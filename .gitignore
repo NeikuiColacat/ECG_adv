@@ -1,3 +1,28 @@
-model/
-data/
+datasets/
 result/
+outputs/
+
+# Model weights & submodules
+model/
+
+# IDE & editor
+.vscode/
+.idea/
+pyrightconfig.json
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Documentation & personal notes
+ARCHITECTURE.md
+PROJECT_STRUCTURE.md
+roadmap.md
+工作簿1.csv
+附录相关技术细节.pdf
+
+# System
+.DS_Store
+*.swp
+*.swo

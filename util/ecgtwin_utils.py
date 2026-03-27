@@ -12,12 +12,20 @@ import yaml
 from typing import Dict, Any, Optional, Tuple
 from pathlib import Path
 
+# ——— TensorFlow segfault workaround（两步法）———
+# 步骤1：先阻止 TF 初始化，让 transformers 认为 TF 不可用
+sys.modules['tensorflow'] = None  # type: ignore
+
 # 添加 ECGTwin 模块路径
 ECGTWIN_ROOT = Path(__file__).parent.parent / "model" / "ECGTwin"
 sys.path.insert(0, str(ECGTWIN_ROOT))
 
 from diffusers import DDPMScheduler
 from transformers import AutoModel, AutoTokenizer
+
+# 步骤2：transformers 已 import，删掉 None 条目让 einops 正常工作
+if sys.modules.get('tensorflow') is None:
+    del sys.modules['tensorflow']
 
 from module.IBExtractor import IBExtractor
 from module.vae_model import VAE_Decoder, VAE_Encoder
