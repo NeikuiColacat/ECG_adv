@@ -177,6 +177,92 @@ def compute_pos_weight(labels: torch.Tensor, epsilon: float = 1.0) -> torch.Tens
     return (neg / pos).clamp(max=100.0)
 
 
+def train_one_epoch(
+    adapter: EfficientNetAdapter,
+    train_loader: DataLoader,
+    optimizer,
+    criterion,
+    device: torch.device,
+    grad_clip: float = 1.0,
+    ewa_params: Optional[List[torch.Tensor]] = None,
+    anchor_lambda: float = 0.1,
+    ewa_decay: float = 0.999,
+) -> float:
+    """
+    训练 adapter 一个 epoch（供 per-epoch 在线训练使用）
+
+    Args:
+        adapter: EfficientNetAdapter
+        train_loader: 混合 DataLoader（real + generated）
+        optimizer: 优化器
+        criterion: BCEWithLogitsLoss
+        device: 设备
+        grad_clip: 梯度裁剪
+        ewa_params: EWA anchor 参数列表（None 则不使用 anchor 正则化）
+        anchor_lambda: anchor 正则化强度
+        ewa_decay: EWA 衰减系数
+
+    Returns:
+        平均 train loss
+    """
+    adapter.train()
+    train_losses = []
+
+    for ecg, labels in train_loader:
+        ecg = ecg.to(device)
+        labels = labels.to(device)
+
+        optimizer.zero_grad()
+        adapted_logits = adapter(ecg)
+        bce_loss = criterion(adapted_logits, labels)
+
+        # EWA anchor 正则化（SA-AET 启发：防止灾难性遗忘）
+        if ewa_params is not None:
+            anchor_loss = sum(
+                (p - p_ewa.detach()).pow(2).sum()
+                for p, p_ewa in zip(adapter.adapter_parameters(), ewa_params)
+            )
+            loss = bce_loss + anchor_lambda * anchor_loss
+        else:
+            loss = bce_loss
+
+        loss.backward()
+
+        if grad_clip > 0:
+            nn.utils.clip_grad_norm_(adapter.adapter_parameters(), grad_clip)
+
+        optimizer.step()
+
+        # EWA 更新
+        if ewa_params is not None:
+            with torch.no_grad():
+                for p, p_ewa in zip(adapter.adapter_parameters(), ewa_params):
+                    p_ewa.mul_(ewa_decay).add_(p.data, alpha=1 - ewa_decay)
+
+        train_losses.append(bce_loss.item())
+
+    return float(np.mean(train_losses))
+
+
+def validate_one_epoch(
+    adapter: EfficientNetAdapter,
+    val_loader: DataLoader,
+    criterion,
+    device: torch.device,
+) -> float:
+    """验证一个 epoch，返回平均 val loss"""
+    adapter.eval()
+    val_losses = []
+    with torch.no_grad():
+        for ecg, labels in val_loader:
+            ecg = ecg.to(device)
+            labels = labels.to(device)
+            adapted_logits = adapter(ecg)
+            val_loss = criterion(adapted_logits, labels)
+            val_losses.append(val_loss.item())
+    return float(np.mean(val_losses))
+
+
 def train_adapter(
     adapter: EfficientNetAdapter,
     train_ds: TensorDataset,
@@ -185,6 +271,7 @@ def train_adapter(
     config: Dict = None,
     save_path: str = None,
     device: str = "cuda",
+    initial_adapter_path: Optional[str] = None,
 ) -> Dict:
     """
     训练 adapter
@@ -204,6 +291,11 @@ def train_adapter(
     cfg = {**DEFAULT_TRAIN_CONFIG, **(config or {})}
     device = torch.device(device)
     adapter = adapter.to(device)
+
+    # Warm-start: 加载之前轮次的 adapter 权重
+    if initial_adapter_path and Path(initial_adapter_path).exists():
+        adapter.load_adapter(initial_adapter_path)
+        print(f"Warm-start from {initial_adapter_path}")
 
     # 构建训练数据集（混合真实 + 生成）
     if generated_ds is not None:

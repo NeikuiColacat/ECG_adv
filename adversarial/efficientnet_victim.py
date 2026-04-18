@@ -89,6 +89,36 @@ class EfficientNetVictim(nn.Module):
         self.mhi_factor = MHI_FACTOR
         self.jit_model = load_efficientnet_jit(weight_path, device)
         self.ecgtwin = ecgtwin_wrapper
+        self.adapter_head = None  # Optional adapter for online adversarial training
+
+    def set_adapter(self, adapter) -> None:
+        """
+        注入 adapter 残差层到可微分链路（用于在线对抗训练）。
+
+        只引用 adapter 的轻量层（norm, fc1, fc2），不复制 JIT backbone。
+        调用后 _latent_to_logits / forward_from_ecg 的输出会经过 adapter 残差。
+        """
+        self.adapter_head = nn.ModuleDict({
+            'norm': adapter.norm,
+            'fc1': adapter.fc1,
+            'fc2': adapter.fc2,
+        })
+        self.adapter_head.to(self.device)
+        self.adapter_head.eval()
+
+    def clear_adapter(self) -> None:
+        """移除 adapter，恢复原始 victim 行为。"""
+        self.adapter_head = None
+
+    def _apply_adapter(self, logits: torch.Tensor) -> torch.Tensor:
+        """如果有 adapter head，应用残差层；否则直接返回。"""
+        if self.adapter_head is not None:
+            x = self.adapter_head['norm'](logits)
+            x = self.adapter_head['fc1'](x)
+            x = F.gelu(x)
+            x = self.adapter_head['fc2'](x)
+            logits = logits + x
+        return logits
 
     def forward_from_ecg(self, ecg: torch.Tensor) -> torch.Tensor:
         """
@@ -106,6 +136,7 @@ class EfficientNetVictim(nn.Module):
             )
         ecg_scaled = ecg * self.mhi_factor
         logits = self.jit_model(ecg_scaled)
+        logits = self._apply_adapter(logits)
         return torch.sigmoid(logits)
 
     def _latent_to_logits(self, latent: torch.Tensor) -> torch.Tensor:
@@ -140,7 +171,8 @@ class EfficientNetVictim(nn.Module):
         )
 
         ecg_scaled = ecg * self.mhi_factor
-        return self.jit_model(ecg_scaled)
+        logits = self.jit_model(ecg_scaled)
+        return self._apply_adapter(logits)
 
     def forward_from_latent_to_logits(self, latent: torch.Tensor) -> torch.Tensor:
         """
@@ -187,6 +219,7 @@ class EfficientNetVictim(nn.Module):
                 )
                 ecg_scaled = ecg * self.mhi_factor
                 logits = self.jit_model(ecg_scaled)
+                logits = self._apply_adapter(logits)
 
         return torch.sigmoid(logits)
 
@@ -237,7 +270,8 @@ class EfficientNetVictim(nn.Module):
                 ecg, size=EFFICIENTNET_INPUT_LENGTH, mode="linear", align_corners=True
             )
         ecg_scaled = ecg * self.mhi_factor
-        return self.jit_model(ecg_scaled)
+        logits = self.jit_model(ecg_scaled)
+        return self._apply_adapter(logits)
 
     def forward(self, ecg: torch.Tensor) -> torch.Tensor:
         """默认 forward：从 ECG 信号推理概率"""

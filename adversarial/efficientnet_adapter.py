@@ -54,14 +54,18 @@ class EfficientNetAdapter(nn.Module):
         dropout: float = 0.3,
         weight_path: str = None,
         device: str = "cuda",
+        backbone=None,
     ):
         super().__init__()
         self.num_classes = num_classes
         self.mhi_factor = MHI_FACTOR
         self.device_str = device
 
-        # Frozen JIT backbone
-        self.backbone = load_efficientnet_jit(weight_path, device)
+        # Frozen JIT backbone (shared or self-loaded)
+        if backbone is not None:
+            self.backbone = backbone
+        else:
+            self.backbone = load_efficientnet_jit(weight_path, device)
         for param in self.backbone.parameters():
             param.requires_grad = False
 

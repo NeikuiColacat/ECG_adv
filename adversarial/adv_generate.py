@@ -16,6 +16,7 @@ AdvDiff 边界引导生成困难样本
 import sys
 import os
 import json
+import random
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 from tqdm import tqdm
@@ -137,6 +138,25 @@ def boundary_loss(logits: torch.Tensor, target_indices: List[int]) -> torch.Tens
     return (target_logits ** 2).mean()
 
 
+def sample_triangle_weights() -> Tuple[float, float, float]:
+    """
+    SA-AET 启发的三角形插值权重采样。
+
+    返回 (w_adv, w_clean, w_hist)，约束 w_clean < w_hist < w_adv。
+    确保结果偏向当前对抗样本（w_adv 最大），但混入 clean 和 historical 增加多样性。
+    """
+    for _ in range(1000):
+        w_adv = random.randint(40, 80) / 100.0
+        remaining = 100 - int(w_adv * 100)
+        if remaining < 2:
+            continue
+        w_clean = random.randint(1, remaining - 1) / 100.0
+        w_hist = 1.0 - w_adv - w_clean
+        if 0.01 <= w_clean < w_hist < w_adv:
+            return w_adv, w_clean, w_hist
+    return 0.6, 0.15, 0.25  # fallback
+
+
 class BoundaryAdvDiffGenerator:
     """
     边界引导 AdvDiff 生成器
@@ -216,6 +236,46 @@ class BoundaryAdvDiffGenerator:
         )
         return output["prev_sample"]
 
+    def _select_best_of_k(
+        self,
+        z_adv: torch.Tensor,
+        z_clean: torch.Tensor,
+        z_hist: torch.Tensor,
+        target_indices: List[int],
+        K: int = 5,
+    ) -> torch.Tensor:
+        """
+        SA-AET 启发的 Best-of-K 选择：生成 K 个三角形插值候选，选最接近决策边界的。
+
+        Args:
+            z_adv: (B, 4, 128) 当前 DDPM 输出
+            z_clean: (B, 4, 128) 参考 ECG 的 VAE latent
+            z_hist: (B, 4, 128) 上一轮的最佳 latent
+            target_indices: 目标 pattern 索引
+            K: 候选数量
+
+        Returns:
+            best_latents: (B, 4, 128)
+        """
+        B = z_adv.shape[0]
+        best_latents = z_adv.clone()
+        best_losses = torch.full((B,), float('inf'), device=self.device)
+
+        for k in range(K):
+            w_adv, w_clean, w_hist = sample_triangle_weights()
+            z_k = w_adv * z_adv + w_clean * z_clean + w_hist * z_hist
+
+            with torch.no_grad():
+                logits = self.victim.forward_from_latent_to_logits(z_k)
+                # boundary_loss per sample: 越小 = 越接近决策边界
+                per_sample_loss = (logits[:, target_indices] ** 2).mean(dim=1)
+
+            better = per_sample_loss < best_losses
+            best_latents[better] = z_k[better]
+            best_losses[better] = per_sample_loss[better]
+
+        return best_latents
+
     def _check_acceptance(
         self,
         latent: torch.Tensor,
@@ -242,6 +302,9 @@ class BoundaryAdvDiffGenerator:
         conditions: Dict[str, torch.Tensor],
         target_indices: List[int],
         batch_size: int = 4,
+        historical_latent: Optional[torch.Tensor] = None,
+        clean_latent: Optional[torch.Tensor] = None,
+        best_of_k: int = 0,
     ) -> Dict[str, Any]:
         """
         生成一个 batch 的边界样本
@@ -250,6 +313,9 @@ class BoundaryAdvDiffGenerator:
             conditions: ECGTwin 生成条件（text_embed, pat_info, base_vector 等）
             target_indices: 目标 EfficientNet pattern 索引
             batch_size: batch 大小
+            historical_latent: (4, 128) 上一轮的最佳 latent（用于 SA-AET Evolution Triangle）
+            clean_latent: (4, 128) 参考 ECG 的 VAE latent（用于 SA-AET Evolution Triangle）
+            best_of_k: K 候选数（0 = 不使用三角形采样）
 
         Returns:
             dict with:
@@ -296,6 +362,12 @@ class BoundaryAdvDiffGenerator:
                 x_t = x_prev
 
             x_0 = x_t
+
+            # SA-AET Evolution Triangle + Best-of-K 选择
+            if best_of_k > 0 and historical_latent is not None and clean_latent is not None:
+                z_clean = clean_latent.unsqueeze(0).expand(batch_size, -1, -1).to(self.device)
+                z_hist = historical_latent.unsqueeze(0).expand(batch_size, -1, -1).to(self.device)
+                x_0 = self._select_best_of_k(x_0, z_clean, z_hist, target_indices, K=best_of_k)
 
             # 筛选满足接受条件的样本
             accept_mask, probs = self._check_acceptance(x_0, target_indices, acceptance_range)
@@ -370,6 +442,8 @@ def prepare_conditions_for_prompt(
         batch_size=batch_size,
         target_text=text_prompt,
     )
+    # SA-AET: 传递 clean latent 用于 Evolution Triangle
+    conditions["ref_latent_raw"] = ref_latent  # (4, 128) CPU tensor
     return conditions
 
 
@@ -577,22 +651,28 @@ def _save_intermediate(save_path, ecg_list, probs_list, latents_list, prompt_key
     )
 
 
-def _make_labels_77(probs: torch.Tensor, prompt_key: str) -> torch.Tensor:
+def _make_labels_77(probs: torch.Tensor, prompt_key: str, soft: bool = False) -> torch.Tensor:
     """
     为生成样本构建 77 维标签向量。
 
     策略：
       1. 用 probs > 0.5 作为基础标签（保留非目标 pattern 的模型预测）
-      2. 将 prompt 语义上对应的 target_indices 强制设为 1.0
+      2. 将 prompt 对应的 target_indices 设为阳性
 
-    强制标注的原因：生成样本的 ECG 文本语义已经确定（如"inferior MI"），
-    即使模型当前对这些 pattern 置信度低（~0.5），它们在语义上仍是阳性样本。
-    用 probs > 0.5 会随机标为 0/1，引入噪声标签，反向损害微调效果。
+    Args:
+        probs: (N, 77) 模型预测概率
+        prompt_key: prompt 名称
+        soft: 是否使用 soft labeling（v4 SA-AET 改进）
+              True: labels[:, target] = clamp(probs, min=0.6)（减少噪声）
+              False: labels[:, target] = 1.0（原始行为）
     """
     labels = (probs > 0.5).float()
     target_indices = PROMPT_TO_PATTERN_INDICES.get(prompt_key, [])
     if target_indices:
-        labels[:, target_indices] = 1.0
+        if soft:
+            labels[:, target_indices] = torch.clamp(probs[:, target_indices], min=0.6)
+        else:
+            labels[:, target_indices] = 1.0
     return labels
 
 
