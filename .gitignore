@@ -1,6 +1,17 @@
 datasets/
 result/
 outputs/
+outputs
+
+# Trash / legacy artifacts (not tracked)
+trash/
+
+# Claude Code local state
+.claude/
+.conda
+
+# Academic reference PDFs (too large for git)
+docs/references/
 
 # Model weights & submodules
 model/
