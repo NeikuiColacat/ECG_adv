@@ -1,0 +1,23 @@
+centers: [chapman_shaoxing, georgia]
+pn2021_root: /root/autodl-tmp/physionet2021/training
+n_samples_per_center: 3
+seed: 0
+
+ecgtwin:
+  device: cuda:0
+  load_encoder: true
+  load_text_model: false
+
+augmix:
+  severity: 5
+  width: 3
+  depth: -1
+  alpha: 1.0
+  ops:
+    - powerline_noise
+    - emg_noise
+    - baseline_shift
+    - baseline_wander
+    - random_leads_masking
+
+output_root: /root/autodl-tmp/methods/augmix/latent_viz

@@ -130,11 +130,17 @@ def plot_ecg(
     columns: int = 4,
     row_height: float = 2.5,
     show_grid: bool = True,
+    engine: Literal["auto", "ecgplot", "matplotlib"] = "auto",
 ) -> Path:
     """画单个 12-lead ECG 样本并保存为 PNG。
 
     shape 自动检测: (12,L) / (L,12) / (1,12,L) / (1,L,12) 均可。
     默认 3x4 网格（12/columns=3 行）。
+
+    engine:
+      - "auto": 优先 ecg_plot 库（医疗纸带样式），没装则回退 matplotlib 子图
+      - "ecgplot": 强制用 ecg_plot 库（适合打印/医生审阅，图会很宽）
+      - "matplotlib": 强制 3x4 子图（屏幕预览/调试友好）
     """
     sr = _validate_sample_rate(sample_rate)
     leads = _validate_lead_order(lead_order)
@@ -142,7 +148,9 @@ def plot_ecg(
     save_path = Path(save_path)
     save_path.parent.mkdir(parents=True, exist_ok=True)
 
-    ecg_plot = _import_ecg_plot()
+    ecg_plot = _import_ecg_plot() if engine in ("auto", "ecgplot") else None
+    if engine == "ecgplot" and ecg_plot is None:
+        raise RuntimeError("engine='ecgplot' requested but ecg_plot is not importable")
     if ecg_plot is not None:
         ecg_plot.plot(
             arr,
@@ -154,7 +162,7 @@ def plot_ecg(
             show_grid=show_grid,
         )
         plt.savefig(save_path, dpi=150, bbox_inches="tight")
-        plt.close("all")
+        plt.close(plt.gcf())
     else:
         _plot_ecg_matplotlib_fallback(
             arr, sr, leads, columns, row_height, title, show_grid, save_path
@@ -192,6 +200,70 @@ def _plot_ecg_matplotlib_fallback(
     fig.tight_layout()
     fig.savefig(save_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
+
+
+def plot_ecg_ecgtwin_style(
+    signal: SignalLike,
+    save_path: Union[str, Path],
+    *,
+    sample_rate: float = 102.4,
+    lead_order: LeadOrder = "ecgtwin",
+    row_height: float = 4,
+    title: str | None = None,
+    per_lead_norm: bool = False,
+    amplitude_scale: float = 1.0,
+) -> Path:
+    """One-column rhythm-strip ECG plot. Assumes input is in mV.
+
+    per_lead_norm: peak-rescale each lead independently to fit its row (kills
+    inter-lead amplitude comparisons; use when input is z-scored, not mV).
+    amplitude_scale: uniform multiplier (preserves cross-lead relationships).
+    """
+    ecg_plot = _import_ecg_plot()
+    if ecg_plot is None:
+        raise RuntimeError(
+            "ecg_plot not importable; cannot use ECGTwin-style plot. "
+            "Install `ecg_plot` or fall back to plot_ecg(engine='matplotlib')."
+        )
+
+    sr = _validate_sample_rate(sample_rate)
+    leads = _validate_lead_order(lead_order)
+    arr = _to_channels_first_2d(signal)  # (12, L)
+    save_path = Path(save_path)
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if per_lead_norm:
+        # Scale each lead so its |peak| lands at 80% of the row half-height.
+        # A std-based rescale (std → 0.4 "mV") is insufficient because typical
+        # R peaks are 4–8σ; those still overflow a 2 mV row by 30–60%. Using
+        # peak-based scaling guarantees no bleed into adjacent leads while
+        # keeping a 20% margin.
+        row_half = float(row_height) / 2.0
+        peaks = np.max(np.abs(arr), axis=1, keepdims=True)
+        peaks = np.where(peaks > 1e-8, peaks, 1.0)
+        arr = arr / peaks * (0.8 * row_half)
+    if amplitude_scale != 1.0:
+        arr = arr * float(amplitude_scale)
+
+    ecg_plot.plot(
+        arr,
+        sample_rate=sr,
+        title=title if title is not None else "",
+        lead_index=leads,
+        columns=1,
+        row_height=row_height,
+    )
+    # Thin out the x-axis tick labels (0.2s major -> 1s major; 0.2s as minor).
+    from matplotlib.ticker import AutoMinorLocator
+    ax = plt.gca()
+    secs = arr.shape[1] / sr
+    ax.set_xticks(np.arange(0, secs + 1e-6, 1.0))
+    ax.xaxis.set_minor_locator(AutoMinorLocator(5))
+    ax.tick_params(axis="x", labelsize=8)
+
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close(plt.gcf())
+    return save_path
 
 
 def plot_comparison(
@@ -405,6 +477,7 @@ def plot_with_report(
     lead_order: LeadOrder = "ecgtwin",
     columns: int = 4,
     row_height: float = 2.5,
+    engine: Literal["auto", "ecgplot", "matplotlib"] = "auto",
 ) -> tuple[Path, dict]:
     """跑 sanity_check，把摘要叠到标题里，再调 plot_ecg 保存图像。返回 (path, report)."""
     report = sanity_check(signal, sample_rate, lead_order=lead_order)
@@ -420,5 +493,6 @@ def plot_with_report(
         lead_order=lead_order,
         columns=columns,
         row_height=row_height,
+        engine=engine,
     )
     return path, report

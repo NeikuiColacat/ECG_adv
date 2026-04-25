@@ -1,0 +1,52 @@
+meta:
+  exp_description: "Plan B v2.1 Stage 0 — Style Translator IBE, 3 centers"
+  stage: "stage0_3c"
+
+data:
+  dataset_path: /root/autodl-tmp/center_aware_ibe/datasets/3center_styled.pt
+  centers: [cpsc_2018_extra, chapman_shaoxing, cpsc_2018]   # index = center_id
+  val_fold: 9
+  test_fold: 10
+
+training:
+  epochs: 20
+  lr: 1.0e-3            # large lr since only small modules trainable
+  weight_decay: 1.0e-4
+  batch_size: 256       # 4090 24GB -> 256 ok
+  num_workers: 8        # 15 core CPU
+  grad_clip: 1.0
+  scheduler:
+    type: cosine
+    eta_min: 1.0e-5
+
+support:
+  K: 50                 # support samples per center for prototype
+  resample_per_batch: true   # fresh support each batch (more diverse)
+
+loss:
+  lambda_sup: 1.0
+  lambda_id: 1.0
+  lambda_style: 0.5
+  supcon_temp: 0.1
+  # Style-transfer pair sampling: within each batch, for up to this fraction of
+  # queries, translate to a different center and pair with a same-class sample
+  # from that center (if present in batch).
+  style_pair_fraction: 0.5
+
+model:
+  embed_dim: 256
+  prototype:
+    in_channels: 4
+    hidden: 128
+    out_dim: 256
+  style_fusion_init: "zero"   # zero-init last layer => initial behavior ≡ base IBE
+
+ecgtwin:
+  # ECGTwin config path (we only need IBE from here)
+  config_path: "model/ECGTwin/config/DiT_ECGTwin.yaml"
+  device: "cuda:0"
+
+logging:
+  save_dir: /root/autodl-tmp/center_aware_ibe/ckpts/stage0_style_translator_3c
+  log_every: 1
+  val_every: 1

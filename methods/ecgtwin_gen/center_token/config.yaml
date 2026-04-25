@@ -1,0 +1,31 @@
+center_token:
+  dim: 256
+  init: zeros
+
+training:
+  lr: 1.0e-3
+  epochs: 30
+  batch_size: 128
+  lambda_inv: 0.1
+  lambda_reg: 0.01
+  grad_clip: 1.0
+  val_fold: 9
+  test_fold: 10
+  optimizer: AdamW
+  scheduler:
+    type: CosineAnnealingLR
+    T_max: 30
+    eta_min: 1.0e-5
+
+data:
+  ptbxl_path: datasets/PTBXL
+  prepared_data_path: datasets/PTBXL/PTBXL_vae_multi_nomic.pt
+  scp_likelihood_threshold: 50.0
+
+ecgtwin:
+  config_path: model/ECGTwin/config/DiT_ECGTwin.yaml
+
+generation:
+  num_inference_steps: 1000
+  gen_batch: 50
+  save_path: datasets/PTBXL/generated_with_center_token/

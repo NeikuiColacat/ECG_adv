@@ -12,6 +12,14 @@ trash/
 
 # Academic reference PDFs (too large for git)
 docs/references/
+docs/papers/**/*.pdf
+
+# Personal thesis docs (contain student ID / personal info)
+docs/*.docx
+docs/~$*.docx
+
+# Personal autodl GPU keep-alive script (not project code)
+util/test_wave.py
 
 # Model weights & submodules
 model/
