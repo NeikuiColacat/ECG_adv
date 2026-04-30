@@ -106,14 +106,14 @@ ptbxl
    - `CD`: BBB, LBBB/RBBB, AV block, fascicular block, IVCD, WPW, paced rhythm 等。
    - `HYP`: ventricular/atrial hypertrophy, LVH/RVH, atrial enlargement 等。
 4. 输出 `(5,) float32` multi-hot。
-5. 用于训练监督时应采用和 PN2021 一致的 NORM exclusivity guard：
+5. 采用和 PN2021 一致的 NORM exclusivity guard：
 
 ```text
 if any(CD, HYP, MI, STTC) == 1:
     NORM = 0
 ```
 
-当前实现提醒：`mimic_report_to_super5()` 的基础正则映射位于 `scripts/triple_labels/label_schemes.py`。在把 MIMIC 纳入主训练前，需要确认代码层是否已经对 MIMIC super5 应用了 NORM guard。
+当前实现：`mimic_report_to_super5()` 位于 `scripts/triple_labels/label_schemes.py`，正则匹配后会应用上述 NORM exclusivity guard。
 
 ## 合成数据标签
 
@@ -131,7 +131,7 @@ labels:  (N, 5), float32, class order = CD/HYP/MI/NORM/STTC
 每次修改标签逻辑后至少检查：
 
 ```bash
-/root/miniforge3/envs/ECGTwin/bin/python scripts/triple_labels/label_schemes.py --mimic_n 2000
+/root/miniforge3/envs/ECGTwin/bin/python scripts/triple_labels/label_schemes.py --sanity --mimic_n 2000
 ```
 
 并重新跑一个小规模训练 smoke test，确认：

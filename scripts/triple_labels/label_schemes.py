@@ -217,7 +217,11 @@ _MIMIC_SUPER5_COMPILED = {
 
 
 def mimic_report_to_super5(report_text):
-    """MIMIC cart report text → (5,) float32 multi-hot. 0/1 only."""
+    """MIMIC cart report text → (5,) float32 multi-hot. 0/1 only.
+
+    Applies the same NORM exclusivity guard used for PN2021 so report phrases
+    like "sinus rhythm" do not coexist with abnormal super5 labels.
+    """
     label = np.zeros(NUM_SUPER5, dtype=np.float32)
     if not report_text:
         return label
@@ -227,6 +231,8 @@ def mimic_report_to_super5(report_text):
             if pat.search(text):
                 label[SUPER5_TO_IDX[cls]] = 1.0
                 break
+    if any(label[i] for i in _SUPER5_ABNORMAL_IDX):
+        label[_SUPER5_NORM_IDX] = 0.0
     return label
 
 

@@ -37,7 +37,7 @@ model/ECGTwin/
 说明：
 
 - paired cache 用于原作者 IBE 的 reference-target 训练。
-- no-IBE thesis mainline 不应默认依赖 paired MIMIC；作者复现可以使用它。
+- 当前 thesis mainline 不应默认依赖 paired MIMIC；作者复现可以使用它。
 - 大输出目录必须放在 `/root/autodl-tmp/`。
 
 ## Stage 1 IBE
@@ -132,7 +132,7 @@ bash scripts/ecgtwin_author_repro/run_author_repro_pipeline.sh
 每个 stage 必须保存：
 
 ```text
-config.yaml
+run_config.yaml
 train.log
 metrics.jsonl
 loss_curve.csv
@@ -162,16 +162,17 @@ pipeline.log
 
 - 证明我们理解并能复现 ECGTwin 架构和训练细节。
 - 为论文提供对照背景。
-- 不作为 thesis mainline 的强依赖。
+- 作为 thesis mainline 的架构复现与实验背景，不直接等同于最终增强方法。
 
 毕设主线仍然是：
 
 ```text
 PTB-XL super5 real ECG
--> ECGTwin VAE latent
--> no-IBE class/text-conditioned latent diffusion
--> synthetic ECG augmentation
--> EfficientNet1DV2 downstream utility
+-> EfficientNet1DV2 super5 baseline
+-> ECGTwin author IBE + DiT reproduction
+-> ECGTwin VAE latent manifold / target-center anchors
+-> TA-OMAT and synth-anchor ablations
+-> PN2021 7-center downstream utility
 ```
 
-不要把作者 IBE paired MIMIC 流程混入 no-IBE 主线叙事。
+不要把作者 IBE paired MIMIC 复现流程写成最终增强方法本身；它主要提供 ECGTwin 架构复现、VAE latent manifold 和对照背景。

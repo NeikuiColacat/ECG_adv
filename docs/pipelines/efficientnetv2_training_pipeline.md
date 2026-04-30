@@ -141,7 +141,7 @@ synthetic augmentation：
 /root/miniforge3/envs/ECGTwin/bin/python scripts/triple_labels/train_ptbxl.py \
   --scheme super5 \
   --output_dir /root/autodl-tmp/triple_labels/<run_name> \
-  --synth_npz /root/autodl-tmp/ecgtwin_class_super5/<run>/samples/synth_waveforms.npz \
+  --synth_npz /root/autodl-tmp/<synthetic_run>/synth_waveforms.npz \
   --synth_ratio 0.25 \
   --batch_size 128 \
   --num_workers 8 \
@@ -180,6 +180,11 @@ PN2021 7-center，不跑 MIMIC：
 best_model.pt
 training_log.json
 train_result.json
+```
+
+训练后按标准评测命令运行 `scripts/triple_labels/eval_crosscenter.py`，至少保存：
+
+```text
 eval_result.json
 ```
 

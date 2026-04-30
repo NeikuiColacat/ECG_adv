@@ -5,6 +5,10 @@ date: 2026-04-19
 status: draft / 待 pipeline 落地后补实测
 ---
 
+> 当前状态：历史标签调研文档。本文保留 2026-04-19 对 Tier-M/Tier-X/AdvDiff/AugMix 路线的论证过程，但不再作为当前 super5 主线的事实来源。
+>
+> 当前主线标签事实以 `docs/pipelines/super5_label_mapping_pipeline.md` 和 `scripts/triple_labels/label_schemes.py` 为准；当前训练/评测入口是 `scripts/triple_labels/train_ptbxl.py` 和 `scripts/triple_labels/eval_crosscenter.py`。
+
 # 跨中心 EfficientNetV2 分类头标签选择调研
 
 ## 0. 结论前置（TL;DR）

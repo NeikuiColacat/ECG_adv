@@ -45,7 +45,7 @@ Primary plan document:
 ```text
 docs/experiment_summary_for_advisor.md
 docs/module_ablation_1_real_vs_synth.md
-docs/ecgtwin_no_ibe_diffusion_augmenter_recommended_plan.md  # historical Scheme B plan
+trash/docs_cleanup_20260501/historical_no_ibe/ecgtwin_no_ibe_diffusion_augmenter_recommended_plan.md  # historical Scheme B plan
 ```
 
 ## Key Data And Artifact Paths
@@ -271,7 +271,7 @@ Use `/root/autodl-tmp/ECGTwin_Data/Mimic_vae.pt` first. It has 744,372 single EC
 subject_id, ecg_time, text, hr, age, sex
 ```
 
-Do not use full paired MIMIC as the default no-IBE route. The paired file has about 6.4M pairs and exists for original IBE reference-target training. After removing IBE, the reference ECG has no clean role and the pair expansion wastes compute.
+Do not use full paired MIMIC as a default single-sample/no-IBE route. The paired file has about 6.4M pairs and exists for original IBE reference-target training. After removing IBE, the reference ECG has no clean role and the pair expansion wastes compute.
 
 MIMIC report labels:
 
@@ -310,7 +310,7 @@ ECGTwin author's validation stack:
 - Downstream utility: auto-diagnosis improvement.
 - Qualitative/case analysis: 12-lead figures, attention maps, prompt-to-prompt editing cases.
 
-For this no-IBE super5 thesis, use a task-adapted stack:
+For current super5 downstream utility and any historical no-IBE/synthetic ablation, use a task-adapted stack:
 
 1. Basic signal sanity using `util/ecg_viz.sanity_check`:
    - NaN/Inf
