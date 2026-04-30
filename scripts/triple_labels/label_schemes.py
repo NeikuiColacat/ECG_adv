@@ -15,9 +15,9 @@ Label convention: float32 array of shape (C,),
 PTB-XL labels are authoritative (from scp_statements.csv) — all super5 + sub23
 classes are fully covered (0/1 only, no -1).
 
-PN2021 and MIMIC labels may produce -1 for classes that cannot be reliably
-extracted from SNOMED codes (sub23: MI subtypes, ischemia subtypes, SEHYP)
-or from cart-report regex.
+Current super5 mappings for PTB-XL, PN2021, and MIMIC output 0/1 labels only.
+Finer schemes may produce -1 for classes that cannot be reliably extracted from
+SNOMED codes or cart-report regex.
 """
 
 import os

@@ -90,6 +90,12 @@ apply_filter = True
 apply_zscore = True
 ```
 
+注意：
+
+- 该缓存是分类器输入缓存，不是 raw mV 信号。
+- 当前训练路径会执行 bandpass/baseline removal 和 per-sample global z-score。
+- global z-score 有利于跨中心稳定，但会削弱绝对电压信息；HYP/CD 的医学电压标准不能只靠该分类器特征来证明。
+
 推荐缓存：
 
 ```text
@@ -139,6 +145,12 @@ center crop to 250 for eval
 /root/autodl-tmp/triple_labels/pn2021_eval_cache/<scheme>_<center>_100hz1000_v2_normguard.npz
 ```
 
+缓存失效规则：
+
+- 若 `SNOMED_TO_SUPER5`、NORM guard、PN2021 header parser、滤波、z-score、lead reorder 或 crop 规则变化，必须 bump cache version 并重建该目录下对应 cache。
+- 评测输出应记录实际 evaluated centers；`ptb-xl` / `ptbxl` 目录即使存在也只能被记录为 excluded，不能进入结果平均。
+- 后续建议在 cache metadata 中保存 `scheme`、`class_names`、`cache_version`、`preprocess_config`、`snomed_map_hash`、`missing_lead_count` 和 `lead_order_counter`。
+
 固定评测中心：
 
 ```text
@@ -177,6 +189,12 @@ split == 2 and valid_mask == True
 
 MIMIC test dataset 从 f16 mmap 读取后转成 float32，再 center crop 到 `(12, 250)`。
 
+注意：
+
+- `mimic_tierM` 目录名来自历史 Tier-M cache。当前 super5 评测只复用其中的 signal cache、patient-level split 和 valid mask。
+- `mimic_index.npz` 内的 `labels_6` 不是 super5 标签，不应被用于 super5 指标。
+- super5 labels 当前由 `record_list.csv` + `machine_measurements.csv` report regex 即时生成；若要保证长期复现，应另建版本化 `mimic_super5_labels` cache。
+
 如果重新构建 MIMIC cache，应使用与 PN2021 相同的通用预处理：
 
 ```text
@@ -207,7 +225,10 @@ ECGTwin 解码后进入分类器前必须：
 
 1. 从 ECGTwin/MIMIC lead order 转成 PTB-XL order。
 2. 从 1024 点重采样/截断到 1000 点。
-3. 保存为 `(N, 1000, 12)`。
+3. 进入 `scripts/triple_labels/train_ptbxl.py --synth_npz` 前，必须匹配分类器训练尺度。
+4. 保存为 `(N, 1000, 12)`。
+
+`SynthNPZDataset` 只做 shape normalization 和 crop，不会再次执行 `unified_preprocess_to_1000()`。因此 synthetic `.npz` 必须已经是与 PTB-XL classifier cache 可比的尺度；如果保存 raw mV，应明确作为 raw-mV ablation 并单独记录。
 
 导联转换：
 

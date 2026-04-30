@@ -118,6 +118,12 @@ per-class AUROC/AUPRC
 per-center AUROC/AUPRC for PN2021
 ```
 
+解释限制：
+
+- 当前分类器输入是 filter + per-sample global z-score 后的 2.5s crop。
+- HYP/CD 的 AUROC/AUPRC 是分类性能指标，不等价于生成 ECG 满足绝对电压或传导时限的临床标准。
+- 生成质量验证中涉及 HYP 电压、QRS/PR/ST/T 等医学规则时，应使用 raw/decoded ECG 的数字心电特征，而不是只引用分类器分数。
+
 ## 标准训练命令
 
 super5 baseline：
@@ -148,6 +154,12 @@ synthetic augmentation：
   --epochs 50 \
   --device cuda
 ```
+
+synthetic `.npz` 注意事项：
+
+- `train_ptbxl.py` 对 synthetic signals 只做 `(N,12,1000)`/`(N,1000,12)` shape normalization 和 crop。
+- 它不会对 synthetic signals 重新滤波、z-score 或 lead reorder。
+- 因此 `--synth_npz` 必须已经使用 PTB-XL lead order，并与分类器预处理尺度一致；否则 real/synth 分布差异会混入增强效果。
 
 ## 标准评测命令
 
