@@ -31,6 +31,7 @@ model/*
 !model/ecgfounder
 !model/textual_inversion
 !model/dataset-interfaces
+!model/robustness
 
 # Legacy/local external repos are not part of the current mainline bootstrap.
 model/SA-AET/

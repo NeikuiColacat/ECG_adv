@@ -4,9 +4,10 @@
 # - Legacy manifest entries whose working-tree paths are tracked symlinks into
 #   `/root/autodl-tmp/models/`. Use `scripts/bootstrap_model_repos.sh` on a new
 #   host for those repositories.
-# - Active gitlink submodules, currently `model/textual_inversion` and
-#   `model/dataset-interfaces`. Use `git submodule update --init --recursive`
-#   after pulling to materialize those directories.
+# - Active gitlink submodules, currently `model/textual_inversion`,
+#   `model/dataset-interfaces`, and `model/robustness`. Use
+#   `git submodule update --init --recursive` after pulling to materialize
+#   those directories.
 #
 # To see which entries are active gitlinks:
 #   git ls-files --stage | grep '^160000'
@@ -29,3 +30,6 @@
 [submodule "model/dataset-interfaces"]
 	path = model/dataset-interfaces
 	url = https://github.com/MadryLab/dataset-interfaces.git
+[submodule "model/robustness"]
+	path = model/robustness
+	url = https://github.com/hendrycks/robustness.git
