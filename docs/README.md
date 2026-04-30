@@ -1,28 +1,41 @@
 # Docs
 
-项目所有文档集中地。
+当前 `docs/` 只保留毕设主线和最终写作需要直接引用的文档。历史方案、旧试验记录和被新版替代的笔记已归档到 `trash/docs_cleanup_20260501/`，没有直接删除。
 
-## 顶层文档
-
-| 文件 | 用途 |
-|---|---|
-| `architecture.md` | ECGTwin 输入数据流 + .pt 格式规范（latent/诊断嵌入/元数据） |
-| `project_structure.md` | 项目目录结构详解 + 核心组件关系 |
-| `reading_guide.md` | ECGTwin 代码阅读路线图（7 步法推荐顺序） |
-| `augmentation_survey.md` | ECG 增强操作调研（40+ 种算子分类、安全性评估） |
-
-## `training/` — v2 基线训练文档
+## 主线结论
 
 | 文件 | 用途 |
 |---|---|
-| `efficientnet_training.md` | EfficientNet1DV2 架构 + 训练配置 |
-| `training_technical_details.md` | 完整训练技术栈（数据/预处理/fold/loss/scheduler） |
-| `gap_report.md` | PTBXL→PN2021→MIMIC 跨中心 gap 定量报告 |
+| `experiment_summary_for_advisor.md` | 面向导师汇报的整体实验故事和结论 |
+| `module_ablation_1_real_vs_synth.md` | TA-OMAT / real-anchor / synthetic-anchor 对比与模块消融 |
+| `triple_labels_metrics_for_advisor.md` | EfficientNet1DV2 在 super5/sub23/pn26 等设置下的指标汇总 |
+| `label_strategy.md` | 标签空间选择、医学含义和监督来源说明 |
+| `synth_anchored_super5_pilot_summary_final.md` | synthetic-anchor super5 最终 pilot 总结 |
+| `center_token_v2_results.md` | center token v2 扩展实验和消融结果 |
 
-## `references/` — 论文 PDF
+## ECG 质量验证
 
 | 文件 | 用途 |
 |---|---|
-| `Li-2025-ECGFoundationModel.pdf` | ECGFounder 论文（10M 记录 foundation model） |
-| `ehaf1119.pdf` | ECG 相关方法论文 |
-| `附录技术细节.pdf` | 技术细节附录（中文） |
+| `ecgtwin_super5_digital_gt_validation.md` | ECGTwin super5 生成样本的数字心电规则验证报告 |
+| `ecgtwin_super5_digital_gt_validation.json` | 上述验证的结构化结果 |
+| `ecg_digital_thresholds.md` | 数字心电质量阈值与判定标准 |
+
+## 训练细节
+
+| 文件 | 用途 |
+|---|---|
+| `training/efficientnet_training.md` | EfficientNet1DV2 架构、训练配置和日志要求 |
+
+## 论文材料
+
+| 路径 | 用途 |
+|---|---|
+| `final_round/` | 任务书、开题报告、中期报告、指导记录的 Markdown 版本 |
+| `papers/INDEX.md` | 本地论文索引 |
+| `references/` | 本地参考 PDF，通常不纳入 git |
+
+## 归档策略
+
+- 旧 no-IBE diffusion 方案、早期 synth pilot、旧 center-token/IBE 风格迁移记录、旧 Tier-M/AugMix 文档、旧标签审计和旧项目结构说明，统一放入 `trash/docs_cleanup_20260501/`。
+- `trash/` 默认不跟踪，适合保留临时归档材料；需要恢复时直接从该目录移回。
