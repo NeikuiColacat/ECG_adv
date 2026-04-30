@@ -142,14 +142,15 @@ center crop to 250 for eval
 评测缓存：
 
 ```text
-/root/autodl-tmp/triple_labels/pn2021_eval_cache/<scheme>_<center>_100hz1000_v2_normguard.npz
+/root/autodl-tmp/triple_labels/pn2021_eval_cache/<scheme>_<center>_100hz1000_v3_super5_normsuppress.npz
 ```
 
 缓存失效规则：
 
-- 若 `SNOMED_TO_SUPER5`、NORM guard、PN2021 header parser、滤波、z-score、lead reorder 或 crop 规则变化，必须 bump cache version 并重建该目录下对应 cache。
+- 若 `SNOMED_TO_SUPER5_POSITIVE`、`NORM_POSITIVE_SNOMEDS`、`NORM_SUPPRESS_SNOMEDS`、PN2021 header parser、滤波、z-score、lead reorder 或 crop 规则变化，必须 bump cache version 并重建该目录下对应 cache。
 - 评测输出应记录实际 evaluated centers；`ptb-xl` / `ptbxl` 目录即使存在也只能被记录为 excluded，不能进入结果平均。
-- 后续建议在 cache metadata 中保存 `scheme`、`class_names`、`cache_version`、`preprocess_config`、`snomed_map_hash`、`missing_lead_count` 和 `lead_order_counter`。
+- v3 cache 已保存并校验基础 metadata：`scheme`、`center`、`class_names`、`cache_version`、`preprocess_config`，super5 还保存 `pn2021_mapping.mapping_version` 和 `pn2021_mapping.mapping_hash`。
+- 后续建议继续增加 `missing_lead_count`、`lead_order_counter` 和 `unmapped_snomed_counter`。
 
 固定评测中心：
 

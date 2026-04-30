@@ -62,6 +62,26 @@ trash/docs_cleanup_20260501/historical_no_ibe/ecgtwin_no_ibe_diffusion_augmenter
 - ECGTwin author repro outputs: `/root/autodl-tmp/ecgtwin_author_repro/<run_name>/`
 - EfficientNet super5 outputs: `/root/autodl-tmp/triple_labels/<run_name>/`
 
+External model repos are expected to live on the data disk and be linked into
+`model/`:
+
+```text
+model/DeepECG                 -> /root/autodl-tmp/models/DeepECG
+model/ECGTwin                 -> /root/autodl-tmp/models/ECGTwin
+model/advdiff                 -> /root/autodl-tmp/models/advdiff
+model/ecg_ptbxl_benchmarking  -> /root/autodl-tmp/models/ecg_ptbxl_benchmarking
+```
+
+On a new AutoDL host, run:
+
+```bash
+bash scripts/bootstrap_model_repos.sh
+```
+
+`.gitmodules` is currently an external-model URL manifest, not active gitlink
+submodules; `git submodule update --init` should not be relied on unless
+`git ls-files --stage | grep '^160000'` shows real gitlinks.
+
 Previously trained baseline:
 
 ```text
@@ -146,6 +166,25 @@ Source of truth:
 ```text
 scripts/triple_labels/label_schemes.py
 ```
+
+PN2021 super5 mapping:
+
+```text
+SUPER5_PN2021_MAPPING_VERSION = v3_super5_normsuppress_20260501
+PN2021_EVAL_CACHE_VERSION = v3_super5_normsuppress
+```
+
+- PN2021 has no official `SNOMED -> PTB-XL super5` crosswalk. The mapping is a
+  project-defined semantic projection for external-center evaluation.
+- Current PN2021 v3 splits direct positives and NORM suppression:
+  `SNOMED_TO_SUPER5_POSITIVE`, `NORM_POSITIVE_SNOMEDS`,
+  `NORM_SUPPRESS_SNOMEDS`.
+- `Q wave abnormal` and `early repolarization` are suppress-only by default, not
+  direct STTC positives.
+- `sinus bradycardia`, `sinus tachycardia`, and `sinus arrhythmia` are not
+  treated as PTB-XL-normal equivalents by default; they suppress NORM.
+- If PN2021 mapping, parser, preprocessing, or class order changes, bump cache
+  version and rebuild `/root/autodl-tmp/triple_labels/pn2021_eval_cache`.
 
 Historical Scheme B prompt fragments:
 

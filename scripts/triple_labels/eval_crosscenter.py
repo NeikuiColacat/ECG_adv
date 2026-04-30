@@ -18,6 +18,7 @@ import sys
 import json
 import argparse
 import time
+import re
 
 import numpy as np
 import pandas as pd
@@ -29,7 +30,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..',
                                 'model', 'DeepECG', 'notebooks'))
 
-from scripts.triple_labels.label_schemes import get_scheme
+from scripts.triple_labels.label_schemes import (
+    get_scheme, get_super5_pn2021_mapping_metadata,
+)
 from scripts.triple_labels.train_ptbxl import (
     PTBXLDatasetScheme, compute_macro_auroc_auprc, masked_bce_with_logits,
     get_ptbxl_labels_for_scheme,
@@ -51,12 +54,13 @@ PN2021_FORBIDDEN = {'ptb-xl', 'ptbxl'}
 # ────────────────────────────────────────────────────────────────────────────
 
 def parse_header_snomed(header_path):
+    dx_re = re.compile(r'^#\s*Dx\s*:\s*(.*)$', re.IGNORECASE)
     with open(header_path, 'r') as f:
         for line in f:
             line = line.strip()
-            if line.startswith('#') and 'Dx' in line:
-                idx = line.index('Dx')
-                codes_str = line[idx:].split(':', 1)[1].strip()
+            match = dx_re.match(line)
+            if match:
+                codes_str = match.group(1).strip()
                 try:
                     return [int(c.strip()) for c in codes_str.split(',') if c.strip()]
                 except ValueError:
@@ -138,7 +142,7 @@ class PN2021CachedCenterDataset(Dataset):
                 torch.from_numpy(self.labels[idx]).float())
 
 
-PN2021_EVAL_CACHE_VERSION = "v2_normguard"
+PN2021_EVAL_CACHE_VERSION = "v3_super5_normsuppress"
 
 
 def _pn2021_cache_path(args, scheme, center):
@@ -152,18 +156,61 @@ def _pn2021_cache_path(args, scheme, center):
     )
 
 
+def _expected_pn2021_cache_metadata(args, scheme, center):
+    metadata = {
+        'scheme': args.scheme,
+        'center': center,
+        'class_names': list(scheme['class_names']),
+        'cache_version': PN2021_EVAL_CACHE_VERSION,
+        'preprocess_config': {
+            'target_fs': 100,
+            'target_len': 1000,
+            'apply_filter': True,
+            'apply_zscore': True,
+            'crop_len': int(args.crop_len),
+            'crop_mode': 'center',
+        },
+    }
+    if args.scheme == 'super5':
+        metadata['pn2021_mapping'] = get_super5_pn2021_mapping_metadata()
+    return metadata
+
+
+def _load_cache_metadata(data):
+    if 'metadata_json' not in data.files:
+        return None
+    raw = data['metadata_json']
+    if hasattr(raw, 'item'):
+        raw = raw.item()
+    if isinstance(raw, bytes):
+        raw = raw.decode('utf-8')
+    try:
+        return json.loads(str(raw))
+    except Exception:
+        return None
+
+
+def _cache_metadata_matches(found, expected):
+    if found is None:
+        return False
+    return found == expected
+
+
 def _load_or_build_pn2021_center(center, paths, snomeds, scheme, args):
     cache_path = _pn2021_cache_path(args, scheme, center)
+    expected_metadata = _expected_pn2021_cache_metadata(args, scheme, center)
     if cache_path and os.path.exists(cache_path):
         data = np.load(cache_path, allow_pickle=True)
-        return (
-            data['signals'].astype(np.float32, copy=False),
-            data['labels'].astype(np.float32, copy=False),
-            data['record_ids'].astype(str),
-            0,
-            0.0,
-            True,
-        )
+        if _cache_metadata_matches(_load_cache_metadata(data), expected_metadata):
+            return (
+                data['signals'].astype(np.float32, copy=False),
+                data['labels'].astype(np.float32, copy=False),
+                data['record_ids'].astype(str),
+                0,
+                0.0,
+                True,
+            )
+        print(f"  {center}: cache metadata mismatch, rebuilding {cache_path}")
 
     signals, labels, record_ids = [], [], []
     fail = 0
@@ -201,7 +248,13 @@ def _load_or_build_pn2021_center(center, paths, snomeds, scheme, args):
         record_ids = np.asarray([], dtype=str)
     load_time = time.time() - t0
     if cache_path and len(signals) > 0:
-        np.savez_compressed(cache_path, signals=signals, labels=labels, record_ids=record_ids)
+        np.savez_compressed(
+            cache_path,
+            signals=signals,
+            labels=labels,
+            record_ids=record_ids,
+            metadata_json=json.dumps(expected_metadata, sort_keys=True),
+        )
         print(f"  {center}: cached preprocessed PN2021 → {cache_path}")
     return signals, labels, record_ids, fail, load_time, False
 

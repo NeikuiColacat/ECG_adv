@@ -281,7 +281,7 @@ def get_ptbxl_labels_for_scheme(csv_path, scheme, label_cache_path, folds=None):
 
     # Cache key includes class count so different schemes can't silently load
     # each other's array (super5 C=5, sub23 C=23, pn26 C=26).
-    cache_key = f"{label_cache_path}.C{scheme['num_classes']}.all"
+    cache_key = f"{label_cache_path}.C{scheme['num_classes']}.all.npy"
     if os.path.exists(cache_key):
         all_labels = np.load(cache_key)
         assert all_labels.shape[1] == scheme['num_classes'], (

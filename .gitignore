@@ -21,8 +21,18 @@ docs/~$*.docx
 # Personal autodl GPU keep-alive script (not project code)
 util/test_wave.py
 
-# Model weights & submodules
-model/
+# External model repos live on the data disk and are linked from model/.
+# Keep the link handles visible to git; do not track arbitrary model payloads.
+model/*
+!model/DeepECG
+!model/ECGTwin
+!model/ecg_ptbxl_benchmarking
+!model/advdiff
+!model/ecgfounder
+
+# Legacy/local external repos are not part of the current mainline bootstrap.
+model/SA-AET/
+model/augmix/
 
 # IDE & editor
 .vscode/

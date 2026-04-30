@@ -25,6 +25,8 @@ import re
 import sys
 import ast
 import functools
+import hashlib
+import json
 import numpy as np
 import pandas as pd
 
@@ -96,16 +98,20 @@ def ptbxl_scp_to_super5(scp_codes_str_or_dict, confidence_threshold=0.0):
     return label
 
 
-# PN2021 SNOMED → Super5. Authoritative source: PhysioNet/CinC 2021
-# dx_mapping_scored.csv + dx_mapping_unscored.csv (github.com/physionetchallenges/evaluation-2021).
-# Covers more than the official scored-26 since PN2021 .hea headers carry the
-# full 133-code raw vocabulary.
-SNOMED_TO_SUPER5 = {
-    # NORM — sinus rhythm + benign rhythm findings
-    426783006: 'NORM',   # sinus rhythm
-    426177001: 'NORM',   # sinus bradycardia
-    427084000: 'NORM',   # sinus tachycardia
-    427393009: 'NORM',   # sinus arrhythmia
+SUPER5_PN2021_MAPPING_VERSION = 'v3_super5_normsuppress_20260501'
+
+# PN2021 SNOMED → PTB-XL Super5 semantic projection.
+#
+# Important: PhysioNet/CinC 2021 defines SNOMED-CT labels and Challenge scoring
+# labels, not an official PN2021→PTB-XL-super5 crosswalk. This mapping is a
+# project policy for external-center evaluation.
+#
+# v3 policy:
+#   - direct positive mapping only for codes with a clear CD/HYP/MI/STTC target;
+#   - strict NORM is only explicit sinus rhythm;
+#   - rhythm/axis/ectopy/low-voltage/boundary codes suppress NORM without
+#     becoming a super5 positive.
+SNOMED_TO_SUPER5_POSITIVE = {
     # MI — infarction codes only (ischemia → STTC, hypertrophy → HYP)
     164865005: 'MI',     # myocardial infarction
     164867002: 'MI',     # old myocardial infarction
@@ -114,9 +120,8 @@ SNOMED_TO_SUPER5 = {
     22298006:  'MI',     # subacute MI
     401303003: 'MI',     # acute anterior MI alt
     233843008: 'MI',     # inferior MI alt
-    # STTC — ST/T wave changes, ischemia (ischemia ≠ infarction), repolarization
+    # STTC — ST/T wave changes, ischemia (ischemia ≠ infarction)
     164934002: 'STTC',   # T wave abnormal
-    164917005: 'STTC',   # Q wave abnormal
     111975006: 'STTC',   # prolonged QT
     164931005: 'STTC',   # ST elevation
     429622005: 'STTC',   # ST depression
@@ -128,7 +133,6 @@ SNOMED_TO_SUPER5 = {
     425623009: 'STTC',   # lateral ischemia
     425419005: 'STTC',   # inferior ischemia
     426434006: 'STTC',   # anterior ischemia
-    428417006: 'STTC',   # early repolarization
     # CD — bundle branch blocks, AV blocks, conduction abnormalities, pacing
     270492004: 'CD',     # 1st degree AV block
     195042002: 'CD',     # 2nd degree AV block
@@ -166,21 +170,100 @@ SNOMED_TO_SUPER5 = {
     164828000: 'HYP',    # atrial hypertrophy (alt)
 }
 
+NORM_POSITIVE_SNOMEDS = frozenset({
+    426783006,  # sinus rhythm
+})
+
+NORM_SUPPRESS_SNOMEDS = frozenset({
+    # Sinus rhythm variants are not equivalent to PTB-XL diagnostic NORM.
+    426177001,  # sinus bradycardia
+    427084000,  # sinus tachycardia
+    427393009,  # sinus arrhythmia
+    # Official scored rhythm/ectopy/axis/voltage labels without direct super5 target.
+    164889003,  # atrial fibrillation
+    164890007,  # atrial flutter
+    284470004,  # premature atrial contraction
+    63593006,   # supraventricular premature beats
+    427172004,  # premature ventricular contractions
+    17338001,   # ventricular premature beats
+    39732003,   # left axis deviation
+    47665007,   # right axis deviation
+    251146004,  # low QRS voltages
+    365413008,  # poor R wave progression
+    426627000,  # bradycardia
+    # Common unscored/non-super5 abnormalities and rhythm variants.
+    164951009,  # abnormal QRS
+    233892002,  # accelerated atrial escape rhythm
+    251187003,  # atrial escape beat
+    61277005,   # accelerated idioventricular rhythm
+    426664006,  # accelerated junctional rhythm
+    195080001,  # atrial fibrillation and flutter
+    251173003,  # atrial bigeminy
+    713422000,  # atrial tachycardia
+    50799005,   # atrioventricular dissociation
+    29320008,   # atrioventricular junctional rhythm
+    251166008,  # AV nodal reentrant tachycardia
+    233897008,  # AV reentrant tachycardia
+    251170000,  # blocked premature atrial contraction
+    74615001,   # brady tachy syndrome
+    426749004,  # chronic atrial fibrillation
+    698247007,  # cardiac dysrhythmia
+    251198002,  # clockwise rotation
+    251199005,  # counterclockwise rotation
+    # Boundary codes: suppress NORM but do not directly create STTC in v3.
+    164917005,  # Q wave abnormal
+    428417006,  # early repolarization
+})
+
+# Backward-compatible public view used by legacy scripts that need to inspect
+# direct positive labels. Suppress-only codes are intentionally absent.
+SNOMED_TO_SUPER5 = {
+    **SNOMED_TO_SUPER5_POSITIVE,
+    **{code: 'NORM' for code in NORM_POSITIVE_SNOMEDS},
+}
+
+
+def _stable_hash_mapping(obj):
+    payload = json.dumps(obj, sort_keys=True, separators=(',', ':'))
+    return hashlib.sha1(payload.encode('utf-8')).hexdigest()[:12]
+
+
+SUPER5_PN2021_MAPPING_HASH = _stable_hash_mapping({
+    'version': SUPER5_PN2021_MAPPING_VERSION,
+    'positive': SNOMED_TO_SUPER5_POSITIVE,
+    'norm_positive': sorted(NORM_POSITIVE_SNOMEDS),
+    'norm_suppress': sorted(NORM_SUPPRESS_SNOMEDS),
+})
+
+
+def get_super5_pn2021_mapping_metadata():
+    return {
+        'mapping_version': SUPER5_PN2021_MAPPING_VERSION,
+        'mapping_hash': SUPER5_PN2021_MAPPING_HASH,
+        'class_names': CLASS_NAMES_SUPER5,
+    }
+
 
 def snomed_list_to_super5(snomed_codes):
     """PN2021 SNOMED list → (5,) float32 multi-hot.
 
-    NORM exclusivity guard: PTB-XL trains NORM as "no abnormality found" (~5%
-    co-occurrence with abnormal classes); PN2021 emits sinus rhythm alongside
-    pathology codes (~98% on cpsc_2018_extra). Without the guard, eval semantics
-    drift from training and NORM AUROC collapses.
+    v3 NORM policy: explicit sinus rhythm may become NORM only when no direct
+    super5 abnormal class and no suppress-only abnormality are present.
     """
     label = np.zeros(NUM_SUPER5, dtype=np.float32)
+    has_norm_candidate = False
+    has_norm_suppress = False
     for code in snomed_codes:
-        cls = SNOMED_TO_SUPER5.get(code)
+        cls = SNOMED_TO_SUPER5_POSITIVE.get(code)
         if cls is not None:
             label[SUPER5_TO_IDX[cls]] = 1.0
-    if any(label[i] for i in _SUPER5_ABNORMAL_IDX):
+        if code in NORM_POSITIVE_SNOMEDS:
+            has_norm_candidate = True
+        if code in NORM_SUPPRESS_SNOMEDS:
+            has_norm_suppress = True
+    if has_norm_candidate and not any(label[i] for i in _SUPER5_ABNORMAL_IDX) and not has_norm_suppress:
+        label[_SUPER5_NORM_IDX] = 1.0
+    else:
         label[_SUPER5_NORM_IDX] = 0.0
     return label
 
@@ -332,7 +415,7 @@ _SUB23_NORM_IDX = SUB23_TO_IDX['NORM']
 # (e.g., generic MI 164865005 — sub23 needs an MI subtype, but the
 # abnormality is real, so NORM must still be 0).
 _SUPER5_ABNORMAL_SNOMEDS = frozenset(
-    c for c, cls in SNOMED_TO_SUPER5.items() if cls != 'NORM'
+    set(SNOMED_TO_SUPER5_POSITIVE) | set(NORM_SUPPRESS_SNOMEDS)
 )
 
 

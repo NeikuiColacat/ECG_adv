@@ -1,3 +1,13 @@
+# NOTE:
+# These URLs are kept as the external model-repo manifest for this project.
+# The active AutoDL layout keeps heavy/dirty model repositories under
+# `/root/autodl-tmp/models/` and links them into `model/`.
+# Use `scripts/bootstrap_model_repos.sh` on a new host.
+#
+# They are not currently active gitlink submodules in the main repo index:
+# `git ls-files --stage | grep '^160000'` should be checked before relying on
+# `git submodule update --init`.
+#
 [submodule "model/DeepECG"]
 	path = model/DeepECG
 	url = https://github.com/HeartWise-AI/DeepECG_Docker.git
