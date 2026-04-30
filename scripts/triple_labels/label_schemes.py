@@ -320,9 +320,26 @@ SUB23_UNMAPPABLE_PN2021 = {
 }
 SUB23_UNMAPPABLE_PN2021_IDX = [SUB23_TO_IDX[c] for c in SUB23_UNMAPPABLE_PN2021]
 
+_SUB23_NORM_IDX = SUB23_TO_IDX['NORM']
+# Reuse super5's SNOMED → abnormality mapping as a broad "any abnormality"
+# detector. Catches abnormalities that sub23 itself cannot map to a subclass
+# (e.g., generic MI 164865005 — sub23 needs an MI subtype, but the
+# abnormality is real, so NORM must still be 0).
+_SUPER5_ABNORMAL_SNOMEDS = frozenset(
+    c for c, cls in SNOMED_TO_SUPER5.items() if cls != 'NORM'
+)
+
 
 def snomed_list_to_sub23(snomed_codes):
-    """PN2021 SNOMED list → (23,) float32 with -1 for unmappable classes."""
+    """PN2021 SNOMED list → (23,) float32 with -1 for unmappable classes.
+
+    NORM exclusivity guard mirrors super5: PTB-XL trains diagnostic_subclass
+    NORM as "no abnormality" (~5% co-occurrence with abnormal subclasses);
+    PN2021 emits sinus rhythm 426783006 alongside pathology codes (~98% on
+    cpsc_2018_extra), and many PN2021 abnormalities (generic MI, ischemia)
+    cannot be split into sub23 subtypes. We therefore key the guard on
+    super5-level abnormality presence, not just sub23 mappable hits.
+    """
     label = np.zeros(NUM_SUB23, dtype=np.float32)
     for idx in SUB23_UNMAPPABLE_PN2021_IDX:
         label[idx] = -1.0
@@ -330,6 +347,8 @@ def snomed_list_to_sub23(snomed_codes):
         cls = SNOMED_TO_SUB23.get(code)
         if cls is not None:
             label[SUB23_TO_IDX[cls]] = 1.0
+    if any(c in _SUPER5_ABNORMAL_SNOMEDS for c in snomed_codes):
+        label[_SUB23_NORM_IDX] = 0.0
     return label
 
 

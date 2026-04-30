@@ -87,7 +87,12 @@ class PGDAdvDiffGenerator:
         z0 = z0.to(self.device).detach()
         y0 = y0.to(self.device).detach()
         assert z0.dim() == 3 and z0.shape[-2:] == (4, 128), f"bad z0 shape: {z0.shape}"
-        assert y0.dim() == 2 and y0.shape[-1] == 6, f"bad y0 shape: {y0.shape}"
+        # num_classes is read off the victim so the same code works for Tier-M (6),
+        # Super5 (5), or any future scheme — this is the only line that was
+        # hard-coded to 6 in the Mode A pipeline (Plan Rev 8 Issue #4).
+        nc = self.victim.num_classes
+        assert y0.dim() == 2 and y0.shape[-1] == nc, \
+            f"bad y0 shape: {y0.shape}, expected (B, {nc})"
 
         if delta_init is None:
             delta = torch.randn_like(z0) * self.delta_init_scale

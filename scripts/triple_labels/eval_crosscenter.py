@@ -119,6 +119,93 @@ class PN2021CenterDataset(Dataset):
                 torch.from_numpy(label).float())
 
 
+class PN2021CachedCenterDataset(Dataset):
+    def __init__(self, signals, labels, crop_len=250):
+        self.signals = signals
+        self.labels = labels.astype(np.float32, copy=False)
+        self.crop_len = crop_len
+        self._fail = 0
+        self._load_time = 0.0
+
+    def __len__(self):
+        return len(self.signals)
+
+    def __getitem__(self, idx):
+        sig_tc = self.signals[idx]
+        crop = crop_signal_tc(sig_tc, self.crop_len, mode='center')
+        sig_ct = crop.T
+        return (torch.from_numpy(np.ascontiguousarray(sig_ct)).float(),
+                torch.from_numpy(self.labels[idx]).float())
+
+
+PN2021_EVAL_CACHE_VERSION = "v2_normguard"
+
+
+def _pn2021_cache_path(args, scheme, center):
+    cache_dir = getattr(args, 'pn2021_cache_dir', None)
+    if not cache_dir:
+        return None
+    os.makedirs(cache_dir, exist_ok=True)
+    return os.path.join(
+        cache_dir,
+        f"{args.scheme}_{center}_100hz1000_{PN2021_EVAL_CACHE_VERSION}.npz",
+    )
+
+
+def _load_or_build_pn2021_center(center, paths, snomeds, scheme, args):
+    cache_path = _pn2021_cache_path(args, scheme, center)
+    if cache_path and os.path.exists(cache_path):
+        data = np.load(cache_path, allow_pickle=True)
+        return (
+            data['signals'].astype(np.float32, copy=False),
+            data['labels'].astype(np.float32, copy=False),
+            data['record_ids'].astype(str),
+            0,
+            0.0,
+            True,
+        )
+
+    signals, labels, record_ids = [], [], []
+    fail = 0
+    t0 = time.time()
+    for path, codes in zip(paths, snomeds):
+        try:
+            rec = wfdb.rdrecord(path)
+        except Exception:
+            fail += 1
+            continue
+        sig = rec.p_signal
+        if sig is None or sig.shape[1] < 12:
+            fail += 1
+            continue
+        sig_names = [s.strip() for s in rec.sig_name] if getattr(rec, 'sig_name', None) else None
+        proc = unified_preprocess_to_1000(
+            sig.astype(np.float32), fs=rec.fs, source_leads=sig_names,
+            target_fs=100, target_len=1000,
+            apply_filter=True, apply_zscore=True,
+        )
+        if proc is None:
+            fail += 1
+            continue
+        signals.append(proc)
+        labels.append(scheme['pn2021_fn'](codes))
+        record_ids.append(os.path.basename(path))
+
+    if signals:
+        signals = np.stack(signals).astype(np.float32)
+        labels = np.stack(labels).astype(np.float32)
+        record_ids = np.asarray(record_ids, dtype=str)
+    else:
+        signals = np.zeros((0, 1000, 12), dtype=np.float32)
+        labels = np.zeros((0, scheme['num_classes']), dtype=np.float32)
+        record_ids = np.asarray([], dtype=str)
+    load_time = time.time() - t0
+    if cache_path and len(signals) > 0:
+        np.savez_compressed(cache_path, signals=signals, labels=labels, record_ids=record_ids)
+        print(f"  {center}: cached preprocessed PN2021 → {cache_path}")
+    return signals, labels, record_ids, fail, load_time, False
+
+
 @torch.no_grad()
 def infer_dataset(model, loader, device):
     model.eval()
@@ -135,9 +222,38 @@ def infer_dataset(model, loader, device):
     return y_true, y_score
 
 
+def _load_excluded_ref_ids(meta_paths):
+    """Plan Rev 7 Issue #39 / Rev 13.2: load `ref_record_ids` from one or more
+    {tag}_k{K}.meta.json files and group by `center`. Records present in any
+    ref pool for a given center are excluded from that center's PN2021 eval
+    so the model never sees its own training refs at test time.
+
+    Returns: {center_name: set(record_id)}
+    """
+    out = {}
+    if not meta_paths:
+        return out
+    for mp in meta_paths:
+        with open(mp) as f:
+            meta = json.load(f)
+        center = meta['center']
+        ids = set(meta.get('ref_record_ids', []))
+        if not ids:
+            print(f"[exclude] WARN {mp} has no ref_record_ids — skipped")
+            continue
+        out.setdefault(center, set()).update(ids)
+        print(f"[exclude] loaded {len(ids)} ref ids for center='{center}' from {mp}")
+    return out
+
+
 def eval_pn2021(model, scheme, args, device):
     print(f"\n[pn2021] evaluating {len(PN2021_CENTERS)} centers (ptb-xl excluded)")
     pn2021_root = args.pn2021_root
+    excluded_by_center = getattr(args, '_excluded_by_center', {}) or {}
+    if excluded_by_center:
+        total_excl = sum(len(v) for v in excluded_by_center.values())
+        print(f"[pn2021] ref-id exclusion active: {total_excl} ids across "
+              f"{len(excluded_by_center)} centers")
     per_center = {}
     macro_aurocs, macro_auprcs = [], []
     for center in PN2021_CENTERS:
@@ -149,11 +265,30 @@ def eval_pn2021(model, scheme, args, device):
             continue
         t0 = time.time()
         paths, snomeds = scan_center_records(center_dir)
-        if args.pn2021_limit and args.pn2021_limit < len(paths):
-            paths = paths[:args.pn2021_limit]
-            snomeds = snomeds[:args.pn2021_limit]
-        labels = np.stack([scheme['pn2021_fn'](s) for s in snomeds])
-        ds = PN2021CenterDataset(paths, labels, crop_len=args.crop_len)
+        n_scanned = len(paths)
+
+        # Plan Rev 7 Issue #39 / Rev 13.2: filter ref records (basename match).
+        # The preprocessing cache must remain center-complete; apply exclusions
+        # after loading/building it so each model can use its own ref-id set.
+        excluded_set = excluded_by_center.get(center, set())
+        n_excluded_ref = 0
+
+        signals, labels, record_ids, fail, load_time, cache_hit = _load_or_build_pn2021_center(
+            center, paths, snomeds, scheme, args
+        )
+        if excluded_set and len(record_ids) > 0:
+            keep_mask = np.asarray([rid not in excluded_set for rid in record_ids], dtype=bool)
+            n_excluded_ref = int((~keep_mask).sum())
+            signals = signals[keep_mask]
+            labels = labels[keep_mask]
+            record_ids = record_ids[keep_mask]
+        if args.pn2021_limit and args.pn2021_limit < len(signals):
+            signals = signals[:args.pn2021_limit]
+            labels = labels[:args.pn2021_limit]
+            record_ids = record_ids[:args.pn2021_limit]
+        ds = PN2021CachedCenterDataset(signals, labels, crop_len=args.crop_len)
+        ds._fail = fail
+        ds._load_time = load_time
         if len(ds) == 0:
             print(f"  {center}: no valid records")
             continue
@@ -164,8 +299,11 @@ def eval_pn2021(model, scheme, args, device):
                                       min_pos=args.min_pos)
         per_center[center] = {
             'n_records': len(ds),
-            'n_scanned': len(paths),
+            'n_scanned': n_scanned,
+            'n_excluded_ref': n_excluded_ref,
+            'effective_n': len(ds),
             'load_time_s': round(ds._load_time, 1),
+            'cache_hit': cache_hit,
             'macro_auroc': m['macro_auroc'],
             'macro_auprc': m['macro_auprc'],
             'n_classes_used': m['n_classes_used'],
@@ -173,7 +311,9 @@ def eval_pn2021(model, scheme, args, device):
         }
         macro_aurocs.append(m['macro_auroc'])
         macro_auprcs.append(m['macro_auprc'])
-        print(f"  {center:<22} n={len(ds):>5}  "
+        excl_tag = f" (-{n_excluded_ref} ref)" if n_excluded_ref > 0 else ""
+        cache_tag = " cache" if cache_hit else ""
+        print(f"  {center:<22} n={len(ds):>5}{excl_tag}{cache_tag}  "
               f"AUROC={m['macro_auroc']:.4f}  AUPRC={m['macro_auprc']:.4f}  "
               f"n_classes={m['n_classes_used']}  ({time.time()-t0:.0f}s)")
     avg_auroc = float(np.nanmean(macro_aurocs)) if macro_aurocs else float('nan')
@@ -323,6 +463,8 @@ def main():
     p.add_argument('--ptbxl_csv', default='/root/autodl-tmp/ptbxl/ptbxl_database.csv')
     p.add_argument('--ptbxl_cache', default=None)
     p.add_argument('--pn2021_root', default='/root/autodl-tmp/physionet2021')
+    p.add_argument('--pn2021_cache_dir', default='/root/autodl-tmp/triple_labels/pn2021_eval_cache',
+                   help='Cache preprocessed PN2021 center signals/labels for repeated model evals')
     p.add_argument('--pn2021_limit', type=int, default=None,
                    help='Cap records per center (for smoke test)')
     p.add_argument('--mimic_limit', type=int, default=None,
@@ -330,7 +472,14 @@ def main():
     p.add_argument('--skip_pn2021', action='store_true')
     p.add_argument('--skip_mimic', action='store_true')
     p.add_argument('--output_path', default=None)
+    p.add_argument('--exclude_ref_ids', nargs='+', default=[],
+                   help='Plan Rev 7 Issue #39: paths to one or more '
+                        '{tag}_k{K}.meta.json files. Records whose '
+                        'basename matches any meta\'s ref_record_ids will be '
+                        'excluded from that center\'s PN2021 eval, so the '
+                        'fine-tuned model never tests on its own training refs.')
     args = p.parse_args()
+    args._excluded_by_center = _load_excluded_ref_ids(args.exclude_ref_ids)
 
     device = torch.device(args.device)
     scheme = get_scheme(args.scheme)
@@ -348,11 +497,12 @@ def main():
     model.eval()
     print(f"[model] loaded {ckpt}")
 
+    # Exclude private fields like `_excluded_by_center` (sets are not JSON serializable)
     output = {
         'scheme': args.scheme,
         'num_classes': scheme['num_classes'],
         'class_names': list(scheme['class_names']),
-        'config': vars(args),
+        'config': {k: v for k, v in vars(args).items() if not k.startswith('_')},
     }
 
     output['ptbxl_test'] = eval_ptbxl_test(model, scheme, args, device)

@@ -22,7 +22,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import ConcatDataset, Dataset, DataLoader, WeightedRandomSampler
 from sklearn.metrics import roc_auc_score, average_precision_score
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -65,6 +65,68 @@ class PTBXLDatasetScheme(Dataset):
         crop = crop_signal_tc(sig_tc, self.crop_len,
                               mode='random' if self.mode == 'train' else 'center')
         sig_ct = crop.T  # (12, crop_len)
+        return (torch.from_numpy(np.ascontiguousarray(sig_ct)).float(),
+                torch.from_numpy(self.labels[idx]).float())
+
+
+class SynthNPZDataset(Dataset):
+    """Synthetic ECG dataset for super5 augmentation.
+
+    Supports either flat keys:
+      signals: (N,1000,12) or (N,12,1000), labels: (N,C)
+    or cached per-center keys:
+      <center>__signals, <center>__labels5
+    """
+
+    def __init__(self, npz_paths, crop_len=250, mode='train'):
+        if isinstance(npz_paths, str):
+            npz_paths = [p for p in npz_paths.split(',') if p]
+        signals_all, labels_all = [], []
+        for path in npz_paths:
+            data = np.load(path)
+            if 'signals' in data:
+                label_key = 'labels' if 'labels' in data else 'labels5'
+                signals_all.append(self._normalize_signals(data['signals']))
+                labels_all.append(np.asarray(data[label_key], dtype=np.float32))
+                continue
+
+            signal_keys = sorted(k for k in data.files if k.endswith('__signals'))
+            for sig_key in signal_keys:
+                prefix = sig_key[:-len('__signals')]
+                label_key = f'{prefix}__labels5'
+                if label_key not in data:
+                    continue
+                signals_all.append(self._normalize_signals(data[sig_key]))
+                labels_all.append(np.asarray(data[label_key], dtype=np.float32))
+
+        if not signals_all:
+            raise ValueError(f"No synthetic signals found in {npz_paths}")
+        self.signals = np.concatenate(signals_all, axis=0).astype(np.float32, copy=False)
+        self.labels = np.concatenate(labels_all, axis=0).astype(np.float32, copy=False)
+        self.crop_len = crop_len
+        self.mode = mode
+        if self.signals.shape[0] != self.labels.shape[0]:
+            raise ValueError(f"synth signals/labels length mismatch: {self.signals.shape} vs {self.labels.shape}")
+
+    @staticmethod
+    def _normalize_signals(signals):
+        arr = np.asarray(signals, dtype=np.float32)
+        if arr.ndim != 3:
+            raise ValueError(f"Expected synth signals ndim=3, got {arr.shape}")
+        if arr.shape[1:] == (12, 1000):
+            arr = arr.transpose(0, 2, 1)
+        if arr.shape[1:] != (1000, 12):
+            raise ValueError(f"Expected synth signals as (N,1000,12) or (N,12,1000), got {arr.shape}")
+        return arr
+
+    def __len__(self):
+        return len(self.signals)
+
+    def __getitem__(self, idx):
+        sig_tc = self.signals[idx]
+        crop = crop_signal_tc(sig_tc, self.crop_len,
+                              mode='random' if self.mode == 'train' else 'center')
+        sig_ct = crop.T
         return (torch.from_numpy(np.ascontiguousarray(sig_ct)).float(),
                 torch.from_numpy(self.labels[idx]).float())
 
@@ -296,9 +358,31 @@ def train(args):
     test_ds = PTBXLDatasetScheme(test_signals, test_labels,
                                  crop_len=args.crop_len, mode='eval')
 
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
-                              num_workers=args.num_workers, pin_memory=True,
-                              drop_last=True, persistent_workers=args.num_workers > 0)
+    if args.synth_npz:
+        if args.scheme != 'super5':
+            raise ValueError("--synth_npz currently supports only --scheme super5")
+        synth_ds = SynthNPZDataset(args.synth_npz, crop_len=args.crop_len, mode='train')
+        train_combo = ConcatDataset([train_ds, synth_ds])
+        real_weight = np.ones(len(train_ds), dtype=np.float64) / max(len(train_ds), 1)
+        synth_weight = (
+            np.ones(len(synth_ds), dtype=np.float64)
+            * float(args.synth_ratio)
+            / max(len(synth_ds), 1)
+        )
+        sampler = WeightedRandomSampler(
+            weights=np.concatenate([real_weight, synth_weight]),
+            num_samples=len(train_ds),
+            replacement=True,
+        )
+        print(f"[synth] using {len(synth_ds)} synthetic samples from {args.synth_npz}")
+        print(f"[synth] target synth:real ratio={args.synth_ratio:g}; epoch samples={len(train_ds)}")
+        train_loader = DataLoader(train_combo, batch_size=args.batch_size, sampler=sampler,
+                                  num_workers=args.num_workers, pin_memory=True,
+                                  drop_last=True, persistent_workers=args.num_workers > 0)
+    else:
+        train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
+                                  num_workers=args.num_workers, pin_memory=True,
+                                  drop_last=True, persistent_workers=args.num_workers > 0)
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False,
                             num_workers=args.num_workers, pin_memory=True,
                             persistent_workers=args.num_workers > 0)
@@ -473,6 +557,10 @@ def parse_args():
     p.add_argument('--compile', type=_str2bool, default=False,
                    help='Use torch.compile (default off; set true for sequential mode)')
     p.add_argument('--pos_weight_clip_max', type=float, default=50.0)
+    p.add_argument('--synth_npz', default=None,
+                   help='Comma-separated synthetic npz files with signals/labels or <center>__signals/<center>__labels5')
+    p.add_argument('--synth_ratio', type=float, default=0.25,
+                   help='Target synthetic:real sampling ratio when --synth_npz is set')
     return p.parse_args()
 
 

@@ -1,0 +1,24 @@
+center_token:
+  dim: 256
+  init: zeros
+  ema_decay: 0.99
+  sphere_target_norm: 1.0   # per-block target L2 norm (~1.0 matches ib_proj output scale)
+
+training_v2:
+  total_steps: 5000          # not epoch-based; ~600× more grad steps than v1
+  batch_size: 8              # small batch -> many gradient updates within K=200 dataset
+  lr_phase1: 5.0e-3          # high LR for embedding-only phase (Break-A-Scene, P+)
+  lr_phase2: 5.0e-6          # surgery LR for last 20% of steps
+  phase_split_frac: 0.8
+  grad_clip: 1.0
+  iso_freq: 0.5              # fraction of steps that ALSO compute L_isolation
+  iso_pool_size: 64          # # PTBXL latents pre-cached as base anchor
+  iso_weight: 1.0            # L_total = L_recon + iso_weight * L_iso
+  log_every: 50
+
+data:
+  ptbxl_path: datasets/PTBXL
+  isolation_pool_path: datasets/PTBXL/PTBXL_vae_multi_nomic.pt
+
+ecgtwin:
+  config_path: model/ECGTwin/config/DiT_ECGTwin.yaml

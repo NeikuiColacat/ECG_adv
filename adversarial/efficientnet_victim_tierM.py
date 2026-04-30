@@ -112,6 +112,11 @@ class EfficientNetVictimTierM(nn.Module):
             device=device,
             num_classes=num_classes,
         )
+        # Default to eval — BatchNorm collapses to bias-only output at batch=1
+        # in train mode (yields identical "fake" probs across distinct inputs).
+        # Training loops explicitly call .train()/.eval() per phase, so zero
+        # regression risk; ad-hoc inference probes get correct behavior by default.
+        self.eval()
 
     # ---- static utilities ----
     @staticmethod

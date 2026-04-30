@@ -266,6 +266,128 @@ def plot_ecg_ecgtwin_style(
     return save_path
 
 
+def plot_ecg_ecgtwin_gallery(
+    signal: SignalLike,
+    save_path: Union[str, Path],
+    *,
+    sample_rate: float = 100.0,
+    lead_order: LeadOrder = "ptbxl",
+    title: str | None = None,
+    row_gap: float = 6.0,
+    target_peak: float = 1.8,
+    scale_mode: Literal["global_p95", "global_peak", "per_lead_peak", "none"] = "global_p95",
+    clip_fraction: float = 0.42,
+    figsize: tuple[float, float] = (18.0, 14.0),
+    linewidth: float = 0.8,
+    show_grid: bool = True,
+    grid_seconds: float = 0.2,
+    major_seconds: float = 1.0,
+    color: str = "black",
+) -> Path:
+    """ECGTwin-gallery-style 12-lead rhythm strip in one large figure.
+
+    This function is intentionally independent of the `ecg_plot` package so the
+    vertical spacing is deterministic. Each lead is drawn on a separate
+    horizontal baseline. Signals are optionally rescaled and then clipped to a
+    fixed fraction of `row_gap`, preventing tall R peaks from entering adjacent
+    leads.
+
+    Recommended for generated/z-scored ECG debug figures:
+      plot_ecg_ecgtwin_gallery(sig, out, lead_order="ptbxl",
+                               row_gap=7.0, target_peak=2.0,
+                               scale_mode="global_p95")
+
+    scale_mode:
+      - global_p95: one global p95 amplitude scale; preserves inter-lead ratios
+        for most signal mass while keeping outliers controlled.
+      - global_peak: one global max-abs scale; fully preserves ratios.
+      - per_lead_peak: each lead peak-normalized; best for visual inspection,
+        but cross-lead amplitude comparison is not valid.
+      - none: no rescaling; only clipping applies.
+    """
+    sr = _validate_sample_rate(sample_rate)
+    leads = _validate_lead_order(lead_order)
+    arr = _to_channels_first_2d(signal).astype(np.float32, copy=True)
+    save_path = Path(save_path)
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+
+    row_gap = float(row_gap)
+    if row_gap <= 0:
+        raise ValueError(f"row_gap must be positive, got {row_gap}")
+    clip_fraction = float(clip_fraction)
+    if not (0 < clip_fraction <= 0.5):
+        raise ValueError(f"clip_fraction must be in (0, 0.5], got {clip_fraction}")
+
+    finite = np.isfinite(arr)
+    arr = np.where(finite, arr, 0.0)
+
+    if scale_mode == "global_p95":
+        denom = float(np.percentile(np.abs(arr), 95))
+        if denom > 1e-8:
+            arr *= float(target_peak) / denom
+    elif scale_mode == "global_peak":
+        denom = float(np.max(np.abs(arr)))
+        if denom > 1e-8:
+            arr *= float(target_peak) / denom
+    elif scale_mode == "per_lead_peak":
+        denom = np.max(np.abs(arr), axis=1, keepdims=True)
+        denom = np.where(denom > 1e-8, denom, 1.0)
+        arr = arr / denom * float(target_peak)
+    elif scale_mode == "none":
+        pass
+    else:
+        raise ValueError(f"unknown scale_mode={scale_mode!r}")
+
+    clip_abs = row_gap * clip_fraction
+    arr = np.clip(arr, -clip_abs, clip_abs)
+
+    length = arr.shape[1]
+    t = np.arange(length, dtype=np.float32) / sr
+    offsets = np.arange(12, dtype=np.float32)[::-1] * row_gap
+
+    fig, ax = plt.subplots(figsize=figsize)
+    for i, lead_name in enumerate(leads):
+        y = arr[i] + offsets[i]
+        ax.plot(t, y, color=color, linewidth=linewidth)
+        ax.text(
+            -0.015 * max(t[-1], 1.0),
+            offsets[i],
+            lead_name,
+            ha="right",
+            va="center",
+            fontsize=10,
+            fontweight="bold",
+        )
+
+    ax.set_xlim(0, t[-1] if length > 1 else 1)
+    ax.set_ylim(offsets[-1] - row_gap * 0.6, offsets[0] + row_gap * 0.6)
+    ax.set_yticks(offsets)
+    ax.set_yticklabels([])
+    ax.tick_params(axis="y", length=0)
+    ax.set_xlabel("time (s)")
+    if title:
+        ax.set_title(title, fontsize=13, pad=12)
+
+    if show_grid:
+        x_minor = np.arange(0, t[-1] + grid_seconds, grid_seconds)
+        x_major = np.arange(0, t[-1] + major_seconds, major_seconds)
+        for x in x_minor:
+            ax.axvline(x, color="#f6cbd1", linewidth=0.45, zorder=0)
+        for x in x_major:
+            ax.axvline(x, color="#e8a5ae", linewidth=0.75, zorder=0)
+        for base in offsets:
+            ax.axhline(base, color="#f0b6bf", linewidth=0.55, zorder=0)
+            ax.axhline(base + clip_abs, color="#f8d9de", linewidth=0.35, zorder=0)
+            ax.axhline(base - clip_abs, color="#f8d9de", linewidth=0.35, zorder=0)
+
+    for spine in ("top", "right", "left"):
+        ax.spines[spine].set_visible(False)
+    fig.tight_layout()
+    fig.savefig(save_path, dpi=180, bbox_inches="tight")
+    plt.close(fig)
+    return save_path
+
+
 def plot_comparison(
     signals: Sequence[SignalLike],
     labels: Sequence[str],
