@@ -26,6 +26,7 @@
 | 文件 | 用途 |
 |---|---|
 | `training/efficientnet_training.md` | EfficientNet1DV2 架构、训练配置和日志要求 |
+| `pipelines/` | 长期维护的标准化 pipeline 记忆文档 |
 
 ## 论文材料
 
