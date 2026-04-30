@@ -555,8 +555,15 @@ def main():
         'scheme': args.scheme,
         'num_classes': scheme['num_classes'],
         'class_names': list(scheme['class_names']),
+        'cache_versions': {
+            'pn2021_eval': PN2021_EVAL_CACHE_VERSION,
+        },
         'config': {k: v for k, v in vars(args).items() if not k.startswith('_')},
     }
+    if args.scheme == 'super5':
+        output['label_mapping'] = {
+            'pn2021_super5': get_super5_pn2021_mapping_metadata(),
+        }
 
     output['ptbxl_test'] = eval_ptbxl_test(model, scheme, args, device)
     if not args.skip_pn2021:

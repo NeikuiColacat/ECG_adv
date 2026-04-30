@@ -223,12 +223,11 @@ v2 已知限制，v3 已修复：
 
 仍需记录的 PN2021 策略风险：
 
-1. `NORM` 语义污染：
+1. `NORM` 语义仍是投影策略，不是官方定义：
    PN2021 中 `sinus rhythm`、`sinus bradycardia`、`sinus tachycardia`、`sinus arrhythmia`
-   等节律描述可以和其他异常诊断共存。当前 guard 只会在映射到 super5 异常类时取消
-   `NORM`，但 AF/AFL/PAC/PVC/LAD/RAD/LQRSV/PRWP 等不进入 super5 的异常证据仍可能保留
-   `NORM=1`。v3 只把 `426783006` sinus rhythm 作为 strict
-   NORM-positive 候选；`SB/STach/SA` 默认进入 NORM-suppress，不等同 PTB-XL normal。
+   等节律描述可以和其他异常诊断共存。v3 已用 `NORM_SUPPRESS_SNOMEDS` 避免
+   AF/AFL/PAC/PVC/LAD/RAD/LQRSV/PRWP 等明显非正常证据保留 `NORM=1`。
+   但 suppress set 仍是本项目规则，不能写成 PN2021 官方 normal 定义。
 2. 边界码归类过强：
    `Q wave abnormal` 可能指向 MI 相关证据，不等价于 PTB-XL 的 STTC；
    `early repolarization` 可能是良性变异，也不应默认当作 STTC 强阳性。

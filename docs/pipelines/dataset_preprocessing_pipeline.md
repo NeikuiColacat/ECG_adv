@@ -145,11 +145,29 @@ center crop to 250 for eval
 /root/autodl-tmp/triple_labels/pn2021_eval_cache/<scheme>_<center>_100hz1000_v3_super5_normsuppress.npz
 ```
 
+super5 标签版本：
+
+```text
+source of truth: scripts/triple_labels/label_schemes.py
+SUPER5_PN2021_MAPPING_VERSION = v3_super5_normsuppress_20260501
+SUPER5_PN2021_MAPPING_HASH    = 544ed42dee6d
+```
+
+语义约束：
+
+- PN2021 官方标签是 SNOMED-CT code list，不存在官方 `PN2021 -> PTB-XL super5` crosswalk。
+- 当前 `super5` 是本项目自定义语义投影，只能按该版本号引用。
+- v3 只把明确异常 code 映射到 `CD/HYP/MI/STTC`。
+- `NORM` 只允许 explicit sinus rhythm 且没有任何直接异常或 suppress-only 异常时为阳性。
+- AF/AFL/PAC/PVC/LAD/RAD/low voltage/Q wave abnormal/early repolarization 等 code 会压制 `NORM`，但不直接产生 super5 阳性类。
+
 缓存失效规则：
 
 - 若 `SNOMED_TO_SUPER5_POSITIVE`、`NORM_POSITIVE_SNOMEDS`、`NORM_SUPPRESS_SNOMEDS`、PN2021 header parser、滤波、z-score、lead reorder 或 crop 规则变化，必须 bump cache version 并重建该目录下对应 cache。
 - 评测输出应记录实际 evaluated centers；`ptb-xl` / `ptbxl` 目录即使存在也只能被记录为 excluded，不能进入结果平均。
 - v3 cache 已保存并校验基础 metadata：`scheme`、`center`、`class_names`、`cache_version`、`preprocess_config`，super5 还保存 `pn2021_mapping.mapping_version` 和 `pn2021_mapping.mapping_hash`。
+- 当前机器若只存在 unversioned 或 `v2_normguard` PN2021 super5 cache，应视为历史缓存；第一次按当前脚本评测会自动生成 v3 cache。
+- `--exclude_ref_ids` 只在加载/构建完整 center cache 后过滤测试记录，不要把 ref-pool 排除逻辑写进共享预处理 cache。
 - 后续建议继续增加 `missing_lead_count`、`lead_order_counter` 和 `unmapped_snomed_counter`。
 
 固定评测中心：
@@ -165,6 +183,13 @@ st_petersburg_incart
 ```
 
 排除 `ptb-xl` / `ptbxl`，避免 PTB-XL 训练数据泄漏。
+
+标签映射改变后的重建范围：
+
+- 必须重建 PN2021 super5 eval cache，并重跑所有仍要引用的 PN2021 super5 指标。
+- 必须重建基于 PN2021 label 抽样的 center-token ref pool、TA-OMAT quick-eval cache、synth-anchor/real-anchor latent pool，尤其是包含 `labels5`、`super5_multi_hot` 或 `ref_record_ids` 的文件。
+- 不需要因为 PN2021 标签映射变化而重建 PTB-XL signal cache、PTB-XL `ptbxl_labels.C5.all.npy`、MIMIC signal cache 或 PN2021 raw `.hea/.mat`。
+- 若只是用已有 PTB-XL baseline 权重重新评测 PN2021，模型权重可复用；改变的是外部评测标签，不是 PTB-XL 训练监督。
 
 ## MIMIC-IV ECG
 

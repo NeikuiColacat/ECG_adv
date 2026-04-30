@@ -2,6 +2,16 @@
 
 This file is durable project memory for coding agents working in `/root/ECG_adv_Gen`.
 
+Repo-tracked Codex skill copy:
+
+```text
+.codex/skills/ecg-adv-gen/SKILL.md
+```
+
+The active runtime skill lives outside git at
+`/root/.codex/skills/ecg-adv-gen/SKILL.md`. When moving to another AutoDL host,
+copy the repo-tracked skill into that runtime location.
+
 ## Environment
 
 - Repo root: `/root/ECG_adv_Gen`

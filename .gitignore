@@ -29,6 +29,8 @@ model/*
 !model/ecg_ptbxl_benchmarking
 !model/advdiff
 !model/ecgfounder
+!model/textual_inversion
+!model/dataset-interfaces
 
 # Legacy/local external repos are not part of the current mainline bootstrap.
 model/SA-AET/

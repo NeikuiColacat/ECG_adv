@@ -1,12 +1,15 @@
 # NOTE:
-# These URLs are kept as the external model-repo manifest for this project.
-# The active AutoDL layout keeps heavy/dirty model repositories under
-# `/root/autodl-tmp/models/` and links them into `model/`.
-# Use `scripts/bootstrap_model_repos.sh` on a new host.
+# This file has two kinds of model dependencies:
 #
-# They are not currently active gitlink submodules in the main repo index:
-# `git ls-files --stage | grep '^160000'` should be checked before relying on
-# `git submodule update --init`.
+# - Legacy manifest entries whose working-tree paths are tracked symlinks into
+#   `/root/autodl-tmp/models/`. Use `scripts/bootstrap_model_repos.sh` on a new
+#   host for those repositories.
+# - Active gitlink submodules, currently `model/textual_inversion` and
+#   `model/dataset-interfaces`. Use `git submodule update --init --recursive`
+#   after pulling to materialize those directories.
+#
+# To see which entries are active gitlinks:
+#   git ls-files --stage | grep '^160000'
 #
 [submodule "model/DeepECG"]
 	path = model/DeepECG
@@ -20,3 +23,9 @@
 [submodule "model/advdiff"]
 	path = model/advdiff
 	url = https://github.com/EricDai0/advdiff.git
+[submodule "model/textual_inversion"]
+	path = model/textual_inversion
+	url = https://github.com/rinongal/textual_inversion.git
+[submodule "model/dataset-interfaces"]
+	path = model/dataset-interfaces
+	url = https://github.com/MadryLab/dataset-interfaces.git
