@@ -62,6 +62,19 @@ def write_jsonl(path: Path, record: dict[str, Any]) -> None:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
+def read_jsonl(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    records = []
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            records.append(json.loads(line))
+    return records
+
+
 def yaml_safe(obj: Any) -> Any:
     if isinstance(obj, Path):
         return str(obj)
@@ -285,6 +298,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max_train_batches", type=int, default=None)
     parser.add_argument("--max_val_batches", type=int, default=None)
     parser.add_argument("--use_pretrained_author_ibe", action="store_true")
+    parser.add_argument("--resume_path", type=Path, default=None)
     return parser.parse_args()
 
 
@@ -357,11 +371,31 @@ def main() -> None:
     )
 
     metrics_path = args.output_dir / "metrics.jsonl"
-    records: list[dict[str, Any]] = []
+    records = read_jsonl(metrics_path)
     best_val = float("inf")
     best_train = float("inf")
+    for record in records:
+        best_val = min(best_val, float(record.get("val_loss", float("inf"))))
+        best_train = min(best_train, float(record.get("train_loss", float("inf"))))
+    start_epoch = 1
+    prior_total_time = float(records[-1].get("total_time_sec", 0.0)) if records else 0.0
+    if args.resume_path is not None:
+        checkpoint = torch.load(args.resume_path, map_location="cpu")
+        noise_predictor.load_state_dict(checkpoint["model"])
+        optimizer.load_state_dict(checkpoint["optimizer"])
+        scheduler.load_state_dict(checkpoint["scheduler"])
+        for state in optimizer.state.values():
+            for key, value in state.items():
+                if torch.is_tensor(value):
+                    state[key] = value.to(device)
+        start_epoch = int(checkpoint.get("epoch", 0)) + 1
+        records = [r for r in records if int(r.get("epoch", 0)) < start_epoch]
+        if records:
+            prior_total_time = float(records[-1].get("total_time_sec", 0.0))
+        logger.info("resumed from %s at epoch=%s; next epoch=%s", args.resume_path, checkpoint.get("epoch"), start_epoch)
+
     start = time.time()
-    for epoch in range(1, args.epochs + 1):
+    for epoch in range(start_epoch, args.epochs + 1):
         epoch_start = time.time()
         train_loss = train_epoch(
             train_loader,
@@ -397,7 +431,7 @@ def main() -> None:
             "val_loss": val_loss,
             "lr": scheduler.get_last_lr()[0],
             "epoch_time_sec": elapsed,
-            "total_time_sec": time.time() - start,
+            "total_time_sec": prior_total_time + time.time() - start,
         }
         records.append(record)
         write_jsonl(metrics_path, record)
@@ -409,6 +443,8 @@ def main() -> None:
             "config": config,
             "optimizer": optimizer.state_dict(),
             "scheduler": scheduler.state_dict(),
+            "best_val": best_val,
+            "best_train": best_train,
         }
         torch.save(state, ckpt_dir / "latest.pt")
         torch.save(noise_predictor.state_dict(), ckpt_dir / "DiT_ECGTwin_latest.pth")
