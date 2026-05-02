@@ -17,7 +17,20 @@ copy the repo-tracked skill into that runtime location.
 - Repo root: `/root/ECG_adv_Gen`
 - Python env: `/root/miniforge3/envs/ECGTwin/bin/python`
 - Hardware target: RTX 4090D 24GB VRAM, 15 CPU cores, 80GB RAM.
+- Optimize future training/preprocessing for this hardware profile:
+  - prefer AMP/bf16 where numerically safe on the 4090D;
+  - keep large arrays/checkpoints/caches under `/root/autodl-tmp/`;
+  - use mmap or streaming for PN2021/PN2021-C instead of repeatedly
+    decompressing large `.npz` files;
+  - set DataLoader `num_workers` from CLI and tune around 4-8 before using all
+    15 CPU cores;
+  - use `pin_memory`, `persistent_workers`, and `prefetch_factor` for long
+    training jobs when `num_workers > 0`;
+  - avoid materializing every corrupted PN2021-C copy unless disk has been
+    expanded substantially.
 - System disk is small. Put large outputs, checkpoints, samples, caches, and logs under `/root/autodl-tmp/`, not the repo.
+- Disk hygiene as of 2026-05-01: after cleaning conda/rattler package caches, `/` has about 9.7 GB free and `/root/autodl-tmp` about 69 GB free. Keep long-run temp/cache paths on the data disk, for example `TMPDIR=/root/autodl-tmp/tmp` and `XDG_CACHE_HOME=/root/autodl-tmp/cache` when safe for a command.
+- Do not move/delete repo historical artifacts or Git objects just to free disk unless the user explicitly approves; prefer package caches, bytecode caches, and new experiment outputs under `/root/autodl-tmp`.
 - `rg` may be unavailable in this environment. Use `find`, `grep`, `sed`, `nl`, and `wc` when needed.
 - Use `apply_patch` for manual file edits. Do not overwrite unrelated dirty worktree changes.
 

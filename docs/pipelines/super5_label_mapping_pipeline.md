@@ -50,6 +50,16 @@ https://raw.githubusercontent.com/physionetchallenges/evaluation-2021/main/dx_ma
 /root/miniforge3/envs/ECGTwin/bin/python scripts/triple_labels/label_schemes.py --sanity --mimic_n 2000
 ```
 
+本轮任务的标签相关结论：
+
+- 刚完成的 PN2021 v3 super5 重新映射会改变外部评测标签，因此所有要写进论文的
+  PN2021 AUROC/AUPRC 都必须重跑。
+- 重新评测计划见 `docs/pipelines/pn2021_v3_reevaluation_pipeline.md`。
+- ECGTwin center prompt-token 的 ref pool、target-center sample pool、latent anchor pool 和
+  PN2021-C corruption cache 都必须记录并继承该 mapping version/hash。
+- 旧 `eval_result.json`、`eval_result_NORMguard.json`、`v2_normguard` cache 只能作为历史结果，
+  不能继续作为当前主结果。
+
 ## 类顺序
 
 所有 super5 相关模型、缓存和合成数据必须使用固定顺序：
@@ -318,6 +328,29 @@ st_petersburg_incart
 ptb-xl
 ptbxl
 ```
+
+## Center Token / Latent Pool 标签规则
+
+ECGTwin center prompt-token 和 Latent-Hull TA-OMAT 都使用同一个 super5 标签空间：
+
+```text
+CD, HYP, MI, NORM, STTC
+```
+
+token bank 可以为每个中心保留 5 个 token：
+
+```text
+<center_CD>, <center_HYP>, <center_MI>, <center_NORM>, <center_STTC>
+```
+
+但第一版下游 synthetic augmentation 只把通过数字 ECG gate 和 teacher/classifier gate 的类别纳入主线。
+当前建议是 NORM/MI/STTC 先进入主线；HYP/CD 先作为 token 训练、验证和消融保留。
+
+latent convex combination 的标签继承规则：
+
+- 只有所有 anchor latent 共享同一个 primary class 或完全相同 multi-hot label 时，才允许沿用 hard GT label。
+- 若未来做跨类别 latent mixing，必须单独定义 union label 或 soft label，并把该实验从主线中分离。
+- PN2021 样本若作为目标中心少样本池，必须来自 v3 mapping cache；不能混用 v2 label。
 
 ## MIMIC -> Super5
 

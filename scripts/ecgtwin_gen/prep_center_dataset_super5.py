@@ -12,7 +12,7 @@ Differences from the Tier-M version (each is a Plan Rev 7/8 issue):
                 near-empty val set); K≥50 keeps hash-based fold split
   • Issue #33  hybrid sampling: per-class floor of N_FLOOR (default 10) with
                 natural-distribution fill — guards against centers like
-                cpsc_2018_extra (~80% MI) collapsing class diversity at K=200
+                cpsc_2018_extra (~80% MI) collapsing class diversity at K=500
   • Issue #39  meta dict records `ref_record_ids` so eval can exclude these
                 records from the same-center test split
   • Issue #42  full-pipeline determinism: --seed 42 + cudnn deterministic
@@ -40,9 +40,9 @@ Output schema (matches the ListDataset format used by CenterTokenTrainer):
 Usage:
   /root/miniforge3/envs/ECGTwin/bin/python \
     scripts/ecgtwin_gen/prep_center_dataset_super5.py \
-    --center cpsc_2018_extra --K 200 \
+    --center ningbo --K 500 \
     --text_embeds /root/autodl-tmp/center_token_super5/super5_text_embeds.pt \
-    --out /root/autodl-tmp/center_token_super5/extra_k200.pt
+    --out /root/autodl-tmp/center_token_super5/ningbo_k500.pt
 """
 import argparse
 import functools
@@ -78,14 +78,10 @@ DEFAULT_TEXT_EMBEDS = "/root/autodl-tmp/center_token_super5/super5_text_embeds.p
 # MI ranks first because the毕设 medical narrative emphasises infarction;
 # NORM is last so any abnormal positive overrides "sinus rhythm" co-occurrence.
 #
-# Plan Rev 11 / Rev 13.2 (2026-04-27): scope narrowed to NORM/MI/STTC only.
-# HYP/CD dropped because the digital GT validation (`docs/ecgtwin_super5_
-# digital_gt_validation.md`) shows ECGTwin generation fails 0/3 best-cell
-# medical thresholds for those classes (HYP Sokolow 0.97-2.15 mV vs >3.5 mV
-# requirement; CD lateral R amplitude < 0.5 mV / PR ≤ 88ms can't cross 200ms).
-# Records whose only super5-positive class is HYP or CD now return None and
-# get filtered out — they can't generate trustworthy synth anchors.
-SUPER5_PRIORITY = ["MI", "STTC", "NORM"]
+# Plan Rev 2026-05-01: keep all 5 super5 classes for center prompt-token
+# training/validation. HYP/CD are no longer filtered at prep time; downstream
+# generation/augmentation still requires class-specific digital and teacher gates.
+SUPER5_PRIORITY = ["MI", "HYP", "CD", "STTC", "NORM"]
 
 
 def set_all_seeds(seed: int) -> None:
@@ -233,8 +229,8 @@ def main():
     ap.add_argument("--out", required=True, help=".pt output path")
     ap.add_argument("--text_embeds", default=DEFAULT_TEXT_EMBEDS,
                     help="Bundle from super5_text_embeds.py")
-    ap.add_argument("--K", type=int, default=200,
-                    help="ref pool size (default 200)")
+    ap.add_argument("--K", type=int, default=500,
+                    help="ref pool size (default 500)")
     ap.add_argument("--floor_per_class", type=int, default=10,
                     help="hybrid sampling per-class floor (Issue #33)")
     ap.add_argument("--encode_batch", type=int, default=32)

@@ -41,13 +41,6 @@ from util.ecgtwin_utils import ECGTwinWrapper  # noqa: E402
 # and the prompt_propcess() pipeline at
 #   model/ECGTwin/data/store_embedding_nomic.py:10
 SNOMED_TO_PROMPT = {
-    # Plan Rev 11 / Rev 13.2 (2026-04-27): scope narrowed to NORM/MI/STTC only.
-    # HYP (10) + CD (23) entries removed because ECGTwin generation fails the
-    # digital-GT validation for those classes — see CLAUDE.md "ECGTwin super5
-    # generation scope". Records whose only super5-positive class is HYP/CD
-    # are filtered out by SUPER5_PRIORITY=["MI","STTC","NORM"] in the prep
-    # script (`scripts/ecgtwin_gen/prep_center_dataset_super5.py`).
-
     # ─── NORM (4 codes) ─────────────────────────────────────────────
     426783006: "sinus rhythm|normal ecg",
     426177001: "sinus bradycardia|slow heart rate",
@@ -88,6 +81,43 @@ SNOMED_TO_PROMPT = {
     425419005: "inferior t wave changes|repolarization abnormality",
     426434006: "anterior t wave changes|repolarization abnormality",
     428417006: "early repolarization",
+
+    # ─── HYP ────────────────────────────────────────────────────────
+    164873001: "left ventricular hypertrophy|high voltage",
+    55827005:  "left ventricular high voltage|left ventricular hypertrophy",
+    89792004:  "right ventricular hypertrophy|high voltage",
+    266249003: "ventricular hypertrophy|high voltage",
+    446358003: "right atrial hypertrophy|right atrial enlargement",
+    446813000: "left atrial hypertrophy|left atrial enlargement",
+    67741000119109: "left atrial enlargement|atrial hypertrophy",
+    67751000119106: "right atrial high voltage|right atrial enlargement",
+    195126007: "atrial hypertrophy|atrial enlargement",
+    164828000: "atrial hypertrophy|atrial enlargement",
+
+    # ─── CD ─────────────────────────────────────────────────────────
+    270492004: "first degree atrioventricular block|av block",
+    195042002: "second degree atrioventricular block|av block",
+    54016002:  "second degree mobitz type i atrioventricular block|av block",
+    426183003: "mobitz type ii atrioventricular block|av block",
+    27885002:  "third degree atrioventricular block|complete heart block",
+    233917008: "atrioventricular block|av block",
+    164947007: "prolonged pr interval|first degree atrioventricular block",
+    164909002: "left bundle branch block|lbbb",
+    733534002: "left bundle branch block|lbbb",
+    59118001:  "right bundle branch block|rbbb",
+    713427006: "right bundle branch block|rbbb",
+    251120003: "incomplete left bundle branch block|lbbb",
+    713426002: "incomplete right bundle branch block|rbbb",
+    6374002:   "bundle branch block",
+    445118002: "left anterior fascicular block|conduction block",
+    445211001: "left posterior fascicular block|conduction block",
+    698252002: "nonspecific intraventricular conduction block|conduction disturbance",
+    10370003:  "pacing rhythm|conduction disturbance",
+    251268003: "atrial pacing pattern|pacing rhythm",
+    251266004: "ventricular pacing pattern|pacing rhythm",
+    74390002:  "wolff parkinson white|preexcitation",
+    26749005:  "wolff parkinson white|preexcitation",
+    195060002: "ventricular preexcitation|wolff parkinson white",
 }
 
 
@@ -96,12 +126,11 @@ SNOMED_TO_PROMPT = {
 # SNOMED_TO_PROMPT (very rare since the table covers the entire
 # SNOMED_TO_SUPER5 keyset, but kept for safety).
 SUPER5_FALLBACK_PROMPT = {
-    # Plan Rev 11 / Rev 13.2 (2026-04-27): scope = NORM/MI/STTC only.
-    # HYP/CD fallback prompts removed; refs whose only super5-positive class
-    # is HYP/CD are filtered out at prep time by SUPER5_PRIORITY.
     "NORM": "sinus rhythm|normal ecg",
     "MI":   "myocardial infarction|st elevation|anterior wall",
     "STTC": "t wave inversion|repolarization abnormality",
+    "HYP":  "left ventricular hypertrophy|high voltage",
+    "CD":   "right bundle branch block|rbbb",
 }
 
 

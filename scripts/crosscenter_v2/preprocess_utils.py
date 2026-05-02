@@ -112,6 +112,34 @@ def pad_or_truncate_tc(signal_tc, target_len):
     return signal_tc
 
 
+def _resolve_preprocess_flags(
+    apply_filter,
+    apply_zscore,
+    preprocess_mode=None,
+    norm_mode=None,
+):
+    """Map named preprocessing modes to the legacy filter/z-score flags."""
+    if preprocess_mode is not None:
+        if preprocess_mode == 'minimal_resample':
+            apply_filter = False
+        elif preprocess_mode == 'legacy_ecgfounder_filter':
+            apply_filter = True
+        elif preprocess_mode == 'raw_for_generation_or_digital':
+            apply_filter = False
+        else:
+            raise ValueError(f"unknown preprocess_mode={preprocess_mode!r}")
+
+    if norm_mode is not None:
+        if norm_mode == 'per_sample_global':
+            apply_zscore = True
+        elif norm_mode == 'none':
+            apply_zscore = False
+        else:
+            raise ValueError(f"unknown norm_mode={norm_mode!r}")
+
+    return bool(apply_filter), bool(apply_zscore)
+
+
 def unified_preprocess_to_1000(
     signal_tc,
     fs,
@@ -120,6 +148,8 @@ def unified_preprocess_to_1000(
     target_len=1000,
     apply_filter=True,
     apply_zscore=True,
+    preprocess_mode=None,
+    norm_mode=None,
 ):
     """Full pipeline up to (target_len, 12). Returns None on failure.
 
@@ -131,14 +161,24 @@ def unified_preprocess_to_1000(
         target_len: unified length (default 1000 = 10s)
         apply_filter: toggle bandpass+baseline (ablation)
         apply_zscore: toggle per-sample z-score (ablation)
+        preprocess_mode: optional named branch. Supported:
+            minimal_resample, legacy_ecgfounder_filter, raw_for_generation_or_digital.
+        norm_mode: optional named normalization. Supported:
+            per_sample_global, none.
 
     Returns: (target_len, 12) float32 or None
     """
+    apply_filter, apply_zscore = _resolve_preprocess_flags(
+        apply_filter=apply_filter,
+        apply_zscore=apply_zscore,
+        preprocess_mode=preprocess_mode,
+        norm_mode=norm_mode,
+    )
     signal_tc = np.asarray(signal_tc, dtype=np.float32)
     if signal_tc.ndim != 2:
         return None
-    if np.isnan(signal_tc).any():
-        signal_tc = np.nan_to_num(signal_tc, nan=0.0)
+    if not np.isfinite(signal_tc).all():
+        signal_tc = np.nan_to_num(signal_tc, nan=0.0, posinf=0.0, neginf=0.0)
 
     # Reorder leads if source order provided
     if source_leads is not None:

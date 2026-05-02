@@ -17,6 +17,7 @@ import sys
 import json
 import time
 import argparse
+import shutil
 
 import numpy as np
 import torch
@@ -234,12 +235,22 @@ def init_weights(m):
 # Data preparation
 # ────────────────────────────────────────────────────────────────────────────
 
-def preprocess_ptbxl_all(raw_path, cache_path, target_fs=100, target_len=1000):
+def preprocess_ptbxl_all(
+    raw_path,
+    cache_path,
+    target_fs=100,
+    target_len=1000,
+    preprocess_mode='legacy_ecgfounder_filter',
+    norm_mode='per_sample_global',
+):
     if os.path.exists(cache_path):
         print(f"[preprocess] cache hit: {cache_path}")
         return np.load(cache_path, mmap_mode='r')
 
-    print(f"[preprocess] preprocessing all PTBXL → {cache_path} (first run)")
+    print(
+        f"[preprocess] preprocessing all PTBXL → {cache_path} (first run) "
+        f"mode={preprocess_mode} norm={norm_mode}"
+    )
     raw = np.load(raw_path, allow_pickle=True).astype(np.float32)
     N = raw.shape[0]
     out = np.zeros((N, target_len, 12), dtype=np.float32)
@@ -248,12 +259,14 @@ def preprocess_ptbxl_all(raw_path, cache_path, target_fs=100, target_len=1000):
         proc = unified_preprocess_to_1000(
             raw[i], fs=100, source_leads=None,
             target_fs=target_fs, target_len=target_len,
-            apply_filter=True, apply_zscore=True,
+            preprocess_mode=preprocess_mode, norm_mode=norm_mode,
         )
         if proc is None:
             fails.append(i)
             sig = raw[i]
-            sig = (sig - sig.mean()) / (sig.std() + 1e-8)
+            sig = np.nan_to_num(sig, nan=0.0, posinf=0.0, neginf=0.0)
+            if norm_mode == 'per_sample_global':
+                sig = (sig - sig.mean()) / (sig.std() + 1e-8)
             out[i] = sig.astype(np.float32)
         else:
             out[i] = proc
@@ -303,6 +316,27 @@ def get_ptbxl_labels_for_scheme(csv_path, scheme, label_cache_path, folds=None):
     return indices, labels.astype(np.float32), df
 
 
+def _load_split_json(path):
+    with open(path) as f:
+        split = json.load(f)
+    required = ['train_indices', 'val_indices', 'test_indices']
+    for key in required:
+        if key not in split:
+            raise ValueError(f"split_json missing {key}: {path}")
+    return split
+
+
+def _default_cache_path(args):
+    safe_mode = str(args.preprocess_mode).replace('/', '_')
+    safe_norm = str(args.norm_mode).replace('/', '_')
+    cache_dir = '/root/autodl-tmp/triple_labels/cache'
+    os.makedirs(cache_dir, exist_ok=True)
+    return os.path.join(
+        cache_dir,
+        f"ptbxl_{safe_mode}_{safe_norm}_fs100_len1000.npy",
+    )
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # Training driver
 # ────────────────────────────────────────────────────────────────────────────
@@ -322,15 +356,34 @@ def train(args):
 
     label_cache_path = os.path.join(args.output_dir, 'ptbxl_labels')
     print(f"[labels] generating PTB-XL labels for scheme={args.scheme}")
-    train_idx, train_labels, _ = get_ptbxl_labels_for_scheme(
-        args.csv_path, scheme, label_cache_path, folds=list(range(1, 9))
-    )
-    val_idx, val_labels, _ = get_ptbxl_labels_for_scheme(
-        args.csv_path, scheme, label_cache_path, folds=[9]
-    )
-    test_idx, test_labels, _ = get_ptbxl_labels_for_scheme(
-        args.csv_path, scheme, label_cache_path, folds=[10]
-    )
+    split_meta = None
+    if args.split_json:
+        all_idx, all_labels, _ = get_ptbxl_labels_for_scheme(
+            args.csv_path, scheme, label_cache_path, folds=None
+        )
+        split_meta = _load_split_json(args.split_json)
+        train_idx = [int(i) for i in split_meta['train_indices']]
+        val_idx = [int(i) for i in split_meta['val_indices']]
+        test_idx = [int(i) for i in split_meta['test_indices']]
+        max_idx = len(all_idx) - 1
+        for name, idxs in [('train', train_idx), ('val', val_idx), ('test', test_idx)]:
+            if any(i < 0 or i > max_idx for i in idxs):
+                raise ValueError(f"{name} split has index outside [0,{max_idx}]")
+        train_labels = all_labels[train_idx]
+        val_labels = all_labels[val_idx]
+        test_labels = all_labels[test_idx]
+        shutil.copyfile(args.split_json, os.path.join(args.output_dir, 'split.json'))
+        print(f"[split] custom split loaded: {args.split_json}")
+    else:
+        train_idx, train_labels, _ = get_ptbxl_labels_for_scheme(
+            args.csv_path, scheme, label_cache_path, folds=list(range(1, 9))
+        )
+        val_idx, val_labels, _ = get_ptbxl_labels_for_scheme(
+            args.csv_path, scheme, label_cache_path, folds=[9]
+        )
+        test_idx, test_labels, _ = get_ptbxl_labels_for_scheme(
+            args.csv_path, scheme, label_cache_path, folds=[10]
+        )
     print(f"  Train: {len(train_idx)}, Val: {len(val_idx)}, Test: {len(test_idx)}")
     print(f"  Per-class positives in train:")
     for i, name in enumerate(class_names):
@@ -340,12 +393,14 @@ def train(args):
         n_mask = int((col == -1).sum())
         print(f"    {name:<12} pos={n_pos:>5}  neg={n_neg:>5}  mask={n_mask}")
 
-    # Reuse PTBXL preprocessed cache from crosscenter_v2 if available
-    cache_path = args.cache_path or '/root/autodl-tmp/crosscenter_v2/ptbxl_preprocessed.npy'
-    if not os.path.exists(cache_path):
-        cache_path = os.path.join(args.output_dir, 'ptbxl_preprocessed.npy')
+    cache_path = args.cache_path or _default_cache_path(args)
     print(f"[preprocess] using cache {cache_path}")
-    all_sig = preprocess_ptbxl_all(args.data_path, cache_path)
+    all_sig = preprocess_ptbxl_all(
+        args.data_path,
+        cache_path,
+        preprocess_mode=args.preprocess_mode,
+        norm_mode=args.norm_mode,
+    )
 
     train_signals = np.asarray(all_sig[train_idx])
     val_signals = np.asarray(all_sig[val_idx])
@@ -358,27 +413,38 @@ def train(args):
     test_ds = PTBXLDatasetScheme(test_signals, test_labels,
                                  crop_len=args.crop_len, mode='eval')
 
+    loss_labels = train_labels
+    if args.synthetic_only and not args.synth_npz:
+        raise ValueError("--synthetic_only requires --synth_npz")
+
     if args.synth_npz:
         if args.scheme != 'super5':
             raise ValueError("--synth_npz currently supports only --scheme super5")
         synth_ds = SynthNPZDataset(args.synth_npz, crop_len=args.crop_len, mode='train')
-        train_combo = ConcatDataset([train_ds, synth_ds])
-        real_weight = np.ones(len(train_ds), dtype=np.float64) / max(len(train_ds), 1)
-        synth_weight = (
-            np.ones(len(synth_ds), dtype=np.float64)
-            * float(args.synth_ratio)
-            / max(len(synth_ds), 1)
-        )
-        sampler = WeightedRandomSampler(
-            weights=np.concatenate([real_weight, synth_weight]),
-            num_samples=len(train_ds),
-            replacement=True,
-        )
-        print(f"[synth] using {len(synth_ds)} synthetic samples from {args.synth_npz}")
-        print(f"[synth] target synth:real ratio={args.synth_ratio:g}; epoch samples={len(train_ds)}")
-        train_loader = DataLoader(train_combo, batch_size=args.batch_size, sampler=sampler,
-                                  num_workers=args.num_workers, pin_memory=True,
-                                  drop_last=True, persistent_workers=args.num_workers > 0)
+        if args.synthetic_only:
+            loss_labels = synth_ds.labels
+            print(f"[synth] synthetic-only training with {len(synth_ds)} samples from {args.synth_npz}")
+            train_loader = DataLoader(synth_ds, batch_size=args.batch_size, shuffle=True,
+                                      num_workers=args.num_workers, pin_memory=True,
+                                      drop_last=True, persistent_workers=args.num_workers > 0)
+        else:
+            train_combo = ConcatDataset([train_ds, synth_ds])
+            real_weight = np.ones(len(train_ds), dtype=np.float64) / max(len(train_ds), 1)
+            synth_weight = (
+                np.ones(len(synth_ds), dtype=np.float64)
+                * float(args.synth_ratio)
+                / max(len(synth_ds), 1)
+            )
+            sampler = WeightedRandomSampler(
+                weights=np.concatenate([real_weight, synth_weight]),
+                num_samples=len(train_ds),
+                replacement=True,
+            )
+            print(f"[synth] using {len(synth_ds)} synthetic samples from {args.synth_npz}")
+            print(f"[synth] target synth:real ratio={args.synth_ratio:g}; epoch samples={len(train_ds)}")
+            train_loader = DataLoader(train_combo, batch_size=args.batch_size, sampler=sampler,
+                                      num_workers=args.num_workers, pin_memory=True,
+                                      drop_last=True, persistent_workers=args.num_workers > 0)
     else:
         train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
                                   num_workers=args.num_workers, pin_memory=True,
@@ -404,11 +470,21 @@ def train(args):
     n_params = sum(p.numel() for p in model.parameters())
     print(f"[model] EfficientNet1DV2 s_v2  params={n_params:,}  num_classes={num_classes}")
 
+    if args.init_ckpt:
+        sd = torch.load(args.init_ckpt, map_location=device)
+        if isinstance(sd, dict) and 'state_dict' in sd:
+            sd = sd['state_dict']
+        elif isinstance(sd, dict) and 'model_state_dict' in sd:
+            sd = sd['model_state_dict']
+        sd = {k.removeprefix('_orig_mod.'): v for k, v in sd.items()}
+        model.load_state_dict(sd, strict=True)
+        print(f"[model] initialized from {args.init_ckpt}")
+
     if args.compile:
         print("[model] torch.compile(mode='default')")
         model = torch.compile(model, mode='default')
 
-    pos_weight_np = compute_pos_weight(train_labels, num_classes,
+    pos_weight_np = compute_pos_weight(loss_labels, num_classes,
                                        clip_max=args.pos_weight_clip_max)
     pos_weight = torch.tensor(pos_weight_np, dtype=torch.float32, device=device)
     print(f"[loss] pos_weight: " + ", ".join(
@@ -426,10 +502,13 @@ def train(args):
     scaler_amp = torch.cuda.amp.GradScaler() if 'cuda' in args.device else None
 
     best_val_auroc = -1.0
+    best_val_auprc = -1.0
+    best_selected_metric = -1.0
     patience_counter = 0
     log = []
     print(f"\n[train] {args.epochs} epochs  patience={args.patience}  "
-          f"batch={args.batch_size}  amp={scaler_amp is not None}")
+          f"batch={args.batch_size}  amp={scaler_amp is not None}  "
+          f"checkpoint_metric={args.checkpoint_metric}")
 
     for epoch in range(1, args.epochs + 1):
         model.train()
@@ -476,17 +555,41 @@ def train(args):
         }
         log.append(entry)
 
-        improved = val_metrics['macro_auroc'] > best_val_auroc
-        if improved:
-            best_val_auroc = val_metrics['macro_auroc']
-            patience_counter = 0
+        sd = None
+        improved_auroc = val_metrics['macro_auroc'] > best_val_auroc
+        improved_auprc = val_metrics['macro_auprc'] > best_val_auprc
+        selected_metric = val_metrics[f"macro_{args.checkpoint_metric}"]
+        improved_selected = selected_metric > best_selected_metric
+
+        if improved_auroc or improved_auprc:
             # Save uncompiled state_dict (strip _orig_mod. prefix if compiled)
             sd = model.state_dict()
             sd = {k.removeprefix('_orig_mod.'): v for k, v in sd.items()}
+
+        if improved_auroc:
+            best_val_auroc = val_metrics['macro_auroc']
+            torch.save(sd, os.path.join(args.output_dir, 'best_model_auroc.pt'))
+        if improved_auprc:
+            best_val_auprc = val_metrics['macro_auprc']
+            torch.save(sd, os.path.join(args.output_dir, 'best_model_auprc.pt'))
+
+        if improved_selected:
+            best_selected_metric = selected_metric
+            patience_counter = 0
+            if sd is None:
+                sd = model.state_dict()
+                sd = {k.removeprefix('_orig_mod.'): v for k, v in sd.items()}
             torch.save(sd, os.path.join(args.output_dir, 'best_model.pt'))
         else:
             patience_counter += 1
-        marker = ' *' if improved else ''
+        marker_parts = []
+        if improved_selected:
+            marker_parts.append('*')
+        if improved_auroc:
+            marker_parts.append('A')
+        if improved_auprc:
+            marker_parts.append('P')
+        marker = f" {'/'.join(marker_parts)}" if marker_parts else ''
         print(f"  Ep {epoch:3d}/{args.epochs} | loss={train_loss:.4f} val={val_loss:.4f} "
               f"auroc={val_metrics['macro_auroc']:.4f} "
               f"auprc={val_metrics['macro_auprc']:.4f} "
@@ -500,8 +603,13 @@ def train(args):
             break
 
     # Reload best for test
-    print("\n[test] evaluating best model on PTB-XL fold 10")
-    sd = torch.load(os.path.join(args.output_dir, 'best_model.pt'), map_location=device)
+    ckpt_name = f"best_model_{args.checkpoint_metric}.pt"
+    ckpt_path = os.path.join(args.output_dir, ckpt_name)
+    if not os.path.exists(ckpt_path):
+        ckpt_name = 'best_model.pt'
+        ckpt_path = os.path.join(args.output_dir, ckpt_name)
+    print(f"\n[test] evaluating {ckpt_name} on PTB-XL fold 10")
+    sd = torch.load(ckpt_path, map_location=device)
     target = model._orig_mod if hasattr(model, '_orig_mod') else model
     target.load_state_dict(sd)
     test_loss, ty_true, ty_score = evaluate(model, test_loader, criterion, device)
@@ -528,9 +636,13 @@ def train(args):
         'test_macro_auprc': round(test_metrics['macro_auprc'], 4),
         'test_per_class': test_metrics['per_class'],
         'best_val_macro_auroc': round(best_val_auroc, 4),
+        'best_val_macro_auprc': round(best_val_auprc, 4),
+        'checkpoint_metric': args.checkpoint_metric,
+        'checkpoint_path': ckpt_path,
         'epochs_trained': len(log),
         'pos_weight': pos_weight_np.tolist(),
         'config': vars(args),
+        'split': split_meta,
     }
     with open(os.path.join(args.output_dir, 'train_result.json'), 'w') as f:
         json.dump(result, f, indent=2)
@@ -544,6 +656,13 @@ def parse_args():
     p.add_argument('--csv_path', default='/root/autodl-tmp/ptbxl/ptbxl_database.csv')
     p.add_argument('--output_dir', required=True)
     p.add_argument('--cache_path', default=None)
+    p.add_argument('--split_json', default=None,
+                   help='Optional custom split JSON with train_indices/val_indices/test_indices')
+    p.add_argument('--preprocess_mode', default='legacy_ecgfounder_filter',
+                   choices=['minimal_resample', 'legacy_ecgfounder_filter',
+                            'raw_for_generation_or_digital'])
+    p.add_argument('--norm_mode', default='per_sample_global',
+                   choices=['per_sample_global', 'none'])
     p.add_argument('--device', default='cuda')
     p.add_argument('--crop_len', type=int, default=250)
     p.add_argument('--batch_size', type=int, default=96)
@@ -557,10 +676,16 @@ def parse_args():
     p.add_argument('--compile', type=_str2bool, default=False,
                    help='Use torch.compile (default off; set true for sequential mode)')
     p.add_argument('--pos_weight_clip_max', type=float, default=50.0)
+    p.add_argument('--checkpoint_metric', default='auroc', choices=['auroc', 'auprc'],
+                   help='Validation metric used for best_model.pt, early stopping, and test reload')
     p.add_argument('--synth_npz', default=None,
                    help='Comma-separated synthetic npz files with signals/labels or <center>__signals/<center>__labels5')
     p.add_argument('--synth_ratio', type=float, default=0.25,
                    help='Target synthetic:real sampling ratio when --synth_npz is set')
+    p.add_argument('--synthetic_only', action='store_true',
+                   help='Train on --synth_npz only while validating/testing on real PTB-XL splits')
+    p.add_argument('--init_ckpt', default=None,
+                   help='Optional EfficientNet1DV2 state_dict used to initialize training')
     return p.parse_args()
 
 

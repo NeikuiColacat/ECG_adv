@@ -109,7 +109,8 @@ def _register_hooks_per_block(wrapper, center_token):
 
 
 def _index_by_class(samples: List[dict], class_names: List[str],
-                    use_super5_multi_hot: bool) -> Dict[str, List[int]]:
+                    use_super5_multi_hot: bool,
+                    label_key: str = "diagnostic_class") -> Dict[str, List[int]]:
     """Map class_name → list of sample indices that are positive for that class.
 
     For Tier-M scheme each ref has a single `diagnostic_class` string.
@@ -124,7 +125,7 @@ def _index_by_class(samples: List[dict], class_names: List[str],
                 if float(mh[j]) > 0.5:
                     out[c].append(i)
         else:
-            cls = s["label"].get("diagnostic_class")
+            cls = s["label"].get(label_key)
             if cls in out:
                 out[cls].append(i)
     return out
@@ -159,6 +160,13 @@ def main():
     ap.add_argument("--center_name", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--n_per_class", type=int, default=1000)
+    ap.add_argument("--classes", nargs="+", default=None,
+                    help="Explicit generation classes. Default preserves legacy scope.")
+    ap.add_argument("--ref_index_mode", choices=("auto", "diagnostic_class", "multi_hot"),
+                    default="auto",
+                    help="How refs are indexed for super5. auto preserves legacy behavior.")
+    ap.add_argument("--save_ref_trace", action="store_true",
+                    help="Save per-generated-sample reference metadata in {out}.ref_trace.json")
     ap.add_argument("--batch_size", type=int, default=50)
     ap.add_argument("--num_steps", type=int, default=50)
     ap.add_argument("--device", default="cuda:0")
@@ -173,15 +181,28 @@ def main():
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-    class_names = SCHEME_TO_CLASSES[args.scheme]
+    class_names = list(SCHEME_TO_CLASSES[args.scheme])
     num_classes = len(class_names)
+    if args.classes:
+        unknown = [c for c in args.classes if c not in class_names]
+        if unknown:
+            raise ValueError(f"unknown classes {unknown}; valid={class_names}")
+        generation_classes = list(args.classes)
+    elif args.scheme == "super5":
+        generation_classes = [c for c in class_names if c in SUPER5_GEN_SUBSET]
+    else:
+        generation_classes = list(class_names)
 
     samples = torch.load(args.ref_pt, map_location="cpu", weights_only=False)
     print(f"[gen] loaded {len(samples)} reference samples from {args.ref_pt} "
           f"(scheme={args.scheme}, {num_classes} classes)")
 
+    if args.ref_index_mode == "auto":
+        use_multi_hot = args.scheme == "super5"
+    else:
+        use_multi_hot = args.ref_index_mode == "multi_hot"
     class_idx = _index_by_class(samples, class_names,
-                                use_super5_multi_hot=(args.scheme == "super5"))
+                                use_super5_multi_hot=use_multi_hot)
     print(f"[gen] per-class reference counts:")
     for c, idx in class_idx.items():
         print(f"  {c}: {len(idx)} refs")
@@ -220,13 +241,11 @@ def main():
     all_signals = []
     all_latents = []   # only filled if --save_latent
     all_labels = []
+    ref_trace = []
 
     t_start = time.time()
-    for cls_i, cls in enumerate(class_names):
-        if args.scheme == "super5" and cls not in SUPER5_GEN_SUBSET:
-            print(f"[gen] [{cls}] not in generation scope (Plan Rev 11/13: "
-                  f"{sorted(SUPER5_GEN_SUBSET)}) — skipping")
-            continue
+    for cls in generation_classes:
+        cls_i = class_names.index(cls)
         refs = class_idx[cls]
         if not refs:
             print(f"[gen] [{cls}] no reference samples — skipping")
@@ -238,6 +257,7 @@ def main():
         for b in range(n_batches):
             bs = min(args.batch_size, args.n_per_class - produced)
             ref_sample = samples[int(rng.choice(refs))]
+            ref_label_full = ref_sample["label"]
             ref_latent = ref_sample["data"]  # (4, 128)
             ref_label = {
                 "hr": float(ref_sample["label"].get("hr", 75.0)),
@@ -269,6 +289,20 @@ def main():
             lbl = np.zeros((bs, num_classes), dtype=np.float32)
             lbl[:, cls_i] = 1.0
             all_labels.append(lbl)
+            if args.save_ref_trace:
+                ref_trace.extend([
+                    {
+                        "class": cls,
+                        "ref_record_id": str(ref_label_full.get("record_id", ref_label_full.get("ecg_id", ""))),
+                        "ref_ecg_id": ref_label_full.get("ecg_id"),
+                        "ref_patient_id": ref_label_full.get("patient_id"),
+                        "ref_source_index": ref_label_full.get("source_index"),
+                        "ref_fold": ref_label_full.get("strat_fold"),
+                        "ref_diagnostic_class": ref_label_full.get("diagnostic_class"),
+                        "ref_text": ref_label_full.get("text"),
+                    }
+                    for _ in range(bs)
+                ])
             produced += bs
 
             if (b + 1) % 5 == 0 or b == n_batches - 1:
@@ -290,6 +324,13 @@ def main():
     out.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(out, signals=signals, labels=labels, center_name=args.center_name)
     print(f"[gen] wrote → {out}  ({out.stat().st_size / 1e6:.1f} MB)")
+
+    if args.save_ref_trace:
+        import json
+        trace_out = out.with_suffix(".ref_trace.json")
+        with trace_out.open("w") as f:
+            json.dump(ref_trace, f, indent=2, default=str)
+        print(f"[gen] wrote ref trace → {trace_out}")
 
     if args.save_latent:
         latents = np.concatenate(all_latents, axis=0).astype(np.float32)

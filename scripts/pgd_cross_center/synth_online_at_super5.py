@@ -62,6 +62,7 @@ from adversarial.adv_validation import compute_asr, compute_semantic_gate  # noq
 from adversarial.efficientnet_victim_tierM import (  # noqa: E402
     EfficientNetVictimTierM, TIERM_INPUT_LENGTH,
 )
+from adversarial.latent_hull_pgd import LatentHullPGDGenerator  # noqa: E402
 from adversarial.pgd_advdiff import PGDAdvDiffGenerator  # noqa: E402
 
 from scripts.crosscenter_tierM.online_adv_train_tierM import (  # noqa: E402
@@ -316,6 +317,41 @@ def stratified_sample_synth(
     return np.array(sorted(set(picked))[:K_anchor])
 
 
+def parse_source_weight_map(raw: Optional[str]) -> Dict[str, float]:
+    """Parse `source=weight,source2=weight2` into a dict."""
+    if not raw:
+        return {}
+    out: Dict[str, float] = {}
+    for item in raw.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        if "=" not in item:
+            raise ValueError(f"Bad source weight item {item!r}; expected source=weight")
+        key, value = item.split("=", 1)
+        out[key.strip()] = float(value)
+    return out
+
+
+def parse_class_source_weight_map(raw: Optional[str]) -> Dict[str, Dict[str, float]]:
+    """Parse `CLASS:source=weight,CLASS2:source2=weight2` overrides."""
+    if not raw:
+        return {}
+    out: Dict[str, Dict[str, float]] = {}
+    for item in raw.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        if ":" not in item or "=" not in item:
+            raise ValueError(
+                f"Bad class-source weight item {item!r}; expected CLASS:source=weight"
+            )
+        cls, rest = item.split(":", 1)
+        source, value = rest.split("=", 1)
+        out.setdefault(cls.strip(), {})[source.strip()] = float(value)
+    return out
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # Plan Rev 13.2: StratifiedPoolWalker — no-revisit-per-epoch over synth pool
 # ─────────────────────────────────────────────────────────────────────────
@@ -330,15 +366,40 @@ class StratifiedPoolWalker:
     meant the victim could memorize all anchors after ~5 epochs).
     """
 
-    def __init__(self, labels_one_hot: np.ndarray,
-                 classes_in_scope: List[str],
-                 class_to_idx: Dict[str, int], seed: int = 42):
+    def __init__(
+        self,
+        labels_one_hot: np.ndarray,
+        classes_in_scope: List[str],
+        class_to_idx: Dict[str, int],
+        seed: int = 42,
+        source_labels: Optional[np.ndarray] = None,
+        source_sampling_strategy: str = "class_balanced",
+        source_weights: Optional[Dict[str, float]] = None,
+        source_class_weights: Optional[Dict[str, Dict[str, float]]] = None,
+        source_floor_per_class: int = 0,
+    ):
         self.classes = list(classes_in_scope)
         self.class_to_idx = class_to_idx
         self.cls_pools: Dict[str, np.ndarray] = {}
         self.cursors: Dict[str, int] = {}
         self.epochs_completed: Dict[str, int] = {c: 0 for c in self.classes}
         self.rng = np.random.default_rng(seed)
+        self.source_sampling_strategy = source_sampling_strategy
+        self.source_weights = dict(source_weights or {})
+        self.source_class_weights = dict(source_class_weights or {})
+        self.source_floor_per_class = max(0, int(source_floor_per_class))
+        self.source_labels = None
+        self.source_names: List[str] = []
+        self.source_cls_pools: Dict[Tuple[str, str], np.ndarray] = {}
+        self.source_cursors: Dict[Tuple[str, str], int] = {}
+        self.source_epochs_completed: Dict[Tuple[str, str], int] = {}
+        self.last_source_counts: Dict[str, int] = {}
+        self.last_class_source_counts: Dict[str, Dict[str, int]] = {}
+        if source_labels is not None:
+            if len(source_labels) != labels_one_hot.shape[0]:
+                raise ValueError("source_labels length must match labels_one_hot")
+            self.source_labels = np.asarray(source_labels).astype(str)
+            self.source_names = sorted(str(s) for s in np.unique(self.source_labels))
         for c in self.classes:
             j = class_to_idx[c]
             mask = labels_one_hot[:, j] > 0.5
@@ -347,26 +408,175 @@ class StratifiedPoolWalker:
                 self.rng.shuffle(idx)
             self.cls_pools[c] = idx
             self.cursors[c] = 0
+            if self.source_labels is not None:
+                for source in self.source_names:
+                    source_mask = mask & (self.source_labels == source)
+                    source_idx = np.where(source_mask)[0].copy()
+                    if len(source_idx) > 0:
+                        self.rng.shuffle(source_idx)
+                    key = (c, source)
+                    self.source_cls_pools[key] = source_idx
+                    self.source_cursors[key] = 0
+                    self.source_epochs_completed[key] = 0
 
     def class_sizes(self) -> Dict[str, int]:
         return {c: int(len(self.cls_pools[c])) for c in self.classes}
 
+    def source_class_sizes(self) -> Dict[str, Dict[str, int]]:
+        if self.source_labels is None:
+            return {}
+        return {
+            c: {s: int(len(self.source_cls_pools.get((c, s), []))) for s in self.source_names}
+            for c in self.classes
+        }
+
+    def _source_weight(self, cls: str, source: str) -> float:
+        if cls in self.source_class_weights and source in self.source_class_weights[cls]:
+            return float(self.source_class_weights[cls][source])
+        return float(self.source_weights.get(source, 1.0))
+
+    def _draw_from_pool(
+        self,
+        key: Any,
+        k: int,
+        pools: Dict[Any, np.ndarray],
+        cursors: Dict[Any, int],
+        epochs_completed: Dict[Any, int],
+    ) -> np.ndarray:
+        pool = pools[key]
+        if k <= 0 or len(pool) == 0:
+            return np.empty(0, dtype=np.int64)
+        cur = cursors[key]
+        if cur + k > len(pool):
+            self.rng.shuffle(pool)
+            cur = 0
+            epochs_completed[key] = int(epochs_completed.get(key, 0)) + 1
+        out = pool[cur:cur + k].copy()
+        cursors[key] = cur + len(out)
+        return out
+
+    def _source_quotas_for_class(self, cls: str, k: int) -> Dict[str, int]:
+        active = []
+        for source in self.source_names:
+            capacity = int(len(self.source_cls_pools.get((cls, source), [])))
+            weight = self._source_weight(cls, source)
+            if capacity > 0 and weight > 0.0:
+                active.append((source, capacity, weight))
+        if not active or k <= 0:
+            return {}
+        quotas = {source: 0 for source, _, _ in active}
+        remaining = int(k)
+
+        if self.source_floor_per_class > 0:
+            for source, capacity, _ in active:
+                take = min(self.source_floor_per_class, capacity, remaining)
+                quotas[source] += take
+                remaining -= take
+                if remaining <= 0:
+                    break
+
+        while remaining > 0:
+            candidates = [
+                (source, weight)
+                for source, capacity, weight in active
+                if quotas[source] < capacity
+            ]
+            if not candidates:
+                break
+            probs = np.asarray([w for _, w in candidates], dtype=np.float64)
+            probs = probs / probs.sum()
+            chosen_i = int(self.rng.choice(np.arange(len(candidates)), p=probs))
+            quotas[candidates[chosen_i][0]] += 1
+            remaining -= 1
+        return quotas
+
     def sample(self, k_per_class: Dict[str, int]) -> Dict[str, np.ndarray]:
         """Draw k_per_class[c] indices for each class without revisit per epoch."""
         out: Dict[str, np.ndarray] = {}
+        self.last_source_counts = {}
+        self.last_class_source_counts = {}
         for c in self.classes:
             k = int(k_per_class.get(c, 0))
-            pool = self.cls_pools[c]
-            if k <= 0 or len(pool) == 0:
-                out[c] = np.empty(0, dtype=np.int64)
+            if (
+                self.source_sampling_strategy == "source_weighted"
+                and self.source_labels is not None
+                and self.source_names
+            ):
+                quotas = self._source_quotas_for_class(c, k)
+                pieces = []
+                self.last_class_source_counts[c] = {}
+                for source in self.source_names:
+                    q = int(quotas.get(source, 0))
+                    key = (c, source)
+                    drawn = self._draw_from_pool(
+                        key, q, self.source_cls_pools,
+                        self.source_cursors, self.source_epochs_completed,
+                    )
+                    if drawn.size > 0:
+                        pieces.append(drawn)
+                    self.last_class_source_counts[c][source] = int(drawn.size)
+                    self.last_source_counts[source] = (
+                        self.last_source_counts.get(source, 0) + int(drawn.size)
+                    )
+                out[c] = np.concatenate(pieces) if pieces else np.empty(0, dtype=np.int64)
+                if out[c].size > 1:
+                    self.rng.shuffle(out[c])
                 continue
-            cur = self.cursors[c]
-            if cur + k > len(pool):
-                self.rng.shuffle(pool)
-                cur = 0
-                self.epochs_completed[c] += 1
-            out[c] = pool[cur:cur + k].copy()
-            self.cursors[c] = cur + k
+            out[c] = self._draw_from_pool(
+                c, k, self.cls_pools, self.cursors, self.epochs_completed,
+            )
+        return out
+
+
+class SameLabelLatentIndex:
+    """Nearest-neighbor candidate index for same-label latent-hull attacks."""
+
+    def __init__(
+        self,
+        latents: np.ndarray,
+        labels_one_hot: np.ndarray,
+        label_mode: str = "primary",
+        seed: int = 42,
+    ):
+        if label_mode not in {"primary", "exact"}:
+            raise ValueError(f"label_mode must be primary|exact, got {label_mode!r}")
+        self.latents = latents.astype(np.float32, copy=False)
+        self.labels = labels_one_hot.astype(np.float32, copy=False)
+        self.label_mode = label_mode
+        self.rng = np.random.default_rng(seed)
+        if label_mode == "primary":
+            keys = [int(i) for i in self.labels.argmax(axis=1)]
+        else:
+            keys = [tuple(int(v) for v in row) for row in (self.labels > 0.5).astype(np.int8)]
+        self.keys = keys
+        self.pools: Dict[Any, np.ndarray] = {}
+        for i, key in enumerate(keys):
+            self.pools.setdefault(key, []).append(i)
+        self.pools = {k: np.asarray(v, dtype=np.int64) for k, v in self.pools.items()}
+
+    def class_sizes(self) -> Dict[str, int]:
+        return {str(k): int(len(v)) for k, v in self.pools.items()}
+
+    def candidates_for(self, anchor_indices: np.ndarray, M: int) -> np.ndarray:
+        """Return (B,M,4,128) nearest same-label candidates, excluding self when possible."""
+        out = np.empty((len(anchor_indices), M, 4, 128), dtype=np.float32)
+        flat_latents = self.latents.reshape(self.latents.shape[0], -1)
+        for row_i, anchor_idx in enumerate(anchor_indices):
+            anchor_idx = int(anchor_idx)
+            key = self.keys[anchor_idx]
+            pool = self.pools.get(key, np.asarray([anchor_idx], dtype=np.int64))
+            pool = pool[pool != anchor_idx]
+            if len(pool) == 0:
+                pool = np.asarray([anchor_idx], dtype=np.int64)
+            diff = flat_latents[pool] - flat_latents[anchor_idx]
+            dist2 = np.einsum("ij,ij->i", diff, diff)
+            order = np.argsort(dist2)
+            chosen = pool[order[:M]]
+            if len(chosen) < M:
+                pad_value = int(chosen[-1]) if len(chosen) else anchor_idx
+                pad = np.full((M - len(chosen),), pad_value, dtype=np.int64)
+                chosen = np.concatenate([chosen, pad])
+            out[row_i] = self.latents[chosen[:M]]
         return out
 
 
@@ -448,6 +658,9 @@ def run_pgd_on_synth_pool(
     rng: np.random.Generator,
     device: str,
     picked_indices: Optional[np.ndarray] = None,
+    attack_mode: str = "pgd",
+    latent_hull_index: Optional[SameLabelLatentIndex] = None,
+    hull_M: int = 10,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict[str, float]]:
     """Sample K anchors stratified by class, run PGD in batches of pgd_batch.
 
@@ -460,7 +673,7 @@ def run_pgd_on_synth_pool(
       adv_signals_ct:   (K, 12, 1000)  float32
       anchor_signals_ct:(K, 12, 1000)  float32  (clean reference for sem-gate)
       labels_one_hot:   (K, C)         float32
-      delta_stats:      mean / max  L2 norm of the final perturbation
+      delta_stats:      mean / max L2 norm plus optional latent-hull weight stats
     """
     if picked_indices is None:
         num_classes = synth_labels.shape[1]
@@ -478,12 +691,28 @@ def run_pgd_on_synth_pool(
     y_anchors = torch.from_numpy(synth_labels[pick]).float()         # (K, C)
 
     adv_chunks, anc_chunks, delta_norms = [], [], []
+    hull_entropies, hull_top1 = [], []
     for i in range(0, z_anchors.shape[0], pgd_batch):
         z_b = z_anchors[i:i + pgd_batch].to(device)
         y_b = y_anchors[i:i + pgd_batch].to(device)
-        # Random init delta — Plan Issue #41 clean-anchor restart each epoch
-        delta_init = torch.randn_like(z_b) * pgd_gen.delta_init_scale
-        x_adv, delta = pgd_gen.attack_from_latent(z_b, y_b, delta_init=delta_init)
+        if attack_mode == "latent_hull":
+            if latent_hull_index is None:
+                raise ValueError("latent_hull_index is required when attack_mode=latent_hull")
+            batch_pick = pick[i:i + pgd_batch]
+            cand_np = latent_hull_index.candidates_for(batch_pick, hull_M)
+            cand_b = torch.from_numpy(cand_np).float().to(device)
+            x_adv, delta = pgd_gen.attack_from_latent(
+                z_b, y_b, candidate_latents=cand_b
+            )
+            hull_info = getattr(pgd_gen, "last_info", {})
+            if "hull_weight_entropy_mean" in hull_info:
+                hull_entropies.append(float(hull_info["hull_weight_entropy_mean"]))
+            if "hull_weight_top1_mean" in hull_info:
+                hull_top1.append(float(hull_info["hull_weight_top1_mean"]))
+        else:
+            # Random init delta — Plan Issue #41 clean-anchor restart each epoch
+            delta_init = torch.randn_like(z_b) * pgd_gen.delta_init_scale
+            x_adv, delta = pgd_gen.attack_from_latent(z_b, y_b, delta_init=delta_init)
         adv_chunks.append(x_adv.detach().cpu().numpy().astype(np.float32))
         # Clean anchor reference (z_b alone, no delta)
         with torch.no_grad():
@@ -493,10 +722,16 @@ def run_pgd_on_synth_pool(
 
     adv_signals = np.concatenate(adv_chunks, axis=0)                  # (K, 12, 1000)
     anc_signals = np.concatenate(anc_chunks, axis=0)
-    return adv_signals, anc_signals, y_anchors.numpy(), {
+    stats = {
         "mean_delta_norm": float(np.mean(delta_norms)),
         "max_delta_norm":  float(np.max(delta_norms)),
     }
+    if hull_entropies:
+        stats.update({
+            "hull_weight_entropy_mean": float(np.mean(hull_entropies)),
+            "hull_weight_top1_mean": float(np.mean(hull_top1)) if hull_top1 else float('nan'),
+        })
+    return adv_signals, anc_signals, y_anchors.numpy(), stats
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -510,6 +745,8 @@ def push_adv_to_buffer(
     victim_logits: np.ndarray,     # (K, C)
     crop_len: int,
     class_trust: Optional[Dict[str, float]] = None,
+    boundary_prob_min: float = 0.0,
+    boundary_prob_max: float = 1.0,
 ) -> Dict[str, int]:
     """Push gates-passed adv signals into the buffer with -1 sentinel labels.
 
@@ -523,6 +760,7 @@ def push_adv_to_buffer(
     """
     n_pushed = 0
     n_dropped_by_trust = 0
+    n_dropped_by_boundary = 0
     for i in range(adv_signals_ct.shape[0]):
         sig_250 = _center_crop_ct(adv_signals_ct[i], crop_len)         # (12, 250)
         target_idx = int(target_one_hot[i].argmax())
@@ -534,6 +772,9 @@ def push_adv_to_buffer(
         lbl = torch.full((target_one_hot.shape[1],), -1.0)
         lbl[target_idx] = 1.0
         prob_t = float(1.0 / (1.0 + math.exp(-min(50.0, max(-50.0, victim_logits[i, target_idx])))))
+        if prob_t < boundary_prob_min or prob_t > boundary_prob_max:
+            n_dropped_by_boundary += 1
+            continue
         score = (1.0 - 2.0 * abs(prob_t - 0.5)) * trust                # ∈ [0, trust]
         buffer.add_one(
             torch.from_numpy(np.ascontiguousarray(sig_250)).float(),
@@ -541,7 +782,11 @@ def push_adv_to_buffer(
             score,
         )
         n_pushed += 1
-    return {"n_pushed": n_pushed, "n_dropped_by_trust": n_dropped_by_trust}
+    return {
+        "n_pushed": n_pushed,
+        "n_dropped_by_trust": n_dropped_by_trust,
+        "n_dropped_by_boundary": n_dropped_by_boundary,
+    }
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -577,6 +822,41 @@ def parse_args():
     p.add_argument("--K_anchor", type=int, default=300)
     p.add_argument("--pgd_alpha", type=float, default=None)
     p.add_argument("--delta_init_scale", type=float, default=0.1)
+    p.add_argument("--attack_mode", choices=["pgd", "latent_hull"], default="pgd",
+                   help="pgd = free z0+delta PGD; latent_hull = same-label convex hull")
+    p.add_argument("--hull_M", type=int, default=10,
+                   help="Number of same-label candidate latents for latent_hull")
+    p.add_argument("--hull_lambda", type=float, default=0.25)
+    p.add_argument("--hull_steps", type=int, default=5)
+    p.add_argument("--hull_lr", type=float, default=0.3)
+    p.add_argument(
+        "--hull_weight_mode",
+        choices=["optimized", "one_hot", "uniform", "dirichlet"],
+        default="optimized",
+        help="Latent-Hull coefficient policy: optimized=C3 main, or fixed C0/C1/C2 ablations.",
+    )
+    p.add_argument("--hull_dirichlet_alpha", type=float, default=1.0)
+    p.add_argument("--hull_label_mode", choices=["primary", "exact"], default="primary")
+    p.add_argument("--source_sampling_strategy",
+                   choices=["class_balanced", "source_weighted"],
+                   default="class_balanced",
+                   help="class_balanced ignores source metadata; source_weighted "
+                        "allocates each class quota by source weights when the "
+                        "latent pool has source_ids/source_names.")
+    p.add_argument("--source_weights", default=None,
+                   help="Comma map for source_weighted, e.g. real_anchor=1.0,prompt_token=0.35")
+    p.add_argument("--source_class_weights", default=None,
+                   help="Comma overrides, e.g. MI:prompt_token=1.0,STTC:prompt_token=0.5")
+    p.add_argument("--source_floor_per_class", type=int, default=0,
+                   help="Minimum anchors per positive-weight source within each class quota.")
+    p.add_argument("--classes_in_scope", nargs="+", default=sorted(SUPER5_GEN_SUBSET),
+                   help="Super5 classes sampled as adversarial anchors. Default keeps historical NORM/MI/STTC.")
+    p.add_argument("--allow_hyp_cd_trust", action="store_true",
+                   help="Do not hard-force HYP/CD class_trust to zero.")
+    p.add_argument("--boundary_prob_min", type=float, default=0.0,
+                   help="Only push adv samples whose target sigmoid probability is >= this value.")
+    p.add_argument("--boundary_prob_max", type=float, default=1.0,
+                   help="Only push adv samples whose target sigmoid probability is <= this value.")
 
     # Mix loader (Plan Rev 13.2: real-dominated mix, adv_w=0.5 vs Wang 2023 0.7 reverse)
     p.add_argument("--ptbxl_weight", type=float, default=1.0)
@@ -621,13 +901,13 @@ def parse_args():
     return p.parse_args()
 
 
-def load_synth_pool(synth_npz_path: str) -> Tuple[np.ndarray, np.ndarray, str]:
+def load_synth_pool(synth_npz_path: str) -> Tuple[np.ndarray, np.ndarray, str, Dict[str, Any]]:
     """Load Stage 1 frozen latent pool. Accepts either:
 
       - {basename}.npz       (signals + labels): auto-finds {basename}.latent.npz
       - {basename}.latent.npz (latents + labels): used directly
 
-    Returns (latents (N,4,128), labels (N,C), center_name).
+    Returns (latents (N,4,128), labels (N,C), center_name, source_meta).
     """
     p = Path(synth_npz_path)
     if p.name.endswith(".latent.npz"):
@@ -647,7 +927,31 @@ def load_synth_pool(synth_npz_path: str) -> Tuple[np.ndarray, np.ndarray, str]:
     assert latents.ndim == 3 and latents.shape[1:] == (4, 128), \
         f"bad synth latent shape: {latents.shape}"
     assert labels.shape[0] == latents.shape[0]
-    return latents.astype(np.float32), labels.astype(np.float32), center
+
+    source_ids = None
+    source_names = None
+    source_labels = None
+    if "source_ids" in d.files and "source_names" in d.files:
+        source_ids = d["source_ids"].astype(np.int64)
+        source_names = [str(x) for x in d["source_names"].tolist()]
+        if source_ids.shape[0] != latents.shape[0]:
+            raise ValueError("source_ids length does not match latents")
+        source_labels = np.asarray([
+            source_names[int(i)] if 0 <= int(i) < len(source_names) else f"source_{int(i)}"
+            for i in source_ids
+        ])
+    else:
+        source_ids = np.zeros((latents.shape[0],), dtype=np.int64)
+        source_names = ["unknown"]
+        source_labels = np.asarray(["unknown"] * latents.shape[0])
+
+    source_meta = {
+        "source_ids": source_ids,
+        "source_names": source_names,
+        "source_labels": source_labels,
+        "has_source_metadata": "source_ids" in d.files and "source_names" in d.files,
+    }
+    return latents.astype(np.float32), labels.astype(np.float32), center, source_meta
 
 
 def main():
@@ -721,17 +1025,34 @@ def main():
     with open(args.class_trust) as f:
         trust_blob = json.load(f)
     class_trust: Dict[str, float] = dict(trust_blob["class_trust"])
-    class_trust.update(DEFAULT_TRUST_HARDCODE)   # Plan Rev 11 hard-enforce
+    if not args.allow_hyp_cd_trust:
+        class_trust.update(DEFAULT_TRUST_HARDCODE)   # Plan Rev 11 hard-enforce
     print(f"[setup] class_trust loaded: {class_trust}")
+    classes_in_scope = []
+    for cls in args.classes_in_scope:
+        cls = cls.upper()
+        if cls not in SUPER5_TO_IDX:
+            raise SystemExit(f"unknown --classes_in_scope class {cls!r}; valid={CLASS_NAMES_SUPER5}")
+        classes_in_scope.append(cls)
+    if not classes_in_scope:
+        raise SystemExit("--classes_in_scope must contain at least one class")
+    print(f"[setup] classes_in_scope={classes_in_scope}")
+    print(f"[setup] boundary target probability window=[{args.boundary_prob_min}, {args.boundary_prob_max}]")
 
     # ── Load synth pool (Stage 1 frozen) for training ──────────────────────
-    synth_latents, synth_labels, synth_center = load_synth_pool(args.synth_npz)
+    synth_latents, synth_labels, synth_center, source_meta = load_synth_pool(args.synth_npz)
     print(f"[setup] synth pool: {synth_latents.shape} labels={synth_labels.shape} "
           f"center={synth_center}")
     cls_dist = synth_labels.argmax(1)
     from collections import Counter
     pool_class_counts = Counter(int(c) for c in cls_dist)
     print(f"[setup] synth class counts (idx): {dict(pool_class_counts)}")
+    source_counts = Counter(str(s) for s in source_meta["source_labels"])
+    print(f"[setup] synth source counts: {dict(source_counts)} "
+          f"has_metadata={source_meta['has_source_metadata']}")
+    if args.source_sampling_strategy == "source_weighted" and not source_meta["has_source_metadata"]:
+        print("[setup] WARNING: source_weighted requested but pool lacks source metadata; "
+              "all samples use source='unknown'.")
 
     # ── PTBXL super5 train / val ────────────────────────────────────────────
     from scripts.triple_labels.label_schemes import get_scheme
@@ -812,16 +1133,36 @@ def main():
         print(f"    {c}: AUROC={info['macro_auroc']}  AUPRC={info['macro_auprc']}  "
               f"(n={info['n']}  classes_used={info['n_classes_used']})")
 
-    # ── PGD generator + buffer ──────────────────────────────────────────────
-    # Note: PGDAdvDiffGenerator's __init__ calls victim.parameters().requires_grad_(False)
+    # ── PGD / Latent-Hull generator + buffer ────────────────────────────────
+    # Note: generator __init__ calls victim.parameters().requires_grad_(False)
     # which would prevent us from training the victim afterwards. We re-enable
     # requires_grad on all params right after, then snapshot EWA + build optimizer.
-    pgd_gen = PGDAdvDiffGenerator(
-        ecgtwin_wrapper=ecgtwin, victim=victim,
-        epsilon=args.pgd_eps, K_pgd=args.pgd_K,
-        alpha=args.pgd_alpha, delta_init_scale=args.delta_init_scale,
-        device=args.device,
-    )
+    latent_hull_index = None
+    if args.attack_mode == "latent_hull":
+        pgd_gen = LatentHullPGDGenerator(
+            ecgtwin_wrapper=ecgtwin, victim=victim,
+            epsilon=args.pgd_eps,
+            hull_lambda=args.hull_lambda,
+            hull_steps=args.hull_steps,
+            hull_lr=args.hull_lr,
+            weight_mode=args.hull_weight_mode,
+            dirichlet_alpha=args.hull_dirichlet_alpha,
+            device=args.device,
+        )
+        latent_hull_index = SameLabelLatentIndex(
+            synth_latents, synth_labels,
+            label_mode=args.hull_label_mode,
+            seed=args.seed,
+        )
+        print(f"[setup] latent-hull index mode={args.hull_label_mode} "
+              f"sizes={latent_hull_index.class_sizes()}")
+    else:
+        pgd_gen = PGDAdvDiffGenerator(
+            ecgtwin_wrapper=ecgtwin, victim=victim,
+            epsilon=args.pgd_eps, K_pgd=args.pgd_K,
+            alpha=args.pgd_alpha, delta_init_scale=args.delta_init_scale,
+            device=args.device,
+        )
     for p in victim.model.parameters():
         p.requires_grad_(True)
     buffer = QualityAwareBuffer(max_size=args.qab_size)
@@ -842,6 +1183,11 @@ def main():
         "args": vars(args),
         "baseline_quick_eval": baseline_qe,
         "class_trust": class_trust,
+        "source_meta": {
+            "source_names": source_meta["source_names"],
+            "source_counts": dict(source_counts),
+            "has_source_metadata": source_meta["has_source_metadata"],
+        },
         "epochs": [],
     }
     best_avg_auroc = baseline_qe["avg_macro_auroc"] \
@@ -854,12 +1200,24 @@ def main():
     es_path = os.path.join(args.output_dir, "early_stop_info.json")
 
     # Plan Rev 13.2: stratified pool walker over NORM/MI/STTC scope only
+    source_weight_map = parse_source_weight_map(args.source_weights)
+    source_class_weight_map = parse_class_source_weight_map(args.source_class_weights)
     walker = StratifiedPoolWalker(
         labels_one_hot=synth_labels,
-        classes_in_scope=sorted(SUPER5_GEN_SUBSET),
+        classes_in_scope=classes_in_scope,
         class_to_idx=SUPER5_TO_IDX, seed=args.seed,
+        source_labels=source_meta["source_labels"],
+        source_sampling_strategy=args.source_sampling_strategy,
+        source_weights=source_weight_map,
+        source_class_weights=source_class_weight_map,
+        source_floor_per_class=args.source_floor_per_class,
     )
     print(f"[setup] walker class sizes: {walker.class_sizes()}")
+    if args.source_sampling_strategy == "source_weighted":
+        print(f"[setup] walker source-class sizes: {walker.source_class_sizes()}")
+        print(f"[setup] source weights: global={source_weight_map or {'<default>': 1.0}} "
+              f"class_overrides={source_class_weight_map or {}} "
+              f"floor_per_class={args.source_floor_per_class}")
 
     rng = np.random.default_rng(args.seed)
     consecutive_low_asr = 0
@@ -872,13 +1230,15 @@ def main():
         # Plan Rev 13.2: StratifiedPoolWalker draws no-revisit-per-epoch,
         # restricted to NORM/MI/STTC scope.
         victim.model.eval()
-        classes_in_scope = sorted(SUPER5_GEN_SUBSET)
         per_cls = max(1, args.K_anchor // len(classes_in_scope))
         k_per_cls = {c: per_cls for c in classes_in_scope}
         rem = args.K_anchor - per_cls * len(classes_in_scope)
         for i_extra in range(rem):
             k_per_cls[classes_in_scope[i_extra % len(classes_in_scope)]] += 1
         drawn = walker.sample(k_per_cls)
+        if args.source_sampling_strategy == "source_weighted":
+            print(f"[ep{epoch:02d}] anchor source counts: {walker.last_source_counts} "
+                  f"class_source={walker.last_class_source_counts}", flush=True)
         all_picks = np.concatenate(
             [drawn[c] for c in classes_in_scope if drawn[c].size > 0]
         ) if any(drawn[c].size > 0 for c in classes_in_scope) else np.empty(0, dtype=np.int64)
@@ -890,6 +1250,9 @@ def main():
             pgd_batch=args.pgd_batch,
             rng=rng, device=args.device,
             picked_indices=all_picks,
+            attack_mode=args.attack_mode,
+            latent_hull_index=latent_hull_index,
+            hull_M=args.hull_M,
         )
         if adv_signals.shape[0] == 0:
             print(f"[ep{epoch:02d}] empty walker pick — skip epoch", flush=True)
@@ -924,6 +1287,8 @@ def main():
                 buffer=buffer, adv_signals_ct=adv_signals,
                 target_one_hot=target_oh, victim_logits=logits_arr,
                 crop_len=args.crop_len, class_trust=class_trust,
+                boundary_prob_min=args.boundary_prob_min,
+                boundary_prob_max=args.boundary_prob_max,
             )
         # Track consecutive low ASR
         if asr_info["asr_overall"] < args.asr_low_threshold:
@@ -995,6 +1360,7 @@ def main():
         elapsed = time.time() - epoch_t0
         entry = {
             "epoch": epoch,
+            "attack_mode": args.attack_mode,
             "train_loss": round(train_loss, 4),
             "val_loss":   round(val_loss, 4),
             "asr_overall": round(float(asr_info["asr_overall"]), 4),
@@ -1006,13 +1372,33 @@ def main():
                 else None,
             "buffer_skipped": gate_skipped,
             "buffer_size":   len(buffer),
+            "push_stats": push_stats if not gate_skipped else {},
             "delta_mean":    round(delta_stats["mean_delta_norm"], 4),
+            "delta_max":     round(delta_stats["max_delta_norm"], 4),
             "lr":            round(optimizer.param_groups[0]["lr"], 6),
             "time_s":        round(elapsed, 1),
         }
+        if args.source_sampling_strategy == "source_weighted":
+            entry.update({
+                "anchor_source_counts": dict(walker.last_source_counts),
+                "anchor_class_source_counts": walker.last_class_source_counts,
+            })
+        if args.attack_mode == "latent_hull":
+            entry.update({
+                "hull_M": args.hull_M,
+                "hull_lambda": args.hull_lambda,
+                "hull_steps": args.hull_steps,
+                "hull_label_mode": args.hull_label_mode,
+                "hull_weight_entropy_mean": round(
+                    float(delta_stats.get("hull_weight_entropy_mean", float('nan'))), 4
+                ),
+                "hull_weight_top1_mean": round(
+                    float(delta_stats.get("hull_weight_top1_mean", float('nan'))), 4
+                ),
+            })
         print(f"Ep {epoch:2d}/{args.n_epochs} | train={train_loss:.4f} val={val_loss:.4f} | "
               f"asr={asr_info['asr_overall']:.2f} eint_p95={sem_info.get('einthoven_mean_p95', float('nan')):.3f} "
-              f"buf={len(buffer)} skip={gate_skipped} | {elapsed:.0f}s")
+              f"buf={len(buffer)} skip={gate_skipped} attack={args.attack_mode} | {elapsed:.0f}s")
 
         # Phase F: quick eval (every eval_every; also last epoch)
         if (epoch % args.eval_every == 0) or (epoch == args.n_epochs):

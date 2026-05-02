@@ -138,8 +138,9 @@ class PN2021CachedCenterDataset(Dataset):
         sig_tc = self.signals[idx]
         crop = crop_signal_tc(sig_tc, self.crop_len, mode='center')
         sig_ct = crop.T
+        label = np.array(self.labels[idx], dtype=np.float32, copy=True)
         return (torch.from_numpy(np.ascontiguousarray(sig_ct)).float(),
-                torch.from_numpy(self.labels[idx]).float())
+                torch.from_numpy(label).float())
 
 
 PN2021_EVAL_CACHE_VERSION = "v3_super5_normsuppress"
@@ -153,6 +154,16 @@ def _pn2021_cache_path(args, scheme, center):
     return os.path.join(
         cache_dir,
         f"{args.scheme}_{center}_100hz1000_{PN2021_EVAL_CACHE_VERSION}.npz",
+    )
+
+
+def _pn2021_mmap_cache_path(args, scheme, center):
+    cache_dir = getattr(args, 'pn2021_mmap_cache_dir', None)
+    if not cache_dir:
+        return None
+    return os.path.join(
+        cache_dir,
+        f"{args.scheme}_{center}_100hz1000_{PN2021_EVAL_CACHE_VERSION}",
     )
 
 
@@ -170,6 +181,25 @@ def _expected_pn2021_cache_metadata(args, scheme, center):
             'crop_len': int(args.crop_len),
             'crop_mode': 'center',
         },
+    }
+    if args.scheme == 'super5':
+        metadata['pn2021_mapping'] = get_super5_pn2021_mapping_metadata()
+    return metadata
+
+
+def _expected_pn2021_mmap_metadata(args, scheme, center):
+    metadata = {
+        'scheme': args.scheme,
+        'center': center,
+        'class_names': list(scheme['class_names']),
+        'cache_version': PN2021_EVAL_CACHE_VERSION,
+        'preprocess_config': {
+            'target_fs': 100,
+            'target_len': 1000,
+            'apply_filter': True,
+            'apply_zscore': True,
+        },
+        'layout': 'mmap_v1',
     }
     if args.scheme == 'super5':
         metadata['pn2021_mapping'] = get_super5_pn2021_mapping_metadata()
@@ -196,22 +226,86 @@ def _cache_metadata_matches(found, expected):
     return found == expected
 
 
-def _load_or_build_pn2021_center(center, paths, snomeds, scheme, args):
+def _write_pn2021_mmap_cache(cache_root, signals, labels, record_ids, metadata):
+    os.makedirs(cache_root, exist_ok=True)
+    np.save(os.path.join(cache_root, 'signals.npy'),
+            signals.astype(np.float32, copy=False))
+    np.save(os.path.join(cache_root, 'labels.npy'),
+            labels.astype(np.float32, copy=False))
+    np.save(os.path.join(cache_root, 'record_ids.npy'),
+            np.asarray(record_ids, dtype=str))
+    with open(os.path.join(cache_root, 'metadata.json'), 'w') as f:
+        json.dump(metadata, f, indent=2, sort_keys=True)
+
+
+def _load_pn2021_mmap_cache(cache_root, expected_metadata):
+    if not cache_root:
+        return None
+    meta_path = os.path.join(cache_root, 'metadata.json')
+    sig_path = os.path.join(cache_root, 'signals.npy')
+    lab_path = os.path.join(cache_root, 'labels.npy')
+    rid_path = os.path.join(cache_root, 'record_ids.npy')
+    if not (os.path.exists(meta_path) and os.path.exists(sig_path) and
+            os.path.exists(lab_path) and os.path.exists(rid_path)):
+        return None
+    try:
+        with open(meta_path) as f:
+            found = json.load(f)
+    except Exception:
+        return None
+    if found != expected_metadata:
+        print(f"  mmap cache metadata mismatch, ignoring {cache_root}")
+        return None
+    return (
+        np.load(sig_path, mmap_mode='r'),
+        np.load(lab_path, mmap_mode='r'),
+        np.load(rid_path, allow_pickle=False).astype(str),
+        0,
+        0.0,
+        True,
+        'mmap',
+    )
+
+
+def _load_or_build_pn2021_center(center, center_dir, scheme, args):
     cache_path = _pn2021_cache_path(args, scheme, center)
     expected_metadata = _expected_pn2021_cache_metadata(args, scheme, center)
+    mmap_cache_root = _pn2021_mmap_cache_path(args, scheme, center)
+    expected_mmap_metadata = _expected_pn2021_mmap_metadata(args, scheme, center)
+
+    mmap_loaded = _load_pn2021_mmap_cache(mmap_cache_root, expected_mmap_metadata)
+    if mmap_loaded is not None:
+        return mmap_loaded
+
     if cache_path and os.path.exists(cache_path):
         data = np.load(cache_path, allow_pickle=True)
         if _cache_metadata_matches(_load_cache_metadata(data), expected_metadata):
+            signals = data['signals'].astype(np.float32, copy=False)
+            labels = data['labels'].astype(np.float32, copy=False)
+            record_ids = data['record_ids'].astype(str)
+            if mmap_cache_root:
+                _write_pn2021_mmap_cache(
+                    mmap_cache_root, signals, labels, record_ids,
+                    expected_mmap_metadata,
+                )
+                print(f"  {center}: converted PN2021 cache to mmap → {mmap_cache_root}")
+                mmap_loaded = _load_pn2021_mmap_cache(
+                    mmap_cache_root, expected_mmap_metadata
+                )
+                if mmap_loaded is not None:
+                    return mmap_loaded
             return (
-                data['signals'].astype(np.float32, copy=False),
-                data['labels'].astype(np.float32, copy=False),
-                data['record_ids'].astype(str),
+                signals,
+                labels,
+                record_ids,
                 0,
                 0.0,
                 True,
+                'npz',
             )
         print(f"  {center}: cache metadata mismatch, rebuilding {cache_path}")
 
+    paths, snomeds = scan_center_records(center_dir)
     signals, labels, record_ids = [], [], []
     fail = 0
     t0 = time.time()
@@ -247,6 +341,11 @@ def _load_or_build_pn2021_center(center, paths, snomeds, scheme, args):
         labels = np.zeros((0, scheme['num_classes']), dtype=np.float32)
         record_ids = np.asarray([], dtype=str)
     load_time = time.time() - t0
+    if mmap_cache_root and len(signals) > 0:
+        _write_pn2021_mmap_cache(
+            mmap_cache_root, signals, labels, record_ids, expected_mmap_metadata,
+        )
+        print(f"  {center}: cached preprocessed PN2021 mmap → {mmap_cache_root}")
     if cache_path and len(signals) > 0:
         np.savez_compressed(
             cache_path,
@@ -256,7 +355,7 @@ def _load_or_build_pn2021_center(center, paths, snomeds, scheme, args):
             metadata_json=json.dumps(expected_metadata, sort_keys=True),
         )
         print(f"  {center}: cached preprocessed PN2021 → {cache_path}")
-    return signals, labels, record_ids, fail, load_time, False
+    return signals, labels, record_ids, fail, load_time, False, 'built'
 
 
 @torch.no_grad()
@@ -317,8 +416,6 @@ def eval_pn2021(model, scheme, args, device):
             print(f"  {center}: missing dir, skipped")
             continue
         t0 = time.time()
-        paths, snomeds = scan_center_records(center_dir)
-        n_scanned = len(paths)
 
         # Plan Rev 7 Issue #39 / Rev 13.2: filter ref records (basename match).
         # The preprocessing cache must remain center-complete; apply exclusions
@@ -326,9 +423,10 @@ def eval_pn2021(model, scheme, args, device):
         excluded_set = excluded_by_center.get(center, set())
         n_excluded_ref = 0
 
-        signals, labels, record_ids, fail, load_time, cache_hit = _load_or_build_pn2021_center(
-            center, paths, snomeds, scheme, args
+        signals, labels, record_ids, fail, load_time, cache_hit, cache_kind = _load_or_build_pn2021_center(
+            center, center_dir, scheme, args
         )
+        n_scanned = int(len(record_ids) + fail)
         if excluded_set and len(record_ids) > 0:
             keep_mask = np.asarray([rid not in excluded_set for rid in record_ids], dtype=bool)
             n_excluded_ref = int((~keep_mask).sum())
@@ -346,7 +444,7 @@ def eval_pn2021(model, scheme, args, device):
             print(f"  {center}: no valid records")
             continue
         loader = DataLoader(ds, batch_size=args.batch_size, shuffle=False,
-                            num_workers=2, pin_memory=True)
+                            num_workers=args.num_workers, pin_memory=True)
         y_true, y_score = infer_dataset(model, loader, device)
         m = compute_macro_auroc_auprc(y_true, y_score, scheme['class_names'],
                                       min_pos=args.min_pos)
@@ -357,6 +455,7 @@ def eval_pn2021(model, scheme, args, device):
             'effective_n': len(ds),
             'load_time_s': round(ds._load_time, 1),
             'cache_hit': cache_hit,
+            'cache_kind': cache_kind,
             'macro_auroc': m['macro_auroc'],
             'macro_auprc': m['macro_auprc'],
             'n_classes_used': m['n_classes_used'],
@@ -365,12 +464,14 @@ def eval_pn2021(model, scheme, args, device):
         macro_aurocs.append(m['macro_auroc'])
         macro_auprcs.append(m['macro_auprc'])
         excl_tag = f" (-{n_excluded_ref} ref)" if n_excluded_ref > 0 else ""
-        cache_tag = " cache" if cache_hit else ""
+        cache_tag = f" {cache_kind}" if cache_hit else ""
         print(f"  {center:<22} n={len(ds):>5}{excl_tag}{cache_tag}  "
               f"AUROC={m['macro_auroc']:.4f}  AUPRC={m['macro_auprc']:.4f}  "
               f"n_classes={m['n_classes_used']}  ({time.time()-t0:.0f}s)")
-    avg_auroc = float(np.nanmean(macro_aurocs)) if macro_aurocs else float('nan')
-    avg_auprc = float(np.nanmean(macro_auprcs)) if macro_auprcs else float('nan')
+    finite_aurocs = [v for v in macro_aurocs if np.isfinite(v)]
+    finite_auprcs = [v for v in macro_auprcs if np.isfinite(v)]
+    avg_auroc = float(np.mean(finite_aurocs)) if finite_aurocs else float('nan')
+    avg_auprc = float(np.mean(finite_auprcs)) if finite_auprcs else float('nan')
     print(f"  ──── 7-center average AUROC={avg_auroc:.4f}  AUPRC={avg_auprc:.4f}")
     return {
         'avg_macro_auroc': avg_auroc,
@@ -518,6 +619,9 @@ def main():
     p.add_argument('--pn2021_root', default='/root/autodl-tmp/physionet2021')
     p.add_argument('--pn2021_cache_dir', default='/root/autodl-tmp/triple_labels/pn2021_eval_cache',
                    help='Cache preprocessed PN2021 center signals/labels for repeated model evals')
+    p.add_argument('--pn2021_mmap_cache_dir',
+                   default='/root/autodl-tmp/triple_labels/pn2021_eval_cache_mmap',
+                   help='Mmap-friendly PN2021 cache root. Preferred over compressed npz when present.')
     p.add_argument('--pn2021_limit', type=int, default=None,
                    help='Cap records per center (for smoke test)')
     p.add_argument('--mimic_limit', type=int, default=None,
