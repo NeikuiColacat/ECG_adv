@@ -2705,6 +2705,170 @@ contains ptbxl_source. Otherwise set --style_loss_weight 0 and treat the run as
 semantic-preserving only, not style-aware.
 ```
 
+### 2026-05-04 vNext-A Execution Record
+
+No-leak full-1000 PN2021 big4 style auxiliary classifier:
+
+```text
+artifact:
+  /root/autodl-tmp/center_style_classifier_noleak/full1000
+
+script:
+  scripts/ecgtwin_gen/train_noleak_center_style_aux_classifier.py
+
+centers:
+  ningbo, chapman_shaoxing, cpsc_2018, georgia
+
+classes:
+  NORM, MI, STTC
+
+input:
+  PN2021 mmap minimal_resample/per_sample_global, 100Hz, 1000 samples
+
+leak control:
+  K=500 center-token anchors excluded per center
+
+split:
+  train = 11517
+  val   = 2466
+  test  = 2475
+
+test accuracy = 0.6279
+test macro F1 = 0.6555
+best val macro F1 = 0.6713
+```
+
+Important caveat:
+
+```text
+This style classifier is an auxiliary differentiable training signal and a
+fast probe. It is stronger than the old 250-point/7-way probe, but it is still
+not final proof of clinical style validity. Final evidence still needs paired
+no-token controls, C2ST/feature distance, and downstream AUROC/AUPRC.
+```
+
+vNext-A PN2021 big4 token training:
+
+```text
+artifact:
+  /root/autodl-tmp/graduate_project/center_token_vnext/pn2021_big4_mv4_style005_sem005_steps3000
+
+token bank:
+  prompt_token_bank.pt
+
+schema:
+  direct MV4
+  centers = ningbo, chapman_shaoxing, cpsc_2018, georgia
+  classes = CD, HYP, MI, NORM, STTC
+
+loss:
+  L_denoise + 1e-3 L_init + 1e-4 L_orth
+  + 0.05 L_style + 0.05 L_semantic
+
+runtime:
+  3000 steps, batch 16, bf16, 4 workers
+  elapsed ~= 339 seconds on RTX 4090D
+```
+
+Final training metrics:
+
+```text
+step = 3000
+loss = 0.10625
+recon_loss = 0.05615
+style_loss = 0.49121
+semantic_loss = 0.51043
+orth_loss = 0.11677
+avg token norm = 1.9972
+avg token delta norm = 1.8033
+```
+
+Token diagnostic artifact:
+
+```text
+/root/autodl-tmp/graduate_project/center_token_vnext/diagnostics/token_summary.csv
+/root/autodl-tmp/graduate_project/center_token_vnext/diagnostics/token_cosine.csv
+
+avg token norm = 1.8923
+avg token delta norm = 1.6347
+avg cosine to init = 0.4866
+```
+
+Per-center delta summary:
+
+| center | avg token delta norm | note |
+|---|---:|---|
+| ningbo | 1.8576 | active NORM/MI/STTC token movement |
+| chapman_shaoxing | 1.9294 | active token movement despite few MI anchors |
+| cpsc_2018 | 1.0931 | HYP/MI stayed near init because selected anchors had no HYP/MI |
+| georgia | 1.6588 | active NORM/STTC token movement |
+
+Generator compatibility fix:
+
+```text
+scripts/ecgtwin_gen/generate_center_prompt_token_synth_batched.py
+
+PN2021 center caches do not always contain source_indices. The batched
+generator now falls back to the cache index when source_indices is absent, so
+PN2021 target-center smoke generation can write summary.json records.
+```
+
+Paired smoke: georgia target-token vs no-token:
+
+```text
+center = georgia
+classes = NORM, STTC
+n_per_class = 50
+steps = 25
+reference policy = same_class
+ref_text_mode = actual_report
+seed = 4242
+
+token pool:
+  /root/autodl-tmp/graduate_project/center_token_vnext/smoke_georgia_token/georgia/samples.npz
+
+no-token pool:
+  /root/autodl-tmp/graduate_project/center_token_vnext/smoke_georgia_no_token/georgia/samples.npz
+
+style probe output:
+  /root/autodl-tmp/graduate_project/center_token_vnext/smoke_georgia_style_probe/
+
+style probe script:
+  scripts/ecgtwin_gen/score_prompt_token_style_probe.py
+```
+
+Semantic target-probability smoke:
+
+| arm | class | n | mean target probability |
+|---|---|---:|---:|
+| no-token | NORM | 50 | 0.7737 |
+| target-token | NORM | 50 | 0.9954 |
+| no-token | STTC | 50 | 0.6571 |
+| target-token | STTC | 50 | 0.8138 |
+
+No-leak style probe smoke:
+
+| arm | class | n | mean P(georgia) | top1 georgia |
+|---|---|---:|---:|---:|
+| no-token | NORM | 50 | 0.6175 | 0.72 |
+| target-token | NORM | 50 | 0.9948 | 1.00 |
+| no-token | STTC | 50 | 0.6022 | 0.60 |
+| target-token | STTC | 50 | 0.9829 | 0.98 |
+
+Interpretation:
+
+```text
+This is the first positive vNext-A smoke signal. With matched georgia
+references and the same generation seed, the style-aware center token increases
+both target-class probability and target-center style probability versus
+no-token.
+
+This does not yet satisfy the final objective because no downstream
+EfficientNetV2 AUROC/AUPRC ablation has been run. The next required step is a
+larger paired candidate pool with B/C/D v2 self-distillation students and
+PN2021/fold10 evaluation.
+```
+
 ### Claim Rules
 
 Allowed claim if the matched ablation passes:

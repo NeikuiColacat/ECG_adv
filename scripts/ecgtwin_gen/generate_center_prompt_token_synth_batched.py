@@ -201,12 +201,14 @@ def generate_batch(
     records = []
     for j, ref_idx in enumerate(ref_indices):
         seed = seed_base + j
+        source_indices = cache.get("source_indices")
+        ref_source_index = int(source_indices[ref_idx]) if source_indices is not None else int(ref_idx)
         records.append({
             "center": center_name,
             "class": cls,
             "seed": int(seed),
             "ref_record_id": str(cache["record_ids"][ref_idx]),
-            "ref_source_index": int(cache["source_indices"][ref_idx]),
+            "ref_source_index": ref_source_index,
             "ref_primary_class": str(cache["primary_class"][ref_idx]),
             "ref_primary_snomed": cache["primary_snomed"][ref_idx],
             "ref_text_mode": ref_text_mode,
