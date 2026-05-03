@@ -1684,14 +1684,25 @@ The reproducible positive claim is:
 
 ```text
 On the project-defined low-resource PTB-XL custom seed42 protocol,
-ECGTwin PTBXL center-token synthetic pretraining followed by real2000 fine-tune
-and optional self-distillation improves macro AUROC by about +3pp and macro
-AUPRC by about +7pp versus the A-fair real2000 baseline.
+ECGTwin synthetic pretraining followed by real2000 fine-tune and optional
+self-distillation improves macro AUROC by about +3pp and macro AUPRC by about
++7pp versus the A-fair real2000 baseline.
 ```
 
 This claim is specific to the custom seed42 split. It should not be written as
 an official PTB-XL fold10 improvement, because the C/D line did not reproduce
 the same gain on fold10.
+
+Important 2026-05-04 center-token ablation update:
+
+```text
+The +3pp/+7pp custom-seed42 gain should not be attributed causally to the
+PTBXL center token. A no-token vanilla ECGTwin synthetic pretrain control
+matched or exceeded the original center-token C1 result after real2000
+fine-tuning. The supported claim is "ECGTwin synthetic pretraining helps this
+custom protocol"; the center-token-specific claim must use the separate v2
+self-distillation ablation, where center-token beats vanilla under that v2 setup.
+```
 
 ### Fixed Data Protocol
 
@@ -2054,30 +2065,192 @@ during distillation and may be split-specialized.
 | D1 | C3 teacher -> real2000 + synth20k soft | 0.8670 | 0.6737 | 0.7631 | 0.5273 | 0.7407 | 0.4280 |
 | D2 | C3 teacher -> real2000 soft only | 0.8682 | 0.6836 | 0.7549 | 0.5180 | 0.7308 | 0.4215 |
 
+### 2026-05-04 Center-Token Causal Ablation For The Large-Gain Line
+
+Question:
+
+```text
+Is the +3pp/+7pp custom seed42 gain caused by the PTBXL center token, or by the
+broader ECGTwin synthetic-pretrain -> real-fine-tune route?
+```
+
+Control design:
+
+```text
+Keep the same train2000 split, same translated-report random_any reference
+policy, same 20000 synthetic candidate size, same C0 synthetic-only pretrain,
+and same C1 real2000 fine-tune.
+
+Only change:
+  target prompt = super5 diagnosis prompt only
+  no learned <ptbxl_CLASS> token
+```
+
+No-token vanilla synthetic pool:
+
+```text
+/root/autodl-tmp/graduate_project/vanilla_ecgtwin_synth_candidates_n20000_translated_randomany_seed42/ptbxl/samples.npz
+
+N = 20000
+per class = 4000
+signals shape = (20000, 12, 1000)
+labels shape = (20000, 5)
+```
+
+Vanilla C0 synthetic-only pretrain:
+
+```text
+artifact:
+  /root/autodl-tmp/graduate_project/ablation_vanilla_no_token_synthonly_pretrain_n20000_seed42
+
+config:
+  synth_npz = vanilla no-token 20k pool
+  synthetic_only = true
+  synth_ratio = 0.25
+  batch_size = 64
+  epochs = 30
+  patience = 8
+  lr = 0.01
+  checkpoint_metric = auroc
+  seed = 5042
+
+custom test = 0.6023 / 0.3851
+```
+
+Vanilla C1 real2000 fine-tune:
+
+```text
+artifact:
+  /root/autodl-tmp/graduate_project/ablation_vanilla_no_token_synthpretrain_auprc_real_finetune_seed42
+
+init_ckpt:
+  /root/autodl-tmp/graduate_project/ablation_vanilla_no_token_synthonly_pretrain_n20000_seed42/best_model_auprc.pt
+
+config:
+  train data = real2000 only
+  batch_size = 64
+  epochs = 50
+  patience = 10
+  lr = 0.003
+  checkpoint_metric = auprc
+  seed = 6042
+```
+
+Repro commands:
+
+```bash
+PY=/root/miniforge3/envs/ECGTwin/bin/python
+SPLIT=/root/autodl-tmp/graduate_project/splits/ptbxl_super5_seed42_train2000_val2000.json
+CACHE=/root/autodl-tmp/triple_labels/cache/ptbxl_minimal_resample_per_sample_global_fs100_len1000.npy
+SYNTH=/root/autodl-tmp/graduate_project/vanilla_ecgtwin_synth_candidates_n20000_translated_randomany_seed42/ptbxl/samples.npz
+C0=/root/autodl-tmp/graduate_project/ablation_vanilla_no_token_synthonly_pretrain_n20000_seed42
+C1=/root/autodl-tmp/graduate_project/ablation_vanilla_no_token_synthpretrain_auprc_real_finetune_seed42
+
+$PY scripts/triple_labels/train_ptbxl.py \
+  --scheme super5 \
+  --split_json "$SPLIT" \
+  --preprocess_mode minimal_resample \
+  --norm_mode per_sample_global \
+  --cache_path "$CACHE" \
+  --output_dir "$C0" \
+  --crop_len 1000 \
+  --batch_size 64 \
+  --epochs 30 \
+  --patience 8 \
+  --lr 0.01 \
+  --weight_decay 0.01 \
+  --cosine_tmax 15 \
+  --num_workers 4 \
+  --seed 5042 \
+  --checkpoint_metric auroc \
+  --synth_npz "$SYNTH" \
+  --synth_ratio 0.25 \
+  --synthetic_only
+
+$PY scripts/triple_labels/train_ptbxl.py \
+  --scheme super5 \
+  --split_json "$SPLIT" \
+  --preprocess_mode minimal_resample \
+  --norm_mode per_sample_global \
+  --cache_path "$CACHE" \
+  --output_dir "$C1" \
+  --init_ckpt "$C0/best_model_auprc.pt" \
+  --crop_len 1000 \
+  --batch_size 64 \
+  --epochs 50 \
+  --patience 10 \
+  --lr 0.003 \
+  --weight_decay 0.01 \
+  --cosine_tmax 15 \
+  --num_workers 4 \
+  --seed 6042 \
+  --checkpoint_metric auprc
+
+$PY scripts/triple_labels/eval_crosscenter.py \
+  --scheme super5 \
+  --model_dir "$C1" \
+  --crop_len 1000 \
+  --ptbxl_cache "$CACHE" \
+  --pn2021_mmap_cache_dir /root/autodl-tmp/triple_labels/pn2021_eval_cache_mmap \
+  --skip_mimic
+```
+
+Result:
+
+| run | token | custom AUROC | custom AUPRC | fold10 AUROC | fold10 AUPRC | PN2021 AUROC | PN2021 AUPRC |
+|---|---|---:|---:|---:|---:|---:|---:|
+| A-fair | none | 0.8357 | 0.6040 | 0.8224 | 0.5922 | 0.7339 | 0.4074 |
+| C1 original | PTBXL MV4 token | 0.8645 | 0.6723 | 0.7490 | 0.5106 | 0.7364 | 0.4195 |
+| C1 vanilla control | no token | 0.8670 | 0.6846 | 0.8560 | 0.6695 | 0.7719 | 0.4750 |
+
+Interpretation:
+
+```text
+This ablation is negative for the center-token causal story in the +3pp/+7pp
+pipeline. The no-token vanilla ECGTwin control is not worse; after real2000
+fine-tuning it exceeds the original center-token C1 on custom seed42, official
+fold10, and PN2021.
+
+Therefore the +3pp/+7pp result should be attributed to ECGTwin synthetic
+pretraining plus real2000 fine-tuning, not specifically to center-token
+conditioning.
+```
+
+Conservative conclusion:
+
+```text
+Center token is useful in the separate v2 self-distillation setting where it
+rescues a vanilla ECGTwin synthetic pool, but it is not validated as the cause
+of the large C0->C1 custom-seed42 gain.
+```
+
 ### Thesis-Safe Wording
 
 Use this wording:
 
 ```text
-Under our low-resource PTB-XL custom seed42 protocol, ECGTwin PTBXL center-token
-synthetic pretraining followed by real2000 fine-tuning improves macro AUROC by
-about +3 percentage points and macro AUPRC by about +7 percentage points over
-the A-fair real2000 baseline. The strongest custom result is obtained after
-C3-teacher self-distillation.
+Under our low-resource PTB-XL custom seed42 protocol, ECGTwin synthetic
+pretraining followed by real2000 fine-tuning improves macro AUROC by about
++3 percentage points and macro AUPRC by about +7 percentage points over the
+A-fair real2000 baseline. The strongest custom result is obtained after
+C3-teacher self-distillation. A 2026-05-04 no-token ablation shows this large
+custom gain is not caused specifically by the PTBXL center token.
 ```
 
 Do not use this wording:
 
 ```text
 The method improves official PTB-XL fold10 performance by +3pp/+7pp.
+The +3pp/+7pp gain proves the center-token design is effective.
 ```
 
 Reason:
 
 ```text
 The large C/D custom gain did not transfer to official fold10. The official
-fold10-safe center-token/self-distillation evidence is the separate v2 E4 line,
-which preserves fold10 better but has a smaller PTB-XL in-domain gain.
+fold10-safe center-token/self-distillation evidence is the separate v2 E4 line.
+The large custom C0->C1 gain now has a no-token control that is stronger than
+the original center-token C1.
 ```
 
 ## Canonical v2 Center-Token Self-Distillation Ablation
