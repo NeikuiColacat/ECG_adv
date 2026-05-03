@@ -2356,3 +2356,370 @@ Therefore the v2 PN2021 improvement should be reported with the exact
 legacy-default evaluation口径, and re-optimized if the project standard switches
 to minimal_resample PN2021 evaluation.
 ```
+
+## Center-Token vNext Plan: Matched No-Token +2pp Target
+
+### Goal
+
+这一节专门服务后续 center-token 改进，不再把 2026-05-03 C0/C1 大增益线
+解释成 center-token 因果结果。
+
+目标改成更严格的 matched ablation：
+
+```text
+在同一 split、同一 reference ECG、同一 reference text、同一 target diagnosis、
+同一 sampling seed、同一过滤器、同一下游训练 recipe 下，
+center-token arm 的 macro AUPRC 至少比 no-token arm 高 2 个百分点。
+```
+
+Primary acceptance:
+
+```text
+target-token AUPRC - matched no-token AUPRC >= +0.0200
+```
+
+Secondary acceptance:
+
+```text
+target-token AUROC 不下降超过 0.005
+official fold10 或 target-center PN2021 不出现明显回退
+bootstrap 95% CI 的 AUPRC delta 下界 > 0 时才能写成稳定增益
+```
+
+### Why The Previous C0/C1 Evidence Is Not Enough
+
+已有 no-token 消融说明：
+
+```text
+C1 no-token vanilla control:
+  custom seed42 = 0.8670 / 0.6846
+  fold10        = 0.8560 / 0.6695
+  PN2021        = 0.7719 / 0.4750
+
+C1 original PTBXL MV4 center-token:
+  custom seed42 = 0.8645 / 0.6723
+  fold10        = 0.7490 / 0.5106
+  PN2021        = 0.7364 / 0.4195
+```
+
+因此旧 C0/C1 路线的失败点不是 ECGTwin synthetic pretraining 没用，而是：
+
+```text
+1. token 只用 diffusion reconstruction loss 学习，没有强制目标中心风格变强；
+2. no-token prompt + translated report 已经很强，center token 没有额外信息优势；
+3. candidate pool 不是 paired control，随机采样差异和 gate 差异会混进结论；
+4. HYP/CD 低质量样本可能稀释 token 的有效类信号；
+5. broad synthetic pretrain 会把 token 影响冲淡，真正能体现 token 的位置应该是
+   filtered synthetic pool、self-distillation 或 latent-hull AT。
+```
+
+### Existing Positive But Limited Evidence
+
+v2 self-distillation 里已有 center-token 相对 no-token 的正向证据：
+
+```text
+vanilla ECGTwin + v2:
+  custom = 0.8333 / 0.6051
+  fold10 = 0.8212 / 0.6005
+  PN2021 = 0.7528 / 0.4233
+
+PTBXL center-token ECGTwin + v2:
+  custom = 0.8500 / 0.6371
+  fold10 = 0.8405 / 0.6380
+  PN2021 = 0.7616 / 0.4546
+```
+
+这个结果已经满足 legacy-default 口径下的 `>2pp vs vanilla`，但还不能作为最终
+center-token 主结论，原因是：
+
+```text
+1. PN2021 minimal_resample/per_sample_global 口径下该优势没有复现；
+2. 当前 v2 过滤不是严格 same-reference/same-seed paired filtering；
+3. style validity 主要来自 downstream utility，还需要 no-leak center-style probe、
+   C2ST 和 feature-distance 共同支撑。
+```
+
+所以 vNext 的目标不是重复 v2，而是把 v2 的正向信号做成更干净的因果实验。
+
+### vNext Core Idea
+
+center token 必须同时满足三件事：
+
+```text
+1. 语义不变：生成的 ECG 仍然像目标 super5 类别；
+2. 风格增强：比 no-token/wrong-token 更像目标中心；
+3. 下游有用：在同一 filtered pool 和同一训练 recipe 下比 no-token 多至少 2pp AUPRC。
+```
+
+因此 vNext 不再只训练一个 diffusion reconstruction token，而是训练
+style-aware + semantic-preserving prompt token。
+
+### Token Training Loss
+
+当前代码已经支持的可执行第一版：
+
+```text
+scripts/ecgtwin_gen/train_center_prompt_tokens.py
+methods/ecgtwin_gen/prompt_token/trainer.py
+
+available losses:
+  L_denoise      = ECGTwin diffusion noise MSE
+  L_init         = token stays near class text embedding init
+  L_orth         = multi-vector token diversity
+  L_style        = frozen center-style classifier CE on decoded predicted x0
+  L_semantic     = frozen EfficientNet super5 BCE on decoded predicted x0
+```
+
+vNext-A loss:
+
+```text
+L = L_denoise
+  + lambda_init * L_init
+  + lambda_orth * L_orth
+  + lambda_style * L_style
+  + lambda_semantic * L_semantic
+```
+
+Recommended first sweep on 4090D:
+
+| run | token schema | style weight | semantic weight | aux timestep max | steps | reason |
+|---|---|---:|---:|---:|---:|---|
+| vNext-A | direct MV4 | 0.05 | 0.05 | 50 | 3000 | smallest change from best existing MV4 |
+| vNext-B | direct MV8 | 0.05 | 0.05 | 50 | 3000 | more token capacity, still simple |
+| vNext-C | factorized C2+K2+R4 | 0.05 | 0.05 | 50 | 3000 | separate center style, class semantics, residual |
+| vNext-D | direct MV8 | 0.10 | 0.05 | 50 | 3000 | stronger style pressure |
+
+Do not start with very large `lambda_style`; the decoded `pred_x0` at diffusion
+training time is only an approximation. If style loss dominates, the token may
+learn classifier artifacts instead of physiologic center style.
+
+Future vNext-Beyond code change if vNext-A/D is insufficient:
+
+```text
+Add prototype/contrastive style loss:
+  f = frozen EfficientNet or ECGTwin latent feature
+  mu_target(center, class) = held-out target-center real prototype
+  mu_neg(other centers, same class) = negative style prototypes
+
+  L_proto = ||f(x0) - mu_target||_2^2
+          + max(0, margin + sim(f, mu_neg) - sim(f, mu_target))
+
+This is preferred over only using a center classifier if the classifier's
+accuracy remains weak or if it overfits center-specific artifacts.
+```
+
+### Reference Policy
+
+For target-center style tokens:
+
+```text
+reference ECG = target center K=500 anchor when possible
+reference class = same primary super5 class when possible
+reference text = actual_report / SNOMED-derived report text
+target text = super5 diagnosis prompt + <target_center_CLASS>
+```
+
+For no-token controls:
+
+```text
+Use the exact same reference ECG, same reference text, same patient info,
+same target diagnosis prompt, and same sampling seed.
+Only omit the learned token.
+```
+
+This is required because otherwise the experiment measures random reference
+selection rather than center-token effect.
+
+### Paired Generation Arms
+
+Every generated candidate should have paired arms:
+
+| arm | prompt condition | purpose |
+|---|---|---|
+| no-token | diagnosis prompt only | strict baseline |
+| target-token | diagnosis prompt + `<target_center_CLASS>` | main method |
+| wrong-center | diagnosis prompt + `<other_center_CLASS>` | center-specificity control |
+| PTBXL-source-token | diagnosis prompt + `<ptbxl_CLASS>` | source-style negative control |
+| wrong-class-token | diagnosis prompt + `<target_center_OTHERCLASS>` | semantic leakage check |
+
+The candidate manifest must store:
+
+```text
+pair_id
+ref_record_id
+ref_center
+ref_primary_class
+target_class
+sampling_seed
+arm
+token_bank
+quality gate results
+style score
+semantic scores
+selected_for_downstream
+```
+
+### Gate And Selection
+
+The selector should be pairwise, not independent per arm.
+
+Hard gates:
+
+```text
+NaN/Inf absent
+amplitude and flatline sanity pass
+Einthoven/aVR residual pass
+semantic target class probability passes class-specific threshold
+NORM: p_NORM high and max abnormal low
+HYP/CD: digital criteria are report-only until gates become reliable
+```
+
+Style gates:
+
+```text
+style_score_delta = P(target center | target-token)
+                  - P(target center | no-token)
+
+target-token kept only if:
+  style_score_delta >= delta_min
+  P(target center | target-token) > P(target center | wrong-center)
+  C2ST distance to held-out target real <= no-token C2ST distance
+```
+
+Initial thresholds:
+
+```text
+delta_min = 0.05 for screening
+delta_min = 0.10 for high-confidence pool
+per_class_cap = 400 for v2 self-distill
+max_keep_total = 2000
+NORM/MI/STTC are first-class production classes
+HYP/CD start as ablation-only until digital gates pass
+```
+
+Diversity selection:
+
+```text
+After hard/style gates, run farthest-point or k-center selection in frozen
+EfficientNet feature space within each class. This avoids keeping 400 nearly
+duplicate high-style-score samples.
+```
+
+### Downstream Ablation Matrix
+
+Primary matrix:
+
+| ID | synthetic source | token | filtering | student recipe | primary metric |
+|---|---|---|---|---|---|
+| A | none | no | none | real2000 from scratch | reference baseline |
+| B | paired vanilla ECGTwin | no | v2 + style/digital gates | self-distill v2 | no-token control |
+| C | paired target-token ECGTwin | yes | same v2 + style/digital gates | self-distill v2 | must beat B by >=2pp AUPRC |
+| D | paired wrong-center token | wrong | same gates | self-distill v2 | should not beat C |
+| E | target-token accepted latents | yes | same gates | Latent-Hull online AT | utility add-on |
+
+Primary target for PTB-XL seed42 v2:
+
+```text
+matched no-token v2 custom AUPRC = 0.6051
+target-token vNext custom AUPRC target >= 0.6251
+
+matched no-token v2 fold10 AUPRC = 0.6005
+target-token vNext fold10 AUPRC target >= 0.6205
+
+matched no-token v2 PN2021 AUPRC = 0.4233
+target-token vNext PN2021 AUPRC target >= 0.4433
+```
+
+Stricter C0/C1 route target:
+
+```text
+matched no-token C1 custom AUPRC = 0.6846
+center-token C1 would need custom AUPRC >= 0.7046
+
+This is much harder. Do not use C0/C1 as the first center-token target.
+Use v2 filtering and/or Latent-Hull AT first, where center-token effects are
+less diluted by broad synthetic pretraining.
+```
+
+### Recommended Execution Order
+
+1. Train or select no-leak style probes with full 1000-sample ECG input, K=500
+   anchors excluded, and same-label binary target-vs-other splits.
+2. Train vNext-A and vNext-D first because they use already implemented
+   `style_loss_weight` and `semantic_loss_weight`.
+3. Generate paired no-token/target-token/wrong-token candidates with identical
+   references and seeds.
+4. Run pairwise style + semantic + digital + diversity selection.
+5. Train v2 self-distillation students for B/C/D.
+6. If C beats B by at least 2pp AUPRC, run fold10, PN2021, and bootstrap CI.
+7. Only after v2 passes, try Latent-Hull online AT with selected token latents.
+8. If v2 fails, inspect whether failure is style-score, semantic-score,
+   diversity, or downstream-training related before changing token capacity.
+
+### First Concrete Commands To Materialize vNext-A
+
+Use existing code paths first. The first executable target should be a PN2021
+center whose label is present in the no-leak style classifier. PTB-XL source
+style-token training can use the same recipe only after the style probe includes
+`ptbxl_source` as one of its labels.
+
+```bash
+PY=/root/miniforge3/envs/ECGTwin/bin/python
+
+$PY -u scripts/ecgtwin_gen/train_center_prompt_tokens.py \
+  --centers ningbo chapman_shaoxing cpsc_2018 georgia \
+  --cache_root /root/autodl-tmp/ecgtwin_prompt_token_super5/cache_v1 \
+  --prompt_bank /root/autodl-tmp/ecgtwin_prompt_token_super5/cache_v1/text_prompt_bank.pt \
+  --save_dir /root/autodl-tmp/graduate_project/center_token_vnext/pn2021_big4_mv4_style005_sem005_steps3000 \
+  --K 500 \
+  --seed 42 \
+  --total_steps 3000 \
+  --batch_size 16 \
+  --num_workers 4 \
+  --sample_strategy center_class_balanced \
+  --amp_dtype bf16 \
+  --token_mode direct \
+  --n_token_vectors 4 \
+  --token_orth_weight 1e-4 \
+  --ref_text_mode actual_report \
+  --style_ckpt /root/autodl-tmp/center_style_classifier_noleak/full1000/best_model.pt \
+  --style_loss_weight 0.05 \
+  --style_crop_len 1000 \
+  --semantic_ckpt /root/autodl-tmp/graduate_project/method_a_real2000_seed44_v2teacher/best_model.pt \
+  --semantic_loss_weight 0.05 \
+  --semantic_crop_len 1000 \
+  --aux_timestep_max 50 \
+  --log_every 50 \
+  --save_every 500
+```
+
+If the no-leak style checkpoint above does not exist, create it first from
+`docs/pipelines/center_style_classifier_pipeline.md`; do not fall back to the old
+250-point 7-way classifier for final evidence.
+
+PTB-XL source-token variant:
+
+```text
+Use --centers ptbxl_source only with a style classifier whose center_names
+contains ptbxl_source. Otherwise set --style_loss_weight 0 and treat the run as
+semantic-preserving only, not style-aware.
+```
+
+### Claim Rules
+
+Allowed claim if the matched ablation passes:
+
+```text
+With paired references and identical downstream training, the style-aware
+center-token synthetic pool improves macro AUPRC by at least 2pp over no-token
+ECGTwin synthetic data.
+```
+
+Not allowed:
+
+```text
+The C0/C1 +3pp/+7pp gain proves center token works.
+The style classifier alone proves medical validity.
+The target-token pool is better if it only wins after using a different filter,
+different reference distribution, or different synthetic count.
+```
