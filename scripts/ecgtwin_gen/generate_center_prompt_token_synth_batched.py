@@ -132,8 +132,9 @@ def generate_batch(
     victim: EfficientNetVictimTierM,
     cache: dict,
     prompt_bank: dict,
-    token_blob: dict,
-    center_idx: int,
+    token_blob: dict | None,
+    center_idx: int | None,
+    center_name: str,
     cls: str,
     cls_idx: int,
     ref_indices: list[int],
@@ -147,8 +148,12 @@ def generate_batch(
     device = wrapper.device
     bsz = len(ref_indices)
     base_text = _load_text_embed(prompt_bank, None, cls).float()
-    token_seq = token_sequence_from_bank(token_blob, center_idx, cls_idx).repeat(token_repeat, 1)
-    text_aug = torch.cat([base_text, token_seq], dim=0).to(device)
+    if token_blob is None:
+        token_seq = None
+        text_aug = base_text.to(device)
+    else:
+        token_seq = token_sequence_from_bank(token_blob, center_idx, cls_idx).repeat(token_repeat, 1)
+        text_aug = torch.cat([base_text, token_seq], dim=0).to(device)
     text_aug_b = text_aug.unsqueeze(0).repeat(bsz, 1, 1)
     mask_aug = torch.ones(bsz, text_aug.shape[0], dtype=torch.float32, device=device)
 
@@ -197,7 +202,7 @@ def generate_batch(
     for j, ref_idx in enumerate(ref_indices):
         seed = seed_base + j
         records.append({
-            "center": token_blob["centers"][center_idx],
+            "center": center_name,
             "class": cls,
             "seed": int(seed),
             "ref_record_id": str(cache["record_ids"][ref_idx]),
@@ -206,8 +211,8 @@ def generate_batch(
             "ref_primary_snomed": cache["primary_snomed"][ref_idx],
             "ref_text_mode": ref_text_mode,
             "ref_class_policy": ref_class_policy,
-            "prompt_token": f"<{token_blob['centers'][center_idx]}_{cls}>",
-            "prompt_token_vectors": int(token_seq.shape[0]),
+            "prompt_token": "none" if token_blob is None else f"<{center_name}_{cls}>",
+            "prompt_token_vectors": 0 if token_seq is None else int(token_seq.shape[0]),
             "p_target": float(probs[j, cls_idx]),
             "top1": CLASS_NAMES_SUPER5[int(np.argmax(probs[j]))],
             "victim_probs": {
@@ -231,7 +236,7 @@ def main() -> None:
     ap.add_argument("--center", default="ptbxl")
     ap.add_argument("--classes", nargs="+", default=["NORM", "MI", "STTC", "HYP", "CD"])
     ap.add_argument("--cache_root", required=True)
-    ap.add_argument("--token_bank", required=True)
+    ap.add_argument("--token_bank", default="")
     ap.add_argument("--prompt_bank", required=True)
     ap.add_argument("--out_dir", required=True)
     ap.add_argument("--K", type=int, default=2000)
@@ -244,6 +249,8 @@ def main() -> None:
     ap.add_argument("--victim_ckpt", required=True)
     ap.add_argument("--victim_crop_len", type=int, default=1000)
     ap.add_argument("--token_repeat", type=int, default=1)
+    ap.add_argument("--no_token", action="store_true",
+                    help="Generate with diagnosis prompt only, no learned center prompt token.")
     ap.add_argument("--ref_text_mode", choices=["class_fallback", "actual_report", "translated_report", "normal"],
                     default="class_fallback")
     ap.add_argument("--ref_prompt_embed_cache", default="",
@@ -265,7 +272,12 @@ def main() -> None:
     out_dir = Path(args.out_dir) / args.center
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    token_blob = torch.load(args.token_bank, map_location="cpu", weights_only=False)
+    if args.no_token:
+        token_blob = None
+    else:
+        if not args.token_bank:
+            raise ValueError("--token_bank is required unless --no_token is set")
+        token_blob = torch.load(args.token_bank, map_location="cpu", weights_only=False)
     prompt_bank = torch.load(args.prompt_bank, map_location="cpu", weights_only=False)
     ref_prompt_embeds = None
     if args.ref_prompt_embed_cache:
@@ -274,11 +286,15 @@ def main() -> None:
         print(f"[setup] loaded translated ref prompt embeds: {len(ref_prompt_embeds)}", flush=True)
     if args.ref_text_mode == "translated_report" and ref_prompt_embeds is None:
         raise ValueError("--ref_prompt_embed_cache is required for --ref_text_mode translated_report")
-    centers = list(token_blob["centers"])
-    class_names = list(token_blob["class_names"])
-    if args.center not in centers:
-        raise ValueError(f"center {args.center!r} not in token bank centers={centers}")
-    center_idx = centers.index(args.center)
+    if token_blob is None:
+        class_names = list(CLASS_NAMES_SUPER5)
+        center_idx = None
+    else:
+        centers = list(token_blob["centers"])
+        class_names = list(token_blob["class_names"])
+        if args.center not in centers:
+            raise ValueError(f"center {args.center!r} not in token bank centers={centers}")
+        center_idx = centers.index(args.center)
 
     cache_root = Path(args.cache_root)
     cache = torch.load(cache_root / "center_full_latents" / f"{args.center}.pt",
@@ -324,6 +340,7 @@ def main() -> None:
                 prompt_bank=prompt_bank,
                 token_blob=token_blob,
                 center_idx=center_idx,
+                center_name=args.center,
                 cls=cls,
                 cls_idx=cls_idx,
                 ref_indices=chunk,

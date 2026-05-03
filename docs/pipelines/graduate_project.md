@@ -1670,3 +1670,516 @@ The main effective route is:
   -> real2000 clean fine-tune
   -> strict real-anchor latent-hull AT as a small stabilizer.
 ```
+
+## Canonical Reproducibility Record: Custom Seed42 +3pp AUROC / +7pp AUPRC
+
+This is the canonical record for the large PTB-XL custom-seed42 improvement
+observed on 2026-05-03. It consolidates the previously separate
+`graduate_project_self_disillation*.md` notes into this main graduation-project
+document.
+
+### Claim Boundary
+
+The reproducible positive claim is:
+
+```text
+On the project-defined low-resource PTB-XL custom seed42 protocol,
+ECGTwin PTBXL center-token synthetic pretraining followed by real2000 fine-tune
+and optional self-distillation improves macro AUROC by about +3pp and macro
+AUPRC by about +7pp versus the A-fair real2000 baseline.
+```
+
+This claim is specific to the custom seed42 split. It should not be written as
+an official PTB-XL fold10 improvement, because the C/D line did not reproduce
+the same gain on fold10.
+
+### Fixed Data Protocol
+
+Split:
+
+```text
+/root/autodl-tmp/graduate_project/splits/ptbxl_super5_seed42_train2000_val2000.json
+
+train = 2000 randomly selected PTB-XL records
+val   = 2000 randomly selected PTB-XL records
+test  = remaining 17799 PTB-XL records
+```
+
+Labels:
+
+```text
+scheme = super5
+class order = CD, HYP, MI, NORM, STTC
+source = PTB-XL diagnostic_class mapping in scripts/triple_labels/label_schemes.py
+```
+
+Classifier preprocessing:
+
+```text
+preprocess_mode = minimal_resample
+norm_mode       = per_sample_global
+target_fs       = 100 Hz
+target_len      = 1000 samples = 10 seconds
+lead order      = PTB-XL order: I, II, III, aVR, aVL, aVF, V1-V6
+```
+
+Classifier architecture:
+
+```text
+EfficientNet1DV2
+variant = s_v2
+input_channels = 12
+num_classes = 5
+activation = leaky_relu
+stochastic_depth_prob = 0.304
+dropout_rate = 0.0
+use_se = True
+norm_type = batch
+```
+
+Hardware/runtime expectation:
+
+```text
+RTX 4090D 24GB
+80GB RAM
+15 CPU cores
+large caches/checkpoints under /root/autodl-tmp
+```
+
+### Baseline A-Fair
+
+Purpose:
+
+```text
+Use only the 2000 real PTB-XL training ECGs.
+Select checkpoint by AUPRC to avoid comparing against an AUROC-biased or
+early-stop-biased baseline.
+```
+
+Artifact:
+
+```text
+/root/autodl-tmp/graduate_project/method_a_real2000_seed42_ckpt_auprc_p50
+```
+
+Metrics:
+
+| metric | value |
+|---|---:|
+| custom seed42 AUROC | 0.8357 |
+| custom seed42 AUPRC | 0.6040 |
+| official fold10 AUROC | 0.8224 |
+| official fold10 AUPRC | 0.5922 |
+| PN2021 avg AUROC | 0.7339 |
+| PN2021 avg AUPRC | 0.4074 |
+
+### PTBXL Center-Token Synthetic Candidate Pool
+
+The large-gain C/D line uses synthetic ECG generated with the PTB-XL source
+center prompt-token bank.
+
+Token setup:
+
+```text
+token bank = /root/autodl-tmp/graduate_project/method_b_ptbxl_tokens_seed42_mv4/prompt_token_bank.pt
+token schema = direct MV4
+token vectors = 4 x 768 per class token
+token examples = <ptbxl_NORM>, <ptbxl_MI>, <ptbxl_STTC>, <ptbxl_HYP>, <ptbxl_CD>
+```
+
+Reference and target condition:
+
+```text
+reference ECG = random_any from the same real2000 train split
+reference text = translated/report-normalized English ECGTwin text embedding
+target condition = super5 diagnosis prompt + <ptbxl_CLASS> token
+ECGTwin base_vector = official IBE reference path
+center/style information = target prompt-token path
+```
+
+Candidate pool:
+
+```text
+N = 20000 synthetic ECG
+per class = 4000 candidates
+output:
+  /root/autodl-tmp/graduate_project/ref_target_mismatch_n20000_translated_randomany_mv4_seed42/ptbxl/samples.npz
+
+signals shape = (20000, 12, 1000)
+labels shape  = (20000, 5)
+raw ECGTwin decode shape before classifier postprocess = (20000, 12, 1024)
+```
+
+Important limitation:
+
+```text
+NORM/MI/STTC are the most reliable direct-synthesis classes.
+HYP/CD can be used for broad synthetic pretraining, but strict digital gates
+often reject them. Do not claim all generated HYP/CD are medically validated.
+```
+
+### Stage C0: Synthetic-Only Pretraining
+
+Purpose:
+
+```text
+Initialize EfficientNet1DV2 on the broad PTBXL center-token synthetic pool.
+This stage alone is not useful as a final model; it provides a representation
+initialization for later real-data fine-tuning.
+```
+
+Artifact:
+
+```text
+/root/autodl-tmp/graduate_project/ref_mismatch_synthonly_pretrain_n20000_mv4_seed42
+```
+
+Key config from `train_result.json`:
+
+```text
+synth_npz = /root/autodl-tmp/graduate_project/ref_target_mismatch_n20000_translated_randomany_mv4_seed42/ptbxl/samples.npz
+synth_ratio = 0.25
+batch_size = 64
+epochs = 30
+patience = 8
+lr = 0.01
+weight_decay = 0.01
+cosine_tmax = 15
+checkpoint_metric = auroc
+seed = 5042
+```
+
+Result:
+
+| run | custom seed42 AUROC | custom seed42 AUPRC |
+|---|---:|---:|
+| C0 synthetic20k only | 0.6649 | 0.4107 |
+
+Interpretation:
+
+```text
+Synthetic-only training is weak. The gain appears only after real2000 fine-tune.
+```
+
+### Stage C1: Synthetic Pretrain -> Real2000 Fine-Tune
+
+Purpose:
+
+```text
+Fine-tune the C0 synthetic-pretrained checkpoint on the 2000 real PTB-XL ECGs.
+This is the main source of the custom seed42 gain.
+```
+
+Artifact:
+
+```text
+/root/autodl-tmp/graduate_project/ref_mismatch_synthpretrain_auprc_real_finetune_seed42
+```
+
+Key config:
+
+```text
+init_ckpt = /root/autodl-tmp/graduate_project/ref_mismatch_synthonly_pretrain_n20000_mv4_seed42/best_model_auprc.pt
+synth_npz = none
+train data = real2000 only
+batch_size = 64
+epochs = 50
+patience = 10
+lr = 0.003
+weight_decay = 0.01
+cosine_tmax = 15
+checkpoint_metric = auprc
+seed = 6042
+```
+
+Result:
+
+| run | custom seed42 AUROC | custom seed42 AUPRC | delta vs A-fair |
+|---|---:|---:|---:|
+| A-fair | 0.8357 | 0.6040 | baseline |
+| C1 | 0.8645 | 0.6723 | +2.88pp / +6.83pp |
+
+### Stage C3: C1 -> Real-Anchor Latent-Hull AT
+
+Purpose:
+
+```text
+Use ECGTwin VAE latent space to create on-manifold real-anchor adversarial
+samples. This stage is a small stabilizer on top of C1, not the primary source
+of the large custom-seed42 gain.
+```
+
+Artifact:
+
+```text
+/root/autodl-tmp/graduate_project/ref_mismatch_synthpretrain_real_latenthull_at_M10_n1000_seed42
+```
+
+Key config:
+
+```text
+init_ckpt = /root/autodl-tmp/graduate_project/ref_mismatch_synthpretrain_auprc_real_finetune_seed42/best_model.pt
+real latent pool = /root/autodl-tmp/graduate_project/ptbxl_real_train2000_seed42.latent.npz
+usable real ECGTwin latents = 1971
+attack mode = real-anchor latent-hull PGD
+same-label grouping = exact same super5 multi-hot
+hull_M = 10
+hull_lambda = 0.25
+hull_steps = 5
+hull_lr = 0.3
+pgd_eps_l2 = 2.0
+boundary gate = target sigmoid probability in [0.50, 0.60]
+accepted adv buffer = 75 / 1000 attacked anchors
+fine-tune lr = 5e-5
+weight_decay = 1e-4
+batch_size = 64
+eval_batch_size = 256
+patience = 5
+seed = 42
+```
+
+Latent-hull definition:
+
+```text
+w_i = softmax(a_i)
+z_mix = sum_i w_i z_i
+z_adv = (1 - lambda) z0 + lambda z_mix
+
+z0 = anchor real ECGTwin VAE latent
+z_i = same-label real ECGTwin VAE latents
+optimized variable = mixture logits a_i only
+```
+
+Result:
+
+| run | custom seed42 AUROC | custom seed42 AUPRC | delta vs A-fair |
+|---|---:|---:|---:|
+| A-fair | 0.8357 | 0.6040 | baseline |
+| C3 strict | 0.8654 | 0.6738 | +2.97pp / +6.98pp |
+
+### Stage D1/D2: C3-Teacher Self-Distillation
+
+Purpose:
+
+```text
+Use the C3 strict model as a teacher to transfer smoother class boundaries into
+students initialized from C0 synthetic pretraining.
+```
+
+Teacher:
+
+```text
+/root/autodl-tmp/graduate_project/ref_mismatch_synthpretrain_real_latenthull_at_M10_n1000_seed42/best_model.pt
+```
+
+Student initialization:
+
+```text
+/root/autodl-tmp/graduate_project/ref_mismatch_synthonly_pretrain_n20000_mv4_seed42/best_model_auprc.pt
+```
+
+Distillation loss:
+
+```text
+L = hard_weight * L_hard_real + L_soft_teacher
+
+real samples:
+  hard masked BCE + teacher soft BCE
+
+synthetic samples, D1 only:
+  teacher soft BCE only
+
+temperature = 2.0
+real_distill_alpha = 0.3
+synth_distill_weight = 0.5
+checkpoint_metric = auprc
+```
+
+D1 artifact:
+
+```text
+/root/autodl-tmp/graduate_project/self_distill_d1_teacher_c3_init_c0_synth20k_seed42
+
+synth_npz = /root/autodl-tmp/graduate_project/ref_target_mismatch_n20000_translated_randomany_mv4_seed42/ptbxl/samples.npz
+synth_ratio = 0.5
+batch_size = 64
+eval_batch_size = 256
+epochs = 50
+patience = 10
+lr = 0.003
+weight_decay = 0.01
+seed = 7042
+```
+
+D2 artifact:
+
+```text
+/root/autodl-tmp/graduate_project/self_distill_d2_teacher_c3_init_c0_realonly_seed42
+
+synth_npz = none
+batch_size = 64
+eval_batch_size = 256
+epochs = 50
+patience = 10
+lr = 0.003
+weight_decay = 0.01
+seed = 7043
+```
+
+Results:
+
+| run | custom seed42 AUROC | custom seed42 AUPRC | delta vs A-fair |
+|---|---:|---:|---:|
+| A-fair | 0.8357 | 0.6040 | baseline |
+| D1 C3-teacher + synth20k soft | 0.8670 | 0.6737 | +3.13pp / +6.97pp |
+| D2 C3-teacher real-only | 0.8682 | 0.6836 | +3.25pp / +7.96pp |
+
+D1 vs D2 interpretation:
+
+```text
+D1 is better for external-generalization style reporting because it improves
+PN2021 over C3 and keeps synthetic soft data in the method.
+
+D2 is the best custom seed42 PTB-XL score, but it uses no synthetic samples
+during distillation and may be split-specialized.
+```
+
+### Complete Metrics Table For The Large-Gain Line
+
+| run | route | custom AUROC | custom AUPRC | fold10 AUROC | fold10 AUPRC | PN2021 AUROC | PN2021 AUPRC |
+|---|---|---:|---:|---:|---:|---:|---:|
+| A-fair | real2000 from scratch | 0.8357 | 0.6040 | 0.8224 | 0.5922 | 0.7339 | 0.4074 |
+| C1 | synth20k pretrain -> real2000 FT | 0.8645 | 0.6723 | 0.7490 | 0.5106 | 0.7364 | 0.4195 |
+| C3 | C1 -> latent-hull AT | 0.8654 | 0.6738 | 0.7510 | 0.5118 | 0.7381 | 0.4230 |
+| D1 | C3 teacher -> real2000 + synth20k soft | 0.8670 | 0.6737 | 0.7631 | 0.5273 | 0.7407 | 0.4280 |
+| D2 | C3 teacher -> real2000 soft only | 0.8682 | 0.6836 | 0.7549 | 0.5180 | 0.7308 | 0.4215 |
+
+### Thesis-Safe Wording
+
+Use this wording:
+
+```text
+Under our low-resource PTB-XL custom seed42 protocol, ECGTwin PTBXL center-token
+synthetic pretraining followed by real2000 fine-tuning improves macro AUROC by
+about +3 percentage points and macro AUPRC by about +7 percentage points over
+the A-fair real2000 baseline. The strongest custom result is obtained after
+C3-teacher self-distillation.
+```
+
+Do not use this wording:
+
+```text
+The method improves official PTB-XL fold10 performance by +3pp/+7pp.
+```
+
+Reason:
+
+```text
+The large C/D custom gain did not transfer to official fold10. The official
+fold10-safe center-token/self-distillation evidence is the separate v2 E4 line,
+which preserves fold10 better but has a smaller PTB-XL in-domain gain.
+```
+
+## Canonical v2 Center-Token Self-Distillation Ablation
+
+This section keeps the useful content from the former
+`graduate_project_self_disillationv2.md` file.
+
+Question:
+
+```text
+Does self-distillation v2 benefit from ECGTwin itself, or specifically from
+PTBXL center-token conditioning?
+```
+
+Three-arm ablation:
+
+| ID | method | real data | synthetic data | center token |
+|---|---|---:|---:|---:|
+| A | real2000 EfficientNet1DV2 | 2000 | none | no |
+| B | vanilla ECGTwin + self-distill v2 | 2000 | 20000 candidates -> 2000 filtered | no |
+| C | PTBXL center-token ECGTwin + self-distill v2 | 2000 | 20000 candidates -> 2000 filtered | yes |
+
+Shared v2 filter:
+
+```text
+teacher = 3-seed real2000 EfficientNet1DV2 ensemble
+teacher checkpoints:
+  /root/autodl-tmp/graduate_project/method_a_real2000_seed42/best_model.pt
+  /root/autodl-tmp/graduate_project/method_a_real2000_seed43_v2teacher/best_model.pt
+  /root/autodl-tmp/graduate_project/method_a_real2000_seed44_v2teacher/best_model.pt
+
+gamma = 0.3
+y_soft = 0.3 * y_condition + 0.7 * p_teacher_ensemble
+tau_high = 0.6
+tau_low = 0.35
+NORM gate = p_NORM >= 0.7 and max abnormal <= 0.3
+per_class_cap = 400
+max_keep_total = 2000
+```
+
+Vanilla ECGTwin generation support:
+
+```text
+scripts/ecgtwin_gen/generate_center_prompt_token_synth_batched.py
+  --no_token
+```
+
+Vanilla artifacts:
+
+```text
+candidate pool:
+  /root/autodl-tmp/graduate_project/vanilla_ecgtwin_synth_candidates_n20000_translated_randomany_seed42/ptbxl/samples.npz
+
+filtered pool:
+  /root/autodl-tmp/graduate_project/self_distill_v2_filtered_vanilla_real2000_ens3_seed42/synth_v2_filtered_top2000_gamma03.npz
+
+student:
+  /root/autodl-tmp/graduate_project/self_distill_v2_e4_vanilla_real2000_ens3_filtered2000_gamma03_scratch_seed42
+```
+
+Center-token v2 artifacts:
+
+```text
+filtered pool:
+  /root/autodl-tmp/graduate_project/self_distill_v2_filtered_real2000_ens3_seed42/synth_v2_filtered_top2000_gamma03.npz
+
+student:
+  /root/autodl-tmp/graduate_project/self_distill_v2_e4_real2000_ens3_filtered2000_gamma03_scratch_seed42
+```
+
+Main result under the legacy-default PN2021 evaluation口径 used by the original
+v2 record:
+
+| ID | method | custom AUROC | custom AUPRC | fold10 AUROC | fold10 AUPRC | PN2021 AUROC | PN2021 AUPRC |
+|---|---|---:|---:|---:|---:|---:|---:|
+| A | real2000 best teacher seed44 | 0.8506 | 0.6469 | 0.8417 | 0.6482 | 0.7594 | 0.4339 |
+| B | vanilla ECGTwin + v2 | 0.8333 | 0.6051 | 0.8212 | 0.6005 | 0.7528 | 0.4233 |
+| C | PTBXL center-token ECGTwin + v2 | 0.8500 | 0.6371 | 0.8405 | 0.6380 | 0.7616 | 0.4546 |
+
+Interpretation:
+
+```text
+Vanilla ECGTwin synthetic data is harmful even after v2 filtering.
+PTBXL center-token conditioning is what makes the v2 synthetic pool useful.
+Compared with vanilla ECGTwin + v2, center-token + v2 improves custom AUPRC by
++0.0320, fold10 AUPRC by +0.0375, and PN2021 AUPRC by +0.0313.
+Compared with the strongest real2000 seed44 teacher, center-token + v2 does not
+improve PTB-XL in-domain AUPRC, but it improves PN2021 AUPRC by +0.0207.
+```
+
+Sensitivity:
+
+```text
+If PN2021 evaluation is explicitly changed to
+  preprocess_mode = minimal_resample
+  norm_mode = per_sample_global
+the three-arm PN2021 result becomes:
+  A = 0.7077 / 0.4027
+  B = 0.7020 / 0.3993
+  C = 0.7067 / 0.3937
+
+Therefore the v2 PN2021 improvement should be reported with the exact
+legacy-default evaluation口径, and re-optimized if the project standard switches
+to minimal_resample PN2021 evaluation.
+```

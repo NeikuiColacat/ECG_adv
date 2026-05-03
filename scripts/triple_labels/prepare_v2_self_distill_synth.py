@@ -1,7 +1,7 @@
 """Prepare ECGTwin synthetic samples for the v2 self-distillation experiment.
 
-The script implements the v2 plan in
-docs/pipelines/graduate_project_self_disillationv2.md:
+The script implements the v2 plan consolidated in
+docs/pipelines/graduate_project.md:
 
 1. score ECGTwin synthetic candidates with one or more real-2000 teachers;
 2. keep high-confidence and target-in-top2 hard samples;
