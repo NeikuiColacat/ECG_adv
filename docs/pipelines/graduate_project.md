@@ -2908,18 +2908,190 @@ Proceed to a larger paired pool and a matched no-token vs target-token
 self-distillation or Latent-Hull AT ablation.
 ```
 
+### 2026-05-04 Matched Downstream Ablation: Negative Result
+
+This block records the first real downstream test after the positive vNext-A
+style smoke.
+
+Candidate generation:
+
+```text
+centers = ningbo, chapman_shaoxing, cpsc_2018, georgia
+classes = NORM, STTC
+n_per_class_per_center = 250
+per arm total = 2000 synthetic ECG
+same reference policy = same_class
+same seed = 5252
+same target text = super5 diagnosis prompt
+only difference = with or without vNext-A center token
+```
+
+Candidate pools:
+
+```text
+target-token:
+  /root/autodl-tmp/graduate_project/center_token_vnext/downstream_n250_token/merged/samples.npz
+
+no-token:
+  /root/autodl-tmp/graduate_project/center_token_vnext/downstream_n250_no_token/merged/samples.npz
+```
+
+v2 semantic filter:
+
+```text
+teachers:
+  method_a_real2000_seed42
+  method_a_real2000_seed43_v2teacher
+  method_a_real2000_seed44_v2teacher
+
+gamma = 0.3
+tau_high = 0.6
+tau_low = 0.35
+norm_tau_high = 0.7
+norm_tau_low = 0.5
+per_class_cap = 1000
+```
+
+Filter result:
+
+| arm | candidates | kept | high | hard | NORM kept | STTC kept |
+|---|---:|---:|---:|---:|---:|---:|
+| no-token | 2000 | 1572 | 1391 | 181 | 916 | 656 |
+| target-token | 2000 | 1814 | 1679 | 135 | 980 | 834 |
+
+Student recipe:
+
+```text
+script = scripts/triple_labels/train_ptbxl_self_distill.py
+real data = PTB-XL seed42 train2000
+teacher = method_a_real2000_seed42
+synth_ratio = 1.0
+synth_distill_weight = 0.5
+soft_loss_mode = bce_soft
+epochs = 50
+checkpoint_metric = auprc
+```
+
+Result:
+
+| arm | custom AUROC | custom AUPRC | fold10 AUROC | fold10 AUPRC | PN2021 AUROC | PN2021 AUPRC |
+|---|---:|---:|---:|---:|---:|---:|
+| no-token | 0.8511 | 0.6330 | 0.8433 | 0.6309 | 0.7494 | 0.4242 |
+| target-token | 0.8400 | 0.6125 | 0.8306 | 0.6130 | 0.7471 | 0.4160 |
+| token - no-token | -0.0111 | -0.0205 | -0.0127 | -0.0179 | -0.0023 | -0.0082 |
+
 Interpretation:
 
 ```text
-This is the first positive vNext-A smoke signal. With matched georgia
+The center token strongly improves synthetic target-center style and increases
+semantic filter pass rate, but direct self-distillation with the resulting
+NORM/STTC target-center-style synthetic pool hurts downstream performance.
+
+This means style transfer alone is not sufficient. Strong target-center style
+can become a domain artifact or over-specialized shortcut when mixed into a
+PTB-XL source-supervised diagnosis learner.
+```
+
+### 2026-05-04 Style-Top1000 Ablation: Also Negative
+
+To check whether the failure came from unequal keep counts or weak no-token
+style, a second subset selected the top target-center style samples after the
+v2 semantic filter:
+
+```text
+selection = top 500 NORM + top 500 STTC by no-leak target-center style score
+same count for target-token and no-token
+```
+
+Selected style score:
+
+| arm | selected | mean style score |
+|---|---:|---:|
+| no-token | 1000 | 0.4324 |
+| target-token | 1000 | 0.9916 |
+
+Student result:
+
+| arm | custom AUROC | custom AUPRC | fold10 AUROC | fold10 AUPRC | PN2021 AUROC | PN2021 AUPRC |
+|---|---:|---:|---:|---:|---:|---:|
+| no-token top-style | 0.8381 | 0.6059 | 0.8266 | 0.5887 | 0.7513 | 0.4208 |
+| target-token top-style | 0.8283 | 0.5757 | 0.8137 | 0.5724 | 0.7305 | 0.3980 |
+| token - no-token | -0.0098 | -0.0302 | -0.0129 | -0.0163 | -0.0208 | -0.0228 |
+
+Interpretation:
+
+```text
+The strongest target-center-looking token samples are the worst downstream
+choice. Therefore the next version must not optimize for maximum style score.
+It should target bounded, on-manifold style perturbations that keep diagnosis
+semantics and source/target compatibility.
+```
+
+### vNext-B Revision After Negative Downstream
+
+The next center-token strategy should change from direct synthetic expansion to
+bounded target-style latent augmentation.
+
+Design changes:
+
+```text
+1. Do not use style score as a monotonic objective.
+   Use a band such as 0.45 <= P(target center) <= 0.85, and reject samples above
+   0.95 unless they are only used as style prototypes.
+
+2. Do not use NORM/STTC-only synthetic expansion as the main student data.
+   Missing CD/HYP/MI coverage hurts macro metrics and encourages class-specific
+   shortcuts.
+
+3. Use target-token samples as latent candidates inside real-anchor Latent-Hull
+   AT, not as standalone training data:
+
+     z_adv = (1 - lambda) * z_real + lambda * sum_i softmax(a_i) * z_token_i
+
+   Recommended lambda = 0.05, 0.10, 0.20 rather than 0.25 first.
+
+4. Use teacher boundary gate on generated/decoded samples:
+   target class probability in 0.45-0.70, not near 0.99.
+
+5. Add per-class and per-center caps before downstream:
+   NORM/STTC max 150 each per center;
+   MI only where same-class anchors exist;
+   CD/HYP ablation-only until digital gates pass.
+
+6. Compare against no-token under the same latent-hull/gating process.
+   The only intended difference should be whether the synthetic candidate
+   latents came from target-token or no-token generation.
+```
+
+vNext-B acceptance:
+
+```text
+Target-token Latent-Hull AT must beat no-token Latent-Hull AT by >= 2pp AUPRC
+on either:
+  1. the four target centers averaged, or
+  2. the full PN2021 seven-center average,
+without losing more than 0.5pp PTB-XL custom AUROC.
+```
+
+Current status:
+
+```text
+Not achieved. vNext-A proves controllable target-center style generation, but
+the first two downstream matched ablations are negative. The next productive
+route is bounded style + real-anchor latent-hull AT, not stronger direct
+synthetic self-distillation.
+```
+
+Earlier smoke interpretation:
+
+```text
+The georgia-only smoke was the first positive vNext-A style signal. With matched
 references and the same generation seed, the style-aware center token increases
 both target-class probability and target-center style probability versus
 no-token.
 
-This does not yet satisfy the final objective because no downstream
-EfficientNetV2 AUROC/AUPRC ablation has been run. The next required step is a
-larger paired candidate pool with B/C/D v2 self-distillation students and
-PN2021/fold10 evaluation.
+The later downstream matched ablations show that this style signal does not
+automatically convert to AUROC/AUPRC gain.
 ```
 
 ### Claim Rules
