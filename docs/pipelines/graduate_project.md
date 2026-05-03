@@ -2855,6 +2855,59 @@ No-leak style probe smoke:
 | no-token | STTC | 50 | 0.6022 | 0.60 |
 | target-token | STTC | 50 | 0.9829 | 0.98 |
 
+Expanded big4 paired smoke:
+
+```text
+token pools:
+  /root/autodl-tmp/graduate_project/center_token_vnext/smoke_big4_token/<center>/samples.npz
+
+no-token pools:
+  /root/autodl-tmp/graduate_project/center_token_vnext/smoke_big4_no_token/<center>/samples.npz
+
+style probe output:
+  /root/autodl-tmp/graduate_project/center_token_vnext/smoke_big4_style_probe/
+```
+
+Expanded big4 smoke target-class probability:
+
+| center | class | no-token p_target | target-token p_target | delta |
+|---|---|---:|---:|---:|
+| ningbo | NORM | 0.8324 | 0.9583 | +0.1259 |
+| ningbo | STTC | 0.6303 | 0.6904 | +0.0601 |
+| chapman_shaoxing | NORM | 0.8487 | 0.8598 | +0.0111 |
+| chapman_shaoxing | STTC | 0.7047 | 0.9564 | +0.2517 |
+| cpsc_2018 | NORM | 0.9300 | 0.9923 | +0.0623 |
+| cpsc_2018 | STTC | 0.6505 | 0.8436 | +0.1931 |
+| georgia | NORM | 0.7737 | 0.9954 | +0.2217 |
+| georgia | STTC | 0.6571 | 0.8138 | +0.1567 |
+
+Expanded big4 smoke target-center style probe:
+
+| center | class | no-token P(center) | token P(center) | no-token top1 | token top1 |
+|---|---|---:|---:|---:|---:|
+| ningbo | NORM | 0.1100 | 0.8365 | 0.02 | 0.90 |
+| ningbo | STTC | 0.0362 | 0.7781 | 0.00 | 0.88 |
+| chapman_shaoxing | NORM | 0.2238 | 0.5072 | 0.20 | 0.60 |
+| chapman_shaoxing | STTC | 0.0407 | 0.5937 | 0.04 | 0.92 |
+| cpsc_2018 | NORM | 0.0957 | 0.8999 | 0.08 | 0.94 |
+| cpsc_2018 | STTC | 0.4567 | 0.9448 | 0.48 | 0.98 |
+| georgia | NORM | 0.6175 | 0.9948 | 0.72 | 1.00 |
+| georgia | STTC | 0.6022 | 0.9829 | 0.60 | 0.98 |
+
+Expanded smoke interpretation:
+
+```text
+vNext-A has a consistent positive style-probe effect across all four target
+centers for NORM/STTC. This is materially stronger than the old prompt-token
+evidence because every target-token pool has a same-center, same-reference,
+same-seed no-token control.
+
+However, the smoke still only validates the direction of the generative
+conditioning. It does not prove the requested +2pp downstream AUPRC gain.
+Proceed to a larger paired pool and a matched no-token vs target-token
+self-distillation or Latent-Hull AT ablation.
+```
+
 Interpretation:
 
 ```text
