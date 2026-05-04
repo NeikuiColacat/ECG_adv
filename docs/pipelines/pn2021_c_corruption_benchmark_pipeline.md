@@ -13,9 +13,9 @@ clean PN2021 v3 cache
   -> AUROC/AUPRC drop vs clean
 ```
 
-当前确认的执行方式：默认采用 streaming/batch corruption eval，只保存 metrics JSON；
-不强制物化保存全部 corrupted cache。原因是 `/root/autodl-tmp` 剩余空间约 73GB，
-4 centers x 5 corruptions x 5 severities 的全量副本会显著放大磁盘压力。
+当前确认的执行方式：如果 `/root/autodl-tmp` 可用空间 >=100 GiB，优先物化
+4 centers x 5 corruptions x 5 severities 的 corrupted cache；如果空间不足，
+才退回 streaming/batch corruption eval，只保存 metrics JSON。
 
 第一版只覆盖 4 个目标中心：
 
@@ -24,6 +24,188 @@ ningbo
 chapman_shaoxing
 cpsc_2018
 georgia
+```
+
+## 2026-05-03 New Requirement: Evaluate The New Full10 Baseline
+
+本轮 PN2021-C 的直接目标是验证新训练的 EfficientNet1DV2：
+
+```text
+/root/autodl-tmp/triple_labels/super5_minresample_full10_perglobal_20260503
+```
+
+也就是：
+
+```text
+PTB-XL super5
+minimal_resample
+per_sample_global
+100Hz / 1000 samples / full 10s input
+```
+
+问题：
+
+```text
+这个新 full10 EfficientNet1DV2 在 PN2021 几大中心经过 ECG corruption 后，
+AUROC 和 AUPRC 会下降多少？
+```
+
+这不是训练期数据增强，而是 ImageNet-C 风格的测试集副本/streaming corruption benchmark。
+标签不变，只改变 ECG signal。
+
+### Required Prerequisites
+
+```text
+1. Task-1 clean model 已训练完成。
+2. clean PN2021 eval JSON 已存在。
+3. clean PN2021 mmap cache 与 Task-1 训练预处理同源：
+   minimal_resample + per_sample_global + 100Hz/1000.
+```
+
+对应路径：
+
+```text
+clean model:
+  /root/autodl-tmp/triple_labels/super5_minresample_full10_perglobal_20260503/best_model.pt
+
+clean eval:
+  /root/autodl-tmp/triple_labels/super5_minresample_full10_perglobal_20260503/eval_result_v3_super5_normsuppress.json
+
+clean mmap cache:
+  /root/autodl-tmp/triple_labels/pn2021_eval_cache_mmap_minresample_perglobal/
+```
+
+### Streaming Eval Command
+
+用户已确认 `/root/autodl-tmp` 已扩容，本轮可以选择物化 PN2021-C 副本数据集，
+而不是只做 streaming eval。容量估算基于现有 PN2021 mmap clean cache：
+
+```text
+target centers:
+  ningbo              signals.npy ~= 1.56 GiB
+  chapman_shaoxing    signals.npy ~= 0.46 GiB
+  cpsc_2018           signals.npy ~= 0.31 GiB
+  georgia             signals.npy ~= 0.46 GiB
+
+4-center clean signals total ~= 2.79 GiB
+5 corruptions x 5 severities = 25 copies
+materialized float32 signals ~= 2.79 GiB x 25 = 69.7 GiB
+labels/record_ids/metadata overhead is small, but compressed npz temp/output
+and future logs/checkpoints need additional free space.
+```
+
+磁盘策略：
+
+```text
+minimum free space before materializing: 100 GiB
+comfortable free space: 120 GiB+
+current observed on 2026-05-03: /root/autodl-tmp had about 82 GiB free,
+which is too tight for a safe full materialized run.
+```
+
+如果只剩 80-90 GiB，可先采用 streaming eval 或分中心/分算子物化并及时评测归档。
+如果可用空间 >=100 GiB，优先物化到：
+
+```text
+/root/autodl-tmp/triple_labels/pn2021_c_cache_minresample_perglobal/
+```
+
+物化命令目标形态：
+
+```bash
+TMPDIR=/root/autodl-tmp/tmp XDG_CACHE_HOME=/root/autodl-tmp/cache \
+/root/miniforge3/envs/ECGTwin/bin/python -u scripts/triple_labels/build_pn2021_corruptions.py \
+  --scheme super5 \
+  --clean_cache_dir /root/autodl-tmp/triple_labels/pn2021_eval_cache_minresample_perglobal \
+  --output_dir /root/autodl-tmp/triple_labels/pn2021_c_cache_minresample_perglobal \
+  --centers ningbo chapman_shaoxing cpsc_2018 georgia \
+  --corruptions powerline_noise emg_noise baseline_wander baseline_shift random_leads_masking \
+  --severities 1 2 3 4 5 \
+  --seed 20260501
+```
+
+注意：当前 `build_pn2021_corruptions.py` 读取 compressed clean npz，而不是 mmap clean cache。
+因此 Task-1 的同源 PN2021 clean eval 需要同时写出：
+
+```text
+/root/autodl-tmp/triple_labels/pn2021_eval_cache_minresample_perglobal/*.npz
+/root/autodl-tmp/triple_labels/pn2021_eval_cache_mmap_minresample_perglobal/*/
+```
+
+物化后评测：
+
+```bash
+/root/miniforge3/envs/ECGTwin/bin/python -u scripts/triple_labels/eval_pn2021_corruptions.py \
+  --mode cache \
+  --scheme super5 \
+  --model_dir /root/autodl-tmp/triple_labels/super5_minresample_full10_perglobal_20260503 \
+  --cache_dir /root/autodl-tmp/triple_labels/pn2021_c_cache_minresample_perglobal \
+  --clean_eval_json /root/autodl-tmp/triple_labels/super5_minresample_full10_perglobal_20260503/eval_result_v3_super5_normsuppress.json \
+  --centers ningbo chapman_shaoxing cpsc_2018 georgia \
+  --corruptions powerline_noise emg_noise baseline_wander baseline_shift random_leads_masking \
+  --severities 1 2 3 4 5 \
+  --crop_len 1000 \
+  --batch_size 192 \
+  --num_workers 6 \
+  --output_path /root/autodl-tmp/triple_labels/super5_minresample_full10_perglobal_20260503/eval_pn2021_c_cache_v1.json
+```
+
+streaming corruption 仍保留为低磁盘 fallback：
+
+```bash
+TMPDIR=/root/autodl-tmp/tmp XDG_CACHE_HOME=/root/autodl-tmp/cache \
+/root/miniforge3/envs/ECGTwin/bin/python -u scripts/triple_labels/eval_pn2021_corruptions.py \
+  --mode stream \
+  --scheme super5 \
+  --model_dir /root/autodl-tmp/triple_labels/super5_minresample_full10_perglobal_20260503 \
+  --clean_mmap_cache_dir /root/autodl-tmp/triple_labels/pn2021_eval_cache_mmap_minresample_perglobal \
+  --clean_eval_json /root/autodl-tmp/triple_labels/super5_minresample_full10_perglobal_20260503/eval_result_v3_super5_normsuppress.json \
+  --centers ningbo chapman_shaoxing cpsc_2018 georgia \
+  --corruptions powerline_noise emg_noise baseline_wander baseline_shift random_leads_masking \
+  --severities 1 2 3 4 5 \
+  --crop_len 1000 \
+  --batch_size 192 \
+  --num_workers 6 \
+  --output_path /root/autodl-tmp/triple_labels/super5_minresample_full10_perglobal_20260503/eval_pn2021_c_stream_v1.json
+```
+
+如果显存不足：
+
+```text
+batch_size 192 -> 128 -> 96
+不要改 crop_len 或 corruption 设置。
+```
+
+### Report Format
+
+主表：
+
+```text
+center x corruption x severity -> AUROC/AUPRC
+mean_by_corruption -> AUROC/AUPRC and drop
+mean_by_severity -> AUROC/AUPRC and drop
+overall corrupted mean AUROC/AUPRC
+self-clean drop = clean metric from same model - corrupted metric
+```
+
+必须对比旧 baseline：
+
+```text
+old baseline:
+  /root/autodl-tmp/triple_labels/super5/eval_pn2021_c_stream_v1.json
+
+new baseline:
+  /root/autodl-tmp/triple_labels/super5_minresample_full10_perglobal_20260503/eval_pn2021_c_stream_v1.json
+```
+
+结论措辞规则：
+
+```text
+If corrupted AUROC/AUPRC is higher but self-clean drop is also higher:
+  say "better absolute corrupted performance", not "better robustness".
+
+If self-clean drop is lower:
+  may say "reduced corruption sensitivity" for that corruption/severity.
 ```
 
 ## 已有算子
@@ -195,15 +377,15 @@ optional:
 - corrupted cache 只改变 signal，不改变 label。
 - 每个 corrupted cache 固定 seed 并写 metadata。
 - 不评估 `ptb-xl` / `ptbxl`。
-- 默认主路径可以不保存 corrupted signals，只保存 corruption 配置、seed 和 metrics。
-- 只有 smoke、可视化或复现实验需要时才物化 selected corruption cache。
+- 当前主路径在空间足够时物化 corrupted signals，便于复现实验、反复评测和可视化。
+- streaming eval 只作为低磁盘 fallback 或 smoke。
 
 ## 自动执行顺序
 
 1. 确保 clean v3 PN2021 cache 已存在。
 2. 已新增并 smoke test `build_pn2021_corruptions.py`，先跑每中心小 limit。
 3. 已新增并 smoke test `eval_pn2021_corruptions.py`。
-4. 已改成 streaming/batch PN2021-C eval，避免全量物化 cache。
+4. 当前保留 streaming/batch PN2021-C eval 作为 fallback；空间足够时优先物化 cache。
 5. smoke 已通过：
 
 ```bash

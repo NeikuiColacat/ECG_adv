@@ -21,6 +21,140 @@
 | Latent-Hull 在线对抗训练 | `docs/pipelines/latent_hull_online_at_pipeline.md` |
 | PN2021-C 鲁棒性评测 | `docs/pipelines/pn2021_c_corruption_benchmark_pipeline.md` |
 
+## 2026-05-03 New Baseline Rerun: Minimal Resample + Full 10s
+
+本轮重新训练一个新的 EfficientNet1DV2 super5 主基线。目的不是继续复用旧
+`legacy_ecgfounder_filter + crop_len=250` baseline，而是测试更符合当前推荐的
+`recommended A` 输入协议：
+
+```text
+native ECG
+-> NaN/Inf guard
+-> lead reorder to PTB-XL canonical order
+-> minimal_resample to 100Hz
+-> pad/truncate to 1000 samples = 10s
+-> per_sample_global z-score
+-> EfficientNet1DV2 full-10s input
+```
+
+### Experiment Name
+
+```text
+super5_minresample_full10_perglobal_20260503
+```
+
+输出目录：
+
+```text
+/root/autodl-tmp/triple_labels/super5_minresample_full10_perglobal_20260503
+```
+
+PTB-XL cache：
+
+```text
+/root/autodl-tmp/triple_labels/cache/ptbxl_minimal_resample_per_sample_global_fs100_len1000.npy
+```
+
+### Training Command
+
+当前 `scripts/triple_labels/train_ptbxl.py` 已经支持这组参数：
+
+```bash
+TMPDIR=/root/autodl-tmp/tmp XDG_CACHE_HOME=/root/autodl-tmp/cache \
+/root/miniforge3/envs/ECGTwin/bin/python -u scripts/triple_labels/train_ptbxl.py \
+  --scheme super5 \
+  --output_dir /root/autodl-tmp/triple_labels/super5_minresample_full10_perglobal_20260503 \
+  --cache_path /root/autodl-tmp/triple_labels/cache/ptbxl_minimal_resample_per_sample_global_fs100_len1000.npy \
+  --preprocess_mode minimal_resample \
+  --norm_mode per_sample_global \
+  --crop_len 1000 \
+  --batch_size 48 \
+  --epochs 80 \
+  --lr 0.003 \
+  --weight_decay 0.01 \
+  --cosine_tmax 30 \
+  --patience 12 \
+  --num_workers 6 \
+  --checkpoint_metric auprc \
+  --device cuda
+```
+
+选择 `checkpoint_metric=auprc` 的原因：
+
+```text
+super5 是类别不平衡多标签任务；
+后续跨中心和增强实验更关心 AUPRC；
+脚本仍会同时保存 best_model_auroc.pt 和 best_model_auprc.pt。
+```
+
+第一轮以 `best_model.pt` 即 AUPRC-selected checkpoint 为主。如果 fold10 AUROC 明显下降，
+再额外评估 `best_model_auroc.pt`，不要在同一轮里改动预处理或 loss。
+
+### PN2021 Clean Evaluation Requirement
+
+当前 `scripts/triple_labels/eval_crosscenter.py` 的 PN2021 cache metadata 仍硬编码：
+
+```text
+apply_filter=True
+apply_zscore=True
+```
+
+因此在评估本模型前必须先补一个小实现改动：
+
+```text
+1. 给 eval_crosscenter.py 增加 --preprocess_mode 和 --norm_mode。
+2. 写入 PN2021 compressed/mmap cache metadata。
+3. 调用 unified_preprocess_to_1000 时传入 preprocess_mode/norm_mode。
+4. 为 minimal_resample/per_sample_global 使用独立 PN2021 cache 目录，避免污染旧 baseline cache。
+```
+
+目标评测命令：
+
+```bash
+/root/miniforge3/envs/ECGTwin/bin/python -u scripts/triple_labels/eval_crosscenter.py \
+  --scheme super5 \
+  --model_dir /root/autodl-tmp/triple_labels/super5_minresample_full10_perglobal_20260503 \
+  --crop_len 1000 \
+  --batch_size 192 \
+  --num_workers 6 \
+  --skip_mimic \
+  --ptbxl_cache /root/autodl-tmp/triple_labels/cache/ptbxl_minimal_resample_per_sample_global_fs100_len1000.npy \
+  --preprocess_mode minimal_resample \
+  --norm_mode per_sample_global \
+  --pn2021_cache_dir /root/autodl-tmp/triple_labels/pn2021_eval_cache_minresample_perglobal \
+  --pn2021_mmap_cache_dir /root/autodl-tmp/triple_labels/pn2021_eval_cache_mmap_minresample_perglobal \
+  --output_path /root/autodl-tmp/triple_labels/super5_minresample_full10_perglobal_20260503/eval_result_v3_super5_normsuppress.json
+```
+
+### Metrics To Report
+
+必须记录：
+
+```text
+PTB-XL fold10 macro AUROC/AUPRC
+PTB-XL per-class AUROC/AUPRC: CD, HYP, MI, NORM, STTC
+PN2021 7-center macro AUROC/AUPRC
+PN2021 per-center AUROC/AUPRC
+PN2021 per-class AUROC/AUPRC
+delta vs old baseline /root/autodl-tmp/triple_labels/super5
+```
+
+旧 baseline 对照：
+
+```text
+old PTB-XL fold10 ~= 0.9064 / 0.7754
+old PN2021 7-center ~= 0.8344 / 0.5526
+```
+
+Acceptance：
+
+```text
+1. PTB-XL fold10 AUPRC 不明显低于旧 baseline。
+2. PN2021 AUPRC 持平或提升。
+3. 如果 AUROC 小幅下降但 AUPRC 提升，优先保留为后续 AT/PN2021-C 主基线。
+4. 如果 full10 训练显存不稳，先降 batch_size 到 32，不改变其他超参数。
+```
+
 ## 代码入口
 
 | 文件 | 作用 |

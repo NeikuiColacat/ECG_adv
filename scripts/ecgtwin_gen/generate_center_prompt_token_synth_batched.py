@@ -28,6 +28,7 @@ from methods.ecgtwin_gen.prompt_token.trainer import (  # noqa: E402
 from scripts.ecgtwin_gen.generate_center_prompt_token_synth import (  # noqa: E402
     choose_ref_indices,
     postprocess_for_classifier,
+    scale_token_sequence,
     token_sequence_from_bank,
 )
 from scripts.triple_labels.label_schemes import CLASS_NAMES_SUPER5  # noqa: E402
@@ -141,6 +142,7 @@ def generate_batch(
     steps: int,
     seed_base: int,
     token_repeat: int,
+    token_scale: float,
     ref_text_mode: str,
     ref_class_policy: str,
     ref_prompt_embeds: dict | None = None,
@@ -152,7 +154,9 @@ def generate_batch(
         token_seq = None
         text_aug = base_text.to(device)
     else:
-        token_seq = token_sequence_from_bank(token_blob, center_idx, cls_idx).repeat(token_repeat, 1)
+        token_seq = token_sequence_from_bank(token_blob, center_idx, cls_idx)
+        token_seq = scale_token_sequence(token_blob, token_seq, center_idx, cls_idx, token_scale)
+        token_seq = token_seq.repeat(token_repeat, 1)
         text_aug = torch.cat([base_text, token_seq], dim=0).to(device)
     text_aug_b = text_aug.unsqueeze(0).repeat(bsz, 1, 1)
     mask_aug = torch.ones(bsz, text_aug.shape[0], dtype=torch.float32, device=device)
@@ -215,6 +219,7 @@ def generate_batch(
             "ref_class_policy": ref_class_policy,
             "prompt_token": "none" if token_blob is None else f"<{center_name}_{cls}>",
             "prompt_token_vectors": 0 if token_seq is None else int(token_seq.shape[0]),
+            "token_scale": None if token_blob is None else float(token_scale),
             "p_target": float(probs[j, cls_idx]),
             "top1": CLASS_NAMES_SUPER5[int(np.argmax(probs[j]))],
             "victim_probs": {
@@ -251,6 +256,8 @@ def main() -> None:
     ap.add_argument("--victim_ckpt", required=True)
     ap.add_argument("--victim_crop_len", type=int, default=1000)
     ap.add_argument("--token_repeat", type=int, default=1)
+    ap.add_argument("--token_scale", type=float, default=1.0,
+                    help="Scale learned token delta as init + scale * (learned - init).")
     ap.add_argument("--no_token", action="store_true",
                     help="Generate with diagnosis prompt only, no learned center prompt token.")
     ap.add_argument("--ref_text_mode", choices=["class_fallback", "actual_report", "translated_report", "normal"],
@@ -267,6 +274,8 @@ def main() -> None:
         raise ValueError("--gen_batch_size must be >= 1")
     if args.token_repeat < 1:
         raise ValueError("--token_repeat must be >= 1")
+    if args.token_scale < 0:
+        raise ValueError("--token_scale must be >= 0")
 
     set_all_seeds(args.seed)
     rng = np.random.default_rng(args.seed)
@@ -349,6 +358,7 @@ def main() -> None:
                 steps=args.steps,
                 seed_base=seed_base,
                 token_repeat=args.token_repeat,
+                token_scale=args.token_scale,
                 ref_text_mode=args.ref_text_mode,
                 ref_class_policy=args.ref_class_policy,
                 ref_prompt_embeds=ref_prompt_embeds,

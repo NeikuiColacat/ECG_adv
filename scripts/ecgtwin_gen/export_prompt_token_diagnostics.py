@@ -151,7 +151,7 @@ def export_bank(path: Path, out_dir: Path, root: Path) -> Dict[str, int]:
     except ValueError:
         run_name = path.parent.as_posix()
 
-    safe_name = run_name.replace("/", "__")
+    safe_name = f"{run_name}__{path.stem}".replace("/", "__")
     token_rows: List[Dict[str, Any]] = []
     pair_rows: List[Dict[str, Any]] = []
 
@@ -238,7 +238,11 @@ def main() -> None:
         total_banks += 1
         total_tokens += counts["token_rows"]
         total_pairs += counts["pair_rows"]
-        safe_name = path.parent.relative_to(root).as_posix().replace("/", "__")
+        try:
+            run_name = path.parent.relative_to(root).as_posix()
+        except ValueError:
+            run_name = path.parent.as_posix()
+        safe_name = f"{run_name}__{path.stem}".replace("/", "__")
         token_files.append(out_dir / f"{safe_name}.token_summary.csv")
         pair_files.append(out_dir / f"{safe_name}.token_cosine.csv")
         print(f"[export] {path}: tokens={counts['token_rows']} pairs={counts['pair_rows']}")

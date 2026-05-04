@@ -29,7 +29,7 @@ copy the repo-tracked skill into that runtime location.
   - avoid materializing every corrupted PN2021-C copy unless disk has been
     expanded substantially.
 - System disk is small. Put large outputs, checkpoints, samples, caches, and logs under `/root/autodl-tmp/`, not the repo.
-- Disk hygiene as of 2026-05-01: after cleaning conda/rattler package caches, `/` has about 9.7 GB free and `/root/autodl-tmp` about 69 GB free. Keep long-run temp/cache paths on the data disk, for example `TMPDIR=/root/autodl-tmp/tmp` and `XDG_CACHE_HOME=/root/autodl-tmp/cache` when safe for a command.
+- Disk hygiene as of 2026-05-03 after user expansion and PN2021-C materialization: `/` has about 9.6 GB free and `/root/autodl-tmp` is about 350 GB total with about 54 GB free. Keep long-run temp/cache paths on the data disk, for example `TMPDIR=/root/autodl-tmp/tmp` and `XDG_CACHE_HOME=/root/autodl-tmp/cache` when safe for a command. Do not materialize another full PN2021-C copy without checking free space first.
 - Do not move/delete repo historical artifacts or Git objects just to free disk unless the user explicitly approves; prefer package caches, bytecode caches, and new experiment outputs under `/root/autodl-tmp`.
 - `rg` may be unavailable in this environment. Use `find`, `grep`, `sed`, `nl`, and `wc` when needed.
 - Use `apply_patch` for manual file edits. Do not overwrite unrelated dirty worktree changes.

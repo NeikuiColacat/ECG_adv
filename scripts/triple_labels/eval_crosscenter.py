@@ -38,7 +38,7 @@ from scripts.triple_labels.train_ptbxl import (
     get_ptbxl_labels_for_scheme,
 )
 from scripts.crosscenter_v2.preprocess_utils import (
-    unified_preprocess_to_1000, crop_signal_tc,
+    unified_preprocess_to_1000, crop_signal_tc, _resolve_preprocess_flags,
 )
 from EfficientNetv2 import EfficientNet1DV2  # noqa: E402
 
@@ -80,7 +80,14 @@ def scan_center_records(center_dir):
 
 
 class PN2021CenterDataset(Dataset):
-    def __init__(self, record_paths, labels, crop_len=250):
+    def __init__(
+        self,
+        record_paths,
+        labels,
+        crop_len=250,
+        preprocess_mode='legacy_ecgfounder_filter',
+        norm_mode='per_sample_global',
+    ):
         self.signals = []
         self.kept_indices = []
         fail = 0
@@ -99,7 +106,7 @@ class PN2021CenterDataset(Dataset):
             proc = unified_preprocess_to_1000(
                 sig.astype(np.float32), fs=rec.fs, source_leads=sig_names,
                 target_fs=100, target_len=1000,
-                apply_filter=True, apply_zscore=True,
+                preprocess_mode=preprocess_mode, norm_mode=norm_mode,
             )
             if proc is None:
                 fail += 1
@@ -146,6 +153,57 @@ class PN2021CachedCenterDataset(Dataset):
 PN2021_EVAL_CACHE_VERSION = "v3_super5_normsuppress"
 
 
+def _pn2021_preprocess_config(args, include_crop=False):
+    apply_filter, apply_zscore = _resolve_preprocess_flags(
+        apply_filter=True,
+        apply_zscore=True,
+        preprocess_mode=args.preprocess_mode,
+        norm_mode=args.norm_mode,
+    )
+    cfg = {
+        'target_fs': 100,
+        'target_len': 1000,
+        'apply_filter': bool(apply_filter),
+        'apply_zscore': bool(apply_zscore),
+        'preprocess_mode': str(args.preprocess_mode),
+        'norm_mode': str(args.norm_mode),
+    }
+    if include_crop:
+        cfg.update({
+            'crop_len': int(args.crop_len),
+            'crop_mode': 'center',
+        })
+    return cfg
+
+
+def _legacy_default_metadata_variant(metadata):
+    """Return the pre-2026-05 metadata shape for default preprocessing caches."""
+    cfg = metadata.get('preprocess_config')
+    if not isinstance(cfg, dict):
+        return None
+    if (
+        cfg.get('preprocess_mode') != 'legacy_ecgfounder_filter'
+        or cfg.get('norm_mode') != 'per_sample_global'
+    ):
+        return None
+    legacy = json.loads(json.dumps(metadata))
+    legacy_cfg = legacy['preprocess_config']
+    legacy_cfg.pop('preprocess_mode', None)
+    legacy_cfg.pop('norm_mode', None)
+    legacy_cfg['apply_filter'] = True
+    legacy_cfg['apply_zscore'] = True
+    return legacy
+
+
+def _metadata_matches_expected(found, expected):
+    if found is None:
+        return False
+    if found == expected:
+        return True
+    legacy = _legacy_default_metadata_variant(expected)
+    return legacy is not None and found == legacy
+
+
 def _pn2021_cache_path(args, scheme, center):
     cache_dir = getattr(args, 'pn2021_cache_dir', None)
     if not cache_dir:
@@ -173,14 +231,7 @@ def _expected_pn2021_cache_metadata(args, scheme, center):
         'center': center,
         'class_names': list(scheme['class_names']),
         'cache_version': PN2021_EVAL_CACHE_VERSION,
-        'preprocess_config': {
-            'target_fs': 100,
-            'target_len': 1000,
-            'apply_filter': True,
-            'apply_zscore': True,
-            'crop_len': int(args.crop_len),
-            'crop_mode': 'center',
-        },
+        'preprocess_config': _pn2021_preprocess_config(args, include_crop=True),
     }
     if args.scheme == 'super5':
         metadata['pn2021_mapping'] = get_super5_pn2021_mapping_metadata()
@@ -193,12 +244,7 @@ def _expected_pn2021_mmap_metadata(args, scheme, center):
         'center': center,
         'class_names': list(scheme['class_names']),
         'cache_version': PN2021_EVAL_CACHE_VERSION,
-        'preprocess_config': {
-            'target_fs': 100,
-            'target_len': 1000,
-            'apply_filter': True,
-            'apply_zscore': True,
-        },
+        'preprocess_config': _pn2021_preprocess_config(args, include_crop=False),
         'layout': 'mmap_v1',
     }
     if args.scheme == 'super5':
@@ -221,9 +267,7 @@ def _load_cache_metadata(data):
 
 
 def _cache_metadata_matches(found, expected):
-    if found is None:
-        return False
-    return found == expected
+    return _metadata_matches_expected(found, expected)
 
 
 def _write_pn2021_mmap_cache(cache_root, signals, labels, record_ids, metadata):
@@ -253,7 +297,7 @@ def _load_pn2021_mmap_cache(cache_root, expected_metadata):
             found = json.load(f)
     except Exception:
         return None
-    if found != expected_metadata:
+    if not _metadata_matches_expected(found, expected_metadata):
         print(f"  mmap cache metadata mismatch, ignoring {cache_root}")
         return None
     return (
@@ -323,7 +367,7 @@ def _load_or_build_pn2021_center(center, center_dir, scheme, args):
         proc = unified_preprocess_to_1000(
             sig.astype(np.float32), fs=rec.fs, source_leads=sig_names,
             target_fs=100, target_len=1000,
-            apply_filter=True, apply_zscore=True,
+            preprocess_mode=args.preprocess_mode, norm_mode=args.norm_mode,
         )
         if proc is None:
             fail += 1
@@ -616,6 +660,14 @@ def main():
                    help='Skip class metrics if n_pos < min_pos')
     p.add_argument('--ptbxl_csv', default='/root/autodl-tmp/ptbxl/ptbxl_database.csv')
     p.add_argument('--ptbxl_cache', default=None)
+    p.add_argument('--preprocess_mode', default='legacy_ecgfounder_filter',
+                   choices=['minimal_resample', 'legacy_ecgfounder_filter',
+                            'raw_for_generation_or_digital'],
+                   help='Named preprocessing branch for PN2021 cache builds. '
+                        'PTB-XL eval uses --ptbxl_cache and must be built separately.')
+    p.add_argument('--norm_mode', default='per_sample_global',
+                   choices=['per_sample_global', 'none'],
+                   help='Normalization branch for PN2021 cache builds.')
     p.add_argument('--pn2021_root', default='/root/autodl-tmp/physionet2021')
     p.add_argument('--pn2021_cache_dir', default='/root/autodl-tmp/triple_labels/pn2021_eval_cache',
                    help='Cache preprocessed PN2021 center signals/labels for repeated model evals')

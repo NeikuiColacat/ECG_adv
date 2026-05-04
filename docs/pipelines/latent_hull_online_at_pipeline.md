@@ -24,6 +24,8 @@ z_adv = (1 - lambda) * z0 + lambda * z_mix
 - `softmax(a)` 保证 convex combination。
 - `lambda` 限制在 `[0, lambda_max]`，第一版建议 `0.25` 或 `<= 0.4`。
 - 第一轮候选池规模数组固定为 `M=[5,10,20]`；默认主线用 `M=10`。
+- `M=3` 只作为 very-small sanity ablation。它更接近少数近邻插值，
+  多样性不足，优先级低于 `M=5/10/20`。
 - `M=100` 暂不进入第一轮，因为大候选池容易均值化 latent、降低医学证据强度，并显著增加 decode/victim backward 成本。
 
 推荐名称：
@@ -31,6 +33,280 @@ z_adv = (1 - lambda) * z0 + lambda * z_mix
 ```text
 Latent-Hull TA-OMAT
 ```
+
+## 2026-05-03 Mainline Update
+
+本项目后续在线对抗训练主线改为 Latent-Hull online AT，而不是自由 latent PGD。
+自由 `z0 + delta` 仍保留为历史对照，但不作为毕业设计主方法。
+
+新的主线输入模型优先使用：
+
+```text
+/root/autodl-tmp/triple_labels/super5_minresample_full10_perglobal_20260503
+```
+
+也就是新训练的：
+
+```text
+PTB-XL super5
+minimal_resample
+per_sample_global
+100Hz / 1000 samples / full 10s
+```
+
+如果新 baseline 尚未完成，则只允许用旧 baseline 做 smoke，不写最终结论。
+
+### Main Algorithm
+
+对每个 anchor latent `z0`，从 same-label candidate pool 中取 `M` 个候选：
+
+```text
+z_mix = sum_i softmax(a_i) * z_i
+z_adv = (1 - lambda) * z0 + lambda * z_mix
+```
+
+其中 `a_i` 是在线优化变量，不是固定手工权重。
+
+推荐默认：
+
+```text
+hull_weight_mode = optimized
+M = 10
+lambda = 0.25
+hull_steps = 5
+hull_lr = 0.3
+pgd_eps = 2.0
+same-label mode = primary first, exact multi-hot as strict ablation
+```
+
+### Candidate Pool Priority
+
+候选池分三层：
+
+```text
+P0 real-anchor:
+  目标中心真实 ECG 的 VAE latent。
+  当前最稳，作为主方法基础。
+
+P1 target-token synthetic:
+  通过 no-leak style validation 和 digital/semantic gate 的 ECGTwin center-token synthetic latent。
+  只有通过 center-style pipeline acceptance 后进入主实验。
+
+P2 controls:
+  vanilla synthetic, wrong-center token synthetic, PTB-XL-source token synthetic。
+  只作为证明 target-token 是否有用的对照。
+```
+
+### M And Lambda Search
+
+已有结果支持 `M=10, lambda=0.25` 是当前最稳 AUPRC 主设置。下一轮不做无目的大网格，
+只做解释性 ablation：
+
+| parameter | main | ablation | note |
+|---|---:|---|---|
+| M | 10 | 5, 20 | 已有结果覆盖；M=10 当前 AUPRC 最好 |
+| M very small | - | 3 | sanity check only；更像少数近邻插值，可能多样性不足 |
+| M large | - | 50 | 只在 cluster-balanced candidate pool 上跑 |
+| M very large | - | 100 | 默认不跑，容易 latent 均值化并增加 decode/backward 成本 |
+| lambda | 0.25 | 0.10, 0.40 | 已有结果显示 0.25 最稳 |
+| hull_steps | 5 | 10 | 只在 best pool 上做 |
+| weight mode | optimized | one_hot, uniform, Dirichlet | 已有 C3 optimized AUPRC 最好 |
+
+### Boundary Confidence Constraint
+
+用户希望对抗样本不要过度扰动导致 GT 标签漂移。因此新增 acceptance gate：
+
+```text
+preferred target probability:
+  p_target in [0.50, 0.60]
+
+acceptable boundary window:
+  p_target in [0.45, 0.65]
+```
+
+实现方式：
+
+```text
+inner objective still maximizes victim loss;
+after decode, samples outside the confidence window are down-ranked or rejected;
+QualityAwareBuffer score = 1 - 2 * abs(p_target - 0.5).
+```
+
+如果内层攻击太强：
+
+```text
+reduce lambda to 0.10
+reduce hull_steps to 3
+increase teacher consistency weight
+reject samples with semantic drift
+```
+
+### Label Policy
+
+第一版只允许 same-label mixing：
+
+```text
+same primary super5 class -> keep original GT label
+exact same multi-hot -> keep original multi-hot label
+NORM -> only pure NORM neighbors
+```
+
+不允许跨类 latent mixing 后继续使用原标签。若未来做跨类：
+
+```text
+y_adv = convex/union soft label
+non-target classes with uncertainty use -1 masked sentinel
+```
+
+这不是当前主线。
+
+### Source-Aware Hybrid Rule
+
+如果把 real-anchor 和 target-token synthetic 放在同一个 candidate pool，必须记录 source：
+
+```text
+source_id = real_anchor | target_token | vanilla | wrong_center | ptbxl_source
+```
+
+并使用 source-aware sampling/weights：
+
+```text
+real_anchor weight = 1.0
+target_token weight = 0.35 to 0.70 initial sweep
+wrong/vanilla controls = matched ratio only, not mixed into main model
+```
+
+Acceptance：
+
+```text
+target-token + real-anchor source-aware
+  must beat real-anchor only or at least improve a target-center metric
+  without lowering PN2021 macro AUPRC.
+```
+
+### Target-Real Supervised Stream Update
+
+2026-05-04 后，`synth_online_at_super5.py` 支持把目标中心 K 条真实 ECG 作为一个
+额外监督训练流加入外层训练：
+
+```text
+--target_real_npz
+--target_real_weight
+```
+
+该训练流不同于 Latent-Hull 内层攻击：
+
+```text
+Latent-Hull candidate pool:
+  real_anchor latent + target-token synthetic latent
+  used to create online adversarial/boundary samples
+
+target_real stream:
+  K=500 target-center real ECG signals and labels
+  used as supervised mini-batch stream during outer training
+```
+
+这样做的动机：
+
+```text
+1. 单独 synthetic target-token 下游 self-distillation 已出现负结果；
+2. 目标中心真实 K=500 ECG 是最可信的 center-style anchor；
+3. target-token latent 只作为 bounded style/boundary candidate，不直接主导训练；
+4. 外层训练用 target_real_weight 控制目标中心监督信号强度。
+```
+
+已完成 ningbo sweep：
+
+| run | target_real_weight | PTB-XL AUROC/AUPRC | PN2021 avg AUROC/AUPRC | ningbo AUROC/AUPRC, K=500 refs excluded |
+|---|---:|---:|---:|---:|
+| Task-1 baseline | 0 | 0.9072 / 0.7744 | 0.7780 / 0.4831 | 0.8657 / 0.4842 |
+| real+token AT w4 | 4 | 0.9089 / 0.7780 | 0.7780 / 0.4825 | 0.8749 / 0.4903 |
+| real+token AT w12 | 12 | 0.9079 / 0.7761 | 0.7796 / 0.4876 | 0.8811 / 0.5019 |
+| real+token AT w20 | 20 | 0.9073 / 0.7747 | 0.7798 / 0.4885 | 0.8829 / 0.5049 |
+| real+no-token AT w20 | 20 | 0.9073 / 0.7747 | 0.7797 / 0.4883 | 0.8830 / 0.5050 |
+| real-only w20 abort-best | 20 | 0.9077 / 0.7762 | 0.7787 / 0.4856 | 0.8767 / 0.4936 |
+
+Current interpretation:
+
+```text
+w20 gives the best held-out ningbo AUPRC gain:
+  +1.72pp AUROC
+  +2.07pp AUPRC
+
+This is close to the target-center +2pp AUROC/AUPRC acceptance target, but not
+fully achieved because AUROC is still short. It is also not yet a center-token
+causal proof until matched real-only, no-token, and wrong-token controls are
+run under the same target_real_weight.
+
+2026-05-04 matched no-token update:
+  no-token w20 matches/slightly exceeds target-token w20 on held-out ningbo
+  (0.8830 / 0.5050 vs 0.8829 / 0.5049). Thus the current benefit comes from
+  adding ECGTwin synthetic latent candidates plus K=500 target-real adaptation,
+  not from the learned center token. Real-only abort-best is weaker, so a
+  synthetic pool is useful; it is just not yet center-token-specific.
+```
+
+Next required controls:
+
+```text
+R0: target_real stream only, no synthetic latent pool
+R1: target_real + real_anchor latent pool only
+R2: target_real + no-token synthetic latent pool
+R3: target_real + target-token synthetic latent pool
+R4: target_real + wrong-center token latent pool
+
+All controls must use:
+  same K=500 ref ids
+  same ref-id exclusion in eval
+  same target_real_weight, preferably 20 first
+  same source weights and hull parameters
+```
+
+Current control status:
+
+```text
+R1 real-only was attempted and produced an abort-best checkpoint, but ASR stayed
+below 0.3 for three epochs because the K=500 real pool has too few MI anchors.
+It is useful as a weak reference, not a completed AT run.
+
+R2 no-token and R3 target-token are complete and are effectively tied.
+R4 wrong-token remains pending and should be run only after a new token/selection
+strategy has a plausible chance to beat R2.
+```
+
+Pairwise style-delta Latent-Hull control:
+
+| run | synthetic selection | PTB-XL AUROC/AUPRC | PN2021 avg AUROC/AUPRC | ningbo AUROC/AUPRC |
+|---|---|---:|---:|---:|
+| target-token selected | token style - no-token style >= 0.05 | 0.9067 / 0.7740 | 0.7794 / 0.4883 | 0.8834 / 0.5050 |
+| no-token selected | same pair ids | 0.9071 / 0.7744 | 0.7802 / 0.4902 | 0.8837 / 0.5063 |
+
+Interpretation:
+
+```text
+Latent-Hull online AT is sensitive to candidate quality, but target-center
+style-score gains are not the right quality signal by themselves. For future
+center-token AT, the token-selected pool must improve real-vs-synth realism
+metrics or C2ST against the matched no-token pool before spending GPU on full
+online AT.
+```
+
+### Outputs For New Main Runs
+
+每个 online AT run 必须保存：
+
+```text
+run_config.json
+training_log.json
+train_result.json
+eval_result_v3_super5_normsuppress.json
+pn2021_per_center_delta.csv
+hull_stats.jsonl
+buffer_quality_summary.json
+accepted_adv_samples.npz or indices-only manifest
+```
+
+PN2021-C 只在 clean PN2021 AUPRC 不低于 baseline 或目标中心明显提升时再跑。
 
 ## 可复用代码
 
@@ -494,3 +770,281 @@ training time
 - NORM 污染风险最高。
 - CD/HYP 不适合第一版主结果。
 - Teacher gate 不能替代数字心电规则；最终论文需要同时报告 digital sanity 和 downstream utility。
+
+## 2026-05-03 Task-1-Gated Center-Token Latent-Hull Result
+
+Candidate pool:
+
+```text
+root:
+  /root/autodl-tmp/ecgtwin_prompt_token_super5/effectiveness_pilot_v42_task1gate_ningbo_token_scale_20260503/target_token_s05/ningbo/gated
+token:
+  v42 no-leak style/semantic direct MV4
+token_scale:
+  0.50
+victim gate:
+  Task-1 full10 EfficientNet checkpoint, crop_len=1000
+gated counts:
+  NORM=77, MI=56, STTC=30, total=163
+validation:
+  no-leak same-label EfficientNet C2ST bacc = 0.7702
+  vanilla C2ST bacc = 0.7725
+  mean ningbo style prob = 0.2867
+  vanilla mean ningbo style prob = 0.0823
+```
+
+AT settings:
+
+```text
+output:
+  /root/autodl-tmp/ecgtwin_prompt_token_super5/online_at_task1gate_scale05/ningbo_s05_M10_lam015_adv003_targetauprc_ep8
+attack_mode:
+  latent_hull
+M:
+  10
+lambda:
+  0.15
+hull_steps:
+  5
+boundary gate:
+  p_target in [0.45, 0.65]
+adv_weight:
+  0.03
+anchor_lambda:
+  0.20
+checkpoint metric:
+  target_macro_auprc
+```
+
+Formal clean eval, compared with Task-1 full10 baseline:
+
+| metric | Task-1 baseline | scale=0.50 AT | delta |
+|---|---:|---:|---:|
+| PTB-XL AUROC | 0.9072 | 0.9090 | +0.0018 |
+| PTB-XL AUPRC | 0.7744 | 0.7788 | +0.0044 |
+| PN2021 avg AUROC | 0.7780 | 0.7782 | +0.0003 |
+| PN2021 avg AUPRC | 0.4831 | 0.4825 | -0.0006 |
+| ningbo AUROC | 0.8657 | 0.8679 | +0.0022 |
+| ningbo AUPRC | 0.4842 | 0.4873 | +0.0031 |
+
+PN2021-C cache eval, 4 centers x 5 corruptions x 5 severities:
+
+| metric | Task-1 baseline | scale=0.50 AT | delta |
+|---|---:|---:|---:|
+| mean corrupted AUROC | 0.8332 | 0.8335 | +0.0003 |
+| mean corrupted AUPRC | 0.5095 | 0.5110 | +0.0015 |
+| mean AUROC drop | 0.0095 | 0.0092 | -0.0004 |
+| mean AUPRC drop | 0.0141 | 0.0138 | -0.0004 |
+| ningbo corrupted AUROC | 0.8547 | 0.8573 | +0.0026 |
+| ningbo corrupted AUPRC | 0.4663 | 0.4700 | +0.0037 |
+
+Decision:
+
+```text
+This is a narrow positive result:
+  center-token scale=0.50 + conservative Latent-Hull AT improves the target
+  center ningbo on both clean and corrupted AUROC/AUPRC, and improves PTB-XL.
+
+It is not yet a full PN2021-average success:
+  PN2021 7-center AUPRC remains slightly below the Task-1 baseline because
+  cpsc_2018 and st_petersburg_incart regress.
+```
+
+Implementation update:
+
+```text
+scripts/pgd_cross_center/synth_online_at_super5.py now supports:
+  --es_metric val_macro_auroc
+  --es_metric val_macro_auprc
+  --es_metric target_macro_auroc
+  --es_metric target_macro_auprc
+```
+
+Next AT improvement:
+
+```text
+Use target_macro_auprc or val_macro_auprc for checkpointing when the claim is
+AUPRC utility. The old AUROC-only checkpoint can select an epoch that is worse
+for AUPRC.
+
+Add a soft-label/KL self-distillation variant before another hard-label sweep:
+  real PTB-XL: masked BCE
+  generated/adv latent-hull ECG: alpha * masked BCE + beta * KL(student, frozen Task-1 teacher)
+  start with beta >= alpha for synthetic samples
+```
+
+## 2026-05-03 Soft-Label Self-Distillation Pilot
+
+Implemented a first soft-label proxy in:
+
+```text
+scripts/pgd_cross_center/synth_online_at_super5.py
+```
+
+New arguments:
+
+```text
+--adv_label_mode hard|mixed_soft|teacher_soft
+--adv_teacher_mix
+--adv_soft_target_floor
+```
+
+`mixed_soft` uses a frozen copy of the initial Task-1 model as teacher. For
+each generated/adv latent-hull ECG, the buffer label is:
+
+```text
+y_adv = mix * sigmoid(teacher(x_adv)) + (1 - mix) * one_hot(target_class)
+y_adv[target_class] = max(y_adv[target_class], soft_target_floor)
+```
+
+First pilot:
+
+```text
+output:
+  /root/autodl-tmp/ecgtwin_prompt_token_super5/online_at_task1gate_scale05/ningbo_s05_M10_lam015_adv003_softmix07_valauprc_ep8
+source pool:
+  ningbo target-token scale=0.50 gated pool
+attack:
+  latent_hull, M=10, lambda=0.15, hull_steps=5
+adv labels:
+  mixed_soft, teacher_mix=0.7, target_floor=0.55
+checkpoint metric:
+  val_macro_auprc
+```
+
+Quick eval looked positive at epoch 8:
+
+| metric | baseline quick | softmix ep8 |
+|---|---:|---:|
+| avg AUROC | 0.8305 | 0.8347 |
+| avg AUPRC | 0.6508 | 0.6529 |
+| ningbo AUROC | 0.8466 | 0.8561 |
+| ningbo AUPRC | 0.6496 | 0.6561 |
+
+Formal clean eval against Task-1 baseline:
+
+| metric | Task-1 baseline | hard target-AUPRC AT | softmix07 val-AUPRC AT |
+|---|---:|---:|---:|
+| PTB-XL AUROC | 0.9072 | 0.9090 | 0.9085 |
+| PTB-XL AUPRC | 0.7744 | 0.7788 | 0.7779 |
+| PN2021 avg AUROC | 0.7780 | 0.7782 | 0.7767 |
+| PN2021 avg AUPRC | 0.4831 | 0.4825 | 0.4817 |
+| ningbo AUROC | 0.8657 | 0.8679 | 0.8681 |
+| ningbo AUPRC | 0.4842 | 0.4873 | 0.4875 |
+
+Decision:
+
+```text
+softmix07 is useful evidence that target-center gains remain, but it does not
+replace the current main hard-label checkpoint because PN2021 average AUROC/AUPRC
+regresses more. Keep hard target-AUPRC AT as the current main result.
+
+If soft labels are revisited, test a lighter teacher mix such as 0.3 or implement
+a true separate KL term with lower synthetic weight instead of putting full soft
+labels through pos_weighted BCE.
+```
+
+Follow-up `teacher_mix=0.3`:
+
+```text
+output:
+  /root/autodl-tmp/ecgtwin_prompt_token_super5/online_at_task1gate_scale05/ningbo_s05_M10_lam015_adv003_softmix03_targetauprc_ep8
+checkpoint metric:
+  target_macro_auprc
+formal clean eval:
+  PTB-XL:     0.9085 / 0.7778
+  PN2021 avg: 0.7767 / 0.4816
+  ningbo:     0.8681 / 0.4875
+```
+
+This is effectively the same as `teacher_mix=0.7` and still worse than the
+hard-label target-AUPRC main checkpoint on PN2021 average. Under the current
+`adv_weight=0.03` setting, changing the soft-label mixing ratio is not a
+meaningful lever.
+
+## 2026-05-04 v45 Real-Anchor + NORM/MI Synthetic Follow-Up
+
+The v45 contrastive center token was tested in the real-anchor online-AT route
+with paired target-token/no-token synthetic samples:
+
+```text
+paired pool:
+  /root/autodl-tmp/ecgtwin_prompt_token_super5/paired_token_delta_v45_norm_mi_ningbo_20260504
+
+paired counts:
+  NORM=223
+  MI=123
+
+real anchors:
+  ningbo K=500
+
+online AT:
+  target_real_weight=20
+  attack_mode=latent_hull
+  hull_M=10
+  hull_lambda=0.15
+  adv_weight=0.06
+  adv_label_mode=mixed_soft
+  adv_teacher_mix=0.3
+```
+
+Formal ref-excluded eval:
+
+| run | source weight | PN2021 avg AUROC | PN2021 avg AUPRC | held-out ningbo AUROC | held-out ningbo AUPRC |
+|---|---:|---:|---:|---:|---:|
+| Task-1 baseline | n/a | 0.7780 | 0.4831 | 0.8657 | 0.4842 |
+| v45 target-token | 0.4 | 0.7813 | 0.4893 | 0.8882 | 0.5159 |
+| v45 no-token | 0.4 | 0.7806 | 0.4890 | 0.8884 | 0.5165 |
+| v45 target-token | 1.0 | 0.7810 | 0.4896 | 0.8882 | 0.5168 |
+| v45 no-token | 1.0 | 0.7808 | 0.4887 | 0.8882 | 0.5158 |
+
+Decision:
+
+```text
+This route now meets the +2pp target-center adaptation criterion versus the
+PTB-XL-only Task-1 baseline on held-out ningbo. The effect is not yet center-token
+causal because matched no-token remains tied within ~0.1pp AUPRC.
+
+The next latent-hull change should not be another source-weight sweep. It should
+make the center-style signal enter the adversarial objective or sample selection
+more directly, for example by adding style-probe/C2ST-aware anchor scoring or a
+feature-distance regularizer, then rerunning matched token/no-token controls.
+```
+
+## 2026-05-04 Georgia Follow-Up Sweeps
+
+Georgia remained below the +2pp/+2pp target after the first multi-center
+target-real run:
+
+| run | georgia AUROC | georgia AUPRC | delta vs baseline |
+|---|---:|---:|---:|
+| PTB-XL-only baseline, K=500 refs excluded | 0.8157 | 0.5916 | n/a |
+| v42 target-token + real-anchor AT, w40 src0.4 adv0.06 | 0.8262 | 0.6029 | +1.05pp / +1.13pp |
+
+Follow-up sweeps:
+
+| run | change | georgia AUROC | georgia AUPRC |
+|---|---|---:|---:|
+| `georgia_v42_target_w80_src04_M10_lam015_adv006_softmix03_ep10` | target_real_weight 40 -> 80 | 0.8118 | 0.5848 |
+| `georgia_v42_target_w40_src20_M10_lam015_adv006_softmix03_ep10` | prompt_token source weight 0.4 -> 2.0 | 0.8113 | 0.5847 |
+| `georgia_v36_target_w40_src04_M10_lam015_adv006_softmix03_ep10` | larger v36 MI/STTC prompt-token pool | 0.8116 | 0.5848 |
+| `georgia_v42_target_w40_src04_M10_lam015_adv003_softmix03_ep10` | adv_weight 0.06 -> 0.03 | 0.8119 | 0.5843 |
+| `georgia_v42_target_w40_src04_M10_lam015_adv006_softmix03_hypcd_ep10` | enable CD/HYP trust, exclude MI from scope | 0.8113 | 0.5846 |
+
+Decision:
+
+```text
+Do not continue scalar sweeps for georgia. Stronger target-real supervision,
+more prompt-token source sampling, more MI/STTC prompt-token anchors, lower
+adv_weight, and enabling CD/HYP anchors all underperform the old
+w40/src0.4/adv0.06 run on full-center eval.
+
+Label audit:
+  full georgia has only 7 MI positives under the project super5 mapping;
+  the K=500 selected refs contain all 7;
+  after ref exclusion, formal georgia eval has no MI positives and uses
+  CD/HYP/NORM/STTC only.
+
+Next georgia work should inspect the target sample selection, PN2021 super5
+mapping, and center-specific label noise before more online-AT sweeps.
+```

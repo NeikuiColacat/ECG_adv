@@ -32,6 +32,7 @@ NOT done in this fork (per Plan Rev 8 explicit non-goals):
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import math
 import os
@@ -747,6 +748,10 @@ def push_adv_to_buffer(
     class_trust: Optional[Dict[str, float]] = None,
     boundary_prob_min: float = 0.0,
     boundary_prob_max: float = 1.0,
+    teacher_probs: Optional[np.ndarray] = None,
+    label_mode: str = "hard",
+    teacher_mix: float = 0.7,
+    soft_target_floor: float = 0.0,
 ) -> Dict[str, int]:
     """Push gates-passed adv signals into the buffer with -1 sentinel labels.
 
@@ -769,12 +774,30 @@ def push_adv_to_buffer(
         if trust <= 0.0:
             n_dropped_by_trust += 1
             continue
-        lbl = torch.full((target_one_hot.shape[1],), -1.0)
-        lbl[target_idx] = 1.0
         prob_t = float(1.0 / (1.0 + math.exp(-min(50.0, max(-50.0, victim_logits[i, target_idx])))))
         if prob_t < boundary_prob_min or prob_t > boundary_prob_max:
             n_dropped_by_boundary += 1
             continue
+        if label_mode == "hard":
+            lbl = torch.full((target_one_hot.shape[1],), -1.0)
+            lbl[target_idx] = 1.0
+        else:
+            if teacher_probs is None:
+                raise ValueError(f"teacher_probs required for label_mode={label_mode}")
+            soft = torch.from_numpy(
+                np.clip(teacher_probs[i].astype(np.float32), 0.0, 1.0)
+            )
+            if label_mode == "teacher_soft":
+                lbl = soft
+            elif label_mode == "mixed_soft":
+                hard_full = torch.zeros((target_one_hot.shape[1],), dtype=torch.float32)
+                hard_full[target_idx] = 1.0
+                mix = max(0.0, min(1.0, float(teacher_mix)))
+                lbl = mix * soft + (1.0 - mix) * hard_full
+            else:
+                raise ValueError(f"unsupported adv label_mode={label_mode}")
+            if soft_target_floor > 0.0:
+                lbl[target_idx] = torch.clamp(lbl[target_idx], min=float(soft_target_floor))
         score = (1.0 - 2.0 * abs(prob_t - 0.5)) * trust                # ∈ [0, trust]
         buffer.add_one(
             torch.from_numpy(np.ascontiguousarray(sig_250)).float(),
@@ -786,6 +809,7 @@ def push_adv_to_buffer(
         "n_pushed": n_pushed,
         "n_dropped_by_trust": n_dropped_by_trust,
         "n_dropped_by_boundary": n_dropped_by_boundary,
+        "label_mode": label_mode,
     }
 
 
@@ -802,6 +826,8 @@ def parse_args():
                    help="Stage 1 latent npz: {latents (N,4,128), labels (N,5)}")
     p.add_argument("--init_ckpt", default=DEFAULT_SUPER5_CKPT)
     p.add_argument("--output_dir", required=True)
+    p.add_argument("--target_real_npz", default="",
+                   help="Optional selected target-center real ECG npz with signals (N,1000,12) and labels.")
 
     # PN2021 quick eval
     p.add_argument("--data_dir", default=DEFAULT_PN2021_DIR)
@@ -857,9 +883,21 @@ def parse_args():
                    help="Only push adv samples whose target sigmoid probability is >= this value.")
     p.add_argument("--boundary_prob_max", type=float, default=1.0,
                    help="Only push adv samples whose target sigmoid probability is <= this value.")
+    p.add_argument("--adv_label_mode",
+                   choices=["hard", "mixed_soft", "teacher_soft"],
+                   default="hard",
+                   help="Label policy for generated adversarial ECGs: hard keeps historical target-only labels; "
+                        "mixed_soft blends the frozen initial teacher probabilities with a hard target; "
+                        "teacher_soft uses the frozen initial teacher probabilities directly.")
+    p.add_argument("--adv_teacher_mix", type=float, default=0.7,
+                   help="For --adv_label_mode mixed_soft, weight on frozen-teacher probabilities.")
+    p.add_argument("--adv_soft_target_floor", type=float, default=0.0,
+                   help="For soft adv labels, clamp the intended target class label to at least this value.")
 
     # Mix loader (Plan Rev 13.2: real-dominated mix, adv_w=0.5 vs Wang 2023 0.7 reverse)
     p.add_argument("--ptbxl_weight", type=float, default=1.0)
+    p.add_argument("--target_real_weight", type=float, default=0.0,
+                   help="Sampling weight for --target_real_npz supervised stream.")
     p.add_argument("--roundtrip_weight", type=float, default=0.5)
     p.add_argument("--adv_weight", type=float, default=0.5)
     p.add_argument("--roundtrip_anchor_n", type=int, default=1500)
@@ -875,7 +913,13 @@ def parse_args():
     p.add_argument("--n_epochs", type=int, default=100)
     p.add_argument("--patience", type=int, default=20,
                    help="Early stop after this many quick_eval rounds without improvement")
-    p.add_argument("--es_metric", choices=["val_macro_auroc"],
+    p.add_argument("--es_metric",
+                   choices=[
+                       "val_macro_auroc",
+                       "val_macro_auprc",
+                       "target_macro_auroc",
+                       "target_macro_auprc",
+                   ],
                    default="val_macro_auroc")
     p.add_argument("--lr", type=float, default=5e-5)
     p.add_argument("--weight_decay", type=float, default=1e-4)
@@ -1038,6 +1082,8 @@ def main():
         raise SystemExit("--classes_in_scope must contain at least one class")
     print(f"[setup] classes_in_scope={classes_in_scope}")
     print(f"[setup] boundary target probability window=[{args.boundary_prob_min}, {args.boundary_prob_max}]")
+    print(f"[setup] adv label mode={args.adv_label_mode} "
+          f"teacher_mix={args.adv_teacher_mix} target_floor={args.adv_soft_target_floor}")
 
     # ── Load synth pool (Stage 1 frozen) for training ──────────────────────
     synth_latents, synth_labels, synth_center, source_meta = load_synth_pool(args.synth_npz)
@@ -1085,6 +1131,30 @@ def main():
                                   crop_len=args.crop_len, mode='train')
     val_ds = PTBXLDatasetScheme(val_signals, val_labels,
                                 crop_len=args.crop_len, mode='eval')
+    target_real_ds = None
+    if args.target_real_npz:
+        with np.load(args.target_real_npz, allow_pickle=True) as real_data:
+            real_signals = np.asarray(real_data["signals"], dtype=np.float32)
+            real_labels = np.asarray(real_data["labels"], dtype=np.float32)
+        if real_signals.ndim != 3:
+            raise ValueError(f"target_real_npz signals must be 3D, got {real_signals.shape}")
+        if real_signals.shape[1:] == (12, 1000):
+            real_signals = real_signals.transpose(0, 2, 1)
+        if real_signals.shape[1:] != (1000, 12):
+            raise ValueError(f"target_real_npz signals must be (N,1000,12) or (N,12,1000), got {real_signals.shape}")
+        if real_labels.shape[0] != real_signals.shape[0] or real_labels.shape[1] != NUM_SUPER5:
+            raise ValueError(f"target_real_npz labels mismatch: signals={real_signals.shape} labels={real_labels.shape}")
+        target_real_ds = PTBXLDatasetScheme(
+            real_signals,
+            real_labels,
+            crop_len=args.crop_len,
+            mode='train',
+        )
+        print(
+            f"[setup] target-real supervised stream: n={len(target_real_ds)} "
+            f"weight={args.target_real_weight} path={args.target_real_npz}",
+            flush=True,
+        )
 
     pos_weight = torch.tensor(
         compute_pos_weight(train_labels, NUM_SUPER5),
@@ -1165,6 +1235,13 @@ def main():
         )
     for p in victim.model.parameters():
         p.requires_grad_(True)
+    teacher_model = None
+    if args.adv_label_mode != "hard":
+        teacher_model = copy.deepcopy(victim.model).to(args.device)
+        teacher_model.eval()
+        for p in teacher_model.parameters():
+            p.requires_grad_(False)
+        print("[setup] frozen initial teacher enabled for soft adv labels")
     buffer = QualityAwareBuffer(max_size=args.qab_size)
 
     # EWA anchor snapshot — only trainable params (after PGD-freeze override)
@@ -1188,10 +1265,28 @@ def main():
             "source_counts": dict(source_counts),
             "has_source_metadata": source_meta["has_source_metadata"],
         },
+        "adv_label_policy": {
+            "mode": args.adv_label_mode,
+            "teacher_mix": args.adv_teacher_mix,
+            "soft_target_floor": args.adv_soft_target_floor,
+        },
         "epochs": [],
     }
-    best_avg_auroc = baseline_qe["avg_macro_auroc"] \
-        if baseline_qe["avg_macro_auroc"] == baseline_qe["avg_macro_auroc"] else -1.0  # NaN-safe
+    def selected_es_metric(qe: Dict[str, Any]) -> float:
+        if args.es_metric == "val_macro_auroc":
+            return float(qe.get("avg_macro_auroc", float("nan")))
+        if args.es_metric == "val_macro_auprc":
+            return float(qe.get("avg_macro_auprc", float("nan")))
+        center_info = qe.get("per_center", {}).get(args.center_name, {})
+        if args.es_metric == "target_macro_auroc":
+            return float(center_info.get("macro_auroc", float("nan")))
+        if args.es_metric == "target_macro_auprc":
+            return float(center_info.get("macro_auprc", float("nan")))
+        raise ValueError(f"unsupported es_metric={args.es_metric}")
+
+    best_metric = selected_es_metric(baseline_qe)
+    if best_metric != best_metric:
+        best_metric = -1.0  # NaN-safe
     best_epoch = 0
     epochs_since_best = 0
     best_ckpt_path = os.path.join(args.output_dir, "best_model.pt")
@@ -1279,16 +1374,27 @@ def main():
             adv_ct_crop = adv_signals[..., start:start + args.crop_len]
             with torch.no_grad():
                 lg_chunks = []
+                teacher_prob_chunks = []
                 for i in range(0, adv_ct_crop.shape[0], 128):
                     x_t = torch.from_numpy(adv_ct_crop[i:i + 128]).float().to(args.device)
                     lg_chunks.append(victim.model(x_t).cpu().numpy())
+                    if teacher_model is not None:
+                        teacher_prob_chunks.append(torch.sigmoid(teacher_model(x_t)).cpu().numpy())
                 logits_arr = np.concatenate(lg_chunks)
+                teacher_probs_arr = (
+                    np.concatenate(teacher_prob_chunks)
+                    if teacher_prob_chunks else None
+                )
             push_stats = push_adv_to_buffer(
                 buffer=buffer, adv_signals_ct=adv_signals,
                 target_one_hot=target_oh, victim_logits=logits_arr,
                 crop_len=args.crop_len, class_trust=class_trust,
                 boundary_prob_min=args.boundary_prob_min,
                 boundary_prob_max=args.boundary_prob_max,
+                teacher_probs=teacher_probs_arr,
+                label_mode=args.adv_label_mode,
+                teacher_mix=args.adv_teacher_mix,
+                soft_target_floor=args.adv_soft_target_floor,
             )
         # Track consecutive low ASR
         if asr_info["asr_overall"] < args.asr_low_threshold:
@@ -1306,6 +1412,8 @@ def main():
         # Phase C: build mixed loader (cold-start guard for empty buffer)
         buf_ds = buffer.to_dataset()
         streams = [(train_ds, args.ptbxl_weight, None)]
+        if target_real_ds is not None and args.target_real_weight > 0:
+            streams.append((target_real_ds, args.target_real_weight, None))
         if roundtrip_ds is not None:
             streams.append((roundtrip_ds, args.roundtrip_weight, None))
         if buf_ds is not None and len(buf_ds) > 0:
@@ -1409,14 +1517,14 @@ def main():
                   f"AUPRC={qe['avg_macro_auprc']}")
             for c, info in qe["per_center"].items():
                 print(f"      {c}: AUROC={info['macro_auroc']}  AUPRC={info['macro_auprc']}")
-            cur = qe["avg_macro_auroc"]
-            improved = (cur == cur) and (cur > best_avg_auroc + 1e-6)   # NaN-safe
+            cur = selected_es_metric(qe)
+            improved = (cur == cur) and (cur > best_metric + 1e-6)   # NaN-safe
             if improved:
-                best_avg_auroc = cur
+                best_metric = cur
                 best_epoch = epoch
                 epochs_since_best = 0
                 torch.save(victim.model.state_dict(), best_ckpt_path)
-                print(f"   ** saved best @ ep{epoch}: avg AUROC {best_avg_auroc}")
+                print(f"   ** saved best @ ep{epoch}: {args.es_metric} {best_metric}")
                 entry["best_update"] = True
             else:
                 epochs_since_best += args.eval_every
@@ -1429,11 +1537,11 @@ def main():
         # Plan Rev 13.1: early-stop on val_macro_auroc plateau
         if (epoch % args.eval_every == 0) and epochs_since_best >= args.patience:
             print(f"\n[early-stop] patience {args.patience} hit at ep{epoch}; "
-                  f"best @ ep{best_epoch} ({args.es_metric}={best_avg_auroc})")
+                  f"best @ ep{best_epoch} ({args.es_metric}={best_metric})")
             with open(es_path, "w") as f:
                 json.dump({
                     "stopped_epoch": epoch, "best_epoch": best_epoch,
-                    "best_metric": best_avg_auroc, "patience": args.patience,
+                    "best_metric": best_metric, "es_metric": args.es_metric, "patience": args.patience,
                     "n_epochs_run": epoch, "early_stopped": True,
                 }, f, indent=2)
             break
@@ -1442,7 +1550,7 @@ def main():
         with open(es_path, "w") as f:
             json.dump({
                 "stopped_epoch": args.n_epochs, "best_epoch": best_epoch,
-                "best_metric": best_avg_auroc, "patience": args.patience,
+                "best_metric": best_metric, "es_metric": args.es_metric, "patience": args.patience,
                 "n_epochs_run": args.n_epochs, "early_stopped": False,
             }, f, indent=2)
 
@@ -1450,7 +1558,8 @@ def main():
     final = {
         "args":               vars(args),
         "baseline_quick_eval": baseline_qe,
-        "best_avg_macro_auroc": best_avg_auroc,
+        "best_metric":         best_metric,
+        "es_metric":           args.es_metric,
         "n_epochs_run":       len(log["epochs"]),
         "last_quick_eval":    log["epochs"][-1].get("quick_eval") if log["epochs"] else None,
     }
@@ -1458,7 +1567,7 @@ def main():
         json.dump(final, f, indent=2, default=str)
 
     print("\n" + "=" * 72)
-    print(f"Training done. best_avg_macro_auroc={best_avg_auroc} → {best_ckpt_path}")
+    print(f"Training done. best {args.es_metric}={best_metric} → {best_ckpt_path}")
 
 
 if __name__ == "__main__":

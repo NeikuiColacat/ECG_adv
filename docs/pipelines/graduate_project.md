@@ -1564,17 +1564,20 @@ C1 synthetic-only pretrain:
 
 Completed metrics:
 
-| run | training route | custom seed42 test AUROC | custom seed42 test AUPRC | official fold10 AUROC | official fold10 AUPRC | PN2021 avg AUROC | PN2021 avg AUPRC |
+Fold10 columns are fold10 subset evaluation of custom-split models, not the
+official PTB-XL training protocol.
+
+| run | training route | custom seed42 test AUROC | custom seed42 test AUPRC | fold10 subset AUROC | fold10 subset AUPRC | PN2021 avg AUROC | PN2021 avg AUPRC |
 |---|---|---:|---:|---:|---:|---:|---:|
 | A-old | real2000 from scratch, original selection | 0.8433 | 0.6234 | not rerun | not rerun | not rerun | not rerun |
-| A-fair | real2000 from scratch, AUPRC checkpoint, no early-stop bias | 0.8357 | 0.6040 | 0.8224 | 0.5922 | 0.7339 | 0.4074 |
+| A-fair | real2000 from scratch, AUPRC checkpoint, no early-stop bias | 0.8357 | 0.6040 | 0.8250 | 0.6011 | 0.7339 | 0.4074 |
 | C0 | synthetic20k only | 0.6649 | 0.4107 | not evaluated | not evaluated | not evaluated | not evaluated |
-| C1 | synthetic20k pretrain -> real2000 clean fine-tune | 0.8645 | 0.6723 | 0.7490 | 0.5106 | 0.7364 | 0.4195 |
-| C3 | C1 -> real-anchor latent-hull AT, M10, boundary 0.5-0.6 | 0.8654 | 0.6738 | 0.7510 | 0.5118 | 0.7381 | 0.4230 |
-| C3-wide | C1 -> real-anchor latent-hull AT, M10, boundary 0.45-0.65 | 0.8655 | 0.6733 | 0.7512 | 0.5095 | 0.7373 | 0.4198 |
-| C4 | A-fair -> real-anchor latent-hull AT, M10, boundary 0.5-0.6 | 0.8356 | 0.6046 | 0.8214 | 0.5925 | 0.7314 | 0.4063 |
-| D1 | C3 teacher -> student self-distill, real2000 + synthetic20k soft | 0.8670 | 0.6737 | 0.7631 | 0.5273 | 0.7407 | 0.4280 |
-| D2 | C3 teacher -> student self-distill, real2000 only | 0.8682 | 0.6836 | 0.7549 | 0.5180 | 0.7308 | 0.4215 |
+| C1 | synthetic20k pretrain -> real2000 clean fine-tune | 0.8645 | 0.6723 | 0.8551 | 0.6693 | 0.7364 | 0.4195 |
+| C3 | C1 -> real-anchor latent-hull AT, M10, boundary 0.5-0.6 | 0.8654 | 0.6738 | 0.8565 | 0.6720 | 0.7381 | 0.4230 |
+| C3-wide | C1 -> real-anchor latent-hull AT, M10, boundary 0.45-0.65 | 0.8655 | 0.6733 | 0.8567 | 0.6719 | 0.7373 | 0.4198 |
+| C4 | A-fair -> real-anchor latent-hull AT, M10, boundary 0.5-0.6 | 0.8356 | 0.6046 | 0.8241 | 0.5996 | 0.7314 | 0.4063 |
+| D1 | C3 teacher -> student self-distill, real2000 + synthetic20k soft | 0.8670 | 0.6737 | 0.8581 | 0.6711 | 0.7407 | 0.4280 |
+| D2 | C3 teacher -> student self-distill, real2000 only | 0.8682 | 0.6836 | 0.8653 | 0.6925 | 0.7308 | 0.4215 |
 
 Important interpretation:
 
@@ -1586,10 +1589,9 @@ PN2021:
   C1/C3 give small but consistent average AUPRC gains over A-fair
   (+0.0121 for C1, +0.0156 for C3).
 
-official PTB-XL fold10:
-  C1/C3 are worse than A-fair. This is a warning that the synthetic-pretrain
-  benefit may be split-dependent or may over-adapt to the random train2000/test-rest
-  protocol.
+fold10 subset:
+  C1/C3/D1/D2 are higher than A-fair, but this is not the official PTB-XL fold
+  protocol because the custom random train2000 split can overlap fold10.
 
 latent-hull AT:
   The strict 0.5-0.6 target-probability gate kept only 75/1000 adversarial
@@ -1605,11 +1607,10 @@ follow-up result:
   small stabilizing add-on, not the primary source of gain.
 
 self-distillation:
-  D1 improves the external PN2021 average to 0.7407 / 0.4280 and official
-  fold10 AUPRC to 0.5273. This is the best current external-generalization
-  student.
-  D2 improves the custom seed42 test to 0.8682 / 0.6836, but PN2021 falls to
-  0.7308 / 0.4215. Treat D2 as split-specialized until repeated across seeds.
+  D1 improves the external PN2021 average to 0.7407 / 0.4280.
+  D2 improves the custom seed42 test to 0.8682 / 0.6836 and fold10 subset AUPRC
+  to 0.6925, but PN2021 falls to 0.7308 / 0.4215. Treat D2 as split-specialized
+  until repeated across seeds.
 ```
 
 Executed C3 latent-hull AT implementation details:
@@ -1689,19 +1690,22 @@ self-distillation improves macro AUROC by about +3pp and macro AUPRC by about
 +7pp versus the A-fair real2000 baseline.
 ```
 
-This claim is specific to the custom seed42 split. It should not be written as
-an official PTB-XL fold10 improvement, because the C/D line did not reproduce
-the same gain on fold10.
+This claim is specific to the custom seed42 split. The auxiliary fold10 numbers
+below are **fold10 subset evaluation**, not the standard PTB-XL official
+fold1-8 train / fold9 validation / fold10 test protocol, because the custom
+random train2000 split can overlap the official fold10 subset.
 
 Important 2026-05-04 center-token ablation update:
 
 ```text
 The +3pp/+7pp custom-seed42 gain should not be attributed causally to the
-PTBXL center token. A no-token vanilla ECGTwin synthetic pretrain control
-matched or exceeded the original center-token C1 result after real2000
-fine-tuning. The supported claim is "ECGTwin synthetic pretraining helps this
-custom protocol"; the center-token-specific claim must use the separate v2
-self-distillation ablation, where center-token beats vanilla under that v2 setup.
+PTBXL center token. Matched no-token vanilla ECGTwin controls now exceed the
+center-token arms at C1, C3, and D1 under the same train2000 split, synthetic
+pool size, real-anchor latent-hull AT recipe, self-distillation recipe, and
+evaluation command. The supported claim for this large-gain line is
+"ECGTwin synthetic pretraining plus real-data fine-tuning/self-distillation
+helps this custom protocol"; the center-token-specific claim must use a
+separate matched v2 or vNext ablation where center-token beats vanilla.
 ```
 
 ### Fixed Data Protocol
@@ -1779,8 +1783,8 @@ Metrics:
 |---|---:|
 | custom seed42 AUROC | 0.8357 |
 | custom seed42 AUPRC | 0.6040 |
-| official fold10 AUROC | 0.8224 |
-| official fold10 AUPRC | 0.5922 |
+| fold10 subset AUROC | 0.8250 |
+| fold10 subset AUPRC | 0.6011 |
 | PN2021 avg AUROC | 0.7339 |
 | PN2021 avg AUPRC | 0.4074 |
 
@@ -2051,19 +2055,20 @@ D1 vs D2 interpretation:
 D1 is better for external-generalization style reporting because it improves
 PN2021 over C3 and keeps synthetic soft data in the method.
 
-D2 is the best custom seed42 PTB-XL score, but it uses no synthetic samples
-during distillation and may be split-specialized.
+D2 is the best custom seed42 PTB-XL score among the original center-token
+D1/D2 pair, but it uses no synthetic samples during distillation and may be
+split-specialized. The later no-token D1 causal control is stronger than both.
 ```
 
 ### Complete Metrics Table For The Large-Gain Line
 
 | run | route | custom AUROC | custom AUPRC | fold10 AUROC | fold10 AUPRC | PN2021 AUROC | PN2021 AUPRC |
 |---|---|---:|---:|---:|---:|---:|---:|
-| A-fair | real2000 from scratch | 0.8357 | 0.6040 | 0.8224 | 0.5922 | 0.7339 | 0.4074 |
-| C1 | synth20k pretrain -> real2000 FT | 0.8645 | 0.6723 | 0.7490 | 0.5106 | 0.7364 | 0.4195 |
-| C3 | C1 -> latent-hull AT | 0.8654 | 0.6738 | 0.7510 | 0.5118 | 0.7381 | 0.4230 |
-| D1 | C3 teacher -> real2000 + synth20k soft | 0.8670 | 0.6737 | 0.7631 | 0.5273 | 0.7407 | 0.4280 |
-| D2 | C3 teacher -> real2000 soft only | 0.8682 | 0.6836 | 0.7549 | 0.5180 | 0.7308 | 0.4215 |
+| A-fair | real2000 from scratch | 0.8357 | 0.6040 | 0.8250 | 0.6011 | 0.7339 | 0.4074 |
+| C1 | synth20k pretrain -> real2000 FT | 0.8645 | 0.6723 | 0.8551 | 0.6693 | 0.7364 | 0.4195 |
+| C3 | C1 -> latent-hull AT | 0.8654 | 0.6738 | 0.8565 | 0.6720 | 0.7381 | 0.4230 |
+| D1 | C3 teacher -> real2000 + synth20k soft | 0.8670 | 0.6737 | 0.8581 | 0.6711 | 0.7407 | 0.4280 |
+| D2 | C3 teacher -> real2000 soft only | 0.8682 | 0.6836 | 0.8653 | 0.6925 | 0.7308 | 0.4215 |
 
 ### 2026-05-04 Center-Token Causal Ablation For The Large-Gain Line
 
@@ -2199,29 +2204,151 @@ Result:
 
 | run | token | custom AUROC | custom AUPRC | fold10 AUROC | fold10 AUPRC | PN2021 AUROC | PN2021 AUPRC |
 |---|---|---:|---:|---:|---:|---:|---:|
-| A-fair | none | 0.8357 | 0.6040 | 0.8224 | 0.5922 | 0.7339 | 0.4074 |
-| C1 original | PTBXL MV4 token | 0.8645 | 0.6723 | 0.7490 | 0.5106 | 0.7364 | 0.4195 |
+| A-fair | none | 0.8357 | 0.6040 | 0.8250 | 0.6011 | 0.7339 | 0.4074 |
+| C1 original | PTBXL MV4 token | 0.8645 | 0.6723 | 0.8551 | 0.6693 | 0.7364 | 0.4195 |
 | C1 vanilla control | no token | 0.8670 | 0.6846 | 0.8560 | 0.6695 | 0.7719 | 0.4750 |
+| C3 original | PTBXL MV4 token | 0.8654 | 0.6738 | 0.8565 | 0.6720 | 0.7381 | 0.4230 |
+| C3 vanilla control | no token | 0.8705 | 0.6904 | 0.8589 | 0.6745 | 0.7651 | 0.4670 |
+| D1 original | PTBXL MV4 token | 0.8670 | 0.6737 | 0.8581 | 0.6711 | 0.7407 | 0.4280 |
+| D1 vanilla control | no token | 0.8750 | 0.7007 | 0.8601 | 0.6813 | 0.7711 | 0.4687 |
+
+New 2026-05-04 matched-control artifacts:
+
+```text
+C3 no-token:
+  /root/autodl-tmp/graduate_project/ablation_vanilla_no_token_synthpretrain_real_latenthull_at_M10_n1000_seed42
+
+D1 no-token:
+  /root/autodl-tmp/graduate_project/self_distill_d1_teacher_no_token_c3_init_no_token_c0_synth20k_seed42
+
+Matched evaluation output files:
+  eval_result_pn2021_legacy_default_rerun_20260504.json for token C1/C3/D1/A-fair
+  eval_result_pn2021_legacy_default.json for no-token C1/C3/D1
+```
+
+Matched C3 no-token details:
+
+```text
+init_ckpt = no-token C1 best_model.pt
+real latent pool = /root/autodl-tmp/graduate_project/ptbxl_real_train2000_seed42.latent.npz
+attack mode = real-anchor latent-hull PGD
+hull_M = 10
+hull_lambda = 0.25
+hull_steps = 5
+hull_lr = 0.3
+boundary gate = target sigmoid probability in [0.50, 0.60]
+accepted adv buffer = 60 / 1000 attacked anchors
+fine-tune lr = 5e-5
+adv_weight = 0.25
+max epochs = 12
+```
 
 Interpretation:
 
 ```text
 This ablation is negative for the center-token causal story in the +3pp/+7pp
-pipeline. The no-token vanilla ECGTwin control is not worse; after real2000
-fine-tuning it exceeds the original center-token C1 on custom seed42, official
-fold10, and PN2021.
+pipeline. The no-token vanilla ECGTwin control is not worse; it exceeds the
+original center-token arm after C1 real2000 fine-tuning, after C3 real-anchor
+latent-hull AT, and after D1 C3-teacher self-distillation.
 
 Therefore the +3pp/+7pp result should be attributed to ECGTwin synthetic
-pretraining plus real2000 fine-tuning, not specifically to center-token
-conditioning.
+pretraining plus real2000 fine-tuning/self-distillation, not specifically to
+center-token conditioning.
+
+Delta no-token minus center-token:
+  C1 custom AUPRC +0.0123, PN2021 AUPRC +0.0555
+  C3 custom AUPRC +0.0166, PN2021 AUPRC +0.0440
+  D1 custom AUPRC +0.0270, PN2021 AUPRC +0.0407
 ```
 
 Conservative conclusion:
 
 ```text
-Center token is useful in the separate v2 self-distillation setting where it
-rescues a vanilla ECGTwin synthetic pool, but it is not validated as the cause
-of the large C0->C1 custom-seed42 gain.
+Center token is not validated as the cause of the large custom-seed42 gain.
+For this line, no-token ECGTwin is the stronger control. A center-token claim
+needs a different matched experiment where target-token beats no-token under
+the same generation, filtering, training, and evaluation recipe.
+```
+
+Audit report:
+
+```text
+docs/tmp_md/auroc3_auprc7_center_token_ablation_20260504.md
+```
+
+The audit includes the C0 synthetic-only comparison. The token arm is better
+than no-token at C0, but that advantage disappears after real2000 fine-tuning
+and reverses at C1/C3/D1. This makes the current causal result negative for
+the center-token explanation of the +3pp/+7pp line.
+
+### 2026-05-04 v47 And Boundary-Confidence Follow-Up
+
+Purpose:
+
+```text
+Give the center-token arm one more fair chance under the same low-resource
+PTB-XL self-distillation setting by:
+1. adding EfficientNet penultimate-feature losses to token training;
+2. selecting boundary-like synthetic samples with teacher target confidence
+   near 0.55 instead of selecting only high-confidence easy samples.
+```
+
+v47 feature-contrast token:
+
+```text
+token bank:
+  /root/autodl-tmp/ecgtwin_ptbxl_prompt_token_boundary_at_v1/prompt_token_runs/ptbxl_source_v47_feature_contrast_steps4000_20260504
+
+extra token-training losses:
+  feature_loss_weight = 0.05
+  contrast_feature_weight = 0.10
+  feature_crop_len = 1000
+```
+
+Generation sanity, 60 samples/class:
+
+| arm | CD top1 | HYP top1 | MI top1 | NORM top1 | STTC top1 |
+|---|---:|---:|---:|---:|---:|
+| v46 token | 0.967 | 0.750 | 0.883 | 1.000 | 0.933 |
+| v46 no-token | 0.833 | 0.583 | 0.300 | 0.900 | 0.650 |
+| v47 feature-token | 0.800 | 0.750 | 0.550 | 0.917 | 0.567 |
+
+Decision:
+
+```text
+v47 was not promoted to large generation because it degraded MI/STTC generation
+sanity relative to v46.
+```
+
+Boundary-confidence filtered pools from the v46 large candidates:
+
+```text
+teacher ensemble = real2000 seed42/43/44
+target_conf_min = 0.35
+target_conf_max = 0.75
+selection_order = boundary
+boundary_center = 0.55
+```
+
+| arm | kept | CD | HYP | MI | NORM | STTC |
+|---|---:|---:|---:|---:|---:|---:|
+| v46 token boundary | 1580 | 348 | 400 | 400 | 36 | 396 |
+| v46 no-token boundary | 1505 | 400 | 400 | 400 | 95 | 210 |
+
+Downstream:
+
+| arm | custom AUROC | custom AUPRC | fold10 AUROC | fold10 AUPRC | PN2021 AUROC | PN2021 AUPRC |
+|---|---:|---:|---:|---:|---:|---:|
+| v46 token boundary | 0.8099 | 0.5484 | 0.7996 | 0.5521 | 0.6752 | 0.3525 |
+| v46 no-token boundary | 0.8403 | 0.6266 | 0.8292 | 0.6182 | 0.7093 | 0.4076 |
+
+Conclusion:
+
+```text
+Boundary-confidence synthetic self-distillation is weaker than high-confidence
+filtered v2 in this recipe. It also remains negative for the center-token
+causal claim, because no-token beats token on custom test, fold10 subset, and
+PN2021 external evaluation.
 ```
 
 ### Thesis-Safe Wording
@@ -2232,9 +2359,10 @@ Use this wording:
 Under our low-resource PTB-XL custom seed42 protocol, ECGTwin synthetic
 pretraining followed by real2000 fine-tuning improves macro AUROC by about
 +3 percentage points and macro AUPRC by about +7 percentage points over the
-A-fair real2000 baseline. The strongest custom result is obtained after
-C3-teacher self-distillation. A 2026-05-04 no-token ablation shows this large
-custom gain is not caused specifically by the PTBXL center token.
+A-fair real2000 baseline. The strongest custom result in this line is the
+no-token D1 control after no-token C3-teacher self-distillation. A 2026-05-04
+no-token ablation shows this large custom gain is not caused specifically by
+the PTBXL center token.
 ```
 
 Do not use this wording:
@@ -2247,10 +2375,10 @@ The +3pp/+7pp gain proves the center-token design is effective.
 Reason:
 
 ```text
-The large C/D custom gain did not transfer to official fold10. The official
-fold10-safe center-token/self-distillation evidence is the separate v2 E4 line.
-The large custom C0->C1 gain now has a no-token control that is stronger than
-the original center-token C1.
+The fold10 numbers in this section are fold10 subset evaluations of custom
+seed42 models, not the official PTB-XL fold protocol. The large custom
+C1/C3/D1 gain now has no-token controls that are stronger than the
+center-token arms.
 ```
 
 ## Canonical v2 Center-Token Self-Distillation Ablation
@@ -2382,7 +2510,7 @@ Secondary acceptance:
 
 ```text
 target-token AUROC 不下降超过 0.005
-official fold10 或 target-center PN2021 不出现明显回退
+fold10 subset 或 target-center PN2021 不出现明显回退
 bootstrap 95% CI 的 AUPRC delta 下界 > 0 时才能写成稳定增益
 ```
 
@@ -2398,7 +2526,7 @@ C1 no-token vanilla control:
 
 C1 original PTBXL MV4 center-token:
   custom seed42 = 0.8645 / 0.6723
-  fold10        = 0.7490 / 0.5106
+  fold10        = 0.8551 / 0.6693
   PN2021        = 0.7364 / 0.4195
 ```
 
@@ -3082,6 +3210,363 @@ route is bounded style + real-anchor latent-hull AT, not stronger direct
 synthetic self-distillation.
 ```
 
+### 2026-05-04 Target-Real + Token Latent-Hull Follow-Up
+
+After the negative direct self-distillation results, a bounded target-center
+adaptation route was tested on the Task-1 full10 baseline:
+
+```text
+base model:
+  /root/autodl-tmp/triple_labels/super5_minresample_full10_perglobal_20260503
+
+target center:
+  ningbo
+
+target real anchors:
+  K = 500 ningbo ECG
+  exported signals:
+    /root/autodl-tmp/ecgtwin_prompt_token_super5/real_anchor_selected_v1/ningbo/ningbo_real_k500_seed42.signals.npz
+  exported latents:
+    /root/autodl-tmp/ecgtwin_prompt_token_super5/real_anchor_selected_v1/ningbo/ningbo_real_k500_seed42.latent.npz
+
+token synthetic pool:
+  v42 target-token scale=0.50, Task-1 full10 victim gate
+  generated/gated root:
+    /root/autodl-tmp/ecgtwin_prompt_token_super5/effectiveness_pilot_v42_task1gate_ningbo_token_scale_large_20260504/target_token_s05/ningbo/gated
+  kept:
+    757 / 1200
+    MI=296, NORM=366, STTC=95
+
+merged latent pool:
+  /root/autodl-tmp/ecgtwin_prompt_token_super5/merged_real_token_v1/ningbo_real500_s05large/merged.latent.npz
+```
+
+Online AT recipe:
+
+```text
+script = scripts/pgd_cross_center/synth_online_at_super5.py
+attack_mode = latent_hull
+hull_M = 10
+hull_lambda = 0.15
+hull_steps = 5
+hull_lr = 0.25
+adv_weight = 0.06
+source_weights = real_anchor=1.0,prompt_token_s05_large=0.4
+target_real_npz = ningbo K=500 real ECG signals
+target_real_weight sweep = 4, 12, 20
+checkpoint metric = target_macro_auprc
+formal eval = PN2021 v3 minimal_resample/per_sample_global with the K=500
+              ref ids excluded from ningbo evaluation
+```
+
+Formal results against the Task-1 baseline:
+
+| run | PTB-XL AUROC | PTB-XL AUPRC | PN2021 avg AUROC | PN2021 avg AUPRC | ningbo AUROC | ningbo AUPRC |
+|---|---:|---:|---:|---:|---:|---:|
+| Task-1 baseline | 0.9072 | 0.7744 | 0.7780 | 0.4831 | 0.8657 | 0.4842 |
+| target-real weight 4 | 0.9089 | 0.7780 | 0.7780 | 0.4825 | 0.8749 | 0.4903 |
+| target-real weight 12 | 0.9079 | 0.7761 | 0.7796 | 0.4876 | 0.8811 | 0.5019 |
+| target-real weight 20 | 0.9073 | 0.7747 | 0.7798 | 0.4885 | 0.8829 | 0.5049 |
+
+Best target-center delta:
+
+```text
+target-real weight 20 vs Task-1 baseline, ningbo with K=500 refs excluded:
+  AUROC: 0.8829 - 0.8657 = +0.0172
+  AUPRC: 0.5049 - 0.4842 = +0.0207
+```
+
+Interpretation:
+
+```text
+This is a partial target-center success: AUPRC exceeds the +2pp target on
+held-out ningbo, and AUROC improves by +1.72pp, but AUROC does not yet reach
++2pp and PN2021 seven-center average remains far below +2pp.
+
+It also does not by itself prove the center-token-specific causal claim because
+the strongest effect now includes a supervised target-real K=500 stream. A fair
+next control must compare:
+
+  real K=500 stream only
+  real K=500 + no-token synthetic latent-hull
+  real K=500 + target-token synthetic latent-hull
+  real K=500 + wrong-token synthetic latent-hull
+
+under the same target_real_weight, source weights, reference ids, and
+ref-excluded evaluation.
+```
+
+Matched control update:
+
+```text
+The fair no-token control was run with the same K=500 refs, same reference
+policy, same generation seed, same gate, same source-aware Latent-Hull recipe,
+same target_real_weight=20, and the same ref-excluded evaluation.
+```
+
+| run | PTB-XL AUROC | PTB-XL AUPRC | PN2021 avg AUROC | PN2021 avg AUPRC | ningbo AUROC | ningbo AUPRC |
+|---|---:|---:|---:|---:|---:|---:|
+| Task-1 baseline | 0.9072 | 0.7744 | 0.7780 | 0.4831 | 0.8657 | 0.4842 |
+| real K500 only, abort-best | 0.9077 | 0.7762 | 0.7787 | 0.4856 | 0.8767 | 0.4936 |
+| real K500 + no-token synth | 0.9073 | 0.7747 | 0.7797 | 0.4883 | 0.8830 | 0.5050 |
+| real K500 + target-token synth | 0.9073 | 0.7747 | 0.7798 | 0.4885 | 0.8829 | 0.5049 |
+
+Control artifacts:
+
+```text
+no-token generated/gated pool:
+  /root/autodl-tmp/ecgtwin_prompt_token_super5/effectiveness_pilot_v42_task1gate_ningbo_no_token_large_20260504/no_token/ningbo/gated
+
+no-token merged latent pool:
+  /root/autodl-tmp/ecgtwin_prompt_token_super5/merged_real_token_v1/ningbo_real500_no_token_large/merged.latent.npz
+
+no-token online AT:
+  /root/autodl-tmp/ecgtwin_prompt_token_super5/online_at_real_token_v1/ningbo_real500_no_token_large_targetrealw20_srcw04_M10_lam015_adv006_softmix03_ep10
+
+real-only abort-best:
+  /root/autodl-tmp/ecgtwin_prompt_token_super5/online_at_real_token_v1/ningbo_real500_only_targetrealw20_M10_lam015_adv006_softmix03_ep10
+```
+
+Updated interpretation:
+
+```text
+The synthetic latent pool is useful: real K500 + no-token synthetic improves
+held-out ningbo AUPRC by +2.08pp, while real-only abort-best improves only
++0.94pp.
+
+However, target-token synthetic does not beat matched no-token synthetic:
+  target-token - no-token, held-out ningbo = -0.0001 AUROC / -0.0001 AUPRC
+  target-token - no-token, PN2021 avg      = +0.0000 AUROC / +0.0002 AUPRC
+
+Therefore this follow-up also fails the center-token causal criterion. It
+supports "ECGTwin synthetic latent candidates + target-real adaptation", not
+"center token improves downstream utility".
+```
+
+### 2026-05-04 Multi-Center Target-Real + Token Latent-Hull v2
+
+Purpose:
+
+```text
+Extend the target-center route beyond ningbo using the same Task-1 full10
+baseline, K=500 target-center real ECG, v42 target-token synthetic latents, and
+VAE latent-hull online AT.
+
+This tests the second graduation-project objective:
+PTB-XL-trained EfficientNetV2 -> target-center K=500 + center-token ECGTwin
+synthetic latent candidates + online AT -> >= 2pp target-center AUROC/AUPRC
+gain versus the bare PTB-XL baseline.
+```
+
+Shared recipe:
+
+```text
+init_ckpt = /root/autodl-tmp/triple_labels/super5_minresample_full10_perglobal_20260503/best_model.pt
+target_real_weight = 40
+source_weights = real_anchor=1.0,prompt_token=0.4
+attack_mode = latent_hull
+hull_M = 10
+hull_lambda = 0.15
+hull_steps = 5
+hull_lr = 0.25
+adv_weight = 0.06
+adv_label_mode = mixed_soft
+adv_teacher_mix = 0.3
+boundary_prob = [0.45, 0.70]
+formal eval = PN2021 v3 minimal_resample/per_sample_global with K=500 ref ids excluded
+```
+
+Artifacts:
+
+```text
+real anchors:
+  /root/autodl-tmp/ecgtwin_prompt_token_super5/real_anchor_selected_v2/<center>/
+
+merged latent pools:
+  /root/autodl-tmp/ecgtwin_prompt_token_super5/merged_real_token_v2/chapman_real500_v42_target
+  /root/autodl-tmp/ecgtwin_prompt_token_super5/merged_real_token_v2/cpsc_real500_v42_target
+  /root/autodl-tmp/ecgtwin_prompt_token_super5/merged_real_token_v2/georgia_real500_v42_target
+
+online AT:
+  /root/autodl-tmp/ecgtwin_prompt_token_super5/online_at_real_token_v2/chapman_v42_target_w40_src04_M10_lam015_adv006_softmix03_ep10
+  /root/autodl-tmp/ecgtwin_prompt_token_super5/online_at_real_token_v2/cpsc_v42_target_w40_src04_M10_lam015_adv006_softmix03_ep10
+  /root/autodl-tmp/ecgtwin_prompt_token_super5/online_at_real_token_v2/georgia_v42_target_w40_src04_M10_lam015_adv006_softmix03_ep10
+```
+
+Formal target-center results versus the same ref-excluded PTB-XL baseline:
+
+| center | baseline target AUROC | baseline target AUPRC | token+real AT target AUROC | token+real AT target AUPRC | delta |
+|---|---:|---:|---:|---:|---:|
+| chapman_shaoxing | 0.8763 | 0.4251 | 0.8972 | 0.4647 | +2.09pp / +3.96pp |
+| cpsc_2018 | 0.8115 | 0.5586 | 0.8543 | 0.5959 | +4.28pp / +3.73pp |
+| georgia | 0.8157 | 0.5916 | 0.8262 | 0.6029 | +1.05pp / +1.13pp |
+
+Matched no-token controls for the two successful centers:
+
+| center | target-token AUROC/AUPRC | no-token AUROC/AUPRC | token - no-token |
+|---|---:|---:|---:|
+| chapman_shaoxing | 0.8972 / 0.4647 | 0.8972 / 0.4653 | +0.00pp / -0.06pp |
+| cpsc_2018 | 0.8543 / 0.5959 | 0.8541 / 0.5958 | +0.02pp / +0.01pp |
+
+Full 7-center averages:
+
+| center-tuned run | PN2021 avg AUROC | PN2021 avg AUPRC | baseline avg AUROC | baseline avg AUPRC |
+|---|---:|---:|---:|---:|
+| chapman_v42_target_w40 | 0.7803 | 0.4910 | 0.7784 | 0.4806 |
+| cpsc_v42_target_w40 | 0.7824 | 0.4804 | 0.7774 | 0.4813 |
+| georgia_v42_target_w40 | 0.7743 | 0.4764 | 0.7778 | 0.4824 |
+
+Interpretation:
+
+```text
+The target-center route is now positive for two large PN2021 centers:
+chapman_shaoxing and cpsc_2018 both exceed +2pp in AUROC and AUPRC after
+excluding the K=500 adaptation ECGs from evaluation.
+
+Georgia improves, but does not reach +2pp on full formal evaluation.
+
+Matched no-token controls for chapman and cpsc are essentially tied with the
+target-token runs. Therefore this is not a center-token causal proof. It
+supports the practical adaptation route: small target-real ECG + ECGTwin
+synthetic latent candidates + latent-hull online AT can repair cross-center
+performance for selected large centers. Current evidence says the target-real
+stream and synthetic latent candidates are the useful pieces; the v42 center
+token has not added measurable downstream gain over vanilla ECGTwin here.
+```
+
+Pairwise token-delta selection was also tested:
+
+```text
+selector:
+  scripts/ecgtwin_gen/select_paired_token_delta_pool.py
+
+selection input:
+  target-token gated large pool
+  no-token gated large pool
+  no-leak full1000 style scores for both arms
+
+selection rule:
+  same original pair id must exist in both arms
+  target-token style score - no-token style score >= 0.05
+  target-token style score in [0.05, 0.95]
+  target-token p_target in [0.45, 0.995]
+
+selected:
+  NORM=80, MI=80, STTC=30
+
+artifact:
+  /root/autodl-tmp/ecgtwin_prompt_token_super5/paired_token_delta_v1_ningbo_20260504
+```
+
+Pairwise downstream result:
+
+| run | PTB-XL AUROC | PTB-XL AUPRC | PN2021 avg AUROC | PN2021 avg AUPRC | ningbo AUROC | ningbo AUPRC |
+|---|---:|---:|---:|---:|---:|---:|
+| paired target-token selected | 0.9067 | 0.7740 | 0.7794 | 0.4883 | 0.8834 | 0.5050 |
+| paired no-token selected | 0.9071 | 0.7744 | 0.7802 | 0.4902 | 0.8837 | 0.5063 |
+
+Interpretation:
+
+```text
+Even after selecting pairs where target-token explicitly increases no-leak
+ningbo style probability over no-token, the matched no-token selected pool is
+still better downstream. This falsifies the current "style delta selection is
+enough" idea.
+
+The next center-token improvement cannot be another post-hoc style-score
+selection over v42. It must change token training itself, for example by adding
+a contrastive token-vs-no-token objective or by training tokens to reduce
+real-vs-synth C2ST/feature distance rather than maximize center-style score.
+```
+
+Current thesis-safe wording:
+
+```text
+The center-token pathway is not validated as the cause of either the custom
+PTB-XL +3pp/+7pp gain or the ningbo target-center +2pp AUPRC adaptation gain.
+The current supported result is narrower: ECGTwin synthetic latent candidates
+plus K=500 target-real adaptation can improve held-out ningbo AUPRC, but the
+matched no-token control is as strong as the target-token arm.
+```
+
+### 2026-05-04 v44/E5/E6 Follow-Up
+
+v44 bounded-style/composed token was tested after v43 showed strong style shift
+but collapsed STTC gate count. v44 uses:
+
+```text
+NORM/MI token vectors = v43 bounded-style token
+STTC token vectors    = v42 scale=0.50 token
+target center         = ningbo
+target real stream    = K=500
+online AT             = source-aware Latent-Hull, M=10, lambda=0.15,
+                        target_real_weight=20, adv_weight=0.06
+```
+
+Formal ref-excluded result:
+
+| run | PTB-XL AUROC | PTB-XL AUPRC | PN2021 avg AUROC | PN2021 avg AUPRC | held-out ningbo AUROC | held-out ningbo AUPRC |
+|---|---:|---:|---:|---:|---:|---:|
+| Task-1 baseline | 0.9072 | 0.7744 | 0.7780 | 0.4831 | 0.8657 | 0.4842 |
+| v44 target-token | 0.9069 | 0.7739 | 0.7789 | 0.4883 | 0.8838 | 0.5070 |
+| matched actual-report no-token | 0.9068 | 0.7734 | 0.7805 | 0.4908 | 0.8853 | 0.5106 |
+
+Decision:
+
+```text
+v44 target-token improves held-out ningbo versus the Task-1 baseline, but the
+matched no-token control is stronger. This is another negative center-token
+causal result for the target-center online-AT route.
+```
+
+The custom PTB-XL v2 self-distillation line was also scaled from 2000 filtered
+synthetic samples to 4000 filtered synthetic samples.
+
+| run | synthetic policy | custom AUROC | custom AUPRC | note |
+|---|---|---:|---:|---|
+| v2 no-token 2000 | vanilla ECGTwin filtered top2000 | 0.8340 | 0.6053 | naked control, best-AUROC checkpoint |
+| v2 token 2000 | PTB-XL center-token filtered top2000 | 0.8500 | 0.6371 | +1.60pp / +3.18pp vs naked |
+| E5 token 4000 | PTB-XL center-token filtered top4000 | 0.8555 | 0.6528 | +2.15pp / +4.75pp vs naked |
+| E5 no-token 4000 | vanilla ECGTwin filtered top3970 | 0.8620 | 0.6684 | strict scaled no-token control wins |
+| E6 hybrid | HYP token, other classes no-token | 0.8530 | 0.6504 | class-wise token gating did not win |
+
+Interpretation:
+
+```text
+E5 token 4000 satisfies the weak comparison against the original naked
+no-token 2000 self-distillation control. However, when the no-token control is
+allowed the same 4000-sample scale, no-token is stronger. Therefore E5 cannot
+be used as a strict center-token causal proof.
+
+The per-class pattern is informative:
+  center token helps HYP,
+  no-token is stronger for CD/MI/NORM/STTC.
+
+Simple class-wise gating with HYP token + other no-token did not recover the
+no-token 4000 performance. The next valid center-token attempt must change the
+token training objective itself, not just expand or remix selected samples.
+```
+
+Code capability added for the next attempt:
+
+```text
+methods/ecgtwin_gen/prompt_token/trainer.py
+scripts/ecgtwin_gen/train_center_prompt_tokens.py
+
+new options:
+  --contrast_recon_weight
+  --contrast_recon_margin
+  --contrast_style_delta_weight
+  --contrast_style_delta_margin
+  --contrast_semantic_delta_weight
+  --contrast_semantic_delta_margin
+
+purpose:
+  train token and no-token as a paired contrast within the same batch/reference.
+  The token must beat no-token on denoise MSE and optionally on target-center
+  style probability or primary-class semantic probability.
+```
+
 Earlier smoke interpretation:
 
 ```text
@@ -3111,4 +3596,596 @@ The C0/C1 +3pp/+7pp gain proves center token works.
 The style classifier alone proves medical validity.
 The target-token pool is better if it only wins after using a different filter,
 different reference distribution, or different synthetic count.
+```
+
+### 2026-05-04 Same-Preprocessing Center-Token Ablation
+
+The filtered self-distillation v2 line was rerun with one consistent eval
+configuration:
+
+```text
+preprocess_mode = minimal_resample
+norm_mode       = per_sample_global
+crop_len        = 1000
+PN2021 cache    = pn2021_eval_cache_mmap_minresample_perglobal
+```
+
+This is the strictest current ablation for the PTB-XL low-resource story because
+the only intended factor is the synthetic source/prompt-token policy.
+
+| arm | custom AUROC | custom AUPRC | fold10 AUROC | fold10 AUPRC | PN2021 AUROC | PN2021 AUPRC |
+|---|---:|---:|---:|---:|---:|---:|
+| real2000 baseline | 0.8433 | 0.6234 | 0.8297 | 0.6190 | 0.7085 | 0.3912 |
+| token filtered top2000 | 0.8500 | 0.6371 | 0.8405 | 0.6380 | 0.7067 | 0.3937 |
+| no-token filtered top2000 | 0.8333 | 0.6051 | 0.8212 | 0.6004 | 0.7020 | 0.3993 |
+| token filtered top4000 | 0.8555 | 0.6528 | 0.8445 | 0.6463 | 0.7201 | 0.4168 |
+| no-token filtered top3970 | 0.8620 | 0.6684 | 0.8532 | 0.6577 | 0.7288 | 0.4291 |
+| HYP-token hybrid top4000 | 0.8530 | 0.6504 | 0.8448 | 0.6381 | 0.7253 | 0.4296 |
+
+Decision:
+
+```text
+Center token is still not validated as the causal source of the +3pp/+7pp
+graduate-project gain.
+
+The token top2000 arm beats no-token top2000 on PTB-XL, but a scaled no-token
+top3970 arm beats token top4000 on custom test, fold10, and PN2021. The safest
+claim is that ECGTwin synthetic/self-distillation can help low-resource PTB-XL;
+the current PTB-XL center token does not provide a strict downstream advantage.
+```
+
+Detailed audit:
+
+```text
+docs/tmp_md/auroc3_auprc7_center_token_ablation_20260504.md
+```
+
+### 2026-05-04 v45 Contrastive Token Generation Check
+
+The new v45 contrastive token does show strong generation-side center-style
+control on ningbo. Same references and seed, 1200 samples per arm:
+
+| arm | class | mean P(ningbo) | top1 ningbo rate |
+|---|---|---:|---:|
+| no-token | MI | 0.0802 | 0.0800 |
+| no-token | NORM | 0.1184 | 0.0725 |
+| no-token | STTC | 0.0841 | 0.0875 |
+| target-token | MI | 0.4643 | 0.5175 |
+| target-token | NORM | 0.6247 | 0.7725 |
+| target-token | STTC | 0.5190 | 0.6075 |
+
+Gate counts:
+
+| arm | total pass | MI | NORM | STTC |
+|---|---:|---:|---:|---:|
+| target-token, no top1 gate | 705 / 1200 | 304 | 390 | 11 |
+| no-token, no top1 gate | 715 / 1200 | 283 | 271 | 161 |
+
+Interpretation:
+
+```text
+v45 proves that contrastive center-token training can move generated samples
+toward target-center style according to the no-leak style probe.
+
+It does not yet prove downstream utility. The next accepted downstream claim
+still requires a matched v45 target-token vs no-token online-AT run where the
+target-token arm beats no-token on AUROC/AUPRC.
+```
+
+### 2026-05-04 v45 Matched Online-AT Result
+
+v45 was then tested in the target-center online-AT route using paired NORM/MI
+samples only. STTC synthetic was excluded from the v45 synthetic side because
+only `11/400` target-token STTC samples passed the digital gate; STTC anchors
+therefore come from the K=500 real target-center latent pool.
+
+Matched setup:
+
+```text
+target center        = ningbo
+target real stream   = K=500, target_real_weight=20
+synthetic classes    = NORM/MI paired target-token vs no-token samples
+paired synthetic N   = 346 each arm, NORM=223, MI=123
+attack               = Latent-Hull, M=10, lambda=0.15
+adv_weight           = 0.06
+label mode           = mixed_soft, teacher_mix=0.3
+checkpoint metric    = target_macro_auprc
+formal eval          = minimal_resample/per_sample_global, crop_len=1000,
+                       K=500 ningbo ref ids excluded
+```
+
+Formal full-center results:
+
+| run | source weight | PTB-XL AUROC | PTB-XL AUPRC | PN2021 avg AUROC | PN2021 avg AUPRC | held-out ningbo AUROC | held-out ningbo AUPRC |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Task-1 baseline | n/a | 0.9072 | 0.7744 | 0.7780 | 0.4831 | 0.8657 | 0.4842 |
+| v45 target-token | 0.4 | 0.9066 | 0.7724 | 0.7813 | 0.4893 | 0.8882 | 0.5159 |
+| v45 no-token | 0.4 | 0.9066 | 0.7726 | 0.7806 | 0.4890 | 0.8884 | 0.5165 |
+| v45 target-token | 1.0 | 0.9067 | 0.7727 | 0.7810 | 0.4896 | 0.8882 | 0.5168 |
+| v45 no-token | 1.0 | 0.9066 | 0.7724 | 0.7808 | 0.4887 | 0.8882 | 0.5158 |
+
+Decision:
+
+```text
+The v45 online-AT route is a positive target-center adaptation result versus
+the Task-1 PTB-XL-only baseline:
+
+  best v45 target-token vs Task-1 on held-out ningbo:
+    AUROC +0.0225
+    AUPRC +0.0326
+
+This satisfies the +2pp target-center criterion for ningbo, but it still does
+not satisfy the center-token causal criterion. Matched no-token is effectively
+identical at source weight 0.4 and only 0.10pp lower in ningbo AUPRC at source
+weight 1.0. Treat the useful factor as K=500 real-anchor Latent-Hull online AT
+plus ECGTwin latent candidates, not yet as a strong center-token-specific gain.
+```
+
+### 2026-05-04 v46 PTB-XL Contrastive Center-Token Ablation
+
+The v46 experiment directly tests whether a stronger PTB-XL class center token
+can explain the low-resource self-distillation gain.
+
+Setup:
+
+```text
+token training:
+  PTB-XL source center token
+  4 vectors/class
+  paired token-vs-no-token contrastive reconstruction + semantic loss
+  4000 training steps
+
+generation:
+  1600 ECG/class, 8000 total per arm
+  classes = CD/HYP/MI/NORM/STTC
+  same references and same seeds for token/no-token
+
+filtering:
+  same v2 3-teacher self-distillation filter
+  gamma=0.3
+  per_class_cap=800
+```
+
+Filter result:
+
+| arm | kept | CD | HYP | MI | NORM | STTC |
+|---|---:|---:|---:|---:|---:|---:|
+| v46 center-token | 4000 | 800 | 800 | 800 | 800 | 800 |
+| matched no-token | 3734 | 800 | 534 | 800 | 800 | 800 |
+| token count-matched | 3734 | 800 | 534 | 800 | 800 | 800 |
+
+Downstream result:
+
+| arm | custom AUROC | custom AUPRC | fold10 AUROC | fold10 AUPRC | PN2021 AUROC | PN2021 AUPRC |
+|---|---:|---:|---:|---:|---:|---:|
+| real2000 baseline | 0.8433 | 0.6234 | 0.8297 | 0.6190 | 0.7085 | 0.3912 |
+| old token top4000 | 0.8555 | 0.6528 | 0.8445 | 0.6463 | 0.7201 | 0.4168 |
+| old no-token top3970 | 0.8620 | 0.6684 | 0.8532 | 0.6577 | 0.7288 | 0.4291 |
+| v46 token top4000 | 0.8508 | 0.6437 | 0.8430 | 0.6419 | 0.7187 | 0.4073 |
+| v46 no-token 3734 | 0.8530 | 0.6404 | 0.8433 | 0.6333 | 0.7250 | 0.4166 |
+| v46 token count-matched 3734 | 0.8537 | 0.6466 | 0.8426 | 0.6383 | 0.7078 | 0.4038 |
+
+Decision:
+
+```text
+v46 improves the generation/filter pass rate, especially for HYP, but it still
+does not validate the center token as a downstream causal factor.
+
+Against matched no-token, the token arm gives only a small PTB-XL AUPRC lift and
+does not improve AUROC. On PN2021, both token variants are worse than no-token.
+
+The thesis-safe interpretation remains:
+  ECGTwin synthetic samples plus self-distillation can help low-resource PTB-XL,
+  but the current PTB-XL center-token design is not the source of the +3pp/+7pp
+  gain under strict controls.
+```
+
+Artifacts:
+
+```text
+token bank:
+  /root/autodl-tmp/ecgtwin_ptbxl_prompt_token_boundary_at_v1/prompt_token_runs/ptbxl_source_v46_contrast_recon_sem_steps4000_20260504
+
+token candidates:
+  /root/autodl-tmp/ecgtwin_ptbxl_prompt_token_boundary_at_v1/v46_large_20260504/token/ptbxl_source/samples.npz
+
+no-token candidates:
+  /root/autodl-tmp/ecgtwin_ptbxl_prompt_token_boundary_at_v1/v46_large_20260504/no_token/ptbxl_source/samples.npz
+
+trained students:
+  /root/autodl-tmp/graduate_project/self_distill_v2_e7_v46_contrast_filtered4000_gamma03_scratch_seed42_auroc
+  /root/autodl-tmp/graduate_project/self_distill_v2_e8_v46_no_token_matched_filtered3734_gamma03_scratch_seed42_auroc
+  /root/autodl-tmp/graduate_project/self_distill_v2_e9_v46_token_countmatched3734_gamma03_scratch_seed42_auroc
+```
+
+### 2026-05-04 v48 MMD Token And v46 Paired-Delta Ablation
+
+v48 tried to make the PTB-XL source token more downstream-compatible by adding
+an EfficientNet feature-distribution MMD objective:
+
+```text
+token training:
+  direct MV4, 4 learned vectors/class
+  semantic_loss_weight = 0.01
+  contrast_recon_weight = 0.10
+  contrast_semantic_delta_weight = 0.02
+  feature_mmd_weight = 0.10
+  contrast_feature_mmd_weight = 0.20
+  4000 steps, bf16
+```
+
+Sanity generation, 60 samples/class:
+
+| arm | CD top1 | HYP top1 | MI top1 | NORM top1 | STTC top1 | overall top1 |
+|---|---:|---:|---:|---:|---:|---:|
+| v46 token | 0.967 | 0.750 | 0.883 | 1.000 | 0.933 | 0.907 |
+| v46 no-token | 0.833 | 0.583 | 0.300 | 0.900 | 0.650 | 0.653 |
+| v47 feature-token | 0.800 | 0.750 | 0.550 | 0.917 | 0.567 | 0.717 |
+| v48 MMD-token | 0.850 | 0.683 | 0.667 | 0.917 | 0.550 | 0.733 |
+
+Decision:
+
+```text
+Do not promote v48. It is better than no-token on MI generation sanity, but it
+is clearly worse than v46 overall and especially worse on MI/STTC.
+```
+
+Because v46 is still the strongest generation-side token, a final paired-delta
+downstream test was run on v46:
+
+```text
+source pools:
+  v46 token/no-token large pools, 8000 candidates per arm
+
+pairing:
+  same class, same reference ECG, same generation seed, same pair index
+
+selection:
+  for each class select top 400 pairs where token target probability improves
+  most over no-token, with token top1 == target class and token p_target >= 0.60
+
+v2 self-distillation filter:
+  teacher ensemble = real2000 seed42/43/44
+  gamma = 0.3
+  tau_high = 0.6
+  tau_low = 0.35
+  per_class_cap = 400
+```
+
+Selection and filter result:
+
+| arm | raw pairs | filtered kept | CD | HYP | MI | NORM | STTC |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| v46 paired-delta token | 2000 | 1759 | 392 | 264 | 334 | 392 | 377 |
+| v46 paired-delta no-token | 2000 | 1069 | 375 | 74 | 219 | 293 | 108 |
+
+This confirms a generation/filter-side token effect: the same pairs produce
+many more semantically accepted HYP/MI/STTC samples when the PTB-XL token is
+inserted. The downstream EfficientNet result is still negative:
+
+| arm | custom AUROC | custom AUPRC | fold10 AUROC | fold10 AUPRC | PN2021 AUROC | PN2021 AUPRC |
+|---|---:|---:|---:|---:|---:|---:|
+| v46 paired-delta token | 0.8472 | 0.6222 | 0.8241 | 0.5936 | 0.6886 | 0.3677 |
+| v46 paired-delta no-token | 0.8597 | 0.6612 | 0.8260 | 0.6030 | 0.7092 | 0.4063 |
+
+Decision:
+
+```text
+The paired-delta ablation is the strictest current test of the center-token
+causal claim. It shows that center token increases the number of accepted
+synthetic samples, but those samples do not improve the downstream classifier.
+The no-token matched arm is stronger on custom test, fold10 subset, and PN2021.
+
+Therefore the AUROC +3pp / AUPRC +7pp low-resource line must not be attributed
+to the current PTB-XL center-token scheme. It should be attributed to ECGTwin
+synthetic/self-distillation plus real fine-tuning, with center token reported as
+a generation-control mechanism that still needs a better downstream objective.
+```
+
+Artifacts:
+
+```text
+v48 token bank:
+  /root/autodl-tmp/ecgtwin_ptbxl_prompt_token_boundary_at_v1/prompt_token_runs/ptbxl_source_v48_feature_mmd_steps4000_20260504
+
+v48 sanity:
+  /root/autodl-tmp/ecgtwin_ptbxl_prompt_token_boundary_at_v1/v48_sanity_20260504/token/ptbxl_source/summary.json
+
+v46 paired-delta raw pools:
+  /root/autodl-tmp/graduate_project/paired_delta_v46_top400x5_seed42/token_paired_delta_top400x5_raw.npz
+  /root/autodl-tmp/graduate_project/paired_delta_v46_top400x5_seed42/no_token_paired_delta_top400x5_raw.npz
+
+v46 paired-delta filtered pools:
+  /root/autodl-tmp/graduate_project/self_distill_v2_paired_delta_v46_token_top400x5_seed42/synth_v2_filtered_top2000_gamma03.npz
+  /root/autodl-tmp/graduate_project/self_distill_v2_paired_delta_v46_no_token_top400x5_seed42/synth_v2_filtered_top2000_gamma03.npz
+
+v46 paired-delta students:
+  /root/autodl-tmp/graduate_project/self_distill_v2_e12_v46_paired_delta_token1759_gamma03_scratch_seed42_auroc
+  /root/autodl-tmp/graduate_project/self_distill_v2_e13_v46_paired_delta_no_token1069_gamma03_scratch_seed42_auroc
+```
+
+### 2026-05-04 Combo Pool Follow-Up: Negative
+
+After the paired-delta result, a conservative combined pool tested whether
+center-token samples could help as an incremental source on top of the stronger
+no-token pool:
+
+```text
+base synthetic pool:
+  v46 no-token filtered pool, 3734 samples
+
+added token pool:
+  v46 center-token filtered pool, 4000 samples
+  token synthetic sample_weights multiplied by 0.35
+
+student recipe:
+  same self-distill v2 student, checkpoint_metric=auroc
+```
+
+Result:
+
+| arm | custom AUROC | custom AUPRC |
+|---|---:|---:|
+| v46 no-token 3734 | 0.8530 | 0.6404 |
+| v46 token top4000 | 0.8508 | 0.6437 |
+| v46 no-token + token w0.35 combo | 0.8497 | 0.6388 |
+
+Decision:
+
+```text
+The current PTB-XL center-token pool does not help even as a low-weight
+incremental source on top of the no-token pool. Do not repeat simple token/no-
+token concatenation or sample-weight sweeps unless the token objective changes.
+```
+
+Artifact:
+
+```text
+/root/autodl-tmp/graduate_project/self_distill_v2_e14_v46_combo_notoken3734_token4000_w035_scratch_seed42_auroc
+```
+
+### 2026-05-04 Class-Oracle Hybrid: Best Token-Aware Variant So Far, Still Below Target
+
+Per-class audit showed that the center-token arms help some classes but hurt
+others:
+
+```text
+v46 token/count-matched tends to help CD/HYP/MI.
+v46 no-token remains better for NORM/STTC.
+```
+
+A class-oracle hybrid pool was therefore built from existing filtered pools:
+
+```text
+CD/HYP/MI  <- v46 token count-matched filtered pool
+NORM/STTC  <- v46 no-token matched filtered pool
+total      = 3734 synthetic samples
+student    = same self-distill v2 recipe, checkpoint_metric=auroc
+```
+
+Result:
+
+| arm | custom AUROC | custom AUPRC | fold10 AUROC | fold10 AUPRC | PN2021 AUROC | PN2021 AUPRC |
+|---|---:|---:|---:|---:|---:|---:|
+| v46 no-token 3734 | 0.8530 | 0.6404 | 0.8433 | 0.6333 | 0.7250 | 0.4166 |
+| v46 class-oracle hybrid | 0.8561 | 0.6511 | 0.8286 | 0.6045 | 0.7220 | 0.4043 |
+| class-oracle fine-tune from no-token | 0.8537 | 0.6437 | not run | not run | not run | not run |
+| class-oracle hybrid, AUPRC checkpoint | 0.8517 | 0.6416 | not run | not run | not run | not run |
+
+Decision:
+
+```text
+This is the best token-aware custom-test variant after the strict no-token
+controls: +0.31pp AUROC and +1.07pp AUPRC over v46 no-token on the custom test.
+It still does not meet the requested +2pp/+2pp criterion, and it degrades fold10
+and PN2021. Use it as evidence that token utility is class-specific, not as the
+final thesis claim.
+
+A conservative fine-tune from the stronger no-token checkpoint was also tried:
+
+```text
+init = v46 no-token best_model_auroc.pt
+synth = class-oracle hybrid
+synth_ratio = 0.5
+synth_distill_weight = 0.25
+lr = 1e-4
+epochs = 20
+```
+
+It reached only `0.8537 / 0.6437` custom AUROC/AUPRC, so the no-token optimum is
+not easily improved by light token-aware fine-tuning.
+```
+
+The same hybrid pool was also rerun with `--checkpoint_metric auprc`:
+
+```text
+output = /root/autodl-tmp/graduate_project/self_distill_v2_e17_v46_class_oracle_hybrid3734_gamma03_scratch_seed42_auprc
+epochs = 50
+patience = 50
+lr = 0.01
+synth_ratio = 1.0
+synth_distill_weight = 0.5
+```
+
+It reached only `0.8517 / 0.6416` on the custom test. Because this is below the
+AUROC-selected hybrid and barely above the strict no-token AUPRC, formal
+fold10/PN2021 evaluation was not promoted.
+
+Artifacts:
+
+```text
+/root/autodl-tmp/graduate_project/self_distill_v2_filtered_v46_class_oracle_hybrid_seed42/synth_v2_filtered_class_oracle_cd_hyp_mi_token_norm_sttc_notoken_gamma03.npz
+/root/autodl-tmp/graduate_project/self_distill_v2_e15_v46_class_oracle_hybrid3734_gamma03_scratch_seed42_auroc
+/root/autodl-tmp/graduate_project/self_distill_v2_e16_v46_class_oracle_ft_from_notoken_lr1e4_r05_seed42_auroc
+/root/autodl-tmp/graduate_project/self_distill_v2_e17_v46_class_oracle_hybrid3734_gamma03_scratch_seed42_auprc
+```
+
+### 2026-05-04 Hard-Label Trust Test: Custom-Positive, External-Negative
+
+Question:
+
+```text
+If center-token samples are more semantically reliable than no-token samples,
+can we trust their synthetic hard labels instead of using only soft
+self-distillation targets?
+```
+
+This test used the same class-oracle hybrid pool:
+
+```text
+CD/HYP/MI  <- v46 token count-matched filtered pool
+NORM/STTC  <- v46 no-token matched filtered pool
+```
+
+Training changes:
+
+```text
+--use_synth_hard_labels
+--synth_distill_weight 0.0
+--real_distill_alpha 0.0
+--soft_loss_mode bce_soft
+```
+
+So synthetic ECGs participate through hard BCE labels, not through teacher soft
+targets. This is a direct test of whether token-generated labels are trustworthy.
+
+Result:
+
+| arm | synth ratio | custom AUROC | custom AUPRC | fold10 AUROC | fold10 AUPRC | PN2021 AUROC | PN2021 AUPRC |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| no-token hard-label, same seed | 1.00 | 0.8574 | 0.6633 | 0.8385 | 0.6394 | 0.7329 | 0.4345 |
+| class-oracle token-hard | 1.00 | 0.8693 | 0.6955 | 0.8308 | 0.6320 | 0.7318 | 0.4349 |
+| class-oracle token-hard | 0.75 | 0.8682 | 0.6961 | 0.8306 | 0.6443 | 0.7313 | 0.4302 |
+| class-oracle token-hard | 1.25 | 0.8583 | 0.6676 | not run | not run | not run | not run |
+
+Interpretation:
+
+```text
+The hard-label variant is useful as a diagnostic:
+  custom AUPRC improves strongly versus matched no-token hard-label control;
+  custom AUROC improves by +1.20pp, close to but below the +2pp target.
+
+However, it does not generalize:
+  fold10 AUROC is lower than no-token hard-label;
+  PN2021 is essentially tied or lower;
+  synth_ratio=1.25 over-trusts synthetic hard labels and degrades custom metrics.
+
+Therefore this route cannot be promoted as the thesis center-token proof. It
+does show that token samples can carry class-specific signal on the custom
+split, but the current hard-label trust recipe overfits and needs external
+alignment before it is usable.
+```
+
+Artifacts:
+
+```text
+/root/autodl-tmp/graduate_project/self_distill_v2_e18_v46_class_oracle_hardlabel_r10_seed42_auroc
+/root/autodl-tmp/graduate_project/self_distill_v2_e19_v46_no_token_hardlabel_r10_seed42_auroc
+/root/autodl-tmp/graduate_project/self_distill_v2_e20_v46_class_oracle_hardlabel_r125_seed42_auroc
+/root/autodl-tmp/graduate_project/self_distill_v2_e21_v46_no_token_hardlabel_r10_seed8042_auroc
+/root/autodl-tmp/graduate_project/self_distill_v2_e22_v46_class_oracle_hardlabel_r075_seed42_auroc
+```
+
+### 2026-05-04 Token-Hard Followed By Real2000 Clean Fine-Tune
+
+Because the hard-label model had strong custom-test AUPRC but weak external
+metrics, it was used as initialization for a conservative real-only fine-tune:
+
+```text
+init = e18 class-oracle token-hard best_model.pt
+train = real2000 only
+lr = 1e-4
+epochs = 25
+checkpoint_metric = auroc
+```
+
+Matched no-token control:
+
+```text
+init = e21 no-token hard-label best_model.pt
+same real2000 fine-tune recipe
+```
+
+Result:
+
+| arm | custom AUROC | custom AUPRC | fold10 AUROC | fold10 AUPRC | PN2021 AUROC | PN2021 AUPRC |
+|---|---:|---:|---:|---:|---:|---:|
+| v46 no-token soft self-distill | 0.8530 | 0.6404 | 0.8433 | 0.6333 | 0.7250 | 0.4166 |
+| token-hard -> real2000 FT | 0.8735 | 0.7013 | 0.8452 | 0.6455 | 0.7346 | 0.4281 |
+| no-token-hard -> real2000 FT | 0.8669 | 0.6828 | 0.8479 | 0.6506 | 0.7370 | 0.4450 |
+
+Interpretation:
+
+```text
+Against the naked v46 no-token soft self-distillation control, the improved
+center-token route reaches the requested custom-test threshold:
+  +2.05pp AUROC / +6.09pp AUPRC.
+
+However, against the stronger same-recipe no-token-hard -> real2000 fine-tune
+control, the token advantage shrinks to:
+  +0.66pp AUROC / +1.85pp AUPRC on custom,
+and the no-token control is better on fold10 and PN2021.
+
+Therefore this is a usable positive ablation only if the baseline is explicitly
+defined as naked no-token soft self-distillation. It is not a strict causal proof
+that center token beats every matched no-token training recipe.
+```
+
+Artifacts:
+
+```text
+/root/autodl-tmp/graduate_project/self_distill_v2_e23_v46_class_oracle_hardlabel_r10_realfine_lr1e4_seed42_auroc
+/root/autodl-tmp/graduate_project/self_distill_v2_e24_v46_no_token_hardlabel_r10_realfine_lr1e4_seed42_auroc
+```
+
+### 2026-05-04 Georgia Target-Center Sweep: Negative
+
+The target-center route already reaches the +2pp AUROC/AUPRC target for
+chapman_shaoxing and cpsc_2018, and reaches it for ningbo AUPRC/AUROC in the
+v45 matched online-AT line. Georgia remained below threshold:
+
+```text
+baseline georgia, K=500 refs excluded:
+  0.8157 / 0.5916
+
+best previous georgia v42 target-token + real-anchor AT:
+  w40, source_weights real_anchor=1.0,prompt_token=0.4
+  0.8262 / 0.6029
+  delta +1.05pp / +1.13pp
+```
+
+Five follow-up sweeps did not improve georgia:
+
+| run | change | georgia AUROC | georgia AUPRC | decision |
+|---|---|---:|---:|---|
+| v42 w80 src0.4 adv0.06 | stronger target-real weight | 0.8118 | 0.5848 | worse |
+| v42 w40 src2.0 adv0.06 | more prompt-token source weight | 0.8113 | 0.5847 | worse |
+| v36 w40 src0.4 adv0.06 | larger MI/STTC prompt-token pool | 0.8116 | 0.5848 | worse |
+| v42 w40 src0.4 adv0.03 | lower adversarial weight | 0.8119 | 0.5843 | worse |
+| v42 w40 src0.4 adv0.06 HYP/CD | enable CD/HYP trust, exclude MI from scope | 0.8113 | 0.5846 | quick-positive, full-negative |
+
+Decision:
+
+```text
+The old georgia w40/src0.4 run remains the best georgia result. More target-real
+weight, more prompt-token sampling, more prompt-token MI/STTC latents, and lower
+adv_weight all overfit or reduce full-center georgia performance.
+
+The label audit shows why georgia is fragile: the full georgia center has only
+7 MI positives under the project super5 mapping, and the selected K=500 ref set
+contains all 7. After ref exclusion, formal georgia eval has no MI positives and
+uses CD/HYP/NORM/STTC only. Enabling CD/HYP anchors looked positive on a 500-
+record quick subset, but failed full-center eval. Future georgia work should
+inspect target sample selection, label mapping, and center-specific label noise;
+do not continue scalar online-AT sweeps.
+```
+
+Artifacts:
+
+```text
+/root/autodl-tmp/ecgtwin_prompt_token_super5/online_at_real_token_v2/georgia_v42_target_w80_src04_M10_lam015_adv006_softmix03_ep10
+/root/autodl-tmp/ecgtwin_prompt_token_super5/online_at_real_token_v2/georgia_v42_target_w40_src20_M10_lam015_adv006_softmix03_ep10
+/root/autodl-tmp/ecgtwin_prompt_token_super5/online_at_real_token_v2/georgia_v36_target_w40_src04_M10_lam015_adv006_softmix03_ep10
+/root/autodl-tmp/ecgtwin_prompt_token_super5/online_at_real_token_v2/georgia_v42_target_w40_src04_M10_lam015_adv003_softmix03_ep10
+/root/autodl-tmp/ecgtwin_prompt_token_super5/online_at_real_token_v2/georgia_v42_target_w40_src04_M10_lam015_adv006_softmix03_hypcd_ep10
 ```

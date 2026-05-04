@@ -86,12 +86,61 @@ def token_sequence_from_bank(token_blob, center_idx: int, cls_idx: int) -> torch
     raise ValueError(f"unsupported token embedding shape: {tuple(emb.shape)}")
 
 
+def init_token_sequence_from_bank(token_blob, center_idx: int, cls_idx: int) -> torch.Tensor | None:
+    """Return the prompt-token initialization sequence when the bank stores it."""
+    mode = str(token_blob.get("token_mode", "direct"))
+    if mode == "factorized" or "center_embeddings" in token_blob:
+        if "init_center_embeddings" not in token_blob or "init_class_embeddings" not in token_blob:
+            return None
+        center = token_blob["init_center_embeddings"][center_idx].float()
+        cls = token_blob["init_class_embeddings"][cls_idx].float()
+        pieces = [center, cls]
+        residual = token_blob.get("init_residual_embeddings")
+        if residual is not None and residual.shape[2] > 0:
+            pieces.append(residual[center_idx, cls_idx].float())
+        return torch.cat(pieces, dim=0)
+
+    init = token_blob.get("init_embeddings")
+    if init is None:
+        return None
+    init = init.float()
+    if init.dim() == 3:
+        return init[center_idx, cls_idx].unsqueeze(0)
+    if init.dim() == 4:
+        return init[center_idx, cls_idx]
+    return None
+
+
+def scale_token_sequence(
+    token_blob,
+    token_seq: torch.Tensor,
+    center_idx: int,
+    cls_idx: int,
+    scale: float,
+) -> torch.Tensor:
+    """Scale learned prompt-token strength while preserving initialization semantics."""
+    if scale == 1.0:
+        return token_seq
+    init_seq = init_token_sequence_from_bank(token_blob, center_idx, cls_idx)
+    if init_seq is not None and init_seq.shape == token_seq.shape:
+        return init_seq + float(scale) * (token_seq - init_seq)
+    return token_seq * float(scale)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--center", default="ningbo")
     ap.add_argument("--classes", nargs="+", default=["NORM", "MI", "STTC", "HYP", "CD"])
     ap.add_argument("--cache_root", default=DEFAULT_CACHE_ROOT)
     ap.add_argument("--token_bank", default=DEFAULT_TOKEN_BANK)
+    ap.add_argument("--token_center", default=None,
+                    help="Center token to append. Default: same as --center.")
+    ap.add_argument("--token_class", default=None,
+                    help="Class token to append. Default: same as generated class.")
+    ap.add_argument("--no_token", action="store_true",
+                    help="Generate with diagnosis prompt only, no learned center token.")
+    ap.add_argument("--arm", default=None,
+                    help="Optional ablation arm label written into summary records.")
     ap.add_argument("--prompt_bank", default=DEFAULT_PROMPT_BANK)
     ap.add_argument("--out_dir", default=DEFAULT_OUT)
     ap.add_argument("--K", type=int, default=500)
@@ -101,24 +150,36 @@ def main() -> None:
     ap.add_argument("--device", default="cuda:0")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--victim_ckpt", default="/root/autodl-tmp/triple_labels/super5/best_model.pt")
+    ap.add_argument("--victim_crop_len", type=int, default=250)
     ap.add_argument("--token_repeat", type=int, default=1,
                     help="Repeat the learned center-class token embedding in text_embed.")
+    ap.add_argument("--token_scale", type=float, default=1.0,
+                    help="Scale learned token delta as init + scale * (learned - init).")
     args = ap.parse_args()
     if args.token_repeat < 1:
         raise ValueError(f"token_repeat must be >= 1, got {args.token_repeat}")
+    if args.token_scale < 0:
+        raise ValueError(f"token_scale must be >= 0, got {args.token_scale}")
     set_all_seeds(args.seed)
     rng = np.random.default_rng(args.seed)
 
     out_dir = Path(args.out_dir) / args.center
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    token_blob = torch.load(args.token_bank, map_location="cpu", weights_only=False)
+    token_blob = None if args.no_token else torch.load(args.token_bank, map_location="cpu", weights_only=False)
     prompt_bank = torch.load(args.prompt_bank, map_location="cpu", weights_only=False)
-    centers = list(token_blob["centers"])
-    class_names = list(token_blob["class_names"])
-    if args.center not in centers:
-        raise ValueError(f"center {args.center!r} not in token bank centers={centers}")
-    center_idx = centers.index(args.center)
+    if token_blob is not None:
+        centers = list(token_blob["centers"])
+        class_names = list(token_blob["class_names"])
+        token_center = args.token_center or args.center
+        if token_center not in centers:
+            raise ValueError(f"token_center {token_center!r} not in token bank centers={centers}")
+        token_center_idx = centers.index(token_center)
+    else:
+        centers = []
+        class_names = list(CLASS_NAMES_SUPER5)
+        token_center = None
+        token_center_idx = None
 
     cache_root = Path(args.cache_root)
     cache = torch.load(
@@ -136,7 +197,7 @@ def main() -> None:
         device=args.device,
         ecgtwin_wrapper=wrapper,
         num_classes=len(CLASS_NAMES_SUPER5),
-        crop_len=250,
+        crop_len=args.victim_crop_len,
     )
 
     all_signals, all_raw, all_latents, all_labels = [], [], [], []
@@ -146,6 +207,10 @@ def main() -> None:
         if cls not in class_names:
             raise ValueError(f"unknown class {cls}; token classes={class_names}")
         cls_idx = class_names.index(cls)
+        token_cls = args.token_class or cls
+        if token_cls not in class_names:
+            raise ValueError(f"unknown token_class {token_cls}; token classes={class_names}")
+        token_cls_idx = class_names.index(token_cls)
         ref_indices = choose_ref_indices(cache, selection, cls, args.n_per_class, rng)
         if not ref_indices:
             print(f"[skip] {args.center} {cls}: no selected references")
@@ -157,9 +222,20 @@ def main() -> None:
             latent_ref = cache["latents"][ref_idx].float()
             primary_snomed = cache["primary_snomed"][ref_idx]
             base_text = _load_text_embed(prompt_bank, primary_snomed, cls)
-            token_seq = token_sequence_from_bank(token_blob, center_idx, cls_idx)
-            token_seq = token_seq.repeat(args.token_repeat, 1)
-            text_aug = torch.cat([base_text, token_seq], dim=0)
+            if args.no_token:
+                token_seq = None
+                text_aug = base_text
+            else:
+                token_seq = token_sequence_from_bank(token_blob, token_center_idx, token_cls_idx)
+                token_seq = scale_token_sequence(
+                    token_blob,
+                    token_seq,
+                    token_center_idx,
+                    token_cls_idx,
+                    args.token_scale,
+                )
+                token_seq = token_seq.repeat(args.token_repeat, 1)
+                text_aug = torch.cat([base_text, token_seq], dim=0)
             mask_aug = torch.ones(1, text_aug.shape[0], dtype=torch.float32, device=wrapper.device)
 
             sex = cache["sex"][ref_idx]
@@ -198,10 +274,14 @@ def main() -> None:
             rec = {
                 "center": args.center,
                 "class": cls,
+                "arm": args.arm or ("vanilla_no_token" if args.no_token else "target_token"),
+                "token_center": token_center,
+                "token_class": None if args.no_token else token_cls,
+                "token_scale": None if args.no_token else float(args.token_scale),
                 "seed": seed,
                 "ref_record_id": cache["record_ids"][ref_idx],
                 "ref_primary_snomed": primary_snomed,
-                "prompt_token": f"<{args.center}_{cls}>",
+                "prompt_token": "none" if args.no_token else f"<{token_center}_{token_cls}>",
                 "p_target": float(probs[CLASS_NAMES_SUPER5.index(cls)]),
                 "top1": CLASS_NAMES_SUPER5[int(np.argmax(probs))],
                 "victim_probs": {CLASS_NAMES_SUPER5[i]: float(probs[i]) for i in range(len(CLASS_NAMES_SUPER5))},

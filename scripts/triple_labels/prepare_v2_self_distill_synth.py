@@ -143,6 +143,8 @@ def select_balanced(
     target_conf: np.ndarray,
     max_keep_total: int,
     per_class_cap: int,
+    selection_order: str = "confidence",
+    boundary_center: float = 0.55,
 ) -> np.ndarray:
     candidates = np.flatnonzero(keep_mask)
     if max_keep_total <= 0 and per_class_cap <= 0:
@@ -154,7 +156,13 @@ def select_balanced(
         idx = candidates[target_idx[candidates] == class_idx]
         if idx.size == 0:
             continue
-        order = np.lexsort((-target_conf[idx], -quality[idx]))
+        if selection_order == "confidence":
+            order = np.lexsort((-target_conf[idx], -quality[idx]))
+        elif selection_order == "boundary":
+            boundary_score = np.abs(target_conf[idx] - float(boundary_center))
+            order = np.lexsort((boundary_score, -quality[idx]))
+        else:
+            raise ValueError(f"Unknown selection_order: {selection_order}")
         ranked = idx[order]
         cap = per_class_cap if per_class_cap > 0 else default_cap
         if cap > 0:
@@ -163,7 +171,13 @@ def select_balanced(
 
     selected_arr = np.asarray(selected, dtype=np.int64)
     if max_keep_total > 0 and selected_arr.size > max_keep_total:
-        order = np.lexsort((-target_conf[selected_arr], -quality[selected_arr]))
+        if selection_order == "confidence":
+            order = np.lexsort((-target_conf[selected_arr], -quality[selected_arr]))
+        elif selection_order == "boundary":
+            boundary_score = np.abs(target_conf[selected_arr] - float(boundary_center))
+            order = np.lexsort((boundary_score, -quality[selected_arr]))
+        else:
+            raise ValueError(f"Unknown selection_order: {selection_order}")
         selected_arr = selected_arr[order[:max_keep_total]]
     selected_arr.sort()
     return selected_arr
@@ -219,6 +233,10 @@ def main() -> None:
     p.add_argument("--norm_tau_low", type=float, default=0.5)
     p.add_argument("--norm_max_abnormal_high", type=float, default=0.3)
     p.add_argument("--norm_max_abnormal_hard", type=float, default=0.45)
+    p.add_argument("--target_conf_min", type=float, default=0.0)
+    p.add_argument("--target_conf_max", type=float, default=1.0)
+    p.add_argument("--selection_order", choices=["confidence", "boundary"], default="confidence")
+    p.add_argument("--boundary_center", type=float, default=0.55)
     p.add_argument("--max_keep_total", type=int, default=2000)
     p.add_argument("--per_class_cap", type=int, default=400)
     args = p.parse_args()
@@ -261,6 +279,8 @@ def main() -> None:
         norm_max_abnormal_hard=args.norm_max_abnormal_hard,
     )
     keep_mask = quality > 0
+    keep_mask &= target_conf >= float(args.target_conf_min)
+    keep_mask &= target_conf <= float(args.target_conf_max)
     selected = select_balanced(
         keep_mask,
         quality,
@@ -268,6 +288,8 @@ def main() -> None:
         target_conf,
         max_keep_total=args.max_keep_total,
         per_class_cap=args.per_class_cap,
+        selection_order=args.selection_order,
+        boundary_center=args.boundary_center,
     )
     soft_labels = (
         float(args.gamma) * labels[selected]
