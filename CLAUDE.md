@@ -1,13 +1,18 @@
 # ECG Adversarial Generation Project
 
 ## Overview
-Cross-center adversarial training pipeline for improving DeepECG EfficientNet
-generalization. Three concurrent research tracks:
-- **VAE-latent PGD** (Mode A) — adversarial buffer generation against a frozen
-  Tier-M victim, validated by ASR + medical-semantic gates
-- **ECGTwin synthesis** — Center-Token / Style-Translator personalize ECGTwin
-  to per-center style; output samples augment training
-- **AugMix** — time/latent-domain mixing for in-domain robustness
+This worktree is the `graduate-project` branch. Its active thesis pipeline is:
+
+1. PTB-XL super5 low-sample EfficientNet1DV2 baseline.
+2. ECGTwin no-token hard-label synthetic pretrain, then real2000 fine-tune.
+3. ECGTwin textual-inversion center-token hard-label synthetic pretrain, then
+   real2000 fine-tune.
+4. Fold10/PN2021 auxiliary evaluation, final medical-validity proxy ablation,
+   and Streamlit demo/deploy artifacts.
+
+Historical AugMix runners, old 256-d center-token hooks, style-translator
+experiments, and old top-level scripts are archived under
+`trash/cleanup_20260506_legacy/`.
 
 ## Environment
 - Python: `/root/miniforge3/envs/ECGTwin/bin/python`
@@ -16,6 +21,7 @@ generalization. Three concurrent research tracks:
 - Root disk: ~4 GB free → store large files in `/root/autodl-tmp/` (~28 GB free)
 
 ## Key Paths
+- Current worktree: `/root/autodl-tmp/ECG_adv_Gen_graduate`
 - PTB-XL data: `/root/ECG_adv_Gen/datasets/PTBXL/` (raw) + `/root/autodl-tmp/ptbxl/` (preprocessed cache)
 - PTB-XL VAE-encoded: `/root/ECG_adv_Gen/datasets/PTBXL/PTBXL_vae_multi_nomic.pt`
 - PN2021: `/root/autodl-tmp/physionet2021/training/<center>/`
@@ -26,9 +32,9 @@ generalization. Three concurrent research tracks:
   - v2 26-class baseline: `/root/autodl-tmp/crosscenter_v2/best_model.pt`
   - Tier-M 6-class victim: `/root/autodl-tmp/crosscenter_tierM/best_model.pt`
   - Triple-label heads: `/root/autodl-tmp/triple_labels/{super5,sub23,pn26}/best_model.pt`
-- Outputs: `/root/ECG_adv_Gen/outputs/` (small artifacts) + `/root/autodl-tmp/` (large)
-- Docs: `/root/ECG_adv_Gen/docs/`
-- Legacy archive: `/root/ECG_adv_Gen/trash/`
+- Outputs: keep large artifacts under `/root/autodl-tmp/`
+- Docs: `/root/autodl-tmp/ECG_adv_Gen_graduate/docs/`
+- Legacy archive: `/root/autodl-tmp/ECG_adv_Gen_graduate/trash/`
 
 ## Running Scripts
 Always use the full Python path:
@@ -39,14 +45,11 @@ Always use the full Python path:
 ## Architecture
 
 ### Core classifier pipelines
-- `scripts/crosscenter_v2/` — original 26-class PN26 baseline + canonical
-  utilities (`label_alignment_v2.py`, `preprocess_utils.py::unified_preprocess_to_1000`,
-  `eval_crosscenter_v2.py`). **Reuse these from new code, do not fork.**
-- `scripts/crosscenter_tierM/` — Tier-M 6-class (NSR/STach/AF/IAVB/LBBB/RBBB)
-  PTB-XL/MIMIC training + cross-center eval (the original AT lineage).
-- `scripts/triple_labels/` — 3 EfficientNet1DV2 heads (super5/sub23/pn26)
-  trained on PTB-XL with masked BCE; eval on PTB-XL fold10 + PN2021 7 centers
-  + MIMIC test. Canonical entry for new label-scheme experiments.
+- `scripts/triple_labels/` — EfficientNet1DV2 super5 training/evaluation,
+  including the custom train2000/val2000/test17799 split and PN2021 evaluation.
+- `scripts/final_round/` — final reproduction and ablation entrypoints.
+- `apps/streamlit_ecg_demo/` and `scripts/deploy/` — graduation demo and
+  inference backend export/benchmark tooling.
 
 ### Adversarial / augmentation
 - `adversarial/` — VAE-latent PGD (Mode A) attack pipeline
@@ -63,15 +66,13 @@ Always use the full Python path:
 - `scripts/pgd_cross_center/` — PGD adv-buffer generator (driver for `adversarial/pgd_advdiff.py`)
 - `scripts/{augmix_validation,augmix_adv_combo,online_vs_offline}/` — ablation runners
 
-### Synthesis (ECGTwin Center-Token / Style-Translator)
-- `methods/ecgtwin_gen/center_token/` — Textual-Inversion-style 256-d center
-  token embedding (model + trainer); class-agnostic
-- `methods/ecgtwin_gen/style_translator/` — Style-Translator
-  (Stage 0 **validated to fail**, see `docs/ecgtwin_gen/style_translator_stage0_results.md`;
-  kept for archival)
-- `scripts/ecgtwin_gen/` — prep_center_dataset / train_center_token /
-  generate_center_synth / enroll_new_center / compare_*
-- `methods/augmix/latent_viz/` — AugMix latent visualization + run pipeline
+### Synthesis
+- `methods/ecgtwin_gen/prompt_token/` — active textual-inversion center-class
+  prompt-token implementation.
+- `scripts/ecgtwin_gen/train_center_prompt_tokens.py` — active token training.
+- `scripts/ecgtwin_gen/generate_center_prompt_token_synth.py` — active
+  prompt-token generation.
+- `scripts/ecgtwin_gen/gate_prompt_token_synth.py` — active quality-gated export.
 
 ### Other
 - `sub_experiment/tsne_clustering_v1/` — t-SNE clustering ablation

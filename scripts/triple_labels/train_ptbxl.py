@@ -608,7 +608,8 @@ def train(args):
     if not os.path.exists(ckpt_path):
         ckpt_name = 'best_model.pt'
         ckpt_path = os.path.join(args.output_dir, ckpt_name)
-    print(f"\n[test] evaluating {ckpt_name} on PTB-XL fold 10")
+    test_name = "custom split test" if args.split_json else "PTB-XL fold 10"
+    print(f"\n[test] evaluating {ckpt_name} on {test_name}")
     sd = torch.load(ckpt_path, map_location=device)
     target = model._orig_mod if hasattr(model, '_orig_mod') else model
     target.load_state_dict(sd)

@@ -22,7 +22,8 @@ cp /root/ECG_adv_Gen/.codex/skills/ecg-adv-gen/SKILL.md \
 
 ## Environment
 
-- Repo: `/root/ECG_adv_Gen`
+- Current graduate worktree: `/root/autodl-tmp/ECG_adv_Gen_graduate`
+- Original main worktree: `/root/ECG_adv_Gen`
 - Python: `/root/miniforge3/envs/ECGTwin/bin/python`
 - GPU target: RTX 4090D, 24 GB VRAM; CPU: 15 cores; RAM: 80 GB
 - Store large outputs/checkpoints in `/root/autodl-tmp/`, not the repo.
@@ -155,7 +156,9 @@ Confirmed current choices:
 - Never set `text_embed_mask` all zeros; original cross-attention can softmax all `-inf` and produce NaN. Use a null text embedding with mask `1`.
 - Official inference supports open-vocabulary diagnostic text through pretrained `bert-base-uncased` + `nomic-ai/nomic-embed-text-v1.5`; it does not natively train new tokenizer tokens.
 - A center token written in the prompt should be implemented by a prompt compiler that appends/inserts a learnable 768-d embedding into `text_embed`, with mask value `1`.
-- Existing `methods/ecgtwin_gen/center_token/` is a 256-d AdaLN/base-vector hook, not a textual-inversion prompt token. Treat it as historical or ablation unless explicitly requested.
+- Archived `trash/cleanup_20260506_legacy/methods_ecgtwin_gen/center_token/`
+  is a 256-d AdaLN/base-vector hook, not a textual-inversion prompt token.
+  Treat it as historical unless explicitly requested.
 - Active prompt-token implementation lives in `methods/ecgtwin_gen/prompt_token/` with entry `scripts/ecgtwin_gen/train_center_prompt_tokens.py`.
 - Active prompt-token generation entry is `scripts/ecgtwin_gen/generate_center_prompt_token_synth.py`.
 - Active prompt-token gated export entry is `scripts/ecgtwin_gen/gate_prompt_token_synth.py`.
@@ -391,8 +394,8 @@ dataset.py            # single-sample PTB-XL latent dataset, not paired ECGTwin 
 prompt_table.py       # super5 prompt table + nomic embedding cache
 train.py              # diffusion training with AMP/EMA/logging
 sample.py             # DDIM/CFG sampling and npz export
-center_token.py       # optional per-block token after mainline works
-train_center_token.py # optional target-center token training
+center_token.py       # archived optional per-block token after mainline works
+train_center_token.py # archived optional target-center token training
 ```
 
 Reuse from ECGTwin:

@@ -7,6 +7,7 @@
 | 文件 | 范围 |
 |---|---|
 | `efficientnetv2_training_pipeline.md` | EfficientNet1DV2 从 PTB-XL 训练到 PN2021/MIMIC 评测的全过程 |
+| `graduate_project_branch_mainline.md` | 当前 `graduate-project` 分支的最终主线、活跃入口、复现脚本和归档边界 |
 | `super5_label_mapping_pipeline.md` | PTB-XL、MIMIC、PN2021 的 super5 标签映射标准 |
 | `ecgtwin_author_repro_pipeline.md` | 复现 ECGTwin 作者 IBE + DiT 两阶段训练的技术细节 |
 | `dataset_preprocessing_pipeline.md` | PTB-XL、MIMIC、PN2021 的统一信号预处理、采样率、长度和导联规则 |

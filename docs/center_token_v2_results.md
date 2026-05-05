@@ -2,7 +2,7 @@
 
 **Date**: 2026-04-27
 **Plan**: `/root/.claude/plans/workspace-center-token-ecg-keen-rivest.md`
-**Code**: `methods/ecgtwin_gen/center_token/{model.py::CenterTokenPerBlock, trainer_v2.py}`
+**Archived code**: `trash/cleanup_20260506_legacy/methods_ecgtwin_gen/center_token/{model.py::CenterTokenPerBlock, trainer_v2.py}`
 
 ## TL;DR
 
@@ -170,11 +170,11 @@ with significant per-class wins where vanilla pipeline structurally underperform
 
 ## Files & artifacts
 
-- Trainer v2: `methods/ecgtwin_gen/center_token/trainer_v2.py`
-- Per-block model: `methods/ecgtwin_gen/center_token/model.py::CenterTokenPerBlock`
-- Driver: `scripts/ecgtwin_gen/train_center_token_v2.py`
-- 3-center runner: `scripts/ecgtwin_gen/run_train_ct_v2_3centers.sh`
-- Smoking-gun: `scripts/ecgtwin_gen/sanity_super5_centertoken_v2.py`
+- Trainer v2: `trash/cleanup_20260506_legacy/methods_ecgtwin_gen/center_token/trainer_v2.py`
+- Per-block model: `trash/cleanup_20260506_legacy/methods_ecgtwin_gen/center_token/model.py::CenterTokenPerBlock`
+- Driver: `trash/cleanup_20260506_legacy/scripts_ecgtwin_gen/train_center_token_v2.py`
+- 3-center runner: `trash/cleanup_20260506_legacy/scripts_ecgtwin_gen/run_train_ct_v2_3centers.sh`
+- Smoking-gun: `trash/cleanup_20260506_legacy/scripts_ecgtwin_gen/sanity_super5_centertoken_v2.py`
 - Style classifier eval: `scripts/ecgtwin_gen/eval_style_classifier_on_synth.py`
 - Trained CTs (sphere=5): `/root/autodl-tmp/center_token_super5_v2_sphere5/{extra,nin,geo}_k200/center_token_smoothed.pth`
 - Trained CTs (sphere=1, ablation): `/root/autodl-tmp/center_token_super5_v2/{extra,nin,geo}_k200/center_token_smoothed.pth`

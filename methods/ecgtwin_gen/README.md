@@ -1,18 +1,27 @@
 # methods/ecgtwin_gen/
 
-**研究方向**：用 ECGTwin（DiT + VAE 条件扩散）生成少量目标域 OOD 样本，用于 fine-tune baseline，改善跨中心性能。
+当前毕业设计主线只保留 ECGTwin textual-inversion prompt-token 方法。
 
-**状态**：🚧 待填充（center token 已实现，还需目标域 anchor 采样策略）
+## Active
 
-## 起点参考
+- `prompt_token/`: center-class soft prompt token bank and trainer support.
+- `scripts/ecgtwin_gen/train_center_prompt_tokens.py`: train center-class prompt tokens.
+- `scripts/ecgtwin_gen/generate_center_prompt_token_synth.py`: generate synthetic ECG with prompt tokens.
+- `scripts/ecgtwin_gen/gate_prompt_token_synth.py`: export gated synthetic pools.
 
-- **ECGTwin 封装**：`util/ecgtwin_utils.py`（加载模型 / 条件编码 / 可微分采样）
-- **中心 token 嵌入**：`center_token/`（已实现，训练脚本 `scripts/run_train_center_token.py`，生成 `scripts/run_generate_with_center.py`）
-- **AdvDiff 边界生成**：`adversarial/adv_generate.py`（latent-space DDPM 引导，同时可作为 ECGTwin 生成的参考）
-- **ECGTwin 模型代码**：`model/ECGTwin/`
+The active token path writes target-center style into the ECGTwin text
+conditioning path as 768-d prompt embeddings. Do not put target-center style
+into `base_vector`.
 
-## 研究设计建议
+## Historical
 
-1. 采样策略：从 PN2021 单一中心（如 Chapman）取 N 个 anchor ECG → ECGTwin 条件生成 K 个变体
-2. Fine-tune：baseline + 生成样本混合训练
-3. 评测：在其他中心 zero-shot 看 gap 变化
+The old 256-d AdaLN/base-vector center-token hook and style-translator branch
+were moved to:
+
+```text
+trash/cleanup_20260506_legacy/methods_ecgtwin_gen/
+trash/cleanup_20260506_legacy/scripts_ecgtwin_gen/
+```
+
+Do not use those archived paths for the final thesis pipeline unless a new
+experiment explicitly revives that historical route.

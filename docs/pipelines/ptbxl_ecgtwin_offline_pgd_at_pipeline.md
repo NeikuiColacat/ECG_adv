@@ -149,7 +149,7 @@ raw100.npy (100Hz, 1000,12)
 | 功能 | 文件 |
 |---|---|
 | ECGTwin PTB-XL cache 构建 | `data/prepare_ptbxl_for_ecgtwin.py` |
-| ECGTwin 批量生成 synthetic signals/latents | `scripts/ecgtwin_gen/generate_center_synth.py` |
+| ECGTwin 批量生成 synthetic signals/latents | `trash/cleanup_20260506_legacy/scripts_ecgtwin_gen/generate_center_synth.py`（旧入口） |
 | EfficientNet1DV2 super5 baseline/real+synth 训练 | `scripts/triple_labels/train_ptbxl.py` |
 | Super5 online latent-PGD/Latent-Hull AT 组件 | `scripts/pgd_cross_center/synth_online_at_super5.py` |
 | VAE latent PGD generator | `adversarial/pgd_advdiff.py` |
@@ -326,7 +326,7 @@ label["source_fold"]
 第一版命令：
 
 ```bash
-/root/miniforge3/envs/ECGTwin/bin/python -u scripts/ecgtwin_gen/generate_center_synth.py \
+/root/miniforge3/envs/ECGTwin/bin/python -u trash/cleanup_20260506_legacy/scripts_ecgtwin_gen/generate_center_synth.py \
   --scheme super5 \
   --ref_pt /root/autodl-tmp/ptbxl_ecgtwin_offline_pgd/refs/ptbxl_train1000_balanced_seed42.pt \
   --center_name ptbxl_source \

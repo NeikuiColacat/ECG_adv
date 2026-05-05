@@ -1,6 +1,7 @@
 # ECG_adv_Gen Agent Notes
 
-This file is durable project memory for coding agents working in `/root/ECG_adv_Gen`.
+This file is durable project memory for coding agents working in the ECG_adv_Gen
+graduate-project worktree.
 
 Repo-tracked Codex skill copy:
 
@@ -14,7 +15,8 @@ copy the repo-tracked skill into that runtime location.
 
 ## Environment
 
-- Repo root: `/root/ECG_adv_Gen`
+- Current graduate worktree: `/root/autodl-tmp/ECG_adv_Gen_graduate`
+- Original main worktree: `/root/ECG_adv_Gen`
 - Python env: `/root/miniforge3/envs/ECGTwin/bin/python`
 - Hardware target: RTX 4090D 24GB VRAM, 15 CPU cores, 80GB RAM.
 - Optimize future training/preprocessing for this hardware profile:
@@ -66,6 +68,7 @@ clean closed loop; MIMIC is an optional noisy OOD evaluation/pretraining source.
 Primary plan document:
 
 ```text
+docs/pipelines/graduate_project_branch_mainline.md
 docs/experiment_summary_for_advisor.md
 docs/module_ablation_1_real_vs_synth.md
 trash/docs_cleanup_20260501/historical_no_ibe/ecgtwin_no_ibe_diffusion_augmenter_recommended_plan.md  # historical Scheme B plan
@@ -76,6 +79,8 @@ trash/docs_cleanup_20260501/historical_no_ibe/ecgtwin_no_ibe_diffusion_augmenter
 - ECGTwin original repo: `model/ECGTwin/`
 - ECGTwin author reproduction scripts: `scripts/ecgtwin_author_repro/`
 - Archived no-IBE Scheme B implementation: `trash/cleanup_20260430/deprecated_no_ibe/`
+- Archived non-mainline code from the graduate branch cleanup:
+  `trash/cleanup_20260506_legacy/`
 - PTB-XL raw/preprocessed: `datasets/PTBXL/`, `/root/autodl-tmp/ptbxl/`
 - PTB-XL VAE/nomic cache: `datasets/PTBXL/PTBXL_vae_multi_nomic.pt`
 - PN2021 centers: `/root/autodl-tmp/physionet2021/training/<center>/`

@@ -691,10 +691,10 @@ prompt token improves target-center useful generation for EfficientNet1DV2.
 现有实现：
 
 ```text
-methods/ecgtwin_gen/center_token/model.py
-methods/ecgtwin_gen/center_token/trainer_v2.py
-scripts/ecgtwin_gen/train_center_token_v2.py
-scripts/ecgtwin_gen/generate_center_synth.py
+trash/cleanup_20260506_legacy/methods_ecgtwin_gen/center_token/model.py
+trash/cleanup_20260506_legacy/methods_ecgtwin_gen/center_token/trainer_v2.py
+trash/cleanup_20260506_legacy/scripts_ecgtwin_gen/train_center_token_v2.py
+trash/cleanup_20260506_legacy/scripts_ecgtwin_gen/generate_center_synth.py
 ```
 
 当前 token 是 256-d AdaLN hook：

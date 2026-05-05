@@ -217,7 +217,8 @@ tokens = <center_CD>, <center_HYP>, <center_MI>, <center_NORM>, <center_STTC>
 - 每个目标中心直接使用 K=500 条 ECG 训练/测试 token；这些 ref ids 后续必须从
   fine-tune validation/eval 中排除。
 - `base_vector` 使用同类 reference ECG 生成，不用 center token 改写 base-vector 本身。
-- 现有 `methods/ecgtwin_gen/center_token/` 是 256-d AdaLN/base-vector hook，不是 prompt token；
+- 已归档的 `trash/cleanup_20260506_legacy/methods_ecgtwin_gen/center_token/`
+  是 256-d AdaLN/base-vector hook，不是 prompt token；
   后续只能作为 ablation 或旧方案参考。
 
 当前建议 prompt fragment：
