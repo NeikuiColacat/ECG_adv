@@ -15,6 +15,8 @@
 | `ecgtwin_center_prompt_token_pipeline.md` | 基于 textual inversion / dataset interfaces 思想的 ECGTwin 目标中心 prompt-token 架构 |
 | `latent_hull_online_at_pipeline.md` | 参考 SA-AET 的 Latent-Hull TA-OMAT 在线对抗训练计划 |
 | `pn2021_c_corruption_benchmark_pipeline.md` | 参考 ImageNet-C 的 PN2021-C 中心数据增强/腐蚀鲁棒性评测 |
+| `final_round_ablation_pipeline.md` | 根据最终任务书/开题/中期/指导记录补齐毕业设计答辩需要的医学合法性、center-token 因果性、下游归因、鲁棒性和采样效率消融 |
+| `streamlit_tensorrt_demo_pipeline.md` | 根据最终任务书/开题/中期/指导记录规划 Streamlit Web 演示、EfficientNet1DV2 TensorRT 加速、ECGTwin 生成展示和鲁棒性可视化 |
 | `ptbxl_ecgtwin_offline_pgd_at_pipeline.md` | PTB-XL 抽 1000 refs，经 ECGTwin 生成 10000 super5 synthetic，再做离线 VAE latent-PGD 对抗训练的计划 |
 | `ptbxl_prompt_token_boundary_at_pipeline.md` | 训练 5 个 PTB-XL source-style prompt token，并只接收 target probability 0.50-0.60 的 Latent-Hull 边界对抗样本 |
 | `next_auto_execution_plan.md` | 当前四项任务的自动执行顺序、产物和阻塞条件 |
