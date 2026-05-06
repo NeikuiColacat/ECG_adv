@@ -31,7 +31,6 @@ from apps.streamlit_ecg_demo.services.classifier_backend import DEFAULT_CKPT, lo
 from apps.streamlit_ecg_demo.services.dataset_intake import load_audit, save_uploaded_dataset
 from apps.streamlit_ecg_demo.services.job_manager import JobSpec, list_jobs, read_job, start_job, stop_job, tail_log
 from apps.streamlit_ecg_demo.services.preprocessing import CLASS_NAMES, load_demo_samples, to_signal_ct
-from apps.streamlit_ecg_demo.services.quality_gate import run_quality_gate
 
 
 st.set_page_config(page_title="ECG Target-Center Adaptation", layout="wide")
@@ -58,16 +57,12 @@ I18N = {
         "label_col": "阈值@0.5",
         "inference_unavailable": "推理不可用",
         "no_sample_pools": "没有找到样本池，请检查 demo/project 路径。",
-        "signal_sanity": "信号质量",
         "job_history": "任务历史",
         "status": "状态",
         "pid": "PID",
         "stop_selected_job": "停止选中任务",
         "log_tail": "日志尾部",
         "no_jobs": "暂无后台任务。",
-        "pass": "通过",
-        "fail": "失败",
-        "warning": "警告",
         "detection": "异常检测",
         "detection_caption": "上传或选择一条 12 导联 ECG，并使用选定部署后端进行检测。",
         "deployment_model": "部署模型 / engine",
@@ -138,6 +133,20 @@ I18N = {
         "model_to_export": "待导出模型",
         "queue_onnx": "排队 ONNX 导出",
         "queued_export": "已排队导出任务",
+        "source_summary": "输入摘要",
+        "simple_token_mode": "生成模式",
+        "center_token": "center-token",
+        "token_preset": "Token 训练预设",
+        "preset_fast": "Fast 快速",
+        "preset_standard": "Standard 标准",
+        "preset_thorough": "Thorough 充分",
+        "token_preset_config": "当前预设：K={K}, 每类下限={floor}, token steps={steps}, batch={batch}",
+        "use_synthetic": "使用 synthetic augmentation",
+        "no_synth_pool": "当前项目没有可用 synthetic pool，将只使用真实 ECG 训练。",
+        "quick_actions": "流程操作",
+        "train_center_token_action": "训练 center token",
+        "train_model_action": "训练医院模型",
+        "export_model_action": "导出部署模型",
     },
     "en": {
         "app_title": "Target-Center ECG Generation And Detection System",
@@ -159,16 +168,12 @@ I18N = {
         "label_col": "label@0.5",
         "inference_unavailable": "Inference unavailable",
         "no_sample_pools": "No sample pools found under configured demo/project paths.",
-        "signal_sanity": "Signal sanity",
         "job_history": "Job history",
         "status": "Status",
         "pid": "PID",
         "stop_selected_job": "Stop selected job",
         "log_tail": "Log tail",
         "no_jobs": "No background jobs yet.",
-        "pass": "PASS",
-        "fail": "FAIL",
-        "warning": "WARNING",
         "detection": "Detection",
         "detection_caption": "Upload or select a 12-lead ECG, then run the selected deployment backend.",
         "deployment_model": "Deployment model / engine",
@@ -239,6 +244,20 @@ I18N = {
         "model_to_export": "Model to export",
         "queue_onnx": "Queue ONNX export",
         "queued_export": "Queued export job",
+        "source_summary": "Input summary",
+        "simple_token_mode": "Generation mode",
+        "center_token": "center-token",
+        "token_preset": "Token training preset",
+        "preset_fast": "Fast",
+        "preset_standard": "Standard",
+        "preset_thorough": "Thorough",
+        "token_preset_config": "Preset: K={K}, class floor={floor}, token steps={steps}, batch={batch}",
+        "use_synthetic": "Use synthetic augmentation",
+        "no_synth_pool": "No synthetic pool is available for this project; training will use real ECG only.",
+        "quick_actions": "Workflow actions",
+        "train_center_token_action": "Train center token",
+        "train_model_action": "Train hospital model",
+        "export_model_action": "Export deployment model",
     },
 }
 
@@ -269,12 +288,11 @@ def _path_options(paths: list[Path], fallback: str = "") -> list[str]:
     return out or ([fallback] if fallback else [])
 
 
-def _status_chip(status: str) -> str:
-    if status == "pass":
-        return tr("pass")
-    if status == "fail":
-        return tr("fail")
-    return tr("warning")
+def _newest_path(paths: list[Path]) -> str:
+    existing = [p for p in paths if p.exists()]
+    if not existing:
+        return ""
+    return str(max(existing, key=lambda p: p.stat().st_mtime))
 
 
 def probability_table(probabilities: np.ndarray) -> pd.DataFrame:
@@ -305,7 +323,7 @@ def predict_panel(signal_ct: np.ndarray, backend_name: str, ckpt_path: str, devi
 
 def sample_selector(samples: list[dict], key: str, label: str = "ECG sample") -> dict | None:
     if not samples:
-        st.warning(tr("no_sample_pools"))
+        st.info(tr("no_sample_pools"))
         return None
     labels = [
         f"{i:03d} | {s.get('center', 'unknown')} | {','.join(s.get('label_names') or ['unknown'])}"
@@ -328,11 +346,13 @@ def uploaded_signal(uploaded) -> tuple[np.ndarray | None, dict]:
     return to_signal_ct(signal), {"source": uploaded.name}
 
 
-def render_quality(signal_ct: np.ndarray):
-    gate = run_quality_gate(signal_ct)
-    st.metric(tr("signal_sanity"), _status_chip(str(gate["status"])))
-    st.json(gate)
-    return gate
+def signal_summary(signal_ct: np.ndarray, meta: dict) -> dict:
+    return {
+        "source": str(meta.get("source") or meta.get("id") or "sample"),
+        "shape": list(np.asarray(signal_ct).shape),
+        "lead_order": "PTB-XL",
+        "sampling_rate_hz": 100,
+    }
 
 
 def render_jobs(project_root: Path):
@@ -371,24 +391,20 @@ def detection_page(project_root: Path | None, samples: list[dict], backend_name:
             meta = {k: v for k, v in selected.items() if k != "signal"}
         else:
             signal_ct, meta = None, {}
-        st.json(meta)
+        if signal_ct is not None:
+            st.markdown(f"**{tr('source_summary')}**")
+            st.json(signal_summary(signal_ct, meta))
     with right:
         if signal_ct is None:
             st.info(tr("select_or_upload"))
             return
-        st.pyplot(make_ecg_figure(signal_ct, title=tr("input_ecg")))
-        cols = st.columns(2)
-        with cols[0]:
-            st.markdown(f"**{tr('prediction')}**")
-            pred = predict_panel(signal_ct, backend_name, selected_model, device)
-        with cols[1]:
-            st.markdown(f"**{tr('quality_gate')}**")
-            gate = render_quality(signal_ct)
+        st.pyplot(make_ecg_figure(signal_ct))
+        st.markdown(f"**{tr('prediction')}**")
+        pred = predict_panel(signal_ct, backend_name, selected_model, device)
         if pred:
             report = {
                 "metadata": meta,
                 "prediction": {k: v for k, v in pred.items() if k not in {"logits"}},
-                "quality_gate": gate,
             }
             st.download_button(
                 tr("download_report"),
@@ -445,27 +461,30 @@ def generation_command(
     return cmd
 
 
-def generation_page(project_root: Path | None, project_id: str | None, samples: list[dict], device: str):
+def generation_page(
+    project_root: Path | None,
+    project_id: str | None,
+    samples: list[dict],
+    device: str,
+):
     st.subheader(tr("generation"))
     st.caption(tr("generation_caption"))
 
     left, right = st.columns([0.34, 0.66])
     with left:
         center = st.text_input(tr("target_center"), value=project_id or "ningbo")
-        mode = st.radio(tr("generation_mode"), ["target-token", "no-token", "wrong-token control"], horizontal=False)
-        token_banks = list_token_banks(project_root)
-        token_bank_options = _path_options(token_banks) or [""]
-        token_bank = st.selectbox(tr("prompt_token_bank"), token_bank_options)
-        token_center = st.text_input(tr("token_center"), value=center if mode != "wrong-token control" else "georgia")
-        cache_root = str(prompt_cache_root(project_root)) if project_root and (prompt_cache_root(project_root) / "center_full_latents").exists() else "/root/autodl-tmp/ecgtwin_prompt_token_super5/cache_v1"
-        cache_root = st.text_input(tr("prompt_cache_root"), cache_root)
+        mode_label = st.radio(tr("simple_token_mode"), [tr("center_token"), "no-token"], horizontal=True)
+        mode = "target-token" if mode_label == tr("center_token") else "no-token"
         selected_classes = st.multiselect(tr("classes"), CLASS_NAMES, default=["NORM", "MI", "STTC"])
         n_per_class = st.number_input(tr("samples_per_class"), min_value=1, max_value=200, value=8)
-        steps = st.slider(tr("steps"), 5, 100, 25)
-        token_scale = st.slider(tr("token_scale"), 0.0, 2.0, 1.0, step=0.05)
-        seed = st.number_input(tr("seed"), min_value=0, value=42)
-        out_base = str((project_root or Path("/root/autodl-tmp/streamlit_ecg_demo")) / "synthetic_pools" / f"gen_{int(time.time())}")
-        out_dir = st.text_input(tr("output_directory"), out_base)
+        token_banks = list_token_banks(project_root)
+        cache_root = str(prompt_cache_root(project_root)) if project_root and (prompt_cache_root(project_root) / "center_full_latents").exists() else "/root/autodl-tmp/ecgtwin_prompt_token_super5/cache_v1"
+        token_bank = _newest_path(token_banks)
+        token_center = center
+        steps = 25
+        token_scale = 1.0
+        seed = 42
+        out_dir = str((project_root or Path("/root/autodl-tmp/streamlit_ecg_demo")) / "synthetic_pools" / f"gen_{int(time.time())}")
         needs_token = mode != "no-token"
         if needs_token and not token_bank:
             st.warning(tr("no_token_bank"))
@@ -487,11 +506,12 @@ def generation_page(project_root: Path | None, project_id: str | None, samples: 
             job_dir = start_job(project_root, JobSpec("generate_synthetic_pool", cmd, str(REPO_ROOT)))
             st.success(f"{tr('queued_generation')}: {job_dir.name}")
 
+        st.markdown(f"**{tr('quality_gate')}**")
         candidate_inputs = []
         if project_root:
             candidate_inputs.extend(sorted((project_root / "synthetic_pools").glob("**/samples.npz")))
         gate_input = st.selectbox(tr("gate_generated"), [str(p.parent) for p in candidate_inputs] or [""])
-        if project_root and gate_input and st.button(tr("queue_gate")):
+        if project_root and gate_input and st.button(tr("queue_gate"), disabled=not selected_classes):
             cmd = [
                 DEFAULT_PYTHON,
                 "scripts/ecgtwin_gen/gate_prompt_token_synth.py",
@@ -511,14 +531,7 @@ def generation_page(project_root: Path | None, project_id: str | None, samples: 
         selected = sample_selector(samples, key="generation_sample", label=tr("existing_synth_sample"))
         if selected is not None:
             signal_ct = selected["signal"]
-            st.pyplot(make_ecg_figure(signal_ct, title=tr("synthetic_ecg")))
-            cols = st.columns(2)
-            with cols[0]:
-                st.markdown(f"**{tr('sample_metadata')}**")
-                st.json({k: v for k, v in selected.items() if k != "signal"})
-            with cols[1]:
-                st.markdown(f"**{tr('plausibility_proxy')}**")
-                render_quality(signal_ct)
+            st.pyplot(make_ecg_figure(signal_ct))
         if project_root:
             st.markdown(f"**{tr('background_jobs')}**")
             render_jobs(project_root)
@@ -568,11 +581,18 @@ def training_page(project_root: Path, project_id: str, device: str):
 
     st.divider()
     st.markdown(f"**{tr('center_token_jobs')}**")
-    c1, c2, c3, c4 = st.columns(4)
-    K = c1.number_input(tr("k_refs"), min_value=1, max_value=5000, value=500)
-    floor = c2.number_input(tr("class_floor"), min_value=0, max_value=200, value=10)
-    steps = c3.number_input(tr("token_steps"), min_value=20, max_value=10000, value=800)
-    batch_size = c4.number_input(tr("token_batch"), min_value=1, max_value=128, value=16)
+    preset = st.selectbox(
+        tr("token_preset"),
+        [tr("preset_fast"), tr("preset_standard"), tr("preset_thorough")],
+        index=1,
+    )
+    if preset == tr("preset_fast"):
+        K, floor, steps, batch_size = 100, 5, 300, 8
+    elif preset == tr("preset_thorough"):
+        K, floor, steps, batch_size = 500, 10, 2000, 16
+    else:
+        K, floor, steps, batch_size = 500, 10, 800, 16
+    st.caption(tr("token_preset_config").format(K=K, floor=floor, steps=steps, batch=batch_size))
     cache_root = str(prompt_cache_root(project_root))
     token_save_dir = str(project_root / "center_tokens" / f"token_{int(time.time())}")
     if st.button(tr("queue_cache"), disabled=not dataset_path.exists()):
@@ -634,13 +654,15 @@ def training_page(project_root: Path, project_id: str, device: str):
     st.markdown(f"**{tr('train_hospital_classifier')}**")
     synth_options = _path_options(list_synthetic_pools(project_root)) or [""]
     model_options = _path_options(list_classifier_artifacts(project_root), fallback=DEFAULT_CKPT)
-    synth_npz = st.selectbox(tr("synth_pool_training"), synth_options)
-    init_ckpt = st.selectbox(tr("initialize_checkpoint"), model_options)
-    m1, m2, m3, m4 = st.columns(4)
-    epochs = m1.number_input(tr("epochs"), min_value=1, max_value=200, value=20)
-    model_batch = m2.number_input(tr("batch_size"), min_value=1, max_value=256, value=32)
-    synth_ratio = m3.slider(tr("synth_ratio"), 0.0, 5.0, 1.0, step=0.25)
-    lr = m4.number_input(tr("lr"), min_value=1e-6, max_value=1e-2, value=1e-4, format="%g")
+    use_synthetic = st.checkbox(tr("use_synthetic"), value=True)
+    epochs = st.selectbox(tr("epochs"), [10, 20, 50], index=1)
+    synth_npz = synth_options[0] if synth_options and use_synthetic else ""
+    init_ckpt = model_options[0]
+    model_batch = 32
+    synth_ratio = 1.0
+    lr = 1e-4
+    if use_synthetic and not synth_npz:
+        st.warning(tr("no_synth_pool"))
     model_out = str(project_root / "classifier_runs" / f"hospital_effnet_{int(time.time())}")
     if st.button(tr("queue_model_training"), disabled=not dataset_path.exists()):
         cmd = [
@@ -663,7 +685,7 @@ def training_page(project_root: Path, project_id: str, device: str):
             "--device",
             "cuda" if device.startswith("cuda") else "cpu",
         ]
-        if synth_npz:
+        if use_synthetic and synth_npz:
             cmd.extend(["--synth_npz", synth_npz])
         job_dir = start_job(project_root, JobSpec("train_hospital_classifier", cmd, str(REPO_ROOT)))
         st.success(f"{tr('queued_classifier')}: {job_dir.name}")
