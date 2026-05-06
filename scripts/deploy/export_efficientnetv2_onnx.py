@@ -14,6 +14,7 @@ if str(REPO) not in sys.path:
 
 from apps.streamlit_ecg_demo.services.classifier_backend import (
     DEFAULT_CKPT,
+    DEFAULT_ONNX,
     build_efficientnet_super5,
 )
 
@@ -34,7 +35,7 @@ def load_model(ckpt: str, device: str):
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--ckpt", default=DEFAULT_CKPT)
-    ap.add_argument("--out", default="/root/autodl-tmp/streamlit_ecg_demo/models/efficientnetv2_super5.onnx")
+    ap.add_argument("--out", default=DEFAULT_ONNX)
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--opset", type=int, default=17)
     args = ap.parse_args()

@@ -7,7 +7,12 @@ from typing import BinaryIO
 import numpy as np
 import pandas as pd
 
-from apps.streamlit_ecg_demo.services.preprocessing import CLASS_NAMES, crop_or_pad_ct, to_signal_ct
+from apps.streamlit_ecg_demo.services.preprocessing import (
+    CLASS_NAMES,
+    DEFAULT_SAMPLE_RATE,
+    crop_or_pad_ct,
+    to_signal_ct,
+)
 
 
 def _read_signal_upload(upload: BinaryIO, name: str) -> tuple[np.ndarray, np.ndarray | None]:
@@ -66,6 +71,8 @@ def audit_dataset(signals_ct: np.ndarray, labels: np.ndarray) -> dict:
     return {
         "n_samples": int(signals_ct.shape[0]),
         "signal_shape": list(signals_ct.shape),
+        "lead_count": int(signals_ct.shape[1]),
+        "sample_rate_hz": float(DEFAULT_SAMPLE_RATE),
         "class_names": list(CLASS_NAMES),
         "class_counts": {c: int(v) for c, v in zip(CLASS_NAMES, class_counts)},
         "primary_counts": primary_counts,
@@ -112,4 +119,3 @@ def load_audit(audit_path: Path) -> dict | None:
     if not audit_path.exists():
         return None
     return json.loads(audit_path.read_text(encoding="utf-8"))
-

@@ -23,19 +23,20 @@ REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO))
 
 from adversarial.efficientnet_victim_tierM import EfficientNetVictimTierM  # noqa: E402
+from apps.streamlit_ecg_demo.services.paths import DATA_ROOT  # noqa: E402
 from methods.ecgtwin_gen.prompt_token.trainer import _load_text_embed  # noqa: E402
 from scripts.triple_labels.label_schemes import CLASS_NAMES_SUPER5  # noqa: E402
 from util.ecgtwin_utils import ECGTwinWrapper  # noqa: E402
 from util.lead_utils import ECGTWIN_TO_PTBXL_INDICES  # noqa: E402
 
 
-DEFAULT_CACHE_ROOT = "/root/autodl-tmp/ecgtwin_prompt_token_super5/cache_v1"
+DEFAULT_CACHE_ROOT = str(DATA_ROOT / "ecgtwin_prompt_token_super5/cache_v1")
 DEFAULT_TOKEN_BANK = (
-    "/root/autodl-tmp/ecgtwin_prompt_token_super5/"
-    "prompt_token_runs/v1_all4_steps2000/prompt_token_bank.pt"
+    str(DATA_ROOT / "ecgtwin_prompt_token_super5/prompt_token_runs/v1_all4_steps2000/prompt_token_bank.pt")
 )
 DEFAULT_PROMPT_BANK = f"{DEFAULT_CACHE_ROOT}/text_prompt_bank.pt"
-DEFAULT_OUT = "/root/autodl-tmp/ecgtwin_prompt_token_super5/generated_smoke"
+DEFAULT_OUT = str(DATA_ROOT / "ecgtwin_prompt_token_super5/generated_smoke")
+DEFAULT_VICTIM_CKPT = str(DATA_ROOT / "triple_labels/super5_minresample_full10_perglobal_20260503/best_model.pt")
 
 
 def set_all_seeds(seed: int) -> None:
@@ -149,7 +150,7 @@ def main() -> None:
     ap.add_argument("--steps", type=int, default=25)
     ap.add_argument("--device", default="cuda:0")
     ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--victim_ckpt", default="/root/autodl-tmp/triple_labels/super5/best_model.pt")
+    ap.add_argument("--victim_ckpt", default=DEFAULT_VICTIM_CKPT)
     ap.add_argument("--victim_crop_len", type=int, default=250)
     ap.add_argument("--token_repeat", type=int, default=1,
                     help="Repeat the learned center-class token embedding in text_embed.")

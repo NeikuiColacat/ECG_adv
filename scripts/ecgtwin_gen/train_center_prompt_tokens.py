@@ -18,12 +18,13 @@ import torch
 REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO))
 
+from apps.streamlit_ecg_demo.services.paths import DATA_ROOT  # noqa: E402
 from methods.ecgtwin_gen.prompt_token.trainer import ECGTwinPromptTokenTrainer  # noqa: E402
 
 
 DEFAULT_CENTERS = ["ningbo", "chapman_shaoxing", "cpsc_2018", "georgia"]
-DEFAULT_CACHE_ROOT = "/root/autodl-tmp/ecgtwin_prompt_token_super5/cache_v1"
-DEFAULT_SAVE_DIR = "/root/autodl-tmp/ecgtwin_prompt_token_super5/prompt_token_runs/v1_all4"
+DEFAULT_CACHE_ROOT = str(DATA_ROOT / "ecgtwin_prompt_token_super5/cache_v1")
+DEFAULT_SAVE_DIR = str(DATA_ROOT / "ecgtwin_prompt_token_super5/prompt_token_runs/v1_all4")
 DEFAULT_PROMPT_BANK = f"{DEFAULT_CACHE_ROOT}/text_prompt_bank.pt"
 
 

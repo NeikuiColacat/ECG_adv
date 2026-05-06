@@ -9,7 +9,9 @@ import numpy as np
 import torch
 
 REPO = Path(__file__).resolve().parents[3]
-DEEPECG_NB = Path("/root/autodl-tmp/models/DeepECG/notebooks")
+from apps.streamlit_ecg_demo.services.paths import APP_DATA_ROOT, DATA_ROOT, MODEL_ROOT
+
+DEEPECG_NB = MODEL_ROOT / "DeepECG/notebooks"
 for p in [REPO, DEEPECG_NB, REPO / "model" / "DeepECG" / "notebooks"]:
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))
@@ -19,12 +21,11 @@ from apps.streamlit_ecg_demo.services.preprocessing import CLASS_NAMES, classifi
 
 
 DEFAULT_CKPT = (
-    "/root/autodl-tmp/triple_labels/"
-    "super5_minresample_full10_perglobal_20260503/best_model.pt"
+    str(DATA_ROOT / "triple_labels/super5_minresample_full10_perglobal_20260503/best_model.pt")
 )
-DEFAULT_ONNX = "/root/autodl-tmp/streamlit_ecg_demo/models/efficientnetv2_super5.onnx"
-DEFAULT_TRT_ENGINE = "/root/autodl-tmp/streamlit_ecg_demo/models/efficientnetv2_super5_fp16.engine"
-DEFAULT_TRT_VENDOR = "/root/autodl-tmp/streamlit_ecg_demo/python_pkgs/tensorrt_cu12"
+DEFAULT_ONNX = str(APP_DATA_ROOT / "models/efficientnetv2_super5.onnx")
+DEFAULT_TRT_ENGINE = str(APP_DATA_ROOT / "models/efficientnetv2_super5_fp16.engine")
+DEFAULT_TRT_VENDOR = str(APP_DATA_ROOT / "python_pkgs/tensorrt_cu12")
 
 
 def _add_tensorrt_vendor_path() -> None:
@@ -85,7 +86,7 @@ class PyTorchClassifierBackend:
         logits_np = logits.detach().cpu().numpy()[0]
         probs_np = probs.detach().cpu().numpy()[0]
         return {
-            "backend": "pytorch",
+            "backend": "torch",
             "device": str(self.device),
             "checkpoint": self.ckpt_path,
             "latency_ms": float(latency_ms),
@@ -193,7 +194,11 @@ def load_classifier_backend(
     ckpt_path: str = DEFAULT_CKPT,
     device: str = "cuda",
 ):
-    if backend == "pytorch":
+    backend = {"pytorch": "torch", "torch": "torch", "tensorrt": "tensorrt"}.get(
+        str(backend).strip().lower(),
+        str(backend).strip().lower(),
+    )
+    if backend == "torch":
         return PyTorchClassifierBackend(ckpt_path=ckpt_path, device=device)
     if backend == "onnxruntime":
         onnx_path = ckpt_path if str(ckpt_path).endswith(".onnx") else DEFAULT_ONNX

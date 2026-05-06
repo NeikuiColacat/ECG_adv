@@ -2,6 +2,8 @@ datasets/
 result/
 outputs/
 outputs
+migrate_files/
+
 
 # Trash / legacy artifacts (not tracked)
 trash/

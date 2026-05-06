@@ -10,8 +10,11 @@ import sys
 import time
 from pathlib import Path
 
+REPO = Path(__file__).resolve().parents[2]
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
 
-DEFAULT_TRT_VENDOR = "/root/autodl-tmp/streamlit_ecg_demo/python_pkgs/tensorrt_cu12"
+from apps.streamlit_ecg_demo.services.classifier_backend import DEFAULT_ONNX, DEFAULT_TRT_ENGINE, DEFAULT_TRT_VENDOR
 
 
 def add_vendor_path(vendor_path: str | None) -> None:
@@ -117,8 +120,8 @@ def build_with_trtexec(args: argparse.Namespace, trtexec: str) -> dict:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--onnx", default="/root/autodl-tmp/streamlit_ecg_demo/models/efficientnetv2_super5.onnx")
-    ap.add_argument("--engine", default="/root/autodl-tmp/streamlit_ecg_demo/models/efficientnetv2_super5_fp16.engine")
+    ap.add_argument("--onnx", default=DEFAULT_ONNX)
+    ap.add_argument("--engine", default=DEFAULT_TRT_ENGINE)
     ap.add_argument("--fp16", dest="fp16", action="store_true", default=True)
     ap.add_argument("--fp32", dest="fp16", action="store_false")
     ap.add_argument("--backend", choices=["auto", "trtexec", "python"], default="auto")

@@ -8,6 +8,7 @@ import numpy as np
 
 CLASS_NAMES = ["CD", "HYP", "MI", "NORM", "STTC"]
 DEFAULT_SAMPLE_RATE = 100.0
+DEFAULT_SAMPLE_LIMIT_PER_POOL = 64
 
 
 def to_signal_ct(signal: np.ndarray) -> np.ndarray:
@@ -41,8 +42,8 @@ def crop_or_pad_ct(signal_ct: np.ndarray, target_len: int = 1000) -> np.ndarray:
 
 
 def classifier_input(signal: np.ndarray, target_len: int = 1000) -> np.ndarray:
-    """Return (1, 12, target_len) classifier input."""
-    arr = crop_or_pad_ct(signal, target_len=target_len)
+    """Return normalized (1, 12, target_len) classifier input."""
+    arr = global_zscore_ct(crop_or_pad_ct(signal, target_len=target_len))
     return arr[None].astype(np.float32, copy=False)
 
 
@@ -53,22 +54,32 @@ def global_zscore_ct(signal_ct: np.ndarray, eps: float = 1e-8) -> np.ndarray:
     return ((arr - mean) / (std + eps)).astype(np.float32)
 
 
-def load_npz_samples(path: str | Path, max_items: int = 64) -> list[dict]:
+def _center_name_from_npz(path: Path, data) -> str:
+    if "center_name" in data:
+        return str(data["center_name"])
+    if path.name == "hospital_dataset.npz" and path.parent.name == "preprocessed":
+        return path.parent.parent.name
+    return path.parent.name
+
+
+def load_npz_samples(path: str | Path, max_items: int | None = DEFAULT_SAMPLE_LIMIT_PER_POOL) -> list[dict]:
+    path = Path(path)
     data = np.load(path, allow_pickle=True)
     if "signals" not in data:
         raise ValueError(f"{path} does not contain key 'signals'")
     signals = data["signals"]
     labels = data["labels"] if "labels" in data else None
     class_names = [str(x) for x in data["class_names"]] if "class_names" in data else CLASS_NAMES
-    center_name = str(data["center_name"]) if "center_name" in data else Path(path).parent.name
+    center_name = _center_name_from_npz(path, data)
     out = []
-    for i in range(min(int(max_items), len(signals))):
+    limit = len(signals) if max_items is None else min(int(max_items), len(signals))
+    for i in range(limit):
         label = labels[i].astype(np.float32).tolist() if labels is not None else None
         label_names = []
         if label is not None:
             label_names = [class_names[j] for j, v in enumerate(label) if float(v) > 0.5]
         out.append({
-            "id": f"{Path(path).stem}:{i}",
+            "id": f"{path.stem}:{i}",
             "source_path": str(path),
             "center": center_name,
             "signal": to_signal_ct(signals[i]),
@@ -78,13 +89,19 @@ def load_npz_samples(path: str | Path, max_items: int = 64) -> list[dict]:
     return out
 
 
-def load_demo_samples(paths: Iterable[str | Path], max_items_per_file: int = 32) -> list[dict]:
+def load_ecg_samples(
+    paths: Iterable[str | Path],
+    max_items_per_file: int = DEFAULT_SAMPLE_LIMIT_PER_POOL,
+) -> list[dict]:
     samples: list[dict] = []
     for path in paths:
         p = Path(path)
         if p.exists():
             samples.extend(load_npz_samples(p, max_items=max_items_per_file))
     return samples
+
+
+load_demo_samples = load_ecg_samples
 
 
 def apply_corruption(signal_ct: np.ndarray, name: str, severity: int, seed: int = 42) -> np.ndarray:
@@ -112,4 +129,3 @@ def apply_corruption(signal_ct: np.ndarray, name: str, severity: int, seed: int 
     else:
         raise ValueError(f"unknown corruption={name!r}")
     return arr.astype(np.float32)
-

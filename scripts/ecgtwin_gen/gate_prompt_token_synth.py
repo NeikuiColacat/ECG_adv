@@ -32,6 +32,7 @@ import torch
 REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO))
 
+from apps.streamlit_ecg_demo.services.paths import DATA_ROOT  # noqa: E402
 from scripts.triple_labels.label_schemes import CLASS_NAMES_SUPER5  # noqa: E402
 from util.ecg_digital_features import (  # noqa: E402
     check_cd,
@@ -43,7 +44,7 @@ from util.ecg_digital_features import (  # noqa: E402
 )
 
 
-DEFAULT_CACHE_ROOT = "/root/autodl-tmp/ecgtwin_prompt_token_super5/cache_v1"
+DEFAULT_CACHE_ROOT = str(DATA_ROOT / "ecgtwin_prompt_token_super5/cache_v1")
 
 PASS_KEY = {
     "NORM": "NORM_any_pass",

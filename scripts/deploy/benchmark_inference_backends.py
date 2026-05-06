@@ -22,6 +22,7 @@ from apps.streamlit_ecg_demo.services.classifier_backend import (
     PyTorchClassifierBackend,
     TensorRTClassifierBackend,
 )
+from apps.streamlit_ecg_demo.services.paths import APP_DATA_ROOT
 
 
 def latency_summary(latencies_ms: list[float], batch_size: int) -> dict:
@@ -127,7 +128,7 @@ def main() -> None:
     ap.add_argument("--repeats", type=int, default=100)
     ap.add_argument("--onnx", default=DEFAULT_ONNX)
     ap.add_argument("--engine", default=DEFAULT_TRT_ENGINE)
-    ap.add_argument("--out", default="/root/autodl-tmp/streamlit_ecg_demo/reports/inference_benchmark.json")
+    ap.add_argument("--out", default=str(APP_DATA_ROOT / "reports/inference_benchmark.json"))
     args = ap.parse_args()
 
     out = Path(args.out)

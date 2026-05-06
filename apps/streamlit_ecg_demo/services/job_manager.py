@@ -8,6 +8,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from apps.streamlit_ecg_demo.services.paths import CACHE_HOME, TMP_DIR
+
 
 @dataclass
 class JobSpec:
@@ -34,8 +36,10 @@ def start_job(project_root: Path, spec: JobSpec) -> Path:
     log_path = job_dir / "stdout.log"
     meta_path = job_dir / "job.json"
     env = os.environ.copy()
-    env.setdefault("TMPDIR", "/root/autodl-tmp/tmp")
-    env.setdefault("XDG_CACHE_HOME", "/root/autodl-tmp/cache")
+    TMP_DIR.mkdir(parents=True, exist_ok=True)
+    CACHE_HOME.mkdir(parents=True, exist_ok=True)
+    env.setdefault("TMPDIR", str(TMP_DIR))
+    env.setdefault("XDG_CACHE_HOME", str(CACHE_HOME))
     if spec.env:
         env.update(spec.env)
     log_f = open(log_path, "ab")
