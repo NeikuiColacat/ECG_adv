@@ -57,6 +57,41 @@ P4: TensorRT 加速 ECGTwin 子模块，仅作为可选增强，不作为答辩�
   12-lead waveform, class probability bar chart, generated-vs-real comparison
 ```
 
+## 2026-05-06 Revised Three-Page Architecture
+
+最新实现把原先 `Detection / Generation / Robustness / Benchmark` 四个 demo tab
+重构为更贴近“目标医院部署”的三页业务闭环：
+
+| page | role |
+|---|---|
+| `Detection` | 加载 baseline 或目标医院 fine-tuned EfficientNet1DV2，对上传 ECG 或 demo ECG 做 super5 异常检测 |
+| `Generation` | 选择目标 center token / no-token / wrong-token control，生成或浏览目标中心 synthetic ECG pool，并进行质量门控 |
+| `Training` | 接收目标医院上传 ECG 和标签，审计数据，准备 prompt-token cache，训练 center token，生成 synthetic pool，训练医院专属检测模型并导出部署产物 |
+
+新的答辩叙事：
+
+```text
+Training:
+  目标医院上传少量带标签 ECG。
+  系统保存到 /root/autodl-tmp/streamlit_ecg_demo/hospitals/<center>/，
+  完成 shape/class/finite/flatline 审计。
+  后台 job 准备 ECGTwin prompt-token cache、训练 center-class prompt token，
+  再用 real + synthetic 训练目标医院专属 EfficientNet1DV2。
+
+Generation:
+  使用训练好的 center token 生成目标医院风格 synthetic ECG。
+  支持 target-token / no-token / wrong-token control。
+  生成结果经过 quality gate 后形成 gated synthetic pool。
+
+Detection:
+  加载目标医院 fine-tuned model / ONNX / TensorRT engine，
+  对新 ECG 做 super5 多标签检测，展示 12 导联图、类别概率、质量检查和推理延迟。
+```
+
+Standalone `Robustness` 和 `Benchmark` 不再作为顶层页面。鲁棒性和推理加速仍保留为
+系统能力：corruption/PN2021-C 作为离线实验和后续可选控件，TensorRT benchmark 作为
+Training 页导出部署产物后的报告内容。
+
 ## System Architecture
 
 推荐目录：
@@ -661,7 +696,7 @@ ONNXRuntime:
   batch=32 latency ~= 341.99 ms, throughput ~= 93.57 ECG/s
 ```
 
-当前部署结论：
+历史部署结论（2026-05-04）：
 
 ```text
 PyTorch CUDA is the fastest available backend in this AutoDL environment.
@@ -669,27 +704,44 @@ ONNXRuntime works but only has CPUExecutionProvider, so it is a functional
 fallback rather than an acceleration backend.
 ```
 
-当前 TensorRT 阻塞：
+历史 TensorRT 阻塞（2026-05-04）：
 
 ```text
 TensorRT engine build blocked because `trtexec` is not found.
 ```
 
-因此答辩表述应为：
+2026-05-06 更新：
 
 ```text
-已完成 Streamlit 演示系统与 PyTorch 推理基线；
-已完成 ONNX/TensorRT 导出与构建脚本；
-当前 AutoDL 环境缺少 trtexec，ONNXRuntime 只有 CPU provider，
-因此系统默认使用 PyTorch CUDA，ONNXRuntime 作为功能 fallback。
-```
+在 AutoDL Docker 环境中不安装系统级 TensorRT/apt 包，不写入系统 CUDA 工具链。
+TensorRT Python runtime/builder 以 pip --target 方式安装到数据盘：
+  /root/autodl-tmp/streamlit_ecg_demo/python_pkgs/tensorrt_cu12
 
-若继续完善 TensorRT：
+Engine build path:
+  scripts/deploy/build_tensorrt_engine.py --backend python
 
-```text
-1. install onnx / onnxruntime in ECGTwin env;
-2. install TensorRT runtime/toolkit with trtexec;
-3. rerun export_efficientnetv2_onnx.py;
-4. rerun build_tensorrt_engine.py;
-5. add TensorRT backend runtime class to Streamlit service.
+Generated engine:
+  /root/autodl-tmp/streamlit_ecg_demo/models/efficientnetv2_super5_fp16.engine
+
+Build report:
+  /root/autodl-tmp/streamlit_ecg_demo/models/efficientnetv2_super5_fp16.build.json
+
+Validation report:
+  /root/autodl-tmp/streamlit_ecg_demo/reports/tensorrt_validation.json
+
+Benchmark report:
+  /root/autodl-tmp/streamlit_ecg_demo/reports/inference_benchmark.json
+
+TensorRT FP16 validation:
+  max_abs_logit_diff = 0.006633
+  max_abs_prob_diff  = 0.000861
+
+Latency p50 / throughput:
+  PyTorch CUDA batch=1:  8.665 ms / 113.85 ECG/s
+  TensorRT FP16 batch=1: 1.251 ms / 647.64 ECG/s
+  PyTorch CUDA batch=32: 8.841 ms / 3492.38 ECG/s
+  TensorRT FP16 batch=32: 2.061 ms / 12597.97 ECG/s
+
+ONNXRuntime still has only CPUExecutionProvider in this environment, so it
+remains a functional fallback, not the acceleration backend.
 ```

@@ -1,0 +1,199 @@
+#!/usr/bin/env python
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+
+DEFAULT_REAL = (
+    "/root/autodl-tmp/graduate_project/"
+    "method_a_real2000_seed42/train_result.json"
+)
+DEFAULT_NO_TOKEN = (
+    "/root/autodl-tmp/graduate_project/"
+    "self_distill_v2_e24_v46_no_token_hardlabel_r10_realfine_lr1e4_seed42_auroc_rerun_20260506/"
+    "train_result.json"
+)
+DEFAULT_CENTER_TOKEN = (
+    "/root/autodl-tmp/graduate_project/"
+    "self_distill_v2_e23_v46_class_oracle_hardlabel_r10_realfine_lr1e4_seed42_auroc_rerun_20260506/"
+    "train_result.json"
+)
+DEFAULT_BENCHMARK = "/root/autodl-tmp/streamlit_ecg_demo/reports/inference_benchmark.json"
+DEFAULT_FIGURES = "/root/autodl-tmp/final_round_ablation_20260504/thesis_paper_selected_v1/selected_examples.json"
+DEFAULT_OUT_DIR = "/root/autodl-tmp/final_round_ablation_20260504/final_evidence"
+
+
+def load_json(path: str | Path) -> dict:
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def pct_delta(value: float, base: float) -> float:
+    return float(value) - float(base)
+
+
+def summarize_method(name: str, path: Path) -> dict:
+    data = load_json(path)
+    return {
+        "name": name,
+        "path": str(path),
+        "test_macro_auroc": data["test_macro_auroc"],
+        "test_macro_auprc": data["test_macro_auprc"],
+        "best_val_macro_auroc": data.get("best_val_macro_auroc"),
+        "best_val_macro_auprc": data.get("best_val_macro_auprc"),
+        "checkpoint_metric": data.get("checkpoint_metric"),
+        "checkpoint_path": data.get("checkpoint_path"),
+        "epochs_trained": data.get("epochs_trained"),
+        "per_class": data.get("test_per_class", {}),
+        "config": data.get("config", {}),
+    }
+
+
+def summarize_benchmark(path: Path) -> dict:
+    data = load_json(path)
+    rows = []
+    for row in data.get("results", []):
+        if row.get("batch_size") in {1, 32}:
+            rows.append({
+                "backend": row.get("backend"),
+                "device": row.get("device"),
+                "batch_size": row.get("batch_size"),
+                "latency_ms_p50": row.get("latency_ms_p50"),
+                "latency_ms_p95": row.get("latency_ms_p95"),
+                "throughput_ecg_per_s": row.get("throughput_ecg_per_s"),
+            })
+    return {
+        "path": str(path),
+        "rows": rows,
+        "tensorrt_validation": data.get("tensorrt_validation", {}),
+    }
+
+
+def write_markdown(out_path: Path, payload: dict) -> None:
+    methods = payload["low_sample_methods"]
+    real = methods[0]
+    lines = [
+        "# Final Thesis Evidence Summary",
+        "",
+        "## Low-Sample PTB-XL Custom Test",
+        "",
+        "| method | AUROC | AUPRC | delta AUROC vs real | delta AUPRC vs real | epochs |",
+        "|---|---:|---:|---:|---:|---:|",
+    ]
+    for method in methods:
+        lines.append(
+            "| {name} | {auroc:.4f} | {auprc:.4f} | {d_auroc:+.4f} | {d_auprc:+.4f} | {epochs} |".format(
+                name=method["name"],
+                auroc=method["test_macro_auroc"],
+                auprc=method["test_macro_auprc"],
+                d_auroc=pct_delta(method["test_macro_auroc"], real["test_macro_auroc"]),
+                d_auprc=pct_delta(method["test_macro_auprc"], real["test_macro_auprc"]),
+                epochs=method.get("epochs_trained"),
+            )
+        )
+
+    lines.extend([
+        "",
+        "## Per-Class Custom Test",
+        "",
+        "| method | class | AUROC | AUPRC | n_pos |",
+        "|---|---|---:|---:|---:|",
+    ])
+    for method in methods:
+        for class_name, rec in method.get("per_class", {}).items():
+            lines.append(
+                "| {method} | {class_name} | {auroc:.4f} | {auprc:.4f} | {n_pos} |".format(
+                    method=method["name"],
+                    class_name=class_name,
+                    auroc=rec["auroc"],
+                    auprc=rec["auprc"],
+                    n_pos=rec.get("n_pos", ""),
+                )
+            )
+
+    lines.extend([
+        "",
+        "## TensorRT Classifier Inference",
+        "",
+        "| backend | device | batch | p50 latency ms | p95 latency ms | throughput ECG/s |",
+        "|---|---|---:|---:|---:|---:|",
+    ])
+    for row in payload["benchmark"]["rows"]:
+        lines.append(
+            "| {backend} | {device} | {batch_size} | {latency_ms_p50:.4f} | {latency_ms_p95:.4f} | {throughput_ecg_per_s:.2f} |".format(**row)
+        )
+    val = payload["benchmark"].get("tensorrt_validation", {})
+    if val:
+        lines.extend([
+            "",
+            "TensorRT probability drift versus PyTorch:",
+            f"- max_abs_prob_diff: `{val.get('max_abs_prob_diff')}`",
+            f"- mean_abs_prob_diff: `{val.get('mean_abs_prob_diff')}`",
+        ])
+
+    lines.extend([
+        "",
+        "## Five-Class Synthetic ECG Figures",
+        "",
+        "| class | source index | quality | target conf | figure |",
+        "|---|---:|---|---:|---|",
+    ])
+    for row in payload["five_class_figures"].get("selected", []):
+        quality_status = row.get("quality_status")
+        if quality_status is None:
+            quality_status = row.get("quality_gate", {}).get("status", "")
+        lines.append(
+            "| {class_name} | {source_index} | {quality_status} | {target_conf:.4f} | `{png}` |".format(
+                class_name=row.get("class_name", ""),
+                source_index=row.get("source_index", ""),
+                quality_status=quality_status,
+                target_conf=float(row.get("target_conf", 0.0)),
+                png=row.get("png", ""),
+            )
+        )
+
+    lines.extend([
+        "",
+        "## Thesis Wording Boundary",
+        "",
+        "- The low-sample result supports ECGTwin synthetic pretraining / real fine-tuning as useful for PTB-XL custom test.",
+        "- The current strict no-token matched control is strong; do not attribute the full gain only to center token.",
+        "- Five-class figures are qualitative visualization examples. HYP/CD still need cautious wording if digital clinical criteria are discussed.",
+        "",
+    ])
+    out_path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--real_result", default=DEFAULT_REAL)
+    ap.add_argument("--no_token_result", default=DEFAULT_NO_TOKEN)
+    ap.add_argument("--center_token_result", default=DEFAULT_CENTER_TOKEN)
+    ap.add_argument("--benchmark", default=DEFAULT_BENCHMARK)
+    ap.add_argument("--figures", default=DEFAULT_FIGURES)
+    ap.add_argument("--out_dir", default=DEFAULT_OUT_DIR)
+    args = ap.parse_args()
+
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    methods = [
+        summarize_method("real2000 baseline", Path(args.real_result)),
+        summarize_method("no-token hard pretrain -> real fine-tune", Path(args.no_token_result)),
+        summarize_method("center-token hard pretrain -> real fine-tune", Path(args.center_token_result)),
+    ]
+    payload = {
+        "low_sample_methods": methods,
+        "benchmark": summarize_benchmark(Path(args.benchmark)),
+        "five_class_figures": load_json(args.figures),
+    }
+    json_path = out_dir / "final_thesis_evidence_summary.json"
+    md_path = out_dir / "final_thesis_evidence_summary.md"
+    json_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    write_markdown(md_path, payload)
+    print(json.dumps({"json": str(json_path), "markdown": str(md_path)}, indent=2))
+
+
+if __name__ == "__main__":
+    main()

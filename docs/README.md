@@ -7,6 +7,7 @@
 | 文件 | 用途 |
 |---|---|
 | `experiment_summary_for_advisor.md` | 面向导师汇报的整体实验故事和结论 |
+| `graduate_project_pipeline_walkthrough.md` | 当前毕设主线的端到端 walk-through：数据、ECGTwin、三方法低样本实验、质量验证、部署和论文表述边界 |
 | `module_ablation_1_real_vs_synth.md` | TA-OMAT / real-anchor / synthetic-anchor 对比与模块消融 |
 | `triple_labels_metrics_for_advisor.md` | EfficientNet1DV2 在 super5/sub23/pn26 等设置下的指标汇总 |
 | `label_strategy.md` | 历史标签调研；当前 super5 映射以 `pipelines/super5_label_mapping_pipeline.md` 和代码为准 |

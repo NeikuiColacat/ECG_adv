@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 import time
 from pathlib import Path
@@ -22,6 +23,22 @@ DEFAULT_CKPT = (
     "super5_minresample_full10_perglobal_20260503/best_model.pt"
 )
 DEFAULT_ONNX = "/root/autodl-tmp/streamlit_ecg_demo/models/efficientnetv2_super5.onnx"
+DEFAULT_TRT_ENGINE = "/root/autodl-tmp/streamlit_ecg_demo/models/efficientnetv2_super5_fp16.engine"
+DEFAULT_TRT_VENDOR = "/root/autodl-tmp/streamlit_ecg_demo/python_pkgs/tensorrt_cu12"
+
+
+def _add_tensorrt_vendor_path() -> None:
+    vendor = Path(os.environ.get("TENSORRT_VENDOR_PATH", DEFAULT_TRT_VENDOR))
+    if vendor.exists() and str(vendor) not in sys.path:
+        sys.path.insert(0, str(vendor))
+
+
+def _import_tensorrt():
+    try:
+        import tensorrt as trt
+    except ModuleNotFoundError:
+        import tensorrt_bindings as trt
+    return trt
 
 
 def build_efficientnet_super5() -> EfficientNet1DV2:
@@ -89,6 +106,88 @@ class UnavailableBackend:
         raise RuntimeError(self.reason)
 
 
+def _torch_dtype_from_trt(dtype):
+    trt = _import_tensorrt()
+
+    if dtype == trt.float16:
+        return torch.float16
+    if dtype == trt.float32:
+        return torch.float32
+    if dtype == trt.int32:
+        return torch.int32
+    if dtype == trt.int8:
+        return torch.int8
+    raise TypeError(f"unsupported TensorRT dtype: {dtype}")
+
+
+class TensorRTClassifierBackend:
+    def __init__(self, engine_path: str = DEFAULT_TRT_ENGINE):
+        _add_tensorrt_vendor_path()
+        if not torch.cuda.is_available():
+            raise RuntimeError("TensorRT backend requires CUDA")
+        self.engine_path = str(engine_path)
+        if not Path(self.engine_path).exists():
+            raise FileNotFoundError(
+                f"missing TensorRT engine: {self.engine_path}; run scripts/deploy/build_tensorrt_engine.py"
+            )
+
+        trt = _import_tensorrt()
+
+        self.trt = trt
+        self.device = torch.device("cuda")
+        logger = trt.Logger(trt.Logger.WARNING)
+        runtime = trt.Runtime(logger)
+        self.engine = runtime.deserialize_cuda_engine(Path(self.engine_path).read_bytes())
+        if self.engine is None:
+            raise RuntimeError(f"failed to deserialize TensorRT engine: {self.engine_path}")
+        self.context = self.engine.create_execution_context()
+        names = [self.engine.get_tensor_name(i) for i in range(self.engine.num_io_tensors)]
+        inputs = [n for n in names if self.engine.get_tensor_mode(n) == trt.TensorIOMode.INPUT]
+        outputs = [n for n in names if self.engine.get_tensor_mode(n) == trt.TensorIOMode.OUTPUT]
+        if not inputs or not outputs:
+            raise RuntimeError(f"TensorRT engine has no usable inputs/outputs: {names}")
+        self.input_name = "ecg" if "ecg" in inputs else inputs[0]
+        self.output_name = "logits" if "logits" in outputs else outputs[0]
+        self.predict_batch_array(np.zeros((1, 12, 1000), dtype=np.float32))
+
+    def predict_batch_array(self, x_np: np.ndarray) -> np.ndarray:
+        x = torch.as_tensor(x_np, dtype=torch.float32, device=self.device).contiguous()
+        if x.ndim != 3 or x.shape[1:] != (12, 1000):
+            raise ValueError(f"expected input shape (B, 12, 1000), got {tuple(x.shape)}")
+        self.context.set_input_shape(self.input_name, tuple(x.shape))
+        out_shape = tuple(int(v) for v in self.context.get_tensor_shape(self.output_name))
+        out_dtype = _torch_dtype_from_trt(self.engine.get_tensor_dtype(self.output_name))
+        y = torch.empty(out_shape, dtype=out_dtype, device=self.device)
+        self.context.set_tensor_address(self.input_name, int(x.data_ptr()))
+        self.context.set_tensor_address(self.output_name, int(y.data_ptr()))
+        stream = torch.cuda.current_stream()
+        ok = self.context.execute_async_v3(stream_handle=stream.cuda_stream)
+        if not ok:
+            raise RuntimeError("TensorRT execute_async_v3 failed")
+        stream.synchronize()
+        return y.detach().float().cpu().numpy()
+
+    def predict(self, signal) -> dict:
+        x_np = classifier_input(np.asarray(signal, dtype=np.float32), target_len=1000)
+        torch.cuda.synchronize()
+        t0 = time.perf_counter()
+        logits_np = self.predict_batch_array(x_np)[0]
+        latency_ms = (time.perf_counter() - t0) * 1000.0
+        probs_np = 1.0 / (1.0 + np.exp(-np.clip(logits_np, -50, 50)))
+        return {
+            "backend": "tensorrt",
+            "device": "cuda",
+            "checkpoint": self.engine_path,
+            "latency_ms": float(latency_ms),
+            "class_names": list(CLASS_NAMES),
+            "logits": logits_np.astype(float).tolist(),
+            "probabilities": probs_np.astype(float).tolist(),
+            "predicted_labels": [
+                CLASS_NAMES[i] for i, p in enumerate(probs_np) if float(p) >= 0.5
+            ],
+        }
+
+
 def load_classifier_backend(
     backend: str,
     ckpt_path: str = DEFAULT_CKPT,
@@ -97,11 +196,11 @@ def load_classifier_backend(
     if backend == "pytorch":
         return PyTorchClassifierBackend(ckpt_path=ckpt_path, device=device)
     if backend == "onnxruntime":
-        return ONNXRuntimeClassifierBackend(onnx_path=DEFAULT_ONNX)
+        onnx_path = ckpt_path if str(ckpt_path).endswith(".onnx") else DEFAULT_ONNX
+        return ONNXRuntimeClassifierBackend(onnx_path=onnx_path)
     if backend == "tensorrt":
-        return UnavailableBackend(
-            f"{backend} runtime is planned in scripts/deploy; use PyTorch fallback for now"
-        )
+        engine_path = ckpt_path if str(ckpt_path).endswith(".engine") else DEFAULT_TRT_ENGINE
+        return TensorRTClassifierBackend(engine_path=engine_path)
     raise ValueError(f"unknown backend={backend!r}")
 
 
