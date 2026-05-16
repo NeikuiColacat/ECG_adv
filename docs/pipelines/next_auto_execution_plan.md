@@ -953,3 +953,183 @@ Do not overstate causality:
   - PN2021 route is positive for three large centers, not georgia.
 ```
 ```
+
+## 2026-05-16 New Paper Auto Plan: VAE-Only Latent-Hull AT
+
+新论文主线暂时从 center token / DiT 合成样本收缩到更干净的 VAE-only 路线：
+
+```text
+目标中心真实 ECG
+-> ECGTwin VAE encoder
+-> same-label latent neighbor hull
+-> 在线优化 softmax 组合权重
+-> VAE decode 成 adversarial ECG
+-> 训练 EfficientNet1DV2 跨中心适配
+```
+
+本轮不使用：
+
+```text
+center token
+ECGTwin DiT direct synthetic ECG
+wrong-center token
+no-token synthetic pool
+```
+
+### 已完成代码更新
+
+```text
+[done] scripts/pgd_cross_center/synth_online_at_super5.py
+       add --hull_include_anchor
+
+[done] scripts/paper/run_vae_only_latenthull_sweep_20260516.py
+       add reusable sweep runner for VAE-only real-anchor LH-AT
+       default: hard quality gate disabled; gate metrics logged for monitoring
+```
+
+`--hull_include_anchor` 用于 no-lambda ablation：
+
+```text
+default:
+  z_i excludes z0
+
+with --hull_include_anchor:
+  z_i includes z0 as candidate 0
+```
+
+Quality gate policy:
+
+```text
+main method:
+  hard quality gate disabled by default
+  quality / semantic gate metrics are still logged as safety monitoring
+
+gate-on ablation:
+  pass --enable_quality_gate to scripts/paper/run_vae_only_latenthull_sweep_20260516.py
+
+2026-05-16 matched no-gate result:
+  ningbo M20/M80 and cpsc_2018 M20/M80 all matched gate-on exactly
+  target AUROC/AUPRC delta = 0.000 / 0.000 pp
+  PN2021 avg delta        = 0.000 / 0.000 pp
+
+interpretation:
+  real-anchor VAE-only LH-AT samples pass the semantic gate already;
+  the performance gain is not caused by gate-based sample selection.
+```
+
+### Task A: Phase-1 M/Variant Sweep
+
+目标：
+
+```text
+比较当前主线 lambda015 和 no-lambda anchor-included convex hull。
+```
+
+命令：
+
+```bash
+TMPDIR=/root/autodl-tmp/tmp XDG_CACHE_HOME=/root/autodl-tmp/cache \
+/root/miniforge3/envs/ECGTwin/bin/python -u scripts/paper/run_vae_only_latenthull_sweep_20260516.py \
+  --centers ningbo cpsc_2018 \
+  --K 500 \
+  --variants lambda015 convex_anchor \
+  --Ms 10 20 40 80 \
+  --epochs 30 \
+  --num_workers 6
+```
+
+预计输出：
+
+```text
+/root/autodl-tmp/paper_vae_only_latenthull_sweep_20260516/
+```
+
+优先记录：
+
+```text
+target-center held-out AUROC / AUPRC
+PN2021 7-center avg AUROC / AUPRC
+PTB-XL fold10 AUROC / AUPRC
+hull_weight_entropy_mean
+hull_weight_top1_mean
+```
+
+### Task B: Full M Sweep
+
+触发条件：
+
+```text
+Phase-1 中 convex_anchor 接近或超过 lambda015，
+或者 lambda015 的 M=40/80 明显超过 M=10/20。
+```
+
+完整 M：
+
+```text
+M = 10, 20, 30, 40, 50, 60, 70, 80, 100
+```
+
+命令：
+
+```bash
+TMPDIR=/root/autodl-tmp/tmp XDG_CACHE_HOME=/root/autodl-tmp/cache \
+/root/miniforge3/envs/ECGTwin/bin/python -u scripts/paper/run_vae_only_latenthull_sweep_20260516.py \
+  --centers ningbo cpsc_2018 \
+  --K 500 \
+  --variants lambda015 convex_anchor convex_neighbors \
+  --Ms 10 20 30 40 50 60 70 80 100 \
+  --epochs 20 30 \
+  --num_workers 6
+```
+
+### Task C: Epoch Scale-Up
+
+推荐 epoch 矩阵：
+
+```text
+M=10/20:
+  epochs = 20, 30, 40
+
+M=30/50:
+  epochs = 20, 30
+
+M=80/100:
+  epochs = 10, 20
+
+best one:
+  epochs = 60
+```
+
+判断规则：
+
+```text
+如果 epoch=40 比 epoch=30 没有提高，停止 scale-up。
+如果 epoch=60 提高 target-center 但明显伤 PTB-XL fold10，论文里只保留为过拟合消融。
+```
+
+### Task D: Multi-Center Confirmation
+
+把最优 2-3 个配置扩展到：
+
+```text
+ningbo
+chapman_shaoxing
+cpsc_2018
+georgia
+```
+
+重点：
+
+```text
+georgia 由于 K=500 ref exclusion 后 MI positives 被清空，必须单独解释。
+如果继续使用 georgia，优先报告 CD/HYP/NORM/STTC used-class 指标。
+```
+
+### Success Criteria
+
+```text
+1. VAE-only real-anchor LH-AT 在至少两个中心复现 target-center AUPRC +3pp 左右。
+2. lambda015 和 no-lambda convex hull 有清楚的对照结论。
+3. M scale-up 显示 M=10/20 是否已经足够，还是大 M 有实际收益。
+4. 所有 target-center eval 都排除 K 条 ref ECG，避免数据污染。
+```

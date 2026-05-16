@@ -1048,3 +1048,309 @@ Label audit:
 Next georgia work should inspect the target sample selection, PN2021 super5
 mapping, and center-specific label noise before more online-AT sweeps.
 ```
+
+## 2026-05-16 论文主线收缩：VAE-Only Real-Anchor Latent-Hull AT
+
+当前论文路线先收缩到最干净的问题：
+
+```text
+不使用 ECGTwin DiT 合成样本
+不使用 center token
+只使用目标中心真实 ECG 的 ECGTwin VAE latent
+在 same-label VAE latent hull 内做在线对抗训练
+```
+
+这样做的原因：
+
+```text
+1. real-anchor LH-AT 已经在 ningbo / chapman_shaoxing / cpsc_2018 上稳定提升。
+2. center token 与 no-token 在若干 matched control 中差异很小，因果性不稳定。
+3. VAE latent manifold 本身是更稳的论文贡献点：用目标中心 K 条真实 ECG 构造
+   医学语义更可信的局部 latent hull，然后在 hull 内搜索决策边界样本。
+```
+
+### 固定输入协议
+
+所有实验继续使用 Task-1 source classifier：
+
+```text
+checkpoint:
+  /root/autodl-tmp/triple_labels/super5_minresample_full10_perglobal_20260503/best_model.pt
+
+preprocess_mode = minimal_resample
+norm_mode       = per_sample_global
+sampling rate   = 100Hz
+input length    = 1000 samples = 10 seconds
+crop_len        = 1000
+lead order      = PTB-XL canonical order
+```
+
+目标中心 anchor：
+
+```text
+K = 500 first
+centers = ningbo, cpsc_2018 first-stage
+then expand to chapman_shaoxing, georgia
+eval must exclude the K target-center ref ids
+```
+
+### 变体定义
+
+主方法 A：anchored lambda hull。
+
+```text
+z_mix = sum_i softmax(a_i) * z_i
+z_adv = (1 - lambda) * z0 + lambda * z_mix
+```
+
+其中：
+
+```text
+z0 = 当前目标中心真实 ECG 的 VAE latent
+z_i = same-primary-label 近邻目标中心真实 ECG latent
+a_i = 每个 batch 在线优化的组合权重 logits
+M = 参与组合的 same-label 近邻数量
+```
+
+推荐主线：
+
+```text
+lambda = 0.15
+M = 10 or 20
+epochs = 30
+```
+
+消融 B：no-lambda neighbor convex hull。
+
+```text
+z_adv = sum_i softmax(a_i) * z_i
+z_i 不包含 z0
+```
+
+这对应 `hull_lambda=1.0` 且不加 `--hull_include_anchor`。它是更激进的
+no-lambda 版本，可能更强也更容易离开原始 ECG 局部邻域。
+
+消融 C：no-lambda anchor-included convex hull。
+
+```text
+z_adv = sum_i softmax(a_i) * z_i
+z_i 包含 z0，且 z0 是 candidate 0
+```
+
+这对应：
+
+```text
+--hull_lambda 1.0
+--hull_include_anchor
+```
+
+它是更稳的 no-lambda 版本，因为 softmax 权重可以选择留在原始 anchor 附近。
+
+### M Sweep
+
+完整 M 数组：
+
+```text
+M = 10, 20, 30, 40, 50, 60, 70, 80, 100
+```
+
+执行顺序：
+
+```text
+phase 1:
+  M = 10, 20, 40, 80
+  centers = ningbo, cpsc_2018
+  variants = lambda015, convex_anchor
+  epochs = 30
+
+phase 2:
+  around best region add M = 30, 50, 60, 70, 100
+  add convex_neighbors only if convex_anchor is competitive
+
+phase 3:
+  expand best 2-3 configs to chapman_shaoxing and georgia
+```
+
+预期：
+
+```text
+M=10/20:
+  局部同类 manifold 最干净，预期最稳。
+
+M=30/40/50:
+  增加多样性，可能略增 AUPRC，但也可能稀释中心局部风格。
+
+M=60/80/100:
+  更像同类全局原型混合，风险是 latent 均值化和医学证据变弱。
+  只作为 scale-up ablation，不作为默认主线。
+```
+
+已有 ningbo exact M grid 提示：
+
+```text
+lambda=0.15, K=500, crop_len=1000:
+  M10 ep30 ~= 0.8946 / 0.5303
+  M20 ep30 ~= 0.8945 / 0.5303
+  M20 ep20 ~= 0.8942 / 0.5295
+  M100 ep20 ~= 0.8944 / 0.5294
+
+结论：
+  M 从 10/20 扩到 100 没有明显继续提升；
+  epoch 从 10 增到 20/30 的收益更明确。
+```
+
+### Epoch Scale-Up
+
+推荐 epoch 数组：
+
+```text
+epochs = 10, 20, 30, 40, 60
+```
+
+执行策略：
+
+```text
+M=10/20:
+  跑 20, 30, 40 epoch。
+
+M=30/50:
+  跑 20, 30 epoch。
+
+M=80/100:
+  先跑 10, 20 epoch。
+  若 20 epoch 无优势，不继续拉长。
+```
+
+当前判断：
+
+```text
+epoch=30 是主线默认。
+epoch=40 可作为上限确认。
+epoch=60 只在最优 M/variant 上做一次，不做全网格。
+```
+
+### 新实现
+
+新增代码：
+
+```text
+scripts/pgd_cross_center/synth_online_at_super5.py
+  --hull_include_anchor
+  --disable_quality_gate
+
+scripts/paper/run_vae_only_latenthull_sweep_20260516.py
+  default: hard quality gate disabled for VAE-only real-anchor LH-AT
+```
+
+`--hull_include_anchor` 的作用：
+
+```text
+SameLabelLatentIndex 默认排除 anchor 自身。
+打开该开关后，候选集合 candidate 0 = z0，后面再接 same-label nearest neighbors。
+这让 no-lambda convex hull 可以表达“保持在原始 ECG 附近”。
+```
+
+### Quality Gate 策略
+
+论文主方法默认关闭 hard quality gate：
+
+```text
+scripts/paper/run_vae_only_latenthull_sweep_20260516.py
+  default behavior: pass --disable_quality_gate to synth_online_at_super5.py
+```
+
+原因：
+
+```text
+2026-05-16 no-gate ablation 显示，在 real-anchor VAE-only LH-AT 主线中，
+gate-on 和 no-gate 的 AUROC/AUPRC 完全一致；原 gate-on 日志没有
+medical gate FAIL 或 skip=True。
+
+这说明当前 real-anchor latent-hull 样本本身通过 semantic gate，
+性能收益不是由 gate-based sample selection 带来的。
+```
+
+保留 gate 指标，但只作为 monitoring / safety audit：
+
+```text
+Einthoven residual
+HR / QRS sanity
+NaN / Inf
+amplitude / flatline
+ASR trace
+```
+
+如果需要复现 gate-on 消融，使用：
+
+```bash
+/root/miniforge3/envs/ECGTwin/bin/python -u scripts/paper/run_vae_only_latenthull_sweep_20260516.py \
+  --enable_quality_gate
+```
+
+已完成 no-gate matched ablation：
+
+```text
+output:
+  /root/autodl-tmp/paper_vae_only_latenthull_nogate_ablation_20260516/
+
+matched cells:
+  ningbo, M=20/80
+  cpsc_2018, M=20/80
+  K=500, lambda=0.15, epochs=30, seed=20260531
+
+result:
+  gate-on vs no-gate target AUROC/AUPRC delta = 0.000 / 0.000 pp
+  gate-on vs no-gate PN2021 avg delta        = 0.000 / 0.000 pp
+```
+
+### 第一轮命令
+
+建议先跑小网格：
+
+```bash
+TMPDIR=/root/autodl-tmp/tmp XDG_CACHE_HOME=/root/autodl-tmp/cache \
+/root/miniforge3/envs/ECGTwin/bin/python -u scripts/paper/run_vae_only_latenthull_sweep_20260516.py \
+  --centers ningbo cpsc_2018 \
+  --K 500 \
+  --variants lambda015 convex_anchor \
+  --Ms 10 20 40 80 \
+  --epochs 30 \
+  --num_workers 6
+```
+
+输出：
+
+```text
+/root/autodl-tmp/paper_vae_only_latenthull_sweep_20260516/
+```
+
+如果 phase 1 结果显示 `convex_anchor` 不输给 `lambda015`，再补：
+
+```bash
+TMPDIR=/root/autodl-tmp/tmp XDG_CACHE_HOME=/root/autodl-tmp/cache \
+/root/miniforge3/envs/ECGTwin/bin/python -u scripts/paper/run_vae_only_latenthull_sweep_20260516.py \
+  --centers ningbo cpsc_2018 \
+  --K 500 \
+  --variants lambda015 convex_anchor convex_neighbors \
+  --Ms 10 20 30 40 50 60 70 80 100 \
+  --epochs 20 30 \
+  --num_workers 6
+```
+
+### 验收标准
+
+最小论文可用标准：
+
+```text
+1. 至少两个中心相对 bare PTB-XL baseline 提升：
+   target AUROC >= +2pp 或 target AUPRC >= +3pp。
+
+2. 目标中心 ref ids 全部从 eval 中排除。
+
+3. PTB-XL fold10 AUPRC 不下降超过 2pp；若下降，需要解释为
+   target adaptation vs source retention trade-off。
+
+4. no-lambda 版本必须和 lambda015 对比：
+   如果 no-lambda 不稳定，论文主方法保留 lambda015；
+   如果 no-lambda 接近或更好，可作为更简洁的主公式候选。
+```

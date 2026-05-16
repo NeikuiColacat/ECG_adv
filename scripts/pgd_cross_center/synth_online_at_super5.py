@@ -538,12 +538,14 @@ class SameLabelLatentIndex:
         labels_one_hot: np.ndarray,
         label_mode: str = "primary",
         seed: int = 42,
+        include_self: bool = False,
     ):
         if label_mode not in {"primary", "exact"}:
             raise ValueError(f"label_mode must be primary|exact, got {label_mode!r}")
         self.latents = latents.astype(np.float32, copy=False)
         self.labels = labels_one_hot.astype(np.float32, copy=False)
         self.label_mode = label_mode
+        self.include_self = bool(include_self)
         self.rng = np.random.default_rng(seed)
         if label_mode == "primary":
             keys = [int(i) for i in self.labels.argmax(axis=1)]
@@ -559,7 +561,13 @@ class SameLabelLatentIndex:
         return {str(k): int(len(v)) for k, v in self.pools.items()}
 
     def candidates_for(self, anchor_indices: np.ndarray, M: int) -> np.ndarray:
-        """Return (B,M,4,128) nearest same-label candidates, excluding self when possible."""
+        """Return (B,M,4,128) nearest same-label candidates.
+
+        By default this excludes the anchor itself when possible, matching the
+        historical Latent-Hull setup. For no-lambda convex-hull ablations,
+        include_self=True prepends the anchor as candidate 0 so
+        z_adv=sum_i softmax(a_i) z_i can still stay near z0 if that is optimal.
+        """
         out = np.empty((len(anchor_indices), M, 4, 128), dtype=np.float32)
         flat_latents = self.latents.reshape(self.latents.shape[0], -1)
         for row_i, anchor_idx in enumerate(anchor_indices):
@@ -572,7 +580,16 @@ class SameLabelLatentIndex:
             diff = flat_latents[pool] - flat_latents[anchor_idx]
             dist2 = np.einsum("ij,ij->i", diff, diff)
             order = np.argsort(dist2)
-            chosen = pool[order[:M]]
+            if self.include_self:
+                neighbor_budget = max(M - 1, 0)
+                chosen = np.concatenate(
+                    [
+                        np.asarray([anchor_idx], dtype=np.int64),
+                        pool[order[:neighbor_budget]],
+                    ]
+                )
+            else:
+                chosen = pool[order[:M]]
             if len(chosen) < M:
                 pad_value = int(chosen[-1]) if len(chosen) else anchor_idx
                 pad = np.full((M - len(chosen),), pad_value, dtype=np.int64)
@@ -863,6 +880,12 @@ def parse_args():
     )
     p.add_argument("--hull_dirichlet_alpha", type=float, default=1.0)
     p.add_argument("--hull_label_mode", choices=["primary", "exact"], default="primary")
+    p.add_argument(
+        "--hull_include_anchor",
+        action="store_true",
+        help="Include the anchor latent itself as candidate 0 in same-label hull. "
+             "Useful for no-lambda convex-hull ablations with --hull_lambda 1.0.",
+    )
     p.add_argument("--source_sampling_strategy",
                    choices=["class_balanced", "source_weighted"],
                    default="class_balanced",
@@ -936,6 +959,12 @@ def parse_args():
                    help="Halt with RuntimeError after this many consecutive low-ASR epochs")
     p.add_argument("--asr_low_threshold", type=float, default=0.30)
     p.add_argument("--einthoven_p95_max", type=float, default=0.5)
+    p.add_argument(
+        "--disable_quality_gate",
+        action="store_true",
+        help="Do not skip buffer push when semantic/quality gate fails. "
+             "Still compute and log gate metrics for ablation.",
+    )
 
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--device", default="cuda:0")
@@ -1223,8 +1252,10 @@ def main():
             synth_latents, synth_labels,
             label_mode=args.hull_label_mode,
             seed=args.seed,
+            include_self=args.hull_include_anchor,
         )
         print(f"[setup] latent-hull index mode={args.hull_label_mode} "
+              f"include_anchor={args.hull_include_anchor} "
               f"sizes={latent_hull_index.class_sizes()}")
     else:
         pgd_gen = PGDAdvDiffGenerator(
@@ -1364,11 +1395,14 @@ def main():
         )
 
         gate_skipped = False
-        if not sem_info.get("PASS", False):
+        if (not args.disable_quality_gate) and (not sem_info.get("PASS", False)):
             gate_skipped = True
             print(f"[ep{epoch:02d}] medical gate FAIL: {sem_info.get('fail_reasons')} "
                   f"— skip buffer push this epoch", flush=True)
         else:
+            if args.disable_quality_gate and not sem_info.get("PASS", False):
+                print(f"[ep{epoch:02d}] medical gate FAIL ignored: "
+                      f"{sem_info.get('fail_reasons')}", flush=True)
             # Center-crop adv (B, 12, 1000) → (B, 12, crop_len) on the time axis
             start = (adv_signals.shape[-1] - args.crop_len) // 2
             adv_ct_crop = adv_signals[..., start:start + args.crop_len]
@@ -1411,16 +1445,24 @@ def main():
 
         # Phase C: build mixed loader (cold-start guard for empty buffer)
         buf_ds = buffer.to_dataset()
-        streams = [(train_ds, args.ptbxl_weight, None)]
+        streams = []
+        if args.ptbxl_weight > 0:
+            streams.append((train_ds, args.ptbxl_weight, None))
         if target_real_ds is not None and args.target_real_weight > 0:
             streams.append((target_real_ds, args.target_real_weight, None))
-        if roundtrip_ds is not None:
+        if roundtrip_ds is not None and args.roundtrip_weight > 0:
             streams.append((roundtrip_ds, args.roundtrip_weight, None))
         if buf_ds is not None and len(buf_ds) > 0:
             streams.append((buf_ds, args.adv_weight, buffer.get_sampling_weights()))
 
+        if len(streams) == 0:
+            raise RuntimeError(
+                "No training streams are active. Check ptbxl_weight, "
+                "target_real_weight, roundtrip_weight, and adv buffer gates."
+            )
         if len(streams) == 1:
-            train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
+            only_ds = streams[0][0]
+            train_loader = DataLoader(only_ds, batch_size=args.batch_size, shuffle=True,
                                       num_workers=args.num_workers, pin_memory=True,
                                       drop_last=True,
                                       persistent_workers=args.num_workers > 0)
@@ -1497,6 +1539,7 @@ def main():
                 "hull_lambda": args.hull_lambda,
                 "hull_steps": args.hull_steps,
                 "hull_label_mode": args.hull_label_mode,
+                "hull_include_anchor": args.hull_include_anchor,
                 "hull_weight_entropy_mean": round(
                     float(delta_stats.get("hull_weight_entropy_mean", float('nan'))), 4
                 ),
