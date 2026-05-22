@@ -319,6 +319,7 @@ def eval_pn(
     ref_ids: dict[str, set[str]],
     device: torch.device,
     batch_size: int,
+    report_drop_all_zero: bool = False,
 ) -> dict:
     scores = predict_head(head, pn["features"].astype(np.float32), batch_size, device)
     return evaluate_pn2021_views(
@@ -327,6 +328,7 @@ def eval_pn(
         pn["centers"].astype(str),
         pn["record_ids"].astype(str),
         ref_ids,
+        report_drop_all_zero=report_drop_all_zero,
     )
 
 
@@ -542,7 +544,14 @@ def train_one_center(
     opt = torch.optim.AdamW(trainable_head_params, lr=args.lr, weight_decay=args.weight_decay)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max(args.epochs, 1), eta_min=args.lr * 0.05)
 
-    baseline_views = eval_pn(head, pn, ref_ids, device, args.eval_batch_size)
+    baseline_views = eval_pn(
+        head,
+        pn,
+        ref_ids,
+        device,
+        args.eval_batch_size,
+        report_drop_all_zero=args.report_drop_all_zero_pn2021,
+    )
     baseline_ptbxl = eval_ptbxl_fold10(head, ptbxl, device, args.eval_batch_size)
     def selection_score(target_row: dict[str, Any], ptbxl_row: dict[str, Any]) -> float:
         target_auprc = float(target_row["macro_auprc"])
@@ -570,29 +579,38 @@ def train_one_center(
     logs = []
     for epoch in range(1, args.epochs + 1):
         victim.eval()
-        per_cls = max(1, args.k_anchor // len(classes_in_scope))
-        k_per_cls = {c: per_cls for c in classes_in_scope}
-        for i in range(args.k_anchor - per_cls * len(classes_in_scope)):
-            k_per_cls[classes_in_scope[i % len(classes_in_scope)]] += 1
-        drawn = walker.sample(k_per_cls)
-        picks = np.concatenate([drawn[c] for c in classes_in_scope if drawn[c].size > 0])
-        if picks.size > 1:
-            np.random.default_rng(args.seed + epoch).shuffle(picks)
         adv_features, adv_labels = [], []
         delta_norms = []
-        for i in range(0, len(picks), args.pgd_batch):
-            batch_idx = picks[i:i + args.pgd_batch]
-            z = torch.from_numpy(pool["latents"][batch_idx]).float().to(device)
-            y = torch.from_numpy(pool["labels"][batch_idx]).float().to(device)
-            cand = torch.from_numpy(index.candidates_for(batch_idx, args.hull_m)).float().to(device)
-            x_adv, delta = pgd_gen.attack_from_latent(z, y, candidate_latents=cand)
-            with torch.no_grad():
-                feats = victim.features_from_ecg1000(x_adv, grad=False)
-            adv_features.append(feats.float().cpu().numpy())
-            adv_labels.append(pool["labels"][batch_idx].astype(np.float32))
-            delta_norms.extend(delta.detach().flatten(1).norm(dim=1).cpu().tolist())
-        adv_x = np.concatenate(adv_features, axis=0).astype(np.float32)
-        adv_y = np.concatenate(adv_labels, axis=0).astype(np.float32)
+        if not args.disable_adv_stream and args.adv_weight > 0 and args.k_anchor > 0:
+            per_cls = max(1, args.k_anchor // len(classes_in_scope))
+            k_per_cls = {c: per_cls for c in classes_in_scope}
+            for i in range(args.k_anchor - per_cls * len(classes_in_scope)):
+                k_per_cls[classes_in_scope[i % len(classes_in_scope)]] += 1
+            drawn = walker.sample(k_per_cls)
+            picks = np.concatenate([drawn[c] for c in classes_in_scope if drawn[c].size > 0])
+            if picks.size > 1:
+                np.random.default_rng(args.seed + epoch).shuffle(picks)
+            for i in range(0, len(picks), args.pgd_batch):
+                batch_idx = picks[i:i + args.pgd_batch]
+                z = torch.from_numpy(pool["latents"][batch_idx]).float().to(device)
+                y = torch.from_numpy(pool["labels"][batch_idx]).float().to(device)
+                cand = torch.from_numpy(index.candidates_for(batch_idx, args.hull_m)).float().to(device)
+                x_adv, delta = pgd_gen.attack_from_latent(z, y, candidate_latents=cand)
+                with torch.no_grad():
+                    feats = victim.features_from_ecg1000(x_adv, grad=False)
+                adv_features.append(feats.float().cpu().numpy())
+                adv_labels.append(pool["labels"][batch_idx].astype(np.float32))
+                delta_norms.extend(delta.detach().flatten(1).norm(dim=1).cpu().tolist())
+        adv_x = (
+            np.concatenate(adv_features, axis=0).astype(np.float32)
+            if adv_features
+            else np.empty((0, source_x.shape[1]), dtype=np.float32)
+        )
+        adv_y = (
+            np.concatenate(adv_labels, axis=0).astype(np.float32)
+            if adv_labels
+            else np.empty((0, len(CLASS_NAMES_SUPER5)), dtype=np.float32)
+        )
 
         loader = make_weighted_loader(source_x, source_y, target_x, target_y, adv_x, adv_y, args)
         head.train()
@@ -636,7 +654,14 @@ def train_one_center(
             "lr": float(opt.param_groups[0]["lr"]),
         }
         if epoch % args.eval_every == 0 or epoch == args.epochs:
-            views = eval_pn(head, pn, ref_ids, device, args.eval_batch_size)
+            views = eval_pn(
+                head,
+                pn,
+                ref_ids,
+                device,
+                args.eval_batch_size,
+                report_drop_all_zero=args.report_drop_all_zero_pn2021,
+            )
             ptbxl_fold10 = eval_ptbxl_fold10(head, ptbxl, device, args.eval_batch_size)
             target = views[center]["per_center"][center]
             entry["target_macro_auroc"] = target["macro_auroc"]
@@ -667,10 +692,21 @@ def train_one_center(
             json.dump(logs, f, indent=2)
 
     head.load_state_dict(torch.load(run_dir / "best_head.pt", map_location=device))
-    final_views = eval_pn(head, pn, ref_ids, device, args.eval_batch_size)
+    final_views = eval_pn(
+        head,
+        pn,
+        ref_ids,
+        device,
+        args.eval_batch_size,
+        report_drop_all_zero=args.report_drop_all_zero_pn2021,
+    )
     final_ptbxl = eval_ptbxl_fold10(head, ptbxl, device, args.eval_batch_size)
     result = {
-        "method": "ECGFounder frozen encoder + VAE-only real-anchor latent-hull online AT head fine-tune",
+        "method": (
+            "ECGFounder frozen encoder + real-only target-center head adaptation"
+            if args.disable_adv_stream
+            else "ECGFounder frozen encoder + VAE-only real-anchor latent-hull online AT head fine-tune"
+        ),
         "center": center,
         "class_names": list(CLASS_NAMES_SUPER5),
         "K": int(args.k),
@@ -709,6 +745,10 @@ def write_summary(rows: list[dict[str, Any]], out_dir: Path) -> None:
             "baseline_target_auprc",
             "lhat_target_auroc",
             "lhat_target_auprc",
+            "baseline_drop_all_zero_target_auroc",
+            "baseline_drop_all_zero_target_auprc",
+            "lhat_drop_all_zero_target_auroc",
+            "lhat_drop_all_zero_target_auprc",
             "delta_target_auroc",
             "delta_target_auprc",
             "baseline_ptbxl_auroc",
@@ -733,6 +773,10 @@ def write_summary(rows: list[dict[str, Any]], out_dir: Path) -> None:
                 b["macro_auprc"],
                 m["macro_auroc"],
                 m["macro_auprc"],
+                b.get("drop_all_zero_macro_auroc"),
+                b.get("drop_all_zero_macro_auprc"),
+                m.get("drop_all_zero_macro_auroc"),
+                m.get("drop_all_zero_macro_auprc"),
                 None if b["macro_auroc"] is None or m["macro_auroc"] is None else m["macro_auroc"] - b["macro_auroc"],
                 None if b["macro_auprc"] is None or m["macro_auprc"] is None else m["macro_auprc"] - b["macro_auprc"],
                 b_ptb["macro_auroc"],
@@ -820,6 +864,16 @@ def parse_args() -> argparse.Namespace:
         help="Reduction for --head_l2_anchor. relative uses ||w-w0||^2 / ||w0||^2.",
     )
     p.add_argument("--source_train_limit", type=int, default=0)
+    p.add_argument(
+        "--disable_adv_stream",
+        action="store_true",
+        help="Train with source + target real features only; no VAE latent-hull adversarial stream.",
+    )
+    p.add_argument(
+        "--report_drop_all_zero_pn2021",
+        action="store_true",
+        help="Also report PN2021 metrics after excluding rows with no positive Super5 label.",
+    )
     p.add_argument(
         "--selection_metric",
         choices=[

@@ -405,12 +405,14 @@ def evaluate_pn2021_views(
     centers: np.ndarray,
     record_ids: np.ndarray,
     ref_ids_by_center: dict[str, set[str]],
+    report_drop_all_zero: bool = False,
 ) -> dict:
     views = {}
     for target_center in TARGET_CENTERS:
         ref_ids = ref_ids_by_center[target_center]
         per_center = {}
         avg_aurocs, avg_auprcs = [], []
+        drop_all_zero_aurocs, drop_all_zero_auprcs = [], []
         for center in PN2021_CENTERS:
             if center.lower() in PN2021_FORBIDDEN:
                 continue
@@ -423,22 +425,64 @@ def evaluate_pn2021_views(
                 mask = mask & ~exclude
             if int(mask.sum()) == 0:
                 continue
-            metric = compute_metrics(labels[mask], scores[mask])
+            center_labels = labels[mask]
+            center_scores = scores[mask]
+            metric = compute_metrics(center_labels, center_scores)
+            nonzero_mask = np.sum(center_labels > 0.5, axis=1) > 0
+            n_all_zero = int((~nonzero_mask).sum())
+            n_nonzero = int(nonzero_mask.sum())
             per_center[center] = {
                 "n_records": n_total,
                 "n_excluded_ref": n_excluded,
                 "effective_n": int(mask.sum()),
+                "n_all_zero_labels": n_all_zero,
+                "n_nonzero_labels": n_nonzero,
                 **metric,
             }
+            if report_drop_all_zero:
+                if n_nonzero > 0:
+                    drop_metric = compute_metrics(center_labels[nonzero_mask], center_scores[nonzero_mask])
+                    per_center[center].update({
+                        "drop_all_zero_macro_auroc": drop_metric["macro_auroc"],
+                        "drop_all_zero_macro_auprc": drop_metric["macro_auprc"],
+                        "drop_all_zero_n_records": n_nonzero,
+                        "drop_all_zero_n_classes_used": drop_metric["n_classes_used"],
+                        "drop_all_zero_per_class": drop_metric["per_class"],
+                    })
+                    if drop_metric["macro_auroc"] is not None and np.isfinite(drop_metric["macro_auroc"]):
+                        drop_all_zero_aurocs.append(drop_metric["macro_auroc"])
+                    if drop_metric["macro_auprc"] is not None and np.isfinite(drop_metric["macro_auprc"]):
+                        drop_all_zero_auprcs.append(drop_metric["macro_auprc"])
+                else:
+                    per_center[center].update({
+                        "drop_all_zero_macro_auroc": None,
+                        "drop_all_zero_macro_auprc": None,
+                        "drop_all_zero_n_records": 0,
+                        "drop_all_zero_n_classes_used": 0,
+                        "drop_all_zero_per_class": {},
+                    })
             if metric["macro_auroc"] is not None:
                 avg_aurocs.append(metric["macro_auroc"])
                 avg_auprcs.append(metric["macro_auprc"])
-        views[target_center] = {
+        view = {
             "target_center": target_center,
             "avg_macro_auroc": float(np.mean(avg_aurocs)),
             "avg_macro_auprc": float(np.mean(avg_auprcs)),
             "per_center": per_center,
         }
+        if report_drop_all_zero:
+            view.update({
+                "drop_all_zero_policy": (
+                    "rows with no positive Super5 label are excluded from PN2021 metric calculation"
+                ),
+                "avg_drop_all_zero_macro_auroc": (
+                    float(np.mean(drop_all_zero_aurocs)) if drop_all_zero_aurocs else None
+                ),
+                "avg_drop_all_zero_macro_auprc": (
+                    float(np.mean(drop_all_zero_auprcs)) if drop_all_zero_auprcs else None
+                ),
+            })
+        views[target_center] = view
     return views
 
 
@@ -476,6 +520,11 @@ def main() -> None:
             "12x5000 + per-record z-score, no extra filter. filtered_dataset "
             "adds ECGFounder's util.py notch/bandpass/median baseline chain."
         ),
+    )
+    p.add_argument(
+        "--report_drop_all_zero_pn2021",
+        action="store_true",
+        help="Also report PN2021 metrics after excluding rows with no positive Super5 label.",
     )
     args = p.parse_args()
     set_seed(args.seed)
@@ -537,6 +586,7 @@ def main() -> None:
         pn_payload["centers"].astype(str),
         pn_payload["record_ids"].astype(str),
         ref_ids_by_center,
+        report_drop_all_zero=args.report_drop_all_zero_pn2021,
     )
 
     output = {

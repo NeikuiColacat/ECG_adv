@@ -258,6 +258,157 @@ ECGFounder frozen encoder
 | 2025 | 0.9214 / 0.8012 | 0.8636 / 0.5069 |
 | 3407 | 0.9217 / 0.8011 | 0.8633 / 0.5073 |
 
+### ECGFounder 官方微调策略核查
+
+本地官方仓库：
+
+```text
+model/ecgfounder
+remote = https://github.com/PKUDigitalHealth/ECGFounder.git
+commit = 04edac7 Update README.md
+```
+
+官方 notebook `finetune_ECGFounder.ipynb` 默认：
+
+```python
+model = ft_12lead_ECGFounder(device, pth, n_classes, linear_prob=False)
+```
+
+并在注释中区分：
+
+```text
+linear_prob=True  -> linear classification
+linear_prob=False -> full fine-tuning
+```
+
+因此我们当前的 `frozen encoder + Linear(1024,5)` 是比官方默认 full fine-tuning
+更保守、更可解释的 baseline，不应写成 ECGFounder 作者推荐的最强下游微调策略。
+论文中需要明确：
+
+1. 线性探针用于验证 ECGFounder frozen representation 的 Super5 可迁移性。
+2. 若要和 ECGFounder 官方推荐微调完全对齐，应追加 full fine-tune 或至少 adapter fine-tune。
+3. 当前 VAE-only/real-only head adaptation 的大提升必须和 real-only adapter 对照，不能直接归因给 VAE latent-hull。
+
+### 2026-05-23 All-zero 与 Real-only Audit
+
+已补代码：
+
+```text
+scripts/paper/run_ecgfounder_linear_probe_super5_20260517.py
+  -> evaluate_pn2021_views(..., report_drop_all_zero=True)
+
+scripts/paper/run_ecgfounder_vae_only_lhat_head_ft_20260523.py
+  -> --report_drop_all_zero_pn2021
+  -> --disable_adv_stream
+
+scripts/paper/reevaluate_ecgfounder_head_run_20260523.py
+  -> evaluation-only 复评已有 best_head.pt，不重跑 latent-hull 训练
+```
+
+`--disable_adv_stream` 的含义：
+
+```text
+source PTB-XL feature stream
++ target-center K real feature stream
++ residual adapter / source-logit anchor
+无 VAE latent-hull adversarial stream
+```
+
+它是必须保留的消融，因为它回答：
+
+```text
+ECGFounder 大提升来自 VAE-only latent-hull，
+还是仅仅来自冻结 encoder 后对目标中心真实 K 样本做 head/adapter adaptation？
+```
+
+K=500、residual adapter、`source_weight=2`、`source_logit_anchor_weight=0.2`、
+target/source hmean selection 的四中心结果：
+
+| center | ECGFounder baseline | real-only adapter | VAE-only latent-hull adapter | real-only drop-all-zero | VAE-only drop-all-zero |
+|---|---:|---:|---:|---:|---:|
+| ningbo | 0.8850 / 0.4342 | 0.9239 / 0.5850 | 0.9229 / 0.5816 | 0.9347 / 0.6844 | 0.9338 / 0.6830 |
+| chapman_shaoxing | 0.8946 / 0.3612 | 0.9254 / 0.4860 | 0.9086 / 0.4862 | 0.9303 / 0.5784 | 0.9138 / 0.5808 |
+| cpsc_2018 | 0.8219 / 0.5725 | 0.9059 / 0.7238 | 0.9082 / 0.7274 | 0.9448 / 0.8673 | 0.9465 / 0.8708 |
+| georgia | 0.8525 / 0.6551 | 0.8928 / 0.7479 | 0.8929 / 0.7466 | 0.9042 / 0.8156 | 0.9036 / 0.8125 |
+| mean | 0.8635 / 0.5058 | 0.9120 / 0.6357 | 0.9082 / 0.6354 | - | - |
+
+当前判断：
+
+1. ECGFounder 上的大提升主要来自目标中心真实 K 样本的 head/adapter adaptation；VAE-only latent-hull 与 real-only adapter 基本持平。
+2. drop-all-zero 后指标没有下降，反而升高；至少当前四中心结果不是靠 all-zero 样本虚高。
+3. 目标中心 AUROC 已接近或超过 PTB-XL source AUROC，但外部中心 full-set AUPRC 仍低于 PTB-XL source AUPRC `0.8016`。
+4. 若论文要主张 VAE-only latent-hull 的独立贡献，必须优先寻找它相对 real-only adapter 的稳定增益，而不是只报相对 frozen linear baseline 的大幅提升。
+
+K=100 四中心小样本 pilot：
+
+| center | baseline | real-only adapter | VAE-only adapter | VAE-only - real-only |
+|---|---:|---:|---:|---:|
+| ningbo | 0.8848 / 0.4382 | 0.9066 / 0.5197 | 0.9050 / 0.5146 | -0.16pp / -0.51pp |
+| chapman_shaoxing | 0.8913 / 0.3724 | 0.9200 / 0.4471 | 0.9171 / 0.4442 | -0.29pp / -0.28pp |
+| cpsc_2018 | 0.8247 / 0.5819 | 0.8755 / 0.6540 | 0.8748 / 0.6541 | -0.07pp / +0.01pp |
+| georgia | 0.8536 / 0.6593 | 0.8745 / 0.7086 | 0.8700 / 0.6984 | -0.45pp / -1.02pp |
+| mean | - | 0.8941 / 0.5824 | 0.8917 / 0.5779 | -0.24pp / -0.45pp |
+
+K=100 下，VAE-only 没有稳定优于 real-only adapter。CPSC 的 AUPRC 几乎打平，
+但 ningbo、chapman、georgia 都是 real-only 更好。
+
+K=100 drop-all-zero sensitivity：
+
+| center | real-only drop-all-zero | VAE-only drop-all-zero |
+|---|---:|---:|
+| ningbo | 0.9182 / 0.6547 | 0.9158 / 0.6479 |
+| chapman_shaoxing | 0.9333 / 0.5709 | 0.9287 / 0.5708 |
+| cpsc_2018 | 0.9186 / 0.8095 | 0.9187 / 0.8087 |
+| georgia | 0.8869 / 0.7833 | 0.8815 / 0.7735 |
+
+这进一步支持：当前 ECGFounder 增益来自目标中心真实样本 adapter adaptation；
+VAE latent-hull 是可用但非必要的 on-manifold adversarial variant。
+
+### K=50 追加审计
+
+为了满足“小样本 K 尽量控制在 100 甚至几十条”的目标，追加 K=50 四中心审计。
+
+| center | real-only adapter | VAE-only adapter | VAE-only - real-only |
+|---|---:|---:|---:|
+| ningbo | 0.9055 / 0.4948 | 0.9008 / 0.4848 | -0.46pp / -1.00pp |
+| chapman_shaoxing | 0.9160 / 0.4458 | 0.9077 / 0.4488 | -0.83pp / +0.30pp |
+| cpsc_2018 | 0.8406 / 0.6061 | 0.8462 / 0.6146 | +0.56pp / +0.84pp |
+| georgia | 0.8679 / 0.6925 | 0.8628 / 0.6786 | -0.51pp / -1.39pp |
+| mean | 0.8825 / 0.5598 | 0.8794 / 0.5567 | -0.31pp / -0.31pp |
+
+针对唯一正向中心 `cpsc_2018`，进一步测了三个简单 refinement：
+
+| CPSC K=50 variant | target | interpretation |
+|---|---:|---|
+| standard VAE-only, lambda=0.15 | 0.8462 / 0.6146 | 当前最好 |
+| high-adv / low-target-real | 0.8426 / 0.6021 | adv 权重过强反而下降 |
+| exact multi-hot candidate | 0.8440 / 0.6092 | 更严格标签组合没有改善 |
+| lambda=0.35 | 0.8439 / 0.6088 | 更大 hull 范围没有改善 |
+| STTC-only latent-hull | 0.8452 / 0.6124 | 只打主要收益类 STTC 仍不如 standard |
+| CD+STTC latent-hull | 0.8448 / 0.6039 | 排除 NORM adv 后整体更差 |
+
+因此 ECGFounder route 的当前事实结论是：
+
+```text
+real-only residual adapter 是主要性能来源；
+VAE-only latent-hull 在 CPSC K=50 有小幅正向窗口，
+但还没有形成多中心稳定优势。
+```
+
+下一步如果继续追 VAE-only 独特性，应从 CPSC 的 per-class 收益机制入手，
+而不是继续统一放大 adv 权重、lambda 或 exact-label 约束。
+
+per-class 已确认：
+
+```text
+standard VAE-only 主要提升 CPSC STTC AUPRC: 0.2313 -> 0.2551。
+但 STTC-only 和 CD+STTC class-scope 都没有超过 standard VAE-only。
+```
+
+所以 ECGFounder 这条路线暂时不建议继续扩展 VAE-only 小变体；更有价值的是将
+residual adapter 思路迁移到 EfficientNet1DV2 frozen backbone，测试 VAE latent-hull
+是否能在 EfficientNet 表征上产生更明确的独立贡献。
+
 4. ECGFounder + VAE-only online AT 不能直接复用 EfficientNet 的 AT runner；需要封装 `waveform -> frozen ECGFounder encoder -> Super5 head` 的可微 victim，使 latent-hull 内层搜索穿过 frozen encoder，但外层只更新线性头。
 
 ## 2026-05-23 ECGFounder + VAE-only Head AT

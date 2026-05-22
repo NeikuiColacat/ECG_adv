@@ -411,3 +411,200 @@ Pareto 判断：
 2. EfficientNet1DV2 若继续追，应优先尝试 backbone-freeze/head-adapter；
    单纯 source-consistency 已验证为保源但压制目标适配。
 ```
+
+## 2026-05-23 追加事实核查：ECGFounder 官方策略、all-zero、real-only
+
+### ECGFounder 官方微调策略
+
+本地官方仓库 `model/ecgfounder` 的 `finetune_ECGFounder.ipynb` 默认使用：
+
+```text
+linear_prob=False
+```
+
+官方代码含义：
+
+```text
+linear_prob=True  -> freeze backbone, train linear head
+linear_prob=False -> full fine-tuning
+```
+
+所以我们现在的 ECGFounder frozen encoder + Super5 linear/residual adapter
+不是作者默认最强 fine-tuning 策略，而是更保守、更可解释的 frozen-feature
+对比基线。论文叙述时不能把它写成 ECGFounder 官方推荐的最强微调。
+
+### All-zero 评估已补
+
+新增：
+
+```text
+scripts/paper/run_ecgfounder_linear_probe_super5_20260517.py
+scripts/paper/run_ecgfounder_vae_only_lhat_head_ft_20260523.py
+scripts/paper/reevaluate_ecgfounder_head_run_20260523.py
+```
+
+现在 ECGFounder PN2021 view 同时输出：
+
+```text
+all-zero-kept main metrics
+drop-all-zero sensitivity metrics
+```
+
+K=500 VAE-only residual adapter + source-logit anchor 0.2 复评：
+
+| center | all-zero-kept | drop-all-zero |
+|---|---:|---:|
+| ningbo | 0.9229 / 0.5816 | 0.9338 / 0.6830 |
+| chapman_shaoxing | 0.9086 / 0.4862 | 0.9138 / 0.5808 |
+| cpsc_2018 | 0.9082 / 0.7274 | 0.9465 / 0.8708 |
+| georgia | 0.8929 / 0.7466 | 0.9036 / 0.8125 |
+
+结论：这组 ECGFounder 结果不是 all-zero 样本把 AUROC/AUPRC 虚高；排除 all-zero 后指标更高。
+
+### Real-only adapter 消融
+
+新增参数：
+
+```text
+--disable_adv_stream
+```
+
+该设置只用：
+
+```text
+PTB-XL source features
++ target-center K real ECGFounder features
++ residual adapter
++ source-logit anchor
+```
+
+不使用 VAE latent-hull adversarial samples。
+
+K=500 四中心对比：
+
+| center | ECGFounder baseline | real-only adapter | VAE-only adapter |
+|---|---:|---:|---:|
+| ningbo | 0.8850 / 0.4342 | 0.9239 / 0.5850 | 0.9229 / 0.5816 |
+| chapman_shaoxing | 0.8946 / 0.3612 | 0.9254 / 0.4860 | 0.9086 / 0.4862 |
+| cpsc_2018 | 0.8219 / 0.5725 | 0.9059 / 0.7238 | 0.9082 / 0.7274 |
+| georgia | 0.8525 / 0.6551 | 0.8928 / 0.7479 | 0.8929 / 0.7466 |
+| mean | 0.8635 / 0.5058 | 0.9120 / 0.6357 | 0.9082 / 0.6354 |
+
+这说明 ECGFounder 的大提升主要来自目标中心真实样本 head/adapter adaptation。
+VAE-only latent-hull 当前和 real-only 持平，没有形成稳定额外优势。
+
+### K=100 四中心小样本 pilot
+
+| center | baseline | real-only adapter | VAE-only adapter | VAE-only - real-only |
+|---|---:|---:|---:|---:|
+| ningbo | 0.8848 / 0.4382 | 0.9066 / 0.5197 | 0.9050 / 0.5146 | -0.16pp / -0.51pp |
+| chapman_shaoxing | 0.8913 / 0.3724 | 0.9200 / 0.4471 | 0.9171 / 0.4442 | -0.29pp / -0.28pp |
+| cpsc_2018 | 0.8247 / 0.5819 | 0.8755 / 0.6540 | 0.8748 / 0.6541 | -0.07pp / +0.01pp |
+| georgia | 0.8536 / 0.6593 | 0.8745 / 0.7086 | 0.8700 / 0.6984 | -0.45pp / -1.02pp |
+| mean | - | 0.8941 / 0.5824 | 0.8917 / 0.5779 | -0.24pp / -0.45pp |
+
+K=100 下，VAE-only 也没有稳定优于 real-only adapter。CPSC 的 AUPRC 基本打平，
+其他三个中心都是 real-only 更强。
+
+drop-all-zero：
+
+| center | real-only drop-all-zero | VAE-only drop-all-zero |
+|---|---:|---:|
+| ningbo | 0.9182 / 0.6547 | 0.9158 / 0.6479 |
+| chapman_shaoxing | 0.9333 / 0.5709 | 0.9287 / 0.5708 |
+| cpsc_2018 | 0.9186 / 0.8095 | 0.9187 / 0.8087 |
+| georgia | 0.8869 / 0.7833 | 0.8815 / 0.7735 |
+
+这轮结果把结论进一步收紧：
+
+```text
+ECGFounder 上的主要性能来源是 target-center real adapter。
+VAE-only latent-hull 目前只是一个可匹配 real-only 的 on-manifold adversarial variant，
+并没有稳定额外增益。
+```
+
+### 当前目标状态
+
+已做到：
+
+```text
+ECGFounder 源域 PTB-XL 性能基本保持：约 0.920-0.922 / 0.796-0.802
+目标中心 AUROC 显著提高
+drop-all-zero 后指标不崩，且通常更高
+```
+
+尚未做到：
+
+```text
+外部目标中心 all-zero-kept AUPRC 达到 PTB-XL source AUPRC 0.8016
+证明 VAE-only latent-hull 明显优于 real-only target adapter
+EfficientNet1DV2 达到 ECGFounder 这一级别的源域/目标域双保持
+```
+
+更合理的下一步：
+
+```text
+1. 如果论文必须保留 VAE-only 主张：做 K=20/50 多 seed，验证极小样本下是否优于 real-only。
+2. 如果追求最强性能：ECGFounder 应主打 real-only residual adapter + source-logit anchor。
+3. EfficientNet1DV2 不应继续 full-model target-heavy 微调；应实现 frozen backbone + residual classifier adapter，
+   否则 source consistency 与目标适配继续冲突。
+```
+
+## 2026-05-23 追加 K=50 小样本审计
+
+目标：继续寻找 VAE-only 在线对抗训练相对 real-only adapter 的独特优势。
+
+K=50 四中心结果：
+
+| center | baseline | real-only adapter | VAE-only adapter | VAE-only - real-only |
+|---|---:|---:|---:|---:|
+| ningbo | 0.8847 / 0.4388 | 0.9055 / 0.4948 | 0.9008 / 0.4848 | -0.46pp / -1.00pp |
+| chapman_shaoxing | 0.8871 / 0.3823 | 0.9160 / 0.4458 | 0.9077 / 0.4488 | -0.83pp / +0.30pp |
+| cpsc_2018 | 0.8252 / 0.5834 | 0.8406 / 0.6061 | 0.8462 / 0.6146 | +0.56pp / +0.84pp |
+| georgia | 0.8538 / 0.6602 | 0.8679 / 0.6925 | 0.8628 / 0.6786 | -0.51pp / -1.39pp |
+| mean | - | 0.8825 / 0.5598 | 0.8794 / 0.5567 | -0.31pp / -0.31pp |
+
+drop-all-zero 后：
+
+| center | real-only | VAE-only |
+|---|---:|---:|
+| ningbo | 0.9170 / 0.6447 | 0.9140 / 0.6407 |
+| chapman_shaoxing | 0.9262 / 0.5754 | 0.9178 / 0.5822 |
+| cpsc_2018 | 0.8863 / 0.7480 | 0.8901 / 0.7571 |
+| georgia | 0.8790 / 0.7675 | 0.8731 / 0.7560 |
+
+唯一正向窗口是 `cpsc_2018`。进一步 refinement：
+
+| variant | CPSC target |
+|---|---:|
+| standard primary-label, lambda=0.15 | 0.8462 / 0.6146 |
+| high-adv / low-target-real | 0.8426 / 0.6021 |
+| exact multi-hot candidate | 0.8440 / 0.6092 |
+| lambda=0.35 | 0.8439 / 0.6088 |
+| STTC-only latent-hull | 0.8452 / 0.6124 |
+| CD+STTC latent-hull | 0.8448 / 0.6039 |
+
+per-class：
+
+| method | CD AUPRC | NORM AUPRC | STTC AUPRC |
+|---|---:|---:|---:|
+| real-only | 0.9237 | 0.6634 | 0.2313 |
+| standard VAE-only | 0.9264 | 0.6623 | 0.2551 |
+| STTC-only VAE | 0.9241 | 0.6586 | 0.2544 |
+| CD+STTC VAE | 0.9244 | 0.6306 | 0.2567 |
+
+判断：
+
+```text
+高 adv 权重、exact-label candidate、更大 lambda、STTC-only、CD+STTC 都没有改进 CPSC。
+因此当前最好的 VAE-only 设置仍是 standard primary-label lambda=0.15。
+但是它只在 CPSC K=50 小幅强于 real-only，不能支撑“VAE-only 明显强于其他方法”。
+```
+
+下一步只值得做一种更聚焦的检查：
+
+```text
+ECGFounder head-adapter 路线继续扫 VAE-only 的收益很低；
+下一个有价值方向是 EfficientNet1DV2 frozen backbone + residual classifier adapter，
+看 VAE latent-hull 是否能在非 foundation frozen representation 上形成独立贡献。
+```
