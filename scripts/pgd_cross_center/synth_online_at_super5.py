@@ -40,7 +40,7 @@ import random
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -122,6 +122,8 @@ def train_source_logit_anchor_epoch(
     weight: float,
     max_batches: int = 0,
     grad_clip: float = 0.0,
+    trainable_params: Optional[List[nn.Parameter]] = None,
+    freeze_backbone_eval_fn: Optional[Callable[[], None]] = None,
 ) -> float:
     """One lightweight source-consistency pass against the frozen PTB-XL teacher.
 
@@ -131,7 +133,10 @@ def train_source_logit_anchor_epoch(
     if weight <= 0:
         return float("nan")
     model.train()
+    if freeze_backbone_eval_fn is not None:
+        freeze_backbone_eval_fn()
     teacher_model.eval()
+    grad_params = trainable_params if trainable_params is not None else list(model.parameters())
     losses: List[float] = []
     for batch_i, batch in enumerate(loader, start=1):
         signals = batch[0].to(device, non_blocking=True)
@@ -142,12 +147,99 @@ def train_source_logit_anchor_epoch(
         loss = F.mse_loss(logits, teacher_logits) * float(weight)
         loss.backward()
         if grad_clip > 0:
-            nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+            nn.utils.clip_grad_norm_(grad_params, grad_clip)
         optimizer.step()
         losses.append(float(loss.item()))
         if max_batches > 0 and batch_i >= max_batches:
             break
     return float(np.mean(losses)) if losses else float("nan")
+
+
+def train_one_epoch_masked_bce_freeze_aware(
+    model: nn.Module,
+    loader: DataLoader,
+    optimizer: AdamW,
+    criterion: nn.Module,
+    device: str,
+    grad_clip: float,
+    trainable_params: List[nn.Parameter],
+    ewa_params: Optional[List[torch.Tensor]],
+    anchor_lambda: float,
+    ewa_decay: float,
+    freeze_backbone_eval_fn: Optional[Callable[[], None]] = None,
+) -> float:
+    """Masked BCE epoch for frozen-backbone adaptation.
+
+    The shared Tier-M helper calls ``model.train()`` internally and anchors by
+    zipping over all model parameters. That is correct for full-model training,
+    but wrong for classifier-only adaptation: frozen BatchNorm modules would
+    update running statistics, and the EWA anchor list would no longer align
+    with trainable parameters. This local variant keeps the backbone in eval
+    mode and applies anchor/grad clipping only to the trainable head.
+    """
+    model.train()
+    if freeze_backbone_eval_fn is not None:
+        freeze_backbone_eval_fn()
+    losses: List[float] = []
+    for signals, labels in loader:
+        signals = signals.to(device, non_blocking=True)
+        labels = labels.to(device, non_blocking=True)
+        optimizer.zero_grad(set_to_none=True)
+        logits = model(signals)
+        mask = (labels >= 0).float()
+        labels_clamp = labels.clamp(min=0.0)
+        per_elem = criterion(logits, labels_clamp)
+        denom = mask.sum().clamp(min=1.0)
+        bce = (per_elem * mask).sum() / denom
+        if ewa_params is not None and anchor_lambda > 0:
+            anchor = sum(
+                (p - p_anchor.detach()).pow(2).sum()
+                for p, p_anchor in zip(trainable_params, ewa_params)
+            )
+            loss = bce + anchor_lambda * anchor
+        else:
+            loss = bce
+        loss.backward()
+        if grad_clip > 0:
+            nn.utils.clip_grad_norm_(trainable_params, grad_clip)
+        optimizer.step()
+        if ewa_params is not None and ewa_decay > 0 and ewa_decay < 1.0:
+            with torch.no_grad():
+                for p, p_anchor in zip(trainable_params, ewa_params):
+                    p_anchor.mul_(ewa_decay).add_(p.data, alpha=1 - ewa_decay)
+        losses.append(float(bce.item()))
+    return float(np.mean(losses)) if losses else float("nan")
+
+
+def configure_classifier_only_adaptation(
+    model: nn.Module,
+    train_final_norm: bool = False,
+) -> Tuple[List[nn.Parameter], Callable[[], None]]:
+    """Freeze EfficientNet1DV2 backbone and train only the classifier head.
+
+    This keeps the saved state_dict compatible with the normal EfficientNet
+    architecture, unlike a non-foldable adapter wrapper. The adaptation is
+    deliberately simple: the PTB-XL source model remains the initialization,
+    and only the final classifier parameters can move.
+    """
+    for p in model.parameters():
+        p.requires_grad_(False)
+    if not hasattr(model, "classifier"):
+        raise ValueError("classifier-only adaptation requires model.classifier")
+    for p in model.classifier.parameters():
+        p.requires_grad_(True)
+    if train_final_norm and hasattr(model, "final_norm"):
+        for p in model.final_norm.parameters():
+            p.requires_grad_(True)
+
+    def freeze_backbone_eval() -> None:
+        for name in ("initial_conv", "features", "final_conv", "final_norm"):
+            module = getattr(model, name, None)
+            if module is not None:
+                module.eval()
+
+    freeze_backbone_eval()
+    return [p for p in model.parameters() if p.requires_grad], freeze_backbone_eval
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -1085,6 +1177,15 @@ def parse_args():
                    help="Sampling weight for --target_real_npz supervised stream.")
     p.add_argument("--roundtrip_weight", type=float, default=0.5)
     p.add_argument("--adv_weight", type=float, default=0.5)
+    p.add_argument(
+        "--disable_adv_stream",
+        action="store_true",
+        help=(
+            "Skip latent PGD generation and do not add adversarial samples to "
+            "the training stream. Use this as the direct target-real adaptation "
+            "control under the same data/optimizer protocol."
+        ),
+    )
     p.add_argument("--roundtrip_anchor_n", type=int, default=1500)
     p.add_argument("--qab_size", type=int, default=2048)
     p.add_argument(
@@ -1102,6 +1203,25 @@ def parse_args():
         type=int,
         default=0,
         help="Max PTB-XL source batches per source-logit anchor pass; 0 uses the full source loader.",
+    )
+    p.add_argument(
+        "--freeze_backbone_classifier_only",
+        action="store_true",
+        help=(
+            "Freeze the EfficientNet backbone and train only model.classifier. "
+            "Backbone BatchNorm modules are forced to eval during adaptation. "
+            "This keeps the checkpoint compatible with the normal model while "
+            "testing whether VAE latent-hull samples add value beyond head fitting."
+        ),
+    )
+    p.add_argument(
+        "--classifier_only_train_final_norm",
+        action="store_true",
+        help=(
+            "With --freeze_backbone_classifier_only, also train final_norm affine "
+            "parameters while keeping its BatchNorm running statistics frozen. "
+            "This gives a small domain-calibration adapter without full backbone FT."
+        ),
     )
 
     # Class trust (Plan Rev 13 H4 gate)
@@ -1462,8 +1582,22 @@ def main():
             alpha=args.pgd_alpha, delta_init_scale=args.delta_init_scale,
             device=args.device,
         )
-    for p in victim.model.parameters():
-        p.requires_grad_(True)
+    freeze_backbone_eval_fn: Optional[Callable[[], None]] = None
+    if args.freeze_backbone_classifier_only:
+        trainable_params, freeze_backbone_eval_fn = configure_classifier_only_adaptation(
+            victim.model,
+            train_final_norm=args.classifier_only_train_final_norm,
+        )
+        print(
+            "[setup] classifier-only adaptation enabled: "
+            f"{sum(p.numel() for p in trainable_params):,} trainable params "
+            f"(train_final_norm={args.classifier_only_train_final_norm})",
+            flush=True,
+        )
+    else:
+        for p in victim.model.parameters():
+            p.requires_grad_(True)
+        trainable_params = [p for p in victim.model.parameters() if p.requires_grad]
     source_logit_teacher_model = None
     if args.source_logit_anchor_weight > 0:
         source_logit_teacher_model = copy.deepcopy(victim.model).to(args.device)
@@ -1482,14 +1616,12 @@ def main():
     buffer = QualityAwareBuffer(max_size=args.qab_size)
 
     # EWA anchor snapshot — only trainable params (after PGD-freeze override)
-    ewa_params = [p.data.clone().detach()
-                  for p in victim.model.parameters() if p.requires_grad]
+    ewa_params = [p.data.clone().detach() for p in trainable_params]
     print(f"[setup] EWA anchor: {len(ewa_params)} param tensors snapshotted "
           f"({sum(p.numel() for p in ewa_params):,} elements)")
 
     # ── Optimizer / scheduler ───────────────────────────────────────────────
-    trainable = [p for p in victim.model.parameters() if p.requires_grad]
-    optimizer = AdamW(trainable, lr=args.lr, weight_decay=args.weight_decay)
+    optimizer = AdamW(trainable_params, lr=args.lr, weight_decay=args.weight_decay)
     scheduler = CosineAnnealingLR(optimizer, T_max=args.n_epochs,
                                   eta_min=args.lr * 0.01)
 
@@ -1497,6 +1629,12 @@ def main():
         "args": vars(args),
         "baseline_quick_eval": baseline_qe,
         "class_trust": class_trust,
+        "adaptation": {
+            "freeze_backbone_classifier_only": bool(args.freeze_backbone_classifier_only),
+            "classifier_only_train_final_norm": bool(args.classifier_only_train_final_norm),
+            "n_trainable_tensors": len(trainable_params),
+            "n_trainable_params": int(sum(p.numel() for p in trainable_params)),
+        },
         "source_meta": {
             "source_names": source_meta["source_names"],
             "source_counts": dict(source_counts),
@@ -1566,95 +1704,110 @@ def main():
         # Phase A: PGD on synth pool with the *current* victim
         # Plan Rev 13.2: StratifiedPoolWalker draws no-revisit-per-epoch,
         # restricted to NORM/MI/STTC scope.
-        victim.model.eval()
-        per_cls = max(1, args.K_anchor // len(classes_in_scope))
-        k_per_cls = {c: per_cls for c in classes_in_scope}
-        rem = args.K_anchor - per_cls * len(classes_in_scope)
-        for i_extra in range(rem):
-            k_per_cls[classes_in_scope[i_extra % len(classes_in_scope)]] += 1
-        drawn = walker.sample(k_per_cls)
-        if args.source_sampling_strategy == "source_weighted":
-            print(f"[ep{epoch:02d}] anchor source counts: {walker.last_source_counts} "
-                  f"class_source={walker.last_class_source_counts}", flush=True)
-        all_picks = np.concatenate(
-            [drawn[c] for c in classes_in_scope if drawn[c].size > 0]
-        ) if any(drawn[c].size > 0 for c in classes_in_scope) else np.empty(0, dtype=np.int64)
-        adv_signals, anc_signals, target_oh, delta_stats = run_pgd_on_synth_pool(
-            pgd_gen=pgd_gen,
-            synth_latents=synth_latents,
-            synth_labels=synth_labels,
-            K_anchor=args.K_anchor,
-            pgd_batch=args.pgd_batch,
-            rng=rng, device=args.device,
-            picked_indices=all_picks,
-            attack_mode=args.attack_mode,
-            latent_hull_index=latent_hull_index,
-            hull_M=args.hull_M,
-            hull_mix_label_mode=args.hull_mix_label_mode,
-            hull_label_lambda_y=args.hull_label_lambda_y,
-            hull_label_positive=args.hull_label_positive,
-            hull_label_negative_floor=args.hull_label_negative_floor,
-            hull_label_new_class_cap=args.hull_label_new_class_cap,
-        )
-        if adv_signals.shape[0] == 0:
-            print(f"[ep{epoch:02d}] empty walker pick — skip epoch", flush=True)
-            continue
-
-        # Phase B: gates
-        # ASR (signals → victim)
-        asr_info = compute_asr(victim, adv_signals, target_oh,
-                               device=args.device, batch_size=128)
-        # Semantic (Einthoven, HR, QRS)
-        sem_info = compute_semantic_gate(
-            adv_signals, anc_signals,
-            einthoven_p95_max=args.einthoven_p95_max,
-        )
-
-        gate_skipped = False
-        if (not args.disable_quality_gate) and (not sem_info.get("PASS", False)):
+        if args.disable_adv_stream:
+            asr_info = {
+                "asr_overall": float("nan"),
+                "per_class_asr": {},
+                "multilabel_positive_label_asr": float("nan"),
+                "sample_any_positive_below_0p5_asr": float("nan"),
+                "sample_all_positive_below_0p5_asr": float("nan"),
+                "sample_all_positive_recognized_rate": float("nan"),
+                "per_class_positive_label_asr": {},
+            }
+            sem_info = {"PASS": True}
+            push_stats = {"n_pushed": 0, "label_mode": "adv_stream_disabled"}
+            delta_stats = {"mean_delta_norm": float("nan"), "max_delta_norm": float("nan")}
             gate_skipped = True
-            print(f"[ep{epoch:02d}] medical gate FAIL: {sem_info.get('fail_reasons')} "
-                  f"— skip buffer push this epoch", flush=True)
         else:
-            if args.disable_quality_gate and not sem_info.get("PASS", False):
-                print(f"[ep{epoch:02d}] medical gate FAIL ignored: "
-                      f"{sem_info.get('fail_reasons')}", flush=True)
-            # Center-crop adv (B, 12, 1000) → (B, 12, crop_len) on the time axis
-            start = (adv_signals.shape[-1] - args.crop_len) // 2
-            adv_ct_crop = adv_signals[..., start:start + args.crop_len]
-            with torch.no_grad():
-                lg_chunks = []
-                teacher_prob_chunks = []
-                for i in range(0, adv_ct_crop.shape[0], 128):
-                    x_t = torch.from_numpy(adv_ct_crop[i:i + 128]).float().to(args.device)
-                    lg_chunks.append(victim.model(x_t).cpu().numpy())
-                    if teacher_model is not None:
-                        teacher_prob_chunks.append(torch.sigmoid(teacher_model(x_t)).cpu().numpy())
-                logits_arr = np.concatenate(lg_chunks)
-                teacher_probs_arr = (
-                    np.concatenate(teacher_prob_chunks)
-                    if teacher_prob_chunks else None
-                )
-            push_stats = push_adv_to_buffer(
-                buffer=buffer, adv_signals_ct=adv_signals,
-                target_one_hot=target_oh, victim_logits=logits_arr,
-                crop_len=args.crop_len, class_trust=class_trust,
-                boundary_prob_min=args.boundary_prob_min,
-                boundary_prob_max=args.boundary_prob_max,
-                teacher_probs=teacher_probs_arr,
-                label_mode=args.adv_label_mode,
-                teacher_mix=args.adv_teacher_mix,
-                soft_target_floor=args.adv_soft_target_floor,
+            victim.model.eval()
+            per_cls = max(1, args.K_anchor // len(classes_in_scope))
+            k_per_cls = {c: per_cls for c in classes_in_scope}
+            rem = args.K_anchor - per_cls * len(classes_in_scope)
+            for i_extra in range(rem):
+                k_per_cls[classes_in_scope[i_extra % len(classes_in_scope)]] += 1
+            drawn = walker.sample(k_per_cls)
+            if args.source_sampling_strategy == "source_weighted":
+                print(f"[ep{epoch:02d}] anchor source counts: {walker.last_source_counts} "
+                      f"class_source={walker.last_class_source_counts}", flush=True)
+            all_picks = np.concatenate(
+                [drawn[c] for c in classes_in_scope if drawn[c].size > 0]
+            ) if any(drawn[c].size > 0 for c in classes_in_scope) else np.empty(0, dtype=np.int64)
+            adv_signals, anc_signals, target_oh, delta_stats = run_pgd_on_synth_pool(
+                pgd_gen=pgd_gen,
+                synth_latents=synth_latents,
+                synth_labels=synth_labels,
+                K_anchor=args.K_anchor,
+                pgd_batch=args.pgd_batch,
+                rng=rng, device=args.device,
+                picked_indices=all_picks,
+                attack_mode=args.attack_mode,
+                latent_hull_index=latent_hull_index,
+                hull_M=args.hull_M,
+                hull_mix_label_mode=args.hull_mix_label_mode,
+                hull_label_lambda_y=args.hull_label_lambda_y,
+                hull_label_positive=args.hull_label_positive,
+                hull_label_negative_floor=args.hull_label_negative_floor,
+                hull_label_new_class_cap=args.hull_label_new_class_cap,
             )
-        # Track consecutive low ASR
-        if asr_info["asr_overall"] < args.asr_low_threshold:
-            consecutive_low_asr += 1
-        else:
-            consecutive_low_asr = 0
-        if consecutive_low_asr >= args.asr_consec_low_max:
-            raise RuntimeError(
-                f"PGD broken: ASR < {args.asr_low_threshold} for "
-                f"{args.asr_consec_low_max} consecutive epochs — abort training.")
+            if adv_signals.shape[0] == 0:
+                print(f"[ep{epoch:02d}] empty walker pick — skip epoch", flush=True)
+                continue
+
+            # Phase B: gates
+            # ASR (signals → victim)
+            asr_info = compute_asr(victim, adv_signals, target_oh,
+                                   device=args.device, batch_size=128)
+            # Semantic (Einthoven, HR, QRS)
+            sem_info = compute_semantic_gate(
+                adv_signals, anc_signals,
+                einthoven_p95_max=args.einthoven_p95_max,
+            )
+
+            gate_skipped = False
+            if (not args.disable_quality_gate) and (not sem_info.get("PASS", False)):
+                gate_skipped = True
+                print(f"[ep{epoch:02d}] medical gate FAIL: {sem_info.get('fail_reasons')} "
+                      f"— skip buffer push this epoch", flush=True)
+            else:
+                if args.disable_quality_gate and not sem_info.get("PASS", False):
+                    print(f"[ep{epoch:02d}] medical gate FAIL ignored: "
+                          f"{sem_info.get('fail_reasons')}", flush=True)
+                # Center-crop adv (B, 12, 1000) → (B, 12, crop_len) on the time axis
+                start = (adv_signals.shape[-1] - args.crop_len) // 2
+                adv_ct_crop = adv_signals[..., start:start + args.crop_len]
+                with torch.no_grad():
+                    lg_chunks = []
+                    teacher_prob_chunks = []
+                    for i in range(0, adv_ct_crop.shape[0], 128):
+                        x_t = torch.from_numpy(adv_ct_crop[i:i + 128]).float().to(args.device)
+                        lg_chunks.append(victim.model(x_t).cpu().numpy())
+                        if teacher_model is not None:
+                            teacher_prob_chunks.append(torch.sigmoid(teacher_model(x_t)).cpu().numpy())
+                    logits_arr = np.concatenate(lg_chunks)
+                    teacher_probs_arr = (
+                        np.concatenate(teacher_prob_chunks)
+                        if teacher_prob_chunks else None
+                    )
+                push_stats = push_adv_to_buffer(
+                    buffer=buffer, adv_signals_ct=adv_signals,
+                    target_one_hot=target_oh, victim_logits=logits_arr,
+                    crop_len=args.crop_len, class_trust=class_trust,
+                    boundary_prob_min=args.boundary_prob_min,
+                    boundary_prob_max=args.boundary_prob_max,
+                    teacher_probs=teacher_probs_arr,
+                    label_mode=args.adv_label_mode,
+                    teacher_mix=args.adv_teacher_mix,
+                    soft_target_floor=args.adv_soft_target_floor,
+                )
+            # Track consecutive low ASR
+            if asr_info["asr_overall"] < args.asr_low_threshold:
+                consecutive_low_asr += 1
+            else:
+                consecutive_low_asr = 0
+            if consecutive_low_asr >= args.asr_consec_low_max:
+                raise RuntimeError(
+                    f"PGD broken: ASR < {args.asr_low_threshold} for "
+                    f"{args.asr_consec_low_max} consecutive epochs — abort training.")
 
         if epoch > 1 and (epoch - 1) % args.rescore_interval == 0 and len(buffer) > 0:
             buffer.rescore(victim.model, args.device)
@@ -1700,11 +1853,22 @@ def main():
                                       persistent_workers=args.num_workers > 0)
 
         # Phase D: train
-        train_loss = train_one_epoch_masked_bce(
-            victim.model, train_loader, optimizer, criterion, args.device,
-            grad_clip=args.grad_clip, ewa_params=ewa_params,
-            anchor_lambda=args.anchor_lambda, ewa_decay=args.ewa_decay,
-        )
+        if args.freeze_backbone_classifier_only:
+            train_loss = train_one_epoch_masked_bce_freeze_aware(
+                victim.model, train_loader, optimizer, criterion, args.device,
+                grad_clip=args.grad_clip,
+                trainable_params=trainable_params,
+                ewa_params=ewa_params,
+                anchor_lambda=args.anchor_lambda,
+                ewa_decay=args.ewa_decay,
+                freeze_backbone_eval_fn=freeze_backbone_eval_fn,
+            )
+        else:
+            train_loss = train_one_epoch_masked_bce(
+                victim.model, train_loader, optimizer, criterion, args.device,
+                grad_clip=args.grad_clip, ewa_params=ewa_params,
+                anchor_lambda=args.anchor_lambda, ewa_decay=args.ewa_decay,
+            )
         source_logit_anchor_loss = float("nan")
         if (
             args.source_logit_anchor_weight > 0
@@ -1720,6 +1884,8 @@ def main():
                 weight=args.source_logit_anchor_weight,
                 max_batches=args.source_logit_anchor_batches,
                 grad_clip=args.grad_clip,
+                trainable_params=trainable_params,
+                freeze_backbone_eval_fn=freeze_backbone_eval_fn,
             )
         scheduler.step()
 

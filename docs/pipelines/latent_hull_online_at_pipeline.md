@@ -1772,3 +1772,121 @@ classifier adapter：
 2. Frozen backbone + residual classifier adapter 可复用 ECGFounder 上的简洁机制。
 3. 这样能判断 VAE latent-hull 对非 foundation frozen representation 是否有独立价值。
 ```
+
+## 2026-05-23 EfficientNet Adapter Update
+
+`synth_online_at_super5.py` 已加入更干净的 EfficientNet1DV2 adapter 模式：
+
+```text
+--freeze_backbone_classifier_only
+  冻结 EfficientNet1DV2 主干，只训练 classifier。
+
+--classifier_only_train_final_norm
+  在上面基础上额外训练 final_norm affine 参数；
+  final_norm/BatchNorm running statistics 仍保持 eval/frozen。
+
+--disable_adv_stream
+  不生成、不加入 VAE latent-hull adversarial stream，
+  用作 real-only target-center adapter control。
+```
+
+该模式的目的不是追求复杂 trick，而是解决 full-model target-heavy 的源域冲突：
+
+```text
+full-model adaptation:
+  target-center 提升更容易，但 PTB-XL source 性能更容易下降。
+
+frozen-backbone adapter:
+  源域 PTB-XL fold10 基本保持在 0.908 / 0.777；
+  更适合判断 VAE latent-hull 是否有独立贡献。
+```
+
+CPSC K=100 初步结果：
+
+| adapter | method | PTB-XL fold10 | CPSC | CPSC drop-all-zero |
+|---|---|---:|---:|---:|
+| head | real-only | 0.9084 / 0.7775 | 0.8154 / 0.5694 | 0.8654 / 0.7004 |
+| head | VAE-only | 0.9083 / 0.7773 | 0.8193 / 0.5716 | 0.8696 / 0.7056 |
+| head+final_norm | real-only | 0.9084 / 0.7774 | 0.8155 / 0.5695 | 0.8655 / 0.7006 |
+| head+final_norm | VAE-only | 0.9082 / 0.7770 | 0.8202 / 0.5721 | 0.8707 / 0.7072 |
+
+当前判断：
+
+```text
+VAE-only 确实在 CPSC K=100 上带来正增益，且 drop-all-zero 后仍成立。
+但是增益只有约 +0.5pp AUROC / +0.7pp AUPRC，不能称为明显强于 real-only。
+head+final_norm 是比纯 head 略好的 EfficientNet 协议，下一步扩到四中心。
+```
+
+下一轮固定推荐：
+
+```text
+model            = EfficientNet1DV2 source baseline
+adapter          = frozen backbone + classifier + final_norm affine
+K                = 100 first, then 50/200 as sensitivity
+lambda           = 0.15
+M                = 20
+hull_steps       = 10
+adv_label_mode   = multi_hot_hard
+quality gate     = disabled for training, logged only
+source anchor    = source_logit_anchor_weight 0.2
+target stream    = target_real_weight 40
+adv stream       = adv_weight 20
+```
+
+不优先继续：
+
+```text
+lambda=0.35,hull_steps=20:
+  ASR 从约 0.43-0.48 提到约 0.48-0.51，但 quick AUPRC 没超过 lambda=0.15。
+```
+
+### K=100 Four-Center EfficientNet Adapter Result
+
+四中心已按上述推荐协议补跑：
+
+```text
+adapter        = frozen backbone + classifier + final_norm affine
+K              = 100
+lambda         = 0.15
+M              = 20
+hull_steps     = 10
+source anchor  = source_logit_anchor_weight 0.2
+quality gate   = disabled
+```
+
+主评估 all-zero-kept：
+
+| center | real-only adapter | VAE-only adapter | VAE-only - real-only |
+|---|---:|---:|---:|
+| ningbo | 0.8741 / 0.4310 | 0.8723 / 0.4285 | -0.18pp / -0.25pp |
+| chapman_shaoxing | 0.8810 / 0.3588 | 0.8822 / 0.3609 | +0.12pp / +0.21pp |
+| cpsc_2018 | 0.8155 / 0.5695 | 0.8202 / 0.5721 | +0.47pp / +0.26pp |
+| georgia | 0.8196 / 0.5958 | 0.8195 / 0.5958 | -0.01pp / +0.00pp |
+| 4-center mean | 0.8476 / 0.4888 | 0.8486 / 0.4893 | +0.10pp / +0.06pp |
+
+drop-all-zero sensitivity：
+
+| center | real-only adapter | VAE-only adapter | VAE-only - real-only |
+|---|---:|---:|---:|
+| ningbo | 0.9016 / 0.6130 | 0.9001 / 0.6112 | -0.15pp / -0.18pp |
+| chapman_shaoxing | 0.9074 / 0.5437 | 0.9079 / 0.5444 | +0.05pp / +0.07pp |
+| cpsc_2018 | 0.8655 / 0.7006 | 0.8707 / 0.7072 | +0.52pp / +0.66pp |
+| georgia | 0.8276 / 0.6764 | 0.8274 / 0.6764 | -0.02pp / +0.00pp |
+| 4-center mean | 0.8740 / 0.6334 | 0.8765 / 0.6348 | +0.25pp / +0.14pp |
+
+PTB-XL fold10:
+
+```text
+real-only adapter: 0.9078-0.9084 / 0.7760-0.7774
+VAE-only adapter:  0.9074-0.9082 / 0.7749-0.7770
+```
+
+结论：
+
+```text
+frozen-backbone EfficientNet adapter 能有效保住 PTB-XL source；
+但 VAE-only latent-hull 相对 real-only 的额外收益很小且中心依赖。
+CPSC 是最明确正向中心，Ningbo/Georgia 当前没有正增益。
+后续不应把 EfficientNet VAE-only 写成全局显著优于 real-only adapter。
+```

@@ -608,3 +608,117 @@ ECGFounder head-adapter 路线继续扫 VAE-only 的收益很低；
 下一个有价值方向是 EfficientNet1DV2 frozen backbone + residual classifier adapter，
 看 VAE latent-hull 是否能在非 foundation frozen representation 上形成独立贡献。
 ```
+
+## 2026-05-23 追加：EfficientNet1DV2 frozen-backbone adapter pilot
+
+为了避免全模型微调导致源域遗忘，`synth_online_at_super5.py` 新增：
+
+```text
+--freeze_backbone_classifier_only
+--classifier_only_train_final_norm
+--disable_adv_stream
+```
+
+协议：
+
+```text
+head:
+  冻结 EfficientNet1DV2 卷积主干，只训练 classifier。
+
+head+final_norm:
+  额外训练 final_norm affine 参数，但 BatchNorm running statistics 保持 eval/frozen。
+
+real-only:
+  使用 --disable_adv_stream，只用 PTB-XL source + K 个目标中心真实样本更新 adapter。
+
+VAE-only:
+  同样 adapter，同时把目标中心真实 ECG 的 ECGTwin VAE latent-hull 在线对抗样本加入训练流。
+```
+
+CPSC K=50/100 pilot，目标中心 ref ids 已从评估集排除：
+
+| setting | method | PTB-XL fold10 | CPSC all-zero-kept | 7-center avg |
+|---|---|---:|---:|---:|
+| K=50 head | real-only | 0.9083 / 0.7771 | 0.8145 / 0.5702 | 0.7800 / 0.4629 |
+| K=50 head | VAE-only | 0.9085 / 0.7777 | 0.8168 / 0.5713 | 0.7809 / 0.4625 |
+| K=100 head | real-only | 0.9084 / 0.7775 | 0.8154 / 0.5694 | 0.7805 / 0.4622 |
+| K=100 head | VAE-only | 0.9083 / 0.7773 | 0.8193 / 0.5716 | 0.7812 / 0.4621 |
+| K=100 head+final_norm | real-only | 0.9084 / 0.7774 | 0.8155 / 0.5695 | 0.7803 / 0.4620 |
+| K=100 head+final_norm | VAE-only | 0.9082 / 0.7770 | 0.8202 / 0.5721 | 0.7811 / 0.4618 |
+
+K=100 drop-all-zero sensitivity：
+
+| setting | method | CPSC drop-all-zero | 7-center drop-all-zero avg |
+|---|---|---:|---:|
+| head | real-only | 0.8654 / 0.7004 | 0.8000 / 0.5704 |
+| head | VAE-only | 0.8696 / 0.7056 | 0.8005 / 0.5712 |
+| head+final_norm | real-only | 0.8655 / 0.7006 | 0.7997 / 0.5703 |
+| head+final_norm | VAE-only | 0.8707 / 0.7072 | 0.8007 / 0.5712 |
+
+判断：
+
+```text
+1. 这条 EfficientNet adapter 路线可以保持 PTB-XL 源域性能：
+   fold10 约 0.908 / 0.777，基本等于原始 source baseline。
+2. VAE-only 相对 real-only 有稳定但很小的 CPSC 正增益。
+   K=100 head+final_norm 下，all-zero-kept 约 +0.47pp / +0.26pp；
+   drop-all-zero 后约 +0.52pp / +0.66pp。
+3. 这说明小幅收益不是 all-zero 样本虚高，但还远不到“明显强于其他方法”。
+4. head+final_norm 比纯 head 略好，是目前更值得继续扩展到多中心/K sweep 的 EfficientNet 适配协议。
+5. 目标中心 CPSC AUPRC 仍远低于 PTB-XL source AUPRC 0.777；当前目标“外部中心达到 PTB-XL 同源水平”未完成。
+```
+
+下一步：
+
+```text
+1. 不再优先提高 lambda/hull_steps；lambda=0.35,hull_steps=20 提高 ASR，但 quick AUPRC 未超过 lambda=0.15。
+2. 用 head+final_norm + lambda=0.15 + M=20 + K=100 扩到 ningbo/chapman/georgia。
+3. 如果多中心仍只有 CPSC 正向，VAE-only 主张应收窄为“特定中心/类别结构有效”，而不是全局方法优势。
+```
+
+### K=100 四中心补跑结果
+
+head+final_norm adapter 已扩展到 `ningbo`、`chapman_shaoxing`、`cpsc_2018`、`georgia`。
+所有 run 都排除了目标中心 K=100 ref ids，训练协议保持一致：
+
+```text
+EfficientNet1DV2 source checkpoint
+freeze backbone
+train classifier + final_norm affine
+source_logit_anchor_weight = 0.2
+real-only: PTB-XL source + target real K
+VAE-only: real-only + target real latent-hull online adversarial samples
+```
+
+主评估 all-zero-kept：
+
+| center | real-only adapter | VAE-only adapter | VAE-only - real-only |
+|---|---:|---:|---:|
+| ningbo | 0.8741 / 0.4310 | 0.8723 / 0.4285 | -0.18pp / -0.25pp |
+| chapman_shaoxing | 0.8810 / 0.3588 | 0.8822 / 0.3609 | +0.12pp / +0.21pp |
+| cpsc_2018 | 0.8155 / 0.5695 | 0.8202 / 0.5721 | +0.47pp / +0.26pp |
+| georgia | 0.8196 / 0.5958 | 0.8195 / 0.5958 | -0.01pp / +0.00pp |
+| 4-center mean | 0.8476 / 0.4888 | 0.8486 / 0.4893 | +0.10pp / +0.06pp |
+
+drop-all-zero sensitivity：
+
+| center | real-only adapter | VAE-only adapter | VAE-only - real-only |
+|---|---:|---:|---:|
+| ningbo | 0.9016 / 0.6130 | 0.9001 / 0.6112 | -0.15pp / -0.18pp |
+| chapman_shaoxing | 0.9074 / 0.5437 | 0.9079 / 0.5444 | +0.05pp / +0.07pp |
+| cpsc_2018 | 0.8655 / 0.7006 | 0.8707 / 0.7072 | +0.52pp / +0.66pp |
+| georgia | 0.8276 / 0.6764 | 0.8274 / 0.6764 | -0.02pp / +0.00pp |
+| 4-center mean | 0.8740 / 0.6334 | 0.8765 / 0.6348 | +0.25pp / +0.14pp |
+
+PTB-XL fold10 保持在 `0.9074-0.9084 / 0.7749-0.7774`，说明 frozen-backbone
+adapter 的源域保持是有效的。
+
+当前结论进一步收紧：
+
+```text
+EfficientNet frozen-backbone adapter 能保住 PTB-XL source。
+VAE-only latent-hull 在 CPSC 最有用，在 Chapman 有轻微正向，在 Ningbo/Georgia 没有优势。
+四中心均值只有约 +0.10pp / +0.06pp，不能作为强主张。
+如果继续论文主线，应把 VAE-only 定位为 on-manifold adversarial regularization，
+而不是稳定超越 real-only target adaptation 的独立增强模块。
+```
