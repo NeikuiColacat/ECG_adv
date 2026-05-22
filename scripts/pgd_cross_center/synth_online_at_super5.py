@@ -57,8 +57,6 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(Path("/root/autodl-tmp/models/DeepECG/notebooks")))
 
-from EfficientNetv2 import EfficientNet1DV2  # noqa: E402
-
 from adversarial.adv_validation import compute_asr, compute_semantic_gate  # noqa: E402
 from adversarial.efficientnet_victim_tierM import (  # noqa: E402
     EfficientNetVictimTierM, TIERM_INPUT_LENGTH,
@@ -75,6 +73,7 @@ from scripts.crosscenter_tierM.online_adv_train_tierM import (  # noqa: E402
 from scripts.triple_labels.label_schemes import (  # noqa: E402
     CLASS_NAMES_SUPER5, NUM_SUPER5, snomed_list_to_super5,
 )
+from scripts.triple_labels.model_zoo import available_model_names  # noqa: E402
 from scripts.triple_labels.train_ptbxl import (  # noqa: E402
     PTBXLDatasetScheme, compute_pos_weight, compute_macro_auroc_auprc,
     evaluate, get_ptbxl_labels_for_scheme, preprocess_ptbxl_all,
@@ -530,7 +529,15 @@ class StratifiedPoolWalker:
 
 
 class SameLabelLatentIndex:
-    """Nearest-neighbor candidate index for same-label latent-hull attacks."""
+    """Nearest-neighbor candidate index for constrained latent-hull attacks.
+
+    Modes:
+      primary: same argmax class as the anchor.
+      exact: exact same multi-hot super5 vector as the anchor.
+      compatible: NORM-only anchors mix only with NORM-only anchors; abnormal
+        anchors mix with any non-NORM abnormal anchor. This expands the search
+        space while avoiding the main super5 contradiction, NORM vs abnormal.
+    """
 
     def __init__(
         self,
@@ -540,17 +547,29 @@ class SameLabelLatentIndex:
         seed: int = 42,
         include_self: bool = False,
     ):
-        if label_mode not in {"primary", "exact"}:
-            raise ValueError(f"label_mode must be primary|exact, got {label_mode!r}")
+        if label_mode not in {"primary", "exact", "compatible"}:
+            raise ValueError(
+                f"label_mode must be primary|exact|compatible, got {label_mode!r}"
+            )
         self.latents = latents.astype(np.float32, copy=False)
         self.labels = labels_one_hot.astype(np.float32, copy=False)
         self.label_mode = label_mode
         self.include_self = bool(include_self)
         self.rng = np.random.default_rng(seed)
+        self.last_candidate_indices: Optional[np.ndarray] = None
         if label_mode == "primary":
             keys = [int(i) for i in self.labels.argmax(axis=1)]
-        else:
+        elif label_mode == "exact":
             keys = [tuple(int(v) for v in row) for row in (self.labels > 0.5).astype(np.int8)]
+        else:
+            norm_idx = SUPER5_TO_IDX["NORM"]
+            abnormal = np.delete(np.arange(self.labels.shape[1]), norm_idx)
+            is_norm_only = (self.labels[:, norm_idx] > 0.5) & (
+                self.labels[:, abnormal].sum(axis=1) == 0
+            )
+            has_abnormal = self.labels[:, abnormal].sum(axis=1) > 0
+            keys = ["NORM_ONLY" if n else "ABNORMAL" if a else "OTHER"
+                    for n, a in zip(is_norm_only, has_abnormal)]
         self.keys = keys
         self.pools: Dict[Any, np.ndarray] = {}
         for i, key in enumerate(keys):
@@ -569,6 +588,7 @@ class SameLabelLatentIndex:
         z_adv=sum_i softmax(a_i) z_i can still stay near z0 if that is optimal.
         """
         out = np.empty((len(anchor_indices), M, 4, 128), dtype=np.float32)
+        out_indices = np.empty((len(anchor_indices), M), dtype=np.int64)
         flat_latents = self.latents.reshape(self.latents.shape[0], -1)
         for row_i, anchor_idx in enumerate(anchor_indices):
             anchor_idx = int(anchor_idx)
@@ -594,8 +614,47 @@ class SameLabelLatentIndex:
                 pad_value = int(chosen[-1]) if len(chosen) else anchor_idx
                 pad = np.full((M - len(chosen),), pad_value, dtype=np.int64)
                 chosen = np.concatenate([chosen, pad])
-            out[row_i] = self.latents[chosen[:M]]
+            chosen = chosen[:M]
+            out_indices[row_i] = chosen
+            out[row_i] = self.latents[chosen]
+        self.last_candidate_indices = out_indices
         return out
+
+
+def build_anchor_preserving_soft_labels(
+    anchor_labels: np.ndarray,
+    candidate_labels: np.ndarray,
+    weights: np.ndarray,
+    *,
+    lambda_y: float,
+    positive_value: float,
+    negative_floor: float,
+    new_class_cap: float,
+) -> np.ndarray:
+    """Build label-smoothing targets from latent-hull candidate weights.
+
+    Anchor positives stay near hard positives. Classes not present in the anchor
+    can receive weak fractional targets from the weighted compatible candidates,
+    capped to keep secondary evidence uncertain rather than hard-positive.
+    """
+    anchor = anchor_labels.astype(np.float32, copy=False)
+    cand = candidate_labels.astype(np.float32, copy=False)
+    w = weights.astype(np.float32, copy=False)
+    q = (w[:, :, None] * cand).sum(axis=1)
+
+    out = np.full(anchor.shape, float(negative_floor), dtype=np.float32)
+    pos_mask = anchor > 0.5
+    out[pos_mask] = float(positive_value)
+    new_soft = np.clip(float(lambda_y) * q, float(negative_floor), float(new_class_cap))
+    out[~pos_mask] = new_soft[~pos_mask]
+
+    # Preserve the super5 NORM policy: abnormal anchors should not acquire a
+    # fractional NORM target from any accidental compatible fallback.
+    norm_idx = SUPER5_TO_IDX["NORM"]
+    abnormal_idx = [i for i in range(anchor.shape[1]) if i != norm_idx]
+    abnormal_anchor = anchor[:, abnormal_idx].sum(axis=1) > 0.5
+    out[abnormal_anchor, norm_idx] = 0.0
+    return np.clip(out, 0.0, 1.0).astype(np.float32)
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -679,6 +738,11 @@ def run_pgd_on_synth_pool(
     attack_mode: str = "pgd",
     latent_hull_index: Optional[SameLabelLatentIndex] = None,
     hull_M: int = 10,
+    hull_mix_label_mode: str = "anchor",
+    hull_label_lambda_y: float = 0.5,
+    hull_label_positive: float = 0.95,
+    hull_label_negative_floor: float = 0.0,
+    hull_label_new_class_cap: float = 0.5,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict[str, float]]:
     """Sample K anchors stratified by class, run PGD in batches of pgd_batch.
 
@@ -705,10 +769,11 @@ def run_pgd_on_synth_pool(
                 np.empty((0, synth_labels.shape[1]), dtype=np.float32),
                 {"mean_delta_norm": float('nan'), "max_delta_norm": float('nan')})
 
+    y_anchor_np = synth_labels[pick].astype(np.float32, copy=False)
     z_anchors = torch.from_numpy(synth_latents[pick]).float()        # (K, 4, 128)
-    y_anchors = torch.from_numpy(synth_labels[pick]).float()         # (K, C)
+    y_anchors = torch.from_numpy(y_anchor_np).float()                # (K, C)
 
-    adv_chunks, anc_chunks, delta_norms = [], [], []
+    adv_chunks, anc_chunks, label_chunks, delta_norms = [], [], [], []
     hull_entropies, hull_top1 = [], []
     for i in range(0, z_anchors.shape[0], pgd_batch):
         z_b = z_anchors[i:i + pgd_batch].to(device)
@@ -722,6 +787,31 @@ def run_pgd_on_synth_pool(
             x_adv, delta = pgd_gen.attack_from_latent(
                 z_b, y_b, candidate_latents=cand_b
             )
+            if hull_mix_label_mode == "anchor":
+                label_chunks.append(y_anchor_np[i:i + pgd_batch])
+            elif hull_mix_label_mode == "anchor_soft":
+                cand_idx = getattr(latent_hull_index, "last_candidate_indices", None)
+                weights_t = getattr(pgd_gen, "last_weights", None)
+                if cand_idx is None or weights_t is None:
+                    raise RuntimeError(
+                        "latent-hull soft labels require candidate indices and weights"
+                    )
+                weights_np = weights_t.numpy().astype(np.float32, copy=False)
+                cand_labels = synth_labels[cand_idx]
+                label_chunks.append(build_anchor_preserving_soft_labels(
+                    y_anchor_np[i:i + pgd_batch],
+                    cand_labels,
+                    weights_np,
+                    lambda_y=hull_label_lambda_y,
+                    positive_value=hull_label_positive,
+                    negative_floor=hull_label_negative_floor,
+                    new_class_cap=hull_label_new_class_cap,
+                ))
+            else:
+                raise ValueError(
+                    "hull_mix_label_mode must be anchor|anchor_soft, "
+                    f"got {hull_mix_label_mode!r}"
+                )
             hull_info = getattr(pgd_gen, "last_info", {})
             if "hull_weight_entropy_mean" in hull_info:
                 hull_entropies.append(float(hull_info["hull_weight_entropy_mean"]))
@@ -731,6 +821,7 @@ def run_pgd_on_synth_pool(
             # Random init delta — Plan Issue #41 clean-anchor restart each epoch
             delta_init = torch.randn_like(z_b) * pgd_gen.delta_init_scale
             x_adv, delta = pgd_gen.attack_from_latent(z_b, y_b, delta_init=delta_init)
+            label_chunks.append(y_anchor_np[i:i + pgd_batch])
         adv_chunks.append(x_adv.detach().cpu().numpy().astype(np.float32))
         # Clean anchor reference (z_b alone, no delta)
         with torch.no_grad():
@@ -749,7 +840,8 @@ def run_pgd_on_synth_pool(
             "hull_weight_entropy_mean": float(np.mean(hull_entropies)),
             "hull_weight_top1_mean": float(np.mean(hull_top1)) if hull_top1 else float('nan'),
         })
-    return adv_signals, anc_signals, y_anchors.numpy(), stats
+    out_labels = np.concatenate(label_chunks, axis=0).astype(np.float32)
+    return adv_signals, anc_signals, out_labels, stats
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -798,6 +890,10 @@ def push_adv_to_buffer(
         if label_mode == "hard":
             lbl = torch.full((target_one_hot.shape[1],), -1.0)
             lbl[target_idx] = 1.0
+        elif label_mode == "multi_hot_hard":
+            lbl = torch.from_numpy((target_one_hot[i] > 0.5).astype(np.float32))
+        elif label_mode == "latent_soft":
+            lbl = torch.from_numpy(np.clip(target_one_hot[i].astype(np.float32), 0.0, 1.0))
         else:
             if teacher_probs is None:
                 raise ValueError(f"teacher_probs required for label_mode={label_mode}")
@@ -811,6 +907,12 @@ def push_adv_to_buffer(
                 hard_full[target_idx] = 1.0
                 mix = max(0.0, min(1.0, float(teacher_mix)))
                 lbl = mix * soft + (1.0 - mix) * hard_full
+            elif label_mode == "latent_mixed_teacher":
+                latent_soft = torch.from_numpy(
+                    np.clip(target_one_hot[i].astype(np.float32), 0.0, 1.0)
+                )
+                mix = max(0.0, min(1.0, float(teacher_mix)))
+                lbl = mix * soft + (1.0 - mix) * latent_soft
             else:
                 raise ValueError(f"unsupported adv label_mode={label_mode}")
             if soft_target_floor > 0.0:
@@ -842,6 +944,8 @@ def parse_args():
     p.add_argument("--synth_npz", required=True,
                    help="Stage 1 latent npz: {latents (N,4,128), labels (N,5)}")
     p.add_argument("--init_ckpt", default=DEFAULT_SUPER5_CKPT)
+    p.add_argument("--model_name", default="efficientnet1dv2",
+                   choices=available_model_names())
     p.add_argument("--output_dir", required=True)
     p.add_argument("--target_real_npz", default="",
                    help="Optional selected target-center real ECG npz with signals (N,1000,12) and labels.")
@@ -879,7 +983,22 @@ def parse_args():
         help="Latent-Hull coefficient policy: optimized=C3 main, or fixed C0/C1/C2 ablations.",
     )
     p.add_argument("--hull_dirichlet_alpha", type=float, default=1.0)
-    p.add_argument("--hull_label_mode", choices=["primary", "exact"], default="primary")
+    p.add_argument(
+        "--hull_label_mode",
+        choices=["primary", "exact", "compatible"],
+        default="primary",
+    )
+    p.add_argument(
+        "--hull_mix_label_mode",
+        choices=["anchor", "anchor_soft"],
+        default="anchor",
+        help="anchor keeps the anchor multi-hot label; anchor_soft builds "
+             "anchor-preserving fractional labels from latent-hull weights.",
+    )
+    p.add_argument("--hull_label_lambda_y", type=float, default=0.5)
+    p.add_argument("--hull_label_positive", type=float, default=0.95)
+    p.add_argument("--hull_label_negative_floor", type=float, default=0.0)
+    p.add_argument("--hull_label_new_class_cap", type=float, default=0.5)
     p.add_argument(
         "--hull_include_anchor",
         action="store_true",
@@ -907,10 +1026,16 @@ def parse_args():
     p.add_argument("--boundary_prob_max", type=float, default=1.0,
                    help="Only push adv samples whose target sigmoid probability is <= this value.")
     p.add_argument("--adv_label_mode",
-                   choices=["hard", "mixed_soft", "teacher_soft"],
+                   choices=[
+                       "hard", "multi_hot_hard", "latent_soft",
+                       "mixed_soft", "teacher_soft", "latent_mixed_teacher",
+                   ],
                    default="hard",
                    help="Label policy for generated adversarial ECGs: hard keeps historical target-only labels; "
-                        "mixed_soft blends the frozen initial teacher probabilities with a hard target; "
+                        "multi_hot_hard keeps the full anchor multi-hot label; "
+                        "latent_soft uses latent-hull fractional labels; "
+                        "mixed_soft blends frozen-teacher probabilities with a hard target; "
+                        "latent_mixed_teacher blends frozen-teacher probabilities with latent_soft labels; "
                         "teacher_soft uses the frozen initial teacher probabilities directly.")
     p.add_argument("--adv_teacher_mix", type=float, default=0.7,
                    help="For --adv_label_mode mixed_soft, weight on frozen-teacher probabilities.")
@@ -1049,6 +1174,7 @@ def main():
         ecgtwin_wrapper=ecgtwin,
         num_classes=NUM_SUPER5,
         crop_len=args.crop_len,
+        model_name=args.model_name,
     )
 
     # ── Plan Rev 13 Stage 0.4 sanity-build mode (early exit) ────────────────
@@ -1113,6 +1239,9 @@ def main():
     print(f"[setup] boundary target probability window=[{args.boundary_prob_min}, {args.boundary_prob_max}]")
     print(f"[setup] adv label mode={args.adv_label_mode} "
           f"teacher_mix={args.adv_teacher_mix} target_floor={args.adv_soft_target_floor}")
+    print(f"[setup] hull mix label mode={args.hull_mix_label_mode} "
+          f"lambda_y={args.hull_label_lambda_y} pos={args.hull_label_positive} "
+          f"neg_floor={args.hull_label_negative_floor} new_cap={args.hull_label_new_class_cap}")
 
     # ── Load synth pool (Stage 1 frozen) for training ──────────────────────
     synth_latents, synth_labels, synth_center, source_meta = load_synth_pool(args.synth_npz)
@@ -1267,7 +1396,8 @@ def main():
     for p in victim.model.parameters():
         p.requires_grad_(True)
     teacher_model = None
-    if args.adv_label_mode != "hard":
+    teacher_label_modes = {"mixed_soft", "teacher_soft", "latent_mixed_teacher"}
+    if args.adv_label_mode in teacher_label_modes:
         teacher_model = copy.deepcopy(victim.model).to(args.device)
         teacher_model.eval()
         for p in teacher_model.parameters():
@@ -1300,6 +1430,11 @@ def main():
             "mode": args.adv_label_mode,
             "teacher_mix": args.adv_teacher_mix,
             "soft_target_floor": args.adv_soft_target_floor,
+            "hull_mix_label_mode": args.hull_mix_label_mode,
+            "hull_label_lambda_y": args.hull_label_lambda_y,
+            "hull_label_positive": args.hull_label_positive,
+            "hull_label_negative_floor": args.hull_label_negative_floor,
+            "hull_label_new_class_cap": args.hull_label_new_class_cap,
         },
         "epochs": [],
     }
@@ -1379,6 +1514,11 @@ def main():
             attack_mode=args.attack_mode,
             latent_hull_index=latent_hull_index,
             hull_M=args.hull_M,
+            hull_mix_label_mode=args.hull_mix_label_mode,
+            hull_label_lambda_y=args.hull_label_lambda_y,
+            hull_label_positive=args.hull_label_positive,
+            hull_label_negative_floor=args.hull_label_negative_floor,
+            hull_label_new_class_cap=args.hull_label_new_class_cap,
         )
         if adv_signals.shape[0] == 0:
             print(f"[ep{epoch:02d}] empty walker pick — skip epoch", flush=True)
@@ -1515,6 +1655,22 @@ def main():
             "val_loss":   round(val_loss, 4),
             "asr_overall": round(float(asr_info["asr_overall"]), 4),
             "asr_per_class": {k: round(float(v), 4) for k, v in asr_info["per_class_asr"].items()},
+            "multilabel_positive_label_asr": round(
+                float(asr_info.get("multilabel_positive_label_asr", float("nan"))), 4
+            ),
+            "sample_any_positive_below_0p5_asr": round(
+                float(asr_info.get("sample_any_positive_below_0p5_asr", float("nan"))), 4
+            ),
+            "sample_all_positive_below_0p5_asr": round(
+                float(asr_info.get("sample_all_positive_below_0p5_asr", float("nan"))), 4
+            ),
+            "sample_all_positive_recognized_rate": round(
+                float(asr_info.get("sample_all_positive_recognized_rate", float("nan"))), 4
+            ),
+            "per_class_positive_label_asr": {
+                k: round(float(v), 4)
+                for k, v in asr_info.get("per_class_positive_label_asr", {}).items()
+            },
             "einthoven_p95":  round(float(sem_info.get("einthoven_mean_p95", float('nan'))), 4),
             "hr_mean_delta": round(float(sem_info.get("hr_mean_delta", float('nan'))), 4),
             "qrs_amp_ratio": round(float(sem_info.get("qrs_amp_ratio", float('nan'))), 4)
@@ -1539,6 +1695,11 @@ def main():
                 "hull_lambda": args.hull_lambda,
                 "hull_steps": args.hull_steps,
                 "hull_label_mode": args.hull_label_mode,
+                "hull_mix_label_mode": args.hull_mix_label_mode,
+                "hull_label_lambda_y": args.hull_label_lambda_y,
+                "hull_label_positive": args.hull_label_positive,
+                "hull_label_negative_floor": args.hull_label_negative_floor,
+                "hull_label_new_class_cap": args.hull_label_new_class_cap,
                 "hull_include_anchor": args.hull_include_anchor,
                 "hull_weight_entropy_mean": round(
                     float(delta_stats.get("hull_weight_entropy_mean", float('nan'))), 4
@@ -1548,7 +1709,10 @@ def main():
                 ),
             })
         print(f"Ep {epoch:2d}/{args.n_epochs} | train={train_loss:.4f} val={val_loss:.4f} | "
-              f"asr={asr_info['asr_overall']:.2f} eint_p95={sem_info.get('einthoven_mean_p95', float('nan')):.3f} "
+              f"asr={asr_info['asr_overall']:.2f} "
+              f"ml_any={asr_info.get('sample_any_positive_below_0p5_asr', float('nan')):.2f} "
+              f"ml_pos={asr_info.get('multilabel_positive_label_asr', float('nan')):.2f} "
+              f"eint_p95={sem_info.get('einthoven_mean_p95', float('nan')):.3f} "
               f"buf={len(buffer)} skip={gate_skipped} attack={args.attack_mode} | {elapsed:.0f}s")
 
         # Phase F: quick eval (every eval_every; also last epoch)

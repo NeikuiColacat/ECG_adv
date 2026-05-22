@@ -31,10 +31,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..',
                                 'model', 'DeepECG', 'notebooks'))
 
 from scripts.triple_labels.label_schemes import get_scheme
+from scripts.triple_labels.model_zoo import (
+    available_model_names, build_super5_model, normalize_model_name,
+)
 from scripts.crosscenter_v2.preprocess_utils import (
     unified_preprocess_to_1000, crop_signal_tc,
 )
-from EfficientNetv2 import EfficientNet1DV2  # noqa: E402
 
 
 def _str2bool(v):
@@ -456,19 +458,11 @@ def train(args):
                              num_workers=args.num_workers, pin_memory=True,
                              persistent_workers=args.num_workers > 0)
 
-    model = EfficientNet1DV2(
-        variant='s_v2',
-        input_channels=12,
-        num_classes=num_classes,
-        activation='leaky_relu',
-        stochastic_depth_prob=0.304,
-        dropout_rate=0.0,
-        use_se=True,
-        norm_type='batch',
-    ).to(device)
+    model_name = normalize_model_name(args.model_name)
+    model = build_super5_model(model_name, num_classes=num_classes).to(device)
     model.apply(init_weights)
     n_params = sum(p.numel() for p in model.parameters())
-    print(f"[model] EfficientNet1DV2 s_v2  params={n_params:,}  num_classes={num_classes}")
+    print(f"[model] {model_name}  params={n_params:,}  num_classes={num_classes}")
 
     if args.init_ckpt:
         sd = torch.load(args.init_ckpt, map_location=device)
@@ -639,6 +633,7 @@ def train(args):
         'best_val_macro_auprc': round(best_val_auprc, 4),
         'checkpoint_metric': args.checkpoint_metric,
         'checkpoint_path': ckpt_path,
+        'model_name': model_name,
         'epochs_trained': len(log),
         'pos_weight': pos_weight_np.tolist(),
         'config': vars(args),
@@ -664,6 +659,8 @@ def parse_args():
     p.add_argument('--norm_mode', default='per_sample_global',
                    choices=['per_sample_global', 'none'])
     p.add_argument('--device', default='cuda')
+    p.add_argument('--model_name', default='efficientnet1dv2',
+                   choices=available_model_names())
     p.add_argument('--crop_len', type=int, default=250)
     p.add_argument('--batch_size', type=int, default=96)
     p.add_argument('--epochs', type=int, default=50)
@@ -685,7 +682,7 @@ def parse_args():
     p.add_argument('--synthetic_only', action='store_true',
                    help='Train on --synth_npz only while validating/testing on real PTB-XL splits')
     p.add_argument('--init_ckpt', default=None,
-                   help='Optional EfficientNet1DV2 state_dict used to initialize training')
+                   help='Optional matching-architecture state_dict used to initialize training')
     return p.parse_args()
 
 

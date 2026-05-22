@@ -33,6 +33,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..',
 from scripts.triple_labels.label_schemes import (
     get_scheme, get_super5_pn2021_mapping_metadata,
 )
+from scripts.triple_labels.model_zoo import (
+    available_model_names, build_super5_model, normalize_model_name,
+)
 from scripts.triple_labels.train_ptbxl import (
     PTBXLDatasetScheme, compute_macro_auroc_auprc, masked_bce_with_logits,
     get_ptbxl_labels_for_scheme,
@@ -40,7 +43,6 @@ from scripts.triple_labels.train_ptbxl import (
 from scripts.crosscenter_v2.preprocess_utils import (
     unified_preprocess_to_1000, crop_signal_tc, _resolve_preprocess_flags,
 )
-from EfficientNetv2 import EfficientNet1DV2  # noqa: E402
 
 
 # PN2021 centers — ptb-xl explicitly excluded (data leakage with PTB-XL train)
@@ -150,7 +152,7 @@ class PN2021CachedCenterDataset(Dataset):
                 torch.from_numpy(label).float())
 
 
-PN2021_EVAL_CACHE_VERSION = "v3_super5_normsuppress"
+PN2021_EVAL_CACHE_VERSION = "v5_super5_strict_voltage_pacing_suppress"
 
 
 def _pn2021_preprocess_config(args, include_crop=False):
@@ -442,16 +444,63 @@ def _load_excluded_ref_ids(meta_paths):
     return out
 
 
+def _load_included_record_ids(meta_paths):
+    """Load explicit PN2021 evaluation IDs grouped by center.
+
+    This is mainly used by seed/fold stability checks: each fold trains on
+    ``ref_record_ids`` and evaluates the target center only on
+    ``heldout_record_ids``. Centers absent from this mapping are evaluated
+    normally.
+    """
+    out = {}
+    if not meta_paths:
+        return out
+    include_keys = (
+        'heldout_record_ids',
+        'eval_record_ids',
+        'include_record_ids',
+        'test_record_ids',
+    )
+    for mp in meta_paths:
+        with open(mp) as f:
+            meta = json.load(f)
+        center = meta['center']
+        ids = []
+        key_used = None
+        for key in include_keys:
+            if meta.get(key):
+                ids = meta[key]
+                key_used = key
+                break
+        ids = set(ids)
+        if not ids:
+            print(f"[include] WARN {mp} has no heldout/eval record ids — skipped")
+            continue
+        out.setdefault(center, set()).update(ids)
+        print(
+            f"[include] loaded {len(ids)} {key_used} for center='{center}' "
+            f"from {mp}"
+        )
+    return out
+
+
 def eval_pn2021(model, scheme, args, device):
     print(f"\n[pn2021] evaluating {len(PN2021_CENTERS)} centers (ptb-xl excluded)")
     pn2021_root = args.pn2021_root
     excluded_by_center = getattr(args, '_excluded_by_center', {}) or {}
+    included_by_center = getattr(args, '_included_by_center', {}) or {}
+    report_drop_all_zero = bool(getattr(args, 'report_drop_all_zero_pn2021', False))
     if excluded_by_center:
         total_excl = sum(len(v) for v in excluded_by_center.values())
         print(f"[pn2021] ref-id exclusion active: {total_excl} ids across "
               f"{len(excluded_by_center)} centers")
+    if included_by_center:
+        total_incl = sum(len(v) for v in included_by_center.values())
+        print(f"[pn2021] explicit include-id filter active: {total_incl} ids across "
+              f"{len(included_by_center)} centers")
     per_center = {}
     macro_aurocs, macro_auprcs = [], []
+    drop_all_zero_aurocs, drop_all_zero_auprcs = [], []
     for center in PN2021_CENTERS:
         assert center.lower() not in PN2021_FORBIDDEN, \
             f"FORBIDDEN center {center} would leak PTB-XL data"
@@ -465,12 +514,20 @@ def eval_pn2021(model, scheme, args, device):
         # The preprocessing cache must remain center-complete; apply exclusions
         # after loading/building it so each model can use its own ref-id set.
         excluded_set = excluded_by_center.get(center, set())
+        included_set = included_by_center.get(center, set())
         n_excluded_ref = 0
+        n_include_kept = 0
 
         signals, labels, record_ids, fail, load_time, cache_hit, cache_kind = _load_or_build_pn2021_center(
             center, center_dir, scheme, args
         )
         n_scanned = int(len(record_ids) + fail)
+        if included_set and len(record_ids) > 0:
+            keep_mask = np.asarray([rid in included_set for rid in record_ids], dtype=bool)
+            n_include_kept = int(keep_mask.sum())
+            signals = signals[keep_mask]
+            labels = labels[keep_mask]
+            record_ids = record_ids[keep_mask]
         if excluded_set and len(record_ids) > 0:
             keep_mask = np.asarray([rid not in excluded_set for rid in record_ids], dtype=bool)
             n_excluded_ref = int((~keep_mask).sum())
@@ -492,11 +549,18 @@ def eval_pn2021(model, scheme, args, device):
         y_true, y_score = infer_dataset(model, loader, device)
         m = compute_macro_auroc_auprc(y_true, y_score, scheme['class_names'],
                                       min_pos=args.min_pos)
+        positive_counts = np.sum(y_true == 1.0, axis=1)
+        nonzero_mask = positive_counts > 0
+        n_all_zero = int((~nonzero_mask).sum())
+        n_nonzero = int(nonzero_mask.sum())
         per_center[center] = {
             'n_records': len(ds),
             'n_scanned': n_scanned,
             'n_excluded_ref': n_excluded_ref,
+            'n_include_kept': n_include_kept,
             'effective_n': len(ds),
+            'n_all_zero_labels': n_all_zero,
+            'n_nonzero_labels': n_nonzero,
             'load_time_s': round(ds._load_time, 1),
             'cache_hit': cache_hit,
             'cache_kind': cache_kind,
@@ -505,23 +569,68 @@ def eval_pn2021(model, scheme, args, device):
             'n_classes_used': m['n_classes_used'],
             'per_class': m['per_class'],
         }
+        drop_m = None
+        if report_drop_all_zero:
+            if n_nonzero > 0:
+                drop_m = compute_macro_auroc_auprc(
+                    y_true[nonzero_mask],
+                    y_score[nonzero_mask],
+                    scheme['class_names'],
+                    min_pos=args.min_pos,
+                )
+                per_center[center].update({
+                    'drop_all_zero_macro_auroc': drop_m['macro_auroc'],
+                    'drop_all_zero_macro_auprc': drop_m['macro_auprc'],
+                    'drop_all_zero_n_records': n_nonzero,
+                    'drop_all_zero_n_classes_used': drop_m['n_classes_used'],
+                    'drop_all_zero_per_class': drop_m['per_class'],
+                })
+                drop_all_zero_aurocs.append(drop_m['macro_auroc'])
+                drop_all_zero_auprcs.append(drop_m['macro_auprc'])
+            else:
+                per_center[center].update({
+                    'drop_all_zero_macro_auroc': float('nan'),
+                    'drop_all_zero_macro_auprc': float('nan'),
+                    'drop_all_zero_n_records': 0,
+                    'drop_all_zero_n_classes_used': 0,
+                    'drop_all_zero_per_class': {},
+                })
         macro_aurocs.append(m['macro_auroc'])
         macro_auprcs.append(m['macro_auprc'])
         excl_tag = f" (-{n_excluded_ref} ref)" if n_excluded_ref > 0 else ""
+        incl_tag = f" include={n_include_kept}" if included_set else ""
         cache_tag = f" {cache_kind}" if cache_hit else ""
-        print(f"  {center:<22} n={len(ds):>5}{excl_tag}{cache_tag}  "
+        print(f"  {center:<22} n={len(ds):>5}{incl_tag}{excl_tag}{cache_tag}  "
               f"AUROC={m['macro_auroc']:.4f}  AUPRC={m['macro_auprc']:.4f}  "
               f"n_classes={m['n_classes_used']}  ({time.time()-t0:.0f}s)")
+        if drop_m is not None:
+            print(f"    drop-all-zero n={n_nonzero:>5} (-{n_all_zero})  "
+                  f"AUROC={drop_m['macro_auroc']:.4f}  "
+                  f"AUPRC={drop_m['macro_auprc']:.4f}  "
+                  f"n_classes={drop_m['n_classes_used']}")
     finite_aurocs = [v for v in macro_aurocs if np.isfinite(v)]
     finite_auprcs = [v for v in macro_auprcs if np.isfinite(v)]
     avg_auroc = float(np.mean(finite_aurocs)) if finite_aurocs else float('nan')
     avg_auprc = float(np.mean(finite_auprcs)) if finite_auprcs else float('nan')
     print(f"  ──── 7-center average AUROC={avg_auroc:.4f}  AUPRC={avg_auprc:.4f}")
-    return {
+    result = {
         'avg_macro_auroc': avg_auroc,
         'avg_macro_auprc': avg_auprc,
         'per_center': per_center,
     }
+    if report_drop_all_zero:
+        finite_drop_aurocs = [v for v in drop_all_zero_aurocs if np.isfinite(v)]
+        finite_drop_auprcs = [v for v in drop_all_zero_auprcs if np.isfinite(v)]
+        avg_drop_auroc = float(np.mean(finite_drop_aurocs)) if finite_drop_aurocs else float('nan')
+        avg_drop_auprc = float(np.mean(finite_drop_auprcs)) if finite_drop_auprcs else float('nan')
+        result.update({
+            'drop_all_zero_policy': 'rows with no positive Super5 label are excluded from PN2021 metric calculation',
+            'avg_drop_all_zero_macro_auroc': avg_drop_auroc,
+            'avg_drop_all_zero_macro_auprc': avg_drop_auprc,
+        })
+        print(f"  ──── drop-all-zero 7-center average "
+              f"AUROC={avg_drop_auroc:.4f}  AUPRC={avg_drop_auprc:.4f}")
+    return result
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -653,6 +762,8 @@ def main():
     p.add_argument('--scheme', required=True, choices=['super5', 'sub23', 'pn26'])
     p.add_argument('--model_dir', required=True)
     p.add_argument('--device', default='cuda')
+    p.add_argument('--model_name', default='efficientnet1dv2',
+                   choices=available_model_names())
     p.add_argument('--crop_len', type=int, default=250)
     p.add_argument('--batch_size', type=int, default=256)
     p.add_argument('--num_workers', type=int, default=4)
@@ -687,24 +798,31 @@ def main():
                         'basename matches any meta\'s ref_record_ids will be '
                         'excluded from that center\'s PN2021 eval, so the '
                         'fine-tuned model never tests on its own training refs.')
+    p.add_argument('--include_record_ids', nargs='+', default=[],
+                   help='Optional paths to meta JSON files containing '
+                        'heldout_record_ids/eval_record_ids/include_record_ids. '
+                        'For centers present in these files, PN2021 eval is '
+                        'restricted to those record IDs after loading the full '
+                        'cache. This is intended for seed/fold stability checks.')
+    p.add_argument('--report_drop_all_zero_pn2021', action='store_true',
+                   help='Also report a PN2021 metric view that removes rows '
+                        'with no positive Super5 label before AUROC/AUPRC.')
     args = p.parse_args()
     args._excluded_by_center = _load_excluded_ref_ids(args.exclude_ref_ids)
+    args._included_by_center = _load_included_record_ids(args.include_record_ids)
 
     device = torch.device(args.device)
     scheme = get_scheme(args.scheme)
     print(f"[scheme] {args.scheme}  num_classes={scheme['num_classes']}")
 
-    model = EfficientNet1DV2(
-        variant='s_v2', input_channels=12, num_classes=scheme['num_classes'],
-        activation='leaky_relu', stochastic_depth_prob=0.304,
-        dropout_rate=0.0, use_se=True, norm_type='batch',
-    ).to(device)
+    model_name = normalize_model_name(args.model_name)
+    model = build_super5_model(model_name, num_classes=scheme['num_classes']).to(device)
     ckpt = os.path.join(args.model_dir, 'best_model.pt')
     sd = torch.load(ckpt, map_location=device)
     sd = {k.removeprefix('_orig_mod.'): v for k, v in sd.items()}
     model.load_state_dict(sd)
     model.eval()
-    print(f"[model] loaded {ckpt}")
+    print(f"[model] loaded {ckpt} ({model_name})")
 
     # Exclude private fields like `_excluded_by_center` (sets are not JSON serializable)
     output = {

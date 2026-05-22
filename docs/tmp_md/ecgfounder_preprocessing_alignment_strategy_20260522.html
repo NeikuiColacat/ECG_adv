@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ECGFounder 预处理对齐策略</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #1d2430;
+      --muted: #5b6575;
+      --line: #d9dee7;
+      --soft: #f5f7fa;
+      --accent: #1767a8;
+      --accent-soft: #e9f3fb;
+      --warn: #9b5d0f;
+      --warn-soft: #fff4df;
+      --ok: #146c43;
+      --ok-soft: #e8f6ee;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif;
+      color: var(--ink);
+      background: #ffffff;
+      line-height: 1.65;
+    }
+    main {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 40px 28px 64px;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 32px;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+    h2 {
+      margin: 34px 0 12px;
+      font-size: 22px;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 8px;
+    }
+    h3 {
+      margin: 24px 0 8px;
+      font-size: 18px;
+    }
+    p { margin: 10px 0; }
+    .meta {
+      color: var(--muted);
+      margin-bottom: 24px;
+    }
+    .summary {
+      border: 1px solid var(--line);
+      background: var(--soft);
+      padding: 18px 20px;
+      border-radius: 8px;
+      margin: 22px 0 28px;
+    }
+    .summary strong { color: var(--accent); }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+      margin: 16px 0 8px;
+    }
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+      background: #fff;
+    }
+    .panel.ok { background: var(--ok-soft); border-color: #bfe6ce; }
+    .panel.warn { background: var(--warn-soft); border-color: #f0d5a5; }
+    .tag {
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      margin-right: 6px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 14px 0 22px;
+      font-size: 14px;
+    }
+    th, td {
+      border: 1px solid var(--line);
+      padding: 9px 10px;
+      vertical-align: top;
+      text-align: left;
+    }
+    th {
+      background: var(--soft);
+      font-weight: 700;
+    }
+    code, pre {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    }
+    code {
+      background: var(--soft);
+      padding: 1px 5px;
+      border-radius: 4px;
+    }
+    pre {
+      background: #111827;
+      color: #f8fafc;
+      padding: 14px 16px;
+      border-radius: 8px;
+      overflow-x: auto;
+      line-height: 1.5;
+      font-size: 13px;
+    }
+    ul { padding-left: 22px; }
+    .note {
+      border-left: 4px solid var(--accent);
+      background: var(--accent-soft);
+      padding: 12px 14px;
+      margin: 16px 0;
+    }
+    .decision {
+      border-left: 4px solid var(--ok);
+      background: var(--ok-soft);
+      padding: 12px 14px;
+      margin: 16px 0;
+    }
+    .risk {
+      border-left: 4px solid var(--warn);
+      background: var(--warn-soft);
+      padding: 12px 14px;
+      margin: 16px 0;
+    }
+    @media (max-width: 760px) {
+      main { padding: 28px 16px 48px; }
+      .grid { grid-template-columns: 1fr; }
+      h1 { font-size: 26px; }
+      table { font-size: 13px; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <h1>ECGFounder 预处理对齐策略</h1>
+  <div class="meta">生成日期：2026-05-22 ｜ 适用任务：ECGFounder frozen encoder + PTB-XL Super5 linear probe + PN2021 外部中心评估</div>
+
+  <section class="summary">
+    <p><strong>核心结论：</strong>ECGFounder 适配实验的主线预处理应对齐 ECGFounder 官方 PTB-XL evaluation 输入协议，而不是复用 EfficientNet1DV2 的 100Hz/1000 点输入协议。</p>
+    <p>主线使用 <code>12 x 5000</code>、10 秒、500Hz 等效输入、PTB-XL <code>records500</code>、per-sample global z-score。滤波链作为 sensitivity analysis 单独跑，不作为主表默认设置。</p>
+  </section>
+
+  <h2>为什么需要单独对齐</h2>
+  <p>ECGFounder 和我们的 EfficientNet1DV2 baseline 是两套不同输入协议的模型。EfficientNet1DV2 当前主线是 <code>100Hz, 1000 samples, 10 seconds</code>；ECGFounder 官方 PTB-XL evaluation 使用的是 <code>500Hz, 5000 samples, 10 seconds</code>。</p>
+  <p>如果把 ECGFounder encoder 强行喂入 100Hz/1000 点 ECG，会让它接收到与官方评估和预训练场景明显不同的输入分布，这会削弱 ECGFounder baseline 的公平性。</p>
+
+  <h2>官方仓库事实</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>文件</th>
+        <th>观察到的事实</th>
+        <th>对我们实验的含义</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>/root/autodl-tmp/ecgfounder/ptbxl_eval.py</code></td>
+        <td>读取 PTB-XL <code>filename_hr</code>，即 <code>records500</code>。输入转成 <code>12 x 5000</code>，做 per-sample global z-score。</td>
+        <td>PTB-XL linear probe 主线应使用高采样率 500Hz 版本。</td>
+      </tr>
+      <tr>
+        <td><code>/root/autodl-tmp/ecgfounder/tasks.txt</code></td>
+        <td>官方 checkpoint 对应 150-class classification validation，不是 PTB-XL Super5。</td>
+        <td>Super5 对比不能直接用 150-class head keyword pooling 作为主结果。</td>
+      </tr>
+      <tr>
+        <td><code>/root/autodl-tmp/ecgfounder/util.py</code></td>
+        <td>提供 50Hz notch、0.67-40Hz bandpass、0.4 秒 median baseline removal。</td>
+        <td>滤波链可以做消融，但官方 PTB-XL eval 脚本本身没有显式使用这条滤波链。</td>
+      </tr>
+      <tr>
+        <td><code>/root/autodl-tmp/ecgfounder/README.md</code></td>
+        <td>提醒验证和微调应遵循 <code>dataset.py</code> 中的 filtering 和 z-score。</td>
+        <td>需要报告 filtered sensitivity，避免被质疑没有覆盖 README 要求。</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>主线预处理协议</h2>
+  <div class="decision">
+    <p><strong>主线名称：</strong><code>ecgfounder_official_ptbxl_eval_style</code></p>
+    <p><strong>用途：</strong>ECGFounder frozen encoder + PTB-XL Super5 linear head 的主表结果。</p>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>项目</th>
+        <th>设置</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>输入 shape</td>
+        <td><code>(12, 5000)</code></td>
+      </tr>
+      <tr>
+        <td>时长</td>
+        <td>10 秒</td>
+      </tr>
+      <tr>
+        <td>采样率</td>
+        <td>500Hz 等效输入</td>
+      </tr>
+      <tr>
+        <td>PTB-XL 来源</td>
+        <td><code>records500</code> / <code>filename_hr</code></td>
+      </tr>
+      <tr>
+        <td>PN2021 来源</td>
+        <td>WFDB 原始 ECG，按真实采样率处理后转成 5000 点</td>
+      </tr>
+      <tr>
+        <td>导联顺序</td>
+        <td><code>I, II, III, aVR, aVL, aVF, V1, V2, V3, V4, V5, V6</code></td>
+      </tr>
+      <tr>
+        <td>标准化</td>
+        <td>per-sample global z-score，即每条 ECG 在完整 <code>12 x 5000</code> 上计算一个 mean/std</td>
+      </tr>
+      <tr>
+        <td>默认滤波</td>
+        <td>主线不额外加 notch、bandpass 或 median baseline removal</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>PTB-XL 处理流程</h2>
+  <pre>PTB-XL records500 / filename_hr
+-&gt; wfdb.rdsamp
+-&gt; (5000, 12) 转成 (12, 5000)
+-&gt; NaN/Inf 清理
+-&gt; 确认导联顺序
+-&gt; per-sample global z-score
+-&gt; ECGFounder frozen encoder
+-&gt; 1024-d feature
+-&gt; Super5 linear head</pre>
+
+  <p>PTB-XL 官方提供 <code>records100</code> 和 <code>records500</code> 两种波形。ECGFounder 官方 PTB-XL evaluation 使用 <code>filename_hr</code>，因此本实验主线使用 <code>records500</code>。</p>
+
+  <h2>PN2021 处理流程</h2>
+  <pre>PN2021 WFDB record
+-&gt; wfdb.rdsamp physical mV
+-&gt; (T, C) 转成 (12, T)
+-&gt; 导联重排到 ECGFounder 顺序
+-&gt; NaN/Inf 清理
+-&gt; 按真实时间截取前 10 秒
+-&gt; 不足 10 秒则 padding 到 10 秒
+-&gt; 重采样到 5000 点
+-&gt; per-sample global z-score
+-&gt; ECGFounder frozen encoder
+-&gt; Super5 linear head
+-&gt; PN2021 v5 Super5 AUROC/AUPRC</pre>
+
+  <div class="note">
+    <p><strong>注意：</strong>不足 10 秒的 PN2021 ECG 不应直接插值拉伸成 10 秒。更稳妥的做法是按真实时间保留，然后 padding 到 10 秒，再统一重采样或补齐到 5000 点。</p>
+  </div>
+
+  <h2>滤波消融协议</h2>
+  <div class="risk">
+    <p>ECGFounder README 强调 <code>dataset.py</code> 的 filtering，但官方 <code>ptbxl_eval.py</code> 对 PTB-XL 150-class eval 没有显式使用滤波链。因此滤波版不作为主线，而作为 sensitivity analysis。</p>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>分支</th>
+        <th>滤波设置</th>
+        <th>用途</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>main</code></td>
+        <td>不额外滤波，只做 z-score</td>
+        <td>对齐官方 PTB-XL eval，作为主表结果</td>
+      </tr>
+      <tr>
+        <td><code>filtered_sensitivity</code></td>
+        <td>50Hz notch + 0.67-40Hz bandpass + 0.4s median baseline removal + z-score</td>
+        <td>回应 README filtering 要求，检查外部中心性能是否敏感</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>与 EfficientNet1DV2 的区别</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>模型</th>
+        <th>输入长度</th>
+        <th>采样率</th>
+        <th>默认预处理</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>EfficientNet1DV2</td>
+        <td>1000 samples</td>
+        <td>100Hz</td>
+        <td><code>minimal_resample + per_sample_global</code></td>
+      </tr>
+      <tr>
+        <td>ECGFounder</td>
+        <td>5000 samples</td>
+        <td>500Hz</td>
+        <td>官方 PTB-XL eval style: records500 + global z-score</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>两者比较的是模型方案和目标中心适配能力，不要求使用相同输入长度。相反，强行统一到 100Hz 会让 ECGFounder baseline 失真。</p>
+
+  <h2>实验计划</h2>
+  <div class="grid">
+    <div class="panel ok">
+      <h3><span class="tag">主线</span>ECGFounder official style</h3>
+      <ul>
+        <li>PTB-XL fold 1-8 提取 frozen features。</li>
+        <li>训练 5 类 Super5 linear head。</li>
+        <li>fold 9 选择 best epoch、阈值和可选校准。</li>
+        <li>fold 10 与 PN2021 外部中心评估 AUROC/AUPRC。</li>
+      </ul>
+    </div>
+    <div class="panel warn">
+      <h3><span class="tag">消融</span>filtered sensitivity</h3>
+      <ul>
+        <li>加入 ECGFounder <code>util.py</code> 滤波链。</li>
+        <li>保持输入 shape 和 fold 划分不变。</li>
+        <li>只比较滤波是否改变 fold10 和 PN2021 表现。</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>建议论文表述</h2>
+  <pre>For ECGFounder, we followed its PTB-XL evaluation-style input protocol:
+12-lead, 10-second, 500Hz ECGs from PTB-XL records500 were normalized by
+per-record global z-score and fed into the frozen ECGFounder encoder.
+For PN2021, raw WFDB records were lead-aligned, truncated or padded to
+10 seconds, resampled to 5000 samples, globally z-score normalized, and
+evaluated with the same frozen encoder and PTB-XL-trained Super5 linear head.
+A filtered preprocessing variant following ECGFounder's dataset.py filter
+chain was evaluated as a sensitivity analysis.</pre>
+
+  <h2>当前结论</h2>
+  <p>主线应使用 <code>records500 + 12x5000 + global z-score</code>。滤波链不是删除，而是降级为消融。这样既尊重 ECGFounder 官方 PTB-XL evaluation 脚本，又覆盖 README 对 filtering 的要求。</p>
+</main>
+</body>
+</html>

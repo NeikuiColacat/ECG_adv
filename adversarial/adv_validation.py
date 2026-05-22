@@ -64,7 +64,7 @@ def compute_asr(
     asr_overall = float((pred_primary != y_primary).mean())
     per_class_asr: Dict[str, float] = {}
     per_class_n: Dict[str, int] = {}
-    for c in range(6):
+    for c in range(labels_multi_hot.shape[1]):
         mask = (y_primary == c)
         n_c = int(mask.sum())
         per_class_n[str(c)] = n_c
@@ -72,6 +72,40 @@ def compute_asr(
             per_class_asr[str(c)] = float("nan")
         else:
             per_class_asr[str(c)] = float((pred_primary[mask] != c).mean())
+
+    positive_mask = labels_multi_hot > 0.5
+    positive_probs = probs[positive_mask]
+    positive_below = (probs < 0.5) & positive_mask
+    sample_has_positive = positive_mask.any(axis=1)
+    positive_counts = positive_mask.sum(axis=1)
+    positive_below_counts = positive_below.sum(axis=1)
+    if positive_probs.size:
+        multilabel_positive_label_asr = float((positive_probs < 0.5).mean())
+        sample_any_positive_below_0p5_asr = float(
+            positive_below[sample_has_positive].any(axis=1).mean()
+        )
+        sample_all_positive_below_0p5_asr = float(
+            (positive_below_counts[sample_has_positive] == positive_counts[sample_has_positive]).mean()
+        )
+        sample_all_positive_recognized_rate = float(
+            (positive_below_counts[sample_has_positive] == 0).mean()
+        )
+    else:
+        multilabel_positive_label_asr = float("nan")
+        sample_any_positive_below_0p5_asr = float("nan")
+        sample_all_positive_below_0p5_asr = float("nan")
+        sample_all_positive_recognized_rate = float("nan")
+
+    per_class_positive_label_asr: Dict[str, float] = {}
+    per_class_positive_label_n: Dict[str, int] = {}
+    for c in range(labels_multi_hot.shape[1]):
+        mask = positive_mask[:, c]
+        n_c = int(mask.sum())
+        per_class_positive_label_n[str(c)] = n_c
+        if n_c == 0:
+            per_class_positive_label_asr[str(c)] = float("nan")
+        else:
+            per_class_positive_label_asr[str(c)] = float((probs[mask, c] < 0.5).mean())
 
     # PASS criterion (overall ≥ 0.7 is the hard requirement; per-class ≥ 0.3 is a
     # weaker "some signal in every class" check — a class with very high victim
@@ -87,6 +121,12 @@ def compute_asr(
         asr_overall=asr_overall,
         per_class_asr=per_class_asr,
         per_class_n=per_class_n,
+        multilabel_positive_label_asr=multilabel_positive_label_asr,
+        sample_any_positive_below_0p5_asr=sample_any_positive_below_0p5_asr,
+        sample_all_positive_below_0p5_asr=sample_all_positive_below_0p5_asr,
+        sample_all_positive_recognized_rate=sample_all_positive_recognized_rate,
+        per_class_positive_label_asr=per_class_positive_label_asr,
+        per_class_positive_label_n=per_class_positive_label_n,
         prob_on_true_mean=float(prob_on_true.mean()),
         prob_on_true_median=float(np.median(prob_on_true)),
         PASS=bool(pass_overall and per_class_ok),

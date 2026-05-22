@@ -193,7 +193,8 @@ def one_run(
 ) -> Path:
     subset = prepare_subset(center, k, seed=args.subset_seed)
     spec = VARIANTS[variant]
-    tag = f"{center}_K{k}_{variant}_M{hull_m}_ep{epochs}_seed{seed}"
+    weight_suffix = "" if args.hull_weight_mode == "optimized" else f"_w{args.hull_weight_mode}"
+    tag = f"{center}_K{k}_{variant}_M{hull_m}{weight_suffix}_ep{epochs}_seed{seed}"
     out_dir = OUT_ROOT / "runs" / tag
     eval_path = out_dir / "eval_result_v3_super5_normsuppress_exclrefs_crop1000.json"
     if eval_path.exists() and not args.force:
@@ -252,7 +253,9 @@ def one_run(
         "--hull_lr",
         str(args.hull_lr),
         "--hull_weight_mode",
-        "optimized",
+        args.hull_weight_mode,
+        "--hull_dirichlet_alpha",
+        str(args.hull_dirichlet_alpha),
         "--hull_label_mode",
         "primary",
         "--source_sampling_strategy",
@@ -428,6 +431,13 @@ def main() -> None:
     ap.add_argument("--adv_weight", type=float, default=0.06)
     ap.add_argument("--hull_steps", type=int, default=5)
     ap.add_argument("--hull_lr", type=float, default=0.25)
+    ap.add_argument(
+        "--hull_weight_mode",
+        choices=["optimized", "one_hot", "uniform", "dirichlet"],
+        default="optimized",
+        help="optimized is the main LH-AT method; fixed modes are no-adversarial-weight ablations.",
+    )
+    ap.add_argument("--hull_dirichlet_alpha", type=float, default=1.0)
     ap.add_argument("--num_workers", type=int, default=6)
     ap.add_argument(
         "--enable_quality_gate",
@@ -473,6 +483,7 @@ def main() -> None:
                         "K": args.K,
                         "variant": variant,
                         "hull_M": hull_m,
+                        "hull_weight_mode": args.hull_weight_mode,
                         "epochs": epochs,
                         "eval_path": str(eval_path),
                     }

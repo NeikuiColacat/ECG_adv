@@ -68,6 +68,28 @@ class LatentHullPGDGenerator(PGDAdvDiffGenerator):
         self.dirichlet_alpha = float(dirichlet_alpha)
         self.init_logit_gap = float(init_logit_gap)
         self.last_info: Dict[str, float] = {}
+        self.last_weights: Optional[torch.Tensor] = None
+
+    @staticmethod
+    def _enable_rnn_backward_only(module: torch.nn.Module) -> list[tuple[torch.nn.Module, bool]]:
+        """Temporarily put only cuDNN RNN modules in train mode for input-gradient attacks.
+
+        cuDNN RNN backward is unavailable for eval-mode RNNs, but switching the
+        whole victim to train would also change BatchNorm/Dropout behavior.  The
+        latent-hull inner loop only needs gradients through the recurrent layer,
+        so we toggle RNNBase children and restore their original states later.
+        """
+        states: list[tuple[torch.nn.Module, bool]] = []
+        for child in module.modules():
+            if isinstance(child, torch.nn.modules.rnn.RNNBase):
+                states.append((child, child.training))
+                child.train(True)
+        return states
+
+    @staticmethod
+    def _restore_module_training_states(states: list[tuple[torch.nn.Module, bool]]) -> None:
+        for child, was_training in states:
+            child.train(was_training)
 
     def _fixed_weights(self, bsz: int, m: int) -> Optional[torch.Tensor]:
         if self.weight_mode == "optimized":
@@ -122,16 +144,20 @@ class LatentHullPGDGenerator(PGDAdvDiffGenerator):
             logits_a.requires_grad_(True)
 
             opt = torch.optim.Adam([logits_a], lr=self.hull_lr)
-            for _ in range(self.hull_steps):
-                w = torch.softmax(logits_a, dim=-1)
-                z_mix = (w.view(bsz, m, 1, 1) * cand).sum(dim=1)
-                z_adv = (1.0 - self.hull_lambda) * z0 + self.hull_lambda * z_mix
-                logits = self.victim.forward_from_latent_to_logits(z_adv)
-                loss = F.binary_cross_entropy_with_logits(logits, y0, reduction="mean")
-                opt.zero_grad(set_to_none=True)
-                (-loss).backward()
-                opt.step()
-                last_loss = loss.detach()
+            rnn_states = self._enable_rnn_backward_only(self.victim.model)
+            try:
+                for _ in range(self.hull_steps):
+                    w = torch.softmax(logits_a, dim=-1)
+                    z_mix = (w.view(bsz, m, 1, 1) * cand).sum(dim=1)
+                    z_adv = (1.0 - self.hull_lambda) * z0 + self.hull_lambda * z_mix
+                    logits = self.victim.forward_from_latent_to_logits(z_adv)
+                    loss = F.binary_cross_entropy_with_logits(logits, y0, reduction="mean")
+                    opt.zero_grad(set_to_none=True)
+                    (-loss).backward()
+                    opt.step()
+                    last_loss = loss.detach()
+            finally:
+                self._restore_module_training_states(rnn_states)
         else:
             logits_a = None
 
@@ -140,6 +166,7 @@ class LatentHullPGDGenerator(PGDAdvDiffGenerator):
                 w = torch.softmax(logits_a.detach(), dim=-1)
             else:
                 w = fixed_w
+            self.last_weights = w.detach().cpu()
             z_mix = (w.view(bsz, m, 1, 1) * cand).sum(dim=1)
             z_adv = (1.0 - self.hull_lambda) * z0 + self.hull_lambda * z_mix
             delta = z_adv - z0

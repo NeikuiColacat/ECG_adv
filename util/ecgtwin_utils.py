@@ -11,6 +11,7 @@ import torch.nn as nn
 import yaml
 from typing import Dict, Any, Optional, Tuple
 from pathlib import Path
+import types
 
 # ——— TensorFlow segfault workaround（两步法）———
 # 步骤1：先阻止 TF 初始化，让 transformers 认为 TF 不可用
@@ -19,6 +20,20 @@ sys.modules['tensorflow'] = None  # type: ignore
 # 添加 ECGTwin 模块路径
 ECGTWIN_ROOT = Path(__file__).parent.parent / "model" / "ECGTwin"
 sys.path.insert(0, str(ECGTWIN_ROOT))
+
+# Several external ECG repos also expose a top-level ``utils`` package.  If one
+# of them is imported before ECGTwin, ``from utils.model_utils`` below resolves
+# to the wrong package.  Drop only non-ECGTwin ``utils`` modules before loading
+# ECGTwin internals.
+for _name in list(sys.modules):
+    if _name == "utils" or _name.startswith("utils."):
+        _mod = sys.modules.get(_name)
+        _file = str(getattr(_mod, "__file__", "") or "")
+        if _file and str(ECGTWIN_ROOT) not in _file:
+            del sys.modules[_name]
+_utils_pkg = types.ModuleType("utils")
+_utils_pkg.__path__ = [str(ECGTWIN_ROOT / "utils")]
+sys.modules["utils"] = _utils_pkg
 
 from diffusers import DDPMScheduler
 from transformers import AutoModel, AutoTokenizer

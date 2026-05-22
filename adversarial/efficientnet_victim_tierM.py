@@ -40,7 +40,7 @@ for p in [str(_PROJECT_ROOT), str(_ECGTWIN_ROOT), str(_DEEPECG_NB)]:
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from EfficientNetv2 import EfficientNet1DV2  # noqa: E402
+from scripts.triple_labels.model_zoo import build_super5_model, normalize_model_name  # noqa: E402
 from util.lead_utils import ECGTWIN_TO_PTBXL_INDICES  # noqa: E402
 
 
@@ -56,27 +56,20 @@ TIERM_PREPROC_LENGTH = 1000
 TIERM_AMP_CLAMP = 3.0
 
 
-def _build_efficientnet_tierM(num_classes: int = 6) -> EfficientNet1DV2:
-    """Construct a Tier-M EfficientNet1DV2 with the exact config used during training."""
-    return EfficientNet1DV2(
-        variant='s_v2',
-        input_channels=12,
-        num_classes=num_classes,
-        activation='leaky_relu',
-        stochastic_depth_prob=0.304,
-        dropout_rate=0.0,
-        use_se=True,
-        norm_type='batch',
-    )
+def _build_efficientnet_tierM(num_classes: int = 6) -> nn.Module:
+    """Backward-compatible EfficientNet constructor."""
+    return build_super5_model("efficientnet1dv2", num_classes=num_classes)
 
 
 def load_efficientnet_tierM(
     weight_path: str = DEFAULT_TIERM_CKPT,
     device: str = "cuda",
     num_classes: int = 6,
-) -> EfficientNet1DV2:
-    """Load Tier-M EfficientNet1DV2 from a plain state_dict checkpoint."""
-    model = _build_efficientnet_tierM(num_classes=num_classes)
+    model_name: str = "efficientnet1dv2",
+) -> nn.Module:
+    """Load a Super5/Tier-M victim backbone from a plain state_dict checkpoint."""
+    model_name = normalize_model_name(model_name)
+    model = build_super5_model(model_name, num_classes=num_classes)
     state = torch.load(weight_path, map_location="cpu")
     model.load_state_dict(state)
     model.to(device)
@@ -101,16 +94,19 @@ class EfficientNetVictimTierM(nn.Module):
         ecgtwin_wrapper=None,
         num_classes: int = 6,
         crop_len: int = TIERM_INPUT_LENGTH,
+        model_name: str = "efficientnet1dv2",
     ):
         super().__init__()
         self.device = torch.device(device)
         self.ecgtwin = ecgtwin_wrapper
         self.num_classes = num_classes
         self.crop_len = crop_len
+        self.model_name = normalize_model_name(model_name)
         self.model = load_efficientnet_tierM(
             weight_path=weight_path,
             device=device,
             num_classes=num_classes,
+            model_name=self.model_name,
         )
         # Default to eval — BatchNorm collapses to bias-only output at batch=1
         # in train mode (yields identical "fake" probs across distinct inputs).

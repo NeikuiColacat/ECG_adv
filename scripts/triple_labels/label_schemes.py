@@ -98,7 +98,7 @@ def ptbxl_scp_to_super5(scp_codes_str_or_dict, confidence_threshold=0.0):
     return label
 
 
-SUPER5_PN2021_MAPPING_VERSION = 'v3_super5_normsuppress_20260501'
+SUPER5_PN2021_MAPPING_VERSION = 'v5_super5_strict_voltage_pacing_suppress_20260522'
 
 # PN2021 SNOMED → PTB-XL Super5 semantic projection.
 #
@@ -106,11 +106,13 @@ SUPER5_PN2021_MAPPING_VERSION = 'v3_super5_normsuppress_20260501'
 # labels, not an official PN2021→PTB-XL-super5 crosswalk. This mapping is a
 # project policy for external-center evaluation.
 #
-# v3 policy:
+# v5 policy:
 #   - direct positive mapping only for codes with a clear CD/HYP/MI/STTC target;
 #   - strict NORM is only explicit sinus rhythm;
 #   - rhythm/axis/ectopy/low-voltage/boundary codes suppress NORM without
 #     becoming a super5 positive.
+#   - pacing/device rhythm codes suppress NORM but are not counted as CD.
+#   - voltage-only codes suppress NORM but are not counted as HYP.
 SNOMED_TO_SUPER5_POSITIVE = {
     # MI — infarction codes only (ischemia → STTC, hypertrophy → HYP)
     164865005: 'MI',     # myocardial infarction
@@ -133,7 +135,7 @@ SNOMED_TO_SUPER5_POSITIVE = {
     425623009: 'STTC',   # lateral ischemia
     425419005: 'STTC',   # inferior ischemia
     426434006: 'STTC',   # anterior ischemia
-    # CD — bundle branch blocks, AV blocks, conduction abnormalities, pacing
+    # CD — bundle branch blocks, AV blocks, conduction abnormalities
     270492004: 'CD',     # 1st degree AV block
     195042002: 'CD',     # 2nd degree AV block
     54016002:  'CD',     # 2nd degree Mobitz type I (Wenckebach)
@@ -151,23 +153,17 @@ SNOMED_TO_SUPER5_POSITIVE = {
     445118002: 'CD',     # LAnFB (left anterior fascicular block)
     445211001: 'CD',     # left posterior fascicular block
     698252002: 'CD',     # nonspecific IV conduction block
-    10370003:  'CD',     # pacing rhythm
-    251268003: 'CD',     # atrial pacing pattern
-    251266004: 'CD',     # ventricular pacing pattern
     74390002:  'CD',     # WPW (wolff-parkinson-white)
     26749005:  'CD',     # WPW alternate code
     195060002: 'CD',     # ventricular pre-excitation
     # HYP — hypertrophy and chamber enlargement
     164873001: 'HYP',    # left ventricular hypertrophy
-    55827005:  'HYP',    # left ventricular high voltage
     89792004:  'HYP',    # right ventricular hypertrophy
     266249003: 'HYP',    # ventricular hypertrophy generic
     446358003: 'HYP',    # right atrial hypertrophy / RAE
     446813000: 'HYP',    # left atrial hypertrophy / LAE
     67741000119109: 'HYP',  # left atrial enlargement (alt)
-    67751000119106: 'HYP',  # right atrial high voltage
     195126007: 'HYP',    # atrial hypertrophy
-    164828000: 'HYP',    # atrial hypertrophy (alt)
 }
 
 NORM_POSITIVE_SNOMEDS = frozenset({
@@ -191,6 +187,16 @@ NORM_SUPPRESS_SNOMEDS = frozenset({
     251146004,  # low QRS voltages
     365413008,  # poor R wave progression
     426627000,  # bradycardia
+    # Pacing/device rhythm changes the ECG morphology but is not a PTB-XL
+    # diagnostic CD subclass; keep it abnormal-for-NORM without making CD
+    # positive.
+    10370003,   # pacing rhythm
+    251268003,  # atrial pacing pattern
+    251266004,  # ventricular pacing pattern
+    # Voltage-only labels are ECG features rather than reliable structural
+    # hypertrophy/enlargement diagnoses.
+    55827005,   # left ventricular high voltage
+    67751000119106,  # right atrial high voltage
     # Common unscored/non-super5 abnormalities and rhythm variants.
     164951009,  # abnormal QRS
     233892002,  # accelerated atrial escape rhythm

@@ -438,6 +438,89 @@ Interpretation: powerline and EMG are mild under current severity mapping; basel
 shift and lead masking are the strongest stressors and should be highlighted in
 robustness tables.
 
+## 2026-05-12 Task-1 Main Baseline PN2021-C Result
+
+这是当前论文主线 EfficientNet1DV2：
+
+```text
+checkpoint:
+  /root/autodl-tmp/triple_labels/super5_minresample_full10_perglobal_20260503/best_model.pt
+
+clean eval:
+  /root/autodl-tmp/triple_labels/super5_minresample_full10_perglobal_20260503/eval_result_v3_super5_normsuppress.json
+
+PN2021-C eval:
+  /root/autodl-tmp/triple_labels/super5_minresample_full10_perglobal_20260503/eval_pn2021_c_cache_v1.json
+
+mode:
+  cache
+
+input protocol:
+  10s, 100Hz, minimal_resample, per_sample_global
+
+centers:
+  ningbo, chapman_shaoxing, cpsc_2018, georgia
+
+corruptions:
+  powerline_noise, emg_noise, baseline_wander, baseline_shift, random_leads_masking
+
+severities:
+  1, 2, 3, 4, 5
+```
+
+整体结果：
+
+| metric | clean mean | corrupted mean | drop |
+|---|---:|---:|---:|
+| AUROC | 0.8428 | 0.8332 | 0.0095 |
+| AUPRC | 0.5237 | 0.5095 | 0.0141 |
+
+按中心：
+
+| center | clean AUROC/AUPRC | corrupted mean AUROC/AUPRC | mean drop |
+|---|---:|---:|---:|
+| ningbo | 0.8657 / 0.4842 | 0.8547 / 0.4663 | 0.0110 / 0.0179 |
+| chapman_shaoxing | 0.8733 / 0.4427 | 0.8616 / 0.4277 | 0.0116 / 0.0150 |
+| cpsc_2018 | 0.8154 / 0.5712 | 0.8092 / 0.5595 | 0.0062 / 0.0117 |
+| georgia | 0.8167 / 0.5966 | 0.8074 / 0.5846 | 0.0093 / 0.0120 |
+
+按 corruption：
+
+| corruption | corrupted mean AUROC/AUPRC | mean drop |
+|---|---:|---:|
+| powerline_noise | 0.8427 / 0.5234 | 0.0001 / 0.0003 |
+| emg_noise | 0.8412 / 0.5204 | 0.0015 / 0.0032 |
+| baseline_wander | 0.8421 / 0.5233 | 0.0006 / 0.0004 |
+| baseline_shift | 0.8393 / 0.5189 | 0.0034 / 0.0048 |
+| random_leads_masking | 0.8008 / 0.4617 | 0.0420 / 0.0620 |
+
+按 severity：
+
+| severity | corrupted mean AUROC/AUPRC | mean drop |
+|---:|---:|---:|
+| 1 | 0.8403 / 0.5196 | 0.0024 / 0.0040 |
+| 2 | 0.8373 / 0.5151 | 0.0055 / 0.0086 |
+| 3 | 0.8342 / 0.5098 | 0.0085 / 0.0139 |
+| 4 | 0.8296 / 0.5051 | 0.0131 / 0.0186 |
+| 5 | 0.8246 / 0.4981 | 0.0181 / 0.0256 |
+
+结论：
+
+```text
+会下降，但不是所有 corruption 都同等严重。
+
+平均下降：
+  AUROC -0.0095
+  AUPRC -0.0141
+
+主要性能下降来自 random_leads_masking：
+  AUROC drop 0.0420
+  AUPRC drop 0.0620
+
+powerline_noise / emg_noise / baseline_wander 在当前 severity mapping 下较温和。
+severity 越高，性能下降越明显。
+```
+
 ## Current Enhanced Result
 
 已完成当前 Latent-Hull AUPRC-best checkpoint 的 streaming PN2021-C：

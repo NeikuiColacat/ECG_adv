@@ -1,0 +1,495 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ECGFounder 150 类到 Super5 映射策略说明</title>
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --paper: #ffffff;
+      --ink: #1f2933;
+      --muted: #64748b;
+      --line: #d9e1ea;
+      --accent: #0f766e;
+      --warn: #b45309;
+      --bad: #b91c1c;
+      --good: #047857;
+      --code: #0f172a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.62;
+    }
+    main {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 36px 22px 64px;
+    }
+    section {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 22px 24px;
+      margin: 18px 0;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 30px;
+      line-height: 1.2;
+    }
+    h2 {
+      margin: 0 0 14px;
+      font-size: 21px;
+    }
+    h3 {
+      margin: 18px 0 8px;
+      font-size: 16px;
+    }
+    p { margin: 8px 0; }
+    .lead {
+      color: var(--muted);
+      max-width: 900px;
+      margin-bottom: 18px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 16px;
+    }
+    .stat {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px 16px;
+      background: #fbfdff;
+    }
+    .num {
+      display: block;
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--accent);
+    }
+    .label { color: var(--muted); font-size: 13px; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 14px 0;
+      font-size: 14px;
+    }
+    th, td {
+      border: 1px solid var(--line);
+      padding: 9px 10px;
+      vertical-align: top;
+    }
+    th {
+      background: #eef4f8;
+      text-align: left;
+      font-weight: 650;
+    }
+    code, pre {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    code {
+      background: #eef2f7;
+      padding: 1px 5px;
+      border-radius: 4px;
+      color: var(--code);
+    }
+    pre {
+      overflow-x: auto;
+      background: #0f172a;
+      color: #e2e8f0;
+      padding: 14px 16px;
+      border-radius: 8px;
+      line-height: 1.45;
+      font-size: 13px;
+    }
+    .tag {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 12px;
+      font-weight: 650;
+      border: 1px solid transparent;
+    }
+    .tag.bad { color: var(--bad); background: #fee2e2; border-color: #fecaca; }
+    .tag.warn { color: var(--warn); background: #fef3c7; border-color: #fde68a; }
+    .tag.good { color: var(--good); background: #dcfce7; border-color: #bbf7d0; }
+    .note {
+      border-left: 4px solid var(--accent);
+      background: #ecfeff;
+      padding: 10px 12px;
+      margin: 12px 0;
+      border-radius: 4px;
+    }
+    .warnbox {
+      border-left: 4px solid var(--warn);
+      background: #fff7ed;
+      padding: 10px 12px;
+      margin: 12px 0;
+      border-radius: 4px;
+    }
+    ul { padding-left: 22px; }
+    li { margin: 5px 0; }
+    .small { font-size: 13px; color: var(--muted); }
+    @media (max-width: 860px) {
+      .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      main { padding: 24px 14px 48px; }
+      section { padding: 18px 16px; }
+      table { font-size: 13px; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <h1>ECGFounder 150 类到 PTB-XL Super5 映射策略说明</h1>
+  <p class="lead">
+    更新时间：2026-05-22。范围：当前项目中 ECGFounder 官方 150-class head 到
+    <code>CD / HYP / MI / NORM / STTC</code> 的映射事实、风险解释，以及后续修正计划。
+  </p>
+
+  <section>
+    <h2>1. 结论先行</h2>
+    <p>
+      历史 ECGFounder 对比脚本使用的是 <strong>keyword pool + max pooling</strong>：
+      先用字符串关键词把 ECGFounder 的 150 个官方输出任务分到 Super5 类别池中，
+      再把每个池内的 sigmoid 概率取最大值作为该 Super5 类的 score。现在脚本已经加入
+      <code>strict_v1</code> 显式映射，并默认使用严格版本。
+    </p>
+    <pre>Super5_score[class] = max(sigmoid(ECGFounder_150_logits[task_i]))
+for task_i in keyword_matched_pool[class]</pre>
+    <div class="warnbox">
+      这不是 ECGFounder 官方 Super5 分类头，也不是 PTB-XL diagnostic_class 的官方映射。
+      它只能作为“官方 150 类输出的启发式兼容基线”，不适合作为论文主表中的公平 ECGFounder Super5 对比。
+    </div>
+    <div class="grid">
+      <div class="stat"><span class="num">150</span><span class="label">ECGFounder official head 输出任务数</span></div>
+      <div class="stat"><span class="num">5</span><span class="label">本项目 Super5 目标类</span></div>
+      <div class="stat"><span class="num">strict_v1</span><span class="label">当前默认映射策略</span></div>
+      <div class="stat"><span class="num">22157aa4ff44</span><span class="label">strict_v1 mapping hash</span></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>2. 当前代码位置</h2>
+    <table>
+      <tr><th>项目</th><th>路径</th><th>作用</th></tr>
+      <tr>
+        <td>ECGFounder zero-shot Super5 评估脚本</td>
+        <td><code>scripts/paper/eval_ecgfounder_super5_zero_shot_20260517.py</code></td>
+        <td>加载 ECGFounder 官方 12-lead checkpoint，输出 150 类 logits；默认用 <code>--mapping_policy strict_v1</code> 转成 Super5 score，也可用 <code>--mapping_policy legacy_keyword</code> 复现历史弱基线。</td>
+      </tr>
+      <tr>
+        <td>ECGFounder 官方任务名</td>
+        <td><code>/root/autodl-tmp/ecgfounder/tasks.txt</code></td>
+        <td>150 个官方输出标签名称，是当前 keyword pool 的输入。</td>
+      </tr>
+      <tr>
+        <td>当前 PN2021 Super5 标签函数</td>
+        <td><code>scripts/triple_labels/label_schemes.py</code></td>
+        <td>当前工作区已经切到 v5：<code>v5_super5_strict_voltage_pacing_suppress_20260522</code>。</td>
+      </tr>
+    </table>
+    <p class="small">
+      注意：ECGFounder 脚本文档字符串里仍有 “v3” 历史描述；实际运行时导入的是当前
+      <code>snomed_list_to_super5</code>，因此现在重新跑会使用 v5 标签策略。旧的 2026-05-21 ECGFounder 报告属于历史口径，需要重跑后才能和 v5 主实验严格对齐。
+    </p>
+  </section>
+
+  <section>
+    <h2>3. 历史 keyword pool 事实</h2>
+    <table>
+      <tr><th>Super5</th><th>pool size</th><th>当前关键词逻辑</th><th>主要问题</th></tr>
+      <tr>
+        <td><code>NORM</code></td>
+        <td>4</td>
+        <td>精确匹配 <code>NORMAL SINUS RHYTHM</code>、<code>NORMAL ECG</code>、<code>SINUS RHYTHM</code>、<code>OTHERWISE NORMAL ECG</code>。</td>
+        <td><code>SINUS RHYTHM</code> 和 <code>NORMAL SINUS RHYTHM</code> 不等价于 PTB-XL 的 diagnostic <code>NORM</code>，尤其不能排除伴随异常。</td>
+      </tr>
+      <tr>
+        <td><code>MI</code></td>
+        <td>11</td>
+        <td>包含 <code>INFARCT</code>、<code>ACUTE MI</code>、<code>STEMI</code>。</td>
+        <td>相对清晰，但仍是报告词匹配，不等价 PTB-XL SCP infarction subclass；injury pattern 是否纳入需要敏感性实验。</td>
+      </tr>
+      <tr>
+        <td><code>CD</code></td>
+        <td>37</td>
+        <td>包含 BBB、fascicular block、IVCD、WPW、AV block、QRS widening，也包含 pacemaker/paced/pacing 相关任务。</td>
+        <td>池很大，max pooling 容易抬高分数；pacing/device rhythm 不应直接当作 PTB-XL CD 主分析阳性。</td>
+      </tr>
+      <tr>
+        <td><code>HYP</code></td>
+        <td>7</td>
+        <td>包含 hypertrophy、enlargement、voltage criteria。</td>
+        <td><code>VOLTAGE CRITERIA</code> 是 ECG 电压表现，不一定等价结构性 hypertrophy；应做 strict/sensitive 两版。</td>
+      </tr>
+      <tr>
+        <td><code>STTC</code></td>
+        <td>31</td>
+        <td>包含 T wave、ST segment、QT、repolarization、digitalis effect、pericarditis 等关键词。</td>
+        <td>池很大，包含大量报告比较语句：now evident、no longer、less/more、has replaced；还包含 early repolarization、pericarditis、short QT 等边界项。</td>
+      </tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>3.1 已实现 strict_v1 映射</h2>
+    <p>
+      代码现在默认使用 <code>ecgfounder150_to_super5_v1_strict_20260522</code>，
+      mapping hash 为 <code>22157aa4ff44</code>。每个 Super5 类仍使用池内
+      <code>max(sigmoid(logit))</code>，但池子改为显式医学审核列表；同时使用
+      <code>NORM suppress</code>：如果任一异常/suppress-only task 概率高，则压低 NORM score。
+    </p>
+    <table>
+      <tr><th>Super5</th><th>strict_v1 pool size</th><th>策略</th></tr>
+      <tr><td><code>CD</code></td><td>18</td><td>BBB、fascicular block、AV block、IVCD、WPW、明确 conduction delay；不含 pacing/device-only。</td></tr>
+      <tr><td><code>HYP</code></td><td>6</td><td>explicit hypertrophy/enlargement；不含 voltage criteria。</td></tr>
+      <tr><td><code>MI</code></td><td>10</td><td>explicit infarct / acute MI / STEMI；不含 <code>CONSIDER...</code> 和 injury pattern。</td></tr>
+      <tr><td><code>NORM</code></td><td>2</td><td>只保留 <code>NORMAL ECG</code> 与 <code>OTHERWISE NORMAL ECG</code>；不把 sinus rhythm 单独当 NORM。</td></tr>
+      <tr><td><code>STTC</code></td><td>6</td><td>明确 ST/T/QT/repolarization abnormality；不含 temporal comparison、early repol、pericarditis、short QT。</td></tr>
+      <tr><td><code>NORM suppress</code></td><td>143</td><td>abnormal/rhythm/axis/ectopy/device/voltage/boundary/strict direct abnormal tasks 都会抑制 NORM。</td></tr>
+    </table>
+    <pre>python scripts/paper/eval_ecgfounder_super5_zero_shot_20260517.py \
+  --mapping_policy strict_v1 \
+  --out_dir /root/autodl-tmp/paper_foundation_baselines_20260522/ecgfounder_super5_strict_v1</pre>
+  </section>
+
+  <section>
+    <h2>4. 当前 150 类池明细</h2>
+    <h3>CD：37 项</h3>
+    <pre>012 RIGHT BUNDLE BRANCH BLOCK
+019 INCOMPLETE RIGHT BUNDLE BRANCH BLOCK
+021 LEFT BUNDLE BRANCH BLOCK
+037 LEFT ANTERIOR FASCICULAR BLOCK
+051 ELECTRONIC ATRIAL PACEMAKER
+052 ABERRANT CONDUCTION
+053 ELECTRONIC VENTRICULAR PACEMAKER
+057 RSR' OR QR PATTERN IN V1 SUGGESTS RIGHT VENTRICULAR CONDUCTION DELAY
+063 INCOMPLETE LEFT BUNDLE BRANCH BLOCK
+066 BIFASCICULAR BLOCK
+071 LEFT POSTERIOR FASCICULAR BLOCK
+073 WITH A COMPETING JUNCTIONAL PACEMAKER
+076 VENTRICULAR-PACED RHYTHM
+077 ATRIAL-PACED RHYTHM
+079 WITH QRS WIDENING
+080 WITH 1ST DEGREE AV BLOCK
+082 WITH PROLONGED AV CONDUCTION
+084 WITH QRS WIDENING AND REPOLARIZATION ABNORMALITY
+085 ATRIAL-SENSED VENTRICULAR-PACED RHYTHM
+086 AV SEQUENTIAL OR DUAL CHAMBER ELECTRONIC PACEMAKER
+090 NONSPECIFIC INTRAVENTRICULAR CONDUCTION DELAY
+093 AV DUAL-PACED RHYTHM
+095 VENTRICULAR-PACED COMPLEXES
+097 RSR' PATTERN IN V1
+104 RBBB AND LEFT ANTERIOR FASCICULAR BLOCK
+106 BIVENTRICULAR PACEMAKER DETECTED
+107 SUSPECT UNSPECIFIED PACEMAKER FAILURE
+108 WOLFF-PARKINSON-WHITE
+113 NONSPECIFIC INTRAVENTRICULAR BLOCK
+114 MASKED BY FASCICULAR BLOCK
+122 WITH COMPLETE HEART BLOCK
+128 WITH VARIABLE AV BLOCK
+138 AV DUAL-PACED COMPLEXES
+140 RBBB AND LEFT POSTERIOR FASCICULAR BLOCK
+142 ATRIAL-PACED COMPLEXES
+147 WITH 2ND DEGREE AV BLOCK MOBITZ I
+148 WITH 2:1 AV CONDUCTION</pre>
+
+    <h3>HYP：7 项</h3>
+    <pre>014 LEFT ATRIAL ENLARGEMENT
+027 LEFT VENTRICULAR HYPERTROPHY
+061 RIGHT ATRIAL ENLARGEMENT
+064 VOLTAGE CRITERIA FOR LEFT VENTRICULAR HYPERTROPHY
+075 BIATRIAL ENLARGEMENT
+083 RIGHT VENTRICULAR HYPERTROPHY
+144 BIVENTRICULAR HYPERTROPHY</pre>
+
+    <h3>MI：11 项</h3>
+    <pre>013 SEPTAL INFARCT
+018 ANTERIOR INFARCT
+025 LATERAL INFARCT
+041 ANTEROSEPTAL INFARCT
+055 ANTEROLATERAL INFARCT
+062 INFERIOR INFARCT
+088 ACUTE MI / STEMI
+089 INFERIOR-POSTERIOR INFARCT
+111 CONSIDER RIGHT VENTRICULAR INVOLVEMENT IN ACUTE INFERIOR INFARCT
+131 ACUTE MI
+133 POSTERIOR INFARCT</pre>
+
+    <h3>NORM：4 项</h3>
+    <pre>002 NORMAL SINUS RHYTHM
+003 NORMAL ECG
+004 SINUS RHYTHM
+008 otherwise normal ecg</pre>
+
+    <h3>STTC：31 项</h3>
+    <pre>015 NONSPECIFIC T WAVE ABNORMALITY
+022 NONSPECIFIC T WAVE ABNORMALITY NOW EVIDENT IN
+023 NONSPECIFIC T WAVE ABNORMALITY NO LONGER EVIDENT IN
+024 T WAVE INVERSION NOW EVIDENT IN
+026 NONSPECIFIC ST ABNORMALITY
+028 T WAVE INVERSION NO LONGER EVIDENT IN
+030 QT HAS SHORTENED
+031 QT HAS LENGTHENED
+036 NONSPECIFIC ST AND T WAVE ABNORMALITY
+043 ST NOW DEPRESSED IN
+046 ST NO LONGER DEPRESSED IN
+047 INVERTED T WAVES HAVE REPLACED NONSPECIFIC T WAVE ABNORMALITY IN
+048 NON-SPECIFIC CHANGE IN ST SEGMENT IN
+049 NONSPECIFIC T WAVE ABNORMALITY HAS REPLACED INVERTED T WAVES IN
+054 T WAVE INVERSION LESS EVIDENT IN
+056 WITH REPOLARIZATION ABNORMALITY
+058 T WAVE INVERSION MORE EVIDENT IN
+065 OR DIGITALIS EFFECT
+067 ST NO LONGER ELEVATED IN
+069 ST ELEVATION NOW PRESENT IN
+072 T WAVE AMPLITUDE HAS DECREASED IN
+078 T WAVE AMPLITUDE HAS INCREASED IN
+081 PROLONGED QT
+084 WITH QRS WIDENING AND REPOLARIZATION ABNORMALITY
+098 ST LESS DEPRESSED IN
+100 EARLY REPOLARIZATION
+101 ST MORE DEPRESSED IN
+112 ST ELEVATION HAS REPLACED ST DEPRESSION IN
+124 ST LESS ELEVATED IN
+126 ST MORE ELEVATED IN
+132 ACUTE PERICARDITIS</pre>
+  </section>
+
+  <section>
+    <h2>5. 当前策略为什么风险高</h2>
+    <table>
+      <tr><th>风险</th><th>解释</th><th>对 AUROC/AUPRC 的影响</th></tr>
+      <tr>
+        <td>ontology 不一致</td>
+        <td>ECGFounder 150 类是报告式标签，PTB-XL Super5 是 diagnostic superclass；二者没有官方一一对应表。</td>
+        <td>指标不能解释为 ECGFounder 官方 Super5 能力。</td>
+      </tr>
+      <tr>
+        <td>max pooling 大池偏置</td>
+        <td>CD 有 37 项、STTC 有 31 项；池越大，任意一项概率偏高的机会越大。</td>
+        <td>CD/STTC 分数容易被系统性抬高，AUPRC 对类别池大小敏感。</td>
+      </tr>
+      <tr>
+        <td>NORM guard 缺失</td>
+        <td>当前只要 ECGFounder 给 <code>SINUS RHYTHM</code> 高分，NORM 就可能高；但 sinus rhythm 可与异常共存。</td>
+        <td>NORM 可能和异常类同时高，影响多标签指标解释。</td>
+      </tr>
+      <tr>
+        <td>设备/起搏污染 CD</td>
+        <td>pacemaker/paced rhythm/device failure 不是 PTB-XL CD 主分析的严格等价项。</td>
+        <td>CD 分数混入设备状态，和我们 v5 PN2021 对 pacing 的 strict 策略不一致。</td>
+      </tr>
+      <tr>
+        <td>报告比较语句污染 STTC</td>
+        <td>“now evident / no longer / less / more / has replaced” 是报告比较语句，不是稳定诊断标签。</td>
+        <td>STTC 分数可能来自文本模板式标签，不是 ECG 当前状态。</td>
+      </tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>6. 推荐改进计划</h2>
+    <table>
+      <tr><th>优先级</th><th>方案</th><th>做法</th><th>论文定位</th></tr>
+      <tr>
+        <td><span class="tag good">P0</span></td>
+        <td>Frozen ECGFounder backbone + PTB-XL Super5 linear head</td>
+        <td>冻结 ECGFounder encoder；用 PTB-XL fold 1-8 训练一个 5 类线性头；fold 9 选择阈值/校准；fold 10 和 PN2021 外部中心评估。</td>
+        <td>最公平主对比。它避免 150 类 ontology 映射问题，直接学习 Super5。</td>
+      </tr>
+      <tr>
+        <td><span class="tag good">P1</span></td>
+        <td>ECGFounder K-shot target head / target fine-tune</td>
+        <td>同样用 Super5 头，在每个目标中心 K=500 上做 head-only 或轻量 fine-tune，并排除 K 条测试污染。</td>
+        <td>强目标中心适配基线，用来对比我们的 VAE-only 在线对抗训练。</td>
+      </tr>
+      <tr>
+        <td><span class="tag warn">P2</span></td>
+        <td>150 probs -> Super5 logistic bridge</td>
+        <td>保留官方 150 类 head 不动；在 PTB-XL fold 1-8 上训练一个 150->5 的 logistic/MLP bridge，fold 9 校准。</td>
+        <td>附表。比 keyword/max pooling 更公平，但仍依赖 150 类头覆盖。</td>
+      </tr>
+      <tr>
+        <td><span class="tag warn">P3</span></td>
+        <td>Strict manual zero-shot pooling</td>
+        <td>修窄当前关键词池：去掉 pacing/device-only、temporal comparison、early repolarization、pericarditis、short QT；NORM 只保留 normal ECG 类。</td>
+        <td>附录/敏感性实验。仍不是官方 Super5 头。</td>
+      </tr>
+      <tr>
+        <td><span class="tag bad">P4</span></td>
+        <td>当前 broad keyword + max pooling</td>
+        <td>保留历史脚本结果，但标注为 heuristic weak baseline。</td>
+        <td>不建议放主表。</td>
+      </tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>7. strict manual pooling 的建议规则</h2>
+    <table>
+      <tr><th>Super5</th><th>strict 主分析</th><th>sensitive/附录</th><th>从当前池删除</th></tr>
+      <tr>
+        <td><code>NORM</code></td>
+        <td>只保留 <code>NORMAL ECG</code>、<code>OTHERWISE NORMAL ECG</code>。</td>
+        <td>可测试是否加入 <code>NORMAL SINUS RHYTHM</code>。</td>
+        <td><code>SINUS RHYTHM</code> 单独项；必要时对所有 abnormal pool 加 NORM suppression。</td>
+      </tr>
+      <tr>
+        <td><code>CD</code></td>
+        <td>BBB、AV block、fascicular block、IVCD、WPW、明确 conduction delay。</td>
+        <td>QRS widening 可作为敏感性。</td>
+        <td>pacemaker/paced rhythm/device failure/device detected/competing pacemaker。</td>
+      </tr>
+      <tr>
+        <td><code>HYP</code></td>
+        <td>explicit hypertrophy / enlargement。</td>
+        <td>voltage criteria 单独敏感性。</td>
+        <td>不要把 voltage criteria 默认当作 HYP 主分析阳性。</td>
+      </tr>
+      <tr>
+        <td><code>MI</code></td>
+        <td>explicit infarct、acute MI、STEMI。</td>
+        <td>injury pattern / consider involvement 单独敏感性。</td>
+        <td>不建议删除 explicit infarct；但 <code>CONSIDER...</code> 可降级敏感性。</td>
+      </tr>
+      <tr>
+        <td><code>STTC</code></td>
+        <td>direct ST abnormality、T wave abnormality、ST depression/elevation、prolonged QT、repolarization abnormality。</td>
+        <td>digitalis effect 可单独敏感性。</td>
+        <td>now evident、no longer、less/more、has replaced、early repolarization、pericarditis、QT has shortened。</td>
+      </tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>8. 计划执行清单</h2>
+    <ol>
+      <li>已完成：把当前 keyword/max pooling 保留为 <code>legacy_keyword</code> 历史弱基线，避免论文里误写成官方 Super5。</li>
+      <li>已完成：新增 <code>strict_v1</code> 显式映射函数，输出每个 Super5 的明确 task 列表，并保存 mapping hash。</li>
+      <li>下一步：重跑 ECGFounder zero-shot strict pool，在 v5 PN2021 标签下报告 all-zero kept 与 drop all-zero 两种口径。</li>
+      <li>实现 P0：冻结 ECGFounder backbone，导出 PTB-XL fold 1-8/9/10 features，训练 Super5 linear head。</li>
+      <li>用同一套 PN2021 v5 评估脚本对比：PTB-XL EfficientNet baseline、VAE-only 在线对抗训练、ECGFounder frozen-backbone Super5 head。</li>
+      <li>如果时间允许，再做 P1 K=500 target head fine-tune，作为强目标中心适配 baseline。</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>9. 论文推荐表述</h2>
+    <pre>ECGFounder provides an official 150-label ECG-report taxonomy head rather than
+a PTB-XL Super5 diagnostic superclass head. Therefore, we do not treat direct
+keyword pooling of the 150 outputs as an official Super5 classifier. Our main
+ECGFounder comparison trains a Super5 linear head on frozen ECGFounder features
+using PTB-XL training folds, while heuristic 150-label pooling is reported only
+as a label-space compatibility baseline.</pre>
+  </section>
+</main>
+</body>
+</html>
