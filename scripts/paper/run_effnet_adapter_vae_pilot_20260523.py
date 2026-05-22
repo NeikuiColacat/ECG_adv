@@ -98,8 +98,11 @@ def train_one(center: str, method: str, args: argparse.Namespace) -> Path:
     subset = prepare_subset(center, args.K, args.subset_seed)
     classes = present_classes(subset["signals"])
     class_tag = "".join(c.lower() for c in classes)
-    adapter_tag = "headfn" if args.train_final_norm else "head"
-    if args.classifier_adapter_type != "linear":
+    if args.unfreeze_last_n_features > 0:
+        adapter_tag = f"last{args.unfreeze_last_n_features}"
+    else:
+        adapter_tag = "headfn" if args.train_final_norm else "head"
+    if args.unfreeze_last_n_features <= 0 and args.classifier_adapter_type != "linear":
         adapter_tag = f"{adapter_tag}_{args.classifier_adapter_type}r{args.classifier_lora_rank}"
     label_tag = args.adv_label_mode.replace("_", "")
     tag = (
@@ -139,10 +142,6 @@ def train_one(center: str, method: str, args: argparse.Namespace) -> Path:
         "--pgd_batch", "32",
         "--classes_in_scope", *classes,
         "--allow_hyp_cd_trust",
-        "--freeze_backbone_classifier_only",
-        "--classifier_adapter_type", args.classifier_adapter_type,
-        "--classifier_lora_rank", str(args.classifier_lora_rank),
-        "--classifier_lora_alpha", str(args.classifier_lora_alpha),
         "--target_real_weight", str(args.target_real_weight),
         "--ptbxl_weight", "1.0",
         "--roundtrip_weight", "0.0",
@@ -165,7 +164,16 @@ def train_one(center: str, method: str, args: argparse.Namespace) -> Path:
         "--crop_len", "1000",
         "--device", args.device,
     ]
-    if args.train_final_norm:
+    if args.unfreeze_last_n_features > 0:
+        train_cmd.extend(["--unfreeze_last_n_features", str(args.unfreeze_last_n_features)])
+    else:
+        train_cmd.extend([
+            "--freeze_backbone_classifier_only",
+            "--classifier_adapter_type", args.classifier_adapter_type,
+            "--classifier_lora_rank", str(args.classifier_lora_rank),
+            "--classifier_lora_alpha", str(args.classifier_lora_alpha),
+        ])
+    if args.train_final_norm and args.unfreeze_last_n_features <= 0:
         train_cmd.append("--classifier_only_train_final_norm")
     if method == "real_only":
         train_cmd.extend(["--disable_adv_stream", "--adv_weight", "0.0"])
@@ -294,6 +302,12 @@ def main() -> None:
     ap.add_argument("--classifier_adapter_type", choices=["linear", "lora"], default="linear")
     ap.add_argument("--classifier_lora_rank", type=int, default=16)
     ap.add_argument("--classifier_lora_alpha", type=float, default=16.0)
+    ap.add_argument(
+        "--unfreeze_last_n_features",
+        type=int,
+        default=0,
+        help="If >0, train classifier/final_conv/final_norm plus last N EfficientNet feature blocks.",
+    )
     ap.add_argument("--lr", type=float, default=5e-5)
     ap.add_argument("--batch_size", type=int, default=128)
     ap.add_argument("--num_workers", type=int, default=4)
@@ -319,11 +333,15 @@ def main() -> None:
                 "K": args.K,
                 "method": method,
                 "adapter": (
-                    ("head+final_norm" if args.train_final_norm else "head")
-                    if args.classifier_adapter_type == "linear"
+                    f"last{args.unfreeze_last_n_features}"
+                    if args.unfreeze_last_n_features > 0
                     else (
                         ("head+final_norm" if args.train_final_norm else "head")
-                        + f"+lora_r{args.classifier_lora_rank}"
+                        if args.classifier_adapter_type == "linear"
+                        else (
+                            ("head+final_norm" if args.train_final_norm else "head")
+                            + f"+lora_r{args.classifier_lora_rank}"
+                        )
                     )
                 ),
                 "classes": " ".join(present_classes(subset["signals"])),

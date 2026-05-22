@@ -2094,3 +2094,56 @@ CPSC K=20 极小目标样本检查：
 K=20 时当前协议没有产生有效 target adaptation；
 VAE-only 没有在极小样本下明显优于 real-only 或 source baseline。
 ```
+
+### 2026-05-23 EfficientNet Last-block Adaptation Pilot
+
+为验证 classifier-only 是否过弱，新增一个保守解冻版本：
+
+```text
+trainable:
+  classifier
+  final_conv
+  final_norm affine
+  last 4 EfficientNet feature blocks
+
+frozen:
+  earlier feature blocks
+  BatchNorm running statistics
+
+K=100, center=cpsc_2018, lr=5e-6, epochs=10
+```
+
+结果：
+
+| setting | target real weight | VAE adv weight | CPSC target | CPSC drop-all-zero | PTB-XL fold10 |
+|---|---:|---:|---:|---:|---:|
+| real-only last4 | 40 | 0 | 0.8143 / 0.5688 | 0.8634 / 0.6982 | 0.9077 / 0.7759 |
+| real+VAE last4 | 40 | 20 | 0.8163 / 0.5700 | 0.8657 / 0.7010 | 0.9078 / 0.7760 |
+| pure VAE last4 | 0 | 20 | 0.8147 / 0.5691 | 0.8636 / 0.6986 | 0.9077 / 0.7757 |
+
+结论：
+
+```text
+last-block adaptation 保持了 PTB-XL source performance；
+但 VAE 增益仍然很小，pure VAE 没有明显独立优势。
+所以当前问题不是简单扩大 trainable capacity 能解决的。
+```
+
+### ECGFounder Fine-tuning Strategy Check
+
+本地 ECGFounder 官方仓库显示：
+
+```text
+finetune_ECGFounder.ipynb:
+  ft_12lead_ECGFounder(..., linear_prob=False)
+  linear classification -> linear_prob=True
+  full fine-tuning      -> linear_prob=False
+
+README:
+  validation/fine-tuning must follow dataset.py preprocessing.
+```
+
+因此 frozen encoder + 5-class head 是 conservative linear-probe baseline，
+不是 ECGFounder 官方推荐的最强策略。ECGFounder 的 target-real 大提升需要
+与官方 full fine-tuning 对照后，才能判断是 VAE-only 强，还是原 head-only
+策略过弱。

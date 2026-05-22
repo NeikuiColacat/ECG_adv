@@ -968,3 +968,51 @@ CPSC K=20 极小目标样本检查：
 K=20 时，本轮 real-only 和 VAE 分支的 best checkpoint 都停在 epoch0。
 当前协议下，VAE-only 没有补足极小样本 target supervision 的不足。
 ```
+
+### EfficientNet last-block adaptation pilot
+
+为了验证“只改分类头太弱”这个假设，新增了 EfficientNet last-block adaptation：
+
+```text
+trainable = classifier + final_conv + final_norm affine + last 4 feature blocks
+frozen    = earlier backbone blocks and BatchNorm running statistics
+lr        = 5e-6
+K         = 100
+center    = cpsc_2018
+```
+
+结果：
+
+| setting | target real weight | VAE adv weight | CPSC target | CPSC drop-all-zero | PTB-XL fold10 |
+|---|---:|---:|---:|---:|---:|
+| real-only last4 | 40 | 0 | 0.8143 / 0.5688 | 0.8634 / 0.6982 | 0.9077 / 0.7759 |
+| real+VAE last4 | 40 | 20 | 0.8163 / 0.5700 | 0.8657 / 0.7010 | 0.9078 / 0.7760 |
+| pure VAE last4 | 0 | 20 | 0.8147 / 0.5691 | 0.8636 / 0.6986 | 0.9077 / 0.7757 |
+
+判断：
+
+```text
+轻微解冻不会破坏 PTB-XL source performance；
+VAE stream 仍只提供弱增益；
+pure VAE last4 没有明显超过 source/real-only；
+当前瓶颈不是“只训练分类头太弱”这么简单。
+```
+
+### ECGFounder official fine-tuning check
+
+本地 ECGFounder 官方仓库证据：
+
+```text
+model/ecgfounder/finetune_ECGFounder.ipynb:
+  ft_12lead_ECGFounder(..., linear_prob=False)
+  "linear classificaion -> linear_prob=True"
+  "full fine-tuning -> linear_prob=False"
+
+model/ecgfounder/README.md:
+  fine-tuning/validation must strictly follow dataset.py preprocessing.
+```
+
+因此当前 ECGFounder frozen-encoder 5-class head/adapter 实验是保守
+linear-probe 设定，不是作者推荐的最强 fine-tuning 设定。ECGFounder
+较大 target-real gain 不能直接归因于 VAE-only；需要用官方 full fine-tuning
+作为更公平的 ECGFounder 上限对照。

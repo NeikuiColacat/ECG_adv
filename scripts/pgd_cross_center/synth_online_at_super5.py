@@ -255,6 +255,51 @@ def configure_classifier_only_adaptation(
     return [p for p in model.parameters() if p.requires_grad], freeze_backbone_eval
 
 
+def configure_last_blocks_adaptation(
+    model: nn.Module,
+    last_n_features: int,
+    train_final_norm: bool = True,
+) -> Tuple[List[nn.Parameter], Callable[[], None]]:
+    """Train classifier plus the last N EfficientNet feature blocks.
+
+    This is a conservative middle ground between classifier-only adaptation and
+    full-model fine-tuning. BatchNorm running statistics are kept frozen by the
+    returned eval callback; trainable convolution/norm affine parameters still
+    receive gradients.
+    """
+    if last_n_features <= 0:
+        raise ValueError(f"last_n_features must be positive, got {last_n_features}")
+    if not hasattr(model, "features") or not hasattr(model.features, "__len__"):
+        raise ValueError("last-block adaptation requires model.features sequence")
+    for p in model.parameters():
+        p.requires_grad_(False)
+
+    n_features = len(model.features)
+    start = max(0, n_features - int(last_n_features))
+    for module in model.features[start:]:
+        for p in module.parameters():
+            p.requires_grad_(True)
+
+    if hasattr(model, "final_conv"):
+        for p in model.final_conv.parameters():
+            p.requires_grad_(True)
+    if train_final_norm and hasattr(model, "final_norm"):
+        for p in model.final_norm.parameters():
+            p.requires_grad_(True)
+    if hasattr(model, "classifier"):
+        for p in model.classifier.parameters():
+            p.requires_grad_(True)
+
+    def freeze_backbone_eval() -> None:
+        for name in ("initial_conv", "features", "final_conv", "final_norm"):
+            module = getattr(model, name, None)
+            if module is not None:
+                module.eval()
+
+    freeze_backbone_eval()
+    return [p for p in model.parameters() if p.requires_grad], freeze_backbone_eval
+
+
 class FoldableLowRankLinear(nn.Module):
     """A foldable low-rank residual adapter for a Linear layer.
 
@@ -1348,6 +1393,17 @@ def parse_args():
     )
     p.add_argument("--classifier_lora_rank", type=int, default=16)
     p.add_argument("--classifier_lora_alpha", type=float, default=16.0)
+    p.add_argument(
+        "--unfreeze_last_n_features",
+        type=int,
+        default=0,
+        help=(
+            "Conservative EfficientNet adaptation: train classifier, "
+            "final_conv/final_norm, and the last N feature blocks while "
+            "keeping BatchNorm running statistics frozen. Mutually exclusive "
+            "with --freeze_backbone_classifier_only."
+        ),
+    )
 
     # Class trust (Plan Rev 13 H4 gate)
     p.add_argument("--class_trust", default=None,
@@ -1708,6 +1764,11 @@ def main():
             device=args.device,
         )
     freeze_backbone_eval_fn: Optional[Callable[[], None]] = None
+    if args.freeze_backbone_classifier_only and args.unfreeze_last_n_features > 0:
+        raise ValueError(
+            "--freeze_backbone_classifier_only and --unfreeze_last_n_features "
+            "are mutually exclusive"
+        )
     if args.freeze_backbone_classifier_only:
         trainable_params, freeze_backbone_eval_fn = configure_classifier_only_adaptation(
             victim.model,
@@ -1721,6 +1782,19 @@ def main():
             f"{sum(p.numel() for p in trainable_params):,} trainable params "
             f"(train_final_norm={args.classifier_only_train_final_norm}, "
             f"adapter={args.classifier_adapter_type})",
+            flush=True,
+        )
+    elif args.unfreeze_last_n_features > 0:
+        trainable_params, freeze_backbone_eval_fn = configure_last_blocks_adaptation(
+            victim.model,
+            last_n_features=args.unfreeze_last_n_features,
+            train_final_norm=True,
+        )
+        print(
+            "[setup] last-block adaptation enabled: "
+            f"{sum(p.numel() for p in trainable_params):,} trainable params "
+            f"(last_n_features={args.unfreeze_last_n_features}, "
+            "final_conv=True, final_norm=True, classifier=True)",
             flush=True,
         )
     else:
@@ -1764,6 +1838,7 @@ def main():
             "classifier_adapter_type": args.classifier_adapter_type,
             "classifier_lora_rank": int(args.classifier_lora_rank),
             "classifier_lora_alpha": float(args.classifier_lora_alpha),
+            "unfreeze_last_n_features": int(args.unfreeze_last_n_features),
             "n_trainable_tensors": len(trainable_params),
             "n_trainable_params": int(sum(p.numel() for p in trainable_params)),
         },
@@ -1985,7 +2060,7 @@ def main():
                                       persistent_workers=args.num_workers > 0)
 
         # Phase D: train
-        if args.freeze_backbone_classifier_only:
+        if freeze_backbone_eval_fn is not None:
             train_loss = train_one_epoch_masked_bce_freeze_aware(
                 victim.model, train_loader, optimizer, criterion, args.device,
                 grad_clip=args.grad_clip,
