@@ -1054,3 +1054,75 @@ ECGFounder 官方 full fine-tuning + K=100 target-real，在不使用 VAE 的情
 因此 ECGFounder 上的大幅 target gain 不能归因于 VAE-only 本身；后续必须把官方 full fine-tuning 作为公平强基线。
 VAE-only 若要成为论文主贡献，需要证明它能在这个 full fine-tuning 基线上继续带来增益，或在更小 K 下稳定胜出。
 ```
+
+### Full fine-tuning + VAE-only online AT pilot
+
+脚本 `scripts/paper/run_ecgfounder_fullft_super5_pilot_20260523.py` 已扩展：
+
+```text
+--enable_vae_adv_stream
+```
+
+训练协议：
+
+```text
+ECGFounder official full fine-tuning
+PTB-XL source stream + K=100 target-real stream
+每个 epoch 用当前 full model 作为 victim
+从同一批 K=100 目标中心真实 ECGTwin VAE latent 做 same-label latent-hull online AT
+VAE adv ECG: ECGTwin latent -> 12 x 1000 -> interpolate to 12 x 5000
+```
+
+CPSC K=100 结果：
+
+| setting | PTB-XL fold10 | CPSC target | CPSC drop-all-zero |
+|---|---:|---:|---:|
+| source-only full FT | 0.9300 / 0.8229 | 0.8187 / 0.5878 | 0.8696 / 0.7109 |
+| source + K100 target-real full FT | 0.9244 / 0.8134 | 0.8684 / 0.6895 | 0.9154 / 0.8198 |
+| source + K100 target-real + VAE-only online AT | 0.9247 / 0.8157 | 0.8754 / 0.7148 | 0.9168 / 0.8261 |
+
+VAE run 关键配置：
+
+```text
+k_anchor=100 requested, actually generated 84/epoch because K=100 pool only has CD/NORM/STTC positives
+M=20, lambda=0.15, hull_steps=3, hull_lr=0.25
+adv_weight=20, target_real_weight=40
+best checkpoint selected by PTB-XL fold9 macro AUPRC
+```
+
+阶段性判断：
+
+```text
+这是目前最重要的正向证据：VAE-only 在 ECGFounder 官方 full fine-tuning 强基线上仍有增益。
+CPSC target AUPRC 比 no-VAE full FT 高 +2.53pp；drop-all-zero AUPRC 高 +0.62pp。
+因此该增益不是只靠 all-zero 样本虚高，也不是仅由 frozen-head 弱 baseline 造成。
+但目前只完成 CPSC K=100 单中心 pilot，还不能宣称全中心稳定达到 PTB-XL 源域水平。
+下一步需要在 ningbo、chapman_shaoxing、georgia 复跑，并做 K=20/50/100 sensitivity。
+```
+
+### Full-FT + VAE-only two-center update
+
+已补 `ningbo` K=100 同协议复现。当前结果均为 PTB-XL fold9 macro AUPRC 选择 best checkpoint。
+
+| center | setting | PTB-XL fold10 | target | drop-all-zero |
+|---|---|---:|---:|---:|
+| cpsc_2018 | no-VAE full FT | 0.9244 / 0.8134 | 0.8684 / 0.6895 | 0.9154 / 0.8198 |
+| cpsc_2018 | full FT + VAE-only online AT | 0.9247 / 0.8157 | 0.8754 / 0.7148 | 0.9168 / 0.8261 |
+| ningbo | no-VAE full FT | 0.9292 / 0.8223 | 0.8919 / 0.4942 | 0.9087 / 0.6429 |
+| ningbo | full FT + VAE-only online AT | 0.9271 / 0.8188 | 0.8999 / 0.5162 | 0.9150 / 0.6509 |
+
+增量：
+
+| center | target delta | drop-all-zero delta | source delta |
+|---|---:|---:|---:|
+| cpsc_2018 | +0.70pp / +2.53pp | +0.15pp / +0.62pp | +0.03pp / +0.23pp |
+| ningbo | +0.80pp / +2.20pp | +0.63pp / +0.80pp | -0.21pp / -0.35pp |
+
+关键边界：
+
+```text
+Ningbo no-VAE 的 epoch1 target AUPRC 曾到 0.5317，超过 VAE source-selected checkpoint 的 0.5162。
+因此 Ningbo 不能解释成 VAE 在 target-oracle 下无条件更强；
+更准确的说法是：在不使用目标测试集选 checkpoint、只按 PTB-XL fold9 选择时，VAE stream 提高了 target 指标。
+后续必须同时报告 source-selected 和 target-oracle 曲线，并设计不泄漏的 target-val selection。
+```

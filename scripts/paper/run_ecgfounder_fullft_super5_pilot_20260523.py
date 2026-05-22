@@ -23,6 +23,7 @@ from typing import Any
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import ConcatDataset, DataLoader, Dataset, WeightedRandomSampler
 from tqdm import tqdm
 
@@ -35,6 +36,8 @@ for _p in [str(REPO_ROOT), str(ECGFOUNDER_ROOT)]:
 
 from finetune_model import ft_12lead_ECGFounder  # noqa: E402
 from physionet2021_dataset import EXPECTED_LEADS, TARGET_POINTS  # noqa: E402
+from adversarial.latent_hull_pgd import LatentHullPGDGenerator  # noqa: E402
+from scripts.paper.run_ecgfounder_vae_only_lhat_head_ft_20260523 import real_anchor_base  # noqa: E402
 from scripts.paper.run_ecgfounder_linear_probe_super5_20260517 import (  # noqa: E402
     CHECKPOINT,
     PTBXL_CSV,
@@ -43,7 +46,11 @@ from scripts.paper.run_ecgfounder_linear_probe_super5_20260517 import (  # noqa:
     build_pn2021_items,
     build_ptbxl_items,
 )
+from scripts.pgd_cross_center.synth_online_at_super5 import SameLabelLatentIndex, StratifiedPoolWalker  # noqa: E402
+from scripts.triple_labels.label_schemes import CLASS_NAMES_SUPER5, SUPER5_TO_IDX  # noqa: E402
 from scripts.triple_labels.train_ptbxl import compute_pos_weight, masked_bce_with_logits  # noqa: E402
+from util.ecgtwin_utils import ECGTwinWrapper  # noqa: E402
+from util.lead_utils import ECGTWIN_TO_PTBXL_INDICES  # noqa: E402
 
 
 DEFAULT_OUT_DIR = Path("/root/autodl-tmp/paper_ecgfounder_fullft_super5_20260523")
@@ -72,6 +79,62 @@ class CachedSignalDataset(Dataset):
         x = np.asarray(self.signals[src_i], dtype=np.float32).copy()
         y = np.asarray(self.labels[src_i], dtype=np.float32).copy()
         return torch.from_numpy(x), torch.from_numpy(y)
+
+
+class MemorySignalDataset(Dataset):
+    def __init__(self, signals: np.ndarray, labels: np.ndarray) -> None:
+        self.signals = np.asarray(signals, dtype=np.float32)
+        self.labels = np.asarray(labels, dtype=np.float32)
+
+    def __len__(self) -> int:
+        return len(self.signals)
+
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
+        return torch.from_numpy(self.signals[idx]), torch.from_numpy(self.labels[idx])
+
+
+def global_zscore(x: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
+    flat = x.reshape(x.shape[0], -1)
+    mean = flat.mean(dim=1, keepdim=True)
+    std = flat.std(dim=1, keepdim=True).clamp(min=eps)
+    return (x - mean.unsqueeze(-1)) / std.unsqueeze(-1)
+
+
+def ecg1000_to_ecgfounder_input(ecg_ct_1000: torch.Tensor) -> torch.Tensor:
+    x = F.interpolate(ecg_ct_1000, size=TARGET_POINTS, mode="linear", align_corners=True)
+    return global_zscore(x)
+
+
+class ECGFounderFullFTVictim(nn.Module):
+    """Differentiable ECGTwin-latent -> ECGFounder full model logits wrapper."""
+
+    def __init__(self, model: nn.Module, ecgtwin: ECGTwinWrapper) -> None:
+        super().__init__()
+        self.model = model
+        self.ecgtwin = ecgtwin
+        self.num_classes = len(CLASS_NAMES_SUPER5)
+
+    @staticmethod
+    def _global_zscore(x: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
+        return global_zscore(x, eps=eps)
+
+    def _decode_latent_differentiable(self, latent: torch.Tensor) -> torch.Tensor:
+        x = latent / 0.18215
+        for module in self.ecgtwin.decoder:
+            x = module(x)
+        return x.transpose(1, 2)
+
+    def _ecgtwin_latent_to_ecg1000(self, latent: torch.Tensor) -> torch.Tensor:
+        ecg_tc = self._decode_latent_differentiable(latent)
+        ecg_ct = ecg_tc.transpose(-1, -2)
+        ecg_ct = ecg_ct[:, ECGTWIN_TO_PTBXL_INDICES, :]
+        ecg_ct = torch.clamp(ecg_ct, min=-3.0, max=3.0)
+        ecg_ct = F.interpolate(ecg_ct, size=1000, mode="linear", align_corners=True)
+        return self._global_zscore(ecg_ct)
+
+    def forward_from_latent_to_logits(self, latent: torch.Tensor) -> torch.Tensor:
+        ecg_ct = self._ecgtwin_latent_to_ecg1000(latent)
+        return self.model(ecg1000_to_ecgfounder_input(ecg_ct))
 
 
 def build_signal_cache(
@@ -142,6 +205,52 @@ def load_selected_ref_ids(ref_meta_json: Path, center: str) -> set[str]:
     return out
 
 
+def load_anchor_pool_for_ids(
+    center: str,
+    selected_ids: set[str],
+    pn_payload: dict[str, np.ndarray],
+) -> dict[str, Any]:
+    base = real_anchor_base(center)
+    with np.load(base.with_suffix(".latent.npz"), allow_pickle=True) as d:
+        latents_all = d["latents"].astype(np.float32)
+        record_ids_all = d["record_ids"].astype(str)
+
+    want = {str(x) for x in selected_ids}
+    rid_to_i = {str(rid): i for i, rid in enumerate(record_ids_all)}
+    missing = sorted(want - set(rid_to_i))
+    if missing:
+        raise RuntimeError(
+            f"{center}: {len(missing)} selected ids are missing from {base.with_suffix('.latent.npz')}; "
+            f"first missing={missing[:5]}"
+        )
+    chosen = np.asarray([rid_to_i[rid] for rid in sorted(want)], dtype=np.int64)
+
+    pn_record_ids = pn_payload["record_ids"].astype(str)
+    pn_labels = pn_payload["labels"].astype(np.float32)
+    label_by_rid = {str(rid): pn_labels[i] for i, rid in enumerate(pn_record_ids)}
+    labels = []
+    for rid in record_ids_all[chosen]:
+        if str(rid) not in label_by_rid:
+            raise RuntimeError(f"{center}: selected id {rid} missing from PN cache labels")
+        labels.append(label_by_rid[str(rid)])
+    labels_arr = np.stack(labels).astype(np.float32)
+    present = labels_arr.sum(axis=0) > 0
+    classes_in_scope = [c for c, ok in zip(CLASS_NAMES_SUPER5, present) if ok]
+    return {
+        "latents": latents_all[chosen],
+        "labels": labels_arr,
+        "record_ids": record_ids_all[chosen],
+        "classes_in_scope": classes_in_scope,
+        "label_counts": dict(zip(CLASS_NAMES_SUPER5, labels_arr.sum(axis=0).astype(int).tolist())),
+        "source_base": str(base),
+    }
+
+
+def set_requires_grad(module: nn.Module, flag: bool) -> None:
+    for param in module.parameters():
+        param.requires_grad_(flag)
+
+
 @torch.no_grad()
 def predict(model: nn.Module, ds: Dataset, batch_size: int, device: torch.device) -> tuple[np.ndarray, np.ndarray]:
     loader = DataLoader(ds, batch_size=batch_size, shuffle=False, num_workers=0)
@@ -167,6 +276,8 @@ def make_train_loader(
     pn_payload: dict[str, np.ndarray],
     target_indices: np.ndarray,
     args: argparse.Namespace,
+    adv_signals: np.ndarray | None = None,
+    adv_labels: np.ndarray | None = None,
 ) -> DataLoader:
     folds = ptbxl_payload["folds"].astype(np.int64)
     source_idx = np.nonzero(np.isin(folds, np.arange(1, 9)))[0]
@@ -174,8 +285,26 @@ def make_train_loader(
         source_idx = source_idx[: args.source_train_limit]
     source_ds = CachedSignalDataset(ptbxl_payload["signals"], ptbxl_payload["labels"], source_idx)
     target_ds = CachedSignalDataset(pn_payload["signals"], pn_payload["labels"], target_indices)
-    combined = ConcatDataset([source_ds, target_ds])
-    weights = [args.source_weight] * len(source_ds) + [args.target_real_weight] * len(target_ds)
+    datasets: list[Dataset] = []
+    weights: list[float] = []
+    if args.source_weight > 0:
+        datasets.append(source_ds)
+        weights.extend([args.source_weight] * len(source_ds))
+    if args.target_real_weight > 0:
+        datasets.append(target_ds)
+        weights.extend([args.target_real_weight] * len(target_ds))
+    if (
+        adv_signals is not None
+        and adv_labels is not None
+        and len(adv_signals) > 0
+        and args.adv_weight > 0
+    ):
+        adv_ds = MemorySignalDataset(adv_signals, adv_labels)
+        datasets.append(adv_ds)
+        weights.extend([args.adv_weight] * len(adv_ds))
+    if not datasets:
+        raise RuntimeError("no active training streams; check source/target/adv weights")
+    combined = ConcatDataset(datasets)
     sampler = WeightedRandomSampler(weights, num_samples=len(weights), replacement=True)
     return DataLoader(
         combined,
@@ -186,6 +315,63 @@ def make_train_loader(
         persistent_workers=args.num_workers > 0,
         drop_last=False,
     )
+
+
+def build_adv_epoch(
+    model: nn.Module,
+    victim: ECGFounderFullFTVictim,
+    pgd_gen: LatentHullPGDGenerator,
+    anchor_pool: dict[str, Any],
+    walker: StratifiedPoolWalker,
+    index: SameLabelLatentIndex,
+    args: argparse.Namespace,
+    device: torch.device,
+) -> dict[str, Any]:
+    set_requires_grad(model, False)
+    model.eval()
+    victim.eval()
+    adv_signals: list[np.ndarray] = []
+    adv_labels: list[np.ndarray] = []
+    delta_norms: list[float] = []
+    try:
+        classes = list(anchor_pool["classes_in_scope"])
+        per_cls = max(1, args.k_anchor // max(len(classes), 1))
+        k_per_cls = {c: per_cls for c in classes}
+        for i in range(args.k_anchor - per_cls * len(classes)):
+            k_per_cls[classes[i % len(classes)]] += 1
+        drawn = walker.sample(k_per_cls)
+        picks = np.concatenate([drawn[c] for c in classes if drawn[c].size > 0])
+        if picks.size > 1:
+            np.random.default_rng(args.seed + int(args.current_epoch)).shuffle(picks)
+        for start in range(0, len(picks), args.pgd_batch):
+            batch_idx = picks[start:start + args.pgd_batch]
+            z = torch.from_numpy(anchor_pool["latents"][batch_idx]).float().to(device)
+            y = torch.from_numpy(anchor_pool["labels"][batch_idx]).float().to(device)
+            cand = torch.from_numpy(index.candidates_for(batch_idx, args.hull_m)).float().to(device)
+            x_adv_1000, delta = pgd_gen.attack_from_latent(z, y, candidate_latents=cand)
+            x_adv_5000 = ecg1000_to_ecgfounder_input(x_adv_1000).detach().cpu().numpy().astype(np.float32)
+            adv_signals.append(x_adv_5000)
+            adv_labels.append(anchor_pool["labels"][batch_idx].astype(np.float32))
+            delta_norms.extend(delta.detach().flatten(1).norm(dim=1).cpu().tolist())
+    finally:
+        set_requires_grad(model, True)
+    signals = (
+        np.concatenate(adv_signals, axis=0).astype(np.float32)
+        if adv_signals
+        else np.empty((0, 12, TARGET_POINTS), dtype=np.float32)
+    )
+    labels = (
+        np.concatenate(adv_labels, axis=0).astype(np.float32)
+        if adv_labels
+        else np.empty((0, len(CLASS_NAMES_SUPER5)), dtype=np.float32)
+    )
+    return {
+        "signals": signals,
+        "labels": labels,
+        "n_adv": int(len(signals)),
+        "delta_mean": float(np.mean(delta_norms)) if delta_norms else None,
+        "delta_max": float(np.max(delta_norms)) if delta_norms else None,
+    }
 
 
 def main() -> None:
@@ -202,6 +388,19 @@ def main() -> None:
     ap.add_argument("--num_workers", type=int, default=4)
     ap.add_argument("--source_weight", type=float, default=1.0)
     ap.add_argument("--target_real_weight", type=float, default=40.0)
+    ap.add_argument("--enable_vae_adv_stream", action="store_true")
+    ap.add_argument("--adv_weight", type=float, default=20.0)
+    ap.add_argument("--k_anchor", type=int, default=100)
+    ap.add_argument("--hull_m", type=int, default=20)
+    ap.add_argument("--hull_lambda", type=float, default=0.15)
+    ap.add_argument("--hull_steps", type=int, default=3)
+    ap.add_argument("--hull_lr", type=float, default=0.25)
+    ap.add_argument("--hull_weight_mode", choices=["optimized", "one_hot", "uniform", "dirichlet"], default="optimized")
+    ap.add_argument("--hull_dirichlet_alpha", type=float, default=1.0)
+    ap.add_argument("--hull_label_mode", choices=["primary", "exact", "compatible"], default="primary")
+    ap.add_argument("--hull_include_anchor", action="store_true")
+    ap.add_argument("--pgd_eps", type=float, default=2.0)
+    ap.add_argument("--pgd_batch", type=int, default=4)
     ap.add_argument("--source_train_limit", type=int, default=0)
     ap.add_argument("--preprocess_policy", default="official_ptbxl_eval")
     ap.add_argument("--device", default="cuda:0")
@@ -215,9 +414,10 @@ def main() -> None:
     lr_tag = str(args.lr).replace(".", "p")
     sw_tag = str(args.source_weight).replace(".", "p")
     tw_tag = str(args.target_real_weight).replace(".", "p")
+    method_tag = "fullft_vae" if args.enable_vae_adv_stream else "fullft"
     run_dir = out_dir / "runs" / (
         f"{args.center}_K{args.k}_fullft_ep{args.epochs}_lr{lr_tag}_"
-        f"sw{sw_tag}_tw{tw_tag}_seed{args.seed}"
+        f"sw{sw_tag}_tw{tw_tag}_{method_tag}_seed{args.seed}"
     )
     run_dir.mkdir(parents=True, exist_ok=True)
     result_path = run_dir / "eval_result.json"
@@ -252,6 +452,42 @@ def main() -> None:
 
     model = ft_12lead_ECGFounder(device, str(CHECKPOINT), 5, linear_prob=False)
     model.train()
+    anchor_pool = None
+    pgd_gen = None
+    walker = None
+    index = None
+    if args.enable_vae_adv_stream:
+        print("[setup] loading ECGTwin VAE decoder for full-FT VAE stream", flush=True)
+        ecgtwin = ECGTwinWrapper(device=args.device, load_encoder=False, load_text_model=False)
+        for param in ecgtwin.decoder.parameters():
+            param.requires_grad_(False)
+        victim = ECGFounderFullFTVictim(model=model, ecgtwin=ecgtwin).to(device)
+        pgd_gen = LatentHullPGDGenerator(
+            ecgtwin_wrapper=ecgtwin,
+            victim=victim,
+            epsilon=args.pgd_eps,
+            hull_lambda=args.hull_lambda,
+            hull_steps=args.hull_steps,
+            hull_lr=args.hull_lr,
+            weight_mode=args.hull_weight_mode,
+            dirichlet_alpha=args.hull_dirichlet_alpha,
+            device=args.device,
+        )
+        anchor_pool = load_anchor_pool_for_ids(args.center, selected_ids, pn)
+        walker = StratifiedPoolWalker(
+            labels_one_hot=anchor_pool["labels"],
+            classes_in_scope=anchor_pool["classes_in_scope"],
+            class_to_idx=SUPER5_TO_IDX,
+            seed=args.seed,
+        )
+        index = SameLabelLatentIndex(
+            anchor_pool["latents"],
+            anchor_pool["labels"],
+            label_mode=args.hull_label_mode,
+            seed=args.seed,
+            include_self=args.hull_include_anchor,
+        )
+        set_requires_grad(model, True)
     pos_weight = torch.tensor(
         compute_pos_weight(ptbxl["labels"][np.isin(ptbxl["folds"], np.arange(1, 9))], 5, clip_max=50.0),
         dtype=torch.float32,
@@ -261,7 +497,6 @@ def main() -> None:
     def criterion(logits: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         return masked_bce_with_logits(logits, y, pos_weight)
 
-    train_loader = make_train_loader(ptbxl, pn, target_idx, args)
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max(args.epochs, 1), eta_min=args.lr * 0.05)
 
@@ -271,6 +506,25 @@ def main() -> None:
     logs = []
     best = -float("inf")
     for epoch in range(1, args.epochs + 1):
+        adv_info = {
+            "signals": None,
+            "labels": None,
+            "n_adv": 0,
+            "delta_mean": None,
+            "delta_max": None,
+        }
+        if args.enable_vae_adv_stream and args.adv_weight > 0 and args.k_anchor > 0:
+            assert anchor_pool is not None and pgd_gen is not None and walker is not None and index is not None
+            args.current_epoch = epoch
+            adv_info = build_adv_epoch(model, pgd_gen.victim, pgd_gen, anchor_pool, walker, index, args, device)
+        train_loader = make_train_loader(
+            ptbxl,
+            pn,
+            target_idx,
+            args,
+            adv_info["signals"],
+            adv_info["labels"],
+        )
         model.train()
         losses = []
         for x, y in tqdm(train_loader, desc=f"epoch {epoch}/{args.epochs}"):
@@ -296,6 +550,9 @@ def main() -> None:
             "target_macro_auprc": target_metrics["macro_auprc"],
             "target_drop_all_zero_macro_auroc": drop_metrics["macro_auroc"],
             "target_drop_all_zero_macro_auprc": drop_metrics["macro_auprc"],
+            "n_adv": int(adv_info["n_adv"]),
+            "adv_delta_mean": adv_info["delta_mean"],
+            "adv_delta_max": adv_info["delta_max"],
             "lr": float(opt.param_groups[0]["lr"]),
         }
         logs.append(entry)
@@ -315,7 +572,12 @@ def main() -> None:
 
     model.load_state_dict(torch.load(run_dir / "best_model.pt", map_location=device))
     result = {
-        "method": "ECGFounder official-style full fine-tuning, no VAE",
+        "method": (
+            "ECGFounder official-style full fine-tuning + VAE-only real-anchor latent-hull online AT"
+            if args.enable_vae_adv_stream
+            else "ECGFounder official-style full fine-tuning, no VAE"
+        ),
+        "vae_stream_enabled": bool(args.enable_vae_adv_stream),
         "center": args.center,
         "K": int(len(target_idx)),
         "selected_ref_record_ids": sorted(selected_ids),
@@ -325,6 +587,11 @@ def main() -> None:
         "n_target_eval": int(len(eval_idx)),
         "n_target_drop_all_zero_eval": int(len(drop_eval_idx)),
         "config": vars(args),
+        "vae_anchor_pool": None if anchor_pool is None else {
+            "classes_in_scope": anchor_pool["classes_in_scope"],
+            "label_counts": anchor_pool["label_counts"],
+            "source_base": anchor_pool["source_base"],
+        },
         "official_evidence": {
             "finetune_model": "ft_12lead_ECGFounder(..., linear_prob=False)",
             "notebook_hyperparams": "lr=1e-4, weight_decay=1e-5, Epochs=5",

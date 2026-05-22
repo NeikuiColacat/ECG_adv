@@ -2196,3 +2196,62 @@ CPSC drop-all-zero = 0.9157 / 0.8253
 因此论文不能再用 ECGFounder frozen-head 结果直接证明 VAE-only 的独立优势。
 后续 VAE-only 主线必须尝试加在 full fine-tuning 之上，或在 K 更小、源域保持更严格的设定下胜出。
 ```
+
+#### Full-FT + VAE-only first pilot
+
+`run_ecgfounder_fullft_super5_pilot_20260523.py` 现在支持：
+
+```text
+--enable_vae_adv_stream
+```
+
+开启后，每个 epoch 执行：
+
+```text
+current ECGFounder full model as victim
+target-center real ECGTwin VAE latents
+same-label latent-hull search:
+  z_adv = (1 - lambda) z0 + lambda sum_i softmax(a_i) z_i
+decode z_adv to ECGTwin waveform
+convert to ECGFounder input 12 x 5000
+mix into the full fine-tuning loader as an adv stream
+```
+
+CPSC K=100 first pilot：
+
+| setting | PTB-XL fold10 | CPSC target | CPSC drop-all-zero |
+|---|---:|---:|---:|
+| source-only full FT | 0.9300 / 0.8229 | 0.8187 / 0.5878 | 0.8696 / 0.7109 |
+| source + K100 target-real full FT | 0.9244 / 0.8134 | 0.8684 / 0.6895 | 0.9154 / 0.8198 |
+| source + K100 target-real + VAE-only online AT | 0.9247 / 0.8157 | 0.8754 / 0.7148 | 0.9168 / 0.8261 |
+
+配置：
+
+```text
+K=100 selected target refs, ref-excluded evaluation
+M=20
+lambda=0.15
+hull_steps=3
+hull_lr=0.25
+target_real_weight=40
+adv_weight=20
+k_anchor=100 requested; 84 adv ECG/epoch generated because the selected CPSC K=100 pool contains only CD/NORM/STTC positives
+best checkpoint selected by PTB-XL fold9 macro AUPRC
+```
+
+Interpretation：
+
+```text
+VAE-only finally shows independent gain on top of the ECGFounder official full fine-tuning control.
+The gain remains after excluding all-zero PN2021 rows, so this pilot is not merely an all-zero metric artifact.
+However, this is only CPSC K=100. It should become the next main branch only after 4-center replication and K sensitivity.
+```
+
+Next experiments：
+
+```text
+1. Replicate full-FT + VAE-only on ningbo, chapman_shaoxing, georgia with the same K=100 protocol.
+2. Run CPSC K=20/50/100 to test whether the method still helps with very small target samples.
+3. Add a target/source selection metric if fold9-only selection misses better target checkpoints.
+4. Keep no-VAE full fine-tuning as the primary fairness baseline for ECGFounder.
+```
