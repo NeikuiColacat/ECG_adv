@@ -360,15 +360,18 @@ def make_weighted_loader(
     datasets = []
     weights = []
     if args.source_weight > 0:
-        ds = TensorDataset(torch.from_numpy(source_x).float(), torch.from_numpy(source_y).float())
+        stream = torch.zeros((len(source_x),), dtype=torch.long)
+        ds = TensorDataset(torch.from_numpy(source_x).float(), torch.from_numpy(source_y).float(), stream)
         datasets.append(ds)
         weights.extend([args.source_weight] * len(ds))
     if args.target_real_weight > 0:
-        ds = TensorDataset(torch.from_numpy(target_x).float(), torch.from_numpy(target_y).float())
+        stream = torch.ones((len(target_x),), dtype=torch.long)
+        ds = TensorDataset(torch.from_numpy(target_x).float(), torch.from_numpy(target_y).float(), stream)
         datasets.append(ds)
         weights.extend(sample_weights(target_y, args.target_real_weight, target_class_weights))
     if len(adv_x) > 0 and args.adv_weight > 0:
-        ds = TensorDataset(torch.from_numpy(adv_x).float(), torch.from_numpy(adv_y).float())
+        stream = torch.full((len(adv_x),), 2, dtype=torch.long)
+        ds = TensorDataset(torch.from_numpy(adv_x).float(), torch.from_numpy(adv_y).float(), stream)
         datasets.append(ds)
         weights.extend(sample_weights(adv_y, args.adv_weight, adv_class_weights))
     combined = ConcatDataset(datasets)
@@ -439,6 +442,11 @@ def train_one_center(
 
     base_head = nn.Linear(source_x.shape[1], len(CLASS_NAMES_SUPER5)).to(device)
     base_head.load_state_dict(torch.load(Path(args.linear_probe_dir) / "best_head.pt", map_location=device))
+    source_teacher_head = nn.Linear(source_x.shape[1], len(CLASS_NAMES_SUPER5)).to(device)
+    source_teacher_head.load_state_dict(torch.load(Path(args.linear_probe_dir) / "best_head.pt", map_location=device))
+    source_teacher_head.eval()
+    for p in source_teacher_head.parameters():
+        p.requires_grad_(False)
     if args.head_type == "linear":
         head = base_head
     else:
@@ -471,8 +479,14 @@ def train_one_center(
     )
     for p in feature_model.parameters():
         p.requires_grad_(False)
-    for p in head.parameters():
-        if p.requires_grad:
+    if isinstance(head, ResidualAdapterHead):
+        for p in head.adapter.parameters():
+            p.requires_grad_(True)
+        if args.freeze_base_head:
+            for p in head.base_head.parameters():
+                p.requires_grad_(False)
+    else:
+        for p in head.parameters():
             p.requires_grad_(True)
 
     classes_in_scope = list(args.classes_in_scope or pool["classes_in_scope"])
@@ -520,7 +534,11 @@ def train_one_center(
 
     trainable_head_params = [p for p in head.parameters() if p.requires_grad]
     if not trainable_head_params:
-        raise RuntimeError("No trainable head parameters. Check --head_type/--freeze_base_head.")
+        param_state = ", ".join(f"{name}:{param.requires_grad}" for name, param in head.named_parameters())
+        raise RuntimeError(
+            "No trainable head parameters. Check --head_type/--freeze_base_head. "
+            f"Parameter states: {param_state}"
+        )
     opt = torch.optim.AdamW(trainable_head_params, lr=args.lr, weight_decay=args.weight_decay)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max(args.epochs, 1), eta_min=args.lr * 0.05)
 
@@ -579,11 +597,20 @@ def train_one_center(
         loader = make_weighted_loader(source_x, source_y, target_x, target_y, adv_x, adv_y, args)
         head.train()
         losses = []
-        for x, y in loader:
+        for x, y, stream in loader:
             x = x.to(device)
             y = y.to(device)
+            stream = stream.to(device)
             opt.zero_grad(set_to_none=True)
-            loss = criterion(head(x), y)
+            logits = head(x)
+            loss = criterion(logits, y)
+            if args.source_logit_anchor_weight > 0:
+                source_mask = stream == 0
+                if bool(source_mask.any()):
+                    with torch.no_grad():
+                        teacher_logits = source_teacher_head(x[source_mask])
+                    source_logit_loss = F.mse_loss(logits[source_mask], teacher_logits)
+                    loss = loss + args.source_logit_anchor_weight * source_logit_loss
             if args.head_l2_anchor > 0:
                 anchor_loss = torch.zeros((), device=device)
                 for name, param in head.named_parameters():
@@ -759,6 +786,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--source_weight", type=float, default=1.0)
     p.add_argument("--target_real_weight", type=float, default=20.0)
     p.add_argument("--adv_weight", type=float, default=10.0)
+    p.add_argument(
+        "--source_logit_anchor_weight",
+        type=float,
+        default=0.0,
+        help="MSE penalty that keeps adapted logits close to the frozen PTB-XL source head on source-stream batches.",
+    )
     p.add_argument(
         "--class_loss_weights",
         default="",

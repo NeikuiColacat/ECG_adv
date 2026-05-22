@@ -299,6 +299,10 @@ def one_run(
         str(args.adv_weight),
         "--target_real_weight",
         str(args.target_real_weight),
+        "--source_logit_anchor_weight",
+        str(args.source_logit_anchor_weight),
+        "--source_logit_anchor_batches",
+        str(args.source_logit_anchor_batches),
         "--ptbxl_weight",
         "1.0",
         "--roundtrip_weight",
@@ -458,6 +462,8 @@ def main() -> None:
     ap.add_argument("--target_real_weight", type=float, default=40.0)
     ap.add_argument("--roundtrip_anchor_n", type=int, default=1500)
     ap.add_argument("--adv_weight", type=float, default=0.06)
+    ap.add_argument("--source_logit_anchor_weight", type=float, default=0.0)
+    ap.add_argument("--source_logit_anchor_batches", type=int, default=0)
     ap.add_argument("--hull_steps", type=int, default=5)
     ap.add_argument("--hull_lr", type=float, default=0.25)
     ap.add_argument(

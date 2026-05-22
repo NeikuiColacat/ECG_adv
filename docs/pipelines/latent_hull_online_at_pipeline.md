@@ -1450,3 +1450,169 @@ EfficientNet1DV2 上 target-heavy 确实提高 CPSC full-set AUPRC，
 ```
 
 注意：EfficientNet quick eval 在训练中一度到 CPSC AUPRC `0.6798`，但 full-set eval 只有 `0.6258`。论文和报告必须引用 full-set eval，不能用 quick subset 代替最终结果。
+
+### EfficientNet1DV2 Source-Consistency Pilot
+
+为了把 ECGFounder 的 source-logit anchor 思路迁移到 EfficientNet1DV2，给 `synth_online_at_super5.py` 新增：
+
+```text
+--source_logit_anchor_weight
+--source_logit_anchor_batches
+```
+
+实现：
+
+```text
+1. 在训练开始时复制一份 frozen initial EfficientNet source teacher。
+2. 每个 mixed target/adv epoch 后，额外抽 PTB-XL source batch。
+3. 用 MSE(current_logits_source, teacher_logits_source) 做 source-consistency distillation。
+```
+
+`cpsc_2018`，target-heavy 配置：
+
+| EfficientNet config | CPSC target | PTB-XL fold10 | PN2021 7-center avg |
+|---|---:|---:|---:|
+| target-heavy, no source-logit anchor | 0.8758 / 0.6258 | 0.8950 / 0.7492 | 0.7868 / 0.4593 |
+| source-logit anchor 0.1 | 0.8731 / 0.6208 | 0.8999 / 0.7604 | 0.7847 / 0.4593 |
+| source-logit anchor 0.5 | 0.8571 / 0.6004 | 0.9055 / 0.7724 | 0.7840 / 0.4623 |
+
+输出：
+
+```text
+/root/autodl-tmp/paper_effnet_vae_only_targetheavy_cpsc_logit01_20260523/
+/root/autodl-tmp/paper_effnet_vae_only_targetheavy_cpsc_logit05_20260523/
+```
+
+结论：
+
+```text
+source-consistency 对 EfficientNet1DV2 有保源作用：
+0.5 能把 PTB-XL AUPRC 从 0.7492 拉回 0.7724，接近 EfficientNet source baseline 0.775。
+但它压低 CPSC target AUPRC，从 0.6258 降到 0.6004。
+0.1 是轻量折中，但 target 和 PTB-XL 都没有超过 no-anchor / source baseline。
+```
+
+判断：
+
+```text
+EfficientNet1DV2 当前不像 ECGFounder residual adapter 那样受益。
+原因可能是 EfficientNet 需要更新全模型参数，source-consistency 与目标适配梯度冲突更强；
+而 ECGFounder 只训练轻量 adapter，保源约束更容易成功。
+```
+
+下一步如果继续追 EfficientNet：
+
+```text
+1. 不优先加大 source_logit_anchor_weight；0.5 已证明过强。
+2. 更合理的是冻结 backbone、只训练 classifier/head adapter，模仿 ECGFounder 的轻量适配。
+3. 或者使用 teacher consistency 只约束中后期 epoch，避免早期目标适配被压制。
+```
+
+EfficientNet1DV2 结构审计：
+
+```text
+initial_conv
+-> features
+-> final_conv / final_norm
+-> classifier = AdaptiveAvgPool1d -> Flatten -> Dropout -> Linear(num_classes)
+```
+
+如果尝试 head-only / adapter-only EfficientNet，不能只把 backbone 参数 `requires_grad=False` 后继续调用普通 `model.train()`，因为 BatchNorm running stats 仍会被目标中心 batch 更新，污染“冻结 backbone”的含义。需要新 runner：
+
+```text
+1. frozen backbone 始终 eval()；
+2. 只让 classifier Linear 或 residual adapter train()；
+3. latent-hull 内层攻击穿过 frozen backbone + trainable head；
+4. 外层只更新 head/adapter；
+5. 使用 source-logit anchor 或 source BCE 保持 PTB-XL source behavior。
+```
+
+这才是和 ECGFounder residual adapter 可比的 EfficientNet 版本。
+
+## 2026-05-23 ECGFounder Residual Adapter Extension
+
+同一套 VAE-only 在线对抗训练思想迁移到 ECGFounder frozen encoder 后，新增 residual adapter head：
+
+```text
+frozen ECGFounder encoder
+-> frozen PTB-XL source linear head
+-> zero-init residual adapter
+```
+
+`cpsc_2018` 结果：
+
+| model/head | config | CPSC target | PTB-XL fold10 |
+|---|---|---:|---:|
+| ECGFounder linear head | target-heavy | 0.9011 / 0.7086 | 0.8998 / 0.7559 |
+| ECGFounder residual adapter | target-only selection | 0.9112 / 0.7385 | 0.8941 / 0.7435 |
+| ECGFounder residual adapter | source_weight=2, target/source hmean selection | 0.9088 / 0.7290 | 0.9085 / 0.7719 |
+| ECGFounder residual adapter | source_weight=3, target/source hmean selection | 0.9083 / 0.7278 | 0.9128 / 0.7817 |
+| ECGFounder residual adapter | head_l2_anchor=0.25, target/source hmean selection | 0.9111 / 0.7365 | 0.8967 / 0.7506 |
+
+结论：
+
+```text
+VAE-only latent-hull 的最强短期方向已经从 EfficientNet 全模型微调
+转向 ECGFounder frozen encoder + lightweight head adaptation。
+Residual adapter 可以进一步推高 CPSC 目标中心性能；
+source_weight=2 + hmean selection 是当前最好的 target/source 折中。
+source_weight=3 进一步保源，但目标中心 AUPRC 小幅回落。
+```
+
+但截至该轮实验，PTB-XL 源域 AUPRC 仍未恢复到 ECGFounder source baseline `0.8016`，所以“目标中心和源域都达到 PTB-XL 源域水平”的目标仍未完成。
+
+### Source-Logit Anchor
+
+为了减少 residual adapter 的源域遗忘，新增 source-logit anchor：
+
+```text
+L_source_logit = MSE(adapted_logits_source, frozen_source_logits)
+```
+
+`cpsc_2018`，residual adapter，`source_weight=2`，target/source hmean selection：
+
+| source_logit_anchor_weight | CPSC target | PTB-XL fold10 |
+|---:|---:|---:|
+| 0.0 | 0.9088 / 0.7290 | 0.9085 / 0.7719 |
+| 0.1 | 0.9089 / 0.7304 | 0.9190 / 0.7943 |
+| 0.2 | 0.9082 / 0.7295 | 0.9204 / 0.7975 |
+| 0.5 | 0.9062 / 0.7232 | 0.9216 / 0.8005 |
+
+结论：
+
+```text
+source-logit anchor 是目前 VAE-only ECGFounder 路线最关键的保源改进。
+0.5 几乎恢复 PTB-XL source AUPRC，同时仍保留 CPSC target AUPRC +15.07pp 的提升。
+下一步需要在四个目标中心复现 0.2/0.5 两档。
+```
+
+四中心 `source_logit_anchor_weight=0.5` 已完成：
+
+| center | baseline target | residual adapter + logit anchor 0.5 | PTB-XL fold10 after AT |
+|---|---:|---:|---:|
+| ningbo | 0.8850 / 0.4342 | 0.9210 / 0.5748 | 0.9211 / 0.8000 |
+| chapman_shaoxing | 0.8946 / 0.3612 | 0.9013 / 0.4850 | 0.9215 / 0.7978 |
+| cpsc_2018 | 0.8219 / 0.5725 | 0.9056 / 0.7218 | 0.9217 / 0.8007 |
+| georgia | 0.8525 / 0.6551 | 0.8909 / 0.7418 | 0.9216 / 0.7992 |
+| mean | 0.8635 / 0.5058 | 0.9047 / 0.6309 | 0.9214 / 0.7994 |
+
+当前方法表述应改为：
+
+```text
+VAE-only residual-adapter online AT improves target-center performance
+while preserving PTB-XL source performance.
+```
+
+不要写成“目标中心性能已经达到 PTB-XL 源域同等 AUPRC”，因为四中心 target mean AUPRC 仍只有 `0.6309`。
+
+四中心 `source_logit_anchor_weight=0.2` 也已完成：
+
+| center | baseline target | residual adapter + logit anchor 0.2 | PTB-XL fold10 after AT |
+|---|---:|---:|---:|
+| ningbo | 0.8850 / 0.4342 | 0.9229 / 0.5816 | 0.9201 / 0.7977 |
+| chapman_shaoxing | 0.8946 / 0.3612 | 0.9086 / 0.4862 | 0.9201 / 0.7934 |
+| cpsc_2018 | 0.8219 / 0.5725 | 0.9082 / 0.7274 | 0.9205 / 0.7980 |
+| georgia | 0.8525 / 0.6551 | 0.8929 / 0.7466 | 0.9201 / 0.7959 |
+| mean | 0.8635 / 0.5058 | 0.9082 / 0.6354 | 0.9202 / 0.7962 |
+
+`0.2` 更偏目标中心适配，`0.5` 更偏源域保持。两者都是论文主线候选，后续用多 seed 决定默认值。

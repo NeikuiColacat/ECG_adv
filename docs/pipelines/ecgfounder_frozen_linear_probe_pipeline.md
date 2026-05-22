@@ -466,6 +466,187 @@ class-aware weighting 是有效但有限的 refinement。
 并报告稀有类 n_pos 对 AUPRC 上限和方差的影响。
 ```
 
+### Residual Adapter Head Pilot
+
+2026-05-23 新增 `residual_adapter` 分类头：
+
+```text
+logits = frozen_source_linear_head(features) + adapter(features)
+adapter = LayerNorm -> Linear(hidden) -> GELU -> Dropout -> Linear(5)
+```
+
+最后一层 adapter 使用 zero-init，所以初始输出严格等于 PTB-XL source linear head。这个版本的动机是让目标中心适配只通过残差分支发生，保留原始 PTB-XL Super5 head 作为锚点。
+
+脚本修正：
+
+```text
+--head_type residual_adapter
+--freeze_base_head
+```
+
+会显式冻结 base head、只训练 adapter 参数。
+
+`cpsc_2018` pilot：
+
+| method | selection | target center | target delta | PTB-XL fold10 after AT |
+|---|---|---:|---:|---:|
+| linear target-heavy | target AUPRC | 0.9011 / 0.7086 | +7.92pp / +13.60pp | 0.8998 / 0.7559 |
+| residual adapter | target AUPRC | 0.9112 / 0.7385 | +8.93pp / +16.60pp | 0.8941 / 0.7435 |
+| residual adapter, source_weight=2 | target/source hmean | 0.9088 / 0.7290 | +8.69pp / +15.65pp | 0.9085 / 0.7719 |
+| residual adapter, source_weight=3 | target/source hmean | 0.9083 / 0.7278 | +8.84pp / +15.52pp | 0.9128 / 0.7817 |
+| residual adapter, head_l2_anchor=0.25 | target/source hmean | 0.9111 / 0.7365 | +8.92pp / +16.39pp | 0.8967 / 0.7506 |
+
+输出：
+
+```text
+/root/autodl-tmp/paper_ecgfounder_vae_only_lhat_resadapter_cpsc_20260523/
+/root/autodl-tmp/paper_ecgfounder_vae_only_lhat_resadapter_cpsc_sw2_hmean_20260523/
+/root/autodl-tmp/paper_ecgfounder_vae_only_lhat_resadapter_cpsc_sw3_hmean_20260523/
+/root/autodl-tmp/paper_ecgfounder_vae_only_lhat_resadapter_cpsc_anchor025_hmean_20260523/
+```
+
+结论：
+
+```text
+residual adapter 能显著提高 CPSC 目标中心上限，target AUPRC 达到 0.7385，
+比 linear target-heavy 高约 +2.99pp AUPRC。
+source_weight=2 + hmean selection 是目前更好的双目标折中：
+target 0.9088 / 0.7290，PTB-XL 0.9085 / 0.7719。
+source_weight=3 能把 PTB-XL AUPRC 进一步拉到 0.7817，但目标 AUPRC 小幅回落到 0.7278。
+但它仍没有达到 PTB-XL source AUPRC 0.8016，说明目标还未完成。
+```
+
+下一步优先级：
+
+```text
+1. 在 residual adapter 上做 source_weight=3/4 与 head_l2_anchor=0.1/0.25/0.5 的小网格。
+2. 把 target/source hmean selection 作为保源默认，target-only selection 只作为上限报告。
+3. 先在 CPSC 稳定后再扩展到 ningbo/chapman/georgia，避免四中心盲跑。
+4. 如果 PTB-XL AUPRC 仍低于 0.79，尝试更小 adapter_hidden 或 adapter_scale，并加入 source calibration loss。
+```
+
+### Source-Logit Anchor Pilot
+
+参数：
+
+```text
+--source_logit_anchor_weight
+```
+
+含义：在 PTB-XL source stream batch 上，用 frozen PTB-XL source head 作为 teacher，惩罚适配后 logits 偏离 source logits：
+
+```text
+L_source_logit = MSE(adapted_logits_source, frozen_source_logits)
+```
+
+这比单纯 `head_l2_anchor` 更直接，因为它约束的是源域输入上的输出行为，而不是参数距离。
+
+`cpsc_2018`，`source_weight=2`，target/source hmean selection：
+
+| config | CPSC target | PTB-XL fold10 |
+|---|---:|---:|
+| no source-logit anchor | 0.9088 / 0.7290 | 0.9085 / 0.7719 |
+| source-logit anchor 0.1 | 0.9089 / 0.7304 | 0.9190 / 0.7943 |
+| source-logit anchor 0.2 | 0.9082 / 0.7295 | 0.9204 / 0.7975 |
+| source-logit anchor 0.5 | 0.9062 / 0.7232 | 0.9216 / 0.8005 |
+
+输出：
+
+```text
+/root/autodl-tmp/paper_ecgfounder_vae_only_lhat_resadapter_cpsc_sw2_logit01_hmean_20260523/
+/root/autodl-tmp/paper_ecgfounder_vae_only_lhat_resadapter_cpsc_sw2_logit02_hmean_20260523/
+/root/autodl-tmp/paper_ecgfounder_vae_only_lhat_resadapter_cpsc_sw2_logit05_hmean_20260523/
+```
+
+结论：
+
+```text
+source-logit anchor 是目前最有效的保源机制。
+0.1/0.2 基本不牺牲 CPSC target AUPRC，同时把 PTB-XL AUPRC 从 0.7719 拉到 0.7943/0.7975。
+0.5 可以把 PTB-XL AUPRC 拉回 0.8005，几乎等于 source baseline 0.8016，
+但 CPSC target AUPRC 从 0.7290 小降到 0.7232。
+```
+
+当前最接近 active goal 的 CPSC 配置：
+
+```text
+residual_adapter + source_weight=2 + target/source hmean selection
++ source_logit_anchor_weight=0.2 or 0.5
+```
+
+其中 `0.2` 更适合目标中心适配，`0.5` 更适合“不损失 PTB-XL 源域”的论证。
+
+### Four-Center Source-Logit Anchor 0.2 / 0.5
+
+把 `source_logit_anchor_weight=0.2` 和最保源的 `0.5` 扩展到四个主中心：
+
+```text
+head_type                  = residual_adapter
+source_weight              = 2.0
+target_real_weight         = 80.0
+adv_weight                 = 40.0
+source_logit_anchor_weight = 0.2 or 0.5
+selection_metric           = target_source_hmean_auprc
+```
+
+`source_logit_anchor_weight=0.5` 结果：
+
+| center | baseline target | VAE-only residual adapter | delta | PTB-XL fold10 after AT |
+|---|---:|---:|---:|---:|
+| ningbo | 0.8850 / 0.4342 | 0.9210 / 0.5748 | +3.60pp / +14.06pp | 0.9211 / 0.8000 |
+| chapman_shaoxing | 0.8946 / 0.3612 | 0.9013 / 0.4850 | +0.67pp / +12.38pp | 0.9215 / 0.7978 |
+| cpsc_2018 | 0.8219 / 0.5725 | 0.9056 / 0.7218 | +8.38pp / +14.93pp | 0.9217 / 0.8007 |
+| georgia | 0.8525 / 0.6551 | 0.8909 / 0.7418 | +3.83pp / +8.67pp | 0.9216 / 0.7992 |
+| mean | 0.8635 / 0.5058 | 0.9047 / 0.6309 | +4.12pp / +12.51pp | 0.9214 / 0.7994 |
+
+输出：
+
+```text
+/root/autodl-tmp/paper_ecgfounder_vae_only_lhat_resadapter_big4_sw2_logit05_hmean_20260523/
+```
+
+`source_logit_anchor_weight=0.2` 结果：
+
+| center | baseline target | VAE-only residual adapter | delta | PTB-XL fold10 after AT |
+|---|---:|---:|---:|---:|
+| ningbo | 0.8850 / 0.4342 | 0.9229 / 0.5816 | +3.79pp / +14.74pp | 0.9201 / 0.7977 |
+| chapman_shaoxing | 0.8946 / 0.3612 | 0.9086 / 0.4862 | +1.40pp / +12.50pp | 0.9201 / 0.7934 |
+| cpsc_2018 | 0.8219 / 0.5725 | 0.9082 / 0.7274 | +8.63pp / +15.49pp | 0.9205 / 0.7980 |
+| georgia | 0.8525 / 0.6551 | 0.8929 / 0.7466 | +4.04pp / +9.15pp | 0.9201 / 0.7959 |
+| mean | 0.8635 / 0.5058 | 0.9082 / 0.6354 | +4.47pp / +12.97pp | 0.9202 / 0.7962 |
+
+输出：
+
+```text
+/root/autodl-tmp/paper_ecgfounder_vae_only_lhat_resadapter_big4_sw2_logit02_hmean_20260523/
+```
+
+关键结论：
+
+```text
+这是一条新的强主线。
+0.2: 目标中心更强，mean target 0.9082 / 0.6354，PTB-XL 0.9202 / 0.7962。
+0.5: 源域保持更强，mean target 0.9047 / 0.6309，PTB-XL 0.9214 / 0.7994。
+两者都显著优于 ECGFounder linear baseline 的 target mean 0.8635 / 0.5058。
+```
+
+但它仍不能声称目标中心指标已经达到 PTB-XL 源域同等水平，因为四中心 target mean AUPRC 是 `0.6309`，明显低于 PTB-XL source AUPRC `0.8016`。现在可以更准确地表述为：
+
+```text
+VAE-only residual-adapter online AT can substantially improve target-center PN2021 performance
+while preserving PTB-XL source performance.
+```
+
+下一步：
+
+```text
+1. 对 0.2/0.5 两个版本做 3 seed 复现，确认四中心稳定性。
+2. 对 EfficientNet1DV2 尝试类似 source-logit distillation / source-consistency loss；
+   但 EfficientNet 没有 frozen source head，可能需要 EMA teacher 或 baseline teacher logits。
+3. 如果要继续追 target AUPRC，上限实验保留 target-only residual adapter；
+   如果要强调源域不掉，主线优先使用 source-logit anchor 0.5。
+```
+
 ## 推荐执行命令
 
 Smoke test：

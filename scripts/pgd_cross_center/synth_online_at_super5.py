@@ -113,6 +113,43 @@ def set_all_seeds(seed: int) -> None:
     torch.backends.cudnn.benchmark = False
 
 
+def train_source_logit_anchor_epoch(
+    model: nn.Module,
+    teacher_model: nn.Module,
+    loader: DataLoader,
+    optimizer: AdamW,
+    device: str,
+    weight: float,
+    max_batches: int = 0,
+    grad_clip: float = 0.0,
+) -> float:
+    """One lightweight source-consistency pass against the frozen PTB-XL teacher.
+
+    This is used after the mixed target/adv epoch to reduce PTB-XL source
+    forgetting. It does not change labels; it only constrains source logits.
+    """
+    if weight <= 0:
+        return float("nan")
+    model.train()
+    teacher_model.eval()
+    losses: List[float] = []
+    for batch_i, batch in enumerate(loader, start=1):
+        signals = batch[0].to(device, non_blocking=True)
+        optimizer.zero_grad(set_to_none=True)
+        logits = model(signals)
+        with torch.no_grad():
+            teacher_logits = teacher_model(signals)
+        loss = F.mse_loss(logits, teacher_logits) * float(weight)
+        loss.backward()
+        if grad_clip > 0:
+            nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+        optimizer.step()
+        losses.append(float(loss.item()))
+        if max_batches > 0 and batch_i >= max_batches:
+            break
+    return float(np.mean(losses)) if losses else float("nan")
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # Quick eval (Super5 PN2021 multi-center stratified subset)
 # ────────────────────────────────────────────────────────────────────────────
@@ -1050,6 +1087,22 @@ def parse_args():
     p.add_argument("--adv_weight", type=float, default=0.5)
     p.add_argument("--roundtrip_anchor_n", type=int, default=1500)
     p.add_argument("--qab_size", type=int, default=2048)
+    p.add_argument(
+        "--source_logit_anchor_weight",
+        type=float,
+        default=0.0,
+        help=(
+            "Optional source-consistency distillation weight. After each mixed "
+            "training epoch, run a PTB-XL source pass and penalize MSE between "
+            "current logits and the frozen initial source model logits."
+        ),
+    )
+    p.add_argument(
+        "--source_logit_anchor_batches",
+        type=int,
+        default=0,
+        help="Max PTB-XL source batches per source-logit anchor pass; 0 uses the full source loader.",
+    )
 
     # Class trust (Plan Rev 13 H4 gate)
     p.add_argument("--class_trust", default=None,
@@ -1289,6 +1342,22 @@ def main():
                                   crop_len=args.crop_len, mode='train')
     val_ds = PTBXLDatasetScheme(val_signals, val_labels,
                                 crop_len=args.crop_len, mode='eval')
+    source_logit_anchor_loader = None
+    if args.source_logit_anchor_weight > 0:
+        source_logit_anchor_loader = DataLoader(
+            train_ds,
+            batch_size=args.batch_size,
+            shuffle=True,
+            num_workers=args.num_workers,
+            pin_memory=True,
+            drop_last=True,
+            persistent_workers=args.num_workers > 0,
+        )
+        print(
+            f"[setup] source-logit anchor enabled: weight={args.source_logit_anchor_weight} "
+            f"max_batches={args.source_logit_anchor_batches or 'full'}",
+            flush=True,
+        )
     target_real_ds = None
     if args.target_real_npz:
         with np.load(args.target_real_npz, allow_pickle=True) as real_data:
@@ -1395,6 +1464,13 @@ def main():
         )
     for p in victim.model.parameters():
         p.requires_grad_(True)
+    source_logit_teacher_model = None
+    if args.source_logit_anchor_weight > 0:
+        source_logit_teacher_model = copy.deepcopy(victim.model).to(args.device)
+        source_logit_teacher_model.eval()
+        for p in source_logit_teacher_model.parameters():
+            p.requires_grad_(False)
+        print("[setup] frozen source-logit teacher enabled")
     teacher_model = None
     teacher_label_modes = {"mixed_soft", "teacher_soft", "latent_mixed_teacher"}
     if args.adv_label_mode in teacher_label_modes:
@@ -1629,6 +1705,22 @@ def main():
             grad_clip=args.grad_clip, ewa_params=ewa_params,
             anchor_lambda=args.anchor_lambda, ewa_decay=args.ewa_decay,
         )
+        source_logit_anchor_loss = float("nan")
+        if (
+            args.source_logit_anchor_weight > 0
+            and source_logit_teacher_model is not None
+            and source_logit_anchor_loader is not None
+        ):
+            source_logit_anchor_loss = train_source_logit_anchor_epoch(
+                model=victim.model,
+                teacher_model=source_logit_teacher_model,
+                loader=source_logit_anchor_loader,
+                optimizer=optimizer,
+                device=args.device,
+                weight=args.source_logit_anchor_weight,
+                max_batches=args.source_logit_anchor_batches,
+                grad_clip=args.grad_clip,
+            )
         scheduler.step()
 
         # Phase E: PTBXL val loss
@@ -1652,6 +1744,8 @@ def main():
             "epoch": epoch,
             "attack_mode": args.attack_mode,
             "train_loss": round(train_loss, 4),
+            "source_logit_anchor_loss": round(source_logit_anchor_loss, 6)
+            if source_logit_anchor_loss == source_logit_anchor_loss else None,
             "val_loss":   round(val_loss, 4),
             "asr_overall": round(float(asr_info["asr_overall"]), 4),
             "asr_per_class": {k: round(float(v), 4) for k, v in asr_info["per_class_asr"].items()},

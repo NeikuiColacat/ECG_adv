@@ -265,3 +265,149 @@ ningbo  MI  AUPRC: 0.2376 -> 0.2653
 | ECGFounder head target-heavy | 0.9011 / 0.7086 | 0.8998 / 0.7559 |
 
 结论：EfficientNet1DV2 也能被 target-heavy 推高一点，但远不如 ECGFounder head AT。目标里“EfficientNet1DV2 也达到 PTB-XL 源域指标”目前还没有实现。
+
+### EfficientNet1DV2 source-consistency pilot
+
+给 EfficientNet 在线 AT 脚本新增：
+
+```text
+--source_logit_anchor_weight
+--source_logit_anchor_batches
+```
+
+做法：训练开始时复制 frozen initial EfficientNet teacher，每个 mixed target/adv epoch 后，用 PTB-XL source batch 做 logits MSE 约束。
+
+`cpsc_2018` full-set 结果：
+
+| config | CPSC target | PTB-XL fold10 | PN2021 avg |
+|---|---:|---:|---:|
+| target-heavy no anchor | 0.8758 / 0.6258 | 0.8950 / 0.7492 | 0.7868 / 0.4593 |
+| source-logit anchor 0.1 | 0.8731 / 0.6208 | 0.8999 / 0.7604 | 0.7847 / 0.4593 |
+| source-logit anchor 0.5 | 0.8571 / 0.6004 | 0.9055 / 0.7724 | 0.7840 / 0.4623 |
+
+判断：
+
+1. EfficientNet source-consistency 能保源：0.5 把 PTB-XL AUPRC 从 `0.7492` 拉到 `0.7724`。
+2. 但它牺牲目标中心：CPSC AUPRC 从 `0.6258` 降到 `0.6004`。
+3. `0.1` 只是轻量折中，没有超过 no-anchor 的目标性能，也没有恢复到 PTB-XL source baseline。
+4. 这说明 EfficientNet 全模型微调和 source consistency 梯度冲突明显；后续更应该试 backbone-freeze/head-adapter，而不是继续加大 consistency。
+
+EfficientNet1DV2 结构：
+
+```text
+initial_conv -> features -> final_conv/final_norm -> classifier
+classifier = AdaptiveAvgPool1d -> Flatten -> Dropout -> Linear
+```
+
+注意：head-only EfficientNet 不能直接在现有 full-model trainer 中只关掉 `requires_grad`，因为 `model.train()` 会继续更新 frozen BatchNorm running stats。需要单独 runner，让 frozen backbone 始终 `eval()`，只训练 classifier Linear 或 residual adapter。
+
+### 2026-05-23 Residual Adapter 追加实验
+
+为了改善 ECGFounder head AT 的目标中心/源域折中，脚本新增 residual adapter 分类头：
+
+```text
+logits = frozen PTB-XL source linear head + zero-init residual adapter
+```
+
+CPSC pilot：
+
+| method | checkpoint selection | CPSC target | PTB-XL fold10 |
+|---|---|---:|---:|
+| linear target-heavy | target AUPRC | 0.9011 / 0.7086 | 0.8998 / 0.7559 |
+| residual adapter | target AUPRC | 0.9112 / 0.7385 | 0.8941 / 0.7435 |
+| residual adapter, source_weight=2 | target/source hmean | 0.9088 / 0.7290 | 0.9085 / 0.7719 |
+| residual adapter, source_weight=3 | target/source hmean | 0.9083 / 0.7278 | 0.9128 / 0.7817 |
+| residual adapter, head_l2_anchor=0.25 | target/source hmean | 0.9111 / 0.7365 | 0.8967 / 0.7506 |
+
+判断：
+
+1. residual adapter 是目前 CPSC 目标中心最强路线，AUPRC 从 baseline `0.5725` 提升到 `0.7385`。
+2. `source_weight=2 + target/source hmean selection` 是当前更接近双目标的折中：目标 AUPRC `0.7290`，PTB-XL AUPRC `0.7719`。
+3. `source_weight=3` 能把 PTB-XL AUPRC 提到 `0.7817`，但目标 AUPRC 回落到 `0.7278`。
+4. 这仍没有达到 PTB-XL source AUPRC `0.8016`，所以 active goal 还未完成。
+5. 下一步应该围绕 residual adapter 做小网格：`source_weight=3/4`、`head_l2_anchor=0.1/0.25/0.5`、更小 `adapter_hidden` 或 `adapter_scale`。
+
+实现修正：
+
+```text
+scripts/paper/run_ecgfounder_vae_only_lhat_head_ft_20260523.py
+```
+
+已修复 `--freeze_base_head` 路径，确保只冻结 base linear head，不冻结 residual adapter。
+
+### Source-logit anchor：当前最有效保源改进
+
+新增参数：
+
+```text
+--source_logit_anchor_weight
+```
+
+在 PTB-XL source batch 上约束 adapted logits 接近 frozen source head logits。CPSC 结果：
+
+| config | CPSC target | PTB-XL fold10 |
+|---|---:|---:|
+| residual sw2 hmean，无 logit anchor | 0.9088 / 0.7290 | 0.9085 / 0.7719 |
+| residual sw2 hmean，logit anchor 0.1 | 0.9089 / 0.7304 | 0.9190 / 0.7943 |
+| residual sw2 hmean，logit anchor 0.2 | 0.9082 / 0.7295 | 0.9204 / 0.7975 |
+| residual sw2 hmean，logit anchor 0.5 | 0.9062 / 0.7232 | 0.9216 / 0.8005 |
+
+判断：
+
+1. source-logit anchor 比参数 L2 更有效；0.1/0.2 几乎不牺牲 CPSC target，却显著恢复 PTB-XL AUPRC。
+2. `0.5` 已经把 PTB-XL AUPRC 拉回 `0.8005`，基本等于 ECGFounder source baseline `0.8016`。
+3. 代价是 CPSC target AUPRC 从最强的 `0.7385` 回落到 `0.7232`，仍比 baseline `0.5725` 高很多。
+4. 当前还只在 CPSC 验证；需要扩展到 ningbo/chapman/georgia 才能证明这是稳定主线。
+
+### Four-center source-logit anchor 0.2 / 0.5
+
+`source_logit_anchor_weight=0.5` 已扩展到四个主中心：
+
+| center | baseline target | residual adapter + logit anchor 0.5 | PTB-XL fold10 after AT |
+|---|---:|---:|---:|
+| ningbo | 0.8850 / 0.4342 | 0.9210 / 0.5748 | 0.9211 / 0.8000 |
+| chapman_shaoxing | 0.8946 / 0.3612 | 0.9013 / 0.4850 | 0.9215 / 0.7978 |
+| cpsc_2018 | 0.8219 / 0.5725 | 0.9056 / 0.7218 | 0.9217 / 0.8007 |
+| georgia | 0.8525 / 0.6551 | 0.8909 / 0.7418 | 0.9216 / 0.7992 |
+| mean | 0.8635 / 0.5058 | 0.9047 / 0.6309 | 0.9214 / 0.7994 |
+
+这轮是目前最接近目标的 ECGFounder 版本：
+
+```text
+target-center mean: +4.12pp AUROC / +12.51pp AUPRC
+PTB-XL source retained: 0.9214 / 0.7994
+ECGFounder source baseline: 0.9224 / 0.8016
+```
+
+`source_logit_anchor_weight=0.2` 四中心：
+
+| center | baseline target | residual adapter + logit anchor 0.2 | PTB-XL fold10 after AT |
+|---|---:|---:|---:|
+| ningbo | 0.8850 / 0.4342 | 0.9229 / 0.5816 | 0.9201 / 0.7977 |
+| chapman_shaoxing | 0.8946 / 0.3612 | 0.9086 / 0.4862 | 0.9201 / 0.7934 |
+| cpsc_2018 | 0.8219 / 0.5725 | 0.9082 / 0.7274 | 0.9205 / 0.7980 |
+| georgia | 0.8525 / 0.6551 | 0.8929 / 0.7466 | 0.9201 / 0.7959 |
+| mean | 0.8635 / 0.5058 | 0.9082 / 0.6354 | 0.9202 / 0.7962 |
+
+Pareto 判断：
+
+```text
+0.2: 目标中心更强，target mean 0.9082 / 0.6354，PTB-XL 0.9202 / 0.7962。
+0.5: 源域保持更强，target mean 0.9047 / 0.6309，PTB-XL 0.9214 / 0.7994。
+```
+
+重要边界：
+
+```text
+源域指标已经基本保住，但外部目标中心 AUPRC 仍低于 PTB-XL source AUPRC。
+所以不能说 target-center 已达到 PTB-XL 同源性能；
+只能说在保住 PTB-XL 源域性能的同时显著提升了目标中心性能。
+```
+
+下一步：
+
+```text
+1. ECGFounder 0.2/0.5 版本做多 seed 复现。
+2. EfficientNet1DV2 若继续追，应优先尝试 backbone-freeze/head-adapter；
+   单纯 source-consistency 已验证为保源但压制目标适配。
+```
