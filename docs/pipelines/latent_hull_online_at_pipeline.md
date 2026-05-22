@@ -2247,11 +2247,50 @@ The gain remains after excluding all-zero PN2021 rows, so this pilot is not mere
 However, this is only CPSC K=100. It should become the next main branch only after 4-center replication and K sensitivity.
 ```
 
+#### Four-center full-FT replication
+
+已完成四中心 K=100 ref-excluded 复现。所有结果使用同一协议：
+
+```text
+ECGFounder official full fine-tuning
+PTB-XL fold1-8 source stream
+K=100 target-real stream
+best checkpoint selected by PTB-XL fold9 macro AUPRC
+target K refs excluded from evaluation
+```
+
+| center | no-VAE target | VAE target | delta pp | no-VAE drop-all-zero | VAE drop-all-zero | delta pp |
+|---|---:|---:|---:|---:|---:|---:|
+| cpsc_2018 | 0.8684 / 0.6895 | 0.8754 / 0.7148 | +0.70 / +2.53 | 0.9154 / 0.8198 | 0.9168 / 0.8261 | +0.15 / +0.62 |
+| ningbo | 0.8919 / 0.4942 | 0.8999 / 0.5162 | +0.80 / +2.20 | 0.9087 / 0.6429 | 0.9150 / 0.6509 | +0.63 / +0.80 |
+| chapman_shaoxing | 0.8782 / 0.4545 | 0.8836 / 0.4559 | +0.53 / +0.13 | 0.8871 / 0.5544 | 0.8901 / 0.5582 | +0.30 / +0.38 |
+| georgia | 0.8357 / 0.5477 | 0.8301 / 0.5385 | -0.56 / -0.92 | 0.8445 / 0.6104 | 0.8389 / 0.6047 | -0.56 / -0.56 |
+
+结论：
+
+```text
+VAE-only 在官方 full-FT 强基线之上并非单中心偶然：CPSC、Ningbo、Chapman 都有正向。
+但 Georgia 是负向，因此当前方法还不是无条件主线。
+drop-all-zero 后 CPSC/Ningbo/Chapman 仍保持正向，说明正向中心不是靠 all-zero 指标虚高。
+```
+
+target-oracle 诊断：
+
+| center | no-VAE target-best | VAE target-best | interpretation |
+|---|---:|---:|---|
+| cpsc_2018 | 0.8723 / 0.7025 | 0.8754 / 0.7148 | VAE 仍强 |
+| ningbo | 0.9207 / 0.5317 | 0.9135 / 0.5222 | no-VAE target-oracle 更强 |
+| chapman_shaoxing | 0.9154 / 0.4678 | 0.9196 / 0.4742 | VAE 小幅强 |
+| georgia | 0.8499 / 0.5565 | 0.8418 / 0.5535 | no-VAE target-oracle 更强 |
+
+这个诊断不能作为正式主指标，因为它使用目标测试集选 epoch；但它说明 source-only
+checkpoint selection 可能错过目标中心最佳点。下一轮要做不泄漏 target-val selection。
+
 Next experiments：
 
 ```text
-1. Replicate full-FT + VAE-only on ningbo, chapman_shaoxing, georgia with the same K=100 protocol.
-2. Run CPSC K=20/50/100 to test whether the method still helps with very small target samples.
-3. Add a target/source selection metric if fold9-only selection misses better target checkpoints.
+1. Add non-leaky target-val selection: split each K=100 into 80 target-train / 20 target-val.
+2. Run CPSC/Ningbo/Chapman/Georgia K=20/50/100 for no-VAE vs VAE under that selection.
+3. For Georgia, sweep smaller adv_weight and class-gated VAE stream before increasing K.
 4. Keep no-VAE full fine-tuning as the primary fairness baseline for ECGFounder.
 ```

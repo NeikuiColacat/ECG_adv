@@ -205,6 +205,28 @@ def load_selected_ref_ids(ref_meta_json: Path, center: str) -> set[str]:
     return out
 
 
+def split_target_train_val(
+    target_idx: np.ndarray,
+    record_ids: np.ndarray,
+    val_count: int,
+    seed: int,
+) -> tuple[np.ndarray, np.ndarray, set[str], set[str]]:
+    target_idx = np.asarray(target_idx, dtype=np.int64)
+    if val_count <= 0:
+        train_ids = {str(record_ids[i]) for i in target_idx}
+        return target_idx, np.empty(0, dtype=np.int64), train_ids, set()
+    if val_count >= len(target_idx):
+        raise ValueError(f"target_val_count={val_count} must be smaller than target K={len(target_idx)}")
+    rng = np.random.default_rng(seed + 1701)
+    perm = np.asarray(target_idx, dtype=np.int64).copy()
+    rng.shuffle(perm)
+    val_idx = np.sort(perm[:val_count])
+    train_idx = np.sort(perm[val_count:])
+    train_ids = {str(record_ids[i]) for i in train_idx}
+    val_ids = {str(record_ids[i]) for i in val_idx}
+    return train_idx, val_idx, train_ids, val_ids
+
+
 def load_anchor_pool_for_ids(
     center: str,
     selected_ids: set[str],
@@ -401,6 +423,13 @@ def main() -> None:
     ap.add_argument("--hull_include_anchor", action="store_true")
     ap.add_argument("--pgd_eps", type=float, default=2.0)
     ap.add_argument("--pgd_batch", type=int, default=4)
+    ap.add_argument("--target_val_count", type=int, default=0)
+    ap.add_argument(
+        "--selection_metric",
+        choices=["source_auprc", "target_val_auprc", "source_plus_target_val_auprc"],
+        default="source_auprc",
+    )
+    ap.add_argument("--target_val_score_weight", type=float, default=0.5)
     ap.add_argument("--source_train_limit", type=int, default=0)
     ap.add_argument("--preprocess_policy", default="official_ptbxl_eval")
     ap.add_argument("--device", default="cuda:0")
@@ -415,9 +444,14 @@ def main() -> None:
     sw_tag = str(args.source_weight).replace(".", "p")
     tw_tag = str(args.target_real_weight).replace(".", "p")
     method_tag = "fullft_vae" if args.enable_vae_adv_stream else "fullft"
+    selection_tag = (
+        f"_tv{args.target_val_count}_{args.selection_metric}"
+        if args.target_val_count > 0 or args.selection_metric != "source_auprc"
+        else ""
+    )
     run_dir = out_dir / "runs" / (
         f"{args.center}_K{args.k}_fullft_ep{args.epochs}_lr{lr_tag}_"
-        f"sw{sw_tag}_tw{tw_tag}_{method_tag}_seed{args.seed}"
+        f"sw{sw_tag}_tw{tw_tag}_{method_tag}{selection_tag}_seed{args.seed}"
     )
     run_dir.mkdir(parents=True, exist_ok=True)
     result_path = run_dir / "eval_result.json"
@@ -447,6 +481,14 @@ def main() -> None:
     target_idx = np.asarray([i for i, rid in enumerate(record_ids) if rid in selected_ids], dtype=np.int64)
     if len(target_idx) != args.k:
         print(f"[warn] parsed K={len(target_idx)} target records; requested {args.k}", flush=True)
+    target_train_idx, target_val_idx, target_train_ids, target_val_ids = split_target_train_val(
+        target_idx,
+        record_ids,
+        args.target_val_count,
+        args.seed,
+    )
+    if args.selection_metric != "source_auprc" and len(target_val_idx) == 0:
+        raise RuntimeError("--selection_metric needs --target_val_count > 0 unless source_auprc is used")
     eval_idx = np.asarray([i for i, rid in enumerate(record_ids) if rid not in selected_ids], dtype=np.int64)
     drop_eval_idx = eval_idx[pn["labels"][eval_idx].sum(axis=1) > 0]
 
@@ -473,7 +515,7 @@ def main() -> None:
             dirichlet_alpha=args.hull_dirichlet_alpha,
             device=args.device,
         )
-        anchor_pool = load_anchor_pool_for_ids(args.center, selected_ids, pn)
+        anchor_pool = load_anchor_pool_for_ids(args.center, target_train_ids, pn)
         walker = StratifiedPoolWalker(
             labels_one_hot=anchor_pool["labels"],
             classes_in_scope=anchor_pool["classes_in_scope"],
@@ -520,7 +562,7 @@ def main() -> None:
         train_loader = make_train_loader(
             ptbxl,
             pn,
-            target_idx,
+            target_train_idx,
             args,
             adv_info["signals"],
             adv_info["labels"],
@@ -539,17 +581,37 @@ def main() -> None:
             losses.append(float(loss.item()))
         sched.step()
         val_metrics = eval_split(model, ptbxl["signals"], ptbxl["labels"], val_idx, args.eval_batch_size, device)
+        target_val_metrics = (
+            eval_split(model, pn["signals"], pn["labels"], target_val_idx, args.eval_batch_size, device)
+            if len(target_val_idx) > 0
+            else None
+        )
         target_metrics = eval_split(model, pn["signals"], pn["labels"], eval_idx, args.eval_batch_size, device)
         drop_metrics = eval_split(model, pn["signals"], pn["labels"], drop_eval_idx, args.eval_batch_size, device)
+        if args.selection_metric == "source_auprc":
+            selection_score = float(val_metrics["macro_auprc"])
+        elif args.selection_metric == "target_val_auprc":
+            assert target_val_metrics is not None
+            selection_score = float(target_val_metrics["macro_auprc"])
+        else:
+            assert target_val_metrics is not None
+            w = float(args.target_val_score_weight)
+            selection_score = (
+                (1.0 - w) * float(val_metrics["macro_auprc"])
+                + w * float(target_val_metrics["macro_auprc"])
+            )
         entry = {
             "epoch": epoch,
             "loss": float(np.mean(losses)),
             "val_macro_auroc": val_metrics["macro_auroc"],
             "val_macro_auprc": val_metrics["macro_auprc"],
+            "target_val_macro_auroc": None if target_val_metrics is None else target_val_metrics["macro_auroc"],
+            "target_val_macro_auprc": None if target_val_metrics is None else target_val_metrics["macro_auprc"],
             "target_macro_auroc": target_metrics["macro_auroc"],
             "target_macro_auprc": target_metrics["macro_auprc"],
             "target_drop_all_zero_macro_auroc": drop_metrics["macro_auroc"],
             "target_drop_all_zero_macro_auprc": drop_metrics["macro_auprc"],
+            "selection_score": selection_score,
             "n_adv": int(adv_info["n_adv"]),
             "adv_delta_mean": adv_info["delta_mean"],
             "adv_delta_max": adv_info["delta_max"],
@@ -561,11 +623,15 @@ def main() -> None:
         print(
             f"ep={epoch:03d} loss={entry['loss']:.4f} "
             f"val={entry['val_macro_auroc']:.4f}/{entry['val_macro_auprc']:.4f} "
-            f"target={entry['target_macro_auroc']:.4f}/{entry['target_macro_auprc']:.4f} "
+            + (
+                f"tval={entry['target_val_macro_auroc']:.4f}/{entry['target_val_macro_auprc']:.4f} "
+                if target_val_metrics is not None else ""
+            )
+            + f"target={entry['target_macro_auroc']:.4f}/{entry['target_macro_auprc']:.4f} "
             f"drop={entry['target_drop_all_zero_macro_auroc']:.4f}/{entry['target_drop_all_zero_macro_auprc']:.4f}",
             flush=True,
         )
-        score = float(val_metrics["macro_auprc"])
+        score = selection_score
         if score > best:
             best = score
             torch.save(model.state_dict(), run_dir / "best_model.pt")
@@ -580,8 +646,17 @@ def main() -> None:
         "vae_stream_enabled": bool(args.enable_vae_adv_stream),
         "center": args.center,
         "K": int(len(target_idx)),
+        "target_train_K": int(len(target_train_idx)),
+        "target_val_K": int(len(target_val_idx)),
         "selected_ref_record_ids": sorted(selected_ids),
+        "target_train_record_ids": sorted(target_train_ids),
+        "target_val_record_ids": sorted(target_val_ids),
         "ptbxl_fold10": eval_split(model, ptbxl["signals"], ptbxl["labels"], test_idx, args.eval_batch_size, device),
+        "target_val": (
+            eval_split(model, pn["signals"], pn["labels"], target_val_idx, args.eval_batch_size, device)
+            if len(target_val_idx) > 0
+            else None
+        ),
         "target_excluding_ref": eval_split(model, pn["signals"], pn["labels"], eval_idx, args.eval_batch_size, device),
         "target_drop_all_zero_excluding_ref": eval_split(model, pn["signals"], pn["labels"], drop_eval_idx, args.eval_batch_size, device),
         "n_target_eval": int(len(eval_idx)),

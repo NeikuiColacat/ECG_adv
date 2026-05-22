@@ -1100,29 +1100,39 @@ CPSC target AUPRC 比 no-VAE full FT 高 +2.53pp；drop-all-zero AUPRC 高 +0.62
 下一步需要在 ningbo、chapman_shaoxing、georgia 复跑，并做 K=20/50/100 sensitivity。
 ```
 
-### Full-FT + VAE-only two-center update
+### Full-FT + VAE-only four-center update
 
-已补 `ningbo` K=100 同协议复现。当前结果均为 PTB-XL fold9 macro AUPRC 选择 best checkpoint。
+已补 `ningbo`、`chapman_shaoxing`、`cpsc_2018`、`georgia` 的 K=100 同协议复现。当前表格均为
+PTB-XL fold9 macro AUPRC 选择 best checkpoint，不使用目标测试集选 checkpoint。
 
-| center | setting | PTB-XL fold10 | target | drop-all-zero |
-|---|---|---:|---:|---:|
-| cpsc_2018 | no-VAE full FT | 0.9244 / 0.8134 | 0.8684 / 0.6895 | 0.9154 / 0.8198 |
-| cpsc_2018 | full FT + VAE-only online AT | 0.9247 / 0.8157 | 0.8754 / 0.7148 | 0.9168 / 0.8261 |
-| ningbo | no-VAE full FT | 0.9292 / 0.8223 | 0.8919 / 0.4942 | 0.9087 / 0.6429 |
-| ningbo | full FT + VAE-only online AT | 0.9271 / 0.8188 | 0.8999 / 0.5162 | 0.9150 / 0.6509 |
+| center | no-VAE target | VAE target | delta pp | no-VAE drop-all-zero | VAE drop-all-zero | delta pp |
+|---|---:|---:|---:|---:|---:|---:|
+| cpsc_2018 | 0.8684 / 0.6895 | 0.8754 / 0.7148 | +0.70 / +2.53 | 0.9154 / 0.8198 | 0.9168 / 0.8261 | +0.15 / +0.62 |
+| ningbo | 0.8919 / 0.4942 | 0.8999 / 0.5162 | +0.80 / +2.20 | 0.9087 / 0.6429 | 0.9150 / 0.6509 | +0.63 / +0.80 |
+| chapman_shaoxing | 0.8782 / 0.4545 | 0.8836 / 0.4559 | +0.53 / +0.13 | 0.8871 / 0.5544 | 0.8901 / 0.5582 | +0.30 / +0.38 |
+| georgia | 0.8357 / 0.5477 | 0.8301 / 0.5385 | -0.56 / -0.92 | 0.8445 / 0.6104 | 0.8389 / 0.6047 | -0.56 / -0.56 |
 
-增量：
+判断：
 
-| center | target delta | drop-all-zero delta | source delta |
-|---|---:|---:|---:|
-| cpsc_2018 | +0.70pp / +2.53pp | +0.15pp / +0.62pp | +0.03pp / +0.23pp |
-| ningbo | +0.80pp / +2.20pp | +0.63pp / +0.80pp | -0.21pp / -0.35pp |
+1. 在官方 full fine-tuning 强基线之上，VAE-only online AT 在 3/4 个中心仍有额外增益。
+2. `cpsc_2018` 和 `ningbo` 的 target AUPRC 增益最大，且 drop-all-zero 后仍为正；这说明增益不只是 all-zero 样本造成的指标虚高。
+3. `chapman_shaoxing` 只有小幅正向，`georgia` 负向。当前不能宣称 VAE-only 对所有中心稳定优于 no-VAE full FT。
+4. ECGFounder 官方 full fine-tuning 本身已经很强，之前 frozen-head/linear-head 路线的大提升有明显弱基线因素；现在的公平问题应以 no-VAE full FT 为主基线。
+5. 目标“外部中心达到 PTB-XL 同源 AUPRC”仍未完成。source fold10 AUPRC 约 `0.81-0.82`，而四中心 target AUPRC 仍在 `0.46-0.71`。
 
-关键边界：
+target-oracle 诊断显示 checkpoint selection 是主要问题之一：
+
+| center | no-VAE target-best | VAE target-best | note |
+|---|---:|---:|---|
+| cpsc_2018 | 0.8723 / 0.7025 | 0.8754 / 0.7148 | VAE 仍强 |
+| ningbo | 0.9207 / 0.5317 | 0.9135 / 0.5222 | no-VAE target-oracle 更强 |
+| chapman_shaoxing | 0.9154 / 0.4678 | 0.9196 / 0.4742 | VAE target-oracle 小幅更强 |
+| georgia | 0.8499 / 0.5565 | 0.8418 / 0.5535 | no-VAE target-oracle 更强 |
+
+因此下一步不应盲目加大 `adv_weight` 或 epoch，而应：
 
 ```text
-Ningbo no-VAE 的 epoch1 target AUPRC 曾到 0.5317，超过 VAE source-selected checkpoint 的 0.5162。
-因此 Ningbo 不能解释成 VAE 在 target-oracle 下无条件更强；
-更准确的说法是：在不使用目标测试集选 checkpoint、只按 PTB-XL fold9 选择时，VAE stream 提高了 target 指标。
-后续必须同时报告 source-selected 和 target-oracle 曲线，并设计不泄漏的 target-val selection。
+1. 设计不泄漏的 target-val checkpoint selection，例如 K=100 内拆 80 train / 20 val。
+2. 对 Georgia 先降低 adv_weight 或只在高置信类启用 VAE stream，避免 MI 极少类被 latent-hull 噪声拖累。
+3. 继续做 K=20/50/100 sensitivity，判断少样本时 VAE-only 是否比 no-VAE 更有独特优势。
 ```
