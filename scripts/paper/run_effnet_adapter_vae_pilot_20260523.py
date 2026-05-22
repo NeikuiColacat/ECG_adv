@@ -99,7 +99,13 @@ def train_one(center: str, method: str, args: argparse.Namespace) -> Path:
     classes = present_classes(subset["signals"])
     class_tag = "".join(c.lower() for c in classes)
     adapter_tag = "headfn" if args.train_final_norm else "head"
-    tag = f"{center}_K{args.K}_{method}_{adapter_tag}_lam015_M20_ep{args.epochs}_{class_tag}_seed{args.seed}"
+    if args.classifier_adapter_type != "linear":
+        adapter_tag = f"{adapter_tag}_{args.classifier_adapter_type}r{args.classifier_lora_rank}"
+    label_tag = args.adv_label_mode.replace("_", "")
+    tag = (
+        f"{center}_K{args.K}_{method}_{adapter_tag}_lam015_M20_"
+        f"{label_tag}_ep{args.epochs}_{class_tag}_seed{args.seed}"
+    )
     out_dir = OUT_ROOT / "runs" / tag
     eval_path = out_dir / "eval_result_v5_exclrefs_crop1000_dropzero.json"
     if eval_path.exists() and not args.force:
@@ -134,6 +140,9 @@ def train_one(center: str, method: str, args: argparse.Namespace) -> Path:
         "--classes_in_scope", *classes,
         "--allow_hyp_cd_trust",
         "--freeze_backbone_classifier_only",
+        "--classifier_adapter_type", args.classifier_adapter_type,
+        "--classifier_lora_rank", str(args.classifier_lora_rank),
+        "--classifier_lora_alpha", str(args.classifier_lora_alpha),
         "--target_real_weight", str(args.target_real_weight),
         "--ptbxl_weight", "1.0",
         "--roundtrip_weight", "0.0",
@@ -162,7 +171,9 @@ def train_one(center: str, method: str, args: argparse.Namespace) -> Path:
         train_cmd.extend(["--disable_adv_stream", "--adv_weight", "0.0"])
     elif method == "vae_only":
         train_cmd.extend([
-            "--adv_label_mode", "multi_hot_hard",
+            "--adv_label_mode", args.adv_label_mode,
+            "--adv_teacher_mix", str(args.adv_teacher_mix),
+            "--adv_soft_target_floor", str(args.adv_soft_target_floor),
             "--adv_weight", str(args.adv_weight),
         ])
     else:
@@ -266,10 +277,23 @@ def main() -> None:
     ap.add_argument("--hull_steps", type=int, default=10)
     ap.add_argument("--target_real_weight", type=float, default=40.0)
     ap.add_argument("--adv_weight", type=float, default=20.0)
+    ap.add_argument(
+        "--adv_label_mode",
+        choices=[
+            "hard", "multi_hot_hard", "latent_soft", "mixed_soft",
+            "teacher_soft", "latent_mixed_teacher",
+        ],
+        default="multi_hot_hard",
+    )
+    ap.add_argument("--adv_teacher_mix", type=float, default=0.7)
+    ap.add_argument("--adv_soft_target_floor", type=float, default=0.0)
     ap.add_argument("--source_logit_anchor_weight", type=float, default=0.2)
     ap.add_argument("--source_logit_anchor_batches", type=int, default=10)
     ap.add_argument("--train_final_norm", action="store_true", default=True)
     ap.add_argument("--no_train_final_norm", action="store_false", dest="train_final_norm")
+    ap.add_argument("--classifier_adapter_type", choices=["linear", "lora"], default="linear")
+    ap.add_argument("--classifier_lora_rank", type=int, default=16)
+    ap.add_argument("--classifier_lora_alpha", type=float, default=16.0)
     ap.add_argument("--lr", type=float, default=5e-5)
     ap.add_argument("--batch_size", type=int, default=128)
     ap.add_argument("--num_workers", type=int, default=4)
@@ -294,7 +318,14 @@ def main() -> None:
                 "center": center,
                 "K": args.K,
                 "method": method,
-                "adapter": "head+final_norm" if args.train_final_norm else "head",
+                "adapter": (
+                    ("head+final_norm" if args.train_final_norm else "head")
+                    if args.classifier_adapter_type == "linear"
+                    else (
+                        ("head+final_norm" if args.train_final_norm else "head")
+                        + f"+lora_r{args.classifier_lora_rank}"
+                    )
+                ),
                 "classes": " ".join(present_classes(subset["signals"])),
                 "eval_path": str(eval_path),
             }

@@ -722,3 +722,249 @@ VAE-only latent-hull 在 CPSC 最有用，在 Chapman 有轻微正向，在 Ning
 如果继续论文主线，应把 VAE-only 定位为 on-manifold adversarial regularization，
 而不是稳定超越 real-only target adaptation 的独立增强模块。
 ```
+
+## 2026-05-23 追加：ECGFounder 纯 VAE-only 独立性测试
+
+为了区分“目标中心真实样本 adapter 适配”和“VAE-only latent-hull 独立贡献”，
+给 ECGFounder runner 新增：
+
+```text
+--init_head_path
+```
+
+这个参数允许第二阶段从已有 head 初始化，例如：
+
+```text
+real-only residual adapter
+-> source + VAE-only adversarial stream refinement
+```
+
+### Stage-2 after real-only
+
+先在 `cpsc_2018` 测试：
+
+```text
+init = K100 real-only residual adapter best_head.pt
+target_real_weight = 0
+adv_weight = 40
+source_weight = 2
+source_logit_anchor_weight = 0.2
+epochs = 15
+```
+
+结果：
+
+| setting | CPSC target | CPSC drop-all-zero | PTB-XL fold10 |
+|---|---:|---:|---:|
+| real-only init | 0.8755 / 0.6540 | 0.9186 / 0.8095 | 0.9224 / 0.8019 |
+| best after VAE-only stage-2 | 0.8755 / 0.6540 | 0.9186 / 0.8095 | 0.9224 / 0.8019 |
+
+训练过程里 VAE-only stage-2 epoch 1-15 的 target AUPRC 下降到约 `0.636-0.646`，
+selection 保留 epoch 0。说明在 real-only adapter 已经适配后，继续只加 VAE
+latent-hull adversarial stream 没有独立增量。
+
+### Pure VAE-only without target-real stream
+
+再测试一个更直接的问题：从 ECGFounder source head 出发，不喂目标中心真实特征，
+只用 PTB-XL source + K=100 目标中心 VAE latent-hull adversarial samples。
+
+配置：
+
+```text
+K = 100
+k_anchor = 100 per epoch
+target_real_weight = 0
+adv_weight = 40
+source_weight = 2
+source_logit_anchor_weight = 0.2
+head_type = residual_adapter
+freeze_base_head = true
+```
+
+结果：
+
+| center | source baseline | pure VAE-only | delta |
+|---|---:|---:|---:|
+| ningbo | 0.8848 / 0.4382 | 0.8845 / 0.4401 | -0.03pp / +0.19pp |
+| chapman_shaoxing | 0.8913 / 0.3724 | 0.8933 / 0.3773 | +0.20pp / +0.49pp |
+| cpsc_2018 | 0.8247 / 0.5819 | 0.8317 / 0.5879 | +0.70pp / +0.60pp |
+| georgia | 0.8536 / 0.6593 | 0.8559 / 0.6614 | +0.23pp / +0.22pp |
+| 4-center mean | 0.8636 / 0.5129 | 0.8663 / 0.5167 | +0.27pp / +0.38pp |
+
+drop-all-zero：
+
+| view | baseline mean | pure VAE-only mean | delta |
+|---|---:|---:|---:|
+| drop-all-zero | 0.8920 / 0.6569 | 0.8950 / 0.6628 | +0.30pp / +0.59pp |
+
+PTB-XL fold10 after pure VAE-only 平均约 `0.9229 / 0.8031`，源域保持很好。
+
+解释：
+
+```text
+Pure VAE-only 有独立适配能力，但幅度很小。
+它不能解释 ECGFounder residual adapter 的大幅提升；
+大提升主要来自 target-real adapter adaptation。
+这条证据不满足“VAE-only 明显强于其他方法”的目标。
+```
+
+下一步不建议继续把 ECGFounder residual adapter 作为证明 VAE-only 独特优势的主路线。
+如果继续追 VAE-only，优先方向应转向：
+
+```text
+1. 低 K/稀有类场景，只把 VAE-only 定位为 target-real 不足时的弱正则。
+2. EfficientNet frozen-backbone adapter 或更轻量 residual classifier adapter，
+   因为非 foundation frozen features 更可能暴露 VAE latent-hull 的独立价值。
+3. 明确报告 negative evidence：real-only adapter 是当前主增益来源。
+```
+
+## 2026-05-23 追加：EfficientNet pure VAE-only K=100 四中心
+
+ECGFounder pure VAE-only 只有小幅独立增益后，转到 EfficientNet1DV2
+frozen-backbone adapter，测试同样的纯 VAE-only 设定：
+
+```text
+source checkpoint = super5_minresample_full10_perglobal_20260503
+adapter           = classifier + final_norm affine
+target_real_weight = 0
+adv_weight         = 20
+source_logit_anchor_weight = 0.2
+K = 100
+M = 20
+lambda = 0.15
+hull_steps = 10
+quality gate = disabled
+```
+
+即只用：
+
+```text
+PTB-XL source stream + target-center real ECGTwin VAE latent-hull adversarial stream
+```
+
+不使用目标中心真实 ECG 的监督 stream。
+
+四中心同 ref-exclusion baseline 对比：
+
+| center | source baseline | pure VAE-only | delta |
+|---|---:|---:|---:|
+| ningbo | 0.8707 / 0.4266 | 0.8736 / 0.4296 | +0.29pp / +0.31pp |
+| chapman_shaoxing | 0.8770 / 0.3567 | 0.8820 / 0.3606 | +0.50pp / +0.39pp |
+| cpsc_2018 | 0.8143 / 0.5687 | 0.8170 / 0.5705 | +0.27pp / +0.18pp |
+| georgia | 0.8173 / 0.5944 | 0.8193 / 0.5952 | +0.20pp / +0.08pp |
+| 4-center mean | 0.8448 / 0.4866 | 0.8480 / 0.4890 | +0.32pp / +0.24pp |
+
+drop-all-zero：
+
+| center | source baseline | pure VAE-only | delta |
+|---|---:|---:|---:|
+| ningbo | 0.8987 / 0.6107 | 0.9010 / 0.6122 | +0.23pp / +0.15pp |
+| chapman_shaoxing | 0.9046 / 0.5429 | 0.9080 / 0.5443 | +0.34pp / +0.13pp |
+| cpsc_2018 | 0.8631 / 0.6979 | 0.8665 / 0.7021 | +0.34pp / +0.42pp |
+| georgia | 0.8258 / 0.6757 | 0.8271 / 0.6757 | +0.13pp / -0.00pp |
+| 4-center mean | 0.8730 / 0.6318 | 0.8756 / 0.6336 | +0.26pp / +0.18pp |
+
+PTB-XL fold10 after pure VAE-only 约 `0.908 / 0.776`，源域保持良好。
+
+判断：
+
+```text
+EfficientNet pure VAE-only 比 ECGFounder pure VAE-only 更一致：四中心都是弱正向。
+但提升幅度仍非常小，离“明显强于其他方法”很远。
+drop-all-zero 后仍是弱正向，说明不是 all-zero 虚高，但也没有达到 PTB-XL 源域性能。
+```
+
+下一步最合理的技术路线：
+
+```text
+EfficientNet frozen backbone
+-> residual classifier adapter, preferably small MLP or low-rank residual head
+-> source-logit anchor keeps PTB-XL
+-> compare pure VAE-only / real-only / real+VAE
+```
+
+原因：
+
+```text
+当前 classifier+final_norm affine 容量太低；
+full-model target-heavy 会损伤 source；
+residual classifier adapter 是两者之间最干净的折中。
+```
+
+### Low-rank residual classifier adapter pilot
+
+实现了一个可折叠 low-rank residual head：
+
+```text
+logits = source_linear(x) + alpha / rank * up(down(x))
+```
+
+训练时只更新 `down/up` 和可选 `final_norm` affine；保存 checkpoint 时把
+`up @ down` 折叠回原 EfficientNet `classifier` 的最后 Linear，保证
+`eval_crosscenter.py` 仍能按 vanilla EfficientNet 加载。
+
+新增参数：
+
+```text
+--classifier_adapter_type lora
+--classifier_lora_rank
+--classifier_lora_alpha
+```
+
+CPSC K=100 pure VAE-only 结果：
+
+| adapter | lr | CPSC target | CPSC drop-all-zero | PTB-XL fold10 |
+|---|---:|---:|---:|---:|
+| source baseline | - | 0.8143 / 0.5687 | 0.8631 / 0.6979 | 0.9072 / 0.7744 |
+| linear head+final_norm | 5e-5 | 0.8170 / 0.5705 | 0.8665 / 0.7021 | 0.9082 / 0.7770 |
+| low-rank r16 | 5e-5 | 0.8142 / 0.5686 | 0.8629 / 0.6977 | 0.9072 / 0.7746 |
+| low-rank r16 | 5e-4 | 0.8143 / 0.5687 | 0.8630 / 0.6978 | 0.9073 / 0.7747 |
+
+结论：
+
+```text
+低秩 residual head 没有改善 pure VAE-only，反而低于简单线性 head。
+这说明当前瓶颈不只是 classifier adapter 容量不足；
+VAE latent-hull adversarial stream 本身提供的监督信号太弱，无法替代目标真实样本监督。
+```
+
+下一步不建议继续扫 `rank/alpha/lr`。如果还要推进 VAE-only 独立性，应换问题设定：
+
+```text
+1. VAE-only 作为 real-only adapter 的稳定性/校准正则，而不是主增益来源；
+2. 或者改进 latent-hull 标签/候选构造，让 adversarial stream 的监督信号更接近真实 target labels；
+3. 继续保留 negative evidence：当前大幅提升主要来自 target-real adapter。
+```
+
+### Soft-label regularizer and K=20 check
+
+CPSC K=100 real+VAE 对照：
+
+| setting | CPSC target | CPSC drop-all-zero | PTB-XL fold10 |
+|---|---:|---:|---:|
+| real-only K100 | 0.8155 / 0.5695 | 0.8655 / 0.7006 | 0.9072 / 0.7744 |
+| hard multi-hot VAE | 0.8202 / 0.5721 | 0.8707 / 0.7072 | 0.9082 / 0.7770 |
+| teacher-soft VAE | 0.8161 / 0.5699 | 0.8660 / 0.7012 | 0.9082 / 0.7771 |
+| mixed-soft VAE | 0.8198 / 0.5718 | 0.8702 / 0.7064 | 0.9082 / 0.7770 |
+
+结论：
+
+```text
+teacher-soft 太保守；
+mixed-soft 接近 hard multi-hot，但仍略弱；
+当前 CPSC K=100 最好的版本仍是 hard multi-hot VAE。
+```
+
+CPSC K=20 极小目标样本检查：
+
+| setting | CPSC target | CPSC drop-all-zero | PTB-XL fold10 |
+|---|---:|---:|---:|
+| source / real-only best | 0.8153 / 0.5707 | 0.8636 / 0.6988 | 0.9072 / 0.7744 |
+| VAE hard multi-hot | 0.8153 / 0.5707 | 0.8636 / 0.6988 | 0.9072 / 0.7744 |
+
+备注：
+
+```text
+K=20 时，本轮 real-only 和 VAE 分支的 best checkpoint 都停在 epoch0。
+当前协议下，VAE-only 没有补足极小样本 target supervision 的不足。
+```

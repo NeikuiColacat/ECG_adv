@@ -214,20 +214,33 @@ def train_one_epoch_masked_bce_freeze_aware(
 def configure_classifier_only_adaptation(
     model: nn.Module,
     train_final_norm: bool = False,
+    adapter_type: str = "linear",
+    lora_rank: int = 16,
+    lora_alpha: float = 16.0,
 ) -> Tuple[List[nn.Parameter], Callable[[], None]]:
     """Freeze EfficientNet1DV2 backbone and train only the classifier head.
 
-    This keeps the saved state_dict compatible with the normal EfficientNet
-    architecture, unlike a non-foldable adapter wrapper. The adaptation is
-    deliberately simple: the PTB-XL source model remains the initialization,
-    and only the final classifier parameters can move.
+    `adapter_type=linear` trains the existing classifier. `adapter_type=lora`
+    trains a low-rank residual on top of the final classifier Linear; checkpoints
+    are later folded back to the normal EfficientNet state_dict.
     """
     for p in model.parameters():
         p.requires_grad_(False)
     if not hasattr(model, "classifier"):
         raise ValueError("classifier-only adaptation requires model.classifier")
-    for p in model.classifier.parameters():
-        p.requires_grad_(True)
+    if adapter_type == "linear":
+        for p in model.classifier.parameters():
+            p.requires_grad_(True)
+    elif adapter_type == "lora":
+        attach_foldable_lora_classifier(model, rank=lora_rank, alpha=lora_alpha)
+        for module in model.modules():
+            if isinstance(module, FoldableLowRankLinear):
+                for p in module.down.parameters():
+                    p.requires_grad_(True)
+                for p in module.up.parameters():
+                    p.requires_grad_(True)
+    else:
+        raise ValueError(f"unsupported classifier adapter_type={adapter_type!r}")
     if train_final_norm and hasattr(model, "final_norm"):
         for p in model.final_norm.parameters():
             p.requires_grad_(True)
@@ -240,6 +253,106 @@ def configure_classifier_only_adaptation(
 
     freeze_backbone_eval()
     return [p for p in model.parameters() if p.requires_grad], freeze_backbone_eval
+
+
+class FoldableLowRankLinear(nn.Module):
+    """A foldable low-rank residual adapter for a Linear layer.
+
+    Forward uses `base(x) + alpha/rank * up(down(x))`. The base linear layer is
+    frozen. `folded_weight_bias()` returns a normal Linear weight/bias pair, so
+    saved checkpoints stay compatible with vanilla EfficientNet evaluation.
+    """
+
+    def __init__(self, base: nn.Linear, rank: int = 16, alpha: float = 16.0) -> None:
+        super().__init__()
+        if rank <= 0:
+            raise ValueError(f"rank must be positive, got {rank}")
+        self.base = base
+        for p in self.base.parameters():
+            p.requires_grad_(False)
+        self.rank = int(rank)
+        self.alpha = float(alpha)
+        self.down = nn.Linear(base.in_features, self.rank, bias=False)
+        self.up = nn.Linear(self.rank, base.out_features, bias=False)
+        self.down.to(device=base.weight.device, dtype=base.weight.dtype)
+        self.up.to(device=base.weight.device, dtype=base.weight.dtype)
+        nn.init.kaiming_uniform_(self.down.weight, a=math.sqrt(5))
+        nn.init.zeros_(self.up.weight)
+
+    @property
+    def scale(self) -> float:
+        return self.alpha / float(self.rank)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.base(x) + self.scale * self.up(self.down(x))
+
+    def folded_weight_bias(self) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        delta = self.scale * (self.up.weight @ self.down.weight)
+        return self.base.weight.detach() + delta.detach(), (
+            None if self.base.bias is None else self.base.bias.detach()
+        )
+
+
+def _set_child_module(parent: nn.Module, child_name: str, module: nn.Module) -> None:
+    if isinstance(parent, nn.Sequential) and child_name.isdigit():
+        parent[int(child_name)] = module
+    else:
+        setattr(parent, child_name, module)
+
+
+def attach_foldable_lora_classifier(model: nn.Module, rank: int, alpha: float) -> None:
+    classifier = getattr(model, "classifier", None)
+    if classifier is None:
+        raise ValueError("model has no classifier")
+    linear_name = None
+    linear_module = None
+    for name, module in reversed(list(classifier.named_children())):
+        if isinstance(module, FoldableLowRankLinear):
+            return
+        if isinstance(module, nn.Linear):
+            linear_name = name
+            linear_module = module
+            break
+    if linear_name is None or linear_module is None:
+        raise ValueError("could not find final Linear inside model.classifier")
+    _set_child_module(
+        classifier,
+        linear_name,
+        FoldableLowRankLinear(linear_module, rank=rank, alpha=alpha),
+    )
+
+
+def compatible_state_dict_for_save(model: nn.Module) -> Dict[str, torch.Tensor]:
+    """Return a state_dict compatible with vanilla EfficientNet1DV2.
+
+    FoldableLowRankLinear modules are materialized into their corresponding
+    `.weight` and `.bias` keys and their adapter internals are omitted.
+    """
+    state = model.state_dict()
+    out: Dict[str, torch.Tensor] = {}
+    folded_prefixes: Dict[str, FoldableLowRankLinear] = {
+        name: module
+        for name, module in model.named_modules()
+        if isinstance(module, FoldableLowRankLinear)
+    }
+    for key, value in state.items():
+        skip = False
+        for prefix in folded_prefixes:
+            if key.startswith(prefix + "."):
+                skip = True
+                break
+        if not skip:
+            out[key] = value
+    for prefix, module in folded_prefixes.items():
+        weight, bias = module.folded_weight_bias()
+        out[f"{prefix}.weight"] = weight.detach().cpu()
+        if bias is not None:
+            out[f"{prefix}.bias"] = bias.detach().cpu()
+    return out
+
+
+def save_compatible_model_state(model: nn.Module, path: str) -> None:
+    torch.save(compatible_state_dict_for_save(model), path)
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -1223,6 +1336,18 @@ def parse_args():
             "This gives a small domain-calibration adapter without full backbone FT."
         ),
     )
+    p.add_argument(
+        "--classifier_adapter_type",
+        choices=["linear", "lora"],
+        default="linear",
+        help=(
+            "Adapter used with --freeze_backbone_classifier_only. linear trains "
+            "the existing classifier; lora trains a foldable low-rank residual "
+            "on the final Linear and saves a vanilla-compatible checkpoint."
+        ),
+    )
+    p.add_argument("--classifier_lora_rank", type=int, default=16)
+    p.add_argument("--classifier_lora_alpha", type=float, default=16.0)
 
     # Class trust (Plan Rev 13 H4 gate)
     p.add_argument("--class_trust", default=None,
@@ -1587,11 +1712,15 @@ def main():
         trainable_params, freeze_backbone_eval_fn = configure_classifier_only_adaptation(
             victim.model,
             train_final_norm=args.classifier_only_train_final_norm,
+            adapter_type=args.classifier_adapter_type,
+            lora_rank=args.classifier_lora_rank,
+            lora_alpha=args.classifier_lora_alpha,
         )
         print(
             "[setup] classifier-only adaptation enabled: "
             f"{sum(p.numel() for p in trainable_params):,} trainable params "
-            f"(train_final_norm={args.classifier_only_train_final_norm})",
+            f"(train_final_norm={args.classifier_only_train_final_norm}, "
+            f"adapter={args.classifier_adapter_type})",
             flush=True,
         )
     else:
@@ -1632,6 +1761,9 @@ def main():
         "adaptation": {
             "freeze_backbone_classifier_only": bool(args.freeze_backbone_classifier_only),
             "classifier_only_train_final_norm": bool(args.classifier_only_train_final_norm),
+            "classifier_adapter_type": args.classifier_adapter_type,
+            "classifier_lora_rank": int(args.classifier_lora_rank),
+            "classifier_lora_alpha": float(args.classifier_lora_alpha),
             "n_trainable_tensors": len(trainable_params),
             "n_trainable_params": int(sum(p.numel() for p in trainable_params)),
         },
@@ -1670,7 +1802,7 @@ def main():
     best_epoch = 0
     epochs_since_best = 0
     best_ckpt_path = os.path.join(args.output_dir, "best_model.pt")
-    torch.save(victim.model.state_dict(), best_ckpt_path)
+    save_compatible_model_state(victim.model, best_ckpt_path)
     log_path = os.path.join(args.output_dir, "training_log.json")
     es_path = os.path.join(args.output_dir, "early_stop_info.json")
 
@@ -1990,7 +2122,7 @@ def main():
                 best_metric = cur
                 best_epoch = epoch
                 epochs_since_best = 0
-                torch.save(victim.model.state_dict(), best_ckpt_path)
+                save_compatible_model_state(victim.model, best_ckpt_path)
                 print(f"   ** saved best @ ep{epoch}: {args.es_metric} {best_metric}")
                 entry["best_update"] = True
             else:

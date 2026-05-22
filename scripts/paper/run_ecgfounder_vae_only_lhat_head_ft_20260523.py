@@ -459,6 +459,10 @@ def train_one_center(
             scale=args.adapter_scale,
             freeze_base=args.freeze_base_head,
         ).to(device)
+    if args.init_head_path:
+        init_path = Path(args.init_head_path)
+        print(f"[init] loading head state from {init_path}", flush=True)
+        head.load_state_dict(torch.load(init_path, map_location=device))
     head_anchor = {
         name: param.detach().clone()
         for name, param in head.named_parameters()
@@ -826,6 +830,14 @@ def parse_args() -> argparse.Namespace:
         "--freeze_base_head",
         action="store_true",
         help="For residual_adapter, freeze the PTB-XL source linear head and train only adapter parameters.",
+    )
+    p.add_argument(
+        "--init_head_path",
+        default="",
+        help=(
+            "Optional checkpoint for initializing the current head before online AT. "
+            "Useful for second-stage experiments, e.g. real-only adapter -> VAE-only adversarial refinement."
+        ),
     )
     p.add_argument("--source_weight", type=float, default=1.0)
     p.add_argument("--target_real_weight", type=float, default=20.0)
