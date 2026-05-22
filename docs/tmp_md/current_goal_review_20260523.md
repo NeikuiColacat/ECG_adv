@@ -117,3 +117,151 @@ ECGFounder linear probe seed42 0.9224 / 0.8016
 ```
 
 PN2021 外部中心目前 AUPRC 明显低于 PTB-XL，尤其 ningbo/chapman。这个差距来自跨中心域移、标签体系不完全一致、all-zero 样本大量存在和类别分布差异。不能把“达到 PTB-XL 同源绝对指标”当作已经完成；需要通过 all-class trust、per-class loss/采样、target real 权重、ECGFounder head-only AT 等逐步逼近。
+
+## 任务 2 追加：ECGFounder + VAE-only head AT
+
+新增脚本：
+
+```text
+scripts/paper/run_ecgfounder_vae_only_lhat_head_ft_20260523.py
+```
+
+设计：
+
+```text
+冻结 ECGFounder encoder
+加载 PTB-XL Super5 Linear(1024,5) head
+每个 epoch 用当前 head 做 VAE latent-hull 在线对抗搜索
+decode 后经过 ECGFounder encoder 抽 feature
+只更新 Super5 线性头
+```
+
+20 epoch，K=500，M=20，lambda=0.15，hull_steps=3，K_anchor=150：
+
+| center | ECGFounder baseline | ECGFounder + VAE-only head AT | delta |
+|---|---:|---:|---:|
+| ningbo | 0.8850 / 0.4342 | 0.9322 / 0.5601 | +4.72pp / +12.59pp |
+| chapman_shaoxing | 0.8946 / 0.3612 | 0.9386 / 0.4762 | +4.40pp / +11.50pp |
+| cpsc_2018 | 0.8219 / 0.5725 | 0.8852 / 0.6590 | +6.33pp / +8.64pp |
+| georgia | 0.8525 / 0.6551 | 0.8878 / 0.7250 | +3.53pp / +6.99pp |
+| mean | 0.8635 / 0.5058 | 0.9110 / 0.6051 | +4.75pp / +9.93pp |
+
+PTB-XL fold10 源域保持：
+
+| method | PTB-XL fold10 |
+|---|---:|
+| ECGFounder linear probe | 0.9224 / 0.8016 |
+| ECGFounder + VAE-only head AT mean after target adaptation | 0.9120 / 0.7783 |
+
+当前判断：
+
+1. ECGFounder 版本的 VAE-only 路线比 EfficientNet1DV2 版本更强，尤其是 cpsc_2018：`0.8852 / 0.6590` vs EfficientNet all-class VAE-only `0.8684 / 0.6151`。
+2. 四个中心 AUROC 已经明显接近或超过 PTB-XL 源域 AUROC，但 AUPRC 还没有达到 PTB-XL 源域 `0.80` 左右。
+3. 这说明目标“做到和 PTB-XL 同样 AUROC/AUPRC”还没完成，但 ECGFounder head-only AT 是目前最有希望的路线。
+4. 下一步优先减少源域遗忘并继续推高 AUPRC：head L2/EWA anchor、source_weight 提高、per-center best epoch、seed 稳定性。
+
+### CPSC source_weight 消融
+
+为了平衡目标中心适配和 PTB-XL 源域保持，先在 `cpsc_2018` 上试了 `source_weight`：
+
+| source_weight | target center | target delta | PTB-XL fold10 after AT |
+|---:|---:|---:|---:|
+| 1.0 | 0.8852 / 0.6590 | +6.33pp / +8.64pp | 0.9112 / 0.7789 |
+| 2.0 | 0.8755 / 0.6336 | +5.36pp / +6.10pp | 0.9157 / 0.7882 |
+| 3.0 | 0.8681 / 0.6216 | +4.62pp / +4.91pp | 0.9177 / 0.7921 |
+
+解释：
+
+```text
+source_weight 越大，PTB-XL 源域 AUPRC 保持越好，但目标中心 AUPRC 增益下降。
+```
+
+论文主实验如果强调 target adaptation，可以用 `source_weight=1.0`；如果导师更关心不牺牲源域，则 `source_weight=2.0` 是更稳的折中。
+
+### Target-heavy 上限实验
+
+为了测试目标中心性能上限，使用：
+
+```text
+source_weight      = 1.0
+target_real_weight = 80.0
+adv_weight         = 40.0
+epochs             = 20
+```
+
+四中心结果：
+
+| center | ECGFounder baseline | target-heavy VAE-only head AT | delta |
+|---|---:|---:|---:|
+| ningbo | 0.8850 / 0.4342 | 0.9394 / 0.5962 | +5.44pp / +16.20pp |
+| chapman_shaoxing | 0.8946 / 0.3612 | 0.9408 / 0.4927 | +4.61pp / +13.15pp |
+| cpsc_2018 | 0.8219 / 0.5725 | 0.9011 / 0.7086 | +7.92pp / +13.60pp |
+| georgia | 0.8525 / 0.6551 | 0.8960 / 0.7459 | +4.35pp / +9.08pp |
+| mean | 0.8635 / 0.5058 | 0.9193 / 0.6358 | +5.58pp / +13.01pp |
+
+对比默认权重：
+
+| config | target mean | PTB-XL fold10 mean after AT |
+|---|---:|---:|
+| default `source/target/adv = 1/20/10` | 0.9110 / 0.6051 | 0.9120 / 0.7783 |
+| target-heavy `1/80/40` | 0.9193 / 0.6358 | 0.9000 / 0.7555 |
+
+当前最好目标中心结果来自 target-heavy；当前最好源域保持来自更高 source_weight 或 source-floor checkpoint selection。两者还没有同时达到 PTB-XL 源域 AUPRC。
+
+### Relative head-anchor 正则
+
+脚本已改成支持相对 head-anchor：
+
+```text
+relative_head_anchor = ||head - source_head||^2 / ||source_head||^2
+```
+
+在 `cpsc_2018` + target-heavy `1/80/40` 下：
+
+| head_l2_anchor | target center | PTB-XL fold10 after AT |
+|---:|---:|---:|
+| 0.0 | 0.9011 / 0.7086 | 0.8998 / 0.7559 |
+| 0.25 | 0.8962 / 0.6933 | 0.9044 / 0.7652 |
+| 1.0 | 0.8859 / 0.6640 | 0.9102 / 0.7776 |
+
+这个正则能有效控制 head 偏移，但越保源，目标中心 AUPRC 越低。后续应在 `0.1-0.5` 做 per-center sweep，而不是全中心固定同一个值。
+
+### Class-aware refinement
+
+新增脚本参数：
+
+```text
+--class_loss_weights
+--target_class_sample_weights
+--adv_class_sample_weights
+```
+
+稀有类定向实验：
+
+| center | target-heavy baseline | class-aware result | delta |
+|---|---:|---:|---:|
+| chapman_shaoxing | 0.9408 / 0.4927 | 0.9401 / 0.4993 | -0.07pp / +0.66pp |
+| ningbo | 0.9394 / 0.5962 | 0.9374 / 0.6009 | -0.20pp / +0.47pp |
+| cpsc_2018 STTC boost | 0.9011 / 0.7086 | 0.8936 / 0.6781 | -0.75pp / -3.05pp |
+
+有效改善的 per-class：
+
+```text
+chapman HYP AUPRC: 0.0276 -> 0.0369
+chapman MI  AUPRC: 0.0865 -> 0.1135
+ningbo  MI  AUPRC: 0.2376 -> 0.2653
+```
+
+判断：class-aware 能小幅改善稀有类，但不是决定性突破。ningbo/chapman 的 AUPRC 上限受稀有阳性数量和标签域差异限制很明显。
+
+### EfficientNet1DV2 target-heavy check
+
+为了验证同样思路能不能拉高 EfficientNet1DV2，跑了 CPSC：
+
+| model/config | CPSC target | PTB-XL fold10 |
+|---|---:|---:|
+| EfficientNet all-class default | 0.8684 / 0.6151 | 0.9012 / 0.7629 |
+| EfficientNet target-heavy | 0.8758 / 0.6258 | 0.8950 / 0.7492 |
+| ECGFounder head target-heavy | 0.9011 / 0.7086 | 0.8998 / 0.7559 |
+
+结论：EfficientNet1DV2 也能被 target-heavy 推高一点，但远不如 ECGFounder head AT。目标里“EfficientNet1DV2 也达到 PTB-XL 源域指标”目前还没有实现。

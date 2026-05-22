@@ -1416,3 +1416,37 @@ TMPDIR=/root/autodl-tmp/tmp XDG_CACHE_HOME=/root/autodl-tmp/cache \
    如果 no-lambda 不稳定，论文主方法保留 lambda015；
    如果 no-lambda 接近或更好，可作为更简洁的主公式候选。
 ```
+
+## 2026-05-23 EfficientNet1DV2 Target-Heavy Check
+
+为了对应 ECGFounder head AT 的 target-heavy 方向，给 EfficientNet1DV2 也测试了更强目标中心流：
+
+```text
+center             = cpsc_2018
+trust_policy       = real_all_present
+classes_in_scope   = CD HYP MI NORM STTC
+target_real_weight = 80.0
+adv_weight         = 0.2
+epochs             = 30
+M                  = 20
+lambda             = 0.15
+hull_steps         = 3
+```
+
+结果：
+
+| model | config | CPSC target | PTB-XL fold10 | note |
+|---|---|---:|---:|---|
+| EfficientNet1DV2 | all-class default | 0.8684 / 0.6151 | 0.9012 / 0.7629 | previous all-class refinement |
+| EfficientNet1DV2 | target-heavy | 0.8758 / 0.6258 | 0.8950 / 0.7492 | small target gain, more source drop |
+| ECGFounder head | target-heavy | 0.9011 / 0.7086 | 0.8998 / 0.7559 | much stronger target adaptation |
+
+解读：
+
+```text
+EfficientNet1DV2 上 target-heavy 确实提高 CPSC full-set AUPRC，
+但只有约 +1.1pp，并伴随 PTB-XL 源域进一步下降。
+同样的 VAE-only 思路在 ECGFounder frozen encoder + linear head 上更有效。
+```
+
+注意：EfficientNet quick eval 在训练中一度到 CPSC AUPRC `0.6798`，但 full-set eval 只有 `0.6258`。论文和报告必须引用 full-set eval，不能用 quick subset 代替最终结果。
