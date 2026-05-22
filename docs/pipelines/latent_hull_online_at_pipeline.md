@@ -2147,3 +2147,52 @@ README:
 不是 ECGFounder 官方推荐的最强策略。ECGFounder 的 target-real 大提升需要
 与官方 full fine-tuning 对照后，才能判断是 VAE-only 强，还是原 head-only
 策略过弱。
+
+### ECGFounder Full Fine-tuning Control
+
+新增 fairness-control 脚本：
+
+```text
+scripts/paper/run_ecgfounder_fullft_super5_pilot_20260523.py
+```
+
+该脚本使用 ECGFounder 作者 notebook 推荐的 full fine-tuning 入口：
+
+```text
+ft_12lead_ECGFounder(..., linear_prob=False)
+lr=1e-4
+weight_decay=1e-5
+epochs=5
+preprocess_policy=official_ptbxl_eval
+input=(12, 5000)
+fold9 macro AUPRC 选择 best checkpoint
+```
+
+它不使用 ECGTwin VAE 对抗样本，用来回答一个关键审稿问题：
+
+```text
+ECGFounder 上的 target-center 提升到底来自 VAE-only，
+还是来自之前 frozen-encoder/head-only baseline 过弱？
+```
+
+CPSC K=100 ref-excluded 对照：
+
+| setting | PTB-XL fold10 | CPSC target | CPSC drop-all-zero |
+|---|---:|---:|---:|
+| source-only full FT | 0.9300 / 0.8229 | 0.8187 / 0.5878 | 0.8696 / 0.7109 |
+| source + K100 target-real full FT | 0.9244 / 0.8134 | 0.8684 / 0.6895 | 0.9154 / 0.8198 |
+
+target-real run 如果按目标中心 epoch 选择，epoch 4 可到：
+
+```text
+CPSC target = 0.8723 / 0.7025
+CPSC drop-all-zero = 0.9157 / 0.8253
+```
+
+阶段性结论：
+
+```text
+官方 full fine-tuning + K=100 target-real 本身已经是很强的 no-VAE control。
+因此论文不能再用 ECGFounder frozen-head 结果直接证明 VAE-only 的独立优势。
+后续 VAE-only 主线必须尝试加在 full fine-tuning 之上，或在 K 更小、源域保持更严格的设定下胜出。
+```

@@ -1016,3 +1016,41 @@ model/ecgfounder/README.md:
 linear-probe 设定，不是作者推荐的最强 fine-tuning 设定。ECGFounder
 较大 target-real gain 不能直接归因于 VAE-only；需要用官方 full fine-tuning
 作为更公平的 ECGFounder 上限对照。
+
+### ECGFounder official-style full fine-tuning control
+
+新增脚本：
+
+```text
+scripts/paper/run_ecgfounder_fullft_super5_pilot_20260523.py
+```
+
+目的：确认 ECGFounder 在作者推荐 full fine-tuning 设置下，本身能达到什么水平。
+该脚本不使用 ECGTwin VAE 对抗样本，只使用 PTB-XL source 和可选的目标中心 K 条真实 ECG。
+
+实现依据：
+
+```text
+ft_12lead_ECGFounder(..., linear_prob=False)
+lr=1e-4, weight_decay=1e-5, epochs=5
+preprocess=official_ptbxl_eval, input=(12, 5000)
+fold9 macro AUPRC 选择 best checkpoint
+```
+
+CPSC K=100 ref-excluded 结果：
+
+| setting | PTB-XL fold10 | CPSC target | CPSC drop-all-zero |
+|---|---:|---:|---:|
+| source-only full FT | 0.9300 / 0.8229 | 0.8187 / 0.5878 | 0.8696 / 0.7109 |
+| source + K100 target-real full FT | 0.9244 / 0.8134 | 0.8684 / 0.6895 | 0.9154 / 0.8198 |
+
+备注：target-real run 按 fold9 选择的是 epoch 3；如果只看目标中心最佳 epoch 4，
+CPSC target 为 `0.8723 / 0.7025`，drop-all-zero 为 `0.9157 / 0.8253`。
+
+结论：
+
+```text
+ECGFounder 官方 full fine-tuning + K=100 target-real，在不使用 VAE 的情况下已经显著强于当前 VAE-only head/adapter 尝试。
+因此 ECGFounder 上的大幅 target gain 不能归因于 VAE-only 本身；后续必须把官方 full fine-tuning 作为公平强基线。
+VAE-only 若要成为论文主贡献，需要证明它能在这个 full fine-tuning 基线上继续带来增益，或在更小 K 下稳定胜出。
+```
