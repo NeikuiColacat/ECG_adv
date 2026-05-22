@@ -459,6 +459,15 @@ def main() -> None:
     p.add_argument("--limit_per_center", type=int, default=0)
     p.add_argument("--force_features", action="store_true")
     p.add_argument(
+        "--feature_cache_dir",
+        default="",
+        help=(
+            "Optional shared directory for ECGFounder feature caches. Use this "
+            "for multi-seed linear-head runs so PTB-XL/PN2021 WFDB extraction "
+            "is not repeated for every seed. Defaults to --out_dir."
+        ),
+    )
+    p.add_argument(
         "--preprocess_policy",
         choices=["official_ptbxl_eval", "filtered_dataset"],
         default="official_ptbxl_eval",
@@ -475,8 +484,10 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     device = torch.device(args.device)
 
-    ptbxl_feature_path = out_dir / f"ptbxl_ecgfounder_features_{args.preprocess_policy}.npz"
-    pn_feature_path = out_dir / f"pn2021_ecgfounder_features_{args.preprocess_policy}.npz"
+    feature_cache_dir = Path(args.feature_cache_dir) if args.feature_cache_dir else out_dir
+    feature_cache_dir.mkdir(parents=True, exist_ok=True)
+    ptbxl_feature_path = feature_cache_dir / f"ptbxl_ecgfounder_features_{args.preprocess_policy}.npz"
+    pn_feature_path = feature_cache_dir / f"pn2021_ecgfounder_features_{args.preprocess_policy}.npz"
     if args.force_features:
         for pth in [ptbxl_feature_path, pn_feature_path]:
             if pth.exists():

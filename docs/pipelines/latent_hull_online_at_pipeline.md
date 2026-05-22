@@ -112,6 +112,68 @@ P2 controls:
 | hull_steps | 5 | 10 | 只在 best pool 上做 |
 | weight mode | optimized | one_hot, uniform, Dirichlet | 已有 C3 optimized AUPRC 最好 |
 
+## 2026-05-23 v5 Label Refinement: Real-Anchor All-Class Trust
+
+当前 v5 PN2021 标签映射变得更严格：
+
+```text
+pacing/device rhythm 不再算 CD
+voltage-only 不再算 HYP
+all-zero 保留为主评估负样本
+```
+
+在这个口径下，VAE-only real-anchor 方案需要重新审视旧的 class trust。历史主线沿用了
+ECGTwin synthetic 质量判断：
+
+```text
+classes_in_scope = NORM, MI, STTC
+CD/HYP class_trust = 0
+```
+
+这对 ECGTwin 直接合成样本是合理的，因为 HYP/CD 合成样本的数字 ECG 质量曾经较弱；但对
+`real-anchor` VAE-only 方法不一定合理。这里的 anchor latent 来自目标中心真实 ECG，
+CD/HYP 标签也来自真实中心标签映射，不是 DiT 合成标签。因此新增优先 refinement：
+
+```text
+trust_policy = real_all_present
+classes_in_scope = CD, HYP, MI, NORM, STTC
+```
+
+实现细节：
+
+1. `run_vae_only_latenthull_sweep_20260516.py` 新增 `--trust_policy real_all_present`。
+2. 对每个 K=500 真实目标中心子集，凡是该类真实阳性数 > 0，就设 `class_trust[class] = 1.0`。
+3. 下游调用 `synth_online_at_super5.py` 时传入 `--allow_hyp_cd_trust`，避免训练入口再次把 CD/HYP 硬置 0。
+4. 仍然禁用 hard quality gate；gate 指标只作为监控。
+5. 第一轮只跑 `lambda015, M=20, epochs=30`，与当前主线最接近，避免同时改变太多变量。
+
+优先对比表：
+
+| arm | classes | trust | purpose |
+|---|---|---|---|
+| legacy VAE-only | NORM/MI/STTC | synthetic-style trust | 当前主线 |
+| all-class VAE-only | CD/HYP/MI/NORM/STTC | real_all_present | 检验 v5 下是否需要把真实 CD/HYP anchor 纳入 AT |
+
+判断标准：
+
+```text
+target-center AUROC/AUPRC
+4-center average AUROC/AUPRC
+PTB-XL fold10 是否明显下降
+CD/HYP per-class 是否改善
+```
+
+第一轮完成结果：
+
+| center | legacy VAE-only | all-class VAE-only | all-class vs legacy |
+|---|---:|---:|---:|
+| ningbo | 0.8880 / 0.4393 | 0.8894 / 0.4419 | +0.15pp / +0.26pp |
+| chapman_shaoxing | 0.8949 / 0.3720 | 0.8964 / 0.3750 | +0.15pp / +0.30pp |
+| cpsc_2018 | 0.8545 / 0.5962 | 0.8684 / 0.6151 | +1.40pp / +1.89pp |
+| georgia | 0.8266 / 0.6012 | 0.8280 / 0.6033 | +0.14pp / +0.21pp |
+
+结论：`real_all_present` 应作为 v5 mapping 下的新主线候选。它证明历史 CD/HYP gate 对真实 anchor 过保守，尤其在 `cpsc_2018` 这种 CD 占比高的中心。下一轮优先做 per-center/per-class 权重，而不是单纯增加 epoch。
+
 ### Boundary Confidence Constraint
 
 用户希望对抗样本不要过度扰动导致 GT 标签漂移。因此新增 acceptance gate：

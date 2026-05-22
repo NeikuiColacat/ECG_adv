@@ -35,7 +35,11 @@ from scripts.triple_labels.label_schemes import CLASS_NAMES_SUPER5  # noqa: E402
 from scripts.triple_labels.train_ptbxl import compute_pos_weight, masked_bce_with_logits  # noqa: E402
 
 
-DEFAULT_OUT_DIR = Path("/root/autodl-tmp/paper_foundation_baselines_20260517/ecgfounder_kshot_head_ft_super5")
+DEFAULT_LINEAR_PROBE_DIR = Path(
+    "/root/autodl-tmp/paper_foundation_baselines_20260522/"
+    "ecgfounder_linear_probe_v5_seed42_official"
+)
+DEFAULT_OUT_DIR = Path("/root/autodl-tmp/paper_foundation_baselines_20260522/ecgfounder_kshot_head_ft_super5")
 
 
 def load_ref_ids(center: str, k: int, seed: int, source_k: int | None = None) -> list[str]:
@@ -270,7 +274,13 @@ def write_summary(rows: list[dict], out_dir: Path) -> None:
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
     p.add_argument("--centers", nargs="+", default=TARGET_CENTERS)
-    p.add_argument("--linear_probe_dir", default=str(LINEAR_PROBE_DIR))
+    p.add_argument("--linear_probe_dir", default=str(DEFAULT_LINEAR_PROBE_DIR))
+    p.add_argument(
+        "--preprocess_policy",
+        default="official_ptbxl_eval",
+        choices=["official_ptbxl_eval", "filtered_dataset"],
+        help="Feature-cache suffix produced by run_ecgfounder_linear_probe_super5_20260517.py.",
+    )
     p.add_argument("--out_dir", default=str(DEFAULT_OUT_DIR))
     p.add_argument("--k", type=int, default=500)
     p.add_argument("--source_k", type=int, default=500,
@@ -293,7 +303,11 @@ def main() -> None:
     args = parse_args()
     linear_dir = Path(args.linear_probe_dir)
     out_dir = Path(args.out_dir)
-    pn_feature_path = linear_dir / "pn2021_ecgfounder_features.npz"
+    pn_feature_candidates = [
+        linear_dir / f"pn2021_ecgfounder_features_{args.preprocess_policy}.npz",
+        linear_dir / "pn2021_ecgfounder_features.npz",
+    ]
+    pn_feature_path = next((p for p in pn_feature_candidates if p.exists()), pn_feature_candidates[0])
     base_head_path = linear_dir / "best_head.pt"
     if not pn_feature_path.exists() or not base_head_path.exists():
         raise FileNotFoundError(f"missing feature/head cache: {pn_feature_path}, {base_head_path}")

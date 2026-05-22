@@ -75,14 +75,24 @@ def _find_real_anchor_base(center: str) -> Path:
     raise FileNotFoundError(f"missing real-anchor files for {center}; searched: {searched}")
 
 
-def prepare_subset(center: str, k: int, seed: int) -> dict[str, Path]:
+def prepare_subset(
+    center: str,
+    k: int,
+    seed: int,
+    trust_policy: str = "legacy_synth3",
+) -> dict[str, Path]:
     """Prepare a deterministic K-subset, supporting mixed v1/v2 anchor roots."""
+    if trust_policy not in {"legacy_synth3", "real_all_present"}:
+        raise ValueError(f"unsupported trust_policy={trust_policy!r}")
     base = _find_real_anchor_base(center)
     signal_path = base.with_suffix(".signals.npz")
     latent_path = base.with_suffix(".latent.npz")
     meta_path = base.with_suffix(".ref_meta.json")
 
-    out_dir = OUT_ROOT / "subsets" / center / f"k{k}_seed{seed}"
+    subset_name = f"k{k}_seed{seed}"
+    if trust_policy != "legacy_synth3":
+        subset_name = f"{subset_name}_{trust_policy}"
+    out_dir = OUT_ROOT / "subsets" / center / subset_name
     out_dir.mkdir(parents=True, exist_ok=True)
     out_signal = out_dir / f"{center}_real_k{k}_seed{seed}.signals.npz"
     out_latent = out_dir / f"{center}_real_k{k}_seed{seed}.latent.npz"
@@ -139,13 +149,26 @@ def prepare_subset(center: str, k: int, seed: int) -> dict[str, Path]:
             indent=2,
         )
     counts = labels[idx].sum(axis=0).astype(int).tolist()
+    if trust_policy == "real_all_present":
+        class_trust = {
+            cls: (1.0 if counts[j] > 0 else 0.0)
+            for j, cls in enumerate(CLASS_NAMES.tolist())
+        }
+        policy = (
+            "VAE-only real-anchor sweep; trust every Super5 class present in "
+            "the real target-center K subset. This is only for real anchors, "
+            "not ECGTwin synthetic pools."
+        )
+    else:
+        class_trust = {"CD": 0.0, "HYP": 0.0, "MI": 1.0, "NORM": 1.0, "STTC": 1.0}
+        policy = "VAE-only real-anchor sweep; HYP/CD disabled to match trusted-class setting"
     with out_trust.open("w") as f:
         json.dump(
             {
                 "tag": f"{center}_real_k{k}",
-                "class_trust": {"CD": 0.0, "HYP": 0.0, "MI": 1.0, "NORM": 1.0, "STTC": 1.0},
+                "class_trust": class_trust,
                 "label_counts": dict(zip(CLASS_NAMES.tolist(), counts)),
-                "policy": "VAE-only real-anchor sweep; HYP/CD disabled to match trusted-class setting",
+                "policy": policy,
             },
             f,
             indent=2,
@@ -191,12 +214,14 @@ def one_run(
     seed: int,
     args: argparse.Namespace,
 ) -> Path:
-    subset = prepare_subset(center, k, seed=args.subset_seed)
+    subset = prepare_subset(center, k, seed=args.subset_seed, trust_policy=args.trust_policy)
     spec = VARIANTS[variant]
     weight_suffix = "" if args.hull_weight_mode == "optimized" else f"_w{args.hull_weight_mode}"
-    tag = f"{center}_K{k}_{variant}_M{hull_m}{weight_suffix}_ep{epochs}_seed{seed}"
+    class_tag = "".join(args.classes_in_scope).lower()
+    trust_suffix = "" if args.trust_policy == "legacy_synth3" else f"_{args.trust_policy}_{class_tag}"
+    tag = f"{center}_K{k}_{variant}_M{hull_m}{weight_suffix}_ep{epochs}_seed{seed}{trust_suffix}"
     out_dir = OUT_ROOT / "runs" / tag
-    eval_path = out_dir / "eval_result_v3_super5_normsuppress_exclrefs_crop1000.json"
+    eval_path = out_dir / f"eval_result_{args.eval_tag}_exclrefs_crop1000.json"
     if eval_path.exists() and not args.force:
         print(f"[skip] {tag}")
         return eval_path
@@ -265,9 +290,7 @@ def one_run(
         "--class_trust",
         str(subset["trust"]),
         "--classes_in_scope",
-        "NORM",
-        "MI",
-        "STTC",
+        *args.classes_in_scope,
         "--adv_label_mode",
         "mixed_soft",
         "--adv_teacher_mix",
@@ -321,6 +344,8 @@ def one_run(
     ]
     if spec["include_anchor"]:
         train_cmd.append("--hull_include_anchor")
+    if args.allow_hyp_cd_trust or args.trust_policy == "real_all_present":
+        train_cmd.append("--allow_hyp_cd_trust")
     if not args.enable_quality_gate:
         train_cmd.append("--disable_quality_gate")
 
@@ -373,6 +398,9 @@ def write_summary(rows: list[dict[str, object]]) -> None:
         "K",
         "variant",
         "hull_M",
+        "hull_weight_mode",
+        "classes_in_scope",
+        "trust_policy",
         "epochs",
         "target_auroc",
         "target_auprc",
@@ -392,11 +420,12 @@ def write_summary(rows: list[dict[str, object]]) -> None:
     md_path = summary_dir / "vae_only_latenthull_sweep.md"
     with md_path.open("w") as f:
         f.write("# VAE-Only Real-Anchor Latent-Hull Sweep\n\n")
-        f.write("| center | K | variant | M | epochs | target AUROC/AUPRC | PN2021 avg | PTB-XL |\n")
-        f.write("|---|---:|---|---:|---:|---:|---:|---:|\n")
+        f.write("| center | K | variant | M | classes | trust | epochs | target AUROC/AUPRC | PN2021 avg | PTB-XL |\n")
+        f.write("|---|---:|---|---:|---|---|---:|---:|---:|---:|\n")
         for r in rows:
             f.write(
-                "| {center} | {K} | {variant} | {hull_M} | {epochs} | "
+                "| {center} | {K} | {variant} | {hull_M} | {classes_in_scope} | "
+                "{trust_policy} | {epochs} | "
                 "{target_auroc:.4f} / {target_auprc:.4f} | "
                 "{pn2021_avg_auroc:.4f} / {pn2021_avg_auprc:.4f} | "
                 "{ptbxl_auroc:.4f} / {ptbxl_auprc:.4f} |\n".format(**r)
@@ -431,6 +460,37 @@ def main() -> None:
     ap.add_argument("--adv_weight", type=float, default=0.06)
     ap.add_argument("--hull_steps", type=int, default=5)
     ap.add_argument("--hull_lr", type=float, default=0.25)
+    ap.add_argument(
+        "--classes_in_scope",
+        nargs="+",
+        default=["NORM", "MI", "STTC"],
+        choices=CLASS_NAMES.tolist(),
+        help=(
+            "Classes used as latent-hull adversarial anchors. Historical mainline "
+            "uses NORM MI STTC; real-anchor all-class refinement should use "
+            "CD HYP MI NORM STTC with --trust_policy real_all_present."
+        ),
+    )
+    ap.add_argument(
+        "--trust_policy",
+        choices=["legacy_synth3", "real_all_present"],
+        default="legacy_synth3",
+        help=(
+            "legacy_synth3 keeps the old synthetic-quality trust map and drops "
+            "CD/HYP adversarial anchors. real_all_present trusts any class that "
+            "appears in the real target-center K subset."
+        ),
+    )
+    ap.add_argument(
+        "--allow_hyp_cd_trust",
+        action="store_true",
+        help="Pass through to synth_online_at_super5.py to avoid hard-forcing HYP/CD trust to zero.",
+    )
+    ap.add_argument(
+        "--eval_tag",
+        default="v5_super5_strict_voltage_pacing_suppress",
+        help="Short tag used in eval output filenames.",
+    )
     ap.add_argument(
         "--hull_weight_mode",
         choices=["optimized", "one_hot", "uniform", "dirichlet"],
@@ -484,6 +544,8 @@ def main() -> None:
                         "variant": variant,
                         "hull_M": hull_m,
                         "hull_weight_mode": args.hull_weight_mode,
+                        "classes_in_scope": " ".join(args.classes_in_scope),
+                        "trust_policy": args.trust_policy,
                         "epochs": epochs,
                         "eval_path": str(eval_path),
                     }

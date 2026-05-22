@@ -218,16 +218,46 @@ fold 10 test
 PN2021 ref-excluded views
 ```
 
-还需要补：
+2026-05-23 review 后已补：
 
 1. 固定并记录随机种子。
 2. 输出 ECGFounder checkpoint hash、标签映射 version/hash。
-3. feature cache 文件名纳入 mapping/preprocess version，避免旧标签缓存混用。
-4. fold 9 per-class threshold selection。
-5. 可选 per-class calibration。
-6. PN2021 drop-all-zero sensitivity view。
-7. per-class PN2021 metrics csv，方便定位 CD/HYP/MI/NORM/STTC 哪类拉低。
-8. 统一生成和 EfficientNet/VAE-only 对比的 markdown/html report。
+3. `--feature_cache_dir`：多 seed 线性头实验可复用 PTB-XL/PN2021 ECGFounder feature cache，避免每个 seed 重新读取 WFDB。
+4. `run_ecgfounder_kshot_head_ft_20260517.py` 默认指向 2026-05-22 v5 线性探针目录，并按 `preprocess_policy` 查找 feature cache。
+
+仍需要补：
+
+1. feature cache 内写入 mapping/preprocess metadata，并在读取旧 cache 时校验。
+2. fold 9 per-class threshold selection。
+3. 可选 per-class calibration。
+4. PN2021 drop-all-zero sensitivity view。
+5. per-class PN2021 metrics csv，方便定位 CD/HYP/MI/NORM/STTC 哪类拉低。
+6. 统一生成和 EfficientNet/VAE-only 对比的 markdown/html report。
+
+## 2026-05-23 Review 结论
+
+当前 ECGFounder 线性头策略本身是合理强基线：
+
+```text
+ECGFounder frozen encoder
+-> PTB-XL fold 1-8 训练 Linear(1024, 5)
+-> fold 9 按 macro AUPRC 选 best epoch
+-> fold 10 和 PN2021 v5 ref-excluded 评估
+```
+
+需要注意的边界：
+
+1. 它不是“ECGFounder 官方 Super5 头”，而是我们在官方 encoder 上重新训练的 Super5 线性探针。
+2. 它的输入协议是 ECGFounder 专属的 `12 x 5000`，不应写成和 EfficientNet1DV2 完全相同。
+3. seed42/2025/3407 已完成，线性头随机性很小：
+
+| seed | PTB-XL fold10 | PN2021 4-center target mean |
+|---:|---:|---:|
+| 42 | 0.9224 / 0.8016 | 0.8635 / 0.5058 |
+| 2025 | 0.9214 / 0.8012 | 0.8636 / 0.5069 |
+| 3407 | 0.9217 / 0.8011 | 0.8633 / 0.5073 |
+
+4. ECGFounder + VAE-only online AT 不能直接复用 EfficientNet 的 AT runner；需要封装 `waveform -> frozen ECGFounder encoder -> Super5 head` 的可微 victim，使 latent-hull 内层搜索穿过 frozen encoder，但外层只更新线性头。
 
 ## 推荐执行命令
 
