@@ -2450,6 +2450,39 @@ K=20/50 目前不能支撑“几十条样本稳定足够”的主张。
 下一步优先补 K=500 fixed-horizon，对齐 no-VAE / VAE aw5 / VAE aw20，再判断扩大 K 是否能逼近 source-domain 指标。
 ```
 
+#### K=500 Fixed-Horizon Check
+
+已补 K=500 的 fixed-horizon 复核，目标是判断扩大 K 是否能接近 PTB-XL source，
+以及 ECGFounder 的大提升是否来自 VAE-only。所有 run 使用 `--selection_metric last_epoch`，
+不使用目标测试集选择 checkpoint。
+
+Epoch 1 结果显示，`target_real_weight=40` 时 VAE aw5/aw20 与 no-VAE 基本打平：
+
+| center | no-VAE ep1 | best VAE ep1 | VAE - no-VAE |
+|---|---:|---:|---:|
+| ningbo | 0.9035 / 0.4753 | 0.9035 / 0.4750 | +0.00pp / -0.04pp |
+| chapman_shaoxing | 0.9140 / 0.4099 | 0.9137 / 0.4111 | -0.03pp / +0.12pp |
+| cpsc_2018 | 0.8407 / 0.5892 | 0.8404 / 0.5884 | -0.03pp / -0.08pp |
+| georgia | 0.8652 / 0.6855 | 0.8654 / 0.6858 | +0.02pp / +0.03pp |
+
+Epoch 10 复核使用 `target_real_weight=20, k_anchor=150, adv_weight=10`：
+
+| center | no-VAE ep10 | VAE ep10 | VAE - no-VAE | no-VAE drop-all-zero | VAE drop-all-zero | drop-all-zero delta |
+|---|---:|---:|---:|---:|---:|---:|
+| ningbo | 0.9274 / 0.5419 | 0.9272 / 0.5418 | -0.03pp / -0.01pp | 0.9399 / 0.6762 | 0.9394 / 0.6758 | -0.05pp / -0.03pp |
+| chapman_shaoxing | 0.9349 / 0.4664 | 0.9349 / 0.4669 | -0.01pp / +0.05pp | 0.9440 / 0.5713 | 0.9440 / 0.5717 | -0.00pp / +0.04pp |
+| cpsc_2018 | 0.8750 / 0.6368 | 0.8758 / 0.6390 | +0.08pp / +0.22pp | 0.9224 / 0.7984 | 0.9232 / 0.7997 | +0.08pp / +0.14pp |
+| georgia | 0.8845 / 0.7195 | 0.8839 / 0.7174 | -0.06pp / -0.21pp | 0.8945 / 0.7908 | 0.8929 / 0.7867 | -0.15pp / -0.41pp |
+
+Decision:
+
+```text
+K=500 下，ECGFounder 的目标中心提升主要来自真实目标中心 full fine-tune，而不是 VAE-only。
+VAE-only 只在 CPSC/Chapman 有非常小的增量，Ningbo/Georgia 持平或略负。
+这条证据不能支持“VAE-only 明显强于 no-VAE”的论文主张。
+更合理的主攻方向是 K=100：真实样本少时 VAE-only 更可能提供正则化和边界增强价值。
+```
+
 #### EfficientNet1DV2 Sanity Check
 
 使用 EfficientNet1DV2 frozen backbone + classifier/final_norm adapter 做了 K=100 fixed epoch=1 小实验。

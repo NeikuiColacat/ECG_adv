@@ -1354,3 +1354,44 @@ EfficientNet adapter 版本目前只有 CPSC 极小正增益，Georgia 无增益
 因此当前 VAE-only 的清晰主证据仍来自 ECGFounder official full fine-tuning。
 EfficientNet1DV2 若要继续追，需要另设 full fine-tune 或 last-block fine-tune，而不是只靠 head adapter。
 ```
+
+### 2026-05-23 追加：ECGFounder K=500 fixed-horizon 复核
+
+为了确认扩大 K 后能否追平 PTB-XL source，并区分 ECGFounder 大提升来自真实目标中心微调还是 VAE-only，
+补跑了 K=500 fixed-horizon。所有 run 使用 `--selection_metric last_epoch`，不使用目标测试集挑 checkpoint；
+评估同时报告 full target 与 drop-all-zero。
+
+#### Epoch 1
+
+`epochs=1, target_real_weight=40, k_anchor=300, M=20, lambda=0.15, hull_steps=3`。
+
+| center | no-VAE ep1 | best VAE ep1 | VAE - no-VAE |
+|---|---:|---:|---:|
+| ningbo | 0.9035 / 0.4753 | 0.9035 / 0.4750 | +0.00pp / -0.04pp |
+| chapman_shaoxing | 0.9140 / 0.4099 | 0.9137 / 0.4111 | -0.03pp / +0.12pp |
+| cpsc_2018 | 0.8407 / 0.5892 | 0.8404 / 0.5884 | -0.03pp / -0.08pp |
+| georgia | 0.8652 / 0.6855 | 0.8654 / 0.6858 | +0.02pp / +0.03pp |
+
+#### Epoch 10
+
+`epochs=10, target_real_weight=20, k_anchor=150, adv_weight=10`。括号中未单列的是
+drop-all-zero 指标。
+
+| center | no-VAE ep10 | VAE ep10 | VAE - no-VAE | no-VAE drop-all-zero | VAE drop-all-zero | drop-all-zero delta |
+|---|---:|---:|---:|---:|---:|---:|
+| ningbo | 0.9274 / 0.5419 | 0.9272 / 0.5418 | -0.03pp / -0.01pp | 0.9399 / 0.6762 | 0.9394 / 0.6758 | -0.05pp / -0.03pp |
+| chapman_shaoxing | 0.9349 / 0.4664 | 0.9349 / 0.4669 | -0.01pp / +0.05pp | 0.9440 / 0.5713 | 0.9440 / 0.5717 | -0.00pp / +0.04pp |
+| cpsc_2018 | 0.8750 / 0.6368 | 0.8758 / 0.6390 | +0.08pp / +0.22pp | 0.9224 / 0.7984 | 0.9232 / 0.7997 | +0.08pp / +0.14pp |
+| georgia | 0.8845 / 0.7195 | 0.8839 / 0.7174 | -0.06pp / -0.21pp | 0.8945 / 0.7908 | 0.8929 / 0.7867 | -0.15pp / -0.41pp |
+
+PTB-XL fold10 during no-VAE ep10 remained around `0.913-0.918 AUROC / 0.780-0.789 AUPRC`.
+
+判断：
+
+```text
+K=500 可以让 ECGFounder 目标中心 full target AUROC 接近或超过 source AUROC，但 AUPRC 仍明显低于 source。
+drop-all-zero 后，CPSC 和 Georgia 的 AUPRC 接近 source；Ningbo/Chapman 仍明显低。
+VAE-only 在 K=500 上没有提供明显独立增益，说明 ECGFounder K=500 大提升主要来自真实目标中心样本 full fine-tune。
+VAE-only 的价值更像 K=100 时的正则化/边界增强，而不是 K=500 下的主驱动。
+下一步应优先做 K=100 多 seed last_epoch 复现，并在 EfficientNet1DV2 上尝试 last-block/full fine-tune；不要把 ECGFounder K=500 的提升归因为 VAE-only。
+```
