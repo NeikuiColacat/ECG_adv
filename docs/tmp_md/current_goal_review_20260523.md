@@ -1230,3 +1230,64 @@ K=100，80 train / 20 target-val，target-val stratified，best checkpoint 按 t
 4. 在 checkpoint selection 稳定后，再做 K=20/50/100 sensitivity，判断少样本是否仍能稳定超过 no-VAE full-FT。
 5. 所有主表同时报告 full target 和 drop-all-zero，防止 all-zero 样本造成虚高。
 ```
+
+### 2026-05-23 追加：Repeated target-val 与 fixed short-horizon
+
+为检查 `target_val_auprc` 单次拆分是否可靠，新增 `--target_val_seed`，把 target-val 拆分种子从训练
+`--seed` 中解耦。这样可以保持模型初始化种子固定，只改变 K=100 内的 80/20 target 拆分。
+
+两组额外 split，中心为 CPSC 和 Georgia：
+
+| center | arm | n | target mean | drop-all-zero mean | PTB-XL mean |
+|---|---|---:|---:|---:|---:|
+| cpsc_2018 | no-VAE | 2 | 0.8706 / 0.6675 | 0.9167 / 0.8146 | 0.9263 / 0.8191 |
+| cpsc_2018 | VAE aw20 | 2 | 0.8753 / 0.6886 | 0.9207 / 0.8265 | 0.9208 / 0.8059 |
+| cpsc_2018 | VAE aw5 | 2 | 0.8677 / 0.6764 | 0.9141 / 0.8096 | 0.9253 / 0.8156 |
+| georgia | no-VAE | 2 | 0.8335 / 0.5414 | 0.8404 / 0.6114 | 0.9256 / 0.8153 |
+| georgia | VAE aw20 | 2 | 0.8262 / 0.5321 | 0.8340 / 0.5988 | 0.9258 / 0.8165 |
+| georgia | VAE aw5 | 2 | 0.8459 / 0.5469 | 0.8524 / 0.6093 | 0.9244 / 0.8097 |
+
+结论：
+
+```text
+CPSC: VAE aw20 在 repeated split 下稳定正向，full target AUPRC +2.12pp，drop-all-zero AUPRC +1.19pp。
+Georgia: VAE aw5 full target 正向，但 drop-all-zero AUPRC 未稳定超过 no-VAE；aw20 明确过强。
+单次 20 条 target-val 的 AUPRC 代表性不足，会选到晚期退化 checkpoint。
+```
+
+因此新增更简洁的候选主线：固定短程 adaptation，不依赖 noisy target-val checkpoint selection。
+
+```text
+K = 100 全部用于 target train
+epochs = 1
+target_val_count = 0
+source_weight = 1
+target_real_weight = 40
+VAE: k_anchor=80, M=20, lambda=0.15, hull_steps=3, hull_lr=0.25
+```
+
+四中心 fixed epoch=1 结果。括号中为 drop-all-zero：
+
+| center | no-VAE | VAE aw5 | VAE aw20 | best VAE delta pp |
+|---|---:|---:|---:|---:|
+| cpsc_2018 | 0.8638 / 0.6486 (0.9139 / 0.8069) | 0.8880 / 0.6960 (0.9324 / 0.8478) | 0.8800 / 0.6979 (0.9239 / 0.8380) | target +1.62 / +4.93; drop +1.00 / +3.11 |
+| ningbo | 0.9197 / 0.5298 (0.9308 / 0.6569) | 0.9119 / 0.5170 (0.9278 / 0.6489) | 0.9176 / 0.5388 (0.9312 / 0.6667) | target -0.21 / +0.90; drop +0.04 / +0.98 |
+| chapman_shaoxing | 0.9145 / 0.4635 (0.9217 / 0.5684) | 0.9188 / 0.4769 (0.9262 / 0.5709) | 0.9148 / 0.4687 (0.9234 / 0.5680) | target +0.44 / +1.34; drop +0.46 / +0.26 |
+| georgia | 0.8472 / 0.5518 (0.8530 / 0.6123) | 0.8523 / 0.5545 (0.8589 / 0.6175) | 0.8424 / 0.5470 (0.8476 / 0.6082) | target +0.51 / +0.27; drop +0.59 / +0.52 |
+
+PTB-XL source fold10 保持：
+
+| center-specific run | no-VAE PTB-XL | best VAE PTB-XL |
+|---|---:|---:|
+| cpsc_2018 | 0.9169 / 0.8029 | 0.9147 / 0.7944 |
+| ningbo | 0.9166 / 0.7983 | 0.9159 / 0.7964 |
+| chapman_shaoxing | 0.9158 / 0.7953 | 0.9160 / 0.7954 |
+| georgia | 0.9172 / 0.7999 | 0.9201 / 0.8007 |
+
+当前判断：
+
+1. fixed epoch=1 是目前最简洁、最稳的 ECGFounder full-FT + VAE-only refinement。
+2. 4/4 中心 full target AUPRC 为正，4/4 中心 drop-all-zero AUPRC 也为正，说明不是 all-zero 样本单独造成虚高。
+3. CPSC 的提升最强，drop-all-zero AUPRC 已超过 PTB-XL source AUPRC；其他中心 AUPRC 仍低于 PTB-XL source。
+4. 最合理的下一步不是加复杂技巧，而是做 K=20/50/100 和 seed 复现，确认 fixed short-horizon 的稳定性。
+5. EfficientNet1DV2 还需要同样 fixed short-horizon 复核；当前最强证据来自 ECGFounder full fine-tuning。

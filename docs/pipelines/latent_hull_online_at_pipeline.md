@@ -2382,3 +2382,40 @@ Refinement 判断：
 4. 主表必须同时报告 full target 与 drop-all-zero，防止 all-zero 负样本造成指标虚高。
 5. 目标仍未完成：除 CPSC drop-all-zero 外，多数外部中心 AUPRC 仍低于 PTB-XL 源域。
 ```
+
+#### Fixed Short-Horizon Candidate
+
+Repeated target-val split 暴露出一个问题：K=100 中只拿 20 条做 target-val，macro AUPRC 波动很大，
+有时会选择已经过拟合或退化的晚期 checkpoint。因此新增一个更简洁的候选主线：
+
+```text
+K = 100 全部用于 target train
+epochs = 1
+target_val_count = 0
+source_weight = 1
+target_real_weight = 40
+VAE stream:
+  k_anchor = 80
+  M = 20
+  lambda = 0.15
+  hull_steps = 3
+  hull_lr = 0.25
+```
+
+四中心 fixed epoch=1 结果。括号中为 drop-all-zero：
+
+| center | no-VAE | VAE aw5 | VAE aw20 | best VAE delta pp |
+|---|---:|---:|---:|---:|
+| cpsc_2018 | 0.8638 / 0.6486 (0.9139 / 0.8069) | 0.8880 / 0.6960 (0.9324 / 0.8478) | 0.8800 / 0.6979 (0.9239 / 0.8380) | target +1.62 / +4.93; drop +1.00 / +3.11 |
+| ningbo | 0.9197 / 0.5298 (0.9308 / 0.6569) | 0.9119 / 0.5170 (0.9278 / 0.6489) | 0.9176 / 0.5388 (0.9312 / 0.6667) | target -0.21 / +0.90; drop +0.04 / +0.98 |
+| chapman_shaoxing | 0.9145 / 0.4635 (0.9217 / 0.5684) | 0.9188 / 0.4769 (0.9262 / 0.5709) | 0.9148 / 0.4687 (0.9234 / 0.5680) | target +0.44 / +1.34; drop +0.46 / +0.26 |
+| georgia | 0.8472 / 0.5518 (0.8530 / 0.6123) | 0.8523 / 0.5545 (0.8589 / 0.6175) | 0.8424 / 0.5470 (0.8476 / 0.6082) | target +0.51 / +0.27; drop +0.59 / +0.52 |
+
+Protocol decision:
+
+```text
+fixed epoch=1 is the current cleanest ECGFounder full-FT VAE-only candidate.
+It improves AUPRC on 4/4 centers under full target and drop-all-zero evaluation.
+It still does not solve the full objective: only CPSC drop-all-zero reaches PTB-XL-source AUPRC level.
+Next required checks: K=20/50/100 and multi-seed replication, then mirror the same fixed short-horizon design on EfficientNet1DV2.
+```

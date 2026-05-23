@@ -214,7 +214,7 @@ def split_target_train_val(
     record_ids: np.ndarray,
     labels: np.ndarray,
     val_count: int,
-    seed: int,
+    split_seed: int,
     split_mode: str = "random",
 ) -> tuple[np.ndarray, np.ndarray, set[str], set[str]]:
     target_idx = np.asarray(target_idx, dtype=np.int64)
@@ -223,7 +223,7 @@ def split_target_train_val(
         return target_idx, np.empty(0, dtype=np.int64), train_ids, set()
     if val_count >= len(target_idx):
         raise ValueError(f"target_val_count={val_count} must be smaller than target K={len(target_idx)}")
-    rng = np.random.default_rng(seed + 1701)
+    rng = np.random.default_rng(split_seed + 1701)
     perm = np.asarray(target_idx, dtype=np.int64).copy()
     rng.shuffle(perm)
     if split_mode == "random":
@@ -476,6 +476,7 @@ def main() -> None:
     ap.add_argument("--pgd_eps", type=float, default=2.0)
     ap.add_argument("--pgd_batch", type=int, default=4)
     ap.add_argument("--target_val_count", type=int, default=0)
+    ap.add_argument("--target_val_seed", type=int, default=None)
     ap.add_argument("--target_val_split_mode", choices=["random", "stratified"], default="random")
     ap.add_argument(
         "--selection_metric",
@@ -524,6 +525,8 @@ def main() -> None:
         selection_tag = f"_tv{args.target_val_count}_{args.selection_metric}"
         if args.target_val_split_mode != "random":
             selection_tag += f"_{args.target_val_split_mode}"
+        if args.target_val_seed is not None:
+            selection_tag += f"_tvseed{args.target_val_seed}"
     run_dir = out_dir / "runs" / (
         f"{args.center}_K{args.k}_fullft_ep{args.epochs}_lr{lr_tag}_"
         f"sw{sw_tag}_tw{tw_tag}_{method_tag}{selection_tag}_seed{args.seed}"
@@ -561,7 +564,7 @@ def main() -> None:
         record_ids,
         pn["labels"],
         args.target_val_count,
-        args.seed,
+        args.seed if args.target_val_seed is None else args.target_val_seed,
         args.target_val_split_mode,
     )
     if args.selection_metric != "source_auprc" and len(target_val_idx) == 0:
