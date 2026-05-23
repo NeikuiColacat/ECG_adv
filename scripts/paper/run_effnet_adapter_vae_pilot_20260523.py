@@ -48,6 +48,10 @@ OUT_ROOT = Path("/root/autodl-tmp/paper_effnet_classifieronly_vae_pilot_20260523
 CLASS_NAMES = np.asarray(["CD", "HYP", "MI", "NORM", "STTC"])
 
 
+def tag_value(value: float | int | str) -> str:
+    return str(value).replace(".", "p").replace("-", "m")
+
+
 def run(cmd: list[str], log_path: Path, dry_run: bool = False) -> None:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     print("[run]", " ".join(cmd), flush=True)
@@ -109,6 +113,12 @@ def train_one(center: str, method: str, args: argparse.Namespace) -> Path:
         f"{center}_K{args.K}_{method}_{adapter_tag}_lam015_M20_"
         f"{label_tag}_ep{args.epochs}_{class_tag}_seed{args.seed}"
     )
+    if method == "vae_only":
+        tag = (
+            f"{center}_K{args.K}_{method}_{adapter_tag}_lam015_M20_"
+            f"{label_tag}_aw{tag_value(args.adv_weight)}_ka{args.k_anchor}_hs{args.hull_steps}_"
+            f"ep{args.epochs}_{class_tag}_seed{args.seed}"
+        )
     out_dir = OUT_ROOT / "runs" / tag
     eval_path = out_dir / "eval_result_v5_exclrefs_crop1000_dropzero.json"
     if eval_path.exists() and not args.force:

@@ -2419,3 +2419,50 @@ It improves AUPRC on 4/4 centers under full target and drop-all-zero evaluation.
 It still does not solve the full objective: only CPSC drop-all-zero reaches PTB-XL-source AUPRC level.
 Next required checks: K=20/50/100 and multi-seed replication, then mirror the same fixed short-horizon design on EfficientNet1DV2.
 ```
+
+#### Fixed Short-Horizon K Sensitivity
+
+同一 ECGFounder official full-FT 协议下，补跑了 K=20/50/100。K 条目标中心样本全部用于 target train，
+不再拆 target-val；当前脚本后续应使用 `--selection_metric last_epoch`，避免用目标测试集挑 checkpoint。
+VAE stream 仍使用 `M=20, lambda=0.15, hull_steps=3, hull_lr=0.25`，同时检查 `adv_weight=5/20`。
+
+| K | full target AUPRC positive | drop-all-zero AUPRC positive | decision |
+|---:|---:|---:|---|
+| 20 | 1/4 | 2/4 | 不稳定，不能作为 small-K 主张 |
+| 50 | 1/4 | 3/4 | 仍不稳定，尤其 ningbo/chapman |
+| 100 | 4/4 | 4/4 | 当前 ECGFounder fixed short-horizon 的实证下限 |
+
+Representative K=100 results，括号中为 drop-all-zero：
+
+| center | no-VAE | best VAE | best delta pp |
+|---|---:|---:|---:|
+| cpsc_2018 | 0.8638 / 0.6486 (0.9139 / 0.8069) | 0.8800 / 0.6979 (0.9239 / 0.8380) | +1.62 / +4.93; drop +1.00 / +3.11 |
+| ningbo | 0.9197 / 0.5298 (0.9308 / 0.6569) | 0.9176 / 0.5388 (0.9312 / 0.6667) | -0.21 / +0.90; drop +0.04 / +0.98 |
+| chapman_shaoxing | 0.9145 / 0.4635 (0.9217 / 0.5684) | 0.9188 / 0.4769 (0.9262 / 0.5709) | +0.44 / +1.34; drop +0.46 / +0.26 |
+| georgia | 0.8472 / 0.5518 (0.8530 / 0.6123) | 0.8523 / 0.5545 (0.8589 / 0.6175) | +0.51 / +0.27; drop +0.59 / +0.52 |
+
+Interpretation:
+
+```text
+K=100 已能证明 VAE-only 在 ECGFounder full fine-tuning 强基线之上有独立增益，且不是 all-zero 样本造成的虚高。
+K=20/50 目前不能支撑“几十条样本稳定足够”的主张。
+除 CPSC drop-all-zero 外，多数中心 AUPRC 仍低于 PTB-XL source，因此目标尚未完成。
+下一步优先补 K=500 fixed-horizon，对齐 no-VAE / VAE aw5 / VAE aw20，再判断扩大 K 是否能逼近 source-domain 指标。
+```
+
+#### EfficientNet1DV2 Sanity Check
+
+使用 EfficientNet1DV2 frozen backbone + classifier/final_norm adapter 做了 K=100 fixed epoch=1 小实验。
+该实验不是 full fine-tuning，因此只作为“能否迁移到 EfficientNet”的 sanity check。
+
+| center | real-only | VAE aw5 | VAE aw20 | decision |
+|---|---:|---:|---:|---|
+| cpsc_2018 | 0.8143 / 0.5687 | 0.8149 / 0.5691 | 0.8155 / 0.5695 | 极小正增益 |
+| georgia | 0.8187 / 0.5952 | 0.8185 / 0.5950 | 0.8185 / 0.5951 | 无增益 |
+
+Interpretation:
+
+```text
+当前 VAE-only 的清晰证据来自 ECGFounder official full fine-tuning。
+EfficientNet1DV2 若要追同一目标，应改成 last-block fine-tuning 或 full fine-tuning，而不是只训练 head/final_norm adapter。
+```

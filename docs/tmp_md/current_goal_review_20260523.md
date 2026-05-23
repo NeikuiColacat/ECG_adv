@@ -1291,3 +1291,66 @@ PTB-XL source fold10 保持：
 3. CPSC 的提升最强，drop-all-zero AUPRC 已超过 PTB-XL source AUPRC；其他中心 AUPRC 仍低于 PTB-XL source。
 4. 最合理的下一步不是加复杂技巧，而是做 K=20/50/100 和 seed 复现，确认 fixed short-horizon 的稳定性。
 5. EfficientNet1DV2 还需要同样 fixed short-horizon 复核；当前最强证据来自 ECGFounder full fine-tuning。
+
+### 2026-05-23 追加：fixed epoch=1 的 K sensitivity
+
+为了验证“少量目标中心样本”是否成立，按同一 fixed short-horizon 协议跑 K=20/50/100。
+这里没有使用 target-val 选 epoch，K 样本全部用于 target train；VAE 同时报告 `aw5` 与 `aw20`，
+不通过 target test 预先选定单一权重。
+
+括号中为 drop-all-zero：
+
+| center | K | no-VAE | VAE aw5 | VAE aw20 | best VAE delta pp |
+|---|---:|---:|---:|---:|---:|
+| cpsc_2018 | 20 | 0.8101 / 0.6009 (0.8560 / 0.7146) | 0.8309 / 0.6051 (0.8815 / 0.7452) | 0.8129 / 0.5955 (0.8582 / 0.7181) | target +2.08 / +0.41; drop +2.55 / +3.06 |
+| cpsc_2018 | 50 | 0.8385 / 0.6135 (0.8872 / 0.7517) | 0.8416 / 0.6183 (0.8925 / 0.7638) | 0.8392 / 0.6212 (0.8887 / 0.7614) | target +0.07 / +0.77; drop +0.15 / +0.97 |
+| cpsc_2018 | 100 | 0.8638 / 0.6486 (0.9139 / 0.8069) | 0.8880 / 0.6960 (0.9324 / 0.8478) | 0.8800 / 0.6979 (0.9239 / 0.8380) | target +1.62 / +4.93; drop +1.00 / +3.11 |
+| ningbo | 20 | 0.9084 / 0.5048 (0.9272 / 0.6589) | 0.8997 / 0.4749 (0.9218 / 0.6466) | 0.8998 / 0.4767 (0.9210 / 0.6436) | target -0.86 / -2.80; drop -0.62 / -1.53 |
+| ningbo | 50 | 0.9060 / 0.4989 (0.9244 / 0.6517) | 0.9078 / 0.4937 (0.9273 / 0.6541) | 0.8999 / 0.4834 (0.9248 / 0.6514) | target +0.18 / -0.52; drop +0.29 / +0.25 |
+| ningbo | 100 | 0.9197 / 0.5298 (0.9308 / 0.6569) | 0.9119 / 0.5170 (0.9278 / 0.6489) | 0.9176 / 0.5388 (0.9312 / 0.6667) | target -0.21 / +0.90; drop +0.04 / +0.98 |
+| chapman_shaoxing | 20 | 0.9060 / 0.4388 (0.9205 / 0.5688) | 0.8969 / 0.4052 (0.9163 / 0.5594) | 0.8969 / 0.4122 (0.9146 / 0.5580) | target -0.91 / -2.66; drop -0.59 / -1.07 |
+| chapman_shaoxing | 50 | 0.9091 / 0.4458 (0.9206 / 0.5640) | 0.9031 / 0.4310 (0.9164 / 0.5615) | 0.9035 / 0.4373 (0.9163 / 0.5604) | target -0.56 / -0.85; drop -0.44 / -0.37 |
+| chapman_shaoxing | 100 | 0.9145 / 0.4635 (0.9217 / 0.5684) | 0.9188 / 0.4769 (0.9262 / 0.5709) | 0.9148 / 0.4687 (0.9234 / 0.5680) | target +0.44 / +1.34; drop +0.46 / +0.26 |
+| georgia | 20 | 0.8478 / 0.5376 (0.8524 / 0.5959) | 0.8434 / 0.5271 (0.8483 / 0.5915) | 0.8452 / 0.5322 (0.8505 / 0.5965) | target -0.26 / -0.54; drop -0.19 / +0.06 |
+| georgia | 50 | 0.8467 / 0.5420 (0.8509 / 0.5989) | 0.8442 / 0.5314 (0.8494 / 0.5974) | 0.8468 / 0.5404 (0.8521 / 0.6045) | target +0.01 / -0.16; drop +0.11 / +0.56 |
+| georgia | 100 | 0.8472 / 0.5518 (0.8530 / 0.6123) | 0.8523 / 0.5545 (0.8589 / 0.6175) | 0.8424 / 0.5470 (0.8476 / 0.6082) | target +0.51 / +0.27; drop +0.59 / +0.52 |
+
+K summary：
+
+| K | full target AUPRC positive | drop-all-zero AUPRC positive |
+|---:|---:|---:|
+| 20 | 1/4 | 2/4 |
+| 50 | 1/4 | 3/4 |
+| 100 | 4/4 | 4/4 |
+
+结论：
+
+```text
+K=100 是当前 fixed short-horizon ECGFounder VAE-only 的实证下限。
+K=20/50 在部分中心会退化，尤其 ningbo 与 chapman_shaoxing；不能宣称几十条样本稳定足够。
+这不是 all-zero 虚高：K=100 的 drop-all-zero AUPRC 在 4/4 中心也正向。
+但除 CPSC drop-all-zero 外，多数中心仍未达到 PTB-XL source AUPRC。
+```
+
+### 2026-05-23 追加：EfficientNet1DV2 adapter sanity check
+
+为了确认 VAE-only 是否也能迁移到 EfficientNet1DV2，使用已有的 EfficientNet frozen-backbone
+adapter 入口做一个 K=100 fixed epoch=1 小实验。该实验只训练 classifier + final_norm，
+不是 EfficientNet full fine-tuning，因此只作为 sanity check。
+
+| center | arm | PTB-XL | target | drop-all-zero |
+|---|---|---:|---:|---:|
+| cpsc_2018 | real_only | 0.9072 / 0.7744 | 0.8143 / 0.5687 | 0.8631 / 0.6979 |
+| cpsc_2018 | vae_aw5 | 0.9078 / 0.7761 | 0.8149 / 0.5691 | 0.8642 / 0.6991 |
+| cpsc_2018 | vae_aw20 | 0.9078 / 0.7761 | 0.8155 / 0.5695 | 0.8648 / 0.6999 |
+| georgia | real_only | 0.9077 / 0.7757 | 0.8187 / 0.5952 | 0.8269 / 0.6761 |
+| georgia | vae_aw5 | 0.9077 / 0.7757 | 0.8185 / 0.5950 | 0.8268 / 0.6760 |
+| georgia | vae_aw20 | 0.9076 / 0.7754 | 0.8185 / 0.5951 | 0.8268 / 0.6760 |
+
+结论：
+
+```text
+EfficientNet adapter 版本目前只有 CPSC 极小正增益，Georgia 无增益。
+因此当前 VAE-only 的清晰主证据仍来自 ECGFounder official full fine-tuning。
+EfficientNet1DV2 若要继续追，需要另设 full fine-tune 或 last-block fine-tune，而不是只靠 head adapter。
+```

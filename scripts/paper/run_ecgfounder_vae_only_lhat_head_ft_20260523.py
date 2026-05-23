@@ -573,9 +573,13 @@ def train_one_center(
             return target_auprc
         raise ValueError(f"unsupported selection_metric={args.selection_metric}")
 
-    best_score = selection_score(
-        baseline_views[center]["per_center"][center],
-        baseline_ptbxl,
+    best_score = (
+        -float("inf")
+        if args.selection_metric == "last_epoch"
+        else selection_score(
+            baseline_views[center]["per_center"][center],
+            baseline_ptbxl,
+        )
     )
     best_epoch = 0
     torch.save(head.state_dict(), run_dir / "best_head.pt")
@@ -672,7 +676,11 @@ def train_one_center(
             entry["target_macro_auprc"] = target["macro_auprc"]
             entry["ptbxl_macro_auroc"] = ptbxl_fold10["macro_auroc"]
             entry["ptbxl_macro_auprc"] = ptbxl_fold10["macro_auprc"]
-            cur_score = selection_score(target, ptbxl_fold10)
+            cur_score = (
+                float(epoch)
+                if args.selection_metric == "last_epoch"
+                else selection_score(target, ptbxl_fold10)
+            )
             entry["selection_metric"] = args.selection_metric
             entry["selection_score"] = cur_score
             if cur_score > best_score:
@@ -889,13 +897,17 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--selection_metric",
         choices=[
+            "last_epoch",
             "target_auprc",
             "target_plus_source_auprc",
             "target_source_hmean_auprc",
             "target_under_source_floor",
         ],
         default="target_auprc",
-        help="Metric used to save best_head.pt during online AT.",
+        help=(
+            "Metric used to save best_head.pt during online AT. "
+            "Use last_epoch for fixed-horizon runs without target-test checkpoint selection."
+        ),
     )
     p.add_argument("--source_selection_weight", type=float, default=0.25)
     p.add_argument("--source_auprc_floor", type=float, default=0.79)
