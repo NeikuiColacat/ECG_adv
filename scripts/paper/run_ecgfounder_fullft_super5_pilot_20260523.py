@@ -65,6 +65,10 @@ def set_seed(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
+def tag_value(value: float | int | str) -> str:
+    return str(value).replace(".", "p").replace("-", "m")
+
+
 class CachedSignalDataset(Dataset):
     def __init__(self, signals: np.ndarray, labels: np.ndarray, indices: np.ndarray) -> None:
         self.signals = signals
@@ -481,6 +485,7 @@ def main() -> None:
     ap.add_argument("--target_val_score_weight", type=float, default=0.5)
     ap.add_argument("--source_train_limit", type=int, default=0)
     ap.add_argument("--preprocess_policy", default="official_ptbxl_eval")
+    ap.add_argument("--run_suffix", default="")
     ap.add_argument("--device", default="cuda:0")
     ap.add_argument("--seed", type=int, default=20260531)
     ap.add_argument("--force", action="store_true")
@@ -497,6 +502,23 @@ def main() -> None:
         method_tag += "_cls" + "-".join(str(c) for c in args.vae_classes_in_scope)
     if args.enable_vae_adv_stream and args.vae_min_class_count > 1:
         method_tag += f"_mincnt{args.vae_min_class_count}"
+    if args.enable_vae_adv_stream:
+        method_tag += (
+            f"_aw{tag_value(args.adv_weight)}"
+            f"_ka{args.k_anchor}"
+            f"_M{args.hull_m}"
+            f"_lam{tag_value(args.hull_lambda)}"
+            f"_hs{args.hull_steps}"
+            f"_hlr{tag_value(args.hull_lr)}"
+        )
+        if args.hull_weight_mode != "optimized":
+            method_tag += f"_{args.hull_weight_mode}"
+        if args.hull_label_mode != "primary":
+            method_tag += f"_label{args.hull_label_mode}"
+        if args.hull_include_anchor:
+            method_tag += "_includeanchor"
+    if args.run_suffix:
+        method_tag += f"_{args.run_suffix}"
     selection_tag = ""
     if args.target_val_count > 0 or args.selection_metric != "source_auprc":
         selection_tag = f"_tv{args.target_val_count}_{args.selection_metric}"

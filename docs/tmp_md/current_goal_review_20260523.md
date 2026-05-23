@@ -1178,3 +1178,55 @@ Chapman K=100 pilot：
 3. VAE stream 暂时保持全类版本；class-gated 作为负结果，不进入主线。
 4. 若 CPSC/Ningbo 仍稳定正向，再做 K=20/50/100；若 Georgia 仍负向，优先降 adv_weight 而不是增加技巧。
 ```
+
+### 2026-05-23 追加：ECGFounder full-FT + VAE-only 低权重 refinement
+
+已确认 ECGFounder 官方 notebook 的推荐微调入口是：
+
+```text
+ft_12lead_ECGFounder(..., linear_prob=False)
+```
+
+也就是 full fine-tuning；`linear_prob=True` 才是 frozen encoder/linear probe。因此后续公平强基线应使用
+`no-VAE full fine-tuning`，不能再只和 frozen-head 做主对比。
+
+本轮先修复实验命名：VAE 目录名现在会记录
+`adv_weight/k_anchor/M/lambda/hull_steps/hull_lr`，避免后续 sweep 覆盖旧结果。
+
+K=100，80 train / 20 target-val，target-val stratified，best checkpoint 按 target-val AUPRC 选择。
+括号中是 all-zero 样本排除后的同中心指标。
+
+| center | no-VAE full-FT | VAE aw20 | VAE aw5 | VAE aw10 |
+|---|---:|---:|---:|---:|
+| cpsc_2018 | 0.8703 / 0.6525 (0.9188 / 0.8107) | 0.8714 / 0.6727 (0.9198 / 0.8207) | 0.8651 / 0.6378 (0.9151 / 0.7973) | - |
+| ningbo | 0.8908 / 0.4753 (0.9088 / 0.6310) | 0.8998 / 0.4844 (0.9169 / 0.6369) | 0.9087 / 0.5023 (0.9255 / 0.6446) | - |
+| chapman_shaoxing | 0.9089 / 0.4541 (0.9184 / 0.5634) | 0.9135 / 0.4509 (0.9233 / 0.5661) | 0.9118 / 0.4501 (0.9218 / 0.5655) | - |
+| georgia | 0.8347 / 0.5385 (0.8422 / 0.6094) | 0.8291 / 0.5247 (0.8369 / 0.5957) | 0.8488 / 0.5508 (0.8544 / 0.6101) | 0.8362 / 0.5400 (0.8446 / 0.6103) |
+
+阶段结论：
+
+1. `aw20` 在 CPSC/Ningbo 有用，但会伤 Georgia；Georgia 不是 VAE-only 必然失败，而是对抗流过强。
+2. `aw5` 修复 Georgia，并显著提高 Ningbo；但在 CPSC 上被 target-val 选到较弱 epoch，说明单次 20 条 target-val 的 checkpoint selection 不够稳。
+3. Chapman 的 VAE 增益很小，更多体现为 AUROC/drop-all-zero 小幅改善，而不是 full target AUPRC 改善。
+4. PTB-XL fold10 在 `aw5` Georgia 仍为 `0.9214 / 0.8036`，说明低权重 VAE 流没有造成明显源域崩坏。
+5. 当前还不能宣称“达到 PTB-XL 源域 AUPRC”。CPSC drop-all-zero AUPRC 已接近或超过源域水平，但 Ningbo/Chapman/Georgia 仍明显低于源域。
+
+每个 epoch 的诊断显示，问题不仅是 VAE 是否有效，也包括 non-leak checkpoint selection：
+
+| center | arm | target AUPRC 最好 epoch | target | drop-all-zero | target-val 最好 epoch |
+|---|---|---:|---:|---:|---:|
+| cpsc_2018 | aw5 | 4 | 0.8711 / 0.6996 | 0.9137 / 0.8163 | 1 |
+| ningbo | aw5 | 2 | 0.9066 / 0.5051 | 0.9205 / 0.6420 | 1 |
+| chapman_shaoxing | aw5 | 3 | 0.8962 / 0.4503 | 0.9029 / 0.5616 | 1 |
+| georgia | aw5 | 1 | 0.8488 / 0.5508 | 0.8544 / 0.6101 | 1 |
+| georgia | aw10 | 2 | 0.8463 / 0.5528 | 0.8529 / 0.6157 | 4 |
+
+下一步主线：
+
+```text
+1. 保持方法简洁：no-VAE full-FT 作为强基线；VAE-only 用 real-anchor latent-hull，默认弱流 aw5/aw20 二选一。
+2. 先做 repeated target-val split 或 K-fold target-val selection，避免 20 条 val 的偶然性决定 checkpoint。
+3. 对 aw 的选择使用 non-leak target-val 稳定性，而不是 target test oracle。
+4. 在 checkpoint selection 稳定后，再做 K=20/50/100 sensitivity，判断少样本是否仍能稳定超过 no-VAE full-FT。
+5. 所有主表同时报告 full target 和 drop-all-zero，防止 all-zero 样本造成虚高。
+```

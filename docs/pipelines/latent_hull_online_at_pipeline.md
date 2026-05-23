@@ -2330,3 +2330,55 @@ Under stratified target-val, VAE improves AUROC and drop-all-zero AUPRC, but ful
 The simple CD/MI/STTC-only class gate is a negative result and should not be promoted to the main method.
 The next useful refinement is repeated target-val splits plus center-wise replication, not more complex class gating.
 ```
+
+#### ECGFounder Full-FT Adv-Weight Refinement
+
+ECGFounder 公平对比必须使用官方式 full fine-tuning：
+
+```text
+ft_12lead_ECGFounder(..., linear_prob=False)
+```
+
+`linear_prob=True` 只是 frozen encoder / linear probe，不能作为判断 VAE-only 是否真正强的唯一主基线。
+
+当前 ECGFounder full-FT VAE-only 路线：
+
+```text
+PTB-XL fold 1-8 source stream
++ K=100 target-center real ECG stream
++ optional VAE-only real-anchor latent-hull adversarial stream
+target-val: K 内拆 80 train / 20 val
+checkpoint: target-val macro AUPRC
+eval: target ref ids excluded; additionally report drop-all-zero
+```
+
+VAE stream 关键设置：
+
+```text
+z_adv = (1 - lambda) z0 + lambda * sum_i softmax(a_i) z_i
+z0, z_i 均来自目标中心真实 ECG 的 ECGTwin VAE latent
+M = 20
+lambda = 0.15
+hull_steps = 3
+hull_lr = 0.25
+k_anchor = 80
+```
+
+2026-05-23 结果显示 `adv_weight` 是主要稳定性参数。括号外为 full target，评估均排除 K=100 ref ids。
+
+| center | no-VAE full-FT | VAE aw20 | VAE aw5 | note |
+|---|---:|---:|---:|---|
+| cpsc_2018 | 0.8703 / 0.6525 | 0.8714 / 0.6727 | 0.8651 / 0.6378 | aw20 更强；aw5 target-val 选到弱 epoch |
+| ningbo | 0.8908 / 0.4753 | 0.8998 / 0.4844 | 0.9087 / 0.5023 | aw5 更强 |
+| chapman_shaoxing | 0.9089 / 0.4541 | 0.9135 / 0.4509 | 0.9118 / 0.4501 | 主要改善 AUROC/drop-all-zero |
+| georgia | 0.8347 / 0.5385 | 0.8291 / 0.5247 | 0.8488 / 0.5508 | aw20 过强；aw5 修复负增益 |
+
+Refinement 判断：
+
+```text
+1. VAE-only 增益不是 frozen-head 弱基线造成的；在 ECGFounder full-FT 强基线上仍有正例。
+2. VAE-only 也不是简单越强越好；Georgia 证明过强 adv stream 会伤目标中心。
+3. 下一步应优先做 repeated target-val split / K-fold target-val selection，而不是继续加复杂技巧。
+4. 主表必须同时报告 full target 与 drop-all-zero，防止 all-zero 负样本造成指标虚高。
+5. 目标仍未完成：除 CPSC drop-all-zero 外，多数外部中心 AUPRC 仍低于 PTB-XL 源域。
+```
