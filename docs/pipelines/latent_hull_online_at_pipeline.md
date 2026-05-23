@@ -2294,3 +2294,39 @@ Next experiments：
 3. For Georgia, sweep smaller adv_weight and class-gated VAE stream before increasing K.
 4. Keep no-VAE full fine-tuning as the primary fairness baseline for ECGFounder.
 ```
+
+#### Target-Val Selection Pilot
+
+`scripts/paper/run_ecgfounder_fullft_super5_pilot_20260523.py` now supports:
+
+```text
+--target_val_count
+--selection_metric target_val_auprc | source_plus_target_val_auprc
+--target_val_split_mode random | stratified
+--vae_classes_in_scope
+--vae_min_class_count
+```
+
+The `stratified` split is a multi-label greedy split. It tries to place target-val positives
+for classes with at least two positives in K, while keeping singleton positives in target-train
+so the VAE anchor pool is not starved.
+
+Chapman K=100, 80 target-train / 20 target-val, ref-excluded target evaluation:
+
+| setting | best epoch | PTB-XL fold10 | target | drop-all-zero | target-val |
+|---|---:|---:|---:|---:|---:|
+| no-VAE random target-val | 1 | 0.9184 / 0.7984 | 0.9109 / 0.4576 | 0.9204 / 0.5655 | 0.9195 / 0.7924 |
+| VAE random target-val | 1 | 0.9172 / 0.7947 | 0.9136 / 0.4716 | 0.9224 / 0.5787 | 0.9106 / 0.7985 |
+| no-VAE stratified target-val | 1 | 0.9182 / 0.7975 | 0.9089 / 0.4541 | 0.9184 / 0.5634 | 0.9359 / 0.9119 |
+| VAE stratified target-val | 1 | 0.9179 / 0.7968 | 0.9135 / 0.4509 | 0.9233 / 0.5661 | 0.9399 / 0.9374 |
+| VAE stratified CD/MI/STTC only | 1 | 0.9163 / 0.7924 | 0.9069 / 0.4451 | 0.9177 / 0.5637 | 0.9345 / 0.9191 |
+
+Interpretation:
+
+```text
+target_val_auprc early selection is better than source_plus_target_val for Chapman because it selects epoch 1.
+VAE remains positive under random target-val selection.
+Under stratified target-val, VAE improves AUROC and drop-all-zero AUPRC, but full target AUPRC is flat/slightly negative.
+The simple CD/MI/STTC-only class gate is a negative result and should not be promoted to the main method.
+The next useful refinement is repeated target-val splits plus center-wise replication, not more complex class gating.
+```

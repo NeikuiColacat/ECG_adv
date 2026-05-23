@@ -208,8 +208,10 @@ def load_selected_ref_ids(ref_meta_json: Path, center: str) -> set[str]:
 def split_target_train_val(
     target_idx: np.ndarray,
     record_ids: np.ndarray,
+    labels: np.ndarray,
     val_count: int,
     seed: int,
+    split_mode: str = "random",
 ) -> tuple[np.ndarray, np.ndarray, set[str], set[str]]:
     target_idx = np.asarray(target_idx, dtype=np.int64)
     if val_count <= 0:
@@ -220,8 +222,52 @@ def split_target_train_val(
     rng = np.random.default_rng(seed + 1701)
     perm = np.asarray(target_idx, dtype=np.int64).copy()
     rng.shuffle(perm)
-    val_idx = np.sort(perm[:val_count])
+    if split_mode == "random":
+        val_idx = np.sort(perm[:val_count])
+    elif split_mode == "stratified":
+        y = np.asarray(labels, dtype=np.float32)[target_idx] > 0.5
+        pos_counts = y.sum(axis=0)
+        selected: list[int] = []
+        selected_set: set[int] = set()
+        class_order = [
+            int(c)
+            for c in np.argsort(pos_counts)
+            if int(pos_counts[int(c)]) >= 2
+        ]
+        for class_i in class_order:
+            candidates = [int(i) for i, row in zip(target_idx, y) if row[class_i] and int(i) not in selected_set]
+            if not candidates:
+                continue
+            candidate_scores = []
+            for idx in candidates:
+                row = np.asarray(labels[idx], dtype=np.float32) > 0.5
+                covered_new = sum(
+                    1
+                    for c in class_order
+                    if row[c] and not any(np.asarray(labels[j], dtype=np.float32)[c] > 0.5 for j in selected)
+                )
+                rarity = float(np.sum([1.0 / max(float(pos_counts[c]), 1.0) for c, present in enumerate(row) if present]))
+                candidate_scores.append((-covered_new, -rarity, rng.random(), idx))
+            candidate_scores.sort()
+            pick = int(candidate_scores[0][3])
+            selected.append(pick)
+            selected_set.add(pick)
+            if len(selected) >= val_count:
+                break
+        for idx in perm:
+            idx = int(idx)
+            if len(selected) >= val_count:
+                break
+            if idx not in selected_set:
+                selected.append(idx)
+                selected_set.add(idx)
+        val_idx = np.sort(np.asarray(selected, dtype=np.int64))
+    else:
+        raise ValueError(f"unknown target_val_split_mode={split_mode}")
     train_idx = np.sort(perm[val_count:])
+    if split_mode == "stratified":
+        val_set = set(int(i) for i in val_idx)
+        train_idx = np.sort(np.asarray([int(i) for i in target_idx if int(i) not in val_set], dtype=np.int64))
     train_ids = {str(record_ids[i]) for i in train_idx}
     val_ids = {str(record_ids[i]) for i in val_idx}
     return train_idx, val_idx, train_ids, val_ids
@@ -413,6 +459,8 @@ def main() -> None:
     ap.add_argument("--enable_vae_adv_stream", action="store_true")
     ap.add_argument("--adv_weight", type=float, default=20.0)
     ap.add_argument("--k_anchor", type=int, default=100)
+    ap.add_argument("--vae_classes_in_scope", nargs="*", default=None)
+    ap.add_argument("--vae_min_class_count", type=int, default=1)
     ap.add_argument("--hull_m", type=int, default=20)
     ap.add_argument("--hull_lambda", type=float, default=0.15)
     ap.add_argument("--hull_steps", type=int, default=3)
@@ -424,6 +472,7 @@ def main() -> None:
     ap.add_argument("--pgd_eps", type=float, default=2.0)
     ap.add_argument("--pgd_batch", type=int, default=4)
     ap.add_argument("--target_val_count", type=int, default=0)
+    ap.add_argument("--target_val_split_mode", choices=["random", "stratified"], default="random")
     ap.add_argument(
         "--selection_metric",
         choices=["source_auprc", "target_val_auprc", "source_plus_target_val_auprc"],
@@ -444,11 +493,15 @@ def main() -> None:
     sw_tag = str(args.source_weight).replace(".", "p")
     tw_tag = str(args.target_real_weight).replace(".", "p")
     method_tag = "fullft_vae" if args.enable_vae_adv_stream else "fullft"
-    selection_tag = (
-        f"_tv{args.target_val_count}_{args.selection_metric}"
-        if args.target_val_count > 0 or args.selection_metric != "source_auprc"
-        else ""
-    )
+    if args.enable_vae_adv_stream and args.vae_classes_in_scope is not None:
+        method_tag += "_cls" + "-".join(str(c) for c in args.vae_classes_in_scope)
+    if args.enable_vae_adv_stream and args.vae_min_class_count > 1:
+        method_tag += f"_mincnt{args.vae_min_class_count}"
+    selection_tag = ""
+    if args.target_val_count > 0 or args.selection_metric != "source_auprc":
+        selection_tag = f"_tv{args.target_val_count}_{args.selection_metric}"
+        if args.target_val_split_mode != "random":
+            selection_tag += f"_{args.target_val_split_mode}"
     run_dir = out_dir / "runs" / (
         f"{args.center}_K{args.k}_fullft_ep{args.epochs}_lr{lr_tag}_"
         f"sw{sw_tag}_tw{tw_tag}_{method_tag}{selection_tag}_seed{args.seed}"
@@ -484,8 +537,10 @@ def main() -> None:
     target_train_idx, target_val_idx, target_train_ids, target_val_ids = split_target_train_val(
         target_idx,
         record_ids,
+        pn["labels"],
         args.target_val_count,
         args.seed,
+        args.target_val_split_mode,
     )
     if args.selection_metric != "source_auprc" and len(target_val_idx) == 0:
         raise RuntimeError("--selection_metric needs --target_val_count > 0 unless source_auprc is used")
@@ -516,6 +571,21 @@ def main() -> None:
             device=args.device,
         )
         anchor_pool = load_anchor_pool_for_ids(args.center, target_train_ids, pn)
+        if args.vae_classes_in_scope is not None:
+            requested = {str(c) for c in args.vae_classes_in_scope}
+            unknown = sorted(requested - set(CLASS_NAMES_SUPER5))
+            if unknown:
+                raise RuntimeError(f"unknown --vae_classes_in_scope classes: {unknown}")
+            anchor_pool["classes_in_scope"] = [
+                c for c in anchor_pool["classes_in_scope"] if c in requested
+            ]
+        if args.vae_min_class_count > 1:
+            anchor_pool["classes_in_scope"] = [
+                c for c in anchor_pool["classes_in_scope"]
+                if int(anchor_pool["label_counts"].get(c, 0)) >= int(args.vae_min_class_count)
+            ]
+        if not anchor_pool["classes_in_scope"]:
+            raise RuntimeError("VAE stream enabled but no classes remain after class filtering")
         walker = StratifiedPoolWalker(
             labels_one_hot=anchor_pool["labels"],
             classes_in_scope=anchor_pool["classes_in_scope"],
@@ -547,6 +617,7 @@ def main() -> None:
     test_idx = np.nonzero(folds == 10)[0]
     logs = []
     best = -float("inf")
+    best_epoch = None
     for epoch in range(1, args.epochs + 1):
         adv_info = {
             "signals": None,
@@ -634,6 +705,7 @@ def main() -> None:
         score = selection_score
         if score > best:
             best = score
+            best_epoch = epoch
             torch.save(model.state_dict(), run_dir / "best_model.pt")
 
     model.load_state_dict(torch.load(run_dir / "best_model.pt", map_location=device))
@@ -651,6 +723,11 @@ def main() -> None:
         "selected_ref_record_ids": sorted(selected_ids),
         "target_train_record_ids": sorted(target_train_ids),
         "target_val_record_ids": sorted(target_val_ids),
+        "selection_metric": args.selection_metric,
+        "target_val_split_mode": args.target_val_split_mode,
+        "selection_score_weight": float(args.target_val_score_weight),
+        "best_epoch": best_epoch,
+        "best_selection_score": float(best),
         "ptbxl_fold10": eval_split(model, ptbxl["signals"], ptbxl["labels"], test_idx, args.eval_batch_size, device),
         "target_val": (
             eval_split(model, pn["signals"], pn["labels"], target_val_idx, args.eval_batch_size, device)
@@ -665,6 +742,8 @@ def main() -> None:
         "vae_anchor_pool": None if anchor_pool is None else {
             "classes_in_scope": anchor_pool["classes_in_scope"],
             "label_counts": anchor_pool["label_counts"],
+            "requested_classes_in_scope": args.vae_classes_in_scope,
+            "min_class_count": int(args.vae_min_class_count),
             "source_base": anchor_pool["source_base"],
         },
         "official_evidence": {

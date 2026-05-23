@@ -1136,3 +1136,45 @@ target-oracle 诊断显示 checkpoint selection 是主要问题之一：
 2. 对 Georgia 先降低 adv_weight 或只在高置信类启用 VAE stream，避免 MI 极少类被 latent-hull 噪声拖累。
 3. 继续做 K=20/50/100 sensitivity，判断少样本时 VAE-only 是否比 no-VAE 更有独特优势。
 ```
+
+### Target-val selection and class-gated VAE pilot
+
+脚本已新增不泄漏 checkpoint selection：
+
+```text
+--target_val_count
+--selection_metric target_val_auprc | source_plus_target_val_auprc
+--target_val_split_mode random | stratified
+```
+
+其中 `stratified` 是多标签贪心拆分：对 K 样本中出现至少 2 次的类别，尽量在 target-val 中保留阳性；
+只出现 1 次的类别留在 target-train，避免把唯一 anchor 从 VAE pool 里拿走。
+
+Chapman K=100 pilot：
+
+| setting | best epoch | PTB-XL fold10 | target | drop-all-zero | target-val |
+|---|---:|---:|---:|---:|---:|
+| no-VAE random target-val | 1 | 0.9184 / 0.7984 | 0.9109 / 0.4576 | 0.9204 / 0.5655 | 0.9195 / 0.7924 |
+| VAE random target-val | 1 | 0.9172 / 0.7947 | 0.9136 / 0.4716 | 0.9224 / 0.5787 | 0.9106 / 0.7985 |
+| no-VAE stratified target-val | 1 | 0.9182 / 0.7975 | 0.9089 / 0.4541 | 0.9184 / 0.5634 | 0.9359 / 0.9119 |
+| VAE stratified target-val | 1 | 0.9179 / 0.7968 | 0.9135 / 0.4509 | 0.9233 / 0.5661 | 0.9399 / 0.9374 |
+| VAE stratified CD/MI/STTC only | 1 | 0.9163 / 0.7924 | 0.9069 / 0.4451 | 0.9177 / 0.5637 | 0.9345 / 0.9191 |
+
+判断：
+
+```text
+1. target_val_auprc 能选到早停 epoch 1，明显优于 source_plus_target_val 在 Chapman 上选到较晚 epoch。
+2. random target-val 下 VAE 对 no-VAE 有 +0.27pp AUROC / +1.41pp AUPRC，drop-all-zero 有 +0.20pp / +1.33pp。
+3. stratified target-val 下 VAE 提高 AUROC 和 drop-all-zero AUPRC，但全量 target AUPRC 略低，主要受 NORM/HYP 波动影响。
+4. 简单 class-gated VAE(CD/MI/STTC only) 没有改善，说明删掉 NORM 不是当前正确方向。
+5. 当前目标仍未达到：Chapman target/drop-all-zero AUPRC 仍明显低于 PTB-XL fold10 AUPRC。
+```
+
+下一步最合理路线：
+
+```text
+1. 把 target_val_auprc early selection 扩展到 CPSC/Ningbo/Georgia，先确认是否比 fold9-only selection 更稳定。
+2. 对每个中心做 repeated target-val split，而不是只相信 20 条 val 的单次拆分。
+3. VAE stream 暂时保持全类版本；class-gated 作为负结果，不进入主线。
+4. 若 CPSC/Ningbo 仍稳定正向，再做 K=20/50/100；若 Georgia 仍负向，优先降 adv_weight 而不是增加技巧。
+```
