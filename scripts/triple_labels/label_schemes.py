@@ -111,7 +111,7 @@ def ptbxl_scp_to_super5(scp_codes_str_or_dict, confidence_threshold=0.0):
     return label
 
 
-SUPER5_PN2021_MAPPING_VERSION = 'v5_super5_strict_voltage_pacing_suppress_20260522'
+SUPER5_PN2021_MAPPING_VERSION = 'v6_super5_clinician_review_20260524'
 
 # PN2021 SNOMED → PTB-XL Super5 semantic projection.
 #
@@ -119,13 +119,15 @@ SUPER5_PN2021_MAPPING_VERSION = 'v5_super5_strict_voltage_pacing_suppress_202605
 # labels, not an official PN2021→PTB-XL-super5 crosswalk. This mapping is a
 # project policy for external-center evaluation.
 #
-# v5 policy:
+# v6 policy:
 #   - direct positive mapping only for codes with a clear CD/HYP/MI/STTC target;
 #   - strict NORM is only explicit sinus rhythm;
 #   - rhythm/axis/ectopy/low-voltage/boundary codes suppress NORM without
 #     becoming a super5 positive.
 #   - pacing/device rhythm codes suppress NORM but are not counted as CD.
 #   - voltage-only codes suppress NORM but are not counted as HYP.
+#   - history-like clinical condition codes are ignored: they neither create a
+#     super5 positive label nor suppress sinus rhythm NORM.
 SNOMED_TO_SUPER5_POSITIVE = {
     # MI — infarction codes only (ischemia → STTC, hypertrophy → HYP)
     164865005: 'MI',     # myocardial infarction
@@ -143,18 +145,28 @@ SNOMED_TO_SUPER5_POSITIVE = {
     164930006: 'STTC',   # ST interval abnormal
     59931005:  'STTC',   # T wave inversion
     164861001: 'STTC',   # myocardial ischemia
+    413444003: 'STTC',   # acute myocardial ischemia
+    413844008: 'STTC',   # chronic myocardial ischemia
     428750005: 'STTC',   # nonspecific ST-T abnormality
     55930002:  'STTC',   # ST changes
+    704997005: 'STTC',   # inferior ST segment depression
     425623009: 'STTC',   # lateral ischemia
     425419005: 'STTC',   # inferior ischemia
     426434006: 'STTC',   # anterior ischemia
+    370365005: 'STTC',   # left ventricular strain
+    77867006:  'STTC',   # decreased QT interval
+    164937009: 'STTC',   # U wave abnormal
     # CD — bundle branch blocks, AV blocks, conduction abnormalities
     270492004: 'CD',     # 1st degree AV block
     195042002: 'CD',     # 2nd degree AV block
     54016002:  'CD',     # 2nd degree Mobitz type I (Wenckebach)
     426183003: 'CD',     # Mobitz type II
+    204384007: 'CD',     # congenital incomplete AV block
     27885002:  'CD',     # 3rd degree AV block (complete heart block)
     233917008: 'CD',     # AV block generic
+    65778007:  'CD',     # sinoatrial block
+    5609005:   'CD',     # sinus arrest
+    60423000:  'CD',     # sinus node dysfunction
     164947007: 'CD',     # prolonged PR interval
     164909002: 'CD',     # LBBB
     733534002: 'CD',     # complete LBBB
@@ -166,6 +178,7 @@ SNOMED_TO_SUPER5_POSITIVE = {
     445118002: 'CD',     # LAnFB (left anterior fascicular block)
     445211001: 'CD',     # left posterior fascicular block
     698252002: 'CD',     # nonspecific IV conduction block
+    82226007:  'CD',     # diffuse intraventricular block
     74390002:  'CD',     # WPW (wolff-parkinson-white)
     26749005:  'CD',     # WPW alternate code
     195060002: 'CD',     # ventricular pre-excitation
@@ -177,6 +190,8 @@ SNOMED_TO_SUPER5_POSITIVE = {
     446813000: 'HYP',    # left atrial hypertrophy / LAE
     67741000119109: 'HYP',  # left atrial enlargement (alt)
     195126007: 'HYP',    # atrial hypertrophy
+    253352002: 'HYP',    # left atrial abnormality
+    253339007: 'HYP',    # right atrial abnormality
 }
 
 NORM_POSITIVE_SNOMEDS = frozenset({
@@ -212,10 +227,13 @@ NORM_SUPPRESS_SNOMEDS = frozenset({
     67751000119106,  # right atrial high voltage
     # Common unscored/non-super5 abnormalities and rhythm variants.
     164951009,  # abnormal QRS
+    418818005,  # Brugada syndrome
+    164942001,  # fragmented QRS wave
     233892002,  # accelerated atrial escape rhythm
     251187003,  # atrial escape beat
     61277005,   # accelerated idioventricular rhythm
     426664006,  # accelerated junctional rhythm
+    106068003,  # atrial rhythm
     195080001,  # atrial fibrillation and flutter
     251173003,  # atrial bigeminy
     713422000,  # atrial tachycardia
@@ -229,9 +247,47 @@ NORM_SUPPRESS_SNOMEDS = frozenset({
     698247007,  # cardiac dysrhythmia
     251198002,  # clockwise rotation
     251199005,  # counterclockwise rotation
-    # Boundary codes: suppress NORM but do not directly create STTC in v3.
+    61721007,   # clockwise or counterclockwise vectorcardiographic loop
+    13640000,   # fusion beats
+    49260003,   # idioventricular rhythm
+    251200008,  # indeterminate cardiac axis
+    426995002,  # junctional escape
+    251164006,  # junctional premature complex
+    426648003,  # junctional tachycardia
+    164912004,  # P wave change
+    251182009,  # paired ventricular premature complexes
+    282825002,  # paroxysmal atrial fibrillation
+    67198005,   # paroxysmal supraventricular tachycardia
+    425856008,  # paroxysmal ventricular tachycardia
+    251205003,  # prolonged P wave
+    164921003,  # R wave abnormal
+    314208002,  # rapid atrial fibrillation
+    49578007,   # shortened PR interval
+    17366009,   # sinus atrium to atrial wandering rhythm
+    251168009,  # supraventricular bigeminy
+    426761007,  # supraventricular tachycardia
+    251139008,  # suspect arm ECG leads reversed
+    251223006,  # tall P wave
+    11157007,   # ventricular bigeminy
+    164884008,  # ventricular ectopics
+    75532003,   # ventricular escape beat
+    81898007,   # ventricular escape rhythm
+    164896001,  # ventricular fibrillation
+    111288001,  # ventricular flutter
+    164895002,  # ventricular tachycardia
+    251180001,  # ventricular trigeminy
+    195101003,  # wandering atrial pacemaker
+    251259000,  # high T-voltage
+    # Boundary codes: suppress NORM but do not directly create STTC in v6.
     164917005,  # Q wave abnormal
     428417006,  # early repolarization
+})
+
+SUPER5_PN2021_IGNORED_SNOMEDS = frozenset({
+    53741008,   # coronary heart disease
+    84114007,   # heart failure
+    368009,     # heart valve disorder
+    266257000,  # transient ischemic attack
 })
 
 # Backward-compatible public view used by legacy scripts that need to inspect
@@ -252,6 +308,7 @@ SUPER5_PN2021_MAPPING_HASH = _stable_hash_mapping({
     'positive': SNOMED_TO_SUPER5_POSITIVE,
     'norm_positive': sorted(NORM_POSITIVE_SNOMEDS),
     'norm_suppress': sorted(NORM_SUPPRESS_SNOMEDS),
+    'ignored': sorted(SUPER5_PN2021_IGNORED_SNOMEDS),
 })
 
 
@@ -260,13 +317,14 @@ def get_super5_pn2021_mapping_metadata():
         'mapping_version': SUPER5_PN2021_MAPPING_VERSION,
         'mapping_hash': SUPER5_PN2021_MAPPING_HASH,
         'class_names': CLASS_NAMES_SUPER5,
+        'ignored_snomeds': sorted(SUPER5_PN2021_IGNORED_SNOMEDS),
     }
 
 
 def snomed_list_to_super5(snomed_codes):
     """PN2021 SNOMED list → (5,) float32 multi-hot.
 
-    v3 NORM policy: explicit sinus rhythm may become NORM only when no direct
+    NORM policy: explicit sinus rhythm may become NORM only when no direct
     super5 abnormal class and no suppress-only abnormality are present.
     """
     label = np.zeros(NUM_SUPER5, dtype=np.float32)

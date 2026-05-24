@@ -152,7 +152,7 @@ class PN2021CachedCenterDataset(Dataset):
                 torch.from_numpy(label).float())
 
 
-PN2021_EVAL_CACHE_VERSION = "v5_super5_strict_voltage_pacing_suppress"
+PN2021_EVAL_CACHE_VERSION = "v6_super5_clinician_review"
 
 
 def _pn2021_preprocess_config(args, include_crop=False):
