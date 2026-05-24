@@ -1,0 +1,510 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DeepECG 适配 Super5 与 VAE-only Latent-Hull 方案</title>
+  <style>
+    :root {
+      --ink: #1c2430;
+      --muted: #5d687a;
+      --line: #d8dee8;
+      --soft: #f5f8fc;
+      --panel: #fff;
+      --blue: #1d4ed8;
+      --green: #047857;
+      --amber: #b45309;
+      --red: #b91c1c;
+      --violet: #6d28d9;
+      --teal: #0f766e;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", Arial, sans-serif;
+      color: var(--ink);
+      background: #edf2f7;
+      line-height: 1.58;
+    }
+    .page { max-width: 1220px; margin: 0 auto; padding: 28px 22px 64px; }
+    header {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 28px 30px;
+      background: linear-gradient(135deg, #ffffff 0%, #eef7f8 52%, #eef4ff 100%);
+      box-shadow: 0 10px 28px rgba(25, 34, 51, .07);
+    }
+    h1 {
+      margin: 0 0 12px;
+      font-size: clamp(28px, 3vw, 42px);
+      line-height: 1.15;
+      letter-spacing: 0;
+    }
+    h2 { margin: 0 0 14px; font-size: 22px; line-height: 1.25; letter-spacing: 0; }
+    h3 { margin: 20px 0 8px; font-size: 17px; letter-spacing: 0; }
+    p { margin: 8px 0; }
+    .subtitle { max-width: 940px; color: var(--muted); font-size: 17px; margin: 0; }
+    .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,.75);
+      border-radius: 999px;
+      color: #334155;
+      padding: 6px 10px;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+    main { display: grid; gap: 18px; margin-top: 18px; }
+    section {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      padding: 22px 24px;
+      box-shadow: 0 6px 18px rgba(25, 34, 51, .04);
+    }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      background: #eef2f7;
+      border: 1px solid #dfe5ee;
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: .92em;
+    }
+    pre {
+      margin: 12px 0;
+      overflow-x: auto;
+      background: #101827;
+      color: #e5edf8;
+      border-radius: 8px;
+      padding: 14px 16px;
+      font-size: 13px;
+      line-height: 1.48;
+    }
+    pre code { background: transparent; border: 0; color: inherit; padding: 0; }
+    table { width: 100%; border-collapse: collapse; margin: 12px 0 4px; font-size: 14px; }
+    th, td { border: 1px solid var(--line); padding: 9px 10px; vertical-align: top; }
+    th { background: #eef4fb; text-align: left; color: #1e293b; }
+    tbody tr:nth-child(even) td { background: #fafbfd; }
+    .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+    .two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .mini {
+      border: 1px solid var(--line);
+      background: var(--soft);
+      border-radius: 8px;
+      padding: 14px 15px;
+    }
+    .mini strong { display: block; margin-bottom: 5px; }
+    .status {
+      border-left: 5px solid var(--blue);
+      background: #eff6ff;
+      border-radius: 6px;
+      padding: 12px 14px;
+      margin: 12px 0;
+    }
+    .status.good { border-left-color: var(--green); background: #ecfdf5; }
+    .status.warn { border-left-color: var(--amber); background: #fffbeb; }
+    .status.risk { border-left-color: var(--red); background: #fef2f2; }
+    .tag {
+      display: inline-block;
+      border-radius: 4px;
+      padding: 2px 6px;
+      margin-right: 5px;
+      color: #fff;
+      background: var(--blue);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .tag.green { background: var(--green); }
+    .tag.amber { background: var(--amber); }
+    .tag.red { background: var(--red); }
+    .tag.violet { background: var(--violet); }
+    .tag.teal { background: var(--teal); }
+    .flow { display: grid; grid-template-columns: repeat(5, minmax(125px, 1fr)); gap: 10px; margin: 14px 0 4px; }
+    .step {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfdff;
+      padding: 12px;
+      min-height: 96px;
+      position: relative;
+    }
+    .step b { display: block; margin-bottom: 4px; }
+    .step:after {
+      content: ">";
+      position: absolute;
+      right: -9px;
+      top: 36px;
+      color: #94a3b8;
+      font-weight: 700;
+    }
+    .step:last-child:after { content: ""; }
+    .small { color: var(--muted); font-size: 13px; }
+    ul, ol { padding-left: 20px; }
+    li { margin: 6px 0; }
+    @media (max-width: 900px) {
+      .grid, .two, .flow { grid-template-columns: 1fr; }
+      .step:after { content: ""; }
+      .page { padding: 16px 12px 48px; }
+      header, section { padding: 18px; }
+      table { font-size: 13px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header>
+      <h1>DeepECG 适配 Super5 与 VAE-only Latent-Hull 方案</h1>
+      <p class="subtitle">
+        目标：把 DeepECG 的原生 77 类模型，尤其是 WCR Transformer，接入我们当前 PTB-XL Super5、
+        PN2021 跨中心评估、ECGTwin VAE latent-hull 在线对抗训练闭环。
+      </p>
+      <div class="meta">
+        <span class="pill">日期：2026-05-23</span>
+        <span class="pill">DeepECG 输入：250Hz × 10s = 2500 点</span>
+        <span class="pill">Super5 head：我们自己训练</span>
+        <span class="pill">推荐首测：frozen WCR encoder + Linear(768,5)</span>
+      </div>
+    </header>
+
+    <main>
+      <section>
+        <h2>结论先行</h2>
+        <div class="grid">
+          <div class="mini">
+            <strong><span class="tag green">可以</span> 100Hz 可以插值到 250Hz</strong>
+            <p>为了满足 DeepECG 输入协议，可以把 <code>100Hz/1000点</code> 临时重采样到 <code>250Hz/2500点</code>。</p>
+          </div>
+          <div class="mini">
+            <strong><span class="tag amber">但</span> 插值不会恢复高频信息</strong>
+            <p>从 100Hz 插值到 250Hz 只是满足长度和接口要求，不会恢复 100Hz 采样时已经丢失的高频。</p>
+          </div>
+          <div class="mini">
+            <strong><span class="tag violet">推荐</span> raw cache 与 VAE path 分开</strong>
+            <p>真实 PTB-XL/PN2021 建 DeepECG feature cache 时优先从 raw WFDB 直接重采样到 250Hz；VAE decoded 样本只能插值。</p>
+          </div>
+        </div>
+
+        <div class="status good">
+          适配原则：不要把整个项目主线改成 250Hz。EfficientNet1DV2、PN2021 clean cache、ECGTwin VAE latent 仍保留当前协议；
+          只有进入 DeepECG 模型前，通过专用 adapter 转成 <code>(B,12,2500)</code>。
+        </div>
+      </section>
+
+      <section>
+        <h2>DeepECG 两条模型线</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>模型</th>
+              <th>参数量</th>
+              <th>类型</th>
+              <th>原生输出</th>
+              <th>Super5 适配建议</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>DeepECG EfficientNetV2 77类 JIT</td>
+              <td>约 1.51M</td>
+              <td>CNN</td>
+              <td>77 个 ECG pattern 概率/logits</td>
+              <td>快速 smoke 可用 <code>77 -> 5</code> adapter；论文主比较不优先。</td>
+            </tr>
+            <tr>
+              <td>DeepECG WCR 77类</td>
+              <td>约 90.43M</td>
+              <td>Transformer</td>
+              <td>77 个 ECG pattern logits，encoder dim 768</td>
+              <td>推荐冻结 encoder，训练 <code>Linear(768,5)</code> Super5 head。</td>
+            </tr>
+            <tr>
+              <td>DeepECG WCR base_ssl</td>
+              <td>约 90.88M</td>
+              <td>Transformer SSL 底座</td>
+              <td>预训练表示</td>
+              <td>可作为后续 full fine-tune 起点，不作为第一轮主线。</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="status warn">
+          不建议把 77 类原生输出直接手工映射成 Super5 作为最终比较。更公平的是像 ECGFounder 一样：
+          冻结预训练表示，然后用 PTB-XL fold 1-8 训练我们自己的 5 类 Super5 head。
+        </div>
+      </section>
+
+      <section>
+        <h2>输入 adapter 怎么做</h2>
+        <p>DeepECG 适配层只做模型入口转换，不改变原始训练/评估缓存的全局协议。</p>
+
+        <table>
+          <thead>
+            <tr>
+              <th>来源</th>
+              <th>输入现状</th>
+              <th>DeepECG adapter</th>
+              <th>适用场景</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>PTB-XL / PN2021 raw WFDB</td>
+              <td>原始采样率不一，通常可读物理单位。</td>
+              <td>读取 10s、lead reorder、直接重采样到 2500 点、z-score/DeepECG scale。</td>
+              <td>最严谨，适合建 frozen WCR feature cache。</td>
+            </tr>
+            <tr>
+              <td>现有 100Hz/1000 cache</td>
+              <td><code>(B,1000,12)</code> 或 <code>(B,12,1000)</code></td>
+              <td>转 <code>(B,12,1000)</code> 后 <code>F.interpolate(..., size=2500)</code>。</td>
+              <td>快速 smoke、在线训练兼容；不恢复高频。</td>
+            </tr>
+            <tr>
+              <td>ECGTwin VAE decoded</td>
+              <td><code>(B,1024,12)</code>，ECGTwin lead order。</td>
+              <td>转置到 <code>(B,12,1024)</code>，lead reorder 到 PTB-XL，再插值到 2500。</td>
+              <td>VAE-only Latent-Hull 必需路径，可微。</td>
+            </tr>
+            <tr>
+              <td>AugMix / PN2021-C corruption</td>
+              <td>当前按 <code>100Hz/1000</code> z-score 标定。</td>
+              <td>先在 100Hz canonical 上腐蚀，再送 DeepECG adapter 到 2500。</td>
+              <td>避免直接在 250Hz/500Hz 下误用 severity。</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>PyTorch 可微 adapter</h3>
+        <pre><code>def to_deepecg_2500(x_bct):
+    # x_bct: (B, 12, L), PTB-XL lead order, 10s
+    x_2500 = torch.nn.functional.interpolate(
+        x_bct, size=2500, mode="linear", align_corners=True
+    )
+    return x_2500.float()</code></pre>
+
+        <div class="status warn">
+          在线 Latent-Hull 必须用 PyTorch 可微路径。离线 feature cache 则可以用更高质量的
+          <code>scipy.signal.resample_poly</code> 或现有 resample helper。
+        </div>
+      </section>
+
+      <section>
+        <h2>Super5 适配路线</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>路线</th>
+              <th>做法</th>
+              <th>优点</th>
+              <th>风险</th>
+              <th>优先级</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>A. 77 logits -> Super5 adapter</td>
+              <td>冻结 DeepECG 原模型，训练 <code>Linear(77,5)</code>。</td>
+              <td>最快，工程量小。</td>
+              <td>受原生 77 类 head 限制，不是真正 representation probe。</td>
+              <td>快速 smoke</td>
+            </tr>
+            <tr>
+              <td>B. WCR encoder feature -> Super5 head</td>
+              <td>取 WCR encoder pooled 768-d feature，训练 <code>Linear(768,5)</code>。</td>
+              <td>最接近 ECGFounder frozen encoder 方案，公平可解释。</td>
+              <td>需要补 feature extractor wrapper，WCR 加载较重。</td>
+              <td>第一主线</td>
+            </tr>
+            <tr>
+              <td>C. WCR residual adapter</td>
+              <td>冻结 base Super5 head，加零初始化 MLP residual adapter。</td>
+              <td>适合 K=500 target-center adaptation。</td>
+              <td>需要控制 source performance，不然会过拟合 target。</td>
+              <td>第二阶段</td>
+            </tr>
+            <tr>
+              <td>D. full fine-tune WCR</td>
+              <td>解冻部分或全部 WCR。</td>
+              <td>上限可能最高。</td>
+              <td>90M Transformer，算力/过拟合/复现成本高。</td>
+              <td>最后再做</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>推荐实现路径</h2>
+        <div class="flow">
+          <div class="step"><b>1. WCR smoke</b><span class="small">确认本地权重能 forward <code>(B,12,2500)</code></span></div>
+          <div class="step"><b>2. feature cache</b><span class="small">PTB-XL / PN2021 raw -> 250Hz -> 768 feature</span></div>
+          <div class="step"><b>3. Super5 head</b><span class="small">fold 1-8 train, fold 9 select, fold 10 test</span></div>
+          <div class="step"><b>4. K=500 real</b><span class="small">target real head/adaptor fine-tune</span></div>
+          <div class="step"><b>5. VAE LHAT</b><span class="small">latent -> decode -> 2500 -> WCR -> Super5 logits</span></div>
+        </div>
+
+        <h3>阶段 1：只做 frozen WCR Super5 baseline</h3>
+        <ol>
+          <li>新增 <code>DeepECGWCRFeatureExtractor</code>，路径不要依赖 <code>./fairseq-signals</code> 当前工作目录。</li>
+          <li>从 raw WFDB 建 <code>ptbxl_wcr_features.npz</code> 和 <code>pn2021_wcr_features.npz</code>。</li>
+          <li>训练 <code>Linear(768,5)</code>，使用 PTB-XL fold 1-8，fold 9 按 macro AUPRC 选 best。</li>
+          <li>评估 fold10 与 PN2021 ref-excluded views。</li>
+        </ol>
+
+        <h3>阶段 2：K=500 real-only 与 VAE-only 对比</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>实验组</th>
+              <th>训练内容</th>
+              <th>回答的问题</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>WCR baseline</code></td>
+              <td>PTB-XL Super5 head only。</td>
+              <td>DeepECG WCR 的跨中心起点有多强。</td>
+            </tr>
+            <tr>
+              <td><code>WCR + K500 real</code></td>
+              <td>target-center 500 条真实样本微调 head/adapter。</td>
+              <td>增益是否主要来自目标中心真实数据。</td>
+            </tr>
+            <tr>
+              <td><code>WCR + VAE LHAT</code></td>
+              <td>target real anchors + same-label latent-hull 在线 AT。</td>
+              <td>VAE latent manifold 是否在 WCR 上提供额外收益。</td>
+            </tr>
+            <tr>
+              <td><code>WCR + K500 real + AugMix JSD</code></td>
+              <td>只对 source/target real 做 corruption consistency。</td>
+              <td>采集噪声增强与 target adaptation 是否互补。</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>VAE-only Latent-Hull 接入细节</h2>
+        <p>为了让 PGD 能从 Super5 loss 回传到 ECGTwin latent，DeepECG WCR 路线需要一个可微 victim wrapper。</p>
+
+        <pre><code>z: (B, 4, 128)
+  -> ECGTwin decoder, out-of-place scale
+  -> ecg: (B, 1024, 12)
+  -> transpose/reorder: (B, 12, 1024)
+  -> interpolate to 2500
+  -> WCR encoder / Super5 head
+  -> logits5
+  -> BCE loss for latent-hull PGD</code></pre>
+
+        <div class="two">
+          <div class="status good">
+            <strong>可行点</strong>
+            <p><code>F.interpolate</code> 是可微的，能支持 latent-hull 内层优化；冻结 WCR 参数时仍可对输入求梯度。</p>
+          </div>
+          <div class="status risk">
+            <strong>风险点</strong>
+            <p>现有 WCR classification wrapper 返回 77 类 sigmoid，不等于 Super5 logits。要新写 raw 5-logit wrapper，不要拿 sigmoid 后概率做 BCE 内层攻击。</p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>DeepECG 与现有主线的预处理边界</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>分支</th>
+              <th>保留协议</th>
+              <th>不要做的事</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>EfficientNet1DV2 Super5 主线</td>
+              <td><code>100Hz/1000点</code>，minimal_resample，per-sample global z-score。</td>
+              <td>不要为了 DeepECG 把主线 cache 全部重建成 250Hz。</td>
+            </tr>
+            <tr>
+              <td>ECGTwin VAE latent</td>
+              <td>VAE latent <code>(4,128)</code>，decode 后 <code>1024点</code>，再按目标模型 adapter 转换。</td>
+              <td>不要在 latent 上做二次 z-score；不要破坏 lead order swap 规则。</td>
+            </tr>
+            <tr>
+              <td>DeepECG EfficientNet / WCR</td>
+              <td>进入模型前统一 <code>(B,12,2500)</code>。</td>
+              <td>不要把 77 类原生 head 当成我们的 5 类 head。</td>
+            </tr>
+            <tr>
+              <td>AugMix / PN2021-C</td>
+              <td>当前 severity 按 <code>100Hz/1000点</code> 标定。</td>
+              <td>不要未经重标定直接在 <code>250Hz</code> 或 <code>500Hz</code> 上套同一 severity。</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>最小代码清单</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>文件/模块</th>
+              <th>新增内容</th>
+              <th>用途</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>scripts/paper/run_deepecg_wcr_linear_probe_super5_20260523.py</code></td>
+              <td>WCR feature cache + Linear(768,5) 训练/评估。</td>
+              <td>建立 DeepECG WCR Super5 强基线。</td>
+            </tr>
+            <tr>
+              <td><code>adversarial/deepecg_wcr_victim.py</code></td>
+              <td>latent -> ECG -> 2500 -> WCR -> Super5 logits 可微 wrapper。</td>
+              <td>接 Latent-Hull PGD。</td>
+            </tr>
+            <tr>
+              <td><code>scripts/paper/run_deepecg_wcr_vae_only_lhat_20260523.py</code></td>
+              <td>冻结 WCR encoder/head or adapter 的 K500 + VAE-only LHAT runner。</td>
+              <td>与 ECGFounder/EfficientNet 进行公平对照。</td>
+            </tr>
+            <tr>
+              <td><code>docs/pipelines/deepecg_wcr_super5_pipeline.md</code></td>
+              <td>记录输入协议、权重路径、参数量、结果表。</td>
+              <td>避免后续混淆 250Hz 与主线 100Hz。</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>建议先跑的 smoke tests</h2>
+        <ol>
+          <li>加载 WCR 权重，在 GPU 上 forward 随机 <code>(2,12,2500)</code>，确认输出 <code>(2,77)</code>。</li>
+          <li>用 8 条 PTB-XL raw ECG 建 2500 输入，确认无 NaN/Inf、shape 正确、速度可接受。</li>
+          <li>提取 128 条 PTB-XL WCR 768-d feature，训练一个 tiny <code>Linear(768,5)</code> overfit smoke。</li>
+          <li>用一个 VAE latent decode 后插值到 2500，跑 WCR Super5 logits，并测试 <code>loss.backward()</code> 能回到 latent。</li>
+          <li>只跑一个中心、一个 epoch 的 K500 real-only 和 LHAT smoke，确认显存和时间。</li>
+        </ol>
+      </section>
+
+      <section>
+        <h2>最终判断口径</h2>
+        <div class="status good">
+          如果 DeepECG WCR baseline 已经比 EfficientNet1DV2 强，再看 VAE-only 是否还能在 K500 real-only 之上增加 AUPRC。
+          只有 <code>WCR + VAE LHAT</code> 明确超过 <code>WCR + K500 real</code>，才能说 VAE latent-hull 在 DeepECG 表示空间上仍有独立价值。
+        </div>
+        <div class="status warn">
+          如果两者打平，结论应写成：DeepECG WCR 的跨中心增益主要来自 foundation representation 与少量 target real adaptation；
+          VAE-only Latent-Hull 对 WCR 的额外增益不稳定，但仍可作为 EfficientNet1DV2 上更有效的低资源增强策略。
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

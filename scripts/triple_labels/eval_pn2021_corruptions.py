@@ -33,7 +33,99 @@ from scripts.triple_labels.eval_crosscenter import (  # noqa: E402
     infer_dataset,
 )
 from scripts.triple_labels.label_schemes import get_scheme  # noqa: E402
+from methods.augmix.ecg_ops import (  # noqa: E402
+    BaselineShift,
+    BaselineWander,
+    EMGNoise,
+    PowerlineNoise,
+    RandomLeadsMask,
+)
 from methods.augmix.severity import build_op  # noqa: E402
+
+
+STRESS_PROFILE_CHOICES = ("standard", "stress_v2")
+
+
+_STRESS_V2_PARAMS = {
+    # Stress profile calibrated for z-scored 100Hz/10s ECG. It is deliberately
+    # stronger than the training-time AugMix severity table and should only be
+    # used as a corruption benchmark.
+    "powerline_noise": {
+        1: {"max_amplitude": 0.15},
+        2: {"max_amplitude": 0.30},
+        3: {"max_amplitude": 0.60},
+        4: {"max_amplitude": 0.90},
+        5: {"max_amplitude": 1.20},
+    },
+    "emg_noise": {
+        1: {"max_amplitude": 0.10},
+        2: {"max_amplitude": 0.25},
+        3: {"max_amplitude": 0.50},
+        4: {"max_amplitude": 0.80},
+        5: {"max_amplitude": 1.20},
+    },
+    "baseline_wander": {
+        1: {"max_amplitude": 0.20, "k": 3},
+        2: {"max_amplitude": 0.40, "k": 3},
+        3: {"max_amplitude": 0.80, "k": 4},
+        4: {"max_amplitude": 1.20, "k": 4},
+        5: {"max_amplitude": 1.60, "k": 5},
+    },
+    "baseline_shift": {
+        1: {"max_amplitude": 0.20, "shift_ratio": 0.10, "num_segment": 1},
+        2: {"max_amplitude": 0.50, "shift_ratio": 0.20, "num_segment": 1},
+        3: {"max_amplitude": 0.80, "shift_ratio": 0.35, "num_segment": 2},
+        4: {"max_amplitude": 1.10, "shift_ratio": 0.55, "num_segment": 2},
+        5: {"max_amplitude": 1.40, "shift_ratio": 0.75, "num_segment": 3},
+    },
+    "random_leads_masking": {
+        1: {"mask_leads_prob": 0.15},
+        2: {"mask_leads_prob": 0.30},
+        3: {"mask_leads_prob": 0.50},
+        4: {"mask_leads_prob": 0.70},
+        5: {"mask_leads_prob": 0.85},
+    },
+}
+
+
+def _build_stress_v2_op(corruption, public_severity):
+    if corruption not in _STRESS_V2_PARAMS:
+        raise ValueError(f"stress_v2 does not define corruption: {corruption}")
+    params = dict(_STRESS_V2_PARAMS[corruption][int(public_severity)])
+    params.setdefault("p", 1.0)
+    if corruption == "powerline_noise":
+        params.setdefault("min_amplitude", 0.0)
+        params.setdefault("freq", 100)
+        params.setdefault("dependency", False)
+        return PowerlineNoise(**params)
+    if corruption == "emg_noise":
+        params.setdefault("min_amplitude", 0.0)
+        params.setdefault("dependency", False)
+        return EMGNoise(**params)
+    if corruption == "baseline_wander":
+        params.setdefault("min_amplitude", 0.0)
+        params.setdefault("min_freq", 0.03)
+        params.setdefault("max_freq", 0.50)
+        params.setdefault("freq", 100)
+        params.setdefault("dependency", False)
+        return BaselineWander(**params)
+    if corruption == "baseline_shift":
+        params.setdefault("min_amplitude", 0.0)
+        params.setdefault("freq", 100)
+        params.setdefault("dependency", False)
+        return BaselineShift(**params)
+    if corruption == "random_leads_masking":
+        params.setdefault("mask_leads_selection", "random")
+        return RandomLeadsMask(**params)
+    raise ValueError(f"unknown corruption: {corruption}")
+
+
+def _build_corruption_op(corruption, public_severity, severity_profile):
+    if severity_profile == "standard":
+        return build_op(corruption, PUBLIC_TO_INTERNAL_SEVERITY[int(public_severity)])
+    if severity_profile == "stress_v2":
+        return _build_stress_v2_op(corruption, public_severity)
+    raise ValueError(f"unknown severity_profile: {severity_profile}")
 
 
 def _cache_path(cache_dir, scheme, center, corruption, severity):
@@ -77,12 +169,13 @@ def _stable_seed(base_seed, *parts):
 
 class StreamingCorruptedPN2021Dataset(Dataset):
     def __init__(self, signals, labels, corruption, public_severity,
-                 seed=20260501, crop_len=250):
+                 seed=20260501, crop_len=250, severity_profile="standard"):
         self.signals = signals
         self.labels = labels.astype(np.float32, copy=False)
         self.corruption = corruption
         self.public_severity = int(public_severity)
         self.internal_severity = PUBLIC_TO_INTERNAL_SEVERITY[self.public_severity]
+        self.severity_profile = severity_profile
         self.seed = int(seed)
         self.crop_len = crop_len
 
@@ -94,7 +187,9 @@ class StreamingCorruptedPN2021Dataset(Dataset):
         np.random.seed(sample_seed)
         random.seed(sample_seed)
         torch.manual_seed(sample_seed)
-        op = build_op(self.corruption, self.internal_severity)
+        op = _build_corruption_op(
+            self.corruption, self.public_severity, self.severity_profile
+        )
 
         sig_tc = self.signals[idx]
         start = max((sig_tc.shape[0] - self.crop_len) // 2, 0)
@@ -184,8 +279,14 @@ def eval_one(model, scheme, args, device, center, corruption, severity, clean_by
         ds = StreamingCorruptedPN2021Dataset(
             signals, labels, corruption, severity,
             seed=args.seed, crop_len=args.crop_len,
+            severity_profile=args.severity_profile,
         )
     else:
+        if args.severity_profile != "standard":
+            raise ValueError(
+                "cache mode only supports --severity_profile standard because "
+                "prebuilt PN2021-C caches encode the standard profile"
+            )
         path = _cache_path(args.cache_dir, args.scheme, center, corruption, severity)
         if not os.path.exists(path):
             raise FileNotFoundError(f"missing PN2021-C cache: {path}")
@@ -230,6 +331,7 @@ def eval_one(model, scheme, args, device, center, corruption, severity, clean_by
         "metadata": metadata,
         "corruption": {
             "name": corruption,
+            "severity_profile": args.severity_profile,
             "public_severity": int(severity),
             "internal_severity": int(PUBLIC_TO_INTERNAL_SEVERITY[int(severity)]),
             "seed": int(args.seed),
@@ -292,6 +394,12 @@ def main():
     p.add_argument("--centers", nargs="+", default=DEFAULT_CENTERS)
     p.add_argument("--corruptions", nargs="+", default=DEFAULT_CORRUPTIONS)
     p.add_argument("--severities", nargs="+", type=int, default=[1, 2, 3, 4, 5])
+    p.add_argument("--severity_profile", default="standard",
+                   choices=STRESS_PROFILE_CHOICES,
+                   help="standard uses methods/augmix/severity.py via public "
+                        "severity 1..5 -> internal 2/4/6/8/10; stress_v2 is "
+                        "a stronger streaming-only robustness sweep and does "
+                        "not affect training-time AugMix defaults.")
     p.add_argument("--device", default="cuda")
     p.add_argument("--crop_len", type=int, default=250)
     p.add_argument("--batch_size", type=int, default=256)
@@ -319,6 +427,7 @@ def main():
         "centers": list(args.centers),
         "corruptions": list(args.corruptions),
         "severities": list(args.severities),
+        "severity_profile": args.severity_profile,
         "pn2021_c_cache_version": PN2021_C_CACHE_VERSION,
         "per_center": {},
     }

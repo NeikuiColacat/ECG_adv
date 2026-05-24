@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -25,6 +26,16 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+_MIGRATED_DATA_ROOT = Path(
+    "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp"
+)
+DATA_ROOT = Path(
+    os.environ.get(
+        "ECG_ADV_GEN_DATA_ROOT",
+        str(_MIGRATED_DATA_ROOT if _MIGRATED_DATA_ROOT.exists() else Path("/root/autodl-tmp")),
+    )
+)
+
 from scripts.paper.eval_ecgfounder_super5_zero_shot_20260517 import TARGET_CENTERS  # noqa: E402
 from scripts.paper.run_ecgfounder_linear_probe_super5_20260517 import (  # noqa: E402
     DEFAULT_OUT_DIR as LINEAR_PROBE_DIR,
@@ -35,11 +46,20 @@ from scripts.triple_labels.label_schemes import CLASS_NAMES_SUPER5  # noqa: E402
 from scripts.triple_labels.train_ptbxl import compute_pos_weight, masked_bce_with_logits  # noqa: E402
 
 
-DEFAULT_LINEAR_PROBE_DIR = Path(
-    "/root/autodl-tmp/paper_foundation_baselines_20260522/"
-    "ecgfounder_linear_probe_v5_seed42_official"
+_V5_LINEAR_PROBE_DIR = (
+    DATA_ROOT
+    / "paper_foundation_baselines_20260522/ecgfounder_linear_probe_v5_seed42_official"
 )
-DEFAULT_OUT_DIR = Path("/root/autodl-tmp/paper_foundation_baselines_20260522/ecgfounder_kshot_head_ft_super5")
+_LEGACY_LINEAR_PROBE_DIR = (
+    DATA_ROOT / "paper_foundation_baselines_20260517/ecgfounder_linear_probe_super5"
+)
+DEFAULT_LINEAR_PROBE_DIR = Path(
+    os.environ.get(
+        "ECGFOUNDER_LINEAR_PROBE_DIR",
+        str(_V5_LINEAR_PROBE_DIR if _V5_LINEAR_PROBE_DIR.exists() else _LEGACY_LINEAR_PROBE_DIR),
+    )
+)
+DEFAULT_OUT_DIR = DATA_ROOT / "paper_foundation_baselines_20260522/ecgfounder_kshot_head_ft_super5"
 
 
 def load_ref_ids(center: str, k: int, seed: int, source_k: int | None = None) -> list[str]:

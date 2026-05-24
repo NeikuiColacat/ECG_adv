@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -22,7 +23,16 @@ import torch.nn as nn
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-ECGFOUNDER_ROOT = Path("/root/autodl-tmp/ecgfounder")
+_MIGRATED_DATA_ROOT = Path(
+    "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp"
+)
+DATA_ROOT = Path(
+    os.environ.get(
+        "ECG_ADV_GEN_DATA_ROOT",
+        str(_MIGRATED_DATA_ROOT if _MIGRATED_DATA_ROOT.exists() else Path("/root/autodl-tmp")),
+    )
+)
+ECGFOUNDER_ROOT = Path(os.environ.get("ECGFOUNDER_ROOT", str(DATA_ROOT / "ecgfounder")))
 for path in [str(REPO_ROOT), str(ECGFOUNDER_ROOT)]:
     if path not in sys.path:
         sys.path.insert(0, path)
@@ -81,6 +91,10 @@ def reevaluate_run(run_dir: Path, args: argparse.Namespace) -> dict[str, Any]:
     preprocess_policy = cfg.get("preprocess_policy", args.preprocess_policy)
     ptbxl_path = linear_probe_dir / f"ptbxl_ecgfounder_features_{preprocess_policy}.npz"
     pn_path = linear_probe_dir / f"pn2021_ecgfounder_features_{preprocess_policy}.npz"
+    if not ptbxl_path.exists():
+        ptbxl_path = linear_probe_dir / "ptbxl_ecgfounder_features.npz"
+    if not pn_path.exists():
+        pn_path = linear_probe_dir / "pn2021_ecgfounder_features.npz"
     ptbxl = load_npz(ptbxl_path)
     pn = load_npz(pn_path)
 

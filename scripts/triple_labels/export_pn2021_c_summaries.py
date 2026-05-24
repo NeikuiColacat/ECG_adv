@@ -133,9 +133,11 @@ def export_summaries(
         eval_json = path.as_posix()
         agg = data["aggregate_by_corruption_severity"]
         json_clean_eval_json = data.get("clean_eval_json")
-        self_clean_json = _self_clean_path(data)
-        if self_clean_json is None and json_clean_eval_json:
-            self_clean_json = Path(json_clean_eval_json)
+        self_clean_json = Path(json_clean_eval_json) if json_clean_eval_json else None
+        if self_clean_json is not None and not self_clean_json.exists():
+            self_clean_json = None
+        if self_clean_json is None:
+            self_clean_json = _self_clean_path(data)
         self_clean = _clean_by_center(self_clean_json)
         self_drop_by_key: Dict[Tuple[str, str], List[Tuple[float | None, float | None]]] = {}
 

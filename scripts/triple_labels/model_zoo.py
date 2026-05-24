@@ -7,21 +7,101 @@ All builders accept inputs shaped ``(B, 12, T)`` and return raw logits.
 
 from __future__ import annotations
 
+import os
 import sys
+import types
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Collection, Optional, Union
 
+import torch
 import torch.nn as nn
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEEPECG_NOTEBOOKS = Path("/root/autodl-tmp/models/DeepECG/notebooks")
+DEEPECG_NOTEBOOKS = Path(
+    os.environ.get(
+        "DEEPECG_NOTEBOOKS",
+        str(PROJECT_ROOT / "model" / "DeepECG" / "notebooks"),
+    )
+)
+DEEPECG_NOTEBOOKS_LEGACY = Path("/root/autodl-tmp/models/DeepECG/notebooks")
 PTBXL_BENCH_CODE = PROJECT_ROOT / "model" / "ecg_ptbxl_benchmarking" / "code"
 
-for _p in (PROJECT_ROOT, DEEPECG_NOTEBOOKS, PTBXL_BENCH_CODE):
+for _p in (PROJECT_ROOT, DEEPECG_NOTEBOOKS_LEGACY, DEEPECG_NOTEBOOKS, PTBXL_BENCH_CODE):
     sp = str(_p)
     if sp not in sys.path:
         sys.path.insert(0, sp)
+
+
+def _ensure_fastai_model_compat() -> None:
+    """Provide the tiny fastai v1 surface used by PTB-XL benchmark models.
+
+    The benchmark repository imports a few helpers from ``fastai.layers`` and
+    ``fastai.core`` inside model definition files.  Our training/eval pipeline
+    only needs the raw PyTorch modules, not the fastai trainer, so a local shim
+    avoids adding a heavyweight environment dependency on migrated hosts.
+    """
+    try:
+        import fastai.layers  # noqa: F401
+        import fastai.core  # noqa: F401
+        return
+    except ModuleNotFoundError:
+        pass
+
+    fastai_mod = types.ModuleType("fastai")
+    layers_mod = types.ModuleType("fastai.layers")
+    core_mod = types.ModuleType("fastai.core")
+
+    class Flatten(nn.Module):
+        def forward(self, x):
+            return x.reshape(x.shape[0], -1)
+
+    class Lambda(nn.Module):
+        def __init__(self, func):
+            super().__init__()
+            self.func = func
+
+        def forward(self, x):
+            return self.func(x)
+
+    def listify(value):
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return value
+        if isinstance(value, tuple):
+            return list(value)
+        return [value]
+
+    def bn_drop_lin(n_in, n_out, bn=True, p=0.0, actn=None):
+        layers = []
+        if bn:
+            layers.append(nn.BatchNorm1d(n_in))
+        if p:
+            layers.append(nn.Dropout(p))
+        layers.append(nn.Linear(n_in, n_out))
+        if actn is not None:
+            layers.append(actn)
+        return layers
+
+    Floats = Union[float, Collection[float]]
+    for mod in (layers_mod, core_mod):
+        mod.Flatten = Flatten
+        mod.Lambda = Lambda
+        mod.bn_drop_lin = bn_drop_lin
+        mod.listify = listify
+        mod.Optional = Optional
+        mod.Collection = Collection
+        mod.Floats = Floats
+
+    fastai_mod.layers = layers_mod
+    fastai_mod.core = core_mod
+    sys.modules.setdefault("fastai", fastai_mod)
+    sys.modules.setdefault("fastai.layers", layers_mod)
+    sys.modules.setdefault("fastai.core", core_mod)
+
+
+_ensure_fastai_model_compat()
 
 
 def _efficientnet1dv2(num_classes: int, input_channels: int = 12) -> nn.Module:

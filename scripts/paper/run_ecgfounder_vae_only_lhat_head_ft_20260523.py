@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import random
 import sys
 from pathlib import Path
@@ -34,7 +35,16 @@ from torch.utils.data import ConcatDataset, DataLoader, TensorDataset, WeightedR
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-ECGFOUNDER_ROOT = Path("/root/autodl-tmp/ecgfounder")
+_MIGRATED_DATA_ROOT = Path(
+    "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp"
+)
+DATA_ROOT = Path(
+    os.environ.get(
+        "ECG_ADV_GEN_DATA_ROOT",
+        str(_MIGRATED_DATA_ROOT if _MIGRATED_DATA_ROOT.exists() else Path("/root/autodl-tmp")),
+    )
+)
+ECGFOUNDER_ROOT = Path(os.environ.get("ECGFOUNDER_ROOT", str(DATA_ROOT / "ecgfounder")))
 for path in [str(REPO_ROOT), str(ECGFOUNDER_ROOT)]:
     if path not in sys.path:
         sys.path.insert(0, path)
@@ -45,7 +55,6 @@ from physionet2021_dataset import EXPECTED_LEADS, TARGET_POINTS  # noqa: E402
 from adversarial.latent_hull_pgd import LatentHullPGDGenerator  # noqa: E402
 from scripts.paper.eval_ecgfounder_super5_zero_shot_20260517 import TARGET_CENTERS  # noqa: E402
 from scripts.paper.run_ecgfounder_linear_probe_super5_20260517 import (  # noqa: E402
-    DEFAULT_OUT_DIR as LEGACY_LINEAR_PROBE_DIR,
     REF_ROOT,
     compute_metrics,
     evaluate_pn2021_views,
@@ -53,6 +62,7 @@ from scripts.paper.run_ecgfounder_linear_probe_super5_20260517 import (  # noqa:
 from scripts.pgd_cross_center.synth_online_at_super5 import (  # noqa: E402
     SameLabelLatentIndex,
     StratifiedPoolWalker,
+    build_anchor_preserving_soft_labels,
 )
 from scripts.triple_labels.label_schemes import CLASS_NAMES_SUPER5, SUPER5_TO_IDX  # noqa: E402
 from scripts.triple_labels.train_ptbxl import compute_pos_weight, masked_bce_with_logits  # noqa: E402
@@ -60,15 +70,24 @@ from util.ecgtwin_utils import ECGTwinWrapper  # noqa: E402
 from util.lead_utils import ECGTWIN_TO_PTBXL_INDICES  # noqa: E402
 
 
-DEFAULT_LINEAR_PROBE_DIR = Path(
-    "/root/autodl-tmp/paper_foundation_baselines_20260522/"
-    "ecgfounder_linear_probe_v5_seed42_official"
+_V5_LINEAR_PROBE_DIR = (
+    DATA_ROOT
+    / "paper_foundation_baselines_20260522/ecgfounder_linear_probe_v5_seed42_official"
 )
-DEFAULT_OUT_DIR = Path("/root/autodl-tmp/paper_ecgfounder_vae_only_lhat_headft_20260523")
+_LEGACY_LINEAR_PROBE_DIR = (
+    DATA_ROOT / "paper_foundation_baselines_20260517/ecgfounder_linear_probe_super5"
+)
+DEFAULT_LINEAR_PROBE_DIR = Path(
+    os.environ.get(
+        "ECGFOUNDER_LINEAR_PROBE_DIR",
+        str(_V5_LINEAR_PROBE_DIR if _V5_LINEAR_PROBE_DIR.exists() else _LEGACY_LINEAR_PROBE_DIR),
+    )
+)
+DEFAULT_OUT_DIR = DATA_ROOT / "paper_ecgfounder_vae_only_lhat_headft_20260523"
 CHECKPOINT = ECGFOUNDER_ROOT / "checkpoint/12_lead_ECGFounder.pth"
 REAL_ROOTS = [
-    Path("/root/autodl-tmp/ecgtwin_prompt_token_super5/real_anchor_selected_v2"),
-    Path("/root/autodl-tmp/ecgtwin_prompt_token_super5/real_anchor_selected_v1"),
+    DATA_ROOT / "ecgtwin_prompt_token_super5/real_anchor_selected_v2",
+    DATA_ROOT / "ecgtwin_prompt_token_super5/real_anchor_selected_v1",
 ]
 
 
@@ -400,6 +419,51 @@ def parse_class_weight_string(raw: str | None) -> dict[str, float]:
     return out
 
 
+def parse_class_list(raw: str | list[str] | None) -> list[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        items = raw
+    else:
+        items = str(raw).replace(",", " ").split()
+    out = []
+    for item in items:
+        cls = item.strip().upper()
+        if not cls:
+            continue
+        if cls not in SUPER5_TO_IDX:
+            raise ValueError(f"unknown class {cls!r}; valid={list(CLASS_NAMES_SUPER5)}")
+        out.append(cls)
+    return out
+
+
+def pairwise_rank_loss(
+    logits: torch.Tensor,
+    labels: torch.Tensor,
+    class_indices: list[int],
+    *,
+    class_weights: dict[int, float] | None = None,
+    temperature: float,
+) -> torch.Tensor:
+    losses = []
+    weights = []
+    temp = max(float(temperature), 1e-6)
+    for cls_idx in class_indices:
+        y = labels[:, cls_idx]
+        pos = logits[y > 0.5, cls_idx]
+        neg = logits[y <= 0.0, cls_idx]
+        if pos.numel() == 0 or neg.numel() == 0:
+            continue
+        margins = (pos[:, None] - neg[None, :]) / temp
+        losses.append(F.softplus(-margins).mean())
+        weights.append(float((class_weights or {}).get(cls_idx, 1.0)))
+    if not losses:
+        return logits.new_zeros(())
+    loss_t = torch.stack(losses)
+    weight_t = torch.tensor(weights, dtype=loss_t.dtype, device=loss_t.device)
+    return (loss_t * weight_t).sum() / weight_t.sum().clamp_min(1e-6)
+
+
 def train_one_center(
     center: str,
     args: argparse.Namespace,
@@ -463,6 +527,17 @@ def train_one_center(
         init_path = Path(args.init_head_path)
         print(f"[init] loading head state from {init_path}", flush=True)
         head.load_state_dict(torch.load(init_path, map_location=device))
+    target_teacher_head = None
+    if args.target_logit_anchor_weight > 0:
+        if not args.target_logit_anchor_path:
+            raise ValueError("--target_logit_anchor_weight requires --target_logit_anchor_path")
+        teacher_path = Path(args.target_logit_anchor_path)
+        print(f"[teacher] loading target logit anchor from {teacher_path}", flush=True)
+        target_teacher_head = nn.Linear(source_x.shape[1], len(CLASS_NAMES_SUPER5)).to(device)
+        target_teacher_head.load_state_dict(torch.load(teacher_path, map_location=device))
+        target_teacher_head.eval()
+        for p in target_teacher_head.parameters():
+            p.requires_grad_(False)
     head_anchor = {
         name: param.detach().clone()
         for name, param in head.named_parameters()
@@ -513,8 +588,16 @@ def train_one_center(
         include_self=args.hull_include_anchor,
     )
 
+    if args.pos_weight_data == "source":
+        pos_weight_labels = source_y
+    elif args.pos_weight_data == "target":
+        pos_weight_labels = target_y
+    elif args.pos_weight_data == "source_target":
+        pos_weight_labels = np.concatenate([source_y, target_y], axis=0)
+    else:
+        raise ValueError(f"unsupported pos_weight_data={args.pos_weight_data!r}")
     pos_weight = torch.tensor(
-        compute_pos_weight(source_y, len(CLASS_NAMES_SUPER5), clip_max=50.0),
+        compute_pos_weight(pos_weight_labels, len(CLASS_NAMES_SUPER5), clip_max=50.0),
         dtype=torch.float32,
         device=device,
     )
@@ -522,6 +605,14 @@ def train_one_center(
     class_loss_weight = torch.ones((len(CLASS_NAMES_SUPER5),), dtype=torch.float32, device=device)
     for cls, value in class_loss_weights_map.items():
         class_loss_weight[SUPER5_TO_IDX[cls]] = float(value)
+    rank_loss_class_indices = [
+        SUPER5_TO_IDX[cls]
+        for cls in parse_class_list(args.target_rank_loss_classes)
+    ]
+    rank_loss_class_weights = {
+        SUPER5_TO_IDX[cls]: float(value)
+        for cls, value in parse_class_weight_string(args.target_rank_loss_class_weights).items()
+    }
 
     def criterion(logits: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         if not class_loss_weights_map:
@@ -607,7 +698,33 @@ def train_one_center(
                 with torch.no_grad():
                     feats = victim.features_from_ecg1000(x_adv, grad=False)
                 adv_features.append(feats.float().cpu().numpy())
-                adv_labels.append(pool["labels"][batch_idx].astype(np.float32))
+                if args.hull_mix_label_mode == "anchor":
+                    adv_labels.append(pool["labels"][batch_idx].astype(np.float32))
+                elif args.hull_mix_label_mode == "anchor_soft":
+                    cand_idx = getattr(index, "last_candidate_indices", None)
+                    weights_t = getattr(pgd_gen, "last_weights", None)
+                    if cand_idx is None or weights_t is None:
+                        raise RuntimeError(
+                            "latent-hull soft labels require candidate indices and weights"
+                        )
+                    weights_np = weights_t.numpy().astype(np.float32, copy=False)
+                    cand_labels = pool["labels"][cand_idx]
+                    adv_labels.append(
+                        build_anchor_preserving_soft_labels(
+                            pool["labels"][batch_idx].astype(np.float32, copy=False),
+                            cand_labels,
+                            weights_np,
+                            lambda_y=args.hull_label_lambda_y,
+                            positive_value=args.hull_label_positive,
+                            negative_floor=args.hull_label_negative_floor,
+                            new_class_cap=args.hull_label_new_class_cap,
+                        )
+                    )
+                else:
+                    raise ValueError(
+                        "hull_mix_label_mode must be anchor|anchor_soft, "
+                        f"got {args.hull_mix_label_mode!r}"
+                    )
                 delta_norms.extend(delta.detach().flatten(1).norm(dim=1).cpu().tolist())
         adv_x = (
             np.concatenate(adv_features, axis=0).astype(np.float32)
@@ -630,6 +747,21 @@ def train_one_center(
             opt.zero_grad(set_to_none=True)
             logits = head(x)
             loss = criterion(logits, y)
+            if args.target_rank_loss_weight > 0 and rank_loss_class_indices:
+                if args.target_rank_loss_stream == "target_real":
+                    target_mask = stream == 1
+                elif args.target_rank_loss_stream == "target_adv":
+                    target_mask = stream == 2
+                else:
+                    target_mask = stream > 0
+                if bool(target_mask.any()):
+                    loss = loss + args.target_rank_loss_weight * pairwise_rank_loss(
+                        logits[target_mask],
+                        y[target_mask],
+                        rank_loss_class_indices,
+                        class_weights=rank_loss_class_weights,
+                        temperature=args.target_rank_loss_temperature,
+                    )
             if args.source_logit_anchor_weight > 0:
                 source_mask = stream == 0
                 if bool(source_mask.any()):
@@ -637,6 +769,14 @@ def train_one_center(
                         teacher_logits = source_teacher_head(x[source_mask])
                     source_logit_loss = F.mse_loss(logits[source_mask], teacher_logits)
                     loss = loss + args.source_logit_anchor_weight * source_logit_loss
+            if args.target_logit_anchor_weight > 0:
+                target_mask = stream > 0
+                if bool(target_mask.any()):
+                    assert target_teacher_head is not None
+                    with torch.no_grad():
+                        teacher_logits = target_teacher_head(x[target_mask])
+                    target_logit_loss = F.mse_loss(logits[target_mask], teacher_logits)
+                    loss = loss + args.target_logit_anchor_weight * target_logit_loss
             if args.head_l2_anchor > 0:
                 anchor_loss = torch.zeros((), device=device)
                 for name, param in head.named_parameters():
@@ -816,6 +956,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--hull_weight_mode", choices=["optimized", "one_hot", "uniform", "dirichlet"], default="optimized")
     p.add_argument("--hull_dirichlet_alpha", type=float, default=1.0)
     p.add_argument("--hull_label_mode", choices=["primary", "exact", "compatible"], default="primary")
+    p.add_argument("--hull_mix_label_mode", choices=["anchor", "anchor_soft"], default="anchor")
+    p.add_argument("--hull_label_lambda_y", type=float, default=0.5)
+    p.add_argument("--hull_label_positive", type=float, default=0.95)
+    p.add_argument("--hull_label_negative_floor", type=float, default=0.0)
+    p.add_argument("--hull_label_new_class_cap", type=float, default=0.5)
     p.add_argument("--hull_include_anchor", action="store_true")
     p.add_argument("--pgd_eps", type=float, default=2.0)
     p.add_argument("--pgd_batch", type=int, default=16)
@@ -857,6 +1002,21 @@ def parse_args() -> argparse.Namespace:
         help="MSE penalty that keeps adapted logits close to the frozen PTB-XL source head on source-stream batches.",
     )
     p.add_argument(
+        "--target_logit_anchor_path",
+        default="",
+        help="Optional linear-head checkpoint used as a target/adv stream logit teacher.",
+    )
+    p.add_argument(
+        "--target_logit_anchor_weight",
+        type=float,
+        default=0.0,
+        help=(
+            "MSE penalty that keeps target-real and target-adv logits close to "
+            "--target_logit_anchor_path. Useful for testing whether a K-shot "
+            "head can stabilize VAE-online AT without score ensembling."
+        ),
+    )
+    p.add_argument(
         "--class_loss_weights",
         default="",
         help="Optional comma-separated class loss weights, e.g. MI=3,HYP=3.",
@@ -872,6 +1032,35 @@ def parse_args() -> argparse.Namespace:
         help="Optional positive-class sampling multipliers for online adversarial stream.",
     )
     p.add_argument(
+        "--target_rank_loss_weight",
+        type=float,
+        default=0.0,
+        help="Optional pairwise ranking-loss weight on target-real and target-adv streams.",
+    )
+    p.add_argument(
+        "--target_rank_loss_classes",
+        nargs="*",
+        default=[],
+        help="Classes for target pairwise ranking loss, e.g. HYP STTC.",
+    )
+    p.add_argument(
+        "--target_rank_loss_class_weights",
+        default="",
+        help="Optional class weights inside target ranking loss, e.g. HYP=1,STTC=0.1.",
+    )
+    p.add_argument(
+        "--target_rank_loss_stream",
+        choices=["target_real", "target_adv", "target_adv_real"],
+        default="target_adv_real",
+        help="Which target stream receives pairwise ranking loss.",
+    )
+    p.add_argument(
+        "--target_rank_loss_temperature",
+        type=float,
+        default=1.0,
+        help="Temperature for target pairwise ranking margins.",
+    )
+    p.add_argument(
         "--head_l2_anchor",
         type=float,
         default=0.0,
@@ -884,6 +1073,16 @@ def parse_args() -> argparse.Namespace:
         help="Reduction for --head_l2_anchor. relative uses ||w-w0||^2 / ||w0||^2.",
     )
     p.add_argument("--source_train_limit", type=int, default=0)
+    p.add_argument(
+        "--pos_weight_data",
+        choices=["source", "target", "source_target"],
+        default="source",
+        help=(
+            "Label distribution used for BCE pos_weight. The historical default "
+            "is source; target can be useful for K-shot center adaptation where "
+            "the target class prior differs from PTB-XL."
+        ),
+    )
     p.add_argument(
         "--disable_adv_stream",
         action="store_true",
@@ -930,9 +1129,9 @@ def main() -> None:
     linear_dir = Path(args.linear_probe_dir)
     ptbxl_path = linear_dir / f"ptbxl_ecgfounder_features_{args.preprocess_policy}.npz"
     pn_path = linear_dir / f"pn2021_ecgfounder_features_{args.preprocess_policy}.npz"
-    if not ptbxl_path.exists() and linear_dir == LEGACY_LINEAR_PROBE_DIR:
+    if not ptbxl_path.exists():
         ptbxl_path = linear_dir / "ptbxl_ecgfounder_features.npz"
-    if not pn_path.exists() and linear_dir == LEGACY_LINEAR_PROBE_DIR:
+    if not pn_path.exists():
         pn_path = linear_dir / "pn2021_ecgfounder_features.npz"
     if not ptbxl_path.exists() or not pn_path.exists():
         raise FileNotFoundError(f"missing ECGFounder feature cache: {ptbxl_path}, {pn_path}")

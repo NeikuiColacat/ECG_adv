@@ -55,7 +55,14 @@ from torch.utils.data import (
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+DEEPECG_NOTEBOOKS = Path(
+    os.environ.get(
+        "DEEPECG_NOTEBOOKS",
+        str(PROJECT_ROOT / "model" / "DeepECG" / "notebooks"),
+    )
+)
 sys.path.insert(0, str(Path("/root/autodl-tmp/models/DeepECG/notebooks")))
+sys.path.insert(0, str(DEEPECG_NOTEBOOKS))
 
 from adversarial.adv_validation import compute_asr, compute_semantic_gate  # noqa: E402
 from adversarial.efficientnet_victim_tierM import (  # noqa: E402
@@ -63,6 +70,8 @@ from adversarial.efficientnet_victim_tierM import (  # noqa: E402
 )
 from adversarial.latent_hull_pgd import LatentHullPGDGenerator  # noqa: E402
 from adversarial.pgd_advdiff import PGDAdvDiffGenerator  # noqa: E402
+from methods.augmix.augmix import _apply_op  # noqa: E402
+from methods.augmix.severity import AVAILABLE_OPS  # noqa: E402
 
 from scripts.crosscenter_tierM.online_adv_train_tierM import (  # noqa: E402
     _center_crop_ct,
@@ -1131,6 +1140,147 @@ def run_pgd_on_synth_pool(
     return adv_signals, anc_signals, out_labels, stats
 
 
+def _global_zscore_np(sig_ct: np.ndarray) -> np.ndarray:
+    """Per-record global z-score for canonical (12, L) ECG tensors."""
+    mean = float(sig_ct.mean())
+    std = float(sig_ct.std())
+    if std < 1e-8:
+        return (sig_ct - mean).astype(np.float32)
+    return ((sig_ct - mean) / std).astype(np.float32)
+
+
+def _dirichlet_with_first_weight_cap(
+    width: int,
+    alpha: float,
+    first_weight_cap: float,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """Sample AugMix branch weights while capping branch 0.
+
+    Branch 0 is the latent-hull adversarial branch. Capping it keeps the final
+    waveform mostly anchored to the real target ECG plus mild acquisition
+    corruptions, instead of letting a single adversarial decode dominate.
+    """
+    weights = rng.dirichlet([float(alpha)] * int(width)).astype(np.float32)
+    cap = float(np.clip(first_weight_cap, 0.0, 1.0))
+    if width <= 1 or weights[0] <= cap:
+        return weights
+    rest = weights[1:]
+    rest_sum = float(rest.sum())
+    weights[0] = cap
+    if rest_sum <= 1e-8:
+        weights[1:] = (1.0 - cap) / float(width - 1)
+    else:
+        weights[1:] = (1.0 - cap) * rest / rest_sum
+    return weights.astype(np.float32)
+
+
+def build_latent_augmix_branch_signals(
+    anchor_signals_ct: np.ndarray,
+    adv_signals_ct: np.ndarray,
+    *,
+    copies: int,
+    severity: int,
+    width: int,
+    depth: int,
+    alpha: float,
+    latent_weight_cap: float,
+    ops: List[str],
+    rng: np.random.Generator,
+    renorm: bool = True,
+    clip_abs: float = 6.0,
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """Use the latent-hull adversarial decode as one AugMix branch.
+
+    For each clean target anchor x0 and latent-hull adversarial decode x_adv:
+
+      x_mix = (1 - m) * x0 + m * (w_lat * x_adv + sum_j w_j * op_chain_j(x0))
+
+    This is the requested "stage 3" path: the latent-space adversarial sample
+    is treated as one branch, and ECG acquisition/noise operators provide the
+    other branches. The final sample is still normalized like the classifier's
+    regular 100 Hz input before entering the adversarial buffer.
+    """
+    if copies <= 0:
+        return (
+            np.empty((0,) + tuple(anchor_signals_ct.shape[1:]), dtype=np.float32),
+            {"enabled": False, "n_generated": 0},
+        )
+    if width < 2:
+        raise ValueError("--latent_augmix_width must be >= 2 because branch 0 is x_adv")
+    if not (1 <= severity <= 10):
+        raise ValueError(f"--latent_augmix_severity must be in [1, 10], got {severity}")
+    if not ops:
+        raise ValueError("--latent_augmix_ops must contain at least one op")
+    for op_name in ops:
+        if op_name not in AVAILABLE_OPS:
+            raise ValueError(f"unknown latent AugMix op: {op_name}")
+    if anchor_signals_ct.shape != adv_signals_ct.shape:
+        raise ValueError(
+            f"anchor/adv shape mismatch: {anchor_signals_ct.shape} vs {adv_signals_ct.shape}"
+        )
+
+    mixed: List[np.ndarray] = []
+    latent_weights: List[float] = []
+    beta_ms: List[float] = []
+    chain_depths: List[int] = []
+    for _copy_i in range(int(copies)):
+        for i in range(anchor_signals_ct.shape[0]):
+            x0 = anchor_signals_ct[i].astype(np.float32, copy=False)
+            x_adv = adv_signals_ct[i].astype(np.float32, copy=False)
+            weights = _dirichlet_with_first_weight_cap(
+                width=width,
+                alpha=alpha,
+                first_weight_cap=latent_weight_cap,
+                rng=rng,
+            )
+            m = float(rng.beta(float(alpha), float(alpha)))
+
+            branch_mix = weights[0] * x_adv
+            latent_weights.append(float(weights[0]))
+            beta_ms.append(m)
+
+            for branch_i in range(1, width):
+                d = int(depth) if depth > 0 else int(rng.integers(1, 4))
+                chain_depths.append(d)
+                sig_t = torch.from_numpy(x0.copy()).float()
+                for _ in range(d):
+                    op_name = str(rng.choice(ops))
+                    sig_t = _apply_op(sig_t, op_name, severity)
+                branch_mix = branch_mix + float(weights[branch_i]) * sig_t.cpu().numpy()
+
+            out = (1.0 - m) * x0 + m * branch_mix
+            if renorm:
+                out = _global_zscore_np(out)
+            else:
+                out = out.astype(np.float32, copy=False)
+            if clip_abs > 0:
+                out = np.clip(out, -float(clip_abs), float(clip_abs)).astype(np.float32)
+            mixed.append(out)
+
+    mixed_arr = np.stack(mixed, axis=0).astype(np.float32) if mixed else np.empty(
+        (0,) + tuple(anchor_signals_ct.shape[1:]), dtype=np.float32
+    )
+    stats = {
+        "enabled": True,
+        "n_generated": int(mixed_arr.shape[0]),
+        "copies": int(copies),
+        "severity": int(severity),
+        "width": int(width),
+        "depth": int(depth),
+        "alpha": float(alpha),
+        "latent_weight_cap": float(latent_weight_cap),
+        "latent_weight_mean": float(np.mean(latent_weights)) if latent_weights else float("nan"),
+        "latent_weight_max": float(np.max(latent_weights)) if latent_weights else float("nan"),
+        "beta_m_mean": float(np.mean(beta_ms)) if beta_ms else float("nan"),
+        "chain_depth_mean": float(np.mean(chain_depths)) if chain_depths else float("nan"),
+        "renorm": bool(renorm),
+        "clip_abs": float(clip_abs),
+        "ops": list(ops),
+    }
+    return mixed_arr, stats
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # Adv buffer push with masked-BCE label semantics
 # ────────────────────────────────────────────────────────────────────────────
@@ -1344,6 +1494,37 @@ def parse_args():
             "control under the same data/optimizer protocol."
         ),
     )
+    p.add_argument(
+        "--enable_latent_augmix_branch",
+        action="store_true",
+        help=(
+            "Stage-3 experiment: after each latent-hull adversarial decode, "
+            "treat x_adv as one AugMix branch and mix it with ECG corruption "
+            "chains from the clean anchor before pushing extra samples into "
+            "the adversarial buffer."
+        ),
+    )
+    p.add_argument("--latent_augmix_copies", type=int, default=1,
+                   help="Number of latent-branch AugMix samples to create per x_adv.")
+    p.add_argument("--latent_augmix_width", type=int, default=3,
+                   help="Total AugMix branches; branch 0 is x_adv, remaining branches are ECG op chains.")
+    p.add_argument("--latent_augmix_depth", type=int, default=-1,
+                   help="Depth per ECG op chain; -1 samples uniformly from {1,2,3}.")
+    p.add_argument("--latent_augmix_alpha", type=float, default=1.0)
+    p.add_argument("--latent_augmix_severity", type=int, default=2)
+    p.add_argument("--latent_augmix_latent_weight_cap", type=float, default=0.30,
+                   help="Maximum Dirichlet weight assigned to the x_adv branch.")
+    p.add_argument(
+        "--latent_augmix_ops",
+        nargs="+",
+        default=["powerline_noise", "emg_noise", "baseline_wander", "baseline_shift"],
+        choices=AVAILABLE_OPS,
+        help="ECG corruption ops for non-latent AugMix branches. Random lead masking is excluded by default.",
+    )
+    p.add_argument("--no_latent_augmix_renorm", action="store_true",
+                   help="Do not global-zscore the final latent-branch AugMix waveform before buffering.")
+    p.add_argument("--latent_augmix_clip_abs", type=float, default=6.0,
+                   help="Clip final latent-branch AugMix waveform after optional zscore; <=0 disables clipping.")
     p.add_argument("--roundtrip_anchor_n", type=int, default=1500)
     p.add_argument("--qab_size", type=int, default=2048)
     p.add_argument(
@@ -1596,6 +1777,15 @@ def main():
     print(f"[setup] hull mix label mode={args.hull_mix_label_mode} "
           f"lambda_y={args.hull_label_lambda_y} pos={args.hull_label_positive} "
           f"neg_floor={args.hull_label_negative_floor} new_cap={args.hull_label_new_class_cap}")
+    if args.enable_latent_augmix_branch:
+        print(
+            "[setup] latent-branch AugMix enabled: "
+            f"copies={args.latent_augmix_copies} width={args.latent_augmix_width} "
+            f"depth={args.latent_augmix_depth} severity={args.latent_augmix_severity} "
+            f"w_lat_cap={args.latent_augmix_latent_weight_cap} "
+            f"ops={args.latent_augmix_ops}",
+            flush=True,
+        )
 
     # ── Load synth pool (Stage 1 frozen) for training ──────────────────────
     synth_latents, synth_labels, synth_center, source_meta = load_synth_pool(args.synth_npz)
@@ -1857,6 +2047,18 @@ def main():
             "hull_label_negative_floor": args.hull_label_negative_floor,
             "hull_label_new_class_cap": args.hull_label_new_class_cap,
         },
+        "latent_augmix_branch": {
+            "enabled": bool(args.enable_latent_augmix_branch),
+            "copies": int(args.latent_augmix_copies),
+            "width": int(args.latent_augmix_width),
+            "depth": int(args.latent_augmix_depth),
+            "alpha": float(args.latent_augmix_alpha),
+            "severity": int(args.latent_augmix_severity),
+            "latent_weight_cap": float(args.latent_augmix_latent_weight_cap),
+            "ops": list(args.latent_augmix_ops),
+            "renorm": not bool(args.no_latent_augmix_renorm),
+            "clip_abs": float(args.latent_augmix_clip_abs),
+        },
         "epochs": [],
     }
     def selected_es_metric(qe: Dict[str, Any]) -> float:
@@ -1923,6 +2125,8 @@ def main():
             }
             sem_info = {"PASS": True}
             push_stats = {"n_pushed": 0, "label_mode": "adv_stream_disabled"}
+            latent_augmix_stats = {"enabled": False, "reason": "adv_stream_disabled", "n_generated": 0}
+            latent_augmix_push_stats = {}
             delta_stats = {"mean_delta_norm": float("nan"), "max_delta_norm": float("nan")}
             gate_skipped = True
         else:
@@ -1971,6 +2175,11 @@ def main():
             )
 
             gate_skipped = False
+            latent_augmix_stats = {
+                "enabled": bool(args.enable_latent_augmix_branch),
+                "n_generated": 0,
+            }
+            latent_augmix_push_stats = {}
             if (not args.disable_quality_gate) and (not sem_info.get("PASS", False)):
                 gate_skipped = True
                 print(f"[ep{epoch:02d}] medical gate FAIL: {sem_info.get('fail_reasons')} "
@@ -2006,6 +2215,67 @@ def main():
                     teacher_mix=args.adv_teacher_mix,
                     soft_target_floor=args.adv_soft_target_floor,
                 )
+                if args.enable_latent_augmix_branch:
+                    latent_augmix_signals, latent_augmix_stats = build_latent_augmix_branch_signals(
+                        anchor_signals_ct=anc_signals,
+                        adv_signals_ct=adv_signals,
+                        copies=args.latent_augmix_copies,
+                        severity=args.latent_augmix_severity,
+                        width=args.latent_augmix_width,
+                        depth=args.latent_augmix_depth,
+                        alpha=args.latent_augmix_alpha,
+                        latent_weight_cap=args.latent_augmix_latent_weight_cap,
+                        ops=list(args.latent_augmix_ops),
+                        rng=rng,
+                        renorm=not args.no_latent_augmix_renorm,
+                        clip_abs=args.latent_augmix_clip_abs,
+                    )
+                    if latent_augmix_signals.shape[0] > 0:
+                        start = (latent_augmix_signals.shape[-1] - args.crop_len) // 2
+                        latent_augmix_ct_crop = latent_augmix_signals[..., start:start + args.crop_len]
+                        labels_rep = np.tile(
+                            target_oh,
+                            (max(1, int(args.latent_augmix_copies)), 1),
+                        )[:latent_augmix_signals.shape[0]]
+                        with torch.no_grad():
+                            lg_chunks = []
+                            teacher_prob_chunks = []
+                            for i in range(0, latent_augmix_ct_crop.shape[0], 128):
+                                x_t = torch.from_numpy(
+                                    latent_augmix_ct_crop[i:i + 128]
+                                ).float().to(args.device)
+                                lg_chunks.append(victim.model(x_t).cpu().numpy())
+                                if teacher_model is not None:
+                                    teacher_prob_chunks.append(
+                                        torch.sigmoid(teacher_model(x_t)).cpu().numpy()
+                                    )
+                            latent_augmix_logits_arr = np.concatenate(lg_chunks)
+                            latent_augmix_teacher_probs_arr = (
+                                np.concatenate(teacher_prob_chunks)
+                                if teacher_prob_chunks else None
+                            )
+                        latent_augmix_push_stats = push_adv_to_buffer(
+                            buffer=buffer,
+                            adv_signals_ct=latent_augmix_signals,
+                            target_one_hot=labels_rep,
+                            victim_logits=latent_augmix_logits_arr,
+                            crop_len=args.crop_len,
+                            class_trust=class_trust,
+                            boundary_prob_min=args.boundary_prob_min,
+                            boundary_prob_max=args.boundary_prob_max,
+                            teacher_probs=latent_augmix_teacher_probs_arr,
+                            label_mode=args.adv_label_mode,
+                            teacher_mix=args.adv_teacher_mix,
+                            soft_target_floor=args.adv_soft_target_floor,
+                        )
+                    print(
+                        f"[ep{epoch:02d}] latent-branch AugMix: "
+                        f"generated={latent_augmix_stats.get('n_generated', 0)} "
+                        f"pushed={latent_augmix_push_stats.get('n_pushed', 0)} "
+                        f"w_lat_mean={latent_augmix_stats.get('latent_weight_mean', float('nan')):.3f} "
+                        f"m_mean={latent_augmix_stats.get('beta_m_mean', float('nan')):.3f}",
+                        flush=True,
+                    )
             # Track consecutive low ASR
             if asr_info["asr_overall"] < args.asr_low_threshold:
                 consecutive_low_asr += 1
@@ -2146,6 +2416,8 @@ def main():
             "buffer_skipped": gate_skipped,
             "buffer_size":   len(buffer),
             "push_stats": push_stats if not gate_skipped else {},
+            "latent_augmix_stats": latent_augmix_stats,
+            "latent_augmix_push_stats": latent_augmix_push_stats,
             "delta_mean":    round(delta_stats["mean_delta_norm"], 4),
             "delta_max":     round(delta_stats["max_delta_norm"], 4),
             "lr":            round(optimizer.param_groups[0]["lr"], 6),

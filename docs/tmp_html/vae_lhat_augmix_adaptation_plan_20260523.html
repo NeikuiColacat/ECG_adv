@@ -1,0 +1,811 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VAE Latent-Hull 在线对抗训练接入 ECG AugMix 方案</title>
+  <style>
+    :root {
+      --ink: #1f2937;
+      --muted: #5f6b7a;
+      --line: #d9e0ea;
+      --paper: #ffffff;
+      --page: #eef2f6;
+      --soft: #f7f9fc;
+      --blue: #1d4ed8;
+      --teal: #0f766e;
+      --green: #047857;
+      --amber: #b45309;
+      --red: #b91c1c;
+      --violet: #6d28d9;
+      --slate: #334155;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", Arial, sans-serif;
+      color: var(--ink);
+      background: var(--page);
+      line-height: 1.6;
+    }
+    .page {
+      max-width: 1260px;
+      margin: 0 auto;
+      padding: 26px 22px 64px;
+    }
+    header {
+      background: linear-gradient(135deg, #ffffff 0%, #f0f7f7 52%, #f4f0ff 100%);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 28px 30px;
+      box-shadow: 0 10px 28px rgba(26, 35, 50, 0.07);
+    }
+    h1 {
+      margin: 0 0 12px;
+      font-size: clamp(28px, 3vw, 42px);
+      line-height: 1.14;
+      letter-spacing: 0;
+    }
+    .subtitle {
+      max-width: 980px;
+      color: var(--muted);
+      font-size: 17px;
+      margin: 0;
+    }
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 18px;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.78);
+      color: #334155;
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+    main {
+      display: grid;
+      gap: 18px;
+      margin-top: 18px;
+    }
+    section {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 22px 24px;
+      box-shadow: 0 6px 18px rgba(26, 35, 50, 0.04);
+    }
+    h2 {
+      margin: 0 0 14px;
+      font-size: 22px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+    h3 {
+      margin: 20px 0 8px;
+      font-size: 17px;
+      letter-spacing: 0;
+    }
+    p { margin: 8px 0; }
+    ul, ol { padding-left: 20px; }
+    li { margin: 6px 0; }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      background: #eef2f7;
+      border: 1px solid #dfe5ee;
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.92em;
+    }
+    pre {
+      margin: 12px 0;
+      overflow-x: auto;
+      background: #111827;
+      color: #e5edf8;
+      border-radius: 8px;
+      padding: 14px 16px;
+      font-size: 13px;
+      line-height: 1.48;
+    }
+    pre code {
+      background: transparent;
+      border: 0;
+      color: inherit;
+      padding: 0;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0 4px;
+      font-size: 14px;
+    }
+    th, td {
+      border: 1px solid var(--line);
+      padding: 9px 10px;
+      vertical-align: top;
+    }
+    th {
+      background: #edf4fb;
+      color: #1e293b;
+      text-align: left;
+      font-weight: 700;
+    }
+    tbody tr:nth-child(even) td { background: #fafbfd; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .two {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+    .mini {
+      border: 1px solid var(--line);
+      background: var(--soft);
+      border-radius: 8px;
+      padding: 14px 15px;
+    }
+    .mini strong {
+      display: block;
+      margin-bottom: 5px;
+      font-size: 15px;
+    }
+    .status {
+      border-left: 5px solid var(--blue);
+      background: #eff6ff;
+      padding: 12px 14px;
+      border-radius: 6px;
+      margin: 12px 0;
+    }
+    .status.good { border-left-color: var(--green); background: #ecfdf5; }
+    .status.warn { border-left-color: var(--amber); background: #fffbeb; }
+    .status.risk { border-left-color: var(--red); background: #fef2f2; }
+    .tag {
+      display: inline-block;
+      border-radius: 4px;
+      padding: 2px 6px;
+      font-size: 12px;
+      font-weight: 700;
+      margin-right: 5px;
+      color: #fff;
+      background: var(--blue);
+      white-space: nowrap;
+    }
+    .tag.green { background: var(--green); }
+    .tag.amber { background: var(--amber); }
+    .tag.red { background: var(--red); }
+    .tag.violet { background: var(--violet); }
+    .tag.slate { background: var(--slate); }
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(120px, 1fr));
+      gap: 10px;
+      margin: 14px 0 4px;
+    }
+    .step {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfdff;
+      padding: 12px;
+      min-height: 96px;
+      position: relative;
+    }
+    .step b { display: block; margin-bottom: 4px; }
+    .step:after {
+      content: ">";
+      position: absolute;
+      right: -9px;
+      top: 36px;
+      color: #94a3b8;
+      font-weight: 700;
+    }
+    .step:last-child:after { content: ""; }
+    .small {
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .formula {
+      background: #f8fafc;
+      border: 1px solid #dbe4ef;
+      border-radius: 8px;
+      padding: 14px 16px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 14px;
+      overflow-x: auto;
+      white-space: nowrap;
+    }
+    .note-list li strong { color: #111827; }
+    @media (max-width: 980px) {
+      .grid, .two, .flow { grid-template-columns: 1fr; }
+      .step:after { content: ""; }
+      .page { padding: 16px 12px 48px; }
+      header, section { padding: 18px; }
+      table { font-size: 13px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header>
+      <h1>VAE Latent-Hull 在线对抗训练接入 ECG AugMix 方案</h1>
+      <p class="subtitle">
+        目标是在当前 real-anchor VAE Latent-Hull 在线对抗训练主线上，加入 ECG AugMix 的采集噪声和 corruption
+        一致性约束，判断增益来自目标中心真实样本、VAE latent-hull 对抗样本，还是来自 AugMix 鲁棒性正则。
+      </p>
+      <div class="meta">
+        <span class="pill">生成日期：2026-05-23</span>
+        <span class="pill">主入口：scripts/pgd_cross_center/synth_online_at_super5.py</span>
+        <span class="pill">AugMix：methods/augmix/</span>
+        <span class="pill">输入：PTB-XL order, 100Hz, crop_len=1000</span>
+        <span class="pill">评估：PN2021 + PN2021-C</span>
+      </div>
+    </header>
+
+    <main>
+      <section>
+        <h2>结论先行</h2>
+        <div class="grid">
+          <div class="mini">
+            <strong><span class="tag green">推荐路线</span>先做外层一致性</strong>
+            <p>AugMix 不替代 VAE Latent-Hull。第一版把它作为外层训练的 JSD consistency regularizer，作用在 clean / AugMix view 之间。</p>
+          </div>
+          <div class="mini">
+            <strong><span class="tag amber">不要先动内层 PGD</span>避免归因混乱</strong>
+            <p>内层仍保持 <code>z_adv = (1-lambda)z0 + lambda * sum softmax(a_i) z_i</code>。先不要在 PGD 目标里加入 AugMix view。</p>
+          </div>
+          <div class="mini">
+            <strong><span class="tag violet">核心对照</span>必须有 AugMix-only</strong>
+            <p>需要单独跑直接目标中心微调 + AugMix。否则无法判断提升来自 VAE 对抗训练，还是普通 corruption consistency。</p>
+          </div>
+        </div>
+
+        <div class="status good">
+          最稳的第一轮实验：在当前 VAE-only real-anchor Latent-Hull 主线基础上，默认传 <code>--disable_quality_gate</code>，
+          质量指标只记录不拦截样本；只对 <code>PTB-XL source stream</code> 和 <code>target-real stream</code> 加 AugMix JSD；
+          adv buffer 暂时只走 clean BCE，不对被攻击样本再做强 corruption。
+        </div>
+      </section>
+
+      <section>
+        <h2>当前主线基线</h2>
+        <div class="flow">
+          <div class="step">
+            <b>目标中心 K=500</b>
+            <span class="small">真实 ECG anchor，排除 eval ref ids</span>
+          </div>
+          <div class="step">
+            <b>ECGTwin VAE</b>
+            <span class="small">encode/decode，latent 为 (B,4,128)</span>
+          </div>
+          <div class="step">
+            <b>Latent-Hull PGD</b>
+            <span class="small">same-label convex hull，在线攻击当前 victim</span>
+          </div>
+          <div class="step">
+            <b>质量监控与边界筛选</b>
+            <span class="small">quality gate 关闭；Einthoven/HR/QRS 只记录，target prob window 可保留</span>
+          </div>
+          <div class="step">
+            <b>混合训练流</b>
+            <span class="small">PTB-XL + target real + roundtrip + adv buffer</span>
+          </div>
+          <div class="step">
+            <b>PN2021 评估</b>
+            <span class="small">ref-excluded，多中心 AUROC/AUPRC</span>
+          </div>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>已有训练流</th>
+              <th>当前作用</th>
+              <th>是否适合先加 AugMix</th>
+              <th>理由</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>PTB-XL source</code></td>
+              <td>保留源域判别能力，防止 target-only 过拟合</td>
+              <td><span class="tag green">是</span></td>
+              <td>标签最干净，AugMix consistency 可以提升采集噪声鲁棒性，风险最低。</td>
+            </tr>
+            <tr>
+              <td><code>target_real</code></td>
+              <td>目标中心真实监督，是跨中心增益的主要 anchor</td>
+              <td><span class="tag green">是</span></td>
+              <td>K=500 容易过拟合；轻度 AugMix 可以扩大局部邻域，但 severity 不能太高。</td>
+            </tr>
+            <tr>
+              <td><code>roundtrip</code></td>
+              <td>VAE decode/encode 稳定性辅助</td>
+              <td><span class="tag amber">二期</span></td>
+              <td>它本身已经是生成链路样本，首轮先不增加变量。</td>
+            </tr>
+            <tr>
+              <td><code>adv buffer</code></td>
+              <td>VAE latent-hull 在线对抗样本</td>
+              <td><span class="tag amber">二期</span></td>
+              <td>adv 样本已在边界附近，再强行 corruption 后用 hard label 监督，容易引入标签漂移。</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>AugMix 组件现状</h2>
+        <p>仓库已有 ECG AugMix 基础设施，主要文件如下：</p>
+        <table>
+          <thead>
+            <tr>
+              <th>文件</th>
+              <th>职责</th>
+              <th>接入方式</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>methods/augmix/ecg_ops.py</code></td>
+              <td>5 个 ECG 算子，来自 DeepECG/fairseq-signals，并修正上游 bug。</td>
+              <td>不需要改；直接由 severity builder 调用。</td>
+            </tr>
+            <tr>
+              <td><code>methods/augmix/severity.py</code></td>
+              <td><code>severity=1..10</code> 到算子参数的线性映射。</td>
+              <td>训练期建议先用 <code>2</code> 或 <code>3</code>。</td>
+            </tr>
+            <tr>
+              <td><code>methods/augmix/augmix.py</code></td>
+              <td>AugMix meta algorithm：Dirichlet chain 权重 + Beta clean/mix 权重。</td>
+              <td>训练循环里对 batch 内样本逐个调用。</td>
+            </tr>
+            <tr>
+              <td><code>methods/augmix/jsd_loss.py</code></td>
+              <td>多标签 Bernoulli JSD，一致性损失。</td>
+              <td>用于 <code>logits_clean, logits_aug1, logits_aug2</code>。</td>
+            </tr>
+            <tr>
+              <td><code>methods/augmix/dataset.py</code></td>
+              <td>把 base dataset 包成 clean/aug1/aug2/label。</td>
+              <td>当前 mixed stream 比较复杂，建议先在训练函数内在线生成，不直接套 Dataset。</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>5 个算子与 severity</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>算子</th>
+              <th>含义</th>
+              <th>severity=1</th>
+              <th>severity=10</th>
+              <th>训练期建议</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>powerline_noise</code></td>
+              <td>50/60Hz 工频噪声</td>
+              <td>max_amp 0.03</td>
+              <td>max_amp 0.30</td>
+              <td>可用；severity 2-4。</td>
+            </tr>
+            <tr>
+              <td><code>emg_noise</code></td>
+              <td>肌电/白噪声</td>
+              <td>max_amp 0.02</td>
+              <td>max_amp 0.20</td>
+              <td>可用；severity 2-3。</td>
+            </tr>
+            <tr>
+              <td><code>baseline_shift</code></td>
+              <td>阶梯型 DC 偏移</td>
+              <td>shift_ratio 0.05</td>
+              <td>shift_ratio 0.40</td>
+              <td>谨慎；首轮用 severity 2。</td>
+            </tr>
+            <tr>
+              <td><code>baseline_wander</code></td>
+              <td>低频基线漂移</td>
+              <td>max_amp 0.05</td>
+              <td>max_amp 0.40</td>
+              <td>可用；severity 2-4。</td>
+            </tr>
+            <tr>
+              <td><code>random_leads_masking</code></td>
+              <td>随机导联清零</td>
+              <td>mask_prob 0.05</td>
+              <td>mask_prob 0.50</td>
+              <td>首轮可关掉，或只在 PN2021-C 评估期用。</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="status warn">
+          这里的 severity 是工程扰动强度，不是临床严重度标定。训练期用轻度扰动，测试期 PN2021-C 再扫公开 severity 1..5。
+        </div>
+      </section>
+
+      <section>
+        <h2>推荐训练目标</h2>
+        <p>保持当前 VAE Latent-Hull 的内层攻击不变，只在外层 batch 训练时增加 AugMix JSD：</p>
+        <div class="formula">
+          z_adv = (1 - lambda_hull) * z0 + lambda_hull * sum_i softmax(a_i) * z_i
+        </div>
+        <div class="formula" style="margin-top:10px;">
+          L = L_masked_BCE(f(x), y) + lambda_aug * JSD_Bernoulli(f(x), f(A1(x)), f(A2(x))) + lambda_src * ||f(x_src)-f0(x_src)||^2 + lambda_ewa * ||theta-theta_anchor||^2
+        </div>
+
+        <div class="two">
+          <div class="mini">
+            <strong>为什么先不把 AugMix 放进 PGD 内层</strong>
+            <p>如果内层目标改成同时攻击 <code>x_adv</code> 和 <code>AugMix(x_adv)</code>，会让攻击更强，但也更难判断样本是否还在医学语义边界内。第一轮需要清楚归因。</p>
+          </div>
+          <div class="mini">
+            <strong>为什么只在 clean 上做监督</strong>
+            <p>AugMix view 保持标签不变只是近似。对 source/target real 可以接受；对 adv buffer 尤其危险。因此首轮用 clean BCE，AugMix view 只做一致性。</p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>代码改造点</h2>
+        <h3>1. 新增 CLI 参数</h3>
+        <pre><code>--use_augmix
+--augmix_streams ptbxl target_real
+--augmix_severity 3
+--augmix_width 3
+--augmix_depth -1
+--augmix_alpha 1.0
+--augmix_jsd_weight 4.0
+--augmix_ops powerline_noise emg_noise baseline_wander baseline_shift
+--augmix_adv_policy off</code></pre>
+
+        <table>
+          <thead>
+            <tr>
+              <th>参数</th>
+              <th>首轮默认</th>
+              <th>说明</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>--augmix_streams</code></td>
+              <td><code>ptbxl target_real</code></td>
+              <td>先只对源域和目标真实样本做 JSD；后续再加入 <code>adv</code>。</td>
+            </tr>
+            <tr>
+              <td><code>--augmix_severity</code></td>
+              <td><code>3</code></td>
+              <td>轻度到中度。若 PN2021 clean 掉点，退到 <code>2</code>。</td>
+            </tr>
+            <tr>
+              <td><code>--augmix_jsd_weight</code></td>
+              <td><code>4.0</code></td>
+              <td>比图像 AugMix 常见的 12 更保守，避免多标签 ECG 过强一致性。</td>
+            </tr>
+            <tr>
+              <td><code>--augmix_ops</code></td>
+              <td>先不含 <code>random_leads_masking</code></td>
+              <td>missing lead 会直接影响电压和导联形态，首轮留给评估或单独消融。</td>
+            </tr>
+            <tr>
+              <td><code>--augmix_adv_policy</code></td>
+              <td><code>off</code></td>
+              <td>二期可改为 <code>jsd_only</code>，不要先对 AugMix 后的 adv 样本做 hard BCE。</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>2. 给 mixed stream 加 stream id</h3>
+        <p>当前 <code>ConcatDataset + WeightedRandomSampler</code> 会丢失样本来自哪个 stream。要让 AugMix 只作用于指定 stream，建议加一个轻量 wrapper。</p>
+        <pre><code>class StreamTaggedDataset(Dataset):
+    def __init__(self, base, stream_id):
+        self.base = base
+        self.stream_id = stream_id
+
+    def __len__(self):
+        return len(self.base)
+
+    def __getitem__(self, idx):
+        x, y = self.base[idx]
+        return x, y, self.stream_id</code></pre>
+
+        <p>然后把 streams 从 <code>(dataset, weight, per_sample_weight)</code> 扩成 <code>(dataset, weight, per_sample_weight, stream_name)</code>，训练函数按 stream mask 决定是否生成 AugMix view。</p>
+
+        <h3>3. 新增 batch 级 AugMix helper</h3>
+        <pre><code>from methods.augmix.augmix import augmix
+from methods.augmix.jsd_loss import jsd_multilabel
+
+def augmix_batch(x, cfg):
+    # x: Tensor[B, 12, L]
+    views = [
+        augmix(sample.detach().cpu(), **cfg).to(x.device)
+        for sample in x
+    ]
+    return torch.stack(views, dim=0)</code></pre>
+        <p class="small">
+          说明：现有算子内部使用 numpy/random，首版放在 CPU 上最简单。确认有效后再考虑 GPU/vectorized 版本；当前 batch size 不宜开太大。
+        </p>
+
+        <h3>4. 新增 AugMix-aware 训练函数</h3>
+        <pre><code>logits_clean = model(signals)
+bce = masked_bce(logits_clean, labels)
+
+if use_augmix_for_this_batch:
+    aug1 = augmix_batch(signals, augmix_cfg)
+    aug2 = augmix_batch(signals, augmix_cfg)
+    logits_aug1 = model(aug1)
+    logits_aug2 = model(aug2)
+    jsd = jsd_multilabel(logits_clean, logits_aug1, logits_aug2)
+    loss = bce + augmix_jsd_weight * jsd
+else:
+    loss = bce</code></pre>
+
+        <div class="status risk">
+          关键限制：不要对 <code>labels == -1</code> 的 masked sentinel 位置做监督；JSD 可以对 logits 全部类别做，因为它约束的是模型自身三路预测一致性。
+        </div>
+      </section>
+
+      <section>
+        <h2>实验矩阵</h2>
+        <p>核心是把 “目标中心真实样本微调”、 “VAE Latent-Hull AT” 和 “AugMix consistency” 三个因素拆开。</p>
+        <table>
+          <thead>
+            <tr>
+              <th>实验臂</th>
+              <th>target real</th>
+              <th>VAE Latent-Hull</th>
+              <th>AugMix</th>
+              <th>目的</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>E0 direct-FT</td>
+              <td>有</td>
+              <td>无，<code>--disable_adv_stream</code></td>
+              <td>无</td>
+              <td>判断 K=500 目标真实样本本身带来的增益。</td>
+            </tr>
+            <tr>
+              <td>E1 VAE-LHAT</td>
+              <td>有</td>
+              <td>有，当前主线</td>
+              <td>无</td>
+              <td>当前 VAE-only 主线基线。</td>
+            </tr>
+            <tr>
+              <td>E2 direct-FT + AugMix</td>
+              <td>有</td>
+              <td>无</td>
+              <td>source + target_real JSD</td>
+              <td>判断 AugMix 是否单独就能达到 VAE-LHAT 的提升。</td>
+            </tr>
+            <tr>
+              <td>E3 VAE-LHAT + AugMix v0</td>
+              <td>有</td>
+              <td>有</td>
+              <td>source + target_real JSD</td>
+              <td>第一主实验，测试两者是否互补。</td>
+            </tr>
+            <tr>
+              <td>E4 VAE-LHAT + AugMix adv-jsd</td>
+              <td>有</td>
+              <td>有</td>
+              <td>source + target_real + adv JSD</td>
+              <td>二期实验，只给 adv buffer 加一致性，不给 augmented adv hard label。</td>
+            </tr>
+            <tr>
+              <td>E5 linear-mix</td>
+              <td>有</td>
+              <td>有</td>
+              <td><code>x_mix=(1-rho)x_adv+rho A(x_adv)</code></td>
+              <td>最后再测真正的线性组合增强，避免一开始归因不清。</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>推荐第一轮只跑 4 个中心</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>center</th>
+              <th>为什么保留</th>
+              <th>重点看什么</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>ningbo</code></td>
+              <td>历史 real-anchor / VAE 效果稳定</td>
+              <td>AUPRC 是否继续提升，NORM/MI/STTC 是否稳定。</td>
+            </tr>
+            <tr>
+              <td><code>chapman_shaoxing</code></td>
+              <td>跨中心域偏明显</td>
+              <td>AugMix 是否改善采集噪声相关泛化。</td>
+            </tr>
+            <tr>
+              <td><code>cpsc_2018</code></td>
+              <td>v5 all-class real-anchor 增益大</td>
+              <td>CD/HYP per-class 是否受 random/missing lead 类扰动影响。</td>
+            </tr>
+            <tr>
+              <td><code>georgia</code></td>
+              <td>历史 VAE 独立增益较小</td>
+              <td>判断 AugMix 是否比 VAE 更适合该中心。</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>命令模板</h2>
+        <p>下面是实现 CLI 后的预期调用形态。路径按当前迁移机器写法保留占位，实际运行前需要替换具体 center 的 latent/target-real npz。</p>
+        <pre><code>cd /home/linbinhao/ECG_adv_Gen
+
+PY=/home/linbinhao/micromamba/envs/ECGTwin/bin/python
+DATA=/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp
+
+$PY -u scripts/pgd_cross_center/synth_online_at_super5.py \
+  --center_name ningbo \
+  --synth_npz $DATA/triple_labels/real_anchor_latents/ningbo_k500.latent.npz \
+  --target_real_npz $DATA/triple_labels/real_anchor_npz/ningbo_k500.npz \
+  --init_ckpt $DATA/triple_labels/super5_minresample_full10_perglobal_20260503/best_model.pt \
+  --output_dir $DATA/triple_labels/vae_lhat_augmix/ningbo_E3_v0 \
+  --attack_mode latent_hull \
+  --hull_M 20 \
+  --hull_lambda 0.15 \
+  --hull_steps 5 \
+  --classes_in_scope CD HYP MI NORM STTC \
+  --allow_hyp_cd_trust \
+  --disable_quality_gate \
+  --target_real_weight 40 \
+  --adv_weight 0.5 \
+  --crop_len 1000 \
+  --use_augmix \
+  --augmix_streams ptbxl target_real \
+  --augmix_severity 3 \
+  --augmix_width 3 \
+  --augmix_depth -1 \
+  --augmix_alpha 1.0 \
+  --augmix_jsd_weight 4.0 \
+  --augmix_ops powerline_noise emg_noise baseline_wander baseline_shift \
+  --batch_size 96 \
+  --num_workers 4 \
+  --n_epochs 30 \
+  --device cuda</code></pre>
+
+        <div class="status warn">
+          如果首轮显存或 CPU 负载偏高，优先把 <code>batch_size</code> 降到 64，或把 AugMix view 数量只保留一份做 consistency smoke；不要改 label mapping、PN2021 center、crop_len。
+        </div>
+      </section>
+
+      <section>
+        <h2>评价与归因规则</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>评价层</th>
+              <th>指标</th>
+              <th>判断标准</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>干净跨中心</td>
+              <td>PN2021 4-center / 7-center macro AUROC, macro AUPRC</td>
+              <td>E3 必须超过 E1 或至少在弱中心提升；否则 AugMix 没有给 VAE 主线带来额外价值。</td>
+            </tr>
+            <tr>
+              <td>目标中心 ref-excluded</td>
+              <td>每个 center 的 AUROC/AUPRC</td>
+              <td>防止 K=500 reference 泄漏；所有 E0-E4 使用同一 ref 排除列表。</td>
+            </tr>
+            <tr>
+              <td>源域保持</td>
+              <td>PTB-XL fold10 AUROC/AUPRC</td>
+              <td>不能为了 PN2021 提升明显牺牲源域。必要时提高 source-logit anchor。</td>
+            </tr>
+            <tr>
+              <td>corruption 鲁棒性</td>
+              <td>PN2021-C absolute corrupted mean 和 self-clean drop</td>
+              <td>如果 corrupted absolute 提升但 drop 变大，只能说绝对 corrupted performance 更好，不能说鲁棒性更强。</td>
+            </tr>
+            <tr>
+              <td>类别层面</td>
+              <td>CD/HYP/MI/NORM/STTC per-class AUROC/AUPRC</td>
+              <td>特别检查 CD/HYP 是否被 baseline shift 或 lead masking 损害。</td>
+            </tr>
+            <tr>
+              <td>训练稳定性</td>
+              <td>JSD loss、masked BCE、ASR、quality metrics、buffer size</td>
+              <td>JSD 快速变大或质量指标异常时，降 severity 或关闭 adv stream AugMix；hard quality gate 不参与样本筛选。</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>线性组合增强的二期方案</h2>
+        <p>用户设想的 “latent hull 在线对抗训练 + AugMix 增强样本线性组合” 可以做，但建议放在 E5。</p>
+        <div class="formula">
+          x_combo = (1 - rho) * x_adv + rho * A(x_adv),   rho ~ Beta(alpha_combo, alpha_combo)
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>组合位置</th>
+              <th>实现</th>
+              <th>风险</th>
+              <th>建议</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>外层训练前</td>
+              <td>adv buffer push 后，训练 batch 中在线生成 <code>x_combo</code></td>
+              <td>adv 样本本来就在边界，corruption 后 hard label 可信度下降</td>
+              <td>只做 JSD 或 teacher-soft，不做 hard BCE。</td>
+            </tr>
+            <tr>
+              <td>内层攻击目标</td>
+              <td>PGD loss 同时包含 <code>f(x_adv)</code> 与 <code>f(A(x_adv))</code></td>
+              <td>攻击过强，可能优化出 corruption 特化样本</td>
+              <td>不进入第一版；等 E3/E4 证明有效后再测。</td>
+            </tr>
+            <tr>
+              <td>target real mix</td>
+              <td><code>x_combo=(1-rho)x_real+rho A(x_real)</code></td>
+              <td>轻度风险，标签较可信</td>
+              <td>可以作为 E2 的增强版本，但要和 VAE 主线分开报。</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>失败模式与处理</h2>
+        <ul class="note-list">
+          <li><strong>PN2021 clean 掉点：</strong>把 <code>augmix_severity 3 -> 2</code>，<code>augmix_jsd_weight 4 -> 2</code>，并去掉 <code>baseline_shift</code>。</li>
+          <li><strong>PTB-XL fold10 掉点：</strong>提高 <code>source_logit_anchor_weight</code>，或只对 target_real 做 AugMix，source 保持原样。</li>
+          <li><strong>CD/HYP per-class 下降：</strong>关闭 <code>random_leads_masking</code>，降低 baseline_shift，保留 powerline/emg/wander。</li>
+          <li><strong>训练变慢：</strong>AugMix 当前按样本 CPU 调用，先减 batch size；确认有效后再做 GPU/vectorized 实现。</li>
+          <li><strong>adv buffer 质量指标变差：</strong>不要在内层 PGD 加 AugMix；先只对 real streams 加 JSD。hard quality gate 默认关闭，只记录异常用于回溯。</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>落地顺序</h2>
+        <ol>
+          <li>给 <code>synth_online_at_super5.py</code> 加 stream id wrapper 和 AugMix CLI，但默认关闭，保证旧命令完全兼容。</li>
+          <li>跑 <code>methods/augmix/tests/</code>，再跑 1 个 center 2 epoch smoke，检查 shape、NaN、JSD loss、速度。</li>
+          <li>跑 E0/E1/E2/E3 四个最小对照，先用 <code>ningbo</code> 和 <code>cpsc_2018</code>。</li>
+          <li>若 E3 相比 E1 有稳定提升，再扩到 <code>chapman_shaoxing</code> 和 <code>georgia</code>。</li>
+          <li>只有 E3 成立后，再做 E4 adv-jsd 和 E5 linear-mix。</li>
+          <li>最终表必须同时给 clean PN2021、PN2021-C、PTB-XL fold10、per-class，以及 direct-FT + AugMix 对照。</li>
+        </ol>
+      </section>
+
+      <section>
+        <h2>一句话论文表述</h2>
+        <div class="status good">
+          推荐写法：ECG AugMix 被用作采集噪声一致性正则，补充 ECGTwin VAE latent-hull 的形态/中心域 manifold augmentation；
+          通过 direct-FT、direct-FT+AugMix、VAE-LHAT、VAE-LHAT+AugMix 四臂对照，区分目标中心真实样本、VAE latent 对抗训练和 corruption consistency 的独立贡献。
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

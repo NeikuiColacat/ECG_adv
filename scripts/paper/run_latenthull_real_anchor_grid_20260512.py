@@ -19,23 +19,41 @@ from pathlib import Path
 import numpy as np
 
 
-PYTHON = "/root/miniforge3/envs/ECGTwin/bin/python"
-PROJECT_ROOT = Path("/root/ECG_adv_Gen")
-BASELINE_CKPT = (
-    "/root/autodl-tmp/triple_labels/"
-    "super5_minresample_full10_perglobal_20260503/best_model.pt"
+_DEFAULT_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_MIGRATED_DATA_ROOT = Path(
+    "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp"
 )
-PTBXL_RAW = "/root/autodl-tmp/ptbxl/raw100.npy"
-PTBXL_CSV = "/root/autodl-tmp/ptbxl/ptbxl_database.csv"
-PTBXL_PREP = (
-    "/root/autodl-tmp/triple_labels/cache/"
-    "ptbxl_minimal_resample_per_sample_global_fs100_len1000.npy"
+_DEFAULT_DATA_ROOT = _MIGRATED_DATA_ROOT if _MIGRATED_DATA_ROOT.exists() else Path("/root/autodl-tmp")
+
+PYTHON = os.environ.get(
+    "ECGTWIN_PYTHON",
+    "/home/linbinhao/micromamba/envs/ECGTwin/bin/python"
+    if Path("/home/linbinhao/micromamba/envs/ECGTwin/bin/python").exists()
+    else "/root/miniforge3/envs/ECGTwin/bin/python",
 )
-PN2021_CACHE_DIR = "/root/autodl-tmp/triple_labels/pn2021_eval_cache_minresample_perglobal"
-PN2021_MMAP_CACHE_DIR = "/root/autodl-tmp/triple_labels/pn2021_eval_cache_mmap_minresample_perglobal"
-PN2021_ROOT = "/root/autodl-tmp/physionet2021/training"
-REAL_ROOT = Path("/root/autodl-tmp/ecgtwin_prompt_token_super5/real_anchor_selected_v2")
-OUT_ROOT = Path("/root/autodl-tmp/paper_latenthull_grid_20260512")
+PROJECT_ROOT = Path(os.environ.get("ECG_ADV_GEN_PROJECT_ROOT", str(_DEFAULT_PROJECT_ROOT)))
+DATA_ROOT = Path(os.environ.get("ECG_ADV_GEN_DATA_ROOT", str(_DEFAULT_DATA_ROOT)))
+BASELINE_CKPT = str(
+    DATA_ROOT
+    / "triple_labels"
+    / "super5_minresample_full10_perglobal_20260503"
+    / "best_model.pt"
+)
+PTBXL_RAW = str(DATA_ROOT / "ptbxl" / "raw100.npy")
+PTBXL_CSV = str(DATA_ROOT / "ptbxl" / "ptbxl_database.csv")
+PTBXL_PREP = str(
+    DATA_ROOT
+    / "triple_labels"
+    / "cache"
+    / "ptbxl_minimal_resample_per_sample_global_fs100_len1000.npy"
+)
+PN2021_CACHE_DIR = str(DATA_ROOT / "triple_labels" / "pn2021_eval_cache_minresample_perglobal")
+PN2021_MMAP_CACHE_DIR = str(
+    DATA_ROOT / "triple_labels" / "pn2021_eval_cache_mmap_minresample_perglobal"
+)
+PN2021_ROOT = str(DATA_ROOT / "physionet2021" / "training")
+REAL_ROOT = DATA_ROOT / "ecgtwin_prompt_token_super5" / "real_anchor_selected_v2"
+OUT_ROOT = DATA_ROOT / "paper_latenthull_grid_20260512"
 
 CLASS_NAMES = np.asarray(["CD", "HYP", "MI", "NORM", "STTC"])
 
@@ -43,8 +61,8 @@ CLASS_NAMES = np.asarray(["CD", "HYP", "MI", "NORM", "STTC"])
 def run(cmd: list[str], log_path: Path) -> None:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
-    env.setdefault("TMPDIR", "/root/autodl-tmp/tmp")
-    env.setdefault("XDG_CACHE_HOME", "/root/autodl-tmp/cache")
+    env.setdefault("TMPDIR", str(DATA_ROOT / "tmp"))
+    env.setdefault("XDG_CACHE_HOME", str(DATA_ROOT / "cache"))
     Path(env["TMPDIR"]).mkdir(parents=True, exist_ok=True)
     Path(env["XDG_CACHE_HOME"]).mkdir(parents=True, exist_ok=True)
     print("[run]", " ".join(cmd), flush=True)

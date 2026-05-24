@@ -5,19 +5,27 @@ description: Work on /root/ECG_adv_Gen ECG generation, ECGTwin author reproducti
 
 # ECG_adv_Gen Project Skill
 
-This repo-tracked copy mirrors the active local Codex skill:
+This repo-tracked copy mirrors the active local Codex skill.
+
+On the current migrated user host initialized 2026-05-23, install/use:
+
+```text
+/home/linbinhao/.codex/skills/ecg-adv-gen/SKILL.md
+```
+
+The original root AutoDL runtime path was:
 
 ```text
 /root/.codex/skills/ecg-adv-gen/SKILL.md
 ```
 
-When moving to another AutoDL host, copy or symlink this file into Codex's skill
-directory:
+When moving to another AutoDL host, copy or symlink this file into the active
+Codex user's skill directory:
 
 ```bash
-mkdir -p /root/.codex/skills/ecg-adv-gen
-cp /root/ECG_adv_Gen/.codex/skills/ecg-adv-gen/SKILL.md \
-  /root/.codex/skills/ecg-adv-gen/SKILL.md
+mkdir -p "${CODEX_HOME:-$HOME/.codex}/skills/ecg-adv-gen"
+cp /path/to/ECG_adv_Gen/.codex/skills/ecg-adv-gen/SKILL.md \
+  "${CODEX_HOME:-$HOME/.codex}/skills/ecg-adv-gen/SKILL.md"
 ```
 
 ## Environment
@@ -25,6 +33,14 @@ cp /root/ECG_adv_Gen/.codex/skills/ecg-adv-gen/SKILL.md \
 - Repo: `/root/ECG_adv_Gen`
 - Python: `/root/miniforge3/envs/ECGTwin/bin/python`
 - GPU target: RTX 4090D, 24 GB VRAM; CPU: 15 cores; RAM: 80 GB
+- Current migrated host override:
+  - repo: `/home/linbinhao/ECG_adv_Gen`
+  - migrated data root:
+    `/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp`
+  - Python: `/home/linbinhao/micromamba/envs/ECGTwin/bin/python`
+  - visible hardware: 8x NVIDIA RTX 4090 24 GB
+  - current user cannot access `/root/autodl-tmp`; pass explicit data/output
+    paths on this host.
 - Store large outputs/checkpoints in `/root/autodl-tmp/`, not the repo.
 - System disk is small. As of 2026-05-01 after cache cleanup: `/` has about
   9.7 GB free and `/root/autodl-tmp` about 69 GB free. Use
@@ -51,14 +67,31 @@ PTB-XL super5 real ECG
 Current preferred thesis route:
 
 ```text
-reproduce ECGTwin author pipeline
--> learn ECGTwin textual-inversion style center-class prompt tokens
--> use ECGTwin VAE latent space for constrained target-center latent-hull augmentation
--> run TA-OMAT / PN2021-C robustness ablations
--> keep direct ECGTwin/no-IBE synthetic augmentation as an ablation or historical reference
+reproduce ECGTwin author pipeline as generative-framework evidence
+-> use target-center real ECG anchors in ECGTwin VAE latent space
+-> run same-label / real_all_present Latent-Hull online adversarial training
+-> evaluate with PN2021 held-out ref-excluded and PN2021-C robustness tests
+-> keep center prompt tokens and direct ECGTwin synthetic augmentation as
+   generation-control / ablation evidence unless matched controls prove a
+   downstream causal win
 ```
 
 Do not make no-IBE ECGTwin self-training mandatory for the thesis mainline unless the user explicitly revives it. Do not make MIMIC mandatory; PTB-XL + PN2021 gives the clean closed loop.
+
+Latest 2026-05-23 state:
+
+- The strongest EfficientNet1DV2-side conclusion is still target-center
+  real-anchor VAE Latent-Hull / TA-OMAT style adaptation, with center tokens as
+  an ablation rather than the primary effect.
+- The latest ECGFounder branch is a promising new mainline candidate:
+  residual-adapter + VAE-only Latent-Hull online AT with source-logit anchor
+  improves four target centers while preserving PTB-XL source performance.
+  It needs multi-seed replication and fair comparison to EfficientNet1DV2.
+- Recent ECGFounder/paper docs use PN2021 Super5 v5 strict mapping:
+  `v5_super5_strict_voltage_pacing_suppress_20260522`. Freeze and report the
+  mapping version/hash before final tables.
+- Prefer the newest `docs/pipelines/*.md` facts over older command snippets in
+  this skill when they conflict.
 
 Current 2026-05 execution priorities:
 

@@ -30,7 +30,16 @@ import wfdb
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-ECGFOUNDER_ROOT = Path("/root/autodl-tmp/ecgfounder")
+_MIGRATED_DATA_ROOT = Path(
+    "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp"
+)
+DATA_ROOT = Path(
+    os.environ.get(
+        "ECG_ADV_GEN_DATA_ROOT",
+        str(_MIGRATED_DATA_ROOT if _MIGRATED_DATA_ROOT.exists() else Path("/root/autodl-tmp")),
+    )
+)
+ECGFOUNDER_ROOT = Path(os.environ.get("ECGFOUNDER_ROOT", str(DATA_ROOT / "ecgfounder")))
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(ECGFOUNDER_ROOT))
 
@@ -61,12 +70,12 @@ from scripts.triple_labels.label_schemes import (  # noqa: E402
 from scripts.triple_labels.train_ptbxl import compute_pos_weight, masked_bce_with_logits  # noqa: E402
 
 
-DEFAULT_OUT_DIR = Path("/root/autodl-tmp/paper_foundation_baselines_20260517/ecgfounder_linear_probe_super5")
-PTBXL_ROOT = Path("/root/autodl-tmp/ptbxl")
+DEFAULT_OUT_DIR = DATA_ROOT / "paper_foundation_baselines_20260517/ecgfounder_linear_probe_super5"
+PTBXL_ROOT = DATA_ROOT / "ptbxl"
 PTBXL_CSV = PTBXL_ROOT / "ptbxl_database.csv"
-PN2021_ROOT = Path("/root/autodl-tmp/physionet2021/training")
+PN2021_ROOT = DATA_ROOT / "physionet2021/training"
 CHECKPOINT = ECGFOUNDER_ROOT / "checkpoint/12_lead_ECGFounder.pth"
-REF_ROOT = Path("/root/autodl-tmp/paper_vae_only_latenthull_sweep_20260516/subsets")
+REF_ROOT = DATA_ROOT / "paper_vae_only_latenthull_sweep_20260516/subsets"
 
 
 def set_seed(seed: int) -> None:
@@ -490,7 +499,7 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--out_dir", default=str(DEFAULT_OUT_DIR))
     p.add_argument("--checkpoint", default=str(CHECKPOINT))
-    p.add_argument("--manifest_cache", default="/root/autodl-tmp/ecgfounder/physionet2021_manifest.json")
+    p.add_argument("--manifest_cache", default=str(ECGFOUNDER_ROOT / "physionet2021_manifest.json"))
     p.add_argument("--batch_size", type=int, default=96)
     p.add_argument("--num_workers", type=int, default=4)
     p.add_argument("--head_batch_size", type=int, default=1024)

@@ -43,7 +43,14 @@ from sklearn.metrics import roc_auc_score, average_precision_score
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+DEEPECG_NOTEBOOKS = Path(
+    os.environ.get(
+        "DEEPECG_NOTEBOOKS",
+        str(PROJECT_ROOT / "model" / "DeepECG" / "notebooks"),
+    )
+)
 sys.path.insert(0, str(Path("/root/autodl-tmp/models/DeepECG/notebooks")))
+sys.path.insert(0, str(DEEPECG_NOTEBOOKS))
 
 from EfficientNetv2 import EfficientNet1DV2  # noqa: E402
 from util.ecgtwin_utils import ECGTwinWrapper  # noqa: E402

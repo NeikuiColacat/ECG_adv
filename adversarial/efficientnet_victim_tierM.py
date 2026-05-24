@@ -25,6 +25,7 @@ API 与 77-class victim 对齐，`BoundaryAdvDiffGenerator` 无需改动即可 s
 """
 
 import sys
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -34,9 +35,15 @@ import torch.nn.functional as F
 
 _PROJECT_ROOT = Path(__file__).parent.parent
 _ECGTWIN_ROOT = _PROJECT_ROOT / "model" / "ECGTwin"
-_DEEPECG_NB = Path("/root/autodl-tmp/models/DeepECG/notebooks")
+_DEEPECG_NB = Path(
+    os.environ.get(
+        "DEEPECG_NOTEBOOKS",
+        str(_PROJECT_ROOT / "model" / "DeepECG" / "notebooks"),
+    )
+)
+_DEEPECG_NB_LEGACY = Path("/root/autodl-tmp/models/DeepECG/notebooks")
 
-for p in [str(_PROJECT_ROOT), str(_ECGTWIN_ROOT), str(_DEEPECG_NB)]:
+for p in [str(_PROJECT_ROOT), str(_ECGTWIN_ROOT), str(_DEEPECG_NB_LEGACY), str(_DEEPECG_NB)]:
     if p not in sys.path:
         sys.path.insert(0, p)
 

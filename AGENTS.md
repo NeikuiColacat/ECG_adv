@@ -2,21 +2,85 @@
 
 This file is durable project memory for coding agents working in `/root/ECG_adv_Gen`.
 
+Critical startup rule for this shared server:
+
+- After every context compaction, resume, or new Codex handoff, read the first
+  100 lines of this `AGENTS.md` before running any command that would use GPU,
+  write files, or modify any environment.
+- Treat this machine as a multi-user shared server at all times. Do not damage
+  other users' files, system environments, experiment outputs, running
+  processes, ports, or GPU jobs.
+- Keep all operations for this project inside the current user's home tree.
+  For this migrated host, that means paths under `/home/linbinhao`, especially
+  `/home/linbinhao/ECG_adv_Gen` and the migrated data root below.
+
+Current migrated host override, initialized 2026-05-23:
+
+```text
+repo root:      /home/linbinhao/ECG_adv_Gen
+migrated data:  /home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp
+python env:     /home/linbinhao/micromamba/envs/ECGTwin/bin/python
+runtime skill:  /home/linbinhao/.codex/skills/ecg-adv-gen/SKILL.md
+```
+
+This host is not running as root. Do not assume `/root/autodl-tmp` or
+`/root/miniforge3/envs/ECGTwin/bin/python` are accessible here unless a later
+setup step creates those paths. Use the migrated data path above for current
+commands, or pass explicit CLI paths.
+
+Shared server cluster constraints:
+
+- Do not use `sudo`.
+- Do not update the Linux kernel.
+- Do not install, replace, or upgrade CUDA.
+- Do not install, replace, or upgrade NVIDIA/GPU drivers.
+- Do not make system-level environment changes.
+- Use only user-level or project-level environments.
+- Keep all files touched by this project under the current user's home tree,
+  especially `/home/linbinhao/ECG_adv_Gen` and
+  `/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp`.
+  Do not create, edit, delete, chmod, chown, or relink files outside the user's
+  home tree unless the user explicitly requests it.
+- Before starting GPU training or long inference, check current GPU usage with
+  `nvidia-smi` and explicitly select intended free GPU(s), for example with
+  `CUDA_VISIBLE_DEVICES=...`. Do not assume all 8 GPUs are available.
+- Prefer single-GPU runs first. Use multi-GPU only when the user asks for it or
+  when the available cluster state clearly makes it safe.
+- Avoid broad process commands such as `pkill python`, `killall`, or unscoped
+  `kill`. Only stop PIDs that have been confirmed to belong to this user's
+  current experiment.
+- Do not overwrite existing experiment directories by default. Write new runs to
+  date/config-named output directories, and use `--force` only for clearly owned
+  temporary or failed runs.
+- Bind local web servers to `127.0.0.1`; if the requested port is occupied, do
+  not kill the existing process unless it is confirmed to be this user's server.
+- Keep large checkpoints, datasets, feature caches, logs, and generated samples
+  out of git. Store them under user-owned data/output directories.
+- CPU, memory, and disk IO can be used more aggressively when the machine is not
+  under pressure, but first check the current load/free memory/disk state for
+  long or heavy jobs. Scale `num_workers`, batching, and parallel preprocessing
+  back down if shared resources become tight.
+- Avoid launching multiple heavy WFDB/PN2021 feature-extraction or cache-build
+  jobs in parallel unless current CPU, memory, and IO load are clearly low.
+
 Repo-tracked Codex skill copy:
 
 ```text
 .codex/skills/ecg-adv-gen/SKILL.md
 ```
 
-The active runtime skill lives outside git at
-`/root/.codex/skills/ecg-adv-gen/SKILL.md`. When moving to another AutoDL host,
-copy the repo-tracked skill into that runtime location.
+The active runtime skill lives outside git. On the original root AutoDL host it
+was `/root/.codex/skills/ecg-adv-gen/SKILL.md`; on this migrated user host it is
+`/home/linbinhao/.codex/skills/ecg-adv-gen/SKILL.md`. When moving hosts, copy
+the repo-tracked skill into the active Codex user's runtime skill directory.
 
 ## Environment
 
 - Repo root: `/root/ECG_adv_Gen`
 - Python env: `/root/miniforge3/envs/ECGTwin/bin/python`
 - Hardware target: RTX 4090D 24GB VRAM, 15 CPU cores, 80GB RAM.
+- Current migrated host observation: 8x NVIDIA RTX 4090 24GB GPUs are visible,
+  with the `ECGTwin` environment under `/home/linbinhao/micromamba/envs/ECGTwin`.
 - Optimize future training/preprocessing for this hardware profile:
   - prefer AMP/bf16 where numerically safe on the 4090D;
   - keep large arrays/checkpoints/caches under `/root/autodl-tmp/`;
@@ -54,6 +118,46 @@ reproduce ECGTwin author pipeline
 -> use ECGTwin VAE latent space for target-anchored on-manifold augmentation
 -> keep direct ECGTwin synthetic augmentation as an ablation, not the main claim
 ```
+
+Latest 2026-05-23 project state after migration:
+
+```text
+Most stable mainline:
+  target-center real ECG anchors
+  -> ECGTwin VAE latent space
+  -> same-label / real_all_present Latent-Hull online adversarial training
+  -> PN2021 held-out ref-excluded + PN2021-C evaluation
+
+Center prompt token:
+  useful for ECGTwin generation control and ablations, but matched no-token
+  controls often equal or exceed it downstream. Do not present center-token
+  synthetic candidates as the main causal source of improvement unless new
+  matched controls prove it.
+
+Direct ECGTwin DiT synthetic augmentation:
+  keep as reproduced generative framework and ablation evidence, not the main
+  classifier-improvement claim.
+
+ECGFounder branch:
+  docs/pipelines/ecgfounder_frozen_linear_probe_pipeline.md contains a new
+  2026-05-23 strong branch. ECGFounder residual-adapter + VAE-only Latent-Hull
+  online AT with source-logit anchor improves four target centers strongly while
+  preserving PTB-XL source performance. Treat this as a promising new mainline
+  candidate that still needs multi-seed replication and clear comparison
+  against EfficientNet1DV2.
+```
+
+For current experimental truth, prefer the latest `docs/pipelines/*.md` over
+older command snippets in this file. In particular, recent ECGFounder documents
+use the v5 PN2021 Super5 mapping:
+
+```text
+SUPER5_PN2021_MAPPING_VERSION = v5_super5_strict_voltage_pacing_suppress_20260522
+```
+
+Before final paper tables, explicitly freeze whether the final EfficientNet and
+ECGFounder comparisons use v3 or v5 mapping, and report the mapping version/hash
+with all metrics.
 
 Do not make no-IBE ECGTwin self-training mandatory for the thesis mainline. The
 previous Scheme B/no-IBE implementation is archived under

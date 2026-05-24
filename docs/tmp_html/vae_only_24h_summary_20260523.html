@@ -1,0 +1,1207 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>VAE-only 主线 24h 尝试结果总结</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f9;
+      --paper: #ffffff;
+      --ink: #18212f;
+      --muted: #5d6878;
+      --line: #d9dee7;
+      --line-strong: #b8c0ce;
+      --blue: #1f67b1;
+      --green: #137a4f;
+      --red: #b33a3a;
+      --amber: #8a6200;
+      --chip: #eef3f8;
+      --shadow: 0 12px 32px rgba(24, 33, 47, 0.08);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      line-height: 1.55;
+    }
+
+    a {
+      color: var(--blue);
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.94);
+      backdrop-filter: blur(12px);
+    }
+
+    .topbar-inner {
+      width: min(1240px, calc(100% - 36px));
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 12px 0;
+    }
+
+    .brand {
+      font-weight: 760;
+      letter-spacing: 0;
+      white-space: nowrap;
+    }
+
+    nav {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    nav a {
+      color: var(--muted);
+      font-size: 13px;
+      padding: 6px 8px;
+      border-radius: 6px;
+    }
+
+    nav a:hover {
+      background: var(--chip);
+      color: var(--ink);
+      text-decoration: none;
+    }
+
+    header {
+      background: #101826;
+      color: #f8fbff;
+      border-bottom: 1px solid #263248;
+    }
+
+    .hero {
+      width: min(1240px, calc(100% - 36px));
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: minmax(0, 1.3fr) minmax(300px, 0.7fr);
+      gap: 28px;
+      padding: 56px 0 44px;
+    }
+
+    .kicker {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 10px;
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      border-radius: 999px;
+      color: #c9d5e6;
+      font-size: 13px;
+      margin-bottom: 18px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(32px, 4.8vw, 56px);
+      line-height: 1.05;
+      letter-spacing: 0;
+      max-width: 900px;
+    }
+
+    .subtitle {
+      margin: 20px 0 0;
+      max-width: 760px;
+      color: #c7d2e2;
+      font-size: 18px;
+    }
+
+    .hero-side {
+      align-self: end;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 8px;
+      padding: 18px;
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    .hero-side h2 {
+      color: #ffffff;
+      margin-top: 0;
+      font-size: 17px;
+    }
+
+    .hero-side p {
+      color: #d2dceb;
+      margin-bottom: 0;
+    }
+
+    main {
+      width: min(1240px, calc(100% - 36px));
+      margin: 0 auto;
+      padding: 28px 0 64px;
+    }
+
+    section {
+      margin: 28px 0;
+    }
+
+    .section-title {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 14px;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: 26px;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin: 0 0 10px;
+      font-size: 18px;
+      letter-spacing: 0;
+    }
+
+    .note {
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 16px;
+    }
+
+    .span-3 { grid-column: span 3; }
+    .span-4 { grid-column: span 4; }
+    .span-5 { grid-column: span 5; }
+    .span-6 { grid-column: span 6; }
+    .span-7 { grid-column: span 7; }
+    .span-8 { grid-column: span 8; }
+    .span-12 { grid-column: span 12; }
+
+    .panel {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      padding: 18px;
+    }
+
+    .panel.tight {
+      padding: 14px;
+    }
+
+    .metric {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-height: 116px;
+    }
+
+    .metric .label {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .metric .value {
+      font-size: 28px;
+      line-height: 1.12;
+      font-weight: 760;
+    }
+
+    .metric .desc {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .pos { color: var(--green); }
+    .neg { color: var(--red); }
+    .warn { color: var(--amber); }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: var(--chip);
+      color: #344155;
+      border: 1px solid #d9e2ed;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .callout {
+      border-left: 4px solid var(--blue);
+      background: #eef5fc;
+      padding: 14px 16px;
+      border-radius: 0 8px 8px 0;
+    }
+
+    .callout strong {
+      color: #0f477d;
+    }
+
+    .danger {
+      border-left-color: var(--red);
+      background: #fff1f1;
+    }
+
+    .danger strong {
+      color: var(--red);
+    }
+
+    .good {
+      border-left-color: var(--green);
+      background: #edf8f3;
+    }
+
+    .good strong {
+      color: var(--green);
+    }
+
+    .table-wrap {
+      width: 100%;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--paper);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 760px;
+      font-size: 14px;
+    }
+
+    th,
+    td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #f1f4f8;
+      color: #374356;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    td.num,
+    th.num {
+      text-align: right;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 70px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      border: 1px solid transparent;
+    }
+
+    .status.good {
+      color: var(--green);
+      background: #eaf7f1;
+      border-color: #b8e1cf;
+    }
+
+    .status.mixed {
+      color: var(--amber);
+      background: #fff8e5;
+      border-color: #ead799;
+    }
+
+    .status.bad {
+      color: var(--red);
+      background: #fff0f0;
+      border-color: #edbcbc;
+    }
+
+    .timeline {
+      display: grid;
+      gap: 12px;
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: 48px 1fr;
+      gap: 12px;
+      align-items: start;
+    }
+
+    .step-num {
+      width: 38px;
+      height: 38px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: #18212f;
+      color: #ffffff;
+      font-weight: 780;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .bar-list {
+      display: grid;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .bar-row {
+      display: grid;
+      grid-template-columns: 160px 1fr 78px;
+      gap: 10px;
+      align-items: center;
+      font-size: 13px;
+    }
+
+    .bar-track {
+      height: 10px;
+      border-radius: 999px;
+      background: #e8edf4;
+      overflow: hidden;
+    }
+
+    .bar-fill {
+      height: 100%;
+      border-radius: 999px;
+      background: var(--green);
+    }
+
+    .code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      background: #f1f4f8;
+      border: 1px solid var(--line);
+      padding: 2px 5px;
+      border-radius: 5px;
+    }
+
+    .source-list {
+      display: grid;
+      gap: 8px;
+      padding-left: 18px;
+      color: var(--muted);
+    }
+
+    .source-list li {
+      padding-left: 4px;
+    }
+
+    @media (max-width: 980px) {
+      .hero {
+        grid-template-columns: 1fr;
+        padding-top: 40px;
+      }
+
+      .span-3,
+      .span-4,
+      .span-5,
+      .span-6,
+      .span-7,
+      .span-8 {
+        grid-column: span 12;
+      }
+
+      .topbar-inner {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      nav {
+        justify-content: flex-start;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .topbar-inner,
+      .hero,
+      main {
+        width: min(100% - 24px, 1240px);
+      }
+
+      .bar-row {
+        grid-template-columns: 1fr;
+        gap: 4px;
+      }
+
+      .hero-side {
+        padding: 14px;
+      }
+
+      .panel {
+        padding: 14px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">ECG_adv_Gen VAE-only 24h Review</div>
+      <nav aria-label="页面导航">
+        <a href="#takeaway">结论</a>
+        <a href="#protocol">协议</a>
+        <a href="#methods">尝试路线</a>
+        <a href="#evidence">结果表</a>
+        <a href="#limits">边界</a>
+        <a href="#next">下一步</a>
+      </nav>
+    </div>
+  </div>
+
+  <header>
+    <div class="hero">
+      <div>
+        <div class="kicker">2026-05-22 到 2026-05-23 旧机器实验整理</div>
+        <h1>VAE-only 主线尝试：哪些方法有效，提升来自哪里</h1>
+        <p class="subtitle">
+          这份页面把过去约 24 小时围绕 ECGTwin VAE latent space 的 real-anchor / latent-hull online AT 尝试合并成一页。
+          重点区分“VAE-only adversarial stream 的独立贡献”和“目标中心真实样本适配”的贡献，避免把强基线带来的提升误归因给 VAE。
+        </p>
+        <div class="chips">
+          <span class="chip">PN2021 Super5 v5</span>
+          <span class="chip">target ref-excluded</span>
+          <span class="chip">K=20 / 50 / 100 / 500</span>
+          <span class="chip">AUROC / AUPRC</span>
+          <span class="chip">drop-all-zero sensitivity</span>
+        </div>
+      </div>
+      <div class="hero-side">
+        <h2>一句话结论</h2>
+        <p>
+          VAE-only real-anchor latent-hull 是一个有效的 on-manifold adversarial regularizer；
+          在 EfficientNet 和多个 PTB-XL benchmark backbone 上稳定正向，但幅度中等。
+          在 ECGFounder 上，最强正向证据来自 official full fine-tuning + K=100 fixed short-horizon，
+          但 K=500 和 frozen residual adapter 的大提升主要来自 target-real adaptation，不是 VAE 独立贡献。
+        </p>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section id="takeaway">
+      <div class="section-title">
+        <h2>核心结论</h2>
+        <span class="note">pp = percentage points，表内数字均为 AUROC / AUPRC</span>
+      </div>
+      <div class="grid">
+        <div class="panel metric span-3">
+          <div class="label">EfficientNet v5 K=500 VAE-only</div>
+          <div class="value pos">+2.08 / +2.27pp</div>
+          <div class="desc">4-center avg，all-zero kept。baseline 0.8452 / 0.4795 -> 0.8660 / 0.5022。</div>
+        </div>
+        <div class="panel metric span-3">
+          <div class="label">all-class trust refinement</div>
+          <div class="value pos">+0.46 / +0.66pp</div>
+          <div class="desc">相对 legacy VAE-only。把真实 CD/HYP anchor 纳入 VAE latent-hull 后继续提升。</div>
+        </div>
+        <div class="panel metric span-3">
+          <div class="label">5 个 benchmark backbone</div>
+          <div class="value pos">20 / 20</div>
+          <div class="desc">所有 model-center 组合 AUROC/AUPRC 均提升，overall +2.93 / +3.54pp。</div>
+        </div>
+        <div class="panel metric span-3">
+          <div class="label">ECGFounder full-FT K=100</div>
+          <div class="value pos">4 / 4 AUPRC+</div>
+          <div class="desc">fixed epoch=1 下四中心 full target 和 drop-all-zero AUPRC 均正向。</div>
+        </div>
+      </div>
+
+      <div class="grid" style="margin-top: 16px;">
+        <div class="panel span-6">
+          <h3>应该保留的论文主张</h3>
+          <div class="callout good">
+            <strong>保守主张：</strong>
+            VAE-only real-anchor latent-hull online AT 可以作为目标中心真实样本的 on-manifold adversarial regularization，
+            在多个 backbone 与多个中心上提升外部中心 AUPRC，尤其是 CPSC。
+          </div>
+        </div>
+        <div class="panel span-6">
+          <h3>现在不能过度声明的点</h3>
+          <div class="callout danger">
+            <strong>不要写成：</strong>
+            ECGFounder 上的大幅 target gain 全部来自 VAE-only。K=500 和 frozen residual adapter 审计显示，
+            主要驱动是 target-center real adapter / full fine-tuning，VAE 只在 K=100 的短程 refinement 中有较清晰增量。
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="protocol">
+      <div class="section-title">
+        <h2>共同评估协议</h2>
+        <span class="note">把旧机器结果放到同一把尺子上看</span>
+      </div>
+      <div class="grid">
+        <div class="panel span-8">
+          <div class="timeline">
+            <div class="step">
+              <div class="step-num">1</div>
+              <div>
+                <h3>数据与标签</h3>
+                <p>PTB-XL Super5 源域训练，PN2021 四个目标中心评估：<span class="code">ningbo</span>、<span class="code">chapman_shaoxing</span>、<span class="code">cpsc_2018</span>、<span class="code">georgia</span>。PN2021 使用 v5 strict mapping：<span class="code">v5_super5_strict_voltage_pacing_suppress_20260522</span>。</p>
+              </div>
+            </div>
+            <div class="step">
+              <div class="step-num">2</div>
+              <div>
+                <h3>目标中心样本排除</h3>
+                <p>每个 target-center adaptation 使用 K 个目标中心真实 ECG anchor；评估同一个中心时排除这些 ref ids，避免测试污染。</p>
+              </div>
+            </div>
+            <div class="step">
+              <div class="step-num">3</div>
+              <div>
+                <h3>VAE-only 定义</h3>
+                <p>不使用 ECGTwin DiT 直接合成样本，不使用 center token。只用目标中心真实 ECG 经 ECGTwin VAE 得到的 latent，在 same-label latent hull 内做 online adversarial search，再 decode 回 ECG 参与训练。</p>
+              </div>
+            </div>
+            <div class="step">
+              <div class="step-num">4</div>
+              <div>
+                <h3>两个口径</h3>
+                <p><span class="code">all-zero kept</span> 是主指标；<span class="code">drop-all-zero</span> 是敏感性分析，检查提升是否只是大量 Super5 全 0 样本造成。</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="panel span-4">
+          <h3>Latent-Hull 形式</h3>
+          <p><span class="code">z_mix = sum softmax(a_i) * z_i</span></p>
+          <p><span class="code">z_adv = (1 - lambda) * z0 + lambda * z_mix</span></p>
+          <p class="note">旧机器主线常用 M=20, lambda=0.15, hull_steps=3 或 10。真实 target anchor 是 ECGTwin VAE latent，不是 DiT synthetic candidate。</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="methods">
+      <div class="section-title">
+        <h2>尝试过的方法路线</h2>
+        <span class="note">按证据强弱和归因清晰度排列</span>
+      </div>
+      <div class="grid">
+        <div class="panel span-4">
+          <h3>A. EfficientNet1DV2 VAE-only K=500</h3>
+          <p>从 PTB-XL EfficientNet1DV2 baseline 出发，目标中心 K=500 real anchor，VAE latent-hull online AT。</p>
+          <div class="chips">
+            <span class="chip">v5 mapping</span>
+            <span class="chip">ref-excluded</span>
+            <span class="chip">all-zero kept</span>
+          </div>
+        </div>
+        <div class="panel span-4">
+          <h3>B. all-class trust refinement</h3>
+          <p>把 legacy 的 NORM/MI/STTC-only 改成 <span class="code">real_all_present</span>，允许真实 CD/HYP anchors 参与。原因是 VAE-only 用的是真实 ECG latent，不受 DiT synthetic HYP/CD 质量门限制。</p>
+          <div class="chips">
+            <span class="chip">CD/HYP enabled</span>
+            <span class="chip">quality gate disabled</span>
+          </div>
+        </div>
+        <div class="panel span-4">
+          <h3>C. 多 backbone 验证</h3>
+          <p>把同一 VAE-only real-anchor LH-AT 跑到 FCN、ResNet1D、Inception1D、LSTM、XResNet1D101，确认不是 EfficientNet1DV2 专属现象。</p>
+          <div class="chips">
+            <span class="chip">5 backbones</span>
+            <span class="chip">20 comparisons</span>
+          </div>
+        </div>
+        <div class="panel span-4">
+          <h3>D. ECGFounder frozen head / residual adapter</h3>
+          <p>冻结 ECGFounder encoder，只训练 Super5 head 或 residual adapter，加 source-logit anchor 保护 PTB-XL 源域。该路线 target gain 大，但后续 real-only 消融显示主因是目标真实样本 adapter。</p>
+          <div class="chips">
+            <span class="chip">frozen encoder</span>
+            <span class="chip">source-logit anchor</span>
+          </div>
+        </div>
+        <div class="panel span-4">
+          <h3>E. pure VAE-only 独立性测试</h3>
+          <p>去掉 target-real supervised stream，只保留 PTB-XL source + VAE adversarial stream，直接测试 VAE 本身能不能适配目标中心。</p>
+          <div class="chips">
+            <span class="chip">target_real_weight=0</span>
+            <span class="chip">weak positive</span>
+          </div>
+        </div>
+        <div class="panel span-4">
+          <h3>F. ECGFounder official full-FT + VAE</h3>
+          <p>按 ECGFounder 官方 full fine-tuning 设定建立强 no-VAE baseline，再加入 VAE-only online AT。fixed epoch=1 的 K=100 版本是当前最干净的正向证据。</p>
+          <div class="chips">
+            <span class="chip">full fine-tuning</span>
+            <span class="chip">K=100 strongest</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="evidence">
+      <div class="section-title">
+        <h2>关键结果表</h2>
+        <span class="note">按“我们尝试了什么”和“各自提升多少”展开</span>
+      </div>
+
+      <div class="panel span-12">
+        <h3>1. EfficientNet1DV2 v5 K=500：VAE-only real-anchor LH-AT 是正向的</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>center</th>
+                <th class="num">baseline</th>
+                <th class="num">VAE-only</th>
+                <th class="num">delta</th>
+                <th class="num">eval n</th>
+                <th>解读</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>ningbo</td>
+                <td class="num">0.8718 / 0.4222</td>
+                <td class="num">0.8880 / 0.4393</td>
+                <td class="num pos">+1.62 / +1.71pp</td>
+                <td class="num">34405</td>
+                <td>稳定正向，但 AUPRC 绝对值仍低。</td>
+              </tr>
+              <tr>
+                <td>chapman_shaoxing</td>
+                <td class="num">0.8805 / 0.3458</td>
+                <td class="num">0.8949 / 0.3720</td>
+                <td class="num pos">+1.44 / +2.63pp</td>
+                <td class="num">9747</td>
+                <td>AUPRC 提升明显，但仍是最难中心之一。</td>
+              </tr>
+              <tr>
+                <td>cpsc_2018</td>
+                <td class="num">0.8115 / 0.5586</td>
+                <td class="num">0.8545 / 0.5962</td>
+                <td class="num pos">+4.30 / +3.76pp</td>
+                <td class="num">6377</td>
+                <td>最强正向中心，VAE latent-hull 与该中心类别结构更匹配。</td>
+              </tr>
+              <tr>
+                <td>georgia</td>
+                <td class="num">0.8168 / 0.5913</td>
+                <td class="num">0.8266 / 0.6012</td>
+                <td class="num pos">+0.98 / +0.99pp</td>
+                <td class="num">9844</td>
+                <td>正向但幅度较小。</td>
+              </tr>
+              <tr>
+                <td><strong>4-center avg</strong></td>
+                <td class="num"><strong>0.8452 / 0.4795</strong></td>
+                <td class="num"><strong>0.8660 / 0.5022</strong></td>
+                <td class="num pos"><strong>+2.08 / +2.27pp</strong></td>
+                <td class="num"></td>
+                <td><strong>主结果可引用，但不能说已达到 PTB-XL source AUPRC。</strong></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note">drop-all-zero 口径下 4-center avg 为 0.8747 / 0.6285 -> 0.8952 / 0.6593，delta +2.05 / +3.08pp，说明正向不是 all-zero 样本单独造成。</p>
+      </div>
+
+      <div class="panel span-12" style="margin-top: 16px;">
+        <h3>2. all-class trust refinement：真实 CD/HYP anchor 应该进来</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>center</th>
+                <th class="num">legacy VAE-only</th>
+                <th class="num">all-class VAE-only</th>
+                <th class="num">all-class vs legacy</th>
+                <th class="num">baseline -> all-class</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>ningbo</td>
+                <td class="num">0.8880 / 0.4393</td>
+                <td class="num">0.8894 / 0.4419</td>
+                <td class="num pos">+0.15 / +0.26pp</td>
+                <td class="num pos">+1.77 / +1.97pp</td>
+              </tr>
+              <tr>
+                <td>chapman_shaoxing</td>
+                <td class="num">0.8949 / 0.3720</td>
+                <td class="num">0.8964 / 0.3750</td>
+                <td class="num pos">+0.15 / +0.30pp</td>
+                <td class="num pos">+1.59 / +2.93pp</td>
+              </tr>
+              <tr>
+                <td>cpsc_2018</td>
+                <td class="num">0.8545 / 0.5962</td>
+                <td class="num">0.8684 / 0.6151</td>
+                <td class="num pos">+1.40 / +1.89pp</td>
+                <td class="num pos">+5.70 / +5.65pp</td>
+              </tr>
+              <tr>
+                <td>georgia</td>
+                <td class="num">0.8266 / 0.6012</td>
+                <td class="num">0.8280 / 0.6033</td>
+                <td class="num pos">+0.14 / +0.21pp</td>
+                <td class="num pos">+1.12 / +1.20pp</td>
+              </tr>
+              <tr>
+                <td><strong>4-center avg</strong></td>
+                <td class="num"><strong>0.8660 / 0.5022</strong></td>
+                <td class="num"><strong>0.8706 / 0.5088</strong></td>
+                <td class="num pos"><strong>+0.46 / +0.66pp</strong></td>
+                <td class="num">-</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note">归因：legacy 关闭 CD/HYP 是为了规避 DiT synthetic HYP/CD 质量问题；但这里用的是 target-center real ECG latent，所以 CD/HYP 不应被 synthetic gate 误伤。CPSC 提升最大，符合其 CD/NORM/STTC anchor 结构。</p>
+      </div>
+
+      <div class="grid" style="margin-top: 16px;">
+        <div class="panel span-6">
+          <h3>3. 多 backbone 复核：不是 EfficientNet 特例</h3>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>model</th>
+                  <th class="num">baseline</th>
+                  <th class="num">online AT</th>
+                  <th class="num">delta</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>FCN Wang</td>
+                  <td class="num">0.8336 / 0.5132</td>
+                  <td class="num">0.8582 / 0.5394</td>
+                  <td class="num pos">+2.47 / +2.62pp</td>
+                </tr>
+                <tr>
+                  <td>ResNet1D Wang</td>
+                  <td class="num">0.8400 / 0.5146</td>
+                  <td class="num">0.8679 / 0.5480</td>
+                  <td class="num pos">+2.79 / +3.34pp</td>
+                </tr>
+                <tr>
+                  <td>Inception1D</td>
+                  <td class="num">0.8414 / 0.5220</td>
+                  <td class="num">0.8733 / 0.5599</td>
+                  <td class="num pos">+3.19 / +3.79pp</td>
+                </tr>
+                <tr>
+                  <td>LSTM</td>
+                  <td class="num">0.8407 / 0.5139</td>
+                  <td class="num">0.8736 / 0.5571</td>
+                  <td class="num pos">+3.29 / +4.32pp</td>
+                </tr>
+                <tr>
+                  <td>XResNet1D101</td>
+                  <td class="num">0.8381 / 0.5221</td>
+                  <td class="num">0.8674 / 0.5583</td>
+                  <td class="num pos">+2.94 / +3.62pp</td>
+                </tr>
+                <tr>
+                  <td><strong>overall</strong></td>
+                  <td class="num"><strong>0.8388 / 0.5172</strong></td>
+                  <td class="num"><strong>0.8681 / 0.5525</strong></td>
+                  <td class="num pos"><strong>+2.93 / +3.54pp</strong></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="panel span-6">
+          <h3>按目标中心看平均收益</h3>
+          <div class="bar-list">
+            <div class="bar-row">
+              <span>cpsc_2018 AUPRC</span>
+              <div class="bar-track"><div class="bar-fill" style="width: 100%;"></div></div>
+              <span class="pos">+4.88pp</span>
+            </div>
+            <div class="bar-row">
+              <span>chapman AUPRC</span>
+              <div class="bar-track"><div class="bar-fill" style="width: 74%;"></div></div>
+              <span class="pos">+3.61pp</span>
+            </div>
+            <div class="bar-row">
+              <span>ningbo AUPRC</span>
+              <div class="bar-track"><div class="bar-fill" style="width: 72%;"></div></div>
+              <span class="pos">+3.53pp</span>
+            </div>
+            <div class="bar-row">
+              <span>georgia AUPRC</span>
+              <div class="bar-track"><div class="bar-fill" style="width: 44%;"></div></div>
+              <span class="pos">+2.13pp</span>
+            </div>
+          </div>
+          <p class="note">这支持“VAE latent-hull 的机制不是某个 classifier artifact”，但 Georgia 仍然是弱增益中心。</p>
+        </div>
+      </div>
+
+      <div class="panel span-12" style="margin-top: 16px;">
+        <h3>4. ECGFounder frozen/residual adapter：大提升很强，但归因要收紧</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>配置</th>
+                <th class="num">target mean</th>
+                <th class="num">target delta</th>
+                <th class="num">PTB-XL fold10 after AT</th>
+                <th>判断</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>ECGFounder VAE-only head AT default</td>
+                <td class="num">0.9110 / 0.6051</td>
+                <td class="num pos">+4.75 / +9.93pp</td>
+                <td class="num">0.9120 / 0.7783</td>
+                <td>目标强，但源域 AUPRC 从 0.8016 降到 0.7783。</td>
+              </tr>
+              <tr>
+                <td>target-heavy 1/80/40</td>
+                <td class="num">0.9193 / 0.6358</td>
+                <td class="num pos">+5.58 / +13.01pp</td>
+                <td class="num">0.9000 / 0.7555</td>
+                <td>目标最高，源域遗忘更明显。</td>
+              </tr>
+              <tr>
+                <td>residual adapter + logit anchor 0.2</td>
+                <td class="num">0.9082 / 0.6354</td>
+                <td class="num pos">+4.47 / +12.96pp</td>
+                <td class="num">0.9202 / 0.7962</td>
+                <td>更好的 Pareto；源域接近 ECGFounder baseline。</td>
+              </tr>
+              <tr>
+                <td>residual adapter + logit anchor 0.5</td>
+                <td class="num">0.9047 / 0.6309</td>
+                <td class="num pos">+4.12 / +12.51pp</td>
+                <td class="num">0.9214 / 0.7994</td>
+                <td>源域保持最好，目标略低。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout" style="margin-top: 12px;">
+          <strong>关键审计：</strong>
+          K=500 real-only adapter mean 0.9120 / 0.6357，VAE-only adapter mean 0.9082 / 0.6354。
+          这说明 ECGFounder frozen/residual adapter 的大提升主要来自 target-center real adapter adaptation，
+          VAE latent-hull 在该设置下没有稳定额外优势。
+        </div>
+      </div>
+
+      <div class="grid" style="margin-top: 16px;">
+        <div class="panel span-6">
+          <h3>5. pure VAE-only：独立贡献存在，但很小</h3>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>backbone / setting</th>
+                  <th class="num">baseline</th>
+                  <th class="num">pure VAE-only</th>
+                  <th class="num">delta</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>ECGFounder K=100 mean</td>
+                  <td class="num">0.8636 / 0.5129</td>
+                  <td class="num">0.8663 / 0.5167</td>
+                  <td class="num pos">+0.27 / +0.38pp</td>
+                </tr>
+                <tr>
+                  <td>ECGFounder drop-all-zero mean</td>
+                  <td class="num">0.8920 / 0.6569</td>
+                  <td class="num">0.8950 / 0.6628</td>
+                  <td class="num pos">+0.30 / +0.59pp</td>
+                </tr>
+                <tr>
+                  <td>EfficientNet K=100 mean</td>
+                  <td class="num">0.8448 / 0.4866</td>
+                  <td class="num">0.8480 / 0.4890</td>
+                  <td class="num pos">+0.32 / +0.24pp</td>
+                </tr>
+                <tr>
+                  <td>EfficientNet drop-all-zero mean</td>
+                  <td class="num">0.8730 / 0.6318</td>
+                  <td class="num">0.8756 / 0.6336</td>
+                  <td class="num pos">+0.26 / +0.18pp</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="note">这证明 VAE-only 不是完全无效，但信号太弱，不能解释 ECGFounder residual adapter 的大幅 target gain。</p>
+        </div>
+        <div class="panel span-6">
+          <h3>6. EfficientNet frozen adapter：VAE 只在 CPSC 小幅正向</h3>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>center</th>
+                  <th class="num">real-only</th>
+                  <th class="num">VAE-only</th>
+                  <th class="num">VAE - real</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>ningbo</td>
+                  <td class="num">0.8741 / 0.4310</td>
+                  <td class="num">0.8723 / 0.4285</td>
+                  <td class="num neg">-0.18 / -0.25pp</td>
+                </tr>
+                <tr>
+                  <td>chapman_shaoxing</td>
+                  <td class="num">0.8810 / 0.3588</td>
+                  <td class="num">0.8822 / 0.3609</td>
+                  <td class="num pos">+0.12 / +0.21pp</td>
+                </tr>
+                <tr>
+                  <td>cpsc_2018</td>
+                  <td class="num">0.8155 / 0.5695</td>
+                  <td class="num">0.8202 / 0.5721</td>
+                  <td class="num pos">+0.47 / +0.26pp</td>
+                </tr>
+                <tr>
+                  <td>georgia</td>
+                  <td class="num">0.8196 / 0.5958</td>
+                  <td class="num">0.8195 / 0.5958</td>
+                  <td class="num">-0.01 / +0.00pp</td>
+                </tr>
+                <tr>
+                  <td><strong>mean</strong></td>
+                  <td class="num"><strong>0.8476 / 0.4888</strong></td>
+                  <td class="num"><strong>0.8486 / 0.4893</strong></td>
+                  <td class="num pos"><strong>+0.10 / +0.06pp</strong></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="note">源域保持很好，但 VAE 相对 real-only 的独立增量太小；不能作为强主线。</p>
+        </div>
+      </div>
+
+      <div class="panel span-12" style="margin-top: 16px;">
+        <h3>7. ECGFounder official full fine-tuning：当前最干净的 VAE 正向证据</h3>
+        <p>
+          先建立 no-VAE official full-FT 强基线，再加入 VAE-only online AT。
+          fold9 选 checkpoint 的四中心结果是 3/4 正向；后来 fixed epoch=1 避免 noisy target-val selection 后，K=100 四中心 full target AUPRC 与 drop-all-zero AUPRC 都正向。
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>center</th>
+                <th class="num">no-VAE fixed ep1</th>
+                <th class="num">best VAE fixed ep1</th>
+                <th class="num">best VAE delta</th>
+                <th class="num">drop-all-zero delta</th>
+                <th>状态</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>cpsc_2018</td>
+                <td class="num">0.8638 / 0.6486</td>
+                <td class="num">0.8800 / 0.6979</td>
+                <td class="num pos">+1.62 / +4.93pp</td>
+                <td class="num pos">+1.00 / +3.11pp</td>
+                <td><span class="status good">强正向</span></td>
+              </tr>
+              <tr>
+                <td>ningbo</td>
+                <td class="num">0.9197 / 0.5298</td>
+                <td class="num">0.9176 / 0.5388</td>
+                <td class="num pos">-0.21 / +0.90pp</td>
+                <td class="num pos">+0.04 / +0.98pp</td>
+                <td><span class="status mixed">AUPRC 正向</span></td>
+              </tr>
+              <tr>
+                <td>chapman_shaoxing</td>
+                <td class="num">0.9145 / 0.4635</td>
+                <td class="num">0.9188 / 0.4769</td>
+                <td class="num pos">+0.44 / +1.34pp</td>
+                <td class="num pos">+0.46 / +0.26pp</td>
+                <td><span class="status good">正向</span></td>
+              </tr>
+              <tr>
+                <td>georgia</td>
+                <td class="num">0.8472 / 0.5518</td>
+                <td class="num">0.8523 / 0.5545</td>
+                <td class="num pos">+0.51 / +0.27pp</td>
+                <td class="num pos">+0.59 / +0.52pp</td>
+                <td><span class="status good">小幅正向</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note">PTB-XL source fold10 在这些 VAE run 中约 0.9147-0.9201 / 0.7944-0.8007，整体没有明显源域崩坏。</p>
+      </div>
+
+      <div class="panel span-12" style="margin-top: 16px;">
+        <h3>8. K sensitivity：K=100 是当前实证下限，K=20/50 不稳，K=500 VAE 贡献消失</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>K</th>
+                <th>full target AUPRC positive</th>
+                <th>drop-all-zero AUPRC positive</th>
+                <th>结论</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="num">20</td>
+                <td>1 / 4</td>
+                <td>2 / 4</td>
+                <td>极小样本下 VAE 没有稳定补足 target supervision。</td>
+              </tr>
+              <tr>
+                <td class="num">50</td>
+                <td>1 / 4</td>
+                <td>3 / 4</td>
+                <td>CPSC 有窗口，Ningbo/Chapman/Georgia 不稳。</td>
+              </tr>
+              <tr>
+                <td class="num">100</td>
+                <td class="pos">4 / 4</td>
+                <td class="pos">4 / 4</td>
+                <td>当前 fixed short-horizon ECGFounder VAE-only 最可信设置。</td>
+              </tr>
+              <tr>
+                <td class="num">500</td>
+                <td class="warn">接近持平</td>
+                <td class="warn">接近持平</td>
+                <td>K=500 的大提升主要来自真实目标中心 full fine-tune；VAE 没有明显独立增益。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="limits">
+      <div class="section-title">
+        <h2>负结果与边界</h2>
+        <span class="note">这些是后续写论文时最容易误写的地方</span>
+      </div>
+      <div class="grid">
+        <div class="panel span-4">
+          <h3>ECGFounder frozen adapter 的大 gain 不能归因给 VAE</h3>
+          <p>K=500 real-only adapter 与 VAE-only adapter 基本持平，说明 target-center real adapter 是主驱动。</p>
+          <p class="note">real-only 0.9120 / 0.6357 vs VAE-only 0.9082 / 0.6354。</p>
+        </div>
+        <div class="panel span-4">
+          <h3>pure VAE-only 是弱正向</h3>
+          <p>不喂 target-real supervised stream 时，ECGFounder 与 EfficientNet 都只有 0.2-0.6pp 级别增益。</p>
+          <p class="note">可作为独立性证据，但不能支撑“明显强于 real-only”。</p>
+        </div>
+        <div class="panel span-4">
+          <h3>低 K 不稳定</h3>
+          <p>ECGFounder full-FT fixed horizon 下，K=20/50 多数中心不稳定，K=100 才出现 4/4 AUPRC 正向。</p>
+          <p class="note">当前不能宣称“几十条目标样本就稳定足够”。</p>
+        </div>
+        <div class="panel span-4">
+          <h3>Georgia 是敏感中心</h3>
+          <p>较高 adv weight 会伤 Georgia，低权重或 fixed short-horizon 才能修复一部分。</p>
+          <p class="note">后续应避免一套 adv_weight 硬套所有中心。</p>
+        </div>
+        <div class="panel span-4">
+          <h3>目标 AUPRC 未普遍达到 PTB-XL source</h3>
+          <p>CPSC drop-all-zero 在部分设置接近或超过 source；Ningbo/Chapman/Georgia 仍明显低于 source AUPRC。</p>
+          <p class="note">可写“保源同时提升目标中心”，不要写“全面达到同源性能”。</p>
+        </div>
+        <div class="panel span-4">
+          <h3>checkpoint selection 影响很大</h3>
+          <p>fold9-only、target-val、last_epoch 得出的 target 表现不同。fixed epoch=1 目前更简单稳定。</p>
+          <p class="note">后续主表需要固定 non-leak selection 规则。</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="next">
+      <div class="section-title">
+        <h2>建议后续主线</h2>
+        <span class="note">把可用结果变成论文叙事</span>
+      </div>
+      <div class="grid">
+        <div class="panel span-6">
+          <h3>论文叙事建议</h3>
+          <ol>
+            <li>主方法写成 <strong>target-center real ECG anchors + ECGTwin VAE latent-hull online AT</strong>，不是直接 ECGTwin DiT synthetic augmentation。</li>
+            <li>EfficientNet 和 5 个 benchmark backbone 证明机制不是单模型 artifact。</li>
+            <li>ECGFounder official full-FT K=100 fixed short-horizon 作为强基线上的 refinement 证据。</li>
+            <li>明确报告 negative evidence：real-only adapter 是强 baseline；VAE 的独立贡献是 regularization/refinement，不是所有提升的唯一来源。</li>
+          </ol>
+        </div>
+        <div class="panel span-6">
+          <h3>下一轮实验优先级</h3>
+          <ol>
+            <li>ECGFounder full-FT K=100 fixed epoch=1 做多 seed 复现。</li>
+            <li>固定 no-VAE vs VAE aw5/aw20 的选择规则，不使用 target test oracle。</li>
+            <li>EfficientNet1DV2 若继续追，应做 last-block/full fine-tune 对照；head adapter 已经显示增益太小。</li>
+            <li>所有主表同时报告 all-zero kept 与 drop-all-zero，并保留每中心、每类分析。</li>
+          </ol>
+        </div>
+      </div>
+    </section>
+
+    <section id="sources">
+      <div class="section-title">
+        <h2>本页依据</h2>
+        <span class="note">均来自当前 repo 已有文档和旧机器迁移结果</span>
+      </div>
+      <div class="panel">
+        <ul class="source-list">
+          <li><span class="code">docs/tmp_md/current_goal_review_20260523.md</span>：ECGFounder、EfficientNet、pure VAE-only、full-FT、K sensitivity 的主要事实表。</li>
+          <li><span class="code">docs/tmp_md/vae_only_v5_allzero_eval_20260522.md</span>：EfficientNet v5 all-zero kept / drop-all-zero 主复核。</li>
+          <li><span class="code">docs/tmp_md/multibackbone_vae_only_lhat_report_20260522.md</span>：5 个 PTB-XL benchmark backbone 的 VAE-only LH-AT 结果。</li>
+          <li><span class="code">docs/pipelines/current_reproduction_pipeline.md</span>：早期 no-token / target-token / real-anchor LH-AT 的复现实验背景。</li>
+        </ul>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

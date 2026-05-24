@@ -30,6 +30,7 @@ if str(_REPO_ROOT) not in sys.path:
 
 from scripts.paper.run_latenthull_real_anchor_grid_20260512 import (  # noqa: E402
     CLASS_NAMES,
+    DATA_ROOT,
     PN2021_CACHE_DIR,
     PN2021_MMAP_CACHE_DIR,
     PN2021_ROOT,
@@ -42,8 +43,10 @@ from scripts.paper.run_latenthull_real_anchor_grid_20260512 import (  # noqa: E4
 )
 
 
-OUT_ROOT = Path("/root/autodl-tmp/paper_multibackbone_vae_only_lhat_20260522")
+OUT_ROOT = DATA_ROOT / "paper_multibackbone_vae_only_lhat_20260522"
 REAL_ROOTS = [
+    DATA_ROOT / "ecgtwin_prompt_token_super5" / "real_anchor_selected_v2",
+    DATA_ROOT / "ecgtwin_prompt_token_super5" / "real_anchor_selected_v1",
     Path("/root/autodl-tmp/ecgtwin_prompt_token_super5/real_anchor_selected_v2"),
     Path("/root/autodl-tmp/ecgtwin_prompt_token_super5/real_anchor_selected_v1"),
 ]
@@ -59,6 +62,7 @@ DEFAULT_MODELS = [
 MODEL_LR = {
     "benchmark_lstm": 1e-3,
 }
+SUMMARY_SUFFIX = ""
 
 
 def run(cmd: list[str], log_path: Path, dry_run: bool = False) -> None:
@@ -67,8 +71,8 @@ def run(cmd: list[str], log_path: Path, dry_run: bool = False) -> None:
     if dry_run:
         return
     env = os.environ.copy()
-    env.setdefault("TMPDIR", "/root/autodl-tmp/tmp")
-    env.setdefault("XDG_CACHE_HOME", "/root/autodl-tmp/cache")
+    env.setdefault("TMPDIR", str(DATA_ROOT / "tmp"))
+    env.setdefault("XDG_CACHE_HOME", str(DATA_ROOT / "cache"))
     Path(env["TMPDIR"]).mkdir(parents=True, exist_ok=True)
     Path(env["XDG_CACHE_HOME"]).mkdir(parents=True, exist_ok=True)
     with log_path.open("w") as log:
@@ -172,7 +176,7 @@ def eval_model(
 ) -> Path:
     out_dir = OUT_ROOT / "evals" / model_name / center
     out_dir.mkdir(parents=True, exist_ok=True)
-    eval_path = out_dir / f"{tag}.json"
+    eval_path = out_dir / f"{tag}{args.eval_suffix}.json"
     if eval_path.exists() and not args.force_eval:
         print(f"[skip] eval {model_name} {center} {tag}", flush=True)
         return eval_path
@@ -194,6 +198,8 @@ def eval_model(
         str(args.eval_batch_size),
         "--num_workers",
         str(args.num_workers),
+        "--ptbxl_csv",
+        PTBXL_CSV,
         "--ptbxl_cache",
         PTBXL_PREP,
         "--preprocess_mode",
@@ -204,6 +210,8 @@ def eval_model(
         PN2021_CACHE_DIR,
         "--pn2021_mmap_cache_dir",
         PN2021_MMAP_CACHE_DIR,
+        "--pn2021_root",
+        str(DATA_ROOT / "physionet2021"),
         "--skip_mimic",
         "--exclude_ref_ids",
         str(ref_meta),
@@ -367,7 +375,7 @@ def target_metrics(center: str, eval_path: Path) -> dict[str, float]:
 def write_summary(rows: list[dict[str, Any]]) -> None:
     summary_dir = OUT_ROOT / "summaries"
     summary_dir.mkdir(parents=True, exist_ok=True)
-    csv_path = summary_dir / "multibackbone_vae_only_lhat.csv"
+    csv_path = summary_dir / f"multibackbone_vae_only_lhat{SUMMARY_SUFFIX}.csv"
     fields = [
         "model_name",
         "center",
@@ -389,7 +397,7 @@ def write_summary(rows: list[dict[str, Any]]) -> None:
         w.writeheader()
         w.writerows(rows)
 
-    md_path = summary_dir / "multibackbone_vae_only_lhat.md"
+    md_path = summary_dir / f"multibackbone_vae_only_lhat{SUMMARY_SUFFIX}.md"
     with md_path.open("w") as f:
         f.write("# Multi-Backbone VAE-Only Online AT\n\n")
         f.write(
@@ -414,7 +422,7 @@ def write_summary(rows: list[dict[str, Any]]) -> None:
 
 
 def main() -> None:
-    global OUT_ROOT
+    global OUT_ROOT, SUMMARY_SUFFIX
     ap = argparse.ArgumentParser()
     ap.add_argument("--out_root", default=str(OUT_ROOT))
     ap.add_argument("--models", nargs="+", default=DEFAULT_MODELS)
@@ -443,10 +451,14 @@ def main() -> None:
     ap.add_argument("--device", default="cuda:0")
     ap.add_argument("--force_train", action="store_true")
     ap.add_argument("--force_eval", action="store_true")
+    ap.add_argument("--eval_suffix", default="",
+                    help="Optional suffix before .json for preserving older "
+                         "evaluation files, e.g. _v5_20260524.")
     ap.add_argument("--force_at", action="store_true")
     ap.add_argument("--dry_run", action="store_true")
     args = ap.parse_args()
     OUT_ROOT = Path(args.out_root)
+    SUMMARY_SUFFIX = args.eval_suffix
     OUT_ROOT.mkdir(parents=True, exist_ok=True)
     with (OUT_ROOT / "run_config.json").open("w") as f:
         json.dump(vars(args), f, indent=2)

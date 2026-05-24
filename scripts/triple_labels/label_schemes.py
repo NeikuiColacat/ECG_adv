@@ -31,6 +31,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 
 # Re-export PN26 functions from the existing module (verified source of truth)
 from scripts.crosscenter_v2.label_alignment_v2 import (
@@ -43,7 +44,19 @@ from scripts.crosscenter_v2.label_alignment_v2 import (
 )
 
 
-SCP_STATEMENTS_PATH = '/root/autodl-tmp/ptbxl/scp_statements.csv'
+SCP_STATEMENTS_PATH = os.environ.get(
+    'PTBXL_SCP_STATEMENTS',
+    os.path.join(PROJECT_ROOT, 'datasets', 'PTBXL', 'scp_statements.csv'),
+)
+if not os.path.exists(SCP_STATEMENTS_PATH):
+    migrated_scp = (
+        '/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/'
+        'root/autodl-tmp/ptbxl/scp_statements.csv'
+    )
+    if os.path.exists(migrated_scp):
+        SCP_STATEMENTS_PATH = migrated_scp
+if not os.path.exists(SCP_STATEMENTS_PATH):
+    SCP_STATEMENTS_PATH = '/root/autodl-tmp/ptbxl/scp_statements.csv'
 
 
 # ────────────────────────────────────────────────────────────────────────────

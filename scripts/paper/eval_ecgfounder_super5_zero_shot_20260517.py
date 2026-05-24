@@ -35,7 +35,16 @@ from tqdm import tqdm
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-ECGFOUNDER_ROOT = Path("/root/autodl-tmp/ecgfounder")
+_MIGRATED_DATA_ROOT = Path(
+    "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp"
+)
+DATA_ROOT = Path(
+    os.environ.get(
+        "ECG_ADV_GEN_DATA_ROOT",
+        str(_MIGRATED_DATA_ROOT if _MIGRATED_DATA_ROOT.exists() else Path("/root/autodl-tmp")),
+    )
+)
+ECGFOUNDER_ROOT = Path(os.environ.get("ECGFOUNDER_ROOT", str(DATA_ROOT / "ecgfounder")))
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(ECGFOUNDER_ROOT))
 
