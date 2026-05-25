@@ -613,6 +613,51 @@ def stratified_sample_synth(
     return np.array(sorted(set(picked))[:K_anchor])
 
 
+def build_k500_internal_val_mask(
+    labels: np.ndarray,
+    val_fraction: float,
+    seed: int,
+    min_per_present_class: int = 1,
+) -> np.ndarray:
+    """Build a deterministic validation mask using only K-shot labels.
+
+    This is intentionally simple and paper-safe: it never looks at held-out
+    PN2021 performance. It first reserves a small class-balanced validation
+    set from the K-shot target labels, then fills to the requested fraction.
+    """
+    labels = np.asarray(labels, dtype=np.float32)
+    if labels.ndim != 2:
+        raise ValueError(f"expected labels 2D, got {labels.shape}")
+    n = int(labels.shape[0])
+    if n < 5:
+        raise ValueError(f"need at least 5 target-real samples for internal val, got {n}")
+    frac = float(val_fraction)
+    if not 0.0 < frac < 0.5:
+        raise ValueError(f"target_real_val_fraction must be in (0,0.5), got {frac}")
+    rng = np.random.default_rng(int(seed))
+    target_n = max(1, int(round(n * frac)))
+    picked: set[int] = set()
+    for cls_i in range(labels.shape[1]):
+        pos = np.where(labels[:, cls_i] > 0.5)[0]
+        if len(pos) == 0:
+            continue
+        take = min(len(pos), max(int(min_per_present_class), int(round(len(pos) * frac))))
+        if take > 0:
+            picked.update(int(i) for i in rng.choice(pos, size=take, replace=False))
+    if len(picked) < target_n:
+        rest = np.asarray([i for i in range(n) if i not in picked], dtype=np.int64)
+        if len(rest) > 0:
+            take = min(target_n - len(picked), len(rest))
+            picked.update(int(i) for i in rng.choice(rest, size=take, replace=False))
+    if len(picked) >= n:
+        # Keep at least one train sample; this should not happen for normal K=500.
+        picked = set(sorted(picked)[:-1])
+    mask = np.zeros((n,), dtype=bool)
+    if picked:
+        mask[np.asarray(sorted(picked), dtype=np.int64)] = True
+    return mask
+
+
 def parse_source_weight_map(raw: Optional[str]) -> Dict[str, float]:
     """Parse `source=weight,source2=weight2` into a dict."""
     if not raw:
@@ -646,6 +691,165 @@ def parse_class_source_weight_map(raw: Optional[str]) -> Dict[str, Dict[str, flo
         source, value = rest.split("=", 1)
         out.setdefault(cls.strip(), {})[source.strip()] = float(value)
     return out
+
+
+def parse_class_weight_map(raw: Optional[str]) -> Dict[str, float]:
+    """Parse `CLASS=weight,CLASS2=weight2` into a Super5 class weight map."""
+    if not raw:
+        return {}
+    out: Dict[str, float] = {}
+    for item in raw.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        if "=" not in item:
+            raise ValueError(f"Bad class weight item {item!r}; expected CLASS=weight")
+        cls, value = item.split("=", 1)
+        cls = cls.strip()
+        if cls not in SUPER5_TO_IDX:
+            raise ValueError(f"Unknown Super5 class in --anchor_class_weights: {cls!r}")
+        out[cls] = max(0.0, float(value))
+    return out
+
+
+def weighted_anchor_quotas(
+    classes_in_scope: List[str],
+    class_sizes: Dict[str, int],
+    K_anchor: int,
+    class_weights: Dict[str, float],
+) -> Dict[str, int]:
+    """Allocate per-class anchor quotas using only the known K-shot pool."""
+    present = [c for c in classes_in_scope if int(class_sizes.get(c, 0)) > 0]
+    if not present or K_anchor <= 0:
+        return {c: 0 for c in classes_in_scope}
+    weights = np.asarray(
+        [max(float(class_weights.get(c, 1.0)), 0.0) for c in present],
+        dtype=np.float64,
+    )
+    if not np.isfinite(weights).all() or float(weights.sum()) <= 0.0:
+        weights = np.ones((len(present),), dtype=np.float64)
+    raw = weights / weights.sum() * int(K_anchor)
+    base = np.floor(raw).astype(int)
+    # Keep every present class represented when possible.
+    if int(K_anchor) >= len(present):
+        base = np.maximum(base, 1)
+    rem = int(K_anchor) - int(base.sum())
+    frac_order = np.argsort(-(raw - np.floor(raw)))
+    i = 0
+    while rem > 0:
+        base[int(frac_order[i % len(frac_order)])] += 1
+        rem -= 1
+        i += 1
+    while rem < 0:
+        for idx in np.argsort(raw - np.floor(raw)):
+            floor = 1 if int(K_anchor) >= len(present) else 0
+            if base[int(idx)] > floor:
+                base[int(idx)] -= 1
+                rem += 1
+                break
+        else:
+            break
+    capacity = np.asarray([int(class_sizes.get(c, 0)) for c in present], dtype=int)
+    base = np.minimum(base, capacity)
+
+    # If rare classes saturate, redistribute their unused quota to classes that
+    # still have unseen K-shot anchors. This preserves K_anchor pressure while
+    # still giving rare classes as much quota as the no-revisit walker allows.
+    remaining = min(int(K_anchor), int(capacity.sum())) - int(base.sum())
+    while remaining > 0:
+        available = np.where(base < capacity)[0]
+        if available.size == 0:
+            break
+        safe_weights = np.where(weights > 0.0, weights, 1.0)
+        ratios = base[available] / safe_weights[available]
+        pick = int(available[int(np.argmin(ratios))])
+        base[pick] += 1
+        remaining -= 1
+
+    quotas = {c: 0 for c in classes_in_scope}
+    quotas.update({c: int(k) for c, k in zip(present, base)})
+    return quotas
+
+
+def derive_kshot_anchor_class_weights(
+    labels_one_hot: np.ndarray,
+    classes_in_scope: List[str],
+    class_to_idx: Dict[str, int],
+    *,
+    mode: str,
+    source_labels: Optional[np.ndarray],
+    reference_source: str,
+    gamma: float,
+    min_weight: float,
+    max_weight: float,
+    missing_weight: float,
+    manual_prior: Optional[Dict[str, float]] = None,
+) -> Tuple[Dict[str, float], Dict[str, Any]]:
+    """Derive anchor quota weights from the known K-shot training subset.
+
+    This intentionally uses only the latent pool after K500-val records are
+    removed. When source metadata exists, the default reference source is the
+    target real anchors; merged PTB-XL/source samples can then serve as rescue
+    anchors only through the source sampler, not by changing the count estimate.
+    """
+    if mode == "manual":
+        weights = dict(manual_prior or {})
+        return weights, {
+            "mode": mode,
+            "manual_prior": weights,
+            "reference_source": reference_source,
+            "reference_source_found": None,
+            "reference_counts": {},
+            "derived_weights": weights,
+        }
+    if mode != "inv_freq_kshot":
+        raise ValueError(f"unsupported anchor_class_weight_mode={mode!r}")
+
+    labels_one_hot = np.asarray(labels_one_hot, dtype=np.float32)
+    ref_mask = np.ones((labels_one_hot.shape[0],), dtype=bool)
+    reference_source_found: Optional[bool] = None
+    if source_labels is not None and reference_source and reference_source != "all":
+        source_labels_arr = np.asarray(source_labels).astype(str)
+        candidate_mask = source_labels_arr == str(reference_source)
+        reference_source_found = bool(candidate_mask.any())
+        if reference_source_found:
+            ref_mask = candidate_mask
+    ref_labels = labels_one_hot[ref_mask]
+    counts: Dict[str, int] = {}
+    for cls in classes_in_scope:
+        idx = class_to_idx[cls]
+        counts[cls] = int((ref_labels[:, idx] > 0.5).sum())
+
+    nonzero = np.asarray([v for v in counts.values() if v > 0], dtype=np.float64)
+    reference_count = float(np.median(nonzero)) if nonzero.size else 1.0
+    gamma = max(float(gamma), 0.0)
+    min_weight = max(float(min_weight), 0.0)
+    max_weight = max(float(max_weight), min_weight)
+    missing_weight = max(float(missing_weight), 0.0)
+    weights: Dict[str, float] = {}
+    for cls in classes_in_scope:
+        count = int(counts[cls])
+        if count <= 0:
+            weight = missing_weight
+        else:
+            weight = (reference_count / max(float(count), 1.0)) ** gamma
+            weight = min(max(weight, min_weight), max_weight)
+        if manual_prior and cls in manual_prior:
+            weight *= max(float(manual_prior[cls]), 0.0)
+        weights[cls] = float(weight)
+    return weights, {
+        "mode": mode,
+        "manual_prior": dict(manual_prior or {}),
+        "reference_source": reference_source,
+        "reference_source_found": reference_source_found,
+        "reference_count": reference_count,
+        "reference_counts": counts,
+        "gamma": gamma,
+        "min_weight": min_weight,
+        "max_weight": max_weight,
+        "missing_weight": missing_weight,
+        "derived_weights": weights,
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -842,17 +1046,41 @@ class SameLabelLatentIndex:
         label_mode: str = "primary",
         seed: int = 42,
         include_self: bool = False,
+        distance_space: str = "raw",
+        neighbor_mode: str = "nearest",
+        neighbor_pool_size: int = 0,
+        neighbor_pool_multiplier: int = 4,
     ):
         if label_mode not in {"primary", "exact", "compatible"}:
             raise ValueError(
                 f"label_mode must be primary|exact|compatible, got {label_mode!r}"
             )
+        if distance_space not in {"raw", "standardized"}:
+            raise ValueError(
+                f"distance_space must be raw|standardized, got {distance_space!r}"
+            )
+        if neighbor_mode not in {"nearest", "local_random", "random"}:
+            raise ValueError(
+                f"neighbor_mode must be nearest|local_random|random, got {neighbor_mode!r}"
+            )
         self.latents = latents.astype(np.float32, copy=False)
         self.labels = labels_one_hot.astype(np.float32, copy=False)
         self.label_mode = label_mode
         self.include_self = bool(include_self)
+        self.distance_space = distance_space
+        self.neighbor_mode = neighbor_mode
+        self.neighbor_pool_size = int(neighbor_pool_size)
+        self.neighbor_pool_multiplier = max(1, int(neighbor_pool_multiplier))
         self.rng = np.random.default_rng(seed)
         self.last_candidate_indices: Optional[np.ndarray] = None
+        flat_latents = self.latents.reshape(self.latents.shape[0], -1)
+        if distance_space == "standardized":
+            mu = flat_latents.mean(axis=0, keepdims=True)
+            sigma = flat_latents.std(axis=0, keepdims=True)
+            sigma = np.where(sigma < 1e-6, 1.0, sigma)
+            self.flat_distance = ((flat_latents - mu) / sigma).astype(np.float32)
+        else:
+            self.flat_distance = flat_latents.astype(np.float32, copy=False)
         if label_mode == "primary":
             keys = [int(i) for i in self.labels.argmax(axis=1)]
         elif label_mode == "exact":
@@ -875,6 +1103,21 @@ class SameLabelLatentIndex:
     def class_sizes(self) -> Dict[str, int]:
         return {str(k): int(len(v)) for k, v in self.pools.items()}
 
+    def _choose_neighbors(self, pool: np.ndarray, order: np.ndarray, M: int) -> np.ndarray:
+        if self.neighbor_mode == "nearest":
+            return pool[order[:M]]
+        if self.neighbor_mode == "random":
+            if len(pool) <= M:
+                return pool.copy()
+            return self.rng.choice(pool, size=M, replace=False).astype(np.int64)
+        top_k = self.neighbor_pool_size
+        if top_k <= 0:
+            top_k = max(M, M * self.neighbor_pool_multiplier)
+        local_pool = pool[order[: min(int(top_k), len(order))]]
+        if len(local_pool) <= M:
+            return local_pool.copy()
+        return self.rng.choice(local_pool, size=M, replace=False).astype(np.int64)
+
     def candidates_for(self, anchor_indices: np.ndarray, M: int) -> np.ndarray:
         """Return (B,M,4,128) nearest same-label candidates.
 
@@ -885,7 +1128,6 @@ class SameLabelLatentIndex:
         """
         out = np.empty((len(anchor_indices), M, 4, 128), dtype=np.float32)
         out_indices = np.empty((len(anchor_indices), M), dtype=np.int64)
-        flat_latents = self.latents.reshape(self.latents.shape[0], -1)
         for row_i, anchor_idx in enumerate(anchor_indices):
             anchor_idx = int(anchor_idx)
             key = self.keys[anchor_idx]
@@ -893,7 +1135,7 @@ class SameLabelLatentIndex:
             pool = pool[pool != anchor_idx]
             if len(pool) == 0:
                 pool = np.asarray([anchor_idx], dtype=np.int64)
-            diff = flat_latents[pool] - flat_latents[anchor_idx]
+            diff = self.flat_distance[pool] - self.flat_distance[anchor_idx]
             dist2 = np.einsum("ij,ij->i", diff, diff)
             order = np.argsort(dist2)
             if self.include_self:
@@ -901,11 +1143,11 @@ class SameLabelLatentIndex:
                 chosen = np.concatenate(
                     [
                         np.asarray([anchor_idx], dtype=np.int64),
-                        pool[order[:neighbor_budget]],
+                        self._choose_neighbors(pool, order, neighbor_budget),
                     ]
                 )
             else:
-                chosen = pool[order[:M]]
+                chosen = self._choose_neighbors(pool, order, M)
             if len(chosen) < M:
                 pad_value = int(chosen[-1]) if len(chosen) else anchor_idx
                 pad = np.full((M - len(chosen),), pad_value, dtype=np.int64)
@@ -1393,6 +1635,18 @@ def parse_args():
                    default=["chapman_shaoxing", "cpsc_2018_extra", "georgia",
                             "ningbo"])
     p.add_argument("--quick_eval_n_per_center", type=int, default=1000)
+    p.add_argument(
+        "--quick_eval_source",
+        choices=["pn2021", "target_real_val"],
+        default="pn2021",
+        help=(
+            "pn2021 uses the historical ref-excluded PN2021 quick subset. "
+            "target_real_val selects checkpoints on a validation split held "
+            "out from --target_real_npz, avoiding target-center test leakage."
+        ),
+    )
+    p.add_argument("--target_real_val_fraction", type=float, default=0.2)
+    p.add_argument("--target_real_val_seed", type=int, default=20260531)
 
     # PTBXL paths
     p.add_argument("--ptbxl_raw", default=DEFAULT_PTBXL_RAW)
@@ -1442,6 +1696,26 @@ def parse_args():
         help="Include the anchor latent itself as candidate 0 in same-label hull. "
              "Useful for no-lambda convex-hull ablations with --hull_lambda 1.0.",
     )
+    p.add_argument(
+        "--hull_neighbor_distance_space",
+        choices=["raw", "standardized"],
+        default="raw",
+        help=(
+            "Latent distance space used when selecting same-label hull partners. "
+            "standardized uses per-dimension z-score distances over the latent pool."
+        ),
+    )
+    p.add_argument(
+        "--hull_neighbor_mode",
+        choices=["nearest", "local_random", "random"],
+        default="nearest",
+        help=(
+            "Partner selection inside the same-label pool. local_random samples "
+            "from a nearby kNN pool, which is useful for locality-aware mixup."
+        ),
+    )
+    p.add_argument("--hull_neighbor_pool_size", type=int, default=0)
+    p.add_argument("--hull_neighbor_pool_multiplier", type=int, default=4)
     p.add_argument("--source_sampling_strategy",
                    choices=["class_balanced", "source_weighted"],
                    default="class_balanced",
@@ -1454,6 +1728,43 @@ def parse_args():
                    help="Comma overrides, e.g. MI:prompt_token=1.0,STTC:prompt_token=0.5")
     p.add_argument("--source_floor_per_class", type=int, default=0,
                    help="Minimum anchors per positive-weight source within each class quota.")
+    p.add_argument(
+        "--anchor_class_weights",
+        default=None,
+        help=(
+            "Comma map CLASS=weight for per-epoch latent anchor quotas, e.g. "
+            "HYP=3,MI=3,CD=2,NORM=1,STTC=1. Uses only classes present in "
+            "the K-shot latent pool."
+        ),
+    )
+    p.add_argument(
+        "--anchor_class_weight_mode",
+        choices=["manual", "inv_freq_kshot"],
+        default="manual",
+        help=(
+            "manual uses --anchor_class_weights. inv_freq_kshot derives a "
+            "single global formula from the K500-train latent labels after the "
+            "internal validation split is removed; no held-out target labels "
+            "or target-center distribution are used."
+        ),
+    )
+    p.add_argument(
+        "--anchor_class_weight_reference_source",
+        default="real_anchor",
+        help=(
+            "Source label used for inv_freq_kshot counts when source metadata "
+            "exists; use 'all' to count the full latent pool."
+        ),
+    )
+    p.add_argument("--anchor_class_weight_gamma", type=float, default=0.5)
+    p.add_argument("--anchor_class_weight_min", type=float, default=0.35)
+    p.add_argument("--anchor_class_weight_cap", type=float, default=4.0)
+    p.add_argument(
+        "--anchor_class_missing_weight",
+        type=float,
+        default=0.35,
+        help="Weight assigned to classes absent from the K500-train reference subset.",
+    )
     p.add_argument("--classes_in_scope", nargs="+", default=sorted(SUPER5_GEN_SUBSET),
                    help="Super5 classes sampled as adversarial anchors. Default keeps historical NORM/MI/STTC.")
     p.add_argument("--allow_hyp_cd_trust", action="store_true",
@@ -1485,6 +1796,15 @@ def parse_args():
                    help="Sampling weight for --target_real_npz supervised stream.")
     p.add_argument("--roundtrip_weight", type=float, default=0.5)
     p.add_argument("--adv_weight", type=float, default=0.5)
+    p.add_argument(
+        "--adv_weight_warmup_epochs",
+        type=int,
+        default=0,
+        help=(
+            "If >0, linearly ramp the adversarial buffer sampling weight from "
+            "a small value to --adv_weight over this many epochs."
+        ),
+    )
     p.add_argument(
         "--disable_adv_stream",
         action="store_true",
@@ -1684,6 +2004,8 @@ def load_synth_pool(synth_npz_path: str) -> Tuple[np.ndarray, np.ndarray, str, D
         "source_labels": source_labels,
         "has_source_metadata": "source_ids" in d.files and "source_names" in d.files,
     }
+    if "record_ids" in d.files:
+        source_meta["record_ids"] = d["record_ids"].astype(str)
     return latents.astype(np.float32), labels.astype(np.float32), center, source_meta
 
 
@@ -1850,10 +2172,17 @@ def main():
             flush=True,
         )
     target_real_ds = None
+    target_val_quick_subset = None
+    target_val_record_ids: set[str] = set()
     if args.target_real_npz:
         with np.load(args.target_real_npz, allow_pickle=True) as real_data:
             real_signals = np.asarray(real_data["signals"], dtype=np.float32)
             real_labels = np.asarray(real_data["labels"], dtype=np.float32)
+            real_record_ids = (
+                real_data["record_ids"].astype(str)
+                if "record_ids" in real_data.files
+                else np.asarray([str(i) for i in range(real_labels.shape[0])])
+            )
         if real_signals.ndim != 3:
             raise ValueError(f"target_real_npz signals must be 3D, got {real_signals.shape}")
         if real_signals.shape[1:] == (12, 1000):
@@ -1862,6 +2191,28 @@ def main():
             raise ValueError(f"target_real_npz signals must be (N,1000,12) or (N,12,1000), got {real_signals.shape}")
         if real_labels.shape[0] != real_signals.shape[0] or real_labels.shape[1] != NUM_SUPER5:
             raise ValueError(f"target_real_npz labels mismatch: signals={real_signals.shape} labels={real_labels.shape}")
+        if args.quick_eval_source == "target_real_val":
+            val_mask = build_k500_internal_val_mask(
+                real_labels,
+                val_fraction=args.target_real_val_fraction,
+                seed=args.target_real_val_seed,
+            )
+            train_mask = ~val_mask
+            target_val_record_ids = set(str(x) for x in real_record_ids[val_mask])
+            target_val_quick_subset = {
+                args.center_name: {
+                    "signals_tc": real_signals[val_mask].astype(np.float32),
+                    "labels_5": real_labels[val_mask].astype(np.float32),
+                }
+            }
+            print(
+                f"[setup] target-real internal val split: "
+                f"train={int(train_mask.sum())} val={int(val_mask.sum())} "
+                f"fraction={args.target_real_val_fraction} seed={args.target_real_val_seed}",
+                flush=True,
+            )
+            real_signals = real_signals[train_mask]
+            real_labels = real_labels[train_mask]
         target_real_ds = PTBXLDatasetScheme(
             real_signals,
             real_labels,
@@ -1873,6 +2224,26 @@ def main():
             f"weight={args.target_real_weight} path={args.target_real_npz}",
             flush=True,
         )
+    elif args.quick_eval_source == "target_real_val":
+        raise ValueError("--quick_eval_source target_real_val requires --target_real_npz")
+
+    if target_val_record_ids and "record_ids" in source_meta:
+        keep_mask = np.asarray(
+            [str(rid) not in target_val_record_ids for rid in source_meta["record_ids"]],
+            dtype=bool,
+        )
+        n_drop = int((~keep_mask).sum())
+        if n_drop > 0:
+            synth_latents = synth_latents[keep_mask]
+            synth_labels = synth_labels[keep_mask]
+            for key in ("source_ids", "source_labels", "record_ids"):
+                if key in source_meta:
+                    source_meta[key] = source_meta[key][keep_mask]
+            print(
+                f"[setup] removed {n_drop} K500-val records from latent anchor pool; "
+                f"train_latents={len(synth_latents)}",
+                flush=True,
+            )
 
     pos_weight = torch.tensor(
         compute_pos_weight(train_labels, NUM_SUPER5),
@@ -1895,22 +2266,36 @@ def main():
     if roundtrip_ds is not None:
         print(f"[setup] roundtrip-anchor: n={len(roundtrip_ds)}, weight={args.roundtrip_weight}")
 
-    # ── Quick eval subset (Issue #39 ref-record exclusion) ──────────────────
-    excluded = None
-    if args.ref_meta_json and os.path.exists(args.ref_meta_json):
-        with open(args.ref_meta_json) as f:
-            meta = json.load(f)
-        excluded = set(meta.get("ref_record_ids", []))
-        print(f"[setup] excluding {len(excluded)} ref_record_ids from "
-              f"quick_eval (center={args.center_name})")
+    # ── Quick eval subset ───────────────────────────────────────────────────
+    if args.quick_eval_source == "target_real_val":
+        if target_val_quick_subset is None:
+            raise RuntimeError("target_real_val quick eval requested but no target val split exists")
+        quick_subset = target_val_quick_subset
+        print(
+            f"[setup] quick_eval_source=target_real_val; "
+            f"n={quick_subset[args.center_name]['signals_tc'].shape[0]} "
+            f"(K500-internal validation, no PN2021 held-out selection)",
+            flush=True,
+        )
+    else:
+        # Historical path: ref-excluded PN2021 target-center quick subset.
+        # This is useful for exploration, but final paper-safe model selection
+        # should use --quick_eval_source target_real_val.
+        excluded = None
+        if args.ref_meta_json and os.path.exists(args.ref_meta_json):
+            with open(args.ref_meta_json) as f:
+                meta = json.load(f)
+            excluded = set(meta.get("ref_record_ids", []))
+            print(f"[setup] excluding {len(excluded)} ref_record_ids from "
+                  f"quick_eval (center={args.center_name})")
 
-    qe_cache = os.path.join(args.output_dir,
-                            f"quick_eval_subset_n{args.quick_eval_n_per_center}.cache")
-    quick_subset = build_quick_eval_subset_super5(
-        centers=args.quick_eval_centers, data_dir=args.data_dir,
-        n_per_center=args.quick_eval_n_per_center, cache_path=qe_cache,
-        seed=args.seed, exclude_record_ids=excluded,
-    )
+        qe_cache = os.path.join(args.output_dir,
+                                f"quick_eval_subset_n{args.quick_eval_n_per_center}.cache")
+        quick_subset = build_quick_eval_subset_super5(
+            centers=args.quick_eval_centers, data_dir=args.data_dir,
+            n_per_center=args.quick_eval_n_per_center, cache_path=qe_cache,
+            seed=args.seed, exclude_record_ids=excluded,
+        )
 
     print("[baseline] Computing baseline quick-eval ...")
     baseline_qe = quick_eval_super5(victim.model, quick_subset, args.device,
@@ -1942,9 +2327,17 @@ def main():
             label_mode=args.hull_label_mode,
             seed=args.seed,
             include_self=args.hull_include_anchor,
+            distance_space=args.hull_neighbor_distance_space,
+            neighbor_mode=args.hull_neighbor_mode,
+            neighbor_pool_size=args.hull_neighbor_pool_size,
+            neighbor_pool_multiplier=args.hull_neighbor_pool_multiplier,
         )
         print(f"[setup] latent-hull index mode={args.hull_label_mode} "
               f"include_anchor={args.hull_include_anchor} "
+              f"distance_space={args.hull_neighbor_distance_space} "
+              f"neighbor_mode={args.hull_neighbor_mode} "
+              f"neighbor_pool_size={args.hull_neighbor_pool_size} "
+              f"neighbor_pool_multiplier={args.hull_neighbor_pool_multiplier} "
               f"sizes={latent_hull_index.class_sizes()}")
     else:
         pgd_gen = PGDAdvDiffGenerator(
@@ -2018,6 +2411,24 @@ def main():
     scheduler = CosineAnnealingLR(optimizer, T_max=args.n_epochs,
                                   eta_min=args.lr * 0.01)
 
+    source_weight_map = parse_source_weight_map(args.source_weights)
+    source_class_weight_map = parse_class_source_weight_map(args.source_class_weights)
+    manual_anchor_class_weight_map = parse_class_weight_map(args.anchor_class_weights)
+    anchor_class_weight_map, anchor_class_weight_info = derive_kshot_anchor_class_weights(
+        synth_labels,
+        classes_in_scope,
+        SUPER5_TO_IDX,
+        mode=args.anchor_class_weight_mode,
+        source_labels=source_meta.get("source_labels"),
+        reference_source=args.anchor_class_weight_reference_source,
+        gamma=args.anchor_class_weight_gamma,
+        min_weight=args.anchor_class_weight_min,
+        max_weight=args.anchor_class_weight_cap,
+        missing_weight=args.anchor_class_missing_weight,
+        manual_prior=manual_anchor_class_weight_map,
+    )
+    print(f"[setup] anchor class weight policy: {anchor_class_weight_info}", flush=True)
+
     log: Dict[str, Any] = {
         "args": vars(args),
         "baseline_quick_eval": baseline_qe,
@@ -2046,6 +2457,19 @@ def main():
             "hull_label_positive": args.hull_label_positive,
             "hull_label_negative_floor": args.hull_label_negative_floor,
             "hull_label_new_class_cap": args.hull_label_new_class_cap,
+        },
+        "latent_hull_partner_selection": {
+            "include_anchor": bool(args.hull_include_anchor),
+            "distance_space": args.hull_neighbor_distance_space,
+            "neighbor_mode": args.hull_neighbor_mode,
+            "neighbor_pool_size": int(args.hull_neighbor_pool_size),
+            "neighbor_pool_multiplier": int(args.hull_neighbor_pool_multiplier),
+        },
+        "anchor_sampling": {
+            "classes_in_scope": list(classes_in_scope),
+            "anchor_class_weights": anchor_class_weight_map,
+            "anchor_class_weight_policy": anchor_class_weight_info,
+            "K_anchor": int(args.K_anchor),
         },
         "latent_augmix_branch": {
             "enabled": bool(args.enable_latent_augmix_branch),
@@ -2084,8 +2508,6 @@ def main():
     es_path = os.path.join(args.output_dir, "early_stop_info.json")
 
     # Plan Rev 13.2: stratified pool walker over NORM/MI/STTC scope only
-    source_weight_map = parse_source_weight_map(args.source_weights)
-    source_class_weight_map = parse_class_source_weight_map(args.source_class_weights)
     walker = StratifiedPoolWalker(
         labels_one_hot=synth_labels,
         classes_in_scope=classes_in_scope,
@@ -2096,7 +2518,9 @@ def main():
         source_class_weights=source_class_weight_map,
         source_floor_per_class=args.source_floor_per_class,
     )
-    print(f"[setup] walker class sizes: {walker.class_sizes()}")
+    walker_class_sizes = walker.class_sizes()
+    print(f"[setup] walker class sizes: {walker_class_sizes}")
+    print(f"[setup] anchor class weights: {anchor_class_weight_map or {'<default>': 1.0}}")
     if args.source_sampling_strategy == "source_weighted":
         print(f"[setup] walker source-class sizes: {walker.source_class_sizes()}")
         print(f"[setup] source weights: global={source_weight_map or {'<default>': 1.0}} "
@@ -2113,6 +2537,7 @@ def main():
         # Phase A: PGD on synth pool with the *current* victim
         # Plan Rev 13.2: StratifiedPoolWalker draws no-revisit-per-epoch,
         # restricted to NORM/MI/STTC scope.
+        k_per_cls: Dict[str, int] = {}
         if args.disable_adv_stream:
             asr_info = {
                 "asr_overall": float("nan"),
@@ -2131,12 +2556,14 @@ def main():
             gate_skipped = True
         else:
             victim.model.eval()
-            per_cls = max(1, args.K_anchor // len(classes_in_scope))
-            k_per_cls = {c: per_cls for c in classes_in_scope}
-            rem = args.K_anchor - per_cls * len(classes_in_scope)
-            for i_extra in range(rem):
-                k_per_cls[classes_in_scope[i_extra % len(classes_in_scope)]] += 1
+            k_per_cls = weighted_anchor_quotas(
+                classes_in_scope,
+                walker_class_sizes,
+                args.K_anchor,
+                anchor_class_weight_map,
+            )
             drawn = walker.sample(k_per_cls)
+            print(f"[ep{epoch:02d}] anchor class quotas: {k_per_cls}", flush=True)
             if args.source_sampling_strategy == "source_weighted":
                 print(f"[ep{epoch:02d}] anchor source counts: {walker.last_source_counts} "
                       f"class_source={walker.last_class_source_counts}", flush=True)
@@ -2298,8 +2725,15 @@ def main():
             streams.append((target_real_ds, args.target_real_weight, None))
         if roundtrip_ds is not None and args.roundtrip_weight > 0:
             streams.append((roundtrip_ds, args.roundtrip_weight, None))
+        epoch_adv_weight = 0.0
         if buf_ds is not None and len(buf_ds) > 0:
-            streams.append((buf_ds, args.adv_weight, buffer.get_sampling_weights()))
+            if args.adv_weight_warmup_epochs > 0:
+                adv_scale = min(1.0, epoch / float(args.adv_weight_warmup_epochs))
+            else:
+                adv_scale = 1.0
+            epoch_adv_weight = float(args.adv_weight) * adv_scale
+            if epoch_adv_weight > 0:
+                streams.append((buf_ds, epoch_adv_weight, buffer.get_sampling_weights()))
 
         if len(streams) == 0:
             raise RuntimeError(
@@ -2418,6 +2852,9 @@ def main():
             "push_stats": push_stats if not gate_skipped else {},
             "latent_augmix_stats": latent_augmix_stats,
             "latent_augmix_push_stats": latent_augmix_push_stats,
+            "adv_weight_effective": round(float(epoch_adv_weight), 6),
+            "adv_weight_warmup_epochs": int(args.adv_weight_warmup_epochs),
+            "anchor_class_quotas": dict(k_per_cls),
             "delta_mean":    round(delta_stats["mean_delta_norm"], 4),
             "delta_max":     round(delta_stats["max_delta_norm"], 4),
             "lr":            round(optimizer.param_groups[0]["lr"], 6),
@@ -2440,6 +2877,10 @@ def main():
                 "hull_label_negative_floor": args.hull_label_negative_floor,
                 "hull_label_new_class_cap": args.hull_label_new_class_cap,
                 "hull_include_anchor": args.hull_include_anchor,
+                "hull_neighbor_distance_space": args.hull_neighbor_distance_space,
+                "hull_neighbor_mode": args.hull_neighbor_mode,
+                "hull_neighbor_pool_size": args.hull_neighbor_pool_size,
+                "hull_neighbor_pool_multiplier": args.hull_neighbor_pool_multiplier,
                 "hull_weight_entropy_mean": round(
                     float(delta_stats.get("hull_weight_entropy_mean", float('nan'))), 4
                 ),

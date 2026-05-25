@@ -44,7 +44,16 @@ from scripts.paper.run_latenthull_real_anchor_grid_20260512 import (
 )
 
 
-OUT_ROOT = Path("/root/autodl-tmp/paper_effnet_classifieronly_vae_pilot_20260523")
+_MIGRATED_DATA_ROOT = Path(
+    "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp"
+)
+DATA_ROOT = Path(
+    os.environ.get(
+        "ECG_ADV_GEN_DATA_ROOT",
+        str(_MIGRATED_DATA_ROOT if _MIGRATED_DATA_ROOT.exists() else Path("/root/autodl-tmp")),
+    )
+)
+OUT_ROOT = DATA_ROOT / "paper_effnet_classifieronly_vae_pilot_20260523"
 CLASS_NAMES = np.asarray(["CD", "HYP", "MI", "NORM", "STTC"])
 
 
@@ -58,8 +67,8 @@ def run(cmd: list[str], log_path: Path, dry_run: bool = False) -> None:
     if dry_run:
         return
     env = os.environ.copy()
-    env.setdefault("TMPDIR", "/root/autodl-tmp/tmp")
-    env.setdefault("XDG_CACHE_HOME", "/root/autodl-tmp/cache")
+    env.setdefault("TMPDIR", "/tmp/linbinhao_ecg_tmp")
+    env.setdefault("XDG_CACHE_HOME", str(DATA_ROOT / "cache"))
     Path(env["TMPDIR"]).mkdir(parents=True, exist_ok=True)
     Path(env["XDG_CACHE_HOME"]).mkdir(parents=True, exist_ok=True)
     with log_path.open("w") as log:
@@ -120,7 +129,7 @@ def train_one(center: str, method: str, args: argparse.Namespace) -> Path:
             f"ep{args.epochs}_{class_tag}_seed{args.seed}"
         )
     out_dir = OUT_ROOT / "runs" / tag
-    eval_path = out_dir / "eval_result_v5_exclrefs_crop1000_dropzero.json"
+    eval_path = out_dir / "eval_result_v6_exclrefs_crop1000_dropzero.json"
     if eval_path.exists() and not args.force:
         print(f"[skip] {tag}")
         return eval_path
@@ -136,6 +145,7 @@ def train_one(center: str, method: str, args: argparse.Namespace) -> Path:
         "--class_trust", str(subset["trust"]),
         "--init_ckpt", BASELINE_CKPT,
         "--output_dir", str(out_dir),
+        "--data_dir", PN2021_ROOT,
         "--quick_eval_centers", center,
         "--quick_eval_n_per_center", str(args.quick_eval_n),
         "--ptbxl_raw", PTBXL_RAW,
@@ -164,7 +174,7 @@ def train_one(center: str, method: str, args: argparse.Namespace) -> Path:
         "--n_epochs", str(args.epochs),
         "--patience", str(args.epochs),
         "--eval_every", "2",
-        "--es_metric", "target_macro_auprc",
+        "--es_metric", args.es_metric,
         "--ewa_decay", "0.999",
         "--anchor_lambda", "0.05",
         "--asr_consec_low_max", "999",
@@ -211,9 +221,11 @@ def train_one(center: str, method: str, args: argparse.Namespace) -> Path:
         "--crop_len", "1000",
         "--batch_size", "192",
         "--num_workers", str(args.num_workers),
+        "--ptbxl_csv", PTBXL_CSV,
         "--ptbxl_cache", PTBXL_PREP,
         "--preprocess_mode", "minimal_resample",
         "--norm_mode", "per_sample_global",
+        "--pn2021_root", str(Path(PN2021_ROOT).parent),
         "--pn2021_cache_dir", PN2021_CACHE_DIR,
         "--pn2021_mmap_cache_dir", PN2021_MMAP_CACHE_DIR,
         "--skip_mimic",
@@ -290,6 +302,11 @@ def main() -> None:
     ap.add_argument("--subset_seed", type=int, default=20260531)
     ap.add_argument("--seed", type=int, default=20260531)
     ap.add_argument("--epochs", type=int, default=10)
+    ap.add_argument(
+        "--es_metric",
+        choices=["target_macro_auroc", "target_macro_auprc", "val_macro_auroc", "val_macro_auprc"],
+        default="target_macro_auprc",
+    )
     ap.add_argument("--quick_eval_n", type=int, default=500)
     ap.add_argument("--k_anchor", type=int, default=150)
     ap.add_argument("--hull_steps", type=int, default=10)

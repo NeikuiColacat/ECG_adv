@@ -38,10 +38,19 @@ from scripts.paper.run_latenthull_real_anchor_grid_20260512 import (
 )
 
 
-OUT_ROOT = Path("/root/autodl-tmp/paper_vae_only_latenthull_sweep_20260516")
+_MIGRATED_DATA_ROOT = Path(
+    "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp"
+)
+DATA_ROOT = Path(
+    os.environ.get(
+        "ECG_ADV_GEN_DATA_ROOT",
+        str(_MIGRATED_DATA_ROOT if _MIGRATED_DATA_ROOT.exists() else Path("/root/autodl-tmp")),
+    )
+)
+OUT_ROOT = DATA_ROOT / "paper_vae_only_latenthull_sweep_20260516"
 REAL_ROOTS = [
-    Path("/root/autodl-tmp/ecgtwin_prompt_token_super5/real_anchor_selected_v2"),
-    Path("/root/autodl-tmp/ecgtwin_prompt_token_super5/real_anchor_selected_v1"),
+    DATA_ROOT / "ecgtwin_prompt_token_super5/real_anchor_selected_v2",
+    DATA_ROOT / "ecgtwin_prompt_token_super5/real_anchor_selected_v1",
 ]
 np_load = np.load
 np_savez_compressed = np.savez_compressed
@@ -182,8 +191,8 @@ def run(cmd: list[str], log_path: Path, dry_run: bool = False) -> None:
     if dry_run:
         return
     env = os.environ.copy()
-    env.setdefault("TMPDIR", "/root/autodl-tmp/tmp")
-    env.setdefault("XDG_CACHE_HOME", "/root/autodl-tmp/cache")
+    env.setdefault("TMPDIR", str(DATA_ROOT / "tmp"))
+    env.setdefault("XDG_CACHE_HOME", str(DATA_ROOT / "cache"))
     Path(env["TMPDIR"]).mkdir(parents=True, exist_ok=True)
     Path(env["XDG_CACHE_HOME"]).mkdir(parents=True, exist_ok=True)
     with log_path.open("w") as log:
@@ -373,6 +382,8 @@ def one_run(
         "192",
         "--num_workers",
         str(args.num_workers),
+        "--ptbxl_csv",
+        PTBXL_CSV,
         "--ptbxl_cache",
         PTBXL_PREP,
         "--preprocess_mode",
@@ -383,6 +394,8 @@ def one_run(
         PN2021_CACHE_DIR,
         "--pn2021_mmap_cache_dir",
         PN2021_MMAP_CACHE_DIR,
+        "--pn2021_root",
+        str(Path(PN2021_ROOT).parent),
         "--skip_mimic",
         "--exclude_ref_ids",
         str(subset["meta"]),
@@ -494,7 +507,7 @@ def main() -> None:
     )
     ap.add_argument(
         "--eval_tag",
-        default="v5_super5_strict_voltage_pacing_suppress",
+        default="v6_super5_clinician_review",
         help="Short tag used in eval output filenames.",
     )
     ap.add_argument(

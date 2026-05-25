@@ -63,6 +63,7 @@ from scripts.pgd_cross_center.synth_online_at_super5 import (  # noqa: E402
     SameLabelLatentIndex,
     StratifiedPoolWalker,
     build_anchor_preserving_soft_labels,
+    build_k500_internal_val_mask,
 )
 from scripts.triple_labels.label_schemes import CLASS_NAMES_SUPER5, SUPER5_TO_IDX  # noqa: E402
 from scripts.triple_labels.train_ptbxl import compute_pos_weight, masked_bce_with_logits  # noqa: E402
@@ -70,6 +71,10 @@ from util.ecgtwin_utils import ECGTwinWrapper  # noqa: E402
 from util.lead_utils import ECGTWIN_TO_PTBXL_INDICES  # noqa: E402
 
 
+_V6_LINEAR_PROBE_DIR = (
+    DATA_ROOT
+    / "paper_foundation_baselines_20260524/ecgfounder_linear_probe_v6_from_legacy_cache"
+)
 _V5_LINEAR_PROBE_DIR = (
     DATA_ROOT
     / "paper_foundation_baselines_20260522/ecgfounder_linear_probe_v5_seed42_official"
@@ -80,10 +85,14 @@ _LEGACY_LINEAR_PROBE_DIR = (
 DEFAULT_LINEAR_PROBE_DIR = Path(
     os.environ.get(
         "ECGFOUNDER_LINEAR_PROBE_DIR",
-        str(_V5_LINEAR_PROBE_DIR if _V5_LINEAR_PROBE_DIR.exists() else _LEGACY_LINEAR_PROBE_DIR),
+        str(
+            _V6_LINEAR_PROBE_DIR
+            if _V6_LINEAR_PROBE_DIR.exists()
+            else (_V5_LINEAR_PROBE_DIR if _V5_LINEAR_PROBE_DIR.exists() else _LEGACY_LINEAR_PROBE_DIR)
+        ),
     )
 )
-DEFAULT_OUT_DIR = DATA_ROOT / "paper_ecgfounder_vae_only_lhat_headft_20260523"
+DEFAULT_OUT_DIR = DATA_ROOT / "paper_ecgfounder_vae_only_lhat_headft_v6_20260524"
 CHECKPOINT = ECGFOUNDER_ROOT / "checkpoint/12_lead_ECGFounder.pth"
 REAL_ROOTS = [
     DATA_ROOT / "ecgtwin_prompt_token_super5/real_anchor_selected_v2",
@@ -218,7 +227,54 @@ class ResidualAdapterHead(nn.Module):
         return self.base_head(x) + self.scale * self.adapter(x)
 
 
-def real_anchor_base(center: str) -> Path:
+class FeatureAdapterHead(nn.Module):
+    """Frozen or trainable source linear head after a zero-init feature adapter."""
+
+    def __init__(
+        self,
+        base_head: nn.Linear,
+        hidden_dim: int = 128,
+        dropout: float = 0.0,
+        scale: float = 1.0,
+        freeze_base: bool = True,
+    ) -> None:
+        super().__init__()
+        self.base_head = base_head
+        self.scale = float(scale)
+        in_dim = int(base_head.in_features)
+        hidden_dim = max(1, int(hidden_dim))
+        self.adapter = nn.Sequential(
+            nn.LayerNorm(in_dim),
+            nn.Linear(in_dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(float(dropout)),
+            nn.Linear(hidden_dim, in_dim),
+        )
+        final = self.adapter[-1]
+        assert isinstance(final, nn.Linear)
+        nn.init.zeros_(final.weight)
+        nn.init.zeros_(final.bias)
+        if freeze_base:
+            for p in self.base_head.parameters():
+                p.requires_grad_(False)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.base_head(x + self.scale * self.adapter(x))
+
+
+def real_anchor_base(center: str, args: argparse.Namespace | None = None) -> Path:
+    if args is not None and getattr(args, "anchor_base_root", ""):
+        root = Path(args.anchor_base_root)
+        candidates = [
+            root / center / f"k{args.k}_seed{args.seed}" / f"{center}_real_k{args.k}_seed{args.seed}",
+            root / center / f"{center}_real_k{args.k}_seed{args.seed}",
+            root / center / f"{center}_real_k500_seed{args.seed}",
+        ]
+        for base in candidates:
+            if base.with_suffix(".latent.npz").exists():
+                return base
+        searched = ", ".join(str(p) for p in candidates)
+        raise FileNotFoundError(f"missing real-anchor files for {center}; searched: {searched}")
     for root in REAL_ROOTS:
         base = root / center / f"{center}_real_k500_seed42"
         if base.with_suffix(".latent.npz").exists():
@@ -227,8 +283,14 @@ def real_anchor_base(center: str) -> Path:
     raise FileNotFoundError(f"missing real-anchor files for {center}; searched: {searched}")
 
 
-def load_anchor_pool(center: str, k: int, seed: int, pn_payload: dict[str, np.ndarray]) -> dict[str, Any]:
-    base = real_anchor_base(center)
+def load_anchor_pool(
+    center: str,
+    k: int,
+    seed: int,
+    pn_payload: dict[str, np.ndarray],
+    args: argparse.Namespace | None = None,
+) -> dict[str, Any]:
+    base = real_anchor_base(center, args)
     with np.load(base.with_suffix(".latent.npz"), allow_pickle=True) as d:
         latents_all = d["latents"].astype(np.float32)
         record_ids_all = d["record_ids"].astype(str)
@@ -314,6 +376,15 @@ def ref_ids_for_all_centers(center: str, selected_ids: np.ndarray) -> dict[str, 
     return ref_ids
 
 
+def center_k500_head_path(run_root: Path, center: str) -> Path:
+    matches = sorted(run_root.glob(f"{center}_K500_fromK500_headft_*/best_head.pt"))
+    if len(matches) != 1:
+        raise FileNotFoundError(
+            f"expected one K500 direct head for {center} under {run_root}, found {len(matches)}"
+        )
+    return matches[0]
+
+
 @torch.no_grad()
 def predict_head(head: nn.Module, features: np.ndarray, batch_size: int, device: torch.device) -> np.ndarray:
     head.eval()
@@ -351,6 +422,215 @@ def eval_pn(
     )
 
 
+@torch.no_grad()
+def eval_feature_subset(
+    head: nn.Module,
+    features: np.ndarray,
+    labels: np.ndarray,
+    device: torch.device,
+    batch_size: int,
+) -> dict[str, Any]:
+    scores = predict_head(head, features.astype(np.float32), batch_size, device)
+    return compute_metrics(labels.astype(np.float32), scores, min_pos=1)
+
+
+@torch.no_grad()
+def anchor_difficulty_weights(
+    head: nn.Module,
+    features: np.ndarray,
+    labels: np.ndarray,
+    *,
+    mode: str,
+    power: float,
+    min_weight: float,
+    batch_size: int,
+    device: torch.device,
+) -> np.ndarray:
+    """Return global per-anchor weights from current head behavior on K-shot records."""
+    if len(features) != len(labels):
+        raise ValueError(f"anchor feature/label length mismatch: {len(features)} vs {len(labels)}")
+    if len(features) == 0:
+        return np.empty((0,), dtype=np.float32)
+    logits_list = []
+    head.eval()
+    loader = DataLoader(torch.from_numpy(features.astype(np.float32)).float(), batch_size=batch_size, shuffle=False)
+    for x in loader:
+        logits_list.append(head(x.to(device)).detach().cpu())
+    logits = torch.cat(logits_list, dim=0)
+    y = torch.from_numpy(labels.astype(np.float32))
+    if mode == "hard_bce":
+        score = F.binary_cross_entropy_with_logits(logits, y, reduction="none").mean(dim=1).numpy()
+    elif mode == "uncertainty":
+        prob = torch.sigmoid(logits)
+        score = (1.0 - torch.abs(prob - 0.5) * 2.0).mean(dim=1).numpy()
+    else:
+        raise ValueError(f"unsupported anchor_sample_mode={mode!r}")
+    score = np.asarray(score, dtype=np.float64)
+    score = np.maximum(score, 0.0)
+    if power != 1.0:
+        score = np.power(score + 1e-12, float(power))
+    score = score + max(float(min_weight), 0.0)
+    if not np.all(np.isfinite(score)) or float(score.sum()) <= 0.0:
+        return np.full((len(features),), 1.0 / len(features), dtype=np.float32)
+    return (score / score.sum()).astype(np.float32)
+
+
+def sample_hard_anchors(
+    *,
+    head: nn.Module,
+    pool_features: np.ndarray,
+    pool_labels: np.ndarray,
+    k_anchor: int,
+    mode: str,
+    power: float,
+    min_weight: float,
+    batch_size: int,
+    device: torch.device,
+    seed: int,
+) -> tuple[np.ndarray, dict[str, float]]:
+    n_pool = len(pool_labels)
+    if n_pool == 0 or k_anchor <= 0:
+        return np.empty((0,), dtype=np.int64), {"mean_weight": 0.0, "max_weight": 0.0}
+    weights = anchor_difficulty_weights(
+        head,
+        pool_features,
+        pool_labels,
+        mode=mode,
+        power=power,
+        min_weight=min_weight,
+        batch_size=batch_size,
+        device=device,
+    )
+    n_take = min(int(k_anchor), n_pool)
+    rng = np.random.default_rng(seed)
+    picks = rng.choice(n_pool, size=n_take, replace=False, p=weights)
+    return picks.astype(np.int64), {
+        "mean_weight": float(np.mean(weights)),
+        "max_weight": float(np.max(weights)),
+        "min_weight": float(np.min(weights)),
+        "ess": float(1.0 / np.sum(np.square(weights.astype(np.float64)))),
+    }
+
+
+def split_anchor_sample_mode(mode: str) -> tuple[str, str]:
+    """Return (head_source, difficulty_mode) for anchor sampling."""
+    if mode.startswith("base_"):
+        return "base", mode[len("base_"):]
+    if mode.startswith("target_"):
+        return "target_teacher", mode[len("target_"):]
+    return "current", mode
+
+
+def clone_linear_head(head: nn.Module, feature_dim: int, device: torch.device) -> nn.Linear:
+    """Freeze a linear copy of the initial/direct head for fixed anchor scoring."""
+    out = nn.Linear(feature_dim, len(CLASS_NAMES_SUPER5)).to(device)
+    if isinstance(head, (ResidualAdapterHead, FeatureAdapterHead)):
+        out.load_state_dict(head.base_head.state_dict())
+    else:
+        out.load_state_dict(head.state_dict())
+    out.eval()
+    for p in out.parameters():
+        p.requires_grad_(False)
+    return out
+
+
+@torch.no_grad()
+def attack_success_stats(
+    clean_logits: torch.Tensor,
+    adv_logits: torch.Tensor,
+    labels: torch.Tensor,
+    *,
+    margin: float,
+) -> dict[str, float]:
+    """Untargeted multi-label PGD success against the same BCE objective."""
+    clean_loss = F.binary_cross_entropy_with_logits(clean_logits, labels, reduction="none").mean(dim=1)
+    adv_loss = F.binary_cross_entropy_with_logits(adv_logits, labels, reduction="none").mean(dim=1)
+    gain = adv_loss - clean_loss
+    success = gain > float(margin)
+
+    clean_prob = torch.sigmoid(clean_logits)
+    adv_prob = torch.sigmoid(adv_logits)
+    pos_mask = labels > 0.5
+    neg_mask = labels <= 0.0
+    pos_drop = (clean_prob - adv_prob)[pos_mask]
+    neg_rise = (adv_prob - clean_prob)[neg_mask]
+    return {
+        "n": float(labels.shape[0]),
+        "success_count": float(success.float().sum().item()),
+        "success_rate": float(success.float().mean().item()),
+        "clean_loss_mean": float(clean_loss.mean().item()),
+        "adv_loss_mean": float(adv_loss.mean().item()),
+        "loss_gain_mean": float(gain.mean().item()),
+        "loss_gain_median": float(gain.median().item()),
+        "loss_gain_p10": float(torch.quantile(gain, 0.10).item()),
+        "loss_gain_p90": float(torch.quantile(gain, 0.90).item()),
+        "pos_prob_drop_mean": float(pos_drop.mean().item()) if pos_drop.numel() else float("nan"),
+        "neg_prob_rise_mean": float(neg_rise.mean().item()) if neg_rise.numel() else float("nan"),
+    }
+
+
+def merge_attack_success_stats(stats: list[dict[str, float]]) -> dict[str, float | None]:
+    if not stats:
+        return {
+            "success_rate": None,
+            "loss_gain_mean": None,
+            "loss_gain_median_mean": None,
+            "clean_loss_mean": None,
+            "adv_loss_mean": None,
+            "pos_prob_drop_mean": None,
+            "neg_prob_rise_mean": None,
+        }
+    n_total = sum(float(s["n"]) for s in stats)
+    if n_total <= 0:
+        return {}
+
+    def weighted(key: str) -> float:
+        vals = [(float(s[key]), float(s["n"])) for s in stats if np.isfinite(float(s[key]))]
+        if not vals:
+            return float("nan")
+        denom = sum(w for _, w in vals)
+        return float(sum(v * w for v, w in vals) / max(denom, 1e-12))
+
+    return {
+        "success_rate": float(sum(float(s["success_count"]) for s in stats) / n_total),
+        "loss_gain_mean": weighted("loss_gain_mean"),
+        "loss_gain_median_mean": weighted("loss_gain_median"),
+        "loss_gain_p10_mean": weighted("loss_gain_p10"),
+        "loss_gain_p90_mean": weighted("loss_gain_p90"),
+        "clean_loss_mean": weighted("clean_loss_mean"),
+        "adv_loss_mean": weighted("adv_loss_mean"),
+        "pos_prob_drop_mean": weighted("pos_prob_drop_mean"),
+        "neg_prob_rise_mean": weighted("neg_prob_rise_mean"),
+    }
+
+
+def initial_hull_latent(
+    z0: torch.Tensor,
+    cand: torch.Tensor,
+    *,
+    weight_mode: str,
+    hull_lambda: float,
+    init_logit_gap: float,
+) -> torch.Tensor:
+    """Reconstruct the latent-hull optimizer's deterministic starting point."""
+    bsz, m = cand.shape[:2]
+    if weight_mode == "optimized":
+        logits_a = torch.full((bsz, m), -float(init_logit_gap), device=z0.device)
+        logits_a[:, 0] = float(init_logit_gap)
+        w = torch.softmax(logits_a, dim=-1)
+    elif weight_mode == "one_hot":
+        w = torch.zeros((bsz, m), device=z0.device)
+        w[:, 0] = 1.0
+    elif weight_mode == "uniform":
+        w = torch.full((bsz, m), 1.0 / float(m), device=z0.device)
+    else:
+        # Dirichlet starts from a random fixed draw inside the generator; use
+        # z0 as a deterministic diagnostic reference rather than guessing it.
+        return z0
+    z_mix = (w.view(bsz, m, 1, 1) * cand).sum(dim=1)
+    return (1.0 - float(hull_lambda)) * z0 + float(hull_lambda) * z_mix
+
+
 def make_weighted_loader(
     source_x: np.ndarray,
     source_y: np.ndarray,
@@ -359,9 +639,12 @@ def make_weighted_loader(
     adv_x: np.ndarray,
     adv_y: np.ndarray,
     args: argparse.Namespace,
+    *,
+    adv_weight: float | None = None,
 ) -> DataLoader:
     target_class_weights = parse_class_weight_string(args.target_class_sample_weights)
     adv_class_weights = parse_class_weight_string(args.adv_class_sample_weights)
+    effective_adv_weight = float(args.adv_weight if adv_weight is None else adv_weight)
 
     def sample_weights(labels: np.ndarray, base_weight: float, class_weights: dict[str, float]) -> list[float]:
         if not class_weights:
@@ -390,14 +673,29 @@ def make_weighted_loader(
         ds = TensorDataset(torch.from_numpy(target_x).float(), torch.from_numpy(target_y).float(), stream)
         datasets.append(ds)
         weights.extend(sample_weights(target_y, args.target_real_weight, target_class_weights))
-    if len(adv_x) > 0 and args.adv_weight > 0:
+    if len(adv_x) > 0 and effective_adv_weight > 0:
         stream = torch.full((len(adv_x),), 2, dtype=torch.long)
         ds = TensorDataset(torch.from_numpy(adv_x).float(), torch.from_numpy(adv_y).float(), stream)
         datasets.append(ds)
-        weights.extend(sample_weights(adv_y, args.adv_weight, adv_class_weights))
+        weights.extend(sample_weights(adv_y, effective_adv_weight, adv_class_weights))
     combined = ConcatDataset(datasets)
     sampler = WeightedRandomSampler(weights, num_samples=len(weights), replacement=True)
     return DataLoader(combined, batch_size=args.batch_size, sampler=sampler, drop_last=False)
+
+
+def scheduled_adv_weight(args: argparse.Namespace, epoch: int) -> float:
+    """Linear warmup for the adversarial stream sampler weight."""
+    target = float(args.adv_weight)
+    if target <= 0:
+        return 0.0
+    warmup_epochs = int(args.adv_weight_warmup_epochs)
+    if warmup_epochs <= 0:
+        return target
+    start = 0.0 if args.adv_weight_start is None else float(args.adv_weight_start)
+    if warmup_epochs == 1 or epoch >= warmup_epochs:
+        return target
+    frac = max(0.0, float(epoch - 1) / float(max(1, warmup_epochs - 1)))
+    return start + frac * (target - start)
 
 
 def parse_class_weight_string(raw: str | None) -> dict[str, float]:
@@ -484,18 +782,59 @@ def train_one_center(
         with result_path.open() as f:
             return json.load(f)
 
-    pool = load_anchor_pool(center, args.k, args.seed, pn)
-    selected_ids = pool["record_ids"].astype(str)
-    ref_ids = ref_ids_for_all_centers(center, selected_ids)
+    pool = load_anchor_pool(center, args.k, args.seed, pn, args)
+    selected_ids_all = pool["record_ids"].astype(str)
+    ref_ids = ref_ids_for_all_centers(center, selected_ids_all)
 
     pn_mask = (pn["centers"].astype(str) == center) & np.asarray(
-        [str(rid) in set(selected_ids) for rid in pn["record_ids"].astype(str)],
+        [str(rid) in set(selected_ids_all) for rid in pn["record_ids"].astype(str)],
         dtype=bool,
     )
     target_x = pn["features"][pn_mask].astype(np.float32)
     target_y = pn["labels"][pn_mask].astype(np.float32)
-    if len(target_x) != len(selected_ids):
-        print(f"[warn] {center}: selected_ids={len(selected_ids)} target_feature_rows={len(target_x)}", flush=True)
+    target_record_ids = pn["record_ids"][pn_mask].astype(str)
+    if len(target_x) != len(selected_ids_all):
+        print(f"[warn] {center}: selected_ids={len(selected_ids_all)} target_feature_rows={len(target_x)}", flush=True)
+    target_feature_by_id = {
+        str(rid): target_x[i].astype(np.float32, copy=False)
+        for i, rid in enumerate(target_record_ids.astype(str))
+    }
+
+    target_val_x = np.empty((0, target_x.shape[1]), dtype=np.float32)
+    target_val_y = np.empty((0, len(CLASS_NAMES_SUPER5)), dtype=np.float32)
+    target_val_record_ids: list[str] = []
+    target_train_record_ids = target_record_ids.astype(str).tolist()
+    original_pool_label_counts = dict(pool["label_counts"])
+    if args.selection_source == "target_real_val":
+        val_mask_pool = build_k500_internal_val_mask(
+            pool["labels"],
+            val_fraction=args.target_real_val_fraction,
+            seed=args.target_real_val_seed,
+        )
+        target_val_ids = set(str(x) for x in pool["record_ids"][val_mask_pool].astype(str))
+        target_train_ids = set(str(x) for x in pool["record_ids"][~val_mask_pool].astype(str))
+        target_val_mask = np.asarray([str(rid) in target_val_ids for rid in target_record_ids], dtype=bool)
+        target_train_mask = np.asarray([str(rid) in target_train_ids for rid in target_record_ids], dtype=bool)
+        target_val_x = target_x[target_val_mask].astype(np.float32)
+        target_val_y = target_y[target_val_mask].astype(np.float32)
+        target_val_record_ids = target_record_ids[target_val_mask].astype(str).tolist()
+        target_x = target_x[target_train_mask].astype(np.float32)
+        target_y = target_y[target_train_mask].astype(np.float32)
+        target_train_record_ids = target_record_ids[target_train_mask].astype(str).tolist()
+        for key in ("latents", "labels", "record_ids"):
+            pool[key] = pool[key][~val_mask_pool]
+        pool["label_counts"] = dict(
+            zip(CLASS_NAMES_SUPER5, pool["labels"].sum(axis=0).astype(int).tolist())
+        )
+        pool["classes_in_scope"] = [
+            c for c, count in pool["label_counts"].items() if int(count) > 0
+        ]
+        print(
+            f"[setup] target-real internal selection split: "
+            f"train={len(target_x)} val={len(target_val_x)} "
+            f"fraction={args.target_real_val_fraction} seed={args.target_real_val_seed}",
+            flush=True,
+        )
 
     folds = ptbxl["folds"].astype(np.int64)
     source_mask = np.isin(folds, np.arange(1, 9))
@@ -515,7 +854,7 @@ def train_one_center(
         p.requires_grad_(False)
     if args.head_type == "linear":
         head = base_head
-    else:
+    elif args.head_type == "residual_adapter":
         head = ResidualAdapterHead(
             base_head=base_head,
             hidden_dim=args.adapter_hidden,
@@ -523,21 +862,50 @@ def train_one_center(
             scale=args.adapter_scale,
             freeze_base=args.freeze_base_head,
         ).to(device)
+    elif args.head_type == "feature_adapter":
+        head = FeatureAdapterHead(
+            base_head=base_head,
+            hidden_dim=args.adapter_hidden,
+            dropout=args.adapter_dropout,
+            scale=args.adapter_scale,
+            freeze_base=args.freeze_base_head,
+        ).to(device)
+    else:
+        raise ValueError(f"unsupported head_type={args.head_type!r}")
+    if args.init_base_head_from_k500_root:
+        k500_head_path = center_k500_head_path(Path(args.init_base_head_from_k500_root), center)
+        print(
+            f"[init] loading center K500 direct head into base head from {k500_head_path}",
+            flush=True,
+        )
+        k500_state = torch.load(k500_head_path, map_location=device)
+        if isinstance(head, (ResidualAdapterHead, FeatureAdapterHead)):
+            head.base_head.load_state_dict(k500_state)
+        else:
+            head.load_state_dict(k500_state)
     if args.init_head_path:
         init_path = Path(args.init_head_path)
         print(f"[init] loading head state from {init_path}", flush=True)
         head.load_state_dict(torch.load(init_path, map_location=device))
+    anchor_base_head = clone_linear_head(head, source_x.shape[1], device)
     target_teacher_head = None
     if args.target_logit_anchor_weight > 0:
-        if not args.target_logit_anchor_path:
-            raise ValueError("--target_logit_anchor_weight requires --target_logit_anchor_path")
-        teacher_path = Path(args.target_logit_anchor_path)
-        print(f"[teacher] loading target logit anchor from {teacher_path}", flush=True)
-        target_teacher_head = nn.Linear(source_x.shape[1], len(CLASS_NAMES_SUPER5)).to(device)
-        target_teacher_head.load_state_dict(torch.load(teacher_path, map_location=device))
-        target_teacher_head.eval()
-        for p in target_teacher_head.parameters():
-            p.requires_grad_(False)
+        if args.target_logit_anchor_source == "initial_head":
+            target_teacher_head = anchor_base_head
+            print("[teacher] using frozen initial/direct head as target logit anchor", flush=True)
+        else:
+            if not args.target_logit_anchor_path:
+                raise ValueError(
+                    "--target_logit_anchor_weight with --target_logit_anchor_source=path "
+                    "requires --target_logit_anchor_path"
+                )
+            teacher_path = Path(args.target_logit_anchor_path)
+            print(f"[teacher] loading target logit anchor from {teacher_path}", flush=True)
+            target_teacher_head = nn.Linear(source_x.shape[1], len(CLASS_NAMES_SUPER5)).to(device)
+            target_teacher_head.load_state_dict(torch.load(teacher_path, map_location=device))
+            target_teacher_head.eval()
+            for p in target_teacher_head.parameters():
+                p.requires_grad_(False)
     head_anchor = {
         name: param.detach().clone()
         for name, param in head.named_parameters()
@@ -560,7 +928,7 @@ def train_one_center(
     )
     for p in feature_model.parameters():
         p.requires_grad_(False)
-    if isinstance(head, ResidualAdapterHead):
+    if isinstance(head, (ResidualAdapterHead, FeatureAdapterHead)):
         for p in head.adapter.parameters():
             p.requires_grad_(True)
         if args.freeze_base_head:
@@ -574,6 +942,17 @@ def train_one_center(
     classes_in_scope = [c for c in classes_in_scope if pool["label_counts"].get(c, 0) > 0]
     if not classes_in_scope:
         raise RuntimeError(f"{center}: no classes in scope after label-count filtering")
+    missing_pool_features = [
+        str(rid) for rid in pool["record_ids"].astype(str)
+        if str(rid) not in target_feature_by_id
+    ]
+    if missing_pool_features:
+        raise RuntimeError(
+            f"{center}: {len(missing_pool_features)} pool anchors missing cached ECGFounder features"
+        )
+    pool_features = np.stack(
+        [target_feature_by_id[str(rid)] for rid in pool["record_ids"].astype(str)]
+    ).astype(np.float32)
     walker = StratifiedPoolWalker(
         labels_one_hot=pool["labels"],
         classes_in_scope=classes_in_scope,
@@ -586,6 +965,10 @@ def train_one_center(
         label_mode=args.hull_label_mode,
         seed=args.seed,
         include_self=args.hull_include_anchor,
+        distance_space=args.hull_neighbor_distance_space,
+        neighbor_mode=args.hull_neighbor_mode,
+        neighbor_pool_size=args.hull_neighbor_pool_size,
+        neighbor_pool_multiplier=args.hull_neighbor_pool_multiplier,
     )
 
     if args.pos_weight_data == "source":
@@ -614,9 +997,7 @@ def train_one_center(
         for cls, value in parse_class_weight_string(args.target_rank_loss_class_weights).items()
     }
 
-    def criterion(logits: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-        if not class_loss_weights_map:
-            return masked_bce_with_logits(logits, y, pos_weight)
+    def criterion(logits: torch.Tensor, y: torch.Tensor, stream: torch.Tensor | None = None) -> torch.Tensor:
         mask = (y >= 0).float()
         labels_safe = torch.where(mask.bool(), y, torch.zeros_like(y))
         bce = F.binary_cross_entropy_with_logits(
@@ -625,9 +1006,32 @@ def train_one_center(
             pos_weight=pos_weight,
             reduction="none",
         )
-        weighted = bce * mask * class_loss_weight.view(1, -1)
-        denom = (mask * class_loss_weight.view(1, -1)).sum().clamp_min(1.0)
-        return weighted.sum() / denom
+        if class_loss_weights_map:
+            weighted = bce * mask * class_loss_weight.view(1, -1)
+            denom = (mask * class_loss_weight.view(1, -1)).sum(dim=1).clamp_min(1.0)
+        else:
+            weighted = bce * mask
+            denom = mask.sum(dim=1).clamp_min(1.0)
+        per_sample = weighted.sum(dim=1) / denom
+        if stream is None:
+            return per_sample.mean()
+        stream_weights = torch.ones_like(per_sample)
+        stream_weights = torch.where(
+            stream == 0,
+            torch.full_like(stream_weights, float(args.source_bce_loss_weight)),
+            stream_weights,
+        )
+        stream_weights = torch.where(
+            stream == 1,
+            torch.full_like(stream_weights, float(args.target_real_bce_loss_weight)),
+            stream_weights,
+        )
+        stream_weights = torch.where(
+            stream == 2,
+            torch.full_like(stream_weights, float(args.adv_bce_loss_weight)),
+            stream_weights,
+        )
+        return (per_sample * stream_weights).sum() / stream_weights.sum().clamp_min(1e-6)
 
     trainable_head_params = [p for p in head.parameters() if p.requires_grad]
     if not trainable_head_params:
@@ -639,22 +1043,50 @@ def train_one_center(
     opt = torch.optim.AdamW(trainable_head_params, lr=args.lr, weight_decay=args.weight_decay)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max(args.epochs, 1), eta_min=args.lr * 0.05)
 
-    baseline_views = eval_pn(
-        head,
-        pn,
-        ref_ids,
-        device,
-        args.eval_batch_size,
-        report_drop_all_zero=args.report_drop_all_zero_pn2021,
-    )
     baseline_ptbxl = eval_ptbxl_fold10(head, ptbxl, device, args.eval_batch_size)
+    if args.selection_source == "target_real_val":
+        if len(target_val_x) == 0:
+            raise RuntimeError("target_real_val selection requested but validation split is empty")
+        baseline_views = None
+        baseline_selection_target = eval_feature_subset(
+            head,
+            target_val_x,
+            target_val_y,
+            device,
+            args.eval_batch_size,
+        )
+        print(
+            f"[baseline] K500-val={baseline_selection_target['macro_auroc']:.4f}/"
+            f"{baseline_selection_target['macro_auprc']:.4f} "
+            f"PTBXL={baseline_ptbxl['macro_auroc']:.4f}/{baseline_ptbxl['macro_auprc']:.4f}",
+            flush=True,
+        )
+    else:
+        baseline_views = eval_pn(
+            head,
+            pn,
+            ref_ids,
+            device,
+            args.eval_batch_size,
+            report_drop_all_zero=args.report_drop_all_zero_pn2021,
+        )
+        baseline_selection_target = baseline_views[center]["per_center"][center]
     def selection_score(target_row: dict[str, Any], ptbxl_row: dict[str, Any]) -> float:
+        target_auroc = float(target_row["macro_auroc"])
         target_auprc = float(target_row["macro_auprc"])
+        source_auroc = float(ptbxl_row["macro_auroc"])
         source_auprc = float(ptbxl_row["macro_auprc"])
+        if args.selection_metric == "target_auroc":
+            return target_auroc
         if args.selection_metric == "target_auprc":
             return target_auprc
+        if args.selection_metric == "target_plus_source_auroc":
+            return target_auroc + args.source_selection_weight * source_auroc
         if args.selection_metric == "target_plus_source_auprc":
             return target_auprc + args.source_selection_weight * source_auprc
+        if args.selection_metric == "target_source_hmean_auroc":
+            denom = target_auroc + source_auroc
+            return (2.0 * target_auroc * source_auroc / denom) if denom > 0 else -float("inf")
         if args.selection_metric == "target_source_hmean_auprc":
             denom = target_auprc + source_auprc
             return (2.0 * target_auprc * source_auprc / denom) if denom > 0 else -float("inf")
@@ -668,38 +1100,117 @@ def train_one_center(
         -float("inf")
         if args.selection_metric == "last_epoch"
         else selection_score(
-            baseline_views[center]["per_center"][center],
+            baseline_selection_target,
             baseline_ptbxl,
         )
     )
     best_epoch = 0
     torch.save(head.state_dict(), run_dir / "best_head.pt")
+    torch.save(head.state_dict(), run_dir / "initial_head.pt")
 
     logs = []
     for epoch in range(1, args.epochs + 1):
+        epoch_adv_weight = scheduled_adv_weight(args, epoch)
         victim.eval()
         adv_features, adv_labels = [], []
         delta_norms = []
-        if not args.disable_adv_stream and args.adv_weight > 0 and args.k_anchor > 0:
-            per_cls = max(1, args.k_anchor // len(classes_in_scope))
-            k_per_cls = {c: per_cls for c in classes_in_scope}
-            for i in range(args.k_anchor - per_cls * len(classes_in_scope)):
-                k_per_cls[classes_in_scope[i % len(classes_in_scope)]] += 1
-            drawn = walker.sample(k_per_cls)
-            picks = np.concatenate([drawn[c] for c in classes_in_scope if drawn[c].size > 0])
-            if picks.size > 1:
-                np.random.default_rng(args.seed + epoch).shuffle(picks)
+        n_adv_generated = 0
+        n_adv_filtered_boundary = 0
+        attack_init_stats_batches: list[dict[str, float]] = []
+        attack_anchor_stats_batches: list[dict[str, float]] = []
+        anchor_head_source, anchor_difficulty_mode = split_anchor_sample_mode(args.anchor_sample_mode)
+        anchor_sample_stats: dict[str, Any] = {
+            "mode": args.anchor_sample_mode,
+            "head_source": anchor_head_source,
+            "difficulty_mode": anchor_difficulty_mode,
+            "adv_weight_effective": float(epoch_adv_weight),
+        }
+        if not args.disable_adv_stream and epoch_adv_weight > 0 and args.k_anchor > 0:
+            if args.anchor_sample_mode == "stratified":
+                per_cls = max(1, args.k_anchor // len(classes_in_scope))
+                k_per_cls = {c: per_cls for c in classes_in_scope}
+                for i in range(args.k_anchor - per_cls * len(classes_in_scope)):
+                    k_per_cls[classes_in_scope[i % len(classes_in_scope)]] += 1
+                drawn = walker.sample(k_per_cls)
+                picks = np.concatenate([drawn[c] for c in classes_in_scope if drawn[c].size > 0])
+                if picks.size > 1:
+                    np.random.default_rng(args.seed + epoch).shuffle(picks)
+                anchor_sample_stats["k_per_cls"] = k_per_cls
+            else:
+                if anchor_head_source == "current":
+                    sample_head = head
+                elif anchor_head_source == "base":
+                    sample_head = anchor_base_head
+                elif anchor_head_source == "target_teacher":
+                    if target_teacher_head is None:
+                        raise ValueError(
+                            f"--anchor_sample_mode {args.anchor_sample_mode!r} requires "
+                            "--target_logit_anchor_path"
+                        )
+                    sample_head = target_teacher_head
+                else:
+                    raise ValueError(f"unsupported anchor head source {anchor_head_source!r}")
+                picks, hard_stats = sample_hard_anchors(
+                    head=sample_head,
+                    pool_features=pool_features,
+                    pool_labels=pool["labels"],
+                    k_anchor=args.k_anchor,
+                    mode=anchor_difficulty_mode,
+                    power=args.anchor_sample_power,
+                    min_weight=args.anchor_sample_min_weight,
+                    batch_size=args.eval_batch_size,
+                    device=device,
+                    seed=args.seed + epoch,
+                )
+                anchor_sample_stats.update(hard_stats)
             for i in range(0, len(picks), args.pgd_batch):
                 batch_idx = picks[i:i + args.pgd_batch]
                 z = torch.from_numpy(pool["latents"][batch_idx]).float().to(device)
                 y = torch.from_numpy(pool["labels"][batch_idx]).float().to(device)
                 cand = torch.from_numpy(index.candidates_for(batch_idx, args.hull_m)).float().to(device)
+                with torch.no_grad():
+                    anchor_logits = victim.forward_from_latent_to_logits(z)
+                    z_init = initial_hull_latent(
+                        z,
+                        cand,
+                        weight_mode=args.hull_weight_mode,
+                        hull_lambda=args.hull_lambda,
+                        init_logit_gap=pgd_gen.init_logit_gap,
+                    )
+                    init_logits = victim.forward_from_latent_to_logits(z_init)
                 x_adv, delta = pgd_gen.attack_from_latent(z, y, candidate_latents=cand)
                 with torch.no_grad():
                     feats = victim.features_from_ecg1000(x_adv, grad=False)
-                adv_features.append(feats.float().cpu().numpy())
+                    adv_logits = head(feats)
+                    attack_init_stats_batches.append(
+                        attack_success_stats(
+                            init_logits,
+                            adv_logits,
+                            y,
+                            margin=args.attack_success_margin,
+                        )
+                    )
+                    attack_anchor_stats_batches.append(
+                        attack_success_stats(
+                            anchor_logits,
+                            adv_logits,
+                            y,
+                            margin=args.attack_success_margin,
+                        )
+                    )
+                probs = torch.sigmoid(adv_logits)
+                pos_mask = y > 0.5
+                pos_counts = pos_mask.sum(dim=1)
+                pos_prob_mean = (probs * pos_mask.float()).sum(dim=1) / pos_counts.clamp(min=1).float()
+                keep_mask = (pos_counts == 0) | (
+                    (pos_prob_mean >= float(args.adv_boundary_prob_min))
+                    & (pos_prob_mean <= float(args.adv_boundary_prob_max))
+                )
+                n_adv_generated += int(len(batch_idx))
+                n_adv_filtered_boundary += int((~keep_mask).sum().item())
+                keep_np = keep_mask.cpu().numpy().astype(bool)
                 if args.hull_mix_label_mode == "anchor":
-                    adv_labels.append(pool["labels"][batch_idx].astype(np.float32))
+                    batch_labels = pool["labels"][batch_idx].astype(np.float32)
                 elif args.hull_mix_label_mode == "anchor_soft":
                     cand_idx = getattr(index, "last_candidate_indices", None)
                     weights_t = getattr(pgd_gen, "last_weights", None)
@@ -709,22 +1220,23 @@ def train_one_center(
                         )
                     weights_np = weights_t.numpy().astype(np.float32, copy=False)
                     cand_labels = pool["labels"][cand_idx]
-                    adv_labels.append(
-                        build_anchor_preserving_soft_labels(
-                            pool["labels"][batch_idx].astype(np.float32, copy=False),
-                            cand_labels,
-                            weights_np,
-                            lambda_y=args.hull_label_lambda_y,
-                            positive_value=args.hull_label_positive,
-                            negative_floor=args.hull_label_negative_floor,
-                            new_class_cap=args.hull_label_new_class_cap,
-                        )
+                    batch_labels = build_anchor_preserving_soft_labels(
+                        pool["labels"][batch_idx].astype(np.float32, copy=False),
+                        cand_labels,
+                        weights_np,
+                        lambda_y=args.hull_label_lambda_y,
+                        positive_value=args.hull_label_positive,
+                        negative_floor=args.hull_label_negative_floor,
+                        new_class_cap=args.hull_label_new_class_cap,
                     )
                 else:
                     raise ValueError(
                         "hull_mix_label_mode must be anchor|anchor_soft, "
                         f"got {args.hull_mix_label_mode!r}"
                     )
+                if bool(keep_mask.any()):
+                    adv_features.append(feats[keep_mask].float().cpu().numpy())
+                    adv_labels.append(batch_labels[keep_np].astype(np.float32, copy=False))
                 delta_norms.extend(delta.detach().flatten(1).norm(dim=1).cpu().tolist())
         adv_x = (
             np.concatenate(adv_features, axis=0).astype(np.float32)
@@ -737,7 +1249,16 @@ def train_one_center(
             else np.empty((0, len(CLASS_NAMES_SUPER5)), dtype=np.float32)
         )
 
-        loader = make_weighted_loader(source_x, source_y, target_x, target_y, adv_x, adv_y, args)
+        loader = make_weighted_loader(
+            source_x,
+            source_y,
+            target_x,
+            target_y,
+            adv_x,
+            adv_y,
+            args,
+            adv_weight=epoch_adv_weight,
+        )
         head.train()
         losses = []
         for x, y, stream in loader:
@@ -746,7 +1267,7 @@ def train_one_center(
             stream = stream.to(device)
             opt.zero_grad(set_to_none=True)
             logits = head(x)
-            loss = criterion(logits, y)
+            loss = criterion(logits, y, stream)
             if args.target_rank_loss_weight > 0 and rank_loss_class_indices:
                 if args.target_rank_loss_stream == "target_real":
                     target_mask = stream == 1
@@ -770,7 +1291,12 @@ def train_one_center(
                     source_logit_loss = F.mse_loss(logits[source_mask], teacher_logits)
                     loss = loss + args.source_logit_anchor_weight * source_logit_loss
             if args.target_logit_anchor_weight > 0:
-                target_mask = stream > 0
+                if args.target_logit_anchor_stream == "target_real":
+                    target_mask = stream == 1
+                elif args.target_logit_anchor_stream == "target_adv":
+                    target_mask = stream == 2
+                else:
+                    target_mask = stream > 0
                 if bool(target_mask.any()):
                     assert target_teacher_head is not None
                     with torch.no_grad():
@@ -797,23 +1323,42 @@ def train_one_center(
             "epoch": epoch,
             "train_loss": float(np.mean(losses)),
             "n_adv": int(len(adv_x)),
+            "n_adv_generated": int(n_adv_generated),
+            "n_adv_filtered_boundary": int(n_adv_filtered_boundary),
+            "adv_boundary_prob_min": float(args.adv_boundary_prob_min),
+            "adv_boundary_prob_max": float(args.adv_boundary_prob_max),
+            "adv_weight_effective": float(epoch_adv_weight),
             "classes_in_scope": classes_in_scope,
+            "anchor_sample_stats": anchor_sample_stats,
+            "attack_success": merge_attack_success_stats(attack_init_stats_batches),
+            "attack_vs_anchor": merge_attack_success_stats(attack_anchor_stats_batches),
             "delta_mean": float(np.mean(delta_norms)) if delta_norms else None,
             "lr": float(opt.param_groups[0]["lr"]),
         }
         if epoch % args.eval_every == 0 or epoch == args.epochs:
-            views = eval_pn(
-                head,
-                pn,
-                ref_ids,
-                device,
-                args.eval_batch_size,
-                report_drop_all_zero=args.report_drop_all_zero_pn2021,
-            )
             ptbxl_fold10 = eval_ptbxl_fold10(head, ptbxl, device, args.eval_batch_size)
-            target = views[center]["per_center"][center]
-            entry["target_macro_auroc"] = target["macro_auroc"]
-            entry["target_macro_auprc"] = target["macro_auprc"]
+            if args.selection_source == "target_real_val":
+                target = eval_feature_subset(
+                    head,
+                    target_val_x,
+                    target_val_y,
+                    device,
+                    args.eval_batch_size,
+                )
+                entry["target_val_macro_auroc"] = target["macro_auroc"]
+                entry["target_val_macro_auprc"] = target["macro_auprc"]
+            else:
+                views = eval_pn(
+                    head,
+                    pn,
+                    ref_ids,
+                    device,
+                    args.eval_batch_size,
+                    report_drop_all_zero=args.report_drop_all_zero_pn2021,
+                )
+                target = views[center]["per_center"][center]
+                entry["target_macro_auroc"] = target["macro_auroc"]
+                entry["target_macro_auprc"] = target["macro_auprc"]
             entry["ptbxl_macro_auroc"] = ptbxl_fold10["macro_auroc"]
             entry["ptbxl_macro_auprc"] = ptbxl_fold10["macro_auprc"]
             cur_score = (
@@ -830,19 +1375,47 @@ def train_one_center(
                 entry["best_update"] = True
             else:
                 entry["best_update"] = False
+            atk = entry["attack_success"]
+            atk_anchor = entry["attack_vs_anchor"]
+            atk_msg = ""
+            if isinstance(atk, dict) and atk.get("success_rate") is not None:
+                atk_msg = (
+                    f" atk_init={float(atk['success_rate']):.2f}"
+                    f"/{float(atk['loss_gain_mean']):+.4f}"
+                )
+                if isinstance(atk_anchor, dict) and atk_anchor.get("success_rate") is not None:
+                    atk_msg += (
+                        f" atk_anchor={float(atk_anchor['success_rate']):.2f}"
+                        f"/{float(atk_anchor['loss_gain_mean']):+.4f}"
+                    )
             print(
                 f"[{center}] ep={epoch:03d} loss={entry['train_loss']:.4f} "
-                f"target={target['macro_auroc']:.4f}/{target['macro_auprc']:.4f} "
+                f"adv_w={epoch_adv_weight:.3g} "
+                f"{args.selection_source}={target['macro_auroc']:.4f}/{target['macro_auprc']:.4f} "
                 f"ptbxl={ptbxl_fold10['macro_auroc']:.4f}/{ptbxl_fold10['macro_auprc']:.4f} "
-                f"best_ep={best_epoch}",
+                f"best_ep={best_epoch}{atk_msg}",
                 flush=True,
             )
         else:
-            print(f"[{center}] ep={epoch:03d} loss={entry['train_loss']:.4f}", flush=True)
+            print(
+                f"[{center}] ep={epoch:03d} loss={entry['train_loss']:.4f} "
+                f"adv_w={epoch_adv_weight:.3g}",
+                flush=True,
+            )
         logs.append(entry)
         with (run_dir / "training_log.json").open("w") as f:
             json.dump(logs, f, indent=2)
 
+    if baseline_views is None:
+        head.load_state_dict(torch.load(run_dir / "initial_head.pt", map_location=device))
+        baseline_views = eval_pn(
+            head,
+            pn,
+            ref_ids,
+            device,
+            args.eval_batch_size,
+            report_drop_all_zero=args.report_drop_all_zero_pn2021,
+        )
     head.load_state_dict(torch.load(run_dir / "best_head.pt", map_location=device))
     final_views = eval_pn(
         head,
@@ -862,9 +1435,12 @@ def train_one_center(
         "center": center,
         "class_names": list(CLASS_NAMES_SUPER5),
         "K": int(args.k),
-        "selected_ref_record_ids": selected_ids.tolist(),
+        "selected_ref_record_ids": selected_ids_all.tolist(),
+        "target_train_record_ids": target_train_record_ids,
+        "target_val_record_ids": target_val_record_ids,
         "classes_in_scope": classes_in_scope,
         "label_counts": pool["label_counts"],
+        "original_k500_label_counts": original_pool_label_counts,
         "class_loss_weights": class_loss_weights_map,
         "head_type": args.head_type,
         "baseline_pn2021_views": baseline_views,
@@ -949,6 +1525,28 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--preprocess_policy", default="official_ptbxl_eval")
     p.add_argument("--k", type=int, default=500)
     p.add_argument("--k_anchor", type=int, default=300)
+    p.add_argument(
+        "--anchor_sample_mode",
+        choices=[
+            "stratified",
+            "hard_bce",
+            "uncertainty",
+            "base_hard_bce",
+            "base_uncertainty",
+            "target_hard_bce",
+            "target_uncertainty",
+        ],
+        default="stratified",
+        help=(
+            "How to choose K-shot latent anchors for online VAE adversarial samples. "
+            "hard_bce/uncertainty use the current head; base_* freezes the initial "
+            "direct/K500 head; target_* uses --target_logit_anchor_path. All modes "
+            "score only the known K-shot training anchors, without looking at "
+            "held-out center distribution."
+        ),
+    )
+    p.add_argument("--anchor_sample_power", type=float, default=1.0)
+    p.add_argument("--anchor_sample_min_weight", type=float, default=1e-4)
     p.add_argument("--hull_m", type=int, default=20)
     p.add_argument("--hull_lambda", type=float, default=0.15)
     p.add_argument("--hull_steps", type=int, default=5)
@@ -962,8 +1560,50 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--hull_label_negative_floor", type=float, default=0.0)
     p.add_argument("--hull_label_new_class_cap", type=float, default=0.5)
     p.add_argument("--hull_include_anchor", action="store_true")
+    p.add_argument(
+        "--hull_neighbor_distance_space",
+        choices=["raw", "standardized"],
+        default="raw",
+        help="Distance space for latent-hull same-label neighbor selection.",
+    )
+    p.add_argument(
+        "--hull_neighbor_mode",
+        choices=["nearest", "local_random", "random"],
+        default="nearest",
+        help=(
+            "nearest keeps historical deterministic kNN; local_random samples "
+            "from top-K same-label neighbors; random samples from the full "
+            "same-label pool."
+        ),
+    )
+    p.add_argument("--hull_neighbor_pool_size", type=int, default=0)
+    p.add_argument("--hull_neighbor_pool_multiplier", type=int, default=4)
     p.add_argument("--pgd_eps", type=float, default=2.0)
     p.add_argument("--pgd_batch", type=int, default=16)
+    p.add_argument(
+        "--adv_boundary_prob_min",
+        type=float,
+        default=0.0,
+        help=(
+            "Filter online adversarial features by mean post-attack probability "
+            "over positive labels. Values below this are considered too strong."
+        ),
+    )
+    p.add_argument(
+        "--adv_boundary_prob_max",
+        type=float,
+        default=1.0,
+        help=(
+            "Filter online adversarial features by mean post-attack probability "
+            "over positive labels. Values above this are considered too weak."
+        ),
+    )
+    p.add_argument(
+        "--attack_success_margin",
+        type=float,
+        default=1e-4,
+        help="Per-sample BCE gain threshold for counting latent PGD as successful.",
+    )
     p.add_argument("--epochs", type=int, default=20)
     p.add_argument("--eval_every", type=int, default=1)
     p.add_argument("--lr", type=float, default=5e-4)
@@ -972,9 +1612,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--eval_batch_size", type=int, default=4096)
     p.add_argument(
         "--head_type",
-        choices=["linear", "residual_adapter"],
+        choices=["linear", "residual_adapter", "feature_adapter"],
         default="linear",
-        help="linear updates the Super5 head directly; residual_adapter keeps a source head plus trainable zero-init adapter.",
+        help=(
+            "linear updates the Super5 head directly; residual_adapter adds a "
+            "zero-init logit residual; feature_adapter adds a zero-init feature "
+            "residual before the Super5 head."
+        ),
     )
     p.add_argument("--adapter_hidden", type=int, default=128)
     p.add_argument("--adapter_dropout", type=float, default=0.0)
@@ -983,6 +1627,15 @@ def parse_args() -> argparse.Namespace:
         "--freeze_base_head",
         action="store_true",
         help="For residual_adapter, freeze the PTB-XL source linear head and train only adapter parameters.",
+    )
+    p.add_argument(
+        "--init_base_head_from_k500_root",
+        default="",
+        help=(
+            "Optional runs/ directory from ECGFounder K500 direct fine-tuning. "
+            "Each center loads its direct-ft best_head.pt into the base linear "
+            "head before training the residual adapter."
+        ),
     )
     p.add_argument(
         "--init_head_path",
@@ -996,6 +1649,46 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--target_real_weight", type=float, default=20.0)
     p.add_argument("--adv_weight", type=float, default=10.0)
     p.add_argument(
+        "--source_bce_loss_weight",
+        type=float,
+        default=1.0,
+        help="Per-sample BCE multiplier for the PTB-XL source stream.",
+    )
+    p.add_argument(
+        "--target_real_bce_loss_weight",
+        type=float,
+        default=1.0,
+        help="Per-sample BCE multiplier for the real K-shot target stream.",
+    )
+    p.add_argument(
+        "--adv_bce_loss_weight",
+        type=float,
+        default=1.0,
+        help=(
+            "Per-sample BCE multiplier for online VAE adversarial samples. "
+            "Values below 1 turn the adversarial stream into a gentler "
+            "consistency/distillation branch instead of hard-label retraining."
+        ),
+    )
+    p.add_argument(
+        "--adv_weight_start",
+        type=float,
+        default=None,
+        help=(
+            "Optional starting sampler weight for the adversarial stream. "
+            "When --adv_weight_warmup_epochs > 0 and this is omitted, warmup starts at 0."
+        ),
+    )
+    p.add_argument(
+        "--adv_weight_warmup_epochs",
+        type=int,
+        default=0,
+        help=(
+            "Linearly warm up adversarial stream sampler weight from "
+            "--adv_weight_start to --adv_weight over this many epochs."
+        ),
+    )
+    p.add_argument(
         "--source_logit_anchor_weight",
         type=float,
         default=0.0,
@@ -1005,6 +1698,22 @@ def parse_args() -> argparse.Namespace:
         "--target_logit_anchor_path",
         default="",
         help="Optional linear-head checkpoint used as a target/adv stream logit teacher.",
+    )
+    p.add_argument(
+        "--target_logit_anchor_source",
+        choices=["path", "initial_head"],
+        default="path",
+        help=(
+            "Source for target/adv logit anchoring. initial_head freezes the "
+            "head after any K500-direct initialization, so it is paper-safe and "
+            "does not require a center-specific held-out teacher path."
+        ),
+    )
+    p.add_argument(
+        "--target_logit_anchor_stream",
+        choices=["target_real", "target_adv", "target_adv_real"],
+        default="target_adv_real",
+        help="Which non-source stream receives the target logit anchor loss.",
     )
     p.add_argument(
         "--target_logit_anchor_weight",
@@ -1097,8 +1806,11 @@ def parse_args() -> argparse.Namespace:
         "--selection_metric",
         choices=[
             "last_epoch",
+            "target_auroc",
             "target_auprc",
+            "target_plus_source_auroc",
             "target_plus_source_auprc",
+            "target_source_hmean_auroc",
             "target_source_hmean_auprc",
             "target_under_source_floor",
         ],
@@ -1108,10 +1820,30 @@ def parse_args() -> argparse.Namespace:
             "Use last_epoch for fixed-horizon runs without target-test checkpoint selection."
         ),
     )
+    p.add_argument(
+        "--selection_source",
+        choices=["pn2021_heldout", "target_real_val"],
+        default="pn2021_heldout",
+        help=(
+            "Checkpoint-selection source. target_real_val uses a deterministic "
+            "validation split from the known K-shot target records and does not "
+            "evaluate PN2021 held-out target data during training."
+        ),
+    )
+    p.add_argument("--target_real_val_fraction", type=float, default=0.2)
+    p.add_argument("--target_real_val_seed", type=int, default=20260531)
     p.add_argument("--source_selection_weight", type=float, default=0.25)
     p.add_argument("--source_auprc_floor", type=float, default=0.79)
     p.add_argument("--source_floor_penalty", type=float, default=5.0)
     p.add_argument("--classes_in_scope", nargs="*", default=[])
+    p.add_argument(
+        "--anchor_base_root",
+        default="",
+        help=(
+            "Optional root for per-center K-shot ECGTwin VAE anchors. Supports "
+            "<root>/<center>/k{k}_seed{seed>/<center>_real_k{k}_seed{seed}."
+        ),
+    )
     p.add_argument("--seed", type=int, default=20260531)
     p.add_argument("--device", default="cuda:0" if torch.cuda.is_available() else "cpu")
     p.add_argument("--force", action="store_true")

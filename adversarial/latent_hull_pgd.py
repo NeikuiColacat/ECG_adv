@@ -67,6 +67,7 @@ class LatentHullPGDGenerator(PGDAdvDiffGenerator):
         self.weight_mode = weight_mode
         self.dirichlet_alpha = float(dirichlet_alpha)
         self.init_logit_gap = float(init_logit_gap)
+        self.attack_pos_weight: Optional[torch.Tensor] = None
         self.last_info: Dict[str, float] = {}
         self.last_weights: Optional[torch.Tensor] = None
 
@@ -151,7 +152,15 @@ class LatentHullPGDGenerator(PGDAdvDiffGenerator):
                     z_mix = (w.view(bsz, m, 1, 1) * cand).sum(dim=1)
                     z_adv = (1.0 - self.hull_lambda) * z0 + self.hull_lambda * z_mix
                     logits = self.victim.forward_from_latent_to_logits(z_adv)
-                    loss = F.binary_cross_entropy_with_logits(logits, y0, reduction="mean")
+                    pos_weight = None
+                    if self.attack_pos_weight is not None:
+                        pos_weight = self.attack_pos_weight.to(device=logits.device, dtype=logits.dtype)
+                    loss = F.binary_cross_entropy_with_logits(
+                        logits,
+                        y0,
+                        pos_weight=pos_weight,
+                        reduction="mean",
+                    )
                     opt.zero_grad(set_to_none=True)
                     (-loss).backward()
                     opt.step()

@@ -46,6 +46,10 @@ from scripts.triple_labels.label_schemes import CLASS_NAMES_SUPER5  # noqa: E402
 from scripts.triple_labels.train_ptbxl import compute_pos_weight, masked_bce_with_logits  # noqa: E402
 
 
+_V6_LINEAR_PROBE_DIR = (
+    DATA_ROOT
+    / "paper_foundation_baselines_20260524/ecgfounder_linear_probe_v6_from_legacy_cache"
+)
 _V5_LINEAR_PROBE_DIR = (
     DATA_ROOT
     / "paper_foundation_baselines_20260522/ecgfounder_linear_probe_v5_seed42_official"
@@ -56,10 +60,14 @@ _LEGACY_LINEAR_PROBE_DIR = (
 DEFAULT_LINEAR_PROBE_DIR = Path(
     os.environ.get(
         "ECGFOUNDER_LINEAR_PROBE_DIR",
-        str(_V5_LINEAR_PROBE_DIR if _V5_LINEAR_PROBE_DIR.exists() else _LEGACY_LINEAR_PROBE_DIR),
+        str(
+            _V6_LINEAR_PROBE_DIR
+            if _V6_LINEAR_PROBE_DIR.exists()
+            else (_V5_LINEAR_PROBE_DIR if _V5_LINEAR_PROBE_DIR.exists() else _LEGACY_LINEAR_PROBE_DIR)
+        ),
     )
 )
-DEFAULT_OUT_DIR = DATA_ROOT / "paper_foundation_baselines_20260522/ecgfounder_kshot_head_ft_super5"
+DEFAULT_OUT_DIR = DATA_ROOT / "paper_foundation_baselines_20260524/ecgfounder_kshot_head_ft_v6_from_legacy_cache"
 
 
 def load_ref_ids(center: str, k: int, seed: int, source_k: int | None = None) -> list[str]:

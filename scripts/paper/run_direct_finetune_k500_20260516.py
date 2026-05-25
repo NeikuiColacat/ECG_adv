@@ -46,8 +46,17 @@ from scripts.triple_labels.train_ptbxl import (  # noqa: E402
 )
 
 
-OUT_ROOT = Path("/root/autodl-tmp/paper_direct_finetune_k500_20260516")
-SUBSET_ROOT = Path("/root/autodl-tmp/paper_vae_only_latenthull_sweep_20260516/subsets")
+_MIGRATED_DATA_ROOT = Path(
+    "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp"
+)
+DATA_ROOT = Path(
+    os.environ.get(
+        "ECG_ADV_GEN_DATA_ROOT",
+        str(_MIGRATED_DATA_ROOT if _MIGRATED_DATA_ROOT.exists() else Path("/root/autodl-tmp")),
+    )
+)
+OUT_ROOT = DATA_ROOT / "paper_direct_finetune_k500_20260516"
+SUBSET_ROOT = DATA_ROOT / "paper_vae_only_latenthull_sweep_20260516/subsets"
 
 
 class NPZRealDataset(Dataset):
@@ -145,8 +154,8 @@ def run_cmd(cmd: list[str], log_path: Path) -> None:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     print("[run]", " ".join(cmd), flush=True)
     env = os.environ.copy()
-    env.setdefault("TMPDIR", "/root/autodl-tmp/tmp")
-    env.setdefault("XDG_CACHE_HOME", "/root/autodl-tmp/cache")
+    env.setdefault("TMPDIR", str(DATA_ROOT / "tmp"))
+    env.setdefault("XDG_CACHE_HOME", str(DATA_ROOT / "cache"))
     Path(env["TMPDIR"]).mkdir(parents=True, exist_ok=True)
     Path(env["XDG_CACHE_HOME"]).mkdir(parents=True, exist_ok=True)
     with log_path.open("w") as log:
@@ -177,7 +186,7 @@ def train_one(center: str, args: argparse.Namespace) -> Path:
         f"{center}_K{args.k}_direct_ft_ep{args.epochs}_seed{args.seed}"
         f"_val{args.val_fraction:g}"
     )
-    eval_path = out_dir / "eval_result_v3_super5_normsuppress_exclrefs_crop1000.json"
+    eval_path = out_dir / "eval_result_v6_super5_clinician_review_exclrefs_crop1000.json"
     if eval_path.exists() and not args.force:
         print(f"[skip] {center} direct fine-tune already evaluated")
         return eval_path
@@ -331,8 +340,10 @@ def train_one(center: str, args: argparse.Namespace) -> Path:
         str(args.eval_batch_size),
         "--num_workers",
         str(args.num_workers),
+        "--ptbxl_csv",
+        str(DATA_ROOT / "ptbxl/ptbxl_database.csv"),
         "--ptbxl_cache",
-        "/root/autodl-tmp/triple_labels/cache/ptbxl_minimal_resample_per_sample_global_fs100_len1000.npy",
+        str(DATA_ROOT / "triple_labels/cache/ptbxl_minimal_resample_per_sample_global_fs100_len1000.npy"),
         "--preprocess_mode",
         "minimal_resample",
         "--norm_mode",
@@ -341,6 +352,8 @@ def train_one(center: str, args: argparse.Namespace) -> Path:
         PN2021_CACHE_DIR,
         "--pn2021_mmap_cache_dir",
         PN2021_MMAP_CACHE_DIR,
+        "--pn2021_root",
+        str(DATA_ROOT / "physionet2021"),
         "--skip_mimic",
         "--exclude_ref_ids",
         str(paths["meta"]),
