@@ -76,7 +76,7 @@ logging:
     - best_model.pt
     - training_log.json
     - train_result.json
-    - eval_result_v7_super5_sjr_rgq_review_exclrefs_crop1000.json
+    - eval_result_v7_exclrefs_crop1000.json
   postprocess_artifacts:
     - metrics_long.csv
 

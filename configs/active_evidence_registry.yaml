@@ -1,0 +1,183 @@
+schema_version: 1
+updated: 2026-05-29
+purpose: >
+  Single tracked entry point for the current trusted ECG_adv_Gen experimental
+  facts. New agents should start here after reading AGENTS.md instead of
+  reconstructing the mainline from old chats or dated HTML reports.
+
+state_machine:
+  current_state: comparison_registered
+  allowed_states:
+    - triage
+    - plan
+    - cpu_audit
+    - gpu_preflight
+    - run
+    - evaluate
+    - register_evidence
+    - comparison_bundle
+    - handoff
+  next_recommended_state: checkpoint_resume_diagnostics
+
+artifact_policy:
+  do_not_commit:
+    - model/DeepECG
+    - model/ECGTwin
+    - model/advdiff
+    - model/ecg_ptbxl_benchmarking
+    - model/ecgfounder
+    - datasets/
+    - runs/
+    - outputs/
+    - checkpoints/
+    - mlruns/
+    - wandb/
+    - "*.pt"
+    - "*.pth"
+    - "*.ckpt"
+    - "*.npz"
+    - "*.npy"
+    - "*.h5"
+    - "*.pkl"
+    - "*.mat"
+  tracked_allowed_artifacts:
+    - configs/**/*.yaml
+    - ecg_adv_gen/**/*.py
+    - scripts/**/*.py
+    - docs/**/*.md
+    - docs/tmp_jsonl/*.jsonl
+    - util/tests/**/*.py
+
+active_claims:
+  - claim_id: effnet_v7_vae_lhat_improves_direct_k500
+    title: EfficientNet1DV2 VAE L-HAT improves over direct K500 on PN2021 v7.
+    status: trusted
+    paper_use: mainline
+    owner: linbinhao
+    evidence_doc: docs/pipelines/v7_sjr_rgq_effnet_mainline_repro_20260528.md
+    protocol:
+      mapping_version: v7_super5_sjr_rgq_review_20260528
+      mapping_hash: 555ec85d5b51
+      class_order: [CD, HYP, MI, NORM, STTC]
+      model_backbone: efficientnet1dv2
+      source_dataset: ptbxl
+      target_dataset: pn2021
+      target_centers: [ningbo, chapman_shaoxing, cpsc_2018, georgia]
+      evaluation_views:
+        - pn2021_all_zero_kept_refexcluded
+        - pn2021_drop_all_zero_refexcluded
+      kshot:
+        mode: fixed_k
+        k: 500
+        seed: 20260531
+        subset_seed: 20260531
+        ref_excluded: true
+        ref_meta_files:
+          ningbo: ${paths.data_root}/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets/ningbo/k500_seed20260531/ningbo_real_k500_seed20260531.ref_meta.json
+          chapman_shaoxing: ${paths.data_root}/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets/chapman_shaoxing/k500_seed20260531/chapman_shaoxing_real_k500_seed20260531.ref_meta.json
+          cpsc_2018: ${paths.data_root}/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets/cpsc_2018/k500_seed20260531/cpsc_2018_real_k500_seed20260531.ref_meta.json
+          georgia: ${paths.data_root}/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets/georgia/k500_seed20260531/georgia_real_k500_seed20260531.ref_meta.json
+      selection:
+        policy: k500_internal_val_plus_source_floor
+        forbidden_information:
+          - heldout_target_labels
+          - full_target_center_class_distribution
+    methods:
+      direct:
+        role: baseline
+        status: trusted
+        method_family: direct_target_k500_finetune
+        run_id: v7_sjr_rgq_main_20260528
+        config: configs/experiments/effnet_direct_k500_v7_sjr_rgq.yaml
+        run_root: ${paths.output_root}/effnet_direct_k500_v7_sjr_rgq/v7_sjr_rgq_main_20260528
+        manifest: ${paths.output_root}/20260528/v7_sjr_rgq_main_20260528_direct_plan/run_manifest.json
+        metrics_long: ${paths.output_root}/metrics_export/v7_sjr_rgq_main_20260528_effnet_direct_k500_v7_sjr_rgq/metrics_long.csv
+        artifact_manifest: ${paths.output_root}/metrics_export/v7_sjr_rgq_main_20260528_effnet_direct_k500_v7_sjr_rgq/artifact_manifest.json
+        paper_tables:
+          pn2021_all_zero_kept_refexcluded: ${paths.output_root}/paper_table/v7_sjr_rgq_main_20260528_effnet_direct_k500_v7_sjr_rgq_all_zero_kept/paper_table.csv
+          pn2021_drop_all_zero_refexcluded: ${paths.output_root}/paper_table/v7_sjr_rgq_main_20260528_effnet_direct_k500_v7_sjr_rgq_drop_all_zero/paper_table.csv
+      vae_lhat:
+        role: candidate
+        status: trusted
+        traceability: legacy_backfilled_manifest
+        method_family: vae_latent_hull_online_at
+        run_id: v7_sjr_rgq_main_20260528
+        config: configs/experiments/effnet_vae_lhat_k500_v7_sjr_rgq.yaml
+        run_root: ${paths.output_root}/effnet_vae_lhat_k500_v7_sjr_rgq/v7_sjr_rgq_main_20260528
+        manifest: ${paths.output_root}/effnet_vae_lhat_k500_v7_sjr_rgq/v7_sjr_rgq_main_20260528/run_manifest.backfilled.json
+        metrics_long: ${paths.output_root}/metrics_export/v7_sjr_rgq_main_20260528_effnet_vae_lhat_k500_v7_sjr_rgq/metrics_long.csv
+        artifact_manifest: ${paths.output_root}/metrics_export/v7_sjr_rgq_main_20260528_effnet_vae_lhat_k500_v7_sjr_rgq/artifact_manifest.json
+        paper_tables:
+          pn2021_all_zero_kept_refexcluded: ${paths.output_root}/paper_table/v7_sjr_rgq_main_20260528_effnet_vae_lhat_k500_v7_sjr_rgq_all_zero_kept/paper_table.csv
+          pn2021_drop_all_zero_refexcluded: ${paths.output_root}/paper_table/v7_sjr_rgq_main_20260528_effnet_vae_lhat_k500_v7_sjr_rgq_drop_all_zero/paper_table.csv
+    summary_metrics:
+      pn2021_all_zero_kept_refexcluded:
+        direct: {macro_auroc: 0.8521806591, macro_auprc: 0.5246913957}
+        vae_lhat: {macro_auroc: 0.8711774092, macro_auprc: 0.5543950864}
+        delta_vae_lhat_minus_direct:
+          macro_auroc_pp: 1.89967501
+          macro_auprc_pp: 2.97036907
+      pn2021_drop_all_zero_refexcluded:
+        direct: {macro_auroc: 0.8763066077, macro_auprc: 0.6666377832}
+        vae_lhat: {macro_auroc: 0.8996374591, macro_auprc: 0.7176495521}
+        delta_vae_lhat_minus_direct:
+          macro_auroc_pp: 2.33308514
+          macro_auprc_pp: 5.10117689
+    comparison_bundle:
+      comparison_id: v7_sjr_rgq_effnet_direct_vs_vae_lhat_20260528
+      status: built
+      baseline_method: direct
+      candidate_method: vae_lhat
+      output_dir: ${paths.output_root}/comparison_bundles/v7_sjr_rgq_effnet_direct_vs_vae_lhat_20260528
+      baseline_run_id: effnet_direct_k500_v7_sjr_rgq
+      candidate_run_id: effnet_vae_lhat_k500_v7_sjr_rgq
+      managed_artifacts:
+        - comparison_manifest.json
+        - metrics_long.csv
+        - comparison_delta.csv
+        - paper_table_pn2021_all_zero_kept_refexcluded.csv
+        - paper_table_pn2021_drop_all_zero_refexcluded.csv
+    caveats:
+      - VAE v7 result uses a legacy backfilled manifest because the original run predates managed launcher manifests.
+      - Do not tune future recipes from held-out PN2021 target labels or full target-center class distributions.
+
+run_catalog:
+  trusted:
+    - effnet_direct_k500_v7_sjr_rgq/v7_sjr_rgq_main_20260528
+    - effnet_vae_lhat_k500_v7_sjr_rgq/v7_sjr_rgq_main_20260528
+  provisional:
+    - effnet_vae_lhat_k500_v7_sjr_rgq/v7_sjr_rgq_main_20260528: legacy_backfilled_manifest
+  deprecated:
+    - v3/v5/v6 headline numbers for the final v7 EfficientNet mainline unless explicitly used as historical sensitivity analysis.
+
+external_research_sources:
+  - title: AGENTS.md format
+    url: https://agents.md/
+    source_type: open specification
+    reliability: high
+    takeaway: Keep agent instructions in a predictable, concise entry file.
+  - title: Codex AGENTS.md guide
+    url: https://developers.openai.com/codex/guides/agents-md
+    source_type: official documentation
+    reliability: high
+    takeaway: Layer global/project/subdirectory instructions and keep project-specific rules near the work.
+  - title: MLflow Tracking
+    url: https://mlflow.org/docs/latest/ml/tracking
+    source_type: official documentation
+    reliability: high
+    takeaway: Record params, code versions, metrics, and artifacts per run.
+  - title: PyTorch saving and loading models
+    url: https://docs.pytorch.org/tutorials/beginner/saving_loading_models.html
+    source_type: official documentation
+    reliability: high
+    takeaway: Resume-capable checkpoints need model, optimizer, epoch, loss, and related state.
+  - title: Hydra output working directory
+    url: https://hydra.cc/docs/1.3/tutorials/basic/running_your_app/working_directory/
+    source_type: official documentation
+    reliability: high
+    takeaway: Per-run output directories should include resolved config and overrides.
+  - title: Lightning checkpointing
+    url: https://lightning.ai/docs/pytorch/stable/common/checkpointing_basic.html
+    source_type: official documentation
+    reliability: high
+    takeaway: Latest and best checkpoint semantics should be explicit and resume-safe.

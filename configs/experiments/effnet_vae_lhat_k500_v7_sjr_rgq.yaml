@@ -16,6 +16,9 @@ logging:
     - val_loss
     - asr_overall
     - sample_any_positive_below_0p5_asr
+    - attack_vs_anchor
+    - loss_gain
+    - decoded_invalid_rate
     - adv_weight_effective
     - latent_augmix_stats
     - hull_weight_entropy_mean

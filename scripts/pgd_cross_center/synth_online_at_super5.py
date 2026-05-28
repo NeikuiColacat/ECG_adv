@@ -83,7 +83,11 @@ from scripts.triple_labels.label_schemes import (  # noqa: E402
     CLASS_NAMES_SUPER5, NUM_SUPER5, snomed_list_to_super5,
 )
 from scripts.triple_labels.model_zoo import available_model_names  # noqa: E402
-from ecg_adv_gen.training import compute_pos_weight  # noqa: E402
+from ecg_adv_gen.training import (  # noqa: E402
+    compute_pos_weight,
+    should_save_initial_best_model,
+    validate_resume_contract,
+)
 from scripts.triple_labels.train_ptbxl import (  # noqa: E402
     PTBXLDatasetScheme, compute_macro_auroc_auprc,
     evaluate, get_ptbxl_labels_for_scheme, preprocess_ptbxl_all,
@@ -422,6 +426,218 @@ def compatible_state_dict_for_save(model: nn.Module) -> Dict[str, torch.Tensor]:
 
 def save_compatible_model_state(model: nn.Module, path: str) -> None:
     torch.save(compatible_state_dict_for_save(model), path)
+
+
+def _atomic_torch_save(payload: Dict[str, Any], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(path.name + ".tmp")
+    torch.save(payload, tmp_path)
+    os.replace(tmp_path, path)
+
+
+def _append_jsonl(path: Path, payload: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(payload, ensure_ascii=True, default=str) + "\n")
+
+
+def _resolve_resume_path(resume: str, output_dir: str) -> Optional[Path]:
+    if not resume:
+        return None
+    if resume == "latest":
+        return Path(output_dir) / "checkpoints" / "checkpoint_latest.pt"
+    return Path(resume).expanduser()
+
+
+def _buffer_state(buffer: QualityAwareBuffer) -> Dict[str, Any]:
+    state: Dict[str, Any] = {
+        "max_size": int(buffer.max_size),
+        "size": int(len(buffer)),
+        "score_list": list(buffer.score_list),
+    }
+    if len(buffer) > 0:
+        state["ecg_tensor"] = torch.stack(buffer.ecg_list).cpu()
+        state["label_tensor"] = torch.stack(buffer.label_list).cpu()
+    return state
+
+
+def _restore_buffer_state(buffer: QualityAwareBuffer, state: Dict[str, Any]) -> None:
+    buffer.max_size = int(state.get("max_size", buffer.max_size))
+    ecg_tensor = state.get("ecg_tensor")
+    label_tensor = state.get("label_tensor")
+    scores = list(state.get("score_list") or [])
+    if ecg_tensor is None or label_tensor is None:
+        buffer.ecg_list = []
+        buffer.label_list = []
+        buffer.score_list = []
+        return
+    buffer.ecg_list = [row.detach().cpu() for row in ecg_tensor]
+    buffer.label_list = [row.detach().cpu() for row in label_tensor]
+    buffer.score_list = [float(x) for x in scores[: len(buffer.ecg_list)]]
+
+
+def _walker_state(walker: StratifiedPoolWalker) -> Dict[str, Any]:
+    return {
+        "cls_pools": {k: v.copy() for k, v in walker.cls_pools.items()},
+        "cursors": dict(walker.cursors),
+        "epochs_completed": dict(walker.epochs_completed),
+        "rng_state": walker.rng.bit_generator.state,
+        "source_cls_pools": {f"{k[0]}::{k[1]}": v.copy() for k, v in walker.source_cls_pools.items()},
+        "source_cursors": {f"{k[0]}::{k[1]}": v for k, v in walker.source_cursors.items()},
+        "source_epochs_completed": {
+            f"{k[0]}::{k[1]}": v for k, v in walker.source_epochs_completed.items()
+        },
+        "last_source_counts": dict(walker.last_source_counts),
+        "last_class_source_counts": dict(walker.last_class_source_counts),
+    }
+
+
+def _restore_walker_state(walker: StratifiedPoolWalker, state: Dict[str, Any]) -> None:
+    if not state:
+        return
+    walker.cls_pools = {k: np.asarray(v, dtype=np.int64) for k, v in state.get("cls_pools", {}).items()}
+    walker.cursors = {k: int(v) for k, v in state.get("cursors", {}).items()}
+    walker.epochs_completed = {k: int(v) for k, v in state.get("epochs_completed", {}).items()}
+    if "rng_state" in state:
+        walker.rng.bit_generator.state = state["rng_state"]
+
+    def split_key(raw: str) -> Tuple[str, str]:
+        left, right = raw.split("::", 1)
+        return left, right
+
+    walker.source_cls_pools = {
+        split_key(k): np.asarray(v, dtype=np.int64)
+        for k, v in state.get("source_cls_pools", {}).items()
+    }
+    walker.source_cursors = {
+        split_key(k): int(v)
+        for k, v in state.get("source_cursors", {}).items()
+    }
+    walker.source_epochs_completed = {
+        split_key(k): int(v)
+        for k, v in state.get("source_epochs_completed", {}).items()
+    }
+    walker.last_source_counts = dict(state.get("last_source_counts", {}))
+    walker.last_class_source_counts = dict(state.get("last_class_source_counts", {}))
+
+
+def _rng_state(epoch_rng: np.random.Generator) -> Dict[str, Any]:
+    state: Dict[str, Any] = {
+        "python": random.getstate(),
+        "numpy_global": np.random.get_state(),
+        "numpy_epoch_generator": epoch_rng.bit_generator.state,
+        "torch_cpu": torch.get_rng_state(),
+    }
+    if torch.cuda.is_available():
+        state["torch_cuda_all"] = torch.cuda.get_rng_state_all()
+    return state
+
+
+def _restore_rng_state(state: Dict[str, Any], epoch_rng: np.random.Generator) -> None:
+    if not state:
+        return
+    if "python" in state:
+        random.setstate(state["python"])
+    if "numpy_global" in state:
+        np.random.set_state(state["numpy_global"])
+    if "numpy_epoch_generator" in state:
+        epoch_rng.bit_generator.state = state["numpy_epoch_generator"]
+    if "torch_cpu" in state:
+        torch.set_rng_state(state["torch_cpu"])
+    if torch.cuda.is_available() and "torch_cuda_all" in state:
+        torch.cuda.set_rng_state_all(state["torch_cuda_all"])
+
+
+def decoded_signal_invalid_stats(signals: np.ndarray) -> Dict[str, float]:
+    if signals.size == 0:
+        return {"decoded_invalid_rate": float("nan"), "nan_rate": float("nan"), "flatline_rate": float("nan")}
+    finite = np.isfinite(signals).all(axis=tuple(range(1, signals.ndim)))
+    p2p = np.ptp(np.nan_to_num(signals, nan=0.0, posinf=0.0, neginf=0.0), axis=-1).max(axis=1)
+    flatline = p2p < 1e-6
+    invalid = (~finite) | flatline
+    return {
+        "decoded_invalid_rate": float(np.mean(invalid)),
+        "nan_rate": float(np.mean(~finite)),
+        "flatline_rate": float(np.mean(flatline)),
+    }
+
+
+@torch.no_grad()
+def attack_bce_diagnostics(
+    model: nn.Module,
+    clean_signals_ct: np.ndarray,
+    adv_signals_ct: np.ndarray,
+    labels: np.ndarray,
+    *,
+    device: str,
+    crop_len: int,
+    batch_size: int = 128,
+) -> Dict[str, Any]:
+    if adv_signals_ct.size == 0:
+        return {}
+
+    def logits_for(signals: np.ndarray) -> torch.Tensor:
+        start = max(0, (signals.shape[-1] - crop_len) // 2)
+        cropped = signals[..., start:start + crop_len]
+        chunks: List[torch.Tensor] = []
+        for i in range(0, cropped.shape[0], batch_size):
+            x = torch.from_numpy(cropped[i:i + batch_size]).float().to(device)
+            chunks.append(model(x).detach().cpu())
+        return torch.cat(chunks, dim=0)
+
+    model.eval()
+    clean_logits = logits_for(clean_signals_ct)
+    adv_logits = logits_for(adv_signals_ct)
+    labels_t = torch.from_numpy(labels.astype(np.float32, copy=False))
+    clean_bce = F.binary_cross_entropy_with_logits(clean_logits, labels_t, reduction="none").mean(dim=1)
+    adv_bce = F.binary_cross_entropy_with_logits(adv_logits, labels_t, reduction="none").mean(dim=1)
+    gain = adv_bce - clean_bce
+    success = gain > 0.0
+    return {
+        "n": int(labels_t.shape[0]),
+        "success_rate": float(success.float().mean().item()),
+        "clean_bce_mean": float(clean_bce.mean().item()),
+        "adv_bce_mean": float(adv_bce.mean().item()),
+        "loss_gain_mean": float(gain.mean().item()),
+        "loss_gain_p50": float(torch.quantile(gain, 0.50).item()),
+        "loss_gain_p90": float(torch.quantile(gain, 0.90).item()),
+    }
+
+
+def agent_attack_decision(
+    entry: Dict[str, Any],
+    *,
+    asr_low_threshold: float,
+    consecutive_low_asr: int,
+) -> Dict[str, Any]:
+    asr = float(entry.get("asr_overall", float("nan")))
+    invalid = float(entry.get("decoded_invalid_rate", float("nan")))
+    loss_gain = entry.get("attack_vs_anchor", {}).get("loss_gain_mean")
+    if asr != asr:
+        state = "no_attack_or_disabled"
+        action = "continue_if_this_is_an_ablation"
+    elif invalid == invalid and invalid > 0.05:
+        state = "attack_too_strong_or_decode_invalid"
+        action = "lower_hull_lambda_or_attack_strength_before_paper_run"
+    elif asr < asr_low_threshold:
+        state = "attack_too_weak"
+        action = "increase_attack_strength_only_if_repeated_and_source_floor_is_safe"
+    elif asr > 0.85 and (loss_gain is None or float(loss_gain) > 0.05):
+        state = "attack_too_strong"
+        action = "lower_adv_weight_or_attack_strength_if_target/source_metrics_drop"
+    elif consecutive_low_asr > 0:
+        state = "watch_low_asr"
+        action = "continue_but_watch_next_epoch"
+    else:
+        state = "healthy"
+        action = "continue"
+    return {
+        "attack_state": state,
+        "action": action,
+        "stop_or_continue": "continue" if state not in {"attack_too_strong_or_decode_invalid"} else "review_before_continue",
+        "asr_low_threshold": float(asr_low_threshold),
+        "consecutive_low_asr": int(consecutive_low_asr),
+    }
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -1267,6 +1483,19 @@ def parse_args():
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--device", default="cuda:0")
     p.add_argument("--crop_len", type=int, default=TIERM_INPUT_LENGTH)
+    p.add_argument(
+        "--resume",
+        default="",
+        help=(
+            "Resume from an epoch-boundary training checkpoint. Use 'latest' "
+            "for output_dir/checkpoints/checkpoint_latest.pt, or pass a path."
+        ),
+    )
+    p.add_argument(
+        "--allow_resume_config_drift",
+        action="store_true",
+        help="Allow critical args in a resume checkpoint to differ from the current command.",
+    )
     p.add_argument("--smoke", action="store_true",
                    help="Run only --n_epochs but with tiny subsets for sanity")
     return p.parse_args()
@@ -1821,9 +2050,23 @@ def main():
     best_epoch = 0
     epochs_since_best = 0
     best_ckpt_path = os.path.join(args.output_dir, "best_model.pt")
-    save_compatible_model_state(victim.model, best_ckpt_path)
     log_path = os.path.join(args.output_dir, "training_log.json")
     es_path = os.path.join(args.output_dir, "early_stop_info.json")
+    checkpoint_dir = Path(args.output_dir) / "checkpoints"
+    checkpoint_latest_path = checkpoint_dir / "checkpoint_latest.pt"
+    checkpoint_best_path = checkpoint_dir / "checkpoint_best.pt"
+    checkpoint_index_path = checkpoint_dir / "checkpoint_index.jsonl"
+    diagnostics_epoch_path = Path(args.output_dir) / "diagnostics_epoch.jsonl"
+    agent_decision_path = Path(args.output_dir) / "agent_decision.json"
+    resume_path = _resolve_resume_path(args.resume, args.output_dir)
+    if should_save_initial_best_model(resume_path):
+        save_compatible_model_state(victim.model, best_ckpt_path)
+    elif not Path(best_ckpt_path).exists():
+        print(
+            f"[resume-warning] best_model.pt is missing before resume: {best_ckpt_path}. "
+            "It will not be recreated unless a later epoch improves.",
+            flush=True,
+        )
 
     # Plan Rev 13.2: stratified pool walker over NORM/MI/STTC scope only
     walker = StratifiedPoolWalker(
@@ -1847,9 +2090,45 @@ def main():
 
     rng = np.random.default_rng(args.seed)
     consecutive_low_asr = 0
+    start_epoch = 1
+    if resume_path is None:
+        for reset_path in (diagnostics_epoch_path, checkpoint_index_path):
+            if reset_path.exists():
+                reset_path.unlink()
+    else:
+        if not resume_path.exists():
+            raise FileNotFoundError(f"--resume checkpoint not found: {resume_path}")
+        print(f"[resume] loading training checkpoint: {resume_path}", flush=True)
+        ckpt = torch.load(resume_path, map_location=args.device)
+        resume_mismatches = validate_resume_contract(
+            ckpt.get("args"),
+            vars(args),
+            allow_drift=bool(args.allow_resume_config_drift),
+        )
+        if resume_mismatches:
+            print(f"[resume-warning] allowing resume config drift: {resume_mismatches}", flush=True)
+        victim.model.load_state_dict(ckpt["model_state_dict"])
+        optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+        scheduler.load_state_dict(ckpt["scheduler_state_dict"])
+        if "ewa_params" in ckpt:
+            ewa_params = [p.to(args.device) for p in ckpt["ewa_params"]]
+        _restore_buffer_state(buffer, ckpt.get("buffer_state", {}))
+        _restore_walker_state(walker, ckpt.get("walker_state", {}))
+        _restore_rng_state(ckpt.get("rng_state", {}), rng)
+        log = ckpt.get("training_log", log)
+        best_metric = float(ckpt.get("best_metric", best_metric))
+        best_epoch = int(ckpt.get("best_epoch", best_epoch))
+        epochs_since_best = int(ckpt.get("epochs_since_best", epochs_since_best))
+        consecutive_low_asr = int(ckpt.get("consecutive_low_asr", consecutive_low_asr))
+        start_epoch = int(ckpt.get("epoch", 0)) + 1
+        print(
+            f"[resume] start_epoch={start_epoch} best_epoch={best_epoch} "
+            f"best_metric={best_metric} buffer={len(buffer)}",
+            flush=True,
+        )
 
     # ── Main loop ───────────────────────────────────────────────────────────
-    for epoch in range(1, args.n_epochs + 1):
+    for epoch in range(start_epoch, args.n_epochs + 1):
         epoch_t0 = time.time()
 
         # Phase A: PGD on synth pool with the *current* victim
@@ -1871,6 +2150,12 @@ def main():
             latent_augmix_stats = {"enabled": False, "reason": "adv_stream_disabled", "n_generated": 0}
             latent_augmix_push_stats = {}
             delta_stats = {"mean_delta_norm": float("nan"), "max_delta_norm": float("nan")}
+            decode_invalid_stats = {
+                "decoded_invalid_rate": float("nan"),
+                "nan_rate": float("nan"),
+                "flatline_rate": float("nan"),
+            }
+            attack_vs_anchor_stats: Dict[str, Any] = {}
             gate_skipped = True
         else:
             victim.model.eval()
@@ -1913,6 +2198,15 @@ def main():
             # ASR (signals → victim)
             asr_info = compute_asr(victim, adv_signals, target_oh,
                                    device=args.device, batch_size=128)
+            decode_invalid_stats = decoded_signal_invalid_stats(adv_signals)
+            attack_vs_anchor_stats = attack_bce_diagnostics(
+                victim.model,
+                anc_signals,
+                adv_signals,
+                target_oh,
+                device=args.device,
+                crop_len=args.crop_len,
+            )
             # Semantic (Einthoven, HR, QRS)
             sem_info = compute_semantic_gate(
                 adv_signals, anc_signals,
@@ -2156,6 +2450,22 @@ def main():
             "sample_all_positive_recognized_rate": round(
                 float(asr_info.get("sample_all_positive_recognized_rate", float("nan"))), 4
             ),
+            "atk_init": None,
+            "atk_init_reason": "not_available_for_current_latent_hull_generator",
+            "atk_anchor": attack_vs_anchor_stats.get("success_rate"),
+            "attack_vs_anchor": attack_vs_anchor_stats,
+            "clean_bce": attack_vs_anchor_stats.get("clean_bce_mean"),
+            "adv_bce": attack_vs_anchor_stats.get("adv_bce_mean"),
+            "loss_gain": attack_vs_anchor_stats.get("loss_gain_mean"),
+            "decoded_invalid_rate": round(float(decode_invalid_stats["decoded_invalid_rate"]), 6)
+            if decode_invalid_stats["decoded_invalid_rate"] == decode_invalid_stats["decoded_invalid_rate"]
+            else None,
+            "decoded_nan_rate": round(float(decode_invalid_stats["nan_rate"]), 6)
+            if decode_invalid_stats["nan_rate"] == decode_invalid_stats["nan_rate"]
+            else None,
+            "decoded_flatline_rate": round(float(decode_invalid_stats["flatline_rate"]), 6)
+            if decode_invalid_stats["flatline_rate"] == decode_invalid_stats["flatline_rate"]
+            else None,
             "per_class_positive_label_asr": {
                 k: round(float(v), 4)
                 for k, v in asr_info.get("per_class_positive_label_asr", {}).items()
@@ -2238,6 +2548,86 @@ def main():
         log["epochs"].append(entry)
         with open(log_path, "w") as f:
             json.dump(log, f, indent=2, default=str)
+
+        decision = agent_attack_decision(
+            entry,
+            asr_low_threshold=args.asr_low_threshold,
+            consecutive_low_asr=consecutive_low_asr,
+        )
+        decision_payload = {
+            "schema_version": 1,
+            "epoch": epoch,
+            "run_dir": args.output_dir,
+            **decision,
+        }
+        with agent_decision_path.open("w", encoding="utf-8") as f:
+            json.dump(decision_payload, f, indent=2, sort_keys=True, ensure_ascii=True, default=str)
+        diagnostics_payload = {
+            "schema_version": 1,
+            "epoch": epoch,
+            "run_dir": args.output_dir,
+            "status": "epoch_complete",
+            "train_loss": entry.get("train_loss"),
+            "val_loss": entry.get("val_loss"),
+            "asr": entry.get("asr_overall"),
+            "atk_init": entry.get("atk_init"),
+            "atk_anchor": entry.get("atk_anchor"),
+            "loss_gain": entry.get("loss_gain"),
+            "clean_bce": entry.get("clean_bce"),
+            "adv_bce": entry.get("adv_bce"),
+            "decoded_invalid_rate": entry.get("decoded_invalid_rate"),
+            "adv_weight_effective": entry.get("adv_weight_effective"),
+            "buffer_size": entry.get("buffer_size"),
+            "quick_eval": entry.get("quick_eval"),
+            "agent_decision": decision,
+            "checkpoint_latest": str(checkpoint_latest_path),
+            "checkpoint_best": str(checkpoint_best_path if best_epoch == epoch else ""),
+        }
+        _append_jsonl(diagnostics_epoch_path, diagnostics_payload)
+
+        ckpt_payload = {
+            "schema_version": 1,
+            "epoch": epoch,
+            "global_step": epoch,
+            "model_state_dict": victim.model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "scheduler_state_dict": scheduler.state_dict(),
+            "ewa_params": [p.detach().cpu() for p in ewa_params],
+            "buffer_state": _buffer_state(buffer),
+            "walker_state": _walker_state(walker),
+            "rng_state": _rng_state(rng),
+            "best_metric": best_metric,
+            "best_epoch": best_epoch,
+            "best_model_path": best_ckpt_path,
+            "es_metric": args.es_metric,
+            "epochs_since_best": epochs_since_best,
+            "consecutive_low_asr": consecutive_low_asr,
+            "training_log": log,
+            "args": vars(args),
+            "diagnostics_epoch_jsonl": str(diagnostics_epoch_path),
+            "agent_decision_json": str(agent_decision_path),
+        }
+        _atomic_torch_save(ckpt_payload, checkpoint_latest_path)
+        latest_index = {
+            "epoch": epoch,
+            "path": str(checkpoint_latest_path),
+            "kind": "latest",
+            "best_metric": best_metric,
+            "best_epoch": best_epoch,
+            "agent_decision": decision["attack_state"],
+        }
+        _append_jsonl(checkpoint_index_path, latest_index)
+        if entry.get("best_update"):
+            _atomic_torch_save(ckpt_payload, checkpoint_best_path)
+            _append_jsonl(
+                checkpoint_index_path,
+                {
+                    **latest_index,
+                    "path": str(checkpoint_best_path),
+                    "kind": "best",
+                    "reason": f"{args.es_metric} improved",
+                },
+            )
 
         # Plan Rev 13.1: early-stop on val_macro_auroc plateau
         if (epoch % args.eval_every == 0) and epochs_since_best >= args.patience:

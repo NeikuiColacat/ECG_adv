@@ -26,6 +26,7 @@
 | `refactor_fact_check_decision_20260527.md` | 多 subagent 事实核查后的重构决策、已修正协议缺口和下一步验收计划 |
 | `refactor_phase12_handoff_20260528.md` | 1 小时收口后的 YAML wrapper / package helper 重构交接状态、验证证据和停止边界 |
 | `managed_v6_main_repro_20260528.md` | phase 1/2 重构后 managed-YAML 主实验 v6 复跑结果、指标和验收记录 |
+| `agent_operating_layer_20260529.md` | Active Evidence Registry、CPU-only agent audit、Direct vs VAE comparison bundle 和 VAE-AT checkpoint/resume contract |
 
 ## Docs 还是 Skill
 

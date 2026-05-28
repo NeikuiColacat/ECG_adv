@@ -344,3 +344,39 @@ Current execute-smoke evidence:
 
 Both are engineering smokes for the launcher/wrapper/postprocess path, not
 paper result runs.
+
+## Agent Operating Layer
+
+The current agent-facing evidence entry point is:
+
+```text
+configs/active_evidence_registry.yaml
+```
+
+Use it when a new agent needs to know the current trusted Direct/VAE mainline,
+mapping version/hash, fixed K500 protocol, ref-exclusion paths, metrics exports,
+paper tables, comparison bundle, and no-commit artifact policy.
+
+CPU-only audit:
+
+```bash
+micromamba run -n ECGTwin python scripts/agent/audit_agent_workspace.py
+```
+
+Backfill the legacy VAE-LHAT run manifest when local artifacts exist:
+
+```bash
+micromamba run -n ECGTwin python scripts/agent/backfill_vae_lhat_manifest.py
+```
+
+Managed Direct vs VAE comparison bundle:
+
+```bash
+micromamba run -n ECGTwin python scripts/agent/build_comparison_bundle.py --force
+```
+
+The full rationale and checkpoint contract are documented in:
+
+```text
+docs/pipelines/agent_operating_layer_20260529.md
+```

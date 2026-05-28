@@ -31,6 +31,11 @@ from .stream_sampling import (
     build_weighted_feature_stream_loader,
     multilabel_stream_sample_weights,
 )
+from .resume_contract import (
+    resume_contract_mismatches,
+    should_save_initial_best_model,
+    validate_resume_contract,
+)
 from .torch_utils import set_module_requires_grad
 
 __all__ = [
@@ -54,8 +59,11 @@ __all__ = [
     "multilabel_stream_sample_weights",
     "pairwise_rank_loss",
     "random_split_indices",
+    "resume_contract_mismatches",
     "set_module_requires_grad",
+    "should_save_initial_best_model",
     "stream_weighted_masked_bce",
     "summarize_fullft_adv_epoch_diagnostics",
     "tag_value",
+    "validate_resume_contract",
 ]

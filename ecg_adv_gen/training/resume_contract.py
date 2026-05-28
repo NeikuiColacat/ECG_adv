@@ -1,0 +1,95 @@
+"""Small CPU-only helpers for resume-safe training entrypoints."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+
+RESUME_CONTRACT_KEYS = (
+    "center_name",
+    "ref_meta_json",
+    "synth_npz",
+    "target_real_npz",
+    "init_ckpt",
+    "model_name",
+    "quick_eval_source",
+    "quick_eval_centers",
+    "target_real_val_fraction",
+    "target_real_val_seed",
+    "attack_mode",
+    "hull_M",
+    "hull_lambda",
+    "hull_steps",
+    "hull_lr",
+    "hull_label_mode",
+    "hull_mix_label_mode",
+    "hull_label_lambda_y",
+    "hull_include_anchor",
+    "hull_neighbor_distance_space",
+    "hull_neighbor_mode",
+    "hull_neighbor_pool_size",
+    "adv_label_mode",
+    "adv_teacher_mix",
+    "enable_latent_augmix_branch",
+    "latent_augmix_width",
+    "latent_augmix_depth",
+    "latent_augmix_severity",
+    "latent_augmix_latent_weight_cap",
+    "classes_in_scope",
+    "seed",
+    "crop_len",
+)
+
+
+def should_save_initial_best_model(resume_path: Path | None) -> bool:
+    """Fresh runs save an initial best model; resumed runs must preserve it."""
+    return resume_path is None
+
+
+def normalize_resume_contract_value(value: Any) -> Any:
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, tuple):
+        return [normalize_resume_contract_value(v) for v in value]
+    if isinstance(value, list):
+        return [normalize_resume_contract_value(v) for v in value]
+    return value
+
+
+def resume_contract_mismatches(
+    saved_args: dict[str, Any],
+    current_args: dict[str, Any],
+    *,
+    keys: tuple[str, ...] = RESUME_CONTRACT_KEYS,
+) -> list[dict[str, Any]]:
+    mismatches: list[dict[str, Any]] = []
+    for key in keys:
+        if key not in saved_args or key not in current_args:
+            continue
+        saved = normalize_resume_contract_value(saved_args[key])
+        current = normalize_resume_contract_value(current_args[key])
+        if saved != current:
+            mismatches.append({"key": key, "saved": saved, "current": current})
+    return mismatches
+
+
+def validate_resume_contract(
+    saved_args: Any,
+    current_args: dict[str, Any],
+    *,
+    allow_drift: bool,
+) -> list[dict[str, Any]]:
+    """Validate critical resume args and return mismatches when allowed."""
+    if not isinstance(saved_args, dict):
+        if allow_drift:
+            return [{"key": "<missing_args>", "saved": None, "current": "<present>"}]
+        raise ValueError("resume checkpoint has no args contract; rerun with --allow_resume_config_drift to override")
+    mismatches = resume_contract_mismatches(saved_args, current_args)
+    if not mismatches or allow_drift:
+        return mismatches
+    preview = mismatches[:8]
+    raise ValueError(
+        "resume checkpoint args disagree with current command on critical keys: "
+        f"{preview}. Use --allow_resume_config_drift only for intentional recovery."
+    )

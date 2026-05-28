@@ -313,6 +313,19 @@ def main() -> None:
         default="",
         help="Optional short suffix appended to the run directory name for parameter sweeps.",
     )
+    ap.add_argument(
+        "--resume",
+        default="",
+        help=(
+            "Forwarded to synth_online_at_super5.py. Use 'latest' to resume "
+            "from the run directory's checkpoints/checkpoint_latest.pt."
+        ),
+    )
+    ap.add_argument(
+        "--allow_resume_config_drift",
+        action="store_true",
+        help="Forwarded to synth_online_at_super5.py for intentional recovery only.",
+    )
     args = ap.parse_args()
 
     data_root = Path(args.data_root)
@@ -450,6 +463,10 @@ def main() -> None:
     ]
     if args.hull_include_anchor:
         train_cmd.append("--hull_include_anchor")
+    if args.resume:
+        train_cmd.extend(["--resume", args.resume])
+    if args.allow_resume_config_drift:
+        train_cmd.append("--allow_resume_config_drift")
     if args.anchor_class_weights:
         train_cmd.extend(["--anchor_class_weights", args.anchor_class_weights])
     if args.source_class_weights:

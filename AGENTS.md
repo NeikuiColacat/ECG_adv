@@ -23,6 +23,16 @@ python env:     /home/linbinhao/micromamba/envs/ECGTwin/bin/python
 runtime skill:  /home/linbinhao/.codex/skills/ecg-adv-gen/SKILL.md
 ```
 
+Current agent operating layer, initialized 2026-05-29:
+
+```text
+active evidence registry: configs/active_evidence_registry.yaml
+CPU-only agent audit:     micromamba run -n ECGTwin python scripts/agent/audit_agent_workspace.py
+legacy VAE manifest:      micromamba run -n ECGTwin python scripts/agent/backfill_vae_lhat_manifest.py
+comparison bundle build:  micromamba run -n ECGTwin python scripts/agent/build_comparison_bundle.py --force
+details:                  docs/pipelines/agent_operating_layer_20260529.md
+```
+
 This host is not running as root. Do not assume `/root/autodl-tmp` or
 `/root/miniforge3/envs/ECGTwin/bin/python` are accessible here unless a later
 setup step creates those paths. Use the migrated data path above for current

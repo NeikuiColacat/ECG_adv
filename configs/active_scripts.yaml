@@ -6,6 +6,7 @@ source_of_truth:
   shared_server_safety: AGENTS.md
   yaml_refactor_plan: docs/tmp_md/project_refactor_yaml_config_plan_20260527.md
   config_rules: configs/README.md
+  active_evidence_registry: configs/active_evidence_registry.yaml
   pipeline_index: docs/pipelines/refactor_source_of_truth_20260527.md
   super5_label_mapping: scripts/triple_labels/label_schemes.py
   super5_label_metadata: ecg_adv_gen/labels/super5.py
@@ -176,6 +177,45 @@ reporting_tools:
       - audits_all_active_wrapped_configs_from_active_script_index
       - can_verify_required_input_artifacts_without_checking_child_outputs
       - writes_reports_only_under_explicit_write_boundary
+
+  - name: active_evidence_registry_auditor
+    status: active
+    script: scripts/agent/audit_agent_workspace.py
+    package: ecg_adv_gen/evidence/registry.py
+    output_artifacts:
+      - agent_workspace_audit.json
+    safety_rules:
+      - cpu_only_no_gpu_no_child_training
+      - validates_active_evidence_registry
+      - checks_mapping_k500_ref_exclusion_metrics_and_comparison_bundle
+      - warns_on_guarded_external_model_dirty_paths
+
+  - name: legacy_vae_manifest_backfiller
+    status: active
+    script: scripts/agent/backfill_vae_lhat_manifest.py
+    package: ecg_adv_gen/evidence/backfill.py
+    output_artifacts:
+      - run_manifest.backfilled.json
+    safety_rules:
+      - cpu_only_no_gpu_no_training
+      - reads_legacy_launch_train_eval_artifacts
+      - writes_only_under_explicit_write_boundary
+      - records_artifact_hashes_for_v7_vae_lhat_evidence
+
+  - name: direct_vs_vae_comparison_bundler
+    status: active
+    script: scripts/agent/build_comparison_bundle.py
+    package: ecg_adv_gen/evidence/comparison.py
+    output_artifacts:
+      - comparison_manifest.json
+      - metrics_long.csv
+      - comparison_delta.csv
+      - paper_table_pn2021_all_zero_kept_refexcluded.csv
+      - paper_table_pn2021_drop_all_zero_refexcluded.csv
+    safety_rules:
+      - builds_from_registry_declared_metrics_only
+      - refuses_nonempty_output_without_force
+      - records_source_metric_hashes_and_baseline_run_id
 
 legacy_hold:
   - path: scripts/pgd_cross_center/synth_online_at_super5.py

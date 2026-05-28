@@ -16,6 +16,7 @@ INDEX = REPO / "configs" / "active_scripts.yaml"
 LOCAL_EXAMPLE = REPO / "configs" / "local" / "linbinhao_server.example.yaml"
 TRACKED_CONFIG_YAMLS = [
     INDEX,
+    REPO / "configs" / "active_evidence_registry.yaml",
     *sorted((REPO / "configs" / "defaults").glob("*.yaml")),
     *sorted((REPO / "configs" / "experiments").glob("*.yaml")),
 ]
