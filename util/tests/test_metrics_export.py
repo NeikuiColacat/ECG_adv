@@ -83,7 +83,7 @@ def _write_metrics_long(path: Path, rows: list[dict[str, str]]) -> Path:
 def test_export_metrics_long_separates_allzero_views(tmp_path: Path):
     src = _write_json(
         tmp_path / "eval_result_v6.json",
-        _eval_crosscenter("v6_super5_clinician_review_20260524", "3adc673a60ad"),
+        _eval_crosscenter("v7_super5_sjr_rgq_review_20260528", "555ec85d5b51"),
     )
     manifest = export_metrics([src], tmp_path / "out")
 
@@ -96,7 +96,7 @@ def test_export_metrics_long_separates_allzero_views(tmp_path: Path):
     assert any(r["view"] == "pn2021_all_zero_kept_refexcluded" and r["center"] == "ningbo" for r in rows)
     assert any(r["view"] == "pn2021_drop_all_zero_refexcluded" and r["center"] == "ningbo" for r in rows)
     assert all(r["canonical_view"] == r["view"] for r in rows if r["view"].startswith("pn2021_"))
-    assert {r["mapping_hash"] for r in rows} == {"3adc673a60ad"}
+    assert {r["mapping_hash"] for r in rows} == {"555ec85d5b51"}
     drop_center = next(
         r for r in rows
         if r["view"] == "pn2021_drop_all_zero_refexcluded"
@@ -129,11 +129,11 @@ def test_export_can_fill_expected_mapping_for_legacy_single_run(tmp_path: Path):
     manifest = export_metrics(
         [legacy],
         tmp_path / "out",
-        expected_mapping_version="v6_super5_clinician_review_20260524",
-        expected_mapping_hash="3adc673a60ad",
+        expected_mapping_version="v7_super5_sjr_rgq_review_20260528",
+        expected_mapping_hash="555ec85d5b51",
     )
 
-    assert manifest["mapping_pairs"] == ["v6_super5_clinician_review_20260524|3adc673a60ad"]
+    assert manifest["mapping_pairs"] == ["v7_super5_sjr_rgq_review_20260528|555ec85d5b51"]
     assert manifest["canonical_views"]["pn2021_all_zero_kept_refexcluded"] > 0
     assert manifest["canonical_views"]["pn2021_drop_all_zero_refexcluded"] > 0
     rows = list(csv.DictReader((tmp_path / "out" / "metrics_long.csv").open()))
@@ -154,7 +154,7 @@ def test_export_requires_mapping_for_metric_artifacts(tmp_path: Path):
 
 
 def test_export_rejects_partial_mapping_metadata(tmp_path: Path):
-    partial = _eval_crosscenter("v6_super5_clinician_review_20260524", "3adc673a60ad")
+    partial = _eval_crosscenter("v7_super5_sjr_rgq_review_20260528", "555ec85d5b51")
     del partial["label_mapping"]["pn2021_super5"]["mapping_hash"]
     src = _write_json(tmp_path / "eval_result_partial.json", partial)
 
@@ -165,7 +165,7 @@ def test_export_rejects_partial_mapping_metadata(tmp_path: Path):
 def test_export_run_id_override_and_target_center_filter(tmp_path: Path):
     run_dir = tmp_path / "ningbo_K500_direct_ft_ep30_seed20260531_val0.2"
     run_dir.mkdir()
-    payload = _eval_crosscenter("v6_super5_clinician_review_20260524", "3adc673a60ad")
+    payload = _eval_crosscenter("v7_super5_sjr_rgq_review_20260528", "555ec85d5b51")
     payload["pn2021"]["per_center"]["georgia"] = dict(payload["pn2021"]["per_center"]["ningbo"])
     payload["pn2021"]["per_center"]["georgia"]["macro_auroc"] = 0.7
     src = _write_json(run_dir / "eval_result_v6.json", payload)
@@ -192,7 +192,7 @@ def test_export_run_id_override_and_target_center_filter(tmp_path: Path):
 def test_export_ecgfounder_lhat_final_views_with_target_filter(tmp_path: Path):
     run_dir = tmp_path / "ningbo" / "runs" / "ningbo_K500_M4_lam0p05_ep1_seed20260531"
     run_dir.mkdir(parents=True)
-    payload = _eval_crosscenter("v6_super5_clinician_review_20260524", "3adc673a60ad")
+    payload = _eval_crosscenter("v7_super5_sjr_rgq_review_20260528", "555ec85d5b51")
     _write_json(
         run_dir / "eval_result.json",
         {
@@ -210,8 +210,8 @@ def test_export_ecgfounder_lhat_final_views_with_target_filter(tmp_path: Path):
         run_id_override="ecgfounder_vae_lhat_k500_v6_smoke",
         filter_to_target_center=True,
         target_centers=["ningbo", "georgia"],
-        expected_mapping_version="v6_super5_clinician_review_20260524",
-        expected_mapping_hash="3adc673a60ad",
+        expected_mapping_version="v7_super5_sjr_rgq_review_20260528",
+        expected_mapping_hash="555ec85d5b51",
     )
 
     assert manifest["n_metric_rows"] > 0
@@ -238,8 +238,8 @@ def test_export_directory_ignores_training_log_lists(tmp_path: Path):
             "center": "chapman_shaoxing",
             "label_mapping": {
                 "pn2021_super5": {
-                    "mapping_version": "v6_super5_clinician_review_20260524",
-                    "mapping_hash": "3adc673a60ad",
+                    "mapping_version": "v7_super5_sjr_rgq_review_20260528",
+                    "mapping_hash": "555ec85d5b51",
                     "class_names": ["CD", "HYP", "MI", "NORM", "STTC"],
                 }
             },
@@ -274,8 +274,8 @@ def test_export_directory_ignores_training_log_lists(tmp_path: Path):
         run_id_override="ecgfounder_direct_k500_v6",
         filter_to_target_center=True,
         target_centers=["chapman_shaoxing"],
-        expected_mapping_version="v6_super5_clinician_review_20260524",
-        expected_mapping_hash="3adc673a60ad",
+        expected_mapping_version="v7_super5_sjr_rgq_review_20260528",
+        expected_mapping_hash="555ec85d5b51",
     )
 
     assert manifest["n_artifacts"] == 1

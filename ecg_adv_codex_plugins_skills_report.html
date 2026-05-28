@@ -1,0 +1,919 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ECG_adv 的 Codex 插件、Skills 与科研工程配置建议</title>
+  <style>
+    :root {
+      --bg: #f6f7fb;
+      --paper: #ffffff;
+      --ink: #18202f;
+      --muted: #5d6678;
+      --line: #dfe4ee;
+      --accent: #315efb;
+      --accent-2: #0f766e;
+      --warn: #b45309;
+      --danger: #b91c1c;
+      --code-bg: #0f172a;
+      --code-ink: #e5e7eb;
+      --soft-blue: #eef4ff;
+      --soft-green: #ecfdf5;
+      --soft-yellow: #fffbeb;
+      --soft-red: #fef2f2;
+      --radius: 18px;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: linear-gradient(180deg, #eef4ff 0%, var(--bg) 280px);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC",
+        "Microsoft YaHei", Arial, sans-serif;
+      line-height: 1.72;
+    }
+
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .page {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 36px 20px 72px;
+    }
+
+    header.hero {
+      background: rgba(255, 255, 255, 0.88);
+      border: 1px solid rgba(49, 94, 251, 0.14);
+      border-radius: 28px;
+      padding: 38px 38px 34px;
+      box-shadow: 0 24px 70px rgba(32, 45, 78, 0.12);
+      backdrop-filter: blur(12px);
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: var(--soft-blue);
+      color: #2446c7;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+
+    h1 {
+      margin: 18px 0 12px;
+      font-size: clamp(30px, 4vw, 54px);
+      line-height: 1.08;
+      letter-spacing: -0.045em;
+    }
+
+    .subtitle {
+      max-width: 900px;
+      color: var(--muted);
+      font-size: 18px;
+      margin: 0;
+    }
+
+    .hero-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 28px;
+    }
+
+    .metric {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 16px;
+    }
+
+    .metric strong {
+      display: block;
+      font-size: 24px;
+      line-height: 1.1;
+      color: var(--accent);
+      margin-bottom: 4px;
+    }
+
+    .metric span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    nav.toc {
+      margin: 24px 0;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+      box-shadow: 0 10px 36px rgba(32, 45, 78, 0.07);
+    }
+
+    nav.toc h2 {
+      margin: 0 0 10px;
+      font-size: 17px;
+    }
+
+    nav.toc ol {
+      margin: 0;
+      padding-left: 22px;
+      columns: 2;
+    }
+
+    nav.toc li {
+      break-inside: avoid;
+      margin: 6px 0;
+      color: var(--muted);
+    }
+
+    section {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 30px;
+      margin: 22px 0;
+      box-shadow: 0 10px 36px rgba(32, 45, 78, 0.06);
+    }
+
+    h2 {
+      margin: 0 0 16px;
+      font-size: 28px;
+      line-height: 1.25;
+      letter-spacing: -0.025em;
+    }
+
+    h3 {
+      margin: 26px 0 10px;
+      font-size: 20px;
+      line-height: 1.35;
+    }
+
+    p { margin: 10px 0 14px; }
+
+    .note, .warning, .danger, .ok {
+      padding: 15px 16px;
+      border-radius: 14px;
+      margin: 16px 0;
+      border: 1px solid;
+    }
+
+    .note {
+      background: var(--soft-blue);
+      border-color: #c7d7fe;
+      color: #233876;
+    }
+
+    .ok {
+      background: var(--soft-green);
+      border-color: #b7f0d1;
+      color: #064e3b;
+    }
+
+    .warning {
+      background: var(--soft-yellow);
+      border-color: #fde68a;
+      color: #78350f;
+    }
+
+    .danger {
+      background: var(--soft-red);
+      border-color: #fecaca;
+      color: #7f1d1d;
+    }
+
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 14px 0 4px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 700;
+      background: #f1f5f9;
+      color: #334155;
+    }
+
+    .pill.must { background: #e0ecff; color: #2446c7; }
+    .pill.rec { background: #dcfce7; color: #166534; }
+    .pill.opt { background: #fef3c7; color: #92400e; }
+    .pill.no { background: #fee2e2; color: #991b1b; }
+
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      margin: 16px 0;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 720px;
+      background: #fff;
+    }
+
+    th, td {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #f8fafc;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    tr:last-child td { border-bottom: 0; }
+
+    .rank-s { color: #1d4ed8; font-weight: 800; }
+    .rank-a { color: #0f766e; font-weight: 800; }
+    .rank-b { color: #b45309; font-weight: 800; }
+
+    pre {
+      background: var(--code-bg);
+      color: var(--code-ink);
+      border-radius: 15px;
+      padding: 18px;
+      overflow-x: auto;
+      line-height: 1.55;
+      font-size: 13px;
+      border: 1px solid #1e293b;
+    }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+        "Liberation Mono", "Courier New", monospace;
+      font-size: 0.92em;
+    }
+
+    p code, li code, td code {
+      background: #eef2ff;
+      color: #1e3a8a;
+      padding: 2px 6px;
+      border-radius: 6px;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 18px;
+      background: #fff;
+    }
+
+    .card h3 { margin-top: 0; }
+
+    .timeline {
+      display: grid;
+      gap: 12px;
+      margin-top: 12px;
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: 96px 1fr;
+      gap: 14px;
+      align-items: start;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #fff;
+    }
+
+    .step .day {
+      font-weight: 800;
+      color: var(--accent);
+    }
+
+    .footer {
+      margin-top: 26px;
+      color: var(--muted);
+      font-size: 13px;
+      text-align: center;
+    }
+
+    @media (max-width: 760px) {
+      header.hero, section { padding: 22px; }
+      .hero-grid, .grid-2 { grid-template-columns: 1fr; }
+      nav.toc ol { columns: 1; }
+      .step { grid-template-columns: 1fr; }
+    }
+
+    @media print {
+      body { background: white; }
+      .page { max-width: none; padding: 0; }
+      header.hero, section, nav.toc {
+        box-shadow: none;
+        break-inside: avoid;
+      }
+      a { color: #000; text-decoration: underline; }
+      pre { white-space: pre-wrap; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="hero">
+      <div class="eyebrow">Codex 配置方案 · 深度学习 ECG 科研项目</div>
+      <h1>ECG_adv 的 Codex 插件、Skills 与科研工程配置建议</h1>
+      <p class="subtitle">
+        这份报告把插件、Skills、MCP、DVC、MLflow/W&B 和项目本地规则整合成一套适合 ECG 深度学习科研项目的 Codex 工作流。
+        重点不是“装越多越好”，而是建立可复现、可审查、低风险的 agent 工程护栏。
+      </p>
+      <div class="hero-grid">
+        <div class="metric"><strong>4</strong><span>核心外部组件</span></div>
+        <div class="metric"><strong>6</strong><span>建议本地 skills</span></div>
+        <div class="metric"><strong>3</strong><span>项目定制 subagents</span></div>
+        <div class="metric"><strong>1</strong><span>只读优先安全边界</span></div>
+      </div>
+    </header>
+
+    <nav class="toc">
+      <h2>目录</h2>
+      <ol>
+        <li><a href="#summary">执行摘要</a></li>
+        <li><a href="#repo-observation">仓库观察与假设</a></li>
+        <li><a href="#recommendations">推荐安装清单</a></li>
+        <li><a href="#mapping">从需求映射到工具</a></li>
+        <li><a href="#codex-config">Codex 配置方案</a></li>
+        <li><a href="#agents">自定义 Subagents</a></li>
+        <li><a href="#agents-md">AGENTS.md 模板</a></li>
+        <li><a href="#local-skills">本地 Skills 模板</a></li>
+        <li><a href="#install-plan">分阶段落地计划</a></li>
+        <li><a href="#security">安全边界</a></li>
+        <li><a href="#sources">参考来源</a></li>
+      </ol>
+    </nav>
+
+    <section id="summary">
+      <h2>1. 执行摘要</h2>
+      <p>对 <code>ECG_adv</code> 这种深度学习科研项目，最合适的 Codex 配置不是“安装一堆万能 skills”，而是采用：</p>
+      <pre><code>Superpowers 做总控流程
+GitHub MCP Server 做只读仓库上下文
+Dimillian/Skills 做重构、review、bug hunt
+DVC + MLflow/W&B 做数据与实验治理
+repo-local skills + AGENTS.md 固化 ECG 项目规则</code></pre>
+
+      <div class="ok">
+        <strong>最终建议：</strong>先装 Superpowers，再配置只读 GitHub MCP；科研工程层面安装 DVC + 本地 MLflow；
+        只精选几个高价值第三方 skills；真正重要的 ECG 规则写进 <code>AGENTS.md</code> 和 <code>.agents/skills/</code>。
+      </div>
+
+      <div class="warning">
+        <strong>重要限制：</strong>公开侧没有确认到 <code>NeikuiColacat/ECG_adv</code> 仓库页面。本报告把公开可见的
+        <code>NeikuiColacat/ECG-diffusion</code> 作为邻近证据，并把 <code>ECG_adv</code> 视为私有或未公开 ECG 深度学习仓库来给出配置建议。
+      </div>
+    </section>
+
+    <section id="repo-observation">
+      <h2>2. 仓库观察与工作假设</h2>
+      <p>
+        公开可见的 <code>ECG-diffusion</code> 是 Python 深度学习项目，包含 <code>src/</code>、<code>tests/</code>、
+        <code>requirements.txt</code>、<code>setup.py</code> 等结构。依赖中可见 <code>numpy</code>、<code>pandas</code>、
+        <code>scikit-learn</code>、<code>tensorflow</code>、<code>matplotlib</code>、<code>seaborn</code>、<code>pytest</code>。
+      </p>
+      <p>
+        它暴露出典型科研代码问题：入口脚本、配置对象、数据加载函数、测试用例与模型构造函数之间存在接口漂移。
+        因此，对 <code>ECG_adv</code> 的 Codex 配置应优先处理以下问题。
+      </p>
+
+      <div class="grid-2">
+        <div class="card">
+          <h3>工程痛点</h3>
+          <ul>
+            <li>训练入口、评估入口和预处理入口不稳定</li>
+            <li>测试存在但可能过时，不能作为唯一安全兜底</li>
+            <li>数据 split、标签映射、采样率、导联顺序容易被 agent 顺手改坏</li>
+            <li>checkpoint、数据缓存、实验日志不适合进入 Git</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>配置目标</h3>
+          <ul>
+            <li>先分析，再修改</li>
+            <li>多 agent 并行读，单 worker 小步写</li>
+            <li>每个 work packet 都有验证命令</li>
+            <li>GitHub、MCP、实验平台默认保守权限</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="recommendations">
+      <h2>3. 推荐安装清单</h2>
+
+      <div class="pill-row">
+        <span class="pill must">必装</span>
+        <span class="pill rec">推荐</span>
+        <span class="pill opt">可选</span>
+        <span class="pill no">不建议滥装</span>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>优先级</th>
+              <th>名称</th>
+              <th>类型</th>
+              <th>用途</th>
+              <th>对 ECG_adv 的价值</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="rank-s">S · 必装</td>
+              <td><code>obra/superpowers</code></td>
+              <td>Plugin / skills framework</td>
+              <td>规划、worktree、TDD、subagent-driven development、review</td>
+              <td>作为“先计划后执行”的总控方法论</td>
+            </tr>
+            <tr>
+              <td class="rank-s">S · 必装</td>
+              <td><code>github/github-mcp-server</code></td>
+              <td>MCP Server</td>
+              <td>读取 repo、issue、PR、Actions、CI 日志</td>
+              <td>配置为只读后，适合私有仓库安全上下文读取</td>
+            </tr>
+            <tr>
+              <td class="rank-a">A · 推荐</td>
+              <td><code>Dimillian/Skills</code></td>
+              <td>Skills collection</td>
+              <td>重构、review swarm、bug hunt、简化 diff</td>
+              <td>只安装 refactor/review/bug-hunt 相关目录即可</td>
+            </tr>
+            <tr>
+              <td class="rank-a">A · 推荐</td>
+              <td><code>openai/skills</code></td>
+              <td>Official skills catalog</td>
+              <td>官方 Codex skills catalog 与 <code>$skill-installer</code></td>
+              <td>按需精选，不要全量安装</td>
+            </tr>
+            <tr>
+              <td class="rank-s">S · 必装</td>
+              <td><code>DVC</code></td>
+              <td>ML 工具</td>
+              <td>数据、模型、pipeline、实验版本管理</td>
+              <td>防止 ECG 数据、checkpoint、预处理产物进入 Git</td>
+            </tr>
+            <tr>
+              <td class="rank-s">S · 默认首选</td>
+              <td><code>MLflow</code></td>
+              <td>实验跟踪</td>
+              <td>本地或自托管记录参数、指标、模型、环境</td>
+              <td>默认比云同步平台更保守，适合合规未知场景</td>
+            </tr>
+            <tr>
+              <td class="rank-a">A · 条件推荐</td>
+              <td><code>W&B</code></td>
+              <td>实验跟踪 SaaS</td>
+              <td>云端可视化、协作、run 管理</td>
+              <td>团队允许上传实验元数据时启用</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="danger">
+        <strong>不要这样做：</strong>不要把所有 marketplace skills、所有 MCP server、所有 memory 工具一股脑装上。
+        Codex 的 skill 列表会占用上下文预算，装太多会污染触发逻辑，还会增加数据泄露风险。
+      </div>
+    </section>
+
+    <section id="mapping">
+      <h2>4. 从 ECG 项目需求映射到工具</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>需求</th>
+              <th>推荐工具</th>
+              <th>理由</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>安全探索私有仓库，不一上来改文件</td>
+              <td>Superpowers + GitHub MCP read-only</td>
+              <td>先规划、先读 repo/PR/CI，再决定是否修改</td>
+            </tr>
+            <tr>
+              <td>重构训练、数据、评估模块</td>
+              <td><code>orchestrate-batch-refactor</code></td>
+              <td>先依赖分析，再拆 work packets，避免多个 agent 同时写同一文件</td>
+            </tr>
+            <tr>
+              <td>训练失败、NaN、shape mismatch、checkpoint 问题</td>
+              <td><code>bug-hunt-swarm</code> + 本地 <code>training-debugger</code></td>
+              <td>并行只读调查，先找最小复现路径</td>
+            </tr>
+            <tr>
+              <td>提交前审查 diff</td>
+              <td><code>review-swarm</code></td>
+              <td>多路只读 review，关注行为回归、可靠性、测试缺口</td>
+            </tr>
+            <tr>
+              <td>数据、checkpoint、缓存不能进 Git</td>
+              <td>DVC</td>
+              <td>把数据和模型版本从 Git 中分离出去</td>
+            </tr>
+            <tr>
+              <td>实验可追踪、可比较、可复现</td>
+              <td>MLflow，本地优先；W&B 条件启用</td>
+              <td>记录参数、指标、模型、环境和运行元数据</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="codex-config">
+      <h2>5. 建议的 Codex 配置</h2>
+      <p>
+        项目级配置可以放在 <code>ECG_adv/.codex/config.toml</code>。建议保守写权限、只读 GitHub 上下文、有限 subagent 并发。
+      </p>
+
+      <h3><code>.codex/config.toml</code></h3>
+      <pre><code>model = "gpt-5.5"
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+web_search = "cached"
+model_reasoning_effort = "high"
+
+[agents]
+max_threads = 4
+max_depth = 1
+
+# Docker 方式接入 GitHub MCP Server，默认只读
+[mcp_servers.github]
+command = "docker"
+args = [
+  "run", "-i", "--rm",
+  "-e", "GITHUB_PERSONAL_ACCESS_TOKEN",
+  "-e", "GITHUB_TOOLSETS=repos,issues,pull_requests,actions",
+  "-e", "GITHUB_READ_ONLY=1",
+  "ghcr.io/github/github-mcp-server"
+]
+env_vars = ["GITHUB_PERSONAL_ACCESS_TOKEN"]
+startup_timeout_sec = 20
+tool_timeout_sec = 60
+required = false
+default_tools_approval_mode = "prompt"</code></pre>
+
+      <h3>不用 Docker 时的 GitHub MCP 配置</h3>
+      <pre><code>[mcp_servers.github]
+command = "/Users/you/.local/bin/github-mcp-server"
+args = ["stdio", "--read-only", "--toolsets", "repos,issues,pull_requests,actions"]
+env_vars = ["GITHUB_PERSONAL_ACCESS_TOKEN"]
+startup_timeout_sec = 20
+tool_timeout_sec = 60
+required = false</code></pre>
+
+      <div class="note">
+        <strong>建议：</strong>GitHub token 放在用户本地环境变量里，不要写入 repo 级配置文件。
+      </div>
+    </section>
+
+    <section id="agents">
+      <h2>6. 自定义 Subagents</h2>
+      <p>
+        对 ECG_adv，建议只加三个项目定制 agent：<code>repo_mapper</code>、<code>reviewer</code>、<code>training_debugger</code>。
+        重点是让它们分工明确，尤其是 reviewer 保持只读。
+      </p>
+
+      <h3><code>.codex/agents/repo-mapper.toml</code></h3>
+      <pre><code>name = "repo_mapper"
+description = "Read-only explorer for ECG_adv. Map entry points, training flow, data pipeline, and validation commands before any edits."
+model = "gpt-5.4-mini"
+model_reasoning_effort = "medium"
+sandbox_mode = "read-only"
+
+developer_instructions = """
+Stay in exploration mode.
+Identify the real training/evaluation/data-prep entry points.
+Return concrete file paths, commands, and coupling risks.
+Do not edit files.
+"""</code></pre>
+
+      <h3><code>.codex/agents/reviewer.toml</code></h3>
+      <pre><code>name = "reviewer"
+description = "Read-only reviewer for behavior regressions, data-prep drift, evaluation drift, and missing tests."
+model = "gpt-5.4"
+model_reasoning_effort = "high"
+sandbox_mode = "read-only"
+
+developer_instructions = """
+Review like a code owner of an ECG ML project.
+Prioritize correctness, split leakage risk, preprocessing drift, metric drift, reproducibility, and missing test coverage.
+Avoid style-only comments.
+"""</code></pre>
+
+      <h3><code>.codex/agents/training-debugger.toml</code></h3>
+      <pre><code>name = "training_debugger"
+description = "Read-heavy training failure investigator for ECG_adv."
+model = "gpt-5.4"
+model_reasoning_effort = "high"
+sandbox_mode = "workspace-write"
+
+developer_instructions = """
+First diagnose, then patch only if asked.
+Focus on data loader shape issues, NaN/Inf, config drift, metric drift, checkpoint path mistakes, and train/eval mismatch.
+Prefer the smallest reproducible command.
+"""</code></pre>
+    </section>
+
+    <section id="agents-md">
+      <h2>7. <code>AGENTS.md</code> 模板</h2>
+      <p>
+        <code>AGENTS.md</code> 应该写项目不变量，而不是一次性技巧。ECG 项目最重要的是数据处理、split、标签映射、评估口径和 artifact 纪律。
+      </p>
+
+      <pre><code># ECG_adv Agent Rules
+
+## Repo invariants
+
+- Do not change train/val/test split logic unless the user explicitly asks.
+- Do not change ECG lead order, sampling-rate assumptions, label mapping, or normalization conventions without calling it out.
+- Treat data preprocessing, evaluation metrics, and checkpoint naming as behavior-critical.
+- Prefer behavior-preserving refactors over architectural rewrites.
+
+## Data and artifact handling
+
+- Never commit raw ECG data, preprocessed waveforms, checkpoints, mlruns/, wandb/, .dvc/cache/, or large artifacts to Git.
+- Track datasets, checkpoints, and derived artifacts with DVC when possible.
+- Never print or export patient metadata unless the user explicitly asks.
+
+## Validation gates
+
+- Before editing, find the narrowest real validation command.
+- After any change to data/preprocessing/training/evaluation code, run at least one smoke validation.
+- If tests are obviously stale, say so explicitly and do not overclaim safety.
+
+## Workflow
+
+- Analyze first, edit second.
+- One work packet at a time.
+- No parallel writes to overlapping files.
+- Reviewer remains read-only.</code></pre>
+    </section>
+
+    <section id="local-skills">
+      <h2>8. 本地 Skills 目录与模板</h2>
+
+      <h3>推荐目录</h3>
+      <pre><code>ECG_adv/
+├── .codex/
+│   ├── config.toml
+│   └── agents/
+│       ├── repo-mapper.toml
+│       ├── reviewer.toml
+│       └── training-debugger.toml
+├── .agents/
+│   └── skills/
+│       ├── safe-refactor-dl/
+│       │   └── SKILL.md
+│       ├── training-debugger/
+│       │   └── SKILL.md
+│       ├── reproducibility-check/
+│       │   └── SKILL.md
+│       ├── data-prep-validator/
+│       │   └── SKILL.md
+│       ├── model-eval/
+│       │   └── SKILL.md
+│       └── experiment-runbook/
+│           └── SKILL.md
+└── AGENTS.md</code></pre>
+
+      <h3><code>safe-refactor-dl/SKILL.md</code></h3>
+      <pre><code>---
+name: safe-refactor-dl
+description: Refactor ECG_adv data, training, and evaluation code with strict behavior preservation, packetized changes, and mandatory validation.
+---
+
+# Safe Refactor DL
+
+## Non-negotiables
+
+- Do not change data split logic, label mapping, lead order, sampling rate assumptions, or metric definitions unless explicitly requested.
+- Prefer behavior-preserving refactors.
+- Do not parallel-edit overlapping files.
+- Treat preprocessing and evaluation as contract-critical.
+
+## Workflow
+
+1. Map the true entry points and validation commands.
+2. Produce a small refactor plan before editing.
+3. Split the work into packets with owned files and checks.
+4. Edit one packet at a time.
+5. Run the smallest relevant validation after each packet.
+6. Summarize invariants preserved and residual risks.
+
+## Validation order
+
+1. Targeted smoke test
+2. Touched-module tests
+3. Broader repo checks if packet crosses module boundaries
+
+## Stop conditions
+
+- Tests are stale or misleading
+- Refactor requires changing metrics/splits/preprocessing semantics
+- Multiple packets collide on file ownership</code></pre>
+
+      <h3><code>training-debugger/SKILL.md</code></h3>
+      <pre><code>---
+name: training-debugger
+description: Diagnose ECG_adv training failures, regressions, NaNs, shape mismatches, checkpoint issues, and train/eval drift.
+---
+
+# Training Debugger
+
+1. Capture the exact failing command and environment.
+2. Identify whether the seam is data, config, model, optimizer, metric, or checkpoint.
+3. Prefer the smallest reproducible command.
+4. Report likely root cause, missing evidence, and fastest proof step.
+5. Do not rewrite training code unless explicitly asked.</code></pre>
+
+      <h3><code>reproducibility-check/SKILL.md</code></h3>
+      <pre><code>---
+name: reproducibility-check
+description: Verify that ECG_adv experiments are reproducible and traceable.
+---
+
+# Reproducibility Check
+
+1. Check seed control and split determinism.
+2. Check whether params/config are fully logged.
+3. Check artifact lineage: dataset -> preprocess output -> checkpoint -> metrics.
+4. Check whether the exact evaluation command can be replayed.
+5. Flag missing version info, environment drift, and unnamed artifacts.</code></pre>
+
+      <h3><code>data-prep-validator/SKILL.md</code></h3>
+      <pre><code>---
+name: data-prep-validator
+description: Validate ECG data loading, preprocessing, split integrity, and label-map contracts.
+---
+
+# Data Prep Validator
+
+1. Verify input schema and expected columns/files.
+2. Verify split rules and leak guards.
+3. Verify sampling-rate assumptions, lead order, normalization, and filtering.
+4. Verify output shape and label mapping contract.
+5. Require a tiny fixture or smoke command before approving changes.</code></pre>
+
+      <h3><code>model-eval/SKILL.md</code></h3>
+      <pre><code>---
+name: model-eval
+description: Standardize ECG_adv evaluation commands, metric naming, output reports, and comparison tables.
+---
+
+# Model Eval
+
+1. Find canonical evaluation entrypoint.
+2. Confirm metrics and aggregation rules.
+3. Run or specify the smallest valid eval command.
+4. Write outputs to a standard location.
+5. Summarize deltas against baseline with caveats.</code></pre>
+
+      <h3><code>experiment-runbook/SKILL.md</code></h3>
+      <pre><code>---
+name: experiment-runbook
+description: Plan ECG_adv experiments, ablations, seeds, metrics, artifacts, and tracking conventions.
+---
+
+# Experiment Runbook
+
+1. Define baseline, hypothesis, variable changed, and expected metric movement.
+2. Specify dataset version, split version, config path, seed list, and GPU budget.
+3. Record MLflow or W&B logging fields.
+4. Define checkpoint naming and artifact storage.
+5. Produce a result table skeleton before running large experiments.</code></pre>
+    </section>
+
+    <section id="install-plan">
+      <h2>9. 分阶段安装与迁移计划</h2>
+
+      <div class="timeline">
+        <div class="step">
+          <div class="day">D0–D1</div>
+          <div><strong>核实真实仓库结构。</strong>拉出 <code>ECG_adv</code> 文件树、训练入口、评估入口、数据预处理入口、测试命令、CI 配置。</div>
+        </div>
+        <div class="step">
+          <div class="day">D1–D2</div>
+          <div><strong>安装 Superpowers。</strong>在 Codex CLI 中执行 <code>/plugins</code>，搜索 <code>superpowers</code> 并安装。</div>
+        </div>
+        <div class="step">
+          <div class="day">D2–D3</div>
+          <div><strong>接入只读 GitHub MCP。</strong>只启用 <code>repos,issues,pull_requests,actions</code>，并强制 read-only。</div>
+        </div>
+        <div class="step">
+          <div class="day">D3–D4</div>
+          <div><strong>建立 DVC + MLflow 基线。</strong>数据、checkpoint、预处理产物走 DVC；实验参数和指标先走本地 MLflow。</div>
+        </div>
+        <div class="step">
+          <div class="day">D4–D5</div>
+          <div><strong>写 AGENTS.md 与 repo-local skills。</strong>先写 <code>safe-refactor-dl</code>、<code>training-debugger</code>、<code>reproducibility-check</code>。</div>
+        </div>
+        <div class="step">
+          <div class="day">D5–D7</div>
+          <div><strong>加项目定制 subagents。</strong>跑一次只读 dry-run，确认能稳定执行“先分析、后修改、再复核”。</div>
+        </div>
+      </div>
+
+      <h3>基础命令</h3>
+      <pre><code># Codex 内安装 Superpowers
+codex
+/plugins
+# 搜索 superpowers，然后选择 Install Plugin
+
+# 数据与实验基础设施
+pip install dvc
+pip install mlflow
+
+# 团队明确允许云同步时再启用
+pip install wandb
+
+# DVC 基线
+dvc init
+dvc add data/raw
+git add .dvc .gitignore data/raw.dvc
+git commit -m "Initialize DVC and track raw ECG data"
+
+# 本地 MLflow
+mlflow server --port 5000</code></pre>
+
+      <h3>精选安装 Dimillian skills</h3>
+      <pre><code>mkdir -p ~/.agents/skills
+git clone --depth=1 https://github.com/Dimillian/Skills /tmp/dimillian-skills
+
+cp -R /tmp/dimillian-skills/orchestrate-batch-refactor ~/.agents/skills/
+cp -R /tmp/dimillian-skills/review-swarm ~/.agents/skills/
+cp -R /tmp/dimillian-skills/bug-hunt-swarm ~/.agents/skills/
+cp -R /tmp/dimillian-skills/review-and-simplify-changes ~/.agents/skills/
+cp -R /tmp/dimillian-skills/project-skill-audit ~/.agents/skills/</code></pre>
+    </section>
+
+    <section id="security">
+      <h2>10. 安全边界</h2>
+      <div class="danger">
+        <strong>核心原则：</strong>把第三方 MCP server 当成本机会执行的程序，默认零信任；把医学/ECG 数据当作敏感数据，默认不外发。
+      </div>
+
+      <ul>
+        <li>GitHub MCP 默认 <code>read-only</code>，不要暴露 <code>all</code> toolsets。</li>
+        <li>GitHub token、W&B API key、云存储密钥只放本地环境变量，不写入 repo。</li>
+        <li>禁止把 raw ECG、预处理波形、checkpoint、<code>mlruns/</code>、<code>wandb/</code>、<code>.dvc/cache/</code> 提交到 Git。</li>
+        <li>未明确授权时，不允许 agent 自动上传 artifacts 到外部服务。</li>
+        <li>任何改动 split、label map、sampling rate、lead order、normalization、metric 的操作都必须单独说明。</li>
+        <li>W&B 仅在团队允许云端同步时启用；默认使用本地 MLflow。</li>
+      </ul>
+    </section>
+
+    <section id="sources">
+      <h2>11. 参考来源</h2>
+      <p>以下是本报告调研时使用的主要公开来源。私有仓库 <code>ECG_adv</code> 未在公开 GitHub 侧确认，因此相关判断已按“工作假设”处理。</p>
+      <ul>
+        <li><a href="https://github.com/NeikuiColacat/ECG-diffusion">NeikuiColacat/ECG-diffusion</a></li>
+        <li><a href="https://github.com/NeikuiColacat?tab=repositories">NeikuiColacat GitHub repositories</a></li>
+        <li><a href="https://developers.openai.com/codex/skills">OpenAI Codex Agent Skills documentation</a></li>
+        <li><a href="https://developers.openai.com/codex/plugins">OpenAI Codex Plugins documentation</a></li>
+        <li><a href="https://developers.openai.com/codex/subagents">OpenAI Codex Subagents documentation</a></li>
+        <li><a href="https://developers.openai.com/codex/config-reference">OpenAI Codex configuration reference</a></li>
+        <li><a href="https://github.com/obra/superpowers">obra/superpowers</a></li>
+        <li><a href="https://github.com/github/github-mcp-server">github/github-mcp-server</a></li>
+        <li><a href="https://github.com/openai/skills">openai/skills</a></li>
+        <li><a href="https://github.com/Dimillian/Skills">Dimillian/Skills</a></li>
+        <li><a href="https://github.com/treeverse/dvc">DVC</a></li>
+        <li><a href="https://mlflow.org/docs/latest/ml/tracking/quickstart/">MLflow tracking quickstart</a></li>
+        <li><a href="https://docs.wandb.ai/models/quickstart">Weights & Biases quickstart</a></li>
+      </ul>
+    </section>
+
+    <p class="footer">
+      生成日期：2026-05-27 · 建议用途：保存到 ECG_adv 仓库 docs/ 或作为 Codex 配置迁移清单。
+    </p>
+  </main>
+</body>
+</html>

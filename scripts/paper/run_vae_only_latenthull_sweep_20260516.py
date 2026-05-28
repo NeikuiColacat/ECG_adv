@@ -507,7 +507,7 @@ def main() -> None:
     )
     ap.add_argument(
         "--eval_tag",
-        default="v6_super5_clinician_review",
+        default="v7_super5_sjr_rgq_review",
         help="Short tag used in eval output filenames.",
     )
     ap.add_argument(

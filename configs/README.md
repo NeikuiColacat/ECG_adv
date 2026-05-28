@@ -232,8 +232,8 @@ micromamba run -n ECGTwin python scripts/export_metrics_long.py \
   --run-id effnet_vae_lhat_k500_v6 \
   --filter-to-target-center \
   --target-centers ningbo chapman_shaoxing cpsc_2018 georgia \
-  --expected-mapping-version v6_super5_clinician_review_20260524 \
-  --expected-mapping-hash 3adc673a60ad
+  --expected-mapping-version v7_super5_sjr_rgq_review_20260528 \
+  --expected-mapping-hash 555ec85d5b51
 ```
 
 Multiple method-level exports can then be merged into one table input:

@@ -36,6 +36,7 @@ data:
     pn2021_cache_dir: ${paths.data_root}/triple_labels/pn2021_eval_cache
     pn2021_mmap_cache_dir: ${paths.data_root}/triple_labels/pn2021_eval_cache_mmap
     prefer_mmap: true
+  kshot_subset_root: ${paths.data_root}/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets
 
 preprocess:
   classifier_fs: 100
@@ -75,7 +76,7 @@ logging:
     - best_model.pt
     - training_log.json
     - train_result.json
-    - eval_result_v7_super5_sjr_rgq_refexcluded.json
+    - eval_result_v7_super5_sjr_rgq_review_exclrefs_crop1000.json
   postprocess_artifacts:
     - metrics_long.csv
 

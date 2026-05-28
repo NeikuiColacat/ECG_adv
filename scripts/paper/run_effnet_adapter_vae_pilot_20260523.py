@@ -129,7 +129,7 @@ def train_one(center: str, method: str, args: argparse.Namespace) -> Path:
             f"ep{args.epochs}_{class_tag}_seed{args.seed}"
         )
     out_dir = OUT_ROOT / "runs" / tag
-    eval_path = out_dir / "eval_result_v6_exclrefs_crop1000_dropzero.json"
+    eval_path = out_dir / "eval_result_v7_exclrefs_crop1000_dropzero.json"
     if eval_path.exists() and not args.force:
         print(f"[skip] {tag}")
         return eval_path

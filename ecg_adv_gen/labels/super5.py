@@ -14,8 +14,8 @@ from typing import Iterable
 CLASS_NAMES_SUPER5 = ("CD", "HYP", "MI", "NORM", "STTC")
 NUM_SUPER5 = len(CLASS_NAMES_SUPER5)
 
-SUPER5_PN2021_MAPPING_VERSION = "v6_super5_clinician_review_20260524"
-SUPER5_PN2021_MAPPING_HASH = "3adc673a60ad"
+SUPER5_PN2021_MAPPING_VERSION = "v7_super5_sjr_rgq_review_20260528"
+SUPER5_PN2021_MAPPING_HASH = "555ec85d5b51"
 
 
 class Super5MetadataError(ValueError):

@@ -485,7 +485,7 @@ def main() -> None:
         "--skip_mimic",
         "--report_drop_all_zero_pn2021",
         "--exclude_ref_ids", str(ref_meta),
-        "--output_path", str(out_dir / "eval_result_v6_exclrefs_crop1000.json"),
+        "--output_path", str(out_dir / "eval_result_v7_exclrefs_crop1000.json"),
     ]
     if args.eval_pn2021_limit > 0:
         eval_cmd.extend(["--pn2021_limit", str(args.eval_pn2021_limit)])

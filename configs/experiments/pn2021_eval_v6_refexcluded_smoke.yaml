@@ -16,7 +16,7 @@ training:
 
 logging:
   child_artifacts:
-    - eval_result_v6_super5_refexcluded_smoke.json
+    - eval_result_v7_super5_sjr_rgq_refexcluded_smoke.json
   postprocess_artifacts: []
 
 evaluation:
@@ -75,4 +75,4 @@ runner:
     - --exclude_ref_ids
     - ${evaluation.ref_exclusion_meta}
     - --output_path
-    - ${paths.output_root}/${experiment.name}/${runtime.run_id}/${matrix.center}/eval_result_v6_super5_refexcluded_smoke.json
+    - ${paths.output_root}/${experiment.name}/${runtime.run_id}/${matrix.center}/eval_result_v7_super5_sjr_rgq_refexcluded_smoke.json

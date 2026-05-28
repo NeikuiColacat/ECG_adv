@@ -62,8 +62,10 @@ def _load(name: str) -> dict:
     [
         ("effnet_direct_k500_v6.yaml", 1),
         ("effnet_direct_k500_v6_smoke.yaml", 1),
+        ("effnet_direct_k500_v7_sjr_rgq.yaml", 1),
         ("effnet_vae_lhat_k500_v6.yaml", 4),
         ("effnet_vae_lhat_k500_v6_smoke.yaml", 4),
+        ("effnet_vae_lhat_k500_v7_sjr_rgq.yaml", 4),
         ("ecgfounder_direct_k500_v6.yaml", 1),
         ("ecgfounder_inithead_fullft_k500_v6.yaml", 4),
         ("ecgfounder_inithead_fullft_k500_v6_smoke.yaml", 4),
@@ -71,6 +73,7 @@ def _load(name: str) -> dict:
         ("ecgfounder_vae_lhat_k500_v6_smoke.yaml", 4),
         ("pn2021_eval_v6_refexcluded.yaml", 4),
         ("pn2021_eval_v6_refexcluded_smoke.yaml", 4),
+        ("pn2021_eval_v7_sjr_rgq_refexcluded.yaml", 4),
     ],
 )
 def test_tracked_configs_validate_and_expand_commands(config_name: str, expected_commands: int):
@@ -79,8 +82,8 @@ def test_tracked_configs_validate_and_expand_commands(config_name: str, expected
     commands = build_runner_commands(config)
 
     assert paths["project_root"].endswith("ECG_adv_Gen")
-    assert config["paper_protocol"]["mapping_version"] == "v6_super5_clinician_review_20260524"
-    assert config["paper_protocol"]["mapping_hash"] == "3adc673a60ad"
+    assert config["paper_protocol"]["mapping_version"] == "v7_super5_sjr_rgq_review_20260528"
+    assert config["paper_protocol"]["mapping_hash"] == "555ec85d5b51"
     assert "pn2021_all_zero_kept_refexcluded" in config["evaluation"]["views"]
     assert "pn2021_drop_all_zero_refexcluded" in config["evaluation"]["views"]
     assert len(commands) == expected_commands
@@ -226,6 +229,57 @@ def test_effnet_direct_command_writes_under_managed_output_root():
     assert _option_value(argv, "--val_fraction") == "0.2"
     assert "--out_root" in argv
     assert _option_value(argv, "--out_root").endswith("/runs/effnet_direct_k500_v6/pytest_run")
+
+
+def test_effnet_v7_configs_use_v7_subset_root_and_direct_init_dependency():
+    direct = _load("effnet_direct_k500_v7_sjr_rgq.yaml")
+    vae = _load("effnet_vae_lhat_k500_v7_sjr_rgq.yaml")
+    direct_paths = validate_experiment_config(direct, repo_root=REPO)
+    vae_paths = validate_experiment_config(vae, repo_root=REPO)
+    direct_command = build_runner_commands(direct)[0]
+    vae_commands = build_runner_commands(vae)
+
+    direct_subset_root = _option_value(direct_command["argv"], "--subset_root")
+    assert direct_subset_root.endswith("/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets")
+    assert _option_value(direct_command["argv"], "--out_root").endswith(
+        "/runs/effnet_direct_k500_v7_sjr_rgq/pytest_run"
+    )
+
+    direct_manifest = make_dry_run_manifest(
+        direct,
+        commands=[direct_command],
+        local_paths=direct_paths,
+        run_id="pytest_v7_direct",
+        cli_args=argparse.Namespace(dry_run=True, write_plan=False),
+    )
+    assert all(
+        "paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets" in ref["anchor_base"]
+        for ref in direct_manifest["artifact_trace"]["inputs"]["k500_refs"]
+    )
+
+    for command in vae_commands:
+        argv = command["argv"]
+        center = command["matrix"]["center"]
+        assert "paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets" in _option_value(
+            argv,
+            "--anchor_base",
+        )
+        assert _option_value(argv, "--init_ckpt").endswith(
+            f"/runs/effnet_direct_k500_v7_sjr_rgq/pytest_run/runs/"
+            f"{center}_K500_direct_ft_ep30_seed20260531_val0.2/best_model.pt"
+        )
+
+    vae_manifest = make_dry_run_manifest(
+        vae,
+        commands=vae_commands,
+        local_paths=vae_paths,
+        run_id="pytest_v7_lhat",
+        cli_args=argparse.Namespace(dry_run=True, write_plan=False),
+    )
+    assert all(
+        "paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets" in ref["anchor_base"]
+        for ref in vae_manifest["artifact_trace"]["inputs"]["k500_refs"]
+    )
 
 
 def test_effnet_direct_manifest_child_dir_uses_shared_run_naming_helper():
@@ -527,7 +581,7 @@ def test_pn2021_eval_command_has_refexcluded_v6_inputs():
         assert len(ref_metas) == 4
         assert all("k500_seed20260531" in path for path in ref_metas)
         assert _option_value(argv, "--output_path").endswith(
-            f"/pn2021_eval_v6_refexcluded/pytest_run/{center}/eval_result_v6_super5_refexcluded.json"
+            f"/pn2021_eval_v6_refexcluded/pytest_run/{center}/eval_result_v7_super5_sjr_rgq_refexcluded.json"
         )
 
     traced_checkpoints = manifest["artifact_trace"]["inputs"]["checkpoints"]
@@ -536,7 +590,7 @@ def test_pn2021_eval_command_has_refexcluded_v6_inputs():
     assert len(postprocess_commands) == 3
     assert postprocess_commands[0]["argv"][1].endswith("scripts/export_metrics_long.py")
     assert "--expected-mapping-version" in postprocess_commands[0]["argv"]
-    assert "v6_super5_clinician_review_20260524" in postprocess_commands[0]["argv"]
+    assert "v7_super5_sjr_rgq_review_20260528" in postprocess_commands[0]["argv"]
     assert postprocess_commands[1]["argv"][1].endswith("scripts/export_paper_table.py")
     assert "pn2021_all_zero_kept_refexcluded" in postprocess_commands[1]["argv"]
     assert "pn2021_drop_all_zero_refexcluded" in postprocess_commands[2]["argv"]
@@ -564,7 +618,7 @@ def test_pn2021_eval_smoke_command_limits_runtime_samples():
         assert _option_value(argv, "--num_workers") == "0"
         assert _option_value(argv, "--min_pos") == "2"
         assert _option_value(argv, "--output_path").endswith(
-            f"/pn2021_eval_v6_refexcluded_smoke/pytest_run/{center}/eval_result_v6_super5_refexcluded_smoke.json"
+            f"/pn2021_eval_v6_refexcluded_smoke/pytest_run/{center}/eval_result_v7_super5_sjr_rgq_refexcluded_smoke.json"
         )
 
 
@@ -810,8 +864,8 @@ def test_manifest_contains_metric_views_and_mapping_metadata():
     manifest = _dry_manifest("effnet_direct_k500_v6.yaml")
     trace = manifest["artifact_trace"]
 
-    assert trace["metrics"]["mapping_version"] == "v6_super5_clinician_review_20260524"
-    assert trace["metrics"]["mapping_hash"] == "3adc673a60ad"
+    assert trace["metrics"]["mapping_version"] == "v7_super5_sjr_rgq_review_20260528"
+    assert trace["metrics"]["mapping_hash"] == "555ec85d5b51"
     assert trace["metrics"]["class_order"] == ["CD", "HYP", "MI", "NORM", "STTC"]
     assert "pn2021_all_zero_kept_refexcluded" in trace["metrics"]["views"]
     assert "pn2021_drop_all_zero_refexcluded" in trace["metrics"]["views"]
@@ -835,7 +889,7 @@ def test_manifest_records_direct_k500_checkpoint_refs_and_outputs():
     child_runs = trace["expected_outputs"]["child_runs"]
     assert len(child_runs) == 4
     assert all(any(art["role"] == "eval_result" for art in run["expected_artifacts"]) for run in child_runs)
-    assert any("eval_result_v6_super5_clinician_review_exclrefs_crop1000.json" in art["path"]
+    assert any("eval_result_v7_super5_sjr_rgq_review_exclrefs_crop1000.json" in art["path"]
                for run in child_runs for art in run["expected_artifacts"])
 
 
@@ -878,7 +932,7 @@ def test_manifest_records_vae_direct_init_anchor_refs_and_outputs():
             }
         )
         assert Path(run["child_run_dir"]).name == expected_leaf
-    assert any("eval_result_v6_exclrefs_crop1000.json" in art["path"]
+    assert any("eval_result_v7_exclrefs_crop1000.json" in art["path"]
                for run in child_runs for art in run["expected_artifacts"])
 
 
@@ -1025,8 +1079,8 @@ def _small_kshot_manifest(tmp_path: Path, *, bad_count: bool = False) -> dict:
         },
         "artifact_trace": {
             "metrics": {
-                "mapping_version": "v6_super5_clinician_review_20260524",
-                "mapping_hash": "3adc673a60ad",
+                "mapping_version": "v7_super5_sjr_rgq_review_20260528",
+                "mapping_hash": "555ec85d5b51",
                 "class_order": ["CD", "HYP", "MI", "NORM", "STTC"],
             },
             "selection_policy": {
@@ -1089,12 +1143,12 @@ def test_k500_ref_ids_generation_rejects_bad_count(tmp_path: Path):
         write_k500_ref_ids_artifact(manifest, tmp_path / "k500_ref_ids.json")
 
 
-def _artifact_manifest(eval_path: Path, *, mapping_hash: str = "3adc673a60ad") -> dict:
+def _artifact_manifest(eval_path: Path, *, mapping_hash: str = "555ec85d5b51") -> dict:
     return {
         "artifact_trace": {
             "metrics": {
-                "mapping_version": "v6_super5_clinician_review_20260524",
-                "mapping_hash": "3adc673a60ad",
+                "mapping_version": "v7_super5_sjr_rgq_review_20260528",
+                "mapping_hash": "555ec85d5b51",
                 "class_order": ["CD", "HYP", "MI", "NORM", "STTC"],
             },
             "expected_outputs": {
@@ -1139,8 +1193,8 @@ def test_verify_required_artifacts_checks_eval_mapping_metadata(tmp_path: Path):
             {
                 "label_mapping": {
                     "pn2021_super5": {
-                        "mapping_version": "v6_super5_clinician_review_20260524",
-                        "mapping_hash": "3adc673a60ad",
+                        "mapping_version": "v7_super5_sjr_rgq_review_20260528",
+                        "mapping_hash": "555ec85d5b51",
                     }
                 }
             }
@@ -1203,7 +1257,7 @@ def test_verify_required_artifacts_rejects_mapping_mismatch(tmp_path: Path):
             {
                 "label_mapping": {
                     "pn2021_super5": {
-                        "mapping_version": "v6_super5_clinician_review_20260524",
+                        "mapping_version": "v7_super5_sjr_rgq_review_20260528",
                         "mapping_hash": "bad_hash",
                     }
                 }
@@ -1248,8 +1302,8 @@ print("child stderr marker", file=sys.stderr)
 Path(sys.argv[1]).write_text(json.dumps({
     "label_mapping": {
         "pn2021_super5": {
-            "mapping_version": "v6_super5_clinician_review_20260524",
-            "mapping_hash": "3adc673a60ad",
+            "mapping_version": "v7_super5_sjr_rgq_review_20260528",
+            "mapping_hash": "555ec85d5b51",
         }
     }
 }))
@@ -1336,8 +1390,8 @@ def test_run_postprocess_commands_verifies_expected_artifacts(tmp_path: Path):
             {
                 "label_mapping": {
                     "pn2021_super5": {
-                        "mapping_version": "v6_super5_clinician_review_20260524",
-                        "mapping_hash": "3adc673a60ad",
+                        "mapping_version": "v7_super5_sjr_rgq_review_20260528",
+                        "mapping_hash": "555ec85d5b51",
                     }
                 }
             }
@@ -1420,8 +1474,8 @@ from pathlib import Path
 Path(sys.argv[1]).write_text(json.dumps({
     "label_mapping": {
         "pn2021_super5": {
-            "mapping_version": "v6_super5_clinician_review_20260524",
-            "mapping_hash": "3adc673a60ad",
+            "mapping_version": "v7_super5_sjr_rgq_review_20260528",
+            "mapping_hash": "555ec85d5b51",
         }
     }
 }), encoding="utf-8")

@@ -1,13 +1,14 @@
 extends:
-  - ../defaults/common_v6_super5.yaml
+  - ../defaults/common_v7_sjr_rgq_super5.yaml
 
 experiment:
-  name: pn2021_eval_v6_refexcluded
-  description: Managed PN2021 Super5 v6 ref-excluded evaluation for direct-K500 EfficientNet1DV2 runs.
+  name: pn2021_eval_v7_sjr_rgq_refexcluded
+  description: Managed PN2021 Super5 v7 SJR/RGQ ref-excluded evaluation for direct-K500 EfficientNet1DV2 runs.
 
 model:
   backbone: efficientnet1dv2
   num_classes: 5
+  direct_init_root: ${paths.output_root}/effnet_direct_k500_v7_sjr_rgq/${runtime.run_id}/runs
 
 training:
   eval_batch_size: 192
@@ -20,12 +21,12 @@ logging:
     - metrics_long.csv
 
 evaluation:
-  model_family: effnet_direct_k500_v6
+  model_family: effnet_direct_k500_v7_sjr_rgq
   ref_exclusion_meta:
-    - ${paths.data_root}/paper_vae_only_latenthull_sweep_20260516/subsets/ningbo/k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}/ningbo_real_k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}.ref_meta.json
-    - ${paths.data_root}/paper_vae_only_latenthull_sweep_20260516/subsets/chapman_shaoxing/k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}/chapman_shaoxing_real_k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}.ref_meta.json
-    - ${paths.data_root}/paper_vae_only_latenthull_sweep_20260516/subsets/cpsc_2018/k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}/cpsc_2018_real_k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}.ref_meta.json
-    - ${paths.data_root}/paper_vae_only_latenthull_sweep_20260516/subsets/georgia/k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}/georgia_real_k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}.ref_meta.json
+    - ${data.kshot_subset_root}/ningbo/k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}/ningbo_real_k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}.ref_meta.json
+    - ${data.kshot_subset_root}/chapman_shaoxing/k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}/chapman_shaoxing_real_k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}.ref_meta.json
+    - ${data.kshot_subset_root}/cpsc_2018/k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}/cpsc_2018_real_k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}.ref_meta.json
+    - ${data.kshot_subset_root}/georgia/k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}/georgia_real_k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}.ref_meta.json
 
 postprocess:
   commands:
@@ -115,7 +116,7 @@ runner:
     - --scheme
     - super5
     - --model_dir
-    - ${paths.data_root}/paper_direct_finetune_k500_20260516/runs/${matrix.center}_K${paper_protocol.kshot.k}_direct_ft_ep30_seed${paper_protocol.kshot.seed}_val0.2
+    - ${model.direct_init_root}/${matrix.center}_K${paper_protocol.kshot.k}_direct_ft_ep30_seed${paper_protocol.kshot.seed}_val0.2
     - --model_name
     - ${model.backbone}
     - --device

@@ -91,8 +91,9 @@ class NPZRealDataset(Dataset):
         )
 
 
-def subset_paths(center: str, k: int, seed: int) -> dict[str, Path]:
-    base_dir = SUBSET_ROOT / center / f"k{k}_seed{seed}"
+def subset_paths(center: str, k: int, seed: int, subset_root: str | Path | None = None) -> dict[str, Path]:
+    root = Path(subset_root) if subset_root else SUBSET_ROOT
+    base_dir = root / center / f"k{k}_seed{seed}"
     base = base_dir / f"{center}_real_k{k}_seed{seed}"
     return {
         "signals": base.with_suffix(".signals.npz"),
@@ -170,7 +171,7 @@ def run_cmd(cmd: list[str], log_path: Path) -> None:
 
 
 def train_one(center: str, args: argparse.Namespace) -> Path:
-    paths = subset_paths(center, args.k, args.subset_seed)
+    paths = subset_paths(center, args.k, args.subset_seed, args.subset_root)
     if not paths["signals"].exists() or not paths["meta"].exists():
         raise FileNotFoundError(f"missing K-shot subset for {center}: {paths}")
 
@@ -184,7 +185,7 @@ def train_one(center: str, args: argparse.Namespace) -> Path:
             "val_fraction": args.val_fraction,
         }
     )
-    eval_path = out_dir / "eval_result_v6_super5_clinician_review_exclrefs_crop1000.json"
+    eval_path = out_dir / "eval_result_v7_super5_sjr_rgq_review_exclrefs_crop1000.json"
     if eval_path.exists() and not args.force:
         print(f"[skip] {center} direct fine-tune already evaluated")
         return eval_path
@@ -447,6 +448,14 @@ def parse_args() -> argparse.Namespace:
         help="Optional PN2021 per-center record cap for engineering smoke runs only.",
     )
     p.add_argument("--out_root", default="")
+    p.add_argument(
+        "--subset_root",
+        default="",
+        help=(
+            "Optional K-shot subset root. Defaults to the historical "
+            "paper_vae_only_latenthull_sweep_20260516/subsets root."
+        ),
+    )
     p.add_argument("--force", action="store_true")
     return p.parse_args()
 

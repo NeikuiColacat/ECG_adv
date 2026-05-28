@@ -738,6 +738,12 @@ def audit_runner_commands(config: dict[str, Any], commands: list[dict[str, Any]]
             centers = set(_opt_list(opts, "--centers"))
             if centers != target_centers:
                 errors.append(f"{script}: centers={sorted(centers)!r}, expected {sorted(target_centers)!r}")
+            subset_root = str(_opt_first(opts, "--subset_root", ""))
+            if subset_root:
+                if f"k{expected_k}_seed{expected_seed}" in subset_root:
+                    errors.append(f"{script}: subset_root should be the root directory, not one center-specific K-shot base")
+                if "subsets" not in subset_root:
+                    errors.append(f"{script}: subset_root does not point at a K-shot subsets directory")
         elif script == "run_effnet_latent_augmix_stage3_20260524.py":
             _audit_require_options(
                 errors,
@@ -1059,6 +1065,13 @@ def _direct_ref_base(data_root: Path, center: str, k: int, seed: int) -> Path:
     )
 
 
+def _direct_ref_base_from_opts(opts: dict[str, Any], data_root: Path, center: str, k: int, seed: int) -> Path:
+    subset_root = str(_opt_first(opts, "--subset_root", ""))
+    if subset_root:
+        return Path(subset_root) / center / f"k{k}_seed{seed}" / f"{center}_real_k{k}_seed{seed}"
+    return _direct_ref_base(data_root, center, k, seed)
+
+
 def _append_k500_ref(
     refs: list[dict[str, Any]],
     *,
@@ -1107,7 +1120,7 @@ def _direct_child_run(opts: dict[str, Any], center: str) -> dict[str, Any]:
             _path_record("legacy_run_config", child_dir / "run_config.json"),
             _path_record(
                 "eval_result",
-                child_dir / "eval_result_v6_super5_clinician_review_exclrefs_crop1000.json",
+                child_dir / "eval_result_v7_super5_sjr_rgq_review_exclrefs_crop1000.json",
             ),
         ],
     }
@@ -1163,7 +1176,7 @@ def _vae_child_run(opts: dict[str, Any], center: str) -> dict[str, Any]:
             _path_record("launch_config", child_dir / "launch_config.json"),
             _path_record("train_stdout", child_dir / "train_stdout.log"),
             _path_record("eval_log", child_dir / "eval_full.log"),
-            _path_record("eval_result", child_dir / "eval_result_v6_exclrefs_crop1000.json"),
+            _path_record("eval_result", child_dir / "eval_result_v7_exclrefs_crop1000.json"),
         ],
     }
 
@@ -1424,7 +1437,7 @@ def build_artifact_trace(
 
         if script == "run_direct_finetune_k500_20260516.py":
             for item_center in _opt_list(opts, "--centers"):
-                base = _direct_ref_base(data_root, item_center, k, seed)
+                base = _direct_ref_base_from_opts(opts, data_root, item_center, k, seed)
                 _append_k500_ref(inputs["k500_refs"], center=item_center, k=k, seed=seed, base=base, include_latent=False)
                 child = _direct_child_run(opts, item_center)
                 child.update({"command_index": command_index, "name": command["name"], "matrix": command["matrix"]})

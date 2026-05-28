@@ -1,0 +1,20 @@
+extends: common_v7_sjr_rgq_super5.yaml
+
+model:
+  backbone: efficientnet1dv2
+  num_classes: 5
+  init_checkpoint: ${paths.data_root}/triple_labels/super5_minresample_full10_perglobal_20260503/best_model.pt
+  direct_init_root: ${paths.output_root}/effnet_direct_k500_v7_sjr_rgq/${runtime.run_id}/runs
+
+training:
+  epochs: 30
+  batch_size: 128
+  eval_batch_size: 192
+  num_workers: ${resources.default_num_workers}
+  amp: false
+  optimizer:
+    name: adamw
+    lr: 0.00005
+    weight_decay: 0.0001
+  grad_clip: 1.0
+  pos_weight_clip_max: 50.0

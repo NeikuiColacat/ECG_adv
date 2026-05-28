@@ -1,0 +1,31 @@
+# Project-local Codex defaults for ECG_adv_Gen.
+#
+# Keep this conservative: this repository runs on a shared GPU server and must
+# not allow broad writes, implicit network use, or uncontrolled agent fan-out.
+
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+project_doc_max_bytes = 65536
+
+[agents]
+max_threads = 3
+max_depth = 1
+
+[sandbox_workspace_write]
+network_access = false
+writable_roots = [
+  "/home/linbinhao/ECG_adv_Gen",
+  "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp",
+]
+
+# Optional GitHub MCP template.
+# Enable only after installing a trusted github-mcp-server binary in user space
+# and exporting GITHUB_PERSONAL_ACCESS_TOKEN in the local shell. Keep read-only.
+#
+# [mcp_servers.github]
+# command = "/home/linbinhao/.local/bin/github-mcp-server"
+# args = ["stdio", "--read-only", "--toolsets", "repos,issues,pull_requests,actions"]
+# env_vars = ["GITHUB_PERSONAL_ACCESS_TOKEN"]
+# startup_timeout_sec = 20
+# tool_timeout_sec = 60
+# required = false
