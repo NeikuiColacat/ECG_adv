@@ -1,0 +1,138 @@
+extends:
+  - ../defaults/ecgfounder_defaults.yaml
+
+experiment:
+  name: ecgfounder_inithead_fullft_k500_v6
+  description: ECGFounder initialized-head full fine-tuning K500 control under PN2021 Super5 v6.
+
+model:
+  num_classes: 5
+
+training:
+  epochs: 10
+  batch_size: 64
+  num_workers: ${resources.default_num_workers}
+  optimizer:
+    name: adamw
+    lr: 0.00002
+    weight_decay: 0.0001
+
+postprocess:
+  commands:
+    - name: export_metrics_long
+      entrypoint: scripts/export_metrics_long.py
+      env:
+        TMPDIR: ${paths.short_tmp_root}
+        XDG_CACHE_HOME: ${paths.cache_root}
+      argv:
+        - --input
+        - ${paths.output_root}/${experiment.name}/${runtime.run_id}
+        - --output-dir
+        - ${paths.output_root}/metrics_export/${runtime.run_id}_${experiment.name}
+        - --run-id
+        - ${experiment.name}
+        - --filter-to-target-center
+        - --target-centers
+        - ${paper_protocol.centers.target_4}
+        - --expected-mapping-version
+        - ${paper_protocol.mapping_version}
+        - --expected-mapping-hash
+        - ${paper_protocol.mapping_hash}
+      expected_artifacts:
+        - role: metrics_long
+          path: ${paths.output_root}/metrics_export/${runtime.run_id}_${experiment.name}/metrics_long.csv
+        - role: artifact_manifest
+          path: ${paths.output_root}/metrics_export/${runtime.run_id}_${experiment.name}/artifact_manifest.json
+
+    - name: export_paper_table_all_zero_kept
+      entrypoint: scripts/export_paper_table.py
+      env:
+        TMPDIR: ${paths.short_tmp_root}
+        XDG_CACHE_HOME: ${paths.cache_root}
+      argv:
+        - --metrics-long
+        - ${paths.output_root}/metrics_export/${runtime.run_id}_${experiment.name}/metrics_long.csv
+        - --output-dir
+        - ${paths.output_root}/paper_table/${runtime.run_id}_${experiment.name}_all_zero_kept
+        - --view
+        - pn2021_all_zero_kept_refexcluded
+        - --dataset
+        - pn2021
+        - --centers
+        - ${paper_protocol.centers.target_4}
+        - --no-dataset-rows
+      expected_artifacts:
+        - role: paper_table
+          path: ${paths.output_root}/paper_table/${runtime.run_id}_${experiment.name}_all_zero_kept/paper_table.csv
+        - role: paper_table_manifest
+          path: ${paths.output_root}/paper_table/${runtime.run_id}_${experiment.name}_all_zero_kept/paper_table_manifest.json
+
+    - name: export_paper_table_drop_all_zero
+      entrypoint: scripts/export_paper_table.py
+      env:
+        TMPDIR: ${paths.short_tmp_root}
+        XDG_CACHE_HOME: ${paths.cache_root}
+      argv:
+        - --metrics-long
+        - ${paths.output_root}/metrics_export/${runtime.run_id}_${experiment.name}/metrics_long.csv
+        - --output-dir
+        - ${paths.output_root}/paper_table/${runtime.run_id}_${experiment.name}_drop_all_zero
+        - --view
+        - pn2021_drop_all_zero_refexcluded
+        - --dataset
+        - pn2021
+        - --centers
+        - ${paper_protocol.centers.target_4}
+        - --no-dataset-rows
+      expected_artifacts:
+        - role: paper_table
+          path: ${paths.output_root}/paper_table/${runtime.run_id}_${experiment.name}_drop_all_zero/paper_table.csv
+        - role: paper_table_manifest
+          path: ${paths.output_root}/paper_table/${runtime.run_id}_${experiment.name}_drop_all_zero/paper_table_manifest.json
+
+runner:
+  entrypoint: scripts/paper/run_ecgfounder_fullft_super5_pilot_20260523.py
+  matrix:
+    center: ${paper_protocol.centers.target_4}
+  argv:
+    - --out_dir
+    - ${paths.output_root}/${experiment.name}/${runtime.run_id}
+    - --center
+    - ${matrix.center}
+    - --ref_meta_json
+    - ${paths.data_root}/paper_vae_only_latenthull_sweep_20260516/subsets/${matrix.center}/k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}/${matrix.center}_real_k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}.ref_meta.json
+    - --k
+    - ${paper_protocol.kshot.k}
+    - --epochs
+    - ${training.epochs}
+    - --seed
+    - ${paper_protocol.kshot.seed}
+    - --device
+    - cuda
+    - --num_workers
+    - ${training.num_workers}
+    - --batch_size
+    - ${training.batch_size}
+    - --eval_batch_size
+    - ${training.eval_batch_size}
+    - --lr
+    - ${training.optimizer.lr}
+    - --weight_decay
+    - ${training.optimizer.weight_decay}
+    - --source_train_limit
+    - ${training.source_train_limit}
+    - --cache_dir
+    - ${data.cache.ecgfounder_fullft_signal_cache_dir}
+    - --init_head_path
+    - ${paths.data_root}/paper_foundation_baselines_20260524/ecgfounder_kshot_head_ft_v6_from_legacy_cache/runs/${matrix.center}_K${paper_protocol.kshot.k}_fromK${paper_protocol.kshot.k}_headft_ep50_seed${paper_protocol.kshot.seed}/best_head.pt
+    - --target_val_count
+    - 100
+    - --target_val_seed
+    - ${paper_protocol.kshot.seed}
+    - --selection_metric
+    - source_plus_target_val_auprc
+    - --run_suffix
+    - yaml_inithead
+
+adaptation:
+  method: direct_target_k500_full_finetune

@@ -22,9 +22,7 @@ import shutil
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.utils.data import ConcatDataset, Dataset, DataLoader, WeightedRandomSampler
-from sklearn.metrics import roc_auc_score, average_precision_score
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..',
@@ -37,6 +35,8 @@ from scripts.triple_labels.model_zoo import (
 from scripts.crosscenter_v2.preprocess_utils import (
     unified_preprocess_to_1000, crop_signal_tc,
 )
+from ecg_adv_gen.evaluation import compute_macro_metric_dict
+from ecg_adv_gen.training import compute_pos_weight, masked_bce_with_logits
 
 
 def _str2bool(v):
@@ -138,64 +138,17 @@ class SynthNPZDataset(Dataset):
 # Loss + metrics
 # ────────────────────────────────────────────────────────────────────────────
 
-def masked_bce_with_logits(logits, labels_mask, pos_weight):
-    """BCE-with-logits that ignores entries where label == -1."""
-    mask = (labels_mask >= 0).float()
-    labels_safe = torch.where(mask.bool(), labels_mask, torch.zeros_like(labels_mask))
-    bce = F.binary_cross_entropy_with_logits(
-        logits, labels_safe, pos_weight=pos_weight, reduction='none'
-    )
-    denom = mask.sum().clamp_min(1.0)
-    return (bce * mask).sum() / denom
-
-
-def compute_pos_weight(labels_mat, num_classes, clip_max=50.0):
-    """Per-class pos_weight = N_neg / N_pos (only on valid 0/1 entries),
-    clipped to [1, clip_max]."""
-    pw = np.zeros(num_classes, dtype=np.float32)
-    for i in range(num_classes):
-        col = labels_mat[:, i]
-        n_pos = int((col == 1.0).sum())
-        n_neg = int((col == 0.0).sum())
-        if n_pos == 0:
-            pw[i] = clip_max
-        else:
-            pw[i] = float(np.clip(n_neg / max(n_pos, 1), 1.0, clip_max))
-    return pw
-
-
 def compute_macro_auroc_auprc(y_true, y_score, class_names, min_pos=10):
     """Per-class AUROC/AUPRC with -1 masking. Skips classes with < min_pos."""
-    aurocs, auprcs, per_class = [], [], {}
-    for i, name in enumerate(class_names):
-        t = y_true[:, i]
-        s = y_score[:, i]
-        valid = t >= 0
-        t_v = t[valid]
-        s_v = s[valid]
-        n_pos = int((t_v == 1.0).sum())
-        n_classes_unique = len(np.unique(t_v)) if t_v.size else 0
-        if n_pos < min_pos or n_classes_unique < 2:
-            per_class[name] = {'auroc': None, 'auprc': None, 'n_pos': n_pos,
-                               'n_valid': int(valid.sum())}
-            continue
-        try:
-            auc = float(roc_auc_score(t_v, s_v))
-            ap = float(average_precision_score(t_v, s_v))
-        except Exception:
-            per_class[name] = {'auroc': None, 'auprc': None, 'n_pos': n_pos,
-                               'n_valid': int(valid.sum())}
-            continue
-        aurocs.append(auc)
-        auprcs.append(ap)
-        per_class[name] = {'auroc': auc, 'auprc': ap, 'n_pos': n_pos,
-                           'n_valid': int(valid.sum())}
-    return {
-        'macro_auroc': float(np.mean(aurocs)) if aurocs else float('nan'),
-        'macro_auprc': float(np.mean(auprcs)) if auprcs else float('nan'),
-        'n_classes_used': len(aurocs),
-        'per_class': per_class,
-    }
+    return compute_macro_metric_dict(
+        y_true,
+        y_score,
+        class_names=class_names,
+        min_pos=min_pos,
+        valid_label_min=0.0,
+        empty_value=float('nan'),
+        skip_metric_errors=True,
+    )
 
 
 @torch.no_grad()

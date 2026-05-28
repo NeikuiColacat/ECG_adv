@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ECG_adv_Gen local machine config",
+  "type": "object",
+  "required": ["paths", "python", "safety"],
+  "properties": {
+    "paths": {
+      "type": "object",
+      "required": ["project_root", "data_root", "model_root", "output_root", "cache_root", "tmp_root"],
+      "additionalProperties": true
+    },
+    "python": {
+      "type": "object",
+      "required": ["executable"],
+      "additionalProperties": true
+    },
+    "safety": {
+      "type": "object",
+      "required": ["write_boundary"],
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,704 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ECG_adv_Gen 项目重构调研与执行方案</title>
+  <style>
+    :root {
+      --ink: #172026;
+      --muted: #5f6f7a;
+      --line: #d8e0e6;
+      --soft: #f5f7f8;
+      --panel: #ffffff;
+      --blue: #1e6091;
+      --green: #26735b;
+      --red: #a43d3d;
+      --gold: #8a6500;
+      --teal: #0f766e;
+      --violet: #6d4b8d;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: #eef2f3;
+      font: 15px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    a { color: var(--blue); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 260px minmax(0, 1fr);
+      min-height: 100vh;
+    }
+
+    aside {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow: auto;
+      padding: 22px 18px;
+      border-right: 1px solid var(--line);
+      background: #ffffff;
+    }
+
+    aside h1 {
+      margin: 0 0 6px;
+      font-size: 18px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+
+    aside p {
+      margin: 0 0 18px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    nav {
+      display: grid;
+      gap: 6px;
+    }
+
+    nav a {
+      display: block;
+      padding: 7px 9px;
+      border-radius: 6px;
+      color: #26343c;
+      font-size: 13px;
+    }
+
+    nav a:hover {
+      background: var(--soft);
+      text-decoration: none;
+    }
+
+    main {
+      width: min(1180px, 100%);
+      padding: 30px 34px 64px;
+    }
+
+    header {
+      padding: 26px 0 20px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    header h2 {
+      margin: 0 0 10px;
+      font-size: 31px;
+      line-height: 1.18;
+      letter-spacing: 0;
+    }
+
+    header .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 9px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      white-space: nowrap;
+    }
+
+    section {
+      margin-top: 30px;
+      padding-top: 3px;
+    }
+
+    h3 {
+      margin: 0 0 13px;
+      font-size: 22px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+
+    h4 {
+      margin: 22px 0 8px;
+      font-size: 16px;
+      line-height: 1.35;
+      letter-spacing: 0;
+    }
+
+    p { margin: 8px 0 12px; }
+
+    ul, ol {
+      margin: 8px 0 14px 21px;
+      padding: 0;
+    }
+
+    li { margin: 5px 0; }
+
+    code {
+      padding: 1px 5px;
+      border: 1px solid #d7dee3;
+      border-radius: 5px;
+      background: #f7f9fa;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.92em;
+    }
+
+    .grid {
+      display: grid;
+      gap: 14px;
+    }
+
+    .grid.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+    .box {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      padding: 16px;
+    }
+
+    .box h4 {
+      margin-top: 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .tag {
+      display: inline-flex;
+      padding: 2px 7px;
+      border-radius: 999px;
+      color: #fff;
+      font-size: 12px;
+      line-height: 1.35;
+      white-space: nowrap;
+    }
+
+    .tag.red { background: var(--red); }
+    .tag.gold { background: var(--gold); }
+    .tag.green { background: var(--green); }
+    .tag.blue { background: var(--blue); }
+    .tag.teal { background: var(--teal); }
+    .tag.violet { background: var(--violet); }
+
+    .callout {
+      border-left: 4px solid var(--blue);
+      background: #fff;
+      padding: 13px 15px;
+      margin: 14px 0;
+      border-radius: 0 8px 8px 0;
+    }
+
+    .callout.warn { border-left-color: var(--gold); }
+    .callout.danger { border-left-color: var(--red); }
+    .callout.good { border-left-color: var(--green); }
+
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      margin: 12px 0 18px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 760px;
+    }
+
+    th, td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #f3f6f7;
+      color: #26343c;
+      font-size: 13px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    tr:last-child td { border-bottom: 0; }
+
+    .metric-strip {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .metric {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 13px 14px;
+    }
+
+    .metric .value {
+      display: block;
+      font-size: 24px;
+      line-height: 1.1;
+      font-weight: 760;
+    }
+
+    .metric .label {
+      display: block;
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .phase {
+      border-left: 4px solid var(--teal);
+      padding: 4px 0 4px 14px;
+      margin: 16px 0;
+    }
+
+    .phase h4 { margin: 0 0 4px; }
+    .phase p { margin: 0 0 6px; }
+
+    .small {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (max-width: 900px) {
+      .layout { display: block; }
+      aside {
+        position: static;
+        height: auto;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+      nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      main { padding: 22px 18px 48px; }
+      .grid.cols-2, .grid.cols-3, .metric-strip { grid-template-columns: 1fr; }
+      header h2 { font-size: 25px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside>
+      <h1>项目重构调研</h1>
+      <p>ECG_adv_Gen · 2026-05-27 · 多 subagent 只读调研汇总</p>
+      <nav>
+        <a href="#summary">结论摘要</a>
+        <a href="#current">现状画像</a>
+        <a href="#goals">重构完成定义</a>
+        <a href="#target">目标架构</a>
+        <a href="#plan">执行路线</a>
+        <a href="#acceptance">验收清单</a>
+        <a href="#risks">风险与禁区</a>
+        <a href="#first">优先落地</a>
+      </nav>
+    </aside>
+
+    <main>
+      <header>
+        <h2>ECG_adv_Gen 应该如何重构，以及怎样才算重构完毕</h2>
+        <div class="meta">
+          <span class="pill">只读调研：架构 / 实验工程 / 路径环境 / 论文资产</span>
+          <span class="pill">当前主线：EfficientNet1DV2 + ECGTwin VAE Latent-Hull online AT</span>
+          <span class="pill">共享服务器：不动系统环境，不碰 GPU</span>
+        </div>
+      </header>
+
+      <section id="summary">
+        <h3>结论摘要</h3>
+        <div class="callout good">
+          当前项目不是“代码完全不能用”，而是已经进入论文冲刺阶段后，实验脚本、临时报告、路径默认值和结果归因混在一起。重构的第一目标不是把目录改漂亮，而是让每个论文 claim 都能被一个冻结 config、一个 run manifest、一个 mapping hash 和一组原始 JSON/CSV 追溯。
+        </div>
+
+        <div class="grid cols-3">
+          <div class="box">
+            <h4><span class="tag red">先别做</span> 大规模搬目录</h4>
+            <p>如果先重命名或移动脚本，最容易暗中改变标签映射、预处理、ref exclusion 和 checkpoint 选择规则，导致历史指标不可比。</p>
+          </div>
+          <div class="box">
+            <h4><span class="tag green">先做</span> 冻结事实链</h4>
+            <p>先建立统一 config、manifest、metrics schema、path resolver 和 source-of-truth 文档，然后把旧脚本包成稳定入口。</p>
+          </div>
+          <div class="box">
+            <h4><span class="tag blue">最终状态</span> 可复现、可迁移、可审稿</h4>
+            <p>直接微调、VAE online AT、ECGFounder 对照都能用同一套 protocol 复跑和出表，且不会依赖旧机器绝对路径。</p>
+          </div>
+        </div>
+
+        <div class="metric-strip">
+          <div class="metric">
+            <span class="value">149</span>
+            <span class="label">当前扫描到的 Python 脚本数，重构前需要分 active / historical / wrapper。</span>
+          </div>
+          <div class="metric">
+            <span class="value">42</span>
+            <span class="label"><code>scripts/paper</code> 下日期命名 runner 数量，很多是一次性实验编排。</span>
+          </div>
+          <div class="metric">
+            <span class="value">49</span>
+            <span class="label"><code>docs/tmp_md</code> 与 <code>docs/tmp_html</code> 中的临时报告数量。</span>
+          </div>
+          <div class="metric">
+            <span class="value">v6</span>
+            <span class="label">当前 PN2021 Super5 映射版本，历史 v3/v5 文档和文件名需要明确降级。</span>
+          </div>
+        </div>
+      </section>
+
+      <section id="current">
+        <h3>现状画像</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>维度</th>
+                <th>当前问题</th>
+                <th>关键证据</th>
+                <th>重构含义</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>代码边界</td>
+                <td><code>scripts/</code> 同时承担 CLI、库函数、实验记录。<code>synth_online_at_super5.py</code> 近 3000 行，混合 Latent-Hull、K500、quick eval、训练流和 AugMix。</td>
+                <td><code>scripts/pgd_cross_center/synth_online_at_super5.py</code>；<code>scripts/triple_labels/train_ptbxl.py</code> 与 <code>eval_crosscenter.py</code> 互相复用内部函数。</td>
+                <td>需要把可复用逻辑抽到库包，CLI 只负责解析参数和调用。</td>
+              </tr>
+              <tr>
+                <td>实验复现</td>
+                <td>核心参数散落在 argparse、日期 runner、summary CSV 和手写文档里；<code>configs/</code> 还没有承载主线实验。</td>
+                <td><code>configs/</code> 只有一个 class-trust JSON；<code>scripts/paper</code> 有大量日期脚本。</td>
+                <td>需要统一 <code>run_config.json</code>、<code>run_manifest.json</code>、<code>metrics_long.csv</code>。</td>
+              </tr>
+              <tr>
+                <td>路径与环境</td>
+                <td>旧 <code>/root/autodl-tmp</code>、<code>/root/ECG_adv_Gen</code>、<code>/root/miniforge3</code> 默认值仍在活跃脚本中。</td>
+                <td><code>eval_crosscenter.py</code>、<code>train_ptbxl.py</code>、<code>bootstrap_model_repos.sh</code>、<code>util/get_PTBXL.py</code>。</td>
+                <td>需要统一 path resolver，默认写入必须落在 <code>/home/linbinhao</code>。</td>
+              </tr>
+              <tr>
+                <td>外部模型</td>
+                <td><code>model/DeepECG</code>、<code>model/ECGTwin</code> 等 symlink 在当前机器是 dirty 状态，直接提交会把 repo 绑定到用户绝对路径。</td>
+                <td><code>git status</code> 显示多个 <code>model/*</code> 修改。</td>
+                <td>外部模型应通过 <code>ECG_ADV_GEN_MODEL_ROOT</code> 和 bootstrap 解析，不把本机 symlink 当论文代码提交。</td>
+              </tr>
+              <tr>
+                <td>论文资产</td>
+                <td>最新事实有些在 <code>AGENTS.md</code> 和 <code>docs/tmp_md</code>，而 <code>docs/pipelines</code> 中仍有 v3/v5/center-token 旧事实残留。</td>
+                <td><code>docs/tmp_md/vae_online_at_closing_summary_20260525.md</code> 是最新收口，但仍在 tmp。</td>
+                <td>需要建立 <code>docs/final_paper</code> 或等价目录作为当前 source of truth。</td>
+              </tr>
+              <tr>
+                <td>评估边界</td>
+                <td>探索阶段可以看 held-out 反馈，但最终方法不能按目标中心完整测试集类别分布或 held-out oracle 选参数。</td>
+                <td><code>.codex/skills/ecg-vae-online-at/SKILL.md</code> 已写 integrity rules。</td>
+                <td>selector 必须默认使用 K500 internal validation + source floor；held-out eval 只做最终报告。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="goals">
+        <h3>达成什么目的才算重构完毕</h3>
+        <p>本项目的重构完成标准不应该是“目录看起来清爽”，而是下面五件事全部成立。</p>
+
+        <div class="grid cols-2">
+          <div class="box">
+            <h4><span class="tag green">目的 1</span> 论文结果可复现</h4>
+            <p>每个主表数字都能追到：代码 commit、config、mapping version/hash、K500 ref ids、ref-exclusion、原始 eval JSON/CSV、selector 输出。</p>
+          </div>
+          <div class="box">
+            <h4><span class="tag blue">目的 2</span> 方法归因清楚</h4>
+            <p>EfficientNet1DV2 上 VAE Latent-Hull 的净增益、ECGFounder 上 target K500/fullFT/head init 的贡献边界要分开，不能混为一个“VAE 带来全部提升”。</p>
+          </div>
+          <div class="box">
+            <h4><span class="tag teal">目的 3</span> 环境可迁移</h4>
+            <p>无 <code>/root/autodl-tmp</code>、无 <code>/root/miniforge3</code> 的机器上，通过 CLI/env 仍能解析数据、模型、cache 和输出路径。</p>
+          </div>
+          <div class="box">
+            <h4><span class="tag violet">目的 4</span> 主线入口稳定</h4>
+            <p>direct K500、EfficientNet VAE online AT、ECGFounder 对照、PN2021 eval、PN2021-C eval 都有稳定入口；日期脚本只作为 wrapper 或 historical。</p>
+          </div>
+          <div class="box">
+            <h4><span class="tag gold">目的 5</span> 不重复犯错</h4>
+            <p>heavy quality gate、heldout-oracle selection、盲目加大 attack、selector-grid 空转、center-token 过度归因等都进入 decision log。</p>
+          </div>
+          <div class="box">
+            <h4><span class="tag red">目的 6</span> 共享服务器安全</h4>
+            <p>所有写入默认在当前用户 home 下；GPU/长任务前检查资源；不提交大文件；不误删 v6 依赖的 v5 mmap cache 和外部模型。</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="target">
+        <h3>推荐目标架构</h3>
+        <div class="callout">
+          建议新增真正的库包，例如 <code>ecg_adv_gen/</code>。<code>scripts/</code> 保留薄 CLI 和兼容 wrapper；<code>scripts/paper/</code> 只保存实验编排，不再被生产库代码 import。
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>目标模块</th>
+                <th>职责</th>
+                <th>从哪里迁移</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>ecg_adv_gen.labels</code></td>
+                <td>Super5/Sub23/PN26；PN2021 mapping version/hash；suppress-only/all-zero 策略；ECGFounder 原生标签到 Super5 的投影。</td>
+                <td><code>scripts/triple_labels/label_schemes.py</code>、<code>scripts/crosscenter_v2/label_alignment_v2.py</code>。</td>
+              </tr>
+              <tr>
+                <td><code>ecg_adv_gen.ecg</code></td>
+                <td>导联顺序、ECGTwin 1024 到 classifier 1000、采样率、标准化、ECGFounder/DeepECG 输入约束。</td>
+                <td><code>util/lead_utils.py</code>、<code>scripts/crosscenter_v2/preprocess_utils.py</code>、分散在 runner 的 resample/reorder。</td>
+              </tr>
+              <tr>
+                <td><code>ecg_adv_gen.paths</code></td>
+                <td>project/data/model/cache/tmp/python 路径解析；home-boundary 写入保护；当前迁移 host fallback。</td>
+                <td>各脚本中的 <code>/root</code> 默认值和 <code>sys.path.insert</code>。</td>
+              </tr>
+              <tr>
+                <td><code>ecg_adv_gen.data</code></td>
+                <td>PTB-XL、PN2021、MIMIC dataset/cache/mmap；K500 split；ref include/exclude；cache metadata。</td>
+                <td><code>eval_crosscenter.py</code>、<code>train_ptbxl.py</code>、各 K500 runner。</td>
+              </tr>
+              <tr>
+                <td><code>ecg_adv_gen.models</code></td>
+                <td>EfficientNet1DV2 registry、ECGFounder adapter、DeepECG adapter、ECGTwin wrapper、外部模型 path resolver。</td>
+                <td><code>scripts/triple_labels/model_zoo.py</code>、<code>util/ecgtwin_utils.py</code>、<code>scripts/paper/*ecgfounder*</code>。</td>
+              </tr>
+              <tr>
+                <td><code>ecg_adv_gen.training</code></td>
+                <td>masked BCE、pos_weight、macro AUROC/AUPRC、checkpoint、common train/eval loop、source floor。</td>
+                <td><code>train_ptbxl.py</code>、ECGFounder fullFT/headFT runner、selector 脚本。</td>
+              </tr>
+              <tr>
+                <td><code>ecg_adv_gen.adaptation</code></td>
+                <td>Latent-Hull partner selection、latent standardization、PGD、ASR/loss_gain logging、AugMix latent branch、online AT streams。</td>
+                <td><code>synth_online_at_super5.py</code>、<code>scripts/paper/run_effnet_latent_augmix_stage3_20260524.py</code>。</td>
+              </tr>
+              <tr>
+                <td><code>ecg_adv_gen.reporting</code></td>
+                <td>metrics_long 导出、paper table exporter、artifact manifest、HTML/MD 报告生成。</td>
+                <td><code>scripts/triple_labels/export_*.py</code>、<code>scripts/paper/eval_*selector*.py</code>、临时总结脚本。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h4>目录关系建议</h4>
+        <ul>
+          <li><code>ecg_adv_gen/</code>：可复用生产库，不能依赖 <code>scripts.*</code>。</li>
+          <li><code>scripts/</code>：薄 CLI，调用 <code>ecg_adv_gen.*</code>，保留老命令兼容。</li>
+          <li><code>experiments/</code> 或继续 <code>scripts/paper/</code>：只做论文实验编排和 config wrapper。</li>
+          <li><code>configs/experiments/</code>：主线 config，不再只靠 argparse 和日期脚本。</li>
+          <li><code>docs/final_paper/</code>：当前 source of truth；<code>docs/tmp_*</code> 降级为过程记录。</li>
+        </ul>
+      </section>
+
+      <section id="plan">
+        <h3>低风险执行路线</h3>
+        <div class="phase">
+          <h4>Phase 0：冻结行为，不移动核心代码</h4>
+          <p>建立 fixture 和 smoke test，锁住 class order、PN2021 v6 mapping hash、lead reorder、ECGTwin 1024->1000、ref exclusion、K500 split 和 metrics 口径。</p>
+          <p class="small">目标：保证后续迁移时能发现任何隐式指标变化。</p>
+        </div>
+
+        <div class="phase">
+          <h4>Phase 1：路径和配置层</h4>
+          <p>新增 <code>paths</code> 工具和 config schema。路径优先级固定为 CLI 参数 &gt; 环境变量 &gt; 当前迁移 host 默认 &gt; 报错。</p>
+          <p class="small">环境变量：<code>ECG_ADV_GEN_PROJECT_ROOT</code>、<code>ECG_ADV_GEN_DATA_ROOT</code>、<code>ECG_ADV_GEN_MODEL_ROOT</code>、<code>ECG_ADV_GEN_PYTHON</code>。</p>
+        </div>
+
+        <div class="phase">
+          <h4>Phase 2：manifest 与 metrics</h4>
+          <p>每个 run 写 <code>run_config.json</code>、<code>run_manifest.json</code>、<code>candidate_manifest.jsonl</code>、<code>metrics_long.csv</code>。先从现有 JSON/CSV 回填，不急着重跑实验。</p>
+          <p class="small">目标：论文表可以自动生成，且不会混用 v3/v5/v6 mapping。</p>
+        </div>
+
+        <div class="phase">
+          <h4>Phase 3：抽最稳公共库</h4>
+          <p>先抽 <code>labels</code>、<code>ecg/preprocess</code>、<code>metrics</code>、<code>paths</code>。旧文件 re-export 新模块，保持历史脚本可跑。</p>
+          <p class="small">这是重构收益最大、风险最低的一步。</p>
+        </div>
+
+        <div class="phase">
+          <h4>Phase 4：拆 online AT 主文件</h4>
+          <p>把 <code>synth_online_at_super5.py</code> 拆成 latent pool、neighbor sampler、PGD attack、decode/preprocess、training stream、checkpoint selection、CLI 六层。</p>
+          <p class="small">拆之前必须有 Phase 0 的行为测试，否则很难判断是否改坏。</p>
+        </div>
+
+        <div class="phase">
+          <h4>Phase 5：统一 backbone adapter</h4>
+          <p>EfficientNet1DV2、ECGFounder、DeepECG 都通过统一 adapter 暴露 input spec、feature/head、freeze/fullFT 策略、checkpoint I/O。</p>
+          <p class="small">这样才能公平测试“同一套 VAE-only 方法在不同 backbone 上的表现”。</p>
+        </div>
+
+        <div class="phase">
+          <h4>Phase 6：论文文档收口</h4>
+          <p>把最新 closing summary 升格到 <code>docs/final_paper/</code>，旧 v3/v5、center-token、DiT synthetic、negative result 统一标注状态。</p>
+          <p class="small">目标：后续 agent 不会把旧探索结果误当当前主线。</p>
+        </div>
+      </section>
+
+      <section id="acceptance">
+        <h3>重构完毕验收清单</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>类别</th>
+                <th>必须满足</th>
+                <th>验证方式</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>可复现</td>
+                <td>direct K500、EfficientNet VAE online AT、ECGFounder fullFT/selector 都能由一个 config 复现。</td>
+                <td>每个 run dir 有冻结 <code>run_config.json</code> 与 <code>run_manifest.json</code>。</td>
+              </tr>
+              <tr>
+                <td>可审稿</td>
+                <td>每个论文 claim 能追到原始 JSON/CSV、mapping hash、seed、K500 ref ids、script entry。</td>
+                <td><code>artifact_manifest.md/json</code> 能从表格反查证据。</td>
+              </tr>
+              <tr>
+                <td>不泄漏</td>
+                <td>最终 selector 不能访问 held-out target labels 或完整目标中心类别分布。</td>
+                <td><code>selection.json</code> 明确 <code>selection_view=k500_internal_val+source_floor</code>。</td>
+              </tr>
+              <tr>
+                <td>不混口径</td>
+                <td>v3/v5/v6 PN2021 mapping 不可混算；all-zero kept 和 drop-all-zero 必须分开。</td>
+                <td>eval JSON 自动写 <code>mapping_version/hash</code>；exporter 拒绝混合 mapping。</td>
+              </tr>
+              <tr>
+                <td>可迁移</td>
+                <td>活跃代码不散落旧 <code>/root</code> 默认路径；写入默认在当前用户 home。</td>
+                <td><code>rg '/root/(autodl-tmp|ECG_adv_Gen|miniforge3)' scripts methods util</code> 只剩 path resolver 或 historical 注释。</td>
+              </tr>
+              <tr>
+                <td>代码边界</td>
+                <td>生产库不再 <code>import scripts.*</code>；只有 CLI 从库导入。</td>
+                <td>静态扫描和 import-only smoke test。</td>
+              </tr>
+              <tr>
+                <td>安全</td>
+                <td>不提交本机 symlink、大 checkpoint、dataset、cache；清理脚本有 dry-run 和 home-boundary。</td>
+                <td><code>git status --short</code>、大文件扫描、symlink 检查。</td>
+              </tr>
+              <tr>
+                <td>文档</td>
+                <td><code>docs/tmp_*</code> 不再有唯一事实源；最新主线文档升格。</td>
+                <td><code>docs/final_paper/source_of_truth.md</code> 明确 current-main / ablation-only / negative / historical。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="risks">
+        <h3>风险与禁区</h3>
+        <div class="grid cols-2">
+          <div class="box">
+            <h4><span class="tag red">禁区</span> 先搬目录再补测试</h4>
+            <p>这会让标签、预处理、cache、ref exclusion 变化混在一起，指标一旦变动无法定位。</p>
+          </div>
+          <div class="box">
+            <h4><span class="tag red">禁区</span> 混合 v3/v5/v6 结果</h4>
+            <p>当前代码是 <code>v6_super5_clinician_review_20260524</code>；历史报告里的 v3/v5 必须标注为 historical 或 sensitivity。</p>
+          </div>
+          <div class="box">
+            <h4><span class="tag gold">高风险</span> 提交外部模型 symlink</h4>
+            <p>当前 <code>model/DeepECG</code>、<code>model/ECGTwin</code> 等是本机绝对路径 dirty symlink，不应随重构一起提交。</p>
+          </div>
+          <div class="box">
+            <h4><span class="tag gold">高风险</span> 清理 v5 mmap cache</h4>
+            <p>v6 PN2021 mmap cache 的 signals/record_ids 可能 symlink 到 v5，不能按文件名把 v5 当旧垃圾删除。</p>
+          </div>
+          <div class="box">
+            <h4><span class="tag blue">归因边界</span> ECGFounder</h4>
+            <p>ECGFounder 的较大增益主要来自 K500 supervised adaptation、head init 和 fullFT recipe；VAE 是较小 refinement 或 selector diversity，不能过度声明。</p>
+          </div>
+          <div class="box">
+            <h4><span class="tag blue">方法边界</span> final selection</h4>
+            <p>探索可看 held-out 反馈，但最终 protocol 不能根据完整目标中心测试分布或类别表现手调。</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="first">
+        <h3>建议优先落地的最小重构</h3>
+        <div class="callout warn">
+          如果只做一轮最小重构，建议目标定为“让当前论文主线可复现并可追溯”，不追求一次性把全部历史代码整理干净。
+        </div>
+
+        <ol>
+          <li>新增 <code>docs/final_paper/source_of_truth.md</code>，把当前主线、证据路径、废弃路线和归因边界写清楚。</li>
+          <li>新增 <code>configs/experiments/</code>，先放三份主线 config：direct K500、EfficientNet VAE Latent-Hull、ECGFounder matched control。</li>
+          <li>新增 path resolver，先让新 wrapper 使用 <code>ECG_ADV_GEN_DATA_ROOT</code>，不急着全 repo 替换旧路径。</li>
+          <li>写 <code>run_manifest</code> 和 <code>metrics_long</code> exporter，从已有结果回填，不动 GPU。</li>
+          <li>给 <code>scripts/paper</code> 建 active index：哪些是 current-main，哪些是 ablation-only，哪些是 negative/historical。</li>
+          <li>把 <code>docs/tmp_md/vae_online_at_closing_summary_20260525.md</code> 升格为正式结果报告，HTML 报告只作为阅读版。</li>
+          <li>补 5 个 CPU/import-only 测试：mapping hash、lead reorder、1024->1000、ref exclusion、metrics_long 导出。</li>
+        </ol>
+
+        <h4>可交付时间估计</h4>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>范围</th>
+                <th>预计时间</th>
+                <th>产物</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>最小可追溯重构</td>
+                <td>0.5-1 天</td>
+                <td>source-of-truth、active script index、config 草案、manifest/metrics schema、HTML/MD 报告。</td>
+              </tr>
+              <tr>
+                <td>主线可复现重构</td>
+                <td>2-4 天</td>
+                <td>三条主线 wrapper、path resolver、metrics exporter、CPU tests、旧结果回填。</td>
+              </tr>
+              <tr>
+                <td>完整架构重构</td>
+                <td>1-2 周</td>
+                <td><code>ecg_adv_gen/</code> 库包、拆分 online AT、统一 model adapter、文档和历史脚本归档。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout good">
+          推荐下一步：先做“最小可追溯重构”。这一步不会占 GPU，也不会动大数据，但能马上减少后续实验和写论文时的混乱。
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

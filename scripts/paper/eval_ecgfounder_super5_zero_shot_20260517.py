@@ -24,12 +24,10 @@ import json
 import os
 import sys
 import time
-from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 import torch
-from sklearn.metrics import average_precision_score, roc_auc_score
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
@@ -52,6 +50,7 @@ from scripts.triple_labels.label_schemes import (  # noqa: E402
     CLASS_NAMES_SUPER5,
     snomed_list_to_super5,
 )
+from ecg_adv_gen.evaluation import MetricRow, compute_macro_metrics  # noqa: E402
 from eval_physionet2021 import load_model  # noqa: E402
 from physionet2021_dataset import (  # noqa: E402
     PhysioNet2021Dataset,
@@ -422,35 +421,12 @@ class Super5FounderDataset(Dataset):
         return signal, label, center_from_record_path(rec["path"]), record_id_from_record_path(rec["path"])
 
 
-@dataclass
-class MetricRow:
-    macro_auroc: float | None
-    macro_auprc: float | None
-    n_classes_used: int
-    per_class: dict
-
-
 def compute_macro(y_true: np.ndarray, y_score: np.ndarray, min_pos: int = 10) -> MetricRow:
-    aurocs, auprcs = [], []
-    per_class = {}
-    for k, cls in enumerate(CLASS_NAMES_SUPER5):
-        yt = y_true[:, k]
-        ys = y_score[:, k]
-        n_pos = int((yt == 1).sum())
-        n_valid = int(len(yt))
-        if n_pos < min_pos or n_pos == n_valid:
-            per_class[cls] = {"auroc": None, "auprc": None, "n_pos": n_pos, "n_valid": n_valid}
-            continue
-        auroc = float(roc_auc_score(yt, ys))
-        auprc = float(average_precision_score(yt, ys))
-        per_class[cls] = {"auroc": auroc, "auprc": auprc, "n_pos": n_pos, "n_valid": n_valid}
-        aurocs.append(auroc)
-        auprcs.append(auprc)
-    return MetricRow(
-        macro_auroc=float(np.mean(aurocs)) if aurocs else None,
-        macro_auprc=float(np.mean(auprcs)) if auprcs else None,
-        n_classes_used=len(aurocs),
-        per_class=per_class,
+    return compute_macro_metrics(
+        y_true,
+        y_score,
+        class_names=CLASS_NAMES_SUPER5,
+        min_pos=min_pos,
     )
 
 

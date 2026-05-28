@@ -1,0 +1,190 @@
+extends:
+  - ../defaults/effnet1dv2_defaults.yaml
+  - ../defaults/vae_lhat_defaults.yaml
+
+experiment:
+  name: effnet_vae_lhat_k500_v6
+  description: EfficientNet1DV2 K500 adaptation with ECGTwin VAE Latent-Hull online AT and latent AugMix branch.
+
+training:
+  epochs: 30
+
+logging:
+  required_epoch_metrics:
+    - epoch
+    - train_loss
+    - val_loss
+    - asr_overall
+    - sample_any_positive_below_0p5_asr
+    - adv_weight_effective
+    - latent_augmix_stats
+    - hull_weight_entropy_mean
+    - quick_eval
+
+postprocess:
+  commands:
+    - name: export_metrics_long
+      entrypoint: scripts/export_metrics_long.py
+      env:
+        TMPDIR: ${paths.short_tmp_root}
+        XDG_CACHE_HOME: ${paths.cache_root}
+      argv:
+        - --input
+        - ${paths.output_root}/${experiment.name}/${runtime.run_id}
+        - --output-dir
+        - ${paths.output_root}/metrics_export/${runtime.run_id}_${experiment.name}
+        - --run-id
+        - ${experiment.name}
+        - --filter-to-target-center
+        - --target-centers
+        - ${paper_protocol.centers.target_4}
+        - --expected-mapping-version
+        - ${paper_protocol.mapping_version}
+        - --expected-mapping-hash
+        - ${paper_protocol.mapping_hash}
+      expected_artifacts:
+        - role: metrics_long
+          path: ${paths.output_root}/metrics_export/${runtime.run_id}_${experiment.name}/metrics_long.csv
+        - role: artifact_manifest
+          path: ${paths.output_root}/metrics_export/${runtime.run_id}_${experiment.name}/artifact_manifest.json
+
+    - name: export_paper_table_all_zero_kept
+      entrypoint: scripts/export_paper_table.py
+      env:
+        TMPDIR: ${paths.short_tmp_root}
+        XDG_CACHE_HOME: ${paths.cache_root}
+      argv:
+        - --metrics-long
+        - ${paths.output_root}/metrics_export/${runtime.run_id}_${experiment.name}/metrics_long.csv
+        - --output-dir
+        - ${paths.output_root}/paper_table/${runtime.run_id}_${experiment.name}_all_zero_kept
+        - --view
+        - pn2021_all_zero_kept_refexcluded
+        - --dataset
+        - pn2021
+        - --centers
+        - ${paper_protocol.centers.target_4}
+        - --no-dataset-rows
+      expected_artifacts:
+        - role: paper_table
+          path: ${paths.output_root}/paper_table/${runtime.run_id}_${experiment.name}_all_zero_kept/paper_table.csv
+        - role: paper_table_manifest
+          path: ${paths.output_root}/paper_table/${runtime.run_id}_${experiment.name}_all_zero_kept/paper_table_manifest.json
+
+    - name: export_paper_table_drop_all_zero
+      entrypoint: scripts/export_paper_table.py
+      env:
+        TMPDIR: ${paths.short_tmp_root}
+        XDG_CACHE_HOME: ${paths.cache_root}
+      argv:
+        - --metrics-long
+        - ${paths.output_root}/metrics_export/${runtime.run_id}_${experiment.name}/metrics_long.csv
+        - --output-dir
+        - ${paths.output_root}/paper_table/${runtime.run_id}_${experiment.name}_drop_all_zero
+        - --view
+        - pn2021_drop_all_zero_refexcluded
+        - --dataset
+        - pn2021
+        - --centers
+        - ${paper_protocol.centers.target_4}
+        - --no-dataset-rows
+      expected_artifacts:
+        - role: paper_table
+          path: ${paths.output_root}/paper_table/${runtime.run_id}_${experiment.name}_drop_all_zero/paper_table.csv
+        - role: paper_table_manifest
+          path: ${paths.output_root}/paper_table/${runtime.run_id}_${experiment.name}_drop_all_zero/paper_table_manifest.json
+
+runner:
+  entrypoint: scripts/paper/run_effnet_latent_augmix_stage3_20260524.py
+  env:
+    ECG_ADV_GEN_DATA_ROOT: ${paths.data_root}
+    TMPDIR: ${paths.short_tmp_root}
+    XDG_CACHE_HOME: ${paths.cache_root}
+  matrix:
+    center: ${paper_protocol.centers.target_4}
+  argv:
+    - --center
+    - ${matrix.center}
+    - --epochs
+    - ${training.epochs}
+    - --seed
+    - ${paper_protocol.kshot.seed}
+    - --device
+    - cuda
+    - --num_workers
+    - ${training.num_workers}
+    - --data_root
+    - ${paths.data_root}
+    - --out_root
+    - ${paths.output_root}/${experiment.name}/${runtime.run_id}
+    - --init_ckpt
+    - ${paths.data_root}/paper_direct_finetune_k500_20260516/runs/${matrix.center}_K${paper_protocol.kshot.k}_direct_ft_ep30_seed${paper_protocol.kshot.seed}_val0.2/best_model.pt
+    - --anchor_base
+    - ${paths.data_root}/paper_vae_only_latenthull_sweep_20260516/subsets/${matrix.center}/k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}/${matrix.center}_real_k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}
+    - --hull_steps
+    - ${adaptation.hull.steps}
+    - --hull_M
+    - ${adaptation.hull.M}
+    - --hull_lambda
+    - ${adaptation.hull.lambda}
+    - --hull_lr
+    - ${adaptation.hull.lr}
+    - --hull_include_anchor
+    - --hull_label_mode
+    - ${adaptation.hull.label_mode}
+    - --hull_mix_label_mode
+    - ${adaptation.hull.mix_label_mode}
+    - --hull_label_lambda_y
+    - ${adaptation.hull.label_lambda_y}
+    - --hull_label_new_class_cap
+    - ${adaptation.hull.label_new_class_cap}
+    - --hull_neighbor_distance_space
+    - ${adaptation.hull.neighbor_distance_space}
+    - --hull_neighbor_mode
+    - ${adaptation.hull.neighbor_mode}
+    - --hull_neighbor_pool_size
+    - ${adaptation.hull.neighbor_pool_size}
+    - --hull_neighbor_pool_multiplier
+    - ${adaptation.hull.neighbor_pool_multiplier}
+    - --k_anchor
+    - ${adaptation.anchors.k_anchor}
+    - --pgd_batch
+    - ${adaptation.attack.pgd_batch}
+    - --target_real_weight
+    - ${adaptation.loss.target_real_weight}
+    - --adv_weight
+    - ${adaptation.loss.adv_weight}
+    - --adv_weight_warmup_epochs
+    - ${adaptation.loss.adv_weight_warmup_epochs}
+    - --adv_label_mode
+    - ${adaptation.loss.label_mode}
+    - --adv_teacher_mix
+    - ${adaptation.loss.teacher_mix}
+    - --lr
+    - ${training.optimizer.lr}
+    - --train_batch_size
+    - ${training.batch_size}
+    - --ptbxl_weight
+    - 1.0
+    - --latent_augmix_latent_weight_cap
+    - ${adaptation.latent_augmix.latent_weight_cap}
+    - --latent_augmix_width
+    - ${adaptation.latent_augmix.width}
+    - --latent_augmix_depth
+    - ${adaptation.latent_augmix.depth}
+    - --latent_augmix_alpha
+    - ${adaptation.latent_augmix.alpha}
+    - --latent_augmix_severity
+    - ${adaptation.latent_augmix.severity}
+    - --quick_eval_source
+    - target_real_val
+    - --target_real_val_fraction
+    - 0.2
+    - --target_real_val_seed
+    - ${paper_protocol.kshot.seed}
+    - --eval_batch_size
+    - ${training.eval_batch_size}
+    - --eval_min_pos
+    - ${evaluation.min_pos}
+    - --eval_pn2021_limit
+    - ${evaluation.pn2021_limit}

@@ -1,0 +1,25 @@
+extends:
+  - common_v6_super5.yaml
+
+model:
+  backbone: ecgfounder
+  num_classes: 5
+  checkpoint: ${paths.data_root}/ecgfounder/checkpoint/12_lead_ECGFounder.pth
+  linear_probe_dir: ${paths.data_root}/paper_foundation_baselines_20260524/ecgfounder_linear_probe_v6_from_legacy_cache
+  k500_head_root: ${paths.data_root}/paper_foundation_baselines_20260524/ecgfounder_kshot_head_ft_v6_from_legacy_cache/runs
+  preprocess_policy: official_ptbxl_eval
+
+data:
+  cache:
+    ecgfounder_fullft_signal_cache_dir: ""
+
+training:
+  eval_batch_size: 128
+  source_train_limit: 0
+
+runner:
+  env:
+    ECG_ADV_GEN_DATA_ROOT: ${paths.data_root}
+    ECGFOUNDER_ROOT: ${paths.data_root}/ecgfounder
+    TMPDIR: ${paths.short_tmp_root}
+    XDG_CACHE_HOME: ${paths.cache_root}

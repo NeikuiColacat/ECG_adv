@@ -31,7 +31,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import ConcatDataset, DataLoader, TensorDataset, WeightedRandomSampler
+from torch.utils.data import DataLoader
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -59,14 +59,46 @@ from scripts.paper.run_ecgfounder_linear_probe_super5_20260517 import (  # noqa:
     compute_metrics,
     evaluate_pn2021_views,
 )
-from scripts.pgd_cross_center.synth_online_at_super5 import (  # noqa: E402
+from ecg_adv_gen.adaptation import (  # noqa: E402
     SameLabelLatentIndex,
     StratifiedPoolWalker,
     build_anchor_preserving_soft_labels,
     build_k500_internal_val_mask,
+    linear_warmup_value,
+    split_anchor_sample_mode,
+)
+from ecg_adv_gen.adaptation.anchor_sampling import (  # noqa: E402
+    feature_anchor_difficulty_weights,
+    sample_hard_feature_anchors,
+)
+from ecg_adv_gen.adaptation.latent_hull_torch import initial_hull_latent  # noqa: E402
+from ecg_adv_gen.data import (  # noqa: E402
+    find_real_anchor_base,
+    load_real_anchor_pool,
 )
 from scripts.triple_labels.label_schemes import CLASS_NAMES_SUPER5, SUPER5_TO_IDX  # noqa: E402
-from scripts.triple_labels.train_ptbxl import compute_pos_weight, masked_bce_with_logits  # noqa: E402
+from ecg_adv_gen.labels import pn2021_super5_label_mapping_payload  # noqa: E402
+from ecg_adv_gen.models import ecgfounder_lhat_run_dir  # noqa: E402
+from ecg_adv_gen.models.ecgfounder_heads import (  # noqa: E402
+    FeatureAdapterHead,
+    ResidualAdapterHead,
+    clone_linear_head,
+)
+from ecg_adv_gen.models.ecgfounder_inference import (  # noqa: E402
+    evaluate_feature_head,
+    evaluate_pn2021_feature_head,
+    evaluate_ptbxl_fold_head,
+    predict_feature_head,
+)
+from ecg_adv_gen.training import (  # noqa: E402
+    WeightedFeatureStream,
+    attack_success_stats,
+    build_weighted_feature_stream_loader,
+    compute_pos_weight,
+    masked_bce_with_logits,
+    merge_attack_success_stats,
+    pairwise_rank_loss,
+)
 from util.ecgtwin_utils import ECGTwinWrapper  # noqa: E402
 from util.lead_utils import ECGTWIN_TO_PTBXL_INDICES  # noqa: E402
 
@@ -191,96 +223,14 @@ class ECGFounderHeadVictim(nn.Module):
         return self.head(features)
 
 
-class ResidualAdapterHead(nn.Module):
-    """Frozen or trainable source linear head plus a zero-init residual adapter."""
-
-    def __init__(
-        self,
-        base_head: nn.Linear,
-        hidden_dim: int = 128,
-        dropout: float = 0.0,
-        scale: float = 1.0,
-        freeze_base: bool = True,
-    ) -> None:
-        super().__init__()
-        self.base_head = base_head
-        self.scale = float(scale)
-        in_dim = int(base_head.in_features)
-        out_dim = int(base_head.out_features)
-        hidden_dim = max(1, int(hidden_dim))
-        self.adapter = nn.Sequential(
-            nn.LayerNorm(in_dim),
-            nn.Linear(in_dim, hidden_dim),
-            nn.GELU(),
-            nn.Dropout(float(dropout)),
-            nn.Linear(hidden_dim, out_dim),
-        )
-        final = self.adapter[-1]
-        assert isinstance(final, nn.Linear)
-        nn.init.zeros_(final.weight)
-        nn.init.zeros_(final.bias)
-        if freeze_base:
-            for p in self.base_head.parameters():
-                p.requires_grad_(False)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.base_head(x) + self.scale * self.adapter(x)
-
-
-class FeatureAdapterHead(nn.Module):
-    """Frozen or trainable source linear head after a zero-init feature adapter."""
-
-    def __init__(
-        self,
-        base_head: nn.Linear,
-        hidden_dim: int = 128,
-        dropout: float = 0.0,
-        scale: float = 1.0,
-        freeze_base: bool = True,
-    ) -> None:
-        super().__init__()
-        self.base_head = base_head
-        self.scale = float(scale)
-        in_dim = int(base_head.in_features)
-        hidden_dim = max(1, int(hidden_dim))
-        self.adapter = nn.Sequential(
-            nn.LayerNorm(in_dim),
-            nn.Linear(in_dim, hidden_dim),
-            nn.GELU(),
-            nn.Dropout(float(dropout)),
-            nn.Linear(hidden_dim, in_dim),
-        )
-        final = self.adapter[-1]
-        assert isinstance(final, nn.Linear)
-        nn.init.zeros_(final.weight)
-        nn.init.zeros_(final.bias)
-        if freeze_base:
-            for p in self.base_head.parameters():
-                p.requires_grad_(False)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.base_head(x + self.scale * self.adapter(x))
-
-
 def real_anchor_base(center: str, args: argparse.Namespace | None = None) -> Path:
-    if args is not None and getattr(args, "anchor_base_root", ""):
-        root = Path(args.anchor_base_root)
-        candidates = [
-            root / center / f"k{args.k}_seed{args.seed}" / f"{center}_real_k{args.k}_seed{args.seed}",
-            root / center / f"{center}_real_k{args.k}_seed{args.seed}",
-            root / center / f"{center}_real_k500_seed{args.seed}",
-        ]
-        for base in candidates:
-            if base.with_suffix(".latent.npz").exists():
-                return base
-        searched = ", ".join(str(p) for p in candidates)
-        raise FileNotFoundError(f"missing real-anchor files for {center}; searched: {searched}")
-    for root in REAL_ROOTS:
-        base = root / center / f"{center}_real_k500_seed42"
-        if base.with_suffix(".latent.npz").exists():
-            return base
-    searched = ", ".join(str(root / center / f"{center}_real_k500_seed42") for root in REAL_ROOTS)
-    raise FileNotFoundError(f"missing real-anchor files for {center}; searched: {searched}")
+    return find_real_anchor_base(
+        center,
+        anchor_base_root=getattr(args, "anchor_base_root", "") if args is not None else None,
+        k=int(getattr(args, "k", 500)) if args is not None else 500,
+        seed=int(getattr(args, "seed", 42)) if args is not None else 42,
+        default_roots=REAL_ROOTS,
+    )
 
 
 def load_anchor_pool(
@@ -290,78 +240,15 @@ def load_anchor_pool(
     pn_payload: dict[str, np.ndarray],
     args: argparse.Namespace | None = None,
 ) -> dict[str, Any]:
-    base = real_anchor_base(center, args)
-    with np.load(base.with_suffix(".latent.npz"), allow_pickle=True) as d:
-        latents_all = d["latents"].astype(np.float32)
-        record_ids_all = d["record_ids"].astype(str)
-
-    pn_centers = pn_payload["centers"].astype(str)
-    pn_record_ids = pn_payload["record_ids"].astype(str)
-    pn_labels = pn_payload["labels"].astype(np.float32)
-    key_to_label = {
-        (str(c), str(rid)): pn_labels[i]
-        for i, (c, rid) in enumerate(zip(pn_centers, pn_record_ids))
-    }
-    labels_all = []
-    keep = []
-    for i, rid in enumerate(record_ids_all):
-        label = key_to_label.get((center, str(rid)))
-        if label is None:
-            continue
-        labels_all.append(label)
-        keep.append(i)
-    if not keep:
-        raise RuntimeError(f"{center}: no anchor record ids matched PN2021 feature cache")
-    latents_all = latents_all[np.asarray(keep, dtype=np.int64)]
-    record_ids_all = record_ids_all[np.asarray(keep, dtype=np.int64)]
-    labels_all = np.stack(labels_all).astype(np.float32)
-
-    if k > len(labels_all):
-        raise ValueError(f"{center}: K={k} exceeds matched anchors {len(labels_all)}")
-    if k < len(labels_all):
-        rng = np.random.default_rng(seed)
-        primary = np.argmax(labels_all, axis=1)
-        pieces = []
-        counts = np.bincount(primary, minlength=len(CLASS_NAMES_SUPER5))
-        raw = counts / max(counts.sum(), 1) * k
-        alloc = np.floor(raw).astype(int)
-        for cls in range(len(CLASS_NAMES_SUPER5)):
-            if counts[cls] > 0 and alloc[cls] == 0:
-                alloc[cls] = 1
-        while alloc.sum() > k:
-            cls = int(np.argmax(alloc))
-            alloc[cls] -= 1
-        while alloc.sum() < k:
-            for cls in np.argsort(-(raw - np.floor(raw))):
-                if alloc.sum() >= k:
-                    break
-                if alloc[cls] < counts[cls]:
-                    alloc[cls] += 1
-        for cls, n_take in enumerate(alloc):
-            idx = np.where(primary == cls)[0]
-            if n_take > 0 and len(idx) > 0:
-                pieces.append(rng.permutation(idx)[: min(n_take, len(idx))])
-        selected = np.concatenate(pieces) if pieces else np.empty(0, dtype=np.int64)
-        if len(selected) < k:
-            rest = np.setdiff1d(np.arange(len(labels_all)), selected, assume_unique=False)
-            selected = np.concatenate([selected, rng.permutation(rest)[: k - len(selected)]])
-        selected = np.sort(selected[:k])
-    else:
-        selected = np.arange(len(labels_all), dtype=np.int64)
-
-    latents = latents_all[selected]
-    labels = labels_all[selected]
-    record_ids = record_ids_all[selected]
-    present = labels.sum(axis=0) > 0
-    classes_in_scope = [c for c, ok in zip(CLASS_NAMES_SUPER5, present) if ok]
-    return {
-        "latents": latents,
-        "labels": labels,
-        "record_ids": record_ids,
-        "classes_in_scope": classes_in_scope,
-        "label_counts": dict(zip(CLASS_NAMES_SUPER5, labels.sum(axis=0).astype(int).tolist())),
-        "source_base": str(base),
-    }
+    return load_real_anchor_pool(
+        center,
+        k=k,
+        seed=seed,
+        pn_payload=pn_payload,
+        anchor_base_root=getattr(args, "anchor_base_root", "") if args is not None else None,
+        default_roots=REAL_ROOTS,
+        class_names=CLASS_NAMES_SUPER5,
+    )
 
 
 def ref_ids_for_all_centers(center: str, selected_ids: np.ndarray) -> dict[str, set[str]]:
@@ -385,22 +272,20 @@ def center_k500_head_path(run_root: Path, center: str) -> Path:
     return matches[0]
 
 
-@torch.no_grad()
 def predict_head(head: nn.Module, features: np.ndarray, batch_size: int, device: torch.device) -> np.ndarray:
-    head.eval()
-    scores = []
-    loader = DataLoader(torch.from_numpy(features).float(), batch_size=batch_size, shuffle=False)
-    for x in loader:
-        logits = head(x.to(device)).cpu().numpy()
-        scores.append(1.0 / (1.0 + np.exp(-np.clip(logits, -50, 50))))
-    return np.concatenate(scores, axis=0)
+    return predict_feature_head(head, features, batch_size=batch_size, device=device)
 
 
 def eval_ptbxl_fold10(head: nn.Module, ptbxl: dict[str, np.ndarray], device: torch.device, batch_size: int) -> dict:
-    folds = ptbxl["folds"].astype(np.int64)
-    mask = folds == 10
-    scores = predict_head(head, ptbxl["features"][mask].astype(np.float32), batch_size, device)
-    return compute_metrics(ptbxl["labels"][mask].astype(np.float32), scores, min_pos=1)
+    return evaluate_ptbxl_fold_head(
+        head,
+        ptbxl,
+        compute_metrics,
+        fold=10,
+        batch_size=batch_size,
+        device=device,
+        min_pos=1,
+    )
 
 
 def eval_pn(
@@ -411,13 +296,13 @@ def eval_pn(
     batch_size: int,
     report_drop_all_zero: bool = False,
 ) -> dict:
-    scores = predict_head(head, pn["features"].astype(np.float32), batch_size, device)
-    return evaluate_pn2021_views(
-        pn["labels"].astype(np.float32),
-        scores,
-        pn["centers"].astype(str),
-        pn["record_ids"].astype(str),
+    return evaluate_pn2021_feature_head(
+        head,
+        pn,
         ref_ids,
+        evaluate_pn2021_views,
+        batch_size=batch_size,
+        device=device,
         report_drop_all_zero=report_drop_all_zero,
     )
 
@@ -430,11 +315,17 @@ def eval_feature_subset(
     device: torch.device,
     batch_size: int,
 ) -> dict[str, Any]:
-    scores = predict_head(head, features.astype(np.float32), batch_size, device)
-    return compute_metrics(labels.astype(np.float32), scores, min_pos=1)
+    return evaluate_feature_head(
+        head,
+        features,
+        labels,
+        compute_metrics,
+        batch_size=batch_size,
+        device=device,
+        min_pos=1,
+    )
 
 
-@torch.no_grad()
 def anchor_difficulty_weights(
     head: nn.Module,
     features: np.ndarray,
@@ -446,33 +337,16 @@ def anchor_difficulty_weights(
     batch_size: int,
     device: torch.device,
 ) -> np.ndarray:
-    """Return global per-anchor weights from current head behavior on K-shot records."""
-    if len(features) != len(labels):
-        raise ValueError(f"anchor feature/label length mismatch: {len(features)} vs {len(labels)}")
-    if len(features) == 0:
-        return np.empty((0,), dtype=np.float32)
-    logits_list = []
-    head.eval()
-    loader = DataLoader(torch.from_numpy(features.astype(np.float32)).float(), batch_size=batch_size, shuffle=False)
-    for x in loader:
-        logits_list.append(head(x.to(device)).detach().cpu())
-    logits = torch.cat(logits_list, dim=0)
-    y = torch.from_numpy(labels.astype(np.float32))
-    if mode == "hard_bce":
-        score = F.binary_cross_entropy_with_logits(logits, y, reduction="none").mean(dim=1).numpy()
-    elif mode == "uncertainty":
-        prob = torch.sigmoid(logits)
-        score = (1.0 - torch.abs(prob - 0.5) * 2.0).mean(dim=1).numpy()
-    else:
-        raise ValueError(f"unsupported anchor_sample_mode={mode!r}")
-    score = np.asarray(score, dtype=np.float64)
-    score = np.maximum(score, 0.0)
-    if power != 1.0:
-        score = np.power(score + 1e-12, float(power))
-    score = score + max(float(min_weight), 0.0)
-    if not np.all(np.isfinite(score)) or float(score.sum()) <= 0.0:
-        return np.full((len(features),), 1.0 / len(features), dtype=np.float32)
-    return (score / score.sum()).astype(np.float32)
+    return feature_anchor_difficulty_weights(
+        head,
+        features,
+        labels,
+        mode=mode,
+        power=power,
+        min_weight=min_weight,
+        batch_size=batch_size,
+        device=device,
+    )
 
 
 def sample_hard_anchors(
@@ -488,147 +362,18 @@ def sample_hard_anchors(
     device: torch.device,
     seed: int,
 ) -> tuple[np.ndarray, dict[str, float]]:
-    n_pool = len(pool_labels)
-    if n_pool == 0 or k_anchor <= 0:
-        return np.empty((0,), dtype=np.int64), {"mean_weight": 0.0, "max_weight": 0.0}
-    weights = anchor_difficulty_weights(
-        head,
-        pool_features,
-        pool_labels,
+    return sample_hard_feature_anchors(
+        head=head,
+        pool_features=pool_features,
+        pool_labels=pool_labels,
+        k_anchor=k_anchor,
         mode=mode,
         power=power,
         min_weight=min_weight,
         batch_size=batch_size,
         device=device,
+        seed=seed,
     )
-    n_take = min(int(k_anchor), n_pool)
-    rng = np.random.default_rng(seed)
-    picks = rng.choice(n_pool, size=n_take, replace=False, p=weights)
-    return picks.astype(np.int64), {
-        "mean_weight": float(np.mean(weights)),
-        "max_weight": float(np.max(weights)),
-        "min_weight": float(np.min(weights)),
-        "ess": float(1.0 / np.sum(np.square(weights.astype(np.float64)))),
-    }
-
-
-def split_anchor_sample_mode(mode: str) -> tuple[str, str]:
-    """Return (head_source, difficulty_mode) for anchor sampling."""
-    if mode.startswith("base_"):
-        return "base", mode[len("base_"):]
-    if mode.startswith("target_"):
-        return "target_teacher", mode[len("target_"):]
-    return "current", mode
-
-
-def clone_linear_head(head: nn.Module, feature_dim: int, device: torch.device) -> nn.Linear:
-    """Freeze a linear copy of the initial/direct head for fixed anchor scoring."""
-    out = nn.Linear(feature_dim, len(CLASS_NAMES_SUPER5)).to(device)
-    if isinstance(head, (ResidualAdapterHead, FeatureAdapterHead)):
-        out.load_state_dict(head.base_head.state_dict())
-    else:
-        out.load_state_dict(head.state_dict())
-    out.eval()
-    for p in out.parameters():
-        p.requires_grad_(False)
-    return out
-
-
-@torch.no_grad()
-def attack_success_stats(
-    clean_logits: torch.Tensor,
-    adv_logits: torch.Tensor,
-    labels: torch.Tensor,
-    *,
-    margin: float,
-) -> dict[str, float]:
-    """Untargeted multi-label PGD success against the same BCE objective."""
-    clean_loss = F.binary_cross_entropy_with_logits(clean_logits, labels, reduction="none").mean(dim=1)
-    adv_loss = F.binary_cross_entropy_with_logits(adv_logits, labels, reduction="none").mean(dim=1)
-    gain = adv_loss - clean_loss
-    success = gain > float(margin)
-
-    clean_prob = torch.sigmoid(clean_logits)
-    adv_prob = torch.sigmoid(adv_logits)
-    pos_mask = labels > 0.5
-    neg_mask = labels <= 0.0
-    pos_drop = (clean_prob - adv_prob)[pos_mask]
-    neg_rise = (adv_prob - clean_prob)[neg_mask]
-    return {
-        "n": float(labels.shape[0]),
-        "success_count": float(success.float().sum().item()),
-        "success_rate": float(success.float().mean().item()),
-        "clean_loss_mean": float(clean_loss.mean().item()),
-        "adv_loss_mean": float(adv_loss.mean().item()),
-        "loss_gain_mean": float(gain.mean().item()),
-        "loss_gain_median": float(gain.median().item()),
-        "loss_gain_p10": float(torch.quantile(gain, 0.10).item()),
-        "loss_gain_p90": float(torch.quantile(gain, 0.90).item()),
-        "pos_prob_drop_mean": float(pos_drop.mean().item()) if pos_drop.numel() else float("nan"),
-        "neg_prob_rise_mean": float(neg_rise.mean().item()) if neg_rise.numel() else float("nan"),
-    }
-
-
-def merge_attack_success_stats(stats: list[dict[str, float]]) -> dict[str, float | None]:
-    if not stats:
-        return {
-            "success_rate": None,
-            "loss_gain_mean": None,
-            "loss_gain_median_mean": None,
-            "clean_loss_mean": None,
-            "adv_loss_mean": None,
-            "pos_prob_drop_mean": None,
-            "neg_prob_rise_mean": None,
-        }
-    n_total = sum(float(s["n"]) for s in stats)
-    if n_total <= 0:
-        return {}
-
-    def weighted(key: str) -> float:
-        vals = [(float(s[key]), float(s["n"])) for s in stats if np.isfinite(float(s[key]))]
-        if not vals:
-            return float("nan")
-        denom = sum(w for _, w in vals)
-        return float(sum(v * w for v, w in vals) / max(denom, 1e-12))
-
-    return {
-        "success_rate": float(sum(float(s["success_count"]) for s in stats) / n_total),
-        "loss_gain_mean": weighted("loss_gain_mean"),
-        "loss_gain_median_mean": weighted("loss_gain_median"),
-        "loss_gain_p10_mean": weighted("loss_gain_p10"),
-        "loss_gain_p90_mean": weighted("loss_gain_p90"),
-        "clean_loss_mean": weighted("clean_loss_mean"),
-        "adv_loss_mean": weighted("adv_loss_mean"),
-        "pos_prob_drop_mean": weighted("pos_prob_drop_mean"),
-        "neg_prob_rise_mean": weighted("neg_prob_rise_mean"),
-    }
-
-
-def initial_hull_latent(
-    z0: torch.Tensor,
-    cand: torch.Tensor,
-    *,
-    weight_mode: str,
-    hull_lambda: float,
-    init_logit_gap: float,
-) -> torch.Tensor:
-    """Reconstruct the latent-hull optimizer's deterministic starting point."""
-    bsz, m = cand.shape[:2]
-    if weight_mode == "optimized":
-        logits_a = torch.full((bsz, m), -float(init_logit_gap), device=z0.device)
-        logits_a[:, 0] = float(init_logit_gap)
-        w = torch.softmax(logits_a, dim=-1)
-    elif weight_mode == "one_hot":
-        w = torch.zeros((bsz, m), device=z0.device)
-        w[:, 0] = 1.0
-    elif weight_mode == "uniform":
-        w = torch.full((bsz, m), 1.0 / float(m), device=z0.device)
-    else:
-        # Dirichlet starts from a random fixed draw inside the generator; use
-        # z0 as a deterministic diagnostic reference rather than guessing it.
-        return z0
-    z_mix = (w.view(bsz, m, 1, 1) * cand).sum(dim=1)
-    return (1.0 - float(hull_lambda)) * z0 + float(hull_lambda) * z_mix
 
 
 def make_weighted_loader(
@@ -645,57 +390,39 @@ def make_weighted_loader(
     target_class_weights = parse_class_weight_string(args.target_class_sample_weights)
     adv_class_weights = parse_class_weight_string(args.adv_class_sample_weights)
     effective_adv_weight = float(args.adv_weight if adv_weight is None else adv_weight)
-
-    def sample_weights(labels: np.ndarray, base_weight: float, class_weights: dict[str, float]) -> list[float]:
-        if not class_weights:
-            return [base_weight] * len(labels)
-        weights_vec = np.ones((len(CLASS_NAMES_SUPER5),), dtype=np.float32)
-        for cls, value in class_weights.items():
-            weights_vec[SUPER5_TO_IDX[cls]] = float(value)
-        pos = labels > 0.5
-        out = []
-        for row in pos:
-            if row.any():
-                out.append(base_weight * float(np.max(weights_vec[row])))
-            else:
-                out.append(base_weight)
-        return out
-
-    datasets = []
-    weights = []
-    if args.source_weight > 0:
-        stream = torch.zeros((len(source_x),), dtype=torch.long)
-        ds = TensorDataset(torch.from_numpy(source_x).float(), torch.from_numpy(source_y).float(), stream)
-        datasets.append(ds)
-        weights.extend([args.source_weight] * len(ds))
-    if args.target_real_weight > 0:
-        stream = torch.ones((len(target_x),), dtype=torch.long)
-        ds = TensorDataset(torch.from_numpy(target_x).float(), torch.from_numpy(target_y).float(), stream)
-        datasets.append(ds)
-        weights.extend(sample_weights(target_y, args.target_real_weight, target_class_weights))
-    if len(adv_x) > 0 and effective_adv_weight > 0:
-        stream = torch.full((len(adv_x),), 2, dtype=torch.long)
-        ds = TensorDataset(torch.from_numpy(adv_x).float(), torch.from_numpy(adv_y).float(), stream)
-        datasets.append(ds)
-        weights.extend(sample_weights(adv_y, effective_adv_weight, adv_class_weights))
-    combined = ConcatDataset(datasets)
-    sampler = WeightedRandomSampler(weights, num_samples=len(weights), replacement=True)
-    return DataLoader(combined, batch_size=args.batch_size, sampler=sampler, drop_last=False)
+    streams = [
+        WeightedFeatureStream(source_x, source_y, stream_id=0, base_weight=args.source_weight),
+        WeightedFeatureStream(
+            target_x,
+            target_y,
+            stream_id=1,
+            base_weight=args.target_real_weight,
+            class_weights=target_class_weights,
+        ),
+        WeightedFeatureStream(
+            adv_x,
+            adv_y,
+            stream_id=2,
+            base_weight=effective_adv_weight,
+            class_weights=adv_class_weights,
+        ),
+    ]
+    return build_weighted_feature_stream_loader(
+        streams,
+        batch_size=args.batch_size,
+        class_to_idx=SUPER5_TO_IDX,
+        num_classes=len(CLASS_NAMES_SUPER5),
+    )
 
 
 def scheduled_adv_weight(args: argparse.Namespace, epoch: int) -> float:
     """Linear warmup for the adversarial stream sampler weight."""
-    target = float(args.adv_weight)
-    if target <= 0:
-        return 0.0
-    warmup_epochs = int(args.adv_weight_warmup_epochs)
-    if warmup_epochs <= 0:
-        return target
-    start = 0.0 if args.adv_weight_start is None else float(args.adv_weight_start)
-    if warmup_epochs == 1 or epoch >= warmup_epochs:
-        return target
-    frac = max(0.0, float(epoch - 1) / float(max(1, warmup_epochs - 1)))
-    return start + frac * (target - start)
+    return linear_warmup_value(
+        args.adv_weight,
+        epoch,
+        args.adv_weight_warmup_epochs,
+        start=args.adv_weight_start,
+    )
 
 
 def parse_class_weight_string(raw: str | None) -> dict[str, float]:
@@ -735,33 +462,6 @@ def parse_class_list(raw: str | list[str] | None) -> list[str]:
     return out
 
 
-def pairwise_rank_loss(
-    logits: torch.Tensor,
-    labels: torch.Tensor,
-    class_indices: list[int],
-    *,
-    class_weights: dict[int, float] | None = None,
-    temperature: float,
-) -> torch.Tensor:
-    losses = []
-    weights = []
-    temp = max(float(temperature), 1e-6)
-    for cls_idx in class_indices:
-        y = labels[:, cls_idx]
-        pos = logits[y > 0.5, cls_idx]
-        neg = logits[y <= 0.0, cls_idx]
-        if pos.numel() == 0 or neg.numel() == 0:
-            continue
-        margins = (pos[:, None] - neg[None, :]) / temp
-        losses.append(F.softplus(-margins).mean())
-        weights.append(float((class_weights or {}).get(cls_idx, 1.0)))
-    if not losses:
-        return logits.new_zeros(())
-    loss_t = torch.stack(losses)
-    weight_t = torch.tensor(weights, dtype=loss_t.dtype, device=loss_t.device)
-    return (loss_t * weight_t).sum() / weight_t.sum().clamp_min(1e-6)
-
-
 def train_one_center(
     center: str,
     args: argparse.Namespace,
@@ -772,9 +472,14 @@ def train_one_center(
     out_dir: Path,
 ) -> dict[str, Any]:
     device = torch.device(args.device)
-    run_dir = out_dir / "runs" / (
-        f"{center}_K{args.k}_M{args.hull_m}_lam{str(args.hull_lambda).replace('.', 'p')}"
-        f"_ep{args.epochs}_seed{args.seed}"
+    run_dir = ecgfounder_lhat_run_dir(
+        out_dir,
+        center=center,
+        k=args.k,
+        hull_m=args.hull_m,
+        hull_lambda=args.hull_lambda,
+        epochs=args.epochs,
+        seed=args.seed,
     )
     run_dir.mkdir(parents=True, exist_ok=True)
     result_path = run_dir / "eval_result.json"
@@ -1433,6 +1138,7 @@ def train_one_center(
             else "ECGFounder frozen encoder + VAE-only real-anchor latent-hull online AT head fine-tune"
         ),
         "center": center,
+        "label_mapping": pn2021_super5_label_mapping_payload(),
         "class_names": list(CLASS_NAMES_SUPER5),
         "K": int(args.k),
         "selected_ref_record_ids": selected_ids_all.tolist(),
@@ -1491,9 +1197,14 @@ def write_summary(rows: list[dict[str, Any]], out_dir: Path) -> None:
             m = r["final_pn2021_views"][c]["per_center"][c]
             b_ptb = r["baseline_ptbxl_fold10"]
             m_ptb = r["final_ptbxl_fold10"]
-            run_dir = out_dir / "runs" / (
-                f"{c}_K{r['K']}_M{r['config']['hull_m']}_lam{str(r['config']['hull_lambda']).replace('.', 'p')}"
-                f"_ep{r['config']['epochs']}_seed{r['config']['seed']}"
+            run_dir = ecgfounder_lhat_run_dir(
+                out_dir,
+                center=c,
+                k=int(r["K"]),
+                hull_m=int(r["config"]["hull_m"]),
+                hull_lambda=r["config"]["hull_lambda"],
+                epochs=int(r["config"]["epochs"]),
+                seed=int(r["config"]["seed"]),
             )
             w.writerow([
                 c,

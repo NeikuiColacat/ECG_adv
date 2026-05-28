@@ -1,0 +1,150 @@
+extends:
+  - ../defaults/common_v6_super5.yaml
+
+experiment:
+  name: pn2021_eval_v6_refexcluded
+  description: Managed PN2021 Super5 v6 ref-excluded evaluation for direct-K500 EfficientNet1DV2 runs.
+
+model:
+  backbone: efficientnet1dv2
+  num_classes: 5
+
+training:
+  eval_batch_size: 192
+  num_workers: ${resources.default_num_workers}
+
+logging:
+  child_artifacts:
+    - eval_result_v6_super5_refexcluded.json
+  postprocess_artifacts:
+    - metrics_long.csv
+
+evaluation:
+  model_family: effnet_direct_k500_v6
+  ref_exclusion_meta:
+    - ${paths.data_root}/paper_vae_only_latenthull_sweep_20260516/subsets/ningbo/k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}/ningbo_real_k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}.ref_meta.json
+    - ${paths.data_root}/paper_vae_only_latenthull_sweep_20260516/subsets/chapman_shaoxing/k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}/chapman_shaoxing_real_k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}.ref_meta.json
+    - ${paths.data_root}/paper_vae_only_latenthull_sweep_20260516/subsets/cpsc_2018/k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}/cpsc_2018_real_k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}.ref_meta.json
+    - ${paths.data_root}/paper_vae_only_latenthull_sweep_20260516/subsets/georgia/k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}/georgia_real_k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}.ref_meta.json
+
+postprocess:
+  commands:
+    - name: export_metrics_long
+      entrypoint: scripts/export_metrics_long.py
+      env:
+        TMPDIR: ${paths.short_tmp_root}
+        XDG_CACHE_HOME: ${paths.cache_root}
+      argv:
+        - --input
+        - ${paths.output_root}/${experiment.name}/${runtime.run_id}/ningbo/eval_result_v6_super5_refexcluded.json
+        - ${paths.output_root}/${experiment.name}/${runtime.run_id}/chapman_shaoxing/eval_result_v6_super5_refexcluded.json
+        - ${paths.output_root}/${experiment.name}/${runtime.run_id}/cpsc_2018/eval_result_v6_super5_refexcluded.json
+        - ${paths.output_root}/${experiment.name}/${runtime.run_id}/georgia/eval_result_v6_super5_refexcluded.json
+        - --output-dir
+        - ${paths.output_root}/metrics_export/${runtime.run_id}
+        - --run-id
+        - ${evaluation.model_family}
+        - --filter-to-target-center
+        - --target-centers
+        - ${paper_protocol.centers.target_4}
+        - --expected-mapping-version
+        - ${paper_protocol.mapping_version}
+        - --expected-mapping-hash
+        - ${paper_protocol.mapping_hash}
+      expected_artifacts:
+        - role: metrics_long
+          path: ${paths.output_root}/metrics_export/${runtime.run_id}/metrics_long.csv
+        - role: artifact_manifest
+          path: ${paths.output_root}/metrics_export/${runtime.run_id}/artifact_manifest.json
+
+    - name: export_paper_table_all_zero_kept
+      entrypoint: scripts/export_paper_table.py
+      env:
+        TMPDIR: ${paths.short_tmp_root}
+        XDG_CACHE_HOME: ${paths.cache_root}
+      argv:
+        - --metrics-long
+        - ${paths.output_root}/metrics_export/${runtime.run_id}/metrics_long.csv
+        - --output-dir
+        - ${paths.output_root}/paper_table/${runtime.run_id}_all_zero_kept
+        - --view
+        - pn2021_all_zero_kept_refexcluded
+        - --dataset
+        - pn2021
+        - --centers
+        - ${paper_protocol.centers.target_4}
+        - --no-dataset-rows
+      expected_artifacts:
+        - role: paper_table
+          path: ${paths.output_root}/paper_table/${runtime.run_id}_all_zero_kept/paper_table.csv
+        - role: paper_table_manifest
+          path: ${paths.output_root}/paper_table/${runtime.run_id}_all_zero_kept/paper_table_manifest.json
+
+    - name: export_paper_table_drop_all_zero
+      entrypoint: scripts/export_paper_table.py
+      env:
+        TMPDIR: ${paths.short_tmp_root}
+        XDG_CACHE_HOME: ${paths.cache_root}
+      argv:
+        - --metrics-long
+        - ${paths.output_root}/metrics_export/${runtime.run_id}/metrics_long.csv
+        - --output-dir
+        - ${paths.output_root}/paper_table/${runtime.run_id}_drop_all_zero
+        - --view
+        - pn2021_drop_all_zero_refexcluded
+        - --dataset
+        - pn2021
+        - --centers
+        - ${paper_protocol.centers.target_4}
+        - --no-dataset-rows
+      expected_artifacts:
+        - role: paper_table
+          path: ${paths.output_root}/paper_table/${runtime.run_id}_drop_all_zero/paper_table.csv
+        - role: paper_table_manifest
+          path: ${paths.output_root}/paper_table/${runtime.run_id}_drop_all_zero/paper_table_manifest.json
+
+runner:
+  entrypoint: scripts/triple_labels/eval_crosscenter.py
+  env:
+    ECG_ADV_GEN_DATA_ROOT: ${paths.data_root}
+    TMPDIR: ${paths.short_tmp_root}
+    XDG_CACHE_HOME: ${paths.cache_root}
+  matrix:
+    center: ${paper_protocol.centers.target_4}
+  argv:
+    - --scheme
+    - super5
+    - --model_dir
+    - ${paths.data_root}/paper_direct_finetune_k500_20260516/runs/${matrix.center}_K${paper_protocol.kshot.k}_direct_ft_ep30_seed${paper_protocol.kshot.seed}_val0.2
+    - --model_name
+    - ${model.backbone}
+    - --device
+    - cuda
+    - --crop_len
+    - ${preprocess.crop_len}
+    - --batch_size
+    - ${training.eval_batch_size}
+    - --num_workers
+    - ${training.num_workers}
+    - --min_pos
+    - ${evaluation.min_pos}
+    - --ptbxl_csv
+    - ${paths.data_root}/ptbxl/ptbxl_database.csv
+    - --ptbxl_cache
+    - ${paths.data_root}/triple_labels/cache/ptbxl_minimal_resample_per_sample_global_fs100_len1000.npy
+    - --preprocess_mode
+    - ${preprocess.mode}
+    - --norm_mode
+    - ${preprocess.norm_mode}
+    - --pn2021_root
+    - ${paths.data_root}/physionet2021
+    - --pn2021_cache_dir
+    - ${data.cache.pn2021_cache_dir}
+    - --pn2021_mmap_cache_dir
+    - ${data.cache.pn2021_mmap_cache_dir}
+    - --skip_mimic
+    - --report_drop_all_zero_pn2021
+    - --exclude_ref_ids
+    - ${evaluation.ref_exclusion_meta}
+    - --output_path
+    - ${paths.output_root}/${experiment.name}/${runtime.run_id}/${matrix.center}/eval_result_v6_super5_refexcluded.json

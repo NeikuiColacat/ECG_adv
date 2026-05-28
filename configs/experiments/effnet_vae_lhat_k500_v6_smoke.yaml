@@ -1,0 +1,39 @@
+extends:
+  - effnet_vae_lhat_k500_v6.yaml
+
+experiment:
+  name: effnet_vae_lhat_k500_v6_smoke
+  description: Small EfficientNet1DV2 VAE-LHAT runtime smoke for the managed online-AT wrapper.
+  status: smoke-only
+
+training:
+  epochs: 1
+  batch_size: 32
+  eval_batch_size: 64
+  num_workers: 0
+
+evaluation:
+  min_pos: 2
+  pn2021_limit: 64
+
+adaptation:
+  anchors:
+    k_anchor: 32
+  hull:
+    M: 4
+    steps: 1
+    lambda: 0.03
+    neighbor_pool_size: 16
+    neighbor_pool_multiplier: 2
+  attack:
+    pgd_batch: 8
+  loss:
+    target_real_weight: 20.0
+    adv_weight: 0.1
+    adv_weight_warmup_epochs: 0
+  latent_augmix:
+    latent_weight_cap: 0.1
+    width: 2
+    depth: 1
+    alpha: 0.5
+    severity: 1

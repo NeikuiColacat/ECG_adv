@@ -18,7 +18,6 @@ import sys
 import json
 import argparse
 import time
-import re
 
 import numpy as np
 import pandas as pd
@@ -43,12 +42,20 @@ from scripts.triple_labels.train_ptbxl import (
 from scripts.crosscenter_v2.preprocess_utils import (
     unified_preprocess_to_1000, crop_signal_tc, _resolve_preprocess_flags,
 )
+from ecg_adv_gen.data import (
+    PN2021_EVAL_CENTERS_7,
+    PN2021_LEAK_EXCLUDED_CENTERS,
+    load_include_record_ids_from_meta,
+    load_ref_record_ids_from_meta,
+    parse_header_snomeds,
+    scan_pn2021_center_records,
+)
+from ecg_adv_gen.evaluation import DROP_ALL_ZERO_POLICY, summarize_center_view
 
 
 # PN2021 centers — ptb-xl explicitly excluded (data leakage with PTB-XL train)
-PN2021_CENTERS = ['chapman_shaoxing', 'cpsc_2018', 'cpsc_2018_extra',
-                  'georgia', 'ningbo', 'ptb', 'st_petersburg_incart']
-PN2021_FORBIDDEN = {'ptb-xl', 'ptbxl'}
+PN2021_CENTERS = list(PN2021_EVAL_CENTERS_7)
+PN2021_FORBIDDEN = set(PN2021_LEAK_EXCLUDED_CENTERS)
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -56,29 +63,12 @@ PN2021_FORBIDDEN = {'ptb-xl', 'ptbxl'}
 # ────────────────────────────────────────────────────────────────────────────
 
 def parse_header_snomed(header_path):
-    dx_re = re.compile(r'^#\s*Dx\s*:\s*(.*)$', re.IGNORECASE)
-    with open(header_path, 'r') as f:
-        for line in f:
-            line = line.strip()
-            match = dx_re.match(line)
-            if match:
-                codes_str = match.group(1).strip()
-                try:
-                    return [int(c.strip()) for c in codes_str.split(',') if c.strip()]
-                except ValueError:
-                    return []
-    return []
+    return parse_header_snomeds(header_path)
 
 
 def scan_center_records(center_dir):
-    paths, snomeds = [], []
-    for root, _, files in os.walk(center_dir):
-        for f in files:
-            if f.endswith('.hea'):
-                hea = os.path.join(root, f)
-                paths.append(hea[:-4])
-                snomeds.append(parse_header_snomed(hea))
-    return paths, snomeds
+    records = scan_pn2021_center_records(center_dir)
+    return [str(record.record_path) for record in records], [list(record.snomeds) for record in records]
 
 
 class PN2021CenterDataset(Dataset):
@@ -432,10 +422,7 @@ def _load_excluded_ref_ids(meta_paths):
     if not meta_paths:
         return out
     for mp in meta_paths:
-        with open(mp) as f:
-            meta = json.load(f)
-        center = meta['center']
-        ids = set(meta.get('ref_record_ids', []))
+        center, ids = load_ref_record_ids_from_meta(mp)
         if not ids:
             print(f"[exclude] WARN {mp} has no ref_record_ids — skipped")
             continue
@@ -462,17 +449,7 @@ def _load_included_record_ids(meta_paths):
         'test_record_ids',
     )
     for mp in meta_paths:
-        with open(mp) as f:
-            meta = json.load(f)
-        center = meta['center']
-        ids = []
-        key_used = None
-        for key in include_keys:
-            if meta.get(key):
-                ids = meta[key]
-                key_used = key
-                break
-        ids = set(ids)
+        center, ids, key_used = load_include_record_ids_from_meta(mp, include_keys=include_keys)
         if not ids:
             print(f"[include] WARN {mp} has no heldout/eval record ids — skipped")
             continue
@@ -501,6 +478,12 @@ def eval_pn2021(model, scheme, args, device):
     per_center = {}
     macro_aurocs, macro_auprcs = [], []
     drop_all_zero_aurocs, drop_all_zero_auprcs = [], []
+    metric_fn = lambda y_true, y_score: compute_macro_auroc_auprc(
+        y_true,
+        y_score,
+        scheme['class_names'],
+        min_pos=args.min_pos,
+    )
     for center in PN2021_CENTERS:
         assert center.lower() not in PN2021_FORBIDDEN, \
             f"FORBIDDEN center {center} would leak PTB-XL data"
@@ -547,67 +530,43 @@ def eval_pn2021(model, scheme, args, device):
         loader = DataLoader(ds, batch_size=args.batch_size, shuffle=False,
                             num_workers=args.num_workers, pin_memory=True)
         y_true, y_score = infer_dataset(model, loader, device)
-        m = compute_macro_auroc_auprc(y_true, y_score, scheme['class_names'],
-                                      min_pos=args.min_pos)
-        positive_counts = np.sum(y_true == 1.0, axis=1)
-        nonzero_mask = positive_counts > 0
-        n_all_zero = int((~nonzero_mask).sum())
-        n_nonzero = int(nonzero_mask.sum())
-        per_center[center] = {
-            'n_records': len(ds),
-            'n_scanned': n_scanned,
-            'n_excluded_ref': n_excluded_ref,
-            'n_include_kept': n_include_kept,
-            'effective_n': len(ds),
-            'n_all_zero_labels': n_all_zero,
-            'n_nonzero_labels': n_nonzero,
-            'load_time_s': round(ds._load_time, 1),
-            'cache_hit': cache_hit,
-            'cache_kind': cache_kind,
-            'macro_auroc': m['macro_auroc'],
-            'macro_auprc': m['macro_auprc'],
-            'n_classes_used': m['n_classes_used'],
-            'per_class': m['per_class'],
-        }
-        drop_m = None
-        if report_drop_all_zero:
-            if n_nonzero > 0:
-                drop_m = compute_macro_auroc_auprc(
-                    y_true[nonzero_mask],
-                    y_score[nonzero_mask],
-                    scheme['class_names'],
-                    min_pos=args.min_pos,
-                )
-                per_center[center].update({
-                    'drop_all_zero_macro_auroc': drop_m['macro_auroc'],
-                    'drop_all_zero_macro_auprc': drop_m['macro_auprc'],
-                    'drop_all_zero_n_records': n_nonzero,
-                    'drop_all_zero_n_classes_used': drop_m['n_classes_used'],
-                    'drop_all_zero_per_class': drop_m['per_class'],
-                })
-                drop_all_zero_aurocs.append(drop_m['macro_auroc'])
-                drop_all_zero_auprcs.append(drop_m['macro_auprc'])
-            else:
-                per_center[center].update({
-                    'drop_all_zero_macro_auroc': float('nan'),
-                    'drop_all_zero_macro_auprc': float('nan'),
-                    'drop_all_zero_n_records': 0,
-                    'drop_all_zero_n_classes_used': 0,
-                    'drop_all_zero_per_class': {},
-                })
-        macro_aurocs.append(m['macro_auroc'])
-        macro_auprcs.append(m['macro_auprc'])
+        center_row = summarize_center_view(
+            y_true,
+            y_score,
+            metric_fn=metric_fn,
+            n_total=len(ds),
+            n_excluded_ref=n_excluded_ref,
+            n_include_kept=n_include_kept,
+            extra_fields={
+                'n_scanned': n_scanned,
+                'load_time_s': round(ds._load_time, 1),
+                'cache_hit': cache_hit,
+                'cache_kind': cache_kind,
+            },
+            report_drop_all_zero=report_drop_all_zero,
+            drop_none_if_empty=False,
+            always_include_count_fields=True,
+        )
+        per_center[center] = center_row
+        macro_aurocs.append(center_row['macro_auroc'])
+        macro_auprcs.append(center_row['macro_auprc'])
+        n_all_zero = center_row['n_all_zero_labels']
+        n_nonzero = center_row['n_nonzero_labels']
+        if report_drop_all_zero and n_nonzero > 0:
+            drop_all_zero_aurocs.append(center_row['drop_all_zero_macro_auroc'])
+            drop_all_zero_auprcs.append(center_row['drop_all_zero_macro_auprc'])
         excl_tag = f" (-{n_excluded_ref} ref)" if n_excluded_ref > 0 else ""
         incl_tag = f" include={n_include_kept}" if included_set else ""
         cache_tag = f" {cache_kind}" if cache_hit else ""
         print(f"  {center:<22} n={len(ds):>5}{incl_tag}{excl_tag}{cache_tag}  "
-              f"AUROC={m['macro_auroc']:.4f}  AUPRC={m['macro_auprc']:.4f}  "
-              f"n_classes={m['n_classes_used']}  ({time.time()-t0:.0f}s)")
-        if drop_m is not None:
+              f"AUROC={center_row['macro_auroc']:.4f}  "
+              f"AUPRC={center_row['macro_auprc']:.4f}  "
+              f"n_classes={center_row['n_classes_used']}  ({time.time()-t0:.0f}s)")
+        if report_drop_all_zero and n_nonzero > 0:
             print(f"    drop-all-zero n={n_nonzero:>5} (-{n_all_zero})  "
-                  f"AUROC={drop_m['macro_auroc']:.4f}  "
-                  f"AUPRC={drop_m['macro_auprc']:.4f}  "
-                  f"n_classes={drop_m['n_classes_used']}")
+                  f"AUROC={center_row['drop_all_zero_macro_auroc']:.4f}  "
+                  f"AUPRC={center_row['drop_all_zero_macro_auprc']:.4f}  "
+                  f"n_classes={center_row['drop_all_zero_n_classes_used']}")
     finite_aurocs = [v for v in macro_aurocs if np.isfinite(v)]
     finite_auprcs = [v for v in macro_auprcs if np.isfinite(v)]
     avg_auroc = float(np.mean(finite_aurocs)) if finite_aurocs else float('nan')
@@ -624,7 +583,7 @@ def eval_pn2021(model, scheme, args, device):
         avg_drop_auroc = float(np.mean(finite_drop_aurocs)) if finite_drop_aurocs else float('nan')
         avg_drop_auprc = float(np.mean(finite_drop_auprcs)) if finite_drop_auprcs else float('nan')
         result.update({
-            'drop_all_zero_policy': 'rows with no positive Super5 label are excluded from PN2021 metric calculation',
+            'drop_all_zero_policy': DROP_ALL_ZERO_POLICY,
             'avg_drop_all_zero_macro_auroc': avg_drop_auroc,
             'avg_drop_all_zero_macro_auprc': avg_drop_auprc,
         })
@@ -846,6 +805,9 @@ def main():
         output['mimic_test'] = eval_mimic(model, scheme, args, device)
 
     out_path = args.output_path or os.path.join(args.model_dir, 'eval_result.json')
+    out_dir = os.path.dirname(out_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
     with open(out_path, 'w') as f:
         json.dump(output, f, indent=2)
     print(f"\n[done] saved {out_path}")

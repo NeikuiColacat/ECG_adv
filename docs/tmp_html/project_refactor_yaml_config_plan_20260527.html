@@ -1,0 +1,738 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ECG_adv_Gen YAML 配置管理与重构计划</title>
+  <style>
+    :root {
+      --bg: #eef2f3;
+      --panel: #ffffff;
+      --ink: #172026;
+      --muted: #5f6f7a;
+      --line: #d8e0e6;
+      --soft: #f6f8f9;
+      --blue: #1e6091;
+      --green: #26735b;
+      --teal: #0f766e;
+      --gold: #8a6500;
+      --red: #a43d3d;
+      --violet: #6d4b8d;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font: 15px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    a { color: var(--blue); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 270px minmax(0, 1fr);
+      min-height: 100vh;
+    }
+
+    aside {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow: auto;
+      padding: 22px 18px;
+      border-right: 1px solid var(--line);
+      background: var(--panel);
+    }
+
+    aside h1 {
+      margin: 0 0 8px;
+      font-size: 18px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+
+    aside p {
+      margin: 0 0 18px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    nav {
+      display: grid;
+      gap: 6px;
+    }
+
+    nav a {
+      display: block;
+      padding: 7px 9px;
+      border-radius: 6px;
+      color: #26343c;
+      font-size: 13px;
+    }
+
+    nav a:hover {
+      background: var(--soft);
+      text-decoration: none;
+    }
+
+    main {
+      width: min(1160px, 100%);
+      padding: 30px 34px 64px;
+    }
+
+    header {
+      padding: 26px 0 20px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    header h2 {
+      margin: 0 0 10px;
+      font-size: 31px;
+      line-height: 1.18;
+      letter-spacing: 0;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 9px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      white-space: nowrap;
+    }
+
+    section {
+      margin-top: 30px;
+      padding-top: 3px;
+    }
+
+    h3 {
+      margin: 0 0 13px;
+      font-size: 22px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+
+    h4 {
+      margin: 22px 0 8px;
+      font-size: 16px;
+      line-height: 1.35;
+      letter-spacing: 0;
+    }
+
+    p { margin: 8px 0 12px; }
+
+    ul, ol {
+      margin: 8px 0 14px 21px;
+      padding: 0;
+    }
+
+    li { margin: 5px 0; }
+
+    code {
+      padding: 1px 5px;
+      border: 1px solid #d7dee3;
+      border-radius: 5px;
+      background: #f7f9fa;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.92em;
+    }
+
+    pre {
+      overflow-x: auto;
+      margin: 12px 0 18px;
+      padding: 14px 16px;
+      border: 1px solid #d7dee3;
+      border-radius: 8px;
+      background: #111820;
+      color: #e7edf2;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    pre code {
+      padding: 0;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      color: inherit;
+      font-size: inherit;
+    }
+
+    .grid {
+      display: grid;
+      gap: 14px;
+    }
+
+    .grid.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+    .box {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      padding: 16px;
+    }
+
+    .box h4 {
+      margin-top: 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .tag {
+      display: inline-flex;
+      padding: 2px 7px;
+      border-radius: 999px;
+      color: #fff;
+      font-size: 12px;
+      line-height: 1.35;
+      white-space: nowrap;
+    }
+
+    .tag.blue { background: var(--blue); }
+    .tag.green { background: var(--green); }
+    .tag.teal { background: var(--teal); }
+    .tag.gold { background: var(--gold); }
+    .tag.red { background: var(--red); }
+    .tag.violet { background: var(--violet); }
+
+    .callout {
+      border-left: 4px solid var(--blue);
+      border-radius: 0 8px 8px 0;
+      background: #fff;
+      padding: 13px 15px;
+      margin: 14px 0;
+    }
+
+    .callout.good { border-left-color: var(--green); }
+    .callout.warn { border-left-color: var(--gold); }
+    .callout.danger { border-left-color: var(--red); }
+
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      margin: 12px 0 18px;
+    }
+
+    table {
+      width: 100%;
+      min-width: 760px;
+      border-collapse: collapse;
+    }
+
+    th, td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #f3f6f7;
+      color: #26343c;
+      font-size: 13px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    tr:last-child td { border-bottom: 0; }
+
+    .phase {
+      border-left: 4px solid var(--teal);
+      padding: 4px 0 4px 14px;
+      margin: 16px 0;
+    }
+
+    .phase h4 { margin: 0 0 4px; }
+    .phase p { margin: 0 0 6px; }
+
+    .small {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (max-width: 900px) {
+      .layout { display: block; }
+      aside {
+        position: static;
+        height: auto;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+      nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      main { padding: 22px 18px 48px; }
+      .grid.cols-2, .grid.cols-3 { grid-template-columns: 1fr; }
+      header h2 { font-size: 25px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside>
+      <h1>YAML 配置管理</h1>
+      <p>ECG_adv_Gen 重构计划 HTML 版 · 2026-05-27</p>
+      <nav>
+        <a href="#summary">核心结论</a>
+        <a href="#principles">设计原则</a>
+        <a href="#layout">目录结构</a>
+        <a href="#schema">字段草案</a>
+        <a href="#local">本地配置</a>
+        <a href="#artifacts">运行产物</a>
+        <a href="#implementation">实现路线</a>
+        <a href="#pitfalls">防错清单</a>
+        <a href="#next">下一步</a>
+      </nav>
+    </aside>
+
+    <main>
+      <header>
+        <h2>ECG_adv_Gen YAML 配置管理与项目重构计划</h2>
+        <div class="meta">
+          <span class="pill">从 Markdown 转为 HTML 阅读版</span>
+          <span class="pill">服务目录：docs/tmp_html</span>
+          <span class="pill">端口：9005</span>
+        </div>
+      </header>
+
+      <section id="summary">
+        <h3>核心结论</h3>
+        <div class="callout good">
+          建议引入 YAML 配置管理，而且应作为当前项目重构的第一批落地事项之一。目标不是让配置“看起来整齐”，而是让每个论文结果都能被 tracked config、local config、resolved run config 和 manifest 追溯。
+        </div>
+
+        <div class="grid cols-3">
+          <div class="box">
+            <h4><span class="tag red">痛点</span> 长 bash 易漏参</h4>
+            <p>当前实验依赖大量命令行参数，mapping、K500、ref exclusion、selector、drop-all-zero view 等任一参数漏传都会让结果不可比。</p>
+          </div>
+          <div class="box">
+            <h4><span class="tag green">方案</span> YAML 管实验定义</h4>
+            <p>把论文实验定义放到 Git 跟踪的 YAML；把本机路径放到 local YAML；每次运行写出 resolved config。</p>
+          </div>
+          <div class="box">
+            <h4><span class="tag blue">边界</span> Bash 只负责启动</h4>
+            <p>Bash 只保留 GPU、config、local-config、run-id、dry-run/resume/force，不再承担方法定义。</p>
+          </div>
+        </div>
+
+        <h4>最容易出错的参数</h4>
+        <ul>
+          <li>PN2021 Super5 mapping 版本是否一致。</li>
+          <li>K=500 target-center ref ids 是否被正确 exclude。</li>
+          <li>direct fine-tune 和 VAE online AT 是否使用同一批 K500。</li>
+          <li>final selector 是否只使用 K500 internal validation 和 source floor。</li>
+          <li>all-zero kept 和 drop-all-zero 指标是否被混算。</li>
+          <li>旧机器 <code>/root/autodl-tmp</code> 路径是否被误用。</li>
+        </ul>
+      </section>
+
+      <section id="principles">
+        <h3>设计原则</h3>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>配置层</th>
+                <th>保存内容</th>
+                <th>是否进 Git</th>
+                <th>说明</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Experiment YAML</td>
+                <td>backbone、mapping、K-shot、centers、preprocess、training、VAE/PGD、selection、eval views、seeds。</td>
+                <td>是</td>
+                <td>这是论文实验定义，必须可审查、可复现。</td>
+              </tr>
+              <tr>
+                <td>Local YAML</td>
+                <td>data root、model root、output root、python env、cache root、共享服务器资源偏好。</td>
+                <td>否</td>
+                <td>这是机器环境，不应污染 Git，也不应写死在实验 YAML。</td>
+              </tr>
+              <tr>
+                <td>CLI Override</td>
+                <td>run-id、dry-run、resume、force、output-dir 等少量字段。</td>
+                <td>命令记录进 manifest</td>
+                <td>只允许白名单 override，防止重新变成长 bash。</td>
+              </tr>
+              <tr>
+                <td>Resolved Config</td>
+                <td>合并所有层后的完整配置。</td>
+                <td>随 run artifact 保存</td>
+                <td>以后复现和审稿只看 resolved config，不猜当时怎么启动。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h4>推荐启动命令</h4>
+        <pre><code>micromamba run -n ECGTwin python scripts/run_experiment.py \
+  --config configs/experiments/effnet_vae_lhat_k500_v6.yaml \
+  --local-config configs/local/linbinhao_server.yaml \
+  --run-id effnet_vae_lhat_v6_k500_seed20260531_20260527 \
+  --dry-run</code></pre>
+
+        <p>正式运行时先运行 <code>nvidia-smi</code>，确认目标 GPU 空闲，再显式设置 <code>CUDA_VISIBLE_DEVICES=...</code> 并使用 <code>--execute</code>。GPU 选择留在命令行环境变量，不写进 tracked YAML。</p>
+      </section>
+
+      <section id="layout">
+        <h3>推荐目录结构</h3>
+        <pre><code>configs/
+  README.md
+  schemas/
+    experiment_config.schema.json
+    local_config.schema.json
+  defaults/
+    common_v6_super5.yaml
+    effnet1dv2_defaults.yaml
+    ecgfounder_defaults.yaml
+    vae_lhat_defaults.yaml
+  experiments/
+    effnet_direct_k500_v6.yaml
+    effnet_vae_lhat_k500_v6.yaml
+    effnet_vae_lhat_augmix_k500_v6.yaml
+    ecgfounder_direct_k500_v6.yaml
+    ecgfounder_inithead_fullft_k500_v6.yaml
+    ecgfounder_vae_lhat_k500_v6.yaml
+    pn2021_eval_v6_refexcluded.yaml
+  local/
+    .gitignore
+    linbinhao_server.example.yaml</code></pre>
+
+        <h4>配置合并优先级</h4>
+        <ol>
+          <li>code defaults：只放极少量安全默认值。</li>
+          <li><code>configs/defaults/*.yaml</code>：模型/方法默认参数。</li>
+          <li><code>configs/experiments/*.yaml</code>：论文实验定义。</li>
+          <li><code>configs/local/*.yaml</code>：本机路径和资源。</li>
+          <li>CLI override：只允许 <code>run_id</code>、<code>resume</code>、<code>dry_run</code> 等少量字段。</li>
+        </ol>
+
+        <h4>本地配置 gitignore</h4>
+        <pre><code>*
+!.gitignore
+!*.example.yaml</code></pre>
+      </section>
+
+      <section id="schema">
+        <h3>Experiment YAML 字段草案</h3>
+
+        <h4>顶层协议</h4>
+        <pre><code>experiment:
+  name: effnet_vae_lhat_k500_v6
+  version: 1
+  description: EfficientNet1DV2 direct-K500 plus ECGTwin VAE latent-hull online AT.
+  owner: linbinhao
+  status: active-main
+
+paper_protocol:
+  mapping_version: v6_super5_clinician_review_20260524
+  mapping_hash: 3adc673a60ad
+  class_order: [CD, HYP, MI, NORM, STTC]
+  centers: [ningbo, chapman_shaoxing, cpsc_2018, georgia]
+  kshot:
+    mode: fixed_k
+    k: 500
+    seed: 20260531
+    subset_seed: 20260531
+    exclude_refs_from_eval: true
+  selection:
+    policy: k500_internal_val_plus_source_floor
+    forbid_heldout_target_labels: true
+    forbid_full_target_distribution_tuning: true</code></pre>
+
+        <h4>数据与预处理</h4>
+        <pre><code>data:
+  source_dataset: ptbxl
+  target_dataset: pn2021
+  pn2021_centers: [ningbo, chapman_shaoxing, cpsc_2018, georgia]
+  exclude_centers: [ptb-xl, ptbxl]
+  cache:
+    pn2021_cache_version: v6_super5_clinician_review_20260524
+    prefer_mmap: true
+
+preprocess:
+  classifier_fs: 100
+  classifier_len: 1000
+  mode: minimal_resample
+  norm_mode: per_sample_global
+  lead_order: ptbxl
+  ecgtwin_decode:
+    input_len: 1024
+    output_len: 1000
+    reorder_indices: [0, 1, 2, 3, 5, 4, 6, 7, 8, 9, 10, 11]</code></pre>
+
+        <h4>模型与训练</h4>
+        <pre><code>model:
+  backbone: efficientnet1dv2
+  num_classes: 5
+  init_checkpoint: ${paths.data_root}/triple_labels/super5_minresample_full10_perglobal_20260503/best_model.pt
+
+training:
+  epochs: 20
+  batch_size: 128
+  num_workers: 4
+  amp: true
+  amp_dtype: bf16
+  optimizer:
+    name: adamw
+    lr: 0.0001
+    weight_decay: 0.0001
+  checkpoint:
+    save_best_clean: true
+    save_best_robust_val: true
+    save_last: true</code></pre>
+
+        <h4>VAE Latent-Hull Online AT</h4>
+        <pre><code>adaptation:
+  method: vae_latent_hull_online_at
+  vae:
+    name: ecgtwin_vae
+    latent_shape: [4, 128]
+    latent_scale: 0.18215
+    standardize_latents: true
+  anchors:
+    source: target_center_k500
+    include_clean_anchor_in_batch: true
+    partner_policy: local_same_label_or_compatible
+    forbid_norm_abnormal_mix_main: true
+    rare_class_anchor_quota: true
+  hull:
+    include_anchor: true
+    coefficient_mode: anchor_dominant
+    hull_lambda: 0.05
+  attack:
+    name: latent_pgd
+    steps: 5
+    epsilon: 2.0
+    step_size: 0.5
+    random_start: true
+    target_asr_range: [0.30, 0.70]
+  loss:
+    clean_weight: 1.0
+    adv_weight: 0.3
+    adv_weight_warmup_epochs: 10
+    label_mode: latent_mixed_teacher
+  quality:
+    hard_reject_invalid_decode: true
+    use_victim_score_gate: false</code></pre>
+
+        <h4>评估与日志</h4>
+        <pre><code>evaluation:
+  views:
+    - pn2021_all_zero_kept_refexcluded
+    - pn2021_drop_all_zero_refexcluded
+    - ptbxl_fold10_source_floor
+  metrics:
+    - macro_auroc
+    - macro_auprc
+    - per_center
+    - per_class
+  min_pos: 10
+
+logging:
+  required_epoch_metrics:
+    - clean_bce
+    - adv_bce
+    - loss_gain
+    - atk_init
+    - atk_anchor
+    - asr_anyflip
+    - invalid_decode_rate
+    - source_floor_auroc
+    - source_floor_auprc
+  launch_artifacts:
+    - run_config.resolved.yaml
+    - run_config.resolved.json
+    - run_manifest.json
+    - command.sh
+    - k500_ref_ids.json
+  child_artifacts:
+    - training_log.json
+    - train_result.json
+    - eval_result.json
+  postprocess_artifacts:
+    - metrics_long.csv
+    - selection.json</code></pre>
+      </section>
+
+      <section id="local">
+        <h3>Local YAML 字段草案</h3>
+        <p>本地 YAML 只回答“这台机器上数据和模型在哪里”。真实文件不进 Git，只保留 example。</p>
+
+        <pre><code>host:
+  name: linbinhao_shared_server
+  shared_server: true
+  home_root: /home/linbinhao
+
+paths:
+  project_root: /home/linbinhao/ECG_adv_Gen
+  data_root: /home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp
+  model_root: /home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/models
+  output_root: /home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs
+  cache_root: /home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/cache
+  tmp_root: /home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/tmp
+
+python:
+  executable: /home/linbinhao/micromamba/envs/ECGTwin/bin/python
+  micromamba_env: ECGTwin
+
+resources:
+  default_num_workers: 4
+  prefer_single_gpu: true
+  require_nvidia_smi_check: true
+  default_bind_host: 127.0.0.1
+
+safety:
+  forbid_sudo: true
+  forbid_system_env_changes: true
+  write_boundary: /home/linbinhao
+  forbid_commit_large_artifacts: true</code></pre>
+
+        <div class="callout warn">
+          真实 <code>configs/local/linbinhao_server.yaml</code> 可以基于 example 复制，但不要提交。tracked experiment YAML 不应该出现 <code>/home/linbinhao</code> 或 <code>/root</code> 绝对路径。
+        </div>
+      </section>
+
+      <section id="artifacts">
+        <h3>运行目录产物规范</h3>
+        <pre><code>${output_root}/&lt;date&gt;/&lt;run_id&gt;/
+  run_config.resolved.yaml
+  run_config.resolved.json
+  run_manifest.json
+  command.sh
+  stdout.log
+  stderr.log
+  training_log.json
+  train_result.json
+  eval_result_v6_super5_refexcluded.json
+  metrics_long.csv
+  selection.json
+  k500_ref_ids.json
+  checkpoints/
+    best_clean.pt
+    best_robust_val.pt
+    last.pt</code></pre>
+
+        <h4>run_manifest 必须记录</h4>
+        <ul>
+          <li>git commit 与 dirty files summary。</li>
+          <li>script entry、argv、resolved config hash。</li>
+          <li>mapping version/hash、K500 record ids file。</li>
+          <li>input checkpoint path、输出 artifact 列表。</li>
+          <li>start/end time、status。</li>
+          <li>selection 阶段是否使用 held-out target labels。</li>
+        </ul>
+      </section>
+
+      <section id="implementation">
+        <h3>实现路线</h3>
+
+        <div class="phase">
+          <h4>Phase 0：文档与 schema 冻结</h4>
+          <p>新增 <code>configs/README.md</code>、schema、local example 和 local gitignore。不改训练逻辑、不启动 GPU。</p>
+        </div>
+
+        <div class="phase">
+          <h4>Phase 1：path resolver 与 config loader</h4>
+          <p>新增 <code>util/project_paths.py</code> 或未来 <code>ecg_adv_gen/paths.py</code>，实现路径解析、home-boundary 校验和 dry-run。</p>
+        </div>
+
+        <div class="phase">
+          <h4>Phase 2：先包三条主线</h4>
+          <p>优先覆盖 <code>effnet_direct_k500_v6</code>、<code>effnet_vae_lhat_k500_v6</code>、<code>ecgfounder_inithead_fullft_k500_v6</code>。当前已落地：VAE-LHAT 显式使用 direct-K500 checkpoint 和 compatsoft direct-init 参数；<code>run_manifest.json</code> 已加入 <code>artifact_trace</code>，记录 K500 ref-meta、frozen <code>k500_ref_ids.json</code>、anchors、init checkpoint/head、child output root 和 expected eval JSON；generated legacy commands 会经过协议审计，<code>--execute</code> 前会验证 required inputs，返回 0 后还会验证 launch/child artifacts 和 eval JSON mapping metadata。</p>
+        </div>
+
+        <div class="phase">
+          <h4>Phase 3：统一 metrics exporter</h4>
+          <p>从现有 JSON/CSV 回填 <code>metrics_long.csv</code> 和 <code>artifact_manifest.json</code>，不用重跑实验。当前 exporter 已同时写入 raw <code>view</code> 与 <code>canonical_view</code>，paper table exporter 按 canonical view 汇总并保留 <code>raw_views</code>，避免 ECGFounder target view 与 PN2021 ref-excluded view 口径漂移。</p>
+        </div>
+
+        <div class="phase">
+          <h4>Phase 4：逐步抽库包</h4>
+          <p>在 wrapper 稳定后，再抽 <code>ecg_adv_gen.labels</code>、<code>ecg_adv_gen.ecg</code>、<code>ecg_adv_gen.data</code>、<code>ecg_adv_gen.models</code>、<code>ecg_adv_gen.training</code>、<code>ecg_adv_gen.adaptation</code>、<code>ecg_adv_gen.reporting</code>。</p>
+        </div>
+
+        <h4>统一入口第一版</h4>
+        <pre><code>python scripts/run_experiment.py \
+  --config configs/experiments/effnet_vae_lhat_k500_v6.yaml \
+  --local-config configs/local/linbinhao_server.yaml \
+  --run-id effnet_vae_lhat_v6_k500_seed20260531 \
+  --dry-run</code></pre>
+
+        <p>第一版 <code>run_experiment.py</code> 不需要真的训练，只要能解析 YAML、校验路径、输出旧脚本命令、resolved config 和 manifest artifact trace，就已经能显著降低后续实验出错概率。当前 CPU-only refactor 测试为 <code>53 passed</code>。</p>
+      </section>
+
+      <section id="pitfalls">
+        <h3>必须防止的错误</h3>
+        <div class="grid cols-2">
+          <div class="box">
+            <h4><span class="tag red">不要提交</span> 本机 local YAML</h4>
+            <p><code>configs/local/*.yaml</code> 真实文件必须 gitignore，只提交 <code>*.example.yaml</code>。</p>
+          </div>
+          <div class="box">
+            <h4><span class="tag red">不要写死</span> GPU id</h4>
+            <p>GPU 选择用 <code>CUDA_VISIBLE_DEVICES</code>，不要进入 tracked experiment YAML。</p>
+          </div>
+          <div class="box">
+            <h4><span class="tag gold">不要依赖</span> 绝对路径</h4>
+            <p>tracked YAML 不应依赖 <code>/home/linbinhao</code> 或 <code>/root</code>。路径通过 local YAML 或环境变量解析。</p>
+          </div>
+          <div class="box">
+            <h4><span class="tag gold">不要混算</span> v3/v5/v6</h4>
+            <p>exporter 必须拒绝混用不同 PN2021 mapping 版本的结果。</p>
+          </div>
+          <div class="box">
+            <h4><span class="tag blue">不要只存</span> 原始 YAML</h4>
+            <p>每次 run 必须保存展开后的 resolved config，否则后续仍然无法复现。</p>
+          </div>
+          <div class="box">
+            <h4><span class="tag blue">不要先搬</span> 大脚本</h4>
+            <p>先 wrapper、manifest、metrics，再拆 <code>synth_online_at_super5.py</code> 和 ECGFounder runner。</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="next">
+        <h3>推荐下一步</h3>
+        <div class="callout good">
+          建议下一轮直接落地 Phase 0 + Phase 1 的骨架。第一版只做 dry-run，不启动 GPU，不改训练逻辑。
+        </div>
+
+        <ol>
+          <li>新建 <code>configs/README.md</code>。</li>
+          <li>新建 <code>configs/local/.gitignore</code>。</li>
+          <li>新建 <code>configs/local/linbinhao_server.example.yaml</code>。</li>
+          <li>新建 <code>configs/experiments/effnet_direct_k500_v6.yaml</code>。</li>
+          <li>新建 <code>configs/experiments/effnet_vae_lhat_k500_v6.yaml</code>。</li>
+          <li>新建一个只做 dry-run 的 <code>scripts/run_experiment.py</code>。</li>
+        </ol>
+
+        <p class="small">源 Markdown：<code>docs/tmp_md/project_refactor_yaml_config_plan_20260527.md</code></p>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

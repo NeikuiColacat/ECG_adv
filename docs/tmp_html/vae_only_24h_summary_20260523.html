@@ -276,6 +276,16 @@
       color: var(--red);
     }
 
+    .callout.warn {
+      border-left-color: var(--amber);
+      background: #fff8e8;
+      color: var(--ink);
+    }
+
+    .callout.warn strong {
+      color: #8a5a00;
+    }
+
     .good {
       border-left-color: var(--green);
       background: #edf8f3;
@@ -480,6 +490,7 @@
       <div class="brand">ECG_adv_Gen VAE-only 24h Review</div>
       <nav aria-label="页面导航">
         <a href="#takeaway">结论</a>
+        <a href="#best-method">最有效</a>
         <a href="#protocol">协议</a>
         <a href="#methods">尝试路线</a>
         <a href="#evidence">结果表</a>
@@ -563,6 +574,128 @@
             ECGFounder 上的大幅 target gain 全部来自 VAE-only。K=500 和 frozen residual adapter 审计显示，
             主要驱动是 target-center real adapter / full fine-tuning，VAE 只在 K=100 的短程 refinement 中有较清晰增量。
           </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="best-method">
+      <div class="section-title">
+        <h2>当前最有效方案与 Takeaway</h2>
+        <span class="note">补充截至 2026-05-25 的 v6 映射探索结论</span>
+      </div>
+
+      <div class="grid">
+        <div class="panel span-7">
+          <h3>最适合作为主方法的版本：EfficientNet1DV2 + target-real VAE Latent-Hull online AT</h3>
+          <p>
+            当前最干净的主方法证据来自 EfficientNet1DV2：先用每个目标中心随机 K=500 真实 ECG 做直接微调，
+            再从这个 direct-K500 checkpoint 继续加入 ECGTwin VAE latent-hull online adversarial training。
+            最强独立候选是 <span class="code">compatsoft direct-init latent-mixed-teacher</span> / anchor-soft 这一族。
+          </p>
+          <table>
+            <tr>
+              <th>口径</th>
+              <th class="num">Direct K500</th>
+              <th class="num">Best VAE-family</th>
+              <th class="num">VAE 增量</th>
+            </tr>
+            <tr class="good">
+              <td>EfficientNet1DV2 四中心均值</td>
+              <td class="num">0.8543 / 0.4880</td>
+              <td class="num">0.8722 / 0.5148</td>
+              <td class="num">+1.79 / +2.68pp</td>
+            </tr>
+            <tr>
+              <td>drop-all-zero sensitivity</td>
+              <td class="num">-</td>
+              <td class="num">0.9018 / 0.6776</td>
+              <td class="num">用于检查全零样本影响</td>
+            </tr>
+          </table>
+          <p class="note">
+            这个结果比 ECGFounder 更适合作为“VAE 带来额外贡献”的主证据，因为它和同 backbone 的 direct K500 微调做了匹配对照，
+            VAE-family 相对 direct K500 仍有约 1.8pp AUROC / 2.7pp AUPRC 的净提升。
+          </p>
+        </div>
+
+        <div class="panel span-5">
+          <h3>最强数字但归因更复杂：ECGFounder selector</h3>
+          <p>
+            ECGFounder 当前最高四中心结果是 K500-internal classwise selector：
+            <span class="code">0.9198 / 0.6435</span>。
+            它相对 frozen/head direct K500 是 <span class="pos">+1.56 / +4.67pp</span>，
+            相对 init-head direct fullFT 是 <span class="pos">+0.62 / +1.30pp</span>。
+          </p>
+          <div class="callout warn">
+            <strong>归因边界：</strong>
+            ECGFounder 的大部分增益来自 K500 supervised adaptation、head initialization 和 full fine-tuning recipe；
+            VAE online AT 是有用的 refinement / candidate diversity，但不能写成唯一主因。
+          </div>
+        </div>
+      </div>
+
+      <div class="grid" style="margin-top: 16px;">
+        <div class="panel span-4">
+          <h3>发现 1：Direct K500 是强基线</h3>
+          <p>
+            目标中心 500 条真实样本本身已经能解释很多跨中心提升。所有论文主表必须和同 backbone、同 K、同 split 的 direct K500 微调比较。
+          </p>
+        </div>
+        <div class="panel span-4">
+          <h3>发现 2：VAE 更像正则器</h3>
+          <p>
+            当前 VAE 的有效角色不是“凭空生成大量新疾病样本”，而是围绕目标中心真实 ECG anchor 在 VAE manifold 上制造边界附近样本，
+            作为 on-manifold adversarial regularization。
+          </p>
+        </div>
+        <div class="panel span-4">
+          <h3>发现 3：攻击不能只追强</h3>
+          <p>
+            单纯提高 adversarial weight 或 PGD 强度并不会稳定提升；过强会伤 Georgia / Ningbo，过弱则没有边界压力。
+            后续需要记录 <span class="code">atk_init</span>、<span class="code">atk_anchor</span>、<span class="code">loss_gain</span> 和 ASR。
+          </p>
+        </div>
+        <div class="panel span-4">
+          <h3>发现 4：局部同标签 latent 更稳</h3>
+          <p>
+            same-label / compatible local latent hull 比盲目跨类混合更可信；source-partner、label-mode-only、selector 扩池都没有突破当前 ceiling。
+          </p>
+        </div>
+        <div class="panel span-4">
+          <h3>发现 5：质量 gate 不是主轴</h3>
+          <p>
+            复杂 victim-score quality gate 没有带来稳定收益。主线只保留硬拒绝：NaN/Inf、flatline、严重幅值异常和明显物理无效 decode。
+          </p>
+        </div>
+        <div class="panel span-4">
+          <h3>发现 6：不能按测试分布特调</h3>
+          <p>
+            探索阶段可以看 held-out 反馈，但最终方法只能用随机 K500 子集及其内部验证、源域 source floor 和固定全局 recipe 选模型。
+          </p>
+        </div>
+      </div>
+
+      <div class="grid" style="margin-top: 16px;">
+        <div class="panel span-6">
+          <h3>应该写进主方法的技术细节</h3>
+          <ol>
+            <li>固定每个目标中心随机 K=500；K500 ref ids 从最终目标中心评估中排除。</li>
+            <li>将目标中心真实 ECG 编码到 ECGTwin VAE latent；decode 后做 lead reorder，并送入 100Hz / 1000 点 EfficientNet1DV2 pipeline。</li>
+            <li>在标准化 latent 空间中找 same-label 或 compatible local partners；混合时 include-anchor，避免远距离全局随机混合。</li>
+            <li>使用 anchor-dominant latent hull：保留原始真实 anchor 的主导权，<span class="code">hull_lambda</span> 维持在 0.05-0.15 的低到中等范围。</li>
+            <li>在线 PGD 只在 latent hull 内搜索边界样本，decode 后进入训练流；不要使用 ECGTwin DiT 直接 synthetic 作为主因果证据。</li>
+            <li>adv label 优先使用 multi-hot preserving 的 <span class="code">latent_mixed_teacher</span> / anchor-soft 形式，避免把多标签 anchor 简化成 argmax 单标签。</li>
+          </ol>
+        </div>
+        <div class="panel span-6">
+          <h3>主训练与选择规则</h3>
+          <ol>
+            <li>训练 loss 同时保留 source / target clean BCE、latent mixed BCE、adversarial BCE 或 Bernoulli-KL，以及必要的 source-logit anchor。</li>
+            <li>adversarial pressure 采用 warmup 或低到中等强度；目标 ASR 是有边界压力但不破坏 clean/source，约 30-70% 更合理。</li>
+            <li>checkpoint 选择用 K500 内部 validation 加 source clean floor；禁止用完整目标中心测试集类别分布或 held-out oracle 选超参。</li>
+            <li>主报告同时给 all-zero kept、drop-all-zero、per-center、per-class，并明确 PN2021 Super5 mapping version。</li>
+            <li>ECGFounder 作为强 foundation-model extension 报告：强调 VAE 对 matched direct/fullFT 的小幅增量和 selector diversity，而不是把全部提升归因给 VAE。</li>
+          </ol>
         </div>
       </div>
     </section>

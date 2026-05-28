@@ -22,6 +22,10 @@
 | `ptbxl_prompt_token_boundary_at_pipeline.md` | 训练 5 个 PTB-XL source-style prompt token，并只接收 target probability 0.50-0.60 的 Latent-Hull 边界对抗样本 |
 | `ecgfounder_frozen_linear_probe_pipeline.md` | 冻结 ECGFounder encoder，用 PTB-XL fold 1-8 训练 Super5 线性头，fold 9 校准，fold 10 和 PN2021 外部中心评估 |
 | `next_auto_execution_plan.md` | 当前四项任务的自动执行顺序、产物和阻塞条件 |
+| `refactor_source_of_truth_20260527.md` | YAML 配置重构期间的事实源、active script index、暂不移动脚本和 reporting 规则 |
+| `refactor_fact_check_decision_20260527.md` | 多 subagent 事实核查后的重构决策、已修正协议缺口和下一步验收计划 |
+| `refactor_phase12_handoff_20260528.md` | 1 小时收口后的 YAML wrapper / package helper 重构交接状态、验证证据和停止边界 |
+| `managed_v6_main_repro_20260528.md` | phase 1/2 重构后 managed-YAML 主实验 v6 复跑结果、指标和验收记录 |
 
 ## Docs 还是 Skill
 

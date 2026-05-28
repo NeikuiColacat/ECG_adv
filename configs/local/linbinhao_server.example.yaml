@@ -1,0 +1,29 @@
+host:
+  name: linbinhao_shared_server
+  shared_server: true
+  home_root: /home/linbinhao
+
+paths:
+  project_root: /home/linbinhao/ECG_adv_Gen
+  data_root: /home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp
+  model_root: ${paths.data_root}/models
+  output_root: ${paths.data_root}/runs
+  cache_root: ${paths.data_root}/cache
+  tmp_root: ${paths.data_root}/tmp
+  short_tmp_root: /home/linbinhao/tmp_ecg
+
+python:
+  executable: /home/linbinhao/micromamba/envs/ECGTwin/bin/python
+  micromamba_env: ECGTwin
+
+resources:
+  default_num_workers: 4
+  prefer_single_gpu: true
+  require_nvidia_smi_check: true
+  default_bind_host: 127.0.0.1
+
+safety:
+  forbid_sudo: true
+  forbid_system_env_changes: true
+  write_boundary: /home/linbinhao
+  forbid_commit_large_artifacts: true

@@ -39,10 +39,10 @@ from scripts.paper.run_latenthull_real_anchor_grid_20260512 import (  # noqa: E4
     eval_metrics,
 )
 from scripts.triple_labels.label_schemes import CLASS_NAMES_SUPER5, NUM_SUPER5  # noqa: E402
+from ecg_adv_gen.run_naming import build_effnet_direct_run_leaf  # noqa: E402
+from ecg_adv_gen.training import compute_pos_weight, masked_bce_with_logits, random_split_indices  # noqa: E402
 from scripts.triple_labels.train_ptbxl import (  # noqa: E402
     compute_macro_auroc_auprc,
-    compute_pos_weight,
-    masked_bce_with_logits,
 )
 
 
@@ -118,15 +118,7 @@ def load_model(device: torch.device) -> nn.Module:
 
 
 def split_indices(n: int, val_fraction: float, seed: int) -> tuple[np.ndarray, np.ndarray]:
-    indices = np.arange(n, dtype=np.int64)
-    if val_fraction <= 0:
-        return indices, indices
-    rng = np.random.default_rng(seed)
-    order = rng.permutation(n)
-    n_val = max(1, int(round(n * val_fraction)))
-    val_idx = np.sort(order[:n_val])
-    train_idx = np.sort(order[n_val:])
-    return train_idx, val_idx
+    return random_split_indices(n, val_fraction, seed, zero_val_policy="identity")
 
 
 @torch.no_grad()
@@ -182,9 +174,15 @@ def train_one(center: str, args: argparse.Namespace) -> Path:
     if not paths["signals"].exists() or not paths["meta"].exists():
         raise FileNotFoundError(f"missing K-shot subset for {center}: {paths}")
 
-    out_dir = OUT_ROOT / "runs" / (
-        f"{center}_K{args.k}_direct_ft_ep{args.epochs}_seed{args.seed}"
-        f"_val{args.val_fraction:g}"
+    out_root = Path(args.out_root) if args.out_root else OUT_ROOT
+    out_dir = out_root / "runs" / build_effnet_direct_run_leaf(
+        {
+            "center": center,
+            "k": args.k,
+            "epochs": args.epochs,
+            "seed": args.seed,
+            "val_fraction": args.val_fraction,
+        }
     )
     eval_path = out_dir / "eval_result_v6_super5_clinician_review_exclrefs_crop1000.json"
     if eval_path.exists() and not args.force:
@@ -340,6 +338,8 @@ def train_one(center: str, args: argparse.Namespace) -> Path:
         str(args.eval_batch_size),
         "--num_workers",
         str(args.num_workers),
+        "--min_pos",
+        str(args.eval_min_pos),
         "--ptbxl_csv",
         str(DATA_ROOT / "ptbxl/ptbxl_database.csv"),
         "--ptbxl_cache",
@@ -357,15 +357,18 @@ def train_one(center: str, args: argparse.Namespace) -> Path:
         "--skip_mimic",
         "--exclude_ref_ids",
         str(paths["meta"]),
+        "--report_drop_all_zero_pn2021",
         "--output_path",
         str(eval_path),
     ]
+    if args.eval_pn2021_limit:
+        eval_cmd.extend(["--pn2021_limit", str(args.eval_pn2021_limit)])
     run_cmd(eval_cmd, out_dir / "eval_full.log")
     return eval_path
 
 
-def write_summary(rows: list[dict]) -> None:
-    summary_dir = OUT_ROOT / "summaries"
+def write_summary(rows: list[dict], out_root: Path = OUT_ROOT) -> None:
+    summary_dir = out_root / "summaries"
     summary_dir.mkdir(parents=True, exist_ok=True)
     csv_path = summary_dir / "direct_finetune_k500.csv"
     fields = [
@@ -436,19 +439,28 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--num_workers", type=int, default=6)
     p.add_argument("--device", default="cuda")
     p.add_argument("--pos_weight_clip_max", type=float, default=50.0)
+    p.add_argument("--eval_min_pos", type=int, default=10)
+    p.add_argument(
+        "--eval_pn2021_limit",
+        type=int,
+        default=0,
+        help="Optional PN2021 per-center record cap for engineering smoke runs only.",
+    )
+    p.add_argument("--out_root", default="")
     p.add_argument("--force", action="store_true")
     return p.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    OUT_ROOT.mkdir(parents=True, exist_ok=True)
+    out_root = Path(args.out_root) if args.out_root else OUT_ROOT
+    out_root.mkdir(parents=True, exist_ok=True)
     rows = []
     for center in args.centers:
         eval_path = train_one(center, args)
         rows.append(parse_eval(center, args.k, args.epochs, eval_path))
-        write_summary(rows)
-    write_summary(rows)
+        write_summary(rows, out_root)
+    write_summary(rows, out_root)
 
 
 if __name__ == "__main__":

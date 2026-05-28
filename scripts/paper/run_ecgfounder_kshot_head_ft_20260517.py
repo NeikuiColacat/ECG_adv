@@ -43,7 +43,11 @@ from scripts.paper.run_ecgfounder_linear_probe_super5_20260517 import (  # noqa:
     evaluate_pn2021_views,
 )
 from scripts.triple_labels.label_schemes import CLASS_NAMES_SUPER5  # noqa: E402
-from scripts.triple_labels.train_ptbxl import compute_pos_weight, masked_bce_with_logits  # noqa: E402
+from ecg_adv_gen.data import load_kshot_ref_record_ids, select_kshot_indices_from_ref_root  # noqa: E402
+from ecg_adv_gen.labels import pn2021_super5_label_mapping_payload  # noqa: E402
+from ecg_adv_gen.models import ecgfounder_kshot_head_run_dir  # noqa: E402
+from ecg_adv_gen.models.ecgfounder_inference import predict_feature_head, sigmoid_clipped  # noqa: E402
+from ecg_adv_gen.training import compute_pos_weight, masked_bce_with_logits, random_split_indices  # noqa: E402
 
 
 _V6_LINEAR_PROBE_DIR = (
@@ -71,11 +75,13 @@ DEFAULT_OUT_DIR = DATA_ROOT / "paper_foundation_baselines_20260524/ecgfounder_ks
 
 
 def load_ref_ids(center: str, k: int, seed: int, source_k: int | None = None) -> list[str]:
-    path = REF_ROOT / center / f"k{k}_seed{seed}" / f"{center}_real_k{k}_seed{seed}.ref_meta.json"
-    if not path.exists() and source_k is not None:
-        path = REF_ROOT / center / f"k{source_k}_seed{seed}" / f"{center}_real_k{source_k}_seed{seed}.ref_meta.json"
-    with path.open() as f:
-        return list(json.load(f)["ref_record_ids"])
+    return load_kshot_ref_record_ids(
+        REF_ROOT,
+        center,
+        k=k,
+        seed=seed,
+        source_k=source_k,
+    )
 
 
 def select_kshot_indices(
@@ -90,74 +96,26 @@ def select_kshot_indices(
     If an exact K ref-meta exists we use it. Otherwise, fall back to the
     source_k pool, usually K=500, and draw a deterministic stratified subset.
     """
-    exact_path = REF_ROOT / center / f"k{args.k}_seed{args.subset_seed}" / (
-        f"{center}_real_k{args.k}_seed{args.subset_seed}.ref_meta.json"
+    return select_kshot_indices_from_ref_root(
+        labels,
+        centers,
+        record_ids,
+        center=center,
+        ref_root=REF_ROOT,
+        k=args.k,
+        source_k=args.source_k,
+        subset_seed=args.subset_seed,
+        seed=args.seed,
+        n_classes=len(CLASS_NAMES_SUPER5),
     )
-    source_ids = load_ref_ids(
-        center,
-        args.k if exact_path.exists() else args.source_k,
-        args.subset_seed,
-    )
-    mask = (centers == center) & np.asarray([rid in set(source_ids) for rid in record_ids], dtype=bool)
-    candidates = np.nonzero(mask)[0]
-    if len(candidates) < args.k:
-        raise RuntimeError(f"{center}: need K={args.k}, found only {len(candidates)} candidates")
-    if len(candidates) == args.k:
-        selected = np.sort(candidates)
-        return selected, record_ids[selected].astype(str).tolist()
-
-    center_offset = sum((i + 1) * ord(ch) for i, ch in enumerate(center))
-    rng = np.random.default_rng(args.seed + center_offset)
-    y = labels[candidates]
-    primary = np.argmax(y, axis=1)
-    selected_parts = []
-    counts = np.bincount(primary, minlength=len(CLASS_NAMES_SUPER5))
-    raw = counts / counts.sum() * args.k
-    alloc = np.floor(raw).astype(int)
-    for cls in range(len(CLASS_NAMES_SUPER5)):
-        if counts[cls] > 0 and alloc[cls] == 0:
-            alloc[cls] = 1
-    while alloc.sum() > args.k:
-        cls = int(np.argmax(alloc))
-        alloc[cls] -= 1
-    while alloc.sum() < args.k:
-        remainder = raw - np.floor(raw)
-        for cls in np.argsort(-remainder):
-            if alloc.sum() >= args.k:
-                break
-            if alloc[cls] < counts[cls]:
-                alloc[cls] += 1
-    for cls, n_take in enumerate(alloc):
-        cls_idx = candidates[primary == cls]
-        if n_take <= 0 or len(cls_idx) == 0:
-            continue
-        selected_parts.append(rng.permutation(cls_idx)[: min(n_take, len(cls_idx))])
-    selected = np.concatenate(selected_parts) if selected_parts else np.asarray([], dtype=np.int64)
-    if len(selected) < args.k:
-        remaining = np.setdiff1d(candidates, selected, assume_unique=False)
-        selected = np.concatenate([selected, rng.permutation(remaining)[: args.k - len(selected)]])
-    selected = np.sort(selected[: args.k])
-    return selected, record_ids[selected].astype(str).tolist()
 
 
 def split_indices(n: int, val_fraction: float, seed: int) -> tuple[np.ndarray, np.ndarray]:
-    rng = np.random.default_rng(seed)
-    order = rng.permutation(n)
-    n_val = max(1, int(round(n * val_fraction))) if val_fraction > 0 else 0
-    val = np.sort(order[:n_val]) if n_val else order
-    train = np.sort(order[n_val:]) if n_val else order
-    return train.astype(np.int64), val.astype(np.int64)
+    return random_split_indices(n, val_fraction, seed, zero_val_policy="permuted")
 
 
-@torch.no_grad()
 def predict_head(head: nn.Module, features: np.ndarray, batch_size: int, device: torch.device) -> np.ndarray:
-    head.eval()
-    loader = DataLoader(torch.from_numpy(features).float(), batch_size=batch_size, shuffle=False)
-    scores = []
-    for x in loader:
-        logits = head(x.to(device)).cpu().numpy()
-        scores.append(1.0 / (1.0 + np.exp(-np.clip(logits, -50, 50))))
-    return np.concatenate(scores, axis=0)
+    return predict_feature_head(head, features, batch_size=batch_size, device=device)
 
 
 @torch.no_grad()
@@ -165,7 +123,7 @@ def eval_subset(head: nn.Module, x: torch.Tensor, y: torch.Tensor, device: torch
     from scripts.paper.run_ecgfounder_linear_probe_super5_20260517 import compute_metrics
 
     logits = head(x.to(device)).cpu().numpy()
-    scores = 1.0 / (1.0 + np.exp(-np.clip(logits, -50, 50)))
+    scores = sigmoid_clipped(logits)
     metric = compute_metrics(y.numpy(), scores, min_pos=1)
     return float(metric["macro_auprc"]) if metric["macro_auprc"] is not None else -float("inf")
 
@@ -178,7 +136,14 @@ def train_one(center: str, args: argparse.Namespace, pn_payload: dict, base_head
     torch.manual_seed(run_seed)
     if device.type == "cuda":
         torch.cuda.manual_seed_all(run_seed)
-    run_dir = out_dir / "runs" / f"{center}_K{args.k}_fromK{args.source_k}_headft_ep{args.epochs}_seed{args.seed}"
+    run_dir = ecgfounder_kshot_head_run_dir(
+        out_dir,
+        center=center,
+        k=args.k,
+        source_k=args.source_k,
+        epochs=args.epochs,
+        seed=args.seed,
+    )
     run_dir.mkdir(parents=True, exist_ok=True)
     result_path = run_dir / "eval_result.json"
     if result_path.exists() and not args.force:
@@ -268,6 +233,7 @@ def train_one(center: str, args: argparse.Namespace, pn_payload: dict, base_head
         "target_view": views[center],
         "all_views": views,
         "base_head": str(base_head_path),
+        "label_mapping": pn2021_super5_label_mapping_payload(),
         "reset_head": bool(args.reset_head),
         "pos_weight": pos_weight.detach().cpu().tolist(),
         "config": vars(args),
@@ -294,7 +260,17 @@ def write_summary(rows: list[dict], out_dir: Path) -> None:
                 target["macro_auprc"],
                 view["avg_macro_auroc"],
                 view["avg_macro_auprc"],
-                str(out_dir / "runs" / f"{c}_K{row['K']}_fromK{row['config'].get('source_k', 500)}_headft_ep{row['config']['epochs']}_seed{row['config']['seed']}" / "eval_result.json"),
+                str(
+                    ecgfounder_kshot_head_run_dir(
+                        out_dir,
+                        center=c,
+                        k=int(row["K"]),
+                        source_k=int(row["config"].get("source_k", 500)),
+                        epochs=int(row["config"]["epochs"]),
+                        seed=int(row["config"]["seed"]),
+                    )
+                    / "eval_result.json"
+                ),
             ])
     print(f"[summary] wrote {csv_path}")
 

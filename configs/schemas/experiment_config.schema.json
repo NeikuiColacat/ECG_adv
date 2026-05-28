@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ECG_adv_Gen experiment config",
+  "type": "object",
+  "required": ["experiment", "runner", "paper_protocol", "data", "preprocess", "model", "evaluation", "logging"],
+  "properties": {
+    "experiment": {
+      "type": "object",
+      "required": ["name", "version", "status"],
+      "properties": {
+        "name": {"type": "string"},
+        "version": {"type": "integer"},
+        "description": {"type": "string"},
+        "owner": {"type": "string"},
+        "status": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
+    "runner": {
+      "type": "object",
+      "required": ["entrypoint", "argv"],
+      "properties": {
+        "entrypoint": {"type": "string"},
+        "argv": {"type": "array"},
+        "env": {"type": "object"},
+        "matrix": {"type": "object"}
+      },
+      "additionalProperties": true
+    },
+    "paper_protocol": {
+      "type": "object",
+      "required": ["mapping_version", "mapping_hash", "class_order", "num_classes", "kshot", "selection"],
+      "additionalProperties": true
+    },
+    "data": {
+      "type": "object",
+      "required": ["source_dataset", "target_dataset", "pn2021_cache_version", "exclude_centers"],
+      "additionalProperties": true
+    },
+    "preprocess": {
+      "type": "object",
+      "required": ["classifier_fs", "classifier_len", "lead_order"],
+      "additionalProperties": true
+    },
+    "model": {
+      "type": "object",
+      "required": ["backbone", "num_classes"],
+      "additionalProperties": true
+    },
+    "evaluation": {
+      "type": "object",
+      "required": ["views", "metrics"],
+      "additionalProperties": true
+    },
+    "logging": {
+      "type": "object",
+      "required": ["launch_artifacts", "child_artifacts", "postprocess_artifacts"],
+      "properties": {
+        "launch_artifacts": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "child_artifacts": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "postprocess_artifacts": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "required_epoch_metrics": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      },
+      "additionalProperties": true
+    },
+    "postprocess": {
+      "type": "object",
+      "properties": {
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "entrypoint", "argv", "expected_artifacts"],
+            "properties": {
+              "name": {"type": "string"},
+              "entrypoint": {"type": "string"},
+              "argv": {"type": "array"},
+              "env": {"type": "object"},
+              "expected_artifacts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["role", "path"],
+                  "properties": {
+                    "role": {"type": "string"},
+                    "path": {"type": "string"},
+                    "required": {"type": "boolean"}
+                  },
+                  "additionalProperties": true
+                }
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

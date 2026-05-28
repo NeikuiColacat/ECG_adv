@@ -22,6 +22,8 @@ import numpy as np
 
 
 REPO = Path(__file__).resolve().parents[2]
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
 _MIGRATED_DATA_ROOT = Path(
     "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp"
 )
@@ -33,9 +35,7 @@ DATA_ROOT = Path(
 )
 CLASS_NAMES = ["CD", "HYP", "MI", "NORM", "STTC"]
 
-
-def fmt_float_tag(value: float) -> str:
-    return f"{value:.3g}".replace("-", "m").replace(".", "p")
+from ecg_adv_gen.run_naming import build_effnet_vae_lhat_run_leaf  # noqa: E402
 
 
 def run(cmd: list[str], log_path: Path, env: dict[str, str]) -> None:
@@ -152,6 +152,8 @@ def main() -> None:
     )
     ap.add_argument("--hull_neighbor_pool_size", type=int, default=0)
     ap.add_argument("--hull_neighbor_pool_multiplier", type=int, default=4)
+    ap.add_argument("--k_anchor", type=int, default=300)
+    ap.add_argument("--pgd_batch", type=int, default=32)
     ap.add_argument(
         "--anchor_class_weights",
         default="",
@@ -242,6 +244,7 @@ def main() -> None:
     )
     ap.add_argument("--ptbxl_weight", type=float, default=1.0)
     ap.add_argument("--lr", type=float, default=5e-5)
+    ap.add_argument("--train_batch_size", type=int, default=128)
     ap.add_argument(
         "--source_logit_anchor_weight",
         type=float,
@@ -299,8 +302,12 @@ def main() -> None:
         choices=["pn2021", "target_real_val"],
         default="pn2021",
     )
+    ap.add_argument("--quick_eval_n_per_center", type=int, default=500)
     ap.add_argument("--target_real_val_fraction", type=float, default=0.2)
     ap.add_argument("--target_real_val_seed", type=int, default=20260531)
+    ap.add_argument("--eval_batch_size", type=int, default=192)
+    ap.add_argument("--eval_min_pos", type=int, default=10)
+    ap.add_argument("--eval_pn2021_limit", type=int, default=0)
     ap.add_argument(
         "--run_tag_extra",
         default="",
@@ -313,37 +320,12 @@ def main() -> None:
         data_root / "paper_effnet_latent_augmix_stage3_20260524"
     )
     center = args.center
-    class_tag = "".join(c.lower() for c in args.classes_in_scope)
-    extra_tag = f"_{args.run_tag_extra}" if args.run_tag_extra else ""
-    neighbor_tag = (
-        f"{args.hull_neighbor_distance_space[:3]}_{args.hull_neighbor_mode}"
-        f"_p{args.hull_neighbor_pool_size or args.hull_neighbor_pool_multiplier}"
-    )
     if args.freeze_backbone_classifier_only and args.unfreeze_last_n_features > 0:
         raise ValueError(
             "--freeze_backbone_classifier_only and --unfreeze_last_n_features "
             "are mutually exclusive"
         )
-    if args.unfreeze_last_n_features > 0:
-        adapt_tag = f"last{args.unfreeze_last_n_features}"
-    elif args.freeze_backbone_classifier_only:
-        adapt_tag = "headfn" if args.classifier_only_train_final_norm else "head"
-        if args.classifier_adapter_type == "lora":
-            adapt_tag += f"_lora{args.classifier_lora_rank}"
-    else:
-        adapt_tag = "fullft"
-    out_dir = (
-        out_root
-        / f"{center}_realall_targetheavy_M{args.hull_M}"
-          f"_lam{fmt_float_tag(args.hull_lambda)}"
-          f"_augmix_s{args.latent_augmix_severity}"
-          f"_wlat{fmt_float_tag(args.latent_augmix_latent_weight_cap)}"
-          f"_hs{args.hull_steps}_{args.es_metric}_{class_tag}"
-          f"_hlabel{args.hull_label_mode[:3]}_{args.hull_mix_label_mode}"
-          f"_{neighbor_tag}"
-          f"_{adapt_tag}"
-          f"{extra_tag}_ep{args.epochs}_seed{args.seed}"
-    )
+    out_dir = out_root / build_effnet_vae_lhat_run_leaf(args)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     anchor_base = Path(args.anchor_base) if args.anchor_base else (
@@ -396,7 +378,7 @@ def main() -> None:
         "--data_dir", str(data_root / "physionet2021/training"),
         "--quick_eval_source", args.quick_eval_source,
         "--quick_eval_centers", center,
-        "--quick_eval_n_per_center", "500",
+        "--quick_eval_n_per_center", str(args.quick_eval_n_per_center),
         "--target_real_val_fraction", str(args.target_real_val_fraction),
         "--target_real_val_seed", str(args.target_real_val_seed),
         "--ptbxl_raw", str(data_root / "ptbxl/raw100.npy"),
@@ -426,8 +408,8 @@ def main() -> None:
         "--anchor_class_weight_min", str(args.anchor_class_weight_min),
         "--anchor_class_weight_cap", str(args.anchor_class_weight_cap),
         "--anchor_class_missing_weight", str(args.anchor_class_missing_weight),
-        "--K_anchor", "300",
-        "--pgd_batch", "32",
+        "--K_anchor", str(args.k_anchor),
+        "--pgd_batch", str(args.pgd_batch),
         "--classes_in_scope", *args.classes_in_scope,
         "--allow_hyp_cd_trust",
         "--target_real_weight", str(args.target_real_weight),
@@ -453,7 +435,7 @@ def main() -> None:
         "--disable_quality_gate",
         "--lr", str(args.lr),
         "--weight_decay", "1e-4",
-        "--batch_size", "128",
+        "--batch_size", str(args.train_batch_size),
         "--n_epochs", str(args.epochs),
         "--patience", str(args.epochs),
         "--eval_every", "2",
@@ -490,7 +472,8 @@ def main() -> None:
         "--model_name", "efficientnet1dv2",
         "--device", "cuda",
         "--crop_len", "1000",
-        "--batch_size", "192",
+        "--batch_size", str(args.eval_batch_size),
+        "--min_pos", str(args.eval_min_pos),
         "--num_workers", str(args.num_workers),
         "--ptbxl_csv", str(data_root / "ptbxl/ptbxl_database.csv"),
         "--ptbxl_cache", str(data_root / "crosscenter_v2/ptbxl_preprocessed.npy"),
@@ -504,6 +487,8 @@ def main() -> None:
         "--exclude_ref_ids", str(ref_meta),
         "--output_path", str(out_dir / "eval_result_v6_exclrefs_crop1000.json"),
     ]
+    if args.eval_pn2021_limit > 0:
+        eval_cmd.extend(["--pn2021_limit", str(args.eval_pn2021_limit)])
 
     (out_dir / "launch_config.json").write_text(json.dumps({
         "args": vars(args),

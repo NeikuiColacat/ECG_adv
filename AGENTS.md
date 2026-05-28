@@ -147,6 +147,91 @@ ECGFounder branch:
   against EfficientNet1DV2.
 ```
 
+Latest VAE-online AT lessons, frozen 2026-05-27:
+
+```text
+Primary evidence docs:
+  docs/tmp_md/vae_online_at_closing_summary_20260525.md
+  docs/tmp_html/vae_only_24h_summary_20260523.html
+  .codex/skills/ecg-vae-online-at/SKILL.md
+
+Main protocol:
+  PN2021 Super5 v6 clinician-review mapping, four target centers
+  (ningbo, chapman_shaoxing, cpsc_2018, georgia), fixed K=500 target
+  ECGs per center, K500 ref ids excluded from final target evaluation.
+  Use 10% target data only as sensitivity analysis unless explicitly changed.
+
+Most effective current method for a clean VAE contribution:
+  EfficientNet1DV2 direct-K500 checkpoint
+  -> target-center real ECGTwin VAE latents
+  -> local same-label / compatible latent-hull online AT
+  -> multi-hot preserving latent labels.
+  Best current standalone family:
+    compatsoft / direct-init / latent_mixed_teacher / anchor-soft.
+  Four-center mean:
+    direct K500                 0.854322 / 0.487952
+    best VAE-family             0.872177 / 0.514767
+    net gain over direct K500   +1.79 pp AUROC / +2.68 pp AUPRC
+    drop-all-zero mean          0.901780 / 0.677552
+
+Strongest ECGFounder number, but with more complex attribution:
+  K500-internal classwise selector over matched direct/fullFT/VAE candidates
+  reached 0.919757 / 0.643536.
+  Gain vs frozen/head direct K500: +1.56 pp AUROC / +4.67 pp AUPRC.
+  Gain vs init-head direct fullFT: +0.62 pp AUROC / +1.30 pp AUPRC.
+  Do not claim most ECGFounder gain comes from VAE. Most gain comes from
+  target-center K500 supervised adaptation, head initialization, and fullFT
+  recipe; VAE is a smaller refinement and useful selector-diversity source.
+
+Technical details to preserve as main-method defaults:
+  - Treat ECGTwin VAE as an on-manifold adversarial regularizer, not as proof
+    that direct ECGTwin DiT synthetic samples are the causal source of gain.
+  - Use real target-center ECG anchors. Decode from ECGTwin VAE, reorder leads
+    with ECGTWIN_TO_PTBXL_INDICES, then resample 1024 -> 1000 for 100Hz
+    EfficientNet-style classifiers.
+  - Standardize VAE latents before distance search, mixup, or PGD.
+  - Prefer local same-label / exact-positive-set partners; compatible-label
+    soft BCE is an ablation. Do not mix NORM with abnormal labels in the main
+    recipe.
+  - Include the original anchor in the latent hull and keep anchor-dominant
+    coefficients. Keep hull_lambda low-to-mid, usually 0.05-0.15.
+  - Keep clean K500 anchors in the batch whenever latent mix or PGD is enabled.
+  - Prefer multi-hot preserving labels such as latent_mixed_teacher or
+    anchor-soft over argmax-collapsed hard labels for mixed latents.
+  - Use K500-internal validation plus a PTB-XL/source clean floor for checkpoint
+    selection. Do not select with full target-center heldout labels or known
+    target-center test class distributions.
+  - Log attack diagnostics for cited runs: atk_init, atk_anchor, loss_gain,
+    clean/adversarial BCE, ASR, decoded invalid rates, source floor, and
+    per-center/per-class target deltas.
+  - Practical ASR target is roughly 30-70%. Use attack success as a control
+    signal, not as the objective.
+
+Mistakes and near-null routes already explored:
+  - Do not attribute ECGFounder K500/fullFT gains to VAE alone.
+  - Do not tune the final method from full target-center class distribution,
+    heldout test labels, or heldout-oracle checkpointing. Exploration may look
+    at heldout feedback, but final claims need a frozen global recipe.
+  - Do not blindly increase adversarial weight, PGD steps, epsilon, or
+    hull_lambda. Too-strong attacks hurt Ningbo/Georgia or source performance;
+    too-weak attacks collapse atk_init/atk_anchor and add no useful pressure.
+  - Do not revive heavy victim-score quality gates as the main mechanism.
+    Keep only hard rejection for non-finite, flatline, severe amplitude, or
+    physically invalid decoded signals.
+  - Do not rely on last-epoch or heldout-oracle selection to make a candidate
+    look better; robust overfitting and per-center tradeoffs were observed.
+  - Do not expect selector-grid expansion alone to unlock the result. Adding
+    more historical candidates, source-partner-only variants, label-mode-only
+    variants, or compatible-neighbor soft-label smoothing did not beat the
+    current EfficientNet ceiling.
+  - Do not treat ECGFounder feature adapters, last-block-only EfficientNet
+    updates, blind full-encoder fine-tuning, stronger rare-ranking alone, or
+    source-logit anchoring alone as solved routes. They were stable in parts
+    but did not improve the four-center mean enough.
+  - Do not overclaim low-K results. K=20/50 were unstable; K=100 has signal in
+    some ECGFounder short-horizon runs; fixed K=500 is the clean main protocol.
+```
+
 For current experimental truth, prefer the latest `docs/pipelines/*.md` over
 older command snippets in this file. In particular, recent ECGFounder documents
 use the v5 PN2021 Super5 mapping:
