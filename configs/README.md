@@ -7,6 +7,10 @@ belong in `configs/local/*.yaml`, which is ignored except for example files.
 configs wrap which legacy scripts. Keep it synchronized whenever a new YAML
 mainline or reporting CLI is added.
 
+`configs/label_mappings/` holds structured label-mapping evidence, such as
+PN2021 to PTB-XL Super5 clinician-review JSONL records. Human-readable review
+documents belong in `docs/labeling/`.
+
 ## Boundary
 
 Tracked YAML may contain:
@@ -141,7 +145,8 @@ Run `--execute` only after the selected GPU is actually free. Before invoking
 any legacy child script, the launcher requires explicit `CUDA_VISIBLE_DEVICES`,
 runs its own `nvidia-smi` snapshot, writes `run_config.resolved.yaml`,
 `run_config.resolved.json`, `run_manifest.json`, `command.sh`,
-`data_manifest.json`, `k500_ref_ids.json`, and `selection.json`, and refuses
+`data_manifest.json`, `k500_ref_ids.json`, `selection.json`, `run_card.json`,
+`run_file_index.json`, and `summary.md`, and refuses
 non-empty output directories unless `--resume` or a matching scoped `--force`
 is supplied. The
 manifest includes an
@@ -167,6 +172,43 @@ aggregate `stdout.log` and `stderr.log` files with section headers across child
 and postprocess commands. The manifest records execute-level
 `execution_started_at_utc`, final `finished_at_utc`, and `duration_seconds`
 when a managed run finishes.
+
+Each managed run is also finalized into an agent-readable layout:
+
+```text
+<run_dir>/
+  run_card.json             # purpose, outcome, result summary, protocol, metric summary
+  run_file_index.json       # logical file categories for the run
+  summary.md                # short human/agent handoff note
+  configs/                  # resolved config and command snapshot
+  manifests/                # manifest snapshots and launch records
+  logs/                     # command stdout/stderr logs
+  checkpoints/              # checkpoint handles and checkpoint indexes
+  eval/                     # metrics_long, paper tables, per-center/class outputs
+  diagnostics/              # diagnostics_epoch, agent_decision, training logs
+  reports/                  # rendered summaries
+  artifacts/                # other small generated files
+```
+
+If an older run predates this layout, backfill the handoff files without
+rerunning training:
+
+```bash
+micromamba run -n ECGTwin python scripts/agent/finalize_run.py \
+  --run-dir /path/to/run_dir \
+  --purpose "Why this experiment was run" \
+  --result-summary "What the run showed" \
+  --outcome provisional
+```
+
+Important runs can then be registered in `configs/active_evidence_registry.yaml`
+using placeholder paths under `${paths.output_root}`:
+
+```bash
+micromamba run -n ECGTwin python scripts/agent/register_run.py \
+  --run-dir /path/to/run_dir \
+  --status provisional
+```
 
 All active paper/evaluation configs now declare managed postprocess commands.
 The common pattern is:

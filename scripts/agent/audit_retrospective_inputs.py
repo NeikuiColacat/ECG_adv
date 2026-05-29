@@ -96,8 +96,27 @@ def collect_project_records(root: Path, max_hash_bytes: int) -> list[FileRecord]
         ("skills", [".codex/skills/*/SKILL.md", ".codex/skills/*/references/*.md"]),
         ("handoffs", ["docs/codex-handoffs/*"]),
         ("pipeline_docs", ["docs/pipelines/*.md"]),
-        ("summary_docs", ["docs/tmp_md/*summary*", "docs/tmp_md/*report*", "docs/tmp_html/*summary*", "docs/tmp_html/*report*"]),
-        ("active_config", ["configs/active_scripts.yaml", "configs/evidence/*.yaml", "configs/evidence/*.json"]),
+        ("labeling_docs", ["docs/labeling/*.md", "configs/label_mappings/*.jsonl"]),
+        (
+            "summary_docs",
+            [
+                "docs/tmp_md/*summary*",
+                "docs/tmp_md/*report*",
+                "docs/tmp_html/*summary*",
+                "docs/tmp_html/*report*",
+                "docs/reports/archive/**/*.md",
+                "docs/reports/archive/**/*.html",
+            ],
+        ),
+        (
+            "active_config",
+            [
+                "configs/active_scripts.yaml",
+                "configs/active_evidence_registry.yaml",
+                "configs/evidence/*.yaml",
+                "configs/evidence/*.json",
+            ],
+        ),
     ]
     records: list[FileRecord] = []
     for category, patterns in specs:

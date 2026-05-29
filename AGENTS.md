@@ -1,6 +1,8 @@
 # ECG_adv_Gen Agent Notes
 
-This file is durable project memory for coding agents working in `/root/ECG_adv_Gen`.
+This file is durable project memory for coding agents working in this
+ECG_adv_Gen repository. The original AutoDL path was `/root/ECG_adv_Gen`; on
+the current migrated host, use the `/home/linbinhao` paths below.
 
 Critical startup rule for this shared server:
 
@@ -30,8 +32,38 @@ active evidence registry: configs/active_evidence_registry.yaml
 CPU-only agent audit:     micromamba run -n ECGTwin python scripts/agent/audit_agent_workspace.py
 legacy VAE manifest:      micromamba run -n ECGTwin python scripts/agent/backfill_vae_lhat_manifest.py
 comparison bundle build:  micromamba run -n ECGTwin python scripts/agent/build_comparison_bundle.py --force
+run finalizer:            micromamba run -n ECGTwin python scripts/agent/finalize_run.py --run-dir <run_dir>
+run registry update:      micromamba run -n ECGTwin python scripts/agent/register_run.py --run-dir <run_dir> --status provisional
 details:                  docs/pipelines/agent_operating_layer_20260529.md
 ```
+
+Current repository navigation, initialized 2026-05-29:
+
+```text
+agent entrypoint:       AGENTS.md
+human project overview: README.md
+stable package code:    ecg_adv_gen/
+experiment configs:     configs/defaults/, configs/experiments/
+active run index:       configs/active_scripts.yaml
+active evidence facts:  configs/active_evidence_registry.yaml
+label mapping evidence: configs/label_mappings/, docs/labeling/
+managed CLIs:           scripts/run_experiment.py, scripts/agent/
+legacy experiment CLIs: scripts/paper/, scripts/triple_labels/, scripts/pgd_cross_center/
+long-term docs:         docs/pipelines/
+archived reports:       docs/reports/archive/
+external model handles: model/
+tests:                  util/tests/  # project-wide tests; future target is tests/
+```
+
+Do not move active legacy entrypoints unless `configs/active_scripts.yaml` and
+the tests are updated in the same change. Prefer extracting pure logic into
+`ecg_adv_gen/` while keeping old script paths as thin wrappers.
+
+Every new managed experiment should leave an agent-readable run record:
+`run_card.json`, `run_file_index.json`, `summary.md`, and logical category
+directories (`configs/`, `manifests/`, `logs/`, `checkpoints/`, `eval/`,
+`diagnostics/`, `reports/`, `artifacts/`). Record the experiment purpose and
+result summary before treating the run as handoff-ready.
 
 This host is not running as root. Do not assume `/root/autodl-tmp` or
 `/root/miniforge3/envs/ECGTwin/bin/python` are accessible here unless a later

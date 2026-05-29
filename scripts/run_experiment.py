@@ -36,6 +36,7 @@ from ecg_adv_gen.config import (  # noqa: E402
     write_selection_record_artifact,
 )
 from ecg_adv_gen.data import write_data_path_manifest  # noqa: E402
+from ecg_adv_gen.evidence import finalize_run_record  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -83,6 +84,11 @@ def _render_command_with_env(command: dict) -> str:
     return f"{env_prefix} {rendered}".strip()
 
 
+def _experiment_purpose(config: dict) -> str:
+    experiment = config.get("experiment") or {}
+    return str(experiment.get("purpose") or experiment.get("description") or "")
+
+
 def _write_plan_files(
     out_dir: Path,
     config: dict,
@@ -122,7 +128,13 @@ def _write_plan_files(
         json.dumps(manifest, indent=2, sort_keys=True, ensure_ascii=True, default=str) + "\n",
         encoding="utf-8",
     )
-    return manifest
+    finalize_run_record(
+        out_dir,
+        purpose=_experiment_purpose(config),
+        result_summary="Run plan files were written; execution has not completed yet.",
+        outcome=str(manifest.get("status", "dry_run")),
+    )
+    return json.loads((out_dir / "run_manifest.json").read_text(encoding="utf-8"))
 
 
 def main() -> int:
@@ -223,6 +235,10 @@ def main() -> int:
             )
             run_legacy_commands(commands, run_dir=out_dir, manifest_path=manifest_path)
             run_postprocess_commands(postprocess_commands, run_dir=out_dir, manifest_path=manifest_path)
+            finalize_run_record(
+                out_dir,
+                purpose=_experiment_purpose(config),
+            )
         except LaunchError as exc:
             print(f"[launch-error] {exc}", file=sys.stderr)
             return 3

@@ -30,6 +30,9 @@ launcher:
     - data_manifest.json
     - k500_ref_ids.json
     - selection.json
+    - run_card.json
+    - run_file_index.json
+    - summary.md
   content_checks:
     - eval_result_mapping_metadata
     - k500_ref_ids_integrity
@@ -52,6 +55,22 @@ launcher:
       - scripts/export_metrics_long.py
       - scripts/merge_metrics_long.py
       - scripts/export_paper_table.py
+
+run_record_layout:
+  status: active
+  required_files:
+    - run_card.json
+    - run_file_index.json
+    - summary.md
+  required_directories:
+    - configs/
+    - manifests/
+    - logs/
+    - checkpoints/
+    - eval/
+    - diagnostics/
+    - reports/
+    - artifacts/
 
 managed_experiments:
   - name: effnet_direct_k500_v6
@@ -216,6 +235,32 @@ reporting_tools:
       - builds_from_registry_declared_metrics_only
       - refuses_nonempty_output_without_force
       - records_source_metric_hashes_and_baseline_run_id
+
+  - name: run_finalizer
+    status: active
+    script: scripts/agent/finalize_run.py
+    package: ecg_adv_gen/evidence/run_record.py
+    output_artifacts:
+      - run_card.json
+      - run_file_index.json
+      - summary.md
+    safety_rules:
+      - cpu_only_no_gpu_no_training
+      - writes_only_under_explicit_write_boundary
+      - records_experiment_purpose_result_summary_protocol_and_metric_summary
+      - creates_agent_readable_file_categories_without_moving_large_checkpoints
+
+  - name: run_registry_updater
+    status: active
+    script: scripts/agent/register_run.py
+    package: ecg_adv_gen/evidence/run_record.py
+    output_artifacts:
+      - configs/active_evidence_registry.yaml
+    safety_rules:
+      - cpu_only_no_gpu_no_training
+      - stores_run_paths_with_paths_output_root_placeholders
+      - idempotently_replaces_existing_run_registration
+      - refuses_run_dirs_outside_paths_output_root
 
 legacy_hold:
   - path: scripts/pgd_cross_center/synth_online_at_super5.py

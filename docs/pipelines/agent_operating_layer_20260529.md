@@ -55,6 +55,28 @@ The audit checks:
 - blocked checkpoint/dataset/run artifacts are not tracked or staged;
 - dirty external model handles are warnings, not failures, unless staged.
 
+Per-run finalization:
+
+```bash
+micromamba run -n ECGTwin python scripts/agent/finalize_run.py --run-dir <run_dir>
+micromamba run -n ECGTwin python scripts/agent/register_run.py --run-dir <run_dir> --status provisional
+```
+
+Every managed launcher run now records:
+
+- `run_card.json`: experiment purpose, outcome, result summary, protocol, and
+  metric summary;
+- `run_file_index.json`: logical file categories for configs, manifests, logs,
+  checkpoints, eval outputs, diagnostics, reports, and miscellaneous artifacts;
+- `summary.md`: short human/agent handoff note;
+- category directories: `configs/`, `manifests/`, `logs/`, `checkpoints/`,
+  `eval/`, `diagnostics/`, `reports/`, and `artifacts/`.
+
+`scripts/run_experiment.py --write-plan` creates an initial planned card.
+`--execute` refreshes it after child and postprocess artifacts finish. Older
+runs can be backfilled with `scripts/agent/finalize_run.py` without rerunning
+GPU training.
+
 Managed comparison bundle:
 
 ```bash

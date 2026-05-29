@@ -424,6 +424,9 @@ def attach_launch_artifacts(manifest: dict[str, Any], *, run_dir: Path) -> dict[
         "data_manifest.json": ("data_manifest", run_dir / "data_manifest.json"),
         "k500_ref_ids.json": ("k500_ref_ids", run_dir / "k500_ref_ids.json"),
         "selection.json": ("selection_record", run_dir / "selection.json"),
+        "run_card.json": ("run_card", run_dir / "run_card.json"),
+        "run_file_index.json": ("run_file_index", run_dir / "run_file_index.json"),
+        "summary.md": ("run_summary", run_dir / "summary.md"),
     }
     declared = expected.get("launch_artifacts_declared") or list(launch_specs)
     launch_artifacts = []

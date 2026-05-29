@@ -22,8 +22,11 @@ def make_repo(tmp_path: Path) -> Path:
     write(root / ".codex/skills/example/SKILL.md", "---\nname: example\ndescription: test\n---\n")
     write(root / "docs/codex-handoffs/2026-05-29-test.md", "# Handoff\n")
     write(root / "docs/pipelines/refactor_handoff.md", "# Refactor\n")
+    write(root / "docs/labeling/pn2021_review.md", "# Label Review\n")
+    write(root / "configs/label_mappings/pn2021_review.jsonl", "{}\n")
     write(root / "docs/tmp_md/run_summary.md", "# Summary\n")
     write(root / "configs/active_scripts.yaml", "version: 1\n")
+    write(root / "configs/active_evidence_registry.yaml", "schema_version: 1\n")
     return root
 
 
@@ -42,7 +45,10 @@ def test_audit_retrospective_inputs_json(tmp_path: Path) -> None:
     assert "AGENTS.md" in by_path
     assert ".codex/skills/example/SKILL.md" in by_path
     assert "docs/codex-handoffs/2026-05-29-test.md" in by_path
+    assert "docs/labeling/pn2021_review.md" in by_path
+    assert "configs/label_mappings/pn2021_review.jsonl" in by_path
     assert "configs/active_scripts.yaml" in by_path
+    assert "configs/active_evidence_registry.yaml" in by_path
     assert by_path["AGENTS.md"]["category"] == "core_memory"
     assert by_path["AGENTS.md"]["sha256"]
 

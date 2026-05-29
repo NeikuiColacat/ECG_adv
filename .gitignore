@@ -2,6 +2,19 @@ datasets/
 result/
 outputs/
 outputs
+runs/
+artifacts/
+checkpoints/
+mlruns/
+wandb/
+*.pt
+*.pth
+*.ckpt
+*.npz
+*.npy
+*.h5
+*.pkl
+*.mat
 
 # Trash / legacy artifacts (not tracked)
 trash/

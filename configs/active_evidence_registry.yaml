@@ -42,11 +42,36 @@ artifact_policy:
     - "*.mat"
   tracked_allowed_artifacts:
     - configs/**/*.yaml
+    - configs/label_mappings/*.jsonl
     - ecg_adv_gen/**/*.py
     - scripts/**/*.py
     - docs/**/*.md
-    - docs/tmp_jsonl/*.jsonl
+    - docs/reports/archive/**/*.html
+    - docs/tmp_md/*.html
+    - docs/tmp_html/*.html
     - util/tests/**/*.py
+
+run_record_policy:
+  required_files:
+    - run_card.json
+    - run_file_index.json
+    - summary.md
+  required_directories:
+    - configs/
+    - manifests/
+    - logs/
+    - checkpoints/
+    - eval/
+    - diagnostics/
+    - reports/
+    - artifacts/
+  required_narrative_fields:
+    - purpose
+    - result_summary
+  registration_command: micromamba run -n ECGTwin python scripts/agent/register_run.py --run-dir <run_dir> --status provisional
+  notes:
+    - Store registered run paths with ${paths.output_root} placeholders, not host absolute paths.
+    - Do not commit checkpoint or generated dataset payloads.
 
 active_claims:
   - claim_id: effnet_v7_vae_lhat_improves_direct_k500

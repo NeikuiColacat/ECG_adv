@@ -27,6 +27,7 @@
 | `refactor_phase12_handoff_20260528.md` | 1 小时收口后的 YAML wrapper / package helper 重构交接状态、验证证据和停止边界 |
 | `managed_v6_main_repro_20260528.md` | phase 1/2 重构后 managed-YAML 主实验 v6 复跑结果、指标和验收记录 |
 | `agent_operating_layer_20260529.md` | Active Evidence Registry、CPU-only agent audit、Direct vs VAE comparison bundle 和 VAE-AT checkpoint/resume contract |
+| `run_record_management_20260529.md` | 每次实验的 run_card、run_file_index、summary、分类目录和 registry 登记规则 |
 
 ## Docs 还是 Skill
 

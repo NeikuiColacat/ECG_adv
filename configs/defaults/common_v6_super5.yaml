@@ -71,6 +71,9 @@ logging:
     - data_manifest.json
     - k500_ref_ids.json
     - selection.json
+    - run_card.json
+    - run_file_index.json
+    - summary.md
   child_artifacts:
     - best_model.pt
     - training_log.json
