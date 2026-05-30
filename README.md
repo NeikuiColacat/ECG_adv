@@ -101,6 +101,12 @@ the committed `artifacts/evidence_pack/` result JSONs when the original data-dis
 paths are absent. Use `low_sample_rerun` only when the full synthetic-pretrain
 initialization checkpoints are present.
 
+For a quick code and UI smoke check:
+
+```bash
+uv run pytest apps/streamlit_ecg_demo/tests scripts/final_round/tests util/tests -q
+```
+
 ## External Model Repos
 
 External repositories are linked under `model/` and stored on the data disk.

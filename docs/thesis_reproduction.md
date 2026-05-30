@@ -237,7 +237,7 @@ model/DeepECG/
 uv run python -m compileall -q \
   apps scripts/final_round scripts/triple_labels scripts/deploy scripts/ecgtwin_author_repro scripts/ecgtwin_gen methods/ecgtwin_gen util adversarial
 
-uv run pytest util/tests -q
+uv run pytest apps/streamlit_ecg_demo/tests scripts/final_round/tests util/tests -q
 
 uv run streamlit run apps/streamlit_ecg_demo/app.py \
   --server.address 0.0.0.0 --server.port 8501 --server.headless true
