@@ -55,14 +55,19 @@ def copy_artifacts(
     include_optional: bool,
     include_nonpackage: bool,
     skip_missing: bool,
+    include_rerun: bool = False,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     copied = []
     missing = []
     for item in manifest.get("artifacts", []):
         required = bool(item.get("required", False))
         package = bool(item.get("package", True))
+        archive_required = bool(item.get("archive_required", True))
         if not package and not include_nonpackage:
             print(f"[skip] non-package artifact: {item['id']}")
+            continue
+        if not archive_required and not include_rerun:
+            print(f"[skip] full-rerun-only artifact: {item['id']}")
             continue
         if not required and not include_optional:
             continue
@@ -147,6 +152,7 @@ def main() -> None:
     parser.add_argument("--out_dir", default=str(DATA_ROOT / "thesis_archive_artifacts"))
     parser.add_argument("--include-optional", action="store_true")
     parser.add_argument("--include-nonpackage", action="store_true")
+    parser.add_argument("--include-rerun", action="store_true")
     parser.add_argument("--skip-missing", action="store_true")
     parser.add_argument("--tar", default=None, help="Optional output .tar.gz path.")
     args = parser.parse_args()
@@ -161,6 +167,7 @@ def main() -> None:
         out_dir,
         include_optional=args.include_optional,
         include_nonpackage=args.include_nonpackage,
+        include_rerun=args.include_rerun,
         skip_missing=args.skip_missing,
     )
     write_checksums(out_dir, copied)

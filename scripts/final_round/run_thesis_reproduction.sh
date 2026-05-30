@@ -36,7 +36,8 @@ Stages:
   env              Print resolved paths and Python command.
   restore_artifacts Restore migrate_files/*.tar.gz into ECG_ADV_DATA_ROOT.
   thesis_assets    Check local figure/image links referenced by thesis.md.
-  preflight        Check required artifact files from docs/artifact_manifest.json.
+  preflight        Check archive/package-required artifact files from docs/artifact_manifest.json.
+  preflight_full   Check all required full-rerun artifact/data dependencies.
   split            Create the PTB-XL super5 train2000/val2000/test17799 split.
   low_sample       Summarize Table 6.5-6.7 archived custom-split results.
   low_sample_rerun Re-run Table 6.5-6.7 training jobs; requires init checkpoints.
@@ -88,7 +89,11 @@ stage_split() {
 }
 
 stage_preflight() {
-  "${PYTHON_CMD[@]}" "${ROOT}/scripts/final_round/preflight_thesis_archive.py" --verify-sha
+  "${PYTHON_CMD[@]}" "${ROOT}/scripts/final_round/preflight_thesis_archive.py" --verify-sha --scope archive
+}
+
+stage_preflight_full() {
+  "${PYTHON_CMD[@]}" "${ROOT}/scripts/final_round/preflight_thesis_archive.py" --verify-sha --scope full
 }
 
 stage_thesis_assets() {
@@ -182,6 +187,7 @@ case "${STAGE}" in
   restore_artifacts) stage_restore_artifacts ;;
   thesis_assets) stage_thesis_assets ;;
   preflight) stage_preflight ;;
+  preflight_full) stage_preflight_full ;;
   split) stage_split ;;
   author_repro) stage_author_repro ;;
   low_sample) stage_low_sample ;;

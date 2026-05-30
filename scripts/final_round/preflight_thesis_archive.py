@@ -75,11 +75,47 @@ def check_artifact(item: dict[str, Any], *, verify_sha: bool) -> tuple[str, str]
     return ("ok", f"[ok:{label}] {item['id']} -> {path}")
 
 
+def should_check_item(item: dict[str, Any], *, scope: str, include_optional: bool) -> bool:
+    if not item.get("required", False) and not include_optional:
+        return False
+    if scope == "archive":
+        return bool(item.get("package", True)) and bool(item.get("archive_required", True))
+    if scope == "full":
+        return True
+    raise ValueError(f"unknown preflight scope: {scope}")
+
+
+def check_manifest(
+    manifest: dict[str, Any],
+    *,
+    verify_sha: bool,
+    scope: str,
+    include_optional: bool,
+) -> dict[str, int]:
+    statuses: dict[str, int] = {
+        "ok": 0,
+        "missing-required": 0,
+        "missing-optional": 0,
+        "bad": 0,
+        "skipped": 0,
+    }
+    for item in manifest.get("artifacts", []):
+        if not should_check_item(item, scope=scope, include_optional=include_optional):
+            statuses["skipped"] += 1
+            print(f"[skip:{scope}] {item['id']}")
+            continue
+        status, message = check_artifact(item, verify_sha=verify_sha)
+        statuses[status] = statuses.get(status, 0) + 1
+        print(message)
+    return statuses
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest", default=str(REPO_ROOT / "docs" / "artifact_manifest.json"))
     parser.add_argument("--verify-sha", action="store_true")
     parser.add_argument("--include-optional", action="store_true")
+    parser.add_argument("--scope", choices=["archive", "full"], default="archive")
     args = parser.parse_args()
 
     manifest_path = Path(args.manifest).expanduser()
@@ -89,21 +125,21 @@ def main() -> int:
         print(f"[error] no artifacts listed in {manifest_path}", file=sys.stderr)
         return 2
 
-    statuses: dict[str, int] = {"ok": 0, "missing-required": 0, "missing-optional": 0, "bad": 0}
-    for item in artifacts:
-        if not item.get("required", False) and not args.include_optional:
-            continue
-        status, message = check_artifact(item, verify_sha=args.verify_sha)
-        statuses[status] = statuses.get(status, 0) + 1
-        print(message)
+    statuses = check_manifest(
+        manifest,
+        verify_sha=args.verify_sha,
+        scope=args.scope,
+        include_optional=args.include_optional,
+    )
 
     print(
         "[summary] ok={ok} missing_required={missing_required} "
-        "missing_optional={missing_optional} bad={bad}".format(
+        "missing_optional={missing_optional} bad={bad} skipped={skipped}".format(
             ok=statuses.get("ok", 0),
             missing_required=statuses.get("missing-required", 0),
             missing_optional=statuses.get("missing-optional", 0),
             bad=statuses.get("bad", 0),
+            skipped=statuses.get("skipped", 0),
         )
     )
     if statuses.get("missing-required", 0) or statuses.get("bad", 0):

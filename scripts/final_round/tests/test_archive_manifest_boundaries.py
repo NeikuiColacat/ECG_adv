@@ -58,3 +58,11 @@ def test_reproduction_runner_exposes_restore_artifacts_stage():
 
     assert "restore_artifacts" in script
     assert "restore_migrate_artifacts.py" in script
+
+
+def test_reproduction_runner_separates_archive_and_full_preflight():
+    script = (REPO_ROOT / "scripts/final_round/run_thesis_reproduction.sh").read_text(encoding="utf-8")
+
+    assert "--scope archive" in script
+    assert "--scope full" in script
+    assert "preflight_full" in script

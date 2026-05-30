@@ -55,7 +55,8 @@ bash scripts/final_round/run_thesis_reproduction.sh env
 可用 stage：
 
 ```text
-preflight        检查 docs/artifact_manifest.json 中的完整复现数据、权重和结果文件
+preflight        检查 docs/artifact_manifest.json 中默认光盘归档必需的数据、权重和结果文件
+preflight_full   检查完整重跑所需的全部数据、权重和结果文件
 restore_artifacts 从 migrate_files/*.tar.gz 恢复已打包 artifacts 到 ECG_ADV_DATA_ROOT
 thesis_assets    检查 thesis.md 引用的本地图片是否都存在
 split            创建 PTB-XL super5 固定划分
@@ -163,10 +164,16 @@ ${ECG_ADV_APP_DATA_ROOT}/models/efficientnetv2_super5.onnx
 ${ECG_ADV_APP_DATA_ROOT}/models/efficientnetv2_super5_fp16.engine
 ```
 
-完整 artifact 清单见 `docs/artifact_manifest.json`。可用以下命令检查完整复现环境：
+完整 artifact 清单见 `docs/artifact_manifest.json`。可用以下命令检查默认光盘归档环境：
 
 ```bash
 bash scripts/final_round/run_thesis_reproduction.sh preflight
+```
+
+需要从原始数据和中间 checkpoint 完整重跑所有实验时，使用 full scope：
+
+```bash
+bash scripts/final_round/run_thesis_reproduction.sh preflight_full
 ```
 
 可用以下命令将当前机器上存在的可交付文件打包到
@@ -176,12 +183,18 @@ bash scripts/final_round/run_thesis_reproduction.sh preflight
 bash scripts/final_round/run_thesis_reproduction.sh package_artifacts
 ```
 
-默认打包只复制 `docs/artifact_manifest.json` 中允许随光盘交付的条目。PTB-XL 原始数据、
-PTB-XL 全量预处理 cache、MIMIC/ECGTwin 作者训练 cache 等授权或体积敏感数据保留为
-`package: false` 外部依赖；它们仍会被 `preflight` 检查，用于判断完整重跑环境是否齐备。
+默认打包只复制 `docs/artifact_manifest.json` 中允许随光盘交付且属于 archive scope
+的条目。PTB-XL 原始数据、PTB-XL 全量预处理 cache、MIMIC/ECGTwin 作者训练 cache
+等授权或体积敏感数据保留为 `package: false` 外部依赖；若需要判断完整重跑环境是否齐备，
+使用 `preflight_full`。精确复现表 6.8 的部分生成池和表 6.6/6.7 完整训练重跑所需的
+synthetic-pretrain 初始化 checkpoint 在 manifest 中标记为 `archive_required: false`；
+它们仍是 full scope 的必需项，但默认光盘包会跳过，避免把“完整重跑缺失件”误报为
+“毕业设计演示归档缺失件”。
 打包目录会额外写出 `artifact_manifest.resolved.json`、`checksums.sha256`、
-`missing_artifacts.json` 和 `missing_artifacts.md`，用于区分“已经随光盘交付的文件”和
-“完整重跑仍需补齐的文件”。
+`missing_artifacts.json` 和 `missing_artifacts.md`，用于记录 archive scope 中未能打包的
+可交付文件。完整重跑仍需补齐的外部数据和 `archive_required: false` 产物以
+`preflight_full` 输出为准；如确实需要把 full-rerun-only 文件也纳入打包检查，可直接运行
+`package_thesis_artifacts.py --include-rerun`。
 
 ECGTwin 作者复现还需要：
 

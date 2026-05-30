@@ -56,7 +56,8 @@ bash scripts/final_round/run_thesis_reproduction.sh streamlit
 |---|---|
 | restore `migrate_files` tar archives | `bash scripts/final_round/run_thesis_reproduction.sh restore_artifacts` |
 | thesis image/link check | `bash scripts/final_round/run_thesis_reproduction.sh thesis_assets` |
-| artifact/data preflight | `bash scripts/final_round/run_thesis_reproduction.sh preflight` |
+| archive artifact preflight | `bash scripts/final_round/run_thesis_reproduction.sh preflight` |
+| full rerun data/checkpoint preflight | `bash scripts/final_round/run_thesis_reproduction.sh preflight_full` |
 | PTB-XL train2000/val2000/test17799 split | `bash scripts/final_round/run_thesis_reproduction.sh split` |
 | ECGTwin IBE + DiT author reproduction | `bash scripts/final_round/run_thesis_reproduction.sh author_repro` |
 | Table 6.5-6.7 archived low-sample summary | `bash scripts/final_round/run_thesis_reproduction.sh low_sample` |
@@ -75,17 +76,24 @@ Detailed mapping from paper tables/figures to code and artifacts is in
 `docs/thesis_reproduction.md`, `docs/thesis_repro_manifest.json`, and
 `docs/artifact_manifest.json`.
 
-`preflight` checks the full reproduction environment, including authorized
-PTB-XL/MIMIC-derived data that is not committed to git. `package_artifacts`
-copies the packageable entries from `docs/artifact_manifest.json`, including
-the required model weights, ECGTwin checkpoints, demo samples, generated pools,
-ONNX export, optional TensorRT engine, and thesis evidence files. It writes
+`preflight` checks the default archive scope: files that are packageable and
+required for the delivered demo, evidence tables, figures, ONNX/TensorRT demo
+path, and shipped ECGTwin weights. `preflight_full` checks the full fresh-rerun
+scope, including authorized PTB-XL/MIMIC-derived data and exact Table 6.8 input
+pools or synthetic-pretrain initialization checkpoints that may be too large or
+license-sensitive for the default archive bundle. `package_artifacts` copies the
+archive-required packageable entries from `docs/artifact_manifest.json`,
+including the required model weights, ECGTwin checkpoints, demo samples,
+generated pools, ONNX export, optional TensorRT engine, and thesis evidence
+files. It writes
 `artifact_manifest.resolved.json`, `checksums.sha256`,
 `missing_artifacts.json`, and `missing_artifacts.md` under
 `${ECG_ADV_DATA_ROOT}/thesis_archive_artifacts/` so missing required files
 remain visible in both machine-readable and human-readable form. Manifest
 entries marked `package: false` are external data dependencies rather than
-default disc artifacts.
+default disc artifacts; entries marked `archive_required: false` remain required
+for a full rerun but are skipped by the default archive package unless
+`package_thesis_artifacts.py --include-rerun` is used.
 
 `low_sample` is the light archive verification path: it summarizes the shipped
 `train_result.json` files from the fixed PTB-XL custom split, falling back to

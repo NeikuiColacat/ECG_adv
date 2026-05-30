@@ -61,6 +61,48 @@ def test_copy_artifacts_reports_missing_when_skip_missing(tmp_path, monkeypatch)
     assert missing[1]["required"] is False
 
 
+def test_copy_artifacts_skips_full_rerun_only_by_default(tmp_path, monkeypatch):
+    data_root = tmp_path / "data"
+    data_root.mkdir()
+    archive_required = data_root / "archive-required.txt"
+    full_rerun_only = data_root / "full-rerun-only.txt"
+    archive_required.write_text("archive me\n", encoding="utf-8")
+    full_rerun_only.write_text("full rerun only\n", encoding="utf-8")
+    monkeypatch.setattr(pkg, "DATA_ROOT", data_root)
+
+    manifest = {
+        "artifacts": [
+            {
+                "id": "archive_required",
+                "path": "${ECG_ADV_DATA_ROOT}/archive-required.txt",
+                "kind": "text",
+                "required": True,
+                "package": True,
+            },
+            {
+                "id": "full_rerun_only",
+                "path": "${ECG_ADV_DATA_ROOT}/full-rerun-only.txt",
+                "kind": "text",
+                "required": True,
+                "package": True,
+                "archive_required": False,
+            },
+        ]
+    }
+
+    copied, missing = pkg.copy_artifacts(
+        manifest,
+        tmp_path / "out",
+        include_optional=True,
+        include_nonpackage=False,
+        include_rerun=False,
+        skip_missing=True,
+    )
+
+    assert [item["id"] for item in copied] == ["archive_required"]
+    assert missing == []
+
+
 def test_write_missing_markdown_lists_required_artifacts(tmp_path):
     missing = [
         {
