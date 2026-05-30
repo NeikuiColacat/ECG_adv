@@ -1,10 +1,10 @@
 {
   "generated_at": "2026-05-05T22:32:55.273763+00:00",
-  "out_dir": "/root/autodl-tmp/ECG_adv_Gen_graduate/final/artifacts/evidence_pack",
-  "implementation_repo": "/root/autodl-tmp/ECG_adv_Gen_graduate",
+  "out_dir": "artifacts/evidence_pack",
+  "implementation_repo": "${REPO_ROOT}",
   "implementation_repo_commit": "4e565a733e69bebce28ed0fd37b86ae9bd8784bf",
   "implementation_repo_branch": "graduate-project",
-  "thesis_repo": "/root/autodl-tmp/ECG_adv_Gen_graduate/final",
+  "thesis_repo": "${REPO_ROOT}",
   "thesis_repo_commit_before_pack": "f75462b6065c1811f9f0eb09df66fe17c321f75f",
   "thesis_repo_branch": "main",
   "tables": [
@@ -64,108 +64,108 @@
     "raw/train_results/synthetic_only_no_token_20k.train_result.json"
   ],
   "dataset_info": {
-    "split_json": "/root/autodl-tmp/graduate_project/splits/ptbxl_super5_seed42_train2000_val2000.json",
-    "label_npy": "/root/autodl-tmp/graduate_project/method_a_real2000_seed42/ptbxl_labels.C5.all.npy",
+    "split_json": "${ECG_ADV_GRAD_ROOT}/splits/ptbxl_super5_seed42_train2000_val2000.json",
+    "label_npy": "${ECG_ADV_GRAD_ROOT}/method_a_real2000_seed42/ptbxl_labels.C5.all.npy",
     "n_total": 21799,
-    "figure": "/root/autodl-tmp/ECG_adv_Gen_graduate/final/artifacts/evidence_pack/figures/dataset_label_distribution.png"
+    "figure": "artifacts/evidence_pack/figures/dataset_label_distribution.png"
   },
   "medical_info": {
-    "summary_json": "/root/autodl-tmp/final_round_ablation_20260504/medical_validity/medical_validity_summary.json",
-    "per_sample_csv": "/root/autodl-tmp/final_round_ablation_20260504/medical_validity/per_sample_quality.csv"
+    "summary_json": "${ECG_ADV_FINAL_ROUND_ROOT}/medical_validity/medical_validity_summary.json",
+    "per_sample_csv": "${ECG_ADV_FINAL_ROUND_ROOT}/medical_validity/per_sample_quality.csv"
   },
   "benchmark_info": {
-    "benchmark_json": "/root/autodl-tmp/streamlit_ecg_demo/reports/inference_benchmark.json",
-    "figure": "/root/autodl-tmp/ECG_adv_Gen_graduate/final/artifacts/evidence_pack/figures/inference_benchmark_bars.png"
+    "benchmark_json": "${ECG_ADV_APP_DATA_ROOT}/reports/inference_benchmark.json",
+    "figure": "artifacts/evidence_pack/figures/inference_benchmark_bars.png"
   },
   "low_sample_figures": {
-    "main_bar": "/root/autodl-tmp/ECG_adv_Gen_graduate/final/artifacts/evidence_pack/figures/low_sample_main_results_bar.png",
-    "ablation_rank": "/root/autodl-tmp/ECG_adv_Gen_graduate/final/artifacts/evidence_pack/figures/low_sample_ablation_auprc_rank.png"
+    "main_bar": "artifacts/evidence_pack/figures/low_sample_main_results_bar.png",
+    "ablation_rank": "artifacts/evidence_pack/figures/low_sample_ablation_auprc_rank.png"
   },
   "design_diagrams": {
-    "technical_route_diagram": "/root/autodl-tmp/ECG_adv_Gen_graduate/final/artifacts/evidence_pack/figures/technical_route_diagram.png",
-    "system_architecture_diagram": "/root/autodl-tmp/ECG_adv_Gen_graduate/final/artifacts/evidence_pack/figures/system_architecture_diagram.png"
+    "technical_route_diagram": "artifacts/evidence_pack/figures/technical_route_diagram.png",
+    "system_architecture_diagram": "artifacts/evidence_pack/figures/system_architecture_diagram.png"
   },
   "real_vs_synth_info": {
     "status": "ok",
     "figures": [
-      "/root/autodl-tmp/ECG_adv_Gen_graduate/final/artifacts/evidence_pack/figures/real_vs_synth/real_vs_synth_CD.png",
-      "/root/autodl-tmp/ECG_adv_Gen_graduate/final/artifacts/evidence_pack/figures/real_vs_synth/real_vs_synth_HYP.png",
-      "/root/autodl-tmp/ECG_adv_Gen_graduate/final/artifacts/evidence_pack/figures/real_vs_synth/real_vs_synth_MI.png",
-      "/root/autodl-tmp/ECG_adv_Gen_graduate/final/artifacts/evidence_pack/figures/real_vs_synth/real_vs_synth_NORM.png",
-      "/root/autodl-tmp/ECG_adv_Gen_graduate/final/artifacts/evidence_pack/figures/real_vs_synth/real_vs_synth_STTC.png"
+      "artifacts/evidence_pack/figures/real_vs_synth/real_vs_synth_CD.png",
+      "artifacts/evidence_pack/figures/real_vs_synth/real_vs_synth_HYP.png",
+      "artifacts/evidence_pack/figures/real_vs_synth/real_vs_synth_MI.png",
+      "artifacts/evidence_pack/figures/real_vs_synth/real_vs_synth_NORM.png",
+      "artifacts/evidence_pack/figures/real_vs_synth/real_vs_synth_STTC.png"
     ]
   },
   "copied_static_artifacts": {
-    "thesis_CD_12lead.png": "/root/autodl-tmp/ECG_adv_Gen_graduate/final/artifacts/evidence_pack/figures/generated_ecg_examples/thesis_CD_12lead.png",
-    "thesis_HYP_12lead.png": "/root/autodl-tmp/ECG_adv_Gen_graduate/final/artifacts/evidence_pack/figures/generated_ecg_examples/thesis_HYP_12lead.png",
-    "thesis_MI_12lead.png": "/root/autodl-tmp/ECG_adv_Gen_graduate/final/artifacts/evidence_pack/figures/generated_ecg_examples/thesis_MI_12lead.png",
-    "thesis_NORM_12lead.png": "/root/autodl-tmp/ECG_adv_Gen_graduate/final/artifacts/evidence_pack/figures/generated_ecg_examples/thesis_NORM_12lead.png",
-    "thesis_STTC_12lead.png": "/root/autodl-tmp/ECG_adv_Gen_graduate/final/artifacts/evidence_pack/figures/generated_ecg_examples/thesis_STTC_12lead.png",
-    "selected_examples.json": "/root/autodl-tmp/ECG_adv_Gen_graduate/final/artifacts/evidence_pack/figures/generated_ecg_examples/selected_examples.json",
-    "selected_examples.md": "/root/autodl-tmp/ECG_adv_Gen_graduate/final/artifacts/evidence_pack/figures/generated_ecg_examples/selected_examples.md",
-    "ibe_stage1_loss_curve.png": "/root/autodl-tmp/ECG_adv_Gen_graduate/final/artifacts/evidence_pack/figures/training_curves/ibe_stage1_loss_curve.png",
-    "dit_stage2_loss_curve.png": "/root/autodl-tmp/ECG_adv_Gen_graduate/final/artifacts/evidence_pack/figures/training_curves/dit_stage2_loss_curve.png"
+    "thesis_CD_12lead.png": "artifacts/evidence_pack/figures/generated_ecg_examples/thesis_CD_12lead.png",
+    "thesis_HYP_12lead.png": "artifacts/evidence_pack/figures/generated_ecg_examples/thesis_HYP_12lead.png",
+    "thesis_MI_12lead.png": "artifacts/evidence_pack/figures/generated_ecg_examples/thesis_MI_12lead.png",
+    "thesis_NORM_12lead.png": "artifacts/evidence_pack/figures/generated_ecg_examples/thesis_NORM_12lead.png",
+    "thesis_STTC_12lead.png": "artifacts/evidence_pack/figures/generated_ecg_examples/thesis_STTC_12lead.png",
+    "selected_examples.json": "artifacts/evidence_pack/figures/generated_ecg_examples/selected_examples.json",
+    "selected_examples.md": "artifacts/evidence_pack/figures/generated_ecg_examples/selected_examples.md",
+    "ibe_stage1_loss_curve.png": "artifacts/evidence_pack/figures/training_curves/ibe_stage1_loss_curve.png",
+    "dit_stage2_loss_curve.png": "artifacts/evidence_pack/figures/training_curves/dit_stage2_loss_curve.png"
   },
   "system_tests": [
     {
       "test_item": "PTB-XL preprocessing cache",
-      "input": "/root/autodl-tmp/triple_labels/cache/ptbxl_minimal_resample_per_sample_global_fs100_len1000.npy",
+      "input": "${ECG_ADV_TRIPLE_ROOT}/cache/ptbxl_minimal_resample_per_sample_global_fs100_len1000.npy",
       "expected": "(21799,1000,12) finite ECG array",
       "actual": "exists",
       "status": "pass"
     },
     {
       "test_item": "super5 label cache",
-      "input": "/root/autodl-tmp/graduate_project/method_a_real2000_seed42/ptbxl_labels.C5.all.npy",
+      "input": "${ECG_ADV_GRAD_ROOT}/method_a_real2000_seed42/ptbxl_labels.C5.all.npy",
       "expected": "(21799,5), class order CD/HYP/MI/NORM/STTC",
       "actual": "exists",
       "status": "pass"
     },
     {
       "test_item": "low-sample split",
-      "input": "/root/autodl-tmp/graduate_project/splits/ptbxl_super5_seed42_train2000_val2000.json",
+      "input": "${ECG_ADV_GRAD_ROOT}/splits/ptbxl_super5_seed42_train2000_val2000.json",
       "expected": "train=2000, val=2000, test=17799",
       "actual": "exists",
       "status": "pass"
     },
     {
       "test_item": "selected generated ECG figures",
-      "input": "/root/autodl-tmp/final_round_ablation_20260504/thesis_paper_selected_v1/selected_examples.json",
+      "input": "${ECG_ADV_FINAL_ROUND_ROOT}/thesis_paper_selected_v1/selected_examples.json",
       "expected": "five thesis-selected 12-lead PNGs and metadata",
       "actual": "exists",
       "status": "pass"
     },
     {
       "test_item": "selected generated ECG vectors",
-      "input": "/root/autodl-tmp/final_round_ablation_20260504/thesis_paper_selected_v1/thesis_selected_samples.npz",
+      "input": "${ECG_ADV_FINAL_ROUND_ROOT}/thesis_paper_selected_v1/thesis_selected_samples.npz",
       "expected": "signals shape (5,1000,12)",
       "actual": "exists",
       "status": "pass"
     },
     {
       "test_item": "medical validity summary",
-      "input": "/root/autodl-tmp/final_round_ablation_20260504/medical_validity/medical_validity_summary.json",
+      "input": "${ECG_ADV_FINAL_ROUND_ROOT}/medical_validity/medical_validity_summary.json",
       "expected": "quality and semantic gate summary",
       "actual": "exists",
       "status": "pass"
     },
     {
       "test_item": "ONNX export",
-      "input": "/root/autodl-tmp/streamlit_ecg_demo/models/efficientnetv2_super5.onnx",
+      "input": "${ECG_ADV_APP_DATA_ROOT}/models/efficientnetv2_super5.onnx",
       "expected": "classifier ONNX model",
       "actual": "exists",
       "status": "pass"
     },
     {
       "test_item": "TensorRT engine",
-      "input": "/root/autodl-tmp/streamlit_ecg_demo/models/efficientnetv2_super5_fp16.engine",
+      "input": "${ECG_ADV_APP_DATA_ROOT}/models/efficientnetv2_super5_fp16.engine",
       "expected": "FP16 TensorRT engine",
       "actual": "exists",
       "status": "pass"
     },
     {
       "test_item": "TensorRT numerical validation",
-      "input": "/root/autodl-tmp/streamlit_ecg_demo/reports/tensorrt_validation.json",
+      "input": "${ECG_ADV_APP_DATA_ROOT}/reports/tensorrt_validation.json",
       "expected": "max_abs_prob_diff below 1e-3",
       "actual": "exists",
       "status": "pass"
@@ -195,9 +195,9 @@
       "batch_size": 64,
       "preprocess_mode": "minimal_resample",
       "norm_mode": "per_sample_global",
-      "split_json": "/root/autodl-tmp/graduate_project/splits/ptbxl_super5_seed42_train2000_val2000.json",
-      "run_dir": "/root/autodl-tmp/graduate_project/method_a_real2000_seed42",
-      "result_json": "/root/autodl-tmp/graduate_project/method_a_real2000_seed42/train_result.json",
+      "split_json": "${ECG_ADV_GRAD_ROOT}/splits/ptbxl_super5_seed42_train2000_val2000.json",
+      "run_dir": "${ECG_ADV_GRAD_ROOT}/method_a_real2000_seed42",
+      "result_json": "${ECG_ADV_GRAD_ROOT}/method_a_real2000_seed42/train_result.json",
       "note": "Paper main baseline run paired with the original downstream comparison.",
       "paper_main": true,
       "delta_auroc_vs_real2000": 0.0,
@@ -219,9 +219,9 @@
       "batch_size": 64,
       "preprocess_mode": "minimal_resample",
       "norm_mode": "per_sample_global",
-      "split_json": "/root/autodl-tmp/graduate_project/splits/ptbxl_super5_seed42_train2000_val2000.json",
-      "run_dir": "/root/autodl-tmp/graduate_project/self_distill_v2_e24_v46_no_token_hardlabel_r10_realfine_lr1e4_seed42_auroc",
-      "result_json": "/root/autodl-tmp/graduate_project/self_distill_v2_e24_v46_no_token_hardlabel_r10_realfine_lr1e4_seed42_auroc/train_result.json",
+      "split_json": "${ECG_ADV_GRAD_ROOT}/splits/ptbxl_super5_seed42_train2000_val2000.json",
+      "run_dir": "${ECG_ADV_GRAD_ROOT}/self_distill_v2_e24_v46_no_token_hardlabel_r10_realfine_lr1e4_seed42_auroc",
+      "result_json": "${ECG_ADV_GRAD_ROOT}/self_distill_v2_e24_v46_no_token_hardlabel_r10_realfine_lr1e4_seed42_auroc/train_result.json",
       "note": "Strict no-token hard-label pretrain followed by real2000 fine-tune.",
       "paper_main": true,
       "delta_auroc_vs_real2000": 0.023599999999999954,
@@ -243,9 +243,9 @@
       "batch_size": 64,
       "preprocess_mode": "minimal_resample",
       "norm_mode": "per_sample_global",
-      "split_json": "/root/autodl-tmp/graduate_project/splits/ptbxl_super5_seed42_train2000_val2000.json",
-      "run_dir": "/root/autodl-tmp/graduate_project/self_distill_v2_e23_v46_class_oracle_hardlabel_r10_realfine_lr1e4_seed42_auroc",
-      "result_json": "/root/autodl-tmp/graduate_project/self_distill_v2_e23_v46_class_oracle_hardlabel_r10_realfine_lr1e4_seed42_auroc/train_result.json",
+      "split_json": "${ECG_ADV_GRAD_ROOT}/splits/ptbxl_super5_seed42_train2000_val2000.json",
+      "run_dir": "${ECG_ADV_GRAD_ROOT}/self_distill_v2_e23_v46_class_oracle_hardlabel_r10_realfine_lr1e4_seed42_auroc",
+      "result_json": "${ECG_ADV_GRAD_ROOT}/self_distill_v2_e23_v46_class_oracle_hardlabel_r10_realfine_lr1e4_seed42_auroc/train_result.json",
       "note": "Best thesis low-sample recipe.",
       "paper_main": true,
       "delta_auroc_vs_real2000": 0.030200000000000005,
@@ -267,9 +267,9 @@
       "batch_size": 64,
       "preprocess_mode": "minimal_resample",
       "norm_mode": "per_sample_global",
-      "split_json": "/root/autodl-tmp/graduate_project/splits/ptbxl_super5_seed42_train2000_val2000.json",
-      "run_dir": "/root/autodl-tmp/graduate_project/method_b_real2000_plus_synth3364_mv4_seed42",
-      "result_json": "/root/autodl-tmp/graduate_project/method_b_real2000_plus_synth3364_mv4_seed42/train_result.json",
+      "split_json": "${ECG_ADV_GRAD_ROOT}/splits/ptbxl_super5_seed42_train2000_val2000.json",
+      "run_dir": "${ECG_ADV_GRAD_ROOT}/method_b_real2000_plus_synth3364_mv4_seed42",
+      "result_json": "${ECG_ADV_GRAD_ROOT}/method_b_real2000_plus_synth3364_mv4_seed42/train_result.json",
       "note": "Direct real+synth training from random init.",
       "paper_main": false
     },
@@ -289,9 +289,9 @@
       "batch_size": 64,
       "preprocess_mode": "minimal_resample",
       "norm_mode": "per_sample_global",
-      "split_json": "/root/autodl-tmp/graduate_project/splits/ptbxl_super5_seed42_train2000_val2000.json",
-      "run_dir": "/root/autodl-tmp/graduate_project/method_b_real2000_plus_synth3313_actual_report_mv4_step2000_seed42",
-      "result_json": "/root/autodl-tmp/graduate_project/method_b_real2000_plus_synth3313_actual_report_mv4_step2000_seed42/train_result.json",
+      "split_json": "${ECG_ADV_GRAD_ROOT}/splits/ptbxl_super5_seed42_train2000_val2000.json",
+      "run_dir": "${ECG_ADV_GRAD_ROOT}/method_b_real2000_plus_synth3313_actual_report_mv4_step2000_seed42",
+      "result_json": "${ECG_ADV_GRAD_ROOT}/method_b_real2000_plus_synth3313_actual_report_mv4_step2000_seed42/train_result.json",
       "note": "Actual-report prompt variant.",
       "paper_main": false
     },
@@ -311,9 +311,9 @@
       "batch_size": 64,
       "preprocess_mode": "minimal_resample",
       "norm_mode": "per_sample_global",
-      "split_json": "/root/autodl-tmp/graduate_project/splits/ptbxl_super5_seed42_train2000_val2000.json",
-      "run_dir": "/root/autodl-tmp/graduate_project/method_b_real2000_plus_synth3391_classfallback_newgen_sameclass_cap20_seed42",
-      "result_json": "/root/autodl-tmp/graduate_project/method_b_real2000_plus_synth3391_classfallback_newgen_sameclass_cap20_seed42/train_result.json",
+      "split_json": "${ECG_ADV_GRAD_ROOT}/splits/ptbxl_super5_seed42_train2000_val2000.json",
+      "run_dir": "${ECG_ADV_GRAD_ROOT}/method_b_real2000_plus_synth3391_classfallback_newgen_sameclass_cap20_seed42",
+      "result_json": "${ECG_ADV_GRAD_ROOT}/method_b_real2000_plus_synth3391_classfallback_newgen_sameclass_cap20_seed42/train_result.json",
       "note": "Class-fallback prompt variant.",
       "paper_main": false
     },
@@ -333,13 +333,13 @@
       "batch_size": 64,
       "preprocess_mode": "minimal_resample",
       "norm_mode": "per_sample_global",
-      "split_json": "/root/autodl-tmp/graduate_project/splits/ptbxl_super5_seed42_train2000_val2000.json",
-      "run_dir": "/root/autodl-tmp/graduate_project/ablation_vanilla_no_token_synthonly_pretrain_n20000_seed42",
-      "result_json": "/root/autodl-tmp/graduate_project/ablation_vanilla_no_token_synthonly_pretrain_n20000_seed42/train_result.json",
+      "split_json": "${ECG_ADV_GRAD_ROOT}/splits/ptbxl_super5_seed42_train2000_val2000.json",
+      "run_dir": "${ECG_ADV_GRAD_ROOT}/ablation_vanilla_no_token_synthonly_pretrain_n20000_seed42",
+      "result_json": "${ECG_ADV_GRAD_ROOT}/ablation_vanilla_no_token_synthonly_pretrain_n20000_seed42/train_result.json",
       "note": "Synthetic-only classifier is weak without real fine-tuning.",
       "paper_main": false
     }
   ],
-  "selected_synth_npz_not_duplicated": "/root/autodl-tmp/final_round_ablation_20260504/thesis_paper_selected_v1/thesis_selected_samples.npz",
+  "selected_synth_npz_not_duplicated": "${ECG_ADV_FINAL_ROUND_ROOT}/thesis_paper_selected_v1/thesis_selected_samples.npz",
   "curation_note": "Curated for the ECG_adv thesis archive branch: legacy Latent-Hull, teacher-distillation, soft self-distillation, and rerun-only rows were removed from the committed evidence pack."
 }

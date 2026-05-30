@@ -138,7 +138,14 @@
           "reported_result": {
             "test_macro_auroc": 0.8477,
             "test_macro_auprc": 0.6419
-          }
+          },
+          "init": "random",
+          "init_ckpt": null,
+          "output_files": [
+            "${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/center_token_joint_seed42/train_result.json",
+            "${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/center_token_joint_seed42/training_log.json",
+            "${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/center_token_joint_seed42/best_model_auroc.pt"
+          ]
         },
         {
           "paper_method": "报告文本联合训练",
@@ -149,7 +156,14 @@
           "reported_result": {
             "test_macro_auroc": 0.8412,
             "test_macro_auprc": 0.6239
-          }
+          },
+          "init": "random",
+          "init_ckpt": null,
+          "output_files": [
+            "${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/report_text_joint_seed42/train_result.json",
+            "${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/report_text_joint_seed42/training_log.json",
+            "${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/report_text_joint_seed42/best_model_auroc.pt"
+          ]
         },
         {
           "paper_method": "默认文本联合训练",
@@ -160,7 +174,14 @@
           "reported_result": {
             "test_macro_auroc": 0.8432,
             "test_macro_auprc": 0.6065
-          }
+          },
+          "init": "random",
+          "init_ckpt": null,
+          "output_files": [
+            "${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/default_text_joint_seed42/train_result.json",
+            "${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/default_text_joint_seed42/training_log.json",
+            "${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/default_text_joint_seed42/best_model_auroc.pt"
+          ]
         },
         {
           "paper_method": "无提示向量仅合成训练",
@@ -171,7 +192,14 @@
           "reported_result": {
             "test_macro_auroc": 0.6023,
             "test_macro_auprc": 0.3851
-          }
+          },
+          "init": "random",
+          "init_ckpt": null,
+          "output_files": [
+            "${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/no_token_synthetic_only_seed5042/train_result.json",
+            "${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/no_token_synthetic_only_seed5042/training_log.json",
+            "${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/no_token_synthetic_only_seed5042/best_model_auroc.pt"
+          ]
         },
         {
           "paper_method": "中心提示向量预训练",
@@ -182,7 +210,13 @@
           "reported_result": {
             "test_macro_auroc": 0.8735,
             "test_macro_auprc": 0.7013
-          }
+          },
+          "init": "init_ckpt",
+          "output_files": [
+            "${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/center_token_pretrain_realfine_seed42/train_result.json",
+            "${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/center_token_pretrain_realfine_seed42/training_log.json",
+            "${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/center_token_pretrain_realfine_seed42/best_model_auroc.pt"
+          ]
         }
       ],
       "artifacts": [
@@ -190,7 +224,9 @@
         "${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/report_text_joint_seed42/",
         "${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/default_text_joint_seed42/",
         "${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/no_token_synthetic_only_seed5042/",
-        "${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/center_token_pretrain_realfine_seed42/"
+        "${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/center_token_pretrain_realfine_seed42/",
+        "${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/table_6_8_summary.csv",
+        "${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/table_6_8_summary.json"
       ]
     },
     {

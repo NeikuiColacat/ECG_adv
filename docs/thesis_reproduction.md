@@ -109,14 +109,18 @@ bash scripts/final_round/run_thesis_reproduction.sh thesis_assets
 
 `ablation_6_8` stage 固定使用 `scripts/final_round/run_table_6_8_ablations.sh`。基础训练参数为
 `--scheme super5 --preprocess_mode minimal_resample --norm_mode per_sample_global --crop_len 1000 --checkpoint_metric auroc --lr 0.01 --weight_decay 0.01 --cosine_tmax 15 --patience 10 --epochs ${EPOCHS:-50}`。
+五个训练目录都会写出 `train_result.json`、`training_log.json` 和 best checkpoint；全部完成后，
+脚本会额外在 `${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/` 写出
+`table_6_8_summary.csv` 和 `table_6_8_summary.json`。`evidence` stage 默认优先读取最新
+`table_6_8_ablation_*/table_6_8_summary.csv`，没有 rerun 结果时再回退到仓库内归档 CSV。
 
-| 论文方法 | 输入 | 输出目录 | 额外训练参数 |
-|---|---|---|---|
-| 提示向量联合训练 | `${ECG_ADV_GRAD_ROOT}/method_b_synth_candidates_mv4_seed42/ptbxl/gated_max1000/gated_samples.npz` | `${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/center_token_joint_seed42/` | `--synth_ratio 1.0 --seed 42` |
-| 报告文本联合训练 | `${ECG_ADV_GRAD_ROOT}/method_b_synth_candidates_actual_report_mv4_step2000_seed42/ptbxl/gated_max1000/gated_samples.npz` | `${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/report_text_joint_seed42/` | `--synth_ratio 1.0 --seed 42` |
-| 默认文本联合训练 | `${ECG_ADV_GRAD_ROOT}/method_b_synth_candidates_classfallback_newgen_sameclass_cap20_seed42/ptbxl/gated_max1000/gated_samples.npz` | `${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/default_text_joint_seed42/` | `--synth_ratio 1.0 --seed 42` |
-| 无提示向量仅合成训练 | `${ECG_ADV_GRAD_ROOT}/vanilla_ecgtwin_synth_candidates_n20000_translated_randomany_seed42/ptbxl/samples.npz` | `${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/no_token_synthetic_only_seed5042/` | `--synthetic_only --epochs 30 --patience 8 --seed 5042` |
-| 中心提示向量预训练 | `${ECG_ADV_GRAD_ROOT}/self_distill_v2_e18_v46_class_oracle_hardlabel_r10_seed42_auroc/best_model.pt` | `${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/center_token_pretrain_realfine_seed42/` | `--init_ckpt <ckpt> --lr 0.0001 --cosine_tmax 10 --patience 8 --epochs 25 --seed 9042` |
+| 论文方法 | 输入 | 初始化 | 输出目录 | 额外训练参数 |
+|---|---|---|---|---|
+| 提示向量联合训练 | `${ECG_ADV_GRAD_ROOT}/method_b_synth_candidates_mv4_seed42/ptbxl/gated_max1000/gated_samples.npz` | random init | `${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/center_token_joint_seed42/` | `--synth_ratio 1.0 --seed 42` |
+| 报告文本联合训练 | `${ECG_ADV_GRAD_ROOT}/method_b_synth_candidates_actual_report_mv4_step2000_seed42/ptbxl/gated_max1000/gated_samples.npz` | random init | `${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/report_text_joint_seed42/` | `--synth_ratio 1.0 --seed 42` |
+| 默认文本联合训练 | `${ECG_ADV_GRAD_ROOT}/method_b_synth_candidates_classfallback_newgen_sameclass_cap20_seed42/ptbxl/gated_max1000/gated_samples.npz` | random init | `${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/default_text_joint_seed42/` | `--synth_ratio 1.0 --seed 42` |
+| 无提示向量仅合成训练 | `${ECG_ADV_GRAD_ROOT}/vanilla_ecgtwin_synth_candidates_n20000_translated_randomany_seed42/ptbxl/samples.npz` | random init | `${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/no_token_synthetic_only_seed5042/` | `--synthetic_only --epochs 30 --patience 8 --seed 5042` |
+| 中心提示向量预训练 | 真实 2000 固定划分 | `${ECG_ADV_GRAD_ROOT}/self_distill_v2_e18_v46_class_oracle_hardlabel_r10_seed42_auroc/best_model.pt` | `${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/center_token_pretrain_realfine_seed42/` | `--init_ckpt <ckpt> --lr 0.0001 --cosine_tmax 10 --patience 8 --epochs 25 --seed 9042` |
 
 ## 4. 必需数据与权重
 

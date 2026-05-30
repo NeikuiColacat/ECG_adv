@@ -113,4 +113,7 @@ run_train "$OUT_ROOT/center_token_pretrain_realfine_seed42" \
   --epochs 25 \
   --seed 9042
 
+"${PYTHON_CMD[@]}" "$ROOT/scripts/final_round/summarize_table_6_8_results.py" \
+  --run_root "$OUT_ROOT"
+
 echo "[done] Table 6.8 ablation commands complete: $OUT_ROOT"

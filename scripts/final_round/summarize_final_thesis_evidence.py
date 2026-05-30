@@ -11,11 +11,19 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DATA_ROOT = Path(os.environ.get("ECG_ADV_DATA_ROOT", Path.home() / "autodl-tmp")).expanduser()
 GRAD_ROOT = Path(os.environ.get("ECG_ADV_GRAD_ROOT", DATA_ROOT / "graduate_project")).expanduser()
+PTBXL_ROOT = Path(os.environ.get("ECG_ADV_PTBXL_ROOT", DATA_ROOT / "ptbxl")).expanduser()
 STREAMLIT_ROOT = Path(os.environ.get("ECG_ADV_APP_DATA_ROOT", DATA_ROOT / "streamlit_ecg_demo")).expanduser()
 FINAL_ROUND_ROOT = Path(
     os.environ.get("ECG_ADV_FINAL_ROUND_ROOT", DATA_ROOT / "final_round_ablation_20260504")
 ).expanduser()
 EVIDENCE_PACK = REPO_ROOT / "artifacts" / "evidence_pack"
+TABLE68_METHODS = {
+    "method_b_real_synth_mv4": "提示向量联合训练",
+    "method_b_actual_report": "报告文本联合训练",
+    "method_b_classfallback": "默认文本联合训练",
+    "synthetic_only_no_token_20k": "无提示向量仅合成训练",
+    "center_token_hard_ft": "中心提示向量预训练",
+}
 
 
 def first_existing(*paths: Path) -> Path:
@@ -51,6 +59,41 @@ def resolve_default_low_sample_results(
     }
 
 
+def table68_summary_complete(path: Path) -> bool:
+    try:
+        with path.open(newline="", encoding="utf-8") as f:
+            rows = list(csv.DictReader(f))
+    except OSError:
+        return False
+
+    found: set[str] = set()
+    for row in rows:
+        key = row.get("key", "")
+        if key not in TABLE68_METHODS:
+            continue
+        if row.get("status", "ok") != "ok":
+            return False
+        try:
+            float(row.get("test_macro_auroc", ""))
+            float(row.get("test_macro_auprc", ""))
+        except ValueError:
+            return False
+        found.add(key)
+    return found == set(TABLE68_METHODS)
+
+
+def resolve_default_table68(
+    *,
+    grad_root: Path = GRAD_ROOT,
+    evidence_pack: Path = EVIDENCE_PACK,
+) -> Path:
+    rerun_summaries = sorted(grad_root.glob("table_6_8_ablation_*/table_6_8_summary.csv"))
+    for summary in reversed(rerun_summaries):
+        if table68_summary_complete(summary):
+            return summary
+    return evidence_pack / "tables" / "low_sample_ablation_results.csv"
+
+
 DEFAULT_LOW_SAMPLE_RESULTS = resolve_default_low_sample_results()
 DEFAULT_REAL = DEFAULT_LOW_SAMPLE_RESULTS["real_result"]
 DEFAULT_NO_TOKEN = DEFAULT_LOW_SAMPLE_RESULTS["no_token_result"]
@@ -69,8 +112,44 @@ DEFAULT_MEDICAL = first_existing(
     FINAL_ROUND_ROOT / "medical_validity" / "medical_validity_summary.json",
     EVIDENCE_PACK / "raw" / "medical_validity_summary.json",
 )
-DEFAULT_TABLE68 = EVIDENCE_PACK / "tables" / "low_sample_ablation_results.csv"
+DEFAULT_TABLE68 = resolve_default_table68()
 DEFAULT_OUT_DIR = FINAL_ROUND_ROOT / "final_evidence"
+
+
+def portable_text(value: str | None) -> str:
+    if not value:
+        return ""
+    replacements = [
+        (str(GRAD_ROOT), "${ECG_ADV_GRAD_ROOT}"),
+        (str(PTBXL_ROOT), "${ECG_ADV_PTBXL_ROOT}"),
+        (str(STREAMLIT_ROOT), "${ECG_ADV_APP_DATA_ROOT}"),
+        (str(FINAL_ROUND_ROOT), "${ECG_ADV_FINAL_ROUND_ROOT}"),
+        (str(DATA_ROOT), "${ECG_ADV_DATA_ROOT}"),
+        ("/root/autodl-tmp/graduate_project", "${ECG_ADV_GRAD_ROOT}"),
+        ("/root/autodl-tmp/ptbxl", "${ECG_ADV_PTBXL_ROOT}"),
+        ("/root/autodl-tmp/streamlit_ecg_demo", "${ECG_ADV_APP_DATA_ROOT}"),
+        ("/root/autodl-tmp/final_round_ablation_20260504", "${ECG_ADV_FINAL_ROUND_ROOT}"),
+        ("/root/autodl-tmp", "${ECG_ADV_DATA_ROOT}"),
+        ("/home/neiku/autodl-tmp/graduate_project", "${ECG_ADV_GRAD_ROOT}"),
+        ("/home/neiku/autodl-tmp/ptbxl", "${ECG_ADV_PTBXL_ROOT}"),
+        ("/home/neiku/autodl-tmp/streamlit_ecg_demo", "${ECG_ADV_APP_DATA_ROOT}"),
+        ("/home/neiku/autodl-tmp/final_round_ablation_20260504", "${ECG_ADV_FINAL_ROUND_ROOT}"),
+        ("/home/neiku/autodl-tmp", "${ECG_ADV_DATA_ROOT}"),
+    ]
+    text = str(value)
+    for old, new in sorted(replacements, key=lambda pair: len(pair[0]), reverse=True):
+        text = text.replace(old, new)
+    return text
+
+
+def sanitize_paths(value):
+    if isinstance(value, str):
+        return portable_text(value)
+    if isinstance(value, list):
+        return [sanitize_paths(item) for item in value]
+    if isinstance(value, dict):
+        return {key: sanitize_paths(item) for key, item in value.items()}
+    return value
 
 
 def load_json(path: str | Path) -> dict:
@@ -130,25 +209,18 @@ def summarize_medical_validity(path: Path) -> dict:
 
 
 def summarize_table68(path: Path) -> dict:
-    wanted = {
-        "method_b_real_synth_mv4": "提示向量联合训练",
-        "method_b_actual_report": "报告文本联合训练",
-        "method_b_classfallback": "默认文本联合训练",
-        "synthetic_only_no_token_20k": "无提示向量仅合成训练",
-        "center_token_hard_ft": "中心提示向量预训练",
-    }
     rows = []
     with path.open(newline="", encoding="utf-8") as f:
         for row in csv.DictReader(f):
             key = row.get("key", "")
-            if key in wanted:
+            if key in TABLE68_METHODS:
                 rows.append({
                     "key": key,
-                    "paper_method": wanted[key],
+                    "paper_method": TABLE68_METHODS[key],
                     "test_macro_auroc": float(row["test_macro_auroc"]),
                     "test_macro_auprc": float(row["test_macro_auprc"]),
-                    "run_dir": row.get("run_dir", ""),
-                    "result_json": row.get("result_json", ""),
+                    "run_dir": portable_text(row.get("run_dir", "")),
+                    "result_json": portable_text(row.get("result_json", "")),
                 })
     if not any(row["key"] == "center_token_hard_ft" for row in rows):
         center_path = EVIDENCE_PACK / "raw" / "train_results" / "center_token_hard_ft.train_result.json"
@@ -159,8 +231,8 @@ def summarize_table68(path: Path) -> dict:
                 "paper_method": "中心提示向量预训练",
                 "test_macro_auroc": float(data["test_macro_auroc"]),
                 "test_macro_auprc": float(data["test_macro_auprc"]),
-                "run_dir": str(Path(data.get("config", {}).get("output_dir", ""))),
-                "result_json": str(center_path),
+                "run_dir": portable_text(data.get("config", {}).get("output_dir", "")),
+                "result_json": portable_text(str(center_path)),
             })
     return {"path": str(path), "rows": rows}
 
@@ -311,6 +383,7 @@ def main() -> None:
         "benchmark": summarize_benchmark(Path(args.benchmark)),
         "five_class_figures": load_json(args.figures),
     }
+    payload = sanitize_paths(payload)
     json_path = out_dir / "final_thesis_evidence_summary.json"
     md_path = out_dir / "final_thesis_evidence_summary.md"
     json_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")

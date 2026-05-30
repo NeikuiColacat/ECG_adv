@@ -627,8 +627,8 @@
         "thesis evidence traceability"
       ],
       "description": "Manifest for the small thesis evidence pack committed with the archive branch.",
-      "sha256": "c0baccfb8926a784ceaeb6936201f46f5adc4a235fbad4536b7cd438239a7c0d",
-      "size_bytes": 16597,
+      "sha256": "0a0b2daeaa9962e3c732c0f034eba59399912bff7e61d33536acbadbb34d35c6",
+      "size_bytes": 15126,
       "can_regenerate": true,
       "regenerate_command": "bash scripts/final_round/run_thesis_reproduction.sh evidence"
     },
@@ -1098,6 +1098,22 @@
       "size_bytes": null,
       "can_regenerate": true,
       "regenerate_command": "Run the center-token synthetic-pretraining job described in docs/thesis_reproduction.md."
+    },
+    {
+      "id": "table68_archived_summary_csv",
+      "path": "${REPO_ROOT}/artifacts/evidence_pack/tables/low_sample_ablation_results.csv",
+      "kind": "result_table",
+      "required": true,
+      "package": true,
+      "used_by": [
+        "Table 6.8",
+        "evidence stage fallback"
+      ],
+      "description": "Archived Table 6.8 CSV summary consumed when no fresh table_6_8_ablation_<tag>/table_6_8_summary.csv exists.",
+      "sha256": "cf2b3f0ddc800e09a909dabc811bc7334d91a2604cbe5e8d9f50fbd34c47c831",
+      "size_bytes": 2201,
+      "can_regenerate": true,
+      "regenerate_command": "bash scripts/final_round/run_thesis_reproduction.sh ablation_6_8"
     }
   ]
 }
