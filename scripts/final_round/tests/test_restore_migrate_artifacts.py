@@ -66,6 +66,24 @@ def test_restore_archives_dry_run_does_not_extract(tmp_path):
     assert not (out_dir / "graduate_project/run/train_result.json").exists()
 
 
+def test_restore_archives_supports_external_repro_bundle_pattern(tmp_path):
+    bundle_dir = tmp_path / "bundle"
+    out_dir = tmp_path / "data"
+    bundle_dir.mkdir()
+    archive = bundle_dir / "ecg_grad_repro_no_pn2021_20260523.tar.gz"
+    _write_tar(archive, {"graduate_project/run/best_model.pt": b"weights\n"})
+    _write_checksums(bundle_dir, archive)
+
+    restored = restore.restore_archives(
+        migrate_dir=bundle_dir,
+        out_dir=out_dir,
+        archive_patterns=("ecg_grad_repro_no_pn2021_*.tar.gz",),
+    )
+
+    assert restored[0]["archive"] == str(archive)
+    assert (out_dir / "graduate_project/run/best_model.pt").read_text(encoding="utf-8") == "weights\n"
+
+
 def test_restore_archives_rejects_path_traversal(tmp_path):
     migrate_dir = tmp_path / "migrate_files"
     out_dir = tmp_path / "data"

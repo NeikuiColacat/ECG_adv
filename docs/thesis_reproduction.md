@@ -32,9 +32,9 @@ export ECG_ADV_FINAL_ROUND_ROOT="${ECG_ADV_DATA_ROOT}/final_round_ablation_20260
 bash scripts/bootstrap_model_repos.sh
 ```
 
-如果当前仓库带有 `migrate_files/ecg_grad_*_artifacts_*.tar.gz`，先用下列命令把
-可随光盘交付的运行权重、demo 数据、ONNX/TensorRT 文件和轻量复现实验结果恢复到
-`ECG_ADV_DATA_ROOT`：
+如果当前仓库带有 `migrate_files/ecg_grad_*_artifacts_*.tar.gz`，或 workspace 上级目录带有
+`ecg_grad_repro_no_pn2021_*.tar.gz`，先用下列命令把可随光盘交付的运行权重、demo 数据、
+ONNX/TensorRT 文件和轻量复现实验结果恢复到 `ECG_ADV_DATA_ROOT`：
 
 ```bash
 bash scripts/final_round/run_thesis_reproduction.sh restore_artifacts
@@ -62,6 +62,7 @@ thesis_assets    检查 thesis.md 引用的本地图片是否都存在
 split            创建 PTB-XL super5 固定划分
 author_repro     复现 ECGTwin IBE + DiT 两阶段训练
 low_sample       汇总表 6.5-6.7 已归档的 custom split 结果
+synthetic_pretrain_init 重建表 6.6/6.7 完整重跑所需的合成预训练初始化 checkpoint
 low_sample_rerun 完整重跑表 6.5-6.7 训练，需要额外初始化 checkpoint
 ablation_6_8     逐项运行表 6.8 消融命令
 medical_validity 复现合成 ECG 质量代理统计
@@ -182,6 +183,18 @@ bash scripts/final_round/run_thesis_reproduction.sh preflight_full
 ${ECG_ADV_DATA_ROOT}/thesis_archive_artifacts/full_preflight_missing_artifacts.json
 ${ECG_ADV_DATA_ROOT}/thesis_archive_artifacts/full_preflight_missing_artifacts.md
 ```
+
+若 `full_preflight_missing_artifacts.md` 中仅缺少
+`full_rerun_no_token_init_checkpoint` 和 `full_rerun_center_token_init_checkpoint` 这类
+合成预训练初始化权重，可先运行：
+
+```bash
+bash scripts/final_round/run_thesis_reproduction.sh synthetic_pretrain_init
+```
+
+该 stage 默认使用归档中的 no-token 与 center-token 合成池；如果要严格复现历史 e18/e21
+输入池，可通过 `NO_TOKEN_PRETRAIN_SYNTH_NPZ` 和 `CENTER_TOKEN_PRETRAIN_SYNTH_NPZ`
+覆盖合成池路径。
 
 可用以下命令将当前机器上存在的可交付文件打包到
 `${ECG_ADV_DATA_ROOT}/thesis_archive_artifacts/`：

@@ -40,6 +40,7 @@ Stages:
   preflight_full   Check all required full-rerun artifact/data dependencies.
   split            Create the PTB-XL super5 train2000/val2000/test17799 split.
   low_sample       Summarize Table 6.5-6.7 archived custom-split results.
+  synthetic_pretrain_init Rebuild synthetic-pretrain init checkpoints for low_sample_rerun.
   low_sample_rerun Re-run Table 6.5-6.7 training jobs; requires init checkpoints.
   ablation_6_8     Run Table 6.8 ablation commands.
   author_repro     Run ECGTwin IBE + DiT author-style reproduction.
@@ -109,6 +110,13 @@ stage_restore_artifacts() {
     --migrate_dir "${ROOT}/migrate_files" \
     --out_dir "${DATA_ROOT}" \
     ${RESTORE_DRY_RUN:+--dry-run}
+  if compgen -G "${ROOT}/../ecg_grad_repro_no_pn2021_*.tar.gz" >/dev/null; then
+    "${PYTHON_CMD[@]}" "${ROOT}/scripts/final_round/restore_migrate_artifacts.py" \
+      --migrate_dir "${ROOT}/.." \
+      --archive-pattern "ecg_grad_repro_no_pn2021_*.tar.gz" \
+      --out_dir "${DATA_ROOT}" \
+      ${RESTORE_DRY_RUN:+--dry-run}
+  fi
 }
 
 stage_author_repro() {
@@ -124,6 +132,10 @@ stage_low_sample() {
 stage_low_sample_rerun() {
   require_file "${GRAD_ROOT}/splits/ptbxl_super5_seed42_train2000_val2000.json"
   LOW_SAMPLE_RERUN=1 bash "${ROOT}/scripts/final_round/run_low_sample_three_methods.sh"
+}
+
+stage_synthetic_pretrain_init() {
+  bash "${ROOT}/scripts/final_round/run_synthetic_pretrain_init_checkpoints.sh"
 }
 
 stage_ablation_6_8() {
@@ -195,6 +207,7 @@ case "${STAGE}" in
   split) stage_split ;;
   author_repro) stage_author_repro ;;
   low_sample) stage_low_sample ;;
+  synthetic_pretrain_init) stage_synthetic_pretrain_init ;;
   low_sample_rerun) stage_low_sample_rerun ;;
   ablation_6_8) stage_ablation_6_8 ;;
   medical_validity) stage_medical_validity ;;

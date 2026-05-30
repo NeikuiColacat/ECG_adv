@@ -58,6 +58,7 @@ def test_reproduction_runner_exposes_restore_artifacts_stage():
 
     assert "restore_artifacts" in script
     assert "restore_migrate_artifacts.py" in script
+    assert "ecg_grad_repro_no_pn2021_*.tar.gz" in script
 
 
 def test_reproduction_runner_separates_archive_and_full_preflight():
@@ -68,3 +69,22 @@ def test_reproduction_runner_separates_archive_and_full_preflight():
     assert "preflight_full" in script
     assert "full_preflight_missing_artifacts.json" in script
     assert "full_preflight_missing_artifacts.md" in script
+
+
+def test_reproduction_runner_exposes_synthetic_pretrain_init_stage():
+    script = (REPO_ROOT / "scripts/final_round/run_thesis_reproduction.sh").read_text(encoding="utf-8")
+
+    assert "synthetic_pretrain_init" in script
+    assert "run_synthetic_pretrain_init_checkpoints.sh" in script
+
+
+def test_synthetic_pretrain_init_runner_rebuilds_both_missing_init_checkpoints():
+    script = (REPO_ROOT / "scripts/final_round/run_synthetic_pretrain_init_checkpoints.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "self_distill_v2_e21_v46_no_token_hardlabel_r10_seed8042_auroc" in script
+    assert "self_distill_v2_e18_v46_class_oracle_hardlabel_r10_seed42_auroc" in script
+    assert "--synthetic_only" in script
+    assert "NO_TOKEN_PRETRAIN_SYNTH_NPZ" in script
+    assert "CENTER_TOKEN_PRETRAIN_SYNTH_NPZ" in script

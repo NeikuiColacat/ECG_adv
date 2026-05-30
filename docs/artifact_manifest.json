@@ -1084,7 +1084,7 @@
       "sha256": null,
       "size_bytes": null,
       "can_regenerate": true,
-      "regenerate_command": "Run the no-token synthetic-pretraining job described in docs/thesis_reproduction.md."
+      "regenerate_command": "bash scripts/final_round/run_thesis_reproduction.sh restore_artifacts && bash scripts/final_round/run_thesis_reproduction.sh synthetic_pretrain_init"
     },
     {
       "id": "full_rerun_center_token_init_checkpoint",
@@ -1103,7 +1103,7 @@
       "sha256": null,
       "size_bytes": null,
       "can_regenerate": true,
-      "regenerate_command": "Run the center-token synthetic-pretraining job described in docs/thesis_reproduction.md."
+      "regenerate_command": "bash scripts/final_round/run_thesis_reproduction.sh restore_artifacts && bash scripts/final_round/run_thesis_reproduction.sh synthetic_pretrain_init"
     },
     {
       "id": "table68_archived_summary_csv",

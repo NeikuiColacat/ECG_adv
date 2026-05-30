@@ -106,6 +106,12 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--migrate_dir", default=str(REPO_ROOT / "migrate_files"))
     parser.add_argument("--out_dir", default=str(DATA_ROOT))
+    parser.add_argument(
+        "--archive-pattern",
+        action="append",
+        dest="archive_patterns",
+        help="Glob pattern to select tar archives inside migrate_dir. Can be repeated.",
+    )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--no-verify", action="store_true")
     args = parser.parse_args()
@@ -113,6 +119,7 @@ def main() -> None:
     restored = restore_archives(
         migrate_dir=args.migrate_dir,
         out_dir=args.out_dir,
+        archive_patterns=tuple(args.archive_patterns) if args.archive_patterns else DEFAULT_ARCHIVE_PATTERNS,
         dry_run=args.dry_run,
         verify=not args.no_verify,
     )

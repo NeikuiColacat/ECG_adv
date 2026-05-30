@@ -31,7 +31,9 @@ export ECG_ADV_DATA_ROOT="${HOME}/autodl-tmp"
 ```
 
 If the `migrate_files/` archives are present on a fresh machine, restore the
-packaged runtime/reproduction artifacts before running preflight:
+packaged runtime/reproduction artifacts before running preflight. If the parent
+workspace also contains `ecg_grad_repro_no_pn2021_*.tar.gz`, the same command
+restores that external no-PN2021 reproducibility bundle as well:
 
 ```bash
 bash scripts/final_round/run_thesis_reproduction.sh restore_artifacts
@@ -61,6 +63,7 @@ bash scripts/final_round/run_thesis_reproduction.sh streamlit
 | PTB-XL train2000/val2000/test17799 split | `bash scripts/final_round/run_thesis_reproduction.sh split` |
 | ECGTwin IBE + DiT author reproduction | `bash scripts/final_round/run_thesis_reproduction.sh author_repro` |
 | Table 6.5-6.7 archived low-sample summary | `bash scripts/final_round/run_thesis_reproduction.sh low_sample` |
+| synthetic-pretrain init checkpoints | `bash scripts/final_round/run_thesis_reproduction.sh synthetic_pretrain_init` |
 | Table 6.5-6.7 full training rerun | `bash scripts/final_round/run_thesis_reproduction.sh low_sample_rerun` |
 | Table 6.8 ablations | `bash scripts/final_round/run_thesis_reproduction.sh ablation_6_8` |
 | Table 6.4 synthetic ECG quality proxy | `bash scripts/final_round/run_thesis_reproduction.sh medical_validity` |
