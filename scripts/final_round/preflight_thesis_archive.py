@@ -92,6 +92,38 @@ def check_manifest(
     scope: str,
     include_optional: bool,
 ) -> dict[str, int]:
+    statuses, _ = collect_manifest_statuses(
+        manifest,
+        verify_sha=verify_sha,
+        scope=scope,
+        include_optional=include_optional,
+    )
+    return statuses
+
+
+def _status_record(item: dict[str, Any], status: str) -> dict[str, Any]:
+    return {
+        "status": status,
+        "id": item["id"],
+        "path": item["path"],
+        "resolved_path": str(expand_path(item["path"])),
+        "kind": item.get("kind"),
+        "required": bool(item.get("required", False)),
+        "package": bool(item.get("package", True)),
+        "archive_required": bool(item.get("archive_required", True)),
+        "used_by": item.get("used_by", []),
+        "description": item.get("description", ""),
+        "regenerate_command": item.get("regenerate_command"),
+    }
+
+
+def collect_manifest_statuses(
+    manifest: dict[str, Any],
+    *,
+    verify_sha: bool,
+    scope: str,
+    include_optional: bool,
+) -> tuple[dict[str, int], list[dict[str, Any]]]:
     statuses: dict[str, int] = {
         "ok": 0,
         "missing-required": 0,
@@ -99,15 +131,64 @@ def check_manifest(
         "bad": 0,
         "skipped": 0,
     }
+    records: list[dict[str, Any]] = []
     for item in manifest.get("artifacts", []):
         if not should_check_item(item, scope=scope, include_optional=include_optional):
             statuses["skipped"] += 1
+            records.append(_status_record(item, "skipped"))
             print(f"[skip:{scope}] {item['id']}")
             continue
         status, message = check_artifact(item, verify_sha=verify_sha)
         statuses[status] = statuses.get(status, 0) + 1
+        records.append(_status_record(item, status))
         print(message)
-    return statuses
+    return statuses, records
+
+
+def write_missing_reports(
+    records: list[dict[str, Any]],
+    *,
+    json_path: Path | None,
+    md_path: Path | None,
+    scope: str,
+) -> None:
+    missing = [r for r in records if str(r.get("status", "")).startswith("missing") or r.get("status") == "bad"]
+    if json_path:
+        json_path.parent.mkdir(parents=True, exist_ok=True)
+        json_path.write_text(
+            json.dumps({"scope": scope, "missing_artifacts": missing}, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+    if md_path:
+        md_path.parent.mkdir(parents=True, exist_ok=True)
+        title = f"Missing {scope.title()} Preflight Artifacts"
+        lines = [
+            f"# {title}",
+            "",
+            "These files are required by the selected `preflight_thesis_archive.py` scope but were not present.",
+            "",
+        ]
+        if not missing:
+            lines.append("No missing artifacts.")
+        for item in missing:
+            used_by = ", ".join(item.get("used_by", [])) or "n/a"
+            command = item.get("regenerate_command") or "n/a"
+            lines.extend([
+                f"## `{item['id']}`",
+                "",
+                f"- status: `{item.get('status')}`",
+                f"- kind: `{item.get('kind', 'n/a')}`",
+                f"- required: `{bool(item.get('required'))}`",
+                f"- package: `{bool(item.get('package'))}`",
+                f"- archive required: `{bool(item.get('archive_required'))}`",
+                f"- source path: `{item.get('path', '')}`",
+                f"- resolved path: `{item.get('resolved_path', '')}`",
+                f"- used by: {used_by}",
+                f"- description: {item.get('description', '')}",
+                f"- regenerate: `{command}`",
+                "",
+            ])
+        md_path.write_text("\n".join(lines), encoding="utf-8")
 
 
 def main() -> int:
@@ -116,6 +197,8 @@ def main() -> int:
     parser.add_argument("--verify-sha", action="store_true")
     parser.add_argument("--include-optional", action="store_true")
     parser.add_argument("--scope", choices=["archive", "full"], default="archive")
+    parser.add_argument("--report-json", default=None)
+    parser.add_argument("--report-md", default=None)
     args = parser.parse_args()
 
     manifest_path = Path(args.manifest).expanduser()
@@ -125,11 +208,17 @@ def main() -> int:
         print(f"[error] no artifacts listed in {manifest_path}", file=sys.stderr)
         return 2
 
-    statuses = check_manifest(
+    statuses, records = collect_manifest_statuses(
         manifest,
         verify_sha=args.verify_sha,
         scope=args.scope,
         include_optional=args.include_optional,
+    )
+    write_missing_reports(
+        records,
+        json_path=Path(args.report_json).expanduser() if args.report_json else None,
+        md_path=Path(args.report_md).expanduser() if args.report_md else None,
+        scope=args.scope,
     )
 
     print(

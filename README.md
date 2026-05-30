@@ -94,6 +94,9 @@ entries marked `package: false` are external data dependencies rather than
 default disc artifacts; entries marked `archive_required: false` remain required
 for a full rerun but are skipped by the default archive package unless
 `package_thesis_artifacts.py --include-rerun` is used.
+When full-scope dependencies are missing, `preflight_full` also writes
+`${ECG_ADV_DATA_ROOT}/thesis_archive_artifacts/full_preflight_missing_artifacts.json`
+and `.md` for machine and human review.
 
 `low_sample` is the light archive verification path: it summarizes the shipped
 `train_result.json` files from the fixed PTB-XL custom split, falling back to

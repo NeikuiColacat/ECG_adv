@@ -66,3 +66,5 @@ def test_reproduction_runner_separates_archive_and_full_preflight():
     assert "--scope archive" in script
     assert "--scope full" in script
     assert "preflight_full" in script
+    assert "full_preflight_missing_artifacts.json" in script
+    assert "full_preflight_missing_artifacts.md" in script

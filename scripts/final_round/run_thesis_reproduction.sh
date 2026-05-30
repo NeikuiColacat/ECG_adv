@@ -93,7 +93,11 @@ stage_preflight() {
 }
 
 stage_preflight_full() {
-  "${PYTHON_CMD[@]}" "${ROOT}/scripts/final_round/preflight_thesis_archive.py" --verify-sha --scope full
+  "${PYTHON_CMD[@]}" "${ROOT}/scripts/final_round/preflight_thesis_archive.py" \
+    --verify-sha \
+    --scope full \
+    --report-json "${DATA_ROOT}/thesis_archive_artifacts/full_preflight_missing_artifacts.json" \
+    --report-md "${DATA_ROOT}/thesis_archive_artifacts/full_preflight_missing_artifacts.md"
 }
 
 stage_thesis_assets() {

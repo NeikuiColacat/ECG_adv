@@ -176,6 +176,13 @@ bash scripts/final_round/run_thesis_reproduction.sh preflight
 bash scripts/final_round/run_thesis_reproduction.sh preflight_full
 ```
 
+如果 full scope 仍有缺项，该命令会同步写出：
+
+```text
+${ECG_ADV_DATA_ROOT}/thesis_archive_artifacts/full_preflight_missing_artifacts.json
+${ECG_ADV_DATA_ROOT}/thesis_archive_artifacts/full_preflight_missing_artifacts.md
+```
+
 可用以下命令将当前机器上存在的可交付文件打包到
 `${ECG_ADV_DATA_ROOT}/thesis_archive_artifacts/`：
 
