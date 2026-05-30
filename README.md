@@ -84,7 +84,8 @@ bash scripts/final_round/run_thesis_reproduction.sh streamlit
 
 Detailed mapping from paper tables/figures to code and artifacts is in
 `docs/thesis_reproduction.md`, `docs/thesis_repro_manifest.json`, and
-`docs/artifact_manifest.json`.
+`docs/artifact_manifest.json`. The final archive-readiness audit is in
+`docs/thesis_archive_completion_audit.md`.
 
 `preflight` checks the default archive scope: files that are packageable and
 required for the delivered demo, evidence tables, figures, ONNX/TensorRT demo
