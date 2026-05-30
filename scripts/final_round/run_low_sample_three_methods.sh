@@ -55,25 +55,9 @@ common_train_args=(
   --checkpoint_metric auroc
 )
 
-common_eval_args=(
-  --scheme super5
-  --device "$DEVICE"
-  --crop_len 1000
-  --batch_size "$BATCH_SIZE"
-  --num_workers "$NUM_WORKERS"
-  --ptbxl_csv "$CSV_PATH"
-  --ptbxl_cache "$CACHE_PATH"
-  --preprocess_mode minimal_resample
-  --norm_mode per_sample_global
-  --skip_mimic
-)
-
 eval_model() {
   local model_dir="$1"
-  "${PYTHON_CMD[@]}" "$ROOT/scripts/triple_labels/eval_crosscenter.py" \
-    "${common_eval_args[@]}" \
-    --model_dir "$model_dir" \
-    --output_path "$model_dir/eval_result_current_code.json"
+  echo "[skip] extra fold10/cross-center evaluation is outside the thesis custom split route: $model_dir"
 }
 
 REAL_DIR="$OUT_ROOT/method_a_real2000_seed42_rerun_${RUN_TAG}"

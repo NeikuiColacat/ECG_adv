@@ -18,7 +18,6 @@ import sys
 import json
 import argparse
 import time
-import re
 
 import numpy as np
 import pandas as pd
@@ -37,9 +36,10 @@ from scripts.triple_labels.train_ptbxl import (
     PTBXLDatasetScheme, compute_macro_auroc_auprc,
     get_ptbxl_labels_for_scheme,
 )
-from scripts.crosscenter_v2.preprocess_utils import (
+from util.ecg_preprocessing import (
     unified_preprocess_to_1000, crop_signal_tc, _resolve_preprocess_flags,
 )
+from util.pn2021_headers import parse_header_snomed
 from EfficientNetv2 import EfficientNet1DV2  # noqa: E402
 
 
@@ -58,21 +58,6 @@ PN2021_FORBIDDEN = {'ptb-xl', 'ptbxl'}
 # ────────────────────────────────────────────────────────────────────────────
 # PN2021 evaluation
 # ────────────────────────────────────────────────────────────────────────────
-
-def parse_header_snomed(header_path):
-    dx_re = re.compile(r'^#\s*Dx\s*:\s*(.*)$', re.IGNORECASE)
-    with open(header_path, 'r') as f:
-        for line in f:
-            line = line.strip()
-            match = dx_re.match(line)
-            if match:
-                codes_str = match.group(1).strip()
-                try:
-                    return [int(c.strip()) for c in codes_str.split(',') if c.strip()]
-                except ValueError:
-                    return []
-    return []
-
 
 def scan_center_records(center_dir):
     paths, snomeds = [], []
@@ -633,7 +618,7 @@ def eval_ptbxl_test(model, scheme, args, device):
         args.ptbxl_csv, scheme, label_cache, folds=[10]
     )
     cache_path = args.ptbxl_cache or os.path.join(
-        DATA_ROOT, 'crosscenter_v2/ptbxl_preprocessed.npy'
+        TRIPLE_ROOT, 'cache/ptbxl_minimal_resample_per_sample_global_fs100_len1000.npy'
     )
     all_sig = np.load(cache_path, mmap_mode='r')
     test_signals = np.asarray(all_sig[test_idx])

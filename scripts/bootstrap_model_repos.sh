@@ -29,8 +29,6 @@ clone_or_report() {
 
 clone_or_report "DeepECG" "https://github.com/HeartWise-AI/DeepECG_Docker.git"
 clone_or_report "ECGTwin" "https://github.com/Raiiyf/ECGTwin.git"
-clone_or_report "ecg_ptbxl_benchmarking" "https://github.com/helme/ecg_ptbxl_benchmarking.git"
-clone_or_report "advdiff" "https://github.com/EricDai0/advdiff.git"
 
 echo "[done] model links:"
 ls -la "${REPO_ROOT}/model"

@@ -1,11 +1,11 @@
-"""Parametrized PTB-XL trainer for the 3 label schemes (super5/sub23/pn26).
+"""PTB-XL trainer for the thesis super5 label scheme.
 
-Forked from scripts/crosscenter_tierM/train_ptbxl_tierM.py with:
+Forked from the historical Tier-M trainer now archived under legacy/ with:
   - --scheme flag dispatches to label_schemes.SCHEME_REGISTRY
-  - masked BCE loss (handles -1 unknown labels in pn26's Brady/PRWP/RAD)
+  - masked BCE loss for compatibility with historical label helpers
   - per-class pos_weight computed only on valid (non -1) labels
   - cudnn.benchmark = True; optional torch.compile
-  - Removed AugMix / SynthCenter (independent ablations)
+  - Historical augmentation ablations are kept out of the thesis training path
 
 Usage:
     uv run python scripts/triple_labels/train_ptbxl.py \
@@ -31,7 +31,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..',
                                 'model', 'DeepECG', 'notebooks'))
 
 from scripts.triple_labels.label_schemes import get_scheme
-from scripts.crosscenter_v2.preprocess_utils import (
+from util.ecg_preprocessing import (
     unified_preprocess_to_1000, crop_signal_tc,
 )
 from EfficientNetv2 import EfficientNet1DV2  # noqa: E402
@@ -297,8 +297,8 @@ def get_ptbxl_labels_for_scheme(csv_path, scheme, label_cache_path, folds=None):
         indices = list(range(len(df_full)))
         df = df_full.copy()
 
-    # Cache key includes class count so different schemes can't silently load
-    # each other's array (super5 C=5, sub23 C=23, pn26 C=26).
+    # Cache key includes class count so different preprocessing modes cannot
+    # silently load each other's array.
     cache_key = f"{label_cache_path}.C{scheme['num_classes']}.all.npy"
     if os.path.exists(cache_key):
         all_labels = np.load(cache_key)
@@ -657,7 +657,7 @@ def train(args):
 
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument('--scheme', required=True, choices=['super5', 'sub23', 'pn26'])
+    p.add_argument('--scheme', required=True, choices=['super5'])
     p.add_argument('--data_path', default=os.path.join(PTBXL_ROOT, 'raw100.npy'))
     p.add_argument('--csv_path', default=os.path.join(PTBXL_ROOT, 'ptbxl_database.csv'))
     p.add_argument('--output_dir', required=True)

@@ -8,7 +8,7 @@ containing:
 
 The script applies class-specific digital ECG gates plus a light classifier
 confidence gate, then writes files directly consumable by
-`scripts/pgd_cross_center/synth_online_at_super5.py`:
+the historical online adversarial training script now archived under `legacy/`:
 
   gated_samples.npz
   gated_samples.latent.npz

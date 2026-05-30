@@ -85,7 +85,7 @@ for i, (_, codes) in enumerate(SCORED_26):
 # records in PN2021 ningbo center (~22% of that center). Without a dual mapping,
 # ningbo's AF column is all-zero in cross-center eval. Patch: make 164890007
 # map to both AFL and AF class indices.
-# Reference: /root/.claude/projects/-root-ECG-adv-Gen/memory/pn2021_labeling_quirks.md
+# Reference: project memory note `pn2021_labeling_quirks.md`.
 _af_idx = CLASS_TO_IDX['AF']
 if _af_idx not in _SNOMED_TO_IDX.get(164890007, []):
     _SNOMED_TO_IDX.setdefault(164890007, []).append(_af_idx)
@@ -309,12 +309,12 @@ if __name__ == '__main__':
     for cls in TIER1:
         assert CLASS_TO_IDX[cls] in PTBXL_COVERED_INDICES, \
             f"PTBXL doesn't cover Tier-1 class {cls}"
-    print(f"All Tier-1 classes covered by PTBXL: OK")
+    print("All Tier-1 classes covered by PTBXL: OK")
 
     # Sanity on SNOMED map
     assert 164889003 in _SNOMED_TO_IDX, "AF SNOMED missing"
     assert _SNOMED_TO_IDX[164889003] == [CLASS_TO_IDX['AF']]
-    print(f"SNOMED map: OK")
+    print("SNOMED map: OK")
 
     # Tier-M coverage
     print(f"TIER_M = {TIER_M} ({NUM_CLASSES_TIER_M} classes)")
@@ -322,7 +322,7 @@ if __name__ == '__main__':
     for cls in TIER_M:
         assert CLASS_TO_IDX[cls] in PTBXL_COVERED_INDICES, \
             f"PTBXL doesn't cover Tier-M class {cls}"
-    print(f"All Tier-M classes covered by PTBXL: OK (no -1)")
+    print("All Tier-M classes covered by PTBXL: OK (no -1)")
 
     # Ningbo AF patch: 164890007 should now map to BOTH AFL and AF
     afl_af_map = set(_SNOMED_TO_IDX[164890007])
@@ -333,4 +333,4 @@ if __name__ == '__main__':
     # 164889003 (pure AF) should NOT activate AFL
     lbl_af = snomed_to_26([164889003])
     assert lbl_af[CLASS_TO_IDX['AF']] == 1.0 and lbl_af[CLASS_TO_IDX['AFL']] == 0.0
-    print(f"Ningbo AF↔AFL dual mapping: OK")
+    print("Ningbo AF↔AFL dual mapping: OK")

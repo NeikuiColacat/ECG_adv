@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, List
@@ -24,6 +25,9 @@ sys.path.insert(0, str(REPO))
 from adversarial.adv_validation import _extract_clinical_features  # noqa: E402
 from adversarial.efficientnet_victim_tierM import EfficientNetVictimTierM  # noqa: E402
 from scripts.triple_labels.label_schemes import CLASS_NAMES_SUPER5, NUM_SUPER5  # noqa: E402
+
+
+DATA_ROOT = Path(os.environ.get("ECG_ADV_DATA_ROOT", Path.home() / "autodl-tmp")).expanduser()
 
 
 def _json_default(obj: Any) -> Any:
@@ -151,7 +155,7 @@ def main() -> None:
     ap.add_argument("--synth_npz", required=True)
     ap.add_argument("--out_json", required=True)
     ap.add_argument("--out_md", required=True)
-    ap.add_argument("--ckpt", default="/root/autodl-tmp/triple_labels/super5/best_model.pt")
+    ap.add_argument("--ckpt", default=str(DATA_ROOT / "triple_labels/super5_minresample_full10_perglobal_20260503/best_model.pt"))
     ap.add_argument("--device", default="cuda:0")
     ap.add_argument("--batch_size", type=int, default=256)
     ap.add_argument("--max_samples", type=int, default=0, help="0 means all")

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -19,8 +20,10 @@ sys.path.insert(0, str(REPO))
 from util.ecgtwin_utils import ECGTwinWrapper  # noqa: E402
 
 
-DEFAULT_JSONL = "/root/autodl-tmp/graduate_project/ptbxl_train2000_ecgtwin_prompts_seed42.jsonl"
-DEFAULT_OUT = "/root/autodl-tmp/graduate_project/ptbxl_train2000_ecgtwin_prompt_embeds_seed42.pt"
+DATA_ROOT = Path(os.environ.get("ECG_ADV_DATA_ROOT", Path.home() / "autodl-tmp")).expanduser()
+GRAD_ROOT = Path(os.environ.get("ECG_ADV_GRAD_ROOT", DATA_ROOT / "graduate_project")).expanduser()
+DEFAULT_JSONL = str(GRAD_ROOT / "ptbxl_train2000_ecgtwin_prompts_seed42.jsonl")
+DEFAULT_OUT = str(GRAD_ROOT / "ptbxl_train2000_ecgtwin_prompt_embeds_seed42.pt")
 
 
 def main() -> None:

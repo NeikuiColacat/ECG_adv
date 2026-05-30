@@ -16,6 +16,7 @@ import argparse
 import ast
 import csv
 import json
+import os
 import re
 import sys
 from collections import Counter
@@ -29,14 +30,14 @@ sys.path.insert(0, str(REPO))
 
 from scripts.triple_labels.label_schemes import CLASS_NAMES_SUPER5, ptbxl_scp_to_super5  # noqa: E402
 
-DEFAULT_CSV = "/root/autodl-tmp/ptbxl/ptbxl_database.csv"
-DEFAULT_SCP = "/root/autodl-tmp/ptbxl/scp_statements.csv"
-DEFAULT_SPLIT = (
-    "/root/autodl-tmp/graduate_project/splits/"
-    "ptbxl_super5_seed42_train2000_val2000.json"
-)
-DEFAULT_OUT_JSONL = "/root/autodl-tmp/graduate_project/ptbxl_train2000_ecgtwin_prompts_seed42.jsonl"
-DEFAULT_OUT_CSV = "/root/autodl-tmp/graduate_project/ptbxl_train2000_ecgtwin_prompts_seed42.csv"
+DATA_ROOT = Path(os.environ.get("ECG_ADV_DATA_ROOT", Path.home() / "autodl-tmp")).expanduser()
+PTBXL_ROOT = Path(os.environ.get("ECG_ADV_PTBXL_ROOT", DATA_ROOT / "ptbxl")).expanduser()
+GRAD_ROOT = Path(os.environ.get("ECG_ADV_GRAD_ROOT", DATA_ROOT / "graduate_project")).expanduser()
+DEFAULT_CSV = str(PTBXL_ROOT / "ptbxl_database.csv")
+DEFAULT_SCP = str(PTBXL_ROOT / "scp_statements.csv")
+DEFAULT_SPLIT = str(GRAD_ROOT / "splits/ptbxl_super5_seed42_train2000_val2000.json")
+DEFAULT_OUT_JSONL = str(GRAD_ROOT / "ptbxl_train2000_ecgtwin_prompts_seed42.jsonl")
+DEFAULT_OUT_CSV = str(GRAD_ROOT / "ptbxl_train2000_ecgtwin_prompts_seed42.csv")
 DEFAULT_THRESHOLD = 50.0
 MAX_FRAGMENTS = 8
 

@@ -22,9 +22,12 @@ from util.ecg_viz import plot_ecg_ecgtwin_gallery
 
 DEFAULT_SYNTH_NPZ = str(
     DATA_ROOT
-    / "graduate_project"
-    / "self_distill_v2_filtered_v46_ptbxl_contrast_seed42"
-    / "synth_v2_filtered_top4000_gamma03.npz"
+    / "ecgtwin_prompt_token_super5"
+    / "effectiveness_pilot_v42_task1gate_ningbo_token_scale_large_20260504"
+    / "target_token_s05"
+    / "ningbo"
+    / "gated"
+    / "gated_samples.npz"
 )
 DEFAULT_OUT_DIR = str(DATA_ROOT / "final_round_ablation_20260504/thesis_selected_ecg_examples")
 

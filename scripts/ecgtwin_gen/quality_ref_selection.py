@@ -14,11 +14,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 import sys
 from collections import Counter
 from pathlib import Path
-from typing import Dict, Iterable, List
+from typing import Dict, List
 
 import numpy as np
 import torch
@@ -30,7 +31,8 @@ from scripts.triple_labels.label_schemes import CLASS_NAMES_SUPER5  # noqa: E402
 
 
 DEFAULT_CENTERS = ["ningbo", "chapman_shaoxing", "cpsc_2018", "georgia"]
-DEFAULT_CACHE_ROOT = "/root/autodl-tmp/ecgtwin_prompt_token_super5/cache_v1"
+DATA_ROOT = Path(os.environ.get("ECG_ADV_DATA_ROOT", Path.home() / "autodl-tmp")).expanduser()
+DEFAULT_CACHE_ROOT = str(DATA_ROOT / "ecgtwin_prompt_token_super5/cache_v1")
 
 
 def _as_float_array(x) -> np.ndarray:

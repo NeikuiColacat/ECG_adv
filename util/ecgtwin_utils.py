@@ -7,9 +7,8 @@ ECGTwin 模型加载与采样工具
 
 import sys
 import torch
-import torch.nn as nn
 import yaml
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Tuple
 from pathlib import Path
 
 # ——— TensorFlow segfault workaround（两步法）———

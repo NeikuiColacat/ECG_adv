@@ -108,10 +108,11 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--input", nargs="*", default=[],
                     help="Items like arm=/path/to/gated_samples.npz")
-    ap.add_argument("--cap_per_arm", type=int, default=128)
+    ap.add_argument("--cap_per_arm", type=int, default=64)
     ap.add_argument("--ckpt", default=DEFAULT_CKPT)
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--out_dir", default=str(DEFAULT_OUT_DIR))
+    ap.add_argument("--allow_missing_inputs", action="store_true")
     args = ap.parse_args()
 
     inputs = []
@@ -126,9 +127,13 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     backend = PyTorchClassifierBackend(ckpt_path=args.ckpt, device=args.device)
     rows = []
+    missing_inputs = []
     for arm, path in inputs:
         if not Path(path).exists():
-            continue
+            missing_inputs.append((arm, path))
+            if args.allow_missing_inputs:
+                continue
+            raise FileNotFoundError(f"missing input pool for arm {arm}: {path}")
         signals, labels, class_names = load_pool(path, args.cap_per_arm)
         for i, (signal, label) in enumerate(zip(signals, labels)):
             sig_ct = to_signal_ct(signal)
@@ -162,6 +167,7 @@ def main() -> None:
         writer.writerows(rows)
     summary = {
         "inputs": [{"arm": arm, "path": path} for arm, path in inputs],
+        "missing_inputs": [{"arm": arm, "path": path} for arm, path in missing_inputs],
         "cap_per_arm": args.cap_per_arm,
         "checkpoint": args.ckpt,
         "summary_by_arm": summarize_rows(rows),

@@ -1,4 +1,7 @@
-"""Validation gates for ECGTwin-PGD adversarial buffers.
+"""Signal sanity helpers kept for ECGTwin synthetic-pool quality checks.
+
+The attack-oriented gates are historical utilities retained only because the
+active synthetic quality report imports the lightweight ECG feature extractor.
 
 Gate 1 — Attack Success Rate: overall ≥ 70%, per-class ≥ 30% (a weaker "some
 signal in every class" check; classes with very high victim confidence can
@@ -10,7 +13,7 @@ plus Einthoven residual |II-I-III| p95 < 0.5 (z-scored units).
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 import numpy as np
 import torch

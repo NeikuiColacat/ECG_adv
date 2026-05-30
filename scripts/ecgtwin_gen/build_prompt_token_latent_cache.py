@@ -20,18 +20,17 @@ from pathlib import Path
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 import wfdb
 
 REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO))
 
-from scripts.crosscenter_v2.preprocess_utils import (  # noqa: E402
+from util.ecg_preprocessing import (  # noqa: E402
     pad_or_truncate_tc,
     reorder_leads_tc,
     resample_tc,
 )
-from scripts.triple_labels.eval_crosscenter import parse_header_snomed  # noqa: E402
+from util.pn2021_headers import parse_header_snomed  # noqa: E402
 from scripts.triple_labels.label_schemes import (  # noqa: E402
     CLASS_NAMES_SUPER5,
     SUPER5_TO_IDX,
@@ -44,8 +43,9 @@ from util.lead_utils import PTBXL_TO_ECGTWIN_INDICES  # noqa: E402
 
 
 DEFAULT_CENTERS = ["ningbo", "chapman_shaoxing", "cpsc_2018", "georgia"]
-DEFAULT_OUT_ROOT = "/root/autodl-tmp/ecgtwin_prompt_token_super5/cache_v1"
-DEFAULT_DATA_ROOT = "/root/autodl-tmp/physionet2021/training"
+DATA_ROOT = Path(os.environ.get("ECG_ADV_DATA_ROOT", Path.home() / "autodl-tmp")).expanduser()
+DEFAULT_OUT_ROOT = str(DATA_ROOT / "ecgtwin_prompt_token_super5/cache_v1")
+DEFAULT_DATA_ROOT = str(DATA_ROOT / "physionet2021/training")
 SUPER5_PRIORITY = ["MI", "HYP", "CD", "STTC", "NORM"]
 VERSION = "ecgtwin_prompt_token_cache_v1"
 

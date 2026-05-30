@@ -110,7 +110,7 @@ Reading guide: `metric` column shows the *single most-discriminative number* for
 
 ### Direct answer to "哪几个 super5 类在数字层面通过医学定义？"
 
-- **NORM、MI、STTC** — 3 classes pass digital validation at 3/3 seeds in the best cell (and 11/12, 5/6, 5/6 overall). These prompts are production-ready for the synth-anchored AT pipeline.
+- **NORM、MI、STTC** — 3 classes pass digital validation at 3/3 seeds in the best cell (and 11/12, 5/6, 5/6 overall). These prompts are the safest classes for the thesis synthetic ECG quality-gate path.
 - **HYP、CD** — 0/3 in every cell, but **for very different reasons** that change deployment recommendations:
 
   - **HYP**: morphology is correct (visual audit + victim agreement at 0.85 p_target both confirm), but **absolute voltage is ~50% of textbook**. Sokolow-Lyon needs ≥ 3.5 mV summed; we observe 0.97-2.15 mV. The deficit is a **synthesis fidelity issue affecting all classes** — it's only fatal for HYP because HYP's diagnostic criterion is a voltage gate.
@@ -130,7 +130,7 @@ The HYP and CD-LBBB failures share root cause: ECGTwin's VAE-decoded amplitudes 
 
 Mechanism: this is consistent with a Gaussian VAE's variance-collapse — the decoder is incentivized by the reconstruction loss to under-shoot extremes. The 0.18215 latent scale (SD-inherited, not ECG-recalibrated, see `memory/ecgtwin_usage_guide.md`) is itself untuned for ECG amplitudes.
 
-Implication for the synth-anchored AT pipeline: **HYP and CD adversarial anchors trained on these synth signals would be voltage-attenuated by ~2×.** This may reduce H4 trust-gate scores as the victim, when applied to real ECG, sees voltage that does NOT match its training distribution; per-class trust gate `H4` would correctly drop HYP/CD samples. **Recommendation**: H4 per-class trust gate is the right fallback; don't try to fix the voltage scale post-hoc (re-scaling decoded mV breaks all the relative criteria).
+Implication for the thesis augmentation pipeline: **HYP and CD synthetic samples can be voltage-attenuated by ~2×.** This can make downstream classifiers see voltage that does not match the real ECG training distribution; per-class quality gates should therefore drop weak HYP/CD samples. **Recommendation**: keep per-class quality gating as the fallback; do not fix the voltage scale post-hoc by blindly re-scaling decoded mV, because that can break the absolute-mV criteria for other classes.
 
 ### MI / STTC passing largely via "off-axis" criteria
 

@@ -16,11 +16,12 @@ Phase 0.A 12-lead viz sanity is performed via --viz (requires --token_ckpt to
 override center_token to zero, then 1 sample/class is generated and rendered).
 
 Usage:
-  /root/miniforge3/envs/ECGTwin/bin/python \
+  uv run python \
     scripts/ecgtwin_gen/super5_text_embeds.py \
-    --out /root/autodl-tmp/center_token_super5/super5_text_embeds.pt
+    --out ${ECG_ADV_DATA_ROOT}/center_token_super5/super5_text_embeds.pt
 """
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -30,6 +31,8 @@ REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO))
 
 from util.ecgtwin_utils import ECGTwinWrapper  # noqa: E402
+
+DATA_ROOT = Path(os.environ.get("ECG_ADV_DATA_ROOT", Path.home() / "autodl-tmp")).expanduser()
 
 
 # Each SNOMED code → ECGTwin-aligned pipe-separated prompt.
@@ -152,7 +155,7 @@ def _encode_unique_prompts(wrapper: ECGTwinWrapper, prompts: dict) -> dict:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default="/root/autodl-tmp/center_token_super5/super5_text_embeds.pt")
+    ap.add_argument("--out", default=str(DATA_ROOT / "center_token_super5/super5_text_embeds.pt"))
     ap.add_argument("--device", default="cuda:0")
     args = ap.parse_args()
 

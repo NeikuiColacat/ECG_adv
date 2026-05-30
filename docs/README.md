@@ -1,18 +1,15 @@
 # Docs
 
-当前 `docs/` 只保留毕设主线和最终写作需要直接引用的文档。历史方案、旧试验记录和被新版替代的笔记已归档到 `trash/docs_cleanup_20260501/`，没有直接删除。
+当前 `docs/` 只保留论文归档主线、系统演示和最终交付需要直接引用的文档。历史方案、旧实验记录和被新版替代的笔记统一迁入 `legacy/docs/`。
 
-## 主线结论
+## 论文归档主线
 
 | 文件 | 用途 |
 |---|---|
-| `experiment_summary_for_advisor.md` | 面向导师汇报的整体实验故事和结论 |
-| `graduate_project_pipeline_walkthrough.md` | 当前毕设主线的端到端 walk-through：数据、ECGTwin、三方法低样本实验、质量验证、部署和论文表述边界 |
-| `module_ablation_1_real_vs_synth.md` | TA-OMAT / real-anchor / synthetic-anchor 对比与模块消融 |
-| `triple_labels_metrics_for_advisor.md` | EfficientNet1DV2 在 super5/sub23/pn26 等设置下的指标汇总 |
-| `label_strategy.md` | 历史标签调研；当前 super5 映射以 `pipelines/super5_label_mapping_pipeline.md` 和代码为准 |
-| `synth_anchored_super5_pilot_summary_final.md` | synthetic-anchor super5 最终 pilot 总结 |
-| `center_token_v2_results.md` | center token v2 扩展实验和消融结果 |
+| `thesis_reproduction.md` | `thesis.md` 表格、图和代码入口的人工可读映射 |
+| `thesis_repro_manifest.json` | 论文复现实验的机器可读索引 |
+| `artifact_manifest.json` | 必需数据、权重、生成池、ONNX/TensorRT 和结果文件清单 |
+| `thesis_archive_cleanup_standard.md` | 本归档分支的整理验收标准 |
 
 ## ECG 质量验证
 
@@ -22,22 +19,15 @@
 | `ecgtwin_super5_digital_gt_validation.json` | 上述验证的结构化结果 |
 | `ecg_digital_thresholds.md` | 数字心电质量阈值与判定标准 |
 
-## 训练细节
-
-| 文件 | 用途 |
-|---|---|
-| `training/efficientnet_training.md` | EfficientNet1DV2 架构、训练配置和日志要求 |
-| `pipelines/` | 长期维护的标准化 pipeline 记忆文档 |
-
 ## 论文材料
 
 | 路径 | 用途 |
 |---|---|
+| `../artifacts/figures/streamlit_demo/` | Streamlit 演示截图 |
+| `../artifacts/figures/generated_ecg_examples/` | 论文图 3.3 合成 ECG 示例图 |
 | `final_round/` | 任务书、开题报告、中期报告、指导记录的 Markdown 版本 |
-| `papers/INDEX.md` | 本地论文索引 |
-| `references/` | 本地参考 PDF，通常不纳入 git |
+| `pipelines/README.md` | 说明旧 pipeline 文档已迁入 legacy |
 
-## 归档策略
+## 历史材料
 
-- 旧 no-IBE diffusion 方案、早期 synth pilot、旧 center-token/IBE 风格迁移记录、旧 Tier-M/AugMix 文档、旧标签审计和旧项目结构说明，统一放入 `trash/docs_cleanup_20260501/`。
-- `trash/` 默认不跟踪，适合保留临时归档材料；需要恢复时直接从该目录移回。
+`legacy/docs/` 保存 PN2021-C、TA-OMAT、AdvDiff、AugMix、Tier-M、旧 center-style prompt token、自蒸馏、早期导师汇报和本地论文索引等非主线材料。主线复现文档不依赖这些文件。

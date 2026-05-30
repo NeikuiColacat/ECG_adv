@@ -34,8 +34,12 @@ Usage: bash scripts/final_round/run_thesis_reproduction.sh <stage>
 
 Stages:
   env              Print resolved paths and Python command.
+  preflight        Check required artifact files from docs/artifact_manifest.json.
   split            Create the PTB-XL super5 train2000/val2000/test17799 split.
-  low_sample       Run Table 6.5-6.7 reproduction: real2000, no-token FT, center-token FT.
+  low_sample       Summarize Table 6.5-6.7 archived custom-split results.
+  low_sample_rerun Re-run Table 6.5-6.7 training jobs; requires init checkpoints.
+  ablation_6_8     Run Table 6.8 ablation commands.
+  author_repro     Run ECGTwin IBE + DiT author-style reproduction.
   medical_validity Run Table 6.4 proxy quality summary for generated ECG pools.
   figures          Export five-class generated ECG visualization examples.
   feature_dist     Run real-vs-synthetic feature distribution analysis.
@@ -43,8 +47,9 @@ Stages:
   build_trt        Build the default TensorRT FP16 engine from ONNX.
   benchmark        Run PyTorch/ONNX/TensorRT inference benchmark.
   evidence         Summarize thesis tables and key evidence into JSON/Markdown.
+  package_artifacts Copy packageable files from docs/artifact_manifest.json into an artifact bundle.
   streamlit        Start the Streamlit demo.
-  all              Run split, low_sample, medical_validity, figures, benchmark, evidence.
+  all              Run split, preflight, low_sample, medical_validity, figures, feature_dist, benchmark, evidence.
 
 Important:
   Large datasets, checkpoints, ONNX, TensorRT engines, and generated pools are
@@ -78,9 +83,27 @@ stage_split() {
     --out_path "${GRAD_ROOT}/splits/ptbxl_super5_seed42_train2000_val2000.json"
 }
 
+stage_preflight() {
+  "${PYTHON_CMD[@]}" "${ROOT}/scripts/final_round/preflight_thesis_archive.py"
+}
+
+stage_author_repro() {
+  bash "${ROOT}/scripts/ecgtwin_author_repro/run_author_repro_pipeline.sh"
+}
+
 stage_low_sample() {
   require_file "${GRAD_ROOT}/splits/ptbxl_super5_seed42_train2000_val2000.json"
-  bash "${ROOT}/scripts/final_round/run_low_sample_three_methods.sh"
+  "${PYTHON_CMD[@]}" "${ROOT}/scripts/final_round/summarize_low_sample_results.py" \
+    --out_dir "${FINAL_ROUND_ROOT}/low_sample_summary"
+}
+
+stage_low_sample_rerun() {
+  require_file "${GRAD_ROOT}/splits/ptbxl_super5_seed42_train2000_val2000.json"
+  LOW_SAMPLE_RERUN=1 bash "${ROOT}/scripts/final_round/run_low_sample_three_methods.sh"
+}
+
+stage_ablation_6_8() {
+  bash "${ROOT}/scripts/final_round/run_table_6_8_ablations.sh"
 }
 
 stage_medical_validity() {
@@ -95,7 +118,7 @@ stage_figures() {
 
 stage_feature_dist() {
   "${PYTHON_CMD[@]}" "${ROOT}/scripts/final_round/run_feature_distribution_analysis.py" \
-    --out "${FINAL_ROUND_ROOT}/feature_distribution"
+    --out_dir "${FINAL_ROUND_ROOT}/feature_distribution"
 }
 
 stage_export_onnx() {
@@ -117,6 +140,12 @@ stage_evidence() {
     --out_dir "${FINAL_ROUND_ROOT}/final_evidence"
 }
 
+stage_package_artifacts() {
+  "${PYTHON_CMD[@]}" "${ROOT}/scripts/final_round/package_thesis_artifacts.py" \
+    --include-optional \
+    --out_dir "${DATA_ROOT}/thesis_archive_artifacts"
+}
+
 stage_streamlit() {
   if command -v uv >/dev/null 2>&1; then
     uv run streamlit run "${ROOT}/apps/streamlit_ecg_demo/app.py" \
@@ -134,8 +163,12 @@ stage_streamlit() {
 case "${STAGE}" in
   help|-h|--help) usage ;;
   env) print_env ;;
+  preflight) stage_preflight ;;
   split) stage_split ;;
+  author_repro) stage_author_repro ;;
   low_sample) stage_low_sample ;;
+  low_sample_rerun) stage_low_sample_rerun ;;
+  ablation_6_8) stage_ablation_6_8 ;;
   medical_validity) stage_medical_validity ;;
   figures) stage_figures ;;
   feature_dist) stage_feature_dist ;;
@@ -143,12 +176,15 @@ case "${STAGE}" in
   build_trt) stage_build_trt ;;
   benchmark) stage_benchmark ;;
   evidence) stage_evidence ;;
+  package_artifacts) stage_package_artifacts ;;
   streamlit) stage_streamlit ;;
   all)
     stage_split
+    stage_preflight
     stage_low_sample
     stage_medical_validity
     stage_figures
+    stage_feature_dist
     stage_benchmark
     stage_evidence
     ;;

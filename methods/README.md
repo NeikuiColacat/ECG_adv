@@ -6,8 +6,8 @@ graduation-project branch.
 | directory | status |
 |---|---|
 | `ecgtwin_gen/prompt_token/` | active textual-inversion center-class prompt-token implementation |
-| `augmix/` | shared ECG corruption operators used by PN2021-C scripts |
-| `advdiff/` | historical pointer; active implementation remains under `adversarial/` |
+| `../legacy/methods/augmix/` | historical PN2021-C robustness code, not part of the thesis route |
+| `../legacy/methods/advdiff/` | historical AdvDiff reference, not part of the thesis route |
 
 Historical ECGTwin 256-d center-token hooks and style-translator code were
 archived to:

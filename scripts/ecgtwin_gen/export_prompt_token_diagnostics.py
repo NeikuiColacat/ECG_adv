@@ -10,15 +10,17 @@ from __future__ import annotations
 import argparse
 import csv
 import glob
+import os
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
 import torch
 import torch.nn.functional as F
 
+DATA_ROOT = Path(os.environ.get("ECG_ADV_DATA_ROOT", Path.home() / "autodl-tmp")).expanduser()
 
 DEFAULT_PATTERNS = [
-    "/root/autodl-tmp/ecgtwin_prompt_token_super5/prompt_token_runs/*/prompt_token_bank.pt",
+    str(DATA_ROOT / "ecgtwin_prompt_token_super5/prompt_token_runs/*/prompt_token_bank.pt"),
 ]
 
 
@@ -221,8 +223,8 @@ def export_bank(path: Path, out_dir: Path, root: Path) -> Dict[str, int]:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--patterns", nargs="*", default=DEFAULT_PATTERNS)
-    parser.add_argument("--out_dir", default="/root/autodl-tmp/ecgtwin_prompt_token_super5/diagnostics")
-    parser.add_argument("--root", default="/root/autodl-tmp/ecgtwin_prompt_token_super5/prompt_token_runs")
+    parser.add_argument("--out_dir", default=str(DATA_ROOT / "ecgtwin_prompt_token_super5/diagnostics"))
+    parser.add_argument("--root", default=str(DATA_ROOT / "ecgtwin_prompt_token_super5/prompt_token_runs"))
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)

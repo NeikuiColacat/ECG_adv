@@ -15,7 +15,7 @@
     {
       "paper_item": "Table 6.3 / Figure 6.2 / Figure 6.3",
       "name": "ECGTwin IBE and DiT author-style reproduction",
-      "command": "bash scripts/ecgtwin_author_repro/run_author_repro_pipeline.sh",
+      "command": "bash scripts/final_round/run_thesis_reproduction.sh author_repro",
       "entrypoints": [
         "scripts/ecgtwin_author_repro/train_ibe_repro.py",
         "scripts/ecgtwin_author_repro/train_dit_repro.py"
@@ -37,16 +37,19 @@
       "name": "Five-class synthetic 12-lead ECG visualization",
       "command": "bash scripts/final_round/run_thesis_reproduction.sh figures",
       "entrypoints": ["scripts/final_round/curate_thesis_ecg_examples.py"],
-      "artifacts": ["${ECG_ADV_FINAL_ROUND_ROOT}/thesis_selected_ecg_examples/"]
+      "artifacts": [
+        "${ECG_ADV_FINAL_ROUND_ROOT}/thesis_selected_ecg_examples/",
+        "artifacts/figures/generated_ecg_examples/thesis_synthetic_12lead.png"
+      ]
     },
     {
       "paper_item": "Table 6.5 / Table 6.6 / Table 6.7 / Figure 6.4",
       "name": "Low-sample EfficientNetV2 baseline and synthetic-pretrain fine-tuning",
       "command": "bash scripts/final_round/run_thesis_reproduction.sh low_sample",
       "entrypoints": [
+        "scripts/final_round/summarize_low_sample_results.py",
         "scripts/final_round/run_low_sample_three_methods.sh",
-        "scripts/triple_labels/train_ptbxl.py",
-        "scripts/triple_labels/eval_crosscenter.py"
+        "scripts/triple_labels/train_ptbxl.py"
       ],
       "artifacts": [
         "${ECG_ADV_GRAD_ROOT}/method_a_real2000_seed42*/train_result.json",
@@ -62,9 +65,47 @@
     {
       "paper_item": "Table 6.8",
       "name": "Training strategy and generation-condition ablations",
-      "command": "python scripts/triple_labels/train_ptbxl.py --synth_npz <pool> --synth_ratio <ratio> [--synthetic_only|--init_ckpt <ckpt>]",
-      "entrypoints": ["scripts/triple_labels/train_ptbxl.py", "scripts/final_round/build_thesis_evidence_pack.py"],
-      "artifacts": ["${ECG_ADV_GRAD_ROOT}/method_b_*", "${ECG_ADV_GRAD_ROOT}/ablation_*"]
+      "command": "bash scripts/final_round/run_thesis_reproduction.sh ablation_6_8",
+      "entrypoints": ["scripts/final_round/run_table_6_8_ablations.sh", "scripts/triple_labels/train_ptbxl.py"],
+      "ablation_rows": [
+        {
+          "paper_method": "提示向量联合训练",
+          "output_dir": "${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/center_token_joint_seed42/",
+          "synth_npz": "${ECG_ADV_DATA_ROOT}/ecgtwin_prompt_token_super5/effectiveness_pilot_v42_task1gate_ningbo_token_scale_large_20260504/target_token_s05/ningbo/gated/gated_samples.npz",
+          "train_args": "--synth_npz <synth_npz> --synth_ratio 0.25 --seed 42 --epochs ${EPOCHS:-50}"
+        },
+        {
+          "paper_method": "报告文本联合训练",
+          "output_dir": "${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/report_text_joint_seed42/",
+          "synth_npz": "${ECG_ADV_GRAD_ROOT}/method_b_synth_candidates_actual_report_mv4_step2000_seed42/ptbxl/gated_max1000/gated_samples.npz",
+          "train_args": "--synth_npz <synth_npz> --synth_ratio 0.25 --seed 42 --epochs ${EPOCHS:-50}"
+        },
+        {
+          "paper_method": "默认文本联合训练",
+          "output_dir": "${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/default_text_joint_seed42/",
+          "synth_npz": "${ECG_ADV_DATA_ROOT}/ecgtwin_prompt_token_super5/generated_pool_v4_merged_balanced/ningbo/gated/gated_samples.npz",
+          "train_args": "--synth_npz <synth_npz> --synth_ratio 0.25 --seed 42 --epochs ${EPOCHS:-50}"
+        },
+        {
+          "paper_method": "无提示向量仅合成训练",
+          "output_dir": "${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/no_token_synthetic_only_seed42/",
+          "synth_npz": "${ECG_ADV_DATA_ROOT}/ecgtwin_prompt_token_super5/effectiveness_pilot_v42_task1gate_ningbo_no_token_large_20260504/no_token/ningbo/gated/gated_samples.npz",
+          "train_args": "--synth_npz <synth_npz> --synthetic_only --seed 42 --epochs ${EPOCHS:-50}"
+        },
+        {
+          "paper_method": "中心提示向量预训练",
+          "output_dir": "${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/center_token_pretrain_realfine_seed42/",
+          "init_ckpt": "${ECG_ADV_GRAD_ROOT}/self_distill_v2_e18_v46_class_oracle_hardlabel_r10_seed42_auroc/best_model.pt",
+          "train_args": "--init_ckpt <init_ckpt> --lr 0.0001 --cosine_tmax 10 --patience 8 --epochs 25 --seed 9042"
+        }
+      ],
+      "artifacts": [
+        "${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/center_token_joint_seed42/",
+        "${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/report_text_joint_seed42/",
+        "${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/default_text_joint_seed42/",
+        "${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/no_token_synthetic_only_seed42/",
+        "${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/center_token_pretrain_realfine_seed42/"
+      ]
     },
     {
       "paper_item": "Table 5.2",
@@ -87,7 +128,7 @@
       "name": "Streamlit prototype",
       "command": "bash scripts/final_round/run_thesis_reproduction.sh streamlit",
       "entrypoints": ["apps/streamlit_ecg_demo/app.py", "scripts/streamlit_demo/"],
-      "artifacts": ["docs/figures/streamlit_demo/*.png"]
+      "artifacts": ["artifacts/figures/streamlit_demo/*.png"]
     }
   ],
   "excluded_from_git": [

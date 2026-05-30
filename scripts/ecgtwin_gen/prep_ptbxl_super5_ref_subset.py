@@ -12,8 +12,8 @@ Output entries keep:
 from __future__ import annotations
 
 import argparse
-import ast
 import json
+import os
 import sys
 from collections import Counter
 from pathlib import Path
@@ -24,6 +24,8 @@ import torch
 
 REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO))
+DATA_ROOT = Path(os.environ.get("ECG_ADV_DATA_ROOT", Path.home() / "autodl-tmp")).expanduser()
+PTBXL_ROOT = Path(os.environ.get("ECG_ADV_PTBXL_ROOT", DATA_ROOT / "ptbxl")).expanduser()
 
 from scripts.triple_labels.label_schemes import (  # noqa: E402
     CLASS_NAMES_SUPER5,
@@ -109,8 +111,8 @@ def _sample_by_primary_class(
 
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--ptbxl_cache", default="/root/ECG_adv_Gen/datasets/PTBXL/PTBXL_vae_multi_nomic.pt")
-    ap.add_argument("--ptbxl_csv", default="/root/autodl-tmp/ptbxl/ptbxl_database.csv")
+    ap.add_argument("--ptbxl_cache", default=str(PTBXL_ROOT / "PTBXL_vae_multi_nomic.pt"))
+    ap.add_argument("--ptbxl_csv", default=str(PTBXL_ROOT / "ptbxl_database.csv"))
     ap.add_argument("--out_pt", required=True)
     ap.add_argument("--out_meta", required=True)
     ap.add_argument("--folds", nargs="+", type=int, default=list(range(1, 9)))

@@ -24,16 +24,11 @@ docs/~$*.docx
 util/test_wave.py
 
 # External model repos live on the data disk and are linked from model/.
-# Keep the link handles visible to git; do not track arbitrary model payloads.
+# Track only model/.gitignore and model/README.md; recreate links with
+# scripts/bootstrap_model_repos.sh.
 model/*
-!model/DeepECG
-!model/ECGTwin
-!model/ecg_ptbxl_benchmarking
-!model/advdiff
-!model/ecgfounder
-!model/textual_inversion
-!model/dataset-interfaces
-!model/robustness
+!model/.gitignore
+!model/README.md
 
 # Legacy/local external repos are not part of the current mainline bootstrap.
 model/SA-AET/

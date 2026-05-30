@@ -14,7 +14,7 @@ Date: 2026-05-04.
 训练与实验:
   docs/pipelines/efficientnetv2_training_pipeline.md
   docs/pipelines/ecgtwin_center_prompt_token_pipeline.md
-  docs/pipelines/latent_hull_online_at_pipeline.md
+  legacy/docs/pipelines/latent_hull_online_at_pipeline.md
 
 演示与部署:
   Streamlit frontend

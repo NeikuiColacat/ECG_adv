@@ -8,7 +8,7 @@ threshold checkers, then writes a markdown report with:
   - final verdict on which classes pass at 3/3, ≥1/3, 0/3 seeds
 
 Usage:
-  /root/miniforge3/envs/ECGTwin/bin/python \
+  uv run python \
     scripts/ecgtwin_gen/digital_gt_validate.py \
     --tensor_dir outputs/sanity_super5_tensors \
     --out_md docs/ecgtwin_super5_digital_gt_validation.md
@@ -25,8 +25,7 @@ REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO))
 
 from util.ecg_digital_features import (         # noqa: E402
-    extract_digital_features, evaluate_super5,
-    check_norm, check_mi, check_sttc, check_hyp, check_cd,
+    extract_digital_features, check_norm, check_mi, check_sttc, check_hyp, check_cd,
 )
 
 

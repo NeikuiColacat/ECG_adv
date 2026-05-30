@@ -26,7 +26,6 @@ from methods.ecgtwin_gen.prompt_token.trainer import (  # noqa: E402
     _load_text_embed,
 )
 from scripts.ecgtwin_gen.generate_center_prompt_token_synth import (  # noqa: E402
-    choose_ref_indices,
     postprocess_for_classifier,
     scale_token_sequence,
     token_sequence_from_bank,

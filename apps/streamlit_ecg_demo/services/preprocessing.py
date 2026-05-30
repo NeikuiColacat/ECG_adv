@@ -105,7 +105,7 @@ load_demo_samples = load_ecg_samples
 
 
 def apply_corruption(signal_ct: np.ndarray, name: str, severity: int, seed: int = 42) -> np.ndarray:
-    """Lightweight PN2021-C-style corruptions for the Streamlit demo."""
+    """Lightweight ECG corruptions for the Streamlit demo."""
     rng = np.random.default_rng(seed)
     arr = to_signal_ct(signal_ct).copy()
     sev = max(1, min(int(severity), 5))

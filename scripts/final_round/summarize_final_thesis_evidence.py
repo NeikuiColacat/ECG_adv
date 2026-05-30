@@ -17,16 +17,16 @@ FINAL_ROUND_ROOT = Path(
 DEFAULT_REAL = GRAD_ROOT / "method_a_real2000_seed42/train_result.json"
 DEFAULT_NO_TOKEN = (
     GRAD_ROOT
-    / "self_distill_v2_e24_v46_no_token_hardlabel_r10_realfine_lr1e4_seed42_auroc_rerun_20260506"
+    / "self_distill_v2_e24_v46_no_token_hardlabel_r10_realfine_lr1e4_seed42_auroc"
     / "train_result.json"
 )
 DEFAULT_CENTER_TOKEN = (
     GRAD_ROOT
-    / "self_distill_v2_e23_v46_class_oracle_hardlabel_r10_realfine_lr1e4_seed42_auroc_rerun_20260506"
+    / "self_distill_v2_e23_v46_class_oracle_hardlabel_r10_realfine_lr1e4_seed42_auroc"
     / "train_result.json"
 )
 DEFAULT_BENCHMARK = STREAMLIT_ROOT / "reports/inference_benchmark.json"
-DEFAULT_FIGURES = FINAL_ROUND_ROOT / "thesis_paper_selected_v1/selected_examples.json"
+DEFAULT_FIGURES = FINAL_ROUND_ROOT / "thesis_selected_ecg_examples/selected_examples.json"
 DEFAULT_OUT_DIR = FINAL_ROUND_ROOT / "final_evidence"
 
 

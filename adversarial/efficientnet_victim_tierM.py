@@ -1,9 +1,9 @@
 """
-可微分 Tier-M 6 类 EfficientNet1DV2 victim（对抗 / 在线微调路径）
+可微分 EfficientNet1DV2 victim（历史文件名保留为 tierM）
 
-与 77-class JIT 版本 efficientnet_victim.py 的区别：
-  - 权重来自 state_dict（默认位于 `ECG_ADV_DATA_ROOT/crosscenter_tierM/best_model.pt`）
-  - 输出维度 6（NSR / STach / AF / IAVB / LBBB / RBBB）
+当前论文主线把它作为 Super5 合成 ECG 质量 proxy / 生成筛选 victim：
+  - 权重来自 state_dict（默认位于 `ECG_ADV_DATA_ROOT/triple_labels/.../best_model.pt`）
+  - 输出维度由 `num_classes` 指定；论文主线使用 5 类 Super5
   - 输入预处理与 `unified_preprocess_to_1000` 一致：
       1024 @ 102.4Hz (ECGTwin VAE decode 输出) → 1000 @ 100Hz → global per-sample zscore → center crop 250
   - 模型本身是 nn.Module（非 JIT），所以可以训练（不需要单独 adapter 层）
@@ -21,7 +21,7 @@
     → center crop 1000 → 250
     → EfficientNet1DV2 → logits (B, 6)
 
-API 与 77-class victim 对齐，`BoundaryAdvDiffGenerator` 无需改动即可 swap-in。
+API 与旧 victim 对齐，便于复用 ECGTwin 生成筛选路径。
 """
 
 import os
@@ -58,9 +58,10 @@ from EfficientNetv2 import EfficientNet1DV2  # noqa: E402
 from util.lead_utils import ECGTWIN_TO_PTBXL_INDICES  # noqa: E402
 
 
-DEFAULT_TIERM_CKPT = str(_DATA_ROOT / "crosscenter_tierM" / "best_model.pt")
+DEFAULT_SUPER5_CKPT = str(_DATA_ROOT / "triple_labels" / "super5_minresample_full10_perglobal_20260503" / "best_model.pt")
+DEFAULT_TIERM_CKPT = DEFAULT_SUPER5_CKPT
 
-# Tier-M victim training input length (match scripts/crosscenter_tierM/train_ptbxl_tierM.py crop_len=250)
+# Historical Tier-M victim training input length.
 TIERM_INPUT_LENGTH = 250
 
 # ECGTwin VAE decoder output is 1024 samples @ 102.4Hz; resample to 1000 for PTBXL preprocessing alignment

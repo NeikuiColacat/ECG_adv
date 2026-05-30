@@ -8,7 +8,7 @@ Each input directory should contain outputs from `gate_prompt_token_synth.py`:
   gated_samples.ref_meta.json
 
 The merged output keeps the same file naming convention so it can be passed
-directly to `scripts/pgd_cross_center/synth_online_at_super5.py`.
+directly to the historical online adversarial training script archived under `legacy/`.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ import json
 import sys
 from collections import Counter
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict
 
 import numpy as np
 

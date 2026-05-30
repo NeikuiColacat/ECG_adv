@@ -47,12 +47,16 @@ DEFAULT_REAL_CACHE = str(TRIPLE_ROOT / "cache/ptbxl_minimal_resample_per_sample_
 DEFAULT_LABELS = str(GRAD_ROOT / "method_a_real2000_seed42/ptbxl_labels.C5.all.npy")
 DEFAULT_SPLIT = str(GRAD_ROOT / "splits/ptbxl_super5_seed42_train2000_val2000.json")
 DEFAULT_SYNTH = str(
-    GRAD_ROOT
-    / "self_distill_v2_filtered_v46_ptbxl_contrast_seed42"
-    / "synth_v2_filtered_top4000_gamma03.npz"
+    DATA_ROOT
+    / "ecgtwin_prompt_token_super5"
+    / "effectiveness_pilot_v42_task1gate_ningbo_token_scale_large_20260504"
+    / "target_token_s05"
+    / "ningbo"
+    / "gated"
+    / "gated_samples.npz"
 )
 DEFAULT_OUT = str(FINAL_ROUND_ROOT / "feature_distribution")
-DEFAULT_EVIDENCE = str(REPO / "final" / "artifacts" / "evidence_pack" / "feature_distribution")
+DEFAULT_EVIDENCE = str(FINAL_ROUND_ROOT / "evidence_pack" / "feature_distribution")
 
 
 @dataclass(frozen=True)

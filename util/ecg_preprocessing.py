@@ -1,8 +1,6 @@
 """
-Unified ECG preprocessing pipeline for PTBXL (training) and PN2021/MIMIC (OOD eval).
-
-Applied identically to all datasets so any remaining cross-center gap reflects
-genuine domain shift rather than preprocessing artifacts.
+Unified ECG preprocessing helpers for PTB-XL classifier training and optional
+external-center evaluation.
 
 Pipeline (per record):
   (1) handle NaN (nan_to_num)
