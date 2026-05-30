@@ -32,6 +32,18 @@ export ECG_ADV_FINAL_ROUND_ROOT="${ECG_ADV_DATA_ROOT}/final_round_ablation_20260
 bash scripts/bootstrap_model_repos.sh
 ```
 
+如果当前仓库带有 `migrate_files/ecg_grad_*_artifacts_*.tar.gz`，先用下列命令把
+可随光盘交付的运行权重、demo 数据、ONNX/TensorRT 文件和轻量复现实验结果恢复到
+`ECG_ADV_DATA_ROOT`：
+
+```bash
+bash scripts/final_round/run_thesis_reproduction.sh restore_artifacts
+```
+
+恢复脚本会读取 `migrate_files/SHA256SUMS_*.txt` 校验 tar 包，并拒绝带路径穿越的
+tar member。可用 `RESTORE_DRY_RUN=1 bash scripts/final_round/run_thesis_reproduction.sh restore_artifacts`
+只查看会解压哪些归档。
+
 ## 2. 一键入口
 
 统一入口脚本：
@@ -44,6 +56,7 @@ bash scripts/final_round/run_thesis_reproduction.sh env
 
 ```text
 preflight        检查 docs/artifact_manifest.json 中的完整复现数据、权重和结果文件
+restore_artifacts 从 migrate_files/*.tar.gz 恢复已打包 artifacts 到 ECG_ADV_DATA_ROOT
 thesis_assets    检查 thesis.md 引用的本地图片是否都存在
 split            创建 PTB-XL super5 固定划分
 author_repro     复现 ECGTwin IBE + DiT 两阶段训练

@@ -30,6 +30,13 @@ ONNX files, and TensorRT engines live here instead of in git:
 export ECG_ADV_DATA_ROOT="${HOME}/autodl-tmp"
 ```
 
+If the `migrate_files/` archives are present on a fresh machine, restore the
+packaged runtime/reproduction artifacts before running preflight:
+
+```bash
+bash scripts/final_round/run_thesis_reproduction.sh restore_artifacts
+```
+
 Check the resolved paths and required artifacts:
 
 ```bash
@@ -47,6 +54,7 @@ bash scripts/final_round/run_thesis_reproduction.sh streamlit
 
 | purpose | command |
 |---|---|
+| restore `migrate_files` tar archives | `bash scripts/final_round/run_thesis_reproduction.sh restore_artifacts` |
 | thesis image/link check | `bash scripts/final_round/run_thesis_reproduction.sh thesis_assets` |
 | artifact/data preflight | `bash scripts/final_round/run_thesis_reproduction.sh preflight` |
 | PTB-XL train2000/val2000/test17799 split | `bash scripts/final_round/run_thesis_reproduction.sh split` |

@@ -51,3 +51,10 @@ def test_archived_table68_summary_does_not_embed_host_absolute_paths():
 
     assert "/root/autodl-tmp" not in text
     assert "/home/neiku/autodl-tmp" not in text
+
+
+def test_reproduction_runner_exposes_restore_artifacts_stage():
+    script = (REPO_ROOT / "scripts/final_round/run_thesis_reproduction.sh").read_text(encoding="utf-8")
+
+    assert "restore_artifacts" in script
+    assert "restore_migrate_artifacts.py" in script

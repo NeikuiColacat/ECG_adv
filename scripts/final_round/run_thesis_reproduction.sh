@@ -34,6 +34,7 @@ Usage: bash scripts/final_round/run_thesis_reproduction.sh <stage>
 
 Stages:
   env              Print resolved paths and Python command.
+  restore_artifacts Restore migrate_files/*.tar.gz into ECG_ADV_DATA_ROOT.
   thesis_assets    Check local figure/image links referenced by thesis.md.
   preflight        Check required artifact files from docs/artifact_manifest.json.
   split            Create the PTB-XL super5 train2000/val2000/test17799 split.
@@ -92,6 +93,13 @@ stage_preflight() {
 
 stage_thesis_assets() {
   "${PYTHON_CMD[@]}" "${ROOT}/scripts/final_round/check_thesis_assets.py"
+}
+
+stage_restore_artifacts() {
+  "${PYTHON_CMD[@]}" "${ROOT}/scripts/final_round/restore_migrate_artifacts.py" \
+    --migrate_dir "${ROOT}/migrate_files" \
+    --out_dir "${DATA_ROOT}" \
+    ${RESTORE_DRY_RUN:+--dry-run}
 }
 
 stage_author_repro() {
@@ -171,6 +179,7 @@ stage_streamlit() {
 case "${STAGE}" in
   help|-h|--help) usage ;;
   env) print_env ;;
+  restore_artifacts) stage_restore_artifacts ;;
   thesis_assets) stage_thesis_assets ;;
   preflight) stage_preflight ;;
   split) stage_split ;;
