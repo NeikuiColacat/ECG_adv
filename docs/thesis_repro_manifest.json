@@ -1,6 +1,12 @@
 {
   "project": "ECG_adv graduate thesis reproduction",
-  "class_order": ["CD", "HYP", "MI", "NORM", "STTC"],
+  "class_order": [
+    "CD",
+    "HYP",
+    "MI",
+    "NORM",
+    "STTC"
+  ],
   "data_root_env": "ECG_ADV_DATA_ROOT",
   "default_data_root": "${HOME}/autodl-tmp",
   "experiments": [
@@ -18,14 +24,18 @@
         "pyproject.toml",
         "uv.lock"
       ],
-      "artifacts": ["thesis.md"],
+      "artifacts": [
+        "thesis.md"
+      ],
       "note": "These tables are authored directly in the thesis text, but each table is backed by the listed implementation files: Table 3.1 by quality-gate code, Table 4.1 by super5 label mapping, Table 4.2 by the EfficientNetV2 trainer, Table 5.1 by Streamlit modules, and Table 6.1 by env/dependency metadata."
     },
     {
       "paper_item": "Figure 3.1 / Figure 3.2",
       "name": "IBE and DiT architecture figures",
       "command": "bash scripts/final_round/run_thesis_reproduction.sh thesis_assets",
-      "entrypoints": ["scripts/final_round/check_thesis_assets.py"],
+      "entrypoints": [
+        "scripts/final_round/check_thesis_assets.py"
+      ],
       "artifacts": [
         "artifacts/evidence_pack/figures/architecture/ibe_module_simplified_user.png",
         "artifacts/evidence_pack/figures/architecture/noise_predictor_module_simplified_user.png"
@@ -35,12 +45,18 @@
       "paper_item": "Table 6.2 / Figure 6.1",
       "name": "PTB-XL super5 low-sample split",
       "command": "bash scripts/final_round/run_thesis_reproduction.sh split",
-      "entrypoints": ["scripts/triple_labels/create_ptbxl_super5_split.py"],
+      "entrypoints": [
+        "scripts/triple_labels/create_ptbxl_super5_split.py"
+      ],
       "artifacts": [
         "${ECG_ADV_GRAD_ROOT}/splits/ptbxl_super5_seed42_train2000_val2000.json",
         "artifacts/evidence_pack/figures/dataset_label_distribution.png"
       ],
-      "expected": {"train": 2000, "val": 2000, "test": 17799}
+      "expected": {
+        "train": 2000,
+        "val": 2000,
+        "test": 17799
+      }
     },
     {
       "paper_item": "Table 6.3 / Figure 6.2 / Figure 6.3",
@@ -60,7 +76,9 @@
       "paper_item": "Table 6.4",
       "name": "Synthetic ECG quality proxy and semantic response",
       "command": "bash scripts/final_round/run_thesis_reproduction.sh medical_validity",
-      "entrypoints": ["scripts/final_round/run_medical_validity_ablation.py"],
+      "entrypoints": [
+        "scripts/final_round/run_medical_validity_ablation.py"
+      ],
       "artifacts": [
         "${ECG_ADV_FINAL_ROUND_ROOT}/medical_validity/per_sample_quality.csv",
         "${ECG_ADV_FINAL_ROUND_ROOT}/medical_validity/medical_validity_summary.json"
@@ -70,10 +88,15 @@
       "paper_item": "Figure 3.3",
       "name": "Five-class synthetic 12-lead ECG visualization",
       "command": "bash scripts/final_round/run_thesis_reproduction.sh figures",
-      "entrypoints": ["scripts/final_round/curate_thesis_ecg_examples.py"],
+      "entrypoints": [
+        "scripts/final_round/curate_thesis_ecg_examples.py"
+      ],
       "artifacts": [
         "${ECG_ADV_FINAL_ROUND_ROOT}/thesis_selected_ecg_examples/",
         "artifacts/figures/generated_ecg_examples/thesis_synthetic_12lead.png"
+      ],
+      "inputs": [
+        "artifacts/samples/generated_ecg_examples/thesis_selected_samples.npz"
       ]
     },
     {
@@ -101,7 +124,10 @@
       "paper_item": "Table 6.8",
       "name": "Training strategy and generation-condition ablations",
       "command": "bash scripts/final_round/run_thesis_reproduction.sh ablation_6_8",
-      "entrypoints": ["scripts/final_round/run_table_6_8_ablations.sh", "scripts/triple_labels/train_ptbxl.py"],
+      "entrypoints": [
+        "scripts/final_round/run_table_6_8_ablations.sh",
+        "scripts/triple_labels/train_ptbxl.py"
+      ],
       "ablation_rows": [
         {
           "paper_method": "提示向量联合训练",
@@ -109,7 +135,10 @@
           "synth_npz": "${ECG_ADV_GRAD_ROOT}/method_b_synth_candidates_mv4_seed42/ptbxl/gated_max1000/gated_samples.npz",
           "source_result": "artifacts/evidence_pack/raw/train_results/method_b_real_synth_mv4.train_result.json",
           "train_args": "--synth_npz <synth_npz> --synth_ratio 1.0 --seed 42 --epochs 50",
-          "reported_result": {"test_macro_auroc": 0.8477, "test_macro_auprc": 0.6419}
+          "reported_result": {
+            "test_macro_auroc": 0.8477,
+            "test_macro_auprc": 0.6419
+          }
         },
         {
           "paper_method": "报告文本联合训练",
@@ -117,7 +146,10 @@
           "synth_npz": "${ECG_ADV_GRAD_ROOT}/method_b_synth_candidates_actual_report_mv4_step2000_seed42/ptbxl/gated_max1000/gated_samples.npz",
           "source_result": "artifacts/evidence_pack/raw/train_results/method_b_actual_report.train_result.json",
           "train_args": "--synth_npz <synth_npz> --synth_ratio 1.0 --seed 42 --epochs 50",
-          "reported_result": {"test_macro_auroc": 0.8412, "test_macro_auprc": 0.6239}
+          "reported_result": {
+            "test_macro_auroc": 0.8412,
+            "test_macro_auprc": 0.6239
+          }
         },
         {
           "paper_method": "默认文本联合训练",
@@ -125,7 +157,10 @@
           "synth_npz": "${ECG_ADV_GRAD_ROOT}/method_b_synth_candidates_classfallback_newgen_sameclass_cap20_seed42/ptbxl/gated_max1000/gated_samples.npz",
           "source_result": "artifacts/evidence_pack/raw/train_results/method_b_classfallback.train_result.json",
           "train_args": "--synth_npz <synth_npz> --synth_ratio 1.0 --seed 42 --epochs 50",
-          "reported_result": {"test_macro_auroc": 0.8432, "test_macro_auprc": 0.6065}
+          "reported_result": {
+            "test_macro_auroc": 0.8432,
+            "test_macro_auprc": 0.6065
+          }
         },
         {
           "paper_method": "无提示向量仅合成训练",
@@ -133,7 +168,10 @@
           "synth_npz": "${ECG_ADV_GRAD_ROOT}/vanilla_ecgtwin_synth_candidates_n20000_translated_randomany_seed42/ptbxl/samples.npz",
           "source_result": "artifacts/evidence_pack/raw/train_results/synthetic_only_no_token_20k.train_result.json",
           "train_args": "--synth_npz <synth_npz> --synthetic_only --epochs 30 --patience 8 --seed 5042",
-          "reported_result": {"test_macro_auroc": 0.6023, "test_macro_auprc": 0.3851}
+          "reported_result": {
+            "test_macro_auroc": 0.6023,
+            "test_macro_auprc": 0.3851
+          }
         },
         {
           "paper_method": "中心提示向量预训练",
@@ -141,7 +179,10 @@
           "init_ckpt": "${ECG_ADV_GRAD_ROOT}/self_distill_v2_e18_v46_class_oracle_hardlabel_r10_seed42_auroc/best_model.pt",
           "source_result": "artifacts/evidence_pack/raw/train_results/center_token_hard_ft.train_result.json",
           "train_args": "--init_ckpt <init_ckpt> --lr 0.0001 --cosine_tmax 10 --patience 8 --epochs 25 --seed 9042",
-          "reported_result": {"test_macro_auroc": 0.8735, "test_macro_auprc": 0.7013}
+          "reported_result": {
+            "test_macro_auroc": 0.8735,
+            "test_macro_auprc": 0.7013
+          }
         }
       ],
       "artifacts": [
@@ -172,8 +213,13 @@
       "paper_item": "Figure 5.1-5.3",
       "name": "Streamlit prototype",
       "command": "bash scripts/final_round/run_thesis_reproduction.sh streamlit",
-      "entrypoints": ["apps/streamlit_ecg_demo/app.py", "scripts/streamlit_demo/"],
-      "artifacts": ["artifacts/figures/streamlit_demo/*.png"]
+      "entrypoints": [
+        "apps/streamlit_ecg_demo/app.py",
+        "scripts/streamlit_demo/"
+      ],
+      "artifacts": [
+        "artifacts/figures/streamlit_demo/*.png"
+      ]
     }
   ],
   "excluded_from_git": [

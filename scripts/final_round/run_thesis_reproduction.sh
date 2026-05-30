@@ -43,14 +43,14 @@ Stages:
   author_repro     Run ECGTwin IBE + DiT author-style reproduction.
   medical_validity Run Table 6.4 proxy quality summary for generated ECG pools.
   figures          Export five-class generated ECG visualization examples.
-  feature_dist     Run real-vs-synthetic feature distribution analysis.
+  feature_dist     Run optional real-vs-synthetic feature distribution analysis.
   export_onnx      Export the default EfficientNetV2 checkpoint to ONNX.
   build_trt        Build the default TensorRT FP16 engine from ONNX.
   benchmark        Run PyTorch/ONNX/TensorRT inference benchmark.
   evidence         Summarize thesis tables and key evidence into JSON/Markdown.
   package_artifacts Copy packageable files from docs/artifact_manifest.json into an artifact bundle.
   streamlit        Start the Streamlit demo.
-  all              Run split, preflight, low_sample, medical_validity, figures, feature_dist, benchmark, evidence.
+  all              Run split, preflight, low_sample, medical_validity, figures, benchmark, evidence.
 
 Important:
   Large datasets, checkpoints, ONNX, TensorRT engines, and generated pools are
@@ -194,7 +194,6 @@ case "${STAGE}" in
     stage_low_sample
     stage_medical_validity
     stage_figures
-    stage_feature_dist
     stage_benchmark
     stage_evidence
     ;;

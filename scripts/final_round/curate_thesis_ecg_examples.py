@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from PIL import Image
 
 REPO = Path(__file__).resolve().parents[2]
 if str(REPO) not in sys.path:
@@ -20,7 +21,8 @@ from util.ecg_digital_features import evaluate_super5, extract_digital_features
 from util.ecg_viz import plot_ecg_ecgtwin_gallery
 
 
-DEFAULT_SYNTH_NPZ = str(
+REPO_SELECTED_SYNTH_NPZ = REPO / "artifacts" / "samples" / "generated_ecg_examples" / "thesis_selected_samples.npz"
+DATA_ROOT_SYNTH_NPZ = (
     DATA_ROOT
     / "ecgtwin_prompt_token_super5"
     / "effectiveness_pilot_v42_task1gate_ningbo_token_scale_large_20260504"
@@ -29,7 +31,15 @@ DEFAULT_SYNTH_NPZ = str(
     / "gated"
     / "gated_samples.npz"
 )
+
+
+def resolve_default_synth_npz(repo_npz: Path = REPO_SELECTED_SYNTH_NPZ, data_npz: Path = DATA_ROOT_SYNTH_NPZ) -> Path:
+    return repo_npz if repo_npz.exists() else data_npz
+
+
+DEFAULT_SYNTH_NPZ = str(resolve_default_synth_npz())
 DEFAULT_OUT_DIR = str(DATA_ROOT / "final_round_ablation_20260504/thesis_selected_ecg_examples")
+DEFAULT_PAPER_FIG_DIR = str(REPO / "artifacts" / "figures" / "generated_ecg_examples")
 
 
 def _jsonable(value: Any) -> Any:
@@ -322,10 +332,33 @@ def _write_png(signal: np.ndarray, png: Path, class_name: str, title_suffix: str
     )
 
 
+def write_thesis_composite_png(
+    png_paths: list[Path],
+    out_path: Path,
+    *,
+    width_px: int = 1920,
+    gap_px: int = 28,
+) -> None:
+    images = [Image.open(path).convert("RGB") for path in png_paths]
+    resized = []
+    for image in images:
+        height = max(1, int(round(image.height * (width_px / image.width))))
+        resized.append(image.resize((width_px, height), Image.Resampling.LANCZOS))
+    total_height = sum(image.height for image in resized) + gap_px * max(0, len(resized) - 1)
+    canvas = Image.new("RGB", (width_px, total_height), "white")
+    y = 0
+    for image in resized:
+        canvas.paste(image, (0, y))
+        y += image.height + gap_px
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    canvas.save(out_path)
+
+
 def write_outputs(
     data: np.lib.npyio.NpzFile,
     source_npz: Path,
     out_dir: Path,
+    paper_fig_dir: Path,
     class_names: list[str],
     rankings: dict[str, list[dict]],
     candidate_pngs: int,
@@ -339,6 +372,7 @@ def write_outputs(
     soft_labels_arr = data["soft_labels"] if "soft_labels" in data.files else None
 
     final_records = []
+    selected_pngs = []
     selected_signals = []
     selected_labels = []
     selected_teacher_probs = []
@@ -353,6 +387,7 @@ def write_outputs(
         signal_ct = to_signal_ct(signals_arr[idx])
         png = out_dir / f"thesis_{class_name}_12lead.png"
         _write_png(signal_ct, png, class_name, "selected v46 center-token")
+        selected_pngs.append(png)
         final_records.append(_record_for_json(row, png))
 
         selected_signals.append(signals_arr[idx])
@@ -443,11 +478,17 @@ def write_outputs(
         npz_kwargs["soft_labels"] = np.stack(selected_soft_labels).astype(np.float32)
     np.savez_compressed(out_dir / "thesis_selected_samples.npz", **npz_kwargs)
 
+    composite = out_dir / "thesis_synthetic_12lead.png"
+    write_thesis_composite_png(selected_pngs, composite)
+    paper_composite = paper_fig_dir / "thesis_synthetic_12lead.png"
+    write_thesis_composite_png(selected_pngs, paper_composite)
+
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--synth_npz", default=DEFAULT_SYNTH_NPZ)
     ap.add_argument("--out_dir", default=DEFAULT_OUT_DIR)
+    ap.add_argument("--paper_fig_dir", default=DEFAULT_PAPER_FIG_DIR)
     ap.add_argument("--scan_per_class", type=int, default=800)
     ap.add_argument("--candidate_pngs", type=int, default=5)
     ap.add_argument(
@@ -459,6 +500,7 @@ def main() -> None:
 
     source_npz = Path(args.synth_npz)
     out_dir = Path(args.out_dir)
+    paper_fig_dir = Path(args.paper_fig_dir)
     data = np.load(source_npz, allow_pickle=True)
     if "signals" not in data.files or "labels" not in data.files:
         raise ValueError(f"{source_npz} must contain signals and labels")
@@ -473,9 +515,11 @@ def main() -> None:
         scan_per_class=args.scan_per_class,
         manual_indices=_parse_manual_indices(args.manual_indices),
     )
-    write_outputs(data, source_npz, out_dir, class_names, rankings, args.candidate_pngs)
+    write_outputs(data, source_npz, out_dir, paper_fig_dir, class_names, rankings, args.candidate_pngs)
     print(json.dumps({
         "out_dir": str(out_dir),
+        "paper_figure": str(paper_fig_dir / "thesis_synthetic_12lead.png"),
+        "composite_figure": str(out_dir / "thesis_synthetic_12lead.png"),
         "selected_npz": str(out_dir / "thesis_selected_samples.npz"),
         "selected_figures": [str(out_dir / f"thesis_{name}_12lead.png") for name in class_names],
     }, indent=2, ensure_ascii=False))

@@ -672,8 +672,24 @@
         "Figure 3.3"
       ],
       "description": "Composite five-class 12-lead synthetic ECG example figure referenced by thesis.md.",
-      "sha256": "eeb2447940e001134251b3602fd8c5658cad70f0e879b74759f58382a205fecc",
-      "size_bytes": 481779,
+      "sha256": "9b3beb9e04c9eb88f743f9d9defb296ff2264ec0a9d1c0c3078f64ee335c1596",
+      "size_bytes": 2651414,
+      "can_regenerate": true,
+      "regenerate_command": "bash scripts/final_round/run_thesis_reproduction.sh figures"
+    },
+    {
+      "id": "fig33_selected_samples_npz",
+      "path": "${REPO_ROOT}/artifacts/samples/generated_ecg_examples/thesis_selected_samples.npz",
+      "kind": "evidence_sample",
+      "required": true,
+      "package": true,
+      "used_by": [
+        "Figure 3.3",
+        "figures stage"
+      ],
+      "description": "Lightweight five-class selected ECG sample vectors used to regenerate the thesis Figure 3.3 composite without requiring the full synthetic pool.",
+      "sha256": "182eab6f9fb78b15d6208b0c8c887f131ba7a1c0d4a90be7a87c7845d598a305",
+      "size_bytes": 234121,
       "can_regenerate": true,
       "regenerate_command": "bash scripts/final_round/run_thesis_reproduction.sh figures"
     },
@@ -853,12 +869,12 @@
       "id": "feature_distribution_summary",
       "path": "${REPO_ROOT}/artifacts/evidence_pack/feature_distribution/feature_distribution_summary.json",
       "kind": "result",
-      "required": true,
+      "required": false,
       "package": true,
       "used_by": [
-        "feature distribution evidence"
+        "optional feature-distribution audit"
       ],
-      "description": "Archived real-vs-synthetic feature-distribution summary.",
+      "description": "Optional archived real-vs-synthetic feature-distribution summary.",
       "sha256": "378912b2d389e517179370bf50d457b92fbbab69a49d8cbe4e532809d6b7d5a5",
       "size_bytes": 9499,
       "can_regenerate": true,
@@ -868,12 +884,12 @@
       "id": "feature_distribution_metrics",
       "path": "${REPO_ROOT}/artifacts/evidence_pack/feature_distribution/feature_distribution_metrics.csv",
       "kind": "result",
-      "required": true,
+      "required": false,
       "package": true,
       "used_by": [
-        "feature distribution evidence"
+        "optional feature-distribution audit"
       ],
-      "description": "Archived real-vs-synthetic feature-distribution metrics.",
+      "description": "Optional archived real-vs-synthetic feature-distribution metrics.",
       "sha256": "dd267d01eac9c57ee4c9cdc22628eb2f8d686e1e423d1cd8e77cf4db66bce560",
       "size_bytes": 2022,
       "can_regenerate": true,
@@ -883,12 +899,12 @@
       "id": "feature_distribution_report",
       "path": "${REPO_ROOT}/artifacts/evidence_pack/feature_distribution/feature_distribution_report.md",
       "kind": "report",
-      "required": true,
+      "required": false,
       "package": true,
       "used_by": [
-        "feature distribution evidence"
+        "optional feature-distribution audit"
       ],
-      "description": "Archived Markdown report for real-vs-synthetic feature distribution.",
+      "description": "Optional archived Markdown report for real-vs-synthetic feature distribution.",
       "sha256": "4227e1781e37932953ecb7f6c53f7861c60dfb566a89c8279325be74bb1d25ce",
       "size_bytes": 5828,
       "can_regenerate": true,

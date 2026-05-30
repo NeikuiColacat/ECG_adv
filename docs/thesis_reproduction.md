@@ -52,7 +52,7 @@ low_sample_rerun 完整重跑表 6.5-6.7 训练，需要额外初始化 checkpoi
 ablation_6_8     逐项运行表 6.8 消融命令
 medical_validity 复现合成 ECG 质量代理统计
 figures          导出五类合成 ECG 可视化样例
-feature_dist     真实/合成特征分布分析
+feature_dist     可选的真实/合成特征分布分析
 export_onnx      导出 EfficientNetV2 ONNX
 build_trt        构建 TensorRT FP16 engine
 benchmark        运行推理性能 benchmark
@@ -61,6 +61,9 @@ package_artifacts 根据 artifact_manifest 打包可随光盘交付的权重、d
 streamlit        启动 Streamlit 演示系统
 all              运行主要离线复现流程
 ```
+
+`feature_dist` 依赖额外的 DeepECG 特征提取代码，当前论文正文没有单独表图引用，
+因此保留为可选审计 stage，不作为 `all` 和必需 preflight 的主线门槛。
 
 示例：
 
@@ -84,7 +87,7 @@ bash scripts/final_round/run_thesis_reproduction.sh streamlit
 | 表 6.2 / 图 6.1 | PTB-XL super5 train=2000、val=2000、test=17799 固定划分 | `scripts/triple_labels/create_ptbxl_super5_split.py` | `${ECG_ADV_GRAD_ROOT}/splits/ptbxl_super5_seed42_train2000_val2000.json` |
 | 表 6.3 / 图 6.2 / 图 6.3 | ECGTwin IBE + DiT 两阶段复现 | `scripts/ecgtwin_author_repro/run_author_repro_pipeline.sh` | `${ECG_ADV_DATA_ROOT}/ecgtwin_author_repro/<run>/` |
 | 表 6.4 | 中心提示向量/无提示向量生成质量代理统计 | `scripts/final_round/run_medical_validity_ablation.py` | `${ECG_ADV_FINAL_ROUND_ROOT}/medical_validity/` |
-| 图 3.3 | 五类 12 导联合成 ECG 样例 | `scripts/final_round/curate_thesis_ecg_examples.py` | `${ECG_ADV_FINAL_ROUND_ROOT}/thesis_selected_ecg_examples/`；论文引用图在 `artifacts/figures/generated_ecg_examples/thesis_synthetic_12lead.png` |
+| 图 3.3 | 五类 12 导联合成 ECG 样例 | `scripts/final_round/curate_thesis_ecg_examples.py` | 默认读取 `artifacts/samples/generated_ecg_examples/thesis_selected_samples.npz`；输出到 `${ECG_ADV_FINAL_ROUND_ROOT}/thesis_selected_ecg_examples/`，并同步更新论文引用图 `artifacts/figures/generated_ecg_examples/thesis_synthetic_12lead.png` |
 | 表 6.5 | EfficientNetV2 真实 2000 baseline | `scripts/final_round/summarize_low_sample_results.py` 或 `scripts/triple_labels/train_ptbxl.py` | `${ECG_ADV_GRAD_ROOT}/method_a_real2000_seed42/train_result.json` |
 | 表 6.6 / 表 6.7 / 图 6.4 | 无提示/中心提示合成预训练后真实微调 | `scripts/final_round/summarize_low_sample_results.py`；完整重跑用 `run_low_sample_three_methods.sh` | `${ECG_ADV_GRAD_ROOT}/self_distill_v2_e23.../train_result.json` 与 `${ECG_ADV_GRAD_ROOT}/self_distill_v2_e24.../train_result.json` |
 | 表 6.8 | 训练策略与生成条件消融 | `scripts/final_round/run_table_6_8_ablations.sh` | `${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/` |
