@@ -1,0 +1,16 @@
+method,class,auroc,auprc,n_pos,n_valid,run_dir
+real2000 baseline,CD,0.833564185601163,0.6474001675658709,3997,17799,/root/autodl-tmp/graduate_project/method_a_real2000_seed42
+real2000 baseline,HYP,0.7634430966511169,0.3223449904912912,2136,17799,/root/autodl-tmp/graduate_project/method_a_real2000_seed42
+real2000 baseline,MI,0.8182883891721087,0.568481874042842,4415,17799,/root/autodl-tmp/graduate_project/method_a_real2000_seed42
+real2000 baseline,NORM,0.915463306063572,0.8761553513190059,7808,17799,/root/autodl-tmp/graduate_project/method_a_real2000_seed42
+real2000 baseline,STTC,0.885526797481966,0.7028474813227599,4244,17799,/root/autodl-tmp/graduate_project/method_a_real2000_seed42
+no-token hard pretrain -> real fine-tune,CD,0.8710395642696376,0.7433421135961235,3997,17799,/root/autodl-tmp/graduate_project/self_distill_v2_e24_v46_no_token_hardlabel_r10_realfine_lr1e4_seed42_auroc
+no-token hard pretrain -> real fine-tune,HYP,0.7902206104416979,0.38535926593775227,2136,17799,/root/autodl-tmp/graduate_project/self_distill_v2_e24_v46_no_token_hardlabel_r10_realfine_lr1e4_seed42_auroc
+no-token hard pretrain -> real fine-tune,MI,0.8452603521115796,0.650179853807543,4415,17799,/root/autodl-tmp/graduate_project/self_distill_v2_e24_v46_no_token_hardlabel_r10_realfine_lr1e4_seed42_auroc
+no-token hard pretrain -> real fine-tune,NORM,0.9237464012180635,0.893940517245182,7808,17799,/root/autodl-tmp/graduate_project/self_distill_v2_e24_v46_no_token_hardlabel_r10_realfine_lr1e4_seed42_auroc
+no-token hard pretrain -> real fine-tune,STTC,0.904294743271991,0.740961832531557,4244,17799,/root/autodl-tmp/graduate_project/self_distill_v2_e24_v46_no_token_hardlabel_r10_realfine_lr1e4_seed42_auroc
+center-token hard pretrain -> real fine-tune,CD,0.8776803041347813,0.7549873983581794,3997,17799,/root/autodl-tmp/graduate_project/self_distill_v2_e23_v46_class_oracle_hardlabel_r10_realfine_lr1e4_seed42_auroc
+center-token hard pretrain -> real fine-tune,HYP,0.7910214343734764,0.4153673032673379,2136,17799,/root/autodl-tmp/graduate_project/self_distill_v2_e23_v46_class_oracle_hardlabel_r10_realfine_lr1e4_seed42_auroc
+center-token hard pretrain -> real fine-tune,MI,0.8662034128747904,0.7032518704985065,4415,17799,/root/autodl-tmp/graduate_project/self_distill_v2_e23_v46_class_oracle_hardlabel_r10_realfine_lr1e4_seed42_auroc
+center-token hard pretrain -> real fine-tune,NORM,0.9279640290503256,0.8974355391157096,7808,17799,/root/autodl-tmp/graduate_project/self_distill_v2_e23_v46_class_oracle_hardlabel_r10_realfine_lr1e4_seed42_auroc
+center-token hard pretrain -> real fine-tune,STTC,0.904695986713814,0.7354889250610712,4244,17799,/root/autodl-tmp/graduate_project/self_distill_v2_e23_v46_class_oracle_hardlabel_r10_realfine_lr1e4_seed42_auroc

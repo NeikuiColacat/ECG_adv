@@ -34,6 +34,7 @@ Usage: bash scripts/final_round/run_thesis_reproduction.sh <stage>
 
 Stages:
   env              Print resolved paths and Python command.
+  thesis_assets    Check local figure/image links referenced by thesis.md.
   preflight        Check required artifact files from docs/artifact_manifest.json.
   split            Create the PTB-XL super5 train2000/val2000/test17799 split.
   low_sample       Summarize Table 6.5-6.7 archived custom-split results.
@@ -85,6 +86,10 @@ stage_split() {
 
 stage_preflight() {
   "${PYTHON_CMD[@]}" "${ROOT}/scripts/final_round/preflight_thesis_archive.py"
+}
+
+stage_thesis_assets() {
+  "${PYTHON_CMD[@]}" "${ROOT}/scripts/final_round/check_thesis_assets.py"
 }
 
 stage_author_repro() {
@@ -143,6 +148,7 @@ stage_evidence() {
 stage_package_artifacts() {
   "${PYTHON_CMD[@]}" "${ROOT}/scripts/final_round/package_thesis_artifacts.py" \
     --include-optional \
+    --skip-missing \
     --out_dir "${DATA_ROOT}/thesis_archive_artifacts"
 }
 
@@ -163,6 +169,7 @@ stage_streamlit() {
 case "${STAGE}" in
   help|-h|--help) usage ;;
   env) print_env ;;
+  thesis_assets) stage_thesis_assets ;;
   preflight) stage_preflight ;;
   split) stage_split ;;
   author_repro) stage_author_repro ;;
@@ -179,6 +186,7 @@ case "${STAGE}" in
   package_artifacts) stage_package_artifacts ;;
   streamlit) stage_streamlit ;;
   all)
+    stage_thesis_assets
     stage_split
     stage_preflight
     stage_low_sample

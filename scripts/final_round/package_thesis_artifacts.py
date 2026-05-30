@@ -55,8 +55,9 @@ def copy_artifacts(
     include_optional: bool,
     include_nonpackage: bool,
     skip_missing: bool,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     copied = []
+    missing = []
     for item in manifest.get("artifacts", []):
         required = bool(item.get("required", False))
         package = bool(item.get("package", True))
@@ -70,6 +71,16 @@ def copy_artifacts(
             message = f"missing artifact: {item['id']} -> {src}"
             if required and not skip_missing:
                 raise FileNotFoundError(message)
+            missing.append({
+                "id": item["id"],
+                "kind": item.get("kind"),
+                "required": required,
+                "package": package,
+                "source_path": str(src),
+                "used_by": item.get("used_by", []),
+                "description": item.get("description", ""),
+                "regenerate_command": item.get("regenerate_command"),
+            })
             print(f"[skip] {message}")
             continue
         rel = archive_relative_path(src)
@@ -90,7 +101,7 @@ def copy_artifacts(
             "description": item.get("description", ""),
         })
         print(f"[copy] {item['id']} -> {rel}")
-    return copied
+    return copied, missing
 
 
 def write_checksums(out_dir: Path, copied: list[dict[str, Any]]) -> None:
@@ -118,7 +129,7 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
-    copied = copy_artifacts(
+    copied, missing = copy_artifacts(
         manifest,
         out_dir,
         include_optional=args.include_optional,
@@ -130,9 +141,13 @@ def main() -> None:
         json.dumps({"artifacts": copied}, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
+    (out_dir / "missing_artifacts.json").write_text(
+        json.dumps({"missing_artifacts": missing}, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
     if args.tar:
         make_tar(out_dir, Path(args.tar).expanduser())
-    print(f"[done] packaged {len(copied)} artifacts under {out_dir}")
+    print(f"[done] packaged {len(copied)} artifacts under {out_dir}; missing={len(missing)}")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,11 @@
+test_item,input,expected,actual,status
+PTB-XL preprocessing cache,/root/autodl-tmp/triple_labels/cache/ptbxl_minimal_resample_per_sample_global_fs100_len1000.npy,"(21799,1000,12) finite ECG array",exists,pass
+super5 label cache,/root/autodl-tmp/graduate_project/method_a_real2000_seed42/ptbxl_labels.C5.all.npy,"(21799,5), class order CD/HYP/MI/NORM/STTC",exists,pass
+low-sample split,/root/autodl-tmp/graduate_project/splits/ptbxl_super5_seed42_train2000_val2000.json,"train=2000, val=2000, test=17799",exists,pass
+selected generated ECG figures,/root/autodl-tmp/final_round_ablation_20260504/thesis_paper_selected_v1/selected_examples.json,five thesis-selected 12-lead PNGs and metadata,exists,pass
+selected generated ECG vectors,/root/autodl-tmp/final_round_ablation_20260504/thesis_paper_selected_v1/thesis_selected_samples.npz,"signals shape (5,1000,12)",exists,pass
+medical validity summary,/root/autodl-tmp/final_round_ablation_20260504/medical_validity/medical_validity_summary.json,quality and semantic gate summary,exists,pass
+ONNX export,/root/autodl-tmp/streamlit_ecg_demo/models/efficientnetv2_super5.onnx,classifier ONNX model,exists,pass
+TensorRT engine,/root/autodl-tmp/streamlit_ecg_demo/models/efficientnetv2_super5_fp16.engine,FP16 TensorRT engine,exists,pass
+TensorRT numerical validation,/root/autodl-tmp/streamlit_ecg_demo/reports/tensorrt_validation.json,max_abs_prob_diff below 1e-3,exists,pass
+Streamlit application source,apps/streamlit_ecg_demo/app.py,detection/generation/robustness/benchmark tabs,exists,pass

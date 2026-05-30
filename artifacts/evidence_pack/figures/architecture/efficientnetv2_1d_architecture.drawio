@@ -1,0 +1,86 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mxfile host="app.diagrams.net" modified="2026-05-09T12:41:26Z" agent="Codex" version="24.7.17" type="device">
+  <diagram id="17663824c8e0" name="一维 EfficientNetV2 架构图">
+    <mxGraphModel dx="1700" dy="760" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1700" pageHeight="760" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title-3343dd95" value="一维 EfficientNetV2 多标签 ECG 异常检测架构" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontFamily=Microsoft YaHei;fontSize=22;fontStyle=1;fontColor=#111827;" vertex="1" parent="1">
+          <mxGeometry x="300" y="35" width="1100" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="box-be3f334e" value="输入 ECG&lt;br&gt;12 × 1000&lt;br&gt;PTB-XL 导联顺序" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#EAF2FB;strokeColor=#2F5597;strokeWidth=2;fontFamily=Microsoft YaHei;fontSize=14;fontColor=#111827;align=center;verticalAlign=middle;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="60" y="190" width="220" height="85" as="geometry" />
+        </mxCell>
+        <mxCell id="box-ab021fdf" value="Initial Conv1d&lt;br&gt;BatchNorm&lt;br&gt;LeakyReLU" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2F5597;strokeWidth=2;fontFamily=Microsoft YaHei;fontSize=14;fontColor=#111827;align=center;verticalAlign=middle;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="360" y="195" width="210" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="box-69e48648" value="Fused-MBConv1d&lt;br&gt;浅层形态特征" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#EAF6EF;strokeColor=#2E7D4F;strokeWidth=2;fontFamily=Microsoft YaHei;fontSize=14;fontColor=#111827;align=center;verticalAlign=middle;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="650" y="195" width="220" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="box-aadf4368" value="MBConv1d&lt;br&gt;Depthwise Conv&lt;br&gt;SE 通道注意力" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#FFF1E2;strokeColor=#C56A1A;strokeWidth=2;fontFamily=Microsoft YaHei;fontSize=14;fontColor=#111827;align=center;verticalAlign=middle;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="950" y="190" width="230" height="85" as="geometry" />
+        </mxCell>
+        <mxCell id="box-15a17331" value="1 × 1 Conv&lt;br&gt;特征整合" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#F1ECF7;strokeColor=#6B5FA7;strokeWidth=2;fontFamily=Microsoft YaHei;fontSize=14;fontColor=#111827;align=center;verticalAlign=middle;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="1260" y="195" width="180" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="box-89c88e47" value="Global AvgPool&lt;br&gt;Flatten" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#4B5563;strokeWidth=2;fontFamily=Microsoft YaHei;fontSize=14;fontColor=#111827;align=center;verticalAlign=middle;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="1510" y="195" width="160" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="box-06b1cd9c" value="Linear Head&lt;br&gt;5 logits" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#FBEAEA;strokeColor=#B4544C;strokeWidth=2;fontFamily=Microsoft YaHei;fontSize=14;fontColor=#111827;align=center;verticalAlign=middle;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="1510" y="380" width="160" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="box-7233e951" value="Sigmoid&lt;br&gt;多标签概率" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#B4544C;strokeWidth=2;fontFamily=Microsoft YaHei;fontSize=14;fontColor=#111827;align=center;verticalAlign=middle;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="1260" y="380" width="180" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="box-34ae7b95" value="输出类别&lt;br&gt;CD / HYP / MI&lt;br&gt;NORM / STTC" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#FBEAEA;strokeColor=#B4544C;strokeWidth=2;fontFamily=Microsoft YaHei;fontSize=14;fontColor=#111827;align=center;verticalAlign=middle;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="950" y="375" width="230" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="group-4c2e831f" value="模型改造要点" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#4B5563;strokeWidth=1;dashed=1;fontFamily=Microsoft YaHei;fontSize=12;fontColor=#6B7280;align=left;verticalAlign=top;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="70" y="540" width="1540" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="box-1346caa1" value="二维图像模型改造&lt;br&gt;2D Conv/Pool → 1D 时序操作&lt;br&gt;RGB 输入 → 12 导联通道" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#F3F4F6;strokeColor=#4B5563;strokeWidth=2;fontFamily=Microsoft YaHei;fontSize=13;fontColor=#111827;align=center;verticalAlign=middle;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="110" y="575" width="330" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="box-7a66f312" value="低样本训练约束&lt;br&gt;类别权重 + 有效标签掩码&lt;br&gt;真实验证集早停" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#F3F4F6;strokeColor=#4B5563;strokeWidth=2;fontFamily=Microsoft YaHei;fontSize=13;fontColor=#111827;align=center;verticalAlign=middle;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="500" y="575" width="300" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="box-f915defb" value="合成增强路线&lt;br&gt;合成 ECG 预训练&lt;br&gt;真实 2000 条微调" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#F3F4F6;strokeColor=#4B5563;strokeWidth=2;fontFamily=Microsoft YaHei;fontSize=13;fontColor=#111827;align=center;verticalAlign=middle;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="860" y="575" width="300" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="box-20c3a395" value="评价与部署&lt;br&gt;AUROC / AUPRC&lt;br&gt;ONNX / TensorRT" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#F3F4F6;strokeColor=#4B5563;strokeWidth=2;fontFamily=Microsoft YaHei;fontSize=13;fontColor=#111827;align=center;verticalAlign=middle;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="1220" y="575" width="300" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="edge-e553d92b" value="" style="endArrow=block;html=1;rounded=0;strokeColor=#2F5597;strokeWidth=2;edgeStyle=orthogonalEdgeStyle;" edge="1" parent="1" source="box-be3f334e" target="box-ab021fdf">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge-045a9c08" value="" style="endArrow=block;html=1;rounded=0;strokeColor=#2F5597;strokeWidth=2;edgeStyle=orthogonalEdgeStyle;" edge="1" parent="1" source="box-ab021fdf" target="box-69e48648">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge-048acce7" value="" style="endArrow=block;html=1;rounded=0;strokeColor=#2E7D4F;strokeWidth=2;edgeStyle=orthogonalEdgeStyle;" edge="1" parent="1" source="box-69e48648" target="box-aadf4368">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge-af7ffcec" value="" style="endArrow=block;html=1;rounded=0;strokeColor=#C56A1A;strokeWidth=2;edgeStyle=orthogonalEdgeStyle;" edge="1" parent="1" source="box-aadf4368" target="box-15a17331">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge-c77357ae" value="" style="endArrow=block;html=1;rounded=0;strokeColor=#6B5FA7;strokeWidth=2;edgeStyle=orthogonalEdgeStyle;" edge="1" parent="1" source="box-15a17331" target="box-89c88e47">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge-07ad8fbb" value="" style="endArrow=block;html=1;rounded=0;strokeColor=#B4544C;strokeWidth=2;edgeStyle=orthogonalEdgeStyle;" edge="1" parent="1" source="box-89c88e47" target="box-06b1cd9c">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge-47214670" value="" style="endArrow=block;html=1;rounded=0;strokeColor=#B4544C;strokeWidth=2;edgeStyle=orthogonalEdgeStyle;" edge="1" parent="1" source="box-06b1cd9c" target="box-7233e951">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge-87fe5254" value="" style="endArrow=block;html=1;rounded=0;strokeColor=#B4544C;strokeWidth=2;edgeStyle=orthogonalEdgeStyle;" edge="1" parent="1" source="box-7233e951" target="box-34ae7b95">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="note-f0993d72" value="时间分辨率逐级降低，通道数逐级增加" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontFamily=Microsoft YaHei;fontSize=14;fontColor=#2E7D4F;" vertex="1" parent="1">
+          <mxGeometry x="650" y="315" width="520" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="note-e6e70a09" value="保留 EfficientNetV2 的高效特征块与通道注意力思想" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontFamily=Microsoft YaHei;fontSize=14;fontColor=#C56A1A;" vertex="1" parent="1">
+          <mxGeometry x="905" y="115" width="600" height="30" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

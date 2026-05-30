@@ -12,7 +12,13 @@
       "kind": "dataset",
       "required": true,
       "package": false,
-      "used_by": ["Table 6.2", "Table 6.5", "Table 6.6", "Table 6.7", "Table 6.8"],
+      "used_by": [
+        "Table 6.2",
+        "Table 6.5",
+        "Table 6.6",
+        "Table 6.7",
+        "Table 6.8"
+      ],
       "description": "PTB-XL 100 Hz ECG array used by the super5 custom split.",
       "sha256": null,
       "size_bytes": null,
@@ -25,7 +31,13 @@
       "kind": "dataset_metadata",
       "required": true,
       "package": false,
-      "used_by": ["Table 6.2", "Table 6.5", "Table 6.6", "Table 6.7", "Table 6.8"],
+      "used_by": [
+        "Table 6.2",
+        "Table 6.5",
+        "Table 6.6",
+        "Table 6.7",
+        "Table 6.8"
+      ],
       "description": "PTB-XL metadata CSV with SCP codes and folds.",
       "sha256": null,
       "size_bytes": null,
@@ -38,7 +50,9 @@
       "kind": "dataset_metadata",
       "required": true,
       "package": false,
-      "used_by": ["super5 label extraction"],
+      "used_by": [
+        "super5 label extraction"
+      ],
       "description": "PTB-XL SCP statement metadata used to build super5 labels.",
       "sha256": null,
       "size_bytes": null,
@@ -51,7 +65,12 @@
       "kind": "preprocess_cache",
       "required": true,
       "package": false,
-      "used_by": ["Table 6.5", "Table 6.6", "Table 6.7", "Table 6.8"],
+      "used_by": [
+        "Table 6.5",
+        "Table 6.6",
+        "Table 6.7",
+        "Table 6.8"
+      ],
       "description": "Classifier-ready PTB-XL cache: 100 Hz, 1000 points, per-sample global normalization.",
       "sha256": null,
       "size_bytes": null,
@@ -63,7 +82,13 @@
       "path": "${ECG_ADV_DATA_ROOT}/graduate_project/splits/ptbxl_super5_seed42_train2000_val2000.json",
       "kind": "split",
       "required": true,
-      "used_by": ["Table 6.2", "Table 6.5", "Table 6.6", "Table 6.7", "Table 6.8"],
+      "used_by": [
+        "Table 6.2",
+        "Table 6.5",
+        "Table 6.6",
+        "Table 6.7",
+        "Table 6.8"
+      ],
       "description": "Fixed train=2000, val=2000, test=17799 PTB-XL split.",
       "sha256": null,
       "size_bytes": null,
@@ -75,7 +100,11 @@
       "path": "${ECG_ADV_DATA_ROOT}/triple_labels/super5_minresample_full10_perglobal_20260503/best_model.pt",
       "kind": "checkpoint",
       "required": true,
-      "used_by": ["Table 6.4", "Table 5.2", "Streamlit demo"],
+      "used_by": [
+        "Table 6.4",
+        "Table 5.2",
+        "Streamlit demo"
+      ],
       "description": "Frozen EfficientNetV2 super5 classifier used for quality proxy and default demo inference.",
       "sha256": "f7a4b05d85da8352013b67a0d56d8d47378ab2abc196d1f3a6ba8bbf15aa40ea",
       "size_bytes": 26043769,
@@ -87,7 +116,10 @@
       "path": "${ECG_ADV_DATA_ROOT}/graduate_project/method_a_real2000_seed42/train_result.json",
       "kind": "result",
       "required": true,
-      "used_by": ["Table 6.5", "Figure 6.4"],
+      "used_by": [
+        "Table 6.5",
+        "Figure 6.4"
+      ],
       "description": "Archived PTB-XL custom-split real2000 baseline result.",
       "sha256": "4158e4b561f6030b6bca8eef5117cdd600f8e4a0cc05d2d37fe1315b925a96ed",
       "size_bytes": 278223,
@@ -99,7 +131,10 @@
       "path": "${ECG_ADV_DATA_ROOT}/graduate_project/self_distill_v2_e24_v46_no_token_hardlabel_r10_realfine_lr1e4_seed42_auroc/train_result.json",
       "kind": "result",
       "required": true,
-      "used_by": ["Table 6.6", "Figure 6.4"],
+      "used_by": [
+        "Table 6.6",
+        "Figure 6.4"
+      ],
       "description": "Archived PTB-XL custom-split no-token synthetic-pretrain plus real-finetune result.",
       "sha256": "aa02dc729fbe86fec1d3b7f9f3663a42eef2fac8374f10b6fc7f2bb4bcccde1f",
       "size_bytes": 278782,
@@ -111,7 +146,10 @@
       "path": "${ECG_ADV_DATA_ROOT}/graduate_project/self_distill_v2_e23_v46_class_oracle_hardlabel_r10_realfine_lr1e4_seed42_auroc/train_result.json",
       "kind": "result",
       "required": true,
-      "used_by": ["Table 6.7", "Figure 6.4"],
+      "used_by": [
+        "Table 6.7",
+        "Figure 6.4"
+      ],
       "description": "Archived PTB-XL custom-split center-token synthetic-pretrain plus real-finetune result.",
       "sha256": "b99a65a3d5dc36301db81ea651ee2bb6cf26736a164576769ffa682f524a73df",
       "size_bytes": 278795,
@@ -123,7 +161,11 @@
       "path": "${ECG_ADV_DATA_ROOT}/graduate_project/self_distill_v2_e24_v46_no_token_hardlabel_r10_realfine_lr1e4_seed42_auroc/best_model.pt",
       "kind": "checkpoint",
       "required": true,
-      "used_by": ["Table 6.6", "Figure 6.4", "result inspection"],
+      "used_by": [
+        "Table 6.6",
+        "Figure 6.4",
+        "result inspection"
+      ],
       "description": "Archived no-token fine-tuned checkpoint corresponding to Table 6.6.",
       "sha256": "3745913e87bbaeba0e42bdfc4d793a1b56ff79e81e15e77a1a75a22ecf7c4980",
       "size_bytes": 26043769,
@@ -135,7 +177,11 @@
       "path": "${ECG_ADV_DATA_ROOT}/graduate_project/self_distill_v2_e23_v46_class_oracle_hardlabel_r10_realfine_lr1e4_seed42_auroc/best_model.pt",
       "kind": "checkpoint",
       "required": true,
-      "used_by": ["Table 6.7", "Figure 6.4", "result inspection"],
+      "used_by": [
+        "Table 6.7",
+        "Figure 6.4",
+        "result inspection"
+      ],
       "description": "Archived center-token fine-tuned checkpoint corresponding to Table 6.7.",
       "sha256": "277ef3b468667153d3327b03b012a444b1431be4363a3d5b59e438d7e7e1e399",
       "size_bytes": 26043769,
@@ -147,31 +193,124 @@
       "path": "${ECG_ADV_DATA_ROOT}/ecgtwin_prompt_token_super5/effectiveness_pilot_v42_task1gate_ningbo_token_scale_large_20260504/target_token_s05/ningbo/gated/gated_samples.npz",
       "kind": "generated_pool",
       "required": true,
-      "used_by": ["Table 6.4", "Table 6.8", "Figure 3.3"],
-      "description": "Center-token gated ECGTwin generated pool.",
+      "used_by": [
+        "Table 6.4",
+        "Figure 3.3",
+        "Streamlit generation demo"
+      ],
+      "description": "Center-token gated ECGTwin generated pool used for quality analysis and demo preview.",
       "sha256": "0e11ab6aa31a1ce562c27cdf73a65750f466a5642ecc2dc320e86a717cd14eb4",
       "size_bytes": 69895007,
       "can_regenerate": true,
       "regenerate_command": "Run prompt-token generation and gate_prompt_token_synth.py with the v42 center-token bank."
     },
     {
+      "id": "center_token_gated_pool_gate_report",
+      "path": "${ECG_ADV_DATA_ROOT}/ecgtwin_prompt_token_super5/effectiveness_pilot_v42_task1gate_ningbo_token_scale_large_20260504/target_token_s05/ningbo/gated/gate_report.json",
+      "kind": "result",
+      "required": false,
+      "used_by": [
+        "Table 6.4",
+        "generated-pool audit"
+      ],
+      "description": "Detailed gate report for the center-token generated pool.",
+      "sha256": "563d0d3672cb4754ca66ca7e45182dc19f81e22d82efc55c55060e714d8c436d",
+      "size_bytes": 1362065,
+      "can_regenerate": true,
+      "regenerate_command": "Run gate_prompt_token_synth.py for the v42 center-token pool."
+    },
+    {
+      "id": "center_token_gated_pool_latents",
+      "path": "${ECG_ADV_DATA_ROOT}/ecgtwin_prompt_token_super5/effectiveness_pilot_v42_task1gate_ningbo_token_scale_large_20260504/target_token_s05/ningbo/gated/gated_samples.latent.npz",
+      "kind": "generated_pool_metadata",
+      "required": false,
+      "used_by": [
+        "generated-pool audit"
+      ],
+      "description": "Latent sidecar for the center-token gated generated pool.",
+      "sha256": "e7b6a047ca344a89d55699a1f22f1e6d6e54da2943d222f1fca0498282980bb3",
+      "size_bytes": 1445624,
+      "can_regenerate": true,
+      "regenerate_command": "Run gate_prompt_token_synth.py for the v42 center-token pool."
+    },
+    {
+      "id": "center_token_gated_pool_class_trust",
+      "path": "${ECG_ADV_DATA_ROOT}/ecgtwin_prompt_token_super5/effectiveness_pilot_v42_task1gate_ningbo_token_scale_large_20260504/target_token_s05/ningbo/gated/gated_samples.class_trust.json",
+      "kind": "generated_pool_metadata",
+      "required": false,
+      "used_by": [
+        "generated-pool audit"
+      ],
+      "description": "Class-trust sidecar for the center-token gated generated pool.",
+      "sha256": "8c3622af0a45795949d122def1eae184fcd694febdd0485329e55adaaa6d799f",
+      "size_bytes": 986,
+      "can_regenerate": true,
+      "regenerate_command": "Run gate_prompt_token_synth.py for the v42 center-token pool."
+    },
+    {
+      "id": "center_token_gated_pool_ref_meta",
+      "path": "${ECG_ADV_DATA_ROOT}/ecgtwin_prompt_token_super5/effectiveness_pilot_v42_task1gate_ningbo_token_scale_large_20260504/target_token_s05/ningbo/gated/gated_samples.ref_meta.json",
+      "kind": "generated_pool_metadata",
+      "required": false,
+      "used_by": [
+        "generated-pool audit"
+      ],
+      "description": "Reference metadata sidecar for the center-token gated generated pool.",
+      "sha256": "d3807be88abd65d12c84499d725b657f5b177207e9bb119ccb2c3490434135b3",
+      "size_bytes": 7686,
+      "can_regenerate": true,
+      "regenerate_command": "Run gate_prompt_token_synth.py for the v42 center-token pool."
+    },
+    {
+      "id": "center_token_generation_summary",
+      "path": "${ECG_ADV_DATA_ROOT}/ecgtwin_prompt_token_super5/effectiveness_pilot_v42_task1gate_ningbo_token_scale_large_20260504/target_token_s05/ningbo/summary.json",
+      "kind": "result",
+      "required": false,
+      "used_by": [
+        "generated-pool audit"
+      ],
+      "description": "Generation summary for the v42 center-token pool before gating.",
+      "sha256": "2ad6c35f6e78447a7b5677c85297a403dcf83e6ce06e621f520b36e54cbc0839",
+      "size_bytes": 832855,
+      "can_regenerate": true,
+      "regenerate_command": "Run prompt-token generation for the v42 center-token pool."
+    },
+    {
       "id": "no_token_gated_pool",
       "path": "${ECG_ADV_DATA_ROOT}/ecgtwin_prompt_token_super5/effectiveness_pilot_v42_task1gate_ningbo_no_token_large_20260504/no_token/ningbo/gated/gated_samples.npz",
       "kind": "generated_pool",
       "required": true,
-      "used_by": ["Table 6.4", "Table 6.8"],
-      "description": "No-token gated ECGTwin generated pool.",
+      "used_by": [
+        "Table 6.4"
+      ],
+      "description": "No-token gated ECGTwin generated pool used for the quality-analysis control arm.",
       "sha256": "9a7c32d8aacae7c17d0bdeb76b5b4bbddedd73c776d58aee9de64a3257622418",
       "size_bytes": 63922172,
       "can_regenerate": true,
       "regenerate_command": "Run no-token generation and gate_prompt_token_synth.py."
     },
     {
+      "id": "table68_center_token_gated_pool",
+      "path": "${ECG_ADV_DATA_ROOT}/graduate_project/method_b_synth_candidates_mv4_seed42/ptbxl/gated_max1000/gated_samples.npz",
+      "kind": "generated_pool",
+      "required": true,
+      "used_by": [
+        "Table 6.8"
+      ],
+      "description": "Center prompt-token synthetic pool corresponding to the Table 6.8 prompt-vector joint-training row.",
+      "sha256": null,
+      "size_bytes": null,
+      "can_regenerate": true,
+      "regenerate_command": "Generate the MV4 center prompt-token candidate pool and gate it to gated_max1000."
+    },
+    {
       "id": "report_text_gated_pool",
       "path": "${ECG_ADV_DATA_ROOT}/graduate_project/method_b_synth_candidates_actual_report_mv4_step2000_seed42/ptbxl/gated_max1000/gated_samples.npz",
       "kind": "generated_pool",
       "required": true,
-      "used_by": ["Table 6.8"],
+      "used_by": [
+        "Table 6.8"
+      ],
       "description": "Actual ECG report-text conditioned gated synthetic pool for the Table 6.8 report-text joint-training row.",
       "sha256": null,
       "size_bytes": null,
@@ -179,12 +318,43 @@
       "regenerate_command": "Generate with --ref_text_mode actual_report, then gate_prompt_token_synth.py."
     },
     {
+      "id": "table68_default_text_gated_pool",
+      "path": "${ECG_ADV_DATA_ROOT}/graduate_project/method_b_synth_candidates_classfallback_newgen_sameclass_cap20_seed42/ptbxl/gated_max1000/gated_samples.npz",
+      "kind": "generated_pool",
+      "required": true,
+      "used_by": [
+        "Table 6.8"
+      ],
+      "description": "Class-default text conditioned gated synthetic pool corresponding to the Table 6.8 default-text joint-training row.",
+      "sha256": null,
+      "size_bytes": null,
+      "can_regenerate": true,
+      "regenerate_command": "Generate the class-fallback/default-text candidate pool and gate it to gated_max1000."
+    },
+    {
+      "id": "table68_no_token_synthetic_pool",
+      "path": "${ECG_ADV_DATA_ROOT}/graduate_project/vanilla_ecgtwin_synth_candidates_n20000_translated_randomany_seed42/ptbxl/samples.npz",
+      "kind": "generated_pool",
+      "required": true,
+      "used_by": [
+        "Table 6.8"
+      ],
+      "description": "No-token synthetic pool corresponding to the Table 6.8 synthetic-only row.",
+      "sha256": null,
+      "size_bytes": null,
+      "can_regenerate": true,
+      "regenerate_command": "Run the no-token ECGTwin synthetic generation job used by the synthetic-only ablation."
+    },
+    {
       "id": "default_text_gated_pool",
       "path": "${ECG_ADV_DATA_ROOT}/ecgtwin_prompt_token_super5/generated_pool_v4_merged_balanced/ningbo/gated/gated_samples.npz",
       "kind": "generated_pool",
       "required": true,
-      "used_by": ["Table 6.4", "Table 6.8"],
-      "description": "Class-default text conditioned gated synthetic pool used for the Table 6.8 default-text joint-training row and the quality summary.",
+      "used_by": [
+        "Streamlit generation demo",
+        "quality summary"
+      ],
+      "description": "Class-default text conditioned gated synthetic pool used by the demo and archived quality summaries.",
       "sha256": "fe4ce50101135d39e1a1a5da08b5056208015288f3c5d7f4ce262934e4959cce",
       "size_bytes": 12063678,
       "can_regenerate": true,
@@ -195,7 +365,10 @@
       "path": "${ECG_ADV_DATA_ROOT}/ecgtwin_prompt_token_super5/prompt_token_runs/v1_all4_steps2000/prompt_token_bank.pt",
       "kind": "checkpoint",
       "required": true,
-      "used_by": ["ECG generation", "Streamlit generation demo"],
+      "used_by": [
+        "ECG generation",
+        "Streamlit generation demo"
+      ],
       "description": "Learned center-class prompt-token bank.",
       "sha256": "4eee08af44d121e916bee632b69c858a7e95784d554fc731e33d644e0b924393",
       "size_bytes": 125204,
@@ -207,7 +380,10 @@
       "path": "${ECG_ADV_DATA_ROOT}/ecgtwin_prompt_token_super5/cache_v1/text_prompt_bank.pt",
       "kind": "cache",
       "required": true,
-      "used_by": ["ECG generation", "Streamlit generation demo"],
+      "used_by": [
+        "ECG generation",
+        "Streamlit generation demo"
+      ],
       "description": "ECGTwin text embedding bank used as the base diagnosis/report text condition.",
       "sha256": "d40b9bd7c0ff951cc0115e355f54018c7a0582560cb038194159ea45135deaa4",
       "size_bytes": 405108,
@@ -219,7 +395,10 @@
       "path": "${ECG_ADV_DATA_ROOT}/ecgtwin_prompt_token_super5/cache_v1/center_full_latents/ningbo.pt",
       "kind": "cache",
       "required": true,
-      "used_by": ["ECG generation", "Streamlit generation demo"],
+      "used_by": [
+        "ECG generation",
+        "Streamlit generation demo"
+      ],
       "description": "Ningbo center ECGTwin latent/reference cache used by the default generation path.",
       "sha256": "42d2eb8db7486065cf45d1be29399835a076834d339434f1408e2decb369ce32",
       "size_bytes": 43717950,
@@ -231,7 +410,10 @@
       "path": "${ECG_ADV_DATA_ROOT}/ecgtwin_prompt_token_super5/cache_v1/ref_selection/ningbo_k500_seed42.json",
       "kind": "cache_metadata",
       "required": true,
-      "used_by": ["ECG generation", "Streamlit generation demo"],
+      "used_by": [
+        "ECG generation",
+        "Streamlit generation demo"
+      ],
       "description": "Fixed K=500 reference selection metadata used by default center-token generation.",
       "sha256": "7eac27e8c252e127925e0023b75f900577bcee14146623340376a799070f19a6",
       "size_bytes": 21051,
@@ -243,7 +425,11 @@
       "path": "${ECG_ADV_DATA_ROOT}/streamlit_ecg_demo/demo/classic_ecg_samples.npz",
       "kind": "demo_data",
       "required": true,
-      "used_by": ["Streamlit demo", "Figure 5.1", "Figure 5.3"],
+      "used_by": [
+        "Streamlit demo",
+        "Figure 5.1",
+        "Figure 5.3"
+      ],
       "description": "Default ECG samples shown by the detection module.",
       "sha256": "74b6cae78c4eb1b74fbde8725f5969421495e15dbe7deb4a048db607777c5df4",
       "size_bytes": 2009737,
@@ -255,7 +441,10 @@
       "path": "${ECG_ADV_DATA_ROOT}/streamlit_ecg_demo/demo/default_hospital_signals.npy",
       "kind": "demo_data",
       "required": true,
-      "used_by": ["Streamlit training demo", "Figure 5.1"],
+      "used_by": [
+        "Streamlit training demo",
+        "Figure 5.1"
+      ],
       "description": "Default hospital training ECG signals for the Streamlit training module.",
       "sha256": "1abb88d49d9ae071796ceeda1c8946ee406b2ec0f2197ff66f40b7d650b2ee57",
       "size_bytes": 2160128,
@@ -267,7 +456,10 @@
       "path": "${ECG_ADV_DATA_ROOT}/streamlit_ecg_demo/demo/default_hospital_labels.csv",
       "kind": "demo_data",
       "required": true,
-      "used_by": ["Streamlit training demo", "Figure 5.1"],
+      "used_by": [
+        "Streamlit training demo",
+        "Figure 5.1"
+      ],
       "description": "Default labels for the Streamlit training demo ECG signals.",
       "sha256": "fd844ad162cbd39dce3f30718cc01a5e9ba943b2390802e709cf5a93be8bc2a5",
       "size_bytes": 920,
@@ -279,7 +471,10 @@
       "path": "${ECG_ADV_DATA_ROOT}/streamlit_ecg_demo/models/efficientnetv2_super5.onnx",
       "kind": "onnx",
       "required": true,
-      "used_by": ["Table 5.2", "Streamlit demo"],
+      "used_by": [
+        "Table 5.2",
+        "Streamlit demo"
+      ],
       "description": "ONNX export of the default EfficientNetV2 super5 classifier.",
       "sha256": "8cb01f50660df208f01f975dc3f737a2dce368c9edb954f31b07594b409b04c0",
       "size_bytes": 25643847,
@@ -291,10 +486,43 @@
       "path": "${ECG_ADV_DATA_ROOT}/streamlit_ecg_demo/models/efficientnetv2_super5_fp16.engine",
       "kind": "tensorrt_engine",
       "required": false,
-      "used_by": ["Table 5.2", "Streamlit TensorRT demo"],
+      "used_by": [
+        "Table 5.2",
+        "Streamlit TensorRT demo"
+      ],
       "description": "TensorRT FP16 engine for the current CUDA/TensorRT/GPU environment.",
       "sha256": "a2a73d9614f243b7c40fda669fe4dfed4a011217f5cfd4f08fe6acf5867e242e",
       "size_bytes": 15571476,
+      "can_regenerate": true,
+      "regenerate_command": "bash scripts/final_round/run_thesis_reproduction.sh build_trt"
+    },
+    {
+      "id": "streamlit_onnx_export_metadata",
+      "path": "${ECG_ADV_DATA_ROOT}/streamlit_ecg_demo/models/efficientnetv2_super5.export.json",
+      "kind": "metadata",
+      "required": true,
+      "used_by": [
+        "Table 5.2",
+        "ONNX export traceability"
+      ],
+      "description": "Metadata recorded when exporting the default EfficientNetV2 super5 classifier to ONNX.",
+      "sha256": "d6a0e250030fd19e6b6bec6f7ed9e3564ffdd7c735897954f5de2799a65c59f4",
+      "size_bytes": 295,
+      "can_regenerate": true,
+      "regenerate_command": "bash scripts/final_round/run_thesis_reproduction.sh export_onnx"
+    },
+    {
+      "id": "streamlit_tensorrt_build_metadata",
+      "path": "${ECG_ADV_DATA_ROOT}/streamlit_ecg_demo/models/efficientnetv2_super5_fp16.build.json",
+      "kind": "metadata",
+      "required": true,
+      "used_by": [
+        "Table 5.2",
+        "TensorRT build traceability"
+      ],
+      "description": "Metadata recorded when building the default TensorRT FP16 engine.",
+      "sha256": "f69d605f0cac506a4389f697d92fa63b714f24a76a66de72f4005782ecc24a69",
+      "size_bytes": 677,
       "can_regenerate": true,
       "regenerate_command": "bash scripts/final_round/run_thesis_reproduction.sh build_trt"
     },
@@ -303,7 +531,10 @@
       "path": "${REPO_ROOT}/model/ECGTwin/checkpoints/vae_model.pth",
       "kind": "checkpoint",
       "required": true,
-      "used_by": ["ECGTwin generation", "ECGTwin author-style reproduction"],
+      "used_by": [
+        "ECGTwin generation",
+        "ECGTwin author-style reproduction"
+      ],
       "description": "ECGTwin VAE encoder/decoder checkpoint expected by model/ECGTwin/config/DiT_ECGTwin.yaml.",
       "sha256": "c2b4ef8060e412bd503f46b66dd44fc460e67a89de0ae1809dcc771358b3fa93",
       "size_bytes": 118289354,
@@ -315,7 +546,9 @@
       "path": "${REPO_ROOT}/model/ECGTwin/checkpoints/ibe_model.pth",
       "kind": "checkpoint",
       "required": true,
-      "used_by": ["ECGTwin generation"],
+      "used_by": [
+        "ECGTwin generation"
+      ],
       "description": "ECGTwin IBE checkpoint expected by model/ECGTwin/config/DiT_ECGTwin.yaml.",
       "sha256": "ef588aad226ece3bb7d7f8915793d722c3784157dc5b06018417818c7e0ea37a",
       "size_bytes": 13467222,
@@ -327,7 +560,9 @@
       "path": "${REPO_ROOT}/model/ECGTwin/checkpoints/ECGTwin_DiT.pth",
       "kind": "checkpoint",
       "required": true,
-      "used_by": ["ECGTwin generation"],
+      "used_by": [
+        "ECGTwin generation"
+      ],
       "description": "ECGTwin DiT/noise predictor checkpoint expected by model/ECGTwin/config/DiT_ECGTwin.yaml.",
       "sha256": "d785e9bcfb378a53f5573c69de5d26e9b534d393aeb06873aa6ceb9d529b3dcb",
       "size_bytes": 42226067,
@@ -339,7 +574,9 @@
       "path": "${REPO_ROOT}/model/ECGTwin/data/prepared_input/normal_1.pt",
       "kind": "demo_data",
       "required": true,
-      "used_by": ["ECGTwin generation"],
+      "used_by": [
+        "ECGTwin generation"
+      ],
       "description": "Default ECGTwin reference sample used by smoke/demo generation paths.",
       "sha256": "5dd35b4d1f56fb5eed2c006f426341b0842f6ec97757ee03b9884197dcbaef2e",
       "size_bytes": 10014,
@@ -347,12 +584,389 @@
       "regenerate_command": null
     },
     {
+      "id": "thesis_evidence_pack_manifest",
+      "path": "${REPO_ROOT}/artifacts/evidence_pack/manifest.json",
+      "kind": "evidence_manifest",
+      "required": true,
+      "used_by": [
+        "thesis evidence traceability"
+      ],
+      "description": "Manifest for the small thesis evidence pack committed with the archive branch.",
+      "sha256": "c0baccfb8926a784ceaeb6936201f46f5adc4a235fbad4536b7cd438239a7c0d",
+      "size_bytes": 16597,
+      "can_regenerate": true,
+      "regenerate_command": "bash scripts/final_round/run_thesis_reproduction.sh evidence"
+    },
+    {
+      "id": "fig31_ibe_architecture",
+      "path": "${REPO_ROOT}/artifacts/evidence_pack/figures/architecture/ibe_module_simplified_user.png",
+      "kind": "figure",
+      "required": true,
+      "used_by": [
+        "Figure 3.1"
+      ],
+      "description": "IBE module architecture figure referenced directly by thesis.md.",
+      "sha256": "e1fb6a059410ad1a9218c4068fe76f6f412bf510369e85373638abeaa02b56ed",
+      "size_bytes": 109486,
+      "can_regenerate": true,
+      "regenerate_command": "Recreate from the thesis evidence-pack figure generation workflow."
+    },
+    {
+      "id": "fig32_dit_architecture",
+      "path": "${REPO_ROOT}/artifacts/evidence_pack/figures/architecture/noise_predictor_module_simplified_user.png",
+      "kind": "figure",
+      "required": true,
+      "used_by": [
+        "Figure 3.2"
+      ],
+      "description": "DiT/noise-predictor module architecture figure referenced directly by thesis.md.",
+      "sha256": "e2429ce633096c6106f8922238167228ab7c643395f95e1b1d1b64a043bb45c3",
+      "size_bytes": 144950,
+      "can_regenerate": true,
+      "regenerate_command": "Recreate from the thesis evidence-pack figure generation workflow."
+    },
+    {
+      "id": "fig33_synthetic_12lead",
+      "path": "${REPO_ROOT}/artifacts/figures/generated_ecg_examples/thesis_synthetic_12lead.png",
+      "kind": "figure",
+      "required": true,
+      "used_by": [
+        "Figure 3.3"
+      ],
+      "description": "Composite five-class 12-lead synthetic ECG example figure referenced by thesis.md.",
+      "sha256": "eeb2447940e001134251b3602fd8c5658cad70f0e879b74759f58382a205fecc",
+      "size_bytes": 481779,
+      "can_regenerate": true,
+      "regenerate_command": "bash scripts/final_round/run_thesis_reproduction.sh figures"
+    },
+    {
+      "id": "fig51_streamlit_training",
+      "path": "${REPO_ROOT}/artifacts/figures/streamlit_demo/03_training_audit_and_workflow.png",
+      "kind": "figure",
+      "required": true,
+      "used_by": [
+        "Figure 5.1"
+      ],
+      "description": "Streamlit center-token/training workflow screenshot referenced by thesis.md.",
+      "sha256": "5dc7ed262622fe1bdf528fd2667c7c0487722f1082858bcbdf4ef490a80e1ca2",
+      "size_bytes": 128001,
+      "can_regenerate": true,
+      "regenerate_command": "Run Streamlit and capture the training tab."
+    },
+    {
+      "id": "fig52_streamlit_generation",
+      "path": "${REPO_ROOT}/artifacts/figures/streamlit_demo/02_generation_preview.png",
+      "kind": "figure",
+      "required": true,
+      "used_by": [
+        "Figure 5.2"
+      ],
+      "description": "Streamlit ECG generation preview screenshot referenced by thesis.md.",
+      "sha256": "3eb3c18336d6030e1c3c7a3fad65b21b2f6faf9245e520c2a3c47b9bfe5ef132",
+      "size_bytes": 217614,
+      "can_regenerate": true,
+      "regenerate_command": "Run Streamlit and capture the generation tab."
+    },
+    {
+      "id": "fig53_streamlit_detection",
+      "path": "${REPO_ROOT}/artifacts/figures/streamlit_demo/01_detection_inference.png",
+      "kind": "figure",
+      "required": true,
+      "used_by": [
+        "Figure 5.3"
+      ],
+      "description": "Streamlit abnormal-detection inference screenshot referenced by thesis.md.",
+      "sha256": "448f57e70d213ee64e73ec3493a79797b602d84f9572ccd3a145443b2d1cef1d",
+      "size_bytes": 231367,
+      "can_regenerate": true,
+      "regenerate_command": "Run Streamlit and capture the detection tab."
+    },
+    {
+      "id": "fig61_dataset_distribution",
+      "path": "${REPO_ROOT}/artifacts/evidence_pack/figures/dataset_label_distribution.png",
+      "kind": "figure",
+      "required": true,
+      "used_by": [
+        "Figure 6.1",
+        "Table 6.2"
+      ],
+      "description": "PTB-XL fixed split label-distribution figure referenced by thesis.md.",
+      "sha256": "530798e1c2e220e64d95814b11f8fabeed6e17d5090286f1cf493788085f38f0",
+      "size_bytes": 89996,
+      "can_regenerate": true,
+      "regenerate_command": "bash scripts/final_round/run_thesis_reproduction.sh evidence"
+    },
+    {
+      "id": "fig62_ibe_loss_curve",
+      "path": "${REPO_ROOT}/artifacts/evidence_pack/figures/training_curves/ibe_stage1_loss_curve.png",
+      "kind": "figure",
+      "required": true,
+      "used_by": [
+        "Figure 6.2",
+        "Table 6.3"
+      ],
+      "description": "IBE stage-1 training curve referenced by thesis.md.",
+      "sha256": "d52452899afb09a645185bc75506a23f1b013e60bc7de546b3cec3e20300b714",
+      "size_bytes": 138748,
+      "can_regenerate": true,
+      "regenerate_command": "bash scripts/final_round/run_thesis_reproduction.sh author_repro"
+    },
+    {
+      "id": "fig63_dit_loss_curve",
+      "path": "${REPO_ROOT}/artifacts/evidence_pack/figures/training_curves/dit_stage2_loss_curve.png",
+      "kind": "figure",
+      "required": true,
+      "used_by": [
+        "Figure 6.3",
+        "Table 6.3"
+      ],
+      "description": "DiT stage-2 training curve referenced by thesis.md.",
+      "sha256": "9cd94be297b888906d45e9170f7364b8af365c4f43b16c98bcc854671d6bf816",
+      "size_bytes": 123679,
+      "can_regenerate": true,
+      "regenerate_command": "bash scripts/final_round/run_thesis_reproduction.sh author_repro"
+    },
+    {
+      "id": "fig64_low_sample_bar",
+      "path": "${REPO_ROOT}/artifacts/evidence_pack/figures/low_sample_main_results_bar.png",
+      "kind": "figure",
+      "required": true,
+      "used_by": [
+        "Figure 6.4",
+        "Table 6.5",
+        "Table 6.6",
+        "Table 6.7"
+      ],
+      "description": "Low-sample main AUROC/AUPRC comparison bar figure referenced by thesis.md.",
+      "sha256": "3258b025c5c5bdd8c5648b4139a19249a61c2b439744763e27db76914feb8f65",
+      "size_bytes": 110807,
+      "can_regenerate": true,
+      "regenerate_command": "bash scripts/final_round/run_thesis_reproduction.sh evidence"
+    },
+    {
+      "id": "table52_inference_benchmark_evidence",
+      "path": "${REPO_ROOT}/artifacts/evidence_pack/raw/inference_benchmark.json",
+      "kind": "result",
+      "required": true,
+      "used_by": [
+        "Table 5.2"
+      ],
+      "description": "Archived inference benchmark JSON backing the thesis PyTorch/TensorRT latency and throughput table.",
+      "sha256": "2870aa71555858e18c03ae4cdedd75005a197da4e19ac8604b17e93acf74d8ae",
+      "size_bytes": 3513,
+      "can_regenerate": true,
+      "regenerate_command": "bash scripts/final_round/run_thesis_reproduction.sh benchmark"
+    },
+    {
+      "id": "table52_tensorrt_validation_evidence",
+      "path": "${REPO_ROOT}/artifacts/evidence_pack/raw/tensorrt_validation.json",
+      "kind": "result",
+      "required": true,
+      "used_by": [
+        "Table 5.2"
+      ],
+      "description": "Archived TensorRT-vs-PyTorch probability drift validation backing the inference benchmark.",
+      "sha256": "c94f6280df0b4ef027c1a6df1a95f9b3d63d843fd1a109d6498ea0fe3b6f3bd0",
+      "size_bytes": 208,
+      "can_regenerate": true,
+      "regenerate_command": "bash scripts/final_round/run_thesis_reproduction.sh benchmark"
+    },
+    {
+      "id": "table64_medical_validity_summary",
+      "path": "${REPO_ROOT}/artifacts/evidence_pack/raw/medical_validity_summary.json",
+      "kind": "result",
+      "required": true,
+      "used_by": [
+        "Table 6.4"
+      ],
+      "description": "Archived synthetic ECG quality/semantic-response summary backing Table 6.4.",
+      "sha256": "84178482a64769cb65b8754a50dfc67e80327f357bbc208e4c59cd43b9f1839f",
+      "size_bytes": 1932,
+      "can_regenerate": true,
+      "regenerate_command": "bash scripts/final_round/run_thesis_reproduction.sh medical_validity"
+    },
+    {
+      "id": "table64_per_sample_quality",
+      "path": "${REPO_ROOT}/artifacts/evidence_pack/raw/per_sample_quality.csv",
+      "kind": "result",
+      "required": true,
+      "used_by": [
+        "Table 6.4",
+        "quality audit"
+      ],
+      "description": "Archived per-sample synthetic ECG quality proxy output backing the quality summary.",
+      "sha256": "039a73a7a7a0598f7b67a3624ae1a355b60b25bb1ebc0ace8aefffb08f7d3e4b",
+      "size_bytes": 80488,
+      "can_regenerate": true,
+      "regenerate_command": "bash scripts/final_round/run_thesis_reproduction.sh medical_validity"
+    },
+    {
+      "id": "feature_distribution_summary",
+      "path": "${REPO_ROOT}/artifacts/evidence_pack/feature_distribution/feature_distribution_summary.json",
+      "kind": "result",
+      "required": true,
+      "used_by": [
+        "feature distribution evidence"
+      ],
+      "description": "Archived real-vs-synthetic feature-distribution summary.",
+      "sha256": "378912b2d389e517179370bf50d457b92fbbab69a49d8cbe4e532809d6b7d5a5",
+      "size_bytes": 9499,
+      "can_regenerate": true,
+      "regenerate_command": "bash scripts/final_round/run_thesis_reproduction.sh feature_dist"
+    },
+    {
+      "id": "feature_distribution_metrics",
+      "path": "${REPO_ROOT}/artifacts/evidence_pack/feature_distribution/feature_distribution_metrics.csv",
+      "kind": "result",
+      "required": true,
+      "used_by": [
+        "feature distribution evidence"
+      ],
+      "description": "Archived real-vs-synthetic feature-distribution metrics.",
+      "sha256": "dd267d01eac9c57ee4c9cdc22628eb2f8d686e1e423d1cd8e77cf4db66bce560",
+      "size_bytes": 2022,
+      "can_regenerate": true,
+      "regenerate_command": "bash scripts/final_round/run_thesis_reproduction.sh feature_dist"
+    },
+    {
+      "id": "feature_distribution_report",
+      "path": "${REPO_ROOT}/artifacts/evidence_pack/feature_distribution/feature_distribution_report.md",
+      "kind": "report",
+      "required": true,
+      "used_by": [
+        "feature distribution evidence"
+      ],
+      "description": "Archived Markdown report for real-vs-synthetic feature distribution.",
+      "sha256": "4227e1781e37932953ecb7f6c53f7861c60dfb566a89c8279325be74bb1d25ce",
+      "size_bytes": 5828,
+      "can_regenerate": true,
+      "regenerate_command": "bash scripts/final_round/run_thesis_reproduction.sh feature_dist"
+    },
+    {
+      "id": "table68_center_token_joint_result",
+      "path": "${REPO_ROOT}/artifacts/evidence_pack/raw/train_results/method_b_real_synth_mv4.train_result.json",
+      "kind": "result",
+      "required": true,
+      "used_by": [
+        "Table 6.8"
+      ],
+      "description": "Archived train_result for the Table 6.8 prompt-vector joint-training row.",
+      "sha256": "e8af8e3d96f1d030324fa95128daad705111ec172192c7fc26b22fac1dbc560a",
+      "size_bytes": 278353,
+      "can_regenerate": true,
+      "regenerate_command": "bash scripts/final_round/run_thesis_reproduction.sh ablation_6_8"
+    },
+    {
+      "id": "table68_report_text_joint_result",
+      "path": "${REPO_ROOT}/artifacts/evidence_pack/raw/train_results/method_b_actual_report.train_result.json",
+      "kind": "result",
+      "required": true,
+      "used_by": [
+        "Table 6.8"
+      ],
+      "description": "Archived train_result for the Table 6.8 report-text joint-training row.",
+      "sha256": "6c9dab97c1e1567b7bccbe3bbe281134210af710e03108d610f047f2bca901b6",
+      "size_bytes": 278642,
+      "can_regenerate": true,
+      "regenerate_command": "bash scripts/final_round/run_thesis_reproduction.sh ablation_6_8"
+    },
+    {
+      "id": "table68_default_text_joint_result",
+      "path": "${REPO_ROOT}/artifacts/evidence_pack/raw/train_results/method_b_classfallback.train_result.json",
+      "kind": "result",
+      "required": true,
+      "used_by": [
+        "Table 6.8"
+      ],
+      "description": "Archived train_result for the Table 6.8 default-text joint-training row.",
+      "sha256": "4b28c23163fe4c5f848dcb7dca2f46665c8345cc96b226918e65f9efdffa98cc",
+      "size_bytes": 278674,
+      "can_regenerate": true,
+      "regenerate_command": "bash scripts/final_round/run_thesis_reproduction.sh ablation_6_8"
+    },
+    {
+      "id": "table68_no_token_synthetic_only_result",
+      "path": "${REPO_ROOT}/artifacts/evidence_pack/raw/train_results/synthetic_only_no_token_20k.train_result.json",
+      "kind": "result",
+      "required": true,
+      "used_by": [
+        "Table 6.8"
+      ],
+      "description": "Archived train_result for the Table 6.8 no-token synthetic-only row.",
+      "sha256": "40e60254f0cb77703829852b87ddbb41554aaff51565f691fe8803157386844f",
+      "size_bytes": 278688,
+      "can_regenerate": true,
+      "regenerate_command": "bash scripts/final_round/run_thesis_reproduction.sh ablation_6_8"
+    },
+    {
+      "id": "table68_center_token_pretrain_result",
+      "path": "${REPO_ROOT}/artifacts/evidence_pack/raw/train_results/center_token_hard_ft.train_result.json",
+      "kind": "result",
+      "required": true,
+      "used_by": [
+        "Table 6.8"
+      ],
+      "description": "Archived train_result for the Table 6.8 center-token pretrain/fine-tune row.",
+      "sha256": "b99a65a3d5dc36301db81ea651ee2bb6cf26736a164576769ffa682f524a73df",
+      "size_bytes": 278795,
+      "can_regenerate": true,
+      "regenerate_command": "bash scripts/final_round/run_thesis_reproduction.sh ablation_6_8"
+    },
+    {
+      "id": "real2000_training_log",
+      "path": "${ECG_ADV_DATA_ROOT}/graduate_project/method_a_real2000_seed42/training_log.json",
+      "kind": "log",
+      "required": true,
+      "used_by": [
+        "Table 6.5",
+        "Figure 6.4"
+      ],
+      "description": "Training log for the real2000 baseline.",
+      "sha256": "cfa634edb0f9c5edd81942b3b4b1b06b97a376cc2d4fceb4898c246c49cfb302",
+      "size_bytes": 8753,
+      "can_regenerate": true,
+      "regenerate_command": "LOW_SAMPLE_RERUN=1 bash scripts/final_round/run_thesis_reproduction.sh low_sample_rerun"
+    },
+    {
+      "id": "no_token_finetune_training_log",
+      "path": "${ECG_ADV_DATA_ROOT}/graduate_project/self_distill_v2_e24_v46_no_token_hardlabel_r10_realfine_lr1e4_seed42_auroc/training_log.json",
+      "kind": "log",
+      "required": true,
+      "used_by": [
+        "Table 6.6",
+        "Figure 6.4"
+      ],
+      "description": "Training log for the no-token synthetic-pretrain plus real-finetune run.",
+      "sha256": "ca715de9288abfd85bf7121224a93876871589f8762eb10775edc8a0dd02f6c6",
+      "size_bytes": 4342,
+      "can_regenerate": true,
+      "regenerate_command": "LOW_SAMPLE_RERUN=1 bash scripts/final_round/run_thesis_reproduction.sh low_sample_rerun"
+    },
+    {
+      "id": "center_token_finetune_training_log",
+      "path": "${ECG_ADV_DATA_ROOT}/graduate_project/self_distill_v2_e23_v46_class_oracle_hardlabel_r10_realfine_lr1e4_seed42_auroc/training_log.json",
+      "kind": "log",
+      "required": true,
+      "used_by": [
+        "Table 6.7",
+        "Figure 6.4"
+      ],
+      "description": "Training log for the center-token synthetic-pretrain plus real-finetune run.",
+      "sha256": "4be717e482e9c9d275bad4ca92032cf6dff0ac8ac3bbf07f04176c2b9afc65a9",
+      "size_bytes": 2948,
+      "can_regenerate": true,
+      "regenerate_command": "LOW_SAMPLE_RERUN=1 bash scripts/final_round/run_thesis_reproduction.sh low_sample_rerun"
+    },
+    {
       "id": "ecgtwin_author_train_cache",
       "path": "${ECG_ADV_DATA_ROOT}/ECGTwin_Data/paired_Mimic_vae_multi_nomic.pt",
       "kind": "dataset_cache",
       "required": true,
       "package": false,
-      "used_by": ["Table 6.3", "ECGTwin author-style reproduction"],
+      "used_by": [
+        "Table 6.3",
+        "ECGTwin author-style reproduction"
+      ],
       "description": "Paired ECGTwin VAE/text/patient-info training cache required by the IBE and DiT author-style reproduction scripts.",
       "sha256": null,
       "size_bytes": null,
@@ -365,7 +979,10 @@
       "kind": "dataset_cache",
       "required": true,
       "package": false,
-      "used_by": ["Table 6.3", "ECGTwin author-style reproduction"],
+      "used_by": [
+        "Table 6.3",
+        "ECGTwin author-style reproduction"
+      ],
       "description": "Validation cache paired with ecgtwin_author_train_cache.",
       "sha256": null,
       "size_bytes": null,
@@ -377,7 +994,10 @@
       "path": "${ECG_ADV_DATA_ROOT}/graduate_project/self_distill_v2_e21_v46_no_token_hardlabel_r10_seed8042_auroc/best_model.pt",
       "kind": "checkpoint",
       "required": true,
-      "used_by": ["Table 6.6", "low_sample_rerun"],
+      "used_by": [
+        "Table 6.6",
+        "low_sample_rerun"
+      ],
       "description": "No-token synthetic-pretrain initialization checkpoint needed to fully rerun Table 6.6 fine-tuning.",
       "sha256": null,
       "size_bytes": null,
@@ -389,7 +1009,12 @@
       "path": "${ECG_ADV_DATA_ROOT}/graduate_project/self_distill_v2_e18_v46_class_oracle_hardlabel_r10_seed42_auroc/best_model.pt",
       "kind": "checkpoint",
       "required": true,
-      "used_by": ["Table 6.7", "Table 6.8", "low_sample_rerun", "ablation_6_8"],
+      "used_by": [
+        "Table 6.7",
+        "Table 6.8",
+        "low_sample_rerun",
+        "ablation_6_8"
+      ],
       "description": "Center-token synthetic-pretrain initialization checkpoint needed to fully rerun Table 6.7 fine-tuning and Table 6.8 pretrain/fine-tune ablation.",
       "sha256": null,
       "size_bytes": null,

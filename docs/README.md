@@ -25,6 +25,7 @@
 |---|---|
 | `../artifacts/figures/streamlit_demo/` | Streamlit 演示截图 |
 | `../artifacts/figures/generated_ecg_examples/` | 论文图 3.3 合成 ECG 示例图 |
+| `../artifacts/evidence_pack/` | `thesis.md` 直接引用的训练曲线、划分图、结果表和小型证据文件 |
 | `final_round/` | 任务书、开题报告、中期报告、指导记录的 Markdown 版本 |
 | `pipelines/README.md` | 说明旧 pipeline 文档已迁入 legacy |
 

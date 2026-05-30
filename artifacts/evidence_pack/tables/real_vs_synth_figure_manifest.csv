@@ -1,0 +1,6 @@
+class,real_ptbxl_index,synthetic_selected_index,figure
+CD,14341,0,/root/autodl-tmp/ECG_adv_Gen_graduate/final/artifacts/evidence_pack/figures/real_vs_synth/real_vs_synth_CD.png
+HYP,9591,1,/root/autodl-tmp/ECG_adv_Gen_graduate/final/artifacts/evidence_pack/figures/real_vs_synth/real_vs_synth_HYP.png
+MI,18648,2,/root/autodl-tmp/ECG_adv_Gen_graduate/final/artifacts/evidence_pack/figures/real_vs_synth/real_vs_synth_MI.png
+NORM,7448,3,/root/autodl-tmp/ECG_adv_Gen_graduate/final/artifacts/evidence_pack/figures/real_vs_synth/real_vs_synth_NORM.png
+STTC,3943,4,/root/autodl-tmp/ECG_adv_Gen_graduate/final/artifacts/evidence_pack/figures/real_vs_synth/real_vs_synth_STTC.png

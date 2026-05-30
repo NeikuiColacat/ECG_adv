@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import os
 from pathlib import Path
 
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
 DATA_ROOT = Path(os.environ.get("ECG_ADV_DATA_ROOT", Path.home() / "autodl-tmp")).expanduser()
 GRAD_ROOT = Path(os.environ.get("ECG_ADV_GRAD_ROOT", DATA_ROOT / "graduate_project")).expanduser()
 STREAMLIT_ROOT = Path(os.environ.get("ECG_ADV_APP_DATA_ROOT", DATA_ROOT / "streamlit_ecg_demo")).expanduser()
@@ -25,8 +27,29 @@ DEFAULT_CENTER_TOKEN = (
     / "self_distill_v2_e23_v46_class_oracle_hardlabel_r10_realfine_lr1e4_seed42_auroc"
     / "train_result.json"
 )
-DEFAULT_BENCHMARK = STREAMLIT_ROOT / "reports/inference_benchmark.json"
-DEFAULT_FIGURES = FINAL_ROUND_ROOT / "thesis_selected_ecg_examples/selected_examples.json"
+EVIDENCE_PACK = REPO_ROOT / "artifacts" / "evidence_pack"
+
+
+def first_existing(*paths: Path) -> Path:
+    for path in paths:
+        if path.exists():
+            return path
+    return paths[0]
+
+
+DEFAULT_BENCHMARK = first_existing(
+    STREAMLIT_ROOT / "reports/inference_benchmark.json",
+    EVIDENCE_PACK / "raw" / "inference_benchmark.json",
+)
+DEFAULT_FIGURES = first_existing(
+    FINAL_ROUND_ROOT / "thesis_selected_ecg_examples/selected_examples.json",
+    EVIDENCE_PACK / "figures" / "generated_ecg_examples" / "selected_examples.json",
+)
+DEFAULT_MEDICAL = first_existing(
+    FINAL_ROUND_ROOT / "medical_validity" / "medical_validity_summary.json",
+    EVIDENCE_PACK / "raw" / "medical_validity_summary.json",
+)
+DEFAULT_TABLE68 = EVIDENCE_PACK / "tables" / "low_sample_ablation_results.csv"
 DEFAULT_OUT_DIR = FINAL_ROUND_ROOT / "final_evidence"
 
 
@@ -75,6 +98,53 @@ def summarize_benchmark(path: Path) -> dict:
     }
 
 
+def summarize_medical_validity(path: Path) -> dict:
+    data = load_json(path)
+    keep = ["target_token_s05", "no_token"]
+    rows = []
+    for arm in keep:
+        row = data.get("summary_by_arm", {}).get(arm)
+        if row:
+            rows.append({"arm": arm, **row})
+    return {"path": str(path), "rows": rows}
+
+
+def summarize_table68(path: Path) -> dict:
+    wanted = {
+        "method_b_real_synth_mv4": "提示向量联合训练",
+        "method_b_actual_report": "报告文本联合训练",
+        "method_b_classfallback": "默认文本联合训练",
+        "synthetic_only_no_token_20k": "无提示向量仅合成训练",
+        "center_token_hard_ft": "中心提示向量预训练",
+    }
+    rows = []
+    with path.open(newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            key = row.get("key", "")
+            if key in wanted:
+                rows.append({
+                    "key": key,
+                    "paper_method": wanted[key],
+                    "test_macro_auroc": float(row["test_macro_auroc"]),
+                    "test_macro_auprc": float(row["test_macro_auprc"]),
+                    "run_dir": row.get("run_dir", ""),
+                    "result_json": row.get("result_json", ""),
+                })
+    if not any(row["key"] == "center_token_hard_ft" for row in rows):
+        center_path = EVIDENCE_PACK / "raw" / "train_results" / "center_token_hard_ft.train_result.json"
+        if center_path.exists():
+            data = load_json(center_path)
+            rows.append({
+                "key": "center_token_hard_ft",
+                "paper_method": "中心提示向量预训练",
+                "test_macro_auroc": float(data["test_macro_auroc"]),
+                "test_macro_auprc": float(data["test_macro_auprc"]),
+                "run_dir": str(Path(data.get("config", {}).get("output_dir", ""))),
+                "result_json": str(center_path),
+            })
+    return {"path": str(path), "rows": rows}
+
+
 def write_markdown(out_path: Path, payload: dict) -> None:
     methods = payload["low_sample_methods"]
     real = methods[0]
@@ -116,6 +186,30 @@ def write_markdown(out_path: Path, payload: dict) -> None:
                     n_pos=rec.get("n_pos", ""),
                 )
             )
+
+    lines.extend([
+        "",
+        "## Synthetic ECG Quality Proxy",
+        "",
+        "| arm | n | top1 consistency | mean target prob | Einthoven residual | aVR residual |",
+        "|---|---:|---:|---:|---:|---:|",
+    ])
+    for row in payload["medical_validity"]["rows"]:
+        lines.append(
+            "| {arm} | {n} | {semantic_top1_rate:.4f} | {mean_target_prob:.4f} | {mean_einthoven_residual:.4f} | {mean_avR_residual:.4f} |".format(**row)
+        )
+
+    lines.extend([
+        "",
+        "## Table 6.8 Ablation Rows",
+        "",
+        "| method | AUROC | AUPRC | source result |",
+        "|---|---:|---:|---|",
+    ])
+    for row in payload["table68_ablation"]["rows"]:
+        lines.append(
+            "| {paper_method} | {test_macro_auroc:.4f} | {test_macro_auprc:.4f} | `{result_json}` |".format(**row)
+        )
 
     lines.extend([
         "",
@@ -177,6 +271,8 @@ def main() -> None:
     ap.add_argument("--center_token_result", default=str(DEFAULT_CENTER_TOKEN))
     ap.add_argument("--benchmark", default=str(DEFAULT_BENCHMARK))
     ap.add_argument("--figures", default=str(DEFAULT_FIGURES))
+    ap.add_argument("--medical_validity", default=str(DEFAULT_MEDICAL))
+    ap.add_argument("--table68", default=str(DEFAULT_TABLE68))
     ap.add_argument("--out_dir", default=str(DEFAULT_OUT_DIR))
     args = ap.parse_args()
 
@@ -190,6 +286,8 @@ def main() -> None:
     ]
     payload = {
         "low_sample_methods": methods,
+        "medical_validity": summarize_medical_validity(Path(args.medical_validity)),
+        "table68_ablation": summarize_table68(Path(args.table68)),
         "benchmark": summarize_benchmark(Path(args.benchmark)),
         "five_class_figures": load_json(args.figures),
     }

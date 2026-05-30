@@ -1,0 +1,892 @@
+{
+  "source_npz": "/root/autodl-tmp/graduate_project/self_distill_v2_filtered_v46_ptbxl_contrast_seed42/synth_v2_filtered_top4000_gamma03.npz",
+  "source_metadata": {
+    "class_names": [
+      "CD",
+      "HYP",
+      "MI",
+      "NORM",
+      "STTC"
+    ],
+    "config": {
+      "batch_size": 256,
+      "crop_len": 1000,
+      "device": "cuda",
+      "gamma": 0.3,
+      "hard_weight": 0.5,
+      "max_keep_total": 4000,
+      "norm_max_abnormal_hard": 0.45,
+      "norm_max_abnormal_high": 0.3,
+      "norm_tau_high": 0.7,
+      "norm_tau_low": 0.5,
+      "num_workers": 4,
+      "output_npz": "/root/autodl-tmp/graduate_project/self_distill_v2_filtered_v46_ptbxl_contrast_seed42/synth_v2_filtered_top4000_gamma03.npz",
+      "per_class_cap": 800,
+      "summary_json": "/root/autodl-tmp/graduate_project/self_distill_v2_filtered_v46_ptbxl_contrast_seed42/synth_v2_filtered_top4000_gamma03.summary.json",
+      "synth_npz": "/root/autodl-tmp/ecgtwin_ptbxl_prompt_token_boundary_at_v1/v46_large_20260504/token/ptbxl_source/samples.npz",
+      "tau_high": 0.6,
+      "tau_low": 0.35,
+      "teacher_ckpts": [
+        "/root/autodl-tmp/graduate_project/method_a_real2000_seed42/best_model.pt",
+        "/root/autodl-tmp/graduate_project/method_a_real2000_seed43_v2teacher/best_model.pt",
+        "/root/autodl-tmp/graduate_project/method_a_real2000_seed44_v2teacher/best_model.pt"
+      ]
+    },
+    "n_candidates": 8000,
+    "n_hard": 0,
+    "n_high": 4000,
+    "n_kept": 4000,
+    "per_class": {
+      "CD": {
+        "candidate_target_conf_mean": 0.8211188316345215,
+        "candidates": 1600,
+        "hard": 0,
+        "high": 800,
+        "kept": 800,
+        "kept_target_conf_mean": 0.9286460280418396,
+        "kept_teacher_prob_mean": [
+          0.9286456108093262,
+          0.4337116479873657,
+          0.6892488598823547,
+          0.06318332999944687,
+          0.18414825201034546
+        ]
+      },
+      "HYP": {
+        "candidate_target_conf_mean": 0.6364032626152039,
+        "candidates": 1600,
+        "hard": 0,
+        "high": 800,
+        "kept": 800,
+        "kept_target_conf_mean": 0.7509134411811829,
+        "kept_teacher_prob_mean": [
+          0.22370645403862,
+          0.7509133815765381,
+          0.6008555293083191,
+          0.055973123759031296,
+          0.9215655326843262
+        ]
+      },
+      "MI": {
+        "candidate_target_conf_mean": 0.6713022589683533,
+        "candidates": 1600,
+        "hard": 0,
+        "high": 800,
+        "kept": 800,
+        "kept_target_conf_mean": 0.7947753667831421,
+        "kept_teacher_prob_mean": [
+          0.7510476112365723,
+          0.6319863796234131,
+          0.7947753667831421,
+          0.03683871775865555,
+          0.5474286079406738
+        ]
+      },
+      "NORM": {
+        "candidate_target_conf_mean": 0.9470495581626892,
+        "candidates": 1600,
+        "hard": 0,
+        "high": 800,
+        "kept": 800,
+        "kept_target_conf_mean": 0.9948593378067017,
+        "kept_teacher_prob_mean": [
+          0.055816493928432465,
+          0.033839304000139236,
+          0.01494976319372654,
+          0.9948596358299255,
+          0.0032723797485232353
+        ]
+      },
+      "STTC": {
+        "candidate_target_conf_mean": 0.7667292952537537,
+        "candidates": 1600,
+        "hard": 0,
+        "high": 800,
+        "kept": 800,
+        "kept_target_conf_mean": 0.918520450592041,
+        "kept_teacher_prob_mean": [
+          0.13667096197605133,
+          0.6779007911682129,
+          0.4336448013782501,
+          0.1267988532781601,
+          0.9185208678245544
+        ]
+      }
+    },
+    "target_conf_mean": 0.8775429129600525,
+    "target_conf_median": 0.8998528718948364,
+    "teacher_ckpts": [
+      "/root/autodl-tmp/graduate_project/method_a_real2000_seed42/best_model.pt",
+      "/root/autodl-tmp/graduate_project/method_a_real2000_seed43_v2teacher/best_model.pt",
+      "/root/autodl-tmp/graduate_project/method_a_real2000_seed44_v2teacher/best_model.pt"
+    ]
+  },
+  "class_order": [
+    "CD",
+    "HYP",
+    "MI",
+    "NORM",
+    "STTC"
+  ],
+  "selected": [
+    {
+      "class_name": "CD",
+      "class_index": 0,
+      "source_index": 308,
+      "original_source_index": 652,
+      "score": 329.7431360521644,
+      "label": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "target_conf": 0.9651753306388855,
+      "teacher_target_prob": 0.9651753306388855,
+      "quality_gate": {
+        "status": "pass",
+        "warnings": [],
+        "einthoven_residual": 0.016904466634247897,
+        "avR_residual": 0.02175636849211336,
+        "hr_estimate_bpm": 169.4560669456067,
+        "flatline_leads": [],
+        "has_nan": false,
+        "has_inf": false
+      },
+      "criteria": {
+        "NORM.N1_hr_60_100": false,
+        "NORM.N1_loose_50_130": true,
+        "NORM.N2_rr_regular_cv_le_010": false,
+        "NORM.N3_p_wave_present": true,
+        "NORM.N4_pr_120_200": true,
+        "NORM.N5_qrs_70_110": false,
+        "NORM.N6_st_isoelectric": true,
+        "NORM.N7_t_positive_2of3": true,
+        "NORM.NORM_strict_pass": false,
+        "NORM.NORM_ratevariant_pass": false,
+        "NORM.NORM_afib_pass": false,
+        "NORM.NORM_any_pass": false,
+        "MI.MI1_ste_2contig": false,
+        "MI.MI1_pairs": [],
+        "MI.MI2_q_dur_and_MI3_q_depth": true,
+        "MI.MI_pathological_q_leads": [
+          [
+            "V1",
+            80.0,
+            -0.8007727861404419,
+            1.7386503219604492
+          ],
+          [
+            "V2",
+            60.0,
+            -1.9583920240402222,
+            0.11129800602793694
+          ],
+          [
+            "V3",
+            80.0,
+            -5.842796564102173,
+            1.1346213221549988
+          ],
+          [
+            "V4",
+            80.0,
+            -5.29380989074707,
+            1.6174700856208801
+          ],
+          [
+            "V5",
+            80.0,
+            -3.952291250228882,
+            1.378486454486847
+          ],
+          [
+            "V6",
+            80.0,
+            -2.674617052078247,
+            0.9902852177619934
+          ],
+          [
+            "II",
+            80.0,
+            -3.4070085287094116,
+            0.6170835494995117
+          ],
+          [
+            "III",
+            80.0,
+            -3.8884530067443848,
+            0.48262253403663635
+          ],
+          [
+            "aVF",
+            80.0,
+            -3.546673893928528,
+            0.5268009305000305
+          ]
+        ],
+        "MI.MI_pass": true,
+        "STTC.ST1_depression": true,
+        "STTC.ST1_pairs": [
+          [
+            "I",
+            "aVL",
+            -0.13773590326309204,
+            -0.2791421562433243
+          ]
+        ],
+        "STTC.ST2_t_inversion": false,
+        "STTC.ST2_pairs": [],
+        "STTC.STTC_pass": true,
+        "HYP.sokolow_mv": 2.179259240627289,
+        "HYP.H1_sokolow": false,
+        "HYP.cornell_mv": 8.183160185813904,
+        "HYP.H2_cornell_male": true,
+        "HYP.H2w_cornell_female": true,
+        "HYP.HYP_pass": true,
+        "CD.L1_qrs_120": true,
+        "CD.L2_lateral_monomorphic_R": false,
+        "CD.L3_v1v2_deep_S": true,
+        "CD.LBBB_pass": false,
+        "CD.R1_qrs_120": true,
+        "CD.R2_rsR_v1v2": true,
+        "CD.RBBB_pass": true,
+        "CD.A1_pr_gt_200": false,
+        "CD.A2_p_qrs_match": true,
+        "CD.AVB_pass": false,
+        "CD.CD_pass": true,
+        "target": "CD",
+        "target_pass": true
+      },
+      "digital_summary": {
+        "hr_bpm": 101.69491525423729,
+        "rr_irregularity_cv": 0.10496077181710131,
+        "p_wave_present": true,
+        "pr_interval_ms": 200.0,
+        "qrs_duration_ms_avg": 160.0,
+        "qrs_duration_ms_broadest": 160.0
+      },
+      "png": "/root/autodl-tmp/final_round_ablation_20260504/thesis_paper_selected_v1/thesis_CD_12lead.png"
+    },
+    {
+      "class_name": "HYP",
+      "class_index": 1,
+      "source_index": 1225,
+      "original_source_index": 2442,
+      "score": 370.88804686138724,
+      "label": [
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "target_conf": 0.8883902430534363,
+      "teacher_target_prob": 0.8883902430534363,
+      "quality_gate": {
+        "status": "pass",
+        "warnings": [],
+        "einthoven_residual": 0.020218105601600686,
+        "avR_residual": 0.03496062552644715,
+        "hr_estimate_bpm": 89.55223880597015,
+        "flatline_leads": [],
+        "has_nan": false,
+        "has_inf": false
+      },
+      "criteria": {
+        "NORM.N1_hr_60_100": true,
+        "NORM.N1_loose_50_130": true,
+        "NORM.N2_rr_regular_cv_le_010": true,
+        "NORM.N3_p_wave_present": true,
+        "NORM.N4_pr_120_200": false,
+        "NORM.N5_qrs_70_110": true,
+        "NORM.N6_st_isoelectric": false,
+        "NORM.N7_t_positive_2of3": false,
+        "NORM.NORM_strict_pass": false,
+        "NORM.NORM_ratevariant_pass": false,
+        "NORM.NORM_afib_pass": false,
+        "NORM.NORM_any_pass": false,
+        "MI.MI1_ste_2contig": false,
+        "MI.MI1_pairs": [],
+        "MI.MI2_q_dur_and_MI3_q_depth": true,
+        "MI.MI_pathological_q_leads": [
+          [
+            "V1",
+            40.0,
+            -6.287123203277588,
+            0.4102226495742798
+          ],
+          [
+            "V2",
+            50.0,
+            -6.651599407196045,
+            0.7975226640701294
+          ],
+          [
+            "III",
+            50.0,
+            -0.16023753583431244,
+            0.5078368782997131
+          ]
+        ],
+        "MI.MI_pass": true,
+        "STTC.ST1_depression": true,
+        "STTC.ST1_pairs": [
+          [
+            "I",
+            "aVL",
+            -0.35989806056022644,
+            -0.15268854051828384
+          ],
+          [
+            "aVL",
+            "V5",
+            -0.15268854051828384,
+            -0.5147490799427032
+          ],
+          [
+            "V5",
+            "V6",
+            -0.5147490799427032,
+            -0.47889387607574463
+          ]
+        ],
+        "STTC.ST2_t_inversion": true,
+        "STTC.ST2_pairs": [
+          [
+            "I",
+            "II",
+            -0.48384588956832886,
+            -0.4579889625310898
+          ],
+          [
+            "II",
+            "V4",
+            -0.4579889625310898,
+            -0.4574793726205826
+          ],
+          [
+            "V4",
+            "V5",
+            -0.4574793726205826,
+            -0.8949100375175476
+          ],
+          [
+            "V5",
+            "V6",
+            -0.8949100375175476,
+            -0.8423836529254913
+          ]
+        ],
+        "STTC.STTC_pass": true,
+        "HYP.sokolow_mv": 13.452489376068115,
+        "HYP.H1_sokolow": true,
+        "HYP.cornell_mv": 6.516782522201538,
+        "HYP.H2_cornell_male": true,
+        "HYP.H2w_cornell_female": true,
+        "HYP.HYP_pass": true,
+        "CD.L1_qrs_120": false,
+        "CD.L2_lateral_monomorphic_R": false,
+        "CD.L3_v1v2_deep_S": true,
+        "CD.LBBB_pass": false,
+        "CD.R1_qrs_120": false,
+        "CD.R2_rsR_v1v2": false,
+        "CD.RBBB_pass": false,
+        "CD.A1_pr_gt_200": false,
+        "CD.A2_p_qrs_match": true,
+        "CD.AVB_pass": false,
+        "CD.CD_pass": false,
+        "target": "HYP",
+        "target_pass": true
+      },
+      "digital_summary": {
+        "hr_bpm": 89.55223880597015,
+        "rr_irregularity_cv": 0.012614242607888309,
+        "p_wave_present": true,
+        "pr_interval_ms": 90.0,
+        "qrs_duration_ms_avg": 100.0,
+        "qrs_duration_ms_broadest": 100.0
+      },
+      "png": "/root/autodl-tmp/final_round_ablation_20260504/thesis_paper_selected_v1/thesis_HYP_12lead.png"
+    },
+    {
+      "class_name": "MI",
+      "class_index": 2,
+      "source_index": 1864,
+      "original_source_index": 3734,
+      "score": 340.66264521512414,
+      "label": [
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0
+      ],
+      "target_conf": 0.842208206653595,
+      "teacher_target_prob": 0.842208206653595,
+      "quality_gate": {
+        "status": "pass",
+        "warnings": [],
+        "einthoven_residual": 0.040491343722127385,
+        "avR_residual": 0.04927373134399106,
+        "hr_estimate_bpm": 160.1642710472279,
+        "flatline_leads": [],
+        "has_nan": false,
+        "has_inf": false
+      },
+      "criteria": {
+        "NORM.N1_hr_60_100": true,
+        "NORM.N1_loose_50_130": true,
+        "NORM.N2_rr_regular_cv_le_010": true,
+        "NORM.N3_p_wave_present": true,
+        "NORM.N4_pr_120_200": false,
+        "NORM.N5_qrs_70_110": false,
+        "NORM.N6_st_isoelectric": false,
+        "NORM.N7_t_positive_2of3": true,
+        "NORM.NORM_strict_pass": false,
+        "NORM.NORM_ratevariant_pass": false,
+        "NORM.NORM_afib_pass": false,
+        "NORM.NORM_any_pass": false,
+        "MI.MI1_ste_2contig": true,
+        "MI.MI1_pairs": [
+          [
+            "III",
+            "aVF",
+            0.26456183195114136,
+            0.10507688671350479
+          ]
+        ],
+        "MI.MI2_q_dur_and_MI3_q_depth": true,
+        "MI.MI_pathological_q_leads": [
+          [
+            "V1",
+            40.0,
+            -8.335831642150879,
+            0.2273292988538742
+          ],
+          [
+            "V2",
+            50.0,
+            -11.37503433227539,
+            0.9047098755836487
+          ],
+          [
+            "V3",
+            50.0,
+            -3.4659368991851807,
+            0.46641990542411804
+          ],
+          [
+            "V4",
+            50.0,
+            -1.108751654624939,
+            1.5016494989395142
+          ],
+          [
+            "I",
+            50.0,
+            -0.9778279662132263,
+            2.000121593475342
+          ],
+          [
+            "aVL",
+            50.0,
+            -2.40463924407959,
+            2.378737688064575
+          ],
+          [
+            "V5",
+            30.0,
+            -0.7353647947311401,
+            2.370178461074829
+          ],
+          [
+            "V6",
+            40.0,
+            -0.7201999425888062,
+            2.5870728492736816
+          ],
+          [
+            "II",
+            50.0,
+            -1.7192490100860596,
+            2.9632437229156494
+          ],
+          [
+            "III",
+            50.0,
+            -3.0487329959869385,
+            4.0517754554748535
+          ],
+          [
+            "aVF",
+            50.0,
+            -2.2265772819519043,
+            3.4210264682769775
+          ]
+        ],
+        "MI.MI_pass": true,
+        "STTC.ST1_depression": true,
+        "STTC.ST1_pairs": [
+          [
+            "V5",
+            "V6",
+            -0.14135274291038513,
+            -0.1916239708662033
+          ],
+          [
+            "II",
+            "III",
+            -0.37346404790878296,
+            -0.283961683511734
+          ],
+          [
+            "III",
+            "aVF",
+            -0.283961683511734,
+            -0.3094651401042938
+          ]
+        ],
+        "STTC.ST2_t_inversion": false,
+        "STTC.ST2_pairs": [],
+        "STTC.STTC_pass": true,
+        "HYP.sokolow_mv": 10.92290449142456,
+        "HYP.H1_sokolow": true,
+        "HYP.cornell_mv": 6.692268133163452,
+        "HYP.H2_cornell_male": true,
+        "HYP.H2w_cornell_female": true,
+        "HYP.HYP_pass": true,
+        "CD.L1_qrs_120": false,
+        "CD.L2_lateral_monomorphic_R": false,
+        "CD.L3_v1v2_deep_S": true,
+        "CD.LBBB_pass": false,
+        "CD.R1_qrs_120": false,
+        "CD.R2_rsR_v1v2": false,
+        "CD.RBBB_pass": false,
+        "CD.A1_pr_gt_200": false,
+        "CD.A2_p_qrs_match": true,
+        "CD.AVB_pass": false,
+        "CD.CD_pass": false,
+        "target": "MI",
+        "target_pass": true
+      },
+      "digital_summary": {
+        "hr_bpm": 80.0,
+        "rr_irregularity_cv": 0.010681139250139686,
+        "p_wave_present": true,
+        "pr_interval_ms": 100.0,
+        "qrs_duration_ms_avg": 120.0,
+        "qrs_duration_ms_broadest": 100.0
+      },
+      "png": "/root/autodl-tmp/final_round_ablation_20260504/thesis_paper_selected_v1/thesis_MI_12lead.png"
+    },
+    {
+      "class_name": "NORM",
+      "class_index": 3,
+      "source_index": 3129,
+      "original_source_index": 6264,
+      "score": 119.86412236092575,
+      "label": [
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0
+      ],
+      "target_conf": 0.9978269934654236,
+      "teacher_target_prob": 0.9978269934654236,
+      "quality_gate": {
+        "status": "pass",
+        "warnings": [],
+        "einthoven_residual": 0.06561169263615761,
+        "avR_residual": 0.055265366060389814,
+        "hr_estimate_bpm": 126.66666666666667,
+        "flatline_leads": [],
+        "has_nan": false,
+        "has_inf": false
+      },
+      "criteria": {
+        "NORM.N1_hr_60_100": true,
+        "NORM.N1_loose_50_130": true,
+        "NORM.N2_rr_regular_cv_le_010": true,
+        "NORM.N3_p_wave_present": true,
+        "NORM.N4_pr_120_200": true,
+        "NORM.N5_qrs_70_110": true,
+        "NORM.N6_st_isoelectric": false,
+        "NORM.N7_t_positive_2of3": true,
+        "NORM.NORM_strict_pass": false,
+        "NORM.NORM_ratevariant_pass": false,
+        "NORM.NORM_afib_pass": false,
+        "NORM.NORM_any_pass": false,
+        "MI.MI1_ste_2contig": false,
+        "MI.MI1_pairs": [],
+        "MI.MI2_q_dur_and_MI3_q_depth": true,
+        "MI.MI_pathological_q_leads": [
+          [
+            "V1",
+            50.0,
+            -4.991360425949097,
+            1.5600725412368774
+          ],
+          [
+            "V2",
+            40.0,
+            -1.4153539538383484,
+            3.114388942718506
+          ],
+          [
+            "III",
+            50.0,
+            -0.9995796084403992,
+            0.37105533480644226
+          ]
+        ],
+        "MI.MI_pass": true,
+        "STTC.ST1_depression": true,
+        "STTC.ST1_pairs": [
+          [
+            "V3",
+            "V4",
+            -0.2544701620936394,
+            -0.4428279250860214
+          ],
+          [
+            "I",
+            "aVL",
+            -0.40751679241657257,
+            -0.056594118475914
+          ],
+          [
+            "aVL",
+            "V5",
+            -0.056594118475914,
+            -0.4635399580001831
+          ],
+          [
+            "V5",
+            "V6",
+            -0.4635399580001831,
+            -0.42910853028297424
+          ],
+          [
+            "II",
+            "III",
+            -0.6718060374259949,
+            -0.21109943091869354
+          ],
+          [
+            "III",
+            "aVF",
+            -0.21109943091869354,
+            -0.46595148742198944
+          ]
+        ],
+        "STTC.ST2_t_inversion": false,
+        "STTC.ST2_pairs": [],
+        "STTC.STTC_pass": true,
+        "HYP.sokolow_mv": 13.372242212295532,
+        "HYP.H1_sokolow": true,
+        "HYP.cornell_mv": 7.706207871437073,
+        "HYP.H2_cornell_male": true,
+        "HYP.H2w_cornell_female": true,
+        "HYP.HYP_pass": true,
+        "CD.L1_qrs_120": false,
+        "CD.L2_lateral_monomorphic_R": false,
+        "CD.L3_v1v2_deep_S": true,
+        "CD.LBBB_pass": false,
+        "CD.R1_qrs_120": false,
+        "CD.R2_rsR_v1v2": false,
+        "CD.RBBB_pass": false,
+        "CD.A1_pr_gt_200": false,
+        "CD.A2_p_qrs_match": true,
+        "CD.AVB_pass": false,
+        "CD.CD_pass": false,
+        "target": "NORM",
+        "target_pass": false
+      },
+      "digital_summary": {
+        "hr_bpm": 61.855670103092784,
+        "rr_irregularity_cv": 0.0396176734244002,
+        "p_wave_present": true,
+        "pr_interval_ms": 120.0,
+        "qrs_duration_ms_avg": 70.0,
+        "qrs_duration_ms_broadest": 70.0
+      },
+      "png": "/root/autodl-tmp/final_round_ablation_20260504/thesis_paper_selected_v1/thesis_NORM_12lead.png"
+    },
+    {
+      "class_name": "STTC",
+      "class_index": 4,
+      "source_index": 3462,
+      "original_source_index": 6940,
+      "score": 374.37955972528516,
+      "label": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "target_conf": 0.9865310788154602,
+      "teacher_target_prob": 0.9865310788154602,
+      "quality_gate": {
+        "status": "pass",
+        "warnings": [],
+        "einthoven_residual": 0.017337259426015758,
+        "avR_residual": 0.032300547565777014,
+        "hr_estimate_bpm": 82.53968253968254,
+        "flatline_leads": [],
+        "has_nan": false,
+        "has_inf": false
+      },
+      "criteria": {
+        "NORM.N1_hr_60_100": true,
+        "NORM.N1_loose_50_130": true,
+        "NORM.N2_rr_regular_cv_le_010": true,
+        "NORM.N3_p_wave_present": true,
+        "NORM.N4_pr_120_200": false,
+        "NORM.N5_qrs_70_110": true,
+        "NORM.N6_st_isoelectric": false,
+        "NORM.N7_t_positive_2of3": false,
+        "NORM.NORM_strict_pass": false,
+        "NORM.NORM_ratevariant_pass": false,
+        "NORM.NORM_afib_pass": false,
+        "NORM.NORM_any_pass": false,
+        "MI.MI1_ste_2contig": false,
+        "MI.MI1_pairs": [],
+        "MI.MI2_q_dur_and_MI3_q_depth": true,
+        "MI.MI_pathological_q_leads": [
+          [
+            "V1",
+            50.0,
+            -5.5188024044036865,
+            1.472194254398346
+          ],
+          [
+            "V2",
+            50.0,
+            -6.245152950286865,
+            2.868092656135559
+          ],
+          [
+            "aVL",
+            50.0,
+            -1.2757542133331299,
+            0.8451547920703888
+          ]
+        ],
+        "MI.MI_pass": true,
+        "STTC.ST1_depression": true,
+        "STTC.ST1_pairs": [
+          [
+            "V2",
+            "V3",
+            -0.10071825981140137,
+            -0.4797568917274475
+          ],
+          [
+            "V3",
+            "V4",
+            -0.4797568917274475,
+            -0.6791688203811646
+          ],
+          [
+            "I",
+            "aVL",
+            -0.44041013717651367,
+            -0.06649111211299896
+          ],
+          [
+            "aVL",
+            "V5",
+            -0.06649111211299896,
+            -0.642984926700592
+          ],
+          [
+            "V5",
+            "V6",
+            -0.642984926700592,
+            -0.5510865449905396
+          ],
+          [
+            "II",
+            "III",
+            -0.7187881469726562,
+            -0.3000078797340393
+          ],
+          [
+            "III",
+            "aVF",
+            -0.3000078797340393,
+            -0.5107381939888
+          ]
+        ],
+        "STTC.ST2_t_inversion": true,
+        "STTC.ST2_pairs": [
+          [
+            "I",
+            "II",
+            -0.4304751455783844,
+            -0.7183233499526978
+          ],
+          [
+            "II",
+            "V4",
+            -0.7183233499526978,
+            -0.660385251045227
+          ],
+          [
+            "V4",
+            "V5",
+            -0.660385251045227,
+            -0.6394972801208496
+          ],
+          [
+            "V5",
+            "V6",
+            -0.6394972801208496,
+            -0.5437737703323364
+          ]
+        ],
+        "STTC.STTC_pass": true,
+        "HYP.sokolow_mv": 12.451292991638184,
+        "HYP.H1_sokolow": true,
+        "HYP.cornell_mv": 4.368027478456497,
+        "HYP.H2_cornell_male": true,
+        "HYP.H2w_cornell_female": true,
+        "HYP.HYP_pass": true,
+        "CD.L1_qrs_120": false,
+        "CD.L2_lateral_monomorphic_R": false,
+        "CD.L3_v1v2_deep_S": true,
+        "CD.LBBB_pass": false,
+        "CD.R1_qrs_120": false,
+        "CD.R2_rsR_v1v2": false,
+        "CD.RBBB_pass": false,
+        "CD.A1_pr_gt_200": false,
+        "CD.A2_p_qrs_match": true,
+        "CD.AVB_pass": false,
+        "CD.CD_pass": false,
+        "target": "STTC",
+        "target_pass": true
+      },
+      "digital_summary": {
+        "hr_bpm": 82.1917808219178,
+        "rr_irregularity_cv": 0.021841023746614063,
+        "p_wave_present": true,
+        "pr_interval_ms": 95.0,
+        "qrs_duration_ms_avg": 80.0,
+        "qrs_duration_ms_broadest": 70.0
+      },
+      "png": "/root/autodl-tmp/final_round_ablation_20260504/thesis_paper_selected_v1/thesis_STTC_12lead.png"
+    }
+  ],
+  "ranking_top": {
+    "CD": [],
+    "HYP": [],
+    "MI": [],
+    "NORM": [],
+    "STTC": []
+  },
+  "note": "These examples are curated thesis visualization artifacts. The saved NPZ contains raw generated ECG vectors in PTB-XL lead order, shape (5,1000,12). Clinical validity should still be described cautiously."
+}

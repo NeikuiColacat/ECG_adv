@@ -1,0 +1,7 @@
+{
+  "batch_size": 8,
+  "max_abs_logit_diff": 0.00663304328918457,
+  "mean_abs_logit_diff": 0.0015409064944833517,
+  "max_abs_prob_diff": 0.0008614063262939453,
+  "mean_abs_prob_diff": 0.00021067354828119278
+}

@@ -27,10 +27,10 @@ CSV_PATH="${CSV_PATH:-${PTBXL_ROOT}/ptbxl_database.csv}"
 CACHE_PATH="${CACHE_PATH:-${TRIPLE_ROOT}/cache/ptbxl_minimal_resample_per_sample_global_fs100_len1000.npy}"
 SPLIT_JSON="${SPLIT_JSON:-${GRAD_ROOT}/splits/ptbxl_super5_seed42_train2000_val2000.json}"
 
-CENTER_TOKEN_SYNTH_NPZ="${CENTER_TOKEN_SYNTH_NPZ:-${DATA_ROOT}/ecgtwin_prompt_token_super5/effectiveness_pilot_v42_task1gate_ningbo_token_scale_large_20260504/target_token_s05/ningbo/gated/gated_samples.npz}"
-NO_TOKEN_SYNTH_NPZ="${NO_TOKEN_SYNTH_NPZ:-${DATA_ROOT}/ecgtwin_prompt_token_super5/effectiveness_pilot_v42_task1gate_ningbo_no_token_large_20260504/no_token/ningbo/gated/gated_samples.npz}"
+CENTER_TOKEN_SYNTH_NPZ="${CENTER_TOKEN_SYNTH_NPZ:-${GRAD_ROOT}/method_b_synth_candidates_mv4_seed42/ptbxl/gated_max1000/gated_samples.npz}"
+NO_TOKEN_SYNTH_NPZ="${NO_TOKEN_SYNTH_NPZ:-${GRAD_ROOT}/vanilla_ecgtwin_synth_candidates_n20000_translated_randomany_seed42/ptbxl/samples.npz}"
 REPORT_TEXT_SYNTH_NPZ="${REPORT_TEXT_SYNTH_NPZ:-${GRAD_ROOT}/method_b_synth_candidates_actual_report_mv4_step2000_seed42/ptbxl/gated_max1000/gated_samples.npz}"
-DEFAULT_TEXT_SYNTH_NPZ="${DEFAULT_TEXT_SYNTH_NPZ:-${DATA_ROOT}/ecgtwin_prompt_token_super5/generated_pool_v4_merged_balanced/ningbo/gated/gated_samples.npz}"
+DEFAULT_TEXT_SYNTH_NPZ="${DEFAULT_TEXT_SYNTH_NPZ:-${GRAD_ROOT}/method_b_synth_candidates_classfallback_newgen_sameclass_cap20_seed42/ptbxl/gated_max1000/gated_samples.npz}"
 CENTER_TOKEN_INIT="${CENTER_TOKEN_INIT:-${GRAD_ROOT}/self_distill_v2_e18_v46_class_oracle_hardlabel_r10_seed42_auroc/best_model.pt}"
 
 export TMPDIR="${TMPDIR:-${DATA_ROOT}/tmp}"
@@ -84,23 +84,25 @@ echo "[table6.8] output root: $OUT_ROOT"
 
 run_train "$OUT_ROOT/center_token_joint_seed42" \
   --synth_npz "$CENTER_TOKEN_SYNTH_NPZ" \
-  --synth_ratio 0.25 \
+  --synth_ratio 1.0 \
   --seed 42
 
 run_train "$OUT_ROOT/report_text_joint_seed42" \
   --synth_npz "$REPORT_TEXT_SYNTH_NPZ" \
-  --synth_ratio 0.25 \
+  --synth_ratio 1.0 \
   --seed 42
 
 run_train "$OUT_ROOT/default_text_joint_seed42" \
   --synth_npz "$DEFAULT_TEXT_SYNTH_NPZ" \
-  --synth_ratio 0.25 \
+  --synth_ratio 1.0 \
   --seed 42
 
-run_train "$OUT_ROOT/no_token_synthetic_only_seed42" \
+run_train "$OUT_ROOT/no_token_synthetic_only_seed5042" \
   --synth_npz "$NO_TOKEN_SYNTH_NPZ" \
   --synthetic_only \
-  --seed 42
+  --epochs 30 \
+  --patience 8 \
+  --seed 5042
 
 require_file "$CENTER_TOKEN_INIT"
 run_train "$OUT_ROOT/center_token_pretrain_realfine_seed42" \

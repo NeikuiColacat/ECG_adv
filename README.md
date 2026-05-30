@@ -47,6 +47,7 @@ bash scripts/final_round/run_thesis_reproduction.sh streamlit
 
 | purpose | command |
 |---|---|
+| thesis image/link check | `bash scripts/final_round/run_thesis_reproduction.sh thesis_assets` |
 | artifact/data preflight | `bash scripts/final_round/run_thesis_reproduction.sh preflight` |
 | PTB-XL train2000/val2000/test17799 split | `bash scripts/final_round/run_thesis_reproduction.sh split` |
 | ECGTwin IBE + DiT author reproduction | `bash scripts/final_round/run_thesis_reproduction.sh author_repro` |
@@ -70,9 +71,12 @@ Detailed mapping from paper tables/figures to code and artifacts is in
 PTB-XL/MIMIC-derived data that is not committed to git. `package_artifacts`
 copies the packageable entries from `docs/artifact_manifest.json`, including
 the required model weights, ECGTwin checkpoints, demo samples, generated pools,
-ONNX export, optional TensorRT engine, and thesis evidence files. Manifest
-entries marked `package: false` are external data dependencies rather than
-default disc artifacts.
+ONNX export, optional TensorRT engine, and thesis evidence files. It writes
+`artifact_manifest.resolved.json`, `checksums.sha256`, and
+`missing_artifacts.json` under `${ECG_ADV_DATA_ROOT}/thesis_archive_artifacts/`
+so missing required files remain visible. Manifest entries marked
+`package: false` are external data dependencies rather than default disc
+artifacts.
 
 `low_sample` is the light archive verification path: it summarizes the shipped
 `train_result.json` files from the fixed PTB-XL custom split. Use
@@ -104,6 +108,7 @@ Tracked source:
 - `methods/ecgtwin_gen/prompt_token/`
 - `util/`
 - `artifacts/figures/` for thesis-ready screenshots and ECG example figures
+- `artifacts/evidence_pack/` for thesis tables, small result summaries, and figures referenced by `thesis.md`
 - `legacy/` for non-mainline historical experiments
 - `pyproject.toml` and `uv.lock`
 

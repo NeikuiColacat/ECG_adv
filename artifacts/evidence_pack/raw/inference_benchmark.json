@@ -1,0 +1,107 @@
+{
+  "checkpoint": "/root/autodl-tmp/triple_labels/super5_minresample_full10_perglobal_20260503/best_model.pt",
+  "onnx": "/root/autodl-tmp/streamlit_ecg_demo/models/efficientnetv2_super5.onnx",
+  "engine": "/root/autodl-tmp/streamlit_ecg_demo/models/efficientnetv2_super5_fp16.engine",
+  "results": [
+    {
+      "backend": "pytorch",
+      "device": "cuda",
+      "batch_size": 1,
+      "repeats": 100,
+      "latency_ms_mean": 8.783290311694145,
+      "latency_ms_p50": 8.664552122354507,
+      "latency_ms_p95": 9.93710272014141,
+      "throughput_ecg_per_s": 113.85255007096734
+    },
+    {
+      "backend": "pytorch",
+      "device": "cuda",
+      "batch_size": 8,
+      "repeats": 100,
+      "latency_ms_mean": 8.916367441415787,
+      "latency_ms_p50": 8.788585662841797,
+      "latency_ms_p95": 9.540186449885368,
+      "throughput_ecg_per_s": 897.2263707797263
+    },
+    {
+      "backend": "pytorch",
+      "device": "cuda",
+      "batch_size": 32,
+      "repeats": 100,
+      "latency_ms_mean": 9.162798449397087,
+      "latency_ms_p50": 8.841440081596375,
+      "latency_ms_p95": 10.633640363812447,
+      "throughput_ecg_per_s": 3492.382832245492
+    },
+    {
+      "backend": "onnxruntime",
+      "device": "CPUExecutionProvider",
+      "batch_size": 1,
+      "repeats": 100,
+      "latency_ms_mean": 127.89747096598148,
+      "latency_ms_p50": 104.29196804761887,
+      "latency_ms_p95": 193.54720935225487,
+      "throughput_ecg_per_s": 7.818762892238758
+    },
+    {
+      "backend": "onnxruntime",
+      "device": "CPUExecutionProvider",
+      "batch_size": 8,
+      "repeats": 100,
+      "latency_ms_mean": 222.02005080878735,
+      "latency_ms_p50": 200.9502314031124,
+      "latency_ms_p95": 302.90186926722527,
+      "throughput_ecg_per_s": 36.032781592730664
+    },
+    {
+      "backend": "onnxruntime",
+      "device": "CPUExecutionProvider",
+      "batch_size": 32,
+      "repeats": 100,
+      "latency_ms_mean": 294.99869994819164,
+      "latency_ms_p50": 295.47982290387154,
+      "latency_ms_p95": 401.2707527726886,
+      "throughput_ecg_per_s": 108.47505431590008
+    },
+    {
+      "backend": "tensorrt",
+      "device": "cuda",
+      "engine": "/root/autodl-tmp/streamlit_ecg_demo/models/efficientnetv2_super5_fp16.engine",
+      "batch_size": 1,
+      "repeats": 100,
+      "latency_ms_mean": 1.544070616364479,
+      "latency_ms_p50": 1.2511461973190308,
+      "latency_ms_p95": 3.3782921731472015,
+      "throughput_ecg_per_s": 647.6387733836322
+    },
+    {
+      "backend": "tensorrt",
+      "device": "cuda",
+      "engine": "/root/autodl-tmp/streamlit_ecg_demo/models/efficientnetv2_super5_fp16.engine",
+      "batch_size": 8,
+      "repeats": 100,
+      "latency_ms_mean": 2.041364684700966,
+      "latency_ms_p50": 1.378912478685379,
+      "latency_ms_p95": 3.459830582141876,
+      "throughput_ecg_per_s": 3918.946996563673
+    },
+    {
+      "backend": "tensorrt",
+      "device": "cuda",
+      "engine": "/root/autodl-tmp/streamlit_ecg_demo/models/efficientnetv2_super5_fp16.engine",
+      "batch_size": 32,
+      "repeats": 100,
+      "latency_ms_mean": 2.5400912016630173,
+      "latency_ms_p50": 2.060983330011368,
+      "latency_ms_p95": 3.8877271115779877,
+      "throughput_ecg_per_s": 12597.972851939077
+    }
+  ],
+  "tensorrt_validation": {
+    "batch_size": 8,
+    "max_abs_logit_diff": 0.00663304328918457,
+    "mean_abs_logit_diff": 0.0015409064944833517,
+    "max_abs_prob_diff": 0.0008614063262939453,
+    "mean_abs_prob_diff": 0.00021067354828119278
+  }
+}

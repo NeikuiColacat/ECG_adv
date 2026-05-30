@@ -1,0 +1,11 @@
+| backend | device | batch_size | repeats | latency_ms_mean | latency_ms_p50 | latency_ms_p95 | throughput_ecg_per_s |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| pytorch | cuda | 1 | 100 | 8.7833 | 8.6646 | 9.9371 | 113.85 |
+| pytorch | cuda | 8 | 100 | 8.9164 | 8.7886 | 9.5402 | 897.23 |
+| pytorch | cuda | 32 | 100 | 9.1628 | 8.8414 | 10.6336 | 3492.38 |
+| onnxruntime | CPUExecutionProvider | 1 | 100 | 127.8975 | 104.2920 | 193.5472 | 7.82 |
+| onnxruntime | CPUExecutionProvider | 8 | 100 | 222.0201 | 200.9502 | 302.9019 | 36.03 |
+| onnxruntime | CPUExecutionProvider | 32 | 100 | 294.9987 | 295.4798 | 401.2708 | 108.48 |
+| tensorrt | cuda | 1 | 100 | 1.5441 | 1.2511 | 3.3783 | 647.64 |
+| tensorrt | cuda | 8 | 100 | 2.0414 | 1.3789 | 3.4598 | 3918.95 |
+| tensorrt | cuda | 32 | 100 | 2.5401 | 2.0610 | 3.8877 | 12597.97 |

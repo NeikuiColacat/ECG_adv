@@ -44,6 +44,7 @@ bash scripts/final_round/run_thesis_reproduction.sh env
 
 ```text
 preflight        检查 docs/artifact_manifest.json 中的完整复现数据、权重和结果文件
+thesis_assets    检查 thesis.md 引用的本地图片是否都存在
 split            创建 PTB-XL super5 固定划分
 author_repro     复现 ECGTwin IBE + DiT 两阶段训练
 low_sample       汇总表 6.5-6.7 已归档的 custom split 结果
@@ -74,6 +75,12 @@ bash scripts/final_round/run_thesis_reproduction.sh streamlit
 
 | 论文位置 | 内容 | 主要代码入口 | 主要产物 |
 |---|---|---|---|
+| 表 3.1 | 合成 ECG 质量门控策略 | `scripts/ecgtwin_gen/gate_prompt_token_synth.py`、`scripts/final_round/run_medical_validity_ablation.py`、`util/ecg_digital_features.py` | 表格写入 `thesis.md`；统计结果见 `artifacts/evidence_pack/raw/medical_validity_summary.json` |
+| 表 4.1 | PTB-XL 诊断超类五标签任务定义 | `scripts/triple_labels/label_schemes.py`、`${ECG_ADV_PTBXL_ROOT}/scp_statements.csv` | 表格写入 `thesis.md`；类别顺序由代码常量 `CLASS_NAMES_SUPER5` 固定 |
+| 表 4.2 | EfficientNetV2 训练实现要点 | `scripts/triple_labels/train_ptbxl.py`、`pyproject.toml`、`uv.lock` | 表格写入 `thesis.md`；训练参数保存在各 `train_result.json` 的 `config` 字段 |
+| 表 5.1 | Streamlit 原型功能模块 | `apps/streamlit_ecg_demo/app.py`、`apps/streamlit_ecg_demo/services/` | 表格写入 `thesis.md`；截图见 `artifacts/figures/streamlit_demo/` |
+| 表 6.1 | 实验环境配置 | `pyproject.toml`、`uv.lock`、`scripts/final_round/run_thesis_reproduction.sh env` | 表格写入 `thesis.md`；运行 `env` stage 查看当前路径与 Python 命令 |
+| 图 3.1 / 图 3.2 | IBE 与 DiT 结构示意图 | 静态论文图；用 `thesis_assets` 检查断链 | `artifacts/evidence_pack/figures/architecture/*.png` |
 | 表 6.2 / 图 6.1 | PTB-XL super5 train=2000、val=2000、test=17799 固定划分 | `scripts/triple_labels/create_ptbxl_super5_split.py` | `${ECG_ADV_GRAD_ROOT}/splits/ptbxl_super5_seed42_train2000_val2000.json` |
 | 表 6.3 / 图 6.2 / 图 6.3 | ECGTwin IBE + DiT 两阶段复现 | `scripts/ecgtwin_author_repro/run_author_repro_pipeline.sh` | `${ECG_ADV_DATA_ROOT}/ecgtwin_author_repro/<run>/` |
 | 表 6.4 | 中心提示向量/无提示向量生成质量代理统计 | `scripts/final_round/run_medical_validity_ablation.py` | `${ECG_ADV_FINAL_ROUND_ROOT}/medical_validity/` |
@@ -84,6 +91,13 @@ bash scripts/final_round/run_thesis_reproduction.sh streamlit
 | 表 5.2 | PyTorch / TensorRT 推理性能 | `scripts/deploy/export_efficientnetv2_onnx.py`、`build_tensorrt_engine.py`、`benchmark_inference_backends.py` | `${ECG_ADV_APP_DATA_ROOT}/reports/inference_benchmark.json` |
 | 图 5.1-5.3 | Streamlit 原型展示 | `apps/streamlit_ecg_demo/app.py` | `artifacts/figures/streamlit_demo/*.png` |
 
+`thesis.md` 直接引用的轻量图表证据已放在 `artifacts/evidence_pack/` 与
+`artifacts/figures/` 下。可用下面命令检查论文图片是否全部存在：
+
+```bash
+bash scripts/final_round/run_thesis_reproduction.sh thesis_assets
+```
+
 ### 表 6.8 消融行
 
 `ablation_6_8` stage 固定使用 `scripts/final_round/run_table_6_8_ablations.sh`。基础训练参数为
@@ -91,10 +105,10 @@ bash scripts/final_round/run_thesis_reproduction.sh streamlit
 
 | 论文方法 | 输入 | 输出目录 | 额外训练参数 |
 |---|---|---|---|
-| 提示向量联合训练 | `${ECG_ADV_DATA_ROOT}/ecgtwin_prompt_token_super5/effectiveness_pilot_v42_task1gate_ningbo_token_scale_large_20260504/target_token_s05/ningbo/gated/gated_samples.npz` | `${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/center_token_joint_seed42/` | `--synth_ratio 0.25 --seed 42` |
-| 报告文本联合训练 | `${ECG_ADV_GRAD_ROOT}/method_b_synth_candidates_actual_report_mv4_step2000_seed42/ptbxl/gated_max1000/gated_samples.npz` | `${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/report_text_joint_seed42/` | `--synth_ratio 0.25 --seed 42` |
-| 默认文本联合训练 | `${ECG_ADV_DATA_ROOT}/ecgtwin_prompt_token_super5/generated_pool_v4_merged_balanced/ningbo/gated/gated_samples.npz` | `${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/default_text_joint_seed42/` | `--synth_ratio 0.25 --seed 42` |
-| 无提示向量仅合成训练 | `${ECG_ADV_DATA_ROOT}/ecgtwin_prompt_token_super5/effectiveness_pilot_v42_task1gate_ningbo_no_token_large_20260504/no_token/ningbo/gated/gated_samples.npz` | `${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/no_token_synthetic_only_seed42/` | `--synthetic_only --seed 42` |
+| 提示向量联合训练 | `${ECG_ADV_GRAD_ROOT}/method_b_synth_candidates_mv4_seed42/ptbxl/gated_max1000/gated_samples.npz` | `${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/center_token_joint_seed42/` | `--synth_ratio 1.0 --seed 42` |
+| 报告文本联合训练 | `${ECG_ADV_GRAD_ROOT}/method_b_synth_candidates_actual_report_mv4_step2000_seed42/ptbxl/gated_max1000/gated_samples.npz` | `${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/report_text_joint_seed42/` | `--synth_ratio 1.0 --seed 42` |
+| 默认文本联合训练 | `${ECG_ADV_GRAD_ROOT}/method_b_synth_candidates_classfallback_newgen_sameclass_cap20_seed42/ptbxl/gated_max1000/gated_samples.npz` | `${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/default_text_joint_seed42/` | `--synth_ratio 1.0 --seed 42` |
+| 无提示向量仅合成训练 | `${ECG_ADV_GRAD_ROOT}/vanilla_ecgtwin_synth_candidates_n20000_translated_randomany_seed42/ptbxl/samples.npz` | `${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/no_token_synthetic_only_seed5042/` | `--synthetic_only --epochs 30 --patience 8 --seed 5042` |
 | 中心提示向量预训练 | `${ECG_ADV_GRAD_ROOT}/self_distill_v2_e18_v46_class_oracle_hardlabel_r10_seed42_auroc/best_model.pt` | `${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/center_token_pretrain_realfine_seed42/` | `--init_ckpt <ckpt> --lr 0.0001 --cosine_tmax 10 --patience 8 --epochs 25 --seed 9042` |
 
 ## 4. 必需数据与权重
@@ -117,7 +131,10 @@ ${ECG_ADV_DATA_ROOT}/ecgtwin_prompt_token_super5/cache_v1/text_prompt_bank.pt
 ${ECG_ADV_DATA_ROOT}/ecgtwin_prompt_token_super5/cache_v1/center_full_latents/ningbo.pt
 ${ECG_ADV_DATA_ROOT}/ecgtwin_prompt_token_super5/cache_v1/ref_selection/ningbo_k500_seed42.json
 ${ECG_ADV_DATA_ROOT}/ecgtwin_prompt_token_super5/**/gated_samples.npz
+${ECG_ADV_GRAD_ROOT}/method_b_synth_candidates_mv4_seed42/ptbxl/gated_max1000/gated_samples.npz
 ${ECG_ADV_GRAD_ROOT}/method_b_synth_candidates_actual_report_mv4_step2000_seed42/ptbxl/gated_max1000/gated_samples.npz
+${ECG_ADV_GRAD_ROOT}/method_b_synth_candidates_classfallback_newgen_sameclass_cap20_seed42/ptbxl/gated_max1000/gated_samples.npz
+${ECG_ADV_GRAD_ROOT}/vanilla_ecgtwin_synth_candidates_n20000_translated_randomany_seed42/ptbxl/samples.npz
 ${ECG_ADV_APP_DATA_ROOT}/models/efficientnetv2_super5.onnx
 ${ECG_ADV_APP_DATA_ROOT}/models/efficientnetv2_super5_fp16.engine
 ```
@@ -138,6 +155,8 @@ bash scripts/final_round/run_thesis_reproduction.sh package_artifacts
 默认打包只复制 `docs/artifact_manifest.json` 中允许随光盘交付的条目。PTB-XL 原始数据、
 PTB-XL 全量预处理 cache、MIMIC/ECGTwin 作者训练 cache 等授权或体积敏感数据保留为
 `package: false` 外部依赖；它们仍会被 `preflight` 检查，用于判断完整重跑环境是否齐备。
+打包目录会额外写出 `artifact_manifest.resolved.json`、`checksums.sha256` 和
+`missing_artifacts.json`，用于区分“已经随光盘交付的文件”和“完整重跑仍需补齐的文件”。
 
 ECGTwin 作者复现还需要：
 
