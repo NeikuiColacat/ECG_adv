@@ -15,18 +15,6 @@ STREAMLIT_ROOT = Path(os.environ.get("ECG_ADV_APP_DATA_ROOT", DATA_ROOT / "strea
 FINAL_ROUND_ROOT = Path(
     os.environ.get("ECG_ADV_FINAL_ROUND_ROOT", DATA_ROOT / "final_round_ablation_20260504")
 ).expanduser()
-
-DEFAULT_REAL = GRAD_ROOT / "method_a_real2000_seed42/train_result.json"
-DEFAULT_NO_TOKEN = (
-    GRAD_ROOT
-    / "self_distill_v2_e24_v46_no_token_hardlabel_r10_realfine_lr1e4_seed42_auroc"
-    / "train_result.json"
-)
-DEFAULT_CENTER_TOKEN = (
-    GRAD_ROOT
-    / "self_distill_v2_e23_v46_class_oracle_hardlabel_r10_realfine_lr1e4_seed42_auroc"
-    / "train_result.json"
-)
 EVIDENCE_PACK = REPO_ROOT / "artifacts" / "evidence_pack"
 
 
@@ -35,6 +23,38 @@ def first_existing(*paths: Path) -> Path:
         if path.exists():
             return path
     return paths[0]
+
+
+def resolve_default_low_sample_results(
+    *,
+    grad_root: Path = GRAD_ROOT,
+    evidence_pack: Path = EVIDENCE_PACK,
+) -> dict[str, Path]:
+    evidence_results = evidence_pack / "raw" / "train_results"
+    return {
+        "real_result": first_existing(
+            grad_root / "method_a_real2000_seed42/train_result.json",
+            evidence_results / "real2000_original.train_result.json",
+        ),
+        "no_token_result": first_existing(
+            grad_root
+            / "self_distill_v2_e24_v46_no_token_hardlabel_r10_realfine_lr1e4_seed42_auroc"
+            / "train_result.json",
+            evidence_results / "no_token_hard_ft.train_result.json",
+        ),
+        "center_token_result": first_existing(
+            grad_root
+            / "self_distill_v2_e23_v46_class_oracle_hardlabel_r10_realfine_lr1e4_seed42_auroc"
+            / "train_result.json",
+            evidence_results / "center_token_hard_ft.train_result.json",
+        ),
+    }
+
+
+DEFAULT_LOW_SAMPLE_RESULTS = resolve_default_low_sample_results()
+DEFAULT_REAL = DEFAULT_LOW_SAMPLE_RESULTS["real_result"]
+DEFAULT_NO_TOKEN = DEFAULT_LOW_SAMPLE_RESULTS["no_token_result"]
+DEFAULT_CENTER_TOKEN = DEFAULT_LOW_SAMPLE_RESULTS["center_token_result"]
 
 
 DEFAULT_BENCHMARK = first_existing(

@@ -79,7 +79,7 @@ bash scripts/final_round/run_thesis_reproduction.sh streamlit
 | 表 4.1 | PTB-XL 诊断超类五标签任务定义 | `scripts/triple_labels/label_schemes.py`、`${ECG_ADV_PTBXL_ROOT}/scp_statements.csv` | 表格写入 `thesis.md`；类别顺序由代码常量 `CLASS_NAMES_SUPER5` 固定 |
 | 表 4.2 | EfficientNetV2 训练实现要点 | `scripts/triple_labels/train_ptbxl.py`、`pyproject.toml`、`uv.lock` | 表格写入 `thesis.md`；训练参数保存在各 `train_result.json` 的 `config` 字段 |
 | 表 5.1 | Streamlit 原型功能模块 | `apps/streamlit_ecg_demo/app.py`、`apps/streamlit_ecg_demo/services/` | 表格写入 `thesis.md`；截图见 `artifacts/figures/streamlit_demo/` |
-| 表 6.1 | 实验环境配置 | `pyproject.toml`、`uv.lock`、`scripts/final_round/run_thesis_reproduction.sh env` | 表格写入 `thesis.md`；运行 `env` stage 查看当前路径与 Python 命令 |
+| 表 6.1 | 实验环境配置 | `pyproject.toml`、`uv.lock`、`scripts/final_round/run_thesis_reproduction.sh env` | 表格写入 `thesis.md`；运行 `env` stage 查看当前路径、Python 命令和 PyTorch/CUDA/TensorRT 版本快照 |
 | 图 3.1 / 图 3.2 | IBE 与 DiT 结构示意图 | 静态论文图；用 `thesis_assets` 检查断链 | `artifacts/evidence_pack/figures/architecture/*.png` |
 | 表 6.2 / 图 6.1 | PTB-XL super5 train=2000、val=2000、test=17799 固定划分 | `scripts/triple_labels/create_ptbxl_super5_split.py` | `${ECG_ADV_GRAD_ROOT}/splits/ptbxl_super5_seed42_train2000_val2000.json` |
 | 表 6.3 / 图 6.2 / 图 6.3 | ECGTwin IBE + DiT 两阶段复现 | `scripts/ecgtwin_author_repro/run_author_repro_pipeline.sh` | `${ECG_ADV_DATA_ROOT}/ecgtwin_author_repro/<run>/` |
@@ -97,6 +97,10 @@ bash scripts/final_round/run_thesis_reproduction.sh streamlit
 ```bash
 bash scripts/final_round/run_thesis_reproduction.sh thesis_assets
 ```
+
+`low_sample` 和 `evidence` stage 会优先读取 `${ECG_ADV_GRAD_ROOT}` 下的原始
+`train_result.json`，如果新机器没有这些历史路径，则回退到仓库内
+`artifacts/evidence_pack/raw/train_results/` 的轻量结果证据。
 
 ### 表 6.8 消融行
 
@@ -155,8 +159,9 @@ bash scripts/final_round/run_thesis_reproduction.sh package_artifacts
 默认打包只复制 `docs/artifact_manifest.json` 中允许随光盘交付的条目。PTB-XL 原始数据、
 PTB-XL 全量预处理 cache、MIMIC/ECGTwin 作者训练 cache 等授权或体积敏感数据保留为
 `package: false` 外部依赖；它们仍会被 `preflight` 检查，用于判断完整重跑环境是否齐备。
-打包目录会额外写出 `artifact_manifest.resolved.json`、`checksums.sha256` 和
-`missing_artifacts.json`，用于区分“已经随光盘交付的文件”和“完整重跑仍需补齐的文件”。
+打包目录会额外写出 `artifact_manifest.resolved.json`、`checksums.sha256`、
+`missing_artifacts.json` 和 `missing_artifacts.md`，用于区分“已经随光盘交付的文件”和
+“完整重跑仍需补齐的文件”。
 
 ECGTwin 作者复现还需要：
 

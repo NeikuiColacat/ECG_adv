@@ -57,3 +57,28 @@ def test_copy_artifacts_reports_missing_when_skip_missing(tmp_path, monkeypatch)
     assert [item["id"] for item in missing] == ["missing_required", "missing_optional"]
     assert missing[0]["required"] is True
     assert missing[1]["required"] is False
+
+
+def test_write_missing_markdown_lists_required_artifacts(tmp_path):
+    missing = [
+        {
+            "id": "table68_pool",
+            "kind": "generated_pool",
+            "required": True,
+            "package": True,
+            "source_path": "/data/missing/table68.npz",
+            "used_by": ["Table 6.8"],
+            "description": "Table 6.8 input pool.",
+            "regenerate_command": "bash scripts/final_round/run_thesis_reproduction.sh ablation_6_8",
+        }
+    ]
+    out_path = tmp_path / "missing_artifacts.md"
+
+    pkg.write_missing_markdown(out_path, missing)
+
+    text = out_path.read_text(encoding="utf-8")
+    assert "# Missing Thesis Archive Artifacts" in text
+    assert "`table68_pool`" in text
+    assert "`/data/missing/table68.npz`" in text
+    assert "Table 6.8" in text
+    assert "bash scripts/final_round/run_thesis_reproduction.sh ablation_6_8" in text

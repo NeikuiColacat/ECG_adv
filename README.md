@@ -72,16 +72,18 @@ PTB-XL/MIMIC-derived data that is not committed to git. `package_artifacts`
 copies the packageable entries from `docs/artifact_manifest.json`, including
 the required model weights, ECGTwin checkpoints, demo samples, generated pools,
 ONNX export, optional TensorRT engine, and thesis evidence files. It writes
-`artifact_manifest.resolved.json`, `checksums.sha256`, and
-`missing_artifacts.json` under `${ECG_ADV_DATA_ROOT}/thesis_archive_artifacts/`
-so missing required files remain visible. Manifest entries marked
-`package: false` are external data dependencies rather than default disc
-artifacts.
+`artifact_manifest.resolved.json`, `checksums.sha256`,
+`missing_artifacts.json`, and `missing_artifacts.md` under
+`${ECG_ADV_DATA_ROOT}/thesis_archive_artifacts/` so missing required files
+remain visible in both machine-readable and human-readable form. Manifest
+entries marked `package: false` are external data dependencies rather than
+default disc artifacts.
 
 `low_sample` is the light archive verification path: it summarizes the shipped
-`train_result.json` files from the fixed PTB-XL custom split. Use
-`low_sample_rerun` only when the full synthetic-pretrain initialization
-checkpoints are present.
+`train_result.json` files from the fixed PTB-XL custom split, falling back to
+the committed `artifacts/evidence_pack/` result JSONs when the original data-disk
+paths are absent. Use `low_sample_rerun` only when the full synthetic-pretrain
+initialization checkpoints are present.
 
 ## External Model Repos
 

@@ -82,6 +82,7 @@
       "path": "${ECG_ADV_DATA_ROOT}/graduate_project/splits/ptbxl_super5_seed42_train2000_val2000.json",
       "kind": "split",
       "required": true,
+      "package": true,
       "used_by": [
         "Table 6.2",
         "Table 6.5",
@@ -100,6 +101,7 @@
       "path": "${ECG_ADV_DATA_ROOT}/triple_labels/super5_minresample_full10_perglobal_20260503/best_model.pt",
       "kind": "checkpoint",
       "required": true,
+      "package": true,
       "used_by": [
         "Table 6.4",
         "Table 5.2",
@@ -116,6 +118,7 @@
       "path": "${ECG_ADV_DATA_ROOT}/graduate_project/method_a_real2000_seed42/train_result.json",
       "kind": "result",
       "required": true,
+      "package": true,
       "used_by": [
         "Table 6.5",
         "Figure 6.4"
@@ -131,6 +134,7 @@
       "path": "${ECG_ADV_DATA_ROOT}/graduate_project/self_distill_v2_e24_v46_no_token_hardlabel_r10_realfine_lr1e4_seed42_auroc/train_result.json",
       "kind": "result",
       "required": true,
+      "package": true,
       "used_by": [
         "Table 6.6",
         "Figure 6.4"
@@ -146,6 +150,7 @@
       "path": "${ECG_ADV_DATA_ROOT}/graduate_project/self_distill_v2_e23_v46_class_oracle_hardlabel_r10_realfine_lr1e4_seed42_auroc/train_result.json",
       "kind": "result",
       "required": true,
+      "package": true,
       "used_by": [
         "Table 6.7",
         "Figure 6.4"
@@ -161,6 +166,7 @@
       "path": "${ECG_ADV_DATA_ROOT}/graduate_project/self_distill_v2_e24_v46_no_token_hardlabel_r10_realfine_lr1e4_seed42_auroc/best_model.pt",
       "kind": "checkpoint",
       "required": true,
+      "package": true,
       "used_by": [
         "Table 6.6",
         "Figure 6.4",
@@ -177,6 +183,7 @@
       "path": "${ECG_ADV_DATA_ROOT}/graduate_project/self_distill_v2_e23_v46_class_oracle_hardlabel_r10_realfine_lr1e4_seed42_auroc/best_model.pt",
       "kind": "checkpoint",
       "required": true,
+      "package": true,
       "used_by": [
         "Table 6.7",
         "Figure 6.4",
@@ -193,6 +200,7 @@
       "path": "${ECG_ADV_DATA_ROOT}/ecgtwin_prompt_token_super5/effectiveness_pilot_v42_task1gate_ningbo_token_scale_large_20260504/target_token_s05/ningbo/gated/gated_samples.npz",
       "kind": "generated_pool",
       "required": true,
+      "package": true,
       "used_by": [
         "Table 6.4",
         "Figure 3.3",
@@ -209,6 +217,7 @@
       "path": "${ECG_ADV_DATA_ROOT}/ecgtwin_prompt_token_super5/effectiveness_pilot_v42_task1gate_ningbo_token_scale_large_20260504/target_token_s05/ningbo/gated/gate_report.json",
       "kind": "result",
       "required": false,
+      "package": true,
       "used_by": [
         "Table 6.4",
         "generated-pool audit"
@@ -224,6 +233,7 @@
       "path": "${ECG_ADV_DATA_ROOT}/ecgtwin_prompt_token_super5/effectiveness_pilot_v42_task1gate_ningbo_token_scale_large_20260504/target_token_s05/ningbo/gated/gated_samples.latent.npz",
       "kind": "generated_pool_metadata",
       "required": false,
+      "package": true,
       "used_by": [
         "generated-pool audit"
       ],
@@ -238,6 +248,7 @@
       "path": "${ECG_ADV_DATA_ROOT}/ecgtwin_prompt_token_super5/effectiveness_pilot_v42_task1gate_ningbo_token_scale_large_20260504/target_token_s05/ningbo/gated/gated_samples.class_trust.json",
       "kind": "generated_pool_metadata",
       "required": false,
+      "package": true,
       "used_by": [
         "generated-pool audit"
       ],
@@ -252,6 +263,7 @@
       "path": "${ECG_ADV_DATA_ROOT}/ecgtwin_prompt_token_super5/effectiveness_pilot_v42_task1gate_ningbo_token_scale_large_20260504/target_token_s05/ningbo/gated/gated_samples.ref_meta.json",
       "kind": "generated_pool_metadata",
       "required": false,
+      "package": true,
       "used_by": [
         "generated-pool audit"
       ],
@@ -266,6 +278,7 @@
       "path": "${ECG_ADV_DATA_ROOT}/ecgtwin_prompt_token_super5/effectiveness_pilot_v42_task1gate_ningbo_token_scale_large_20260504/target_token_s05/ningbo/summary.json",
       "kind": "result",
       "required": false,
+      "package": true,
       "used_by": [
         "generated-pool audit"
       ],
@@ -280,6 +293,7 @@
       "path": "${ECG_ADV_DATA_ROOT}/ecgtwin_prompt_token_super5/effectiveness_pilot_v42_task1gate_ningbo_no_token_large_20260504/no_token/ningbo/gated/gated_samples.npz",
       "kind": "generated_pool",
       "required": true,
+      "package": true,
       "used_by": [
         "Table 6.4"
       ],
@@ -294,6 +308,7 @@
       "path": "${ECG_ADV_DATA_ROOT}/graduate_project/method_b_synth_candidates_mv4_seed42/ptbxl/gated_max1000/gated_samples.npz",
       "kind": "generated_pool",
       "required": true,
+      "package": true,
       "used_by": [
         "Table 6.8"
       ],
@@ -308,6 +323,7 @@
       "path": "${ECG_ADV_DATA_ROOT}/graduate_project/method_b_synth_candidates_actual_report_mv4_step2000_seed42/ptbxl/gated_max1000/gated_samples.npz",
       "kind": "generated_pool",
       "required": true,
+      "package": true,
       "used_by": [
         "Table 6.8"
       ],
@@ -322,6 +338,7 @@
       "path": "${ECG_ADV_DATA_ROOT}/graduate_project/method_b_synth_candidates_classfallback_newgen_sameclass_cap20_seed42/ptbxl/gated_max1000/gated_samples.npz",
       "kind": "generated_pool",
       "required": true,
+      "package": true,
       "used_by": [
         "Table 6.8"
       ],
@@ -336,6 +353,7 @@
       "path": "${ECG_ADV_DATA_ROOT}/graduate_project/vanilla_ecgtwin_synth_candidates_n20000_translated_randomany_seed42/ptbxl/samples.npz",
       "kind": "generated_pool",
       "required": true,
+      "package": true,
       "used_by": [
         "Table 6.8"
       ],
@@ -350,6 +368,7 @@
       "path": "${ECG_ADV_DATA_ROOT}/ecgtwin_prompt_token_super5/generated_pool_v4_merged_balanced/ningbo/gated/gated_samples.npz",
       "kind": "generated_pool",
       "required": true,
+      "package": true,
       "used_by": [
         "Streamlit generation demo",
         "quality summary"
@@ -365,6 +384,7 @@
       "path": "${ECG_ADV_DATA_ROOT}/ecgtwin_prompt_token_super5/prompt_token_runs/v1_all4_steps2000/prompt_token_bank.pt",
       "kind": "checkpoint",
       "required": true,
+      "package": true,
       "used_by": [
         "ECG generation",
         "Streamlit generation demo"
@@ -380,6 +400,7 @@
       "path": "${ECG_ADV_DATA_ROOT}/ecgtwin_prompt_token_super5/cache_v1/text_prompt_bank.pt",
       "kind": "cache",
       "required": true,
+      "package": true,
       "used_by": [
         "ECG generation",
         "Streamlit generation demo"
@@ -395,6 +416,7 @@
       "path": "${ECG_ADV_DATA_ROOT}/ecgtwin_prompt_token_super5/cache_v1/center_full_latents/ningbo.pt",
       "kind": "cache",
       "required": true,
+      "package": true,
       "used_by": [
         "ECG generation",
         "Streamlit generation demo"
@@ -410,6 +432,7 @@
       "path": "${ECG_ADV_DATA_ROOT}/ecgtwin_prompt_token_super5/cache_v1/ref_selection/ningbo_k500_seed42.json",
       "kind": "cache_metadata",
       "required": true,
+      "package": true,
       "used_by": [
         "ECG generation",
         "Streamlit generation demo"
@@ -425,6 +448,7 @@
       "path": "${ECG_ADV_DATA_ROOT}/streamlit_ecg_demo/demo/classic_ecg_samples.npz",
       "kind": "demo_data",
       "required": true,
+      "package": true,
       "used_by": [
         "Streamlit demo",
         "Figure 5.1",
@@ -441,6 +465,7 @@
       "path": "${ECG_ADV_DATA_ROOT}/streamlit_ecg_demo/demo/default_hospital_signals.npy",
       "kind": "demo_data",
       "required": true,
+      "package": true,
       "used_by": [
         "Streamlit training demo",
         "Figure 5.1"
@@ -456,6 +481,7 @@
       "path": "${ECG_ADV_DATA_ROOT}/streamlit_ecg_demo/demo/default_hospital_labels.csv",
       "kind": "demo_data",
       "required": true,
+      "package": true,
       "used_by": [
         "Streamlit training demo",
         "Figure 5.1"
@@ -471,6 +497,7 @@
       "path": "${ECG_ADV_DATA_ROOT}/streamlit_ecg_demo/models/efficientnetv2_super5.onnx",
       "kind": "onnx",
       "required": true,
+      "package": true,
       "used_by": [
         "Table 5.2",
         "Streamlit demo"
@@ -486,6 +513,7 @@
       "path": "${ECG_ADV_DATA_ROOT}/streamlit_ecg_demo/models/efficientnetv2_super5_fp16.engine",
       "kind": "tensorrt_engine",
       "required": false,
+      "package": true,
       "used_by": [
         "Table 5.2",
         "Streamlit TensorRT demo"
@@ -501,6 +529,7 @@
       "path": "${ECG_ADV_DATA_ROOT}/streamlit_ecg_demo/models/efficientnetv2_super5.export.json",
       "kind": "metadata",
       "required": true,
+      "package": true,
       "used_by": [
         "Table 5.2",
         "ONNX export traceability"
@@ -516,6 +545,7 @@
       "path": "${ECG_ADV_DATA_ROOT}/streamlit_ecg_demo/models/efficientnetv2_super5_fp16.build.json",
       "kind": "metadata",
       "required": true,
+      "package": true,
       "used_by": [
         "Table 5.2",
         "TensorRT build traceability"
@@ -531,6 +561,7 @@
       "path": "${REPO_ROOT}/model/ECGTwin/checkpoints/vae_model.pth",
       "kind": "checkpoint",
       "required": true,
+      "package": true,
       "used_by": [
         "ECGTwin generation",
         "ECGTwin author-style reproduction"
@@ -546,6 +577,7 @@
       "path": "${REPO_ROOT}/model/ECGTwin/checkpoints/ibe_model.pth",
       "kind": "checkpoint",
       "required": true,
+      "package": true,
       "used_by": [
         "ECGTwin generation"
       ],
@@ -560,6 +592,7 @@
       "path": "${REPO_ROOT}/model/ECGTwin/checkpoints/ECGTwin_DiT.pth",
       "kind": "checkpoint",
       "required": true,
+      "package": true,
       "used_by": [
         "ECGTwin generation"
       ],
@@ -574,6 +607,7 @@
       "path": "${REPO_ROOT}/model/ECGTwin/data/prepared_input/normal_1.pt",
       "kind": "demo_data",
       "required": true,
+      "package": true,
       "used_by": [
         "ECGTwin generation"
       ],
@@ -588,6 +622,7 @@
       "path": "${REPO_ROOT}/artifacts/evidence_pack/manifest.json",
       "kind": "evidence_manifest",
       "required": true,
+      "package": true,
       "used_by": [
         "thesis evidence traceability"
       ],
@@ -602,6 +637,7 @@
       "path": "${REPO_ROOT}/artifacts/evidence_pack/figures/architecture/ibe_module_simplified_user.png",
       "kind": "figure",
       "required": true,
+      "package": true,
       "used_by": [
         "Figure 3.1"
       ],
@@ -616,6 +652,7 @@
       "path": "${REPO_ROOT}/artifacts/evidence_pack/figures/architecture/noise_predictor_module_simplified_user.png",
       "kind": "figure",
       "required": true,
+      "package": true,
       "used_by": [
         "Figure 3.2"
       ],
@@ -630,6 +667,7 @@
       "path": "${REPO_ROOT}/artifacts/figures/generated_ecg_examples/thesis_synthetic_12lead.png",
       "kind": "figure",
       "required": true,
+      "package": true,
       "used_by": [
         "Figure 3.3"
       ],
@@ -644,6 +682,7 @@
       "path": "${REPO_ROOT}/artifacts/figures/streamlit_demo/03_training_audit_and_workflow.png",
       "kind": "figure",
       "required": true,
+      "package": true,
       "used_by": [
         "Figure 5.1"
       ],
@@ -658,6 +697,7 @@
       "path": "${REPO_ROOT}/artifacts/figures/streamlit_demo/02_generation_preview.png",
       "kind": "figure",
       "required": true,
+      "package": true,
       "used_by": [
         "Figure 5.2"
       ],
@@ -672,6 +712,7 @@
       "path": "${REPO_ROOT}/artifacts/figures/streamlit_demo/01_detection_inference.png",
       "kind": "figure",
       "required": true,
+      "package": true,
       "used_by": [
         "Figure 5.3"
       ],
@@ -686,6 +727,7 @@
       "path": "${REPO_ROOT}/artifacts/evidence_pack/figures/dataset_label_distribution.png",
       "kind": "figure",
       "required": true,
+      "package": true,
       "used_by": [
         "Figure 6.1",
         "Table 6.2"
@@ -701,6 +743,7 @@
       "path": "${REPO_ROOT}/artifacts/evidence_pack/figures/training_curves/ibe_stage1_loss_curve.png",
       "kind": "figure",
       "required": true,
+      "package": true,
       "used_by": [
         "Figure 6.2",
         "Table 6.3"
@@ -716,6 +759,7 @@
       "path": "${REPO_ROOT}/artifacts/evidence_pack/figures/training_curves/dit_stage2_loss_curve.png",
       "kind": "figure",
       "required": true,
+      "package": true,
       "used_by": [
         "Figure 6.3",
         "Table 6.3"
@@ -731,6 +775,7 @@
       "path": "${REPO_ROOT}/artifacts/evidence_pack/figures/low_sample_main_results_bar.png",
       "kind": "figure",
       "required": true,
+      "package": true,
       "used_by": [
         "Figure 6.4",
         "Table 6.5",
@@ -748,6 +793,7 @@
       "path": "${REPO_ROOT}/artifacts/evidence_pack/raw/inference_benchmark.json",
       "kind": "result",
       "required": true,
+      "package": true,
       "used_by": [
         "Table 5.2"
       ],
@@ -762,6 +808,7 @@
       "path": "${REPO_ROOT}/artifacts/evidence_pack/raw/tensorrt_validation.json",
       "kind": "result",
       "required": true,
+      "package": true,
       "used_by": [
         "Table 5.2"
       ],
@@ -776,6 +823,7 @@
       "path": "${REPO_ROOT}/artifacts/evidence_pack/raw/medical_validity_summary.json",
       "kind": "result",
       "required": true,
+      "package": true,
       "used_by": [
         "Table 6.4"
       ],
@@ -790,6 +838,7 @@
       "path": "${REPO_ROOT}/artifacts/evidence_pack/raw/per_sample_quality.csv",
       "kind": "result",
       "required": true,
+      "package": true,
       "used_by": [
         "Table 6.4",
         "quality audit"
@@ -805,6 +854,7 @@
       "path": "${REPO_ROOT}/artifacts/evidence_pack/feature_distribution/feature_distribution_summary.json",
       "kind": "result",
       "required": true,
+      "package": true,
       "used_by": [
         "feature distribution evidence"
       ],
@@ -819,6 +869,7 @@
       "path": "${REPO_ROOT}/artifacts/evidence_pack/feature_distribution/feature_distribution_metrics.csv",
       "kind": "result",
       "required": true,
+      "package": true,
       "used_by": [
         "feature distribution evidence"
       ],
@@ -833,6 +884,7 @@
       "path": "${REPO_ROOT}/artifacts/evidence_pack/feature_distribution/feature_distribution_report.md",
       "kind": "report",
       "required": true,
+      "package": true,
       "used_by": [
         "feature distribution evidence"
       ],
@@ -847,6 +899,7 @@
       "path": "${REPO_ROOT}/artifacts/evidence_pack/raw/train_results/method_b_real_synth_mv4.train_result.json",
       "kind": "result",
       "required": true,
+      "package": true,
       "used_by": [
         "Table 6.8"
       ],
@@ -861,6 +914,7 @@
       "path": "${REPO_ROOT}/artifacts/evidence_pack/raw/train_results/method_b_actual_report.train_result.json",
       "kind": "result",
       "required": true,
+      "package": true,
       "used_by": [
         "Table 6.8"
       ],
@@ -875,6 +929,7 @@
       "path": "${REPO_ROOT}/artifacts/evidence_pack/raw/train_results/method_b_classfallback.train_result.json",
       "kind": "result",
       "required": true,
+      "package": true,
       "used_by": [
         "Table 6.8"
       ],
@@ -889,6 +944,7 @@
       "path": "${REPO_ROOT}/artifacts/evidence_pack/raw/train_results/synthetic_only_no_token_20k.train_result.json",
       "kind": "result",
       "required": true,
+      "package": true,
       "used_by": [
         "Table 6.8"
       ],
@@ -903,6 +959,7 @@
       "path": "${REPO_ROOT}/artifacts/evidence_pack/raw/train_results/center_token_hard_ft.train_result.json",
       "kind": "result",
       "required": true,
+      "package": true,
       "used_by": [
         "Table 6.8"
       ],
@@ -917,6 +974,7 @@
       "path": "${ECG_ADV_DATA_ROOT}/graduate_project/method_a_real2000_seed42/training_log.json",
       "kind": "log",
       "required": true,
+      "package": true,
       "used_by": [
         "Table 6.5",
         "Figure 6.4"
@@ -932,6 +990,7 @@
       "path": "${ECG_ADV_DATA_ROOT}/graduate_project/self_distill_v2_e24_v46_no_token_hardlabel_r10_realfine_lr1e4_seed42_auroc/training_log.json",
       "kind": "log",
       "required": true,
+      "package": true,
       "used_by": [
         "Table 6.6",
         "Figure 6.4"
@@ -947,6 +1006,7 @@
       "path": "${ECG_ADV_DATA_ROOT}/graduate_project/self_distill_v2_e23_v46_class_oracle_hardlabel_r10_realfine_lr1e4_seed42_auroc/training_log.json",
       "kind": "log",
       "required": true,
+      "package": true,
       "used_by": [
         "Table 6.7",
         "Figure 6.4"
@@ -994,6 +1054,7 @@
       "path": "${ECG_ADV_DATA_ROOT}/graduate_project/self_distill_v2_e21_v46_no_token_hardlabel_r10_seed8042_auroc/best_model.pt",
       "kind": "checkpoint",
       "required": true,
+      "package": true,
       "used_by": [
         "Table 6.6",
         "low_sample_rerun"
@@ -1009,6 +1070,7 @@
       "path": "${ECG_ADV_DATA_ROOT}/graduate_project/self_distill_v2_e18_v46_class_oracle_hardlabel_r10_seed42_auroc/best_model.pt",
       "kind": "checkpoint",
       "required": true,
+      "package": true,
       "used_by": [
         "Table 6.7",
         "Table 6.8",

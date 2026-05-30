@@ -67,6 +67,8 @@ print_env() {
   echo "FINAL_ROUND_ROOT=${FINAL_ROUND_ROOT}"
   echo "APP_DATA_ROOT=${APP_DATA_ROOT}"
   echo "PYTHON_CMD=${PYTHON_CMD[*]}"
+  echo "[versions]"
+  "${PYTHON_CMD[@]}" "${ROOT}/scripts/final_round/environment_snapshot.py"
 }
 
 require_file() {
@@ -85,7 +87,7 @@ stage_split() {
 }
 
 stage_preflight() {
-  "${PYTHON_CMD[@]}" "${ROOT}/scripts/final_round/preflight_thesis_archive.py"
+  "${PYTHON_CMD[@]}" "${ROOT}/scripts/final_round/preflight_thesis_archive.py" --verify-sha
 }
 
 stage_thesis_assets() {

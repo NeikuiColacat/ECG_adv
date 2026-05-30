@@ -8,25 +8,49 @@ from pathlib import Path
 from typing import Any
 
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
 DATA_ROOT = Path(os.environ.get("ECG_ADV_DATA_ROOT", Path.home() / "autodl-tmp")).expanduser()
 GRAD_ROOT = Path(os.environ.get("ECG_ADV_GRAD_ROOT", DATA_ROOT / "graduate_project")).expanduser()
 FINAL_ROUND_ROOT = Path(
     os.environ.get("ECG_ADV_FINAL_ROUND_ROOT", DATA_ROOT / "final_round_ablation_20260504")
 ).expanduser()
+EVIDENCE_PACK = REPO_ROOT / "artifacts" / "evidence_pack"
 
-DEFAULT_METHODS = {
-    "real2000_baseline": GRAD_ROOT / "method_a_real2000_seed42" / "train_result.json",
-    "no_token_pretrain_finetune": (
-        GRAD_ROOT
-        / "self_distill_v2_e24_v46_no_token_hardlabel_r10_realfine_lr1e4_seed42_auroc"
-        / "train_result.json"
-    ),
-    "center_token_pretrain_finetune": (
-        GRAD_ROOT
-        / "self_distill_v2_e23_v46_class_oracle_hardlabel_r10_realfine_lr1e4_seed42_auroc"
-        / "train_result.json"
-    ),
-}
+
+def first_existing(*paths: Path) -> Path:
+    for path in paths:
+        if path.exists():
+            return path
+    return paths[0]
+
+
+def resolve_default_methods(
+    *,
+    grad_root: Path = GRAD_ROOT,
+    evidence_pack: Path = EVIDENCE_PACK,
+) -> dict[str, Path]:
+    evidence_results = evidence_pack / "raw" / "train_results"
+    return {
+        "real2000_baseline": first_existing(
+            grad_root / "method_a_real2000_seed42" / "train_result.json",
+            evidence_results / "real2000_original.train_result.json",
+        ),
+        "no_token_pretrain_finetune": first_existing(
+            grad_root
+            / "self_distill_v2_e24_v46_no_token_hardlabel_r10_realfine_lr1e4_seed42_auroc"
+            / "train_result.json",
+            evidence_results / "no_token_hard_ft.train_result.json",
+        ),
+        "center_token_pretrain_finetune": first_existing(
+            grad_root
+            / "self_distill_v2_e23_v46_class_oracle_hardlabel_r10_realfine_lr1e4_seed42_auroc"
+            / "train_result.json",
+            evidence_results / "center_token_hard_ft.train_result.json",
+        ),
+    }
+
+
+DEFAULT_METHODS = resolve_default_methods()
 
 
 def load_json(path: Path) -> dict[str, Any]:

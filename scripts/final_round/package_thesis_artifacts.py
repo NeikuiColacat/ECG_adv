@@ -109,6 +109,33 @@ def write_checksums(out_dir: Path, copied: list[dict[str, Any]]) -> None:
     (out_dir / "checksums.sha256").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def write_missing_markdown(out_path: Path, missing: list[dict[str, Any]]) -> None:
+    lines = [
+        "# Missing Thesis Archive Artifacts",
+        "",
+        "These files were listed in `docs/artifact_manifest.json` but were not present when the artifact package was built.",
+        "",
+    ]
+    if not missing:
+        lines.append("No missing artifacts.")
+    for item in missing:
+        used_by = ", ".join(item.get("used_by", [])) or "n/a"
+        command = item.get("regenerate_command") or "n/a"
+        lines.extend([
+            f"## `{item['id']}`",
+            "",
+            f"- kind: `{item.get('kind', 'n/a')}`",
+            f"- required: `{bool(item.get('required'))}`",
+            f"- package: `{bool(item.get('package'))}`",
+            f"- source path: `{item.get('source_path', '')}`",
+            f"- used by: {used_by}",
+            f"- description: {item.get('description', '')}",
+            f"- regenerate: `{command}`",
+            "",
+        ])
+    out_path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def make_tar(out_dir: Path, tar_path: Path) -> None:
     with tarfile.open(tar_path, "w:gz") as tar:
         tar.add(out_dir, arcname=out_dir.name)
@@ -145,6 +172,7 @@ def main() -> None:
         json.dumps({"missing_artifacts": missing}, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
+    write_missing_markdown(out_dir / "missing_artifacts.md", missing)
     if args.tar:
         make_tar(out_dir, Path(args.tar).expanduser())
     print(f"[done] packaged {len(copied)} artifacts under {out_dir}; missing={len(missing)}")

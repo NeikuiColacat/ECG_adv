@@ -180,6 +180,7 @@ streamlit        启动 Streamlit 演示
 - `checksums.sha256`
 - artifacts 根目录说明
 - `preflight` 检查逻辑
+- `missing_artifacts.json` 和 `missing_artifacts.md`，分别给机器和人工检查缺失项
 - `package: false` 条目不进入默认光盘 artifact 包，但 `preflight` 仍会检查它们是否满足完整复现环境。
 
 ## 8. Streamlit 演示标准
