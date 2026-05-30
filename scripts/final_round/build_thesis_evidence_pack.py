@@ -4,13 +4,13 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable
 
 import matplotlib
 
@@ -26,10 +26,14 @@ from util.ecg_viz import plot_comparison
 
 
 CLASS_NAMES = ["CD", "HYP", "MI", "NORM", "STTC"]
-TMP_ROOT = Path("/root/autodl-tmp")
-GRAD_ROOT = TMP_ROOT / "graduate_project"
-FINAL_ROUND_ROOT = TMP_ROOT / "final_round_ablation_20260504"
-STREAMLIT_ROOT = TMP_ROOT / "streamlit_ecg_demo"
+TMP_ROOT = Path(os.environ.get("ECG_ADV_DATA_ROOT", Path.home() / "autodl-tmp")).expanduser()
+GRAD_ROOT = Path(os.environ.get("ECG_ADV_GRAD_ROOT", TMP_ROOT / "graduate_project")).expanduser()
+FINAL_ROUND_ROOT = Path(
+    os.environ.get("ECG_ADV_FINAL_ROUND_ROOT", TMP_ROOT / "final_round_ablation_20260504")
+).expanduser()
+STREAMLIT_ROOT = Path(
+    os.environ.get("ECG_ADV_APP_DATA_ROOT", TMP_ROOT / "streamlit_ecg_demo")
+).expanduser()
 
 SPLIT_JSON = GRAD_ROOT / "splits/ptbxl_super5_seed42_train2000_val2000.json"
 LABEL_NPY = GRAD_ROOT / "method_a_real2000_seed42/ptbxl_labels.C5.all.npy"
@@ -867,7 +871,7 @@ def write_readme(out_dir: Path, manifest: dict, main_rows: list[dict]) -> None:
         "# Thesis Evidence Pack",
         "",
         "This directory collects small, thesis-ready evidence files generated from the existing experiment artifacts.",
-        "Large checkpoints and source experiment arrays remain under `/root/autodl-tmp/`.",
+        "Large checkpoints and source experiment arrays remain under `ECG_ADV_DATA_ROOT`.",
         "",
         "## Recommended Thesis Wording",
         "",

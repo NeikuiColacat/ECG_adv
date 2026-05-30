@@ -14,6 +14,7 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 from apps.streamlit_ecg_demo.services.classifier_backend import DEFAULT_CKPT, PyTorchClassifierBackend
+from apps.streamlit_ecg_demo.services.paths import DATA_ROOT
 from apps.streamlit_ecg_demo.services.preprocessing import CLASS_NAMES, to_signal_ct
 from apps.streamlit_ecg_demo.services.quality_gate import run_quality_gate
 
@@ -21,22 +22,32 @@ from apps.streamlit_ecg_demo.services.quality_gate import run_quality_gate
 DEFAULT_INPUTS = [
     (
         "target_token_s05",
-        "/root/autodl-tmp/ecgtwin_prompt_token_super5/"
-        "effectiveness_pilot_v42_task1gate_ningbo_token_scale_large_20260504/"
-        "target_token_s05/ningbo/gated/gated_samples.npz",
+        str(
+            DATA_ROOT
+            / "ecgtwin_prompt_token_super5"
+            / "effectiveness_pilot_v42_task1gate_ningbo_token_scale_large_20260504"
+            / "target_token_s05/ningbo/gated/gated_samples.npz"
+        ),
     ),
     (
         "no_token",
-        "/root/autodl-tmp/ecgtwin_prompt_token_super5/"
-        "effectiveness_pilot_v42_task1gate_ningbo_no_token_large_20260504/"
-        "no_token/ningbo/gated/gated_samples.npz",
+        str(
+            DATA_ROOT
+            / "ecgtwin_prompt_token_super5"
+            / "effectiveness_pilot_v42_task1gate_ningbo_no_token_large_20260504"
+            / "no_token/ningbo/gated/gated_samples.npz"
+        ),
     ),
     (
         "v4_balanced_token",
-        "/root/autodl-tmp/ecgtwin_prompt_token_super5/generated_pool_v4_merged_balanced/"
-        "ningbo/gated/gated_samples.npz",
+        str(
+            DATA_ROOT
+            / "ecgtwin_prompt_token_super5/generated_pool_v4_merged_balanced"
+            / "ningbo/gated/gated_samples.npz"
+        ),
     ),
 ]
+DEFAULT_OUT_DIR = DATA_ROOT / "final_round_ablation_20260504/medical_validity"
 
 
 def load_pool(path: str, cap: int):
@@ -100,7 +111,7 @@ def main() -> None:
     ap.add_argument("--cap_per_arm", type=int, default=128)
     ap.add_argument("--ckpt", default=DEFAULT_CKPT)
     ap.add_argument("--device", default="cuda")
-    ap.add_argument("--out_dir", default="/root/autodl-tmp/final_round_ablation_20260504/medical_validity")
+    ap.add_argument("--out_dir", default=str(DEFAULT_OUT_DIR))
     args = ap.parse_args()
 
     inputs = []
@@ -175,4 +186,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

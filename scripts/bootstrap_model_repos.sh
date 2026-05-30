@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_ROOT="${REPO_ROOT:-/root/ECG_adv_Gen}"
-MODEL_ROOT="${MODEL_ROOT:-/root/autodl-tmp/models}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="${REPO_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
+DATA_ROOT="${ECG_ADV_DATA_ROOT:-${HOME}/autodl-tmp}"
+MODEL_ROOT="${MODEL_ROOT:-${ECG_ADV_MODEL_ROOT:-${DATA_ROOT}/models}}"
 
 mkdir -p "${MODEL_ROOT}" "${REPO_ROOT}/model"
 

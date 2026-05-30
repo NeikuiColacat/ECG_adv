@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections import Counter
 from pathlib import Path
@@ -26,6 +27,11 @@ REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO))
 
 from scripts.triple_labels.label_schemes import CLASS_NAMES_SUPER5, get_scheme  # noqa: E402
+
+
+DATA_ROOT = Path(os.environ.get("ECG_ADV_DATA_ROOT", Path.home() / "autodl-tmp")).expanduser()
+PTBXL_ROOT = Path(os.environ.get("ECG_ADV_PTBXL_ROOT", DATA_ROOT / "ptbxl")).expanduser()
+GRAD_ROOT = Path(os.environ.get("ECG_ADV_GRAD_ROOT", DATA_ROOT / "graduate_project")).expanduser()
 
 
 def _combo_name(row: np.ndarray) -> str:
@@ -59,11 +65,11 @@ def _patient_overlap(df: pd.DataFrame, a: list[int], b: list[int]) -> int:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--csv_path", default="/root/autodl-tmp/ptbxl/ptbxl_database.csv")
-    ap.add_argument("--out_path", default=(
-        "/root/autodl-tmp/graduate_project/splits/"
-        "ptbxl_super5_seed42_train2000_val2000.json"
-    ))
+    ap.add_argument("--csv_path", default=str(PTBXL_ROOT / "ptbxl_database.csv"))
+    ap.add_argument(
+        "--out_path",
+        default=str(GRAD_ROOT / "splits/ptbxl_super5_seed42_train2000_val2000.json"),
+    )
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--train_size", type=int, default=2000)
     ap.add_argument("--val_size", type=int, default=2000)

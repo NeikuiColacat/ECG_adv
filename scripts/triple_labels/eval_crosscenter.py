@@ -9,8 +9,8 @@ Per-class AUROC/AUPRC with -1 masking, plus macro across classes that have
 >= min_pos positives.
 
 Usage:
-    /root/miniforge3/envs/ECGTwin/bin/python scripts/triple_labels/eval_crosscenter.py \
-        --scheme super5 --model_dir /root/autodl-tmp/triple_labels/super5
+    uv run python scripts/triple_labels/eval_crosscenter.py \
+        --scheme super5 --model_dir ${ECG_ADV_TRIPLE_ROOT}/super5
 """
 
 import os
@@ -34,13 +34,19 @@ from scripts.triple_labels.label_schemes import (
     get_scheme, get_super5_pn2021_mapping_metadata,
 )
 from scripts.triple_labels.train_ptbxl import (
-    PTBXLDatasetScheme, compute_macro_auroc_auprc, masked_bce_with_logits,
+    PTBXLDatasetScheme, compute_macro_auroc_auprc,
     get_ptbxl_labels_for_scheme,
 )
 from scripts.crosscenter_v2.preprocess_utils import (
     unified_preprocess_to_1000, crop_signal_tc, _resolve_preprocess_flags,
 )
 from EfficientNetv2 import EfficientNet1DV2  # noqa: E402
+
+
+DATA_ROOT = os.path.expanduser(os.environ.get('ECG_ADV_DATA_ROOT', '~/autodl-tmp'))
+PTBXL_ROOT = os.path.expanduser(os.environ.get('ECG_ADV_PTBXL_ROOT', os.path.join(DATA_ROOT, 'ptbxl')))
+TRIPLE_ROOT = os.path.expanduser(os.environ.get('ECG_ADV_TRIPLE_ROOT', os.path.join(DATA_ROOT, 'triple_labels')))
+PN2021_ROOT = os.path.expanduser(os.environ.get('ECG_ADV_PN2021_ROOT', os.path.join(DATA_ROOT, 'physionet2021')))
 
 
 # PN2021 centers — ptb-xl explicitly excluded (data leakage with PTB-XL train)
@@ -535,10 +541,12 @@ def build_mimic_test_index(scheme):
     mimic_preprocessed_f16.npy for the test split.
     """
     print("[mimic] reproducing record_list × machine_measurements merge")
-    rec = pd.read_csv('/root/autodl-tmp/MIMIC/record_list.csv',
+    mimic_root = os.environ.get('ECG_ADV_MIMIC_ROOT', os.path.join(DATA_ROOT, 'MIMIC'))
+    mimic_cache_root = os.environ.get('ECG_ADV_MIMIC_CACHE_ROOT', os.path.join(DATA_ROOT, 'mimic_tierM'))
+    rec = pd.read_csv(os.path.join(mimic_root, 'record_list.csv'),
                       usecols=['subject_id', 'study_id', 'path'])
     report_cols = [f'report_{i}' for i in range(18)]
-    mm = pd.read_csv('/root/autodl-tmp/MIMIC/machine_measurements.csv',
+    mm = pd.read_csv(os.path.join(mimic_root, 'machine_measurements.csv'),
                      usecols=['study_id'] + report_cols, low_memory=False)
 
     def _join(row):
@@ -550,7 +558,7 @@ def build_mimic_test_index(scheme):
     merged = rec.merge(mm, on='study_id', how='inner')
     print(f"[mimic] merged rows: {len(merged)}")
 
-    cache = np.load('/root/autodl-tmp/mimic_tierM/mimic_index.npz', allow_pickle=True)
+    cache = np.load(os.path.join(mimic_cache_root, 'mimic_index.npz'), allow_pickle=True)
     valid_mask = cache['valid_mask']
     split = cache['split']
     test_mask = (split == 2) & valid_mask
@@ -560,7 +568,7 @@ def build_mimic_test_index(scheme):
     test_indices = np.nonzero(test_mask)[0]
     print(f"[mimic] test split: {len(test_indices)} valid records")
 
-    print(f"[mimic] generating scheme labels for test records")
+    print("[mimic] generating scheme labels for test records")
     labels = np.stack([scheme['mimic_fn'](merged.report_text.iloc[i])
                        for i in test_indices])
     return test_indices, labels
@@ -570,7 +578,8 @@ class MIMICCacheDataset(Dataset):
     """Reads preprocessed signals from f16 mmap for given indices."""
 
     def __init__(self, cache_indices, labels, crop_len=250):
-        self.cache = np.load('/root/autodl-tmp/mimic_tierM/mimic_preprocessed_f16.npy',
+        mimic_cache_root = os.environ.get('ECG_ADV_MIMIC_CACHE_ROOT', os.path.join(DATA_ROOT, 'mimic_tierM'))
+        self.cache = np.load(os.path.join(mimic_cache_root, 'mimic_preprocessed_f16.npy'),
                              mmap_mode='r')
         self.indices = cache_indices
         self.labels = labels.astype(np.float32, copy=False)
@@ -623,7 +632,9 @@ def eval_ptbxl_test(model, scheme, args, device):
     test_idx, test_labels, _ = get_ptbxl_labels_for_scheme(
         args.ptbxl_csv, scheme, label_cache, folds=[10]
     )
-    cache_path = args.ptbxl_cache or '/root/autodl-tmp/crosscenter_v2/ptbxl_preprocessed.npy'
+    cache_path = args.ptbxl_cache or os.path.join(
+        DATA_ROOT, 'crosscenter_v2/ptbxl_preprocessed.npy'
+    )
     all_sig = np.load(cache_path, mmap_mode='r')
     test_signals = np.asarray(all_sig[test_idx])
     ds = PTBXLDatasetScheme(test_signals, test_labels,
@@ -658,7 +669,7 @@ def main():
     p.add_argument('--num_workers', type=int, default=4)
     p.add_argument('--min_pos', type=int, default=10,
                    help='Skip class metrics if n_pos < min_pos')
-    p.add_argument('--ptbxl_csv', default='/root/autodl-tmp/ptbxl/ptbxl_database.csv')
+    p.add_argument('--ptbxl_csv', default=os.path.join(PTBXL_ROOT, 'ptbxl_database.csv'))
     p.add_argument('--ptbxl_cache', default=None)
     p.add_argument('--preprocess_mode', default='legacy_ecgfounder_filter',
                    choices=['minimal_resample', 'legacy_ecgfounder_filter',
@@ -668,11 +679,11 @@ def main():
     p.add_argument('--norm_mode', default='per_sample_global',
                    choices=['per_sample_global', 'none'],
                    help='Normalization branch for PN2021 cache builds.')
-    p.add_argument('--pn2021_root', default='/root/autodl-tmp/physionet2021')
-    p.add_argument('--pn2021_cache_dir', default='/root/autodl-tmp/triple_labels/pn2021_eval_cache',
+    p.add_argument('--pn2021_root', default=PN2021_ROOT)
+    p.add_argument('--pn2021_cache_dir', default=os.path.join(TRIPLE_ROOT, 'pn2021_eval_cache'),
                    help='Cache preprocessed PN2021 center signals/labels for repeated model evals')
     p.add_argument('--pn2021_mmap_cache_dir',
-                   default='/root/autodl-tmp/triple_labels/pn2021_eval_cache_mmap',
+                   default=os.path.join(TRIPLE_ROOT, 'pn2021_eval_cache_mmap'),
                    help='Mmap-friendly PN2021 cache root. Preferred over compressed npz when present.')
     p.add_argument('--pn2021_limit', type=int, default=None,
                    help='Cap records per center (for smoke test)')

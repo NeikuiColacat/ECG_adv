@@ -28,6 +28,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 ECGTWIN_ROOT = REPO_ROOT / "model" / "ECGTwin"
 if str(ECGTWIN_ROOT) not in sys.path:
     sys.path.insert(0, str(ECGTWIN_ROOT))
+DATA_ROOT = Path(os.environ.get("ECG_ADV_DATA_ROOT", Path.home() / "autodl-tmp")).expanduser()
 
 from module.IBExtractor import IBExtractor  # noqa: E402
 from utils.data_utils import PairedECGDataset, paired_ecg_collate_fn, process_pat_info  # noqa: E402
@@ -260,9 +261,9 @@ def eval_score(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output_dir", type=Path, default=Path("/root/autodl-tmp/ecgtwin_author_repro/ibe_stage1"))
-    parser.add_argument("--train_path", type=Path, default=Path("/root/autodl-tmp/ECGTwin_Data/paired_Mimic_vae_multi_nomic.pt"))
-    parser.add_argument("--val_path", type=Path, default=Path("/root/autodl-tmp/ECGTwin_Data/paired_Mimic_vae_multi_nomic_test.pt"))
+    parser.add_argument("--output_dir", type=Path, default=DATA_ROOT / "ecgtwin_author_repro/ibe_stage1")
+    parser.add_argument("--train_path", type=Path, default=DATA_ROOT / "ECGTwin_Data/paired_Mimic_vae_multi_nomic.pt")
+    parser.add_argument("--val_path", type=Path, default=DATA_ROOT / "ECGTwin_Data/paired_Mimic_vae_multi_nomic_test.pt")
     parser.add_argument("--epochs", type=int, default=40)
     parser.add_argument("--batch_size", type=int, default=65536)
     parser.add_argument("--mini_batch_size", type=int, default=512)

@@ -14,15 +14,17 @@ if str(REPO) not in sys.path:
 
 from apps.streamlit_ecg_demo.services.preprocessing import CLASS_NAMES, to_signal_ct
 from apps.streamlit_ecg_demo.services.quality_gate import run_quality_gate
+from apps.streamlit_ecg_demo.services.paths import DATA_ROOT
 from util.ecg_viz import plot_ecg_ecgtwin_gallery
 
 
-DEFAULT_SYNTH_NPZ = (
-    "/root/autodl-tmp/graduate_project/"
-    "self_distill_v2_filtered_v46_ptbxl_contrast_seed42/"
-    "synth_v2_filtered_top4000_gamma03.npz"
+DEFAULT_SYNTH_NPZ = str(
+    DATA_ROOT
+    / "graduate_project"
+    / "self_distill_v2_filtered_v46_ptbxl_contrast_seed42"
+    / "synth_v2_filtered_top4000_gamma03.npz"
 )
-DEFAULT_OUT_DIR = "/root/autodl-tmp/final_round_ablation_20260504/five_class_visuals"
+DEFAULT_OUT_DIR = str(DATA_ROOT / "final_round_ablation_20260504/five_class_visuals")
 
 
 def _jsonable(value):

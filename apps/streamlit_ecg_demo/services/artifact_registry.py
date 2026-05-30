@@ -23,6 +23,7 @@ DEFAULT_SYNTH_PATHS = [
 DEFAULT_PROMPT_CACHE_ROOT = str(DATA_ROOT / "ecgtwin_prompt_token_super5/cache_v1")
 DEFAULT_PROMPT_BANK = f"{DEFAULT_PROMPT_CACHE_ROOT}/text_prompt_bank.pt"
 DEFAULT_PYTHON = PYTHON_EXECUTABLE
+DEFAULT_GENERATION_CENTER = "ningbo"
 
 
 def sanitize_project_id(value: str) -> str:
@@ -69,6 +70,25 @@ def canonical_audit_path(root: Path) -> Path:
 
 def prompt_cache_root(root: Path) -> Path:
     return root / "cache" / "prompt_token_cache"
+
+
+def prompt_cache_centers(root: Path | None = None) -> list[str]:
+    cache_roots: list[Path] = []
+    if root is not None:
+        cache_roots.append(prompt_cache_root(root))
+    cache_roots.append(Path(DEFAULT_PROMPT_CACHE_ROOT))
+
+    out: list[str] = []
+    seen = set()
+    for cache_root in cache_roots:
+        center_root = cache_root / "center_full_latents"
+        if not center_root.exists():
+            continue
+        for path in sorted(center_root.glob("*.pt")):
+            if path.stem not in seen:
+                seen.add(path.stem)
+                out.append(path.stem)
+    return out
 
 
 def _existing_unique(paths: list[Path]) -> list[Path]:

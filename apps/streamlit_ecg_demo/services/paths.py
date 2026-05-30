@@ -10,10 +10,7 @@ def _path_env(name: str, default: str | Path) -> Path:
 
 
 def _default_data_root() -> Path:
-    home_data = Path.home() / "autodl-tmp"
-    if home_data.exists():
-        return home_data
-    return Path("/root/autodl-tmp")
+    return Path.home() / "autodl-tmp"
 
 
 DATA_ROOT = _path_env("ECG_ADV_DATA_ROOT", _default_data_root())

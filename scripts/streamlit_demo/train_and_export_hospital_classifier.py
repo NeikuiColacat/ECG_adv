@@ -88,6 +88,14 @@ def main() -> None:
             "--backend",
             "auto",
             "--fp16",
+            "--workspace_mib",
+            "1024",
+            "--min_batch",
+            "1",
+            "--opt_batch",
+            "4",
+            "--max_batch",
+            "8",
         ]
         run_cmd(trt_cmd)
         if trt_report_path.exists():

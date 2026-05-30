@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from html import escape
@@ -15,11 +16,16 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 DEFAULT_DETECTION_PREVIEW_COUNT = 8
+DEFAULT_CENTER_TOKEN_STEPS = int(os.environ.get("ECG_ADV_CENTER_TOKEN_STEPS", "20"))
+DEFAULT_CENTER_TOKEN_BATCH_SIZE = int(os.environ.get("ECG_ADV_CENTER_TOKEN_BATCH_SIZE", "4"))
+DEFAULT_CENTER_TOKEN_WORKERS = int(os.environ.get("ECG_ADV_CENTER_TOKEN_WORKERS", "0"))
+DEFAULT_CLASSIFIER_BATCH_SIZE = int(os.environ.get("ECG_ADV_CLASSIFIER_BATCH_SIZE", "16"))
 
 from apps.streamlit_ecg_demo.components.ecg_plot import make_ecg_figure
 from apps.streamlit_ecg_demo.services.artifact_registry import (
     APP_DATA_ROOT,
     DEFAULT_CLASSIC_SAMPLE_PATH,
+    DEFAULT_GENERATION_CENTER,
     DEFAULT_PROMPT_BANK,
     DEFAULT_PROMPT_CACHE_ROOT,
     DEFAULT_PYTHON,
@@ -33,6 +39,7 @@ from apps.streamlit_ecg_demo.services.artifact_registry import (
     list_token_banks,
     list_training_label_files,
     list_training_signal_files,
+    prompt_cache_centers,
     prompt_cache_root,
     sanitize_project_id,
 )
@@ -794,9 +801,23 @@ def generation_page(
 
     left, right = st.columns([0.34, 0.66])
     with left:
-        center = st.text_input(tr("target_center"), value=project_id or "ningbo")
-        selected_classes = st.multiselect(tr("classes"), CLASS_NAMES, default=["NORM", "MI", "STTC"])
-        n_per_class = st.number_input(tr("samples_per_class"), min_value=1, max_value=200, value=8)
+        available_centers = prompt_cache_centers(project_root)
+        default_center = (
+            project_id
+            if project_id in available_centers
+            else DEFAULT_GENERATION_CENTER
+            if DEFAULT_GENERATION_CENTER in available_centers
+            else available_centers[0]
+            if available_centers
+            else DEFAULT_GENERATION_CENTER
+        )
+        center = st.selectbox(
+            tr("target_center"),
+            available_centers or [default_center],
+            index=(available_centers or [default_center]).index(default_center),
+        )
+        selected_classes = st.multiselect(tr("classes"), CLASS_NAMES, default=["NORM"])
+        n_per_class = st.number_input(tr("samples_per_class"), min_value=1, max_value=200, value=1)
         token_banks = list_token_banks(project_root)
         cache_root = str(prompt_cache_root(project_root)) if project_root and (prompt_cache_root(project_root) / "center_full_latents").exists() else DEFAULT_PROMPT_CACHE_ROOT
         token_options = _path_options(token_banks)
@@ -916,7 +937,9 @@ def training_page(project_root: Path, project_id: str, device: str):
 
     st.divider()
     st.markdown(f"**{tr('center_token_jobs')}**")
-    K, floor, steps, batch_size = 500, 10, 2000, 16
+    K, floor = 500, 10
+    steps = DEFAULT_CENTER_TOKEN_STEPS
+    batch_size = DEFAULT_CENTER_TOKEN_BATCH_SIZE
     cache_root = str(prompt_cache_root(project_root))
     token_save_dir = str(project_root / "center_tokens" / f"token_{int(time.time())}")
     if st.button(tr("queue_token"), disabled=not dataset_path.exists()):
@@ -942,7 +965,7 @@ def training_page(project_root: Path, project_id: str, device: str):
             "--batch_size",
             str(int(batch_size)),
             "--num_workers",
-            "2",
+            str(int(DEFAULT_CENTER_TOKEN_WORKERS)),
             "--device",
             device,
         ]
@@ -960,8 +983,8 @@ def training_page(project_root: Path, project_id: str, device: str):
         format_func=lambda p: Path(p).name if p else "",
     )
     init_ckpt = st.selectbox(tr("initialize_checkpoint"), model_options, index=0)
-    epochs = st.selectbox(tr("epochs"), [10, 20, 50], index=1)
-    model_batch = 32
+    epochs = st.selectbox(tr("epochs"), [1, 10, 20, 50], index=0)
+    model_batch = DEFAULT_CLASSIFIER_BATCH_SIZE
     synth_ratio = 1.0
     lr = 1e-4
     if not synth_npz:

@@ -35,16 +35,23 @@ from EfficientNetv2 import EfficientNet1DV2  # noqa: E402
 
 CLASS_NAMES = ["CD", "HYP", "MI", "NORM", "STTC"]
 
-DEFAULT_MODEL = "/root/autodl-tmp/triple_labels/super5_minresample_full10_perglobal_20260503/best_model.pt"
-DEFAULT_REAL_CACHE = "/root/autodl-tmp/triple_labels/cache/ptbxl_minimal_resample_per_sample_global_fs100_len1000.npy"
-DEFAULT_LABELS = "/root/autodl-tmp/graduate_project/method_a_real2000_seed42/ptbxl_labels.C5.all.npy"
-DEFAULT_SPLIT = "/root/autodl-tmp/graduate_project/splits/ptbxl_super5_seed42_train2000_val2000.json"
-DEFAULT_SYNTH = (
-    "/root/autodl-tmp/graduate_project/"
-    "self_distill_v2_filtered_v46_ptbxl_contrast_seed42/"
-    "synth_v2_filtered_top4000_gamma03.npz"
+DATA_ROOT = Path(os.environ.get("ECG_ADV_DATA_ROOT", Path.home() / "autodl-tmp")).expanduser()
+GRAD_ROOT = Path(os.environ.get("ECG_ADV_GRAD_ROOT", DATA_ROOT / "graduate_project")).expanduser()
+TRIPLE_ROOT = Path(os.environ.get("ECG_ADV_TRIPLE_ROOT", DATA_ROOT / "triple_labels")).expanduser()
+FINAL_ROUND_ROOT = Path(
+    os.environ.get("ECG_ADV_FINAL_ROUND_ROOT", DATA_ROOT / "final_round_ablation_20260504")
+).expanduser()
+
+DEFAULT_MODEL = str(TRIPLE_ROOT / "super5_minresample_full10_perglobal_20260503/best_model.pt")
+DEFAULT_REAL_CACHE = str(TRIPLE_ROOT / "cache/ptbxl_minimal_resample_per_sample_global_fs100_len1000.npy")
+DEFAULT_LABELS = str(GRAD_ROOT / "method_a_real2000_seed42/ptbxl_labels.C5.all.npy")
+DEFAULT_SPLIT = str(GRAD_ROOT / "splits/ptbxl_super5_seed42_train2000_val2000.json")
+DEFAULT_SYNTH = str(
+    GRAD_ROOT
+    / "self_distill_v2_filtered_v46_ptbxl_contrast_seed42"
+    / "synth_v2_filtered_top4000_gamma03.npz"
 )
-DEFAULT_OUT = "/root/autodl-tmp/final_round_ablation_20260504/feature_distribution"
+DEFAULT_OUT = str(FINAL_ROUND_ROOT / "feature_distribution")
 DEFAULT_EVIDENCE = str(REPO / "final" / "artifacts" / "evidence_pack" / "feature_distribution")
 
 

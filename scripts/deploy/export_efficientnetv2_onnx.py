@@ -37,7 +37,7 @@ def main() -> None:
     ap.add_argument("--ckpt", default=DEFAULT_CKPT)
     ap.add_argument("--out", default=DEFAULT_ONNX)
     ap.add_argument("--device", default="cuda")
-    ap.add_argument("--opset", type=int, default=17)
+    ap.add_argument("--opset", type=int, default=18)
     args = ap.parse_args()
 
     device = args.device if args.device == "cpu" or torch.cuda.is_available() else "cpu"
@@ -56,6 +56,7 @@ def main() -> None:
         dynamic_axes={"ecg": {0: "batch"}, "logits": {0: "batch"}},
         opset_version=args.opset,
         do_constant_folding=True,
+        external_data=False,
     )
     meta = {
         "checkpoint": args.ckpt,

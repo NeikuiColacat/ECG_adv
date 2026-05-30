@@ -2,7 +2,7 @@
 可微分 Tier-M 6 类 EfficientNet1DV2 victim（对抗 / 在线微调路径）
 
 与 77-class JIT 版本 efficientnet_victim.py 的区别：
-  - 权重来自 state_dict（`/root/autodl-tmp/crosscenter_tierM/best_model.pt`）
+  - 权重来自 state_dict（默认位于 `ECG_ADV_DATA_ROOT/crosscenter_tierM/best_model.pt`）
   - 输出维度 6（NSR / STach / AF / IAVB / LBBB / RBBB）
   - 输入预处理与 `unified_preprocess_to_1000` 一致：
       1024 @ 102.4Hz (ECGTwin VAE decode 输出) → 1000 @ 100Hz → global per-sample zscore → center crop 250
@@ -24,9 +24,9 @@
 API 与 77-class victim 对齐，`BoundaryAdvDiffGenerator` 无需改动即可 swap-in。
 """
 
+import os
 import sys
 from pathlib import Path
-from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -34,9 +34,23 @@ import torch.nn.functional as F
 
 _PROJECT_ROOT = Path(__file__).parent.parent
 _ECGTWIN_ROOT = _PROJECT_ROOT / "model" / "ECGTwin"
-_DEEPECG_NB = Path("/root/autodl-tmp/models/DeepECG/notebooks")
+_DATA_ROOT = Path(os.environ.get("ECG_ADV_DATA_ROOT", Path.home() / "autodl-tmp")).expanduser()
+_DEEPECG_NB_CANDIDATES = [
+    _PROJECT_ROOT / "model" / "DeepECG" / "notebooks",
+    _DATA_ROOT / "models" / "DeepECG" / "notebooks",
+]
 
-for p in [str(_PROJECT_ROOT), str(_ECGTWIN_ROOT), str(_DEEPECG_NB)]:
+
+def _path_exists(path: Path) -> bool:
+    try:
+        return path.exists()
+    except OSError:
+        return False
+
+
+for p in [str(_PROJECT_ROOT), str(_ECGTWIN_ROOT)] + [
+    str(p) for p in _DEEPECG_NB_CANDIDATES if _path_exists(p)
+]:
     if p not in sys.path:
         sys.path.insert(0, p)
 
@@ -44,7 +58,7 @@ from EfficientNetv2 import EfficientNet1DV2  # noqa: E402
 from util.lead_utils import ECGTWIN_TO_PTBXL_INDICES  # noqa: E402
 
 
-DEFAULT_TIERM_CKPT = "/root/autodl-tmp/crosscenter_tierM/best_model.pt"
+DEFAULT_TIERM_CKPT = str(_DATA_ROOT / "crosscenter_tierM" / "best_model.pt")
 
 # Tier-M victim training input length (match scripts/crosscenter_tierM/train_ptbxl_tierM.py crop_len=250)
 TIERM_INPUT_LENGTH = 250

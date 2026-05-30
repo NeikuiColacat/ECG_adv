@@ -3,6 +3,16 @@
 This file is durable project memory for coding agents working in the ECG_adv_Gen
 graduate-project worktree.
 
+Current archive/reproduction branch note:
+
+- Active local worktree in this environment: `/home/neiku/graduate_project/ECG_adv`.
+- Use `uv` and `pyproject.toml` for the portable Python environment.
+- Prefer `ECG_ADV_DATA_ROOT=${HOME}/autodl-tmp` or another explicit data-disk
+  path instead of hard-coding `/root/autodl-tmp`.
+- The thesis reproduction entrypoint is
+  `scripts/final_round/run_thesis_reproduction.sh`; the detailed table/figure
+  mapping is `docs/thesis_reproduction.md`.
+
 Repo-tracked Codex skill copy:
 
 ```text

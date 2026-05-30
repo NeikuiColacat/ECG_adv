@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -46,7 +45,10 @@ def build_with_python_tensorrt(args: argparse.Namespace) -> dict:
     onnx_path = Path(args.onnx)
     if not onnx_path.exists():
         raise FileNotFoundError(f"missing ONNX model: {onnx_path}")
-    parsed = parser.parse(onnx_path.read_bytes())
+    if hasattr(parser, "parse_from_file"):
+        parsed = parser.parse_from_file(str(onnx_path))
+    else:
+        parsed = parser.parse(onnx_path.read_bytes())
     if not parsed:
         errors = [str(parser.get_error(i)) for i in range(parser.num_errors)]
         raise RuntimeError("TensorRT ONNX parse failed:\n" + "\n".join(errors))

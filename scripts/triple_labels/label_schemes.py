@@ -39,11 +39,15 @@ from scripts.crosscenter_v2.label_alignment_v2 import (
     ptbxl_scp_to_26 as ptbxl_scp_to_pn26,
     snomed_to_26 as snomed_list_to_pn26,
     mimic_report_to_26 as mimic_report_to_pn26,
-    has_any_scored_class,
 )
 
 
-SCP_STATEMENTS_PATH = '/root/autodl-tmp/ptbxl/scp_statements.csv'
+DATA_ROOT = os.path.expanduser(os.environ.get('ECG_ADV_DATA_ROOT', '~/autodl-tmp'))
+PTBXL_ROOT = os.path.expanduser(os.environ.get('ECG_ADV_PTBXL_ROOT', os.path.join(DATA_ROOT, 'ptbxl')))
+SCP_STATEMENTS_PATH = os.environ.get(
+    'ECG_ADV_SCP_STATEMENTS_PATH',
+    os.path.join(PTBXL_ROOT, 'scp_statements.csv'),
+)
 
 
 # ────────────────────────────────────────────────────────────────────────────

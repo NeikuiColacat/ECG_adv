@@ -1,0 +1,103 @@
+{
+  "project": "ECG_adv graduate thesis reproduction",
+  "class_order": ["CD", "HYP", "MI", "NORM", "STTC"],
+  "data_root_env": "ECG_ADV_DATA_ROOT",
+  "default_data_root": "${HOME}/autodl-tmp",
+  "experiments": [
+    {
+      "paper_item": "Table 6.2 / Figure 6.1",
+      "name": "PTB-XL super5 low-sample split",
+      "command": "bash scripts/final_round/run_thesis_reproduction.sh split",
+      "entrypoints": ["scripts/triple_labels/create_ptbxl_super5_split.py"],
+      "artifacts": ["${ECG_ADV_GRAD_ROOT}/splits/ptbxl_super5_seed42_train2000_val2000.json"],
+      "expected": {"train": 2000, "val": 2000, "test": 17799}
+    },
+    {
+      "paper_item": "Table 6.3 / Figure 6.2 / Figure 6.3",
+      "name": "ECGTwin IBE and DiT author-style reproduction",
+      "command": "bash scripts/ecgtwin_author_repro/run_author_repro_pipeline.sh",
+      "entrypoints": [
+        "scripts/ecgtwin_author_repro/train_ibe_repro.py",
+        "scripts/ecgtwin_author_repro/train_dit_repro.py"
+      ],
+      "artifacts": ["${ECG_ADV_DATA_ROOT}/ecgtwin_author_repro/<run>/"]
+    },
+    {
+      "paper_item": "Table 6.4",
+      "name": "Synthetic ECG quality proxy and semantic response",
+      "command": "bash scripts/final_round/run_thesis_reproduction.sh medical_validity",
+      "entrypoints": ["scripts/final_round/run_medical_validity_ablation.py"],
+      "artifacts": [
+        "${ECG_ADV_FINAL_ROUND_ROOT}/medical_validity/per_sample_quality.csv",
+        "${ECG_ADV_FINAL_ROUND_ROOT}/medical_validity/medical_validity_summary.json"
+      ]
+    },
+    {
+      "paper_item": "Figure 3.3",
+      "name": "Five-class synthetic 12-lead ECG visualization",
+      "command": "bash scripts/final_round/run_thesis_reproduction.sh figures",
+      "entrypoints": ["scripts/final_round/curate_thesis_ecg_examples.py"],
+      "artifacts": ["${ECG_ADV_FINAL_ROUND_ROOT}/thesis_selected_ecg_examples/"]
+    },
+    {
+      "paper_item": "Table 6.5 / Table 6.6 / Table 6.7 / Figure 6.4",
+      "name": "Low-sample EfficientNetV2 baseline and synthetic-pretrain fine-tuning",
+      "command": "bash scripts/final_round/run_thesis_reproduction.sh low_sample",
+      "entrypoints": [
+        "scripts/final_round/run_low_sample_three_methods.sh",
+        "scripts/triple_labels/train_ptbxl.py",
+        "scripts/triple_labels/eval_crosscenter.py"
+      ],
+      "artifacts": [
+        "${ECG_ADV_GRAD_ROOT}/method_a_real2000_seed42*/train_result.json",
+        "${ECG_ADV_GRAD_ROOT}/self_distill_v2_*_realfine_*/train_result.json"
+      ],
+      "reported_main_result": {
+        "real2000_macro_auroc": 0.8433,
+        "real2000_macro_auprc": 0.6234,
+        "center_token_macro_auroc": 0.8735,
+        "center_token_macro_auprc": 0.7013
+      }
+    },
+    {
+      "paper_item": "Table 6.8",
+      "name": "Training strategy and generation-condition ablations",
+      "command": "python scripts/triple_labels/train_ptbxl.py --synth_npz <pool> --synth_ratio <ratio> [--synthetic_only|--init_ckpt <ckpt>]",
+      "entrypoints": ["scripts/triple_labels/train_ptbxl.py", "scripts/final_round/build_thesis_evidence_pack.py"],
+      "artifacts": ["${ECG_ADV_GRAD_ROOT}/method_b_*", "${ECG_ADV_GRAD_ROOT}/ablation_*"]
+    },
+    {
+      "paper_item": "Table 5.2",
+      "name": "PyTorch / TensorRT inference benchmark",
+      "command": "bash scripts/final_round/run_thesis_reproduction.sh benchmark",
+      "entrypoints": [
+        "scripts/deploy/export_efficientnetv2_onnx.py",
+        "scripts/deploy/build_tensorrt_engine.py",
+        "scripts/deploy/benchmark_inference_backends.py"
+      ],
+      "artifacts": [
+        "${ECG_ADV_APP_DATA_ROOT}/models/efficientnetv2_super5.onnx",
+        "${ECG_ADV_APP_DATA_ROOT}/models/efficientnetv2_super5_fp16.engine",
+        "${ECG_ADV_APP_DATA_ROOT}/reports/inference_benchmark.json",
+        "${ECG_ADV_APP_DATA_ROOT}/reports/tensorrt_validation.json"
+      ]
+    },
+    {
+      "paper_item": "Figure 5.1-5.3",
+      "name": "Streamlit prototype",
+      "command": "bash scripts/final_round/run_thesis_reproduction.sh streamlit",
+      "entrypoints": ["apps/streamlit_ecg_demo/app.py", "scripts/streamlit_demo/"],
+      "artifacts": ["docs/figures/streamlit_demo/*.png"]
+    }
+  ],
+  "excluded_from_git": [
+    ".venv/",
+    "migrate_files/",
+    "__pycache__/",
+    "*.pyc",
+    "large datasets",
+    "model checkpoints",
+    "generated ECG pools",
+    "ONNX and TensorRT engines"
+  ]
+}

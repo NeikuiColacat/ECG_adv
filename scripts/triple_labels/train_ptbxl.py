@@ -8,8 +8,8 @@ Forked from scripts/crosscenter_tierM/train_ptbxl_tierM.py with:
   - Removed AugMix / SynthCenter (independent ablations)
 
 Usage:
-    /root/miniforge3/envs/ECGTwin/bin/python scripts/triple_labels/train_ptbxl.py \
-        --scheme super5 --batch_size 96 --output_dir /root/autodl-tmp/triple_labels/super5
+    uv run python scripts/triple_labels/train_ptbxl.py \
+        --scheme super5 --batch_size 96 --output_dir ${ECG_ADV_TRIPLE_ROOT}/super5
 """
 
 import os
@@ -35,6 +35,11 @@ from scripts.crosscenter_v2.preprocess_utils import (
     unified_preprocess_to_1000, crop_signal_tc,
 )
 from EfficientNetv2 import EfficientNet1DV2  # noqa: E402
+
+
+DATA_ROOT = os.path.expanduser(os.environ.get('ECG_ADV_DATA_ROOT', '~/autodl-tmp'))
+PTBXL_ROOT = os.path.expanduser(os.environ.get('ECG_ADV_PTBXL_ROOT', os.path.join(DATA_ROOT, 'ptbxl')))
+TRIPLE_ROOT = os.path.expanduser(os.environ.get('ECG_ADV_TRIPLE_ROOT', os.path.join(DATA_ROOT, 'triple_labels')))
 
 
 def _str2bool(v):
@@ -329,7 +334,7 @@ def _load_split_json(path):
 def _default_cache_path(args):
     safe_mode = str(args.preprocess_mode).replace('/', '_')
     safe_norm = str(args.norm_mode).replace('/', '_')
-    cache_dir = '/root/autodl-tmp/triple_labels/cache'
+    cache_dir = os.path.join(TRIPLE_ROOT, 'cache')
     os.makedirs(cache_dir, exist_ok=True)
     return os.path.join(
         cache_dir,
@@ -385,7 +390,7 @@ def train(args):
             args.csv_path, scheme, label_cache_path, folds=[10]
         )
     print(f"  Train: {len(train_idx)}, Val: {len(val_idx)}, Test: {len(test_idx)}")
-    print(f"  Per-class positives in train:")
+    print("  Per-class positives in train:")
     for i, name in enumerate(class_names):
         col = train_labels[:, i]
         n_pos = int((col == 1).sum())
@@ -487,7 +492,7 @@ def train(args):
     pos_weight_np = compute_pos_weight(loss_labels, num_classes,
                                        clip_max=args.pos_weight_clip_max)
     pos_weight = torch.tensor(pos_weight_np, dtype=torch.float32, device=device)
-    print(f"[loss] pos_weight: " + ", ".join(
+    print("[loss] pos_weight: " + ", ".join(
         f"{n}={w:.2f}" for n, w in zip(class_names, pos_weight_np)
     ))
 
@@ -653,8 +658,8 @@ def train(args):
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument('--scheme', required=True, choices=['super5', 'sub23', 'pn26'])
-    p.add_argument('--data_path', default='/root/autodl-tmp/ptbxl/raw100.npy')
-    p.add_argument('--csv_path', default='/root/autodl-tmp/ptbxl/ptbxl_database.csv')
+    p.add_argument('--data_path', default=os.path.join(PTBXL_ROOT, 'raw100.npy'))
+    p.add_argument('--csv_path', default=os.path.join(PTBXL_ROOT, 'ptbxl_database.csv'))
     p.add_argument('--output_dir', required=True)
     p.add_argument('--cache_path', default=None)
     p.add_argument('--split_json', default=None,

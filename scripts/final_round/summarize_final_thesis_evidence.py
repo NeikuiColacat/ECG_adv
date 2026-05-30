@@ -3,26 +3,31 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 
-DEFAULT_REAL = (
-    "/root/autodl-tmp/graduate_project/"
-    "method_a_real2000_seed42/train_result.json"
-)
+DATA_ROOT = Path(os.environ.get("ECG_ADV_DATA_ROOT", Path.home() / "autodl-tmp")).expanduser()
+GRAD_ROOT = Path(os.environ.get("ECG_ADV_GRAD_ROOT", DATA_ROOT / "graduate_project")).expanduser()
+STREAMLIT_ROOT = Path(os.environ.get("ECG_ADV_APP_DATA_ROOT", DATA_ROOT / "streamlit_ecg_demo")).expanduser()
+FINAL_ROUND_ROOT = Path(
+    os.environ.get("ECG_ADV_FINAL_ROUND_ROOT", DATA_ROOT / "final_round_ablation_20260504")
+).expanduser()
+
+DEFAULT_REAL = GRAD_ROOT / "method_a_real2000_seed42/train_result.json"
 DEFAULT_NO_TOKEN = (
-    "/root/autodl-tmp/graduate_project/"
-    "self_distill_v2_e24_v46_no_token_hardlabel_r10_realfine_lr1e4_seed42_auroc_rerun_20260506/"
-    "train_result.json"
+    GRAD_ROOT
+    / "self_distill_v2_e24_v46_no_token_hardlabel_r10_realfine_lr1e4_seed42_auroc_rerun_20260506"
+    / "train_result.json"
 )
 DEFAULT_CENTER_TOKEN = (
-    "/root/autodl-tmp/graduate_project/"
-    "self_distill_v2_e23_v46_class_oracle_hardlabel_r10_realfine_lr1e4_seed42_auroc_rerun_20260506/"
-    "train_result.json"
+    GRAD_ROOT
+    / "self_distill_v2_e23_v46_class_oracle_hardlabel_r10_realfine_lr1e4_seed42_auroc_rerun_20260506"
+    / "train_result.json"
 )
-DEFAULT_BENCHMARK = "/root/autodl-tmp/streamlit_ecg_demo/reports/inference_benchmark.json"
-DEFAULT_FIGURES = "/root/autodl-tmp/final_round_ablation_20260504/thesis_paper_selected_v1/selected_examples.json"
-DEFAULT_OUT_DIR = "/root/autodl-tmp/final_round_ablation_20260504/final_evidence"
+DEFAULT_BENCHMARK = STREAMLIT_ROOT / "reports/inference_benchmark.json"
+DEFAULT_FIGURES = FINAL_ROUND_ROOT / "thesis_paper_selected_v1/selected_examples.json"
+DEFAULT_OUT_DIR = FINAL_ROUND_ROOT / "final_evidence"
 
 
 def load_json(path: str | Path) -> dict:
@@ -167,12 +172,12 @@ def write_markdown(out_path: Path, payload: dict) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--real_result", default=DEFAULT_REAL)
-    ap.add_argument("--no_token_result", default=DEFAULT_NO_TOKEN)
-    ap.add_argument("--center_token_result", default=DEFAULT_CENTER_TOKEN)
-    ap.add_argument("--benchmark", default=DEFAULT_BENCHMARK)
-    ap.add_argument("--figures", default=DEFAULT_FIGURES)
-    ap.add_argument("--out_dir", default=DEFAULT_OUT_DIR)
+    ap.add_argument("--real_result", default=str(DEFAULT_REAL))
+    ap.add_argument("--no_token_result", default=str(DEFAULT_NO_TOKEN))
+    ap.add_argument("--center_token_result", default=str(DEFAULT_CENTER_TOKEN))
+    ap.add_argument("--benchmark", default=str(DEFAULT_BENCHMARK))
+    ap.add_argument("--figures", default=str(DEFAULT_FIGURES))
+    ap.add_argument("--out_dir", default=str(DEFAULT_OUT_DIR))
     args = ap.parse_args()
 
     out_dir = Path(args.out_dir)
