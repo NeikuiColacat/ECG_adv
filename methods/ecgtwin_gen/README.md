@@ -16,11 +16,11 @@ into `base_vector`.
 ## Historical
 
 The old 256-d AdaLN/base-vector center-token hook and style-translator branch
-were moved to:
+are historical and live under `legacy/` in this archive branch:
 
 ```text
-trash/cleanup_20260506_legacy/methods_ecgtwin_gen/
-trash/cleanup_20260506_legacy/scripts_ecgtwin_gen/
+legacy/docs/pipelines/ecgtwin_center_prompt_token_pipeline.md
+legacy/scripts/ecgtwin_gen/
 ```
 
 Do not use those archived paths for the final thesis pipeline unless a new

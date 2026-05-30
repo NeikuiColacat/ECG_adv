@@ -221,6 +221,7 @@ uv run python -m compileall -q \
   scripts/ecgtwin_author_repro \
   scripts/ecgtwin_gen \
   scripts/deploy \
+  scripts/streamlit_demo \
   methods/ecgtwin_gen \
   util
 

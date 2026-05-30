@@ -25,6 +25,7 @@ Large checkpoints and source experiment arrays stay outside git and are listed i
 - `tables/per_class_main_results.md`: Table 6.7 evidence.
 - `tables/low_sample_ablation_results.md`: Table 6.8 evidence.
 - `tables/dataset_split_label_distribution.md`: Table 6.2 evidence.
+- `raw/ecgtwin_author_repro_summary.json`: Table 6.3 IBE/DiT metric summary.
 - `tables/medical_validity_summary.md`: Table 6.4 evidence.
 - `tables/inference_benchmark.md`: Table 5.2 evidence.
 - `tables/system_function_tests.md`: Streamlit/system test evidence.

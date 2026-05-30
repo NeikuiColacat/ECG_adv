@@ -626,7 +626,13 @@ def _run_inference_batch(
     *,
     show_progress: bool = True,
 ) -> list[dict]:
-    backend = get_backend(backend_name, model_path, device)
+    try:
+        backend = get_backend(backend_name, model_path, device)
+    except Exception as exc:
+        if str(backend_name).lower() != "tensorrt":
+            raise
+        st.warning(f"{tr('inference_unavailable')}: TensorRT unavailable ({exc}); fallback to torch.")
+        backend = get_backend("torch", DEFAULT_CKPT, device)
     results = []
     progress = st.progress(0.0) if show_progress else None
     status = st.empty() if show_progress else None

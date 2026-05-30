@@ -4,6 +4,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import torch
@@ -16,7 +17,6 @@ for p in [REPO, DEEPECG_NB, REPO / "model" / "DeepECG" / "notebooks"]:
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))
 
-from EfficientNetv2 import EfficientNet1DV2  # noqa: E402
 from apps.streamlit_ecg_demo.services.preprocessing import CLASS_NAMES, classifier_input  # noqa: E402
 
 
@@ -42,7 +42,20 @@ def _import_tensorrt():
     return trt
 
 
-def build_efficientnet_super5() -> EfficientNet1DV2:
+def _load_efficientnet1dv2() -> Any:
+    try:
+        from EfficientNetv2 import EfficientNet1DV2
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "DeepECG EfficientNet implementation is unavailable. Restore external model repos with "
+            "`bash scripts/bootstrap_model_repos.sh`, or restore the packaged artifacts before "
+            "running PyTorch inference."
+        ) from exc
+    return EfficientNet1DV2
+
+
+def build_efficientnet_super5() -> torch.nn.Module:
+    EfficientNet1DV2 = _load_efficientnet1dv2()
     return EfficientNet1DV2(
         variant="s_v2",
         input_channels=12,

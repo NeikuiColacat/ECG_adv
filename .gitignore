@@ -16,6 +16,16 @@ trash/
 docs/references/
 docs/papers/**/*.pdf
 
+# Prevent accidental large artifact commits. Existing tracked thesis figures,
+# small JSON/CSV evidence, and the curated Figure 3.3 sample stay tracked.
+artifacts/**/*.pt
+artifacts/**/*.pth
+artifacts/**/*.onnx
+artifacts/**/*.engine
+artifacts/**/*.npy
+artifacts/**/*.npz
+!artifacts/samples/generated_ecg_examples/thesis_selected_samples.npz
+
 # Personal thesis docs (contain student ID / personal info)
 docs/*.docx
 docs/~$*.docx

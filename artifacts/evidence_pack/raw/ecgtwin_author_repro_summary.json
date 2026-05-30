@@ -1,0 +1,47 @@
+{
+  "paper_item": "Table 6.3 / Figure 6.2 / Figure 6.3",
+  "name": "ECGTwin IBE and DiT author-style reproduction summary",
+  "class_order": ["CD", "HYP", "MI", "NORM", "STTC"],
+  "stages": [
+    {
+      "stage": "IBE stage 1",
+      "epochs": 40,
+      "effective_batch_size": 65536,
+      "micro_batch_size": 512,
+      "initial_lr": 0.001,
+      "precision": "BF16 AMP",
+      "final_train_loss": 0.1985,
+      "final_validation_score": 0.6954,
+      "best_validation_score": 0.7189,
+      "metric_definition": "mean cosine similarity between paired reference and target features; higher is better",
+      "figure": "artifacts/evidence_pack/figures/training_curves/ibe_stage1_loss_curve.png"
+    },
+    {
+      "stage": "DiT stage 2",
+      "epochs": 30,
+      "batch_size": 512,
+      "initial_lr": 0.0001,
+      "diffusion_steps": 1000,
+      "beta_start": 0.00085,
+      "beta_end": 0.012,
+      "precision": "BF16 AMP",
+      "final_train_loss": 14.6943,
+      "final_validation_loss": 15.5211,
+      "best_validation_loss": 15.0806,
+      "metric_definition": "diffusion noise-prediction validation loss; lower is better",
+      "figure": "artifacts/evidence_pack/figures/training_curves/dit_stage2_loss_curve.png"
+    }
+  ],
+  "reproduction_command": "bash scripts/final_round/run_thesis_reproduction.sh author_repro",
+  "expected_output_root": "${ECG_ADV_DATA_ROOT}/ecgtwin_author_repro/<run>/",
+  "expected_raw_outputs": [
+    "run_config.json",
+    "metrics.jsonl",
+    "loss_curve.csv",
+    "loss_curve.png",
+    "train.log",
+    "checkpoints/IBE_best.pth",
+    "checkpoints/DiT_ECGTwin_best_val.pth"
+  ],
+  "note": "This small JSON mirrors the Table 6.3 values cited in thesis.md and points to the archived training-curve figures. Full rerun logs are produced under ECG_ADV_DATA_ROOT by author_repro and may be package:false due to size or data-cache requirements."
+}

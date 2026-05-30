@@ -1,14 +1,8 @@
-"""Signal sanity helpers kept for ECGTwin synthetic-pool quality checks.
+"""Signal sanity helpers for ECGTwin synthetic-pool quality checks.
 
-The attack-oriented gates are historical utilities retained only because the
-active synthetic quality report imports the lightweight ECG feature extractor.
-
-Gate 1 — Attack Success Rate: overall ≥ 70%, per-class ≥ 30% (a weaker "some
-signal in every class" check; classes with very high victim confidence can
-legitimately be harder to attack at a given epsilon).
-
-Gate 2 — Medical Semantic: HR/QRS-width/amplitude drift bounded vs anchor,
-plus Einthoven residual |II-I-III| p95 < 0.5 (z-scored units).
+The thesis generation pipeline uses these lightweight ECG features for HR,
+QRS-amplitude, and Einthoven-residual summaries on classifier-scale
+``(12, 1000)`` PTB-XL-order signals.
 """
 
 from __future__ import annotations

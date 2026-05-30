@@ -1,4 +1,5 @@
 import json
+import ast
 from pathlib import Path
 
 
@@ -51,6 +52,56 @@ def test_archived_table68_summary_does_not_embed_host_absolute_paths():
 
     assert "/root/autodl-tmp" not in text
     assert "/home/neiku/autodl-tmp" not in text
+
+
+def test_mainline_sources_do_not_import_top_level_adversarial():
+    mainline_roots = [
+        REPO_ROOT / "apps",
+        REPO_ROOT / "scripts",
+        REPO_ROOT / "methods",
+        REPO_ROOT / "util",
+    ]
+    offenders = []
+    for root in mainline_roots:
+        for path in root.rglob("*.py"):
+            if "__pycache__" in path.parts or "legacy" in path.parts:
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            imports_adversarial = any(
+                (
+                    isinstance(node, ast.ImportFrom)
+                    and node.module is not None
+                    and node.module.split(".")[0] == "adversarial"
+                )
+                or (
+                    isinstance(node, ast.Import)
+                    and any(alias.name.split(".")[0] == "adversarial" for alias in node.names)
+                )
+                for node in ast.walk(tree)
+            )
+            if imports_adversarial:
+                offenders.append(path.relative_to(REPO_ROOT).as_posix())
+
+    assert offenders == []
+
+
+def test_tensorrt_dependency_is_optional_deploy_extra():
+    pyproject = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+
+    deps_block = pyproject.split("dependencies = [", 1)[1].split("]", 1)[0]
+    deploy_block = pyproject.split("[project.optional-dependencies]", 1)[1]
+    assert "tensorrt-cu12" not in deps_block
+    assert "deploy = [" in deploy_block
+    assert "tensorrt-cu12" in deploy_block
+
+
+def test_table63_author_repro_has_small_metric_summary():
+    manifest = json.loads((REPO_ROOT / "docs/thesis_repro_manifest.json").read_text(encoding="utf-8"))
+    table63 = next(item for item in manifest["experiments"] if item["paper_item"].startswith("Table 6.3"))
+
+    assert "artifacts/evidence_pack/raw/ecgtwin_author_repro_summary.json" in table63["artifacts"]
+    assert table63["reported_result"]["ibe_best_validation_score"] == 0.7189
+    assert table63["reported_result"]["dit_best_validation_loss"] == 15.0806
 
 
 def test_reproduction_runner_exposes_restore_artifacts_stage():

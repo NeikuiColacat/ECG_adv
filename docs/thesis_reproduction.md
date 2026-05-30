@@ -10,6 +10,13 @@
 uv sync --all-groups
 ```
 
+TensorRT 与 CUDA、TensorRT runtime、GPU 架构绑定，基础环境不强制安装。需要在目标
+GPU 机器上构建或验证 TensorRT engine 时，再执行：
+
+```bash
+uv sync --all-groups --extra deploy
+```
+
 默认数据根目录是：
 
 ```bash
@@ -80,6 +87,13 @@ all              运行主要离线复现流程
 `feature_dist` 依赖额外的 DeepECG 特征提取代码，当前论文正文没有单独表图引用，
 因此保留为可选审计 stage，不作为 `all` 和必需 preflight 的主线门槛。
 
+`scripts/ecgtwin_gen/build_prompt_token_latent_cache.py` 和
+`methods/ecgtwin_gen/prompt_token/trainer.py` 中出现的 PN2021 center 名称只用于构建
+ECGTwin prompt-token 的参考/风格缓存；它们不作为表 6.5-6.8 的监督训练数据，也不进入
+论文主表评估。表 6.5-6.8 的训练入口固定传入 PTB-XL custom split；直接调用
+`scripts/triple_labels/train_ptbxl.py` 做论文复现实验时也必须显式传入
+`--split_json ${ECG_ADV_GRAD_ROOT}/splits/ptbxl_super5_seed42_train2000_val2000.json`。
+
 示例：
 
 ```bash
@@ -100,13 +114,13 @@ bash scripts/final_round/run_thesis_reproduction.sh streamlit
 | 表 6.1 | 实验环境配置 | `pyproject.toml`、`uv.lock`、`scripts/final_round/run_thesis_reproduction.sh env` | 表格写入 `thesis.md`；运行 `env` stage 查看当前路径、Python 命令和 PyTorch/CUDA/TensorRT 版本快照 |
 | 图 3.1 / 图 3.2 | IBE 与 DiT 结构示意图 | 静态论文图；用 `thesis_assets` 检查断链 | `artifacts/evidence_pack/figures/architecture/*.png` |
 | 表 6.2 / 图 6.1 | PTB-XL super5 train=2000、val=2000、test=17799 固定划分 | `scripts/triple_labels/create_ptbxl_super5_split.py` | `${ECG_ADV_GRAD_ROOT}/splits/ptbxl_super5_seed42_train2000_val2000.json` |
-| 表 6.3 / 图 6.2 / 图 6.3 | ECGTwin IBE + DiT 两阶段复现 | `scripts/ecgtwin_author_repro/run_author_repro_pipeline.sh` | `${ECG_ADV_DATA_ROOT}/ecgtwin_author_repro/<run>/` |
+| 表 6.3 / 图 6.2 / 图 6.3 | ECGTwin IBE + DiT 两阶段复现 | `scripts/ecgtwin_author_repro/run_author_repro_pipeline.sh` | `${ECG_ADV_DATA_ROOT}/ecgtwin_author_repro/<run>/`；归档摘要见 `artifacts/evidence_pack/raw/ecgtwin_author_repro_summary.json` |
 | 表 6.4 | 中心提示向量/无提示向量生成质量代理统计 | `scripts/final_round/run_medical_validity_ablation.py` | `${ECG_ADV_FINAL_ROUND_ROOT}/medical_validity/` |
 | 图 3.3 | 五类 12 导联合成 ECG 样例 | `scripts/final_round/curate_thesis_ecg_examples.py` | 默认读取 `artifacts/samples/generated_ecg_examples/thesis_selected_samples.npz`；输出到 `${ECG_ADV_FINAL_ROUND_ROOT}/thesis_selected_ecg_examples/`，并同步更新论文引用图 `artifacts/figures/generated_ecg_examples/thesis_synthetic_12lead.png` |
 | 表 6.5 | EfficientNetV2 真实 2000 baseline | `scripts/final_round/summarize_low_sample_results.py` 或 `scripts/triple_labels/train_ptbxl.py` | `${ECG_ADV_GRAD_ROOT}/method_a_real2000_seed42/train_result.json` |
 | 表 6.6 / 表 6.7 / 图 6.4 | 无提示/中心提示合成预训练后真实微调 | `scripts/final_round/summarize_low_sample_results.py`；完整重跑用 `run_low_sample_three_methods.sh` | `${ECG_ADV_GRAD_ROOT}/self_distill_v2_e23.../train_result.json` 与 `${ECG_ADV_GRAD_ROOT}/self_distill_v2_e24.../train_result.json` |
 | 表 6.8 | 训练策略与生成条件消融 | `scripts/final_round/run_table_6_8_ablations.sh` | `${ECG_ADV_GRAD_ROOT}/table_6_8_ablation_<tag>/` |
-| 表 5.2 | PyTorch / TensorRT 推理性能 | `scripts/deploy/export_efficientnetv2_onnx.py`、`build_tensorrt_engine.py`、`benchmark_inference_backends.py` | `${ECG_ADV_APP_DATA_ROOT}/reports/inference_benchmark.json` |
+| 表 5.2 | PyTorch / ONNX Runtime / TensorRT 推理性能 | `scripts/deploy/export_efficientnetv2_onnx.py`、`build_tensorrt_engine.py`、`benchmark_inference_backends.py` | `${ECG_ADV_APP_DATA_ROOT}/reports/inference_benchmark.json` |
 | 图 5.1-5.3 | Streamlit 原型展示 | `apps/streamlit_ecg_demo/app.py` | `artifacts/figures/streamlit_demo/*.png` |
 
 `thesis.md` 直接引用的轻量图表证据已放在 `artifacts/evidence_pack/` 与
@@ -216,6 +230,10 @@ synthetic-pretrain 初始化 checkpoint 在 manifest 中标记为 `archive_requi
 `preflight_full` 输出为准；如确实需要把 full-rerun-only 文件也纳入打包检查，可直接运行
 `package_thesis_artifacts.py --include-rerun`。
 
+仓库内 `artifacts/samples/generated_ecg_examples/thesis_selected_samples.npz`
+是论文图 3.3 使用的 tiny curated visualization sample，不是训练用生成样本池；大型
+`gated_samples.npz` 和训练/推理权重仍通过 artifact 包交付，不进入 git。
+
 ECGTwin 作者复现还需要：
 
 ```text
@@ -235,6 +253,7 @@ model/DeepECG/
 - `scripts/ecgtwin_author_repro/`
 - `scripts/ecgtwin_gen/`
 - `scripts/deploy/`
+- `scripts/streamlit_demo/`
 - `methods/ecgtwin_gen/prompt_token/`
 - `util/`
 - `pyproject.toml`、`uv.lock`
@@ -255,7 +274,7 @@ model/DeepECG/
 
 ```bash
 uv run python -m compileall -q \
-  apps scripts/final_round scripts/triple_labels scripts/deploy scripts/ecgtwin_author_repro scripts/ecgtwin_gen methods/ecgtwin_gen util adversarial
+  apps scripts/final_round scripts/triple_labels scripts/deploy scripts/streamlit_demo scripts/ecgtwin_author_repro scripts/ecgtwin_gen methods/ecgtwin_gen util
 
 uv run pytest apps/streamlit_ecg_demo/tests scripts/final_round/tests util/tests -q
 

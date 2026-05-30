@@ -4,7 +4,7 @@ ECG 样本可视化 + 合理性检查工具（通用 debug 场景）。
 三类输入场景:
 - ECG 数据增强算子输出
 - ECGTwin 条件生成样本 (util/ecgtwin_utils.py)
-- AdvDiff 对抗样本 (adversarial/adv_generate.py)
+- 历史对抗样本或 legacy 结果的静态可视化
 
 API:
     plot_ecg(signal, sample_rate, save_path, ...) -> Path
@@ -12,7 +12,7 @@ API:
     sanity_check(signal, sample_rate, lead_order=...) -> dict
     plot_with_report(signal, sample_rate, save_path, ...) -> (Path, dict)
 
-专用对抗样本保存（GT-Target-Pred 命名）见 util/save_tool.py，本模块不覆盖。
+专用历史对抗样本保存逻辑不属于当前 thesis mainline，本模块只保留通用 ECG 绘图能力。
 """
 from __future__ import annotations
 

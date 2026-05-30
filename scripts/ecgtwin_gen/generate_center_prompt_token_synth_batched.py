@@ -20,7 +20,6 @@ import torch
 REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO))
 
-from adversarial.efficientnet_victim_tierM import EfficientNetVictimTierM  # noqa: E402
 from methods.ecgtwin_gen.prompt_token.trainer import (  # noqa: E402
     _actual_report_text_embed,
     _load_text_embed,
@@ -33,6 +32,7 @@ from scripts.ecgtwin_gen.generate_center_prompt_token_synth import (  # noqa: E4
 from scripts.triple_labels.label_schemes import CLASS_NAMES_SUPER5  # noqa: E402
 from model.ECGTwin.utils.data_utils import _pad_text_embed  # noqa: E402
 from util.ecgtwin_utils import ECGTwinWrapper, process_pat_info, sex_transform  # noqa: E402
+from util.super5_victim import EfficientNetVictimTierM  # noqa: E402
 
 
 def set_all_seeds(seed: int) -> None:

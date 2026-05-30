@@ -22,9 +22,9 @@ import torch
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 
-from adversarial.adv_validation import _extract_clinical_features  # noqa: E402
-from adversarial.efficientnet_victim_tierM import EfficientNetVictimTierM  # noqa: E402
 from scripts.triple_labels.label_schemes import CLASS_NAMES_SUPER5, NUM_SUPER5  # noqa: E402
+from util.ecg_signal_sanity import _extract_clinical_features  # noqa: E402
+from util.super5_victim import EfficientNetVictimTierM  # noqa: E402
 
 
 DATA_ROOT = Path(os.environ.get("ECG_ADV_DATA_ROOT", Path.home() / "autodl-tmp")).expanduser()

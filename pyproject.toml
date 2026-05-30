@@ -33,13 +33,17 @@ dependencies = [
     "sentencepiece>=0.2",
     "statsmodels>=0.14",
     "streamlit>=1.39",
-    "tensorrt-cu12==10.16.1.11",
     "tokenizers==0.21.1",
     "torch>=2.5",
     "torchmetrics>=1.6",
     "tqdm>=4.66",
     "transformers==4.50.3",
     "wfdb>=4.1",
+]
+
+[project.optional-dependencies]
+deploy = [
+    "tensorrt-cu12==10.16.1.11",
 ]
 
 [dependency-groups]

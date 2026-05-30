@@ -22,12 +22,12 @@ import torch.nn.functional as F
 REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO))
 
-from adversarial.efficientnet_victim_tierM import EfficientNetVictimTierM  # noqa: E402
 from apps.streamlit_ecg_demo.services.paths import DATA_ROOT  # noqa: E402
 from methods.ecgtwin_gen.prompt_token.trainer import _load_text_embed  # noqa: E402
 from scripts.triple_labels.label_schemes import CLASS_NAMES_SUPER5  # noqa: E402
 from util.ecgtwin_utils import ECGTwinWrapper  # noqa: E402
 from util.lead_utils import ECGTWIN_TO_PTBXL_INDICES  # noqa: E402
+from util.super5_victim import EfficientNetVictimTierM  # noqa: E402
 
 
 DEFAULT_CACHE_ROOT = str(DATA_ROOT / "ecgtwin_prompt_token_super5/cache_v1")

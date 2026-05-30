@@ -10,8 +10,9 @@ graduation-project branch.
 | `../legacy/methods/advdiff/` | historical AdvDiff reference, not part of the thesis route |
 
 Historical ECGTwin 256-d center-token hooks and style-translator code were
-archived to:
+archived under:
 
 ```text
-trash/cleanup_20260506_legacy/methods_ecgtwin_gen/
+legacy/docs/pipelines/ecgtwin_center_prompt_token_pipeline.md
+legacy/scripts/ecgtwin_gen/
 ```

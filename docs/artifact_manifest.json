@@ -631,8 +631,8 @@
         "thesis evidence traceability"
       ],
       "description": "Manifest for the small thesis evidence pack committed with the archive branch.",
-      "sha256": "0a0b2daeaa9962e3c732c0f034eba59399912bff7e61d33536acbadbb34d35c6",
-      "size_bytes": 15126,
+      "sha256": "0463ae6a8c704dcf27f13f94975d40f2f78d403d09a62a5a181eddb08ea988b8",
+      "size_bytes": 15171,
       "can_regenerate": true,
       "regenerate_command": "bash scripts/final_round/run_thesis_reproduction.sh evidence"
     },
@@ -787,6 +787,23 @@
       "description": "DiT stage-2 training curve referenced by thesis.md.",
       "sha256": "9cd94be297b888906d45e9170f7364b8af365c4f43b16c98bcc854671d6bf816",
       "size_bytes": 123679,
+      "can_regenerate": true,
+      "regenerate_command": "bash scripts/final_round/run_thesis_reproduction.sh author_repro"
+    },
+    {
+      "id": "table63_ecgtwin_author_summary",
+      "path": "${REPO_ROOT}/artifacts/evidence_pack/raw/ecgtwin_author_repro_summary.json",
+      "kind": "result",
+      "required": true,
+      "package": true,
+      "used_by": [
+        "Table 6.3",
+        "Figure 6.2",
+        "Figure 6.3"
+      ],
+      "description": "Small Table 6.3 summary for ECGTwin IBE and DiT author-style reproduction metrics.",
+      "sha256": "633a2e2095bcb4f4d689634782aef8c2e8dc296f3bb67048207246960d370953",
+      "size_bytes": 1882,
       "can_regenerate": true,
       "regenerate_command": "bash scripts/final_round/run_thesis_reproduction.sh author_repro"
     },

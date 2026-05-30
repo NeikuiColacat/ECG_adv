@@ -51,6 +51,7 @@
     "figures/training_curves/ibe_stage1_loss_curve.png"
   ],
   "raw": [
+    "raw/ecgtwin_author_repro_summary.json",
     "raw/inference_benchmark.json",
     "raw/medical_validity_summary.json",
     "raw/per_sample_quality.csv",

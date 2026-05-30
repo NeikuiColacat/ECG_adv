@@ -1,5 +1,4 @@
-"""
-可微分 EfficientNet1DV2 victim（历史文件名保留为 tierM）
+"""Differentiable EfficientNet1DV2 Super5 victim used by generation quality checks.
 
 当前论文主线把它作为 Super5 合成 ECG 质量 proxy / 生成筛选 victim：
   - 权重来自 state_dict（默认位于 `ECG_ADV_DATA_ROOT/triple_labels/.../best_model.pt`）
@@ -19,14 +18,17 @@
     → F.interpolate(1024 → 1000)
     → per-sample global zscore（全 12×1000 上算 mean/std）
     → center crop 1000 → 250
-    → EfficientNet1DV2 → logits (B, 6)
+    → EfficientNet1DV2 → logits (B, num_classes)
 
-API 与旧 victim 对齐，便于复用 ECGTwin 生成筛选路径。
+The public class name remains ``EfficientNetVictimTierM`` for checkpoint and
+script compatibility, but this module is part of the Super5 thesis route rather
+than the legacy adversarial-training pipeline.
 """
 
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -54,14 +56,13 @@ for p in [str(_PROJECT_ROOT), str(_ECGTWIN_ROOT)] + [
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from EfficientNetv2 import EfficientNet1DV2  # noqa: E402
 from util.lead_utils import ECGTWIN_TO_PTBXL_INDICES  # noqa: E402
 
 
 DEFAULT_SUPER5_CKPT = str(_DATA_ROOT / "triple_labels" / "super5_minresample_full10_perglobal_20260503" / "best_model.pt")
 DEFAULT_TIERM_CKPT = DEFAULT_SUPER5_CKPT
 
-# Historical Tier-M victim training input length.
+# EfficientNetV2 classifier crop length.
 TIERM_INPUT_LENGTH = 250
 
 # ECGTwin VAE decoder output is 1024 samples @ 102.4Hz; resample to 1000 for PTBXL preprocessing alignment
@@ -71,8 +72,20 @@ TIERM_PREPROC_LENGTH = 1000
 TIERM_AMP_CLAMP = 3.0
 
 
-def _build_efficientnet_tierM(num_classes: int = 6) -> EfficientNet1DV2:
-    """Construct a Tier-M EfficientNet1DV2 with the exact config used during training."""
+def _load_efficientnet1dv2() -> Any:
+    try:
+        from EfficientNetv2 import EfficientNet1DV2
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "DeepECG EfficientNet implementation is unavailable. Restore external model repos with "
+            "`bash scripts/bootstrap_model_repos.sh` before running generation quality filtering."
+        ) from exc
+    return EfficientNet1DV2
+
+
+def _build_efficientnet_tierM(num_classes: int = 5) -> nn.Module:
+    """Construct the EfficientNet1DV2 classifier used as the Super5 victim."""
+    EfficientNet1DV2 = _load_efficientnet1dv2()
     return EfficientNet1DV2(
         variant='s_v2',
         input_channels=12,
@@ -88,9 +101,9 @@ def _build_efficientnet_tierM(num_classes: int = 6) -> EfficientNet1DV2:
 def load_efficientnet_tierM(
     weight_path: str = DEFAULT_TIERM_CKPT,
     device: str = "cuda",
-    num_classes: int = 6,
-) -> EfficientNet1DV2:
-    """Load Tier-M EfficientNet1DV2 from a plain state_dict checkpoint."""
+    num_classes: int = 5,
+) -> nn.Module:
+    """Load the Super5 EfficientNet1DV2 from a plain state_dict checkpoint."""
     model = _build_efficientnet_tierM(num_classes=num_classes)
     state = torch.load(weight_path, map_location="cpu")
     model.load_state_dict(state)
@@ -100,10 +113,10 @@ def load_efficientnet_tierM(
 
 class EfficientNetVictimTierM(nn.Module):
     """
-    Tier-M 6-class EfficientNet1DV2 可微分 victim。
+    Super5 EfficientNet1DV2 differentiable victim.
 
     同时支持 4 种前向入口：
-      1. forward_from_latent_to_logits(latent) — 对抗生成时用（raw logits，支持梯度）
+      1. forward_from_latent_to_logits(latent) — latent 质量筛选时用（raw logits，支持梯度）
       2. forward_from_latent(latent, enable_grad=True) — 返回 sigmoid 概率
       3. forward_from_ecg(ecg_ct) — 输入 (B, 12, L)，自动 center crop 到 250 后推理
       4. forward(ecg_ct) — 默认入口，等价 forward_from_ecg
@@ -114,7 +127,7 @@ class EfficientNetVictimTierM(nn.Module):
         weight_path: str = DEFAULT_TIERM_CKPT,
         device: str = "cuda",
         ecgtwin_wrapper=None,
-        num_classes: int = 6,
+        num_classes: int = 5,
         crop_len: int = TIERM_INPUT_LENGTH,
     ):
         super().__init__()
@@ -212,10 +225,10 @@ class EfficientNetVictimTierM(nn.Module):
 
 
 if __name__ == "__main__":
-    # Minimal smoke: construct victim from the Tier-M checkpoint and forward random (B, 12, 250)
+    # Minimal smoke: construct victim from the Super5 checkpoint and forward random (B, 12, 250)
     import time
     t0 = time.time()
-    print("[smoke] Loading Tier-M victim state_dict...")
+    print("[smoke] Loading Super5 victim state_dict...")
     victim = EfficientNetVictimTierM(
         weight_path=DEFAULT_TIERM_CKPT,
         device="cuda",
@@ -226,6 +239,6 @@ if __name__ == "__main__":
     with torch.no_grad():
         probs = victim(x)
         logits = victim.compute_logits_from_ecg(x)
-    assert probs.shape == (2, 6), probs.shape
-    assert logits.shape == (2, 6), logits.shape
+    assert probs.shape == (2, 5), probs.shape
+    assert logits.shape == (2, 5), logits.shape
     print(f"[smoke] OK in {time.time()-t0:.2f}s. Example probs[0]={probs[0].cpu().tolist()}")

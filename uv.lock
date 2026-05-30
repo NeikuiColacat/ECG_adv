@@ -558,7 +558,6 @@ dependencies = [
     { name = "sentencepiece" },
     { name = "statsmodels" },
     { name = "streamlit" },
-    { name = "tensorrt-cu12" },
     { name = "tokenizers" },
     { name = "torch", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'linux'" },
     { name = "torch", version = "2.11.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "sys_platform == 'linux'" },
@@ -566,6 +565,11 @@ dependencies = [
     { name = "tqdm" },
     { name = "transformers" },
     { name = "wfdb" },
+]
+
+[package.optional-dependencies]
+deploy = [
+    { name = "tensorrt-cu12" },
 ]
 
 [package.dev-dependencies]
@@ -606,7 +610,7 @@ requires-dist = [
     { name = "sentencepiece", specifier = ">=0.2" },
     { name = "statsmodels", specifier = ">=0.14" },
     { name = "streamlit", specifier = ">=1.39" },
-    { name = "tensorrt-cu12", specifier = "==10.16.1.11" },
+    { name = "tensorrt-cu12", marker = "extra == 'deploy'", specifier = "==10.16.1.11" },
     { name = "tokenizers", specifier = "==0.21.1" },
     { name = "torch", marker = "sys_platform != 'linux'", specifier = ">=2.5" },
     { name = "torch", marker = "sys_platform == 'linux'", specifier = ">=2.5", index = "https://download.pytorch.org/whl/cu128" },
@@ -615,6 +619,7 @@ requires-dist = [
     { name = "transformers", specifier = "==4.50.3" },
     { name = "wfdb", specifier = ">=4.1" },
 ]
+provides-extras = ["deploy"]
 
 [package.metadata.requires-dev]
 dev = [

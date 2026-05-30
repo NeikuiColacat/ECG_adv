@@ -68,9 +68,18 @@
       ],
       "artifacts": [
         "${ECG_ADV_DATA_ROOT}/ecgtwin_author_repro/<run>/",
+        "artifacts/evidence_pack/raw/ecgtwin_author_repro_summary.json",
         "artifacts/evidence_pack/figures/training_curves/ibe_stage1_loss_curve.png",
         "artifacts/evidence_pack/figures/training_curves/dit_stage2_loss_curve.png"
-      ]
+      ],
+      "reported_result": {
+        "ibe_final_train_loss": 0.1985,
+        "ibe_final_validation_score": 0.6954,
+        "ibe_best_validation_score": 0.7189,
+        "dit_final_train_loss": 14.6943,
+        "dit_final_validation_loss": 15.5211,
+        "dit_best_validation_loss": 15.0806
+      }
     },
     {
       "paper_item": "Table 6.4",
@@ -111,14 +120,22 @@
       "artifacts": [
         "${ECG_ADV_GRAD_ROOT}/method_a_real2000_seed42*/train_result.json",
         "${ECG_ADV_GRAD_ROOT}/self_distill_v2_*_realfine_*/train_result.json",
+        "artifacts/evidence_pack/raw/train_results/real2000_original.train_result.json",
+        "artifacts/evidence_pack/raw/train_results/no_token_hard_ft.train_result.json",
+        "artifacts/evidence_pack/raw/train_results/center_token_hard_ft.train_result.json",
+        "artifacts/evidence_pack/tables/per_class_main_results.csv",
+        "artifacts/evidence_pack/tables/low_sample_main_results.csv",
         "artifacts/evidence_pack/figures/low_sample_main_results_bar.png"
       ],
       "reported_main_result": {
         "real2000_macro_auroc": 0.8433,
         "real2000_macro_auprc": 0.6234,
+        "no_token_macro_auroc": 0.8669,
+        "no_token_macro_auprc": 0.6828,
         "center_token_macro_auroc": 0.8735,
         "center_token_macro_auprc": 0.7013
-      }
+      },
+      "reported_per_class_table": "artifacts/evidence_pack/tables/per_class_main_results.csv"
     },
     {
       "paper_item": "Table 6.8",
@@ -231,7 +248,7 @@
     },
     {
       "paper_item": "Table 5.2",
-      "name": "PyTorch / TensorRT inference benchmark",
+      "name": "PyTorch / ONNX Runtime / TensorRT inference benchmark",
       "command": "bash scripts/final_round/run_thesis_reproduction.sh benchmark",
       "entrypoints": [
         "scripts/deploy/export_efficientnetv2_onnx.py",

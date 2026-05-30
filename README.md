@@ -23,6 +23,13 @@ Install the Python environment with uv:
 uv sync --all-groups
 ```
 
+TensorRT is optional and tied to the target CUDA/TensorRT runtime. Install the
+deploy extra only on a compatible GPU machine:
+
+```bash
+uv sync --all-groups --extra deploy
+```
+
 Set the data/artifact root. Large datasets, checkpoints, generated ECG pools,
 ONNX files, and TensorRT engines live here instead of in git:
 
@@ -107,6 +114,10 @@ the committed `artifacts/evidence_pack/` result JSONs when the original data-dis
 paths are absent. Use `low_sample_rerun` only when the full synthetic-pretrain
 initialization checkpoints are present.
 
+The tracked `artifacts/samples/generated_ecg_examples/thesis_selected_samples.npz`
+is a tiny curated visualization sample for Figure 3.3. Training-scale generated
+pools, checkpoints, ONNX exports, and TensorRT engines remain external artifacts.
+
 For a quick code and UI smoke check:
 
 ```bash
@@ -135,6 +146,7 @@ Tracked source:
 - `scripts/ecgtwin_author_repro/`
 - `scripts/ecgtwin_gen/`
 - `scripts/deploy/`
+- `scripts/streamlit_demo/`
 - `methods/ecgtwin_gen/prompt_token/`
 - `util/`
 - `artifacts/figures/` for thesis-ready screenshots and ECG example figures
