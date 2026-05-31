@@ -102,6 +102,9 @@ class EfficientNetVictimTierM(nn.Module):
         num_classes: int = 6,
         crop_len: int = TIERM_INPUT_LENGTH,
         model_name: str = "efficientnet1dv2",
+        latent_backend: str = "ecgtwin1024",
+        latent_preproc_length: int = TIERM_PREPROC_LENGTH,
+        latent_amp_clamp: float = TIERM_AMP_CLAMP,
     ):
         super().__init__()
         self.device = torch.device(device)
@@ -109,6 +112,9 @@ class EfficientNetVictimTierM(nn.Module):
         self.num_classes = num_classes
         self.crop_len = crop_len
         self.model_name = normalize_model_name(model_name)
+        self.latent_backend = str(latent_backend)
+        self.latent_preproc_length = int(latent_preproc_length)
+        self.latent_amp_clamp = float(latent_amp_clamp)
         self.model = load_efficientnet_tierM(
             weight_path=weight_path,
             device=device,
@@ -147,25 +153,36 @@ class EfficientNetVictimTierM(nn.Module):
 
     # ---- gradient-preserving VAE decode ----
     def _decode_latent_differentiable(self, latent: torch.Tensor) -> torch.Tensor:
-        """Out-of-place VAE decode — same pattern as 77-class victim."""
+        """Out-of-place VAE decode for the configured latent backend."""
         assert self.ecgtwin is not None, "need ecgtwin_wrapper for latent decode"
-        x = latent / 0.18215                   # out-of-place (avoids VAE_Decoder's in-place /=)
-        decoder = self.ecgtwin.decoder
-        for module in decoder:                 # nn.Sequential: iterate submodules
-            x = module(x)
-        x = x.transpose(1, 2)                  # (B, 12, 1024) → (B, 1024, 12)
-        return x
+        if self.latent_backend == "ecgtwin1024":
+            x = latent / 0.18215               # out-of-place (avoids VAE_Decoder's in-place /=)
+            decoder = self.ecgtwin.decoder
+            for module in decoder:             # nn.Sequential: iterate submodules
+                x = module(x)
+            x = x.transpose(1, 2)              # (B, 12, 1024) -> (B, 1024, 12)
+            return x
+        if self.latent_backend.startswith("diffusets500"):
+            return self.ecgtwin.decode(latent) # (B, 5000, 12), PTB-XL order, normalized
+        raise ValueError(f"unsupported latent_backend={self.latent_backend!r}")
+
+    def decode_latent_to_ecg_ct(self, latent: torch.Tensor) -> torch.Tensor:
+        """Decode latent into PTB-XL-order, globally z-scored ECG `(B,12,L)`."""
+        ecg_tc = self._decode_latent_differentiable(latent)
+        ecg_ct = ecg_tc.transpose(-1, -2)
+        if self.latent_backend == "ecgtwin1024":
+            ecg_ct = ecg_ct[:, ECGTWIN_TO_PTBXL_INDICES, :]
+        if self.latent_amp_clamp > 0:
+            ecg_ct = torch.clamp(ecg_ct, min=-self.latent_amp_clamp, max=self.latent_amp_clamp)
+        if ecg_ct.shape[-1] != self.latent_preproc_length:
+            ecg_ct = F.interpolate(
+                ecg_ct, size=self.latent_preproc_length, mode="linear", align_corners=True
+            )
+        return self._global_zscore(ecg_ct)
 
     # ---- shared latent->logits internal path ----
     def _latent_to_logits(self, latent: torch.Tensor) -> torch.Tensor:
-        ecg_tc = self._decode_latent_differentiable(latent)     # (B, 1024, 12)
-        ecg_ct = ecg_tc.transpose(-1, -2)                       # (B, 12, 1024) [ECGTwin order]
-        ecg_ct = ecg_ct[:, ECGTWIN_TO_PTBXL_INDICES, :]         # PTBXL canonical order
-        ecg_ct = torch.clamp(ecg_ct, min=-TIERM_AMP_CLAMP, max=TIERM_AMP_CLAMP)
-        ecg_ct = F.interpolate(
-            ecg_ct, size=TIERM_PREPROC_LENGTH, mode="linear", align_corners=True
-        )                                                       # (B, 12, 1000) @ 100Hz
-        ecg_ct = self._global_zscore(ecg_ct)                    # global per-sample zscore
+        ecg_ct = self.decode_latent_to_ecg_ct(latent)
         ecg_ct = self._center_crop(ecg_ct, self.crop_len)       # (B, 12, 250)
         return self.model(ecg_ct)                               # (B, 6)
 

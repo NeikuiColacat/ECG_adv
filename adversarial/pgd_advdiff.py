@@ -32,10 +32,7 @@ _PROJECT_ROOT = Path(__file__).parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from adversarial.efficientnet_victim_tierM import (  # noqa: E402
-    EfficientNetVictimTierM, TIERM_AMP_CLAMP, TIERM_PREPROC_LENGTH,
-)
-from util.lead_utils import ECGTWIN_TO_PTBXL_INDICES  # noqa: E402
+from adversarial.efficientnet_victim_tierM import EfficientNetVictimTierM  # noqa: E402
 
 
 class PGDAdvDiffGenerator:
@@ -86,7 +83,7 @@ class PGDAdvDiffGenerator:
         """
         z0 = z0.to(self.device).detach()
         y0 = y0.to(self.device).detach()
-        assert z0.dim() == 3 and z0.shape[-2:] == (4, 128), f"bad z0 shape: {z0.shape}"
+        assert z0.dim() == 3, f"bad z0 shape: {z0.shape}"
         # num_classes is read off the victim so the same code works for Tier-M (6),
         # Super5 (5), or any future scheme — this is the only line that was
         # hard-coded to 6 in the Mode A pipeline (Plan Rev 8 Issue #4).
@@ -192,20 +189,12 @@ class PGDAdvDiffGenerator:
         return delta * factor.view(-1, 1, 1)
 
     def _decode_to_ptbxl_1000(self, z: torch.Tensor) -> torch.Tensor:
-        """Replicate victim's internal preprocessing chain up to z-score (no crop).
+        """Replicate victim's latent preprocessing chain up to z-score (no crop).
 
-        Output: (B, 12, 1000) PTBXL-order, clamp(±3), z-scored.
+        Output: (B, 12, L) PTBXL-order, optional clamp, z-scored.
         This matches SynthCenterDataset.__init__ expected signals format.
         """
-        ecg_tc = self.victim._decode_latent_differentiable(z)       # (B, 1024, 12)
-        ecg_ct = ecg_tc.transpose(-1, -2)                           # (B, 12, 1024) ECGTwin order
-        ecg_ct = ecg_ct[:, ECGTWIN_TO_PTBXL_INDICES, :]             # PTBXL order
-        ecg_ct = torch.clamp(ecg_ct, min=-TIERM_AMP_CLAMP, max=TIERM_AMP_CLAMP)
-        ecg_ct = F.interpolate(
-            ecg_ct, size=TIERM_PREPROC_LENGTH, mode="linear", align_corners=True
-        )                                                           # (B, 12, 1000)
-        ecg_ct = self.victim._global_zscore(ecg_ct)                 # global z-score
-        return ecg_ct
+        return self.victim.decode_latent_to_ecg_ct(z)
 
 
 if __name__ == "__main__":

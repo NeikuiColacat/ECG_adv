@@ -66,6 +66,7 @@ from scripts.triple_labels.label_schemes import (  # noqa: E402
     snomed_list_to_super5,
 )
 from ecg_adv_gen.evaluation import assemble_target_refexcluded_views, compute_macro_metric_dict  # noqa: E402
+from ecg_adv_gen.data import load_kshot_ref_record_ids  # noqa: E402
 from ecg_adv_gen.training import compute_pos_weight, masked_bce_with_logits  # noqa: E402
 
 
@@ -445,6 +446,9 @@ def main() -> None:
     p.add_argument("--limit_ptbxl", type=int, default=0)
     p.add_argument("--limit_per_center", type=int, default=0)
     p.add_argument("--force_features", action="store_true")
+    p.add_argument("--ref_root", default=str(REF_ROOT))
+    p.add_argument("--ref_k", type=int, default=500)
+    p.add_argument("--ref_seed", type=int, default=42)
     p.add_argument(
         "--feature_cache_dir",
         default="",
@@ -522,7 +526,17 @@ def main() -> None:
         args.preprocess_policy,
     )
     pn_scores = predict_head(head, pn_payload["features"], args.head_batch_size, device)
-    ref_ids_by_center = load_ref_ids(REF_ROOT, TARGET_CENTERS)
+    ref_ids_by_center = {
+        center: set(
+            load_kshot_ref_record_ids(
+                args.ref_root,
+                center,
+                k=args.ref_k,
+                seed=args.ref_seed,
+            )
+        )
+        for center in TARGET_CENTERS
+    }
     views = evaluate_pn2021_views(
         pn_payload["labels"],
         pn_scores,

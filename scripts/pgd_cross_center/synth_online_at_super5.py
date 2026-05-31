@@ -95,6 +95,7 @@ from scripts.triple_labels.train_ptbxl import (  # noqa: E402
 from scripts.triple_labels.eval_crosscenter import parse_header_snomed  # noqa: E402
 from scripts.crosscenter_v2.preprocess_utils import unified_preprocess_to_1000  # noqa: E402
 from util.ecgtwin_utils import ECGTwinWrapper  # noqa: E402
+from ecg_adv_gen.vae import VAE500RuntimeWrapper  # noqa: E402
 from ecg_adv_gen.adaptation import (  # noqa: E402
     SameLabelLatentIndex,
     StratifiedPoolWalker,
@@ -139,6 +140,30 @@ def set_all_seeds(seed: int) -> None:
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+
+
+def configure_torch_acceleration(args: argparse.Namespace) -> None:
+    """Apply opt-in PyTorch runtime speed knobs for long GPU runs."""
+    if getattr(args, "allow_tf32", False) and torch.cuda.is_available():
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+    if getattr(args, "matmul_precision", ""):
+        torch.set_float32_matmul_precision(args.matmul_precision)
+    if getattr(args, "cudnn_benchmark", False):
+        torch.backends.cudnn.deterministic = False
+        torch.backends.cudnn.benchmark = True
+
+
+def dataloader_perf_kwargs(args: argparse.Namespace) -> Dict[str, Any]:
+    kwargs: Dict[str, Any] = {
+        "num_workers": args.num_workers,
+        "pin_memory": bool(args.pin_memory),
+    }
+    if args.num_workers > 0:
+        kwargs["persistent_workers"] = bool(args.persistent_workers)
+        if args.prefetch_factor and args.prefetch_factor > 0:
+            kwargs["prefetch_factor"] = int(args.prefetch_factor)
+    return kwargs
 
 
 def train_source_logit_anchor_epoch(
@@ -902,7 +927,7 @@ def compute_synth_sanity_auroc(
 
 def run_pgd_on_synth_pool(
     pgd_gen: PGDAdvDiffGenerator,
-    synth_latents: np.ndarray,    # (N, 4, 128)
+    synth_latents: np.ndarray,    # (N, C_lat, L_lat)
     synth_labels: np.ndarray,     # (N, C) one-hot
     K_anchor: int,
     pgd_batch: int,
@@ -926,8 +951,8 @@ def run_pgd_on_synth_pool(
     with smoke / Plan Rev 8.
 
     Returns:
-      adv_signals_ct:   (K, 12, 1000)  float32
-      anchor_signals_ct:(K, 12, 1000)  float32  (clean reference for sem-gate)
+      adv_signals_ct:   (K, 12, L)  float32
+      anchor_signals_ct:(K, 12, L)  float32  (clean reference for sem-gate)
       labels_one_hot:   (K, C)         float32
       delta_stats:      mean / max L2 norm plus optional latent-hull weight stats
     """
@@ -938,8 +963,9 @@ def run_pgd_on_synth_pool(
         pick = picked_indices
 
     if len(pick) == 0:
-        return (np.empty((0, 12, 1000), dtype=np.float32),
-                np.empty((0, 12, 1000), dtype=np.float32),
+        signal_len = int(getattr(pgd_gen.victim, "latent_preproc_length", pgd_gen.victim.crop_len))
+        return (np.empty((0, 12, signal_len), dtype=np.float32),
+                np.empty((0, 12, signal_len), dtype=np.float32),
                 np.empty((0, synth_labels.shape[1]), dtype=np.float32),
                 {"mean_delta_norm": float('nan'), "max_delta_norm": float('nan')})
 
@@ -1155,13 +1181,13 @@ def parse_args():
     p.add_argument("--ref_meta_json",
                    help="path to {tag}_k200.meta.json (for record_id exclusion in eval)")
     p.add_argument("--synth_npz", required=True,
-                   help="Stage 1 latent npz: {latents (N,4,128), labels (N,5)}")
+                   help="Latent npz: {latents (N,C,L), labels (N,5)}")
     p.add_argument("--init_ckpt", default=DEFAULT_SUPER5_CKPT)
     p.add_argument("--model_name", default="efficientnet1dv2",
                    choices=available_model_names())
     p.add_argument("--output_dir", required=True)
     p.add_argument("--target_real_npz", default="",
-                   help="Optional selected target-center real ECG npz with signals (N,1000,12) and labels.")
+                   help="Optional selected target-center real ECG npz with signals (N,L,12) and labels.")
 
     # PN2021 quick eval
     p.add_argument("--data_dir", default=DEFAULT_PN2021_DIR)
@@ -1186,6 +1212,21 @@ def parse_args():
     p.add_argument("--ptbxl_raw", default=DEFAULT_PTBXL_RAW)
     p.add_argument("--ptbxl_csv", default=DEFAULT_PTBXL_CSV)
     p.add_argument("--ptbxl_prep", default=DEFAULT_PTBXL_PREP)
+    p.add_argument("--sampling_rate", type=int, default=100)
+    p.add_argument("--input_len", type=int, default=1000)
+    p.add_argument("--preprocess_mode", default="legacy_ecgfounder_filter",
+                   choices=["minimal_resample", "legacy_ecgfounder_filter",
+                            "raw_for_generation_or_digital"])
+    p.add_argument("--norm_mode", default="per_sample_global",
+                   choices=["per_sample_global", "none"])
+    p.add_argument("--vae_backend", default="ecgtwin1024",
+                   choices=["ecgtwin1024", "diffusets500_v1"],
+                   help="Latent decoder backend used for online AT.")
+    p.add_argument("--vae500_ckpt", default="",
+                   help="Required when --vae_backend diffusets500_v1.")
+    p.add_argument("--vae500_variant", default=None)
+    p.add_argument("--latent_amp_clamp", type=float, default=3.0,
+                   help="Clamp decoded latent ECG before z-score; <=0 disables.")
 
     # PGD (Plan Rev 13: K_pgd=10 + ε=2.0 + K_anchor=300)
     p.add_argument("--pgd_eps", type=float, default=2.0)
@@ -1462,6 +1503,20 @@ def parse_args():
     p.add_argument("--weight_decay", type=float, default=1e-4)
     p.add_argument("--batch_size", type=int, default=128)
     p.add_argument("--num_workers", type=int, default=12)      # Issue #46
+    p.add_argument("--pin_memory", action=argparse.BooleanOptionalAction, default=True)
+    p.add_argument("--persistent_workers", action=argparse.BooleanOptionalAction, default=True)
+    p.add_argument("--prefetch_factor", type=int, default=4)
+    p.add_argument("--allow_tf32", action="store_true")
+    p.add_argument(
+        "--matmul_precision",
+        choices=["highest", "high", "medium"],
+        default="high",
+    )
+    p.add_argument(
+        "--cudnn_benchmark",
+        action="store_true",
+        help="Enable CuDNN benchmark for fixed-shape long runs; disables deterministic CuDNN.",
+    )
     p.add_argument("--anchor_lambda", type=float, default=0.05)
     p.add_argument("--ewa_decay", type=float, default=0.999)
     p.add_argument("--grad_clip", type=float, default=1.0)
@@ -1507,7 +1562,7 @@ def load_synth_pool(synth_npz_path: str) -> Tuple[np.ndarray, np.ndarray, str, D
       - {basename}.npz       (signals + labels): auto-finds {basename}.latent.npz
       - {basename}.latent.npz (latents + labels): used directly
 
-    Returns (latents (N,4,128), labels (N,C), center_name, source_meta).
+    Returns (latents (N,C_lat,L_lat), labels (N,C), center_name, source_meta).
     """
     p = Path(synth_npz_path)
     if p.name.endswith(".latent.npz"):
@@ -1524,8 +1579,7 @@ def load_synth_pool(synth_npz_path: str) -> Tuple[np.ndarray, np.ndarray, str, D
     latents = d["latents"]
     labels = d["labels"]
     center = str(d["center_name"]) if "center_name" in d.files else "?"
-    assert latents.ndim == 3 and latents.shape[1:] == (4, 128), \
-        f"bad synth latent shape: {latents.shape}"
+    assert latents.ndim == 3, f"bad synth latent shape: {latents.shape}"
     assert labels.shape[0] == latents.shape[0]
 
     source_ids = None
@@ -1559,6 +1613,7 @@ def load_synth_pool(synth_npz_path: str) -> Tuple[np.ndarray, np.ndarray, str, D
 def main():
     args = parse_args()
     set_all_seeds(args.seed)
+    configure_torch_acceleration(args)
     os.makedirs(args.output_dir, exist_ok=True)
 
     print("=" * 72)
@@ -1569,8 +1624,25 @@ def main():
     print("-" * 72)
 
     # ── Build Super5 victim early (needed for both sanity + training) ──────
-    print("[setup] Loading ECGTwin (encoder + decoder, no text model)...")
-    ecgtwin = ECGTwinWrapper(device=args.device, load_encoder=True, load_text_model=False)
+    if args.vae_backend == "ecgtwin1024":
+        print("[setup] Loading ECGTwin (encoder + decoder, no text model)...")
+        ecgtwin = ECGTwinWrapper(device=args.device, load_encoder=True, load_text_model=False)
+        latent_preproc_length = 1000
+    elif args.vae_backend == "diffusets500_v1":
+        if not args.vae500_ckpt:
+            raise ValueError("--vae500_ckpt is required when --vae_backend diffusets500_v1")
+        print(f"[setup] Loading VAE500 backend from {args.vae500_ckpt}")
+        ecgtwin = VAE500RuntimeWrapper(
+            args.vae500_ckpt,
+            variant=args.vae500_variant,
+            device=args.device,
+        )
+        latent_preproc_length = int(args.input_len)
+        if args.roundtrip_anchor_n > 0:
+            print("[setup] disabling roundtrip_anchor_n for VAE500 backend")
+            args.roundtrip_anchor_n = 0
+    else:
+        raise ValueError(f"unsupported --vae_backend {args.vae_backend!r}")
     print(f"[setup] Loading Super5 victim from {args.init_ckpt}")
     victim = EfficientNetVictimTierM(
         weight_path=args.init_ckpt,
@@ -1579,6 +1651,9 @@ def main():
         num_classes=NUM_SUPER5,
         crop_len=args.crop_len,
         model_name=args.model_name,
+        latent_backend=args.vae_backend,
+        latent_preproc_length=latent_preproc_length,
+        latent_amp_clamp=args.latent_amp_clamp,
     )
 
     # ── Plan Rev 13 Stage 0.4 sanity-build mode (early exit) ────────────────
@@ -1683,10 +1758,25 @@ def main():
         args.ptbxl_csv, scheme, label_cache, folds=[9]
     )
 
-    cache_path = args.ptbxl_prep if os.path.exists(args.ptbxl_prep) else \
-        os.path.join(args.output_dir, "ptbxl_preprocessed.npy")
+    use_default_100hz_cache = (
+        args.ptbxl_prep == DEFAULT_PTBXL_PREP
+        and int(args.sampling_rate) == 100
+        and int(args.input_len) == 1000
+    )
+    if os.path.exists(args.ptbxl_prep) and (args.ptbxl_prep != DEFAULT_PTBXL_PREP or use_default_100hz_cache):
+        cache_path = args.ptbxl_prep
+    else:
+        cache_path = os.path.join(args.output_dir, "ptbxl_preprocessed.npy")
     print(f"[setup] PTBXL preprocessed cache → {cache_path}")
-    all_sig = preprocess_ptbxl_all(args.ptbxl_raw, cache_path)
+    all_sig = preprocess_ptbxl_all(
+        args.ptbxl_raw,
+        cache_path,
+        csv_path=args.ptbxl_csv,
+        target_fs=args.sampling_rate,
+        target_len=args.input_len,
+        preprocess_mode=args.preprocess_mode,
+        norm_mode=args.norm_mode,
+    )
     train_signals = np.asarray(all_sig[train_idx])
     val_signals = np.asarray(all_sig[val_idx])
 
@@ -1708,10 +1798,8 @@ def main():
             train_ds,
             batch_size=args.batch_size,
             shuffle=True,
-            num_workers=args.num_workers,
-            pin_memory=True,
             drop_last=True,
-            persistent_workers=args.num_workers > 0,
+            **dataloader_perf_kwargs(args),
         )
         print(
             f"[setup] source-logit anchor enabled: weight={args.source_logit_anchor_weight} "
@@ -1732,10 +1820,13 @@ def main():
             )
         if real_signals.ndim != 3:
             raise ValueError(f"target_real_npz signals must be 3D, got {real_signals.shape}")
-        if real_signals.shape[1:] == (12, 1000):
+        if real_signals.shape[1:] == (12, args.input_len):
             real_signals = real_signals.transpose(0, 2, 1)
-        if real_signals.shape[1:] != (1000, 12):
-            raise ValueError(f"target_real_npz signals must be (N,1000,12) or (N,12,1000), got {real_signals.shape}")
+        if real_signals.shape[1:] != (args.input_len, 12):
+            raise ValueError(
+                f"target_real_npz signals must be (N,{args.input_len},12) "
+                f"or (N,12,{args.input_len}), got {real_signals.shape}"
+            )
         if real_labels.shape[0] != real_signals.shape[0] or real_labels.shape[1] != NUM_SUPER5:
             raise ValueError(f"target_real_npz labels mismatch: signals={real_signals.shape} labels={real_labels.shape}")
         if args.quick_eval_source == "target_real_val":
@@ -1800,8 +1891,12 @@ def main():
     # reduction='none' for mask × bce (-1 sentinel handling)
     criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight, reduction='none')
 
-    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False,
-                            num_workers=args.num_workers, pin_memory=True)
+    val_loader = DataLoader(
+        val_ds,
+        batch_size=args.batch_size,
+        shuffle=False,
+        **dataloader_perf_kwargs(args),
+    )
 
     # ── Roundtrip anchor (cached) ────────────────────────────────────────────
     rt_cache = os.path.join(args.output_dir, f"roundtrip_anchor_n{args.roundtrip_anchor_n}.npz")
@@ -2210,6 +2305,7 @@ def main():
             # Semantic (Einthoven, HR, QRS)
             sem_info = compute_semantic_gate(
                 adv_signals, anc_signals,
+                fs=args.sampling_rate,
                 einthoven_p95_max=args.einthoven_p95_max,
             )
 
@@ -2355,9 +2451,8 @@ def main():
         if len(streams) == 1:
             only_ds = streams[0][0]
             train_loader = DataLoader(only_ds, batch_size=args.batch_size, shuffle=True,
-                                      num_workers=args.num_workers, pin_memory=True,
                                       drop_last=True,
-                                      persistent_workers=args.num_workers > 0)
+                                      **dataloader_perf_kwargs(args))
         else:
             weights = []
             total_n = 0
@@ -2371,9 +2466,8 @@ def main():
             sampler = WeightedRandomSampler(weights, num_samples=total_n, replacement=True)
             combined = ConcatDataset([s[0] for s in streams])
             train_loader = DataLoader(combined, batch_size=args.batch_size, sampler=sampler,
-                                      num_workers=args.num_workers, pin_memory=True,
                                       drop_last=True,
-                                      persistent_workers=args.num_workers > 0)
+                                      **dataloader_perf_kwargs(args))
 
         # Phase D: train
         if freeze_backbone_eval_fn is not None:

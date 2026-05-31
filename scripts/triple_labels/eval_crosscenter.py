@@ -77,6 +77,8 @@ class PN2021CenterDataset(Dataset):
         record_paths,
         labels,
         crop_len=250,
+        sampling_rate=100,
+        input_len=1000,
         preprocess_mode='legacy_ecgfounder_filter',
         norm_mode='per_sample_global',
     ):
@@ -97,7 +99,7 @@ class PN2021CenterDataset(Dataset):
             sig_names = [s.strip() for s in rec.sig_name] if getattr(rec, 'sig_name', None) else None
             proc = unified_preprocess_to_1000(
                 sig.astype(np.float32), fs=rec.fs, source_leads=sig_names,
-                target_fs=100, target_len=1000,
+                target_fs=sampling_rate, target_len=input_len,
                 preprocess_mode=preprocess_mode, norm_mode=norm_mode,
             )
             if proc is None:
@@ -153,8 +155,8 @@ def _pn2021_preprocess_config(args, include_crop=False):
         norm_mode=args.norm_mode,
     )
     cfg = {
-        'target_fs': 100,
-        'target_len': 1000,
+        'target_fs': int(getattr(args, 'sampling_rate', 100)),
+        'target_len': int(getattr(args, 'input_len', 1000)),
         'apply_filter': bool(apply_filter),
         'apply_zscore': bool(apply_zscore),
         'preprocess_mode': str(args.preprocess_mode),
@@ -203,7 +205,7 @@ def _pn2021_cache_path(args, scheme, center):
     os.makedirs(cache_dir, exist_ok=True)
     return os.path.join(
         cache_dir,
-        f"{args.scheme}_{center}_100hz1000_{PN2021_EVAL_CACHE_VERSION}.npz",
+        f"{args.scheme}_{center}_{int(args.sampling_rate)}hz{int(args.input_len)}_{PN2021_EVAL_CACHE_VERSION}.npz",
     )
 
 
@@ -213,7 +215,7 @@ def _pn2021_mmap_cache_path(args, scheme, center):
         return None
     return os.path.join(
         cache_dir,
-        f"{args.scheme}_{center}_100hz1000_{PN2021_EVAL_CACHE_VERSION}",
+        f"{args.scheme}_{center}_{int(args.sampling_rate)}hz{int(args.input_len)}_{PN2021_EVAL_CACHE_VERSION}",
     )
 
 
@@ -358,7 +360,7 @@ def _load_or_build_pn2021_center(center, center_dir, scheme, args):
         sig_names = [s.strip() for s in rec.sig_name] if getattr(rec, 'sig_name', None) else None
         proc = unified_preprocess_to_1000(
             sig.astype(np.float32), fs=rec.fs, source_leads=sig_names,
-            target_fs=100, target_len=1000,
+            target_fs=args.sampling_rate, target_len=args.input_len,
             preprocess_mode=args.preprocess_mode, norm_mode=args.norm_mode,
         )
         if proc is None:
@@ -373,7 +375,7 @@ def _load_or_build_pn2021_center(center, center_dir, scheme, args):
         labels = np.stack(labels).astype(np.float32)
         record_ids = np.asarray(record_ids, dtype=str)
     else:
-        signals = np.zeros((0, 1000, 12), dtype=np.float32)
+        signals = np.zeros((0, int(args.input_len), 12), dtype=np.float32)
         labels = np.zeros((0, scheme['num_classes']), dtype=np.float32)
         record_ids = np.asarray([], dtype=str)
     load_time = time.time() - t0
@@ -723,6 +725,10 @@ def main():
     p.add_argument('--device', default='cuda')
     p.add_argument('--model_name', default='efficientnet1dv2',
                    choices=available_model_names())
+    p.add_argument('--sampling_rate', type=int, default=100,
+                   help='Target sampling rate for PN2021 preprocessing/cache. Default keeps legacy 100Hz behavior.')
+    p.add_argument('--input_len', type=int, default=1000,
+                   help='Target pre-crop sequence length. Use 5000 with --sampling_rate 500.')
     p.add_argument('--crop_len', type=int, default=250)
     p.add_argument('--batch_size', type=int, default=256)
     p.add_argument('--num_workers', type=int, default=4)

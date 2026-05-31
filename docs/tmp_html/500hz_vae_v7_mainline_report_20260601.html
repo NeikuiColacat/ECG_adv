@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>500Hz VAE V7 Mainline Report</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 32px; color: #1f2937; line-height: 1.55; }
+    h1, h2 { color: #111827; }
+    table { border-collapse: collapse; width: 100%; margin: 16px 0 28px; font-size: 14px; }
+    th, td { border: 1px solid #d1d5db; padding: 8px 10px; text-align: right; }
+    th:first-child, td:first-child { text-align: left; }
+    th { background: #f3f4f6; }
+    code, pre { background: #f3f4f6; border-radius: 4px; }
+    pre { padding: 12px; overflow-x: auto; }
+    .lead { font-size: 17px; max-width: 980px; }
+  </style>
+</head>
+<body>
+  <h1>500Hz VAE V7 Mainline Report</h1>
+  <p class="lead">The 500Hz branch is technically viable. The PTB-XL-only VAE reconstructs records500 ECG well enough for downstream latent-hull experiments, and VAE500 online adversarial training improves all four PN2021 target centers after K500 ref exclusion.</p>
+
+  <h2>EfficientNet1DV2 Main Result</h2>
+  <table>
+    <thead><tr><th>method</th><th>PN2021 4-center AUROC / AUPRC</th></tr></thead>
+    <tbody>
+      <tr><td>500Hz EfficientNet1DV2 baseline</td><td>0.8336 / 0.5048</td></tr>
+      <tr><td>500Hz EfficientNet1DV2 + VAE500 online AT</td><td>0.8578 / 0.5378</td></tr>
+      <tr><td>delta</td><td>+2.42pp / +3.30pp</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Input And Acceleration Policy</h2>
+  <p>Input is <code>minimal_resample</code>, 500Hz, 5000 samples = 10s. EfficientNet1DV2 uses per-sample global z-score. Benchmark backbones use dataset-level train mean/std to match <code>ecg_ptbxl_benchmarking</code>. PTB-XL arrays are loaded into RAM when practical. PN2021 500Hz evaluation keeps mmap caches on disk, then copies one center at a time into RAM for inference. Safe acceleration defaults are bf16 AMP where appropriate, TF32, CuDNN benchmark, fused AdamW, pinned memory, persistent workers, and prefetching.</p>
+
+  <h2>VAE500 Audit</h2>
+  <table>
+    <thead><tr><th>metric</th><th>value</th></tr></thead>
+    <tbody>
+      <tr><td>validation Pearson</td><td>0.9976</td></tr>
+      <tr><td>first-difference Pearson</td><td>0.9494</td></tr>
+      <tr><td>leads with Pearson >= 0.90</td><td>12 / 12</td></tr>
+      <tr><td>invalid decoded samples</td><td>0</td></tr>
+    </tbody>
+  </table>
+
+  <h2>EfficientNet1DV2 Target-Center Results</h2>
+  <table>
+    <thead><tr><th>center</th><th>baseline all-zero-kept</th><th>baseline drop-all-zero</th><th>VAE500 AT all-zero-kept</th><th>VAE500 AT drop-all-zero</th></tr></thead>
+    <tbody>
+      <tr><td>ningbo</td><td>0.8598 / 0.4650</td><td>0.8776 / 0.6375</td><td>0.8774 / 0.4986</td><td>0.9013 / 0.6840</td></tr>
+      <tr><td>chapman_shaoxing</td><td>0.8602 / 0.4150</td><td>0.8787 / 0.5950</td><td>0.8728 / 0.4459</td><td>0.8965 / 0.6405</td></tr>
+      <tr><td>cpsc_2018</td><td>0.7958 / 0.5427</td><td>0.8464 / 0.6702</td><td>0.8482 / 0.5932</td><td>0.9009 / 0.7674</td></tr>
+      <tr><td>georgia</td><td>0.8185 / 0.5963</td><td>0.8264 / 0.6850</td><td>0.8327 / 0.6135</td><td>0.8426 / 0.7075</td></tr>
+      <tr><td>mean</td><td>0.8336 / 0.5048</td><td>0.8573 / 0.6470</td><td>0.8578 / 0.5378</td><td>0.8853 / 0.6999</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Historical 100Hz Versus 500Hz</h2>
+  <p>The old 100Hz results are historical and not strictly apples-to-apples with the current v7 mapping. They are useful only as a sanity check that the VAE-only online AT effect size remains similar after moving to 500Hz.</p>
+  <table>
+    <thead><tr><th>branch</th><th>mapping/input</th><th>baseline</th><th>VAE online AT</th><th>delta</th></tr></thead>
+    <tbody>
+      <tr><td>historical 100Hz EfficientNet1DV2</td><td>older mapping, 100Hz/1000</td><td>0.8427 / 0.5134</td><td>0.8671 / 0.5464</td><td>+2.45pp / +3.29pp</td></tr>
+      <tr><td>current 500Hz EfficientNet1DV2</td><td>v7, 500Hz/5000</td><td>0.8336 / 0.5048</td><td>0.8578 / 0.5378</td><td>+2.42pp / +3.30pp</td></tr>
+    </tbody>
+  </table>
+
+  <h2>ECGFounder Branch</h2>
+  <table>
+    <thead><tr><th>method</th><th>four target-center mean</th><th>interpretation</th></tr></thead>
+    <tbody>
+      <tr><td>frozen linear probe</td><td>0.8610 / 0.5565</td><td>strong frozen foundation baseline</td></tr>
+      <tr><td>direct K500 head fine-tune</td><td>0.9086 / 0.6739</td><td>strongest current K500 adaptation control</td></tr>
+      <tr><td>VAE500 online AT from direct K500 head</td><td>0.9086 / 0.6739</td><td>epoch-0 selected; no added gain in first recipe</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Benchmark Backbones</h2>
+  <table>
+    <thead><tr><th>model</th><th>PTB-XL fold10</th><th>PN2021 4-center mean</th></tr></thead>
+    <tbody>
+      <tr><td>fastai_inception1d</td><td>0.9247 / 0.8138</td><td>0.8452 / 0.4971</td></tr>
+      <tr><td>fastai_resnet1d_wang</td><td>0.9175 / 0.7984</td><td>0.8246 / 0.4833</td></tr>
+      <tr><td>fastai_xresnet1d50</td><td>0.9206 / 0.8079</td><td>0.8511 / 0.5120</td></tr>
+      <tr><td>fastai_fcn_wang</td><td>0.9084 / 0.7869</td><td>0.8245 / 0.4838</td></tr>
+      <tr><td>fastai_schirrmeister</td><td>0.9070 / 0.7651</td><td>0.8264 / 0.4671</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Interpretation</h2>
+  <p>The most paper-safe claim is that a PTB-XL-only 500Hz VAE latent space can act as an on-manifold online adversarial regularizer for 500Hz EfficientNet1DV2 Super5 cross-center adaptation. Direct ECGTwin/DiT synthetic samples should remain an ablation, while ECGFounder is a strong foundation-model comparison and direct K500 adaptation control.</p>
+</body>
+</html>

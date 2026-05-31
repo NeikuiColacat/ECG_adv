@@ -114,9 +114,9 @@ class LatentHullPGDGenerator(PGDAdvDiffGenerator):
         """Optimize same-label mixture weights and return decoded adv signals.
 
         Args:
-          z0: (B,4,128) anchor latent.
+          z0: (B,C,L) anchor latent.
           y0: (B,C) multi-hot label.
-          candidate_latents: (B,M,4,128), same-label candidates.
+          candidate_latents: (B,M,C,L), same-label candidates.
           init_logits: optional (B,M). If omitted, candidate 0 starts dominant.
 
         Returns:
@@ -126,7 +126,7 @@ class LatentHullPGDGenerator(PGDAdvDiffGenerator):
         z0 = z0.to(self.device).detach().float()
         y0 = y0.to(self.device).detach().float()
         cand = candidate_latents.to(self.device).detach().float()
-        if cand.dim() != 4 or cand.shape[0] != z0.shape[0] or cand.shape[2:] != (4, 128):
+        if cand.dim() != 4 or cand.shape[0] != z0.shape[0] or cand.shape[2:] != z0.shape[1:]:
             raise ValueError(f"bad candidate_latents shape: {tuple(cand.shape)}")
         if y0.dim() != 2 or y0.shape[-1] != self.victim.num_classes:
             raise ValueError(f"bad y0 shape: {tuple(y0.shape)}")

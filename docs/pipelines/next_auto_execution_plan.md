@@ -1,5 +1,115 @@
 # Next Auto Execution Plan
 
+## Active Plan Override, 2026-05-31
+
+当前新的自动执行主计划已经切换到：
+
+```text
+docs/pipelines/500hz_vae_v7_mainline_rebuild_pipeline.md
+```
+
+本轮目标不是继续旧的 100Hz center-token 队列，而是：
+
+```text
+1. 多核压缩/归档暂时不用的冷 artifacts，腾出 500Hz 分支空间；
+2. 借助 DiffuSETS 参考代码实现并训练 PTB-XL-only 500Hz VAE；
+3. 在 PN2021 Super5 v7 标签映射下重跑 500Hz EfficientNet1DV2、ECGFounder、
+   model/ecg_ptbxl_benchmarking backbones；
+4. 使用新的 500Hz VAE 重新验证 VAE-only real-anchor online AT 是否还能带来
+   AUROC/AUPRC 增益。
+```
+
+## Active Execution Status, 2026-06-01
+
+当前 500Hz 主线进度：
+
+```text
+Phase 1 disk recovery:
+  done. graduate_project 已压缩归档并校验后删除原目录；
+  regenerable PN2021-C cache 已记录 manifest 后删除；
+  /root/autodl-tmp 当前约 148G free after 500Hz PN2021 mmap cache and runs。
+
+Phase 2 PTB-XL records500 VAE cache:
+  done. /root/autodl-tmp/vae500/ptbxl_records500_v7/cache_v1
+  train/val/audit = 17418 / 2183 / 2198 records, shape 5000 x 12。
+
+Phase 3 PTB-XL-only 500Hz VAE:
+  numeric + 32-sample visual audit passed.
+  accepted checkpoint:
+  /root/autodl-tmp/vae500/ptbxl_records500_v7/diffusets500_v1_fast_b64_lc025_20260601/checkpoints/best.pt
+
+Phase 4 500Hz EfficientNet1DV2 baseline:
+  done. accepted run:
+  /root/autodl-tmp/triple_labels/super5_v7_effnet1dv2_500hz_full10_b128_20260601
+  PTB-XL fold10 = 0.9131 / 0.7867
+  PN2021 4-center all-zero-kept mean = 0.8347 / 0.5106
+  PN2021 4-center drop-all-zero mean = 0.8574 / 0.6468
+  PN2021 7-center all-zero-kept mean = 0.7812 / 0.4764
+
+Torch acceleration policy:
+  VAE training used RAM cache, batch_size=64, 8 workers, prefetch_factor=4,
+  bf16 AMP, TF32, fused AdamW. torch.compile was tested but disabled for the
+  VAE because PyTorch 2.1.1 failed on the dynamic interpolation path.
+  EfficientNet / benchmark 500Hz runs use the same safe acceleration defaults:
+  RAM-loaded PTB-XL caches where practical, bf16 AMP, TF32, CuDNN benchmark,
+  fused AdamW, pinned memory, persistent workers, and prefetching. PN2021 500Hz
+  eval uses mmap cache on disk, then copies one center at a time into RAM.
+
+Phase 5 EfficientNet1DV2 VAE500 online AT:
+  Phase 5 EfficientNet1DV2 VAE500 online AT is done for four centers.
+  Ref-excluded all-zero-kept four-center mean:
+    baseline 0.8336 / 0.5048
+    VAE500 online AT 0.8578 / 0.5378
+    delta +2.42pp / +3.30pp
+  Detailed report:
+    docs/tmp_md/vae500_lhat_four_center_20260601.md
+
+Phase 6 ECGFounder 500Hz v7:
+  done for seed42 first pass.
+  Frozen linear probe PTB-XL fold10 = 0.9191 / 0.7952.
+  Direct K500 head fine-tune target-center results:
+    ningbo 0.9301 / 0.6444
+    chapman_shaoxing 0.9311 / 0.6367
+    cpsc_2018 0.8796 / 0.6618
+    georgia 0.8937 / 0.7527
+  VAE500-online-AT branch initialized from direct K500 selected epoch 0 for
+  all centers, so it did not improve over direct K500 in the first recipe.
+  Detailed report:
+    docs/tmp_md/ecgfounder_500hz_v7_phase6_20260601.md
+
+Phase 7 model/ecg_ptbxl_benchmarking 500Hz direct comparison:
+  done for five backbones.
+  Run root:
+    /root/autodl-tmp/ptbxl_benchmarking_500hz_super5_v7/five_backbones_full30_20260601
+  Added:
+    scripts/triple_labels/train_ptbxl_benchmarking_500hz_super5.py
+    scripts/triple_labels/eval_ptbxl_benchmarking_500hz_super5.py
+  Best direct benchmark:
+    fastai_xresnet1d50
+    PTB-XL fold10 = 0.9206 / 0.8079
+    PN2021 4-center target K500-excluded mean = 0.8511 / 0.5120
+  Detailed report:
+    docs/tmp_md/ptbxl_benchmarking_500hz_v7_phase7_20260601.md
+
+Phase 8 unified status report:
+  done.
+  Reports:
+    docs/tmp_md/500hz_vae_v7_mainline_report_20260601.md
+    docs/tmp_html/500hz_vae_v7_mainline_report_20260601.html
+  Includes:
+    all-zero-kept and drop-all-zero PN2021 views,
+    historical 100Hz versus current 500Hz effect-size comparison,
+    EfficientNet1DV2, ECGFounder, and five benchmark direct backbones.
+
+Remaining optional follow-up:
+  Add a generic benchmark victim/model-builder adapter if we want VAE500
+  online AT on the five ecg_ptbxl_benchmarking backbones. Current online AT
+  implementation is centered on EfficientNet1DV2.
+```
+
+用户已经确认 500Hz 分支的关键决策。下面的旧 2026-05-03 队列保留为历史记录，
+不再作为当前默认自动执行顺序。
+
 Date: 2026-05-03.
 
 本文档替换旧的自动执行队列。当前目标是围绕一个新的 clean EfficientNet1DV2

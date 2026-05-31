@@ -506,8 +506,8 @@ class SameLabelLatentIndex:
         return self.rng.choice(local_pool, size=M, replace=False).astype(np.int64)
 
     def candidates_for(self, anchor_indices: np.ndarray, M: int) -> np.ndarray:
-        """Return ``(B, M, 4, 128)`` same-label candidate latents."""
-        out = np.empty((len(anchor_indices), M, 4, 128), dtype=np.float32)
+        """Return ``(B, M, *latent_shape)`` same-label candidate latents."""
+        out = np.empty((len(anchor_indices), M, *self.latents.shape[1:]), dtype=np.float32)
         out_indices = np.empty((len(anchor_indices), M), dtype=np.int64)
         for row_i, anchor_idx in enumerate(anchor_indices):
             anchor_idx = int(anchor_idx)

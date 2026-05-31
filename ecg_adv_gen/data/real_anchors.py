@@ -25,11 +25,25 @@ def real_anchor_base_candidates(
 ) -> list[Path]:
     """Return current explicit-root anchor filename candidates."""
     root = Path(anchor_base_root)
-    return [
+    candidates = [
         root / center / f"k{k}_seed{seed}" / f"{center}_real_k{k}_seed{seed}",
         root / center / f"{center}_real_k{k}_seed{seed}",
         root / center / f"{center}_real_k500_seed{seed}",
     ]
+    flat_dir = root / center
+    candidates.extend(
+        p.with_suffix("")
+        for p in sorted(flat_dir.glob(f"{center}_real_k{k}_seed{seed}*.latent.npz"))
+    )
+    seen: set[str] = set()
+    unique: list[Path] = []
+    for path in candidates:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(path)
+    return unique
 
 
 def find_real_anchor_base(

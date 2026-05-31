@@ -152,6 +152,31 @@ def kshot_ref_meta_path(ref_root: str | Path, center: str, k: int, seed: int) ->
     )
 
 
+def kshot_ref_meta_candidates(ref_root: str | Path, center: str, k: int, seed: int) -> list[Path]:
+    """Return known K-shot ref-meta layouts for legacy and VAE500 anchors."""
+
+    root = Path(ref_root)
+    k = int(k)
+    seed = int(seed)
+    canonical = kshot_ref_meta_path(root, center, k, seed)
+    flat_dir = root / center
+    candidates = [
+        canonical,
+        flat_dir / f"{center}_real_k{k}_seed{seed}.ref_meta.json",
+        flat_dir / f"{center}_real_k{k}_seed{seed}_vae500.ref_meta.json",
+    ]
+    candidates.extend(sorted(flat_dir.glob(f"{center}_real_k{k}_seed{seed}*.ref_meta.json")))
+    seen: set[str] = set()
+    unique: list[Path] = []
+    for path in candidates:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(path)
+    return unique
+
+
 def load_kshot_ref_record_ids(
     ref_root: str | Path,
     center: str,
@@ -167,9 +192,17 @@ def load_kshot_ref_record_ids(
     pool and perform deterministic sub-selection downstream.
     """
 
-    path = kshot_ref_meta_path(ref_root, center, k, seed)
-    if not path.exists() and source_k is not None:
-        path = kshot_ref_meta_path(ref_root, center, source_k, seed)
+    path = next((p for p in kshot_ref_meta_candidates(ref_root, center, k, seed) if p.exists()), None)
+    if path is None and source_k is not None:
+        path = next(
+            (p for p in kshot_ref_meta_candidates(ref_root, center, source_k, seed) if p.exists()),
+            None,
+        )
+    if path is None:
+        tried = kshot_ref_meta_candidates(ref_root, center, k, seed)
+        if source_k is not None:
+            tried.extend(kshot_ref_meta_candidates(ref_root, center, source_k, seed))
+        raise FileNotFoundError("no K-shot ref meta found; tried: " + ", ".join(str(p) for p in tried))
     meta = _load_json(path)
     if "ref_record_ids" not in meta:
         raise KeyError(f"{path} missing required ref_record_ids")

@@ -76,6 +76,7 @@ from ecg_adv_gen.data import (  # noqa: E402
     find_real_anchor_base,
     load_real_anchor_pool,
 )
+from ecg_adv_gen.vae import VAE500RuntimeWrapper  # noqa: E402
 from scripts.triple_labels.label_schemes import CLASS_NAMES_SUPER5, SUPER5_TO_IDX  # noqa: E402
 from ecg_adv_gen.labels import pn2021_super5_label_mapping_payload  # noqa: E402
 from ecg_adv_gen.models import ecgfounder_lhat_run_dir  # noqa: E402
@@ -171,14 +172,18 @@ class ECGFounderHeadVictim(nn.Module):
         self,
         feature_model: nn.Module,
         head: nn.Module,
-        ecgtwin: ECGTwinWrapper,
+        ecgtwin: nn.Module,
         device: torch.device,
+        latent_backend: str = "ecgtwin1024",
+        latent_amp_clamp: float = 3.0,
     ) -> None:
         super().__init__()
         self.feature_model = feature_model
         self.head = head
         self.ecgtwin = ecgtwin
         self.device = device
+        self.latent_backend = latent_backend
+        self.latent_amp_clamp = float(latent_amp_clamp)
         self.num_classes = len(CLASS_NAMES_SUPER5)
         self.model = nn.ModuleDict({"feature_model": self.feature_model, "head": self.head})
 
@@ -190,18 +195,22 @@ class ECGFounderHeadVictim(nn.Module):
         return (x - mean.unsqueeze(-1)) / std.unsqueeze(-1)
 
     def _decode_latent_differentiable(self, latent: torch.Tensor) -> torch.Tensor:
+        if self.latent_backend.startswith("diffusets500"):
+            return self.ecgtwin.decode(latent)
         x = latent / 0.18215
         decoder = self.ecgtwin.decoder
         for module in decoder:
             x = module(x)
         return x.transpose(1, 2)
 
-    def _ecgtwin_latent_to_ecg1000(self, latent: torch.Tensor) -> torch.Tensor:
+    def decode_latent_to_ecg_ct(self, latent: torch.Tensor) -> torch.Tensor:
         ecg_tc = self._decode_latent_differentiable(latent)
         ecg_ct = ecg_tc.transpose(-1, -2)
-        ecg_ct = ecg_ct[:, ECGTWIN_TO_PTBXL_INDICES, :]
-        ecg_ct = torch.clamp(ecg_ct, min=-3.0, max=3.0)
-        ecg_ct = F.interpolate(ecg_ct, size=1000, mode="linear", align_corners=True)
+        if self.latent_backend == "ecgtwin1024":
+            ecg_ct = ecg_ct[:, ECGTWIN_TO_PTBXL_INDICES, :]
+            ecg_ct = F.interpolate(ecg_ct, size=1000, mode="linear", align_corners=True)
+        if self.latent_amp_clamp > 0:
+            ecg_ct = torch.clamp(ecg_ct, min=-self.latent_amp_clamp, max=self.latent_amp_clamp)
         return self._global_zscore(ecg_ct)
 
     def features_from_ecg1000(self, ecg_ct_1000: torch.Tensor, grad: bool) -> torch.Tensor:
@@ -215,7 +224,7 @@ class ECGFounderHeadVictim(nn.Module):
         return features
 
     def forward_from_latent_to_logits(self, latent: torch.Tensor) -> torch.Tensor:
-        ecg_ct = self._ecgtwin_latent_to_ecg1000(latent)
+        ecg_ct = self.decode_latent_to_ecg_ct(latent)
         features = self.features_from_ecg1000(ecg_ct, grad=True)
         return self.head(features)
 
@@ -468,7 +477,7 @@ def train_one_center(
     ptbxl: dict[str, np.ndarray],
     pn: dict[str, np.ndarray],
     feature_model: nn.Module,
-    ecgtwin: ECGTwinWrapper,
+    ecgtwin: nn.Module,
     out_dir: Path,
 ) -> dict[str, Any]:
     device = torch.device(args.device)
@@ -619,7 +628,14 @@ def train_one_center(
     for param in head_anchor.values():
         head_anchor_denom = head_anchor_denom + torch.sum(param ** 2)
     head_anchor_denom = head_anchor_denom.clamp(min=1e-12)
-    victim = ECGFounderHeadVictim(feature_model=feature_model, head=head, ecgtwin=ecgtwin, device=device).to(device)
+    victim = ECGFounderHeadVictim(
+        feature_model=feature_model,
+        head=head,
+        ecgtwin=ecgtwin,
+        device=device,
+        latent_backend=args.vae_backend,
+        latent_amp_clamp=args.latent_amp_clamp,
+    ).to(device)
     pgd_gen = LatentHullPGDGenerator(
         ecgtwin_wrapper=ecgtwin,
         victim=victim,
@@ -1160,7 +1176,11 @@ def train_one_center(
         "preprocess": {
             "ecgfounder_input": f"12 x {TARGET_POINTS}",
             "lead_order": EXPECTED_LEADS,
-            "latent_decode_path": "ECGTwin VAE latent -> PTB-XL-order 1000 samples -> linear interpolate to 5000 -> per-sample global z-score",
+            "latent_decode_path": (
+                "VAE500 latent -> PTB-XL-order 5000 samples -> per-sample global z-score"
+                if args.vae_backend == "diffusets500_v1"
+                else "ECGTwin VAE latent -> PTB-XL-order 1000 samples -> linear interpolate to 5000 -> per-sample global z-score"
+            ),
         },
     }
     with result_path.open("w") as f:
@@ -1234,6 +1254,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--linear_probe_dir", default=str(DEFAULT_LINEAR_PROBE_DIR))
     p.add_argument("--checkpoint", default=str(CHECKPOINT))
     p.add_argument("--preprocess_policy", default="official_ptbxl_eval")
+    p.add_argument("--vae_backend", choices=["ecgtwin1024", "diffusets500_v1"], default="ecgtwin1024")
+    p.add_argument("--vae500_ckpt", default="")
+    p.add_argument("--vae500_variant", default=None)
+    p.add_argument("--latent_amp_clamp", type=float, default=3.0)
     p.add_argument("--k", type=int, default=500)
     p.add_argument("--k_anchor", type=int, default=300)
     p.add_argument(
@@ -1589,8 +1613,20 @@ def main() -> None:
     device = torch.device(args.device)
     print("[setup] loading ECGFounder encoder", flush=True)
     feature_model = build_ecgfounder_feature_model(Path(args.checkpoint), device)
-    print("[setup] loading ECGTwin VAE decoder", flush=True)
-    ecgtwin = ECGTwinWrapper(device=args.device, load_encoder=False, load_text_model=False)
+    if args.vae_backend == "ecgtwin1024":
+        print("[setup] loading ECGTwin VAE decoder", flush=True)
+        ecgtwin: nn.Module = ECGTwinWrapper(device=args.device, load_encoder=False, load_text_model=False)
+    elif args.vae_backend == "diffusets500_v1":
+        if not args.vae500_ckpt:
+            raise ValueError("--vae500_ckpt is required for --vae_backend diffusets500_v1")
+        print(f"[setup] loading VAE500 decoder from {args.vae500_ckpt}", flush=True)
+        ecgtwin = VAE500RuntimeWrapper(
+            args.vae500_ckpt,
+            variant=args.vae500_variant,
+            device=args.device,
+        )
+    else:
+        raise ValueError(f"unsupported --vae_backend {args.vae_backend!r}")
 
     rows = []
     for center in args.centers:

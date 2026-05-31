@@ -17,6 +17,7 @@ import sys
 import json
 import time
 import argparse
+import contextlib
 import shutil
 
 import numpy as np
@@ -53,7 +54,7 @@ class PTBXLDatasetScheme(Dataset):
     """PTB-XL dataset emitting (12, crop_len) signals + (C,) labels for any scheme."""
 
     def __init__(self, signals_1000, labels, crop_len=250, mode='train'):
-        # signals_1000: (N, 1000, 12) float32
+        # signals_1000: (N, T, 12) float32. Historical default T=1000.
         # labels: (N, C) float32 with values in {-1, 0, 1}
         self.signals = signals_1000
         self.labels = labels.astype(np.float32, copy=False)
@@ -64,7 +65,7 @@ class PTBXLDatasetScheme(Dataset):
         return len(self.signals)
 
     def __getitem__(self, idx):
-        sig_tc = self.signals[idx]  # (1000, 12)
+        sig_tc = self.signals[idx]  # (T, 12)
         crop = crop_signal_tc(sig_tc, self.crop_len,
                               mode='random' if self.mode == 'train' else 'center')
         sig_ct = crop.T  # (12, crop_len)
@@ -193,6 +194,7 @@ def init_weights(m):
 def preprocess_ptbxl_all(
     raw_path,
     cache_path,
+    csv_path=None,
     target_fs=100,
     target_len=1000,
     preprocess_mode='legacy_ecgfounder_filter',
@@ -204,22 +206,58 @@ def preprocess_ptbxl_all(
 
     print(
         f"[preprocess] preprocessing all PTBXL → {cache_path} (first run) "
-        f"mode={preprocess_mode} norm={norm_mode}"
+        f"fs={target_fs} len={target_len} mode={preprocess_mode} norm={norm_mode}"
     )
-    raw = np.load(raw_path, allow_pickle=True).astype(np.float32)
-    N = raw.shape[0]
+    use_records500 = int(target_fs) == 500
+    if use_records500:
+        import pandas as pd
+        import wfdb
+
+        if not csv_path:
+            raise ValueError("csv_path is required when target_fs=500")
+        df = pd.read_csv(csv_path)
+        if 'filename_hr' not in df.columns:
+            raise ValueError(f"{csv_path} has no filename_hr column")
+        ptbxl_root = os.path.dirname(os.path.abspath(csv_path))
+        raw = None
+        N = len(df)
+    else:
+        raw = np.load(raw_path, allow_pickle=True).astype(np.float32)
+        df = None
+        ptbxl_root = None
+        N = raw.shape[0]
     out = np.zeros((N, target_len, 12), dtype=np.float32)
     fails = []
     for i in range(N):
+        fs = 100
+        source_leads = None
+        if use_records500:
+            row = df.iloc[i]
+            rec_base = os.path.join(ptbxl_root, str(row.filename_hr))
+            try:
+                rec = wfdb.rdrecord(rec_base)
+                sig = np.asarray(rec.p_signal, dtype=np.float32)
+                fs = int(round(float(rec.fs)))
+                source_leads = [s.strip() for s in rec.sig_name] if getattr(rec, 'sig_name', None) else None
+            except Exception:
+                fails.append(i)
+                sig = np.zeros((target_len, 12), dtype=np.float32)
+                fs = target_fs
+        else:
+            sig = raw[i]
         proc = unified_preprocess_to_1000(
-            raw[i], fs=100, source_leads=None,
+            sig, fs=fs, source_leads=source_leads,
             target_fs=target_fs, target_len=target_len,
             preprocess_mode=preprocess_mode, norm_mode=norm_mode,
         )
         if proc is None:
             fails.append(i)
-            sig = raw[i]
             sig = np.nan_to_num(sig, nan=0.0, posinf=0.0, neginf=0.0)
+            if sig.shape[0] < target_len:
+                pad = np.zeros((target_len - sig.shape[0], sig.shape[1]), dtype=sig.dtype)
+                sig = np.concatenate([sig, pad], axis=0)
+            elif sig.shape[0] > target_len:
+                sig = sig[:target_len]
             if norm_mode == 'per_sample_global':
                 sig = (sig - sig.mean()) / (sig.std() + 1e-8)
             out[i] = sig.astype(np.float32)
@@ -288,13 +326,33 @@ def _default_cache_path(args):
     os.makedirs(cache_dir, exist_ok=True)
     return os.path.join(
         cache_dir,
-        f"ptbxl_{safe_mode}_{safe_norm}_fs100_len1000.npy",
+        f"ptbxl_{safe_mode}_{safe_norm}_fs{int(args.sampling_rate)}_len{int(args.input_len)}.npy",
     )
 
 
 # ────────────────────────────────────────────────────────────────────────────
 # Training driver
 # ────────────────────────────────────────────────────────────────────────────
+
+def _loader_kwargs(args, *, train):
+    kwargs = {
+        'batch_size': args.batch_size,
+        'num_workers': args.num_workers,
+        'pin_memory': bool(args.pin_memory and 'cuda' in str(args.device)),
+        'drop_last': bool(train and args.drop_last),
+        'persistent_workers': bool(args.num_workers > 0 and args.persistent_workers),
+    }
+    if args.num_workers > 0:
+        kwargs['prefetch_factor'] = args.prefetch_factor
+    return kwargs
+
+
+def _amp_context(args):
+    if 'cuda' not in str(args.device) or not args.amp:
+        return contextlib.nullcontext()
+    dtype = torch.bfloat16 if args.amp_dtype == 'bf16' else torch.float16
+    return torch.amp.autocast(device_type='cuda', dtype=dtype)
+
 
 def train(args):
     device = torch.device(args.device)
@@ -303,6 +361,10 @@ def train(args):
     np.random.seed(args.seed)
     if 'cuda' in args.device:
         torch.backends.cudnn.benchmark = True
+        torch.backends.cuda.matmul.allow_tf32 = bool(args.allow_tf32)
+        torch.backends.cudnn.allow_tf32 = bool(args.allow_tf32)
+        if args.matmul_precision:
+            torch.set_float32_matmul_precision(args.matmul_precision)
 
     scheme = get_scheme(args.scheme)
     num_classes = scheme['num_classes']
@@ -353,6 +415,9 @@ def train(args):
     all_sig = preprocess_ptbxl_all(
         args.data_path,
         cache_path,
+        csv_path=args.csv_path,
+        target_fs=args.sampling_rate,
+        target_len=args.input_len,
         preprocess_mode=args.preprocess_mode,
         norm_mode=args.norm_mode,
     )
@@ -379,9 +444,11 @@ def train(args):
         if args.synthetic_only:
             loss_labels = synth_ds.labels
             print(f"[synth] synthetic-only training with {len(synth_ds)} samples from {args.synth_npz}")
-            train_loader = DataLoader(synth_ds, batch_size=args.batch_size, shuffle=True,
-                                      num_workers=args.num_workers, pin_memory=True,
-                                      drop_last=True, persistent_workers=args.num_workers > 0)
+            train_loader = DataLoader(
+                synth_ds,
+                shuffle=True,
+                **_loader_kwargs(args, train=True),
+            )
         else:
             train_combo = ConcatDataset([train_ds, synth_ds])
             real_weight = np.ones(len(train_ds), dtype=np.float64) / max(len(train_ds), 1)
@@ -397,19 +464,27 @@ def train(args):
             )
             print(f"[synth] using {len(synth_ds)} synthetic samples from {args.synth_npz}")
             print(f"[synth] target synth:real ratio={args.synth_ratio:g}; epoch samples={len(train_ds)}")
-            train_loader = DataLoader(train_combo, batch_size=args.batch_size, sampler=sampler,
-                                      num_workers=args.num_workers, pin_memory=True,
-                                      drop_last=True, persistent_workers=args.num_workers > 0)
+            train_loader = DataLoader(
+                train_combo,
+                sampler=sampler,
+                **_loader_kwargs(args, train=True),
+            )
     else:
-        train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
-                                  num_workers=args.num_workers, pin_memory=True,
-                                  drop_last=True, persistent_workers=args.num_workers > 0)
-    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False,
-                            num_workers=args.num_workers, pin_memory=True,
-                            persistent_workers=args.num_workers > 0)
-    test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False,
-                             num_workers=args.num_workers, pin_memory=True,
-                             persistent_workers=args.num_workers > 0)
+        train_loader = DataLoader(
+            train_ds,
+            shuffle=True,
+            **_loader_kwargs(args, train=True),
+        )
+    val_loader = DataLoader(
+        val_ds,
+        shuffle=False,
+        **_loader_kwargs(args, train=False),
+    )
+    test_loader = DataLoader(
+        test_ds,
+        shuffle=False,
+        **_loader_kwargs(args, train=False),
+    )
 
     model_name = normalize_model_name(args.model_name)
     model = build_super5_model(model_name, num_classes=num_classes).to(device)
@@ -428,8 +503,8 @@ def train(args):
         print(f"[model] initialized from {args.init_ckpt}")
 
     if args.compile:
-        print("[model] torch.compile(mode='default')")
-        model = torch.compile(model, mode='default')
+        print(f"[model] torch.compile(mode={args.compile_mode!r})")
+        model = torch.compile(model, mode=args.compile_mode)
 
     pos_weight_np = compute_pos_weight(loss_labels, num_classes,
                                        clip_max=args.pos_weight_clip_max)
@@ -441,12 +516,22 @@ def train(args):
     def criterion(logits, labels):
         return masked_bce_with_logits(logits, labels, pos_weight)
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr,
-                                  weight_decay=args.weight_decay)
+    optim_kwargs = {'lr': args.lr, 'weight_decay': args.weight_decay}
+    if args.fused_adamw and 'cuda' in args.device:
+        optim_kwargs['fused'] = True
+    try:
+        optimizer = torch.optim.AdamW(model.parameters(), **optim_kwargs)
+    except TypeError:
+        optim_kwargs.pop('fused', None)
+        optimizer = torch.optim.AdamW(model.parameters(), **optim_kwargs)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=args.cosine_tmax, eta_min=args.lr * 0.01
     )
-    scaler_amp = torch.cuda.amp.GradScaler() if 'cuda' in args.device else None
+    scaler_enabled = 'cuda' in args.device and args.amp and args.amp_dtype == 'fp16'
+    try:
+        scaler_amp = torch.amp.GradScaler('cuda', enabled=scaler_enabled)
+    except (AttributeError, TypeError):
+        scaler_amp = torch.cuda.amp.GradScaler(enabled=scaler_enabled)
 
     best_val_auroc = -1.0
     best_val_auprc = -1.0
@@ -454,7 +539,7 @@ def train(args):
     patience_counter = 0
     log = []
     print(f"\n[train] {args.epochs} epochs  patience={args.patience}  "
-          f"batch={args.batch_size}  amp={scaler_amp is not None}  "
+          f"batch={args.batch_size}  amp={args.amp} dtype={args.amp_dtype} "
           f"checkpoint_metric={args.checkpoint_metric}")
 
     for epoch in range(1, args.epochs + 1):
@@ -467,8 +552,8 @@ def train(args):
             labels = labels.to(device, non_blocking=True)
 
             optimizer.zero_grad(set_to_none=True)
-            if scaler_amp is not None:
-                with torch.cuda.amp.autocast():
+            if scaler_amp.is_enabled():
+                with _amp_context(args):
                     logits = model(signals)
                     loss = criterion(logits, labels)
                 scaler_amp.scale(loss).backward()
@@ -477,8 +562,9 @@ def train(args):
                 scaler_amp.step(optimizer)
                 scaler_amp.update()
             else:
-                logits = model(signals)
-                loss = criterion(logits, labels)
+                with _amp_context(args):
+                    logits = model(signals)
+                    loss = criterion(logits, labels)
                 loss.backward()
                 nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 optimizer.step()
@@ -614,6 +700,10 @@ def parse_args():
     p.add_argument('--device', default='cuda')
     p.add_argument('--model_name', default='efficientnet1dv2',
                    choices=available_model_names())
+    p.add_argument('--sampling_rate', type=int, default=100,
+                   help='Target sampling rate for PTB-XL preprocessing/cache. Default keeps legacy 100Hz behavior.')
+    p.add_argument('--input_len', type=int, default=1000,
+                   help='Target pre-crop sequence length. Use 5000 with --sampling_rate 500 for records500.')
     p.add_argument('--crop_len', type=int, default=250)
     p.add_argument('--batch_size', type=int, default=96)
     p.add_argument('--epochs', type=int, default=50)
@@ -622,9 +712,26 @@ def parse_args():
     p.add_argument('--cosine_tmax', type=int, default=15)
     p.add_argument('--patience', type=int, default=10)
     p.add_argument('--num_workers', type=int, default=4)
+    p.add_argument('--pin_memory', type=_str2bool, default=True)
+    p.add_argument('--persistent_workers', type=_str2bool, default=True)
+    p.add_argument('--prefetch_factor', type=int, default=2)
+    p.add_argument('--drop_last', type=_str2bool, default=True)
     p.add_argument('--seed', type=int, default=42)
     p.add_argument('--compile', type=_str2bool, default=False,
                    help='Use torch.compile (default off; set true for sequential mode)')
+    p.add_argument('--compile_mode', default='default',
+                   choices=['default', 'reduce-overhead', 'max-autotune'])
+    p.add_argument('--amp', type=_str2bool, default=True,
+                   help='Use CUDA autocast when device is cuda.')
+    p.add_argument('--amp_dtype', default='bf16', choices=['bf16', 'fp16'],
+                   help='Autocast dtype. bf16 is the default for RTX 4090 class GPUs.')
+    p.add_argument('--allow_tf32', type=_str2bool, default=True,
+                   help='Enable TF32 matmul/cuDNN paths on Ampere/Ada GPUs.')
+    p.add_argument('--matmul_precision', default='high',
+                   choices=['highest', 'high', 'medium', ''],
+                   help='torch.set_float32_matmul_precision value; empty string disables it.')
+    p.add_argument('--fused_adamw', type=_str2bool, default=True,
+                   help='Use fused AdamW when available on CUDA.')
     p.add_argument('--pos_weight_clip_max', type=float, default=50.0)
     p.add_argument('--checkpoint_metric', default='auroc', choices=['auroc', 'auprc'],
                    help='Validation metric used for best_model.pt, early stopping, and test reload')
