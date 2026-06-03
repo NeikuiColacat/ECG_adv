@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import ceil
+from typing import Any
 
 import torch
 from torch import nn
@@ -223,7 +224,7 @@ class DiffuSETSVAE500(nn.Module):
         return VAEForwardOutput(recon=recon, z=z, mu=mu, log_var=log_var)
 
 
-def build_vae500(variant: str, **kwargs) -> DiffuSETSVAE500:
+def build_vae500(variant: str, **kwargs) -> nn.Module:
     """Build a named 500 Hz VAE variant."""
     if variant == "diffusets500_v1_dynamic":
         defaults = {
@@ -243,6 +244,15 @@ def build_vae500(variant: str, **kwargs) -> DiffuSETSVAE500:
             "channel_mult": (1, 2, 4, 4),
             "use_attention": True,
         }
+    elif variant == "ecgtwin_init_vae500":
+        from ecg_adv_gen.vae.ecgtwin_vae500 import ECGTwinVAE500
+
+        allowed: dict[str, Any] = {
+            key: value
+            for key, value in kwargs.items()
+            if key in {"input_length", "in_channels", "latent_scale", "ptbxl_io"}
+        }
+        return ECGTwinVAE500(**allowed)
     else:
         raise ValueError(f"unknown VAE500 variant: {variant}")
     defaults.update(kwargs)

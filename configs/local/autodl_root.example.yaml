@@ -1,0 +1,29 @@
+host:
+  name: autodl_root_server
+  shared_server: true
+  home_root: /root
+
+paths:
+  project_root: /root/autodl-tmp/ECG_adv_Gen
+  data_root: /root/autodl-tmp
+  model_root: ${paths.data_root}/models
+  output_root: ${paths.data_root}/runs
+  cache_root: ${paths.data_root}/cache
+  tmp_root: ${paths.data_root}/tmp
+  short_tmp_root: /root/autodl-tmp/tmp
+
+python:
+  executable: /root/miniforge3/envs/ECGTwin/bin/python
+  micromamba_env: ECGTwin
+
+resources:
+  default_num_workers: 8
+  prefer_single_gpu: true
+  require_nvidia_smi_check: true
+  default_bind_host: 127.0.0.1
+
+safety:
+  forbid_sudo: true
+  forbid_system_env_changes: true
+  write_boundary: /root/autodl-tmp
+  forbid_commit_large_artifacts: true

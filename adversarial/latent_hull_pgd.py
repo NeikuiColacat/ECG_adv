@@ -16,11 +16,10 @@ import argparse
 import sys
 import time
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 
 _PROJECT_ROOT = Path(__file__).parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
@@ -45,6 +44,11 @@ class LatentHullPGDGenerator(PGDAdvDiffGenerator):
         dirichlet_alpha: float = 1.0,
         init_logit_gap: float = 4.0,
         device: str = "cuda",
+        attack_loss_mode: str = "bce",
+        attack_pos_hide_weight: float = 1.0,
+        attack_neg_add_weight: float = 0.25,
+        attack_negative_exclude_indices: Sequence[int] | None = None,
+        attack_neg_topk: int = 0,
     ):
         super().__init__(
             ecgtwin_wrapper=ecgtwin_wrapper,
@@ -54,6 +58,11 @@ class LatentHullPGDGenerator(PGDAdvDiffGenerator):
             alpha=None,
             delta_init_scale=0.0,
             device=device,
+            attack_loss_mode=attack_loss_mode,
+            attack_pos_hide_weight=attack_pos_hide_weight,
+            attack_neg_add_weight=attack_neg_add_weight,
+            attack_negative_exclude_indices=attack_negative_exclude_indices,
+            attack_neg_topk=attack_neg_topk,
         )
         self.hull_epsilon = float(epsilon) if epsilon is not None else None
         self.hull_lambda = float(hull_lambda)
@@ -155,12 +164,7 @@ class LatentHullPGDGenerator(PGDAdvDiffGenerator):
                     pos_weight = None
                     if self.attack_pos_weight is not None:
                         pos_weight = self.attack_pos_weight.to(device=logits.device, dtype=logits.dtype)
-                    loss = F.binary_cross_entropy_with_logits(
-                        logits,
-                        y0,
-                        pos_weight=pos_weight,
-                        reduction="mean",
-                    )
+                    loss = self._attack_loss(logits, y0, pos_weight=pos_weight)
                     opt.zero_grad(set_to_none=True)
                     (-loss).backward()
                     opt.step()

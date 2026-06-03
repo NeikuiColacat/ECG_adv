@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Sequence, Tuple
 
 import numpy as np
 import torch
@@ -33,6 +33,83 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from adversarial.efficientnet_victim_tierM import EfficientNetVictimTierM  # noqa: E402
+
+
+ATTACK_LOSS_MODES = {"bce", "positive_hide", "negative_add", "pos_hide_neg_add"}
+
+
+def _masked_mean(values: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    mask_f = mask.to(dtype=values.dtype)
+    denom = mask_f.sum().clamp(min=1.0)
+    return (values * mask_f).sum() / denom
+
+
+def _masked_topk_mean(values: torch.Tensor, mask: torch.Tensor, k: int) -> torch.Tensor:
+    pieces = []
+    for row_values, row_mask in zip(values, mask, strict=True):
+        selected = row_values[row_mask]
+        if selected.numel() == 0:
+            continue
+        kk = min(int(k), selected.numel())
+        pieces.append(selected.topk(kk).values.mean())
+    if not pieces:
+        return values.sum() * 0.0
+    return torch.stack(pieces).mean()
+
+
+def multilabel_attack_loss(
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+    *,
+    mode: str = "bce",
+    pos_weight: torch.Tensor | None = None,
+    pos_hide_weight: float = 1.0,
+    neg_add_weight: float = 0.25,
+    negative_exclude_indices: Sequence[int] | None = None,
+    neg_topk: int = 0,
+) -> torch.Tensor:
+    """Attack objective for multi-label ECG classification.
+
+    ``bce`` preserves the historical behavior: maximize full BCE against the
+    original multi-hot label. The explicit modes split that loss into positive
+    label hiding and negative label addition so experiments can control which
+    failure mode the latent attack should search for.
+    """
+    if mode not in ATTACK_LOSS_MODES:
+        raise ValueError(f"unknown attack loss mode {mode!r}; valid={sorted(ATTACK_LOSS_MODES)}")
+    if mode == "bce":
+        return F.binary_cross_entropy_with_logits(
+            logits,
+            targets,
+            pos_weight=pos_weight,
+            reduction="mean",
+        )
+
+    pos_mask = targets > 0.5
+    neg_mask = targets < 0.5
+    if negative_exclude_indices:
+        exclude = [int(i) for i in negative_exclude_indices]
+        valid = [i for i in exclude if 0 <= i < logits.shape[1]]
+        if valid:
+            neg_mask = neg_mask.clone()
+            neg_mask[:, valid] = False
+
+    pos_terms = F.softplus(-logits)
+    neg_terms = F.softplus(logits)
+    pos_loss = _masked_mean(pos_terms, pos_mask) if pos_mask.any() else logits.sum() * 0.0
+    if neg_mask.any():
+        if neg_topk and neg_topk > 0:
+            neg_loss = _masked_topk_mean(neg_terms, neg_mask, int(neg_topk))
+        else:
+            neg_loss = _masked_mean(neg_terms, neg_mask)
+    else:
+        neg_loss = logits.sum() * 0.0
+
+    if mode == "positive_hide":
+        return float(pos_hide_weight) * pos_loss
+    if mode == "negative_add":
+        return float(neg_add_weight) * neg_loss
+    return float(pos_hide_weight) * pos_loss + float(neg_add_weight) * neg_loss
 
 
 class PGDAdvDiffGenerator:
@@ -53,6 +130,11 @@ class PGDAdvDiffGenerator:
         alpha: Optional[float] = None,
         delta_init_scale: float = 0.1,
         device: str = "cuda",
+        attack_loss_mode: str = "bce",
+        attack_pos_hide_weight: float = 1.0,
+        attack_neg_add_weight: float = 0.25,
+        attack_negative_exclude_indices: Sequence[int] | None = None,
+        attack_neg_topk: int = 0,
     ):
         self.ecgtwin = ecgtwin_wrapper
         self.victim = victim
@@ -62,6 +144,16 @@ class PGDAdvDiffGenerator:
         self.alpha = float(alpha) if alpha is not None else 2.0 * self.epsilon / max(self.K_pgd, 1)
         self.delta_init_scale = float(delta_init_scale)
         self.device = torch.device(device)
+        if attack_loss_mode not in ATTACK_LOSS_MODES:
+            raise ValueError(
+                f"attack_loss_mode must be one of {sorted(ATTACK_LOSS_MODES)}, "
+                f"got {attack_loss_mode!r}"
+            )
+        self.attack_loss_mode = attack_loss_mode
+        self.attack_pos_hide_weight = float(attack_pos_hide_weight)
+        self.attack_neg_add_weight = float(attack_neg_add_weight)
+        self.attack_negative_exclude_indices = tuple(int(i) for i in (attack_negative_exclude_indices or ()))
+        self.attack_neg_topk = int(attack_neg_topk)
         # Freeze victim
         self.victim.eval()
         for p in self.victim.parameters():
@@ -108,8 +200,8 @@ class PGDAdvDiffGenerator:
             z_pert = z0 + delta
             # Use victim's grad-preserving latent→logits path
             logits = self.victim.forward_from_latent_to_logits(z_pert)  # (B, 6)
-            # BCE-with-logits: attack direction is gradient ASCENT (maximize loss on y0)
-            loss = F.binary_cross_entropy_with_logits(logits, y0, reduction="mean")
+            # Attack direction is gradient ASCENT on the selected multi-label objective.
+            loss = self._attack_loss(logits, y0)
 
             grad = torch.autograd.grad(loss, delta, only_inputs=True)[0]
             # Normalize gradient (per-sample L2) for stable step size
@@ -180,6 +272,24 @@ class PGDAdvDiffGenerator:
         return signals_arr, labels_arr, info
 
     # ----- internal helpers -----
+
+    def _attack_loss(
+        self,
+        logits: torch.Tensor,
+        targets: torch.Tensor,
+        *,
+        pos_weight: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        return multilabel_attack_loss(
+            logits,
+            targets,
+            mode=self.attack_loss_mode,
+            pos_weight=pos_weight,
+            pos_hide_weight=self.attack_pos_hide_weight,
+            neg_add_weight=self.attack_neg_add_weight,
+            negative_exclude_indices=self.attack_negative_exclude_indices,
+            neg_topk=self.attack_neg_topk,
+        )
 
     def _project_l2_ball(self, delta: torch.Tensor) -> torch.Tensor:
         """Per-sample L2 ball projection. delta shape (B, 4, 128) or (1, 4, 128)."""

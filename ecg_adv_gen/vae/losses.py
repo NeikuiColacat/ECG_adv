@@ -15,6 +15,7 @@ class VAE500LossOutput:
     kl: torch.Tensor
     first_diff_huber: torch.Tensor
     lead_consistency_huber: torch.Tensor
+    spectral_huber: torch.Tensor
 
 
 def lead_consistency_residual(x: torch.Tensor) -> torch.Tensor:
@@ -45,6 +46,18 @@ def _huber(input_tensor: torch.Tensor, target_tensor: torch.Tensor) -> torch.Ten
     return F.smooth_l1_loss(input_tensor, target_tensor, reduction="mean")
 
 
+def spectral_logmag(x: torch.Tensor) -> torch.Tensor:
+    """Return log-magnitude FFT features over ECG time.
+
+    The operation is intentionally simple and differentiable. It is used as a
+    weak morphology/frequency constraint, not as a clinical spectral model.
+    """
+    if x.ndim != 3:
+        raise ValueError(f"expected ECG shape (B, L, C), got {tuple(x.shape)}")
+    spectrum = torch.fft.rfft(x.float(), dim=1)
+    return torch.log1p(torch.abs(spectrum))
+
+
 def vae500_loss(
     recon: torch.Tensor,
     target: torch.Tensor,
@@ -54,6 +67,7 @@ def vae500_loss(
     beta: float = 1e-4,
     first_diff_weight: float = 0.05,
     lead_consistency_weight: float = 0.02,
+    spectral_weight: float = 0.0,
 ) -> VAE500LossOutput:
     """Compute the planned VAE500 objective.
 
@@ -66,11 +80,16 @@ def vae500_loss(
     kl = -0.5 * torch.mean(1.0 + log_var - mu.pow(2) - log_var.exp())
     first_diff_huber = _huber(recon[:, 1:] - recon[:, :-1], target[:, 1:] - target[:, :-1])
     lead_consistency_huber = _huber(lead_consistency_residual(recon), lead_consistency_residual(target))
+    if spectral_weight > 0:
+        spectral_huber = _huber(spectral_logmag(recon), spectral_logmag(target))
+    else:
+        spectral_huber = torch.zeros((), device=recon.device, dtype=recon.dtype)
     loss = (
         recon_huber
         + float(beta) * kl
         + float(first_diff_weight) * first_diff_huber
         + float(lead_consistency_weight) * lead_consistency_huber
+        + float(spectral_weight) * spectral_huber
     )
     return VAE500LossOutput(
         loss=loss,
@@ -78,7 +97,8 @@ def vae500_loss(
         kl=kl.detach(),
         first_diff_huber=first_diff_huber.detach(),
         lead_consistency_huber=lead_consistency_huber.detach(),
+        spectral_huber=spectral_huber.detach(),
     )
 
 
-__all__ = ["VAE500LossOutput", "lead_consistency_residual", "vae500_loss"]
+__all__ = ["VAE500LossOutput", "lead_consistency_residual", "spectral_logmag", "vae500_loss"]

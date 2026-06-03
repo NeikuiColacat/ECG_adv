@@ -14,6 +14,7 @@ from typing import Any
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -96,11 +97,48 @@ def _kl_beta(args: argparse.Namespace, epoch: int) -> float:
     return float(args.beta) * scale
 
 
+def _resize_time(x: torch.Tensor, target_len: int) -> torch.Tensor:
+    if x.shape[1] == target_len:
+        return x
+    return F.interpolate(
+        x.transpose(1, 2),
+        size=int(target_len),
+        mode="linear",
+        align_corners=False,
+    ).transpose(1, 2)
+
+
+def _resize_latent_time(x: torch.Tensor, target_len: int) -> torch.Tensor:
+    if x.shape[-1] == target_len:
+        return x
+    return F.adaptive_avg_pool1d(x, int(target_len))
+
+
+def _build_ecgtwin_teacher(args: argparse.Namespace, device: torch.device) -> torch.nn.Module | None:
+    if not args.teacher_ecgtwin_vae_ckpt:
+        return None
+    teacher = build_vae500(
+        "ecgtwin_init_vae500",
+        input_length=args.teacher_input_len,
+    ).to(device)
+    teacher.load_ecgtwin_checkpoint(args.teacher_ecgtwin_vae_ckpt, strict=True)
+    teacher.eval()
+    for param in teacher.parameters():
+        param.requires_grad_(False)
+    print(
+        f"[teacher] ECGTwin VAE loaded from {args.teacher_ecgtwin_vae_ckpt} "
+        f"input_len={teacher.input_length} latent=({teacher.latent_channels},{teacher.latent_length})",
+        flush=True,
+    )
+    return teacher
+
+
 def _run_epoch(
     *,
     model: torch.nn.Module,
     loader: DataLoader,
     optimizer: torch.optim.Optimizer | None,
+    teacher_model: torch.nn.Module | None,
     device: torch.device,
     args: argparse.Namespace,
     epoch: int,
@@ -113,6 +151,9 @@ def _run_epoch(
         "kl": 0.0,
         "first_diff_huber": 0.0,
         "lead_consistency_huber": 0.0,
+        "spectral_huber": 0.0,
+        "teacher_recon_huber": 0.0,
+        "teacher_latent_huber": 0.0,
     }
     n_samples = 0
     beta = _kl_beta(args, epoch)
@@ -131,19 +172,61 @@ def _run_epoch(
                     beta=beta,
                     first_diff_weight=args.first_diff_weight,
                     lead_consistency_weight=args.lead_consistency_weight,
+                    spectral_weight=args.spectral_weight,
                 )
+                total_loss = loss_out.loss
+                teacher_recon = torch.zeros((), device=device)
+                teacher_latent = torch.zeros((), device=device)
+                if teacher_model is not None and (
+                    args.teacher_recon_weight > 0 or args.teacher_latent_weight > 0
+                ):
+                    teacher_x = _resize_time(batch, int(args.teacher_input_len))
+                    with torch.no_grad():
+                        teacher_noise = torch.zeros(
+                            (
+                                batch.shape[0],
+                                teacher_model.latent_channels,
+                                teacher_model.latent_length,
+                            ),
+                            device=device,
+                            dtype=batch.dtype,
+                        )
+                        teacher_z, teacher_mu, _ = teacher_model.encode(
+                            teacher_x,
+                            noise=teacher_noise,
+                        )
+                        teacher_reconstruction = teacher_model.decode(teacher_z)
+                    if args.teacher_recon_weight > 0:
+                        student_reconstruction = _resize_time(out.recon, int(args.teacher_input_len))
+                        teacher_recon = F.smooth_l1_loss(
+                            student_reconstruction,
+                            teacher_reconstruction,
+                            reduction="mean",
+                        )
+                        total_loss = total_loss + float(args.teacher_recon_weight) * teacher_recon
+                    if args.teacher_latent_weight > 0:
+                        student_mu = _resize_latent_time(out.mu, int(teacher_mu.shape[-1]))
+                        teacher_latent = F.smooth_l1_loss(
+                            student_mu,
+                            teacher_mu,
+                            reduction="mean",
+                        )
+                        total_loss = total_loss + float(args.teacher_latent_weight) * teacher_latent
             if train:
-                loss_out.loss.backward()
+                total_loss.backward()
                 if args.grad_clip_norm > 0:
                     torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip_norm)
                 optimizer.step()
         bsz = int(batch.shape[0])
         n_samples += bsz
-        totals["loss"] += float(loss_out.loss.detach().cpu()) * bsz
+        totals["loss"] += float(total_loss.detach().cpu()) * bsz
         totals["recon_huber"] += float(loss_out.recon_huber.cpu()) * bsz
         totals["kl"] += float(loss_out.kl.cpu()) * bsz
         totals["first_diff_huber"] += float(loss_out.first_diff_huber.cpu()) * bsz
         totals["lead_consistency_huber"] += float(loss_out.lead_consistency_huber.cpu()) * bsz
+        totals["spectral_huber"] += float(loss_out.spectral_huber.cpu()) * bsz
+        totals["teacher_recon_huber"] += float(teacher_recon.detach().cpu()) * bsz
+        totals["teacher_latent_huber"] += float(teacher_latent.detach().cpu()) * bsz
     if n_samples <= 0:
         raise RuntimeError("empty dataloader")
     return {key: value / n_samples for key, value in totals.items()} | {"kl_beta": beta, "n": float(n_samples)}
@@ -243,11 +326,17 @@ def train(args: argparse.Namespace) -> None:
         base_channels=args.base_channels,
         use_attention=not args.no_attention,
     ).to(device)
+    if args.init_ecgtwin_vae_ckpt:
+        if not hasattr(model, "load_ecgtwin_checkpoint"):
+            raise ValueError("--init_ecgtwin_vae_ckpt requires --model_variant ecgtwin_init_vae500")
+        load_info = model.load_ecgtwin_checkpoint(args.init_ecgtwin_vae_ckpt, strict=True)
+        print(f"[model] initialized from ECGTwin original VAE: {load_info}", flush=True)
     if args.init_ckpt:
         ckpt = torch.load(args.init_ckpt, map_location="cpu")
         state = ckpt["model_state_dict"] if isinstance(ckpt, dict) and "model_state_dict" in ckpt else ckpt
         model.load_state_dict(state, strict=True)
         print(f"[model] initialized from {args.init_ckpt}", flush=True)
+    teacher_model = _build_ecgtwin_teacher(args, device)
     if args.compile:
         print(f"[model] torch.compile mode={args.compile_mode}", flush=True)
         model = torch.compile(model, mode=args.compile_mode)
@@ -264,8 +353,24 @@ def train(args: argparse.Namespace) -> None:
     best_val = float("inf")
     start = time.time()
     for epoch in range(1, args.epochs + 1):
-        train_metrics = _run_epoch(model=model, loader=train_loader, optimizer=optimizer, device=device, args=args, epoch=epoch)
-        val_metrics = _run_epoch(model=model, loader=val_loader, optimizer=None, device=device, args=args, epoch=epoch)
+        train_metrics = _run_epoch(
+            model=model,
+            loader=train_loader,
+            optimizer=optimizer,
+            teacher_model=teacher_model,
+            device=device,
+            args=args,
+            epoch=epoch,
+        )
+        val_metrics = _run_epoch(
+            model=model,
+            loader=val_loader,
+            optimizer=None,
+            teacher_model=teacher_model,
+            device=device,
+            args=args,
+            epoch=epoch,
+        )
         row = {
             "epoch": epoch,
             "time_sec": time.time() - start,
@@ -299,7 +404,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cache_dir", required=True)
     parser.add_argument("--output_dir", required=True)
-    parser.add_argument("--model_variant", default="diffusets500_v1_dynamic", choices=["diffusets500_v1_dynamic", "diffusets500_v2_compact"])
+    parser.add_argument(
+        "--model_variant",
+        default="diffusets500_v1_dynamic",
+        choices=["diffusets500_v1_dynamic", "diffusets500_v2_compact", "ecgtwin_init_vae500"],
+    )
     parser.add_argument("--epochs", type=int, default=80)
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--lr", type=float, default=1e-4)
@@ -308,6 +417,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--kl_warmup_epochs", type=int, default=20)
     parser.add_argument("--first_diff_weight", type=float, default=0.05)
     parser.add_argument("--lead_consistency_weight", type=float, default=0.02)
+    parser.add_argument("--spectral_weight", type=float, default=0.0,
+                        help="Optional SmoothL1 weight on log-magnitude FFT reconstruction features.")
+    parser.add_argument("--teacher_ecgtwin_vae_ckpt", default=None,
+                        help="Optional original ECGTwin VAE checkpoint used as a frozen 1024-point teacher.")
+    parser.add_argument("--teacher_input_len", type=int, default=1024)
+    parser.add_argument("--teacher_recon_weight", type=float, default=0.0,
+                        help="SmoothL1 weight for recon500 downsampled to teacher_input_len vs teacher recon.")
+    parser.add_argument("--teacher_latent_weight", type=float, default=0.0,
+                        help="SmoothL1 weight for pooled student mu vs teacher mu.")
     parser.add_argument("--base_channels", type=int, default=64)
     parser.add_argument("--no_attention", action="store_true")
     parser.add_argument("--num_workers", type=int, default=4)
@@ -324,6 +442,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sample_count", type=int, default=8)
     parser.add_argument("--init_ckpt", default=None,
                         help="Optional VAE500 checkpoint used to initialize model weights.")
+    parser.add_argument("--init_ecgtwin_vae_ckpt", default=None,
+                        help="Original ECGTwin vae_model.pth used to initialize ecgtwin_init_vae500.")
     parser.add_argument("--cache_in_memory", action="store_true",
                         help="Load train/val normalized arrays into RAM instead of mmap reads.")
     parser.add_argument("--allow_tf32", action="store_true",

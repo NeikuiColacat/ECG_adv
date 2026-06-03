@@ -264,6 +264,114 @@ def train_one_epoch_masked_bce_freeze_aware(
     return float(np.mean(losses)) if losses else float("nan")
 
 
+def multilabel_pairwise_rank_loss(
+    logits: torch.Tensor,
+    labels: torch.Tensor,
+    *,
+    margin: float = 1.0,
+    positive_class_indices: Optional[List[int]] = None,
+) -> torch.Tensor:
+    """Pairwise multilabel ranking loss over valid positive-vs-negative labels.
+
+    For each sample, every selected positive class should have a logit at least
+    `margin` above every valid negative class. Unknown labels (-1) are ignored.
+    With only five Super5 classes, a simple per-row loop is clearer and cheap.
+    """
+    losses: List[torch.Tensor] = []
+    class_filter = None
+    if positive_class_indices:
+        class_filter = torch.zeros(labels.shape[1], dtype=torch.bool, device=labels.device)
+        valid_indices = [idx for idx in positive_class_indices if 0 <= idx < labels.shape[1]]
+        if valid_indices:
+            class_filter[valid_indices] = True
+    for row_logits, row_labels in zip(logits, labels, strict=True):
+        valid = row_labels >= 0
+        pos = valid & (row_labels > 0.5)
+        neg = valid & (row_labels <= 0.5)
+        if class_filter is not None:
+            pos = pos & class_filter
+        if int(pos.sum().item()) == 0 or int(neg.sum().item()) == 0:
+            continue
+        pair_margin = float(margin) - row_logits[pos].unsqueeze(1) + row_logits[neg].unsqueeze(0)
+        losses.append(F.softplus(pair_margin).mean())
+    if not losses:
+        return logits.sum() * 0.0
+    return torch.stack(losses).mean()
+
+
+def train_one_epoch_masked_bce_rank_aware(
+    model: nn.Module,
+    loader: DataLoader,
+    optimizer: AdamW,
+    criterion: nn.Module,
+    device: str,
+    grad_clip: float,
+    trainable_params: List[nn.Parameter],
+    ewa_params: Optional[List[torch.Tensor]],
+    anchor_lambda: float,
+    ewa_decay: float,
+    *,
+    rank_loss_weight: float = 0.0,
+    rank_loss_margin: float = 1.0,
+    rank_loss_positive_indices: Optional[List[int]] = None,
+    freeze_backbone_eval_fn: Optional[Callable[[], None]] = None,
+) -> Dict[str, float]:
+    """Masked BCE plus optional pairwise multilabel rank loss.
+
+    This keeps the historical masked-BCE behavior when rank_loss_weight <= 0.
+    The helper is local to this script so older Tier-M entrypoints are not
+    affected.
+    """
+    model.train()
+    if freeze_backbone_eval_fn is not None:
+        freeze_backbone_eval_fn()
+    bce_losses: List[float] = []
+    rank_losses: List[float] = []
+    total_losses: List[float] = []
+    for signals, labels in loader:
+        signals = signals.to(device, non_blocking=True)
+        labels = labels.to(device, non_blocking=True)
+        optimizer.zero_grad(set_to_none=True)
+        logits = model(signals)
+        mask = (labels >= 0).float()
+        labels_clamp = labels.clamp(min=0.0)
+        per_elem = criterion(logits, labels_clamp)
+        denom = mask.sum().clamp(min=1.0)
+        bce = (per_elem * mask).sum() / denom
+        if rank_loss_weight > 0:
+            rank_loss = multilabel_pairwise_rank_loss(
+                logits,
+                labels,
+                margin=rank_loss_margin,
+                positive_class_indices=rank_loss_positive_indices,
+            )
+        else:
+            rank_loss = logits.sum() * 0.0
+        loss = bce + float(rank_loss_weight) * rank_loss
+        if ewa_params is not None and anchor_lambda > 0:
+            anchor = sum(
+                (p - p_anchor.detach()).pow(2).sum()
+                for p, p_anchor in zip(trainable_params, ewa_params)
+            )
+            loss = loss + anchor_lambda * anchor
+        loss.backward()
+        if grad_clip > 0:
+            nn.utils.clip_grad_norm_(trainable_params, grad_clip)
+        optimizer.step()
+        if ewa_params is not None and ewa_decay > 0 and ewa_decay < 1.0:
+            with torch.no_grad():
+                for p, p_anchor in zip(trainable_params, ewa_params):
+                    p_anchor.mul_(ewa_decay).add_(p.data, alpha=1 - ewa_decay)
+        bce_losses.append(float(bce.item()))
+        rank_losses.append(float(rank_loss.item()))
+        total_losses.append(float(loss.item()))
+    return {
+        "bce": float(np.mean(bce_losses)) if bce_losses else float("nan"),
+        "rank": float(np.mean(rank_losses)) if rank_losses else float("nan"),
+        "total": float(np.mean(total_losses)) if total_losses else float("nan"),
+    }
+
+
 def configure_classifier_only_adaptation(
     model: nn.Module,
     train_final_norm: bool = False,
@@ -597,6 +705,11 @@ def attack_bce_diagnostics(
     device: str,
     crop_len: int,
     batch_size: int = 128,
+    attack_loss_mode: str = "bce",
+    attack_pos_hide_weight: float = 1.0,
+    attack_neg_add_weight: float = 0.25,
+    attack_negative_exclude_indices: Optional[List[int]] = None,
+    attack_neg_topk: int = 0,
 ) -> Dict[str, Any]:
     if adv_signals_ct.size == 0:
         return {}
@@ -618,6 +731,45 @@ def attack_bce_diagnostics(
     adv_bce = F.binary_cross_entropy_with_logits(adv_logits, labels_t, reduction="none").mean(dim=1)
     gain = adv_bce - clean_bce
     success = gain > 0.0
+    attack_negative_exclude_indices = attack_negative_exclude_indices or []
+
+    def targeted_loss_per_sample(logits: torch.Tensor) -> torch.Tensor:
+        if attack_loss_mode == "bce":
+            return F.binary_cross_entropy_with_logits(logits, labels_t, reduction="none").mean(dim=1)
+        pos_mask = labels_t > 0.5
+        neg_mask = labels_t < 0.5
+        valid_exclude = [idx for idx in attack_negative_exclude_indices if 0 <= idx < labels_t.shape[1]]
+        if valid_exclude:
+            neg_mask = neg_mask.clone()
+            neg_mask[:, valid_exclude] = False
+        pos_terms = F.softplus(-logits)
+        neg_terms = F.softplus(logits)
+        pos_denom = pos_mask.sum(dim=1).clamp(min=1).to(dtype=logits.dtype)
+        pos_loss = (pos_terms * pos_mask.to(dtype=logits.dtype)).sum(dim=1) / pos_denom
+        if int(attack_neg_topk) > 0:
+            neg_losses = []
+            for row_terms, row_mask in zip(neg_terms, neg_mask, strict=True):
+                selected = row_terms[row_mask]
+                if selected.numel() == 0:
+                    neg_losses.append(row_terms.sum() * 0.0)
+                else:
+                    kk = min(int(attack_neg_topk), selected.numel())
+                    neg_losses.append(selected.topk(kk).values.mean())
+            neg_loss = torch.stack(neg_losses)
+        else:
+            neg_denom = neg_mask.sum(dim=1).clamp(min=1).to(dtype=logits.dtype)
+            neg_loss = (neg_terms * neg_mask.to(dtype=logits.dtype)).sum(dim=1) / neg_denom
+        if attack_loss_mode == "positive_hide":
+            return float(attack_pos_hide_weight) * pos_loss
+        if attack_loss_mode == "negative_add":
+            return float(attack_neg_add_weight) * neg_loss
+        if attack_loss_mode == "pos_hide_neg_add":
+            return float(attack_pos_hide_weight) * pos_loss + float(attack_neg_add_weight) * neg_loss
+        raise ValueError(f"unknown attack_loss_mode={attack_loss_mode!r}")
+
+    clean_target = targeted_loss_per_sample(clean_logits)
+    adv_target = targeted_loss_per_sample(adv_logits)
+    target_gain = adv_target - clean_target
     return {
         "n": int(labels_t.shape[0]),
         "success_rate": float(success.float().mean().item()),
@@ -626,6 +778,14 @@ def attack_bce_diagnostics(
         "loss_gain_mean": float(gain.mean().item()),
         "loss_gain_p50": float(torch.quantile(gain, 0.50).item()),
         "loss_gain_p90": float(torch.quantile(gain, 0.90).item()),
+        "attack_loss_mode": attack_loss_mode,
+        "attack_target_clean_loss_mean": float(clean_target.mean().item()),
+        "attack_target_adv_loss_mean": float(adv_target.mean().item()),
+        "attack_target_loss_gain_mean": float(target_gain.mean().item()),
+        "attack_target_loss_gain_p50": float(torch.quantile(target_gain, 0.50).item()),
+        "attack_target_loss_gain_p90": float(torch.quantile(target_gain, 0.90).item()),
+        "_loss_gain_per_sample": gain.detach().cpu().numpy().astype(np.float32).tolist(),
+        "_attack_target_loss_gain_per_sample": target_gain.detach().cpu().numpy().astype(np.float32).tolist(),
     }
 
 
@@ -635,9 +795,18 @@ def agent_attack_decision(
     asr_low_threshold: float,
     consecutive_low_asr: int,
 ) -> Dict[str, Any]:
-    asr = float(entry.get("asr_overall", float("nan")))
-    invalid = float(entry.get("decoded_invalid_rate", float("nan")))
-    loss_gain = entry.get("attack_vs_anchor", {}).get("loss_gain_mean")
+    def _float_or_nan(value: Any) -> float:
+        if value is None:
+            return float("nan")
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return float("nan")
+
+    asr = _float_or_nan(entry.get("asr_overall", float("nan")))
+    invalid = _float_or_nan(entry.get("decoded_invalid_rate", float("nan")))
+    attack_vs_anchor = entry.get("attack_vs_anchor", {}) or {}
+    loss_gain = _float_or_nan(attack_vs_anchor.get("loss_gain_mean"))
     if asr != asr:
         state = "no_attack_or_disabled"
         action = "continue_if_this_is_an_ablation"
@@ -647,7 +816,7 @@ def agent_attack_decision(
     elif asr < asr_low_threshold:
         state = "attack_too_weak"
         action = "increase_attack_strength_only_if_repeated_and_source_floor_is_safe"
-    elif asr > 0.85 and (loss_gain is None or float(loss_gain) > 0.05):
+    elif asr > 0.85 and (loss_gain != loss_gain or loss_gain > 0.05):
         state = "attack_too_strong"
         action = "lower_adv_weight_or_attack_strength_if_target/source_metrics_drop"
     elif consecutive_low_asr > 0:
@@ -1100,7 +1269,11 @@ def push_adv_to_buffer(
     label_mode: str = "hard",
     teacher_mix: float = 0.7,
     soft_target_floor: float = 0.0,
-) -> Dict[str, int]:
+    loss_gain_per_sample: Optional[np.ndarray] = None,
+    min_loss_gain: Optional[float] = None,
+    loss_gain_score_scale: float = 0.0,
+    loss_gain_score_strength: float = 0.0,
+) -> Dict[str, Any]:
     """Push gates-passed adv signals into the buffer with -1 sentinel labels.
 
     Label scheme: target_only (Plan Issue #28 — CheXpert U-Ignore + SPML).
@@ -1114,6 +1287,16 @@ def push_adv_to_buffer(
     n_pushed = 0
     n_dropped_by_trust = 0
     n_dropped_by_boundary = 0
+    n_dropped_by_loss_gain = 0
+    accepted_indices: List[int] = []
+    loss_gain_score_multipliers: List[float] = []
+    if loss_gain_per_sample is not None:
+        loss_gain_per_sample = np.asarray(loss_gain_per_sample, dtype=np.float32)
+        if loss_gain_per_sample.shape[0] != adv_signals_ct.shape[0]:
+            raise ValueError(
+                "loss_gain_per_sample length mismatch: "
+                f"{loss_gain_per_sample.shape[0]} vs {adv_signals_ct.shape[0]}"
+            )
     for i in range(adv_signals_ct.shape[0]):
         sig_250 = _center_crop_ct(adv_signals_ct[i], crop_len)         # (12, 250)
         target_idx = int(target_one_hot[i].argmax())
@@ -1122,6 +1305,10 @@ def push_adv_to_buffer(
         if trust <= 0.0:
             n_dropped_by_trust += 1
             continue
+        if min_loss_gain is not None and loss_gain_per_sample is not None:
+            if float(loss_gain_per_sample[i]) < float(min_loss_gain):
+                n_dropped_by_loss_gain += 1
+                continue
         prob_t = float(1.0 / (1.0 + math.exp(-min(50.0, max(-50.0, victim_logits[i, target_idx])))))
         if prob_t < boundary_prob_min or prob_t > boundary_prob_max:
             n_dropped_by_boundary += 1
@@ -1157,18 +1344,223 @@ def push_adv_to_buffer(
             if soft_target_floor > 0.0:
                 lbl[target_idx] = torch.clamp(lbl[target_idx], min=float(soft_target_floor))
         score = (1.0 - 2.0 * abs(prob_t - 0.5)) * trust                # ∈ [0, trust]
+        if (
+            loss_gain_per_sample is not None
+            and loss_gain_score_scale > 0.0
+            and loss_gain_score_strength > 0.0
+        ):
+            gain = float(loss_gain_per_sample[i])
+            multiplier = 1.0 + float(loss_gain_score_strength) * math.tanh(
+                gain / float(loss_gain_score_scale)
+            )
+            multiplier = max(0.05, float(multiplier))
+            score *= multiplier
+            loss_gain_score_multipliers.append(multiplier)
         buffer.add_one(
             torch.from_numpy(np.ascontiguousarray(sig_250)).float(),
             lbl,
             score,
         )
+        accepted_indices.append(int(i))
         n_pushed += 1
     return {
         "n_pushed": n_pushed,
         "n_dropped_by_trust": n_dropped_by_trust,
         "n_dropped_by_boundary": n_dropped_by_boundary,
+        "n_dropped_by_loss_gain": n_dropped_by_loss_gain,
+        "accepted_indices": accepted_indices,
         "label_mode": label_mode,
+        "loss_gain_score_mult_mean": (
+            float(np.mean(loss_gain_score_multipliers))
+            if loss_gain_score_multipliers else float("nan")
+        ),
+        "loss_gain_score_mult_min": (
+            float(np.min(loss_gain_score_multipliers))
+            if loss_gain_score_multipliers else float("nan")
+        ),
+        "loss_gain_score_mult_max": (
+            float(np.max(loss_gain_score_multipliers))
+            if loss_gain_score_multipliers else float("nan")
+        ),
     }
+
+
+@torch.no_grad()
+def score_target_real_anchors(
+    weight_path: str,
+    model_name: str,
+    signals_tc: np.ndarray,
+    labels: np.ndarray,
+    record_ids: np.ndarray,
+    *,
+    device: str,
+    crop_len: int,
+    mode: str,
+    low_margin_weight: float,
+    batch_size: int,
+    ecgtwin_wrapper: Any,
+    vae_backend: str,
+    latent_preproc_length: int,
+    latent_amp_clamp: float,
+) -> Tuple[Dict[str, float], Dict[str, Any]]:
+    """Score K-shot real anchors using a frozen checkpoint.
+
+    Scores are used only to order/select latent anchors inside the known K-shot
+    pool. They must be computed from the K-shot split, not from held-out PN2021
+    target-center labels.
+    """
+    if signals_tc.size == 0:
+        return {}, {"enabled": False, "reason": "empty target-real train split"}
+    labels = np.asarray(labels, dtype=np.float32)
+    record_ids = np.asarray(record_ids).astype(str)
+    if labels.shape[0] != signals_tc.shape[0] or record_ids.shape[0] != signals_tc.shape[0]:
+        raise ValueError(
+            "anchor scoring target-real arrays mismatch: "
+            f"signals={signals_tc.shape} labels={labels.shape} record_ids={record_ids.shape}"
+        )
+    scorer = EfficientNetVictimTierM(
+        weight_path=weight_path,
+        device=device,
+        ecgtwin_wrapper=ecgtwin_wrapper,
+        num_classes=NUM_SUPER5,
+        crop_len=crop_len,
+        model_name=model_name,
+        latent_backend=vae_backend,
+        latent_preproc_length=latent_preproc_length,
+        latent_amp_clamp=latent_amp_clamp,
+    )
+    scorer.eval()
+    logits_chunks: List[torch.Tensor] = []
+    for i in range(0, signals_tc.shape[0], batch_size):
+        chunk = signals_tc[i:i + batch_size]
+        if chunk.shape[1:] == (crop_len, 12):
+            x = torch.from_numpy(chunk).float().permute(0, 2, 1).contiguous().to(device)
+        elif chunk.shape[1:] == (12, crop_len):
+            x = torch.from_numpy(chunk).float().contiguous().to(device)
+        else:
+            raise ValueError(f"unexpected target-real signal shape for scoring: {chunk.shape}")
+        logits_chunks.append(scorer.compute_logits_from_ecg(x).detach().cpu())
+    logits = torch.cat(logits_chunks, dim=0)
+    labels_t = torch.from_numpy(labels.astype(np.float32, copy=False))
+    bce = F.binary_cross_entropy_with_logits(logits, labels_t, reduction="none")
+    probs = torch.sigmoid(logits)
+    pos_mask = labels_t > 0.5
+    pos_count = pos_mask.sum(dim=1).clamp(min=1)
+    pos_bce = (bce * pos_mask.float()).sum(dim=1) / pos_count
+    full_bce = bce.mean(dim=1)
+    pos_uncertainty = ((1.0 - 2.0 * torch.abs(probs - 0.5)).clamp(min=0.0) * pos_mask.float()).sum(dim=1) / pos_count
+
+    mode = str(mode)
+    if mode == "hard_bce":
+        score = full_bce
+    elif mode == "positive_hard_bce":
+        score = pos_bce
+    elif mode == "low_margin":
+        score = pos_uncertainty
+    elif mode == "hard_bce_plus_low_margin":
+        score = pos_bce + float(low_margin_weight) * pos_uncertainty
+    else:
+        raise ValueError(f"unsupported anchor_score_mode={mode!r}")
+    score_np = score.detach().cpu().numpy().astype(np.float64)
+    score_map = {str(rid): float(s) for rid, s in zip(record_ids, score_np)}
+    info = {
+        "enabled": True,
+        "weight_path": weight_path,
+        "mode": mode,
+        "low_margin_weight": float(low_margin_weight),
+        "n_scored": int(score_np.shape[0]),
+        "score_mean": float(np.mean(score_np)) if score_np.size else float("nan"),
+        "score_p50": float(np.quantile(score_np, 0.50)) if score_np.size else float("nan"),
+        "score_p90": float(np.quantile(score_np, 0.90)) if score_np.size else float("nan"),
+        "score_max": float(np.max(score_np)) if score_np.size else float("nan"),
+    }
+    del scorer
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    return score_map, info
+
+
+def build_anchor_score_vector(
+    score_map: Dict[str, float],
+    source_meta: Dict[str, Any],
+    n_pool: int,
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    if "record_ids" not in source_meta:
+        raise ValueError("anchor scoring requires record_ids in the latent pool")
+    record_ids = np.asarray(source_meta["record_ids"]).astype(str)
+    if record_ids.shape[0] != n_pool:
+        raise ValueError(
+            f"latent pool record_ids length mismatch: {record_ids.shape[0]} vs {n_pool}"
+        )
+    scores = np.full((n_pool,), np.nan, dtype=np.float64)
+    n_matched = 0
+    for i, rid in enumerate(record_ids):
+        if str(rid) in score_map:
+            scores[i] = float(score_map[str(rid)])
+            n_matched += 1
+    return scores, {
+        "n_pool": int(n_pool),
+        "n_matched_record_ids": int(n_matched),
+        "n_missing_record_ids": int(n_pool - n_matched),
+    }
+
+
+def apply_anchor_scores_to_walker(
+    walker: StratifiedPoolWalker,
+    scores: np.ndarray,
+    *,
+    top_frac: float,
+    min_per_class: int,
+) -> Dict[str, Any]:
+    """Order and optionally trim walker pools by precomputed anchor scores."""
+    top_frac = float(top_frac)
+    min_per_class = max(1, int(min_per_class))
+    summary: Dict[str, Any] = {
+        "enabled": True,
+        "top_frac": top_frac,
+        "min_per_class": min_per_class,
+        "per_class": {},
+        "per_source_class": {},
+    }
+
+    def order_pool(pool: np.ndarray) -> Tuple[np.ndarray, Dict[str, Any]]:
+        pool = np.asarray(pool, dtype=np.int64)
+        if pool.size == 0:
+            return pool, {"before": 0, "after": 0}
+        vals = scores[pool]
+        finite_vals = vals[np.isfinite(vals)]
+        sortable = np.nan_to_num(vals, nan=-np.inf, posinf=np.inf, neginf=-np.inf)
+        ordered = pool[np.argsort(-sortable)]
+        before = int(pool.size)
+        keep_n = before
+        if 0.0 < top_frac < 1.0:
+            keep_n = min(before, max(min_per_class, int(math.ceil(before * top_frac))))
+            ordered = ordered[:keep_n]
+        info = {
+            "before": before,
+            "after": int(ordered.size),
+            "finite_scores": int(finite_vals.size),
+            "score_p50": float(np.quantile(finite_vals, 0.50)) if finite_vals.size else float("nan"),
+            "score_p90": float(np.quantile(finite_vals, 0.90)) if finite_vals.size else float("nan"),
+            "score_max": float(np.max(finite_vals)) if finite_vals.size else float("nan"),
+        }
+        return ordered.astype(np.int64, copy=False), info
+
+    for cls in walker.classes:
+        ordered, info = order_pool(walker.cls_pools[cls])
+        walker.cls_pools[cls] = ordered
+        walker.cursors[cls] = 0
+        walker.epochs_completed[cls] = 0
+        summary["per_class"][cls] = info
+
+    for key in list(walker.source_cls_pools):
+        ordered, info = order_pool(walker.source_cls_pools[key])
+        walker.source_cls_pools[key] = ordered
+        walker.source_cursors[key] = 0
+        walker.source_epochs_completed[key] = 0
+        cls, source = key
+        summary["per_source_class"].setdefault(cls, {})[source] = info
+    return summary
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -1195,6 +1587,16 @@ def parse_args():
                    default=["chapman_shaoxing", "cpsc_2018_extra", "georgia",
                             "ningbo"])
     p.add_argument("--quick_eval_n_per_center", type=int, default=1000)
+    p.add_argument(
+        "--quick_eval_min_pos",
+        type=int,
+        default=10,
+        help=(
+            "Minimum positive labels required for a class in quick_eval metrics. "
+            "Keep the default 10 for K500/K1000 runs; lower it only for explicit "
+            "low-K screening where the internal target validation split is small."
+        ),
+    )
     p.add_argument(
         "--quick_eval_source",
         choices=["pn2021", "target_real_val"],
@@ -1235,6 +1637,26 @@ def parse_args():
     p.add_argument("--K_anchor", type=int, default=300)
     p.add_argument("--pgd_alpha", type=float, default=None)
     p.add_argument("--delta_init_scale", type=float, default=0.1)
+    p.add_argument(
+        "--attack_loss_mode",
+        choices=["bce", "positive_hide", "negative_add", "pos_hide_neg_add"],
+        default="bce",
+        help="Latent attack objective. bce preserves historical full-label BCE behavior.",
+    )
+    p.add_argument("--attack_pos_hide_weight", type=float, default=1.0)
+    p.add_argument("--attack_neg_add_weight", type=float, default=0.25)
+    p.add_argument(
+        "--attack_negative_exclude_classes",
+        nargs="*",
+        default=[],
+        help="Super5 classes excluded from negative-add terms, e.g. NORM.",
+    )
+    p.add_argument(
+        "--attack_neg_topk",
+        type=int,
+        default=0,
+        help="If >0, negative-add uses top-k negative class losses per sample.",
+    )
     p.add_argument("--attack_mode", choices=["pgd", "latent_hull"], default="pgd",
                    help="pgd = free z0+delta PGD; latent_hull = same-label convex hull")
     p.add_argument("--hull_M", type=int, default=10,
@@ -1340,6 +1762,51 @@ def parse_args():
         default=0.35,
         help="Weight assigned to classes absent from the K500-train reference subset.",
     )
+    p.add_argument(
+        "--anchor_score_mode",
+        choices=[
+            "none",
+            "hard_bce",
+            "positive_hard_bce",
+            "low_margin",
+            "hard_bce_plus_low_margin",
+        ],
+        default="none",
+        help=(
+            "Optional boundary-targeted anchor ordering. Scores are computed "
+            "only on the K-shot target-real train split, then used to order or "
+            "trim the latent anchor pools before sampling."
+        ),
+    )
+    p.add_argument(
+        "--anchor_score_ckpt",
+        default="",
+        help=(
+            "Checkpoint used to score boundary anchors. If empty and "
+            "--anchor_score_mode is not none, the current --init_ckpt is used."
+        ),
+    )
+    p.add_argument(
+        "--anchor_score_low_margin_weight",
+        type=float,
+        default=0.5,
+        help="Weight for the low-margin term in hard_bce_plus_low_margin mode.",
+    )
+    p.add_argument(
+        "--anchor_score_top_frac",
+        type=float,
+        default=1.0,
+        help=(
+            "If in (0,1), keep only the top fraction of scored anchors inside "
+            "each class pool. 1.0 keeps all anchors but samples hardest first."
+        ),
+    )
+    p.add_argument(
+        "--anchor_score_min_per_class",
+        type=int,
+        default=8,
+        help="Minimum anchors retained per class when --anchor_score_top_frac < 1.",
+    )
     p.add_argument("--classes_in_scope", nargs="+", default=sorted(SUPER5_GEN_SUBSET),
                    help="Super5 classes sampled as adversarial anchors. Default keeps historical NORM/MI/STTC.")
     p.add_argument("--allow_hyp_cd_trust", action="store_true",
@@ -1364,6 +1831,41 @@ def parse_args():
                    help="For --adv_label_mode mixed_soft, weight on frozen-teacher probabilities.")
     p.add_argument("--adv_soft_target_floor", type=float, default=0.0,
                    help="For soft adv labels, clamp the intended target class label to at least this value.")
+    p.add_argument("--adv_accept_min_loss_gain", type=float, default=None,
+                   help="If set, only push adversarial samples with adv_bce - clean_bce >= this value.")
+    p.add_argument(
+        "--adv_accept_gain_mode",
+        choices=["bce", "target"],
+        default="bce",
+        help=(
+            "Loss-gain vector used by --adv_accept_min_loss_gain and soft score scaling. "
+            "bce is legacy full BCE; target follows --attack_loss_mode."
+        ),
+    )
+    p.add_argument("--adv_loss_gain_score_scale", type=float, default=0.0,
+                   help="If >0 with --adv_loss_gain_score_strength >0, softly reweight buffer scores by loss_gain / scale.")
+    p.add_argument("--adv_loss_gain_score_strength", type=float, default=0.0,
+                   help="Soft loss-gain score multiplier strength. Multiplier is 1 + strength * tanh(loss_gain / scale).")
+    p.add_argument(
+        "--rank_loss_weight",
+        type=float,
+        default=0.0,
+        help=(
+            "Optional pairwise multilabel ranking loss weight. Default 0 keeps "
+            "historical masked-BCE training. Use with "
+            "--rank_loss_positive_classes to target rare abnormal positives."
+        ),
+    )
+    p.add_argument("--rank_loss_margin", type=float, default=1.0)
+    p.add_argument(
+        "--rank_loss_positive_classes",
+        nargs="*",
+        default=[],
+        help=(
+            "Positive classes included in the ranking term, e.g. CD HYP MI STTC. "
+            "Empty means all positive classes."
+        ),
+    )
 
     # Mix loader (Plan Rev 13.2: real-dominated mix, adv_w=0.5 vs Wang 2023 0.7 reverse)
     p.add_argument("--ptbxl_weight", type=float, default=1.0)
@@ -1627,7 +2129,10 @@ def main():
     if args.vae_backend == "ecgtwin1024":
         print("[setup] Loading ECGTwin (encoder + decoder, no text model)...")
         ecgtwin = ECGTwinWrapper(device=args.device, load_encoder=True, load_text_model=False)
-        latent_preproc_length = 1000
+        # Keep old 100 Hz behavior when input_len=1000, but allow the original
+        # ECGTwin 1024-point VAE latent manifold to feed 500 Hz classifiers by
+        # decoding to 1024 and differentiably interpolating to input_len.
+        latent_preproc_length = int(args.input_len)
     elif args.vae_backend == "diffusets500_v1":
         if not args.vae500_ckpt:
             raise ValueError("--vae500_ckpt is required when --vae_backend diffusets500_v1")
@@ -1715,6 +2220,39 @@ def main():
     if not classes_in_scope:
         raise SystemExit("--classes_in_scope must contain at least one class")
     print(f"[setup] classes_in_scope={classes_in_scope}")
+    attack_negative_exclude_indices: List[int] = []
+    attack_negative_exclude_classes: List[str] = []
+    for cls in args.attack_negative_exclude_classes:
+        cls = cls.upper()
+        if cls not in SUPER5_TO_IDX:
+            raise SystemExit(
+                f"unknown --attack_negative_exclude_classes class {cls!r}; "
+                f"valid={CLASS_NAMES_SUPER5}"
+            )
+        attack_negative_exclude_classes.append(cls)
+        attack_negative_exclude_indices.append(int(SUPER5_TO_IDX[cls]))
+    rank_loss_positive_classes: List[str] = []
+    rank_loss_positive_indices: List[int] = []
+    for cls in args.rank_loss_positive_classes:
+        cls = cls.upper()
+        if cls not in SUPER5_TO_IDX:
+            raise SystemExit(
+                f"unknown --rank_loss_positive_classes class {cls!r}; "
+                f"valid={CLASS_NAMES_SUPER5}"
+            )
+        rank_loss_positive_classes.append(cls)
+        rank_loss_positive_indices.append(int(SUPER5_TO_IDX[cls]))
+    print(
+        "[setup] attack objective: "
+        f"mode={args.attack_loss_mode} pos_w={args.attack_pos_hide_weight} "
+        f"neg_w={args.attack_neg_add_weight} neg_exclude={attack_negative_exclude_classes} "
+        f"neg_topk={args.attack_neg_topk} accept_gain={args.adv_accept_gain_mode}"
+    )
+    print(
+        "[setup] rank-aware loss: "
+        f"weight={args.rank_loss_weight} margin={args.rank_loss_margin} "
+        f"positive_classes={rank_loss_positive_classes or '<all positives>'}"
+    )
     print(f"[setup] boundary target probability window=[{args.boundary_prob_min}, {args.boundary_prob_max}]")
     print(f"[setup] adv label mode={args.adv_label_mode} "
           f"teacher_mix={args.adv_teacher_mix} target_floor={args.adv_soft_target_floor}")
@@ -1809,6 +2347,9 @@ def main():
     target_real_ds = None
     target_val_quick_subset = None
     target_val_record_ids: set[str] = set()
+    target_train_signals_tc: Optional[np.ndarray] = None
+    target_train_labels: Optional[np.ndarray] = None
+    target_train_record_ids: Optional[np.ndarray] = None
     if args.target_real_npz:
         with np.load(args.target_real_npz, allow_pickle=True) as real_data:
             real_signals = np.asarray(real_data["signals"], dtype=np.float32)
@@ -1851,6 +2392,10 @@ def main():
             )
             real_signals = real_signals[train_mask]
             real_labels = real_labels[train_mask]
+            real_record_ids = real_record_ids[train_mask]
+        target_train_signals_tc = real_signals.astype(np.float32, copy=False)
+        target_train_labels = real_labels.astype(np.float32, copy=False)
+        target_train_record_ids = real_record_ids.astype(str, copy=False)
         target_real_ds = PTBXLDatasetScheme(
             real_signals,
             real_labels,
@@ -1882,6 +2427,41 @@ def main():
                 f"train_latents={len(synth_latents)}",
                 flush=True,
             )
+
+    anchor_score_vector: Optional[np.ndarray] = None
+    anchor_score_info: Dict[str, Any] = {"enabled": False, "mode": args.anchor_score_mode}
+    if args.anchor_score_mode != "none":
+        if target_train_signals_tc is None or target_train_labels is None or target_train_record_ids is None:
+            raise ValueError("--anchor_score_mode requires --target_real_npz")
+        score_ckpt = args.anchor_score_ckpt or args.init_ckpt
+        print(
+            f"[setup] scoring target-real anchors: mode={args.anchor_score_mode} "
+            f"ckpt={score_ckpt} top_frac={args.anchor_score_top_frac}",
+            flush=True,
+        )
+        score_map, score_info = score_target_real_anchors(
+            score_ckpt,
+            args.model_name,
+            target_train_signals_tc,
+            target_train_labels,
+            target_train_record_ids,
+            device=args.device,
+            crop_len=args.crop_len,
+            mode=args.anchor_score_mode,
+            low_margin_weight=args.anchor_score_low_margin_weight,
+            batch_size=args.batch_size,
+            ecgtwin_wrapper=ecgtwin,
+            vae_backend=args.vae_backend,
+            latent_preproc_length=latent_preproc_length,
+            latent_amp_clamp=args.latent_amp_clamp,
+        )
+        anchor_score_vector, match_info = build_anchor_score_vector(
+            score_map,
+            source_meta,
+            n_pool=int(synth_labels.shape[0]),
+        )
+        anchor_score_info = {**score_info, **match_info}
+        print(f"[setup] anchor score info: {anchor_score_info}", flush=True)
 
     pos_weight = torch.tensor(
         compute_pos_weight(train_labels, NUM_SUPER5),
@@ -1941,7 +2521,8 @@ def main():
 
     print("[baseline] Computing baseline quick-eval ...")
     baseline_qe = quick_eval_super5(victim.model, quick_subset, args.device,
-                                    crop_len=args.crop_len)
+                                    crop_len=args.crop_len,
+                                    min_pos=args.quick_eval_min_pos)
     print(f"[baseline] avg macro AUROC={baseline_qe['avg_macro_auroc']}, "
           f"AUPRC={baseline_qe['avg_macro_auprc']}")
     for c, info in baseline_qe["per_center"].items():
@@ -1963,6 +2544,11 @@ def main():
             weight_mode=args.hull_weight_mode,
             dirichlet_alpha=args.hull_dirichlet_alpha,
             device=args.device,
+            attack_loss_mode=args.attack_loss_mode,
+            attack_pos_hide_weight=args.attack_pos_hide_weight,
+            attack_neg_add_weight=args.attack_neg_add_weight,
+            attack_negative_exclude_indices=attack_negative_exclude_indices,
+            attack_neg_topk=args.attack_neg_topk,
         )
         latent_hull_index = SameLabelLatentIndex(
             synth_latents, synth_labels,
@@ -1987,6 +2573,11 @@ def main():
             epsilon=args.pgd_eps, K_pgd=args.pgd_K,
             alpha=args.pgd_alpha, delta_init_scale=args.delta_init_scale,
             device=args.device,
+            attack_loss_mode=args.attack_loss_mode,
+            attack_pos_hide_weight=args.attack_pos_hide_weight,
+            attack_neg_add_weight=args.attack_neg_add_weight,
+            attack_negative_exclude_indices=attack_negative_exclude_indices,
+            attack_neg_topk=args.attack_neg_topk,
         )
     freeze_backbone_eval_fn: Optional[Callable[[], None]] = None
     if args.freeze_backbone_classifier_only and args.unfreeze_last_n_features > 0:
@@ -2094,11 +2685,29 @@ def main():
             "mode": args.adv_label_mode,
             "teacher_mix": args.adv_teacher_mix,
             "soft_target_floor": args.adv_soft_target_floor,
+            "accept_min_loss_gain": args.adv_accept_min_loss_gain,
+            "accept_gain_mode": args.adv_accept_gain_mode,
+            "loss_gain_score_scale": float(args.adv_loss_gain_score_scale),
+            "loss_gain_score_strength": float(args.adv_loss_gain_score_strength),
             "hull_mix_label_mode": args.hull_mix_label_mode,
             "hull_label_lambda_y": args.hull_label_lambda_y,
             "hull_label_positive": args.hull_label_positive,
             "hull_label_negative_floor": args.hull_label_negative_floor,
             "hull_label_new_class_cap": args.hull_label_new_class_cap,
+        },
+        "attack_objective": {
+            "mode": args.attack_loss_mode,
+            "pos_hide_weight": float(args.attack_pos_hide_weight),
+            "neg_add_weight": float(args.attack_neg_add_weight),
+            "negative_exclude_classes": list(attack_negative_exclude_classes),
+            "negative_exclude_indices": list(attack_negative_exclude_indices),
+            "neg_topk": int(args.attack_neg_topk),
+        },
+        "rank_loss": {
+            "weight": float(args.rank_loss_weight),
+            "margin": float(args.rank_loss_margin),
+            "positive_classes": list(rank_loss_positive_classes),
+            "positive_indices": list(rank_loss_positive_indices),
         },
         "latent_hull_partner_selection": {
             "include_anchor": bool(args.hull_include_anchor),
@@ -2112,6 +2721,7 @@ def main():
             "anchor_class_weights": anchor_class_weight_map,
             "anchor_class_weight_policy": anchor_class_weight_info,
             "K_anchor": int(args.K_anchor),
+            "anchor_score": anchor_score_info,
         },
         "latent_augmix_branch": {
             "enabled": bool(args.enable_latent_augmix_branch),
@@ -2174,6 +2784,20 @@ def main():
         source_class_weights=source_class_weight_map,
         source_floor_per_class=args.source_floor_per_class,
     )
+    if anchor_score_vector is not None:
+        anchor_score_apply_info = apply_anchor_scores_to_walker(
+            walker,
+            anchor_score_vector,
+            top_frac=args.anchor_score_top_frac,
+            min_per_class=args.anchor_score_min_per_class,
+        )
+        anchor_score_info["pool_ordering"] = anchor_score_apply_info
+        log["anchor_sampling"]["anchor_score"] = anchor_score_info
+        print(
+            f"[setup] boundary-targeted anchor pools applied: "
+            f"{json.dumps(anchor_score_apply_info['per_class'], ensure_ascii=True)}",
+            flush=True,
+        )
     walker_class_sizes = walker.class_sizes()
     print(f"[setup] walker class sizes: {walker_class_sizes}")
     print(f"[setup] anchor class weights: {anchor_class_weight_map or {'<default>': 1.0}}")
@@ -2239,6 +2863,9 @@ def main():
                 "sample_all_positive_below_0p5_asr": float("nan"),
                 "sample_all_positive_recognized_rate": float("nan"),
                 "per_class_positive_label_asr": {},
+                "multilabel_negative_label_asr": float("nan"),
+                "sample_any_negative_above_0p5_asr": float("nan"),
+                "per_class_negative_label_asr": {},
             }
             sem_info = {"PASS": True}
             push_stats = {"n_pushed": 0, "label_mode": "adv_stream_disabled"}
@@ -2301,6 +2928,20 @@ def main():
                 target_oh,
                 device=args.device,
                 crop_len=args.crop_len,
+                attack_loss_mode=args.attack_loss_mode,
+                attack_pos_hide_weight=args.attack_pos_hide_weight,
+                attack_neg_add_weight=args.attack_neg_add_weight,
+                attack_negative_exclude_indices=attack_negative_exclude_indices,
+                attack_neg_topk=args.attack_neg_topk,
+            )
+            gain_key = (
+                "_attack_target_loss_gain_per_sample"
+                if args.adv_accept_gain_mode == "target"
+                else "_loss_gain_per_sample"
+            )
+            loss_gain_per_sample = np.asarray(
+                attack_vs_anchor_stats.get(gain_key, []),
+                dtype=np.float32,
             )
             # Semantic (Einthoven, HR, QRS)
             sem_info = compute_semantic_gate(
@@ -2349,27 +2990,50 @@ def main():
                     label_mode=args.adv_label_mode,
                     teacher_mix=args.adv_teacher_mix,
                     soft_target_floor=args.adv_soft_target_floor,
+                    loss_gain_per_sample=loss_gain_per_sample,
+                    min_loss_gain=args.adv_accept_min_loss_gain,
+                    loss_gain_score_scale=args.adv_loss_gain_score_scale,
+                    loss_gain_score_strength=args.adv_loss_gain_score_strength,
                 )
                 if args.enable_latent_augmix_branch:
-                    latent_augmix_signals, latent_augmix_stats = build_latent_augmix_branch_signals(
-                        anchor_signals_ct=anc_signals,
-                        adv_signals_ct=adv_signals,
-                        copies=args.latent_augmix_copies,
-                        severity=args.latent_augmix_severity,
-                        width=args.latent_augmix_width,
-                        depth=args.latent_augmix_depth,
-                        alpha=args.latent_augmix_alpha,
-                        latent_weight_cap=args.latent_augmix_latent_weight_cap,
-                        ops=list(args.latent_augmix_ops),
-                        rng=rng,
-                        renorm=not args.no_latent_augmix_renorm,
-                        clip_abs=args.latent_augmix_clip_abs,
+                    accepted_indices = np.asarray(
+                        push_stats.get("accepted_indices", []),
+                        dtype=np.int64,
                     )
+                    if accepted_indices.size == 0:
+                        latent_augmix_signals = np.empty(
+                            (0,) + tuple(adv_signals.shape[1:]),
+                            dtype=np.float32,
+                        )
+                        latent_augmix_stats = {
+                            "enabled": True,
+                            "n_generated": 0,
+                            "reason": "no_main_adv_samples_accepted",
+                        }
+                    else:
+                        anchor_for_augmix = anc_signals[accepted_indices]
+                        adv_for_augmix = adv_signals[accepted_indices]
+                        labels_for_augmix = target_oh[accepted_indices]
+                        latent_augmix_signals, latent_augmix_stats = build_latent_augmix_branch_signals(
+                            anchor_signals_ct=anchor_for_augmix,
+                            adv_signals_ct=adv_for_augmix,
+                            copies=args.latent_augmix_copies,
+                            severity=args.latent_augmix_severity,
+                            width=args.latent_augmix_width,
+                            depth=args.latent_augmix_depth,
+                            alpha=args.latent_augmix_alpha,
+                            latent_weight_cap=args.latent_augmix_latent_weight_cap,
+                            ops=list(args.latent_augmix_ops),
+                            rng=rng,
+                            renorm=not args.no_latent_augmix_renorm,
+                            clip_abs=args.latent_augmix_clip_abs,
+                        )
+                        latent_augmix_stats["accepted_source_count"] = int(accepted_indices.size)
                     if latent_augmix_signals.shape[0] > 0:
                         start = (latent_augmix_signals.shape[-1] - args.crop_len) // 2
                         latent_augmix_ct_crop = latent_augmix_signals[..., start:start + args.crop_len]
                         labels_rep = np.tile(
-                            target_oh,
+                            labels_for_augmix,
                             (max(1, int(args.latent_augmix_copies)), 1),
                         )[:latent_augmix_signals.shape[0]]
                         with torch.no_grad():
@@ -2470,7 +3134,29 @@ def main():
                                       **dataloader_perf_kwargs(args))
 
         # Phase D: train
-        if freeze_backbone_eval_fn is not None:
+        train_bce_loss = float("nan")
+        train_rank_loss = float("nan")
+        if args.rank_loss_weight > 0:
+            train_parts = train_one_epoch_masked_bce_rank_aware(
+                victim.model,
+                train_loader,
+                optimizer,
+                criterion,
+                args.device,
+                grad_clip=args.grad_clip,
+                trainable_params=trainable_params,
+                ewa_params=ewa_params,
+                anchor_lambda=args.anchor_lambda,
+                ewa_decay=args.ewa_decay,
+                rank_loss_weight=args.rank_loss_weight,
+                rank_loss_margin=args.rank_loss_margin,
+                rank_loss_positive_indices=rank_loss_positive_indices,
+                freeze_backbone_eval_fn=freeze_backbone_eval_fn,
+            )
+            train_loss = train_parts["total"]
+            train_bce_loss = train_parts["bce"]
+            train_rank_loss = train_parts["rank"]
+        elif freeze_backbone_eval_fn is not None:
             train_loss = train_one_epoch_masked_bce_freeze_aware(
                 victim.model, train_loader, optimizer, criterion, args.device,
                 grad_clip=args.grad_clip,
@@ -2523,10 +3209,21 @@ def main():
         val_loss = float(np.mean(val_losses)) if val_losses else float('nan')
 
         elapsed = time.time() - epoch_t0
+        attack_vs_anchor_log = {
+            key: value for key, value in attack_vs_anchor_stats.items()
+            if not str(key).startswith("_")
+        }
         entry = {
             "epoch": epoch,
             "attack_mode": args.attack_mode,
             "train_loss": round(train_loss, 4),
+            "train_bce_loss": round(train_bce_loss, 4)
+            if train_bce_loss == train_bce_loss else None,
+            "train_rank_loss": round(train_rank_loss, 4)
+            if train_rank_loss == train_rank_loss else None,
+            "rank_loss_weight": float(args.rank_loss_weight),
+            "rank_loss_margin": float(args.rank_loss_margin),
+            "rank_loss_positive_classes": list(rank_loss_positive_classes),
             "source_logit_anchor_loss": round(source_logit_anchor_loss, 6)
             if source_logit_anchor_loss == source_logit_anchor_loss else None,
             "val_loss":   round(val_loss, 4),
@@ -2546,11 +3243,11 @@ def main():
             ),
             "atk_init": None,
             "atk_init_reason": "not_available_for_current_latent_hull_generator",
-            "atk_anchor": attack_vs_anchor_stats.get("success_rate"),
-            "attack_vs_anchor": attack_vs_anchor_stats,
-            "clean_bce": attack_vs_anchor_stats.get("clean_bce_mean"),
-            "adv_bce": attack_vs_anchor_stats.get("adv_bce_mean"),
-            "loss_gain": attack_vs_anchor_stats.get("loss_gain_mean"),
+            "atk_anchor": attack_vs_anchor_log.get("success_rate"),
+            "attack_vs_anchor": attack_vs_anchor_log,
+            "clean_bce": attack_vs_anchor_log.get("clean_bce_mean"),
+            "adv_bce": attack_vs_anchor_log.get("adv_bce_mean"),
+            "loss_gain": attack_vs_anchor_log.get("loss_gain_mean"),
             "decoded_invalid_rate": round(float(decode_invalid_stats["decoded_invalid_rate"]), 6)
             if decode_invalid_stats["decoded_invalid_rate"] == decode_invalid_stats["decoded_invalid_rate"]
             else None,
@@ -2564,6 +3261,16 @@ def main():
                 k: round(float(v), 4)
                 for k, v in asr_info.get("per_class_positive_label_asr", {}).items()
             },
+            "multilabel_negative_label_asr": round(
+                float(asr_info.get("multilabel_negative_label_asr", float("nan"))), 4
+            ),
+            "sample_any_negative_above_0p5_asr": round(
+                float(asr_info.get("sample_any_negative_above_0p5_asr", float("nan"))), 4
+            ),
+            "per_class_negative_label_asr": {
+                k: round(float(v), 4)
+                for k, v in asr_info.get("per_class_negative_label_asr", {}).items()
+            },
             "einthoven_p95":  round(float(sem_info.get("einthoven_mean_p95", float('nan'))), 4),
             "hr_mean_delta": round(float(sem_info.get("hr_mean_delta", float('nan'))), 4),
             "qrs_amp_ratio": round(float(sem_info.get("qrs_amp_ratio", float('nan'))), 4)
@@ -2576,6 +3283,8 @@ def main():
             "latent_augmix_push_stats": latent_augmix_push_stats,
             "adv_weight_effective": round(float(epoch_adv_weight), 6),
             "adv_weight_warmup_epochs": int(args.adv_weight_warmup_epochs),
+            "adv_accept_min_loss_gain": args.adv_accept_min_loss_gain,
+            "adv_accept_gain_mode": args.adv_accept_gain_mode,
             "anchor_class_quotas": dict(k_per_cls),
             "delta_mean":    round(delta_stats["mean_delta_norm"], 4),
             "delta_max":     round(delta_stats["max_delta_norm"], 4),
@@ -2620,7 +3329,8 @@ def main():
         # Phase F: quick eval (every eval_every; also last epoch)
         if (epoch % args.eval_every == 0) or (epoch == args.n_epochs):
             qe = quick_eval_super5(victim.model, quick_subset, args.device,
-                                   crop_len=args.crop_len)
+                                   crop_len=args.crop_len,
+                                   min_pos=args.quick_eval_min_pos)
             entry["quick_eval"] = qe
             print(f"   quick eval: avg AUROC={qe['avg_macro_auroc']}  "
                   f"AUPRC={qe['avg_macro_auprc']}")

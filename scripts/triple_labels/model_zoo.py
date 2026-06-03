@@ -143,6 +143,17 @@ def _benchmark_xresnet1d18(num_classes: int, input_channels: int = 12) -> nn.Mod
     )
 
 
+def _fastai_xresnet1d50(num_classes: int, input_channels: int = 12) -> nn.Module:
+    from models.xresnet1d import xresnet1d50
+
+    return xresnet1d50(
+        num_classes=num_classes,
+        input_channels=input_channels,
+        ps_head=0.5,
+        lin_ftrs_head=[128],
+    )
+
+
 def _benchmark_xresnet1d101(num_classes: int, input_channels: int = 12) -> nn.Module:
     from models.xresnet1d import xresnet1d101
 
@@ -205,6 +216,7 @@ def _benchmark_lstm(num_classes: int, input_channels: int = 12) -> nn.Module:
 
 MODEL_BUILDERS: dict[str, Callable[[int, int], nn.Module]] = {
     "efficientnet1dv2": _efficientnet1dv2,
+    "fastai_xresnet1d50": _fastai_xresnet1d50,
     "benchmark_resnet1d_wang": _benchmark_resnet1d_wang,
     "benchmark_xresnet1d18": _benchmark_xresnet1d18,
     "benchmark_xresnet1d101": _benchmark_xresnet1d101,
@@ -217,6 +229,7 @@ MODEL_BUILDERS: dict[str, Callable[[int, int], nn.Module]] = {
 ALIASES = {
     "resnet1d_wang": "benchmark_resnet1d_wang",
     "xresnet1d18": "benchmark_xresnet1d18",
+    "xresnet1d50": "fastai_xresnet1d50",
     "xresnet1d101": "benchmark_xresnet1d101",
     "inception1d": "benchmark_inception1d",
     "fcn_wang": "benchmark_fcn_wang",

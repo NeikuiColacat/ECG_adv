@@ -107,6 +107,30 @@ def compute_asr(
         else:
             per_class_positive_label_asr[str(c)] = float((probs[mask, c] < 0.5).mean())
 
+    negative_mask = labels_multi_hot < 0.5
+    negative_probs = probs[negative_mask]
+    negative_above = (probs > 0.5) & negative_mask
+    sample_has_negative = negative_mask.any(axis=1)
+    if negative_probs.size:
+        multilabel_negative_label_asr = float((negative_probs > 0.5).mean())
+        sample_any_negative_above_0p5_asr = float(
+            negative_above[sample_has_negative].any(axis=1).mean()
+        )
+    else:
+        multilabel_negative_label_asr = float("nan")
+        sample_any_negative_above_0p5_asr = float("nan")
+
+    per_class_negative_label_asr: Dict[str, float] = {}
+    per_class_negative_label_n: Dict[str, int] = {}
+    for c in range(labels_multi_hot.shape[1]):
+        mask = negative_mask[:, c]
+        n_c = int(mask.sum())
+        per_class_negative_label_n[str(c)] = n_c
+        if n_c == 0:
+            per_class_negative_label_asr[str(c)] = float("nan")
+        else:
+            per_class_negative_label_asr[str(c)] = float((probs[mask, c] > 0.5).mean())
+
     # PASS criterion (overall ≥ 0.7 is the hard requirement; per-class ≥ 0.3 is a
     # weaker "some signal in every class" check — a class with very high victim
     # confidence like RBBB can legitimately be harder to attack at a given ε,
@@ -127,6 +151,10 @@ def compute_asr(
         sample_all_positive_recognized_rate=sample_all_positive_recognized_rate,
         per_class_positive_label_asr=per_class_positive_label_asr,
         per_class_positive_label_n=per_class_positive_label_n,
+        multilabel_negative_label_asr=multilabel_negative_label_asr,
+        sample_any_negative_above_0p5_asr=sample_any_negative_above_0p5_asr,
+        per_class_negative_label_asr=per_class_negative_label_asr,
+        per_class_negative_label_n=per_class_negative_label_n,
         prob_on_true_mean=float(prob_on_true.mean()),
         prob_on_true_median=float(np.median(prob_on_true)),
         PASS=bool(pass_overall and per_class_ok),
