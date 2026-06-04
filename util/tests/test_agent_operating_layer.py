@@ -278,9 +278,10 @@ def test_agent_workspace_cli_combines_registry_and_active_script_audits():
         assert item["staged_diff"]["has_diff"] is True
         assert item["unstaged_diff"]["has_diff"] is True
     review_queue = contract["source_of_truth_review_queue"]
-    assert len(review_queue) == source_summary["dirty_count"]
+    review_items = [item for item in source_status if item["git_status"] != "clean"]
+    assert len(review_queue) == len(review_items)
     queue_by_path = {item["path"]: item for item in review_queue}
-    assert set(queue_by_path) == set(source_summary["dirty_paths"])
+    assert set(queue_by_path) == {item["path"] for item in review_items}
     for item in review_queue:
         assert set(item) == {
             "path",
@@ -313,7 +314,9 @@ def test_agent_workspace_cli_combines_registry_and_active_script_audits():
     assert [priority_order[item["review_state"]] for item in review_queue] == sorted(
         priority_order[item["review_state"]] for item in review_queue
     )
-    assert source_summary["requires_attention"] is (source_summary["dirty_count"] > 0)
+    assert source_summary["requires_attention"] is bool(
+        source_summary["dirty_count"] or source_summary["untracked_count"] or source_summary["missing_count"]
+    )
     assert "configs" in source_summary["by_layer"]
     layer_status = source_summary["by_layer_status"]
     assert set(layer_status) == set(source_summary["by_layer"])
@@ -321,7 +324,7 @@ def test_agent_workspace_cli_combines_registry_and_active_script_audits():
         layer_items = [item for item in source_status if item["layer"] == layer]
         assert layer_item["total_count"] == len(layer_items)
         assert layer_item["clean_count"] == sum(1 for item in layer_items if item["git_status"] == "clean")
-        assert layer_item["dirty_count"] == sum(1 for item in layer_items if item["git_status"] != "clean")
+        assert layer_item["dirty_count"] == sum(1 for item in layer_items if item["path"] in source_summary["dirty_paths"])
         assert layer_item["intent_to_add_count"] == sum(1 for item in layer_items if item["intent_to_add"])
         assert layer_item["staged_content_count"] == sum(1 for item in layer_items if item["index_status"] not in {" ", "?"})
         assert layer_item["unstaged_content_count"] == sum(1 for item in layer_items if item["worktree_status"] not in {" ", "?"})

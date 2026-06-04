@@ -211,6 +211,12 @@ micromamba run -n ECGTwin python scripts/agent/register_run.py \
   --status provisional
 ```
 
+Registration expects an already finalized run. `register_run.py` will not
+auto-create `run_card.json`; `finalize_run.py` and registration both reject runs
+that lack explicit purpose/result text, manifest schema v2, git commit, resolved
+config hash, command argv records, K-shot ref traces, `selection.json`, declared
+eval artifacts, and succeeded-run metric center coverage.
+
 Active paper/evaluation configs should declare managed postprocess commands.
 The common pattern is:
 

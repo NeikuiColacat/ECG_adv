@@ -59,6 +59,12 @@ micromamba run -n ECGTwin python scripts/agent/register_run.py \
 
 The registration command stores run paths relative to `${paths.output_root}` so
 tracked registry YAML does not contain host-specific `/home/...` paths.
+It does not auto-finalize a run: `run_card.json`, `run_file_index.json`, and
+`summary.md` must already exist. Both finalization and registration validate the
+replay contract: manifest schema v2, git commit, resolved config hash, command
+argv records, K-shot ref traces, selection policy plus `selection.json`,
+declared eval artifacts, and succeeded-run metric coverage for every target
+center.
 
 ## Policy
 
@@ -68,3 +74,5 @@ tracked registry YAML does not contain host-specific `/home/...` paths.
   move legacy child artifacts unless the producing script and tests are updated.
 - Always describe both purpose and result summary. A run without those two
   fields is not ready for long-handoff agent work.
+- Do not register launch-only or weakly backfilled directories as evidence; a
+  registry entry must be replayable from the finalized manifest and artifacts.

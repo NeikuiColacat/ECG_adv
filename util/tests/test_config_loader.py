@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import inspect
 import json
 import os
 import shutil
@@ -276,6 +277,35 @@ def test_command_protocol_audit_rejects_missing_vae_init_checkpoint():
 
     with pytest.raises(ConfigError, match="missing required option --init_ckpt"):
         build_runner_commands(config)
+
+
+def test_effnet_vae_lhat_command_audit_is_split_into_adapter():
+    from ecg_adv_gen.config.adapters.effnet_vae_lhat import audit_effnet_vae_lhat_command
+
+    source = inspect.getsource(audit_runner_commands)
+    assert "audit_effnet_vae_lhat_command(" in source
+    assert "anchor_base does not encode K" not in source
+
+    config = _load("effnet_vae_lhat_k500_v6.yaml")
+    command = build_runner_commands(config)[0]
+    result = audit_effnet_vae_lhat_command(
+        command,
+        expected_k=500,
+        expected_seed=20260531,
+        target_centers=set(config["paper_protocol"]["centers"]["target_4"]),
+    )
+    assert result == {"errors": [], "warnings": []}
+
+    bad = copy.deepcopy(command)
+    bad["argv"] = list(bad["argv"])
+    bad["argv"][bad["argv"].index("--hull_neighbor_mode") + 1] = "heldout_oracle"
+    result = audit_effnet_vae_lhat_command(
+        bad,
+        expected_k=500,
+        expected_seed=20260531,
+        target_centers=set(config["paper_protocol"]["centers"]["target_4"]),
+    )
+    assert "invalid --hull_neighbor_mode" in "\n".join(result["errors"])
 
 
 def test_effnet_direct_command_writes_under_managed_output_root():

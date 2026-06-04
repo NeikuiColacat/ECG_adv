@@ -25,6 +25,7 @@ except Exception:  # pragma: no cover - jsonschema exists in the current env.
 from .paths import PathSafetyError, is_under, validate_local_paths
 from .entrypoints import managed_runner_script_names, managed_script_profile
 from .adapters.direct import audit_direct_finetune_command
+from .adapters.effnet_vae_lhat import audit_effnet_vae_lhat_command
 from .adapters.source_training import audit_train_ptbxl_command
 from ecg_adv_gen.data import DataContractError, validate_data_preprocess_config
 from ecg_adv_gen.data.gated_pools import GatedPoolArtifactPaths
@@ -1211,56 +1212,14 @@ def audit_runner_commands(config: dict[str, Any], commands: list[dict[str, Any]]
             if "--force" in opts:
                 errors.append(f"{script}: benchmark direct managed config must not pass --force")
         elif script == "run_effnet_latent_augmix_stage3_20260524.py":
-            matrix_case = _matrix_case(command)
-            expected_command_k = str(matrix_case.get("k", expected_k))
-            expected_command_seed = str(matrix_case.get("seed", expected_seed))
-            _audit_require_options(
-                errors,
-                script,
-                opts,
-                [
-                    "--center",
-                    "--seed",
-                    "--data_root",
-                    "--out_root",
-                    "--init_ckpt",
-                    "--anchor_base",
-                    "--hull_lambda",
-                    "--hull_neighbor_distance_space",
-                    "--hull_neighbor_mode",
-                    "--hull_neighbor_pool_size",
-                    "--quick_eval_source",
-                    "--target_real_val_fraction",
-                    "--target_real_val_seed",
-                ],
+            result = audit_effnet_vae_lhat_command(
+                command,
+                expected_k=expected_k,
+                expected_seed=expected_seed,
+                target_centers=target_centers,
             )
-            center = str(_opt_first(opts, "--center", ""))
-            matrix_center = str(matrix_case.get("center") or "")
-            if matrix_center and center != matrix_center:
-                errors.append(f"{script}: matrix center {matrix_center!r} must match --center {center!r}")
-            if center not in target_centers:
-                errors.append(f"{script}: unexpected center {center!r}")
-            _audit_equals(errors, script, opts, "--seed", expected_command_seed)
-            _audit_equals(errors, script, opts, "--quick_eval_source", "target_real_val")
-            _audit_equals(errors, script, opts, "--target_real_val_seed", expected_command_seed)
-            if _opt_first(opts, "--hull_neighbor_distance_space") not in {"raw", "standardized"}:
-                errors.append(f"{script}: invalid --hull_neighbor_distance_space")
-            if _opt_first(opts, "--hull_neighbor_mode") not in {"nearest", "local_random", "random"}:
-                errors.append(f"{script}: invalid --hull_neighbor_mode")
-            anchor_base = str(_opt_first(opts, "--anchor_base", ""))
-            if f"k{expected_command_k}_seed{expected_command_seed}" not in anchor_base:
-                errors.append(
-                    f"{script}: anchor_base does not encode K{expected_command_k}/seed{expected_command_seed}"
-                )
-            init_ckpt = str(_opt_first(opts, "--init_ckpt", ""))
-            protocol = str(matrix_case.get("protocol") or "")
-            if protocol:
-                if f"effnet_direct_{protocol}_v7_sjr_rgq" not in init_ckpt:
-                    errors.append(f"{script}: init_ckpt does not match protocol {protocol!r}")
-                if f"{center}_K{expected_command_k}_direct_ft_ep" not in init_ckpt:
-                    errors.append(f"{script}: init_ckpt does not encode {center}/K{expected_command_k}")
-            if "paper_direct_finetune_k500_20260516" not in init_ckpt:
-                warnings.append(f"{script}: init_ckpt is not the historical direct-K500 run root")
+            errors.extend(result["errors"])
+            warnings.extend(result["warnings"])
         elif script == "run_ecgfounder_fullft_super5_pilot_20260523.py":
             _audit_require_options(
                 errors,

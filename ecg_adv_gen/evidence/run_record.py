@@ -28,6 +28,9 @@ RUN_LAYOUT_DIRS = {
 }
 
 _SMALL_COPY_LIMIT_BYTES = 5 * 1024 * 1024
+_GENERIC_RESULT_SUMMARIES = {
+    "Run finalized with evaluation metrics; see metric_summary and eval artifacts.",
+}
 
 
 def _utc_now() -> str:
@@ -311,6 +314,170 @@ def _default_result_summary(manifest: dict[str, Any], metric_summary: dict[str, 
     return f"Run finalized with status={status}; evaluation metrics were not discovered."
 
 
+def _non_empty_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _target_centers_from_protocol(protocol: dict[str, Any]) -> list[str]:
+    centers = protocol.get("centers") or {}
+    values = centers.get("target_4") or protocol.get("target_centers") or []
+    return [str(item) for item in values if str(item)]
+
+
+def _artifact_records_by_source(manifest: dict[str, Any], source: str) -> list[dict[str, Any]]:
+    expected = ((manifest.get("artifact_trace") or {}).get("expected_outputs") or {})
+    if source == "launch":
+        return list(expected.get("launch_artifacts") or [])
+    records: list[dict[str, Any]] = []
+    for run in expected.get(source) or []:
+        for artifact in run.get("expected_artifacts") or []:
+            item = dict(artifact)
+            item.setdefault("command_index", run.get("command_index"))
+            item.setdefault("center", run.get("center"))
+            records.append(item)
+    return records
+
+
+def _expected_eval_artifact_records(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    eval_roles = {
+        "artifact_manifest",
+        "eval_result",
+        "metrics_long",
+        "paper_table",
+        "paper_table_manifest",
+        "per_center_delta",
+        "per_class_delta",
+    }
+    records: list[dict[str, Any]] = []
+    for source in ("child_runs", "postprocess_runs"):
+        for artifact in _artifact_records_by_source(manifest, source):
+            role = str(artifact.get("role") or "")
+            name = Path(str(artifact.get("path") or "")).name
+            if role in eval_roles or name in {"metrics_long.csv", "eval_result.json"} or "paper_table" in name:
+                records.append(artifact)
+    return records
+
+
+def _metric_centers_from_metrics_long(paths: list[Path]) -> set[str]:
+    centers: set[str] = set()
+    for path in paths:
+        try:
+            with path.open("r", encoding="utf-8", newline="") as f:
+                rows = list(csv.DictReader(f))
+        except OSError:
+            continue
+        for row in rows:
+            if row.get("scope") == "center" and row.get("center"):
+                metric = row.get("metric", "")
+                if metric.endswith("macro_auroc") or metric.endswith("macro_auprc"):
+                    centers.add(str(row["center"]))
+    return centers
+
+
+def _validate_command_records(commands: Any) -> list[str]:
+    errors: list[str] = []
+    if not isinstance(commands, list) or not commands:
+        return ["run_manifest.commands must be a non-empty list"]
+    for idx, command in enumerate(commands):
+        if not isinstance(command, dict):
+            errors.append(f"run_manifest.commands[{idx}] must be an object")
+            continue
+        argv = command.get("argv")
+        if not isinstance(argv, list) or len(argv) < 2:
+            errors.append(f"run_manifest.commands[{idx}].argv must record the python executable and entrypoint")
+        if not _non_empty_text(command.get("cwd")):
+            errors.append(f"run_manifest.commands[{idx}].cwd is required")
+    return errors
+
+
+def _validate_run_record_contract(
+    run_dir: Path,
+    manifest: dict[str, Any],
+    *,
+    purpose: str,
+    result_summary: str,
+    metric_summary: dict[str, Any],
+    require_registration_ready: bool = False,
+    registration_status: str | None = None,
+) -> None:
+    errors: list[str] = []
+    if not _non_empty_text(purpose):
+        errors.append("run_record.purpose must be non-empty")
+    if not _non_empty_text(result_summary):
+        errors.append("run_record.result_summary must be non-empty and explicit")
+    if result_summary in _GENERIC_RESULT_SUMMARIES or result_summary.startswith("Run finalized with status="):
+        errors.append("run_record.result_summary must not use a generic auto-generated summary")
+
+    schema_version = manifest.get("manifest_schema_version")
+    if schema_version != 2:
+        errors.append("run_manifest.manifest_schema_version must be 2")
+    if not _non_empty_text(manifest.get("run_id")):
+        errors.append("run_manifest.run_id is required")
+    if not _non_empty_text(manifest.get("status")):
+        errors.append("run_manifest.status is required")
+    if not _non_empty_text((manifest.get("git") or {}).get("commit")):
+        errors.append("run_manifest.git.commit is required")
+    if not _non_empty_text(manifest.get("config_hash_sha256")):
+        errors.append("run_manifest.config_hash_sha256 is required")
+    errors.extend(_validate_command_records(manifest.get("commands")))
+
+    if not (run_dir / "run_config.resolved.yaml").exists() and not (run_dir / "run_config.resolved.json").exists():
+        errors.append("resolved config artifact is required: run_config.resolved.yaml or run_config.resolved.json")
+    if not (run_dir / "command.sh").exists():
+        errors.append("command.sh is required")
+    if not (run_dir / "selection.json").exists():
+        errors.append("selection.json is required")
+
+    paper = manifest.get("paper_protocol") or {}
+    if not _non_empty_text(paper.get("mapping_version")):
+        errors.append("paper_protocol.mapping_version is required")
+    if not _non_empty_text(paper.get("mapping_hash")):
+        errors.append("paper_protocol.mapping_hash is required")
+    if not paper.get("class_order"):
+        errors.append("paper_protocol.class_order is required")
+    target_centers = _target_centers_from_protocol(paper)
+    if not target_centers:
+        errors.append("paper_protocol target centers are required")
+    kshot = paper.get("kshot") or {}
+    if not kshot.get("k") or not (kshot.get("subset_seed") or kshot.get("seed")):
+        errors.append("paper_protocol.kshot must record k and seed/subset_seed")
+    if not (paper.get("selection") or ((manifest.get("artifact_trace") or {}).get("selection_policy"))):
+        errors.append("selection policy is required in paper_protocol or artifact_trace")
+
+    trace = manifest.get("artifact_trace") or {}
+    if trace.get("schema_version") != 1:
+        errors.append("artifact_trace.schema_version must be 1")
+    inputs = trace.get("inputs") or {}
+    if not inputs.get("k500_refs"):
+        errors.append("artifact_trace.inputs.k500_refs must be non-empty")
+    expected_eval = _expected_eval_artifact_records(manifest)
+    if not expected_eval:
+        errors.append("expected eval artifacts must be declared in artifact_trace.expected_outputs")
+
+    status = str(manifest.get("status") or "")
+    if status == "succeeded":
+        artifact_verification = manifest.get("artifact_verification") or {}
+        if artifact_verification.get("passed") is not True:
+            errors.append("run_manifest.artifact_verification.passed must be true for succeeded runs")
+        metric_paths = _discover_metrics_paths(run_dir, manifest)
+        if not metric_summary:
+            errors.append("succeeded runs must include a non-empty metric_summary")
+        observed_centers = _metric_centers_from_metrics_long(metric_paths)
+        missing_centers = sorted(set(target_centers) - observed_centers)
+        if missing_centers:
+            errors.append(f"metric center coverage is missing target centers: {missing_centers}")
+
+    if require_registration_ready:
+        if registration_status in {"trusted", "provisional"} and status != "succeeded":
+            errors.append("trusted/provisional registration requires run_manifest.status='succeeded'")
+        for name in ("run_card.json", "run_file_index.json", "summary.md"):
+            if not (run_dir / name).exists():
+                errors.append(f"{name} is required before registry registration")
+
+    if errors:
+        raise RunRecordError("Run record contract failed:\n" + "\n".join(f"- {error}" for error in errors))
+
+
 def _render_summary_md(card: dict[str, Any], file_index: dict[str, Any]) -> str:
     lines = [
         f"# Run Summary: {card['run_id']}",
@@ -361,8 +528,15 @@ def finalize_run_record(
     paper = manifest.get("paper_protocol") or {}
     centers = (paper.get("centers") or {}).get("target_4") or paper.get("target_centers") or []
     resolved_purpose = purpose or experiment.get("purpose") or experiment.get("description") or ""
-    resolved_result = result_summary or _default_result_summary(manifest, metric_summary)
+    resolved_result = result_summary or (manifest.get("run_record") or {}).get("result_summary") or ""
     resolved_outcome = outcome or manifest.get("status") or "unknown"
+    _validate_run_record_contract(
+        run_dir,
+        manifest,
+        purpose=str(resolved_purpose),
+        result_summary=str(resolved_result),
+        metric_summary=metric_summary,
+    )
 
     card = {
         "schema_version": 1,
@@ -441,8 +615,18 @@ def register_run_in_registry(
     run_dir = Path(run_dir).expanduser().resolve()
     card_path = run_dir / "run_card.json"
     if not card_path.exists():
-        finalize_run_record(run_dir)
+        raise RunRecordError(f"Missing run_card.json; finalize the run before registry registration: {card_path}")
     card = _read_json(card_path)
+    manifest = _read_json(run_dir / "run_manifest.json")
+    _validate_run_record_contract(
+        run_dir,
+        manifest,
+        purpose=str((card.get("experiment") or {}).get("purpose") or ""),
+        result_summary=str((card.get("result") or {}).get("summary") or ""),
+        metric_summary=card.get("metric_summary") or {},
+        require_registration_ready=True,
+        registration_status=status,
+    )
     registry = _read_yaml(registry_path)
     local_config = _read_yaml(local_config_path)
     output_root_raw = ((local_config.get("paths") or {}).get("output_root"))

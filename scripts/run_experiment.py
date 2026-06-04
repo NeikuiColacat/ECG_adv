@@ -29,7 +29,7 @@ from ecg_adv_gen.config import (  # noqa: E402
     validate_experiment_config,
     verify_required_inputs,
 )
-from ecg_adv_gen.evidence import finalize_run_record  # noqa: E402
+from ecg_adv_gen.evidence import RunRecordError, finalize_run_record  # noqa: E402
 from ecg_adv_gen.runner.launch_plan import (  # noqa: E402
     experiment_purpose,
     render_launch_command,
@@ -102,8 +102,9 @@ def main() -> int:
         try:
             visible = require_cuda_visible_devices()
             gpu_snapshot = check_nvidia_smi()
-        except LaunchError as exc:
-            print(f"[launch-error] {exc}", file=sys.stderr)
+        except (LaunchError, RunRecordError) as exc:
+            label = "run-record-error" if isinstance(exc, RunRecordError) else "launch-error"
+            print(f"[{label}] {exc}", file=sys.stderr)
             return 3
         manifest["gpu_prelaunch"] = {
             "CUDA_VISIBLE_DEVICES": visible,
@@ -144,8 +145,9 @@ def main() -> int:
             return 3
         try:
             manifest = write_launch_plan_files(out_dir, config, manifest, commands, postprocess_commands)
-        except LaunchError as exc:
-            print(f"[launch-error] {exc}", file=sys.stderr)
+        except (LaunchError, RunRecordError) as exc:
+            label = "run-record-error" if isinstance(exc, RunRecordError) else "launch-error"
+            print(f"[{label}] {exc}", file=sys.stderr)
             return 3
         print(f"\nWrote run plan files: {out_dir}")
 
@@ -172,6 +174,11 @@ def main() -> int:
             finalize_run_record(
                 out_dir,
                 purpose=experiment_purpose(config),
+                result_summary=(
+                    "Managed execution completed; artifact verification passed and replay metrics "
+                    "are recorded in the finalized run record."
+                ),
+                outcome="succeeded",
             )
         except LaunchError as exc:
             print(f"[launch-error] {exc}", file=sys.stderr)

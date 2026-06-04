@@ -94,6 +94,7 @@ def test_write_launch_plan_files_materializes_agent_handoff_artifacts(tmp_path: 
     commands = [
         {
             "name": "legacy_child",
+            "cwd": str(tmp_path),
             "env": {"TMPDIR": tmp_path / "tmp space"},
             "argv": ["python", "legacy.py", "--out_dir", tmp_path / "run space"],
         }
@@ -101,18 +102,24 @@ def test_write_launch_plan_files_materializes_agent_handoff_artifacts(tmp_path: 
     postprocess_commands = [
         {
             "name": "post",
+            "cwd": str(tmp_path),
             "env": {},
             "argv": ["python", "post.py", "--input", tmp_path / "run space"],
         }
     ]
     manifest = {
+        "manifest_schema_version": 2,
         "status": "dry_run",
         "run_id": "pytest_plan",
         "config_hash_sha256": "abc123",
+        "git": {"commit": "16446f14b071e6fc06898b92db374ba05fe42cb0", "branch": "main", "status_short": ""},
         "experiment": config["experiment"],
         "paper_protocol": config["paper_protocol"],
         "local_paths": {"write_boundary": str(tmp_path)},
+        "commands": commands,
+        "postprocess_commands": postprocess_commands,
         "artifact_trace": {
+            "schema_version": 1,
             "metrics": {
                 "mapping_version": "v7_super5_sjr_rgq_review_20260528",
                 "mapping_hash": "555ec85d5b51",
@@ -145,7 +152,20 @@ def test_write_launch_plan_files_materializes_agent_handoff_artifacts(tmp_path: 
                     "run_card.json",
                     "run_file_index.json",
                     "summary.md",
-                ]
+                ],
+                "postprocess_runs": [
+                    {
+                        "command_index": 0,
+                        "name": "post",
+                        "expected_artifacts": [
+                            {
+                                "role": "metrics_long",
+                                "path": str(tmp_path / "run" / "eval" / "metrics_long.csv"),
+                                "required": True,
+                            }
+                        ],
+                    }
+                ],
             },
         },
     }
