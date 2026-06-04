@@ -71,6 +71,7 @@ from adversarial.efficientnet_victim_tierM import (  # noqa: E402
 from adversarial.latent_hull_pgd import LatentHullPGDGenerator  # noqa: E402
 from adversarial.pgd_advdiff import PGDAdvDiffGenerator  # noqa: E402
 from methods.augmix.augmix import _apply_op  # noqa: E402
+from methods.augmix.jsd_loss import jsd_multilabel  # noqa: E402
 from methods.augmix.severity import AVAILABLE_OPS  # noqa: E402
 
 from scripts.crosscenter_tierM.online_adv_train_tierM import (  # noqa: E402
@@ -84,9 +85,20 @@ from scripts.triple_labels.label_schemes import (  # noqa: E402
 )
 from scripts.triple_labels.model_zoo import available_model_names  # noqa: E402
 from ecg_adv_gen.training import (  # noqa: E402
+    append_jsonl,
+    atomic_torch_save,
+    capture_rng_state,
     compute_pos_weight,
+    quality_buffer_state,
+    resolve_resume_path,
+    restore_quality_buffer_state,
+    restore_rng_state,
     should_save_initial_best_model,
     validate_resume_contract,
+)
+from ecg_adv_gen.data.latent_pools import (  # noqa: E402
+    LatentPoolError,
+    load_synth_pool as _load_synth_pool,
 )
 from scripts.triple_labels.train_ptbxl import (  # noqa: E402
     PTBXLDatasetScheme, compute_macro_auroc_auprc,
@@ -98,12 +110,16 @@ from util.ecgtwin_utils import ECGTwinWrapper  # noqa: E402
 from ecg_adv_gen.adaptation import (  # noqa: E402
     SameLabelLatentIndex,
     StratifiedPoolWalker,
+    agent_attack_decision,
     auroc_to_trust,
     build_anchor_preserving_soft_labels,
+    build_adv_buffer_label,
     build_k500_internal_val_mask,
     build_latent_augmix_branch_signals as _build_latent_augmix_branch_signals_core,
+    build_raw_corruption_views as _build_raw_corruption_views_core,
     derive_class_trust,
     derive_kshot_anchor_class_weights,
+    decoded_signal_invalid_stats,
     parse_class_source_weight_map,
     parse_class_weight_map,
     parse_source_weight_map,
@@ -237,6 +253,154 @@ def train_one_epoch_masked_bce_freeze_aware(
                     p_anchor.mul_(ewa_decay).add_(p.data, alpha=1 - ewa_decay)
         losses.append(float(bce.item()))
     return float(np.mean(losses)) if losses else float("nan")
+
+
+def train_raw_corruption_consistency_epoch(
+    model: nn.Module,
+    loader: DataLoader,
+    optimizer: AdamW,
+    criterion: nn.Module,
+    device: str,
+    *,
+    copies: int,
+    severity: int,
+    ops: List[str],
+    prob: float,
+    consistency_weight: float,
+    bce_weight: float,
+    consistency_loss: str,
+    rng: np.random.Generator,
+    grad_clip: float,
+    trainable_params: List[nn.Parameter],
+    freeze_backbone_eval_fn: Optional[Callable[[], None]] = None,
+    max_batches: int = 0,
+    renorm: bool = False,
+    clip_abs: float = 6.0,
+) -> Dict[str, Any]:
+    """Train on raw ECG corruptions with clean-model consistency targets."""
+    if copies <= 0 or (consistency_weight <= 0 and bce_weight <= 0):
+        return {
+            "enabled": False,
+            "reason": "disabled_or_zero_weight",
+            "loss": float("nan"),
+            "bce_loss": float("nan"),
+            "consistency_loss": float("nan"),
+            "n_batches": 0,
+            "n_generated": 0,
+            "n_corrupted": 0,
+            "op_counts": {},
+        }
+    consistency_loss = str(consistency_loss)
+    if consistency_loss not in {"soft_bce", "jsd"}:
+        raise ValueError(f"unknown raw corruption consistency loss: {consistency_loss}")
+    if consistency_loss == "jsd" and copies < 2:
+        raise ValueError("--raw_corrupt_consistency_loss jsd requires --raw_corrupt_copies >= 2")
+
+    losses: List[float] = []
+    bce_losses: List[float] = []
+    consistency_losses: List[float] = []
+    n_generated = 0
+    n_corrupted = 0
+    op_counts: Dict[str, int] = {}
+
+    for batch_i, (signals, labels) in enumerate(loader, start=1):
+        signals = signals.to(device, non_blocking=True)
+        labels = labels.to(device, non_blocking=True)
+
+        clean_np = signals.detach().cpu().numpy().astype(np.float32, copy=False)
+        corrupt_np, stats = build_raw_corruption_views(
+            clean_np,
+            copies=copies,
+            severity=severity,
+            ops=ops,
+            prob=prob,
+            rng=rng,
+            renorm=renorm,
+            clip_abs=clip_abs,
+        )
+        if corrupt_np.shape[0] == 0:
+            continue
+
+        labels_rep = labels.repeat((int(copies), 1))
+        corrupt = torch.from_numpy(corrupt_np).float().to(device, non_blocking=True)
+
+        model.train()
+        if freeze_backbone_eval_fn is not None:
+            freeze_backbone_eval_fn()
+        optimizer.zero_grad(set_to_none=True)
+        if consistency_loss == "soft_bce":
+            with torch.no_grad():
+                clean_logits = model(signals)
+                soft_targets = torch.sigmoid(clean_logits).detach()
+            logits = model(corrupt)
+            soft_rep = soft_targets.repeat((int(copies), 1))
+
+            mask = (labels_rep >= 0).float()
+            labels_clamp = labels_rep.clamp(min=0.0)
+            denom = mask.sum().clamp(min=1.0)
+            hard_bce = (criterion(logits, labels_clamp) * mask).sum() / denom
+            raw_consistency = (
+                F.binary_cross_entropy_with_logits(logits, soft_rep, reduction="none") * mask
+            ).sum() / denom
+        else:
+            clean_logits = model(signals)
+            logits = model(corrupt)
+            logits_views = logits.view(int(copies), signals.shape[0], -1)
+
+            mask_clean = (labels >= 0).float()
+            denom_clean = mask_clean.sum().clamp(min=1.0)
+            clean_hard_bce = (
+                criterion(clean_logits, labels.clamp(min=0.0)) * mask_clean
+            ).sum() / denom_clean
+
+            mask_rep = (labels_rep >= 0).float()
+            labels_rep_clamp = labels_rep.clamp(min=0.0)
+            denom_rep = mask_rep.sum().clamp(min=1.0)
+            corrupt_hard_bce = (criterion(logits, labels_rep_clamp) * mask_rep).sum() / denom_rep
+            hard_bce = 0.5 * (clean_hard_bce + corrupt_hard_bce)
+
+            jsd_terms = []
+            for copy_i in range(int(copies)):
+                copy_j = (copy_i + 1) % int(copies)
+                jsd_terms.append(jsd_multilabel(clean_logits, logits_views[copy_i], logits_views[copy_j]))
+            raw_consistency = torch.stack(jsd_terms).mean()
+
+        loss = float(bce_weight) * hard_bce + float(consistency_weight) * raw_consistency
+        loss.backward()
+        if grad_clip > 0:
+            nn.utils.clip_grad_norm_(trainable_params, grad_clip)
+        optimizer.step()
+
+        losses.append(float(loss.item()))
+        bce_losses.append(float(hard_bce.item()))
+        consistency_losses.append(float(raw_consistency.item()))
+        n_generated += int(stats.get("n_generated", 0))
+        n_corrupted += int(stats.get("n_corrupted", 0))
+        for op_name, count in dict(stats.get("op_counts", {})).items():
+            op_counts[str(op_name)] = op_counts.get(str(op_name), 0) + int(count)
+        if max_batches > 0 and batch_i >= max_batches:
+            break
+
+    return {
+        "enabled": True,
+        "loss": float(np.mean(losses)) if losses else float("nan"),
+        "bce_loss": float(np.mean(bce_losses)) if bce_losses else float("nan"),
+        "consistency_loss": float(np.mean(consistency_losses)) if consistency_losses else float("nan"),
+        "n_batches": len(losses),
+        "n_generated": int(n_generated),
+        "n_corrupted": int(n_corrupted),
+        "corrupt_fraction": float(n_corrupted / max(1, n_generated)),
+        "copies": int(copies),
+        "severity": int(severity),
+        "prob": float(prob),
+        "consistency_weight": float(consistency_weight),
+        "consistency_objective": str(consistency_loss),
+        "bce_weight": float(bce_weight),
+        "ops": list(ops),
+        "op_counts": op_counts,
+        "renorm": bool(renorm),
+        "clip_abs": float(clip_abs),
+    }
 
 
 def configure_classifier_only_adaptation(
@@ -429,51 +593,23 @@ def save_compatible_model_state(model: nn.Module, path: str) -> None:
 
 
 def _atomic_torch_save(payload: Dict[str, Any], path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(path.name + ".tmp")
-    torch.save(payload, tmp_path)
-    os.replace(tmp_path, path)
+    atomic_torch_save(payload, path)
 
 
 def _append_jsonl(path: Path, payload: Dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(payload, ensure_ascii=True, default=str) + "\n")
+    append_jsonl(path, payload)
 
 
 def _resolve_resume_path(resume: str, output_dir: str) -> Optional[Path]:
-    if not resume:
-        return None
-    if resume == "latest":
-        return Path(output_dir) / "checkpoints" / "checkpoint_latest.pt"
-    return Path(resume).expanduser()
+    return resolve_resume_path(resume, output_dir)
 
 
 def _buffer_state(buffer: QualityAwareBuffer) -> Dict[str, Any]:
-    state: Dict[str, Any] = {
-        "max_size": int(buffer.max_size),
-        "size": int(len(buffer)),
-        "score_list": list(buffer.score_list),
-    }
-    if len(buffer) > 0:
-        state["ecg_tensor"] = torch.stack(buffer.ecg_list).cpu()
-        state["label_tensor"] = torch.stack(buffer.label_list).cpu()
-    return state
+    return quality_buffer_state(buffer)
 
 
 def _restore_buffer_state(buffer: QualityAwareBuffer, state: Dict[str, Any]) -> None:
-    buffer.max_size = int(state.get("max_size", buffer.max_size))
-    ecg_tensor = state.get("ecg_tensor")
-    label_tensor = state.get("label_tensor")
-    scores = list(state.get("score_list") or [])
-    if ecg_tensor is None or label_tensor is None:
-        buffer.ecg_list = []
-        buffer.label_list = []
-        buffer.score_list = []
-        return
-    buffer.ecg_list = [row.detach().cpu() for row in ecg_tensor]
-    buffer.label_list = [row.detach().cpu() for row in label_tensor]
-    buffer.score_list = [float(x) for x in scores[: len(buffer.ecg_list)]]
+    restore_quality_buffer_state(buffer, state)
 
 
 def _walker_state(walker: StratifiedPoolWalker) -> Dict[str, Any]:
@@ -522,44 +658,11 @@ def _restore_walker_state(walker: StratifiedPoolWalker, state: Dict[str, Any]) -
 
 
 def _rng_state(epoch_rng: np.random.Generator) -> Dict[str, Any]:
-    state: Dict[str, Any] = {
-        "python": random.getstate(),
-        "numpy_global": np.random.get_state(),
-        "numpy_epoch_generator": epoch_rng.bit_generator.state,
-        "torch_cpu": torch.get_rng_state(),
-    }
-    if torch.cuda.is_available():
-        state["torch_cuda_all"] = torch.cuda.get_rng_state_all()
-    return state
+    return capture_rng_state(epoch_rng)
 
 
 def _restore_rng_state(state: Dict[str, Any], epoch_rng: np.random.Generator) -> None:
-    if not state:
-        return
-    if "python" in state:
-        random.setstate(state["python"])
-    if "numpy_global" in state:
-        np.random.set_state(state["numpy_global"])
-    if "numpy_epoch_generator" in state:
-        epoch_rng.bit_generator.state = state["numpy_epoch_generator"]
-    if "torch_cpu" in state:
-        torch.set_rng_state(state["torch_cpu"])
-    if torch.cuda.is_available() and "torch_cuda_all" in state:
-        torch.cuda.set_rng_state_all(state["torch_cuda_all"])
-
-
-def decoded_signal_invalid_stats(signals: np.ndarray) -> Dict[str, float]:
-    if signals.size == 0:
-        return {"decoded_invalid_rate": float("nan"), "nan_rate": float("nan"), "flatline_rate": float("nan")}
-    finite = np.isfinite(signals).all(axis=tuple(range(1, signals.ndim)))
-    p2p = np.ptp(np.nan_to_num(signals, nan=0.0, posinf=0.0, neginf=0.0), axis=-1).max(axis=1)
-    flatline = p2p < 1e-6
-    invalid = (~finite) | flatline
-    return {
-        "decoded_invalid_rate": float(np.mean(invalid)),
-        "nan_rate": float(np.mean(~finite)),
-        "flatline_rate": float(np.mean(flatline)),
-    }
+    restore_rng_state(state, epoch_rng)
 
 
 @torch.no_grad()
@@ -601,42 +704,6 @@ def attack_bce_diagnostics(
         "loss_gain_mean": float(gain.mean().item()),
         "loss_gain_p50": float(torch.quantile(gain, 0.50).item()),
         "loss_gain_p90": float(torch.quantile(gain, 0.90).item()),
-    }
-
-
-def agent_attack_decision(
-    entry: Dict[str, Any],
-    *,
-    asr_low_threshold: float,
-    consecutive_low_asr: int,
-) -> Dict[str, Any]:
-    asr = float(entry.get("asr_overall", float("nan")))
-    invalid = float(entry.get("decoded_invalid_rate", float("nan")))
-    loss_gain = entry.get("attack_vs_anchor", {}).get("loss_gain_mean")
-    if asr != asr:
-        state = "no_attack_or_disabled"
-        action = "continue_if_this_is_an_ablation"
-    elif invalid == invalid and invalid > 0.05:
-        state = "attack_too_strong_or_decode_invalid"
-        action = "lower_hull_lambda_or_attack_strength_before_paper_run"
-    elif asr < asr_low_threshold:
-        state = "attack_too_weak"
-        action = "increase_attack_strength_only_if_repeated_and_source_floor_is_safe"
-    elif asr > 0.85 and (loss_gain is None or float(loss_gain) > 0.05):
-        state = "attack_too_strong"
-        action = "lower_adv_weight_or_attack_strength_if_target/source_metrics_drop"
-    elif consecutive_low_asr > 0:
-        state = "watch_low_asr"
-        action = "continue_but_watch_next_epoch"
-    else:
-        state = "healthy"
-        action = "continue"
-    return {
-        "attack_state": state,
-        "action": action,
-        "stop_or_continue": "continue" if state not in {"attack_too_strong_or_decode_invalid"} else "review_before_continue",
-        "asr_low_threshold": float(asr_low_threshold),
-        "consecutive_low_asr": int(consecutive_low_asr),
     }
 
 
@@ -1057,6 +1124,37 @@ def build_latent_augmix_branch_signals(
     )
 
 
+def build_raw_corruption_views(
+    signals_ct: np.ndarray,
+    *,
+    copies: int,
+    severity: int,
+    ops: List[str],
+    prob: float,
+    rng: np.random.Generator,
+    renorm: bool = False,
+    clip_abs: float = 6.0,
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """Legacy wrapper around the package-level raw corruption view core."""
+
+    def _apply_augmix_op_np(sig_ct: np.ndarray, op_name: str, op_severity: int) -> np.ndarray:
+        sig_t = torch.from_numpy(sig_ct.copy()).float()
+        return _apply_op(sig_t, op_name, int(op_severity)).cpu().numpy().astype(np.float32, copy=False)
+
+    return _build_raw_corruption_views_core(
+        signals_ct,
+        copies=copies,
+        severity=severity,
+        ops=ops,
+        prob=prob,
+        rng=rng,
+        op_apply_fn=_apply_augmix_op_np,
+        available_ops=AVAILABLE_OPS,
+        renorm=renorm,
+        clip_abs=clip_abs,
+    )
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # Adv buffer push with masked-BCE label semantics
 # ────────────────────────────────────────────────────────────────────────────
@@ -1100,36 +1198,16 @@ def push_adv_to_buffer(
         if prob_t < boundary_prob_min or prob_t > boundary_prob_max:
             n_dropped_by_boundary += 1
             continue
-        if label_mode == "hard":
-            lbl = torch.full((target_one_hot.shape[1],), -1.0)
-            lbl[target_idx] = 1.0
-        elif label_mode == "multi_hot_hard":
-            lbl = torch.from_numpy((target_one_hot[i] > 0.5).astype(np.float32))
-        elif label_mode == "latent_soft":
-            lbl = torch.from_numpy(np.clip(target_one_hot[i].astype(np.float32), 0.0, 1.0))
-        else:
-            if teacher_probs is None:
-                raise ValueError(f"teacher_probs required for label_mode={label_mode}")
-            soft = torch.from_numpy(
-                np.clip(teacher_probs[i].astype(np.float32), 0.0, 1.0)
+        teacher_i = teacher_probs[i] if teacher_probs is not None else None
+        lbl = torch.from_numpy(
+            build_adv_buffer_label(
+                target_one_hot[i],
+                label_mode=label_mode,
+                teacher_probs=teacher_i,
+                teacher_mix=teacher_mix,
+                soft_target_floor=soft_target_floor,
             )
-            if label_mode == "teacher_soft":
-                lbl = soft
-            elif label_mode == "mixed_soft":
-                hard_full = torch.zeros((target_one_hot.shape[1],), dtype=torch.float32)
-                hard_full[target_idx] = 1.0
-                mix = max(0.0, min(1.0, float(teacher_mix)))
-                lbl = mix * soft + (1.0 - mix) * hard_full
-            elif label_mode == "latent_mixed_teacher":
-                latent_soft = torch.from_numpy(
-                    np.clip(target_one_hot[i].astype(np.float32), 0.0, 1.0)
-                )
-                mix = max(0.0, min(1.0, float(teacher_mix)))
-                lbl = mix * soft + (1.0 - mix) * latent_soft
-            else:
-                raise ValueError(f"unsupported adv label_mode={label_mode}")
-            if soft_target_floor > 0.0:
-                lbl[target_idx] = torch.clamp(lbl[target_idx], min=float(soft_target_floor))
+        )
         score = (1.0 - 2.0 * abs(prob_t - 0.5)) * trust                # ∈ [0, trust]
         buffer.add_one(
             torch.from_numpy(np.ascontiguousarray(sig_250)).float(),
@@ -1379,6 +1457,56 @@ def parse_args():
                    help="Do not global-zscore the final latent-branch AugMix waveform before buffering.")
     p.add_argument("--latent_augmix_clip_abs", type=float, default=6.0,
                    help="Clip final latent-branch AugMix waveform after optional zscore; <=0 disables clipping.")
+    p.add_argument(
+        "--enable_raw_corrupt_consistency",
+        action="store_true",
+        help=(
+            "After the normal mixed epoch, train a small target-real corruption "
+            "consistency phase using raw ECG AugMix-style ops. This directly "
+            "matches PN2021-C corruption types and is disabled by default."
+        ),
+    )
+    p.add_argument("--raw_corrupt_copies", type=int, default=1)
+    p.add_argument("--raw_corrupt_prob", type=float, default=0.5)
+    p.add_argument("--raw_corrupt_severity", type=int, default=4)
+    p.add_argument(
+        "--raw_corrupt_ops",
+        nargs="+",
+        default=[
+            "powerline_noise",
+            "emg_noise",
+            "baseline_wander",
+            "baseline_shift",
+            "random_leads_masking",
+        ],
+        choices=AVAILABLE_OPS,
+        help="Raw ECG corruption ops for the consistency branch.",
+    )
+    p.add_argument("--raw_corrupt_consistency_weight", type=float, default=0.5)
+    p.add_argument(
+        "--raw_corrupt_consistency_loss",
+        choices=["soft_bce", "jsd"],
+        default="soft_bce",
+        help=(
+            "Consistency objective for raw ECG corruptions. 'soft_bce' preserves "
+            "the previous clean-teacher BCE behavior; 'jsd' uses multi-label "
+            "AugMix-style JSD over clean and two corrupted views."
+        ),
+    )
+    p.add_argument("--raw_corrupt_bce_weight", type=float, default=0.1)
+    p.add_argument("--raw_corrupt_max_batches", type=int, default=0)
+    p.add_argument(
+        "--raw_corrupt_scope",
+        choices=["target", "source", "source_target"],
+        default="target",
+        help=(
+            "Dataset used by the raw ECG corruption consistency phase. "
+            "'target' preserves the original K-shot-only behavior; 'source' "
+            "uses PTB-XL train samples; 'source_target' concatenates both."
+        ),
+    )
+    p.add_argument("--raw_corrupt_no_renorm", action="store_true")
+    p.add_argument("--raw_corrupt_clip_abs", type=float, default=6.0)
     p.add_argument("--roundtrip_anchor_n", type=int, default=1500)
     p.add_argument("--qab_size", type=int, default=2048)
     p.add_argument(
@@ -1509,51 +1637,10 @@ def load_synth_pool(synth_npz_path: str) -> Tuple[np.ndarray, np.ndarray, str, D
 
     Returns (latents (N,4,128), labels (N,C), center_name, source_meta).
     """
-    p = Path(synth_npz_path)
-    if p.name.endswith(".latent.npz"):
-        latent_path = p
-    else:
-        # Convert e.g. extra_pool300.npz → extra_pool300.latent.npz
-        latent_path = p.with_name(p.stem + ".latent.npz")
-        if not latent_path.exists():
-            raise SystemExit(
-                f"latent pool .npz not found: tried {latent_path}. "
-                f"Re-run generate_center_synth.py with --save_latent."
-            )
-    d = np.load(str(latent_path), allow_pickle=True)
-    latents = d["latents"]
-    labels = d["labels"]
-    center = str(d["center_name"]) if "center_name" in d.files else "?"
-    assert latents.ndim == 3 and latents.shape[1:] == (4, 128), \
-        f"bad synth latent shape: {latents.shape}"
-    assert labels.shape[0] == latents.shape[0]
-
-    source_ids = None
-    source_names = None
-    source_labels = None
-    if "source_ids" in d.files and "source_names" in d.files:
-        source_ids = d["source_ids"].astype(np.int64)
-        source_names = [str(x) for x in d["source_names"].tolist()]
-        if source_ids.shape[0] != latents.shape[0]:
-            raise ValueError("source_ids length does not match latents")
-        source_labels = np.asarray([
-            source_names[int(i)] if 0 <= int(i) < len(source_names) else f"source_{int(i)}"
-            for i in source_ids
-        ])
-    else:
-        source_ids = np.zeros((latents.shape[0],), dtype=np.int64)
-        source_names = ["unknown"]
-        source_labels = np.asarray(["unknown"] * latents.shape[0])
-
-    source_meta = {
-        "source_ids": source_ids,
-        "source_names": source_names,
-        "source_labels": source_labels,
-        "has_source_metadata": "source_ids" in d.files and "source_names" in d.files,
-    }
-    if "record_ids" in d.files:
-        source_meta["record_ids"] = d["record_ids"].astype(str)
-    return latents.astype(np.float32), labels.astype(np.float32), center, source_meta
+    try:
+        return _load_synth_pool(synth_npz_path)
+    except LatentPoolError as exc:
+        raise SystemExit(str(exc)) from exc
 
 
 def main():
@@ -1773,6 +1860,39 @@ def main():
         )
     elif args.quick_eval_source == "target_real_val":
         raise ValueError("--quick_eval_source target_real_val requires --target_real_npz")
+
+    raw_corrupt_consistency_loader = None
+    if args.enable_raw_corrupt_consistency:
+        if args.raw_corrupt_scope == "target":
+            if target_real_ds is None:
+                raise ValueError("--enable_raw_corrupt_consistency with --raw_corrupt_scope target requires --target_real_npz")
+            raw_corrupt_ds = target_real_ds
+        elif args.raw_corrupt_scope == "source":
+            raw_corrupt_ds = train_ds
+        else:
+            if target_real_ds is None:
+                raise ValueError("--enable_raw_corrupt_consistency with --raw_corrupt_scope source_target requires --target_real_npz")
+            raw_corrupt_ds = ConcatDataset([train_ds, target_real_ds])
+        raw_corrupt_consistency_loader = DataLoader(
+            raw_corrupt_ds,
+            batch_size=args.batch_size,
+            shuffle=True,
+            num_workers=args.num_workers,
+            pin_memory=True,
+            drop_last=True,
+            persistent_workers=args.num_workers > 0,
+        )
+        print(
+            "[setup] raw corruption consistency enabled: "
+            f"copies={args.raw_corrupt_copies} severity={args.raw_corrupt_severity} "
+            f"prob={args.raw_corrupt_prob} "
+            f"weights=(consistency={args.raw_corrupt_consistency_weight}, "
+            f"bce={args.raw_corrupt_bce_weight}) "
+            f"scope={args.raw_corrupt_scope} n={len(raw_corrupt_ds)} "
+            f"ops={args.raw_corrupt_ops} "
+            f"max_batches={args.raw_corrupt_max_batches or 'full'}",
+            flush=True,
+        )
 
     if target_val_record_ids and "record_ids" in source_meta:
         keep_mask = np.asarray(
@@ -2029,6 +2149,20 @@ def main():
             "ops": list(args.latent_augmix_ops),
             "renorm": not bool(args.no_latent_augmix_renorm),
             "clip_abs": float(args.latent_augmix_clip_abs),
+        },
+        "raw_corrupt_consistency": {
+            "enabled": bool(args.enable_raw_corrupt_consistency),
+            "copies": int(args.raw_corrupt_copies),
+            "prob": float(args.raw_corrupt_prob),
+            "severity": int(args.raw_corrupt_severity),
+            "ops": list(args.raw_corrupt_ops),
+            "consistency_weight": float(args.raw_corrupt_consistency_weight),
+            "consistency_loss": str(args.raw_corrupt_consistency_loss),
+            "bce_weight": float(args.raw_corrupt_bce_weight),
+            "max_batches": int(args.raw_corrupt_max_batches),
+            "scope": str(args.raw_corrupt_scope),
+            "renorm": not bool(args.raw_corrupt_no_renorm),
+            "clip_abs": float(args.raw_corrupt_clip_abs),
         },
         "epochs": [],
     }
@@ -2392,6 +2526,29 @@ def main():
                 grad_clip=args.grad_clip, ewa_params=ewa_params,
                 anchor_lambda=args.anchor_lambda, ewa_decay=args.ewa_decay,
             )
+        raw_corrupt_stats = {"enabled": False, "reason": "disabled"}
+        if args.enable_raw_corrupt_consistency and raw_corrupt_consistency_loader is not None:
+            raw_corrupt_stats = train_raw_corruption_consistency_epoch(
+                model=victim.model,
+                loader=raw_corrupt_consistency_loader,
+                optimizer=optimizer,
+                criterion=criterion,
+                device=args.device,
+                copies=args.raw_corrupt_copies,
+                severity=args.raw_corrupt_severity,
+                ops=list(args.raw_corrupt_ops),
+                prob=args.raw_corrupt_prob,
+                consistency_weight=args.raw_corrupt_consistency_weight,
+                bce_weight=args.raw_corrupt_bce_weight,
+                consistency_loss=args.raw_corrupt_consistency_loss,
+                rng=rng,
+                grad_clip=args.grad_clip,
+                trainable_params=trainable_params,
+                freeze_backbone_eval_fn=freeze_backbone_eval_fn,
+                max_batches=args.raw_corrupt_max_batches,
+                renorm=not args.raw_corrupt_no_renorm,
+                clip_abs=args.raw_corrupt_clip_abs,
+            )
         source_logit_anchor_loss = float("nan")
         if (
             args.source_logit_anchor_weight > 0
@@ -2433,6 +2590,18 @@ def main():
             "epoch": epoch,
             "attack_mode": args.attack_mode,
             "train_loss": round(train_loss, 4),
+            "raw_corrupt_loss": round(float(raw_corrupt_stats.get("loss", float("nan"))), 6)
+            if raw_corrupt_stats.get("loss", float("nan")) == raw_corrupt_stats.get("loss", float("nan"))
+            else None,
+            "raw_corrupt_bce_loss": round(float(raw_corrupt_stats.get("bce_loss", float("nan"))), 6)
+            if raw_corrupt_stats.get("bce_loss", float("nan")) == raw_corrupt_stats.get("bce_loss", float("nan"))
+            else None,
+            "raw_corrupt_consistency_loss": round(
+                float(raw_corrupt_stats.get("consistency_loss", float("nan"))), 6
+            )
+            if raw_corrupt_stats.get("consistency_loss", float("nan"))
+            == raw_corrupt_stats.get("consistency_loss", float("nan"))
+            else None,
             "source_logit_anchor_loss": round(source_logit_anchor_loss, 6)
             if source_logit_anchor_loss == source_logit_anchor_loss else None,
             "val_loss":   round(val_loss, 4),
@@ -2480,6 +2649,7 @@ def main():
             "push_stats": push_stats if not gate_skipped else {},
             "latent_augmix_stats": latent_augmix_stats,
             "latent_augmix_push_stats": latent_augmix_push_stats,
+            "raw_corrupt_stats": raw_corrupt_stats,
             "adv_weight_effective": round(float(epoch_adv_weight), 6),
             "adv_weight_warmup_epochs": int(args.adv_weight_warmup_epochs),
             "anchor_class_quotas": dict(k_per_cls),

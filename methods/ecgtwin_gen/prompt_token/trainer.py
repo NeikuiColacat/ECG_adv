@@ -28,6 +28,7 @@ from module.vae_model import VAE_Decoder  # noqa: E402
 from utils.data_utils import _pad_text_embed, process_pat_info  # noqa: E402
 from utils.model_utils import build_noise_predictor  # noqa: E402
 
+from ecg_adv_gen.generation.prompt_tokens import load_text_embed_from_prompt_bank  # noqa: E402
 from methods.ecgtwin_gen.prompt_token.model import CenterClassPromptTokenBank  # noqa: E402
 from scripts.triple_labels.label_schemes import CLASS_NAMES_SUPER5  # noqa: E402
 from util.lead_utils import ECGTWIN_TO_PTBXL_INDICES  # noqa: E402
@@ -57,20 +58,7 @@ def _sex_to_binary(value) -> float:
 
 
 def _load_text_embed(prompt_bank: Dict[str, object], primary_snomed, primary_class: str) -> torch.Tensor:
-    by_snomed = prompt_bank["by_snomed"]
-    by_class = prompt_bank["by_class"]
-    candidates = []
-    if primary_snomed is not None:
-        candidates.append(primary_snomed)
-        try:
-            candidates.append(int(primary_snomed))
-        except Exception:
-            pass
-        candidates.append(str(primary_snomed))
-    for key in candidates:
-        if key in by_snomed:
-            return by_snomed[key].detach().float()
-    return by_class[primary_class].detach().float()
+    return load_text_embed_from_prompt_bank(prompt_bank, primary_snomed, primary_class)
 
 
 def _actual_report_text_embed(cache: Dict[str, object], idx: int) -> Optional[torch.Tensor]:

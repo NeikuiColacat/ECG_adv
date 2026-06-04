@@ -52,7 +52,6 @@ project work under `/home/linbinhao`.
 | `docs/pipelines/` | Long-term pipeline, refactor, reproduction, and evidence docs |
 | `docs/labeling/` | Human-readable label mapping review and clinician audit material |
 | `docs/reports/archive/` | Archived HTML/MD reports that are useful context but not canonical facts |
-| `docs/tmp_md/`, `docs/tmp_html/` | Legacy temporary reports; do not treat as canonical unless referenced by pipelines |
 | `model/` | External model repo handles and submodules; do not stage host-specific symlink changes |
 | `util/tests/` | Project-wide tests. Future target layout is top-level `tests/` |
 | `trash/` | Ignored cold archive; do not import active code from here without migrating and testing it |

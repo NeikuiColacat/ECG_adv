@@ -1,0 +1,154 @@
+extends:
+  - ../defaults/effnet1dv2_v7_sjr_rgq_defaults.yaml
+  - ../defaults/vae_lhat_defaults.yaml
+
+experiment:
+  name: effnet_vae_lhat_percent_v7_sjr_rgq
+  description: Per-center EfficientNet1DV2 VAE-LHAT p10/p20 v7 SJR/RGQ matrix launch surface with protocol-matched Direct init checkpoints.
+
+training:
+  epochs: 30
+
+logging:
+  required_epoch_metrics:
+    - epoch
+    - train_loss
+    - val_loss
+    - asr_overall
+    - sample_any_positive_below_0p5_asr
+    - attack_vs_anchor
+    - loss_gain
+    - decoded_invalid_rate
+    - adv_weight_effective
+    - latent_augmix_stats
+    - hull_weight_entropy_mean
+    - quick_eval
+
+runner:
+  entrypoint: scripts/paper/run_effnet_latent_augmix_stage3_20260524.py
+  name: ${experiment.name}_${matrix.case.center}_${matrix.case.protocol}
+  matrix:
+    case:
+      - center: ningbo
+        protocol: p10
+        k: 1923
+      - center: ningbo
+        protocol: p20
+        k: 3846
+      - center: chapman_shaoxing
+        protocol: p10
+        k: 582
+      - center: chapman_shaoxing
+        protocol: p20
+        k: 1164
+      - center: cpsc_2018
+        protocol: p10
+        k: 475
+      - center: cpsc_2018
+        protocol: p20
+        k: 949
+      - center: georgia
+        protocol: p10
+        k: 871
+      - center: georgia
+        protocol: p20
+        k: 1742
+  argv:
+    - --center
+    - ${matrix.case.center}
+    - --epochs
+    - ${training.epochs}
+    - --seed
+    - ${paper_protocol.kshot.seed}
+    - --device
+    - cuda
+    - --num_workers
+    - ${training.num_workers}
+    - --data_root
+    - ${paths.data_root}
+    - --out_root
+    - ${paths.output_root}/effnet_vae_lhat_${matrix.case.protocol}_v7_sjr_rgq/${runtime.run_id}
+    - --init_ckpt
+    - ${paths.output_root}/effnet_direct_${matrix.case.protocol}_v7_sjr_rgq/${runtime.run_id}/${matrix.case.center}/runs/${matrix.case.center}_K${matrix.case.k}_direct_ft_ep30_seed${paper_protocol.kshot.seed}_val0.2/best_model.pt
+    - --anchor_base
+    - ${data.kshot_subset_root}/${matrix.case.center}/k${matrix.case.k}_seed${paper_protocol.kshot.seed}/${matrix.case.center}_real_k${matrix.case.k}_seed${paper_protocol.kshot.seed}
+    - --hull_steps
+    - ${adaptation.hull.steps}
+    - --hull_M
+    - ${adaptation.hull.M}
+    - --hull_lambda
+    - ${adaptation.hull.lambda}
+    - --hull_lr
+    - ${adaptation.hull.lr}
+    - --hull_include_anchor
+    - --hull_label_mode
+    - ${adaptation.hull.label_mode}
+    - --hull_mix_label_mode
+    - ${adaptation.hull.mix_label_mode}
+    - --hull_label_lambda_y
+    - ${adaptation.hull.label_lambda_y}
+    - --hull_label_new_class_cap
+    - ${adaptation.hull.label_new_class_cap}
+    - --hull_neighbor_distance_space
+    - ${adaptation.hull.neighbor_distance_space}
+    - --hull_neighbor_mode
+    - ${adaptation.hull.neighbor_mode}
+    - --hull_neighbor_pool_size
+    - ${adaptation.hull.neighbor_pool_size}
+    - --hull_neighbor_pool_multiplier
+    - ${adaptation.hull.neighbor_pool_multiplier}
+    - --k_anchor
+    - ${adaptation.anchors.k_anchor}
+    - --pgd_batch
+    - ${adaptation.attack.pgd_batch}
+    - --target_real_weight
+    - ${adaptation.loss.target_real_weight}
+    - --adv_weight
+    - ${adaptation.loss.adv_weight}
+    - --adv_weight_warmup_epochs
+    - ${adaptation.loss.adv_weight_warmup_epochs}
+    - --adv_label_mode
+    - ${adaptation.loss.label_mode}
+    - --adv_teacher_mix
+    - ${adaptation.loss.teacher_mix}
+    - --lr
+    - ${training.optimizer.lr}
+    - --train_batch_size
+    - ${training.batch_size}
+    - --ptbxl_weight
+    - 1.0
+    - --latent_augmix_latent_weight_cap
+    - ${adaptation.latent_augmix.latent_weight_cap}
+    - --latent_augmix_width
+    - ${adaptation.latent_augmix.width}
+    - --latent_augmix_depth
+    - ${adaptation.latent_augmix.depth}
+    - --latent_augmix_alpha
+    - ${adaptation.latent_augmix.alpha}
+    - --latent_augmix_severity
+    - ${adaptation.latent_augmix.severity}
+    - --quick_eval_source
+    - target_real_val
+    - --target_real_val_fraction
+    - 0.2
+    - --target_real_val_seed
+    - ${paper_protocol.kshot.seed}
+    - --eval_batch_size
+    - ${training.eval_batch_size}
+    - --eval_min_pos
+    - ${evaluation.min_pos}
+    - --eval_pn2021_limit
+    - ${evaluation.pn2021_limit}
+    - --run_tag_extra
+    - ${matrix.case.protocol}
+
+adaptation:
+  method: vae_latent_hull_percent_online_at
+
+lineage:
+  replaces_legacy_surface: scripts/paper/run_effnet_v7_multiseed_kshot_matrix_20260530.py
+  scope: vae_lhat_p10_p20_only
+  prerequisite_config: configs/experiments/effnet_direct_percent_v7_sjr_rgq_matrix.yaml
+  notes:
+    - This managed config replaces the VAE-LHAT p10/p20 command expansion from the dated matrix runner.
+    - Reuse the same runtime.run_id as the Direct p10/p20 matrix so init_ckpt resolves to the protocol-matched Direct checkpoint.

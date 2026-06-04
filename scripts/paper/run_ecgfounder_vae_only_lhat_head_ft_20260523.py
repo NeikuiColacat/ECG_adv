@@ -78,7 +78,7 @@ from ecg_adv_gen.data import (  # noqa: E402
 )
 from scripts.triple_labels.label_schemes import CLASS_NAMES_SUPER5, SUPER5_TO_IDX  # noqa: E402
 from ecg_adv_gen.labels import pn2021_super5_label_mapping_payload  # noqa: E402
-from ecg_adv_gen.models import ecgfounder_lhat_run_dir  # noqa: E402
+from ecg_adv_gen.models import ecgfounder_k500_head_path, ecgfounder_lhat_run_dir  # noqa: E402
 from ecg_adv_gen.models.ecgfounder_heads import (  # noqa: E402
     FeatureAdapterHead,
     ResidualAdapterHead,
@@ -251,25 +251,27 @@ def load_anchor_pool(
     )
 
 
-def ref_ids_for_all_centers(center: str, selected_ids: np.ndarray) -> dict[str, set[str]]:
+def ref_ids_for_all_centers(
+    center: str,
+    selected_ids: np.ndarray,
+    ref_root: str | Path = REF_ROOT,
+) -> dict[str, set[str]]:
     ref_ids = {}
     try:
         from scripts.paper.eval_ecgfounder_super5_zero_shot_20260517 import load_ref_ids
 
-        ref_ids = load_ref_ids(REF_ROOT, TARGET_CENTERS)
+        ref_ids = load_ref_ids(ref_root, TARGET_CENTERS)
     except Exception:
         ref_ids = {c: set() for c in TARGET_CENTERS}
     ref_ids[center] = set(str(x) for x in selected_ids)
     return ref_ids
 
 
-def center_k500_head_path(run_root: Path, center: str) -> Path:
-    matches = sorted(run_root.glob(f"{center}_K500_fromK500_headft_*/best_head.pt"))
-    if len(matches) != 1:
-        raise FileNotFoundError(
-            f"expected one K500 direct head for {center} under {run_root}, found {len(matches)}"
-        )
-    return matches[0]
+def center_kshot_head_path(run_root: Path, center: str, k: int, seed: int) -> Path:
+    path = ecgfounder_k500_head_path(run_root, center=center, k=k, seed=seed, source_k=k)
+    if not path.exists():
+        raise FileNotFoundError(f"missing direct head for {center} K={k} under {run_root}: {path}")
+    return path
 
 
 def predict_head(head: nn.Module, features: np.ndarray, batch_size: int, device: torch.device) -> np.ndarray:
@@ -489,7 +491,7 @@ def train_one_center(
 
     pool = load_anchor_pool(center, args.k, args.seed, pn, args)
     selected_ids_all = pool["record_ids"].astype(str)
-    ref_ids = ref_ids_for_all_centers(center, selected_ids_all)
+    ref_ids = ref_ids_for_all_centers(center, selected_ids_all, args.ref_root)
 
     pn_mask = (pn["centers"].astype(str) == center) & np.asarray(
         [str(rid) in set(selected_ids_all) for rid in pn["record_ids"].astype(str)],
@@ -578,7 +580,12 @@ def train_one_center(
     else:
         raise ValueError(f"unsupported head_type={args.head_type!r}")
     if args.init_base_head_from_k500_root:
-        k500_head_path = center_k500_head_path(Path(args.init_base_head_from_k500_root), center)
+        k500_head_path = center_kshot_head_path(
+            Path(args.init_base_head_from_k500_root),
+            center,
+            k=int(args.k),
+            seed=int(args.seed),
+        )
         print(
             f"[init] loading center K500 direct head into base head from {k500_head_path}",
             flush=True,
@@ -1235,6 +1242,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--checkpoint", default=str(CHECKPOINT))
     p.add_argument("--preprocess_policy", default="official_ptbxl_eval")
     p.add_argument("--k", type=int, default=500)
+    p.add_argument(
+        "--ref_root",
+        default=str(REF_ROOT),
+        help="Root containing per-center K-shot ref_meta files used for non-target ref-excluded eval views.",
+    )
     p.add_argument("--k_anchor", type=int, default=300)
     p.add_argument(
         "--anchor_sample_mode",

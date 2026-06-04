@@ -1,0 +1,64 @@
+extends:
+  - ../defaults/ecgfounder_v7_sjr_rgq_defaults.yaml
+
+experiment:
+  name: ecgfounder_direct_k500_v7_sjr_rgq_matrix
+  description: Per-center ECGFounder frozen-feature direct K500 v7 SJR/RGQ matrix launch surface replacing the Direct portion of the dated ECGFounder v7 multiseed runner.
+
+adaptation:
+  method: ecgfounder_frozen_feature_direct_k500_head_finetune_matrix
+
+logging:
+  child_artifacts:
+    - best_head.pt
+    - training_log.json
+    - eval_result.json
+  postprocess_artifacts:
+    - metrics_long.csv
+
+runner:
+  entrypoint: scripts/paper/run_ecgfounder_kshot_head_ft_20260517.py
+  name: ${experiment.name}_${matrix.center}
+  matrix:
+    center: ${paper_protocol.centers.target_4}
+  argv:
+    - --centers
+    - ${matrix.center}
+    - --linear_probe_dir
+    - ${model.linear_probe_dir}
+    - --preprocess_policy
+    - ${model.preprocess_policy}
+    - --out_dir
+    - ${paths.output_root}/ecgfounder_direct_k500_v7_sjr_rgq/${runtime.run_id}/${matrix.center}
+    - --ref_root
+    - ${data.kshot_subset_root}
+    - --k
+    - ${paper_protocol.kshot.k}
+    - --source_k
+    - ${paper_protocol.kshot.k}
+    - --subset_seed
+    - ${paper_protocol.kshot.subset_seed}
+    - --seed
+    - ${paper_protocol.kshot.seed}
+    - --epochs
+    - ${training.epochs}
+    - --lr
+    - ${training.optimizer.lr}
+    - --weight_decay
+    - ${training.optimizer.weight_decay}
+    - --val_fraction
+    - ${training.validation.val_fraction}
+    - --batch_size
+    - ${training.batch_size}
+    - --eval_batch_size
+    - ${training.eval_batch_size}
+    - --device
+    - cuda
+
+lineage:
+  replaces_legacy_surface: scripts/paper/run_ecgfounder_v7_multiseed_kshot_matrix_20260530.py
+  scope: ecgfounder_direct_k500_only
+  prerequisite_stage: ecgfounder_linear_probe_v7_from_v6_cache
+  notes:
+    - This managed config replaces the ECGFounder Direct K500 per-center command expansion from the dated matrix runner.
+    - VAE-LHAT ECGFounder v7 should consume these Direct heads through a separate managed config once its base-head root is frozen.

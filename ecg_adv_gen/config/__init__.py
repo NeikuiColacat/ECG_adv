@@ -10,6 +10,12 @@ from .loader import (
     make_dry_run_manifest,
     validate_experiment_config,
 )
+from .entrypoints import (
+    ManagedScriptProfile,
+    managed_runner_profiles,
+    managed_runner_script_names,
+    managed_script_profile,
+)
 from .launch import (
     LaunchError,
     attach_launch_artifacts,
@@ -36,6 +42,7 @@ __all__ = [
     "ConfigError",
     "LaunchError",
     "ALLOWED_CLI_OVERRIDE_KEYS",
+    "ManagedScriptProfile",
     "attach_launch_artifacts",
     "apply_cli_overrides",
     "build_postprocess_commands",
@@ -44,6 +51,9 @@ __all__ = [
     "default_run_dir",
     "load_experiment_config",
     "make_dry_run_manifest",
+    "managed_runner_profiles",
+    "managed_runner_script_names",
+    "managed_script_profile",
     "prepare_output_dir",
     "require_cuda_visible_devices",
     "run_legacy_commands",

@@ -5,6 +5,16 @@ purpose: >
   facts. New agents should start here after reading AGENTS.md instead of
   reconstructing the mainline from old chats or dated HTML reports.
 
+evidence_surface_policy:
+  trusted_claims_source: active_claims
+  paper_tables_source: registered_artifacts
+  archived_reports_are_evidence_by_default: false
+  managed_launch_configs_are_evidence_by_default: false
+  safety_rules:
+    - cite_metrics_through_registry_or_registered_run_records
+    - do_not_promote_archived_reports_without_registry_link
+    - do_not_treat_launch_only_configs_as_paper_evidence
+
 state_machine:
   current_state: comparison_registered
   allowed_states:
@@ -47,8 +57,6 @@ artifact_policy:
     - scripts/**/*.py
     - docs/**/*.md
     - docs/reports/archive/**/*.html
-    - docs/tmp_md/*.html
-    - docs/tmp_html/*.html
     - util/tests/**/*.py
 
 run_record_policy:
@@ -170,8 +178,6 @@ run_catalog:
   trusted:
     - effnet_direct_k500_v7_sjr_rgq/v7_sjr_rgq_main_20260528
     - effnet_vae_lhat_k500_v7_sjr_rgq/v7_sjr_rgq_main_20260528
-  provisional:
-    - effnet_vae_lhat_k500_v7_sjr_rgq/v7_sjr_rgq_main_20260528: legacy_backfilled_manifest
   deprecated:
     - v3/v5/v6 headline numbers for the final v7 EfficientNet mainline unless explicitly used as historical sensitivity analysis.
 

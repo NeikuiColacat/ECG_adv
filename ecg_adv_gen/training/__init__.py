@@ -36,12 +36,24 @@ from .resume_contract import (
     should_save_initial_best_model,
     validate_resume_contract,
 )
+from .checkpoint_state import (
+    append_jsonl,
+    atomic_torch_save,
+    capture_rng_state,
+    quality_buffer_state,
+    resolve_resume_path,
+    restore_quality_buffer_state,
+    restore_rng_state,
+)
 from .torch_utils import set_module_requires_grad
 
 __all__ = [
+    "append_jsonl",
     "attack_success_stats",
+    "atomic_torch_save",
     "CachedSignalDataset",
     "compute_pos_weight",
+    "capture_rng_state",
     "fullft_adv_batch_diagnostics",
     "build_weighted_signal_stream_loader",
     "build_ecgfounder_fullft_method_tag",
@@ -58,8 +70,12 @@ __all__ = [
     "build_weighted_feature_stream_loader",
     "multilabel_stream_sample_weights",
     "pairwise_rank_loss",
+    "quality_buffer_state",
     "random_split_indices",
     "resume_contract_mismatches",
+    "resolve_resume_path",
+    "restore_quality_buffer_state",
+    "restore_rng_state",
     "set_module_requires_grad",
     "should_save_initial_best_model",
     "stream_weighted_masked_bce",

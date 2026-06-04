@@ -6,11 +6,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import shlex
 import sys
 from pathlib import Path
-
-import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -19,7 +16,6 @@ if str(REPO_ROOT) not in sys.path:
 from ecg_adv_gen.config import (  # noqa: E402
     ConfigError,
     LaunchError,
-    attach_launch_artifacts,
     build_postprocess_commands,
     build_runner_commands,
     check_nvidia_smi,
@@ -32,11 +28,13 @@ from ecg_adv_gen.config import (  # noqa: E402
     run_postprocess_commands,
     validate_experiment_config,
     verify_required_inputs,
-    write_k500_ref_ids_artifact,
-    write_selection_record_artifact,
 )
-from ecg_adv_gen.data import write_data_path_manifest  # noqa: E402
 from ecg_adv_gen.evidence import finalize_run_record  # noqa: E402
+from ecg_adv_gen.runner.launch_plan import (  # noqa: E402
+    experiment_purpose,
+    render_launch_command,
+    write_launch_plan_files,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -71,70 +69,6 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     return parser.parse_args()
-
-
-def _shell_join(argv: list[str]) -> str:
-    return " ".join(shlex.quote(part) for part in argv)
-
-
-def _render_command_with_env(command: dict) -> str:
-    env = command.get("env") or {}
-    env_prefix = " ".join(f"{k}={shlex.quote(str(v))}" for k, v in sorted(env.items()))
-    rendered = _shell_join(command["argv"])
-    return f"{env_prefix} {rendered}".strip()
-
-
-def _experiment_purpose(config: dict) -> str:
-    experiment = config.get("experiment") or {}
-    return str(experiment.get("purpose") or experiment.get("description") or "")
-
-
-def _write_plan_files(
-    out_dir: Path,
-    config: dict,
-    manifest: dict,
-    commands: list[dict],
-    postprocess_commands: list[dict],
-) -> dict:
-    out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "run_config.resolved.yaml").write_text(
-        yaml.safe_dump(config, sort_keys=False, allow_unicode=False),
-        encoding="utf-8",
-    )
-    (out_dir / "run_config.resolved.json").write_text(
-        json.dumps(config, indent=2, sort_keys=True, ensure_ascii=True, default=str) + "\n",
-        encoding="utf-8",
-    )
-    (out_dir / "run_manifest.json").write_text(
-        json.dumps(manifest, indent=2, sort_keys=True, ensure_ascii=True, default=str) + "\n",
-        encoding="utf-8",
-    )
-    command_text = "#!/usr/bin/env bash\nset -euo pipefail\n\n"
-    command_text += "# Legacy child commands\n"
-    command_text += "\n\n".join(_render_command_with_env(cmd) for cmd in commands) + "\n"
-    if postprocess_commands:
-        command_text += "\n# Managed postprocess commands\n"
-        command_text += "\n\n".join(_render_command_with_env(cmd) for cmd in postprocess_commands) + "\n"
-    (out_dir / "command.sh").write_text(command_text, encoding="utf-8")
-    write_data_path_manifest(
-        config,
-        out_dir / "data_manifest.json",
-        local_paths=manifest.get("local_paths") or {},
-    )
-    write_k500_ref_ids_artifact(manifest, out_dir / "k500_ref_ids.json")
-    write_selection_record_artifact(manifest, out_dir / "selection.json")
-    manifest = attach_launch_artifacts(manifest, run_dir=out_dir)
-    (out_dir / "run_manifest.json").write_text(
-        json.dumps(manifest, indent=2, sort_keys=True, ensure_ascii=True, default=str) + "\n",
-        encoding="utf-8",
-    )
-    finalize_run_record(
-        out_dir,
-        purpose=_experiment_purpose(config),
-        result_summary="Run plan files were written; execution has not completed yet.",
-        outcome=str(manifest.get("status", "dry_run")),
-    )
-    return json.loads((out_dir / "run_manifest.json").read_text(encoding="utf-8"))
 
 
 def main() -> int:
@@ -185,11 +119,11 @@ def main() -> int:
     else:
         print("\n# Legacy commands (not executed)")
     for command in commands:
-        print(_render_command_with_env(command))
+        print(render_launch_command(command))
     if postprocess_commands:
         print("\n# Managed postprocess commands")
         for command in postprocess_commands:
-            print(_render_command_with_env(command))
+            print(render_launch_command(command))
 
     if args.write_plan or args.execute:
         if args.output_dir:
@@ -209,7 +143,7 @@ def main() -> int:
             print(f"[launch-error] {exc}", file=sys.stderr)
             return 3
         try:
-            manifest = _write_plan_files(out_dir, config, manifest, commands, postprocess_commands)
+            manifest = write_launch_plan_files(out_dir, config, manifest, commands, postprocess_commands)
         except LaunchError as exc:
             print(f"[launch-error] {exc}", file=sys.stderr)
             return 3
@@ -237,7 +171,7 @@ def main() -> int:
             run_postprocess_commands(postprocess_commands, run_dir=out_dir, manifest_path=manifest_path)
             finalize_run_record(
                 out_dir,
-                purpose=_experiment_purpose(config),
+                purpose=experiment_purpose(config),
             )
         except LaunchError as exc:
             print(f"[launch-error] {exc}", file=sys.stderr)

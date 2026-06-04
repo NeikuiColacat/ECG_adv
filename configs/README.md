@@ -45,6 +45,13 @@ restricted to:
 The active-script tests lock this pattern so real local YAML, private paths,
 and credentials cannot be accidentally tracked.
 
+Local YAML is a host overlay only. Its top-level keys are restricted to
+`host`, `paths`, `python`, `resources`, and `safety`. It must not override
+tracked experiment protocol or launch semantics such as `paper_protocol`,
+`data`, `preprocess`, `model`, `evaluation`, `runner`, `postprocess`, or
+`logging`; those sections belong in tracked YAML where audit and review can
+see them.
+
 `configs/schemas/experiment_config.schema.json` now treats `logging` as a
 required lifecycle section. Experiment YAML must declare launch, child, and
 postprocess artifact buckets, and YAML-managed postprocess commands must list
@@ -56,9 +63,9 @@ The supported entrypoint can resolve configs as a CPU-only dry-run:
 
 ```bash
 micromamba run -n ECGTwin python scripts/run_experiment.py \
-  --config configs/experiments/effnet_direct_k500_v6.yaml \
+  --config configs/experiments/effnet_direct_k500_v7_sjr_rgq_matrix.yaml \
   --local-config configs/local/linbinhao_server.example.yaml \
-  --run-id dryrun_effnet_direct_k500_v6 \
+  --run-id dryrun_effnet_direct_k500_v7 \
   --dry-run
 ```
 
@@ -66,19 +73,13 @@ Dry-run validates the YAML, checks path boundaries, compares Super5 mapping
 metadata and data/preprocess protocol fields against code, and prints the
 legacy commands without invoking child scripts.
 
-The currently managed experiment/evaluation configs are:
-
-- `configs/experiments/effnet_direct_k500_v6.yaml`
-- `configs/experiments/effnet_direct_k500_v6_smoke.yaml`
-- `configs/experiments/effnet_vae_lhat_k500_v6.yaml`
-- `configs/experiments/effnet_vae_lhat_k500_v6_smoke.yaml`
-- `configs/experiments/ecgfounder_direct_k500_v6.yaml`
-- `configs/experiments/ecgfounder_inithead_fullft_k500_v6.yaml`
-- `configs/experiments/ecgfounder_inithead_fullft_k500_v6_smoke.yaml`
-- `configs/experiments/ecgfounder_vae_lhat_k500_v6.yaml`
-- `configs/experiments/ecgfounder_vae_lhat_k500_v6_smoke.yaml`
-- `configs/experiments/pn2021_eval_v6_refexcluded.yaml`
-- `configs/experiments/pn2021_eval_v6_refexcluded_smoke.yaml`
+The authoritative active/smoke/superseded inventory is
+`configs/active_scripts.yaml`. Current agent-facing active surfaces are v7
+SJR/RGQ configs covering EfficientNet Direct/VAE-LHAT K500 and percent-shot
+matrices, benchmark backbones, ECGFounder Direct/VAE-LHAT K500, ECGTwin author
+reproduction, minimal prompt-token train/generate/gate, PN2021 ref-excluded
+eval, and PN2021-C eval. Older v6 configs are retained only when
+`configs/active_scripts.yaml` classifies them as smoke or superseded.
 
 The smoke configs are not paper result configs. The PN2021 eval smoke passes
 `--pn2021_limit`; the EfficientNet direct smoke uses one training epoch,
@@ -97,7 +98,7 @@ Small launch-time overrides are supported only through an audited whitelist:
 
 ```bash
 micromamba run -n ECGTwin python scripts/run_experiment.py \
-  --config configs/experiments/effnet_direct_k500_v6.yaml \
+  --config configs/experiments/effnet_direct_k500_v7_sjr_rgq_matrix.yaml \
   --local-config configs/local/linbinhao_server.example.yaml \
   --run-id smoke_epochs2_workers1 \
   --dry-run \
@@ -135,9 +136,9 @@ Execution is intentionally stricter than dry-run:
 ```bash
 nvidia-smi
 CUDA_VISIBLE_DEVICES=3 micromamba run -n ECGTwin python scripts/run_experiment.py \
-  --config configs/experiments/effnet_direct_k500_v6.yaml \
+  --config configs/experiments/effnet_direct_k500_v7_sjr_rgq_matrix.yaml \
   --local-config configs/local/linbinhao_server.yaml \
-  --run-id effnet_direct_k500_v6_seed20260531 \
+  --run-id effnet_direct_k500_v7_seed20260531 \
   --execute
 ```
 
@@ -210,16 +211,17 @@ micromamba run -n ECGTwin python scripts/agent/register_run.py \
   --status provisional
 ```
 
-All active paper/evaluation configs now declare managed postprocess commands.
+Active paper/evaluation configs should declare managed postprocess commands.
 The common pattern is:
 
 - `scripts/export_metrics_long.py`
 - `scripts/export_paper_table.py` for `pn2021_all_zero_kept_refexcluded`
 - `scripts/export_paper_table.py` for `pn2021_drop_all_zero_refexcluded`
 
-`configs/experiments/ecgfounder_direct_k500_v6.yaml` is the one exception: its
-legacy direct-head result script does not emit a drop-all-zero view, so it
-declares metrics export plus the all-zero-kept paper table only.
+Older smoke/superseded configs may carry narrower postprocess coverage when
+the legacy result script does not emit every view. Check
+`configs/active_scripts.yaml` before treating any such config as a current
+paper surface.
 
 The generated `command.sh` includes both the legacy child commands and these
 postprocess commands, so a managed run produces paper-table inputs without a
@@ -232,7 +234,7 @@ waveforms or recursively scanning large datasets:
 
 ```bash
 micromamba run -n ECGTwin python scripts/export_data_manifest.py \
-  --config configs/experiments/effnet_direct_k500_v6.yaml \
+  --config configs/experiments/effnet_direct_k500_v7_sjr_rgq_matrix.yaml \
   --local-config configs/local/linbinhao_server.example.yaml \
   --output-dir /home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/data_manifest/<name>
 ```
@@ -271,7 +273,7 @@ inferred target center:
 micromamba run -n ECGTwin python scripts/export_metrics_long.py \
   --input /path/to/ningbo_run/eval_result.json /path/to/georgia_run/eval_result.json \
   --output-dir /home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/metrics_export/<method> \
-  --run-id effnet_vae_lhat_k500_v6 \
+  --run-id <method_run_id> \
   --filter-to-target-center \
   --target-centers ningbo chapman_shaoxing cpsc_2018 georgia \
   --expected-mapping-version v7_super5_sjr_rgq_review_20260528 \
@@ -324,16 +326,14 @@ Current verification snapshot:
 
 ```text
 micromamba run -n ECGTwin python scripts/audit_managed_configs.py \
-  --local-config configs/local/linbinhao_server.example.yaml \
-  --require-existing-inputs \
-  --output-dir /home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/config_audit/refactor_after_ecgfounder_smokes_20260528
+  --local-config configs/local/linbinhao_server.example.yaml
 
-managed_experiment_count=6
-passed_count=6
+managed_experiment_count=23
+passed_count=23
 failed_count=0
 ```
 
-Current execute-smoke evidence:
+Historical 2026-05 execute-smoke evidence:
 
 - `pn2021_eval_v6_refexcluded`: `refactor_execute_postprocess_pn2021_eval_20260528`
   succeeded with managed postprocess and two paper-table views.
@@ -363,7 +363,7 @@ under:
 /home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/dry_runs/refactor_all_postprocess_plan_*_20260528/
 ```
 
-Current execute-smoke evidence:
+Additional historical 2026-05 execute-smoke evidence:
 
 - `ecgfounder_direct_k500_v6` has a cached-feature 2-epoch training smoke:
   `refactor_smoke_ecgfounder_direct_postprocess_ep2_20260528`, with

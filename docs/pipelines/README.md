@@ -28,6 +28,8 @@
 | `managed_v6_main_repro_20260528.md` | phase 1/2 重构后 managed-YAML 主实验 v6 复跑结果、指标和验收记录 |
 | `agent_operating_layer_20260529.md` | Active Evidence Registry、CPU-only agent audit、Direct vs VAE comparison bundle 和 VAE-AT checkpoint/resume contract |
 | `run_record_management_20260529.md` | 每次实验的 run_card、run_file_index、summary、分类目录和 registry 登记规则 |
+| `agents_md_organization_suggestions_20260529.md` | AGENTS.md 的长度、历史路径、旧 mapping 事实和归档边界整理建议 |
+| `ai_agent_workspace_refactor_plan_20260604.md` | 多 subagent 扫描后的 AI-agent 友好重构计划：YAML 启动、package helper 抽象、legacy wrapper 和验证门禁 |
 
 ## Docs 还是 Skill
 

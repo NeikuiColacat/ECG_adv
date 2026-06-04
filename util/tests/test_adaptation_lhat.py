@@ -12,6 +12,7 @@ from ecg_adv_gen.adaptation import (
     build_anchor_preserving_soft_labels,
     build_k500_internal_val_mask,
     build_latent_augmix_branch_signals,
+    build_raw_corruption_views,
     derive_class_trust,
     derive_kshot_anchor_class_weights,
     dirichlet_with_first_weight_cap,
@@ -281,3 +282,53 @@ def test_latent_augmix_core_uses_injected_ops_and_caps_latent_branch():
             op_apply_fn=apply_op,
             available_ops=["offset"],
         )
+
+
+def test_raw_corruption_views_use_single_ops_and_prob_gate():
+    signals = np.ones((3, 12, 8), dtype=np.float32)
+    calls: list[tuple[str, int]] = []
+
+    def apply_op(sig: np.ndarray, op_name: str, severity: int) -> np.ndarray:
+        calls.append((op_name, severity))
+        if op_name == "offset":
+            return sig + 0.5
+        if op_name == "scale":
+            return sig * 2.0
+        raise AssertionError(op_name)
+
+    corrupted, stats = build_raw_corruption_views(
+        signals,
+        copies=2,
+        severity=3,
+        ops=["offset", "scale"],
+        prob=1.0,
+        rng=np.random.default_rng(7),
+        op_apply_fn=apply_op,
+        available_ops=["offset", "scale"],
+        renorm=False,
+        clip_abs=6.0,
+    )
+
+    assert corrupted.shape == (6, 12, 8)
+    assert calls
+    assert len(calls) == 6
+    assert all(severity == 3 for _, severity in calls)
+    assert stats["enabled"] is True
+    assert stats["n_generated"] == 6
+    assert stats["n_corrupted"] == 6
+    assert stats["ops"] == ["offset", "scale"]
+    assert np.isfinite(corrupted).all()
+
+    passthrough, passthrough_stats = build_raw_corruption_views(
+        signals,
+        copies=1,
+        severity=3,
+        ops=["offset"],
+        prob=0.0,
+        rng=np.random.default_rng(3),
+        op_apply_fn=apply_op,
+        available_ops=["offset"],
+        renorm=False,
+    )
+    assert np.allclose(passthrough, signals)
+    assert passthrough_stats["n_corrupted"] == 0

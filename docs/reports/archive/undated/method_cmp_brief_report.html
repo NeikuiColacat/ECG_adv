@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ECG 跨中心方法对比首轮实验建议</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #172026;
+      --muted: #5c6a72;
+      --line: #d9e1e6;
+      --soft: #f5f7f8;
+      --accent: #176b87;
+      --accent-2: #8a5a00;
+      --good: #0f7a45;
+      --warn: #a05a00;
+    }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: white;
+      line-height: 1.55;
+    }
+    main {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 32px 28px 56px;
+    }
+    h1 {
+      font-size: 30px;
+      line-height: 1.2;
+      margin: 0 0 8px;
+      letter-spacing: 0;
+    }
+    h2 {
+      font-size: 20px;
+      margin: 30px 0 12px;
+      border-top: 1px solid var(--line);
+      padding-top: 20px;
+    }
+    h3 {
+      font-size: 16px;
+      margin: 18px 0 8px;
+    }
+    p {
+      margin: 8px 0;
+    }
+    .meta {
+      color: var(--muted);
+      font-size: 14px;
+      margin-bottom: 20px;
+    }
+    .callout {
+      border: 1px solid #b7d4df;
+      background: #f1f8fb;
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin: 16px 0 22px;
+    }
+    .callout strong {
+      color: var(--accent);
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin: 14px 0;
+    }
+    .tile {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px 14px;
+      background: var(--soft);
+    }
+    .tile .label {
+      color: var(--muted);
+      font-size: 13px;
+      margin-bottom: 4px;
+    }
+    .tile .value {
+      font-weight: 650;
+      font-size: 18px;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 12px 0 18px;
+      font-size: 14px;
+    }
+    th, td {
+      border: 1px solid var(--line);
+      padding: 9px 10px;
+      vertical-align: top;
+      text-align: left;
+    }
+    th {
+      background: #eef3f5;
+      font-weight: 650;
+    }
+    code {
+      font-family: "SFMono-Regular", Consolas, monospace;
+      background: #edf1f3;
+      padding: 1px 5px;
+      border-radius: 4px;
+      font-size: 0.94em;
+    }
+    .rank {
+      font-weight: 700;
+      color: var(--accent);
+      white-space: nowrap;
+    }
+    .ok {
+      color: var(--good);
+      font-weight: 650;
+    }
+    .warn {
+      color: var(--warn);
+      font-weight: 650;
+    }
+    ul {
+      padding-left: 20px;
+    }
+    li {
+      margin: 5px 0;
+    }
+    @media (max-width: 760px) {
+      main {
+        padding: 22px 16px 40px;
+      }
+      .grid {
+        grid-template-columns: 1fr;
+      }
+      table {
+        font-size: 13px;
+      }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <h1>ECG 跨中心方法对比首轮实验建议</h1>
+  <div class="meta">基于 <code>docs/reports/archive/undated/method_cmp.md</code> 与当前 VAE-only real-anchor LH-AT 结果整理，日期：2026-05-16。</div>
+
+  <section class="callout">
+    <p><strong>结论：</strong>首轮不要先跑 ECG-FM / ECGFounder / SHOT / TENT 这类协议差异较大的方法。最合适先跑的是 <strong>K-shot FT + Mixup</strong>，随后跑 <strong>K-shot FT + Manifold Mixup</strong> 和 <strong>K-shot FT + SAM</strong>。</p>
+    <p>理由是它们和我们的 LH-AT 一样使用目标中心 K 条有标签样本，最公平、实现成本最低、论文审稿时也最能回答“你的方法是不是只是普通微调、普通插值或鲁棒优化”的质疑。</p>
+  </section>
+
+  <h2>当前已知参照点</h2>
+  <div class="grid">
+    <div class="tile">
+      <div class="label">Source-only baseline</div>
+      <div class="value">PTB-XL EfficientNet1DV2</div>
+      <p>训练协议：<code>minimal_resample</code>、100Hz、10s、<code>per_sample_global</code>。</p>
+    </div>
+    <div class="tile">
+      <div class="label">Direct K-shot FT 已跑</div>
+      <div class="value">K=500, 30 epochs</div>
+      <p>Ningbo：0.8809 / 0.4995；CPSC：0.8212 / 0.5593。</p>
+    </div>
+    <div class="tile">
+      <div class="label">Ours LH-AT 已跑</div>
+      <div class="value">K=500, M=20/80</div>
+      <p>Ningbo 最高：0.8953 / 0.5314；CPSC 最高：0.8682 / 0.6147。</p>
+    </div>
+  </div>
+
+  <h2>推荐首轮对比顺序</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>优先级</th>
+        <th>方法</th>
+        <th>为什么先跑</th>
+        <th>第一轮协议</th>
+        <th>预期结论价值</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="rank">P1</td>
+        <td><strong>K-shot FT + Mixup</strong></td>
+        <td>最直接的插值增强 baseline。若 LH-AT 明显优于它，就能说明 VAE latent hull 的收益不是普通输入空间 Mixup。</td>
+        <td>K=500；Ningbo、CPSC 先跑；复用同一批 ref ids；epoch=30；mixup alpha 先试 0.2 和 0.4。</td>
+        <td class="ok">最高优先级，应该马上做。</td>
+      </tr>
+      <tr>
+        <td class="rank">P2</td>
+        <td><strong>K-shot FT + Manifold Mixup</strong></td>
+        <td>概念上最接近我们的方法：都是“隐藏/特征空间插值”。区别是我们在 ECGTwin VAE latent 中做 same-label target anchor + adversarial search。</td>
+        <td>K=500；Ningbo、CPSC；hidden layer 先选 EfficientNet 倒数第二层或 block 输出；alpha 0.2/0.4。</td>
+        <td class="ok">必须打赢或至少持平，否则 LH-AT 的贡献要重新表述。</td>
+      </tr>
+      <tr>
+        <td class="rank">P3</td>
+        <td><strong>K-shot FT + SAM</strong></td>
+        <td>回答“提升是否只是来自更平滑的极小值/泛化优化”。SAM 和我们都属于泛化增强，但不使用 ECGTwin VAE target manifold。</td>
+        <td>K=500；Ningbo、CPSC；rho 0.05 起步；AdamW 或 SGD-SAM 需固定学习率策略。</td>
+        <td class="ok">审稿友好，成本中等。</td>
+      </tr>
+      <tr>
+        <td class="rank">P4</td>
+        <td><strong>Random same-label latent hull</strong></td>
+        <td>这是我们方法内部最关键消融：去掉对抗优化，只随机或均匀组合同标签 target VAE latent。</td>
+        <td>K=500；M=20/80；lambda=0.15；不优化 <code>a_i</code>，只用 uniform 或 Dirichlet 权重。</td>
+        <td class="ok">证明 hard search 有独立贡献。</td>
+      </tr>
+      <tr>
+        <td class="rank">P5</td>
+        <td><strong>Deep CORAL / SHOT / EATA</strong></td>
+        <td>这些是 target-unlabeled 或 test-time adaptation，协议和 K-shot labeled 不完全一致。适合补充，不适合做第一轮主对比。</td>
+        <td>先等 P1-P4 出结果；单独声明使用目标中心无标签数据，不和 K-shot labeled 表混在一起。</td>
+        <td class="warn">作为补充表更合适。</td>
+      </tr>
+      <tr>
+        <td class="rank">P6</td>
+        <td><strong>ECG-FM / ECGFounder</strong></td>
+        <td>是强 backbone baseline，但不是同类 target-center adaptation 方法。接入成本、标签头、输入预处理和权重许可都需要额外确认。</td>
+        <td>后续做 K-shot linear probe / fine-tune；先不要阻塞当前 LH-AT 对比。</td>
+        <td class="warn">重要但不是第一优先级。</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>首轮执行建议</h2>
+  <h3>Phase 1：最小可证明对比</h3>
+  <ul>
+    <li>中心：先跑 <code>ningbo</code> 和 <code>cpsc_2018</code>，因为当前 direct FT 与 LH-AT 都已经有完整结果。</li>
+    <li>K：先固定 <code>K=500</code>，复用当前 LH-AT 的 subset/ref ids，评估时继续排除这些 ref ids，避免测试集污染。</li>
+    <li>方法：<code>Direct FT</code>、<code>FT+Mixup</code>、<code>FT+Manifold Mixup</code>、<code>FT+SAM</code>、<code>Random Latent Hull</code>、<code>Ours LH-AT</code>。</li>
+    <li>指标：每个中心报告 held-out target AUROC/AUPRC、PN2021 7-center avg、PTB-XL fold10 保持情况。</li>
+  </ul>
+
+  <h3>Phase 2：扩展到四中心和 K sweep</h3>
+  <ul>
+    <li>中心扩展：<code>ningbo</code>、<code>chapman_shaoxing</code>、<code>cpsc_2018</code>、<code>georgia</code>。</li>
+    <li>K 扩展：<code>100 / 200 / 300 / 400 / 500</code>。</li>
+    <li>若 P1-P3 有方法接近或超过 LH-AT，再对该方法补 3 个随机种子；如果明显落后，先保留单 seed 作为主表初版。</li>
+  </ul>
+
+  <h2>为什么不先跑 foundation model</h2>
+  <p>ECG-FM 和 ECGFounder 是强基线，但它们回答的是“换更强预训练 backbone 是否更好”。我们的当前论文主张是“在少量目标中心样本条件下，VAE target latent hull adversarial adaptation 能增强跨中心性能”。这两个问题不同。</p>
+  <p>如果先跑 foundation model，会带来新的变量：模型架构、预训练数据、输入长度、标签头、微调超参都变了。首轮最应该控制变量，只换 adaptation 方法。</p>
+
+  <h2>建议报告表</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Method</th>
+        <th>Target labels</th>
+        <th>Uses ECGTwin VAE</th>
+        <th>Uses adversarial search</th>
+        <th>Ningbo AUROC/AUPRC</th>
+        <th>CPSC AUROC/AUPRC</th>
+        <th>PN2021 avg</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Source-only</td>
+        <td>No</td>
+        <td>No</td>
+        <td>No</td>
+        <td>已知 baseline</td>
+        <td>已知 baseline</td>
+        <td>已知 baseline</td>
+      </tr>
+      <tr>
+        <td>Direct K-shot FT</td>
+        <td>Yes, K=500</td>
+        <td>No</td>
+        <td>No</td>
+        <td>0.8809 / 0.4995</td>
+        <td>0.8212 / 0.5593</td>
+        <td>0.7787 / 0.4863; 0.7788 / 0.4788</td>
+      </tr>
+      <tr>
+        <td>FT + Mixup</td>
+        <td>Yes, K=500</td>
+        <td>No</td>
+        <td>No</td>
+        <td>待跑</td>
+        <td>待跑</td>
+        <td>待跑</td>
+      </tr>
+      <tr>
+        <td>FT + Manifold Mixup</td>
+        <td>Yes, K=500</td>
+        <td>No</td>
+        <td>No</td>
+        <td>待跑</td>
+        <td>待跑</td>
+        <td>待跑</td>
+      </tr>
+      <tr>
+        <td>FT + SAM</td>
+        <td>Yes, K=500</td>
+        <td>No</td>
+        <td>No</td>
+        <td>待跑</td>
+        <td>待跑</td>
+        <td>待跑</td>
+      </tr>
+      <tr>
+        <td>Random same-label latent hull</td>
+        <td>Yes, K=500</td>
+        <td>Yes</td>
+        <td>No</td>
+        <td>待跑/待汇总</td>
+        <td>待跑/待汇总</td>
+        <td>待跑/待汇总</td>
+      </tr>
+      <tr>
+        <td><strong>Ours: real-anchor LH-AT</strong></td>
+        <td>Yes, K=500</td>
+        <td>Yes</td>
+        <td>Yes</td>
+        <td><strong>0.8953 / 0.5314</strong></td>
+        <td><strong>0.8682 / 0.6147</strong></td>
+        <td>0.7839 / 0.4922; 0.7850 / 0.4799</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>下一步动作</h2>
+  <ol>
+    <li>在现有 <code>scripts/paper/run_direct_finetune_k500_20260516.py</code> 基础上派生一个 comparator runner，加入 <code>--method direct|mixup|manifold_mixup|sam</code>。</li>
+    <li>先跑 <code>ningbo</code> 和 <code>cpsc_2018</code> 的 K=500 单 seed 快速版，确认 Mixup/Manifold Mixup/SAM 是否接近 LH-AT。</li>
+    <li>若 LH-AT 仍明显领先，再扩展到四中心与 K sweep；若某个 baseline 接近 LH-AT，则优先补 seed 和超参，保证结论站得住。</li>
+  </ol>
+
+  <section class="callout">
+    <p><strong>一句话建议：</strong>从 <strong>K-shot FT + Mixup</strong> 开始跑；它最便宜、最公平、最能检验我们方法是否只是普通插值增强。跑完后立刻接 <strong>Manifold Mixup</strong>，这是对 LH-AT 最关键的外部对照。</p>
+  </section>
+</main>
+</body>
+</html>

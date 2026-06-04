@@ -47,10 +47,27 @@ from ecg_adv_gen.data import (
     PN2021_LEAK_EXCLUDED_CENTERS,
     load_include_record_ids_from_meta,
     load_ref_record_ids_from_meta,
+    materialize_pn2021_center_records,
     parse_header_snomeds,
     scan_pn2021_center_records,
 )
-from ecg_adv_gen.evaluation import DROP_ALL_ZERO_POLICY, summarize_center_view
+from ecg_adv_gen.evaluation import (
+    DROP_ALL_ZERO_POLICY,
+    filter_pn2021_center_records,
+    summarize_center_view,
+)
+from ecg_adv_gen.evaluation.pn2021_eval_cache import (
+    PN2021_EVAL_CACHE_VERSION,
+    build_pn2021_cache_metadata,
+    build_pn2021_preprocess_config,
+    legacy_default_metadata_variant,
+    load_existing_pn2021_eval_cache,
+    load_npz_metadata,
+    metadata_matches_expected,
+    pn2021_mmap_cache_path,
+    pn2021_npz_cache_path,
+    write_pn2021_mmap_cache,
+)
 
 
 # PN2021 centers — ptb-xl explicitly excluded (data leakage with PTB-XL train)
@@ -142,9 +159,6 @@ class PN2021CachedCenterDataset(Dataset):
                 torch.from_numpy(label).float())
 
 
-PN2021_EVAL_CACHE_VERSION = "v7_super5_sjr_rgq_review"
-
-
 def _pn2021_preprocess_config(args, include_crop=False):
     apply_filter, apply_zscore = _resolve_preprocess_flags(
         apply_filter=True,
@@ -152,48 +166,23 @@ def _pn2021_preprocess_config(args, include_crop=False):
         preprocess_mode=args.preprocess_mode,
         norm_mode=args.norm_mode,
     )
-    cfg = {
-        'target_fs': 100,
-        'target_len': 1000,
-        'apply_filter': bool(apply_filter),
-        'apply_zscore': bool(apply_zscore),
-        'preprocess_mode': str(args.preprocess_mode),
-        'norm_mode': str(args.norm_mode),
-    }
-    if include_crop:
-        cfg.update({
-            'crop_len': int(args.crop_len),
-            'crop_mode': 'center',
-        })
-    return cfg
+    return build_pn2021_preprocess_config(
+        preprocess_mode=args.preprocess_mode,
+        norm_mode=args.norm_mode,
+        apply_filter=apply_filter,
+        apply_zscore=apply_zscore,
+        include_crop=include_crop,
+        crop_len=getattr(args, 'crop_len', None),
+    )
 
 
 def _legacy_default_metadata_variant(metadata):
     """Return the pre-2026-05 metadata shape for default preprocessing caches."""
-    cfg = metadata.get('preprocess_config')
-    if not isinstance(cfg, dict):
-        return None
-    if (
-        cfg.get('preprocess_mode') != 'legacy_ecgfounder_filter'
-        or cfg.get('norm_mode') != 'per_sample_global'
-    ):
-        return None
-    legacy = json.loads(json.dumps(metadata))
-    legacy_cfg = legacy['preprocess_config']
-    legacy_cfg.pop('preprocess_mode', None)
-    legacy_cfg.pop('norm_mode', None)
-    legacy_cfg['apply_filter'] = True
-    legacy_cfg['apply_zscore'] = True
-    return legacy
+    return legacy_default_metadata_variant(metadata)
 
 
 def _metadata_matches_expected(found, expected):
-    if found is None:
-        return False
-    if found == expected:
-        return True
-    legacy = _legacy_default_metadata_variant(expected)
-    return legacy is not None and found == legacy
+    return metadata_matches_expected(found, expected)
 
 
 def _pn2021_cache_path(args, scheme, center):
@@ -201,106 +190,51 @@ def _pn2021_cache_path(args, scheme, center):
     if not cache_dir:
         return None
     os.makedirs(cache_dir, exist_ok=True)
-    return os.path.join(
-        cache_dir,
-        f"{args.scheme}_{center}_100hz1000_{PN2021_EVAL_CACHE_VERSION}.npz",
-    )
+    return pn2021_npz_cache_path(cache_dir, args.scheme, center)
 
 
 def _pn2021_mmap_cache_path(args, scheme, center):
     cache_dir = getattr(args, 'pn2021_mmap_cache_dir', None)
     if not cache_dir:
         return None
-    return os.path.join(
-        cache_dir,
-        f"{args.scheme}_{center}_100hz1000_{PN2021_EVAL_CACHE_VERSION}",
-    )
+    return pn2021_mmap_cache_path(cache_dir, args.scheme, center)
 
 
 def _expected_pn2021_cache_metadata(args, scheme, center):
-    metadata = {
-        'scheme': args.scheme,
-        'center': center,
-        'class_names': list(scheme['class_names']),
-        'cache_version': PN2021_EVAL_CACHE_VERSION,
-        'preprocess_config': _pn2021_preprocess_config(args, include_crop=True),
-    }
-    if args.scheme == 'super5':
-        metadata['pn2021_mapping'] = get_super5_pn2021_mapping_metadata()
-    return metadata
+    return build_pn2021_cache_metadata(
+        scheme_name=args.scheme,
+        center=center,
+        class_names=scheme['class_names'],
+        preprocess_config=_pn2021_preprocess_config(args, include_crop=True),
+        pn2021_mapping=(
+            get_super5_pn2021_mapping_metadata()
+            if args.scheme == 'super5'
+            else None
+        ),
+    )
 
 
 def _expected_pn2021_mmap_metadata(args, scheme, center):
-    metadata = {
-        'scheme': args.scheme,
-        'center': center,
-        'class_names': list(scheme['class_names']),
-        'cache_version': PN2021_EVAL_CACHE_VERSION,
-        'preprocess_config': _pn2021_preprocess_config(args, include_crop=False),
-        'layout': 'mmap_v1',
-    }
-    if args.scheme == 'super5':
-        metadata['pn2021_mapping'] = get_super5_pn2021_mapping_metadata()
-    return metadata
+    return build_pn2021_cache_metadata(
+        scheme_name=args.scheme,
+        center=center,
+        class_names=scheme['class_names'],
+        preprocess_config=_pn2021_preprocess_config(args, include_crop=False),
+        pn2021_mapping=(
+            get_super5_pn2021_mapping_metadata()
+            if args.scheme == 'super5'
+            else None
+        ),
+        layout='mmap_v1',
+    )
 
 
 def _load_cache_metadata(data):
-    if 'metadata_json' not in data.files:
-        return None
-    raw = data['metadata_json']
-    if hasattr(raw, 'item'):
-        raw = raw.item()
-    if isinstance(raw, bytes):
-        raw = raw.decode('utf-8')
-    try:
-        return json.loads(str(raw))
-    except Exception:
-        return None
+    return load_npz_metadata(data)
 
 
 def _cache_metadata_matches(found, expected):
     return _metadata_matches_expected(found, expected)
-
-
-def _write_pn2021_mmap_cache(cache_root, signals, labels, record_ids, metadata):
-    os.makedirs(cache_root, exist_ok=True)
-    np.save(os.path.join(cache_root, 'signals.npy'),
-            signals.astype(np.float32, copy=False))
-    np.save(os.path.join(cache_root, 'labels.npy'),
-            labels.astype(np.float32, copy=False))
-    np.save(os.path.join(cache_root, 'record_ids.npy'),
-            np.asarray(record_ids, dtype=str))
-    with open(os.path.join(cache_root, 'metadata.json'), 'w') as f:
-        json.dump(metadata, f, indent=2, sort_keys=True)
-
-
-def _load_pn2021_mmap_cache(cache_root, expected_metadata):
-    if not cache_root:
-        return None
-    meta_path = os.path.join(cache_root, 'metadata.json')
-    sig_path = os.path.join(cache_root, 'signals.npy')
-    lab_path = os.path.join(cache_root, 'labels.npy')
-    rid_path = os.path.join(cache_root, 'record_ids.npy')
-    if not (os.path.exists(meta_path) and os.path.exists(sig_path) and
-            os.path.exists(lab_path) and os.path.exists(rid_path)):
-        return None
-    try:
-        with open(meta_path) as f:
-            found = json.load(f)
-    except Exception:
-        return None
-    if not _metadata_matches_expected(found, expected_metadata):
-        print(f"  mmap cache metadata mismatch, ignoring {cache_root}")
-        return None
-    return (
-        np.load(sig_path, mmap_mode='r'),
-        np.load(lab_path, mmap_mode='r'),
-        np.load(rid_path, allow_pickle=False).astype(str),
-        0,
-        0.0,
-        True,
-        'mmap',
-    )
 
 
 def _load_or_build_pn2021_center(center, center_dir, scheme, args):
@@ -309,76 +243,50 @@ def _load_or_build_pn2021_center(center, center_dir, scheme, args):
     mmap_cache_root = _pn2021_mmap_cache_path(args, scheme, center)
     expected_mmap_metadata = _expected_pn2021_mmap_metadata(args, scheme, center)
 
-    mmap_loaded = _load_pn2021_mmap_cache(mmap_cache_root, expected_mmap_metadata)
-    if mmap_loaded is not None:
-        return mmap_loaded
-
+    cache_load = load_existing_pn2021_eval_cache(
+        npz_cache_path=cache_path,
+        npz_expected_metadata=expected_metadata,
+        mmap_cache_root=mmap_cache_root,
+        mmap_expected_metadata=expected_mmap_metadata,
+    )
+    if cache_load is not None:
+        if cache_load.converted_npz_to_mmap:
+            print(f"  {center}: converted PN2021 cache to mmap → {mmap_cache_root}")
+        loaded = cache_load.cache
+        return (
+            loaded.signals,
+            loaded.labels,
+            loaded.record_ids,
+            0,
+            0.0,
+            loaded.cache_hit,
+            loaded.cache_kind,
+        )
     if cache_path and os.path.exists(cache_path):
-        data = np.load(cache_path, allow_pickle=True)
-        if _cache_metadata_matches(_load_cache_metadata(data), expected_metadata):
-            signals = data['signals'].astype(np.float32, copy=False)
-            labels = data['labels'].astype(np.float32, copy=False)
-            record_ids = data['record_ids'].astype(str)
-            if mmap_cache_root:
-                _write_pn2021_mmap_cache(
-                    mmap_cache_root, signals, labels, record_ids,
-                    expected_mmap_metadata,
-                )
-                print(f"  {center}: converted PN2021 cache to mmap → {mmap_cache_root}")
-                mmap_loaded = _load_pn2021_mmap_cache(
-                    mmap_cache_root, expected_mmap_metadata
-                )
-                if mmap_loaded is not None:
-                    return mmap_loaded
-            return (
-                signals,
-                labels,
-                record_ids,
-                0,
-                0.0,
-                True,
-                'npz',
-            )
         print(f"  {center}: cache metadata mismatch, rebuilding {cache_path}")
 
     paths, snomeds = scan_center_records(center_dir)
-    signals, labels, record_ids = [], [], []
-    fail = 0
-    t0 = time.time()
-    for path, codes in zip(paths, snomeds):
-        try:
-            rec = wfdb.rdrecord(path)
-        except Exception:
-            fail += 1
-            continue
-        sig = rec.p_signal
-        if sig is None or sig.shape[1] < 12:
-            fail += 1
-            continue
-        sig_names = [s.strip() for s in rec.sig_name] if getattr(rec, 'sig_name', None) else None
-        proc = unified_preprocess_to_1000(
-            sig.astype(np.float32), fs=rec.fs, source_leads=sig_names,
-            target_fs=100, target_len=1000,
-            preprocess_mode=args.preprocess_mode, norm_mode=args.norm_mode,
-        )
-        if proc is None:
-            fail += 1
-            continue
-        signals.append(proc)
-        labels.append(scheme['pn2021_fn'](codes))
-        record_ids.append(os.path.basename(path))
-
-    if signals:
-        signals = np.stack(signals).astype(np.float32)
-        labels = np.stack(labels).astype(np.float32)
-        record_ids = np.asarray(record_ids, dtype=str)
-    else:
-        signals = np.zeros((0, 1000, 12), dtype=np.float32)
-        labels = np.zeros((0, scheme['num_classes']), dtype=np.float32)
-        record_ids = np.asarray([], dtype=str)
-    load_time = time.time() - t0
+    materialized = materialize_pn2021_center_records(
+        paths,
+        snomeds,
+        read_record=wfdb.rdrecord,
+        preprocess_signal=unified_preprocess_to_1000,
+        label_fn=scheme['pn2021_fn'],
+        num_classes=scheme['num_classes'],
+        preprocess_kwargs={
+            'target_fs': 100,
+            'target_len': 1000,
+            'preprocess_mode': args.preprocess_mode,
+            'norm_mode': args.norm_mode,
+        },
+    )
+    signals = materialized.signals
+    labels = materialized.labels
+    record_ids = materialized.record_ids
+    fail = materialized.fail
+    load_time = materialized.load_time_s
     if mmap_cache_root and len(signals) > 0:
-        _write_pn2021_mmap_cache(
+        write_pn2021_mmap_cache(
             mmap_cache_root, signals, labels, record_ids, expected_mmap_metadata,
         )
         print(f"  {center}: cached preprocessed PN2021 mmap → {mmap_cache_root}")
@@ -498,25 +406,23 @@ def eval_pn2021(model, scheme, args, device):
         # after loading/building it so each model can use its own ref-id set.
         excluded_set = excluded_by_center.get(center, set())
         included_set = included_by_center.get(center, set())
-        n_excluded_ref = 0
-        n_include_kept = 0
 
         signals, labels, record_ids, fail, load_time, cache_hit, cache_kind = _load_or_build_pn2021_center(
             center, center_dir, scheme, args
         )
         n_scanned = int(len(record_ids) + fail)
-        if included_set and len(record_ids) > 0:
-            keep_mask = np.asarray([rid in included_set for rid in record_ids], dtype=bool)
-            n_include_kept = int(keep_mask.sum())
-            signals = signals[keep_mask]
-            labels = labels[keep_mask]
-            record_ids = record_ids[keep_mask]
-        if excluded_set and len(record_ids) > 0:
-            keep_mask = np.asarray([rid not in excluded_set for rid in record_ids], dtype=bool)
-            n_excluded_ref = int((~keep_mask).sum())
-            signals = signals[keep_mask]
-            labels = labels[keep_mask]
-            record_ids = record_ids[keep_mask]
+        filtered = filter_pn2021_center_records(
+            signals,
+            labels,
+            record_ids,
+            include_ids=included_set,
+            ref_ids=excluded_set,
+        )
+        signals = filtered.signals
+        labels = filtered.labels
+        record_ids = filtered.record_ids
+        n_excluded_ref = filtered.n_excluded_ref
+        n_include_kept = filtered.n_include_kept
         if args.pn2021_limit and args.pn2021_limit < len(signals):
             signals = signals[:args.pn2021_limit]
             labels = labels[:args.pn2021_limit]

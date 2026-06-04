@@ -1,0 +1,224 @@
+extends:
+  - ../defaults/effnet1dv2_v7_sjr_rgq_defaults.yaml
+  - ../defaults/vae_lhat_defaults.yaml
+
+experiment:
+  name: ecgtwin_prompt_token_online_at_minimal
+  description: Managed minimal online-AT launch surface that consumes one same-run ECGTwin prompt-token gated pool and K500 target-real anchors.
+  status: active-wrapped
+
+model:
+  backbone: efficientnet1dv2
+  name: efficientnet1dv2
+  num_classes: 5
+
+training:
+  epochs: 20
+
+adaptation:
+  method: ecgtwin_prompt_token_online_at
+  prompt_token:
+    output_root: ${paths.output_root}/ecgtwin_prompt_token_minimal/${runtime.run_id}
+    online_at_root: ${paths.output_root}/ecgtwin_prompt_token_online_at_minimal/${runtime.run_id}
+    arm: target_token
+    center: ningbo
+    gated_dir: ${adaptation.prompt_token.output_root}/generated/${adaptation.prompt_token.arm}/${adaptation.prompt_token.center}/gated
+    classes: [NORM, MI, STTC]
+  vae:
+    name: ecgtwin_vae
+    latent_shape: [4, 128]
+    latent_scale: 0.18215
+    standardize_latents: true
+  anchors:
+    source: target_center_k500
+    k_anchor: 300
+    include_clean_anchor_in_batch: true
+    partner_policy: local_same_label_or_compatible
+    forbid_norm_abnormal_mix_main: true
+    rare_class_anchor_quota: true
+  hull:
+    M: 20
+    lambda: 0.05
+    steps: 3
+    lr: 0.25
+    include_anchor: true
+    label_mode: compatible
+    mix_label_mode: anchor_soft
+    label_lambda_y: 0.25
+    label_new_class_cap: 0.25
+    neighbor_distance_space: standardized
+    neighbor_mode: local_random
+    neighbor_pool_size: 120
+    neighbor_pool_multiplier: 4
+  attack:
+    name: latent_pgd
+    pgd_batch: 32
+    target_asr_range: [0.30, 0.70]
+  loss:
+    clean_weight: 1.0
+    target_real_weight: 40.0
+    adv_weight: 0.6
+    adv_weight_warmup_epochs: 10
+    label_mode: latent_mixed_teacher
+    teacher_mix: 0.4
+  latent_augmix:
+    latent_weight_cap: 0.25
+    width: 3
+    depth: -1
+    alpha: 1.0
+    severity: 2
+
+logging:
+  required_epoch_metrics:
+    - epoch
+    - train_loss
+    - val_loss
+    - quick_eval
+    - attack_success
+    - attack_vs_anchor
+    - loss_gain
+    - decoded_invalid_rate
+    - adv_weight_effective
+    - latent_augmix_stats
+  child_artifacts:
+    - best_model.pt
+    - training_log.json
+    - train_result.json
+    - checkpoints/checkpoint_latest.pt
+    - checkpoints/checkpoint_index.jsonl
+  postprocess_artifacts: []
+
+runner:
+  entrypoint: scripts/pgd_cross_center/synth_online_at_super5.py
+  name: ${experiment.name}
+  env:
+    ECG_ADV_GEN_DATA_ROOT: ${paths.data_root}
+    TMPDIR: ${paths.short_tmp_root}
+    XDG_CACHE_HOME: ${paths.cache_root}
+  argv:
+    - --center_name
+    - ${adaptation.prompt_token.center}
+    - --ref_meta_json
+    - ${adaptation.prompt_token.gated_dir}/gated_samples.ref_meta.json
+    - --synth_npz
+    - ${adaptation.prompt_token.gated_dir}/gated_samples.latent.npz
+    - --target_real_npz
+    - ${data.kshot_subset_root}/${adaptation.prompt_token.center}/k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}/${adaptation.prompt_token.center}_real_k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}.signals.npz
+    - --class_trust
+    - ${adaptation.prompt_token.gated_dir}/gated_samples.class_trust.json
+    - --init_ckpt
+    - ${model.direct_init_root}/${adaptation.prompt_token.center}_K${paper_protocol.kshot.k}_direct_ft_ep30_seed${paper_protocol.kshot.seed}_val0.2/best_model.pt
+    - --model_name
+    - ${model.name}
+    - --output_dir
+    - ${adaptation.prompt_token.online_at_root}/${adaptation.prompt_token.center}
+    - --data_dir
+    - ${paths.data_root}/physionet2021/training
+    - --quick_eval_source
+    - target_real_val
+    - --quick_eval_centers
+    - ${adaptation.prompt_token.center}
+    - --quick_eval_n_per_center
+    - 0
+    - --target_real_val_fraction
+    - 0.2
+    - --target_real_val_seed
+    - ${paper_protocol.kshot.seed}
+    - --ptbxl_raw
+    - ${paths.data_root}/ptbxl/raw100.npy
+    - --ptbxl_csv
+    - ${paths.data_root}/ptbxl/ptbxl_database.csv
+    - --ptbxl_prep
+    - ${paths.data_root}/crosscenter_v2/ptbxl_preprocessed.npy
+    - --attack_mode
+    - latent_hull
+    - --hull_M
+    - ${adaptation.hull.M}
+    - --hull_lambda
+    - ${adaptation.hull.lambda}
+    - --hull_steps
+    - ${adaptation.hull.steps}
+    - --hull_lr
+    - ${adaptation.hull.lr}
+    - --hull_include_anchor
+    - --hull_label_mode
+    - ${adaptation.hull.label_mode}
+    - --hull_mix_label_mode
+    - ${adaptation.hull.mix_label_mode}
+    - --hull_label_lambda_y
+    - ${adaptation.hull.label_lambda_y}
+    - --hull_label_new_class_cap
+    - ${adaptation.hull.label_new_class_cap}
+    - --hull_neighbor_distance_space
+    - ${adaptation.hull.neighbor_distance_space}
+    - --hull_neighbor_mode
+    - ${adaptation.hull.neighbor_mode}
+    - --hull_neighbor_pool_size
+    - ${adaptation.hull.neighbor_pool_size}
+    - --hull_neighbor_pool_multiplier
+    - ${adaptation.hull.neighbor_pool_multiplier}
+    - --K_anchor
+    - ${adaptation.anchors.k_anchor}
+    - --pgd_batch
+    - ${adaptation.attack.pgd_batch}
+    - --target_real_weight
+    - ${adaptation.loss.target_real_weight}
+    - --ptbxl_weight
+    - ${adaptation.loss.clean_weight}
+    - --adv_weight
+    - ${adaptation.loss.adv_weight}
+    - --adv_weight_warmup_epochs
+    - ${adaptation.loss.adv_weight_warmup_epochs}
+    - --adv_label_mode
+    - ${adaptation.loss.label_mode}
+    - --adv_teacher_mix
+    - ${adaptation.loss.teacher_mix}
+    - --classes_in_scope
+    - ${adaptation.prompt_token.classes}
+    - --enable_latent_augmix_branch
+    - --latent_augmix_latent_weight_cap
+    - ${adaptation.latent_augmix.latent_weight_cap}
+    - --latent_augmix_width
+    - ${adaptation.latent_augmix.width}
+    - --latent_augmix_depth
+    - ${adaptation.latent_augmix.depth}
+    - --latent_augmix_alpha
+    - ${adaptation.latent_augmix.alpha}
+    - --latent_augmix_severity
+    - ${adaptation.latent_augmix.severity}
+    - --n_epochs
+    - ${training.epochs}
+    - --patience
+    - 8
+    - --es_metric
+    - target_macro_auprc
+    - --lr
+    - ${training.optimizer.lr}
+    - --weight_decay
+    - ${training.optimizer.weight_decay}
+    - --batch_size
+    - ${training.batch_size}
+    - --num_workers
+    - ${training.num_workers}
+    - --grad_clip
+    - ${training.grad_clip}
+    - --eval_every
+    - 1
+    - --rescore_interval
+    - 1
+    - --seed
+    - ${paper_protocol.kshot.seed}
+    - --device
+    - cuda
+
+lineage:
+  replaces_legacy_surface: scripts/ecgtwin_gen/run_multicenter_prompt_token_v36_online_at.sh
+  scope: prompt_token_gated_pool_online_at_minimal
+  prerequisite_stages:
+    - configs/experiments/effnet_direct_k500_v7_sjr_rgq.yaml
+    - configs/experiments/ecgtwin_prompt_token_train_minimal.yaml
+    - configs/experiments/ecgtwin_prompt_token_generate_minimal.yaml
+    - configs/experiments/ecgtwin_prompt_token_gate_minimal.yaml
+  notes:
+    - This is a launch-only minimal wrapper for one center. It consumes same-run prompt-token gated artifacts and v7 K500 target-real signals.
+    - It uses target_real_val internal validation for checkpoint selection instead of held-out PN2021 quick-eval labels.

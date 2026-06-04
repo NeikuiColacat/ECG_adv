@@ -1,0 +1,20 @@
+extends: common_v7_sjr_rgq_super5.yaml
+
+model:
+  backbone: benchmark_resnet1d_wang
+  name: benchmark_resnet1d_wang
+  num_classes: 5
+  source_checkpoint: ${paths.output_root}/benchmark_source_v7_sjr_rgq/${model.name}_seed${paper_protocol.kshot.seed}_v7_sjr_rgq_${runtime.run_id}/best_model.pt
+
+training:
+  epochs: 30
+  batch_size: 128
+  eval_batch_size: 192
+  num_workers: ${resources.default_num_workers}
+  amp: false
+  optimizer:
+    name: adamw
+    lr: 0.00005
+    weight_decay: 0.0001
+  grad_clip: 1.0
+  pos_weight_clip_max: 50.0

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import fnmatch
 import hashlib
 import json
 import re
@@ -37,6 +38,181 @@ _BLOCKED_TRACKED_DIRS = (
     "wandb/",
     ".dvc/cache/",
 )
+
+
+def _guarded_staged_paths(staged_paths: list[str], do_not_commit_entries: list[str]) -> list[str]:
+    guarded: list[str] = []
+    seen: set[str] = set()
+
+    for path in staged_paths:
+        matched = False
+        for raw in do_not_commit_entries:
+            if raw.endswith("/"):
+                matched = path.startswith(raw)
+            elif any(ch in raw for ch in "*?[]"):
+                matched = fnmatch.fnmatch(path, raw)
+            else:
+                matched = path == raw
+            if matched:
+                break
+        if matched and path not in seen:
+            guarded.append(path)
+            seen.add(path)
+    return guarded
+
+
+def _dirty_status_path(line: str) -> str:
+    """Return the handoff-relevant path from a git porcelain v1 status line."""
+    raw = line[3:] if len(line) > 3 else line
+    if " -> " in raw:
+        return raw.rsplit(" -> ", 1)[1]
+    return raw
+
+
+def _dirty_status_layer(path: str) -> str:
+    if path == "AGENTS.md" or path.endswith("/AGENTS.md"):
+        return "agent_instructions"
+    if path.startswith(".codex/skills/"):
+        return "codex_skills"
+    if path.startswith("model/"):
+        return "external_models"
+    if path.startswith("configs/"):
+        return "configs"
+    if path.startswith("docs/") or path == "README.md":
+        return "docs"
+    if path.startswith("ecg_adv_gen/"):
+        return "package"
+    if path.startswith("scripts/"):
+        return "scripts"
+    if path.startswith("util/tests/") or path.startswith("tests/"):
+        return "tests"
+    if path.startswith("methods/"):
+        return "methods"
+    return "other"
+
+
+def _empty_dirty_layer_summary() -> dict[str, Any]:
+    return {
+        "total_entries": 0,
+        "staged_entries": 0,
+        "unstaged_entries": 0,
+        "untracked_entries": 0,
+        "guarded_dirty_count": 0,
+        "paths": [],
+        "staged_paths": [],
+        "unstaged_paths": [],
+        "untracked_paths": [],
+        "guarded_dirty_paths": [],
+        "status_entries": [],
+        "sample_paths": [],
+    }
+
+
+def _dirty_layer_handoff_action(layer: str) -> str:
+    return {
+        "agent_instructions": "review_first_100_lines_before_writes",
+        "codex_skills": "sync_runtime_skills_intentionally",
+        "configs": "verify_yaml_index_and_path_boundaries",
+        "docs": "separate_pipeline_docs_from_archived_reports",
+        "external_models": "keep_local_only_do_not_stage",
+        "methods": "verify_method_compatibility_before_changes",
+        "package": "run_focused_cpu_tests_before_handoff",
+        "scripts": "keep_legacy_wrappers_thin_and_index_managed",
+        "tests": "run_related_cpu_tests",
+    }.get(layer, "classify_before_commit")
+
+
+def _build_dirty_handoff_gate(
+    *,
+    by_layer: dict[str, dict[str, Any]],
+    guarded_dirty_paths: list[str],
+    total_entries: int,
+) -> dict[str, Any]:
+    return {
+        "requires_attention": total_entries > 0,
+        "dirty_layer_count": len(by_layer),
+        "guarded_paths_require_local_only": guarded_dirty_paths,
+        "actions": [
+            {
+                "layer": layer,
+                "handoff_action": summary["handoff_action"],
+                "dirty_entries": summary["total_entries"],
+                "guarded_dirty_count": summary["guarded_dirty_count"],
+            }
+            for layer, summary in sorted(by_layer.items())
+        ],
+    }
+
+
+def _summarize_dirty_workspace(
+    status_lines: list[str],
+    *,
+    do_not_commit: set[str] | None = None,
+) -> dict[str, Any]:
+    """Summarize git porcelain status into agent-handoff layers."""
+    guarded = do_not_commit or set()
+    by_layer: dict[str, dict[str, Any]] = {}
+    total = staged = unstaged = untracked = 0
+    guarded_dirty_paths: list[str] = []
+
+    for line in status_lines:
+        if not line:
+            continue
+        total += 1
+        x = line[0] if len(line) > 0 else " "
+        y = line[1] if len(line) > 1 else " "
+        path = _dirty_status_path(line)
+        raw_status = line[:2] if len(line) >= 2 else f"{x}{y}"
+        git_status = raw_status.strip() or "modified"
+        layer = _dirty_status_layer(path)
+        layer_summary = by_layer.setdefault(layer, _empty_dirty_layer_summary())
+        layer_summary["handoff_action"] = _dirty_layer_handoff_action(layer)
+        layer_summary["total_entries"] += 1
+        layer_summary["paths"].append(path)
+        layer_summary["status_entries"].append(
+            {
+                "path": path,
+                "git_status": git_status,
+                "index_status": x,
+                "worktree_status": y,
+            }
+        )
+        if len(layer_summary["sample_paths"]) < 5:
+            layer_summary["sample_paths"].append(path)
+
+        if x == "?" and y == "?":
+            untracked += 1
+            layer_summary["untracked_entries"] += 1
+            layer_summary["untracked_paths"].append(path)
+        else:
+            if x not in (" ", "?"):
+                staged += 1
+                layer_summary["staged_entries"] += 1
+                layer_summary["staged_paths"].append(path)
+            if y != " ":
+                unstaged += 1
+                layer_summary["unstaged_entries"] += 1
+                layer_summary["unstaged_paths"].append(path)
+
+        if path in guarded:
+            guarded_dirty_paths.append(path)
+            layer_summary["guarded_dirty_count"] += 1
+            layer_summary["guarded_dirty_paths"].append(path)
+
+    return {
+        "total_entries": total,
+        "staged_entries": staged,
+        "unstaged_entries": unstaged,
+        "untracked_entries": untracked,
+        "guarded_dirty_count": len(guarded_dirty_paths),
+        "guarded_dirty_paths": guarded_dirty_paths,
+        "by_layer": {key: by_layer[key] for key in sorted(by_layer)},
+        "handoff_gate": _build_dirty_handoff_gate(
+            by_layer=by_layer,
+            guarded_dirty_paths=guarded_dirty_paths,
+            total_entries=total,
+        ),
+    }
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
@@ -685,6 +861,8 @@ def _audit_git(repo_root: Path, registry: dict[str, Any], issues: list[dict[str,
     for path in blocked_tracked:
         issues.append(_issue("error", "blocked_artifact_tracked", f"Blocked artifact is tracked by git: {path}"))
 
+    do_not_commit_entries = list(registry.get("artifact_policy", {}).get("do_not_commit", []))
+
     staged = run_git(["diff", "--cached", "--name-only"])
     blocked_staged = [
         path for path in staged
@@ -693,17 +871,17 @@ def _audit_git(repo_root: Path, registry: dict[str, Any], issues: list[dict[str,
     ]
     for path in blocked_staged:
         issues.append(_issue("error", "blocked_artifact_staged", f"Blocked artifact is staged: {path}"))
+    guarded_staged = _guarded_staged_paths(staged, do_not_commit_entries)
+    for path in guarded_staged:
+        issues.append(_issue("error", "guarded_path_staged", f"Guarded local-only path is staged: {path}"))
 
     dirty = run_git(["status", "--short"])
     do_not_commit = set()
-    for raw in registry.get("artifact_policy", {}).get("do_not_commit", []):
+    for raw in do_not_commit_entries:
         if not any(ch in raw for ch in "*?[]") and not raw.endswith("/"):
             do_not_commit.add(raw)
-    dirty_guarded = []
-    for line in dirty:
-        path = line[3:] if len(line) > 3 else line
-        if path in do_not_commit:
-            dirty_guarded.append(path)
+    dirty_summary = _summarize_dirty_workspace(dirty, do_not_commit=do_not_commit)
+    dirty_guarded = dirty_summary["guarded_dirty_paths"]
     for path in dirty_guarded:
         issues.append(
             _issue(
@@ -712,12 +890,46 @@ def _audit_git(repo_root: Path, registry: dict[str, Any], issues: list[dict[str,
                 f"Guarded external-model path is dirty and must not be staged: {path}",
             )
         )
+    blocking_artifact_risks = [
+        {
+            "risk": "blocked_tracked_artifacts",
+            "severity": "error",
+            "count": len(blocked_tracked),
+            "paths": blocked_tracked,
+            "handoff_action": "remove_from_git_tracking_or_document_exception_before_handoff",
+        },
+        {
+            "risk": "blocked_staged_artifacts",
+            "severity": "error",
+            "count": len(blocked_staged),
+            "paths": blocked_staged,
+            "handoff_action": "unstage_large_or_generated_artifacts",
+        },
+        {
+            "risk": "guarded_staged_paths",
+            "severity": "error",
+            "count": len(guarded_staged),
+            "paths": guarded_staged,
+            "handoff_action": "unstage_local_only_guarded_paths",
+        },
+        {
+            "risk": "dirty_guarded_local_only_paths",
+            "severity": "warning",
+            "count": len(dirty_guarded),
+            "paths": dirty_guarded,
+            "handoff_action": "keep_local_only_do_not_stage",
+        },
+    ]
     return {
         "tracked_count": len(tracked),
         "blocked_tracked_count": len(blocked_tracked),
         "staged_count": len(staged),
         "blocked_staged_count": len(blocked_staged),
+        "guarded_staged_count": len(guarded_staged),
+        "guarded_staged_paths": guarded_staged,
         "dirty_guarded_paths": dirty_guarded,
+        "blocking_artifact_risks": blocking_artifact_risks,
+        "dirty_summary": dirty_summary,
     }
 
 
@@ -811,6 +1023,7 @@ def audit_active_evidence_registry(
         "issues": issues,
         "registry_path": str(registry_path),
         "local_config_path": str(local_config_path),
+        "evidence_surface_policy": raw_registry.get("evidence_surface_policy") or {},
         "claim_count": len(registry.get("active_claims", [])),
         "claims": claim_summaries,
         "git": git_summary,

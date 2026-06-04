@@ -5,6 +5,7 @@ from __future__ import annotations
 from argparse import Namespace
 
 from ecg_adv_gen.run_naming import (
+    build_benchmark_direct_run_leaf,
     build_ecgfounder_fullft_method_tag,
     build_ecgfounder_fullft_run_leaf,
     build_ecgfounder_fullft_selection_tag,
@@ -160,6 +161,29 @@ def test_effnet_direct_run_leaf_matches_legacy_child_dir():
             "val_fraction": 0.125,
         }
     ) == "georgia_K32_direct_ft_ep1_seed7_val0.125"
+
+
+def test_benchmark_direct_run_leaf_matches_legacy_child_dir():
+    assert build_benchmark_direct_run_leaf(
+        {
+            "center": "ningbo",
+            "k": "500",
+            "model_name": "benchmark_resnet1d_wang",
+            "epochs": "30",
+            "seed": "20260531",
+            "val_fraction": "0.2",
+        }
+    ) == "ningbo_K500_direct_ft_benchmark_resnet1d_wang_ep30_seed20260531_val0p2"
+    assert build_benchmark_direct_run_leaf(
+        {
+            "center": "georgia",
+            "k": 949,
+            "model_name": "benchmark/inception 1d",
+            "epochs": 2,
+            "seed": 7,
+            "val_fraction": 0.125,
+        }
+    ) == "georgia_K949_direct_ft_benchmark_inception_1d_ep2_seed7_val0p125"
 
 
 def test_effnet_vae_lhat_run_leaf_matches_stage3_legacy_tags():

@@ -937,7 +937,7 @@ Updated:
   docs/pipelines/center_style_classifier_pipeline.md
   docs/pipelines/latent_hull_online_at_pipeline.md
   docs/pipelines/next_auto_execution_plan.md
-  docs/tmp_md/auroc3_auprc7_center_token_ablation_20260504.md
+  docs/reports/archive/20260504/auroc3_auprc7_center_token_ablation_20260504.md
 
 Verification:
   git diff --check passed after the latest edits.

@@ -41,6 +41,13 @@ from util.ecg_digital_features import (  # noqa: E402
     check_sttc,
     extract_digital_features,
 )
+from ecg_adv_gen.data.gated_pools import (  # noqa: E402
+    GatedPoolArtifactPaths,
+    build_gated_class_trust,
+    write_gated_class_trust_json,
+    write_gated_pool_npzs,
+    write_gated_ref_meta_json,
+)
 
 
 DEFAULT_CACHE_ROOT = "/root/autodl-tmp/ecgtwin_prompt_token_super5/cache_v1"
@@ -226,10 +233,9 @@ def main() -> None:
     if not passed_indices:
         raise RuntimeError("no samples passed gates")
     idx = np.asarray(passed_indices, dtype=np.int64)
-    gated_samples_path = out_dir / "gated_samples.npz"
-    gated_latent_path = out_dir / "gated_samples.latent.npz"
-    np.savez_compressed(
-        gated_samples_path,
+    artifact_paths = GatedPoolArtifactPaths.from_dir(out_dir)
+    write_gated_pool_npzs(
+        artifact_paths,
         signals=signals[idx],
         raw_signal_ct=raw_signal_ct[idx],
         latents=latents[idx],
@@ -238,66 +244,56 @@ def main() -> None:
         class_names=class_names,
         source_indices=idx,
     )
-    np.savez_compressed(
-        gated_latent_path,
-        latents=latents[idx],
-        labels=labels[idx],
-        center_name=center_name,
-        class_names=class_names,
-        source_indices=idx,
-    )
+    gated_samples_path = artifact_paths.samples
+    gated_latent_path = artifact_paths.latents
 
     passed_classes = [per_sample[i]["class"] for i in passed_indices]
     pass_counts = Counter(passed_classes)
     total_counts = Counter(row["class"] for row in per_sample)
-    class_trust = {}
-    for cls in CLASS_NAMES_SUPER5:
-        class_trust[cls] = 1.0 if pass_counts.get(cls, 0) >= args.min_pass_per_class else 0.0
     # Keep the project-level HYP/CD caution by default. PTB-XL source-token
     # experiments can opt into all-5-class strict-gated trust.
-    hardcoded_zero = []
-    if not args.allow_hyp_cd_trust:
-        class_trust["HYP"] = 0.0
-        class_trust["CD"] = 0.0
-        hardcoded_zero = ["HYP", "CD"]
-    trust_path = out_dir / "gated_samples.class_trust.json"
-    with open(trust_path, "w") as f:
-        json.dump({
-            "tag": center_name,
-            "source_samples": str(samples_path),
-            "gated_latent_pool": str(gated_latent_path),
-            "class_trust": class_trust,
-            "policy": {
-                "digital_gate": "class-specific util.ecg_digital_features checks",
-                "min_target_prob": thresholds,
-                "require_top1": bool(args.require_top1),
-                "min_pass_per_class": int(args.min_pass_per_class),
-                "max_pass_per_class": int(args.max_pass_per_class),
-                "hardcoded_zero": hardcoded_zero,
-            },
-            "counts_total": dict(total_counts),
-            "counts_passed": dict(pass_counts),
-        }, f, indent=2)
+    trust = build_gated_class_trust(
+        pass_counts,
+        min_pass_per_class=args.min_pass_per_class,
+        allow_hyp_cd_trust=args.allow_hyp_cd_trust,
+    )
+    class_trust = trust.class_trust
+    trust_path = write_gated_class_trust_json(
+        artifact_paths,
+        tag=center_name,
+        center=center_name,
+        source_samples=samples_path,
+        gated_latent_pool=gated_latent_path,
+        class_trust=class_trust,
+        policy={
+            "digital_gate": "class-specific util.ecg_digital_features checks",
+            "min_target_prob": thresholds,
+            "require_top1": bool(args.require_top1),
+            "min_pass_per_class": int(args.min_pass_per_class),
+            "max_pass_per_class": int(args.max_pass_per_class),
+            "hardcoded_zero": list(trust.hardcoded_zero),
+        },
+        counts_total=dict(total_counts),
+        counts_passed=dict(pass_counts),
+    )
 
     ref_ids = load_k_ref_ids(Path(args.cache_root), center_name, args.K, args.selection_seed)
     if not ref_ids:
         ref_ids = sorted({str(r.get("ref_record_id")) for r in per_sample if r.get("ref_record_id")})
-    ref_meta_path = out_dir / "gated_samples.ref_meta.json"
-    with open(ref_meta_path, "w") as f:
-        json.dump({
-            "center": center_name,
-            "ref_record_ids": ref_ids,
-            "policy": "Exclude full prompt-token K-ref selection from downstream quick eval when available.",
-            "K": int(args.K),
-            "selection_seed": int(args.selection_seed),
-        }, f, indent=2)
+    ref_meta_path = write_gated_ref_meta_json(
+        artifact_paths,
+        center=center_name,
+        ref_record_ids=ref_ids,
+        k=args.K,
+        selection_seed=args.selection_seed,
+    )
 
     by_class = defaultdict(lambda: {"total": 0, "passed": 0})
     for row in per_sample:
         by_class[row["class"]]["total"] += 1
         if row["keep"]:
             by_class[row["class"]]["passed"] += 1
-    report_path = out_dir / "gate_report.json"
+    report_path = artifact_paths.gate_report
     with open(report_path, "w") as f:
         json.dump({
             "source_samples": str(samples_path),

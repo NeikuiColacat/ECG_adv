@@ -23,7 +23,10 @@ REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO))
 
 from adversarial.efficientnet_victim_tierM import EfficientNetVictimTierM  # noqa: E402
-from methods.ecgtwin_gen.prompt_token.trainer import _load_text_embed  # noqa: E402
+from ecg_adv_gen.generation.prompt_tokens import (  # noqa: E402
+    compile_prompt_text_embed,
+    load_text_embed_from_prompt_bank,
+)
 from scripts.triple_labels.label_schemes import CLASS_NAMES_SUPER5  # noqa: E402
 from util.ecgtwin_utils import ECGTwinWrapper  # noqa: E402
 from util.lead_utils import ECGTWIN_TO_PTBXL_INDICES  # noqa: E402
@@ -64,67 +67,6 @@ def choose_ref_indices(cache, selection, cls: str, n: int, rng: np.random.Genera
         return []
     replace = len(idx) < n
     return rng.choice(np.asarray(idx, dtype=np.int64), size=n, replace=replace).tolist()
-
-
-def token_sequence_from_bank(token_blob, center_idx: int, cls_idx: int) -> torch.Tensor:
-    """Return a `(M,768)` prompt-token sequence from legacy or v2 banks."""
-    mode = str(token_blob.get("token_mode", "direct"))
-    if mode == "factorized" or "center_embeddings" in token_blob:
-        center = token_blob["center_embeddings"][center_idx].float()
-        cls = token_blob["class_embeddings"][cls_idx].float()
-        pieces = [center, cls]
-        residual = token_blob.get("residual_embeddings")
-        if residual is not None and residual.shape[2] > 0:
-            pieces.append(residual[center_idx, cls_idx].float())
-        return torch.cat(pieces, dim=0)
-
-    emb = token_blob["embeddings"].float()
-    if emb.dim() == 3:
-        return emb[center_idx, cls_idx].unsqueeze(0)
-    if emb.dim() == 4:
-        return emb[center_idx, cls_idx]
-    raise ValueError(f"unsupported token embedding shape: {tuple(emb.shape)}")
-
-
-def init_token_sequence_from_bank(token_blob, center_idx: int, cls_idx: int) -> torch.Tensor | None:
-    """Return the prompt-token initialization sequence when the bank stores it."""
-    mode = str(token_blob.get("token_mode", "direct"))
-    if mode == "factorized" or "center_embeddings" in token_blob:
-        if "init_center_embeddings" not in token_blob or "init_class_embeddings" not in token_blob:
-            return None
-        center = token_blob["init_center_embeddings"][center_idx].float()
-        cls = token_blob["init_class_embeddings"][cls_idx].float()
-        pieces = [center, cls]
-        residual = token_blob.get("init_residual_embeddings")
-        if residual is not None and residual.shape[2] > 0:
-            pieces.append(residual[center_idx, cls_idx].float())
-        return torch.cat(pieces, dim=0)
-
-    init = token_blob.get("init_embeddings")
-    if init is None:
-        return None
-    init = init.float()
-    if init.dim() == 3:
-        return init[center_idx, cls_idx].unsqueeze(0)
-    if init.dim() == 4:
-        return init[center_idx, cls_idx]
-    return None
-
-
-def scale_token_sequence(
-    token_blob,
-    token_seq: torch.Tensor,
-    center_idx: int,
-    cls_idx: int,
-    scale: float,
-) -> torch.Tensor:
-    """Scale learned prompt-token strength while preserving initialization semantics."""
-    if scale == 1.0:
-        return token_seq
-    init_seq = init_token_sequence_from_bank(token_blob, center_idx, cls_idx)
-    if init_seq is not None and init_seq.shape == token_seq.shape:
-        return init_seq + float(scale) * (token_seq - init_seq)
-    return token_seq * float(scale)
 
 
 def main() -> None:
@@ -221,22 +163,19 @@ def main() -> None:
             set_all_seeds(seed)
             latent_ref = cache["latents"][ref_idx].float()
             primary_snomed = cache["primary_snomed"][ref_idx]
-            base_text = _load_text_embed(prompt_bank, primary_snomed, cls)
-            if args.no_token:
-                token_seq = None
-                text_aug = base_text
-            else:
-                token_seq = token_sequence_from_bank(token_blob, token_center_idx, token_cls_idx)
-                token_seq = scale_token_sequence(
-                    token_blob,
-                    token_seq,
-                    token_center_idx,
-                    token_cls_idx,
-                    args.token_scale,
-                )
-                token_seq = token_seq.repeat(args.token_repeat, 1)
-                text_aug = torch.cat([base_text, token_seq], dim=0)
-            mask_aug = torch.ones(1, text_aug.shape[0], dtype=torch.float32, device=wrapper.device)
+            base_text = load_text_embed_from_prompt_bank(prompt_bank, primary_snomed, cls)
+            compiled_text = compile_prompt_text_embed(
+                base_text,
+                token_blob,
+                center_idx=token_center_idx,
+                class_idx=token_cls_idx,
+                repeat=args.token_repeat,
+                scale=args.token_scale,
+                no_token=args.no_token,
+            )
+            token_seq = compiled_text.token_sequence
+            text_aug = compiled_text.text_embed
+            mask_aug = compiled_text.text_embed_mask.to(wrapper.device)
 
             sex = cache["sex"][ref_idx]
             ref_label = {

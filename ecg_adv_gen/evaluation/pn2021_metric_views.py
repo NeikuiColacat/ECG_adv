@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from collections.abc import Callable, Sequence
 from typing import Any
 
@@ -12,6 +13,18 @@ from ecg_adv_gen.data import PN2021_EVAL_CENTERS_7, PN2021_TARGET_CENTERS_4
 MetricFn = Callable[[np.ndarray, np.ndarray], dict[str, Any]]
 
 DROP_ALL_ZERO_POLICY = "rows with no positive Super5 label are excluded from PN2021 metric calculation"
+
+
+@dataclass(frozen=True)
+class FilteredPN2021CenterRecords:
+    """Center-local PN2021 arrays after include/ref-exclusion filters."""
+
+    signals: np.ndarray
+    labels: np.ndarray
+    record_ids: np.ndarray
+    n_total: int
+    n_excluded_ref: int
+    n_include_kept: int
 
 
 def _finite_mean(values: Sequence[Any], *, none_if_empty: bool) -> float | None:
@@ -42,6 +55,42 @@ def _record_mask(
         n_excluded_ref = int((mask & exclude_mask).sum())
         mask = mask & ~exclude_mask
     return mask, n_total, n_excluded_ref, n_include_kept
+
+
+def filter_pn2021_center_records(
+    signals: np.ndarray,
+    labels: np.ndarray,
+    record_ids: np.ndarray,
+    *,
+    ref_ids: set[str] | None = None,
+    include_ids: set[str] | None = None,
+) -> FilteredPN2021CenterRecords:
+    """Apply center-local include filtering before K-shot ref exclusion."""
+
+    signals = np.asarray(signals)
+    labels = np.asarray(labels)
+    record_ids = np.asarray(record_ids).astype(str)
+    keep_mask = np.ones(record_ids.shape[0], dtype=bool)
+    n_include_kept = 0
+    if include_ids:
+        include_set = {str(rid) for rid in include_ids}
+        include_mask = np.asarray([str(rid) in include_set for rid in record_ids], dtype=bool)
+        keep_mask &= include_mask
+        n_include_kept = int(keep_mask.sum())
+    n_excluded_ref = 0
+    if ref_ids:
+        ref_set = {str(rid) for rid in ref_ids}
+        ref_mask = np.asarray([str(rid) in ref_set for rid in record_ids], dtype=bool)
+        n_excluded_ref = int((keep_mask & ref_mask).sum())
+        keep_mask &= ~ref_mask
+    return FilteredPN2021CenterRecords(
+        signals=signals[keep_mask],
+        labels=labels[keep_mask],
+        record_ids=record_ids[keep_mask],
+        n_total=int(record_ids.shape[0]),
+        n_excluded_ref=n_excluded_ref,
+        n_include_kept=n_include_kept,
+    )
 
 
 def summarize_center_view(

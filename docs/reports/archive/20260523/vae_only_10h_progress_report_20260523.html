@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VAE-only 路线近10小时实验汇报</title>
+<style>
+:root { --ink:#172026; --muted:#61707a; --line:#d9e1e6; --soft:#f5f7f8; --blue:#176b87; --green:#0f7a45; --red:#a33a2a; --amber:#8a6500; }
+body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color:var(--ink); background:#fff; line-height:1.55; }
+main { max-width:1180px; margin:0 auto; padding:30px 28px 56px; }
+h1 { margin:0 0 8px; font-size:30px; line-height:1.2; }
+h2 { margin:30px 0 12px; padding-top:18px; border-top:1px solid var(--line); font-size:20px; }
+h3 { margin:18px 0 8px; font-size:16px; }
+.meta,.small { color:var(--muted); font-size:14px; }
+.callout { border:1px solid #b8d4df; background:#f1f8fb; border-radius:8px; padding:14px 16px; margin:16px 0; }
+.warnbox { border:1px solid #e1cb8f; background:#fff8e2; border-radius:8px; padding:14px 16px; margin:16px 0; }
+.grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin:16px 0; }
+.tile { border:1px solid var(--line); background:var(--soft); border-radius:8px; padding:12px 14px; }
+.tile b { display:block; color:var(--muted); font-size:13px; margin-bottom:4px; }
+.tile span { font-size:19px; font-weight:700; }
+table { width:100%; border-collapse:collapse; margin:12px 0 18px; font-size:14px; }
+th,td { border:1px solid var(--line); padding:8px 9px; text-align:left; vertical-align:top; }
+th { background:#edf3f5; font-weight:650; }
+.good td:last-child, .good { color:var(--green); } .bad td:last-child, .bad { color:var(--red); } .warn td:last-child, .warn { color:var(--amber); }
+code { background:#edf1f3; border-radius:4px; padding:1px 5px; }
+ul { padding-left:20px; }
+</style></head><body><main>
+<h1>VAE-only 路线近10小时实验汇报</h1>
+<div class="meta">生成时间：2026-05-23；工作目录：<code>/root/autodl-tmp/ECG_adv_Gen</code>；指标格式均为 macro AUROC / macro AUPRC。</div>
+
+<div class="callout"><b>一句话结论：</b>过去这轮实验把结论从“VAE-only 可能稳定增强 ECGFounder”修正为更准确的版本：<b>VAE-only 在 K=100 少样本场景有正向信号，但跨 seed 后并不稳定；K=500 的大提升主要来自真实目标中心样本微调，而不是 VAE-only 本身。</b>当前最稳的科学叙事不是夸大 VAE，而是把 VAE-only 定位为 small-K regularizer / boundary augmenter，继续寻找更稳的约束。</div>
+
+<div class="grid">
+  <div class="tile"><b>已补实验</b><span>K=500 ep1/ep10 + K=100 seed32</span></div>
+  <div class="tile"><b>最清楚的正例</b><span>CPSC K=100/K=500</span></div>
+  <div class="tile"><b>最大风险</b><span>VAE 增益不稳定</span></div>
+</div>
+
+<h2>1. 这轮实际尝试了什么</h2>
+<ul>
+<li>确认 ECGFounder 作者式 full fine-tune 路径：本地脚本调用 <code>ft_12lead_ECGFounder(..., linear_prob=False)</code>，不是 frozen linear probe。</li>
+<li>在 ECGFounder full fine-tune 上补 K=100 seed20260532，比较 no-VAE vs VAE-only。</li>
+<li>在 ECGFounder frozen encoder/head 版本上补 K=500 fixed-horizon，比较 no-VAE ep1/ep10 与 VAE ep1/ep10。</li>
+<li>复核 drop-all-zero 视角，判断性能是否由不属于 Super5 任一类的 all-zero 样本造成。</li>
+<li>整理 EfficientNet1DV2 adapter sanity check，确认当前只训 head/final_norm 不足以证明 VAE 可迁移到 EfficientNet。</li>
+</ul>
+
+<h2>2. ECGFounder full fine-tune K=100：多 seed 复核</h2>
+<p>协议：PTB-XL source + K=100 目标中心真实 ECG；ECGFounder 全模型微调；VAE-only 使用目标中心真实 ECGTwin VAE latent 做 latent-hull 在线对抗样本；固定 1 epoch，不用目标测试集挑 checkpoint。</p>
+<table><tr><th>seed</th><th>center</th><th>no-VAE</th><th>best/selected VAE</th><th>VAE - no-VAE</th><th>drop-all-zero delta</th><th>PTB-XL source</th></tr><tr class="good"><td>20260531</td><td>ningbo</td><td>0.9197 / 0.5298</td><td>0.9176 / 0.5388 (aw=20)</td><td>-0.21pp / +0.90pp</td><td>+0.04pp / +0.98pp</td><td>0.9166 / 0.7983</td></tr><tr class="good"><td>20260531</td><td>chapman_shaoxing</td><td>0.9145 / 0.4635</td><td>0.9188 / 0.4769 (aw=5)</td><td>+0.44pp / +1.34pp</td><td>+0.46pp / +0.26pp</td><td>0.9158 / 0.7953</td></tr><tr class="good"><td>20260531</td><td>cpsc_2018</td><td>0.8638 / 0.6486</td><td>0.8800 / 0.6979 (aw=20)</td><td>+1.62pp / +4.93pp</td><td>+1.00pp / +3.11pp</td><td>0.9169 / 0.8029</td></tr><tr class="good"><td>20260531</td><td>georgia</td><td>0.8472 / 0.5518</td><td>0.8523 / 0.5545 (aw=5)</td><td>+0.51pp / +0.27pp</td><td>+0.59pp / +0.52pp</td><td>0.9172 / 0.7999</td></tr><tr class="bad"><td>20260532</td><td>ningbo</td><td>0.9187 / 0.5414</td><td>0.9127 / 0.5356 (aw=20)</td><td>-0.60pp / -0.58pp</td><td>-0.30pp / -0.20pp</td><td>0.9156 / 0.7941</td></tr><tr class="bad"><td>20260532</td><td>chapman_shaoxing</td><td>0.9171 / 0.4845</td><td>0.9138 / 0.4764 (aw=5)</td><td>-0.33pp / -0.81pp</td><td>+0.17pp / +0.42pp</td><td>0.9157 / 0.7912</td></tr><tr class="good"><td>20260532</td><td>cpsc_2018</td><td>0.8621 / 0.6491</td><td>0.8664 / 0.6643 (aw=20)</td><td>+0.43pp / +1.52pp</td><td>+0.44pp / +1.93pp</td><td>0.9144 / 0.7914</td></tr><tr class="good"><td>20260532</td><td>georgia</td><td>0.8435 / 0.5393</td><td>0.8470 / 0.5424 (aw=5)</td><td>+0.36pp / +0.31pp</td><td>+0.45pp / +0.89pp</td><td>0.9169 / 0.7957</td></tr></table>
+<h3>跨 seed 平均</h3>
+<table><tr><th>center</th><th>paired seeds</th><th>mean VAE-noVAE full target</th><th>mean VAE-noVAE drop-all-zero</th><th>reading</th></tr><tr class="good"><td>ningbo</td><td>2</td><td>-0.41pp / +0.16pp</td><td>-0.13pp / +0.39pp</td><td>稳定正向</td></tr><tr class="good"><td>chapman_shaoxing</td><td>2</td><td>+0.05pp / +0.27pp</td><td>+0.31pp / +0.34pp</td><td>稳定正向</td></tr><tr class="good"><td>cpsc_2018</td><td>2</td><td>+1.02pp / +3.23pp</td><td>+0.72pp / +2.52pp</td><td>稳定正向</td></tr><tr class="good"><td>georgia</td><td>2</td><td>+0.43pp / +0.29pp</td><td>+0.52pp / +0.71pp</td><td>稳定正向</td></tr></table>
+<div class="warnbox"><b>解释：</b>seed20260531 曾显示 K=100 的 VAE-only 在 4/4 中心 AUPRC 正向；但 seed20260532 后，Ningbo/Chapman 变成负向，CPSC/Georgia 正向。也就是说，K=100 的 VAE-only 有潜力，但现在还不能说稳定。</div>
+
+<h2>3. ECGFounder frozen encoder/head K=500：大提升来自真实目标中心样本</h2>
+<p>这部分使用 ECGFounder 特征缓存做快速 head adaptation，不是 full fine-tune。它用来回答一个关键问题：扩大到 K=500 后，VAE 是否仍明显强于 no-VAE。</p>
+<h3>K=500 epoch 1</h3>
+<table><tr><th>center</th><th>no-VAE ep1</th><th>best VAE ep1</th><th>VAE-noVAE</th></tr><tr class="bad"><td>ningbo</td><td>0.9035 / 0.4753</td><td>0.9035 / 0.4750 (aw5)</td><td>+0.00pp / -0.04pp</td></tr><tr class="good"><td>chapman_shaoxing</td><td>0.9140 / 0.4099</td><td>0.9137 / 0.4111 (aw20)</td><td>-0.03pp / +0.12pp</td></tr><tr class="bad"><td>cpsc_2018</td><td>0.8407 / 0.5892</td><td>0.8404 / 0.5884 (aw5)</td><td>-0.03pp / -0.08pp</td></tr><tr class="good"><td>georgia</td><td>0.8652 / 0.6855</td><td>0.8654 / 0.6858 (aw5)</td><td>+0.02pp / +0.03pp</td></tr></table>
+<h3>K=500 epoch 10</h3>
+<table><tr><th>center</th><th>no-VAE ep10</th><th>VAE ep10</th><th>VAE-noVAE</th><th>drop-all-zero delta</th><th>PTB-XL source</th></tr><tr class="bad"><td>ningbo</td><td>0.9274 / 0.5419</td><td>0.9272 / 0.5418</td><td>-0.03pp / -0.01pp</td><td>-0.05pp / -0.03pp</td><td>0.9144 / 0.7857</td></tr><tr class="good"><td>chapman_shaoxing</td><td>0.9349 / 0.4664</td><td>0.9349 / 0.4669</td><td>-0.01pp / +0.05pp</td><td>-0.00pp / +0.04pp</td><td>0.9129 / 0.7803</td></tr><tr class="good"><td>cpsc_2018</td><td>0.8750 / 0.6368</td><td>0.8758 / 0.6390</td><td>+0.08pp / +0.22pp</td><td>+0.08pp / +0.14pp</td><td>0.9154 / 0.7884</td></tr><tr class="bad"><td>georgia</td><td>0.8845 / 0.7195</td><td>0.8839 / 0.7174</td><td>-0.06pp / -0.21pp</td><td>-0.15pp / -0.41pp</td><td>0.9176 / 0.7892</td></tr></table>
+<div class="callout"><b>结论：</b>K=500 时 no-VAE 已经很强，VAE-only 只在 CPSC/Chapman 有极小增益，在 Ningbo/Georgia 持平或略负。因此 ECGFounder K=500 的大提升主要来自真实目标中心样本微调，不应归因于 VAE-only。</div>
+
+<h2>4. K 值结论</h2>
+<table><tr><th>K</th><th>full target AUPRC 正向中心数</th><th>drop-all-zero AUPRC 正向中心数</th><th>结论</th></tr><tr><td>20</td><td>1/4</td><td>2/4</td><td>不稳定</td></tr><tr><td>50</td><td>1/4</td><td>3/4</td><td>仍不稳定</td></tr><tr><td>100</td><td>4/4</td><td>4/4</td><td>seed31 下可用，但 seed32 复现后需保守</td></tr></table>
+<p>K=20/50 目前不适合作为论文主张；K=100 是有价值但需要继续稳定化的区间；K=500 目标中心真实样本本身已经很强，VAE 的边际价值变小。</p>
+
+<h2>5. EfficientNet1DV2 结果</h2>
+<p>目前只做了 frozen backbone + classifier/final_norm adapter sanity check，不是完整 EfficientNet full fine-tune。</p>
+<table><tr><th>center</th><th>arm</th><th>PTB-XL</th><th>target</th><th>drop-all-zero</th></tr><tr><td>cpsc_2018</td><td>real_only</td><td>0.9072 / 0.7744</td><td>0.8143 / 0.5687</td><td>0.8631 / 0.6979</td></tr><tr><td>cpsc_2018</td><td>vae_aw20</td><td>0.9078 / 0.7761</td><td>0.8155 / 0.5695</td><td>0.8648 / 0.6999</td></tr><tr><td>georgia</td><td>real_only</td><td>0.9077 / 0.7757</td><td>0.8187 / 0.5952</td><td>0.8269 / 0.6761</td></tr><tr><td>georgia</td><td>vae_aw20</td><td>0.9076 / 0.7754</td><td>0.8185 / 0.5951</td><td>0.8268 / 0.6760</td></tr></table>
+<p>结论：CPSC 只有极小正增益，Georgia 无增益。EfficientNet1DV2 要继续追，应该改成 last-block/full fine-tune，而不是只训练 head adapter。</p>
+
+<h2>6. All-zero 复核</h2>
+<ul>
+<li>K=100 seed31 的正向结果在 drop-all-zero 后仍有正向证据，说明不是单纯 all-zero 虚高。</li>
+<li>K=100 seed32 显示 VAE 正负混合，drop-all-zero 也没有把所有问题修掉，说明核心问题是方法稳定性，不只是指标统计。</li>
+<li>K=500 drop-all-zero 后，CPSC/Georgia AUPRC 接近 source，但 Ningbo/Chapman 仍明显低于 source。</li>
+</ul>
+
+<h2>7. 当前判断</h2>
+<ul>
+<li><b>不能再说：</b>VAE-only 已经稳定强于 no-VAE 或能稳定追平 PTB-XL source。</li>
+<li><b>可以说：</b>VAE-only 在少样本 K=100 下存在有效信号，CPSC 最稳定；但跨中心、跨 seed 还不够稳。</li>
+<li><b>最有学术 taste 的下一步：</b>不要继续堆 trick。优先改进 latent-hull 的约束，让 VAE 样本更像 target-manifold regularization，而不是随机加重对抗流。</li>
+</ul>
+
+<h2>8. 建议下一步</h2>
+<ol>
+<li>固定 K=100，跑 3 seed 的 no-VAE / VAE，优先只在 CPSC + Georgia 快速筛选更稳的 VAE 约束。</li>
+<li>尝试更保守的 VAE 流：降低 adv_weight、限制每类最小样本数、或者只对 VAE 确认正向的类别启用。</li>
+<li>EfficientNet1DV2 改做 last-block/full fine-tune，再判断 VAE-only 是否能迁移。</li>
+<li>报告中把 ECGFounder K=500 作为“真实目标中心样本强基线”，不能作为 VAE-only 主贡献。</li>
+</ol>
+
+<h2>9. 关键文件</h2>
+<ul>
+<li><code>docs/reports/archive/20260523/current_goal_review_20260523.md</code></li>
+<li><code>docs/pipelines/latent_hull_online_at_pipeline.md</code></li>
+<li><code>/root/autodl-tmp/paper_ecgfounder_fullft_super5_20260523/</code></li>
+<li><code>/root/autodl-tmp/paper_ecgfounder_fixed_last_k500_*_20260523/</code></li>
+</ul>
+</main></body></html>

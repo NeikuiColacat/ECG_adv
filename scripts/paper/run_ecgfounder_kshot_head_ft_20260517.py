@@ -74,9 +74,15 @@ DEFAULT_LINEAR_PROBE_DIR = Path(
 DEFAULT_OUT_DIR = DATA_ROOT / "paper_foundation_baselines_20260524/ecgfounder_kshot_head_ft_v6_from_legacy_cache"
 
 
-def load_ref_ids(center: str, k: int, seed: int, source_k: int | None = None) -> list[str]:
+def load_ref_ids(
+    center: str,
+    k: int,
+    seed: int,
+    source_k: int | None = None,
+    ref_root: str | Path = REF_ROOT,
+) -> list[str]:
     return load_kshot_ref_record_ids(
-        REF_ROOT,
+        ref_root,
         center,
         k=k,
         seed=seed,
@@ -101,7 +107,7 @@ def select_kshot_indices(
         centers,
         record_ids,
         center=center,
-        ref_root=REF_ROOT,
+        ref_root=args.ref_root,
         k=args.k,
         source_k=args.source_k,
         subset_seed=args.subset_seed,
@@ -214,12 +220,10 @@ def train_one(center: str, args: argparse.Namespace, pn_payload: dict, base_head
             json.dump(logs, f, indent=2)
     head.load_state_dict(torch.load(run_dir / "best_head.pt", map_location=device))
     scores = predict_head(head, features, args.eval_batch_size, device)
-    ref_by_center = {}
-    selected_by_center = {}
-    for c in TARGET_CENTERS:
-        _, ids_c = select_kshot_indices(labels, centers, record_ids, c, args)
-        selected_by_center[c] = ids_c
-        ref_by_center[c] = set(ids_c)
+    ref_by_center = {c: set() for c in TARGET_CENTERS}
+    selected_by_center = {c: [] for c in TARGET_CENTERS}
+    selected_by_center[center] = selected_ref_ids
+    ref_by_center[center] = set(selected_ref_ids)
     views = evaluate_pn2021_views(labels, scores, centers, record_ids, ref_by_center)
     result = {
         "method": "ECGFounder frozen feature + K-shot target head fine-tune",
@@ -286,6 +290,11 @@ def parse_args() -> argparse.Namespace:
         help="Feature-cache suffix produced by run_ecgfounder_linear_probe_super5_20260517.py.",
     )
     p.add_argument("--out_dir", default=str(DEFAULT_OUT_DIR))
+    p.add_argument(
+        "--ref_root",
+        default=str(REF_ROOT),
+        help="Root containing per-center K-shot ref_meta files used for selection and ref-excluded eval.",
+    )
     p.add_argument("--k", type=int, default=500)
     p.add_argument("--source_k", type=int, default=500,
                    help="Existing ref pool size to subsample from when exact K metadata is absent.")

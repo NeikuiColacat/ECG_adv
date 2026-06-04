@@ -6,6 +6,8 @@ import csv
 import hashlib
 import json
 from pathlib import Path
+import subprocess
+import sys
 
 import yaml
 import pytest
@@ -17,7 +19,8 @@ from ecg_adv_gen.evidence import (
     EvidenceAuditError,
     load_evidence_registry,
 )
-from ecg_adv_gen.evidence.registry import _audit_manifest
+from ecg_adv_gen.evidence.registry import _audit_manifest, _summarize_dirty_workspace
+from ecg_adv_gen.evidence.registry import _guarded_staged_paths
 from ecg_adv_gen.reporting.metrics_export import METRICS_FIELDNAMES
 
 
@@ -104,6 +107,16 @@ def test_active_evidence_registry_is_tracked_and_path_safe():
     assert host_paths == []
     assert raw["active_claims"][0]["protocol"]["mapping_version"] == "v7_super5_sjr_rgq_review_20260528"
     assert raw["active_claims"][0]["comparison_bundle"]["status"] == "built"
+    policy = raw["evidence_surface_policy"]
+    assert policy["trusted_claims_source"] == "active_claims"
+    assert policy["paper_tables_source"] == "registered_artifacts"
+    assert policy["archived_reports_are_evidence_by_default"] is False
+    assert policy["managed_launch_configs_are_evidence_by_default"] is False
+    assert {
+        "cite_metrics_through_registry_or_registered_run_records",
+        "do_not_promote_archived_reports_without_registry_link",
+        "do_not_treat_launch_only_configs_as_paper_evidence",
+    }.issubset(set(policy["safety_rules"]))
 
 
 def test_registry_resolves_with_local_config():
@@ -124,6 +137,387 @@ def test_agent_workspace_audit_cpu_only_without_artifact_scan():
     )
     assert report["passed"] is True
     assert report["claim_count"] == 1
+    policy = report["evidence_surface_policy"]
+    assert policy["trusted_claims_source"] == "active_claims"
+    assert policy["archived_reports_are_evidence_by_default"] is False
+
+
+def test_agent_workspace_git_audit_reports_guarded_staged_paths():
+    report = audit_active_evidence_registry(
+        repo_root=REPO,
+        registry_path=REGISTRY,
+        local_config_path=LOCAL_EXAMPLE,
+        require_existing_artifacts=False,
+        check_git=True,
+    )
+
+    assert "guarded_staged_count" in report["git"]
+    assert "guarded_staged_paths" in report["git"]
+    assert report["git"]["guarded_staged_paths"] == []
+    assert not [issue for issue in report["issues"] if issue["code"] == "guarded_path_staged"]
+    assert "blocking_artifact_risks" in report["git"]
+    risks = report["git"]["blocking_artifact_risks"]
+    assert {"risk", "count", "paths"}.issubset(risks[0])
+    risk_names = {item["risk"] for item in risks}
+    assert {
+        "blocked_tracked_artifacts",
+        "blocked_staged_artifacts",
+        "guarded_staged_paths",
+        "dirty_guarded_local_only_paths",
+    }.issubset(risk_names)
+
+
+def test_agent_workspace_cli_combines_registry_and_active_script_audits():
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(REPO / "scripts" / "agent" / "audit_agent_workspace.py"),
+            "--skip-existing-artifacts",
+        ],
+        cwd=REPO,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout)
+    assert report["passed"] is True
+    assert report["claim_count"] == 1
+    active_scripts = report["active_scripts"]
+    assert active_scripts["passed"] is True
+    assert active_scripts["failed_count"] == 0
+    assert active_scripts["managed_experiment_count"] >= 25
+    assert active_scripts["index"].endswith("configs/active_scripts.yaml")
+    config_git_inventory = active_scripts["config_git_inventory"]
+    inventory_paths = {item["config"] for item in config_git_inventory}
+    config_git_summary = active_scripts["config_git_summary"]
+    assert config_git_summary["tracked_yaml_required"] is True
+    assert config_git_summary["total_count"] == len(config_git_inventory)
+    assert config_git_summary["untracked_count"] == len(config_git_summary["untracked_paths"])
+    assert all(row["config"] in inventory_paths for row in active_scripts["rows"])
+    assert "configs/defaults/benchmark_backbone_v7_sjr_rgq_defaults.yaml" in inventory_paths
+    assert "configs/defaults/ecgfounder_v7_sjr_rgq_defaults.yaml" in inventory_paths
+    contract = report["handoff_contract"]
+    assert contract["schema_version"] == 1
+    assert contract["startup_sequence"] == [
+        "read_AGENTS_first_100_lines",
+        "run_scripts_agent_audit_agent_workspace",
+        "inspect_git_dirty_summary_handoff_gate",
+        "inspect_active_scripts_policies",
+        "inspect_active_scripts_config_git_summary",
+    ]
+    assert contract["source_of_truth"]["active_evidence_registry"].endswith("configs/active_evidence_registry.yaml")
+    assert contract["source_of_truth"]["active_scripts_index"].endswith("configs/active_scripts.yaml")
+    source_status = contract["source_of_truth_status"]
+    assert source_status
+    status_by_name = {item["name"]: item for item in source_status}
+    assert status_by_name["active_evidence_registry"]["path"] == "configs/active_evidence_registry.yaml"
+    assert status_by_name["active_evidence_registry"]["exists"] is True
+    assert isinstance(status_by_name["active_evidence_registry"]["tracked_by_git"], bool)
+    assert status_by_name["active_evidence_registry"]["git_status"]
+    assert status_by_name["active_evidence_registry"]["layer"] == "configs"
+    assert status_by_name["active_scripts_index"]["path"] == "configs/active_scripts.yaml"
+    assert status_by_name["active_scripts_index"]["layer"] == "configs"
+    assert status_by_name["yaml_refactor_plan"]["path"] == "docs/pipelines/ai_agent_workspace_refactor_plan_20260604.md"
+    assert status_by_name["yaml_refactor_plan"]["layer"] == "docs"
+    assert status_by_name["synthetic_npz_dataset_contract"]["path"] == "ecg_adv_gen/data/synthetic_npz.py"
+    assert status_by_name["synthetic_npz_dataset_contract"]["layer"] == "package"
+    assert all(item["required_for_handoff"] is True for item in source_status)
+    assert all(not Path(item["path"]).is_absolute() for item in source_status)
+    assert all("index_status" in item for item in source_status)
+    assert all("worktree_status" in item for item in source_status)
+    assert all(isinstance(item["intent_to_add"], bool) for item in source_status)
+    for item in source_status:
+        assert set(item["staged_diff"]) == {
+            "has_diff",
+            "added_lines",
+            "deleted_lines",
+            "binary",
+        }
+        assert set(item["unstaged_diff"]) == {
+            "has_diff",
+            "added_lines",
+            "deleted_lines",
+            "binary",
+        }
+        assert isinstance(item["staged_diff"]["has_diff"], bool)
+        assert isinstance(item["unstaged_diff"]["has_diff"], bool)
+    source_summary = contract["source_of_truth_summary"]
+    assert source_summary["total_count"] == len(source_status)
+    assert source_summary["missing_count"] == len(source_summary["missing_paths"])
+    assert source_summary["untracked_count"] == len(source_summary["untracked_paths"])
+    assert source_summary["dirty_count"] == len(source_summary["dirty_paths"])
+    assert source_summary["intent_to_add_count"] == len(source_summary["intent_to_add_paths"])
+    assert source_summary["staged_content_count"] == len(source_summary["staged_content_paths"])
+    assert source_summary["unstaged_content_count"] == len(source_summary["unstaged_content_paths"])
+    assert source_summary["mixed_index_worktree_count"] == len(source_summary["mixed_index_worktree_paths"])
+    intent_to_add_items = [item for item in source_status if item["intent_to_add"]]
+    staged_content_items = [item for item in source_status if item["index_status"] not in {" ", "?"}]
+    unstaged_content_items = [item for item in source_status if item["worktree_status"] not in {" ", "?"}]
+    mixed_index_worktree_items = [
+        item
+        for item in source_status
+        if item["index_status"] not in {" ", "?"} and item["worktree_status"] not in {" ", "?"}
+    ]
+    assert source_summary["intent_to_add_count"] == len(intent_to_add_items)
+    assert source_summary["intent_to_add_paths"] == [item["path"] for item in intent_to_add_items]
+    assert source_summary["staged_content_count"] == len(staged_content_items)
+    assert source_summary["staged_content_paths"] == [item["path"] for item in staged_content_items]
+    assert source_summary["unstaged_content_count"] == len(unstaged_content_items)
+    assert source_summary["unstaged_content_paths"] == [item["path"] for item in unstaged_content_items]
+    assert source_summary["mixed_index_worktree_count"] == len(mixed_index_worktree_items)
+    assert source_summary["mixed_index_worktree_paths"] == [item["path"] for item in mixed_index_worktree_items]
+    if intent_to_add_items:
+        assert all(item["git_status"] == "A" for item in intent_to_add_items)
+        assert all(item["index_status"] == " " for item in intent_to_add_items)
+        assert all(item["worktree_status"] == "A" for item in intent_to_add_items)
+        assert all(item["staged_diff"]["has_diff"] is False for item in intent_to_add_items)
+        assert all(item["unstaged_diff"]["has_diff"] is True for item in intent_to_add_items)
+    for item in mixed_index_worktree_items:
+        assert item["staged_diff"]["has_diff"] is True
+        assert item["unstaged_diff"]["has_diff"] is True
+    review_queue = contract["source_of_truth_review_queue"]
+    assert len(review_queue) == source_summary["dirty_count"]
+    queue_by_path = {item["path"]: item for item in review_queue}
+    assert set(queue_by_path) == set(source_summary["dirty_paths"])
+    for item in review_queue:
+        assert set(item) == {
+            "path",
+            "name",
+            "layer",
+            "git_status",
+            "review_state",
+            "next_action",
+            "staged_diff",
+            "unstaged_diff",
+        }
+        assert item["next_action"]
+    for item in mixed_index_worktree_items:
+        queue_item = queue_by_path[item["path"]]
+        assert queue_item["review_state"] == "mixed_index_worktree"
+        assert queue_item["next_action"] == "review_staged_and_unstaged_diffs_then_stage_or_unstage_consistently"
+        assert queue_item["staged_diff"] == item["staged_diff"]
+        assert queue_item["unstaged_diff"] == item["unstaged_diff"]
+    for item in intent_to_add_items:
+        queue_item = queue_by_path[item["path"]]
+        assert queue_item["review_state"] == "intent_to_add"
+        assert queue_item["next_action"] == "review_worktree_diff_then_stage_or_declassify"
+    priority_order = {
+        "mixed_index_worktree": 0,
+        "staged_content": 1,
+        "intent_to_add": 2,
+        "unstaged_content": 3,
+        "dirty": 4,
+    }
+    assert [priority_order[item["review_state"]] for item in review_queue] == sorted(
+        priority_order[item["review_state"]] for item in review_queue
+    )
+    assert source_summary["requires_attention"] is (source_summary["dirty_count"] > 0)
+    assert "configs" in source_summary["by_layer"]
+    layer_status = source_summary["by_layer_status"]
+    assert set(layer_status) == set(source_summary["by_layer"])
+    for layer, layer_item in layer_status.items():
+        layer_items = [item for item in source_status if item["layer"] == layer]
+        assert layer_item["total_count"] == len(layer_items)
+        assert layer_item["clean_count"] == sum(1 for item in layer_items if item["git_status"] == "clean")
+        assert layer_item["dirty_count"] == sum(1 for item in layer_items if item["git_status"] != "clean")
+        assert layer_item["intent_to_add_count"] == sum(1 for item in layer_items if item["intent_to_add"])
+        assert layer_item["staged_content_count"] == sum(1 for item in layer_items if item["index_status"] not in {" ", "?"})
+        assert layer_item["unstaged_content_count"] == sum(1 for item in layer_items if item["worktree_status"] not in {" ", "?"})
+        assert layer_item["mixed_index_worktree_count"] == sum(
+            1
+            for item in layer_items
+            if item["index_status"] not in {" ", "?"} and item["worktree_status"] not in {" ", "?"}
+        )
+        assert layer_item["paths"] == [item["path"] for item in layer_items]
+    assert set(source_summary["by_git_status"]) >= {"clean"}
+    issue_codes = {issue["code"] for issue in report["issues"]}
+    if source_summary["untracked_count"]:
+        assert "source_of_truth_untracked" in issue_codes
+    else:
+        assert "source_of_truth_untracked" not in issue_codes
+    if source_summary["dirty_count"]:
+        assert "source_of_truth_dirty" in issue_codes
+    else:
+        assert "source_of_truth_dirty" not in issue_codes
+    if source_summary["intent_to_add_count"]:
+        assert "source_of_truth_intent_to_add" in issue_codes
+    else:
+        assert "source_of_truth_intent_to_add" not in issue_codes
+    if source_summary["staged_content_count"]:
+        assert "source_of_truth_staged_content" in issue_codes
+    else:
+        assert "source_of_truth_staged_content" not in issue_codes
+    assert "source_of_truth_missing" not in issue_codes
+    readiness = contract["handoff_readiness"]
+    assert readiness["ready_for_handoff"] is False
+    assert readiness["ready_for_commit"] is False
+    source_control_ready_expected = (
+        source_summary["dirty_count"] == 0
+        and source_summary["staged_content_count"] == 0
+        and source_summary["unstaged_content_count"] == 0
+        and source_summary["untracked_count"] == 0
+        and source_summary["missing_count"] == 0
+        and config_git_summary["dirty_count"] == 0
+        and config_git_summary["staged_content_count"] == 0
+        and config_git_summary["unstaged_content_count"] == 0
+        and config_git_summary["untracked_count"] == 0
+        and config_git_summary["missing_count"] == 0
+        and readiness["hard_reason_count"] == 0
+    )
+    assert readiness["source_control_ready"] is source_control_ready_expected
+    assert readiness["status"] == "attention_required"
+    readiness_reasons = {item["code"]: item for item in readiness["reasons"]}
+    if source_summary["untracked_count"]:
+        assert readiness_reasons["source_of_truth_untracked"]["count"] == source_summary["untracked_count"]
+    if source_summary["dirty_count"]:
+        assert readiness_reasons["source_of_truth_dirty"]["count"] == source_summary["dirty_count"]
+    if source_summary["intent_to_add_count"]:
+        assert readiness_reasons["source_of_truth_intent_to_add"]["count"] == source_summary["intent_to_add_count"]
+    if source_summary["staged_content_count"]:
+        assert readiness_reasons["source_of_truth_staged_content"]["count"] == source_summary["staged_content_count"]
+    if config_git_summary["requires_attention"]:
+        assert readiness_reasons["managed_config_git_requires_attention"]["count"] == config_git_summary["dirty_count"]
+        assert readiness_reasons["managed_config_git_requires_attention"]["paths"] == config_git_summary["dirty_paths"]
+    assert readiness_reasons["dirty_guarded_local_only_paths"]["count"] == 5
+    assert "git.guarded_staged_paths" in readiness["must_be_empty"]
+    assert "handoff_contract.source_of_truth_summary.missing_paths" in readiness["must_be_empty"]
+    assert "active_scripts.config_git_summary.missing_paths" in readiness["must_be_empty"]
+    assert "handoff_contract.source_of_truth_summary.untracked_paths" in readiness["review_required"]
+    assert "handoff_contract.source_of_truth_review_queue" in readiness["review_required"]
+    assert "handoff_contract.source_of_truth_summary.staged_content_paths" in readiness["review_required"]
+    assert "handoff_contract.source_of_truth_summary.unstaged_content_paths" in readiness["review_required"]
+    assert "active_scripts.config_git_summary.untracked_paths" in readiness["review_required"]
+    assert "active_scripts.config_git_summary.intent_to_add_paths" in readiness["review_required"]
+    assert "active_scripts.config_git_summary.staged_content_paths" in readiness["review_required"]
+    assert "active_scripts.config_git_summary.unstaged_content_paths" in readiness["review_required"]
+    assert "git.dirty_summary.handoff_gate" in readiness["review_required"]
+    assert "git.dirty_summary.by_layer" in readiness["review_required"]
+    assert "git.dirty_summary.by_layer.*.paths" in readiness["review_required"]
+    assert contract["dirty_gate_json_path"] == "git.dirty_summary.handoff_gate"
+    assert contract["current_handoff_note"]["path"] == "docs/codex-handoffs/current_workspace_handoff.md"
+    assert contract["current_handoff_note"]["exists"] is True
+    assert isinstance(contract["current_handoff_note"]["tracked_by_git"], bool)
+    assert contract["current_handoff_note"]["git_status"]
+    assert "index_status" in contract["current_handoff_note"]
+    assert "worktree_status" in contract["current_handoff_note"]
+    assert isinstance(contract["current_handoff_note"]["intent_to_add"], bool)
+    assert contract["policies"]["evidence_surface_policy"]["trusted_claims_source"] == "active_claims"
+    assert contract["policies"]["evidence_surface_policy"]["managed_launch_configs_are_evidence_by_default"] is False
+    assert contract["policies"]["launch_surface_policy"]["default_launcher"] == "scripts/run_experiment.py"
+    assert contract["policies"]["documentation_surface_policy"]["historical_report_archive"] == "docs/reports/archive"
+    assert contract["policies"]["implementation_surface_policy"]["package_root"] == "ecg_adv_gen"
+
+
+def test_dirty_workspace_summary_groups_agent_handoff_layers():
+    summary = _summarize_dirty_workspace(
+        [
+            "MM configs/active_scripts.yaml",
+            " M ecg_adv_gen/config/loader.py",
+            "?? configs/experiments/new_eval.yaml",
+            " M model/ECGTwin",
+            "R  docs/tmp_md/old.md -> docs/reports/archive/20260501/old.md",
+            " M util/tests/test_config_loader.py",
+            " M scripts/run_experiment.py",
+            "A  .codex/skills/ecg-agent-retrospective/SKILL.md",
+            " M AGENTS.md",
+        ],
+        do_not_commit={"model/ECGTwin"},
+    )
+
+    assert summary["total_entries"] == 9
+    assert summary["staged_entries"] == 3
+    assert summary["unstaged_entries"] == 6
+    assert summary["untracked_entries"] == 1
+    assert summary["guarded_dirty_count"] == 1
+    assert summary["guarded_dirty_paths"] == ["model/ECGTwin"]
+
+    by_layer = summary["by_layer"]
+    assert by_layer["configs"]["total_entries"] == 2
+    assert by_layer["configs"]["staged_entries"] == 1
+    assert by_layer["configs"]["untracked_entries"] == 1
+    assert by_layer["configs"]["paths"] == [
+        "configs/active_scripts.yaml",
+        "configs/experiments/new_eval.yaml",
+    ]
+    assert by_layer["configs"]["staged_paths"] == ["configs/active_scripts.yaml"]
+    assert by_layer["configs"]["unstaged_paths"] == ["configs/active_scripts.yaml"]
+    assert by_layer["configs"]["untracked_paths"] == ["configs/experiments/new_eval.yaml"]
+    assert by_layer["configs"]["status_entries"] == [
+        {
+            "path": "configs/active_scripts.yaml",
+            "git_status": "MM",
+            "index_status": "M",
+            "worktree_status": "M",
+        },
+        {
+            "path": "configs/experiments/new_eval.yaml",
+            "git_status": "??",
+            "index_status": "?",
+            "worktree_status": "?",
+        },
+    ]
+    assert by_layer["package"]["unstaged_entries"] == 1
+    assert by_layer["package"]["paths"] == ["ecg_adv_gen/config/loader.py"]
+    assert by_layer["package"]["staged_paths"] == []
+    assert by_layer["package"]["unstaged_paths"] == ["ecg_adv_gen/config/loader.py"]
+    assert by_layer["external_models"]["guarded_dirty_count"] == 1
+    assert by_layer["external_models"]["guarded_dirty_paths"] == ["model/ECGTwin"]
+    assert by_layer["docs"]["staged_entries"] == 1
+    assert by_layer["docs"]["paths"] == ["docs/reports/archive/20260501/old.md"]
+    assert by_layer["tests"]["unstaged_entries"] == 1
+    assert by_layer["scripts"]["unstaged_entries"] == 1
+    assert by_layer["agent_instructions"]["unstaged_entries"] == 1
+    assert by_layer["codex_skills"]["staged_entries"] == 1
+    assert by_layer["external_models"]["handoff_action"] == "keep_local_only_do_not_stage"
+    assert by_layer["configs"]["handoff_action"] == "verify_yaml_index_and_path_boundaries"
+    assert by_layer["package"]["handoff_action"] == "run_focused_cpu_tests_before_handoff"
+    assert by_layer["scripts"]["handoff_action"] == "keep_legacy_wrappers_thin_and_index_managed"
+    assert by_layer["docs"]["handoff_action"] == "separate_pipeline_docs_from_archived_reports"
+    assert by_layer["tests"]["handoff_action"] == "run_related_cpu_tests"
+    assert by_layer["agent_instructions"]["handoff_action"] == "review_first_100_lines_before_writes"
+
+    gate = summary["handoff_gate"]
+    assert gate["requires_attention"] is True
+    assert gate["dirty_layer_count"] == len(by_layer)
+    assert gate["guarded_paths_require_local_only"] == ["model/ECGTwin"]
+    assert {
+        "layer": "external_models",
+        "handoff_action": "keep_local_only_do_not_stage",
+        "dirty_entries": 1,
+        "guarded_dirty_count": 1,
+    } in gate["actions"]
+    assert {
+        "layer": "configs",
+        "handoff_action": "verify_yaml_index_and_path_boundaries",
+        "dirty_entries": 2,
+        "guarded_dirty_count": 0,
+    } in gate["actions"]
+
+
+def test_guarded_staged_paths_match_exact_prefix_and_glob_policy_entries():
+    guarded = _guarded_staged_paths(
+        [
+            "model/ECGTwin",
+            "datasets/PTBXL/cache.npy",
+            "docs/reports/archive/20260501/report.md",
+            "outputs/run/latest.json",
+            "ecg_adv_gen/evidence/registry.py",
+        ],
+        [
+            "model/ECGTwin",
+            "datasets/",
+            "outputs/",
+            "*.npy",
+        ],
+    )
+
+    assert guarded == [
+        "model/ECGTwin",
+        "datasets/PTBXL/cache.npy",
+        "outputs/run/latest.json",
+    ]
 
 
 def test_trusted_mainline_missing_manifest_is_an_error():

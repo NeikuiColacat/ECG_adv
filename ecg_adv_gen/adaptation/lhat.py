@@ -718,3 +718,73 @@ def build_latent_augmix_branch_signals(
         "ops": list(ops),
     }
     return mixed_arr, stats
+
+
+def build_raw_corruption_views(
+    signals_ct: np.ndarray,
+    *,
+    copies: int,
+    severity: int,
+    ops: Sequence[str],
+    prob: float,
+    rng: np.random.Generator,
+    op_apply_fn: Callable[[np.ndarray, str, int], np.ndarray],
+    available_ops: Sequence[str],
+    renorm: bool = False,
+    clip_abs: float = 6.0,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Create single-op raw ECG corruption views for consistency training."""
+    if copies <= 0:
+        return (
+            np.empty((0,) + tuple(signals_ct.shape[1:]), dtype=np.float32),
+            {"enabled": False, "n_generated": 0},
+        )
+    if signals_ct.ndim != 3:
+        raise ValueError(f"signals_ct must be 3D (N,12,L), got {signals_ct.shape}")
+    if not (1 <= severity <= 10):
+        raise ValueError(f"severity must be in [1,10], got {severity}")
+    if not ops:
+        raise ValueError("ops must contain at least one op")
+    available = set(str(op) for op in available_ops)
+    for op_name in ops:
+        if op_name not in available:
+            raise ValueError(f"unknown raw corruption op: {op_name}")
+    p = float(np.clip(prob, 0.0, 1.0))
+
+    out: list[np.ndarray] = []
+    used_ops: list[str] = []
+    n_corrupted = 0
+    for _copy_i in range(int(copies)):
+        for i in range(signals_ct.shape[0]):
+            sig = signals_ct[i].astype(np.float32, copy=True)
+            if rng.random() < p:
+                op_name = str(rng.choice(ops))
+                sig = op_apply_fn(sig, op_name, int(severity)).astype(np.float32, copy=False)
+                used_ops.append(op_name)
+                n_corrupted += 1
+            if renorm:
+                sig = global_zscore_np(sig)
+            else:
+                sig = sig.astype(np.float32, copy=False)
+            if clip_abs > 0:
+                sig = np.clip(sig, -float(clip_abs), float(clip_abs)).astype(np.float32)
+            out.append(sig)
+
+    arr = np.stack(out, axis=0).astype(np.float32) if out else np.empty(
+        (0,) + tuple(signals_ct.shape[1:]), dtype=np.float32
+    )
+    op_counts = {op: int(used_ops.count(op)) for op in sorted(set(used_ops))}
+    stats = {
+        "enabled": True,
+        "n_generated": int(arr.shape[0]),
+        "n_corrupted": int(n_corrupted),
+        "corrupt_fraction": float(n_corrupted / max(1, arr.shape[0])),
+        "copies": int(copies),
+        "severity": int(severity),
+        "prob": p,
+        "ops": list(ops),
+        "op_counts": op_counts,
+        "renorm": bool(renorm),
+        "clip_abs": float(clip_abs),
+    }
+    return arr, stats

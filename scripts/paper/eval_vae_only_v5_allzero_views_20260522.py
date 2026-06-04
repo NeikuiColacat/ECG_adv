@@ -39,7 +39,7 @@ PN2021_CACHE_DIR = Path("/root/autodl-tmp/triple_labels/pn2021_eval_cache_minres
 PN2021_MMAP_CACHE_DIR = Path("/root/autodl-tmp/triple_labels/pn2021_eval_cache_mmap_minresample_perglobal")
 KCURVE_ROOT = Path("/root/autodl-tmp/paper_vae_only_lhat_kcurve_20260518")
 OUT_ROOT = Path("/root/autodl-tmp/paper_vae_only_v5_allzero_eval_20260522")
-DOC_OUT = Path("docs/tmp_md/vae_only_v5_allzero_eval_20260522.md")
+DOC_OUT = Path("docs/reports/archive/20260522/vae_only_v5_allzero_eval_20260522.md")
 
 CENTERS = ["ningbo", "chapman_shaoxing", "cpsc_2018", "georgia"]
 

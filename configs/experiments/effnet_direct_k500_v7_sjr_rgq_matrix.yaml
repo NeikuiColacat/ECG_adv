@@ -1,0 +1,57 @@
+extends:
+  - ../defaults/effnet1dv2_v7_sjr_rgq_defaults.yaml
+
+experiment:
+  name: effnet_direct_k500_v7_sjr_rgq_matrix
+  description: Per-center EfficientNet1DV2 direct K500 v7 SJR/RGQ matrix launch surface replacing the Direct portion of the dated multiseed runner.
+
+runner:
+  entrypoint: scripts/paper/run_direct_finetune_k500_20260516.py
+  name: ${experiment.name}_${matrix.center}
+  matrix:
+    center: ${paper_protocol.centers.target_4}
+  argv:
+    - --centers
+    - ${matrix.center}
+    - --k
+    - ${paper_protocol.kshot.k}
+    - --subset_seed
+    - ${paper_protocol.kshot.subset_seed}
+    - --seed
+    - ${paper_protocol.kshot.seed}
+    - --epochs
+    - ${training.epochs}
+    - --lr
+    - ${training.optimizer.lr}
+    - --weight_decay
+    - ${training.optimizer.weight_decay}
+    - --grad_clip
+    - ${training.grad_clip}
+    - --batch_size
+    - ${training.batch_size}
+    - --eval_batch_size
+    - ${training.eval_batch_size}
+    - --crop_len
+    - ${preprocess.crop_len}
+    - --val_fraction
+    - 0.2
+    - --num_workers
+    - ${training.num_workers}
+    - --device
+    - cuda
+    - --pos_weight_clip_max
+    - ${training.pos_weight_clip_max}
+    - --subset_root
+    - ${data.kshot_subset_root}
+    - --out_root
+    - ${paths.output_root}/${experiment.name}/${runtime.run_id}/${matrix.center}
+
+adaptation:
+  method: direct_target_k500_finetune
+
+lineage:
+  replaces_legacy_surface: scripts/paper/run_effnet_v7_multiseed_kshot_matrix_20260530.py
+  scope: direct_k500_only
+  notes:
+    - This managed config replaces the Direct K500 per-center command expansion from the dated matrix runner.
+    - Percent-shot protocols require the subset-export stage to provide per-center K values before they can be safely YAML-managed.

@@ -1,0 +1,168 @@
+extends:
+  - ../defaults/effnet1dv2_v7_sjr_rgq_defaults.yaml
+
+experiment:
+  name: ecgtwin_prompt_token_online_at_minimal_eval
+  description: Managed PN2021 Super5 v7 ref-excluded eval for the same-run minimal prompt-token online-AT output.
+  status: active-wrapped
+
+model:
+  backbone: efficientnet1dv2
+  name: efficientnet1dv2
+  num_classes: 5
+
+adaptation:
+  method: ecgtwin_prompt_token_online_at_eval
+  prompt_token:
+    center: ningbo
+    online_at_root: ${paths.output_root}/ecgtwin_prompt_token_online_at_minimal/${runtime.run_id}
+    eval_root: ${paths.output_root}/ecgtwin_prompt_token_online_at_minimal_eval/${runtime.run_id}
+
+training:
+  eval_batch_size: 192
+  num_workers: ${resources.default_num_workers}
+
+logging:
+  child_artifacts:
+    - eval_result_v7_super5_sjr_rgq_refexcluded.json
+  postprocess_artifacts:
+    - metrics_long.csv
+    - paper_table.csv
+
+evaluation:
+  model_family: ecgtwin_prompt_token_online_at_minimal
+  target_centers: [ningbo]
+  ref_exclusion_meta:
+    - ${data.kshot_subset_root}/ningbo/k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}/ningbo_real_k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}.ref_meta.json
+    - ${data.kshot_subset_root}/chapman_shaoxing/k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}/chapman_shaoxing_real_k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}.ref_meta.json
+    - ${data.kshot_subset_root}/cpsc_2018/k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}/cpsc_2018_real_k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}.ref_meta.json
+    - ${data.kshot_subset_root}/georgia/k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}/georgia_real_k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}.ref_meta.json
+
+postprocess:
+  commands:
+    - name: export_metrics_long
+      entrypoint: scripts/export_metrics_long.py
+      env:
+        TMPDIR: ${paths.short_tmp_root}
+        XDG_CACHE_HOME: ${paths.cache_root}
+      argv:
+        - --input
+        - ${adaptation.prompt_token.eval_root}/${adaptation.prompt_token.center}/eval_result_v7_super5_sjr_rgq_refexcluded.json
+        - --output-dir
+        - ${paths.output_root}/metrics_export/${runtime.run_id}_${experiment.name}
+        - --run-id
+        - ${evaluation.model_family}
+        - --filter-to-target-center
+        - --target-centers
+        - ${evaluation.target_centers}
+        - --expected-mapping-version
+        - ${paper_protocol.mapping_version}
+        - --expected-mapping-hash
+        - ${paper_protocol.mapping_hash}
+      expected_artifacts:
+        - role: metrics_long
+          path: ${paths.output_root}/metrics_export/${runtime.run_id}_${experiment.name}/metrics_long.csv
+        - role: artifact_manifest
+          path: ${paths.output_root}/metrics_export/${runtime.run_id}_${experiment.name}/artifact_manifest.json
+
+    - name: export_paper_table_all_zero_kept
+      entrypoint: scripts/export_paper_table.py
+      env:
+        TMPDIR: ${paths.short_tmp_root}
+        XDG_CACHE_HOME: ${paths.cache_root}
+      argv:
+        - --metrics-long
+        - ${paths.output_root}/metrics_export/${runtime.run_id}_${experiment.name}/metrics_long.csv
+        - --output-dir
+        - ${paths.output_root}/paper_table/${runtime.run_id}_${experiment.name}_all_zero_kept
+        - --view
+        - pn2021_all_zero_kept_refexcluded
+        - --dataset
+        - pn2021
+        - --centers
+        - ${evaluation.target_centers}
+        - --no-dataset-rows
+      expected_artifacts:
+        - role: paper_table
+          path: ${paths.output_root}/paper_table/${runtime.run_id}_${experiment.name}_all_zero_kept/paper_table.csv
+        - role: paper_table_manifest
+          path: ${paths.output_root}/paper_table/${runtime.run_id}_${experiment.name}_all_zero_kept/paper_table_manifest.json
+
+    - name: export_paper_table_drop_all_zero
+      entrypoint: scripts/export_paper_table.py
+      env:
+        TMPDIR: ${paths.short_tmp_root}
+        XDG_CACHE_HOME: ${paths.cache_root}
+      argv:
+        - --metrics-long
+        - ${paths.output_root}/metrics_export/${runtime.run_id}_${experiment.name}/metrics_long.csv
+        - --output-dir
+        - ${paths.output_root}/paper_table/${runtime.run_id}_${experiment.name}_drop_all_zero
+        - --view
+        - pn2021_drop_all_zero_refexcluded
+        - --dataset
+        - pn2021
+        - --centers
+        - ${evaluation.target_centers}
+        - --no-dataset-rows
+      expected_artifacts:
+        - role: paper_table
+          path: ${paths.output_root}/paper_table/${runtime.run_id}_${experiment.name}_drop_all_zero/paper_table.csv
+        - role: paper_table_manifest
+          path: ${paths.output_root}/paper_table/${runtime.run_id}_${experiment.name}_drop_all_zero/paper_table_manifest.json
+
+runner:
+  entrypoint: scripts/triple_labels/eval_crosscenter.py
+  name: ${experiment.name}
+  env:
+    ECG_ADV_GEN_DATA_ROOT: ${paths.data_root}
+    TMPDIR: ${paths.short_tmp_root}
+    XDG_CACHE_HOME: ${paths.cache_root}
+  matrix:
+    center: [ningbo]
+  argv:
+    - --scheme
+    - super5
+    - --model_dir
+    - ${adaptation.prompt_token.online_at_root}/${matrix.center}
+    - --model_name
+    - ${model.name}
+    - --device
+    - cuda
+    - --crop_len
+    - ${preprocess.crop_len}
+    - --batch_size
+    - ${training.eval_batch_size}
+    - --num_workers
+    - ${training.num_workers}
+    - --min_pos
+    - ${evaluation.min_pos}
+    - --ptbxl_csv
+    - ${paths.data_root}/ptbxl/ptbxl_database.csv
+    - --ptbxl_cache
+    - ${paths.data_root}/triple_labels/cache/ptbxl_minimal_resample_per_sample_global_fs100_len1000.npy
+    - --preprocess_mode
+    - ${preprocess.mode}
+    - --norm_mode
+    - ${preprocess.norm_mode}
+    - --pn2021_root
+    - ${paths.data_root}/physionet2021
+    - --pn2021_cache_dir
+    - ${data.cache.pn2021_cache_dir}
+    - --pn2021_mmap_cache_dir
+    - ${data.cache.pn2021_mmap_cache_dir}
+    - --skip_mimic
+    - --report_drop_all_zero_pn2021
+    - --exclude_ref_ids
+    - ${evaluation.ref_exclusion_meta}
+    - --output_path
+    - ${adaptation.prompt_token.eval_root}/${matrix.center}/eval_result_v7_super5_sjr_rgq_refexcluded.json
+
+lineage:
+  replaces_legacy_surface: scripts/ecgtwin_gen/run_multicenter_prompt_token_v36_online_at.sh
+  scope: prompt_token_online_at_pn2021_eval_minimal
+  prerequisite_stages:
+    - configs/experiments/ecgtwin_prompt_token_online_at_minimal.yaml
+  notes:
+    - This evaluation-only config consumes the same runtime.run_id online-AT output and writes v7 ref-excluded PN2021 metrics under its own run-id-scoped eval root.
+    - It intentionally excludes all four target-center K500 ref-meta files even though the minimal online-AT slice evaluates only Ningbo.

@@ -473,7 +473,7 @@ V42-A0 direct MV4, lr=1e-3, style=0.003, sem=0.02, aux_t=250
        style aux test acc / macro F1 = 0.6279 / 0.6555
        semantic ckpt: /root/autodl-tmp/triple_labels/super5_minresample_full10_perglobal_20260503/best_model.pt
        status: failed promotion gate
-       report: docs/tmp_md/center_token_v42_validation_20260503.md
+       report: docs/reports/archive/20260503/center_token_v42_validation_20260503.md
 V42-B direct MV8, lr=3e-4, style=0.01, sem=0.05, aux_t=250
 V42-C direct MV4, lr=1e-3, style=0.03, sem=0.10, aux_t=100
 V42-D factorized C4+Y4+R4, lr=3e-4, style=0.01, sem=0.05, aux_t=250
@@ -600,7 +600,7 @@ output:
   /root/autodl-tmp/ecgtwin_prompt_token_super5/effectiveness_pilot_20260503
 
 report:
-  docs/tmp_md/center_token_effectiveness_pilot_20260503.md
+  docs/reports/archive/20260503/center_token_effectiveness_pilot_20260503.md
 ```
 
 结论：

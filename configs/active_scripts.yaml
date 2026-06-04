@@ -1,20 +1,87 @@
 version: 1
-updated: 2026-05-27
+updated: 2026-06-04
 purpose: Track which legacy scripts are managed by YAML configs during the refactor.
 
 source_of_truth:
   shared_server_safety: AGENTS.md
-  yaml_refactor_plan: docs/tmp_md/project_refactor_yaml_config_plan_20260527.md
+  yaml_refactor_plan: docs/pipelines/ai_agent_workspace_refactor_plan_20260604.md
+  current_handoff_note: docs/codex-handoffs/current_workspace_handoff.md
   config_rules: configs/README.md
   active_evidence_registry: configs/active_evidence_registry.yaml
-  pipeline_index: docs/pipelines/refactor_source_of_truth_20260527.md
-  super5_label_mapping: scripts/triple_labels/label_schemes.py
+  pipeline_index: docs/pipelines/README.md
+  managed_entrypoint_registry: ecg_adv_gen/config/entrypoints.py
+  command_adapter_helpers: ecg_adv_gen/config/adapters/common.py
+  direct_command_adapter: ecg_adv_gen/config/adapters/direct.py
+  source_training_command_adapter: ecg_adv_gen/config/adapters/source_training.py
+  super5_label_mapping: ecg_adv_gen/labels/super5_mapping.py
   super5_label_metadata: ecg_adv_gen/labels/super5.py
   data_preprocess_contract: ecg_adv_gen/data/contracts.py
+  synthetic_npz_dataset_contract: ecg_adv_gen/data/synthetic_npz.py
+  pn2021_record_metadata: ecg_adv_gen/data/pn2021_records.py
+  pn2021_waveform_materialization: ecg_adv_gen/data/pn2021_waveforms.py
+  kshot_artifact_paths: ecg_adv_gen/data/kshot_artifacts.py
+  gated_pool_artifacts: ecg_adv_gen/data/gated_pools.py
+  prompt_token_compiler: ecg_adv_gen/generation/prompt_tokens.py
+  launch_plan_writer: ecg_adv_gen/runner/launch_plan.py
   evaluation_view_semantics: ecg_adv_gen/evaluation/views.py
+  pn2021_clean_eval_cache: ecg_adv_gen/evaluation/pn2021_eval_cache.py
+  pn2021_corruption_eval_helpers: ecg_adv_gen/evaluation/pn2021_corruptions.py
+  pn2021_record_filtering: ecg_adv_gen/evaluation/pn2021_metric_views.py
   selection_policy_semantics: ecg_adv_gen/evaluation/selection.py
   ecgfounder_model_contract: ecg_adv_gen/models/ecgfounder.py
   training_loss_helpers: ecg_adv_gen/training/losses.py
+
+launch_surface_policy:
+  default_launcher: scripts/run_experiment.py
+  managed_index: configs/active_scripts.yaml
+  config_roots:
+    - configs/defaults
+    - configs/experiments
+  tracked_yaml_required: true
+  new_long_bash_launchers_allowed: false
+  new_dated_matrix_scripts_allowed: false
+  human_exception_requires_index_update: true
+  gpu_binding_location: external_environment_after_nvidia_smi
+  legacy_bash_role: historical_reference_or_project_setup_only
+  safety_rules:
+    - no_tracked_gpu_ids
+    - no_host_absolute_paths
+    - run_id_scoped_outputs
+    - legacy_entrypoint_kept_as_thin_wrapper
+
+documentation_surface_policy:
+  durable_process_docs: docs/pipelines
+  historical_report_archive: docs/reports/archive
+  handoff_notes: docs/codex-handoffs
+  active_evidence_sources:
+    - configs/active_evidence_registry.yaml
+    - registered_run_records
+  temporary_report_dirs_allowed: false
+  dated_archive_subdirs_required: true
+  archive_reports_are_active_evidence_by_default: false
+  safety_rules:
+    - move_historical_reports_to_docs_reports_archive_YYYYMMDD
+    - cite_archived_reports_from_pipeline_docs_or_registry
+    - keep_raw_tmp_reports_out_of_default_handoff
+
+implementation_surface_policy:
+  package_root: ecg_adv_gen
+  tests_root: util/tests
+  legacy_wrapper_roots:
+    - scripts/paper
+    - scripts/pgd_cross_center
+    - scripts/triple_labels
+    - scripts/ecgtwin_author_repro
+    - scripts/ecgtwin_gen
+  new_shared_logic_target: ecg_adv_gen
+  legacy_entrypoints_can_move_without_index_update: false
+  legacy_wrappers_own_new_shared_abstractions: false
+  package_helpers_require_cpu_tests: true
+  safety_rules:
+    - extract_small_cpu_tested_helpers_before_training_loop_moves
+    - keep_script_level_compatibility_exports
+    - update_active_scripts_and_tests_with_entrypoint_moves
+    - do_not_move_full_gpu_orchestration_in_one_step
 
 launcher:
   script: scripts/run_experiment.py
@@ -72,29 +139,159 @@ run_record_layout:
     - reports/
     - artifacts/
 
+evidence_scope_definitions:
+  trusted_registry_linked: Launch config is linked to the current trusted active evidence, but cite metrics only through configs/active_evidence_registry.yaml and recorded artifacts.
+  launch_only: Launch surface is managed and auditable, but it is not current experiment evidence by itself.
+  prep_only: Preparation/export surface only; generated data must be linked by later run manifests before citation.
+  evaluation_only: Evaluation surface only; cite resulting metrics only after registry or run-record registration.
+
 managed_experiments:
-  - name: effnet_direct_k500_v6
+  - name: effnet_direct_k500_v7_sjr_rgq
     status: active_wrapped
-    config: configs/experiments/effnet_direct_k500_v6.yaml
+    evidence_scope: trusted_registry_linked
+    config: configs/experiments/effnet_direct_k500_v7_sjr_rgq.yaml
     legacy_entrypoint: scripts/paper/run_direct_finetune_k500_20260516.py
     launcher: scripts/run_experiment.py
     method_family: direct_target_k500_finetune
     mapping_version: v7_super5_sjr_rgq_review_20260528
     owns_training_logic: false
-    notes: Stable first wrapper; one legacy command covers the four target centers and passes managed --out_root.
+    notes: Current EfficientNet direct K500 v7 SJR/RGQ wrapper; one legacy command covers the four target centers and passes managed --out_root.
 
-  - name: effnet_vae_lhat_k500_v6
+  - name: effnet_direct_k500_v7_sjr_rgq_matrix
     status: active_wrapped
-    config: configs/experiments/effnet_vae_lhat_k500_v6.yaml
+    evidence_scope: launch_only
+    config: configs/experiments/effnet_direct_k500_v7_sjr_rgq_matrix.yaml
+    legacy_entrypoint: scripts/paper/run_direct_finetune_k500_20260516.py
+    launcher: scripts/run_experiment.py
+    method_family: direct_target_k500_finetune_matrix
+    mapping_version: v7_super5_sjr_rgq_review_20260528
+    owns_training_logic: false
+    notes: Per-center Direct K500 v7 matrix launch surface; replaces the Direct K500 command expansion in scripts/paper/run_effnet_v7_multiseed_kshot_matrix_20260530.py without tracking GPU ids.
+
+  - name: effnet_v7_sjr_rgq_subset_export
+    status: active_wrapped
+    evidence_scope: prep_only
+    config: configs/experiments/effnet_v7_sjr_rgq_subset_export.yaml
+    legacy_entrypoint: scripts/paper/export_percent_kshot_v7_sjr_rgq_20260530.py
+    launcher: scripts/run_experiment.py
+    method_family: managed_v7_subset_export_prep
+    mapping_version: v7_super5_sjr_rgq_review_20260528
+    owns_training_logic: false
+    notes: Managed prep command for K500, p10, and p20 v7 SJR/RGQ ECGTwin-anchor subsets; replaces the subset-export stage embedded in scripts/paper/run_effnet_v7_multiseed_kshot_matrix_20260530.py.
+
+  - name: effnet_direct_percent_v7_sjr_rgq_matrix
+    status: active_wrapped
+    evidence_scope: launch_only
+    config: configs/experiments/effnet_direct_percent_v7_sjr_rgq_matrix.yaml
+    legacy_entrypoint: scripts/paper/run_direct_finetune_k500_20260516.py
+    launcher: scripts/run_experiment.py
+    method_family: direct_target_percent_finetune_matrix
+    mapping_version: v7_super5_sjr_rgq_review_20260528
+    owns_training_logic: false
+    notes: Per-center Direct p10/p20 v7 matrix launch surface; consumes seed20260531 percent-shot subsets and replaces that Direct portion of scripts/paper/run_effnet_v7_multiseed_kshot_matrix_20260530.py without tracking GPU ids.
+
+  - name: effnet_vae_lhat_k500_v7_sjr_rgq
+    status: active_wrapped
+    evidence_scope: trusted_registry_linked
+    config: configs/experiments/effnet_vae_lhat_k500_v7_sjr_rgq.yaml
     legacy_entrypoint: scripts/paper/run_effnet_latent_augmix_stage3_20260524.py
     launcher: scripts/run_experiment.py
     method_family: vae_latent_hull_online_at
     mapping_version: v7_super5_sjr_rgq_review_20260528
     owns_training_logic: false
-    notes: Expands to one legacy command per target center; uses seed20260531 K500 anchors, direct-K500 init checkpoints, compatsoft direct-init LHAT parameters, and target_real_val quick selection.
+    notes: Current EfficientNet VAE-LHAT v7 SJR/RGQ wrapper; expands to one legacy command per target center, uses seed20260531 K500 anchors, direct-K500 init checkpoints, compatsoft direct-init LHAT parameters, and target_real_val quick selection.
+
+  - name: effnet_vae_lhat_percent_v7_sjr_rgq
+    status: active_wrapped
+    evidence_scope: launch_only
+    config: configs/experiments/effnet_vae_lhat_percent_v7_sjr_rgq.yaml
+    legacy_entrypoint: scripts/paper/run_effnet_latent_augmix_stage3_20260524.py
+    launcher: scripts/run_experiment.py
+    method_family: vae_latent_hull_percent_online_at
+    mapping_version: v7_super5_sjr_rgq_review_20260528
+    owns_training_logic: false
+    notes: Per-center VAE-LHAT p10/p20 v7 matrix launch surface; uses protocol-matched Direct percent checkpoints from the same runtime.run_id and replaces that VAE portion of scripts/paper/run_effnet_v7_multiseed_kshot_matrix_20260530.py without tracking GPU ids.
+
+  - name: benchmark_source_v7_sjr_rgq_matrix
+    status: active_wrapped
+    evidence_scope: launch_only
+    config: configs/experiments/benchmark_source_v7_sjr_rgq_matrix.yaml
+    legacy_entrypoint: scripts/triple_labels/train_ptbxl.py
+    launcher: scripts/run_experiment.py
+    method_family: benchmark_source_pretrain_matrix
+    mapping_version: v7_super5_sjr_rgq_review_20260528
+    owns_training_logic: false
+    notes: Source PTB-XL Super5 pretraining launch surface for benchmark 1D ECG backbones; replaces the source-pretrain command expansion hidden inside scripts/paper/run_benchmark_backbone_v7_kshot_matrix_20260530.py.
+
+  - name: benchmark_resnet1d_direct_k500_v7_sjr_rgq_matrix
+    status: active_wrapped
+    evidence_scope: launch_only
+    config: configs/experiments/benchmark_resnet1d_direct_k500_v7_sjr_rgq_matrix.yaml
+    legacy_entrypoint: scripts/paper/run_benchmark_direct_finetune_v7_20260530.py
+    launcher: scripts/run_experiment.py
+    method_family: benchmark_direct_target_k500_finetune_matrix
+    mapping_version: v7_super5_sjr_rgq_review_20260528
+    owns_training_logic: false
+    notes: Per-center benchmark_resnet1d_wang Direct K500 v7 matrix launch surface; source checkpoint training remains an explicit prerequisite instead of being hidden inside scripts/paper/run_benchmark_backbone_v7_kshot_matrix_20260530.py.
+
+  - name: benchmark_inception1d_direct_k500_v7_sjr_rgq_matrix
+    status: active_wrapped
+    evidence_scope: launch_only
+    config: configs/experiments/benchmark_inception1d_direct_k500_v7_sjr_rgq_matrix.yaml
+    legacy_entrypoint: scripts/paper/run_benchmark_direct_finetune_v7_20260530.py
+    launcher: scripts/run_experiment.py
+    method_family: benchmark_direct_target_k500_finetune_matrix
+    mapping_version: v7_super5_sjr_rgq_review_20260528
+    owns_training_logic: false
+    notes: Per-center benchmark_inception1d Direct K500 v7 matrix launch surface; source checkpoint training remains an explicit prerequisite.
+
+  - name: benchmark_fcn_wang_direct_k500_v7_sjr_rgq_matrix
+    status: active_wrapped
+    evidence_scope: launch_only
+    config: configs/experiments/benchmark_fcn_wang_direct_k500_v7_sjr_rgq_matrix.yaml
+    legacy_entrypoint: scripts/paper/run_benchmark_direct_finetune_v7_20260530.py
+    launcher: scripts/run_experiment.py
+    method_family: benchmark_direct_target_k500_finetune_matrix
+    mapping_version: v7_super5_sjr_rgq_review_20260528
+    owns_training_logic: false
+    notes: Per-center benchmark_fcn_wang Direct K500 v7 matrix launch surface; source checkpoint training remains an explicit prerequisite.
+
+  - name: benchmark_resnet1d_direct_percent_v7_sjr_rgq_matrix
+    status: active_wrapped
+    evidence_scope: launch_only
+    config: configs/experiments/benchmark_resnet1d_direct_percent_v7_sjr_rgq_matrix.yaml
+    legacy_entrypoint: scripts/paper/run_benchmark_direct_finetune_v7_20260530.py
+    launcher: scripts/run_experiment.py
+    method_family: benchmark_direct_target_percent_finetune_matrix
+    mapping_version: v7_super5_sjr_rgq_review_20260528
+    owns_training_logic: false
+    notes: Per-center benchmark_resnet1d_wang Direct p10/p20 v7 matrix launch surface; consumes seed20260531 percent-shot subsets and keeps source checkpoint training as an explicit prerequisite.
+
+  - name: ecgfounder_direct_k500_v7_sjr_rgq_matrix
+    status: active_wrapped
+    evidence_scope: launch_only
+    config: configs/experiments/ecgfounder_direct_k500_v7_sjr_rgq_matrix.yaml
+    legacy_entrypoint: scripts/paper/run_ecgfounder_kshot_head_ft_20260517.py
+    launcher: scripts/run_experiment.py
+    method_family: ecgfounder_frozen_feature_direct_k500_head_finetune_matrix
+    mapping_version: v7_super5_sjr_rgq_review_20260528
+    owns_training_logic: false
+    notes: Per-center ECGFounder frozen-feature Direct K500 v7 matrix launch surface; uses the v7 linear-probe cache and seed20260531 SJR/RGQ K500 subset root while leaving GPU selection outside YAML.
+
+  - name: ecgfounder_vae_lhat_k500_v7_sjr_rgq
+    status: active_wrapped
+    evidence_scope: launch_only
+    config: configs/experiments/ecgfounder_vae_lhat_k500_v7_sjr_rgq.yaml
+    legacy_entrypoint: scripts/paper/run_ecgfounder_vae_only_lhat_head_ft_20260523.py
+    launcher: scripts/run_experiment.py
+    method_family: ecgfounder_vae_latent_hull_online_at_v7
+    mapping_version: v7_super5_sjr_rgq_review_20260528
+    owns_training_logic: false
+    notes: Per-center ECGFounder residual-adapter VAE-LHAT K500 v7 launch surface; consumes v7 Direct K500 heads from the same run_id and the seed20260531 SJR/RGQ subset root while leaving GPU selection outside YAML.
 
   - name: ecgfounder_inithead_fullft_k500_v6
     status: active_wrapped
+    evidence_scope: launch_only
     config: configs/experiments/ecgfounder_inithead_fullft_k500_v6.yaml
     legacy_entrypoint: scripts/paper/run_ecgfounder_fullft_super5_pilot_20260523.py
     launcher: scripts/run_experiment.py
@@ -105,6 +302,7 @@ managed_experiments:
 
   - name: ecgfounder_direct_k500_v6
     status: active_wrapped
+    evidence_scope: launch_only
     config: configs/experiments/ecgfounder_direct_k500_v6.yaml
     legacy_entrypoint: scripts/paper/run_ecgfounder_kshot_head_ft_20260517.py
     launcher: scripts/run_experiment.py
@@ -115,6 +313,7 @@ managed_experiments:
 
   - name: ecgfounder_vae_lhat_k500_v6
     status: active_wrapped
+    evidence_scope: launch_only
     config: configs/experiments/ecgfounder_vae_lhat_k500_v6.yaml
     legacy_entrypoint: scripts/paper/run_ecgfounder_vae_only_lhat_head_ft_20260523.py
     launcher: scripts/run_experiment.py
@@ -123,15 +322,137 @@ managed_experiments:
     owns_training_logic: false
     notes: Residual-adapter VAE-only Latent-Hull online AT wrapper; expands one command per target center, uses seed20260531 K500 latent anchors, K500 direct heads as frozen base heads, hard-BCE anchor sampling, and target_real_val checkpoint selection.
 
-  - name: pn2021_eval_v6_refexcluded
+  - name: ecgtwin_author_ibe_repro
     status: active_wrapped
-    config: configs/experiments/pn2021_eval_v6_refexcluded.yaml
+    evidence_scope: launch_only
+    config: configs/experiments/ecgtwin_author_ibe_repro.yaml
+    legacy_entrypoint: scripts/ecgtwin_author_repro/train_ibe_repro.py
+    launcher: scripts/run_experiment.py
+    method_family: ecgtwin_author_ibe_stage1_reproduction
+    mapping_version: v7_super5_sjr_rgq_review_20260528
+    owns_training_logic: false
+    notes: Managed stage-1 ECGTwin author IBE reproduction launch surface with run-id-scoped output and stable artifact trace; not current classifier evidence by itself.
+
+  - name: ecgtwin_author_dit_repro
+    status: active_wrapped
+    evidence_scope: launch_only
+    config: configs/experiments/ecgtwin_author_dit_repro.yaml
+    legacy_entrypoint: scripts/ecgtwin_author_repro/train_dit_repro.py
+    launcher: scripts/run_experiment.py
+    method_family: ecgtwin_author_dit_stage2_reproduction
+    mapping_version: v7_super5_sjr_rgq_review_20260528
+    owns_training_logic: false
+    notes: Managed stage-2 ECGTwin author DiT reproduction launch surface; consumes IBE_best.pth from the managed stage-1 output for the same run_id.
+
+  - name: ecgtwin_prompt_token_train_minimal
+    status: active_wrapped
+    evidence_scope: launch_only
+    config: configs/experiments/ecgtwin_prompt_token_train_minimal.yaml
+    legacy_entrypoint: scripts/ecgtwin_gen/train_center_prompt_tokens.py
+    launcher: scripts/run_experiment.py
+    method_family: ecgtwin_prompt_token_train
+    mapping_version: v7_super5_sjr_rgq_review_20260528
+    owns_training_logic: false
+    notes: Minimal managed prompt-token training launch surface; writes a run-id-scoped PN2021 target-center prompt_token_bank.pt without style/semantic auxiliary losses.
+
+  - name: ecgtwin_prompt_token_generate_minimal
+    status: active_wrapped
+    evidence_scope: launch_only
+    config: configs/experiments/ecgtwin_prompt_token_generate_minimal.yaml
+    legacy_entrypoint: scripts/ecgtwin_gen/generate_center_prompt_token_synth.py
+    launcher: scripts/run_experiment.py
+    method_family: ecgtwin_prompt_token_generate
+    mapping_version: v7_super5_sjr_rgq_review_20260528
+    owns_training_logic: false
+    notes: Minimal managed prompt-token target-token generation surface for Ningbo NORM/MI/STTC; consumes the same-run prompt token bank and writes samples.npz plus summary.json.
+
+  - name: ecgtwin_prompt_token_gate_minimal
+    status: active_wrapped
+    evidence_scope: launch_only
+    config: configs/experiments/ecgtwin_prompt_token_gate_minimal.yaml
+    legacy_entrypoint: scripts/ecgtwin_gen/gate_prompt_token_synth.py
+    launcher: scripts/run_experiment.py
+    method_family: ecgtwin_prompt_token_gate
+    mapping_version: v7_super5_sjr_rgq_review_20260528
+    owns_training_logic: false
+    notes: Minimal managed prompt-token gate/export surface; consumes same-run generated target-token samples and writes gated_samples, latent pool, class trust, ref meta, and gate report artifacts.
+
+  - name: ecgtwin_prompt_token_online_at_minimal
+    status: active_wrapped
+    evidence_scope: launch_only
+    config: configs/experiments/ecgtwin_prompt_token_online_at_minimal.yaml
+    legacy_entrypoint: scripts/pgd_cross_center/synth_online_at_super5.py
+    launcher: scripts/run_experiment.py
+    method_family: ecgtwin_prompt_token_online_at
+    mapping_version: v7_super5_sjr_rgq_review_20260528
+    owns_training_logic: false
+    notes: Minimal managed prompt-token online AT launch surface; consumes same-run prompt-token gated latent pool/class-trust/ref-meta artifacts plus v7 K500 target-real signals and writes a run-id-scoped Ningbo adaptation run.
+
+  - name: ecgtwin_prompt_token_online_at_minimal_eval
+    status: active_wrapped
+    evidence_scope: evaluation_only
+    config: configs/experiments/ecgtwin_prompt_token_online_at_minimal_pn2021_eval.yaml
+    legacy_entrypoint: scripts/triple_labels/eval_crosscenter.py
+    launcher: scripts/run_experiment.py
+    method_family: ecgtwin_prompt_token_online_at_eval
+    mapping_version: v7_super5_sjr_rgq_review_20260528
+    owns_training_logic: false
+    notes: Minimal managed PN2021 ref-excluded eval surface for the same-run prompt-token online AT Ningbo output; excludes all four target-center K500 ref-meta files and writes metrics/table postprocess artifacts.
+
+  - name: pn2021_eval_v7_sjr_rgq_refexcluded
+    status: active_wrapped
+    evidence_scope: evaluation_only
+    config: configs/experiments/pn2021_eval_v7_sjr_rgq_refexcluded.yaml
     legacy_entrypoint: scripts/triple_labels/eval_crosscenter.py
     launcher: scripts/run_experiment.py
     method_family: managed_pn2021_refexcluded_eval
     mapping_version: v7_super5_sjr_rgq_review_20260528
     owns_training_logic: false
     notes: Expands to one eval command per direct-K500 target-center model; each command excludes all four K500 ref-meta files and reports both all-zero-kept and drop-all-zero PN2021 views.
+
+  - name: pn2021c_effnet_v7_augmix_vs_noaug
+    status: active_wrapped
+    evidence_scope: evaluation_only
+    config: configs/experiments/pn2021c_effnet_v7_augmix_vs_noaug.yaml
+    legacy_entrypoint: scripts/triple_labels/eval_pn2021_corruptions.py
+    launcher: scripts/run_experiment.py
+    method_family: managed_pn2021c_refexcluded_corruption_eval
+    mapping_version: v7_super5_sjr_rgq_review_20260528
+    owns_training_logic: false
+    notes: Expands to eight PN2021-C eval commands for four target centers times VAE noAug and VAE LHAT EfficientNet v7 runs; each command writes run-id-scoped corruption metrics and excludes that center's K500 ref-meta.
+
+inactive_experiment_configs:
+  - config: configs/experiments/effnet_direct_k500_v6.yaml
+    status: superseded_by_v7
+    reason: Historical managed Direct K500 config; keep for compatibility, but current active launch/evidence surfaces use v7 SJR/RGQ configs.
+
+  - config: configs/experiments/effnet_direct_k500_v6_smoke.yaml
+    status: smoke_only
+    reason: Engineering smoke config for launcher/runtime checks; not an active paper result surface.
+
+  - config: configs/experiments/effnet_vae_lhat_k500_v6.yaml
+    status: superseded_by_v7
+    reason: Historical managed EfficientNet VAE-LHAT config; current active evidence and launch surfaces use v7 SJR/RGQ configs.
+
+  - config: configs/experiments/effnet_vae_lhat_k500_v6_smoke.yaml
+    status: smoke_only
+    reason: Engineering smoke config for launcher/runtime checks; not an active paper result surface.
+
+  - config: configs/experiments/ecgfounder_inithead_fullft_k500_v6_smoke.yaml
+    status: smoke_only
+    reason: Engineering smoke config for ECGFounder init-head full-FT runtime checks; not an active paper result surface.
+
+  - config: configs/experiments/ecgfounder_vae_lhat_k500_v6_smoke.yaml
+    status: smoke_only
+    reason: Engineering smoke config for ECGFounder VAE-LHAT runtime checks; not an active paper result surface.
+
+  - config: configs/experiments/pn2021_eval_v6_refexcluded.yaml
+    status: superseded_by_v7
+    reason: Historical managed PN2021 ref-excluded eval config; current active eval surface uses v7 SJR/RGQ mapping and ref ids.
+
+  - config: configs/experiments/pn2021_eval_v6_refexcluded_smoke.yaml
+    status: smoke_only
+    reason: Engineering smoke config for PN2021 ref-excluded eval runtime checks; not an active paper result surface.
 
 reporting_tools:
   - name: data_manifest_exporter
@@ -206,8 +527,10 @@ reporting_tools:
     safety_rules:
       - cpu_only_no_gpu_no_child_training
       - validates_active_evidence_registry
+      - audits_active_script_index_managed_configs
       - checks_mapping_k500_ref_exclusion_metrics_and_comparison_bundle
-      - warns_on_guarded_external_model_dirty_paths
+      - errors_on_staged_guarded_paths_and_warns_on_dirty_local_only_paths
+      - summarizes_dirty_workspace_by_agent_handoff_layer
 
   - name: legacy_vae_manifest_backfiller
     status: active

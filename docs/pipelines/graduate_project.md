@@ -671,7 +671,7 @@ epoch sample budget       = comparable to Method A unless explicitly running exp
 
 ```text
 /root/autodl-tmp/graduate_project/reports/method_a_vs_b_seed42.md
-docs/tmp_md/graduate_project_method_a_vs_b_seed42.md
+docs/reports/archive/undated/graduate_project_method_a_vs_b_seed42.md
 ```
 
 报告表格：
@@ -2273,7 +2273,7 @@ the same generation, filtering, training, and evaluation recipe.
 Audit report:
 
 ```text
-docs/tmp_md/auroc3_auprc7_center_token_ablation_20260504.md
+docs/reports/archive/20260504/auroc3_auprc7_center_token_ablation_20260504.md
 ```
 
 The audit includes the C0 synthetic-only comparison. The token arm is better
@@ -3637,7 +3637,7 @@ the current PTB-XL center token does not provide a strict downstream advantage.
 Detailed audit:
 
 ```text
-docs/tmp_md/auroc3_auprc7_center_token_ablation_20260504.md
+docs/reports/archive/20260504/auroc3_auprc7_center_token_ablation_20260504.md
 ```
 
 ### 2026-05-04 v45 Contrastive Token Generation Check

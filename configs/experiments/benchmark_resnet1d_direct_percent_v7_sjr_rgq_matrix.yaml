@@ -1,0 +1,96 @@
+extends:
+  - ../defaults/benchmark_backbone_v7_sjr_rgq_defaults.yaml
+
+experiment:
+  name: benchmark_resnet1d_direct_percent_v7_sjr_rgq_matrix
+  description: Per-center benchmark ResNet1D direct p10/p20 v7 SJR/RGQ matrix launch surface consuming exported percent-shot subsets.
+
+runner:
+  entrypoint: scripts/paper/run_benchmark_direct_finetune_v7_20260530.py
+  name: ${experiment.name}_${matrix.case.center}_${matrix.case.protocol}
+  matrix:
+    case:
+      - center: ningbo
+        protocol: p10
+        k: 1923
+      - center: ningbo
+        protocol: p20
+        k: 3846
+      - center: chapman_shaoxing
+        protocol: p10
+        k: 582
+      - center: chapman_shaoxing
+        protocol: p20
+        k: 1164
+      - center: cpsc_2018
+        protocol: p10
+        k: 475
+      - center: cpsc_2018
+        protocol: p20
+        k: 949
+      - center: georgia
+        protocol: p10
+        k: 871
+      - center: georgia
+        protocol: p20
+        k: 1742
+  argv:
+    - --centers
+    - ${matrix.case.center}
+    - --k
+    - ${matrix.case.k}
+    - --subset_seed
+    - ${paper_protocol.kshot.subset_seed}
+    - --seed
+    - ${paper_protocol.kshot.seed}
+    - --model_name
+    - ${model.name}
+    - --init_ckpt
+    - ${model.source_checkpoint}
+    - --epochs
+    - ${training.epochs}
+    - --lr
+    - ${training.optimizer.lr}
+    - --weight_decay
+    - ${training.optimizer.weight_decay}
+    - --grad_clip
+    - ${training.grad_clip}
+    - --batch_size
+    - ${training.batch_size}
+    - --eval_batch_size
+    - ${training.eval_batch_size}
+    - --crop_len
+    - ${preprocess.crop_len}
+    - --val_fraction
+    - 0.2
+    - --num_workers
+    - ${training.num_workers}
+    - --device
+    - cuda
+    - --pos_weight_clip_max
+    - ${training.pos_weight_clip_max}
+    - --eval_min_pos
+    - ${evaluation.min_pos}
+    - --eval_pn2021_limit
+    - ${evaluation.pn2021_limit}
+    - --data_root
+    - ${paths.data_root}
+    - --python
+    - ${python.executable}
+    - --subset_root
+    - ${data.kshot_subset_root}
+    - --out_root
+    - ${paths.output_root}/${model.name}_direct_${matrix.case.protocol}_v7_sjr_rgq/${runtime.run_id}/${matrix.case.center}
+
+adaptation:
+  method: benchmark_direct_target_percent_finetune
+
+lineage:
+  replaces_legacy_surface: scripts/paper/run_benchmark_backbone_v7_kshot_matrix_20260530.py
+  scope: benchmark_resnet1d_direct_p10_p20_only
+  prerequisite_config: configs/experiments/effnet_v7_sjr_rgq_subset_export.yaml
+  prerequisite_stage: benchmark_source_v7_sjr_rgq
+  notes:
+    - This managed config replaces the Direct p10/p20 command expansion for benchmark_resnet1d_wang only.
+    - Source checkpoint training remains an explicit prerequisite instead of being hidden inside a matrix launcher.
+    - The per-center K values come from exported v7 seed20260531 percent-shot subset directories.

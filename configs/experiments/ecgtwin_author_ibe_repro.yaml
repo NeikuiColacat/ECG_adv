@@ -1,0 +1,90 @@
+extends:
+  - ../defaults/common_v7_sjr_rgq_super5.yaml
+
+experiment:
+  name: ecgtwin_author_ibe_repro
+  description: Managed ECGTwin author IBE stage-1 reproduction launch surface with run-id-scoped outputs.
+  status: active-wrapped
+
+training:
+  epochs: 40
+  batch_size: 65536
+  mini_batch_size: 512
+  val_batch_size: 256
+  num_workers: ${resources.default_num_workers}
+  optimizer:
+    lr: 0.001
+    weight_decay: 0.001
+  prefetch_factor: 2
+  matmul_precision: high
+  amp:
+    enabled: true
+    dtype: bf16
+  log_every: 1
+
+model:
+  backbone: ecgtwin_author_ibe_repro
+  name: ecgtwin_author_ibe_repro
+  num_classes: 5
+
+adaptation:
+  method: ecgtwin_author_ibe_stage1_reproduction
+
+logging:
+  child_artifacts:
+    - train.log
+    - run_config.yaml
+    - metrics.jsonl
+    - loss_curve.csv
+    - loss_curve.png
+    - checkpoints/latest.pt
+    - checkpoints/best.pt
+    - checkpoints/IBE_best.pth
+  postprocess_artifacts: []
+
+runner:
+  entrypoint: scripts/ecgtwin_author_repro/train_ibe_repro.py
+  name: ${experiment.name}
+  argv:
+    - --output_dir
+    - ${paths.output_root}/ecgtwin_author_repro/${runtime.run_id}/ibe_stage1
+    - --train_path
+    - ${paths.data_root}/ECGTwin_Data/paired_Mimic_vae_multi_nomic.pt
+    - --val_path
+    - ${paths.data_root}/ECGTwin_Data/paired_Mimic_vae_multi_nomic_test.pt
+    - --epochs
+    - ${training.epochs}
+    - --batch_size
+    - ${training.batch_size}
+    - --mini_batch_size
+    - ${training.mini_batch_size}
+    - --val_batch_size
+    - ${training.val_batch_size}
+    - --lr
+    - ${training.optimizer.lr}
+    - --weight_decay
+    - ${training.optimizer.weight_decay}
+    - --num_workers
+    - ${training.num_workers}
+    - --pin_memory
+    - --prefetch_factor
+    - ${training.prefetch_factor}
+    - --drop_last
+    - --amp
+    - --amp_dtype
+    - ${training.amp.dtype}
+    - --matmul_precision
+    - ${training.matmul_precision}
+    - --device
+    - cuda
+    - --seed
+    - ${paper_protocol.kshot.seed}
+    - --log_every
+    - ${training.log_every}
+
+lineage:
+  replaces_legacy_surface: scripts/ecgtwin_author_repro/run_author_repro_pipeline.sh
+  scope: ecgtwin_author_ibe_stage1_only
+  notes:
+    - This config manages stage 1 only; DiT stage 2 is a separate config consuming this run's IBE_best.pth.
+    - Persistent DataLoader workers are intentionally omitted because the historical long IBE run had worker cleanup issues after interruption.

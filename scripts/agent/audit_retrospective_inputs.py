@@ -100,10 +100,6 @@ def collect_project_records(root: Path, max_hash_bytes: int) -> list[FileRecord]
         (
             "summary_docs",
             [
-                "docs/tmp_md/*summary*",
-                "docs/tmp_md/*report*",
-                "docs/tmp_html/*summary*",
-                "docs/tmp_html/*report*",
                 "docs/reports/archive/**/*.md",
                 "docs/reports/archive/**/*.html",
             ],

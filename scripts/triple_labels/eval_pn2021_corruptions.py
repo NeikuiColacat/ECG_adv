@@ -41,6 +41,17 @@ from methods.augmix.ecg_ops import (  # noqa: E402
     RandomLeadsMask,
 )
 from methods.augmix.severity import build_op  # noqa: E402
+from ecg_adv_gen.data.kshot import load_ref_record_ids_by_center  # noqa: E402
+from ecg_adv_gen.evaluation.pn2021_corruptions import (  # noqa: E402
+    aggregate_corruption_summary,
+    clean_mmap_cache_path,
+    clean_npz_cache_path,
+    corruption_cache_path,
+    filter_record_indices,
+    load_clean_metric_lookup,
+    load_npz_metadata,
+    stable_corruption_seed,
+)
 
 
 STRESS_PROFILE_CHOICES = ("standard", "stress_v2")
@@ -129,49 +140,38 @@ def _build_corruption_op(corruption, public_severity, severity_profile):
 
 
 def _cache_path(cache_dir, scheme, center, corruption, severity):
-    name = f"{scheme}_{center}_{corruption}_s{severity}_100hz1000_{PN2021_C_CACHE_VERSION}.npz"
-    return os.path.join(cache_dir, name)
+    return corruption_cache_path(
+        cache_dir, scheme, center, corruption, severity, PN2021_C_CACHE_VERSION
+    )
 
 
 def _clean_mmap_path(cache_dir, scheme, center):
-    return os.path.join(
-        cache_dir,
-        f"{scheme}_{center}_100hz1000_{PN2021_EVAL_CACHE_VERSION}",
-    )
+    return clean_mmap_cache_path(cache_dir, scheme, center, PN2021_EVAL_CACHE_VERSION)
 
 
 def _clean_npz_path(cache_dir, scheme, center):
-    return os.path.join(
-        cache_dir,
-        f"{scheme}_{center}_100hz1000_{PN2021_EVAL_CACHE_VERSION}.npz",
-    )
+    return clean_npz_cache_path(cache_dir, scheme, center, PN2021_EVAL_CACHE_VERSION)
 
 
 def _load_metadata(data):
-    if "metadata_json" not in data.files:
-        return {}
-    raw = data["metadata_json"]
-    if hasattr(raw, "item"):
-        raw = raw.item()
-    if isinstance(raw, bytes):
-        raw = raw.decode("utf-8")
-    try:
-        return json.loads(str(raw))
-    except Exception:
-        return {}
+    return load_npz_metadata(data)
 
 
 def _stable_seed(base_seed, *parts):
-    import hashlib
-    payload = "|".join(str(p) for p in (base_seed,) + parts).encode("utf-8")
-    return int.from_bytes(hashlib.sha1(payload).digest()[:4], "little")
+    return stable_corruption_seed(base_seed, *parts)
 
 
 class StreamingCorruptedPN2021Dataset(Dataset):
     def __init__(self, signals, labels, corruption, public_severity,
-                 seed=20260501, crop_len=250, severity_profile="standard"):
+                 seed=20260501, crop_len=250, severity_profile="standard",
+                 indices=None):
         self.signals = signals
         self.labels = labels.astype(np.float32, copy=False)
+        self.indices = (
+            np.arange(len(signals), dtype=np.int64)
+            if indices is None
+            else np.asarray(indices, dtype=np.int64)
+        )
         self.corruption = corruption
         self.public_severity = int(public_severity)
         self.internal_severity = PUBLIC_TO_INTERNAL_SEVERITY[self.public_severity]
@@ -180,10 +180,11 @@ class StreamingCorruptedPN2021Dataset(Dataset):
         self.crop_len = crop_len
 
     def __len__(self):
-        return len(self.signals)
+        return len(self.indices)
 
     def __getitem__(self, idx):
-        sample_seed = _stable_seed(self.seed, self.corruption, self.public_severity, idx)
+        real_idx = int(self.indices[idx])
+        sample_seed = _stable_seed(self.seed, self.corruption, self.public_severity, real_idx)
         np.random.seed(sample_seed)
         random.seed(sample_seed)
         torch.manual_seed(sample_seed)
@@ -191,13 +192,17 @@ class StreamingCorruptedPN2021Dataset(Dataset):
             self.corruption, self.public_severity, self.severity_profile
         )
 
-        sig_tc = self.signals[idx]
+        sig_tc = self.signals[real_idx]
         start = max((sig_tc.shape[0] - self.crop_len) // 2, 0)
         crop = sig_tc[start:start + self.crop_len]
         sig_ct = torch.from_numpy(np.ascontiguousarray(crop.T)).float()
         corrupt_ct = op(sig_ct)
-        label = np.array(self.labels[idx], dtype=np.float32, copy=True)
+        label = np.array(self.labels[real_idx], dtype=np.float32, copy=True)
         return corrupt_ct.float(), torch.from_numpy(label).float()
+
+
+def _filter_indices(record_ids, exclude_ids, limit=None):
+    return filter_record_indices(record_ids, exclude_ids, limit)
 
 
 def _load_clean_center(args, center):
@@ -205,8 +210,9 @@ def _load_clean_center(args, center):
     if os.path.isdir(mmap_root):
         sig_path = os.path.join(mmap_root, "signals.npy")
         lab_path = os.path.join(mmap_root, "labels.npy")
+        rid_path = os.path.join(mmap_root, "record_ids.npy")
         meta_path = os.path.join(mmap_root, "metadata.json")
-        if os.path.exists(sig_path) and os.path.exists(lab_path):
+        if os.path.exists(sig_path) and os.path.exists(lab_path) and os.path.exists(rid_path):
             metadata = {}
             if os.path.exists(meta_path):
                 with open(meta_path) as f:
@@ -214,6 +220,7 @@ def _load_clean_center(args, center):
             return (
                 np.load(sig_path, mmap_mode="r"),
                 np.load(lab_path, mmap_mode="r"),
+                np.load(rid_path, allow_pickle=True).astype(str),
                 metadata,
                 "mmap",
             )
@@ -226,6 +233,7 @@ def _load_clean_center(args, center):
     return (
         data["signals"].astype(np.float32, copy=False),
         data["labels"].astype(np.float32, copy=False),
+        data["record_ids"].astype(str),
         _load_metadata(data),
         "npz",
     )
@@ -252,34 +260,23 @@ def _load_model(args, scheme, device):
 
 
 def _clean_lookup(clean_eval_json):
-    if not clean_eval_json:
-        return {}
-    with open(clean_eval_json) as f:
-        data = json.load(f)
-    per_center = data.get("pn2021", {}).get("per_center", {})
-    return {
-        center: {
-            "macro_auroc": vals.get("macro_auroc"),
-            "macro_auprc": vals.get("macro_auprc"),
-        }
-        for center, vals in per_center.items()
-    }
+    return load_clean_metric_lookup(clean_eval_json)
 
 
 def eval_one(model, scheme, args, device, center, corruption, severity, clean_by_center):
     path = None
     metadata = {}
     cache_source = args.mode
+    exclude_ids = getattr(args, "exclude_ref_ids_by_center", {}).get(center, set())
     if args.mode == "stream":
-        signals, labels, metadata, clean_kind = _load_clean_center(args, center)
+        signals, labels, record_ids, metadata, clean_kind = _load_clean_center(args, center)
         cache_source = f"stream:{clean_kind}"
-        if args.limit and args.limit < len(signals):
-            signals = signals[:args.limit]
-            labels = labels[:args.limit]
+        indices = _filter_indices(record_ids, exclude_ids, args.limit)
         ds = StreamingCorruptedPN2021Dataset(
             signals, labels, corruption, severity,
             seed=args.seed, crop_len=args.crop_len,
             severity_profile=args.severity_profile,
+            indices=indices,
         )
     else:
         if args.severity_profile != "standard":
@@ -293,9 +290,10 @@ def eval_one(model, scheme, args, device, center, corruption, severity, clean_by
         data = np.load(path, allow_pickle=True)
         signals = data["signals"].astype(np.float32, copy=False)
         labels = data["labels"].astype(np.float32, copy=False)
-        if args.limit and args.limit < len(signals):
-            signals = signals[:args.limit]
-            labels = labels[:args.limit]
+        record_ids = data["record_ids"].astype(str)
+        indices = _filter_indices(record_ids, exclude_ids, args.limit)
+        signals = signals[indices]
+        labels = labels[indices]
         ds = PN2021CachedCenterDataset(signals, labels, crop_len=args.crop_len)
         metadata = _load_metadata(data)
     loader = DataLoader(
@@ -329,6 +327,7 @@ def eval_one(model, scheme, args, device, center, corruption, severity, clean_by
         "cache_path": path,
         "cache_source": cache_source,
         "metadata": metadata,
+        "n_excluded_ref_ids_for_center": int(len(exclude_ids)),
         "corruption": {
             "name": corruption,
             "severity_profile": args.severity_profile,
@@ -349,33 +348,7 @@ def eval_one(model, scheme, args, device, center, corruption, severity, clean_by
 
 
 def _aggregate(results):
-    by_key = {}
-    for center, center_results in results["per_center"].items():
-        for corruption, severity_results in center_results.items():
-            for severity, vals in severity_results.items():
-                key = (corruption, severity)
-                by_key.setdefault(key, []).append(vals)
-
-    out = {}
-    for (corruption, severity), rows in by_key.items():
-        auroc = [r["macro_auroc"] for r in rows if np.isfinite(r["macro_auroc"])]
-        auprc = [r["macro_auprc"] for r in rows if np.isfinite(r["macro_auprc"])]
-        auroc_drop = [
-            r["auroc_drop_vs_clean"] for r in rows
-            if r["auroc_drop_vs_clean"] is not None and np.isfinite(r["auroc_drop_vs_clean"])
-        ]
-        auprc_drop = [
-            r["auprc_drop_vs_clean"] for r in rows
-            if r["auprc_drop_vs_clean"] is not None and np.isfinite(r["auprc_drop_vs_clean"])
-        ]
-        out.setdefault(corruption, {})[str(severity)] = {
-            "n_centers": len(rows),
-            "mean_macro_auroc": float(np.mean(auroc)) if auroc else float("nan"),
-            "mean_macro_auprc": float(np.mean(auprc)) if auprc else float("nan"),
-            "mean_auroc_drop_vs_clean": float(np.mean(auroc_drop)) if auroc_drop else None,
-            "mean_auprc_drop_vs_clean": float(np.mean(auprc_drop)) if auprc_drop else None,
-        }
-    return out
+    return aggregate_corruption_summary(results)
 
 
 def main():
@@ -406,6 +379,16 @@ def main():
     p.add_argument("--num_workers", type=int, default=4)
     p.add_argument("--min_pos", type=int, default=10)
     p.add_argument("--seed", type=int, default=20260501)
+    p.add_argument(
+        "--exclude_ref_ids",
+        nargs="*",
+        default=[],
+        help=(
+            "Optional K-shot ref-meta JSON file(s). Records listed under "
+            "ref_record_ids are excluded from the matching center before "
+            "corruption evaluation."
+        ),
+    )
     p.add_argument("--limit", type=int, default=None,
                    help="Evaluate only the first N records per cache for smoke tests.")
     p.add_argument("--output_path", default=None)
@@ -415,6 +398,15 @@ def main():
     scheme = get_scheme(args.scheme)
     model = _load_model(args, scheme, device)
     clean_by_center = _clean_lookup(args.clean_eval_json)
+    args.exclude_ref_ids_by_center = load_ref_record_ids_by_center(args.exclude_ref_ids)
+    if args.exclude_ref_ids_by_center:
+        print(
+            "[exclude] "
+            + ", ".join(
+                f"{center}:{len(ids)}"
+                for center, ids in sorted(args.exclude_ref_ids_by_center.items())
+            )
+        )
 
     output = {
         "scheme": args.scheme,
@@ -428,6 +420,11 @@ def main():
         "corruptions": list(args.corruptions),
         "severities": list(args.severities),
         "severity_profile": args.severity_profile,
+        "exclude_ref_ids": list(args.exclude_ref_ids),
+        "exclude_ref_ids_by_center_counts": {
+            center: len(ids)
+            for center, ids in sorted(args.exclude_ref_ids_by_center.items())
+        },
         "pn2021_c_cache_version": PN2021_C_CACHE_VERSION,
         "per_center": {},
     }

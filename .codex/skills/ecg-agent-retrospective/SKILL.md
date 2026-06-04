@@ -38,8 +38,9 @@ Prefer project-local, durable inputs:
 2. `.codex/skills/*/SKILL.md` and only the specific reference files needed.
 3. `docs/codex-handoffs/*` if present.
 4. Recent `docs/pipelines/*`, especially handoff/repro/refactor docs.
-5. Recent `docs/tmp_md/*summary*`, `docs/tmp_md/*report*`, and matching HTML
-   report files when they are the only source of a decision.
+5. Recent `docs/reports/archive/**/*summary*` and
+   `docs/reports/archive/**/*report*` files when they are the only source of a
+   decision.
 6. `configs/active_scripts.yaml` and active experiment/evidence registry files.
 7. User-provided session transcript paths. Do not rummage through unrelated
    global Codex sessions by default.

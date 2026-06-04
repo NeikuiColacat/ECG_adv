@@ -9,7 +9,6 @@ resamples/pads to 1024, converts PTBXL order to ECGTwin order, then encodes.
 """
 
 import argparse
-import hashlib
 import json
 import os
 import random
@@ -31,14 +30,15 @@ from scripts.crosscenter_v2.preprocess_utils import (  # noqa: E402
     reorder_leads_tc,
     resample_tc,
 )
-from scripts.triple_labels.eval_crosscenter import parse_header_snomed  # noqa: E402
-from scripts.triple_labels.label_schemes import (  # noqa: E402
-    CLASS_NAMES_SUPER5,
-    SUPER5_TO_IDX,
-    get_super5_pn2021_mapping_metadata,
-    snomed_list_to_super5,
-    SNOMED_TO_SUPER5_POSITIVE,
+from ecg_adv_gen.data import (  # noqa: E402
+    hybrid_select_pn2021_records,
+    parse_pn2021_header_metadata,
+    pn2021_hash_fold,
+    pn2021_primary_class,
+    pn2021_primary_snomed,
+    record_to_prompt_token_cache_item,
 )
+from scripts.triple_labels.label_schemes import get_super5_pn2021_mapping_metadata  # noqa: E402
 from util.ecgtwin_utils import ECGTwinWrapper  # noqa: E402
 from util.lead_utils import PTBXL_TO_ECGTWIN_INDICES  # noqa: E402
 
@@ -46,7 +46,6 @@ from util.lead_utils import PTBXL_TO_ECGTWIN_INDICES  # noqa: E402
 DEFAULT_CENTERS = ["ningbo", "chapman_shaoxing", "cpsc_2018", "georgia"]
 DEFAULT_OUT_ROOT = "/root/autodl-tmp/ecgtwin_prompt_token_super5/cache_v1"
 DEFAULT_DATA_ROOT = "/root/autodl-tmp/physionet2021/training"
-SUPER5_PRIORITY = ["MI", "HYP", "CD", "STTC", "NORM"]
 VERSION = "ecgtwin_prompt_token_cache_v1"
 
 
@@ -58,51 +57,19 @@ def set_all_seeds(seed):
 
 
 def _parse_header_meta(header_path):
-    meta = {"age": None, "sex": None, "hr": None}
-    try:
-        with open(header_path) as f:
-            for line in f:
-                line = line.strip()
-                if not line.startswith("#"):
-                    continue
-                body = line[1:].strip()
-                if body.startswith("Age:"):
-                    try:
-                        val = float(body.split(":", 1)[1].strip())
-                        if np.isfinite(val):
-                            meta["age"] = val
-                    except Exception:
-                        pass
-                elif body.startswith("Sex:"):
-                    val = body.split(":", 1)[1].strip().upper()
-                    if val.startswith("M"):
-                        meta["sex"] = "M"
-                    elif val.startswith("F"):
-                        meta["sex"] = "F"
-                    else:
-                        meta["sex"] = "U"
-    except Exception:
-        pass
-    return meta
+    return parse_pn2021_header_metadata(header_path)
 
 
 def _fold_from_hash(record_id):
-    h = int(hashlib.sha1(record_id.encode()).hexdigest()[:8], 16)
-    return (h % 10) + 1
+    return pn2021_hash_fold(record_id)
 
 
 def _primary_class(label):
-    for cls in SUPER5_PRIORITY:
-        if label[SUPER5_TO_IDX[cls]] == 1.0:
-            return cls
-    return None
+    return pn2021_primary_class(label)
 
 
 def _primary_snomed(codes, primary):
-    for code in codes:
-        if SNOMED_TO_SUPER5_POSITIVE.get(code) == primary:
-            return code
-    return None
+    return pn2021_primary_snomed(codes, primary, include_norm_candidate=False)
 
 
 def _scan_records(center_dir):
@@ -112,28 +79,9 @@ def _scan_records(center_dir):
             if not name.endswith(".hea"):
                 continue
             hea = os.path.join(root, name)
-            codes = parse_header_snomed(hea)
-            if not codes:
-                continue
-            label = snomed_list_to_super5(codes)
-            primary = _primary_class(label)
-            if primary is None:
-                continue
-            meta = _parse_header_meta(hea)
-            path = hea[:-4]
-            records.append({
-                "record_id": os.path.basename(path),
-                "path": path,
-                "snomed_codes": codes,
-                "label": label.astype(np.float32),
-                "primary_class": primary,
-                "primary_class_idx": SUPER5_TO_IDX[primary],
-                "primary_snomed": _primary_snomed(codes, primary),
-                "age": meta["age"],
-                "sex": meta["sex"] or "U",
-                "hr": meta["hr"],
-                "strat_fold": _fold_from_hash(os.path.basename(path)),
-            })
+            item = record_to_prompt_token_cache_item(hea)
+            if item is not None:
+                records.append(item)
     return records
 
 
@@ -162,23 +110,15 @@ def _raw_to_ecgtwin_1024(record_path):
 
 
 def hybrid_select(records, k, floor_per_class, seed):
-    rng = random.Random(seed)
-    by_class = {cls: [] for cls in CLASS_NAMES_SUPER5}
-    for idx, rec in enumerate(records):
-        by_class[rec["primary_class"]].append(idx)
-
-    selected = []
-    for cls in CLASS_NAMES_SUPER5:
-        pool = by_class[cls]
-        n_take = min(floor_per_class, len(pool))
-        if n_take:
-            selected.extend(rng.sample(pool, n_take))
-
-    selected_set = set(selected)
-    remaining = [i for i in range(len(records)) if i not in selected_set]
-    rng.shuffle(remaining)
-    selected.extend(remaining[:max(0, k - len(selected))])
-    return selected[:k]
+    selected = hybrid_select_pn2021_records(
+        records,
+        k=k,
+        floor_per_class=floor_per_class,
+        seed=seed,
+        class_key="primary_class",
+    )
+    index_by_id = {rec["record_id"]: idx for idx, rec in enumerate(records)}
+    return [index_by_id[rec["record_id"]] for rec in selected]
 
 
 def build_center(args, center):

@@ -37,10 +37,10 @@
 | `references/` | 本地参考 PDF，通常不纳入 git |
 | `labeling/` | 人类可读的 PN2021/Super5 标签映射审核文档 |
 | `reports/archive/` | 已归档 HTML/Markdown 报告，作为上下文而非 canonical evidence |
-| `tmp_md/`, `tmp_html/` | 历史临时报表；只有被 `docs/pipelines/` 或 registry 引用时才作为证据入口 |
 
 ## 归档策略
 
 - 旧 no-IBE diffusion 方案、早期 synth pilot、旧 center-token/IBE 风格迁移记录、旧 Tier-M/AugMix 文档、旧标签审计和旧项目结构说明，统一放入 `trash/docs_cleanup_20260501/`。
 - `trash/` 默认不跟踪，适合保留临时归档材料；需要恢复时直接从该目录移回。
 - 新的长期事实优先写入 `docs/pipelines/`；临时 HTML/Markdown 报告归入 `docs/reports/archive/YYYYMMDD/`。
+- 不再把 tracked 报告放入 `docs/tmp_md/` 或 `docs/tmp_html/`。如果某份归档报告后来成为主线依据，保留归档文件并在对应 pipeline/registry 中显式引用。

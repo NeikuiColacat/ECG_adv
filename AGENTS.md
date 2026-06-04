@@ -30,12 +30,30 @@ Current agent operating layer, initialized 2026-05-29:
 ```text
 active evidence registry: configs/active_evidence_registry.yaml
 CPU-only agent audit:     micromamba run -n ECGTwin python scripts/agent/audit_agent_workspace.py
+                         covers active evidence, active scripts, and dirty layers
+handoff readiness:        inspect handoff_contract.handoff_readiness
+source-of-truth summary:  inspect handoff_contract.source_of_truth_summary
+source-of-truth status:   inspect handoff_contract.source_of_truth_status
+intent-to-add paths:      inspect handoff_contract.source_of_truth_summary.intent_to_add_paths
+managed YAML git status:  inspect active_scripts.config_git_summary
+artifact risk checklist:  inspect git.blocking_artifact_risks
+dirty handoff gate:       inspect git.dirty_summary.handoff_gate in the audit JSON
+dirty layer details:      inspect git.dirty_summary.by_layer for per-layer actions
+current handoff note:     docs/codex-handoffs/current_workspace_handoff.md
 legacy VAE manifest:      micromamba run -n ECGTwin python scripts/agent/backfill_vae_lhat_manifest.py
 comparison bundle build:  micromamba run -n ECGTwin python scripts/agent/build_comparison_bundle.py --force
 run finalizer:            micromamba run -n ECGTwin python scripts/agent/finalize_run.py --run-dir <run_dir>
 run registry update:      micromamba run -n ECGTwin python scripts/agent/register_run.py --run-dir <run_dir> --status provisional
 details:                  docs/pipelines/agent_operating_layer_20260529.md
 ```
+
+Research and uncertainty handling:
+
+- When a method/design choice is uncertain or external precedent would help,
+  use installed MCP tools, relevant skills, live web search, and parallel
+  subagents as needed before committing to a direction. Treat that research as
+  guidance for the ECG_adv_Gen mainline, not as permission to drift from the
+  active evidence registry or project constraints.
 
 Current repository navigation, initialized 2026-05-29:
 
@@ -54,6 +72,19 @@ archived reports:       docs/reports/archive/
 external model handles: model/
 tests:                  util/tests/  # project-wide tests; future target is tests/
 ```
+
+AGENTS.md maintenance:
+
+- Keep the first 100 lines focused on shared-server safety, current host
+  overrides, and agent entrypoints.
+- Move historical reports and dated exploration notes to
+  `docs/reports/archive/YYYYMMDD/`; cite them from pipeline docs or the active
+  evidence registry instead of expanding this file.
+- Treat `/root/...` commands below as original AutoDL historical examples unless
+  the current migrated host override above gives an explicit `/home/linbinhao`
+  replacement.
+- Detailed cleanup suggestions are tracked in
+  `docs/pipelines/agents_md_organization_suggestions_20260529.md`.
 
 Do not move active legacy entrypoints unless `configs/active_scripts.yaml` and
 the tests are updated in the same change. Prefer extracting pure logic into
@@ -193,15 +224,17 @@ Latest VAE-online AT lessons, frozen 2026-05-27:
 
 ```text
 Primary evidence docs:
-  docs/tmp_md/vae_online_at_closing_summary_20260525.md
-  docs/tmp_html/vae_only_24h_summary_20260523.html
+  docs/reports/archive/20260525/vae_online_at_closing_summary_20260525.md
+  docs/reports/archive/20260523/vae_only_24h_summary_20260523.html
   .codex/skills/ecg-vae-online-at/SKILL.md
 
-Main protocol:
+Historical snapshot protocol from 2026-05-27:
   PN2021 Super5 v6 clinician-review mapping, four target centers
   (ningbo, chapman_shaoxing, cpsc_2018, georgia), fixed K=500 target
   ECGs per center, K500 ref ids excluded from final target evaluation.
   Use 10% target data only as sensitivity analysis unless explicitly changed.
+  Current managed runs should use the v7 SJR/RGQ mapping recorded in
+  configs/active_scripts.yaml and configs/active_evidence_registry.yaml.
 
 Most effective current method for a clean VAE contribution:
   EfficientNet1DV2 direct-K500 checkpoint
@@ -266,6 +299,12 @@ Mistakes and near-null routes already explored:
     more historical candidates, source-partner-only variants, label-mode-only
     variants, or compatible-neighbor soft-label smoothing did not beat the
     current EfficientNet ceiling.
+  - Do not treat raw ECG AugMix/corruption consistency as solved. On
+    2026-05-30, target-only raw corruption consistency gave only about
+    +0.04 to +0.10 PN2021-C AUPRC pp, and PTB-XL source-scope raw corruption
+    hurt clean/corrupted four-center means. The best tested AugMix variant
+    remains the original mild latent-branch s2, but its gain over VAE noAug is
+    only about +0.05 AUROC pp / +0.10 AUPRC pp on PN2021-C.
   - Do not treat ECGFounder feature adapters, last-block-only EfficientNet
     updates, blind full-encoder fine-tuning, stronger rare-ranking alone, or
     source-logit anchoring alone as solved routes. They were stable in parts
@@ -274,17 +313,19 @@ Mistakes and near-null routes already explored:
     some ECGFounder short-horizon runs; fixed K=500 is the clean main protocol.
 ```
 
-For current experimental truth, prefer the latest `docs/pipelines/*.md` over
-older command snippets in this file. In particular, recent ECGFounder documents
-use the v5 PN2021 Super5 mapping:
+For current experimental truth, prefer `configs/active_evidence_registry.yaml`,
+`configs/active_scripts.yaml`, and the latest `docs/pipelines/*.md` over older
+command snippets in this file. The current managed EfficientNet/ECGFounder
+mainline uses the SJR/RGQ-reviewed v7 PN2021 Super5 mapping:
 
 ```text
-SUPER5_PN2021_MAPPING_VERSION = v5_super5_strict_voltage_pacing_suppress_20260522
+SUPER5_PN2021_MAPPING_VERSION = v7_super5_sjr_rgq_review_20260528
+SUPER5_PN2021_MAPPING_HASH = 555ec85d5b51
 ```
 
-Before final paper tables, explicitly freeze whether the final EfficientNet and
-ECGFounder comparisons use v3 or v5 mapping, and report the mapping version/hash
-with all metrics.
+Older v3/v5/v6 command names and result files are historical unless they are
+explicitly listed as active or smoke/superseded in `configs/active_scripts.yaml`.
+Report the mapping version/hash with all final metrics.
 
 Do not make no-IBE ECGTwin self-training mandatory for the thesis mainline. The
 previous Scheme B/no-IBE implementation is archived under
@@ -418,19 +459,24 @@ CD, HYP, MI, NORM, STTC
 Source of truth:
 
 ```text
-scripts/triple_labels/label_schemes.py
+ecg_adv_gen/labels/super5_mapping.py
 ```
+
+`scripts/triple_labels/label_schemes.py` is now a legacy compatibility wrapper
+for Super5. It re-exports the package-owned Super5 API while keeping sub23/pn26
+logic local for older callers.
 
 PN2021 super5 mapping:
 
 ```text
-SUPER5_PN2021_MAPPING_VERSION = v3_super5_normsuppress_20260501
-PN2021_EVAL_CACHE_VERSION = v3_super5_normsuppress
+SUPER5_PN2021_MAPPING_VERSION = v7_super5_sjr_rgq_review_20260528
+SUPER5_PN2021_MAPPING_HASH = 555ec85d5b51
+PN2021_EVAL_CACHE_VERSION = v7_super5_sjr_rgq_review
 ```
 
 - PN2021 has no official `SNOMED -> PTB-XL super5` crosswalk. The mapping is a
   project-defined semantic projection for external-center evaluation.
-- Current PN2021 v3 splits direct positives and NORM suppression:
+- Current PN2021 v7 splits direct positives and NORM suppression:
   `SNOMED_TO_SUPER5_POSITIVE`, `NORM_POSITIVE_SNOMEDS`,
   `NORM_SUPPRESS_SNOMEDS`.
 - `Q wave abnormal` and `early repolarization` are suppress-only by default, not
@@ -438,7 +484,8 @@ PN2021_EVAL_CACHE_VERSION = v3_super5_normsuppress
 - `sinus bradycardia`, `sinus tachycardia`, and `sinus arrhythmia` are not
   treated as PTB-XL-normal equivalents by default; they suppress NORM.
 - If PN2021 mapping, parser, preprocessing, or class order changes, bump cache
-  version and rebuild `/root/autodl-tmp/triple_labels/pn2021_eval_cache`.
+  version and rebuild the PN2021 eval cache through the managed local paths in
+  `configs/local/*.yaml`.
 
 Historical Scheme B prompt fragments:
 

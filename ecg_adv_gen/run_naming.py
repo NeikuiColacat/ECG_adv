@@ -174,6 +174,19 @@ def build_effnet_direct_run_leaf(params: Any) -> str:
     return f"{center}_K{k}_direct_ft_ep{epochs}_seed{seed}_val{val_fraction:g}"
 
 
+def build_benchmark_direct_run_leaf(params: Any) -> str:
+    """Build the run directory leaf for benchmark-backbone direct fine-tuning."""
+
+    center = str(_get(params, "center", ""))
+    k = _as_int(_get(params, "k", 500), 500)
+    model_name = str(_get(params, "model_name", "benchmark_resnet1d_wang"))
+    model_slug = model_name.replace("/", "_").replace(" ", "_")
+    epochs = _as_int(_get(params, "epochs", 30), 30)
+    seed = _as_int(_get(params, "seed", 20260531), 20260531)
+    val_fraction = tag_value(_get(params, "val_fraction", 0.2))
+    return f"{center}_K{k}_direct_ft_{model_slug}_ep{epochs}_seed{seed}_val{val_fraction}"
+
+
 def build_effnet_vae_lhat_run_leaf(params: Any) -> str:
     """Build the run directory leaf for EfficientNet VAE-LHAT/AugMix pilots."""
 

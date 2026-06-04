@@ -35,6 +35,7 @@ from scripts.triple_labels.model_zoo import (
 from scripts.crosscenter_v2.preprocess_utils import (
     unified_preprocess_to_1000, crop_signal_tc,
 )
+from ecg_adv_gen.data import load_synthetic_npz_arrays, normalize_synthetic_signals
 from ecg_adv_gen.evaluation import compute_macro_metric_dict
 from ecg_adv_gen.training import compute_pos_weight, masked_bce_with_logits
 
@@ -82,45 +83,13 @@ class SynthNPZDataset(Dataset):
     """
 
     def __init__(self, npz_paths, crop_len=250, mode='train'):
-        if isinstance(npz_paths, str):
-            npz_paths = [p for p in npz_paths.split(',') if p]
-        signals_all, labels_all = [], []
-        for path in npz_paths:
-            data = np.load(path)
-            if 'signals' in data:
-                label_key = 'labels' if 'labels' in data else 'labels5'
-                signals_all.append(self._normalize_signals(data['signals']))
-                labels_all.append(np.asarray(data[label_key], dtype=np.float32))
-                continue
-
-            signal_keys = sorted(k for k in data.files if k.endswith('__signals'))
-            for sig_key in signal_keys:
-                prefix = sig_key[:-len('__signals')]
-                label_key = f'{prefix}__labels5'
-                if label_key not in data:
-                    continue
-                signals_all.append(self._normalize_signals(data[sig_key]))
-                labels_all.append(np.asarray(data[label_key], dtype=np.float32))
-
-        if not signals_all:
-            raise ValueError(f"No synthetic signals found in {npz_paths}")
-        self.signals = np.concatenate(signals_all, axis=0).astype(np.float32, copy=False)
-        self.labels = np.concatenate(labels_all, axis=0).astype(np.float32, copy=False)
+        loaded = load_synthetic_npz_arrays(npz_paths)
+        self.signals = loaded.signals
+        self.labels = loaded.labels
         self.crop_len = crop_len
         self.mode = mode
-        if self.signals.shape[0] != self.labels.shape[0]:
-            raise ValueError(f"synth signals/labels length mismatch: {self.signals.shape} vs {self.labels.shape}")
 
-    @staticmethod
-    def _normalize_signals(signals):
-        arr = np.asarray(signals, dtype=np.float32)
-        if arr.ndim != 3:
-            raise ValueError(f"Expected synth signals ndim=3, got {arr.shape}")
-        if arr.shape[1:] == (12, 1000):
-            arr = arr.transpose(0, 2, 1)
-        if arr.shape[1:] != (1000, 12):
-            raise ValueError(f"Expected synth signals as (N,1000,12) or (N,12,1000), got {arr.shape}")
-        return arr
+    _normalize_signals = staticmethod(normalize_synthetic_signals)
 
     def __len__(self):
         return len(self.signals)

@@ -487,7 +487,7 @@ Phase 4: robustness and final packaging
 15. implement lightweight corruption controls
 16. add clean-vs-corrupted probability comparison
 17. generate final demo screenshots for thesis
-18. write user manual under docs/final_round or docs/tmp_md
+18. write user manual under docs/final_round or docs/reports/archive/YYYYMMDD
 ```
 
 ## Evaluation Metrics

@@ -60,11 +60,17 @@ Completed traceability layers:
   `active_wrapped` experiment in `configs/active_scripts.yaml`, using the same
   config loader, command audit, manifest trace, and optional required-input
   checks as the launcher without invoking legacy child scripts.
+- `ecg_adv_gen.runner.launch_plan` now owns durable run-plan rendering and
+  materialization for YAML-managed launches: command text, resolved config
+  files, data manifest, K-shot ref IDs, selection record, launch artifact
+  status, and the initial agent-readable run record. `scripts/run_experiment.py`
+  remains the CLI wrapper and safety gate rather than the owner of plan-file
+  layout.
 - `ecg_adv_gen.labels.super5` now holds stable Super5 protocol metadata used
-  by config validation and reporting, reducing direct production imports from
-  legacy `scripts/` modules. Full label-conversion logic remains in
-  `scripts/triple_labels/label_schemes.py`. It also exposes the canonical
-  `label_mapping.pn2021_super5` payload used by managed result artifacts.
+  by config validation and reporting, and
+  `ecg_adv_gen.labels.super5_mapping` owns the Super5 PTB-XL, PN2021, and MIMIC
+  conversion policy. Legacy `scripts/triple_labels/label_schemes.py` re-exports
+  that Super5 API for old entrypoints.
 - `ecg_adv_gen.data.contracts` now holds the current PTB-XL -> PN2021 data and
   preprocessing contract used by YAML validation: target/eval centers,
   PTB-XL/PN2021 dataset names, leakage exclusions, 100 Hz x 1000 classifier
@@ -78,11 +84,13 @@ Completed traceability layers:
   --write-plan` now writes this
   manifest next to `k500_ref_ids.json` and the managed `selection.json`
   policy-safety record.
-- `ecg_adv_gen.data.pn2021_index` and `ecg_adv_gen.data.kshot` now hold the
-  first legacy-compatible metadata helpers for PN2021 header parsing, record-id
-  basename handling, leak-center guards, ref/include meta loading, K-shot
-  artifact schema checks, selected ref-id JSON variant parsing, and
-  proportional primary-label K-shot selection. They also own the ECGFounder
+- `ecg_adv_gen.data.pn2021_index`, `ecg_adv_gen.data.pn2021_records`, and
+  `ecg_adv_gen.data.kshot` now hold the legacy-compatible metadata helpers for
+  PN2021 header parsing, record-id basename handling, age/sex metadata, Super5
+  primary-class/SNOMED policy, deterministic hash folds, hybrid
+  floor-plus-natural K-shot sampling, leak-center guards, ref/include meta
+  loading, K-shot artifact schema checks, selected ref-id JSON variant parsing,
+  and proportional primary-label K-shot selection. They also own the ECGFounder
   direct-head exact-K/source-K ref-meta fallback and min-one primary-class
   target selection used by frozen-feature K-shot head fine-tuning. The helpers
   do not load waveforms or build caches.
@@ -109,6 +117,11 @@ Completed traceability layers:
   uses `summarize_center_view` for its PN2021 per-center row shape while
   preserving legacy fields such as `n_scanned`, cache metadata, and
   `n_include_kept`.
+- `ecg_adv_gen.evaluation.pn2021_eval_cache` owns clean PN2021 eval cache path
+  naming, preprocess/cache metadata construction, legacy metadata
+  compatibility, NPZ metadata decoding, and mmap cache read/write helpers.
+  `eval_crosscenter.py` keeps its stable private helper names as wrappers while
+  delegating cache metadata and mmap/NPZ loading to the package helper.
 - `ecg_adv_gen.evaluation.metrics` contains the shared ECG macro AUROC/AUPRC
   helper with legacy ECGFounder and EfficientNet/triple-label class gates,
   optional unknown-label masking, configurable empty-metric values, and the
@@ -135,6 +148,18 @@ Completed traceability layers:
   wrapper while re-exporting the imported helper names for compatibility.
   ECGFounder full-FT and VAE-LHAT scripts now import these shared helpers
   directly from the package rather than reaching through that legacy script.
+- `configs/experiments/ecgtwin_prompt_token_online_at_minimal.yaml` is the
+  first managed prompt-token gated-pool online-AT launch surface for
+  `synth_online_at_super5.py`. It is launch-only evidence: the legacy script
+  still owns training/decode logic, while config validation owns the same-run
+  gated-pool, direct-K500 checkpoint, K500 target-real, and quick-eval
+  selection contracts.
+- `configs/experiments/ecgtwin_prompt_token_online_at_minimal_pn2021_eval.yaml`
+  is the matching evaluation-only PN2021 ref-excluded launch surface for that
+  prompt-token online-AT slice. It consumes the same-run online-AT model
+  directory, excludes all four target-center K500 ref-meta files, and records
+  metrics/table postprocess artifacts without promoting the result to trusted
+  paper evidence.
 - `ecg_adv_gen.models.ecgfounder` contains CPU-only ECGFounder filesystem and
   run-layout contracts for linear-probe feature caches, direct K-shot head
   run dirs, VAE-LHAT run dirs, and K500 base-head lookup. The config manifest
@@ -190,18 +215,19 @@ Completed traceability layers:
 | Topic | Authoritative File |
 |---|---|
 | Shared server safety and host constraints | `AGENTS.md` |
-| YAML refactor plan | `docs/tmp_md/project_refactor_yaml_config_plan_20260527.md` |
+| YAML refactor plan | `docs/reports/archive/20260527/project_refactor_yaml_config_plan_20260527.md` |
 | YAML usage and tracked/local boundary | `configs/README.md` |
 | Active script and config index | `configs/active_scripts.yaml` |
-| PN2021 Super5 mapping logic | `scripts/triple_labels/label_schemes.py` |
+| PN2021 Super5 mapping logic | `ecg_adv_gen/labels/super5_mapping.py` |
 | PN2021 Super5 protocol metadata facade | `ecg_adv_gen/labels/super5.py` |
 | PTB-XL -> PN2021 data/preprocess contract | `ecg_adv_gen/data/contracts.py` |
 | Lightweight data path manifest | `ecg_adv_gen/data/manifest.py`, `scripts/export_data_manifest.py` |
-| PN2021/K-shot metadata helpers | `ecg_adv_gen/data/pn2021_index.py`, `ecg_adv_gen/data/kshot.py` |
+| PN2021/K-shot metadata helpers | `ecg_adv_gen/data/pn2021_index.py`, `ecg_adv_gen/data/pn2021_records.py`, `ecg_adv_gen/data/kshot.py` |
 | Real-anchor latent pool loading | `ecg_adv_gen/data/real_anchors.py` |
 | Waveform shape/resample/lead-order helpers | `ecg_adv_gen/preprocessing/signals.py` |
 | Evaluation view semantics | `ecg_adv_gen/evaluation/views.py` |
 | PN2021 metric view assembly | `ecg_adv_gen/evaluation/pn2021_metric_views.py` |
+| PN2021 clean eval cache helpers | `ecg_adv_gen/evaluation/pn2021_eval_cache.py` |
 | Shared macro AUROC/AUPRC helpers | `ecg_adv_gen/evaluation/metrics.py` |
 | Paper-safe selection policy and full-FT selection score | `ecg_adv_gen/evaluation/selection.py` |
 | Target K-shot internal train/val split | `ecg_adv_gen/evaluation/target_splits.py` |
@@ -220,6 +246,7 @@ Completed traceability layers:
 | Torch latent-hull start helpers | `ecg_adv_gen/adaptation/latent_hull_torch.py` |
 | Experiment config schemas | `configs/schemas/*.json` |
 | Launcher config/path/runtime code | `ecg_adv_gen/config/` |
+| Launch plan rendering and materialization | `ecg_adv_gen/runner/launch_plan.py` |
 | Reporting/export code | `ecg_adv_gen/reporting/` |
 | Active managed-config audit | `ecg_adv_gen/config/audit.py`, `scripts/audit_managed_configs.py` |
 
@@ -498,8 +525,9 @@ must not be averaged together.
 
 After wrappers are exercised on real runs, extract in this order:
 
-1. `ecg_adv_gen.labels`: first metadata facade is in place; next extraction is
-   full Super5 label conversion once data loaders are moved out of `scripts/`.
+1. `ecg_adv_gen.labels`: Super5 metadata and conversion policy are package-owned;
+   next extraction is broader non-Super5 scheme cleanup after data loaders move
+   out of `scripts/`.
 2. `ecg_adv_gen.data`: paper-protocol contract, lightweight path manifest,
    optional PN2021 header-count helper, PN2021 metadata index helpers, K-shot
    artifact helpers, real-anchor pool loading, and full-FT signal-cache

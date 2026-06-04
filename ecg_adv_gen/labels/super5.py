@@ -1,21 +1,16 @@
-"""Stable PTB-XL Super5 metadata used by configs and paper exports.
-
-This module intentionally contains only metadata needed by the production
-wrapper/reporting layer. Full label-conversion logic remains in the legacy
-label scheme module until the data pipeline is extracted.
-"""
+"""Stable PTB-XL Super5 metadata used by configs and paper exports."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Iterable
 
-
-CLASS_NAMES_SUPER5 = ("CD", "HYP", "MI", "NORM", "STTC")
-NUM_SUPER5 = len(CLASS_NAMES_SUPER5)
-
-SUPER5_PN2021_MAPPING_VERSION = "v7_super5_sjr_rgq_review_20260528"
-SUPER5_PN2021_MAPPING_HASH = "555ec85d5b51"
+from .super5_mapping import (
+    CLASS_NAMES_SUPER5,
+    NUM_SUPER5,
+    SUPER5_PN2021_MAPPING_HASH,
+    SUPER5_PN2021_MAPPING_VERSION,
+)
 
 
 class Super5MetadataError(ValueError):

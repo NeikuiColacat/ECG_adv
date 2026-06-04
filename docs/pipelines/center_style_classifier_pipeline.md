@@ -271,7 +271,7 @@ First pilot result:
 
 ```text
 report:
-  docs/tmp_md/center_token_effectiveness_pilot_20260503.md
+  docs/reports/archive/20260503/center_token_effectiveness_pilot_20260503.md
 
 synthetic output:
   /root/autodl-tmp/ecgtwin_prompt_token_super5/effectiveness_pilot_20260503
@@ -338,7 +338,7 @@ V42-A0 validation result:
 
 ```text
 report:
-  docs/tmp_md/center_token_v42_validation_20260503.md
+  docs/reports/archive/20260503/center_token_v42_validation_20260503.md
 
 verdict:
   failed promotion gate.

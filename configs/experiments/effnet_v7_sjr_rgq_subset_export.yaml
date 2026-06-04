@@ -1,0 +1,37 @@
+extends:
+  - ../defaults/effnet1dv2_v7_sjr_rgq_defaults.yaml
+
+experiment:
+  name: effnet_v7_sjr_rgq_subset_export
+  description: Managed prep surface for exporting v7 SJR/RGQ K500, 10 percent, and 20 percent real ECGTwin anchor subsets.
+
+runner:
+  entrypoint: scripts/paper/export_percent_kshot_v7_sjr_rgq_20260530.py
+  argv:
+    - --centers
+    - ${paper_protocol.centers.target_4}
+    - --percents
+    - 0.10
+    - 0.20
+    - --fixed-ks
+    - ${paper_protocol.kshot.k}
+    - --seed
+    - ${paper_protocol.kshot.seed}
+    - --cache-root
+    - ${paths.data_root}/ecgtwin_prompt_token_super5/cache_v1
+    - --mmap-root
+    - ${paths.data_root}/triple_labels/pn2021_eval_cache_mmap_minresample_perglobal
+    - --output-root
+    - ${data.kshot_subset_root}
+    - --summary-path
+    - ${paths.output_root}/${experiment.name}/${runtime.run_id}/percent_shot_v7_seed${paper_protocol.kshot.seed}_summary.json
+
+adaptation:
+  method: subset_export_prep
+
+lineage:
+  replaces_legacy_surface: scripts/paper/run_effnet_v7_multiseed_kshot_matrix_20260530.py
+  scope: subset_export_for_k500_p10_p20
+  notes:
+    - This managed prep command exposes the subset-export stage needed before percent-shot Direct and VAE-LHAT matrices can be YAML-managed.
+    - Execution may write subset artifacts under data.kshot_subset_root; run only after shared-server CPU, memory, and disk checks.

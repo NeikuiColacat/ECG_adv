@@ -13,13 +13,19 @@ from ecg_adv_gen.data import (
     assert_not_forbidden_center,
     center_offset_seed,
     count_center_header_files,
+    hybrid_select_pn2021_records,
     kshot_ref_meta_path,
     load_include_record_ids_by_center,
     load_include_record_ids_from_meta,
     load_kshot_ref_record_ids,
     load_ref_record_ids_by_center,
     load_selected_record_ids_from_meta,
+    parse_pn2021_header_metadata,
     parse_header_snomeds,
+    pn2021_hash_fold,
+    pn2021_primary_class,
+    pn2021_primary_snomed,
+    record_to_prompt_token_cache_item,
     proportional_stratified_indices,
     record_id_from_path,
     scan_pn2021_center_records,
@@ -60,6 +66,71 @@ def test_scan_pn2021_center_records_uses_recursive_headers_and_basename_ids(tmp_
     assert list(records_by_id["N0002"].snomeds) == [2, 3]
     assert record_id_from_path(center / "g1" / "N0001.hea") == "N0001"
     assert record_id_from_path(center / "g1" / "N0001") == "N0001"
+
+
+def test_parse_pn2021_header_metadata_normalizes_demographics(tmp_path: Path):
+    hea = tmp_path / "N0001.hea"
+    hea.write_text(
+        "12 500 5000\n# Age: 71\n# Sex: female\n#Dx: 164865005,270492004\n",
+        encoding="utf-8",
+    )
+    nan_age = tmp_path / "N0002.hea"
+    nan_age.write_text("# Age: nan\n# Sex: other\n#Dx: 164865005\n", encoding="utf-8")
+
+    assert parse_pn2021_header_metadata(hea) == {"age": 71.0, "sex": "F", "hr": None}
+    assert parse_pn2021_header_metadata(nan_age) == {"age": None, "sex": "U", "hr": None}
+
+
+def test_pn2021_super5_primary_policy_matches_prompt_token_legacy_priority():
+    label = np.asarray([1, 1, 1, 1, 1], dtype=np.float32)
+    codes = [270492004, 164873001, 164865005]
+
+    assert pn2021_primary_class(label) == "MI"
+    assert pn2021_primary_snomed(codes, "MI") == 164865005
+    assert pn2021_primary_snomed(codes, "STTC") is None
+    assert pn2021_hash_fold("N0001") == pn2021_hash_fold("N0001")
+    assert 1 <= pn2021_hash_fold("N0001") <= 10
+
+
+def test_record_to_prompt_token_cache_item_builds_legacy_shape(tmp_path: Path):
+    hea = tmp_path / "N0001.hea"
+    hea.write_text(
+        "12 500 5000\n# Age: 62\n# Sex: M\n#Dx: 270492004,164865005\n",
+        encoding="utf-8",
+    )
+
+    item = record_to_prompt_token_cache_item(hea)
+
+    assert item is not None
+    assert item["record_id"] == "N0001"
+    assert item["path"] == str(hea.with_suffix(""))
+    assert item["snomed_codes"] == [270492004, 164865005]
+    assert item["label"].dtype == np.float32
+    assert item["primary_class"] == "MI"
+    assert item["primary"] == "MI"
+    assert item["primary_class_idx"] == 2
+    assert item["primary_snomed"] == 164865005
+    assert item["primary_code"] == 164865005
+    assert item["age"] == 62.0
+    assert item["sex"] == "M"
+    assert 1 <= item["strat_fold"] <= 10
+
+
+def test_hybrid_select_pn2021_records_is_deterministic_and_preserves_record_order_fill():
+    records = [
+        {"record_id": "n1", "primary_class": "NORM"},
+        {"record_id": "n2", "primary_class": "NORM"},
+        {"record_id": "m1", "primary_class": "MI"},
+        {"record_id": "m2", "primary_class": "MI"},
+        {"record_id": "s1", "primary_class": "STTC"},
+    ]
+
+    selected = hybrid_select_pn2021_records(records, k=4, floor_per_class=1, seed=7)
+    selected_again = hybrid_select_pn2021_records(records, k=4, floor_per_class=1, seed=7)
+
+    assert [r["record_id"] for r in selected] == [r["record_id"] for r in selected_again]
+    assert len(selected) == 4
+    assert {"NORM", "MI", "STTC"} <= {r["primary_class"] for r in selected}
 
 
 def test_count_center_header_files_is_bounded_not_full_recursive(tmp_path: Path):

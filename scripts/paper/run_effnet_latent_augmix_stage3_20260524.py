@@ -14,11 +14,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
-
-import numpy as np
 
 
 REPO = Path(__file__).resolve().parents[2]
@@ -33,64 +30,18 @@ DATA_ROOT = Path(
         str(_MIGRATED_DATA_ROOT if _MIGRATED_DATA_ROOT.exists() else Path("/root/autodl-tmp")),
     )
 )
-CLASS_NAMES = ["CD", "HYP", "MI", "NORM", "STTC"]
 
+from ecg_adv_gen.data.class_trust import write_real_all_present_trust  # noqa: E402
+from ecg_adv_gen.labels.super5 import CLASS_NAMES_SUPER5  # noqa: E402
+from ecg_adv_gen.runner.process import build_process_env, run_stream  # noqa: E402
 from ecg_adv_gen.run_naming import build_effnet_vae_lhat_run_leaf  # noqa: E402
+from methods.augmix.severity import AVAILABLE_OPS  # noqa: E402
+
+CLASS_NAMES = list(CLASS_NAMES_SUPER5)
 
 
 def run(cmd: list[str], log_path: Path, env: dict[str, str]) -> None:
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    print("[run]", " ".join(cmd), flush=True)
-    with log_path.open("w") as log:
-        proc = subprocess.Popen(
-            cmd,
-            cwd=str(REPO),
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-        )
-        assert proc.stdout is not None
-        for line in proc.stdout:
-            print(line, end="", flush=True)
-            log.write(line)
-            log.flush()
-        ret = proc.wait()
-    if ret != 0:
-        raise subprocess.CalledProcessError(ret, cmd)
-
-
-def write_real_all_present_trust(
-    signal_npz: Path,
-    out_dir: Path,
-    center: str,
-    *,
-    classes_in_scope: list[str] | None = None,
-) -> Path:
-    out_dir.mkdir(parents=True, exist_ok=True)
-    tag = signal_npz.name.removesuffix(".signals.npz")
-    out_path = out_dir / f"{tag}.real_all_present.class_trust.json"
-    with np.load(signal_npz) as data:
-        labels = data["labels"].astype(np.float32)
-    counts = labels.sum(axis=0).astype(int).tolist()
-    allowed = set(classes_in_scope or CLASS_NAMES)
-    blob = {
-        "tag": f"{tag}_real_all_present",
-        "center": center,
-        "signal_npz": str(signal_npz),
-        "class_trust": {
-            cls: (1.0 if counts[i] > 0 and cls in allowed else 0.0)
-            for i, cls in enumerate(CLASS_NAMES)
-        },
-        "class_counts": dict(zip(CLASS_NAMES, counts)),
-        "policy": (
-            "VAE-only real-anchor stage-3 AugMix test; trust every Super5 "
-            "class present in the real target-center K subset."
-        ),
-    }
-    out_path.write_text(json.dumps(blob, indent=2))
-    return out_path
+    run_stream(cmd, log_path=log_path, env=env, cwd=REPO)
 
 
 def main() -> None:
@@ -293,10 +244,69 @@ def main() -> None:
         ),
     )
     ap.add_argument("--latent_augmix_latent_weight_cap", type=float, default=0.3)
+    ap.add_argument(
+        "--disable_latent_augmix_branch",
+        action="store_true",
+        help=(
+            "Do not forward --enable_latent_augmix_branch to "
+            "synth_online_at_super5.py. This creates a true VAE-LHAT-only "
+            "control while keeping this legacy wrapper's defaults unchanged."
+        ),
+    )
+    ap.add_argument("--latent_augmix_copies", type=int, default=1)
     ap.add_argument("--latent_augmix_width", type=int, default=3)
     ap.add_argument("--latent_augmix_depth", type=int, default=-1)
     ap.add_argument("--latent_augmix_alpha", type=float, default=1.0)
     ap.add_argument("--latent_augmix_severity", type=int, default=2)
+    ap.add_argument(
+        "--latent_augmix_ops",
+        nargs="+",
+        choices=AVAILABLE_OPS,
+        default=["powerline_noise", "emg_noise", "baseline_wander", "baseline_shift"],
+        help=(
+            "ECG corruption ops used by non-latent AugMix branches. The legacy "
+            "default excludes random_leads_masking; robustness sweeps can pass "
+            "all five ops explicitly."
+        ),
+    )
+    ap.add_argument(
+        "--enable_raw_corrupt_consistency",
+        action="store_true",
+        help=(
+            "Enable a target-real raw corruption consistency phase after each "
+            "normal LHAT epoch. This is the direct PN2021-C robustness branch."
+        ),
+    )
+    ap.add_argument("--raw_corrupt_copies", type=int, default=1)
+    ap.add_argument("--raw_corrupt_prob", type=float, default=0.5)
+    ap.add_argument("--raw_corrupt_severity", type=int, default=4)
+    ap.add_argument(
+        "--raw_corrupt_ops",
+        nargs="+",
+        choices=AVAILABLE_OPS,
+        default=[
+            "powerline_noise",
+            "emg_noise",
+            "baseline_wander",
+            "baseline_shift",
+            "random_leads_masking",
+        ],
+    )
+    ap.add_argument("--raw_corrupt_consistency_weight", type=float, default=0.5)
+    ap.add_argument(
+        "--raw_corrupt_consistency_loss",
+        choices=["soft_bce", "jsd"],
+        default="soft_bce",
+    )
+    ap.add_argument("--raw_corrupt_bce_weight", type=float, default=0.1)
+    ap.add_argument("--raw_corrupt_max_batches", type=int, default=0)
+    ap.add_argument(
+        "--raw_corrupt_scope",
+        choices=["target", "source", "source_target"],
+        default="target",
+    )
+    ap.add_argument("--raw_corrupt_no_renorm", action="store_true")
+    ap.add_argument("--raw_corrupt_clip_abs", type=float, default=6.0)
     ap.add_argument(
         "--quick_eval_source",
         choices=["pn2021", "target_real_val"],
@@ -359,18 +369,25 @@ def main() -> None:
         out_root / "config",
         center,
         classes_in_scope=args.classes_in_scope,
+        policy=(
+            "VAE-only real-anchor stage-3 AugMix test; trust every Super5 "
+            "class present in the real target-center K subset."
+        ),
     )
 
-    env = os.environ.copy()
     # PyTorch multiprocessing creates AF_UNIX sockets under TMPDIR. The
     # migrated data path is too long for that socket path, so use a short
     # user-owned temp directory while keeping large caches on the data disk.
-    env.setdefault("TMPDIR", str(Path.home() / "tmp_ecg"))
-    env.setdefault("XDG_CACHE_HOME", str(data_root / "cache"))
-    env.setdefault("DEEPECG_NOTEBOOKS", str(REPO / "model" / "DeepECG" / "notebooks"))
-    env.setdefault("PYTHONUNBUFFERED", "1")
-    Path(env["TMPDIR"]).mkdir(parents=True, exist_ok=True)
-    Path(env["XDG_CACHE_HOME"]).mkdir(parents=True, exist_ok=True)
+    env = build_process_env(
+        updates={
+            "TMPDIR": os.environ.get("TMPDIR", str(Path.home() / "tmp_ecg")),
+            "XDG_CACHE_HOME": os.environ.get("XDG_CACHE_HOME", str(data_root / "cache")),
+            "DEEPECG_NOTEBOOKS": os.environ.get(
+                "DEEPECG_NOTEBOOKS",
+                str(REPO / "model" / "DeepECG" / "notebooks"),
+            ),
+        },
+    )
 
     python = sys.executable
     train_cmd = [
@@ -438,13 +455,6 @@ def main() -> None:
         "--adv_soft_target_floor", str(args.adv_soft_target_floor),
         "--boundary_prob_min", str(args.boundary_prob_min),
         "--boundary_prob_max", str(args.boundary_prob_max),
-        "--enable_latent_augmix_branch",
-        "--latent_augmix_copies", "1",
-        "--latent_augmix_width", str(args.latent_augmix_width),
-        "--latent_augmix_depth", str(args.latent_augmix_depth),
-        "--latent_augmix_alpha", str(args.latent_augmix_alpha),
-        "--latent_augmix_severity", str(args.latent_augmix_severity),
-        "--latent_augmix_latent_weight_cap", str(args.latent_augmix_latent_weight_cap),
         "--disable_quality_gate",
         "--lr", str(args.lr),
         "--weight_decay", "1e-4",
@@ -463,6 +473,33 @@ def main() -> None:
     ]
     if args.hull_include_anchor:
         train_cmd.append("--hull_include_anchor")
+    if not args.disable_latent_augmix_branch:
+        train_cmd.extend([
+            "--enable_latent_augmix_branch",
+            "--latent_augmix_copies", str(args.latent_augmix_copies),
+            "--latent_augmix_width", str(args.latent_augmix_width),
+            "--latent_augmix_depth", str(args.latent_augmix_depth),
+            "--latent_augmix_alpha", str(args.latent_augmix_alpha),
+            "--latent_augmix_severity", str(args.latent_augmix_severity),
+            "--latent_augmix_latent_weight_cap", str(args.latent_augmix_latent_weight_cap),
+            "--latent_augmix_ops", *args.latent_augmix_ops,
+        ])
+    if args.enable_raw_corrupt_consistency:
+        train_cmd.extend([
+            "--enable_raw_corrupt_consistency",
+            "--raw_corrupt_copies", str(args.raw_corrupt_copies),
+            "--raw_corrupt_prob", str(args.raw_corrupt_prob),
+            "--raw_corrupt_severity", str(args.raw_corrupt_severity),
+            "--raw_corrupt_ops", *args.raw_corrupt_ops,
+            "--raw_corrupt_consistency_weight", str(args.raw_corrupt_consistency_weight),
+            "--raw_corrupt_consistency_loss", str(args.raw_corrupt_consistency_loss),
+            "--raw_corrupt_bce_weight", str(args.raw_corrupt_bce_weight),
+            "--raw_corrupt_max_batches", str(args.raw_corrupt_max_batches),
+            "--raw_corrupt_scope", str(args.raw_corrupt_scope),
+            "--raw_corrupt_clip_abs", str(args.raw_corrupt_clip_abs),
+        ])
+        if args.raw_corrupt_no_renorm:
+            train_cmd.append("--raw_corrupt_no_renorm")
     if args.resume:
         train_cmd.extend(["--resume", args.resume])
     if args.allow_resume_config_drift:

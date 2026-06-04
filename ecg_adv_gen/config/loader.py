@@ -23,7 +23,12 @@ except Exception:  # pragma: no cover - jsonschema exists in the current env.
     jsonschema = None
 
 from .paths import PathSafetyError, is_under, validate_local_paths
+from .entrypoints import managed_runner_script_names, managed_script_profile
+from .adapters.direct import audit_direct_finetune_command
+from .adapters.source_training import audit_train_ptbxl_command
 from ecg_adv_gen.data import DataContractError, validate_data_preprocess_config
+from ecg_adv_gen.data.gated_pools import GatedPoolArtifactPaths
+from ecg_adv_gen.data.kshot_artifacts import KShotArtifactGroup, canonical_kshot_base
 from ecg_adv_gen.evaluation import (
     SelectionPolicyError,
     has_forbidden_selection_reference,
@@ -39,6 +44,7 @@ from ecg_adv_gen.models import (
     ecgfounder_lhat_run_dir,
 )
 from ecg_adv_gen.run_naming import (
+    build_benchmark_direct_run_leaf,
     build_ecgfounder_fullft_run_leaf,
     build_effnet_direct_run_leaf,
     build_effnet_vae_lhat_run_leaf,
@@ -84,6 +90,18 @@ ALLOWED_CLI_OVERRIDE_KEYS = frozenset(
     }
 )
 
+ALLOWED_LOCAL_CONFIG_TOP_LEVEL_KEYS = frozenset(
+    {
+        "host",
+        "paths",
+        "python",
+        "resources",
+        "safety",
+    }
+)
+
+MANAGED_RUNNER_SCRIPT_NAMES = managed_runner_script_names()
+
 
 def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
     out = copy.deepcopy(base)
@@ -101,6 +119,20 @@ def _read_yaml(path: Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ConfigError(f"YAML root must be a mapping: {path}")
     return data
+
+
+def _validate_local_config_overlay(local_raw: dict[str, Any]) -> None:
+    disallowed = sorted(
+        key
+        for key in local_raw
+        if not str(key).startswith("_") and key not in ALLOWED_LOCAL_CONFIG_TOP_LEVEL_KEYS
+    )
+    if disallowed:
+        allowed = ", ".join(sorted(ALLOWED_LOCAL_CONFIG_TOP_LEVEL_KEYS))
+        raise ConfigError(
+            "Local config may only define host, paths, python, resources, and safety; "
+            f"disallowed top-level keys: {disallowed}. Allowed keys: {allowed}"
+        )
 
 
 def _load_with_extends(path: Path, seen: set[Path] | None = None) -> dict[str, Any]:
@@ -301,6 +333,7 @@ def load_experiment_config(
     experiment_raw = _load_with_extends(config_path)
     local_raw = _load_with_extends(local_config_path)
     configs_root = _configs_root_for(config_path)
+    _validate_local_config_overlay(local_raw)
     _validate_json_schema(local_raw, configs_root / "schemas" / "local_config.schema.json")
 
     forbidden_hits = _scan_for_forbidden_local_paths(experiment_raw)
@@ -570,6 +603,11 @@ def _audit_equals(errors: list[str], script: str, opts: dict[str, Any], option: 
         errors.append(f"{script}: {option}={value!r}, expected {expected!r}")
 
 
+def _matrix_case(command: dict[str, Any]) -> dict[str, Any]:
+    case = (command.get("matrix") or {}).get("case")
+    return case if isinstance(case, dict) else {}
+
+
 def _audit_no_forbidden_substrings(errors: list[str], script: str, argv: list[str], forbidden: list[str]) -> None:
     joined = " ".join(str(x) for x in argv)
     for token in forbidden:
@@ -584,10 +622,22 @@ def _audit_no_forbidden_substrings(errors: list[str], script: str, argv: list[st
 _PATH_OPTION_NAMES = {
     "--anchor_base",
     "--anchor_base_root",
+    "--cache_path",
     "--cache_dir",
+    "--class_trust",
+    "--csv_path",
+    "--clean_cache_dir",
+    "--clean_eval_json",
+    "--clean_mmap_cache_dir",
     "--data_dir",
+    "--data_path",
     "--data_root",
+    "--ecgtwin_config",
     "--input",
+    "--input_dir",
+    "--input_dirs",
+    "--gated_dirs",
+    "--ibe_path",
     "--exclude_ref_ids",
     "--checkpoint",
     "--init_ckpt",
@@ -609,10 +659,22 @@ _PATH_OPTION_NAMES = {
     "--ptbxl_prep",
     "--ptbxl_raw",
     "--ptbxl_vae_cache",
+    "--python",
+    "--ref_root",
     "--ref_meta_json",
+    "--split_json",
+    "--save_dir",
+    "--semantic_ckpt",
+    "--style_ckpt",
     "--synth_npz",
     "--target_logit_anchor_path",
     "--target_real_npz",
+    "--token_bank",
+    "--train_path",
+    "--val_path",
+    "--resume_path",
+    "--victim_ckpt",
+    "--prompt_bank",
 }
 
 _OUTPUT_PATH_OPTION_NAMES = {
@@ -621,6 +683,7 @@ _OUTPUT_PATH_OPTION_NAMES = {
     "--output_dir",
     "--output-dir",
     "--output_path",
+    "--save_dir",
 }
 
 _ENV_PATH_KEYS = {
@@ -708,6 +771,8 @@ def audit_runner_commands(config: dict[str, Any], commands: list[dict[str, Any]]
     """Validate generated legacy argv against paper-protocol invariants."""
     errors: list[str] = []
     warnings: list[str] = []
+    managed_entrypoints: list[dict[str, str]] = []
+    seen_managed_scripts: set[str] = set()
     kshot = config["paper_protocol"]["kshot"]
     expected_k = int(kshot["k"])
     expected_seed = int(kshot.get("subset_seed", kshot["seed"]))
@@ -719,6 +784,20 @@ def audit_runner_commands(config: dict[str, Any], commands: list[dict[str, Any]]
         argv = [str(x) for x in command["argv"]]
         script = Path(argv[1]).name
         opts = _argv_option_map(argv)
+        if script not in MANAGED_RUNNER_SCRIPT_NAMES:
+            errors.append(f"{script}: runner entrypoint is not in the managed runner allowlist")
+            continue
+        if script not in seen_managed_scripts:
+            profile = managed_script_profile(script)
+            managed_entrypoints.append(
+                {
+                    "script_name": profile.script_name,
+                    "relative_path": profile.relative_path,
+                    "wrapper_root": profile.wrapper_root,
+                    "family": profile.family,
+                }
+            )
+            seen_managed_scripts.add(script)
         _audit_no_forbidden_substrings(errors, script, argv, ["/root/", "seed42"])
         if has_forbidden_selection_reference(argv):
             errors.append(f"{script}: command argv references held-out target selection data")
@@ -726,25 +805,415 @@ def audit_runner_commands(config: dict[str, Any], commands: list[dict[str, Any]]
         _audit_output_paths_are_run_scoped(errors, script, opts, run_id=run_id)
 
         if script == "run_direct_finetune_k500_20260516.py":
+            errors.extend(
+                audit_direct_finetune_command(
+                    command,
+                    expected_k=expected_k,
+                    expected_seed=expected_seed,
+                    target_centers=target_centers,
+                )
+            )
+        elif script == "train_ptbxl.py":
+            errors.extend(audit_train_ptbxl_command(command, expected_seed=expected_seed))
+        elif script == "train_ibe_repro.py":
             _audit_require_options(
                 errors,
                 script,
                 opts,
-                ["--centers", "--k", "--subset_seed", "--seed", "--val_fraction", "--out_root"],
+                [
+                    "--output_dir",
+                    "--train_path",
+                    "--val_path",
+                    "--epochs",
+                    "--batch_size",
+                    "--mini_batch_size",
+                    "--val_batch_size",
+                    "--lr",
+                    "--weight_decay",
+                    "--num_workers",
+                    "--prefetch_factor",
+                    "--amp_dtype",
+                    "--matmul_precision",
+                    "--device",
+                    "--seed",
+                    "--log_every",
+                ],
             )
-            _audit_equals(errors, script, opts, "--k", expected_k)
-            _audit_equals(errors, script, opts, "--subset_seed", expected_seed)
-            _audit_equals(errors, script, opts, "--seed", expected_seed)
+            output_dir = str(_opt_first(opts, "--output_dir", ""))
+            if "ecgtwin_author_repro" not in output_dir or not output_dir.endswith("/ibe_stage1"):
+                errors.append(f"{script}: output_dir must end with ecgtwin_author_repro/<run_id>/ibe_stage1")
+            if str(_opt_first(opts, "--device", "")) != "cuda":
+                errors.append(f"{script}: --device should be 'cuda' and GPU id must be selected by CUDA_VISIBLE_DEVICES")
+            if "--amp" not in opts:
+                errors.append(f"{script}: managed author IBE repro should use AMP")
+            if "--drop_last" not in opts:
+                errors.append(f"{script}: managed author IBE repro should pass --drop_last")
+            if "--persistent_workers" in opts:
+                warnings.append(f"{script}: persistent workers are enabled despite historical worker cleanup issues")
+            _audit_equals(errors, script, opts, "--batch_size", "65536")
+            _audit_equals(errors, script, opts, "--mini_batch_size", "512")
+            _audit_equals(errors, script, opts, "--amp_dtype", "bf16")
+            train_path = str(_opt_first(opts, "--train_path", ""))
+            val_path = str(_opt_first(opts, "--val_path", ""))
+            if not train_path.endswith("/ECGTwin_Data/paired_Mimic_vae_multi_nomic.pt"):
+                errors.append(f"{script}: train_path should point at paired_Mimic_vae_multi_nomic.pt")
+            if not val_path.endswith("/ECGTwin_Data/paired_Mimic_vae_multi_nomic_test.pt"):
+                errors.append(f"{script}: val_path should point at paired_Mimic_vae_multi_nomic_test.pt")
+        elif script == "train_dit_repro.py":
+            _audit_require_options(
+                errors,
+                script,
+                opts,
+                [
+                    "--output_dir",
+                    "--train_path",
+                    "--val_path",
+                    "--ibe_path",
+                    "--epochs",
+                    "--batch_size",
+                    "--val_batch_size",
+                    "--num_workers",
+                    "--prefetch_factor",
+                    "--amp_dtype",
+                    "--matmul_precision",
+                    "--device",
+                    "--seed",
+                    "--log_every",
+                ],
+            )
+            output_dir = str(_opt_first(opts, "--output_dir", ""))
+            if "ecgtwin_author_repro" not in output_dir or not output_dir.endswith("/dit_stage2"):
+                errors.append(f"{script}: output_dir must end with ecgtwin_author_repro/<run_id>/dit_stage2")
+            ibe_path = str(_opt_first(opts, "--ibe_path", ""))
+            expected_ibe_suffix = f"/ecgtwin_author_repro/{run_id}/ibe_stage1/checkpoints/IBE_best.pth"
+            if run_id and not ibe_path.endswith(expected_ibe_suffix):
+                errors.append(f"{script}: --ibe_path must consume the managed IBE stage from the same runtime.run_id")
+            if "--use_pretrained_author_ibe" in opts:
+                errors.append(f"{script}: must consume the managed IBE stage instead of --use_pretrained_author_ibe")
+            if str(_opt_first(opts, "--device", "")) != "cuda":
+                errors.append(f"{script}: --device should be 'cuda' and GPU id must be selected by CUDA_VISIBLE_DEVICES")
+            if "--amp" not in opts:
+                errors.append(f"{script}: managed author DiT repro should use AMP")
+            if "--persistent_workers" in opts:
+                warnings.append(f"{script}: persistent workers are enabled despite historical worker cleanup issues")
+            _audit_equals(errors, script, opts, "--batch_size", "512")
+            _audit_equals(errors, script, opts, "--val_batch_size", "512")
+            _audit_equals(errors, script, opts, "--amp_dtype", "bf16")
+            train_path = str(_opt_first(opts, "--train_path", ""))
+            val_path = str(_opt_first(opts, "--val_path", ""))
+            if not train_path.endswith("/ECGTwin_Data/paired_Mimic_vae_multi_nomic.pt"):
+                errors.append(f"{script}: train_path should point at paired_Mimic_vae_multi_nomic.pt")
+            if not val_path.endswith("/ECGTwin_Data/paired_Mimic_vae_multi_nomic_test.pt"):
+                errors.append(f"{script}: val_path should point at paired_Mimic_vae_multi_nomic_test.pt")
+        elif script == "train_center_prompt_tokens.py":
+            _audit_require_options(
+                errors,
+                script,
+                opts,
+                [
+                    "--centers",
+                    "--cache_root",
+                    "--prompt_bank",
+                    "--save_dir",
+                    "--ecgtwin_config",
+                    "--device",
+                    "--K",
+                    "--seed",
+                    "--total_steps",
+                    "--batch_size",
+                    "--num_workers",
+                    "--lr",
+                    "--weight_decay",
+                    "--grad_clip",
+                    "--amp_dtype",
+                    "--token_repeat",
+                    "--sample_strategy",
+                    "--n_token_vectors",
+                    "--token_mode",
+                    "--ref_text_mode",
+                    "--log_every",
+                    "--save_every",
+                ],
+            )
             centers = set(_opt_list(opts, "--centers"))
             if centers != target_centers:
                 errors.append(f"{script}: centers={sorted(centers)!r}, expected {sorted(target_centers)!r}")
+            _audit_equals(errors, script, opts, "--K", expected_k)
+            _audit_equals(errors, script, opts, "--seed", expected_seed)
+            _audit_equals(errors, script, opts, "--total_steps", "2500")
+            _audit_equals(errors, script, opts, "--batch_size", "16")
+            _audit_equals(errors, script, opts, "--amp_dtype", "bf16")
+            _audit_equals(errors, script, opts, "--sample_strategy", "center_class_balanced")
+            _audit_equals(errors, script, opts, "--token_mode", "direct")
+            _audit_equals(errors, script, opts, "--n_token_vectors", "4")
+            _audit_equals(errors, script, opts, "--ref_text_mode", "actual_report")
+            if str(_opt_first(opts, "--device", "")) != "cuda":
+                errors.append(f"{script}: --device should be 'cuda' and GPU id must be selected by CUDA_VISIBLE_DEVICES")
+            cache_root = str(_opt_first(opts, "--cache_root", ""))
+            prompt_bank = str(_opt_first(opts, "--prompt_bank", ""))
+            save_dir = str(_opt_first(opts, "--save_dir", ""))
+            if not cache_root.endswith("/ecgtwin_prompt_token_super5/cache_v1"):
+                errors.append(f"{script}: cache_root should point at ecgtwin_prompt_token_super5/cache_v1")
+            if prompt_bank != str(Path(cache_root) / "text_prompt_bank.pt"):
+                errors.append(f"{script}: prompt_bank must be cache_root/text_prompt_bank.pt")
+            if "ecgtwin_prompt_token_minimal" not in save_dir or not save_dir.endswith("/prompt_token_train"):
+                errors.append(f"{script}: save_dir must end with ecgtwin_prompt_token_minimal/<run_id>/prompt_token_train")
+        elif script == "generate_center_prompt_token_synth.py":
+            _audit_require_options(
+                errors,
+                script,
+                opts,
+                [
+                    "--center",
+                    "--classes",
+                    "--cache_root",
+                    "--token_bank",
+                    "--arm",
+                    "--prompt_bank",
+                    "--out_dir",
+                    "--K",
+                    "--selection_seed",
+                    "--n_per_class",
+                    "--steps",
+                    "--device",
+                    "--seed",
+                    "--victim_ckpt",
+                    "--victim_crop_len",
+                    "--token_repeat",
+                    "--token_scale",
+                ],
+            )
+            center = str(_opt_first(opts, "--center", ""))
+            classes = _opt_list(opts, "--classes")
+            if center not in target_centers:
+                errors.append(f"{script}: unexpected center {center!r}")
+            if classes != ["NORM", "MI", "STTC"]:
+                errors.append(f"{script}: classes={classes!r}, expected ['NORM', 'MI', 'STTC']")
+            _audit_equals(errors, script, opts, "--K", expected_k)
+            _audit_equals(errors, script, opts, "--selection_seed", "42")
+            _audit_equals(errors, script, opts, "--seed", expected_seed)
+            _audit_equals(errors, script, opts, "--arm", "target_token")
+            if "--no_token" in opts:
+                errors.append(f"{script}: target-token managed config must not pass --no_token")
+            if str(_opt_first(opts, "--device", "")) != "cuda":
+                errors.append(f"{script}: --device should be 'cuda' and GPU id must be selected by CUDA_VISIBLE_DEVICES")
+            cache_root = str(_opt_first(opts, "--cache_root", ""))
+            prompt_bank = str(_opt_first(opts, "--prompt_bank", ""))
+            token_bank = str(_opt_first(opts, "--token_bank", ""))
+            out_dir = str(_opt_first(opts, "--out_dir", ""))
+            expected_token_suffix = f"/ecgtwin_prompt_token_minimal/{run_id}/prompt_token_train/prompt_token_bank.pt"
+            if not cache_root.endswith("/ecgtwin_prompt_token_super5/cache_v1"):
+                errors.append(f"{script}: cache_root should point at ecgtwin_prompt_token_super5/cache_v1")
+            if prompt_bank != str(Path(cache_root) / "text_prompt_bank.pt"):
+                errors.append(f"{script}: prompt_bank must be cache_root/text_prompt_bank.pt")
+            if run_id and not token_bank.endswith(expected_token_suffix):
+                errors.append(f"{script}: token_bank must consume prompt_token_train from the same runtime.run_id")
+            if f"/ecgtwin_prompt_token_minimal/{run_id}/generated/target_token" not in out_dir:
+                errors.append(f"{script}: out_dir must be the run-id-scoped target_token generation directory")
+            if not str(_opt_first(opts, "--victim_ckpt", "")).endswith("/triple_labels/super5/best_model.pt"):
+                errors.append(f"{script}: victim_ckpt should point at the frozen Super5 baseline best_model.pt")
+        elif script == "gate_prompt_token_synth.py":
+            _audit_require_options(
+                errors,
+                script,
+                opts,
+                [
+                    "--input_dir",
+                    "--out_dir",
+                    "--classes",
+                    "--fs",
+                    "--lead_order",
+                    "--min_target_prob",
+                    "--min_pass_per_class",
+                    "--max_pass_per_class",
+                    "--cache_root",
+                    "--K",
+                    "--selection_seed",
+                ],
+            )
+            classes = _opt_list(opts, "--classes")
+            input_dir = str(_opt_first(opts, "--input_dir", ""))
+            out_dir = str(_opt_first(opts, "--out_dir", ""))
+            center = Path(input_dir).name
+            if center not in target_centers:
+                errors.append(f"{script}: unexpected input center {center!r}")
+            if classes != ["NORM", "MI", "STTC"]:
+                errors.append(f"{script}: classes={classes!r}, expected ['NORM', 'MI', 'STTC']")
+            _audit_equals(errors, script, opts, "--K", expected_k)
+            _audit_equals(errors, script, opts, "--selection_seed", "42")
+            _audit_equals(errors, script, opts, "--min_target_prob", "0.30")
+            if run_id and f"/ecgtwin_prompt_token_minimal/{run_id}/generated/target_token/{center}" not in input_dir:
+                errors.append(f"{script}: input_dir must consume generated target_token samples from the same runtime.run_id")
+            if input_dir and out_dir != str(Path(input_dir) / "gated"):
+                errors.append(f"{script}: out_dir must be <input_dir>/gated")
+            cache_root = str(_opt_first(opts, "--cache_root", ""))
+            if not cache_root.endswith("/ecgtwin_prompt_token_super5/cache_v1"):
+                errors.append(f"{script}: cache_root should point at ecgtwin_prompt_token_super5/cache_v1")
+        elif script == "synth_online_at_super5.py":
+            _audit_require_options(
+                errors,
+                script,
+                opts,
+                [
+                    "--center_name",
+                    "--ref_meta_json",
+                    "--synth_npz",
+                    "--target_real_npz",
+                    "--class_trust",
+                    "--init_ckpt",
+                    "--model_name",
+                    "--output_dir",
+                    "--data_dir",
+                    "--quick_eval_source",
+                    "--quick_eval_centers",
+                    "--target_real_val_fraction",
+                    "--target_real_val_seed",
+                    "--ptbxl_raw",
+                    "--ptbxl_csv",
+                    "--ptbxl_prep",
+                    "--attack_mode",
+                    "--hull_M",
+                    "--hull_lambda",
+                    "--hull_steps",
+                    "--hull_lr",
+                    "--hull_label_mode",
+                    "--hull_mix_label_mode",
+                    "--hull_neighbor_distance_space",
+                    "--hull_neighbor_mode",
+                    "--hull_neighbor_pool_size",
+                    "--K_anchor",
+                    "--pgd_batch",
+                    "--target_real_weight",
+                    "--ptbxl_weight",
+                    "--adv_weight",
+                    "--adv_weight_warmup_epochs",
+                    "--adv_label_mode",
+                    "--adv_teacher_mix",
+                    "--classes_in_scope",
+                    "--n_epochs",
+                    "--num_workers",
+                    "--seed",
+                    "--device",
+                ],
+            )
+            center = str(_opt_first(opts, "--center_name", ""))
+            if center not in target_centers:
+                errors.append(f"{script}: unexpected center {center!r}")
+            _audit_equals(errors, script, opts, "--seed", expected_seed)
+            _audit_equals(errors, script, opts, "--target_real_val_seed", expected_seed)
+            _audit_equals(errors, script, opts, "--quick_eval_source", "target_real_val")
+            _audit_equals(errors, script, opts, "--attack_mode", "latent_hull")
+            _audit_equals(errors, script, opts, "--hull_label_mode", "compatible")
+            _audit_equals(errors, script, opts, "--hull_mix_label_mode", "anchor_soft")
+            _audit_equals(errors, script, opts, "--adv_label_mode", "latent_mixed_teacher")
+            _audit_equals(errors, script, opts, "--adv_teacher_mix", "0.4")
+            if _opt_list(opts, "--quick_eval_centers") != [center]:
+                errors.append(f"{script}: --quick_eval_centers must contain only the target center")
+            if _opt_list(opts, "--classes_in_scope") != ["NORM", "MI", "STTC"]:
+                errors.append(f"{script}: classes_in_scope must be ['NORM', 'MI', 'STTC']")
+            if str(_opt_first(opts, "--device", "")) != "cuda":
+                errors.append(f"{script}: --device should be 'cuda' and GPU id must be selected by CUDA_VISIBLE_DEVICES")
+            if "--build_class_trust" in opts:
+                errors.append(f"{script}: managed online-AT config must consume a gated class_trust artifact")
+            if "--disable_adv_stream" in opts:
+                errors.append(f"{script}: prompt-token online-AT config must keep the adversarial stream enabled")
+            model_name = str(_opt_first(opts, "--model_name", ""))
+            expected_model = str((config.get("model") or {}).get("name") or "")
+            if expected_model and model_name != expected_model:
+                errors.append(f"{script}: --model_name={model_name!r}, expected {expected_model!r}")
+            gated_dir = Path(str(_opt_first(opts, "--synth_npz", ""))).parent
+            expected_gated_fragment = f"/ecgtwin_prompt_token_minimal/{run_id}/generated/target_token/{center}/gated"
+            if run_id and expected_gated_fragment not in str(gated_dir):
+                errors.append(f"{script}: synth_npz must consume same-run prompt-token gated latents")
+            expected_files = {
+                "--synth_npz": "gated_samples.latent.npz",
+                "--class_trust": "gated_samples.class_trust.json",
+                "--ref_meta_json": "gated_samples.ref_meta.json",
+            }
+            for option, expected_name in expected_files.items():
+                value = Path(str(_opt_first(opts, option, "")))
+                if value.name != expected_name:
+                    errors.append(f"{script}: {option} must point at {expected_name}")
+                if str(value.parent) != str(gated_dir):
+                    errors.append(f"{script}: {option} must come from the same gated directory")
+            target_real_npz = str(_opt_first(opts, "--target_real_npz", ""))
+            expected_real_suffix = (
+                f"/{center}/k{expected_k}_seed{expected_seed}/"
+                f"{center}_real_k{expected_k}_seed{expected_seed}.signals.npz"
+            )
+            if not target_real_npz.endswith(expected_real_suffix):
+                errors.append(f"{script}: target_real_npz must point at the v7 K-shot signals artifact")
+            init_ckpt = str(_opt_first(opts, "--init_ckpt", ""))
+            expected_init_suffix = (
+                f"/effnet_direct_k500_v7_sjr_rgq/{run_id}/runs/"
+                f"{center}_K{expected_k}_direct_ft_ep30_seed{expected_seed}_val0.2/best_model.pt"
+            )
+            if run_id and not init_ckpt.endswith(expected_init_suffix):
+                errors.append(f"{script}: init_ckpt must consume same-run EfficientNet Direct K500 checkpoint")
+            output_dir = str(_opt_first(opts, "--output_dir", ""))
+            if run_id and not output_dir.endswith(f"/ecgtwin_prompt_token_online_at_minimal/{run_id}/{center}"):
+                errors.append(f"{script}: output_dir must be run-id-scoped under ecgtwin_prompt_token_online_at_minimal")
+        elif script == "run_benchmark_direct_finetune_v7_20260530.py":
+            matrix = command.get("matrix") or {}
+            matrix_case = _matrix_case(command)
+            expected_command_k = str(matrix_case.get("k", expected_k))
+            expected_command_seed = str(matrix_case.get("seed", expected_seed))
+            _audit_require_options(
+                errors,
+                script,
+                opts,
+                [
+                    "--centers",
+                    "--k",
+                    "--subset_seed",
+                    "--seed",
+                    "--model_name",
+                    "--init_ckpt",
+                    "--epochs",
+                    "--val_fraction",
+                    "--out_root",
+                    "--subset_root",
+                    "--data_root",
+                    "--python",
+                ],
+            )
+            _audit_equals(errors, script, opts, "--k", expected_command_k)
+            _audit_equals(errors, script, opts, "--subset_seed", expected_command_seed)
+            _audit_equals(errors, script, opts, "--seed", expected_command_seed)
+            centers = set(_opt_list(opts, "--centers"))
+            matrix_center = str(matrix.get("center") or matrix_case.get("center") or "")
+            if matrix_center:
+                if centers != {matrix_center}:
+                    errors.append(f"{script}: matrix center {matrix_center!r} must match --centers {sorted(centers)!r}")
+                if matrix_center not in target_centers:
+                    errors.append(f"{script}: unexpected matrix center {matrix_center!r}")
+            elif centers != target_centers:
+                errors.append(f"{script}: centers={sorted(centers)!r}, expected {sorted(target_centers)!r}")
+            model_name = str(_opt_first(opts, "--model_name", ""))
+            expected_model = str((config.get("model") or {}).get("name") or "")
+            if expected_model and model_name != expected_model:
+                errors.append(f"{script}: --model_name={model_name!r}, expected {expected_model!r}")
+            init_ckpt = str(_opt_first(opts, "--init_ckpt", ""))
+            if "benchmark_source_v7_sjr_rgq" not in init_ckpt:
+                errors.append(f"{script}: init_ckpt must come from benchmark_source_v7_sjr_rgq")
+            if model_name and model_name not in init_ckpt:
+                errors.append(f"{script}: init_ckpt does not encode model_name {model_name!r}")
+            if f"seed{expected_command_seed}" not in init_ckpt:
+                errors.append(f"{script}: init_ckpt does not encode seed{expected_command_seed}")
             subset_root = str(_opt_first(opts, "--subset_root", ""))
             if subset_root:
-                if f"k{expected_k}_seed{expected_seed}" in subset_root:
+                if f"k{expected_command_k}_seed{expected_command_seed}" in subset_root:
                     errors.append(f"{script}: subset_root should be the root directory, not one center-specific K-shot base")
                 if "subsets" not in subset_root:
                     errors.append(f"{script}: subset_root does not point at a K-shot subsets directory")
+            if str(_opt_first(opts, "--device", "")) != "cuda":
+                errors.append(f"{script}: --device should be 'cuda' and GPU id must be selected by CUDA_VISIBLE_DEVICES")
+            if "--force" in opts:
+                errors.append(f"{script}: benchmark direct managed config must not pass --force")
         elif script == "run_effnet_latent_augmix_stage3_20260524.py":
+            matrix_case = _matrix_case(command)
+            expected_command_k = str(matrix_case.get("k", expected_k))
+            expected_command_seed = str(matrix_case.get("seed", expected_seed))
             _audit_require_options(
                 errors,
                 script,
@@ -766,19 +1235,30 @@ def audit_runner_commands(config: dict[str, Any], commands: list[dict[str, Any]]
                 ],
             )
             center = str(_opt_first(opts, "--center", ""))
+            matrix_center = str(matrix_case.get("center") or "")
+            if matrix_center and center != matrix_center:
+                errors.append(f"{script}: matrix center {matrix_center!r} must match --center {center!r}")
             if center not in target_centers:
                 errors.append(f"{script}: unexpected center {center!r}")
-            _audit_equals(errors, script, opts, "--seed", expected_seed)
+            _audit_equals(errors, script, opts, "--seed", expected_command_seed)
             _audit_equals(errors, script, opts, "--quick_eval_source", "target_real_val")
-            _audit_equals(errors, script, opts, "--target_real_val_seed", expected_seed)
+            _audit_equals(errors, script, opts, "--target_real_val_seed", expected_command_seed)
             if _opt_first(opts, "--hull_neighbor_distance_space") not in {"raw", "standardized"}:
                 errors.append(f"{script}: invalid --hull_neighbor_distance_space")
             if _opt_first(opts, "--hull_neighbor_mode") not in {"nearest", "local_random", "random"}:
                 errors.append(f"{script}: invalid --hull_neighbor_mode")
             anchor_base = str(_opt_first(opts, "--anchor_base", ""))
-            if f"k{expected_k}_seed{expected_seed}" not in anchor_base:
-                errors.append(f"{script}: anchor_base does not encode K{expected_k}/seed{expected_seed}")
+            if f"k{expected_command_k}_seed{expected_command_seed}" not in anchor_base:
+                errors.append(
+                    f"{script}: anchor_base does not encode K{expected_command_k}/seed{expected_command_seed}"
+                )
             init_ckpt = str(_opt_first(opts, "--init_ckpt", ""))
+            protocol = str(matrix_case.get("protocol") or "")
+            if protocol:
+                if f"effnet_direct_{protocol}_v7_sjr_rgq" not in init_ckpt:
+                    errors.append(f"{script}: init_ckpt does not match protocol {protocol!r}")
+                if f"{center}_K{expected_command_k}_direct_ft_ep" not in init_ckpt:
+                    errors.append(f"{script}: init_ckpt does not encode {center}/K{expected_command_k}")
             if "paper_direct_finetune_k500_20260516" not in init_ckpt:
                 warnings.append(f"{script}: init_ckpt is not the historical direct-K500 run root")
         elif script == "run_ecgfounder_fullft_super5_pilot_20260523.py":
@@ -809,6 +1289,10 @@ def audit_runner_commands(config: dict[str, Any], commands: list[dict[str, Any]]
             if not ref_meta.endswith(f"_real_k{expected_k}_seed{expected_seed}.ref_meta.json"):
                 errors.append(f"{script}: ref_meta_json does not encode K{expected_k}/seed{expected_seed}")
         elif script == "run_ecgfounder_kshot_head_ft_20260517.py":
+            matrix = command.get("matrix") or {}
+            matrix_case = _matrix_case(command)
+            expected_command_k = str(matrix_case.get("k", expected_k))
+            expected_command_seed = str(matrix_case.get("seed", expected_seed))
             _audit_require_options(
                 errors,
                 script,
@@ -832,13 +1316,27 @@ def audit_runner_commands(config: dict[str, Any], commands: list[dict[str, Any]]
                 ],
             )
             centers = set(_opt_list(opts, "--centers"))
-            if centers != target_centers:
+            matrix_center = str(matrix.get("center") or matrix_case.get("center") or "")
+            if matrix_center:
+                if centers != {matrix_center}:
+                    errors.append(f"{script}: matrix center {matrix_center!r} must match --centers {sorted(centers)!r}")
+                if matrix_center not in target_centers:
+                    errors.append(f"{script}: unexpected matrix center {matrix_center!r}")
+            elif centers != target_centers:
                 errors.append(f"{script}: centers={sorted(centers)!r}, expected {sorted(target_centers)!r}")
-            _audit_equals(errors, script, opts, "--k", expected_k)
-            _audit_equals(errors, script, opts, "--source_k", expected_k)
-            _audit_equals(errors, script, opts, "--subset_seed", expected_seed)
-            _audit_equals(errors, script, opts, "--seed", expected_seed)
+            _audit_equals(errors, script, opts, "--k", expected_command_k)
+            _audit_equals(errors, script, opts, "--source_k", expected_command_k)
+            _audit_equals(errors, script, opts, "--subset_seed", expected_command_seed)
+            _audit_equals(errors, script, opts, "--seed", expected_command_seed)
             _audit_equals(errors, script, opts, "--preprocess_policy", "official_ptbxl_eval")
+            ref_root = str(_opt_first(opts, "--ref_root", ""))
+            if matrix_center and not ref_root:
+                errors.append(f"{script}: matrix command must pass --ref_root")
+            if ref_root:
+                if f"k{expected_command_k}_seed{expected_command_seed}" in ref_root:
+                    errors.append(f"{script}: ref_root should be the root directory, not one center-specific K-shot base")
+                if "subsets" not in ref_root:
+                    errors.append(f"{script}: ref_root does not point at a K-shot subsets directory")
             if str(_opt_first(opts, "--device", "")) != "cuda":
                 errors.append(f"{script}: --device should be 'cuda' and GPU id must be selected by CUDA_VISIBLE_DEVICES")
             if "--reset_head" in opts:
@@ -846,9 +1344,13 @@ def audit_runner_commands(config: dict[str, Any], commands: list[dict[str, Any]]
             if "--force" in opts:
                 errors.append(f"{script}: managed config must not pass --force")
             linear_dir = str(_opt_first(opts, "--linear_probe_dir", ""))
-            if "ecgfounder_linear_probe_v6" not in linear_dir:
-                warnings.append(f"{script}: linear_probe_dir is not the v6 ECGFounder linear-probe cache")
+            if "ecgfounder_linear_probe_v6" not in linear_dir and "ecgfounder_linear_probe_v7" not in linear_dir:
+                warnings.append(f"{script}: linear_probe_dir is not a managed ECGFounder linear-probe cache")
         elif script == "run_ecgfounder_vae_only_lhat_head_ft_20260523.py":
+            matrix = command.get("matrix") or {}
+            matrix_case = _matrix_case(command)
+            expected_command_k = str(matrix_case.get("k", expected_k))
+            expected_command_seed = str(matrix_case.get("seed", expected_seed))
             _audit_require_options(
                 errors,
                 script,
@@ -882,12 +1384,12 @@ def audit_runner_commands(config: dict[str, Any], commands: list[dict[str, Any]]
                 errors.append(f"{script}: --centers must name at least one target center")
             if not centers.issubset(target_centers):
                 errors.append(f"{script}: centers={sorted(centers)!r}, expected subset of {sorted(target_centers)!r}")
-            matrix_center = str((command.get("matrix") or {}).get("center", ""))
+            matrix_center = str(matrix.get("center") or matrix_case.get("center") or "")
             if matrix_center and centers != {matrix_center}:
                 errors.append(f"{script}: matrix center {matrix_center!r} must match --centers {sorted(centers)!r}")
-            _audit_equals(errors, script, opts, "--k", expected_k)
-            _audit_equals(errors, script, opts, "--seed", expected_seed)
-            _audit_equals(errors, script, opts, "--target_real_val_seed", expected_seed)
+            _audit_equals(errors, script, opts, "--k", expected_command_k)
+            _audit_equals(errors, script, opts, "--seed", expected_command_seed)
+            _audit_equals(errors, script, opts, "--target_real_val_seed", expected_command_seed)
             _audit_equals(errors, script, opts, "--selection_source", "target_real_val")
             _audit_equals(errors, script, opts, "--preprocess_policy", "official_ptbxl_eval")
             if "--report_drop_all_zero_pn2021" not in opts:
@@ -907,13 +1409,29 @@ def audit_runner_commands(config: dict[str, Any], commands: list[dict[str, Any]]
             if anchor_mode not in {"stratified", "hard_bce", "base_hard_bce", "target_hard_bce"}:
                 warnings.append(f"{script}: anchor_sample_mode={anchor_mode!r} may be less stable for the mainline")
             anchor_root = str(_opt_first(opts, "--anchor_base_root", ""))
-            if f"k{expected_k}_seed{expected_seed}" in anchor_root:
+            if f"k{expected_command_k}_seed{expected_command_seed}" in anchor_root:
                 errors.append(f"{script}: anchor_base_root should be the subset root, not one center-specific K-shot base")
             if "subsets" not in anchor_root:
                 errors.append(f"{script}: anchor_base_root does not point at a K-shot subsets directory")
+            ref_root = str(_opt_first(opts, "--ref_root", ""))
             init_root = str(_opt_first(opts, "--init_base_head_from_k500_root", ""))
-            if "ecgfounder_kshot_head_ft_v6" not in init_root:
-                warnings.append(f"{script}: init_base_head_from_k500_root is not the v6 ECGFounder K500-head root")
+            experiment_name = str((config.get("experiment") or {}).get("name") or "")
+            requires_ref_root = (
+                "ecgfounder_direct_k500_v7_sjr_rgq" in init_root
+                or experiment_name.endswith("_v7_sjr_rgq")
+            )
+            if matrix_center and requires_ref_root and not ref_root:
+                errors.append(f"{script}: matrix command must pass --ref_root")
+            if ref_root:
+                if f"k{expected_command_k}_seed{expected_command_seed}" in ref_root:
+                    errors.append(f"{script}: ref_root should be the root directory, not one center-specific K-shot base")
+                if "subsets" not in ref_root:
+                    errors.append(f"{script}: ref_root does not point at a K-shot subsets directory")
+            if (
+                "ecgfounder_kshot_head_ft_v6" not in init_root
+                and "ecgfounder_direct_k500_v7_sjr_rgq" not in init_root
+            ):
+                warnings.append(f"{script}: init_base_head_from_k500_root is not a managed ECGFounder direct-head root")
         elif script == "eval_crosscenter.py":
             _audit_require_options(
                 errors,
@@ -962,11 +1480,136 @@ def audit_runner_commands(config: dict[str, Any], commands: list[dict[str, Any]]
             matrix_center = str((command.get("matrix") or {}).get("center", ""))
             if matrix_center and matrix_center not in target_centers:
                 errors.append(f"{script}: unexpected matrix center {matrix_center!r}")
+            experiment_name = str((config.get("experiment") or {}).get("name") or "")
+            if experiment_name == "ecgtwin_prompt_token_online_at_minimal_eval":
+                center = matrix_center or str(_opt_first(opts, "--center", ""))
+                model_dir = str(_opt_first(opts, "--model_dir", ""))
+                output_path = str(_opt_first(opts, "--output_path", ""))
+                expected_model_dir_suffix = f"/ecgtwin_prompt_token_online_at_minimal/{run_id}/{center}"
+                expected_output_suffix = (
+                    f"/ecgtwin_prompt_token_online_at_minimal_eval/{run_id}/{center}/"
+                    "eval_result_v7_super5_sjr_rgq_refexcluded.json"
+                )
+                _audit_equals(errors, script, opts, "--model_name", "efficientnet1dv2")
+                _audit_equals(errors, script, opts, "--device", "cuda")
+                if run_id and not model_dir.endswith(expected_model_dir_suffix):
+                    errors.append(
+                        f"{script}: model_dir must point at same-run prompt-token online-AT output"
+                    )
+                if run_id and not output_path.endswith(expected_output_suffix):
+                    errors.append(
+                        f"{script}: output_path must be run-id-scoped under ecgtwin_prompt_token_online_at_minimal_eval"
+                    )
+        elif script == "eval_pn2021_corruptions.py":
+            _audit_require_options(
+                errors,
+                script,
+                opts,
+                [
+                    "--mode",
+                    "--scheme",
+                    "--model_dir",
+                    "--clean_mmap_cache_dir",
+                    "--clean_cache_dir",
+                    "--clean_eval_json",
+                    "--centers",
+                    "--corruptions",
+                    "--severities",
+                    "--severity_profile",
+                    "--device",
+                    "--crop_len",
+                    "--batch_size",
+                    "--num_workers",
+                    "--min_pos",
+                    "--seed",
+                    "--exclude_ref_ids",
+                    "--output_path",
+                ],
+            )
+            _audit_equals(errors, script, opts, "--mode", "stream")
+            _audit_equals(errors, script, opts, "--scheme", "super5")
+            _audit_equals(errors, script, opts, "--severity_profile", "standard")
+            _audit_equals(errors, script, opts, "--crop_len", config["preprocess"]["crop_len"])
+            _audit_equals(errors, script, opts, "--min_pos", config["evaluation"]["min_pos"])
+            if str(_opt_first(opts, "--device", "")) != "cuda":
+                errors.append(f"{script}: --device should be 'cuda' and GPU id must be selected by CUDA_VISIBLE_DEVICES")
+            centers = _opt_list(opts, "--centers")
+            matrix_center = str((command.get("matrix") or {}).get("center", ""))
+            if len(centers) != 1:
+                errors.append(f"{script}: managed PN2021-C eval must target exactly one center per command")
+            center = centers[0] if centers else matrix_center
+            if center not in target_centers:
+                errors.append(f"{script}: unexpected center {center!r}")
+            if matrix_center and center != matrix_center:
+                errors.append(f"{script}: matrix center {matrix_center!r} must match --centers {centers!r}")
+            ref_metas = _opt_list(opts, "--exclude_ref_ids")
+            expected_ref_name = f"{center}_real_k{expected_k}_seed{expected_seed}.ref_meta.json"
+            if [Path(path).name for path in ref_metas] != [expected_ref_name]:
+                errors.append(
+                    f"{script}: exclude_ref_ids={[Path(path).name for path in ref_metas]!r}, "
+                    f"expected {[expected_ref_name]!r}"
+                )
+            clean_eval = str(_opt_first(opts, "--clean_eval_json", ""))
+            model_dir = str(_opt_first(opts, "--model_dir", ""))
+            if model_dir and clean_eval != str(Path(model_dir) / "eval_result_v7_exclrefs_crop1000.json"):
+                errors.append(f"{script}: clean_eval_json must point inside --model_dir")
+            if "--limit" in opts and str(_opt_first(opts, "--limit")) not in {"0", ""}:
+                errors.append(f"{script}: managed main PN2021-C eval must not limit samples")
+        elif script == "export_percent_kshot_v7_sjr_rgq_20260530.py":
+            _audit_require_options(
+                errors,
+                script,
+                opts,
+                [
+                    "--centers",
+                    "--percents",
+                    "--fixed-ks",
+                    "--seed",
+                    "--cache-root",
+                    "--mmap-root",
+                    "--output-root",
+                    "--summary-path",
+                ],
+            )
+            centers = set(_opt_list(opts, "--centers"))
+            if centers != target_centers:
+                errors.append(f"{script}: centers={sorted(centers)!r}, expected {sorted(target_centers)!r}")
+            fixed_ks = set(_opt_list(opts, "--fixed-ks"))
+            if fixed_ks != {str(expected_k)}:
+                errors.append(f"{script}: fixed-ks={sorted(fixed_ks)!r}, expected {[str(expected_k)]!r}")
+            _audit_equals(errors, script, opts, "--seed", expected_seed)
+            percents = _opt_list(opts, "--percents")
+            if not percents:
+                errors.append(f"{script}: --percents must include percent-shot protocols")
+            invalid_percents = []
+            for value in percents:
+                try:
+                    number = float(value)
+                except ValueError:
+                    invalid_percents.append(value)
+                    continue
+                if number <= 0.0 or number > 1.0:
+                    invalid_percents.append(value)
+            if invalid_percents:
+                errors.append(f"{script}: invalid --percents {invalid_percents!r}")
+            if "--force" in opts:
+                errors.append(f"{script}: managed subset export must not pass --force")
+            output_root = str(_opt_first(opts, "--output-root", ""))
+            if "subsets" not in output_root:
+                errors.append(f"{script}: output-root does not point at a K-shot subsets directory")
+            summary_path = str(_opt_first(opts, "--summary-path", ""))
+            if run_id and run_id not in summary_path:
+                errors.append(f"{script}: summary-path must be run-id scoped")
 
     if errors:
         joined = "\n".join(f"  - {error}" for error in errors)
         raise ConfigError("Generated runner commands failed protocol audit:\n" + joined)
-    return {"passed": True, "errors": errors, "warnings": warnings}
+    return {
+        "passed": True,
+        "errors": errors,
+        "warnings": warnings,
+        "managed_entrypoints": managed_entrypoints,
+    }
 
 
 def audit_postprocess_commands(config: dict[str, Any], commands: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1055,20 +1698,22 @@ def _path_record(role: str, path: str | Path, *, required: bool = True) -> dict[
 
 
 def _direct_ref_base(data_root: Path, center: str, k: int, seed: int) -> Path:
-    return (
-        data_root
-        / "paper_vae_only_latenthull_sweep_20260516"
-        / "subsets"
-        / center
-        / f"k{k}_seed{seed}"
-        / f"{center}_real_k{k}_seed{seed}"
+    return canonical_kshot_base(
+        data_root / "paper_vae_only_latenthull_sweep_20260516" / "subsets",
+        center,
+        k=k,
+        seed=seed,
     )
 
 
 def _direct_ref_base_from_opts(opts: dict[str, Any], data_root: Path, center: str, k: int, seed: int) -> Path:
-    subset_root = str(_opt_first(opts, "--subset_root", ""))
+    subset_root = str(
+        _opt_first(opts, "--subset_root", "")
+        or _opt_first(opts, "--ref_root", "")
+        or _opt_first(opts, "--anchor_base_root", "")
+    )
     if subset_root:
-        return Path(subset_root) / center / f"k{k}_seed{seed}" / f"{center}_real_k{k}_seed{seed}"
+        return canonical_kshot_base(subset_root, center, k=k, seed=seed)
     return _direct_ref_base(data_root, center, k, seed)
 
 
@@ -1081,16 +1726,23 @@ def _append_k500_ref(
     base: Path,
     include_latent: bool,
 ) -> None:
+    group = KShotArtifactGroup.from_base(
+        base,
+        center=center,
+        k=k,
+        seed=seed,
+        include_latent=include_latent,
+    )
     refs.append(
         {
-            "center": center,
-            "k": k,
-            "seed": seed,
-            "anchor_base": str(base),
-            "ref_meta_json": _path_record("kshot_ref_meta", base.with_suffix(".ref_meta.json")),
-            "signals_npz": _path_record("kshot_signals", base.with_suffix(".signals.npz")),
+            "center": group.center,
+            "k": group.k,
+            "seed": group.seed,
+            "anchor_base": str(group.base),
+            "ref_meta_json": _path_record("kshot_ref_meta", group.ref_meta),
+            "signals_npz": _path_record("kshot_signals", group.signals),
             "latent_npz": (
-                _path_record("kshot_latents", base.with_suffix(".latent.npz"))
+                _path_record("kshot_latents", group.latents)
                 if include_latent
                 else None
             ),
@@ -1122,6 +1774,167 @@ def _direct_child_run(opts: dict[str, Any], center: str) -> dict[str, Any]:
                 "eval_result",
                 child_dir / "eval_result_v7_super5_sjr_rgq_review_exclrefs_crop1000.json",
             ),
+        ],
+    }
+
+
+def _benchmark_direct_child_run(opts: dict[str, Any], center: str) -> dict[str, Any]:
+    out_root = Path(str(_opt_first(opts, "--out_root", "")))
+    child_dir = out_root / "runs" / build_benchmark_direct_run_leaf(
+        {
+            "center": center,
+            "k": _opt_first(opts, "--k", "500"),
+            "model_name": _opt_first(opts, "--model_name", "benchmark_resnet1d_wang"),
+            "epochs": _opt_first(opts, "--epochs", "30"),
+            "seed": _opt_first(opts, "--seed", "20260531"),
+            "val_fraction": _opt_first(opts, "--val_fraction", "0.2"),
+        }
+    )
+    return {
+        "center": center,
+        "output_root": str(out_root),
+        "child_run_dir": str(child_dir),
+        "expected_artifacts": [
+            _path_record("best_model", child_dir / "best_model.pt"),
+            _path_record("training_log", child_dir / "training_log.json"),
+            _path_record("train_result", child_dir / "train_result.json"),
+            _path_record("legacy_run_config", child_dir / "run_config.json"),
+            _path_record(
+                "eval_result",
+                child_dir / "eval_result_v7_super5_sjr_rgq_review_exclrefs_crop1000.json",
+            ),
+        ],
+    }
+
+
+def _benchmark_source_child_run(opts: dict[str, Any]) -> dict[str, Any]:
+    child_dir = Path(str(_opt_first(opts, "--output_dir", "")))
+    return {
+        "model": str(_opt_first(opts, "--model_name", "")),
+        "output_root": str(child_dir.parent),
+        "child_run_dir": str(child_dir),
+        "expected_artifacts": [
+            _path_record("best_model", child_dir / "best_model.pt"),
+            _path_record("best_model_auprc", child_dir / "best_model_auprc.pt"),
+            _path_record("training_log", child_dir / "training_log.json"),
+            _path_record("train_result", child_dir / "train_result.json"),
+        ],
+    }
+
+
+def _ecgtwin_author_ibe_child_run(opts: dict[str, Any]) -> dict[str, Any]:
+    child_dir = Path(str(_opt_first(opts, "--output_dir", "")))
+    return {
+        "stage": "ibe_stage1",
+        "output_root": str(child_dir),
+        "child_run_dir": str(child_dir),
+        "expected_artifacts": [
+            _path_record("legacy_run_config", child_dir / "run_config.yaml"),
+            _path_record("train_log", child_dir / "train.log"),
+            _path_record("metrics_jsonl", child_dir / "metrics.jsonl"),
+            _path_record("loss_curve_csv", child_dir / "loss_curve.csv"),
+            _path_record("loss_curve_png", child_dir / "loss_curve.png"),
+            _path_record("ecgtwin_author.latest_checkpoint", child_dir / "checkpoints" / "latest.pt"),
+            _path_record("ecgtwin_author.best_checkpoint", child_dir / "checkpoints" / "best.pt"),
+            _path_record("ecgtwin_author.ibe_best", child_dir / "checkpoints" / "IBE_best.pth"),
+        ],
+    }
+
+
+def _ecgtwin_author_dit_child_run(opts: dict[str, Any]) -> dict[str, Any]:
+    child_dir = Path(str(_opt_first(opts, "--output_dir", "")))
+    return {
+        "stage": "dit_stage2",
+        "output_root": str(child_dir),
+        "child_run_dir": str(child_dir),
+        "expected_artifacts": [
+            _path_record("legacy_run_config", child_dir / "run_config.yaml"),
+            _path_record("train_log", child_dir / "train.log"),
+            _path_record("metrics_jsonl", child_dir / "metrics.jsonl"),
+            _path_record("loss_curve_csv", child_dir / "loss_curve.csv"),
+            _path_record("loss_curve_png", child_dir / "loss_curve.png"),
+            _path_record("ecgtwin_author.dit_latest", child_dir / "checkpoints" / "latest.pt"),
+            _path_record("ecgtwin_author.dit_best_val", child_dir / "checkpoints" / "best_val.pt"),
+            _path_record("ecgtwin_author.dit_best_train", child_dir / "checkpoints" / "best_train.pt"),
+            _path_record(
+                "ecgtwin_author.dit_latest_weights",
+                child_dir / "checkpoints" / "DiT_ECGTwin_latest.pth",
+            ),
+            _path_record(
+                "ecgtwin_author.dit_best_val_weights",
+                child_dir / "checkpoints" / "DiT_ECGTwin_best_val.pth",
+            ),
+            _path_record(
+                "ecgtwin_author.dit_best_train_weights",
+                child_dir / "checkpoints" / "DiT_ECGTwin_best_train.pth",
+            ),
+        ],
+    }
+
+
+def _prompt_token_train_child_run(opts: dict[str, Any]) -> dict[str, Any]:
+    child_dir = Path(str(_opt_first(opts, "--save_dir", "")))
+    return {
+        "stage": "prompt_token_train",
+        "output_root": str(child_dir),
+        "child_run_dir": str(child_dir),
+        "expected_artifacts": [
+            _path_record("prompt_token.run_config", child_dir / "run_config.json"),
+            _path_record("prompt_token.metrics_jsonl", child_dir / "metrics.jsonl"),
+            _path_record("prompt_token.prompt_token_bank", child_dir / "prompt_token_bank.pt"),
+        ],
+    }
+
+
+def _prompt_token_generate_child_run(opts: dict[str, Any]) -> dict[str, Any]:
+    center = str(_opt_first(opts, "--center", ""))
+    out_dir = Path(str(_opt_first(opts, "--out_dir", "")))
+    child_dir = out_dir / center
+    return {
+        "stage": "prompt_token_generate",
+        "center": center,
+        "arm": str(_opt_first(opts, "--arm", "")),
+        "output_root": str(out_dir),
+        "child_run_dir": str(child_dir),
+        "expected_artifacts": [
+            _path_record("prompt_token.samples_npz", child_dir / "samples.npz"),
+            _path_record("prompt_token.summary_json", child_dir / "summary.json"),
+        ],
+    }
+
+
+def _prompt_token_gate_child_run(opts: dict[str, Any]) -> dict[str, Any]:
+    input_dir = Path(str(_opt_first(opts, "--input_dir", "")))
+    child_dir = Path(str(_opt_first(opts, "--out_dir", "")))
+    gated_paths = GatedPoolArtifactPaths.from_dir(child_dir)
+    return {
+        "stage": "prompt_token_gate",
+        "center": input_dir.name,
+        "output_root": str(child_dir),
+        "child_run_dir": str(child_dir),
+        "expected_artifacts": [
+            _path_record("prompt_token.gated_samples_npz", gated_paths.samples),
+            _path_record("prompt_token.gated_latent_npz", gated_paths.latents),
+            _path_record("prompt_token.class_trust_json", gated_paths.class_trust),
+            _path_record("prompt_token.ref_meta_json", gated_paths.ref_meta),
+            _path_record("prompt_token.gate_report_json", gated_paths.gate_report),
+        ],
+    }
+
+
+def _prompt_token_online_at_child_run(opts: dict[str, Any]) -> dict[str, Any]:
+    child_dir = Path(str(_opt_first(opts, "--output_dir", "")))
+    return {
+        "stage": "prompt_token_online_at",
+        "center": str(_opt_first(opts, "--center_name", "")),
+        "output_root": str(child_dir),
+        "child_run_dir": str(child_dir),
+        "expected_artifacts": [
+            _path_record("best_model", child_dir / "best_model.pt"),
+            _path_record("training_log", child_dir / "training_log.json"),
+            _path_record("train_result", child_dir / "train_result.json"),
+            _path_record("checkpoint_latest", child_dir / "checkpoints" / "checkpoint_latest.pt"),
+            _path_record("checkpoint_index", child_dir / "checkpoints" / "checkpoint_index.jsonl"),
         ],
     }
 
@@ -1437,16 +2250,172 @@ def build_artifact_trace(
 
         if script == "run_direct_finetune_k500_20260516.py":
             for item_center in _opt_list(opts, "--centers"):
-                base = _direct_ref_base_from_opts(opts, data_root, item_center, k, seed)
-                _append_k500_ref(inputs["k500_refs"], center=item_center, k=k, seed=seed, base=base, include_latent=False)
+                command_k = int(_opt_first(opts, "--k", k))
+                command_seed = int(_opt_first(opts, "--subset_seed", seed))
+                base = _direct_ref_base_from_opts(opts, data_root, item_center, command_k, command_seed)
+                _append_k500_ref(
+                    inputs["k500_refs"],
+                    center=item_center,
+                    k=command_k,
+                    seed=command_seed,
+                    base=base,
+                    include_latent=False,
+                )
                 child = _direct_child_run(opts, item_center)
+                child.update({"command_index": command_index, "name": command["name"], "matrix": command["matrix"]})
+                child_runs.append(child)
+        elif script == "train_ptbxl.py":
+            for option, label in (
+                ("--data_path", "command.data_path"),
+                ("--csv_path", "command.csv_path"),
+                ("--cache_path", "command.cache_path"),
+                ("--split_json", "command.split_json"),
+            ):
+                if _opt_first(opts, option):
+                    inputs["data_caches"].append(_path_record(label, _opt_first(opts, option)))
+            child = _benchmark_source_child_run(opts)
+            child.update({"command_index": command_index, "name": command["name"], "matrix": command["matrix"]})
+            child_runs.append(child)
+        elif script == "train_ibe_repro.py":
+            for option, label in (
+                ("--train_path", "ecgtwin_author.train_pairs"),
+                ("--val_path", "ecgtwin_author.val_pairs"),
+            ):
+                if _opt_first(opts, option):
+                    inputs["data_caches"].append(_path_record(label, _opt_first(opts, option)))
+            child = _ecgtwin_author_ibe_child_run(opts)
+            child.update({"command_index": command_index, "name": command["name"], "matrix": command["matrix"]})
+            child_runs.append(child)
+        elif script == "train_dit_repro.py":
+            for option, label in (
+                ("--train_path", "ecgtwin_author.train_pairs"),
+                ("--val_path", "ecgtwin_author.val_pairs"),
+            ):
+                if _opt_first(opts, option):
+                    inputs["data_caches"].append(_path_record(label, _opt_first(opts, option)))
+            if _opt_first(opts, "--ibe_path"):
+                inputs["checkpoints"].append(
+                    _path_record("ecgtwin_author.ibe_stage1_best", _opt_first(opts, "--ibe_path"))
+                )
+            child = _ecgtwin_author_dit_child_run(opts)
+            child.update({"command_index": command_index, "name": command["name"], "matrix": command["matrix"]})
+            child_runs.append(child)
+        elif script == "train_center_prompt_tokens.py":
+            for option, label in (
+                ("--cache_root", "prompt_token.cache_root"),
+                ("--prompt_bank", "prompt_token.text_prompt_bank"),
+                ("--ecgtwin_config", "prompt_token.ecgtwin_config"),
+                ("--style_ckpt", "prompt_token.style_ckpt"),
+                ("--semantic_ckpt", "prompt_token.semantic_ckpt"),
+            ):
+                if _opt_first(opts, option):
+                    inputs["data_caches"].append(
+                        _path_record(label, _opt_first(opts, option), required=option != "--cache_root")
+                    )
+            child = _prompt_token_train_child_run(opts)
+            child.update({"command_index": command_index, "name": command["name"], "matrix": command["matrix"]})
+            child_runs.append(child)
+        elif script == "generate_center_prompt_token_synth.py":
+            center = str(_opt_first(opts, "--center", ""))
+            cache_root = Path(str(_opt_first(opts, "--cache_root", "")))
+            if _opt_first(opts, "--token_bank"):
+                inputs["init_heads"].append(
+                    _path_record("prompt_token.prompt_token_bank", _opt_first(opts, "--token_bank"))
+                )
+            if _opt_first(opts, "--victim_ckpt"):
+                inputs["checkpoints"].append(
+                    _path_record("prompt_token.victim_ckpt", _opt_first(opts, "--victim_ckpt"))
+                )
+            for role, path in (
+                ("prompt_token.text_prompt_bank", _opt_first(opts, "--prompt_bank")),
+                ("prompt_token.center_full_latents", cache_root / "center_full_latents" / f"{center}.pt"),
+                (
+                    "prompt_token.ref_selection",
+                    cache_root
+                    / "ref_selection"
+                    / f"{center}_k{_opt_first(opts, '--K', k)}_seed{_opt_first(opts, '--selection_seed', '42')}.json",
+                ),
+            ):
+                if path:
+                    inputs["data_caches"].append(_path_record(role, path))
+            child = _prompt_token_generate_child_run(opts)
+            child.update({"command_index": command_index, "name": command["name"], "matrix": command["matrix"]})
+            child_runs.append(child)
+        elif script == "gate_prompt_token_synth.py":
+            input_dir = Path(str(_opt_first(opts, "--input_dir", "")))
+            center = input_dir.name
+            cache_root = Path(str(_opt_first(opts, "--cache_root", "")))
+            for role, path in (
+                ("prompt_token.generated_samples", input_dir / "samples.npz"),
+                ("prompt_token.generated_summary", input_dir / "summary.json"),
+                ("prompt_token.center_full_latents", cache_root / "center_full_latents" / f"{center}.pt"),
+                (
+                    "prompt_token.ref_selection",
+                    cache_root
+                    / "ref_selection"
+                    / f"{center}_k{_opt_first(opts, '--K', k)}_seed{_opt_first(opts, '--selection_seed', '42')}.json",
+                ),
+            ):
+                inputs["data_caches"].append(_path_record(role, path))
+            child = _prompt_token_gate_child_run(opts)
+            child.update({"command_index": command_index, "name": command["name"], "matrix": command["matrix"]})
+            child_runs.append(child)
+        elif script == "synth_online_at_super5.py":
+            center = str(_opt_first(opts, "--center_name", ""))
+            if _opt_first(opts, "--init_ckpt"):
+                inputs["checkpoints"].append(
+                    _path_record("efficientnet.direct_init_checkpoint", _opt_first(opts, "--init_ckpt"))
+                )
+            for role, option in (
+                ("prompt_token.gated_latent_npz", "--synth_npz"),
+                ("prompt_token.gated_class_trust_json", "--class_trust"),
+                ("prompt_token.gated_ref_meta_json", "--ref_meta_json"),
+                ("target_k500.signals_npz", "--target_real_npz"),
+                ("pn2021.training_root", "--data_dir"),
+                ("ptbxl.raw100", "--ptbxl_raw"),
+                ("ptbxl.database_csv", "--ptbxl_csv"),
+                ("ptbxl.preprocessed_cache", "--ptbxl_prep"),
+            ):
+                if _opt_first(opts, option):
+                    inputs["data_caches"].append(_path_record(role, _opt_first(opts, option)))
+            target_real_npz = str(_opt_first(opts, "--target_real_npz", ""))
+            if target_real_npz.endswith(".signals.npz"):
+                base = Path(_strip_known_suffix(target_real_npz, ".signals.npz"))
+                _append_k500_ref(inputs["k500_refs"], center=center, k=k, seed=seed, base=base, include_latent=False)
+            child = _prompt_token_online_at_child_run(opts)
+            child.update({"command_index": command_index, "name": command["name"], "matrix": command["matrix"]})
+            child_runs.append(child)
+        elif script == "run_benchmark_direct_finetune_v7_20260530.py":
+            for item_center in _opt_list(opts, "--centers"):
+                command_k = int(_opt_first(opts, "--k", k))
+                command_seed = int(_opt_first(opts, "--subset_seed", seed))
+                base = _direct_ref_base_from_opts(opts, data_root, item_center, command_k, command_seed)
+                _append_k500_ref(
+                    inputs["k500_refs"],
+                    center=item_center,
+                    k=command_k,
+                    seed=command_seed,
+                    base=base,
+                    include_latent=False,
+                )
+                child = _benchmark_direct_child_run(opts, item_center)
                 child.update({"command_index": command_index, "name": command["name"], "matrix": command["matrix"]})
                 child_runs.append(child)
         elif script == "run_effnet_latent_augmix_stage3_20260524.py":
             anchor_base = Path(str(_opt_first(opts, "--anchor_base", "")))
             if "seed42" in str(anchor_base):
                 protocol_warnings.append(f"{script}:{center} anchor_base contains seed42")
-            _append_k500_ref(inputs["k500_refs"], center=center, k=k, seed=seed, base=anchor_base, include_latent=True)
+            matrix_case = _matrix_case(command)
+            command_k = int(matrix_case.get("k", k))
+            command_seed = int(_opt_first(opts, "--seed", seed))
+            _append_k500_ref(
+                inputs["k500_refs"],
+                center=center,
+                k=command_k,
+                seed=command_seed,
+                base=anchor_base,
+                include_latent=True,
+            )
             child = _vae_child_run(opts, center)
             child.update({"command_index": command_index, "name": command["name"], "matrix": command["matrix"]})
             child_runs.append(child)
@@ -1469,12 +2438,14 @@ def build_artifact_trace(
                 preprocess_policy=preprocess_policy,
             )
             for item_center in _opt_list(opts, "--centers"):
-                base = _direct_ref_base(data_root, item_center, k, seed)
+                command_k = int(_opt_first(opts, "--k", k))
+                command_seed = int(_opt_first(opts, "--subset_seed", seed))
+                base = _direct_ref_base_from_opts(opts, data_root, item_center, command_k, command_seed)
                 _append_k500_ref(
                     inputs["k500_refs"],
                     center=item_center,
-                    k=k,
-                    seed=seed,
+                    k=command_k,
+                    seed=command_seed,
                     base=base,
                     include_latent=False,
                 )
@@ -1500,13 +2471,14 @@ def build_artifact_trace(
                         k=k,
                         seed=seed,
                     )
-                anchor_root = Path(str(_opt_first(opts, "--anchor_base_root", "")))
-                base = anchor_root / item_center / f"k{k}_seed{seed}" / f"{item_center}_real_k{k}_seed{seed}"
+                command_k = int(_opt_first(opts, "--k", k))
+                command_seed = int(_opt_first(opts, "--seed", seed))
+                base = _direct_ref_base_from_opts(opts, data_root, item_center, command_k, command_seed)
                 _append_k500_ref(
                     inputs["k500_refs"],
                     center=item_center,
-                    k=k,
-                    seed=seed,
+                    k=command_k,
+                    seed=command_seed,
                     base=base,
                     include_latent=True,
                 )
@@ -1527,6 +2499,33 @@ def build_artifact_trace(
                         base=base,
                         include_latent=False,
                     )
+            child = _eval_child_run(opts, center)
+            child.update({"command_index": command_index, "name": command["name"], "matrix": command["matrix"]})
+            child_runs.append(child)
+        elif script == "eval_pn2021_corruptions.py":
+            for ref_meta in _opt_list(opts, "--exclude_ref_ids"):
+                ref_name = Path(ref_meta).name
+                ref_center = ref_name.split(f"_real_k{k}_seed{seed}.ref_meta.json")[0]
+                if ref_center:
+                    base = Path(_strip_known_suffix(ref_meta, ".ref_meta.json"))
+                    _append_k500_ref(
+                        inputs["k500_refs"],
+                        center=ref_center,
+                        k=k,
+                        seed=seed,
+                        base=base,
+                        include_latent=False,
+                    )
+            for option, role in [
+                ("--clean_cache_dir", "pn2021_clean_cache_dir"),
+                ("--clean_mmap_cache_dir", "pn2021_clean_mmap_cache_dir"),
+            ]:
+                value = str(_opt_first(opts, option, ""))
+                if value:
+                    inputs["data_caches"].append(_path_record(role, value, required=False))
+            clean_eval = str(_opt_first(opts, "--clean_eval_json", ""))
+            if clean_eval:
+                inputs["checkpoints"].append(_path_record("command.clean_eval_json", clean_eval))
             child = _eval_child_run(opts, center)
             child.update({"command_index": command_index, "name": command["name"], "matrix": command["matrix"]})
             child_runs.append(child)

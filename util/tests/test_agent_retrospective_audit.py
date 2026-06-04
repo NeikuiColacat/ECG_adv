@@ -24,7 +24,7 @@ def make_repo(tmp_path: Path) -> Path:
     write(root / "docs/pipelines/refactor_handoff.md", "# Refactor\n")
     write(root / "docs/labeling/pn2021_review.md", "# Label Review\n")
     write(root / "configs/label_mappings/pn2021_review.jsonl", "{}\n")
-    write(root / "docs/tmp_md/run_summary.md", "# Summary\n")
+    write(root / "docs/reports/archive/20260529/run_summary.md", "# Summary\n")
     write(root / "configs/active_scripts.yaml", "version: 1\n")
     write(root / "configs/active_evidence_registry.yaml", "schema_version: 1\n")
     return root

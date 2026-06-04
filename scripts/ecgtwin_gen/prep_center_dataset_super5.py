@@ -46,7 +46,6 @@ Usage:
 """
 import argparse
 import functools
-import hashlib
 import os
 import random
 import sys
@@ -63,11 +62,15 @@ REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO))
 
 from scripts.crosscenter_v2.preprocess_utils import unified_preprocess_to_1000  # noqa: E402
-from scripts.triple_labels.eval_crosscenter import parse_header_snomed  # noqa: E402
-from scripts.triple_labels.label_schemes import (  # noqa: E402
-    CLASS_NAMES_SUPER5, NUM_SUPER5, SUPER5_TO_IDX,
-    SNOMED_TO_SUPER5, snomed_list_to_super5,
+from ecg_adv_gen.data import (  # noqa: E402
+    hybrid_select_pn2021_records,
+    parse_pn2021_header_metadata,
+    pn2021_hash_fold,
+    pn2021_primary_class,
+    pn2021_primary_snomed,
+    record_to_prompt_token_cache_item,
 )
+from scripts.triple_labels.label_schemes import NUM_SUPER5  # noqa: E402
 from util.ecgtwin_utils import ECGTwinWrapper  # noqa: E402
 from util.lead_utils import ECGTWIN_TO_PTBXL_INDICES  # noqa: E402
 
@@ -103,43 +106,16 @@ def _parse_header_meta(header_path: str) -> dict:
     NaN guard: ningbo .hea sometimes contains 'Age: nan' (literal string) which
     float() parses without raising; we treat that as missing.
     """
-    import math
-    meta = {"age": None, "sex": None, "hr": None}
-    try:
-        with open(header_path, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if not line.startswith('#'):
-                    continue
-                body = line[1:].strip()
-                if body.startswith('Age:'):
-                    val = body.split(':', 1)[1].strip()
-                    try:
-                        a = float(val)
-                        if math.isfinite(a):
-                            meta["age"] = a
-                    except ValueError:
-                        pass
-                elif body.startswith('Sex:'):
-                    val = body.split(':', 1)[1].strip().upper()
-                    meta["sex"] = "M" if val.startswith("M") else (
-                        "F" if val.startswith("F") else "U")
-    except Exception:
-        pass
-    return meta
+    return parse_pn2021_header_metadata(header_path)
 
 
 def _fold_from_hash(record_id: str) -> int:
-    h = int(hashlib.sha1(record_id.encode()).hexdigest()[:8], 16)
-    return (h % 10) + 1
+    return pn2021_hash_fold(record_id)
 
 
 def _pick_primary_super5(multi_hot: np.ndarray) -> Optional[str]:
     """Severity-priority primary class string, or None if all-zero."""
-    for cls in SUPER5_PRIORITY:
-        if multi_hot[SUPER5_TO_IDX[cls]] == 1.0:
-            return cls
-    return None
+    return pn2021_primary_class(multi_hot, priority=SUPER5_PRIORITY)
 
 
 def _pick_primary_snomed(snomed_codes: List[int], primary: str) -> Optional[int]:
@@ -147,10 +123,7 @@ def _pick_primary_snomed(snomed_codes: List[int], primary: str) -> Optional[int]
 
     Used by Issue #20 dynamic per-record text_embed selection.
     """
-    for code in snomed_codes:
-        if SNOMED_TO_SUPER5.get(code) == primary:
-            return code
-    return None
+    return pn2021_primary_snomed(snomed_codes, primary, include_norm_candidate=True)
 
 
 def parse_record_worker(hea_path: str) -> Optional[dict]:
@@ -159,28 +132,20 @@ def parse_record_worker(hea_path: str) -> Optional[dict]:
     Pure-Python only — no torch / no GPU access. Returns None on parse failure
     or if the record has no super5-positive class.
     """
-    snomed_codes = parse_header_snomed(hea_path)
-    if not snomed_codes:
+    item = record_to_prompt_token_cache_item(hea_path)
+    if item is None:
         return None
-    multi_hot = snomed_list_to_super5(snomed_codes)
-    primary = _pick_primary_super5(multi_hot)
-    if primary is None:
-        return None
-    primary_code = _pick_primary_snomed(snomed_codes, primary)
-    meta = _parse_header_meta(hea_path)
-    record_path = hea_path[:-4]  # strip .hea → wfdb basename
-    record_id = os.path.basename(record_path)
     return {
         "hea_path":      hea_path,
-        "record_path":   record_path,
-        "record_id":     record_id,
-        "snomed_codes":  snomed_codes,
-        "multi_hot":     multi_hot,         # np.ndarray (5,) float32
-        "primary":       primary,           # str
-        "primary_code":  primary_code,      # int or None
-        "age":           meta["age"],
-        "sex":           meta["sex"],
-        "hr":            meta["hr"],
+        "record_path":   item["record_path"],
+        "record_id":     item["record_id"],
+        "snomed_codes":  item["snomed_codes"],
+        "multi_hot":     item["multi_hot"],        # np.ndarray (5,) float32
+        "primary":       item["primary"],          # str
+        "primary_code":  item["primary_code"],     # int or None
+        "age":           item["age"],
+        "sex":           item["sex"],
+        "hr":            item["hr"],
     }
 
 
@@ -200,25 +165,15 @@ def hybrid_sample(records: List[dict], K: int, floor: int, seed: int) -> List[di
     at random.
     Step 2: Fill remaining K-budget with the leftover natural-distribution pool.
     """
-    rng = random.Random(seed)
-    by_class = {c: [] for c in CLASS_NAMES_SUPER5}
-    for r in records:
-        by_class[r["primary"]].append(r)
-
-    selected = []
-    for cls in CLASS_NAMES_SUPER5:
-        pool = by_class[cls]
-        n_take = min(floor, len(pool))
-        if n_take > 0:
-            selected.extend(rng.sample(pool, n_take))
-
-    selected_ids = {r["record_id"] for r in selected}
-    remaining = [r for r in records if r["record_id"] not in selected_ids]
-    n_more = K - len(selected)
-    if n_more > 0 and remaining:
-        rng.shuffle(remaining)
-        selected.extend(remaining[:n_more])
-    return selected
+    return list(
+        hybrid_select_pn2021_records(
+            records,
+            k=K,
+            floor_per_class=floor,
+            seed=seed,
+            class_key="primary",
+        )
+    )
 
 
 def main():

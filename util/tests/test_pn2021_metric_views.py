@@ -8,6 +8,7 @@ from ecg_adv_gen.evaluation import (
     DROP_ALL_ZERO_POLICY,
     assemble_pn2021_center_metrics,
     assemble_target_refexcluded_views,
+    filter_pn2021_center_records,
     summarize_center_view,
 )
 
@@ -25,6 +26,35 @@ def fake_metric(labels: np.ndarray, scores: np.ndarray) -> dict:
             for i, v in enumerate(positives)
         },
     }
+
+
+def test_filter_pn2021_center_records_applies_include_then_ref_exclusion():
+    signals = np.asarray(
+        [
+            [[1.0]],
+            [[2.0]],
+            [[3.0]],
+            [[4.0]],
+        ],
+        dtype=np.float32,
+    )
+    labels = np.asarray([[1, 0], [0, 1], [1, 1], [0, 0]], dtype=np.float32)
+    record_ids = np.asarray(["N1", "N2", "N3", "N4"])
+
+    filtered = filter_pn2021_center_records(
+        signals,
+        labels,
+        record_ids,
+        include_ids={"N1", "N2", "N3"},
+        ref_ids={"N2", "N4"},
+    )
+
+    assert filtered.n_total == 4
+    assert filtered.n_include_kept == 3
+    assert filtered.n_excluded_ref == 1
+    assert filtered.record_ids.tolist() == ["N1", "N3"]
+    assert filtered.signals[:, 0, 0].tolist() == [1.0, 3.0]
+    assert filtered.labels.tolist() == [[1.0, 0.0], [1.0, 1.0]]
 
 
 def test_assemble_pn2021_center_metrics_applies_include_then_ref_exclusion():

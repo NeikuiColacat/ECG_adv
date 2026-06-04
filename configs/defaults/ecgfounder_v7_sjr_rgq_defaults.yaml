@@ -1,0 +1,18 @@
+extends:
+  - ecgfounder_defaults.yaml
+  - common_v7_sjr_rgq_super5.yaml
+
+model:
+  linear_probe_dir: ${paths.data_root}/paper_foundation_baselines_20260530/ecgfounder_linear_probe_v7_from_v6_cache
+  k500_head_root: ${paths.output_root}/ecgfounder_direct_k500_v7_sjr_rgq/${runtime.run_id}/runs
+
+training:
+  epochs: 50
+  batch_size: 128
+  eval_batch_size: 4096
+  optimizer:
+    name: adamw
+    lr: 0.0005
+    weight_decay: 0.0001
+  validation:
+    val_fraction: 0.2
