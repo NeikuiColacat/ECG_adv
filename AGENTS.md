@@ -30,8 +30,10 @@ Current agent operating layer, initialized 2026-05-29:
 ```text
 active evidence registry: configs/active_evidence_registry.yaml
 CPU-only agent audit:     micromamba run -n ECGTwin python scripts/agent/audit_agent_workspace.py
-                         covers active evidence, active scripts, and dirty layers
+                         covers active evidence, active scripts, external models, and dirty layers
+external model check:     micromamba run -n ECGTwin python scripts/agent/check_external_models.py
 handoff readiness:        inspect handoff_contract.handoff_readiness
+external model status:    inspect external_models and handoff_contract.handoff_readiness.ignored_verified_external_model_dirty_paths
 source-of-truth summary:  inspect handoff_contract.source_of_truth_summary
 source-of-truth status:   inspect handoff_contract.source_of_truth_status
 intent-to-add paths:      inspect handoff_contract.source_of_truth_summary.intent_to_add_paths
@@ -43,7 +45,7 @@ current handoff note:     docs/codex-handoffs/current_workspace_handoff.md
 legacy VAE manifest:      micromamba run -n ECGTwin python scripts/agent/backfill_vae_lhat_manifest.py
 comparison bundle build:  micromamba run -n ECGTwin python scripts/agent/build_comparison_bundle.py --force
 run finalizer:            micromamba run -n ECGTwin python scripts/agent/finalize_run.py --run-dir <run_dir>
-run registry update:      micromamba run -n ECGTwin python scripts/agent/register_run.py --run-dir <run_dir> --status provisional
+run registry update:      micromamba run -n ECGTwin python scripts/agent/register_run.py --run-dir <run_dir> --status auto
 details:                  docs/pipelines/agent_operating_layer_20260529.md
 ```
 
@@ -358,19 +360,23 @@ trash/docs_cleanup_20260501/historical_no_ibe/ecgtwin_no_ibe_diffusion_augmenter
 - EfficientNet super5 outputs: `/root/autodl-tmp/triple_labels/<run_name>/`
 
 External model repos are expected to live on the data disk and be linked into
-`model/`:
+`model/`. On the current migrated host, their real targets are declared in
+`configs/local/linbinhao_server.example.yaml` under `external_models`; on other
+hosts they may be supplied through environment variables or a local YAML:
 
 ```text
-model/DeepECG                 -> /root/autodl-tmp/models/DeepECG
-model/ECGTwin                 -> /root/autodl-tmp/models/ECGTwin
-model/advdiff                 -> /root/autodl-tmp/models/advdiff
-model/ecg_ptbxl_benchmarking  -> /root/autodl-tmp/models/ecg_ptbxl_benchmarking
+model/DeepECG                 -> ${paths.model_root}/DeepECG
+model/ECGTwin                 -> ${paths.model_root}/ECGTwin
+model/advdiff                 -> ${paths.model_root}/advdiff
+model/ecg_ptbxl_benchmarking  -> ${paths.model_root}/ecg_ptbxl_benchmarking
+model/ecgfounder              -> ${paths.data_root}/ecgfounder
 ```
 
-On a new AutoDL host, run:
+On a new AutoDL host, run bootstrap with either local YAML or explicit env:
 
 ```bash
-bash scripts/bootstrap_model_repos.sh
+bash scripts/bootstrap_model_repos.sh --local-config configs/local/linbinhao_server.example.yaml
+bash scripts/bootstrap_model_repos.sh --check-only --local-config configs/local/linbinhao_server.example.yaml
 ```
 
 `.gitmodules` is currently an external-model URL manifest, not active gitlink

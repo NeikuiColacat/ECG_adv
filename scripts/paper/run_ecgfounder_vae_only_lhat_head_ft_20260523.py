@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import os
 import random
@@ -75,6 +76,10 @@ from ecg_adv_gen.adaptation.latent_hull_torch import initial_hull_latent  # noqa
 from ecg_adv_gen.data import (  # noqa: E402
     find_real_anchor_base,
     load_real_anchor_pool,
+)
+from ecg_adv_gen.evaluation import (  # noqa: E402
+    compute_ecgfounder_lhat_selection_score,
+    validate_ecgfounder_lhat_runtime_selection,
 )
 from scripts.triple_labels.label_schemes import CLASS_NAMES_SUPER5, SUPER5_TO_IDX  # noqa: E402
 from ecg_adv_gen.labels import pn2021_super5_label_mapping_payload  # noqa: E402
@@ -464,6 +469,20 @@ def parse_class_list(raw: str | list[str] | None) -> list[str]:
     return out
 
 
+def file_sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def append_checkpoint_index_record(path: Path, record: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record, sort_keys=True, ensure_ascii=True, default=str) + "\n")
+
+
 def train_one_center(
     center: str,
     args: argparse.Namespace,
@@ -488,6 +507,20 @@ def train_one_center(
     if result_path.exists() and not args.force:
         with result_path.open() as f:
             return json.load(f)
+    checkpoint_index_path = run_dir / "checkpoint_index.jsonl"
+    if checkpoint_index_path.exists():
+        checkpoint_index_path.unlink()
+    selection_safety = getattr(args, "selection_safety_record", None)
+    if selection_safety is None:
+        selection_safety = validate_ecgfounder_lhat_runtime_selection(
+            selection_source=args.selection_source,
+            selection_metric=args.selection_metric,
+            target_real_val_fraction=args.target_real_val_fraction,
+            target_real_val_seed=args.target_real_val_seed,
+            allow_pn2021_heldout_selection=getattr(args, "allow_pn2021_heldout_selection", False),
+        )
+    with (run_dir / "selection_safety.json").open("w", encoding="utf-8") as f:
+        json.dump(selection_safety, f, indent=2, sort_keys=True)
 
     pool = load_anchor_pool(center, args.k, args.seed, pn, args)
     selected_ids_all = pool["record_ids"].astype(str)
@@ -784,29 +817,14 @@ def train_one_center(
         )
         baseline_selection_target = baseline_views[center]["per_center"][center]
     def selection_score(target_row: dict[str, Any], ptbxl_row: dict[str, Any]) -> float:
-        target_auroc = float(target_row["macro_auroc"])
-        target_auprc = float(target_row["macro_auprc"])
-        source_auroc = float(ptbxl_row["macro_auroc"])
-        source_auprc = float(ptbxl_row["macro_auprc"])
-        if args.selection_metric == "target_auroc":
-            return target_auroc
-        if args.selection_metric == "target_auprc":
-            return target_auprc
-        if args.selection_metric == "target_plus_source_auroc":
-            return target_auroc + args.source_selection_weight * source_auroc
-        if args.selection_metric == "target_plus_source_auprc":
-            return target_auprc + args.source_selection_weight * source_auprc
-        if args.selection_metric == "target_source_hmean_auroc":
-            denom = target_auroc + source_auroc
-            return (2.0 * target_auroc * source_auroc / denom) if denom > 0 else -float("inf")
-        if args.selection_metric == "target_source_hmean_auprc":
-            denom = target_auprc + source_auprc
-            return (2.0 * target_auprc * source_auprc / denom) if denom > 0 else -float("inf")
-        if args.selection_metric == "target_under_source_floor":
-            if source_auprc < args.source_auprc_floor:
-                return target_auprc - args.source_floor_penalty * (args.source_auprc_floor - source_auprc)
-            return target_auprc
-        raise ValueError(f"unsupported selection_metric={args.selection_metric}")
+        return compute_ecgfounder_lhat_selection_score(
+            selection_metric=args.selection_metric,
+            target_metrics=target_row,
+            source_metrics=ptbxl_row,
+            source_selection_weight=args.source_selection_weight,
+            source_auprc_floor=args.source_auprc_floor,
+            source_floor_penalty=args.source_floor_penalty,
+        )
 
     best_score = (
         -float("inf")
@@ -819,6 +837,29 @@ def train_one_center(
     best_epoch = 0
     torch.save(head.state_dict(), run_dir / "best_head.pt")
     torch.save(head.state_dict(), run_dir / "initial_head.pt")
+    append_checkpoint_index_record(
+        checkpoint_index_path,
+        {
+            "event": "initial_checkpoint",
+            "epoch": 0,
+            "center": center,
+            "selected_as_best": True,
+            "selection_source": args.selection_source,
+            "selection_metric": args.selection_metric,
+            "selection_score": None if not np.isfinite(best_score) else float(best_score),
+            "target_metric_view": (
+                "target_k500_internal_val"
+                if args.selection_source == "target_real_val"
+                else "pn2021_heldout"
+            ),
+            "target_metrics": baseline_selection_target,
+            "source_metrics": baseline_ptbxl,
+            "source_auprc_floor": float(args.source_auprc_floor),
+            "checkpoint_path": str(run_dir / "best_head.pt"),
+            "checkpoint_sha256": file_sha256(run_dir / "best_head.pt"),
+            "selection_safety": selection_safety["selection_safety"],
+        },
+    )
 
     logs = []
     for epoch in range(1, args.epochs + 1):
@@ -1087,6 +1128,34 @@ def train_one_center(
                 entry["best_update"] = True
             else:
                 entry["best_update"] = False
+            append_checkpoint_index_record(
+                checkpoint_index_path,
+                {
+                    "event": "eval_checkpoint_decision",
+                    "epoch": int(epoch),
+                    "center": center,
+                    "selected_as_best": bool(entry["best_update"]),
+                    "best_epoch": int(best_epoch),
+                    "selection_source": args.selection_source,
+                    "selection_metric": args.selection_metric,
+                    "selection_score": float(cur_score),
+                    "target_metric_view": (
+                        "target_k500_internal_val"
+                        if args.selection_source == "target_real_val"
+                        else "pn2021_heldout"
+                    ),
+                    "target_metrics": target,
+                    "source_metrics": ptbxl_fold10,
+                    "source_auprc_floor": float(args.source_auprc_floor),
+                    "checkpoint_path": str(run_dir / "best_head.pt"),
+                    "checkpoint_sha256": (
+                        file_sha256(run_dir / "best_head.pt")
+                        if entry["best_update"]
+                        else None
+                    ),
+                    "selection_safety": selection_safety["selection_safety"],
+                },
+            )
             atk = entry["attack_success"]
             atk_anchor = entry["attack_vs_anchor"]
             atk_msg = ""
@@ -1162,6 +1231,7 @@ def train_one_center(
         "final_ptbxl_fold10": final_ptbxl,
         "best_epoch": int(best_epoch),
         "best_selection_score": float(best_score),
+        "selection_record": selection_safety,
         "config": vars(args),
         "anchor_source_base": pool["source_base"],
         "preprocess": {
@@ -1546,11 +1616,19 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--selection_source",
         choices=["pn2021_heldout", "target_real_val"],
-        default="pn2021_heldout",
+        default="target_real_val",
         help=(
             "Checkpoint-selection source. target_real_val uses a deterministic "
             "validation split from the known K-shot target records and does not "
             "evaluate PN2021 held-out target data during training."
+        ),
+    )
+    p.add_argument(
+        "--allow_pn2021_heldout_selection",
+        action="store_true",
+        help=(
+            "Allow explicit diagnostic checkpoint selection on PN2021 held-out "
+            "target labels. Do not use for paper-safe runs."
         ),
     )
     p.add_argument("--target_real_val_fraction", type=float, default=0.2)
@@ -1575,6 +1653,13 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    args.selection_safety_record = validate_ecgfounder_lhat_runtime_selection(
+        selection_source=args.selection_source,
+        selection_metric=args.selection_metric,
+        target_real_val_fraction=args.target_real_val_fraction,
+        target_real_val_seed=args.target_real_val_seed,
+        allow_pn2021_heldout_selection=args.allow_pn2021_heldout_selection,
+    )
     set_seed(args.seed)
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

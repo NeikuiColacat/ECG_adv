@@ -54,17 +54,27 @@ Register important finalized runs in the active evidence registry:
 ```bash
 micromamba run -n ECGTwin python scripts/agent/register_run.py \
   --run-dir /path/to/run_dir \
-  --status provisional
+  --status auto
 ```
 
 The registration command stores run paths relative to `${paths.output_root}` so
 tracked registry YAML does not contain host-specific `/home/...` paths.
+`--status auto` resolves `run_record.registration_status`, then
+`run_record.status`, then finalized outcome when those values are one of the
+registry statuses; otherwise it falls back to `provisional`.
 It does not auto-finalize a run: `run_card.json`, `run_file_index.json`, and
 `summary.md` must already exist. Both finalization and registration validate the
 replay contract: manifest schema v2, git commit, resolved config hash, command
 argv records, K-shot ref traces, selection policy plus `selection.json`,
 declared eval artifacts, and succeeded-run metric coverage for every target
 center.
+The validator also checks artifact content before a run can be finalized or
+registered: `selection.json` must explicitly deny held-out target labels and
+full target-distribution tuning, `k500_ref_ids.json` must match target centers,
+K/seed, ref-id counts, hashes, and source ref-meta hashes, `metrics_long.csv`
+must include matching mapping metadata and trace source eval files, and paper
+tables plus table manifests must carry non-empty provenance back to discovered
+`metrics_long.csv` and source files.
 
 ## Policy
 

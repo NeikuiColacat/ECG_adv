@@ -49,6 +49,10 @@ def test_data_preprocess_contract_matches_current_pipeline_constants():
     assert contract.ecgtwin_decode_input_len == 1024
     assert contract.ecgtwin_decode_output_len == 1000
     assert contract.ecgtwin_to_ptbxl_indices == tuple(LEGACY_REORDER)
+    assert contract.ecgfounder_preprocess_policy == "official_ptbxl_eval"
+    assert contract.ecgfounder_input_fs == 500
+    assert contract.ecgfounder_input_len == 5000
+    assert contract.ecgfounder_input_shape == (12, 5000)
     assert ECGTWIN_TO_PTBXL_INDICES == tuple(LEGACY_REORDER)
 
 
@@ -79,6 +83,33 @@ def test_validate_experiment_config_rejects_preprocess_contract_drift():
     config["preprocess"]["classifier_fs"] = 500
 
     with pytest.raises(ConfigError, match="preprocess.classifier_fs mismatch"):
+        validate_experiment_config(config, repo_root=REPO)
+
+
+def test_validate_experiment_config_rejects_ecgfounder_policy_drift():
+    config = _load("ecgfounder_vae_lhat_k500_v7_sjr_rgq.yaml")
+    config = copy.deepcopy(config)
+    config["model"]["preprocess_policy"] = "filtered_dataset"
+
+    with pytest.raises(ConfigError, match="model.preprocess_policy mismatch"):
+        validate_experiment_config(config, repo_root=REPO)
+
+
+def test_validate_experiment_config_rejects_ecgfounder_feature_shape_drift():
+    config = _load("ecgfounder_vae_lhat_k500_v7_sjr_rgq.yaml")
+    config = copy.deepcopy(config)
+    config["preprocess"]["ecgfounder"]["input_len"] = 1000
+
+    with pytest.raises(ConfigError, match="preprocess.ecgfounder.input_len mismatch"):
+        validate_experiment_config(config, repo_root=REPO)
+
+
+def test_validate_experiment_config_rejects_ecgfounder_policy_on_effnet():
+    config = _load("effnet_vae_lhat_k500_v7_sjr_rgq.yaml")
+    config = copy.deepcopy(config)
+    config["model"]["preprocess_policy"] = "official_ptbxl_eval"
+
+    with pytest.raises(ConfigError, match="reserved for ECGFounder"):
         validate_experiment_config(config, repo_root=REPO)
 
 

@@ -10,9 +10,13 @@ source_of_truth:
   active_evidence_registry: configs/active_evidence_registry.yaml
   pipeline_index: docs/pipelines/README.md
   managed_entrypoint_registry: ecg_adv_gen/config/entrypoints.py
+  runner_adapter_registry: ecg_adv_gen/config/adapters/registry.py
   command_adapter_helpers: ecg_adv_gen/config/adapters/common.py
   direct_command_adapter: ecg_adv_gen/config/adapters/direct.py
+  ecgfounder_vae_lhat_command_adapter: ecg_adv_gen/config/adapters/ecgfounder_vae_lhat.py
   effnet_vae_lhat_command_adapter: ecg_adv_gen/config/adapters/effnet_vae_lhat.py
+  effnet_vae_lhat_wrapper_plan_builder: ecg_adv_gen/runner/effnet_vae_lhat.py
+  external_model_link_contract: ecg_adv_gen/config/external_models.py
   source_training_command_adapter: ecg_adv_gen/config/adapters/source_training.py
   super5_label_mapping: ecg_adv_gen/labels/super5_mapping.py
   super5_label_metadata: ecg_adv_gen/labels/super5.py
@@ -31,6 +35,7 @@ source_of_truth:
   selection_policy_semantics: ecg_adv_gen/evaluation/selection.py
   ecgfounder_model_contract: ecg_adv_gen/models/ecgfounder.py
   training_loss_helpers: ecg_adv_gen/training/losses.py
+  online_at_orchestration_helpers: ecg_adv_gen/training/online_at.py
 
 launch_surface_policy:
   default_launcher: scripts/run_experiment.py
@@ -49,6 +54,7 @@ launch_surface_policy:
     - no_host_absolute_paths
     - run_id_scoped_outputs
     - legacy_entrypoint_kept_as_thin_wrapper
+    - optional_runner_adapter_builds_legacy_argv_from_typed_yaml
 
 documentation_surface_policy:
   durable_process_docs: docs/pipelines
@@ -200,7 +206,7 @@ managed_experiments:
     method_family: vae_latent_hull_online_at
     mapping_version: v7_super5_sjr_rgq_review_20260528
     owns_training_logic: false
-    notes: Current EfficientNet VAE-LHAT v7 SJR/RGQ wrapper; expands to one legacy command per target center, uses seed20260531 K500 anchors, direct-K500 init checkpoints, compatsoft direct-init LHAT parameters, and target_real_val quick selection.
+    notes: Current EfficientNet VAE-LHAT v7 SJR/RGQ wrapper; runner.adapter=effnet_vae_lhat expands typed YAML fields to one legacy command per target center, uses seed20260531 K500 anchors, direct-K500 init checkpoints, compatsoft direct-init LHAT parameters, and target_real_val quick selection.
 
   - name: effnet_vae_lhat_percent_v7_sjr_rgq
     status: active_wrapped
@@ -288,7 +294,7 @@ managed_experiments:
     method_family: ecgfounder_vae_latent_hull_online_at_v7
     mapping_version: v7_super5_sjr_rgq_review_20260528
     owns_training_logic: false
-    notes: Per-center ECGFounder residual-adapter VAE-LHAT K500 v7 launch surface; consumes v7 Direct K500 heads from the same run_id and the seed20260531 SJR/RGQ subset root while leaving GPU selection outside YAML.
+    notes: Per-center ECGFounder residual-adapter VAE-LHAT K500 v7 launch surface; runner.adapter=ecgfounder_vae_lhat expands typed YAML fields to one legacy command per target center, explicitly passes standardized/local-random latent-neighbor policy, consumes v7 Direct K500 heads from the same run_id, and records child checkpoint selection index expectations while leaving GPU selection outside YAML.
 
   - name: ecgfounder_inithead_fullft_k500_v6
     status: active_wrapped
@@ -522,16 +528,31 @@ reporting_tools:
   - name: active_evidence_registry_auditor
     status: active
     script: scripts/agent/audit_agent_workspace.py
-    package: ecg_adv_gen/evidence/registry.py
+    package: scripts/agent/audit_agent_workspace.py
     output_artifacts:
       - agent_workspace_audit.json
     safety_rules:
       - cpu_only_no_gpu_no_child_training
       - validates_active_evidence_registry
       - audits_active_script_index_managed_configs
+      - validates_external_model_links_from_local_yaml
       - checks_mapping_k500_ref_exclusion_metrics_and_comparison_bundle
-      - errors_on_staged_guarded_paths_and_warns_on_dirty_local_only_paths
+      - errors_on_staged_guarded_paths_and_unverified_dirty_model_handles
+      - ignores_verified_external_model_handle_dirty_paths_for_handoff_readiness
       - summarizes_dirty_workspace_by_agent_handoff_layer
+
+  - name: external_model_link_checker
+    status: active
+    script: scripts/agent/check_external_models.py
+    package: ecg_adv_gen/config/external_models.py
+    output_artifacts:
+      - external_model_link_report.json
+    safety_rules:
+      - cpu_only_no_gpu_no_training
+      - reads_external_model_targets_from_local_yaml
+      - checks_model_handles_are_symlinks_to_configured_targets
+      - checks_targets_stay_under_configured_allowed_roots_and_write_boundary
+      - supports_bootstrap_plan_for_scripts_bootstrap_model_repos
 
   - name: legacy_vae_manifest_backfiller
     status: active
@@ -559,6 +580,7 @@ reporting_tools:
       - builds_from_registry_declared_metrics_only
       - refuses_nonempty_output_without_force
       - records_source_metric_hashes_and_baseline_run_id
+      - records_registered_run_metadata_when_available
 
   - name: run_finalizer
     status: active
@@ -572,6 +594,7 @@ reporting_tools:
       - cpu_only_no_gpu_no_training
       - writes_only_under_explicit_write_boundary
       - records_experiment_purpose_result_summary_protocol_and_metric_summary
+      - reads_yaml_run_record_defaults_with_manual_override
       - refuses_missing_git_config_commands_kshot_selection_expected_eval_contract
       - creates_agent_readable_file_categories_without_moving_large_checkpoints
 
@@ -585,6 +608,7 @@ reporting_tools:
       - cpu_only_no_gpu_no_training
       - stores_run_paths_with_paths_output_root_placeholders
       - idempotently_replaces_existing_run_registration
+      - resolves_auto_status_from_finalized_run_record
       - refuses_run_dirs_outside_paths_output_root
       - refuses_unfinalized_or_contract_invalid_run_records
 

@@ -26,8 +26,10 @@ from .selection import (
     FORBIDDEN_SELECTION_REFERENCES,
     SELECTION_POLICY,
     SelectionPolicyError,
+    compute_ecgfounder_lhat_selection_score,
     compute_source_target_selection_score,
     has_forbidden_selection_reference,
+    validate_ecgfounder_lhat_runtime_selection,
     validate_selection_policy,
 )
 from .target_splits import TargetSplitMode, split_target_train_val_indices
@@ -85,6 +87,7 @@ __all__ = [
     "canonicalize_view",
     "clean_mmap_cache_path",
     "clean_npz_cache_path",
+    "compute_ecgfounder_lhat_selection_score",
     "compute_macro_metric_dict",
     "compute_macro_metrics",
     "compute_source_target_selection_score",
@@ -92,6 +95,7 @@ __all__ = [
     "filter_record_indices",
     "filter_pn2021_center_records",
     "has_forbidden_selection_reference",
+    "validate_ecgfounder_lhat_runtime_selection",
     "legacy_default_metadata_variant",
     "load_existing_pn2021_eval_cache",
     "load_clean_metric_lookup",

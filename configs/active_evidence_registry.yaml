@@ -76,7 +76,7 @@ run_record_policy:
   required_narrative_fields:
     - purpose
     - result_summary
-  registration_command: micromamba run -n ECGTwin python scripts/agent/register_run.py --run-dir <run_dir> --status provisional
+  registration_command: micromamba run -n ECGTwin python scripts/agent/register_run.py --run-dir <run_dir> --status auto
   notes:
     - Store registered run paths with ${paths.output_root} placeholders, not host absolute paths.
     - Do not commit checkpoint or generated dataset payloads.

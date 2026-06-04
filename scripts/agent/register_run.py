@@ -19,7 +19,7 @@ from ecg_adv_gen.evidence import RunRecordError, register_run_in_registry  # noq
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-dir", required=True, help="Finalized run directory containing run_card.json")
-    parser.add_argument("--status", default="provisional", choices=["trusted", "provisional", "deprecated", "failed", "exploratory"])
+    parser.add_argument("--status", default="auto", choices=["auto", "trusted", "provisional", "deprecated", "failed", "exploratory"])
     parser.add_argument("--registry", default="configs/active_evidence_registry.yaml")
     parser.add_argument("--local-config", default="configs/local/linbinhao_server.example.yaml")
     parser.add_argument("--write-boundary", default="/home/linbinhao")

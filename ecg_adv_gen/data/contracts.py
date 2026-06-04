@@ -38,10 +38,16 @@ CROP_LEN = 1000
 PREPROCESS_MODE = "minimal_resample"
 NORM_MODE = "per_sample_global"
 PTBXL_LEAD_ORDER = "ptbxl"
+PREPROCESS_CONTRACT_ID = "ptbxl_pn2021_super5_ecgtwin_decode_v1"
 
 ECGTWIN_DECODE_INPUT_LEN = 1024
 ECGTWIN_DECODE_OUTPUT_LEN = 1000
 ECGTWIN_TO_PTBXL_INDICES = (0, 1, 2, 3, 5, 4, 6, 7, 8, 9, 10, 11)
+
+ECGFOUNDER_PREPROCESS_POLICY = "official_ptbxl_eval"
+ECGFOUNDER_INPUT_FS = 500
+ECGFOUNDER_INPUT_LEN = 5000
+ECGFOUNDER_INPUT_SHAPE = (12, 5000)
 
 
 class DataContractError(ValueError):
@@ -61,9 +67,14 @@ class DataPreprocessContract:
     preprocess_mode: str
     norm_mode: str
     lead_order: str
+    contract_id: str
     ecgtwin_decode_input_len: int
     ecgtwin_decode_output_len: int
     ecgtwin_to_ptbxl_indices: tuple[int, ...]
+    ecgfounder_preprocess_policy: str
+    ecgfounder_input_fs: int
+    ecgfounder_input_len: int
+    ecgfounder_input_shape: tuple[int, int]
 
 
 def get_data_preprocess_contract() -> DataPreprocessContract:
@@ -79,9 +90,14 @@ def get_data_preprocess_contract() -> DataPreprocessContract:
         preprocess_mode=PREPROCESS_MODE,
         norm_mode=NORM_MODE,
         lead_order=PTBXL_LEAD_ORDER,
+        contract_id=PREPROCESS_CONTRACT_ID,
         ecgtwin_decode_input_len=ECGTWIN_DECODE_INPUT_LEN,
         ecgtwin_decode_output_len=ECGTWIN_DECODE_OUTPUT_LEN,
         ecgtwin_to_ptbxl_indices=ECGTWIN_TO_PTBXL_INDICES,
+        ecgfounder_preprocess_policy=ECGFOUNDER_PREPROCESS_POLICY,
+        ecgfounder_input_fs=ECGFOUNDER_INPUT_FS,
+        ecgfounder_input_len=ECGFOUNDER_INPUT_LEN,
+        ecgfounder_input_shape=ECGFOUNDER_INPUT_SHAPE,
     )
 
 
@@ -112,6 +128,8 @@ def _assert_equal(name: str, actual: Any, expected: Any) -> None:
 def validate_data_preprocess_config(config: dict[str, Any]) -> None:
     """Validate YAML data/preprocess fields against the current paper protocol."""
     expected = get_data_preprocess_contract()
+    model = config.get("model") or {}
+    backbone = str(_require(config, "model.backbone"))
 
     _assert_equal("data.source_dataset", _require(config, "data.source_dataset"), expected.source_dataset)
     _assert_equal("data.target_dataset", _require(config, "data.target_dataset"), expected.target_dataset)
@@ -147,6 +165,7 @@ def validate_data_preprocess_config(config: dict[str, Any]) -> None:
     _assert_equal("preprocess.mode", _require(config, "preprocess.mode"), expected.preprocess_mode)
     _assert_equal("preprocess.norm_mode", _require(config, "preprocess.norm_mode"), expected.norm_mode)
     _assert_equal("preprocess.lead_order", _require(config, "preprocess.lead_order"), expected.lead_order)
+    _assert_equal("preprocess.contract_id", _require(config, "preprocess.contract_id"), expected.contract_id)
     _assert_equal(
         "preprocess.ecgtwin_decode.input_len",
         int(_require(config, "preprocess.ecgtwin_decode.input_len")),
@@ -162,3 +181,35 @@ def validate_data_preprocess_config(config: dict[str, Any]) -> None:
         tuple(int(v) for v in _as_tuple(_require(config, "preprocess.ecgtwin_decode.reorder_indices"))),
         expected.ecgtwin_to_ptbxl_indices,
     )
+
+    is_ecgfounder = backbone == "ecgfounder" or backbone.startswith("ecgfounder_")
+    if is_ecgfounder:
+        _assert_equal(
+            "model.preprocess_policy",
+            _require(config, "model.preprocess_policy"),
+            expected.ecgfounder_preprocess_policy,
+        )
+        _assert_equal(
+            "preprocess.ecgfounder.preprocess_policy",
+            _require(config, "preprocess.ecgfounder.preprocess_policy"),
+            expected.ecgfounder_preprocess_policy,
+        )
+        _assert_equal(
+            "preprocess.ecgfounder.input_fs",
+            int(_require(config, "preprocess.ecgfounder.input_fs")),
+            expected.ecgfounder_input_fs,
+        )
+        _assert_equal(
+            "preprocess.ecgfounder.input_len",
+            int(_require(config, "preprocess.ecgfounder.input_len")),
+            expected.ecgfounder_input_len,
+        )
+        _assert_equal(
+            "preprocess.ecgfounder.input_shape",
+            tuple(int(v) for v in _as_tuple(_require(config, "preprocess.ecgfounder.input_shape"))),
+            expected.ecgfounder_input_shape,
+        )
+    elif "preprocess_policy" in model:
+        raise DataContractError(
+            f"model.preprocess_policy is reserved for ECGFounder backbones; got {backbone!r}"
+        )

@@ -16,6 +16,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from ecg_adv_gen.config import ConfigError, audit_active_managed_configs  # noqa: E402
+from ecg_adv_gen.config.external_models import audit_external_model_links  # noqa: E402
 from ecg_adv_gen.config.paths import is_under  # noqa: E402
 from ecg_adv_gen.evidence import EvidenceAuditError, audit_active_evidence_registry  # noqa: E402
 from ecg_adv_gen.evidence.registry import _dirty_status_layer  # noqa: E402
@@ -338,6 +339,40 @@ def add_source_of_truth_issues(report: dict) -> None:
     report["passed"] = bool(report.get("passed")) and error_count == 0
 
 
+def add_external_model_issues(report: dict) -> None:
+    external_models = report.get("external_models") or {}
+    issues = report.setdefault("issues", [])
+    for issue in external_models.get("issues") or []:
+        issues.append(
+            {
+                "level": issue["level"],
+                "code": issue["code"],
+                "message": issue["message"],
+            }
+        )
+    report["passed"] = bool(report.get("passed")) and bool(external_models.get("passed", True))
+
+
+def annotate_external_model_dirty_paths(report: dict) -> None:
+    external_models = report.get("external_models") or {}
+    if not external_models:
+        return
+    verified = set(external_models.get("verified_handle_paths") or [])
+    dirty_guarded = list(((report.get("git") or {}).get("dirty_guarded_paths") or []))
+    external_models["dirty_verified_handle_paths"] = [path for path in dirty_guarded if path in verified]
+    external_models["dirty_unverified_handle_paths"] = [path for path in dirty_guarded if path not in verified]
+
+
+def _dirty_summary_paths(report: dict) -> list[str]:
+    dirty_summary = ((report.get("git") or {}).get("dirty_summary") or {})
+    paths: list[str] = []
+    for layer in (dirty_summary.get("by_layer") or {}).values():
+        for path in layer.get("paths") or []:
+            if path not in paths:
+                paths.append(path)
+    return paths
+
+
 def build_handoff_readiness(report: dict, source_summary: dict) -> dict:
     reasons: list[dict] = []
 
@@ -391,22 +426,49 @@ def build_handoff_readiness(report: dict, source_summary: dict) -> dict:
     )
 
     git = report.get("git") or {}
+    external_models = report.get("external_models") or {}
+    external_models_passed = bool(external_models.get("passed", True))
+    ignored_external_dirty_paths = (
+        list(external_models.get("dirty_verified_handle_paths") or [])
+        if external_models_passed
+        else []
+    )
+    ignored_external_dirty = set(ignored_external_dirty_paths)
+
+    add_reason(
+        "external_model_links_invalid",
+        "error",
+        int(external_models.get("error_count") or 0),
+        [
+            str(item.get("handle_path"))
+            for item in external_models.get("models") or []
+            if item.get("issues")
+        ],
+        "fix_external_model_links_or_local_config_before_handoff",
+    )
     for risk in git.get("blocking_artifact_risks") or []:
+        risk_paths = list(risk.get("paths") or [])
+        if str(risk.get("risk")) == "dirty_guarded_local_only_paths":
+            risk_paths = [path for path in risk_paths if path not in ignored_external_dirty]
         add_reason(
             str(risk.get("risk") or "artifact_risk"),
             str(risk.get("severity") or "warning"),
-            int(risk.get("count") or 0),
-            list(risk.get("paths") or []),
+            len(risk_paths),
+            risk_paths,
             str(risk.get("handoff_action") or "review_artifact_risk"),
         )
 
     dirty_gate = ((git.get("dirty_summary") or {}).get("handoff_gate") or {})
-    if dirty_gate.get("requires_attention"):
+    dirty_paths_after_external = [
+        path for path in _dirty_summary_paths(report)
+        if path not in ignored_external_dirty
+    ]
+    if dirty_gate.get("requires_attention") and dirty_paths_after_external:
         add_reason(
             "dirty_workspace_requires_attention",
             "warning",
-            int((git.get("dirty_summary") or {}).get("total_entries") or 0),
-            [],
+            len(dirty_paths_after_external),
+            dirty_paths_after_external,
             "inspect_git_dirty_summary_handoff_gate",
         )
 
@@ -448,6 +510,7 @@ def build_handoff_readiness(report: dict, source_summary: dict) -> dict:
         "status": "ready" if ready else ("blocked" if hard_reason_count else "attention_required"),
         "hard_reason_count": hard_reason_count,
         "warning_reason_count": warning_reason_count,
+        "ignored_verified_external_model_dirty_paths": ignored_external_dirty_paths,
         "reasons": reasons,
         "must_be_empty": [
             "git.guarded_staged_paths",
@@ -554,6 +617,13 @@ def main() -> int:
             report["passed"] = bool(report["passed"]) and bool(active_scripts["passed"])
             if not active_scripts["passed"]:
                 report["error_count"] += int(active_scripts["failed_count"])
+        report["external_models"] = audit_external_model_links(
+            repo_root=REPO_ROOT,
+            local_config_path=REPO_ROOT / args.local_config,
+            require_existing=True,
+        )
+        annotate_external_model_dirty_paths(report)
+        add_external_model_issues(report)
         report["handoff_contract"] = build_handoff_contract(report)
         add_source_of_truth_issues(report)
     except (EvidenceAuditError, ConfigError) as exc:

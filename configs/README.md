@@ -46,11 +46,26 @@ The active-script tests lock this pattern so real local YAML, private paths,
 and credentials cannot be accidentally tracked.
 
 Local YAML is a host overlay only. Its top-level keys are restricted to
-`host`, `paths`, `python`, `resources`, and `safety`. It must not override
+`host`, `paths`, `python`, `resources`, `safety`, and `external_models`. It must not override
 tracked experiment protocol or launch semantics such as `paper_protocol`,
 `data`, `preprocess`, `model`, `evaluation`, `runner`, `postprocess`, or
 `logging`; those sections belong in tracked YAML where audit and review can
 see them.
+
+External model repository targets also belong in local YAML or environment
+variables, not tracked experiment configs or long launch arguments. The current
+host example declares them under `external_models`:
+
+```bash
+micromamba run -n ECGTwin python scripts/agent/check_external_models.py \
+  --local-config configs/local/linbinhao_server.example.yaml
+bash scripts/bootstrap_model_repos.sh --check-only \
+  --local-config configs/local/linbinhao_server.example.yaml
+```
+
+`scripts/agent/audit_agent_workspace.py` uses the same contract: verified dirty
+`model/*` symlink handles are local-only and ignored for handoff readiness, but
+staged guarded paths or unverified model handles still require action.
 
 `configs/schemas/experiment_config.schema.json` now treats `logging` as a
 required lifecycle section. Experiment YAML must declare launch, child, and
@@ -128,6 +143,27 @@ other while preserving a stable method-level grouping under
 The protocol audit also rejects managed child or postprocess output options
 (`--out_root`, `--out_dir`, `--output_path`, `--output-dir`, and
 `--output_dir`) that do not include the resolved `runtime.run_id`.
+
+Optional `stages[]` records can describe future multi-step orchestration with
+`name`, `requires`, `produces`, and `skip_if_exists`. The launcher records them
+in dry-run `pipeline_stages` manifests for handoff and planning; it does not
+yet turn them into a multi-stage scheduler.
+
+Runner commands can be expressed either as legacy-compatible `runner.argv` or,
+for selected mainline families, as typed `runner.adapter` entries. The adapter
+registry lives in `ecg_adv_gen/config/adapters/registry.py` and currently owns
+`effnet_vae_lhat` and `ecgfounder_vae_lhat`; each builds the legacy argv from
+typed YAML fields, so old script entrypoints and CLI behavior remain unchanged
+while active configs no longer carry full argument lists. The ECGFounder adapter
+also makes the latent-neighbor policy explicit instead of relying on legacy
+runner defaults. `runner.adapter` and `runner.argv` are mutually exclusive;
+configs must not keep stale argv beside a typed adapter.
+
+All active configs share `preprocess.contract_id` for PTB-XL/PN2021/ECGTwin
+decode contracts. ECGFounder configs additionally declare
+`preprocess.ecgfounder` and `model.preprocess_policy=official_ptbxl_eval` so
+500Hz/5000-point feature-cache runs cannot be mixed into EfficientNet 100Hz
+classifier contracts by accident.
 
 ## Managed Execution
 
@@ -208,7 +244,7 @@ using placeholder paths under `${paths.output_root}`:
 ```bash
 micromamba run -n ECGTwin python scripts/agent/register_run.py \
   --run-dir /path/to/run_dir \
-  --status provisional
+  --status auto
 ```
 
 Registration expects an already finalized run. `register_run.py` will not
@@ -216,6 +252,8 @@ auto-create `run_card.json`; `finalize_run.py` and registration both reject runs
 that lack explicit purpose/result text, manifest schema v2, git commit, resolved
 config hash, command argv records, K-shot ref traces, `selection.json`, declared
 eval artifacts, and succeeded-run metric center coverage.
+With `--status auto`, registration reads the finalized run-record status when
+available and falls back to `provisional`.
 
 Active paper/evaluation configs should declare managed postprocess commands.
 The common pattern is:

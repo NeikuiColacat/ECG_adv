@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import shutil
 from datetime import datetime, timezone
@@ -31,6 +32,7 @@ _SMALL_COPY_LIMIT_BYTES = 5 * 1024 * 1024
 _GENERIC_RESULT_SUMMARIES = {
     "Run finalized with evaluation metrics; see metric_summary and eval artifacts.",
 }
+REGISTRATION_STATUSES = {"trusted", "provisional", "deprecated", "failed", "exploratory"}
 
 
 def _utc_now() -> str:
@@ -374,6 +376,223 @@ def _metric_centers_from_metrics_long(paths: list[Path]) -> set[str]:
     return centers
 
 
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _sha256_lines(values: list[str]) -> str:
+    return hashlib.sha256(("\n".join(values) + "\n").encode("utf-8")).hexdigest()
+
+
+def _expected_mapping_metadata(manifest: dict[str, Any]) -> dict[str, Any]:
+    paper = manifest.get("paper_protocol") or {}
+    trace_metrics = (manifest.get("artifact_trace") or {}).get("metrics") or {}
+    return {
+        "mapping_version": trace_metrics.get("mapping_version") or paper.get("mapping_version"),
+        "mapping_hash": trace_metrics.get("mapping_hash") or paper.get("mapping_hash"),
+        "class_order": trace_metrics.get("class_order") or paper.get("class_order") or [],
+    }
+
+
+def _validate_selection_content(run_dir: Path, manifest: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    try:
+        selection = _read_json(run_dir / "selection.json")
+    except RunRecordError as exc:
+        return [str(exc)]
+    expected_policy = (
+        ((manifest.get("artifact_trace") or {}).get("selection_policy") or {}).get("policy")
+        or ((manifest.get("paper_protocol") or {}).get("selection") or {}).get("policy")
+    )
+    actual_policy = (selection.get("selection_policy") or {}).get("policy")
+    if expected_policy and actual_policy != expected_policy:
+        errors.append(f"selection.json policy={actual_policy!r}, expected {expected_policy!r}")
+    safety = selection.get("selection_safety") or {}
+    if safety.get("heldout_target_labels_used_for_selection") is not False:
+        errors.append("selection.json held-out target labels must be explicitly denied")
+    if safety.get("full_target_distribution_used_for_tuning") is not False:
+        errors.append("selection.json full target distribution tuning must be explicitly denied")
+    if safety.get("forbidden_reference_found") is not False:
+        errors.append("selection.json forbidden selection reference scan must be false")
+    metadata = _expected_mapping_metadata(manifest)
+    protocol = selection.get("paper_protocol") or {}
+    if protocol:
+        for key in ("mapping_version", "mapping_hash"):
+            if metadata.get(key) and protocol.get(key) and protocol.get(key) != metadata[key]:
+                errors.append(f"selection.json {key}={protocol.get(key)!r}, expected {metadata[key]!r}")
+    return errors
+
+
+def _validate_k500_ref_ids_content(run_dir: Path, manifest: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    path = run_dir / "k500_ref_ids.json"
+    try:
+        artifact = _read_json(path)
+    except RunRecordError as exc:
+        return [str(exc)]
+
+    paper = manifest.get("paper_protocol") or {}
+    kshot = paper.get("kshot") or {}
+    expected_centers = _target_centers_from_protocol(paper)
+    expected_k = int(kshot.get("k", 0) or 0)
+    expected_seed = int(kshot.get("subset_seed", kshot.get("seed", 0)) or 0)
+    metadata = _expected_mapping_metadata(manifest)
+    artifact_protocol = artifact.get("paper_protocol") or {}
+    for key in ("mapping_version", "mapping_hash"):
+        if metadata.get(key) and artifact_protocol.get(key) != metadata[key]:
+            errors.append(f"k500_ref_ids.json {key}={artifact_protocol.get(key)!r}, expected {metadata[key]!r}")
+    expected_class_order = [str(item) for item in metadata.get("class_order") or []]
+    artifact_class_order = [str(item) for item in artifact_protocol.get("class_order") or []]
+    if expected_class_order:
+        if not artifact_class_order:
+            errors.append("k500_ref_ids.json class_order is required")
+        elif artifact_class_order != expected_class_order:
+            errors.append("k500_ref_ids.json class_order does not match run manifest")
+
+    centers = artifact.get("centers") or {}
+    if not isinstance(centers, dict) or not centers:
+        errors.append("k500_ref_ids.json centers must be a non-empty object")
+        return errors
+    for center in expected_centers:
+        payload = centers.get(center)
+        if not isinstance(payload, dict):
+            errors.append(f"k500_ref_ids.json missing center {center}")
+            continue
+        ids_ordered = [str(item) for item in payload.get("ref_record_ids_ordered") or []]
+        ids_sorted = [str(item) for item in payload.get("ref_record_ids_sorted") or []]
+        if int(payload.get("k", -1)) != expected_k:
+            errors.append(f"k500_ref_ids.json {center} k={payload.get('k')!r}, expected {expected_k}")
+        if int(payload.get("selection_seed", -1)) != expected_seed:
+            errors.append(
+                f"k500_ref_ids.json {center} selection_seed={payload.get('selection_seed')!r}, expected {expected_seed}"
+            )
+        if len(ids_ordered) != expected_k or len(ids_sorted) != expected_k or len(set(ids_ordered)) != expected_k:
+            errors.append(f"k500_ref_ids.json {center} ref_record_ids count/uniqueness mismatch")
+        expected_hash = _sha256_lines(sorted(ids_ordered))
+        if payload.get("ref_record_ids_sha256") != expected_hash:
+            errors.append(f"k500_ref_ids.json {center} ref_record_ids_sha256 mismatch")
+        source_meta_text = _non_empty_text(payload.get("source_ref_meta_path"))
+        if not source_meta_text:
+            errors.append(f"k500_ref_ids.json {center} source_ref_meta_path is required")
+            continue
+        source_meta = Path(source_meta_text).expanduser()
+        if not source_meta.exists():
+            errors.append(f"k500_ref_ids.json {center} source_ref_meta_path is missing")
+        elif payload.get("source_ref_meta_sha256") != _sha256_file(source_meta):
+            errors.append(f"k500_ref_ids.json {center} source_ref_meta_sha256 mismatch")
+    return errors
+
+
+def _metrics_long_rows(path: Path) -> list[dict[str, str]]:
+    with path.open("r", encoding="utf-8", newline="") as f:
+        return list(csv.DictReader(f))
+
+
+def _validate_metrics_long_content(paths: list[Path], manifest: dict[str, Any]) -> tuple[list[str], set[str]]:
+    errors: list[str] = []
+    source_files: set[str] = set()
+    metadata = _expected_mapping_metadata(manifest)
+    expected_class_order = "|".join(str(item) for item in metadata.get("class_order") or [])
+    for path in paths:
+        try:
+            rows = _metrics_long_rows(path)
+        except OSError as exc:
+            errors.append(f"metrics_long.csv could not be read: {path}: {exc}")
+            continue
+        if not rows:
+            errors.append(f"metrics_long.csv is empty: {path}")
+            continue
+        for row_idx, row in enumerate(rows, start=2):
+            for key in ("mapping_version", "mapping_hash"):
+                if metadata.get(key):
+                    actual = _non_empty_text(row.get(key))
+                    if not actual:
+                        errors.append(f"metrics_long.csv {path}:{row_idx} {key} is required")
+                    elif actual != metadata[key]:
+                        errors.append(f"metrics_long.csv {path}:{row_idx} {key}={actual!r}, expected {metadata[key]!r}")
+            if expected_class_order:
+                actual_class_order = _non_empty_text(row.get("class_order"))
+                if not actual_class_order:
+                    errors.append(f"metrics_long.csv {path}:{row_idx} class_order is required")
+                elif actual_class_order != expected_class_order:
+                    errors.append(f"metrics_long.csv {path}:{row_idx} class_order mismatch")
+            if row.get("scope") == "center" and row.get("metric", "").endswith(("macro_auroc", "macro_auprc")):
+                source_file = _non_empty_text(row.get("source_file"))
+                if not source_file:
+                    errors.append(f"metrics_long.csv {path}:{row_idx} source_file is required for center macro rows")
+                else:
+                    source_files.add(source_file)
+                    if not Path(source_file).expanduser().exists():
+                        errors.append(f"metrics_long.csv {path}:{row_idx} source_file does not exist: {source_file}")
+    return errors, source_files
+
+
+def _validate_paper_table_content(
+    manifest: dict[str, Any],
+    *,
+    metrics_paths: list[Path],
+    metrics_source_files: set[str],
+) -> list[str]:
+    errors: list[str] = []
+    metrics_path_set = {str(path) for path in metrics_paths}
+    for record in _expected_eval_artifact_records(manifest):
+        role = str(record.get("role") or "")
+        path = Path(str(record.get("path") or "")).expanduser()
+        if role == "paper_table" and path.exists():
+            try:
+                with path.open("r", encoding="utf-8", newline="") as f:
+                    rows = list(csv.DictReader(f))
+            except OSError as exc:
+                errors.append(f"paper_table could not be read: {path}: {exc}")
+                continue
+            if not rows:
+                errors.append(f"paper_table is empty: {path}")
+                continue
+            if "source_files" not in (rows[0].keys() if rows else []):
+                errors.append(f"paper_table source_files column is required: {path}")
+                continue
+            for row_idx, row in enumerate(rows, start=2):
+                source_files_text = _non_empty_text(row.get("source_files"))
+                if not source_files_text:
+                    errors.append(f"paper_table {path}:{row_idx} source_files is required")
+                    continue
+                for source_file in [item for item in source_files_text.split("|") if item]:
+                    if source_file not in metrics_source_files or not Path(source_file).expanduser().exists():
+                        errors.append(f"paper_table {path}:{row_idx} source_files contains untraced source: {source_file}")
+        if role == "paper_table_manifest" and path.exists():
+            try:
+                manifest_payload = _read_json(path)
+            except RunRecordError as exc:
+                errors.append(str(exc))
+                continue
+            metrics_long = _non_empty_text(manifest_payload.get("metrics_long"))
+            if not metrics_long:
+                errors.append(f"paper_table_manifest metrics_long is required: {path}")
+            elif metrics_long not in metrics_path_set:
+                errors.append(f"paper_table_manifest metrics_long is not a discovered metrics_long.csv: {metrics_long}")
+    return errors
+
+
+def _validate_content_artifacts(run_dir: Path, manifest: dict[str, Any], metric_paths: list[Path]) -> list[str]:
+    errors: list[str] = []
+    errors.extend(_validate_selection_content(run_dir, manifest))
+    errors.extend(_validate_k500_ref_ids_content(run_dir, manifest))
+    metrics_errors, source_files = _validate_metrics_long_content(metric_paths, manifest)
+    errors.extend(metrics_errors)
+    errors.extend(
+        _validate_paper_table_content(
+            manifest,
+            metrics_paths=metric_paths,
+            metrics_source_files=source_files,
+        )
+    )
+    return errors
+
+
 def _validate_command_records(commands: Any) -> list[str]:
     errors: list[str] = []
     if not isinstance(commands, list) or not commands:
@@ -453,13 +672,14 @@ def _validate_run_record_contract(
     expected_eval = _expected_eval_artifact_records(manifest)
     if not expected_eval:
         errors.append("expected eval artifacts must be declared in artifact_trace.expected_outputs")
+    metric_paths = _discover_metrics_paths(run_dir, manifest)
+    errors.extend(_validate_content_artifacts(run_dir, manifest, metric_paths))
 
     status = str(manifest.get("status") or "")
     if status == "succeeded":
         artifact_verification = manifest.get("artifact_verification") or {}
         if artifact_verification.get("passed") is not True:
             errors.append("run_manifest.artifact_verification.passed must be true for succeeded runs")
-        metric_paths = _discover_metrics_paths(run_dir, manifest)
         if not metric_summary:
             errors.append("succeeded runs must include a non-empty metric_summary")
         observed_centers = _metric_centers_from_metrics_long(metric_paths)
@@ -525,11 +745,12 @@ def finalize_run_record(
     manifest = _read_json(manifest_path)
     metric_summary = _build_metric_summary(run_dir, manifest)
     experiment = manifest.get("experiment") or {}
+    manifest_run_record = manifest.get("run_record") or {}
     paper = manifest.get("paper_protocol") or {}
     centers = (paper.get("centers") or {}).get("target_4") or paper.get("target_centers") or []
-    resolved_purpose = purpose or experiment.get("purpose") or experiment.get("description") or ""
-    resolved_result = result_summary or (manifest.get("run_record") or {}).get("result_summary") or ""
-    resolved_outcome = outcome or manifest.get("status") or "unknown"
+    resolved_purpose = purpose or manifest_run_record.get("purpose") or experiment.get("purpose") or experiment.get("description") or ""
+    resolved_result = result_summary or manifest_run_record.get("result_summary") or ""
+    resolved_outcome = outcome or manifest_run_record.get("outcome") or manifest_run_record.get("status") or manifest.get("status") or "unknown"
     _validate_run_record_contract(
         run_dir,
         manifest,
@@ -570,6 +791,7 @@ def finalize_run_record(
     }
     _write_json(run_dir / "run_card.json", card)
     manifest["run_record"] = {
+        **manifest_run_record,
         "finalized_at_utc": card["generated_at_utc"],
         "run_card": str(run_dir / "run_card.json"),
         "file_index": str(run_dir / "run_file_index.json"),
@@ -602,6 +824,29 @@ def _path_ref(path: Path, *, output_root: Path) -> str:
     return "${paths.output_root}" if not rel else f"${{paths.output_root}}/{rel}"
 
 
+def _resolve_registration_status(
+    *,
+    requested_status: str | None,
+    manifest: dict[str, Any],
+    card: dict[str, Any],
+) -> str:
+    if requested_status and requested_status != "auto":
+        return requested_status
+    run_record = manifest.get("run_record") or {}
+    experiment = manifest.get("experiment") or {}
+    result = card.get("result") or {}
+    candidates = [
+        run_record.get("registration_status"),
+        run_record.get("status"),
+        result.get("outcome"),
+        experiment.get("status"),
+    ]
+    for candidate in candidates:
+        if str(candidate) in REGISTRATION_STATUSES:
+            return str(candidate)
+    return "provisional"
+
+
 def register_run_in_registry(
     *,
     registry_path: Path,
@@ -618,6 +863,11 @@ def register_run_in_registry(
         raise RunRecordError(f"Missing run_card.json; finalize the run before registry registration: {card_path}")
     card = _read_json(card_path)
     manifest = _read_json(run_dir / "run_manifest.json")
+    resolved_status = _resolve_registration_status(
+        requested_status=status,
+        manifest=manifest,
+        card=card,
+    )
     _validate_run_record_contract(
         run_dir,
         manifest,
@@ -625,7 +875,7 @@ def register_run_in_registry(
         result_summary=str((card.get("result") or {}).get("summary") or ""),
         metric_summary=card.get("metric_summary") or {},
         require_registration_ready=True,
-        registration_status=status,
+        registration_status=resolved_status,
     )
     registry = _read_yaml(registry_path)
     local_config = _read_yaml(local_config_path)
@@ -637,7 +887,7 @@ def register_run_in_registry(
     entry = {
         "run_id": card.get("run_id", run_dir.name),
         "experiment_name": (card.get("experiment") or {}).get("name", ""),
-        "status": status,
+        "status": resolved_status,
         "outcome": (card.get("result") or {}).get("outcome", ""),
         "purpose": (card.get("experiment") or {}).get("purpose", ""),
         "result_summary": (card.get("result") or {}).get("summary", ""),
@@ -657,11 +907,11 @@ def register_run_in_registry(
     next_runs.append(entry)
     registry["managed_runs"] = next_runs
     run_catalog = dict(registry.get("run_catalog") or {})
-    catalog_items = list(run_catalog.get(status) or [])
+    catalog_items = list(run_catalog.get(resolved_status) or [])
     catalog_ref = f"{entry['experiment_name']}/{entry['run_id']}"
     if catalog_ref not in catalog_items:
         catalog_items.append(catalog_ref)
-    run_catalog[status] = catalog_items
+    run_catalog[resolved_status] = catalog_items
     registry["run_catalog"] = run_catalog
     registry["updated"] = _utc_now().split("T", 1)[0]
     _write_yaml(registry_path, registry)

@@ -198,6 +198,16 @@ def test_agent_workspace_cli_combines_registry_and_active_script_audits():
     assert all(row["config"] in inventory_paths for row in active_scripts["rows"])
     assert "configs/defaults/benchmark_backbone_v7_sjr_rgq_defaults.yaml" in inventory_paths
     assert "configs/defaults/ecgfounder_v7_sjr_rgq_defaults.yaml" in inventory_paths
+    external_models = report["external_models"]
+    assert external_models["passed"] is True
+    assert external_models["model_count"] == 5
+    assert external_models["verified_handle_paths"] == [
+        "model/DeepECG",
+        "model/ECGTwin",
+        "model/advdiff",
+        "model/ecg_ptbxl_benchmarking",
+        "model/ecgfounder",
+    ]
     contract = report["handoff_contract"]
     assert contract["schema_version"] == 1
     assert contract["startup_sequence"] == [
@@ -354,8 +364,9 @@ def test_agent_workspace_cli_combines_registry_and_active_script_audits():
         assert "source_of_truth_staged_content" not in issue_codes
     assert "source_of_truth_missing" not in issue_codes
     readiness = contract["handoff_readiness"]
-    assert readiness["ready_for_handoff"] is False
-    assert readiness["ready_for_commit"] is False
+    readiness_reasons = {item["code"]: item for item in readiness["reasons"]}
+    assert readiness["ready_for_handoff"] is (len(readiness_reasons) == 0)
+    assert readiness["ready_for_commit"] is (len(readiness_reasons) == 0)
     source_control_ready_expected = (
         source_summary["dirty_count"] == 0
         and source_summary["staged_content_count"] == 0
@@ -370,8 +381,8 @@ def test_agent_workspace_cli_combines_registry_and_active_script_audits():
         and readiness["hard_reason_count"] == 0
     )
     assert readiness["source_control_ready"] is source_control_ready_expected
-    assert readiness["status"] == "attention_required"
-    readiness_reasons = {item["code"]: item for item in readiness["reasons"]}
+    expected_status = "ready" if not readiness_reasons else ("blocked" if readiness["hard_reason_count"] else "attention_required")
+    assert readiness["status"] == expected_status
     if source_summary["untracked_count"]:
         assert readiness_reasons["source_of_truth_untracked"]["count"] == source_summary["untracked_count"]
     if source_summary["dirty_count"]:
@@ -383,7 +394,12 @@ def test_agent_workspace_cli_combines_registry_and_active_script_audits():
     if config_git_summary["requires_attention"]:
         assert readiness_reasons["managed_config_git_requires_attention"]["count"] == config_git_summary["dirty_count"]
         assert readiness_reasons["managed_config_git_requires_attention"]["paths"] == config_git_summary["dirty_paths"]
-    assert readiness_reasons["dirty_guarded_local_only_paths"]["count"] == 5
+    assert readiness["ignored_verified_external_model_dirty_paths"] == external_models["dirty_verified_handle_paths"]
+    assert set(external_models["dirty_verified_handle_paths"]).issubset(set(external_models["verified_handle_paths"]))
+    if external_models["dirty_unverified_handle_paths"]:
+        assert readiness_reasons["dirty_guarded_local_only_paths"]["paths"] == external_models["dirty_unverified_handle_paths"]
+    else:
+        assert "dirty_guarded_local_only_paths" not in readiness_reasons
     assert "git.guarded_staged_paths" in readiness["must_be_empty"]
     assert "handoff_contract.source_of_truth_summary.missing_paths" in readiness["must_be_empty"]
     assert "active_scripts.config_git_summary.missing_paths" in readiness["must_be_empty"]
@@ -754,6 +770,17 @@ def test_build_comparison_bundle_from_registry(tmp_path: Path):
     registry.write_text(
         f"""
 schema_version: 1
+managed_runs:
+  - run_id: direct
+    experiment_name: direct_exp
+    status: trusted
+    purpose: Direct baseline purpose.
+    result_summary: Direct baseline result.
+  - run_id: vae
+    experiment_name: vae_exp
+    status: provisional
+    purpose: Candidate VAE purpose.
+    result_summary: Candidate VAE result.
 active_claims:
   - claim_id: synthetic_claim
     protocol:
@@ -787,6 +814,8 @@ active_claims:
     )
 
     assert Path(manifest["artifacts"]["comparison_delta"]).exists()
+    assert manifest["method_records"]["direct"]["registered_run"]["status"] == "trusted"
+    assert manifest["method_records"]["vae"]["registered_run"]["result_summary"] == "Candidate VAE result."
     mean = [
         row for row in manifest["delta_rows"]
         if row["view"] == "pn2021_all_zero_kept_refexcluded"

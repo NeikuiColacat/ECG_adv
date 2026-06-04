@@ -53,13 +53,25 @@ The audit checks:
 - metrics_long and paper tables can be traced to source eval JSONs;
 - the managed comparison bundle exists when the registry marks it built;
 - blocked checkpoint/dataset/run artifacts are not tracked or staged;
-- dirty external model handles are warnings, not failures, unless staged.
+- external model handles under `model/*` resolve to configured local YAML
+  targets and stay under allowed roots/write boundary;
+- verified external model handle dirt is ignored for handoff readiness, while
+  staged guarded paths and unverified dirty model handles still require action.
+
+External model link audit:
+
+```bash
+micromamba run -n ECGTwin python scripts/agent/check_external_models.py \
+  --local-config configs/local/linbinhao_server.example.yaml
+bash scripts/bootstrap_model_repos.sh --check-only \
+  --local-config configs/local/linbinhao_server.example.yaml
+```
 
 Per-run finalization:
 
 ```bash
 micromamba run -n ECGTwin python scripts/agent/finalize_run.py --run-dir <run_dir>
-micromamba run -n ECGTwin python scripts/agent/register_run.py --run-dir <run_dir> --status provisional
+micromamba run -n ECGTwin python scripts/agent/register_run.py --run-dir <run_dir> --status auto
 ```
 
 Every managed launcher run now records:

@@ -9,6 +9,13 @@ model:
   k500_head_root: ${paths.data_root}/paper_foundation_baselines_20260524/ecgfounder_kshot_head_ft_v6_from_legacy_cache/runs
   preprocess_policy: official_ptbxl_eval
 
+preprocess:
+  ecgfounder:
+    preprocess_policy: official_ptbxl_eval
+    input_fs: 500
+    input_len: 5000
+    input_shape: [12, 5000]
+
 data:
   cache:
     ecgfounder_fullft_signal_cache_dir: ""

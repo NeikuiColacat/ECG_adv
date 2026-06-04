@@ -1,6 +1,6 @@
 # Current Workspace Handoff
 
-Updated: 2026-06-04
+Updated: 2026-06-05
 
 This is the stable human-readable entrypoint for the current AI-agent refactor
 handoff. It complements the machine-readable audit JSON; it does not replace
@@ -56,16 +56,21 @@ micromamba run -n ECGTwin python scripts/agent/audit_agent_workspace.py --skip-e
    `source_of_truth_untracked`, `source_of_truth_dirty`,
    `source_of_truth_intent_to_add`, and `source_of_truth_staged_content` for
    machine-searchable handoff risk triage.
-4. Inspect `git.blocking_artifact_risks` for staged guarded paths, staged
-   large/generated artifacts, and dirty local-only guarded paths.
-5. Inspect `git.dirty_summary.handoff_gate` for the compact dirty-worktree
+4. Inspect `external_models` and
+   `handoff_contract.handoff_readiness.ignored_verified_external_model_dirty_paths`.
+   Verified dirty `model/*` handles are host-local symlink targets and do not
+   by themselves block handoff/commit readiness. Staged guarded paths or
+   unverified dirty model handles still require action.
+5. Inspect `git.blocking_artifact_risks` for staged guarded paths, staged
+   large/generated artifacts, and unverified dirty local-only guarded paths.
+6. Inspect `git.dirty_summary.handoff_gate` for the compact dirty-worktree
    gate.
-6. Inspect `git.dirty_summary.by_layer` for per-layer actions before editing,
+7. Inspect `git.dirty_summary.by_layer` for per-layer actions before editing,
    staging, or handing off dirty work. Each layer exposes full `paths`,
    `staged_paths`, `unstaged_paths`, `untracked_paths`, and `status_entries`;
    use `git.dirty_summary.by_layer.*.paths` to review exact files rather than
    relying on sample paths.
-7. Inspect `git.guarded_staged_paths` before any commit; it must stay empty.
+8. Inspect `git.guarded_staged_paths` before any commit; it must stay empty.
 
 ## Source Of Truth
 
@@ -86,6 +91,25 @@ micromamba run -n ECGTwin python scripts/agent/audit_agent_workspace.py --skip-e
 - Direct K-shot fine-tune command checks live in
   `ecg_adv_gen/config/adapters/direct.py`, with shared argv helpers in
   `ecg_adv_gen/config/adapters/common.py`.
+- Typed VAE-LHAT command expansion now has separate adapters for
+  EfficientNet (`ecg_adv_gen/config/adapters/effnet_vae_lhat.py`) and
+  ECGFounder (`ecg_adv_gen/config/adapters/ecgfounder_vae_lhat.py`). The
+  ECGFounder v7 launch config uses `runner.adapter=ecgfounder_vae_lhat` and
+  expects child `checkpoint_index.jsonl` records.
+- Pure online-AT orchestration helpers live in
+  `ecg_adv_gen/training/online_at.py`; the legacy
+  `scripts/pgd_cross_center/synth_online_at_super5.py` entrypoint still owns
+  the actual training loop.
+- Optional YAML `stages[]` records are now normalized by
+  `ecg_adv_gen/config/loader.py` and recorded in dry-run `pipeline_stages`
+  manifests without changing single-run command behavior when absent.
+- The data/preprocess contract now explicitly records the shared
+  PTB-XL/PN2021/ECGTwin decode rules plus ECGFounder
+  `official_ptbxl_eval` 500Hz/5000-point feature-cache policy.
+- Run finalization and registration can consume YAML-derived
+  `run_record` metadata; `register_run.py --status auto` resolves the
+  registration status from finalized run-record metadata before falling back to
+  `provisional`.
 - Reusable shared logic belongs under `ecg_adv_gen/`, with focused CPU tests
   under `util/tests/`.
 - Historical reports belong under `docs/reports/archive/` and are not active

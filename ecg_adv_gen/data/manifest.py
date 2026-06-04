@@ -233,9 +233,14 @@ def build_data_path_manifest(
             "preprocess_mode": contract.preprocess_mode,
             "norm_mode": contract.norm_mode,
             "lead_order": contract.lead_order,
+            "contract_id": contract.contract_id,
             "ecgtwin_decode_input_len": contract.ecgtwin_decode_input_len,
             "ecgtwin_decode_output_len": contract.ecgtwin_decode_output_len,
             "ecgtwin_to_ptbxl_indices": list(contract.ecgtwin_to_ptbxl_indices),
+            "ecgfounder_preprocess_policy": contract.ecgfounder_preprocess_policy,
+            "ecgfounder_input_fs": contract.ecgfounder_input_fs,
+            "ecgfounder_input_len": contract.ecgfounder_input_len,
+            "ecgfounder_input_shape": list(contract.ecgfounder_input_shape),
         },
         "config_values": {
             "source_dataset": data.get("source_dataset"),
@@ -250,11 +255,13 @@ def build_data_path_manifest(
             "preprocess_mode": preprocess.get("mode"),
             "norm_mode": preprocess.get("norm_mode"),
             "lead_order": preprocess.get("lead_order"),
+            "contract_id": preprocess.get("contract_id"),
             "ecgtwin_decode": {
                 "input_len": ecgtwin_decode.get("input_len"),
                 "output_len": ecgtwin_decode.get("output_len"),
                 "reorder_indices": ecgtwin_decode.get("reorder_indices", []),
             },
+            "ecgfounder": preprocess.get("ecgfounder", {}),
         },
         "counting": {
             "include_counts": bool(include_counts),

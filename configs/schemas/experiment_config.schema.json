@@ -18,9 +18,14 @@
     },
     "runner": {
       "type": "object",
-      "required": ["entrypoint", "argv"],
+      "required": ["entrypoint"],
+      "oneOf": [
+        {"required": ["argv"]},
+        {"required": ["adapter"]}
+      ],
       "properties": {
         "entrypoint": {"type": "string"},
+        "adapter": {"type": "string"},
         "argv": {"type": "array"},
         "env": {"type": "object"},
         "matrix": {"type": "object"}
@@ -39,7 +44,30 @@
     },
     "preprocess": {
       "type": "object",
-      "required": ["classifier_fs", "classifier_len", "lead_order"],
+      "required": ["contract_id", "classifier_fs", "classifier_len", "lead_order"],
+      "properties": {
+        "contract_id": {"type": "string"},
+        "classifier_fs": {"type": "integer"},
+        "classifier_len": {"type": "integer"},
+        "crop_len": {"type": "integer"},
+        "mode": {"type": "string"},
+        "norm_mode": {"type": "string"},
+        "lead_order": {"type": "string"},
+        "ecgtwin_decode": {"type": "object"},
+        "ecgfounder": {
+          "type": "object",
+          "properties": {
+            "preprocess_policy": {"type": "string"},
+            "input_fs": {"type": "integer"},
+            "input_len": {"type": "integer"},
+            "input_shape": {
+              "type": "array",
+              "items": {"type": "integer"}
+            }
+          },
+          "additionalProperties": true
+        }
+      },
       "additionalProperties": true
     },
     "model": {
@@ -74,6 +102,43 @@
         }
       },
       "additionalProperties": true
+    },
+    "run_record": {
+      "type": "object",
+      "properties": {
+        "purpose": {"type": "string"},
+        "result_summary": {"type": "string"},
+        "outcome": {"type": "string"},
+        "status": {"type": "string"},
+        "registration_status": {
+          "type": "string",
+          "enum": ["trusted", "provisional", "deprecated", "failed", "exploratory"]
+        }
+      },
+      "additionalProperties": true
+    },
+    "stages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {"type": "string"},
+          "requires": {
+            "type": "array",
+            "items": {"type": "string"}
+          },
+          "produces": {
+            "type": "array",
+            "items": {"type": "string"}
+          },
+          "skip_if_exists": {
+            "type": "array",
+            "items": {"type": "string"}
+          }
+        },
+        "additionalProperties": true
+      }
     },
     "postprocess": {
       "type": "object",

@@ -210,6 +210,14 @@ runner:
     - --hull_label_new_class_cap
     - ${adaptation.hull.label_new_class_cap}
     - --hull_include_anchor
+    - --hull_neighbor_distance_space
+    - ${adaptation.hull.neighbor_distance_space}
+    - --hull_neighbor_mode
+    - ${adaptation.hull.neighbor_mode}
+    - --hull_neighbor_pool_size
+    - ${adaptation.hull.neighbor_pool_size}
+    - --hull_neighbor_pool_multiplier
+    - ${adaptation.hull.neighbor_pool_multiplier}
     - --pgd_eps
     - ${adaptation.attack.pgd_eps}
     - --pgd_batch

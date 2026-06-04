@@ -135,6 +135,105 @@ def test_logging_artifacts_are_split_by_lifecycle():
     assert "selection.json" not in logging_cfg["postprocess_artifacts"]
 
 
+def test_pipeline_stages_are_recorded_in_dry_run_manifest():
+    config = _load("ecgtwin_prompt_token_online_at_minimal.yaml")
+    config = copy.deepcopy(config)
+    config["stages"] = [
+        {
+            "name": "train_prompt_token_bank",
+            "produces": ["prompt_token_bank"],
+            "skip_if_exists": ["${paths.output_root}/prompt_token_bank.pt"],
+        },
+        {
+            "name": "online_at",
+            "requires": ["train_prompt_token_bank"],
+            "produces": ["online_at_checkpoint", "online_at_metrics"],
+        },
+    ]
+    paths = validate_experiment_config(config, repo_root=REPO)
+    commands = build_runner_commands(config)
+    manifest = make_dry_run_manifest(
+        config,
+        commands=commands,
+        local_paths=paths,
+        run_id="pytest_pipeline_stages",
+        cli_args=argparse.Namespace(dry_run=True, write_plan=False),
+    )
+
+    assert manifest["pipeline_stages"]["schema_version"] == 1
+    assert manifest["pipeline_stages"]["stages"] == [
+        {
+            "index": 0,
+            "name": "train_prompt_token_bank",
+            "requires": [],
+            "produces": ["prompt_token_bank"],
+            "skip_if_exists": ["${paths.output_root}/prompt_token_bank.pt"],
+        },
+        {
+            "index": 1,
+            "name": "online_at",
+            "requires": ["train_prompt_token_bank"],
+            "produces": ["online_at_checkpoint", "online_at_metrics"],
+            "skip_if_exists": [],
+        },
+    ]
+    assert manifest["artifact_trace"]["pipeline_stages"] == manifest["pipeline_stages"]
+
+
+def test_pipeline_stages_reject_unknown_dependencies():
+    config = _load("ecgtwin_prompt_token_online_at_minimal.yaml")
+    config = copy.deepcopy(config)
+    config["stages"] = [
+        {
+            "name": "online_at",
+            "requires": ["missing_prompt_token_bank"],
+            "produces": ["online_at_checkpoint"],
+        }
+    ]
+
+    with pytest.raises(ConfigError, match="unknown required stage"):
+        validate_experiment_config(config, repo_root=REPO)
+
+
+def test_pipeline_stages_reject_duplicate_names():
+    config = _load("ecgtwin_prompt_token_online_at_minimal.yaml")
+    config = copy.deepcopy(config)
+    config["stages"] = [
+        {"name": "online_at", "produces": ["ckpt"]},
+        {"name": "online_at", "produces": ["metrics"]},
+    ]
+
+    with pytest.raises(ConfigError, match="duplicate stage name"):
+        validate_experiment_config(config, repo_root=REPO)
+
+
+def test_dry_run_manifest_preserves_yaml_run_record_metadata():
+    config = _load("effnet_direct_k500_v7_sjr_rgq.yaml")
+    config = copy.deepcopy(config)
+    config["run_record"] = {
+        "purpose": "Verify YAML-managed run-record metadata survives dry-run planning.",
+        "result_summary": "The dry-run metadata path recorded the intended summary.",
+        "registration_status": "provisional",
+    }
+    paths = validate_experiment_config(config, repo_root=REPO)
+    commands = build_runner_commands(config)
+    manifest = make_dry_run_manifest(
+        config,
+        commands=commands,
+        local_paths=paths,
+        run_id="pytest_run_record_metadata",
+        cli_args=argparse.Namespace(dry_run=True, write_plan=False),
+    )
+
+    assert manifest["experiment"]["name"] == "effnet_direct_k500_v7_sjr_rgq"
+    assert manifest["experiment"]["description"].startswith("EfficientNet1DV2 direct K500")
+    assert manifest["run_record"] == {
+        "purpose": "Verify YAML-managed run-record metadata survives dry-run planning.",
+        "result_summary": "The dry-run metadata path recorded the intended summary.",
+        "registration_status": "provisional",
+    }
+
+
 def test_experiment_schema_rejects_missing_logging_block():
     config = _load("effnet_direct_k500_v6.yaml")
     config = copy.deepcopy(config)
@@ -306,6 +405,37 @@ def test_effnet_vae_lhat_command_audit_is_split_into_adapter():
         target_centers=set(config["paper_protocol"]["centers"]["target_4"]),
     )
     assert "invalid --hull_neighbor_mode" in "\n".join(result["errors"])
+
+
+def test_effnet_vae_lhat_typed_adapter_matches_legacy_runner_argv():
+    legacy = _load("effnet_vae_lhat_k500_v6.yaml")
+    adapted = copy.deepcopy(legacy)
+    adapted["runner"]["adapter"] = "effnet_vae_lhat"
+    adapted["runner"].pop("argv")
+    validate_experiment_config(adapted, repo_root=REPO)
+
+    legacy_commands = build_runner_commands(legacy)
+    adapted_commands = build_runner_commands(adapted)
+
+    assert adapted_commands == legacy_commands
+
+
+def test_effnet_vae_lhat_v7_config_uses_typed_runner_adapter():
+    config = _load("effnet_vae_lhat_k500_v7_sjr_rgq.yaml")
+
+    assert config["runner"]["adapter"] == "effnet_vae_lhat"
+    assert "argv" not in config["runner"]
+    commands = build_runner_commands(config)
+    assert len(commands) == 4
+    assert all(command["argv"][1].endswith("scripts/paper/run_effnet_latent_augmix_stage3_20260524.py") for command in commands)
+
+
+def test_runner_rejects_adapter_and_argv_together():
+    config = _load("effnet_vae_lhat_k500_v7_sjr_rgq.yaml")
+    config["runner"]["argv"] = ["--center", "${matrix.center}"]
+
+    with pytest.raises(ConfigError, match="runner.*adapter.*argv"):
+        build_runner_commands(config)
 
 
 def test_effnet_direct_command_writes_under_managed_output_root():
@@ -1375,6 +1505,8 @@ def test_ecgfounder_vae_lhat_k500_v7_config_uses_v7_direct_heads_and_refs():
         cli_args=argparse.Namespace(dry_run=True, write_plan=False),
     )
 
+    assert config["runner"]["adapter"] == "ecgfounder_vae_lhat"
+    assert "argv" not in config["runner"]
     assert len(commands) == 4
     for command in commands:
         argv = command["argv"]
@@ -1400,6 +1532,10 @@ def test_ecgfounder_vae_lhat_k500_v7_config_uses_v7_direct_heads_and_refs():
         )
         assert _option_value(argv, "--k") == "500"
         assert _option_value(argv, "--k_anchor") == "300"
+        assert _option_value(argv, "--hull_neighbor_distance_space") == "standardized"
+        assert _option_value(argv, "--hull_neighbor_mode") == "local_random"
+        assert _option_value(argv, "--hull_neighbor_pool_size") == "120"
+        assert _option_value(argv, "--hull_neighbor_pool_multiplier") == "4"
         assert _option_value(argv, "--selection_source") == "target_real_val"
         assert _option_value(argv, "--target_real_val_seed") == "20260531"
         assert _option_value(argv, "--head_type") == "residual_adapter"
@@ -1438,17 +1574,28 @@ def test_ecgfounder_vae_lhat_k500_v7_config_uses_v7_direct_heads_and_refs():
             seed=20260531,
         )
         assert Path(child_run["child_run_dir"]) == expected
+        assert any(
+            item["role"] == "checkpoint_index"
+            and item["path"].endswith("/checkpoint_index.jsonl")
+            for item in child_run["expected_artifacts"]
+        )
+
+
+def test_ecgfounder_vae_lhat_adapter_is_registered():
+    from ecg_adv_gen.config.adapters.registry import runner_adapter_names
+
+    assert "ecgfounder_vae_lhat" in runner_adapter_names()
 
 
 def test_ecgfounder_vae_lhat_k500_v7_audit_rejects_missing_ref_root():
     config = _load("ecgfounder_vae_lhat_k500_v7_sjr_rgq.yaml")
-    config = copy.deepcopy(config)
-    idx = config["runner"]["argv"].index("--ref_root")
-    del config["runner"]["argv"][idx : idx + 2]
     validate_experiment_config(config, repo_root=REPO)
+    command = copy.deepcopy(build_runner_commands(config)[0])
+    idx = command["argv"].index("--ref_root")
+    del command["argv"][idx : idx + 2]
 
     with pytest.raises(ConfigError, match="matrix command must pass --ref_root"):
-        build_runner_commands(config)
+        audit_runner_commands(config, [command])
 
 
 def test_effnet_direct_manifest_child_dir_uses_shared_run_naming_helper():

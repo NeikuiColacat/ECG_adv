@@ -9,9 +9,11 @@ from ecg_adv_gen.evaluation import (
     ALLOWED_SELECTION_DATA,
     SELECTION_POLICY,
     SelectionPolicyError,
+    compute_ecgfounder_lhat_selection_score,
     compute_source_target_selection_score,
     has_forbidden_selection_reference,
     split_target_train_val_indices,
+    validate_ecgfounder_lhat_runtime_selection,
     validate_selection_policy,
 )
 
@@ -83,6 +85,63 @@ def test_compute_source_target_selection_score_preserves_fullft_modes():
             selection_metric="heldout_target_auprc",
             source_metrics=source,
             target_val_metrics=target,
+        )
+
+
+def test_compute_ecgfounder_lhat_selection_score_preserves_script_modes():
+    target = {"macro_auroc": 0.82, "macro_auprc": 0.51}
+    source = {"macro_auroc": 0.91, "macro_auprc": 0.76}
+
+    assert compute_ecgfounder_lhat_selection_score(
+        selection_metric="target_auroc",
+        target_metrics=target,
+        source_metrics=source,
+    ) == pytest.approx(0.82)
+    assert compute_ecgfounder_lhat_selection_score(
+        selection_metric="target_plus_source_auprc",
+        target_metrics=target,
+        source_metrics=source,
+        source_selection_weight=0.25,
+    ) == pytest.approx(0.51 + 0.25 * 0.76)
+    assert compute_ecgfounder_lhat_selection_score(
+        selection_metric="target_source_hmean_auroc",
+        target_metrics=target,
+        source_metrics=source,
+    ) == pytest.approx(2.0 * 0.82 * 0.91 / (0.82 + 0.91))
+    assert compute_ecgfounder_lhat_selection_score(
+        selection_metric="target_under_source_floor",
+        target_metrics=target,
+        source_metrics={"macro_auroc": 0.91, "macro_auprc": 0.73},
+        source_auprc_floor=0.75,
+        source_floor_penalty=10.0,
+    ) == pytest.approx(0.51 - 10.0 * (0.75 - 0.73))
+
+    with pytest.raises(SelectionPolicyError, match="unknown selection_metric"):
+        compute_ecgfounder_lhat_selection_score(
+            selection_metric="heldout_target_auprc",
+            target_metrics=target,
+            source_metrics=source,
+        )
+
+
+def test_validate_ecgfounder_lhat_runtime_selection_blocks_heldout_by_default():
+    record = validate_ecgfounder_lhat_runtime_selection(
+        selection_source="target_real_val",
+        selection_metric="target_auprc",
+        target_real_val_fraction=0.2,
+        target_real_val_seed=20260531,
+    )
+
+    assert record["selection_source"] == "target_real_val"
+    assert record["selection_metric"] == "target_auprc"
+    assert record["selection_safety"]["heldout_target_labels_used_for_selection"] is False
+
+    with pytest.raises(SelectionPolicyError, match="pn2021_heldout"):
+        validate_ecgfounder_lhat_runtime_selection(
+            selection_source="pn2021_heldout",
+            selection_metric="target_auprc",
+            target_real_val_fraction=0.2,
+            target_real_val_seed=20260531,
         )
 
 

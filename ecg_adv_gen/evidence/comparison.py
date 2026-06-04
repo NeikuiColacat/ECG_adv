@@ -161,6 +161,39 @@ def _claim_by_id(registry: dict[str, Any], claim_id: str | None) -> dict[str, An
     raise ComparisonBundleError(f"Unknown claim_id: {claim_id}")
 
 
+def _registered_run_by_id(registry: dict[str, Any], run_id: str) -> dict[str, Any]:
+    for item in registry.get("managed_runs") or []:
+        if str(item.get("run_id") or "") == str(run_id):
+            return {
+                "run_id": item.get("run_id", ""),
+                "experiment_name": item.get("experiment_name", ""),
+                "status": item.get("status", ""),
+                "outcome": item.get("outcome", ""),
+                "purpose": item.get("purpose", ""),
+                "result_summary": item.get("result_summary", ""),
+                "run_card": item.get("run_card", ""),
+                "summary": item.get("summary", ""),
+            }
+    return {}
+
+
+def _method_record(
+    *,
+    registry: dict[str, Any],
+    method: dict[str, Any],
+    run_id: str,
+) -> dict[str, Any]:
+    return {
+        "run_id": run_id,
+        "method_status": method.get("status", ""),
+        "method_family": method.get("method_family", ""),
+        "config": method.get("config", ""),
+        "manifest": method.get("manifest", ""),
+        "metrics_long": method.get("metrics_long", ""),
+        "registered_run": _registered_run_by_id(registry, run_id),
+    }
+
+
 def build_comparison_bundle(
     *,
     registry_path: Path,
@@ -226,6 +259,18 @@ def build_comparison_bundle(
         "candidate_method": candidate_key,
         "baseline_run_id": comparison["baseline_run_id"],
         "candidate_run_id": comparison["candidate_run_id"],
+        "method_records": {
+            baseline_key: _method_record(
+                registry=registry,
+                method=baseline,
+                run_id=comparison["baseline_run_id"],
+            ),
+            candidate_key: _method_record(
+                registry=registry,
+                method=candidate,
+                run_id=comparison["candidate_run_id"],
+            ),
+        },
         "protocol": claim["protocol"],
         "registry_path": str(Path(registry_path).expanduser().resolve()),
         "local_config_path": str(Path(local_config_path).expanduser().resolve()),

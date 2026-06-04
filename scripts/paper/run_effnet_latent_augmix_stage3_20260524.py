@@ -33,8 +33,12 @@ DATA_ROOT = Path(
 
 from ecg_adv_gen.data.class_trust import write_real_all_present_trust  # noqa: E402
 from ecg_adv_gen.labels.super5 import CLASS_NAMES_SUPER5  # noqa: E402
+from ecg_adv_gen.runner.effnet_vae_lhat import (  # noqa: E402
+    build_effnet_vae_lhat_eval_cmd,
+    build_effnet_vae_lhat_train_cmd,
+    resolve_effnet_vae_lhat_paths,
+)
 from ecg_adv_gen.runner.process import build_process_env, run_stream  # noqa: E402
-from ecg_adv_gen.run_naming import build_effnet_vae_lhat_run_leaf  # noqa: E402
 from methods.augmix.severity import AVAILABLE_OPS  # noqa: E402
 
 CLASS_NAMES = list(CLASS_NAMES_SUPER5)
@@ -348,24 +352,12 @@ def main() -> None:
             "--freeze_backbone_classifier_only and --unfreeze_last_n_features "
             "are mutually exclusive"
         )
-    out_dir = out_root / build_effnet_vae_lhat_run_leaf(args)
+    paths = resolve_effnet_vae_lhat_paths(args, data_root=data_root, out_root=out_root)
+    out_dir = paths.out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    anchor_base = Path(args.anchor_base) if args.anchor_base else (
-        data_root
-        / "ecgtwin_prompt_token_super5/real_anchor_selected_v2"
-        / center
-        / f"{center}_real_k500_seed42"
-    )
-    signal_npz = anchor_base.with_suffix(".signals.npz")
-    latent_npz = (
-        Path(args.synth_npz_override)
-        if args.synth_npz_override
-        else anchor_base.with_suffix(".latent.npz")
-    )
-    ref_meta = anchor_base.with_suffix(".ref_meta.json")
     class_trust = write_real_all_present_trust(
-        signal_npz,
+        paths.signal_npz,
         out_root / "config",
         center,
         classes_in_scope=args.classes_in_scope,
@@ -390,159 +382,19 @@ def main() -> None:
     )
 
     python = sys.executable
-    train_cmd = [
-        python, "-u", "scripts/pgd_cross_center/synth_online_at_super5.py",
-        "--center_name", center,
-        "--ref_meta_json", str(ref_meta),
-        "--synth_npz", str(latent_npz),
-        "--target_real_npz", str(signal_npz),
-        "--class_trust", str(class_trust),
-        "--init_ckpt",
-        str(
-            Path(args.init_ckpt)
-            if args.init_ckpt
-            else data_root / "triple_labels/super5_minresample_full10_perglobal_20260503/best_model.pt"
-        ),
-        "--model_name", "efficientnet1dv2",
-        "--output_dir", str(out_dir),
-        "--data_dir", str(data_root / "physionet2021/training"),
-        "--quick_eval_source", args.quick_eval_source,
-        "--quick_eval_centers", center,
-        "--quick_eval_n_per_center", str(args.quick_eval_n_per_center),
-        "--target_real_val_fraction", str(args.target_real_val_fraction),
-        "--target_real_val_seed", str(args.target_real_val_seed),
-        "--ptbxl_raw", str(data_root / "ptbxl/raw100.npy"),
-        "--ptbxl_csv", str(data_root / "ptbxl/ptbxl_database.csv"),
-        "--ptbxl_prep", str(data_root / "crosscenter_v2/ptbxl_preprocessed.npy"),
-        "--attack_mode", "latent_hull",
-        "--hull_M", str(args.hull_M),
-        "--hull_lambda", str(args.hull_lambda),
-        "--hull_steps", str(args.hull_steps),
-        "--hull_lr", str(args.hull_lr),
-        "--hull_label_mode", args.hull_label_mode,
-        "--hull_mix_label_mode", args.hull_mix_label_mode,
-        "--hull_label_lambda_y", str(args.hull_label_lambda_y),
-        "--hull_label_positive", str(args.hull_label_positive),
-        "--hull_label_negative_floor", str(args.hull_label_negative_floor),
-        "--hull_label_new_class_cap", str(args.hull_label_new_class_cap),
-        "--hull_neighbor_distance_space", args.hull_neighbor_distance_space,
-        "--hull_neighbor_mode", args.hull_neighbor_mode,
-        "--hull_neighbor_pool_size", str(args.hull_neighbor_pool_size),
-        "--hull_neighbor_pool_multiplier", str(args.hull_neighbor_pool_multiplier),
-        "--source_sampling_strategy", "source_weighted",
-        "--source_weights", args.source_weights,
-        "--source_floor_per_class", str(args.source_floor_per_class),
-        "--anchor_class_weight_mode", args.anchor_class_weight_mode,
-        "--anchor_class_weight_reference_source", args.anchor_class_weight_reference_source,
-        "--anchor_class_weight_gamma", str(args.anchor_class_weight_gamma),
-        "--anchor_class_weight_min", str(args.anchor_class_weight_min),
-        "--anchor_class_weight_cap", str(args.anchor_class_weight_cap),
-        "--anchor_class_missing_weight", str(args.anchor_class_missing_weight),
-        "--K_anchor", str(args.k_anchor),
-        "--pgd_batch", str(args.pgd_batch),
-        "--classes_in_scope", *args.classes_in_scope,
-        "--allow_hyp_cd_trust",
-        "--target_real_weight", str(args.target_real_weight),
-        "--adv_weight", str(args.adv_weight),
-        "--adv_weight_warmup_epochs", str(args.adv_weight_warmup_epochs),
-        "--ptbxl_weight", str(args.ptbxl_weight),
-        "--roundtrip_weight", "0.0",
-        "--roundtrip_anchor_n", "0",
-        "--source_logit_anchor_weight", str(args.source_logit_anchor_weight),
-        "--source_logit_anchor_batches", str(args.source_logit_anchor_batches),
-        "--adv_label_mode", args.adv_label_mode,
-        "--adv_teacher_mix", str(args.adv_teacher_mix),
-        "--adv_soft_target_floor", str(args.adv_soft_target_floor),
-        "--boundary_prob_min", str(args.boundary_prob_min),
-        "--boundary_prob_max", str(args.boundary_prob_max),
-        "--disable_quality_gate",
-        "--lr", str(args.lr),
-        "--weight_decay", "1e-4",
-        "--batch_size", str(args.train_batch_size),
-        "--n_epochs", str(args.epochs),
-        "--patience", str(args.epochs),
-        "--eval_every", "2",
-        "--es_metric", args.es_metric,
-        "--ewa_decay", "0.999",
-        "--anchor_lambda", "0.05",
-        "--asr_consec_low_max", "999",
-        "--num_workers", str(args.num_workers),
-        "--seed", str(args.seed),
-        "--crop_len", "1000",
-        "--device", args.device,
-    ]
-    if args.hull_include_anchor:
-        train_cmd.append("--hull_include_anchor")
-    if not args.disable_latent_augmix_branch:
-        train_cmd.extend([
-            "--enable_latent_augmix_branch",
-            "--latent_augmix_copies", str(args.latent_augmix_copies),
-            "--latent_augmix_width", str(args.latent_augmix_width),
-            "--latent_augmix_depth", str(args.latent_augmix_depth),
-            "--latent_augmix_alpha", str(args.latent_augmix_alpha),
-            "--latent_augmix_severity", str(args.latent_augmix_severity),
-            "--latent_augmix_latent_weight_cap", str(args.latent_augmix_latent_weight_cap),
-            "--latent_augmix_ops", *args.latent_augmix_ops,
-        ])
-    if args.enable_raw_corrupt_consistency:
-        train_cmd.extend([
-            "--enable_raw_corrupt_consistency",
-            "--raw_corrupt_copies", str(args.raw_corrupt_copies),
-            "--raw_corrupt_prob", str(args.raw_corrupt_prob),
-            "--raw_corrupt_severity", str(args.raw_corrupt_severity),
-            "--raw_corrupt_ops", *args.raw_corrupt_ops,
-            "--raw_corrupt_consistency_weight", str(args.raw_corrupt_consistency_weight),
-            "--raw_corrupt_consistency_loss", str(args.raw_corrupt_consistency_loss),
-            "--raw_corrupt_bce_weight", str(args.raw_corrupt_bce_weight),
-            "--raw_corrupt_max_batches", str(args.raw_corrupt_max_batches),
-            "--raw_corrupt_scope", str(args.raw_corrupt_scope),
-            "--raw_corrupt_clip_abs", str(args.raw_corrupt_clip_abs),
-        ])
-        if args.raw_corrupt_no_renorm:
-            train_cmd.append("--raw_corrupt_no_renorm")
-    if args.resume:
-        train_cmd.extend(["--resume", args.resume])
-    if args.allow_resume_config_drift:
-        train_cmd.append("--allow_resume_config_drift")
-    if args.anchor_class_weights:
-        train_cmd.extend(["--anchor_class_weights", args.anchor_class_weights])
-    if args.source_class_weights:
-        train_cmd.extend(["--source_class_weights", args.source_class_weights])
-    if args.freeze_backbone_classifier_only:
-        train_cmd.extend([
-            "--freeze_backbone_classifier_only",
-            "--classifier_adapter_type", args.classifier_adapter_type,
-            "--classifier_lora_rank", str(args.classifier_lora_rank),
-            "--classifier_lora_alpha", str(args.classifier_lora_alpha),
-        ])
-        if args.classifier_only_train_final_norm:
-            train_cmd.append("--classifier_only_train_final_norm")
-    if args.unfreeze_last_n_features > 0:
-        train_cmd.extend(["--unfreeze_last_n_features", str(args.unfreeze_last_n_features)])
-    eval_cmd = [
-        python, "-u", "scripts/triple_labels/eval_crosscenter.py",
-        "--scheme", "super5",
-        "--model_dir", str(out_dir),
-        "--model_name", "efficientnet1dv2",
-        "--device", "cuda",
-        "--crop_len", "1000",
-        "--batch_size", str(args.eval_batch_size),
-        "--min_pos", str(args.eval_min_pos),
-        "--num_workers", str(args.num_workers),
-        "--ptbxl_csv", str(data_root / "ptbxl/ptbxl_database.csv"),
-        "--ptbxl_cache", str(data_root / "crosscenter_v2/ptbxl_preprocessed.npy"),
-        "--preprocess_mode", "minimal_resample",
-        "--norm_mode", "per_sample_global",
-        "--pn2021_root", str(data_root / "physionet2021"),
-        "--pn2021_cache_dir", str(data_root / "triple_labels/pn2021_eval_cache_minresample_perglobal"),
-        "--pn2021_mmap_cache_dir", str(data_root / "triple_labels/pn2021_eval_cache_mmap_minresample_perglobal"),
-        "--skip_mimic",
-        "--report_drop_all_zero_pn2021",
-        "--exclude_ref_ids", str(ref_meta),
-        "--output_path", str(out_dir / "eval_result_v7_exclrefs_crop1000.json"),
-    ]
-    if args.eval_pn2021_limit > 0:
-        eval_cmd.extend(["--pn2021_limit", str(args.eval_pn2021_limit)])
+    train_cmd = build_effnet_vae_lhat_train_cmd(
+        args,
+        python=python,
+        data_root=data_root,
+        paths=paths,
+        class_trust=class_trust,
+    )
+    eval_cmd = build_effnet_vae_lhat_eval_cmd(
+        args,
+        python=python,
+        data_root=data_root,
+        paths=paths,
+    )
 
     (out_dir / "launch_config.json").write_text(json.dumps({
         "args": vars(args),

@@ -26,6 +26,7 @@ from .paths import PathSafetyError, is_under, validate_local_paths
 from .entrypoints import managed_runner_script_names, managed_script_profile
 from .adapters.direct import audit_direct_finetune_command
 from .adapters.effnet_vae_lhat import audit_effnet_vae_lhat_command
+from .adapters.registry import build_runner_adapter_argv
 from .adapters.source_training import audit_train_ptbxl_command
 from ecg_adv_gen.data import DataContractError, validate_data_preprocess_config
 from ecg_adv_gen.data.gated_pools import GatedPoolArtifactPaths
@@ -98,6 +99,7 @@ ALLOWED_LOCAL_CONFIG_TOP_LEVEL_KEYS = frozenset(
         "python",
         "resources",
         "safety",
+        "external_models",
     }
 )
 
@@ -134,6 +136,59 @@ def _validate_local_config_overlay(local_raw: dict[str, Any]) -> None:
             "Local config may only define host, paths, python, resources, and safety; "
             f"disallowed top-level keys: {disallowed}. Allowed keys: {allowed}"
         )
+
+
+def normalize_pipeline_stages(config: dict[str, Any]) -> dict[str, Any]:
+    """Normalize YAML-managed stage dependencies into a manifest contract."""
+
+    raw_stages = config.get("stages") or []
+    if not raw_stages:
+        return {"schema_version": 1, "stages": []}
+    if not isinstance(raw_stages, list):
+        raise ConfigError("stages must be a list")
+
+    normalized: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for idx, raw_stage in enumerate(raw_stages):
+        if not isinstance(raw_stage, dict):
+            raise ConfigError("stages[] entries must be mappings")
+        name = raw_stage.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise ConfigError("stages[].name must be a non-empty string")
+        name = name.strip()
+        if name in seen:
+            raise ConfigError(f"duplicate stage name: {name}")
+
+        def normalize_string_list(key: str) -> list[str]:
+            values = raw_stage.get(key, [])
+            if values is None:
+                return []
+            if not isinstance(values, list):
+                raise ConfigError(f"stages[].{key} must be a list")
+            out: list[str] = []
+            for value in values:
+                if not isinstance(value, str) or not value.strip():
+                    raise ConfigError(f"stages[].{key} entries must be non-empty strings")
+                out.append(value.strip())
+            return out
+
+        requires = normalize_string_list("requires")
+        for dependency in requires:
+            if dependency not in seen:
+                raise ConfigError(f"stage {name} has unknown required stage: {dependency}")
+
+        normalized.append(
+            {
+                "index": idx,
+                "name": name,
+                "requires": requires,
+                "produces": normalize_string_list("produces"),
+                "skip_if_exists": normalize_string_list("skip_if_exists"),
+            }
+        )
+        seen.add(name)
+
+    return {"schema_version": 1, "stages": normalized}
 
 
 def _load_with_extends(path: Path, seen: set[Path] | None = None) -> dict[str, Any]:
@@ -423,6 +478,7 @@ def validate_experiment_config(config: dict[str, Any], *, repo_root: Path) -> di
         validate_data_preprocess_config(config)
     except DataContractError as exc:
         raise ConfigError(str(exc)) from exc
+    normalize_pipeline_stages(config)
     return validate_local_paths(config)
 
 
@@ -462,6 +518,8 @@ def _flatten_argv(argv: list[Any], context: dict[str, Any]) -> list[str]:
 def build_runner_commands(config: dict[str, Any]) -> list[dict[str, Any]]:
     paths = validate_local_paths(config)
     runner = config.get("runner") or {}
+    if runner.get("adapter") and "argv" in runner:
+        raise ConfigError("runner.adapter and runner.argv are mutually exclusive")
     entrypoint = Path(str(runner["entrypoint"]))
     if entrypoint.is_absolute():
         raise ConfigError("runner.entrypoint must be repo-relative")
@@ -473,7 +531,19 @@ def build_runner_commands(config: dict[str, Any]) -> list[dict[str, Any]]:
     for matrix_ctx in _matrix_contexts(config):
         context = copy.deepcopy(config)
         context.update(matrix_ctx)
-        argv = _flatten_argv(runner.get("argv") or [], context)
+        adapter_name = runner.get("adapter")
+        if adapter_name:
+            try:
+                adapter_argv = build_runner_adapter_argv(
+                    str(adapter_name),
+                    config=config,
+                    context=context,
+                )
+            except (KeyError, ValueError) as exc:
+                raise ConfigError(str(exc)) from exc
+            argv = _flatten_argv(adapter_argv, context)
+        else:
+            argv = _flatten_argv(runner.get("argv") or [], context)
         command = [paths["python_executable"], str(script_path), *argv]
         env = _interpolate_value(runner.get("env") or {}, context)
         commands.append(
@@ -1327,6 +1397,10 @@ def audit_runner_commands(config: dict[str, Any], commands: list[dict[str, Any]]
                     "--hull_lambda",
                     "--hull_steps",
                     "--hull_lr",
+                    "--hull_neighbor_distance_space",
+                    "--hull_neighbor_mode",
+                    "--hull_neighbor_pool_size",
+                    "--hull_neighbor_pool_multiplier",
                     "--head_type",
                     "--init_base_head_from_k500_root",
                     "--selection_metric",
@@ -1357,6 +1431,10 @@ def audit_runner_commands(config: dict[str, Any], commands: list[dict[str, Any]]
                 errors.append(f"{script}: managed config must not pass --force")
             if str(_opt_first(opts, "--device", "")) != "cuda":
                 errors.append(f"{script}: --device should be 'cuda' and GPU id must be selected by CUDA_VISIBLE_DEVICES")
+            if str(_opt_first(opts, "--hull_neighbor_distance_space", "")) not in {"raw", "standardized"}:
+                errors.append(f"{script}: invalid --hull_neighbor_distance_space")
+            if str(_opt_first(opts, "--hull_neighbor_mode", "")) not in {"nearest", "local_random", "random"}:
+                errors.append(f"{script}: invalid --hull_neighbor_mode")
             if str(_opt_first(opts, "--head_type", "")) != "residual_adapter":
                 warnings.append(f"{script}: head_type is not residual_adapter")
             if "--freeze_base_head" not in opts:
@@ -2030,6 +2108,7 @@ def _ecgfounder_lhat_child_run(opts: dict[str, Any], center: str) -> dict[str, A
         "expected_artifacts": [
             _path_record("best_head", child_dir / "best_head.pt"),
             _path_record("initial_head", child_dir / "initial_head.pt"),
+            _path_record("checkpoint_index", child_dir / "checkpoint_index.jsonl"),
             _path_record("training_log", child_dir / "training_log.json"),
             _path_record("eval_result", child_dir / "eval_result.json"),
         ],
@@ -2504,7 +2583,7 @@ def build_artifact_trace(
     inputs["init_heads"] = _dedupe_path_records(inputs["init_heads"])
     inputs["data_caches"] = _dedupe_path_records(inputs["data_caches"])
 
-    return {
+    artifact_trace = {
         "schema_version": 1,
         "metrics": {
             "views": config.get("evaluation", {}).get("views", []),
@@ -2533,6 +2612,10 @@ def build_artifact_trace(
             "postprocess_audit": postprocess_audit,
         },
     }
+    pipeline_stages = normalize_pipeline_stages(config)
+    if pipeline_stages["stages"]:
+        artifact_trace["pipeline_stages"] = pipeline_stages
+    return artifact_trace
 
 
 def _stable_config_hash(config: dict[str, Any]) -> str:
@@ -2571,7 +2654,7 @@ def make_dry_run_manifest(
     project_root = Path(local_paths["project_root"])
     now = datetime.now(timezone.utc).isoformat()
     postprocess_commands = postprocess_commands if postprocess_commands is not None else build_postprocess_commands(config)
-    return {
+    manifest = {
         "manifest_schema_version": 2,
         "status": "dry_run",
         "created_at_utc": now,
@@ -2580,6 +2663,8 @@ def make_dry_run_manifest(
         "local_config": config.get("_local_config"),
         "config_hash_sha256": _stable_config_hash(config),
         "git": _git_summary(project_root),
+        "experiment": config.get("experiment"),
+        "run_record": config.get("run_record", {}),
         "paper_protocol": config.get("paper_protocol"),
         "evaluation": config.get("evaluation"),
         "local_paths": local_paths,
@@ -2604,3 +2689,7 @@ def make_dry_run_manifest(
             "heldout_target_labels_for_selection": False,
         },
     }
+    pipeline_stages = normalize_pipeline_stages(config)
+    if pipeline_stages["stages"]:
+        manifest["pipeline_stages"] = pipeline_stages
+    return manifest

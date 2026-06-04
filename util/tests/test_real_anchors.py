@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from argparse import Namespace
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from ecg_adv_gen.data import (
 )
 from scripts.paper.run_ecgfounder_vae_only_lhat_head_ft_20260523 import (
     load_anchor_pool,
+    parse_args,
     real_anchor_base,
 )
 
@@ -54,6 +56,14 @@ def test_select_primary_label_proportional_min1_matches_runner_behavior():
     assert select_primary_label_proportional_min1(labels, 5, seed=11).tolist() == [0, 1, 2, 3, 4]
     with pytest.raises(ValueError, match="exceeds matched anchors"):
         select_primary_label_proportional_min1(labels, 6, seed=11)
+
+
+def test_ecgfounder_vae_lhat_runner_defaults_to_target_real_val_selection(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["run_ecgfounder_vae_only_lhat_head_ft_20260523.py"])
+
+    args = parse_args()
+
+    assert args.selection_source == "target_real_val"
 
 
 def test_load_real_anchor_pool_matches_pn_cache_by_center_and_record_id(tmp_path: Path):

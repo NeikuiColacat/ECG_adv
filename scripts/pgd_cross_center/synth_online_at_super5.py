@@ -90,6 +90,7 @@ from ecg_adv_gen.training import (  # noqa: E402
     capture_rng_state,
     compute_pos_weight,
     quality_buffer_state,
+    resolve_quick_eval_plan,
     resolve_resume_path,
     restore_quality_buffer_state,
     restore_rng_state,
@@ -1934,16 +1935,24 @@ def main():
         print(f"[setup] roundtrip-anchor: n={len(roundtrip_ds)}, weight={args.roundtrip_weight}")
 
     # ── Quick eval subset ───────────────────────────────────────────────────
-    if args.quick_eval_source == "target_real_val":
-        if target_val_quick_subset is None:
-            raise RuntimeError("target_real_val quick eval requested but no target val split exists")
+    target_val_n = (
+        int(target_val_quick_subset[args.center_name]["signals_tc"].shape[0])
+        if target_val_quick_subset is not None
+        else 0
+    )
+    quick_eval_plan = resolve_quick_eval_plan(
+        quick_eval_source=args.quick_eval_source,
+        center_name=args.center_name,
+        quick_eval_centers=args.quick_eval_centers,
+        output_dir=args.output_dir,
+        quick_eval_n_per_center=args.quick_eval_n_per_center,
+        target_val_available=target_val_quick_subset is not None,
+        target_val_n=target_val_n,
+    )
+    if quick_eval_plan.source == "target_real_val":
+        assert target_val_quick_subset is not None
         quick_subset = target_val_quick_subset
-        print(
-            f"[setup] quick_eval_source=target_real_val; "
-            f"n={quick_subset[args.center_name]['signals_tc'].shape[0]} "
-            f"(K500-internal validation, no PN2021 held-out selection)",
-            flush=True,
-        )
+        print(f"[setup] {quick_eval_plan.message}", flush=True)
     else:
         # Historical path: ref-excluded PN2021 target-center quick subset.
         # This is useful for exploration, but final paper-safe model selection
@@ -1956,10 +1965,10 @@ def main():
             print(f"[setup] excluding {len(excluded)} ref_record_ids from "
                   f"quick_eval (center={args.center_name})")
 
-        qe_cache = os.path.join(args.output_dir,
-                                f"quick_eval_subset_n{args.quick_eval_n_per_center}.cache")
+        assert quick_eval_plan.cache_path is not None
+        qe_cache = str(quick_eval_plan.cache_path)
         quick_subset = build_quick_eval_subset_super5(
-            centers=args.quick_eval_centers, data_dir=args.data_dir,
+            centers=list(quick_eval_plan.centers), data_dir=args.data_dir,
             n_per_center=args.quick_eval_n_per_center, cache_path=qe_cache,
             seed=args.seed, exclude_record_ids=excluded,
         )

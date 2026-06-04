@@ -26,6 +26,10 @@
     "resources": {
       "type": "object",
       "additionalProperties": true
+    },
+    "external_models": {
+      "type": "object",
+      "additionalProperties": true
     }
   },
   "patternProperties": {
