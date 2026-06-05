@@ -40,6 +40,7 @@ from ecg_adv_gen.runner.effnet_vae_lhat import (  # noqa: E402
 )
 from ecg_adv_gen.runner.process import build_process_env, run_stream  # noqa: E402
 from methods.augmix.severity import AVAILABLE_OPS  # noqa: E402
+from scripts.triple_labels.model_zoo import available_model_names  # noqa: E402
 
 CLASS_NAMES = list(CLASS_NAMES_SUPER5)
 
@@ -55,6 +56,7 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=20260524)
     ap.add_argument("--device", default="cuda:0")
     ap.add_argument("--num_workers", type=int, default=4)
+    ap.add_argument("--model_name", default="efficientnet1dv2", choices=available_model_names())
     ap.add_argument("--data_root", default=str(DATA_ROOT))
     ap.add_argument("--out_root", default="")
     ap.add_argument(

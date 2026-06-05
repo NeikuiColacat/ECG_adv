@@ -12,6 +12,7 @@ DISPATCHED_RUNNER_AUDIT_SCRIPT_NAMES = frozenset(
         "eval_pn2021_corruptions.py",
         "run_direct_finetune_k500_20260516.py",
         "run_benchmark_direct_finetune_v7_20260530.py",
+        "run_effnet_latent_augmix_stage3_20260524.py",
         "synth_online_at_super5.py",
     }
 )
@@ -28,6 +29,21 @@ def audit_runner_command(command: Mapping[str, Any], *, config: Mapping[str, Any
     """Dispatch script-specific protocol audits away from the config loader."""
 
     name = script_name(command)
+    runner_adapter = str(((config.get("runner") or {}).get("adapter")) or "")
+    if name == "run_effnet_latent_augmix_stage3_20260524.py" and runner_adapter == "benchmark_vae_lhat":
+        from ecg_adv_gen.config.adapters.benchmark_vae_lhat import audit_benchmark_vae_lhat_command
+
+        return audit_benchmark_vae_lhat_command(command, config=config)
+    if name == "run_effnet_latent_augmix_stage3_20260524.py":
+        from ecg_adv_gen.config.adapters.effnet_vae_lhat import audit_effnet_vae_lhat_command
+
+        kshot = config["paper_protocol"]["kshot"]
+        return audit_effnet_vae_lhat_command(
+            command,
+            expected_k=int(kshot["k"]),
+            expected_seed=int(kshot.get("subset_seed", kshot["seed"])),
+            target_centers=set(config["paper_protocol"]["centers"]["target_4"]),
+        )
     if name == "eval_crosscenter.py":
         from ecg_adv_gen.config.adapters.pn2021_eval import audit_pn2021_eval_command
 

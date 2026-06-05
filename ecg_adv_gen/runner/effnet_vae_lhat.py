@@ -72,6 +72,7 @@ def build_effnet_vae_lhat_train_cmd(
 ) -> list[str]:
     """Build the legacy synth-online-AT command used by the wrapper."""
 
+    model_name = str(getattr(args, "model_name", "efficientnet1dv2"))
     train_cmd = [
         python,
         "-u",
@@ -89,7 +90,7 @@ def build_effnet_vae_lhat_train_cmd(
         "--init_ckpt",
         str(_default_init_ckpt(args, data_root)),
         "--model_name",
-        "efficientnet1dv2",
+        model_name,
         "--output_dir",
         str(paths.out_dir),
         "--data_dir",
@@ -307,6 +308,7 @@ def build_effnet_vae_lhat_eval_cmd(
 ) -> list[str]:
     """Build the full PN2021 ref-excluded evaluation command."""
 
+    model_name = str(getattr(args, "model_name", "efficientnet1dv2"))
     eval_cmd = [
         python,
         "-u",
@@ -316,7 +318,7 @@ def build_effnet_vae_lhat_eval_cmd(
         "--model_dir",
         str(paths.out_dir),
         "--model_name",
-        "efficientnet1dv2",
+        model_name,
         "--device",
         "cuda",
         "--crop_len",

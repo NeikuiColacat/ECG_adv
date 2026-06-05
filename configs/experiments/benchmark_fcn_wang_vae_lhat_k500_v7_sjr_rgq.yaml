@@ -1,0 +1,30 @@
+extends:
+  - ../defaults/benchmark_backbone_v7_sjr_rgq_defaults.yaml
+  - ../defaults/vae_lhat_defaults.yaml
+
+experiment:
+  name: benchmark_fcn_wang_vae_lhat_k500_v7_sjr_rgq
+  description: Benchmark FCN-Wang K500 VAE-LHAT v7 SJR/RGQ matrix launch surface consuming same-run direct K500 checkpoints.
+
+model:
+  backbone: benchmark_fcn_wang
+  name: benchmark_fcn_wang
+  num_classes: 5
+
+runner:
+  entrypoint: scripts/paper/run_effnet_latent_augmix_stage3_20260524.py
+  adapter: benchmark_vae_lhat
+  name: ${experiment.name}_${matrix.center}
+  matrix:
+    center: ${paper_protocol.centers.target_4}
+
+adaptation:
+  method: benchmark_vae_latent_hull_online_at_v7
+
+lineage:
+  replaces_legacy_surface: scripts/paper/run_benchmark_backbone_v7_kshot_matrix_20260530.py
+  scope: benchmark_fcn_wang_vae_lhat_k500_only
+  prerequisite_stage: benchmark_fcn_wang_direct_k500_v7_sjr_rgq_matrix
+  notes:
+    - This managed config replaces the benchmark FCN-Wang VAE-LHAT command expansion from the dated matrix runner.
+    - It consumes same-run Direct K500 checkpoints and keeps GPU selection outside YAML.

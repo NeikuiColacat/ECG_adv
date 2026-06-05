@@ -1,5 +1,6 @@
 """Command audit adapters for YAML-managed legacy entrypoints."""
 
+from .benchmark_vae_lhat import build_benchmark_vae_lhat_argv
 from .direct_finetune import build_direct_finetune_argv
 from .direct import audit_direct_finetune_command
 from .pn2021_eval import build_pn2021_eval_argv
@@ -10,6 +11,7 @@ from .source_training import audit_train_ptbxl_command
 __all__ = [
     "audit_direct_finetune_command",
     "audit_train_ptbxl_command",
+    "build_benchmark_vae_lhat_argv",
     "build_direct_finetune_argv",
     "build_pn2021_eval_argv",
     "build_pn2021c_eval_argv",

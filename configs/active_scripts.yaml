@@ -267,6 +267,39 @@ managed_experiments:
     owns_training_logic: false
     notes: Per-center benchmark_fcn_wang Direct K500 v7 matrix launch surface; source checkpoint training remains an explicit prerequisite.
 
+  - name: benchmark_resnet1d_vae_lhat_k500_v7_sjr_rgq
+    status: active_wrapped
+    evidence_scope: launch_only
+    config: configs/experiments/benchmark_resnet1d_vae_lhat_k500_v7_sjr_rgq.yaml
+    legacy_entrypoint: scripts/paper/run_effnet_latent_augmix_stage3_20260524.py
+    launcher: scripts/run_experiment.py
+    method_family: benchmark_vae_latent_hull_online_at_v7
+    mapping_version: v7_super5_sjr_rgq_review_20260528
+    owns_training_logic: false
+    notes: Per-center benchmark_resnet1d_wang VAE-LHAT K500 v7 launch surface; runner.adapter=benchmark_vae_lhat expands typed YAML fields, consumes same-run Direct K500 checkpoints, and leaves GPU selection outside YAML.
+
+  - name: benchmark_inception1d_vae_lhat_k500_v7_sjr_rgq
+    status: active_wrapped
+    evidence_scope: launch_only
+    config: configs/experiments/benchmark_inception1d_vae_lhat_k500_v7_sjr_rgq.yaml
+    legacy_entrypoint: scripts/paper/run_effnet_latent_augmix_stage3_20260524.py
+    launcher: scripts/run_experiment.py
+    method_family: benchmark_vae_latent_hull_online_at_v7
+    mapping_version: v7_super5_sjr_rgq_review_20260528
+    owns_training_logic: false
+    notes: Per-center benchmark_inception1d VAE-LHAT K500 v7 launch surface; runner.adapter=benchmark_vae_lhat expands typed YAML fields, consumes same-run Direct K500 checkpoints, and leaves GPU selection outside YAML.
+
+  - name: benchmark_fcn_wang_vae_lhat_k500_v7_sjr_rgq
+    status: active_wrapped
+    evidence_scope: launch_only
+    config: configs/experiments/benchmark_fcn_wang_vae_lhat_k500_v7_sjr_rgq.yaml
+    legacy_entrypoint: scripts/paper/run_effnet_latent_augmix_stage3_20260524.py
+    launcher: scripts/run_experiment.py
+    method_family: benchmark_vae_latent_hull_online_at_v7
+    mapping_version: v7_super5_sjr_rgq_review_20260528
+    owns_training_logic: false
+    notes: Per-center benchmark_fcn_wang VAE-LHAT K500 v7 launch surface; runner.adapter=benchmark_vae_lhat expands typed YAML fields, consumes same-run Direct K500 checkpoints, and leaves GPU selection outside YAML.
+
   - name: benchmark_resnet1d_direct_percent_v7_sjr_rgq_matrix
     status: active_wrapped
     evidence_scope: launch_only

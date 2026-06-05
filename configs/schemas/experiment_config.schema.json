@@ -28,6 +28,7 @@
         "adapter": {
           "type": "string",
           "enum": [
+            "benchmark_vae_lhat",
             "direct_finetune",
             "ecgfounder_vae_lhat",
             "effnet_vae_lhat",
