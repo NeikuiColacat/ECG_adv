@@ -163,7 +163,7 @@ def _claim_by_id(registry: dict[str, Any], claim_id: str | None) -> dict[str, An
 
 def _registered_run_by_id(registry: dict[str, Any], run_id: str) -> dict[str, Any]:
     for item in registry.get("managed_runs") or []:
-        if str(item.get("run_id") or "") == str(run_id):
+        if str(item.get("run_id") or "") == str(run_id) or str(item.get("experiment_name") or "") == str(run_id):
             return {
                 "run_id": item.get("run_id", ""),
                 "experiment_name": item.get("experiment_name", ""),
@@ -250,6 +250,28 @@ def build_comparison_bundle(
         baseline_run_id=comparison["baseline_run_id"],
         candidate_run_id=comparison["candidate_run_id"],
     )
+    method_records = {
+        baseline_key: _method_record(
+            registry=registry,
+            method=baseline,
+            run_id=comparison["baseline_run_id"],
+        ),
+        candidate_key: _method_record(
+            registry=registry,
+            method=candidate,
+            run_id=comparison["candidate_run_id"],
+        ),
+    }
+    trusted = str(claim.get("status") or "") == "trusted" and str(claim.get("paper_use") or "") == "mainline"
+    if trusted and not all(record.get("registered_run") for record in method_records.values()):
+        missing = [
+            key for key, record in method_records.items()
+            if not record.get("registered_run")
+        ]
+        raise ComparisonBundleError(
+            "trusted comparison requires registered_run metadata for every method: "
+            + ", ".join(missing)
+        )
     manifest = {
         "schema_version": 1,
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -259,18 +281,7 @@ def build_comparison_bundle(
         "candidate_method": candidate_key,
         "baseline_run_id": comparison["baseline_run_id"],
         "candidate_run_id": comparison["candidate_run_id"],
-        "method_records": {
-            baseline_key: _method_record(
-                registry=registry,
-                method=baseline,
-                run_id=comparison["baseline_run_id"],
-            ),
-            candidate_key: _method_record(
-                registry=registry,
-                method=candidate,
-                run_id=comparison["candidate_run_id"],
-            ),
-        },
+        "method_records": method_records,
         "protocol": claim["protocol"],
         "registry_path": str(Path(registry_path).expanduser().resolve()),
         "local_config_path": str(Path(local_config_path).expanduser().resolve()),

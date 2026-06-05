@@ -152,12 +152,17 @@ yet turn them into a multi-stage scheduler.
 Runner commands can be expressed either as legacy-compatible `runner.argv` or,
 for selected mainline families, as typed `runner.adapter` entries. The adapter
 registry lives in `ecg_adv_gen/config/adapters/registry.py` and currently owns
-`effnet_vae_lhat` and `ecgfounder_vae_lhat`; each builds the legacy argv from
-typed YAML fields, so old script entrypoints and CLI behavior remain unchanged
-while active configs no longer carry full argument lists. The ECGFounder adapter
-also makes the latent-neighbor policy explicit instead of relying on legacy
-runner defaults. `runner.adapter` and `runner.argv` are mutually exclusive;
-configs must not keep stale argv beside a typed adapter.
+`effnet_vae_lhat`, `ecgfounder_vae_lhat`, `pn2021_eval`, `pn2021c_eval`,
+`prompt_token_online_at`, and `direct_finetune`; each builds the legacy argv
+from typed YAML fields, so old script entrypoints and CLI behavior remain
+unchanged while active configs no longer carry full argument lists. The
+PN2021 eval adapter always emits `--eval_protocol paper_refexcluded` and a
+K500 `--min_target_ref_excluded` gate. The PN2021-C adapter requires a clean
+eval JSON, `v7_refexcluded_100hz1000` cache metadata, and explicit K500 ref
+exclusion. The ECGFounder adapter also makes the latent-neighbor policy
+explicit instead of relying on legacy runner defaults. `runner.adapter` and
+`runner.argv` are mutually exclusive; configs must not keep stale argv beside
+a typed adapter.
 
 All active configs share `preprocess.contract_id` for PTB-XL/PN2021/ECGTwin
 decode contracts. ECGFounder configs additionally declare

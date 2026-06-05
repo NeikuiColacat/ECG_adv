@@ -81,6 +81,32 @@ run_record_policy:
     - Store registered run paths with ${paths.output_root} placeholders, not host absolute paths.
     - Do not commit checkpoint or generated dataset payloads.
 
+managed_runs:
+  - run_id: v7_sjr_rgq_main_20260528
+    experiment_name: effnet_direct_k500_v7_sjr_rgq
+    status: trusted
+    outcome: succeeded
+    purpose: Direct K500 EfficientNet1DV2 baseline for the v7 SJR/RGQ mainline comparison.
+    result_summary: Direct K500 baseline metrics are registered for the EffNet v7 VAE-LHAT comparison.
+    run_dir: ${paths.output_root}/effnet_direct_k500_v7_sjr_rgq/v7_sjr_rgq_main_20260528
+    run_card: ${paths.output_root}/20260528/v7_sjr_rgq_main_20260528_direct_plan/run_card.json
+    summary: ${paths.output_root}/20260528/v7_sjr_rgq_main_20260528_direct_plan/summary.md
+    mapping_version: v7_super5_sjr_rgq_review_20260528
+    mapping_hash: 555ec85d5b51
+    updated: 2026-06-05
+  - run_id: v7_sjr_rgq_main_20260528
+    experiment_name: effnet_vae_lhat_k500_v7_sjr_rgq
+    status: provisional
+    outcome: succeeded
+    purpose: VAE L-HAT K500 EfficientNet1DV2 candidate for the v7 SJR/RGQ mainline comparison.
+    result_summary: Legacy VAE-LHAT run is backfilled with selection/run-record metadata; full trusted registration still requires a finalized run_card chain.
+    run_dir: ${paths.output_root}/effnet_vae_lhat_k500_v7_sjr_rgq/v7_sjr_rgq_main_20260528
+    run_card: ""
+    summary: ""
+    mapping_version: v7_super5_sjr_rgq_review_20260528
+    mapping_hash: 555ec85d5b51
+    updated: 2026-06-05
+
 active_claims:
   - claim_id: effnet_v7_vae_lhat_improves_direct_k500
     title: EfficientNet1DV2 VAE L-HAT improves over direct K500 on PN2021 v7.

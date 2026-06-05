@@ -87,6 +87,7 @@ from scripts.triple_labels.model_zoo import available_model_names  # noqa: E402
 from ecg_adv_gen.training import (  # noqa: E402
     append_jsonl,
     atomic_torch_save,
+    build_checkpoint_selection_record,
     capture_rng_state,
     compute_pos_weight,
     quality_buffer_state,
@@ -2764,6 +2765,14 @@ def main():
         }
         _append_jsonl(diagnostics_epoch_path, diagnostics_payload)
 
+        selection_record = build_checkpoint_selection_record(
+            center=args.center_name,
+            best_epoch=best_epoch,
+            metric_name=args.es_metric,
+            metric_value=float(best_metric),
+            selection_source=args.quick_eval_source,
+            heldout_target_labels_used=bool(quick_eval_plan.uses_heldout_selection),
+        )
         ckpt_payload = {
             "schema_version": 1,
             "epoch": epoch,
@@ -2777,6 +2786,7 @@ def main():
             "rng_state": _rng_state(rng),
             "best_metric": best_metric,
             "best_epoch": best_epoch,
+            "checkpoint_selection": selection_record,
             "best_model_path": best_ckpt_path,
             "es_metric": args.es_metric,
             "epochs_since_best": epochs_since_best,
@@ -2793,6 +2803,7 @@ def main():
             "kind": "latest",
             "best_metric": best_metric,
             "best_epoch": best_epoch,
+            "checkpoint_selection": selection_record,
             "agent_decision": decision["attack_state"],
         }
         _append_jsonl(checkpoint_index_path, latest_index)

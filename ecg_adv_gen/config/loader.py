@@ -28,6 +28,7 @@ from .adapters.direct import audit_direct_finetune_command
 from .adapters.effnet_vae_lhat import audit_effnet_vae_lhat_command
 from .adapters.registry import build_runner_adapter_argv
 from .adapters.source_training import audit_train_ptbxl_command
+from .runner_audit import DISPATCHED_RUNNER_AUDIT_SCRIPT_NAMES, audit_runner_command
 from ecg_adv_gen.data import DataContractError, validate_data_preprocess_config
 from ecg_adv_gen.data.gated_pools import GatedPoolArtifactPaths
 from ecg_adv_gen.data.kshot_artifacts import KShotArtifactGroup, canonical_kshot_base
@@ -874,6 +875,12 @@ def audit_runner_commands(config: dict[str, Any], commands: list[dict[str, Any]]
             errors.append(f"{script}: command argv references held-out target selection data")
         _audit_command_path_safety(errors, script, command, opts, boundary=boundary)
         _audit_output_paths_are_run_scoped(errors, script, opts, run_id=run_id)
+
+        if script in DISPATCHED_RUNNER_AUDIT_SCRIPT_NAMES:
+            report = audit_runner_command(command, config=config)
+            errors.extend(report.get("errors", []))
+            warnings.extend(report.get("warnings", []))
+            continue
 
         if script == "run_direct_finetune_k500_20260516.py":
             errors.extend(

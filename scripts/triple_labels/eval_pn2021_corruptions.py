@@ -5,6 +5,7 @@ PN2021 benchmark remains unchanged.
 """
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -42,15 +43,23 @@ from methods.augmix.ecg_ops import (  # noqa: E402
 )
 from methods.augmix.severity import build_op  # noqa: E402
 from ecg_adv_gen.data.kshot import load_ref_record_ids_by_center  # noqa: E402
+from ecg_adv_gen.data.contracts import PREPROCESS_CONTRACT_ID  # noqa: E402
 from ecg_adv_gen.evaluation.pn2021_corruptions import (  # noqa: E402
     aggregate_corruption_summary,
     clean_mmap_cache_path,
     clean_npz_cache_path,
     corruption_cache_path,
     filter_record_indices,
+    load_json_payload,
     load_clean_metric_lookup,
     load_npz_metadata,
+    require_clean_eval_json,
     stable_corruption_seed,
+)
+from ecg_adv_gen.evaluation.pn2021c_metadata import (  # noqa: E402
+    PN2021CMetadataError,
+    build_pn2021c_metadata_payload,
+    validate_pn2021c_metadata_compatibility,
 )
 
 
@@ -139,9 +148,14 @@ def _build_corruption_op(corruption, public_severity, severity_profile):
     raise ValueError(f"unknown severity_profile: {severity_profile}")
 
 
-def _cache_path(cache_dir, scheme, center, corruption, severity):
+def _cache_path(cache_dir, scheme, center, corruption, severity, cache_version=None):
     return corruption_cache_path(
-        cache_dir, scheme, center, corruption, severity, PN2021_C_CACHE_VERSION
+        cache_dir,
+        scheme,
+        center,
+        corruption,
+        severity,
+        cache_version or PN2021_C_CACHE_VERSION,
     )
 
 
@@ -263,7 +277,22 @@ def _clean_lookup(clean_eval_json):
     return load_clean_metric_lookup(clean_eval_json)
 
 
-def eval_one(model, scheme, args, device, center, corruption, severity, clean_by_center):
+def _merge_clean_metadata(clean_cache_metadata, clean_eval_payload):
+    metadata = dict(clean_cache_metadata)
+    if clean_eval_payload:
+        if "label_mapping" in clean_eval_payload:
+            metadata["label_mapping"] = clean_eval_payload["label_mapping"]
+        if "preprocess" in clean_eval_payload:
+            metadata["preprocess"] = clean_eval_payload["preprocess"]
+    return metadata
+
+
+def _ref_ids_sha256(ids):
+    values = sorted(str(item) for item in ids)
+    return hashlib.sha256(("\n".join(values) + "\n").encode("utf-8")).hexdigest()
+
+
+def eval_one(model, scheme, args, device, center, corruption, severity, clean_by_center, clean_eval_payload):
     path = None
     metadata = {}
     cache_source = args.mode
@@ -284,7 +313,14 @@ def eval_one(model, scheme, args, device, center, corruption, severity, clean_by
                 "cache mode only supports --severity_profile standard because "
                 "prebuilt PN2021-C caches encode the standard profile"
             )
-        path = _cache_path(args.cache_dir, args.scheme, center, corruption, severity)
+        path = _cache_path(
+            args.cache_dir,
+            args.scheme,
+            center,
+            corruption,
+            severity,
+            args.required_cache_version,
+        )
         if not os.path.exists(path):
             raise FileNotFoundError(f"missing PN2021-C cache: {path}")
         data = np.load(path, allow_pickle=True)
@@ -296,6 +332,49 @@ def eval_one(model, scheme, args, device, center, corruption, severity, clean_by
         labels = labels[indices]
         ds = PN2021CachedCenterDataset(signals, labels, crop_len=args.crop_len)
         metadata = _load_metadata(data)
+    if clean_eval_payload:
+        if args.mode == "stream":
+            metadata = build_pn2021c_metadata_payload(
+                clean_metadata=_merge_clean_metadata(metadata, clean_eval_payload),
+                center=center,
+                corruption=corruption,
+                public_severity=int(severity),
+                internal_severity=int(PUBLIC_TO_INTERNAL_SEVERITY[int(severity)]),
+                cache_version=args.required_cache_version,
+                n_excluded_ref=len(exclude_ids),
+                preprocess_contract_id=PREPROCESS_CONTRACT_ID,
+                ref_record_ids_sha256=_ref_ids_sha256(exclude_ids),
+                source_clean_cache=cache_source,
+                seed=int(args.seed),
+                limit=args.limit,
+                severity_profile=args.severity_profile,
+            )
+        compatibility = validate_pn2021c_metadata_compatibility(
+            clean_eval=clean_eval_payload,
+            corrupt_metadata=metadata,
+            center=center,
+            required_cache_version=args.required_cache_version,
+        )
+        if int(len(exclude_ids)) != int(compatibility["n_excluded_ref"]):
+            raise PN2021CMetadataError(
+                "n_excluded_ref mismatch for actual PN2021-C eval: "
+                f"clean={compatibility['n_excluded_ref']!r}, "
+                f"exclude_ref_ids={len(exclude_ids)!r}, center={center}"
+            )
+        actual_ref_hash = _ref_ids_sha256(exclude_ids)
+        if actual_ref_hash != compatibility["ref_record_ids_sha256"]:
+            raise PN2021CMetadataError(
+                "ref_record_ids_sha256 mismatch for actual PN2021-C eval: "
+                f"clean={compatibility['ref_record_ids_sha256']!r}, "
+                f"exclude_ref_ids={actual_ref_hash!r}, center={center}"
+            )
+    else:
+        compatibility = {
+            "compatible": None,
+            "reason": "diagnostic_without_clean",
+            "center": center,
+            "cache_version": args.required_cache_version,
+        }
     loader = DataLoader(
         ds,
         batch_size=args.batch_size,
@@ -327,6 +406,7 @@ def eval_one(model, scheme, args, device, center, corruption, severity, clean_by
         "cache_path": path,
         "cache_source": cache_source,
         "metadata": metadata,
+        "metadata_compatibility": compatibility,
         "n_excluded_ref_ids_for_center": int(len(exclude_ids)),
         "corruption": {
             "name": corruption,
@@ -362,8 +442,9 @@ def main():
                    default="/root/autodl-tmp/triple_labels/pn2021_eval_cache_mmap")
     p.add_argument("--clean_cache_dir",
                    default="/root/autodl-tmp/triple_labels/pn2021_eval_cache")
-    p.add_argument("--clean_eval_json",
-                   default="/root/autodl-tmp/triple_labels/super5/eval_result_v3_super5_normsuppress.json")
+    p.add_argument("--clean_eval_json", default=None)
+    p.add_argument("--diagnostic_without_clean", action="store_true")
+    p.add_argument("--required_cache_version", default=PN2021_C_CACHE_VERSION)
     p.add_argument("--centers", nargs="+", default=DEFAULT_CENTERS)
     p.add_argument("--corruptions", nargs="+", default=DEFAULT_CORRUPTIONS)
     p.add_argument("--severities", nargs="+", type=int, default=[1, 2, 3, 4, 5])
@@ -393,6 +474,14 @@ def main():
                    help="Evaluate only the first N records per cache for smoke tests.")
     p.add_argument("--output_path", default=None)
     args = p.parse_args()
+    try:
+        require_clean_eval_json(
+            args.clean_eval_json,
+            diagnostic_without_clean=args.diagnostic_without_clean,
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    clean_eval_payload = load_json_payload(args.clean_eval_json)
 
     device = torch.device(args.device)
     scheme = get_scheme(args.scheme)
@@ -416,6 +505,8 @@ def main():
         "clean_mmap_cache_dir": args.clean_mmap_cache_dir,
         "clean_cache_dir": args.clean_cache_dir,
         "clean_eval_json": args.clean_eval_json,
+        "diagnostic_without_clean": bool(args.diagnostic_without_clean),
+        "required_cache_version": args.required_cache_version,
         "centers": list(args.centers),
         "corruptions": list(args.corruptions),
         "severities": list(args.severities),
@@ -425,7 +516,7 @@ def main():
             center: len(ids)
             for center, ids in sorted(args.exclude_ref_ids_by_center.items())
         },
-        "pn2021_c_cache_version": PN2021_C_CACHE_VERSION,
+        "pn2021_c_cache_version": args.required_cache_version,
         "per_center": {},
     }
 
@@ -435,7 +526,15 @@ def main():
             output["per_center"][center].setdefault(corruption, {})
             for severity in args.severities:
                 output["per_center"][center][corruption][str(severity)] = eval_one(
-                    model, scheme, args, device, center, corruption, severity, clean_by_center
+                    model,
+                    scheme,
+                    args,
+                    device,
+                    center,
+                    corruption,
+                    severity,
+                    clean_by_center,
+                    clean_eval_payload,
                 )
 
     output["aggregate_by_corruption_severity"] = _aggregate(output)

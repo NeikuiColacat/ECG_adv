@@ -185,7 +185,7 @@ def build_signal_cache(
 
 
 def load_selected_ref_ids(ref_meta_json: Path, center: str) -> set[str]:
-    return load_selected_record_ids_from_meta(ref_meta_json, center)
+    return load_selected_record_ids_from_meta(ref_meta_json, center, strict_center=True)
 
 
 def init_dense_from_head(model: nn.Module, head_path: Path) -> dict[str, Any]:

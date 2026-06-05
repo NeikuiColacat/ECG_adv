@@ -340,6 +340,38 @@ def _artifact_records_by_source(manifest: dict[str, Any], source: str) -> list[d
     return records
 
 
+_REGISTRATION_REQUIRED_ROLE_ALIASES = {
+    "run_manifest": {"run_manifest"},
+    "resolved_config": {"resolved_config", "run_config_yaml", "run_config_json"},
+    "command": {"command", "command_sh"},
+    "data_manifest": {"data_manifest"},
+    "selection": {"selection", "selection_record"},
+    "k500_refs": {"k500_refs", "k500_ref_ids"},
+    "metrics_source": {"metrics_source", "metrics_long"},
+}
+
+
+def _declared_artifact_roles(manifest: dict[str, Any]) -> set[str]:
+    roles: set[str] = set()
+    for artifact in _artifact_records_by_source(manifest, "launch"):
+        if artifact.get("role"):
+            roles.add(str(artifact["role"]))
+    for source in ("child_runs", "postprocess_runs"):
+        for artifact in _artifact_records_by_source(manifest, source):
+            if artifact.get("role"):
+                roles.add(str(artifact["role"]))
+    return roles
+
+
+def _missing_registration_roles(manifest: dict[str, Any]) -> list[str]:
+    declared = _declared_artifact_roles(manifest)
+    missing: list[str] = []
+    for canonical_role, aliases in _REGISTRATION_REQUIRED_ROLE_ALIASES.items():
+        if not declared.intersection(aliases):
+            missing.append(canonical_role)
+    return missing
+
+
 def _expected_eval_artifact_records(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     eval_roles = {
         "artifact_manifest",
@@ -688,6 +720,13 @@ def _validate_run_record_contract(
             errors.append(f"metric center coverage is missing target centers: {missing_centers}")
 
     if require_registration_ready:
+        if registration_status in {"trusted", "provisional"}:
+            missing_roles = _missing_registration_roles(manifest)
+            if missing_roles:
+                errors.append(
+                    "registry registration requires artifact roles: "
+                    + ", ".join(missing_roles)
+                )
         if registration_status in {"trusted", "provisional"} and status != "succeeded":
             errors.append("trusted/provisional registration requires run_manifest.status='succeeded'")
         for name in ("run_card.json", "run_file_index.json", "summary.md"):

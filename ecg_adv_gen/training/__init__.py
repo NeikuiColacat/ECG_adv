@@ -32,6 +32,7 @@ from .stream_sampling import (
     multilabel_stream_sample_weights,
 )
 from .online_at import QuickEvalPlan, resolve_quick_eval_plan
+from .online_at_records import build_checkpoint_selection_record
 from .resume_contract import (
     resume_contract_mismatches,
     should_save_initial_best_model,
@@ -69,6 +70,7 @@ __all__ = [
     "TaggedMemorySignalDataset",
     "WeightedFeatureStream",
     "build_weighted_feature_stream_loader",
+    "build_checkpoint_selection_record",
     "multilabel_stream_sample_weights",
     "pairwise_rank_loss",
     "quality_buffer_state",

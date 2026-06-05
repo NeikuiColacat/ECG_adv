@@ -103,14 +103,16 @@ def load_selected_record_ids_from_meta(
     center: str,
     *,
     id_keys: Sequence[str] = ("record_ids", "ref_record_ids", "selected_ref_record_ids"),
+    strict_center: bool = True,
 ) -> set[str]:
     """Load selected record ids from legacy K-shot ref-meta JSON variants.
 
     Supported shapes match the ECGFounder full-FT runner's historical parser:
     a top-level list of item dictionaries, a mapping with one of ``id_keys``,
     or a mapping with an ``items`` list. Top-level list rows are filtered by
-    ``center`` when a row-level center is present; mapping-level item rows keep
-    legacy behavior and accept every listed row.
+    ``center`` when a row-level center is present. Mapping-level item rows use
+    the same center filter by default; pass ``strict_center=False`` only for
+    explicit historical diagnostics that need the legacy all-items behavior.
     """
     payload = _load_json_any(path)
     selected: set[str] = set()
@@ -130,6 +132,8 @@ def load_selected_record_ids_from_meta(
         if not selected and "items" in payload:
             for row in payload["items"]:
                 if not isinstance(row, dict):
+                    continue
+                if strict_center and str(row.get("center", center)) != center:
                     continue
                 rid = row.get("record_id") or row.get("record")
                 if rid is not None:

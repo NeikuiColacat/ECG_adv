@@ -611,6 +611,63 @@ def _trusted_mainline_requires_manifest(claim: dict[str, Any], method: dict[str,
     )
 
 
+def _has_registered_run_for_method(registry: dict[str, Any], method_key: str, method: dict[str, Any]) -> bool:
+    explicit = method.get("registered_run")
+    if isinstance(explicit, dict) and explicit:
+        return True
+    expected_run_ids = {
+        str(value)
+        for value in (
+            method.get("registered_run_id"),
+            method.get("run_id"),
+            method_key,
+        )
+        if value
+    }
+    config_name = Path(str(method.get("config") or "")).stem
+    expected_experiments = {
+        str(value)
+        for value in (
+            method.get("registered_experiment_name"),
+            config_name,
+            method_key,
+        )
+        if value
+    }
+    for item in registry.get("managed_runs") or []:
+        if str(item.get("status") or "") not in {"trusted", "provisional"}:
+            continue
+        if str(item.get("run_id") or "") in expected_run_ids:
+            return True
+        if str(item.get("experiment_name") or "") in expected_experiments:
+            return True
+    return False
+
+
+def _audit_legacy_backfill_registration(
+    registry: dict[str, Any],
+    claim: dict[str, Any],
+    method_key: str,
+    method: dict[str, Any],
+    issues: list[dict[str, Any]],
+) -> None:
+    if not _trusted_mainline_requires_manifest(claim, method):
+        return
+    if method.get("traceability") != "legacy_backfilled_manifest":
+        return
+    if _has_registered_run_for_method(registry, method_key, method):
+        return
+    issues.append(
+        _issue(
+            "error",
+            "trusted_legacy_backfill_missing_registered_run",
+            f"{method_key} is trusted mainline but only has a legacy backfilled manifest; register a run record first",
+            method=method_key,
+            run_id=method.get("run_id", ""),
+        )
+    )
+
+
 def _audit_legacy_backfilled_manifest(
     method_key: str,
     method: dict[str, Any],
@@ -957,6 +1014,7 @@ def audit_active_evidence_registry(
         method_summaries: dict[str, Any] = {}
         config_summaries: dict[str, Any] = {}
         for method_key, method in claim["methods"].items():
+            _audit_legacy_backfill_registration(registry, claim, method_key, method, issues)
             config_summary = _audit_config(repo_root, local_config_path, claim, method_key, method, issues)
             if config_summary is not None:
                 config_summaries[method_key] = {

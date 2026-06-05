@@ -96,6 +96,12 @@ micromamba run -n ECGTwin python scripts/agent/audit_agent_workspace.py --skip-e
   ECGFounder (`ecg_adv_gen/config/adapters/ecgfounder_vae_lhat.py`). The
   ECGFounder v7 launch config uses `runner.adapter=ecgfounder_vae_lhat` and
   expects child `checkpoint_index.jsonl` records.
+- High-risk long argv surfaces now also have typed runner adapters:
+  `pn2021_eval`, `pn2021c_eval`, `prompt_token_online_at`, and
+  `direct_finetune`. The PN2021 eval adapter emits the paper-safe
+  `paper_refexcluded` protocol with K500 minimum ref exclusion; the PN2021-C
+  adapter requires clean eval metadata, `v7_refexcluded_100hz1000`, and
+  same-center K500 ref exclusion.
 - Pure online-AT orchestration helpers live in
   `ecg_adv_gen/training/online_at.py`; the legacy
   `scripts/pgd_cross_center/synth_online_at_super5.py` entrypoint still owns

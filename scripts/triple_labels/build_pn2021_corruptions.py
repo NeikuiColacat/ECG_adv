@@ -27,6 +27,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from methods.augmix.severity import AVAILABLE_OPS, build_op  # noqa: E402
 from scripts.triple_labels.eval_crosscenter import PN2021_EVAL_CACHE_VERSION  # noqa: E402
+from ecg_adv_gen.data.contracts import PREPROCESS_CONTRACT_ID  # noqa: E402
+from ecg_adv_gen.evaluation.pn2021_corruptions import (  # noqa: E402
+    load_json_payload,
+    require_clean_eval_json,
+)
+from ecg_adv_gen.evaluation.pn2021c_metadata import (  # noqa: E402
+    build_pn2021c_metadata_payload,
+)
 
 
 DEFAULT_CENTERS = ["ningbo", "chapman_shaoxing", "cpsc_2018", "georgia"]
@@ -38,7 +46,7 @@ DEFAULT_CORRUPTIONS = [
     "random_leads_masking",
 ]
 PUBLIC_TO_INTERNAL_SEVERITY = {1: 2, 2: 4, 3: 6, 4: 8, 5: 10}
-PN2021_C_CACHE_VERSION = "v1"
+PN2021_C_CACHE_VERSION = "v7_refexcluded_100hz1000"
 
 
 def _stable_seed(base_seed, *parts):
@@ -85,6 +93,27 @@ def _apply_corruption(signals_tc, corruption, public_severity, seed):
     return out
 
 
+def _center_clean_ref_count(clean_eval_payload, center):
+    per_center = clean_eval_payload.get("pn2021", {}).get("per_center", {})
+    row = per_center.get(center, {})
+    return int(row.get("n_excluded_ref", 0) or 0)
+
+
+def _center_clean_ref_hash(clean_eval_payload, center):
+    hashes = clean_eval_payload.get("pn2021", {}).get("eval_protocol", {}).get("target_ref_id_hashes", {})
+    return hashes.get(center)
+
+
+def _merge_clean_metadata(cache_metadata, clean_eval_payload):
+    metadata = dict(cache_metadata)
+    if clean_eval_payload:
+        if "label_mapping" in clean_eval_payload:
+            metadata["label_mapping"] = clean_eval_payload["label_mapping"]
+        if "preprocess" in clean_eval_payload:
+            metadata["preprocess"] = clean_eval_payload["preprocess"]
+    return metadata
+
+
 def build_one(args, center, corruption, public_severity):
     clean_path = _clean_cache_path(args.clean_cache_dir, args.scheme, center)
     if not os.path.exists(clean_path):
@@ -117,17 +146,21 @@ def build_one(args, center, corruption, public_severity):
     if not np.isfinite(corrupt).all():
         raise ValueError(f"{out_path}: corruption produced NaN/Inf")
 
-    metadata = _load_metadata(data)
-    metadata["pn2021_c"] = {
-        "cache_version": PN2021_C_CACHE_VERSION,
-        "source_clean_cache": clean_path,
-        "corruption": corruption,
-        "public_severity": int(public_severity),
-        "internal_severity": int(PUBLIC_TO_INTERNAL_SEVERITY[int(public_severity)]),
-        "seed": int(args.seed),
-        "limit": int(args.limit) if args.limit else None,
-        "ops_source": "methods/augmix/ecg_ops.py",
-    }
+    clean_eval_payload = getattr(args, "_clean_eval_payload", {})
+    metadata = build_pn2021c_metadata_payload(
+        clean_metadata=_merge_clean_metadata(_load_metadata(data), clean_eval_payload),
+        center=center,
+        corruption=corruption,
+        public_severity=int(public_severity),
+        internal_severity=int(PUBLIC_TO_INTERNAL_SEVERITY[int(public_severity)]),
+        cache_version=PN2021_C_CACHE_VERSION,
+        n_excluded_ref=_center_clean_ref_count(clean_eval_payload, center),
+        preprocess_contract_id=PREPROCESS_CONTRACT_ID,
+        ref_record_ids_sha256=_center_clean_ref_hash(clean_eval_payload, center),
+        source_clean_cache=clean_path,
+        seed=int(args.seed),
+        limit=args.limit,
+    )
 
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
@@ -150,10 +183,22 @@ def main():
                    choices=AVAILABLE_OPS)
     p.add_argument("--severities", nargs="+", type=int, default=[1, 2, 3, 4, 5])
     p.add_argument("--seed", type=int, default=20260501)
+    p.add_argument("--clean_eval_json", default=None,
+                   help="Clean ref-excluded PN2021 eval JSON used to stamp "
+                        "label mapping, preprocess contract, and ref-exclusion counts.")
+    p.add_argument("--diagnostic_without_clean", action="store_true")
     p.add_argument("--limit", type=int, default=None,
                    help="Build only the first N records per center for smoke tests.")
     p.add_argument("--overwrite", action="store_true")
     args = p.parse_args()
+    try:
+        require_clean_eval_json(
+            args.clean_eval_json,
+            diagnostic_without_clean=args.diagnostic_without_clean,
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    args._clean_eval_payload = load_json_payload(args.clean_eval_json)
 
     for severity in args.severities:
         if severity not in PUBLIC_TO_INTERNAL_SEVERITY:

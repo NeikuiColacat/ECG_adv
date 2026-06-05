@@ -38,6 +38,7 @@ from ecg_adv_gen.config import (
     write_selection_record_artifact,
 )
 from ecg_adv_gen.config.loader import audit_runner_commands
+from ecg_adv_gen.config.runner_audit import audit_runner_command
 from ecg_adv_gen.config.adapters.direct import audit_direct_finetune_command
 from ecg_adv_gen.config.adapters.source_training import audit_train_ptbxl_command
 from ecg_adv_gen.config.paths import PathSafetyError, translate_legacy_path, validate_local_paths
@@ -376,6 +377,67 @@ def test_command_protocol_audit_rejects_missing_vae_init_checkpoint():
 
     with pytest.raises(ConfigError, match="missing required option --init_ckpt"):
         build_runner_commands(config)
+
+
+def test_runner_audit_dispatches_eval_crosscenter_command():
+    command = {
+        "argv": [
+            "python",
+            "scripts/triple_labels/eval_crosscenter.py",
+            "--scheme",
+            "super5",
+            "--model_dir",
+            "/home/linbinhao/outputs/model",
+            "--model_name",
+            "efficientnet1dv2",
+            "--device",
+            "cuda",
+            "--crop_len",
+            "1000",
+            "--batch_size",
+            "192",
+            "--num_workers",
+            "0",
+            "--ptbxl_csv",
+            "/home/linbinhao/data/ptbxl_database.csv",
+            "--ptbxl_cache",
+            "/home/linbinhao/data/ptbxl_cache.npy",
+            "--preprocess_mode",
+            "minimal_resample",
+            "--norm_mode",
+            "per_sample_global",
+            "--pn2021_root",
+            "/home/linbinhao/data/physionet2021",
+            "--pn2021_cache_dir",
+            "/home/linbinhao/cache/pn2021",
+            "--pn2021_mmap_cache_dir",
+            "/home/linbinhao/cache/pn2021_mmap",
+            "--skip_mimic",
+            "--report_drop_all_zero_pn2021",
+            "--eval_protocol",
+            "paper_refexcluded",
+            "--exclude_ref_ids",
+            "/home/linbinhao/subsets/ningbo_real_k500_seed1.ref_meta.json",
+            "/home/linbinhao/subsets/chapman_shaoxing_real_k500_seed1.ref_meta.json",
+            "/home/linbinhao/subsets/cpsc_2018_real_k500_seed1.ref_meta.json",
+            "/home/linbinhao/subsets/georgia_real_k500_seed1.ref_meta.json",
+            "--output_path",
+            "/home/linbinhao/runs/pytest_run/ningbo/eval.json",
+        ],
+        "matrix": {"center": "ningbo"},
+    }
+    config = {
+        "paper_protocol": {
+            "kshot": {"k": 500, "seed": 1},
+            "centers": {"target_4": ["ningbo", "chapman_shaoxing", "cpsc_2018", "georgia"]},
+        },
+        "preprocess": {"crop_len": 1000, "mode": "minimal_resample", "norm_mode": "per_sample_global"},
+        "evaluation": {"min_pos": 10},
+        "runtime": {"run_id": "pytest_run"},
+    }
+    report = audit_runner_command(command, config=config)
+
+    assert report["errors"] == []
 
 
 def test_effnet_vae_lhat_command_audit_is_split_into_adapter():
@@ -1248,15 +1310,16 @@ def test_ecgtwin_prompt_token_online_at_config_consumes_gated_pool_and_real_k500
 def test_ecgtwin_prompt_token_online_at_audit_rejects_pn2021_quick_eval():
     config = _load("ecgtwin_prompt_token_online_at_minimal.yaml")
     config = copy.deepcopy(config)
-    argv = config["runner"]["argv"]
-    argv[argv.index("--quick_eval_source") + 1] = "pn2021"
     validate_experiment_config(config, repo_root=REPO)
+    command = copy.deepcopy(build_runner_commands(config)[0])
+    argv = command["argv"]
+    argv[argv.index("--quick_eval_source") + 1] = "pn2021"
 
     with pytest.raises(
         ConfigError,
         match=r"--quick_eval_source='pn2021', expected 'target_real_val'",
     ):
-        build_runner_commands(config)
+        audit_runner_commands(config, [command])
 
 
 def test_ecgtwin_prompt_token_online_at_eval_config_uses_same_run_model_and_ref_exclusion():
@@ -1585,6 +1648,36 @@ def test_ecgfounder_vae_lhat_adapter_is_registered():
     from ecg_adv_gen.config.adapters.registry import runner_adapter_names
 
     assert "ecgfounder_vae_lhat" in runner_adapter_names()
+
+
+def test_high_risk_long_argv_adapters_are_registered():
+    from ecg_adv_gen.config.adapters.registry import runner_adapter_names
+
+    names = set(runner_adapter_names())
+    assert {
+        "pn2021_eval",
+        "pn2021c_eval",
+        "prompt_token_online_at",
+        "direct_finetune",
+    } <= names
+
+
+@pytest.mark.parametrize(
+    ("config_name", "adapter_name", "expected_commands"),
+    [
+        ("pn2021_eval_v7_sjr_rgq_refexcluded.yaml", "pn2021_eval", 4),
+        ("pn2021c_effnet_v7_augmix_vs_noaug.yaml", "pn2021c_eval", 8),
+        ("ecgtwin_prompt_token_online_at_minimal.yaml", "prompt_token_online_at", 1),
+        ("effnet_direct_k500_v7_sjr_rgq_matrix.yaml", "direct_finetune", 4),
+    ],
+)
+def test_high_risk_long_argv_configs_use_typed_adapters(config_name: str, adapter_name: str, expected_commands: int):
+    config = _load(config_name)
+
+    assert config["runner"]["adapter"] == adapter_name
+    assert "argv" not in config["runner"]
+    commands = build_runner_commands(config)
+    assert len(commands) == expected_commands
 
 
 def test_ecgfounder_vae_lhat_k500_v7_audit_rejects_missing_ref_root():

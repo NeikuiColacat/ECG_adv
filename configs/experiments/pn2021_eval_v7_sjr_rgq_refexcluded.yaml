@@ -106,46 +106,10 @@ postprocess:
 
 runner:
   entrypoint: scripts/triple_labels/eval_crosscenter.py
+  adapter: pn2021_eval
   env:
     ECG_ADV_GEN_DATA_ROOT: ${paths.data_root}
     TMPDIR: ${paths.short_tmp_root}
     XDG_CACHE_HOME: ${paths.cache_root}
   matrix:
     center: ${paper_protocol.centers.target_4}
-  argv:
-    - --scheme
-    - super5
-    - --model_dir
-    - ${model.direct_init_root}/${matrix.center}_K${paper_protocol.kshot.k}_direct_ft_ep30_seed${paper_protocol.kshot.seed}_val0.2
-    - --model_name
-    - ${model.backbone}
-    - --device
-    - cuda
-    - --crop_len
-    - ${preprocess.crop_len}
-    - --batch_size
-    - ${training.eval_batch_size}
-    - --num_workers
-    - ${training.num_workers}
-    - --min_pos
-    - ${evaluation.min_pos}
-    - --ptbxl_csv
-    - ${paths.data_root}/ptbxl/ptbxl_database.csv
-    - --ptbxl_cache
-    - ${paths.data_root}/triple_labels/cache/ptbxl_minimal_resample_per_sample_global_fs100_len1000.npy
-    - --preprocess_mode
-    - ${preprocess.mode}
-    - --norm_mode
-    - ${preprocess.norm_mode}
-    - --pn2021_root
-    - ${paths.data_root}/physionet2021
-    - --pn2021_cache_dir
-    - ${data.cache.pn2021_cache_dir}
-    - --pn2021_mmap_cache_dir
-    - ${data.cache.pn2021_mmap_cache_dir}
-    - --skip_mimic
-    - --report_drop_all_zero_pn2021
-    - --exclude_ref_ids
-    - ${evaluation.ref_exclusion_meta}
-    - --output_path
-    - ${paths.output_root}/${experiment.name}/${runtime.run_id}/${matrix.center}/eval_result_v7_super5_sjr_rgq_refexcluded.json

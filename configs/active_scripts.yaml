@@ -13,8 +13,12 @@ source_of_truth:
   runner_adapter_registry: ecg_adv_gen/config/adapters/registry.py
   command_adapter_helpers: ecg_adv_gen/config/adapters/common.py
   direct_command_adapter: ecg_adv_gen/config/adapters/direct.py
+  direct_finetune_runner_adapter: ecg_adv_gen/config/adapters/direct_finetune.py
   ecgfounder_vae_lhat_command_adapter: ecg_adv_gen/config/adapters/ecgfounder_vae_lhat.py
   effnet_vae_lhat_command_adapter: ecg_adv_gen/config/adapters/effnet_vae_lhat.py
+  pn2021_eval_runner_adapter: ecg_adv_gen/config/adapters/pn2021_eval.py
+  pn2021c_eval_runner_adapter: ecg_adv_gen/config/adapters/pn2021c_eval.py
+  prompt_token_online_at_runner_adapter: ecg_adv_gen/config/adapters/prompt_token_online_at.py
   effnet_vae_lhat_wrapper_plan_builder: ecg_adv_gen/runner/effnet_vae_lhat.py
   external_model_link_contract: ecg_adv_gen/config/external_models.py
   source_training_command_adapter: ecg_adv_gen/config/adapters/source_training.py
@@ -173,7 +177,7 @@ managed_experiments:
     method_family: direct_target_k500_finetune_matrix
     mapping_version: v7_super5_sjr_rgq_review_20260528
     owns_training_logic: false
-    notes: Per-center Direct K500 v7 matrix launch surface; replaces the Direct K500 command expansion in scripts/paper/run_effnet_v7_multiseed_kshot_matrix_20260530.py without tracking GPU ids.
+    notes: Per-center Direct K500 v7 matrix launch surface; runner.adapter=direct_finetune expands typed YAML fields and replaces the Direct K500 command expansion in scripts/paper/run_effnet_v7_multiseed_kshot_matrix_20260530.py without tracking GPU ids.
 
   - name: effnet_v7_sjr_rgq_subset_export
     status: active_wrapped
@@ -393,7 +397,7 @@ managed_experiments:
     method_family: ecgtwin_prompt_token_online_at
     mapping_version: v7_super5_sjr_rgq_review_20260528
     owns_training_logic: false
-    notes: Minimal managed prompt-token online AT launch surface; consumes same-run prompt-token gated latent pool/class-trust/ref-meta artifacts plus v7 K500 target-real signals and writes a run-id-scoped Ningbo adaptation run.
+    notes: Minimal managed prompt-token online AT launch surface; runner.adapter=prompt_token_online_at expands typed YAML fields, consumes same-run prompt-token gated latent pool/class-trust/ref-meta artifacts plus v7 K500 target-real signals, and writes a run-id-scoped Ningbo adaptation run.
 
   - name: ecgtwin_prompt_token_online_at_minimal_eval
     status: active_wrapped
@@ -415,7 +419,7 @@ managed_experiments:
     method_family: managed_pn2021_refexcluded_eval
     mapping_version: v7_super5_sjr_rgq_review_20260528
     owns_training_logic: false
-    notes: Expands to one eval command per direct-K500 target-center model; each command excludes all four K500 ref-meta files and reports both all-zero-kept and drop-all-zero PN2021 views.
+    notes: runner.adapter=pn2021_eval expands to one paper_refexcluded eval command per direct-K500 target-center model; each command requires K500 ref exclusion, excludes all four K500 ref-meta files, and reports both all-zero-kept and drop-all-zero PN2021 views.
 
   - name: pn2021c_effnet_v7_augmix_vs_noaug
     status: active_wrapped
@@ -426,7 +430,7 @@ managed_experiments:
     method_family: managed_pn2021c_refexcluded_corruption_eval
     mapping_version: v7_super5_sjr_rgq_review_20260528
     owns_training_logic: false
-    notes: Expands to eight PN2021-C eval commands for four target centers times VAE noAug and VAE LHAT EfficientNet v7 runs; each command writes run-id-scoped corruption metrics and excludes that center's K500 ref-meta.
+    notes: runner.adapter=pn2021c_eval expands to eight PN2021-C eval commands for four target centers times VAE noAug and VAE LHAT EfficientNet v7 runs; each command requires clean eval metadata, required cache version v7_refexcluded_100hz1000, run-id-scoped corruption metrics, and that center's K500 ref-meta exclusion.
 
 inactive_experiment_configs:
   - config: configs/experiments/effnet_direct_k500_v6.yaml

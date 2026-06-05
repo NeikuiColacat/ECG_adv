@@ -202,6 +202,42 @@ def test_selected_record_ids_loader_supports_legacy_meta_variants(tmp_path: Path
         load_selected_record_ids_from_meta(empty, "ningbo")
 
 
+def test_selected_record_ids_items_shape_filters_wrong_center_in_strict_mode(tmp_path: Path):
+    path = tmp_path / "multi_center_ref_meta.json"
+    path.write_text(
+        json.dumps(
+            {
+                "center": "ningbo",
+                "items": [
+                    {"center": "ningbo", "record_id": "N1"},
+                    {"center": "georgia", "record_id": "G1"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert load_selected_record_ids_from_meta(path, "ningbo", strict_center=True) == {"N1"}
+
+
+def test_selected_record_ids_items_shape_can_preserve_legacy_mode(tmp_path: Path):
+    path = tmp_path / "multi_center_ref_meta.json"
+    path.write_text(
+        json.dumps(
+            {
+                "center": "ningbo",
+                "items": [
+                    {"center": "ningbo", "record_id": "N1"},
+                    {"center": "georgia", "record_id": "G1"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert load_selected_record_ids_from_meta(path, "ningbo", strict_center=False) == {"N1", "G1"}
+
+
 def test_kshot_ref_meta_loader_uses_exact_k_or_source_k_fallback(tmp_path: Path):
     source = kshot_ref_meta_path(tmp_path, "ningbo", 500, 20260531)
     source.parent.mkdir(parents=True)

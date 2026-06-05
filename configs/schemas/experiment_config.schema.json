@@ -25,7 +25,17 @@
       ],
       "properties": {
         "entrypoint": {"type": "string"},
-        "adapter": {"type": "string"},
+        "adapter": {
+          "type": "string",
+          "enum": [
+            "direct_finetune",
+            "ecgfounder_vae_lhat",
+            "effnet_vae_lhat",
+            "pn2021_eval",
+            "pn2021c_eval",
+            "prompt_token_online_at"
+          ]
+        },
         "argv": {"type": "array"},
         "env": {"type": "object"},
         "matrix": {"type": "object"}
@@ -78,6 +88,45 @@
     "evaluation": {
       "type": "object",
       "required": ["views", "metrics"],
+      "properties": {
+        "eval_protocol": {
+          "type": "object",
+          "properties": {
+            "name": {"type": "string"},
+            "min_target_ref_excluded": {"type": "integer"},
+            "allow_missing_centers": {"type": "boolean"}
+          },
+          "additionalProperties": true
+        },
+        "pn2021c": {
+          "type": "object",
+          "properties": {
+            "required_cache_version": {"type": "string"},
+            "severity_profile": {"type": "string"},
+            "corruption_seed": {"type": "integer"}
+          },
+          "additionalProperties": true
+        },
+        "prompt_token_online_at": {
+          "type": "object",
+          "properties": {
+            "quick_eval_source": {"type": "string"},
+            "classes_in_scope": {
+              "type": "array",
+              "items": {"type": "string"}
+            }
+          },
+          "additionalProperties": true
+        },
+        "direct_finetune": {
+          "type": "object",
+          "properties": {
+            "val_fraction": {"type": "number"},
+            "subset_root": {"type": "string"}
+          },
+          "additionalProperties": true
+        }
+      },
       "additionalProperties": true
     },
     "logging": {

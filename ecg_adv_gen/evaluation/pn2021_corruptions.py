@@ -97,6 +97,28 @@ def load_clean_metric_lookup(clean_eval_json: os.PathLike[str] | str | None) -> 
     }
 
 
+def require_clean_eval_json(
+    clean_eval_json: os.PathLike[str] | str | None,
+    *,
+    diagnostic_without_clean: bool = False,
+) -> None:
+    """Require a clean PN2021 eval JSON unless the caller opts into diagnostic mode."""
+
+    if clean_eval_json or diagnostic_without_clean:
+        return
+    raise ValueError("--clean_eval_json is required for paper PN2021-C evaluation")
+
+
+def load_json_payload(path: os.PathLike[str] | str | None) -> dict[str, Any]:
+    """Load a JSON object from path, returning an empty object for absent paths."""
+
+    if not path:
+        return {}
+    with Path(path).open() as f:
+        payload = json.load(f)
+    return payload if isinstance(payload, dict) else {}
+
+
 def _finite_values(rows: Sequence[Mapping[str, Any]], key: str) -> list[float]:
     return [
         float(row[key])
@@ -134,7 +156,9 @@ __all__ = [
     "clean_npz_cache_path",
     "corruption_cache_path",
     "filter_record_indices",
+    "load_json_payload",
     "load_clean_metric_lookup",
     "load_npz_metadata",
+    "require_clean_eval_json",
     "stable_corruption_seed",
 ]

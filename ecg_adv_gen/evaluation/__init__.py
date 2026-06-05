@@ -20,6 +20,20 @@ from .pn2021_metric_views import (
     filter_pn2021_center_records,
     summarize_center_view,
 )
+from .protocols import (
+    ALLOWED_EVAL_PROTOCOLS,
+    DIAGNOSTIC_EVAL_PROTOCOL,
+    PAPER_EVAL_PROTOCOL,
+    PN2021ProtocolError,
+    normalize_paper_preprocess_mode,
+    validate_pn2021_eval_protocol,
+)
+from .pn2021c_metadata import (
+    PN2021CMetadataError,
+    build_pn2021c_metadata_payload,
+    canonical_pn2021c_metadata,
+    validate_pn2021c_metadata_compatibility,
+)
 from .metrics import MetricRow, compute_macro_metric_dict, compute_macro_metrics
 from .selection import (
     ALLOWED_SELECTION_DATA,
@@ -69,6 +83,9 @@ __all__ = [
     "TARGET_K500_INTERNAL_VAL",
     "VIEW_ALIASES",
     "DROP_ALL_ZERO_POLICY",
+    "ALLOWED_EVAL_PROTOCOLS",
+    "DIAGNOSTIC_EVAL_PROTOCOL",
+    "PAPER_EVAL_PROTOCOL",
     "FilteredPN2021CenterRecords",
     "ALLOWED_SELECTION_DATA",
     "FORBIDDEN_SELECTION_REFERENCES",
@@ -77,14 +94,18 @@ __all__ = [
     "PN2021_EVAL_CACHE_VERSION",
     "PN2021EvalCache",
     "PN2021EvalCacheLoad",
+    "PN2021CMetadataError",
+    "PN2021ProtocolError",
     "SelectionPolicyError",
     "TargetSplitMode",
     "assemble_pn2021_center_metrics",
     "assemble_target_refexcluded_views",
     "aggregate_corruption_summary",
     "build_pn2021_cache_metadata",
+    "build_pn2021c_metadata_payload",
     "build_pn2021_preprocess_config",
     "canonicalize_view",
+    "canonical_pn2021c_metadata",
     "clean_mmap_cache_path",
     "clean_npz_cache_path",
     "compute_ecgfounder_lhat_selection_score",
@@ -103,6 +124,7 @@ __all__ = [
     "load_pn2021_mmap_cache",
     "load_pn2021_npz_cache",
     "metadata_matches_expected",
+    "normalize_paper_preprocess_mode",
     "normalize_macro_metric",
     "pn2021_mmap_cache_path",
     "pn2021_npz_cache_path",
@@ -110,5 +132,7 @@ __all__ = [
     "summarize_center_view",
     "split_target_train_val_indices",
     "validate_selection_policy",
+    "validate_pn2021_eval_protocol",
+    "validate_pn2021c_metadata_compatibility",
     "write_pn2021_mmap_cache",
 ]

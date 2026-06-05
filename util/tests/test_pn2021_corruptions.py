@@ -2,6 +2,7 @@ import json
 import math
 
 import numpy as np
+import pytest
 
 from ecg_adv_gen.evaluation.pn2021_corruptions import (
     aggregate_corruption_summary,
@@ -9,6 +10,7 @@ from ecg_adv_gen.evaluation.pn2021_corruptions import (
     clean_npz_cache_path,
     corruption_cache_path,
     filter_record_indices,
+    require_clean_eval_json,
     load_clean_metric_lookup,
     load_npz_metadata,
     stable_corruption_seed,
@@ -83,6 +85,14 @@ def test_load_clean_metric_lookup_reads_per_center_metrics(tmp_path):
         "georgia": {"macro_auroc": 0.8, "macro_auprc": None},
     }
     assert load_clean_metric_lookup(None) == {}
+
+
+def test_require_clean_eval_json_blocks_paper_mode_without_clean_baseline():
+    with pytest.raises(ValueError, match="--clean_eval_json is required"):
+        require_clean_eval_json(None, diagnostic_without_clean=False)
+
+    require_clean_eval_json(None, diagnostic_without_clean=True)
+    require_clean_eval_json("/clean/eval.json", diagnostic_without_clean=False)
 
 
 def test_aggregate_corruption_summary_skips_nan_metrics_and_missing_clean_drops():

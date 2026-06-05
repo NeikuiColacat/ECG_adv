@@ -72,6 +72,10 @@ runner:
     - ${evaluation.pn2021_limit}
     - --skip_mimic
     - --report_drop_all_zero_pn2021
+    - --eval_protocol
+    - paper_refexcluded
+    - --min_target_ref_excluded
+    - ${paper_protocol.kshot.k}
     - --exclude_ref_ids
     - ${evaluation.ref_exclusion_meta}
     - --output_path

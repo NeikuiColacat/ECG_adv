@@ -580,6 +580,34 @@ def test_register_run_in_registry_uses_output_root_placeholder(tmp_path: Path):
     assert str(tmp_path) not in dumped
 
 
+def test_register_run_in_registry_rejects_missing_required_registration_role(tmp_path: Path):
+    run_dir = _make_run_dir(tmp_path)
+    finalize_run_record(
+        run_dir,
+        purpose="Register this run only when replay roles are declared.",
+        result_summary="Registration should fail after removing a required role.",
+        outcome="trusted",
+    )
+    manifest = _load_manifest(run_dir)
+    launch_artifacts = manifest["artifact_trace"]["expected_outputs"]["launch_artifacts"]
+    manifest["artifact_trace"]["expected_outputs"]["launch_artifacts"] = [
+        item for item in launch_artifacts if item["role"] != "data_manifest"
+    ]
+    _write_manifest(run_dir, manifest)
+    registry_path = tmp_path / "registry.yaml"
+    local_config_path = tmp_path / "local.yaml"
+    registry_path.write_text("schema_version: 1\nrun_catalog:\n  trusted: []\n", encoding="utf-8")
+    local_config_path.write_text(f"paths:\n  output_root: {tmp_path / 'runs'}\n", encoding="utf-8")
+
+    with pytest.raises(RunRecordError, match="data_manifest"):
+        register_run_in_registry(
+            registry_path=registry_path,
+            local_config_path=local_config_path,
+            run_dir=run_dir,
+            status="trusted",
+        )
+
+
 def test_register_run_in_registry_can_auto_resolve_status_from_run_record(tmp_path: Path):
     run_dir = _make_run_dir(tmp_path)
     manifest = _load_manifest(run_dir)

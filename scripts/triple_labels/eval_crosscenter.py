@@ -18,6 +18,7 @@ import sys
 import json
 import argparse
 import time
+import hashlib
 
 import numpy as np
 import pandas as pd
@@ -45,6 +46,7 @@ from scripts.crosscenter_v2.preprocess_utils import (
 from ecg_adv_gen.data import (
     PN2021_EVAL_CENTERS_7,
     PN2021_LEAK_EXCLUDED_CENTERS,
+    PN2021_TARGET_CENTERS_4,
     load_include_record_ids_from_meta,
     load_ref_record_ids_from_meta,
     materialize_pn2021_center_records,
@@ -52,9 +54,12 @@ from ecg_adv_gen.data import (
     scan_pn2021_center_records,
 )
 from ecg_adv_gen.evaluation import (
+    ALLOWED_EVAL_PROTOCOLS,
     DROP_ALL_ZERO_POLICY,
     filter_pn2021_center_records,
+    normalize_paper_preprocess_mode,
     summarize_center_view,
+    validate_pn2021_eval_protocol,
 )
 from ecg_adv_gen.evaluation.pn2021_eval_cache import (
     PN2021_EVAL_CACHE_VERSION,
@@ -68,6 +73,7 @@ from ecg_adv_gen.evaluation.pn2021_eval_cache import (
     pn2021_npz_cache_path,
     write_pn2021_mmap_cache,
 )
+from ecg_adv_gen.data.contracts import PREPROCESS_CONTRACT_ID
 
 
 # PN2021 centers — ptb-xl explicitly excluded (data leakage with PTB-XL train)
@@ -339,6 +345,15 @@ def _load_excluded_ref_ids(meta_paths):
     return out
 
 
+def _ref_id_hashes_by_center(excluded_by_center):
+    out = {}
+    for center, ids in sorted((excluded_by_center or {}).items()):
+        values = sorted(str(item) for item in ids)
+        payload = ("\n".join(values) + "\n").encode("utf-8")
+        out[str(center)] = hashlib.sha256(payload).hexdigest()
+    return out
+
+
 def _load_included_record_ids(meta_paths):
     """Load explicit PN2021 evaluation IDs grouped by center.
 
@@ -495,6 +510,27 @@ def eval_pn2021(model, scheme, args, device):
         })
         print(f"  ──── drop-all-zero 7-center average "
               f"AUROC={avg_drop_auroc:.4f}  AUPRC={avg_drop_auprc:.4f}")
+    protocol_preprocess_mode = normalize_paper_preprocess_mode(
+        preprocess_mode=args.preprocess_mode,
+        norm_mode=args.norm_mode,
+        crop_len=args.crop_len,
+    )
+    result['eval_protocol'] = validate_pn2021_eval_protocol(
+        eval_protocol=args.eval_protocol,
+        per_center=per_center,
+        target_centers=PN2021_TARGET_CENTERS_4,
+        eval_centers=PN2021_CENTERS,
+        preprocess_mode=protocol_preprocess_mode,
+        crop_len=args.crop_len,
+        diagnostic_legacy_eval=args.diagnostic_legacy_eval,
+        allow_missing_centers=args.allow_missing_centers,
+        min_target_ref_excluded=args.min_target_ref_excluded,
+    )
+    result['eval_protocol']['actual_preprocess_mode'] = args.preprocess_mode
+    result['eval_protocol']['actual_norm_mode'] = args.norm_mode
+    result['eval_protocol']['target_ref_id_hashes'] = _ref_id_hashes_by_center(
+        getattr(args, '_excluded_by_center', {}) or {}
+    )
     return result
 
 
@@ -672,6 +708,16 @@ def main():
     p.add_argument('--report_drop_all_zero_pn2021', action='store_true',
                    help='Also report a PN2021 metric view that removes rows '
                         'with no positive Super5 label before AUROC/AUPRC.')
+    p.add_argument('--eval_protocol', choices=ALLOWED_EVAL_PROTOCOLS,
+                   default='paper_refexcluded',
+                   help='PN2021 eval safety protocol. paper_refexcluded requires '
+                        'all eval centers, paper preprocessing, and target ref exclusion.')
+    p.add_argument('--diagnostic_legacy_eval', action='store_true',
+                   help='Allow legacy preprocessing in diagnostic_unrefexcluded mode only.')
+    p.add_argument('--allow_missing_centers', action='store_true',
+                   help='Allow PN2021 center directories with no evaluated rows; diagnostic use only.')
+    p.add_argument('--min_target_ref_excluded', type=int, default=500,
+                   help='Minimum excluded K-shot refs required per target center in paper mode.')
     args = p.parse_args()
     args._excluded_by_center = _load_excluded_ref_ids(args.exclude_ref_ids)
     args._included_by_center = _load_included_record_ids(args.include_record_ids)
@@ -699,9 +745,20 @@ def main():
         },
         'config': {k: v for k, v in vars(args).items() if not k.startswith('_')},
     }
+    output['preprocess'] = {
+        'contract_id': PREPROCESS_CONTRACT_ID,
+        'preprocess_mode': args.preprocess_mode,
+        'norm_mode': args.norm_mode,
+        'crop_len': int(args.crop_len),
+        'target_fs': 100,
+        'target_len': 1000,
+    }
     if args.scheme == 'super5':
+        mapping_metadata = get_super5_pn2021_mapping_metadata()
         output['label_mapping'] = {
-            'pn2021_super5': get_super5_pn2021_mapping_metadata(),
+            'version': mapping_metadata.get('mapping_version'),
+            'hash': mapping_metadata.get('mapping_hash'),
+            'pn2021_super5': mapping_metadata,
         }
 
     output['ptbxl_test'] = eval_ptbxl_test(model, scheme, args, device)

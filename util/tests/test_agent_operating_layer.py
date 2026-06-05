@@ -16,6 +16,7 @@ from ecg_adv_gen.evidence import (
     audit_active_evidence_registry,
     build_comparison_bundle,
     build_legacy_vae_lhat_manifest,
+    ComparisonBundleError,
     EvidenceAuditError,
     load_evidence_registry,
 )
@@ -624,6 +625,56 @@ def test_legacy_backfilled_manifest_contract(tmp_path: Path):
     assert issues == []
 
 
+def test_trusted_mainline_legacy_backfill_without_registered_run_is_blocking(tmp_path: Path):
+    local_config = tmp_path / "local.yaml"
+    local_config.write_text(
+        "paths:\n"
+        f"  output_root: {tmp_path / 'outputs'}\n"
+        f"  data_root: {tmp_path / 'data'}\n"
+        f"  write_boundary: {tmp_path}\n",
+        encoding="utf-8",
+    )
+    registry = tmp_path / "registry.yaml"
+    registry.write_text(
+        """
+schema_version: 1
+active_claims:
+  - claim_id: effnet_v7_vae_lhat_improves_direct_k500
+    status: trusted
+    paper_use: mainline
+    protocol:
+      mapping_version: vtest
+      mapping_hash: htest
+      class_order: [CD, HYP, MI, NORM, STTC]
+      model_backbone: efficientnet1dv2
+      target_centers: [ningbo]
+      evaluation_views: [pn2021_all_zero_kept_refexcluded]
+      kshot: {k: 500, seed: 7, ref_excluded: true}
+      selection: {policy: fake}
+    methods:
+      vae_lhat:
+        status: trusted
+        traceability: legacy_backfilled_manifest
+        method_family: vae_latent_hull_online_at
+        run_id: run
+        config: configs/experiments/missing.yaml
+        manifest: ${paths.output_root}/missing/run_manifest.backfilled.json
+""",
+        encoding="utf-8",
+    )
+
+    report = audit_active_evidence_registry(
+        repo_root=tmp_path,
+        registry_path=registry,
+        local_config_path=local_config,
+        require_existing_artifacts=False,
+        check_git=False,
+    )
+
+    issue_codes = {issue["code"] for issue in report["issues"]}
+    assert "trusted_legacy_backfill_missing_registered_run" in issue_codes
+
+
 def test_build_legacy_vae_lhat_manifest_from_fake_run(tmp_path: Path):
     output_root = tmp_path / "out"
     run_root = output_root / "effnet_vae_lhat_k500_v7_sjr_rgq" / "run"
@@ -713,7 +764,11 @@ active_claims:
         write_boundary=tmp_path,
     )
     assert manifest["manifest_kind"] == "legacy_backfilled_manifest"
+    assert manifest["selection"]["policy"] == "target_real_val_internal"
+    assert manifest["selection"]["heldout_target_labels_used_for_selection"] is False
+    assert manifest["run_record"]["registration_status"] == "provisional"
     assert manifest["centers"][0]["center"] == "ningbo"
+    assert manifest["centers"][0]["checkpoint_selection"]["best_epoch"] == 2
     assert manifest["centers"][0]["artifacts"]["best_model.pt"]["sha256"]
     assert manifest["centers"][0]["final_eval"]["mapping_version"] == "vtest"
     assert (run_root / "run_manifest.backfilled.json").exists()
@@ -823,3 +878,48 @@ active_claims:
     ][0]
     assert abs(mean["delta_macro_auroc_pp"] - 3.0) < 1e-9
     assert abs(mean["delta_macro_auprc_pp"] - 6.0) < 1e-9
+
+
+def test_trusted_comparison_bundle_requires_registered_method_records(tmp_path: Path):
+    direct_metrics = _write_metrics(tmp_path / "direct.csv", _metric_rows("direct", 0.8, 0.5))
+    vae_metrics = _write_metrics(tmp_path / "vae.csv", _metric_rows("vae", 0.83, 0.56))
+    local_config = tmp_path / "local.yaml"
+    local_config.write_text(f"paths:\n  output_root: {tmp_path / 'out'}\n", encoding="utf-8")
+    registry = tmp_path / "registry.yaml"
+    registry.write_text(
+        f"""
+schema_version: 1
+active_claims:
+  - claim_id: synthetic_claim
+    status: trusted
+    paper_use: mainline
+    protocol:
+      mapping_version: vtest
+      mapping_hash: htest
+      class_order: [CD, HYP, MI, NORM, STTC]
+      target_centers: [ningbo, georgia]
+      evaluation_views:
+        - pn2021_all_zero_kept_refexcluded
+        - pn2021_drop_all_zero_refexcluded
+    methods:
+      direct:
+        metrics_long: {direct_metrics}
+      vae:
+        metrics_long: {vae_metrics}
+    comparison_bundle:
+      comparison_id: synthetic_comparison
+      baseline_method: direct
+      candidate_method: vae
+      baseline_run_id: direct
+      candidate_run_id: vae
+      output_dir: ${{paths.output_root}}/synthetic_comparison
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ComparisonBundleError, match="registered_run"):
+        build_comparison_bundle(
+            registry_path=registry,
+            local_config_path=local_config,
+            force=True,
+        )
