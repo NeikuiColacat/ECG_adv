@@ -20,6 +20,17 @@ from ecg_adv_gen.evidence import finalize_run_record
 from .process import render_command
 
 
+def _declared_launch_artifact_names(manifest: dict[str, Any]) -> set[str]:
+    expected = ((manifest.get("artifact_trace") or {}).get("expected_outputs") or {})
+    declared = expected.get("launch_artifacts_declared") or []
+    return {str(name) for name in declared}
+
+
+def _should_write_launch_artifact(manifest: dict[str, Any], artifact_name: str) -> bool:
+    declared = _declared_launch_artifact_names(manifest)
+    return not declared or artifact_name in declared
+
+
 def render_launch_command(command: dict[str, Any]) -> str:
     """Render a managed child/postprocess command for durable plan files."""
 
@@ -69,8 +80,10 @@ def write_launch_plan_files(
         out_dir / "data_manifest.json",
         local_paths=manifest.get("local_paths") or {},
     )
-    write_k500_ref_ids_artifact(manifest, out_dir / "k500_ref_ids.json")
-    write_selection_record_artifact(manifest, out_dir / "selection.json")
+    if _should_write_launch_artifact(manifest, "k500_ref_ids.json"):
+        write_k500_ref_ids_artifact(manifest, out_dir / "k500_ref_ids.json")
+    if _should_write_launch_artifact(manifest, "selection.json"):
+        write_selection_record_artifact(manifest, out_dir / "selection.json")
     manifest = attach_launch_artifacts(manifest, run_dir=out_dir)
     (out_dir / "run_manifest.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True, ensure_ascii=True, default=str) + "\n",

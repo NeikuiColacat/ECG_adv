@@ -198,3 +198,113 @@ def test_write_launch_plan_files_materializes_agent_handoff_artifacts(tmp_path: 
     ref_artifact = json.loads((run_dir / "k500_ref_ids.json").read_text(encoding="utf-8"))
     assert ref_artifact["centers"]["ningbo"]["ref_record_ids_ordered"] == ["ningbo/a", "ningbo/b"]
     assert written["run_record"]["outcome"] == "dry_run"
+
+
+def test_write_launch_plan_files_respects_declared_launch_artifacts_without_k500(tmp_path: Path):
+    config = {
+        "experiment": {
+            "name": "pytest_source_launch_plan",
+            "description": "source pretrain plan",
+        },
+        "data": {
+            "source_dataset": "ptbxl",
+            "target_dataset": "pn2021",
+            "roots": {
+                "ptbxl": str(tmp_path / "data" / "ptbxl"),
+                "pn2021": str(tmp_path / "data" / "pn2021"),
+            },
+            "cache": {
+                "pn2021_cache_dir": str(tmp_path / "data" / "cache" / "pn2021"),
+                "pn2021_mmap_cache_dir": str(tmp_path / "data" / "cache" / "pn2021_mmap"),
+            },
+            "pn2021_centers": [],
+            "exclude_centers": [],
+        },
+        "preprocess": {
+            "classifier_fs": 100,
+            "classifier_len": 1000,
+            "crop_len": 1000,
+            "mode": "resample_crop",
+            "norm_mode": "zscore_per_record",
+            "lead_order": "ptbxl",
+        },
+        "paper_protocol": {
+            "mapping_version": "v7_super5_sjr_rgq_review_20260528",
+            "mapping_hash": "555ec85d5b51",
+            "class_order": ["CD", "HYP", "MI", "NORM", "STTC"],
+            "centers": {"target_4": ["ningbo"], "eval_7": ["ningbo"]},
+            "kshot": {"k": 500, "seed": 20260531, "subset_seed": 20260531, "exclude_refs_from_eval": True},
+            "selection": {
+                "policy": "k500_internal_val_plus_source_floor",
+                "allowed_data": [
+                    "target_k500_train_split",
+                    "target_k500_internal_val",
+                    "ptbxl_source_floor",
+                ],
+                "forbid_heldout_target_labels": True,
+                "forbid_full_target_distribution_tuning": True,
+            },
+        },
+    }
+    commands = [
+        {
+            "name": "source_child",
+            "cwd": str(tmp_path),
+            "env": {},
+            "argv": ["python", "train.py", "--output_dir", str(tmp_path / "source")],
+        }
+    ]
+    launch_artifacts = [
+        "run_config.resolved.yaml",
+        "run_config.resolved.json",
+        "run_manifest.json",
+        "command.sh",
+        "data_manifest.json",
+        "selection.json",
+        "run_card.json",
+        "run_file_index.json",
+        "summary.md",
+    ]
+    manifest = {
+        "manifest_schema_version": 2,
+        "status": "dry_run",
+        "run_id": "pytest_source_plan",
+        "config_hash_sha256": "abc123",
+        "git": {"commit": "16446f14b071e6fc06898b92db374ba05fe42cb0", "branch": "main", "status_short": ""},
+        "experiment": config["experiment"],
+        "paper_protocol": config["paper_protocol"],
+        "local_paths": {"write_boundary": str(tmp_path)},
+        "commands": commands,
+        "postprocess_commands": [],
+        "artifact_trace": {
+            "schema_version": 1,
+            "metrics": {
+                "mapping_version": "v7_super5_sjr_rgq_review_20260528",
+                "mapping_hash": "555ec85d5b51",
+                "class_order": ["CD", "HYP", "MI", "NORM", "STTC"],
+            },
+            "selection_policy": config["paper_protocol"]["selection"],
+            "protocol_audit": {
+                "command_audit": {"passed": True},
+                "postprocess_audit": {"passed": True},
+            },
+            "inputs": {"k500_refs": []},
+            "expected_outputs": {
+                "launch_artifacts_declared": launch_artifacts,
+                "child_runs": [],
+                "postprocess_runs": [],
+            },
+        },
+    }
+
+    written = write_launch_plan_files(tmp_path / "run", config, manifest, commands, [])
+
+    run_dir = tmp_path / "run"
+    assert not (run_dir / "k500_ref_ids.json").exists()
+    assert (run_dir / "selection.json").exists()
+    launch_roles = {
+        item["role"]
+        for item in written["artifact_trace"]["expected_outputs"]["launch_artifacts"]
+    }
+    assert "k500_ref_ids" not in launch_roles
+    assert written["run_record"]["outcome"] == "dry_run"

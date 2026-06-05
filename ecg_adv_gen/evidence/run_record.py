@@ -519,6 +519,24 @@ def _validate_k500_ref_ids_content(run_dir: Path, manifest: dict[str, Any]) -> l
     return errors
 
 
+def _expects_launch_artifact_role(manifest: dict[str, Any], role: str) -> bool:
+    expected = ((manifest.get("artifact_trace") or {}).get("expected_outputs") or {})
+    launch_artifacts = expected.get("launch_artifacts") or []
+    if launch_artifacts:
+        return any(
+            artifact.get("role") == role and artifact.get("required") is not False
+            for artifact in launch_artifacts
+        )
+    declared = expected.get("launch_artifacts_declared") or []
+    if declared:
+        role_by_name = {
+            "k500_ref_ids.json": "k500_ref_ids",
+            "selection.json": "selection_record",
+        }
+        return any(role_by_name.get(str(name)) == role for name in declared)
+    return True
+
+
 def _metrics_long_rows(path: Path) -> list[dict[str, str]]:
     with path.open("r", encoding="utf-8", newline="") as f:
         return list(csv.DictReader(f))
@@ -611,8 +629,10 @@ def _validate_paper_table_content(
 
 def _validate_content_artifacts(run_dir: Path, manifest: dict[str, Any], metric_paths: list[Path]) -> list[str]:
     errors: list[str] = []
-    errors.extend(_validate_selection_content(run_dir, manifest))
-    errors.extend(_validate_k500_ref_ids_content(run_dir, manifest))
+    if _expects_launch_artifact_role(manifest, "selection_record"):
+        errors.extend(_validate_selection_content(run_dir, manifest))
+    if _expects_launch_artifact_role(manifest, "k500_ref_ids"):
+        errors.extend(_validate_k500_ref_ids_content(run_dir, manifest))
     metrics_errors, source_files = _validate_metrics_long_content(metric_paths, manifest)
     errors.extend(metrics_errors)
     errors.extend(
@@ -699,11 +719,12 @@ def _validate_run_record_contract(
     if trace.get("schema_version") != 1:
         errors.append("artifact_trace.schema_version must be 1")
     inputs = trace.get("inputs") or {}
-    if not inputs.get("k500_refs"):
+    if _expects_launch_artifact_role(manifest, "k500_ref_ids") and not inputs.get("k500_refs"):
         errors.append("artifact_trace.inputs.k500_refs must be non-empty")
+    expected_artifacts = _iter_expected_artifact_records(manifest)
+    if not expected_artifacts:
+        errors.append("expected artifacts must be declared in artifact_trace.expected_outputs")
     expected_eval = _expected_eval_artifact_records(manifest)
-    if not expected_eval:
-        errors.append("expected eval artifacts must be declared in artifact_trace.expected_outputs")
     metric_paths = _discover_metrics_paths(run_dir, manifest)
     errors.extend(_validate_content_artifacts(run_dir, manifest, metric_paths))
 
@@ -712,12 +733,13 @@ def _validate_run_record_contract(
         artifact_verification = manifest.get("artifact_verification") or {}
         if artifact_verification.get("passed") is not True:
             errors.append("run_manifest.artifact_verification.passed must be true for succeeded runs")
-        if not metric_summary:
+        if expected_eval and not metric_summary:
             errors.append("succeeded runs must include a non-empty metric_summary")
-        observed_centers = _metric_centers_from_metrics_long(metric_paths)
-        missing_centers = sorted(set(target_centers) - observed_centers)
-        if missing_centers:
-            errors.append(f"metric center coverage is missing target centers: {missing_centers}")
+        if expected_eval:
+            observed_centers = _metric_centers_from_metrics_long(metric_paths)
+            missing_centers = sorted(set(target_centers) - observed_centers)
+            if missing_centers:
+                errors.append(f"metric center coverage is missing target centers: {missing_centers}")
 
     if require_registration_ready:
         if registration_status in {"trusted", "provisional"}:

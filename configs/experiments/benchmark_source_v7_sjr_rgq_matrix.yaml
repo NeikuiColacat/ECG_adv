@@ -74,6 +74,18 @@ runner:
 adaptation:
   method: benchmark_source_pretrain
 
+logging:
+  launch_artifacts:
+    - run_config.resolved.yaml
+    - run_config.resolved.json
+    - run_manifest.json
+    - command.sh
+    - data_manifest.json
+    - selection.json
+    - run_card.json
+    - run_file_index.json
+    - summary.md
+
 lineage:
   replaces_legacy_surface: scripts/paper/run_benchmark_backbone_v7_kshot_matrix_20260530.py
   scope: benchmark_source_pretrain_all_default_models

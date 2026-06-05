@@ -562,6 +562,22 @@ reporting_tools:
       - can_verify_required_input_artifacts_without_checking_child_outputs
       - writes_reports_only_under_explicit_write_boundary
 
+  - name: matrix_parallel_launcher
+    status: active
+    script: scripts/agent/run_matrix_parallel.py
+    package: ecg_adv_gen/runner/matrix_parallel.py
+    output_artifacts:
+      - run_manifest.json
+      - command_*.log
+      - run_card.json
+      - run_file_index.json
+    safety_rules:
+      - requires_explicit_gpu_list
+      - one_gpu_per_matrix_command
+      - reuses_yaml_config_loader_and_command_audit
+      - records_gpu_assignment_in_manifest
+      - refuses_more_matrix_commands_than_selected_gpus
+
   - name: active_evidence_registry_auditor
     status: active
     script: scripts/agent/audit_agent_workspace.py
