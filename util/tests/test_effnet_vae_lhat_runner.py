@@ -201,3 +201,27 @@ def test_build_effnet_vae_lhat_commands_preserve_wrapper_flags():
         paths.out_dir / "eval_result_v7_exclrefs_crop1000.json"
     )
     assert opt_first(eval_opts, "--pn2021_limit") == "25"
+
+
+def test_build_effnet_vae_lhat_eval_cmd_uses_all_target_refs_for_standard_anchor_base():
+    data_root = Path("/tmp/ecg-data")
+    out_root = data_root / "runs"
+    args = _args(
+        anchor_base="/tmp/refs/georgia/k500_seed20260531/georgia_real_k500_seed20260531",
+    )
+    paths = resolve_effnet_vae_lhat_paths(args, data_root=data_root, out_root=out_root)
+
+    eval_cmd = build_effnet_vae_lhat_eval_cmd(
+        args,
+        python="/env/bin/python",
+        data_root=data_root,
+        paths=paths,
+    )
+    eval_opts = argv_option_map(eval_cmd)
+
+    assert opt_list(eval_opts, "--exclude_ref_ids") == [
+        "/tmp/refs/ningbo/k500_seed20260531/ningbo_real_k500_seed20260531.ref_meta.json",
+        "/tmp/refs/chapman_shaoxing/k500_seed20260531/chapman_shaoxing_real_k500_seed20260531.ref_meta.json",
+        "/tmp/refs/cpsc_2018/k500_seed20260531/cpsc_2018_real_k500_seed20260531.ref_meta.json",
+        "/tmp/refs/georgia/k500_seed20260531/georgia_real_k500_seed20260531.ref_meta.json",
+    ]

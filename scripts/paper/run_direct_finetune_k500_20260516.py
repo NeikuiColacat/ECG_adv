@@ -40,6 +40,7 @@ from scripts.paper.run_latenthull_real_anchor_grid_20260512 import (  # noqa: E4
 )
 from scripts.triple_labels.label_schemes import CLASS_NAMES_SUPER5, NUM_SUPER5  # noqa: E402
 from ecg_adv_gen.run_naming import build_effnet_direct_run_leaf  # noqa: E402
+from ecg_adv_gen.evaluation.ref_exclusion import append_target_ref_exclusion_args  # noqa: E402
 from ecg_adv_gen.training import compute_pos_weight, masked_bce_with_logits, random_split_indices  # noqa: E402
 from scripts.triple_labels.train_ptbxl import (  # noqa: E402
     compute_macro_auroc_auprc,
@@ -356,12 +357,18 @@ def train_one(center: str, args: argparse.Namespace) -> Path:
         "--pn2021_root",
         str(DATA_ROOT / "physionet2021"),
         "--skip_mimic",
-        "--exclude_ref_ids",
-        str(paths["meta"]),
+    ]
+    append_target_ref_exclusion_args(
+        eval_cmd,
+        args.subset_root or SUBSET_ROOT,
+        k=args.k,
+        seed=args.subset_seed,
+    )
+    eval_cmd.extend([
         "--report_drop_all_zero_pn2021",
         "--output_path",
         str(eval_path),
-    ]
+    ])
     if args.eval_pn2021_limit:
         eval_cmd.extend(["--pn2021_limit", str(args.eval_pn2021_limit)])
     run_cmd(eval_cmd, out_dir / "eval_full.log")

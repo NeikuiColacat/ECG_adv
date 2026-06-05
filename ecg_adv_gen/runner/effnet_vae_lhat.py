@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ecg_adv_gen.evaluation.ref_exclusion import append_target_ref_exclusion_args_from_anchor_base
 from ecg_adv_gen.run_naming import build_effnet_vae_lhat_run_leaf
 
 
@@ -345,11 +346,15 @@ def build_effnet_vae_lhat_eval_cmd(
         str(data_root / "triple_labels/pn2021_eval_cache_mmap_minresample_perglobal"),
         "--skip_mimic",
         "--report_drop_all_zero_pn2021",
-        "--exclude_ref_ids",
-        str(paths.ref_meta),
+    ]
+    try:
+        append_target_ref_exclusion_args_from_anchor_base(eval_cmd, paths.anchor_base)
+    except ValueError:
+        eval_cmd.extend(["--exclude_ref_ids", str(paths.ref_meta)])
+    eval_cmd.extend([
         "--output_path",
         str(paths.out_dir / "eval_result_v7_exclrefs_crop1000.json"),
-    ]
+    ])
     if int(args.eval_pn2021_limit) > 0:
         eval_cmd.extend(["--pn2021_limit", str(args.eval_pn2021_limit)])
     return eval_cmd
