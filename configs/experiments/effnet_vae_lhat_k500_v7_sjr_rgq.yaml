@@ -6,6 +6,9 @@ experiment:
   name: effnet_vae_lhat_k500_v7_sjr_rgq
   description: EfficientNet1DV2 K500 adaptation with ECGTwin VAE Latent-Hull online AT under PN2021 Super5 v7 SJR/RGQ review mapping.
 
+model:
+  direct_init_root: ${paths.output_root}/effnet_direct_k500_v7_sjr_rgq_matrix/${runtime.run_id}/${matrix.center}/runs
+
 training:
   epochs: 30
 

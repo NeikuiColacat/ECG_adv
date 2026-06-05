@@ -550,7 +550,7 @@ def test_effnet_v7_configs_use_v7_subset_root_and_direct_init_dependency():
             "--anchor_base",
         )
         assert _option_value(argv, "--init_ckpt").endswith(
-            f"/runs/effnet_direct_k500_v7_sjr_rgq/pytest_run/runs/"
+            f"/runs/effnet_direct_k500_v7_sjr_rgq_matrix/pytest_run/{center}/runs/"
             f"{center}_K500_direct_ft_ep30_seed20260531_val0.2/best_model.pt"
         )
 
