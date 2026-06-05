@@ -333,6 +333,48 @@ def test_finalize_run_record_uses_manifest_run_record_defaults(tmp_path: Path):
     assert card["result"]["outcome"] == "provisional"
 
 
+def test_finalize_run_record_allows_eval_result_without_metrics_long(tmp_path: Path):
+    run_dir = _make_run_dir(tmp_path)
+    for path in [
+        run_dir / "eval" / "metrics_long.csv",
+        run_dir / "eval" / "paper_table.csv",
+        run_dir / "eval" / "paper_table_manifest.json",
+    ]:
+        path.unlink()
+
+    eval_result = run_dir / "center_runs" / "ningbo" / "eval_result.json"
+    eval_result.write_text(
+        json.dumps(
+            {
+                "mapping_version": "vtest",
+                "mapping_hash": "htest",
+                "macro_auroc": 0.83,
+                "macro_auprc": 0.54,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    manifest = _load_manifest(run_dir)
+    child_artifacts = manifest["artifact_trace"]["expected_outputs"]["child_runs"][0]["expected_artifacts"]
+    child_artifacts.append({"role": "eval_result", "path": str(eval_result), "required": True})
+    manifest["artifact_trace"]["expected_outputs"]["postprocess_runs"] = []
+    manifest["artifact_verification"]["verified_artifacts"] = [
+        {"role": "eval_result", "path": str(eval_result), "exists": True, "content_verified": True}
+    ]
+    _write_manifest(run_dir, manifest)
+
+    card = finalize_run_record(
+        run_dir,
+        purpose="Test whether direct eval-only runs can be finalized.",
+        result_summary="The direct eval-only run produced child eval_result files without metrics_long.",
+        outcome="trusted",
+    )
+
+    assert card["metric_summary"] == {}
+    assert "No metrics_long.csv summary discovered" in (run_dir / "summary.md").read_text(encoding="utf-8")
+
+
 def test_finalize_run_record_requires_explicit_result_summary(tmp_path: Path):
     run_dir = _make_run_dir(tmp_path)
 

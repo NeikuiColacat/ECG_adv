@@ -392,6 +392,16 @@ def _expected_eval_artifact_records(manifest: dict[str, Any]) -> list[dict[str, 
     return records
 
 
+def _expected_metrics_long_artifact_records(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for record in _iter_expected_artifact_records(manifest):
+        role = str(record.get("role") or "")
+        path = Path(str(record.get("path") or ""))
+        if role == "metrics_long" or path.name == "metrics_long.csv":
+            records.append(record)
+    return records
+
+
 def _metric_centers_from_metrics_long(paths: list[Path]) -> set[str]:
     centers: set[str] = set()
     for path in paths:
@@ -725,6 +735,7 @@ def _validate_run_record_contract(
     if not expected_artifacts:
         errors.append("expected artifacts must be declared in artifact_trace.expected_outputs")
     expected_eval = _expected_eval_artifact_records(manifest)
+    expected_metrics_long = _expected_metrics_long_artifact_records(manifest)
     metric_paths = _discover_metrics_paths(run_dir, manifest)
     errors.extend(_validate_content_artifacts(run_dir, manifest, metric_paths))
 
@@ -733,9 +744,11 @@ def _validate_run_record_contract(
         artifact_verification = manifest.get("artifact_verification") or {}
         if artifact_verification.get("passed") is not True:
             errors.append("run_manifest.artifact_verification.passed must be true for succeeded runs")
-        if expected_eval and not metric_summary:
+        if _expects_launch_artifact_role(manifest, "k500_ref_ids") and not expected_eval:
+            errors.append("expected eval artifacts must be declared for K500 target runs")
+        if expected_metrics_long and not metric_summary:
             errors.append("succeeded runs must include a non-empty metric_summary")
-        if expected_eval:
+        if expected_metrics_long:
             observed_centers = _metric_centers_from_metrics_long(metric_paths)
             missing_centers = sorted(set(target_centers) - observed_centers)
             if missing_centers:
