@@ -52,6 +52,7 @@ Stages:
   benchmark        Run PyTorch/ONNX/TensorRT inference benchmark.
   evidence         Summarize thesis tables and key evidence into JSON/Markdown.
   package_artifacts Copy packageable files from docs/artifact_manifest.json into an artifact bundle.
+  package_source   Build a clean source-code tarball for the 2026 graduation disc.
   streamlit        Start the Streamlit demo.
   all              Run split, preflight, low_sample, medical_validity, figures, benchmark, evidence.
 
@@ -183,6 +184,10 @@ stage_package_artifacts() {
     --out_dir "${DATA_ROOT}/thesis_archive_artifacts"
 }
 
+stage_package_source() {
+  bash "${ROOT}/scripts/final_round/package_source_code.sh"
+}
+
 stage_streamlit() {
   if command -v uv >/dev/null 2>&1; then
     uv run streamlit run "${ROOT}/apps/streamlit_ecg_demo/app.py" \
@@ -218,6 +223,7 @@ case "${STAGE}" in
   benchmark) stage_benchmark ;;
   evidence) stage_evidence ;;
   package_artifacts) stage_package_artifacts ;;
+  package_source) stage_package_source ;;
   streamlit) stage_streamlit ;;
   all)
     stage_thesis_assets

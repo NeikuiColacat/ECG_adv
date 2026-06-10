@@ -112,6 +112,17 @@ def test_reproduction_runner_exposes_restore_artifacts_stage():
     assert "ecg_grad_repro_no_pn2021_*.tar.gz" in script
 
 
+def test_reproduction_runner_exposes_clean_source_package_stage():
+    script = (REPO_ROOT / "scripts/final_round/run_thesis_reproduction.sh").read_text(encoding="utf-8")
+    package_script = (REPO_ROOT / "scripts/final_round/package_source_code.sh").read_text(encoding="utf-8")
+
+    assert "package_source" in script
+    assert "package_source_code.sh" in script
+    assert "git -C" in package_script
+    assert "ls-files -z --cached --others --exclude-standard" in package_script
+    assert "thesis_archive_artifacts/source_code" in package_script
+
+
 def test_reproduction_runner_separates_archive_and_full_preflight():
     script = (REPO_ROOT / "scripts/final_round/run_thesis_reproduction.sh").read_text(encoding="utf-8")
 

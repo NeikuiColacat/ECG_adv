@@ -1,7 +1,8 @@
 """Prepare a balanced PTB-XL super5 ECGTwin reference subset.
 
 This script selects ECGTwin-compatible PTB-XL latent records from folds 1-8 by
-default, preserving the list-of-dict schema consumed by generate_center_synth.py.
+default, preserving the list-of-dict schema consumed by the prompt-token
+generation scripts such as generate_center_prompt_token_synth.py.
 
 Output entries keep:
   data:  (4,128) ECGTwin VAE latent

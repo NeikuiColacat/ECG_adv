@@ -3,6 +3,16 @@ result/
 outputs/
 outputs
 migrate_files/
+.venv/
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+wandb/
+runs/
+checkpoints/
+logs/
+*.egg-info/
+*.Zone.Identifier
 
 
 # Trash / legacy artifacts (not tracked)
@@ -25,6 +35,22 @@ artifacts/**/*.engine
 artifacts/**/*.npy
 artifacts/**/*.npz
 !artifacts/samples/generated_ecg_examples/thesis_selected_samples.npz
+
+# Training-scale local outputs should live under ECG_ADV_DATA_ROOT or an
+# external artifact bundle, not in the repository.
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.engine
+*.npy
+*.npz
+*.pkl
+*.joblib
+*.h5
+*.tar
+*.tar.gz
+*.zip
 
 # Personal thesis docs (contain student ID / personal info)
 docs/*.docx

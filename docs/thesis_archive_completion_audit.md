@@ -44,6 +44,7 @@ silently ignored.
 | Non-mainline historical material is separated or labeled | Pass | `legacy/README.md`, `docs/final_round/README.md`, cleaned `AGENTS.md`/`CLAUDE.md` |
 | Large model/data artifacts are outside git | Pass | `.gitignore`; `git ls-files` only contains one tiny curated Figure 3.3 `.npz` sample |
 | Package command emits checksums and missing reports | Pass | `package_artifacts` writes `artifact_manifest.resolved.json`, `checksums.sha256`, `missing_artifacts.json`, `missing_artifacts.md` |
+| Clean source package can be produced for the graduation disc | Pass | `package_source` writes `ECG_adv_source_*.tar.gz` and `.sha256` under `${ECG_ADV_DATA_ROOT}/thesis_archive_artifacts/source_code/` |
 | Archive preflight can tell what is missing | Pass | `preflight` and `preflight_full` stages; full report paths under `${ECG_ADV_DATA_ROOT}/thesis_archive_artifacts/` |
 
 ## Verification Snapshot
@@ -63,6 +64,7 @@ uv run python -m json.tool docs/thesis_repro_manifest.json >/dev/null
 uv run python -m json.tool docs/artifact_manifest.json >/dev/null
 bash scripts/final_round/run_thesis_reproduction.sh thesis_assets
 bash scripts/final_round/run_thesis_reproduction.sh preflight
+bash scripts/final_round/run_thesis_reproduction.sh package_source
 bash scripts/final_round/run_thesis_reproduction.sh package_artifacts
 bash scripts/final_round/run_thesis_reproduction.sh env
 bash scripts/final_round/run_thesis_reproduction.sh low_sample
@@ -72,10 +74,11 @@ bash scripts/final_round/run_thesis_reproduction.sh evidence
 Observed results:
 
 ```text
-pytest: 48 passed
+pytest: 49 passed
 ruff: All checks passed
 thesis_assets: checked=10 missing=0
 preflight: ok=50 missing_required=0 missing_optional=0 bad=0 skipped=21
+package_source: wrote ECG_adv_source_20260609T1915.tar.gz, sha256 OK
 package_artifacts: packaged 59 artifacts, missing=0
 low_sample: wrote low_sample_summary.json and low_sample_summary.md
 evidence: wrote final_thesis_evidence_summary.json and .md

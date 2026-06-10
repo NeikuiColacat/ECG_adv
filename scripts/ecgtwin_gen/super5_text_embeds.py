@@ -12,13 +12,14 @@ Output schema:
       "prompts_by_class":  {super5_class: prompt_str},
   }, out_path)
 
-Phase 0.A 12-lead viz sanity is performed via --viz (requires --token_ckpt to
-override center_token to zero, then 1 sample/class is generated and rendered).
+Optional 12-lead visualization sanity is performed via --viz. This utility
+builds text embeddings only; the thesis prompt-token route appends the learned
+768-d center-class prompt token later and does not modify the ECGTwin tokenizer.
 
 Usage:
   uv run python \
     scripts/ecgtwin_gen/super5_text_embeds.py \
-    --out ${ECG_ADV_DATA_ROOT}/center_token_super5/super5_text_embeds.pt
+    --out ${ECG_ADV_DATA_ROOT}/ecgtwin_prompt_token_super5/cache_v1/super5_text_embeds.pt
 """
 import argparse
 import os
@@ -155,7 +156,10 @@ def _encode_unique_prompts(wrapper: ECGTwinWrapper, prompts: dict) -> dict:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default=str(DATA_ROOT / "center_token_super5/super5_text_embeds.pt"))
+    ap.add_argument(
+        "--out",
+        default=str(DATA_ROOT / "ecgtwin_prompt_token_super5/cache_v1/super5_text_embeds.pt"),
+    )
     ap.add_argument("--device", default="cuda:0")
     args = ap.parse_args()
 

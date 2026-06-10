@@ -1,6 +1,7 @@
 """Create a random PTB-XL super5 split for the graduate-project experiment.
 
-Default policy follows docs/pipelines/graduate_project.md:
+Default policy follows docs/thesis_reproduction.md and the compatibility pointer
+docs/pipelines/graduate_project.md:
 
   train_real = 2000 random PTB-XL records
   val_real   = 2000 random records from the remaining records

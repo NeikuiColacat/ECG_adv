@@ -81,11 +81,13 @@ bash scripts/final_round/run_thesis_reproduction.sh streamlit
 | PyTorch/ONNX/TensorRT benchmark | `bash scripts/final_round/run_thesis_reproduction.sh benchmark` |
 | Thesis evidence summary | `bash scripts/final_round/run_thesis_reproduction.sh evidence` |
 | package weights/demo artifacts | `bash scripts/final_round/run_thesis_reproduction.sh package_artifacts` |
+| package clean source code | `bash scripts/final_round/run_thesis_reproduction.sh package_source` |
 
 Detailed mapping from paper tables/figures to code and artifacts is in
 `docs/thesis_reproduction.md`, `docs/thesis_repro_manifest.json`, and
 `docs/artifact_manifest.json`. The final archive-readiness audit is in
-`docs/thesis_archive_completion_audit.md`.
+`docs/thesis_archive_completion_audit.md`. The 2026 graduation-disc delivery
+checklist is in `docs/graduation_disc_delivery.md`.
 
 `preflight` checks the default archive scope: files that are packageable and
 required for the delivered demo, evidence tables, figures, ONNX/TensorRT demo
@@ -158,13 +160,39 @@ Tracked source:
 Ignored or external:
 
 - `.venv/`
+- `.pytest_cache/`, `.ruff_cache/`, `__pycache__/`
 - `migrate_files/`
-- `__pycache__/`
+- `wandb/`, `runs/`, `checkpoints/`, local training logs
 - large datasets and checkpoints
 - generated ECG pools
 - ONNX and TensorRT engine binaries
 
 The strict thesis route must not import from `legacy/`. Legacy code is kept only
 for traceability of exploratory experiments that are not part of `thesis.md`.
+
+## 2026 Graduation Disc
+
+The school archive checklist asks the disc to include the source code/software
+system, demonstration materials, and defense PPT in addition to the exported
+graduation documents. For this repository, use:
+
+- `ECG_adv/` as the cleaned source-code/software-system directory;
+- `migrate_files/*.tar.gz` or the parent `ecg_grad_repro_no_pn2021_*.tar.gz`
+  bundle as external runtime artifacts;
+- `docs/graduation_disc_delivery.md` as the handoff checklist;
+- the parent workspace `defense_ppt/` directory for the HTML/PPTX defense deck.
+
+For a copy-safe source package, run:
+
+```bash
+bash scripts/final_round/run_thesis_reproduction.sh package_source
+```
+
+The package is written under
+`${ECG_ADV_DATA_ROOT}/thesis_archive_artifacts/source_code/` and includes only
+git-tracked or unignored source files.
+
+Do not copy `.venv/`, caches, raw PTB-XL/MIMIC data, host-specific model
+symlink targets, or training-scale checkpoints into the git-tracked source tree.
 
 For durable project memory and ECG-specific caveats, see `AGENTS.md`.
