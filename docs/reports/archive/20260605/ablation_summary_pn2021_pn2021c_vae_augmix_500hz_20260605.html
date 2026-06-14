@@ -1,0 +1,416 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PN2021 / PN2021-C VAE + AugMix Ablation Summary</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #17202a;
+      --muted: #5d6977;
+      --line: #d8dde5;
+      --panel: #f7f9fc;
+      --green: #0f7b4f;
+      --red: #a33a2f;
+      --blue: #2459a6;
+      --amber: #9a6a12;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: white;
+    }
+    header {
+      padding: 28px 32px 18px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+    }
+    main { padding: 24px 32px 48px; max-width: 1280px; }
+    h1 { margin: 0 0 8px; font-size: 26px; font-weight: 750; }
+    h2 { margin: 28px 0 10px; font-size: 19px; }
+    h3 { margin: 20px 0 8px; font-size: 15px; }
+    p { margin: 8px 0; }
+    .meta { color: var(--muted); }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(180px, 1fr));
+      gap: 12px;
+      margin: 18px 0 6px;
+    }
+    .tile {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: white;
+      min-height: 118px;
+    }
+    .tile strong { display: block; font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+    .num { font-size: 24px; font-weight: 760; }
+    .good { color: var(--green); }
+    .bad { color: var(--red); }
+    .note {
+      border-left: 4px solid var(--blue);
+      background: #f2f6fd;
+      padding: 10px 12px;
+      margin: 14px 0;
+    }
+    .warn {
+      border-left: 4px solid var(--amber);
+      background: #fff8e8;
+      padding: 10px 12px;
+      margin: 14px 0;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0 20px;
+      font-variant-numeric: tabular-nums;
+    }
+    th, td {
+      border: 1px solid var(--line);
+      padding: 8px 9px;
+      text-align: right;
+      vertical-align: top;
+    }
+    th {
+      background: #eef2f7;
+      font-weight: 700;
+      color: #263241;
+    }
+    td:first-child, th:first-child,
+    td:nth-child(2), th:nth-child(2) { text-align: left; }
+    .small { font-size: 12px; color: var(--muted); }
+    code {
+      background: #eef2f7;
+      padding: 1px 5px;
+      border-radius: 4px;
+    }
+    ul { margin: 8px 0 18px 20px; padding: 0; }
+    li { margin: 5px 0; }
+    @media (max-width: 900px) {
+      main, header { padding-left: 16px; padding-right: 16px; }
+      .grid { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; white-space: nowrap; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>PN2021 / PN2021-C VAE + AugMix Ablation Summary</h1>
+    <p class="meta">2026-06-05 | v7 Super5 SJR/RGQ mapping | four target centers: Ningbo, Chapman-Shaoxing, CPSC 2018, Georgia | K500 ref-excluded</p>
+  </header>
+  <main>
+    <section>
+      <h2>结论先看</h2>
+      <div class="grid">
+        <div class="tile">
+          <strong>EfficientNet1DV2 VAE+AugMix 能否追上裸 ECGFounder?</strong>
+          <div class="num good">能</div>
+          <p class="small">对比裸 ECGFounder source-only PTB-XL linear head，EffNet VAE+AugMix 在 clean PN2021 与 PN2021-C 都略高。</p>
+        </div>
+        <div class="tile">
+          <strong>EffNet VAE+AugMix vs 裸 ECGFounder, PN2021-C</strong>
+          <div class="num good">+1.21 / +1.26 pp</div>
+          <p class="small">AUROC / AUPRC。注意 EffNet 这里使用 target K500 + VAE adaptation，不是无 target baseline。</p>
+        </div>
+        <div class="tile">
+          <strong>ECGFounder VAE+AugMix vs 裸 ECGFounder, PN2021-C</strong>
+          <div class="num good">+5.19 / +11.29 pp</div>
+          <p class="small">AUROC / AUPRC。这是 source-only 到 target-adapted residual adapter 的提升。</p>
+        </div>
+        <div class="tile">
+          <strong>500Hz VAE 分支状态</strong>
+          <div class="num bad">不作为主线</div>
+          <p class="small">四中心 clean gain 只有 +0.032 / +0.126 pp，主要集中在 CPSC，Ningbo 仍回落 direct。</p>
+        </div>
+      </div>
+      <div class="note">
+        论文叙述建议：100Hz 主线可以说 VAE+AugMix 提升了 corrupted absolute performance；500Hz VAE 分支应作为探索性负向/弱增益消融，不应包装成主方法。
+      </div>
+    </section>
+
+    <section>
+      <h2>1. EfficientNet1DV2 VAE+AugMix 是否追上裸 ECGFounder?</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>模型 / 设置</th>
+            <th>是否用 target K500</th>
+            <th>clean PN2021 AUROC</th>
+            <th>clean PN2021 AUPRC</th>
+            <th>PN2021-C AUROC</th>
+            <th>PN2021-C AUPRC</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>裸 ECGFounder source-only linear head</td>
+            <td>否</td>
+            <td>0.8546</td>
+            <td>0.5408</td>
+            <td>0.8476</td>
+            <td>0.5244</td>
+          </tr>
+          <tr>
+            <td>EfficientNet1DV2 VAE+AugMix</td>
+            <td>是</td>
+            <td>0.8712</td>
+            <td>0.5549</td>
+            <td>0.8597</td>
+            <td>0.5370</td>
+          </tr>
+          <tr>
+            <td>EffNet VAE+AugMix - 裸 ECGFounder</td>
+            <td>delta</td>
+            <td class="good">+1.66 pp</td>
+            <td class="good">+1.49 pp</td>
+            <td class="good">+1.21 pp</td>
+            <td class="good">+1.26 pp</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="small">解释：能追上，但这不是同等资源对比。EfficientNet1DV2 VAE+AugMix 使用目标中心 K500 和 VAE latent augmentation；裸 ECGFounder 只是在 PTB-XL 上训练了 Super5 linear head。</p>
+    </section>
+
+    <section>
+      <h2>2. ECGFounder: source-only / direct K500 / VAE+AugMix</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>ECGFounder 设置</th>
+            <th>clean AUROC</th>
+            <th>clean AUPRC</th>
+            <th>PN2021-C AUROC</th>
+            <th>PN2021-C AUPRC</th>
+            <th>AUROC drop</th>
+            <th>AUPRC drop</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>source-only PTB-XL linear head</td>
+            <td>0.8546</td>
+            <td>0.5408</td>
+            <td>0.8476</td>
+            <td>0.5244</td>
+            <td>0.70 pp</td>
+            <td>1.63 pp</td>
+          </tr>
+          <tr>
+            <td>direct K500 head FT</td>
+            <td>0.8973</td>
+            <td>0.6325</td>
+            <td>0.8900</td>
+            <td>0.6165</td>
+            <td>0.72 pp</td>
+            <td>1.60 pp</td>
+          </tr>
+          <tr>
+            <td>VAE-LHAT + AugMix residual adapter</td>
+            <td>0.9037</td>
+            <td>0.6455</td>
+            <td>0.8995</td>
+            <td>0.6374</td>
+            <td>0.41 pp</td>
+            <td>0.81 pp</td>
+          </tr>
+          <tr>
+            <td>VAE+AugMix - source-only</td>
+            <td class="good">+4.91 pp</td>
+            <td class="good">+10.48 pp</td>
+            <td class="good">+5.19 pp</td>
+            <td class="good">+11.29 pp</td>
+            <td class="good">-0.28 pp</td>
+            <td class="good">-0.82 pp</td>
+          </tr>
+          <tr>
+            <td>VAE+AugMix - direct K500</td>
+            <td class="good">+0.64 pp</td>
+            <td class="good">+1.30 pp</td>
+            <td class="good">+0.95 pp</td>
+            <td class="good">+2.08 pp</td>
+            <td class="good">-0.31 pp</td>
+            <td class="good">-0.79 pp</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>3. Requested PN2021-C model family ablation</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>模型</th>
+            <th>clean AUROC delta</th>
+            <th>clean AUPRC delta</th>
+            <th>PN2021-C AUROC delta</th>
+            <th>PN2021-C AUPRC delta</th>
+            <th>drop 变化</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>EfficientNet1DV2 VAE+AugMix - direct</td>
+            <td class="good">+1.91 pp</td>
+            <td class="good">+3.02 pp</td>
+            <td class="good">+1.77 pp</td>
+            <td class="good">+2.71 pp</td>
+            <td>略增</td>
+          </tr>
+          <tr>
+            <td>FCN-Wang VAE+AugMix - direct</td>
+            <td class="good">+0.54 pp</td>
+            <td class="good">+1.12 pp</td>
+            <td class="good">+0.39 pp</td>
+            <td class="good">+0.81 pp</td>
+            <td>略增</td>
+          </tr>
+          <tr>
+            <td>Inception1D VAE+AugMix - direct</td>
+            <td class="good">+0.61 pp</td>
+            <td class="good">+1.24 pp</td>
+            <td class="good">+0.48 pp</td>
+            <td class="good">+0.98 pp</td>
+            <td>略增</td>
+          </tr>
+          <tr>
+            <td>ResNet1D-Wang VAE+AugMix - direct</td>
+            <td class="good">+0.88 pp</td>
+            <td class="good">+1.96 pp</td>
+            <td class="good">+0.71 pp</td>
+            <td class="good">+1.69 pp</td>
+            <td>略增</td>
+          </tr>
+          <tr>
+            <td>ECGFounder VAE+AugMix - direct</td>
+            <td class="good">+0.64 pp</td>
+            <td class="good">+1.30 pp</td>
+            <td class="good">+0.95 pp</td>
+            <td class="good">+2.08 pp</td>
+            <td class="good">下降</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="small">CNN/model-zoo backbones 的 clean-to-corrupt drop 略增，说明应表述为 absolute corrupted performance improvement，不应表述为 drop robustness 改善。ECGFounder 两者都有改善。</p>
+    </section>
+
+    <section>
+      <h2>4. 500Hz EfficientNet1DV2 VAE branch</h2>
+      <div class="warn">
+        500Hz branch 当前没有按同一套 100Hz PN2021-C standard corruption profile 做完整 corrupted benchmark。这里汇总的是 clean PN2021 ref-excluded 结果，以及两中心 smoke 消融。原因是 500Hz corruption severity 需要重新标定，不能直接把 100Hz PN2021-C 结论等价迁移。
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>500Hz 设置</th>
+            <th>clean AUROC</th>
+            <th>clean AUPRC</th>
+            <th>drop-all-zero AUROC</th>
+            <th>drop-all-zero AUPRC</th>
+            <th>相对 direct K500</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>source-only 500Hz EfficientNet1DV2</td>
+            <td>0.8357</td>
+            <td>0.5147</td>
+            <td>0.8599</td>
+            <td>0.6548</td>
+            <td>低于 direct K500</td>
+          </tr>
+          <tr>
+            <td>direct K500 500Hz</td>
+            <td>0.8671</td>
+            <td>0.5658</td>
+            <td>0.8921</td>
+            <td>0.7257</td>
+            <td>baseline</td>
+          </tr>
+          <tr>
+            <td>global VAE-LHAT 500Hz candidate</td>
+            <td>0.8674</td>
+            <td>0.5670</td>
+            <td>0.8939</td>
+            <td>0.7288</td>
+            <td class="good">+0.032 / +0.126 pp clean; +0.180 / +0.315 pp drop-zero</td>
+          </tr>
+        </tbody>
+      </table>
+      <h3>500Hz two-center smoke variants</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>variant</th>
+            <th>2-center mean delta AUROC</th>
+            <th>2-center mean delta AUPRC</th>
+            <th>CPSC AUPRC delta</th>
+            <th>Ningbo AUPRC delta</th>
+            <th>interpretation</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>loss_gain_priority</td>
+            <td class="good">+0.136 pp</td>
+            <td class="good">+0.526 pp</td>
+            <td class="good">+1.052 pp</td>
+            <td>+0.000 pp</td>
+            <td>CPSC 有提升，Ningbo direct fallback</td>
+          </tr>
+          <tr>
+            <td>low_margin_topk</td>
+            <td class="good">+0.126 pp</td>
+            <td class="good">+0.458 pp</td>
+            <td class="good">+0.916 pp</td>
+            <td>+0.000 pp</td>
+            <td>CPSC 有提升，Ningbo direct fallback</td>
+          </tr>
+          <tr>
+            <td>domain_guided</td>
+            <td class="good">+0.118 pp</td>
+            <td class="good">+0.336 pp</td>
+            <td class="good">+0.673 pp</td>
+            <td>+0.000 pp</td>
+            <td>CPSC 有提升，Ningbo direct fallback</td>
+          </tr>
+          <tr>
+            <td>advconsistency / tinyconsumer / linearity</td>
+            <td>+0.000 pp</td>
+            <td>+0.000 pp</td>
+            <td>+0.000 pp</td>
+            <td>+0.000 pp</td>
+            <td>基本等同 direct，未证明有效机制</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>机制判断：500Hz VAE hard samples 已经不是“无效 decode”问题。triage 说明样本有效、支持类、classifier-hard，但对 direct-K500 的泛化帮助不稳定，主要卡在 Ningbo 和非 CPSC center 的可用性。</p>
+    </section>
+
+    <section>
+      <h2>5. 最终可写进论文/报告的说法</h2>
+      <ul>
+        <li>主线 100Hz VAE+AugMix：在 EfficientNet1DV2、FCN/Inception/ResNet benchmarking backbones、ECGFounder 上均提升 PN2021-C absolute corrupted AUROC/AUPRC。</li>
+        <li>EfficientNet1DV2 VAE+AugMix 可以追上并略超过裸 ECGFounder source-only linear head；但这个对比要声明目标 K500 使用差异。</li>
+        <li>ECGFounder VAE+AugMix 是目前更强的 robustness/result branch：相对 source-only 和 direct K500 都提升，且 clean-to-corrupt drop 下降。</li>
+        <li>500Hz VAE 分支保留为负向机制消融：高采样率 + VAE hard sample 并没有自动带来主线级提升，当前收益小且集中在 CPSC。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>6. Artifacts</h2>
+      <p>100Hz PN2021-C run root:</p>
+      <p><code>/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605</code></p>
+      <p>500Hz VAE clean PN2021 run root:</p>
+      <p><code>/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/effnet_vae_lhat_k500_500hz_v7_sjr_rgq/vae500_20260603</code></p>
+      <p>500Hz direct K500 run root:</p>
+      <p><code>/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/effnet_direct_k500_500hz_v7_sjr_rgq/direct500_20260603</code></p>
+      <p class="small">All metrics above use the all-zero-kept primary view unless explicitly marked drop-all-zero.</p>
+    </section>
+  </main>
+</body>
+</html>

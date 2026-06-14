@@ -1,0 +1,557 @@
+{
+  "created_at": "2026-06-05T21:30:03+0800",
+  "gpus": [
+    "1",
+    "2",
+    "3",
+    "4"
+  ],
+  "n_jobs_total": 68,
+  "n_jobs_pending": 64,
+  "jobs": [
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/EfficientNet1DV2/direct/ningbo/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "EfficientNet1DV2",
+      "variant": "direct",
+      "center": "ningbo",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/EfficientNet1DV2/direct/ningbo/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/EfficientNet1DV2_direct_ningbo.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/EfficientNet1DV2/direct/chapman_shaoxing/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "EfficientNet1DV2",
+      "variant": "direct",
+      "center": "chapman_shaoxing",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/EfficientNet1DV2/direct/chapman_shaoxing/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/EfficientNet1DV2_direct_chapman_shaoxing.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/EfficientNet1DV2/direct/cpsc_2018/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "EfficientNet1DV2",
+      "variant": "direct",
+      "center": "cpsc_2018",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/EfficientNet1DV2/direct/cpsc_2018/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/EfficientNet1DV2_direct_cpsc_2018.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/EfficientNet1DV2/direct/georgia/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "EfficientNet1DV2",
+      "variant": "direct",
+      "center": "georgia",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/EfficientNet1DV2/direct/georgia/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/EfficientNet1DV2_direct_georgia.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/effnet_vae_noaug_k500_v7_sjr_rgq/seed20260601_k500_v7_sjr_rgq_20260530_rep1/ningbo_realall_targetheavy_M20_lam0p05_augmix_s2_wlat0p25_hs3_target_macro_auprc_cdhypminormsttc_hlabelcom_anchor_soft_sta_local_random_p120_fullft_k500_noaugmix_ep30_seed20260601/eval_pn2021_c_v7_ningbo_exclrefs_stream_standard.json",
+      "model": "EfficientNet1DV2",
+      "variant": "vae_noaug",
+      "center": "ningbo",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/effnet_vae_noaug_k500_v7_sjr_rgq/seed20260601_k500_v7_sjr_rgq_20260530_rep1/ningbo_realall_targetheavy_M20_lam0p05_augmix_s2_wlat0p25_hs3_target_macro_auprc_cdhypminormsttc_hlabelcom_anchor_soft_sta_local_random_p120_fullft_k500_noaugmix_ep30_seed20260601/eval_pn2021_c_v7_ningbo_exclrefs_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/EfficientNet1DV2_vae_noaug_ningbo.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/effnet_vae_noaug_k500_v7_sjr_rgq/seed20260601_k500_v7_sjr_rgq_20260530_rep1/chapman_shaoxing_realall_targetheavy_M20_lam0p05_augmix_s2_wlat0p25_hs3_target_macro_auprc_cdhypminormsttc_hlabelcom_anchor_soft_sta_local_random_p120_fullft_k500_noaugmix_ep30_seed20260601/eval_pn2021_c_v7_chapman_shaoxing_exclrefs_stream_standard.json",
+      "model": "EfficientNet1DV2",
+      "variant": "vae_noaug",
+      "center": "chapman_shaoxing",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/effnet_vae_noaug_k500_v7_sjr_rgq/seed20260601_k500_v7_sjr_rgq_20260530_rep1/chapman_shaoxing_realall_targetheavy_M20_lam0p05_augmix_s2_wlat0p25_hs3_target_macro_auprc_cdhypminormsttc_hlabelcom_anchor_soft_sta_local_random_p120_fullft_k500_noaugmix_ep30_seed20260601/eval_pn2021_c_v7_chapman_shaoxing_exclrefs_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/EfficientNet1DV2_vae_noaug_chapman_shaoxing.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/effnet_vae_noaug_k500_v7_sjr_rgq/seed20260601_k500_v7_sjr_rgq_20260530_rep1/cpsc_2018_realall_targetheavy_M20_lam0p05_augmix_s2_wlat0p25_hs3_target_macro_auprc_cdhypminormsttc_hlabelcom_anchor_soft_sta_local_random_p120_fullft_k500_noaugmix_ep30_seed20260601/eval_pn2021_c_v7_cpsc_2018_exclrefs_stream_standard.json",
+      "model": "EfficientNet1DV2",
+      "variant": "vae_noaug",
+      "center": "cpsc_2018",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/effnet_vae_noaug_k500_v7_sjr_rgq/seed20260601_k500_v7_sjr_rgq_20260530_rep1/cpsc_2018_realall_targetheavy_M20_lam0p05_augmix_s2_wlat0p25_hs3_target_macro_auprc_cdhypminormsttc_hlabelcom_anchor_soft_sta_local_random_p120_fullft_k500_noaugmix_ep30_seed20260601/eval_pn2021_c_v7_cpsc_2018_exclrefs_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/EfficientNet1DV2_vae_noaug_cpsc_2018.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/effnet_vae_noaug_k500_v7_sjr_rgq/seed20260601_k500_v7_sjr_rgq_20260530_rep1/georgia_realall_targetheavy_M20_lam0p05_augmix_s2_wlat0p25_hs3_target_macro_auprc_cdhypminormsttc_hlabelcom_anchor_soft_sta_local_random_p120_fullft_k500_noaugmix_ep30_seed20260601/eval_pn2021_c_v7_georgia_exclrefs_stream_standard.json",
+      "model": "EfficientNet1DV2",
+      "variant": "vae_noaug",
+      "center": "georgia",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/effnet_vae_noaug_k500_v7_sjr_rgq/seed20260601_k500_v7_sjr_rgq_20260530_rep1/georgia_realall_targetheavy_M20_lam0p05_augmix_s2_wlat0p25_hs3_target_macro_auprc_cdhypminormsttc_hlabelcom_anchor_soft_sta_local_random_p120_fullft_k500_noaugmix_ep30_seed20260601/eval_pn2021_c_v7_georgia_exclrefs_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/EfficientNet1DV2_vae_noaug_georgia.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/EfficientNet1DV2/vae_lhat/ningbo/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "EfficientNet1DV2",
+      "variant": "vae_augmix",
+      "center": "ningbo",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/EfficientNet1DV2/vae_lhat/ningbo/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/EfficientNet1DV2_vae_augmix_ningbo.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/EfficientNet1DV2/vae_lhat/chapman_shaoxing/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "EfficientNet1DV2",
+      "variant": "vae_augmix",
+      "center": "chapman_shaoxing",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/EfficientNet1DV2/vae_lhat/chapman_shaoxing/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/EfficientNet1DV2_vae_augmix_chapman_shaoxing.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/EfficientNet1DV2/vae_lhat/cpsc_2018/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "EfficientNet1DV2",
+      "variant": "vae_augmix",
+      "center": "cpsc_2018",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/EfficientNet1DV2/vae_lhat/cpsc_2018/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/EfficientNet1DV2_vae_augmix_cpsc_2018.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/EfficientNet1DV2/vae_lhat/georgia/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "EfficientNet1DV2",
+      "variant": "vae_augmix",
+      "center": "georgia",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/EfficientNet1DV2/vae_lhat/georgia/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/EfficientNet1DV2_vae_augmix_georgia.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ecgfounder/direct/ningbo/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "ECGFounder",
+      "variant": "direct",
+      "center": "ningbo",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ecgfounder/direct/ningbo/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/ECGFounder_direct_ningbo.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ecgfounder/direct/chapman_shaoxing/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "ECGFounder",
+      "variant": "direct",
+      "center": "chapman_shaoxing",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ecgfounder/direct/chapman_shaoxing/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/ECGFounder_direct_chapman_shaoxing.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ecgfounder/direct/cpsc_2018/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "ECGFounder",
+      "variant": "direct",
+      "center": "cpsc_2018",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ecgfounder/direct/cpsc_2018/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/ECGFounder_direct_cpsc_2018.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ecgfounder/direct/georgia/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "ECGFounder",
+      "variant": "direct",
+      "center": "georgia",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ecgfounder/direct/georgia/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/ECGFounder_direct_georgia.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ecgfounder/vae_lhat_noaug/ningbo/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "ECGFounder",
+      "variant": "vae_noaug",
+      "center": "ningbo",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ecgfounder/vae_lhat_noaug/ningbo/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/ECGFounder_vae_noaug_ningbo.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ecgfounder/vae_lhat_noaug/chapman_shaoxing/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "ECGFounder",
+      "variant": "vae_noaug",
+      "center": "chapman_shaoxing",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ecgfounder/vae_lhat_noaug/chapman_shaoxing/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/ECGFounder_vae_noaug_chapman_shaoxing.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ecgfounder/vae_lhat_noaug/cpsc_2018/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "ECGFounder",
+      "variant": "vae_noaug",
+      "center": "cpsc_2018",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ecgfounder/vae_lhat_noaug/cpsc_2018/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/ECGFounder_vae_noaug_cpsc_2018.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ecgfounder/vae_lhat_noaug/georgia/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "ECGFounder",
+      "variant": "vae_noaug",
+      "center": "georgia",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ecgfounder/vae_lhat_noaug/georgia/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/ECGFounder_vae_noaug_georgia.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ecgfounder/vae_lhat_augmix/ningbo/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "ECGFounder",
+      "variant": "vae_augmix",
+      "center": "ningbo",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ecgfounder/vae_lhat_augmix/ningbo/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/ECGFounder_vae_augmix_ningbo.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ecgfounder/vae_lhat_augmix/chapman_shaoxing/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "ECGFounder",
+      "variant": "vae_augmix",
+      "center": "chapman_shaoxing",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ecgfounder/vae_lhat_augmix/chapman_shaoxing/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/ECGFounder_vae_augmix_chapman_shaoxing.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ecgfounder/vae_lhat_augmix/cpsc_2018/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "ECGFounder",
+      "variant": "vae_augmix",
+      "center": "cpsc_2018",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ecgfounder/vae_lhat_augmix/cpsc_2018/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/ECGFounder_vae_augmix_cpsc_2018.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ecgfounder/vae_lhat_augmix/georgia/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "ECGFounder",
+      "variant": "vae_augmix",
+      "center": "georgia",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ecgfounder/vae_lhat_augmix/georgia/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/ECGFounder_vae_augmix_georgia.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ResNet1D-Wang/direct/ningbo/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "ResNet1D-Wang",
+      "variant": "direct",
+      "center": "ningbo",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ResNet1D-Wang/direct/ningbo/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/ResNet1D-Wang_direct_ningbo.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ResNet1D-Wang/direct/chapman_shaoxing/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "ResNet1D-Wang",
+      "variant": "direct",
+      "center": "chapman_shaoxing",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ResNet1D-Wang/direct/chapman_shaoxing/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/ResNet1D-Wang_direct_chapman_shaoxing.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ResNet1D-Wang/direct/cpsc_2018/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "ResNet1D-Wang",
+      "variant": "direct",
+      "center": "cpsc_2018",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ResNet1D-Wang/direct/cpsc_2018/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/ResNet1D-Wang_direct_cpsc_2018.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ResNet1D-Wang/direct/georgia/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "ResNet1D-Wang",
+      "variant": "direct",
+      "center": "georgia",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ResNet1D-Wang/direct/georgia/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/ResNet1D-Wang_direct_georgia.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ResNet1D-Wang/vae_noaug/ningbo/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "ResNet1D-Wang",
+      "variant": "vae_noaug",
+      "center": "ningbo",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ResNet1D-Wang/vae_noaug/ningbo/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/ResNet1D-Wang_vae_noaug_ningbo.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ResNet1D-Wang/vae_noaug/chapman_shaoxing/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "ResNet1D-Wang",
+      "variant": "vae_noaug",
+      "center": "chapman_shaoxing",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ResNet1D-Wang/vae_noaug/chapman_shaoxing/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/ResNet1D-Wang_vae_noaug_chapman_shaoxing.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ResNet1D-Wang/vae_noaug/cpsc_2018/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "ResNet1D-Wang",
+      "variant": "vae_noaug",
+      "center": "cpsc_2018",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ResNet1D-Wang/vae_noaug/cpsc_2018/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/ResNet1D-Wang_vae_noaug_cpsc_2018.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ResNet1D-Wang/vae_noaug/georgia/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "ResNet1D-Wang",
+      "variant": "vae_noaug",
+      "center": "georgia",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ResNet1D-Wang/vae_noaug/georgia/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/ResNet1D-Wang_vae_noaug_georgia.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ResNet1D-Wang/vae_lhat/ningbo/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "ResNet1D-Wang",
+      "variant": "vae_augmix",
+      "center": "ningbo",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ResNet1D-Wang/vae_lhat/ningbo/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/ResNet1D-Wang_vae_augmix_ningbo.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ResNet1D-Wang/vae_lhat/chapman_shaoxing/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "ResNet1D-Wang",
+      "variant": "vae_augmix",
+      "center": "chapman_shaoxing",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ResNet1D-Wang/vae_lhat/chapman_shaoxing/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/ResNet1D-Wang_vae_augmix_chapman_shaoxing.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ResNet1D-Wang/vae_lhat/cpsc_2018/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "ResNet1D-Wang",
+      "variant": "vae_augmix",
+      "center": "cpsc_2018",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ResNet1D-Wang/vae_lhat/cpsc_2018/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/ResNet1D-Wang_vae_augmix_cpsc_2018.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ResNet1D-Wang/vae_lhat/georgia/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "ResNet1D-Wang",
+      "variant": "vae_augmix",
+      "center": "georgia",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ResNet1D-Wang/vae_lhat/georgia/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/ResNet1D-Wang_vae_augmix_georgia.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/Inception1D/direct/ningbo/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "Inception1D",
+      "variant": "direct",
+      "center": "ningbo",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/Inception1D/direct/ningbo/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/Inception1D_direct_ningbo.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/Inception1D/direct/chapman_shaoxing/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "Inception1D",
+      "variant": "direct",
+      "center": "chapman_shaoxing",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/Inception1D/direct/chapman_shaoxing/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/Inception1D_direct_chapman_shaoxing.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/Inception1D/direct/cpsc_2018/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "Inception1D",
+      "variant": "direct",
+      "center": "cpsc_2018",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/Inception1D/direct/cpsc_2018/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/Inception1D_direct_cpsc_2018.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/Inception1D/direct/georgia/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "Inception1D",
+      "variant": "direct",
+      "center": "georgia",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/Inception1D/direct/georgia/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/Inception1D_direct_georgia.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/Inception1D/vae_noaug/ningbo/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "Inception1D",
+      "variant": "vae_noaug",
+      "center": "ningbo",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/Inception1D/vae_noaug/ningbo/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/Inception1D_vae_noaug_ningbo.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/Inception1D/vae_noaug/chapman_shaoxing/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "Inception1D",
+      "variant": "vae_noaug",
+      "center": "chapman_shaoxing",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/Inception1D/vae_noaug/chapman_shaoxing/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/Inception1D_vae_noaug_chapman_shaoxing.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/Inception1D/vae_noaug/cpsc_2018/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "Inception1D",
+      "variant": "vae_noaug",
+      "center": "cpsc_2018",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/Inception1D/vae_noaug/cpsc_2018/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/Inception1D_vae_noaug_cpsc_2018.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/Inception1D/vae_noaug/georgia/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "Inception1D",
+      "variant": "vae_noaug",
+      "center": "georgia",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/Inception1D/vae_noaug/georgia/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/Inception1D_vae_noaug_georgia.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/Inception1D/vae_lhat/ningbo/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "Inception1D",
+      "variant": "vae_augmix",
+      "center": "ningbo",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/Inception1D/vae_lhat/ningbo/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/Inception1D_vae_augmix_ningbo.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/Inception1D/vae_lhat/chapman_shaoxing/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "Inception1D",
+      "variant": "vae_augmix",
+      "center": "chapman_shaoxing",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/Inception1D/vae_lhat/chapman_shaoxing/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/Inception1D_vae_augmix_chapman_shaoxing.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/Inception1D/vae_lhat/cpsc_2018/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "Inception1D",
+      "variant": "vae_augmix",
+      "center": "cpsc_2018",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/Inception1D/vae_lhat/cpsc_2018/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/Inception1D_vae_augmix_cpsc_2018.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/Inception1D/vae_lhat/georgia/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "Inception1D",
+      "variant": "vae_augmix",
+      "center": "georgia",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/Inception1D/vae_lhat/georgia/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/Inception1D_vae_augmix_georgia.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/FCN-Wang/direct/ningbo/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "FCN-Wang",
+      "variant": "direct",
+      "center": "ningbo",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/FCN-Wang/direct/ningbo/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/FCN-Wang_direct_ningbo.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/FCN-Wang/direct/chapman_shaoxing/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "FCN-Wang",
+      "variant": "direct",
+      "center": "chapman_shaoxing",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/FCN-Wang/direct/chapman_shaoxing/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/FCN-Wang_direct_chapman_shaoxing.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/FCN-Wang/direct/cpsc_2018/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "FCN-Wang",
+      "variant": "direct",
+      "center": "cpsc_2018",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/FCN-Wang/direct/cpsc_2018/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/FCN-Wang_direct_cpsc_2018.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/FCN-Wang/direct/georgia/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "FCN-Wang",
+      "variant": "direct",
+      "center": "georgia",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/FCN-Wang/direct/georgia/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/FCN-Wang_direct_georgia.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/FCN-Wang/vae_noaug/ningbo/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "FCN-Wang",
+      "variant": "vae_noaug",
+      "center": "ningbo",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/FCN-Wang/vae_noaug/ningbo/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/FCN-Wang_vae_noaug_ningbo.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/FCN-Wang/vae_noaug/chapman_shaoxing/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "FCN-Wang",
+      "variant": "vae_noaug",
+      "center": "chapman_shaoxing",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/FCN-Wang/vae_noaug/chapman_shaoxing/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/FCN-Wang_vae_noaug_chapman_shaoxing.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/FCN-Wang/vae_noaug/cpsc_2018/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "FCN-Wang",
+      "variant": "vae_noaug",
+      "center": "cpsc_2018",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/FCN-Wang/vae_noaug/cpsc_2018/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/FCN-Wang_vae_noaug_cpsc_2018.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/FCN-Wang/vae_noaug/georgia/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "FCN-Wang",
+      "variant": "vae_noaug",
+      "center": "georgia",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/FCN-Wang/vae_noaug/georgia/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/FCN-Wang_vae_noaug_georgia.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/FCN-Wang/vae_lhat/ningbo/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "FCN-Wang",
+      "variant": "vae_augmix",
+      "center": "ningbo",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/FCN-Wang/vae_lhat/ningbo/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/FCN-Wang_vae_augmix_ningbo.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/FCN-Wang/vae_lhat/chapman_shaoxing/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "FCN-Wang",
+      "variant": "vae_augmix",
+      "center": "chapman_shaoxing",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/FCN-Wang/vae_lhat/chapman_shaoxing/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/FCN-Wang_vae_augmix_chapman_shaoxing.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/FCN-Wang/vae_lhat/cpsc_2018/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "FCN-Wang",
+      "variant": "vae_augmix",
+      "center": "cpsc_2018",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/FCN-Wang/vae_lhat/cpsc_2018/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/FCN-Wang_vae_augmix_cpsc_2018.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/FCN-Wang/vae_lhat/georgia/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "FCN-Wang",
+      "variant": "vae_augmix",
+      "center": "georgia",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/FCN-Wang/vae_lhat/georgia/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/FCN-Wang_vae_augmix_georgia.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/source_ptbxl_v7_refexcluded_20260605/EfficientNet1DV2/ningbo/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "EfficientNet1DV2",
+      "variant": "source_ptbxl",
+      "center": "ningbo",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/source_ptbxl_v7_refexcluded_20260605/EfficientNet1DV2/ningbo/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/EfficientNet1DV2_source_ptbxl_ningbo.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/source_ptbxl_v7_refexcluded_20260605/EfficientNet1DV2/chapman_shaoxing/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "EfficientNet1DV2",
+      "variant": "source_ptbxl",
+      "center": "chapman_shaoxing",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/source_ptbxl_v7_refexcluded_20260605/EfficientNet1DV2/chapman_shaoxing/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/EfficientNet1DV2_source_ptbxl_chapman_shaoxing.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/source_ptbxl_v7_refexcluded_20260605/EfficientNet1DV2/cpsc_2018/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "EfficientNet1DV2",
+      "variant": "source_ptbxl",
+      "center": "cpsc_2018",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/source_ptbxl_v7_refexcluded_20260605/EfficientNet1DV2/cpsc_2018/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/EfficientNet1DV2_source_ptbxl_cpsc_2018.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/source_ptbxl_v7_refexcluded_20260605/EfficientNet1DV2/georgia/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "EfficientNet1DV2",
+      "variant": "source_ptbxl",
+      "center": "georgia",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/source_ptbxl_v7_refexcluded_20260605/EfficientNet1DV2/georgia/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/EfficientNet1DV2_source_ptbxl_georgia.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ecgfounder/source_ptbxl_linear/ningbo/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "ECGFounder",
+      "variant": "source_ptbxl",
+      "center": "ningbo",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ecgfounder/source_ptbxl_linear/ningbo/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/ECGFounder_source_ptbxl_ningbo.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ecgfounder/source_ptbxl_linear/chapman_shaoxing/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "ECGFounder",
+      "variant": "source_ptbxl",
+      "center": "chapman_shaoxing",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ecgfounder/source_ptbxl_linear/chapman_shaoxing/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/ECGFounder_source_ptbxl_chapman_shaoxing.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ecgfounder/source_ptbxl_linear/cpsc_2018/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "ECGFounder",
+      "variant": "source_ptbxl",
+      "center": "cpsc_2018",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ecgfounder/source_ptbxl_linear/cpsc_2018/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/ECGFounder_source_ptbxl_cpsc_2018.log"
+    },
+    {
+      "source": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ecgfounder/source_ptbxl_linear/georgia/eval_pn2021_c_v7_refexcluded_stream_standard.json",
+      "model": "ECGFounder",
+      "variant": "source_ptbxl",
+      "center": "georgia",
+      "output": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/pn2021c_direct_vs_vae_augmix_mainline_v7_k500_20260605/ecgfounder/source_ptbxl_linear/georgia/eval_pn2021_c_v7_refexcluded_stream_standard_dropallzero.json",
+      "log": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen/docs/reports/archive/20260605/pn2021c_dropallzero_eval_logs_20260605/ECGFounder_source_ptbxl_georgia.log"
+    }
+  ]
+}

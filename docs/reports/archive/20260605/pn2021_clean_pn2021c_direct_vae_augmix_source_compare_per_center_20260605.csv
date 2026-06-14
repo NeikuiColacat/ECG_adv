@@ -1,0 +1,137 @@
+dataset,model,variant,variant_label,center,macro_auroc,macro_auprc,source_status
+PN2021 clean,EfficientNet1DV2,direct,Direct fine-tune,ningbo,0.8814194609471713,0.4955396153654088,main_table
+PN2021 clean,EfficientNet1DV2,direct,Direct fine-tune,chapman_shaoxing,0.8852745815916144,0.4455408148201032,main_table
+PN2021 clean,EfficientNet1DV2,direct,Direct fine-tune,cpsc_2018,0.8212155097878915,0.5593386021819902,main_table
+PN2021 clean,EfficientNet1DV2,direct,Direct fine-tune,georgia,0.8206847026717844,0.5982129871553375,main_table
+PN2021 clean,EfficientNet1DV2,vae_noaug,VAE-only noAug,ningbo,0.8844296519386123,0.5189647257240738,main_table
+PN2021 clean,EfficientNet1DV2,vae_noaug,VAE-only noAug,chapman_shaoxing,0.891072670736385,0.4902868774608983,main_table
+PN2021 clean,EfficientNet1DV2,vae_noaug,VAE-only noAug,cpsc_2018,0.876608192972279,0.6122642858378319,main_table
+PN2021 clean,EfficientNet1DV2,vae_noaug,VAE-only noAug,georgia,0.8279592277082475,0.6079701079190702,main_table
+PN2021 clean,EfficientNet1DV2,vae_augmix,VAE + AugMix,ningbo,0.8866227790564117,0.5118574837185303,main_table
+PN2021 clean,EfficientNet1DV2,vae_augmix,VAE + AugMix,chapman_shaoxing,0.897212283406477,0.4842726552903425,main_table
+PN2021 clean,EfficientNet1DV2,vae_augmix,VAE + AugMix,cpsc_2018,0.8763256810899683,0.6213779216512064,main_table
+PN2021 clean,EfficientNet1DV2,vae_augmix,VAE + AugMix,georgia,0.8246703678265314,0.601920013855081,main_table
+PN2021 clean,ECGFounder,direct,Direct fine-tune,ningbo,0.9179380450024975,0.6007888441842815,main_table
+PN2021 clean,ECGFounder,direct,Direct fine-tune,chapman_shaoxing,0.9260872513274849,0.5848525418152,main_table
+PN2021 clean,ECGFounder,direct,Direct fine-tune,cpsc_2018,0.8629724729405956,0.6219425502971091,main_table
+PN2021 clean,ECGFounder,direct,Direct fine-tune,georgia,0.8820184204310484,0.7225738706019358,main_table
+PN2021 clean,ECGFounder,vae_noaug,VAE-only noAug,ningbo,0.9179380450024975,0.6007888441842815,main_table
+PN2021 clean,ECGFounder,vae_noaug,VAE-only noAug,chapman_shaoxing,0.9260872513274849,0.5848525418152,main_table
+PN2021 clean,ECGFounder,vae_noaug,VAE-only noAug,cpsc_2018,0.8870055892737474,0.6814601755645691,main_table
+PN2021 clean,ECGFounder,vae_noaug,VAE-only noAug,georgia,0.881437503099251,0.7207954607916698,main_table
+PN2021 clean,ECGFounder,vae_augmix,VAE + AugMix,ningbo,0.9179380450024975,0.6007888441842815,main_table
+PN2021 clean,ECGFounder,vae_augmix,VAE + AugMix,chapman_shaoxing,0.9260872513274849,0.5848525418152,main_table
+PN2021 clean,ECGFounder,vae_augmix,VAE + AugMix,cpsc_2018,0.8889537756748277,0.6749820386423768,main_table
+PN2021 clean,ECGFounder,vae_augmix,VAE + AugMix,georgia,0.881707682796623,0.7214248575922292,main_table
+PN2021 clean,ResNet1D-Wang,direct,Direct fine-tune,ningbo,0.8802004279822231,0.5052694846014094,main_table
+PN2021 clean,ResNet1D-Wang,direct,Direct fine-tune,chapman_shaoxing,0.8779312863313266,0.45012105363543126,main_table
+PN2021 clean,ResNet1D-Wang,direct,Direct fine-tune,cpsc_2018,0.8534699457815836,0.5894170491180504,main_table
+PN2021 clean,ResNet1D-Wang,direct,Direct fine-tune,georgia,0.8151502398639628,0.5896151741037488,main_table
+PN2021 clean,ResNet1D-Wang,vae_noaug,VAE-only noAug,ningbo,0.8802004279822231,0.5052694846014094,main_table
+PN2021 clean,ResNet1D-Wang,vae_noaug,VAE-only noAug,chapman_shaoxing,0.8868757049416587,0.46617484738351794,main_table
+PN2021 clean,ResNet1D-Wang,vae_noaug,VAE-only noAug,cpsc_2018,0.8743609424946589,0.6238636903375632,main_table
+PN2021 clean,ResNet1D-Wang,vae_noaug,VAE-only noAug,georgia,0.8254064153845453,0.6175928091768926,main_table
+PN2021 clean,ResNet1D-Wang,vae_augmix,VAE + AugMix,ningbo,0.8802004279822231,0.5052694846014094,main_table
+PN2021 clean,ResNet1D-Wang,vae_augmix,VAE + AugMix,chapman_shaoxing,0.8825652839752172,0.46874275143302435,main_table
+PN2021 clean,ResNet1D-Wang,vae_augmix,VAE + AugMix,cpsc_2018,0.8742560149599973,0.6237744472208353,main_table
+PN2021 clean,ResNet1D-Wang,vae_augmix,VAE + AugMix,georgia,0.8248937658229747,0.6151976738040075,main_table
+PN2021 clean,Inception1D,direct,Direct fine-tune,ningbo,0.885342477034226,0.5293078075791946,main_table
+PN2021 clean,Inception1D,direct,Direct fine-tune,chapman_shaoxing,0.8946749170486374,0.48971875097701834,main_table
+PN2021 clean,Inception1D,direct,Direct fine-tune,cpsc_2018,0.8603836658831518,0.5987976942295244,main_table
+PN2021 clean,Inception1D,direct,Direct fine-tune,georgia,0.8264118878642536,0.610233807262984,main_table
+PN2021 clean,Inception1D,vae_noaug,VAE-only noAug,ningbo,0.885342477034226,0.5293078075791946,main_table
+PN2021 clean,Inception1D,vae_noaug,VAE-only noAug,chapman_shaoxing,0.8946749170486374,0.48971875097701834,main_table
+PN2021 clean,Inception1D,vae_noaug,VAE-only noAug,cpsc_2018,0.8834129281617634,0.6373216806802738,main_table
+PN2021 clean,Inception1D,vae_noaug,VAE-only noAug,georgia,0.8278196927375195,0.6204709593784006,main_table
+PN2021 clean,Inception1D,vae_augmix,VAE + AugMix,ningbo,0.885342477034226,0.5293078075791946,main_table
+PN2021 clean,Inception1D,vae_augmix,VAE + AugMix,chapman_shaoxing,0.8946749170486374,0.48971875097701834,main_table
+PN2021 clean,Inception1D,vae_augmix,VAE + AugMix,cpsc_2018,0.8830145370471824,0.6370557881251725,main_table
+PN2021 clean,Inception1D,vae_augmix,VAE + AugMix,georgia,0.8283785412329563,0.6216301471770176,main_table
+PN2021 clean,FCN-Wang,direct,Direct fine-tune,ningbo,0.8735256958535192,0.4976728885019221,main_table
+PN2021 clean,FCN-Wang,direct,Direct fine-tune,chapman_shaoxing,0.8741451766734892,0.42808996252327586,main_table
+PN2021 clean,FCN-Wang,direct,Direct fine-tune,cpsc_2018,0.8321278207316403,0.5560885798474086,main_table
+PN2021 clean,FCN-Wang,direct,Direct fine-tune,georgia,0.8122480057082463,0.5920470155143807,main_table
+PN2021 clean,FCN-Wang,vae_noaug,VAE-only noAug,ningbo,0.8735256958535192,0.4976728885019221,main_table
+PN2021 clean,FCN-Wang,vae_noaug,VAE-only noAug,chapman_shaoxing,0.8741451766734892,0.42808996252327586,main_table
+PN2021 clean,FCN-Wang,vae_noaug,VAE-only noAug,cpsc_2018,0.8542383191894668,0.5939280827174701,main_table
+PN2021 clean,FCN-Wang,vae_noaug,VAE-only noAug,georgia,0.8097212581709661,0.5978542845498176,main_table
+PN2021 clean,FCN-Wang,vae_augmix,VAE + AugMix,ningbo,0.8735256958535192,0.4976728885019221,main_table
+PN2021 clean,FCN-Wang,vae_augmix,VAE + AugMix,chapman_shaoxing,0.8741451766734892,0.42808996252327586,main_table
+PN2021 clean,FCN-Wang,vae_augmix,VAE + AugMix,cpsc_2018,0.8541199266009781,0.5934911187020888,main_table
+PN2021 clean,FCN-Wang,vae_augmix,VAE + AugMix,georgia,0.811832307731349,0.5993811225118754,main_table
+PN2021-C,EfficientNet1DV2,direct,Direct fine-tune,ningbo,0.8691948474339679,0.476076592622321,main_table
+PN2021-C,EfficientNet1DV2,direct,Direct fine-tune,chapman_shaoxing,0.8733289453318157,0.4294834642287581,main_table
+PN2021-C,EfficientNet1DV2,direct,Direct fine-tune,cpsc_2018,0.8133118820419527,0.547669914981766,main_table
+PN2021-C,EfficientNet1DV2,direct,Direct fine-tune,georgia,0.8122310691493492,0.5864641404833182,main_table
+PN2021-C,EfficientNet1DV2,vae_noaug,VAE-only noAug,ningbo,0.8717006646863378,0.49822563907042794,main_table
+PN2021-C,EfficientNet1DV2,vae_noaug,VAE-only noAug,chapman_shaoxing,0.8779136755546613,0.46826695600277385,main_table
+PN2021-C,EfficientNet1DV2,vae_noaug,VAE-only noAug,cpsc_2018,0.8652919950607489,0.5961651503996235,main_table
+PN2021-C,EfficientNet1DV2,vae_noaug,VAE-only noAug,georgia,0.8184035116941457,0.5950999006876219,main_table
+PN2021-C,EfficientNet1DV2,vae_augmix,VAE + AugMix,ningbo,0.8749459009062939,0.49231348389380647,main_table
+PN2021-C,EfficientNet1DV2,vae_augmix,VAE + AugMix,chapman_shaoxing,0.8839915795189428,0.46284909280064085,main_table
+PN2021-C,EfficientNet1DV2,vae_augmix,VAE + AugMix,cpsc_2018,0.8645915130781063,0.6033228042635888,main_table
+PN2021-C,EfficientNet1DV2,vae_augmix,VAE + AugMix,georgia,0.8152279204779225,0.589473552563765,main_table
+PN2021-C,ECGFounder,direct,Direct fine-tune,ningbo,0.908314952173149,0.5808531946118037,main_table
+PN2021-C,ECGFounder,direct,Direct fine-tune,chapman_shaoxing,0.9173372554890826,0.5600840237658445,main_table
+PN2021-C,ECGFounder,direct,Direct fine-tune,cpsc_2018,0.860421240521218,0.6151083282144099,main_table
+PN2021-C,ECGFounder,direct,Direct fine-tune,georgia,0.8740889650951231,0.7100928905263008,main_table
+PN2021-C,ECGFounder,vae_noaug,VAE-only noAug,ningbo,0.908314952173149,0.5808531946118036,main_table
+PN2021-C,ECGFounder,vae_noaug,VAE-only noAug,chapman_shaoxing,0.9173372554890826,0.5600840237658445,main_table
+PN2021-C,ECGFounder,vae_noaug,VAE-only noAug,cpsc_2018,0.8882258552464621,0.6757625827367973,main_table
+PN2021-C,ECGFounder,vae_noaug,VAE-only noAug,georgia,0.8737425924049083,0.7090564890414852,main_table
+PN2021-C,ECGFounder,vae_augmix,VAE + AugMix,ningbo,0.908314952173149,0.5808531946118037,main_table
+PN2021-C,ECGFounder,vae_augmix,VAE + AugMix,chapman_shaoxing,0.9173372554890826,0.5600840237658445,main_table
+PN2021-C,ECGFounder,vae_augmix,VAE + AugMix,cpsc_2018,0.8982938062868514,0.6983499738576215,main_table
+PN2021-C,ECGFounder,vae_augmix,VAE + AugMix,georgia,0.8741791186787151,0.7101956419342261,main_table
+PN2021-C,ResNet1D-Wang,direct,Direct fine-tune,ningbo,0.8642744067581505,0.4788243193925815,main_table
+PN2021-C,ResNet1D-Wang,direct,Direct fine-tune,chapman_shaoxing,0.8618732919806783,0.4258224014921468,main_table
+PN2021-C,ResNet1D-Wang,direct,Direct fine-tune,cpsc_2018,0.8367423885113253,0.563308430049488,main_table
+PN2021-C,ResNet1D-Wang,direct,Direct fine-tune,georgia,0.8020552123783954,0.5714864414733681,main_table
+PN2021-C,ResNet1D-Wang,vae_noaug,VAE-only noAug,ningbo,0.8642744067581504,0.47882431939258163,main_table
+PN2021-C,ResNet1D-Wang,vae_noaug,VAE-only noAug,chapman_shaoxing,0.8662208488452894,0.4360760657312778,main_table
+PN2021-C,ResNet1D-Wang,vae_noaug,VAE-only noAug,cpsc_2018,0.8547765579517053,0.5933907381257533,main_table
+PN2021-C,ResNet1D-Wang,vae_noaug,VAE-only noAug,georgia,0.8097455496366961,0.5943349020086615,main_table
+PN2021-C,ResNet1D-Wang,vae_augmix,VAE + AugMix,ningbo,0.8642744067581505,0.4788243193925815,main_table
+PN2021-C,ResNet1D-Wang,vae_augmix,VAE + AugMix,chapman_shaoxing,0.8653826258247402,0.4426119174914905,main_table
+PN2021-C,ResNet1D-Wang,vae_augmix,VAE + AugMix,cpsc_2018,0.8547031271556516,0.5935588440360982,main_table
+PN2021-C,ResNet1D-Wang,vae_augmix,VAE + AugMix,georgia,0.809035766355689,0.5919573711875384,main_table
+PN2021-C,Inception1D,direct,Direct fine-tune,ningbo,0.8687861098505035,0.49873770046137067,main_table
+PN2021-C,Inception1D,direct,Direct fine-tune,chapman_shaoxing,0.8763203506161399,0.4631786606439862,main_table
+PN2021-C,Inception1D,direct,Direct fine-tune,cpsc_2018,0.8464862128544849,0.5787209607113906,main_table
+PN2021-C,Inception1D,direct,Direct fine-tune,georgia,0.8138420472740203,0.5925070368675839,main_table
+PN2021-C,Inception1D,vae_noaug,VAE-only noAug,ningbo,0.8687861098505035,0.4987377004613706,main_table
+PN2021-C,Inception1D,vae_noaug,VAE-only noAug,chapman_shaoxing,0.8763203506161398,0.4631786606439861,main_table
+PN2021-C,Inception1D,vae_noaug,VAE-only noAug,cpsc_2018,0.866826013531472,0.6116914286675608,main_table
+PN2021-C,Inception1D,vae_noaug,VAE-only noAug,georgia,0.8114618657555491,0.5966565383931054,main_table
+PN2021-C,Inception1D,vae_augmix,VAE + AugMix,ningbo,0.8687861098505035,0.49873770046137067,main_table
+PN2021-C,Inception1D,vae_augmix,VAE + AugMix,chapman_shaoxing,0.8763203506161399,0.4631786606439862,main_table
+PN2021-C,Inception1D,vae_augmix,VAE + AugMix,cpsc_2018,0.8672266187537734,0.6125670063808424,main_table
+PN2021-C,Inception1D,vae_augmix,VAE + AugMix,georgia,0.8122730257983206,0.5979397998153638,main_table
+PN2021-C,FCN-Wang,direct,Direct fine-tune,ningbo,0.8554120293841103,0.4668660902967584,main_table
+PN2021-C,FCN-Wang,direct,Direct fine-tune,chapman_shaoxing,0.8554032670387864,0.4051103491570387,main_table
+PN2021-C,FCN-Wang,direct,Direct fine-tune,cpsc_2018,0.8145746553260221,0.5311915978195884,main_table
+PN2021-C,FCN-Wang,direct,Direct fine-tune,georgia,0.7975790290981589,0.5724032499733009,main_table
+PN2021-C,FCN-Wang,vae_noaug,VAE-only noAug,ningbo,0.8554120293841101,0.4668660902967585,main_table
+PN2021-C,FCN-Wang,vae_noaug,VAE-only noAug,chapman_shaoxing,0.8554032670387866,0.4051103491570386,main_table
+PN2021-C,FCN-Wang,vae_noaug,VAE-only noAug,cpsc_2018,0.8332798292169069,0.5615023266462446,main_table
+PN2021-C,FCN-Wang,vae_noaug,VAE-only noAug,georgia,0.791636291217231,0.5724715055300782,main_table
+PN2021-C,FCN-Wang,vae_augmix,VAE + AugMix,ningbo,0.8554120293841103,0.4668660902967584,main_table
+PN2021-C,FCN-Wang,vae_augmix,VAE + AugMix,chapman_shaoxing,0.8554032670387864,0.4051103491570387,main_table
+PN2021-C,FCN-Wang,vae_augmix,VAE + AugMix,cpsc_2018,0.8333133731372868,0.561105276462584,main_table
+PN2021-C,FCN-Wang,vae_augmix,VAE + AugMix,georgia,0.7944193081345108,0.5750566185369235,main_table
+PN2021 clean,EfficientNet1DV2,source_ptbxl,PTB-XL-only source,ningbo,0.8705202640358147,0.4790380907272794,new_effnet_source_eval_20260605
+PN2021 clean,EfficientNet1DV2,source_ptbxl,PTB-XL-only source,chapman_shaoxing,0.8742033920316594,0.4266584232531681,new_effnet_source_eval_20260605
+PN2021 clean,EfficientNet1DV2,source_ptbxl,PTB-XL-only source,cpsc_2018,0.8114678812262968,0.558602923207618,new_effnet_source_eval_20260605
+PN2021 clean,EfficientNet1DV2,source_ptbxl,PTB-XL-only source,georgia,0.8152375594144159,0.5918713000865934,new_effnet_source_eval_20260605
+PN2021-C,EfficientNet1DV2,source_ptbxl,PTB-XL-only source,ningbo,0.8586774130669135,0.4606681396367577,new_effnet_source_pn2021c_eval_20260605
+PN2021-C,EfficientNet1DV2,source_ptbxl,PTB-XL-only source,chapman_shaoxing,0.8627333778806141,0.4110215625451692,new_effnet_source_pn2021c_eval_20260605
+PN2021-C,EfficientNet1DV2,source_ptbxl,PTB-XL-only source,cpsc_2018,0.8053344620235612,0.5472797376061883,new_effnet_source_pn2021c_eval_20260605
+PN2021-C,EfficientNet1DV2,source_ptbxl,PTB-XL-only source,georgia,0.806130474078413,0.5800681461228445,new_effnet_source_pn2021c_eval_20260605
+PN2021 clean,ECGFounder,source_ptbxl,PTB-XL-only source,ningbo,0.8795956142463911,0.4981245303442174,existing_ecgfounder_source_eval
+PN2021-C,ECGFounder,source_ptbxl,PTB-XL-only source,ningbo,0.8695590119001751,0.4795975280163452,existing_ecgfounder_source_pn2021c_eval
+PN2021 clean,ECGFounder,source_ptbxl,PTB-XL-only source,chapman_shaoxing,0.8854610226713165,0.4607551689212688,existing_ecgfounder_source_eval
+PN2021-C,ECGFounder,source_ptbxl,PTB-XL-only source,chapman_shaoxing,0.8777865355033811,0.4449083754038648,existing_ecgfounder_source_pn2021c_eval
+PN2021 clean,ECGFounder,source_ptbxl,PTB-XL-only source,cpsc_2018,0.8063863992955943,0.5537222764025213,existing_ecgfounder_source_eval
+PN2021-C,ECGFounder,source_ptbxl,PTB-XL-only source,cpsc_2018,0.8029395377481614,0.5358599815974922,existing_ecgfounder_source_pn2021c_eval
+PN2021 clean,ECGFounder,source_ptbxl,PTB-XL-only source,georgia,0.8470276261066693,0.6504424625128427,existing_ecgfounder_source_eval
+PN2021-C,ECGFounder,source_ptbxl,PTB-XL-only source,georgia,0.8402457413307534,0.6373517212040425,existing_ecgfounder_source_pn2021c_eval

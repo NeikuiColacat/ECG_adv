@@ -1,0 +1,21 @@
+dataset,model,variant,variant_label,mean_drop_all_zero_macro_auroc,mean_drop_all_zero_macro_auprc,n_centers_with_drop
+PN2021 clean drop-all-zero,EfficientNet1DV2,source_ptbxl,仅PTBXL训练,0.8682064242667402,0.6560197848067388,4
+PN2021 clean drop-all-zero,EfficientNet1DV2,direct,直接微调,0.8762735487585068,0.6666273058980839,4
+PN2021 clean drop-all-zero,EfficientNet1DV2,vae_noaug,VAE-only,0.8985579494673432,0.7246926207401698,4
+PN2021 clean drop-all-zero,EfficientNet1DV2,vae_augmix,VAE+AugMix,0.8996445412045155,0.7177123516996973,4
+PN2021 clean drop-all-zero,ECGFounder,source_ptbxl,仅PTBXL训练,0.878705848479623,0.672801700576759,4
+PN2021 clean drop-all-zero,ECGFounder,direct,直接微调,0.9166199382848211,0.7432202327947988,4
+PN2021 clean drop-all-zero,ECGFounder,vae_noaug,VAE-only,0.9220983096800213,0.7641417167838204,4
+PN2021 clean drop-all-zero,ECGFounder,vae_augmix,VAE+AugMix,0.9243243058374044,0.7680525432357854,4
+PN2021 clean drop-all-zero,ResNet1D-Wang,source_ptbxl,仅PTBXL训练,,,0
+PN2021 clean drop-all-zero,ResNet1D-Wang,direct,直接微调,0.8813406661926007,0.6873049062315193,4
+PN2021 clean drop-all-zero,ResNet1D-Wang,vae_noaug,VAE-only,0.8925739766750715,0.7120618356352204,4
+PN2021 clean drop-all-zero,ResNet1D-Wang,vae_augmix,VAE+AugMix,0.8910401722661804,0.7114550087238299,4
+PN2021 clean drop-all-zero,Inception1D,source_ptbxl,仅PTBXL训练,,,0
+PN2021 clean drop-all-zero,Inception1D,direct,直接微调,0.8933652055147379,0.709152253915966,4
+PN2021 clean drop-all-zero,Inception1D,vae_noaug,VAE-only,0.8994648103347915,0.7274075105068472,4
+PN2021 clean drop-all-zero,Inception1D,vae_augmix,VAE+AugMix,0.8994348459065622,0.7271518289351232,4
+PN2021 clean drop-all-zero,FCN-Wang,source_ptbxl,仅PTBXL训练,,,0
+PN2021 clean drop-all-zero,FCN-Wang,direct,直接微调,0.8748144824891901,0.6702317994809349,4
+PN2021 clean drop-all-zero,FCN-Wang,vae_noaug,VAE-only,0.8805847522826138,0.6882867376602136,4
+PN2021 clean drop-all-zero,FCN-Wang,vae_augmix,VAE+AugMix,0.8810020062055969,0.688492667790321,4
