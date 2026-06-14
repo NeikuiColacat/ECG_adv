@@ -4,8 +4,8 @@ host:
   home_root: /home/linbinhao
 
 paths:
-  project_root: /home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/ECG_adv_Gen
-  data_root: /home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp
+  project_root: /home/linbinhao/ECG_adv_Gen
+  data_root: /home/linbinhao/ECG_adv_data
   model_root: ${paths.data_root}/models
   output_root: ${paths.data_root}/runs
   cache_root: ${paths.data_root}/cache

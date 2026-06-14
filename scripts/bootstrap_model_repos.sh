@@ -17,7 +17,7 @@ fi
 if [[ -n "${ECGFOUNDER_ROOT+x}" ]]; then
   ECGFOUNDER_ROOT_EXPLICIT=1
 fi
-DATA_ROOT="${DATA_ROOT:-/root/autodl-tmp}"
+DATA_ROOT="${DATA_ROOT:-/home/linbinhao/ECG_adv_data}"
 MODEL_ROOT="${MODEL_ROOT:-${DATA_ROOT}/models}"
 ECGFOUNDER_ROOT="${ECGFOUNDER_ROOT:-${DATA_ROOT}/ecgfounder}"
 if [[ -n "${PYTHON:-}" ]]; then

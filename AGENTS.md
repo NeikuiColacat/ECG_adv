@@ -20,7 +20,7 @@ Current migrated host override, initialized 2026-05-23:
 
 ```text
 repo root:      /home/linbinhao/ECG_adv_Gen
-migrated data:  /home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp
+migrated data:  /home/linbinhao/ECG_adv_data
 python env:     /home/linbinhao/micromamba/envs/ECGTwin/bin/python
 runtime skill:  /home/linbinhao/.codex/skills/ecg-adv-gen/SKILL.md
 ```
@@ -113,7 +113,7 @@ Shared server cluster constraints:
 - Use only user-level or project-level environments.
 - Keep all files touched by this project under the current user's home tree,
   especially `/home/linbinhao/ECG_adv_Gen` and
-  `/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp`.
+  `/home/linbinhao/ECG_adv_data`.
   Do not create, edit, delete, chmod, chown, or relink files outside the user's
   home tree unless the user explicitly requests it.
 - Before starting GPU training or long inference, check current GPU usage with

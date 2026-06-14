@@ -15,7 +15,7 @@ max_depth = 1
 network_access = false
 writable_roots = [
   "/home/linbinhao/ECG_adv_Gen",
-  "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp",
+  "/home/linbinhao/ECG_adv_data",
 ]
 
 # Optional GitHub MCP template.

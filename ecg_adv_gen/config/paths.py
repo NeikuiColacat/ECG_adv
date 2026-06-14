@@ -7,7 +7,7 @@ from typing import Any
 
 
 LEGACY_PATH_ALIASES = {
-    "/root/autodl-tmp": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp",
+    "/root/autodl-tmp": "/home/linbinhao/ECG_adv_data",
     "/root/miniforge3/envs/ECGTwin/bin/python": "/home/linbinhao/micromamba/envs/ECGTwin/bin/python",
     "/root/.codex": "/home/linbinhao/.codex",
 }

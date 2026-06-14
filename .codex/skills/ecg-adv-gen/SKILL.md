@@ -36,7 +36,7 @@ cp /path/to/ECG_adv_Gen/.codex/skills/ecg-adv-gen/SKILL.md \
 - Current migrated host override:
   - repo: `/home/linbinhao/ECG_adv_Gen`
   - migrated data root:
-    `/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp`
+    `/home/linbinhao/ECG_adv_data`
   - Python: `/home/linbinhao/micromamba/envs/ECGTwin/bin/python`
   - visible hardware: 8x NVIDIA RTX 4090 24 GB
   - current user cannot access `/root/autodl-tmp`; pass explicit data/output
