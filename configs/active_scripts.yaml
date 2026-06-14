@@ -498,6 +498,78 @@ inactive_experiment_configs:
     status: smoke_only
     reason: Engineering smoke config for PN2021 ref-excluded eval runtime checks; not an active paper result surface.
 
+  - config: configs/experiments/effnet_vae_lhat_calibrated_rawsupervised_k500_v7_sjr_rgq.yaml
+    status: historical_unmanaged
+    reason: Provisional raw-supervised PN2021-C recovery draft config; keep inventoried for preflight completeness, but not an active paper evidence surface.
+
+  - config: configs/experiments/effnet_vae_lhat_calibrated_rawsupervised_k500_v7_sjr_rgq_ningbo.yaml
+    status: historical_unmanaged
+    reason: Provisional single-center raw-supervised PN2021-C recovery draft config; keep inventoried for preflight completeness, but not an active paper evidence surface.
+
+  - config: configs/experiments/effnet_vae_lhat_calibrated_rawsupervised_k500_v7_sjr_rgq_smoke.yaml
+    status: smoke_only
+    reason: Engineering smoke config for calibrated raw-supervised PN2021-C recovery checks; not an active paper result surface.
+
+  - config: configs/experiments/effnet_vae_lhat_maskshift_consistency_k500_v7_sjr_rgq.yaml
+    status: historical_unmanaged
+    reason: Provisional mask/shift consistency PN2021-C recovery draft config; keep inventoried for preflight completeness, but not an active paper evidence surface.
+
+  - config: configs/experiments/effnet_vae_lhat_maskshift_consistency_k500_v7_sjr_rgq_ningbo.yaml
+    status: historical_unmanaged
+    reason: Provisional single-center mask/shift consistency PN2021-C recovery draft config; keep inventoried for preflight completeness, but not an active paper evidence surface.
+
+  - config: configs/experiments/effnet_vae_lhat_maskshift_consistency_k500_v7_sjr_rgq_smoke.yaml
+    status: smoke_only
+    reason: Engineering smoke config for mask/shift consistency PN2021-C recovery checks; not an active paper result surface.
+
+  - config: configs/experiments/effnet_vae_lhat_rawjsd_curriculum_k500_v7_sjr_rgq.yaml
+    status: historical_unmanaged
+    reason: Provisional raw-JSD curriculum PN2021-C recovery draft config; keep inventoried for preflight completeness, but not an active paper evidence surface.
+
+  - config: configs/experiments/effnet_vae_lhat_rawjsd_curriculum_k500_v7_sjr_rgq_smoke.yaml
+    status: smoke_only
+    reason: Engineering smoke config for raw-JSD curriculum PN2021-C recovery checks; not an active paper result surface.
+
+  - config: configs/experiments/effnet_vae_lhat_rawsupervised_stressor_k500_v7_sjr_rgq.yaml
+    status: historical_unmanaged
+    reason: Provisional raw-supervised stressor PN2021-C recovery draft config; keep inventoried for preflight completeness, but not an active paper evidence surface.
+
+  - config: configs/experiments/effnet_vae_lhat_rawsupervised_stressor_k500_v7_sjr_rgq_ningbo.yaml
+    status: historical_unmanaged
+    reason: Provisional single-center raw-supervised stressor PN2021-C recovery draft config; keep inventoried for preflight completeness, but not an active paper evidence surface.
+
+  - config: configs/experiments/effnet_vae_lhat_rawsupervised_stressor_k500_v7_sjr_rgq_smoke.yaml
+    status: smoke_only
+    reason: Engineering smoke config for raw-supervised stressor PN2021-C recovery checks; not an active paper result surface.
+
+  - config: configs/experiments/pn2021c_effnet_v7_strong_10to20pp_smoke.yaml
+    status: smoke_only
+    reason: Engineering smoke config for calibrated 10-20 pp PN2021-C evaluation checks; not an active paper result surface.
+
+  - config: configs/experiments/pn2021c_effnet_v7_strong_calibrated_rawsupervised.yaml
+    status: historical_unmanaged
+    reason: Provisional PN2021-C strong-profile eval draft for calibrated raw-supervised candidates; keep inventoried for preflight completeness, but not an active paper evidence surface.
+
+  - config: configs/experiments/pn2021c_effnet_v7_strong_calibrated_rawsupervised_ningbo.yaml
+    status: historical_unmanaged
+    reason: Provisional single-center PN2021-C strong-profile eval draft for calibrated raw-supervised candidates; keep inventoried for preflight completeness, but not an active paper evidence surface.
+
+  - config: configs/experiments/pn2021c_effnet_v7_strong_maskshift_ningbo.yaml
+    status: historical_unmanaged
+    reason: Provisional single-center PN2021-C strong-profile eval draft for mask/shift candidates; keep inventoried for preflight completeness, but not an active paper evidence surface.
+
+  - config: configs/experiments/pn2021c_effnet_v7_strong_raw_candidates.yaml
+    status: historical_unmanaged
+    reason: Provisional PN2021-C strong-profile eval draft for raw-corruption candidates; keep inventoried for preflight completeness, but not an active paper evidence surface.
+
+  - config: configs/experiments/pn2021c_effnet_v7_strong_raw_candidates_smoke.yaml
+    status: smoke_only
+    reason: Engineering smoke config for PN2021-C strong-profile raw-candidate evaluation checks; not an active paper result surface.
+
+  - config: configs/experiments/pn2021c_effnet_v7_strong_rawsupervised_ningbo.yaml
+    status: historical_unmanaged
+    reason: Provisional single-center PN2021-C strong-profile eval draft for raw-supervised candidates; keep inventoried for preflight completeness, but not an active paper evidence surface.
+
 reporting_tools:
   - name: data_manifest_exporter
     status: active

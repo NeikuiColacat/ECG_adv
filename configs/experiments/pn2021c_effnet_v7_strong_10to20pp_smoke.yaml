@@ -1,0 +1,21 @@
+extends:
+  - pn2021c_effnet_v7_strong_10to20pp.yaml
+
+experiment:
+  name: pn2021c_effnet_v7_strong_10to20pp_smoke
+  description: Single-center smoke test for the calibrated 10-20 pp PN2021-C EfficientNet1DV2 VAE noAug vs VAE LHAT evaluation.
+
+training:
+  num_workers: 0
+
+runner:
+  matrix:
+    center:
+      - ningbo
+    method:
+      - name: vae_noaug
+        family: effnet_vae_noaug_k500_v7_sjr_rgq
+        noaug_suffix: _noaugmix
+      - name: vae_lhat
+        family: effnet_vae_lhat_k500_v7_sjr_rgq
+        noaug_suffix: ""

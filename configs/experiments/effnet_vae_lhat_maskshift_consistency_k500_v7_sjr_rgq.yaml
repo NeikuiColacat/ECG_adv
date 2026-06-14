@@ -1,0 +1,34 @@
+extends:
+  - effnet_vae_lhat_k500_v7_sjr_rgq.yaml
+
+experiment:
+  name: effnet_vae_lhat_maskshift_consistency_k500_v7_sjr_rgq
+  description: EfficientNet1DV2 K500 VAE-LHAT with deterministic lead-mask and baseline-shift consistency for calibrated PN2021-C recovery.
+
+paper_protocol:
+  kshot:
+    seed: 20260601
+    subset_seed: 20260601
+
+model:
+  direct_init_root: ${paths.output_root}/effnet_direct_k500_v7_sjr_rgq/seed20260601_k500_v7_sjr_rgq_20260530_rep1/runs
+
+adaptation:
+  run_tag_extra: k500_maskshift
+  mask_shift_consistency:
+    enabled: true
+    copies: 1
+    mask_severity: 5
+    shift_severity: 5
+    consistency_weight: 10.0
+    consistency_loss: jsd
+    bce_weight: 0.05
+    max_batches: 0
+    scope: target
+    no_renorm: true
+    clip_abs: 6.0
+
+run_record:
+  purpose: Test a targeted random_leads_masking plus baseline_shift consistency branch for recovering calibrated PN2021-C AUPRC drop.
+  result_summary: Pending. Compare against matched VAE noAug under calibrated_10to20pp PN2021-C without heldout-oracle model selection.
+  registration_status: provisional

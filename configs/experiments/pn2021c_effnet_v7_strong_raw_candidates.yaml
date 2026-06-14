@@ -1,0 +1,45 @@
+extends:
+  - pn2021c_effnet_v7_strong_10to20pp.yaml
+
+experiment:
+  name: pn2021c_effnet_v7_strong_raw_candidates
+  description: Managed calibrated 10-20 pp PN2021-C evaluation for existing EfficientNet1DV2 raw-corruption VAE-LHAT candidates against matched VAE noAug.
+
+paper_protocol:
+  kshot:
+    seed: 20260601
+    subset_seed: 20260601
+
+runner:
+  matrix:
+    method:
+      - name: vae_noaug
+        family: effnet_vae_noaug_k500_v7_sjr_rgq
+        noaug_suffix: _noaugmix
+        run_stamp: 20260530_rep1
+        run_leaf_stem: realall_targetheavy_M20_lam0p05_augmix_s2_wlat0p25_hs3_target_macro_auprc_cdhypminormsttc_hlabelcom_anchor_soft_sta_local_random_p120
+      - name: rawjsd_s5c2_w8_lowbce
+        family: effnet_vae_lhat_k500_v7_sjr_rgq
+        noaug_suffix: ""
+        run_stamp: 20260530_rawjsd_s5c2_w8_lowbce
+        run_leaf_stem: realall_targetheavy_M20_lam0p05_augmix_s4_wlat0p2_hs3_target_macro_auprc_cdhypminormsttc_hlabelcom_anchor_soft_sta_local_random_p120
+      - name: rawhard_s5c3
+        family: effnet_vae_lhat_k500_v7_sjr_rgq
+        noaug_suffix: ""
+        run_stamp: 20260530_rawhard_s5c3
+        run_leaf_stem: realall_targetheavy_M20_lam0p05_augmix_s2_wlat0p25_hs3_target_macro_auprc_cdhypminormsttc_hlabelcom_anchor_soft_sta_local_random_p120
+      - name: rawhard_s5_norenorm_lowbce
+        family: effnet_vae_lhat_k500_v7_sjr_rgq
+        noaug_suffix: ""
+        run_stamp: 20260530_rawhard_s5_norenorm_lowbce
+        run_leaf_stem: realall_targetheavy_M20_lam0p05_augmix_s4_wlat0p2_hs3_target_macro_auprc_cdhypminormsttc_hlabelcom_anchor_soft_sta_local_random_p120
+      - name: s6allops
+        family: effnet_vae_lhat_k500_v7_sjr_rgq
+        noaug_suffix: ""
+        run_stamp: 20260530_s6allops
+        run_leaf_stem: realall_targetheavy_M20_lam0p05_augmix_s6_wlat0p25_hs3_target_macro_auprc_cdhypminormsttc_hlabelcom_anchor_soft_sta_local_random_p120
+
+run_record:
+  purpose: Check whether historical raw-corruption candidates reveal larger gains under calibrated_10to20pp PN2021-C than under standard severity.
+  result_summary: Pending. If no candidate approaches +6 pp corrupted macro AUPRC, do not expand raw-consistency scalar sweeps.
+  registration_status: provisional

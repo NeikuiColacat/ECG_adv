@@ -1,0 +1,16 @@
+extends:
+  - effnet_vae_lhat_rawsupervised_stressor_k500_v7_sjr_rgq.yaml
+
+experiment:
+  name: effnet_vae_lhat_calibrated_rawsupervised_k500_v7_sjr_rgq
+  description: EfficientNet1DV2 K500 VAE-LHAT with source-target supervised raw training using the calibrated PN2021-C 10-20 pp stressor profile.
+
+adaptation:
+  run_tag_extra: k500_calrawsupervised
+  raw_corrupt_consistency:
+    severity_profile: calibrated_10to20pp
+
+run_record:
+  purpose: Test whether matching the training-time raw corruption branch to the calibrated_10to20pp PN2021-C evaluator recovers more corrupted AUPRC than the standard-profile raw-supervised stressor.
+  result_summary: Pending. Compare first on Ningbo against matched VAE noAug and the standard-profile rawsupervised run before any four-center expansion.
+  registration_status: provisional
