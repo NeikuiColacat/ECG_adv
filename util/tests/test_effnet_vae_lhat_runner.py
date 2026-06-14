@@ -84,6 +84,7 @@ def _args(**overrides):
         "raw_corrupt_copies": 1,
         "raw_corrupt_prob": 0.5,
         "raw_corrupt_severity": 4,
+        "raw_corrupt_severity_profile": "standard",
         "raw_corrupt_ops": ["emg_noise"],
         "raw_corrupt_consistency_weight": 0.5,
         "raw_corrupt_consistency_loss": "soft_bce",
@@ -92,6 +93,17 @@ def _args(**overrides):
         "raw_corrupt_scope": "target",
         "raw_corrupt_no_renorm": False,
         "raw_corrupt_clip_abs": 6.0,
+        "enable_mask_shift_consistency": False,
+        "mask_shift_copies": 1,
+        "mask_shift_mask_severity": 6,
+        "mask_shift_shift_severity": 6,
+        "mask_shift_consistency_weight": 1.0,
+        "mask_shift_consistency_loss": "jsd",
+        "mask_shift_bce_weight": 0.05,
+        "mask_shift_max_batches": 0,
+        "mask_shift_scope": "target",
+        "mask_shift_no_renorm": False,
+        "mask_shift_clip_abs": 6.0,
         "quick_eval_source": "target_real_val",
         "quick_eval_n_per_center": 500,
         "target_real_val_fraction": 0.2,
@@ -147,6 +159,11 @@ def test_build_effnet_vae_lhat_commands_preserve_wrapper_flags():
         hull_include_anchor=True,
         enable_raw_corrupt_consistency=True,
         raw_corrupt_no_renorm=True,
+        enable_mask_shift_consistency=True,
+        mask_shift_no_renorm=True,
+        mask_shift_mask_severity=5,
+        mask_shift_shift_severity=5,
+        mask_shift_consistency_weight=10.0,
         resume="latest",
         allow_resume_config_drift=True,
         anchor_class_weights="MI=2.0",
@@ -179,6 +196,12 @@ def test_build_effnet_vae_lhat_commands_preserve_wrapper_flags():
     assert train_opts["--enable_latent_augmix_branch"] is True
     assert train_opts["--enable_raw_corrupt_consistency"] is True
     assert train_opts["--raw_corrupt_no_renorm"] is True
+    assert opt_first(train_opts, "--raw_corrupt_severity_profile") == "standard"
+    assert train_opts["--enable_mask_shift_consistency"] is True
+    assert train_opts["--mask_shift_no_renorm"] is True
+    assert opt_first(train_opts, "--mask_shift_mask_severity") == "5"
+    assert opt_first(train_opts, "--mask_shift_shift_severity") == "5"
+    assert opt_first(train_opts, "--mask_shift_consistency_weight") == "10.0"
     assert opt_first(train_opts, "--resume") == "latest"
     assert train_opts["--allow_resume_config_drift"] is True
     assert opt_first(train_opts, "--anchor_class_weights") == "MI=2.0"

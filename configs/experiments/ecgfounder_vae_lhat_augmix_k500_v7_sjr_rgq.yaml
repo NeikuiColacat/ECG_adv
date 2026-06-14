@@ -1,0 +1,28 @@
+extends:
+  - ecgfounder_vae_lhat_k500_v7_sjr_rgq.yaml
+
+experiment:
+  name: ecgfounder_vae_lhat_augmix_k500_v7_sjr_rgq
+  description: ECGFounder residual-adapter K500 VAE-LHAT v7 SJR/RGQ with latent AugMix branch enabled to match the EfficientNet/benchmark VAE recipe.
+
+adaptation:
+  latent_augmix:
+    enabled: true
+    latent_weight_cap: 0.25
+    width: 3
+    depth: -1
+    alpha: 1.0
+    severity: 2
+    ops:
+      - powerline_noise
+      - emg_noise
+      - baseline_wander
+      - baseline_shift
+
+lineage:
+  replaces_legacy_surface: scripts/paper/run_ecgfounder_v7_multiseed_kshot_matrix_20260530.py
+  scope: ecgfounder_vae_lhat_augmix_k500_only
+  prerequisite_stage: ecgfounder_direct_k500_v7_sjr_rgq_matrix
+  notes:
+    - This config keeps the ECGFounder VAE-LHAT K500 protocol fixed and enables the latent AugMix branch for an explicit noAug-vs-AugMix comparison.
+    - It consumes same-run ECGFounder direct K500 heads and keeps GPU selection outside YAML.

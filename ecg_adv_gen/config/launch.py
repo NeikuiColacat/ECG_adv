@@ -247,6 +247,19 @@ def _k500_ref_entries_by_center(manifest: dict[str, Any]) -> dict[str, list[dict
     return out
 
 
+def _k500_centers_for_manifest(manifest: dict[str, Any]) -> list[str]:
+    expected = ((manifest.get("artifact_trace") or {}).get("expected_outputs") or {})
+    centers: list[str] = []
+    for child in expected.get("child_runs") or []:
+        center = str(child.get("center") or "")
+        if center and center not in centers:
+            centers.append(center)
+    if centers:
+        return centers
+    paper = manifest.get("paper_protocol") or {}
+    return list((paper.get("centers") or {}).get("target_4") or [])
+
+
 def build_k500_ref_ids_artifact(manifest: dict[str, Any], *, output_path: Path) -> dict[str, Any]:
     """Build a frozen K500 record-id artifact from traced ref-meta files."""
     paper = manifest.get("paper_protocol") or {}
@@ -254,8 +267,8 @@ def build_k500_ref_ids_artifact(manifest: dict[str, Any], *, output_path: Path) 
     metrics = (manifest.get("artifact_trace") or {}).get("metrics") or {}
     expected_k = int(kshot.get("k", 500))
     expected_seed = int(kshot.get("subset_seed", kshot.get("seed", 0)))
-    target_centers = list((paper.get("centers") or {}).get("target_4") or [])
     refs_by_center = _k500_ref_entries_by_center(manifest)
+    target_centers = _k500_centers_for_manifest(manifest)
     centers: dict[str, Any] = {}
 
     for center in target_centers:
@@ -466,7 +479,7 @@ def _validate_k500_ref_ids_artifact(
     metrics = (manifest.get("artifact_trace") or {}).get("metrics") or {}
     expected_k = int(kshot.get("k", 500))
     expected_seed = int(kshot.get("subset_seed", kshot.get("seed", 0)))
-    expected_centers = list((paper.get("centers") or {}).get("target_4") or [])
+    expected_centers = _k500_centers_for_manifest(manifest)
     artifact_protocol = artifact.get("paper_protocol") or {}
     if artifact_protocol.get("mapping_version") != metrics.get("mapping_version"):
         bad = dict(record)

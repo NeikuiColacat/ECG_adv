@@ -74,8 +74,20 @@ def _load(name: str) -> dict:
         ("effnet_vae_lhat_k500_v6.yaml", 4),
         ("effnet_vae_lhat_k500_v6_smoke.yaml", 4),
         ("effnet_vae_lhat_k500_v7_sjr_rgq.yaml", 4),
+        ("effnet_vae_lhat_rawjsd_curriculum_k500_v7_sjr_rgq.yaml", 4),
+        ("effnet_vae_lhat_rawjsd_curriculum_k500_v7_sjr_rgq_smoke.yaml", 1),
+        ("effnet_vae_lhat_rawsupervised_stressor_k500_v7_sjr_rgq.yaml", 4),
+        ("effnet_vae_lhat_rawsupervised_stressor_k500_v7_sjr_rgq_ningbo.yaml", 1),
+        ("effnet_vae_lhat_rawsupervised_stressor_k500_v7_sjr_rgq_smoke.yaml", 1),
+        ("effnet_vae_lhat_calibrated_rawsupervised_k500_v7_sjr_rgq.yaml", 4),
+        ("effnet_vae_lhat_calibrated_rawsupervised_k500_v7_sjr_rgq_ningbo.yaml", 1),
+        ("effnet_vae_lhat_calibrated_rawsupervised_k500_v7_sjr_rgq_smoke.yaml", 1),
+        ("effnet_vae_lhat_maskshift_consistency_k500_v7_sjr_rgq.yaml", 4),
+        ("effnet_vae_lhat_maskshift_consistency_k500_v7_sjr_rgq_ningbo.yaml", 1),
+        ("effnet_vae_lhat_maskshift_consistency_k500_v7_sjr_rgq_smoke.yaml", 1),
         ("effnet_vae_lhat_percent_v7_sjr_rgq.yaml", 8),
         ("ecgfounder_direct_k500_v7_sjr_rgq_matrix.yaml", 4),
+        ("ecgfounder_vae_lhat_augmix_k500_v7_sjr_rgq.yaml", 4),
         ("benchmark_source_v7_sjr_rgq_matrix.yaml", 3),
         ("benchmark_resnet1d_direct_percent_v7_sjr_rgq_matrix.yaml", 8),
         ("benchmark_inception1d_direct_k500_v7_sjr_rgq_matrix.yaml", 4),
@@ -83,6 +95,9 @@ def _load(name: str) -> dict:
         ("benchmark_resnet1d_vae_lhat_k500_v7_sjr_rgq.yaml", 4),
         ("benchmark_inception1d_vae_lhat_k500_v7_sjr_rgq.yaml", 4),
         ("benchmark_fcn_wang_vae_lhat_k500_v7_sjr_rgq.yaml", 4),
+        ("benchmark_resnet1d_vae_noaug_k500_v7_sjr_rgq.yaml", 4),
+        ("benchmark_inception1d_vae_noaug_k500_v7_sjr_rgq.yaml", 4),
+        ("benchmark_fcn_wang_vae_noaug_k500_v7_sjr_rgq.yaml", 4),
         ("ecgfounder_direct_k500_v6.yaml", 1),
         ("ecgfounder_inithead_fullft_k500_v6.yaml", 4),
         ("ecgfounder_inithead_fullft_k500_v6_smoke.yaml", 4),
@@ -100,6 +115,14 @@ def _load(name: str) -> dict:
         ("pn2021_eval_v6_refexcluded_smoke.yaml", 4),
         ("pn2021_eval_v7_sjr_rgq_refexcluded.yaml", 4),
         ("pn2021c_effnet_v7_augmix_vs_noaug.yaml", 8),
+        ("pn2021c_effnet_v7_strong_10to20pp.yaml", 8),
+        ("pn2021c_effnet_v7_strong_10to20pp_smoke.yaml", 2),
+        ("pn2021c_effnet_v7_strong_raw_candidates.yaml", 20),
+        ("pn2021c_effnet_v7_strong_raw_candidates_smoke.yaml", 5),
+        ("pn2021c_effnet_v7_strong_maskshift_ningbo.yaml", 2),
+        ("pn2021c_effnet_v7_strong_rawsupervised_ningbo.yaml", 2),
+        ("pn2021c_effnet_v7_strong_calibrated_rawsupervised.yaml", 8),
+        ("pn2021c_effnet_v7_strong_calibrated_rawsupervised_ningbo.yaml", 2),
     ],
 )
 def test_tracked_configs_validate_and_expand_commands(config_name: str, expected_commands: int):
@@ -372,6 +395,52 @@ def test_effnet_vae_lhat_command_is_protocol_equivalent():
         assert _option_value(argv, "--eval_pn2021_limit") == "0"
 
 
+@pytest.mark.parametrize(
+    ("config_name", "output_family"),
+    [
+        (
+            "benchmark_resnet1d_vae_noaug_k500_v7_sjr_rgq.yaml",
+            "benchmark_resnet1d_wang_vae_noaug_k500_v7_sjr_rgq",
+        ),
+        (
+            "benchmark_inception1d_vae_noaug_k500_v7_sjr_rgq.yaml",
+            "benchmark_inception1d_vae_noaug_k500_v7_sjr_rgq",
+        ),
+        (
+            "benchmark_fcn_wang_vae_noaug_k500_v7_sjr_rgq.yaml",
+            "benchmark_fcn_wang_vae_noaug_k500_v7_sjr_rgq",
+        ),
+    ],
+)
+def test_benchmark_vae_noaug_configs_disable_latent_augmix_branch(
+    config_name: str,
+    output_family: str,
+):
+    config = _load(config_name)
+    validate_experiment_config(config, repo_root=REPO)
+    commands = build_runner_commands(config)
+
+    assert len(commands) == 4
+    for command in commands:
+        argv = command["argv"]
+        center = command["matrix"]["center"]
+        model_name = _option_value(argv, "--model_name")
+        assert argv[1].endswith("scripts/paper/run_effnet_latent_augmix_stage3_20260524.py")
+        assert _option_value(argv, "--center") == center
+        assert _option_value(argv, "--out_root").endswith(f"/runs/{output_family}/pytest_run")
+        assert f"/{model_name}_direct_k500_v7_sjr_rgq/pytest_run/{center}/runs/" in _option_value(
+            argv,
+            "--init_ckpt",
+        )
+        assert "--disable_latent_augmix_branch" in argv
+        assert _option_value(argv, "--run_tag_extra") == "noaugmix"
+        assert "--latent_augmix_latent_weight_cap" not in argv
+        assert "--latent_augmix_width" not in argv
+        assert "--latent_augmix_depth" not in argv
+        assert "--latent_augmix_alpha" not in argv
+        assert "--latent_augmix_severity" not in argv
+
+
 def test_command_protocol_audit_rejects_missing_vae_init_checkpoint():
     config = _load("effnet_vae_lhat_k500_v6.yaml")
     config = copy.deepcopy(config)
@@ -493,6 +562,123 @@ def test_effnet_vae_lhat_v7_config_uses_typed_runner_adapter():
     commands = build_runner_commands(config)
     assert len(commands) == 4
     assert all(command["argv"][1].endswith("scripts/paper/run_effnet_latent_augmix_stage3_20260524.py") for command in commands)
+
+
+def test_effnet_vae_lhat_rawjsd_curriculum_config_exposes_raw_corruption_flags():
+    config = _load("effnet_vae_lhat_rawjsd_curriculum_k500_v7_sjr_rgq.yaml")
+    validate_experiment_config(config, repo_root=REPO)
+    commands = build_runner_commands(config)
+
+    assert len(commands) == 4
+    for command in commands:
+        argv = command["argv"]
+        assert "--enable_raw_corrupt_consistency" in argv
+        assert _option_value(argv, "--raw_corrupt_consistency_loss") == "jsd"
+        assert _option_value(argv, "--raw_corrupt_copies") == "2"
+        assert _option_value(argv, "--raw_corrupt_prob") == "0.75"
+        assert _option_value(argv, "--raw_corrupt_severity") == "5"
+        assert _option_value(argv, "--raw_corrupt_severity_profile") == "standard"
+        assert _option_value(argv, "--raw_corrupt_consistency_weight") == "8.0"
+        assert _option_value(argv, "--raw_corrupt_bce_weight") == "0.05"
+        assert _option_value(argv, "--raw_corrupt_max_batches") == "8"
+        assert _option_value(argv, "--raw_corrupt_scope") == "target"
+        assert "--raw_corrupt_no_renorm" in argv
+        assert _all_option_values(argv, "--latent_augmix_ops") == [
+            "powerline_noise",
+            "emg_noise",
+            "baseline_wander",
+            "baseline_shift",
+            "random_leads_masking",
+        ]
+        assert _all_option_values(argv, "--raw_corrupt_ops") == [
+            "baseline_shift",
+            "random_leads_masking",
+            "baseline_shift",
+            "random_leads_masking",
+            "powerline_noise",
+            "emg_noise",
+            "baseline_wander",
+        ]
+        assert _option_value(argv, "--run_tag_extra") == "k500_rawjsd"
+
+
+def test_effnet_vae_lhat_rawsupervised_stressor_config_exposes_source_target_flags():
+    config = _load("effnet_vae_lhat_rawsupervised_stressor_k500_v7_sjr_rgq.yaml")
+    validate_experiment_config(config, repo_root=REPO)
+    commands = build_runner_commands(config)
+
+    assert len(commands) == 4
+    for command in commands:
+        argv = command["argv"]
+        assert "--enable_raw_corrupt_consistency" in argv
+        assert _option_value(argv, "--raw_corrupt_consistency_loss") == "jsd"
+        assert _option_value(argv, "--raw_corrupt_copies") == "2"
+        assert _option_value(argv, "--raw_corrupt_prob") == "1.0"
+        assert _option_value(argv, "--raw_corrupt_severity") == "5"
+        assert _option_value(argv, "--raw_corrupt_severity_profile") == "standard"
+        assert _option_value(argv, "--raw_corrupt_consistency_weight") == "2.0"
+        assert _option_value(argv, "--raw_corrupt_bce_weight") == "1.0"
+        assert _option_value(argv, "--raw_corrupt_max_batches") == "64"
+        assert _option_value(argv, "--raw_corrupt_scope") == "source_target"
+        assert "--raw_corrupt_no_renorm" in argv
+        assert _all_option_values(argv, "--raw_corrupt_ops") == [
+            "powerline_noise",
+            "emg_noise",
+            "baseline_wander",
+            "baseline_shift",
+            "random_leads_masking",
+        ]
+        assert _option_value(argv, "--run_tag_extra") == "k500_rawsupervised"
+
+
+def test_effnet_vae_lhat_calibrated_rawsupervised_config_exposes_profile_flag():
+    config = _load("effnet_vae_lhat_calibrated_rawsupervised_k500_v7_sjr_rgq.yaml")
+    validate_experiment_config(config, repo_root=REPO)
+    commands = build_runner_commands(config)
+
+    assert len(commands) == 4
+    for command in commands:
+        argv = command["argv"]
+        assert "--enable_raw_corrupt_consistency" in argv
+        assert _option_value(argv, "--raw_corrupt_severity") == "5"
+        assert _option_value(argv, "--raw_corrupt_severity_profile") == "calibrated_10to20pp"
+        assert _option_value(argv, "--raw_corrupt_scope") == "source_target"
+        assert _option_value(argv, "--run_tag_extra") == "k500_calrawsupervised"
+
+
+def test_effnet_vae_lhat_maskshift_consistency_config_exposes_targeted_flags():
+    config = _load("effnet_vae_lhat_maskshift_consistency_k500_v7_sjr_rgq.yaml")
+    validate_experiment_config(config, repo_root=REPO)
+    commands = build_runner_commands(config)
+
+    assert len(commands) == 4
+    for command in commands:
+        argv = command["argv"]
+        assert "--enable_mask_shift_consistency" in argv
+        assert "--enable_raw_corrupt_consistency" not in argv
+        assert _option_value(argv, "--mask_shift_consistency_loss") == "jsd"
+        assert _option_value(argv, "--mask_shift_copies") == "1"
+        assert _option_value(argv, "--mask_shift_mask_severity") == "5"
+        assert _option_value(argv, "--mask_shift_shift_severity") == "5"
+        assert _option_value(argv, "--mask_shift_consistency_weight") == "10.0"
+        assert _option_value(argv, "--mask_shift_bce_weight") == "0.05"
+        assert _option_value(argv, "--mask_shift_max_batches") == "0"
+        assert _option_value(argv, "--mask_shift_scope") == "target"
+        assert "--mask_shift_no_renorm" in argv
+        assert _option_value(argv, "--run_tag_extra") == "k500_maskshift"
+
+
+def test_effnet_vae_lhat_maskshift_smoke_config_targets_ningbo_only():
+    config = _load("effnet_vae_lhat_maskshift_consistency_k500_v7_sjr_rgq_smoke.yaml")
+    validate_experiment_config(config, repo_root=REPO)
+    commands = build_runner_commands(config)
+
+    assert len(commands) == 1
+    argv = commands[0]["argv"]
+    assert _option_value(argv, "--center") == "ningbo"
+    assert _option_value(argv, "--epochs") == "1"
+    assert _option_value(argv, "--num_workers") == "0"
+    assert _option_value(argv, "--mask_shift_max_batches") == "2"
 
 
 def test_runner_rejects_adapter_and_argv_together():
@@ -1607,6 +1793,7 @@ def test_ecgfounder_vae_lhat_k500_v7_config_uses_v7_direct_heads_and_refs():
         assert _option_value(argv, "--head_type") == "residual_adapter"
         assert "--freeze_base_head" in argv
         assert "--report_drop_all_zero_pn2021" in argv
+        assert "--enable_latent_augmix_branch" not in argv
         assert "--force" not in argv
 
     trace = manifest["artifact_trace"]
@@ -1644,6 +1831,33 @@ def test_ecgfounder_vae_lhat_k500_v7_config_uses_v7_direct_heads_and_refs():
             item["role"] == "checkpoint_index"
             and item["path"].endswith("/checkpoint_index.jsonl")
             for item in child_run["expected_artifacts"]
+        )
+
+
+def test_ecgfounder_vae_lhat_augmix_config_enables_latent_augmix_branch():
+    config = _load("ecgfounder_vae_lhat_augmix_k500_v7_sjr_rgq.yaml")
+    validate_experiment_config(config, repo_root=REPO)
+    commands = build_runner_commands(config)
+
+    assert config["experiment"]["name"] == "ecgfounder_vae_lhat_augmix_k500_v7_sjr_rgq"
+    assert len(commands) == 4
+    for command in commands:
+        argv = command["argv"]
+        assert "--enable_latent_augmix_branch" in argv
+        assert _option_value(argv, "--latent_augmix_latent_weight_cap") == "0.25"
+        assert _option_value(argv, "--latent_augmix_width") == "3"
+        assert _option_value(argv, "--latent_augmix_depth") == "-1"
+        assert _option_value(argv, "--latent_augmix_alpha") == "1.0"
+        assert _option_value(argv, "--latent_augmix_severity") == "2"
+        assert _all_option_values(argv, "--latent_augmix_ops") == [
+            "powerline_noise",
+            "emg_noise",
+            "baseline_wander",
+            "baseline_shift",
+        ]
+        assert _option_value(argv, "--out_dir").endswith(
+            "/runs/ecgfounder_vae_lhat_augmix_k500_v7_sjr_rgq/pytest_run/"
+            f"{command['matrix']['center']}"
         )
 
 
@@ -2188,6 +2402,88 @@ def test_pn2021c_effnet_v7_augmix_config_generates_refexcluded_corruption_comman
     child_runs = manifest["artifact_trace"]["expected_outputs"]["child_runs"]
     assert len(child_runs) == 8
     assert all(child["expected_artifacts"][0]["role"] == "eval_result" for child in child_runs)
+
+
+def test_pn2021c_effnet_v7_strong_config_uses_calibrated_profile():
+    config = _load("pn2021c_effnet_v7_strong_10to20pp.yaml")
+    validate_experiment_config(config, repo_root=REPO)
+    commands = build_runner_commands(config)
+
+    assert len(commands) == 8
+    assert config["experiment"]["name"] == "pn2021c_effnet_v7_strong_10to20pp"
+    assert config["evaluation"]["severity_profile"] == "calibrated_10to20pp"
+    assert config["evaluation"]["severities"] == [5]
+    for command in commands:
+        argv = command["argv"]
+        center = command["matrix"]["center"]
+        method = command["matrix"]["method"]["name"]
+        assert _option_value(argv, "--severity_profile") == "calibrated_10to20pp"
+        assert _option_value(argv, "--severities") == "5"
+        assert _option_value(argv, "--output_path").endswith(
+            f"/pn2021c_effnet_v7_strong_10to20pp/pytest_run/{center}/{method}/"
+            "eval_pn2021_c_v7_refexcluded_stream_calibrated_10to20pp.json"
+        )
+
+
+def test_pn2021c_effnet_v7_strong_smoke_config_targets_ningbo_only(tmp_path: Path):
+    config = _load("pn2021c_effnet_v7_strong_10to20pp_smoke.yaml")
+    local_paths = validate_experiment_config(config, repo_root=REPO)
+    commands = build_runner_commands(config)
+    manifest = make_dry_run_manifest(
+        config,
+        commands=commands,
+        local_paths=local_paths,
+        run_id="pytest_run",
+        postprocess_commands=[],
+        cli_args=argparse.Namespace(
+            config="configs/experiments/pn2021c_effnet_v7_strong_10to20pp_smoke.yaml",
+            local_config="configs/local/linbinhao_server.example.yaml",
+            run_id="pytest_run",
+            dry_run=True,
+            write_plan=True,
+        ),
+    )
+
+    assert len(commands) == 2
+    assert config["experiment"]["name"] == "pn2021c_effnet_v7_strong_10to20pp_smoke"
+    assert config["paper_protocol"]["centers"]["target_4"] == [
+        "ningbo",
+        "chapman_shaoxing",
+        "cpsc_2018",
+        "georgia",
+    ]
+    assert {command["matrix"]["center"] for command in commands} == {"ningbo"}
+    for command in commands:
+        argv = command["argv"]
+        assert _option_value(argv, "--severity_profile") == "calibrated_10to20pp"
+
+    traced_refs = manifest["artifact_trace"]["inputs"]["k500_refs"]
+    assert len(traced_refs) == 2
+    assert {ref["center"] for ref in traced_refs} == {"ningbo"}
+
+    artifact_path = tmp_path / "k500_ref_ids.json"
+    write_k500_ref_ids_artifact(manifest, artifact_path)
+    k500_payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+    assert set(k500_payload["centers"]) == {"ningbo"}
+
+
+def test_pn2021c_strong_raw_candidates_use_seed20260601_ref_exclusion():
+    config = _load("pn2021c_effnet_v7_strong_raw_candidates_smoke.yaml")
+    validate_experiment_config(config, repo_root=REPO)
+    commands = build_runner_commands(config)
+
+    assert config["paper_protocol"]["kshot"]["seed"] == 20260601
+    assert config["paper_protocol"]["kshot"]["subset_seed"] == 20260601
+    assert len(commands) == 5
+    for command in commands:
+        argv = command["argv"]
+        center = command["matrix"]["center"]
+        assert _option_value(argv, "--exclude_ref_ids").endswith(
+            f"/{center}/k500_seed20260601/{center}_real_k500_seed20260601.ref_meta.json"
+        )
+        assert _option_value(argv, "--severities") == "5"
+        assert _option_value(argv, "--num_workers") == "0"
+        assert _option_value(argv, "--centers") == "ningbo"
 
 
 def test_effnet_direct_smoke_command_limits_runtime_eval_samples():

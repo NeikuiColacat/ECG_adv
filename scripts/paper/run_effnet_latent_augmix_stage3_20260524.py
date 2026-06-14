@@ -40,6 +40,9 @@ from ecg_adv_gen.runner.effnet_vae_lhat import (  # noqa: E402
 )
 from ecg_adv_gen.runner.process import build_process_env, run_stream  # noqa: E402
 from methods.augmix.severity import AVAILABLE_OPS  # noqa: E402
+from scripts.triple_labels.eval_pn2021_corruptions import (  # noqa: E402
+    STRESS_PROFILE_CHOICES as PN2021C_STRESS_PROFILE_CHOICES,
+)
 from scripts.triple_labels.model_zoo import available_model_names  # noqa: E402
 
 CLASS_NAMES = list(CLASS_NAMES_SUPER5)
@@ -287,6 +290,15 @@ def main() -> None:
     ap.add_argument("--raw_corrupt_prob", type=float, default=0.5)
     ap.add_argument("--raw_corrupt_severity", type=int, default=4)
     ap.add_argument(
+        "--raw_corrupt_severity_profile",
+        choices=PN2021C_STRESS_PROFILE_CHOICES,
+        default="standard",
+        help=(
+            "Parameter profile forwarded to the raw corruption consistency branch. "
+            "Use calibrated_10to20pp to match the strong PN2021-C evaluator."
+        ),
+    )
+    ap.add_argument(
         "--raw_corrupt_ops",
         nargs="+",
         choices=AVAILABLE_OPS,
@@ -313,6 +325,32 @@ def main() -> None:
     )
     ap.add_argument("--raw_corrupt_no_renorm", action="store_true")
     ap.add_argument("--raw_corrupt_clip_abs", type=float, default=6.0)
+    ap.add_argument(
+        "--enable_mask_shift_consistency",
+        action="store_true",
+        help=(
+            "Enable the deterministic random_leads_masking + baseline_shift "
+            "consistency phase in synth_online_at_super5.py."
+        ),
+    )
+    ap.add_argument("--mask_shift_copies", type=int, default=1)
+    ap.add_argument("--mask_shift_mask_severity", type=int, default=6)
+    ap.add_argument("--mask_shift_shift_severity", type=int, default=6)
+    ap.add_argument("--mask_shift_consistency_weight", type=float, default=1.0)
+    ap.add_argument(
+        "--mask_shift_consistency_loss",
+        choices=["soft_bce", "jsd"],
+        default="jsd",
+    )
+    ap.add_argument("--mask_shift_bce_weight", type=float, default=0.05)
+    ap.add_argument("--mask_shift_max_batches", type=int, default=0)
+    ap.add_argument(
+        "--mask_shift_scope",
+        choices=["target", "source", "source_target"],
+        default="target",
+    )
+    ap.add_argument("--mask_shift_no_renorm", action="store_true")
+    ap.add_argument("--mask_shift_clip_abs", type=float, default=6.0)
     ap.add_argument(
         "--quick_eval_source",
         choices=["pn2021", "target_real_val"],

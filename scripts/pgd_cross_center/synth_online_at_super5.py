@@ -73,6 +73,10 @@ from adversarial.pgd_advdiff import PGDAdvDiffGenerator  # noqa: E402
 from methods.augmix.augmix import _apply_op  # noqa: E402
 from methods.augmix.jsd_loss import jsd_multilabel  # noqa: E402
 from methods.augmix.severity import AVAILABLE_OPS  # noqa: E402
+from scripts.triple_labels.eval_pn2021_corruptions import (  # noqa: E402
+    STRESS_PROFILE_CHOICES as PN2021C_STRESS_PROFILE_CHOICES,
+    _build_corruption_op as _build_pn2021c_corruption_op,
+)
 
 from scripts.crosscenter_tierM.online_adv_train_tierM import (  # noqa: E402
     _center_crop_ct,
@@ -266,6 +270,7 @@ def train_raw_corruption_consistency_epoch(
     *,
     copies: int,
     severity: int,
+    severity_profile: str,
     ops: List[str],
     prob: float,
     consistency_weight: float,
@@ -297,6 +302,9 @@ def train_raw_corruption_consistency_epoch(
         raise ValueError(f"unknown raw corruption consistency loss: {consistency_loss}")
     if consistency_loss == "jsd" and copies < 2:
         raise ValueError("--raw_corrupt_consistency_loss jsd requires --raw_corrupt_copies >= 2")
+    severity_profile = str(severity_profile)
+    if severity_profile not in PN2021C_STRESS_PROFILE_CHOICES:
+        raise ValueError(f"unknown raw corruption severity profile: {severity_profile}")
 
     losses: List[float] = []
     bce_losses: List[float] = []
@@ -314,6 +322,7 @@ def train_raw_corruption_consistency_epoch(
             clean_np,
             copies=copies,
             severity=severity,
+            severity_profile=severity_profile,
             ops=ops,
             prob=prob,
             rng=rng,
@@ -394,12 +403,182 @@ def train_raw_corruption_consistency_epoch(
         "corrupt_fraction": float(n_corrupted / max(1, n_generated)),
         "copies": int(copies),
         "severity": int(severity),
+        "severity_profile": str(severity_profile),
         "prob": float(prob),
         "consistency_weight": float(consistency_weight),
         "consistency_objective": str(consistency_loss),
         "bce_weight": float(bce_weight),
         "ops": list(ops),
         "op_counts": op_counts,
+        "renorm": bool(renorm),
+        "clip_abs": float(clip_abs),
+    }
+
+
+def train_mask_shift_consistency_epoch(
+    model: nn.Module,
+    loader: DataLoader,
+    optimizer: AdamW,
+    criterion: nn.Module,
+    device: str,
+    *,
+    copies: int,
+    mask_severity: int,
+    shift_severity: int,
+    consistency_weight: float,
+    bce_weight: float,
+    consistency_loss: str,
+    rng: np.random.Generator,
+    grad_clip: float,
+    trainable_params: List[nn.Parameter],
+    freeze_backbone_eval_fn: Optional[Callable[[], None]] = None,
+    max_batches: int = 0,
+    renorm: bool = False,
+    clip_abs: float = 6.0,
+) -> Dict[str, Any]:
+    """Train deterministic lead-mask and baseline-shift invariance views."""
+    if copies <= 0 or (consistency_weight <= 0 and bce_weight <= 0):
+        return {
+            "enabled": False,
+            "reason": "disabled_or_zero_weight",
+            "loss": float("nan"),
+            "bce_loss": float("nan"),
+            "consistency_loss": float("nan"),
+            "n_batches": 0,
+            "n_generated": 0,
+            "n_mask_generated": 0,
+            "n_shift_generated": 0,
+        }
+    consistency_loss = str(consistency_loss)
+    if consistency_loss not in {"soft_bce", "jsd"}:
+        raise ValueError(f"unknown mask-shift consistency loss: {consistency_loss}")
+
+    losses: List[float] = []
+    bce_losses: List[float] = []
+    consistency_losses: List[float] = []
+    n_mask_generated = 0
+    n_shift_generated = 0
+    n_mask_corrupted = 0
+    n_shift_corrupted = 0
+
+    for batch_i, (signals, labels) in enumerate(loader, start=1):
+        signals = signals.to(device, non_blocking=True)
+        labels = labels.to(device, non_blocking=True)
+
+        clean_np = signals.detach().cpu().numpy().astype(np.float32, copy=False)
+        mask_np, mask_stats = build_raw_corruption_views(
+            clean_np,
+            copies=copies,
+            severity=mask_severity,
+            ops=["random_leads_masking"],
+            prob=1.0,
+            rng=rng,
+            renorm=renorm,
+            clip_abs=clip_abs,
+        )
+        shift_np, shift_stats = build_raw_corruption_views(
+            clean_np,
+            copies=copies,
+            severity=shift_severity,
+            ops=["baseline_shift"],
+            prob=1.0,
+            rng=rng,
+            renorm=renorm,
+            clip_abs=clip_abs,
+        )
+        corrupt_np = np.concatenate([mask_np, shift_np], axis=0)
+        total_views = int(corrupt_np.shape[0] // max(1, signals.shape[0]))
+        if corrupt_np.shape[0] == 0 or total_views <= 0:
+            continue
+
+        labels_rep = labels.repeat((total_views, 1))
+        corrupt = torch.from_numpy(corrupt_np).float().to(device, non_blocking=True)
+
+        model.train()
+        if freeze_backbone_eval_fn is not None:
+            freeze_backbone_eval_fn()
+        optimizer.zero_grad(set_to_none=True)
+        if consistency_loss == "soft_bce":
+            with torch.no_grad():
+                clean_logits = model(signals)
+                soft_targets = torch.sigmoid(clean_logits).detach()
+            logits = model(corrupt)
+            soft_rep = soft_targets.repeat((total_views, 1))
+
+            mask = (labels_rep >= 0).float()
+            labels_clamp = labels_rep.clamp(min=0.0)
+            denom = mask.sum().clamp(min=1.0)
+            hard_bce = (criterion(logits, labels_clamp) * mask).sum() / denom
+            mask_shift_consistency = (
+                F.binary_cross_entropy_with_logits(logits, soft_rep, reduction="none") * mask
+            ).sum() / denom
+        else:
+            clean_logits = model(signals)
+            logits = model(corrupt)
+            logits_views = logits.view(total_views, signals.shape[0], -1)
+
+            mask_clean = (labels >= 0).float()
+            denom_clean = mask_clean.sum().clamp(min=1.0)
+            clean_hard_bce = (
+                criterion(clean_logits, labels.clamp(min=0.0)) * mask_clean
+            ).sum() / denom_clean
+
+            mask_rep = (labels_rep >= 0).float()
+            labels_rep_clamp = labels_rep.clamp(min=0.0)
+            denom_rep = mask_rep.sum().clamp(min=1.0)
+            corrupt_hard_bce = (criterion(logits, labels_rep_clamp) * mask_rep).sum() / denom_rep
+            hard_bce = 0.5 * (clean_hard_bce + corrupt_hard_bce)
+
+            mask_logits = logits_views[: int(copies)]
+            shift_logits = logits_views[int(copies): int(copies) * 2]
+            jsd_terms = [
+                jsd_multilabel(clean_logits, mask_logits[copy_i], shift_logits[copy_i])
+                for copy_i in range(int(copies))
+            ]
+            mask_shift_consistency = torch.stack(jsd_terms).mean()
+
+        loss = float(bce_weight) * hard_bce + float(consistency_weight) * mask_shift_consistency
+        loss.backward()
+        if grad_clip > 0:
+            nn.utils.clip_grad_norm_(trainable_params, grad_clip)
+        optimizer.step()
+
+        losses.append(float(loss.item()))
+        bce_losses.append(float(hard_bce.item()))
+        consistency_losses.append(float(mask_shift_consistency.item()))
+        n_mask_generated += int(mask_stats.get("n_generated", 0))
+        n_shift_generated += int(shift_stats.get("n_generated", 0))
+        n_mask_corrupted += int(mask_stats.get("n_corrupted", 0))
+        n_shift_corrupted += int(shift_stats.get("n_corrupted", 0))
+        if max_batches > 0 and batch_i >= max_batches:
+            break
+
+    n_generated = n_mask_generated + n_shift_generated
+    n_corrupted = n_mask_corrupted + n_shift_corrupted
+    return {
+        "enabled": True,
+        "loss": float(np.mean(losses)) if losses else float("nan"),
+        "bce_loss": float(np.mean(bce_losses)) if bce_losses else float("nan"),
+        "consistency_loss": float(np.mean(consistency_losses)) if consistency_losses else float("nan"),
+        "n_batches": len(losses),
+        "n_generated": int(n_generated),
+        "n_corrupted": int(n_corrupted),
+        "corrupt_fraction": float(n_corrupted / max(1, n_generated)),
+        "n_mask_generated": int(n_mask_generated),
+        "n_shift_generated": int(n_shift_generated),
+        "n_mask_corrupted": int(n_mask_corrupted),
+        "n_shift_corrupted": int(n_shift_corrupted),
+        "copies_per_op": int(copies),
+        "mask_severity": int(mask_severity),
+        "shift_severity": int(shift_severity),
+        "consistency_weight": float(consistency_weight),
+        "consistency_objective": str(consistency_loss),
+        "bce_weight": float(bce_weight),
+        "ops": ["random_leads_masking", "baseline_shift"],
+        "op_counts": {
+            "random_leads_masking": int(n_mask_corrupted),
+            "baseline_shift": int(n_shift_corrupted),
+        },
         "renorm": bool(renorm),
         "clip_abs": float(clip_abs),
     }
@@ -1131,6 +1310,7 @@ def build_raw_corruption_views(
     *,
     copies: int,
     severity: int,
+    severity_profile: str = "standard",
     ops: List[str],
     prob: float,
     rng: np.random.Generator,
@@ -1141,9 +1321,12 @@ def build_raw_corruption_views(
 
     def _apply_augmix_op_np(sig_ct: np.ndarray, op_name: str, op_severity: int) -> np.ndarray:
         sig_t = torch.from_numpy(sig_ct.copy()).float()
-        return _apply_op(sig_t, op_name, int(op_severity)).cpu().numpy().astype(np.float32, copy=False)
+        if severity_profile == "standard":
+            return _apply_op(sig_t, op_name, int(op_severity)).cpu().numpy().astype(np.float32, copy=False)
+        op = _build_pn2021c_corruption_op(op_name, int(op_severity), severity_profile)
+        return op(sig_t).cpu().numpy().astype(np.float32, copy=False)
 
-    return _build_raw_corruption_views_core(
+    arr, stats = _build_raw_corruption_views_core(
         signals_ct,
         copies=copies,
         severity=severity,
@@ -1155,6 +1338,8 @@ def build_raw_corruption_views(
         renorm=renorm,
         clip_abs=clip_abs,
     )
+    stats["severity_profile"] = str(severity_profile)
+    return arr, stats
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -1472,6 +1657,16 @@ def parse_args():
     p.add_argument("--raw_corrupt_prob", type=float, default=0.5)
     p.add_argument("--raw_corrupt_severity", type=int, default=4)
     p.add_argument(
+        "--raw_corrupt_severity_profile",
+        choices=PN2021C_STRESS_PROFILE_CHOICES,
+        default="standard",
+        help=(
+            "Parameter profile used by the raw ECG corruption consistency branch. "
+            "'standard' preserves the training-time AugMix severity table; "
+            "'calibrated_10to20pp' matches the strong PN2021-C evaluation profile."
+        ),
+    )
+    p.add_argument(
         "--raw_corrupt_ops",
         nargs="+",
         default=[
@@ -1509,6 +1704,34 @@ def parse_args():
     )
     p.add_argument("--raw_corrupt_no_renorm", action="store_true")
     p.add_argument("--raw_corrupt_clip_abs", type=float, default=6.0)
+    p.add_argument(
+        "--enable_mask_shift_consistency",
+        action="store_true",
+        help=(
+            "After the normal mixed epoch, train deterministic target-real "
+            "views for random_leads_masking and baseline_shift. This is a "
+            "targeted lead-invariance branch for PN2021-C masking/shift "
+            "stressors, separate from random raw-corruption sampling."
+        ),
+    )
+    p.add_argument("--mask_shift_copies", type=int, default=1)
+    p.add_argument("--mask_shift_mask_severity", type=int, default=6)
+    p.add_argument("--mask_shift_shift_severity", type=int, default=6)
+    p.add_argument("--mask_shift_consistency_weight", type=float, default=1.0)
+    p.add_argument(
+        "--mask_shift_consistency_loss",
+        choices=["soft_bce", "jsd"],
+        default="jsd",
+    )
+    p.add_argument("--mask_shift_bce_weight", type=float, default=0.05)
+    p.add_argument("--mask_shift_max_batches", type=int, default=0)
+    p.add_argument(
+        "--mask_shift_scope",
+        choices=["target", "source", "source_target"],
+        default="target",
+    )
+    p.add_argument("--mask_shift_no_renorm", action="store_true")
+    p.add_argument("--mask_shift_clip_abs", type=float, default=6.0)
     p.add_argument("--roundtrip_anchor_n", type=int, default=1500)
     p.add_argument("--qab_size", type=int, default=2048)
     p.add_argument(
@@ -1887,12 +2110,47 @@ def main():
         print(
             "[setup] raw corruption consistency enabled: "
             f"copies={args.raw_corrupt_copies} severity={args.raw_corrupt_severity} "
+            f"profile={args.raw_corrupt_severity_profile} "
             f"prob={args.raw_corrupt_prob} "
             f"weights=(consistency={args.raw_corrupt_consistency_weight}, "
             f"bce={args.raw_corrupt_bce_weight}) "
             f"scope={args.raw_corrupt_scope} n={len(raw_corrupt_ds)} "
             f"ops={args.raw_corrupt_ops} "
             f"max_batches={args.raw_corrupt_max_batches or 'full'}",
+            flush=True,
+        )
+
+    mask_shift_consistency_loader = None
+    if args.enable_mask_shift_consistency:
+        if args.mask_shift_scope == "target":
+            if target_real_ds is None:
+                raise ValueError("--enable_mask_shift_consistency with --mask_shift_scope target requires --target_real_npz")
+            mask_shift_ds = target_real_ds
+        elif args.mask_shift_scope == "source":
+            mask_shift_ds = train_ds
+        else:
+            if target_real_ds is None:
+                raise ValueError("--enable_mask_shift_consistency with --mask_shift_scope source_target requires --target_real_npz")
+            mask_shift_ds = ConcatDataset([train_ds, target_real_ds])
+        mask_shift_consistency_loader = DataLoader(
+            mask_shift_ds,
+            batch_size=args.batch_size,
+            shuffle=True,
+            num_workers=args.num_workers,
+            pin_memory=True,
+            drop_last=True,
+            persistent_workers=args.num_workers > 0,
+        )
+        print(
+            "[setup] mask/shift consistency enabled: "
+            f"copies_per_op={args.mask_shift_copies} "
+            f"mask_severity={args.mask_shift_mask_severity} "
+            f"shift_severity={args.mask_shift_shift_severity} "
+            f"weights=(consistency={args.mask_shift_consistency_weight}, "
+            f"bce={args.mask_shift_bce_weight}) "
+            f"loss={args.mask_shift_consistency_loss} "
+            f"scope={args.mask_shift_scope} n={len(mask_shift_ds)} "
+            f"max_batches={args.mask_shift_max_batches or 'full'}",
             flush=True,
         )
 
@@ -2165,6 +2423,7 @@ def main():
             "copies": int(args.raw_corrupt_copies),
             "prob": float(args.raw_corrupt_prob),
             "severity": int(args.raw_corrupt_severity),
+            "severity_profile": str(args.raw_corrupt_severity_profile),
             "ops": list(args.raw_corrupt_ops),
             "consistency_weight": float(args.raw_corrupt_consistency_weight),
             "consistency_loss": str(args.raw_corrupt_consistency_loss),
@@ -2173,6 +2432,19 @@ def main():
             "scope": str(args.raw_corrupt_scope),
             "renorm": not bool(args.raw_corrupt_no_renorm),
             "clip_abs": float(args.raw_corrupt_clip_abs),
+        },
+        "mask_shift_consistency": {
+            "enabled": bool(args.enable_mask_shift_consistency),
+            "copies_per_op": int(args.mask_shift_copies),
+            "mask_severity": int(args.mask_shift_mask_severity),
+            "shift_severity": int(args.mask_shift_shift_severity),
+            "consistency_weight": float(args.mask_shift_consistency_weight),
+            "consistency_loss": str(args.mask_shift_consistency_loss),
+            "bce_weight": float(args.mask_shift_bce_weight),
+            "max_batches": int(args.mask_shift_max_batches),
+            "scope": str(args.mask_shift_scope),
+            "renorm": not bool(args.mask_shift_no_renorm),
+            "clip_abs": float(args.mask_shift_clip_abs),
         },
         "epochs": [],
     }
@@ -2546,6 +2818,7 @@ def main():
                 device=args.device,
                 copies=args.raw_corrupt_copies,
                 severity=args.raw_corrupt_severity,
+                severity_profile=args.raw_corrupt_severity_profile,
                 ops=list(args.raw_corrupt_ops),
                 prob=args.raw_corrupt_prob,
                 consistency_weight=args.raw_corrupt_consistency_weight,
@@ -2558,6 +2831,28 @@ def main():
                 max_batches=args.raw_corrupt_max_batches,
                 renorm=not args.raw_corrupt_no_renorm,
                 clip_abs=args.raw_corrupt_clip_abs,
+            )
+        mask_shift_stats = {"enabled": False, "reason": "disabled"}
+        if args.enable_mask_shift_consistency and mask_shift_consistency_loader is not None:
+            mask_shift_stats = train_mask_shift_consistency_epoch(
+                model=victim.model,
+                loader=mask_shift_consistency_loader,
+                optimizer=optimizer,
+                criterion=criterion,
+                device=args.device,
+                copies=args.mask_shift_copies,
+                mask_severity=args.mask_shift_mask_severity,
+                shift_severity=args.mask_shift_shift_severity,
+                consistency_weight=args.mask_shift_consistency_weight,
+                bce_weight=args.mask_shift_bce_weight,
+                consistency_loss=args.mask_shift_consistency_loss,
+                rng=rng,
+                grad_clip=args.grad_clip,
+                trainable_params=trainable_params,
+                freeze_backbone_eval_fn=freeze_backbone_eval_fn,
+                max_batches=args.mask_shift_max_batches,
+                renorm=not args.mask_shift_no_renorm,
+                clip_abs=args.mask_shift_clip_abs,
             )
         source_logit_anchor_loss = float("nan")
         if (
@@ -2612,6 +2907,18 @@ def main():
             if raw_corrupt_stats.get("consistency_loss", float("nan"))
             == raw_corrupt_stats.get("consistency_loss", float("nan"))
             else None,
+            "mask_shift_loss": round(float(mask_shift_stats.get("loss", float("nan"))), 6)
+            if mask_shift_stats.get("loss", float("nan")) == mask_shift_stats.get("loss", float("nan"))
+            else None,
+            "mask_shift_bce_loss": round(float(mask_shift_stats.get("bce_loss", float("nan"))), 6)
+            if mask_shift_stats.get("bce_loss", float("nan")) == mask_shift_stats.get("bce_loss", float("nan"))
+            else None,
+            "mask_shift_consistency_loss": round(
+                float(mask_shift_stats.get("consistency_loss", float("nan"))), 6
+            )
+            if mask_shift_stats.get("consistency_loss", float("nan"))
+            == mask_shift_stats.get("consistency_loss", float("nan"))
+            else None,
             "source_logit_anchor_loss": round(source_logit_anchor_loss, 6)
             if source_logit_anchor_loss == source_logit_anchor_loss else None,
             "val_loss":   round(val_loss, 4),
@@ -2660,6 +2967,7 @@ def main():
             "latent_augmix_stats": latent_augmix_stats,
             "latent_augmix_push_stats": latent_augmix_push_stats,
             "raw_corrupt_stats": raw_corrupt_stats,
+            "mask_shift_stats": mask_shift_stats,
             "adv_weight_effective": round(float(epoch_adv_weight), 6),
             "adv_weight_warmup_epochs": int(args.adv_weight_warmup_epochs),
             "anchor_class_quotas": dict(k_per_cls),

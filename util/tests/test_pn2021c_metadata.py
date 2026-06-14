@@ -2,6 +2,7 @@ import pytest
 
 from ecg_adv_gen.evaluation.pn2021c_metadata import (
     PN2021CMetadataError,
+    build_center_scoped_clean_eval_payload,
     build_pn2021c_metadata_payload,
     validate_pn2021c_metadata_compatibility,
 )
@@ -128,6 +129,44 @@ def test_pn2021c_metadata_supports_clean_eval_nested_mapping_shape():
         center="ningbo",
         required_cache_version="v7_refexcluded_100hz1000",
     )["label_mapping_hash"] == "hash-v7"
+
+
+def test_pn2021c_metadata_builds_center_scoped_clean_payload_for_legacy_clean_eval():
+    legacy = {
+        "label_mapping": {
+            "pn2021_super5": {"mapping_version": "v7", "mapping_hash": "hash-v7"}
+        },
+        "preprocess_config": {
+            "preprocess_mode": "minimal_resample",
+            "norm_mode": "per_sample_global",
+            "target_len": 1000,
+        },
+        "pn2021": {
+            "per_center": {
+                "ningbo": {"macro_auroc": 0.1, "macro_auprc": 0.2},
+            },
+        },
+    }
+    clean = build_center_scoped_clean_eval_payload(
+        legacy,
+        center="ningbo",
+        n_excluded_ref=500,
+        ref_record_ids_sha256="refhash",
+        preprocess_contract_id="ptbxl_pn2021_super5_ecgtwin_decode_v1",
+        preprocess_mode="minimal_resample",
+        norm_mode="per_sample_global",
+        crop_len=1000,
+        clean_metrics={"macro_auroc": 0.9, "macro_auprc": 0.5},
+    )
+
+    assert clean["pn2021"]["eval_protocol"]["center_scoped_for_pn2021c"] is True
+    assert clean["pn2021"]["per_center"]["ningbo"]["macro_auroc"] == 0.9
+    assert validate_pn2021c_metadata_compatibility(
+        clean_eval=clean,
+        corrupt_metadata=_corrupt(),
+        center="ningbo",
+        required_cache_version="v7_refexcluded_100hz1000",
+    )["compatible"] is True
 
 
 def test_build_pn2021c_metadata_payload_canonicalizes_clean_cache_metadata():

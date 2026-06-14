@@ -1572,7 +1572,7 @@ def audit_runner_commands(config: dict[str, Any], commands: list[dict[str, Any]]
             )
             _audit_equals(errors, script, opts, "--mode", "stream")
             _audit_equals(errors, script, opts, "--scheme", "super5")
-            _audit_equals(errors, script, opts, "--severity_profile", "standard")
+            _audit_equals(errors, script, opts, "--severity_profile", config["evaluation"]["severity_profile"])
             _audit_equals(errors, script, opts, "--crop_len", config["preprocess"]["crop_len"])
             _audit_equals(errors, script, opts, "--min_pos", config["evaluation"]["min_pos"])
             if str(_opt_first(opts, "--device", "")) != "cuda":

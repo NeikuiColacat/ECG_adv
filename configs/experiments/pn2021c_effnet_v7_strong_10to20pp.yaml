@@ -1,0 +1,16 @@
+extends:
+  - pn2021c_effnet_v7_augmix_vs_noaug.yaml
+
+experiment:
+  name: pn2021c_effnet_v7_strong_10to20pp
+  description: Managed PN2021-C Super5 v7 ref-excluded strong corruption evaluation using the calibrated 10-20 pp single-operator profile for EfficientNet1DV2 VAE noAug and VAE LHAT runs.
+
+evaluation:
+  severity_profile: calibrated_10to20pp
+  severities: [5]
+
+logging:
+  child_artifacts:
+    - eval_pn2021_c_v7_refexcluded_stream_calibrated_10to20pp.json
+  postprocess_artifacts:
+    - pn2021c_strong_10to20pp.csv

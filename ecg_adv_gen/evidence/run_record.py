@@ -326,6 +326,18 @@ def _target_centers_from_protocol(protocol: dict[str, Any]) -> list[str]:
     return [str(item) for item in values if str(item)]
 
 
+def _k500_centers_from_manifest(manifest: dict[str, Any]) -> list[str]:
+    expected = ((manifest.get("artifact_trace") or {}).get("expected_outputs") or {})
+    centers: list[str] = []
+    for child in expected.get("child_runs") or []:
+        center = str(child.get("center") or "")
+        if center and center not in centers:
+            centers.append(center)
+    if centers:
+        return centers
+    return _target_centers_from_protocol(manifest.get("paper_protocol") or {})
+
+
 def _artifact_records_by_source(manifest: dict[str, Any], source: str) -> list[dict[str, Any]]:
     expected = ((manifest.get("artifact_trace") or {}).get("expected_outputs") or {})
     if source == "launch":
@@ -479,7 +491,7 @@ def _validate_k500_ref_ids_content(run_dir: Path, manifest: dict[str, Any]) -> l
 
     paper = manifest.get("paper_protocol") or {}
     kshot = paper.get("kshot") or {}
-    expected_centers = _target_centers_from_protocol(paper)
+    expected_centers = _k500_centers_from_manifest(manifest)
     expected_k = int(kshot.get("k", 0) or 0)
     expected_seed = int(kshot.get("subset_seed", kshot.get("seed", 0)) or 0)
     metadata = _expected_mapping_metadata(manifest)

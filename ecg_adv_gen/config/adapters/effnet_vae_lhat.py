@@ -14,6 +14,17 @@ from .common import (
 )
 
 
+def _append_optional_value(argv: list[Any], option: str, value: Any) -> None:
+    if value is not None:
+        argv.extend([option, value])
+
+
+def _append_optional_sequence(argv: list[Any], option: str, values: Any) -> None:
+    if values:
+        argv.append(option)
+        argv.extend(list(values))
+
+
 def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, Any]) -> list[Any]:
     """Build legacy argv for the EfficientNet VAE-LHAT wrapper from typed config fields."""
 
@@ -46,8 +57,11 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
         f"{kshot_subset_root}/{center}/k{k}_seed{seed}/"
         f"{center}_real_k{k}_seed{seed}"
     )
+    latent_augmix = adaptation["latent_augmix"]
+    raw_corrupt = adaptation.get("raw_corrupt_consistency") or {}
+    mask_shift = adaptation.get("mask_shift_consistency") or {}
 
-    return [
+    argv: list[Any] = [
         "--center",
         center,
         "--epochs",
@@ -112,15 +126,15 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
         "--ptbxl_weight",
         "1.0",
         "--latent_augmix_latent_weight_cap",
-        adaptation["latent_augmix"]["latent_weight_cap"],
+        latent_augmix["latent_weight_cap"],
         "--latent_augmix_width",
-        adaptation["latent_augmix"]["width"],
+        latent_augmix["width"],
         "--latent_augmix_depth",
-        adaptation["latent_augmix"]["depth"],
+        latent_augmix["depth"],
         "--latent_augmix_alpha",
-        adaptation["latent_augmix"]["alpha"],
+        latent_augmix["alpha"],
         "--latent_augmix_severity",
-        adaptation["latent_augmix"]["severity"],
+        latent_augmix["severity"],
         "--quick_eval_source",
         "target_real_val",
         "--target_real_val_fraction",
@@ -134,6 +148,54 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
         "--eval_pn2021_limit",
         evaluation["pn2021_limit"],
     ]
+    _append_optional_sequence(argv, "--latent_augmix_ops", latent_augmix.get("ops"))
+    if raw_corrupt.get("enabled"):
+        argv.append("--enable_raw_corrupt_consistency")
+        _append_optional_value(argv, "--raw_corrupt_copies", raw_corrupt.get("copies"))
+        _append_optional_value(argv, "--raw_corrupt_prob", raw_corrupt.get("prob"))
+        _append_optional_value(argv, "--raw_corrupt_severity", raw_corrupt.get("severity"))
+        _append_optional_value(
+            argv,
+            "--raw_corrupt_severity_profile",
+            raw_corrupt.get("severity_profile", "standard"),
+        )
+        _append_optional_sequence(argv, "--raw_corrupt_ops", raw_corrupt.get("ops"))
+        _append_optional_value(
+            argv,
+            "--raw_corrupt_consistency_weight",
+            raw_corrupt.get("consistency_weight"),
+        )
+        _append_optional_value(argv, "--raw_corrupt_consistency_loss", raw_corrupt.get("consistency_loss"))
+        _append_optional_value(argv, "--raw_corrupt_bce_weight", raw_corrupt.get("bce_weight"))
+        _append_optional_value(argv, "--raw_corrupt_max_batches", raw_corrupt.get("max_batches"))
+        _append_optional_value(argv, "--raw_corrupt_scope", raw_corrupt.get("scope"))
+        _append_optional_value(argv, "--raw_corrupt_clip_abs", raw_corrupt.get("clip_abs"))
+        if raw_corrupt.get("no_renorm"):
+            argv.append("--raw_corrupt_no_renorm")
+    if mask_shift.get("enabled"):
+        argv.append("--enable_mask_shift_consistency")
+        _append_optional_value(argv, "--mask_shift_copies", mask_shift.get("copies"))
+        _append_optional_value(argv, "--mask_shift_mask_severity", mask_shift.get("mask_severity"))
+        _append_optional_value(argv, "--mask_shift_shift_severity", mask_shift.get("shift_severity"))
+        _append_optional_value(
+            argv,
+            "--mask_shift_consistency_weight",
+            mask_shift.get("consistency_weight"),
+        )
+        _append_optional_value(argv, "--mask_shift_consistency_loss", mask_shift.get("consistency_loss"))
+        _append_optional_value(argv, "--mask_shift_bce_weight", mask_shift.get("bce_weight"))
+        _append_optional_value(argv, "--mask_shift_max_batches", mask_shift.get("max_batches"))
+        _append_optional_value(argv, "--mask_shift_scope", mask_shift.get("scope"))
+        _append_optional_value(argv, "--mask_shift_clip_abs", mask_shift.get("clip_abs"))
+        if mask_shift.get("no_renorm"):
+            argv.append("--mask_shift_no_renorm")
+    run_tag_extra = (
+        adaptation.get("run_tag_extra")
+        or mask_shift.get("run_tag_extra")
+        or raw_corrupt.get("run_tag_extra")
+    )
+    _append_optional_value(argv, "--run_tag_extra", run_tag_extra)
+    return argv
 
 
 def audit_effnet_vae_lhat_command(

@@ -49,3 +49,51 @@ def test_pn2021c_eval_adapter_requires_clean_eval_and_cache_version():
     assert argv[argv.index("--exclude_ref_ids") + 1].endswith(
         "/ningbo/k500_seed20260531/ningbo_real_k500_seed20260531.ref_meta.json"
     )
+
+
+def test_pn2021c_eval_adapter_uses_configured_severity_profile_in_output_name():
+    config = _config()
+    config["evaluation"]["severity_profile"] = "calibrated_10to20pp"
+    config["evaluation"]["severities"] = [5]
+    argv = [
+        str(x)
+        for x in build_pn2021c_eval_argv(
+            config,
+            {"matrix": {"center": "georgia", "method": {"name": "vae_lhat", "family": "family", "noaug_suffix": ""}}},
+        )
+    ]
+
+    assert argv[argv.index("--severity_profile") + 1] == "calibrated_10to20pp"
+    assert argv[argv.index("--severities") + 1] == "5"
+    assert argv[argv.index("--output_path") + 1].endswith(
+        "/pn2021c_eval/run1/georgia/vae_lhat/"
+        "eval_pn2021_c_v7_refexcluded_stream_calibrated_10to20pp.json"
+    )
+
+
+def test_pn2021c_eval_adapter_allows_method_level_run_overrides():
+    config = _config()
+    method = {
+        "name": "rawjsd",
+        "family": "effnet_vae_lhat_k500_v7_sjr_rgq",
+        "run_stamp": "20260530_rawjsd_s5c2_w8_lowbce",
+        "run_leaf_stem": "raw_leaf",
+        "eval_seed": 20260601,
+        "epochs": 30,
+        "clean_eval_name": "clean.json",
+    }
+    argv = [
+        str(x)
+        for x in build_pn2021c_eval_argv(
+            config,
+            {"matrix": {"center": "ningbo", "method": method}},
+        )
+    ]
+    model_dir = argv[argv.index("--model_dir") + 1]
+
+    assert model_dir == (
+        "/out/effnet_vae_lhat_k500_v7_sjr_rgq/"
+        "seed20260601_k500_v7_sjr_rgq_20260530_rawjsd_s5c2_w8_lowbce/"
+        "ningbo_raw_leaf_fullft_k500_ep30_seed20260601"
+    )
+    assert argv[argv.index("--clean_eval_json") + 1] == f"{model_dir}/clean.json"

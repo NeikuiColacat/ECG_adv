@@ -56,6 +56,8 @@ def build_benchmark_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[st
     k = int(kshot["k"])
     seed = int(kshot.get("subset_seed", kshot["seed"]))
     model_name = str(model["name"])
+    output_family = str(model.get("output_family") or f"{model_name}_vae_lhat_k500_v7_sjr_rgq")
+    latent_augmix = adaptation.get("latent_augmix") or {}
     direct_init_ckpt = model.get("direct_init_ckpt") or _benchmark_direct_init_ckpt(
         output_root=str(paths["output_root"]),
         model_name=model_name,
@@ -69,7 +71,7 @@ def build_benchmark_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[st
         f"{center}_real_k{k}_seed{seed}"
     )
 
-    return [
+    argv: list[Any] = [
         "--center",
         center,
         "--model_name",
@@ -85,7 +87,7 @@ def build_benchmark_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[st
         "--data_root",
         paths["data_root"],
         "--out_root",
-        f"{paths['output_root']}/{model_name}_vae_lhat_k500_v7_sjr_rgq/{runtime['run_id']}",
+        f"{paths['output_root']}/{output_family}/{runtime['run_id']}",
         "--init_ckpt",
         direct_init_ckpt,
         "--anchor_base",
@@ -135,29 +137,42 @@ def build_benchmark_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[st
         training["batch_size"],
         "--ptbxl_weight",
         "1.0",
-        "--latent_augmix_latent_weight_cap",
-        adaptation["latent_augmix"]["latent_weight_cap"],
-        "--latent_augmix_width",
-        adaptation["latent_augmix"]["width"],
-        "--latent_augmix_depth",
-        adaptation["latent_augmix"]["depth"],
-        "--latent_augmix_alpha",
-        adaptation["latent_augmix"]["alpha"],
-        "--latent_augmix_severity",
-        adaptation["latent_augmix"]["severity"],
-        "--quick_eval_source",
-        "target_real_val",
-        "--target_real_val_fraction",
-        "0.2",
-        "--target_real_val_seed",
-        seed,
-        "--eval_batch_size",
-        training["eval_batch_size"],
-        "--eval_min_pos",
-        evaluation["min_pos"],
-        "--eval_pn2021_limit",
-        evaluation["pn2021_limit"],
     ]
+    if bool(latent_augmix.get("enabled", True)):
+        argv.extend(
+            [
+                "--latent_augmix_latent_weight_cap",
+                latent_augmix["latent_weight_cap"],
+                "--latent_augmix_width",
+                latent_augmix["width"],
+                "--latent_augmix_depth",
+                latent_augmix["depth"],
+                "--latent_augmix_alpha",
+                latent_augmix["alpha"],
+                "--latent_augmix_severity",
+                latent_augmix["severity"],
+            ]
+        )
+    else:
+        argv.append("--disable_latent_augmix_branch")
+        argv.extend(["--run_tag_extra", latent_augmix.get("run_tag_extra", "noaugmix")])
+    argv.extend(
+        [
+            "--quick_eval_source",
+            "target_real_val",
+            "--target_real_val_fraction",
+            "0.2",
+            "--target_real_val_seed",
+            seed,
+            "--eval_batch_size",
+            training["eval_batch_size"],
+            "--eval_min_pos",
+            evaluation["min_pos"],
+            "--eval_pn2021_limit",
+            evaluation["pn2021_limit"],
+        ]
+    )
+    return argv
 
 
 def audit_benchmark_vae_lhat_command(
@@ -177,8 +192,14 @@ def audit_benchmark_vae_lhat_command(
     expected_k = int(case.get("k", kshot["k"]))
     expected_seed = int(case.get("seed", kshot.get("subset_seed", kshot["seed"])))
     expected_model = str((config.get("model") or {}).get("name") or "")
+    expected_output_family = str(
+        (config.get("model") or {}).get("output_family")
+        or f"{expected_model}_vae_lhat_k500_v7_sjr_rgq"
+    )
     target_centers = set(config["paper_protocol"]["centers"]["target_4"])
     run_id = str((config.get("runtime") or {}).get("run_id") or "")
+    latent_augmix = (config.get("adaptation") or {}).get("latent_augmix") or {}
+    latent_augmix_enabled = bool(latent_augmix.get("enabled", True))
 
     if script != "run_effnet_latent_augmix_stage3_20260524.py":
         errors.append(
@@ -234,6 +255,32 @@ def audit_benchmark_vae_lhat_command(
     if f"k{expected_k}_seed{expected_seed}" not in anchor_base:
         errors.append(f"{script}: anchor_base does not encode K{expected_k}/seed{expected_seed}")
     out_root = str(opt_first(opts, "--out_root", ""))
-    if expected_model and f"/{expected_model}_vae_lhat_k500_v7_sjr_rgq/{run_id}" not in out_root:
+    if expected_output_family and f"/{expected_output_family}/{run_id}" not in out_root:
         errors.append(f"{script}: out_root must be scoped to benchmark VAE-LHAT model/run_id")
+    if latent_augmix_enabled:
+        if "--disable_latent_augmix_branch" in opts:
+            errors.append(f"{script}: latent AugMix enabled config must not pass --disable_latent_augmix_branch")
+        for name in [
+            "--latent_augmix_latent_weight_cap",
+            "--latent_augmix_width",
+            "--latent_augmix_depth",
+            "--latent_augmix_alpha",
+            "--latent_augmix_severity",
+        ]:
+            if name not in opts:
+                errors.append(f"{script}: latent AugMix enabled config missing {name}")
+    else:
+        if "--disable_latent_augmix_branch" not in opts:
+            errors.append(f"{script}: latent AugMix disabled config must pass --disable_latent_augmix_branch")
+        if str(opt_first(opts, "--run_tag_extra", "")) != "noaugmix":
+            errors.append(f"{script}: latent AugMix disabled config must tag runs with --run_tag_extra noaugmix")
+        for name in [
+            "--latent_augmix_latent_weight_cap",
+            "--latent_augmix_width",
+            "--latent_augmix_depth",
+            "--latent_augmix_alpha",
+            "--latent_augmix_severity",
+        ]:
+            if name in opts:
+                errors.append(f"{script}: latent AugMix disabled config must not pass {name}")
     return {"errors": errors, "warnings": warnings}

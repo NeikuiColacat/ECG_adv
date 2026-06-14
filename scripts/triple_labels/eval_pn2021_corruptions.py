@@ -19,8 +19,6 @@ from torch.utils.data import DataLoader, Dataset
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..",
                                 "model", "DeepECG", "notebooks"))
-
-from EfficientNetv2 import EfficientNet1DV2  # noqa: E402
 from scripts.triple_labels.build_pn2021_corruptions import (  # noqa: E402
     DEFAULT_CENTERS,
     DEFAULT_CORRUPTIONS,
@@ -33,7 +31,15 @@ from scripts.triple_labels.eval_crosscenter import (  # noqa: E402
     compute_macro_auroc_auprc,
     infer_dataset,
 )
-from scripts.triple_labels.label_schemes import get_scheme  # noqa: E402
+from scripts.triple_labels.label_schemes import (  # noqa: E402
+    get_scheme,
+    get_super5_pn2021_mapping_metadata,
+)
+from scripts.triple_labels.model_zoo import (  # noqa: E402
+    available_model_names,
+    build_super5_model,
+    normalize_model_name,
+)
 from methods.augmix.ecg_ops import (  # noqa: E402
     BaselineShift,
     BaselineWander,
@@ -58,12 +64,13 @@ from ecg_adv_gen.evaluation.pn2021_corruptions import (  # noqa: E402
 )
 from ecg_adv_gen.evaluation.pn2021c_metadata import (  # noqa: E402
     PN2021CMetadataError,
+    build_center_scoped_clean_eval_payload,
     build_pn2021c_metadata_payload,
     validate_pn2021c_metadata_compatibility,
 )
 
 
-STRESS_PROFILE_CHOICES = ("standard", "stress_v2")
+STRESS_PROFILE_CHOICES = ("standard", "stress_v2", "calibrated_10to20pp")
 
 
 _STRESS_V2_PARAMS = {
@@ -108,10 +115,38 @@ _STRESS_V2_PARAMS = {
 }
 
 
-def _build_stress_v2_op(corruption, public_severity):
-    if corruption not in _STRESS_V2_PARAMS:
-        raise ValueError(f"stress_v2 does not define corruption: {corruption}")
-    params = dict(_STRESS_V2_PARAMS[corruption][int(public_severity)])
+_CALIBRATED_10TO20PP_PARAMS = {
+    # Fixed single-operator profile calibrated on 2026-06-06 to induce roughly
+    # 10-20 pp mean AUROC/AUPRC drops on the four-center v7 K500 mainline.
+    # These parameters are validated only for public severity=5.
+    "powerline_noise": {
+        5: {"max_amplitude": 8.0},
+    },
+    "emg_noise": {
+        5: {"max_amplitude": 2.3},
+    },
+    "baseline_wander": {
+        5: {"max_amplitude": 2.5, "k": 6, "max_freq": 0.8},
+    },
+    "baseline_shift": {
+        5: {"max_amplitude": 2.4, "shift_ratio": 0.9, "num_segment": 6},
+    },
+    "random_leads_masking": {
+        5: {"mask_leads_prob": 0.57},
+    },
+}
+
+
+def _build_profile_op(profile_params, profile_name, corruption, public_severity):
+    public_severity = int(public_severity)
+    if corruption not in profile_params:
+        raise ValueError(f"{profile_name} does not define corruption: {corruption}")
+    if public_severity not in profile_params[corruption]:
+        raise ValueError(
+            f"{profile_name} defines {corruption} only for severities "
+            f"{sorted(profile_params[corruption])}; got {public_severity}"
+        )
+    params = dict(profile_params[corruption][public_severity])
     params.setdefault("p", 1.0)
     if corruption == "powerline_noise":
         params.setdefault("min_amplitude", 0.0)
@@ -125,7 +160,6 @@ def _build_stress_v2_op(corruption, public_severity):
     if corruption == "baseline_wander":
         params.setdefault("min_amplitude", 0.0)
         params.setdefault("min_freq", 0.03)
-        params.setdefault("max_freq", 0.50)
         params.setdefault("freq", 100)
         params.setdefault("dependency", False)
         return BaselineWander(**params)
@@ -140,11 +174,26 @@ def _build_stress_v2_op(corruption, public_severity):
     raise ValueError(f"unknown corruption: {corruption}")
 
 
+def _build_stress_v2_op(corruption, public_severity):
+    return _build_profile_op(_STRESS_V2_PARAMS, "stress_v2", corruption, public_severity)
+
+
+def _build_calibrated_10to20pp_op(corruption, public_severity):
+    return _build_profile_op(
+        _CALIBRATED_10TO20PP_PARAMS,
+        "calibrated_10to20pp",
+        corruption,
+        public_severity,
+    )
+
+
 def _build_corruption_op(corruption, public_severity, severity_profile):
     if severity_profile == "standard":
         return build_op(corruption, PUBLIC_TO_INTERNAL_SEVERITY[int(public_severity)])
     if severity_profile == "stress_v2":
         return _build_stress_v2_op(corruption, public_severity)
+    if severity_profile == "calibrated_10to20pp":
+        return _build_calibrated_10to20pp_op(corruption, public_severity)
     raise ValueError(f"unknown severity_profile: {severity_profile}")
 
 
@@ -215,6 +264,29 @@ class StreamingCorruptedPN2021Dataset(Dataset):
         return corrupt_ct.float(), torch.from_numpy(label).float()
 
 
+class PN2021IndexedCenterDataset(Dataset):
+    def __init__(self, signals, labels, indices, crop_len=250):
+        self.signals = signals
+        self.labels = labels.astype(np.float32, copy=False)
+        self.indices = np.asarray(indices, dtype=np.int64)
+        self.crop_len = crop_len
+
+    def __len__(self):
+        return len(self.indices)
+
+    def __getitem__(self, idx):
+        real_idx = int(self.indices[idx])
+        sig_tc = self.signals[real_idx]
+        start = max((sig_tc.shape[0] - self.crop_len) // 2, 0)
+        crop = sig_tc[start:start + self.crop_len]
+        sig_ct = crop.T
+        label = np.array(self.labels[real_idx], dtype=np.float32, copy=True)
+        return (
+            torch.from_numpy(np.ascontiguousarray(sig_ct)).float(),
+            torch.from_numpy(label).float(),
+        )
+
+
 def _filter_indices(record_ids, exclude_ids, limit=None):
     return filter_record_indices(record_ids, exclude_ids, limit)
 
@@ -254,22 +326,17 @@ def _load_clean_center(args, center):
 
 
 def _load_model(args, scheme, device):
-    model = EfficientNet1DV2(
-        variant="s_v2",
-        input_channels=12,
+    model_name = normalize_model_name(args.model_name)
+    model = build_super5_model(
+        model_name,
         num_classes=scheme["num_classes"],
-        activation="leaky_relu",
-        stochastic_depth_prob=0.304,
-        dropout_rate=0.0,
-        use_se=True,
-        norm_type="batch",
     ).to(device)
     ckpt = os.path.join(args.model_dir, "best_model.pt")
     sd = torch.load(ckpt, map_location=device)
     sd = {k.removeprefix("_orig_mod."): v for k, v in sd.items()}
     model.load_state_dict(sd)
     model.eval()
-    print(f"[model] loaded {ckpt}")
+    print(f"[model] loaded {ckpt} ({model_name})")
     return model
 
 
@@ -290,6 +357,70 @@ def _merge_clean_metadata(clean_cache_metadata, clean_eval_payload):
 def _ref_ids_sha256(ids):
     values = sorted(str(item) for item in ids)
     return hashlib.sha256(("\n".join(values) + "\n").encode("utf-8")).hexdigest()
+
+
+def _compute_clean_subset_metrics(model, scheme, args, device, signals, labels, indices):
+    ds = PN2021IndexedCenterDataset(signals, labels, indices, crop_len=args.crop_len)
+    loader = DataLoader(
+        ds,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=True,
+    )
+    y_true, y_score = infer_dataset(model, loader, device)
+    metrics = compute_macro_auroc_auprc(
+        y_true, y_score, scheme["class_names"], min_pos=args.min_pos
+    )
+    nonzero_mask = np.asarray(y_true).sum(axis=1) > 0
+    drop_all_zero_metrics = None
+    if np.any(nonzero_mask):
+        drop_all_zero_metrics = compute_macro_auroc_auprc(
+            y_true[nonzero_mask],
+            y_score[nonzero_mask],
+            scheme["class_names"],
+            min_pos=args.min_pos,
+        )
+    return {
+        "macro_auroc": metrics["macro_auroc"],
+        "macro_auprc": metrics["macro_auprc"],
+        "n_classes_used": metrics["n_classes_used"],
+        "per_class": metrics["per_class"],
+        "drop_all_zero_n_records": int(nonzero_mask.sum()),
+        "drop_all_zero_macro_auroc": (
+            drop_all_zero_metrics["macro_auroc"]
+            if drop_all_zero_metrics is not None
+            else None
+        ),
+        "drop_all_zero_macro_auprc": (
+            drop_all_zero_metrics["macro_auprc"]
+            if drop_all_zero_metrics is not None
+            else None
+        ),
+        "drop_all_zero_n_classes_used": (
+            drop_all_zero_metrics["n_classes_used"]
+            if drop_all_zero_metrics is not None
+            else 0
+        ),
+        "drop_all_zero_per_class": (
+            drop_all_zero_metrics["per_class"]
+            if drop_all_zero_metrics is not None
+            else {}
+        ),
+        "clean_metric_source": "same_filtered_subset",
+    }
+
+
+def _get_clean_subset_metrics(model, scheme, args, device, center, signals, labels, indices):
+    cache = getattr(args, "clean_subset_metrics_by_center", None)
+    if cache is None:
+        cache = {}
+        args.clean_subset_metrics_by_center = cache
+    if center not in cache:
+        cache[center] = _compute_clean_subset_metrics(
+            model, scheme, args, device, signals, labels, indices
+        )
+    return cache[center]
 
 
 def eval_one(model, scheme, args, device, center, corruption, severity, clean_by_center, clean_eval_payload):
@@ -333,9 +464,25 @@ def eval_one(model, scheme, args, device, center, corruption, severity, clean_by
         ds = PN2021CachedCenterDataset(signals, labels, crop_len=args.crop_len)
         metadata = _load_metadata(data)
     if clean_eval_payload:
+        clean_eval_for_validation = clean_eval_payload
         if args.mode == "stream":
+            clean = _get_clean_subset_metrics(
+                model, scheme, args, device, center, signals, labels, indices
+            )
+            clean_eval_for_validation = build_center_scoped_clean_eval_payload(
+                _merge_clean_metadata(metadata, clean_eval_payload),
+                center=center,
+                n_excluded_ref=len(exclude_ids),
+                ref_record_ids_sha256=_ref_ids_sha256(exclude_ids),
+                preprocess_contract_id=PREPROCESS_CONTRACT_ID,
+                preprocess_mode="minimal_resample",
+                norm_mode="per_sample_global",
+                crop_len=args.crop_len,
+                target_len=1000,
+                clean_metrics=clean,
+            )
             metadata = build_pn2021c_metadata_payload(
-                clean_metadata=_merge_clean_metadata(metadata, clean_eval_payload),
+                clean_metadata=clean_eval_for_validation,
                 center=center,
                 corruption=corruption,
                 public_severity=int(severity),
@@ -350,7 +497,7 @@ def eval_one(model, scheme, args, device, center, corruption, severity, clean_by
                 severity_profile=args.severity_profile,
             )
         compatibility = validate_pn2021c_metadata_compatibility(
-            clean_eval=clean_eval_payload,
+            clean_eval=clean_eval_for_validation,
             corrupt_metadata=metadata,
             center=center,
             required_cache_version=args.required_cache_version,
@@ -375,6 +522,7 @@ def eval_one(model, scheme, args, device, center, corruption, severity, clean_by
             "center": center,
             "cache_version": args.required_cache_version,
         }
+        clean = clean_by_center.get(center, {})
     loader = DataLoader(
         ds,
         batch_size=args.batch_size,
@@ -387,7 +535,17 @@ def eval_one(model, scheme, args, device, center, corruption, severity, clean_by
     metrics = compute_macro_auroc_auprc(
         y_true, y_score, scheme["class_names"], min_pos=args.min_pos
     )
-    clean = clean_by_center.get(center, {})
+    nonzero_mask = np.asarray(y_true).sum(axis=1) > 0
+    drop_all_zero_metrics = None
+    if np.any(nonzero_mask):
+        drop_all_zero_metrics = compute_macro_auroc_auprc(
+            y_true[nonzero_mask],
+            y_score[nonzero_mask],
+            scheme["class_names"],
+            min_pos=args.min_pos,
+        )
+    if args.mode != "stream":
+        clean = clean_by_center.get(center, {})
     auroc_drop = None
     auprc_drop = None
     if clean.get("macro_auroc") is not None:
@@ -416,10 +574,33 @@ def eval_one(model, scheme, args, device, center, corruption, severity, clean_by
             "seed": int(args.seed),
         },
         "n_records": int(len(ds)),
+        "n_all_zero_labels": int((~nonzero_mask).sum()),
         "macro_auroc": metrics["macro_auroc"],
         "macro_auprc": metrics["macro_auprc"],
         "n_classes_used": metrics["n_classes_used"],
         "per_class": metrics["per_class"],
+        "drop_all_zero_n_records": int(nonzero_mask.sum()),
+        "drop_all_zero_macro_auroc": (
+            drop_all_zero_metrics["macro_auroc"]
+            if drop_all_zero_metrics is not None
+            else None
+        ),
+        "drop_all_zero_macro_auprc": (
+            drop_all_zero_metrics["macro_auprc"]
+            if drop_all_zero_metrics is not None
+            else None
+        ),
+        "drop_all_zero_n_classes_used": (
+            drop_all_zero_metrics["n_classes_used"]
+            if drop_all_zero_metrics is not None
+            else 0
+        ),
+        "drop_all_zero_per_class": (
+            drop_all_zero_metrics["per_class"]
+            if drop_all_zero_metrics is not None
+            else {}
+        ),
+        "clean_metric_source": clean.get("clean_metric_source", "clean_eval_json"),
         "clean_macro_auroc": clean.get("macro_auroc"),
         "clean_macro_auprc": clean.get("macro_auprc"),
         "auroc_drop_vs_clean": auroc_drop,
@@ -435,6 +616,8 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--scheme", default="super5", choices=["super5", "sub23", "pn26"])
     p.add_argument("--model_dir", required=True)
+    p.add_argument("--model_name", default="efficientnet1dv2",
+                   choices=available_model_names())
     p.add_argument("--mode", default="stream", choices=["stream", "cache"],
                    help="stream: corrupt clean cache on the fly; cache: read prebuilt PN2021-C npz files")
     p.add_argument("--cache_dir", default="/root/autodl-tmp/triple_labels/pn2021_c_cache")
@@ -452,8 +635,10 @@ def main():
                    choices=STRESS_PROFILE_CHOICES,
                    help="standard uses methods/augmix/severity.py via public "
                         "severity 1..5 -> internal 2/4/6/8/10; stress_v2 is "
-                        "a stronger streaming-only robustness sweep and does "
-                        "not affect training-time AugMix defaults.")
+                        "a stronger streaming-only robustness sweep; "
+                        "calibrated_10to20pp is a fixed severity=5 profile "
+                        "calibrated to induce roughly 10-20 pp drops. These "
+                        "profiles do not affect training-time AugMix defaults.")
     p.add_argument("--device", default="cuda")
     p.add_argument("--crop_len", type=int, default=250)
     p.add_argument("--batch_size", type=int, default=256)
@@ -500,6 +685,7 @@ def main():
     output = {
         "scheme": args.scheme,
         "model_dir": args.model_dir,
+        "model_name": normalize_model_name(args.model_name),
         "mode": args.mode,
         "cache_dir": args.cache_dir,
         "clean_mmap_cache_dir": args.clean_mmap_cache_dir,
@@ -519,6 +705,21 @@ def main():
         "pn2021_c_cache_version": args.required_cache_version,
         "per_center": {},
     }
+    output["preprocess"] = {
+        "contract_id": PREPROCESS_CONTRACT_ID,
+        "preprocess_mode": "minimal_resample",
+        "norm_mode": "per_sample_global",
+        "crop_len": int(args.crop_len),
+        "target_fs": 100,
+        "target_len": 1000,
+    }
+    if args.scheme == "super5":
+        mapping_metadata = get_super5_pn2021_mapping_metadata()
+        output["label_mapping"] = {
+            "version": mapping_metadata.get("mapping_version"),
+            "hash": mapping_metadata.get("mapping_hash"),
+            "pn2021_super5": mapping_metadata,
+        }
 
     for center in args.centers:
         output["per_center"].setdefault(center, {})

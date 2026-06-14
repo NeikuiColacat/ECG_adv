@@ -31,14 +31,20 @@ def build_pn2021c_eval_argv(config: Mapping[str, Any], context: Mapping[str, Any
     preprocess = config["preprocess"]
     runtime = config.get("runtime") or {}
     experiment = config["experiment"]
+    severity_profile = str(evaluation["severity_profile"])
     noaug_suffix = method.get("noaug_suffix", "")
+    eval_seed = method.get("eval_seed", model["eval_seed"])
+    epochs = method.get("epochs", model["epochs"])
+    run_stamp = method.get("run_stamp", model["run_stamp"])
+    run_leaf_stem = method.get("run_leaf_stem", model["run_leaf_stem"])
+    clean_eval_name = method.get("clean_eval_name", model["clean_eval_name"])
     run_leaf = (
-        f"{center}_{model['run_leaf_stem']}_fullft_k{kshot['k']}"
-        f"{noaug_suffix}_ep{model['epochs']}_seed{model['eval_seed']}"
+        f"{center}_{run_leaf_stem}_fullft_k{kshot['k']}"
+        f"{noaug_suffix}_ep{epochs}_seed{eval_seed}"
     )
     method_root = (
         f"{paths['output_root']}/{method['family']}/"
-        f"seed{model['eval_seed']}_k{kshot['k']}_v7_sjr_rgq_{model['run_stamp']}/{run_leaf}"
+        f"seed{eval_seed}_k{kshot['k']}_v7_sjr_rgq_{run_stamp}/{run_leaf}"
     )
 
     return [
@@ -53,7 +59,7 @@ def build_pn2021c_eval_argv(config: Mapping[str, Any], context: Mapping[str, Any
         "--clean_cache_dir",
         data["cache"]["pn2021_clean_cache_dir"],
         "--clean_eval_json",
-        f"{method_root}/{model['clean_eval_name']}",
+        f"{method_root}/{clean_eval_name}",
         "--required_cache_version",
         PN2021C_REQUIRED_CACHE_VERSION,
         "--centers",
@@ -84,7 +90,7 @@ def build_pn2021c_eval_argv(config: Mapping[str, Any], context: Mapping[str, Any
         "--output_path",
         (
             f"{paths['output_root']}/{experiment['name']}/{runtime['run_id']}/{center}/"
-            f"{method['name']}/eval_pn2021_c_v7_refexcluded_stream_standard.json"
+            f"{method['name']}/eval_pn2021_c_v7_refexcluded_stream_{severity_profile}.json"
         ),
     ]
 
@@ -131,7 +137,7 @@ def audit_pn2021c_eval_command(command: Mapping[str, Any], *, config: Mapping[st
     audit_equals(errors, script, opts, "--mode", "stream")
     audit_equals(errors, script, opts, "--scheme", "super5")
     audit_equals(errors, script, opts, "--required_cache_version", PN2021C_REQUIRED_CACHE_VERSION)
-    audit_equals(errors, script, opts, "--severity_profile", "standard")
+    audit_equals(errors, script, opts, "--severity_profile", config["evaluation"]["severity_profile"])
     audit_equals(errors, script, opts, "--crop_len", config["preprocess"]["crop_len"])
     audit_equals(errors, script, opts, "--min_pos", config["evaluation"]["min_pos"])
     if str(opt_first(opts, "--device", "")) != "cuda":
@@ -157,7 +163,15 @@ def audit_pn2021c_eval_command(command: Mapping[str, Any], *, config: Mapping[st
 
     clean_eval = str(opt_first(opts, "--clean_eval_json", ""))
     model_dir = str(opt_first(opts, "--model_dir", ""))
-    if model_dir and clean_eval != f"{model_dir}/eval_result_v7_exclrefs_crop1000.json":
+    method = (command.get("matrix") or {}).get("method") or {}
+    expected_clean_name = "eval_result_v7_exclrefs_crop1000.json"
+    if isinstance(method, Mapping):
+        expected_clean_name = str(
+            method.get("clean_eval_name")
+            or config.get("model", {}).get("clean_eval_name")
+            or expected_clean_name
+        )
+    if model_dir and clean_eval != f"{model_dir}/{expected_clean_name}":
         errors.append(f"{script}: clean_eval_json must point inside --model_dir")
     if "--diagnostic_without_clean" in opts:
         errors.append(f"{script}: managed PN2021-C eval must require a clean paper-safe eval JSON")

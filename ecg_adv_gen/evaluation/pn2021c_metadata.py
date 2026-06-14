@@ -124,6 +124,83 @@ def build_pn2021c_metadata_payload(
     return payload
 
 
+def build_center_scoped_clean_eval_payload(
+    clean_metadata: Mapping[str, Any],
+    *,
+    center: str,
+    n_excluded_ref: int,
+    ref_record_ids_sha256: str,
+    preprocess_contract_id: str,
+    preprocess_mode: str,
+    norm_mode: str,
+    crop_len: int,
+    target_len: int = 1000,
+    clean_metrics: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a PN2021-C clean baseline payload for the exact evaluated center.
+
+    Legacy clean PN2021 JSONs may predate the paper-safe ``eval_protocol``
+    block. PN2021-C evaluates one center at a time, so this payload freezes the
+    current center's ref-exclusion hash and same-subset clean metrics without
+    rewriting the original clean eval artifact.
+    """
+
+    payload = dict(clean_metadata)
+    canonical = canonical_pn2021c_metadata(payload)
+    preprocess = dict(canonical["preprocess"])
+    preprocess["contract_id"] = preprocess.get("contract_id") or preprocess_contract_id
+    preprocess["preprocess_mode"] = preprocess.get("preprocess_mode") or str(preprocess_mode)
+    preprocess["norm_mode"] = preprocess.get("norm_mode") or str(norm_mode)
+    preprocess["crop_len"] = preprocess.get("crop_len") or int(crop_len)
+    preprocess["target_len"] = preprocess.get("target_len") or int(target_len)
+    payload["preprocess"] = preprocess
+
+    pn2021 = dict(payload.get("pn2021") or {})
+    per_center = dict(pn2021.get("per_center") or {})
+    row = dict(per_center.get(center) or {})
+    row["n_excluded_ref"] = int(n_excluded_ref)
+    if clean_metrics:
+        for key in (
+            "macro_auroc",
+            "macro_auprc",
+            "n_classes_used",
+            "per_class",
+            "drop_all_zero_macro_auroc",
+            "drop_all_zero_macro_auprc",
+            "drop_all_zero_n_classes_used",
+            "drop_all_zero_per_class",
+            "drop_all_zero_n_records",
+        ):
+            if key in clean_metrics:
+                row[key] = clean_metrics[key]
+    per_center[str(center)] = row
+
+    protocol = dict(pn2021.get("eval_protocol") or {})
+    target_hashes = dict(protocol.get("target_ref_id_hashes") or {})
+    existing_hash = target_hashes.get(str(center))
+    if existing_hash not in (None, "", ref_record_ids_sha256):
+        raise PN2021CMetadataError(
+            f"clean_eval ref hash mismatch for {center}: "
+            f"existing={existing_hash!r}, current={ref_record_ids_sha256!r}"
+        )
+    target_hashes[str(center)] = str(ref_record_ids_sha256)
+    protocol.update(
+        {
+            "status": "paper_safe",
+            "eval_protocol": "paper_refexcluded",
+            "target_ref_exclusion_required": True,
+            "center_scoped_for_pn2021c": True,
+            "target_ref_id_hashes": target_hashes,
+            "preprocess_mode": preprocess["preprocess_mode"],
+            "crop_len": int(preprocess["crop_len"]),
+        }
+    )
+    pn2021["eval_protocol"] = protocol
+    pn2021["per_center"] = per_center
+    payload["pn2021"] = pn2021
+    return payload
+
+
 def validate_pn2021c_metadata_compatibility(
     *,
     clean_eval: Mapping[str, Any],

@@ -35,6 +35,7 @@ def build_ecgfounder_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[s
     loss = adaptation["loss"]
     selection = adaptation["selection"]
     optimizer = training["optimizer"]
+    latent_augmix = adaptation.get("latent_augmix") or {}
 
     argv: list[Any] = [
         "--centers",
@@ -163,4 +164,23 @@ def build_ecgfounder_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[s
             "--report_drop_all_zero_pn2021",
         ]
     )
+    if bool(latent_augmix.get("enabled", False)):
+        argv.extend(
+            [
+                "--enable_latent_augmix_branch",
+                "--latent_augmix_latent_weight_cap",
+                latent_augmix.get("latent_weight_cap", 0.25),
+                "--latent_augmix_width",
+                latent_augmix.get("width", 3),
+                "--latent_augmix_depth",
+                latent_augmix.get("depth", -1),
+                "--latent_augmix_alpha",
+                latent_augmix.get("alpha", 1.0),
+                "--latent_augmix_severity",
+                latent_augmix.get("severity", 2),
+            ]
+        )
+        if latent_augmix.get("ops"):
+            argv.append("--latent_augmix_ops")
+            argv.extend(latent_augmix["ops"])
     return argv

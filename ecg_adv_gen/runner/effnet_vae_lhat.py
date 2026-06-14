@@ -255,6 +255,8 @@ def build_effnet_vae_lhat_train_cmd(
                 str(args.raw_corrupt_prob),
                 "--raw_corrupt_severity",
                 str(args.raw_corrupt_severity),
+                "--raw_corrupt_severity_profile",
+                str(args.raw_corrupt_severity_profile),
                 "--raw_corrupt_ops",
                 *[str(item) for item in args.raw_corrupt_ops],
                 "--raw_corrupt_consistency_weight",
@@ -273,6 +275,32 @@ def build_effnet_vae_lhat_train_cmd(
         )
         if args.raw_corrupt_no_renorm:
             train_cmd.append("--raw_corrupt_no_renorm")
+    if args.enable_mask_shift_consistency:
+        train_cmd.extend(
+            [
+                "--enable_mask_shift_consistency",
+                "--mask_shift_copies",
+                str(args.mask_shift_copies),
+                "--mask_shift_mask_severity",
+                str(args.mask_shift_mask_severity),
+                "--mask_shift_shift_severity",
+                str(args.mask_shift_shift_severity),
+                "--mask_shift_consistency_weight",
+                str(args.mask_shift_consistency_weight),
+                "--mask_shift_consistency_loss",
+                str(args.mask_shift_consistency_loss),
+                "--mask_shift_bce_weight",
+                str(args.mask_shift_bce_weight),
+                "--mask_shift_max_batches",
+                str(args.mask_shift_max_batches),
+                "--mask_shift_scope",
+                str(args.mask_shift_scope),
+                "--mask_shift_clip_abs",
+                str(args.mask_shift_clip_abs),
+            ]
+        )
+        if args.mask_shift_no_renorm:
+            train_cmd.append("--mask_shift_no_renorm")
     if args.resume:
         train_cmd.extend(["--resume", str(args.resume)])
     if args.allow_resume_config_drift:

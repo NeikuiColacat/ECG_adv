@@ -300,6 +300,39 @@ managed_experiments:
     owns_training_logic: false
     notes: Per-center benchmark_fcn_wang VAE-LHAT K500 v7 launch surface; runner.adapter=benchmark_vae_lhat expands typed YAML fields, consumes same-run Direct K500 checkpoints, and leaves GPU selection outside YAML.
 
+  - name: benchmark_resnet1d_vae_noaug_k500_v7_sjr_rgq
+    status: active_wrapped
+    evidence_scope: launch_only
+    config: configs/experiments/benchmark_resnet1d_vae_noaug_k500_v7_sjr_rgq.yaml
+    legacy_entrypoint: scripts/paper/run_effnet_latent_augmix_stage3_20260524.py
+    launcher: scripts/run_experiment.py
+    method_family: benchmark_vae_latent_hull_online_at_noaug_v7
+    mapping_version: v7_super5_sjr_rgq_review_20260528
+    owns_training_logic: false
+    notes: Per-center benchmark_resnet1d_wang VAE-LHAT noAug K500 v7 launch surface; disables latent AugMix branch, writes to a separate noAug output family, consumes same-run Direct K500 checkpoints, and leaves GPU selection outside YAML.
+
+  - name: benchmark_inception1d_vae_noaug_k500_v7_sjr_rgq
+    status: active_wrapped
+    evidence_scope: launch_only
+    config: configs/experiments/benchmark_inception1d_vae_noaug_k500_v7_sjr_rgq.yaml
+    legacy_entrypoint: scripts/paper/run_effnet_latent_augmix_stage3_20260524.py
+    launcher: scripts/run_experiment.py
+    method_family: benchmark_vae_latent_hull_online_at_noaug_v7
+    mapping_version: v7_super5_sjr_rgq_review_20260528
+    owns_training_logic: false
+    notes: Per-center benchmark_inception1d VAE-LHAT noAug K500 v7 launch surface; disables latent AugMix branch, writes to a separate noAug output family, consumes same-run Direct K500 checkpoints, and leaves GPU selection outside YAML.
+
+  - name: benchmark_fcn_wang_vae_noaug_k500_v7_sjr_rgq
+    status: active_wrapped
+    evidence_scope: launch_only
+    config: configs/experiments/benchmark_fcn_wang_vae_noaug_k500_v7_sjr_rgq.yaml
+    legacy_entrypoint: scripts/paper/run_effnet_latent_augmix_stage3_20260524.py
+    launcher: scripts/run_experiment.py
+    method_family: benchmark_vae_latent_hull_online_at_noaug_v7
+    mapping_version: v7_super5_sjr_rgq_review_20260528
+    owns_training_logic: false
+    notes: Per-center benchmark_fcn_wang VAE-LHAT noAug K500 v7 launch surface; disables latent AugMix branch, writes to a separate noAug output family, consumes same-run Direct K500 checkpoints, and leaves GPU selection outside YAML.
+
   - name: benchmark_resnet1d_direct_percent_v7_sjr_rgq_matrix
     status: active_wrapped
     evidence_scope: launch_only
@@ -332,6 +365,17 @@ managed_experiments:
     mapping_version: v7_super5_sjr_rgq_review_20260528
     owns_training_logic: false
     notes: Per-center ECGFounder residual-adapter VAE-LHAT K500 v7 launch surface; runner.adapter=ecgfounder_vae_lhat expands typed YAML fields to one legacy command per target center, explicitly passes standardized/local-random latent-neighbor policy, consumes v7 Direct K500 heads from the same run_id, and records child checkpoint selection index expectations while leaving GPU selection outside YAML.
+
+  - name: ecgfounder_vae_lhat_augmix_k500_v7_sjr_rgq
+    status: active_wrapped
+    evidence_scope: launch_only
+    config: configs/experiments/ecgfounder_vae_lhat_augmix_k500_v7_sjr_rgq.yaml
+    legacy_entrypoint: scripts/paper/run_ecgfounder_vae_only_lhat_head_ft_20260523.py
+    launcher: scripts/run_experiment.py
+    method_family: ecgfounder_vae_latent_hull_augmix_online_at_v7
+    mapping_version: v7_super5_sjr_rgq_review_20260528
+    owns_training_logic: false
+    notes: Per-center ECGFounder residual-adapter VAE-LHAT K500 v7 launch surface with the latent AugMix branch enabled; consumes same-run Direct K500 heads and keeps GPU selection outside YAML.
 
   - name: ecgfounder_inithead_fullft_k500_v6
     status: active_wrapped
@@ -464,6 +508,17 @@ managed_experiments:
     mapping_version: v7_super5_sjr_rgq_review_20260528
     owns_training_logic: false
     notes: runner.adapter=pn2021c_eval expands to eight PN2021-C eval commands for four target centers times VAE noAug and VAE LHAT EfficientNet v7 runs; each command requires clean eval metadata, required cache version v7_refexcluded_100hz1000, run-id-scoped corruption metrics, and that center's K500 ref-meta exclusion.
+
+  - name: pn2021c_effnet_v7_strong_10to20pp
+    status: active_wrapped
+    evidence_scope: evaluation_only
+    config: configs/experiments/pn2021c_effnet_v7_strong_10to20pp.yaml
+    legacy_entrypoint: scripts/triple_labels/eval_pn2021_corruptions.py
+    launcher: scripts/run_experiment.py
+    method_family: managed_pn2021c_refexcluded_strong_corruption_eval
+    mapping_version: v7_super5_sjr_rgq_review_20260528
+    owns_training_logic: false
+    notes: runner.adapter=pn2021c_eval expands to eight PN2021-C eval commands for four target centers times VAE noAug and VAE LHAT EfficientNet v7 runs, using the calibrated_10to20pp severity=5 streaming-only profile that was tuned to induce roughly 10-20 pp drops.
 
 inactive_experiment_configs:
   - config: configs/experiments/effnet_direct_k500_v6.yaml

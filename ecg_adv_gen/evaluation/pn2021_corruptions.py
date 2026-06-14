@@ -138,12 +138,20 @@ def aggregate_corruption_summary(results: Mapping[str, Any]) -> dict[str, dict[s
     for (corruption, severity), rows in by_key.items():
         auroc = _finite_values(rows, "macro_auroc")
         auprc = _finite_values(rows, "macro_auprc")
+        drop_all_zero_auroc = _finite_values(rows, "drop_all_zero_macro_auroc")
+        drop_all_zero_auprc = _finite_values(rows, "drop_all_zero_macro_auprc")
         auroc_drop = _finite_values(rows, "auroc_drop_vs_clean")
         auprc_drop = _finite_values(rows, "auprc_drop_vs_clean")
         out.setdefault(corruption, {})[severity] = {
             "n_centers": len(rows),
             "mean_macro_auroc": float(np.mean(auroc)) if auroc else float("nan"),
             "mean_macro_auprc": float(np.mean(auprc)) if auprc else float("nan"),
+            "mean_drop_all_zero_macro_auroc": (
+                float(np.mean(drop_all_zero_auroc)) if drop_all_zero_auroc else float("nan")
+            ),
+            "mean_drop_all_zero_macro_auprc": (
+                float(np.mean(drop_all_zero_auprc)) if drop_all_zero_auprc else float("nan")
+            ),
             "mean_auroc_drop_vs_clean": float(np.mean(auroc_drop)) if auroc_drop else None,
             "mean_auprc_drop_vs_clean": float(np.mean(auprc_drop)) if auprc_drop else None,
         }

@@ -65,6 +65,7 @@ from ecg_adv_gen.adaptation import (  # noqa: E402
     StratifiedPoolWalker,
     build_anchor_preserving_soft_labels,
     build_k500_internal_val_mask,
+    build_latent_augmix_branch_signals,
     linear_warmup_value,
     split_anchor_sample_mode,
 )
@@ -104,6 +105,7 @@ from ecg_adv_gen.training import (  # noqa: E402
     merge_attack_success_stats,
     pairwise_rank_loss,
 )
+from methods.augmix.severity import AVAILABLE_OPS, build_op  # noqa: E402
 from util.ecgtwin_utils import ECGTwinWrapper  # noqa: E402
 from util.lead_utils import ECGTWIN_TO_PTBXL_INDICES  # noqa: E402
 
@@ -381,6 +383,39 @@ def sample_hard_anchors(
         device=device,
         seed=seed,
     )
+
+
+def apply_augmix_op_np(sig_ct: np.ndarray, op_name: str, op_severity: int) -> np.ndarray:
+    """Apply one ECG AugMix op to a channels-first 100 Hz ECG sample."""
+
+    sig_t = torch.from_numpy(sig_ct.copy()).float()
+    return build_op(op_name, int(op_severity))(sig_t).cpu().numpy().astype(np.float32, copy=False)
+
+
+def summarize_latent_augmix_stats(stats_batches: list[dict[str, Any]], *, enabled: bool) -> dict[str, Any]:
+    """Merge per-PGD-batch latent AugMix diagnostics for the epoch log."""
+
+    if not enabled:
+        return {"enabled": False, "n_generated": 0}
+    if not stats_batches:
+        return {"enabled": True, "n_generated": 0}
+    out: dict[str, Any] = {
+        "enabled": True,
+        "n_generated": int(sum(int(item.get("n_generated", 0)) for item in stats_batches)),
+    }
+    for key in ["copies", "severity", "width", "depth", "alpha", "latent_weight_cap", "renorm", "clip_abs", "ops"]:
+        if key in stats_batches[-1]:
+            out[key] = stats_batches[-1][key]
+    for key in ["latent_weight_mean", "latent_weight_max", "beta_m_mean", "chain_depth_mean"]:
+        values = [
+            float(item[key])
+            for item in stats_batches
+            if key in item and np.isfinite(float(item[key]))
+        ]
+        if values:
+            reducer = max if key == "latent_weight_max" else np.mean
+            out[key] = float(reducer(values))
+    return out
 
 
 def make_weighted_loader(
@@ -871,6 +906,8 @@ def train_one_center(
         n_adv_filtered_boundary = 0
         attack_init_stats_batches: list[dict[str, float]] = []
         attack_anchor_stats_batches: list[dict[str, float]] = []
+        latent_augmix_rng = np.random.default_rng(args.seed + 170000 + epoch)
+        latent_augmix_stats_batches: list[dict[str, Any]] = []
         anchor_head_source, anchor_difficulty_mode = split_anchor_sample_mode(args.anchor_sample_mode)
         anchor_sample_stats: dict[str, Any] = {
             "mode": args.anchor_sample_mode,
@@ -922,6 +959,7 @@ def train_one_center(
                 y = torch.from_numpy(pool["labels"][batch_idx]).float().to(device)
                 cand = torch.from_numpy(index.candidates_for(batch_idx, args.hull_m)).float().to(device)
                 with torch.no_grad():
+                    anchor_x = victim._ecgtwin_latent_to_ecg1000(z)
                     anchor_logits = victim.forward_from_latent_to_logits(z)
                     z_init = initial_hull_latent(
                         z,
@@ -988,8 +1026,44 @@ def train_one_center(
                         f"got {args.hull_mix_label_mode!r}"
                     )
                 if bool(keep_mask.any()):
+                    kept_labels = batch_labels[keep_np].astype(np.float32, copy=False)
                     adv_features.append(feats[keep_mask].float().cpu().numpy())
-                    adv_labels.append(batch_labels[keep_np].astype(np.float32, copy=False))
+                    adv_labels.append(kept_labels)
+                    if args.enable_latent_augmix_branch:
+                        anchor_np = anchor_x[keep_mask].detach().cpu().numpy().astype(np.float32, copy=False)
+                        adv_np = x_adv[keep_mask].detach().cpu().numpy().astype(np.float32, copy=False)
+                        mixed_np, mixed_stats = build_latent_augmix_branch_signals(
+                            anchor_np,
+                            adv_np,
+                            copies=args.latent_augmix_copies,
+                            severity=args.latent_augmix_severity,
+                            width=args.latent_augmix_width,
+                            depth=args.latent_augmix_depth,
+                            alpha=args.latent_augmix_alpha,
+                            latent_weight_cap=args.latent_augmix_latent_weight_cap,
+                            ops=list(args.latent_augmix_ops),
+                            rng=latent_augmix_rng,
+                            op_apply_fn=apply_augmix_op_np,
+                            available_ops=AVAILABLE_OPS,
+                            renorm=not args.no_latent_augmix_renorm,
+                            clip_abs=args.latent_augmix_clip_abs,
+                        )
+                        latent_augmix_stats_batches.append(mixed_stats)
+                        if mixed_np.shape[0] > 0:
+                            labels_rep = np.tile(
+                                kept_labels,
+                                (max(1, int(args.latent_augmix_copies)), 1),
+                            )[: mixed_np.shape[0]].astype(np.float32, copy=False)
+                            mixed_feature_chunks = []
+                            with torch.no_grad():
+                                for j in range(0, mixed_np.shape[0], 128):
+                                    mixed_t = torch.from_numpy(mixed_np[j:j + 128]).float().to(device)
+                                    mixed_feature_chunks.append(
+                                        victim.features_from_ecg1000(mixed_t, grad=False).float().cpu().numpy()
+                                    )
+                            if mixed_feature_chunks:
+                                adv_features.append(np.concatenate(mixed_feature_chunks, axis=0).astype(np.float32))
+                                adv_labels.append(labels_rep)
                 delta_norms.extend(delta.detach().flatten(1).norm(dim=1).cpu().tolist())
         adv_x = (
             np.concatenate(adv_features, axis=0).astype(np.float32)
@@ -1085,6 +1159,10 @@ def train_one_center(
             "anchor_sample_stats": anchor_sample_stats,
             "attack_success": merge_attack_success_stats(attack_init_stats_batches),
             "attack_vs_anchor": merge_attack_success_stats(attack_anchor_stats_batches),
+            "latent_augmix_stats": summarize_latent_augmix_stats(
+                latent_augmix_stats_batches,
+                enabled=bool(args.enable_latent_augmix_branch),
+            ),
             "delta_mean": float(np.mean(delta_norms)) if delta_norms else None,
             "lr": float(opt.param_groups[0]["lr"]),
         }
@@ -1589,6 +1667,39 @@ def parse_args() -> argparse.Namespace:
         "--disable_adv_stream",
         action="store_true",
         help="Train with source + target real features only; no VAE latent-hull adversarial stream.",
+    )
+    p.add_argument(
+        "--enable_latent_augmix_branch",
+        action="store_true",
+        help=(
+            "After each kept latent-hull adversarial decode, mix x_adv as one "
+            "AugMix branch with ECG corruption chains from the clean anchor and "
+            "push the resulting ECGFounder features into the target_adv stream."
+        ),
+    )
+    p.add_argument("--latent_augmix_copies", type=int, default=1)
+    p.add_argument("--latent_augmix_width", type=int, default=3)
+    p.add_argument("--latent_augmix_depth", type=int, default=-1)
+    p.add_argument("--latent_augmix_alpha", type=float, default=1.0)
+    p.add_argument("--latent_augmix_severity", type=int, default=2)
+    p.add_argument("--latent_augmix_latent_weight_cap", type=float, default=0.25)
+    p.add_argument(
+        "--latent_augmix_ops",
+        nargs="+",
+        default=["powerline_noise", "emg_noise", "baseline_wander", "baseline_shift"],
+        choices=AVAILABLE_OPS,
+        help="ECG corruption ops for non-latent AugMix branches. Random lead masking is excluded by default.",
+    )
+    p.add_argument(
+        "--no_latent_augmix_renorm",
+        action="store_true",
+        help="Do not global-zscore the final latent-branch AugMix waveform before feature extraction.",
+    )
+    p.add_argument(
+        "--latent_augmix_clip_abs",
+        type=float,
+        default=6.0,
+        help="Clip final latent-branch AugMix waveform after optional zscore; <=0 disables clipping.",
     )
     p.add_argument(
         "--report_drop_all_zero_pn2021",
