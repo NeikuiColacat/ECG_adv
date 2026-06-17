@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -12,6 +14,9 @@ from ecg_adv_gen.runner.effnet_vae_lhat import (
     build_effnet_vae_lhat_train_cmd,
     resolve_effnet_vae_lhat_paths,
 )
+
+
+REPO = Path(__file__).resolve().parents[2]
 
 
 def _args(**overrides):
@@ -79,7 +84,14 @@ def _args(**overrides):
         "latent_augmix_depth": -1,
         "latent_augmix_alpha": 1.0,
         "latent_augmix_severity": 2,
+        "latent_augmix_severity_profile": "standard",
         "latent_augmix_ops": ["powerline_noise", "baseline_wander"],
+        "no_latent_augmix_renorm": False,
+        "enable_latent_augmix_consistency": False,
+        "latent_augmix_consistency_weight": 2.0,
+        "latent_augmix_consistency_loss": "jsd",
+        "latent_augmix_bce_weight": 1.0,
+        "latent_augmix_consistency_max_batches": 0,
         "enable_raw_corrupt_consistency": False,
         "raw_corrupt_copies": 1,
         "raw_corrupt_prob": 0.5,
@@ -93,6 +105,20 @@ def _args(**overrides):
         "raw_corrupt_scope": "target",
         "raw_corrupt_no_renorm": False,
         "raw_corrupt_clip_abs": 6.0,
+        "raw_corrupt_view_mode": "single_op",
+        "raw_augmix_width": 3,
+        "raw_augmix_depth": -1,
+        "raw_augmix_alpha": 1.0,
+        "raw_augmix_mixture_mode": "beta",
+        "raw_augmix_mixture_prob": 0.5,
+        "raw_augmix_mixture_beta_a": 0.0,
+        "raw_augmix_mixture_beta_b": 0.0,
+        "raw_input_bandpass_low_hz": None,
+        "raw_input_bandpass_high_hz": None,
+        "raw_input_repair_flat_leads": False,
+        "raw_input_clip_abs": None,
+        "raw_input_renorm_after_stabilizer": False,
+        "raw_input_sample_rate_hz": 100.0,
         "enable_mask_shift_consistency": False,
         "mask_shift_copies": 1,
         "mask_shift_mask_severity": 6,
@@ -117,6 +143,33 @@ def _args(**overrides):
     }
     values.update(overrides)
     return SimpleNamespace(**values)
+
+
+def test_legacy_effnet_wrapper_help_exposes_raw_augmix_flags():
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(REPO / "scripts/paper/run_effnet_latent_augmix_stage3_20260524.py"),
+            "--help",
+        ],
+        cwd=REPO,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    assert "--raw_corrupt_view_mode" in result.stdout
+    assert "--raw_augmix_width" in result.stdout
+    assert "--raw_augmix_depth" in result.stdout
+    assert "--raw_augmix_alpha" in result.stdout
+    assert "--raw_augmix_mixture_mode" in result.stdout
+    assert "--raw_augmix_mixture_prob" in result.stdout
+    assert "--raw_augmix_mixture_beta_a" in result.stdout
+    assert "--raw_augmix_mixture_beta_b" in result.stdout
+    assert "--raw_input_bandpass_low_hz" in result.stdout
+    assert "--raw_input_bandpass_high_hz" in result.stdout
+    assert "--raw_input_repair_flat_leads" in result.stdout
+    assert "--raw_input_renorm_after_stabilizer" in result.stdout
 
 
 def test_resolve_effnet_vae_lhat_paths_preserves_legacy_defaults_and_overrides():
@@ -159,6 +212,18 @@ def test_build_effnet_vae_lhat_commands_preserve_wrapper_flags():
         hull_include_anchor=True,
         enable_raw_corrupt_consistency=True,
         raw_corrupt_no_renorm=True,
+        raw_corrupt_view_mode="augmix",
+        raw_augmix_width=3,
+        raw_augmix_depth=2,
+        raw_augmix_alpha=1.0,
+        raw_augmix_mixture_mode="fixed",
+        raw_augmix_mixture_prob=0.75,
+        raw_augmix_mixture_beta_a=3.0,
+        raw_augmix_mixture_beta_b=1.0,
+        raw_input_bandpass_low_hz=0.5,
+        raw_input_bandpass_high_hz=35.0,
+        raw_input_repair_flat_leads=True,
+        raw_input_renorm_after_stabilizer=True,
         enable_mask_shift_consistency=True,
         mask_shift_no_renorm=True,
         mask_shift_mask_severity=5,
@@ -170,6 +235,13 @@ def test_build_effnet_vae_lhat_commands_preserve_wrapper_flags():
         source_class_weights="real_anchor:MI=2.0",
         freeze_backbone_classifier_only=True,
         classifier_only_train_final_norm=True,
+        latent_augmix_severity_profile="calibrated_10to20pp",
+        no_latent_augmix_renorm=True,
+        enable_latent_augmix_consistency=True,
+        latent_augmix_consistency_weight=2.0,
+        latent_augmix_consistency_loss="jsd",
+        latent_augmix_bce_weight=1.0,
+        latent_augmix_consistency_max_batches=7,
         eval_pn2021_limit=25,
     )
     paths = resolve_effnet_vae_lhat_paths(args, data_root=data_root, out_root=out_root)
@@ -194,9 +266,28 @@ def test_build_effnet_vae_lhat_commands_preserve_wrapper_flags():
     assert train_opts["--allow_hyp_cd_trust"] is True
     assert train_opts["--hull_include_anchor"] is True
     assert train_opts["--enable_latent_augmix_branch"] is True
+    assert opt_first(train_opts, "--latent_augmix_severity_profile") == "calibrated_10to20pp"
+    assert train_opts["--no_latent_augmix_renorm"] is True
+    assert train_opts["--enable_latent_augmix_consistency"] is True
+    assert opt_first(train_opts, "--latent_augmix_consistency_weight") == "2.0"
+    assert opt_first(train_opts, "--latent_augmix_consistency_loss") == "jsd"
+    assert opt_first(train_opts, "--latent_augmix_bce_weight") == "1.0"
+    assert opt_first(train_opts, "--latent_augmix_consistency_max_batches") == "7"
     assert train_opts["--enable_raw_corrupt_consistency"] is True
     assert train_opts["--raw_corrupt_no_renorm"] is True
     assert opt_first(train_opts, "--raw_corrupt_severity_profile") == "standard"
+    assert opt_first(train_opts, "--raw_corrupt_view_mode") == "augmix"
+    assert opt_first(train_opts, "--raw_augmix_width") == "3"
+    assert opt_first(train_opts, "--raw_augmix_depth") == "2"
+    assert opt_first(train_opts, "--raw_augmix_alpha") == "1.0"
+    assert opt_first(train_opts, "--raw_augmix_mixture_mode") == "fixed"
+    assert opt_first(train_opts, "--raw_augmix_mixture_prob") == "0.75"
+    assert opt_first(train_opts, "--raw_augmix_mixture_beta_a") == "3.0"
+    assert opt_first(train_opts, "--raw_augmix_mixture_beta_b") == "1.0"
+    assert opt_first(train_opts, "--raw_input_bandpass_low_hz") == "0.5"
+    assert opt_first(train_opts, "--raw_input_bandpass_high_hz") == "35.0"
+    assert train_opts["--raw_input_repair_flat_leads"] is True
+    assert train_opts["--raw_input_renorm_after_stabilizer"] is True
     assert train_opts["--enable_mask_shift_consistency"] is True
     assert train_opts["--mask_shift_no_renorm"] is True
     assert opt_first(train_opts, "--mask_shift_mask_severity") == "5"

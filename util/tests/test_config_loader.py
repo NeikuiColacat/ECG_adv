@@ -82,6 +82,12 @@ def _load(name: str) -> dict:
         ("effnet_vae_lhat_calibrated_rawsupervised_k500_v7_sjr_rgq.yaml", 4),
         ("effnet_vae_lhat_calibrated_rawsupervised_k500_v7_sjr_rgq_ningbo.yaml", 1),
         ("effnet_vae_lhat_calibrated_rawsupervised_k500_v7_sjr_rgq_smoke.yaml", 1),
+        ("effnet_vae_lhat_calibrated_latent_augmix_k500_v7_sjr_rgq.yaml", 4),
+        ("effnet_vae_lhat_calibrated_latent_augmix_k500_v7_sjr_rgq_cpsc_2018.yaml", 1),
+        ("effnet_vae_lhat_calibrated_latent_augmix_norenorm_k500_v7_sjr_rgq_cpsc_2018.yaml", 1),
+        ("effnet_vae_lhat_calibrated_latent_augmix_directloss_k500_v7_sjr_rgq_cpsc_2018.yaml", 1),
+        ("effnet_vae_lhat_fullpool_raw_augmix_depth1_w1_m100_stabilizer35_k500_v7_sjr_rgq.yaml", 4),
+        ("effnet_vae_lhat_fullpool_raw_augmix_depth1_w1_m100_stabilizer35_k500_v7_sjr_rgq_smoke.yaml", 1),
         ("effnet_vae_lhat_maskshift_consistency_k500_v7_sjr_rgq.yaml", 4),
         ("effnet_vae_lhat_maskshift_consistency_k500_v7_sjr_rgq_ningbo.yaml", 1),
         ("effnet_vae_lhat_maskshift_consistency_k500_v7_sjr_rgq_smoke.yaml", 1),
@@ -395,6 +401,28 @@ def test_effnet_vae_lhat_command_is_protocol_equivalent():
         assert _option_value(argv, "--eval_pn2021_limit") == "0"
 
 
+def test_effnet_raw_corrupt_input_stabilizer_config_maps_to_legacy_flags():
+    config = _load("effnet_vae_lhat_calibrated_rawsupervised_k500_v7_sjr_rgq_smoke.yaml")
+    config = copy.deepcopy(config)
+    config["adaptation"]["raw_corrupt_consistency"]["input_stabilizer"] = {
+        "bandpass_low_hz": 0.5,
+        "bandpass_high_hz": 35.0,
+        "repair_flat_leads": True,
+        "renorm_after_stabilizer": True,
+        "sample_rate_hz": 100.0,
+    }
+    validate_experiment_config(config, repo_root=REPO)
+    commands = build_runner_commands(config)
+
+    assert len(commands) == 1
+    argv = commands[0]["argv"]
+    assert _option_value(argv, "--raw_input_bandpass_low_hz") == "0.5"
+    assert _option_value(argv, "--raw_input_bandpass_high_hz") == "35.0"
+    assert "--raw_input_repair_flat_leads" in argv
+    assert "--raw_input_renorm_after_stabilizer" in argv
+    assert _option_value(argv, "--raw_input_sample_rate_hz") == "100.0"
+
+
 @pytest.mark.parametrize(
     ("config_name", "output_family"),
     [
@@ -644,6 +672,137 @@ def test_effnet_vae_lhat_calibrated_rawsupervised_config_exposes_profile_flag():
         assert _option_value(argv, "--raw_corrupt_severity_profile") == "calibrated_10to20pp"
         assert _option_value(argv, "--raw_corrupt_scope") == "source_target"
         assert _option_value(argv, "--run_tag_extra") == "k500_calrawsupervised"
+
+
+def test_effnet_vae_lhat_calibrated_latent_augmix_config_exposes_profile_flag():
+    config = _load("effnet_vae_lhat_calibrated_latent_augmix_k500_v7_sjr_rgq_cpsc_2018.yaml")
+    validate_experiment_config(config, repo_root=REPO)
+    commands = build_runner_commands(config)
+
+    assert len(commands) == 1
+    argv = commands[0]["argv"]
+    assert _option_value(argv, "--center") == "cpsc_2018"
+    assert "--enable_raw_corrupt_consistency" not in argv
+    assert _option_value(argv, "--seed") == "20260601"
+    assert _option_value(argv, "--latent_augmix_severity") == "5"
+    assert _option_value(argv, "--latent_augmix_severity_profile") == "calibrated_10to20pp"
+    assert _option_value(argv, "--run_tag_extra") == "k500_callatentaugmix"
+    assert _all_option_values(argv, "--latent_augmix_ops") == [
+        "powerline_noise",
+        "emg_noise",
+        "baseline_wander",
+        "baseline_shift",
+        "random_leads_masking",
+    ]
+
+
+def test_effnet_vae_lhat_calibrated_latent_augmix_norenorm_config_exposes_flag():
+    config = _load("effnet_vae_lhat_calibrated_latent_augmix_norenorm_k500_v7_sjr_rgq_cpsc_2018.yaml")
+    validate_experiment_config(config, repo_root=REPO)
+    commands = build_runner_commands(config)
+
+    assert len(commands) == 1
+    argv = commands[0]["argv"]
+    assert _option_value(argv, "--center") == "cpsc_2018"
+    assert _option_value(argv, "--latent_augmix_severity_profile") == "calibrated_10to20pp"
+    assert "--no_latent_augmix_renorm" in argv
+    assert _option_value(argv, "--run_tag_extra") == "k500_callatentaugmix_norenorm"
+
+
+def test_effnet_vae_lhat_calibrated_latent_augmix_directloss_config_exposes_flags():
+    config = _load("effnet_vae_lhat_calibrated_latent_augmix_directloss_k500_v7_sjr_rgq_cpsc_2018.yaml")
+    validate_experiment_config(config, repo_root=REPO)
+    commands = build_runner_commands(config)
+
+    assert len(commands) == 1
+    argv = commands[0]["argv"]
+    assert _option_value(argv, "--center") == "cpsc_2018"
+    assert "--enable_raw_corrupt_consistency" not in argv
+    assert _option_value(argv, "--latent_augmix_copies") == "2"
+    assert _option_value(argv, "--latent_augmix_severity_profile") == "calibrated_10to20pp"
+    assert "--enable_latent_augmix_consistency" in argv
+    assert _option_value(argv, "--latent_augmix_consistency_loss") == "jsd"
+    assert _option_value(argv, "--latent_augmix_consistency_weight") == "2.0"
+    assert _option_value(argv, "--latent_augmix_bce_weight") == "1.0"
+    assert _option_value(argv, "--run_tag_extra") == "k500_callatentaugmix_directloss"
+
+
+def test_effnet_vae_lhat_fullpool_raw_augmix_config_exposes_flags():
+    config = _load("effnet_vae_lhat_fullpool_raw_augmix_k500_v7_sjr_rgq_cpsc_2018.yaml")
+    validate_experiment_config(config, repo_root=REPO)
+    commands = build_runner_commands(config)
+
+    assert len(commands) == 1
+    argv = commands[0]["argv"]
+    assert _option_value(argv, "--center") == "cpsc_2018"
+    assert "--enable_raw_corrupt_consistency" in argv
+    assert _option_value(argv, "--raw_corrupt_severity_profile") == "calibrated_10to20pp"
+    assert _option_value(argv, "--raw_corrupt_scope") == "source_target"
+    assert _option_value(argv, "--raw_corrupt_view_mode") == "augmix"
+    assert _option_value(argv, "--raw_augmix_width") == "3"
+    assert _option_value(argv, "--raw_augmix_depth") == "-1"
+    assert _option_value(argv, "--raw_augmix_alpha") == "1.0"
+    assert _option_value(argv, "--run_tag_extra") == "k500_fullpool_rawaugmix"
+
+
+def test_effnet_vae_lhat_raw_augmix_config_exposes_mixture_flags():
+    config = _load("effnet_vae_lhat_fullpool_raw_augmix_depth1_k500_v7_sjr_rgq_cpsc_2018.yaml")
+    config = copy.deepcopy(config)
+    config["adaptation"]["raw_corrupt_consistency"]["augmix"]["mixture_mode"] = "fixed"
+    config["adaptation"]["raw_corrupt_consistency"]["augmix"]["mixture_prob"] = 0.75
+    validate_experiment_config(config, repo_root=REPO)
+    commands = build_runner_commands(config)
+
+    argv = commands[0]["argv"]
+    assert _option_value(argv, "--raw_corrupt_view_mode") == "augmix"
+    assert _option_value(argv, "--raw_augmix_depth") == "1"
+    assert _option_value(argv, "--raw_augmix_mixture_mode") == "fixed"
+    assert _option_value(argv, "--raw_augmix_mixture_prob") == "0.75"
+
+
+def test_effnet_vae_lhat_raw_augmix_w1_m100_remaining3_config_exposes_matrix():
+    config = _load("effnet_vae_lhat_fullpool_raw_augmix_depth1_w1_m100_k500_v7_sjr_rgq_remaining3.yaml")
+    validate_experiment_config(config, repo_root=REPO)
+    commands = build_runner_commands(config)
+
+    assert [command["matrix"]["center"] for command in commands] == [
+        "ningbo",
+        "chapman_shaoxing",
+        "georgia",
+    ]
+    for command in commands:
+        argv = command["argv"]
+        assert _option_value(argv, "--raw_corrupt_view_mode") == "augmix"
+        assert _option_value(argv, "--raw_augmix_width") == "1"
+        assert _option_value(argv, "--raw_augmix_depth") == "1"
+        assert _option_value(argv, "--raw_augmix_mixture_mode") == "fixed"
+        assert _option_value(argv, "--raw_augmix_mixture_prob") == "1.0"
+        assert _option_value(argv, "--run_tag_extra") == "k500_fullpool_rawaugmix_d1_w1_m100"
+
+
+def test_effnet_vae_lhat_weighted_hardops_raw_augmix_chapman_config():
+    config = _load("effnet_vae_lhat_fullpool_raw_augmix_depth1_w1_m100_hardops_k500_v7_sjr_rgq_chapman.yaml")
+    validate_experiment_config(config, repo_root=REPO)
+    commands = build_runner_commands(config)
+
+    assert len(commands) == 1
+    argv = commands[0]["argv"]
+    assert _option_value(argv, "--center") == "chapman_shaoxing"
+    assert _option_value(argv, "--raw_corrupt_view_mode") == "augmix"
+    assert _option_value(argv, "--raw_augmix_width") == "1"
+    assert _option_value(argv, "--raw_augmix_depth") == "1"
+    assert _option_value(argv, "--raw_augmix_mixture_mode") == "fixed"
+    assert _option_value(argv, "--raw_augmix_mixture_prob") == "1.0"
+    assert _all_option_values(argv, "--raw_corrupt_ops") == [
+        "powerline_noise",
+        "emg_noise",
+        "emg_noise",
+        "baseline_wander",
+        "baseline_wander",
+        "baseline_shift",
+        "random_leads_masking",
+    ]
+    assert _option_value(argv, "--run_tag_extra") == "k500_fullpool_rawaugmix_d1_w1_m100_hardops"
 
 
 def test_effnet_vae_lhat_maskshift_consistency_config_exposes_targeted_flags():
@@ -1859,6 +2018,77 @@ def test_ecgfounder_vae_lhat_augmix_config_enables_latent_augmix_branch():
             "/runs/ecgfounder_vae_lhat_augmix_k500_v7_sjr_rgq/pytest_run/"
             f"{command['matrix']['center']}"
         )
+
+
+def test_ecgfounder_vae_lhat_raw_augmix_config_exposes_mixture_flags():
+    config = _load("ecgfounder_vae_lhat_k500_v7_sjr_rgq.yaml")
+    config = copy.deepcopy(config)
+    config["adaptation"]["raw_corrupt_consistency"] = {
+        "enabled": True,
+        "batch_size": 128,
+        "copies": 2,
+        "prob": 1.0,
+        "severity": 5,
+        "severity_profile": "calibrated_10to20pp",
+        "consistency_weight": 2.0,
+        "consistency_loss": "jsd",
+        "bce_weight": 1.0,
+        "max_batches": 64,
+        "scope": "source_target",
+        "clip_abs": 6.0,
+        "grad_clip": 1.0,
+        "source_signal_cache_dir": "${paths.data_root}/paper_effnet_source_signal_cache",
+        "ops": [
+            "powerline_noise",
+            "emg_noise",
+            "baseline_wander",
+            "baseline_shift",
+            "random_leads_masking",
+        ],
+        "no_renorm": True,
+        "view_mode": "augmix",
+        "augmix": {
+            "width": 1,
+            "depth": 1,
+            "alpha": 1.0,
+            "mixture_mode": "fixed",
+            "mixture_prob": 1.0,
+            "mixture_beta_a": 0.0,
+            "mixture_beta_b": 0.0,
+        },
+    }
+    validate_experiment_config(config, repo_root=REPO)
+    commands = build_runner_commands(config)
+
+    assert len(commands) == 4
+    for command in commands:
+        argv = command["argv"]
+        assert "--enable_raw_corrupt_consistency" in argv
+        assert _option_value(argv, "--raw_corrupt_severity_profile") == "calibrated_10to20pp"
+        assert _option_value(argv, "--raw_corrupt_scope") == "source_target"
+        assert "--raw_corrupt_no_renorm" in argv
+        assert _option_value(argv, "--raw_corrupt_view_mode") == "augmix"
+        assert _option_value(argv, "--raw_augmix_width") == "1"
+        assert _option_value(argv, "--raw_augmix_depth") == "1"
+        assert _option_value(argv, "--raw_augmix_alpha") == "1.0"
+        assert _option_value(argv, "--raw_augmix_mixture_mode") == "fixed"
+        assert _option_value(argv, "--raw_augmix_mixture_prob") == "1.0"
+        assert _option_value(argv, "--raw_augmix_mixture_beta_a") == "0.0"
+        assert _option_value(argv, "--raw_augmix_mixture_beta_b") == "0.0"
+
+
+def test_ecgfounder_vae_lhat_diagnostic_last_epoch_config_is_explicitly_allowed():
+    config = _load("ecgfounder_vae_lhat_fullpool_raw_augmix_w1_m100_last_epoch_k500_v7_sjr_rgq_cpsc_2018.yaml")
+    validate_experiment_config(config, repo_root=REPO)
+    commands = build_runner_commands(config)
+
+    assert config["run_record"]["registration_status"] == "exploratory"
+    assert len(commands) == 1
+    argv = commands[0]["argv"]
+    assert _option_value(argv, "--selection_metric") == "last_epoch"
+    assert _option_value(argv, "--raw_corrupt_view_mode") == "augmix"
+    assert _option_value(argv, "--raw_augmix_width") == "1"
+    assert _option_value(argv, "--raw_augmix_mixture_mode") == "fixed"
 
 
 def test_ecgfounder_vae_lhat_adapter_is_registered():

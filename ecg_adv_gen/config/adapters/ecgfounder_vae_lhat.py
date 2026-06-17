@@ -36,6 +36,7 @@ def build_ecgfounder_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[s
     selection = adaptation["selection"]
     optimizer = training["optimizer"]
     latent_augmix = adaptation.get("latent_augmix") or {}
+    raw_corrupt = adaptation.get("raw_corrupt_consistency") or {}
 
     argv: list[Any] = [
         "--centers",
@@ -178,9 +179,69 @@ def build_ecgfounder_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[s
                 latent_augmix.get("alpha", 1.0),
                 "--latent_augmix_severity",
                 latent_augmix.get("severity", 2),
+                "--latent_augmix_severity_profile",
+                latent_augmix.get("severity_profile", "standard"),
             ]
         )
         if latent_augmix.get("ops"):
             argv.append("--latent_augmix_ops")
             argv.extend(latent_augmix["ops"])
+        if bool(latent_augmix.get("no_renorm", False)):
+            argv.append("--no_latent_augmix_renorm")
+        if latent_augmix.get("clip_abs") is not None:
+            argv.extend(["--latent_augmix_clip_abs", latent_augmix.get("clip_abs")])
+    if bool(raw_corrupt.get("enabled", False)):
+        raw_augmix = raw_corrupt.get("augmix") or {}
+        argv.extend(
+            [
+                "--enable_raw_corrupt_consistency",
+                "--raw_corrupt_batch_size",
+                raw_corrupt.get("batch_size", 128),
+                "--raw_corrupt_copies",
+                raw_corrupt.get("copies", 1),
+                "--raw_corrupt_prob",
+                raw_corrupt.get("prob", 0.5),
+                "--raw_corrupt_severity",
+                raw_corrupt.get("severity", 4),
+                "--raw_corrupt_severity_profile",
+                raw_corrupt.get("severity_profile", "standard"),
+                "--raw_corrupt_consistency_weight",
+                raw_corrupt.get("consistency_weight", 0.5),
+                "--raw_corrupt_consistency_loss",
+                raw_corrupt.get("consistency_loss", "soft_bce"),
+                "--raw_corrupt_bce_weight",
+                raw_corrupt.get("bce_weight", 0.1),
+                "--raw_corrupt_max_batches",
+                raw_corrupt.get("max_batches", 0),
+                "--raw_corrupt_scope",
+                raw_corrupt.get("scope", "target"),
+                "--raw_corrupt_clip_abs",
+                raw_corrupt.get("clip_abs", 6.0),
+                "--raw_corrupt_grad_clip",
+                raw_corrupt.get("grad_clip", 0.0),
+                "--source_signal_cache_dir",
+                raw_corrupt.get("source_signal_cache_dir", ""),
+                "--raw_corrupt_view_mode",
+                raw_corrupt.get("view_mode", "single_op"),
+                "--raw_augmix_width",
+                raw_augmix.get("width", 3),
+                "--raw_augmix_depth",
+                raw_augmix.get("depth", -1),
+                "--raw_augmix_alpha",
+                raw_augmix.get("alpha", 1.0),
+                "--raw_augmix_mixture_mode",
+                raw_augmix.get("mixture_mode", "beta"),
+                "--raw_augmix_mixture_prob",
+                raw_augmix.get("mixture_prob", 0.5),
+                "--raw_augmix_mixture_beta_a",
+                raw_augmix.get("mixture_beta_a", 0.0),
+                "--raw_augmix_mixture_beta_b",
+                raw_augmix.get("mixture_beta_b", 0.0),
+            ]
+        )
+        if raw_corrupt.get("ops"):
+            argv.append("--raw_corrupt_ops")
+            argv.extend(raw_corrupt["ops"])
+        if bool(raw_corrupt.get("no_renorm", False)):
+            argv.append("--raw_corrupt_no_renorm")
     return argv

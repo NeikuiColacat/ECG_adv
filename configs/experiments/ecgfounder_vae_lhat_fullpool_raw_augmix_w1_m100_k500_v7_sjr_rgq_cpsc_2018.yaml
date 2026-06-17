@@ -1,0 +1,55 @@
+extends:
+  - ecgfounder_vae_lhat_k500_v7_sjr_rgq.yaml
+
+experiment:
+  name: ecgfounder_vae_lhat_fullpool_raw_augmix_w1_m100_k500_v7_sjr_rgq_cpsc_2018
+  description: CPSC 2018 ECGFounder VAE-LHAT with source-target raw AugMix reduced to single-op full-strength PN2021-C views.
+
+model:
+  k500_head_root: ${paths.output_root}/ecgfounder_direct_k500_v7_sjr_rgq/mainline_v7_k500_4gpu_20260605/${matrix.center}/runs
+
+adaptation:
+  raw_corrupt_consistency:
+    enabled: true
+    batch_size: 128
+    copies: 2
+    prob: 1.0
+    severity: 5
+    severity_profile: calibrated_10to20pp
+    ops:
+      - powerline_noise
+      - emg_noise
+      - baseline_wander
+      - baseline_shift
+      - random_leads_masking
+    consistency_weight: 2.0
+    consistency_loss: jsd
+    bce_weight: 1.0
+    max_batches: 64
+    scope: source_target
+    source_signal_cache_dir: ${paths.output_root}/ecgfounder_inithead_fullft_k500_v6/main_repro_20260528_1355_ecgfounder_inithead/cache
+    no_renorm: true
+    clip_abs: 6.0
+    grad_clip: 1.0
+    view_mode: augmix
+    augmix:
+      width: 1
+      depth: 1
+      alpha: 1.0
+      mixture_mode: fixed
+      mixture_prob: 1.0
+      mixture_beta_a: 0.0
+      mixture_beta_b: 0.0
+
+postprocess:
+  commands: []
+
+runner:
+  matrix:
+    center:
+      - cpsc_2018
+
+run_record:
+  purpose: Test whether the EfficientNet raw-AugMix boundary recipe also recovers ECGFounder PN2021-C CPSC robustness when integrated into the ECGFounder VAE-LHAT mainline.
+  result_summary: Pending CPSC run. Compare against ECGFounder VAE noAug, standard VAE+AugMix, and calibrated raw-supervised CPSC results.
+  registration_status: provisional

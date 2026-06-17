@@ -1,0 +1,18 @@
+extends:
+  - effnet_vae_lhat_fullpool_raw_augmix_depth1_k500_v7_sjr_rgq_cpsc_2018.yaml
+
+experiment:
+  name: effnet_vae_lhat_fullpool_raw_augmix_depth1_m075_k500_v7_sjr_rgq_cpsc_2018
+  description: CPSC 2018 EfficientNet1DV2 VAE-LHAT with PN2021-C-aligned raw AugMix chains and fixed high corruption mixture.
+
+adaptation:
+  run_tag_extra: k500_fullpool_rawaugmix_d1_m075
+  raw_corrupt_consistency:
+    augmix:
+      mixture_mode: fixed
+      mixture_prob: 0.75
+
+run_record:
+  purpose: Test whether biasing raw AugMix views toward the calibrated corrupted branch improves PN2021-C recovery beyond depth=1 raw AugMix.
+  result_summary: Pending CPSC run. Compare against depth=1 beta-mixture raw AugMix and calibrated raw-supervised.
+  registration_status: provisional

@@ -1,0 +1,46 @@
+extends:
+  - effnet_vae_lhat_fullpool_raw_augmix_depth1_w1_m100_stabilizer35_k500_v7_sjr_rgq.yaml
+
+experiment:
+  name: effnet_vae_lhat_fullpool_raw_augmix_depth1_w1_m100_stabilizer35_k500_v7_sjr_rgq_smoke
+  description: Single-center smoke test for EfficientNet1DV2 boundary raw-AugMix with training-time raw input stabilizer.
+
+training:
+  epochs: 1
+  batch_size: 32
+  eval_batch_size: 64
+  num_workers: 0
+
+adaptation:
+  anchors:
+    k_anchor: 32
+  hull:
+    M: 4
+    steps: 1
+    neighbor_pool_size: 32
+  attack:
+    pgd_batch: 8
+  loss:
+    target_real_weight: 20.0
+    adv_weight: 0.1
+    adv_weight_warmup_epochs: 0
+  latent_augmix:
+    width: 2
+  raw_corrupt_consistency:
+    max_batches: 1
+
+evaluation:
+  pn2021_limit: 64
+
+postprocess:
+  commands: []
+
+runner:
+  matrix:
+    center:
+      - cpsc_2018
+
+run_record:
+  purpose: Smoke-check that the EfficientNet raw-AugMix training branch can generate PN2021-C calibrated stabilized views and record the stabilizer in run metadata.
+  result_summary: Pending smoke result.
+  registration_status: provisional

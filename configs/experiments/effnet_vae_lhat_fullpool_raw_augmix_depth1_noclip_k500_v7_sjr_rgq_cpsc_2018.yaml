@@ -1,0 +1,16 @@
+extends:
+  - effnet_vae_lhat_fullpool_raw_augmix_depth1_k500_v7_sjr_rgq_cpsc_2018.yaml
+
+experiment:
+  name: effnet_vae_lhat_fullpool_raw_augmix_depth1_noclip_k500_v7_sjr_rgq_cpsc_2018
+  description: CPSC 2018 EfficientNet1DV2 VAE-LHAT with PN2021-C-aligned raw AugMix chains and no training-time corruption clipping.
+
+adaptation:
+  run_tag_extra: k500_fullpool_rawaugmix_d1_noclip
+  raw_corrupt_consistency:
+    clip_abs: 0.0
+
+run_record:
+  purpose: Test whether removing training-time raw corruption clipping improves PN2021-C recovery for single-operator calibrated raw AugMix views.
+  result_summary: Pending CPSC run. Compare against clipped depth=1 raw AugMix to isolate the training/eval amplitude-alignment effect.
+  registration_status: provisional

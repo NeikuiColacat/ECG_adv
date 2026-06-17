@@ -629,13 +629,14 @@ def build_latent_augmix_branch_signals(
     *,
     copies: int,
     severity: int,
+    severity_profile: str = "standard",
     width: int,
     depth: int,
     alpha: float,
     latent_weight_cap: float,
     ops: Sequence[str],
     rng: np.random.Generator,
-    op_apply_fn: Callable[[np.ndarray, str, int], np.ndarray],
+    op_apply_fn: Callable[[np.ndarray, str, int, str], np.ndarray],
     available_ops: Sequence[str],
     renorm: bool = True,
     clip_abs: float = 6.0,
@@ -685,7 +686,10 @@ def build_latent_augmix_branch_signals(
                 sig = x0.copy()
                 for _ in range(d):
                     op_name = str(rng.choice(ops))
-                    sig = op_apply_fn(sig, op_name, int(severity)).astype(np.float32, copy=False)
+                    sig = op_apply_fn(sig, op_name, int(severity), str(severity_profile)).astype(
+                        np.float32,
+                        copy=False,
+                    )
                 branch_mix = branch_mix + float(weights[branch_i]) * sig
 
             out = (1.0 - m) * x0 + m * branch_mix
@@ -705,6 +709,7 @@ def build_latent_augmix_branch_signals(
         "n_generated": int(mixed_arr.shape[0]),
         "copies": int(copies),
         "severity": int(severity),
+        "severity_profile": str(severity_profile),
         "width": int(width),
         "depth": int(depth),
         "alpha": float(alpha),
@@ -732,6 +737,8 @@ def build_raw_corruption_views(
     available_ops: Sequence[str],
     renorm: bool = False,
     clip_abs: float = 6.0,
+    postprocess_fn: Callable[[np.ndarray], np.ndarray] | None = None,
+    postprocess_name: str | None = None,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     """Create single-op raw ECG corruption views for consistency training."""
     if copies <= 0:
@@ -753,15 +760,20 @@ def build_raw_corruption_views(
 
     out: list[np.ndarray] = []
     used_ops: list[str] = []
+    view_ops: list[str] = []
     n_corrupted = 0
     for _copy_i in range(int(copies)):
         for i in range(signals_ct.shape[0]):
             sig = signals_ct[i].astype(np.float32, copy=True)
+            view_op = "__clean__"
             if rng.random() < p:
                 op_name = str(rng.choice(ops))
                 sig = op_apply_fn(sig, op_name, int(severity)).astype(np.float32, copy=False)
                 used_ops.append(op_name)
+                view_op = op_name
                 n_corrupted += 1
+            if postprocess_fn is not None:
+                sig = np.asarray(postprocess_fn(sig), dtype=np.float32)
             if renorm:
                 sig = global_zscore_np(sig)
             else:
@@ -769,6 +781,7 @@ def build_raw_corruption_views(
             if clip_abs > 0:
                 sig = np.clip(sig, -float(clip_abs), float(clip_abs)).astype(np.float32)
             out.append(sig)
+            view_ops.append(view_op)
 
     arr = np.stack(out, axis=0).astype(np.float32) if out else np.empty(
         (0,) + tuple(signals_ct.shape[1:]), dtype=np.float32
@@ -784,7 +797,138 @@ def build_raw_corruption_views(
         "prob": p,
         "ops": list(ops),
         "op_counts": op_counts,
+        "view_ops": view_ops,
         "renorm": bool(renorm),
         "clip_abs": float(clip_abs),
     }
+    if postprocess_fn is not None:
+        stats["postprocess"] = str(postprocess_name or "custom")
+    return arr, stats
+
+
+def build_raw_augmix_views(
+    signals_ct: np.ndarray,
+    *,
+    copies: int,
+    severity: int,
+    severity_profile: str = "standard",
+    width: int,
+    depth: int,
+    alpha: float,
+    mixture_mode: str = "beta",
+    mixture_prob: float = 0.5,
+    mixture_beta_a: float | None = None,
+    mixture_beta_b: float | None = None,
+    ops: Sequence[str],
+    rng: np.random.Generator,
+    op_apply_fn: Callable[[np.ndarray, str, int, str], np.ndarray],
+    available_ops: Sequence[str],
+    renorm: bool = False,
+    clip_abs: float = 6.0,
+    postprocess_fn: Callable[[np.ndarray], np.ndarray] | None = None,
+    postprocess_name: str | None = None,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Create raw ECG AugMix views with multi-op chains for consistency training."""
+    if copies <= 0:
+        return (
+            np.empty((0,) + tuple(signals_ct.shape[1:]), dtype=np.float32),
+            {"enabled": False, "n_generated": 0},
+        )
+    if signals_ct.ndim != 3:
+        raise ValueError(f"signals_ct must be 3D (N,12,L), got {signals_ct.shape}")
+    if not (1 <= severity <= 10):
+        raise ValueError(f"severity must be in [1,10], got {severity}")
+    if width < 1:
+        raise ValueError("raw AugMix width must be >= 1")
+    mixture_mode = str(mixture_mode)
+    if mixture_mode not in {"beta", "fixed"}:
+        raise ValueError(f"raw AugMix mixture_mode must be 'beta' or 'fixed', got {mixture_mode!r}")
+    if mixture_mode == "fixed":
+        if not (0.0 <= float(mixture_prob) <= 1.0):
+            raise ValueError("raw AugMix fixed mixture_prob must be in [0, 1]")
+    beta_a = float(alpha) if mixture_beta_a is None else float(mixture_beta_a)
+    beta_b = float(alpha) if mixture_beta_b is None else float(mixture_beta_b)
+    if beta_a <= 0 or beta_b <= 0:
+        raise ValueError("raw AugMix mixture beta parameters must be > 0")
+    if not ops:
+        raise ValueError("ops must contain at least one op")
+    available = set(str(op) for op in available_ops)
+    for op_name in ops:
+        if op_name not in available:
+            raise ValueError(f"unknown raw AugMix op: {op_name}")
+
+    mixed: list[np.ndarray] = []
+    beta_ms: list[float] = []
+    chain_depths: list[int] = []
+    used_ops: list[str] = []
+    view_ops: list[str] = []
+
+    for _copy_i in range(int(copies)):
+        for i in range(signals_ct.shape[0]):
+            x0 = signals_ct[i].astype(np.float32, copy=False)
+            weights = rng.dirichlet([float(alpha)] * int(width)).astype(np.float32)
+            if mixture_mode == "fixed":
+                m = float(mixture_prob)
+            else:
+                m = float(rng.beta(beta_a, beta_b))
+            beta_ms.append(m)
+
+            branch_mix = np.zeros_like(x0, dtype=np.float32)
+            ops_for_view: list[str] = []
+            for branch_i in range(int(width)):
+                d = int(depth) if int(depth) > 0 else int(rng.integers(1, 4))
+                chain_depths.append(d)
+                sig = x0.copy()
+                for _ in range(d):
+                    op_name = str(rng.choice(ops))
+                    sig = op_apply_fn(sig, op_name, int(severity), str(severity_profile)).astype(
+                        np.float32,
+                        copy=False,
+                    )
+                    used_ops.append(op_name)
+                    ops_for_view.append(op_name)
+                branch_mix = branch_mix + float(weights[branch_i]) * sig
+
+            out = (1.0 - m) * x0 + m * branch_mix
+            if postprocess_fn is not None:
+                out = np.asarray(postprocess_fn(out), dtype=np.float32)
+            if renorm:
+                out = global_zscore_np(out)
+            else:
+                out = out.astype(np.float32, copy=False)
+            if clip_abs > 0:
+                out = np.clip(out, -float(clip_abs), float(clip_abs)).astype(np.float32)
+            mixed.append(out)
+            view_ops.append(ops_for_view[0] if len(ops_for_view) == 1 else "__mixed__")
+
+    arr = np.stack(mixed, axis=0).astype(np.float32) if mixed else np.empty(
+        (0,) + tuple(signals_ct.shape[1:]), dtype=np.float32
+    )
+    op_counts = {op: int(used_ops.count(op)) for op in sorted(set(used_ops))}
+    stats = {
+        "enabled": True,
+        "view_mode": "augmix",
+        "n_generated": int(arr.shape[0]),
+        "n_corrupted": int(arr.shape[0]),
+        "corrupt_fraction": 1.0,
+        "copies": int(copies),
+        "severity": int(severity),
+        "severity_profile": str(severity_profile),
+        "width": int(width),
+        "depth": int(depth),
+        "alpha": float(alpha),
+        "mixture_mode": mixture_mode,
+        "mixture_prob": float(mixture_prob),
+        "mixture_beta_a": beta_a,
+        "mixture_beta_b": beta_b,
+        "beta_m_mean": float(np.mean(beta_ms)) if beta_ms else float("nan"),
+        "chain_depth_mean": float(np.mean(chain_depths)) if chain_depths else float("nan"),
+        "ops": list(ops),
+        "op_counts": op_counts,
+        "view_ops": view_ops,
+        "renorm": bool(renorm),
+        "clip_abs": float(clip_abs),
+    }
+    if postprocess_fn is not None:
+        stats["postprocess"] = str(postprocess_name or "custom")
     return arr, stats

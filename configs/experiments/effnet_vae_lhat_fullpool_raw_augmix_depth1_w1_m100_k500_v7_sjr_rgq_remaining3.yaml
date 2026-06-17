@@ -1,0 +1,18 @@
+extends:
+  - effnet_vae_lhat_fullpool_raw_augmix_depth1_w1_m100_k500_v7_sjr_rgq_cpsc_2018.yaml
+
+experiment:
+  name: effnet_vae_lhat_fullpool_raw_augmix_depth1_w1_m100_k500_v7_sjr_rgq_remaining3
+  description: Remaining-center EfficientNet1DV2 VAE-LHAT boundary raw-AugMix check after the CPSC 2018 pilot.
+
+runner:
+  matrix:
+    center:
+      - ningbo
+      - chapman_shaoxing
+      - georgia
+
+run_record:
+  purpose: Verify whether the CPSC raw-AugMix boundary recipe generalizes to the other three K500 target centers without changing the training recipe.
+  result_summary: Completed 2026-06-16. Selected-checkpoint four-center PN2021-C mean is clean 0.864/0.545, corrupted 0.792/0.455, drop 7.27/9.07 pp. A paper-safe K500 internal corrupted-validation selector over selected/latest checkpoints chooses latest for all four centers and raises the external mean to clean 0.866/0.551, corrupted 0.812/0.472, drop 5.41/7.86 pp, effectively matching calibrated raw-supervised.
+  registration_status: provisional

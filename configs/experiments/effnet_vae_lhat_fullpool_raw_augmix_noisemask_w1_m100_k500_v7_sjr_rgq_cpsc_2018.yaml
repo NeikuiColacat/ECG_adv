@@ -1,0 +1,24 @@
+extends:
+  - effnet_vae_lhat_fullpool_raw_augmix_depth1_w1_m100_k500_v7_sjr_rgq_cpsc_2018.yaml
+
+experiment:
+  name: effnet_vae_lhat_fullpool_raw_augmix_noisemask_w1_m100_k500_v7_sjr_rgq_cpsc_2018
+  description: CPSC 2018 EfficientNet1DV2 VAE-LHAT with calibrated raw AugMix restricted to high-frequency noise and lead masking.
+
+adaptation:
+  run_tag_extra: k500_fullpool_rawaugmix_noisemask_w1_m100
+  raw_corrupt_consistency:
+    ops:
+      - powerline_noise
+      - emg_noise
+      - random_leads_masking
+    consistency_weight: 2.0
+    consistency_loss: jsd
+    bce_weight: 1.0
+    max_batches: 64
+    scope: source_target
+
+run_record:
+  purpose: Test whether the ECGFounder-winning noise/mask raw-AugMix split also improves EfficientNet1DV2 PN2021-C robustness, especially EMG, without over-training baseline_wander and baseline_shift.
+  result_summary: Pending CPSC pilot. Compare against four-center robust-selector w1_m100 and calibrated raw-supervised before expanding.
+  registration_status: provisional

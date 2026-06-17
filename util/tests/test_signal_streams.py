@@ -5,13 +5,16 @@ from __future__ import annotations
 import numpy as np
 import pytest
 import torch
+from torch.utils.data import TensorDataset
 
 from ecg_adv_gen.training import (
     CachedSignalDataset,
     MemorySignalDataset,
     TaggedCachedSignalDataset,
     TaggedMemorySignalDataset,
+    TaggedSignalDataset,
     build_weighted_signal_stream_loader,
+    build_weighted_signal_stream_loader_from_datasets,
 )
 
 
@@ -92,6 +95,41 @@ def test_build_weighted_signal_stream_loader_preserves_weights_and_four_tensors(
     assert len(batch) == 4
     x, y, stream, teacher = batch
     assert x.shape[1:] == torch.Size([2, 4])
+    assert y.shape[1:] == torch.Size([5])
+    assert teacher.shape[1:] == torch.Size([5])
+    assert set(stream.tolist()).issubset({0, 1, 2})
+
+
+def test_build_weighted_signal_stream_loader_from_datasets_accepts_custom_source_target():
+    source_ds = TensorDataset(
+        torch.ones((2, 12, 1000), dtype=torch.float32),
+        torch.zeros((2, 5), dtype=torch.float32),
+    )
+    target_ds = TensorDataset(
+        torch.full((1, 12, 1000), 2.0, dtype=torch.float32),
+        torch.ones((1, 5), dtype=torch.float32),
+    )
+    adv_x = np.full((1, 12, 1000), 3.0, dtype=np.float32)
+    adv_y = np.ones((1, 5), dtype=np.float32)
+
+    loader = build_weighted_signal_stream_loader_from_datasets(
+        source_dataset=source_ds,
+        target_dataset=target_ds,
+        source_weight=1.0,
+        target_real_weight=2.0,
+        adv_weight=3.0,
+        batch_size=4,
+        num_workers=0,
+        num_classes=5,
+        adv_signals=adv_x,
+        adv_labels=adv_y,
+        pin_memory=False,
+    )
+
+    assert len(loader.dataset) == 4
+    assert [float(w) for w in loader.sampler.weights] == pytest.approx([1.0, 1.0, 2.0, 3.0])
+    x, y, stream, teacher = next(iter(loader))
+    assert x.shape[1:] == torch.Size([12, 1000])
     assert y.shape[1:] == torch.Size([5])
     assert teacher.shape[1:] == torch.Size([5])
     assert set(stream.tolist()).issubset({0, 1, 2})

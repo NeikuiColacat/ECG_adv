@@ -1,0 +1,17 @@
+extends:
+  - effnet_vae_lhat_fullpool_raw_augmix_depth1_w1_m100_stabilizer35_k500_v7_sjr_rgq.yaml
+
+experiment:
+  name: effnet_vae_lhat_fullpool_raw_augmix_depth1_w1_m100_stabilizer35_k500_v7_sjr_rgq_part01
+  description: Part 1 of the EfficientNet1DV2 training-time stabilizer35 four-center run.
+
+runner:
+  matrix:
+    center:
+      - ningbo
+      - cpsc_2018
+
+run_record:
+  purpose: Run ningbo and CPSC for the training-integrated stabilizer35 EfficientNet1DV2 raw-AugMix recipe.
+  result_summary: Pending. Aggregate with part02 for the four-center PN2021-C summary.
+  registration_status: provisional

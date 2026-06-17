@@ -1,0 +1,20 @@
+extends:
+  - effnet_vae_lhat_fullpool_raw_augmix_depth1_k500_v7_sjr_rgq_cpsc_2018.yaml
+
+experiment:
+  name: effnet_vae_lhat_fullpool_raw_augmix_depth1_w1_m100_k500_v7_sjr_rgq_cpsc_2018
+  description: CPSC 2018 EfficientNet1DV2 VAE-LHAT with raw AugMix reduced to single-op full-strength corrupted views.
+
+adaptation:
+  run_tag_extra: k500_fullpool_rawaugmix_d1_w1_m100
+  raw_corrupt_consistency:
+    augmix:
+      width: 1
+      depth: 1
+      mixture_mode: fixed
+      mixture_prob: 1.0
+
+run_record:
+  purpose: Test whether removing AugMix clean mixback and multi-branch averaging closes the gap to calibrated raw-supervised while keeping the VAE-LH + raw-AugMix training path.
+  result_summary: Pending CPSC run. Compare against depth=1 fixed m=0.75 and calibrated raw-supervised.
+  registration_status: provisional

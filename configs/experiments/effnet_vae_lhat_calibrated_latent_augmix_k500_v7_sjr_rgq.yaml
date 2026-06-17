@@ -1,0 +1,35 @@
+extends:
+  - effnet_vae_lhat_k500_v7_sjr_rgq.yaml
+
+experiment:
+  name: effnet_vae_lhat_calibrated_latent_augmix_k500_v7_sjr_rgq
+  description: EfficientNet1DV2 K500 VAE-LHAT with latent AugMix chains using the calibrated PN2021-C 10-20 pp stressor profile.
+
+paper_protocol:
+  kshot:
+    seed: 20260601
+    subset_seed: 20260601
+
+model:
+  direct_init_root: ${paths.output_root}/effnet_direct_k500_v7_sjr_rgq/seed20260601_k500_v7_sjr_rgq_20260530_rep1/runs
+
+adaptation:
+  run_tag_extra: k500_callatentaugmix
+  latent_augmix:
+    latent_weight_cap: 0.25
+    width: 3
+    depth: -1
+    alpha: 1.0
+    severity: 5
+    severity_profile: calibrated_10to20pp
+    ops:
+      - powerline_noise
+      - emg_noise
+      - baseline_wander
+      - baseline_shift
+      - random_leads_masking
+
+run_record:
+  purpose: Test whether moving the calibrated PN2021-C stressor profile into latent AugMix chains improves corrupted AUPRC without adding a separate raw ECG corruption supervised/JSD phase.
+  result_summary: Pending. Run cpsc_2018 first against matched VAE noAug, standard latent AugMix, and calibrated raw-supervised stressor before four-center expansion.
+  registration_status: provisional

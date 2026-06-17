@@ -47,9 +47,11 @@ def jsd_multilabel(
     Returns:
         Loss. Scalar if reduction in {"mean","sum"}, else (B,).
     """
-    p_c = torch.sigmoid(logits_clean)
-    p_1 = torch.sigmoid(logits_aug1)
-    p_2 = torch.sigmoid(logits_aug2)
+    # Compute probabilities in fp32 even under AMP/fp16. With fp16, values such
+    # as 1 - 1e-6 round back to 1.0, which makes log1p(-p) produce -inf.
+    p_c = torch.sigmoid(logits_clean.float())
+    p_1 = torch.sigmoid(logits_aug1.float())
+    p_2 = torch.sigmoid(logits_aug2.float())
     m = (p_c + p_1 + p_2) / 3.0
 
     jsd = (_bernoulli_kl(p_c, m) + _bernoulli_kl(p_1, m) + _bernoulli_kl(p_2, m)) / 3.0

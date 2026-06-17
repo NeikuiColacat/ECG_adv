@@ -102,6 +102,10 @@ from ecg_adv_gen.training import (  # noqa: E402
     should_save_initial_best_model,
     validate_resume_contract,
 )
+from ecg_adv_gen.models.ecgfounder_torch import (  # noqa: E402
+    global_zscore_torch,
+    stabilize_ecg_torch,
+)
 from ecg_adv_gen.data.latent_pools import (  # noqa: E402
     LatentPoolError,
     load_synth_pool as _load_synth_pool,
@@ -122,6 +126,7 @@ from ecg_adv_gen.adaptation import (  # noqa: E402
     build_adv_buffer_label,
     build_k500_internal_val_mask,
     build_latent_augmix_branch_signals as _build_latent_augmix_branch_signals_core,
+    build_raw_augmix_views as _build_raw_augmix_views_core,
     build_raw_corruption_views as _build_raw_corruption_views_core,
     derive_class_trust,
     derive_kshot_anchor_class_weights,
@@ -147,6 +152,65 @@ SUPER5_GEN_SUBSET = {"NORM", "MI", "STTC"}
 # Plan Rev 11/13: hardcoded distrust regardless of Stage 0.4 sanity output
 # (HYP synth fails Sokolow voltage; CD synth fails QRS broadening).
 DEFAULT_TRUST_HARDCODE = {"HYP": 0.0, "CD": 0.0}
+
+
+def _has_raw_input_stabilizer(config: Optional[Dict[str, Any]]) -> bool:
+    config = dict(config or {})
+    return bool(
+        config.get("bandpass_low_hz") is not None
+        or config.get("bandpass_high_hz") is not None
+        or config.get("repair_flat_leads")
+        or config.get("clip_abs") is not None
+        or config.get("renorm_after_stabilizer")
+    )
+
+
+def _raw_input_stabilizer_config(args: argparse.Namespace) -> Dict[str, Any]:
+    return {
+        "bandpass_low_hz": args.raw_input_bandpass_low_hz,
+        "bandpass_high_hz": args.raw_input_bandpass_high_hz,
+        "repair_flat_leads": bool(args.raw_input_repair_flat_leads),
+        "clip_abs": args.raw_input_clip_abs,
+        "renorm_after_stabilizer": bool(args.raw_input_renorm_after_stabilizer),
+        "sample_rate_hz": float(args.raw_input_sample_rate_hz),
+    }
+
+
+def _apply_raw_input_stabilizer_np(sig_ct: np.ndarray, config: Dict[str, Any]) -> np.ndarray:
+    if not _has_raw_input_stabilizer(config):
+        return np.asarray(sig_ct, dtype=np.float32)
+    x = torch.from_numpy(np.ascontiguousarray(sig_ct)).float().unsqueeze(0)
+    y = stabilize_ecg_torch(
+        x,
+        sample_rate_hz=float(config.get("sample_rate_hz", 100.0)),
+        bandpass_low_hz=config.get("bandpass_low_hz"),
+        bandpass_high_hz=config.get("bandpass_high_hz"),
+        repair_flat_leads=bool(config.get("repair_flat_leads", False)),
+        clip_abs=config.get("clip_abs"),
+    )
+    if bool(config.get("renorm_after_stabilizer", False)):
+        y = global_zscore_torch(y)
+    return y.squeeze(0).cpu().numpy().astype(np.float32, copy=False)
+
+
+def _raw_input_stabilizer_postprocess(
+    config: Optional[Dict[str, Any]],
+) -> tuple[Optional[Callable[[np.ndarray], np.ndarray]], Optional[str]]:
+    config = dict(config or {})
+    if not _has_raw_input_stabilizer(config):
+        return None, None
+
+    def _postprocess(sig_ct: np.ndarray) -> np.ndarray:
+        return _apply_raw_input_stabilizer_np(sig_ct, config)
+
+    parts: list[str] = []
+    if config.get("bandpass_low_hz") is not None or config.get("bandpass_high_hz") is not None:
+        parts.append(f"bandpass{config.get('bandpass_low_hz')}-{config.get('bandpass_high_hz')}")
+    if config.get("repair_flat_leads"):
+        parts.append("repairflat")
+    if config.get("renorm_after_stabilizer"):
+        parts.append("renorm")
+    return _postprocess, "+".join(parts) or "raw_input_stabilizer"
 
 from scripts.triple_labels.label_schemes import SUPER5_TO_IDX  # noqa: E402
 
@@ -283,6 +347,15 @@ def train_raw_corruption_consistency_epoch(
     max_batches: int = 0,
     renorm: bool = False,
     clip_abs: float = 6.0,
+    view_mode: str = "single_op",
+    augmix_width: int = 3,
+    augmix_depth: int = -1,
+    augmix_alpha: float = 1.0,
+    augmix_mixture_mode: str = "beta",
+    augmix_mixture_prob: float = 0.5,
+    augmix_mixture_beta_a: float = 0.0,
+    augmix_mixture_beta_b: float = 0.0,
+    input_stabilizer_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Train on raw ECG corruptions with clean-model consistency targets."""
     if copies <= 0 or (consistency_weight <= 0 and bce_weight <= 0):
@@ -305,6 +378,9 @@ def train_raw_corruption_consistency_epoch(
     severity_profile = str(severity_profile)
     if severity_profile not in PN2021C_STRESS_PROFILE_CHOICES:
         raise ValueError(f"unknown raw corruption severity profile: {severity_profile}")
+    view_mode = str(view_mode)
+    if view_mode not in {"single_op", "augmix"}:
+        raise ValueError(f"unknown raw corruption view mode: {view_mode}")
 
     losses: List[float] = []
     bce_losses: List[float] = []
@@ -312,23 +388,45 @@ def train_raw_corruption_consistency_epoch(
     n_generated = 0
     n_corrupted = 0
     op_counts: Dict[str, int] = {}
+    postprocess_names: set[str] = set()
 
     for batch_i, (signals, labels) in enumerate(loader, start=1):
         signals = signals.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
 
         clean_np = signals.detach().cpu().numpy().astype(np.float32, copy=False)
-        corrupt_np, stats = build_raw_corruption_views(
-            clean_np,
-            copies=copies,
-            severity=severity,
-            severity_profile=severity_profile,
-            ops=ops,
-            prob=prob,
-            rng=rng,
-            renorm=renorm,
-            clip_abs=clip_abs,
-        )
+        if view_mode == "augmix":
+            corrupt_np, stats = build_raw_augmix_views(
+                clean_np,
+                copies=copies,
+                severity=severity,
+                severity_profile=severity_profile,
+                width=augmix_width,
+                depth=augmix_depth,
+                alpha=augmix_alpha,
+                mixture_mode=augmix_mixture_mode,
+                mixture_prob=augmix_mixture_prob,
+                mixture_beta_a=None if augmix_mixture_beta_a <= 0 else augmix_mixture_beta_a,
+                mixture_beta_b=None if augmix_mixture_beta_b <= 0 else augmix_mixture_beta_b,
+                ops=ops,
+                rng=rng,
+                renorm=renorm,
+                clip_abs=clip_abs,
+                input_stabilizer_config=input_stabilizer_config,
+            )
+        else:
+            corrupt_np, stats = build_raw_corruption_views(
+                clean_np,
+                copies=copies,
+                severity=severity,
+                severity_profile=severity_profile,
+                ops=ops,
+                prob=prob,
+                rng=rng,
+                renorm=renorm,
+                clip_abs=clip_abs,
+                input_stabilizer_config=input_stabilizer_config,
+            )
         if corrupt_np.shape[0] == 0:
             continue
 
@@ -387,13 +485,21 @@ def train_raw_corruption_consistency_epoch(
         consistency_losses.append(float(raw_consistency.item()))
         n_generated += int(stats.get("n_generated", 0))
         n_corrupted += int(stats.get("n_corrupted", 0))
+        if stats.get("postprocess"):
+            postprocess_names.add(str(stats["postprocess"]))
         for op_name, count in dict(stats.get("op_counts", {})).items():
             op_counts[str(op_name)] = op_counts.get(str(op_name), 0) + int(count)
         if max_batches > 0 and batch_i >= max_batches:
             break
+    postprocess_name = None
+    if postprocess_names:
+        postprocess_name = next(iter(postprocess_names)) if len(postprocess_names) == 1 else "+".join(sorted(postprocess_names))
+    elif _has_raw_input_stabilizer(input_stabilizer_config):
+        _unused_postprocess_fn, postprocess_name = _raw_input_stabilizer_postprocess(input_stabilizer_config)
 
-    return {
+    result = {
         "enabled": True,
+        "view_mode": view_mode,
         "loss": float(np.mean(losses)) if losses else float("nan"),
         "bce_loss": float(np.mean(bce_losses)) if bce_losses else float("nan"),
         "consistency_loss": float(np.mean(consistency_losses)) if consistency_losses else float("nan"),
@@ -412,6 +518,168 @@ def train_raw_corruption_consistency_epoch(
         "op_counts": op_counts,
         "renorm": bool(renorm),
         "clip_abs": float(clip_abs),
+        "augmix_width": int(augmix_width) if view_mode == "augmix" else None,
+        "augmix_depth": int(augmix_depth) if view_mode == "augmix" else None,
+        "augmix_alpha": float(augmix_alpha) if view_mode == "augmix" else None,
+        "augmix_mixture_mode": str(augmix_mixture_mode) if view_mode == "augmix" else None,
+        "augmix_mixture_prob": float(augmix_mixture_prob) if view_mode == "augmix" else None,
+        "augmix_mixture_beta_a": float(augmix_mixture_beta_a) if view_mode == "augmix" else None,
+        "augmix_mixture_beta_b": float(augmix_mixture_beta_b) if view_mode == "augmix" else None,
+    }
+    if _has_raw_input_stabilizer(input_stabilizer_config):
+        result["input_stabilizer"] = dict(input_stabilizer_config or {})
+        result["postprocess"] = postprocess_name or "raw_input_stabilizer"
+    return result
+
+
+def train_latent_augmix_consistency_epoch(
+    model: nn.Module,
+    clean_signals_ct: np.ndarray,
+    augmix_signals_ct: np.ndarray,
+    labels_np: np.ndarray,
+    optimizer: AdamW,
+    criterion: nn.Module,
+    device: str,
+    *,
+    copies: int,
+    consistency_weight: float,
+    bce_weight: float,
+    consistency_loss: str,
+    batch_size: int,
+    crop_len: int,
+    grad_clip: float,
+    trainable_params: List[nn.Parameter],
+    freeze_backbone_eval_fn: Optional[Callable[[], None]] = None,
+    max_batches: int = 0,
+) -> Dict[str, Any]:
+    """Train directly on latent-AugMix views generated for the current epoch."""
+    if copies <= 0 or (consistency_weight <= 0 and bce_weight <= 0):
+        return {
+            "enabled": False,
+            "reason": "disabled_or_zero_weight",
+            "loss": float("nan"),
+            "bce_loss": float("nan"),
+            "consistency_loss": float("nan"),
+            "n_batches": 0,
+            "n_generated": 0,
+        }
+    consistency_loss = str(consistency_loss)
+    if consistency_loss not in {"soft_bce", "jsd"}:
+        raise ValueError(f"unknown latent AugMix consistency loss: {consistency_loss}")
+    if consistency_loss == "jsd" and int(copies) < 2:
+        raise ValueError("--latent_augmix_consistency_loss jsd requires --latent_augmix_copies >= 2")
+
+    clean_np = np.asarray(clean_signals_ct, dtype=np.float32)
+    aug_np = np.asarray(augmix_signals_ct, dtype=np.float32)
+    labels_arr = np.asarray(labels_np, dtype=np.float32)
+    n = int(clean_np.shape[0])
+    if n == 0 or aug_np.shape[0] == 0:
+        return {
+            "enabled": True,
+            "reason": "empty_views",
+            "loss": float("nan"),
+            "bce_loss": float("nan"),
+            "consistency_loss": float("nan"),
+            "n_batches": 0,
+            "n_generated": int(aug_np.shape[0]),
+            "copies": int(copies),
+            "consistency_weight": float(consistency_weight),
+            "consistency_objective": consistency_loss,
+            "bce_weight": float(bce_weight),
+        }
+    expected = int(copies) * n
+    if aug_np.shape[0] != expected:
+        raise ValueError(f"latent AugMix view count mismatch: got {aug_np.shape[0]}, expected {expected}")
+    if labels_arr.shape[0] != n:
+        raise ValueError(f"label count mismatch: got {labels_arr.shape[0]}, expected {n}")
+
+    start = max(0, (clean_np.shape[-1] - int(crop_len)) // 2)
+    stop = start + int(crop_len)
+    clean_np = clean_np[..., start:stop]
+    aug_views_np = aug_np.reshape(int(copies), n, *aug_np.shape[1:])[..., start:stop]
+    labels_t = torch.from_numpy(labels_arr).float()
+
+    losses: List[float] = []
+    bce_losses: List[float] = []
+    consistency_losses: List[float] = []
+    batch_size = max(1, int(batch_size))
+    order = np.arange(n)
+
+    for batch_i, lo in enumerate(range(0, n, batch_size), start=1):
+        idx = order[lo:lo + batch_size]
+        clean = torch.from_numpy(clean_np[idx]).float().to(device, non_blocking=True)
+        labels = labels_t[idx].to(device, non_blocking=True)
+        views = torch.from_numpy(aug_views_np[:, idx].reshape(-1, *aug_views_np.shape[2:])).float().to(
+            device,
+            non_blocking=True,
+        )
+        labels_rep = labels.repeat((int(copies), 1))
+
+        model.train()
+        if freeze_backbone_eval_fn is not None:
+            freeze_backbone_eval_fn()
+        optimizer.zero_grad(set_to_none=True)
+        if consistency_loss == "soft_bce":
+            with torch.no_grad():
+                clean_logits = model(clean)
+                soft_targets = torch.sigmoid(clean_logits).detach()
+            logits = model(views)
+            soft_rep = soft_targets.repeat((int(copies), 1))
+
+            mask = (labels_rep >= 0).float()
+            labels_clamp = labels_rep.clamp(min=0.0)
+            denom = mask.sum().clamp(min=1.0)
+            hard_bce = (criterion(logits, labels_clamp) * mask).sum() / denom
+            direct_consistency = (
+                F.binary_cross_entropy_with_logits(logits, soft_rep, reduction="none") * mask
+            ).sum() / denom
+        else:
+            clean_logits = model(clean)
+            logits = model(views)
+            logits_views = logits.view(int(copies), clean.shape[0], -1)
+
+            mask_clean = (labels >= 0).float()
+            denom_clean = mask_clean.sum().clamp(min=1.0)
+            clean_hard_bce = (
+                criterion(clean_logits, labels.clamp(min=0.0)) * mask_clean
+            ).sum() / denom_clean
+
+            mask_rep = (labels_rep >= 0).float()
+            labels_rep_clamp = labels_rep.clamp(min=0.0)
+            denom_rep = mask_rep.sum().clamp(min=1.0)
+            aug_hard_bce = (criterion(logits, labels_rep_clamp) * mask_rep).sum() / denom_rep
+            hard_bce = 0.5 * (clean_hard_bce + aug_hard_bce)
+
+            jsd_terms = []
+            for copy_i in range(int(copies)):
+                copy_j = (copy_i + 1) % int(copies)
+                jsd_terms.append(jsd_multilabel(clean_logits, logits_views[copy_i], logits_views[copy_j]))
+            direct_consistency = torch.stack(jsd_terms).mean()
+
+        loss = float(bce_weight) * hard_bce + float(consistency_weight) * direct_consistency
+        loss.backward()
+        if grad_clip > 0:
+            nn.utils.clip_grad_norm_(trainable_params, grad_clip)
+        optimizer.step()
+
+        losses.append(float(loss.item()))
+        bce_losses.append(float(hard_bce.item()))
+        consistency_losses.append(float(direct_consistency.item()))
+        if max_batches > 0 and batch_i >= max_batches:
+            break
+
+    return {
+        "enabled": True,
+        "loss": float(np.mean(losses)) if losses else float("nan"),
+        "bce_loss": float(np.mean(bce_losses)) if bce_losses else float("nan"),
+        "consistency_loss": float(np.mean(consistency_losses)) if consistency_losses else float("nan"),
+        "n_batches": len(losses),
+        "n_generated": int(aug_np.shape[0]),
+        "copies": int(copies),
+        "consistency_weight": float(consistency_weight),
+        "consistency_objective": consistency_loss,
+        "bce_weight": float(bce_weight),
+        "max_batches": int(max_batches),
     }
 
 
@@ -1272,6 +1540,7 @@ def build_latent_augmix_branch_signals(
     *,
     copies: int,
     severity: int,
+    severity_profile: str = "standard",
     width: int,
     depth: int,
     alpha: float,
@@ -1283,15 +1552,24 @@ def build_latent_augmix_branch_signals(
 ) -> Tuple[np.ndarray, Dict[str, Any]]:
     """Legacy wrapper around the package-level latent AugMix core."""
 
-    def _apply_augmix_op_np(sig_ct: np.ndarray, op_name: str, op_severity: int) -> np.ndarray:
+    def _apply_augmix_op_np(
+        sig_ct: np.ndarray,
+        op_name: str,
+        op_severity: int,
+        op_severity_profile: str,
+    ) -> np.ndarray:
         sig_t = torch.from_numpy(sig_ct.copy()).float()
-        return _apply_op(sig_t, op_name, int(op_severity)).cpu().numpy().astype(np.float32, copy=False)
+        if op_severity_profile == "standard":
+            return _apply_op(sig_t, op_name, int(op_severity)).cpu().numpy().astype(np.float32, copy=False)
+        op = _build_pn2021c_corruption_op(op_name, int(op_severity), op_severity_profile)
+        return op(sig_t).cpu().numpy().astype(np.float32, copy=False)
 
     return _build_latent_augmix_branch_signals_core(
         anchor_signals_ct,
         adv_signals_ct,
         copies=copies,
         severity=severity,
+        severity_profile=severity_profile,
         width=width,
         depth=depth,
         alpha=alpha,
@@ -1316,6 +1594,7 @@ def build_raw_corruption_views(
     rng: np.random.Generator,
     renorm: bool = False,
     clip_abs: float = 6.0,
+    input_stabilizer_config: Optional[Dict[str, Any]] = None,
 ) -> Tuple[np.ndarray, Dict[str, Any]]:
     """Legacy wrapper around the package-level raw corruption view core."""
 
@@ -1326,6 +1605,7 @@ def build_raw_corruption_views(
         op = _build_pn2021c_corruption_op(op_name, int(op_severity), severity_profile)
         return op(sig_t).cpu().numpy().astype(np.float32, copy=False)
 
+    postprocess_fn, postprocess_name = _raw_input_stabilizer_postprocess(input_stabilizer_config)
     arr, stats = _build_raw_corruption_views_core(
         signals_ct,
         copies=copies,
@@ -1337,8 +1617,72 @@ def build_raw_corruption_views(
         available_ops=AVAILABLE_OPS,
         renorm=renorm,
         clip_abs=clip_abs,
+        postprocess_fn=postprocess_fn,
+        postprocess_name=postprocess_name,
     )
     stats["severity_profile"] = str(severity_profile)
+    if input_stabilizer_config:
+        stats["input_stabilizer"] = dict(input_stabilizer_config)
+    return arr, stats
+
+
+def build_raw_augmix_views(
+    signals_ct: np.ndarray,
+    *,
+    copies: int,
+    severity: int,
+    severity_profile: str = "standard",
+    width: int,
+    depth: int,
+    alpha: float,
+    mixture_mode: str = "beta",
+    mixture_prob: float = 0.5,
+    mixture_beta_a: Optional[float] = None,
+    mixture_beta_b: Optional[float] = None,
+    ops: List[str],
+    rng: np.random.Generator,
+    renorm: bool = False,
+    clip_abs: float = 6.0,
+    input_stabilizer_config: Optional[Dict[str, Any]] = None,
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """Legacy wrapper around the package-level full-pool raw AugMix view core."""
+
+    def _apply_augmix_op_np(
+        sig_ct: np.ndarray,
+        op_name: str,
+        op_severity: int,
+        op_severity_profile: str,
+    ) -> np.ndarray:
+        sig_t = torch.from_numpy(sig_ct.copy()).float()
+        if op_severity_profile == "standard":
+            return _apply_op(sig_t, op_name, int(op_severity)).cpu().numpy().astype(np.float32, copy=False)
+        op = _build_pn2021c_corruption_op(op_name, int(op_severity), op_severity_profile)
+        return op(sig_t).cpu().numpy().astype(np.float32, copy=False)
+
+    postprocess_fn, postprocess_name = _raw_input_stabilizer_postprocess(input_stabilizer_config)
+    arr, stats = _build_raw_augmix_views_core(
+        signals_ct,
+        copies=copies,
+        severity=severity,
+        severity_profile=severity_profile,
+        width=width,
+        depth=depth,
+        alpha=alpha,
+        mixture_mode=mixture_mode,
+        mixture_prob=mixture_prob,
+        mixture_beta_a=mixture_beta_a,
+        mixture_beta_b=mixture_beta_b,
+        ops=ops,
+        rng=rng,
+        op_apply_fn=_apply_augmix_op_np,
+        available_ops=AVAILABLE_OPS,
+        renorm=renorm,
+        clip_abs=clip_abs,
+        postprocess_fn=postprocess_fn,
+        postprocess_name=postprocess_name,
+    )
+    if input_stabilizer_config:
+        stats["input_stabilizer"] = dict(input_stabilizer_config)
     return arr, stats
 
 
@@ -1631,6 +1975,16 @@ def parse_args():
                    help="Depth per ECG op chain; -1 samples uniformly from {1,2,3}.")
     p.add_argument("--latent_augmix_alpha", type=float, default=1.0)
     p.add_argument("--latent_augmix_severity", type=int, default=2)
+    p.add_argument(
+        "--latent_augmix_severity_profile",
+        choices=PN2021C_STRESS_PROFILE_CHOICES,
+        default="standard",
+        help=(
+            "Parameter profile used by non-latent latent-AugMix ECG op chains. "
+            "'standard' preserves the original mild AugMix table; "
+            "'calibrated_10to20pp' matches the strong PN2021-C evaluation profile."
+        ),
+    )
     p.add_argument("--latent_augmix_latent_weight_cap", type=float, default=0.30,
                    help="Maximum Dirichlet weight assigned to the x_adv branch.")
     p.add_argument(
@@ -1644,6 +1998,22 @@ def parse_args():
                    help="Do not global-zscore the final latent-branch AugMix waveform before buffering.")
     p.add_argument("--latent_augmix_clip_abs", type=float, default=6.0,
                    help="Clip final latent-branch AugMix waveform after optional zscore; <=0 disables clipping.")
+    p.add_argument(
+        "--enable_latent_augmix_consistency",
+        action="store_true",
+        help=(
+            "After each normal mixed epoch, directly train on the latent-AugMix "
+            "views generated for that epoch with hard BCE plus soft-BCE/JSD."
+        ),
+    )
+    p.add_argument("--latent_augmix_consistency_weight", type=float, default=2.0)
+    p.add_argument(
+        "--latent_augmix_consistency_loss",
+        choices=["soft_bce", "jsd"],
+        default="jsd",
+    )
+    p.add_argument("--latent_augmix_bce_weight", type=float, default=1.0)
+    p.add_argument("--latent_augmix_consistency_max_batches", type=int, default=0)
     p.add_argument(
         "--enable_raw_corrupt_consistency",
         action="store_true",
@@ -1704,6 +2074,25 @@ def parse_args():
     )
     p.add_argument("--raw_corrupt_no_renorm", action="store_true")
     p.add_argument("--raw_corrupt_clip_abs", type=float, default=6.0)
+    p.add_argument(
+        "--raw_corrupt_view_mode",
+        choices=["single_op", "augmix"],
+        default="single_op",
+        help="Use single-op raw corruption views or full AugMix multi-chain raw views.",
+    )
+    p.add_argument("--raw_augmix_width", type=int, default=3)
+    p.add_argument("--raw_augmix_depth", type=int, default=-1)
+    p.add_argument("--raw_augmix_alpha", type=float, default=1.0)
+    p.add_argument("--raw_augmix_mixture_mode", choices=["beta", "fixed"], default="beta")
+    p.add_argument("--raw_augmix_mixture_prob", type=float, default=0.5)
+    p.add_argument("--raw_augmix_mixture_beta_a", type=float, default=0.0)
+    p.add_argument("--raw_augmix_mixture_beta_b", type=float, default=0.0)
+    p.add_argument("--raw_input_bandpass_low_hz", type=float, default=None)
+    p.add_argument("--raw_input_bandpass_high_hz", type=float, default=None)
+    p.add_argument("--raw_input_repair_flat_leads", action="store_true")
+    p.add_argument("--raw_input_clip_abs", type=float, default=None)
+    p.add_argument("--raw_input_renorm_after_stabilizer", action="store_true")
+    p.add_argument("--raw_input_sample_rate_hz", type=float, default=100.0)
     p.add_argument(
         "--enable_mask_shift_consistency",
         action="store_true",
@@ -1963,10 +2352,22 @@ def main():
             "[setup] latent-branch AugMix enabled: "
             f"copies={args.latent_augmix_copies} width={args.latent_augmix_width} "
             f"depth={args.latent_augmix_depth} severity={args.latent_augmix_severity} "
+            f"profile={args.latent_augmix_severity_profile} "
             f"w_lat_cap={args.latent_augmix_latent_weight_cap} "
             f"ops={args.latent_augmix_ops}",
             flush=True,
         )
+        if args.enable_latent_augmix_consistency:
+            print(
+                "[setup] latent-branch AugMix direct consistency enabled: "
+                f"loss={args.latent_augmix_consistency_loss} "
+                f"weights=(consistency={args.latent_augmix_consistency_weight}, "
+                f"bce={args.latent_augmix_bce_weight}) "
+                f"max_batches={args.latent_augmix_consistency_max_batches}",
+                flush=True,
+            )
+    elif args.enable_latent_augmix_consistency:
+        raise ValueError("--enable_latent_augmix_consistency requires --enable_latent_augmix_branch")
 
     # ── Load synth pool (Stage 1 frozen) for training ──────────────────────
     synth_latents, synth_labels, synth_center, source_meta = load_synth_pool(args.synth_npz)
@@ -2087,6 +2488,7 @@ def main():
         raise ValueError("--quick_eval_source target_real_val requires --target_real_npz")
 
     raw_corrupt_consistency_loader = None
+    raw_input_stabilizer_config = _raw_input_stabilizer_config(args)
     if args.enable_raw_corrupt_consistency:
         if args.raw_corrupt_scope == "target":
             if target_real_ds is None:
@@ -2115,6 +2517,12 @@ def main():
             f"weights=(consistency={args.raw_corrupt_consistency_weight}, "
             f"bce={args.raw_corrupt_bce_weight}) "
             f"scope={args.raw_corrupt_scope} n={len(raw_corrupt_ds)} "
+            f"view_mode={args.raw_corrupt_view_mode} "
+            f"augmix=(width={args.raw_augmix_width},depth={args.raw_augmix_depth},"
+            f"alpha={args.raw_augmix_alpha},mixture={args.raw_augmix_mixture_mode}:"
+            f"{args.raw_augmix_mixture_prob},beta=({args.raw_augmix_mixture_beta_a},"
+            f"{args.raw_augmix_mixture_beta_b})) "
+            f"input_stabilizer={raw_input_stabilizer_config if _has_raw_input_stabilizer(raw_input_stabilizer_config) else 'disabled'} "
             f"ops={args.raw_corrupt_ops} "
             f"max_batches={args.raw_corrupt_max_batches or 'full'}",
             flush=True,
@@ -2413,10 +2821,18 @@ def main():
             "depth": int(args.latent_augmix_depth),
             "alpha": float(args.latent_augmix_alpha),
             "severity": int(args.latent_augmix_severity),
+            "severity_profile": str(args.latent_augmix_severity_profile),
             "latent_weight_cap": float(args.latent_augmix_latent_weight_cap),
             "ops": list(args.latent_augmix_ops),
             "renorm": not bool(args.no_latent_augmix_renorm),
             "clip_abs": float(args.latent_augmix_clip_abs),
+            "direct_consistency": {
+                "enabled": bool(args.enable_latent_augmix_consistency),
+                "consistency_weight": float(args.latent_augmix_consistency_weight),
+                "consistency_loss": str(args.latent_augmix_consistency_loss),
+                "bce_weight": float(args.latent_augmix_bce_weight),
+                "max_batches": int(args.latent_augmix_consistency_max_batches),
+            },
         },
         "raw_corrupt_consistency": {
             "enabled": bool(args.enable_raw_corrupt_consistency),
@@ -2432,6 +2848,15 @@ def main():
             "scope": str(args.raw_corrupt_scope),
             "renorm": not bool(args.raw_corrupt_no_renorm),
             "clip_abs": float(args.raw_corrupt_clip_abs),
+            "view_mode": str(args.raw_corrupt_view_mode),
+            "augmix_width": int(args.raw_augmix_width),
+            "augmix_depth": int(args.raw_augmix_depth),
+            "augmix_alpha": float(args.raw_augmix_alpha),
+            "augmix_mixture_mode": str(args.raw_augmix_mixture_mode),
+            "augmix_mixture_prob": float(args.raw_augmix_mixture_prob),
+            "augmix_mixture_beta_a": float(args.raw_augmix_mixture_beta_a),
+            "augmix_mixture_beta_b": float(args.raw_augmix_mixture_beta_b),
+            "input_stabilizer": dict(raw_input_stabilizer_config),
         },
         "mask_shift_consistency": {
             "enabled": bool(args.enable_mask_shift_consistency),
@@ -2546,6 +2971,9 @@ def main():
     # ── Main loop ───────────────────────────────────────────────────────────
     for epoch in range(start_epoch, args.n_epochs + 1):
         epoch_t0 = time.time()
+        latent_augmix_direct_clean: np.ndarray | None = None
+        latent_augmix_direct_views: np.ndarray | None = None
+        latent_augmix_direct_labels: np.ndarray | None = None
 
         # Phase A: PGD on synth pool with the *current* victim
         # Plan Rev 13.2: StratifiedPoolWalker draws no-revisit-per-epoch,
@@ -2676,6 +3104,7 @@ def main():
                         adv_signals_ct=adv_signals,
                         copies=args.latent_augmix_copies,
                         severity=args.latent_augmix_severity,
+                        severity_profile=args.latent_augmix_severity_profile,
                         width=args.latent_augmix_width,
                         depth=args.latent_augmix_depth,
                         alpha=args.latent_augmix_alpha,
@@ -2723,6 +3152,10 @@ def main():
                             teacher_mix=args.adv_teacher_mix,
                             soft_target_floor=args.adv_soft_target_floor,
                         )
+                        if args.enable_latent_augmix_consistency:
+                            latent_augmix_direct_clean = anc_signals.astype(np.float32, copy=False)
+                            latent_augmix_direct_views = latent_augmix_signals.astype(np.float32, copy=False)
+                            latent_augmix_direct_labels = target_oh.astype(np.float32, copy=False)
                     print(
                         f"[ep{epoch:02d}] latent-branch AugMix: "
                         f"generated={latent_augmix_stats.get('n_generated', 0)} "
@@ -2808,6 +3241,42 @@ def main():
                 grad_clip=args.grad_clip, ewa_params=ewa_params,
                 anchor_lambda=args.anchor_lambda, ewa_decay=args.ewa_decay,
             )
+        latent_augmix_consistency_stats = {"enabled": False, "reason": "disabled"}
+        if args.enable_latent_augmix_consistency:
+            if (
+                latent_augmix_direct_clean is None
+                or latent_augmix_direct_views is None
+                or latent_augmix_direct_labels is None
+            ):
+                latent_augmix_consistency_stats = {
+                    "enabled": False,
+                    "reason": "no_latent_augmix_views_this_epoch",
+                    "loss": float("nan"),
+                    "bce_loss": float("nan"),
+                    "consistency_loss": float("nan"),
+                    "n_batches": 0,
+                    "n_generated": 0,
+                }
+            else:
+                latent_augmix_consistency_stats = train_latent_augmix_consistency_epoch(
+                    model=victim.model,
+                    clean_signals_ct=latent_augmix_direct_clean,
+                    augmix_signals_ct=latent_augmix_direct_views,
+                    labels_np=latent_augmix_direct_labels,
+                    optimizer=optimizer,
+                    criterion=criterion,
+                    device=args.device,
+                    copies=args.latent_augmix_copies,
+                    consistency_weight=args.latent_augmix_consistency_weight,
+                    bce_weight=args.latent_augmix_bce_weight,
+                    consistency_loss=args.latent_augmix_consistency_loss,
+                    batch_size=args.batch_size,
+                    crop_len=args.crop_len,
+                    grad_clip=args.grad_clip,
+                    trainable_params=trainable_params,
+                    freeze_backbone_eval_fn=freeze_backbone_eval_fn,
+                    max_batches=args.latent_augmix_consistency_max_batches,
+                )
         raw_corrupt_stats = {"enabled": False, "reason": "disabled"}
         if args.enable_raw_corrupt_consistency and raw_corrupt_consistency_loader is not None:
             raw_corrupt_stats = train_raw_corruption_consistency_epoch(
@@ -2831,6 +3300,15 @@ def main():
                 max_batches=args.raw_corrupt_max_batches,
                 renorm=not args.raw_corrupt_no_renorm,
                 clip_abs=args.raw_corrupt_clip_abs,
+                view_mode=args.raw_corrupt_view_mode,
+                augmix_width=args.raw_augmix_width,
+                augmix_depth=args.raw_augmix_depth,
+                augmix_alpha=args.raw_augmix_alpha,
+                augmix_mixture_mode=args.raw_augmix_mixture_mode,
+                augmix_mixture_prob=args.raw_augmix_mixture_prob,
+                augmix_mixture_beta_a=args.raw_augmix_mixture_beta_a,
+                augmix_mixture_beta_b=args.raw_augmix_mixture_beta_b,
+                input_stabilizer_config=raw_input_stabilizer_config,
             )
         mask_shift_stats = {"enabled": False, "reason": "disabled"}
         if args.enable_mask_shift_consistency and mask_shift_consistency_loader is not None:
@@ -2895,6 +3373,24 @@ def main():
             "epoch": epoch,
             "attack_mode": args.attack_mode,
             "train_loss": round(train_loss, 4),
+            "latent_augmix_consistency_loss": round(
+                float(latent_augmix_consistency_stats.get("loss", float("nan"))), 6
+            )
+            if latent_augmix_consistency_stats.get("loss", float("nan"))
+            == latent_augmix_consistency_stats.get("loss", float("nan"))
+            else None,
+            "latent_augmix_consistency_bce_loss": round(
+                float(latent_augmix_consistency_stats.get("bce_loss", float("nan"))), 6
+            )
+            if latent_augmix_consistency_stats.get("bce_loss", float("nan"))
+            == latent_augmix_consistency_stats.get("bce_loss", float("nan"))
+            else None,
+            "latent_augmix_consistency_objective_loss": round(
+                float(latent_augmix_consistency_stats.get("consistency_loss", float("nan"))), 6
+            )
+            if latent_augmix_consistency_stats.get("consistency_loss", float("nan"))
+            == latent_augmix_consistency_stats.get("consistency_loss", float("nan"))
+            else None,
             "raw_corrupt_loss": round(float(raw_corrupt_stats.get("loss", float("nan"))), 6)
             if raw_corrupt_stats.get("loss", float("nan")) == raw_corrupt_stats.get("loss", float("nan"))
             else None,
@@ -2966,6 +3462,7 @@ def main():
             "push_stats": push_stats if not gate_skipped else {},
             "latent_augmix_stats": latent_augmix_stats,
             "latent_augmix_push_stats": latent_augmix_push_stats,
+            "latent_augmix_consistency_stats": latent_augmix_consistency_stats,
             "raw_corrupt_stats": raw_corrupt_stats,
             "mask_shift_stats": mask_shift_stats,
             "adv_weight_effective": round(float(epoch_adv_weight), 6),

@@ -38,6 +38,7 @@ for path in (REPO_ROOT, ECGFOUNDER_ROOT):
         sys.path.insert(0, str(path))
 
 from net1d import Net1D  # noqa: E402
+from finetune_model import ft_12lead_ECGFounder  # noqa: E402
 from physionet2021_dataset import TARGET_POINTS  # noqa: E402
 
 from ecg_adv_gen.data.contracts import PREPROCESS_CONTRACT_ID  # noqa: E402
@@ -50,6 +51,7 @@ from ecg_adv_gen.evaluation.pn2021_corruptions import (  # noqa: E402
 )
 from ecg_adv_gen.models.ecgfounder_heads import (  # noqa: E402
     FeatureAdapterHead,
+    OperatorConditionedLogitAdapter,
     ResidualAdapterHead,
 )
 from ecg_adv_gen.models.ecgfounder_inference import sigmoid_clipped  # noqa: E402
@@ -170,6 +172,36 @@ class ECGFounderStreamingCorruptedDataset(Dataset):
         return corrupt_ct.float(), label
 
 
+class ECGFounderCleanDataset(Dataset):
+    def __init__(
+        self,
+        signals: np.ndarray,
+        labels: np.ndarray,
+        indices: np.ndarray,
+        *,
+        crop_len: int,
+    ) -> None:
+        self.signals = signals
+        self.labels = labels.astype(np.float32, copy=False)
+        self.indices = np.asarray(indices, dtype=np.int64)
+        self.crop_len = int(crop_len)
+
+    def __len__(self) -> int:
+        return int(len(self.indices))
+
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
+        real_idx = int(self.indices[idx])
+        sig_tc = self.signals[real_idx]
+        if self.crop_len and self.crop_len < sig_tc.shape[0]:
+            start = max((sig_tc.shape[0] - self.crop_len) // 2, 0)
+            sig_tc = sig_tc[start : start + self.crop_len]
+        sig_ct = torch.from_numpy(np.ascontiguousarray(sig_tc.T)).float()
+        label = torch.from_numpy(
+            np.array(self.labels[real_idx], dtype=np.float32, copy=True)
+        ).float()
+        return sig_ct.float(), label
+
+
 def build_ecgfounder_feature_model(checkpoint_path: Path, device: torch.device) -> nn.Module:
     model = Net1D(
         in_channels=12,
@@ -203,6 +235,18 @@ def _load_result(run_dir: Path) -> dict[str, Any]:
     if "center" not in result:
         raise ValueError(f"{result_path} does not record center")
     return result
+
+
+def _detect_eval_mode(run_dir: Path) -> str:
+    """Return how an ECGFounder run should be evaluated."""
+
+    if (run_dir / "best_head.pt").exists():
+        return "feature_head"
+    if (run_dir / "best_model.pt").exists():
+        return "fullft_model"
+    raise FileNotFoundError(
+        f"expected either best_head.pt or best_model.pt under {run_dir}"
+    )
 
 
 def _infer_feature_dim(head_state: dict[str, torch.Tensor]) -> int:
@@ -248,11 +292,79 @@ def _build_head(run_dir: Path, result: dict[str, Any], device: torch.device) -> 
     return head
 
 
+def _build_fullft_model(run_dir: Path, checkpoint: Path, device: torch.device) -> nn.Module:
+    model = ft_12lead_ECGFounder(device, str(checkpoint), len(CLASS_NAMES_SUPER5), linear_prob=False)
+    model_path = run_dir / "best_model.pt"
+    if not model_path.exists():
+        raise FileNotFoundError(model_path)
+    payload = torch.load(model_path, map_location=device)
+    state = payload["model_state_dict"] if isinstance(payload, dict) and "model_state_dict" in payload else payload
+    if not isinstance(state, dict):
+        raise RuntimeError(f"unsupported fullFT checkpoint payload: {model_path}")
+    state = {str(k).removeprefix("_orig_mod."): v for k, v in state.items()}
+    model.load_state_dict(state)
+    model.eval()
+    model = model.to(device)
+    if isinstance(payload, dict) and "op_adapter_state_dict" in payload:
+        cfg = dict(payload.get("op_adapter_config") or {})
+        if not cfg:
+            raise RuntimeError(f"{model_path} has op_adapter_state_dict but no op_adapter_config")
+        op_adapter = OperatorConditionedLogitAdapter(
+            feature_dim=int(cfg["feature_dim"]),
+            num_classes=int(cfg["num_classes"]),
+            op_names=list(cfg["op_names"]),
+            hidden_dim=int(cfg.get("hidden_dim", 128)),
+            dropout=float(cfg.get("dropout", 0.0)),
+            scale=float(cfg.get("scale", 1.0)),
+        ).to(device)
+        op_adapter.load_state_dict(payload["op_adapter_state_dict"])
+        op_adapter.eval()
+        return OperatorConditionedFullFTModel(model, op_adapter).to(device)
+    return model
+
+
+def _forward_logits_features(model: nn.Module, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    if not hasattr(model, "return_features"):
+        raise RuntimeError("op-conditioned ECGFounder eval requires model.return_features support")
+    previous = bool(getattr(model, "return_features"))
+    try:
+        setattr(model, "return_features", True)
+        output = model(x)
+    finally:
+        setattr(model, "return_features", previous)
+    if not (isinstance(output, tuple) and len(output) == 2):
+        raise RuntimeError("op-conditioned ECGFounder eval expected model(x) to return (logits, features)")
+    logits, features = output
+    return logits, features
+
+
+class OperatorConditionedFullFTModel(nn.Module):
+    def __init__(self, base_model: nn.Module, op_adapter: OperatorConditionedLogitAdapter) -> None:
+        super().__init__()
+        self.base_model = base_model
+        self.op_adapter = op_adapter
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.base_model(x)
+
+    def forward_with_operator(self, x: torch.Tensor, operator_name: str) -> torch.Tensor:
+        logits, features = _forward_logits_features(self.base_model, x)
+        op_ids = self.op_adapter.op_ids_from_names(
+            [str(operator_name)] * int(x.shape[0]),
+            device=x.device,
+        )
+        return logits + self.op_adapter(features, op_ids)
+
+
 def _clean_metric_for_center(result: dict[str, Any], center: str) -> dict[str, Any]:
     views = result.get("final_pn2021_views")
     if isinstance(views, dict) and center in views:
         row = views[center].get("per_center", {}).get(center, {})
         if row:
+            return row
+    if center == str(result.get("center")):
+        row = result.get("target_excluding_ref")
+        if isinstance(row, dict) and row:
             return row
     target_view = result.get("target_view")
     if isinstance(target_view, dict):
@@ -267,12 +379,27 @@ def _clean_metric_for_center(result: dict[str, Any], center: str) -> dict[str, A
     return {}
 
 
+def _input_stabilizer_kwargs_from_args(args: argparse.Namespace) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {}
+    if args.ecgfounder_input_bandpass_low_hz is not None:
+        kwargs["bandpass_low_hz"] = float(args.ecgfounder_input_bandpass_low_hz)
+    if args.ecgfounder_input_bandpass_high_hz is not None:
+        kwargs["bandpass_high_hz"] = float(args.ecgfounder_input_bandpass_high_hz)
+    if bool(args.ecgfounder_input_repair_flat_leads):
+        kwargs["repair_flat_leads"] = True
+    if args.ecgfounder_input_clip_abs is not None:
+        kwargs["clip_abs"] = float(args.ecgfounder_input_clip_abs)
+    return kwargs
+
+
 @torch.no_grad()
 def infer_ecgfounder(
     feature_model: nn.Module,
     head: nn.Module,
     loader: DataLoader,
     device: torch.device,
+    *,
+    input_stabilizer_kwargs: dict[str, Any] | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     y_true: list[np.ndarray] = []
     y_score: list[np.ndarray] = []
@@ -280,7 +407,11 @@ def infer_ecgfounder(
     head.eval()
     for ecg_ct, labels in loader:
         ecg_ct = ecg_ct.to(device, non_blocking=True)
-        x = ecg1000_to_ecgfounder_input(ecg_ct, target_points=TARGET_POINTS)
+        x = ecg1000_to_ecgfounder_input(
+            ecg_ct,
+            target_points=TARGET_POINTS,
+            **(input_stabilizer_kwargs or {}),
+        )
         with torch.cuda.amp.autocast(enabled=device.type == "cuda"):
             _, features = feature_model(x)
             logits = head(features)
@@ -289,15 +420,119 @@ def infer_ecgfounder(
     return np.concatenate(y_true, axis=0), np.concatenate(y_score, axis=0)
 
 
+@torch.no_grad()
+def infer_ecgfounder_fullft(
+    model: nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+    *,
+    operator_name: str | None = None,
+    input_stabilizer_kwargs: dict[str, Any] | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    y_true: list[np.ndarray] = []
+    y_score: list[np.ndarray] = []
+    model.eval()
+    for ecg_ct, labels in loader:
+        ecg_ct = ecg_ct.to(device, non_blocking=True)
+        x = ecg1000_to_ecgfounder_input(
+            ecg_ct,
+            target_points=TARGET_POINTS,
+            **(input_stabilizer_kwargs or {}),
+        )
+        with torch.cuda.amp.autocast(enabled=device.type == "cuda"):
+            if operator_name and hasattr(model, "forward_with_operator"):
+                logits = model.forward_with_operator(x, operator_name)
+            else:
+                logits = model(x)
+        y_true.append(labels.numpy())
+        y_score.append(sigmoid_clipped(logits.detach().float().cpu().numpy()))
+    return np.concatenate(y_true, axis=0), np.concatenate(y_score, axis=0)
+
+
+def eval_clean_center(
+    eval_mode: str,
+    model_or_feature_model: nn.Module,
+    head: nn.Module | None,
+    result: dict[str, Any],
+    args: argparse.Namespace,
+    device: torch.device,
+    center: str,
+    *,
+    input_stabilizer_kwargs: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    signals, labels, record_ids, metadata, clean_kind = _load_clean_center(args, center)
+    selected_ids = set(str(x) for x in result.get("selected_ref_record_ids", []))
+    exclude_ids = selected_ids if center == str(result["center"]) else set()
+    indices = filter_record_indices(record_ids, exclude_ids, args.limit)
+    ds = ECGFounderCleanDataset(
+        signals,
+        labels,
+        indices,
+        crop_len=args.crop_len,
+    )
+    loader = DataLoader(
+        ds,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=device.type == "cuda",
+    )
+    if eval_mode == "feature_head":
+        if head is None:
+            raise RuntimeError("feature_head evaluation requires a head module")
+        y_true, y_score = infer_ecgfounder(
+            model_or_feature_model,
+            head,
+            loader,
+            device,
+            input_stabilizer_kwargs=input_stabilizer_kwargs,
+        )
+    elif eval_mode == "fullft_model":
+        y_true, y_score = infer_ecgfounder_fullft(
+            model_or_feature_model,
+            loader,
+            device,
+            input_stabilizer_kwargs=input_stabilizer_kwargs,
+        )
+    else:
+        raise ValueError(f"unknown ECGFounder eval mode: {eval_mode}")
+    metrics = compute_macro_auroc_auprc(
+        y_true,
+        y_score,
+        CLASS_NAMES_SUPER5,
+        min_pos=args.min_pos,
+    )
+    print(
+        f"  {center:<18} clean{'':<22} n={len(ds):>5} "
+        f"AUROC={metrics['macro_auroc']:.4f} AUPRC={metrics['macro_auprc']:.4f}",
+        flush=True,
+    )
+    return {
+        "cache_source": f"stream:{clean_kind}",
+        "metadata": metadata,
+        "n_records": int(len(ds)),
+        "n_excluded_ref_ids_for_center": int(len(exclude_ids)),
+        "ref_record_ids_sha256": _ref_ids_sha256(exclude_ids),
+        "macro_auroc": metrics["macro_auroc"],
+        "macro_auprc": metrics["macro_auprc"],
+        "n_classes_used": metrics["n_classes_used"],
+        "per_class": metrics["per_class"],
+    }
+
+
 def eval_one(
-    feature_model: nn.Module,
-    head: nn.Module,
+    eval_mode: str,
+    model_or_feature_model: nn.Module,
+    head: nn.Module | None,
     result: dict[str, Any],
     args: argparse.Namespace,
     device: torch.device,
     center: str,
     corruption: str,
     severity: int,
+    *,
+    clean_metric_override: dict[str, Any] | None = None,
+    input_stabilizer_kwargs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     signals, labels, record_ids, metadata, clean_kind = _load_clean_center(args, center)
     selected_ids = set(str(x) for x in result.get("selected_ref_record_ids", []))
@@ -321,7 +556,26 @@ def eval_one(
         pin_memory=device.type == "cuda",
     )
     t0 = time.time()
-    y_true, y_score = infer_ecgfounder(feature_model, head, loader, device)
+    if eval_mode == "feature_head":
+        if head is None:
+            raise RuntimeError("feature_head evaluation requires a head module")
+        y_true, y_score = infer_ecgfounder(
+            model_or_feature_model,
+            head,
+            loader,
+            device,
+            input_stabilizer_kwargs=input_stabilizer_kwargs,
+        )
+    elif eval_mode == "fullft_model":
+        y_true, y_score = infer_ecgfounder_fullft(
+            model_or_feature_model,
+            loader,
+            device,
+            operator_name=corruption,
+            input_stabilizer_kwargs=input_stabilizer_kwargs,
+        )
+    else:
+        raise ValueError(f"unknown ECGFounder eval mode: {eval_mode}")
     metrics = compute_macro_auroc_auprc(
         y_true,
         y_score,
@@ -337,7 +591,12 @@ def eval_one(
             CLASS_NAMES_SUPER5,
             min_pos=args.min_pos,
         )
-    clean = _clean_metric_for_center(result, center)
+    clean = clean_metric_override if clean_metric_override is not None else _clean_metric_for_center(result, center)
+    clean_metric_source = (
+        "recomputed_input_stabilizer"
+        if clean_metric_override is not None
+        else "saved_eval_result"
+    )
     auroc_drop = None
     auprc_drop = None
     if clean.get("macro_auroc") is not None:
@@ -399,6 +658,7 @@ def eval_one(
         ),
         "clean_macro_auroc": clean.get("macro_auroc"),
         "clean_macro_auprc": clean.get("macro_auprc"),
+        "clean_metric_source": clean_metric_source,
         "auroc_drop_vs_clean": auroc_drop,
         "auprc_drop_vs_clean": auprc_drop,
     }
@@ -430,6 +690,15 @@ def main() -> None:
     p.add_argument("--min_pos", type=int, default=10)
     p.add_argument("--seed", type=int, default=20260501)
     p.add_argument("--limit", type=int, default=None)
+    p.add_argument("--ecgfounder_input_bandpass_low_hz", type=float, default=None)
+    p.add_argument("--ecgfounder_input_bandpass_high_hz", type=float, default=None)
+    p.add_argument("--ecgfounder_input_repair_flat_leads", action="store_true")
+    p.add_argument("--ecgfounder_input_clip_abs", type=float, default=None)
+    p.add_argument(
+        "--recompute_clean_with_input_stabilizer",
+        action="store_true",
+        help="Recompute clean PN2021 metrics through the same ECGFounder input stabilizer before reporting drops.",
+    )
     p.add_argument("--output_path", default=None)
     args = p.parse_args()
 
@@ -441,16 +710,37 @@ def main() -> None:
         raise ValueError(f"unknown PN2021-C centers: {unknown}")
 
     device = torch.device(args.device)
-    feature_model = build_ecgfounder_feature_model(Path(args.checkpoint), device)
-    head = _build_head(run_dir, result, device)
+    eval_mode = _detect_eval_mode(run_dir)
+    if eval_mode == "feature_head":
+        model_or_feature_model = build_ecgfounder_feature_model(Path(args.checkpoint), device)
+        head = _build_head(run_dir, result, device)
+    else:
+        model_or_feature_model = _build_fullft_model(run_dir, Path(args.checkpoint), device)
+        head = None
+    input_stabilizer_kwargs = _input_stabilizer_kwargs_from_args(args)
+    clean_metric_overrides: dict[str, dict[str, Any]] = {}
+    if args.recompute_clean_with_input_stabilizer:
+        for center in centers:
+            clean_metric_overrides[center] = eval_clean_center(
+                eval_mode,
+                model_or_feature_model,
+                head,
+                result,
+                args,
+                device,
+                center,
+                input_stabilizer_kwargs=input_stabilizer_kwargs,
+            )
 
     output: dict[str, Any] = {
         "scheme": args.scheme,
         "model_name": "ECGFounder",
+        "eval_mode": eval_mode,
         "variant": args.variant,
         "run_dir": str(run_dir),
         "clean_eval_json": str(run_dir / "eval_result.json"),
-        "head_path": str(run_dir / "best_head.pt"),
+        "head_path": str(run_dir / "best_head.pt") if (run_dir / "best_head.pt").exists() else None,
+        "model_path": str(run_dir / "best_model.pt") if (run_dir / "best_model.pt").exists() else None,
         "checkpoint": str(Path(args.checkpoint)),
         "center_from_run": str(result["center"]),
         "centers": centers,
@@ -460,9 +750,14 @@ def main() -> None:
         "crop_len": int(args.crop_len),
         "required_cache_version": args.required_cache_version,
         "pn2021_c_cache_version": args.required_cache_version,
+        "input_stabilizer": {
+            "kwargs": dict(input_stabilizer_kwargs),
+            "recompute_clean_with_input_stabilizer": bool(args.recompute_clean_with_input_stabilizer),
+        },
         "selected_ref_record_ids_count": int(len(result.get("selected_ref_record_ids", []))),
         "label_mapping": result.get("label_mapping"),
         "class_names": list(CLASS_NAMES_SUPER5),
+        "clean_metric_overrides": clean_metric_overrides,
         "per_center": {},
     }
     for center in centers:
@@ -471,7 +766,8 @@ def main() -> None:
             output["per_center"][center].setdefault(corruption, {})
             for severity in args.severities:
                 output["per_center"][center][corruption][str(severity)] = eval_one(
-                    feature_model,
+                    eval_mode,
+                    model_or_feature_model,
                     head,
                     result,
                     args,
@@ -479,6 +775,8 @@ def main() -> None:
                     center,
                     corruption,
                     int(severity),
+                    clean_metric_override=clean_metric_overrides.get(center),
+                    input_stabilizer_kwargs=input_stabilizer_kwargs,
                 )
     output["aggregate_by_corruption_severity"] = aggregate_corruption_summary(output)
 

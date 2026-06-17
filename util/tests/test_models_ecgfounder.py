@@ -35,7 +35,9 @@ from ecg_adv_gen.models.ecgfounder_inference import (
 )
 from ecg_adv_gen.models.ecgfounder_torch import (
     ecg1000_to_ecgfounder_input,
+    fft_bandpass_torch,
     global_zscore_torch,
+    repair_flat_ecg_leads_torch,
 )
 from ecg_adv_gen.training import CachedSignalDataset
 
@@ -190,6 +192,59 @@ def test_ecgfounder_torch_input_conversion_resamples_and_normalizes():
     assert tuple(y.shape) == (2, 3, 8)
     torch.testing.assert_close(y.reshape(2, -1).mean(dim=1), torch.zeros(2), atol=1e-6, rtol=0.0)
     torch.testing.assert_close(y.reshape(2, -1).std(dim=1), torch.ones(2), atol=1e-6, rtol=0.0)
+
+
+def test_fft_bandpass_torch_suppresses_out_of_band_power():
+    sample_rate_hz = 100.0
+    t = torch.arange(1000, dtype=torch.float32) / sample_rate_hz
+    low = torch.sin(2 * torch.pi * 5.0 * t)
+    high = 0.8 * torch.sin(2 * torch.pi * 40.0 * t)
+    x = (low + high).reshape(1, 1, -1).repeat(1, 12, 1)
+
+    y = fft_bandpass_torch(x, sample_rate_hz=sample_rate_hz, low_hz=0.5, high_hz=35.0)
+
+    freq = torch.fft.rfftfreq(y.shape[-1], d=1.0 / sample_rate_hz)
+    spectrum = torch.fft.rfft(y[0, 0])
+    amp_5 = spectrum[torch.argmin(torch.abs(freq - 5.0))].abs()
+    amp_40 = spectrum[torch.argmin(torch.abs(freq - 40.0))].abs()
+    assert amp_5 > 100 * amp_40
+
+
+def test_repair_flat_ecg_leads_recovers_limb_relation_when_anchors_present():
+    t = torch.linspace(0.0, 1.0, 16)
+    lead_i = torch.sin(2 * torch.pi * t)
+    lead_ii = torch.cos(2 * torch.pi * t)
+    x = torch.zeros((1, 12, 16), dtype=torch.float32)
+    x[:, 0] = lead_i
+    x[:, 1] = lead_ii
+    x[:, 2] = 0.0
+
+    repaired = repair_flat_ecg_leads_torch(x)
+
+    torch.testing.assert_close(repaired[0, 2], lead_ii - lead_i, atol=1e-6, rtol=0.0)
+    torch.testing.assert_close(repaired[0, 0], lead_i, atol=1e-6, rtol=0.0)
+    torch.testing.assert_close(repaired[0, 1], lead_ii, atol=1e-6, rtol=0.0)
+
+
+def test_ecg1000_to_ecgfounder_input_accepts_input_stabilizer_options():
+    sample_rate_hz = 100.0
+    t = torch.arange(1000, dtype=torch.float32) / sample_rate_hz
+    low = torch.sin(2 * torch.pi * 5.0 * t)
+    high = 0.8 * torch.sin(2 * torch.pi * 40.0 * t)
+    x = (low + high).reshape(1, 1, -1).repeat(1, 12, 1)
+
+    y = ecg1000_to_ecgfounder_input(
+        x,
+        target_points=1000,
+        bandpass_low_hz=0.5,
+        bandpass_high_hz=35.0,
+        input_sample_rate_hz=sample_rate_hz,
+    )
+
+    assert tuple(y.shape) == (1, 12, 1000)
+    expected = global_zscore_torch(low.reshape(1, 1, -1).repeat(1, 12, 1))
+    corr = torch.corrcoef(torch.stack([y[0, 0], expected[0, 0]]))[0, 1]
+    assert float(corr) > 0.99
 
 
 def test_predict_feature_head_matches_clipped_sigmoid():

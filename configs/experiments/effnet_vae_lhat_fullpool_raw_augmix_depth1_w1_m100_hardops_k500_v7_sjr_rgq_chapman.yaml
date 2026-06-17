@@ -1,0 +1,28 @@
+extends:
+  - effnet_vae_lhat_fullpool_raw_augmix_depth1_w1_m100_k500_v7_sjr_rgq_cpsc_2018.yaml
+
+experiment:
+  name: effnet_vae_lhat_fullpool_raw_augmix_depth1_w1_m100_hardops_k500_v7_sjr_rgq_chapman
+  description: Chapman EfficientNet1DV2 VAE-LHAT boundary raw-AugMix with extra EMG and baseline-wander sampling weight.
+
+adaptation:
+  run_tag_extra: k500_fullpool_rawaugmix_d1_w1_m100_hardops
+  raw_corrupt_consistency:
+    ops:
+      - powerline_noise
+      - emg_noise
+      - emg_noise
+      - baseline_wander
+      - baseline_wander
+      - baseline_shift
+      - random_leads_masking
+
+runner:
+  matrix:
+    center:
+      - chapman_shaoxing
+
+run_record:
+  purpose: Test whether keeping all five PN2021-C calibrated raw-AugMix operators while up-weighting the residual hard operators, EMG and baseline wander, improves the Chapman bottleneck beyond the robust-selector baseline.
+  result_summary: Pending Chapman pilot. Compare against the robust-selector latest checkpoint, post-hoc bandpass/lead-repair diagnostic, and calibrated raw-supervised.
+  registration_status: provisional

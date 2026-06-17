@@ -1,0 +1,19 @@
+extends:
+  - effnet_vae_lhat_calibrated_latent_augmix_k500_v7_sjr_rgq.yaml
+
+experiment:
+  name: effnet_vae_lhat_calibrated_latent_augmix_k500_v7_sjr_rgq_cpsc_2018
+  description: Single-center CPSC 2018 run for calibrated-profile latent AugMix before four-center expansion.
+
+postprocess:
+  commands: []
+
+runner:
+  matrix:
+    center:
+      - cpsc_2018
+
+run_record:
+  purpose: Run a 30-epoch CPSC 2018 calibrated latent AugMix test before deciding whether to launch the four-center full recipe.
+  result_summary: Pending. Evaluate with clean PN2021 and calibrated_10to20pp PN2021-C against matched VAE noAug, standard AugMix, and calibrated raw-supervised stressor.
+  registration_status: provisional

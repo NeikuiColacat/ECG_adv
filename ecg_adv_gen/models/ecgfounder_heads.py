@@ -80,6 +80,93 @@ class FeatureAdapterHead(nn.Module):
         return self.base_head(x + self.scale * self.adapter(x))
 
 
+class OperatorConditionedLogitAdapter(nn.Module):
+    """Per-operator residual logit adapters for explicit corruption diagnostics."""
+
+    def __init__(
+        self,
+        *,
+        feature_dim: int,
+        num_classes: int,
+        op_names: list[str] | tuple[str, ...],
+        hidden_dim: int = 128,
+        dropout: float = 0.0,
+        scale: float = 1.0,
+    ) -> None:
+        super().__init__()
+        if not op_names:
+            raise ValueError("op_names must not be empty")
+        self.op_names = [str(op) for op in op_names]
+        self.op_to_idx = {op: i for i, op in enumerate(self.op_names)}
+        self.scale = float(scale)
+        feature_dim = int(feature_dim)
+        num_classes = int(num_classes)
+        hidden_dim = max(1, int(hidden_dim))
+        self.adapters = nn.ModuleList()
+        for _ in self.op_names:
+            adapter = nn.Sequential(
+                nn.LayerNorm(feature_dim),
+                nn.Linear(feature_dim, hidden_dim),
+                nn.GELU(),
+                nn.Dropout(float(dropout)),
+                nn.Linear(hidden_dim, num_classes),
+            )
+            final = adapter[-1]
+            assert isinstance(final, nn.Linear)
+            nn.init.zeros_(final.weight)
+            nn.init.zeros_(final.bias)
+            self.adapters.append(adapter)
+
+    def config(self) -> dict[str, Any]:
+        first = self.adapters[0]
+        assert isinstance(first, nn.Sequential)
+        hidden = first[1]
+        dropout = first[3]
+        assert isinstance(hidden, nn.Linear)
+        assert isinstance(dropout, nn.Dropout)
+        return {
+            "op_names": list(self.op_names),
+            "feature_dim": int(hidden.in_features),
+            "num_classes": int(self.adapters[0][-1].out_features),  # type: ignore[index, union-attr]
+            "hidden_dim": int(hidden.out_features),
+            "dropout": float(dropout.p),
+            "scale": float(self.scale),
+        }
+
+    def op_ids_from_names(
+        self,
+        op_names: list[str] | tuple[str, ...],
+        *,
+        device: torch.device | str | None = None,
+    ) -> torch.Tensor:
+        ids: list[int] = []
+        unknown: list[str] = []
+        for op in op_names:
+            op = str(op)
+            if op not in self.op_to_idx:
+                unknown.append(op)
+            else:
+                ids.append(int(self.op_to_idx[op]))
+        if unknown:
+            raise ValueError(f"unknown operator ids for op-conditioned adapter: {sorted(set(unknown))}")
+        return torch.tensor(ids, dtype=torch.long, device=device)
+
+    def forward(self, features: torch.Tensor, op_ids: torch.Tensor) -> torch.Tensor:
+        if features.ndim != 2:
+            raise ValueError(f"features must be 2D, got {tuple(features.shape)}")
+        op_ids = op_ids.to(device=features.device, dtype=torch.long)
+        if op_ids.ndim != 1 or op_ids.shape[0] != features.shape[0]:
+            raise ValueError(
+                f"op_ids must be 1D with batch size {features.shape[0]}, got {tuple(op_ids.shape)}"
+            )
+        out = features.new_zeros((features.shape[0], int(self.adapters[0][-1].out_features)))  # type: ignore[index, union-attr]
+        for op_i, adapter in enumerate(self.adapters):
+            mask = op_ids == int(op_i)
+            if bool(mask.any()):
+                out[mask] = adapter(features[mask])
+        return self.scale * out
+
+
 def unwrap_linear_head(head: nn.Module) -> nn.Linear:
     """Return the linear base head from either a raw or adapter-wrapped head."""
     if isinstance(head, (ResidualAdapterHead, FeatureAdapterHead)):
@@ -142,6 +229,7 @@ def init_dense_from_head_path(model: nn.Module, head_path: str | Path) -> dict[s
 
 __all__ = [
     "FeatureAdapterHead",
+    "OperatorConditionedLogitAdapter",
     "ResidualAdapterHead",
     "clone_linear_head",
     "init_dense_from_head_path",

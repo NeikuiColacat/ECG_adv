@@ -268,6 +268,15 @@ def main() -> None:
     ap.add_argument("--latent_augmix_alpha", type=float, default=1.0)
     ap.add_argument("--latent_augmix_severity", type=int, default=2)
     ap.add_argument(
+        "--latent_augmix_severity_profile",
+        choices=PN2021C_STRESS_PROFILE_CHOICES,
+        default="standard",
+        help=(
+            "Parameter profile forwarded to non-latent latent-AugMix ECG op chains. "
+            "Use calibrated_10to20pp to match the strong PN2021-C evaluator."
+        ),
+    )
+    ap.add_argument(
         "--latent_augmix_ops",
         nargs="+",
         choices=AVAILABLE_OPS,
@@ -278,6 +287,24 @@ def main() -> None:
             "all five ops explicitly."
         ),
     )
+    ap.add_argument(
+        "--no_latent_augmix_renorm",
+        action="store_true",
+        help="Forwarded to latent AugMix so calibrated chains keep their raw corruption scale.",
+    )
+    ap.add_argument(
+        "--enable_latent_augmix_consistency",
+        action="store_true",
+        help="Forward latent-AugMix generated views through a direct BCE/JSD training phase.",
+    )
+    ap.add_argument("--latent_augmix_consistency_weight", type=float, default=2.0)
+    ap.add_argument(
+        "--latent_augmix_consistency_loss",
+        choices=["soft_bce", "jsd"],
+        default="jsd",
+    )
+    ap.add_argument("--latent_augmix_bce_weight", type=float, default=1.0)
+    ap.add_argument("--latent_augmix_consistency_max_batches", type=int, default=0)
     ap.add_argument(
         "--enable_raw_corrupt_consistency",
         action="store_true",
@@ -325,6 +352,29 @@ def main() -> None:
     )
     ap.add_argument("--raw_corrupt_no_renorm", action="store_true")
     ap.add_argument("--raw_corrupt_clip_abs", type=float, default=6.0)
+    ap.add_argument(
+        "--raw_corrupt_view_mode",
+        choices=["single_op", "augmix"],
+        default="single_op",
+        help=(
+            "Forwarded to the raw corruption consistency branch. single_op "
+            "uses one sampled PN2021-C operator per view; augmix mixes "
+            "multi-op corruption chains into each view."
+        ),
+    )
+    ap.add_argument("--raw_augmix_width", type=int, default=3)
+    ap.add_argument("--raw_augmix_depth", type=int, default=-1)
+    ap.add_argument("--raw_augmix_alpha", type=float, default=1.0)
+    ap.add_argument("--raw_augmix_mixture_mode", choices=["beta", "fixed"], default="beta")
+    ap.add_argument("--raw_augmix_mixture_prob", type=float, default=0.5)
+    ap.add_argument("--raw_augmix_mixture_beta_a", type=float, default=0.0)
+    ap.add_argument("--raw_augmix_mixture_beta_b", type=float, default=0.0)
+    ap.add_argument("--raw_input_bandpass_low_hz", type=float, default=None)
+    ap.add_argument("--raw_input_bandpass_high_hz", type=float, default=None)
+    ap.add_argument("--raw_input_repair_flat_leads", action="store_true")
+    ap.add_argument("--raw_input_clip_abs", type=float, default=None)
+    ap.add_argument("--raw_input_renorm_after_stabilizer", action="store_true")
+    ap.add_argument("--raw_input_sample_rate_hz", type=float, default=100.0)
     ap.add_argument(
         "--enable_mask_shift_consistency",
         action="store_true",

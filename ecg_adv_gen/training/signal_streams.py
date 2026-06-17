@@ -55,6 +55,27 @@ class TaggedCachedSignalDataset(Dataset):
         return x, y, torch.tensor(self.stream_id, dtype=torch.long), self.teacher_logits.clone()
 
 
+class TaggedSignalDataset(Dataset):
+    """Tag any two-tensor ECG dataset with a stream id and zero teacher logits."""
+
+    def __init__(self, base: Dataset, stream_id: int, num_classes: int) -> None:
+        self.base = base
+        self.stream_id = int(stream_id)
+        self.teacher_logits = torch.zeros((int(num_classes),), dtype=torch.float32)
+
+    def __len__(self) -> int:
+        return len(self.base)
+
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        x, y = self.base[idx]
+        return (
+            torch.as_tensor(x, dtype=torch.float32),
+            torch.as_tensor(y, dtype=torch.float32),
+            torch.tensor(self.stream_id, dtype=torch.long),
+            self.teacher_logits.clone(),
+        )
+
+
 class TaggedMemorySignalDataset(Dataset):
     """In-memory ECG stream with optional per-row teacher logits."""
 
@@ -89,14 +110,10 @@ class TaggedMemorySignalDataset(Dataset):
         )
 
 
-def build_weighted_signal_stream_loader(
+def build_weighted_signal_stream_loader_from_datasets(
     *,
-    source_signals: np.ndarray,
-    source_labels: np.ndarray,
-    source_indices: np.ndarray,
-    target_signals: np.ndarray,
-    target_labels: np.ndarray,
-    target_indices: np.ndarray,
+    source_dataset: Dataset,
+    target_dataset: Dataset,
     source_weight: float,
     target_real_weight: float,
     adv_weight: float,
@@ -109,17 +126,9 @@ def build_weighted_signal_stream_loader(
     pin_memory: bool = True,
     drop_last: bool = False,
 ) -> DataLoader:
-    """Build source/target/adversarial ECG stream loader with fixed stream ids."""
-    source_ds = TaggedCachedSignalDataset(
-        CachedSignalDataset(source_signals, source_labels, source_indices),
-        stream_id=0,
-        num_classes=num_classes,
-    )
-    target_ds = TaggedCachedSignalDataset(
-        CachedSignalDataset(target_signals, target_labels, target_indices),
-        stream_id=1,
-        num_classes=num_classes,
-    )
+    """Build source/target/adversarial ECG stream loader from prepared datasets."""
+    source_ds = TaggedSignalDataset(source_dataset, stream_id=0, num_classes=num_classes)
+    target_ds = TaggedSignalDataset(target_dataset, stream_id=1, num_classes=num_classes)
 
     datasets: list[Dataset] = []
     weights: list[float] = []
@@ -159,10 +168,52 @@ def build_weighted_signal_stream_loader(
     )
 
 
+def build_weighted_signal_stream_loader(
+    *,
+    source_signals: np.ndarray,
+    source_labels: np.ndarray,
+    source_indices: np.ndarray,
+    target_signals: np.ndarray,
+    target_labels: np.ndarray,
+    target_indices: np.ndarray,
+    source_weight: float,
+    target_real_weight: float,
+    adv_weight: float,
+    batch_size: int,
+    num_workers: int,
+    num_classes: int,
+    adv_signals: np.ndarray | None = None,
+    adv_labels: np.ndarray | None = None,
+    adv_teacher_logits: np.ndarray | None = None,
+    pin_memory: bool = True,
+    drop_last: bool = False,
+) -> DataLoader:
+    """Build source/target/adversarial ECG stream loader with fixed stream ids."""
+    source_ds = CachedSignalDataset(source_signals, source_labels, source_indices)
+    target_ds = CachedSignalDataset(target_signals, target_labels, target_indices)
+    return build_weighted_signal_stream_loader_from_datasets(
+        source_dataset=source_ds,
+        target_dataset=target_ds,
+        source_weight=source_weight,
+        target_real_weight=target_real_weight,
+        adv_weight=adv_weight,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        num_classes=num_classes,
+        adv_signals=adv_signals,
+        adv_labels=adv_labels,
+        adv_teacher_logits=adv_teacher_logits,
+        pin_memory=pin_memory,
+        drop_last=drop_last,
+    )
+
+
 __all__ = [
     "CachedSignalDataset",
     "MemorySignalDataset",
     "TaggedCachedSignalDataset",
     "TaggedMemorySignalDataset",
+    "TaggedSignalDataset",
     "build_weighted_signal_stream_loader",
+    "build_weighted_signal_stream_loader_from_datasets",
 ]

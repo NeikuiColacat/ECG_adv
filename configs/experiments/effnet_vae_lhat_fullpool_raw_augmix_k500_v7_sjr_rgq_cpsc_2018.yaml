@@ -1,0 +1,28 @@
+extends:
+  - effnet_vae_lhat_calibrated_rawsupervised_k500_v7_sjr_rgq.yaml
+
+experiment:
+  name: effnet_vae_lhat_fullpool_raw_augmix_k500_v7_sjr_rgq_cpsc_2018
+  description: CPSC 2018 EfficientNet1DV2 VAE-LHAT with calibrated full-pool raw AugMix consistency.
+
+adaptation:
+  run_tag_extra: k500_fullpool_rawaugmix
+  raw_corrupt_consistency:
+    view_mode: augmix
+    augmix:
+      width: 3
+      depth: -1
+      alpha: 1.0
+
+postprocess:
+  commands: []
+
+runner:
+  matrix:
+    center:
+      - cpsc_2018
+
+run_record:
+  purpose: Test whether using AugMix-style multi-chain calibrated raw views over the same source+target raw pool recovers PN2021-C robustness better than latent-AugMix direct loss.
+  result_summary: Pending CPSC run. Compare against VAE noAug, calibrated raw-supervised, calibrated latent AugMix, and calibrated latent AugMix directloss.
+  registration_status: provisional

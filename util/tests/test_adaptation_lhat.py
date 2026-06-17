@@ -12,6 +12,7 @@ from ecg_adv_gen.adaptation import (
     build_anchor_preserving_soft_labels,
     build_k500_internal_val_mask,
     build_latent_augmix_branch_signals,
+    build_raw_augmix_views,
     build_raw_corruption_views,
     derive_class_trust,
     derive_kshot_anchor_class_weights,
@@ -162,6 +163,157 @@ def test_trust_zscore_and_dirichlet_cap_helpers():
     assert float(weights.sum()) == pytest.approx(1.0)
 
 
+def test_raw_augmix_views_use_chains_and_forward_profile():
+    signals = np.zeros((2, 12, 8), dtype=np.float32)
+    calls: list[tuple[str, int, str]] = []
+
+    def apply_op(sig: np.ndarray, op_name: str, severity: int, severity_profile: str) -> np.ndarray:
+        calls.append((op_name, severity, severity_profile))
+        return sig + (1.0 if op_name == "op_a" else 2.0)
+
+    views, stats = build_raw_augmix_views(
+        signals,
+        copies=2,
+        severity=5,
+        severity_profile="calibrated_10to20pp",
+        width=3,
+        depth=2,
+        alpha=1.0,
+        ops=["op_a", "op_b"],
+        rng=np.random.default_rng(123),
+        op_apply_fn=apply_op,
+        available_ops=["op_a", "op_b"],
+        renorm=False,
+        clip_abs=0.0,
+    )
+
+    assert views.shape == (4, 12, 8)
+    assert stats["enabled"] is True
+    assert stats["n_generated"] == 4
+    assert stats["copies"] == 2
+    assert stats["severity_profile"] == "calibrated_10to20pp"
+    assert stats["width"] == 3
+    assert stats["chain_depth_mean"] == pytest.approx(2.0)
+    assert len(calls) == 2 * 2 * 3 * 2
+    assert {call[2] for call in calls} == {"calibrated_10to20pp"}
+    assert {call[1] for call in calls} == {5}
+    assert float(np.abs(views).sum()) > 0.0
+
+
+def test_raw_augmix_views_can_use_fixed_corruption_mixture():
+    signals = np.zeros((1, 12, 4), dtype=np.float32)
+
+    def apply_op(sig: np.ndarray, op_name: str, severity: int, severity_profile: str) -> np.ndarray:
+        return sig + 4.0
+
+    views, stats = build_raw_augmix_views(
+        signals,
+        copies=1,
+        severity=5,
+        severity_profile="calibrated_10to20pp",
+        width=1,
+        depth=1,
+        alpha=1.0,
+        mixture_mode="fixed",
+        mixture_prob=0.75,
+        ops=["op_a"],
+        rng=np.random.default_rng(123),
+        op_apply_fn=apply_op,
+        available_ops=["op_a"],
+        renorm=False,
+        clip_abs=0.0,
+    )
+
+    assert views.shape == (1, 12, 4)
+    assert np.allclose(views, 3.0)
+    assert stats["mixture_mode"] == "fixed"
+    assert stats["mixture_prob"] == pytest.approx(0.75)
+    assert stats["beta_m_mean"] == pytest.approx(0.75)
+    assert stats["view_ops"] == ["op_a"]
+
+
+def test_raw_augmix_views_record_mixed_view_ops_when_chain_has_multiple_ops():
+    signals = np.zeros((1, 12, 4), dtype=np.float32)
+
+    def apply_op(sig: np.ndarray, op_name: str, severity: int, severity_profile: str) -> np.ndarray:
+        return sig + (1.0 if op_name == "op_a" else 2.0)
+
+    _views, stats = build_raw_augmix_views(
+        signals,
+        copies=1,
+        severity=5,
+        severity_profile="calibrated_10to20pp",
+        width=2,
+        depth=1,
+        alpha=1.0,
+        mixture_mode="fixed",
+        mixture_prob=1.0,
+        ops=["op_a", "op_b"],
+        rng=np.random.default_rng(123),
+        op_apply_fn=apply_op,
+        available_ops=["op_a", "op_b"],
+        renorm=False,
+        clip_abs=0.0,
+    )
+
+    assert stats["view_ops"] == ["__mixed__"]
+
+
+def test_raw_corruption_views_apply_optional_postprocess_fn():
+    signals = np.zeros((2, 12, 4), dtype=np.float32)
+
+    def apply_op(sig: np.ndarray, op_name: str, severity: int) -> np.ndarray:
+        return sig + 1.0
+
+    views, stats = build_raw_corruption_views(
+        signals,
+        copies=1,
+        severity=5,
+        ops=["op_a"],
+        prob=1.0,
+        rng=np.random.default_rng(123),
+        op_apply_fn=apply_op,
+        available_ops=["op_a"],
+        renorm=False,
+        clip_abs=0.0,
+        postprocess_fn=lambda sig: sig + 10.0,
+        postprocess_name="stabilizer35",
+    )
+
+    assert np.allclose(views, 11.0)
+    assert stats["postprocess"] == "stabilizer35"
+
+
+def test_raw_augmix_views_apply_optional_postprocess_fn():
+    signals = np.zeros((1, 12, 4), dtype=np.float32)
+
+    def apply_op(sig: np.ndarray, op_name: str, severity: int, severity_profile: str) -> np.ndarray:
+        return sig + 2.0
+
+    views, stats = build_raw_augmix_views(
+        signals,
+        copies=1,
+        severity=5,
+        severity_profile="calibrated_10to20pp",
+        width=1,
+        depth=1,
+        alpha=1.0,
+        mixture_mode="fixed",
+        mixture_prob=1.0,
+        ops=["op_a"],
+        rng=np.random.default_rng(123),
+        op_apply_fn=apply_op,
+        available_ops=["op_a"],
+        renorm=False,
+        clip_abs=0.0,
+        postprocess_fn=lambda sig: sig * 3.0,
+        postprocess_name="stabilizer35",
+    )
+
+    assert np.allclose(views, 6.0)
+    assert stats["postprocess"] == "stabilizer35"
+
+
 def test_stratified_pool_walker_draws_without_revisit_until_pool_exhaustion():
     labels = np.zeros((8, 5), dtype=np.float32)
     labels[:4, SUPER5_TO_IDX["NORM"]] = 1.0
@@ -233,7 +385,13 @@ def test_latent_augmix_core_uses_injected_ops_and_caps_latent_branch():
     adv = np.ones((2, 12, 10), dtype=np.float32)
     calls: list[tuple[str, int]] = []
 
-    def apply_op(sig: np.ndarray, op_name: str, severity: int) -> np.ndarray:
+    def apply_op(
+        sig: np.ndarray,
+        op_name: str,
+        severity: int,
+        severity_profile: str = "standard",
+    ) -> np.ndarray:
+        assert severity_profile == "standard"
         calls.append((op_name, severity))
         if op_name == "offset":
             return sig + severity * 0.01
@@ -282,6 +440,40 @@ def test_latent_augmix_core_uses_injected_ops_and_caps_latent_branch():
             op_apply_fn=apply_op,
             available_ops=["offset"],
         )
+
+
+def test_latent_augmix_core_forwards_severity_profile_to_chain_ops():
+    anchor = np.zeros((1, 12, 10), dtype=np.float32)
+    adv = np.ones((1, 12, 10), dtype=np.float32)
+    calls: list[tuple[str, int, str]] = []
+
+    def apply_op(sig: np.ndarray, op_name: str, severity: int, severity_profile: str) -> np.ndarray:
+        calls.append((op_name, severity, severity_profile))
+        return sig + 0.01
+
+    mixed, stats = build_latent_augmix_branch_signals(
+        anchor,
+        adv,
+        copies=1,
+        severity=5,
+        severity_profile="calibrated_10to20pp",
+        width=3,
+        depth=1,
+        alpha=1.0,
+        latent_weight_cap=0.25,
+        ops=["baseline_wander", "random_leads_masking"],
+        rng=np.random.default_rng(7),
+        op_apply_fn=apply_op,
+        available_ops=["baseline_wander", "random_leads_masking"],
+        renorm=False,
+        clip_abs=6.0,
+    )
+
+    assert mixed.shape == (1, 12, 10)
+    assert calls
+    assert all(severity == 5 for _, severity, _ in calls)
+    assert all(profile == "calibrated_10to20pp" for _, _, profile in calls)
+    assert stats["severity_profile"] == "calibrated_10to20pp"
 
 
 def test_raw_corruption_views_use_single_ops_and_prob_gate():

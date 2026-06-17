@@ -52,3 +52,14 @@ def test_non_negative():
         l2 = torch.randn(4, 26) * 5.0
         loss = jsd_multilabel(lc, l1, l2)
         assert loss.item() >= -1e-6, f"JSD negative: {loss.item()}"
+
+
+def test_float16_extreme_logits_stay_finite():
+    lc = torch.tensor([[80.0, -80.0, 20.0, -20.0]], dtype=torch.float16)
+    l1 = torch.tensor([[-80.0, 80.0, -20.0, 20.0]], dtype=torch.float16)
+    l2 = torch.tensor([[40.0, -40.0, 0.0, 0.0]], dtype=torch.float16)
+
+    loss = jsd_multilabel(lc, l1, l2)
+
+    assert torch.isfinite(loss)
+    assert loss.item() >= 0.0

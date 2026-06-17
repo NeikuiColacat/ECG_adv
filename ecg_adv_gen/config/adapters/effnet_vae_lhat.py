@@ -58,7 +58,10 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
         f"{center}_real_k{k}_seed{seed}"
     )
     latent_augmix = adaptation["latent_augmix"]
+    latent_augmix_consistency = latent_augmix.get("consistency") or {}
     raw_corrupt = adaptation.get("raw_corrupt_consistency") or {}
+    raw_augmix = raw_corrupt.get("augmix") or {}
+    raw_input_stabilizer = raw_corrupt.get("input_stabilizer") or {}
     mask_shift = adaptation.get("mask_shift_consistency") or {}
 
     argv: list[Any] = [
@@ -148,7 +151,41 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
         "--eval_pn2021_limit",
         evaluation["pn2021_limit"],
     ]
+    _append_optional_value(
+        argv,
+        "--latent_augmix_copies",
+        latent_augmix.get("copies"),
+    )
+    _append_optional_value(
+        argv,
+        "--latent_augmix_severity_profile",
+        latent_augmix.get("severity_profile"),
+    )
     _append_optional_sequence(argv, "--latent_augmix_ops", latent_augmix.get("ops"))
+    if latent_augmix.get("no_renorm"):
+        argv.append("--no_latent_augmix_renorm")
+    if latent_augmix_consistency.get("enabled"):
+        argv.append("--enable_latent_augmix_consistency")
+        _append_optional_value(
+            argv,
+            "--latent_augmix_consistency_weight",
+            latent_augmix_consistency.get("consistency_weight"),
+        )
+        _append_optional_value(
+            argv,
+            "--latent_augmix_consistency_loss",
+            latent_augmix_consistency.get("consistency_loss"),
+        )
+        _append_optional_value(
+            argv,
+            "--latent_augmix_bce_weight",
+            latent_augmix_consistency.get("bce_weight"),
+        )
+        _append_optional_value(
+            argv,
+            "--latent_augmix_consistency_max_batches",
+            latent_augmix_consistency.get("max_batches"),
+        )
     if raw_corrupt.get("enabled"):
         argv.append("--enable_raw_corrupt_consistency")
         _append_optional_value(argv, "--raw_corrupt_copies", raw_corrupt.get("copies"))
@@ -170,6 +207,35 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
         _append_optional_value(argv, "--raw_corrupt_max_batches", raw_corrupt.get("max_batches"))
         _append_optional_value(argv, "--raw_corrupt_scope", raw_corrupt.get("scope"))
         _append_optional_value(argv, "--raw_corrupt_clip_abs", raw_corrupt.get("clip_abs"))
+        _append_optional_value(argv, "--raw_corrupt_view_mode", raw_corrupt.get("view_mode"))
+        _append_optional_value(argv, "--raw_augmix_width", raw_augmix.get("width"))
+        _append_optional_value(argv, "--raw_augmix_depth", raw_augmix.get("depth"))
+        _append_optional_value(argv, "--raw_augmix_alpha", raw_augmix.get("alpha"))
+        _append_optional_value(argv, "--raw_augmix_mixture_mode", raw_augmix.get("mixture_mode"))
+        _append_optional_value(argv, "--raw_augmix_mixture_prob", raw_augmix.get("mixture_prob"))
+        _append_optional_value(argv, "--raw_augmix_mixture_beta_a", raw_augmix.get("mixture_beta_a"))
+        _append_optional_value(argv, "--raw_augmix_mixture_beta_b", raw_augmix.get("mixture_beta_b"))
+        if raw_input_stabilizer:
+            _append_optional_value(
+                argv,
+                "--raw_input_bandpass_low_hz",
+                raw_input_stabilizer.get("bandpass_low_hz"),
+            )
+            _append_optional_value(
+                argv,
+                "--raw_input_bandpass_high_hz",
+                raw_input_stabilizer.get("bandpass_high_hz"),
+            )
+            if raw_input_stabilizer.get("repair_flat_leads"):
+                argv.append("--raw_input_repair_flat_leads")
+            _append_optional_value(argv, "--raw_input_clip_abs", raw_input_stabilizer.get("clip_abs"))
+            if raw_input_stabilizer.get("renorm_after_stabilizer"):
+                argv.append("--raw_input_renorm_after_stabilizer")
+            _append_optional_value(
+                argv,
+                "--raw_input_sample_rate_hz",
+                raw_input_stabilizer.get("sample_rate_hz"),
+            )
         if raw_corrupt.get("no_renorm"):
             argv.append("--raw_corrupt_no_renorm")
     if mask_shift.get("enabled"):

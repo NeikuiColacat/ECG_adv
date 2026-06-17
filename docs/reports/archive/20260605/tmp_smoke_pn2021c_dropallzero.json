@@ -1,0 +1,230 @@
+{
+  "scheme": "super5",
+  "model_dir": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/effnet_direct_k500_v7_sjr_rgq_matrix/mainline_v7_k500_4gpu_20260605/ningbo/runs/ningbo_K500_direct_ft_ep30_seed20260531_val0.2",
+  "model_name": "efficientnet1dv2",
+  "mode": "stream",
+  "cache_dir": "/root/autodl-tmp/triple_labels/pn2021_c_cache",
+  "clean_mmap_cache_dir": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/triple_labels/pn2021_eval_cache_mmap_minresample_perglobal",
+  "clean_cache_dir": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/triple_labels/pn2021_eval_cache_minresample_perglobal",
+  "clean_eval_json": "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/effnet_direct_k500_v7_sjr_rgq_matrix/mainline_v7_k500_4gpu_20260605/ningbo/runs/ningbo_K500_direct_ft_ep30_seed20260531_val0.2/eval_result_v7_super5_sjr_rgq_review_exclrefs_crop1000.json",
+  "diagnostic_without_clean": false,
+  "required_cache_version": "v7_refexcluded_100hz1000",
+  "centers": [
+    "ningbo"
+  ],
+  "corruptions": [
+    "powerline_noise"
+  ],
+  "severities": [
+    1
+  ],
+  "severity_profile": "standard",
+  "exclude_ref_ids": [
+    "/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets/ningbo/k500_seed20260531/ningbo_real_k500_seed20260531.ref_meta.json"
+  ],
+  "exclude_ref_ids_by_center_counts": {
+    "ningbo": 500
+  },
+  "pn2021_c_cache_version": "v7_refexcluded_100hz1000",
+  "per_center": {
+    "ningbo": {
+      "powerline_noise": {
+        "1": {
+          "cache_path": null,
+          "cache_source": "stream:mmap",
+          "metadata": {
+            "cache_version": "v7_super5_sjr_rgq_review",
+            "center": "ningbo",
+            "class_names": [
+              "CD",
+              "HYP",
+              "MI",
+              "NORM",
+              "STTC"
+            ],
+            "layout": "mmap_v1",
+            "pn2021_mapping": {
+              "class_names": [
+                "CD",
+                "HYP",
+                "MI",
+                "NORM",
+                "STTC"
+              ],
+              "ignored_snomeds": [
+                368009,
+                53741008,
+                61721007,
+                84114007,
+                251139008,
+                251198002,
+                251199005,
+                266257000,
+                428417006
+              ],
+              "mapping_hash": "555ec85d5b51",
+              "mapping_version": "v7_super5_sjr_rgq_review_20260528"
+            },
+            "preprocess_config": {
+              "apply_filter": false,
+              "apply_zscore": true,
+              "norm_mode": "per_sample_global",
+              "preprocess_mode": "minimal_resample",
+              "target_fs": 100,
+              "target_len": 1000
+            },
+            "scheme": "super5",
+            "label_mapping": {
+              "version": "v7_super5_sjr_rgq_review_20260528",
+              "hash": "555ec85d5b51"
+            },
+            "preprocess": {
+              "contract_id": "ptbxl_pn2021_super5_ecgtwin_decode_v1",
+              "preprocess_mode": "minimal_resample",
+              "norm_mode": "per_sample_global",
+              "crop_len": 1000,
+              "target_len": 1000
+            },
+            "pn2021c": {
+              "cache_version": "v7_refexcluded_100hz1000",
+              "center": "ningbo",
+              "source_clean_cache": "stream:mmap",
+              "corruption": "powerline_noise",
+              "severity": 1,
+              "public_severity": 1,
+              "internal_severity": 2,
+              "severity_profile": "standard",
+              "n_excluded_ref": 500,
+              "ref_record_ids_sha256": "3660e9016c22bd127be3954a3f3aac099d4e03712558b668d02c35983cd290dc",
+              "seed": 20260501,
+              "limit": 64,
+              "ops_source": "methods/augmix/ecg_ops.py"
+            },
+            "pn2021_c": {
+              "cache_version": "v7_refexcluded_100hz1000",
+              "center": "ningbo",
+              "source_clean_cache": "stream:mmap",
+              "corruption": "powerline_noise",
+              "severity": 1,
+              "public_severity": 1,
+              "internal_severity": 2,
+              "severity_profile": "standard",
+              "n_excluded_ref": 500,
+              "ref_record_ids_sha256": "3660e9016c22bd127be3954a3f3aac099d4e03712558b668d02c35983cd290dc",
+              "seed": 20260501,
+              "limit": 64,
+              "ops_source": "methods/augmix/ecg_ops.py"
+            }
+          },
+          "metadata_compatibility": {
+            "compatible": true,
+            "center": "ningbo",
+            "cache_version": "v7_refexcluded_100hz1000",
+            "n_excluded_ref": 500,
+            "ref_record_ids_sha256": "3660e9016c22bd127be3954a3f3aac099d4e03712558b668d02c35983cd290dc",
+            "label_mapping_hash": "555ec85d5b51",
+            "preprocess_contract_id": "ptbxl_pn2021_super5_ecgtwin_decode_v1"
+          },
+          "n_excluded_ref_ids_for_center": 500,
+          "corruption": {
+            "name": "powerline_noise",
+            "severity_profile": "standard",
+            "public_severity": 1,
+            "internal_severity": 2,
+            "seed": 20260501
+          },
+          "n_records": 64,
+          "n_all_zero_labels": 56,
+          "macro_auroc": NaN,
+          "macro_auprc": NaN,
+          "n_classes_used": 0,
+          "per_class": {
+            "CD": {
+              "auroc": null,
+              "auprc": null,
+              "n_pos": 0,
+              "n_valid": 64
+            },
+            "HYP": {
+              "auroc": null,
+              "auprc": null,
+              "n_pos": 4,
+              "n_valid": 64
+            },
+            "MI": {
+              "auroc": null,
+              "auprc": null,
+              "n_pos": 0,
+              "n_valid": 64
+            },
+            "NORM": {
+              "auroc": null,
+              "auprc": null,
+              "n_pos": 0,
+              "n_valid": 64
+            },
+            "STTC": {
+              "auroc": null,
+              "auprc": null,
+              "n_pos": 7,
+              "n_valid": 64
+            }
+          },
+          "drop_all_zero_n_records": 8,
+          "drop_all_zero_macro_auroc": NaN,
+          "drop_all_zero_macro_auprc": NaN,
+          "drop_all_zero_n_classes_used": 0,
+          "drop_all_zero_per_class": {
+            "CD": {
+              "auroc": null,
+              "auprc": null,
+              "n_pos": 0,
+              "n_valid": 8
+            },
+            "HYP": {
+              "auroc": null,
+              "auprc": null,
+              "n_pos": 4,
+              "n_valid": 8
+            },
+            "MI": {
+              "auroc": null,
+              "auprc": null,
+              "n_pos": 0,
+              "n_valid": 8
+            },
+            "NORM": {
+              "auroc": null,
+              "auprc": null,
+              "n_pos": 0,
+              "n_valid": 8
+            },
+            "STTC": {
+              "auroc": null,
+              "auprc": null,
+              "n_pos": 7,
+              "n_valid": 8
+            }
+          },
+          "clean_macro_auroc": 0.8814194609471713,
+          "clean_macro_auprc": 0.4955396153654088,
+          "auroc_drop_vs_clean": NaN,
+          "auprc_drop_vs_clean": NaN
+        }
+      }
+    }
+  },
+  "aggregate_by_corruption_severity": {
+    "powerline_noise": {
+      "1": {
+        "n_centers": 1,
+        "mean_macro_auroc": NaN,
+        "mean_macro_auprc": NaN,
+        "mean_drop_all_zero_macro_auroc": NaN,
+        "mean_drop_all_zero_macro_auprc": NaN,
+        "mean_auroc_drop_vs_clean": null,
+        "mean_auprc_drop_vs_clean": null
+      }
+    }
+  }
+}

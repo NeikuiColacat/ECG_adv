@@ -1,0 +1,16 @@
+extends:
+  - effnet_vae_lhat_calibrated_latent_augmix_k500_v7_sjr_rgq_cpsc_2018.yaml
+
+experiment:
+  name: effnet_vae_lhat_calibrated_latent_augmix_norenorm_k500_v7_sjr_rgq_cpsc_2018
+  description: Single-center CPSC 2018 calibrated-profile latent AugMix run without final latent-AugMix renormalization.
+
+adaptation:
+  run_tag_extra: k500_callatentaugmix_norenorm
+  latent_augmix:
+    no_renorm: true
+
+run_record:
+  purpose: Test whether disabling latent-AugMix global renormalization preserves calibrated PN2021-C corruption strength and improves corrupted AUPRC.
+  result_summary: Completed 2026-06-15 on CPSC 2018. CPSC PN2021-C calibrated AUPRC was 0.4738, only +0.23 pp over noAug and worse than calibrated latent AugMix with renorm; do not expand as-is.
+  registration_status: provisional

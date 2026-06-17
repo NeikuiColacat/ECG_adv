@@ -23,7 +23,9 @@ from .signal_streams import (
     MemorySignalDataset,
     TaggedCachedSignalDataset,
     TaggedMemorySignalDataset,
+    TaggedSignalDataset,
     build_weighted_signal_stream_loader,
+    build_weighted_signal_stream_loader_from_datasets,
 )
 from .splits import random_split_indices
 from .stream_sampling import (
@@ -57,6 +59,7 @@ __all__ = [
     "compute_pos_weight",
     "capture_rng_state",
     "fullft_adv_batch_diagnostics",
+    "build_weighted_signal_stream_loader_from_datasets",
     "build_weighted_signal_stream_loader",
     "build_ecgfounder_fullft_method_tag",
     "build_ecgfounder_fullft_run_leaf",
@@ -68,6 +71,7 @@ __all__ = [
     "multilabel_bce_per_sample",
     "TaggedCachedSignalDataset",
     "TaggedMemorySignalDataset",
+    "TaggedSignalDataset",
     "WeightedFeatureStream",
     "build_weighted_feature_stream_loader",
     "build_checkpoint_selection_record",

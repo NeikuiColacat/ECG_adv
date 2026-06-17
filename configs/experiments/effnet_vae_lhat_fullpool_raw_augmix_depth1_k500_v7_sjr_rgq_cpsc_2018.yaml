@@ -1,0 +1,17 @@
+extends:
+  - effnet_vae_lhat_fullpool_raw_augmix_k500_v7_sjr_rgq_cpsc_2018.yaml
+
+experiment:
+  name: effnet_vae_lhat_fullpool_raw_augmix_depth1_k500_v7_sjr_rgq_cpsc_2018
+  description: CPSC 2018 EfficientNet1DV2 VAE-LHAT with calibrated full-pool raw AugMix consistency using PN2021-C-aligned single-op chains.
+
+adaptation:
+  run_tag_extra: k500_fullpool_rawaugmix_d1
+  raw_corrupt_consistency:
+    augmix:
+      depth: 1
+
+run_record:
+  purpose: Test whether raw AugMix improves PN2021-C recovery when each AugMix branch uses exactly one calibrated PN2021-C operator instead of random multi-op chains.
+  result_summary: Pending CPSC run. Compare against VAE noAug, calibrated raw-supervised, calibrated latent AugMix directloss, and full-pool raw AugMix depth=-1.
+  registration_status: provisional

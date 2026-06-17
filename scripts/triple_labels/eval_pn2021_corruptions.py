@@ -68,6 +68,10 @@ from ecg_adv_gen.evaluation.pn2021c_metadata import (  # noqa: E402
     build_pn2021c_metadata_payload,
     validate_pn2021c_metadata_compatibility,
 )
+from ecg_adv_gen.models.ecgfounder_torch import (  # noqa: E402
+    global_zscore_torch,
+    stabilize_ecg_torch,
+)
 
 
 STRESS_PROFILE_CHOICES = ("standard", "stress_v2", "calibrated_10to20pp")
@@ -197,6 +201,67 @@ def _build_corruption_op(corruption, public_severity, severity_profile):
     raise ValueError(f"unknown severity_profile: {severity_profile}")
 
 
+def _input_stabilizer_config(args):
+    return {
+        "bandpass_low_hz": args.input_bandpass_low_hz,
+        "bandpass_high_hz": args.input_bandpass_high_hz,
+        "repair_flat_leads": bool(args.input_repair_flat_leads),
+        "clip_abs": args.input_clip_abs,
+        "renorm_after_stabilizer": bool(args.input_renorm_after_stabilizer),
+        "sample_rate_hz": float(args.input_sample_rate_hz),
+        "stage": str(args.input_stabilizer_stage),
+    }
+
+
+def _has_input_stabilizer(config):
+    return bool(
+        config.get("bandpass_low_hz") is not None
+        or config.get("bandpass_high_hz") is not None
+        or config.get("repair_flat_leads")
+        or config.get("clip_abs") is not None
+        or config.get("renorm_after_stabilizer")
+    )
+
+
+def apply_effnet_input_stabilizer(ecg_ct, config):
+    """Apply optional diagnostic input stabilizer to EfficientNet ECG tensors.
+
+    The standard EfficientNet PN2021-C evaluator remains unchanged unless one
+    of the explicit stabilizer flags is enabled.  Inputs are channel-time ECG
+    tensors with shape ``(C, T)`` or batched ``(B, C, T)``.
+    """
+    config = dict(config or {})
+    if not _has_input_stabilizer(config):
+        return ecg_ct
+    squeeze = False
+    x = ecg_ct
+    if x.ndim == 2:
+        x = x.unsqueeze(0)
+        squeeze = True
+    if x.ndim != 3:
+        raise ValueError(f"expected ECG tensor with shape (C,T) or (B,C,T), got {tuple(ecg_ct.shape)}")
+    y = stabilize_ecg_torch(
+        x,
+        sample_rate_hz=float(config.get("sample_rate_hz", 100.0)),
+        bandpass_low_hz=config.get("bandpass_low_hz"),
+        bandpass_high_hz=config.get("bandpass_high_hz"),
+        repair_flat_leads=bool(config.get("repair_flat_leads", False)),
+        clip_abs=config.get("clip_abs"),
+    )
+    if bool(config.get("renorm_after_stabilizer", False)):
+        y = global_zscore_torch(y)
+    if squeeze:
+        y = y.squeeze(0)
+    return y.to(dtype=ecg_ct.dtype)
+
+
+def _center_crop_ct(ecg_ct, crop_len):
+    if crop_len and int(crop_len) < ecg_ct.shape[-1]:
+        start = max((ecg_ct.shape[-1] - int(crop_len)) // 2, 0)
+        return ecg_ct[..., start:start + int(crop_len)]
+    return ecg_ct
+
+
 def _cache_path(cache_dir, scheme, center, corruption, severity, cache_version=None):
     return corruption_cache_path(
         cache_dir,
@@ -227,7 +292,7 @@ def _stable_seed(base_seed, *parts):
 class StreamingCorruptedPN2021Dataset(Dataset):
     def __init__(self, signals, labels, corruption, public_severity,
                  seed=20260501, crop_len=250, severity_profile="standard",
-                 indices=None):
+                 indices=None, input_stabilizer_config=None):
         self.signals = signals
         self.labels = labels.astype(np.float32, copy=False)
         self.indices = (
@@ -241,6 +306,7 @@ class StreamingCorruptedPN2021Dataset(Dataset):
         self.severity_profile = severity_profile
         self.seed = int(seed)
         self.crop_len = crop_len
+        self.input_stabilizer_config = dict(input_stabilizer_config or {})
 
     def __len__(self):
         return len(self.indices)
@@ -256,20 +322,31 @@ class StreamingCorruptedPN2021Dataset(Dataset):
         )
 
         sig_tc = self.signals[real_idx]
-        start = max((sig_tc.shape[0] - self.crop_len) // 2, 0)
-        crop = sig_tc[start:start + self.crop_len]
-        sig_ct = torch.from_numpy(np.ascontiguousarray(crop.T)).float()
+        stage = self.input_stabilizer_config.get("stage", "post_crop")
+        if stage == "pre_crop":
+            sig_ct = torch.from_numpy(np.ascontiguousarray(sig_tc.T)).float()
+        else:
+            start = max((sig_tc.shape[0] - self.crop_len) // 2, 0)
+            crop = sig_tc[start:start + self.crop_len]
+            sig_ct = torch.from_numpy(np.ascontiguousarray(crop.T)).float()
         corrupt_ct = op(sig_ct)
+        corrupt_ct = apply_effnet_input_stabilizer(
+            corrupt_ct,
+            self.input_stabilizer_config,
+        )
+        if stage == "pre_crop":
+            corrupt_ct = _center_crop_ct(corrupt_ct, self.crop_len)
         label = np.array(self.labels[real_idx], dtype=np.float32, copy=True)
         return corrupt_ct.float(), torch.from_numpy(label).float()
 
 
 class PN2021IndexedCenterDataset(Dataset):
-    def __init__(self, signals, labels, indices, crop_len=250):
+    def __init__(self, signals, labels, indices, crop_len=250, input_stabilizer_config=None):
         self.signals = signals
         self.labels = labels.astype(np.float32, copy=False)
         self.indices = np.asarray(indices, dtype=np.int64)
         self.crop_len = crop_len
+        self.input_stabilizer_config = dict(input_stabilizer_config or {})
 
     def __len__(self):
         return len(self.indices)
@@ -277,12 +354,23 @@ class PN2021IndexedCenterDataset(Dataset):
     def __getitem__(self, idx):
         real_idx = int(self.indices[idx])
         sig_tc = self.signals[real_idx]
-        start = max((sig_tc.shape[0] - self.crop_len) // 2, 0)
-        crop = sig_tc[start:start + self.crop_len]
-        sig_ct = crop.T
+        stage = self.input_stabilizer_config.get("stage", "post_crop")
+        if stage == "pre_crop":
+            sig_ct_np = sig_tc.T
+        else:
+            start = max((sig_tc.shape[0] - self.crop_len) // 2, 0)
+            crop = sig_tc[start:start + self.crop_len]
+            sig_ct_np = crop.T
+        sig_ct = torch.from_numpy(np.ascontiguousarray(sig_ct_np)).float()
+        sig_ct = apply_effnet_input_stabilizer(
+            sig_ct,
+            self.input_stabilizer_config,
+        )
+        if stage == "pre_crop":
+            sig_ct = _center_crop_ct(sig_ct, self.crop_len)
         label = np.array(self.labels[real_idx], dtype=np.float32, copy=True)
         return (
-            torch.from_numpy(np.ascontiguousarray(sig_ct)).float(),
+            sig_ct.float(),
             torch.from_numpy(label).float(),
         )
 
@@ -360,7 +448,13 @@ def _ref_ids_sha256(ids):
 
 
 def _compute_clean_subset_metrics(model, scheme, args, device, signals, labels, indices):
-    ds = PN2021IndexedCenterDataset(signals, labels, indices, crop_len=args.crop_len)
+    ds = PN2021IndexedCenterDataset(
+        signals,
+        labels,
+        indices,
+        crop_len=args.crop_len,
+        input_stabilizer_config=_input_stabilizer_config(args),
+    )
     loader = DataLoader(
         ds,
         batch_size=args.batch_size,
@@ -437,6 +531,7 @@ def eval_one(model, scheme, args, device, center, corruption, severity, clean_by
             seed=args.seed, crop_len=args.crop_len,
             severity_profile=args.severity_profile,
             indices=indices,
+            input_stabilizer_config=_input_stabilizer_config(args),
         )
     else:
         if args.severity_profile != "standard":
@@ -646,6 +741,49 @@ def main():
     p.add_argument("--min_pos", type=int, default=10)
     p.add_argument("--seed", type=int, default=20260501)
     p.add_argument(
+        "--input_bandpass_low_hz",
+        type=float,
+        default=None,
+        help="Optional diagnostic bandpass low cutoff applied after crop/corruption before EfficientNet inference.",
+    )
+    p.add_argument(
+        "--input_bandpass_high_hz",
+        type=float,
+        default=None,
+        help="Optional diagnostic bandpass high cutoff applied after crop/corruption before EfficientNet inference.",
+    )
+    p.add_argument(
+        "--input_repair_flat_leads",
+        action="store_true",
+        help="Optionally repair flat/masked ECG leads before EfficientNet inference.",
+    )
+    p.add_argument(
+        "--input_clip_abs",
+        type=float,
+        default=None,
+        help="Optional absolute clipping after diagnostic input stabilization.",
+    )
+    p.add_argument(
+        "--input_renorm_after_stabilizer",
+        action="store_true",
+        help="Apply per-sample global z-score after diagnostic input stabilization.",
+    )
+    p.add_argument(
+        "--input_sample_rate_hz",
+        type=float,
+        default=100.0,
+        help="Sample rate for diagnostic input stabilization filters.",
+    )
+    p.add_argument(
+        "--input_stabilizer_stage",
+        choices=["post_crop", "pre_crop"],
+        default="post_crop",
+        help=(
+            "Apply diagnostic input stabilization after the normal center crop "
+            "or on the full 1000-point signal before center cropping."
+        ),
+    )
+    p.add_argument(
         "--exclude_ref_ids",
         nargs="*",
         default=[],
@@ -712,6 +850,7 @@ def main():
         "crop_len": int(args.crop_len),
         "target_fs": 100,
         "target_len": 1000,
+        "diagnostic_input_stabilizer": _input_stabilizer_config(args),
     }
     if args.scheme == "super5":
         mapping_metadata = get_super5_pn2021_mapping_metadata()

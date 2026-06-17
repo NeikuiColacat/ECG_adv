@@ -239,12 +239,30 @@ def build_effnet_vae_lhat_train_cmd(
                 str(args.latent_augmix_alpha),
                 "--latent_augmix_severity",
                 str(args.latent_augmix_severity),
+                "--latent_augmix_severity_profile",
+                str(getattr(args, "latent_augmix_severity_profile", "standard")),
                 "--latent_augmix_latent_weight_cap",
                 str(args.latent_augmix_latent_weight_cap),
                 "--latent_augmix_ops",
                 *[str(item) for item in args.latent_augmix_ops],
             ]
         )
+        if getattr(args, "no_latent_augmix_renorm", False):
+            train_cmd.append("--no_latent_augmix_renorm")
+        if getattr(args, "enable_latent_augmix_consistency", False):
+            train_cmd.extend(
+                [
+                    "--enable_latent_augmix_consistency",
+                    "--latent_augmix_consistency_weight",
+                    str(args.latent_augmix_consistency_weight),
+                    "--latent_augmix_consistency_loss",
+                    str(args.latent_augmix_consistency_loss),
+                    "--latent_augmix_bce_weight",
+                    str(args.latent_augmix_bce_weight),
+                    "--latent_augmix_consistency_max_batches",
+                    str(args.latent_augmix_consistency_max_batches),
+                ]
+            )
     if args.enable_raw_corrupt_consistency:
         train_cmd.extend(
             [
@@ -271,8 +289,43 @@ def build_effnet_vae_lhat_train_cmd(
                 str(args.raw_corrupt_scope),
                 "--raw_corrupt_clip_abs",
                 str(args.raw_corrupt_clip_abs),
+                "--raw_corrupt_view_mode",
+                str(getattr(args, "raw_corrupt_view_mode", "single_op")),
+                "--raw_augmix_width",
+                str(getattr(args, "raw_augmix_width", 3)),
+                "--raw_augmix_depth",
+                str(getattr(args, "raw_augmix_depth", -1)),
+                "--raw_augmix_alpha",
+                str(getattr(args, "raw_augmix_alpha", 1.0)),
+                "--raw_augmix_mixture_mode",
+                str(getattr(args, "raw_augmix_mixture_mode", "beta")),
+                "--raw_augmix_mixture_prob",
+                str(getattr(args, "raw_augmix_mixture_prob", 0.5)),
+                "--raw_augmix_mixture_beta_a",
+                str(getattr(args, "raw_augmix_mixture_beta_a", 0.0)),
+                "--raw_augmix_mixture_beta_b",
+                str(getattr(args, "raw_augmix_mixture_beta_b", 0.0)),
             ]
         )
+        raw_input_enabled = bool(
+            getattr(args, "raw_input_bandpass_low_hz", None) is not None
+            or getattr(args, "raw_input_bandpass_high_hz", None) is not None
+            or getattr(args, "raw_input_repair_flat_leads", False)
+            or getattr(args, "raw_input_clip_abs", None) is not None
+            or getattr(args, "raw_input_renorm_after_stabilizer", False)
+        )
+        if raw_input_enabled and getattr(args, "raw_input_bandpass_low_hz", None) is not None:
+            train_cmd.extend(["--raw_input_bandpass_low_hz", str(args.raw_input_bandpass_low_hz)])
+        if raw_input_enabled and getattr(args, "raw_input_bandpass_high_hz", None) is not None:
+            train_cmd.extend(["--raw_input_bandpass_high_hz", str(args.raw_input_bandpass_high_hz)])
+        if raw_input_enabled and getattr(args, "raw_input_repair_flat_leads", False):
+            train_cmd.append("--raw_input_repair_flat_leads")
+        if raw_input_enabled and getattr(args, "raw_input_clip_abs", None) is not None:
+            train_cmd.extend(["--raw_input_clip_abs", str(args.raw_input_clip_abs)])
+        if raw_input_enabled and getattr(args, "raw_input_renorm_after_stabilizer", False):
+            train_cmd.append("--raw_input_renorm_after_stabilizer")
+        if raw_input_enabled and getattr(args, "raw_input_sample_rate_hz", None) is not None:
+            train_cmd.extend(["--raw_input_sample_rate_hz", str(args.raw_input_sample_rate_hz)])
         if args.raw_corrupt_no_renorm:
             train_cmd.append("--raw_corrupt_no_renorm")
     if args.enable_mask_shift_consistency:

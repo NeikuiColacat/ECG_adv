@@ -565,6 +565,22 @@ inactive_experiment_configs:
     status: smoke_only
     reason: Engineering smoke config for calibrated raw-supervised PN2021-C recovery checks; not an active paper result surface.
 
+  - config: configs/experiments/effnet_vae_lhat_calibrated_latent_augmix_k500_v7_sjr_rgq.yaml
+    status: historical_unmanaged
+    reason: Provisional calibrated-profile latent AugMix PN2021-C recovery draft config; keep inventoried for preflight completeness, but not an active paper evidence surface.
+
+  - config: configs/experiments/effnet_vae_lhat_calibrated_latent_augmix_k500_v7_sjr_rgq_cpsc_2018.yaml
+    status: historical_unmanaged
+    reason: Provisional single-center CPSC 2018 calibrated-profile latent AugMix draft config; keep inventoried for preflight completeness, but not an active paper evidence surface.
+
+  - config: configs/experiments/effnet_vae_lhat_calibrated_latent_augmix_norenorm_k500_v7_sjr_rgq_cpsc_2018.yaml
+    status: historical_unmanaged
+    reason: Provisional single-center CPSC 2018 calibrated-profile latent AugMix no-renorm ablation; keep inventoried for preflight completeness, but not an active paper evidence surface.
+
+  - config: configs/experiments/effnet_vae_lhat_calibrated_latent_augmix_directloss_k500_v7_sjr_rgq_cpsc_2018.yaml
+    status: historical_unmanaged
+    reason: Provisional single-center CPSC 2018 calibrated-profile latent AugMix direct-loss ablation; keep inventoried for preflight completeness, but not an active paper evidence surface.
+
   - config: configs/experiments/effnet_vae_lhat_maskshift_consistency_k500_v7_sjr_rgq.yaml
     status: historical_unmanaged
     reason: Provisional mask/shift consistency PN2021-C recovery draft config; keep inventoried for preflight completeness, but not an active paper evidence surface.

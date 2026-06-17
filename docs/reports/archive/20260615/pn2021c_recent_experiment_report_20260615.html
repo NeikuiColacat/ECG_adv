@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PN2021-C ECG Visual Comparison Report</title>
+  <style>
+    :root { --ink:#1f252d; --muted:#667085; --line:#d6dbe3; --panel:#fff; --page:#f5f6f8; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif; background:var(--page); color:var(--ink); letter-spacing:0; }
+    .page { max-width:1480px; margin:0 auto; padding:26px 28px 44px; }
+    header { display:grid; grid-template-columns:minmax(0,1.25fr) minmax(360px,.75fr); gap:18px; align-items:end; margin-bottom:18px; }
+    h1 { font-size:30px; line-height:1.15; margin:0 0 10px; } h2 { font-size:22px; margin:28px 0 10px; } h3 { font-size:17px; margin:0; }
+    p { margin:0; color:var(--muted); line-height:1.48; }
+    .tag-row { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; } .tag { border:1px solid var(--line); background:#fff; padding:5px 9px; border-radius:999px; font-size:12px; color:#3d4856; }
+    .summary-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+    .summary-card,.ecg-pair,.table-card,.note-card { background:var(--panel); border:1px solid var(--line); border-radius:8px; box-shadow:0 1px 2px rgba(30,35,41,.04); }
+    .summary-card { padding:13px; } .summary-card span { display:block; color:var(--muted); font-size:12px; margin-bottom:7px; } .summary-card strong { display:block; font-size:24px; margin-bottom:3px; }
+    .summary-card small,td small { display:block; color:var(--muted); font-size:11px; margin-top:3px; } .section-intro { margin-bottom:12px; max-width:980px; }
+    .ecg-pair { margin:14px 0; overflow:hidden; } .pair-head { padding:14px 16px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; gap:16px; align-items:center; }
+    .pair-title { min-width:270px; } .pair-title h3 { margin-bottom:4px; } .drop-stats { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:7px; max-width:900px; }
+    .drop-stats span { display:inline-block; border:1px solid var(--line); border-radius:6px; padding:5px 8px; background:#f8fafc; color:#334155; font-size:12px; line-height:1.25; white-space:nowrap; font-variant-numeric:tabular-nums; }
+    .drop-stats .effnet { background:#eef6ff; } .drop-stats .founder { background:#f4f7f2; }
+    .pair-grid { display:grid; grid-template-columns:1fr 1fr; gap:0; } figure { margin:0; padding:12px; min-width:0; } figure:first-child { border-right:1px solid var(--line); background:#fbfcfd; }
+    figcaption { display:flex; justify-content:space-between; gap:10px; align-items:baseline; margin-bottom:8px; font-size:13px; } figcaption span { color:var(--muted); font-size:12px; }
+    img { display:block; width:100%; height:auto; border:1px solid #e2e6ec; border-radius:6px; background:#fff; } .table-card { overflow:auto; }
+    table { width:100%; border-collapse:collapse; min-width:760px; } th,td { padding:11px 12px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; font-size:13px; font-variant-numeric:tabular-nums; }
+    th { position:sticky; top:0; background:#f9fafb; color:#384250; font-size:12px; font-weight:700; } tr.best-row td { background:#f3faf6; }
+    .note-card { padding:16px 18px; margin-top:18px; } .note-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin-top:10px; } .note-card li { margin:8px 0; color:#445160; line-height:1.45; }
+    .source-list { font-size:12px; color:var(--muted); line-height:1.6; overflow-wrap:anywhere; }
+    @media (max-width:1080px) { .page { padding:20px 14px 34px; } header,.pair-grid { grid-template-columns:1fr; } .summary-grid,.note-grid { grid-template-columns:1fr; } figure:first-child { border-right:0; border-bottom:1px solid var(--line); } .pair-head { display:block; } .drop-stats { justify-content:flex-start; margin-top:10px; } .drop-stats span { white-space:normal; } }
+    @media (max-width:620px) { h1 { font-size:24px; } figcaption { display:block; } }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header>
+      <div>
+        <h1>PN2021-C ECG Visual Comparison Report</h1>
+        <p>第一部分嵌入 ECG_adv_data 里已有的 clean vs PN2021-C ECG 图；每个算子标题处展示 CPSC direct K500 模型相对 PN2021 clean 的 AUROC/AUPRC 下降。后面按 CPSC 中心分别列出 EfficientNet1DV2 与 ECGFounder 的方法对比。</p>
+        <div class="tag-row"><span class="tag">Generated 2026-06-15</span><span class="tag">center cpsc_2018</span><span class="tag">source sample JS30769</span><span class="tag">labels STTC</span><span class="tag">Super5 v7 hash 555ec85d5b51</span></div>
+      </div>
+      <div class="summary-grid">
+        <div class="summary-card"><span>EffNet CPSC calibrated best</span><strong>0.535</strong><p>原始 ECG 强扰动校准微调 AUPRC</p></div>
+        <div class="summary-card"><span>ECGFounder CPSC calibrated best</span><strong>0.563</strong><p>VAE-LH noAug AUPRC</p></div>
+        <div class="summary-card"><span>Direct K500 per-op view</span><strong>CPSC</strong><p>Drop vs PN2021 clean</p></div>
+      </div>
+    </header>
+
+    <section><h2>Clean vs 五个增强算子 ECG 图像</h2><p class="section-intro">图片来源：`/home/linbinhao/ECG_adv_data/runs/visualizations/pn2021c_strong_corruptions_20260614`。这些是之前已经用 ECG 可视化工具生成的 12-lead gallery 图，不是本报告重新绘制的图。标题右侧只展示 CPSC direct K500 在 calibrated_10to20pp severity 5 下的 AUROC/AUPRC drop pp，并标明对应模型。</p>
+        <section class="ecg-pair">
+          <div class="pair-head">
+            <div class="pair-title"><h3>Powerline noise</h3><p>powerline_noise · seed 20260615 · diff RMS 7.689 · max |diff| 7.689</p></div>
+            <div class="drop-stats"><span class="effnet">EffNet direct: drop 7.34 / 9.71 pp</span><span class="founder">ECGFounder direct: drop 12.17 / 15.33 pp</span></div>
+          </div>
+          <div class="pair-grid">
+            <figure>
+              <figcaption><strong>Clean</strong><span>JS30769 · labels STTC</span></figcaption>
+              <img src="pn2021c_strong_corruptions_20260614_assets/sample000_clean_12lead_gallery.png" alt="Clean ECG sample JS30769">
+            </figure>
+            <figure>
+              <figcaption><strong>Augmented</strong><span>warnings 3 · flatline none</span></figcaption>
+              <img src="pn2021c_strong_corruptions_20260614_assets/sample000_powerline_noise_12lead_gallery.png" alt="Augmented ECG sample JS30769 using powerline_noise">
+            </figure>
+          </div>
+        </section>
+        <section class="ecg-pair">
+          <div class="pair-head">
+            <div class="pair-title"><h3>EMG noise</h3><p>emg_noise · seed 20260616 · diff RMS 1.321 · max |diff| 7.602</p></div>
+            <div class="drop-stats"><span class="effnet">EffNet direct: drop 4.73 / 5.86 pp</span><span class="founder">ECGFounder direct: drop 10.39 / 14.71 pp</span></div>
+          </div>
+          <div class="pair-grid">
+            <figure>
+              <figcaption><strong>Clean</strong><span>JS30769 · labels STTC</span></figcaption>
+              <img src="pn2021c_strong_corruptions_20260614_assets/sample000_clean_12lead_gallery.png" alt="Clean ECG sample JS30769">
+            </figure>
+            <figure>
+              <figcaption><strong>Augmented</strong><span>warnings 2 · flatline none</span></figcaption>
+              <img src="pn2021c_strong_corruptions_20260614_assets/sample000_emg_noise_12lead_gallery.png" alt="Augmented ECG sample JS30769 using emg_noise">
+            </figure>
+          </div>
+        </section>
+        <section class="ecg-pair">
+          <div class="pair-head">
+            <div class="pair-title"><h3>Baseline wander</h3><p>baseline_wander · seed 20260617 · diff RMS 2.407 · max |diff| 8.467</p></div>
+            <div class="drop-stats"><span class="effnet">EffNet direct: drop 13.08 / 14.56 pp</span><span class="founder">ECGFounder direct: drop 1.38 / 4.08 pp</span></div>
+          </div>
+          <div class="pair-grid">
+            <figure>
+              <figcaption><strong>Clean</strong><span>JS30769 · labels STTC</span></figcaption>
+              <img src="pn2021c_strong_corruptions_20260614_assets/sample000_clean_12lead_gallery.png" alt="Clean ECG sample JS30769">
+            </figure>
+            <figure>
+              <figcaption><strong>Augmented</strong><span>warnings 2 · flatline none</span></figcaption>
+              <img src="pn2021c_strong_corruptions_20260614_assets/sample000_baseline_wander_12lead_gallery.png" alt="Augmented ECG sample JS30769 using baseline_wander">
+            </figure>
+          </div>
+        </section>
+        <section class="ecg-pair">
+          <div class="pair-head">
+            <div class="pair-title"><h3>Baseline shift</h3><p>baseline_shift · seed 20260618 · diff RMS 1.012 · max |diff| 1.161</p></div>
+            <div class="drop-stats"><span class="effnet">EffNet direct: drop 7.06 / 9.33 pp</span><span class="founder">ECGFounder direct: drop 0.26 / 0.67 pp</span></div>
+          </div>
+          <div class="pair-grid">
+            <figure>
+              <figcaption><strong>Clean</strong><span>JS30769 · labels STTC</span></figcaption>
+              <img src="pn2021c_strong_corruptions_20260614_assets/sample000_clean_12lead_gallery.png" alt="Clean ECG sample JS30769">
+            </figure>
+            <figure>
+              <figcaption><strong>Augmented</strong><span>warnings 3 · flatline none</span></figcaption>
+              <img src="pn2021c_strong_corruptions_20260614_assets/sample000_baseline_shift_12lead_gallery.png" alt="Augmented ECG sample JS30769 using baseline_shift">
+            </figure>
+          </div>
+        </section>
+        <section class="ecg-pair">
+          <div class="pair-head">
+            <div class="pair-title"><h3>Random leads masking</h3><p>random_leads_masking · seed 20260619 · diff RMS 0.799 · max |diff| 13.619</p></div>
+            <div class="drop-stats"><span class="effnet">EffNet direct: drop 7.71 / 10.92 pp</span><span class="founder">ECGFounder direct: drop 5.31 / 10.25 pp</span></div>
+          </div>
+          <div class="pair-grid">
+            <figure>
+              <figcaption><strong>Clean</strong><span>JS30769 · labels STTC</span></figcaption>
+              <img src="pn2021c_strong_corruptions_20260614_assets/sample000_clean_12lead_gallery.png" alt="Clean ECG sample JS30769">
+            </figure>
+            <figure>
+              <figcaption><strong>Augmented</strong><span>warnings 2 · flatline I, II, III, AVF, V1, V2, V4, V6</span></figcaption>
+              <img src="pn2021c_strong_corruptions_20260614_assets/sample000_random_leads_masking_12lead_gallery.png" alt="Augmented ECG sample JS30769 using random_leads_masking">
+            </figure>
+          </div>
+        </section></section>
+
+    <section><h2>EfficientNet1DV2 CPSC 方法对比</h2><p class="section-intro">CPSC 2018 单中心，all-zero kept，K500 ref-excluded。四行现在都按 calibrated_10to20pp severity 5 展示；direct K500 是 2026-06-15 补跑结果。</p><div class="table-card"><table><thead><tr><th>Method</th><th>PN2021 Clean AUROC/AUPRC</th><th>PN2021-C AUROC/AUPRC</th></tr></thead><tbody>
+          <tr>
+            <td><strong>Direct K500 fine-tune</strong><small>direct</small></td>
+            <td>0.821 / 0.559</td>
+            <td>0.741 / 0.459</td>
+          </tr>
+          <tr>
+            <td><strong>VAE-LH online AT only</strong><small>vae_noaug</small></td>
+            <td>0.877 / 0.612</td>
+            <td>0.756 / 0.471</td>
+          </tr>
+          <tr>
+            <td><strong>VAE-LH + AugMix</strong><small>calibrated_latent_augmix_s5</small></td>
+            <td>0.878 / 0.615</td>
+            <td>0.760 / 0.478</td>
+          </tr>
+          <tr class="best-row">
+            <td><strong>原始 ECG 强扰动校准微调</strong><small>calrawsupervised</small></td>
+            <td>0.865 / 0.602</td>
+            <td>0.817 / 0.535</td>
+          </tr></tbody></table></div></section>
+
+    <section><h2>ECGFounder CPSC 方法对比</h2><p class="section-intro">CPSC 2018 单中心，all-zero kept，K500 ref-excluded。这里使用 calibrated_10to20pp severity 5 的 ECGFounder direct / VAE-LH / VAE-LH+AugMix / 原始 ECG 强扰动校准微调结果；原始 ECG 强扰动校准微调按 target_real_val paper-safe selection 选回 epoch 0。</p><div class="table-card"><table><thead><tr><th>Method</th><th>PN2021 Clean AUROC/AUPRC</th><th>PN2021-C AUROC/AUPRC</th></tr></thead><tbody>
+          <tr>
+            <td><strong>Direct K500 fine-tune</strong><small>direct</small></td>
+            <td>0.863 / 0.622</td>
+            <td>0.804 / 0.532</td>
+          </tr>
+          <tr class="best-row">
+            <td><strong>VAE-LH online AT only</strong><small>vae_noaug</small></td>
+            <td>0.887 / 0.681</td>
+            <td>0.821 / 0.563</td>
+          </tr>
+          <tr>
+            <td><strong>VAE-LH + AugMix</strong><small>vae_augmix</small></td>
+            <td>0.889 / 0.675</td>
+            <td>0.820 / 0.561</td>
+          </tr>
+          <tr>
+            <td><strong>原始 ECG 强扰动校准微调</strong><small>calrawsupervised</small></td>
+            <td>0.863 / 0.622</td>
+            <td>0.804 / 0.532</td>
+          </tr></tbody></table></div></section>
+  </main>
+</body>
+</html>

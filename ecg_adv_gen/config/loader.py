@@ -1447,8 +1447,14 @@ def audit_runner_commands(config: dict[str, Any], commands: list[dict[str, Any]]
             if "--freeze_base_head" not in opts:
                 warnings.append(f"{script}: residual_adapter base head is not frozen")
             selection_metric = str(_opt_first(opts, "--selection_metric", ""))
-            if selection_metric not in {"target_auprc", "target_auroc", "target_under_source_floor"}:
+            allowed_selection_metrics = {"target_auprc", "target_auroc", "target_under_source_floor"}
+            run_record = config.get("run_record") or {}
+            if str(run_record.get("registration_status") or "") == "exploratory":
+                allowed_selection_metrics.add("last_epoch")
+            if selection_metric not in allowed_selection_metrics:
                 errors.append(f"{script}: selection_metric={selection_metric!r} is not a managed paper-safe option")
+            elif selection_metric == "last_epoch":
+                warnings.append(f"{script}: selection_metric='last_epoch' is for exploratory diagnostics only")
             anchor_mode = str(_opt_first(opts, "--anchor_sample_mode", ""))
             if anchor_mode not in {"stratified", "hard_bce", "base_hard_bce", "target_hard_bce"}:
                 warnings.append(f"{script}: anchor_sample_mode={anchor_mode!r} may be less stable for the mainline")

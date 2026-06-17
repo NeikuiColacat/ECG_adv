@@ -32,7 +32,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader
+from torch.utils.data import ConcatDataset, DataLoader, Dataset
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -66,6 +66,8 @@ from ecg_adv_gen.adaptation import (  # noqa: E402
     build_anchor_preserving_soft_labels,
     build_k500_internal_val_mask,
     build_latent_augmix_branch_signals,
+    build_raw_augmix_views,
+    build_raw_corruption_views,
     linear_warmup_value,
     split_anchor_sample_mode,
 )
@@ -106,6 +108,11 @@ from ecg_adv_gen.training import (  # noqa: E402
     pairwise_rank_loss,
 )
 from methods.augmix.severity import AVAILABLE_OPS, build_op  # noqa: E402
+from methods.augmix.jsd_loss import jsd_multilabel  # noqa: E402
+from scripts.triple_labels.eval_pn2021_corruptions import (  # noqa: E402
+    STRESS_PROFILE_CHOICES,
+    _build_corruption_op,
+)
 from util.ecgtwin_utils import ECGTwinWrapper  # noqa: E402
 from util.lead_utils import ECGTWIN_TO_PTBXL_INDICES  # noqa: E402
 
@@ -385,11 +392,210 @@ def sample_hard_anchors(
     )
 
 
-def apply_augmix_op_np(sig_ct: np.ndarray, op_name: str, op_severity: int) -> np.ndarray:
+def apply_augmix_op_np(
+    sig_ct: np.ndarray,
+    op_name: str,
+    op_severity: int,
+    severity_profile: str = "standard",
+) -> np.ndarray:
     """Apply one ECG AugMix op to a channels-first 100 Hz ECG sample."""
 
     sig_t = torch.from_numpy(sig_ct.copy()).float()
-    return build_op(op_name, int(op_severity))(sig_t).cpu().numpy().astype(np.float32, copy=False)
+    if str(severity_profile) == "standard":
+        op = build_op(op_name, int(op_severity))
+    else:
+        op = _build_corruption_op(op_name, int(op_severity), str(severity_profile))
+    return op(sig_t).cpu().numpy().astype(np.float32, copy=False)
+
+
+def build_profiled_raw_corruption_views(
+    signals_ct: np.ndarray,
+    *,
+    copies: int,
+    severity: int,
+    severity_profile: str,
+    ops: list[str],
+    prob: float,
+    rng: np.random.Generator,
+    renorm: bool,
+    clip_abs: float,
+    view_mode: str = "single_op",
+    augmix_width: int = 3,
+    augmix_depth: int = -1,
+    augmix_alpha: float = 1.0,
+    augmix_mixture_mode: str = "beta",
+    augmix_mixture_prob: float = 0.5,
+    augmix_mixture_beta_a: float = 0.0,
+    augmix_mixture_beta_b: float = 0.0,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Create raw corruption views using either training or PN2021-C profiles."""
+
+    def _apply(
+        sig_ct: np.ndarray,
+        op_name: str,
+        op_severity: int,
+        op_severity_profile: str = severity_profile,
+    ) -> np.ndarray:
+        return apply_augmix_op_np(sig_ct, op_name, op_severity, op_severity_profile)
+
+    if view_mode == "single_op":
+        arr, stats = build_raw_corruption_views(
+            signals_ct,
+            copies=copies,
+            severity=severity,
+            ops=ops,
+            prob=prob,
+            rng=rng,
+            op_apply_fn=_apply,
+            available_ops=AVAILABLE_OPS,
+            renorm=renorm,
+            clip_abs=clip_abs,
+        )
+        stats["view_mode"] = "single_op"
+    elif view_mode == "augmix":
+        arr, stats = build_raw_augmix_views(
+            signals_ct,
+            copies=copies,
+            severity=severity,
+            severity_profile=severity_profile,
+            width=augmix_width,
+            depth=augmix_depth,
+            alpha=augmix_alpha,
+            mixture_mode=augmix_mixture_mode,
+            mixture_prob=augmix_mixture_prob,
+            mixture_beta_a=None if augmix_mixture_beta_a <= 0 else augmix_mixture_beta_a,
+            mixture_beta_b=None if augmix_mixture_beta_b <= 0 else augmix_mixture_beta_b,
+            ops=ops,
+            rng=rng,
+            op_apply_fn=_apply,
+            available_ops=AVAILABLE_OPS,
+            renorm=renorm,
+            clip_abs=clip_abs,
+        )
+    else:
+        raise ValueError(f"unknown raw corruption view_mode: {view_mode}")
+    stats["severity_profile"] = str(severity_profile)
+    return arr, stats
+
+
+class RawSignalDataset(Dataset):
+    """Memory-backed raw ECG dataset returning channels-first signals."""
+
+    def __init__(
+        self,
+        signals: np.ndarray,
+        labels: np.ndarray,
+        *,
+        indices: np.ndarray | None = None,
+        target_len: int = 1000,
+    ) -> None:
+        self.signals = signals
+        self.labels = labels.astype(np.float32, copy=False)
+        self.target_len = int(target_len)
+        self.indices = (
+            np.arange(labels.shape[0], dtype=np.int64)
+            if indices is None
+            else np.asarray(indices, dtype=np.int64)
+        )
+        if self.labels.shape[0] != self.signals.shape[0]:
+            raise ValueError(
+                f"signals/labels length mismatch: {self.signals.shape[0]} vs {self.labels.shape[0]}"
+            )
+
+    def __len__(self) -> int:
+        return int(self.indices.shape[0])
+
+    def __getitem__(self, idx: int) -> tuple[np.ndarray, np.ndarray]:
+        real_idx = int(self.indices[idx])
+        sig = np.asarray(self.signals[real_idx], dtype=np.float32)
+        if sig.ndim != 2:
+            raise ValueError(f"raw signal must be 2D, got {sig.shape}")
+        if sig.shape[0] == 12:
+            sig_ct = sig
+        elif sig.shape[-1] == 12:
+            sig_ct = sig.T
+        else:
+            raise ValueError(f"raw signal must be channels-first/last with 12 leads, got {sig.shape}")
+        if self.target_len > 0 and sig_ct.shape[-1] != self.target_len:
+            src_len = int(sig_ct.shape[-1])
+            if src_len % self.target_len == 0:
+                sig_ct = sig_ct[:, :: src_len // self.target_len]
+            else:
+                src_x = np.linspace(0.0, 1.0, num=src_len, dtype=np.float32)
+                dst_x = np.linspace(0.0, 1.0, num=self.target_len, dtype=np.float32)
+                sig_ct = np.stack(
+                    [np.interp(dst_x, src_x, lead).astype(np.float32) for lead in sig_ct],
+                    axis=0,
+                )
+        return sig_ct.astype(np.float32, copy=True), self.labels[real_idx].astype(np.float32, copy=True)
+
+
+def anchor_signal_npz_path(center: str, args: argparse.Namespace) -> Path:
+    base = real_anchor_base(center, args)
+    candidates = [
+        Path(str(base) + ".signals.npz"),
+        base.with_suffix(".signals.npz"),
+        base,
+    ]
+    for path in candidates:
+        if path.exists():
+            return path
+    raise FileNotFoundError(
+        f"missing target raw anchor signals for {center}; checked: "
+        + ", ".join(str(p) for p in candidates)
+    )
+
+
+def load_target_raw_dataset(
+    center: str,
+    args: argparse.Namespace,
+    train_record_ids: list[str],
+) -> RawSignalDataset:
+    signal_path = anchor_signal_npz_path(center, args)
+    with np.load(signal_path, allow_pickle=True) as data:
+        signals = np.asarray(data["signals"], dtype=np.float32)
+        labels = np.asarray(data["labels"], dtype=np.float32)
+        record_ids = (
+            data["record_ids"].astype(str)
+            if "record_ids" in data.files
+            else np.asarray([str(i) for i in range(labels.shape[0])])
+        )
+    train_ids = set(str(x) for x in train_record_ids)
+    indices = np.asarray([i for i, rid in enumerate(record_ids.astype(str)) if str(rid) in train_ids], dtype=np.int64)
+    if indices.size == 0:
+        raise RuntimeError(f"{center}: no target raw signals matched target train record ids")
+    return RawSignalDataset(signals, labels, indices=indices)
+
+
+def load_source_raw_dataset(
+    cache_dir: str,
+    source_indices: np.ndarray,
+    expected_labels: np.ndarray,
+) -> RawSignalDataset:
+    cache = Path(cache_dir)
+    signal_path = cache / "ptbxl_official_ptbxl_eval.signals.npy"
+    meta_path = cache / "ptbxl_official_ptbxl_eval.meta.npz"
+    if not signal_path.exists() or not meta_path.exists():
+        raise FileNotFoundError(
+            f"missing ECGFounder PTB-XL raw signal cache under {cache}: "
+            f"{signal_path}, {meta_path}"
+        )
+    signals = np.load(signal_path, mmap_mode="r")
+    with np.load(meta_path, allow_pickle=True) as meta:
+        labels = np.asarray(meta["labels"], dtype=np.float32)
+    if labels.shape[0] != signals.shape[0]:
+        raise ValueError(f"source raw signals/labels length mismatch: {signals.shape} vs {labels.shape}")
+    source_indices = np.asarray(source_indices, dtype=np.int64)
+    if expected_labels.shape[0] != source_indices.shape[0]:
+        raise ValueError(
+            f"expected source label rows mismatch: {expected_labels.shape[0]} vs {source_indices.shape[0]}"
+        )
+    if not np.allclose(labels[source_indices], expected_labels.astype(np.float32), atol=1e-6):
+        raise ValueError(
+            "source raw cache labels do not align with ECGFounder feature cache; "
+            "refusing to train raw-supervised source branch"
+        )
+    return RawSignalDataset(signals, labels, indices=source_indices)
 
 
 def summarize_latent_augmix_stats(stats_batches: list[dict[str, Any]], *, enabled: bool) -> dict[str, Any]:
@@ -403,7 +609,18 @@ def summarize_latent_augmix_stats(stats_batches: list[dict[str, Any]], *, enable
         "enabled": True,
         "n_generated": int(sum(int(item.get("n_generated", 0)) for item in stats_batches)),
     }
-    for key in ["copies", "severity", "width", "depth", "alpha", "latent_weight_cap", "renorm", "clip_abs", "ops"]:
+    for key in [
+        "copies",
+        "severity",
+        "severity_profile",
+        "width",
+        "depth",
+        "alpha",
+        "latent_weight_cap",
+        "renorm",
+        "clip_abs",
+        "ops",
+    ]:
         if key in stats_batches[-1]:
             out[key] = stats_batches[-1][key]
     for key in ["latent_weight_mean", "latent_weight_max", "beta_m_mean", "chain_depth_mean"]:
@@ -416,6 +633,176 @@ def summarize_latent_augmix_stats(stats_batches: list[dict[str, Any]], *, enable
             reducer = max if key == "latent_weight_max" else np.mean
             out[key] = float(reducer(values))
     return out
+
+
+def train_raw_corruption_feature_consistency_epoch(
+    *,
+    victim: ECGFounderHeadVictim,
+    loader: DataLoader,
+    optimizer: torch.optim.Optimizer,
+    criterion,
+    device: torch.device,
+    copies: int,
+    severity: int,
+    severity_profile: str,
+    ops: list[str],
+    prob: float,
+    consistency_weight: float,
+    bce_weight: float,
+    consistency_loss: str,
+    rng: np.random.Generator,
+    trainable_params: list[nn.Parameter],
+    grad_clip: float,
+    max_batches: int,
+    renorm: bool,
+    clip_abs: float,
+    view_mode: str = "single_op",
+    augmix_width: int = 3,
+    augmix_depth: int = -1,
+    augmix_alpha: float = 1.0,
+    augmix_mixture_mode: str = "beta",
+    augmix_mixture_prob: float = 0.5,
+    augmix_mixture_beta_a: float = 0.0,
+    augmix_mixture_beta_b: float = 0.0,
+) -> dict[str, Any]:
+    """Train the ECGFounder head on PN2021-C-style raw corruption views."""
+
+    if copies <= 0 or (consistency_weight <= 0 and bce_weight <= 0):
+        return {
+            "enabled": False,
+            "reason": "disabled_or_zero_weight",
+            "loss": float("nan"),
+            "bce_loss": float("nan"),
+            "consistency_loss": float("nan"),
+            "n_batches": 0,
+            "n_generated": 0,
+            "n_corrupted": 0,
+            "op_counts": {},
+        }
+    if consistency_loss not in {"soft_bce", "jsd"}:
+        raise ValueError(f"unknown raw corruption consistency loss: {consistency_loss}")
+    if consistency_loss == "jsd" and copies < 2:
+        raise ValueError("--raw_corrupt_consistency_loss jsd requires --raw_corrupt_copies >= 2")
+    if str(severity_profile) not in STRESS_PROFILE_CHOICES:
+        raise ValueError(f"unknown raw corruption severity profile: {severity_profile}")
+
+    victim.feature_model.eval()
+    victim.head.train()
+    losses: list[float] = []
+    bce_losses: list[float] = []
+    consistency_losses: list[float] = []
+    n_generated = 0
+    n_corrupted = 0
+    op_counts: dict[str, int] = {}
+
+    for batch_i, (signals, labels) in enumerate(loader, start=1):
+        signals = signals.to(device, non_blocking=True).float()
+        labels = labels.to(device, non_blocking=True).float()
+        if signals.shape[-1] != 1000:
+            signals = F.interpolate(signals, size=1000, mode="linear", align_corners=True)
+
+        clean_np = signals.detach().cpu().numpy().astype(np.float32, copy=False)
+        corrupt_np, stats = build_profiled_raw_corruption_views(
+            clean_np,
+            copies=copies,
+            severity=severity,
+            severity_profile=severity_profile,
+            ops=ops,
+            prob=prob,
+            rng=rng,
+            renorm=renorm,
+            clip_abs=clip_abs,
+            view_mode=view_mode,
+            augmix_width=augmix_width,
+            augmix_depth=augmix_depth,
+            augmix_alpha=augmix_alpha,
+            augmix_mixture_mode=augmix_mixture_mode,
+            augmix_mixture_prob=augmix_mixture_prob,
+            augmix_mixture_beta_a=augmix_mixture_beta_a,
+            augmix_mixture_beta_b=augmix_mixture_beta_b,
+        )
+        if corrupt_np.shape[0] == 0:
+            continue
+        corrupt = torch.from_numpy(corrupt_np).float().to(device, non_blocking=True)
+        labels_rep = labels.repeat((int(copies), 1))
+
+        optimizer.zero_grad(set_to_none=True)
+        if consistency_loss == "soft_bce":
+            with torch.no_grad():
+                clean_feats = victim.features_from_ecg1000(signals, grad=False)
+                clean_logits = victim.head(clean_feats)
+                soft_targets = torch.sigmoid(clean_logits).detach()
+                corrupt_feats = victim.features_from_ecg1000(corrupt, grad=False)
+            logits = victim.head(corrupt_feats)
+            soft_rep = soft_targets.repeat((int(copies), 1))
+            mask = (labels_rep >= 0).float()
+            denom = mask.sum().clamp(min=1.0)
+            hard_bce = criterion(logits, labels_rep)
+            raw_consistency = (
+                F.binary_cross_entropy_with_logits(logits, soft_rep, reduction="none") * mask
+            ).sum() / denom
+        else:
+            with torch.no_grad():
+                clean_feats = victim.features_from_ecg1000(signals, grad=False)
+                corrupt_feats = victim.features_from_ecg1000(corrupt, grad=False)
+            clean_logits = victim.head(clean_feats)
+            logits = victim.head(corrupt_feats)
+            logits_views = logits.view(int(copies), signals.shape[0], -1)
+            clean_hard_bce = criterion(clean_logits, labels)
+            corrupt_hard_bce = criterion(logits, labels_rep)
+            hard_bce = 0.5 * (clean_hard_bce + corrupt_hard_bce)
+
+            jsd_terms = []
+            for copy_i in range(int(copies)):
+                copy_j = (copy_i + 1) % int(copies)
+                jsd_terms.append(jsd_multilabel(clean_logits, logits_views[copy_i], logits_views[copy_j]))
+            raw_consistency = torch.stack(jsd_terms).mean()
+
+        loss = float(bce_weight) * hard_bce + float(consistency_weight) * raw_consistency
+        loss.backward()
+        if grad_clip > 0:
+            nn.utils.clip_grad_norm_(trainable_params, float(grad_clip))
+        optimizer.step()
+
+        losses.append(float(loss.item()))
+        bce_losses.append(float(hard_bce.item()))
+        consistency_losses.append(float(raw_consistency.item()))
+        n_generated += int(stats.get("n_generated", 0))
+        n_corrupted += int(stats.get("n_corrupted", 0))
+        for op_name, count in dict(stats.get("op_counts", {})).items():
+            op_counts[str(op_name)] = op_counts.get(str(op_name), 0) + int(count)
+        if max_batches > 0 and batch_i >= max_batches:
+            break
+
+    return {
+        "enabled": True,
+        "loss": float(np.mean(losses)) if losses else float("nan"),
+        "bce_loss": float(np.mean(bce_losses)) if bce_losses else float("nan"),
+        "consistency_loss": float(np.mean(consistency_losses)) if consistency_losses else float("nan"),
+        "n_batches": int(len(losses)),
+        "n_generated": int(n_generated),
+        "n_corrupted": int(n_corrupted),
+        "corrupt_fraction": float(n_corrupted / max(1, n_generated)),
+        "copies": int(copies),
+        "severity": int(severity),
+        "severity_profile": str(severity_profile),
+        "prob": float(prob),
+        "view_mode": str(view_mode),
+        "consistency_weight": float(consistency_weight),
+        "consistency_objective": str(consistency_loss),
+        "bce_weight": float(bce_weight),
+        "ops": list(ops),
+        "op_counts": op_counts,
+        "renorm": bool(renorm),
+        "clip_abs": float(clip_abs),
+        "augmix_width": int(augmix_width) if view_mode == "augmix" else None,
+        "augmix_depth": int(augmix_depth) if view_mode == "augmix" else None,
+        "augmix_alpha": float(augmix_alpha) if view_mode == "augmix" else None,
+        "augmix_mixture_mode": str(augmix_mixture_mode) if view_mode == "augmix" else None,
+        "augmix_mixture_prob": float(augmix_mixture_prob) if view_mode == "augmix" else None,
+        "augmix_mixture_beta_a": float(augmix_mixture_beta_a) if view_mode == "augmix" else None,
+        "augmix_mixture_beta_b": float(augmix_mixture_beta_b) if view_mode == "augmix" else None,
+    }
 
 
 def make_weighted_loader(
@@ -619,6 +1006,72 @@ def train_one_center(
         src_idx = np.nonzero(source_mask)[0]
     source_x = ptbxl["features"][src_idx].astype(np.float32)
     source_y = ptbxl["labels"][src_idx].astype(np.float32)
+
+    raw_corrupt_consistency_loader: DataLoader | None = None
+    raw_corrupt_setup: dict[str, Any] = {"enabled": False}
+    if args.enable_raw_corrupt_consistency:
+        raw_datasets: list[Dataset] = []
+        if args.raw_corrupt_scope in {"source", "source_target"}:
+            if not args.source_signal_cache_dir:
+                raise ValueError(
+                    "--enable_raw_corrupt_consistency with source scope requires "
+                    "--source_signal_cache_dir"
+                )
+            source_raw_ds = load_source_raw_dataset(
+                args.source_signal_cache_dir,
+                src_idx,
+                source_y,
+            )
+            raw_datasets.append(source_raw_ds)
+        if args.raw_corrupt_scope in {"target", "source_target"}:
+            target_raw_ds = load_target_raw_dataset(center, args, target_train_record_ids)
+            raw_datasets.append(target_raw_ds)
+        if not raw_datasets:
+            raise ValueError(f"unsupported raw_corrupt_scope={args.raw_corrupt_scope!r}")
+        raw_corrupt_ds: Dataset = raw_datasets[0] if len(raw_datasets) == 1 else ConcatDataset(raw_datasets)
+        raw_corrupt_consistency_loader = DataLoader(
+            raw_corrupt_ds,
+            batch_size=int(args.raw_corrupt_batch_size),
+            shuffle=True,
+            num_workers=0,
+            pin_memory=(device.type == "cuda"),
+            drop_last=False,
+        )
+        raw_corrupt_setup = {
+            "enabled": True,
+            "scope": str(args.raw_corrupt_scope),
+            "n_samples": int(len(raw_corrupt_ds)),
+            "batch_size": int(args.raw_corrupt_batch_size),
+            "copies": int(args.raw_corrupt_copies),
+            "severity": int(args.raw_corrupt_severity),
+            "severity_profile": str(args.raw_corrupt_severity_profile),
+            "ops": list(args.raw_corrupt_ops),
+            "prob": float(args.raw_corrupt_prob),
+            "consistency_weight": float(args.raw_corrupt_consistency_weight),
+            "bce_weight": float(args.raw_corrupt_bce_weight),
+            "consistency_loss": str(args.raw_corrupt_consistency_loss),
+            "max_batches": int(args.raw_corrupt_max_batches),
+            "renorm": not bool(args.raw_corrupt_no_renorm),
+            "clip_abs": float(args.raw_corrupt_clip_abs),
+            "view_mode": str(args.raw_corrupt_view_mode),
+            "augmix_width": int(args.raw_augmix_width),
+            "augmix_depth": int(args.raw_augmix_depth),
+            "augmix_alpha": float(args.raw_augmix_alpha),
+            "augmix_mixture_mode": str(args.raw_augmix_mixture_mode),
+            "augmix_mixture_prob": float(args.raw_augmix_mixture_prob),
+            "augmix_mixture_beta_a": float(args.raw_augmix_mixture_beta_a),
+            "augmix_mixture_beta_b": float(args.raw_augmix_mixture_beta_b),
+        }
+        print(
+            f"[setup] raw-corrupt consistency enabled: scope={args.raw_corrupt_scope} "
+            f"n={len(raw_corrupt_ds)} batch={args.raw_corrupt_batch_size} "
+            f"copies={args.raw_corrupt_copies} severity={args.raw_corrupt_severity} "
+            f"profile={args.raw_corrupt_severity_profile} view={args.raw_corrupt_view_mode} "
+            f"augmix=(w={args.raw_augmix_width},d={args.raw_augmix_depth},"
+            f"m={args.raw_augmix_mixture_mode}:{args.raw_augmix_mixture_prob}) "
+            f"ops={list(args.raw_corrupt_ops)}",
+            flush=True,
+        )
 
     base_head = nn.Linear(source_x.shape[1], len(CLASS_NAMES_SUPER5)).to(device)
     base_head.load_state_dict(torch.load(Path(args.linear_probe_dir) / "best_head.pt", map_location=device))
@@ -1037,6 +1490,7 @@ def train_one_center(
                             adv_np,
                             copies=args.latent_augmix_copies,
                             severity=args.latent_augmix_severity,
+                            severity_profile=args.latent_augmix_severity_profile,
                             width=args.latent_augmix_width,
                             depth=args.latent_augmix_depth,
                             alpha=args.latent_augmix_alpha,
@@ -1144,11 +1598,48 @@ def train_one_center(
             loss.backward()
             opt.step()
             losses.append(float(loss.item()))
+        raw_corrupt_stats = {"enabled": False, "reason": "disabled"}
+        if args.enable_raw_corrupt_consistency and raw_corrupt_consistency_loader is not None:
+            raw_corrupt_stats = train_raw_corruption_feature_consistency_epoch(
+                victim=victim,
+                loader=raw_corrupt_consistency_loader,
+                optimizer=opt,
+                criterion=criterion,
+                device=device,
+                copies=args.raw_corrupt_copies,
+                severity=args.raw_corrupt_severity,
+                severity_profile=args.raw_corrupt_severity_profile,
+                ops=list(args.raw_corrupt_ops),
+                prob=args.raw_corrupt_prob,
+                consistency_weight=args.raw_corrupt_consistency_weight,
+                bce_weight=args.raw_corrupt_bce_weight,
+                consistency_loss=args.raw_corrupt_consistency_loss,
+                rng=np.random.default_rng(args.seed + 270000 + epoch),
+                trainable_params=trainable_head_params,
+                grad_clip=args.raw_corrupt_grad_clip,
+                max_batches=args.raw_corrupt_max_batches,
+                renorm=not args.raw_corrupt_no_renorm,
+                clip_abs=args.raw_corrupt_clip_abs,
+                view_mode=args.raw_corrupt_view_mode,
+                augmix_width=args.raw_augmix_width,
+                augmix_depth=args.raw_augmix_depth,
+                augmix_alpha=args.raw_augmix_alpha,
+                augmix_mixture_mode=args.raw_augmix_mixture_mode,
+                augmix_mixture_prob=args.raw_augmix_mixture_prob,
+                augmix_mixture_beta_a=args.raw_augmix_mixture_beta_a,
+                augmix_mixture_beta_b=args.raw_augmix_mixture_beta_b,
+            )
         sched.step()
 
         entry = {
             "epoch": epoch,
             "train_loss": float(np.mean(losses)),
+            "raw_corrupt_loss": (
+                None
+                if not np.isfinite(float(raw_corrupt_stats.get("loss", float("nan"))))
+                else float(raw_corrupt_stats.get("loss"))
+            ),
+            "raw_corrupt_stats": raw_corrupt_stats,
             "n_adv": int(len(adv_x)),
             "n_adv_generated": int(n_adv_generated),
             "n_adv_filtered_boundary": int(n_adv_filtered_boundary),
@@ -1311,6 +1802,7 @@ def train_one_center(
         "best_selection_score": float(best_score),
         "selection_record": selection_safety,
         "config": vars(args),
+        "raw_corrupt_consistency": raw_corrupt_setup,
         "anchor_source_base": pool["source_base"],
         "preprocess": {
             "ecgfounder_input": f"12 x {TARGET_POINTS}",
@@ -1682,6 +2174,16 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--latent_augmix_depth", type=int, default=-1)
     p.add_argument("--latent_augmix_alpha", type=float, default=1.0)
     p.add_argument("--latent_augmix_severity", type=int, default=2)
+    p.add_argument(
+        "--latent_augmix_severity_profile",
+        choices=STRESS_PROFILE_CHOICES,
+        default="standard",
+        help=(
+            "Severity profile for ECG corruption chains inside latent AugMix. "
+            "standard uses the training-time severity table; calibrated_10to20pp "
+            "uses the PN2021-C calibrated single-op profile."
+        ),
+    )
     p.add_argument("--latent_augmix_latent_weight_cap", type=float, default=0.25)
     p.add_argument(
         "--latent_augmix_ops",
@@ -1700,6 +2202,71 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=6.0,
         help="Clip final latent-branch AugMix waveform after optional zscore; <=0 disables clipping.",
+    )
+    p.add_argument(
+        "--enable_raw_corrupt_consistency",
+        action="store_true",
+        help=(
+            "Run an extra supervised raw-ECG corruption consistency phase after "
+            "the normal ECGFounder feature-stream update in each epoch."
+        ),
+    )
+    p.add_argument("--raw_corrupt_batch_size", type=int, default=128)
+    p.add_argument("--raw_corrupt_copies", type=int, default=1)
+    p.add_argument("--raw_corrupt_prob", type=float, default=0.5)
+    p.add_argument("--raw_corrupt_severity", type=int, default=4)
+    p.add_argument(
+        "--raw_corrupt_severity_profile",
+        choices=STRESS_PROFILE_CHOICES,
+        default="standard",
+    )
+    p.add_argument(
+        "--raw_corrupt_ops",
+        nargs="+",
+        default=["powerline_noise", "emg_noise", "baseline_wander", "baseline_shift", "random_leads_masking"],
+        choices=AVAILABLE_OPS,
+        help="Raw ECG corruption ops for the consistency branch.",
+    )
+    p.add_argument("--raw_corrupt_consistency_weight", type=float, default=0.5)
+    p.add_argument(
+        "--raw_corrupt_consistency_loss",
+        choices=["soft_bce", "jsd"],
+        default="soft_bce",
+    )
+    p.add_argument("--raw_corrupt_bce_weight", type=float, default=0.1)
+    p.add_argument("--raw_corrupt_max_batches", type=int, default=0)
+    p.add_argument(
+        "--raw_corrupt_scope",
+        choices=["target", "source", "source_target"],
+        default="target",
+        help=(
+            "Which raw ECG pool feeds the extra corruption branch. source/source_target "
+            "requires --source_signal_cache_dir."
+        ),
+    )
+    p.add_argument("--raw_corrupt_no_renorm", action="store_true")
+    p.add_argument("--raw_corrupt_clip_abs", type=float, default=6.0)
+    p.add_argument("--raw_corrupt_grad_clip", type=float, default=0.0)
+    p.add_argument(
+        "--raw_corrupt_view_mode",
+        choices=["single_op", "augmix"],
+        default="single_op",
+        help="Use independent single-op corruption views or AugMix-style raw corruption chains.",
+    )
+    p.add_argument("--raw_augmix_width", type=int, default=3)
+    p.add_argument("--raw_augmix_depth", type=int, default=-1)
+    p.add_argument("--raw_augmix_alpha", type=float, default=1.0)
+    p.add_argument("--raw_augmix_mixture_mode", choices=["beta", "fixed"], default="beta")
+    p.add_argument("--raw_augmix_mixture_prob", type=float, default=0.5)
+    p.add_argument("--raw_augmix_mixture_beta_a", type=float, default=0.0)
+    p.add_argument("--raw_augmix_mixture_beta_b", type=float, default=0.0)
+    p.add_argument(
+        "--source_signal_cache_dir",
+        default="",
+        help=(
+            "Directory containing ptbxl_official_ptbxl_eval.signals.npy and "
+            "ptbxl_official_ptbxl_eval.meta.npz for source-scope raw corruption."
+        ),
     )
     p.add_argument(
         "--report_drop_all_zero_pn2021",
