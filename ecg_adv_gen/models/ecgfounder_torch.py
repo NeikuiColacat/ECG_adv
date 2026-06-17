@@ -144,6 +144,7 @@ def ecg1000_to_ecgfounder_input(
     input_sample_rate_hz: float = 100.0,
     repair_flat_leads: bool = False,
     clip_abs: float | None = None,
+    apply_global_zscore: bool = True,
 ) -> torch.Tensor:
     """Convert channel-time 100Hz ECG tensors to ECGFounder 500Hz normalized input."""
     ecg_ct_1000 = stabilize_ecg_torch(
@@ -160,4 +161,6 @@ def ecg1000_to_ecgfounder_input(
         mode="linear",
         align_corners=True,
     )
-    return global_zscore_torch(x, eps=eps)
+    if apply_global_zscore:
+        return global_zscore_torch(x, eps=eps)
+    return x

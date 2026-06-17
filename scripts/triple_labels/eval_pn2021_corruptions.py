@@ -14,6 +14,7 @@ import random
 
 import numpy as np
 import torch
+import wfdb
 from torch.utils.data import DataLoader, Dataset
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -50,6 +51,7 @@ from methods.augmix.ecg_ops import (  # noqa: E402
 from methods.augmix.severity import build_op  # noqa: E402
 from ecg_adv_gen.data.kshot import load_ref_record_ids_by_center  # noqa: E402
 from ecg_adv_gen.data.contracts import PREPROCESS_CONTRACT_ID  # noqa: E402
+from ecg_adv_gen.data.pn2021_index import scan_pn2021_center_records  # noqa: E402
 from ecg_adv_gen.evaluation.pn2021_corruptions import (  # noqa: E402
     aggregate_corruption_summary,
     clean_mmap_cache_path,
@@ -72,9 +74,14 @@ from ecg_adv_gen.models.ecgfounder_torch import (  # noqa: E402
     global_zscore_torch,
     stabilize_ecg_torch,
 )
+from scripts.crosscenter_v2.preprocess_utils import (  # noqa: E402
+    reorder_leads_tc,
+    unified_preprocess_to_1000,
+)
 
 
 STRESS_PROFILE_CHOICES = ("standard", "stress_v2", "calibrated_10to20pp")
+DEFAULT_DATA_ROOT = os.environ.get("ECG_ADV_GEN_DATA_ROOT", "/home/linbinhao/ECG_adv_data")
 
 
 _STRESS_V2_PARAMS = {
@@ -191,13 +198,22 @@ def _build_calibrated_10to20pp_op(corruption, public_severity):
     )
 
 
-def _build_corruption_op(corruption, public_severity, severity_profile):
+def _with_native_sample_rate(op, sample_rate_hz):
+    if sample_rate_hz is not None and hasattr(op, "freq"):
+        op.freq = float(sample_rate_hz)
+    return op
+
+
+def _build_corruption_op(corruption, public_severity, severity_profile, *, sample_rate_hz=None):
     if severity_profile == "standard":
-        return build_op(corruption, PUBLIC_TO_INTERNAL_SEVERITY[int(public_severity)])
+        op = build_op(corruption, PUBLIC_TO_INTERNAL_SEVERITY[int(public_severity)])
+        return _with_native_sample_rate(op, sample_rate_hz)
     if severity_profile == "stress_v2":
-        return _build_stress_v2_op(corruption, public_severity)
+        op = _build_stress_v2_op(corruption, public_severity)
+        return _with_native_sample_rate(op, sample_rate_hz)
     if severity_profile == "calibrated_10to20pp":
-        return _build_calibrated_10to20pp_op(corruption, public_severity)
+        op = _build_calibrated_10to20pp_op(corruption, public_severity)
+        return _with_native_sample_rate(op, sample_rate_hz)
     raise ValueError(f"unknown severity_profile: {severity_profile}")
 
 
@@ -340,6 +356,209 @@ class StreamingCorruptedPN2021Dataset(Dataset):
         return corrupt_ct.float(), torch.from_numpy(label).float()
 
 
+def _global_zscore_ct(ecg_ct):
+    return global_zscore_torch(ecg_ct.unsqueeze(0)).squeeze(0)
+
+
+class RawFirstCleanPN2021Dataset(Dataset):
+    """Clean PN2021 view for raw-first corruption evaluation.
+
+    Signals are 100 Hz / 1000 point ECGs after lead ordering, NaN repair, and
+    resampling, but before per-record normalization.  The dataset applies the
+    normal model-facing per-sample z-score before the final eval crop.
+    """
+
+    def __init__(self, signals, labels, indices, crop_len=250, input_stabilizer_config=None):
+        self.signals = signals.astype(np.float32, copy=False)
+        self.labels = labels.astype(np.float32, copy=False)
+        self.indices = np.asarray(indices, dtype=np.int64)
+        self.crop_len = crop_len
+        self.input_stabilizer_config = dict(input_stabilizer_config or {})
+
+    def __len__(self):
+        return len(self.indices)
+
+    def __getitem__(self, idx):
+        real_idx = int(self.indices[idx])
+        sig_tc = self.signals[real_idx]
+        sig_ct = torch.from_numpy(np.ascontiguousarray(sig_tc.T)).float()
+        sig_ct = _global_zscore_ct(sig_ct)
+        sig_ct = apply_effnet_input_stabilizer(sig_ct, self.input_stabilizer_config)
+        sig_ct = _center_crop_ct(sig_ct, self.crop_len)
+        label = np.array(self.labels[real_idx], dtype=np.float32, copy=True)
+        return sig_ct.float(), torch.from_numpy(label).float()
+
+
+class RawFirstCorruptedPN2021Dataset(Dataset):
+    """Apply corruption before model-facing z-score normalization."""
+
+    def __init__(self, signals, labels, corruption, public_severity,
+                 seed=20260501, crop_len=250, severity_profile="standard",
+                 indices=None, input_stabilizer_config=None):
+        self.signals = signals.astype(np.float32, copy=False)
+        self.labels = labels.astype(np.float32, copy=False)
+        self.indices = (
+            np.arange(len(signals), dtype=np.int64)
+            if indices is None
+            else np.asarray(indices, dtype=np.int64)
+        )
+        self.corruption = corruption
+        self.public_severity = int(public_severity)
+        self.internal_severity = PUBLIC_TO_INTERNAL_SEVERITY[self.public_severity]
+        self.severity_profile = severity_profile
+        self.seed = int(seed)
+        self.crop_len = crop_len
+        self.input_stabilizer_config = dict(input_stabilizer_config or {})
+
+    def __len__(self):
+        return len(self.indices)
+
+    def __getitem__(self, idx):
+        real_idx = int(self.indices[idx])
+        sample_seed = _stable_seed(
+            self.seed,
+            "raw_first",
+            self.corruption,
+            self.public_severity,
+            real_idx,
+        )
+        np.random.seed(sample_seed)
+        random.seed(sample_seed)
+        torch.manual_seed(sample_seed)
+        op = _build_corruption_op(
+            self.corruption, self.public_severity, self.severity_profile
+        )
+
+        sig_tc = self.signals[real_idx]
+        sig_ct = torch.from_numpy(np.ascontiguousarray(sig_tc.T)).float()
+        corrupt_ct = op(sig_ct)
+        corrupt_ct = _global_zscore_ct(corrupt_ct)
+        corrupt_ct = apply_effnet_input_stabilizer(
+            corrupt_ct,
+            self.input_stabilizer_config,
+        )
+        corrupt_ct = _center_crop_ct(corrupt_ct, self.crop_len)
+        label = np.array(self.labels[real_idx], dtype=np.float32, copy=True)
+        return corrupt_ct.float(), torch.from_numpy(label).float()
+
+
+def _prepare_native_raw_signal_tc(signal_tc, source_leads):
+    signal_tc = np.asarray(signal_tc, dtype=np.float32)
+    if signal_tc.ndim != 2:
+        return None
+    if not np.isfinite(signal_tc).all():
+        signal_tc = np.nan_to_num(signal_tc, nan=0.0, posinf=0.0, neginf=0.0)
+    if source_leads is not None:
+        signal_tc = reorder_leads_tc(signal_tc, source_leads)
+        if signal_tc is None:
+            return None
+    if signal_tc.shape[1] != 12:
+        return None
+    return signal_tc.astype(np.float32, copy=False)
+
+
+def _model_preprocess_native_tc(signal_tc, sample_rate_hz):
+    return unified_preprocess_to_1000(
+        signal_tc,
+        fs=float(sample_rate_hz),
+        source_leads=None,
+        target_fs=100,
+        target_len=1000,
+        preprocess_mode="minimal_resample",
+        norm_mode="per_sample_global",
+    )
+
+
+class NativeRawFirstCleanPN2021Dataset(Dataset):
+    """Clean PN2021 view that starts from native-fs raw ECG records."""
+
+    def __init__(self, signals, labels, sample_rates, indices, crop_len=250, input_stabilizer_config=None):
+        self.signals = list(signals)
+        self.labels = labels.astype(np.float32, copy=False)
+        self.sample_rates = np.asarray(sample_rates, dtype=np.float32)
+        self.indices = np.asarray(indices, dtype=np.int64)
+        self.crop_len = crop_len
+        self.input_stabilizer_config = dict(input_stabilizer_config or {})
+
+    def __len__(self):
+        return len(self.indices)
+
+    def __getitem__(self, idx):
+        real_idx = int(self.indices[idx])
+        proc = _model_preprocess_native_tc(
+            self.signals[real_idx],
+            float(self.sample_rates[real_idx]),
+        )
+        if proc is None:
+            raise RuntimeError(f"native raw clean preprocessing failed for index {real_idx}")
+        sig_ct = torch.from_numpy(np.ascontiguousarray(proc.T)).float()
+        sig_ct = apply_effnet_input_stabilizer(sig_ct, self.input_stabilizer_config)
+        sig_ct = _center_crop_ct(sig_ct, self.crop_len)
+        label = np.array(self.labels[real_idx], dtype=np.float32, copy=True)
+        return sig_ct.float(), torch.from_numpy(label).float()
+
+
+class NativeRawFirstCorruptedPN2021Dataset(Dataset):
+    """Apply corruption on native-fs raw ECG, then run model preprocessing."""
+
+    def __init__(self, signals, labels, sample_rates, corruption, public_severity,
+                 seed=20260501, crop_len=250, severity_profile="standard",
+                 indices=None, input_stabilizer_config=None):
+        self.signals = list(signals)
+        self.labels = labels.astype(np.float32, copy=False)
+        self.sample_rates = np.asarray(sample_rates, dtype=np.float32)
+        self.indices = (
+            np.arange(len(signals), dtype=np.int64)
+            if indices is None
+            else np.asarray(indices, dtype=np.int64)
+        )
+        self.corruption = corruption
+        self.public_severity = int(public_severity)
+        self.internal_severity = PUBLIC_TO_INTERNAL_SEVERITY[self.public_severity]
+        self.severity_profile = severity_profile
+        self.seed = int(seed)
+        self.crop_len = crop_len
+        self.input_stabilizer_config = dict(input_stabilizer_config or {})
+
+    def __len__(self):
+        return len(self.indices)
+
+    def __getitem__(self, idx):
+        real_idx = int(self.indices[idx])
+        sample_rate_hz = float(self.sample_rates[real_idx])
+        sample_seed = _stable_seed(
+            self.seed,
+            "native_raw_first",
+            self.corruption,
+            self.public_severity,
+            real_idx,
+        )
+        np.random.seed(sample_seed)
+        random.seed(sample_seed)
+        torch.manual_seed(sample_seed)
+        op = _build_corruption_op(
+            self.corruption,
+            self.public_severity,
+            self.severity_profile,
+            sample_rate_hz=sample_rate_hz,
+        )
+
+        sig_ct = torch.from_numpy(np.ascontiguousarray(self.signals[real_idx].T)).float()
+        corrupt_ct = op(sig_ct)
+        corrupt_tc = corrupt_ct.detach().cpu().numpy().T.astype(np.float32, copy=False)
+        proc = _model_preprocess_native_tc(corrupt_tc, sample_rate_hz)
+        if proc is None:
+            raise RuntimeError(f"native raw corrupted preprocessing failed for index {real_idx}")
+        corrupt_ct = torch.from_numpy(np.ascontiguousarray(proc.T)).float()
+        corrupt_ct = apply_effnet_input_stabilizer(
+            corrupt_ct,
+            self.input_stabilizer_config,
+        )
+        corrupt_ct = _center_crop_ct(corrupt_ct, self.crop_len)
+        label = np.array(self.labels[real_idx], dtype=np.float32, copy=True)
+        return corrupt_ct.float(), torch.from_numpy(label).float()
+
+
 class PN2021IndexedCenterDataset(Dataset):
     def __init__(self, signals, labels, indices, crop_len=250, input_stabilizer_config=None):
         self.signals = signals
@@ -413,6 +632,206 @@ def _load_clean_center(args, center):
     )
 
 
+def _load_raw_first_center(args, scheme, center):
+    cache = getattr(args, "_raw_first_center_cache", None)
+    if cache is None:
+        cache = {}
+        args._raw_first_center_cache = cache
+    if center in cache:
+        return cache[center]
+
+    center_dir = os.path.join(args.pn2021_root, "training", center)
+    if not os.path.isdir(center_dir):
+        raise FileNotFoundError(f"PN2021 center directory not found: {center_dir}")
+
+    records = scan_pn2021_center_records(center_dir)
+    signals = []
+    labels = []
+    record_ids = []
+    fail = 0
+    t0 = time.time()
+    for record in records:
+        try:
+            rec = wfdb.rdrecord(str(record.record_path))
+        except Exception:
+            fail += 1
+            continue
+        sig = rec.p_signal
+        if sig is None or sig.shape[1] < 12:
+            fail += 1
+            continue
+        sig_names = [s.strip() for s in rec.sig_name] if getattr(rec, "sig_name", None) else None
+        proc = unified_preprocess_to_1000(
+            sig.astype(np.float32),
+            fs=rec.fs,
+            source_leads=sig_names,
+            target_fs=100,
+            target_len=1000,
+            preprocess_mode="minimal_resample",
+            norm_mode="none",
+        )
+        if proc is None:
+            fail += 1
+            continue
+        signals.append(proc.astype(np.float32, copy=False))
+        labels.append(scheme["pn2021_fn"](record.snomeds).astype(np.float32, copy=False))
+        record_ids.append(str(record.record_id))
+
+    if not signals:
+        raise RuntimeError(f"raw-first PN2021 load produced no records for {center}")
+    metadata = {
+        "scheme": str(args.scheme),
+        "center": str(center),
+        "class_names": list(scheme["class_names"]),
+        "cache_version": str(PN2021_EVAL_CACHE_VERSION),
+        "source": "wfdb_raw_first",
+        "source_center_dir": center_dir,
+        "n_scanned_records": int(len(records)),
+        "n_failed_records": int(fail),
+        "load_time_s": float(time.time() - t0),
+        "preprocess_config": {
+            "target_fs": 100,
+            "target_len": 1000,
+            "apply_filter": False,
+            "apply_zscore": False,
+            "preprocess_mode": "minimal_resample",
+            "norm_mode": "none",
+        },
+        "model_input_preprocess_after_corruption": {
+            "apply_zscore": True,
+            "norm_mode": "per_sample_global",
+            "crop_len": int(args.crop_len),
+            "crop_mode": "center",
+        },
+        "corruption_order": [
+            "wfdb_read",
+            "lead_reorder_nan_guard_resample_pad_no_zscore",
+            "corruption",
+            "per_sample_global_zscore",
+            "center_crop",
+            "model",
+        ],
+    }
+    if args.scheme == "super5":
+        metadata["pn2021_mapping"] = get_super5_pn2021_mapping_metadata()
+
+    loaded = (
+        np.stack(signals, axis=0).astype(np.float32),
+        np.stack(labels, axis=0).astype(np.float32),
+        np.asarray(record_ids, dtype=str),
+        metadata,
+        "raw_first:wfdb",
+    )
+    cache[center] = loaded
+    print(
+        f"  {center}: loaded raw-first PN2021 n={len(record_ids)} "
+        f"fail={fail} ({time.time() - t0:.1f}s)",
+        flush=True,
+    )
+    return loaded
+
+
+def _load_native_raw_first_center(args, scheme, center):
+    cache = getattr(args, "_native_raw_first_center_cache", None)
+    if cache is None:
+        cache = {}
+        args._native_raw_first_center_cache = cache
+    if center in cache:
+        return cache[center]
+
+    center_dir = os.path.join(args.pn2021_root, "training", center)
+    if not os.path.isdir(center_dir):
+        raise FileNotFoundError(f"PN2021 center directory not found: {center_dir}")
+
+    records = scan_pn2021_center_records(center_dir)
+    signals = []
+    sample_rates = []
+    labels = []
+    record_ids = []
+    fail = 0
+    t0 = time.time()
+    for record in records:
+        try:
+            rec = wfdb.rdrecord(str(record.record_path))
+        except Exception:
+            fail += 1
+            continue
+        sig = rec.p_signal
+        if sig is None or sig.shape[1] < 12:
+            fail += 1
+            continue
+        sig_names = [s.strip() for s in rec.sig_name] if getattr(rec, "sig_name", None) else None
+        proc = _prepare_native_raw_signal_tc(sig.astype(np.float32), sig_names)
+        if proc is None:
+            fail += 1
+            continue
+        signals.append(proc)
+        sample_rates.append(float(rec.fs))
+        labels.append(scheme["pn2021_fn"](record.snomeds).astype(np.float32, copy=False))
+        record_ids.append(str(record.record_id))
+
+    if not signals:
+        raise RuntimeError(f"native raw-first PN2021 load produced no records for {center}")
+    metadata = {
+        "scheme": str(args.scheme),
+        "center": str(center),
+        "class_names": list(scheme["class_names"]),
+        "cache_version": str(PN2021_EVAL_CACHE_VERSION),
+        "source": "wfdb_native_raw_first",
+        "source_center_dir": center_dir,
+        "n_scanned_records": int(len(records)),
+        "n_failed_records": int(fail),
+        "load_time_s": float(time.time() - t0),
+        "pre_corruption_config": {
+            "lead_reorder": True,
+            "nan_guard": True,
+            "apply_filter": False,
+            "apply_resample": False,
+            "apply_pad_truncate": False,
+            "apply_zscore": False,
+            "sample_rate_hz": "native_per_record",
+            "signal_length": "native_per_record",
+        },
+        "model_input_preprocess_after_corruption": {
+            "target_fs": 100,
+            "target_len": 1000,
+            "preprocess_mode": "minimal_resample",
+            "apply_filter": False,
+            "apply_zscore": True,
+            "norm_mode": "per_sample_global",
+            "crop_len": int(args.crop_len),
+            "crop_mode": "center",
+        },
+        "corruption_order": [
+            "wfdb_read_native_fs_native_length",
+            "lead_reorder_nan_guard_no_resample_no_zscore",
+            "corruption_with_native_sample_rate",
+            "resample_pad_or_truncate_to_100hz_1000",
+            "per_sample_global_zscore",
+            "center_crop",
+            "model",
+        ],
+    }
+    if args.scheme == "super5":
+        metadata["pn2021_mapping"] = get_super5_pn2021_mapping_metadata()
+
+    loaded = (
+        signals,
+        np.stack(labels, axis=0).astype(np.float32),
+        np.asarray(record_ids, dtype=str),
+        metadata,
+        "native_raw_first:wfdb",
+        np.asarray(sample_rates, dtype=np.float32),
+    )
+    cache[center] = loaded
+    print(
+        f"  {center}: loaded native raw-first PN2021 n={len(record_ids)} "
+        f"fail={fail} ({time.time() - t0:.1f}s)",
+        flush=True,
+    )
+    return loaded
+
+
 def _load_model(args, scheme, device):
     model_name = normalize_model_name(args.model_name)
     model = build_super5_model(
@@ -447,14 +866,32 @@ def _ref_ids_sha256(ids):
     return hashlib.sha256(("\n".join(values) + "\n").encode("utf-8")).hexdigest()
 
 
-def _compute_clean_subset_metrics(model, scheme, args, device, signals, labels, indices):
-    ds = PN2021IndexedCenterDataset(
-        signals,
-        labels,
-        indices,
-        crop_len=args.crop_len,
-        input_stabilizer_config=_input_stabilizer_config(args),
-    )
+def _compute_clean_subset_metrics(model, scheme, args, device, signals, labels, indices, sample_rates=None):
+    if getattr(args, "corruption_input", "preprocessed_cache") == "native_raw_first":
+        ds = NativeRawFirstCleanPN2021Dataset(
+            signals,
+            labels,
+            sample_rates,
+            indices,
+            crop_len=args.crop_len,
+            input_stabilizer_config=_input_stabilizer_config(args),
+        )
+    elif getattr(args, "corruption_input", "preprocessed_cache") == "raw_first":
+        ds = RawFirstCleanPN2021Dataset(
+            signals,
+            labels,
+            indices,
+            crop_len=args.crop_len,
+            input_stabilizer_config=_input_stabilizer_config(args),
+        )
+    else:
+        ds = PN2021IndexedCenterDataset(
+            signals,
+            labels,
+            indices,
+            crop_len=args.crop_len,
+            input_stabilizer_config=_input_stabilizer_config(args),
+        )
     loader = DataLoader(
         ds,
         batch_size=args.batch_size,
@@ -505,14 +942,14 @@ def _compute_clean_subset_metrics(model, scheme, args, device, signals, labels, 
     }
 
 
-def _get_clean_subset_metrics(model, scheme, args, device, center, signals, labels, indices):
+def _get_clean_subset_metrics(model, scheme, args, device, center, signals, labels, indices, sample_rates=None):
     cache = getattr(args, "clean_subset_metrics_by_center", None)
     if cache is None:
         cache = {}
         args.clean_subset_metrics_by_center = cache
     if center not in cache:
         cache[center] = _compute_clean_subset_metrics(
-            model, scheme, args, device, signals, labels, indices
+            model, scheme, args, device, signals, labels, indices, sample_rates=sample_rates
         )
     return cache[center]
 
@@ -522,17 +959,49 @@ def eval_one(model, scheme, args, device, center, corruption, severity, clean_by
     metadata = {}
     cache_source = args.mode
     exclude_ids = getattr(args, "exclude_ref_ids_by_center", {}).get(center, set())
+    sample_rates = None
     if args.mode == "stream":
-        signals, labels, record_ids, metadata, clean_kind = _load_clean_center(args, center)
+        if args.corruption_input == "native_raw_first":
+            (
+                signals,
+                labels,
+                record_ids,
+                metadata,
+                clean_kind,
+                sample_rates,
+            ) = _load_native_raw_first_center(args, scheme, center)
+        elif args.corruption_input == "raw_first":
+            signals, labels, record_ids, metadata, clean_kind = _load_raw_first_center(
+                args, scheme, center
+            )
+        else:
+            signals, labels, record_ids, metadata, clean_kind = _load_clean_center(args, center)
         cache_source = f"stream:{clean_kind}"
         indices = _filter_indices(record_ids, exclude_ids, args.limit)
-        ds = StreamingCorruptedPN2021Dataset(
-            signals, labels, corruption, severity,
-            seed=args.seed, crop_len=args.crop_len,
-            severity_profile=args.severity_profile,
-            indices=indices,
-            input_stabilizer_config=_input_stabilizer_config(args),
-        )
+        if args.corruption_input == "native_raw_first":
+            ds = NativeRawFirstCorruptedPN2021Dataset(
+                signals, labels, sample_rates, corruption, severity,
+                seed=args.seed, crop_len=args.crop_len,
+                severity_profile=args.severity_profile,
+                indices=indices,
+                input_stabilizer_config=_input_stabilizer_config(args),
+            )
+        elif args.corruption_input == "raw_first":
+            ds = RawFirstCorruptedPN2021Dataset(
+                signals, labels, corruption, severity,
+                seed=args.seed, crop_len=args.crop_len,
+                severity_profile=args.severity_profile,
+                indices=indices,
+                input_stabilizer_config=_input_stabilizer_config(args),
+            )
+        else:
+            ds = StreamingCorruptedPN2021Dataset(
+                signals, labels, corruption, severity,
+                seed=args.seed, crop_len=args.crop_len,
+                severity_profile=args.severity_profile,
+                indices=indices,
+                input_stabilizer_config=_input_stabilizer_config(args),
+            )
     else:
         if args.severity_profile != "standard":
             raise ValueError(
@@ -562,7 +1031,15 @@ def eval_one(model, scheme, args, device, center, corruption, severity, clean_by
         clean_eval_for_validation = clean_eval_payload
         if args.mode == "stream":
             clean = _get_clean_subset_metrics(
-                model, scheme, args, device, center, signals, labels, indices
+                model,
+                scheme,
+                args,
+                device,
+                center,
+                signals,
+                labels,
+                indices,
+                sample_rates=sample_rates,
             )
             clean_eval_for_validation = build_center_scoped_clean_eval_payload(
                 _merge_clean_metadata(metadata, clean_eval_payload),
@@ -715,6 +1192,25 @@ def main():
                    choices=available_model_names())
     p.add_argument("--mode", default="stream", choices=["stream", "cache"],
                    help="stream: corrupt clean cache on the fly; cache: read prebuilt PN2021-C npz files")
+    p.add_argument(
+        "--corruption_input",
+        default="preprocessed_cache",
+        choices=["preprocessed_cache", "raw_first", "native_raw_first"],
+        help=(
+            "preprocessed_cache keeps the historical behavior: corrupt the "
+            "100Hz/1000 per-sample-z-scored clean cache. raw_first reads WFDB "
+            "records, resamples/pads without z-score, applies corruption, then "
+            "applies the normal per-sample global z-score before model input. "
+            "native_raw_first applies corruption on WFDB native-fs/native-length "
+            "signals after only lead reorder and NaN repair, then runs the "
+            "normal model preprocessing."
+        ),
+    )
+    p.add_argument(
+        "--pn2021_root",
+        default=os.path.join(DEFAULT_DATA_ROOT, "physionet2021"),
+        help="PN2021 root containing training/<center>; used by --corruption_input raw_first.",
+    )
     p.add_argument("--cache_dir", default="/root/autodl-tmp/triple_labels/pn2021_c_cache")
     p.add_argument("--clean_mmap_cache_dir",
                    default="/root/autodl-tmp/triple_labels/pn2021_eval_cache_mmap")
@@ -797,6 +1293,8 @@ def main():
                    help="Evaluate only the first N records per cache for smoke tests.")
     p.add_argument("--output_path", default=None)
     args = p.parse_args()
+    if args.mode != "stream" and args.corruption_input in {"raw_first", "native_raw_first"}:
+        raise SystemExit("--corruption_input raw_first/native_raw_first requires --mode stream")
     try:
         require_clean_eval_json(
             args.clean_eval_json,
@@ -825,6 +1323,12 @@ def main():
         "model_dir": args.model_dir,
         "model_name": normalize_model_name(args.model_name),
         "mode": args.mode,
+        "corruption_input": args.corruption_input,
+        "pn2021_root": (
+            args.pn2021_root
+            if args.corruption_input in {"raw_first", "native_raw_first"}
+            else None
+        ),
         "cache_dir": args.cache_dir,
         "clean_mmap_cache_dir": args.clean_mmap_cache_dir,
         "clean_cache_dir": args.clean_cache_dir,
@@ -851,6 +1355,35 @@ def main():
         "target_fs": 100,
         "target_len": 1000,
         "diagnostic_input_stabilizer": _input_stabilizer_config(args),
+        "corruption_order": (
+            [
+                "wfdb_read_native_fs_native_length",
+                "lead_reorder_nan_guard_no_resample_no_zscore",
+                "corruption_with_native_sample_rate",
+                "resample_pad_or_truncate_to_100hz_1000",
+                "per_sample_global_zscore",
+                "center_crop",
+                "model",
+            ]
+            if args.corruption_input == "native_raw_first"
+            else (
+                [
+                    "wfdb_read",
+                    "lead_reorder_nan_guard_resample_pad_no_zscore",
+                    "corruption",
+                    "per_sample_global_zscore",
+                    "center_crop",
+                    "model",
+                ]
+                if args.corruption_input == "raw_first"
+                else [
+                    "load_100hz1000_per_sample_global_zscore_cache",
+                    "center_crop_or_full_signal",
+                    "corruption",
+                    "model",
+                ]
+            )
+        ),
     }
     if args.scheme == "super5":
         mapping_metadata = get_super5_pn2021_mapping_metadata()

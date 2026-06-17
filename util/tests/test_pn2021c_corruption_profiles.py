@@ -4,11 +4,13 @@ import torch
 
 from scripts.triple_labels.eval_pn2021_corruptions import (
     PN2021IndexedCenterDataset,
+    NativeRawFirstCorruptedPN2021Dataset,
     STRESS_PROFILE_CHOICES,
     StreamingCorruptedPN2021Dataset,
     apply_effnet_input_stabilizer,
     _build_corruption_op,
 )
+import scripts.triple_labels.eval_pn2021_corruptions as pn2021c_eval
 
 
 def test_calibrated_10to20pp_profile_builds_verified_strong_ops():
@@ -37,6 +39,61 @@ def test_calibrated_10to20pp_profile_builds_verified_strong_ops():
     assert shift.dependency is False
     assert mask.mask_leads_prob == 0.57
     assert mask.mask_leads_selection == "random"
+
+
+def test_corruption_op_can_use_native_sample_rate():
+    powerline = _build_corruption_op(
+        "powerline_noise",
+        5,
+        "calibrated_10to20pp",
+        sample_rate_hz=500,
+    )
+    wander = _build_corruption_op(
+        "baseline_wander",
+        5,
+        "calibrated_10to20pp",
+        sample_rate_hz=500,
+    )
+
+    assert powerline.freq == 500
+    assert wander.freq == 500
+
+
+def test_native_raw_first_corrupts_before_resample_and_model_zscore(monkeypatch):
+    calls = []
+
+    class RecordingOp:
+        def __call__(self, sample):
+            calls.append(("shape", tuple(sample.shape)))
+            return sample + 1.0
+
+    def fake_build(corruption, public_severity, severity_profile, *, sample_rate_hz=None):
+        calls.append(("fs", sample_rate_hz))
+        return RecordingOp()
+
+    monkeypatch.setattr(pn2021c_eval, "_build_corruption_op", fake_build)
+    t = np.linspace(0.0, 1.0, 5000, dtype=np.float32)
+    signal = np.stack([np.sin(2 * np.pi * (lead + 1) * t) for lead in range(12)], axis=1)
+    labels = np.ones((1, 5), dtype=np.float32)
+    ds = NativeRawFirstCorruptedPN2021Dataset(
+        [signal],
+        labels,
+        sample_rates=np.array([500.0], dtype=np.float32),
+        corruption="powerline_noise",
+        public_severity=5,
+        seed=123,
+        crop_len=1000,
+        severity_profile="calibrated_10to20pp",
+        indices=np.array([0]),
+    )
+
+    x, y = ds[0]
+
+    assert calls == [("fs", 500.0), ("shape", (12, 5000))]
+    assert tuple(x.shape) == (12, 1000)
+    assert tuple(y.shape) == (5,)
+    assert abs(float(x.mean())) < 1e-5
+    assert abs(float(x.reshape(-1).std(unbiased=False) - 1.0)) < 1e-5
 
 
 def test_calibrated_10to20pp_profile_rejects_unverified_severities():

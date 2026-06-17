@@ -69,8 +69,14 @@ from scripts.triple_labels.eval_crosscenter import (  # noqa: E402
 from scripts.triple_labels.eval_pn2021_corruptions import (  # noqa: E402
     STRESS_PROFILE_CHOICES,
     _build_corruption_op,
+    _load_raw_first_center,
+    _load_native_raw_first_center,
+    RawFirstCleanPN2021Dataset,
+    RawFirstCorruptedPN2021Dataset,
+    NativeRawFirstCleanPN2021Dataset,
+    NativeRawFirstCorruptedPN2021Dataset,
 )
-from scripts.triple_labels.label_schemes import CLASS_NAMES_SUPER5  # noqa: E402
+from scripts.triple_labels.label_schemes import CLASS_NAMES_SUPER5, get_scheme  # noqa: E402
 
 
 CHECKPOINT = ECGFOUNDER_ROOT / "checkpoint/12_lead_ECGFounder.pth"
@@ -84,6 +90,10 @@ def _stable_seed(base_seed: int, *parts: object) -> int:
 def _ref_ids_sha256(ids: set[str]) -> str:
     values = sorted(str(item) for item in ids)
     return hashlib.sha256(("\n".join(values) + "\n").encode("utf-8")).hexdigest()
+
+
+def _pn2021_scheme(args: argparse.Namespace) -> dict[str, Any]:
+    return get_scheme(args.scheme)
 
 
 def _clean_mmap_path(cache_dir: str, scheme: str, center: str) -> str:
@@ -400,6 +410,7 @@ def infer_ecgfounder(
     device: torch.device,
     *,
     input_stabilizer_kwargs: dict[str, Any] | None = None,
+    apply_input_zscore: bool = True,
 ) -> tuple[np.ndarray, np.ndarray]:
     y_true: list[np.ndarray] = []
     y_score: list[np.ndarray] = []
@@ -410,6 +421,7 @@ def infer_ecgfounder(
         x = ecg1000_to_ecgfounder_input(
             ecg_ct,
             target_points=TARGET_POINTS,
+            apply_global_zscore=bool(apply_input_zscore),
             **(input_stabilizer_kwargs or {}),
         )
         with torch.cuda.amp.autocast(enabled=device.type == "cuda"):
@@ -428,6 +440,7 @@ def infer_ecgfounder_fullft(
     *,
     operator_name: str | None = None,
     input_stabilizer_kwargs: dict[str, Any] | None = None,
+    apply_input_zscore: bool = True,
 ) -> tuple[np.ndarray, np.ndarray]:
     y_true: list[np.ndarray] = []
     y_score: list[np.ndarray] = []
@@ -437,6 +450,7 @@ def infer_ecgfounder_fullft(
         x = ecg1000_to_ecgfounder_input(
             ecg_ct,
             target_points=TARGET_POINTS,
+            apply_global_zscore=bool(apply_input_zscore),
             **(input_stabilizer_kwargs or {}),
         )
         with torch.cuda.amp.autocast(enabled=device.type == "cuda"):
@@ -459,17 +473,57 @@ def eval_clean_center(
     center: str,
     *,
     input_stabilizer_kwargs: dict[str, Any] | None = None,
+    apply_input_zscore: bool = True,
 ) -> dict[str, Any]:
-    signals, labels, record_ids, metadata, clean_kind = _load_clean_center(args, center)
+    sample_rates = None
+    if args.corruption_input == "native_raw_first":
+        (
+            signals,
+            labels,
+            record_ids,
+            metadata,
+            clean_kind,
+            sample_rates,
+        ) = _load_native_raw_first_center(
+            args,
+            _pn2021_scheme(args),
+            center,
+        )
+    elif args.corruption_input == "raw_first":
+        signals, labels, record_ids, metadata, clean_kind = _load_raw_first_center(
+            args,
+            _pn2021_scheme(args),
+            center,
+        )
+    else:
+        signals, labels, record_ids, metadata, clean_kind = _load_clean_center(args, center)
     selected_ids = set(str(x) for x in result.get("selected_ref_record_ids", []))
     exclude_ids = selected_ids if center == str(result["center"]) else set()
     indices = filter_record_indices(record_ids, exclude_ids, args.limit)
-    ds = ECGFounderCleanDataset(
-        signals,
-        labels,
-        indices,
-        crop_len=args.crop_len,
-    )
+    if args.corruption_input == "native_raw_first":
+        ds = NativeRawFirstCleanPN2021Dataset(
+            signals,
+            labels,
+            sample_rates,
+            indices,
+            crop_len=args.crop_len,
+            input_stabilizer_config={},
+        )
+    elif args.corruption_input == "raw_first":
+        ds = RawFirstCleanPN2021Dataset(
+            signals,
+            labels,
+            indices,
+            crop_len=args.crop_len,
+            input_stabilizer_config={},
+        )
+    else:
+        ds = ECGFounderCleanDataset(
+            signals,
+            labels,
+            indices,
+            crop_len=args.crop_len,
+        )
     loader = DataLoader(
         ds,
         batch_size=args.batch_size,
@@ -486,6 +540,7 @@ def eval_clean_center(
             loader,
             device,
             input_stabilizer_kwargs=input_stabilizer_kwargs,
+            apply_input_zscore=apply_input_zscore,
         )
     elif eval_mode == "fullft_model":
         y_true, y_score = infer_ecgfounder_fullft(
@@ -493,6 +548,7 @@ def eval_clean_center(
             loader,
             device,
             input_stabilizer_kwargs=input_stabilizer_kwargs,
+            apply_input_zscore=apply_input_zscore,
         )
     else:
         raise ValueError(f"unknown ECGFounder eval mode: {eval_mode}")
@@ -533,21 +589,69 @@ def eval_one(
     *,
     clean_metric_override: dict[str, Any] | None = None,
     input_stabilizer_kwargs: dict[str, Any] | None = None,
+    apply_input_zscore: bool = True,
 ) -> dict[str, Any]:
-    signals, labels, record_ids, metadata, clean_kind = _load_clean_center(args, center)
+    sample_rates = None
+    if args.corruption_input == "native_raw_first":
+        (
+            signals,
+            labels,
+            record_ids,
+            metadata,
+            clean_kind,
+            sample_rates,
+        ) = _load_native_raw_first_center(
+            args,
+            _pn2021_scheme(args),
+            center,
+        )
+    elif args.corruption_input == "raw_first":
+        signals, labels, record_ids, metadata, clean_kind = _load_raw_first_center(
+            args,
+            _pn2021_scheme(args),
+            center,
+        )
+    else:
+        signals, labels, record_ids, metadata, clean_kind = _load_clean_center(args, center)
     selected_ids = set(str(x) for x in result.get("selected_ref_record_ids", []))
     exclude_ids = selected_ids if center == str(result["center"]) else set()
     indices = filter_record_indices(record_ids, exclude_ids, args.limit)
-    ds = ECGFounderStreamingCorruptedDataset(
-        signals,
-        labels,
-        indices,
-        corruption,
-        severity,
-        seed=args.seed,
-        crop_len=args.crop_len,
-        severity_profile=args.severity_profile,
-    )
+    if args.corruption_input == "native_raw_first":
+        ds = NativeRawFirstCorruptedPN2021Dataset(
+            signals,
+            labels,
+            sample_rates,
+            corruption,
+            severity,
+            seed=args.seed,
+            crop_len=args.crop_len,
+            severity_profile=args.severity_profile,
+            indices=indices,
+            input_stabilizer_config={},
+        )
+    elif args.corruption_input == "raw_first":
+        ds = RawFirstCorruptedPN2021Dataset(
+            signals,
+            labels,
+            corruption,
+            severity,
+            seed=args.seed,
+            crop_len=args.crop_len,
+            severity_profile=args.severity_profile,
+            indices=indices,
+            input_stabilizer_config={},
+        )
+    else:
+        ds = ECGFounderStreamingCorruptedDataset(
+            signals,
+            labels,
+            indices,
+            corruption,
+            severity,
+            seed=args.seed,
+            crop_len=args.crop_len,
+            severity_profile=args.severity_profile,
+        )
     loader = DataLoader(
         ds,
         batch_size=args.batch_size,
@@ -565,6 +669,7 @@ def eval_one(
             loader,
             device,
             input_stabilizer_kwargs=input_stabilizer_kwargs,
+            apply_input_zscore=apply_input_zscore,
         )
     elif eval_mode == "fullft_model":
         y_true, y_score = infer_ecgfounder_fullft(
@@ -573,6 +678,7 @@ def eval_one(
             device,
             operator_name=corruption,
             input_stabilizer_kwargs=input_stabilizer_kwargs,
+            apply_input_zscore=apply_input_zscore,
         )
     else:
         raise ValueError(f"unknown ECGFounder eval mode: {eval_mode}")
@@ -592,11 +698,16 @@ def eval_one(
             min_pos=args.min_pos,
         )
     clean = clean_metric_override if clean_metric_override is not None else _clean_metric_for_center(result, center)
-    clean_metric_source = (
-        "recomputed_input_stabilizer"
-        if clean_metric_override is not None
-        else "saved_eval_result"
-    )
+    if clean_metric_override is not None:
+        clean_metric_source = (
+            "recomputed_native_raw_first_clean"
+            if args.corruption_input == "native_raw_first"
+            else "recomputed_raw_first_clean"
+            if args.corruption_input == "raw_first"
+            else "recomputed_input_stabilizer"
+        )
+    else:
+        clean_metric_source = "saved_eval_result"
     auroc_drop = None
     auprc_drop = None
     if clean.get("macro_auroc") is not None:
@@ -678,6 +789,25 @@ def main() -> None:
         "--clean_cache_dir",
         default=str(DATA_ROOT / "triple_labels/pn2021_eval_cache_minresample_perglobal"),
     )
+    p.add_argument(
+        "--corruption_input",
+        default="preprocessed_cache",
+        choices=["preprocessed_cache", "raw_first", "native_raw_first"],
+        help=(
+            "preprocessed_cache keeps historical behavior: corrupt the "
+            "100Hz/1000 per-sample-z-scored clean cache and let ECGFounder "
+            "input conversion z-score again. raw_first reads WFDB records, "
+            "resamples/pads without z-score, applies corruption, z-scores once, "
+            "then only resamples to ECGFounder length. native_raw_first applies "
+            "corruption on WFDB native-fs/native-length signals after only lead "
+            "reorder and NaN repair, then runs model preprocessing."
+        ),
+    )
+    p.add_argument(
+        "--pn2021_root",
+        default=str(DATA_ROOT / "physionet2021"),
+        help="PN2021 root containing training/<center>; used by --corruption_input raw_first.",
+    )
     p.add_argument("--required_cache_version", default=PN2021_C_CACHE_VERSION)
     p.add_argument("--centers", nargs="+", default=None)
     p.add_argument("--corruptions", nargs="+", default=DEFAULT_CORRUPTIONS)
@@ -718,8 +848,12 @@ def main() -> None:
         model_or_feature_model = _build_fullft_model(run_dir, Path(args.checkpoint), device)
         head = None
     input_stabilizer_kwargs = _input_stabilizer_kwargs_from_args(args)
+    apply_input_zscore = args.corruption_input not in {"raw_first", "native_raw_first"}
     clean_metric_overrides: dict[str, dict[str, Any]] = {}
-    if args.recompute_clean_with_input_stabilizer:
+    if (
+        args.recompute_clean_with_input_stabilizer
+        or args.corruption_input in {"raw_first", "native_raw_first"}
+    ):
         for center in centers:
             clean_metric_overrides[center] = eval_clean_center(
                 eval_mode,
@@ -730,6 +864,7 @@ def main() -> None:
                 device,
                 center,
                 input_stabilizer_kwargs=input_stabilizer_kwargs,
+                apply_input_zscore=apply_input_zscore,
             )
 
     output: dict[str, Any] = {
@@ -738,6 +873,12 @@ def main() -> None:
         "eval_mode": eval_mode,
         "variant": args.variant,
         "run_dir": str(run_dir),
+        "corruption_input": args.corruption_input,
+        "pn2021_root": (
+            args.pn2021_root
+            if args.corruption_input in {"raw_first", "native_raw_first"}
+            else None
+        ),
         "clean_eval_json": str(run_dir / "eval_result.json"),
         "head_path": str(run_dir / "best_head.pt") if (run_dir / "best_head.pt").exists() else None,
         "model_path": str(run_dir / "best_model.pt") if (run_dir / "best_model.pt").exists() else None,
@@ -753,7 +894,40 @@ def main() -> None:
         "input_stabilizer": {
             "kwargs": dict(input_stabilizer_kwargs),
             "recompute_clean_with_input_stabilizer": bool(args.recompute_clean_with_input_stabilizer),
+            "ecgfounder_apply_input_zscore": bool(apply_input_zscore),
         },
+        "corruption_order": (
+            [
+                "wfdb_read_native_fs_native_length",
+                "lead_reorder_nan_guard_no_resample_no_zscore",
+                "corruption_with_native_sample_rate",
+                "resample_pad_or_truncate_to_100hz_1000",
+                "per_sample_global_zscore",
+                "center_crop",
+                "ecgfounder_resample_1000_to_5000_no_second_zscore",
+                "model",
+            ]
+            if args.corruption_input == "native_raw_first"
+            else (
+                [
+                    "wfdb_read",
+                    "lead_reorder_nan_guard_resample_pad_no_zscore",
+                    "corruption",
+                    "per_sample_global_zscore",
+                    "center_crop",
+                    "ecgfounder_resample_1000_to_5000_no_second_zscore",
+                    "model",
+                ]
+                if args.corruption_input == "raw_first"
+                else [
+                    "load_100hz1000_per_sample_global_zscore_cache",
+                    "center_crop_or_full_signal",
+                    "corruption",
+                    "ecgfounder_resample_1000_to_5000_and_global_zscore",
+                    "model",
+                ]
+            )
+        ),
         "selected_ref_record_ids_count": int(len(result.get("selected_ref_record_ids", []))),
         "label_mapping": result.get("label_mapping"),
         "class_names": list(CLASS_NAMES_SUPER5),
@@ -777,6 +951,7 @@ def main() -> None:
                     int(severity),
                     clean_metric_override=clean_metric_overrides.get(center),
                     input_stabilizer_kwargs=input_stabilizer_kwargs,
+                    apply_input_zscore=apply_input_zscore,
                 )
     output["aggregate_by_corruption_severity"] = aggregate_corruption_summary(output)
 
