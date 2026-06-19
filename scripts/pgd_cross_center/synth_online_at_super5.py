@@ -50,7 +50,7 @@ from sklearn.metrics import roc_auc_score, average_precision_score
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import (
-    DataLoader, ConcatDataset, TensorDataset, WeightedRandomSampler,
+    DataLoader, ConcatDataset, Dataset, TensorDataset, WeightedRandomSampler,
 )
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -115,7 +115,7 @@ from scripts.triple_labels.train_ptbxl import (  # noqa: E402
     evaluate, get_ptbxl_labels_for_scheme, preprocess_ptbxl_all,
 )
 from scripts.triple_labels.eval_crosscenter import parse_header_snomed  # noqa: E402
-from scripts.crosscenter_v2.preprocess_utils import unified_preprocess_to_1000  # noqa: E402
+from scripts.crosscenter_v2.preprocess_utils import crop_signal_tc, unified_preprocess_to_1000  # noqa: E402
 from util.ecgtwin_utils import ECGTwinWrapper  # noqa: E402
 from ecg_adv_gen.adaptation import (  # noqa: E402
     SameLabelLatentIndex,
@@ -128,6 +128,7 @@ from ecg_adv_gen.adaptation import (  # noqa: E402
     build_latent_augmix_branch_signals as _build_latent_augmix_branch_signals_core,
     build_raw_augmix_views as _build_raw_augmix_views_core,
     build_raw_corruption_views as _build_raw_corruption_views_core,
+    build_three_chain_vae_lhat_augmix_views as _build_three_chain_vae_lhat_augmix_views_core,
     derive_class_trust,
     derive_kshot_anchor_class_weights,
     decoded_signal_invalid_stats,
@@ -216,6 +217,68 @@ from scripts.triple_labels.label_schemes import SUPER5_TO_IDX  # noqa: E402
 
 # Indices of in-scope generation classes (NORM/MI/STTC) in the 5-class scheme.
 SUPER5_GEN_SUBSET_IDX = sorted(SUPER5_TO_IDX[c] for c in SUPER5_GEN_SUBSET)
+
+
+def _per_sample_global_zscore_np(signal_tc: np.ndarray, eps: float = 1e-8) -> np.ndarray:
+    signal_tc = np.asarray(signal_tc, dtype=np.float32)
+    mean = float(np.mean(signal_tc))
+    std = float(np.std(signal_tc))
+    return ((signal_tc - mean) / (std + eps)).astype(np.float32, copy=False)
+
+
+def _normalize_target_real_signals(signals_tc: np.ndarray, norm_mode: str) -> np.ndarray:
+    signals_tc = np.asarray(signals_tc, dtype=np.float32)
+    if norm_mode == "pre_zscored":
+        return signals_tc.astype(np.float32, copy=False)
+    if norm_mode == "per_sample_global":
+        if signals_tc.ndim != 3:
+            raise ValueError(f"target-real signals must be 3D for z-score, got {signals_tc.shape}")
+        mean = signals_tc.mean(axis=(1, 2), keepdims=True)
+        std = signals_tc.std(axis=(1, 2), keepdims=True)
+        return ((signals_tc - mean) / (std + 1e-8)).astype(np.float32, copy=False)
+    raise ValueError(f"unknown target_real_norm_mode={norm_mode!r}")
+
+
+class TargetRealWaveformDataset(Dataset):
+    """Target-center supervised ECG stream with explicit normalization contract."""
+
+    def __init__(
+        self,
+        signals_1000: np.ndarray,
+        labels: np.ndarray,
+        *,
+        crop_len: int = TIERM_INPUT_LENGTH,
+        mode: str = "train",
+        norm_mode: str = "pre_zscored",
+    ) -> None:
+        signals = np.asarray(signals_1000, dtype=np.float32)
+        if signals.ndim != 3 or signals.shape[1:] != (1000, 12):
+            raise ValueError(f"signals_1000 must be shaped (N,1000,12), got {signals.shape}")
+        if norm_mode not in {"pre_zscored", "per_sample_global"}:
+            raise ValueError(f"unknown target-real norm_mode={norm_mode!r}")
+        self.signals = signals
+        self.labels = np.asarray(labels, dtype=np.float32)
+        self.crop_len = int(crop_len)
+        self.mode = str(mode)
+        self.norm_mode = str(norm_mode)
+
+    def __len__(self) -> int:
+        return int(self.signals.shape[0])
+
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
+        sig_tc = self.signals[idx]
+        if self.norm_mode == "per_sample_global":
+            sig_tc = _per_sample_global_zscore_np(sig_tc)
+        crop = crop_signal_tc(
+            sig_tc,
+            self.crop_len,
+            mode="random" if self.mode == "train" else "center",
+        )
+        sig_ct = crop.T
+        return (
+            torch.from_numpy(np.ascontiguousarray(sig_ct)).float(),
+            torch.from_numpy(self.labels[idx]).float(),
+        )
 
 
 def set_all_seeds(seed: int) -> None:
@@ -1583,6 +1646,53 @@ def build_latent_augmix_branch_signals(
     )
 
 
+def build_three_chain_vae_lhat_augmix_views(
+    anchor_signals_ct: np.ndarray,
+    adv_signals_ct: np.ndarray,
+    *,
+    copies: int,
+    severity: int,
+    severity_profile: str = "standard",
+    width: int,
+    depth: int,
+    alpha: float,
+    ops: List[str],
+    rng: np.random.Generator,
+    renorm: bool = False,
+    clip_abs: float = 6.0,
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """Locked wrapper: two ECG corruption chains plus one uncorrupted VAE-LHAT chain."""
+
+    def _apply_augmix_op_np(
+        sig_ct: np.ndarray,
+        op_name: str,
+        op_severity: int,
+        op_severity_profile: str,
+    ) -> np.ndarray:
+        sig_t = torch.from_numpy(sig_ct.copy()).float()
+        if op_severity_profile == "standard":
+            return _apply_op(sig_t, op_name, int(op_severity)).cpu().numpy().astype(np.float32, copy=False)
+        op = _build_pn2021c_corruption_op(op_name, int(op_severity), op_severity_profile)
+        return op(sig_t).cpu().numpy().astype(np.float32, copy=False)
+
+    return _build_three_chain_vae_lhat_augmix_views_core(
+        anchor_signals_ct,
+        adv_signals_ct,
+        copies=copies,
+        severity=severity,
+        severity_profile=severity_profile,
+        width=width,
+        depth=depth,
+        alpha=alpha,
+        ops=ops,
+        rng=rng,
+        op_apply_fn=_apply_augmix_op_np,
+        available_ops=AVAILABLE_OPS,
+        renorm=renorm,
+        clip_abs=clip_abs,
+    )
+
+
 def build_raw_corruption_views(
     signals_ct: np.ndarray,
     *,
@@ -1771,6 +1881,16 @@ def parse_args():
     p.add_argument("--output_dir", required=True)
     p.add_argument("--target_real_npz", default="",
                    help="Optional selected target-center real ECG npz with signals (N,1000,12) and labels.")
+    p.add_argument(
+        "--target_real_norm_mode",
+        choices=["pre_zscored", "per_sample_global"],
+        default="pre_zscored",
+        help=(
+            "Normalization contract for --target_real_npz. Use pre_zscored "
+            "for legacy selected .signals.npz and per_sample_global for "
+            "raw1000 K-shot artifacts."
+        ),
+    )
 
     # PN2021 quick eval
     p.add_argument("--data_dir", default=DEFAULT_PN2021_DIR)
@@ -1780,12 +1900,14 @@ def parse_args():
     p.add_argument("--quick_eval_n_per_center", type=int, default=1000)
     p.add_argument(
         "--quick_eval_source",
-        choices=["pn2021", "target_real_val"],
+        choices=["pn2021", "target_real_val", "none"],
         default="pn2021",
         help=(
             "pn2021 uses the historical ref-excluded PN2021 quick subset. "
             "target_real_val selects checkpoints on a validation split held "
-            "out from --target_real_npz, avoiding target-center test leakage."
+            "out from --target_real_npz, avoiding target-center test leakage. "
+            "none disables quick-eval checkpoint selection for predeclared "
+            "last-checkpoint runs."
         ),
     )
     p.add_argument("--target_real_val_fraction", type=float, default=0.2)
@@ -1965,6 +2087,17 @@ def parse_args():
             "treat x_adv as one AugMix branch and mix it with ECG corruption "
             "chains from the clean anchor before pushing extra samples into "
             "the adversarial buffer."
+        ),
+    )
+    p.add_argument(
+        "--latent_augmix_topology",
+        choices=["legacy_branch", "locked_three_chain"],
+        default="legacy_branch",
+        help=(
+            "legacy_branch preserves historical latent-AugMix weighting. "
+            "locked_three_chain enforces the PN2021-C protocol topology: "
+            "two raw ECG corruption chains plus one uncorrupted VAE-LHAT "
+            "adversarial waveform chain."
         ),
     )
     p.add_argument("--latent_augmix_copies", type=int, default=1,
@@ -2192,6 +2325,12 @@ def parse_args():
     p.add_argument("--n_epochs", type=int, default=100)
     p.add_argument("--patience", type=int, default=20,
                    help="Early stop after this many quick_eval rounds without improvement")
+    p.add_argument(
+        "--checkpoint_policy",
+        choices=["best", "last"],
+        default="best",
+        help="best preserves historical quick-eval selection; last evaluates the final epoch checkpoint.",
+    )
     p.add_argument("--es_metric",
                    choices=[
                        "val_macro_auroc",
@@ -2350,6 +2489,7 @@ def main():
     if args.enable_latent_augmix_branch:
         print(
             "[setup] latent-branch AugMix enabled: "
+            f"topology={args.latent_augmix_topology} "
             f"copies={args.latent_augmix_copies} width={args.latent_augmix_width} "
             f"depth={args.latent_augmix_depth} severity={args.latent_augmix_severity} "
             f"profile={args.latent_augmix_severity_profile} "
@@ -2368,6 +2508,11 @@ def main():
             )
     elif args.enable_latent_augmix_consistency:
         raise ValueError("--enable_latent_augmix_consistency requires --enable_latent_augmix_branch")
+    if args.enable_latent_augmix_branch and args.latent_augmix_topology == "locked_three_chain":
+        if int(args.latent_augmix_width) != 3:
+            raise ValueError("--latent_augmix_topology locked_three_chain requires --latent_augmix_width 3")
+    if args.quick_eval_source == "none" and args.checkpoint_policy != "last":
+        raise ValueError("--quick_eval_source none requires --checkpoint_policy last")
 
     # ── Load synth pool (Stage 1 frozen) for training ──────────────────────
     synth_latents, synth_labels, synth_center, source_meta = load_synth_pool(args.synth_npz)
@@ -2461,7 +2606,10 @@ def main():
             target_val_record_ids = set(str(x) for x in real_record_ids[val_mask])
             target_val_quick_subset = {
                 args.center_name: {
-                    "signals_tc": real_signals[val_mask].astype(np.float32),
+                    "signals_tc": _normalize_target_real_signals(
+                        real_signals[val_mask],
+                        args.target_real_norm_mode,
+                    ),
                     "labels_5": real_labels[val_mask].astype(np.float32),
                 }
             }
@@ -2473,15 +2621,17 @@ def main():
             )
             real_signals = real_signals[train_mask]
             real_labels = real_labels[train_mask]
-        target_real_ds = PTBXLDatasetScheme(
+        target_real_ds = TargetRealWaveformDataset(
             real_signals,
             real_labels,
             crop_len=args.crop_len,
             mode='train',
+            norm_mode=args.target_real_norm_mode,
         )
         print(
             f"[setup] target-real supervised stream: n={len(target_real_ds)} "
-            f"weight={args.target_real_weight} path={args.target_real_npz}",
+            f"weight={args.target_real_weight} norm_mode={args.target_real_norm_mode} "
+            f"path={args.target_real_npz}",
             flush=True,
         )
     elif args.quick_eval_source == "target_real_val":
@@ -2616,7 +2766,10 @@ def main():
         target_val_available=target_val_quick_subset is not None,
         target_val_n=target_val_n,
     )
-    if quick_eval_plan.source == "target_real_val":
+    if quick_eval_plan.source == "none":
+        quick_subset = {}
+        print(f"[setup] {quick_eval_plan.message}", flush=True)
+    elif quick_eval_plan.source == "target_real_val":
         assert target_val_quick_subset is not None
         quick_subset = target_val_quick_subset
         print(f"[setup] {quick_eval_plan.message}", flush=True)
@@ -2640,14 +2793,23 @@ def main():
             seed=args.seed, exclude_record_ids=excluded,
         )
 
-    print("[baseline] Computing baseline quick-eval ...")
-    baseline_qe = quick_eval_super5(victim.model, quick_subset, args.device,
-                                    crop_len=args.crop_len)
-    print(f"[baseline] avg macro AUROC={baseline_qe['avg_macro_auroc']}, "
-          f"AUPRC={baseline_qe['avg_macro_auprc']}")
-    for c, info in baseline_qe["per_center"].items():
-        print(f"    {c}: AUROC={info['macro_auroc']}  AUPRC={info['macro_auprc']}  "
-              f"(n={info['n']}  classes_used={info['n_classes_used']})")
+    if quick_eval_plan.source == "none":
+        baseline_qe = {
+            "enabled": False,
+            "avg_macro_auroc": None,
+            "avg_macro_auprc": None,
+            "per_center": {},
+        }
+        print("[baseline] quick-eval disabled; checkpoint_policy=last", flush=True)
+    else:
+        print("[baseline] Computing baseline quick-eval ...")
+        baseline_qe = quick_eval_super5(victim.model, quick_subset, args.device,
+                                        crop_len=args.crop_len)
+        print(f"[baseline] avg macro AUROC={baseline_qe['avg_macro_auroc']}, "
+              f"AUPRC={baseline_qe['avg_macro_auprc']}")
+        for c, info in baseline_qe["per_center"].items():
+            print(f"    {c}: AUROC={info['macro_auroc']}  AUPRC={info['macro_auprc']}  "
+                  f"(n={info['n']}  classes_used={info['n_classes_used']})")
 
     # ── PGD / Latent-Hull generator + buffer ────────────────────────────────
     # Note: generator __init__ calls victim.parameters().requires_grad_(False)
@@ -2816,6 +2978,7 @@ def main():
         },
         "latent_augmix_branch": {
             "enabled": bool(args.enable_latent_augmix_branch),
+            "topology": str(args.latent_augmix_topology),
             "copies": int(args.latent_augmix_copies),
             "width": int(args.latent_augmix_width),
             "depth": int(args.latent_augmix_depth),
@@ -2874,6 +3037,8 @@ def main():
         "epochs": [],
     }
     def selected_es_metric(qe: Dict[str, Any]) -> float:
+        if args.checkpoint_policy == "last":
+            return -1.0
         if args.es_metric == "val_macro_auroc":
             return float(qe.get("avg_macro_auroc", float("nan")))
         if args.es_metric == "val_macro_auprc":
@@ -2891,6 +3056,7 @@ def main():
     best_epoch = 0
     epochs_since_best = 0
     best_ckpt_path = os.path.join(args.output_dir, "best_model.pt")
+    last_ckpt_path = os.path.join(args.output_dir, "last_model.pt")
     log_path = os.path.join(args.output_dir, "training_log.json")
     es_path = os.path.join(args.output_dir, "early_stop_info.json")
     checkpoint_dir = Path(args.output_dir) / "checkpoints"
@@ -2900,9 +3066,9 @@ def main():
     diagnostics_epoch_path = Path(args.output_dir) / "diagnostics_epoch.jsonl"
     agent_decision_path = Path(args.output_dir) / "agent_decision.json"
     resume_path = _resolve_resume_path(args.resume, args.output_dir)
-    if should_save_initial_best_model(resume_path):
+    if args.checkpoint_policy == "best" and should_save_initial_best_model(resume_path):
         save_compatible_model_state(victim.model, best_ckpt_path)
-    elif not Path(best_ckpt_path).exists():
+    elif args.checkpoint_policy == "best" and not Path(best_ckpt_path).exists():
         print(
             f"[resume-warning] best_model.pt is missing before resume: {best_ckpt_path}. "
             "It will not be recreated unless a later epoch improves.",
@@ -3099,21 +3265,37 @@ def main():
                     soft_target_floor=args.adv_soft_target_floor,
                 )
                 if args.enable_latent_augmix_branch:
-                    latent_augmix_signals, latent_augmix_stats = build_latent_augmix_branch_signals(
-                        anchor_signals_ct=anc_signals,
-                        adv_signals_ct=adv_signals,
-                        copies=args.latent_augmix_copies,
-                        severity=args.latent_augmix_severity,
-                        severity_profile=args.latent_augmix_severity_profile,
-                        width=args.latent_augmix_width,
-                        depth=args.latent_augmix_depth,
-                        alpha=args.latent_augmix_alpha,
-                        latent_weight_cap=args.latent_augmix_latent_weight_cap,
-                        ops=list(args.latent_augmix_ops),
-                        rng=rng,
-                        renorm=not args.no_latent_augmix_renorm,
-                        clip_abs=args.latent_augmix_clip_abs,
-                    )
+                    if args.latent_augmix_topology == "locked_three_chain":
+                        latent_augmix_signals, latent_augmix_stats = build_three_chain_vae_lhat_augmix_views(
+                            anchor_signals_ct=anc_signals,
+                            adv_signals_ct=adv_signals,
+                            copies=args.latent_augmix_copies,
+                            severity=args.latent_augmix_severity,
+                            severity_profile=args.latent_augmix_severity_profile,
+                            width=args.latent_augmix_width,
+                            depth=args.latent_augmix_depth,
+                            alpha=args.latent_augmix_alpha,
+                            ops=list(args.latent_augmix_ops),
+                            rng=rng,
+                            renorm=not args.no_latent_augmix_renorm,
+                            clip_abs=args.latent_augmix_clip_abs,
+                        )
+                    else:
+                        latent_augmix_signals, latent_augmix_stats = build_latent_augmix_branch_signals(
+                            anchor_signals_ct=anc_signals,
+                            adv_signals_ct=adv_signals,
+                            copies=args.latent_augmix_copies,
+                            severity=args.latent_augmix_severity,
+                            severity_profile=args.latent_augmix_severity_profile,
+                            width=args.latent_augmix_width,
+                            depth=args.latent_augmix_depth,
+                            alpha=args.latent_augmix_alpha,
+                            latent_weight_cap=args.latent_augmix_latent_weight_cap,
+                            ops=list(args.latent_augmix_ops),
+                            rng=rng,
+                            renorm=not args.no_latent_augmix_renorm,
+                            clip_abs=args.latent_augmix_clip_abs,
+                        )
                     if latent_augmix_signals.shape[0] > 0:
                         start = (latent_augmix_signals.shape[-1] - args.crop_len) // 2
                         latent_augmix_ct_crop = latent_augmix_signals[..., start:start + args.crop_len]
@@ -3160,7 +3342,7 @@ def main():
                         f"[ep{epoch:02d}] latent-branch AugMix: "
                         f"generated={latent_augmix_stats.get('n_generated', 0)} "
                         f"pushed={latent_augmix_push_stats.get('n_pushed', 0)} "
-                        f"w_lat_mean={latent_augmix_stats.get('latent_weight_mean', float('nan')):.3f} "
+                        f"w_lat_mean={latent_augmix_stats.get('latent_weight_mean', latent_augmix_stats.get('adv_weight_mean', float('nan'))):.3f} "
                         f"m_mean={latent_augmix_stats.get('beta_m_mean', float('nan')):.3f}",
                         flush=True,
                     )
@@ -3510,15 +3692,30 @@ def main():
 
         # Phase F: quick eval (every eval_every; also last epoch)
         if (epoch % args.eval_every == 0) or (epoch == args.n_epochs):
-            qe = quick_eval_super5(victim.model, quick_subset, args.device,
-                                   crop_len=args.crop_len)
-            entry["quick_eval"] = qe
-            print(f"   quick eval: avg AUROC={qe['avg_macro_auroc']}  "
-                  f"AUPRC={qe['avg_macro_auprc']}")
-            for c, info in qe["per_center"].items():
-                print(f"      {c}: AUROC={info['macro_auroc']}  AUPRC={info['macro_auprc']}")
-            cur = selected_es_metric(qe)
-            improved = (cur == cur) and (cur > best_metric + 1e-6)   # NaN-safe
+            if quick_eval_plan.source == "none":
+                qe = {
+                    "enabled": False,
+                    "reason": "quick_eval_source_none",
+                    "avg_macro_auroc": None,
+                    "avg_macro_auprc": None,
+                    "per_center": {},
+                }
+                entry["quick_eval"] = qe
+                improved = False
+            else:
+                qe = quick_eval_super5(victim.model, quick_subset, args.device,
+                                       crop_len=args.crop_len)
+                entry["quick_eval"] = qe
+                print(f"   quick eval: avg AUROC={qe['avg_macro_auroc']}  "
+                      f"AUPRC={qe['avg_macro_auprc']}")
+                for c, info in qe["per_center"].items():
+                    print(f"      {c}: AUROC={info['macro_auroc']}  AUPRC={info['macro_auprc']}")
+                cur = selected_es_metric(qe)
+                improved = (
+                    args.checkpoint_policy == "best"
+                    and (cur == cur)
+                    and (cur > best_metric + 1e-6)
+                )   # NaN-safe
             if improved:
                 best_metric = cur
                 best_epoch = epoch
@@ -3530,6 +3727,7 @@ def main():
                 epochs_since_best += args.eval_every
                 entry["best_update"] = False
 
+        save_compatible_model_state(victim.model, last_ckpt_path)
         log["epochs"].append(entry)
         with open(log_path, "w") as f:
             json.dump(log, f, indent=2, default=str)
@@ -3625,7 +3823,11 @@ def main():
             )
 
         # Plan Rev 13.1: early-stop on val_macro_auroc plateau
-        if (epoch % args.eval_every == 0) and epochs_since_best >= args.patience:
+        if (
+            args.checkpoint_policy == "best"
+            and (epoch % args.eval_every == 0)
+            and epochs_since_best >= args.patience
+        ):
             print(f"\n[early-stop] patience {args.patience} hit at ep{epoch}; "
                   f"best @ ep{best_epoch} ({args.es_metric}={best_metric})")
             with open(es_path, "w") as f:
@@ -3650,6 +3852,10 @@ def main():
         "baseline_quick_eval": baseline_qe,
         "best_metric":         best_metric,
         "es_metric":           args.es_metric,
+        "checkpoint_policy":   args.checkpoint_policy,
+        "selected_checkpoint": last_ckpt_path if args.checkpoint_policy == "last" else best_ckpt_path,
+        "last_model_path":     last_ckpt_path,
+        "best_model_path":     best_ckpt_path if Path(best_ckpt_path).exists() else None,
         "n_epochs_run":       len(log["epochs"]),
         "last_quick_eval":    log["epochs"][-1].get("quick_eval") if log["epochs"] else None,
     }

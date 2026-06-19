@@ -57,8 +57,14 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
         f"{kshot_subset_root}/{center}/k{k}_seed{seed}/"
         f"{center}_real_k{k}_seed{seed}"
     )
+    target_real_npz_override = str(data.get("target_real_npz_override") or "")
+    target_real_npz_suffix = str(data.get("target_real_npz_suffix") or "")
+    if not target_real_npz_override and target_real_npz_suffix:
+        suffix = target_real_npz_suffix if target_real_npz_suffix.startswith(".") else f".{target_real_npz_suffix}"
+        target_real_npz_override = f"{anchor_base}{suffix}"
     latent_augmix = adaptation["latent_augmix"]
     latent_augmix_consistency = latent_augmix.get("consistency") or {}
+    selection = adaptation.get("selection") or {}
     raw_corrupt = adaptation.get("raw_corrupt_consistency") or {}
     raw_augmix = raw_corrupt.get("augmix") or {}
     raw_input_stabilizer = raw_corrupt.get("input_stabilizer") or {}
@@ -139,9 +145,9 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
         "--latent_augmix_severity",
         latent_augmix["severity"],
         "--quick_eval_source",
-        "target_real_val",
+        selection.get("quick_eval_source", "target_real_val"),
         "--target_real_val_fraction",
-        "0.2",
+        selection.get("target_real_val_fraction", 0.2),
         "--target_real_val_seed",
         seed,
         "--eval_batch_size",
@@ -151,6 +157,18 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
         "--eval_pn2021_limit",
         evaluation["pn2021_limit"],
     ]
+    _append_optional_value(argv, "--target_real_norm_mode", data.get("target_real_norm_mode"))
+    _append_optional_value(argv, "--target_real_npz_override", target_real_npz_override or None)
+    _append_optional_value(
+        argv,
+        "--checkpoint_policy",
+        selection.get("checkpoint_policy"),
+    )
+    _append_optional_value(
+        argv,
+        "--latent_augmix_topology",
+        latent_augmix.get("topology"),
+    )
     _append_optional_value(
         argv,
         "--latent_augmix_copies",
@@ -316,7 +334,13 @@ def audit_effnet_vae_lhat_command(
     if center not in target_centers:
         errors.append(f"{script}: unexpected center {center!r}")
     audit_equals(errors, script, opts, "--seed", expected_command_seed)
-    audit_equals(errors, script, opts, "--quick_eval_source", "target_real_val")
+    checkpoint_policy = str(opt_first(opts, "--checkpoint_policy", "best"))
+    quick_eval_source = str(opt_first(opts, "--quick_eval_source", ""))
+    if checkpoint_policy == "last":
+        audit_equals(errors, script, opts, "--quick_eval_source", "none")
+        audit_equals(errors, script, opts, "--target_real_val_fraction", "0.0")
+    else:
+        audit_equals(errors, script, opts, "--quick_eval_source", "target_real_val")
     audit_equals(errors, script, opts, "--target_real_val_seed", expected_command_seed)
     if opt_first(opts, "--hull_neighbor_distance_space") not in {"raw", "standardized"}:
         errors.append(f"{script}: invalid --hull_neighbor_distance_space")

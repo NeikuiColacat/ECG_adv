@@ -662,6 +662,8 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument('--scheme', required=True, choices=['super5', 'sub23', 'pn26'])
     p.add_argument('--model_dir', required=True)
+    p.add_argument('--checkpoint_name', default='best_model.pt',
+                   help='Checkpoint filename under --model_dir.')
     p.add_argument('--device', default='cuda')
     p.add_argument('--model_name', default='efficientnet1dv2',
                    choices=available_model_names())
@@ -728,7 +730,7 @@ def main():
 
     model_name = normalize_model_name(args.model_name)
     model = build_super5_model(model_name, num_classes=scheme['num_classes']).to(device)
-    ckpt = os.path.join(args.model_dir, 'best_model.pt')
+    ckpt = os.path.join(args.model_dir, args.checkpoint_name)
     sd = torch.load(ckpt, map_location=device)
     sd = {k.removeprefix('_orig_mod.'): v for k, v in sd.items()}
     model.load_state_dict(sd)

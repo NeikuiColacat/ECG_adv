@@ -222,6 +222,52 @@ ECGFounder branch:
   against EfficientNet1DV2.
 ```
 
+Current VAE-LH + AugMix method intent, clarified 2026-06-17:
+
+```text
+Latest locked protocol:
+  docs/pipelines/pn2021c_vae_lhat_augmix_locked_protocol_20260618.md
+
+When this protocol conflicts with older ECGFounder frozen/head-only,
+raw-supervised, stabilizer, native-raw-first, or calibrated-stress notes, follow
+the locked protocol unless the user explicitly changes it.
+
+The desired main method is not merely "any robustness gain on PN2021-C".
+It must preserve the VAE-LH + AugMix paradigm:
+  target-center anchors in ECGTwin VAE latent space
+  -> VAE-LH online adversarial / hard-sample search
+  -> multi-chain AugMix-style composite augmentation
+  -> classifier training that internalizes the hard-sample capability into
+     model parameters.
+
+Do not silently replace this with:
+  - degenerate single-chain raw corruption consistency
+    (`width=1`, `depth=1`, `fixed mix=1.0`);
+  - a matched input-stabilizer / preprocessing front-end such as stabilizer35;
+  - an operator-aware oracle or post-hoc selection result.
+
+Those may be useful ablations, diagnostics, or engineering baselines, but they
+are not the thesis main method unless the user explicitly changes the goal.
+If a run uses them, label the deviation explicitly and do not claim the gain as
+learned VAE-LH + multi-chain AugMix robustness.
+```
+
+Implementation guidance:
+
+```text
+  - Keep AugMix as multi-chain composite augmentation when testing the main
+    method: use multiple branches/chains and mixing, not a collapsed single-op
+    corruption view.
+  - Hard samples should be selected/searched by VAE-LH/PGD or equivalent
+    online adversarial signals, then trained into model weights.
+  - Report evidence that the model learned the hard samples: loss_gain,
+    clean/adv BCE, ASR or attack-success diagnostics, atk_init, atk_anchor,
+    source/clean floor, and ref-excluded PN2021/PN2021-C metrics.
+  - If stabilizer35 or any other input frontend is used, report it as explicit
+    preprocessing. It can be a matched-front-end ablation, not proof of
+    intrinsic model robustness.
+```
+
 Latest VAE-online AT lessons, frozen 2026-05-27:
 
 ```text

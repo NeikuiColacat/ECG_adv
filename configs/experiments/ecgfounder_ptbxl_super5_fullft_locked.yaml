@@ -1,0 +1,57 @@
+extends:
+  - ../defaults/ecgfounder_v7_sjr_rgq_defaults.yaml
+
+experiment:
+  name: ecgfounder_ptbxl_super5_fullft_locked
+  description: Locked ECGFounder PTB-XL Super5 full fine-tuning stage that produces the source last checkpoint for K500 full-FT.
+
+paper_protocol:
+  selection:
+    policy: last_checkpoint_only
+    allowed_data: [target_k500_train_all, ptbxl_source_sanity]
+    forbid_k500_validation_split: true
+    forbid_best_checkpoint_selection: true
+    forbid_heldout_target_labels: true
+    forbid_full_target_distribution_tuning: true
+
+training:
+  epochs: 5
+  batch_size: 64
+  eval_batch_size: 128
+  num_workers: ${resources.default_num_workers}
+  source_train_limit: 0
+  optimizer:
+    name: adamw
+    lr: 0.0001
+    weight_decay: 0.00001
+
+adaptation:
+  method: ecgfounder_ptbxl_super5_full_finetune_locked_last
+  stage: ptbxl_source
+  run_name: ptbxl_super5_fullft_locked
+  selection:
+    checkpoint_policy: last
+    target_val_count: 0
+    metric: source_auprc
+  loss:
+    source_weight: 1.0
+
+runner:
+  entrypoint: scripts/paper/run_ecgfounder_fullft_super5_pilot_20260523.py
+  adapter: ecgfounder_fullft
+
+logging:
+  launch_artifacts:
+    - run_config.resolved.yaml
+    - run_config.resolved.json
+    - run_manifest.json
+    - command.sh
+    - data_manifest.json
+    - selection.json
+    - run_card.json
+    - run_file_index.json
+    - summary.md
+  child_artifacts:
+    - last_model.pt
+    - training_log.json
+    - eval_result.json

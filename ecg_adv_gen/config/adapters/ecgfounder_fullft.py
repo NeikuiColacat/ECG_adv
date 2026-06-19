@@ -1,0 +1,370 @@
+"""Typed YAML adapter for ECGFounder full fine-tuning commands."""
+
+from __future__ import annotations
+
+from typing import Any, Mapping
+
+from .common import audit_equals, audit_require_options, argv_option_map, opt_first
+
+
+def _append_option(argv: list[Any], flag: str, value: Any) -> None:
+    if value is not None and value != "":
+        argv.extend([flag, value])
+
+
+def _append_flag(argv: list[Any], flag: str, enabled: Any) -> None:
+    if bool(enabled):
+        argv.append(flag)
+
+
+def _append_list_option(argv: list[Any], flag: str, values: Any) -> None:
+    if values:
+        argv.append(flag)
+        argv.extend(list(values))
+
+
+def build_ecgfounder_fullft_argv(config: Mapping[str, Any], context: Mapping[str, Any]) -> list[Any]:
+    """Build locked ECGFounder full-FT argv from typed YAML fields."""
+
+    paths = config["paths"]
+    paper = config["paper_protocol"]
+    kshot = paper["kshot"]
+    training = config["training"]
+    optimizer = training["optimizer"]
+    data = config["data"]
+    model = config["model"]
+    adaptation = config.get("adaptation") or {}
+    selection = adaptation.get("selection") or {}
+    loss = adaptation.get("loss") or {}
+    vae = adaptation.get("vae") or {}
+    hull = adaptation.get("hull") or {}
+    attack = adaptation.get("attack") or {}
+    latent_augmix = adaptation.get("latent_augmix") or {}
+    runtime = config.get("runtime") or {}
+    experiment = config["experiment"]
+    stage = str(adaptation.get("stage", "k500"))
+
+    seed = kshot["seed"]
+    subset_seed = kshot.get("subset_seed", seed)
+    if stage == "ptbxl_source":
+        argv: list[Any] = [
+            "--out_dir",
+            f"{paths['output_root']}/{experiment['name']}/{runtime['run_id']}",
+            "--stage",
+            "ptbxl_source",
+            "--epochs",
+            training["epochs"],
+            "--seed",
+            seed,
+            "--device",
+            "cuda",
+            "--num_workers",
+            training["num_workers"],
+            "--batch_size",
+            training["batch_size"],
+            "--eval_batch_size",
+            training["eval_batch_size"],
+            "--lr",
+            optimizer["lr"],
+            "--weight_decay",
+            optimizer["weight_decay"],
+            "--source_train_limit",
+            training.get("source_train_limit", 0),
+            "--cache_dir",
+            (data.get("cache") or {}).get("ecgfounder_fullft_signal_cache_dir", ""),
+            "--source_weight",
+            loss.get("source_weight", 1.0),
+            "--target_real_weight",
+            0.0,
+            "--target_val_count",
+            0,
+            "--selection_metric",
+            selection.get("metric", "source_auprc"),
+            "--checkpoint_policy",
+            selection.get("checkpoint_policy", "last"),
+            "--run_name",
+            adaptation.get("run_name", "ptbxl_super5_fullft_locked"),
+        ]
+        return argv
+
+    matrix = context.get("matrix") or {}
+    center = matrix.get("center")
+    if not center:
+        raise ValueError("ecgfounder_fullft adapter requires runner.matrix.center for K500 stage")
+
+    ref_meta = (
+        f"{data['kshot_subset_root']}/{center}/k{kshot['k']}_seed{subset_seed}/"
+        f"{center}_real_k{kshot['k']}_seed{subset_seed}.ref_meta.json"
+    )
+    anchor_base = (
+        f"{data['kshot_subset_root']}/{center}/k{kshot['k']}_seed{subset_seed}/"
+        f"{center}_real_k{kshot['k']}_seed{subset_seed}"
+    )
+    target_raw1000_npz_override = (
+        data.get("target_raw1000_npz_override")
+        or data.get("target_real_npz_override")
+        or ""
+    )
+    target_raw1000_npz_suffix = str(data.get("target_raw1000_npz_suffix") or data.get("target_real_npz_suffix") or "")
+    if not target_raw1000_npz_override and target_raw1000_npz_suffix:
+        suffix = target_raw1000_npz_suffix if target_raw1000_npz_suffix.startswith(".") else f".{target_raw1000_npz_suffix}"
+        target_raw1000_npz_override = f"{anchor_base}{suffix}"
+    argv: list[Any] = [
+        "--out_dir",
+        f"{paths['output_root']}/{experiment['name']}/{runtime['run_id']}",
+        "--center",
+        center,
+        "--ref_meta_json",
+        ref_meta,
+        "--k",
+        kshot["k"],
+        "--epochs",
+        training["epochs"],
+        "--seed",
+        seed,
+        "--device",
+        "cuda",
+        "--num_workers",
+        training["num_workers"],
+        "--batch_size",
+        training["batch_size"],
+        "--eval_batch_size",
+        training["eval_batch_size"],
+        "--lr",
+        optimizer["lr"],
+        "--weight_decay",
+        optimizer["weight_decay"],
+        "--source_train_limit",
+        training.get("source_train_limit", 0),
+        "--cache_dir",
+        (data.get("cache") or {}).get("ecgfounder_fullft_signal_cache_dir", ""),
+        "--source_weight",
+        loss.get("source_weight", 1.0),
+        "--target_real_weight",
+        loss.get("target_real_weight", 40.0),
+        "--target_val_count",
+        selection.get("target_val_count", 0),
+        "--selection_metric",
+        selection.get("metric", "source_auprc"),
+        "--checkpoint_policy",
+        selection.get("checkpoint_policy", "last"),
+        "--supervised_input_mode",
+        adaptation.get("supervised_input_mode", "raw1000"),
+    ]
+    _append_option(argv, "--target_raw1000_npz_override", target_raw1000_npz_override)
+    _append_option(argv, "--init_model_path", model.get("init_model_path", ""))
+    _append_option(argv, "--run_name", adaptation.get("run_name", ""))
+    if bool(vae.get("enabled", False)):
+        argv.append("--enable_vae_adv_stream")
+        _append_option(argv, "--adv_weight", vae.get("adv_weight", 20.0))
+        _append_option(argv, "--adv_weight_start", vae.get("adv_weight_start"))
+        _append_option(argv, "--adv_weight_warmup_epochs", vae.get("adv_weight_warmup_epochs", 0))
+        _append_option(argv, "--source_bce_loss_weight", loss.get("source_bce_loss_weight", 1.0))
+        _append_option(argv, "--target_real_bce_loss_weight", loss.get("target_real_bce_loss_weight", 1.0))
+        _append_option(argv, "--adv_bce_loss_weight", loss.get("adv_bce_loss_weight", 1.0))
+        _append_option(argv, "--adv_clean_logit_anchor_weight", loss.get("adv_clean_logit_anchor_weight", 0.0))
+        _append_option(argv, "--k_anchor", vae.get("k_anchor", 100))
+        _append_option(argv, "--anchor_sample_mode", vae.get("anchor_sample_mode", "stratified"))
+        _append_option(argv, "--anchor_sample_power", vae.get("anchor_sample_power", 1.0))
+        _append_option(argv, "--anchor_sample_min_weight", vae.get("anchor_sample_min_weight", 1e-6))
+        _append_option(argv, "--anchor_class_sample_weights", vae.get("anchor_class_sample_weights", ""))
+        _append_option(argv, "--anchor_class_max_repeat", vae.get("anchor_class_max_repeat", 0))
+        _append_list_option(argv, "--vae_classes_in_scope", vae.get("classes_in_scope"))
+        _append_option(argv, "--vae_min_class_count", vae.get("min_class_count", 1))
+        _append_option(argv, "--anchor_base_root", vae.get("anchor_base_root", ""))
+        _append_option(argv, "--hull_m", hull.get("M", 20))
+        _append_option(argv, "--hull_lambda", hull.get("lambda", 0.15))
+        _append_option(argv, "--hull_steps", hull.get("steps", 3))
+        _append_option(argv, "--hull_lr", hull.get("lr", 0.25))
+        _append_option(argv, "--hull_weight_mode", hull.get("weight_mode", "optimized"))
+        _append_option(argv, "--hull_dirichlet_alpha", hull.get("dirichlet_alpha", 1.0))
+        _append_option(argv, "--hull_attack_pos_weight_source", hull.get("attack_pos_weight_source", "none"))
+        _append_option(argv, "--hull_attack_pos_weight_clip", hull.get("attack_pos_weight_clip", 50.0))
+        _append_option(argv, "--hull_label_mode", hull.get("label_mode", "primary"))
+        _append_flag(argv, "--hull_include_anchor", hull.get("include_anchor", False))
+        _append_option(argv, "--hull_partner_pool", hull.get("partner_pool", "target"))
+        _append_option(argv, "--ptbxl_vae_cache", hull.get("ptbxl_vae_cache", ""))
+        _append_option(argv, "--source_partner_limit_per_class", hull.get("source_partner_limit_per_class", 0))
+        _append_option(argv, "--pgd_eps", attack.get("pgd_eps", 2.0))
+        _append_option(argv, "--pgd_batch", attack.get("pgd_batch", 4))
+    if bool(latent_augmix.get("enabled", False)):
+        argv.append("--enable_latent_augmix_branch")
+        _append_option(argv, "--latent_augmix_topology", latent_augmix.get("topology", "locked_three_chain"))
+        _append_option(argv, "--latent_augmix_copies", latent_augmix.get("copies", 1))
+        _append_option(argv, "--latent_augmix_width", latent_augmix.get("width", 3))
+        _append_option(argv, "--latent_augmix_depth", latent_augmix.get("depth", -1))
+        _append_option(argv, "--latent_augmix_alpha", latent_augmix.get("alpha", 1.0))
+        _append_option(argv, "--latent_augmix_severity", latent_augmix.get("severity", 5))
+        _append_option(argv, "--latent_augmix_severity_profile", latent_augmix.get("severity_profile", "standard"))
+        _append_list_option(argv, "--latent_augmix_ops", latent_augmix.get("ops", []))
+        _append_flag(argv, "--latent_augmix_renorm", latent_augmix.get("renorm", False))
+        _append_option(argv, "--latent_augmix_clip_abs", latent_augmix.get("clip_abs", 6.0))
+    return argv
+
+
+def audit_ecgfounder_fullft_command(
+    command: Mapping[str, Any],
+    *,
+    config: Mapping[str, Any],
+) -> dict[str, list[str]]:
+    """Return protocol audit errors for ECGFounder full-FT commands."""
+
+    errors: list[str] = []
+    warnings: list[str] = []
+    argv = [str(x) for x in command["argv"]]
+    script = argv[1].split("/")[-1] if len(argv) > 1 else ""
+    opts = argv_option_map(argv)
+    runner_adapter = str(((config.get("runner") or {}).get("adapter")) or "")
+    kshot = config["paper_protocol"]["kshot"]
+    expected_k = int(kshot["k"])
+    expected_seed = int(kshot.get("subset_seed", kshot["seed"]))
+    target_centers = set(config["paper_protocol"]["centers"]["target_4"])
+
+    if script != "run_ecgfounder_fullft_super5_pilot_20260523.py":
+        return {
+            "errors": [f"{script}: ecgfounder_fullft audit cannot handle this script"],
+            "warnings": warnings,
+        }
+
+    if runner_adapter != "ecgfounder_fullft":
+        audit_require_options(
+            errors,
+            script,
+            opts,
+            [
+                "--out_dir",
+                "--center",
+                "--ref_meta_json",
+                "--k",
+                "--seed",
+                "--init_head_path",
+                "--target_val_count",
+                "--target_val_seed",
+                "--selection_metric",
+            ],
+        )
+        center = str(opt_first(opts, "--center", ""))
+        if center not in target_centers:
+            errors.append(f"{script}: unexpected center {center!r}")
+        audit_equals(errors, script, opts, "--k", str(expected_k))
+        audit_equals(errors, script, opts, "--seed", str(expected_seed))
+        audit_equals(errors, script, opts, "--target_val_seed", str(expected_seed))
+        audit_equals(errors, script, opts, "--selection_metric", "source_plus_target_val_auprc")
+        ref_meta = str(opt_first(opts, "--ref_meta_json", ""))
+        if not ref_meta.endswith(f"_real_k{expected_k}_seed{expected_seed}.ref_meta.json"):
+            errors.append(f"{script}: ref_meta_json does not encode K{expected_k}/seed{expected_seed}")
+        return {"errors": errors, "warnings": warnings}
+
+    stage = str(opt_first(opts, "--stage", "k500"))
+    if stage == "ptbxl_source":
+        audit_require_options(
+            errors,
+            script,
+            opts,
+            [
+                "--out_dir",
+                "--stage",
+                "--epochs",
+                "--seed",
+                "--target_val_count",
+                "--selection_metric",
+                "--checkpoint_policy",
+                "--run_name",
+            ],
+        )
+        audit_equals(errors, script, opts, "--target_val_count", "0")
+        audit_equals(errors, script, opts, "--selection_metric", "source_auprc")
+        audit_equals(errors, script, opts, "--checkpoint_policy", "last")
+        audit_equals(errors, script, opts, "--run_name", "ptbxl_super5_fullft_locked")
+        if "--ref_meta_json" in opts or "--center" in opts:
+            errors.append(f"{script}: PTB-XL source full-FT stage must not pass K500 center/ref_meta options")
+        if "--init_model_path" in opts or "--init_head_path" in opts:
+            errors.append(f"{script}: PTB-XL source full-FT stage must start from official full ECGFounder checkpoint")
+        joined = " ".join(argv)
+        if "best_head.pt" in joined or "residual_adapter" in joined:
+            errors.append(f"{script}: locked PTB-XL full-FT command contains historical head-only/residual-adapter route")
+        return {"errors": errors, "warnings": warnings}
+
+    audit_require_options(
+        errors,
+        script,
+        opts,
+        [
+            "--out_dir",
+            "--center",
+            "--ref_meta_json",
+            "--k",
+            "--seed",
+            "--init_model_path",
+            "--target_val_count",
+            "--selection_metric",
+            "--checkpoint_policy",
+            "--supervised_input_mode",
+        ],
+    )
+    center = str(opt_first(opts, "--center", ""))
+    if center not in target_centers:
+        errors.append(f"{script}: unexpected center {center!r}")
+    audit_equals(errors, script, opts, "--k", str(expected_k))
+    audit_equals(errors, script, opts, "--seed", str(expected_seed))
+    audit_equals(errors, script, opts, "--target_val_count", "0")
+    audit_equals(errors, script, opts, "--selection_metric", "source_auprc")
+    audit_equals(errors, script, opts, "--checkpoint_policy", "last")
+    audit_equals(errors, script, opts, "--supervised_input_mode", "raw1000")
+    target_raw1000 = str(opt_first(opts, "--target_raw1000_npz_override", ""))
+    if not target_raw1000:
+        errors.append(f"{script}: locked raw1000 full-FT command must pass --target_raw1000_npz_override")
+    elif not target_raw1000.endswith(".raw1000.npz"):
+        errors.append(f"{script}: target_raw1000_npz_override must point at .raw1000.npz, got {target_raw1000}")
+
+    if "--target_val_seed" in opts:
+        errors.append(f"{script}: locked full-FT config must not pass --target_val_seed")
+    if "--init_head_path" in opts:
+        errors.append(f"{script}: locked full-FT config must not initialize from best_head.pt")
+    if "--enable_raw_corrupt_consistency" in opts or "--enable_raw_corrupt_aux_consistency" in opts:
+        errors.append(f"{script}: locked full-FT baseline must not enable raw corruption branches")
+    if any(opt in opts for opt in ("--ecgfounder_input_repair_flat_leads", "--ecgfounder_input_bandpass_low_hz", "--ecgfounder_input_bandpass_high_hz")):
+        errors.append(f"{script}: locked full-FT config must not enable ECGFounder input stabilizers")
+    joined = " ".join(argv)
+    if "best_head.pt" in joined or "residual_adapter" in joined:
+        errors.append(f"{script}: locked full-FT command contains historical head-only/residual-adapter route")
+    if "--enable_latent_augmix_branch" in opts:
+        if "--enable_vae_adv_stream" not in opts:
+            errors.append(f"{script}: locked latent AugMix requires --enable_vae_adv_stream")
+        audit_equals(errors, script, opts, "--latent_augmix_topology", "locked_three_chain")
+        audit_equals(errors, script, opts, "--latent_augmix_width", "3")
+        audit_equals(errors, script, opts, "--latent_augmix_severity", "5")
+        audit_equals(errors, script, opts, "--latent_augmix_severity_profile", "standard")
+        if "--latent_augmix_renorm" in opts:
+            errors.append(f"{script}: locked latent AugMix must not pre-z-score/renorm AugMix views")
+        expected_ops = [
+            "powerline_noise",
+            "emg_noise",
+            "baseline_wander",
+            "baseline_shift",
+            "random_leads_masking",
+        ]
+        actual_ops = list(opts.get("--latent_augmix_ops", []))
+        if actual_ops != expected_ops:
+            errors.append(f"{script}: locked latent AugMix ops must be {expected_ops}, got {actual_ops}")
+
+    ref_meta = str(opt_first(opts, "--ref_meta_json", ""))
+    expected_ref = (
+        f"/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets/{center}/"
+        f"k{expected_k}_seed{expected_seed}/{center}_real_k{expected_k}_seed{expected_seed}.ref_meta.json"
+    )
+    if not ref_meta.endswith(expected_ref):
+        errors.append(f"{script}: ref_meta_json does not use locked v7 K500 subset path")
+
+    init_model = str(opt_first(opts, "--init_model_path", ""))
+    run_id = str((config.get("runtime") or {}).get("run_id") or "")
+    if "--enable_vae_adv_stream" in opts:
+        expected_init = (
+            f"/ecgfounder_k500_fullft_locked/{run_id}/runs/"
+            f"{center}_k500_fullft_locked/last_model.pt"
+        )
+    else:
+        expected_init = f"/ecgfounder_ptbxl_super5_fullft_locked/{run_id}/runs/ptbxl_super5_fullft_locked/last_model.pt"
+    if run_id and not init_model.endswith(expected_init):
+        errors.append(f"{script}: init_model_path must consume the locked upstream last_model.pt from the same run_id")
+    return {"errors": errors, "warnings": warnings}

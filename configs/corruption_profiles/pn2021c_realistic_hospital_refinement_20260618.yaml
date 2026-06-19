@@ -1,0 +1,113 @@
+metadata:
+  profile_family: pn2021c_realistic_hospital_refinement_20260618
+  public_severity: 5
+  score_profile: realistic_hospital
+  calibration_centers:
+    - cpsc_2018
+    - georgia
+  target: >
+    Narrow refinement after the first realistic_hospital sweep. Keep the same
+    raw/acquisition-side corruption principle and explore only operators that
+    missed the first two-center realistic target.
+profiles:
+  emg_amp0p32:
+    emg_noise:
+      5:
+        max_amplitude: 0.32
+        min_amplitude: 0.0
+        p: 1.0
+        dependency: false
+  emg_amp0p34:
+    emg_noise:
+      5:
+        max_amplitude: 0.34
+        min_amplitude: 0.0
+        p: 1.0
+        dependency: false
+  emg_amp0p36:
+    emg_noise:
+      5:
+        max_amplitude: 0.36
+        min_amplitude: 0.0
+        p: 1.0
+        dependency: false
+  emg_amp0p38:
+    emg_noise:
+      5:
+        max_amplitude: 0.38
+        min_amplitude: 0.0
+        p: 1.0
+        dependency: false
+  emg_amp0p42:
+    emg_noise:
+      5:
+        max_amplitude: 0.42
+        min_amplitude: 0.0
+        p: 1.0
+        dependency: false
+  power_native_amp3:
+    powerline_noise:
+      5:
+        max_amplitude: 3.0
+        min_amplitude: 0.0
+        p: 1.0
+        dependency: false
+  power_native_amp3p5:
+    powerline_noise:
+      5:
+        max_amplitude: 3.5
+        min_amplitude: 0.0
+        p: 1.0
+        dependency: false
+  power_native_amp4p5:
+    powerline_noise:
+      5:
+        max_amplitude: 4.5
+        min_amplitude: 0.0
+        p: 1.0
+        dependency: false
+  power_native_amp5:
+    powerline_noise:
+      5:
+        max_amplitude: 5.0
+        min_amplitude: 0.0
+        p: 1.0
+        dependency: false
+  mask_max4:
+    random_leads_masking:
+      5:
+        max_masked_leads: 4
+        min_masked_leads: 1
+        mask_leads_selection: random
+        p: 1.0
+  mask_max5:
+    random_leads_masking:
+      5:
+        max_masked_leads: 5
+        min_masked_leads: 1
+        mask_leads_selection: random
+        p: 1.0
+  mask_p0p15:
+    random_leads_masking:
+      5:
+        mask_leads_prob: 0.15
+        mask_leads_selection: random
+        p: 1.0
+  mask_p0p20:
+    random_leads_masking:
+      5:
+        mask_leads_prob: 0.20
+        mask_leads_selection: random
+        p: 1.0
+  mask_p0p25:
+    random_leads_masking:
+      5:
+        mask_leads_prob: 0.25
+        mask_leads_selection: random
+        p: 1.0
+  mask_p0p30:
+    random_leads_masking:
+      5:
+        mask_leads_prob: 0.30
+        mask_leads_selection: random
+        p: 1.0

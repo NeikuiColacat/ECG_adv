@@ -14,6 +14,7 @@ from ecg_adv_gen.adaptation import (
     build_latent_augmix_branch_signals,
     build_raw_augmix_views,
     build_raw_corruption_views,
+    build_three_chain_vae_lhat_augmix_views,
     derive_class_trust,
     derive_kshot_anchor_class_weights,
     dirichlet_with_first_weight_cap,
@@ -257,6 +258,72 @@ def test_raw_augmix_views_record_mixed_view_ops_when_chain_has_multiple_ops():
     )
 
     assert stats["view_ops"] == ["__mixed__"]
+
+
+def test_three_chain_vae_lhat_augmix_uses_two_corruption_chains_and_uncorrupted_adv_chain():
+    anchor = np.zeros((2, 12, 8), dtype=np.float32)
+    adv = np.full((2, 12, 8), 7.0, dtype=np.float32)
+    op_inputs: list[float] = []
+    calls: list[tuple[str, int, str]] = []
+
+    def apply_op(sig: np.ndarray, op_name: str, severity: int, severity_profile: str) -> np.ndarray:
+        op_inputs.append(float(sig.mean()))
+        calls.append((op_name, severity, severity_profile))
+        return sig + (1.0 if op_name == "op_a" else 2.0)
+
+    views, stats = build_three_chain_vae_lhat_augmix_views(
+        anchor,
+        adv,
+        copies=1,
+        severity=5,
+        severity_profile="pn2021c_official_s5",
+        width=3,
+        depth=2,
+        alpha=1.0,
+        ops=["op_a", "op_b"],
+        rng=np.random.default_rng(123),
+        op_apply_fn=apply_op,
+        available_ops=["op_a", "op_b"],
+        renorm=False,
+        clip_abs=0.0,
+    )
+
+    assert views.shape == (2, 12, 8)
+    assert stats["topology"] == "locked_three_chain_vae_lhat_augmix"
+    assert stats["width"] == 3
+    assert stats["corruption_chain_count"] == 2
+    assert stats["adversarial_chain_count"] == 1
+    assert stats["adversarial_chain_corrupted"] is False
+    assert stats["severity_profile"] == "pn2021c_official_s5"
+    assert stats["renorm"] is False
+    assert len(calls) == 2 * 2 * 2
+    assert {call[1] for call in calls} == {5}
+    assert {call[2] for call in calls} == {"pn2021c_official_s5"}
+    assert all(mean < 7.0 for mean in op_inputs)
+    assert float(np.max(views)) > 0.0
+
+
+def test_three_chain_vae_lhat_augmix_rejects_degenerate_width():
+    anchor = np.zeros((1, 12, 8), dtype=np.float32)
+    adv = np.ones((1, 12, 8), dtype=np.float32)
+
+    def apply_op(sig: np.ndarray, op_name: str, severity: int, severity_profile: str) -> np.ndarray:
+        return sig + 1.0
+
+    with pytest.raises(ValueError, match="exactly three chains"):
+        build_three_chain_vae_lhat_augmix_views(
+            anchor,
+            adv,
+            copies=1,
+            severity=5,
+            width=1,
+            depth=1,
+            alpha=1.0,
+            ops=["op_a"],
+            rng=np.random.default_rng(123),
+            op_apply_fn=apply_op,
+            available_ops=["op_a"],
+        )
 
 
 def test_raw_corruption_views_apply_optional_postprocess_fn():

@@ -30,6 +30,8 @@
           "enum": [
             "benchmark_vae_lhat",
             "direct_finetune",
+            "ecgfounder_fullft",
+            "ecgfounder_pn2021c_eval",
             "ecgfounder_vae_lhat",
             "effnet_vae_lhat",
             "pn2021_eval",
@@ -104,6 +106,8 @@
           "properties": {
             "required_cache_version": {"type": "string"},
             "severity_profile": {"type": "string"},
+            "severity_params_file": {"type": "string"},
+            "severity_params_name": {"type": "string"},
             "corruption_seed": {"type": "integer"}
           },
           "additionalProperties": true

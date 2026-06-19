@@ -1775,6 +1775,7 @@ def _append_k500_ref(
     seed: int,
     base: Path,
     include_latent: bool,
+    signal_path: Path | None = None,
 ) -> None:
     group = KShotArtifactGroup.from_base(
         base,
@@ -1783,6 +1784,8 @@ def _append_k500_ref(
         seed=seed,
         include_latent=include_latent,
     )
+    signal_path = signal_path or group.signals
+    signal_role = "kshot_raw1000_signals" if str(signal_path).endswith(".raw1000.npz") else "kshot_signals"
     refs.append(
         {
             "center": group.center,
@@ -1790,7 +1793,7 @@ def _append_k500_ref(
             "seed": group.seed,
             "anchor_base": str(group.base),
             "ref_meta_json": _path_record("kshot_ref_meta", group.ref_meta),
-            "signals_npz": _path_record("kshot_signals", group.signals),
+            "signals_npz": _path_record(signal_role, signal_path),
             "latent_npz": (
                 _path_record("kshot_latents", group.latents)
                 if include_latent
@@ -1991,6 +1994,9 @@ def _prompt_token_online_at_child_run(opts: dict[str, Any]) -> dict[str, Any]:
 
 def _vae_child_run(opts: dict[str, Any], center: str) -> dict[str, Any]:
     out_root = Path(str(_opt_first(opts, "--out_root", "")))
+    checkpoint_policy = str(_opt_first(opts, "--checkpoint_policy", "best"))
+    checkpoint_role = "last_model" if checkpoint_policy == "last" else "best_model"
+    checkpoint_name = "last_model.pt" if checkpoint_policy == "last" else "best_model.pt"
     child_dir = out_root / build_effnet_vae_lhat_run_leaf(
         {
             "center": center,
@@ -2035,7 +2041,7 @@ def _vae_child_run(opts: dict[str, Any], center: str) -> dict[str, Any]:
         "output_root": str(out_root),
         "child_run_dir": str(child_dir),
         "expected_artifacts": [
-            _path_record("best_model", child_dir / "best_model.pt"),
+            _path_record(checkpoint_role, child_dir / checkpoint_name),
             _path_record("launch_config", child_dir / "launch_config.json"),
             _path_record("train_stdout", child_dir / "train_stdout.log"),
             _path_record("eval_log", child_dir / "eval_full.log"),
@@ -2086,12 +2092,15 @@ def _ecgfounder_child_run(opts: dict[str, Any], center: str) -> dict[str, Any]:
         "seed": _opt_first(opts, "--seed", "20260531"),
     }
     child_dir = out_dir / "runs" / build_ecgfounder_fullft_run_leaf(params)
+    checkpoint_policy = str(_opt_first(opts, "--checkpoint_policy", "best"))
+    checkpoint_role = "last_model" if checkpoint_policy == "last" else "best_model"
+    checkpoint_name = "last_model.pt" if checkpoint_policy == "last" else "best_model.pt"
     return {
         "center": center,
         "output_root": str(out_dir),
         "child_run_dir": str(child_dir),
         "expected_artifacts": [
-            _path_record("best_model", child_dir / "best_model.pt"),
+            _path_record(checkpoint_role, child_dir / checkpoint_name),
             _path_record("training_log", child_dir / "training_log.json"),
             _path_record("eval_result", child_dir / "eval_result.json"),
         ],
@@ -2283,11 +2292,15 @@ def build_artifact_trace(
 
         if _opt_first(opts, "--init_ckpt"):
             inputs["checkpoints"].append(_path_record("command.init_ckpt", _opt_first(opts, "--init_ckpt")))
+        if _opt_first(opts, "--init_model_path"):
+            inputs["checkpoints"].append(_path_record("command.init_model_path", _opt_first(opts, "--init_model_path")))
         if _opt_first(opts, "--model_dir"):
+            checkpoint_name = str(_opt_first(opts, "--checkpoint_name", "best_model.pt"))
+            checkpoint_stem = Path(checkpoint_name).stem
             inputs["checkpoints"].append(
                 _path_record(
-                    "command.model_dir.best_model",
-                    Path(str(_opt_first(opts, "--model_dir"))) / "best_model.pt",
+                    f"command.model_dir.{checkpoint_stem}",
+                    Path(str(_opt_first(opts, "--model_dir"))) / checkpoint_name,
                 )
             )
         if _opt_first(opts, "--init_head_path"):
@@ -2433,6 +2446,17 @@ def build_artifact_trace(
             if target_real_npz.endswith(".signals.npz"):
                 base = Path(_strip_known_suffix(target_real_npz, ".signals.npz"))
                 _append_k500_ref(inputs["k500_refs"], center=center, k=k, seed=seed, base=base, include_latent=False)
+            elif target_real_npz.endswith(".raw1000.npz"):
+                base = Path(_strip_known_suffix(target_real_npz, ".raw1000.npz"))
+                _append_k500_ref(
+                    inputs["k500_refs"],
+                    center=center,
+                    k=k,
+                    seed=seed,
+                    base=base,
+                    include_latent=False,
+                    signal_path=Path(target_real_npz),
+                )
             child = _prompt_token_online_at_child_run(opts)
             child.update({"command_index": command_index, "name": command["name"], "matrix": command["matrix"]})
             child_runs.append(child)
@@ -2459,6 +2483,7 @@ def build_artifact_trace(
             matrix_case = _matrix_case(command)
             command_k = int(matrix_case.get("k", k))
             command_seed = int(_opt_first(opts, "--seed", seed))
+            signal_override = str(_opt_first(opts, "--target_real_npz_override", ""))
             _append_k500_ref(
                 inputs["k500_refs"],
                 center=center,
@@ -2466,14 +2491,26 @@ def build_artifact_trace(
                 seed=command_seed,
                 base=anchor_base,
                 include_latent=True,
+                signal_path=Path(signal_override) if signal_override else None,
             )
             child = _vae_child_run(opts, center)
             child.update({"command_index": command_index, "name": command["name"], "matrix": command["matrix"]})
             child_runs.append(child)
         elif script == "run_ecgfounder_fullft_super5_pilot_20260523.py":
-            ref_meta = str(_opt_first(opts, "--ref_meta_json", ""))
-            base = Path(_strip_known_suffix(ref_meta, ".ref_meta.json"))
-            _append_k500_ref(inputs["k500_refs"], center=center, k=k, seed=seed, base=base, include_latent=False)
+            stage = str(_opt_first(opts, "--stage", "k500"))
+            if stage != "ptbxl_source":
+                ref_meta = str(_opt_first(opts, "--ref_meta_json", ""))
+                base = Path(_strip_known_suffix(ref_meta, ".ref_meta.json"))
+                signal_override = str(_opt_first(opts, "--target_raw1000_npz_override", ""))
+                _append_k500_ref(
+                    inputs["k500_refs"],
+                    center=center,
+                    k=k,
+                    seed=seed,
+                    base=base,
+                    include_latent=False,
+                    signal_path=Path(signal_override) if signal_override else None,
+                )
             cache_dir = str(_opt_first(opts, "--cache_dir", ""))
             if cache_dir:
                 inputs["data_caches"].append(_path_record("ecgfounder.fullft.signal_cache_dir", cache_dir))
@@ -2577,6 +2614,36 @@ def build_artifact_trace(
             clean_eval = str(_opt_first(opts, "--clean_eval_json", ""))
             if clean_eval:
                 inputs["checkpoints"].append(_path_record("command.clean_eval_json", clean_eval))
+            child = _eval_child_run(opts, center)
+            child.update({"command_index": command_index, "name": command["name"], "matrix": command["matrix"]})
+            child_runs.append(child)
+        elif script == "eval_ecgfounder_pn2021_corruptions.py":
+            run_dir = Path(str(_opt_first(opts, "--run_dir", "")))
+            if run_dir:
+                inputs["checkpoints"].append(_path_record("command.run_dir.last_model", run_dir / "last_model.pt"))
+                inputs["data_caches"].append(_path_record("command.run_dir.eval_result", run_dir / "eval_result.json"))
+            if center:
+                ref_base = (
+                    Path(str(config["data"]["kshot_subset_root"]))
+                    / center
+                    / f"k{k}_seed{seed}"
+                    / f"{center}_real_k{k}_seed{seed}"
+                )
+                _append_k500_ref(
+                    inputs["k500_refs"],
+                    center=center,
+                    k=k,
+                    seed=seed,
+                    base=ref_base,
+                    include_latent=False,
+                )
+            for option, role in [
+                ("--clean_cache_dir", "pn2021_clean_cache_dir"),
+                ("--clean_mmap_cache_dir", "pn2021_clean_mmap_cache_dir"),
+            ]:
+                value = str(_opt_first(opts, option, ""))
+                if value:
+                    inputs["data_caches"].append(_path_record(role, value, required=False))
             child = _eval_child_run(opts, center)
             child.update({"command_index": command_index, "name": command["name"], "matrix": command["matrix"]})
             child_runs.append(child)

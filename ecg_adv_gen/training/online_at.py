@@ -36,6 +36,15 @@ def resolve_quick_eval_plan(
     """Resolve the online-AT quick-eval branch without touching datasets."""
 
     source = str(quick_eval_source)
+    if source == "none":
+        return QuickEvalPlan(
+            source=source,
+            metric_view="disabled",
+            centers=(),
+            uses_heldout_selection=False,
+            cache_path=None,
+            message="quick_eval_source=none; checkpoint selection eval disabled",
+        )
     if source == "target_real_val":
         if not target_val_available:
             raise ValueError("--quick_eval_source target_real_val requires --target_real_npz")

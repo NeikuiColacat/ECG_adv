@@ -16,6 +16,7 @@ model:
 adaptation:
   run_tag_extra: k500_callatentaugmix
   latent_augmix:
+    topology: locked_three_chain
     latent_weight_cap: 0.25
     width: 3
     depth: -1

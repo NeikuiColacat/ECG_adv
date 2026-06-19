@@ -24,6 +24,12 @@ _PROFILES: tuple[ManagedScriptProfile, ...] = (
         family="pn2021_refexcluded_eval",
     ),
     ManagedScriptProfile(
+        script_name="eval_ecgfounder_pn2021_corruptions.py",
+        relative_path="scripts/triple_labels/eval_ecgfounder_pn2021_corruptions.py",
+        wrapper_root="scripts/triple_labels",
+        family="ecgfounder_pn2021_corruption_eval",
+    ),
+    ManagedScriptProfile(
         script_name="eval_pn2021_corruptions.py",
         relative_path="scripts/triple_labels/eval_pn2021_corruptions.py",
         wrapper_root="scripts/triple_labels",

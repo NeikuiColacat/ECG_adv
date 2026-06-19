@@ -78,6 +78,11 @@ from .pn2021_waveforms import (
     PN2021MaterializedCenter,
     materialize_pn2021_center_records,
 )
+from .pn2021_raw_kshot import (
+    Raw1000KShot,
+    materialize_selected_raw1000_from_ref_meta,
+    save_raw1000_kshot_npz,
+)
 from .real_anchors import (
     anchor_classes_in_scope,
     anchor_label_counts,
@@ -147,6 +152,7 @@ __all__ = [
     "SelectedGatedPoolResult",
     "PN2021HeaderRecord",
     "PN2021MaterializedCenter",
+    "Raw1000KShot",
     "PN2021_HEADER_COUNT_PATTERN",
     "PN2021_HEADER_COUNT_SCOPE",
     "PN2021_HEADER_SUFFIX",
@@ -184,6 +190,7 @@ __all__ = [
     "load_synth_pool",
     "load_synthetic_npz_arrays",
     "materialize_pn2021_center_records",
+    "materialize_selected_raw1000_from_ref_meta",
     "merge_gated_pool_artifacts",
     "normalize_synthetic_signals",
     "parse_header_snomeds",
@@ -201,6 +208,7 @@ __all__ = [
     "select_kshot_indices_from_ref_root",
     "select_primary_label_proportional_min1",
     "signal_cache_shape",
+    "save_raw1000_kshot_npz",
     "validate_kshot_artifacts",
     "validate_data_path_manifest",
     "validate_data_preprocess_config",

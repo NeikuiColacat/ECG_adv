@@ -86,6 +86,7 @@ def _load(name: str) -> dict:
         ("effnet_vae_lhat_calibrated_latent_augmix_k500_v7_sjr_rgq_cpsc_2018.yaml", 1),
         ("effnet_vae_lhat_calibrated_latent_augmix_norenorm_k500_v7_sjr_rgq_cpsc_2018.yaml", 1),
         ("effnet_vae_lhat_calibrated_latent_augmix_directloss_k500_v7_sjr_rgq_cpsc_2018.yaml", 1),
+        ("effnet_vae_lhat_augmix_threechain_locked_k500.yaml", 4),
         ("effnet_vae_lhat_fullpool_raw_augmix_depth1_w1_m100_stabilizer35_k500_v7_sjr_rgq.yaml", 4),
         ("effnet_vae_lhat_fullpool_raw_augmix_depth1_w1_m100_stabilizer35_k500_v7_sjr_rgq_smoke.yaml", 1),
         ("effnet_vae_lhat_maskshift_consistency_k500_v7_sjr_rgq.yaml", 4),
@@ -121,6 +122,9 @@ def _load(name: str) -> dict:
         ("pn2021_eval_v6_refexcluded_smoke.yaml", 4),
         ("pn2021_eval_v7_sjr_rgq_refexcluded.yaml", 4),
         ("pn2021c_effnet_v7_augmix_vs_noaug.yaml", 8),
+        ("pn2021c_official_s5_locked_protocol.yaml", 8),
+        ("pn2021c_effnet_threechain_locked_official_s5.yaml", 4),
+        ("pn2021c_ecgfounder_threechain_locked_official_s5.yaml", 4),
         ("pn2021c_effnet_v7_strong_10to20pp.yaml", 8),
         ("pn2021c_effnet_v7_strong_10to20pp_smoke.yaml", 2),
         ("pn2021c_effnet_v7_strong_raw_candidates.yaml", 20),
@@ -684,6 +688,7 @@ def test_effnet_vae_lhat_calibrated_latent_augmix_config_exposes_profile_flag():
     assert _option_value(argv, "--center") == "cpsc_2018"
     assert "--enable_raw_corrupt_consistency" not in argv
     assert _option_value(argv, "--seed") == "20260601"
+    assert _option_value(argv, "--latent_augmix_topology") == "locked_three_chain"
     assert _option_value(argv, "--latent_augmix_severity") == "5"
     assert _option_value(argv, "--latent_augmix_severity_profile") == "calibrated_10to20pp"
     assert _option_value(argv, "--run_tag_extra") == "k500_callatentaugmix"
@@ -725,6 +730,49 @@ def test_effnet_vae_lhat_calibrated_latent_augmix_directloss_config_exposes_flag
     assert _option_value(argv, "--latent_augmix_consistency_weight") == "2.0"
     assert _option_value(argv, "--latent_augmix_bce_weight") == "1.0"
     assert _option_value(argv, "--run_tag_extra") == "k500_callatentaugmix_directloss"
+
+
+def test_effnet_vae_lhat_threechain_locked_k500_config_uses_official_s5_last_checkpoint():
+    config = _load("effnet_vae_lhat_augmix_threechain_locked_k500.yaml")
+    paths = validate_experiment_config(config, repo_root=REPO)
+    commands = build_runner_commands(config)
+    manifest = make_dry_run_manifest(
+        config,
+        commands=commands,
+        local_paths=paths,
+        run_id="pytest_effnet_threechain_locked",
+        cli_args=argparse.Namespace(dry_run=True, write_plan=False),
+    )
+
+    assert len(commands) == 4
+    refs = manifest["artifact_trace"]["inputs"]["k500_refs"]
+    assert len(refs) == 4
+    assert all(item["signals_npz"]["role"] == "kshot_raw1000_signals" for item in refs)
+    assert all(item["signals_npz"]["path"].endswith(".raw1000.npz") for item in refs)
+    for command in commands:
+        argv = command["argv"]
+        assert "--enable_raw_corrupt_consistency" not in argv
+        assert _option_value(argv, "--latent_augmix_topology") == "locked_three_chain"
+        assert _option_value(argv, "--latent_augmix_copies") == "2"
+        assert _option_value(argv, "--latent_augmix_width") == "3"
+        assert _option_value(argv, "--latent_augmix_severity") == "5"
+        assert _option_value(argv, "--latent_augmix_severity_profile") == "standard"
+        assert _option_value(argv, "--checkpoint_policy") == "last"
+        assert _option_value(argv, "--quick_eval_source") == "none"
+        assert _option_value(argv, "--target_real_val_fraction") == "0.0"
+        assert _option_value(argv, "--target_real_norm_mode") == "per_sample_global"
+        assert _option_value(argv, "--target_real_npz_override").endswith(
+            f"/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets/{command['matrix']['center']}/"
+            f"k500_seed20260601/{command['matrix']['center']}_real_k500_seed20260601.raw1000.npz"
+        )
+        assert _option_value(argv, "--run_tag_extra") == "k500_threechain_s5_locked"
+        assert _all_option_values(argv, "--latent_augmix_ops") == [
+            "powerline_noise",
+            "emg_noise",
+            "baseline_wander",
+            "baseline_shift",
+            "random_leads_masking",
+        ]
 
 
 def test_effnet_vae_lhat_fullpool_raw_augmix_config_exposes_flags():
@@ -2354,6 +2402,214 @@ def test_ecgfounder_inithead_command_has_required_k500_inputs():
         assert _option_value(argv, "--target_val_count") == "100"
 
 
+def test_ecgfounder_locked_fullft_adapter_is_registered():
+    from ecg_adv_gen.config.adapters.registry import runner_adapter_names
+
+    assert "ecgfounder_fullft" in runner_adapter_names()
+
+
+def test_ecgfounder_locked_k500_fullft_command_uses_last_checkpoint_no_head_route():
+    config = _load("ecgfounder_k500_fullft_locked.yaml")
+    validate_experiment_config(config, repo_root=REPO)
+    commands = build_runner_commands(config)
+
+    assert config["runner"]["adapter"] == "ecgfounder_fullft"
+    assert config["paper_protocol"]["selection"]["policy"] == "last_checkpoint_only"
+    assert len(commands) == 4
+    for command in commands:
+        argv = command["argv"]
+        center = command["matrix"]["center"]
+        assert argv[1].endswith("scripts/paper/run_ecgfounder_fullft_super5_pilot_20260523.py")
+        assert _option_value(argv, "--center") == center
+        assert _option_value(argv, "--ref_meta_json").endswith(
+            f"/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets/{center}/"
+            f"k500_seed20260531/{center}_real_k500_seed20260531.ref_meta.json"
+        )
+        assert _option_value(argv, "--k") == "500"
+        assert _option_value(argv, "--seed") == "20260531"
+        assert _option_value(argv, "--target_val_count") == "0"
+        assert "--target_val_seed" not in argv
+        assert _option_value(argv, "--selection_metric") == "source_auprc"
+        assert _option_value(argv, "--checkpoint_policy") == "last"
+        assert _option_value(argv, "--init_model_path").endswith(
+            "/ecgfounder_ptbxl_super5_fullft_locked/pytest_run/runs/ptbxl_super5_fullft_locked/last_model.pt"
+        )
+        assert _option_value(argv, "--supervised_input_mode") == "raw1000"
+        assert _option_value(argv, "--target_raw1000_npz_override").endswith(
+            f"/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets/{center}/"
+            f"k500_seed20260531/{center}_real_k500_seed20260531.raw1000.npz"
+        )
+        assert "--init_head_path" not in argv
+        assert "--enable_raw_corrupt_consistency" not in argv
+        assert "--ecgfounder_input_repair_flat_leads" not in argv
+        assert "--ecgfounder_input_bandpass_low_hz" not in argv
+        assert "--ecgfounder_input_bandpass_high_hz" not in argv
+        assert "best_head.pt" not in " ".join(argv)
+        assert "residual_adapter" not in " ".join(argv)
+
+
+def test_ecgfounder_locked_threechain_augmix_command_uses_fullft_last_checkpoint_mainline():
+    config = _load("ecgfounder_vae_lhat_augmix_threechain_locked_k500.yaml")
+    validate_experiment_config(config, repo_root=REPO)
+    commands = build_runner_commands(config)
+
+    assert config["runner"]["adapter"] == "ecgfounder_fullft"
+    assert config["paper_protocol"]["selection"]["policy"] == "last_checkpoint_only"
+    assert len(commands) == 4
+    for command in commands:
+        argv = command["argv"]
+        center = command["matrix"]["center"]
+        joined = " ".join(argv)
+        assert argv[1].endswith("scripts/paper/run_ecgfounder_fullft_super5_pilot_20260523.py")
+        assert _option_value(argv, "--center") == center
+        assert _option_value(argv, "--checkpoint_policy") == "last"
+        assert _option_value(argv, "--target_val_count") == "0"
+        assert "--target_val_seed" not in argv
+        assert _option_value(argv, "--selection_metric") == "source_auprc"
+        assert _option_value(argv, "--supervised_input_mode") == "raw1000"
+        assert _option_value(argv, "--target_raw1000_npz_override").endswith(
+            f"/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets/{center}/"
+            f"k500_seed20260531/{center}_real_k500_seed20260531.raw1000.npz"
+        )
+        assert _option_value(argv, "--init_model_path").endswith(
+            f"/ecgfounder_k500_fullft_locked/pytest_run/runs/{center}_k500_fullft_locked/last_model.pt"
+        )
+        assert "--enable_vae_adv_stream" in argv
+        assert "--enable_latent_augmix_branch" in argv
+        assert _option_value(argv, "--latent_augmix_topology") == "locked_three_chain"
+        assert _option_value(argv, "--latent_augmix_width") == "3"
+        assert _option_value(argv, "--latent_augmix_severity") == "5"
+        assert _option_value(argv, "--latent_augmix_severity_profile") == "standard"
+        assert _all_option_values(argv, "--latent_augmix_ops") == [
+            "powerline_noise",
+            "emg_noise",
+            "baseline_wander",
+            "baseline_shift",
+            "random_leads_masking",
+        ]
+        assert "--enable_raw_corrupt_consistency" not in argv
+        assert "--enable_raw_corrupt_aux_consistency" not in argv
+        assert "--ecgfounder_input_repair_flat_leads" not in argv
+        assert "--ecgfounder_input_bandpass_low_hz" not in argv
+        assert "--init_head_path" not in argv
+        assert "best_head.pt" not in joined
+        assert "residual_adapter" not in joined
+
+
+def test_ecgfounder_locked_threechain_augmix_manifest_expects_last_model():
+    config = _load("ecgfounder_vae_lhat_augmix_threechain_locked_k500.yaml")
+    paths = validate_experiment_config(config, repo_root=REPO)
+    commands = build_runner_commands(config)
+    manifest = make_dry_run_manifest(
+        config,
+        commands=commands,
+        local_paths=paths,
+        run_id="pytest_ecgfounder_threechain_locked",
+        cli_args=argparse.Namespace(dry_run=True, write_plan=False),
+    )
+    child_runs = manifest["artifact_trace"]["expected_outputs"]["child_runs"]
+    checkpoint_inputs = manifest["artifact_trace"]["inputs"]["checkpoints"]
+    refs = manifest["artifact_trace"]["inputs"]["k500_refs"]
+
+    assert len(child_runs) == len(commands) == 4
+    assert len(refs) == 4
+    assert all(item["signals_npz"]["role"] == "kshot_raw1000_signals" for item in refs)
+    assert all(item["signals_npz"]["path"].endswith(".raw1000.npz") for item in refs)
+    assert all(
+        any(item["role"] == "last_model" and item["path"].endswith("/last_model.pt")
+            for item in child["expected_artifacts"])
+        for child in child_runs
+    )
+    assert all(
+        not any(item["path"].endswith("best_head.pt") for item in child["expected_artifacts"])
+        for child in child_runs
+    )
+    assert any(
+        item["role"] == "command.init_model_path"
+        and "/ecgfounder_k500_fullft_locked/" in item["path"]
+        and item["path"].endswith("/last_model.pt")
+        for item in checkpoint_inputs
+    )
+
+
+def test_ecgfounder_locked_ptbxl_fullft_command_is_source_only_last_checkpoint():
+    config = _load("ecgfounder_ptbxl_super5_fullft_locked.yaml")
+    validate_experiment_config(config, repo_root=REPO)
+    commands = build_runner_commands(config)
+
+    assert config["runner"]["adapter"] == "ecgfounder_fullft"
+    assert config["adaptation"]["stage"] == "ptbxl_source"
+    assert len(commands) == 1
+    argv = commands[0]["argv"]
+    assert argv[1].endswith("scripts/paper/run_ecgfounder_fullft_super5_pilot_20260523.py")
+    assert _option_value(argv, "--stage") == "ptbxl_source"
+    assert _option_value(argv, "--checkpoint_policy") == "last"
+    assert _option_value(argv, "--selection_metric") == "source_auprc"
+    assert _option_value(argv, "--run_name") == "ptbxl_super5_fullft_locked"
+    assert "--ref_meta_json" not in argv
+    assert "--center" not in argv
+    assert "--init_model_path" not in argv
+    assert "--init_head_path" not in argv
+    assert "--target_val_seed" not in argv
+    assert "--enable_raw_corrupt_consistency" not in argv
+    assert "best_head.pt" not in " ".join(argv)
+    assert "residual_adapter" not in " ".join(argv)
+
+
+def test_ecgfounder_locked_ptbxl_fullft_manifest_has_no_k500_refs():
+    config = _load("ecgfounder_ptbxl_super5_fullft_locked.yaml")
+    paths = validate_experiment_config(config, repo_root=REPO)
+    commands = build_runner_commands(config)
+    manifest = make_dry_run_manifest(
+        config,
+        commands=commands,
+        local_paths=paths,
+        run_id="pytest_ecgfounder_ptbxl_fullft",
+        cli_args=argparse.Namespace(dry_run=True, write_plan=False),
+    )
+    child_runs = manifest["artifact_trace"]["expected_outputs"]["child_runs"]
+    launch_artifacts = manifest["artifact_trace"]["expected_outputs"]["launch_artifacts_declared"]
+
+    assert manifest["artifact_trace"]["inputs"]["k500_refs"] == []
+    assert "k500_ref_ids.json" not in launch_artifacts
+    assert len(child_runs) == 1
+    assert child_runs[0]["child_run_dir"].endswith("/runs/ptbxl_super5_fullft_locked")
+    paths_by_role = {item["role"]: item["path"] for item in child_runs[0]["expected_artifacts"]}
+    assert paths_by_role["last_model"].endswith("/runs/ptbxl_super5_fullft_locked/last_model.pt")
+
+
+def test_ecgfounder_locked_k500_fullft_manifest_expects_last_model():
+    config = _load("ecgfounder_k500_fullft_locked.yaml")
+    paths = validate_experiment_config(config, repo_root=REPO)
+    commands = build_runner_commands(config)
+    manifest = make_dry_run_manifest(
+        config,
+        commands=commands,
+        local_paths=paths,
+        run_id="pytest_ecgfounder_locked_fullft",
+        cli_args=argparse.Namespace(dry_run=True, write_plan=False),
+    )
+    child_runs = manifest["artifact_trace"]["expected_outputs"]["child_runs"]
+    checkpoint_inputs = manifest["artifact_trace"]["inputs"]["checkpoints"]
+    refs = manifest["artifact_trace"]["inputs"]["k500_refs"]
+
+    assert len(child_runs) == len(commands) == 4
+    assert len(refs) == 4
+    assert all(item["signals_npz"]["role"] == "kshot_raw1000_signals" for item in refs)
+    assert all(item["signals_npz"]["path"].endswith(".raw1000.npz") for item in refs)
+    assert any(
+        item["role"] == "command.init_model_path" and item["path"].endswith("/last_model.pt")
+        for item in checkpoint_inputs
+    )
+    for child in child_runs:
+        roles = {item["role"] for item in child["expected_artifacts"]}
+        paths_by_role = {item["role"]: item["path"] for item in child["expected_artifacts"]}
+        assert "last_model" in roles
+        assert paths_by_role["last_model"].endswith("/last_model.pt")
+        assert "best_head" not in roles
+        assert all(not item["path"].endswith("best_head.pt") for item in child["expected_artifacts"])
+
+
 def test_ecgfounder_inithead_manifest_child_dirs_use_shared_fullft_naming_helper():
     config = _load("ecgfounder_inithead_fullft_k500_v6.yaml")
     paths = validate_experiment_config(config, repo_root=REPO)
@@ -2631,6 +2887,117 @@ def test_pn2021c_effnet_v7_augmix_config_generates_refexcluded_corruption_comman
     assert {ref["center"] for ref in traced_refs} == {"ningbo", "chapman_shaoxing", "cpsc_2018", "georgia"}
     child_runs = manifest["artifact_trace"]["expected_outputs"]["child_runs"]
     assert len(child_runs) == 8
+    assert all(child["expected_artifacts"][0]["role"] == "eval_result" for child in child_runs)
+
+
+def test_pn2021c_official_s5_locked_protocol_overrides_selection_and_raw_order():
+    config = _load("pn2021c_official_s5_locked_protocol.yaml")
+    paths = validate_experiment_config(config, repo_root=REPO)
+    commands = build_runner_commands(config)
+    manifest = make_dry_run_manifest(
+        config,
+        commands=commands,
+        local_paths=paths,
+        run_id="pytest_pn2021c_official_s5_locked",
+        cli_args=argparse.Namespace(dry_run=True, write_plan=False),
+    )
+
+    assert len(commands) == 8
+    assert config["paper_protocol"]["selection"]["policy"] == "last_checkpoint_only"
+    assert config["paper_protocol"]["selection"]["forbid_k500_validation_split"] is True
+    assert config["paper_protocol"]["selection"]["forbid_best_checkpoint_selection"] is True
+    assert manifest["artifact_trace"]["selection_policy"]["policy"] == "last_checkpoint_only"
+    for command in commands:
+        argv = command["argv"]
+        assert _option_value(argv, "--corruption_input") == "raw_first"
+        assert _option_value(argv, "--severity_profile") == "standard"
+        assert _option_value(argv, "--severities") == "5"
+        assert _option_value(argv, "--output_path").endswith(
+            "eval_pn2021_c_v7_refexcluded_stream_standard_official_s5_locked.json"
+        )
+
+
+def test_pn2021c_effnet_threechain_locked_official_s5_targets_locked_run_dir():
+    config = _load("pn2021c_effnet_threechain_locked_official_s5.yaml")
+    paths = validate_experiment_config(config, repo_root=REPO)
+    commands = build_runner_commands(config)
+    manifest = make_dry_run_manifest(
+        config,
+        commands=commands,
+        local_paths=paths,
+        run_id=config["runtime"]["run_id"],
+        cli_args=argparse.Namespace(dry_run=True, write_plan=False),
+    )
+
+    assert len(commands) == 4
+    for command in commands:
+        argv = command["argv"]
+        center = command["matrix"]["center"]
+        model_dir = _option_value(argv, "--model_dir")
+        assert model_dir == (
+            f"/home/linbinhao/ECG_adv_data/runs/"
+            f"effnet_vae_lhat_augmix_threechain_locked_k500/"
+            f"{config['runtime']['run_id']}/"
+            f"{center}_realall_targetheavy_M20_lam0p05_augmix_s5_wlat0p25_hs3_target_macro_auprc_cdhypminormsttc_hlabelcom_anchor_soft_sta_local_random_p120_fullft_k500_threechain_s5_locked_ep30_seed20260601"
+        )
+        assert _option_value(argv, "--clean_eval_json") == (
+            f"{model_dir}/eval_result_v7_exclrefs_crop1000.json"
+        )
+        assert _option_value(argv, "--corruption_input") == "raw_first"
+        assert _option_value(argv, "--severity_profile") == "standard"
+        assert _option_value(argv, "--severities") == "5"
+        assert _option_value(argv, "--checkpoint_name") == "last_model.pt"
+
+    traced_checkpoints = manifest["artifact_trace"]["inputs"]["checkpoints"]
+    assert any(
+        item["role"] == "command.model_dir.last_model"
+        and item["path"].endswith("/last_model.pt")
+        for item in traced_checkpoints
+    )
+    assert not any(item["role"] == "command.model_dir.best_model" for item in traced_checkpoints)
+
+
+def test_pn2021c_ecgfounder_threechain_locked_official_s5_targets_locked_run_dir():
+    config = _load("pn2021c_ecgfounder_threechain_locked_official_s5.yaml")
+    paths = validate_experiment_config(config, repo_root=REPO)
+    commands = build_runner_commands(config)
+    manifest = make_dry_run_manifest(
+        config,
+        commands=commands,
+        local_paths=paths,
+        run_id=config["runtime"]["run_id"],
+        cli_args=argparse.Namespace(dry_run=True, write_plan=False),
+    )
+
+    assert len(commands) == 4
+    for command in commands:
+        argv = command["argv"]
+        center = command["matrix"]["center"]
+        run_dir = _option_value(argv, "--run_dir")
+        assert argv[1].endswith("scripts/triple_labels/eval_ecgfounder_pn2021_corruptions.py")
+        assert run_dir == (
+            f"/home/linbinhao/ECG_adv_data/runs/"
+            f"ecgfounder_vae_lhat_augmix_threechain_locked_k500/"
+            f"{config['runtime']['run_id']}/runs/{center}_vae_lhat_augmix_threechain_locked"
+        )
+        assert _option_value(argv, "--corruption_input") == "bottleneck5000"
+        assert _option_value(argv, "--severity_profile") == "standard"
+        assert _option_value(argv, "--severities") == "5"
+        assert _option_value(argv, "--output_path").endswith(
+            f"/pn2021c_ecgfounder_threechain_locked_official_s5/{config['runtime']['run_id']}/"
+            f"{center}/ecgfounder_threechain_locked/"
+            "eval_pn2021_c_ecgfounder_v7_refexcluded_stream_standard_official_s5_locked.json"
+        )
+
+    traced_checkpoints = manifest["artifact_trace"]["inputs"]["checkpoints"]
+    assert any(
+        item["role"] == "command.run_dir.last_model"
+        and item["path"].endswith("/last_model.pt")
+        for item in traced_checkpoints
+    )
+    assert any(item["role"] == "model.checkpoint" for item in traced_checkpoints)
+    child_runs = manifest["artifact_trace"]["expected_outputs"]["child_runs"]
+    assert len(child_runs) == 4
     assert all(child["expected_artifacts"][0]["role"] == "eval_result" for child in child_runs)
 
 

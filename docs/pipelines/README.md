@@ -15,6 +15,8 @@
 | `ecgtwin_center_prompt_token_pipeline.md` | 基于 textual inversion / dataset interfaces 思想的 ECGTwin 目标中心 prompt-token 架构 |
 | `latent_hull_online_at_pipeline.md` | 参考 SA-AET 的 Latent-Hull TA-OMAT 在线对抗训练计划 |
 | `pn2021_c_corruption_benchmark_pipeline.md` | 参考 ImageNet-C 的 PN2021-C 中心数据增强/腐蚀鲁棒性评测 |
+| `pn2021c_vae_lhat_augmix_locked_protocol_20260618.md` | 2026-06-18 锁定的 PN2021-C VAE-LHAT + 三链路 AugMix 探索协议 |
+| `pn2021c_vae_lhat_augmix_execution_plan_20260618.md` | 按锁定协议实施工程门禁、训练入口、PN2021-C 评测和探索矩阵的执行计划 |
 | `current_reproduction_pipeline.md` | 当前论文主实验稳定复现计划：center token 训练、ECGTwin VAE latent candidates 和 target-center Latent-Hull online adversarial training |
 | `final_round_ablation_pipeline.md` | 根据最终任务书/开题/中期/指导记录补齐毕业设计答辩需要的医学合法性、center-token 因果性、下游归因、鲁棒性和采样效率消融 |
 | `streamlit_tensorrt_demo_pipeline.md` | 根据最终任务书/开题/中期/指导记录规划 Streamlit Web 演示、EfficientNet1DV2 TensorRT 加速、ECGTwin 生成展示和鲁棒性可视化 |

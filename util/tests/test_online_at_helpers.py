@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from ecg_adv_gen.training.online_at import resolve_quick_eval_plan
+from scripts.pgd_cross_center.synth_online_at_super5 import TargetRealWaveformDataset
 
 
 def test_resolve_quick_eval_plan_uses_target_real_val_without_heldout_selection():
@@ -57,3 +59,40 @@ def test_resolve_quick_eval_plan_preserves_pn2021_cache_path_for_exploration():
     assert plan.uses_heldout_selection is True
     assert plan.cache_path == Path("/tmp/run/quick_eval_subset_n64.cache")
     assert plan.centers == ("ningbo", "georgia")
+
+
+def test_resolve_quick_eval_plan_can_disable_checkpoint_selection_eval():
+    plan = resolve_quick_eval_plan(
+        quick_eval_source="none",
+        center_name="ningbo",
+        quick_eval_centers=["ningbo", "georgia"],
+        output_dir=Path("/tmp/run"),
+        quick_eval_n_per_center=64,
+        target_val_available=False,
+        target_val_n=0,
+    )
+
+    assert plan.source == "none"
+    assert plan.metric_view == "disabled"
+    assert plan.uses_heldout_selection is False
+    assert plan.cache_path is None
+    assert plan.centers == ()
+
+
+def test_target_real_waveform_dataset_zscores_raw1000_before_crop():
+    signal = np.linspace(2.0, 8.0, 1000 * 12, dtype=np.float32).reshape(1, 1000, 12)
+    labels = np.ones((1, 5), dtype=np.float32)
+    ds = TargetRealWaveformDataset(
+        signal,
+        labels,
+        crop_len=1000,
+        mode="eval",
+        norm_mode="per_sample_global",
+    )
+
+    x, y = ds[0]
+
+    assert x.shape == (12, 1000)
+    assert y.shape == (5,)
+    assert abs(float(x.mean())) < 1e-5
+    assert abs(float(x.std(unbiased=False)) - 1.0) < 1e-5

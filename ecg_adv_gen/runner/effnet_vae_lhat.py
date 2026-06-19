@@ -39,7 +39,11 @@ def resolve_effnet_vae_lhat_paths(
         / center
         / f"{center}_real_k500_seed42"
     )
-    signal_npz = anchor_base.with_suffix(".signals.npz")
+    signal_npz = (
+        Path(args.target_real_npz_override)
+        if getattr(args, "target_real_npz_override", "")
+        else anchor_base.with_suffix(".signals.npz")
+    )
     latent_npz = (
         Path(args.synth_npz_override)
         if args.synth_npz_override
@@ -86,6 +90,8 @@ def build_effnet_vae_lhat_train_cmd(
         str(paths.latent_npz),
         "--target_real_npz",
         str(paths.signal_npz),
+        "--target_real_norm_mode",
+        str(getattr(args, "target_real_norm_mode", "pre_zscored")),
         "--class_trust",
         str(class_trust),
         "--init_ckpt",
@@ -106,6 +112,8 @@ def build_effnet_vae_lhat_train_cmd(
         str(args.target_real_val_fraction),
         "--target_real_val_seed",
         str(args.target_real_val_seed),
+        "--checkpoint_policy",
+        str(getattr(args, "checkpoint_policy", "best")),
         "--ptbxl_raw",
         str(data_root / "ptbxl/raw100.npy"),
         "--ptbxl_csv",
@@ -229,6 +237,8 @@ def build_effnet_vae_lhat_train_cmd(
         train_cmd.extend(
             [
                 "--enable_latent_augmix_branch",
+                "--latent_augmix_topology",
+                str(getattr(args, "latent_augmix_topology", "legacy_branch")),
                 "--latent_augmix_copies",
                 str(args.latent_augmix_copies),
                 "--latent_augmix_width",
@@ -428,6 +438,8 @@ def build_effnet_vae_lhat_eval_cmd(
         "--skip_mimic",
         "--report_drop_all_zero_pn2021",
     ]
+    if str(getattr(args, "checkpoint_policy", "best")) == "last":
+        eval_cmd.extend(["--checkpoint_name", "last_model.pt"])
     try:
         append_target_ref_exclusion_args_from_anchor_base(eval_cmd, paths.anchor_base)
     except ValueError:

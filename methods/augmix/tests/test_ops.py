@@ -3,6 +3,7 @@ import numpy as np
 import pytest
 import torch
 
+from methods.augmix.ecg_ops import RandomLeadsMask
 from methods.augmix.severity import AVAILABLE_OPS, build_op
 
 
@@ -78,3 +79,21 @@ def test_build_op_bad_severity():
         build_op("powerline_noise", severity=0)
     with pytest.raises(ValueError):
         build_op("powerline_noise", severity=11)
+
+
+def test_random_leads_mask_can_cap_masked_lead_count():
+    x = torch.ones(12, 250)
+    op = RandomLeadsMask(
+        p=1.0,
+        mask_leads_selection="random",
+        max_masked_leads=3,
+    )
+
+    np.random.seed(123)
+    masked_counts = []
+    for _ in range(40):
+        y = op(x)
+        masked_counts.append(int((y.abs().sum(dim=1) == 0).sum().item()))
+
+    assert min(masked_counts) >= 1
+    assert max(masked_counts) <= 3

@@ -54,6 +54,43 @@ def test_train_latent_augmix_consistency_epoch_updates_on_generated_views():
     assert any(not torch.allclose(old, new) for old, new in zip(before, model.parameters()))
 
 
+def test_stage3_locked_three_chain_wrapper_forwards_official_profile_and_keeps_adv_uncorrupted():
+    clean = np.zeros((2, 12, 8), dtype=np.float32)
+    adv = np.full((2, 12, 8), 5.0, dtype=np.float32)
+    calls: list[tuple[float, str, int, str]] = []
+
+    def fake_apply_op(sig_t, op_name: str, severity: int):
+        calls.append((float(sig_t.mean().item()), op_name, severity, "standard"))
+        return sig_t + 1.0
+
+    stage3_apply_orig = stage3._apply_op
+    stage3._apply_op = fake_apply_op
+    try:
+        views, stats = stage3.build_three_chain_vae_lhat_augmix_views(
+            clean,
+            adv,
+            copies=1,
+            severity=5,
+            severity_profile="standard",
+            width=3,
+            depth=1,
+            alpha=1.0,
+            ops=["powerline_noise"],
+            rng=np.random.default_rng(23),
+            renorm=False,
+            clip_abs=0.0,
+        )
+    finally:
+        stage3._apply_op = stage3_apply_orig
+
+    assert views.shape == (2, 12, 8)
+    assert stats["topology"] == "locked_three_chain_vae_lhat_augmix"
+    assert stats["corruption_chain_count"] == 2
+    assert stats["adversarial_chain_corrupted"] is False
+    assert len(calls) == 2 * 2
+    assert all(mean < 5.0 for mean, *_ in calls)
+
+
 def test_train_raw_corruption_consistency_epoch_can_use_raw_augmix_views(monkeypatch):
     torch.manual_seed(11)
     signals = torch.zeros((2, 12, 8), dtype=torch.float32)

@@ -1,0 +1,77 @@
+profiles:
+  realistic_hospital_v1:
+    baseline_shift:
+      5:
+        max_amplitude: 0.6
+        min_amplitude: 0.0
+        shift_ratio: 0.35
+        num_segment: 2
+        p: 1.0
+        dependency: false
+    baseline_wander:
+      5:
+        max_amplitude: 1.2
+        min_amplitude: 0.0
+        min_freq: 0.03
+        max_freq: 0.4
+        k: 4
+        p: 1.0
+        dependency: false
+    emg_noise:
+      5:
+        max_amplitude: 0.32
+        min_amplitude: 0.0
+        p: 1.0
+        dependency: false
+    powerline_noise:
+      5:
+        max_amplitude: 3.5
+        min_amplitude: 0.0
+        p: 1.0
+        dependency: false
+    random_leads_masking:
+      5:
+        mask_leads_prob: 0.40
+        mask_leads_selection: random
+        p: 1.0
+selection:
+  baseline_shift: shift_amp0p6_r0p35_seg2
+  baseline_wander: wander_amp1p2_k4_f0p4
+  emg_noise: emg_amp0p32
+  powerline_noise: power_native_amp3p5
+  random_leads_masking: mask_p0p40
+metadata:
+  profile_name: realistic_hospital_v1
+  public_severity: 5
+  score_profile: realistic_hospital
+  calibration_centers:
+    - cpsc_2018
+    - georgia
+  confirmation_centers:
+    - ningbo
+    - chapman_shaoxing
+    - cpsc_2018
+    - georgia
+  input_modes:
+    baseline_shift:
+      effnet: raw_first
+      ecgfounder: bottleneck5000
+    baseline_wander:
+      effnet: raw_first
+      ecgfounder: bottleneck5000
+    emg_noise:
+      effnet: raw_first
+      ecgfounder: bottleneck5000
+    powerline_noise:
+      effnet: native_raw_first
+      ecgfounder: native_raw_first
+    random_leads_masking:
+      effnet: raw_first
+      ecgfounder: bottleneck5000
+  candidate_score_csv: /home/linbinhao/ECG_adv_data/runs/pn2021c_realistic_hospital_sweep_20260618/two_center_combined_candidate_scores.csv
+  selection_notes:
+    baseline_shift: accepted on two-center calibration; balanced moderate DC/step offset.
+    baseline_wander: accepted on two-center calibration; selected mid-strength drift below stress_v1 amplitude.
+    emg_noise: not accepted only because ECGFounder is more sensitive; selected lower amplitude to avoid excessive AUPRC collapse.
+    powerline_noise: accepted on two-center calibration; acquisition-side native_raw_first branch, far below amp32 stress profile.
+    random_leads_masking: boundary setting; p0.40 reaches the target boundary but is stronger than simple 1-3 lead dropout.

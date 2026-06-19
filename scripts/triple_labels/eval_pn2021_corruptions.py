@@ -64,6 +64,11 @@ from ecg_adv_gen.evaluation.pn2021_corruptions import (  # noqa: E402
     require_clean_eval_json,
     stable_corruption_seed,
 )
+from ecg_adv_gen.evaluation.pn2021c_protocol import (  # noqa: E402
+    LOCKED_EFFNET_CORRUPTION_INPUT,
+    LOCKED_MAIN_INPUT_ORDER_ID,
+    locked_protocol_metadata,
+)
 from ecg_adv_gen.evaluation.pn2021c_metadata import (  # noqa: E402
     PN2021CMetadataError,
     build_center_scoped_clean_eval_payload,
@@ -80,7 +85,7 @@ from scripts.crosscenter_v2.preprocess_utils import (  # noqa: E402
 )
 
 
-STRESS_PROFILE_CHOICES = ("standard", "stress_v2", "calibrated_10to20pp")
+STRESS_PROFILE_CHOICES = ("standard", "stress_v2", "calibrated_10to20pp", "custom")
 DEFAULT_DATA_ROOT = os.environ.get("ECG_ADV_GEN_DATA_ROOT", "/home/linbinhao/ECG_adv_data")
 
 
@@ -148,7 +153,7 @@ _CALIBRATED_10TO20PP_PARAMS = {
 }
 
 
-def _build_profile_op(profile_params, profile_name, corruption, public_severity):
+def _profile_params_for_op(profile_params, profile_name, corruption, public_severity):
     public_severity = int(public_severity)
     if corruption not in profile_params:
         raise ValueError(f"{profile_name} does not define corruption: {corruption}")
@@ -158,31 +163,174 @@ def _build_profile_op(profile_params, profile_name, corruption, public_severity)
             f"{sorted(profile_params[corruption])}; got {public_severity}"
         )
     params = dict(profile_params[corruption][public_severity])
+    return params
+
+
+def _with_operator_defaults(corruption, params):
+    params = dict(params)
     params.setdefault("p", 1.0)
     if corruption == "powerline_noise":
         params.setdefault("min_amplitude", 0.0)
         params.setdefault("freq", 100)
         params.setdefault("dependency", False)
-        return PowerlineNoise(**params)
+        return params
     if corruption == "emg_noise":
         params.setdefault("min_amplitude", 0.0)
         params.setdefault("dependency", False)
-        return EMGNoise(**params)
+        return params
     if corruption == "baseline_wander":
         params.setdefault("min_amplitude", 0.0)
         params.setdefault("min_freq", 0.03)
         params.setdefault("freq", 100)
         params.setdefault("dependency", False)
-        return BaselineWander(**params)
+        return params
     if corruption == "baseline_shift":
         params.setdefault("min_amplitude", 0.0)
         params.setdefault("freq", 100)
         params.setdefault("dependency", False)
-        return BaselineShift(**params)
+        return params
     if corruption == "random_leads_masking":
         params.setdefault("mask_leads_selection", "random")
+        return params
+    raise ValueError(f"unknown corruption: {corruption}")
+
+
+def _build_profile_op(profile_params, profile_name, corruption, public_severity):
+    params = _with_operator_defaults(
+        corruption,
+        _profile_params_for_op(profile_params, profile_name, corruption, public_severity),
+    )
+    if corruption == "powerline_noise":
+        return PowerlineNoise(**params)
+    if corruption == "emg_noise":
+        return EMGNoise(**params)
+    if corruption == "baseline_wander":
+        return BaselineWander(**params)
+    if corruption == "baseline_shift":
+        return BaselineShift(**params)
+    if corruption == "random_leads_masking":
         return RandomLeadsMask(**params)
     raise ValueError(f"unknown corruption: {corruption}")
+
+
+def _canonicalize_profile(raw_profile, *, profile_name):
+    if not isinstance(raw_profile, dict):
+        raise ValueError(f"custom severity profile {profile_name!r} must be a mapping")
+    profile = {}
+    for corruption, severities in raw_profile.items():
+        if not isinstance(severities, dict):
+            raise ValueError(f"custom severity profile {profile_name!r} {corruption!r} must map severities")
+        profile[str(corruption)] = {}
+        for severity, params in severities.items():
+            try:
+                severity_int = int(severity)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"custom severity profile {profile_name!r} has non-integer severity "
+                    f"{severity!r} for {corruption!r}"
+                ) from exc
+            if not isinstance(params, dict):
+                raise ValueError(
+                    f"custom severity profile {profile_name!r} {corruption!r} "
+                    f"severity {severity_int} must map parameters"
+                )
+            profile[str(corruption)][severity_int] = dict(params)
+    return profile
+
+
+def _load_profile_document(path):
+    if not path:
+        raise ValueError("--severity_params_file is required when --severity_profile custom")
+    if str(path).endswith(".json"):
+        with open(path) as f:
+            return json.load(f)
+    try:
+        import yaml
+    except ImportError as exc:
+        raise RuntimeError(
+            "PyYAML is required to read custom severity profile YAML files"
+        ) from exc
+    with open(path) as f:
+        return yaml.safe_load(f)
+
+
+def _load_custom_severity_profile(path, profile_name):
+    if not profile_name:
+        raise ValueError("--severity_params_name is required when --severity_profile custom")
+    document = _load_profile_document(path)
+    if not isinstance(document, dict) or "profiles" not in document:
+        raise ValueError("custom severity profile file must contain a top-level 'profiles' mapping")
+    profiles = document["profiles"]
+    if not isinstance(profiles, dict):
+        raise ValueError("custom severity profile file top-level 'profiles' must be a mapping")
+    if profile_name not in profiles:
+        raise ValueError(
+            f"custom severity profile {profile_name!r} not found; available={sorted(profiles)}"
+        )
+    return _canonicalize_profile(profiles[profile_name], profile_name=profile_name)
+
+
+def _file_sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _resolve_severity_profile_args(args):
+    params_file = getattr(args, "severity_params_file", None)
+    params_name = getattr(args, "severity_params_name", None)
+    if args.severity_profile != "custom":
+        if params_file or params_name:
+            raise ValueError(
+                "--severity_params_file/--severity_params_name are only valid with "
+                "--severity_profile custom"
+            )
+        return None
+    if getattr(args, "mode", "stream") != "stream":
+        raise ValueError("--severity_profile custom requires --mode stream")
+    return _load_custom_severity_profile(params_file, params_name)
+
+
+def _severity_profile_metadata(args):
+    params = getattr(args, "severity_profile_params", None)
+    if args.severity_profile != "custom":
+        return None
+    return {
+        "severity_profile": "custom",
+        "severity_params_file": str(args.severity_params_file),
+        "severity_params_file_sha256": _file_sha256(args.severity_params_file),
+        "severity_params_name": str(args.severity_params_name),
+        "resolved_params": params,
+    }
+
+
+def _resolve_corruption_profile_params(corruption, public_severity, severity_profile, severity_profile_params=None):
+    if severity_profile == "standard":
+        return None
+    if severity_profile == "stress_v2":
+        params = _profile_params_for_op(_STRESS_V2_PARAMS, "stress_v2", corruption, public_severity)
+        return _with_operator_defaults(corruption, params)
+    if severity_profile == "calibrated_10to20pp":
+        params = _profile_params_for_op(
+            _CALIBRATED_10TO20PP_PARAMS,
+            "calibrated_10to20pp",
+            corruption,
+            public_severity,
+        )
+        return _with_operator_defaults(corruption, params)
+    if severity_profile == "custom":
+        if severity_profile_params is None:
+            raise ValueError("severity_profile_params is required for --severity_profile custom")
+        params = _profile_params_for_op(
+            severity_profile_params,
+            "custom",
+            corruption,
+            public_severity,
+        )
+        return _with_operator_defaults(corruption, params)
+    raise ValueError(f"unknown severity_profile: {severity_profile}")
 
 
 def _build_stress_v2_op(corruption, public_severity):
@@ -204,7 +352,14 @@ def _with_native_sample_rate(op, sample_rate_hz):
     return op
 
 
-def _build_corruption_op(corruption, public_severity, severity_profile, *, sample_rate_hz=None):
+def _build_corruption_op(
+    corruption,
+    public_severity,
+    severity_profile,
+    *,
+    sample_rate_hz=None,
+    severity_profile_params=None,
+):
     if severity_profile == "standard":
         op = build_op(corruption, PUBLIC_TO_INTERNAL_SEVERITY[int(public_severity)])
         return _with_native_sample_rate(op, sample_rate_hz)
@@ -213,6 +368,16 @@ def _build_corruption_op(corruption, public_severity, severity_profile, *, sampl
         return _with_native_sample_rate(op, sample_rate_hz)
     if severity_profile == "calibrated_10to20pp":
         op = _build_calibrated_10to20pp_op(corruption, public_severity)
+        return _with_native_sample_rate(op, sample_rate_hz)
+    if severity_profile == "custom":
+        if severity_profile_params is None:
+            raise ValueError("severity_profile_params is required for --severity_profile custom")
+        op = _build_profile_op(
+            severity_profile_params,
+            "custom",
+            corruption,
+            public_severity,
+        )
         return _with_native_sample_rate(op, sample_rate_hz)
     raise ValueError(f"unknown severity_profile: {severity_profile}")
 
@@ -308,7 +473,8 @@ def _stable_seed(base_seed, *parts):
 class StreamingCorruptedPN2021Dataset(Dataset):
     def __init__(self, signals, labels, corruption, public_severity,
                  seed=20260501, crop_len=250, severity_profile="standard",
-                 indices=None, input_stabilizer_config=None):
+                 indices=None, input_stabilizer_config=None,
+                 severity_profile_params=None):
         self.signals = signals
         self.labels = labels.astype(np.float32, copy=False)
         self.indices = (
@@ -320,6 +486,7 @@ class StreamingCorruptedPN2021Dataset(Dataset):
         self.public_severity = int(public_severity)
         self.internal_severity = PUBLIC_TO_INTERNAL_SEVERITY[self.public_severity]
         self.severity_profile = severity_profile
+        self.severity_profile_params = severity_profile_params
         self.seed = int(seed)
         self.crop_len = crop_len
         self.input_stabilizer_config = dict(input_stabilizer_config or {})
@@ -334,7 +501,10 @@ class StreamingCorruptedPN2021Dataset(Dataset):
         random.seed(sample_seed)
         torch.manual_seed(sample_seed)
         op = _build_corruption_op(
-            self.corruption, self.public_severity, self.severity_profile
+            self.corruption,
+            self.public_severity,
+            self.severity_profile,
+            severity_profile_params=self.severity_profile_params,
         )
 
         sig_tc = self.signals[real_idx]
@@ -394,7 +564,8 @@ class RawFirstCorruptedPN2021Dataset(Dataset):
 
     def __init__(self, signals, labels, corruption, public_severity,
                  seed=20260501, crop_len=250, severity_profile="standard",
-                 indices=None, input_stabilizer_config=None):
+                 indices=None, input_stabilizer_config=None,
+                 severity_profile_params=None):
         self.signals = signals.astype(np.float32, copy=False)
         self.labels = labels.astype(np.float32, copy=False)
         self.indices = (
@@ -406,6 +577,7 @@ class RawFirstCorruptedPN2021Dataset(Dataset):
         self.public_severity = int(public_severity)
         self.internal_severity = PUBLIC_TO_INTERNAL_SEVERITY[self.public_severity]
         self.severity_profile = severity_profile
+        self.severity_profile_params = severity_profile_params
         self.seed = int(seed)
         self.crop_len = crop_len
         self.input_stabilizer_config = dict(input_stabilizer_config or {})
@@ -426,7 +598,10 @@ class RawFirstCorruptedPN2021Dataset(Dataset):
         random.seed(sample_seed)
         torch.manual_seed(sample_seed)
         op = _build_corruption_op(
-            self.corruption, self.public_severity, self.severity_profile
+            self.corruption,
+            self.public_severity,
+            self.severity_profile,
+            severity_profile_params=self.severity_profile_params,
         )
 
         sig_tc = self.signals[real_idx]
@@ -503,7 +678,8 @@ class NativeRawFirstCorruptedPN2021Dataset(Dataset):
 
     def __init__(self, signals, labels, sample_rates, corruption, public_severity,
                  seed=20260501, crop_len=250, severity_profile="standard",
-                 indices=None, input_stabilizer_config=None):
+                 indices=None, input_stabilizer_config=None,
+                 severity_profile_params=None):
         self.signals = list(signals)
         self.labels = labels.astype(np.float32, copy=False)
         self.sample_rates = np.asarray(sample_rates, dtype=np.float32)
@@ -516,6 +692,7 @@ class NativeRawFirstCorruptedPN2021Dataset(Dataset):
         self.public_severity = int(public_severity)
         self.internal_severity = PUBLIC_TO_INTERNAL_SEVERITY[self.public_severity]
         self.severity_profile = severity_profile
+        self.severity_profile_params = severity_profile_params
         self.seed = int(seed)
         self.crop_len = crop_len
         self.input_stabilizer_config = dict(input_stabilizer_config or {})
@@ -541,6 +718,7 @@ class NativeRawFirstCorruptedPN2021Dataset(Dataset):
             self.public_severity,
             self.severity_profile,
             sample_rate_hz=sample_rate_hz,
+            severity_profile_params=self.severity_profile_params,
         )
 
         sig_ct = torch.from_numpy(np.ascontiguousarray(self.signals[real_idx].T)).float()
@@ -838,7 +1016,7 @@ def _load_model(args, scheme, device):
         model_name,
         num_classes=scheme["num_classes"],
     ).to(device)
-    ckpt = os.path.join(args.model_dir, "best_model.pt")
+    ckpt = os.path.join(args.model_dir, args.checkpoint_name)
     sd = torch.load(ckpt, map_location=device)
     sd = {k.removeprefix("_orig_mod."): v for k, v in sd.items()}
     model.load_state_dict(sd)
@@ -985,6 +1163,7 @@ def eval_one(model, scheme, args, device, center, corruption, severity, clean_by
                 severity_profile=args.severity_profile,
                 indices=indices,
                 input_stabilizer_config=_input_stabilizer_config(args),
+                severity_profile_params=getattr(args, "severity_profile_params", None),
             )
         elif args.corruption_input == "raw_first":
             ds = RawFirstCorruptedPN2021Dataset(
@@ -993,6 +1172,7 @@ def eval_one(model, scheme, args, device, center, corruption, severity, clean_by
                 severity_profile=args.severity_profile,
                 indices=indices,
                 input_stabilizer_config=_input_stabilizer_config(args),
+                severity_profile_params=getattr(args, "severity_profile_params", None),
             )
         else:
             ds = StreamingCorruptedPN2021Dataset(
@@ -1001,6 +1181,7 @@ def eval_one(model, scheme, args, device, center, corruption, severity, clean_by
                 severity_profile=args.severity_profile,
                 indices=indices,
                 input_stabilizer_config=_input_stabilizer_config(args),
+                severity_profile_params=getattr(args, "severity_profile_params", None),
             )
     else:
         if args.severity_profile != "standard":
@@ -1067,12 +1248,22 @@ def eval_one(model, scheme, args, device, center, corruption, severity, clean_by
                 seed=int(args.seed),
                 limit=args.limit,
                 severity_profile=args.severity_profile,
+                protocol_metadata=(
+                    locked_protocol_metadata("efficientnet1dv2")
+                    if args.corruption_input == LOCKED_EFFNET_CORRUPTION_INPUT
+                    else None
+                ),
             )
         compatibility = validate_pn2021c_metadata_compatibility(
             clean_eval=clean_eval_for_validation,
             corrupt_metadata=metadata,
             center=center,
             required_cache_version=args.required_cache_version,
+            required_input_order_id=(
+                LOCKED_MAIN_INPUT_ORDER_ID
+                if args.corruption_input == LOCKED_EFFNET_CORRUPTION_INPUT
+                else None
+            ),
         )
         if int(len(exclude_ids)) != int(compatibility["n_excluded_ref"]):
             raise PN2021CMetadataError(
@@ -1141,6 +1332,14 @@ def eval_one(model, scheme, args, device, center, corruption, severity, clean_by
         "corruption": {
             "name": corruption,
             "severity_profile": args.severity_profile,
+            "severity_params_file": getattr(args, "severity_params_file", None),
+            "severity_params_name": getattr(args, "severity_params_name", None),
+            "resolved_params": _resolve_corruption_profile_params(
+                corruption,
+                severity,
+                args.severity_profile,
+                getattr(args, "severity_profile_params", None),
+            ),
             "public_severity": int(severity),
             "internal_severity": int(PUBLIC_TO_INTERNAL_SEVERITY[int(severity)]),
             "seed": int(args.seed),
@@ -1188,6 +1387,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--scheme", default="super5", choices=["super5", "sub23", "pn26"])
     p.add_argument("--model_dir", required=True)
+    p.add_argument("--checkpoint_name", default="best_model.pt")
     p.add_argument("--model_name", default="efficientnet1dv2",
                    choices=available_model_names())
     p.add_argument("--mode", default="stream", choices=["stream", "cache"],
@@ -1228,8 +1428,19 @@ def main():
                         "severity 1..5 -> internal 2/4/6/8/10; stress_v2 is "
                         "a stronger streaming-only robustness sweep; "
                         "calibrated_10to20pp is a fixed severity=5 profile "
-                        "calibrated to induce roughly 10-20 pp drops. These "
+                        "calibrated to induce roughly 10-20 pp drops; custom "
+                        "loads operator parameters from --severity_params_file. These "
                         "profiles do not affect training-time AugMix defaults.")
+    p.add_argument(
+        "--severity_params_file",
+        default=None,
+        help="YAML/JSON profile file used only with --severity_profile custom.",
+    )
+    p.add_argument(
+        "--severity_params_name",
+        default=None,
+        help="Profile name under top-level profiles used only with --severity_profile custom.",
+    )
     p.add_argument("--device", default="cuda")
     p.add_argument("--crop_len", type=int, default=250)
     p.add_argument("--batch_size", type=int, default=256)
@@ -1293,6 +1504,11 @@ def main():
                    help="Evaluate only the first N records per cache for smoke tests.")
     p.add_argument("--output_path", default=None)
     args = p.parse_args()
+    try:
+        args.severity_profile_params = _resolve_severity_profile_args(args)
+        args.severity_profile_metadata = _severity_profile_metadata(args)
+    except (ValueError, RuntimeError, OSError) as exc:
+        raise SystemExit(str(exc)) from exc
     if args.mode != "stream" and args.corruption_input in {"raw_first", "native_raw_first"}:
         raise SystemExit("--corruption_input raw_first/native_raw_first requires --mode stream")
     try:
@@ -1339,12 +1555,20 @@ def main():
         "corruptions": list(args.corruptions),
         "severities": list(args.severities),
         "severity_profile": args.severity_profile,
+        "severity_params_file": args.severity_params_file,
+        "severity_params_name": args.severity_params_name,
+        "severity_profile_metadata": args.severity_profile_metadata,
         "exclude_ref_ids": list(args.exclude_ref_ids),
         "exclude_ref_ids_by_center_counts": {
             center: len(ids)
             for center, ids in sorted(args.exclude_ref_ids_by_center.items())
         },
         "pn2021_c_cache_version": args.required_cache_version,
+        "pn2021c_protocol": (
+            locked_protocol_metadata("efficientnet1dv2")
+            if args.corruption_input == LOCKED_EFFNET_CORRUPTION_INPUT
+            else None
+        ),
         "per_center": {},
     }
     output["preprocess"] = {

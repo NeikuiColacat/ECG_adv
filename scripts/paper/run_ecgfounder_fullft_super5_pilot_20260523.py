@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """ECGFounder official-style full fine-tuning Super5 pilot.
 
-This script tests whether ECGFounder's target-center gains come from the
-previous frozen-encoder/head-only protocol being too weak. It follows the local
-ECGFounder notebook's recommended mode (`linear_prob=False`): initialize the
-12-lead checkpoint, replace the dense layer with a Super5 head, and fine-tune
-the whole model on PTB-XL source plus K target-center real ECGs.
+This script tests ECGFounder under full fine-tuning rather than the previous
+frozen-encoder/head-only protocol. It follows the local ECGFounder notebook's
+recommended mode (`linear_prob=False`): initialize the 12-lead checkpoint,
+replace the dense layer with a Super5 head, and fine-tune the whole model on
+PTB-XL source plus K target-center real ECGs.
 
-No ECGTwin VAE adversarial samples are used here. This is the fairness control
-that must be understood before attributing ECGFounder gains to VAE-only LH-AT.
+The locked 2026-06-18 protocol also uses this entrypoint for ECGFounder
+VAE-LHAT and VAE-LHAT plus three-chain AugMix, while keeping all layers
+trainable and selecting only the last checkpoint.
 """
 
 from __future__ import annotations
@@ -58,6 +59,7 @@ from scripts.paper.run_ecgfounder_linear_probe_super5_20260517 import (  # noqa:
 from ecg_adv_gen.adaptation import (  # noqa: E402
     SameLabelLatentIndex,
     StratifiedPoolWalker,
+    build_three_chain_vae_lhat_augmix_views as build_three_chain_vae_lhat_augmix_views_core,
     linear_warmup_value,
 )
 from ecg_adv_gen.adaptation.latent_hull_torch import initial_hull_latent  # noqa: E402
@@ -112,12 +114,14 @@ from methods.augmix.jsd_loss import jsd_multilabel  # noqa: E402
 from scripts.paper.run_ecgfounder_vae_only_lhat_head_ft_20260523 import (  # noqa: E402
     RawSignalDataset,
     anchor_signal_npz_path,
+    apply_augmix_op_np,
     build_profiled_raw_corruption_views,
     load_source_raw_dataset,
 )
 from scripts.triple_labels.eval_pn2021_corruptions import (  # noqa: E402
     STRESS_PROFILE_CHOICES,
 )
+from methods.augmix.severity import AVAILABLE_OPS  # noqa: E402
 from scripts.triple_labels.model_zoo import build_super5_model, normalize_model_name  # noqa: E402
 from util.ecgtwin_utils import ECGTwinWrapper  # noqa: E402
 from util.lead_utils import ECGTWIN_TO_PTBXL_INDICES  # noqa: E402
@@ -418,7 +422,11 @@ def load_target_raw_dataset(
     args: argparse.Namespace,
     train_record_ids: list[str],
 ) -> RawSignalDataset:
-    signal_path = anchor_signal_npz_path(center, args)
+    signal_path = (
+        Path(args.target_raw1000_npz_override)
+        if getattr(args, "target_raw1000_npz_override", "")
+        else anchor_signal_npz_path(center, args)
+    )
     with np.load(signal_path, allow_pickle=True) as data:
         signals = np.asarray(data["signals"], dtype=np.float32)
         labels = np.asarray(data["labels"], dtype=np.float32)
@@ -432,6 +440,92 @@ def load_target_raw_dataset(
     if indices.size == 0:
         raise RuntimeError(f"{center}: no target raw signals matched target train record ids")
     return RawSignalDataset(signals, labels, indices=indices)
+
+
+def build_locked_three_chain_latent_augmix_views(
+    anchor_signals_ct: np.ndarray,
+    adv_signals_ct: np.ndarray,
+    *,
+    copies: int,
+    severity: int,
+    severity_profile: str,
+    width: int,
+    depth: int,
+    alpha: float,
+    ops: list[str],
+    rng: np.random.Generator,
+    renorm: bool = False,
+    clip_abs: float = 6.0,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Build locked ECGFounder three-chain VAE-LHAT AugMix waveform views."""
+
+    return build_three_chain_vae_lhat_augmix_views_core(
+        anchor_signals_ct,
+        adv_signals_ct,
+        copies=copies,
+        severity=severity,
+        severity_profile=severity_profile,
+        width=width,
+        depth=depth,
+        alpha=alpha,
+        ops=ops,
+        rng=rng,
+        op_apply_fn=apply_augmix_op_np,
+        available_ops=AVAILABLE_OPS,
+        renorm=renorm,
+        clip_abs=clip_abs,
+    )
+
+
+def summarize_latent_augmix_epoch_stats(stats_batches: list[dict[str, Any]]) -> dict[str, Any]:
+    """Merge per-batch locked latent-AugMix stats for logging."""
+
+    enabled_batches = [s for s in stats_batches if bool(s.get("enabled", False))]
+    if not enabled_batches:
+        return {
+            "enabled": False,
+            "topology": "locked_three_chain_vae_lhat_augmix",
+            "n_generated": 0,
+        }
+    op_counts: dict[str, int] = {}
+    for stats in enabled_batches:
+        for op_name, count in dict(stats.get("op_counts", {})).items():
+            op_counts[str(op_name)] = op_counts.get(str(op_name), 0) + int(count)
+
+    def _mean_stat(name: str) -> float | None:
+        values = [
+            float(stats[name])
+            for stats in enabled_batches
+            if stats.get(name) is not None and np.isfinite(float(stats[name]))
+        ]
+        return float(np.mean(values)) if values else None
+
+    first = enabled_batches[0]
+    return {
+        "enabled": True,
+        "topology": first.get("topology", "locked_three_chain_vae_lhat_augmix"),
+        "view_mode": first.get("view_mode", "vae_lhat_augmix"),
+        "n_generated": int(sum(int(s.get("n_generated", 0)) for s in enabled_batches)),
+        "copies": int(first.get("copies", 0)),
+        "severity": int(first.get("severity", 0)),
+        "severity_profile": str(first.get("severity_profile", "")),
+        "width": int(first.get("width", 3)),
+        "depth": int(first.get("depth", -1)),
+        "alpha": float(first.get("alpha", 1.0)),
+        "corruption_chain_count": int(first.get("corruption_chain_count", 2)),
+        "adversarial_chain_count": int(first.get("adversarial_chain_count", 1)),
+        "adversarial_chain_index": int(first.get("adversarial_chain_index", 2)),
+        "adversarial_chain_corrupted": bool(first.get("adversarial_chain_corrupted", False)),
+        "chain_roles": list(first.get("chain_roles", [])),
+        "adv_weight_mean": _mean_stat("adv_weight_mean"),
+        "adv_weight_max": _mean_stat("adv_weight_max"),
+        "beta_m_mean": _mean_stat("beta_m_mean"),
+        "chain_depth_mean": _mean_stat("chain_depth_mean"),
+        "ops": list(first.get("ops", [])),
+        "op_counts": op_counts,
+        "renorm": bool(first.get("renorm", False)),
+        "clip_abs": float(first.get("clip_abs", 0.0)),
+    }
 
 
 def prepare_raw_dataset_as_ecgfounder_dataset(
@@ -798,6 +892,40 @@ def make_train_loader(
     )
 
 
+def make_source_only_train_loader(
+    ptbxl_payload: dict[str, np.ndarray],
+    args: argparse.Namespace,
+) -> DataLoader:
+    """Build the locked PTB-XL-only full-FT loader."""
+
+    folds = ptbxl_payload["folds"].astype(np.int64)
+    source_idx = np.nonzero(np.isin(folds, np.arange(1, 9)))[0]
+    if args.source_train_limit > 0:
+        source_idx = source_idx[: args.source_train_limit]
+    if str(args.supervised_input_mode) == "raw1000":
+        source_ds = load_source_raw1000_dataset(
+            args,
+            source_idx,
+            ptbxl_payload["labels"][source_idx],
+        )
+    else:
+        source_ds = CachedSignalDataset(
+            ptbxl_payload["signals"],
+            ptbxl_payload["labels"],
+            source_idx,
+        )
+    return build_weighted_signal_stream_loader_from_datasets(
+        source_dataset=source_ds,
+        target_dataset=source_ds,
+        source_weight=float(args.source_weight),
+        target_real_weight=0.0,
+        adv_weight=0.0,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        num_classes=len(CLASS_NAMES_SUPER5),
+    )
+
+
 def scheduled_adv_weight(args: argparse.Namespace, epoch: int) -> float:
     return linear_warmup_value(
         args.adv_weight,
@@ -826,6 +954,7 @@ def build_adv_epoch(
     adv_teacher_logits: list[np.ndarray] = []
     delta_norms: list[float] = []
     batch_diagnostics: list[dict[str, np.ndarray | int]] = []
+    latent_augmix_stats_batches: list[dict[str, Any]] = []
     anchor_sample_stats: dict[str, Any] = {}
     try:
         picks, anchor_sample_stats = sample_anchor_indices(
@@ -858,20 +987,66 @@ def build_adv_epoch(
                 batch_diagnostics.append(
                     fullft_adv_batch_diagnostics(clean_logits, init_logits, adv_logits, y)
                 )
-            x_adv_for_stream = (
-                prepare_adv_stream_signal_for_supervised_mode(
-                    x_adv_1000,
-                    args.supervised_input_mode,
-                    victim.input_stabilizer_kwargs,
+            if args.enable_latent_augmix_branch:
+                with torch.no_grad():
+                    anchor_x_1000 = victim._ecgtwin_latent_to_ecg1000(z)
+                latent_augmix_rng = np.random.default_rng(
+                    int(args.seed) + int(getattr(args, "current_epoch", 0)) * 100003 + int(start)
                 )
-                .detach()
-                .cpu()
-                .numpy()
-                .astype(np.float32)
-            )
-            adv_signals.append(x_adv_for_stream)
-            adv_labels.append(anchor_pool["labels"][batch_idx].astype(np.float32))
-            adv_teacher_logits.append(clean_logits.detach().cpu().numpy().astype(np.float32))
+                latent_augmix_np, latent_augmix_stats = build_locked_three_chain_latent_augmix_views(
+                    anchor_x_1000.detach().cpu().numpy().astype(np.float32, copy=False),
+                    x_adv_1000.detach().cpu().numpy().astype(np.float32, copy=False),
+                    copies=args.latent_augmix_copies,
+                    severity=args.latent_augmix_severity,
+                    severity_profile=args.latent_augmix_severity_profile,
+                    width=args.latent_augmix_width,
+                    depth=args.latent_augmix_depth,
+                    alpha=args.latent_augmix_alpha,
+                    ops=list(args.latent_augmix_ops),
+                    rng=latent_augmix_rng,
+                    renorm=bool(args.latent_augmix_renorm),
+                    clip_abs=float(args.latent_augmix_clip_abs),
+                )
+                latent_augmix_stats_batches.append(latent_augmix_stats)
+                if latent_augmix_np.shape[0] > 0:
+                    latent_augmix_t = torch.from_numpy(latent_augmix_np).float().to(device)
+                    x_adv_for_stream = (
+                        prepare_adv_stream_signal_for_supervised_mode(
+                            latent_augmix_t,
+                            args.supervised_input_mode,
+                            victim.input_stabilizer_kwargs,
+                        )
+                        .detach()
+                        .cpu()
+                        .numpy()
+                        .astype(np.float32)
+                    )
+                    adv_signals.append(x_adv_for_stream)
+                    labels_rep = np.tile(
+                        anchor_pool["labels"][batch_idx].astype(np.float32),
+                        (max(1, int(args.latent_augmix_copies)), 1),
+                    )[: latent_augmix_np.shape[0]]
+                    teacher_rep = np.tile(
+                        clean_logits.detach().cpu().numpy().astype(np.float32),
+                        (max(1, int(args.latent_augmix_copies)), 1),
+                    )[: latent_augmix_np.shape[0]]
+                    adv_labels.append(labels_rep.astype(np.float32, copy=False))
+                    adv_teacher_logits.append(teacher_rep.astype(np.float32, copy=False))
+            else:
+                x_adv_for_stream = (
+                    prepare_adv_stream_signal_for_supervised_mode(
+                        x_adv_1000,
+                        args.supervised_input_mode,
+                        victim.input_stabilizer_kwargs,
+                    )
+                    .detach()
+                    .cpu()
+                    .numpy()
+                    .astype(np.float32)
+                )
+                adv_signals.append(x_adv_for_stream)
+                adv_labels.append(anchor_pool["labels"][batch_idx].astype(np.float32))
+                adv_teacher_logits.append(clean_logits.detach().cpu().numpy().astype(np.float32))
             delta_norms.extend(delta.detach().flatten(1).norm(dim=1).cpu().tolist())
     finally:
         set_module_requires_grad(model, True)
@@ -899,10 +1074,21 @@ def build_adv_epoch(
         n_adv=int(len(signals)),
         anchor_sample_stats=anchor_sample_stats,
     )
+    latent_augmix_stats = (
+        summarize_latent_augmix_epoch_stats(latent_augmix_stats_batches)
+        if args.enable_latent_augmix_branch
+        else {
+            "enabled": False,
+            "topology": "locked_three_chain_vae_lhat_augmix",
+            "reason": "disabled",
+            "n_generated": 0,
+        }
+    )
     return {
         "signals": signals,
         "labels": labels,
         "teacher_logits": teacher_logits,
+        "latent_augmix_stats": latent_augmix_stats,
         **adv_stats,
     }
 
@@ -1511,8 +1697,9 @@ def train_fullft_raw_corruption_branches_epoch(
 def build_arg_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out_dir", default=str(DEFAULT_OUT_DIR))
+    ap.add_argument("--stage", choices=["k500", "ptbxl_source"], default="k500")
     ap.add_argument("--center", default=CENTER_DEFAULT)
-    ap.add_argument("--ref_meta_json", required=True)
+    ap.add_argument("--ref_meta_json", default="")
     ap.add_argument("--k", type=int, default=100)
     ap.add_argument("--epochs", type=int, default=5)
     ap.add_argument("--lr", type=float, default=1e-4)
@@ -1523,6 +1710,51 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--source_weight", type=float, default=1.0)
     ap.add_argument("--target_real_weight", type=float, default=40.0)
     ap.add_argument("--enable_vae_adv_stream", action="store_true")
+    ap.add_argument(
+        "--enable_latent_augmix_branch",
+        action="store_true",
+        help=(
+            "After each VAE-LHAT adversarial waveform is generated, build the "
+            "locked three-chain AugMix view: two official corruption chains "
+            "plus one uncorrupted VAE-LHAT adversarial waveform chain."
+        ),
+    )
+    ap.add_argument(
+        "--latent_augmix_topology",
+        choices=["locked_three_chain"],
+        default="locked_three_chain",
+    )
+    ap.add_argument("--latent_augmix_copies", type=int, default=1)
+    ap.add_argument("--latent_augmix_width", type=int, default=3)
+    ap.add_argument("--latent_augmix_depth", type=int, default=-1)
+    ap.add_argument("--latent_augmix_alpha", type=float, default=1.0)
+    ap.add_argument("--latent_augmix_severity", type=int, default=5)
+    ap.add_argument(
+        "--latent_augmix_severity_profile",
+        default="standard",
+        choices=STRESS_PROFILE_CHOICES,
+    )
+    ap.add_argument(
+        "--latent_augmix_ops",
+        nargs="+",
+        default=[
+            "powerline_noise",
+            "emg_noise",
+            "baseline_wander",
+            "baseline_shift",
+            "random_leads_masking",
+        ],
+        choices=AVAILABLE_OPS,
+    )
+    ap.add_argument(
+        "--latent_augmix_renorm",
+        action="store_true",
+        help=(
+            "Diagnostic only. The locked main protocol leaves generated "
+            "AugMix waveforms unnormalized until ECGFounder input conversion."
+        ),
+    )
+    ap.add_argument("--latent_augmix_clip_abs", type=float, default=6.0)
     ap.add_argument("--adv_weight", type=float, default=20.0)
     ap.add_argument("--adv_weight_start", type=float, default=None)
     ap.add_argument("--adv_weight_warmup_epochs", type=int, default=0)
@@ -1627,6 +1859,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default="source_auprc",
     )
     ap.add_argument("--target_val_score_weight", type=float, default=0.5)
+    ap.add_argument(
+        "--checkpoint_policy",
+        choices=["best", "last"],
+        default="best",
+        help="Checkpoint loaded for final eval_result.json; locked PN2021-C protocol uses last.",
+    )
     ap.add_argument("--source_train_limit", type=int, default=0)
     ap.add_argument(
         "--cache_dir",
@@ -1644,6 +1882,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default="",
         help="Optional short run directory name under <out_dir>/runs; useful when config tags exceed filename limits.",
     )
+    ap.add_argument(
+        "--init_model_path",
+        default="",
+        help="Optional full-model ECGFounder checkpoint used before K500 full fine-tuning.",
+    )
     ap.add_argument("--ecgfounder_input_bandpass_low_hz", type=float, default=None)
     ap.add_argument("--ecgfounder_input_bandpass_high_hz", type=float, default=None)
     ap.add_argument("--ecgfounder_input_repair_flat_leads", action="store_true")
@@ -1660,6 +1903,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument("--source_raw1000_signal_cache", default=str(DEFAULT_SOURCE_RAW1000_SIGNAL_CACHE))
     ap.add_argument("--source_raw1000_label_cache", default=str(DEFAULT_SOURCE_RAW1000_LABEL_CACHE))
+    ap.add_argument(
+        "--target_raw1000_npz_override",
+        default="",
+        help=(
+            "Optional target-center raw1000 K-shot artifact. Use this for the "
+            "locked PN2021-C raw-first protocol so target supervised ECGs are "
+            "not loaded from legacy pre-zscored .signals.npz files."
+        ),
+    )
     ap.add_argument(
         "--init_head_path",
         default="",
@@ -1816,6 +2068,27 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = build_arg_parser().parse_args()
 
+    if args.stage == "k500" and not args.ref_meta_json:
+        raise ValueError("--ref_meta_json is required for --stage k500")
+    if args.enable_latent_augmix_branch and not args.enable_vae_adv_stream:
+        raise ValueError("--enable_latent_augmix_branch requires --enable_vae_adv_stream")
+    if args.enable_latent_augmix_branch:
+        if args.latent_augmix_topology != "locked_three_chain":
+            raise ValueError("--enable_latent_augmix_branch requires --latent_augmix_topology locked_three_chain")
+        if int(args.latent_augmix_width) != 3:
+            raise ValueError("--latent_augmix_topology locked_three_chain requires exactly three chains")
+        if bool(args.latent_augmix_renorm):
+            raise ValueError("--latent_augmix_renorm is diagnostic-only and excluded from the locked main protocol")
+    if args.stage == "ptbxl_source":
+        if args.enable_vae_adv_stream:
+            raise ValueError("--stage ptbxl_source does not support VAE adversarial stream")
+        if args.enable_latent_augmix_branch:
+            raise ValueError("--stage ptbxl_source does not support latent AugMix")
+        if args.init_model_path or args.init_head_path:
+            raise ValueError("--stage ptbxl_source must start from the official ECGFounder checkpoint")
+        if args.enable_raw_corrupt_consistency or args.enable_raw_corrupt_aux_consistency:
+            raise ValueError("--stage ptbxl_source does not support raw corruption branches")
+
     set_seed(args.seed)
     device = torch.device(args.device)
     input_stabilizer_kwargs = input_stabilizer_kwargs_from_args(args)
@@ -1831,40 +2104,60 @@ def main() -> None:
 
     cache_dir = Path(args.cache_dir) if args.cache_dir else out_dir / "cache"
     ptbxl_items, _ = build_ptbxl_items(limit=0)
-    pn_items_all = build_pn2021_items(out_dir / "pn2021_manifest.json", limit_per_center=0)
-    pn_items = [x for x in pn_items_all if str(x["center"]) == args.center]
     ptbxl = build_signal_cache(
         ptbxl_items,
         cache_dir / f"ptbxl_{args.preprocess_policy}.signals.npy",
         cache_dir / f"ptbxl_{args.preprocess_policy}.meta.npz",
         args.preprocess_policy,
     )
-    pn = build_signal_cache(
-        pn_items,
-        cache_dir / f"{args.center}_{args.preprocess_policy}.signals.npy",
-        cache_dir / f"{args.center}_{args.preprocess_policy}.meta.npz",
-        args.preprocess_policy,
-    )
+    if args.stage == "ptbxl_source":
+        pn = None
+        selected_ids: set[str] = set()
+        target_idx = np.empty(0, dtype=np.int64)
+        target_train_idx = np.empty(0, dtype=np.int64)
+        target_val_idx = np.empty(0, dtype=np.int64)
+        target_train_ids: set[str] = set()
+        target_val_ids: set[str] = set()
+        eval_idx = np.empty(0, dtype=np.int64)
+        drop_eval_idx = np.empty(0, dtype=np.int64)
+    else:
+        pn_items_all = build_pn2021_items(out_dir / "pn2021_manifest.json", limit_per_center=0)
+        pn_items = [x for x in pn_items_all if str(x["center"]) == args.center]
+        pn = build_signal_cache(
+            pn_items,
+            cache_dir / f"{args.center}_{args.preprocess_policy}.signals.npy",
+            cache_dir / f"{args.center}_{args.preprocess_policy}.meta.npz",
+            args.preprocess_policy,
+        )
 
-    selected_ids = load_selected_ref_ids(Path(args.ref_meta_json), args.center)
-    record_ids = pn["record_ids"].astype(str)
-    target_idx = np.asarray([i for i, rid in enumerate(record_ids) if rid in selected_ids], dtype=np.int64)
-    if len(target_idx) != args.k:
-        print(f"[warn] parsed K={len(target_idx)} target records; requested {args.k}", flush=True)
-    target_train_idx, target_val_idx, target_train_ids, target_val_ids = split_target_train_val(
-        target_idx,
-        record_ids,
-        pn["labels"],
-        args.target_val_count,
-        args.seed if args.target_val_seed is None else args.target_val_seed,
-        args.target_val_split_mode,
-    )
-    if args.selection_metric != "source_auprc" and len(target_val_idx) == 0:
-        raise RuntimeError("--selection_metric needs --target_val_count > 0 unless source_auprc is used")
-    eval_idx = np.asarray([i for i, rid in enumerate(record_ids) if rid not in selected_ids], dtype=np.int64)
-    drop_eval_idx = eval_idx[pn["labels"][eval_idx].sum(axis=1) > 0]
+        selected_ids = load_selected_ref_ids(Path(args.ref_meta_json), args.center)
+        record_ids = pn["record_ids"].astype(str)
+        target_idx = np.asarray([i for i, rid in enumerate(record_ids) if rid in selected_ids], dtype=np.int64)
+        if len(target_idx) != args.k:
+            print(f"[warn] parsed K={len(target_idx)} target records; requested {args.k}", flush=True)
+        target_train_idx, target_val_idx, target_train_ids, target_val_ids = split_target_train_val(
+            target_idx,
+            record_ids,
+            pn["labels"],
+            args.target_val_count,
+            args.seed if args.target_val_seed is None else args.target_val_seed,
+            args.target_val_split_mode,
+        )
+        if args.selection_metric != "source_auprc" and len(target_val_idx) == 0:
+            raise RuntimeError("--selection_metric needs --target_val_count > 0 unless source_auprc is used")
+        eval_idx = np.asarray([i for i, rid in enumerate(record_ids) if rid not in selected_ids], dtype=np.int64)
+        drop_eval_idx = eval_idx[pn["labels"][eval_idx].sum(axis=1) > 0]
 
     model = ft_12lead_ECGFounder(device, str(CHECKPOINT), 5, linear_prob=False)
+    init_model_info = None
+    if args.init_model_path:
+        init_model_path = Path(args.init_model_path)
+        load_fullft_checkpoint(init_model_path, model, device, op_adapter=None)
+        init_model_info = {
+            "path": str(init_model_path),
+            "type": "full_model",
+        }
+        print(f"[setup] initialized full ECGFounder model from {init_model_path}", flush=True)
     init_head_info = None
     if args.init_head_path:
         init_head_info = init_dense_from_head(model, Path(args.init_head_path))
@@ -2169,17 +2462,21 @@ def main() -> None:
                 device,
             )
         epoch_adv_weight = scheduled_adv_weight(args, epoch)
-        train_loader = make_train_loader(
-            ptbxl,
-            pn,
-            target_train_idx,
-            args,
-            adv_info["signals"],
-            adv_info["labels"],
-            adv_info.get("teacher_logits"),
-            adv_weight=epoch_adv_weight,
-            target_train_record_ids=target_train_ids,
-        )
+        if args.stage == "ptbxl_source":
+            train_loader = make_source_only_train_loader(ptbxl, args)
+        else:
+            assert pn is not None
+            train_loader = make_train_loader(
+                ptbxl,
+                pn,
+                target_train_idx,
+                args,
+                adv_info["signals"],
+                adv_info["labels"],
+                adv_info.get("teacher_logits"),
+                adv_weight=epoch_adv_weight,
+                target_train_record_ids=target_train_ids,
+            )
         model.train()
         losses = []
         clean_anchor_losses = []
@@ -2244,26 +2541,34 @@ def main() -> None:
                 device,
                 input_stabilizer_kwargs=input_stabilizer_kwargs,
             )
-            if len(target_val_idx) > 0
+            if pn is not None and len(target_val_idx) > 0
             else None
         )
-        target_metrics = eval_split(
-            model,
-            pn["signals"],
-            pn["labels"],
-            eval_idx,
-            args.eval_batch_size,
-            device,
-            input_stabilizer_kwargs=input_stabilizer_kwargs,
+        target_metrics = (
+            eval_split(
+                model,
+                pn["signals"],
+                pn["labels"],
+                eval_idx,
+                args.eval_batch_size,
+                device,
+                input_stabilizer_kwargs=input_stabilizer_kwargs,
+            )
+            if pn is not None
+            else None
         )
-        drop_metrics = eval_split(
-            model,
-            pn["signals"],
-            pn["labels"],
-            drop_eval_idx,
-            args.eval_batch_size,
-            device,
-            input_stabilizer_kwargs=input_stabilizer_kwargs,
+        drop_metrics = (
+            eval_split(
+                model,
+                pn["signals"],
+                pn["labels"],
+                drop_eval_idx,
+                args.eval_batch_size,
+                device,
+                input_stabilizer_kwargs=input_stabilizer_kwargs,
+            )
+            if pn is not None
+            else None
         )
         selection_score = compute_source_target_selection_score(
             selection_metric=args.selection_metric,
@@ -2278,10 +2583,10 @@ def main() -> None:
             "val_macro_auprc": val_metrics["macro_auprc"],
             "target_val_macro_auroc": None if target_val_metrics is None else target_val_metrics["macro_auroc"],
             "target_val_macro_auprc": None if target_val_metrics is None else target_val_metrics["macro_auprc"],
-            "target_macro_auroc": target_metrics["macro_auroc"],
-            "target_macro_auprc": target_metrics["macro_auprc"],
-            "target_drop_all_zero_macro_auroc": drop_metrics["macro_auroc"],
-            "target_drop_all_zero_macro_auprc": drop_metrics["macro_auprc"],
+            "target_macro_auroc": None if target_metrics is None else target_metrics["macro_auroc"],
+            "target_macro_auprc": None if target_metrics is None else target_metrics["macro_auprc"],
+            "target_drop_all_zero_macro_auroc": None if drop_metrics is None else drop_metrics["macro_auroc"],
+            "target_drop_all_zero_macro_auprc": None if drop_metrics is None else drop_metrics["macro_auprc"],
             "selection_score": selection_score,
             "n_adv": int(adv_info["n_adv"]),
             "adv_weight_effective": float(epoch_adv_weight),
@@ -2327,6 +2632,7 @@ def main() -> None:
             "raw_corrupt_stats": raw_corrupt_stats,
             "raw_corrupt_aux_loss": _finite_loss_or_none(raw_corrupt_aux_stats),
             "raw_corrupt_aux_stats": raw_corrupt_aux_stats,
+            "latent_augmix_stats": adv_info.get("latent_augmix_stats"),
             "lr": float(opt.param_groups[0]["lr"]),
         }
         logs.append(entry)
@@ -2339,14 +2645,27 @@ def main() -> None:
                 f"tval={entry['target_val_macro_auroc']:.4f}/{entry['target_val_macro_auprc']:.4f} "
                 if target_val_metrics is not None else ""
             )
-            + f"target={entry['target_macro_auroc']:.4f}/{entry['target_macro_auprc']:.4f} "
-            f"drop={entry['target_drop_all_zero_macro_auroc']:.4f}/{entry['target_drop_all_zero_macro_auprc']:.4f} "
+            + (
+                f"target={entry['target_macro_auroc']:.4f}/{entry['target_macro_auprc']:.4f} "
+                f"drop={entry['target_drop_all_zero_macro_auroc']:.4f}/"
+                f"{entry['target_drop_all_zero_macro_auprc']:.4f} "
+                if entry["target_macro_auroc"] is not None
+                else ""
+            )
             + (
                 f"adv_gain={entry['adv_loss_gain_mean']:.4f} "
                 f"init_gain={entry['adv_init_loss_gain_mean']:.4f} "
                 f"margin_drop={entry['adv_signed_margin_drop_mean']:.4f} "
                 f"asr={entry['adv_sample_anyflip_asr']:.3f}"
                 if entry["adv_loss_gain_mean"] is not None and entry["adv_sample_anyflip_asr"] is not None
+                else ""
+            )
+            + (
+                f" latmix_n={entry['latent_augmix_stats'].get('n_generated', 0)} "
+                f"latmix_wadv={entry['latent_augmix_stats'].get('adv_weight_mean'):.3f}"
+                if isinstance(entry.get("latent_augmix_stats"), dict)
+                and entry["latent_augmix_stats"].get("enabled")
+                and entry["latent_augmix_stats"].get("adv_weight_mean") is not None
                 else ""
             ),
             flush=True,
@@ -2356,17 +2675,22 @@ def main() -> None:
             best = score
             best_epoch = epoch
             save_fullft_checkpoint(run_dir / "best_model.pt", model, op_adapter)
+        save_fullft_checkpoint(run_dir / "last_model.pt", model, op_adapter)
 
-    load_fullft_checkpoint(run_dir / "best_model.pt", model, device, op_adapter)
+    selected_checkpoint_name = "last_model.pt" if args.checkpoint_policy == "last" else "best_model.pt"
+    load_fullft_checkpoint(run_dir / selected_checkpoint_name, model, device, op_adapter)
+    last_epoch = logs[-1]["epoch"] if logs else None
     result = {
         "method": (
             "ECGFounder official-style full fine-tuning"
             + (" + VAE-only real-anchor latent-hull online AT" if args.enable_vae_adv_stream else "")
+            + (" + locked three-chain VAE-LHAT AugMix" if args.enable_latent_augmix_branch else "")
             + (" + calibrated/raw corruption consistency" if args.enable_raw_corrupt_consistency else "")
             + (" + auxiliary/raw corruption consistency" if args.enable_raw_corrupt_aux_consistency else "")
             + (" + explicit op-conditioned corruption adapter" if op_adapter is not None else "")
         ),
         "vae_stream_enabled": bool(args.enable_vae_adv_stream),
+        "latent_augmix_branch_enabled": bool(args.enable_latent_augmix_branch),
         "raw_corrupt_consistency_enabled": bool(args.enable_raw_corrupt_consistency),
         "raw_corrupt_aux_consistency_enabled": bool(args.enable_raw_corrupt_aux_consistency),
         "raw_corrupt_op_conditioning_enabled": bool(op_adapter is not None),
@@ -2374,7 +2698,8 @@ def main() -> None:
         "supervised_input_mode": str(args.supervised_input_mode),
         "input_stabilizer": dict(input_stabilizer_kwargs),
         "label_mapping": pn2021_super5_label_mapping_payload(),
-        "center": args.center,
+        "stage": args.stage,
+        "center": None if args.stage == "ptbxl_source" else args.center,
         "K": int(len(target_idx)),
         "target_train_K": int(len(target_train_idx)),
         "target_val_K": int(len(target_val_idx)),
@@ -2384,6 +2709,9 @@ def main() -> None:
         "selection_metric": args.selection_metric,
         "target_val_split_mode": args.target_val_split_mode,
         "selection_score_weight": float(args.target_val_score_weight),
+        "checkpoint_policy": args.checkpoint_policy,
+        "selected_checkpoint": selected_checkpoint_name,
+        "last_epoch": last_epoch,
         "best_epoch": best_epoch,
         "best_selection_score": float(best),
         "ptbxl_fold10": eval_split(
@@ -2405,33 +2733,61 @@ def main() -> None:
                 device,
                 input_stabilizer_kwargs=input_stabilizer_kwargs,
             )
-            if len(target_val_idx) > 0
+            if pn is not None and len(target_val_idx) > 0
             else None
         ),
-        "target_excluding_ref": eval_split(
-            model,
-            pn["signals"],
-            pn["labels"],
-            eval_idx,
-            args.eval_batch_size,
-            device,
-            input_stabilizer_kwargs=input_stabilizer_kwargs,
+        "target_excluding_ref": (
+            eval_split(
+                model,
+                pn["signals"],
+                pn["labels"],
+                eval_idx,
+                args.eval_batch_size,
+                device,
+                input_stabilizer_kwargs=input_stabilizer_kwargs,
+            )
+            if pn is not None
+            else None
         ),
-        "target_drop_all_zero_excluding_ref": eval_split(
-            model,
-            pn["signals"],
-            pn["labels"],
-            drop_eval_idx,
-            args.eval_batch_size,
-            device,
-            input_stabilizer_kwargs=input_stabilizer_kwargs,
+        "target_drop_all_zero_excluding_ref": (
+            eval_split(
+                model,
+                pn["signals"],
+                pn["labels"],
+                drop_eval_idx,
+                args.eval_batch_size,
+                device,
+                input_stabilizer_kwargs=input_stabilizer_kwargs,
+            )
+            if pn is not None
+            else None
         ),
         "n_target_eval": int(len(eval_idx)),
         "n_target_drop_all_zero_eval": int(len(drop_eval_idx)),
         "config": vars(args),
+        "init_model": init_model_info,
         "init_head": init_head_info,
         "raw_corrupt_consistency": raw_corrupt_setup,
         "raw_corrupt_aux_consistency": raw_corrupt_aux_setup,
+        "latent_augmix_branch": {
+            "enabled": bool(args.enable_latent_augmix_branch),
+            "topology": str(args.latent_augmix_topology),
+            "chain_roles": [
+                "corruption",
+                "corruption",
+                "vae_lhat_adversarial_waveform",
+            ] if args.enable_latent_augmix_branch else [],
+            "adversarial_chain_corrupted": False if args.enable_latent_augmix_branch else None,
+            "copies": int(args.latent_augmix_copies),
+            "width": int(args.latent_augmix_width),
+            "depth": int(args.latent_augmix_depth),
+            "alpha": float(args.latent_augmix_alpha),
+            "severity": int(args.latent_augmix_severity),
+            "severity_profile": str(args.latent_augmix_severity_profile),
+            "ops": list(args.latent_augmix_ops),
+            "renorm": bool(args.latent_augmix_renorm),
+            "clip_abs": float(args.latent_augmix_clip_abs),
+        },
         "vae_anchor_pool": None if anchor_pool is None else {
             "classes_in_scope": anchor_pool["classes_in_scope"],
             "label_counts": anchor_pool["label_counts"],

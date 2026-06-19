@@ -136,6 +136,25 @@ def main() -> None:
         ),
     )
     ap.add_argument(
+        "--target_real_npz_override",
+        default="",
+        help=(
+            "Optional target-real supervised signal artifact. Use a raw1000 "
+            "artifact with --target_real_norm_mode per_sample_global for the "
+            "locked PN2021-C raw-first protocol."
+        ),
+    )
+    ap.add_argument(
+        "--target_real_norm_mode",
+        choices=["pre_zscored", "per_sample_global"],
+        default="pre_zscored",
+        help=(
+            "Normalization contract for --target_real_npz. pre_zscored keeps "
+            "legacy selected .signals.npz behavior; per_sample_global z-scores "
+            "raw1000 target ECGs inside the online-AT dataset before the model."
+        ),
+    )
+    ap.add_argument(
         "--source_weights",
         default="real_anchor=1.0",
         help="Comma map passed to synth_online_at_super5 --source_weights.",
@@ -253,6 +272,16 @@ def main() -> None:
         ),
     )
     ap.add_argument("--latent_augmix_latent_weight_cap", type=float, default=0.3)
+    ap.add_argument(
+        "--latent_augmix_topology",
+        choices=["legacy_branch", "locked_three_chain"],
+        default="legacy_branch",
+        help=(
+            "Forwarded to synth_online_at_super5.py. locked_three_chain keeps "
+            "the PN2021-C main method as two corruption chains plus one "
+            "uncorrupted VAE-LHAT adversarial waveform chain."
+        ),
+    )
     ap.add_argument(
         "--disable_latent_augmix_branch",
         action="store_true",
@@ -403,12 +432,13 @@ def main() -> None:
     ap.add_argument("--mask_shift_clip_abs", type=float, default=6.0)
     ap.add_argument(
         "--quick_eval_source",
-        choices=["pn2021", "target_real_val"],
+        choices=["pn2021", "target_real_val", "none"],
         default="pn2021",
     )
     ap.add_argument("--quick_eval_n_per_center", type=int, default=500)
     ap.add_argument("--target_real_val_fraction", type=float, default=0.2)
     ap.add_argument("--target_real_val_seed", type=int, default=20260531)
+    ap.add_argument("--checkpoint_policy", choices=["best", "last"], default="best")
     ap.add_argument("--eval_batch_size", type=int, default=192)
     ap.add_argument("--eval_min_pos", type=int, default=10)
     ap.add_argument("--eval_pn2021_limit", type=int, default=0)

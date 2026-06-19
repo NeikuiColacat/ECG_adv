@@ -12,6 +12,26 @@ from torch.utils.data import DataLoader, TensorDataset
 import scripts.paper.run_ecgfounder_fullft_super5_pilot_20260523 as fullft
 
 
+def test_fullft_parser_accepts_ptbxl_source_stage_without_ref_meta():
+    parser = fullft.build_arg_parser()
+
+    args = parser.parse_args(
+        [
+            "--stage",
+            "ptbxl_source",
+            "--checkpoint_policy",
+            "last",
+            "--run_name",
+            "ptbxl_super5_fullft_locked",
+        ]
+    )
+
+    assert args.stage == "ptbxl_source"
+    assert args.ref_meta_json == ""
+    assert args.checkpoint_policy == "last"
+    assert args.run_name == "ptbxl_super5_fullft_locked"
+
+
 class _TinyFullFT(nn.Module):
     def __init__(self) -> None:
         super().__init__()
@@ -155,6 +175,118 @@ def test_fullft_parser_accepts_aux_raw_corruption_teacher_flags():
     assert args.raw_corrupt_aux_teacher_weight == 0.75
     assert args.raw_corrupt_aux_teacher_loss == "mse_logits"
     assert args.raw_corrupt_aux_teacher_view == "corrupt"
+
+
+def test_fullft_parser_accepts_locked_latent_augmix_flags():
+    parser = fullft.build_arg_parser()
+
+    args = parser.parse_args(
+        [
+            "--ref_meta_json",
+            "/tmp/ref.json",
+            "--enable_vae_adv_stream",
+            "--enable_latent_augmix_branch",
+            "--latent_augmix_topology",
+            "locked_three_chain",
+            "--latent_augmix_width",
+            "3",
+            "--latent_augmix_depth",
+            "-1",
+            "--latent_augmix_alpha",
+            "1.0",
+            "--latent_augmix_severity",
+            "5",
+            "--latent_augmix_severity_profile",
+            "standard",
+            "--latent_augmix_ops",
+            "powerline_noise",
+            "emg_noise",
+            "baseline_wander",
+            "baseline_shift",
+            "random_leads_masking",
+            "--latent_augmix_copies",
+            "2",
+            "--latent_augmix_clip_abs",
+            "0",
+        ]
+    )
+
+    assert args.enable_vae_adv_stream is True
+    assert args.enable_latent_augmix_branch is True
+    assert args.latent_augmix_topology == "locked_three_chain"
+    assert args.latent_augmix_width == 3
+    assert args.latent_augmix_severity == 5
+    assert args.latent_augmix_severity_profile == "standard"
+    assert args.latent_augmix_ops == [
+        "powerline_noise",
+        "emg_noise",
+        "baseline_wander",
+        "baseline_shift",
+        "random_leads_masking",
+    ]
+    assert args.latent_augmix_clip_abs == 0.0
+
+
+def test_fullft_locked_three_chain_augmix_wrapper_keeps_adv_chain_uncorrupted(monkeypatch):
+    anchor = np.zeros((1, 12, 8), dtype=np.float32)
+    adv = np.full((1, 12, 8), 10.0, dtype=np.float32)
+    op_inputs: list[float] = []
+
+    def fake_apply(sig_ct, op_name, op_severity, severity_profile="standard"):
+        op_inputs.append(float(np.max(sig_ct)))
+        assert op_name == "powerline_noise"
+        assert op_severity == 5
+        assert severity_profile == "standard"
+        return np.asarray(sig_ct, dtype=np.float32) + 1.0
+
+    monkeypatch.setattr(fullft, "apply_augmix_op_np", fake_apply)
+
+    mixed, stats = fullft.build_locked_three_chain_latent_augmix_views(
+        anchor,
+        adv,
+        copies=1,
+        severity=5,
+        severity_profile="standard",
+        width=3,
+        depth=1,
+        alpha=1.0,
+        ops=["powerline_noise"],
+        rng=np.random.default_rng(7),
+        renorm=False,
+        clip_abs=0.0,
+    )
+
+    assert mixed.shape == anchor.shape
+    assert op_inputs == [0.0, 0.0]
+    assert stats["topology"] == "locked_three_chain_vae_lhat_augmix"
+    assert stats["corruption_chain_count"] == 2
+    assert stats["adversarial_chain_count"] == 1
+    assert stats["adversarial_chain_corrupted"] is False
+    assert stats["chain_roles"] == [
+        "corruption",
+        "corruption",
+        "vae_lhat_adversarial_waveform",
+    ]
+    assert stats["renorm"] is False
+
+
+def test_fullft_locked_three_chain_augmix_wrapper_rejects_degenerate_width():
+    anchor = np.zeros((1, 12, 8), dtype=np.float32)
+    adv = np.zeros((1, 12, 8), dtype=np.float32)
+
+    with pytest.raises(ValueError, match="exactly three chains"):
+        fullft.build_locked_three_chain_latent_augmix_views(
+            anchor,
+            adv,
+            copies=1,
+            severity=5,
+            severity_profile="standard",
+            width=1,
+            depth=1,
+            alpha=1.0,
+            ops=["powerline_noise"],
+            rng=np.random.default_rng(7),
+        )
 
 
 def test_prepare_raw_corruption_teacher_input_uses_raw1000_for_effnet_teacher(monkeypatch):
@@ -469,7 +601,7 @@ def test_make_train_loader_raw1000_uses_source_cache_and_target_anchor(monkeypat
     np.save(source_signal_path, source_signals)
     np.save(source_label_path, source_labels)
 
-    target_signal_path = tmp_path / "cpsc_2018_real_k500_seed20260531.signals.npz"
+    target_signal_path = tmp_path / "cpsc_2018_real_k500_seed20260531.raw1000.npz"
     np.savez_compressed(
         target_signal_path,
         signals=np.ones((2, 1000, 12), dtype=np.float32),
@@ -477,17 +609,12 @@ def test_make_train_loader_raw1000_uses_source_cache_and_target_anchor(monkeypat
         record_ids=np.asarray(["r0", "r1"], dtype=str),
     )
 
-    def fake_anchor_signal_npz_path(center, args):
-        assert center == "cpsc_2018"
-        return target_signal_path
-
     captured = {}
 
     def fake_build_loader(**kwargs):
         captured.update(kwargs)
         return "loader"
 
-    monkeypatch.setattr(fullft, "anchor_signal_npz_path", fake_anchor_signal_npz_path)
     monkeypatch.setattr(fullft, "build_weighted_signal_stream_loader_from_datasets", fake_build_loader)
 
     args = fullft.build_arg_parser().parse_args(
@@ -498,6 +625,8 @@ def test_make_train_loader_raw1000_uses_source_cache_and_target_anchor(monkeypat
             "cpsc_2018",
             "--supervised_input_mode",
             "raw1000",
+            "--target_raw1000_npz_override",
+            str(target_signal_path),
             "--source_raw1000_signal_cache",
             str(source_signal_path),
             "--source_raw1000_label_cache",

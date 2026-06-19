@@ -1,0 +1,50 @@
+extends:
+  - pn2021c_official_s5_locked_protocol.yaml
+
+experiment:
+  name: pn2021c_ecgfounder_threechain_locked_official_s5
+  description: Official severity-5 PN2021-C evaluation for the locked ECGFounder full-FT three-chain AugMix run.
+
+model:
+  backbone: ecgfounder
+  checkpoint: ${paths.data_root}/ecgfounder/checkpoint/12_lead_ECGFounder.pth
+  preprocess_policy: official_ptbxl_eval
+
+preprocess:
+  ecgfounder:
+    preprocess_policy: official_ptbxl_eval
+    input_fs: 500
+    input_len: 5000
+    input_shape: [12, 5000]
+
+training:
+  eval_batch_size: 96
+  num_workers: ${resources.default_num_workers}
+
+evaluation:
+  model_family: ecgfounder_fullft_threechain_locked
+  corruption_input: bottleneck5000
+  output_stem: eval_pn2021_c_ecgfounder_v7_refexcluded_stream_standard_official_s5_locked
+
+logging:
+  child_artifacts:
+    - eval_pn2021_c_ecgfounder_v7_refexcluded_stream_standard_official_s5_locked.json
+  postprocess_artifacts:
+    - pn2021c_ecgfounder_threechain_locked_official_s5.csv
+
+runner:
+  entrypoint: scripts/triple_labels/eval_ecgfounder_pn2021_corruptions.py
+  adapter: ecgfounder_pn2021c_eval
+  env:
+    ECG_ADV_GEN_DATA_ROOT: ${paths.data_root}
+    ECGFOUNDER_ROOT: ${paths.data_root}/ecgfounder
+    TMPDIR: ${paths.short_tmp_root}
+    XDG_CACHE_HOME: ${paths.cache_root}
+  matrix:
+    center: ${paper_protocol.centers.target_4}
+    method:
+      - name: ecgfounder_threechain_locked
+        family: ecgfounder_vae_lhat_augmix_threechain_locked_k500
+        run_dir_template: >-
+          {output_root}/{family}/{run_id}/runs/{center}_vae_lhat_augmix_threechain_locked
+  name: ${experiment.name}_${matrix.center}_${matrix.method.name}

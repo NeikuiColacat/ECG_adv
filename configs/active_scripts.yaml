@@ -1,5 +1,5 @@
 version: 1
-updated: 2026-06-05
+updated: 2026-06-18
 purpose: Track which legacy scripts are managed by YAML configs during the refactor.
 
 source_of_truth:
@@ -14,6 +14,8 @@ source_of_truth:
   command_adapter_helpers: ecg_adv_gen/config/adapters/common.py
   direct_command_adapter: ecg_adv_gen/config/adapters/direct.py
   direct_finetune_runner_adapter: ecg_adv_gen/config/adapters/direct_finetune.py
+  ecgfounder_fullft_runner_adapter: ecg_adv_gen/config/adapters/ecgfounder_fullft.py
+  ecgfounder_pn2021c_eval_runner_adapter: ecg_adv_gen/config/adapters/ecgfounder_pn2021c_eval.py
   ecgfounder_vae_lhat_command_adapter: ecg_adv_gen/config/adapters/ecgfounder_vae_lhat.py
   effnet_vae_lhat_command_adapter: ecg_adv_gen/config/adapters/effnet_vae_lhat.py
   pn2021_eval_runner_adapter: ecg_adv_gen/config/adapters/pn2021_eval.py
@@ -212,6 +214,17 @@ managed_experiments:
     owns_training_logic: false
     notes: Current EfficientNet VAE-LHAT v7 SJR/RGQ wrapper; runner.adapter=effnet_vae_lhat expands typed YAML fields to one legacy command per target center, uses seed20260531 K500 anchors, direct-K500 init checkpoints, compatsoft direct-init LHAT parameters, and target_real_val quick selection.
 
+  - name: effnet_vae_lhat_augmix_threechain_locked_k500
+    status: active_wrapped
+    evidence_scope: launch_only
+    config: configs/experiments/effnet_vae_lhat_augmix_threechain_locked_k500.yaml
+    legacy_entrypoint: scripts/paper/run_effnet_latent_augmix_stage3_20260524.py
+    launcher: scripts/run_experiment.py
+    method_family: vae_latent_hull_threechain_augmix_locked_pn2021c
+    mapping_version: v7_super5_sjr_rgq_review_20260528
+    owns_training_logic: false
+    notes: Locked EfficientNet PN2021-C official severity-5 main-method launch surface; uses all K500 target samples, checkpoint_policy=last, quick_eval_source=none, and two corruption chains plus one VAE-LHAT adversarial waveform chain.
+
   - name: effnet_vae_lhat_percent_v7_sjr_rgq
     status: active_wrapped
     evidence_scope: launch_only
@@ -388,6 +401,39 @@ managed_experiments:
     owns_training_logic: false
     notes: Direct init-head full fine-tune control with explicit ref_meta, K500, init_head, and target-val selector.
 
+  - name: ecgfounder_ptbxl_super5_fullft_locked
+    status: active_wrapped
+    evidence_scope: launch_only
+    config: configs/experiments/ecgfounder_ptbxl_super5_fullft_locked.yaml
+    legacy_entrypoint: scripts/paper/run_ecgfounder_fullft_super5_pilot_20260523.py
+    launcher: scripts/run_experiment.py
+    method_family: ecgfounder_locked_ptbxl_super5_full_finetune
+    mapping_version: v7_super5_sjr_rgq_review_20260528
+    owns_training_logic: false
+    notes: Locked PTB-XL source full-FT stage for the PN2021-C protocol; runner.adapter=ecgfounder_fullft emits a source-only command, uses official ECGFounder initialization, target_val_count=0, checkpoint_policy=last, and writes last_model.pt for downstream K500 full-FT.
+
+  - name: ecgfounder_k500_fullft_locked
+    status: active_wrapped
+    evidence_scope: launch_only
+    config: configs/experiments/ecgfounder_k500_fullft_locked.yaml
+    legacy_entrypoint: scripts/paper/run_ecgfounder_fullft_super5_pilot_20260523.py
+    launcher: scripts/run_experiment.py
+    method_family: ecgfounder_locked_k500_full_finetune
+    mapping_version: v7_super5_sjr_rgq_review_20260528
+    owns_training_logic: false
+    notes: Locked K500 full-FT stage for the PN2021-C protocol; consumes same-run PTB-XL full-FT last_model.pt via --init_model_path, uses all K500 samples for training, target_val_count=0, checkpoint_policy=last, and never references best_head.pt/residual_adapter routes.
+
+  - name: ecgfounder_vae_lhat_augmix_threechain_locked_k500
+    status: active_wrapped
+    evidence_scope: launch_only
+    config: configs/experiments/ecgfounder_vae_lhat_augmix_threechain_locked_k500.yaml
+    legacy_entrypoint: scripts/paper/run_ecgfounder_fullft_super5_pilot_20260523.py
+    launcher: scripts/run_experiment.py
+    method_family: ecgfounder_locked_fullft_vae_lhat_threechain_augmix_pn2021c
+    mapping_version: v7_super5_sjr_rgq_review_20260528
+    owns_training_logic: false
+    notes: Locked ECGFounder PN2021-C main-method launch surface; consumes same-run K500 full-FT last_model.pt, keeps all ECGFounder layers trainable, uses all K500 samples, checkpoint_policy=last, and trains two official corruption chains plus one VAE-LHAT adversarial waveform chain without raw-supervised or stabilizer branches.
+
   - name: ecgfounder_direct_k500_v6
     status: active_wrapped
     evidence_scope: launch_only
@@ -509,6 +555,28 @@ managed_experiments:
     owns_training_logic: false
     notes: runner.adapter=pn2021c_eval expands to eight PN2021-C eval commands for four target centers times VAE noAug and VAE LHAT EfficientNet v7 runs; each command requires clean eval metadata, required cache version v7_refexcluded_100hz1000, run-id-scoped corruption metrics, and that center's K500 ref-meta exclusion.
 
+  - name: pn2021c_official_s5_locked_protocol
+    status: active_wrapped
+    evidence_scope: evaluation_only
+    config: configs/experiments/pn2021c_official_s5_locked_protocol.yaml
+    legacy_entrypoint: scripts/triple_labels/eval_pn2021_corruptions.py
+    launcher: scripts/run_experiment.py
+    method_family: managed_pn2021c_official_s5_locked_protocol_eval
+    mapping_version: v7_super5_sjr_rgq_review_20260528
+    owns_training_logic: false
+    notes: Locked PN2021-C official severity-5 evaluation surface; records waveform-bottleneck-then-corrupt-then-zscore protocol metadata, uses standard profile severity=5, five official operators, four target centers, and K500 ref-meta exclusion.
+
+  - name: pn2021c_ecgfounder_threechain_locked_official_s5
+    status: active_wrapped
+    evidence_scope: evaluation_only
+    config: configs/experiments/pn2021c_ecgfounder_threechain_locked_official_s5.yaml
+    legacy_entrypoint: scripts/triple_labels/eval_ecgfounder_pn2021_corruptions.py
+    launcher: scripts/run_experiment.py
+    method_family: managed_ecgfounder_pn2021c_official_s5_locked_eval
+    mapping_version: v7_super5_sjr_rgq_review_20260528
+    owns_training_logic: false
+    notes: Locked ECGFounder PN2021-C official severity-5 evaluation surface; runner.adapter=ecgfounder_pn2021c_eval consumes the full-FT three-chain run last_model.pt, evaluates bottleneck5000 corruption order, recomputes clean metrics through the same raw->100Hz->500Hz->zscore path, and does not enable stabilizer or repair options.
+
   - name: pn2021c_effnet_v7_strong_10to20pp
     status: active_wrapped
     evidence_scope: evaluation_only
@@ -580,6 +648,62 @@ inactive_experiment_configs:
   - config: configs/experiments/effnet_vae_lhat_calibrated_latent_augmix_directloss_k500_v7_sjr_rgq_cpsc_2018.yaml
     status: historical_unmanaged
     reason: Provisional single-center CPSC 2018 calibrated-profile latent AugMix direct-loss ablation; keep inventoried for preflight completeness, but not an active paper evidence surface.
+
+  - config: configs/experiments/effnet_vae_lhat_fullpool_raw_augmix_k500_v7_sjr_rgq_cpsc_2018.yaml
+    status: historical_unmanaged
+    reason: Provisional single-center CPSC 2018 raw-AugMix consistency draft; superseded by the locked three-chain VAE-LHAT AugMix protocol because it uses an independent raw-corruption branch.
+
+  - config: configs/experiments/effnet_vae_lhat_fullpool_raw_augmix_depth1_k500_v7_sjr_rgq_cpsc_2018.yaml
+    status: historical_unmanaged
+    reason: Provisional single-center CPSC 2018 raw-AugMix depth-1 diagnostic; not active mainline because it uses the older raw-corruption consistency branch outside locked three-chain AugMix.
+
+  - config: configs/experiments/effnet_vae_lhat_fullpool_raw_augmix_depth1_m075_k500_v7_sjr_rgq_cpsc_2018.yaml
+    status: historical_unmanaged
+    reason: Provisional single-center CPSC 2018 raw-AugMix fixed-mixture diagnostic; not active mainline because it is a collapsed raw-corruption consistency ablation.
+
+  - config: configs/experiments/effnet_vae_lhat_fullpool_raw_augmix_depth1_noclip_k500_v7_sjr_rgq_cpsc_2018.yaml
+    status: historical_unmanaged
+    reason: Provisional single-center CPSC 2018 raw-AugMix no-clip diagnostic; not active mainline because it uses the older raw-corruption consistency branch.
+
+  - config: configs/experiments/effnet_vae_lhat_fullpool_raw_augmix_depth1_w1_m100_k500_v7_sjr_rgq_cpsc_2018.yaml
+    status: historical_unmanaged
+    reason: Provisional single-center CPSC 2018 width-1 fixed-mixture raw-AugMix diagnostic; explicitly not the locked multi-chain AugMix main method.
+
+  - config: configs/experiments/effnet_vae_lhat_fullpool_raw_augmix_depth1_w1_m100_k500_v7_sjr_rgq_remaining3.yaml
+    status: historical_unmanaged
+    reason: Provisional remaining-center width-1 fixed-mixture raw-AugMix diagnostic; explicitly not the locked multi-chain AugMix main method.
+
+  - config: configs/experiments/effnet_vae_lhat_fullpool_raw_augmix_depth1_w1_m100_hardops_k500_v7_sjr_rgq_chapman.yaml
+    status: historical_unmanaged
+    reason: Provisional Chapman hard-operator raw-AugMix diagnostic; not active mainline because it uses operator-biased collapsed raw-corruption consistency.
+
+  - config: configs/experiments/effnet_vae_lhat_fullpool_raw_augmix_noisemask_w1_m100_k500_v7_sjr_rgq_cpsc_2018.yaml
+    status: historical_unmanaged
+    reason: Provisional CPSC 2018 noise/mask-only raw-AugMix diagnostic; not active mainline because it is operator-filtered and collapsed outside locked three-chain AugMix.
+
+  - config: configs/experiments/effnet_vae_lhat_fullpool_raw_augmix_depth1_w1_m100_stabilizer35_k500_v7_sjr_rgq.yaml
+    status: historical_unmanaged
+    reason: Provisional training-time stabilizer35 raw-AugMix diagnostic; excluded from the locked mainline because stabilizer frontends are diagnostics only.
+
+  - config: configs/experiments/effnet_vae_lhat_fullpool_raw_augmix_depth1_w1_m100_stabilizer35_k500_v7_sjr_rgq_part01.yaml
+    status: historical_unmanaged
+    reason: Provisional partitioned stabilizer35 raw-AugMix diagnostic; excluded from the locked mainline because stabilizer frontends are diagnostics only.
+
+  - config: configs/experiments/effnet_vae_lhat_fullpool_raw_augmix_depth1_w1_m100_stabilizer35_k500_v7_sjr_rgq_part02.yaml
+    status: historical_unmanaged
+    reason: Provisional partitioned stabilizer35 raw-AugMix diagnostic; excluded from the locked mainline because stabilizer frontends are diagnostics only.
+
+  - config: configs/experiments/effnet_vae_lhat_fullpool_raw_augmix_depth1_w1_m100_stabilizer35_k500_v7_sjr_rgq_smoke.yaml
+    status: smoke_only
+    reason: Engineering smoke config for the historical stabilizer35 raw-AugMix diagnostic; not an active paper result surface.
+
+  - config: configs/experiments/ecgfounder_vae_lhat_fullpool_raw_augmix_w1_m100_k500_v7_sjr_rgq_cpsc_2018.yaml
+    status: historical_unmanaged
+    reason: Provisional ECGFounder single-center raw-AugMix consistency diagnostic; superseded by the locked full-FT three-chain ECGFounder mainline because it uses the old residual-adapter/raw-consistency route.
+
+  - config: configs/experiments/ecgfounder_vae_lhat_fullpool_raw_augmix_w1_m100_last_epoch_k500_v7_sjr_rgq_cpsc_2018.yaml
+    status: historical_unmanaged
+    reason: Provisional ECGFounder last-epoch raw-AugMix consistency diagnostic; superseded by the locked full-FT last-checkpoint three-chain ECGFounder mainline.
 
   - config: configs/experiments/effnet_vae_lhat_maskshift_consistency_k500_v7_sjr_rgq.yaml
     status: historical_unmanaged

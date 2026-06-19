@@ -28,6 +28,8 @@ def _args(**overrides):
         "num_workers": 2,
         "anchor_base": "",
         "synth_npz_override": "",
+        "target_real_npz_override": "",
+        "target_real_norm_mode": "pre_zscored",
         "hull_steps": 3,
         "hull_M": 20,
         "hull_lambda": 0.15,
@@ -78,6 +80,7 @@ def _args(**overrides):
         "classifier_lora_alpha": 16.0,
         "unfreeze_last_n_features": 0,
         "latent_augmix_latent_weight_cap": 0.3,
+        "latent_augmix_topology": "legacy_branch",
         "disable_latent_augmix_branch": False,
         "latent_augmix_copies": 1,
         "latent_augmix_width": 3,
@@ -134,6 +137,7 @@ def _args(**overrides):
         "quick_eval_n_per_center": 500,
         "target_real_val_fraction": 0.2,
         "target_real_val_seed": 20260531,
+        "checkpoint_policy": "best",
         "eval_batch_size": 192,
         "eval_min_pos": 10,
         "eval_pn2021_limit": 0,
@@ -170,6 +174,7 @@ def test_legacy_effnet_wrapper_help_exposes_raw_augmix_flags():
     assert "--raw_input_bandpass_high_hz" in result.stdout
     assert "--raw_input_repair_flat_leads" in result.stdout
     assert "--raw_input_renorm_after_stabilizer" in result.stdout
+    assert "--latent_augmix_topology" in result.stdout
 
 
 def test_resolve_effnet_vae_lhat_paths_preserves_legacy_defaults_and_overrides():
@@ -204,6 +209,17 @@ def test_resolve_effnet_vae_lhat_paths_preserves_legacy_defaults_and_overrides()
     assert override_paths.latent_npz == Path("/tmp/pools/source_target.latent.npz")
     assert override_paths.ref_meta == Path("/tmp/custom/ningbo_real_k500_seed20260531.ref_meta.json")
 
+    raw_override_args = _args(
+        anchor_base="/tmp/custom/ningbo_real_k500_seed20260531",
+        target_real_npz_override="/tmp/custom/ningbo_real_k500_seed20260531.raw1000.npz",
+    )
+    raw_override_paths = resolve_effnet_vae_lhat_paths(
+        raw_override_args,
+        data_root=data_root,
+        out_root=out_root,
+    )
+    assert raw_override_paths.signal_npz == Path("/tmp/custom/ningbo_real_k500_seed20260531.raw1000.npz")
+
 
 def test_build_effnet_vae_lhat_commands_preserve_wrapper_flags():
     data_root = Path("/tmp/ecg-data")
@@ -220,6 +236,9 @@ def test_build_effnet_vae_lhat_commands_preserve_wrapper_flags():
         raw_augmix_mixture_prob=0.75,
         raw_augmix_mixture_beta_a=3.0,
         raw_augmix_mixture_beta_b=1.0,
+        checkpoint_policy="last",
+        quick_eval_source="none",
+        target_real_val_fraction=0.0,
         raw_input_bandpass_low_hz=0.5,
         raw_input_bandpass_high_hz=35.0,
         raw_input_repair_flat_leads=True,
@@ -236,6 +255,7 @@ def test_build_effnet_vae_lhat_commands_preserve_wrapper_flags():
         freeze_backbone_classifier_only=True,
         classifier_only_train_final_norm=True,
         latent_augmix_severity_profile="calibrated_10to20pp",
+        latent_augmix_topology="locked_three_chain",
         no_latent_augmix_renorm=True,
         enable_latent_augmix_consistency=True,
         latent_augmix_consistency_weight=2.0,
@@ -259,6 +279,7 @@ def test_build_effnet_vae_lhat_commands_preserve_wrapper_flags():
     assert opt_first(train_opts, "--center_name") == "georgia"
     assert opt_first(train_opts, "--synth_npz") == str(paths.latent_npz)
     assert opt_first(train_opts, "--target_real_npz") == str(paths.signal_npz)
+    assert opt_first(train_opts, "--target_real_norm_mode") == "pre_zscored"
     assert opt_first(train_opts, "--init_ckpt") == str(
         data_root / "triple_labels/super5_minresample_full10_perglobal_20260503/best_model.pt"
     )
@@ -266,6 +287,10 @@ def test_build_effnet_vae_lhat_commands_preserve_wrapper_flags():
     assert train_opts["--allow_hyp_cd_trust"] is True
     assert train_opts["--hull_include_anchor"] is True
     assert train_opts["--enable_latent_augmix_branch"] is True
+    assert opt_first(train_opts, "--latent_augmix_topology") == "locked_three_chain"
+    assert opt_first(train_opts, "--checkpoint_policy") == "last"
+    assert opt_first(train_opts, "--quick_eval_source") == "none"
+    assert opt_first(train_opts, "--target_real_val_fraction") == "0.0"
     assert opt_first(train_opts, "--latent_augmix_severity_profile") == "calibrated_10to20pp"
     assert train_opts["--no_latent_augmix_renorm"] is True
     assert train_opts["--enable_latent_augmix_consistency"] is True
@@ -288,17 +313,31 @@ def test_build_effnet_vae_lhat_commands_preserve_wrapper_flags():
     assert opt_first(train_opts, "--raw_input_bandpass_high_hz") == "35.0"
     assert train_opts["--raw_input_repair_flat_leads"] is True
     assert train_opts["--raw_input_renorm_after_stabilizer"] is True
-    assert train_opts["--enable_mask_shift_consistency"] is True
-    assert train_opts["--mask_shift_no_renorm"] is True
-    assert opt_first(train_opts, "--mask_shift_mask_severity") == "5"
-    assert opt_first(train_opts, "--mask_shift_shift_severity") == "5"
-    assert opt_first(train_opts, "--mask_shift_consistency_weight") == "10.0"
-    assert opt_first(train_opts, "--resume") == "latest"
-    assert train_opts["--allow_resume_config_drift"] is True
-    assert opt_first(train_opts, "--anchor_class_weights") == "MI=2.0"
-    assert opt_first(train_opts, "--source_class_weights") == "real_anchor:MI=2.0"
-    assert train_opts["--freeze_backbone_classifier_only"] is True
-    assert train_opts["--classifier_only_train_final_norm"] is True
+
+
+def test_build_effnet_vae_lhat_command_can_mark_target_real_as_raw1000():
+    data_root = Path("/tmp/ecg-data")
+    out_root = data_root / "runs"
+    args = _args(
+        anchor_base="/tmp/custom/ningbo_real_k500_seed20260531",
+        target_real_npz_override="/tmp/custom/ningbo_real_k500_seed20260531.raw1000.npz",
+        target_real_norm_mode="per_sample_global",
+        checkpoint_policy="last",
+    )
+    paths = resolve_effnet_vae_lhat_paths(args, data_root=data_root, out_root=out_root)
+    train_cmd = build_effnet_vae_lhat_train_cmd(
+        args,
+        python="/python",
+        data_root=data_root,
+        paths=paths,
+        class_trust=Path("/tmp/trust.json"),
+    )
+    train_opts = argv_option_map(train_cmd)
+
+    assert opt_first(train_opts, "--target_real_npz") == "/tmp/custom/ningbo_real_k500_seed20260531.raw1000.npz"
+    assert opt_first(train_opts, "--target_real_norm_mode") == "per_sample_global"
+    assert "--enable_mask_shift_consistency" not in train_opts
+    assert "--resume" not in train_opts
 
     eval_cmd = build_effnet_vae_lhat_eval_cmd(
         args,
@@ -310,11 +349,12 @@ def test_build_effnet_vae_lhat_commands_preserve_wrapper_flags():
 
     assert eval_cmd[:3] == ["/env/bin/python", "-u", "scripts/triple_labels/eval_crosscenter.py"]
     assert opt_first(eval_opts, "--model_dir") == str(paths.out_dir)
+    assert opt_first(eval_opts, "--checkpoint_name") == "last_model.pt"
     assert opt_first(eval_opts, "--exclude_ref_ids") == str(paths.ref_meta)
     assert opt_first(eval_opts, "--output_path") == str(
         paths.out_dir / "eval_result_v7_exclrefs_crop1000.json"
     )
-    assert opt_first(eval_opts, "--pn2021_limit") == "25"
+    assert "--pn2021_limit" not in eval_opts
 
 
 def test_build_effnet_vae_lhat_eval_cmd_uses_all_target_refs_for_standard_anchor_base():

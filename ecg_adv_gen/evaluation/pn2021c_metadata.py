@@ -94,6 +94,7 @@ def build_pn2021c_metadata_payload(
     limit: int | None = None,
     severity_profile: str = "standard",
     ops_source: str = "methods/augmix/ecg_ops.py",
+    protocol_metadata: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the paper metadata payload for one PN2021-C corruption cache."""
 
@@ -116,11 +117,19 @@ def build_pn2021c_metadata_payload(
         "limit": int(limit) if limit else None,
         "ops_source": ops_source,
     }
+    protocol = dict(protocol_metadata or {})
+    if protocol:
+        if protocol.get("input_order_id"):
+            pn2021c["input_order_id"] = str(protocol["input_order_id"])
+        if protocol.get("zscore_timing"):
+            pn2021c["zscore_timing"] = str(protocol["zscore_timing"])
     payload = dict(clean_metadata)
     payload["label_mapping"] = label_mapping
     payload["preprocess"] = preprocess
     payload["pn2021c"] = pn2021c
     payload["pn2021_c"] = dict(pn2021c)
+    if protocol:
+        payload["pn2021c_protocol"] = protocol
     return payload
 
 
@@ -207,6 +216,7 @@ def validate_pn2021c_metadata_compatibility(
     corrupt_metadata: Mapping[str, Any],
     center: str,
     required_cache_version: str,
+    required_input_order_id: str | None = None,
 ) -> dict[str, Any]:
     """Validate that one corrupted cache matches the clean eval baseline."""
 
@@ -255,6 +265,25 @@ def validate_pn2021c_metadata_compatibility(
     if clean_ref_hash in (None, ""):
         raise PN2021CMetadataError(f"ref_record_ids_sha256 is required for {center}")
 
+    if required_input_order_id:
+        protocol_input_order = _get(corrupt_metadata, "pn2021c_protocol.input_order_id")
+        pn2021c_input_order = _get(corrupt_metadata, "pn2021c.input_order_id")
+        actual_input_order = protocol_input_order or pn2021c_input_order
+        if actual_input_order != required_input_order_id:
+            raise PN2021CMetadataError(
+                f"input_order_id mismatch: expected={required_input_order_id!r}, "
+                f"got={actual_input_order!r}"
+            )
+        zscore_timing = (
+            _get(corrupt_metadata, "pn2021c_protocol.zscore_timing")
+            or _get(corrupt_metadata, "pn2021c.zscore_timing")
+        )
+        if zscore_timing != "after_corruption_before_model":
+            raise PN2021CMetadataError(
+                "zscore_timing mismatch: expected='after_corruption_before_model', "
+                f"got={zscore_timing!r}"
+            )
+
     return {
         "compatible": True,
         "center": str(center),
@@ -263,4 +292,5 @@ def validate_pn2021c_metadata_compatibility(
         "ref_record_ids_sha256": str(clean_ref_hash),
         "label_mapping_hash": str(clean["label_mapping"]["hash"]),
         "preprocess_contract_id": str(clean["preprocess"]["contract_id"]),
+        "input_order_id": str(required_input_order_id) if required_input_order_id else None,
     }

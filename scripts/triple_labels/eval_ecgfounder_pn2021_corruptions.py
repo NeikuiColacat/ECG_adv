@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Evaluate saved ECGFounder heads on PN2021-C corruptions.
+"""Evaluate ECGFounder PN2021-C corruptions.
 
-ECGFounder uses a frozen 500 Hz encoder plus a feature-space Super5 head, so it
-cannot be evaluated through the 100 Hz CNN PN2021-C entrypoint.  This script
-keeps the same corruption and aggregation contract while routing corrupted ECGs
-through the ECGFounder encoder before applying the saved head.
+This evaluator supports historical frozen-feature heads and the locked full
+fine-tuning mainline. It keeps the PN2021-C aggregation contract while routing
+corrupted ECGs through the ECGFounder 500 Hz input path.
 """
 
 from __future__ import annotations
@@ -49,13 +48,20 @@ from ecg_adv_gen.evaluation.pn2021_corruptions import (  # noqa: E402
     filter_record_indices,
     load_npz_metadata,
 )
+from ecg_adv_gen.evaluation.pn2021c_protocol import (  # noqa: E402
+    LOCKED_ECGFOUNDER_CORRUPTION_INPUT,
+    locked_protocol_metadata,
+)
 from ecg_adv_gen.models.ecgfounder_heads import (  # noqa: E402
     FeatureAdapterHead,
     OperatorConditionedLogitAdapter,
     ResidualAdapterHead,
 )
 from ecg_adv_gen.models.ecgfounder_inference import sigmoid_clipped  # noqa: E402
-from ecg_adv_gen.models.ecgfounder_torch import ecg1000_to_ecgfounder_input  # noqa: E402
+from ecg_adv_gen.models.ecgfounder_torch import (  # noqa: E402
+    ecg1000_to_ecgfounder_input,
+    global_zscore_torch,
+)
 from scripts.triple_labels.build_pn2021_corruptions import (  # noqa: E402
     DEFAULT_CENTERS,
     DEFAULT_CORRUPTIONS,
@@ -69,6 +75,9 @@ from scripts.triple_labels.eval_crosscenter import (  # noqa: E402
 from scripts.triple_labels.eval_pn2021_corruptions import (  # noqa: E402
     STRESS_PROFILE_CHOICES,
     _build_corruption_op,
+    _resolve_corruption_profile_params,
+    _resolve_severity_profile_args,
+    _severity_profile_metadata,
     _load_raw_first_center,
     _load_native_raw_first_center,
     RawFirstCleanPN2021Dataset,
@@ -148,6 +157,7 @@ class ECGFounderStreamingCorruptedDataset(Dataset):
         seed: int,
         crop_len: int,
         severity_profile: str,
+        severity_profile_params: dict[str, Any] | None = None,
     ) -> None:
         self.signals = signals
         self.labels = labels.astype(np.float32, copy=False)
@@ -158,6 +168,7 @@ class ECGFounderStreamingCorruptedDataset(Dataset):
         self.seed = int(seed)
         self.crop_len = int(crop_len)
         self.severity_profile = str(severity_profile)
+        self.severity_profile_params = severity_profile_params
 
     def __len__(self) -> int:
         return int(len(self.indices))
@@ -168,7 +179,12 @@ class ECGFounderStreamingCorruptedDataset(Dataset):
         np.random.seed(sample_seed)
         random.seed(sample_seed)
         torch.manual_seed(sample_seed)
-        op = _build_corruption_op(self.corruption, self.public_severity, self.severity_profile)
+        op = _build_corruption_op(
+            self.corruption,
+            self.public_severity,
+            self.severity_profile,
+            severity_profile_params=self.severity_profile_params,
+        )
 
         sig_tc = self.signals[real_idx]
         if self.crop_len and self.crop_len < sig_tc.shape[0]:
@@ -212,6 +228,110 @@ class ECGFounderCleanDataset(Dataset):
         return sig_ct.float(), label
 
 
+def _ecg1000_ct_to_ecgfounder_5000_no_zscore(sig_ct: torch.Tensor) -> torch.Tensor:
+    return ecg1000_to_ecgfounder_input(
+        sig_ct.unsqueeze(0),
+        target_points=TARGET_POINTS,
+        apply_global_zscore=False,
+    ).squeeze(0)
+
+
+class ECGFounderBottleneck5000CleanDataset(Dataset):
+    """Clean ECGFounder view for the locked 100Hz->500Hz->zscore order."""
+
+    def __init__(
+        self,
+        signals: np.ndarray,
+        labels: np.ndarray,
+        indices: np.ndarray,
+        *,
+        crop_len: int,
+    ) -> None:
+        self.signals = signals.astype(np.float32, copy=False)
+        self.labels = labels.astype(np.float32, copy=False)
+        self.indices = np.asarray(indices, dtype=np.int64)
+        self.crop_len = int(crop_len)
+
+    def __len__(self) -> int:
+        return int(len(self.indices))
+
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
+        real_idx = int(self.indices[idx])
+        sig_tc = self.signals[real_idx]
+        if self.crop_len and self.crop_len < sig_tc.shape[0]:
+            start = max((sig_tc.shape[0] - self.crop_len) // 2, 0)
+            sig_tc = sig_tc[start : start + self.crop_len]
+        sig_ct = torch.from_numpy(np.ascontiguousarray(sig_tc.T)).float()
+        sig_ct = _ecg1000_ct_to_ecgfounder_5000_no_zscore(sig_ct)
+        label = torch.from_numpy(
+            np.array(self.labels[real_idx], dtype=np.float32, copy=True)
+        ).float()
+        return sig_ct.float(), label
+
+
+class ECGFounderBottleneck5000CorruptedDataset(Dataset):
+    """Apply PN2021-C corruption after ECGFounder's 500 Hz interpolation."""
+
+    def __init__(
+        self,
+        signals: np.ndarray,
+        labels: np.ndarray,
+        indices: np.ndarray,
+        corruption: str,
+        public_severity: int,
+        *,
+        seed: int,
+        crop_len: int,
+        severity_profile: str,
+        severity_profile_params: dict[str, Any] | None = None,
+    ) -> None:
+        self.signals = signals.astype(np.float32, copy=False)
+        self.labels = labels.astype(np.float32, copy=False)
+        self.indices = np.asarray(indices, dtype=np.int64)
+        self.corruption = str(corruption)
+        self.public_severity = int(public_severity)
+        self.internal_severity = PUBLIC_TO_INTERNAL_SEVERITY[self.public_severity]
+        self.seed = int(seed)
+        self.crop_len = int(crop_len)
+        self.severity_profile = str(severity_profile)
+        self.severity_profile_params = severity_profile_params
+
+    def __len__(self) -> int:
+        return int(len(self.indices))
+
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
+        real_idx = int(self.indices[idx])
+        sample_seed = _stable_seed(
+            self.seed,
+            LOCKED_ECGFOUNDER_CORRUPTION_INPUT,
+            self.corruption,
+            self.public_severity,
+            real_idx,
+        )
+        np.random.seed(sample_seed)
+        random.seed(sample_seed)
+        torch.manual_seed(sample_seed)
+        op = _build_corruption_op(
+            self.corruption,
+            self.public_severity,
+            self.severity_profile,
+            sample_rate_hz=500.0,
+            severity_profile_params=self.severity_profile_params,
+        )
+
+        sig_tc = self.signals[real_idx]
+        if self.crop_len and self.crop_len < sig_tc.shape[0]:
+            start = max((sig_tc.shape[0] - self.crop_len) // 2, 0)
+            sig_tc = sig_tc[start : start + self.crop_len]
+        sig_ct = torch.from_numpy(np.ascontiguousarray(sig_tc.T)).float()
+        sig_ct = _ecg1000_ct_to_ecgfounder_5000_no_zscore(sig_ct)
+        corrupt_ct = op(sig_ct)
+        label = torch.from_numpy(
+            np.array(self.labels[real_idx], dtype=np.float32, copy=True)
+        ).float()
+        return corrupt_ct.float(), label
+
+
 def build_ecgfounder_feature_model(checkpoint_path: Path, device: torch.device) -> nn.Module:
     model = Net1D(
         in_channels=12,
@@ -250,13 +370,22 @@ def _load_result(run_dir: Path) -> dict[str, Any]:
 def _detect_eval_mode(run_dir: Path) -> str:
     """Return how an ECGFounder run should be evaluated."""
 
+    if _fullft_model_path(run_dir).exists():
+        return "fullft_model"
     if (run_dir / "best_head.pt").exists():
         return "feature_head"
-    if (run_dir / "best_model.pt").exists():
-        return "fullft_model"
     raise FileNotFoundError(
-        f"expected either best_head.pt or best_model.pt under {run_dir}"
+        f"expected best_head.pt, last_model.pt, or best_model.pt under {run_dir}"
     )
+
+
+def _fullft_model_path(run_dir: Path) -> Path:
+    """Return the full-FT checkpoint path, preferring locked last checkpoint."""
+
+    last_path = run_dir / "last_model.pt"
+    if last_path.exists():
+        return last_path
+    return run_dir / "best_model.pt"
 
 
 def _infer_feature_dim(head_state: dict[str, torch.Tensor]) -> int:
@@ -304,7 +433,7 @@ def _build_head(run_dir: Path, result: dict[str, Any], device: torch.device) -> 
 
 def _build_fullft_model(run_dir: Path, checkpoint: Path, device: torch.device) -> nn.Module:
     model = ft_12lead_ECGFounder(device, str(checkpoint), len(CLASS_NAMES_SUPER5), linear_prob=False)
-    model_path = run_dir / "best_model.pt"
+    model_path = _fullft_model_path(run_dir)
     if not model_path.exists():
         raise FileNotFoundError(model_path)
     payload = torch.load(model_path, map_location=device)
@@ -411,6 +540,7 @@ def infer_ecgfounder(
     *,
     input_stabilizer_kwargs: dict[str, Any] | None = None,
     apply_input_zscore: bool = True,
+    input_already_ecgfounder: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
     y_true: list[np.ndarray] = []
     y_score: list[np.ndarray] = []
@@ -418,12 +548,17 @@ def infer_ecgfounder(
     head.eval()
     for ecg_ct, labels in loader:
         ecg_ct = ecg_ct.to(device, non_blocking=True)
-        x = ecg1000_to_ecgfounder_input(
-            ecg_ct,
-            target_points=TARGET_POINTS,
-            apply_global_zscore=bool(apply_input_zscore),
-            **(input_stabilizer_kwargs or {}),
-        )
+        if input_already_ecgfounder:
+            if input_stabilizer_kwargs:
+                raise ValueError("input stabilizer is not supported for pre-resampled ECGFounder inputs")
+            x = global_zscore_torch(ecg_ct)
+        else:
+            x = ecg1000_to_ecgfounder_input(
+                ecg_ct,
+                target_points=TARGET_POINTS,
+                apply_global_zscore=bool(apply_input_zscore),
+                **(input_stabilizer_kwargs or {}),
+            )
         with torch.cuda.amp.autocast(enabled=device.type == "cuda"):
             _, features = feature_model(x)
             logits = head(features)
@@ -441,18 +576,24 @@ def infer_ecgfounder_fullft(
     operator_name: str | None = None,
     input_stabilizer_kwargs: dict[str, Any] | None = None,
     apply_input_zscore: bool = True,
+    input_already_ecgfounder: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
     y_true: list[np.ndarray] = []
     y_score: list[np.ndarray] = []
     model.eval()
     for ecg_ct, labels in loader:
         ecg_ct = ecg_ct.to(device, non_blocking=True)
-        x = ecg1000_to_ecgfounder_input(
-            ecg_ct,
-            target_points=TARGET_POINTS,
-            apply_global_zscore=bool(apply_input_zscore),
-            **(input_stabilizer_kwargs or {}),
-        )
+        if input_already_ecgfounder:
+            if input_stabilizer_kwargs:
+                raise ValueError("input stabilizer is not supported for pre-resampled ECGFounder inputs")
+            x = global_zscore_torch(ecg_ct)
+        else:
+            x = ecg1000_to_ecgfounder_input(
+                ecg_ct,
+                target_points=TARGET_POINTS,
+                apply_global_zscore=bool(apply_input_zscore),
+                **(input_stabilizer_kwargs or {}),
+            )
         with torch.cuda.amp.autocast(enabled=device.type == "cuda"):
             if operator_name and hasattr(model, "forward_with_operator"):
                 logits = model.forward_with_operator(x, operator_name)
@@ -474,6 +615,7 @@ def eval_clean_center(
     *,
     input_stabilizer_kwargs: dict[str, Any] | None = None,
     apply_input_zscore: bool = True,
+    input_already_ecgfounder: bool = False,
 ) -> dict[str, Any]:
     sample_rates = None
     if args.corruption_input == "native_raw_first":
@@ -490,6 +632,12 @@ def eval_clean_center(
             center,
         )
     elif args.corruption_input == "raw_first":
+        signals, labels, record_ids, metadata, clean_kind = _load_raw_first_center(
+            args,
+            _pn2021_scheme(args),
+            center,
+        )
+    elif args.corruption_input == LOCKED_ECGFOUNDER_CORRUPTION_INPUT:
         signals, labels, record_ids, metadata, clean_kind = _load_raw_first_center(
             args,
             _pn2021_scheme(args),
@@ -517,6 +665,13 @@ def eval_clean_center(
             crop_len=args.crop_len,
             input_stabilizer_config={},
         )
+    elif args.corruption_input == LOCKED_ECGFOUNDER_CORRUPTION_INPUT:
+        ds = ECGFounderBottleneck5000CleanDataset(
+            signals,
+            labels,
+            indices,
+            crop_len=args.crop_len,
+        )
     else:
         ds = ECGFounderCleanDataset(
             signals,
@@ -541,6 +696,7 @@ def eval_clean_center(
             device,
             input_stabilizer_kwargs=input_stabilizer_kwargs,
             apply_input_zscore=apply_input_zscore,
+            input_already_ecgfounder=input_already_ecgfounder,
         )
     elif eval_mode == "fullft_model":
         y_true, y_score = infer_ecgfounder_fullft(
@@ -549,6 +705,7 @@ def eval_clean_center(
             device,
             input_stabilizer_kwargs=input_stabilizer_kwargs,
             apply_input_zscore=apply_input_zscore,
+            input_already_ecgfounder=input_already_ecgfounder,
         )
     else:
         raise ValueError(f"unknown ECGFounder eval mode: {eval_mode}")
@@ -590,6 +747,7 @@ def eval_one(
     clean_metric_override: dict[str, Any] | None = None,
     input_stabilizer_kwargs: dict[str, Any] | None = None,
     apply_input_zscore: bool = True,
+    input_already_ecgfounder: bool = False,
 ) -> dict[str, Any]:
     sample_rates = None
     if args.corruption_input == "native_raw_first":
@@ -606,6 +764,12 @@ def eval_one(
             center,
         )
     elif args.corruption_input == "raw_first":
+        signals, labels, record_ids, metadata, clean_kind = _load_raw_first_center(
+            args,
+            _pn2021_scheme(args),
+            center,
+        )
+    elif args.corruption_input == LOCKED_ECGFOUNDER_CORRUPTION_INPUT:
         signals, labels, record_ids, metadata, clean_kind = _load_raw_first_center(
             args,
             _pn2021_scheme(args),
@@ -628,6 +792,7 @@ def eval_one(
             severity_profile=args.severity_profile,
             indices=indices,
             input_stabilizer_config={},
+            severity_profile_params=getattr(args, "severity_profile_params", None),
         )
     elif args.corruption_input == "raw_first":
         ds = RawFirstCorruptedPN2021Dataset(
@@ -640,6 +805,19 @@ def eval_one(
             severity_profile=args.severity_profile,
             indices=indices,
             input_stabilizer_config={},
+            severity_profile_params=getattr(args, "severity_profile_params", None),
+        )
+    elif args.corruption_input == LOCKED_ECGFOUNDER_CORRUPTION_INPUT:
+        ds = ECGFounderBottleneck5000CorruptedDataset(
+            signals,
+            labels,
+            indices,
+            corruption,
+            severity,
+            seed=args.seed,
+            crop_len=args.crop_len,
+            severity_profile=args.severity_profile,
+            severity_profile_params=getattr(args, "severity_profile_params", None),
         )
     else:
         ds = ECGFounderStreamingCorruptedDataset(
@@ -651,6 +829,7 @@ def eval_one(
             seed=args.seed,
             crop_len=args.crop_len,
             severity_profile=args.severity_profile,
+            severity_profile_params=getattr(args, "severity_profile_params", None),
         )
     loader = DataLoader(
         ds,
@@ -670,6 +849,7 @@ def eval_one(
             device,
             input_stabilizer_kwargs=input_stabilizer_kwargs,
             apply_input_zscore=apply_input_zscore,
+            input_already_ecgfounder=input_already_ecgfounder,
         )
     elif eval_mode == "fullft_model":
         y_true, y_score = infer_ecgfounder_fullft(
@@ -679,6 +859,7 @@ def eval_one(
             operator_name=corruption,
             input_stabilizer_kwargs=input_stabilizer_kwargs,
             apply_input_zscore=apply_input_zscore,
+            input_already_ecgfounder=input_already_ecgfounder,
         )
     else:
         raise ValueError(f"unknown ECGFounder eval mode: {eval_mode}")
@@ -704,6 +885,8 @@ def eval_one(
             if args.corruption_input == "native_raw_first"
             else "recomputed_raw_first_clean"
             if args.corruption_input == "raw_first"
+            else "recomputed_bottleneck5000_clean"
+            if args.corruption_input == LOCKED_ECGFOUNDER_CORRUPTION_INPUT
             else "recomputed_input_stabilizer"
         )
     else:
@@ -714,6 +897,14 @@ def eval_one(
         auroc_drop = float(clean["macro_auroc"] - metrics["macro_auroc"])
     if clean.get("macro_auprc") is not None:
         auprc_drop = float(clean["macro_auprc"] - metrics["macro_auprc"])
+    result_metadata = dict(metadata)
+    result_protocol = (
+        locked_protocol_metadata("ecgfounder")
+        if args.corruption_input == LOCKED_ECGFOUNDER_CORRUPTION_INPUT
+        else None
+    )
+    if result_protocol:
+        result_metadata["pn2021c_protocol"] = result_protocol
     print(
         f"  {center:<18} {corruption:<22} s{severity} n={len(ds):>5} "
         f"AUROC={metrics['macro_auroc']:.4f} AUPRC={metrics['macro_auprc']:.4f} "
@@ -725,17 +916,26 @@ def eval_one(
     return {
         "cache_path": None,
         "cache_source": f"stream:{clean_kind}",
-        "metadata": metadata,
+        "metadata": result_metadata,
         "metadata_compatibility": {
             "compatible": None,
             "reason": "ecgfounder_clean_eval_result",
             "preprocess_contract_id": PREPROCESS_CONTRACT_ID,
+            "input_order_id": result_protocol["input_order_id"] if result_protocol else None,
         },
         "n_excluded_ref_ids_for_center": int(len(exclude_ids)),
         "ref_record_ids_sha256": _ref_ids_sha256(exclude_ids),
         "corruption": {
             "name": corruption,
             "severity_profile": args.severity_profile,
+            "severity_params_file": getattr(args, "severity_params_file", None),
+            "severity_params_name": getattr(args, "severity_params_name", None),
+            "resolved_params": _resolve_corruption_profile_params(
+                corruption,
+                severity,
+                args.severity_profile,
+                getattr(args, "severity_profile_params", None),
+            ),
             "public_severity": int(severity),
             "internal_severity": int(PUBLIC_TO_INTERNAL_SEVERITY[int(severity)]),
             "seed": int(args.seed),
@@ -792,7 +992,7 @@ def main() -> None:
     p.add_argument(
         "--corruption_input",
         default="preprocessed_cache",
-        choices=["preprocessed_cache", "raw_first", "native_raw_first"],
+        choices=["preprocessed_cache", "raw_first", "native_raw_first", LOCKED_ECGFOUNDER_CORRUPTION_INPUT],
         help=(
             "preprocessed_cache keeps historical behavior: corrupt the "
             "100Hz/1000 per-sample-z-scored clean cache and let ECGFounder "
@@ -800,7 +1000,10 @@ def main() -> None:
             "resamples/pads without z-score, applies corruption, z-scores once, "
             "then only resamples to ECGFounder length. native_raw_first applies "
             "corruption on WFDB native-fs/native-length signals after only lead "
-            "reorder and NaN repair, then runs model preprocessing."
+            "reorder and NaN repair, then runs model preprocessing. "
+            "bottleneck5000 is the locked main protocol: raw -> 100Hz/1000 "
+            "without z-score -> ECGFounder 500Hz/5000 interpolation -> "
+            "corruption -> z-score -> model."
         ),
     )
     p.add_argument(
@@ -813,6 +1016,16 @@ def main() -> None:
     p.add_argument("--corruptions", nargs="+", default=DEFAULT_CORRUPTIONS)
     p.add_argument("--severities", nargs="+", type=int, default=[1, 2, 3, 4, 5])
     p.add_argument("--severity_profile", default="standard", choices=STRESS_PROFILE_CHOICES)
+    p.add_argument(
+        "--severity_params_file",
+        default=None,
+        help="YAML/JSON profile file used only with --severity_profile custom.",
+    )
+    p.add_argument(
+        "--severity_params_name",
+        default=None,
+        help="Profile name under top-level profiles used only with --severity_profile custom.",
+    )
     p.add_argument("--device", default="cuda")
     p.add_argument("--crop_len", type=int, default=1000)
     p.add_argument("--batch_size", type=int, default=96)
@@ -831,6 +1044,11 @@ def main() -> None:
     )
     p.add_argument("--output_path", default=None)
     args = p.parse_args()
+    try:
+        args.severity_profile_params = _resolve_severity_profile_args(args)
+        args.severity_profile_metadata = _severity_profile_metadata(args)
+    except (ValueError, RuntimeError, OSError) as exc:
+        raise SystemExit(str(exc)) from exc
 
     run_dir = Path(args.run_dir)
     result = _load_result(run_dir)
@@ -848,11 +1066,16 @@ def main() -> None:
         model_or_feature_model = _build_fullft_model(run_dir, Path(args.checkpoint), device)
         head = None
     input_stabilizer_kwargs = _input_stabilizer_kwargs_from_args(args)
-    apply_input_zscore = args.corruption_input not in {"raw_first", "native_raw_first"}
+    input_already_ecgfounder = args.corruption_input == LOCKED_ECGFOUNDER_CORRUPTION_INPUT
+    apply_input_zscore = args.corruption_input not in {
+        "raw_first",
+        "native_raw_first",
+        LOCKED_ECGFOUNDER_CORRUPTION_INPUT,
+    }
     clean_metric_overrides: dict[str, dict[str, Any]] = {}
     if (
         args.recompute_clean_with_input_stabilizer
-        or args.corruption_input in {"raw_first", "native_raw_first"}
+        or args.corruption_input in {"raw_first", "native_raw_first", LOCKED_ECGFOUNDER_CORRUPTION_INPUT}
     ):
         for center in centers:
             clean_metric_overrides[center] = eval_clean_center(
@@ -865,8 +1088,14 @@ def main() -> None:
                 center,
                 input_stabilizer_kwargs=input_stabilizer_kwargs,
                 apply_input_zscore=apply_input_zscore,
+                input_already_ecgfounder=input_already_ecgfounder,
             )
 
+    protocol_metadata = (
+        locked_protocol_metadata("ecgfounder")
+        if args.corruption_input == LOCKED_ECGFOUNDER_CORRUPTION_INPUT
+        else None
+    )
     output: dict[str, Any] = {
         "scheme": args.scheme,
         "model_name": "ECGFounder",
@@ -876,18 +1105,21 @@ def main() -> None:
         "corruption_input": args.corruption_input,
         "pn2021_root": (
             args.pn2021_root
-            if args.corruption_input in {"raw_first", "native_raw_first"}
+            if args.corruption_input in {"raw_first", "native_raw_first", LOCKED_ECGFOUNDER_CORRUPTION_INPUT}
             else None
         ),
         "clean_eval_json": str(run_dir / "eval_result.json"),
         "head_path": str(run_dir / "best_head.pt") if (run_dir / "best_head.pt").exists() else None,
-        "model_path": str(run_dir / "best_model.pt") if (run_dir / "best_model.pt").exists() else None,
+        "model_path": str(_fullft_model_path(run_dir)) if _fullft_model_path(run_dir).exists() else None,
         "checkpoint": str(Path(args.checkpoint)),
         "center_from_run": str(result["center"]),
         "centers": centers,
         "corruptions": list(args.corruptions),
         "severities": list(args.severities),
         "severity_profile": args.severity_profile,
+        "severity_params_file": args.severity_params_file,
+        "severity_params_name": args.severity_params_name,
+        "severity_profile_metadata": args.severity_profile_metadata,
         "crop_len": int(args.crop_len),
         "required_cache_version": args.required_cache_version,
         "pn2021_c_cache_version": args.required_cache_version,
@@ -896,6 +1128,7 @@ def main() -> None:
             "recompute_clean_with_input_stabilizer": bool(args.recompute_clean_with_input_stabilizer),
             "ecgfounder_apply_input_zscore": bool(apply_input_zscore),
         },
+        "pn2021c_protocol": protocol_metadata,
         "corruption_order": (
             [
                 "wfdb_read_native_fs_native_length",
@@ -919,13 +1152,17 @@ def main() -> None:
                     "model",
                 ]
                 if args.corruption_input == "raw_first"
-                else [
-                    "load_100hz1000_per_sample_global_zscore_cache",
-                    "center_crop_or_full_signal",
-                    "corruption",
-                    "ecgfounder_resample_1000_to_5000_and_global_zscore",
-                    "model",
-                ]
+                else (
+                    protocol_metadata["waveform_order"]
+                    if protocol_metadata
+                    else [
+                        "load_100hz1000_per_sample_global_zscore_cache",
+                        "center_crop_or_full_signal",
+                        "corruption",
+                        "ecgfounder_resample_1000_to_5000_and_global_zscore",
+                        "model",
+                    ]
+                )
             )
         ),
         "selected_ref_record_ids_count": int(len(result.get("selected_ref_record_ids", []))),
@@ -952,6 +1189,7 @@ def main() -> None:
                     clean_metric_override=clean_metric_overrides.get(center),
                     input_stabilizer_kwargs=input_stabilizer_kwargs,
                     apply_input_zscore=apply_input_zscore,
+                    input_already_ecgfounder=input_already_ecgfounder,
                 )
     output["aggregate_by_corruption_severity"] = aggregate_corruption_summary(output)
 

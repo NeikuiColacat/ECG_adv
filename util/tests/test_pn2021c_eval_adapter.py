@@ -1,10 +1,19 @@
-from ecg_adv_gen.config.adapters.pn2021c_eval import build_pn2021c_eval_argv
+from ecg_adv_gen.config.adapters.pn2021c_eval import (
+    audit_pn2021c_eval_command,
+    build_pn2021c_eval_argv,
+)
+from ecg_adv_gen.config.adapters.ecgfounder_pn2021c_eval import (
+    build_ecgfounder_pn2021c_eval_argv,
+)
 
 
 def _config():
     return {
-        "paths": {"output_root": "/out"},
-        "paper_protocol": {"kshot": {"k": 500, "seed": 20260531}},
+        "paths": {"output_root": "/out", "data_root": "/data"},
+        "paper_protocol": {
+            "kshot": {"k": 500, "seed": 20260531},
+            "centers": {"target_4": ["ningbo", "chapman_shaoxing", "cpsc_2018", "georgia"]},
+        },
         "preprocess": {"crop_len": 1000},
         "model": {
             "eval_seed": 20260601,
@@ -31,6 +40,15 @@ def _config():
         "runtime": {"run_id": "run1"},
         "experiment": {"name": "pn2021c_eval"},
     }
+
+
+def _ecgfounder_config():
+    config = _config()
+    config["model"]["checkpoint"] = "/ecgfounder/checkpoint.pt"
+    config["training"]["eval_batch_size"] = 96
+    config["training"]["num_workers"] = 0
+    config["evaluation"]["corruption_input"] = "bottleneck5000"
+    return config
 
 
 def test_pn2021c_eval_adapter_requires_clean_eval_and_cache_version():
@@ -71,6 +89,47 @@ def test_pn2021c_eval_adapter_uses_configured_severity_profile_in_output_name():
     )
 
 
+def test_pn2021c_eval_adapter_emits_custom_severity_profile_file_and_name():
+    config = _config()
+    config["evaluation"]["severity_profile"] = "custom"
+    config["evaluation"]["severity_params_file"] = "configs/corruption_profiles/candidates.yaml"
+    config["evaluation"]["severity_params_name"] = "emg_amp2p3"
+    argv = [
+        str(x)
+        for x in build_pn2021c_eval_argv(
+            config,
+            {"matrix": {"center": "cpsc_2018", "method": {"name": "vae_lhat", "family": "family", "noaug_suffix": ""}}},
+        )
+    ]
+
+    assert argv[argv.index("--severity_profile") + 1] == "custom"
+    assert argv[argv.index("--severity_params_file") + 1] == "configs/corruption_profiles/candidates.yaml"
+    assert argv[argv.index("--severity_params_name") + 1] == "emg_amp2p3"
+
+
+def test_ecgfounder_pn2021c_eval_adapter_emits_custom_severity_profile_file_and_name():
+    config = _ecgfounder_config()
+    config["evaluation"]["severity_profile"] = "custom"
+    config["evaluation"]["severity_params_file"] = "configs/corruption_profiles/candidates.yaml"
+    config["evaluation"]["severity_params_name"] = "power_native_amp8"
+    method = {
+        "name": "ecgfounder_k500_fullft_locked",
+        "family": "ecgfounder_k500_fullft_locked",
+        "run_dir_template": "{output_root}/{family}/{run_id}/runs/{center}_k500_fullft_locked",
+    }
+    argv = [
+        str(x)
+        for x in build_ecgfounder_pn2021c_eval_argv(
+            config,
+            {"matrix": {"center": "cpsc_2018", "method": method}},
+        )
+    ]
+
+    assert argv[argv.index("--severity_profile") + 1] == "custom"
+    assert argv[argv.index("--severity_params_file") + 1] == "configs/corruption_profiles/candidates.yaml"
+    assert argv[argv.index("--severity_params_name") + 1] == "power_native_amp8"
+
+
 def test_pn2021c_eval_adapter_allows_method_level_run_overrides():
     config = _config()
     method = {
@@ -97,3 +156,53 @@ def test_pn2021c_eval_adapter_allows_method_level_run_overrides():
         "ningbo_raw_leaf_fullft_k500_ep30_seed20260601"
     )
     assert argv[argv.index("--clean_eval_json") + 1] == f"{model_dir}/clean.json"
+
+
+def test_pn2021c_eval_adapter_allows_locked_model_dir_template():
+    config = _config()
+    config["paper_protocol"]["selection"] = {"policy": "last_checkpoint_only"}
+    config["runtime"] = {"run_id": "locked_rawfirst_20260618_effnet_copies2"}
+    method = {
+        "name": "threechain_locked",
+        "family": "effnet_vae_lhat_augmix_threechain_locked_k500",
+        "model_dir_template": (
+            "{output_root}/{family}/{run_id}/"
+            "{center}_realall_targetheavy_M20_lam0p05_augmix_s5_locked_ep30_seed{eval_seed}"
+        ),
+        "clean_eval_name": "eval_result_v7_exclrefs_crop1000.json",
+    }
+    argv = [
+        str(x)
+        for x in build_pn2021c_eval_argv(
+            config,
+            {"matrix": {"center": "georgia", "method": method}},
+        )
+    ]
+    model_dir = argv[argv.index("--model_dir") + 1]
+
+    assert model_dir == (
+        "/out/effnet_vae_lhat_augmix_threechain_locked_k500/"
+        "locked_rawfirst_20260618_effnet_copies2/"
+        "georgia_realall_targetheavy_M20_lam0p05_augmix_s5_locked_ep30_seed20260601"
+    )
+    assert argv[argv.index("--clean_eval_json") + 1] == (
+        f"{model_dir}/eval_result_v7_exclrefs_crop1000.json"
+    )
+    assert argv[argv.index("--checkpoint_name") + 1] == "last_model.pt"
+
+
+def test_pn2021c_eval_adapter_emits_locked_raw_first_protocol_when_configured():
+    config = _config()
+    config["evaluation"]["corruption_input"] = "raw_first"
+    command = {
+        "argv": build_pn2021c_eval_argv(
+            config,
+            {"matrix": {"center": "ningbo", "method": {"name": "vae_lhat", "family": "family", "noaug_suffix": ""}}},
+        ),
+        "matrix": {"center": "ningbo", "method": {"name": "vae_lhat", "family": "family", "noaug_suffix": ""}},
+    }
+    argv = [str(x) for x in command["argv"]]
+
+    assert argv[argv.index("--corruption_input") + 1] == "raw_first"
+    audit = audit_pn2021c_eval_command(command, config=config)
+    assert audit["errors"] == []

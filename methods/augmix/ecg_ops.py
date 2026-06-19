@@ -210,18 +210,32 @@ class RandomLeadsMask(object):
         mask_leads_selection: str = "random",
         mask_leads_prob=0.5,
         mask_leads_condition=None,
+        max_masked_leads=None,
+        min_masked_leads=1,
         **kwargs,
     ):
         self.p = p
         self.mask_leads_prob = mask_leads_prob
         self.mask_leads_selection = mask_leads_selection
         self.mask_leads_condition = mask_leads_condition
+        self.max_masked_leads = None if max_masked_leads is None else int(max_masked_leads)
+        self.min_masked_leads = int(min_masked_leads)
 
     def __call__(self, sample):
         if self.p >= np.random.uniform(0, 1):
             new_sample = sample.new_zeros(sample.size())
             if self.mask_leads_selection == "random":
-                survivors = np.random.uniform(0, 1, size=12) >= self.mask_leads_prob
+                if self.max_masked_leads is None:
+                    survivors = np.random.uniform(0, 1, size=12) >= self.mask_leads_prob
+                else:
+                    max_masked = min(12, max(0, int(self.max_masked_leads)))
+                    min_masked = min(max_masked, max(0, int(self.min_masked_leads)))
+                    survivors = np.ones(12, dtype=bool)
+                    if max_masked > 0:
+                        n_masked = int(np.random.randint(min_masked, max_masked + 1))
+                        if n_masked > 0:
+                            masked = np.random.choice(np.arange(12), size=n_masked, replace=False)
+                            survivors[masked] = False
                 new_sample[survivors] = sample[survivors]
             elif self.mask_leads_selection == "conditional":
                 # FIX: upstream used self.mask_leads_selection (str) instead of condition (tuple)

@@ -6,6 +6,10 @@ from ecg_adv_gen.evaluation.pn2021c_metadata import (
     build_pn2021c_metadata_payload,
     validate_pn2021c_metadata_compatibility,
 )
+from ecg_adv_gen.evaluation.pn2021c_protocol import (
+    LOCKED_MAIN_INPUT_ORDER_ID,
+    locked_protocol_metadata,
+)
 
 
 def _clean():
@@ -206,3 +210,37 @@ def test_build_pn2021c_metadata_payload_canonicalizes_clean_cache_metadata():
     assert payload["pn2021c"]["cache_version"] == "v7_refexcluded_100hz1000"
     assert payload["pn2021c"]["ref_record_ids_sha256"] == "refhash"
     assert payload["pn2021_c"] == payload["pn2021c"]
+
+
+def test_build_pn2021c_metadata_payload_records_locked_input_order():
+    payload = build_pn2021c_metadata_payload(
+        clean_metadata=_clean(),
+        center="ningbo",
+        corruption="emg_noise",
+        public_severity=5,
+        internal_severity=10,
+        cache_version="v7_refexcluded_100hz1000",
+        n_excluded_ref=500,
+        preprocess_contract_id="ptbxl_pn2021_super5_ecgtwin_decode_v1",
+        ref_record_ids_sha256="refhash",
+        protocol_metadata=locked_protocol_metadata("efficientnet1dv2"),
+    )
+
+    assert payload["pn2021c_protocol"]["input_order_id"] == LOCKED_MAIN_INPUT_ORDER_ID
+    assert payload["pn2021c_protocol"]["zscore_timing"] == "after_corruption_before_model"
+    assert payload["pn2021c"]["input_order_id"] == LOCKED_MAIN_INPUT_ORDER_ID
+
+
+def test_pn2021c_metadata_rejects_input_order_drift_when_required():
+    corrupt = _corrupt()
+    corrupt["pn2021c_protocol"] = locked_protocol_metadata("efficientnet1dv2")
+    corrupt["pn2021c_protocol"]["input_order_id"] = "pre_zscored_cache_then_corrupt"
+
+    with pytest.raises(PN2021CMetadataError, match="input_order_id"):
+        validate_pn2021c_metadata_compatibility(
+            clean_eval=_clean(),
+            corrupt_metadata=corrupt,
+            center="ningbo",
+            required_cache_version="v7_refexcluded_100hz1000",
+            required_input_order_id=LOCKED_MAIN_INPUT_ORDER_ID,
+        )

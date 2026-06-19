@@ -1,0 +1,189 @@
+profiles:
+  shift_amp1p8_r0p70_seg4:
+    baseline_shift:
+      5:
+        max_amplitude: 1.8
+        min_amplitude: 0.0
+        shift_ratio: 0.70
+        num_segment: 4
+        p: 1.0
+        dependency: false
+  shift_amp2p4_r0p90_seg6:
+    baseline_shift:
+      5:
+        max_amplitude: 2.4
+        min_amplitude: 0.0
+        shift_ratio: 0.90
+        num_segment: 6
+        p: 1.0
+        dependency: false
+  shift_amp2p8_r0p90_seg6:
+    baseline_shift:
+      5:
+        max_amplitude: 2.8
+        min_amplitude: 0.0
+        shift_ratio: 0.90
+        num_segment: 6
+        p: 1.0
+        dependency: false
+  shift_amp3p2_r0p90_seg8:
+    baseline_shift:
+      5:
+        max_amplitude: 3.2
+        min_amplitude: 0.0
+        shift_ratio: 0.90
+        num_segment: 8
+        p: 1.0
+        dependency: false
+
+  wander_amp2p0_k5_f0p6:
+    baseline_wander:
+      5:
+        max_amplitude: 2.0
+        min_amplitude: 0.0
+        min_freq: 0.03
+        max_freq: 0.6
+        k: 5
+        p: 1.0
+        dependency: false
+  wander_amp2p5_k6_f0p8:
+    baseline_wander:
+      5:
+        max_amplitude: 2.5
+        min_amplitude: 0.0
+        min_freq: 0.03
+        max_freq: 0.8
+        k: 6
+        p: 1.0
+        dependency: false
+  wander_amp3p0_k6_f0p8:
+    baseline_wander:
+      5:
+        max_amplitude: 3.0
+        min_amplitude: 0.0
+        min_freq: 0.03
+        max_freq: 0.8
+        k: 6
+        p: 1.0
+        dependency: false
+  wander_amp3p5_k8_f1p0:
+    baseline_wander:
+      5:
+        max_amplitude: 3.5
+        min_amplitude: 0.0
+        min_freq: 0.03
+        max_freq: 1.0
+        k: 8
+        p: 1.0
+        dependency: false
+
+  emg_amp1p6:
+    emg_noise:
+      5:
+        max_amplitude: 1.6
+        min_amplitude: 0.0
+        p: 1.0
+        dependency: false
+  emg_amp2p0:
+    emg_noise:
+      5:
+        max_amplitude: 2.0
+        min_amplitude: 0.0
+        p: 1.0
+        dependency: false
+  emg_amp2p3:
+    emg_noise:
+      5:
+        max_amplitude: 2.3
+        min_amplitude: 0.0
+        p: 1.0
+        dependency: false
+  emg_amp2p8:
+    emg_noise:
+      5:
+        max_amplitude: 2.8
+        min_amplitude: 0.0
+        p: 1.0
+        dependency: false
+
+  power_locked_amp8:
+    powerline_noise:
+      5:
+        max_amplitude: 8.0
+        min_amplitude: 0.0
+        p: 1.0
+        dependency: false
+  power_locked_amp12:
+    powerline_noise:
+      5:
+        max_amplitude: 12.0
+        min_amplitude: 0.0
+        p: 1.0
+        dependency: false
+  power_locked_amp16:
+    powerline_noise:
+      5:
+        max_amplitude: 16.0
+        min_amplitude: 0.0
+        p: 1.0
+        dependency: false
+  power_locked_amp20:
+    powerline_noise:
+      5:
+        max_amplitude: 20.0
+        min_amplitude: 0.0
+        p: 1.0
+        dependency: false
+  power_native_amp8:
+    powerline_noise:
+      5:
+        max_amplitude: 8.0
+        min_amplitude: 0.0
+        p: 1.0
+        dependency: false
+  power_native_amp12:
+    powerline_noise:
+      5:
+        max_amplitude: 12.0
+        min_amplitude: 0.0
+        p: 1.0
+        dependency: false
+  power_native_amp16:
+    powerline_noise:
+      5:
+        max_amplitude: 16.0
+        min_amplitude: 0.0
+        p: 1.0
+        dependency: false
+  power_native_amp20:
+    powerline_noise:
+      5:
+        max_amplitude: 20.0
+        min_amplitude: 0.0
+        p: 1.0
+        dependency: false
+
+  mask_p0p50:
+    random_leads_masking:
+      5:
+        mask_leads_prob: 0.50
+        mask_leads_selection: random
+        p: 1.0
+  mask_p0p57:
+    random_leads_masking:
+      5:
+        mask_leads_prob: 0.57
+        mask_leads_selection: random
+        p: 1.0
+  mask_p0p60:
+    random_leads_masking:
+      5:
+        mask_leads_prob: 0.60
+        mask_leads_selection: random
+        p: 1.0
+  mask_p0p65:
+    random_leads_masking:
+      5:
+        mask_leads_prob: 0.65
+        mask_leads_selection: random
+        p: 1.0

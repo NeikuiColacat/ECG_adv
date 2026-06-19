@@ -1,0 +1,60 @@
+extends:
+  - effnet_vae_lhat_k500_v7_sjr_rgq.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_locked_k500
+  description: EfficientNet1DV2 K500 VAE-LHAT plus locked three-chain AugMix with official PN2021-C severity 5 and last-checkpoint evaluation.
+
+paper_protocol:
+  kshot:
+    seed: 20260601
+    subset_seed: 20260601
+  selection:
+    policy: last_checkpoint_only
+    allowed_data:
+      - target_k500_train_all
+      - ptbxl_source_sanity
+    forbid_k500_validation_split: true
+    forbid_best_checkpoint_selection: true
+    forbid_heldout_target_labels: true
+    forbid_full_target_distribution_tuning: true
+
+model:
+  direct_init_root: ${paths.output_root}/effnet_direct_k500_v7_sjr_rgq/seed20260601_k500_v7_sjr_rgq_20260530_rep1/runs
+
+data:
+  target_real_npz_suffix: .raw1000.npz
+  target_real_norm_mode: per_sample_global
+
+adaptation:
+  run_tag_extra: k500_threechain_s5_locked
+  selection:
+    checkpoint_policy: last
+    quick_eval_source: none
+    target_real_val_fraction: 0.0
+  latent_augmix:
+    topology: locked_three_chain
+    copies: 2
+    latent_weight_cap: 0.25
+    width: 3
+    depth: -1
+    alpha: 1.0
+    severity: 5
+    severity_profile: standard
+    ops:
+      - powerline_noise
+      - emg_noise
+      - baseline_wander
+      - baseline_shift
+      - random_leads_masking
+    consistency:
+      enabled: true
+      consistency_weight: 2.0
+      consistency_loss: jsd
+      bce_weight: 1.0
+      max_batches: 0
+
+run_record:
+  purpose: "Locked EfficientNet1DV2 main-method run: all K500 samples train, no K500 validation split, last checkpoint only, two official corruption chains plus one VAE-LHAT adversarial waveform chain."
+  result_summary: Pending. Evaluate PN2021 clean and PN2021-C official severity 5 after smoke passes.
+  registration_status: provisional
