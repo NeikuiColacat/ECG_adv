@@ -1,0 +1,40 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_dualmodel_cand23_lowptb_bufferheavy_cpsc.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_dualmodel_cand32_q2048_lfmask_focus_cpsc
+  description: "CPSC probe: preserve cand23 q2048 high-buffer regime and focus three-chain AugMix pressure on low-frequency shift/wander and lead masking bottlenecks."
+
+adaptation:
+  run_tag_extra: trraw_proxy_q2048r1_lfmask_c8_rawfocus_aw16_tw55_hs10_lam20_cw20_b7
+  loss:
+    ptbxl_weight: 0.05
+    target_real_weight: 55.0
+    adv_weight: 16.0
+    adv_weight_warmup_epochs: 2
+  buffer:
+    qab_size: 2048
+    rescore_interval: 1
+    asr_consec_low_max: 999
+    asr_low_threshold: 0.20
+  latent_augmix:
+    copies: 8
+    chain_weights: "0.48,0.47,0.05"
+    ops:
+      - baseline_wander
+      - baseline_shift
+      - random_leads_masking
+      - random_leads_masking
+      - emg_noise
+      - powerline_noise
+    consistency:
+      enabled: true
+      consistency_weight: 20.0
+      consistency_loss: jsd
+      bce_weight: 7.0
+      max_batches: 0
+
+run_record:
+  purpose: Test whether cand23 is bottlenecked by insufficient focused exposure to baseline wander, baseline shift, and lead masking rather than by generic hard-sample strength.
+  result_summary: Pending.
+  registration_status: provisional

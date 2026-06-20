@@ -295,6 +295,40 @@ def main() -> None:
     ap.add_argument("--latent_augmix_width", type=int, default=3)
     ap.add_argument("--latent_augmix_depth", type=int, default=-1)
     ap.add_argument("--latent_augmix_alpha", type=float, default=1.0)
+    ap.add_argument("--latent_augmix_mixture_mode", choices=["beta", "fixed"], default="beta")
+    ap.add_argument("--latent_augmix_mixture_prob", type=float, default=0.5)
+    ap.add_argument("--latent_augmix_mixture_beta_a", type=float, default=0.0)
+    ap.add_argument("--latent_augmix_mixture_beta_b", type=float, default=0.0)
+    ap.add_argument(
+        "--latent_augmix_op_schedule",
+        choices=["random", "cycle", "per_op"],
+        default="random",
+        help=(
+            "Forwarded to locked three-chain AugMix. per_op maps AugMix copies "
+            "onto the configured PN2021-C operators inside the main three-chain graph."
+        ),
+    )
+    ap.add_argument(
+        "--latent_augmix_chain_weights",
+        default="",
+        help="Optional comma-separated locked-chain weights: raw1,raw2,vae_lhat_adv.",
+    )
+    ap.add_argument(
+        "--latent_augmix_signal_space",
+        choices=["model_zscore", "raw_pre_zscore"],
+        default="model_zscore",
+        help="Forwarded to locked three-chain AugMix corruption input space.",
+    )
+    ap.add_argument(
+        "--latent_augmix_corruption_source",
+        choices=["vae_decode", "target_real"],
+        default="vae_decode",
+        help=(
+            "Forwarded to locked three-chain AugMix. target_real uses the "
+            "picked K500 raw ECG as the two corruption-chain anchors while "
+            "keeping the VAE-LH adversarial waveform as the third chain."
+        ),
+    )
     ap.add_argument("--latent_augmix_severity", type=int, default=2)
     ap.add_argument(
         "--latent_augmix_severity_profile",
@@ -305,6 +339,8 @@ def main() -> None:
             "Use calibrated_10to20pp to match the strong PN2021-C evaluator."
         ),
     )
+    ap.add_argument("--latent_augmix_severity_params_file", default="")
+    ap.add_argument("--latent_augmix_severity_params_name", default="")
     ap.add_argument(
         "--latent_augmix_ops",
         nargs="+",
@@ -354,6 +390,8 @@ def main() -> None:
             "Use calibrated_10to20pp to match the strong PN2021-C evaluator."
         ),
     )
+    ap.add_argument("--raw_corrupt_severity_params_file", default="")
+    ap.add_argument("--raw_corrupt_severity_params_name", default="")
     ap.add_argument(
         "--raw_corrupt_ops",
         nargs="+",
@@ -442,6 +480,30 @@ def main() -> None:
     ap.add_argument("--eval_batch_size", type=int, default=192)
     ap.add_argument("--eval_min_pos", type=int, default=10)
     ap.add_argument("--eval_pn2021_limit", type=int, default=0)
+    ap.add_argument(
+        "--qab_size",
+        type=int,
+        default=2048,
+        help="Forwarded to synth_online_at_super5.py QualityAwareBuffer max size.",
+    )
+    ap.add_argument(
+        "--rescore_interval",
+        type=int,
+        default=3,
+        help="Forwarded to synth_online_at_super5.py buffer rescore interval in epochs.",
+    )
+    ap.add_argument(
+        "--asr_consec_low_max",
+        type=int,
+        default=999,
+        help="Forwarded to synth_online_at_super5.py low-ASR stop patience.",
+    )
+    ap.add_argument(
+        "--asr_low_threshold",
+        type=float,
+        default=0.30,
+        help="Forwarded to synth_online_at_super5.py low-ASR threshold.",
+    )
     ap.add_argument(
         "--run_tag_extra",
         default="",

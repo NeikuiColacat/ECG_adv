@@ -1,0 +1,31 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_dualmodel_k500_cpsc_base.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_d1_c2_cw2_bce1_m065
+  description: "CPSC dual_model smoke candidate: depth1, copies2, JSD2/BCE1, fixed mix 0.65, moderate hard-sample frequency."
+
+adaptation:
+  run_tag_extra: k500_dual3ch_d1_c2_cw2_bce1_m065_aw0p6_ka600
+  anchors:
+    k_anchor: 600
+  loss:
+    adv_weight: 0.6
+    adv_weight_warmup_epochs: 5
+  latent_augmix:
+    copies: 2
+    depth: 1
+    mixture:
+      mode: fixed
+      prob: 0.65
+    consistency:
+      enabled: true
+      consistency_weight: 2.0
+      consistency_loss: jsd
+      bce_weight: 1.0
+      max_batches: 0
+
+run_record:
+  purpose: Lower-pressure locked three-chain dual_model candidate for CPSC first-round screening.
+  result_summary: Pending.
+  registration_status: provisional

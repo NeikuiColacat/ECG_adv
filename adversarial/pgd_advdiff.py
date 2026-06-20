@@ -191,12 +191,8 @@ class PGDAdvDiffGenerator:
         factor = torch.clamp(self.epsilon / norm, max=1.0)  # (B,)
         return delta * factor.view(-1, 1, 1)
 
-    def _decode_to_ptbxl_1000(self, z: torch.Tensor) -> torch.Tensor:
-        """Replicate victim's internal preprocessing chain up to z-score (no crop).
-
-        Output: (B, 12, 1000) PTBXL-order, clamp(±3), z-scored.
-        This matches SynthCenterDataset.__init__ expected signals format.
-        """
+    def _decode_to_ptbxl_1000_raw(self, z: torch.Tensor) -> torch.Tensor:
+        """Decode latent ECGs to PTBXL-order 100 Hz waveforms before z-score."""
         ecg_tc = self.victim._decode_latent_differentiable(z)       # (B, 1024, 12)
         ecg_ct = ecg_tc.transpose(-1, -2)                           # (B, 12, 1024) ECGTwin order
         ecg_ct = ecg_ct[:, ECGTWIN_TO_PTBXL_INDICES, :]             # PTBXL order
@@ -204,6 +200,15 @@ class PGDAdvDiffGenerator:
         ecg_ct = F.interpolate(
             ecg_ct, size=TIERM_PREPROC_LENGTH, mode="linear", align_corners=True
         )                                                           # (B, 12, 1000)
+        return ecg_ct
+
+    def _decode_to_ptbxl_1000(self, z: torch.Tensor) -> torch.Tensor:
+        """Replicate victim's internal preprocessing chain up to z-score (no crop).
+
+        Output: (B, 12, 1000) PTBXL-order, clamp(±3), z-scored.
+        This matches SynthCenterDataset.__init__ expected signals format.
+        """
+        ecg_ct = self._decode_to_ptbxl_1000_raw(z)
         ecg_ct = self.victim._global_zscore(ecg_ct)                 # global z-score
         return ecg_ct
 

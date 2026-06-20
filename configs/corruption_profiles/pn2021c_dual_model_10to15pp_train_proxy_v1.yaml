@@ -1,0 +1,54 @@
+profiles:
+  dual_model_10to15pp_train_proxy_v1:
+    baseline_shift:
+      5:
+        max_amplitude: 1.0
+        min_amplitude: 0.0
+        shift_ratio: 0.55
+        num_segment: 2
+        p: 1.0
+        dependency: false
+    baseline_wander:
+      5:
+        max_amplitude: 1.6
+        min_amplitude: 0.0
+        min_freq: 0.03
+        max_freq: 0.6
+        k: 5
+        p: 1.0
+        dependency: false
+    emg_noise:
+      5:
+        max_amplitude: 0.6
+        min_amplitude: 0.0
+        p: 1.0
+        dependency: false
+    powerline_noise:
+      5:
+        max_amplitude: 8.0
+        min_amplitude: 0.0
+        p: 1.0
+        dependency: false
+    random_leads_masking:
+      5:
+        mask_leads_prob: 0.65
+        mask_leads_selection: random
+        p: 1.0
+selection:
+  baseline_shift: shift_amp1p0_r0p55_seg2
+  baseline_wander: wander_amp1p6_k5_f0p6
+  emg_noise: emg_amp0p6
+  powerline_noise: train_proxy_100hz_amp8_for_native_amp32
+  random_leads_masking: mask_p0p65
+metadata:
+  profile_name: dual_model_10to15pp_train_proxy_v1
+  intended_use: training_only_100hz_raw_pre_zscore_augmix_proxy
+  eval_profile: configs/corruption_profiles/pn2021c_dual_model_10to15pp_v1.yaml
+  rationale: >-
+    The frozen PN2021-C evaluation profile uses native_raw_first powerline
+    injection with max_amplitude=32. In the EfficientNet training graph the
+    locked three-chain AugMix corruption chains operate on 100Hz/1000 ECG, so
+    using amplitude 32 creates a much stronger Nyquist-adjacent proxy than the
+    intended native_raw_first stressor. Amplitude 8 keeps the training proxy
+    near the historical 10-20pp raw-first powerline calibration while preserving
+    the frozen evaluation benchmark unchanged.

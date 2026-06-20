@@ -220,8 +220,14 @@ def build_effnet_vae_lhat_train_cmd(
         "0.999",
         "--anchor_lambda",
         "0.05",
+        "--qab_size",
+        str(args.qab_size),
+        "--rescore_interval",
+        str(args.rescore_interval),
         "--asr_consec_low_max",
-        "999",
+        str(args.asr_consec_low_max),
+        "--asr_low_threshold",
+        str(args.asr_low_threshold),
         "--num_workers",
         str(args.num_workers),
         "--seed",
@@ -247,6 +253,22 @@ def build_effnet_vae_lhat_train_cmd(
                 str(args.latent_augmix_depth),
                 "--latent_augmix_alpha",
                 str(args.latent_augmix_alpha),
+                "--latent_augmix_mixture_mode",
+                str(getattr(args, "latent_augmix_mixture_mode", "beta")),
+                "--latent_augmix_mixture_prob",
+                str(getattr(args, "latent_augmix_mixture_prob", 0.5)),
+                "--latent_augmix_mixture_beta_a",
+                str(getattr(args, "latent_augmix_mixture_beta_a", 0.0)),
+                "--latent_augmix_mixture_beta_b",
+                str(getattr(args, "latent_augmix_mixture_beta_b", 0.0)),
+                "--latent_augmix_op_schedule",
+                str(getattr(args, "latent_augmix_op_schedule", "random")),
+                "--latent_augmix_chain_weights",
+                str(getattr(args, "latent_augmix_chain_weights", "")),
+                "--latent_augmix_signal_space",
+                str(getattr(args, "latent_augmix_signal_space", "model_zscore")),
+                "--latent_augmix_corruption_source",
+                str(getattr(args, "latent_augmix_corruption_source", "vae_decode")),
                 "--latent_augmix_severity",
                 str(args.latent_augmix_severity),
                 "--latent_augmix_severity_profile",
@@ -257,6 +279,20 @@ def build_effnet_vae_lhat_train_cmd(
                 *[str(item) for item in args.latent_augmix_ops],
             ]
         )
+        if getattr(args, "latent_augmix_severity_params_file", ""):
+            train_cmd.extend(
+                [
+                    "--latent_augmix_severity_params_file",
+                    str(args.latent_augmix_severity_params_file),
+                ]
+            )
+        if getattr(args, "latent_augmix_severity_params_name", ""):
+            train_cmd.extend(
+                [
+                    "--latent_augmix_severity_params_name",
+                    str(args.latent_augmix_severity_params_name),
+                ]
+            )
         if getattr(args, "no_latent_augmix_renorm", False):
             train_cmd.append("--no_latent_augmix_renorm")
         if getattr(args, "enable_latent_augmix_consistency", False):
@@ -317,6 +353,20 @@ def build_effnet_vae_lhat_train_cmd(
                 str(getattr(args, "raw_augmix_mixture_beta_b", 0.0)),
             ]
         )
+        if getattr(args, "raw_corrupt_severity_params_file", ""):
+            train_cmd.extend(
+                [
+                    "--raw_corrupt_severity_params_file",
+                    str(args.raw_corrupt_severity_params_file),
+                ]
+            )
+        if getattr(args, "raw_corrupt_severity_params_name", ""):
+            train_cmd.extend(
+                [
+                    "--raw_corrupt_severity_params_name",
+                    str(args.raw_corrupt_severity_params_name),
+                ]
+            )
         raw_input_enabled = bool(
             getattr(args, "raw_input_bandpass_low_hz", None) is not None
             or getattr(args, "raw_input_bandpass_high_hz", None) is not None

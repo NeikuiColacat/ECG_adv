@@ -1,0 +1,39 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_dualmodel_cand23_lowptb_bufferheavy_cpsc.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_dualmodel_cand27_lfmask_focus_cpsc
+  description: "CPSC probe: use the same locked three-chain graph but map more AugMix copies to baseline shift, baseline wander, and lead masking, which are current recovery bottlenecks."
+
+adaptation:
+  run_tag_extra: trraw_proxy_lfmask_q768r1_c8_raw45_lw10_aw18_tw50_cw18_b7
+  loss:
+    ptbxl_weight: 0.05
+    target_real_weight: 50.0
+    adv_weight: 18.0
+    adv_weight_warmup_epochs: 1
+  buffer:
+    qab_size: 768
+    rescore_interval: 1
+    asr_consec_low_max: 999
+    asr_low_threshold: 0.20
+  latent_augmix:
+    copies: 8
+    chain_weights: "0.45,0.45,0.10"
+    ops:
+      - baseline_wander
+      - baseline_shift
+      - random_leads_masking
+      - baseline_wander
+      - baseline_shift
+      - random_leads_masking
+      - emg_noise
+      - powerline_noise
+    consistency:
+      consistency_weight: 18.0
+      bce_weight: 7.0
+
+run_record:
+  purpose: "Target the per-operator bottleneck while preserving the main AugMix topology: every view still contains two raw corruption chains plus one VAE-LH adversarial waveform chain."
+  result_summary: Pending.
+  registration_status: provisional

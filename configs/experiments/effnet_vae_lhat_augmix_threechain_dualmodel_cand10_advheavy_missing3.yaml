@@ -1,0 +1,18 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_advheavy_hlam20_aw3p0_c4_cw10_bce3_m090.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_dualmodel_cand10_advheavy_missing3
+  description: "Run the selected cand10 adversarial-heavy locked three-chain VAE-LH AugMix recipe on the three non-CPSC target centers; CPSC is reused from the smoke run."
+
+runner:
+  matrix:
+    center:
+      - ningbo
+      - chapman_shaoxing
+      - georgia
+
+run_record:
+  purpose: Complete four-center evidence for cand10 without rerunning the already completed CPSC smoke run.
+  result_summary: Pending.
+  registration_status: provisional

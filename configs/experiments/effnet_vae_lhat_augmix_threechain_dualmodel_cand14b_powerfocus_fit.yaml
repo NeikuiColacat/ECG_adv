@@ -1,0 +1,25 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_dualmodel_cand14_powerfocus.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_dualmodel_cand14b_powerfocus_fit
+  description: "Memory-fit cand14 variant: preserve powerline-focused target-real raw locked three-chain AugMix pressure, but reduce direct consistency views from 10 to 8 copies for 24GB GPUs."
+
+adaptation:
+  run_tag_extra: trraw_pf_c8_cw25_b24_aw8_tw25_hs10_lam18
+  latent_augmix:
+    copies: 8
+    ops:
+      - powerline_noise
+      - powerline_noise
+      - powerline_noise
+      - powerline_noise
+      - emg_noise
+      - baseline_wander
+      - baseline_shift
+      - random_leads_masking
+
+run_record:
+  purpose: Retry cand14 with the same mainline and powerline-focused pressure while fitting the direct AugMix consistency phase into 24GB GPU memory.
+  result_summary: Pending.
+  registration_status: provisional

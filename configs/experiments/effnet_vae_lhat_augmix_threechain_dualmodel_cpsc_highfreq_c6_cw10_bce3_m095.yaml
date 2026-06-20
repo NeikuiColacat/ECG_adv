@@ -1,0 +1,40 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_dualmodel_k500_cpsc_base.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_highfreq_c6_cw10_bce3_m095
+  description: "CPSC dual_model high-frequency candidate: keep locked three-chain AugMix, raise generated copies to 6, fixed mix 0.95, JSD10/BCE3, and stronger latent weight."
+
+training:
+  batch_size: 64
+
+adaptation:
+  run_tag_extra: k500_dual3ch_highfreq_hlam12_hs6_lr40_c6_cw10_bce3_m095_aw2p0_ka1600_wlat65_b64
+  anchors:
+    k_anchor: 1600
+  hull:
+    lambda: 0.12
+    steps: 6
+    lr: 0.40
+  loss:
+    target_real_weight: 60.0
+    adv_weight: 2.0
+    adv_weight_warmup_epochs: 2
+  latent_augmix:
+    copies: 6
+    latent_weight_cap: 0.65
+    depth: 1
+    mixture:
+      mode: fixed
+      prob: 0.95
+    consistency:
+      enabled: true
+      consistency_weight: 10.0
+      consistency_loss: jsd
+      bce_weight: 3.0
+      max_batches: 0
+
+run_record:
+  purpose: Test whether much higher locked three-chain AugMix sample frequency can recover more PN2021-C performance while preserving the VAE-LH + AugMix mainline.
+  result_summary: Pending.
+  registration_status: provisional

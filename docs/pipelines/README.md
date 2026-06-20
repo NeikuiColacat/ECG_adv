@@ -32,6 +32,7 @@
 | `run_record_management_20260529.md` | 每次实验的 run_card、run_file_index、summary、分类目录和 registry 登记规则 |
 | `agents_md_organization_suggestions_20260529.md` | AGENTS.md 的长度、历史路径、旧 mapping 事实和归档边界整理建议 |
 | `ai_agent_workspace_refactor_plan_20260604.md` | 多 subagent 扫描后的 AI-agent 友好重构计划：YAML 启动、package helper 抽象、legacy wrapper 和验证门禁 |
+| `data_layer_refactor_plan_20260619.md` | 数据读取、预处理、清洗和缓存相关模块的当前重构计划：契约优先、legacy wrapper、CPU 测试门禁 |
 
 ## Docs 还是 Skill
 

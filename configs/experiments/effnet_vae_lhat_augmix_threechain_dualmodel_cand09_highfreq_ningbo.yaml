@@ -1,0 +1,16 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_highfreq_c6_cw10_bce3_m095.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_dualmodel_cand09_highfreq_ningbo
+  description: "Run selected cand09 high-frequency locked three-chain VAE-LH AugMix recipe on Ningbo for four-center evidence."
+
+runner:
+  matrix:
+    center:
+      - ningbo
+
+run_record:
+  purpose: Complete Ningbo evidence for cand09 without rerunning the already completed CPSC smoke run.
+  result_summary: Pending.
+  registration_status: provisional

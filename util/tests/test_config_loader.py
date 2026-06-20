@@ -87,6 +87,25 @@ def _load(name: str) -> dict:
         ("effnet_vae_lhat_calibrated_latent_augmix_norenorm_k500_v7_sjr_rgq_cpsc_2018.yaml", 1),
         ("effnet_vae_lhat_calibrated_latent_augmix_directloss_k500_v7_sjr_rgq_cpsc_2018.yaml", 1),
         ("effnet_vae_lhat_augmix_threechain_locked_k500.yaml", 4),
+        ("effnet_vae_lhat_augmix_threechain_dualmodel_k500_cpsc_base.yaml", 1),
+        ("effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_d1_c2_cw2_bce1_m065.yaml", 1),
+        ("effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_d1_c3_cw4_bce1_m065.yaml", 1),
+        ("effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_d1_c3_cw6_bce1_m075.yaml", 1),
+        ("effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_d1_c4_cw4_bce2_m075.yaml", 1),
+        ("effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_randdepth_c3_cw4_bce1_m065.yaml", 1),
+        ("effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_d1_c3_cw4_bce2_m075_hs5.yaml", 1),
+        ("effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_strong_hlam10_aw1p5_c3_cw6_bce2_m085.yaml", 1),
+        ("effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_strong_hlam15_aw2p0_c4_cw8_bce2_m090.yaml", 1),
+        ("effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_highfreq_c6_cw10_bce3_m095.yaml", 1),
+        ("effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_advheavy_hlam20_aw3p0_c4_cw10_bce3_m090.yaml", 1),
+        ("effnet_vae_lhat_augmix_threechain_dualmodel_cand09_highfreq_missing3.yaml", 3),
+        ("effnet_vae_lhat_augmix_threechain_dualmodel_cand10_advheavy_missing3.yaml", 3),
+        ("effnet_vae_lhat_augmix_threechain_dualmodel_cand09_highfreq_ningbo.yaml", 1),
+        ("effnet_vae_lhat_augmix_threechain_dualmodel_cand09_highfreq_chapman_shaoxing.yaml", 1),
+        ("effnet_vae_lhat_augmix_threechain_dualmodel_cand09_highfreq_georgia.yaml", 1),
+        ("effnet_vae_lhat_augmix_threechain_dualmodel_cand10_advheavy_ningbo.yaml", 1),
+        ("effnet_vae_lhat_augmix_threechain_dualmodel_cand10_advheavy_chapman_shaoxing.yaml", 1),
+        ("effnet_vae_lhat_augmix_threechain_dualmodel_cand10_advheavy_georgia.yaml", 1),
         ("effnet_vae_lhat_fullpool_raw_augmix_depth1_w1_m100_stabilizer35_k500_v7_sjr_rgq.yaml", 4),
         ("effnet_vae_lhat_fullpool_raw_augmix_depth1_w1_m100_stabilizer35_k500_v7_sjr_rgq_smoke.yaml", 1),
         ("effnet_vae_lhat_maskshift_consistency_k500_v7_sjr_rgq.yaml", 4),
@@ -133,6 +152,11 @@ def _load(name: str) -> dict:
         ("pn2021c_effnet_v7_strong_rawsupervised_ningbo.yaml", 2),
         ("pn2021c_effnet_v7_strong_calibrated_rawsupervised.yaml", 8),
         ("pn2021c_effnet_v7_strong_calibrated_rawsupervised_ningbo.yaml", 2),
+        ("pn2021c_effnet_dual3ch_cpsc_dualmodel_smoke.yaml", 11),
+        ("pn2021c_effnet_dual3ch_selected_dualmodel_missing3.yaml", 15),
+        ("pn2021c_effnet_dual3ch_selected_dualmodel_cpsc.yaml", 5),
+        ("pn2021c_effnet_dual3ch_selected_official_s5_missing3.yaml", 15),
+        ("pn2021c_effnet_dual3ch_selected_official_s5_cpsc.yaml", 5),
     ],
 )
 def test_tracked_configs_validate_and_expand_commands(config_name: str, expected_commands: int):
@@ -586,6 +610,18 @@ def test_effnet_vae_lhat_typed_adapter_matches_legacy_runner_argv():
     assert adapted_commands == legacy_commands
 
 
+def test_effnet_vae_lhat_typed_adapter_honors_ptbxl_weight_override():
+    config = _load("effnet_vae_lhat_augmix_threechain_dualmodel_cand15_freq_cpsc.yaml")
+    config = copy.deepcopy(config)
+    config["adaptation"]["loss"]["ptbxl_weight"] = 0.0
+    validate_experiment_config(config, repo_root=REPO)
+
+    commands = build_runner_commands(config)
+
+    assert len(commands) == 1
+    assert _option_value(commands[0]["argv"], "--ptbxl_weight") == "0.0"
+
+
 def test_effnet_vae_lhat_v7_config_uses_typed_runner_adapter():
     config = _load("effnet_vae_lhat_k500_v7_sjr_rgq.yaml")
 
@@ -773,6 +809,186 @@ def test_effnet_vae_lhat_threechain_locked_k500_config_uses_official_s5_last_che
             "baseline_shift",
             "random_leads_masking",
         ]
+
+
+@pytest.mark.parametrize(
+    ("config_name", "center", "copies", "mix_prob", "hull_steps", "hull_lambda", "run_tag_extra"),
+    [
+        (
+            "effnet_vae_lhat_augmix_threechain_dualmodel_cand09_highfreq_ningbo.yaml",
+            "ningbo",
+            "6",
+            "0.95",
+            "6",
+            "0.12",
+            "k500_dual3ch_highfreq_hlam12_hs6_lr40_c6_cw10_bce3_m095_aw2p0_ka1600_wlat65_b64",
+        ),
+        (
+            "effnet_vae_lhat_augmix_threechain_dualmodel_cand10_advheavy_georgia.yaml",
+            "georgia",
+            "4",
+            "0.9",
+            "8",
+            "0.2",
+            "k500_dual3ch_advheavy_hlam20_hs8_lr50_c4_cw10_bce3_m090_aw3p0_ka1800_treal40",
+        ),
+    ],
+)
+def test_effnet_vae_lhat_dualmodel_selected_configs_preserve_locked_threechain_mainline(
+    config_name: str,
+    center: str,
+    copies: str,
+    mix_prob: str,
+    hull_steps: str,
+    hull_lambda: str,
+    run_tag_extra: str,
+):
+    config = _load(config_name)
+    validate_experiment_config(config, repo_root=REPO)
+    commands = build_runner_commands(config)
+
+    assert len(commands) == 1
+    command = commands[0]
+    argv = command["argv"]
+    assert command["matrix"]["center"] == center
+    assert _option_value(argv, "--center") == center
+    assert "--enable_raw_corrupt_consistency" not in argv
+    assert "--raw_input_stabilizer" not in argv
+    assert "--raw_corrupt_view_mode" not in argv
+    assert _option_value(argv, "--latent_augmix_topology") == "locked_three_chain"
+    assert _option_value(argv, "--latent_augmix_width") == "3"
+    assert _option_value(argv, "--latent_augmix_depth") == "1"
+    assert _option_value(argv, "--latent_augmix_copies") == copies
+    assert _option_value(argv, "--latent_augmix_mixture_mode") == "fixed"
+    assert _option_value(argv, "--latent_augmix_mixture_prob") == mix_prob
+    if "opcycle" in config_name:
+        assert _option_value(argv, "--latent_augmix_op_schedule") == "per_op"
+        assert _option_value(argv, "--latent_augmix_chain_weights") == "0.45,0.45,0.10"
+    assert _option_value(argv, "--latent_augmix_severity") == "5"
+    assert _option_value(argv, "--latent_augmix_severity_profile") == "custom"
+    assert _option_value(argv, "--latent_augmix_severity_params_file") == (
+        "configs/corruption_profiles/pn2021c_dual_model_10to15pp_v1.yaml"
+    )
+    assert _option_value(argv, "--latent_augmix_severity_params_name") == "dual_model_10to15pp_v1"
+    assert "--enable_latent_augmix_consistency" in argv
+    assert _option_value(argv, "--latent_augmix_consistency_loss") == "jsd"
+    assert _option_value(argv, "--latent_augmix_consistency_weight") == "10.0"
+    assert _option_value(argv, "--latent_augmix_bce_weight") == "3.0"
+    assert _option_value(argv, "--latent_augmix_consistency_max_batches") == "0"
+    assert _option_value(argv, "--hull_steps") == hull_steps
+    assert _option_value(argv, "--hull_lambda") == hull_lambda
+    assert _option_value(argv, "--checkpoint_policy") == "last"
+    assert _option_value(argv, "--target_real_val_fraction") == "0.0"
+    assert _option_value(argv, "--run_tag_extra") == run_tag_extra
+    assert _all_option_values(argv, "--latent_augmix_ops") == [
+        "powerline_noise",
+        "emg_noise",
+        "baseline_wander",
+        "baseline_shift",
+        "random_leads_masking",
+    ]
+
+
+def test_effnet_vae_lhat_dualmodel_cand11_opcycle_config_preserves_mainline_matrix():
+    config = _load("effnet_vae_lhat_augmix_threechain_dualmodel_cand11_opcycle_rawheavy.yaml")
+    validate_experiment_config(config, repo_root=REPO)
+    commands = build_runner_commands(config)
+
+    assert len(commands) == 4
+    assert {command["matrix"]["center"] for command in commands} == {
+        "ningbo",
+        "chapman_shaoxing",
+        "cpsc_2018",
+        "georgia",
+    }
+    for command in commands:
+        argv = command["argv"]
+        assert "--enable_raw_corrupt_consistency" not in argv
+        assert "--raw_input_stabilizer" not in argv
+        assert "--raw_corrupt_view_mode" not in argv
+        assert _option_value(argv, "--latent_augmix_topology") == "locked_three_chain"
+        assert _option_value(argv, "--latent_augmix_width") == "3"
+        assert _option_value(argv, "--latent_augmix_depth") == "1"
+        assert _option_value(argv, "--latent_augmix_copies") == "5"
+        assert _option_value(argv, "--latent_augmix_mixture_mode") == "fixed"
+        assert _option_value(argv, "--latent_augmix_mixture_prob") == "1.0"
+        assert _option_value(argv, "--latent_augmix_op_schedule") == "per_op"
+        assert _option_value(argv, "--latent_augmix_chain_weights") == "0.45,0.45,0.10"
+        assert _option_value(argv, "--latent_augmix_severity_profile") == "custom"
+        assert _option_value(argv, "--latent_augmix_severity_params_name") == "dual_model_10to15pp_v1"
+        assert "--enable_latent_augmix_consistency" in argv
+        assert _option_value(argv, "--latent_augmix_consistency_weight") == "12.0"
+        assert _option_value(argv, "--latent_augmix_bce_weight") == "4.0"
+        assert _option_value(argv, "--run_tag_extra") == "opcyraw_c5_w4510_cw12_b4_m1"
+
+
+def test_effnet_vae_lhat_dualmodel_cand12_rawspace_config_preserves_mainline_matrix():
+    config = _load("effnet_vae_lhat_augmix_threechain_dualmodel_cand12_rawspace_advbce.yaml")
+    validate_experiment_config(config, repo_root=REPO)
+    commands = build_runner_commands(config)
+
+    assert len(commands) == 4
+    assert {command["matrix"]["center"] for command in commands} == {
+        "ningbo",
+        "chapman_shaoxing",
+        "cpsc_2018",
+        "georgia",
+    }
+    for command in commands:
+        argv = command["argv"]
+        assert "--enable_raw_corrupt_consistency" not in argv
+        assert "--raw_input_stabilizer" not in argv
+        assert "--raw_corrupt_view_mode" not in argv
+        assert _option_value(argv, "--latent_augmix_topology") == "locked_three_chain"
+        assert _option_value(argv, "--latent_augmix_signal_space") == "raw_pre_zscore"
+        assert _option_value(argv, "--latent_augmix_op_schedule") == "per_op"
+        assert _option_value(argv, "--latent_augmix_chain_weights") == "0.35,0.35,0.30"
+        assert _option_value(argv, "--latent_augmix_copies") == "5"
+        assert _option_value(argv, "--latent_augmix_mixture_mode") == "fixed"
+        assert _option_value(argv, "--latent_augmix_mixture_prob") == "1.0"
+        assert _option_value(argv, "--latent_augmix_severity_profile") == "custom"
+        assert _option_value(argv, "--latent_augmix_severity_params_name") == "dual_model_10to15pp_v1"
+        assert "--enable_latent_augmix_consistency" in argv
+        assert _option_value(argv, "--latent_augmix_consistency_weight") == "8.0"
+        assert _option_value(argv, "--latent_augmix_bce_weight") == "8.0"
+        assert _option_value(argv, "--hull_steps") == "8"
+        assert _option_value(argv, "--hull_lambda") == "0.15"
+        assert _option_value(argv, "--run_tag_extra") == "rawspace_c5_w353530_cw8_b8_aw3"
+
+
+def test_effnet_vae_lhat_dualmodel_cand13_targetreal_config_preserves_mainline_matrix():
+    config = _load("effnet_vae_lhat_augmix_threechain_dualmodel_cand13_targetrealraw.yaml")
+    validate_experiment_config(config, repo_root=REPO)
+    commands = build_runner_commands(config)
+
+    assert len(commands) == 4
+    assert {command["matrix"]["center"] for command in commands} == {
+        "ningbo",
+        "chapman_shaoxing",
+        "cpsc_2018",
+        "georgia",
+    }
+    for command in commands:
+        argv = command["argv"]
+        assert "--enable_raw_corrupt_consistency" not in argv
+        assert "--raw_input_stabilizer" not in argv
+        assert "--raw_corrupt_view_mode" not in argv
+        assert _option_value(argv, "--latent_augmix_topology") == "locked_three_chain"
+        assert _option_value(argv, "--latent_augmix_signal_space") == "raw_pre_zscore"
+        assert _option_value(argv, "--latent_augmix_corruption_source") == "target_real"
+        assert _option_value(argv, "--latent_augmix_op_schedule") == "per_op"
+        assert _option_value(argv, "--latent_augmix_chain_weights") == "0.45,0.45,0.10"
+        assert _option_value(argv, "--latent_augmix_copies") == "5"
+        assert _option_value(argv, "--latent_augmix_mixture_mode") == "fixed"
+        assert _option_value(argv, "--latent_augmix_mixture_prob") == "1.0"
+        assert _option_value(argv, "--latent_augmix_severity_profile") == "custom"
+        assert _option_value(argv, "--latent_augmix_severity_params_name") == "dual_model_10to15pp_v1"
+        assert "--enable_latent_augmix_consistency" in argv
+        assert _option_value(argv, "--latent_augmix_consistency_weight") == "12.0"
+        assert _option_value(argv, "--latent_augmix_bce_weight") == "8.0"
+        assert _option_value(argv, "--hull_steps") == "8"
+        assert _option_value(argv, "--hull_lambda") == "0.15"
+        assert _option_value(argv, "--run_tag_extra") == "trraw_c5_w4510_cw12_b8_aw3"
 
 
 def test_effnet_vae_lhat_fullpool_raw_augmix_config_exposes_flags():

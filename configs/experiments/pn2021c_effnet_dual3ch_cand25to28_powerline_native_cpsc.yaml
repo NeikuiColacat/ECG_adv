@@ -1,0 +1,63 @@
+extends:
+  - pn2021c_official_s5_locked_protocol.yaml
+
+experiment:
+  name: pn2021c_effnet_dual3ch_cand25to28_powerline_native_cpsc
+  description: CPSC native-raw-first powerline evaluation for cand25-28 fresh-buffer EfficientNet VAE-LH AugMix probes.
+
+paper_protocol:
+  kshot:
+    seed: 20260601
+    subset_seed: 20260601
+
+evaluation:
+  severity_profile: custom
+  severity_params_file: configs/corruption_profiles/pn2021c_dual_model_10to15pp_v1.yaml
+  severity_params_name: dual_model_10to15pp_v1
+  corruptions:
+    - powerline_noise
+  severities: [5]
+  corruption_input: native_raw_first
+  output_stem: eval_powerline_native_raw_first
+
+logging:
+  child_artifacts:
+    - eval_powerline_native_raw_first.json
+  postprocess_artifacts:
+    - pn2021c_effnet_dual3ch_cand25to28_powerline_native_cpsc.csv
+
+runner:
+  matrix:
+    center:
+      - cpsc_2018
+    method:
+      - name: cand25_freshbuf_advchain_cpsc
+        family: effnet_vae_lhat_augmix_threechain_dualmodel_cand25_freshbuf_advchain_cpsc
+        model_dir_template: >-
+          {output_root}/effnet_vae_lhat_augmix_threechain_dualmodel_cand25_freshbuf_advchain_cpsc/dual3ch_cand25_freshbuf_advchain_cpsc_20260620/{center}_realall_targetheavy_M20_lam0p2_augmix_s5_wlat0p3_hs10_target_macro_auprc_cdhypminormsttc_hlabelcom_anchor_soft_sta_local_random_p120_fullft_trraw_proxy_freshbuf_q768r1_lw20_aw16_tw55_c6_cw16_b6_ep30_seed20260601
+        checkpoint_name: last_model.pt
+        clean_eval_name: eval_result_v7_exclrefs_crop1000.json
+      - name: cand26_boundary_freshbuf_cpsc
+        family: effnet_vae_lhat_augmix_threechain_dualmodel_cand26_boundary_freshbuf_cpsc
+        model_dir_template: >-
+          {output_root}/effnet_vae_lhat_augmix_threechain_dualmodel_cand26_boundary_freshbuf_cpsc/dual3ch_cand26_boundary_freshbuf_cpsc_20260620/{center}_realall_targetheavy_M20_lam0p2_augmix_s5_wlat0p3_hs10_target_macro_auprc_cdhypminormsttc_hlabelcom_anchor_soft_sta_local_random_p120_fullft_trraw_proxy_boundary_q1024r1_lw20_aw20_tw50_c6_b01585_ep30_seed20260601
+        checkpoint_name: last_model.pt
+        clean_eval_name: eval_result_v7_exclrefs_crop1000.json
+      - name: cand27_lfmask_focus_cpsc
+        family: effnet_vae_lhat_augmix_threechain_dualmodel_cand27_lfmask_focus_cpsc
+        model_dir_template: >-
+          {output_root}/effnet_vae_lhat_augmix_threechain_dualmodel_cand27_lfmask_focus_cpsc/dual3ch_cand27_lfmask_focus_cpsc_20260620/{center}_realall_targetheavy_M20_lam0p2_augmix_s5_wlat0p3_hs10_target_macro_auprc_cdhypminormsttc_hlabelcom_anchor_soft_sta_local_random_p120_fullft_trraw_proxy_lfmask_q768r1_c8_raw45_lw10_aw18_tw50_cw18_b7_ep30_seed20260601
+        checkpoint_name: last_model.pt
+        clean_eval_name: eval_result_v7_exclrefs_crop1000.json
+      - name: cand28_hardrefresh_cpsc
+        family: effnet_vae_lhat_augmix_threechain_dualmodel_cand28_hardrefresh_cpsc
+        model_dir_template: >-
+          {output_root}/effnet_vae_lhat_augmix_threechain_dualmodel_cand28_hardrefresh_cpsc/dual3ch_cand28_hardrefresh_cpsc_20260620/{center}_realall_targetheavy_M20_lam0p28_augmix_s5_wlat0p3_hs14_target_macro_auprc_cdhypminormsttc_hlabelcom_anchor_soft_sta_local_random_p120_fullft_trraw_proxy_hardrefresh_q512r1_lw25_aw20_tw45_hs14_lam28_c6_cw16_b6_ep30_seed20260601
+        checkpoint_name: last_model.pt
+        clean_eval_name: eval_result_v7_exclrefs_crop1000.json
+  name: ${experiment.name}_${matrix.center}_${matrix.method.name}
+
+run_record:
+  purpose: Evaluate native acquisition-side powerline stress for cand25-28, matching the mixed-mode PN2021-C reporting protocol.
+  result_summary: Pending.
+  registration_status: provisional

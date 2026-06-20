@@ -76,6 +76,7 @@ from methods.augmix.severity import AVAILABLE_OPS  # noqa: E402
 from scripts.triple_labels.eval_pn2021_corruptions import (  # noqa: E402
     STRESS_PROFILE_CHOICES as PN2021C_STRESS_PROFILE_CHOICES,
     _build_corruption_op as _build_pn2021c_corruption_op,
+    _load_custom_severity_profile,
 )
 
 from scripts.crosscenter_tierM.online_adv_train_tierM import (  # noqa: E402
@@ -146,6 +147,31 @@ DEFAULT_SUPER5_CKPT = "/root/autodl-tmp/triple_labels/super5/best_model.pt"
 
 PN2021_FORBIDDEN = {"ptb-xl", "ptbxl"}     # never eval against this shard
 
+
+def _resolve_optional_custom_severity_profile(
+    *,
+    enabled: bool,
+    severity_profile: str,
+    params_file: str,
+    params_name: str,
+    flag_prefix: str,
+) -> Optional[Dict[str, Dict[int, Dict[str, Any]]]]:
+    """Load custom PN2021-C operator parameters only when that branch is active."""
+    if not enabled:
+        return None
+    severity_profile = str(severity_profile)
+    params_file = str(params_file or "")
+    params_name = str(params_name or "")
+    if severity_profile != "custom":
+        if params_file or params_name:
+            raise ValueError(
+                f"{flag_prefix}_severity_params_file/name are only valid with "
+                f"{flag_prefix}_severity_profile custom"
+            )
+        return None
+    return _load_custom_severity_profile(params_file, params_name)
+
+
 # Plan Rev 11/13: synth scope narrowed to 3 classes — HYP/CD synth disabled
 # because their digital-GT validation fails 0/3 best-cell.
 SUPER5_GEN_SUBSET = {"NORM", "MI", "STTC"}
@@ -213,6 +239,18 @@ def _raw_input_stabilizer_postprocess(
         parts.append("renorm")
     return _postprocess, "+".join(parts) or "raw_input_stabilizer"
 
+
+def _parse_optional_float_list(raw: str | List[float] | Tuple[float, ...] | None) -> Optional[List[float]]:
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return None
+        return [float(item.strip()) for item in text.split(",") if item.strip()]
+    return [float(item) for item in raw]
+
+
 from scripts.triple_labels.label_schemes import SUPER5_TO_IDX  # noqa: E402
 
 # Indices of in-scope generation classes (NORM/MI/STTC) in the 5-class scheme.
@@ -237,6 +275,39 @@ def _normalize_target_real_signals(signals_tc: np.ndarray, norm_mode: str) -> np
         std = signals_tc.std(axis=(1, 2), keepdims=True)
         return ((signals_tc - mean) / (std + 1e-8)).astype(np.float32, copy=False)
     raise ValueError(f"unknown target_real_norm_mode={norm_mode!r}")
+
+
+def select_target_real_augmix_anchors_ct(
+    target_real_signals_tc: np.ndarray,
+    *,
+    picked_indices: np.ndarray,
+    expected_count: int,
+) -> np.ndarray:
+    """Select real K500 raw anchors for locked AugMix corruption chains."""
+    signals = np.asarray(target_real_signals_tc, dtype=np.float32)
+    if signals.ndim != 3 or signals.shape[1:] != (1000, 12):
+        raise ValueError(f"target_real_signals_tc must be shaped (N,1000,12), got {signals.shape}")
+    picks = np.asarray(picked_indices, dtype=np.int64)
+    if picks.ndim != 1:
+        raise ValueError(f"picked_indices must be 1D, got {picks.shape}")
+    if int(expected_count) != int(picks.shape[0]):
+        raise ValueError(f"expected_count={expected_count} does not match picked_indices={picks.shape[0]}")
+    if picks.size == 0:
+        return np.empty((0, 12, 1000), dtype=np.float32)
+    if int(picks.min()) < 0 or int(picks.max()) >= signals.shape[0]:
+        raise IndexError(
+            f"picked_indices out of range for target_real_signals_tc length {signals.shape[0]}"
+        )
+    return np.ascontiguousarray(signals[picks].transpose(0, 2, 1)).astype(np.float32, copy=False)
+
+
+def _zscore_ct_batch(signals_ct: np.ndarray, eps: float = 1e-8) -> np.ndarray:
+    signals = np.asarray(signals_ct, dtype=np.float32)
+    if signals.ndim != 3:
+        raise ValueError(f"signals_ct must be 3D, got {signals.shape}")
+    mean = signals.mean(axis=(1, 2), keepdims=True)
+    std = signals.std(axis=(1, 2), keepdims=True)
+    return ((signals - mean) / (std + eps)).astype(np.float32, copy=False)
 
 
 class TargetRealWaveformDataset(Dataset):
@@ -419,6 +490,7 @@ def train_raw_corruption_consistency_epoch(
     augmix_mixture_beta_a: float = 0.0,
     augmix_mixture_beta_b: float = 0.0,
     input_stabilizer_config: Optional[Dict[str, Any]] = None,
+    severity_profile_params: Optional[Dict[str, Dict[int, Dict[str, Any]]]] = None,
 ) -> Dict[str, Any]:
     """Train on raw ECG corruptions with clean-model consistency targets."""
     if copies <= 0 or (consistency_weight <= 0 and bce_weight <= 0):
@@ -464,6 +536,7 @@ def train_raw_corruption_consistency_epoch(
                 copies=copies,
                 severity=severity,
                 severity_profile=severity_profile,
+                severity_profile_params=severity_profile_params,
                 width=augmix_width,
                 depth=augmix_depth,
                 alpha=augmix_alpha,
@@ -483,6 +556,7 @@ def train_raw_corruption_consistency_epoch(
                 copies=copies,
                 severity=severity,
                 severity_profile=severity_profile,
+                severity_profile_params=severity_profile_params,
                 ops=ops,
                 prob=prob,
                 rng=rng,
@@ -1496,6 +1570,7 @@ def run_pgd_on_synth_pool(
     hull_label_positive: float = 0.95,
     hull_label_negative_floor: float = 0.0,
     hull_label_new_class_cap: float = 0.5,
+    store_raw_decoded: bool = False,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict[str, float]]:
     """Sample K anchors stratified by class, run PGD in batches of pgd_batch.
 
@@ -1527,6 +1602,7 @@ def run_pgd_on_synth_pool(
     y_anchors = torch.from_numpy(y_anchor_np).float()                # (K, C)
 
     adv_chunks, anc_chunks, label_chunks, delta_norms = [], [], [], []
+    raw_adv_chunks, raw_anc_chunks = [], []
     hull_entropies, hull_top1 = [], []
     for i in range(0, z_anchors.shape[0], pgd_batch):
         z_b = z_anchors[i:i + pgd_batch].to(device)
@@ -1579,11 +1655,23 @@ def run_pgd_on_synth_pool(
         # Clean anchor reference (z_b alone, no delta)
         with torch.no_grad():
             anc_x = pgd_gen._decode_to_ptbxl_1000(z_b)
+            if store_raw_decoded:
+                raw_anc_x = pgd_gen._decode_to_ptbxl_1000_raw(z_b)
+                raw_adv_x = pgd_gen._decode_to_ptbxl_1000_raw(z_b + delta.detach())
         anc_chunks.append(anc_x.detach().cpu().numpy().astype(np.float32))
+        if store_raw_decoded:
+            raw_anc_chunks.append(raw_anc_x.detach().cpu().numpy().astype(np.float32))
+            raw_adv_chunks.append(raw_adv_x.detach().cpu().numpy().astype(np.float32))
         delta_norms.extend(delta.detach().flatten(1).norm(dim=1).cpu().tolist())
 
     adv_signals = np.concatenate(adv_chunks, axis=0)                  # (K, 12, 1000)
     anc_signals = np.concatenate(anc_chunks, axis=0)
+    if store_raw_decoded:
+        pgd_gen.last_anchor_raw_ptbxl_1000 = np.concatenate(raw_anc_chunks, axis=0)
+        pgd_gen.last_adv_raw_ptbxl_1000 = np.concatenate(raw_adv_chunks, axis=0)
+    else:
+        pgd_gen.last_anchor_raw_ptbxl_1000 = None
+        pgd_gen.last_adv_raw_ptbxl_1000 = None
     stats = {
         "mean_delta_norm": float(np.mean(delta_norms)),
         "max_delta_norm":  float(np.max(delta_norms)),
@@ -1612,6 +1700,7 @@ def build_latent_augmix_branch_signals(
     rng: np.random.Generator,
     renorm: bool = True,
     clip_abs: float = 6.0,
+    severity_profile_params: Optional[Dict[str, Dict[int, Dict[str, Any]]]] = None,
 ) -> Tuple[np.ndarray, Dict[str, Any]]:
     """Legacy wrapper around the package-level latent AugMix core."""
 
@@ -1624,7 +1713,12 @@ def build_latent_augmix_branch_signals(
         sig_t = torch.from_numpy(sig_ct.copy()).float()
         if op_severity_profile == "standard":
             return _apply_op(sig_t, op_name, int(op_severity)).cpu().numpy().astype(np.float32, copy=False)
-        op = _build_pn2021c_corruption_op(op_name, int(op_severity), op_severity_profile)
+        op = _build_pn2021c_corruption_op(
+            op_name,
+            int(op_severity),
+            op_severity_profile,
+            severity_profile_params=severity_profile_params,
+        )
         return op(sig_t).cpu().numpy().astype(np.float32, copy=False)
 
     return _build_latent_augmix_branch_signals_core(
@@ -1656,10 +1750,17 @@ def build_three_chain_vae_lhat_augmix_views(
     width: int,
     depth: int,
     alpha: float,
+    mixture_mode: str = "beta",
+    mixture_prob: float = 0.5,
+    mixture_beta_a: Optional[float] = None,
+    mixture_beta_b: Optional[float] = None,
+    op_schedule: str = "random",
+    chain_weights: Optional[List[float]] = None,
     ops: List[str],
     rng: np.random.Generator,
     renorm: bool = False,
     clip_abs: float = 6.0,
+    severity_profile_params: Optional[Dict[str, Dict[int, Dict[str, Any]]]] = None,
 ) -> Tuple[np.ndarray, Dict[str, Any]]:
     """Locked wrapper: two ECG corruption chains plus one uncorrupted VAE-LHAT chain."""
 
@@ -1672,7 +1773,12 @@ def build_three_chain_vae_lhat_augmix_views(
         sig_t = torch.from_numpy(sig_ct.copy()).float()
         if op_severity_profile == "standard":
             return _apply_op(sig_t, op_name, int(op_severity)).cpu().numpy().astype(np.float32, copy=False)
-        op = _build_pn2021c_corruption_op(op_name, int(op_severity), op_severity_profile)
+        op = _build_pn2021c_corruption_op(
+            op_name,
+            int(op_severity),
+            op_severity_profile,
+            severity_profile_params=severity_profile_params,
+        )
         return op(sig_t).cpu().numpy().astype(np.float32, copy=False)
 
     return _build_three_chain_vae_lhat_augmix_views_core(
@@ -1684,6 +1790,12 @@ def build_three_chain_vae_lhat_augmix_views(
         width=width,
         depth=depth,
         alpha=alpha,
+        mixture_mode=mixture_mode,
+        mixture_prob=mixture_prob,
+        mixture_beta_a=mixture_beta_a,
+        mixture_beta_b=mixture_beta_b,
+        op_schedule=op_schedule,
+        chain_weights=chain_weights,
         ops=ops,
         rng=rng,
         op_apply_fn=_apply_augmix_op_np,
@@ -1705,6 +1817,7 @@ def build_raw_corruption_views(
     renorm: bool = False,
     clip_abs: float = 6.0,
     input_stabilizer_config: Optional[Dict[str, Any]] = None,
+    severity_profile_params: Optional[Dict[str, Dict[int, Dict[str, Any]]]] = None,
 ) -> Tuple[np.ndarray, Dict[str, Any]]:
     """Legacy wrapper around the package-level raw corruption view core."""
 
@@ -1712,7 +1825,12 @@ def build_raw_corruption_views(
         sig_t = torch.from_numpy(sig_ct.copy()).float()
         if severity_profile == "standard":
             return _apply_op(sig_t, op_name, int(op_severity)).cpu().numpy().astype(np.float32, copy=False)
-        op = _build_pn2021c_corruption_op(op_name, int(op_severity), severity_profile)
+        op = _build_pn2021c_corruption_op(
+            op_name,
+            int(op_severity),
+            severity_profile,
+            severity_profile_params=severity_profile_params,
+        )
         return op(sig_t).cpu().numpy().astype(np.float32, copy=False)
 
     postprocess_fn, postprocess_name = _raw_input_stabilizer_postprocess(input_stabilizer_config)
@@ -1754,6 +1872,7 @@ def build_raw_augmix_views(
     renorm: bool = False,
     clip_abs: float = 6.0,
     input_stabilizer_config: Optional[Dict[str, Any]] = None,
+    severity_profile_params: Optional[Dict[str, Dict[int, Dict[str, Any]]]] = None,
 ) -> Tuple[np.ndarray, Dict[str, Any]]:
     """Legacy wrapper around the package-level full-pool raw AugMix view core."""
 
@@ -1766,7 +1885,12 @@ def build_raw_augmix_views(
         sig_t = torch.from_numpy(sig_ct.copy()).float()
         if op_severity_profile == "standard":
             return _apply_op(sig_t, op_name, int(op_severity)).cpu().numpy().astype(np.float32, copy=False)
-        op = _build_pn2021c_corruption_op(op_name, int(op_severity), op_severity_profile)
+        op = _build_pn2021c_corruption_op(
+            op_name,
+            int(op_severity),
+            op_severity_profile,
+            severity_profile_params=severity_profile_params,
+        )
         return op(sig_t).cpu().numpy().astype(np.float32, copy=False)
 
     postprocess_fn, postprocess_name = _raw_input_stabilizer_postprocess(input_stabilizer_config)
@@ -2107,6 +2231,52 @@ def parse_args():
     p.add_argument("--latent_augmix_depth", type=int, default=-1,
                    help="Depth per ECG op chain; -1 samples uniformly from {1,2,3}.")
     p.add_argument("--latent_augmix_alpha", type=float, default=1.0)
+    p.add_argument("--latent_augmix_mixture_mode", choices=["beta", "fixed"], default="beta")
+    p.add_argument("--latent_augmix_mixture_prob", type=float, default=0.5)
+    p.add_argument("--latent_augmix_mixture_beta_a", type=float, default=0.0)
+    p.add_argument("--latent_augmix_mixture_beta_b", type=float, default=0.0)
+    p.add_argument(
+        "--latent_augmix_op_schedule",
+        choices=["random", "cycle", "per_op"],
+        default="random",
+        help=(
+            "Operator schedule for locked_three_chain raw corruption chains. "
+            "random preserves historical AugMix behavior; per_op maps copies "
+            "onto ops so every target anchor receives explicit single-operator "
+            "views inside the three-chain graph."
+        ),
+    )
+    p.add_argument(
+        "--latent_augmix_chain_weights",
+        default="",
+        help=(
+            "Optional comma-separated weights for the two raw corruption "
+            "chains and the VAE-LHAT adversarial chain, e.g. 0.45,0.45,0.10. "
+            "Empty keeps Dirichlet AugMix weights."
+        ),
+    )
+    p.add_argument(
+        "--latent_augmix_signal_space",
+        choices=["model_zscore", "raw_pre_zscore"],
+        default="model_zscore",
+        help=(
+            "Signal space used by locked_three_chain raw corruption chains. "
+            "model_zscore preserves historical behavior. raw_pre_zscore applies "
+            "corruption to VAE-decoded raw 100 Hz waveforms, then relies on the "
+            "final AugMix renorm before model input."
+        ),
+    )
+    p.add_argument(
+        "--latent_augmix_corruption_source",
+        choices=["vae_decode", "target_real"],
+        default="vae_decode",
+        help=(
+            "Clean anchor source for locked_three_chain raw corruption chains. "
+            "vae_decode preserves historical VAE-decoded anchors. target_real "
+            "uses the same picked K500 raw ECG anchors for the two corruption "
+            "chains while keeping the third chain as the VAE-LH adversarial waveform."
+        ),
+    )
     p.add_argument("--latent_augmix_severity", type=int, default=2)
     p.add_argument(
         "--latent_augmix_severity_profile",
@@ -2117,6 +2287,16 @@ def parse_args():
             "'standard' preserves the original mild AugMix table; "
             "'calibrated_10to20pp' matches the strong PN2021-C evaluation profile."
         ),
+    )
+    p.add_argument(
+        "--latent_augmix_severity_params_file",
+        default="",
+        help="YAML/JSON operator profile file used only with --latent_augmix_severity_profile custom.",
+    )
+    p.add_argument(
+        "--latent_augmix_severity_params_name",
+        default="",
+        help="Profile name under top-level profiles used only with --latent_augmix_severity_profile custom.",
     )
     p.add_argument("--latent_augmix_latent_weight_cap", type=float, default=0.30,
                    help="Maximum Dirichlet weight assigned to the x_adv branch.")
@@ -2168,6 +2348,16 @@ def parse_args():
             "'standard' preserves the training-time AugMix severity table; "
             "'calibrated_10to20pp' matches the strong PN2021-C evaluation profile."
         ),
+    )
+    p.add_argument(
+        "--raw_corrupt_severity_params_file",
+        default="",
+        help="YAML/JSON operator profile file used only with --raw_corrupt_severity_profile custom.",
+    )
+    p.add_argument(
+        "--raw_corrupt_severity_params_name",
+        default="",
+        help="Profile name under top-level profiles used only with --raw_corrupt_severity_profile custom.",
     )
     p.add_argument(
         "--raw_corrupt_ops",
@@ -2480,6 +2670,20 @@ def main():
     if not classes_in_scope:
         raise SystemExit("--classes_in_scope must contain at least one class")
     print(f"[setup] classes_in_scope={classes_in_scope}")
+    latent_augmix_severity_profile_params = _resolve_optional_custom_severity_profile(
+        enabled=bool(args.enable_latent_augmix_branch),
+        severity_profile=args.latent_augmix_severity_profile,
+        params_file=args.latent_augmix_severity_params_file,
+        params_name=args.latent_augmix_severity_params_name,
+        flag_prefix="--latent_augmix",
+    )
+    raw_corrupt_severity_profile_params = _resolve_optional_custom_severity_profile(
+        enabled=bool(args.enable_raw_corrupt_consistency),
+        severity_profile=args.raw_corrupt_severity_profile,
+        params_file=args.raw_corrupt_severity_params_file,
+        params_name=args.raw_corrupt_severity_params_name,
+        flag_prefix="--raw_corrupt",
+    )
     print(f"[setup] boundary target probability window=[{args.boundary_prob_min}, {args.boundary_prob_max}]")
     print(f"[setup] adv label mode={args.adv_label_mode} "
           f"teacher_mix={args.adv_teacher_mix} target_floor={args.adv_soft_target_floor}")
@@ -2493,6 +2697,11 @@ def main():
             f"copies={args.latent_augmix_copies} width={args.latent_augmix_width} "
             f"depth={args.latent_augmix_depth} severity={args.latent_augmix_severity} "
             f"profile={args.latent_augmix_severity_profile} "
+            f"mixture={args.latent_augmix_mixture_mode}:{args.latent_augmix_mixture_prob} "
+            f"op_schedule={args.latent_augmix_op_schedule} "
+            f"chain_weights={args.latent_augmix_chain_weights or 'dirichlet'} "
+            f"signal_space={args.latent_augmix_signal_space} "
+            f"corruption_source={args.latent_augmix_corruption_source} "
             f"w_lat_cap={args.latent_augmix_latent_weight_cap} "
             f"ops={args.latent_augmix_ops}",
             flush=True,
@@ -2511,6 +2720,25 @@ def main():
     if args.enable_latent_augmix_branch and args.latent_augmix_topology == "locked_three_chain":
         if int(args.latent_augmix_width) != 3:
             raise ValueError("--latent_augmix_topology locked_three_chain requires --latent_augmix_width 3")
+        if args.latent_augmix_signal_space == "raw_pre_zscore" and args.no_latent_augmix_renorm:
+            raise ValueError(
+                "--latent_augmix_signal_space raw_pre_zscore requires final latent-AugMix renorm "
+                "so generated views match classifier model-input normalization"
+            )
+        if args.latent_augmix_corruption_source == "target_real":
+            if args.latent_augmix_signal_space != "raw_pre_zscore":
+                raise ValueError(
+                    "--latent_augmix_corruption_source target_real requires "
+                    "--latent_augmix_signal_space raw_pre_zscore"
+                )
+            if not args.target_real_npz:
+                raise ValueError("--latent_augmix_corruption_source target_real requires --target_real_npz")
+        if args.latent_augmix_op_schedule == "per_op" and int(args.latent_augmix_copies) < len(args.latent_augmix_ops):
+            print(
+                "[setup] warning: latent_augmix_op_schedule=per_op has fewer copies "
+                "than ops; only the first scheduled operators will appear each epoch.",
+                flush=True,
+            )
     if args.quick_eval_source == "none" and args.checkpoint_policy != "last":
         raise ValueError("--quick_eval_source none requires --checkpoint_policy last")
 
@@ -2579,6 +2807,8 @@ def main():
     target_real_ds = None
     target_val_quick_subset = None
     target_val_record_ids: set[str] = set()
+    target_real_augmix_signals_tc: np.ndarray | None = None
+    target_real_augmix_all_signals_tc: np.ndarray | None = None
     if args.target_real_npz:
         with np.load(args.target_real_npz, allow_pickle=True) as real_data:
             real_signals = np.asarray(real_data["signals"], dtype=np.float32)
@@ -2596,6 +2826,7 @@ def main():
             raise ValueError(f"target_real_npz signals must be (N,1000,12) or (N,12,1000), got {real_signals.shape}")
         if real_labels.shape[0] != real_signals.shape[0] or real_labels.shape[1] != NUM_SUPER5:
             raise ValueError(f"target_real_npz labels mismatch: signals={real_signals.shape} labels={real_labels.shape}")
+        target_real_augmix_all_signals_tc = real_signals.astype(np.float32, copy=True)
         if args.quick_eval_source == "target_real_val":
             val_mask = build_k500_internal_val_mask(
                 real_labels,
@@ -2621,6 +2852,9 @@ def main():
             )
             real_signals = real_signals[train_mask]
             real_labels = real_labels[train_mask]
+            target_real_augmix_signals_tc = real_signals.astype(np.float32, copy=True)
+        else:
+            target_real_augmix_signals_tc = real_signals.astype(np.float32, copy=True)
         target_real_ds = TargetRealWaveformDataset(
             real_signals,
             real_labels,
@@ -2728,6 +2962,20 @@ def main():
                 f"[setup] removed {n_drop} K500-val records from latent anchor pool; "
                 f"train_latents={len(synth_latents)}",
                 flush=True,
+            )
+            if target_real_augmix_all_signals_tc is not None:
+                target_real_augmix_signals_tc = target_real_augmix_all_signals_tc[keep_mask].astype(
+                    np.float32,
+                    copy=True,
+                )
+    if args.latent_augmix_corruption_source == "target_real":
+        if target_real_augmix_signals_tc is None:
+            raise ValueError("--latent_augmix_corruption_source target_real requires loaded target-real signals")
+        if int(target_real_augmix_signals_tc.shape[0]) != int(synth_latents.shape[0]):
+            raise ValueError(
+                "--latent_augmix_corruption_source target_real requires target-real raw signals "
+                f"to align 1:1 with latent anchors, got raw={target_real_augmix_signals_tc.shape[0]} "
+                f"latents={synth_latents.shape[0]}"
             )
 
     pos_weight = torch.tensor(
@@ -2983,8 +3231,18 @@ def main():
             "width": int(args.latent_augmix_width),
             "depth": int(args.latent_augmix_depth),
             "alpha": float(args.latent_augmix_alpha),
+            "mixture_mode": str(args.latent_augmix_mixture_mode),
+            "mixture_prob": float(args.latent_augmix_mixture_prob),
+            "mixture_beta_a": float(args.latent_augmix_mixture_beta_a),
+            "mixture_beta_b": float(args.latent_augmix_mixture_beta_b),
+            "op_schedule": str(args.latent_augmix_op_schedule),
+            "chain_weights": str(args.latent_augmix_chain_weights),
+            "signal_space": str(args.latent_augmix_signal_space),
+            "corruption_source": str(args.latent_augmix_corruption_source),
             "severity": int(args.latent_augmix_severity),
             "severity_profile": str(args.latent_augmix_severity_profile),
+            "severity_params_file": str(args.latent_augmix_severity_params_file),
+            "severity_params_name": str(args.latent_augmix_severity_params_name),
             "latent_weight_cap": float(args.latent_augmix_latent_weight_cap),
             "ops": list(args.latent_augmix_ops),
             "renorm": not bool(args.no_latent_augmix_renorm),
@@ -3003,6 +3261,8 @@ def main():
             "prob": float(args.raw_corrupt_prob),
             "severity": int(args.raw_corrupt_severity),
             "severity_profile": str(args.raw_corrupt_severity_profile),
+            "severity_params_file": str(args.raw_corrupt_severity_params_file),
+            "severity_params_name": str(args.raw_corrupt_severity_params_name),
             "ops": list(args.raw_corrupt_ops),
             "consistency_weight": float(args.raw_corrupt_consistency_weight),
             "consistency_loss": str(args.raw_corrupt_consistency_loss),
@@ -3199,6 +3459,11 @@ def main():
                 hull_label_positive=args.hull_label_positive,
                 hull_label_negative_floor=args.hull_label_negative_floor,
                 hull_label_new_class_cap=args.hull_label_new_class_cap,
+                store_raw_decoded=(
+                    bool(args.enable_latent_augmix_branch)
+                    and args.latent_augmix_topology == "locked_three_chain"
+                    and args.latent_augmix_signal_space == "raw_pre_zscore"
+                ),
             )
             if adv_signals.shape[0] == 0:
                 print(f"[ep{epoch:02d}] empty walker pick — skip epoch", flush=True)
@@ -3265,16 +3530,51 @@ def main():
                     soft_target_floor=args.adv_soft_target_floor,
                 )
                 if args.enable_latent_augmix_branch:
+                    augmix_anchor_signals = anc_signals
+                    augmix_adv_signals = adv_signals
+                    latent_augmix_clean_for_consistency = anc_signals
+                    if (
+                        args.latent_augmix_topology == "locked_three_chain"
+                        and args.latent_augmix_signal_space == "raw_pre_zscore"
+                    ):
+                        augmix_anchor_signals = getattr(pgd_gen, "last_anchor_raw_ptbxl_1000", None)
+                        augmix_adv_signals = getattr(pgd_gen, "last_adv_raw_ptbxl_1000", None)
+                        if augmix_anchor_signals is None or augmix_adv_signals is None:
+                            raise RuntimeError(
+                                "raw_pre_zscore latent AugMix requested but raw decoded PGD signals were not cached"
+                            )
+                        if args.latent_augmix_corruption_source == "target_real":
+                            if target_real_augmix_signals_tc is None:
+                                raise RuntimeError(
+                                    "target_real latent AugMix corruption source requested but no target-real raw signals are loaded"
+                                )
+                            augmix_anchor_signals = select_target_real_augmix_anchors_ct(
+                                target_real_augmix_signals_tc,
+                                picked_indices=all_picks,
+                                expected_count=adv_signals.shape[0],
+                            )
+                            latent_augmix_clean_for_consistency = _zscore_ct_batch(augmix_anchor_signals)
                     if args.latent_augmix_topology == "locked_three_chain":
                         latent_augmix_signals, latent_augmix_stats = build_three_chain_vae_lhat_augmix_views(
-                            anchor_signals_ct=anc_signals,
-                            adv_signals_ct=adv_signals,
+                            anchor_signals_ct=augmix_anchor_signals,
+                            adv_signals_ct=augmix_adv_signals,
                             copies=args.latent_augmix_copies,
                             severity=args.latent_augmix_severity,
                             severity_profile=args.latent_augmix_severity_profile,
+                            severity_profile_params=latent_augmix_severity_profile_params,
                             width=args.latent_augmix_width,
                             depth=args.latent_augmix_depth,
                             alpha=args.latent_augmix_alpha,
+                            mixture_mode=args.latent_augmix_mixture_mode,
+                            mixture_prob=args.latent_augmix_mixture_prob,
+                            mixture_beta_a=None
+                            if args.latent_augmix_mixture_beta_a <= 0
+                            else args.latent_augmix_mixture_beta_a,
+                            mixture_beta_b=None
+                            if args.latent_augmix_mixture_beta_b <= 0
+                            else args.latent_augmix_mixture_beta_b,
+                            op_schedule=args.latent_augmix_op_schedule,
+                            chain_weights=_parse_optional_float_list(args.latent_augmix_chain_weights),
                             ops=list(args.latent_augmix_ops),
                             rng=rng,
                             renorm=not args.no_latent_augmix_renorm,
@@ -3282,11 +3582,12 @@ def main():
                         )
                     else:
                         latent_augmix_signals, latent_augmix_stats = build_latent_augmix_branch_signals(
-                            anchor_signals_ct=anc_signals,
-                            adv_signals_ct=adv_signals,
+                            anchor_signals_ct=augmix_anchor_signals,
+                            adv_signals_ct=augmix_adv_signals,
                             copies=args.latent_augmix_copies,
                             severity=args.latent_augmix_severity,
                             severity_profile=args.latent_augmix_severity_profile,
+                            severity_profile_params=latent_augmix_severity_profile_params,
                             width=args.latent_augmix_width,
                             depth=args.latent_augmix_depth,
                             alpha=args.latent_augmix_alpha,
@@ -3296,6 +3597,7 @@ def main():
                             renorm=not args.no_latent_augmix_renorm,
                             clip_abs=args.latent_augmix_clip_abs,
                         )
+                    latent_augmix_stats["corruption_source"] = str(args.latent_augmix_corruption_source)
                     if latent_augmix_signals.shape[0] > 0:
                         start = (latent_augmix_signals.shape[-1] - args.crop_len) // 2
                         latent_augmix_ct_crop = latent_augmix_signals[..., start:start + args.crop_len]
@@ -3335,7 +3637,7 @@ def main():
                             soft_target_floor=args.adv_soft_target_floor,
                         )
                         if args.enable_latent_augmix_consistency:
-                            latent_augmix_direct_clean = anc_signals.astype(np.float32, copy=False)
+                            latent_augmix_direct_clean = latent_augmix_clean_for_consistency.astype(np.float32, copy=False)
                             latent_augmix_direct_views = latent_augmix_signals.astype(np.float32, copy=False)
                             latent_augmix_direct_labels = target_oh.astype(np.float32, copy=False)
                     print(
@@ -3470,6 +3772,7 @@ def main():
                 copies=args.raw_corrupt_copies,
                 severity=args.raw_corrupt_severity,
                 severity_profile=args.raw_corrupt_severity_profile,
+                severity_profile_params=raw_corrupt_severity_profile_params,
                 ops=list(args.raw_corrupt_ops),
                 prob=args.raw_corrupt_prob,
                 consistency_weight=args.raw_corrupt_consistency_weight,

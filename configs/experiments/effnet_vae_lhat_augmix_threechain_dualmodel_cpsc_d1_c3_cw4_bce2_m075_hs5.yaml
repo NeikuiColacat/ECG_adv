@@ -1,0 +1,26 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_dualmodel_k500_cpsc_base.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_d1_c3_cw4_bce2_m075_hs5
+  description: "CPSC dual_model diagnostic candidate: depth1, copies3, JSD4/BCE2, fixed mix 0.75, hull_steps5."
+
+adaptation:
+  run_tag_extra: k500_dual3ch_d1_c3_cw4_bce2_m075_aw0p8_ka800_hs5
+  hull:
+    steps: 5
+  latent_augmix:
+    mixture:
+      mode: fixed
+      prob: 0.75
+    consistency:
+      enabled: true
+      consistency_weight: 4.0
+      consistency_loss: jsd
+      bce_weight: 2.0
+      max_batches: 0
+
+run_record:
+  purpose: Higher-BCE plus stronger latent-hull search diagnostic for CPSC first-round screening.
+  result_summary: Pending.
+  registration_status: provisional

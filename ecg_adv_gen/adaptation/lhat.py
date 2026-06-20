@@ -743,6 +743,8 @@ def build_three_chain_vae_lhat_augmix_views(
     mixture_prob: float = 0.5,
     mixture_beta_a: float | None = None,
     mixture_beta_b: float | None = None,
+    op_schedule: str = "random",
+    chain_weights: Sequence[float] | None = None,
     renorm: bool = False,
     clip_abs: float = 6.0,
 ) -> tuple[np.ndarray, dict[str, Any]]:
@@ -771,6 +773,9 @@ def build_three_chain_vae_lhat_augmix_views(
         raise ValueError(f"mixture_mode must be 'beta' or 'fixed', got {mixture_mode!r}")
     if mixture_mode == "fixed" and not (0.0 <= float(mixture_prob) <= 1.0):
         raise ValueError("fixed mixture_prob must be in [0, 1]")
+    op_schedule = str(op_schedule)
+    if op_schedule not in {"random", "cycle", "per_op"}:
+        raise ValueError(f"op_schedule must be random|cycle|per_op, got {op_schedule!r}")
     beta_a = float(alpha) if mixture_beta_a is None else float(mixture_beta_a)
     beta_b = float(alpha) if mixture_beta_b is None else float(mixture_beta_b)
     if beta_a <= 0 or beta_b <= 0:
@@ -781,6 +786,17 @@ def build_three_chain_vae_lhat_augmix_views(
     for op_name in ops:
         if op_name not in available:
             raise ValueError(f"unknown locked VAE-LHAT AugMix op: {op_name}")
+    fixed_chain_weights: np.ndarray | None = None
+    if chain_weights is not None:
+        fixed_chain_weights = np.asarray(list(chain_weights), dtype=np.float32)
+        if fixed_chain_weights.shape != (3,):
+            raise ValueError("chain_weights must contain exactly three values for locked_three_chain")
+        if not np.isfinite(fixed_chain_weights).all() or np.any(fixed_chain_weights < 0):
+            raise ValueError("chain_weights must be finite non-negative values")
+        weight_sum = float(fixed_chain_weights.sum())
+        if weight_sum <= 0.0:
+            raise ValueError("chain_weights must sum to a positive value")
+        fixed_chain_weights = (fixed_chain_weights / weight_sum).astype(np.float32)
 
     mixed: list[np.ndarray] = []
     adv_weights: list[float] = []
@@ -789,11 +805,14 @@ def build_three_chain_vae_lhat_augmix_views(
     used_ops: list[str] = []
     view_ops: list[str] = []
 
-    for _copy_i in range(int(copies)):
+    for copy_i in range(int(copies)):
         for i in range(anchor_signals_ct.shape[0]):
             x0 = anchor_signals_ct[i].astype(np.float32, copy=False)
             x_adv = adv_signals_ct[i].astype(np.float32, copy=False)
-            weights = rng.dirichlet([float(alpha)] * 3).astype(np.float32)
+            if fixed_chain_weights is None:
+                weights = rng.dirichlet([float(alpha)] * 3).astype(np.float32)
+            else:
+                weights = fixed_chain_weights
             if mixture_mode == "fixed":
                 m = float(mixture_prob)
             else:
@@ -806,8 +825,14 @@ def build_three_chain_vae_lhat_augmix_views(
                 d = int(depth) if int(depth) > 0 else int(rng.integers(1, 4))
                 chain_depths.append(d)
                 sig = x0.copy()
-                for _ in range(d):
-                    op_name = str(rng.choice(ops))
+                for step_i in range(d):
+                    if op_schedule == "per_op":
+                        op_name = str(ops[int(copy_i) % len(ops)])
+                    elif op_schedule == "cycle":
+                        op_i = int(copy_i + i + chain_i + step_i) % len(ops)
+                        op_name = str(ops[op_i])
+                    else:
+                        op_name = str(rng.choice(ops))
                     sig = op_apply_fn(sig, op_name, int(severity), str(severity_profile)).astype(
                         np.float32,
                         copy=False,
@@ -828,7 +853,11 @@ def build_three_chain_vae_lhat_augmix_views(
             if clip_abs > 0:
                 out = np.clip(out, -float(clip_abs), float(clip_abs)).astype(np.float32)
             mixed.append(out)
-            view_ops.append(ops_for_view[0] if len(ops_for_view) == 1 else "__mixed__")
+            view_ops.append(
+                ops_for_view[0]
+                if ops_for_view and len(set(ops_for_view)) == 1
+                else "__mixed__"
+            )
 
     arr = np.stack(mixed, axis=0).astype(np.float32) if mixed else np.empty(
         (0,) + tuple(anchor_signals_ct.shape[1:]), dtype=np.float32
@@ -851,6 +880,13 @@ def build_three_chain_vae_lhat_augmix_views(
         "mixture_prob": float(mixture_prob),
         "mixture_beta_a": beta_a,
         "mixture_beta_b": beta_b,
+        "op_schedule": op_schedule,
+        "chain_weight_mode": "fixed" if fixed_chain_weights is not None else "dirichlet",
+        "chain_weights": (
+            [round(float(v), 6) for v in fixed_chain_weights.tolist()]
+            if fixed_chain_weights is not None
+            else []
+        ),
         "corruption_chain_count": 2,
         "adversarial_chain_count": 1,
         "adversarial_chain_index": 2,

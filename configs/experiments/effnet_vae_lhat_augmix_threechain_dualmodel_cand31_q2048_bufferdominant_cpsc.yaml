@@ -1,0 +1,24 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_dualmodel_cand23_lowptb_bufferheavy_cpsc.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_dualmodel_cand31_q2048_bufferdominant_cpsc
+  description: "CPSC probe: keep cand23 q2048 buffer diversity but make the hard/AugMix buffer more dominant while retaining clean K500 anchors."
+
+adaptation:
+  run_tag_extra: trraw_proxy_q2048r1_bufdom_aw24_tw45_hs10_lam20_c6_cw16_b6
+  loss:
+    ptbxl_weight: 0.05
+    target_real_weight: 45.0
+    adv_weight: 24.0
+    adv_weight_warmup_epochs: 1
+  buffer:
+    qab_size: 2048
+    rescore_interval: 1
+    asr_consec_low_max: 999
+    asr_low_threshold: 0.20
+
+run_record:
+  purpose: Test the user's hypothesis that hard/AugMix samples should dominate the online AT pool, while avoiding the pure-buffer failure mode by preserving a clean K500 anchor stream.
+  result_summary: Pending.
+  registration_status: provisional

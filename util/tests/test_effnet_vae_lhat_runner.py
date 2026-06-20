@@ -86,8 +86,18 @@ def _args(**overrides):
         "latent_augmix_width": 3,
         "latent_augmix_depth": -1,
         "latent_augmix_alpha": 1.0,
+        "latent_augmix_mixture_mode": "beta",
+        "latent_augmix_mixture_prob": 0.5,
+        "latent_augmix_mixture_beta_a": 0.0,
+        "latent_augmix_mixture_beta_b": 0.0,
+        "latent_augmix_op_schedule": "random",
+        "latent_augmix_chain_weights": "",
+        "latent_augmix_signal_space": "model_zscore",
+        "latent_augmix_corruption_source": "vae_decode",
         "latent_augmix_severity": 2,
         "latent_augmix_severity_profile": "standard",
+        "latent_augmix_severity_params_file": "",
+        "latent_augmix_severity_params_name": "",
         "latent_augmix_ops": ["powerline_noise", "baseline_wander"],
         "no_latent_augmix_renorm": False,
         "enable_latent_augmix_consistency": False,
@@ -100,6 +110,8 @@ def _args(**overrides):
         "raw_corrupt_prob": 0.5,
         "raw_corrupt_severity": 4,
         "raw_corrupt_severity_profile": "standard",
+        "raw_corrupt_severity_params_file": "",
+        "raw_corrupt_severity_params_name": "",
         "raw_corrupt_ops": ["emg_noise"],
         "raw_corrupt_consistency_weight": 0.5,
         "raw_corrupt_consistency_loss": "soft_bce",
@@ -141,6 +153,10 @@ def _args(**overrides):
         "eval_batch_size": 192,
         "eval_min_pos": 10,
         "eval_pn2021_limit": 0,
+        "qab_size": 2048,
+        "rescore_interval": 3,
+        "asr_consec_low_max": 999,
+        "asr_low_threshold": 0.30,
         "run_tag_extra": "",
         "resume": "",
         "allow_resume_config_drift": False,
@@ -170,11 +186,25 @@ def test_legacy_effnet_wrapper_help_exposes_raw_augmix_flags():
     assert "--raw_augmix_mixture_prob" in result.stdout
     assert "--raw_augmix_mixture_beta_a" in result.stdout
     assert "--raw_augmix_mixture_beta_b" in result.stdout
+    assert "--latent_augmix_mixture_mode" in result.stdout
+    assert "--latent_augmix_mixture_prob" in result.stdout
+    assert "--latent_augmix_op_schedule" in result.stdout
+    assert "--latent_augmix_chain_weights" in result.stdout
+    assert "--latent_augmix_signal_space" in result.stdout
+    assert "--latent_augmix_corruption_source" in result.stdout
+    assert "--latent_augmix_severity_params_file" in result.stdout
+    assert "--latent_augmix_severity_params_name" in result.stdout
+    assert "--raw_corrupt_severity_params_file" in result.stdout
+    assert "--raw_corrupt_severity_params_name" in result.stdout
     assert "--raw_input_bandpass_low_hz" in result.stdout
     assert "--raw_input_bandpass_high_hz" in result.stdout
     assert "--raw_input_repair_flat_leads" in result.stdout
     assert "--raw_input_renorm_after_stabilizer" in result.stdout
     assert "--latent_augmix_topology" in result.stdout
+    assert "--qab_size" in result.stdout
+    assert "--rescore_interval" in result.stdout
+    assert "--asr_consec_low_max" in result.stdout
+    assert "--asr_low_threshold" in result.stdout
 
 
 def test_resolve_effnet_vae_lhat_paths_preserves_legacy_defaults_and_overrides():
@@ -228,6 +258,9 @@ def test_build_effnet_vae_lhat_commands_preserve_wrapper_flags():
         hull_include_anchor=True,
         enable_raw_corrupt_consistency=True,
         raw_corrupt_no_renorm=True,
+        raw_corrupt_severity_profile="custom",
+        raw_corrupt_severity_params_file="/tmp/raw_profiles.yaml",
+        raw_corrupt_severity_params_name="dual_model_10to15pp_v1",
         raw_corrupt_view_mode="augmix",
         raw_augmix_width=3,
         raw_augmix_depth=2,
@@ -255,6 +288,16 @@ def test_build_effnet_vae_lhat_commands_preserve_wrapper_flags():
         freeze_backbone_classifier_only=True,
         classifier_only_train_final_norm=True,
         latent_augmix_severity_profile="calibrated_10to20pp",
+        latent_augmix_mixture_mode="fixed",
+        latent_augmix_mixture_prob=0.75,
+        latent_augmix_mixture_beta_a=2.0,
+        latent_augmix_mixture_beta_b=3.0,
+        latent_augmix_op_schedule="per_op",
+        latent_augmix_chain_weights="0.45,0.45,0.10",
+        latent_augmix_signal_space="raw_pre_zscore",
+        latent_augmix_corruption_source="target_real",
+        latent_augmix_severity_params_file="/tmp/profiles.yaml",
+        latent_augmix_severity_params_name="dual_model_10to15pp_v1",
         latent_augmix_topology="locked_three_chain",
         no_latent_augmix_renorm=True,
         enable_latent_augmix_consistency=True,
@@ -263,6 +306,10 @@ def test_build_effnet_vae_lhat_commands_preserve_wrapper_flags():
         latent_augmix_bce_weight=1.0,
         latent_augmix_consistency_max_batches=7,
         eval_pn2021_limit=25,
+        qab_size=768,
+        rescore_interval=1,
+        asr_consec_low_max=7,
+        asr_low_threshold=0.20,
     )
     paths = resolve_effnet_vae_lhat_paths(args, data_root=data_root, out_root=out_root)
 
@@ -292,15 +339,31 @@ def test_build_effnet_vae_lhat_commands_preserve_wrapper_flags():
     assert opt_first(train_opts, "--quick_eval_source") == "none"
     assert opt_first(train_opts, "--target_real_val_fraction") == "0.0"
     assert opt_first(train_opts, "--latent_augmix_severity_profile") == "calibrated_10to20pp"
+    assert opt_first(train_opts, "--latent_augmix_mixture_mode") == "fixed"
+    assert opt_first(train_opts, "--latent_augmix_mixture_prob") == "0.75"
+    assert opt_first(train_opts, "--latent_augmix_mixture_beta_a") == "2.0"
+    assert opt_first(train_opts, "--latent_augmix_mixture_beta_b") == "3.0"
+    assert opt_first(train_opts, "--latent_augmix_op_schedule") == "per_op"
+    assert opt_first(train_opts, "--latent_augmix_chain_weights") == "0.45,0.45,0.10"
+    assert opt_first(train_opts, "--latent_augmix_signal_space") == "raw_pre_zscore"
+    assert opt_first(train_opts, "--latent_augmix_corruption_source") == "target_real"
+    assert opt_first(train_opts, "--latent_augmix_severity_params_file") == "/tmp/profiles.yaml"
+    assert opt_first(train_opts, "--latent_augmix_severity_params_name") == "dual_model_10to15pp_v1"
     assert train_opts["--no_latent_augmix_renorm"] is True
     assert train_opts["--enable_latent_augmix_consistency"] is True
     assert opt_first(train_opts, "--latent_augmix_consistency_weight") == "2.0"
     assert opt_first(train_opts, "--latent_augmix_consistency_loss") == "jsd"
     assert opt_first(train_opts, "--latent_augmix_bce_weight") == "1.0"
     assert opt_first(train_opts, "--latent_augmix_consistency_max_batches") == "7"
+    assert opt_first(train_opts, "--qab_size") == "768"
+    assert opt_first(train_opts, "--rescore_interval") == "1"
+    assert opt_first(train_opts, "--asr_consec_low_max") == "7"
+    assert opt_first(train_opts, "--asr_low_threshold") == "0.2"
     assert train_opts["--enable_raw_corrupt_consistency"] is True
     assert train_opts["--raw_corrupt_no_renorm"] is True
-    assert opt_first(train_opts, "--raw_corrupt_severity_profile") == "standard"
+    assert opt_first(train_opts, "--raw_corrupt_severity_profile") == "custom"
+    assert opt_first(train_opts, "--raw_corrupt_severity_params_file") == "/tmp/raw_profiles.yaml"
+    assert opt_first(train_opts, "--raw_corrupt_severity_params_name") == "dual_model_10to15pp_v1"
     assert opt_first(train_opts, "--raw_corrupt_view_mode") == "augmix"
     assert opt_first(train_opts, "--raw_augmix_width") == "3"
     assert opt_first(train_opts, "--raw_augmix_depth") == "2"

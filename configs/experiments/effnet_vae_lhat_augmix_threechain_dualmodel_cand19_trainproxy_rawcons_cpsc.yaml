@@ -1,0 +1,43 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_dualmodel_cand17_trainproxy_rawtarget_cpsc.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_dualmodel_cand19_trainproxy_rawcons_cpsc
+  description: "CPSC probe: train-proxy target-real raw three-chain AugMix with stronger raw-corruption consistency and less dominant VAE chain."
+
+adaptation:
+  run_tag_extra: trraw_proxy_rawcons_c8_cw20_b8_aw4_tw45_hs8_lam15
+  anchors:
+    k_anchor: 2000
+  hull:
+    lambda: 0.15
+    steps: 8
+    lr: 0.45
+  loss:
+    target_real_weight: 45.0
+    adv_weight: 4.0
+    adv_weight_warmup_epochs: 2
+  latent_augmix:
+    copies: 8
+    latent_weight_cap: 0.20
+    chain_weights: "0.50,0.45,0.05"
+    ops:
+      - powerline_noise
+      - emg_noise
+      - emg_noise
+      - baseline_wander
+      - baseline_wander
+      - baseline_shift
+      - random_leads_masking
+      - random_leads_masking
+    consistency:
+      enabled: true
+      consistency_weight: 20.0
+      consistency_loss: jsd
+      bce_weight: 8.0
+      max_batches: 0
+
+run_record:
+  purpose: Test whether the +4pp ceiling is caused by insufficient learned invariance to raw corruption chains after aligning the 100Hz powerline training proxy.
+  result_summary: Pending.
+  registration_status: provisional

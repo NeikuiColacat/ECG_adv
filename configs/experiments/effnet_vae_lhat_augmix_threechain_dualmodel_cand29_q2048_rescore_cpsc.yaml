@@ -1,0 +1,19 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_dualmodel_cand23_lowptb_bufferheavy_cpsc.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_dualmodel_cand29_q2048_rescore_cpsc
+  description: "CPSC probe: preserve cand23 q2048 high-buffer regime, changing only buffer rescore cadence to every epoch."
+
+adaptation:
+  run_tag_extra: trraw_proxy_q2048r1_lowptb005_aw16_tw55_hs10_lam20_c6_cw16_b6
+  buffer:
+    qab_size: 2048
+    rescore_interval: 1
+    asr_consec_low_max: 999
+    asr_low_threshold: 0.20
+
+run_record:
+  purpose: Test whether cand23's best recovery can be improved by refreshing the same large hard/AugMix buffer more frequently without reducing its sampling mass.
+  result_summary: Pending.
+  registration_status: provisional

@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+import ecg_adv_gen.preprocessing as preprocessing
 from ecg_adv_gen.preprocessing import (
     PreprocessingError,
     ecgtwin_to_ptbxl,
@@ -83,3 +84,43 @@ def test_prepare_ecgtwin_decoded_for_classifier_channel_first():
     assert out.shape == (2, 1000, 12)
     np.testing.assert_allclose(out[:, :, 4], 5.0)
     np.testing.assert_allclose(out[:, :, 5], 4.0)
+
+
+def test_classifier_preprocess_helpers_are_package_owned():
+    assert hasattr(preprocessing, "crop_signal_tc")
+    assert hasattr(preprocessing, "reorder_leads_tc")
+    assert hasattr(preprocessing, "unified_preprocess_to_1000")
+
+    crop_signal_tc = preprocessing.crop_signal_tc
+    reorder_leads_tc = preprocessing.reorder_leads_tc
+    unified_preprocess_to_1000 = preprocessing.unified_preprocess_to_1000
+
+    sig = np.zeros((8, 12), dtype=np.float32)
+    source_leads = ["II", "I", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"]
+    sig[:, 0] = 2.0
+    sig[:, 1] = 1.0
+
+    reordered = reorder_leads_tc(sig, source_leads)
+    assert reordered is not None
+    np.testing.assert_allclose(reordered[:, 0], 1.0)
+    np.testing.assert_allclose(reordered[:, 1], 2.0)
+
+    processed = unified_preprocess_to_1000(
+        sig,
+        fs=8,
+        source_leads=source_leads,
+        target_fs=100,
+        target_len=1000,
+        preprocess_mode="minimal_resample",
+        norm_mode="none",
+    )
+
+    assert processed is not None
+    assert processed.shape == (1000, 12)
+    assert processed.dtype == np.float32
+    np.testing.assert_allclose(processed[:100, 0], 1.0, atol=1e-6)
+    np.testing.assert_allclose(processed[:100, 1], 2.0, atol=1e-6)
+    np.testing.assert_allclose(processed[100:, :], 0.0, atol=1e-6)
+
+    crop = crop_signal_tc(processed, 250, mode="center")
+    assert crop.shape == (250, 12)

@@ -1,0 +1,23 @@
+extends:
+  - pn2021c_effnet_dual3ch_selected_dualmodel_cpsc.yaml
+
+experiment:
+  name: pn2021c_effnet_dual3ch_selected_official_s5_cpsc
+  description: Official severity-5 PN2021-C evaluation for selected EfficientNet direct/noAug/locked/cand09/cand10 methods on CPSC.
+
+evaluation:
+  severity_profile: standard
+  severities: [5]
+  corruption_input: raw_first
+  output_stem: eval_pn2021_c_v7_refexcluded_stream_standard_official_s5_locked
+
+logging:
+  child_artifacts:
+    - eval_pn2021_c_v7_refexcluded_stream_standard_official_s5_locked.json
+  postprocess_artifacts:
+    - pn2021c_effnet_dual3ch_selected_official_s5_cpsc.csv
+
+run_record:
+  purpose: Evaluate selected CPSC-guided tuned mainline candidates on official severity-5 PN2021-C for CPSC.
+  result_summary: Pending.
+  registration_status: provisional

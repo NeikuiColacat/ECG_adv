@@ -1,0 +1,37 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_dualmodel_cand14_powerfocus.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_dualmodel_cand15_freq_cpsc
+  description: "CPSC probe: preserve target-real raw locked three-chain VAE-LH AugMix, restore 10 copies, and halve batch size to increase AugMix consistency optimizer-step frequency."
+
+training:
+  epochs: 40
+  batch_size: 32
+  num_workers: 8
+
+adaptation:
+  run_tag_extra: trraw_freq_c10_b32_cw25_b24_aw8_tw25_hs10_lam18
+  latent_augmix:
+    copies: 10
+    ops:
+      - powerline_noise
+      - powerline_noise
+      - emg_noise
+      - emg_noise
+      - baseline_wander
+      - baseline_wander
+      - baseline_shift
+      - baseline_shift
+      - random_leads_masking
+      - random_leads_masking
+
+runner:
+  matrix:
+    center:
+      - cpsc_2018
+
+run_record:
+  purpose: Test whether the cand14 failure is mainly AugMix direct-consistency update frequency rather than operator weighting, without adding any standalone raw-supervised branch or preprocessing stabilizer.
+  result_summary: Pending.
+  registration_status: provisional

@@ -1,0 +1,103 @@
+extends:
+  - pn2021c_official_s5_locked_protocol.yaml
+
+experiment:
+  name: pn2021c_effnet_dual3ch_cpsc_dualmodel_smoke
+  description: CPSC-only PN2021-C dual_model_10to15pp_v1 evaluation for EfficientNet direct K500 and locked three-chain VAE-LH AugMix smoke/strong-pressure candidates.
+
+paper_protocol:
+  kshot:
+    seed: 20260601
+    subset_seed: 20260601
+
+evaluation:
+  severity_profile: custom
+  severity_params_file: configs/corruption_profiles/pn2021c_dual_model_10to15pp_v1.yaml
+  severity_params_name: dual_model_10to15pp_v1
+  severities: [5]
+  corruption_input: raw_first
+  output_stem: eval_pn2021_c_v7_refexcluded_stream_dual_model_10to15pp_v1_raw_first
+
+logging:
+  child_artifacts:
+    - eval_pn2021_c_v7_refexcluded_stream_dual_model_10to15pp_v1_raw_first.json
+  postprocess_artifacts:
+    - pn2021c_effnet_dual3ch_cpsc_dualmodel_smoke.csv
+
+runner:
+  matrix:
+    center:
+      - cpsc_2018
+    method:
+      - name: direct_k500
+        family: effnet_direct_k500_v7_sjr_rgq
+        model_dir_template: >-
+          {output_root}/effnet_direct_k500_v7_sjr_rgq/seed20260601_k500_v7_sjr_rgq_20260530_rep1/runs/cpsc_2018_K500_direct_ft_ep30_seed20260601_val0.2
+        checkpoint_name: best_model.pt
+        clean_eval_name: eval_result_v7_super5_sjr_rgq_review_exclrefs_crop1000.json
+      - name: cand01_d1_c2_cw2_bce1_m065
+        family: effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_d1_c2_cw2_bce1_m065
+        model_dir_template: >-
+          {output_root}/effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_d1_c2_cw2_bce1_m065/dual3ch_cpsc_cand01_d1_c2_cw2_bce1_m065_20260620/cpsc_2018_realall_targetheavy_M20_lam0p05_augmix_s5_wlat0p25_hs3_target_macro_auprc_cdhypminormsttc_hlabelcom_anchor_soft_sta_local_random_p120_fullft_k500_dual3ch_d1_c2_cw2_bce1_m065_aw0p6_ka600_ep30_seed20260601
+        checkpoint_name: last_model.pt
+        clean_eval_name: eval_result_v7_exclrefs_crop1000.json
+      - name: cand02_d1_c3_cw4_bce1_m065
+        family: effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_d1_c3_cw4_bce1_m065
+        model_dir_template: >-
+          {output_root}/effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_d1_c3_cw4_bce1_m065/dual3ch_cpsc_cand02_d1_c3_cw4_bce1_m065_20260620/cpsc_2018_realall_targetheavy_M20_lam0p05_augmix_s5_wlat0p25_hs3_target_macro_auprc_cdhypminormsttc_hlabelcom_anchor_soft_sta_local_random_p120_fullft_k500_dual3ch_d1_c3_cw4_bce1_m065_aw0p8_ka800_ep30_seed20260601
+        checkpoint_name: last_model.pt
+        clean_eval_name: eval_result_v7_exclrefs_crop1000.json
+      - name: cand03_d1_c3_cw6_bce1_m075
+        family: effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_d1_c3_cw6_bce1_m075
+        model_dir_template: >-
+          {output_root}/effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_d1_c3_cw6_bce1_m075/dual3ch_cpsc_cand03_d1_c3_cw6_bce1_m075_20260620/cpsc_2018_realall_targetheavy_M20_lam0p05_augmix_s5_wlat0p25_hs3_target_macro_auprc_cdhypminormsttc_hlabelcom_anchor_soft_sta_local_random_p120_fullft_k500_dual3ch_d1_c3_cw6_bce1_m075_aw1p0_ka1000_ep30_seed20260601
+        checkpoint_name: last_model.pt
+        clean_eval_name: eval_result_v7_exclrefs_crop1000.json
+      - name: cand04_d1_c4_cw4_bce2_m075
+        family: effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_d1_c4_cw4_bce2_m075
+        model_dir_template: >-
+          {output_root}/effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_d1_c4_cw4_bce2_m075/dual3ch_cpsc_cand04_d1_c4_cw4_bce2_m075_20260620/cpsc_2018_realall_targetheavy_M20_lam0p05_augmix_s5_wlat0p25_hs3_target_macro_auprc_cdhypminormsttc_hlabelcom_anchor_soft_sta_local_random_p120_fullft_k500_dual3ch_d1_c4_cw4_bce2_m075_aw1p0_ka1000_ep30_seed20260601
+        checkpoint_name: last_model.pt
+        clean_eval_name: eval_result_v7_exclrefs_crop1000.json
+      - name: cand05_randdepth_c3_cw4_bce1_m065
+        family: effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_randdepth_c3_cw4_bce1_m065
+        model_dir_template: >-
+          {output_root}/effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_randdepth_c3_cw4_bce1_m065/dual3ch_cpsc_cand05_randdepth_c3_cw4_bce1_m065_20260620/cpsc_2018_realall_targetheavy_M20_lam0p05_augmix_s5_wlat0p25_hs3_target_macro_auprc_cdhypminormsttc_hlabelcom_anchor_soft_sta_local_random_p120_fullft_k500_dual3ch_randdepth_c3_cw4_bce1_m065_aw0p8_ka800_ep30_seed20260601
+        checkpoint_name: last_model.pt
+        clean_eval_name: eval_result_v7_exclrefs_crop1000.json
+      - name: cand06_d1_c3_cw4_bce2_m075_hs5
+        family: effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_d1_c3_cw4_bce2_m075_hs5
+        model_dir_template: >-
+          {output_root}/effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_d1_c3_cw4_bce2_m075_hs5/dual3ch_cpsc_cand06_d1_c3_cw4_bce2_m075_hs5_20260620/cpsc_2018_realall_targetheavy_M20_lam0p05_augmix_s5_wlat0p25_hs5_target_macro_auprc_cdhypminormsttc_hlabelcom_anchor_soft_sta_local_random_p120_fullft_k500_dual3ch_d1_c3_cw4_bce2_m075_aw0p8_ka800_hs5_ep30_seed20260601
+        checkpoint_name: last_model.pt
+        clean_eval_name: eval_result_v7_exclrefs_crop1000.json
+      - name: cand07_strong_hlam10_aw1p5
+        family: effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_strong_hlam10_aw1p5_c3_cw6_bce2_m085
+        model_dir_template: >-
+          {output_root}/effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_strong_hlam10_aw1p5_c3_cw6_bce2_m085/dual3ch_cpsc_cand07_strong_hlam10_aw1p5_20260620/cpsc_2018_realall_targetheavy_M20_lam0p1_augmix_s5_wlat0p4_hs5_target_macro_auprc_cdhypminormsttc_hlabelcom_anchor_soft_sta_local_random_p120_fullft_k500_dual3ch_strong_hlam10_hs5_lr35_c3_cw6_bce2_m085_aw1p5_ka1200_wlat40_ep30_seed20260601
+        checkpoint_name: last_model.pt
+        clean_eval_name: eval_result_v7_exclrefs_crop1000.json
+      - name: cand08_strong_hlam15_aw2p0
+        family: effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_strong_hlam15_aw2p0_c4_cw8_bce2_m090
+        model_dir_template: >-
+          {output_root}/effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_strong_hlam15_aw2p0_c4_cw8_bce2_m090/dual3ch_cpsc_cand08_strong_hlam15_aw2p0_20260620/cpsc_2018_realall_targetheavy_M20_lam0p15_augmix_s5_wlat0p5_hs6_target_macro_auprc_cdhypminormsttc_hlabelcom_anchor_soft_sta_local_random_p120_fullft_k500_dual3ch_strong_hlam15_hs6_lr40_c4_cw8_bce2_m090_aw2p0_ka1400_wlat50_treal60_ep30_seed20260601
+        checkpoint_name: last_model.pt
+        clean_eval_name: eval_result_v7_exclrefs_crop1000.json
+      - name: cand09_highfreq_c6_cw10_bce3_m095
+        family: effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_highfreq_c6_cw10_bce3_m095
+        model_dir_template: >-
+          {output_root}/effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_highfreq_c6_cw10_bce3_m095/dual3ch_cpsc_cand09_highfreq_20260620/cpsc_2018_realall_targetheavy_M20_lam0p12_augmix_s5_wlat0p65_hs6_target_macro_auprc_cdhypminormsttc_hlabelcom_anchor_soft_sta_local_random_p120_fullft_k500_dual3ch_highfreq_hlam12_hs6_lr40_c6_cw10_bce3_m095_aw2p0_ka1600_wlat65_b64_ep30_seed20260601
+        checkpoint_name: last_model.pt
+        clean_eval_name: eval_result_v7_exclrefs_crop1000.json
+      - name: cand10_advheavy_hlam20_aw3p0
+        family: effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_advheavy_hlam20_aw3p0_c4_cw10_bce3_m090
+        model_dir_template: >-
+          {output_root}/effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_advheavy_hlam20_aw3p0_c4_cw10_bce3_m090/dual3ch_cpsc_cand10_advheavy_20260620/cpsc_2018_realall_targetheavy_M20_lam0p2_augmix_s5_wlat0p5_hs8_target_macro_auprc_cdhypminormsttc_hlabelcom_anchor_soft_sta_local_random_p120_fullft_k500_dual3ch_advheavy_hlam20_hs8_lr50_c4_cw10_bce3_m090_aw3p0_ka1800_treal40_ep30_seed20260601
+        checkpoint_name: last_model.pt
+        clean_eval_name: eval_result_v7_exclrefs_crop1000.json
+  name: ${experiment.name}_${matrix.center}_${matrix.method.name}
+
+run_record:
+  purpose: Evaluate whether higher-frequency locked three-chain VAE-LH AugMix candidates recover CPSC PN2021-C dual_model_10to15pp_v1 performance versus direct K500.
+  result_summary: Pending until cand01-10 finish and the managed PN2021-C eval run completes.
+  registration_status: provisional

@@ -1,10 +1,11 @@
 version: 1
-updated: 2026-06-18
+updated: 2026-06-19
 purpose: Track which legacy scripts are managed by YAML configs during the refactor.
 
 source_of_truth:
   shared_server_safety: AGENTS.md
   yaml_refactor_plan: docs/pipelines/ai_agent_workspace_refactor_plan_20260604.md
+  data_layer_refactor_plan: docs/pipelines/data_layer_refactor_plan_20260619.md
   current_handoff_note: docs/codex-handoffs/current_workspace_handoff.md
   config_rules: configs/README.md
   active_evidence_registry: configs/active_evidence_registry.yaml
@@ -27,6 +28,7 @@ source_of_truth:
   super5_label_mapping: ecg_adv_gen/labels/super5_mapping.py
   super5_label_metadata: ecg_adv_gen/labels/super5.py
   data_preprocess_contract: ecg_adv_gen/data/contracts.py
+  classifier_preprocessing_helpers: ecg_adv_gen/preprocessing/classifier.py
   synthetic_npz_dataset_contract: ecg_adv_gen/data/synthetic_npz.py
   pn2021_record_metadata: ecg_adv_gen/data/pn2021_records.py
   pn2021_waveform_materialization: ecg_adv_gen/data/pn2021_waveforms.py
@@ -565,6 +567,17 @@ managed_experiments:
     mapping_version: v7_super5_sjr_rgq_review_20260528
     owns_training_logic: false
     notes: Locked PN2021-C official severity-5 evaluation surface; records waveform-bottleneck-then-corrupt-then-zscore protocol metadata, uses standard profile severity=5, five official operators, four target centers, and K500 ref-meta exclusion.
+
+  - name: pn2021c_effnet_threechain_locked_official_s5
+    status: active_wrapped
+    evidence_scope: evaluation_only
+    config: configs/experiments/pn2021c_effnet_threechain_locked_official_s5.yaml
+    legacy_entrypoint: scripts/triple_labels/eval_pn2021_corruptions.py
+    launcher: scripts/run_experiment.py
+    method_family: managed_pn2021c_effnet_official_s5_locked_eval
+    mapping_version: v7_super5_sjr_rgq_review_20260528
+    owns_training_logic: false
+    notes: Locked EfficientNet1DV2 three-chain AugMix PN2021-C official severity-5 evaluation surface; inherits the standard locked protocol and evaluates four target centers with K500 ref-meta exclusion.
 
   - name: pn2021c_ecgfounder_threechain_locked_official_s5
     status: active_wrapped
