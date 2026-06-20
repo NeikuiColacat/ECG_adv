@@ -1,0 +1,18 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_dualmodel_cand32_q2048_lfmask_focus_cpsc.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_dualmodel_cand32_q2048_lfmask_focus_missing3
+  description: "Run the low-frequency and lead-masking focused q2048 recipe on the three non-CPSC target centers."
+
+runner:
+  matrix:
+    center:
+      - ningbo
+      - chapman_shaoxing
+      - georgia
+
+run_record:
+  purpose: Test whether the four-center recovery gap is driven by weak baseline wander, baseline shift, and random-lead masking recovery outside CPSC.
+  result_summary: Pending.
+  registration_status: provisional

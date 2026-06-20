@@ -1,0 +1,31 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_dualmodel_cand31_q2048_bufferdominant_cpsc.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_dualmodel_cand33_q2048_bufdom_powerfocus_cpsc
+  description: "CPSC counterpart for cand33: q2048 buffer-dominant online AT with powerline-focused locked three-chain AugMix scheduling."
+
+adaptation:
+  run_tag_extra: trraw_proxy_q2048r1_bufdom_pf_c8_aw24_tw45_hs10_lam20_cw20_b8
+  latent_augmix:
+    copies: 8
+    ops:
+      - powerline_noise
+      - powerline_noise
+      - powerline_noise
+      - powerline_noise
+      - emg_noise
+      - baseline_wander
+      - baseline_shift
+      - random_leads_masking
+    consistency:
+      enabled: true
+      consistency_weight: 20.0
+      consistency_loss: jsd
+      bce_weight: 8.0
+      max_batches: 0
+
+run_record:
+  purpose: Complete the cand33 four-center set by testing whether explicit powerline exposure improves the CPSC powerline bottleneck without adding a stabilizer or raw-supervised branch.
+  result_summary: Pending.
+  registration_status: provisional
