@@ -1,0 +1,951 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ECG_adv_Gen 数据模块彻底重构需求分析</title>
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --ink: #18202b;
+      --muted: #596579;
+      --panel: #ffffff;
+      --soft: #f8fafc;
+      --line: #d8e0eb;
+      --accent: #0f766e;
+      --accent-dark: #0f3f3b;
+      --blue: #1d4ed8;
+      --amber: #a16207;
+      --red: #b91c1c;
+      --code-bg: #101827;
+      --code-ink: #e8edf6;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.64;
+    }
+
+    header {
+      background: #10202a;
+      color: #f8fafc;
+      padding: 42px 24px 34px;
+      border-bottom: 4px solid var(--accent);
+    }
+
+    header .inner,
+    main {
+      max-width: 1240px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      margin: 0 0 12px;
+      font-size: clamp(30px, 4.8vw, 54px);
+      line-height: 1.08;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      margin: 0 0 14px;
+      font-size: 25px;
+      line-height: 1.22;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin: 0 0 8px;
+      font-size: 18px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+
+    p { margin: 0 0 12px; }
+
+    a {
+      color: var(--blue);
+      text-decoration: none;
+      border-bottom: 1px solid rgba(29, 78, 216, 0.35);
+    }
+
+    a:hover { border-bottom-color: currentColor; }
+
+    main { padding: 26px 24px 64px; }
+
+    section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 22px;
+      margin: 0 0 18px;
+    }
+
+    .subtitle {
+      color: #d5dde8;
+      max-width: 980px;
+      font-size: 17px;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 18px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      border-radius: 999px;
+      padding: 4px 11px;
+      background: rgba(255, 255, 255, 0.12);
+      color: #e2e8f0;
+      font-size: 13px;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+    .box {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+      background: var(--soft);
+    }
+
+    .box strong {
+      display: block;
+      margin-bottom: 7px;
+      color: #111827;
+    }
+
+    .muted { color: var(--muted); }
+    .good { color: var(--accent); font-weight: 700; }
+    .warn { color: var(--amber); font-weight: 700; }
+    .danger { color: var(--red); font-weight: 700; }
+
+    ul, ol {
+      margin: 8px 0 0;
+      padding-left: 22px;
+    }
+
+    li { margin: 6px 0; }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      font-size: 0.94em;
+      background: #edf2f7;
+      color: #172033;
+      padding: 1px 5px;
+      border-radius: 5px;
+    }
+
+    pre {
+      overflow-x: auto;
+      background: var(--code-bg);
+      color: var(--code-ink);
+      border-radius: 8px;
+      padding: 16px;
+      margin: 12px 0 0;
+      line-height: 1.45;
+      font-size: 13px;
+      border: 1px solid #1f2937;
+    }
+
+    pre code {
+      background: transparent;
+      color: inherit;
+      padding: 0;
+      border-radius: 0;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 12px;
+      font-size: 14px;
+    }
+
+    th, td {
+      border: 1px solid var(--line);
+      padding: 10px 11px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #edf2f7;
+      color: #111827;
+    }
+
+    .pipeline {
+      display: grid;
+      gap: 14px;
+      margin-top: 14px;
+    }
+
+    .stage {
+      border: 1px solid var(--line);
+      border-left: 5px solid var(--accent);
+      border-radius: 8px;
+      background: #ffffff;
+      padding: 16px;
+    }
+
+    .stage-head {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 8px 12px;
+      margin-bottom: 8px;
+    }
+
+    .stage-num {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 30px;
+      height: 30px;
+      border-radius: 999px;
+      background: var(--accent);
+      color: white;
+      font-weight: 700;
+      font-size: 14px;
+      flex: 0 0 auto;
+    }
+
+    .stage-title {
+      font-size: 20px;
+      font-weight: 800;
+      color: var(--accent-dark);
+    }
+
+    .stage-tag {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .api-block {
+      margin-top: 10px;
+    }
+
+    .review-gate {
+      border-left: 5px solid var(--amber);
+      background: #fff8ed;
+    }
+
+    .memory {
+      border-left: 5px solid var(--blue);
+      background: #eff6ff;
+    }
+
+    @media (max-width: 940px) {
+      .grid,
+      .grid.two,
+      .grid.four {
+        grid-template-columns: 1fr;
+      }
+
+      header { padding-top: 32px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="inner">
+      <h1>数据模块彻底重构需求分析</h1>
+      <p class="subtitle">
+        这版只做需求分析，不写业务实现。目标是从数据流动 pipeline 重新定义模块边界：每一步先讲清楚要解决什么问题，再给出 API 形状、输入输出、内存策略和验收点。设计默认利用 250G 内存提速，同时保留小内存机器可运行的 mmap/stream fallback。
+      </p>
+      <div class="meta">
+        <span class="pill">worktree: /home/linbinhao/ECG_rebuild</span>
+        <span class="pill">branch: refactor/data-module-20260620</span>
+        <span class="pill">date: 2026-06-21</span>
+        <span class="pill">scope: requirements analysis only</span>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section>
+      <h2>重构目标</h2>
+      <div class="grid">
+        <div class="box">
+          <strong>丢掉技术债</strong>
+          <p>不再以 legacy 脚本为设计中心。脚本只做 CLI wrapper，数据真相由 package API 表达。</p>
+        </div>
+        <div class="box">
+          <strong>按数据流而不是文件名设计</strong>
+          <p>从 raw dataset、manifest、cache、split、anchor、model view、eval view 到 report lineage，一步一步定义。</p>
+        </div>
+        <div class="box">
+          <strong>内存能力成为一等公民</strong>
+          <p>默认 250G memory-first：可把核心数组常驻内存；小机器自动降级到 mmap 或 stream。</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>非目标</h2>
+      <ul>
+        <li>本轮不改 Python 业务代码，不移动入口，不重写训练脚本。</li>
+        <li>本轮不重新实现 ECGTwin decoder、PGD、AugMix 算子或模型训练循环。</li>
+        <li>本轮不承诺完全兼容所有历史实验；需求分析会把 legacy 兼容作为独立边界，而不是让它污染新 API。</li>
+        <li>本轮不把 500Hz ECGFounder cache 作为数据真相；它只是从 <code>raw1000</code> 派生出来的 model view。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>硬契约</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>契约</th>
+            <th>固定值</th>
+            <th>需求含义</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Super5 class order</td>
+            <td><code>CD,HYP,MI,NORM,STTC</code></td>
+            <td>所有 label、logit、class weight、metric、anchor quota 都按这一顺序解释。</td>
+          </tr>
+          <tr>
+            <td>Classifier canonical waveform</td>
+            <td><code>(N,1000,12)</code>, 100Hz, PTB-XL lead order</td>
+            <td>所有 source、target、decoded、eval clean cache 的统一波形中间层。</td>
+          </tr>
+          <tr>
+            <td>Torch model view</td>
+            <td><code>(N,12,L)</code></td>
+            <td>模型输入是派生 view，不是 cache 真相。EffNet 用 1000，ECGFounder 用 5000。</td>
+          </tr>
+          <tr>
+            <td>ECGTwin latent</td>
+            <td><code>(N,4,128)</code>, scale metadata required</td>
+            <td>VAE-LHAT 只吃 latent pool，不直接解释文件路径和 label order。</td>
+          </tr>
+          <tr>
+            <td>ECGTwin decode</td>
+            <td><code>1024 -> reorder aVL/aVF -> 1000</code></td>
+            <td>decoded waveform 必须转成 PTB-XL lead order 和 100Hz/1000，再进入上层。</td>
+          </tr>
+          <tr>
+            <td>PN2021 eval</td>
+            <td>full cache first, ref exclusion later</td>
+            <td>K500 ref id 只在 eval view 阶段排除，不能烧进 full center cache。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="memory">
+      <h2>250G 内存利用策略</h2>
+      <p>
+        新数据模块应该明确支持三种 load mode，并在当前机器默认使用 <code>auto</code>。<code>auto</code> 会估算数组大小和可用内存：小于预算时常驻内存，大于预算时使用 mmap，再大或随机访问不友好时使用 stream/shard。
+      </p>
+      <pre><code>@dataclass(frozen=True)
+class MemoryPolicy:
+    mode: Literal["auto", "ram", "mmap", "stream"]
+    ram_budget_gb: float = 180.0
+    keep_source_ptbxl: bool = True
+    keep_target_k500: bool = True
+    keep_pn2021_eval_cache: bool = True
+    prefer_float32: bool = True
+    allow_object_arrays: bool = False
+    mmap_fallback: bool = True
+
+def estimate_array_gb(shape: tuple[int, ...], dtype: np.dtype) -> float: ...
+def choose_load_mode(required_gb: float, policy: MemoryPolicy, available_gb: float) -> str: ...</code></pre>
+      <div class="grid four">
+        <div class="box">
+          <strong>RAM-first</strong>
+          <p>PTB-XL、K500、常用 PN2021 clean eval cache 可以直接常驻内存，减少重复解压和磁盘随机读。</p>
+        </div>
+        <div class="box">
+          <strong>mmap fallback</strong>
+          <p>PN2021 全中心或多版本 cache 过大时，使用 <code>.npy</code> mmap，避免一次性内存爆掉。</p>
+        </div>
+        <div class="box">
+          <strong>stream fallback</strong>
+          <p>只在重新 materialize raw WFDB、超大腐败集、或小机器训练时使用。</p>
+        </div>
+        <div class="box">
+          <strong>显式 lineage</strong>
+          <p>每个 cache 记录 load mode、shape、dtype、hash、mapping version，避免“看似复用，实际漂移”。</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Pipeline 总览</h2>
+      <p>
+        下面每个 stage 都是一条需求。真正实现时可以一个 stage 一个 PR；但需求层面先完整画出来，避免重构到一半发现边界不对。
+      </p>
+    </section>
+
+    <div class="pipeline">
+      <section class="stage">
+        <div class="stage-head">
+          <span class="stage-num">0</span>
+          <span class="stage-title">运行上下文与契约解析</span>
+          <span class="stage-tag">config -> typed context</span>
+        </div>
+        <p>
+          需求：所有数据 API 都必须从同一个上下文拿到 data root、output root、mapping version、class order、target/eval centers、preprocess contract 和 memory policy。不能让脚本各自读环境变量或各自拼路径。
+        </p>
+        <div class="api-block">
+          <pre><code>@dataclass(frozen=True)
+class DataContext:
+    data_root: Path
+    output_root: Path
+    source_dataset: Literal["ptbxl"]
+    target_dataset: Literal["pn2021"]
+    class_order: tuple[str, ...]
+    mapping_version: str
+    mapping_hash: str
+    target_centers: tuple[str, ...]
+    eval_centers: tuple[str, ...]
+    preprocess: DataPreprocessContract
+    memory: MemoryPolicy
+
+def resolve_data_context(config: Mapping[str, Any]) -> DataContext: ...
+def validate_data_context(ctx: DataContext) -> None: ...</code></pre>
+        </div>
+        <p class="muted">验收：给定 YAML resolved config，可以构造唯一上下文；缺少 mapping hash、class order、leak-excluded center 时直接报错。</p>
+      </section>
+
+      <section class="stage">
+        <div class="stage-head">
+          <span class="stage-num">1</span>
+          <span class="stage-title">数据资产清单</span>
+          <span class="stage-tag">paths -> inventory</span>
+        </div>
+        <p>
+          需求：在真正加载数据前，先能快速知道 PTB-XL、PN2021、K500 artifact、latent pool、cache 是否存在、大小多少、会占多少内存。这是 250G 内存策略的入口。
+        </p>
+        <pre><code>@dataclass(frozen=True)
+class DataAsset:
+    name: str
+    path: Path
+    kind: Literal["raw", "cache", "artifact", "manifest"]
+    exists: bool
+    size_gb: float | None
+    expected_schema: str
+
+@dataclass(frozen=True)
+class DataInventory:
+    assets: tuple[DataAsset, ...]
+    total_existing_gb: float
+    missing_required: tuple[str, ...]
+
+def inspect_data_assets(ctx: DataContext) -> DataInventory: ...
+def plan_cache_loads(inventory: DataInventory, policy: MemoryPolicy) -> dict[str, str]: ...</code></pre>
+        <p class="muted">验收：只读运行，不能读大数组；能输出“哪些会 RAM-load，哪些会 mmap，哪些缺失”。</p>
+      </section>
+
+      <section class="stage">
+        <div class="stage-head">
+          <span class="stage-num">2</span>
+          <span class="stage-title">PTB-XL 元数据与标签</span>
+          <span class="stage-tag">CSV/SCP -> labels/folds</span>
+        </div>
+        <p>
+          需求：PTB-XL 的 label、fold、record id、row index 必须先独立成 manifest。波形是否加载是后面的事；标签和 split 不能和 waveform materialization 绑死。
+        </p>
+        <pre><code>@dataclass(frozen=True)
+class PTBXLManifest:
+    record_ids: np.ndarray      # (N,), str
+    row_indices: np.ndarray     # (N,), int64
+    folds: np.ndarray           # (N,), int64
+    labels: np.ndarray          # (N,5), float32
+    class_order: tuple[str, ...]
+    metadata: dict[str, Any]
+
+def load_ptbxl_manifest(csv_path: Path, *, ctx: DataContext) -> PTBXLManifest: ...
+def split_ptbxl_manifest(manifest: PTBXLManifest, split_spec: SplitSpec) -> SplitIndices: ...</code></pre>
+        <p class="muted">验收：fake CSV 可测；fold 1-8/9/10 默认稳定；Super5 order 和 mapping metadata 必须进入 metadata。</p>
+      </section>
+
+      <section class="stage">
+        <div class="stage-head">
+          <span class="stage-num">3</span>
+          <span class="stage-title">PTB-XL 波形存储</span>
+          <span class="stage-tag">raw100.npy -> signal store</span>
+        </div>
+        <p>
+          需求：PTB-XL source waveform 必须有统一 store。当前 250G 机器可以把 <code>(N,1000,12)</code> 直接常驻内存；小机器可以 mmap。训练代码不应该知道原始 cache 是 <code>.npy</code> 还是 RAM。
+        </p>
+        <pre><code>@dataclass(frozen=True)
+class SignalStore:
+    signals: np.ndarray          # (N,1000,12), float32
+    layout: Literal["time_channel"]
+    sampling_rate: int
+    lead_order: Literal["ptbxl"]
+    normalized: bool
+    load_mode: Literal["ram", "mmap", "stream"]
+    metadata: dict[str, Any]
+
+def load_or_build_ptbxl_signal_store(
+    raw_path: Path,
+    manifest: PTBXLManifest,
+    *,
+    ctx: DataContext,
+    cache_path: Path,
+) -> SignalStore: ...</code></pre>
+        <p class="muted">验收：cache hit 不改变 shape/dtype；cache miss 的 preprocess contract 写入 metadata；不能偷偷 zscore 两次。</p>
+      </section>
+
+      <section class="stage">
+        <div class="stage-head">
+          <span class="stage-num">4</span>
+          <span class="stage-title">训练样本视图</span>
+          <span class="stage-tag">signal store -> dataset view</span>
+        </div>
+        <p>
+          需求：训练 dataset 只负责按 split/crop/transpose 生成模型输入，不负责读 CSV、不负责建 cache、不负责选择 K500。
+        </p>
+        <pre><code>@dataclass(frozen=True)
+class ArrayDatasetSpec:
+    crop_len: int
+    crop_mode_train: Literal["random", "center"]
+    crop_mode_eval: Literal["center"]
+    output_layout: Literal["channel_time"]
+    label_dtype: str = "float32"
+
+class ECGArrayDataset(Dataset):
+    def __init__(
+        self,
+        signals_tc: np.ndarray,
+        labels: np.ndarray,
+        indices: np.ndarray,
+        spec: ArrayDatasetSpec,
+        mode: Literal["train", "eval"],
+    ): ...
+
+def make_ptbxl_datasets(store: SignalStore, manifest: PTBXLManifest, splits: SplitIndices, spec: ArrayDatasetSpec) -> DatasetBundle: ...</code></pre>
+        <p class="muted">验收：同一输入数组，train 是 random crop，eval 是 center crop；输出永远是 <code>(12,crop_len)</code>。</p>
+      </section>
+
+      <section class="stage">
+        <div class="stage-head">
+          <span class="stage-num">5</span>
+          <span class="stage-title">PN2021 Header Index</span>
+          <span class="stage-tag">headers -> center manifest</span>
+        </div>
+        <p>
+          需求：PN2021 的 header 扫描和 SNOMED 解析必须是轻量、可测试、无 WFDB waveform IO 的 manifest 阶段。这里负责排除 leak shard。
+        </p>
+        <pre><code>@dataclass(frozen=True)
+class PN2021CenterManifest:
+    center: str
+    record_paths: np.ndarray     # WFDB paths without .hea
+    record_ids: np.ndarray
+    snomed_codes: tuple[tuple[int, ...], ...]
+    n_headers: int
+    metadata: dict[str, Any]
+
+def scan_pn2021_center(center_dir: Path, *, center: str, ctx: DataContext) -> PN2021CenterManifest: ...
+def scan_pn2021_eval_set(root: Path, *, ctx: DataContext) -> dict[str, PN2021CenterManifest]: ...</code></pre>
+        <p class="muted">验收：遇到 <code>ptb-xl</code> 或 <code>ptbxl</code> 直接拒绝；不读取 waveform。</p>
+      </section>
+
+      <section class="stage">
+        <div class="stage-head">
+          <span class="stage-num">6</span>
+          <span class="stage-title">PN2021 Full Center Cache</span>
+          <span class="stage-tag">WFDB -> full clean cache</span>
+        </div>
+        <p>
+          需求：PN2021 clean eval cache 必须是完整 center cache。这里只做读 WFDB、预处理、label mapping、写 cache；绝不做 K500 ref exclusion。
+        </p>
+        <pre><code>@dataclass(frozen=True)
+class PN2021FullCenterCache:
+    center: str
+    signals: np.ndarray          # full center, (N,1000,12)
+    labels: np.ndarray           # (N,5)
+    record_ids: np.ndarray
+    failed_count: int
+    load_mode: Literal["ram", "mmap"]
+    cache_kind: Literal["built", "npz", "mmap"]
+    metadata: dict[str, Any]
+
+def load_or_build_pn2021_full_center_cache(
+    manifest: PN2021CenterManifest,
+    *,
+    ctx: DataContext,
+    cache_dir: Path,
+) -> PN2021FullCenterCache: ...</code></pre>
+        <p class="muted">内存策略：250G 机器可把四个主 target centers 和常用 eval centers RAM-load；全 7-center 大 cache 保留 mmap fallback。</p>
+      </section>
+
+      <section class="stage">
+        <div class="stage-head">
+          <span class="stage-num">7</span>
+          <span class="stage-title">K500 选择与引用集</span>
+          <span class="stage-tag">full target cache -> selected ids</span>
+        </div>
+        <p>
+          需求：K-shot 选择必须是显式对象，记录 center、K、seed、subset_seed、candidate pool、selection policy 和 record_id hash。选择逻辑不能藏在训练脚本里。
+        </p>
+        <pre><code>@dataclass(frozen=True)
+class KShotSpec:
+    center: str
+    k: int
+    seed: int
+    subset_seed: int
+    selection_policy: Literal["primary_label_proportional_min1", "explicit_ids"]
+    class_order: tuple[str, ...]
+
+@dataclass(frozen=True)
+class KShotSelection:
+    spec: KShotSpec
+    selected_indices: np.ndarray
+    selected_record_ids: np.ndarray
+    label_counts: dict[str, int]
+    ref_meta_path: Path | None
+    metadata: dict[str, Any]
+
+def select_kshot(cache: PN2021FullCenterCache, spec: KShotSpec) -> KShotSelection: ...
+def load_kshot_selection(meta_path: Path, *, expected: KShotSpec) -> KShotSelection: ...</code></pre>
+        <p class="muted">验收：相同 seed 可复现；少于 K 直接报错；selected ids 可用于训练，也可用于 eval ref-exclusion。</p>
+      </section>
+
+      <section class="stage">
+        <div class="stage-head">
+          <span class="stage-num">8</span>
+          <span class="stage-title">Target Anchor Pool</span>
+          <span class="stage-tag">K500 + waveform + latent -> bundle</span>
+        </div>
+        <p>
+          需求：VAE-LHAT / AugMix / Direct-K500 的核心输入应该是同一个 <code>TargetAnchorPool</code>。它一次性保证 raw1000、labels、record_ids、latents 对齐。
+        </p>
+        <pre><code>@dataclass(frozen=True)
+class TargetAnchorPool:
+    center: str
+    selection: KShotSelection
+    raw1000_tc: np.ndarray       # (K,1000,12), pre-zscore
+    labels: np.ndarray           # (K,5)
+    record_ids: np.ndarray       # (K,)
+    latents: np.ndarray | None   # (K,4,128)
+    source_base: Path | None
+    metadata: dict[str, Any]
+
+def build_target_anchor_pool(
+    cache: PN2021FullCenterCache,
+    selection: KShotSelection,
+    *,
+    latent_npz: Path | None,
+    ctx: DataContext,
+) -> TargetAnchorPool: ...
+
+def validate_anchor_pool(pool: TargetAnchorPool) -> None: ...</code></pre>
+        <p class="muted">验收：任何 latent/raw/label/record_id 数量不一致都报错；metadata 写入 latent scale、record_id hash、preprocess contract。</p>
+      </section>
+
+      <section class="stage">
+        <div class="stage-head">
+          <span class="stage-num">9</span>
+          <span class="stage-title">模型输入视图</span>
+          <span class="stage-tag">canonical waveform -> backbone view</span>
+        </div>
+        <p>
+          需求：模型输入都是从 canonical waveform 派生。EffNet、ECGFounder、AugMix pre-zscore、VAE decoded waveform 都必须明确自己处在哪个空间。
+        </p>
+        <pre><code>@dataclass(frozen=True)
+class ModelViewSpec:
+    backbone: Literal["efficientnet1dv2", "ecgfounder"]
+    input_len: int
+    input_fs: int
+    output_layout: Literal["channel_time"]
+    normalize: Literal["none", "per_sample_global"]
+    corruption_space: Literal["pre_zscore", "post_zscore"]
+
+@dataclass(frozen=True)
+class ModelInputView:
+    x: np.ndarray
+    labels: np.ndarray
+    record_ids: np.ndarray
+    centers: np.ndarray
+    spec: ModelViewSpec
+    metadata: dict[str, Any]
+
+def make_model_view(source: TargetAnchorPool | SignalStore | DecodedWaveformBatch, spec: ModelViewSpec) -> ModelInputView: ...</code></pre>
+        <p class="muted">验收：EffNet 输出 <code>(N,12,1000)</code>；ECGFounder 输出 <code>(N,12,5000)</code>；zscore 只发生一次。</p>
+      </section>
+
+      <section class="stage">
+        <div class="stage-head">
+          <span class="stage-num">10</span>
+          <span class="stage-title">VAE Latent 与 Decode Batch</span>
+          <span class="stage-tag">latent -> decoded canonical waveform</span>
+        </div>
+        <p>
+          需求：数据模块不实现 decoder，但要定义 decoder 前后的数据契约。上层 VAE-LHAT 只需要清楚传入什么 latent，拿回什么 waveform。
+        </p>
+        <pre><code>@dataclass(frozen=True)
+class LatentBatch:
+    z: np.ndarray                # (B,4,128)
+    labels: np.ndarray
+    anchor_record_ids: np.ndarray
+    latent_scale: float
+    standardized: bool
+    metadata: dict[str, Any]
+
+@dataclass(frozen=True)
+class DecodedWaveformBatch:
+    raw1000_tc: np.ndarray       # (B,1000,12), PTB-XL order, pre-zscore
+    labels: np.ndarray
+    anchor_record_ids: np.ndarray
+    metadata: dict[str, Any]
+
+def validate_latent_batch(batch: LatentBatch) -> None: ...
+def normalize_decoded_ecgtwin(raw1024, *, ctx: DataContext) -> np.ndarray: ...</code></pre>
+        <p class="muted">验收：输入 <code>(B,1024,12)</code> 或 <code>(B,12,1024)</code> 都能规范到 <code>(B,1000,12)</code>；lead reorder 必须记录。</p>
+      </section>
+
+      <section class="stage">
+        <div class="stage-head">
+          <span class="stage-num">11</span>
+          <span class="stage-title">AugMix 输入批次</span>
+          <span class="stage-tag">clean/adv/corrupt chains -> train views</span>
+        </div>
+        <p>
+          需求：AugMix 不是新数据集，而是训练批次视图。主线 locked three-chain 要明确 chain 1/2 是官方 corruption，chain 3 是 VAE-LHAT adversarial waveform。
+        </p>
+        <pre><code>@dataclass(frozen=True)
+class AugMixBatchSpec:
+    topology: Literal["locked_three_chain"]
+    width: int
+    depth: int
+    severity: int
+    severity_profile: str
+    ops: tuple[str, ...]
+    mix_space: Literal["raw1000_pre_zscore"]
+
+@dataclass(frozen=True)
+class AugMixInputBatch:
+    clean_raw1000_tc: np.ndarray
+    adv_raw1000_tc: np.ndarray | None
+    labels: np.ndarray
+    record_ids: np.ndarray
+    spec: AugMixBatchSpec
+
+def build_augmix_input_batch(pool: TargetAnchorPool, decoded_adv: DecodedWaveformBatch, spec: AugMixBatchSpec) -> AugMixInputBatch: ...</code></pre>
+        <p class="muted">验收：不能退化成 width=1/depth=1 的单链；corruption 应在 zscore 前发生。</p>
+      </section>
+
+      <section class="stage">
+        <div class="stage-head">
+          <span class="stage-num">12</span>
+          <span class="stage-title">PN2021 Eval View</span>
+          <span class="stage-tag">full cache + ids -> metrics-ready arrays</span>
+        </div>
+        <p>
+          需求：评估 view 是从 full center cache 派生的只读切片。include filter 先于 ref exclusion，target ref 只排除对应 center。
+        </p>
+        <pre><code>@dataclass(frozen=True)
+class PN2021EvalFilter:
+    center: str
+    include_record_ids: frozenset[str] | None
+    exclude_ref_record_ids: frozenset[str] | None
+    limit: int | None
+
+@dataclass(frozen=True)
+class PN2021EvalView:
+    center: str
+    signals_tc: np.ndarray
+    labels: np.ndarray
+    record_ids: np.ndarray
+    n_total_before_filter: int
+    n_include_kept: int
+    n_excluded_ref: int
+    metadata: dict[str, Any]
+
+def make_pn2021_eval_view(cache: PN2021FullCenterCache, filt: PN2021EvalFilter) -> PN2021EvalView: ...</code></pre>
+        <p class="warn">优先验收点：锁住 <code>n_total_before_filter</code>、<code>effective_n</code>、<code>n_excluded_ref</code> 的语义，避免指标分母漂移。</p>
+      </section>
+
+      <section class="stage">
+        <div class="stage-head">
+          <span class="stage-num">13</span>
+          <span class="stage-title">Metric View 与协议门禁</span>
+          <span class="stage-tag">scores + labels -> reportable metrics</span>
+        </div>
+        <p>
+          需求：all-zero-kept 和 drop-all-zero 是明确 metric view，不是数据加载选项。paper-safe protocol 必须校验 7 centers、paper preprocess、crop_len=1000、K500 ref-exclusion。
+        </p>
+        <pre><code>@dataclass(frozen=True)
+class MetricViewSpec:
+    name: Literal["pn2021_all_zero_kept_refexcluded", "pn2021_drop_all_zero_refexcluded"]
+    min_pos: int
+    class_order: tuple[str, ...]
+
+@dataclass(frozen=True)
+class MetricViewResult:
+    view: MetricViewSpec
+    avg_macro_auroc: float | None
+    avg_macro_auprc: float | None
+    per_center: dict[str, dict[str, Any]]
+    metadata: dict[str, Any]
+
+def compute_metric_view(views: Sequence[PN2021EvalView], scores: Mapping[str, np.ndarray], spec: MetricViewSpec) -> MetricViewResult: ...
+def validate_paper_eval_protocol(result: MetricViewResult, *, ctx: DataContext) -> dict[str, Any]: ...</code></pre>
+        <p class="muted">验收：drop-all-zero 不覆盖 all-zero-kept；protocol fail 必须是硬错误，不是 warning。</p>
+      </section>
+
+      <section class="stage">
+        <div class="stage-head">
+          <span class="stage-num">14</span>
+          <span class="stage-title">Run Manifest 与可复现 lineage</span>
+          <span class="stage-tag">everything -> manifest</span>
+        </div>
+        <p>
+          需求：每次训练/评估都要能回答“用了哪份数据、哪个 mapping、哪个 K500、哪个 ref exclusion、哪种 load mode、哪些 cache hash”。这部分让彻底重构以后仍然可追溯。
+        </p>
+        <pre><code>@dataclass(frozen=True)
+class DataRunManifest:
+    run_id: str
+    data_context: dict[str, Any]
+    assets: tuple[DataAsset, ...]
+    caches: tuple[dict[str, Any], ...]
+    kshot: tuple[dict[str, Any], ...]
+    memory_policy: dict[str, Any]
+    ref_exclusion_hashes: dict[str, str]
+
+def build_data_run_manifest(ctx: DataContext, products: Sequence[Any]) -> DataRunManifest: ...
+def write_data_run_manifest(manifest: DataRunManifest, path: Path) -> None: ...</code></pre>
+        <p class="muted">验收：manifest 不含大数组；包含足够信息让别人定位同一份 cache 和 K500 ids。</p>
+      </section>
+
+      <section class="stage">
+        <div class="stage-head">
+          <span class="stage-num">15</span>
+          <span class="stage-title">Legacy Compatibility Boundary</span>
+          <span class="stage-tag">new API -> old scripts</span>
+        </div>
+        <p>
+          需求：如果要保留旧入口，旧入口只能是薄 wrapper。兼容层负责把旧 CLI 参数转换成新 API spec，不允许继续拥有数据逻辑。
+        </p>
+        <pre><code>@dataclass(frozen=True)
+class LegacyAdapterResult:
+    context: DataContext
+    api_calls: tuple[str, ...]
+    warnings: tuple[str, ...]
+
+def adapt_train_ptbxl_args(args) -> tuple[DataContext, PTBXLManifest, ArrayDatasetSpec]: ...
+def adapt_eval_crosscenter_args(args) -> tuple[DataContext, PN2021EvalFilter, MetricViewSpec]: ...
+def warn_on_legacy_path(path: Path) -> None: ...</code></pre>
+        <p class="muted">验收：legacy wrapper 里不再出现 label parsing、WFDB scan、cache metadata compare、metric aggregation 主逻辑。</p>
+      </section>
+    </div>
+
+    <section class="review-gate">
+      <h2>需求优先级</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>优先级</th>
+            <th>需求</th>
+            <th>原因</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>P0</td>
+            <td><code>DataContext</code>, <code>MemoryPolicy</code>, hard contracts</td>
+            <td>没有上下文和契约，后面每个模块都会重新发明路径和 shape 规则。</td>
+          </tr>
+          <tr>
+            <td>P0</td>
+            <td><code>PTBXLManifest</code>, <code>SignalStore</code>, <code>ECGArrayDataset</code></td>
+            <td>这是最适合先做的 source pipeline，能快速减少 <code>train_ptbxl.py</code> 技术债。</td>
+          </tr>
+          <tr>
+            <td>P0</td>
+            <td><code>PN2021FullCenterCache</code>, <code>PN2021EvalView</code></td>
+            <td>这是指标安全边界，必须防止 ref exclusion/cache/metric view 漂移。</td>
+          </tr>
+          <tr>
+            <td>P1</td>
+            <td><code>KShotSelection</code>, <code>TargetAnchorPool</code></td>
+            <td>这是 VAE-LHAT / Direct-K500 / AugMix 主线的核心数据产品。</td>
+          </tr>
+          <tr>
+            <td>P1</td>
+            <td><code>ModelInputView</code>, <code>LatentBatch</code>, <code>AugMixInputBatch</code></td>
+            <td>让 EffNet、ECGFounder、VAE decode、AugMix 都从同一份 canonical waveform 派生。</td>
+          </tr>
+          <tr>
+            <td>P2</td>
+            <td><code>LegacyAdapter</code></td>
+            <td>只在新 API 稳定以后迁移旧入口，避免为了兼容历史脚本牺牲新设计。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>测试需求</h2>
+      <ul>
+        <li>每个 stage 至少一个 fake-data 单元测试，不依赖真实 PTB-XL/PN2021。</li>
+        <li>每个 cache object 测 shape、dtype、metadata、hash、load mode。</li>
+        <li>每个 view object 测“不改变源数据”和“只做一种变换”。</li>
+        <li>PN2021 eval 必测 full cache 先于 ref exclusion。</li>
+        <li>MemoryPolicy 必测：small budget 选择 mmap，大 budget 选择 RAM。</li>
+        <li>Legacy adapter 必测：旧 args 转新 spec，但 wrapper 不拥有数据逻辑。</li>
+      </ul>
+      <pre><code>pytest -q \
+  util/tests/test_data_contracts.py \
+  util/tests/test_memory_policy.py \
+  util/tests/test_ptbxl_manifest.py \
+  util/tests/test_signal_store.py \
+  util/tests/test_ecg_array_dataset.py \
+  util/tests/test_pn2021_full_center_cache.py \
+  util/tests/test_pn2021_eval_view.py \
+  util/tests/test_kshot_selection.py \
+  util/tests/test_target_anchor_pool.py \
+  util/tests/test_model_input_views.py \
+  util/tests/test_data_run_manifest.py</code></pre>
+    </section>
+
+    <section>
+      <h2>第一步建议</h2>
+      <p>
+        真正开写代码时，第一步不是碰当前打开的 <code>eval_crosscenter.py</code>，而是先实现最底层的 <code>DataContext</code>、<code>MemoryPolicy</code>、<code>PTBXLManifest</code>、<code>SignalStore</code>、<code>ECGArrayDataset</code>。这部分能教清楚现代 Python 数据模块怎么设计，也不会碰 GPU 和主线实验。
+      </p>
+      <p>
+        第二步再处理 PN2021 full center cache 和 eval view，把 “full cache -> ref exclusion -> metric view” 这个安全边界钉死。等这两条 pipeline 稳了，再接 K500 anchor pool 和 VAE/AugMix。
+      </p>
+    </section>
+
+    <section>
+      <h2>参考当前文件</h2>
+      <ul>
+        <li><a href="/ecg_adv_gen/data/contracts.py">ecg_adv_gen/data/contracts.py</a></li>
+        <li><a href="/ecg_adv_gen/preprocessing/signals.py">ecg_adv_gen/preprocessing/signals.py</a></li>
+        <li><a href="/ecg_adv_gen/preprocessing/classifier.py">ecg_adv_gen/preprocessing/classifier.py</a></li>
+        <li><a href="/scripts/triple_labels/train_ptbxl.py">scripts/triple_labels/train_ptbxl.py</a></li>
+        <li><a href="/scripts/triple_labels/eval_crosscenter.py">scripts/triple_labels/eval_crosscenter.py</a></li>
+        <li><a href="/ecg_adv_gen/evaluation/pn2021_metric_views.py">ecg_adv_gen/evaluation/pn2021_metric_views.py</a></li>
+        <li><a href="/ecg_adv_gen/evaluation/pn2021_eval_cache.py">ecg_adv_gen/evaluation/pn2021_eval_cache.py</a></li>
+        <li><a href="/ecg_adv_gen/data/real_anchors.py">ecg_adv_gen/data/real_anchors.py</a></li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>

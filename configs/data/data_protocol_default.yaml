@@ -1,0 +1,161 @@
+schema_version: 1
+protocol_id: data_protocol_default
+status: active-main
+owner: linbinhao
+description: Default PTB-XL -> PN2021 Super5 data, preprocessing, target reference set, VAE, and evaluation protocol for the current SOTA mainline.
+
+labels:
+  scheme: super5
+  mapping_version: v7_super5_sjr_rgq_review_20260528
+  mapping_hash: 555ec85d5b51
+  mapping_file:
+    format: jsonl
+    path: configs/data/pn2021_to_ptbxl_super5_label_mapping_default.jsonl
+    evidence_source_path: configs/label_mappings/pn2021_super5_sjr_rgq_review_20260528.jsonl
+    sha256: c8e54585dbf8b564ae3ba06c84fa2d26e6478238cf2e24f733718d6e35dfb15c
+    record_count: 138
+    metadata_record_count: 1
+    label_record_count: 137
+    metadata_record_type: metadata
+    label_record_type: label_mapping_review
+    decision_field: normalized_decision
+    source_dataset: pn2021
+    target_dataset: ptbxl
+    target_scheme: super5
+  class_order: [CD, HYP, MI, NORM, STTC]
+  num_classes: 5
+
+centers:
+  adaptation: [ningbo, chapman_shaoxing, cpsc_2018, georgia]
+  evaluation: [chapman_shaoxing, cpsc_2018, cpsc_2018_extra, georgia, ningbo, ptb, st_petersburg_incart]
+  leak_excluded: [ptb-xl, ptbxl]
+
+target_reference_set:
+  mode: fixed_size_per_center
+  size_per_center: 500
+  selection_seed: 20260601
+  exclude_selected_from_eval: true
+  metadata_path_template: "{reference_root}/{center}/k{size_per_center}_seed{selection_seed}/{center}_real_k{size_per_center}_seed{selection_seed}.ref_meta.json"
+
+datasets:
+  source:
+    name: ptbxl
+    role: source_training
+  target:
+    name: pn2021
+    role: target_adaptation_and_external_evaluation
+    cache_version: v7_super5_sjr_rgq_review
+    adaptation_centers: ${centers.adaptation}
+    leak_excluded_centers: ${centers.leak_excluded}
+
+artifacts:
+  target_anchor_waveforms:
+    format: npz
+    suffix: .raw1000.npz
+    normalization: per_sample_global
+
+waveforms:
+  canonical:
+    sampling_rate_hz: 100
+    length: 1000
+    shape: [1000, 12]
+    layout: time_channel
+    lead_order: ptbxl
+    lead_names: [I, II, III, aVR, aVL, aVF, V1, V2, V3, V4, V5, V6]
+    dtype: float32
+  cache:
+    scope: full_center_before_ref_exclusion
+    order: full_center_cache_then_ref_exclusion
+    prefer_mmap: true
+
+preprocessing:
+  contract_id: ptbxl_pn2021_super5_vae_decode_default
+  resampling_policy: minimal
+  cropping:
+    length: 1000
+    train: random
+    evaluation: center
+  normalization:
+    mode: per_sample_global
+  classifier_input:
+    sampling_rate_hz: 100
+    length: 1000
+    shape: [1000, 12]
+    layout: time_channel
+    model_tensor_shape: [12, 1000]
+    model_tensor_layout: channel_time
+  vae_decoded_waveform_adapter:
+    input_length: 1024
+    input_shape: [1024, 12]
+    input_layout: time_channel
+    output_length: 1000
+    output_shape: [1000, 12]
+    output_layout: time_channel
+    source_to_ptbxl_lead_indices: [0, 1, 2, 3, 5, 4, 6, 7, 8, 9, 10, 11]
+
+model_input_views:
+  ecgfounder_500hz:
+    preprocess_policy: official_ptbxl_eval
+    sampling_rate_hz: 500
+    length: 5000
+    shape: [12, 5000]
+    layout: channel_time
+
+latent_format:
+  id: vae_default
+  shape: [4, 128]
+  cache_scale: 0.18215
+  standardize_before_search: true
+  anchor_pool:
+    source: target_reference_set
+    include_clean_anchor_in_batch: true
+    partner_policy: local_same_label_or_compatible
+    forbid_norm_abnormal_mix_main: true
+
+evaluation:
+  pn2021:
+    protocol: refexcluded
+    cache_version: ${datasets.target.cache_version}
+    full_center_cache_first: true
+    include_filter_before_ref_exclusion: true
+    ref_exclusion_after_cache_load: true
+    min_target_ref_excluded: 500
+    allow_missing_centers: false
+    diagnostic_legacy_eval: false
+    report_drop_all_zero: true
+    min_positive_per_class: 10
+    record_limit: null
+  views:
+    - pn2021_all_zero_kept_refexcluded
+    - pn2021_drop_all_zero_refexcluded
+    - ptbxl_fold10_source_floor
+  metrics:
+    - macro_auroc
+    - macro_auprc
+    - per_center
+    - per_class
+
+runtime_defaults:
+  memory_policy:
+    mode: auto
+    large_ram_mode: ram
+    fallback_modes: [mmap, stream]
+    ram_budget_gb: 180
+    mmap_when_over_budget: true
+    keep_in_ram:
+      ptbxl_source_cache: true
+      target_reference_set: true
+      pn2021_eval_cache: true
+
+validation:
+  fail_if:
+    shape_drift: true
+    sampling_rate_drift: true
+    lead_order_drift: true
+    label_order_drift: true
+    mapping_hash_drift: true
+    pn2021_cache_version_drift: true
+    ref_exclusion_missing: true
+    forbidden_center_present: true
+    ref_exclusion_baked_into_cache: true
+    nonnull_record_limit_for_final_eval: true

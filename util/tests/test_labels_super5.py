@@ -90,7 +90,7 @@ def test_pn2021_super5_v7_sjr_rgq_policy_deltas():
     assert mapped_classes(53741008) == {"NORM"}  # coronary heart disease
 
 
-def test_package_super5_mapping_owns_conversion_policy():
+def test_package_super5_mapping_owns_conversion_policy(tmp_path, monkeypatch, request):
     assert super5_mapping.SUPER5_PN2021_MAPPING_VERSION == (
         "v7_super5_sjr_rgq_review_20260528"
     )
@@ -118,6 +118,17 @@ def test_package_super5_mapping_owns_conversion_policy():
         for name, value in zip(super5_mapping.CLASS_NAMES_SUPER5, mimic_label)
         if value == 1.0
     } == {"CD"}
+
+    scp_statements = tmp_path / "scp_statements.csv"
+    scp_statements.write_text(
+        ",diagnostic,diagnostic_class\n"
+        "NORM,1.0,NORM\n"
+        "IMI,1.0,MI\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(super5_mapping, "SCP_STATEMENTS_PATH", scp_statements)
+    super5_mapping._load_scp_super5_map.cache_clear()
+    request.addfinalizer(super5_mapping._load_scp_super5_map.cache_clear)
 
     ptbxl_label = super5_mapping.ptbxl_scp_to_super5({"NORM": 100.0, "IMI": 80.0})
     legacy_ptbxl_label = label_schemes.ptbxl_scp_to_super5({"NORM": 100.0, "IMI": 80.0})
