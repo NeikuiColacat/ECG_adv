@@ -306,9 +306,37 @@ def _severity_profile_metadata(args):
     }
 
 
+def _corruption_sequence(corruption):
+    sequence = [part.strip() for part in str(corruption).split("+") if part.strip()]
+    if not sequence:
+        raise ValueError(f"empty corruption name: {corruption!r}")
+    unknown = [part for part in sequence if part not in DEFAULT_CORRUPTIONS]
+    if unknown:
+        raise ValueError(
+            f"unknown corruption(s) in {corruption!r}: {unknown}; "
+            f"allowed={list(DEFAULT_CORRUPTIONS)}"
+        )
+    return sequence
+
+
 def _resolve_corruption_profile_params(corruption, public_severity, severity_profile, severity_profile_params=None):
+    sequence = _corruption_sequence(corruption)
+    if len(sequence) > 1:
+        return [
+            {
+                "name": name,
+                "params": _resolve_corruption_profile_params(
+                    name,
+                    public_severity,
+                    severity_profile,
+                    severity_profile_params,
+                ),
+            }
+            for name in sequence
+        ]
     if severity_profile == "standard":
         return None
+    corruption = sequence[0]
     if severity_profile == "stress_v2":
         params = _profile_params_for_op(_STRESS_V2_PARAMS, "stress_v2", corruption, public_severity)
         return _with_operator_defaults(corruption, params)
@@ -360,6 +388,13 @@ def _build_corruption_op(
     sample_rate_hz=None,
     severity_profile_params=None,
 ):
+    sequence = _corruption_sequence(corruption)
+    if len(sequence) != 1:
+        raise ValueError(
+            "_build_corruption_op only accepts one operator; "
+            "use _apply_corruption_sequence for composite corruptions"
+        )
+    corruption = sequence[0]
     if severity_profile == "standard":
         op = build_op(corruption, PUBLIC_TO_INTERNAL_SEVERITY[int(public_severity)])
         return _with_native_sample_rate(op, sample_rate_hz)
@@ -380,6 +415,43 @@ def _build_corruption_op(
         )
         return _with_native_sample_rate(op, sample_rate_hz)
     raise ValueError(f"unknown severity_profile: {severity_profile}")
+
+
+def _seed_corruption_rng(base_seed, *parts):
+    sample_seed = _stable_seed(base_seed, *parts)
+    np.random.seed(sample_seed)
+    random.seed(sample_seed)
+    torch.manual_seed(sample_seed)
+    return sample_seed
+
+
+def _apply_corruption_sequence(
+    ecg_ct,
+    corruption,
+    public_severity,
+    severity_profile,
+    *,
+    base_seed,
+    seed_parts,
+    sample_rate_hz=None,
+    severity_profile_params=None,
+):
+    sequence = _corruption_sequence(corruption)
+    out = ecg_ct
+    for pos, op_name in enumerate(sequence):
+        if len(sequence) == 1:
+            _seed_corruption_rng(base_seed, *seed_parts)
+        else:
+            _seed_corruption_rng(base_seed, *seed_parts, pos, op_name)
+        op = _build_corruption_op(
+            op_name,
+            public_severity,
+            severity_profile,
+            sample_rate_hz=sample_rate_hz,
+            severity_profile_params=severity_profile_params,
+        )
+        out = op(out)
+    return out
 
 
 def _input_stabilizer_config(args):
@@ -496,17 +568,6 @@ class StreamingCorruptedPN2021Dataset(Dataset):
 
     def __getitem__(self, idx):
         real_idx = int(self.indices[idx])
-        sample_seed = _stable_seed(self.seed, self.corruption, self.public_severity, real_idx)
-        np.random.seed(sample_seed)
-        random.seed(sample_seed)
-        torch.manual_seed(sample_seed)
-        op = _build_corruption_op(
-            self.corruption,
-            self.public_severity,
-            self.severity_profile,
-            severity_profile_params=self.severity_profile_params,
-        )
-
         sig_tc = self.signals[real_idx]
         stage = self.input_stabilizer_config.get("stage", "post_crop")
         if stage == "pre_crop":
@@ -515,7 +576,15 @@ class StreamingCorruptedPN2021Dataset(Dataset):
             start = max((sig_tc.shape[0] - self.crop_len) // 2, 0)
             crop = sig_tc[start:start + self.crop_len]
             sig_ct = torch.from_numpy(np.ascontiguousarray(crop.T)).float()
-        corrupt_ct = op(sig_ct)
+        corrupt_ct = _apply_corruption_sequence(
+            sig_ct,
+            self.corruption,
+            self.public_severity,
+            self.severity_profile,
+            base_seed=self.seed,
+            seed_parts=(self.corruption, self.public_severity, real_idx),
+            severity_profile_params=self.severity_profile_params,
+        )
         corrupt_ct = apply_effnet_input_stabilizer(
             corrupt_ct,
             self.input_stabilizer_config,
@@ -587,26 +656,17 @@ class RawFirstCorruptedPN2021Dataset(Dataset):
 
     def __getitem__(self, idx):
         real_idx = int(self.indices[idx])
-        sample_seed = _stable_seed(
-            self.seed,
-            "raw_first",
-            self.corruption,
-            self.public_severity,
-            real_idx,
-        )
-        np.random.seed(sample_seed)
-        random.seed(sample_seed)
-        torch.manual_seed(sample_seed)
-        op = _build_corruption_op(
+        sig_tc = self.signals[real_idx]
+        sig_ct = torch.from_numpy(np.ascontiguousarray(sig_tc.T)).float()
+        corrupt_ct = _apply_corruption_sequence(
+            sig_ct,
             self.corruption,
             self.public_severity,
             self.severity_profile,
+            base_seed=self.seed,
+            seed_parts=("raw_first", self.corruption, self.public_severity, real_idx),
             severity_profile_params=self.severity_profile_params,
         )
-
-        sig_tc = self.signals[real_idx]
-        sig_ct = torch.from_numpy(np.ascontiguousarray(sig_tc.T)).float()
-        corrupt_ct = op(sig_ct)
         corrupt_ct = _global_zscore_ct(corrupt_ct)
         corrupt_ct = apply_effnet_input_stabilizer(
             corrupt_ct,
@@ -703,26 +763,22 @@ class NativeRawFirstCorruptedPN2021Dataset(Dataset):
     def __getitem__(self, idx):
         real_idx = int(self.indices[idx])
         sample_rate_hz = float(self.sample_rates[real_idx])
-        sample_seed = _stable_seed(
-            self.seed,
-            "native_raw_first",
-            self.corruption,
-            self.public_severity,
-            real_idx,
-        )
-        np.random.seed(sample_seed)
-        random.seed(sample_seed)
-        torch.manual_seed(sample_seed)
-        op = _build_corruption_op(
+        sig_ct = torch.from_numpy(np.ascontiguousarray(self.signals[real_idx].T)).float()
+        corrupt_ct = _apply_corruption_sequence(
+            sig_ct,
             self.corruption,
             self.public_severity,
             self.severity_profile,
+            base_seed=self.seed,
+            seed_parts=(
+                "native_raw_first",
+                self.corruption,
+                self.public_severity,
+                real_idx,
+            ),
             sample_rate_hz=sample_rate_hz,
             severity_profile_params=self.severity_profile_params,
         )
-
-        sig_ct = torch.from_numpy(np.ascontiguousarray(self.signals[real_idx].T)).float()
-        corrupt_ct = op(sig_ct)
         corrupt_tc = corrupt_ct.detach().cpu().numpy().T.astype(np.float32, copy=False)
         proc = _model_preprocess_native_tc(corrupt_tc, sample_rate_hz)
         if proc is None:

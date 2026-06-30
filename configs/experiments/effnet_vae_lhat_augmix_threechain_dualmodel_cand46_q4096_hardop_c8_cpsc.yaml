@@ -1,0 +1,31 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_dualmodel_cand41_trainproxy16_q4096_cpsc.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_dualmodel_cand46_q4096_hardop_c8_cpsc
+  description: "CPSC probe: keep cand41 q4096 train-proxy pressure and increase raw AugMix exposure for powerline, EMG, and lead masking without dropping baseline operators."
+
+adaptation:
+  run_tag_extra: trraw_proxy16_q4096r1_hardop_c8_aw24_tw45_hs10_lam20_c8_cw16_b6
+  latent_augmix:
+    copies: 8
+    ops:
+      - powerline_noise
+      - emg_noise
+      - baseline_wander
+      - baseline_shift
+      - random_leads_masking
+      - powerline_noise
+      - emg_noise
+      - random_leads_masking
+    consistency:
+      enabled: true
+      consistency_weight: 16.0
+      consistency_loss: jsd
+      bce_weight: 6.0
+      max_batches: 0
+
+run_record:
+  purpose: Test whether cand41 can recover more powerline/lead-masking robustness by adding hard-operator copies while preserving baseline shift/wander coverage inside locked three-chain VAE-LH AugMix.
+  result_summary: Pending.
+  registration_status: provisional

@@ -1,0 +1,54 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_dualmodel_cand93_q8192_hull24_combo_depth2_c12_b24_ep45_cpsc.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_officials5_cand99_depthmix_c18_b20_ep45_cpsc
+  description: "CPSC pilot: official severity-5 standard three-chain AugMix with random depth 1/2/3 composite exposure."
+
+training:
+  epochs: 45
+  batch_size: 20
+  num_workers: 4
+
+adaptation:
+  run_tag_extra: c99officials5_depthmix_c18_b20_ep45
+  latent_augmix:
+    copies: 18
+    depth: -1
+    op_schedule: cycle
+    chain_weights: "0.45,0.45,0.10"
+    severity_profile: standard
+    severity_params_file: ""
+    severity_params_name: ""
+    mixture:
+      mode: fixed
+      prob: 0.85
+    ops:
+      - baseline_shift
+      - baseline_wander
+      - emg_noise
+      - powerline_noise
+      - random_leads_masking
+      - baseline_shift
+      - emg_noise
+      - random_leads_masking
+      - baseline_wander
+      - powerline_noise
+    consistency:
+      enabled: true
+      consistency_weight: 14.0
+      consistency_loss: jsd
+      bce_weight: 8.0
+      max_batches: 0
+
+run_record:
+  purpose: >-
+    Pilot the official standard severity-5 composite PN2021-C benchmark
+    distribution inside the locked three-chain VAE-LH AugMix main method. This
+    preserves two raw ECG corruption chains plus one VAE-LH adversarial
+    waveform chain, removes the inherited dual-model custom train proxy, and
+    uses AugMix's classic random depth 1/2/3 so training includes single-op,
+    pair, and triple composite views without adding a stabilizer, post-hoc
+    oracle, or separate raw-supervised branch.
+  result_summary: Pending.
+  registration_status: provisional

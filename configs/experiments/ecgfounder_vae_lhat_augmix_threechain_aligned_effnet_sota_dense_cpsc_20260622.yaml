@@ -1,0 +1,23 @@
+extends:
+  - ecgfounder_vae_lhat_augmix_threechain_aligned_effnet_sota_dense_k500.yaml
+
+experiment:
+  name: ecgfounder_vae_lhat_augmix_threechain_aligned_effnet_sota_dense_cpsc_20260622
+  description: CPSC ECGFounder aligned EffNet-SOTA dense-only trainable-scope probe.
+
+data:
+  cache:
+    ecgfounder_fullft_signal_cache_dir: ${paths.output_root}/ecgfounder_vae_lhat_augmix_threechain_aligned_effnet_sota_cpsc_20260621/ecgfounder_aligned_cpsc_gpu3_20260621/cache
+
+runner:
+  matrix:
+    center:
+      - cpsc_2018
+
+run_record:
+  purpose: >-
+    Dense-only control for ECGFounder trainable-scope exploration on CPSC.
+    The VAE-LH plus locked three-chain AugMix recipe is unchanged from the
+    aligned EffNet-SOTA probe.
+  result_summary: Pending.
+  registration_status: provisional

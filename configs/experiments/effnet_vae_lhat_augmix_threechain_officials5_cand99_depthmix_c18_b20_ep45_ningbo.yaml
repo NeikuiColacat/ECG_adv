@@ -1,0 +1,18 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_officials5_cand99_depthmix_c18_b20_ep45_cpsc.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_officials5_cand99_depthmix_c18_b20_ep45_ningbo
+  description: "Ningbo pilot: official severity-5 standard three-chain AugMix with random depth 1/2/3 composite exposure."
+
+runner:
+  matrix:
+    center:
+      - ningbo
+
+run_record:
+  purpose: >-
+    Complete Ningbo evidence for cand99 official standard severity-5
+    depth-mixed locked three-chain VAE-LH AugMix.
+  result_summary: Pending.
+  registration_status: provisional

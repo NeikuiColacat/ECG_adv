@@ -151,6 +151,9 @@ def build_ecgfounder_fullft_argv(config: Mapping[str, Any], context: Mapping[str
         "--supervised_input_mode",
         adaptation.get("supervised_input_mode", "raw1000"),
     ]
+    trainable_scope = adaptation.get("trainable_scope") or {}
+    _append_option(argv, "--trainable_scope", trainable_scope.get("scope"))
+    _append_option(argv, "--trainable_last_n_stages", trainable_scope.get("last_n_stages"))
     _append_option(argv, "--target_raw1000_npz_override", target_raw1000_npz_override)
     _append_option(argv, "--init_model_path", model.get("init_model_path", ""))
     _append_option(argv, "--run_name", adaptation.get("run_name", ""))
@@ -196,6 +199,31 @@ def build_ecgfounder_fullft_argv(config: Mapping[str, Any], context: Mapping[str
         _append_option(argv, "--latent_augmix_alpha", latent_augmix.get("alpha", 1.0))
         _append_option(argv, "--latent_augmix_severity", latent_augmix.get("severity", 5))
         _append_option(argv, "--latent_augmix_severity_profile", latent_augmix.get("severity_profile", "standard"))
+        _append_option(argv, "--latent_augmix_severity_params_file", latent_augmix.get("severity_params_file"))
+        _append_option(argv, "--latent_augmix_severity_params_name", latent_augmix.get("severity_params_name"))
+        latent_augmix_mixture = latent_augmix.get("mixture") or {}
+        _append_option(
+            argv,
+            "--latent_augmix_mixture_mode",
+            latent_augmix_mixture.get("mode", latent_augmix.get("mixture_mode")),
+        )
+        _append_option(
+            argv,
+            "--latent_augmix_mixture_prob",
+            latent_augmix_mixture.get("prob", latent_augmix.get("mixture_prob")),
+        )
+        _append_option(
+            argv,
+            "--latent_augmix_mixture_beta_a",
+            latent_augmix_mixture.get("beta_a", latent_augmix.get("mixture_beta_a")),
+        )
+        _append_option(
+            argv,
+            "--latent_augmix_mixture_beta_b",
+            latent_augmix_mixture.get("beta_b", latent_augmix.get("mixture_beta_b")),
+        )
+        _append_option(argv, "--latent_augmix_op_schedule", latent_augmix.get("op_schedule"))
+        _append_option(argv, "--latent_augmix_chain_weights", latent_augmix.get("chain_weights"))
         _append_list_option(argv, "--latent_augmix_ops", latent_augmix.get("ops", []))
         _append_flag(argv, "--latent_augmix_renorm", latent_augmix.get("renorm", False))
         _append_option(argv, "--latent_augmix_clip_abs", latent_augmix.get("clip_abs", 6.0))
@@ -334,16 +362,47 @@ def audit_ecgfounder_fullft_command(
         audit_equals(errors, script, opts, "--latent_augmix_topology", "locked_three_chain")
         audit_equals(errors, script, opts, "--latent_augmix_width", "3")
         audit_equals(errors, script, opts, "--latent_augmix_severity", "5")
-        audit_equals(errors, script, opts, "--latent_augmix_severity_profile", "standard")
+        latent_augmix = ((config.get("adaptation") or {}).get("latent_augmix")) or {}
+        expected_profile = str(latent_augmix.get("severity_profile", "standard"))
+        audit_equals(errors, script, opts, "--latent_augmix_severity_profile", expected_profile)
+        if expected_profile == "custom":
+            audit_require_options(
+                errors,
+                script,
+                opts,
+                ["--latent_augmix_severity_params_file", "--latent_augmix_severity_params_name"],
+            )
+            audit_equals(
+                errors,
+                script,
+                opts,
+                "--latent_augmix_severity_params_file",
+                latent_augmix.get("severity_params_file"),
+            )
+            audit_equals(
+                errors,
+                script,
+                opts,
+                "--latent_augmix_severity_params_name",
+                latent_augmix.get("severity_params_name"),
+            )
+        else:
+            if "--latent_augmix_severity_params_file" in opts or "--latent_augmix_severity_params_name" in opts:
+                errors.append(f"{script}: latent AugMix severity params require severity_profile custom")
         if "--latent_augmix_renorm" in opts:
             errors.append(f"{script}: locked latent AugMix must not pre-z-score/renorm AugMix views")
-        expected_ops = [
-            "powerline_noise",
-            "emg_noise",
-            "baseline_wander",
-            "baseline_shift",
-            "random_leads_masking",
-        ]
+        expected_ops = list(
+            latent_augmix.get(
+                "ops",
+                [
+                    "powerline_noise",
+                    "emg_noise",
+                    "baseline_wander",
+                    "baseline_shift",
+                    "random_leads_masking",
+                ],
+            )
+        )
         actual_ops = list(opts.get("--latent_augmix_ops", []))
         if actual_ops != expected_ops:
             errors.append(f"{script}: locked latent AugMix ops must be {expected_ops}, got {actual_ops}")
@@ -358,13 +417,20 @@ def audit_ecgfounder_fullft_command(
 
     init_model = str(opt_first(opts, "--init_model_path", ""))
     run_id = str((config.get("runtime") or {}).get("run_id") or "")
+    upstream_run_id = str(((config.get("model") or {}).get("upstream_run_id")) or run_id)
     if "--enable_vae_adv_stream" in opts:
         expected_init = (
-            f"/ecgfounder_k500_fullft_locked/{run_id}/runs/"
+            f"/ecgfounder_k500_fullft_locked/{upstream_run_id}/runs/"
             f"{center}_k500_fullft_locked/last_model.pt"
         )
     else:
-        expected_init = f"/ecgfounder_ptbxl_super5_fullft_locked/{run_id}/runs/ptbxl_super5_fullft_locked/last_model.pt"
-    if run_id and not init_model.endswith(expected_init):
-        errors.append(f"{script}: init_model_path must consume the locked upstream last_model.pt from the same run_id")
+        expected_init = (
+            f"/ecgfounder_ptbxl_super5_fullft_locked/{upstream_run_id}/runs/"
+            "ptbxl_super5_fullft_locked/last_model.pt"
+        )
+    if upstream_run_id and not init_model.endswith(expected_init):
+        errors.append(
+            f"{script}: init_model_path must consume the locked upstream last_model.pt "
+            "from runtime.run_id or model.upstream_run_id"
+        )
     return {"errors": errors, "warnings": warnings}

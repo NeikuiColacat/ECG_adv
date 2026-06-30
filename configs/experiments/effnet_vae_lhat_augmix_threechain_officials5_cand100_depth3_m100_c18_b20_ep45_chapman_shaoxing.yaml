@@ -1,0 +1,18 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_officials5_cand100_depth3_m100_c18_b20_ep45_cpsc.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_officials5_cand100_depth3_m100_c18_b20_ep45_chapman_shaoxing
+  description: "Chapman-Shaoxing stronger pilot: official severity-5 standard three-chain AugMix with fixed depth-3 and undiluted branch mixture."
+
+runner:
+  matrix:
+    center:
+      - chapman_shaoxing
+
+run_record:
+  purpose: >-
+    Complete Chapman-Shaoxing evidence for cand100 official standard
+    severity-5 fixed-depth-3 locked three-chain VAE-LH AugMix.
+  result_summary: Pending.
+  registration_status: provisional

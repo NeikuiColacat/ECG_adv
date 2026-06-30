@@ -1,0 +1,16 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_dualmodel_cand35_advchain_balanced_ops_cpsc.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_dualmodel_cand35_advchain_balanced_ops_georgia
+  description: "Run cand35 adv-chain balanced-ops locked three-chain VAE-LH AugMix recipe on Georgia."
+
+runner:
+  matrix:
+    center:
+      - georgia
+
+run_record:
+  purpose: Directly target cand31's weakest center by running the balanced-ops adv-chain recipe on Georgia.
+  result_summary: Pending.
+  registration_status: provisional

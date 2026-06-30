@@ -12,7 +12,6 @@ import argparse
 import hashlib
 import json
 import os
-import random
 import sys
 import time
 from pathlib import Path
@@ -74,7 +73,7 @@ from scripts.triple_labels.eval_crosscenter import (  # noqa: E402
 )
 from scripts.triple_labels.eval_pn2021_corruptions import (  # noqa: E402
     STRESS_PROFILE_CHOICES,
-    _build_corruption_op,
+    _apply_corruption_sequence,
     _resolve_corruption_profile_params,
     _resolve_severity_profile_args,
     _severity_profile_metadata,
@@ -89,11 +88,6 @@ from scripts.triple_labels.label_schemes import CLASS_NAMES_SUPER5, get_scheme  
 
 
 CHECKPOINT = ECGFOUNDER_ROOT / "checkpoint/12_lead_ECGFounder.pth"
-
-
-def _stable_seed(base_seed: int, *parts: object) -> int:
-    payload = "|".join(str(p) for p in (base_seed,) + parts).encode("utf-8")
-    return int.from_bytes(hashlib.sha1(payload).digest()[:4], "little")
 
 
 def _ref_ids_sha256(ids: set[str]) -> str:
@@ -175,23 +169,25 @@ class ECGFounderStreamingCorruptedDataset(Dataset):
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
         real_idx = int(self.indices[idx])
-        sample_seed = _stable_seed(self.seed, self.corruption, self.public_severity, real_idx)
-        np.random.seed(sample_seed)
-        random.seed(sample_seed)
-        torch.manual_seed(sample_seed)
-        op = _build_corruption_op(
-            self.corruption,
-            self.public_severity,
-            self.severity_profile,
-            severity_profile_params=self.severity_profile_params,
-        )
-
         sig_tc = self.signals[real_idx]
         if self.crop_len and self.crop_len < sig_tc.shape[0]:
             start = max((sig_tc.shape[0] - self.crop_len) // 2, 0)
             sig_tc = sig_tc[start : start + self.crop_len]
         sig_ct = torch.from_numpy(np.ascontiguousarray(sig_tc.T)).float()
-        corrupt_ct = op(sig_ct)
+        corrupt_ct = _apply_corruption_sequence(
+            sig_ct,
+            self.corruption,
+            self.public_severity,
+            self.severity_profile,
+            base_seed=self.seed,
+            seed_parts=(
+                "ecgfounder_preprocessed_cache",
+                self.corruption,
+                self.public_severity,
+                real_idx,
+            ),
+            severity_profile_params=self.severity_profile_params,
+        )
         label = torch.from_numpy(
             np.array(self.labels[real_idx], dtype=np.float32, copy=True)
         ).float()
@@ -301,31 +297,27 @@ class ECGFounderBottleneck5000CorruptedDataset(Dataset):
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
         real_idx = int(self.indices[idx])
-        sample_seed = _stable_seed(
-            self.seed,
-            LOCKED_ECGFOUNDER_CORRUPTION_INPUT,
-            self.corruption,
-            self.public_severity,
-            real_idx,
-        )
-        np.random.seed(sample_seed)
-        random.seed(sample_seed)
-        torch.manual_seed(sample_seed)
-        op = _build_corruption_op(
-            self.corruption,
-            self.public_severity,
-            self.severity_profile,
-            sample_rate_hz=500.0,
-            severity_profile_params=self.severity_profile_params,
-        )
-
         sig_tc = self.signals[real_idx]
         if self.crop_len and self.crop_len < sig_tc.shape[0]:
             start = max((sig_tc.shape[0] - self.crop_len) // 2, 0)
             sig_tc = sig_tc[start : start + self.crop_len]
         sig_ct = torch.from_numpy(np.ascontiguousarray(sig_tc.T)).float()
         sig_ct = _ecg1000_ct_to_ecgfounder_5000_no_zscore(sig_ct)
-        corrupt_ct = op(sig_ct)
+        corrupt_ct = _apply_corruption_sequence(
+            sig_ct,
+            self.corruption,
+            self.public_severity,
+            self.severity_profile,
+            base_seed=self.seed,
+            seed_parts=(
+                LOCKED_ECGFOUNDER_CORRUPTION_INPUT,
+                self.corruption,
+                self.public_severity,
+                real_idx,
+            ),
+            sample_rate_hz=500.0,
+            severity_profile_params=self.severity_profile_params,
+        )
         label = torch.from_numpy(
             np.array(self.labels[real_idx], dtype=np.float32, copy=True)
         ).float()

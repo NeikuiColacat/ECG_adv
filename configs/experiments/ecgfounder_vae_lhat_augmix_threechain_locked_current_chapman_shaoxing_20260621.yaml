@@ -1,0 +1,20 @@
+extends:
+  - ecgfounder_vae_lhat_augmix_threechain_locked_k500.yaml
+
+experiment:
+  name: ecgfounder_vae_lhat_augmix_threechain_locked_current_chapman_shaoxing_20260621
+  description: "Chapman-Shaoxing ECGFounder current-method probe: fullFT VAE-LHAT plus locked three-chain AugMix, initialized from the locked K500 fullFT checkpoint."
+
+model:
+  upstream_run_id: locked_rawfirst_20260618
+  init_model_path: ${paths.output_root}/ecgfounder_k500_fullft_locked/locked_rawfirst_20260618/runs/chapman_shaoxing_k500_fullft_locked/last_model.pt
+
+runner:
+  matrix:
+    center:
+      - chapman_shaoxing
+
+run_record:
+  purpose: "Probe whether the current fullFT VAE-LHAT plus locked three-chain AugMix topology improves ECGFounder on PN2021-C Chapman-Shaoxing, without raw-supervised branches or input stabilizers."
+  result_summary: Pending.
+  registration_status: provisional

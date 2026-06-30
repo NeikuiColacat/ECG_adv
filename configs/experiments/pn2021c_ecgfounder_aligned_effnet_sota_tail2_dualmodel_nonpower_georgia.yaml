@@ -1,0 +1,26 @@
+extends:
+  - pn2021c_ecgfounder_aligned_effnet_sota_dualmodel_nonpower_georgia.yaml
+
+experiment:
+  name: pn2021c_ecgfounder_aligned_effnet_sota_tail2_official_s5_locked_dualmodel_nonpower_georgia
+  description: Non-powerline bottleneck5000 PN2021-C dual_model_10to15pp_v1 eval for ECGFounder aligned EffNet-SOTA tail2 Georgia.
+
+logging:
+  postprocess_artifacts:
+    - pn2021c_ecgfounder_aligned_effnet_sota_tail2_dualmodel_nonpower_georgia.csv
+
+runner:
+  matrix:
+    center:
+      - georgia
+    method:
+      - name: ecgfounder_aligned_effnet_sota_tail2
+        family: ecgfounder_vae_lhat_augmix_threechain_aligned_effnet_sota_tail2_georgia_20260621
+        run_dir_template: >-
+          {output_root}/ecgfounder_vae_lhat_augmix_threechain_aligned_effnet_sota_tail2_georgia_20260621/tail2_georgia_probe_20260621_gpu4/runs/georgia_vae_lhat_augmix_threechain_aligned_effnet_sota_tail2
+  name: ${experiment.name}_${matrix.center}_${matrix.method.name}
+
+run_record:
+  purpose: Evaluate the ECGFounder tail2 partial-unfreeze probe on non-powerline dual_model corruptions.
+  result_summary: Pending.
+  registration_status: provisional

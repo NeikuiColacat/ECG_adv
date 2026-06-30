@@ -20,7 +20,7 @@ import os
 import random
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 import torch
@@ -114,12 +114,15 @@ from methods.augmix.jsd_loss import jsd_multilabel  # noqa: E402
 from scripts.paper.run_ecgfounder_vae_only_lhat_head_ft_20260523 import (  # noqa: E402
     RawSignalDataset,
     anchor_signal_npz_path,
-    apply_augmix_op_np,
+    apply_augmix_op_np as _legacy_apply_augmix_op_np,
     build_profiled_raw_corruption_views,
     load_source_raw_dataset,
 )
 from scripts.triple_labels.eval_pn2021_corruptions import (  # noqa: E402
     STRESS_PROFILE_CHOICES,
+    _build_corruption_op,
+    _resolve_severity_profile_args,
+    _severity_profile_metadata,
 )
 from methods.augmix.severity import AVAILABLE_OPS  # noqa: E402
 from scripts.triple_labels.model_zoo import build_super5_model, normalize_model_name  # noqa: E402
@@ -148,6 +151,47 @@ REAL_ROOTS = [
     DATA_ROOT / "ecgtwin_prompt_token_super5/real_anchor_selected_v2",
     DATA_ROOT / "ecgtwin_prompt_token_super5/real_anchor_selected_v1",
 ]
+
+
+def _parse_float_csv(value: str | None) -> list[float] | None:
+    if value is None or str(value).strip() == "":
+        return None
+    return [float(part.strip()) for part in str(value).split(",") if part.strip()]
+
+
+def _resolve_latent_augmix_severity_profile(args: argparse.Namespace) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    resolver_args = argparse.Namespace(
+        severity_profile=args.latent_augmix_severity_profile,
+        severity_params_file=args.latent_augmix_severity_params_file,
+        severity_params_name=args.latent_augmix_severity_params_name,
+        mode="stream",
+    )
+    params = _resolve_severity_profile_args(resolver_args)
+    resolver_args.severity_profile_params = params
+    return params, _severity_profile_metadata(resolver_args)
+
+
+def apply_augmix_op_np(
+    sig_ct: np.ndarray,
+    op_name: str,
+    op_severity: int,
+    severity_profile: str = "standard",
+    severity_profile_params: dict[str, Any] | None = None,
+) -> np.ndarray:
+    """Apply one ECG AugMix op, including evaluator-style custom profiles."""
+
+    if str(severity_profile) == "custom":
+        op = _build_corruption_op(
+            op_name,
+            int(op_severity),
+            str(severity_profile),
+            severity_profile_params=severity_profile_params,
+        )
+        sig_t = torch.from_numpy(sig_ct.copy()).float()
+        return op(sig_t).cpu().numpy().astype(np.float32, copy=False)
+    if severity_profile_params is not None:
+        raise ValueError("severity_profile_params are only valid for latent_augmix severity_profile=custom")
+    return _legacy_apply_augmix_op_np(sig_ct, op_name, op_severity, severity_profile)
 
 
 def set_seed(seed: int) -> None:
@@ -449,9 +493,18 @@ def build_locked_three_chain_latent_augmix_views(
     copies: int,
     severity: int,
     severity_profile: str,
+    severity_profile_params: dict[str, Any] | None = None,
+    severity_params_file: str | None = None,
+    severity_params_name: str | None = None,
     width: int,
     depth: int,
     alpha: float,
+    mixture_mode: str = "beta",
+    mixture_prob: float = 0.5,
+    mixture_beta_a: float | None = None,
+    mixture_beta_b: float | None = None,
+    op_schedule: str = "random",
+    chain_weights: list[float] | None = None,
     ops: list[str],
     rng: np.random.Generator,
     renorm: bool = False,
@@ -459,7 +512,16 @@ def build_locked_three_chain_latent_augmix_views(
 ) -> tuple[np.ndarray, dict[str, Any]]:
     """Build locked ECGFounder three-chain VAE-LHAT AugMix waveform views."""
 
-    return build_three_chain_vae_lhat_augmix_views_core(
+    def _apply(sig_ct: np.ndarray, op_name: str, op_severity: int, op_profile: str) -> np.ndarray:
+        return apply_augmix_op_np(
+            sig_ct,
+            op_name,
+            op_severity,
+            op_profile,
+            severity_profile_params=severity_profile_params,
+        )
+
+    views, stats = build_three_chain_vae_lhat_augmix_views_core(
         anchor_signals_ct,
         adv_signals_ct,
         copies=copies,
@@ -470,11 +532,22 @@ def build_locked_three_chain_latent_augmix_views(
         alpha=alpha,
         ops=ops,
         rng=rng,
-        op_apply_fn=apply_augmix_op_np,
+        op_apply_fn=_apply,
         available_ops=AVAILABLE_OPS,
+        mixture_mode=mixture_mode,
+        mixture_prob=mixture_prob,
+        mixture_beta_a=mixture_beta_a,
+        mixture_beta_b=mixture_beta_b,
+        op_schedule=op_schedule,
+        chain_weights=chain_weights,
         renorm=renorm,
         clip_abs=clip_abs,
     )
+    if str(severity_profile) == "custom":
+        stats["severity_params_file"] = str(severity_params_file or "")
+        stats["severity_params_name"] = str(severity_params_name or "")
+        stats["severity_profile_params"] = severity_profile_params
+    return views, stats
 
 
 def summarize_latent_augmix_epoch_stats(stats_batches: list[dict[str, Any]]) -> dict[str, Any]:
@@ -945,6 +1018,7 @@ def build_adv_epoch(
     pos_weight: torch.Tensor,
     args: argparse.Namespace,
     device: torch.device,
+    restore_trainable_fn: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     set_module_requires_grad(model, False)
     model.eval()
@@ -999,9 +1073,26 @@ def build_adv_epoch(
                     copies=args.latent_augmix_copies,
                     severity=args.latent_augmix_severity,
                     severity_profile=args.latent_augmix_severity_profile,
+                    severity_profile_params=getattr(args, "latent_augmix_severity_profile_params", None),
+                    severity_params_file=args.latent_augmix_severity_params_file,
+                    severity_params_name=args.latent_augmix_severity_params_name,
                     width=args.latent_augmix_width,
                     depth=args.latent_augmix_depth,
                     alpha=args.latent_augmix_alpha,
+                    mixture_mode=args.latent_augmix_mixture_mode,
+                    mixture_prob=args.latent_augmix_mixture_prob,
+                    mixture_beta_a=(
+                        None
+                        if float(args.latent_augmix_mixture_beta_a) <= 0.0
+                        else float(args.latent_augmix_mixture_beta_a)
+                    ),
+                    mixture_beta_b=(
+                        None
+                        if float(args.latent_augmix_mixture_beta_b) <= 0.0
+                        else float(args.latent_augmix_mixture_beta_b)
+                    ),
+                    op_schedule=args.latent_augmix_op_schedule,
+                    chain_weights=_parse_float_csv(args.latent_augmix_chain_weights),
                     ops=list(args.latent_augmix_ops),
                     rng=latent_augmix_rng,
                     renorm=bool(args.latent_augmix_renorm),
@@ -1049,7 +1140,10 @@ def build_adv_epoch(
                 adv_teacher_logits.append(clean_logits.detach().cpu().numpy().astype(np.float32))
             delta_norms.extend(delta.detach().flatten(1).norm(dim=1).cpu().tolist())
     finally:
-        set_module_requires_grad(model, True)
+        if restore_trainable_fn is not None:
+            restore_trainable_fn()
+        else:
+            set_module_requires_grad(model, True)
     signals = (
         np.concatenate(adv_signals, axis=0).astype(np.float32)
         if adv_signals
@@ -1147,6 +1241,7 @@ def train_fullft_raw_corruption_consistency_epoch(
     feature_consistency_normalize: bool = False,
     op_adapter: OperatorConditionedLogitAdapter | None = None,
     input_stabilizer_kwargs: dict[str, Any] | None = None,
+    train_mode_fn: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     """Train the full ECGFounder model on profiled raw corruption views."""
 
@@ -1186,9 +1281,12 @@ def train_fullft_raw_corruption_consistency_epoch(
     if str(severity_profile) not in STRESS_PROFILE_CHOICES:
         raise ValueError(f"unknown raw corruption severity profile: {severity_profile}")
 
-    model.train()
-    if op_adapter is not None:
-        op_adapter.train()
+    if train_mode_fn is not None:
+        train_mode_fn()
+    else:
+        model.train()
+        if op_adapter is not None:
+            op_adapter.train()
     if teacher_model is not None:
         teacher_model.eval()
     losses: list[float] = []
@@ -1594,6 +1692,88 @@ def load_fullft_checkpoint(
     model.load_state_dict(state)
 
 
+def _ecgfounder_tail_train_modules(model: nn.Module, args: argparse.Namespace) -> list[nn.Module]:
+    scope = str(args.trainable_scope)
+    if scope == "dense":
+        return [model.dense]
+    if scope == "last_n_stages":
+        stage_list = getattr(model, "stage_list", None)
+        if stage_list is None:
+            raise RuntimeError("--trainable_scope last_n_stages requires ECGFounder model.stage_list")
+        n_stages = len(stage_list)
+        last_n = int(args.trainable_last_n_stages)
+        if last_n <= 0:
+            raise ValueError("--trainable_last_n_stages must be positive when trainable_scope=last_n_stages")
+        if last_n > n_stages:
+            raise ValueError(
+                f"--trainable_last_n_stages={last_n} exceeds ECGFounder stage count {n_stages}"
+            )
+        return list(stage_list[-last_n:]) + [model.dense]
+    if scope == "full":
+        return [model]
+    raise ValueError(f"unsupported --trainable_scope={scope!r}")
+
+
+def configure_ecgfounder_trainable_scope(
+    model: nn.Module,
+    args: argparse.Namespace,
+    op_adapter: OperatorConditionedLogitAdapter | None = None,
+) -> dict[str, Any]:
+    """Apply the requested ECGFounder fine-tuning scope and return audit info."""
+
+    scope = str(args.trainable_scope)
+    if scope == "full":
+        set_module_requires_grad(model, True)
+        if op_adapter is not None:
+            set_module_requires_grad(op_adapter, True)
+        train_module_names = ["model"]
+    else:
+        set_module_requires_grad(model, False)
+        train_modules = _ecgfounder_tail_train_modules(model, args)
+        for module in train_modules:
+            set_module_requires_grad(module, True)
+        if op_adapter is not None:
+            set_module_requires_grad(op_adapter, True)
+        if scope == "dense":
+            train_module_names = ["dense"]
+        else:
+            last_n = int(args.trainable_last_n_stages)
+            stage_count = len(getattr(model, "stage_list"))
+            train_module_names = [
+                *(f"stage_list.{idx}" for idx in range(stage_count - last_n, stage_count)),
+                "dense",
+            ]
+    trainable_model_params = [p for p in model.parameters() if p.requires_grad]
+    trainable_op_params = [] if op_adapter is None else [p for p in op_adapter.parameters() if p.requires_grad]
+    return {
+        "scope": scope,
+        "last_n_stages": int(args.trainable_last_n_stages),
+        "train_module_names": train_module_names,
+        "n_trainable_model_tensors": int(len(trainable_model_params)),
+        "n_trainable_model_params": int(sum(p.numel() for p in trainable_model_params)),
+        "n_trainable_op_adapter_params": int(sum(p.numel() for p in trainable_op_params)),
+        "n_total_model_params": int(sum(p.numel() for p in model.parameters())),
+    }
+
+
+def set_ecgfounder_train_mode_for_scope(
+    model: nn.Module,
+    args: argparse.Namespace,
+    op_adapter: OperatorConditionedLogitAdapter | None = None,
+) -> None:
+    """Set train/eval modes so frozen ECGFounder blocks do not update BN stats."""
+
+    scope = str(args.trainable_scope)
+    if scope == "full":
+        model.train()
+    else:
+        model.eval()
+        for module in _ecgfounder_tail_train_modules(model, args):
+            module.train()
+    if op_adapter is not None:
+        op_adapter.train()
+
+
 def train_fullft_raw_corruption_branches_epoch(
     *,
     model: nn.Module,
@@ -1607,6 +1787,7 @@ def train_fullft_raw_corruption_branches_epoch(
     aux_teacher_model: nn.Module | None = None,
     op_adapter: OperatorConditionedLogitAdapter | None = None,
     input_stabilizer_kwargs: dict[str, Any] | None = None,
+    train_mode_fn: Callable[[], None] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Run primary and optional auxiliary raw-corruption branches for one epoch."""
 
@@ -1648,6 +1829,7 @@ def train_fullft_raw_corruption_branches_epoch(
             feature_consistency_normalize=args.raw_corrupt_feature_consistency_normalize,
             op_adapter=op_adapter,
             input_stabilizer_kwargs=input_stabilizer_kwargs,
+            train_mode_fn=train_mode_fn,
         )
 
     if args.enable_raw_corrupt_aux_consistency:
@@ -1689,6 +1871,7 @@ def train_fullft_raw_corruption_branches_epoch(
             feature_consistency_normalize=args.raw_corrupt_feature_consistency_normalize,
             op_adapter=op_adapter,
             input_stabilizer_kwargs=input_stabilizer_kwargs,
+            train_mode_fn=train_mode_fn,
         )
 
     return primary_stats, aux_stats
@@ -1734,6 +1917,30 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default="standard",
         choices=STRESS_PROFILE_CHOICES,
     )
+    ap.add_argument(
+        "--latent_augmix_severity_params_file",
+        default=None,
+        help="YAML/JSON profile file used only with --latent_augmix_severity_profile custom.",
+    )
+    ap.add_argument(
+        "--latent_augmix_severity_params_name",
+        default=None,
+        help="Profile name under top-level profiles used only with --latent_augmix_severity_profile custom.",
+    )
+    ap.add_argument(
+        "--latent_augmix_mixture_mode",
+        choices=["beta", "fixed"],
+        default="beta",
+    )
+    ap.add_argument("--latent_augmix_mixture_prob", type=float, default=0.5)
+    ap.add_argument("--latent_augmix_mixture_beta_a", type=float, default=0.0)
+    ap.add_argument("--latent_augmix_mixture_beta_b", type=float, default=0.0)
+    ap.add_argument(
+        "--latent_augmix_op_schedule",
+        choices=["random", "cycle", "per_op"],
+        default="random",
+    )
+    ap.add_argument("--latent_augmix_chain_weights", default="")
     ap.add_argument(
         "--latent_augmix_ops",
         nargs="+",
@@ -1918,6 +2125,23 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Optional trained Super5 linear head state dict (weight/bias) used to initialize model.dense.",
     )
     ap.add_argument(
+        "--trainable_scope",
+        choices=["full", "dense", "last_n_stages"],
+        default="full",
+        help=(
+            "Which ECGFounder parameters are updated during this run. "
+            "full preserves the locked fullFT protocol; dense trains only "
+            "model.dense; last_n_stages trains model.dense plus the last N "
+            "ECGFounder stage_list blocks."
+        ),
+    )
+    ap.add_argument(
+        "--trainable_last_n_stages",
+        type=int,
+        default=0,
+        help="Number of tail stage_list blocks to train when --trainable_scope last_n_stages.",
+    )
+    ap.add_argument(
         "--anchor_base_root",
         default="",
         help=(
@@ -2068,6 +2292,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = build_arg_parser().parse_args()
 
+    args.latent_augmix_severity_profile_params = None
+    args.latent_augmix_severity_profile_metadata = None
+    if args.enable_latent_augmix_branch:
+        (
+            args.latent_augmix_severity_profile_params,
+            args.latent_augmix_severity_profile_metadata,
+        ) = _resolve_latent_augmix_severity_profile(args)
+    elif args.latent_augmix_severity_params_file or args.latent_augmix_severity_params_name:
+        raise ValueError(
+            "--latent_augmix_severity_params_file/name require --enable_latent_augmix_branch"
+        )
+
     if args.stage == "k500" and not args.ref_meta_json:
         raise ValueError("--ref_meta_json is required for --stage k500")
     if args.enable_latent_augmix_branch and not args.enable_vae_adv_stream:
@@ -2079,6 +2315,10 @@ def main() -> None:
             raise ValueError("--latent_augmix_topology locked_three_chain requires exactly three chains")
         if bool(args.latent_augmix_renorm):
             raise ValueError("--latent_augmix_renorm is diagnostic-only and excluded from the locked main protocol")
+    if args.trainable_scope == "last_n_stages" and int(args.trainable_last_n_stages) <= 0:
+        raise ValueError("--trainable_scope last_n_stages requires --trainable_last_n_stages > 0")
+    if args.trainable_scope != "last_n_stages" and int(args.trainable_last_n_stages) != 0:
+        raise ValueError("--trainable_last_n_stages is only valid with --trainable_scope last_n_stages")
     if args.stage == "ptbxl_source":
         if args.enable_vae_adv_stream:
             raise ValueError("--stage ptbxl_source does not support VAE adversarial stream")
@@ -2427,9 +2667,23 @@ def main() -> None:
             adv_weight=float(args.adv_bce_loss_weight),
         )
 
-    trainable_params = list(model.parameters())
+    trainable_setup = configure_ecgfounder_trainable_scope(model, args, op_adapter)
+    train_mode_fn = lambda: set_ecgfounder_train_mode_for_scope(model, args, op_adapter)
+    trainable_params = [p for p in model.parameters() if p.requires_grad]
     if op_adapter is not None:
-        trainable_params += list(op_adapter.parameters())
+        trainable_params += [p for p in op_adapter.parameters() if p.requires_grad]
+    if not trainable_params:
+        raise RuntimeError("no trainable parameters selected for ECGFounder run")
+    print(
+        "[setup] ECGFounder trainable scope: "
+        f"scope={trainable_setup['scope']} "
+        f"last_n_stages={trainable_setup['last_n_stages']} "
+        f"modules={trainable_setup['train_module_names']} "
+        f"trainable={trainable_setup['n_trainable_model_params']:,}/"
+        f"{trainable_setup['n_total_model_params']:,} model params "
+        f"op_adapter={trainable_setup['n_trainable_op_adapter_params']:,}",
+        flush=True,
+    )
     opt = torch.optim.AdamW(trainable_params, lr=args.lr, weight_decay=args.weight_decay)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max(args.epochs, 1), eta_min=args.lr * 0.05)
 
@@ -2460,6 +2714,7 @@ def main() -> None:
                 pos_weight,
                 args,
                 device,
+                restore_trainable_fn=lambda: configure_ecgfounder_trainable_scope(model, args, op_adapter),
             )
         epoch_adv_weight = scheduled_adv_weight(args, epoch)
         if args.stage == "ptbxl_source":
@@ -2477,7 +2732,7 @@ def main() -> None:
                 adv_weight=epoch_adv_weight,
                 target_train_record_ids=target_train_ids,
             )
-        model.train()
+        train_mode_fn()
         losses = []
         clean_anchor_losses = []
         for x, y, stream, teacher_logits in tqdm(train_loader, desc=f"epoch {epoch}/{args.epochs}"):
@@ -2520,6 +2775,7 @@ def main() -> None:
                 aux_teacher_model=raw_corrupt_aux_teacher_model,
                 op_adapter=op_adapter,
                 input_stabilizer_kwargs=input_stabilizer_kwargs,
+                train_mode_fn=train_mode_fn,
             )
         sched.step()
         val_metrics = eval_split(
@@ -2633,6 +2889,7 @@ def main() -> None:
             "raw_corrupt_aux_loss": _finite_loss_or_none(raw_corrupt_aux_stats),
             "raw_corrupt_aux_stats": raw_corrupt_aux_stats,
             "latent_augmix_stats": adv_info.get("latent_augmix_stats"),
+            "trainable_scope": trainable_setup,
             "lr": float(opt.param_groups[0]["lr"]),
         }
         logs.append(entry)
@@ -2697,6 +2954,7 @@ def main() -> None:
         "raw_corrupt_op_adapter": None if op_adapter is None else op_adapter.config(),
         "supervised_input_mode": str(args.supervised_input_mode),
         "input_stabilizer": dict(input_stabilizer_kwargs),
+        "trainable_scope": trainable_setup,
         "label_mapping": pn2021_super5_label_mapping_payload(),
         "stage": args.stage,
         "center": None if args.stage == "ptbxl_source" else args.center,
@@ -2784,6 +3042,15 @@ def main() -> None:
             "alpha": float(args.latent_augmix_alpha),
             "severity": int(args.latent_augmix_severity),
             "severity_profile": str(args.latent_augmix_severity_profile),
+            "severity_params_file": args.latent_augmix_severity_params_file,
+            "severity_params_name": args.latent_augmix_severity_params_name,
+            "severity_profile_metadata": args.latent_augmix_severity_profile_metadata,
+            "mixture_mode": str(args.latent_augmix_mixture_mode),
+            "mixture_prob": float(args.latent_augmix_mixture_prob),
+            "mixture_beta_a": float(args.latent_augmix_mixture_beta_a),
+            "mixture_beta_b": float(args.latent_augmix_mixture_beta_b),
+            "op_schedule": str(args.latent_augmix_op_schedule),
+            "chain_weights": _parse_float_csv(args.latent_augmix_chain_weights),
             "ops": list(args.latent_augmix_ops),
             "renorm": bool(args.latent_augmix_renorm),
             "clip_abs": float(args.latent_augmix_clip_abs),

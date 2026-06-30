@@ -1,0 +1,16 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_dualmodel_cand35_advchain_balanced_ops_cpsc.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_dualmodel_cand35_advchain_balanced_ops_ningbo
+  description: "Run cand35 adv-chain balanced-ops locked three-chain VAE-LH AugMix recipe on Ningbo."
+
+runner:
+  matrix:
+    center:
+      - ningbo
+
+run_record:
+  purpose: Complete Ningbo evidence for cand35 without sequentially blocking the four-center sweep.
+  result_summary: Pending.
+  registration_status: provisional

@@ -1,0 +1,19 @@
+extends:
+  - ecgfounder_vae_lhat_augmix_threechain_cand93_matched_seed20260601_k500.yaml
+
+experiment:
+  name: ecgfounder_vae_lhat_augmix_threechain_cand93_matched_seed20260601_dense_k500
+  description: ECGFounder cand93-matched trainable-scope ablation with only the Super5 dense head trainable.
+
+adaptation:
+  run_name: ${matrix.center}_vae_lhat_augmix_threechain_cand93_matched_seed20260601_dense
+  trainable_scope:
+    scope: dense
+
+run_record:
+  purpose: >-
+    Trainable-scope ablation for the cand93-matched ECGFounder replication.
+    This tests whether full encoder updates damage ECGFounder robustness while
+    keeping the VAE-LH plus locked three-chain AugMix method unchanged.
+  result_summary: Pending.
+  registration_status: provisional

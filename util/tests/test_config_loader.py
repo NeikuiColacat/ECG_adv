@@ -622,6 +622,45 @@ def test_effnet_vae_lhat_typed_adapter_honors_ptbxl_weight_override():
     assert _option_value(commands[0]["argv"], "--ptbxl_weight") == "0.0"
 
 
+def test_effnet_vae_lhat_typed_adapter_exposes_source_floor_anchor_options():
+    config = _load("effnet_vae_lhat_augmix_threechain_dualmodel_cand41_trainproxy16_q4096_cpsc.yaml")
+    config = copy.deepcopy(config)
+    config["data"]["synth_npz_override"] = "source_pools/cpsc_source_floor.latent.npz"
+    config["adaptation"]["anchors"].update(
+        {
+            "source_weights": "real_anchor=1.0,ptbxl_source=0.35",
+            "source_class_weights": "MI:ptbxl_source=2.0,HYP:ptbxl_source=1.5",
+            "source_floor_per_class": 12,
+            "anchor_class_weights": "MI=3.0,HYP=2.0",
+            "anchor_class_weight_mode": "inv_freq_kshot",
+            "anchor_class_weight_reference_source": "all",
+            "anchor_class_weight_gamma": 0.7,
+            "anchor_class_weight_min": 0.5,
+            "anchor_class_weight_cap": 5.0,
+            "anchor_class_missing_weight": 1.25,
+        }
+    )
+    validate_experiment_config(config, repo_root=REPO)
+
+    commands = build_runner_commands(config)
+
+    assert len(commands) == 1
+    argv = commands[0]["argv"]
+    assert _option_value(argv, "--synth_npz_override").endswith(
+        "/ECG_adv_data/source_pools/cpsc_source_floor.latent.npz"
+    )
+    assert _option_value(argv, "--source_weights") == "real_anchor=1.0,ptbxl_source=0.35"
+    assert _option_value(argv, "--source_class_weights") == "MI:ptbxl_source=2.0,HYP:ptbxl_source=1.5"
+    assert _option_value(argv, "--source_floor_per_class") == "12"
+    assert _option_value(argv, "--anchor_class_weights") == "MI=3.0,HYP=2.0"
+    assert _option_value(argv, "--anchor_class_weight_mode") == "inv_freq_kshot"
+    assert _option_value(argv, "--anchor_class_weight_reference_source") == "all"
+    assert _option_value(argv, "--anchor_class_weight_gamma") == "0.7"
+    assert _option_value(argv, "--anchor_class_weight_min") == "0.5"
+    assert _option_value(argv, "--anchor_class_weight_cap") == "5.0"
+    assert _option_value(argv, "--anchor_class_missing_weight") == "1.25"
+
+
 def test_effnet_vae_lhat_v7_config_uses_typed_runner_adapter():
     config = _load("effnet_vae_lhat_k500_v7_sjr_rgq.yaml")
 
@@ -2710,6 +2749,31 @@ def test_ecgfounder_locked_threechain_augmix_command_uses_fullft_last_checkpoint
         assert "--init_head_path" not in argv
         assert "best_head.pt" not in joined
         assert "residual_adapter" not in joined
+
+
+def test_ecgfounder_locked_threechain_augmix_can_reuse_locked_upstream_run_id():
+    config = _load("ecgfounder_vae_lhat_augmix_threechain_locked_k500.yaml")
+    config = copy.deepcopy(config)
+    config["runner"]["matrix"]["center"] = ["cpsc_2018"]
+    config["model"]["upstream_run_id"] = "locked_rawfirst_20260618"
+    config["model"]["init_model_path"] = (
+        "${paths.output_root}/ecgfounder_k500_fullft_locked/"
+        "locked_rawfirst_20260618/runs/${matrix.center}_k500_fullft_locked/last_model.pt"
+    )
+    validate_experiment_config(config, repo_root=REPO)
+    commands = build_runner_commands(config)
+
+    assert len(commands) == 1
+    argv = commands[0]["argv"]
+    assert _option_value(argv, "--out_dir").endswith(
+        "/runs/ecgfounder_vae_lhat_augmix_threechain_locked_k500/pytest_run"
+    )
+    assert _option_value(argv, "--init_model_path").endswith(
+        "/ecgfounder_k500_fullft_locked/locked_rawfirst_20260618/runs/"
+        "cpsc_2018_k500_fullft_locked/last_model.pt"
+    )
+    audit = audit_runner_command(commands[0], config=config)
+    assert audit["errors"] == []
 
 
 def test_ecgfounder_locked_threechain_augmix_manifest_expects_last_model():

@@ -1,0 +1,17 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_dualmodel_cand37_trainproxy16_cpsc.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_dualmodel_cand39_trainproxy16_boundary_cpsc
+  description: "CPSC probe: keep cand37's amp16 training proxy and filter the online VAE-LH/AugMix buffer to boundary-range hard samples."
+
+adaptation:
+  run_tag_extra: trraw_proxy16_q2048r1_boundary_b01585_aw24_tw45_hs10_lam20_c6_cw16_b6
+  attack:
+    boundary_prob_min: 0.15
+    boundary_prob_max: 0.85
+
+run_record:
+  purpose: Test whether cand31/cand37 are capped because the quality-aware buffer mixes too-easy and too-hard views; boundary filtering should keep learnable VAE-LH plus three-chain AugMix hard samples without adding any preprocessing or raw-supervised branch.
+  result_summary: Pending.
+  registration_status: provisional

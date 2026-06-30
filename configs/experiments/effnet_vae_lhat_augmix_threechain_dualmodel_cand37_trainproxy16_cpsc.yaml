@@ -1,0 +1,17 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_dualmodel_cand31_q2048_bufferdominant_cpsc.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_dualmodel_cand37_trainproxy16_cpsc
+  description: "CPSC probe: isolate the training/evaluation powerline-profile gap by keeping cand31 fixed and raising only the 100Hz training powerline proxy from amp8 to amp16."
+
+adaptation:
+  run_tag_extra: trraw_proxy16_q2048r1_bufdom_aw24_tw45_hs10_lam20_c6_cw16_b6
+  latent_augmix:
+    severity_params_file: configs/corruption_profiles/pn2021c_dual_model_10to15pp_train_proxy_v2.yaml
+    severity_params_name: dual_model_10to15pp_train_proxy_v2
+
+run_record:
+  purpose: Test whether cand31's remaining powerline recovery gap is caused by under-training against the native_raw_first powerline stressor, while preserving VAE-LH online AT plus locked three-chain AugMix.
+  result_summary: Pending.
+  registration_status: provisional

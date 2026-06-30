@@ -1,0 +1,43 @@
+extends:
+  - pn2021c_official_s5_locked_protocol.yaml
+
+experiment:
+  name: pn2021c_effnet_dual3ch_cand94_goal_rawfirst_cpsc
+  description: Raw-first PN2021-C evaluation for cand94 per-op CPSC run.
+
+paper_protocol:
+  kshot:
+    seed: 20260601
+    subset_seed: 20260601
+
+evaluation:
+  severity_profile: custom
+  severity_params_file: configs/corruption_profiles/pn2021c_dual_model_10to15pp_v1.yaml
+  severity_params_name: dual_model_10to15pp_v1
+  severities: [5]
+  corruption_input: raw_first
+  output_stem: eval_pn2021_c_v7_refexcluded_stream_dual_model_10to15pp_v1_raw_first
+
+logging:
+  child_artifacts:
+    - eval_pn2021_c_v7_refexcluded_stream_dual_model_10to15pp_v1_raw_first.json
+  postprocess_artifacts:
+    - pn2021c_effnet_dual3ch_cand94_goal_rawfirst_cpsc.csv
+
+runner:
+  matrix:
+    center:
+      - cpsc_2018
+    method:
+      - name: cand94_q8192_hull24_perop_maskpower_c15_b20_ep45_goal
+        family: effnet_vae_lhat_augmix_threechain_dualmodel_cand94_q8192_hull24_perop_maskpower_c15_b20_ep45_cpsc
+        model_dir_template: >-
+          {output_root}/effnet_vae_lhat_augmix_threechain_dualmodel_cand94_q8192_hull24_perop_maskpower_c15_b20_ep45_cpsc/cand94_cpsc_accel_20260622_gpu4/{center}_realall_targetheavy_M20_lam0p24_augmix_s5_wlat0p3_hs12_target_macro_auprc_cdhypminormsttc_hlabelcom_anchor_soft_sta_local_random_p120_fullft_c94perop_c15_maskpower_aw24_b20_ep45_ep45_seed20260601
+        checkpoint_name: last_model.pt
+        clean_eval_name: eval_result_v7_exclrefs_crop1000.json
+  name: ${experiment.name}_${matrix.center}_${matrix.method.name}
+
+run_record:
+  purpose: Test whether cand94 per-op AugMix improves CPSC corrupted recovery under dual_model_10to15pp_v1 raw-first PN2021-C.
+  result_summary: Pending.
+  registration_status: provisional

@@ -98,6 +98,13 @@ directories (`configs/`, `manifests/`, `logs/`, `checkpoints/`, `eval/`,
 `diagnostics/`, `reports/`, `artifacts/`). Record the experiment purpose and
 result summary before treating the run as handoff-ready.
 
+For exploratory sweeps and long evaluations, avoid high-frequency disk writes.
+Prefer in-memory or temporary stdout/stderr under `/dev/shm` for verbose logs
+and intermediate diagnostics, then persist only the final command, manifest,
+CSV/JSON metrics, important plots/reports, and selected evaluation weights.
+Do not keep large resume-state checkpoints or regenerated signal caches unless
+they are explicitly needed for reproduction.
+
 This host is not running as root. Do not assume `/root/autodl-tmp` or
 `/root/miniforge3/envs/ECGTwin/bin/python` are accessible here unless a later
 setup step creates those paths. Use the migrated data path above for current

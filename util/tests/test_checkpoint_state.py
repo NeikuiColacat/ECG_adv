@@ -114,3 +114,35 @@ def test_rng_state_restores_python_numpy_torch_and_epoch_generator():
         int(epoch_rng.integers(0, 10_000)),
     )
     assert observed == pytest.approx(expected)
+
+
+def test_rng_state_restores_torch_cpu_from_serialized_list():
+    random.seed(321)
+    np.random.seed(321)
+    torch.manual_seed(321)
+    epoch_rng = np.random.default_rng(321)
+    state = capture_rng_state(epoch_rng, include_cuda=False)
+    state["torch_cpu"] = state["torch_cpu"].tolist()
+
+    expected = float(torch.rand(1).item())
+    torch.rand(1)
+    restore_rng_state(state, epoch_rng, restore_cuda=False)
+
+    assert float(torch.rand(1).item()) == pytest.approx(expected)
+
+
+def test_rng_state_normalizes_cuda_state_before_restore(monkeypatch):
+    epoch_rng = np.random.default_rng(7)
+    captured = []
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "set_rng_state_all", lambda states: captured.extend(states))
+
+    restore_rng_state(
+        {"torch_cuda_all": [[1, 2, 3], torch.tensor([4, 5], dtype=torch.int64)]},
+        epoch_rng,
+        restore_cuda=True,
+    )
+
+    assert [state.dtype for state in captured] == [torch.uint8, torch.uint8]
+    assert all(state.device.type == "cpu" for state in captured)

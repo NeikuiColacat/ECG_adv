@@ -1,0 +1,21 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_dualmodel_cand75_q8192_hull24_powermask_c12_b24_cpsc.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_dualmodel_cand79_q8192_hull24_powermask_bcedir_c12_b24_cpsc
+  description: "CPSC probe: keep cand75's powerline/random-mask exposure but increase supervised BCE pressure on locked three-chain AugMix views."
+
+adaptation:
+  run_tag_extra: trraw_proxy16_q8192r1_powermask_bcedir_c12_aw24_tw45_hs12_lam24_c12_cw12_b10_b24
+  latent_augmix:
+    consistency:
+      enabled: true
+      consistency_weight: 12.0
+      consistency_loss: jsd
+      bce_weight: 10.0
+      max_batches: 0
+
+run_record:
+  purpose: Test whether cand75's remaining powerline/random-lead recovery gap is caused by insufficient supervised learning on the hard AugMix views rather than insufficient operator exposure. This preserves the locked three-chain VAE-LH + AugMix mainline and does not add preprocessing, postprocessing, heldout selection, or an independent raw-supervised branch.
+  result_summary: Pending.
+  registration_status: provisional

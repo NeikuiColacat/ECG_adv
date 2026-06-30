@@ -1,0 +1,21 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_dualmodel_cand71_q8192_c10_maskboost_b32_cpsc.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_dualmodel_cand74_q8192_hull24_aw32_c10_maskboost_b32_cpsc
+  description: "CPSC probe: combine q8192 buffer, moderately harder latent-hull search, and higher hard-sample sampler pressure."
+
+adaptation:
+  run_tag_extra: trraw_proxy16_q8192r1_c10mask_aw32_tw45_hs12_lam24_c10_cw16_b6_b32
+  hull:
+    lambda: 0.24
+    steps: 12
+    lr: 0.55
+  loss:
+    adv_weight: 32.0
+    adv_weight_warmup_epochs: 1
+
+run_record:
+  purpose: Test whether the two small positive directions around cand71 are additive, while keeping the VAE-LH online AT plus locked three-chain AugMix mainline unchanged.
+  result_summary: Pending.
+  registration_status: provisional

@@ -1,0 +1,23 @@
+extends:
+  - ecgfounder_vae_lhat_augmix_threechain_aligned_effnet_sota_dense_k500.yaml
+
+experiment:
+  name: ecgfounder_vae_lhat_augmix_threechain_aligned_effnet_sota_dense_cached_georgia_20260621
+  description: Georgia ECGFounder aligned EffNet-SOTA dense-only probe reusing completed ECGFounder signal cache.
+
+data:
+  cache:
+    ecgfounder_fullft_signal_cache_dir: ${paths.output_root}/ecgfounder_vae_lhat_augmix_threechain_aligned_effnet_sota_tail3_georgia_20260621/tail3_georgia_probe_20260621_gpu1/cache
+
+runner:
+  matrix:
+    center:
+      - georgia
+
+run_record:
+  purpose: >-
+    Dense-only control for ECGFounder trainable-scope exploration, reusing the
+    completed tail3 Georgia/PTB-XL ECGFounder cache to avoid duplicate cache
+    generation. The VAE-LH plus locked three-chain AugMix recipe is unchanged.
+  result_summary: Pending.
+  registration_status: provisional

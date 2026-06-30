@@ -1,0 +1,63 @@
+extends:
+  - ecgfounder_vae_lhat_augmix_threechain_cand93_matched_seed20260601_k500.yaml
+
+experiment:
+  name: ecgfounder_vae_lhat_augmix_threechain_officials5_cand100_depth3_m100_c18_b20_cpsc_20260623
+  description: "CPSC ECGFounder pilot aligned to EffNet c100: official severity-5 depth-3 locked three-chain VAE-LH AugMix."
+
+training:
+  batch_size: 20
+  eval_batch_size: 128
+
+model:
+  upstream_run_id: ecgf_direct_canon_s20260601_cpsc_20260622_gpu4
+  init_model_path: ${paths.output_root}/ecgfounder_k500_fullft_locked/ecgf_direct_canon_s20260601_cpsc_20260622_gpu4/runs/cpsc_2018_k500_fullft_locked/last_model.pt
+
+adaptation:
+  run_name: ${matrix.center}_vae_lhat_augmix_threechain_officials5_cand100_depth3_m100
+  latent_augmix:
+    enabled: true
+    topology: locked_three_chain
+    copies: 18
+    width: 3
+    depth: 3
+    alpha: 1.0
+    severity: 5
+    severity_profile: standard
+    severity_params_file: ""
+    severity_params_name: ""
+    mixture:
+      mode: fixed
+      prob: 1.0
+      beta_a: 0.0
+      beta_b: 0.0
+    op_schedule: cycle
+    chain_weights: 0.45,0.45,0.10
+    ops:
+      - baseline_shift
+      - baseline_wander
+      - emg_noise
+      - powerline_noise
+      - random_leads_masking
+      - baseline_shift
+      - emg_noise
+      - random_leads_masking
+      - baseline_wander
+      - powerline_noise
+    renorm: false
+    clip_abs: 6.0
+
+runner:
+  matrix:
+    center:
+      - cpsc_2018
+
+run_record:
+  purpose: >-
+    ECGFounder model-universality pilot matched to the best current EffNet
+    official severity-5 c100 recipe. Uses seed20260601 K500 fullFT
+    initialization, VAE-LH online adversarial training, and locked three-chain
+    AugMix with fixed depth-3 official standard corruptions. No stabilizer,
+    raw-supervised branch, operator oracle, or single-chain AugMix.
+  result_summary: Pending.
+  registration_status: provisional

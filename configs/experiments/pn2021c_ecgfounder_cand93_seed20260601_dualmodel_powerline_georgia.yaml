@@ -1,0 +1,47 @@
+extends:
+  - pn2021c_ecgfounder_threechain_locked_official_s5.yaml
+
+experiment:
+  name: pn2021c_ecgfounder_cand93_seed20260601_official_s5_locked_dualmodel_powerline_georgia
+  description: Powerline native_raw_first PN2021-C dual_model_10to15pp_v1 eval for Georgia ECGFounder direct and cand93 matched.
+
+paper_protocol:
+  kshot:
+    seed: 20260601
+    subset_seed: 20260601
+
+evaluation:
+  severity_profile: custom
+  severity_params_file: configs/corruption_profiles/pn2021c_dual_model_10to15pp_v1.yaml
+  severity_params_name: dual_model_10to15pp_v1
+  severities: [5]
+  corruption_input: native_raw_first
+  corruptions:
+    - powerline_noise
+  output_stem: eval_pn2021_c_ecgfounder_v7_refexcluded_stream_dual_model_10to15pp_v1_native_raw_first_powerline
+
+logging:
+  child_artifacts:
+    - eval_pn2021_c_ecgfounder_v7_refexcluded_stream_dual_model_10to15pp_v1_native_raw_first_powerline.json
+  postprocess_artifacts:
+    - pn2021c_ecgfounder_cand93_seed20260601_dualmodel_powerline_georgia.csv
+
+runner:
+  matrix:
+    center:
+      - georgia
+    method:
+      - name: ecgfounder_direct_seed20260601
+        family: ecgfounder_k500_fullft_locked
+        run_dir_template: >-
+          {output_root}/ecgfounder_k500_fullft_locked/ecgf_direct_canon_s20260601_georgia_20260622_gpu7/runs/georgia_k500_fullft_locked
+      - name: ecgfounder_cand93_matched_seed20260601
+        family: ecgfounder_vae_lhat_augmix_threechain_cand93_matched_seed20260601_georgia_20260622
+        run_dir_template: >-
+          {output_root}/ecgfounder_vae_lhat_augmix_threechain_cand93_matched_seed20260601_georgia_20260622/ecgf_cand93_matched_s20260601_georgia_20260622_gpu7/runs/georgia_vae_lhat_augmix_threechain_cand93_matched_seed20260601
+  name: ${experiment.name}_${matrix.center}_${matrix.method.name}
+
+run_record:
+  purpose: Evaluate Georgia ECGFounder direct versus cand93 matched powerline under native_raw_first dual_model protocol.
+  result_summary: Pending.
+  registration_status: provisional

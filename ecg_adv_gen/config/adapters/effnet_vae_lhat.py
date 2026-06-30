@@ -62,9 +62,13 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
     if not target_real_npz_override and target_real_npz_suffix:
         suffix = target_real_npz_suffix if target_real_npz_suffix.startswith(".") else f".{target_real_npz_suffix}"
         target_real_npz_override = f"{anchor_base}{suffix}"
+    synth_npz_override = str(data.get("synth_npz_override") or "")
+    if synth_npz_override and not Path(synth_npz_override).is_absolute():
+        synth_npz_override = str(Path(paths["data_root"]) / synth_npz_override)
     latent_augmix = adaptation["latent_augmix"]
     latent_augmix_mixture = latent_augmix.get("mixture") or {}
     latent_augmix_consistency = latent_augmix.get("consistency") or {}
+    anchors = adaptation.get("anchors") or {}
     selection = adaptation.get("selection") or {}
     buffer = adaptation.get("buffer") or {}
     raw_corrupt = adaptation.get("raw_corrupt_consistency") or {}
@@ -117,7 +121,7 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
         "--hull_neighbor_pool_multiplier",
         adaptation["hull"]["neighbor_pool_multiplier"],
         "--k_anchor",
-        adaptation["anchors"]["k_anchor"],
+        anchors["k_anchor"],
         "--pgd_batch",
         adaptation["attack"]["pgd_batch"],
         "--target_real_weight",
@@ -162,7 +166,26 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
     _append_optional_value(argv, "--boundary_prob_min", adaptation["attack"].get("boundary_prob_min"))
     _append_optional_value(argv, "--boundary_prob_max", adaptation["attack"].get("boundary_prob_max"))
     _append_optional_value(argv, "--target_real_norm_mode", data.get("target_real_norm_mode"))
+    _append_optional_value(argv, "--synth_npz_override", synth_npz_override or None)
     _append_optional_value(argv, "--target_real_npz_override", target_real_npz_override or None)
+    _append_optional_value(argv, "--source_weights", anchors.get("source_weights"))
+    _append_optional_value(argv, "--source_class_weights", anchors.get("source_class_weights"))
+    _append_optional_value(argv, "--source_floor_per_class", anchors.get("source_floor_per_class"))
+    _append_optional_value(argv, "--anchor_class_weights", anchors.get("anchor_class_weights"))
+    _append_optional_value(argv, "--anchor_class_weight_mode", anchors.get("anchor_class_weight_mode"))
+    _append_optional_value(
+        argv,
+        "--anchor_class_weight_reference_source",
+        anchors.get("anchor_class_weight_reference_source"),
+    )
+    _append_optional_value(argv, "--anchor_class_weight_gamma", anchors.get("anchor_class_weight_gamma"))
+    _append_optional_value(argv, "--anchor_class_weight_min", anchors.get("anchor_class_weight_min"))
+    _append_optional_value(argv, "--anchor_class_weight_cap", anchors.get("anchor_class_weight_cap"))
+    _append_optional_value(
+        argv,
+        "--anchor_class_missing_weight",
+        anchors.get("anchor_class_missing_weight"),
+    )
     _append_optional_value(
         argv,
         "--checkpoint_policy",

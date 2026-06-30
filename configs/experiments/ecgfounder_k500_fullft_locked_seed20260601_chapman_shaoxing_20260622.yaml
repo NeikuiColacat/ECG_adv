@@ -1,0 +1,19 @@
+extends:
+  - ecgfounder_k500_fullft_locked_seed20260601.yaml
+
+experiment:
+  name: ecgfounder_k500_fullft_locked
+  description: ECGFounder direct K500 fullFT baseline for Chapman-Shaoxing using seed20260601.
+
+runner:
+  matrix:
+    center:
+      - chapman_shaoxing
+
+run_record:
+  purpose: >-
+    Per-center ECGFounder direct K500 fullFT baseline for matched model
+    universality tests of the current VAE-LH plus locked three-chain AugMix
+    recipe. Uses seed20260601 K500 and last-checkpoint selection.
+  result_summary: Pending.
+  registration_status: provisional

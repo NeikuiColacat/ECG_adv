@@ -1,0 +1,22 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_dualmodel_cand41_trainproxy16_q4096_cpsc.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_dualmodel_cand45_sourcefloor_q4096_cpsc
+  description: "CPSC probe: keep cand41 q4096 train-proxy pressure but add PTB-XL source-floor latent anchors for K500-missing classes."
+
+data:
+  synth_npz_override: paper_effnet_source_partner_pools_v6_20260525/cpsc_2018/cpsc_2018_k500_plus_ptbxl_bal250.latent.npz
+
+adaptation:
+  run_tag_extra: trraw_proxy16_q4096r1_srcfloor12_aw24_tw45_hs10_lam20_c6_cw16_b6
+  anchors:
+    source_weights: real_anchor=1.0,ptbxl_source=0.35
+    source_floor_per_class: 12
+    anchor_class_weights: MI=3.0,HYP=2.0,CD=1.0,NORM=1.0,STTC=1.0
+    anchor_class_weight_mode: manual
+
+run_record:
+  purpose: Test whether cand41's ceiling is partly caused by CPSC K500 missing HYP/MI anchors; this expands only the VAE-LH hard-sample search pool and keeps the locked three-chain AugMix mainline.
+  result_summary: Pending.
+  registration_status: provisional

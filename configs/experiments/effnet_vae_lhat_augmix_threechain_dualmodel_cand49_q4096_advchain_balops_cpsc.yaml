@@ -1,0 +1,32 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_dualmodel_cand41_trainproxy16_q4096_cpsc.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_dualmodel_cand49_q4096_advchain_balops_cpsc
+  description: "CPSC probe: combine cand41 q4096 train-proxy pressure with cand35's higher VAE-LH adversarial-chain share and balanced hard-operator coverage."
+
+adaptation:
+  run_tag_extra: trraw_proxy16_q4096r1_adv20_balops_aw24_tw45_hs10_lam20_c8_cw20_b8
+  latent_augmix:
+    copies: 8
+    chain_weights: "0.40,0.40,0.20"
+    ops:
+      - powerline_noise
+      - baseline_wander
+      - baseline_shift
+      - random_leads_masking
+      - powerline_noise
+      - baseline_wander
+      - baseline_shift
+      - random_leads_masking
+    consistency:
+      enabled: true
+      consistency_weight: 20.0
+      consistency_loss: jsd
+      bce_weight: 8.0
+      max_batches: 0
+
+run_record:
+  purpose: Test whether cand35's higher adversarial-chain and balanced-op signal becomes useful once cand41's q4096 buffer and powerline train-proxy16 are retained.
+  result_summary: Pending.
+  registration_status: provisional

@@ -1,0 +1,39 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_dualmodel_cand72_q8192_hull24_c10_maskboost_b32_cpsc.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_dualmodel_cand90_q8192_hull24_powermask_midlatent_c12_b24_ep45_cpsc
+  description: "CPSC probe: keep powermask exposure but restore a moderate VAE-LH adversarial waveform-chain share after raw-heavy variants compressed it too far."
+
+training:
+  epochs: 45
+  batch_size: 24
+  num_workers: 8
+
+adaptation:
+  run_tag_extra: trraw_proxy16_q8192r1_powermask_midlat_c12_aw24_tw45_hs12_lam24_c12_cw16_b6_b24_ep45
+  latent_augmix:
+    copies: 12
+    chain_weights: "0.425,0.425,0.15"
+    ops:
+      - powerline_noise
+      - random_leads_masking
+      - powerline_noise
+      - baseline_wander
+      - random_leads_masking
+      - baseline_shift
+      - powerline_noise
+      - random_leads_masking
+      - emg_noise
+      - baseline_wander
+      - baseline_shift
+      - random_leads_masking
+
+run_record:
+  purpose: >-
+    Test a global next-step variant that keeps the VAE-LH hard-sample search
+    and locked three-chain AugMix topology, emphasizes powerline/random-lead
+    bottleneck operators, but gives the VAE adversarial waveform chain enough
+    weight to avoid the raw-heavy side effects seen in cand81.
+  result_summary: Pending.
+  registration_status: provisional

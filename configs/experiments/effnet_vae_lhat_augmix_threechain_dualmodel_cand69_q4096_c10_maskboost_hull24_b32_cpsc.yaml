@@ -1,0 +1,21 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_dualmodel_cand57_q4096_c10_maskboost_b32_cpsc.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_dualmodel_cand69_q4096_c10_maskboost_hull24_b32_cpsc
+  description: "CPSC probe: keep cand57 c10 mask-boost but make the latent-hull search moderately harder."
+
+training:
+  num_workers: 4
+
+adaptation:
+  run_tag_extra: trraw_proxy16_q4096r1_c10mask_aw24_tw45_hs12_lam24_c10_cw16_b6_b32
+  hull:
+    lambda: 0.24
+    steps: 12
+    lr: 0.55
+
+run_record:
+  purpose: Test whether cand57's late-epoch ASR collapse is caused by insufficient VAE-LH attack strength rather than AugMix operator exposure, while keeping the locked three-chain topology unchanged.
+  result_summary: Pending.
+  registration_status: provisional

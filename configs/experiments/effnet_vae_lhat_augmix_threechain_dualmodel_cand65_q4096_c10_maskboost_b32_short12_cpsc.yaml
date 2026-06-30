@@ -1,0 +1,18 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_dualmodel_cand57_q4096_c10_maskboost_b32_cpsc.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_dualmodel_cand65_q4096_c10_maskboost_b32_short12_cpsc
+  description: "CPSC probe: cand57 c10 mask-boost recipe with a fixed 12-epoch last-checkpoint schedule."
+
+training:
+  epochs: 12
+  num_workers: 4
+
+adaptation:
+  run_tag_extra: trraw_proxy16_q4096r1_c10mask_aw24_tw45_hs10_lam20_c10_cw16_b6_b32_short12
+
+run_record:
+  purpose: Test whether cand57 over-trains by 30 epochs under paper-safe last-checkpoint selection.
+  result_summary: Pending.
+  registration_status: provisional

@@ -1,0 +1,19 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_dualmodel_cand96_q8192_hull24_balancemask_c18_b24_ep36_cpsc.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_dualmodel_cand96_q8192_hull24_balancemask_c18_b24_ep36_georgia
+  description: "Georgia fallback: balanced per-op locked three-chain AugMix with extra random-lead and baseline exposure."
+
+runner:
+  matrix:
+    center:
+      - georgia
+
+run_record:
+  purpose: >-
+    Georgia evidence for the cand96 global fallback recipe. The recipe preserves
+    VAE-LH online adversarial training plus locked three-chain AugMix and uses
+    the same operator schedule as the CPSC config.
+  result_summary: Pending.
+  registration_status: provisional

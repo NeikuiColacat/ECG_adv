@@ -87,6 +87,12 @@ def capture_rng_state(epoch_rng: np.random.Generator, *, include_cuda: bool = Tr
     return state
 
 
+def _as_cpu_byte_tensor(value: Any) -> torch.Tensor:
+    if isinstance(value, torch.Tensor):
+        return value.detach().to(device="cpu", dtype=torch.uint8)
+    return torch.as_tensor(value, dtype=torch.uint8, device="cpu")
+
+
 def restore_rng_state(
     state: dict[str, Any],
     epoch_rng: np.random.Generator,
@@ -104,9 +110,11 @@ def restore_rng_state(
     if "numpy_epoch_generator" in state:
         epoch_rng.bit_generator.state = state["numpy_epoch_generator"]
     if "torch_cpu" in state:
-        torch.set_rng_state(state["torch_cpu"])
+        torch.set_rng_state(_as_cpu_byte_tensor(state["torch_cpu"]))
     if restore_cuda and torch.cuda.is_available() and "torch_cuda_all" in state:
-        torch.cuda.set_rng_state_all(state["torch_cuda_all"])
+        torch.cuda.set_rng_state_all(
+            [_as_cpu_byte_tensor(item) for item in state["torch_cuda_all"]]
+        )
 
 
 __all__ = [

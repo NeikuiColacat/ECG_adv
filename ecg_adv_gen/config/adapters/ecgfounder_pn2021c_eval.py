@@ -218,8 +218,14 @@ def audit_ecgfounder_pn2021c_eval_command(
             )
             if run_dir != expected_run_dir:
                 errors.append(f"{script}: run_dir does not match locked method template")
-    if run_id and "/ecgfounder_vae_lhat_augmix_threechain_locked_k500/" not in run_dir:
-        errors.append(f"{script}: run_dir must target the locked ECGFounder three-chain run family")
+    allowed_run_family_fragments = (
+        "/ecgfounder_k500_fullft_locked/",
+        "/ecgfounder_vae_lhat_augmix_threechain_locked_k500/",
+        "/ecgfounder_vae_lhat_augmix_threechain_aligned_effnet_sota_",
+        "/ecgfounder_vae_lhat_augmix_threechain_cand93_matched_seed20260601_",
+    )
+    if run_id and not any(fragment in run_dir for fragment in allowed_run_family_fragments):
+        errors.append(f"{script}: run_dir must target a locked ECGFounder run family")
 
     if "--limit" in opts and str(opt_first(opts, "--limit")) not in {"0", ""}:
         errors.append(f"{script}: managed main ECGFounder PN2021-C eval must not limit samples")

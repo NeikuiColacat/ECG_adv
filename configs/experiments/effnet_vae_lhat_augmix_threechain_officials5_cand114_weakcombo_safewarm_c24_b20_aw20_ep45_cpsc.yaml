@@ -1,0 +1,28 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_officials5_cand110_weakcombo_cover_c24_strongjsd_b20_ep45_cpsc.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_officials5_cand114_weakcombo_safewarm_c24_b20_aw20_ep45_cpsc
+  description: "CPSC pilot: c110 weakcombo operator schedule with c112 safe VAE-LH warmup."
+
+adaptation:
+  run_tag_extra: c114officials5_weakcombo_safewarm_c24_b20_aw20_ep45
+  loss:
+    adv_weight: 20.0
+    adv_weight_warmup_epochs: 8
+  latent_augmix:
+    chain_weights: "0.425,0.425,0.15"
+
+run_record:
+  purpose: >-
+    Test whether c112's safer VAE-LH pressure helps when combined with c110's
+    stronger weak-combo operator schedule. This preserves official standard
+    severity-5 raw_pre_zscore corruptions, locked three-chain AugMix, fixed
+    depth-3 composite exposure, same-label/local VAE-LH hard-sample search,
+    clean K500 anchors, and last-checkpoint policy. It only reduces the
+    adversarial-buffer sampling weight, lengthens warmup, and modestly raises
+    the adversarial AugMix chain from 0.10 to 0.15. No stabilizer, oracle,
+    single-chain AugMix, raw-supervised extra branch, or custom severity
+    profile is added.
+  result_summary: Pending.
+  registration_status: provisional

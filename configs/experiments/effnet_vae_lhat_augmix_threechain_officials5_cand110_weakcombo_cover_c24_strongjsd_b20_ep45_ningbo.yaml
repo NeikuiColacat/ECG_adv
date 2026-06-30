@@ -1,0 +1,42 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_officials5_cand107_triplecover_c24_strongjsd_b20_ep45_ningbo.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_officials5_cand110_weakcombo_cover_c24_strongjsd_b20_ep45_ningbo
+  description: "Ningbo expansion: c107 strong training with operator cycle optimized toward weakest depth-3 recovery combos."
+
+adaptation:
+  run_tag_extra: c110officials5_weakcombo_cover_c24_strongjsd_b20_ep45
+  latent_augmix:
+    ops:
+      - random_leads_masking
+      - emg_noise
+      - powerline_noise
+      - random_leads_masking
+      - baseline_wander
+      - baseline_shift
+      - random_leads_masking
+      - baseline_wander
+      - emg_noise
+      - baseline_shift
+      - powerline_noise
+      - emg_noise
+      - baseline_wander
+      - baseline_shift
+      - random_leads_masking
+      - powerline_noise
+      - baseline_wander
+      - emg_noise
+      - powerline_noise
+      - baseline_wander
+      - baseline_shift
+
+run_record:
+  purpose: >-
+    Expand c110 to Ningbo so the current best completed EffNet candidate can
+    be judged on the full four-center official severity-5 composite benchmark.
+    This keeps c107's VAE-LH + locked three-chain AugMix recipe and only uses
+    c110's weak-combo operator cycle. No stabilizer, oracle, single-chain
+    AugMix, raw-supervised branch, or custom severity profile is added.
+  result_summary: Pending.
+  registration_status: provisional

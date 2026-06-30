@@ -1,0 +1,18 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_officials5_cand103_latentchain30_c18_b20_ep45_cpsc.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_officials5_cand103_latentchain30_c18_b20_ep45_chapman_shaoxing
+  description: "Chapman-Shaoxing pilot: official severity-5 depth-3 locked three-chain AugMix with stronger VAE-LH adversarial chain weight."
+
+runner:
+  matrix:
+    center:
+      - chapman_shaoxing
+
+run_record:
+  purpose: >-
+    Complete Chapman-Shaoxing evidence for c103 latent-chain-weight official
+    severity-5 fixed-depth-3 locked three-chain VAE-LH AugMix.
+  result_summary: Pending.
+  registration_status: provisional

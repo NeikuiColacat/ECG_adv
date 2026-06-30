@@ -1,0 +1,16 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_dualmodel_cand75_q8192_hull24_powermask_c12_b24_cpsc.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_dualmodel_cand77_q8192_hull24_adv25_powermask_c12_b24_cpsc
+  description: "CPSC probe: combine cand75's powerline/mask exposure with a stronger VAE-LH adversarial waveform chain inside locked three-chain AugMix."
+
+adaptation:
+  run_tag_extra: trraw_proxy16_q8192r1_powermask_adv25_c12_aw24_tw45_hs12_lam24_c12_cw16_b6_b24
+  latent_augmix:
+    chain_weights: "0.375,0.375,0.25"
+
+run_record:
+  purpose: Test whether the remaining CPSC gap needs both powerline/random-mask emphasis and a nontrivial VAE-LH adversarial chain share, without adding preprocessing, postprocessing, operator oracle, or independent raw-supervised branches.
+  result_summary: Pending.
+  registration_status: provisional

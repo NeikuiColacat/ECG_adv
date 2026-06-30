@@ -1,0 +1,40 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_dualmodel_cand72_q8192_hull24_c10_maskboost_b32_cpsc.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_dualmodel_cand92_q8192_hull24_balanced_c12_midlatent_b24_ep45_cpsc
+  description: "CPSC pilot: balanced c12 AugMix exposure with extra powerline/random-mask and restored moderate VAE-LH adversarial waveform-chain share."
+
+training:
+  epochs: 45
+  batch_size: 24
+  num_workers: 6
+
+adaptation:
+  run_tag_extra: trraw_proxy16_q8192r1_balanced_c12_midlat_aw24_tw45_hs12_lam24_c12_cw16_b6_b24_ep45
+  latent_augmix:
+    copies: 12
+    chain_weights: "0.425,0.425,0.15"
+    ops:
+      - powerline_noise
+      - random_leads_masking
+      - baseline_wander
+      - baseline_shift
+      - emg_noise
+      - powerline_noise
+      - random_leads_masking
+      - baseline_wander
+      - baseline_shift
+      - emg_noise
+      - powerline_noise
+      - random_leads_masking
+
+run_record:
+  purpose: >-
+    Test an operator-balanced c12 variant after cand78/cand86 remained below
+    the +10 pp target and cand81 showed that raw-heavy powermask can hurt
+    non-mask operators. This keeps the VAE-LH hard-sample search and locked
+    three-chain AugMix topology, gives powerline and random-lead masking one
+    extra view each, and restores the VAE adversarial waveform chain to 0.15.
+  result_summary: Pending.
+  registration_status: provisional

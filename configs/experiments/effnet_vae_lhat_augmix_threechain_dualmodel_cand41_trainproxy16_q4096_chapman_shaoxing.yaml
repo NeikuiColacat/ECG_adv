@@ -1,0 +1,16 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_dualmodel_cand41_trainproxy16_q4096_cpsc.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_dualmodel_cand41_trainproxy16_q4096_chapman_shaoxing
+  description: "Run cand41 train-proxy16 q4096 locked three-chain VAE-LH AugMix recipe on Chapman-Shaoxing for four-center evidence."
+
+runner:
+  matrix:
+    center:
+      - chapman_shaoxing
+
+run_record:
+  purpose: Test whether the CPSC-positive cand41 q4096 hard/AugMix buffer recipe transfers to Chapman-Shaoxing without changing the main VAE-LH plus locked three-chain AugMix method.
+  result_summary: Pending.
+  registration_status: provisional

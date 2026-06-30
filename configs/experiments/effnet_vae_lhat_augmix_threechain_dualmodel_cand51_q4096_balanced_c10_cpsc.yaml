@@ -1,0 +1,34 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_dualmodel_cand41_trainproxy16_q4096_cpsc.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_dualmodel_cand51_q4096_balanced_c10_cpsc
+  description: "CPSC probe: keep cand41 q4096 train-proxy pressure and expose each frozen PN2021-C operator twice per epoch inside locked three-chain AugMix."
+
+adaptation:
+  run_tag_extra: trraw_proxy16_q4096r1_balanced_c10_aw24_tw45_hs10_lam20_c10_cw16_b6
+  latent_augmix:
+    copies: 10
+    chain_weights: "0.45,0.45,0.10"
+    ops:
+      - powerline_noise
+      - emg_noise
+      - baseline_wander
+      - baseline_shift
+      - random_leads_masking
+      - powerline_noise
+      - emg_noise
+      - baseline_wander
+      - baseline_shift
+      - random_leads_masking
+    consistency:
+      enabled: true
+      consistency_weight: 16.0
+      consistency_loss: jsd
+      bce_weight: 6.0
+      max_batches: 0
+
+run_record:
+  purpose: Test whether cand41 is capped by under-exposure to the full five-operator mixture rather than by individual hard-op emphasis.
+  result_summary: Pending.
+  registration_status: provisional

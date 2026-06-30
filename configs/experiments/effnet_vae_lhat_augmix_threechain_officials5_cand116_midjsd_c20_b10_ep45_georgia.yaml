@@ -1,0 +1,30 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_officials5_cand107_triplecover_c24_strongjsd_b20_ep45_georgia.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_officials5_cand116_midjsd_c20_b10_ep45_georgia
+  description: "Georgia pilot: c105/c107 middle consistency pressure for official severity-5 triple-cover AugMix."
+
+adaptation:
+  run_tag_extra: c116officials5_midjsd_c20_b10_ep45
+  latent_augmix:
+    copies: 20
+    consistency:
+      enabled: true
+      consistency_weight: 16.0
+      consistency_loss: jsd
+      bce_weight: 10.0
+      max_batches: 0
+
+run_record:
+  purpose: >-
+    Test whether c107's stronger consistency can be reduced without losing
+    Georgia recovery. This preserves the locked VAE-LH + three-chain AugMix
+    topology, official standard severity-5 raw_pre_zscore corruptions, fixed
+    depth-3 triple-cover operator schedule, same-label/local VAE latent-hull
+    hard-sample search, clean K500 anchors, and last-checkpoint policy. It only
+    sets an intermediate AugMix copy count and JSD/BCE consistency strength. No
+    stabilizer, oracle, single-chain AugMix, raw-supervised extra branch, or
+    custom severity profile is added.
+  result_summary: Pending.
+  registration_status: provisional

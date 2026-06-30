@@ -1,0 +1,29 @@
+extends:
+  - pn2021c_effnet_dual3ch_cand31_cand33_rawfirst_missing3.yaml
+
+experiment:
+  name: pn2021c_effnet_dual3ch_cand33_rawfirst_partial_done2
+  description: Raw-first PN2021-C diagnostic for completed cand33 non-CPSC centers only.
+
+logging:
+  postprocess_artifacts:
+    - pn2021c_effnet_dual3ch_cand33_rawfirst_partial_done2.csv
+
+runner:
+  matrix:
+    center:
+      - ningbo
+      - chapman_shaoxing
+    method:
+      - name: cand33_q2048_bufdom_powerfocus
+        family: effnet_vae_lhat_augmix_threechain_dualmodel_cand33_q2048_bufdom_powerfocus_missing3
+        model_dir_template: >-
+          {output_root}/effnet_vae_lhat_augmix_threechain_dualmodel_cand33_q2048_bufdom_powerfocus_missing3/dual3ch_cand33_q2048_bufdom_powerfocus_missing3_20260620/{center}_realall_targetheavy_M20_lam0p2_augmix_s5_wlat0p3_hs10_target_macro_auprc_cdhypminormsttc_hlabelcom_anchor_soft_sta_local_random_p120_fullft_trraw_proxy_q2048r1_bufdom_pf_c8_aw24_tw45_hs10_lam20_cw20_b8_ep30_seed20260601
+        checkpoint_name: last_model.pt
+        clean_eval_name: eval_result_v7_exclrefs_crop1000.json
+  name: ${experiment.name}_${matrix.center}_${matrix.method.name}
+
+run_record:
+  purpose: Early diagnostic for whether the powerline-focused cand33 variant transfers beyond CPSC on completed Ningbo and Chapman centers before Georgia finishes.
+  result_summary: Pending.
+  registration_status: provisional

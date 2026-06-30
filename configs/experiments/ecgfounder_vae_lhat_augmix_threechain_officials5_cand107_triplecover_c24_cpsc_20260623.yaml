@@ -1,0 +1,36 @@
+extends:
+  - ecgfounder_vae_lhat_augmix_threechain_officials5_cand100_depth3_m100_c18_b20_cpsc_20260623.yaml
+
+experiment:
+  name: ecgfounder_vae_lhat_augmix_threechain_officials5_cand107_triplecover_c24_cpsc_20260623
+  description: "CPSC ECGFounder pilot aligned to EffNet c107 triple-cover AugMix geometry, without raw consistency branches."
+
+adaptation:
+  run_name: ${matrix.center}_vae_lhat_augmix_threechain_officials5_cand107_triplecover_c24
+  latent_augmix:
+    copies: 24
+    ops:
+      - powerline_noise
+      - baseline_shift
+      - baseline_wander
+      - random_leads_masking
+      - baseline_shift
+      - emg_noise
+      - powerline_noise
+      - baseline_wander
+      - random_leads_masking
+      - baseline_shift
+      - baseline_wander
+      - emg_noise
+      - random_leads_masking
+
+run_record:
+  purpose: >-
+    ECGFounder model-universality pilot aligned to the current strongest
+    EfficientNet official severity-5 candidate's AugMix exposure pattern:
+    fixed depth-3 locked three-chain VAE-LH AugMix, target-real raw_pre_zscore
+    official standard corruptions, triple-cover operator order, and 24 AugMix
+    copies. This does not add raw-supervised/consistency branches, stabilizer,
+    operator oracle, or single-chain AugMix.
+  result_summary: Pending.
+  registration_status: provisional

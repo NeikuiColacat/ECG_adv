@@ -1,0 +1,21 @@
+extends:
+  - ecgfounder_vae_lhat_augmix_threechain_aligned_effnet_sota_k500.yaml
+
+experiment:
+  name: ecgfounder_vae_lhat_augmix_threechain_aligned_effnet_sota_tail2_k500
+  description: ECGFounder aligned EffNet-SOTA VAE-LH plus locked three-chain AugMix with dense plus last two ECGFounder stages trainable.
+
+adaptation:
+  run_name: ${matrix.center}_vae_lhat_augmix_threechain_aligned_effnet_sota_tail2
+  trainable_scope:
+    scope: last_n_stages
+    last_n_stages: 2
+
+run_record:
+  purpose: >-
+    Test whether full encoder fine-tuning is hurting ECGFounder robustness by
+    freezing the foundation front/mid blocks and training only model.dense plus
+    the last two ECGFounder stage_list blocks under the same VAE-LH online AT
+    plus locked three-chain AugMix recipe.
+  result_summary: Pending.
+  registration_status: provisional

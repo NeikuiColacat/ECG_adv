@@ -1,0 +1,45 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_dualmodel_cand72_q8192_hull24_c10_maskboost_b32_cpsc.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_dualmodel_cand91_q8192_hull24_powermask_bcedir_c12_b24_ep45_cpsc
+  description: "CPSC probe: keep powermask exposure and increase supervised BCE pressure on AugMix views without adding a raw-supervised branch."
+
+training:
+  epochs: 45
+  batch_size: 24
+  num_workers: 8
+
+adaptation:
+  run_tag_extra: trraw_proxy16_q8192r1_powermask_bcedir_c12_aw24_tw45_hs12_lam24_c12_cw12_b10_b24_ep45
+  latent_augmix:
+    copies: 12
+    chain_weights: "0.45,0.45,0.10"
+    ops:
+      - powerline_noise
+      - random_leads_masking
+      - powerline_noise
+      - baseline_wander
+      - random_leads_masking
+      - baseline_shift
+      - powerline_noise
+      - random_leads_masking
+      - emg_noise
+      - baseline_wander
+      - baseline_shift
+      - random_leads_masking
+    consistency:
+      enabled: true
+      consistency_weight: 12.0
+      consistency_loss: jsd
+      bce_weight: 10.0
+      max_batches: 0
+
+run_record:
+  purpose: >-
+    Test whether the remaining powerline/random-lead recovery gap is caused by
+    weak supervised learning on AugMix views. This keeps the three-chain
+    VAE-LH + AugMix mainline and does not introduce preprocessing, an oracle,
+    or an independent raw-supervised branch.
+  result_summary: Pending.
+  registration_status: provisional

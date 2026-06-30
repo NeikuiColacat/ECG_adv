@@ -1,0 +1,16 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_dualmodel_cand57_q4096_c10_maskboost_b32_cpsc.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_dualmodel_cand57_q4096_c10_maskboost_b32_georgia
+  description: "Run cand57 q4096/c10 mask-boost locked three-chain VAE-LH AugMix recipe on Georgia for four-center recovery evidence."
+
+runner:
+  matrix:
+    center:
+      - georgia
+
+run_record:
+  purpose: Test whether the CPSC-best cand57 q4096/c10 mask-boost recipe transfers to Georgia, the current weakest recovery center, without changing the VAE-LH plus locked three-chain AugMix mainline.
+  result_summary: Pending.
+  registration_status: provisional

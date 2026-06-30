@@ -1,0 +1,20 @@
+extends:
+  - ecgfounder_vae_lhat_augmix_threechain_cand93_matched_seed20260601_k500.yaml
+
+experiment:
+  name: ecgfounder_vae_lhat_augmix_threechain_cand93_matched_seed20260601_tail2_k500
+  description: ECGFounder cand93-matched trainable-scope ablation with dense plus last two stages trainable.
+
+adaptation:
+  run_name: ${matrix.center}_vae_lhat_augmix_threechain_cand93_matched_seed20260601_tail2
+  trainable_scope:
+    scope: last_n_stages
+    last_n_stages: 2
+
+run_record:
+  purpose: >-
+    Trainable-scope ablation for the cand93-matched ECGFounder replication.
+    It freezes early ECGFounder blocks and trains only dense plus the last two
+    stages under the same VAE-LH plus locked three-chain AugMix recipe.
+  result_summary: Pending.
+  registration_status: provisional

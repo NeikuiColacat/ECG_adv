@@ -1,0 +1,26 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_dualmodel_cand94_q8192_hull24_perop_maskpower_c15_b20_ep45_chapman_shaoxing.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_dualmodel_cand97_q8192_hull24_perop_fixedm085_c15_b20_ep45_chapman_shaoxing
+  description: "Chapman-Shaoxing probe: cand94 per-op locked three-chain AugMix with fixed high AugMix mixture m=0.85."
+
+adaptation:
+  run_tag_extra: c97fixedm085_c15_maskpower_aw24_b20_ep45
+  latent_augmix:
+    mixture:
+      mode: fixed
+      prob: 0.85
+
+run_record:
+  purpose: >-
+    Test whether cand94 under-recovers random_leads_masking because the raw
+    corruption chains are diluted by the clean anchor in the final AugMix
+    mixture. This preserves the VAE-LH online adversarial search and locked
+    three-chain topology: two raw ECG corruption chains plus one VAE-LH
+    adversarial waveform chain. It changes only the AugMix clean/branch mixing
+    from beta-sampled m to fixed m=0.85; it does not add stabilizer,
+    preprocessing repair, operator oracle, heldout selector, or a separate
+    raw-supervised branch.
+  result_summary: Pending.
+  registration_status: provisional

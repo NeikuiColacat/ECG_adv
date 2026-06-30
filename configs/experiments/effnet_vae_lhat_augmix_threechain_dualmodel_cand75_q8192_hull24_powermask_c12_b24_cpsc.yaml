@@ -1,0 +1,33 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_dualmodel_cand72_q8192_hull24_c10_maskboost_b32_cpsc.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_dualmodel_cand75_q8192_hull24_powermask_c12_b24_cpsc
+  description: "CPSC probe: keep cand72 q8192/hull24 but concentrate locked three-chain AugMix exposure on the remaining powerline and random-lead masking bottlenecks."
+
+training:
+  batch_size: 24
+  num_workers: 6
+
+adaptation:
+  run_tag_extra: trraw_proxy16_q8192r1_powermask_c12_aw24_tw45_hs12_lam24_c12_cw16_b6_b24
+  latent_augmix:
+    copies: 12
+    ops:
+      - powerline_noise
+      - random_leads_masking
+      - powerline_noise
+      - baseline_wander
+      - random_leads_masking
+      - baseline_shift
+      - powerline_noise
+      - random_leads_masking
+      - emg_noise
+      - baseline_wander
+      - baseline_shift
+      - random_leads_masking
+
+run_record:
+  purpose: Test whether the remaining CPSC recovery gap is dominated by under-internalized powerline and random-lead masking views after cand72, while preserving VAE-LH hard-sample search and locked three-chain AugMix without preprocessing or raw-supervised branches.
+  result_summary: Pending.
+  registration_status: provisional

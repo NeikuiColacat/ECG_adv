@@ -1,0 +1,28 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_officials5_cand105_triplecover_c18_b20_ep45_cpsc.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_officials5_cand107_triplecover_c24_strongjsd_b20_ep45_cpsc
+  description: "CPSC pilot: c105 triple-cover ops with more AugMix copies and stronger JSD/BCE consistency pressure."
+
+adaptation:
+  run_tag_extra: c107officials5_triplecover_c24_strongjsd_b20_ep45
+  latent_augmix:
+    copies: 24
+    consistency:
+      enabled: true
+      consistency_weight: 20.0
+      consistency_loss: jsd
+      bce_weight: 12.0
+      max_batches: 0
+
+run_record:
+  purpose: >-
+    Test whether official severity-5 composite recovery is limited by weak
+    consistency pressure after c105's triple-combo coverage fix. This keeps
+    fixed depth-3 locked three-chain VAE-LH AugMix, target-real raw_pre_zscore
+    corruption, c105 operator order, and the VAE-LH adversarial chain, but
+    raises AugMix copies and BCE/JSD weights. No stabilizer, oracle,
+    raw-supervised branch, or single-chain AugMix is added.
+  result_summary: Pending.
+  registration_status: provisional

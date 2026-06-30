@@ -35,6 +35,8 @@ ECGFounder.
   - chain 2: official corruption chain.
   - chain 3: VAE-LHAT adversarial waveform.
 - Chain 3 does not receive extra corruption.
+- Candidate SOTA recipes must be checked on both EfficientNet1DV2 and
+  ECGFounder before any model-agnostic claim is made.
 - No stabilizer35, raw-supervised branch, head-only ECGFounder path,
   residual-adapter ECGFounder path, or oracle selection is allowed in the main
   method.
@@ -372,7 +374,33 @@ If neither backbone reaches the band:
 - Mark clean PN2021 AUPRC drops greater than about 2 pp and PTB-XL source AUPRC
   drops greater than about 2 pp as warnings.
 
-## Phase 8: Report Bundle
+## Phase 8: Cross-Backbone Universality And Trainable-Scope Ablations
+
+**Trigger:** Run this phase whenever an EfficientNet1DV2 tuned recipe is
+promoted as the current candidate SOTA.
+
+**Required rows:**
+
+- EfficientNet1DV2 direct K500 baseline.
+- EfficientNet1DV2 VAE-LHAT only.
+- EfficientNet1DV2 VAE-LHAT plus locked three-chain AugMix.
+- ECGFounder direct K500 fullFT baseline.
+- ECGFounder VAE-LHAT only.
+- ECGFounder VAE-LHAT plus locked three-chain AugMix with the matched recipe.
+- ECGFounder trainable-scope ablations when fullFT hurts robustness:
+  dense-only, last-N-stage partial unfreeze, and LoRA if available.
+
+**Acceptance gate:**
+
+- Do not call the method model-universal from EfficientNet evidence alone.
+- If ECGFounder fails while EfficientNet succeeds, report the result as a
+  backbone-sensitive method and analyze the failure by trainable scope,
+  corruption operator, center, clean performance, and adversarial diagnostics.
+- Partial-unfreeze or LoRA gains are valid ablation evidence about ECGFounder
+  adaptation sensitivity, but they do not replace the fullFT mainline unless
+  the protocol is explicitly revised before final reruns.
+
+## Phase 9: Report Bundle
 
 **Files:**
 

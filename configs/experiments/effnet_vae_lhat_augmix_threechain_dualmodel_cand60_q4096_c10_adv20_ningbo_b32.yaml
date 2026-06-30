@@ -1,0 +1,19 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_dualmodel_cand60_q4096_c10_adv20_georgia_b32.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_dualmodel_cand60_q4096_c10_adv20_ningbo_b32
+  description: "Ningbo probe: apply the cand60 stronger VAE-LH adversarial waveform chain and hard-operator exposure without changing the locked three-chain AugMix mainline."
+
+adaptation:
+  run_tag_extra: trraw_proxy16_q4096r1_c10adv20_hardops_aw24_tw45_hs10_lam20_c10_cw18_b8_b32
+
+runner:
+  matrix:
+    center:
+      - ningbo
+
+run_record:
+  purpose: Test whether cand60's larger VAE-LH adversarial waveform chain share and repeated powerline/baseline/mask operators improve Ningbo recovery, preserving the locked three-chain VAE-LH + AugMix design.
+  result_summary: Pending.
+  registration_status: provisional

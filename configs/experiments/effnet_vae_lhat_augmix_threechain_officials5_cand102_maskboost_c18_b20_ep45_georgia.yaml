@@ -1,0 +1,19 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_officials5_cand102_maskboost_c18_b20_ep45_cpsc.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_officials5_cand102_maskboost_c18_b20_ep45_georgia
+  description: "Georgia pilot: official severity-5 locked three-chain AugMix with duplicated hard operators to increase random-lead/noise exposure."
+
+runner:
+  matrix:
+    center:
+      - georgia
+
+run_record:
+  purpose: >-
+    Same c102 mask/noise-boosted operator sampling pilot as CPSC, run on
+    Georgia to check whether the recovery signal generalizes beyond one center
+    before launching all four centers.
+  result_summary: Pending.
+  registration_status: provisional

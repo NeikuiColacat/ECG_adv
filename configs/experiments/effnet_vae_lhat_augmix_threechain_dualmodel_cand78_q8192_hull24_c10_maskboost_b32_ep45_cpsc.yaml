@@ -1,0 +1,17 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_dualmodel_cand72_q8192_hull24_c10_maskboost_b32_cpsc.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_dualmodel_cand78_q8192_hull24_c10_maskboost_b32_ep45_cpsc
+  description: "CPSC probe: keep cand72 unchanged but extend online AT exposure from 30 to 45 epochs."
+
+training:
+  epochs: 45
+
+adaptation:
+  run_tag_extra: trraw_proxy16_q8192r1_c10mask_aw24_tw45_hs12_lam24_c10_cw16_b6_b32_ep45
+
+run_record:
+  purpose: Test whether cand72 is limited by too few online VAE-LH/AugMix hard-sample refreshes rather than by the specific chain weights or operator schedule.
+  result_summary: Pending.
+  registration_status: provisional

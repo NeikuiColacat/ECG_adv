@@ -1,0 +1,17 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_dualmodel_cand31_q2048_bufferdominant_cpsc.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_dualmodel_cand44_short12_cpsc
+  description: "CPSC probe: keep cand31 q2048 buffer-dominant locked three-chain VAE-LH AugMix, but use a fixed shorter 12-epoch schedule to test late-stage robustness overfitting."
+
+training:
+  epochs: 12
+
+adaptation:
+  run_tag_extra: trraw_proxy_q2048r1_bufdom_aw24_tw45_hs10_lam20_c6_cw16_b6_short12
+
+run_record:
+  purpose: Test whether the cand31/cand40 late-epoch validation-loss drift is hurting PN2021-C recovery. This keeps the VAE-LH online AT plus locked three-chain AugMix topology and changes only the paper-safe fixed training schedule.
+  result_summary: Pending.
+  registration_status: provisional

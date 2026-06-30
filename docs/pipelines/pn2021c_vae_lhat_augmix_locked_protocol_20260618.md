@@ -57,6 +57,39 @@ ECGFounder:
   `base_head`, and `best_head.pt` routes are historical or ablation-only and
   must not appear as the main ECGFounder baseline or main method.
 
+## Model Universality Gate
+
+An EfficientNet1DV2-only improvement is not enough to claim the main method is
+generally effective. Whenever a tuned VAE-LHAT plus three-chain AugMix recipe is
+promoted as a candidate SOTA, run a matched ECGFounder replication before making
+a model-agnostic claim.
+
+The matched ECGFounder replication must keep the following fixed relative to
+the EfficientNet1DV2 candidate unless a run is explicitly labeled as an
+ablation:
+
+- K500 seed and ref-exclusion policy.
+- PN2021-C severity profile and corruption order.
+- Three-chain AugMix topology, with two raw corruption chains and one VAE-LHAT
+  adversarial waveform chain.
+- No stabilizer, repair frontend, raw-supervised branch, operator oracle, or
+  heldout selector.
+- Last-checkpoint evaluation policy during this exploratory phase.
+
+Required cross-backbone reporting rows:
+
+- Direct K500 baseline for each backbone.
+- VAE-LHAT online AT only, without AugMix.
+- VAE-LHAT plus locked three-chain AugMix.
+- ECGFounder trainable-scope ablations if full fine-tuning underperforms:
+  fullFT, dense-only, last-N-stage partial unfreeze, and LoRA if implemented.
+
+Partial-unfreeze and LoRA ECGFounder runs are trainable-scope ablations, not a
+replacement for the fullFT mainline unless the user explicitly changes the
+protocol. If they improve robustness, report them as evidence about
+foundation-model adaptation sensitivity and then decide whether to promote a
+new frozen recipe before final paper-style reruns.
+
 ## Input And Corruption Order
 
 All corruptions and training augmentations are applied before z-score

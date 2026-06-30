@@ -1,0 +1,30 @@
+extends:
+  - effnet_vae_lhat_augmix_threechain_officials5_cand100_depth3_m100_c18_b20_ep45_cpsc.yaml
+
+experiment:
+  name: effnet_vae_lhat_augmix_threechain_officials5_cand102_maskboost_c18_b20_ep45_cpsc
+  description: "CPSC pilot: official severity-5 locked three-chain AugMix with duplicated hard operators to increase random-lead/noise exposure."
+
+adaptation:
+  run_tag_extra: c102officials5_depth3_m100_maskboost_c18_b20_ep45
+  latent_augmix:
+    ops:
+      - random_leads_masking
+      - random_leads_masking
+      - random_leads_masking
+      - random_leads_masking
+      - emg_noise
+      - emg_noise
+      - baseline_shift
+      - baseline_wander
+      - powerline_noise
+
+run_record:
+  purpose: >-
+    Test whether the residual recovery gap on official severity-5 composite
+    PN2021-C is concentrated in random_leads_masking and noise combinations.
+    This keeps the locked VAE-LH + three-chain AugMix method, official severity
+    profile, fixed depth-3 chains, and c100 loss weights; only the AugMix
+    operator sampling distribution is reweighted through duplicated ops.
+  result_summary: Pending.
+  registration_status: provisional
