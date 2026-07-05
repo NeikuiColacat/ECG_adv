@@ -611,39 +611,6 @@ def _trusted_mainline_requires_manifest(claim: dict[str, Any], method: dict[str,
     )
 
 
-def _has_registered_run_for_method(registry: dict[str, Any], method_key: str, method: dict[str, Any]) -> bool:
-    explicit = method.get("registered_run")
-    if isinstance(explicit, dict) and explicit:
-        return True
-    expected_run_ids = {
-        str(value)
-        for value in (
-            method.get("registered_run_id"),
-            method.get("run_id"),
-            method_key,
-        )
-        if value
-    }
-    config_name = Path(str(method.get("config") or "")).stem
-    expected_experiments = {
-        str(value)
-        for value in (
-            method.get("registered_experiment_name"),
-            config_name,
-            method_key,
-        )
-        if value
-    }
-    for item in registry.get("managed_runs") or []:
-        if str(item.get("status") or "") not in {"trusted", "provisional"}:
-            continue
-        if str(item.get("run_id") or "") in expected_run_ids:
-            return True
-        if str(item.get("experiment_name") or "") in expected_experiments:
-            return True
-    return False
-
-
 def _audit_manifest(
     method_key: str,
     method: dict[str, Any],
