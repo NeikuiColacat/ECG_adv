@@ -1,7 +1,7 @@
 """
 可微分 Tier-M 6 类 EfficientNet1DV2 victim（对抗 / 在线微调路径）
 
-与 77-class JIT 版本 efficientnet_victim.py 的区别：
+与旧 77-class JIT victim 的区别：
   - 权重来自 state_dict（`/root/autodl-tmp/crosscenter_tierM/best_model.pt`）
   - 输出维度 6（NSR / STach / AF / IAVB / LBBB / RBBB）
   - 输入预处理与 `unified_preprocess_to_1000` 一致：
@@ -21,7 +21,7 @@
     → center crop 1000 → 250
     → EfficientNet1DV2 → logits (B, 6)
 
-API 与 77-class victim 对齐，`BoundaryAdvDiffGenerator` 无需改动即可 swap-in。
+API 保持 latent-PGD generator 所需的最小 victim 接口。
 """
 
 import sys

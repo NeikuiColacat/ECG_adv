@@ -4,7 +4,7 @@ ECG 样本可视化 + 合理性检查工具（通用 debug 场景）。
 三类输入场景:
 - AugMix / ECG 数据增强算子输出 (methods/augmix/augmix.py)
 - ECGTwin 条件生成样本 (util/ecgtwin_utils.py)
-- AdvDiff 对抗样本 (adversarial/adv_generate.py)
+- VAE-LHAT adversarial samples
 
 API:
     plot_ecg(signal, sample_rate, save_path, ...) -> Path
