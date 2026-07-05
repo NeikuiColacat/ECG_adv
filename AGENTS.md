@@ -580,7 +580,6 @@ ecg_adv_gen/runner/train_dit_repro.py  # ECGTwin author DiT reproduction
 ecg_adv_gen/runner/synth_online_at_super5.py  # TA-OMAT / synth-anchor ablations
 ecg_adv_gen/runner/ptbxl_source_train.py      # EfficientNet1DV2 source training
 ecg_adv_gen/runner/pn2021_clean_eval.py       # PN2021 clean/ref-excluded eval
-util/ecg_digital_features.py       # digital ECG validation
 ```
 
 Historical no-IBE implementation is not part of this public tree.
@@ -709,78 +708,6 @@ STTC ~= 298,721
 ```
 
 Use patient-level split by `subject_id`, not random ECG split.
-
-## Generation Quality Validation
-
-ECGTwin author's validation stack:
-
-- Signal level: FID, improved Precision, Recall, F1 in ECG feature space.
-- Feature/physiology level: HR-MAE between generated ECG HR and target condition HR.
-- Diagnostic/semantic level: ECG-text CLIP Score.
-- Personal consistency: base-vector t-SNE, similarity score, silhouette coefficient.
-- Downstream utility: auto-diagnosis improvement.
-- Qualitative/case analysis: 12-lead figures, attention maps, prompt-to-prompt editing cases.
-
-For current super5 downstream utility and any historical no-IBE/synthetic ablation, use a task-adapted stack:
-
-1. Basic signal sanity using `util/ecg_viz.sanity_check`:
-   - NaN/Inf
-   - flatline/saturation
-   - DC offset
-   - amplitude p2p
-   - Einthoven and aVR residuals
-   - HR estimate and HR range
-2. Digital ECG criteria using `util/ecg_digital_features.py` and `docs/ecg_digital_thresholds.md`:
-   - HR, RR-CV, P wave, PR, QRS, ST/T, voltage criteria.
-   - Existing prior digital validation suggests NORM/MI/STTC are stronger; HYP/CD may fail absolute voltage or detailed conduction criteria.
-3. Class/prompt consistency:
-   - Use the frozen EfficientNet1DV2 super5 baseline as a victim classifier.
-   - Generated class should raise the intended class probability.
-   - For NORM, abnormal probabilities should stay low.
-   - Use this as a filter, not as the only proof.
-4. Feature distribution:
-   - Compute real-vs-synth feature FID/rFID and precision/recall/F1 using EfficientNet penultimate features or ECGTwin CLIP features.
-   - Compare synthetic samples to PTB-XL fold 1-8 and fold 9.
-5. Downstream utility:
-   - PTB-XL fold10 macro AUROC/AUPRC.
-   - PN2021 7-center macro AUROC/AUPRC.
-   - per-class and per-center deltas.
-
-Expected `eval_synth.py` artifacts:
-
-```text
-synth_quality_summary.json
-per_sample_quality.csv
-per_class_quality.csv
-victim_scores.csv
-feature_distribution.json
-digital_criteria_report.md
-figures/*.png
-```
-
-Do not claim generated ECGs are clinically valid solely because they improve a classifier. The thesis argument should combine visual quality, physiology sanity, prompt/class consistency, feature distribution, and downstream external evaluation.
-
-## Visualization
-
-Use `util/ecg_viz.py`.
-
-Important functions:
-
-```text
-plot_ecg
-plot_with_report
-sanity_check
-plot_ecg_ecgtwin_style
-plot_ecg_ecgtwin_gallery
-```
-
-`plot_ecg_ecgtwin_gallery` was added to show all 12 leads in one large figure with enough vertical row spacing to avoid peaks overlapping adjacent leads.
-
-Gallery-safe output previously generated under:
-
-```text
-/root/autodl-tmp/ecgtwin_class_super5/ptbxl_scheme_b_init/ecgtwin_gallery_safe/
-```
 
 ## Logging Requirements
 
