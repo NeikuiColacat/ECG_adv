@@ -11,8 +11,9 @@ Current cleanup state: the public tree keeps only
 `configs/active_scripts.yaml:latest_mainline` plus the 8 SOTA replay YAMLs.
 Old executable scripts/configs and legacy provenance directories were removed
 from the public tree; use
-`docs/refactor_cleanup/final_cleanup_summary_20260705.md` for the deletion
-manifest and verification record.
+`docs/refactor_cleanup/cleanup_manifest_summary_20260705.md` and
+`docs/refactor_cleanup/latest_mainline_dry_run_20260705.md` for the compact
+deletion manifest and dry-run verification record.
 
 ## Startup Order
 

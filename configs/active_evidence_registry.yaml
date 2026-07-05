@@ -82,18 +82,18 @@ run_record_policy:
     - Do not commit checkpoint or generated dataset payloads.
 
 managed_runs:
-  - run_id: v7_sjr_rgq_main_20260528
+  - run_id: seed20260601_k500_v7_sjr_rgq_20260530_rep1
     experiment_name: effnet_direct_k500_v7_sjr_rgq
     status: trusted
     outcome: succeeded
-    purpose: Direct K500 EfficientNet1DV2 baseline for the v7 SJR/RGQ mainline comparison.
-    result_summary: Direct K500 baseline metrics are registered for the EffNet v7 VAE-LHAT comparison.
-    run_dir: ${paths.output_root}/effnet_direct_k500_v7_sjr_rgq/v7_sjr_rgq_main_20260528
-    run_card: ${paths.output_root}/20260528/v7_sjr_rgq_main_20260528_direct_plan/run_card.json
-    summary: ${paths.output_root}/20260528/v7_sjr_rgq_main_20260528_direct_plan/summary.md
+    purpose: Direct EfficientNet1DV2 K500 target-center baseline for the latest PN2021/PN2021-C VAE-LHAT comparison using seed20260601 references.
+    result_summary: Seed20260601 direct K500 baseline metadata is backfilled from existing four-center training/evaluation outputs and registered metrics/paper-table artifacts.
+    run_dir: ${paths.output_root}/managed_launches/effnet_direct_seed20260601_k500_v7_sjr_rgq_20260530_rep1_v1
+    run_card: ${paths.output_root}/managed_launches/effnet_direct_seed20260601_k500_v7_sjr_rgq_20260530_rep1_v1/run_card.json
+    summary: ${paths.output_root}/managed_launches/effnet_direct_seed20260601_k500_v7_sjr_rgq_20260530_rep1_v1/summary.md
     mapping_version: v7_super5_sjr_rgq_review_20260528
     mapping_hash: 555ec85d5b51
-    updated: 2026-06-05
+    updated: 2026-07-06
   - run_id: locked_rawfirst_20260618_effnet_copies2
     experiment_name: effnet_vae_lhat_augmix_threechain_locked_k500
     status: trusted
@@ -151,7 +151,7 @@ active_claims:
         role: baseline
         status: trusted
         method_family: direct_target_k500_finetune
-        run_id: v7_sjr_rgq_main_20260528
+        run_id: seed20260601_k500_v7_sjr_rgq_20260530_rep1
         config: configs/experiments/effnet_direct_k500_v7_sjr_rgq.yaml
         current_replay:
           mode: managed_yaml
@@ -161,13 +161,13 @@ active_claims:
           status: provenance_only
           callable_interface: false
           use_for_new_runs: false
-        run_root: ${paths.output_root}/effnet_direct_k500_v7_sjr_rgq/v7_sjr_rgq_main_20260528
-        manifest: ${paths.output_root}/20260528/v7_sjr_rgq_main_20260528_direct_plan/run_manifest.json
-        metrics_long: ${paths.output_root}/metrics_export/v7_sjr_rgq_main_20260528_effnet_direct_k500_v7_sjr_rgq/metrics_long.csv
-        artifact_manifest: ${paths.output_root}/metrics_export/v7_sjr_rgq_main_20260528_effnet_direct_k500_v7_sjr_rgq/artifact_manifest.json
+        run_root: ${paths.output_root}/effnet_direct_k500_v7_sjr_rgq/seed20260601_k500_v7_sjr_rgq_20260530_rep1
+        manifest: ${paths.output_root}/managed_launches/effnet_direct_seed20260601_k500_v7_sjr_rgq_20260530_rep1_v1/run_manifest.json
+        metrics_long: ${paths.output_root}/metrics_export/seed20260601_k500_v7_sjr_rgq_20260530_rep1_effnet_direct_k500_v7_sjr_rgq/metrics_long.csv
+        artifact_manifest: ${paths.output_root}/metrics_export/seed20260601_k500_v7_sjr_rgq_20260530_rep1_effnet_direct_k500_v7_sjr_rgq/artifact_manifest.json
         paper_tables:
-          pn2021_all_zero_kept_refexcluded: ${paths.output_root}/paper_table/v7_sjr_rgq_main_20260528_effnet_direct_k500_v7_sjr_rgq_all_zero_kept/paper_table.csv
-          pn2021_drop_all_zero_refexcluded: ${paths.output_root}/paper_table/v7_sjr_rgq_main_20260528_effnet_direct_k500_v7_sjr_rgq_drop_all_zero/paper_table.csv
+          pn2021_all_zero_kept_refexcluded: ${paths.output_root}/paper_table/seed20260601_k500_v7_sjr_rgq_20260530_rep1_effnet_direct_k500_v7_sjr_rgq_all_zero_kept/paper_table.csv
+          pn2021_drop_all_zero_refexcluded: ${paths.output_root}/paper_table/seed20260601_k500_v7_sjr_rgq_20260530_rep1_effnet_direct_k500_v7_sjr_rgq_drop_all_zero/paper_table.csv
       vae_lhat:
         role: candidate
         status: trusted
@@ -192,17 +192,17 @@ active_claims:
           pn2021_drop_all_zero_refexcluded: ${paths.output_root}/paper_table/locked_rawfirst_20260618_effnet_copies2_effnet_vae_lhat_augmix_threechain_locked_k500_drop_all_zero/paper_table.csv
     summary_metrics:
       pn2021_all_zero_kept_refexcluded:
-        direct: {macro_auroc: 0.8521806591, macro_auprc: 0.5246913957}
+        direct: {macro_auroc: 0.8491815467, macro_auprc: 0.5271229623}
         vae_lhat: {macro_auroc: 0.873450206917, macro_auprc: 0.563700861136}
         delta_vae_lhat_minus_direct:
-          macro_auroc_pp: 2.12695478
-          macro_auprc_pp: 3.90094654
+          macro_auroc_pp: 2.42686602
+          macro_auprc_pp: 3.65778988
       pn2021_drop_all_zero_refexcluded:
-        direct: {macro_auroc: 0.8763066077, macro_auprc: 0.6666377832}
+        direct: {macro_auroc: 0.8732016318, macro_auprc: 0.6703137497}
         vae_lhat: {macro_auroc: 0.901499159253, macro_auprc: 0.73065541338}
         delta_vae_lhat_minus_direct:
-          macro_auroc_pp: 2.51925516
-          macro_auprc_pp: 6.40176302
+          macro_auroc_pp: 2.82975275
+          macro_auprc_pp: 6.03416637
       pn2021c_all_zero_kept_corrupted_refexcluded:
         direct: {macro_auroc: 0.8099513373, macro_auprc: 0.4728534587}
         vae_lhat: {macro_auroc: 0.8286190331, macro_auprc: 0.4940394547}
@@ -265,7 +265,7 @@ active_claims:
 
 run_catalog:
   trusted:
-    - effnet_direct_k500_v7_sjr_rgq/v7_sjr_rgq_main_20260528
+    - effnet_direct_k500_v7_sjr_rgq/seed20260601_k500_v7_sjr_rgq_20260530_rep1
     - managed_launches/effnet_threechain_locked_rawfirst_20260618_copies2_v1
   deprecated:
     - effnet_vae_lhat_k500_v7_sjr_rgq/v7_sjr_rgq_main_20260528 is legacy clean VAE-LHAT provenance, not the latest three-chain mainline evidence.

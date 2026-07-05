@@ -2,7 +2,9 @@
 
 Generated: 2026-07-05
 
-This is phase 1 only: no source files were deleted or moved. The keep list is conservative and is meant to be reviewed before any archive/delete pass.
+This is the compact public cleanup manifest. Earlier generated keep-list and
+archive-candidate scratch files were removed from the public tree after the
+latest-mainline boundary was committed.
 
 ## Inputs
 
@@ -12,10 +14,10 @@ This is phase 1 only: no source files were deleted or moved. The keep list is co
 - Mapping: `v7_super5_sjr_rgq_review_20260528 / 555ec85d5b51`
 - Class order: `CD,HYP,MI,NORM,STTC`
 
-## Outputs
+## Retained Public Records
 
-- Keep list: `docs/refactor_cleanup/mainline_keep_list_20260705.txt`
-- Archive candidates: `docs/refactor_cleanup/archive_candidates_20260705.csv`
+- This compact manifest.
+- `docs/refactor_cleanup/latest_mainline_dry_run_20260705.md`
 
 ## Counts
 
@@ -48,10 +50,13 @@ This is phase 1 only: no source files were deleted or moved. The keep list is co
 
 ## First Safe Archive Pass
 
-1. Remove `trash/` from the public release tree after preserving this CSV and the existing `trash/legacy_scripts_20260701/README.md` provenance note.
-2. Move `docs/reports/archive/`, `docs/tmp_html/`, and `docs/papers/` out of the public release tree or replace them with a compact bibliography/provenance manifest.
-3. Move `configs/experiments/*` not listed in the keep list into a generated config archive index instead of keeping hundreds of historical candidate YAMLs in the active config folder.
-4. Review `ecg_adv_gen/runner/*` and `ecg_adv_gen/config/adapters/*` candidates that are not in the import closure before deleting; these are code, not pure archive.
+1. `trash/`, historical scripts, historical executable YAMLs, and non-mainline
+   runner entrypoints have been removed from the public release tree.
+2. Active `configs/experiments/*.yaml` is constrained to
+   `configs/active_scripts.yaml:latest_mainline` plus the retained SOTA replay
+   references.
+3. Remaining large files under `ecg_adv_gen/runner/` are active replay
+   entrypoints or direct dependencies of those entrypoints.
 
 ## Required Verification Before Deleting
 

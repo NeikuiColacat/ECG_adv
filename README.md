@@ -65,8 +65,8 @@ The active EfficientNet1DV2 v7 claim is registered in
 
 | View | Direct K500 | VAE-LHAT three-chain | Delta |
 |---|---:|---:|---:|
-| `pn2021_all_zero_kept_refexcluded` AUROC / AUPRC | 0.8522 / 0.5247 | 0.8735 / 0.5637 | +2.13 pp / +3.90 pp |
-| `pn2021_drop_all_zero_refexcluded` AUROC / AUPRC | 0.8763 / 0.6666 | 0.9015 / 0.7307 | +2.52 pp / +6.40 pp |
+| `pn2021_all_zero_kept_refexcluded` AUROC / AUPRC | 0.8492 / 0.5271 | 0.8735 / 0.5637 | +2.43 pp / +3.66 pp |
+| `pn2021_drop_all_zero_refexcluded` AUROC / AUPRC | 0.8732 / 0.6703 | 0.9015 / 0.7307 | +2.83 pp / +6.03 pp |
 | `pn2021c_all_zero_kept_corrupted_refexcluded` AUROC / AUPRC | 0.8100 / 0.4729 | 0.8286 / 0.4940 | +1.87 pp / +2.12 pp |
 | `pn2021c_drop_all_zero_corrupted_refexcluded` AUROC / AUPRC | 0.8312 / 0.6087 | 0.8547 / 0.6439 | +2.35 pp / +3.52 pp |
 

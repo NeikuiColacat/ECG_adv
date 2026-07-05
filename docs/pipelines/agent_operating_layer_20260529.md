@@ -164,10 +164,10 @@ is explicit rather than silently absent.
 
 ## Legacy Traceability Closure
 
-The v7 Direct run has a managed launcher manifest:
+The latest Direct K500 baseline has a seed20260601 managed metadata record:
 
 ```text
-${paths.output_root}/20260528/v7_sjr_rgq_main_20260528_direct_plan/run_manifest.json
+${paths.output_root}/managed_launches/effnet_direct_seed20260601_k500_v7_sjr_rgq_20260530_rep1_v1/run_manifest.json
 ```
 
 The historical v7 VAE noAug output predates the managed launcher manifest path,
