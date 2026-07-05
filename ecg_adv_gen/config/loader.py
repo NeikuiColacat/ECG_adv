@@ -730,7 +730,6 @@ _PATH_OPTION_NAMES = {
     "--semantic_ckpt",
     "--style_ckpt",
     "--synth_npz",
-    "--target_logit_anchor_path",
     "--target_real_npz",
     "--token_bank",
     "--train_path",
@@ -1120,7 +1119,6 @@ def build_artifact_trace(
     seed = int(kshot.get("subset_seed", kshot["seed"]))
     inputs = {
         "checkpoints": [],
-        "init_heads": [],
         "k500_refs": [],
         "data_caches": [
             _path_record("pn2021_cache_dir", config["data"]["cache"]["pn2021_cache_dir"], required=False),
@@ -1165,11 +1163,6 @@ def build_artifact_trace(
             )
         if _opt_first(opts, "--checkpoint"):
             inputs["checkpoints"].append(_path_record("command.checkpoint", _opt_first(opts, "--checkpoint")))
-        if _opt_first(opts, "--target_logit_anchor_path"):
-            inputs["init_heads"].append(
-                _path_record("command.target_logit_anchor_path", _opt_first(opts, "--target_logit_anchor_path"))
-            )
-
         if script == "effnet_direct_finetune.py":
             for item_center in _opt_list(opts, "--centers"):
                 command_k = int(_opt_first(opts, "--k", k))
@@ -1316,7 +1309,6 @@ def build_artifact_trace(
         )
 
     inputs["checkpoints"] = _dedupe_path_records(inputs["checkpoints"])
-    inputs["init_heads"] = _dedupe_path_records(inputs["init_heads"])
     inputs["data_caches"] = _dedupe_path_records(inputs["data_caches"])
 
     artifact_trace = {

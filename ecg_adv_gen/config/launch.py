@@ -666,8 +666,6 @@ def verify_required_inputs(manifest: dict[str, Any]) -> dict[str, Any]:
 
     for record in inputs.get("checkpoints") or []:
         check_record(record)
-    for record in inputs.get("init_heads") or []:
-        check_record(record)
     for record in inputs.get("data_caches") or []:
         check_record(record)
     for ref in inputs.get("k500_refs") or []:

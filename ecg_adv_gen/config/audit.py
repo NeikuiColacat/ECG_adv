@@ -321,7 +321,6 @@ def audit_managed_experiment(
         passed = passed and bool(input_verification.get("passed"))
 
     checkpoints = inputs.get("checkpoints") or []
-    init_heads = inputs.get("init_heads") or []
     k500_refs = inputs.get("k500_refs") or []
     data_caches = inputs.get("data_caches") or []
     runner = config.get("runner") or {}
@@ -342,13 +341,11 @@ def audit_managed_experiment(
         "postprocess_artifact_count": sum(len(run.get("expected_artifacts") or []) for run in postprocess_runs),
         "k500_ref_count": len(k500_refs),
         "checkpoint_count": len(checkpoints),
-        "init_head_count": len(init_heads),
         "data_cache_count": len(data_caches),
         "required_input_count": (
             _count_records(checkpoints, "model.init_checkpoint")
             + _count_records(checkpoints, "model.checkpoint")
             + len([r for r in checkpoints if r.get("required") is not False and r.get("role") not in {"model.init_checkpoint", "model.checkpoint"}])
-            + len([r for r in init_heads if r.get("required") is not False])
             + len([r for r in data_caches if r.get("required") is not False])
             + sum(
                 int(ref.get("ref_meta_json") is not None)
@@ -447,7 +444,6 @@ def write_audit_report(report: dict[str, Any], output_dir: Path) -> dict[str, st
         "postprocess_artifact_count",
         "k500_ref_count",
         "checkpoint_count",
-        "init_head_count",
         "data_cache_count",
         "required_input_count",
         "command_audit_passed",
