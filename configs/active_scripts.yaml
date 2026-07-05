@@ -1,6 +1,6 @@
 version: 1
 updated: 2026-07-01
-purpose: Track the latest-mainline YAML launch contract and SOTA replay references for the public refactor.
+purpose: Track the latest-mainline YAML launch contract for the public refactor.
 source_of_truth:
   shared_server_safety: AGENTS.md
   yaml_refactor_plan: docs/refactor_cleanup/cleanup_manifest_summary_20260705.md
@@ -73,7 +73,7 @@ latest_mainline:
   - MI
   - NORM
   - STTC
-  historical_policy: drop_from_public_tree_unless_latest_mainline_or_sota_replay
+  historical_policy: drop_from_public_tree_unless_latest_mainline
   excluded_main_method_branches:
   - stabilizer_frontend
   - raw_supervised_branch
@@ -299,31 +299,6 @@ managed_experiments:
   mapping_version: v7_super5_sjr_rgq_review_20260528
   owns_training_logic: false
   notes: Latest ECGFounder depth2/depth3 composite PN2021-C official severity-5 evaluation surface for the locked three-chain VAE-LHAT AugMix run.
-inactive_experiment_configs:
-- config: configs/experiments/pn2021c_effnet_c117_official_s5_depth23_replay_chapman_shaoxing.yaml
-  status: sota_replay_reference
-  reason: Managed replay config for already reported EffNet c117 SOTA artifacts; kept out of latest_mainline because it points to dated historical output directories.
-- config: configs/experiments/pn2021c_effnet_c117_official_s5_depth23_replay_cpsc.yaml
-  status: sota_replay_reference
-  reason: Managed replay config for already reported EffNet c117 SOTA artifacts; kept out of latest_mainline because it points to dated historical output directories.
-- config: configs/experiments/pn2021c_effnet_c117_official_s5_depth23_replay_georgia.yaml
-  status: sota_replay_reference
-  reason: Managed replay config for already reported EffNet c117 SOTA artifacts; kept out of latest_mainline because it points to dated historical output directories.
-- config: configs/experiments/pn2021c_effnet_c117_official_s5_depth23_replay_ningbo.yaml
-  status: sota_replay_reference
-  reason: Managed replay config for already reported EffNet c117 SOTA artifacts; kept out of latest_mainline because it points to dated historical output directories.
-- config: configs/experiments/pn2021c_ecgfounder_c110_official_s5_depth23_replay_chapman_shaoxing_20260624.yaml
-  status: sota_replay_reference
-  reason: Managed replay config for already reported ECGFounder c110 SOTA artifacts; kept out of latest_mainline because it points to dated historical output directories.
-- config: configs/experiments/pn2021c_ecgfounder_c110_official_s5_depth23_replay_cpsc_20260624.yaml
-  status: sota_replay_reference
-  reason: Managed replay config for already reported ECGFounder c110 SOTA artifacts; kept out of latest_mainline because it points to dated historical output directories.
-- config: configs/experiments/pn2021c_ecgfounder_c110_official_s5_depth23_replay_georgia_20260624.yaml
-  status: sota_replay_reference
-  reason: Managed replay config for already reported ECGFounder c110 SOTA artifacts; kept out of latest_mainline because it points to dated historical output directories.
-- config: configs/experiments/pn2021c_ecgfounder_c110_official_s5_depth23_replay_ningbo_20260624.yaml
-  status: sota_replay_reference
-  reason: Managed replay config for already reported ECGFounder c110 SOTA artifacts; kept out of latest_mainline because it points to dated historical output directories.
 reporting_tools:
 - name: data_manifest_exporter
   status: active

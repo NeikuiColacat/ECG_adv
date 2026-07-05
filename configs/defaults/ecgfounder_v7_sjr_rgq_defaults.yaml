@@ -1,18 +1,40 @@
 extends:
-  - ecgfounder_defaults.yaml
   - common_v7_sjr_rgq_super5.yaml
 
 model:
+  backbone: ecgfounder
+  num_classes: 5
+  checkpoint: ${paths.data_root}/ecgfounder/checkpoint/12_lead_ECGFounder.pth
   linear_probe_dir: ${paths.data_root}/paper_foundation_baselines_20260530/ecgfounder_linear_probe_v7_from_v6_cache
   k500_head_root: ${paths.output_root}/ecgfounder_direct_k500_v7_sjr_rgq/${runtime.run_id}/runs
+  preprocess_policy: official_ptbxl_eval
+
+preprocess:
+  ecgfounder:
+    preprocess_policy: official_ptbxl_eval
+    input_fs: 500
+    input_len: 5000
+    input_shape: [12, 5000]
+
+data:
+  cache:
+    ecgfounder_fullft_signal_cache_dir: ""
 
 training:
   epochs: 50
   batch_size: 128
   eval_batch_size: 4096
+  source_train_limit: 0
   optimizer:
     name: adamw
     lr: 0.0005
     weight_decay: 0.0001
   validation:
     val_fraction: 0.2
+
+runner:
+  env:
+    ECG_ADV_GEN_DATA_ROOT: ${paths.data_root}
+    ECGFOUNDER_ROOT: ${paths.data_root}/ecgfounder
+    TMPDIR: ${paths.short_tmp_root}
+    XDG_CACHE_HOME: ${paths.cache_root}

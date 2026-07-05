@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import copy
-import inspect
 import json
 from pathlib import Path
 
@@ -60,26 +59,11 @@ def test_data_preprocess_contract_matches_current_pipeline_constants():
 
 def test_data_contract_tests_use_latest_mainline_or_active_fixtures():
     index = yaml.safe_load((REPO / "configs" / "active_scripts.yaml").read_text(encoding="utf-8"))
-    inactive_config_names = {Path(item["config"]).name for item in index["inactive_experiment_configs"]}
-    checked_tests = [
-        test_tracked_configs_follow_data_preprocess_contract,
-        test_validate_experiment_config_rejects_center_contract_drift,
-        test_validate_experiment_config_rejects_preprocess_contract_drift,
-        test_validate_experiment_config_rejects_ecgfounder_policy_drift,
-        test_validate_experiment_config_rejects_ecgfounder_feature_shape_drift,
-        test_validate_experiment_config_rejects_ecgfounder_policy_on_effnet,
-        _config_with_tmp_data_roots,
-    ]
-    offenders = []
-    for test_func in checked_tests:
-        source = inspect.getsource(test_func)
-        offenders.extend(
-            f"{test_func.__name__}: {config_name}"
-            for config_name in sorted(inactive_config_names)
-            if config_name in source
-        )
+    latest_config_names = {Path(stage["config"]).name for stage in index["latest_mainline"]["stages"]}
+    public_config_names = {path.name for path in (REPO / "configs" / "experiments").glob("*.yaml")}
 
-    assert offenders == []
+    assert "inactive_experiment_configs" not in index
+    assert public_config_names == latest_config_names
 
 
 def test_tracked_configs_follow_data_preprocess_contract():

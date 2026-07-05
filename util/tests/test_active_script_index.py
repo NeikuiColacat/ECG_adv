@@ -26,7 +26,6 @@ LEGACY_SCRIPT_ROOTS = {
     "scripts/ecgtwin_gen",
     "scripts/ecgtwin_author_repro",
 }
-SOTA_REPLAY_STATUS = "sota_replay_reference"
 
 
 def _load_index() -> dict[str, Any]:
@@ -69,10 +68,6 @@ def _tracked_public_yaml() -> list[Path]:
 
 def _latest_configs(data: dict[str, Any]) -> set[str]:
     return {stage["config"] for stage in data["latest_mainline"]["stages"]}
-
-
-def _sota_replay_configs(data: dict[str, Any]) -> set[str]:
-    return {item["config"] for item in data["inactive_experiment_configs"]}
 
 
 def test_active_script_index_has_no_host_absolute_paths():
@@ -155,22 +150,16 @@ def test_latest_mainline_configs_use_managed_package_runners():
         assert build_runner_commands(config)
 
 
-def test_public_experiment_config_inventory_is_latest_mainline_plus_sota_replay():
+def test_public_experiment_config_inventory_is_latest_mainline_only():
     data = _load_index()
     latest_configs = _latest_configs(data)
-    replay_configs = _sota_replay_configs(data)
     actual_configs = {
         path.relative_to(REPO).as_posix()
         for path in (REPO / "configs" / "experiments").glob("*.yaml")
     }
 
-    assert len(replay_configs) == 8
-    assert replay_configs.isdisjoint(latest_configs)
-    assert actual_configs == latest_configs | replay_configs
-    for item in data["inactive_experiment_configs"]:
-        assert item["status"] == SOTA_REPLAY_STATUS
-        assert (REPO / item["config"]).exists()
-        assert item["reason"]
+    assert "inactive_experiment_configs" not in data
+    assert actual_configs == latest_configs
 
 
 def test_active_index_no_longer_tracks_historical_inventory():
@@ -178,6 +167,7 @@ def test_active_index_no_longer_tracks_historical_inventory():
         "trash/",
         "legacy_scripts_20260701",
         "historical_unmanaged",
+        "sota_replay_reference",
         "smoke_only",
         "superseded_by_v7",
     )

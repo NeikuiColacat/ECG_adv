@@ -66,11 +66,4 @@ runner:
     XDG_CACHE_HOME: ${paths.cache_root}
   matrix:
     center: ${paper_protocol.centers.target_4}
-    method:
-      - name: vae_noaug
-        family: effnet_vae_noaug_k500_v7_sjr_rgq
-        noaug_suffix: _noaugmix
-      - name: vae_lhat
-        family: effnet_vae_lhat_k500_v7_sjr_rgq
-        noaug_suffix: ""
   name: ${experiment.name}_${matrix.center}_${matrix.method.name}

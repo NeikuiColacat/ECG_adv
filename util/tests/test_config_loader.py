@@ -40,7 +40,7 @@ from ecg_adv_gen.config import (
 from ecg_adv_gen.config.entrypoints import managed_runner_script_names
 from ecg_adv_gen.config.loader import audit_runner_commands, build_artifact_trace
 from ecg_adv_gen.config.runner_audit import DISPATCHED_RUNNER_AUDIT_SCRIPT_NAMES, audit_runner_command
-from ecg_adv_gen.config.paths import PathSafetyError, translate_legacy_path, validate_local_paths
+from ecg_adv_gen.config.paths import PathSafetyError, validate_local_paths
 from ecg_adv_gen.evaluation.pn2021c_protocol import official_s5_depth23_composites
 from ecg_adv_gen.run_naming import build_effnet_direct_run_leaf
 
@@ -110,24 +110,20 @@ def test_effnet_latest_eval_refs_use_locked_k500_seed(config_name: str):
     assert "seed20260531" not in argv
 
 
-def test_public_experiment_configs_are_latest_mainline_plus_sota_replay():
+def test_public_experiment_configs_are_latest_mainline_only():
     index = yaml.safe_load((REPO / "configs" / "active_scripts.yaml").read_text(encoding="utf-8"))
     latest_configs = {Path(stage["config"]).name for stage in index["latest_mainline"]["stages"]}
-    replay_configs = {Path(item["config"]).name for item in index["inactive_experiment_configs"]}
     actual_configs = {path.name for path in (REPO / "configs" / "experiments").glob("*.yaml")}
 
     assert len(latest_configs) == 10
-    assert len(replay_configs) == 8
-    assert latest_configs.isdisjoint(replay_configs)
-    assert actual_configs == latest_configs | replay_configs
-    assert {item["status"] for item in index["inactive_experiment_configs"]} == {
-        "sota_replay_reference"
-    }
+    assert "inactive_experiment_configs" not in index
+    assert actual_configs == latest_configs
 
 
 def test_generic_config_framework_tests_use_active_fixtures():
     index = yaml.safe_load((REPO / "configs" / "active_scripts.yaml").read_text(encoding="utf-8"))
-    inactive_config_names = {Path(item["config"]).name for item in index["inactive_experiment_configs"]}
+    public_config_names = {path.name for path in (REPO / "configs" / "experiments").glob("*.yaml")}
+    latest_config_names = {Path(stage["config"]).name for stage in index["latest_mainline"]["stages"]}
     generic_tests = [
         test_logging_artifacts_are_split_by_lifecycle,
         test_pipeline_stages_are_recorded_in_dry_run_manifest,
@@ -143,10 +139,11 @@ def test_generic_config_framework_tests_use_active_fixtures():
         source = inspect.getsource(test_func)
         offenders.extend(
             f"{test_func.__name__}: {config_name}"
-            for config_name in sorted(inactive_config_names)
+            for config_name in sorted(public_config_names - latest_config_names)
             if config_name in source
         )
 
+    assert public_config_names == latest_config_names
     assert offenders == []
 
 
@@ -1283,15 +1280,7 @@ def test_tracked_config_rejects_local_absolute_paths(tmp_path: Path):
         load_experiment_config(bad_config, LOCAL_EXAMPLE)
 
 
-def test_known_legacy_root_alias_translates():
-    assert translate_legacy_path("/root/autodl-tmp/ptbxl").startswith("/home/linbinhao/")
-    assert (
-        translate_legacy_path("/root/miniforge3/envs/ECGTwin/bin/python")
-        == "/home/linbinhao/micromamba/envs/ECGTwin/bin/python"
-    )
-
-
-def test_local_config_accepts_known_root_aliases(tmp_path: Path):
+def test_local_config_rejects_known_root_aliases(tmp_path: Path):
     local = yaml.safe_load(LOCAL_EXAMPLE.read_text(encoding="utf-8"))
     local["paths"]["data_root"] = "/root/autodl-tmp"
     local["paths"]["model_root"] = "/root/autodl-tmp/models"
@@ -1302,14 +1291,13 @@ def test_local_config_accepts_known_root_aliases(tmp_path: Path):
     local_path = tmp_path / "local_root_alias.yaml"
     local_path.write_text(yaml.safe_dump(local), encoding="utf-8")
 
-    config = load_experiment_config(
-        REPO / "configs" / "experiments" / "effnet_direct_k500_v7_sjr_rgq.yaml",
-        local_path,
-        runtime_context={"run_id": "pytest_root_alias"},
-    )
-    paths = validate_local_paths(config)
-    assert paths["data_root"].startswith("/home/linbinhao/")
-    assert paths["python_executable"].startswith("/home/linbinhao/")
+    with pytest.raises(PathSafetyError, match="root-era path"):
+        config = load_experiment_config(
+            REPO / "configs" / "experiments" / "effnet_direct_k500_v7_sjr_rgq.yaml",
+            local_path,
+            runtime_context={"run_id": "pytest_root_alias"},
+        )
+        validate_local_paths(config)
 
 
 def test_local_config_rejects_unknown_root_path(tmp_path: Path):

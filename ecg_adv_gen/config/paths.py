@@ -6,33 +6,13 @@ from pathlib import Path
 from typing import Any
 
 
-LEGACY_PATH_ALIASES = {
-    "/root/autodl-tmp": "/home/linbinhao/ECG_adv_data",
-    "/root/miniforge3/envs/ECGTwin/bin/python": "/home/linbinhao/micromamba/envs/ECGTwin/bin/python",
-    "/root/.codex": "/home/linbinhao/.codex",
-}
-
-
 class PathSafetyError(ValueError):
     """Raised when a configured path would violate shared-server boundaries."""
-
-
-def translate_legacy_path(raw_value: Any) -> Any:
-    if not isinstance(raw_value, str):
-        return raw_value
-    expanded = raw_value.strip()
-    for legacy, migrated in sorted(LEGACY_PATH_ALIASES.items(), key=lambda kv: len(kv[0]), reverse=True):
-        if expanded == legacy:
-            return migrated
-        if expanded.startswith(legacy + "/"):
-            return migrated + expanded[len(legacy):]
-    return raw_value
 
 
 def _as_path(value: Any, *, field: str) -> Path:
     if value in (None, ""):
         raise PathSafetyError(f"Missing required path field: {field}")
-    value = translate_legacy_path(value)
     return Path(str(value)).expanduser().resolve()
 
 
@@ -47,14 +27,11 @@ def is_under(path: Path, boundary: Path) -> bool:
 def reject_untranslated_root_path(raw_value: Any, *, field: str) -> None:
     if not isinstance(raw_value, str):
         return
-    translated = translate_legacy_path(raw_value)
-    if translated != raw_value:
-        return
     expanded = raw_value.strip()
     if expanded.startswith("/root/"):
         raise PathSafetyError(
             f"{field} still points at root-era path {expanded!r}; "
-            "move this to local YAML or translate it through an explicit alias"
+            "move this to current host-local YAML"
         )
 
 
