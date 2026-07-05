@@ -567,6 +567,7 @@ def test_effnet_vae_lhat_threechain_locked_k500_config_uses_official_s5_last_che
         assert "--boundary_prob_min" not in argv
         assert "--boundary_prob_max" not in argv
         assert "--source_class_weights" not in argv
+        assert "--source_weights" not in argv
         assert "--source_floor_per_class" not in argv
         assert "--anchor_class_weights" not in argv
         assert "--anchor_class_weight_mode" not in argv

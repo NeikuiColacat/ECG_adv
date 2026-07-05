@@ -67,7 +67,7 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
         synth_npz_override = str(Path(paths["data_root"]) / synth_npz_override)
     latent_augmix = adaptation["latent_augmix"]
     latent_augmix_consistency = latent_augmix["consistency"]
-    anchors = adaptation.get("anchors") or {}
+    anchors = adaptation["anchors"]
 
     argv: list[Any] = [
         "--center",
@@ -153,7 +153,6 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
     _append_optional_value(argv, "--target_real_norm_mode", data.get("target_real_norm_mode"))
     _append_optional_value(argv, "--synth_npz_override", synth_npz_override or None)
     _append_optional_value(argv, "--target_real_npz_override", target_real_npz_override or None)
-    _append_optional_value(argv, "--source_weights", anchors.get("source_weights"))
     _append_optional_value(
         argv,
         "--latent_augmix_copies",
