@@ -38,7 +38,7 @@ from ecg_adv_gen.config import (
     write_selection_record_artifact,
 )
 from ecg_adv_gen.config.entrypoints import managed_runner_script_names
-from ecg_adv_gen.config.loader import audit_runner_commands, build_artifact_trace
+from ecg_adv_gen.config.loader import _audit_runtime_path, audit_runner_commands, build_artifact_trace
 from ecg_adv_gen.config.runner_audit import DISPATCHED_RUNNER_AUDIT_SCRIPT_NAMES, audit_runner_command
 from ecg_adv_gen.config.paths import PathSafetyError, validate_local_paths
 from ecg_adv_gen.evaluation.pn2021c_protocol import official_s5_depth23_composites
@@ -1913,6 +1913,26 @@ def test_runner_env_rejects_cuda_visible_devices_override():
 
     with pytest.raises(ConfigError, match="CUDA_VISIBLE_DEVICES"):
         build_runner_commands(config)
+
+
+def test_runtime_path_audit_keeps_home_entrypoint_for_symlinked_inputs(tmp_path: Path):
+    boundary = tmp_path / "home"
+    external = tmp_path / "external_data"
+    boundary.mkdir()
+    external.mkdir()
+    input_link = boundary / "kshot_subsets"
+    input_link.symlink_to(external, target_is_directory=True)
+
+    errors: list[str] = []
+    _audit_runtime_path(
+        errors,
+        script="pn2021_clean_eval.py",
+        label="--exclude_ref_ids",
+        value=str(input_link / "ref_meta.json"),
+        boundary=boundary,
+    )
+
+    assert errors == []
 
 
 def test_check_nvidia_smi_parses_fake_runner():

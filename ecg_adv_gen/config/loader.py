@@ -778,7 +778,7 @@ def _audit_runtime_path(
             errors.append(f"{script}: {label} points at root-era runtime path {text!r}")
             continue
         try:
-            resolved = Path(text).expanduser().resolve(strict=False)
+            resolved = Path(os.path.abspath(os.path.expanduser(text)))
         except OSError:
             errors.append(f"{script}: {label} is not a valid path {text!r}")
             continue

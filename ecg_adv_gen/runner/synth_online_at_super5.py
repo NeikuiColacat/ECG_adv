@@ -79,11 +79,11 @@ from ecg_adv_gen.evaluation.pn2021c import (  # noqa: E402
     load_custom_severity_profile as _load_custom_severity_profile,
 )
 
-from ecg_adv_gen.training.tierm_online_adv import (  # noqa: E402
-    _center_crop_ct,
-    QualityAwareBufferTierM as QualityAwareBuffer,
+from ecg_adv_gen.training.online_buffer import (  # noqa: E402
+    QualityAwareBuffer,
     build_roundtrip_anchor_dataset,
-    train_one_epoch_tierM as train_one_epoch_masked_bce,
+    center_crop_ct,
+    train_one_epoch_masked_bce,
 )
 from ecg_adv_gen.labels import CLASS_NAMES_SUPER5, NUM_SUPER5, get_super5_scheme  # noqa: E402
 from ecg_adv_gen.labels.super5_mapping import SUPER5_TO_IDX, snomed_list_to_super5  # noqa: E402
@@ -1459,7 +1459,7 @@ def push_adv_to_buffer(
     n_dropped_by_trust = 0
     n_dropped_by_boundary = 0
     for i in range(adv_signals_ct.shape[0]):
-        sig_250 = _center_crop_ct(adv_signals_ct[i], crop_len)         # (12, 250)
+        sig_250 = center_crop_ct(adv_signals_ct[i], crop_len)          # (12, 250)
         target_idx = int(target_one_hot[i].argmax())
         target_class = CLASS_NAMES_SUPER5[target_idx] if target_idx < len(CLASS_NAMES_SUPER5) else None
         trust = float(class_trust.get(target_class, 1.0)) if class_trust else 1.0
