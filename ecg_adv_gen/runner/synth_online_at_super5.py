@@ -105,9 +105,7 @@ from ecg_adv_gen.adaptation import (  # noqa: E402
     build_three_chain_vae_lhat_augmix_views as _build_three_chain_vae_lhat_augmix_views_core,
     derive_kshot_anchor_class_weights,
     decoded_signal_invalid_stats,
-    parse_class_source_weight_map,
     parse_class_weight_map,
-    parse_source_weight_map,
     weighted_anchor_quotas,
 )
 
@@ -939,18 +937,6 @@ def parse_args():
     )
     p.add_argument("--hull_neighbor_pool_size", type=int, default=0)
     p.add_argument("--hull_neighbor_pool_multiplier", type=int, default=4)
-    p.add_argument("--source_sampling_strategy",
-                   choices=["class_balanced", "source_weighted"],
-                   default="class_balanced",
-                   help="class_balanced ignores source metadata; source_weighted "
-                        "allocates each class quota by source weights when the "
-                        "latent pool has source_ids/source_names.")
-    p.add_argument("--source_weights", default=None,
-                   help="Comma map for source_weighted, e.g. real_anchor=1.0,prompt_token=0.35")
-    p.add_argument("--source_class_weights", default=None,
-                   help="Comma overrides, e.g. MI:prompt_token=1.0,STTC:prompt_token=0.5")
-    p.add_argument("--source_floor_per_class", type=int, default=0,
-                   help="Minimum anchors per positive-weight source within each class quota.")
     p.add_argument(
         "--anchor_class_weights",
         default=None,
@@ -1294,10 +1280,6 @@ def main():
     source_counts = Counter(str(s) for s in source_meta["source_labels"])
     print(f"[setup] synth source counts: {dict(source_counts)} "
           f"has_metadata={source_meta['has_source_metadata']}")
-    if args.source_sampling_strategy == "source_weighted" and not source_meta["has_source_metadata"]:
-        print("[setup] WARNING: source_weighted requested but pool lacks source metadata; "
-              "all samples use source='unknown'.")
-
     # ── PTBXL super5 train / val ────────────────────────────────────────────
     scheme = get_super5_scheme()
 
@@ -1423,8 +1405,6 @@ def main():
     scheduler = CosineAnnealingLR(optimizer, T_max=args.n_epochs,
                                   eta_min=args.lr * 0.01)
 
-    source_weight_map = parse_source_weight_map(args.source_weights)
-    source_class_weight_map = parse_class_source_weight_map(args.source_class_weights)
     manual_anchor_class_weight_map = parse_class_weight_map(args.anchor_class_weights)
     anchor_class_weight_map, anchor_class_weight_info = derive_kshot_anchor_class_weights(
         synth_labels,
@@ -1523,20 +1503,10 @@ def main():
         labels_one_hot=synth_labels,
         classes_in_scope=classes_in_scope,
         class_to_idx=SUPER5_TO_IDX, seed=args.seed,
-        source_labels=source_meta["source_labels"],
-        source_sampling_strategy=args.source_sampling_strategy,
-        source_weights=source_weight_map,
-        source_class_weights=source_class_weight_map,
-        source_floor_per_class=args.source_floor_per_class,
     )
     walker_class_sizes = walker.class_sizes()
     print(f"[setup] walker class sizes: {walker_class_sizes}")
     print(f"[setup] anchor class weights: {anchor_class_weight_map or {'<default>': 1.0}}")
-    if args.source_sampling_strategy == "source_weighted":
-        print(f"[setup] walker source-class sizes: {walker.source_class_sizes()}")
-        print(f"[setup] source weights: global={source_weight_map or {'<default>': 1.0}} "
-              f"class_overrides={source_class_weight_map or {}} "
-              f"floor_per_class={args.source_floor_per_class}")
 
     rng = np.random.default_rng(args.seed)
     consecutive_low_asr = 0
@@ -1593,9 +1563,6 @@ def main():
         )
         drawn = walker.sample(k_per_cls)
         print(f"[ep{epoch:02d}] anchor class quotas: {k_per_cls}", flush=True)
-        if args.source_sampling_strategy == "source_weighted":
-            print(f"[ep{epoch:02d}] anchor source counts: {walker.last_source_counts} "
-                  f"class_source={walker.last_class_source_counts}", flush=True)
         all_picks = np.concatenate(
             [drawn[c] for c in classes_in_scope if drawn[c].size > 0]
         ) if any(drawn[c].size > 0 for c in classes_in_scope) else np.empty(0, dtype=np.int64)
@@ -1969,11 +1936,6 @@ def main():
             "lr":            round(optimizer.param_groups[0]["lr"], 6),
             "time_s":        round(elapsed, 1),
         }
-        if args.source_sampling_strategy == "source_weighted":
-            entry.update({
-                "anchor_source_counts": dict(walker.last_source_counts),
-                "anchor_class_source_counts": walker.last_class_source_counts,
-            })
         entry.update({
             "hull_M": args.hull_M,
             "hull_lambda": args.hull_lambda,

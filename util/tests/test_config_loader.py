@@ -676,6 +676,8 @@ def test_effnet_vae_lhat_train_builder_locks_threechain_consistency():
     assert "--enable_latent_augmix_branch" not in cmd
     assert "--latent_augmix_topology" not in cmd
     assert "--enable_latent_augmix_consistency" not in cmd
+    assert "--source_sampling_strategy" not in cmd
+    assert "--source_weights" not in cmd
     assert _option_value(cmd, "--latent_augmix_width") == "3"
     assert _option_value(cmd, "--latent_augmix_consistency_loss") == "jsd"
     assert _all_option_values(cmd, "--latent_augmix_ops") == [
