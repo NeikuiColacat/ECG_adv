@@ -192,9 +192,6 @@ def build_effnet_vae_lhat_train_cmd(
         train_cmd.append("--hull_include_anchor")
     train_cmd.extend(
         [
-            "--enable_latent_augmix_branch",
-            "--latent_augmix_topology",
-            "locked_three_chain",
             "--latent_augmix_copies",
             str(args.latent_augmix_copies),
             "--latent_augmix_width",
@@ -215,7 +212,6 @@ def build_effnet_vae_lhat_train_cmd(
     )
     train_cmd.extend(
         [
-            "--enable_latent_augmix_consistency",
             "--latent_augmix_consistency_weight",
             str(args.latent_augmix_consistency_weight),
             "--latent_augmix_consistency_loss",

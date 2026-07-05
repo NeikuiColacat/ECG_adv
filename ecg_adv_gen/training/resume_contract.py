@@ -26,7 +26,6 @@ RESUME_CONTRACT_KEYS = (
     "hull_neighbor_pool_size",
     "adv_label_mode",
     "adv_teacher_mix",
-    "enable_latent_augmix_branch",
     "latent_augmix_width",
     "latent_augmix_depth",
     "latent_augmix_severity",
@@ -36,6 +35,11 @@ RESUME_CONTRACT_KEYS = (
     "crop_len",
 )
 LOCKED_ATTACK_MODE = "latent_hull"
+LOCKED_LEGACY_ARGS = {
+    "enable_latent_augmix_branch": True,
+    "enable_latent_augmix_consistency": True,
+    "latent_augmix_topology": "locked_three_chain",
+}
 
 
 def normalize_resume_contract_value(value: Any) -> Any:
@@ -63,6 +67,11 @@ def resume_contract_mismatches(
                 "saved": saved_attack_mode,
                 "current": LOCKED_ATTACK_MODE,
             })
+    for key, current in LOCKED_LEGACY_ARGS.items():
+        if key in saved_args:
+            saved = normalize_resume_contract_value(saved_args[key])
+            if saved != current:
+                mismatches.append({"key": key, "saved": saved, "current": current})
     for key in keys:
         if key not in saved_args or key not in current_args:
             continue

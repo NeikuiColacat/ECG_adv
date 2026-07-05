@@ -1025,26 +1025,6 @@ def parse_args():
             "a small value to --adv_weight over this many epochs."
         ),
     )
-    p.add_argument(
-        "--enable_latent_augmix_branch",
-        action="store_true",
-        help=(
-            "Stage-3 experiment: after each latent-hull adversarial decode, "
-            "treat x_adv as one AugMix branch and mix it with ECG corruption "
-            "chains from the clean anchor before pushing extra samples into "
-            "the adversarial buffer."
-        ),
-    )
-    p.add_argument(
-        "--latent_augmix_topology",
-        choices=["locked_three_chain"],
-        default="locked_three_chain",
-        help=(
-            "locked_three_chain enforces the PN2021-C protocol topology: "
-            "two raw ECG corruption chains plus one uncorrupted VAE-LHAT "
-            "adversarial waveform chain."
-        ),
-    )
     p.add_argument("--latent_augmix_copies", type=int, default=1,
                    help="Number of latent-branch AugMix samples to create per x_adv.")
     p.add_argument("--latent_augmix_width", type=int, default=3,
@@ -1132,14 +1112,6 @@ def parse_args():
                    help="Do not global-zscore the final latent-branch AugMix waveform before buffering.")
     p.add_argument("--latent_augmix_clip_abs", type=float, default=6.0,
                    help="Clip final latent-branch AugMix waveform after optional zscore; <=0 disables clipping.")
-    p.add_argument(
-        "--enable_latent_augmix_consistency",
-        action="store_true",
-        help=(
-            "After each normal mixed epoch, directly train on the latent-AugMix "
-            "views generated for that epoch with hard BCE plus soft-BCE/JSD."
-        ),
-    )
     p.add_argument("--latent_augmix_consistency_weight", type=float, default=2.0)
     p.add_argument(
         "--latent_augmix_consistency_loss",
@@ -1192,7 +1164,10 @@ def parse_args():
         action="store_true",
         help="Allow critical args in a resume checkpoint to differ from the current command.",
     )
-    return p.parse_args()
+    args = p.parse_args()
+    if int(args.latent_augmix_copies) <= 0:
+        p.error("--latent_augmix_copies must be > 0 for locked latent AugMix")
+    return args
 
 
 def load_synth_pool(synth_npz_path: str) -> Tuple[np.ndarray, np.ndarray, str, Dict[str, Any]]:
@@ -1252,7 +1227,7 @@ def main():
         raise SystemExit("--classes_in_scope must contain at least one class")
     print(f"[setup] classes_in_scope={classes_in_scope}")
     latent_augmix_severity_profile_params = _resolve_optional_custom_severity_profile(
-        enabled=bool(args.enable_latent_augmix_branch),
+        enabled=True,
         severity_profile=args.latent_augmix_severity_profile,
         params_file=args.latent_augmix_severity_params_file,
         params_name=args.latent_augmix_severity_params_name,
@@ -1264,55 +1239,50 @@ def main():
     print(f"[setup] hull mix label mode={args.hull_mix_label_mode} "
           f"lambda_y={args.hull_label_lambda_y} pos={args.hull_label_positive} "
           f"neg_floor={args.hull_label_negative_floor} new_cap={args.hull_label_new_class_cap}")
-    if args.enable_latent_augmix_branch:
+    print(
+        "[setup] latent-branch AugMix enabled: "
+        "topology=locked_three_chain "
+        f"copies={args.latent_augmix_copies} width={args.latent_augmix_width} "
+        f"depth={args.latent_augmix_depth} severity={args.latent_augmix_severity} "
+        f"profile={args.latent_augmix_severity_profile} "
+        f"mixture={args.latent_augmix_mixture_mode}:{args.latent_augmix_mixture_prob} "
+        f"op_schedule={args.latent_augmix_op_schedule} "
+        f"chain_weights={args.latent_augmix_chain_weights or 'dirichlet'} "
+        f"signal_space={args.latent_augmix_signal_space} "
+        f"corruption_source={args.latent_augmix_corruption_source} "
+        f"w_lat_cap={args.latent_augmix_latent_weight_cap} "
+        f"ops={args.latent_augmix_ops}",
+        flush=True,
+    )
+    print(
+        "[setup] latent-branch AugMix direct consistency enabled: "
+        f"loss={args.latent_augmix_consistency_loss} "
+        f"weights=(consistency={args.latent_augmix_consistency_weight}, "
+        f"bce={args.latent_augmix_bce_weight}) "
+        f"max_batches={args.latent_augmix_consistency_max_batches}",
+        flush=True,
+    )
+    if int(args.latent_augmix_width) != 3:
+        raise ValueError("locked three-chain latent AugMix requires --latent_augmix_width 3")
+    if args.latent_augmix_signal_space == "raw_pre_zscore" and args.no_latent_augmix_renorm:
+        raise ValueError(
+            "--latent_augmix_signal_space raw_pre_zscore requires final latent-AugMix renorm "
+            "so generated views match classifier model-input normalization"
+        )
+    if args.latent_augmix_corruption_source == "target_real":
+        if args.latent_augmix_signal_space != "raw_pre_zscore":
+            raise ValueError(
+                "--latent_augmix_corruption_source target_real requires "
+                "--latent_augmix_signal_space raw_pre_zscore"
+            )
+        if not args.target_real_npz:
+            raise ValueError("--latent_augmix_corruption_source target_real requires --target_real_npz")
+    if args.latent_augmix_op_schedule == "per_op" and int(args.latent_augmix_copies) < len(args.latent_augmix_ops):
         print(
-            "[setup] latent-branch AugMix enabled: "
-            f"topology={args.latent_augmix_topology} "
-            f"copies={args.latent_augmix_copies} width={args.latent_augmix_width} "
-            f"depth={args.latent_augmix_depth} severity={args.latent_augmix_severity} "
-            f"profile={args.latent_augmix_severity_profile} "
-            f"mixture={args.latent_augmix_mixture_mode}:{args.latent_augmix_mixture_prob} "
-            f"op_schedule={args.latent_augmix_op_schedule} "
-            f"chain_weights={args.latent_augmix_chain_weights or 'dirichlet'} "
-            f"signal_space={args.latent_augmix_signal_space} "
-            f"corruption_source={args.latent_augmix_corruption_source} "
-            f"w_lat_cap={args.latent_augmix_latent_weight_cap} "
-            f"ops={args.latent_augmix_ops}",
+            "[setup] warning: latent_augmix_op_schedule=per_op has fewer copies "
+            "than ops; only the first scheduled operators will appear each epoch.",
             flush=True,
         )
-        if args.enable_latent_augmix_consistency:
-            print(
-                "[setup] latent-branch AugMix direct consistency enabled: "
-                f"loss={args.latent_augmix_consistency_loss} "
-                f"weights=(consistency={args.latent_augmix_consistency_weight}, "
-                f"bce={args.latent_augmix_bce_weight}) "
-                f"max_batches={args.latent_augmix_consistency_max_batches}",
-                flush=True,
-            )
-    elif args.enable_latent_augmix_consistency:
-        raise ValueError("--enable_latent_augmix_consistency requires --enable_latent_augmix_branch")
-    if args.enable_latent_augmix_branch and args.latent_augmix_topology == "locked_three_chain":
-        if int(args.latent_augmix_width) != 3:
-            raise ValueError("--latent_augmix_topology locked_three_chain requires --latent_augmix_width 3")
-        if args.latent_augmix_signal_space == "raw_pre_zscore" and args.no_latent_augmix_renorm:
-            raise ValueError(
-                "--latent_augmix_signal_space raw_pre_zscore requires final latent-AugMix renorm "
-                "so generated views match classifier model-input normalization"
-            )
-        if args.latent_augmix_corruption_source == "target_real":
-            if args.latent_augmix_signal_space != "raw_pre_zscore":
-                raise ValueError(
-                    "--latent_augmix_corruption_source target_real requires "
-                    "--latent_augmix_signal_space raw_pre_zscore"
-                )
-            if not args.target_real_npz:
-                raise ValueError("--latent_augmix_corruption_source target_real requires --target_real_npz")
-        if args.latent_augmix_op_schedule == "per_op" and int(args.latent_augmix_copies) < len(args.latent_augmix_ops):
-            print(
-                "[setup] warning: latent_augmix_op_schedule=per_op has fewer copies "
-                "than ops; only the first scheduled operators will appear each epoch.",
-                flush=True,
-            )
     # ── Load synth pool (Stage 1 frozen) for training ──────────────────────
     synth_latents, synth_labels, synth_center, source_meta = load_synth_pool(args.synth_npz)
     print(f"[setup] synth pool: {synth_latents.shape} labels={synth_labels.shape} "
@@ -1507,8 +1477,8 @@ def main():
             "K_anchor": int(args.K_anchor),
         },
         "latent_augmix_branch": {
-            "enabled": bool(args.enable_latent_augmix_branch),
-            "topology": str(args.latent_augmix_topology),
+            "enabled": True,
+            "topology": "locked_three_chain",
             "copies": int(args.latent_augmix_copies),
             "width": int(args.latent_augmix_width),
             "depth": int(args.latent_augmix_depth),
@@ -1530,7 +1500,7 @@ def main():
             "renorm": not bool(args.no_latent_augmix_renorm),
             "clip_abs": float(args.latent_augmix_clip_abs),
             "direct_consistency": {
-                "enabled": bool(args.enable_latent_augmix_consistency),
+                "enabled": True,
                 "consistency_weight": float(args.latent_augmix_consistency_weight),
                 "consistency_loss": str(args.latent_augmix_consistency_loss),
                 "bce_weight": float(args.latent_augmix_bce_weight),
@@ -1644,9 +1614,7 @@ def main():
             hull_label_negative_floor=args.hull_label_negative_floor,
             hull_label_new_class_cap=args.hull_label_new_class_cap,
             store_raw_decoded=(
-                bool(args.enable_latent_augmix_branch)
-                and args.latent_augmix_topology == "locked_three_chain"
-                and args.latent_augmix_signal_space == "raw_pre_zscore"
+                args.latent_augmix_signal_space == "raw_pre_zscore"
             ),
         )
         if adv_signals.shape[0] == 0:
@@ -1674,7 +1642,7 @@ def main():
 
         gate_skipped = False
         latent_augmix_stats = {
-            "enabled": bool(args.enable_latent_augmix_branch),
+            "enabled": True,
             "n_generated": 0,
         }
         latent_augmix_push_stats = {}
@@ -1713,107 +1681,102 @@ def main():
                 teacher_mix=args.adv_teacher_mix,
                 soft_target_floor=args.adv_soft_target_floor,
             )
-            if args.enable_latent_augmix_branch:
-                augmix_anchor_signals = anc_signals
-                augmix_adv_signals = adv_signals
-                latent_augmix_clean_for_consistency = anc_signals
-                if (
-                    args.latent_augmix_topology == "locked_three_chain"
-                    and args.latent_augmix_signal_space == "raw_pre_zscore"
-                ):
-                    augmix_anchor_signals = getattr(pgd_gen, "last_anchor_raw_ptbxl_1000", None)
-                    augmix_adv_signals = getattr(pgd_gen, "last_adv_raw_ptbxl_1000", None)
-                    if augmix_anchor_signals is None or augmix_adv_signals is None:
-                        raise RuntimeError(
-                            "raw_pre_zscore latent AugMix requested but raw decoded PGD signals were not cached"
-                        )
-                    if args.latent_augmix_corruption_source == "target_real":
-                        if target_real_augmix_signals_tc is None:
-                            raise RuntimeError(
-                                "target_real latent AugMix corruption source requested but no target-real raw signals are loaded"
-                            )
-                        augmix_anchor_signals = select_target_real_augmix_anchors_ct(
-                            target_real_augmix_signals_tc,
-                            picked_indices=all_picks,
-                            expected_count=adv_signals.shape[0],
-                        )
-                        latent_augmix_clean_for_consistency = _zscore_ct_batch(augmix_anchor_signals)
-                latent_augmix_signals, latent_augmix_stats = build_three_chain_vae_lhat_augmix_views(
-                    anchor_signals_ct=augmix_anchor_signals,
-                    adv_signals_ct=augmix_adv_signals,
-                    copies=args.latent_augmix_copies,
-                    severity=args.latent_augmix_severity,
-                    severity_profile=args.latent_augmix_severity_profile,
-                    severity_profile_params=latent_augmix_severity_profile_params,
-                    width=args.latent_augmix_width,
-                    depth=args.latent_augmix_depth,
-                    alpha=args.latent_augmix_alpha,
-                    mixture_mode=args.latent_augmix_mixture_mode,
-                    mixture_prob=args.latent_augmix_mixture_prob,
-                    mixture_beta_a=None
-                    if args.latent_augmix_mixture_beta_a <= 0
-                    else args.latent_augmix_mixture_beta_a,
-                    mixture_beta_b=None
-                    if args.latent_augmix_mixture_beta_b <= 0
-                    else args.latent_augmix_mixture_beta_b,
-                    op_schedule=args.latent_augmix_op_schedule,
-                    chain_weights=_parse_optional_float_list(args.latent_augmix_chain_weights),
-                    ops=list(args.latent_augmix_ops),
-                    rng=rng,
-                    renorm=not args.no_latent_augmix_renorm,
-                    clip_abs=args.latent_augmix_clip_abs,
-                )
-                latent_augmix_stats["corruption_source"] = str(args.latent_augmix_corruption_source)
-                if latent_augmix_signals.shape[0] > 0:
-                    start = (latent_augmix_signals.shape[-1] - args.crop_len) // 2
-                    latent_augmix_ct_crop = latent_augmix_signals[..., start:start + args.crop_len]
-                    labels_rep = np.tile(
-                        target_oh,
-                        (max(1, int(args.latent_augmix_copies)), 1),
-                    )[:latent_augmix_signals.shape[0]]
-                    with torch.no_grad():
-                        lg_chunks = []
-                        teacher_prob_chunks = []
-                        for i in range(0, latent_augmix_ct_crop.shape[0], 128):
-                            x_t = torch.from_numpy(
-                                latent_augmix_ct_crop[i:i + 128]
-                            ).float().to(args.device)
-                            lg_chunks.append(victim.model(x_t).cpu().numpy())
-                            if teacher_model is not None:
-                                teacher_prob_chunks.append(
-                                    torch.sigmoid(teacher_model(x_t)).cpu().numpy()
-                                )
-                        latent_augmix_logits_arr = np.concatenate(lg_chunks)
-                        latent_augmix_teacher_probs_arr = (
-                            np.concatenate(teacher_prob_chunks)
-                            if teacher_prob_chunks else None
-                        )
-                    latent_augmix_push_stats = push_adv_to_buffer(
-                        buffer=buffer,
-                        adv_signals_ct=latent_augmix_signals,
-                        target_one_hot=labels_rep,
-                        victim_logits=latent_augmix_logits_arr,
-                        crop_len=args.crop_len,
-                        class_trust=class_trust,
-                        boundary_prob_min=args.boundary_prob_min,
-                        boundary_prob_max=args.boundary_prob_max,
-                        teacher_probs=latent_augmix_teacher_probs_arr,
-                        label_mode=args.adv_label_mode,
-                        teacher_mix=args.adv_teacher_mix,
-                        soft_target_floor=args.adv_soft_target_floor,
+            augmix_anchor_signals = anc_signals
+            augmix_adv_signals = adv_signals
+            latent_augmix_clean_for_consistency = anc_signals
+            if args.latent_augmix_signal_space == "raw_pre_zscore":
+                augmix_anchor_signals = getattr(pgd_gen, "last_anchor_raw_ptbxl_1000", None)
+                augmix_adv_signals = getattr(pgd_gen, "last_adv_raw_ptbxl_1000", None)
+                if augmix_anchor_signals is None or augmix_adv_signals is None:
+                    raise RuntimeError(
+                        "raw_pre_zscore latent AugMix requested but raw decoded PGD signals were not cached"
                     )
-                    if args.enable_latent_augmix_consistency:
-                        latent_augmix_direct_clean = latent_augmix_clean_for_consistency.astype(np.float32, copy=False)
-                        latent_augmix_direct_views = latent_augmix_signals.astype(np.float32, copy=False)
-                        latent_augmix_direct_labels = target_oh.astype(np.float32, copy=False)
-                print(
-                    f"[ep{epoch:02d}] latent-branch AugMix: "
-                    f"generated={latent_augmix_stats.get('n_generated', 0)} "
-                    f"pushed={latent_augmix_push_stats.get('n_pushed', 0)} "
-                    f"w_lat_mean={latent_augmix_stats.get('latent_weight_mean', latent_augmix_stats.get('adv_weight_mean', float('nan'))):.3f} "
-                    f"m_mean={latent_augmix_stats.get('beta_m_mean', float('nan')):.3f}",
-                    flush=True,
+                if args.latent_augmix_corruption_source == "target_real":
+                    if target_real_augmix_signals_tc is None:
+                        raise RuntimeError(
+                            "target_real latent AugMix corruption source requested but no target-real raw signals are loaded"
+                        )
+                    augmix_anchor_signals = select_target_real_augmix_anchors_ct(
+                        target_real_augmix_signals_tc,
+                        picked_indices=all_picks,
+                        expected_count=adv_signals.shape[0],
+                    )
+                    latent_augmix_clean_for_consistency = _zscore_ct_batch(augmix_anchor_signals)
+            latent_augmix_signals, latent_augmix_stats = build_three_chain_vae_lhat_augmix_views(
+                anchor_signals_ct=augmix_anchor_signals,
+                adv_signals_ct=augmix_adv_signals,
+                copies=args.latent_augmix_copies,
+                severity=args.latent_augmix_severity,
+                severity_profile=args.latent_augmix_severity_profile,
+                severity_profile_params=latent_augmix_severity_profile_params,
+                width=args.latent_augmix_width,
+                depth=args.latent_augmix_depth,
+                alpha=args.latent_augmix_alpha,
+                mixture_mode=args.latent_augmix_mixture_mode,
+                mixture_prob=args.latent_augmix_mixture_prob,
+                mixture_beta_a=None
+                if args.latent_augmix_mixture_beta_a <= 0
+                else args.latent_augmix_mixture_beta_a,
+                mixture_beta_b=None
+                if args.latent_augmix_mixture_beta_b <= 0
+                else args.latent_augmix_mixture_beta_b,
+                op_schedule=args.latent_augmix_op_schedule,
+                chain_weights=_parse_optional_float_list(args.latent_augmix_chain_weights),
+                ops=list(args.latent_augmix_ops),
+                rng=rng,
+                renorm=not args.no_latent_augmix_renorm,
+                clip_abs=args.latent_augmix_clip_abs,
+            )
+            latent_augmix_stats["corruption_source"] = str(args.latent_augmix_corruption_source)
+            if latent_augmix_signals.shape[0] > 0:
+                start = (latent_augmix_signals.shape[-1] - args.crop_len) // 2
+                latent_augmix_ct_crop = latent_augmix_signals[..., start:start + args.crop_len]
+                labels_rep = np.tile(
+                    target_oh,
+                    (max(1, int(args.latent_augmix_copies)), 1),
+                )[:latent_augmix_signals.shape[0]]
+                with torch.no_grad():
+                    lg_chunks = []
+                    teacher_prob_chunks = []
+                    for i in range(0, latent_augmix_ct_crop.shape[0], 128):
+                        x_t = torch.from_numpy(
+                            latent_augmix_ct_crop[i:i + 128]
+                        ).float().to(args.device)
+                        lg_chunks.append(victim.model(x_t).cpu().numpy())
+                        if teacher_model is not None:
+                            teacher_prob_chunks.append(
+                                torch.sigmoid(teacher_model(x_t)).cpu().numpy()
+                            )
+                    latent_augmix_logits_arr = np.concatenate(lg_chunks)
+                    latent_augmix_teacher_probs_arr = (
+                        np.concatenate(teacher_prob_chunks)
+                        if teacher_prob_chunks else None
+                    )
+                latent_augmix_push_stats = push_adv_to_buffer(
+                    buffer=buffer,
+                    adv_signals_ct=latent_augmix_signals,
+                    target_one_hot=labels_rep,
+                    victim_logits=latent_augmix_logits_arr,
+                    crop_len=args.crop_len,
+                    class_trust=class_trust,
+                    boundary_prob_min=args.boundary_prob_min,
+                    boundary_prob_max=args.boundary_prob_max,
+                    teacher_probs=latent_augmix_teacher_probs_arr,
+                    label_mode=args.adv_label_mode,
+                    teacher_mix=args.adv_teacher_mix,
+                    soft_target_floor=args.adv_soft_target_floor,
                 )
+                latent_augmix_direct_clean = latent_augmix_clean_for_consistency.astype(np.float32, copy=False)
+                latent_augmix_direct_views = latent_augmix_signals.astype(np.float32, copy=False)
+                latent_augmix_direct_labels = target_oh.astype(np.float32, copy=False)
+            print(
+                f"[ep{epoch:02d}] latent-branch AugMix: "
+                f"generated={latent_augmix_stats.get('n_generated', 0)} "
+                f"pushed={latent_augmix_push_stats.get('n_pushed', 0)} "
+                f"w_lat_mean={latent_augmix_stats.get('latent_weight_mean', latent_augmix_stats.get('adv_weight_mean', float('nan'))):.3f} "
+                f"m_mean={latent_augmix_stats.get('beta_m_mean', float('nan')):.3f}",
+                flush=True,
+            )
         # Track consecutive low ASR
         if asr_info["asr_overall"] < args.asr_low_threshold:
             consecutive_low_asr += 1
@@ -1878,41 +1841,39 @@ def main():
             grad_clip=args.grad_clip, ewa_params=ewa_params,
             anchor_lambda=args.anchor_lambda, ewa_decay=args.ewa_decay,
         )
-        latent_augmix_consistency_stats = {"enabled": False, "reason": "disabled"}
-        if args.enable_latent_augmix_consistency:
-            if (
-                latent_augmix_direct_clean is None
-                or latent_augmix_direct_views is None
-                or latent_augmix_direct_labels is None
-            ):
-                latent_augmix_consistency_stats = {
-                    "enabled": False,
-                    "reason": "no_latent_augmix_views_this_epoch",
-                    "loss": float("nan"),
-                    "bce_loss": float("nan"),
-                    "consistency_loss": float("nan"),
-                    "n_batches": 0,
-                    "n_generated": 0,
-                }
-            else:
-                latent_augmix_consistency_stats = train_latent_augmix_consistency_epoch(
-                    model=victim.model,
-                    clean_signals_ct=latent_augmix_direct_clean,
-                    augmix_signals_ct=latent_augmix_direct_views,
-                    labels_np=latent_augmix_direct_labels,
-                    optimizer=optimizer,
-                    criterion=criterion,
-                    device=args.device,
-                    copies=args.latent_augmix_copies,
-                    consistency_weight=args.latent_augmix_consistency_weight,
-                    bce_weight=args.latent_augmix_bce_weight,
-                    consistency_loss=args.latent_augmix_consistency_loss,
-                    batch_size=args.batch_size,
-                    crop_len=args.crop_len,
-                    grad_clip=args.grad_clip,
-                    trainable_params=trainable_params,
-                    max_batches=args.latent_augmix_consistency_max_batches,
-                )
+        if (
+            latent_augmix_direct_clean is None
+            or latent_augmix_direct_views is None
+            or latent_augmix_direct_labels is None
+        ):
+            latent_augmix_consistency_stats = {
+                "enabled": False,
+                "reason": "no_latent_augmix_views_this_epoch",
+                "loss": float("nan"),
+                "bce_loss": float("nan"),
+                "consistency_loss": float("nan"),
+                "n_batches": 0,
+                "n_generated": 0,
+            }
+        else:
+            latent_augmix_consistency_stats = train_latent_augmix_consistency_epoch(
+                model=victim.model,
+                clean_signals_ct=latent_augmix_direct_clean,
+                augmix_signals_ct=latent_augmix_direct_views,
+                labels_np=latent_augmix_direct_labels,
+                optimizer=optimizer,
+                criterion=criterion,
+                device=args.device,
+                copies=args.latent_augmix_copies,
+                consistency_weight=args.latent_augmix_consistency_weight,
+                bce_weight=args.latent_augmix_bce_weight,
+                consistency_loss=args.latent_augmix_consistency_loss,
+                batch_size=args.batch_size,
+                crop_len=args.crop_len,
+                grad_clip=args.grad_clip,
+                trainable_params=trainable_params,
+                max_batches=args.latent_augmix_consistency_max_batches,
+            )
         scheduler.step()
 
         # Phase E: PTBXL val loss

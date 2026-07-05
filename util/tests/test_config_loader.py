@@ -673,9 +673,10 @@ def test_effnet_vae_lhat_train_builder_locks_threechain_consistency():
         class_trust=Path("/tmp/class_trust.json"),
     )
 
-    assert "--enable_latent_augmix_branch" in cmd
-    assert _option_value(cmd, "--latent_augmix_topology") == "locked_three_chain"
-    assert "--enable_latent_augmix_consistency" in cmd
+    assert "--enable_latent_augmix_branch" not in cmd
+    assert "--latent_augmix_topology" not in cmd
+    assert "--enable_latent_augmix_consistency" not in cmd
+    assert _option_value(cmd, "--latent_augmix_width") == "3"
     assert _option_value(cmd, "--latent_augmix_consistency_loss") == "jsd"
     assert _all_option_values(cmd, "--latent_augmix_ops") == [
         "powerline_noise",
@@ -684,6 +685,29 @@ def test_effnet_vae_lhat_train_builder_locks_threechain_consistency():
         "baseline_shift",
         "random_leads_masking",
     ]
+
+
+def test_synth_online_at_rejects_zero_latent_augmix_copies(monkeypatch):
+    from ecg_adv_gen.runner.synth_online_at_super5 import parse_args
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "synth_online_at_super5.py",
+            "--center_name",
+            "ningbo",
+            "--synth_npz",
+            "/tmp/anchor.latent.npz",
+            "--output_dir",
+            "/tmp/out",
+            "--latent_augmix_copies",
+            "0",
+        ],
+    )
+
+    with pytest.raises(SystemExit):
+        parse_args()
 
 
 def test_runner_rejects_adapter_and_argv_together():
