@@ -19,7 +19,6 @@ training:
   batch_size: 64
   eval_batch_size: 128
   num_workers: ${resources.default_num_workers}
-  source_train_limit: 0
   optimizer:
     name: adamw
     lr: 0.0001

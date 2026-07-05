@@ -16,15 +16,10 @@ preprocess:
     input_len: 5000
     input_shape: [12, 5000]
 
-data:
-  cache:
-    ecgfounder_fullft_signal_cache_dir: ""
-
 training:
   epochs: 50
   batch_size: 128
   eval_batch_size: 4096
-  source_train_limit: 0
   optimizer:
     name: adamw
     lr: 0.0005

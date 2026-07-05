@@ -705,8 +705,6 @@ def make_train_loader(
 ) -> DataLoader:
     folds = ptbxl_payload["folds"].astype(np.int64)
     source_idx = np.nonzero(np.isin(folds, np.arange(1, 9)))[0]
-    if args.source_train_limit > 0:
-        source_idx = source_idx[: args.source_train_limit]
     effective_adv_weight = float(args.adv_weight if adv_weight is None else adv_weight)
     if str(args.supervised_input_mode) == "raw1000":
         if target_train_record_ids is None:
@@ -761,8 +759,6 @@ def make_source_only_train_loader(
 
     folds = ptbxl_payload["folds"].astype(np.int64)
     source_idx = np.nonzero(np.isin(folds, np.arange(1, 9)))[0]
-    if args.source_train_limit > 0:
-        source_idx = source_idx[: args.source_train_limit]
     if str(args.supervised_input_mode) == "raw1000":
         source_ds = load_source_raw1000_dataset(
             args,
@@ -1188,16 +1184,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument("--pgd_eps", type=float, default=2.0)
     ap.add_argument("--pgd_batch", type=int, default=4)
-    ap.add_argument("--source_train_limit", type=int, default=0)
-    ap.add_argument(
-        "--cache_dir",
-        default="",
-        help=(
-            "Optional signal-cache directory. When omitted, uses <out_dir>/cache. "
-            "This is intended for short engineering smokes that reuse existing "
-            "user-owned ECGFounder signal caches without rebuilding raw WFDB data."
-        ),
-    )
     ap.add_argument("--preprocess_policy", default="official_ptbxl_eval")
     ap.add_argument(
         "--run_name",
@@ -1287,7 +1273,7 @@ def main() -> None:
         print(result_path.read_text())
         return
 
-    cache_dir = Path(args.cache_dir) if args.cache_dir else out_dir / "cache"
+    cache_dir = out_dir / "cache"
     ptbxl_items, _ = build_ptbxl_items(limit=0)
     ptbxl = build_signal_cache(
         ptbxl_items,
