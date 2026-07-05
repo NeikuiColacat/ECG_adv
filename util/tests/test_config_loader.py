@@ -43,6 +43,10 @@ from ecg_adv_gen.config.runner_audit import DISPATCHED_RUNNER_AUDIT_SCRIPT_NAMES
 from ecg_adv_gen.config.paths import PathSafetyError, validate_local_paths
 from ecg_adv_gen.evaluation.pn2021c_protocol import official_s5_depth23_composites
 from ecg_adv_gen.run_naming import build_effnet_direct_run_leaf
+from ecg_adv_gen.runner.effnet_vae_lhat import (
+    EffNetVaeLhatPaths,
+    build_effnet_vae_lhat_train_cmd,
+)
 
 
 REPO = Path(__file__).resolve().parents[2]
@@ -546,7 +550,8 @@ def test_effnet_vae_lhat_threechain_locked_k500_config_uses_official_s5_last_che
     for command in commands:
         argv = command["argv"]
         assert "--enable_raw_corrupt_consistency" not in argv
-        assert _option_value(argv, "--latent_augmix_topology") == "locked_three_chain"
+        assert "--latent_augmix_topology" not in argv
+        assert "--enable_latent_augmix_consistency" not in argv
         assert _option_value(argv, "--latent_augmix_copies") == "2"
         assert _option_value(argv, "--latent_augmix_width") == "3"
         assert _option_value(argv, "--latent_augmix_severity") == "5"
@@ -590,6 +595,94 @@ def test_effnet_vae_lhat_threechain_locked_k500_config_uses_official_s5_last_che
             "baseline_shift",
             "random_leads_masking",
         ]
+
+
+def test_effnet_vae_lhat_train_builder_locks_threechain_consistency():
+    args = argparse.Namespace(
+        center="ningbo",
+        target_real_npz_override="",
+        target_real_norm_mode="per_sample_global",
+        synth_npz_override="",
+        init_ckpt="",
+        model_name="efficientnet1dv2",
+        hull_M=10,
+        hull_lambda=0.25,
+        hull_steps=5,
+        hull_lr=0.3,
+        hull_label_mode="exact",
+        hull_mix_label_mode="anchor_soft",
+        hull_label_lambda_y=0.5,
+        hull_label_positive=0.95,
+        hull_label_negative_floor=0.0,
+        hull_label_new_class_cap=0.5,
+        hull_neighbor_distance_space="standardized",
+        hull_neighbor_mode="nearest",
+        hull_neighbor_pool_size=0,
+        hull_neighbor_pool_multiplier=4,
+        k_anchor=500,
+        pgd_batch=32,
+        classes_in_scope=["CD", "HYP", "MI", "NORM", "STTC"],
+        target_real_weight=80.0,
+        adv_weight=0.2,
+        adv_weight_warmup_epochs=0,
+        ptbxl_weight=1.0,
+        adv_label_mode="latent_mixed_teacher",
+        adv_teacher_mix=0.3,
+        lr=5e-5,
+        train_batch_size=128,
+        epochs=30,
+        num_workers=4,
+        seed=20260601,
+        device="cuda",
+        hull_include_anchor=True,
+        latent_augmix_copies=2,
+        latent_augmix_width=3,
+        latent_augmix_depth=-1,
+        latent_augmix_alpha=1.0,
+        latent_augmix_severity=5,
+        latent_augmix_severity_profile="standard",
+        latent_augmix_latent_weight_cap=0.25,
+        latent_augmix_ops=[
+            "powerline_noise",
+            "emg_noise",
+            "baseline_wander",
+            "baseline_shift",
+            "random_leads_masking",
+        ],
+        latent_augmix_consistency_weight=2.0,
+        latent_augmix_consistency_loss="jsd",
+        latent_augmix_bce_weight=1.0,
+        latent_augmix_consistency_max_batches=0,
+        resume="",
+        allow_resume_config_drift=False,
+    )
+    paths = EffNetVaeLhatPaths(
+        out_dir=Path("/tmp/out"),
+        anchor_base=Path("/tmp/anchor"),
+        signal_npz=Path("/tmp/anchor.raw1000.npz"),
+        latent_npz=Path("/tmp/anchor.latent.npz"),
+        ref_meta=Path("/tmp/anchor.ref_meta.json"),
+    )
+
+    cmd = build_effnet_vae_lhat_train_cmd(
+        args,
+        python=sys.executable,
+        data_root=Path("/tmp/data"),
+        paths=paths,
+        class_trust=Path("/tmp/class_trust.json"),
+    )
+
+    assert "--enable_latent_augmix_branch" in cmd
+    assert _option_value(cmd, "--latent_augmix_topology") == "locked_three_chain"
+    assert "--enable_latent_augmix_consistency" in cmd
+    assert _option_value(cmd, "--latent_augmix_consistency_loss") == "jsd"
+    assert _all_option_values(cmd, "--latent_augmix_ops") == [
+        "powerline_noise",
+        "emg_noise",
+        "baseline_wander",
+        "baseline_shift",
+        "random_leads_masking",
+    ]
 
 
 def test_runner_rejects_adapter_and_argv_together():

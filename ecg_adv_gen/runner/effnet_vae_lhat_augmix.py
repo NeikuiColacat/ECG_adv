@@ -193,11 +193,6 @@ def main() -> None:
             "all five ops explicitly."
         ),
     )
-    ap.add_argument(
-        "--enable_latent_augmix_consistency",
-        action="store_true",
-        help="Forward latent-AugMix generated views through a direct BCE/JSD training phase.",
-    )
     ap.add_argument("--latent_augmix_consistency_weight", type=float, default=2.0)
     ap.add_argument(
         "--latent_augmix_consistency_loss",

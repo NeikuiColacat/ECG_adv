@@ -66,7 +66,7 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
     if synth_npz_override and not Path(synth_npz_override).is_absolute():
         synth_npz_override = str(Path(paths["data_root"]) / synth_npz_override)
     latent_augmix = adaptation["latent_augmix"]
-    latent_augmix_consistency = latent_augmix.get("consistency") or {}
+    latent_augmix_consistency = latent_augmix["consistency"]
     anchors = adaptation.get("anchors") or {}
 
     argv: list[Any] = [
@@ -156,11 +156,6 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
     _append_optional_value(argv, "--source_weights", anchors.get("source_weights"))
     _append_optional_value(
         argv,
-        "--latent_augmix_topology",
-        latent_augmix.get("topology"),
-    )
-    _append_optional_value(
-        argv,
         "--latent_augmix_copies",
         latent_augmix.get("copies"),
     )
@@ -170,28 +165,26 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
         latent_augmix.get("severity_profile"),
     )
     _append_optional_sequence(argv, "--latent_augmix_ops", latent_augmix.get("ops"))
-    if latent_augmix_consistency.get("enabled"):
-        argv.append("--enable_latent_augmix_consistency")
-        _append_optional_value(
-            argv,
-            "--latent_augmix_consistency_weight",
-            latent_augmix_consistency.get("consistency_weight"),
-        )
-        _append_optional_value(
-            argv,
-            "--latent_augmix_consistency_loss",
-            latent_augmix_consistency.get("consistency_loss"),
-        )
-        _append_optional_value(
-            argv,
-            "--latent_augmix_bce_weight",
-            latent_augmix_consistency.get("bce_weight"),
-        )
-        _append_optional_value(
-            argv,
-            "--latent_augmix_consistency_max_batches",
-            latent_augmix_consistency.get("max_batches"),
-        )
+    _append_optional_value(
+        argv,
+        "--latent_augmix_consistency_weight",
+        latent_augmix_consistency.get("consistency_weight"),
+    )
+    _append_optional_value(
+        argv,
+        "--latent_augmix_consistency_loss",
+        latent_augmix_consistency.get("consistency_loss"),
+    )
+    _append_optional_value(
+        argv,
+        "--latent_augmix_bce_weight",
+        latent_augmix_consistency.get("bce_weight"),
+    )
+    _append_optional_value(
+        argv,
+        "--latent_augmix_consistency_max_batches",
+        latent_augmix_consistency.get("max_batches"),
+    )
     run_tag_extra = adaptation.get("run_tag_extra")
     _append_optional_value(argv, "--run_tag_extra", run_tag_extra)
     return argv

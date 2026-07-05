@@ -137,7 +137,6 @@ data:
 adaptation:
   run_tag_extra: k500_threechain_s5_locked
   latent_augmix:
-    topology: locked_three_chain
     chain_roles:
       - name: chain1
         role: official_corruption_chain

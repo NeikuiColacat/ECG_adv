@@ -213,20 +213,19 @@ def build_effnet_vae_lhat_train_cmd(
             *[str(item) for item in args.latent_augmix_ops],
         ]
     )
-    if getattr(args, "enable_latent_augmix_consistency", False):
-        train_cmd.extend(
-            [
-                "--enable_latent_augmix_consistency",
-                "--latent_augmix_consistency_weight",
-                str(args.latent_augmix_consistency_weight),
-                "--latent_augmix_consistency_loss",
-                str(args.latent_augmix_consistency_loss),
-                "--latent_augmix_bce_weight",
-                str(args.latent_augmix_bce_weight),
-                "--latent_augmix_consistency_max_batches",
-                str(args.latent_augmix_consistency_max_batches),
-            ]
-        )
+    train_cmd.extend(
+        [
+            "--enable_latent_augmix_consistency",
+            "--latent_augmix_consistency_weight",
+            str(args.latent_augmix_consistency_weight),
+            "--latent_augmix_consistency_loss",
+            str(args.latent_augmix_consistency_loss),
+            "--latent_augmix_bce_weight",
+            str(args.latent_augmix_bce_weight),
+            "--latent_augmix_consistency_max_batches",
+            str(args.latent_augmix_consistency_max_batches),
+        ]
+    )
     if args.resume:
         train_cmd.extend(["--resume", str(args.resume)])
     if args.allow_resume_config_drift:
