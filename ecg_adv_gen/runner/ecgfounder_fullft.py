@@ -26,7 +26,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import ConcatDataset, DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
 
@@ -78,6 +78,11 @@ from ecg_adv_gen.data import (  # noqa: E402
     signal_cache_shape,
     write_signal_cache_metadata,
 )
+from ecg_adv_gen.data.raw_signals import (  # noqa: E402
+    RawSignalDataset,
+    anchor_signal_npz_path,
+    apply_augmix_op_np as _raw_signal_apply_augmix_op_np,
+)
 from ecg_adv_gen.evaluation import (  # noqa: E402
     compute_source_target_selection_score,
     split_target_train_val_indices,
@@ -85,10 +90,7 @@ from ecg_adv_gen.evaluation import (  # noqa: E402
 from ecg_adv_gen.labels import CLASS_NAMES_SUPER5  # noqa: E402
 from ecg_adv_gen.labels.super5_mapping import SUPER5_TO_IDX  # noqa: E402
 from ecg_adv_gen.labels import pn2021_super5_label_mapping_payload  # noqa: E402
-from ecg_adv_gen.models.ecgfounder_heads import (  # noqa: E402
-    OperatorConditionedLogitAdapter,
-    init_dense_from_head_path,
-)
+from ecg_adv_gen.models.ecgfounder_heads import init_dense_from_head_path  # noqa: E402
 from ecg_adv_gen.models.ecgfounder_inference import evaluate_signal_split  # noqa: E402
 from ecg_adv_gen.models.ecgfounder_torch import (  # noqa: E402
     ecg1000_to_ecgfounder_input,
@@ -108,22 +110,12 @@ from ecg_adv_gen.training import (  # noqa: E402
     summarize_fullft_adv_epoch_diagnostics,
 )
 from ecg_adv_gen.run_naming import build_ecgfounder_fullft_run_leaf  # noqa: E402
-from methods.augmix.jsd_loss import jsd_multilabel  # noqa: E402
-from ecg_adv_gen.runner.ecgfounder_vae_lhat import (  # noqa: E402
-    RawSignalDataset,
-    anchor_signal_npz_path,
-    apply_augmix_op_np as _legacy_apply_augmix_op_np,
-    build_profiled_raw_corruption_views,
-    load_source_raw_dataset,
-)
 from ecg_adv_gen.evaluation.pn2021c import (  # noqa: E402
     STRESS_PROFILE_CHOICES,
-    build_corruption_op as _build_corruption_op,
     resolve_severity_profile_args as _resolve_severity_profile_args,
     severity_profile_metadata as _severity_profile_metadata,
 )
 from methods.augmix.severity import AVAILABLE_OPS  # noqa: E402
-from ecg_adv_gen.models.super5_model_zoo import build_super5_model, normalize_model_name  # noqa: E402
 from util.ecgtwin_utils import ECGTwinWrapper  # noqa: E402
 from util.lead_utils import ECGTWIN_TO_PTBXL_INDICES  # noqa: E402
 
@@ -137,14 +129,6 @@ DEFAULT_SOURCE_RAW1000_SIGNAL_CACHE = (
 DEFAULT_SOURCE_RAW1000_LABEL_CACHE = (
     DATA_ROOT / "triple_labels/super5_minresample_full10_perglobal_20260503/ptbxl_labels.C5.all.npy"
 )
-RAW_CORRUPT_OP_CONDITION_NAMES = [
-    "powerline_noise",
-    "emg_noise",
-    "baseline_wander",
-    "baseline_shift",
-    "random_leads_masking",
-]
-RAW_CORRUPT_TEACHER_TYPES = ("ecgfounder_fullft", "ecgfounder_feature_head", "efficientnet1dv2")
 REAL_ROOTS = [
     DATA_ROOT / "ecgtwin_prompt_token_super5/real_anchor_selected_v2",
     DATA_ROOT / "ecgtwin_prompt_token_super5/real_anchor_selected_v1",
@@ -178,18 +162,13 @@ def apply_augmix_op_np(
 ) -> np.ndarray:
     """Apply one ECG AugMix op, including evaluator-style custom profiles."""
 
-    if str(severity_profile) == "custom":
-        op = _build_corruption_op(
-            op_name,
-            int(op_severity),
-            str(severity_profile),
-            severity_profile_params=severity_profile_params,
-        )
-        sig_t = torch.from_numpy(sig_ct.copy()).float()
-        return op(sig_t).cpu().numpy().astype(np.float32, copy=False)
-    if severity_profile_params is not None:
-        raise ValueError("severity_profile_params are only valid for latent_augmix severity_profile=custom")
-    return _legacy_apply_augmix_op_np(sig_ct, op_name, op_severity, severity_profile)
+    return _raw_signal_apply_augmix_op_np(
+        sig_ct,
+        op_name,
+        op_severity,
+        severity_profile,
+        severity_profile_params=severity_profile_params,
+    )
 
 
 def set_seed(seed: int) -> None:
@@ -467,7 +446,7 @@ def load_target_raw_dataset(
     signal_path = (
         Path(args.target_raw1000_npz_override)
         if getattr(args, "target_raw1000_npz_override", "")
-        else anchor_signal_npz_path(center, args)
+        else anchor_signal_npz_path(center, args, default_roots=REAL_ROOTS)
     )
     with np.load(signal_path, allow_pickle=True) as data:
         signals = np.asarray(data["signals"], dtype=np.float32)
@@ -1185,510 +1164,21 @@ def build_adv_epoch(
     }
 
 
-def forward_logits_features(model: nn.Module, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-    """Run ECGFounder with its penultimate feature output enabled."""
-
-    if not hasattr(model, "return_features"):
-        raise RuntimeError("raw feature consistency requires model.return_features support")
-    previous = bool(getattr(model, "return_features"))
-    try:
-        setattr(model, "return_features", True)
-        output = model(x)
-    finally:
-        setattr(model, "return_features", previous)
-    if not (isinstance(output, tuple) and len(output) == 2):
-        raise RuntimeError("raw feature consistency expected model(x) to return (logits, features)")
-    logits, features = output
-    return logits, features
-
-
-def train_fullft_raw_corruption_consistency_epoch(
-    *,
-    model: nn.Module,
-    loader: DataLoader,
-    optimizer: torch.optim.Optimizer,
-    pos_weight: torch.Tensor,
-    device: torch.device,
-    copies: int,
-    severity: int,
-    severity_profile: str,
-    ops: list[str],
-    prob: float,
-    consistency_weight: float,
-    bce_weight: float,
-    consistency_loss: str,
-    rng: np.random.Generator,
-    trainable_params: list[nn.Parameter],
-    grad_clip: float,
-    max_batches: int,
-    renorm: bool,
-    clip_abs: float,
-    view_mode: str = "single_op",
-    augmix_width: int = 3,
-    augmix_depth: int = -1,
-    augmix_alpha: float = 1.0,
-    augmix_mixture_mode: str = "beta",
-    augmix_mixture_prob: float = 0.5,
-    augmix_mixture_beta_a: float = 0.0,
-    augmix_mixture_beta_b: float = 0.0,
-    augmix_op_schedule: str = "random",
-    teacher_model: nn.Module | None = None,
-    teacher_weight: float = 0.0,
-    teacher_loss: str = "soft_bce",
-    teacher_view: str = "corrupt",
-    feature_consistency_weight: float = 0.0,
-    feature_consistency_normalize: bool = False,
-    op_adapter: OperatorConditionedLogitAdapter | None = None,
-    input_stabilizer_kwargs: dict[str, Any] | None = None,
-    train_mode_fn: Callable[[], None] | None = None,
-) -> dict[str, Any]:
-    """Train the full ECGFounder model on profiled raw corruption views."""
-
-    teacher_weight = float(teacher_weight)
-    teacher_enabled = bool(teacher_model is not None and teacher_weight > 0)
-    feature_consistency_weight = float(feature_consistency_weight)
-    feature_enabled = bool(feature_consistency_weight > 0)
-    op_conditioning_enabled = op_adapter is not None
-    input_stabilizer_kwargs = dict(input_stabilizer_kwargs or {})
-    if copies <= 0 or (
-        consistency_weight <= 0
-        and bce_weight <= 0
-        and not teacher_enabled
-        and not feature_enabled
-    ):
-        return {
-            "enabled": False,
-            "reason": "disabled_or_zero_weight",
-            "loss": float("nan"),
-            "bce_loss": float("nan"),
-            "consistency_loss": float("nan"),
-            "teacher_loss": float("nan"),
-            "feature_loss": float("nan"),
-            "n_batches": 0,
-            "n_generated": 0,
-            "n_corrupted": 0,
-            "op_counts": {},
-        }
-    if consistency_loss not in {"soft_bce", "jsd"}:
-        raise ValueError(f"unknown raw corruption consistency loss: {consistency_loss}")
-    if consistency_loss == "jsd" and copies < 2:
-        raise ValueError("--raw_corrupt_consistency_loss jsd requires --raw_corrupt_copies >= 2")
-    if teacher_enabled and teacher_loss not in {"soft_bce", "mse_logits"}:
-        raise ValueError(f"unknown raw corruption teacher loss: {teacher_loss}")
-    if teacher_enabled and teacher_view not in {"clean", "corrupt"}:
-        raise ValueError(f"unknown raw corruption teacher view: {teacher_view}")
-    if str(severity_profile) not in STRESS_PROFILE_CHOICES:
-        raise ValueError(f"unknown raw corruption severity profile: {severity_profile}")
-
-    if train_mode_fn is not None:
-        train_mode_fn()
-    else:
-        model.train()
-        if op_adapter is not None:
-            op_adapter.train()
-    if teacher_model is not None:
-        teacher_model.eval()
-    losses: list[float] = []
-    bce_losses: list[float] = []
-    consistency_losses: list[float] = []
-    teacher_losses: list[float] = []
-    feature_losses: list[float] = []
-    n_generated = 0
-    n_corrupted = 0
-    op_conditioned_views = 0
-    op_counts: dict[str, int] = {}
-
-    for batch_i, (signals, labels) in enumerate(loader, start=1):
-        signals = signals.to(device, non_blocking=True).float()
-        labels = labels.to(device, non_blocking=True).float()
-        if signals.shape[-1] != 1000:
-            signals = F.interpolate(signals, size=1000, mode="linear", align_corners=True)
-
-        clean_np = signals.detach().cpu().numpy().astype(np.float32, copy=False)
-        corrupt_np, stats = build_profiled_raw_corruption_views(
-            clean_np,
-            copies=copies,
-            severity=severity,
-            severity_profile=severity_profile,
-            ops=ops,
-            prob=prob,
-            rng=rng,
-            renorm=renorm,
-            clip_abs=clip_abs,
-            view_mode=view_mode,
-            augmix_width=augmix_width,
-            augmix_depth=augmix_depth,
-            augmix_alpha=augmix_alpha,
-            augmix_mixture_mode=augmix_mixture_mode,
-            augmix_mixture_prob=augmix_mixture_prob,
-            augmix_mixture_beta_a=augmix_mixture_beta_a,
-            augmix_mixture_beta_b=augmix_mixture_beta_b,
-            augmix_op_schedule=augmix_op_schedule,
-        )
-        if corrupt_np.shape[0] == 0:
-            continue
-
-        corrupt = torch.from_numpy(corrupt_np).float().to(device, non_blocking=True)
-        labels_rep = labels.repeat((int(copies), 1))
-        optimizer.zero_grad(set_to_none=True)
-        op_ids: torch.Tensor | None = None
-        if op_conditioning_enabled:
-            assert op_adapter is not None
-            view_ops = stats.get("view_ops")
-            if not isinstance(view_ops, list) or len(view_ops) != int(corrupt_np.shape[0]):
-                raise RuntimeError(
-                    "raw corruption op conditioning requires stats['view_ops'] "
-                    f"for every generated view, got {type(view_ops).__name__}"
-                )
-            op_ids = op_adapter.op_ids_from_names(view_ops, device=device)
-            op_conditioned_views += int(op_ids.numel())
-
-        with torch.cuda.amp.autocast(enabled=device.type == "cuda"):
-            clean_input = prepare_raw_ecgfounder_input(signals, input_stabilizer_kwargs)
-            corrupt_input = prepare_raw_ecgfounder_input(corrupt, input_stabilizer_kwargs)
-            if feature_enabled or op_conditioning_enabled:
-                clean_logits, clean_features = forward_logits_features(model, clean_input)
-                corrupt_logits, corrupt_features = forward_logits_features(model, corrupt_input)
-            else:
-                clean_logits = model(clean_input)
-                corrupt_logits = model(corrupt_input)
-                clean_features = None
-                corrupt_features = None
-            if op_conditioning_enabled:
-                assert op_adapter is not None and op_ids is not None and corrupt_features is not None
-                corrupt_logits = corrupt_logits + op_adapter(corrupt_features, op_ids)
-            if not torch.isfinite(clean_logits).all() or not torch.isfinite(corrupt_logits).all():
-                raise RuntimeError(
-                    "non-finite raw corruption logits "
-                    f"at batch {batch_i}: "
-                    f"clean_finite={bool(torch.isfinite(clean_logits).all())} "
-                    f"corrupt_finite={bool(torch.isfinite(corrupt_logits).all())}"
-                )
-            hard_bce = 0.5 * (
-                masked_bce_with_logits(clean_logits, labels, pos_weight)
-                + masked_bce_with_logits(corrupt_logits, labels_rep, pos_weight)
-            )
-            if consistency_loss == "soft_bce":
-                soft_targets = torch.sigmoid(clean_logits.detach()).repeat((int(copies), 1))
-                mask = (labels_rep >= 0).float()
-                raw_consistency = (
-                    F.binary_cross_entropy_with_logits(
-                        corrupt_logits,
-                        soft_targets,
-                        reduction="none",
-                    )
-                    * mask
-                ).sum() / mask.sum().clamp(min=1.0)
-            else:
-                logits_views = corrupt_logits.view(int(copies), signals.shape[0], -1)
-                jsd_terms = []
-                for copy_i in range(int(copies)):
-                    copy_j = (copy_i + 1) % int(copies)
-                    jsd_terms.append(
-                        jsd_multilabel(clean_logits, logits_views[copy_i], logits_views[copy_j])
-                    )
-                raw_consistency = torch.stack(jsd_terms).mean()
-            if teacher_enabled:
-                assert teacher_model is not None
-                with torch.no_grad():
-                    if teacher_view == "clean":
-                        teacher_logits = teacher_model(
-                            prepare_raw_corruption_teacher_input(
-                                teacher_model,
-                                signals,
-                                input_stabilizer_kwargs,
-                            )
-                        )
-                        teacher_logits = teacher_logits.repeat((int(copies), 1))
-                    else:
-                        teacher_logits = teacher_model(
-                            prepare_raw_corruption_teacher_input(
-                                teacher_model,
-                                corrupt,
-                                input_stabilizer_kwargs,
-                            )
-                        )
-                if not torch.isfinite(teacher_logits).all():
-                    raise RuntimeError(
-                        "non-finite raw corruption teacher logits "
-                        f"at batch {batch_i}: "
-                        f"teacher_finite={bool(torch.isfinite(teacher_logits).all())}"
-                    )
-                if teacher_loss == "soft_bce":
-                    teacher_targets = torch.sigmoid(teacher_logits.detach())
-                    mask = (labels_rep >= 0).float()
-                    raw_teacher_loss = (
-                        F.binary_cross_entropy_with_logits(
-                            corrupt_logits,
-                            teacher_targets,
-                            reduction="none",
-                        )
-                        * mask
-                    ).sum() / mask.sum().clamp(min=1.0)
-                else:
-                    raw_teacher_loss = F.mse_loss(corrupt_logits, teacher_logits.detach())
-            else:
-                raw_teacher_loss = corrupt_logits.new_zeros(())
-            if feature_enabled:
-                assert clean_features is not None and corrupt_features is not None
-                if not torch.isfinite(clean_features).all() or not torch.isfinite(corrupt_features).all():
-                    raise RuntimeError(
-                        "non-finite raw corruption features "
-                        f"at batch {batch_i}: "
-                        f"clean_finite={bool(torch.isfinite(clean_features).all())} "
-                        f"corrupt_finite={bool(torch.isfinite(corrupt_features).all())}"
-                    )
-                clean_feature_targets = clean_features.detach().repeat((int(copies), 1))
-                corrupt_feature_values = corrupt_features
-                if feature_consistency_normalize:
-                    clean_feature_targets = F.normalize(clean_feature_targets.float(), p=2, dim=1)
-                    corrupt_feature_values = F.normalize(corrupt_feature_values.float(), p=2, dim=1)
-                raw_feature_loss = F.mse_loss(corrupt_feature_values, clean_feature_targets)
-            else:
-                raw_feature_loss = corrupt_logits.new_zeros(())
-            loss = (
-                float(bce_weight) * hard_bce
-                + float(consistency_weight) * raw_consistency
-                + teacher_weight * raw_teacher_loss
-                + feature_consistency_weight * raw_feature_loss
-            )
-            if not torch.isfinite(loss):
-                raise RuntimeError(
-                    "non-finite raw corruption loss "
-                    f"at batch {batch_i}: "
-                    f"loss={float(loss.detach().cpu())} "
-                    f"bce={float(hard_bce.detach().cpu())} "
-                    f"consistency={float(raw_consistency.detach().cpu())} "
-                    f"teacher={float(raw_teacher_loss.detach().cpu())}"
-                    f"feature={float(raw_feature_loss.detach().cpu())}"
-                )
-
-        loss.backward()
-        for name, param in model.named_parameters():
-            if param.grad is not None and not torch.isfinite(param.grad).all():
-                raise RuntimeError(
-                    "non-finite raw corruption gradient "
-                    f"at batch {batch_i}: parameter={name}"
-                )
-        if grad_clip > 0:
-            nn.utils.clip_grad_norm_(trainable_params, float(grad_clip))
-        optimizer.step()
-        for name, param in model.named_parameters():
-            if not torch.isfinite(param).all():
-                raise RuntimeError(
-                    "non-finite raw corruption parameter "
-                    f"after optimizer step at batch {batch_i}: parameter={name}"
-                )
-
-        losses.append(float(loss.item()))
-        bce_losses.append(float(hard_bce.item()))
-        consistency_losses.append(float(raw_consistency.item()))
-        if teacher_enabled:
-            teacher_losses.append(float(raw_teacher_loss.item()))
-        if feature_enabled:
-            feature_losses.append(float(raw_feature_loss.item()))
-        n_generated += int(stats.get("n_generated", 0))
-        n_corrupted += int(stats.get("n_corrupted", 0))
-        for op_name, count in dict(stats.get("op_counts", {})).items():
-            op_counts[str(op_name)] = op_counts.get(str(op_name), 0) + int(count)
-        if max_batches > 0 and batch_i >= max_batches:
-            break
-
-    return {
-        "enabled": True,
-        "loss": float(np.mean(losses)) if losses else float("nan"),
-        "bce_loss": float(np.mean(bce_losses)) if bce_losses else float("nan"),
-        "consistency_loss": float(np.mean(consistency_losses)) if consistency_losses else float("nan"),
-        "teacher_loss": float(np.mean(teacher_losses)) if teacher_losses else float("nan"),
-        "feature_loss": float(np.mean(feature_losses)) if feature_losses else float("nan"),
-        "n_batches": int(len(losses)),
-        "n_generated": int(n_generated),
-        "n_corrupted": int(n_corrupted),
-        "corrupt_fraction": float(n_corrupted / max(1, n_generated)),
-        "copies": int(copies),
-        "severity": int(severity),
-        "severity_profile": str(severity_profile),
-        "prob": float(prob),
-        "view_mode": str(view_mode),
-        "consistency_weight": float(consistency_weight),
-        "consistency_objective": str(consistency_loss),
-        "bce_weight": float(bce_weight),
-        "teacher_enabled": bool(teacher_enabled),
-        "teacher_weight": float(teacher_weight),
-        "teacher_objective": str(teacher_loss) if teacher_enabled else None,
-        "teacher_view": str(teacher_view) if teacher_enabled else None,
-        "feature_consistency_enabled": bool(feature_enabled),
-        "feature_consistency_weight": float(feature_consistency_weight),
-        "feature_consistency_normalize": bool(feature_consistency_normalize),
-        "op_conditioning_enabled": bool(op_conditioning_enabled),
-        "op_conditioned_views": int(op_conditioned_views),
-        "op_condition_names": (
-            list(op_adapter.op_names) if op_adapter is not None else []
-        ),
-        "input_stabilizer": dict(input_stabilizer_kwargs),
-        "ops": list(ops),
-        "op_counts": op_counts,
-        "renorm": bool(renorm),
-        "clip_abs": float(clip_abs),
-        "augmix_width": int(augmix_width) if view_mode == "augmix" else None,
-        "augmix_depth": int(augmix_depth) if view_mode == "augmix" else None,
-        "augmix_alpha": float(augmix_alpha) if view_mode == "augmix" else None,
-        "augmix_mixture_mode": str(augmix_mixture_mode) if view_mode == "augmix" else None,
-        "augmix_mixture_prob": float(augmix_mixture_prob) if view_mode == "augmix" else None,
-        "augmix_mixture_beta_a": float(augmix_mixture_beta_a) if view_mode == "augmix" else None,
-        "augmix_mixture_beta_b": float(augmix_mixture_beta_b) if view_mode == "augmix" else None,
-        "augmix_op_schedule": str(augmix_op_schedule) if view_mode == "augmix" else None,
-    }
-
-
-def _finite_loss_or_none(stats: dict[str, Any]) -> float | None:
-    value = float(stats.get("loss", float("nan")))
-    if not np.isfinite(value):
-        return None
-    return value
-
-
-def prepare_raw_corruption_teacher_input(
-    teacher_model: nn.Module,
-    x: torch.Tensor,
-    input_stabilizer_kwargs: dict[str, Any] | None = None,
-) -> torch.Tensor:
-    """Return the input tensor expected by a raw-corruption teacher."""
-
-    mode = str(getattr(teacher_model, "raw_corruption_input_mode", "ecgfounder"))
-    if mode == "raw1000":
-        return x
-    if mode == "ecgfounder":
-        return prepare_raw_ecgfounder_input(x, input_stabilizer_kwargs)
-    raise ValueError(f"unknown raw corruption teacher input mode: {mode}")
-
-
-def _load_teacher_state_dict(model_path: Path, device: torch.device) -> dict[str, torch.Tensor]:
-    payload = torch.load(model_path, map_location=device)
-    if isinstance(payload, dict) and "model_state_dict" in payload:
-        payload = payload["model_state_dict"]
-    if not isinstance(payload, dict):
-        raise ValueError(f"teacher checkpoint does not contain a state_dict: {model_path}")
-    return {str(k).removeprefix("_orig_mod."): v for k, v in payload.items()}
-
-
-def load_frozen_fullft_teacher(model_path: Path, device: torch.device) -> nn.Module:
-    """Load a frozen ECGFounder fullFT model for corrupted-view distillation."""
-
-    teacher = ft_12lead_ECGFounder(device, str(CHECKPOINT), 5, linear_prob=False)
-    state_dict = _load_teacher_state_dict(model_path, device)
-    teacher.load_state_dict(state_dict)
-    teacher.eval()
-    for param in teacher.parameters():
-        param.requires_grad_(False)
-    return teacher
-
-
-def load_frozen_feature_head_teacher(head_path: Path, device: torch.device) -> nn.Module:
-    """Load a frozen ECGFounder encoder with a linear feature-head checkpoint."""
-
-    teacher = ft_12lead_ECGFounder(device, str(CHECKPOINT), 5, linear_prob=False)
-    head_state = torch.load(head_path, map_location=device)
-    if not isinstance(head_state, dict) or "weight" not in head_state or "bias" not in head_state:
-        raise ValueError(f"feature-head teacher checkpoint must contain weight/bias: {head_path}")
-    dense = getattr(teacher, "dense", None)
-    if not isinstance(dense, nn.Linear):
-        raise ValueError(f"ECGFounder teacher dense head is not linear: {type(dense).__name__}")
-    weight = head_state["weight"].detach().to(device=device, dtype=dense.weight.dtype)
-    bias = head_state["bias"].detach().to(device=device, dtype=dense.bias.dtype)
-    if tuple(weight.shape) != tuple(dense.weight.shape) or tuple(bias.shape) != tuple(dense.bias.shape):
-        raise ValueError(
-            f"feature-head teacher shape mismatch: got weight={tuple(weight.shape)} "
-            f"bias={tuple(bias.shape)}, expected weight={tuple(dense.weight.shape)} "
-            f"bias={tuple(dense.bias.shape)}"
-        )
-    with torch.no_grad():
-        dense.weight.copy_(weight)
-        dense.bias.copy_(bias)
-    teacher.raw_corruption_input_mode = "ecgfounder"  # type: ignore[attr-defined]
-    teacher.eval()
-    for param in teacher.parameters():
-        param.requires_grad_(False)
-    return teacher
-
-
-class FrozenEfficientNetRawTeacher(nn.Module):
-    """Frozen Super5 teacher that consumes raw 100Hz `(B, 12, 1000)` ECG."""
-
-    raw_corruption_input_mode = "raw1000"
-
-    def __init__(self, model: nn.Module) -> None:
-        super().__init__()
-        self.model = model
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.model(x)
-
-
-def load_frozen_effnet_teacher(
-    model_path: Path,
-    device: torch.device,
-    model_name: str = "efficientnet1dv2",
-) -> nn.Module:
-    """Load a frozen EfficientNet-style Super5 model for raw-view distillation."""
-
-    base = build_super5_model(
-        normalize_model_name(str(model_name)),
-        num_classes=len(CLASS_NAMES_SUPER5),
-    ).to(device)
-    base.load_state_dict(_load_teacher_state_dict(model_path, device))
-    teacher = FrozenEfficientNetRawTeacher(base)
-    teacher.eval()
-    for param in teacher.parameters():
-        param.requires_grad_(False)
-    return teacher
-
-
-def load_frozen_raw_corruption_teacher(
-    model_path: Path,
-    device: torch.device,
-    *,
-    teacher_type: str,
-    teacher_model_name: str = "efficientnet1dv2",
-) -> nn.Module:
-    if teacher_type == "ecgfounder_fullft":
-        return load_frozen_fullft_teacher(model_path, device)
-    if teacher_type == "ecgfounder_feature_head":
-        return load_frozen_feature_head_teacher(model_path, device)
-    if teacher_type == "efficientnet1dv2":
-        return load_frozen_effnet_teacher(model_path, device, model_name=teacher_model_name)
-    raise ValueError(f"unknown raw corruption teacher type: {teacher_type}")
-
-
 def save_fullft_checkpoint(
     path: Path,
     model: nn.Module,
-    op_adapter: OperatorConditionedLogitAdapter | None = None,
 ) -> None:
-    if op_adapter is None:
-        torch.save(model.state_dict(), path)
-        return
-    torch.save(
-        {
-            "model_state_dict": model.state_dict(),
-            "op_adapter_state_dict": op_adapter.state_dict(),
-            "op_adapter_config": op_adapter.config(),
-        },
-        path,
-    )
+    torch.save(model.state_dict(), path)
 
 
 def load_fullft_checkpoint(
     path: Path,
     model: nn.Module,
     device: torch.device,
-    op_adapter: OperatorConditionedLogitAdapter | None = None,
 ) -> None:
     state = torch.load(path, map_location=device)
     if isinstance(state, dict) and "model_state_dict" in state:
         model.load_state_dict(state["model_state_dict"])
-        if op_adapter is not None and "op_adapter_state_dict" in state:
-            op_adapter.load_state_dict(state["op_adapter_state_dict"])
         return
     model.load_state_dict(state)
 
@@ -1718,23 +1208,18 @@ def _ecgfounder_tail_train_modules(model: nn.Module, args: argparse.Namespace) -
 def configure_ecgfounder_trainable_scope(
     model: nn.Module,
     args: argparse.Namespace,
-    op_adapter: OperatorConditionedLogitAdapter | None = None,
 ) -> dict[str, Any]:
     """Apply the requested ECGFounder fine-tuning scope and return audit info."""
 
     scope = str(args.trainable_scope)
     if scope == "full":
         set_module_requires_grad(model, True)
-        if op_adapter is not None:
-            set_module_requires_grad(op_adapter, True)
         train_module_names = ["model"]
     else:
         set_module_requires_grad(model, False)
         train_modules = _ecgfounder_tail_train_modules(model, args)
         for module in train_modules:
             set_module_requires_grad(module, True)
-        if op_adapter is not None:
-            set_module_requires_grad(op_adapter, True)
         if scope == "dense":
             train_module_names = ["dense"]
         else:
@@ -1745,14 +1230,12 @@ def configure_ecgfounder_trainable_scope(
                 "dense",
             ]
     trainable_model_params = [p for p in model.parameters() if p.requires_grad]
-    trainable_op_params = [] if op_adapter is None else [p for p in op_adapter.parameters() if p.requires_grad]
     return {
         "scope": scope,
         "last_n_stages": int(args.trainable_last_n_stages),
         "train_module_names": train_module_names,
         "n_trainable_model_tensors": int(len(trainable_model_params)),
         "n_trainable_model_params": int(sum(p.numel() for p in trainable_model_params)),
-        "n_trainable_op_adapter_params": int(sum(p.numel() for p in trainable_op_params)),
         "n_total_model_params": int(sum(p.numel() for p in model.parameters())),
     }
 
@@ -1760,7 +1243,6 @@ def configure_ecgfounder_trainable_scope(
 def set_ecgfounder_train_mode_for_scope(
     model: nn.Module,
     args: argparse.Namespace,
-    op_adapter: OperatorConditionedLogitAdapter | None = None,
 ) -> None:
     """Set train/eval modes so frozen ECGFounder blocks do not update BN stats."""
 
@@ -1771,113 +1253,6 @@ def set_ecgfounder_train_mode_for_scope(
         model.eval()
         for module in _ecgfounder_tail_train_modules(model, args):
             module.train()
-    if op_adapter is not None:
-        op_adapter.train()
-
-
-def train_fullft_raw_corruption_branches_epoch(
-    *,
-    model: nn.Module,
-    loader: DataLoader,
-    optimizer: torch.optim.Optimizer,
-    pos_weight: torch.Tensor,
-    device: torch.device,
-    args: argparse.Namespace,
-    epoch: int,
-    trainable_params: list[nn.Parameter],
-    aux_teacher_model: nn.Module | None = None,
-    op_adapter: OperatorConditionedLogitAdapter | None = None,
-    input_stabilizer_kwargs: dict[str, Any] | None = None,
-    train_mode_fn: Callable[[], None] | None = None,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Run primary and optional auxiliary raw-corruption branches for one epoch."""
-
-    primary_stats: dict[str, Any] = {"enabled": False, "reason": "disabled"}
-    aux_stats: dict[str, Any] = {"enabled": False, "reason": "disabled"}
-
-    if args.enable_raw_corrupt_consistency:
-        primary_stats = train_fullft_raw_corruption_consistency_epoch(
-            model=model,
-            loader=loader,
-            optimizer=optimizer,
-            pos_weight=pos_weight,
-            device=device,
-            copies=args.raw_corrupt_copies,
-            severity=args.raw_corrupt_severity,
-            severity_profile=args.raw_corrupt_severity_profile,
-            ops=list(args.raw_corrupt_ops),
-            prob=args.raw_corrupt_prob,
-            consistency_weight=args.raw_corrupt_consistency_weight,
-            bce_weight=args.raw_corrupt_bce_weight,
-            consistency_loss=args.raw_corrupt_consistency_loss,
-            rng=np.random.default_rng(args.seed + epoch * 2713),
-            trainable_params=trainable_params,
-            grad_clip=args.raw_corrupt_grad_clip,
-            max_batches=args.raw_corrupt_max_batches,
-            renorm=not args.raw_corrupt_no_renorm,
-            clip_abs=args.raw_corrupt_clip_abs,
-            view_mode=args.raw_corrupt_view_mode,
-            augmix_width=args.raw_corrupt_augmix_width,
-            augmix_depth=args.raw_corrupt_augmix_depth,
-            augmix_alpha=args.raw_corrupt_augmix_alpha,
-            augmix_mixture_mode=args.raw_corrupt_augmix_mixture_mode,
-            augmix_mixture_prob=args.raw_corrupt_augmix_mixture_prob,
-            augmix_mixture_beta_a=args.raw_corrupt_augmix_mixture_beta_a,
-            augmix_mixture_beta_b=args.raw_corrupt_augmix_mixture_beta_b,
-            augmix_op_schedule=args.raw_corrupt_augmix_op_schedule,
-            teacher_model=None,
-            teacher_weight=0.0,
-            feature_consistency_weight=args.raw_corrupt_feature_consistency_weight,
-            feature_consistency_normalize=args.raw_corrupt_feature_consistency_normalize,
-            op_adapter=op_adapter,
-            input_stabilizer_kwargs=input_stabilizer_kwargs,
-            train_mode_fn=train_mode_fn,
-        )
-
-    if args.enable_raw_corrupt_aux_consistency:
-        if not args.raw_corrupt_aux_ops:
-            raise ValueError("--enable_raw_corrupt_aux_consistency requires --raw_corrupt_aux_ops")
-        aux_stats = train_fullft_raw_corruption_consistency_epoch(
-            model=model,
-            loader=loader,
-            optimizer=optimizer,
-            pos_weight=pos_weight,
-            device=device,
-            copies=args.raw_corrupt_copies,
-            severity=args.raw_corrupt_severity,
-            severity_profile=args.raw_corrupt_severity_profile,
-            ops=list(args.raw_corrupt_aux_ops),
-            prob=args.raw_corrupt_prob,
-            consistency_weight=args.raw_corrupt_aux_consistency_weight,
-            bce_weight=args.raw_corrupt_aux_bce_weight,
-            consistency_loss=args.raw_corrupt_aux_consistency_loss,
-            rng=np.random.default_rng(args.seed + epoch * 2713 + 911),
-            trainable_params=trainable_params,
-            grad_clip=args.raw_corrupt_grad_clip,
-            max_batches=args.raw_corrupt_aux_max_batches,
-            renorm=not args.raw_corrupt_no_renorm,
-            clip_abs=args.raw_corrupt_clip_abs,
-            view_mode=args.raw_corrupt_view_mode,
-            augmix_width=args.raw_corrupt_augmix_width,
-            augmix_depth=args.raw_corrupt_augmix_depth,
-            augmix_alpha=args.raw_corrupt_augmix_alpha,
-            augmix_mixture_mode=args.raw_corrupt_augmix_mixture_mode,
-            augmix_mixture_prob=args.raw_corrupt_augmix_mixture_prob,
-            augmix_mixture_beta_a=args.raw_corrupt_augmix_mixture_beta_a,
-            augmix_mixture_beta_b=args.raw_corrupt_augmix_mixture_beta_b,
-            augmix_op_schedule=args.raw_corrupt_augmix_op_schedule,
-            teacher_model=aux_teacher_model,
-            teacher_weight=args.raw_corrupt_aux_teacher_weight,
-            teacher_loss=args.raw_corrupt_aux_teacher_loss,
-            teacher_view=args.raw_corrupt_aux_teacher_view,
-            feature_consistency_weight=args.raw_corrupt_aux_feature_consistency_weight,
-            feature_consistency_normalize=args.raw_corrupt_feature_consistency_normalize,
-            op_adapter=op_adapter,
-            input_stabilizer_kwargs=input_stabilizer_kwargs,
-            train_mode_fn=train_mode_fn,
-        )
-
-    return primary_stats, aux_stats
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -2153,146 +1528,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "<root>/<center>/k{k}_seed{seed>/<center>_real_k{k}_seed{seed}."
         ),
     )
-    ap.add_argument("--enable_raw_corrupt_consistency", action="store_true")
-    ap.add_argument("--raw_corrupt_batch_size", type=int, default=128)
-    ap.add_argument("--raw_corrupt_copies", type=int, default=1)
-    ap.add_argument("--raw_corrupt_prob", type=float, default=0.5)
-    ap.add_argument("--raw_corrupt_severity", type=int, default=4)
-    ap.add_argument(
-        "--raw_corrupt_severity_profile",
-        default="standard",
-        choices=STRESS_PROFILE_CHOICES,
-    )
-    ap.add_argument(
-        "--raw_corrupt_ops",
-        nargs="+",
-        default=[
-            "powerline_noise",
-            "emg_noise",
-            "baseline_wander",
-            "baseline_shift",
-            "random_leads_masking",
-        ],
-    )
-    ap.add_argument("--raw_corrupt_consistency_weight", type=float, default=0.5)
-    ap.add_argument(
-        "--raw_corrupt_consistency_loss",
-        choices=["soft_bce", "jsd"],
-        default="soft_bce",
-    )
-    ap.add_argument("--raw_corrupt_bce_weight", type=float, default=0.1)
-    ap.add_argument(
-        "--raw_corrupt_feature_consistency_weight",
-        type=float,
-        default=0.0,
-        help=(
-            "Optional clean-vs-corrupted penultimate feature MSE weight for "
-            "the primary raw-corruption branch."
-        ),
-    )
-    ap.add_argument("--raw_corrupt_max_batches", type=int, default=0)
-    ap.add_argument(
-        "--raw_corrupt_scope",
-        choices=["source", "target", "source_target"],
-        default="target",
-    )
-    ap.add_argument("--raw_corrupt_no_renorm", action="store_true")
-    ap.add_argument("--raw_corrupt_clip_abs", type=float, default=6.0)
-    ap.add_argument("--raw_corrupt_grad_clip", type=float, default=0.0)
-    ap.add_argument(
-        "--raw_corrupt_view_mode",
-        choices=["single_op", "augmix"],
-        default="single_op",
-    )
-    ap.add_argument("--raw_corrupt_augmix_width", type=int, default=3)
-    ap.add_argument("--raw_corrupt_augmix_depth", type=int, default=-1)
-    ap.add_argument("--raw_corrupt_augmix_alpha", type=float, default=1.0)
-    ap.add_argument(
-        "--raw_corrupt_augmix_mixture_mode",
-        choices=["beta", "fixed"],
-        default="beta",
-    )
-    ap.add_argument("--raw_corrupt_augmix_mixture_prob", type=float, default=0.5)
-    ap.add_argument("--raw_corrupt_augmix_mixture_beta_a", type=float, default=0.0)
-    ap.add_argument("--raw_corrupt_augmix_mixture_beta_b", type=float, default=0.0)
-    ap.add_argument(
-        "--raw_corrupt_augmix_op_schedule",
-        "--raw_augmix_op_schedule",
-        choices=["random", "cycle", "official_s5_depth23_composite_cycle"],
-        default="random",
-    )
-    ap.add_argument(
-        "--raw_corrupt_feature_consistency_normalize",
-        action="store_true",
-        help="L2-normalize clean/corrupted features before feature-consistency MSE.",
-    )
-    ap.add_argument(
-        "--raw_corrupt_op_conditioning",
-        choices=["none", "explicit_adapter"],
-        default="none",
-        help=(
-            "Optional diagnostic per-operator residual adapter for corrupted "
-            "raw-AugMix views. Requires view-level operator metadata."
-        ),
-    )
-    ap.add_argument("--raw_corrupt_op_adapter_hidden", type=int, default=128)
-    ap.add_argument("--raw_corrupt_op_adapter_dropout", type=float, default=0.0)
-    ap.add_argument("--raw_corrupt_op_adapter_scale", type=float, default=1.0)
-    ap.add_argument(
-        "--enable_raw_corrupt_aux_consistency",
-        action="store_true",
-        help=(
-            "Optional second raw-corruption branch sharing the same raw loader "
-            "and AugMix geometry but using separate ops/loss weights."
-        ),
-    )
-    ap.add_argument("--raw_corrupt_aux_ops", nargs="+", default=[])
-    ap.add_argument("--raw_corrupt_aux_consistency_weight", type=float, default=0.0)
-    ap.add_argument(
-        "--raw_corrupt_aux_consistency_loss",
-        choices=["soft_bce", "jsd"],
-        default="soft_bce",
-    )
-    ap.add_argument("--raw_corrupt_aux_bce_weight", type=float, default=0.0)
-    ap.add_argument(
-        "--raw_corrupt_aux_feature_consistency_weight",
-        type=float,
-        default=0.0,
-        help=(
-            "Optional clean-vs-corrupted penultimate feature MSE weight for "
-            "the auxiliary raw-corruption branch."
-        ),
-    )
-    ap.add_argument("--raw_corrupt_aux_max_batches", type=int, default=0)
-    ap.add_argument(
-        "--raw_corrupt_aux_teacher_model_path",
-        default="",
-        help=(
-            "Optional frozen teacher checkpoint used for auxiliary "
-            "raw-corruption distillation."
-        ),
-    )
-    ap.add_argument(
-        "--raw_corrupt_aux_teacher_type",
-        choices=RAW_CORRUPT_TEACHER_TYPES,
-        default="ecgfounder_fullft",
-    )
-    ap.add_argument(
-        "--raw_corrupt_aux_teacher_model_name",
-        default="efficientnet1dv2",
-        help="Model-zoo name used when --raw_corrupt_aux_teacher_type=efficientnet1dv2.",
-    )
-    ap.add_argument("--raw_corrupt_aux_teacher_weight", type=float, default=0.0)
-    ap.add_argument(
-        "--raw_corrupt_aux_teacher_loss",
-        choices=["soft_bce", "mse_logits"],
-        default="soft_bce",
-    )
-    ap.add_argument(
-        "--raw_corrupt_aux_teacher_view",
-        choices=["clean", "corrupt"],
-        default="corrupt",
-    )
     ap.add_argument("--device", default="cuda:0")
     ap.add_argument("--seed", type=int, default=20260531)
     ap.add_argument("--force", action="store_true")
@@ -2336,8 +1571,6 @@ def main() -> None:
             raise ValueError("--stage ptbxl_source does not support latent AugMix")
         if args.init_model_path or args.init_head_path:
             raise ValueError("--stage ptbxl_source must start from the official ECGFounder checkpoint")
-        if args.enable_raw_corrupt_consistency or args.enable_raw_corrupt_aux_consistency:
-            raise ValueError("--stage ptbxl_source does not support raw corruption branches")
 
     set_seed(args.seed)
     device = torch.device(args.device)
@@ -2402,7 +1635,7 @@ def main() -> None:
     init_model_info = None
     if args.init_model_path:
         init_model_path = Path(args.init_model_path)
-        load_fullft_checkpoint(init_model_path, model, device, op_adapter=None)
+        load_fullft_checkpoint(init_model_path, model, device)
         init_model_info = {
             "path": str(init_model_path),
             "type": "full_model",
@@ -2412,53 +1645,7 @@ def main() -> None:
     if args.init_head_path:
         init_head_info = init_dense_from_head(model, Path(args.init_head_path))
         print(f"[setup] initialized dense Super5 head from {args.init_head_path}", flush=True)
-    op_adapter: OperatorConditionedLogitAdapter | None = None
-    if args.raw_corrupt_op_conditioning == "explicit_adapter":
-        dense = getattr(model, "dense", None)
-        if not isinstance(dense, nn.Linear):
-            raise RuntimeError("explicit raw-corrupt op conditioning requires ECGFounder model.dense")
-        op_adapter = OperatorConditionedLogitAdapter(
-            feature_dim=int(dense.in_features),
-            num_classes=len(CLASS_NAMES_SUPER5),
-            op_names=RAW_CORRUPT_OP_CONDITION_NAMES,
-            hidden_dim=int(args.raw_corrupt_op_adapter_hidden),
-            dropout=float(args.raw_corrupt_op_adapter_dropout),
-            scale=float(args.raw_corrupt_op_adapter_scale),
-        ).to(device)
-        print(
-            "[setup] raw-corrupt explicit op-conditioned adapter enabled: "
-            f"ops={RAW_CORRUPT_OP_CONDITION_NAMES} "
-            f"hidden={args.raw_corrupt_op_adapter_hidden} "
-            f"dropout={args.raw_corrupt_op_adapter_dropout} "
-            f"scale={args.raw_corrupt_op_adapter_scale}",
-            flush=True,
-        )
     model.train()
-    if op_adapter is not None:
-        op_adapter.train()
-    raw_corrupt_aux_teacher_model: nn.Module | None = None
-    if float(args.raw_corrupt_aux_teacher_weight) > 0:
-        if not args.raw_corrupt_aux_teacher_model_path:
-            raise ValueError(
-                "--raw_corrupt_aux_teacher_weight > 0 requires "
-                "--raw_corrupt_aux_teacher_model_path"
-            )
-        raw_corrupt_aux_teacher_model = load_frozen_raw_corruption_teacher(
-            Path(args.raw_corrupt_aux_teacher_model_path),
-            device,
-            teacher_type=str(args.raw_corrupt_aux_teacher_type),
-            teacher_model_name=str(args.raw_corrupt_aux_teacher_model_name),
-        )
-        print(
-            "[setup] loaded auxiliary raw-corruption frozen teacher: "
-            f"type={args.raw_corrupt_aux_teacher_type} "
-            f"model_name={args.raw_corrupt_aux_teacher_model_name} "
-            f"path={args.raw_corrupt_aux_teacher_model_path} "
-            f"weight={args.raw_corrupt_aux_teacher_weight} "
-            f"loss={args.raw_corrupt_aux_teacher_loss} "
-            f"view={args.raw_corrupt_aux_teacher_view}",
-            flush=True,
-        )
     anchor_pool = None
     pgd_gen = None
     walker = None
@@ -2562,113 +1749,6 @@ def main() -> None:
             flush=True,
         )
 
-    raw_corrupt_loader: DataLoader | None = None
-    raw_corrupt_setup: dict[str, Any] = {"enabled": False}
-    raw_corrupt_aux_setup: dict[str, Any] = {"enabled": False}
-    raw_corrupt_any_enabled = bool(
-        args.enable_raw_corrupt_consistency or args.enable_raw_corrupt_aux_consistency
-    )
-    if raw_corrupt_any_enabled:
-        if args.enable_raw_corrupt_aux_consistency and not args.raw_corrupt_aux_ops:
-            raise ValueError("--enable_raw_corrupt_aux_consistency requires --raw_corrupt_aux_ops")
-        raw_datasets: list[Dataset] = []
-        folds_for_raw = ptbxl["folds"].astype(np.int64)
-        source_raw_idx = np.nonzero(np.isin(folds_for_raw, np.arange(1, 9)))[0]
-        if args.source_train_limit > 0:
-            source_raw_idx = source_raw_idx[: args.source_train_limit]
-        if args.raw_corrupt_scope in {"source", "source_target"}:
-            raw_datasets.append(
-                load_source_raw_dataset(
-                    str(cache_dir),
-                    source_raw_idx,
-                    ptbxl["labels"][source_raw_idx],
-                )
-            )
-        if args.raw_corrupt_scope in {"target", "source_target"}:
-            raw_datasets.append(
-                load_target_raw_dataset(
-                    args.center,
-                    args,
-                    sorted(target_train_ids),
-                )
-            )
-        if not raw_datasets:
-            raise ValueError(f"unsupported raw_corrupt_scope={args.raw_corrupt_scope!r}")
-        raw_corrupt_ds: Dataset = raw_datasets[0] if len(raw_datasets) == 1 else ConcatDataset(raw_datasets)
-        raw_corrupt_loader = DataLoader(
-            raw_corrupt_ds,
-            batch_size=int(args.raw_corrupt_batch_size),
-            shuffle=True,
-            num_workers=int(args.num_workers),
-            pin_memory=device.type == "cuda",
-            drop_last=False,
-        )
-        raw_corrupt_common_setup = {
-            "scope": str(args.raw_corrupt_scope),
-            "n_samples": int(len(raw_corrupt_ds)),
-            "batch_size": int(args.raw_corrupt_batch_size),
-            "copies": int(args.raw_corrupt_copies),
-            "severity": int(args.raw_corrupt_severity),
-            "severity_profile": str(args.raw_corrupt_severity_profile),
-            "prob": float(args.raw_corrupt_prob),
-            "renorm": not bool(args.raw_corrupt_no_renorm),
-            "clip_abs": float(args.raw_corrupt_clip_abs),
-            "view_mode": str(args.raw_corrupt_view_mode),
-            "augmix_width": int(args.raw_corrupt_augmix_width),
-            "augmix_depth": int(args.raw_corrupt_augmix_depth),
-            "augmix_alpha": float(args.raw_corrupt_augmix_alpha),
-            "augmix_mixture_mode": str(args.raw_corrupt_augmix_mixture_mode),
-            "augmix_mixture_prob": float(args.raw_corrupt_augmix_mixture_prob),
-            "augmix_mixture_beta_a": float(args.raw_corrupt_augmix_mixture_beta_a),
-            "augmix_mixture_beta_b": float(args.raw_corrupt_augmix_mixture_beta_b),
-            "augmix_op_schedule": str(args.raw_corrupt_augmix_op_schedule),
-            "feature_consistency_normalize": bool(args.raw_corrupt_feature_consistency_normalize),
-            "op_conditioning": str(args.raw_corrupt_op_conditioning),
-            "op_adapter": None if op_adapter is None else op_adapter.config(),
-            "input_stabilizer": dict(input_stabilizer_kwargs),
-        }
-        raw_corrupt_setup = {
-            "enabled": bool(args.enable_raw_corrupt_consistency),
-            **raw_corrupt_common_setup,
-            "ops": list(args.raw_corrupt_ops),
-            "consistency_weight": float(args.raw_corrupt_consistency_weight),
-            "bce_weight": float(args.raw_corrupt_bce_weight),
-            "feature_consistency_weight": float(args.raw_corrupt_feature_consistency_weight),
-            "consistency_loss": str(args.raw_corrupt_consistency_loss),
-            "max_batches": int(args.raw_corrupt_max_batches),
-        }
-        raw_corrupt_aux_setup = {
-            "enabled": bool(args.enable_raw_corrupt_aux_consistency),
-            **raw_corrupt_common_setup,
-            "ops": list(args.raw_corrupt_aux_ops),
-            "consistency_weight": float(args.raw_corrupt_aux_consistency_weight),
-            "bce_weight": float(args.raw_corrupt_aux_bce_weight),
-            "feature_consistency_weight": float(args.raw_corrupt_aux_feature_consistency_weight),
-            "consistency_loss": str(args.raw_corrupt_aux_consistency_loss),
-            "max_batches": int(args.raw_corrupt_aux_max_batches),
-            "teacher_model_path": str(args.raw_corrupt_aux_teacher_model_path),
-            "teacher_type": str(args.raw_corrupt_aux_teacher_type),
-            "teacher_model_name": str(args.raw_corrupt_aux_teacher_model_name),
-            "teacher_weight": float(args.raw_corrupt_aux_teacher_weight),
-            "teacher_loss": str(args.raw_corrupt_aux_teacher_loss),
-            "teacher_view": str(args.raw_corrupt_aux_teacher_view),
-        }
-        print(
-            f"[setup] fullFT raw-corrupt consistency enabled: scope={args.raw_corrupt_scope} "
-            f"n={len(raw_corrupt_ds)} batch={args.raw_corrupt_batch_size} "
-            f"copies={args.raw_corrupt_copies} severity={args.raw_corrupt_severity} "
-            f"profile={args.raw_corrupt_severity_profile} view={args.raw_corrupt_view_mode} "
-            f"w={args.raw_corrupt_augmix_width} d={args.raw_corrupt_augmix_depth} "
-            f"schedule={args.raw_corrupt_augmix_op_schedule} "
-            f"mix={args.raw_corrupt_augmix_mixture_mode}:{args.raw_corrupt_augmix_mixture_prob} "
-            f"primary={bool(args.enable_raw_corrupt_consistency)} ops={list(args.raw_corrupt_ops)} "
-            f"aux={bool(args.enable_raw_corrupt_aux_consistency)} aux_ops={list(args.raw_corrupt_aux_ops)} "
-            f"aux_teacher_w={float(args.raw_corrupt_aux_teacher_weight)} "
-            f"feat_w={float(args.raw_corrupt_feature_consistency_weight)} "
-            f"aux_feat_w={float(args.raw_corrupt_aux_feature_consistency_weight)}",
-            flush=True,
-        )
-
     def criterion(logits: torch.Tensor, y: torch.Tensor, stream: torch.Tensor) -> torch.Tensor:
         return stream_weighted_masked_bce(
             logits,
@@ -2680,11 +1760,9 @@ def main() -> None:
             adv_weight=float(args.adv_bce_loss_weight),
         )
 
-    trainable_setup = configure_ecgfounder_trainable_scope(model, args, op_adapter)
-    train_mode_fn = lambda: set_ecgfounder_train_mode_for_scope(model, args, op_adapter)
+    trainable_setup = configure_ecgfounder_trainable_scope(model, args)
+    train_mode_fn = lambda: set_ecgfounder_train_mode_for_scope(model, args)
     trainable_params = [p for p in model.parameters() if p.requires_grad]
-    if op_adapter is not None:
-        trainable_params += [p for p in op_adapter.parameters() if p.requires_grad]
     if not trainable_params:
         raise RuntimeError("no trainable parameters selected for ECGFounder run")
     print(
@@ -2693,8 +1771,7 @@ def main() -> None:
         f"last_n_stages={trainable_setup['last_n_stages']} "
         f"modules={trainable_setup['train_module_names']} "
         f"trainable={trainable_setup['n_trainable_model_params']:,}/"
-        f"{trainable_setup['n_total_model_params']:,} model params "
-        f"op_adapter={trainable_setup['n_trainable_op_adapter_params']:,}",
+        f"{trainable_setup['n_total_model_params']:,} model params",
         flush=True,
     )
     opt = torch.optim.AdamW(trainable_params, lr=args.lr, weight_decay=args.weight_decay)
@@ -2727,7 +1804,7 @@ def main() -> None:
                 pos_weight,
                 args,
                 device,
-                restore_trainable_fn=lambda: configure_ecgfounder_trainable_scope(model, args, op_adapter),
+                restore_trainable_fn=lambda: configure_ecgfounder_trainable_scope(model, args),
             )
         epoch_adv_weight = scheduled_adv_weight(args, epoch)
         if args.stage == "ptbxl_source":
@@ -2773,23 +1850,6 @@ def main() -> None:
             loss.backward()
             opt.step()
             losses.append(float(loss.item()))
-        raw_corrupt_stats = {"enabled": False, "reason": "disabled"}
-        raw_corrupt_aux_stats = {"enabled": False, "reason": "disabled"}
-        if raw_corrupt_any_enabled and raw_corrupt_loader is not None:
-            raw_corrupt_stats, raw_corrupt_aux_stats = train_fullft_raw_corruption_branches_epoch(
-                model=model,
-                loader=raw_corrupt_loader,
-                optimizer=opt,
-                pos_weight=pos_weight,
-                device=device,
-                args=args,
-                epoch=epoch,
-                trainable_params=trainable_params,
-                aux_teacher_model=raw_corrupt_aux_teacher_model,
-                op_adapter=op_adapter,
-                input_stabilizer_kwargs=input_stabilizer_kwargs,
-                train_mode_fn=train_mode_fn,
-            )
         sched.step()
         val_metrics = eval_split(
             model,
@@ -2897,10 +1957,6 @@ def main() -> None:
             "adv_anchor_score_p90": adv_info.get("anchor_score_p90"),
             "adv_anchor_score_max": adv_info.get("anchor_score_max"),
             "adv_anchor_sample_ess": adv_info.get("anchor_sample_ess"),
-            "raw_corrupt_loss": _finite_loss_or_none(raw_corrupt_stats),
-            "raw_corrupt_stats": raw_corrupt_stats,
-            "raw_corrupt_aux_loss": _finite_loss_or_none(raw_corrupt_aux_stats),
-            "raw_corrupt_aux_stats": raw_corrupt_aux_stats,
             "latent_augmix_stats": adv_info.get("latent_augmix_stats"),
             "trainable_scope": trainable_setup,
             "lr": float(opt.param_groups[0]["lr"]),
@@ -2944,27 +2000,20 @@ def main() -> None:
         if score > best:
             best = score
             best_epoch = epoch
-            save_fullft_checkpoint(run_dir / "best_model.pt", model, op_adapter)
-        save_fullft_checkpoint(run_dir / "last_model.pt", model, op_adapter)
+            save_fullft_checkpoint(run_dir / "best_model.pt", model)
+        save_fullft_checkpoint(run_dir / "last_model.pt", model)
 
     selected_checkpoint_name = "last_model.pt" if args.checkpoint_policy == "last" else "best_model.pt"
-    load_fullft_checkpoint(run_dir / selected_checkpoint_name, model, device, op_adapter)
+    load_fullft_checkpoint(run_dir / selected_checkpoint_name, model, device)
     last_epoch = logs[-1]["epoch"] if logs else None
     result = {
         "method": (
             "ECGFounder official-style full fine-tuning"
             + (" + VAE-only real-anchor latent-hull online AT" if args.enable_vae_adv_stream else "")
             + (" + locked three-chain VAE-LHAT AugMix" if args.enable_latent_augmix_branch else "")
-            + (" + calibrated/raw corruption consistency" if args.enable_raw_corrupt_consistency else "")
-            + (" + auxiliary/raw corruption consistency" if args.enable_raw_corrupt_aux_consistency else "")
-            + (" + explicit op-conditioned corruption adapter" if op_adapter is not None else "")
         ),
         "vae_stream_enabled": bool(args.enable_vae_adv_stream),
         "latent_augmix_branch_enabled": bool(args.enable_latent_augmix_branch),
-        "raw_corrupt_consistency_enabled": bool(args.enable_raw_corrupt_consistency),
-        "raw_corrupt_aux_consistency_enabled": bool(args.enable_raw_corrupt_aux_consistency),
-        "raw_corrupt_op_conditioning_enabled": bool(op_adapter is not None),
-        "raw_corrupt_op_adapter": None if op_adapter is None else op_adapter.config(),
         "supervised_input_mode": str(args.supervised_input_mode),
         "input_stabilizer": dict(input_stabilizer_kwargs),
         "trainable_scope": trainable_setup,
@@ -3038,8 +2087,6 @@ def main() -> None:
         "config": vars(args),
         "init_model": init_model_info,
         "init_head": init_head_info,
-        "raw_corrupt_consistency": raw_corrupt_setup,
-        "raw_corrupt_aux_consistency": raw_corrupt_aux_setup,
         "latent_augmix_branch": {
             "enabled": bool(args.enable_latent_augmix_branch),
             "topology": str(args.latent_augmix_topology),

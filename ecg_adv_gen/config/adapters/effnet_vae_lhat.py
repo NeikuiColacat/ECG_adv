@@ -72,10 +72,6 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
     anchors = adaptation.get("anchors") or {}
     selection = adaptation.get("selection") or {}
     buffer = adaptation.get("buffer") or {}
-    raw_corrupt = adaptation.get("raw_corrupt_consistency") or {}
-    raw_augmix = raw_corrupt.get("augmix") or {}
-    raw_input_stabilizer = raw_corrupt.get("input_stabilizer") or {}
-    mask_shift = adaptation.get("mask_shift_consistency") or {}
 
     argv: list[Any] = [
         "--center",
@@ -295,91 +291,7 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
             "--latent_augmix_consistency_max_batches",
             latent_augmix_consistency.get("max_batches"),
         )
-    if raw_corrupt.get("enabled"):
-        argv.append("--enable_raw_corrupt_consistency")
-        _append_optional_value(argv, "--raw_corrupt_copies", raw_corrupt.get("copies"))
-        _append_optional_value(argv, "--raw_corrupt_prob", raw_corrupt.get("prob"))
-        _append_optional_value(argv, "--raw_corrupt_severity", raw_corrupt.get("severity"))
-        _append_optional_value(
-            argv,
-            "--raw_corrupt_severity_profile",
-            raw_corrupt.get("severity_profile", "standard"),
-        )
-        _append_optional_value(
-            argv,
-            "--raw_corrupt_severity_params_file",
-            raw_corrupt.get("severity_params_file"),
-        )
-        _append_optional_value(
-            argv,
-            "--raw_corrupt_severity_params_name",
-            raw_corrupt.get("severity_params_name"),
-        )
-        _append_optional_sequence(argv, "--raw_corrupt_ops", raw_corrupt.get("ops"))
-        _append_optional_value(
-            argv,
-            "--raw_corrupt_consistency_weight",
-            raw_corrupt.get("consistency_weight"),
-        )
-        _append_optional_value(argv, "--raw_corrupt_consistency_loss", raw_corrupt.get("consistency_loss"))
-        _append_optional_value(argv, "--raw_corrupt_bce_weight", raw_corrupt.get("bce_weight"))
-        _append_optional_value(argv, "--raw_corrupt_max_batches", raw_corrupt.get("max_batches"))
-        _append_optional_value(argv, "--raw_corrupt_scope", raw_corrupt.get("scope"))
-        _append_optional_value(argv, "--raw_corrupt_clip_abs", raw_corrupt.get("clip_abs"))
-        _append_optional_value(argv, "--raw_corrupt_view_mode", raw_corrupt.get("view_mode"))
-        _append_optional_value(argv, "--raw_augmix_width", raw_augmix.get("width"))
-        _append_optional_value(argv, "--raw_augmix_depth", raw_augmix.get("depth"))
-        _append_optional_value(argv, "--raw_augmix_alpha", raw_augmix.get("alpha"))
-        _append_optional_value(argv, "--raw_augmix_mixture_mode", raw_augmix.get("mixture_mode"))
-        _append_optional_value(argv, "--raw_augmix_mixture_prob", raw_augmix.get("mixture_prob"))
-        _append_optional_value(argv, "--raw_augmix_mixture_beta_a", raw_augmix.get("mixture_beta_a"))
-        _append_optional_value(argv, "--raw_augmix_mixture_beta_b", raw_augmix.get("mixture_beta_b"))
-        _append_optional_value(argv, "--raw_augmix_op_schedule", raw_augmix.get("op_schedule"))
-        if raw_input_stabilizer:
-            _append_optional_value(
-                argv,
-                "--raw_input_bandpass_low_hz",
-                raw_input_stabilizer.get("bandpass_low_hz"),
-            )
-            _append_optional_value(
-                argv,
-                "--raw_input_bandpass_high_hz",
-                raw_input_stabilizer.get("bandpass_high_hz"),
-            )
-            if raw_input_stabilizer.get("repair_flat_leads"):
-                argv.append("--raw_input_repair_flat_leads")
-            _append_optional_value(argv, "--raw_input_clip_abs", raw_input_stabilizer.get("clip_abs"))
-            if raw_input_stabilizer.get("renorm_after_stabilizer"):
-                argv.append("--raw_input_renorm_after_stabilizer")
-            _append_optional_value(
-                argv,
-                "--raw_input_sample_rate_hz",
-                raw_input_stabilizer.get("sample_rate_hz"),
-            )
-        if raw_corrupt.get("no_renorm"):
-            argv.append("--raw_corrupt_no_renorm")
-    if mask_shift.get("enabled"):
-        argv.append("--enable_mask_shift_consistency")
-        _append_optional_value(argv, "--mask_shift_copies", mask_shift.get("copies"))
-        _append_optional_value(argv, "--mask_shift_mask_severity", mask_shift.get("mask_severity"))
-        _append_optional_value(argv, "--mask_shift_shift_severity", mask_shift.get("shift_severity"))
-        _append_optional_value(
-            argv,
-            "--mask_shift_consistency_weight",
-            mask_shift.get("consistency_weight"),
-        )
-        _append_optional_value(argv, "--mask_shift_consistency_loss", mask_shift.get("consistency_loss"))
-        _append_optional_value(argv, "--mask_shift_bce_weight", mask_shift.get("bce_weight"))
-        _append_optional_value(argv, "--mask_shift_max_batches", mask_shift.get("max_batches"))
-        _append_optional_value(argv, "--mask_shift_scope", mask_shift.get("scope"))
-        _append_optional_value(argv, "--mask_shift_clip_abs", mask_shift.get("clip_abs"))
-        if mask_shift.get("no_renorm"):
-            argv.append("--mask_shift_no_renorm")
-    run_tag_extra = (
-        adaptation.get("run_tag_extra")
-        or mask_shift.get("run_tag_extra")
-        or raw_corrupt.get("run_tag_extra")
-    )
+    run_tag_extra = adaptation.get("run_tag_extra")
     _append_optional_value(argv, "--run_tag_extra", run_tag_extra)
     return argv
 
@@ -443,6 +355,16 @@ def audit_effnet_vae_lhat_command(
         audit_equals(errors, script, opts, "--target_real_val_fraction", "0.0")
     else:
         audit_equals(errors, script, opts, "--quick_eval_source", "target_real_val")
+    forbidden_ablation_flags = [
+        "--enable_raw_corrupt_consistency",
+        "--enable_mask_shift_consistency",
+        "--raw_input_repair_flat_leads",
+        "--raw_input_bandpass_low_hz",
+        "--raw_input_bandpass_high_hz",
+    ]
+    present_forbidden = [flag for flag in forbidden_ablation_flags if flag in opts]
+    if present_forbidden:
+        errors.append(f"{script}: locked mainline must not enable raw/mask-shift ablation flags: {present_forbidden}")
     audit_equals(errors, script, opts, "--target_real_val_seed", expected_command_seed)
     if opt_first(opts, "--hull_neighbor_distance_space") not in {"raw", "standardized"}:
         errors.append(f"{script}: invalid --hull_neighbor_distance_space")

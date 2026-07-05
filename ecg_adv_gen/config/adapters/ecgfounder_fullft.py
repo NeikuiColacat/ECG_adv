@@ -40,8 +40,6 @@ def build_ecgfounder_fullft_argv(config: Mapping[str, Any], context: Mapping[str
     hull = adaptation.get("hull") or {}
     attack = adaptation.get("attack") or {}
     latent_augmix = adaptation.get("latent_augmix") or {}
-    raw_corrupt = adaptation.get("raw_corrupt_consistency") or {}
-    raw_augmix = raw_corrupt.get("augmix") or {}
     runtime = config.get("runtime") or {}
     experiment = config["experiment"]
     stage = str(adaptation.get("stage", "k500"))
@@ -230,32 +228,6 @@ def build_ecgfounder_fullft_argv(config: Mapping[str, Any], context: Mapping[str
         _append_list_option(argv, "--latent_augmix_ops", latent_augmix.get("ops", []))
         _append_flag(argv, "--latent_augmix_renorm", latent_augmix.get("renorm", False))
         _append_option(argv, "--latent_augmix_clip_abs", latent_augmix.get("clip_abs", 6.0))
-    if bool(raw_corrupt.get("enabled", False)):
-        argv.append("--enable_raw_corrupt_consistency")
-        _append_option(argv, "--raw_corrupt_batch_size", raw_corrupt.get("batch_size"))
-        _append_option(argv, "--raw_corrupt_copies", raw_corrupt.get("copies"))
-        _append_option(argv, "--raw_corrupt_prob", raw_corrupt.get("prob"))
-        _append_option(argv, "--raw_corrupt_severity", raw_corrupt.get("severity"))
-        _append_option(argv, "--raw_corrupt_severity_profile", raw_corrupt.get("severity_profile"))
-        _append_list_option(argv, "--raw_corrupt_ops", raw_corrupt.get("ops", []))
-        _append_option(argv, "--raw_corrupt_consistency_weight", raw_corrupt.get("consistency_weight"))
-        _append_option(argv, "--raw_corrupt_consistency_loss", raw_corrupt.get("consistency_loss"))
-        _append_option(argv, "--raw_corrupt_bce_weight", raw_corrupt.get("bce_weight"))
-        _append_option(argv, "--raw_corrupt_feature_consistency_weight", raw_corrupt.get("feature_consistency_weight"))
-        _append_option(argv, "--raw_corrupt_max_batches", raw_corrupt.get("max_batches"))
-        _append_option(argv, "--raw_corrupt_scope", raw_corrupt.get("scope"))
-        _append_option(argv, "--raw_corrupt_clip_abs", raw_corrupt.get("clip_abs"))
-        _append_option(argv, "--raw_corrupt_grad_clip", raw_corrupt.get("grad_clip"))
-        _append_option(argv, "--raw_corrupt_view_mode", raw_corrupt.get("view_mode"))
-        _append_option(argv, "--raw_corrupt_augmix_width", raw_augmix.get("width"))
-        _append_option(argv, "--raw_corrupt_augmix_depth", raw_augmix.get("depth"))
-        _append_option(argv, "--raw_corrupt_augmix_alpha", raw_augmix.get("alpha"))
-        _append_option(argv, "--raw_corrupt_augmix_mixture_mode", raw_augmix.get("mixture_mode"))
-        _append_option(argv, "--raw_corrupt_augmix_mixture_prob", raw_augmix.get("mixture_prob"))
-        _append_option(argv, "--raw_corrupt_augmix_mixture_beta_a", raw_augmix.get("mixture_beta_a"))
-        _append_option(argv, "--raw_corrupt_augmix_mixture_beta_b", raw_augmix.get("mixture_beta_b"))
-        _append_option(argv, "--raw_corrupt_augmix_op_schedule", raw_augmix.get("op_schedule"))
-        _append_flag(argv, "--raw_corrupt_no_renorm", raw_corrupt.get("no_renorm", False))
     return argv
 
 
@@ -388,18 +360,8 @@ def audit_ecgfounder_fullft_command(
         errors.append(f"{script}: locked full-FT config must not pass --target_val_seed")
     if "--init_head_path" in opts:
         errors.append(f"{script}: locked full-FT config must not initialize from best_head.pt")
-    raw_corrupt = ((config.get("adaptation") or {}).get("raw_corrupt_consistency")) or {}
-    raw_corrupt_enabled = bool(raw_corrupt.get("enabled", False))
-    if (
-        ("--enable_raw_corrupt_consistency" in opts or "--enable_raw_corrupt_aux_consistency" in opts)
-        and not raw_corrupt_enabled
-    ):
+    if "--enable_raw_corrupt_consistency" in opts or "--enable_raw_corrupt_aux_consistency" in opts:
         errors.append(f"{script}: locked full-FT baseline must not enable raw corruption branches")
-    if raw_corrupt_enabled:
-        if "--enable_raw_corrupt_consistency" not in opts:
-            errors.append(f"{script}: raw-corruption ablation config did not emit --enable_raw_corrupt_consistency")
-        audit_equals(errors, script, opts, "--raw_corrupt_view_mode", raw_corrupt.get("view_mode", "single_op"))
-        audit_equals(errors, script, opts, "--raw_corrupt_severity_profile", raw_corrupt.get("severity_profile", "standard"))
     if any(opt in opts for opt in ("--ecgfounder_input_repair_flat_leads", "--ecgfounder_input_bandpass_low_hz", "--ecgfounder_input_bandpass_high_hz")):
         errors.append(f"{script}: locked full-FT config must not enable ECGFounder input stabilizers")
     joined = " ".join(argv)
@@ -473,7 +435,7 @@ def audit_ecgfounder_fullft_command(
     init_model = str(opt_first(opts, "--init_model_path", ""))
     run_id = str((config.get("runtime") or {}).get("run_id") or "")
     upstream_run_id = str(((config.get("model") or {}).get("upstream_run_id")) or run_id)
-    if "--enable_vae_adv_stream" in opts or raw_corrupt_enabled:
+    if "--enable_vae_adv_stream" in opts:
         expected_init = (
             f"/ecgfounder_k500_fullft_locked/{upstream_run_id}/runs/"
             f"{center}_k500_fullft_locked/last_model.pt"

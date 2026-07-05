@@ -1,4 +1,5 @@
 # Mainline keep list generated 2026-07-05
+# Phase2 refresh 2026-07-06: latest-only compression removed stale ECGFounder VAE-LHAT runner and raw/mask ablation helpers.
 # Source: configs/active_scripts.yaml:latest_mainline plus YAML extends, runner/postprocess entrypoints, ecg_adv_gen import closure, core tests, label/data protocol files, and SOTA replay configs.
 # Columns: path<TAB>reason<TAB>lines
 AGENTS.md	static_public_surface	820
@@ -33,20 +34,20 @@ docs/pipelines/README.md	static_public_surface	56
 docs/pipelines/agent_operating_layer_20260529.md	static_public_surface	199
 docs/pipelines/pn2021c_vae_lhat_augmix_locked_protocol_20260618.md	static_public_surface	281
 ecg_adv_gen/__init__.py	package_init	5
-ecg_adv_gen/adaptation/__init__.py	python_import_closure	55
+ecg_adv_gen/adaptation/__init__.py	python_import_closure	51
 ecg_adv_gen/adaptation/anchor_sampling.py	python_import_closure	295
 ecg_adv_gen/adaptation/buffer_labels.py	python_import_closure	72
 ecg_adv_gen/adaptation/diagnostics.py	python_import_closure	74
 ecg_adv_gen/adaptation/latent_hull_torch.py	python_import_closure	43
-ecg_adv_gen/adaptation/lhat.py	python_import_closure	1194
+ecg_adv_gen/adaptation/lhat.py	python_import_closure	944
 ecg_adv_gen/config/__init__.py	python_import_closure	71
 ecg_adv_gen/config/adapters/__init__.py	python_import_closure	19
 ecg_adv_gen/config/adapters/common.py	python_import_closure	70
 ecg_adv_gen/config/adapters/direct.py	python_import_closure	64
 ecg_adv_gen/config/adapters/direct_finetune.py	runner_adapter	100
-ecg_adv_gen/config/adapters/ecgfounder_fullft.py	runner_adapter	491
+ecg_adv_gen/config/adapters/ecgfounder_fullft.py	runner_adapter	453
 ecg_adv_gen/config/adapters/ecgfounder_pn2021c_eval.py	runner_adapter	257
-ecg_adv_gen/config/adapters/effnet_vae_lhat.py	runner_adapter	463
+ecg_adv_gen/config/adapters/effnet_vae_lhat.py	runner_adapter	385
 ecg_adv_gen/config/adapters/pn2021_eval.py	runner_adapter	138
 ecg_adv_gen/config/adapters/pn2021c_eval.py	runner_adapter	288
 ecg_adv_gen/config/adapters/registry.py	python_import_closure	48
@@ -71,6 +72,7 @@ ecg_adv_gen/data/pn2021_raw_kshot.py	python_import_closure	159
 ecg_adv_gen/data/pn2021_records.py	python_import_closure	167
 ecg_adv_gen/data/pn2021_waveforms.py	python_import_closure	93
 ecg_adv_gen/data/ptbxl.py	python_import_closure	135
+ecg_adv_gen/data/raw_signals.py	python_import_closure	131
 ecg_adv_gen/data/real_anchors.py	python_import_closure	295
 ecg_adv_gen/data/signal_cache.py	python_import_closure	91
 ecg_adv_gen/data/synthetic_npz.py	python_import_closure	119
@@ -114,14 +116,13 @@ ecg_adv_gen/reporting/metrics_merge.py	python_import_closure	120
 ecg_adv_gen/reporting/paper_tables.py	python_import_closure	325
 ecg_adv_gen/run_naming.py	python_import_closure	233
 ecg_adv_gen/runner/__init__.py	package_init	10
-ecg_adv_gen/runner/ecgfounder_fullft.py	runner_entrypoint	3101
+ecg_adv_gen/runner/ecgfounder_fullft.py	runner_entrypoint	2148
 ecg_adv_gen/runner/ecgfounder_linear_probe.py	python_import_closure	195
 ecg_adv_gen/runner/ecgfounder_pn2021c_eval.py	runner_entrypoint	743
-ecg_adv_gen/runner/ecgfounder_vae_lhat.py	python_import_closure	2404
 ecg_adv_gen/runner/effnet_direct.py	python_import_closure	50
 ecg_adv_gen/runner/effnet_direct_finetune.py	runner_entrypoint	481
-ecg_adv_gen/runner/effnet_vae_lhat.py	python_import_closure	507
-ecg_adv_gen/runner/effnet_vae_lhat_augmix.py	runner_entrypoint	604
+ecg_adv_gen/runner/effnet_vae_lhat.py	python_import_closure	400
+ecg_adv_gen/runner/effnet_vae_lhat_augmix.py	runner_entrypoint	501
 ecg_adv_gen/runner/launch_plan.py	python_import_closure	136
 ecg_adv_gen/runner/pn2021_clean_eval.py	runner_entrypoint	529
 ecg_adv_gen/runner/pn2021c_eval.py	runner_entrypoint	702
