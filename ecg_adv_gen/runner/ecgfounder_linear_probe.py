@@ -23,9 +23,10 @@ DATA_ROOT = Path(
     )
 )
 ECGFOUNDER_ROOT = Path(os.environ.get("ECGFOUNDER_ROOT", str(DATA_ROOT / "ecgfounder")))
-for _path in (str(REPO_ROOT), str(ECGFOUNDER_ROOT)):
-    if _path not in sys.path:
-        sys.path.insert(0, _path)
+for _path in (str(ECGFOUNDER_ROOT), str(REPO_ROOT)):
+    if _path in sys.path:
+        sys.path.remove(_path)
+    sys.path.insert(0, _path)
 
 from physionet2021_dataset import (  # noqa: E402
     EXPECTED_LEADS,

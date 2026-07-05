@@ -30,9 +30,11 @@ DATA_ROOT = Path(
     )
 )
 ECGFOUNDER_ROOT = Path(os.environ.get("ECGFOUNDER_ROOT", str(DATA_ROOT / "ecgfounder")))
-for path in (REPO_ROOT, ECGFOUNDER_ROOT):
-    if str(path) not in sys.path:
-        sys.path.insert(0, str(path))
+for path in (ECGFOUNDER_ROOT, REPO_ROOT):
+    path_str = str(path)
+    if path_str in sys.path:
+        sys.path.remove(path_str)
+    sys.path.insert(0, path_str)
 
 from physionet2021_dataset import TARGET_POINTS  # noqa: E402
 

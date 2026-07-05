@@ -41,9 +41,10 @@ DATA_ROOT = Path(
     )
 )
 ECGFOUNDER_ROOT = Path(os.environ.get("ECGFOUNDER_ROOT", str(DATA_ROOT / "ecgfounder")))
-for _p in [str(REPO_ROOT), str(ECGFOUNDER_ROOT)]:
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
+for _p in [str(ECGFOUNDER_ROOT), str(REPO_ROOT)]:
+    if _p in sys.path:
+        sys.path.remove(_p)
+    sys.path.insert(0, _p)
 
 from finetune_model import ft_12lead_ECGFounder  # noqa: E402
 from physionet2021_dataset import EXPECTED_LEADS, TARGET_POINTS  # noqa: E402
