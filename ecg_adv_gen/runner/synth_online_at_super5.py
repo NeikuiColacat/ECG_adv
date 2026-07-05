@@ -46,7 +46,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from sklearn.metrics import roc_auc_score, average_precision_score
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import (
@@ -117,12 +116,10 @@ from ecg_adv_gen.adaptation import (  # noqa: E402
     SameLabelLatentIndex,
     StratifiedPoolWalker,
     agent_attack_decision,
-    auroc_to_trust,
     build_anchor_preserving_soft_labels,
     build_adv_buffer_label,
     build_k500_internal_val_mask,
     build_three_chain_vae_lhat_augmix_views as _build_three_chain_vae_lhat_augmix_views_core,
-    derive_class_trust,
     derive_kshot_anchor_class_weights,
     decoded_signal_invalid_stats,
     parse_class_source_weight_map,
@@ -167,11 +164,6 @@ def _resolve_optional_custom_severity_profile(
 # Plan Rev 11/13: synth scope narrowed to 3 classes — HYP/CD synth disabled
 # because their digital-GT validation fails 0/3 best-cell.
 SUPER5_GEN_SUBSET = {"NORM", "MI", "STTC"}
-
-# Plan Rev 11/13: hardcoded distrust regardless of Stage 0.4 sanity output
-# (HYP synth fails Sokolow voltage; CD synth fails QRS broadening).
-DEFAULT_TRUST_HARDCODE = {"HYP": 0.0, "CD": 0.0}
-
 
 def _parse_optional_float_list(raw: str | List[float] | Tuple[float, ...] | None) -> Optional[List[float]]:
     if raw is None:
@@ -832,58 +824,6 @@ def stratified_sample_synth(
 # remain in this module's namespace for older scripts that import from here.
 
 
-# ─────────────────────────────────────────────────────────────────────────
-# Plan Rev 13 Stage 0.4: synth pool sanity → class_trust map
-# ─────────────────────────────────────────────────────────────────────────
-
-
-@torch.no_grad()
-def compute_synth_sanity_auroc(
-    synth_pool_signals: np.ndarray,        # (N, 12, 1000) z-scored
-    labels_one_hot: np.ndarray,            # (N, 5)
-    victim: nn.Module,
-    device: str,
-    crop_len: int = TIERM_INPUT_LENGTH,
-    batch_size: int = 128,
-) -> Dict[str, Optional[float]]:
-    """Forward synth pool through Super5 victim, compute per-class AUROC.
-
-    A class's synth is "trustworthy" iff victim AUROC > 0.55 (separable from
-    the other 4 classes' decision regions).
-    """
-    N = synth_pool_signals.shape[0]
-    crops = []
-    for i in range(N):
-        sig_tc = synth_pool_signals[i].T  # (1000, 12)
-        start = (sig_tc.shape[0] - crop_len) // 2
-        crop = sig_tc[start:start + crop_len, :]
-        crops.append(crop.T.astype(np.float32))
-    crops_arr = np.stack(crops, axis=0)
-    victim.eval() if hasattr(victim, 'eval') else None
-    all_logits = []
-    for i in range(0, N, batch_size):
-        x = torch.from_numpy(crops_arr[i:i + batch_size]).float().to(device)
-        if hasattr(victim, 'compute_logits_from_ecg'):
-            lg = victim.compute_logits_from_ecg(x)
-        else:
-            lg = victim(x)
-        all_logits.append(lg.cpu().numpy())
-    logits = np.concatenate(all_logits, axis=0)
-    probs = 1.0 / (1.0 + np.exp(-np.clip(logits, -50, 50)))
-    per_class: Dict[str, Optional[float]] = {}
-    for j, c in enumerate(CLASS_NAMES_SUPER5):
-        col = labels_one_hot[:, j]
-        n_pos = int((col == 1.0).sum())
-        if n_pos == 0 or n_pos == N:
-            per_class[c] = None
-            continue
-        try:
-            per_class[c] = float(roc_auc_score(col, probs[:, j]))
-        except Exception:
-            per_class[c] = None
-    return per_class
-
-
 def run_pgd_on_synth_pool(
     pgd_gen: PGDAdvDiffGenerator,
     synth_latents: np.ndarray,    # (N, 4, 128)
@@ -1317,8 +1257,6 @@ def parse_args():
     )
     p.add_argument("--classes_in_scope", nargs="+", default=sorted(SUPER5_GEN_SUBSET),
                    help="Super5 classes sampled as adversarial anchors. Default keeps historical NORM/MI/STTC.")
-    p.add_argument("--allow_hyp_cd_trust", action="store_true",
-                   help="Do not hard-force HYP/CD class_trust to zero.")
     p.add_argument("--boundary_prob_min", type=float, default=0.0,
                    help="Only push adv samples whose target sigmoid probability is >= this value.")
     p.add_argument("--boundary_prob_max", type=float, default=1.0,
@@ -1480,11 +1418,8 @@ def parse_args():
     p.add_argument("--latent_augmix_consistency_max_batches", type=int, default=0)
     p.add_argument("--roundtrip_anchor_n", type=int, default=1500)
     p.add_argument("--qab_size", type=int, default=2048)
-    # Class trust (Plan Rev 13 H4 gate)
     p.add_argument("--class_trust", default=None,
-                   help="Path to class_trust.json (Stage 0.4 sanity output). Required unless --build_class_trust.")
-    p.add_argument("--build_class_trust", action="store_true",
-                   help="Run sanity AUROC on synth pool, write class_trust.json next to synth pool, then EXIT.")
+                   help="Path to the real-all-present class_trust.json written by the managed wrapper.")
 
     # Optim (Plan Rev 13.1: 100 ep + early-stop patience=20 on val_macro_auroc)
     p.add_argument("--n_epochs", type=int, default=100)
@@ -1586,55 +1521,13 @@ def main():
         model_name=args.model_name,
     )
 
-    # ── Plan Rev 13 Stage 0.4 sanity-build mode (early exit) ────────────────
-    if args.build_class_trust:
-        # Need synth_pool's signals (decoded) — load from .npz (signals key) or
-        # re-derive from latents via VAE decoder.
-        signal_npz = args.synth_npz
-        if signal_npz.endswith(".latent.npz"):
-            signal_npz = signal_npz.replace(".latent.npz", ".npz")
-        if not os.path.exists(signal_npz):
-            raise SystemExit(f"signal pool .npz not found at {signal_npz}; "
-                              "regen synth with --save_latent (this stores both signals + latents).")
-        sig_data = np.load(signal_npz, allow_pickle=True)
-        if "signals" not in sig_data.files:
-            raise SystemExit(f"{signal_npz} missing 'signals' key — re-run "
-                              "generate_center_synth.py with the current head.")
-        signals = sig_data["signals"].astype(np.float32)
-        labels_oh = sig_data["labels"].astype(np.float32)
-        print(f"[sanity] forwarding {signals.shape} synth signals through "
-              f"victim for per-class AUROC ...")
-        per_class = compute_synth_sanity_auroc(
-            signals, labels_oh, victim, args.device,
-            crop_len=args.crop_len, batch_size=128,
-        )
-        trust = derive_class_trust(per_class)
-        ct_path = args.class_trust or str(
-            Path(args.synth_npz).with_suffix("").with_suffix(".class_trust.json"))
-        os.makedirs(os.path.dirname(ct_path) or ".", exist_ok=True)
-        with open(ct_path, "w") as f:
-            json.dump({
-                "tag": args.center_name,
-                "synth_pool": args.synth_npz,
-                "per_class_auroc": per_class,
-                "class_trust": trust,
-                "policy": "AUROC>0.7→1.0; >0.55→0.5; else 0.0; HYP/CD hardcoded 0.0",
-            }, f, indent=2)
-        print(f"[sanity] per-class AUROC: {per_class}")
-        print(f"[sanity] class_trust: {trust}")
-        print(f"[sanity] wrote → {ct_path}")
-        print("[sanity] DONE — exiting (build_class_trust mode)")
-        return
-
     # ── Load class_trust (required for training) ───────────────────────────
     if not args.class_trust or not os.path.exists(args.class_trust):
         raise SystemExit(f"--class_trust required for training (got {args.class_trust!r}). "
-                          f"Run with --build_class_trust first to derive it.")
+                          f"Launch through effnet_vae_lhat_augmix.py so the managed wrapper writes it.")
     with open(args.class_trust) as f:
         trust_blob = json.load(f)
     class_trust: Dict[str, float] = dict(trust_blob["class_trust"])
-    if not args.allow_hyp_cd_trust:
-        class_trust.update(DEFAULT_TRUST_HARDCODE)   # Plan Rev 11 hard-enforce
     print(f"[setup] class_trust loaded: {class_trust}")
     classes_in_scope = []
     for cls in args.classes_in_scope:

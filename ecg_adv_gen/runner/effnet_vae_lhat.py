@@ -174,7 +174,6 @@ def build_effnet_vae_lhat_train_cmd(
         str(args.pgd_batch),
         "--classes_in_scope",
         *[str(item) for item in args.classes_in_scope],
-        "--allow_hyp_cd_trust",
         "--target_real_weight",
         str(args.target_real_weight),
         "--adv_weight",
