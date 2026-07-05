@@ -1310,8 +1310,6 @@ def main() -> None:
     val_idx = np.nonzero(folds == 9)[0]
     test_idx = np.nonzero(folds == 10)[0]
     logs = []
-    best = -float("inf")
-    best_epoch = None
     for epoch in range(1, args.epochs + 1):
         adv_info = {
             "signals": None,
@@ -1403,7 +1401,6 @@ def main() -> None:
             if pn is not None
             else None
         )
-        selection_score = float(val_metrics["macro_auprc"])
         entry = {
             "epoch": epoch,
             "loss": float(np.mean(losses)),
@@ -1415,7 +1412,6 @@ def main() -> None:
             "target_macro_auprc": None if target_metrics is None else target_metrics["macro_auprc"],
             "target_drop_all_zero_macro_auroc": None if drop_metrics is None else drop_metrics["macro_auroc"],
             "target_drop_all_zero_macro_auprc": None if drop_metrics is None else drop_metrics["macro_auprc"],
-            "selection_score": selection_score,
             "n_adv": int(adv_info["n_adv"]),
             "adv_weight_effective": float(epoch_adv_weight),
             "adv_bce_loss_weight": float(args.adv_bce_loss_weight),
@@ -1491,10 +1487,6 @@ def main() -> None:
             ),
             flush=True,
         )
-        score = selection_score
-        if score > best:
-            best = score
-            best_epoch = epoch
         save_fullft_checkpoint(run_dir / "last_model.pt", model)
 
     selected_checkpoint_name = "last_model.pt"
@@ -1518,13 +1510,9 @@ def main() -> None:
         "selected_ref_record_ids": sorted(selected_ids),
         "target_train_record_ids": sorted(target_train_ids),
         "target_val_record_ids": sorted(target_val_ids),
-        "selection_metric": "source_auprc",
-        "selection_score_weight": 0.0,
         "checkpoint_policy": "last",
         "selected_checkpoint": selected_checkpoint_name,
         "last_epoch": last_epoch,
-        "best_epoch": best_epoch,
-        "best_source_auprc": float(best),
         "ptbxl_fold10": eval_split(
             model,
             ptbxl["signals"],
