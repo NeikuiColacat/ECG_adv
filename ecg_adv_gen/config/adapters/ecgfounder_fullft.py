@@ -164,41 +164,13 @@ def build_ecgfounder_fullft_argv(config: Mapping[str, Any], context: Mapping[str
         _append_option(argv, "--pgd_batch", attack.get("pgd_batch", 4))
     if bool(latent_augmix.get("enabled", False)):
         argv.append("--enable_latent_augmix_branch")
-        _append_option(argv, "--latent_augmix_topology", latent_augmix.get("topology", "locked_three_chain"))
         _append_option(argv, "--latent_augmix_copies", latent_augmix.get("copies", 1))
         _append_option(argv, "--latent_augmix_width", latent_augmix.get("width", 3))
         _append_option(argv, "--latent_augmix_depth", latent_augmix.get("depth", -1))
         _append_option(argv, "--latent_augmix_alpha", latent_augmix.get("alpha", 1.0))
         _append_option(argv, "--latent_augmix_severity", latent_augmix.get("severity", 5))
         _append_option(argv, "--latent_augmix_severity_profile", latent_augmix.get("severity_profile", "standard"))
-        _append_option(argv, "--latent_augmix_severity_params_file", latent_augmix.get("severity_params_file"))
-        _append_option(argv, "--latent_augmix_severity_params_name", latent_augmix.get("severity_params_name"))
-        latent_augmix_mixture = latent_augmix.get("mixture") or {}
-        _append_option(
-            argv,
-            "--latent_augmix_mixture_mode",
-            latent_augmix_mixture.get("mode", latent_augmix.get("mixture_mode")),
-        )
-        _append_option(
-            argv,
-            "--latent_augmix_mixture_prob",
-            latent_augmix_mixture.get("prob", latent_augmix.get("mixture_prob")),
-        )
-        _append_option(
-            argv,
-            "--latent_augmix_mixture_beta_a",
-            latent_augmix_mixture.get("beta_a", latent_augmix.get("mixture_beta_a")),
-        )
-        _append_option(
-            argv,
-            "--latent_augmix_mixture_beta_b",
-            latent_augmix_mixture.get("beta_b", latent_augmix.get("mixture_beta_b")),
-        )
-        _append_option(argv, "--latent_augmix_op_schedule", latent_augmix.get("op_schedule"))
-        _append_option(argv, "--latent_augmix_chain_weights", latent_augmix.get("chain_weights"))
         _append_list_option(argv, "--latent_augmix_ops", latent_augmix.get("ops", []))
-        _append_flag(argv, "--latent_augmix_renorm", latent_augmix.get("renorm", False))
-        _append_option(argv, "--latent_augmix_clip_abs", latent_augmix.get("clip_abs", 6.0))
     return argv
 
 
@@ -312,38 +284,29 @@ def audit_ecgfounder_fullft_command(
     if "--enable_latent_augmix_branch" in opts:
         if "--enable_vae_adv_stream" not in opts:
             errors.append(f"{script}: locked latent AugMix requires --enable_vae_adv_stream")
-        audit_equals(errors, script, opts, "--latent_augmix_topology", "locked_three_chain")
         audit_equals(errors, script, opts, "--latent_augmix_width", "3")
         audit_equals(errors, script, opts, "--latent_augmix_severity", "5")
         latent_augmix = ((config.get("adaptation") or {}).get("latent_augmix")) or {}
         expected_profile = str(latent_augmix.get("severity_profile", "standard"))
         audit_equals(errors, script, opts, "--latent_augmix_severity_profile", expected_profile)
         if expected_profile == "custom":
-            audit_require_options(
-                errors,
-                script,
-                opts,
-                ["--latent_augmix_severity_params_file", "--latent_augmix_severity_params_name"],
-            )
-            audit_equals(
-                errors,
-                script,
-                opts,
-                "--latent_augmix_severity_params_file",
-                latent_augmix.get("severity_params_file"),
-            )
-            audit_equals(
-                errors,
-                script,
-                opts,
-                "--latent_augmix_severity_params_name",
-                latent_augmix.get("severity_params_name"),
-            )
-        else:
-            if "--latent_augmix_severity_params_file" in opts or "--latent_augmix_severity_params_name" in opts:
-                errors.append(f"{script}: latent AugMix severity params require severity_profile custom")
-        if "--latent_augmix_renorm" in opts:
-            errors.append(f"{script}: locked latent AugMix must not pre-z-score/renorm AugMix views")
+            errors.append(f"{script}: locked latent AugMix training does not support custom severity profiles")
+        removed_latent_augmix_opts = [
+            "--latent_augmix_topology",
+            "--latent_augmix_severity_params_file",
+            "--latent_augmix_severity_params_name",
+            "--latent_augmix_mixture_mode",
+            "--latent_augmix_mixture_prob",
+            "--latent_augmix_mixture_beta_a",
+            "--latent_augmix_mixture_beta_b",
+            "--latent_augmix_op_schedule",
+            "--latent_augmix_chain_weights",
+            "--latent_augmix_renorm",
+            "--latent_augmix_clip_abs",
+        ]
+        present_removed = [opt for opt in removed_latent_augmix_opts if opt in opts]
+        if present_removed:
+            errors.append(f"{script}: locked latent AugMix command exposes removed knobs {present_removed}")
         expected_ops = list(
             latent_augmix.get(
                 "ops",

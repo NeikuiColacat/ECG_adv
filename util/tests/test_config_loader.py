@@ -817,6 +817,107 @@ def test_synth_online_at_parser_rejects_custom_latent_augmix_profile(monkeypatch
         parse_args()
 
 
+def test_ecgfounder_fullft_parser_keeps_only_mainline_latent_augmix_knobs():
+    from ecg_adv_gen.runner.ecgfounder_fullft import build_arg_parser
+
+    parser = build_arg_parser()
+
+    args = parser.parse_args(
+        [
+            "--stage",
+            "k500",
+            "--center",
+            "ningbo",
+            "--ref_meta_json",
+            "/tmp/ref_meta.json",
+            "--enable_vae_adv_stream",
+            "--enable_latent_augmix_branch",
+            "--latent_augmix_copies",
+            "1",
+            "--latent_augmix_width",
+            "3",
+            "--latent_augmix_depth",
+            "-1",
+            "--latent_augmix_alpha",
+            "1.0",
+            "--latent_augmix_severity",
+            "5",
+            "--latent_augmix_severity_profile",
+            "standard",
+            "--latent_augmix_ops",
+            "powerline_noise",
+            "emg_noise",
+        ]
+    )
+
+    assert args.enable_latent_augmix_branch is True
+    assert args.latent_augmix_width == 3
+    assert args.latent_augmix_ops == ["powerline_noise", "emg_noise"]
+    assert not hasattr(args, "latent_augmix_topology")
+    assert not hasattr(args, "latent_augmix_mixture_mode")
+    assert not hasattr(args, "latent_augmix_renorm")
+    assert not hasattr(args, "latent_augmix_clip_abs")
+
+
+@pytest.mark.parametrize(
+    "removed_argv",
+    [
+        ["--latent_augmix_topology", "locked_three_chain"],
+        ["--latent_augmix_mixture_mode", "fixed"],
+        ["--latent_augmix_mixture_prob", "1.0"],
+        ["--latent_augmix_mixture_beta_a", "0.2"],
+        ["--latent_augmix_mixture_beta_b", "0.2"],
+        ["--latent_augmix_op_schedule", "per_op"],
+        ["--latent_augmix_chain_weights", "0.4,0.4,0.2"],
+        ["--latent_augmix_severity_params_file", "/tmp/profile.yaml"],
+        ["--latent_augmix_severity_params_name", "stress"],
+        ["--latent_augmix_renorm"],
+        ["--latent_augmix_clip_abs", "4.0"],
+    ],
+)
+def test_ecgfounder_fullft_parser_rejects_removed_latent_augmix_knobs(removed_argv):
+    from ecg_adv_gen.runner.ecgfounder_fullft import build_arg_parser
+
+    parser = build_arg_parser()
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(
+            [
+                "--stage",
+                "k500",
+                "--center",
+                "ningbo",
+                "--ref_meta_json",
+                "/tmp/ref_meta.json",
+                "--enable_vae_adv_stream",
+                "--enable_latent_augmix_branch",
+                *removed_argv,
+            ]
+        )
+
+
+def test_ecgfounder_fullft_parser_rejects_custom_latent_augmix_profile():
+    from ecg_adv_gen.runner.ecgfounder_fullft import build_arg_parser
+
+    parser = build_arg_parser()
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(
+            [
+                "--stage",
+                "k500",
+                "--center",
+                "ningbo",
+                "--ref_meta_json",
+                "/tmp/ref_meta.json",
+                "--enable_vae_adv_stream",
+                "--enable_latent_augmix_branch",
+                "--latent_augmix_severity_profile",
+                "custom",
+            ]
+        )
+
+
 def test_runner_rejects_adapter_and_argv_together():
     config = _load("effnet_vae_lhat_augmix_threechain_locked_k500.yaml")
     config["runner"]["argv"] = ["--center", "${matrix.center}"]
@@ -1172,10 +1273,20 @@ def test_ecgfounder_locked_threechain_augmix_command_uses_fullft_last_checkpoint
         )
         assert "--enable_vae_adv_stream" in argv
         assert "--enable_latent_augmix_branch" in argv
-        assert _option_value(argv, "--latent_augmix_topology") == "locked_three_chain"
+        assert "--latent_augmix_topology" not in argv
         assert _option_value(argv, "--latent_augmix_width") == "3"
         assert _option_value(argv, "--latent_augmix_severity") == "5"
         assert _option_value(argv, "--latent_augmix_severity_profile") == "standard"
+        assert "--latent_augmix_severity_params_file" not in argv
+        assert "--latent_augmix_severity_params_name" not in argv
+        assert "--latent_augmix_mixture_mode" not in argv
+        assert "--latent_augmix_mixture_prob" not in argv
+        assert "--latent_augmix_mixture_beta_a" not in argv
+        assert "--latent_augmix_mixture_beta_b" not in argv
+        assert "--latent_augmix_op_schedule" not in argv
+        assert "--latent_augmix_chain_weights" not in argv
+        assert "--latent_augmix_renorm" not in argv
+        assert "--latent_augmix_clip_abs" not in argv
         assert _all_option_values(argv, "--latent_augmix_ops") == [
             "powerline_noise",
             "emg_noise",

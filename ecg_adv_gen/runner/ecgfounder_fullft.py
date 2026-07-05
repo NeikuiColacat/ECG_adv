@@ -104,8 +104,6 @@ from ecg_adv_gen.training import (  # noqa: E402
 from ecg_adv_gen.run_naming import build_ecgfounder_fullft_run_leaf  # noqa: E402
 from ecg_adv_gen.evaluation.pn2021c import (  # noqa: E402
     STRESS_PROFILE_CHOICES,
-    resolve_severity_profile_args as _resolve_severity_profile_args,
-    severity_profile_metadata as _severity_profile_metadata,
 )
 from methods.augmix.severity import AVAILABLE_OPS  # noqa: E402
 from util.ecgtwin_utils import ECGTwinWrapper  # noqa: E402
@@ -126,24 +124,6 @@ REAL_ROOTS = [
 ]
 
 
-def _parse_float_csv(value: str | None) -> list[float] | None:
-    if value is None or str(value).strip() == "":
-        return None
-    return [float(part.strip()) for part in str(value).split(",") if part.strip()]
-
-
-def _resolve_latent_augmix_severity_profile(args: argparse.Namespace) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    resolver_args = argparse.Namespace(
-        severity_profile=args.latent_augmix_severity_profile,
-        severity_params_file=args.latent_augmix_severity_params_file,
-        severity_params_name=args.latent_augmix_severity_params_name,
-        mode="stream",
-    )
-    params = _resolve_severity_profile_args(resolver_args)
-    resolver_args.severity_profile_params = params
-    return params, _severity_profile_metadata(resolver_args)
-
-
 def apply_augmix_op_np(
     sig_ct: np.ndarray,
     op_name: str,
@@ -151,7 +131,7 @@ def apply_augmix_op_np(
     severity_profile: str = "standard",
     severity_profile_params: dict[str, Any] | None = None,
 ) -> np.ndarray:
-    """Apply one ECG AugMix op, including evaluator-style custom profiles."""
+    """Apply one ECG AugMix op with the locked PN2021-C profile table."""
 
     return _raw_signal_apply_augmix_op_np(
         sig_ct,
@@ -321,22 +301,11 @@ def build_locked_three_chain_latent_augmix_views(
     copies: int,
     severity: int,
     severity_profile: str,
-    severity_profile_params: dict[str, Any] | None = None,
-    severity_params_file: str | None = None,
-    severity_params_name: str | None = None,
     width: int,
     depth: int,
     alpha: float,
-    mixture_mode: str = "beta",
-    mixture_prob: float = 0.5,
-    mixture_beta_a: float | None = None,
-    mixture_beta_b: float | None = None,
-    op_schedule: str = "random",
-    chain_weights: list[float] | None = None,
     ops: list[str],
     rng: np.random.Generator,
-    renorm: bool = False,
-    clip_abs: float = 6.0,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     """Build locked ECGFounder three-chain VAE-LHAT AugMix waveform views."""
 
@@ -346,7 +315,7 @@ def build_locked_three_chain_latent_augmix_views(
             op_name,
             op_severity,
             op_profile,
-            severity_profile_params=severity_profile_params,
+            severity_profile_params=None,
         )
 
     views, stats = build_three_chain_vae_lhat_augmix_views_core(
@@ -362,19 +331,15 @@ def build_locked_three_chain_latent_augmix_views(
         rng=rng,
         op_apply_fn=_apply,
         available_ops=AVAILABLE_OPS,
-        mixture_mode=mixture_mode,
-        mixture_prob=mixture_prob,
-        mixture_beta_a=mixture_beta_a,
-        mixture_beta_b=mixture_beta_b,
-        op_schedule=op_schedule,
-        chain_weights=chain_weights,
-        renorm=renorm,
-        clip_abs=clip_abs,
+        mixture_mode="beta",
+        mixture_prob=0.5,
+        mixture_beta_a=None,
+        mixture_beta_b=None,
+        op_schedule="random",
+        chain_weights=None,
+        renorm=False,
+        clip_abs=6.0,
     )
-    if str(severity_profile) == "custom":
-        stats["severity_params_file"] = str(severity_params_file or "")
-        stats["severity_params_name"] = str(severity_params_name or "")
-        stats["severity_profile_params"] = severity_profile_params
     return views, stats
 
 
@@ -766,30 +731,11 @@ def build_adv_epoch(
                     copies=args.latent_augmix_copies,
                     severity=args.latent_augmix_severity,
                     severity_profile=args.latent_augmix_severity_profile,
-                    severity_profile_params=getattr(args, "latent_augmix_severity_profile_params", None),
-                    severity_params_file=args.latent_augmix_severity_params_file,
-                    severity_params_name=args.latent_augmix_severity_params_name,
                     width=args.latent_augmix_width,
                     depth=args.latent_augmix_depth,
                     alpha=args.latent_augmix_alpha,
-                    mixture_mode=args.latent_augmix_mixture_mode,
-                    mixture_prob=args.latent_augmix_mixture_prob,
-                    mixture_beta_a=(
-                        None
-                        if float(args.latent_augmix_mixture_beta_a) <= 0.0
-                        else float(args.latent_augmix_mixture_beta_a)
-                    ),
-                    mixture_beta_b=(
-                        None
-                        if float(args.latent_augmix_mixture_beta_b) <= 0.0
-                        else float(args.latent_augmix_mixture_beta_b)
-                    ),
-                    op_schedule=args.latent_augmix_op_schedule,
-                    chain_weights=_parse_float_csv(args.latent_augmix_chain_weights),
                     ops=list(args.latent_augmix_ops),
                     rng=latent_augmix_rng,
-                    renorm=bool(args.latent_augmix_renorm),
-                    clip_abs=float(args.latent_augmix_clip_abs),
                 )
                 latent_augmix_stats_batches.append(latent_augmix_stats)
                 if latent_augmix_np.shape[0] > 0:
@@ -919,11 +865,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "plus one uncorrupted VAE-LHAT adversarial waveform chain."
         ),
     )
-    ap.add_argument(
-        "--latent_augmix_topology",
-        choices=["locked_three_chain"],
-        default="locked_three_chain",
-    )
     ap.add_argument("--latent_augmix_copies", type=int, default=1)
     ap.add_argument("--latent_augmix_width", type=int, default=3)
     ap.add_argument("--latent_augmix_depth", type=int, default=-1)
@@ -932,32 +873,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--latent_augmix_severity_profile",
         default="standard",
-        choices=STRESS_PROFILE_CHOICES,
+        choices=[name for name in STRESS_PROFILE_CHOICES if name != "custom"],
     )
-    ap.add_argument(
-        "--latent_augmix_severity_params_file",
-        default=None,
-        help="YAML/JSON profile file used only with --latent_augmix_severity_profile custom.",
-    )
-    ap.add_argument(
-        "--latent_augmix_severity_params_name",
-        default=None,
-        help="Profile name under top-level profiles used only with --latent_augmix_severity_profile custom.",
-    )
-    ap.add_argument(
-        "--latent_augmix_mixture_mode",
-        choices=["beta", "fixed"],
-        default="beta",
-    )
-    ap.add_argument("--latent_augmix_mixture_prob", type=float, default=0.5)
-    ap.add_argument("--latent_augmix_mixture_beta_a", type=float, default=0.0)
-    ap.add_argument("--latent_augmix_mixture_beta_b", type=float, default=0.0)
-    ap.add_argument(
-        "--latent_augmix_op_schedule",
-        choices=["random", "cycle", "per_op", "official_s5_depth23_composite_cycle"],
-        default="random",
-    )
-    ap.add_argument("--latent_augmix_chain_weights", default="")
     ap.add_argument(
         "--latent_augmix_ops",
         nargs="+",
@@ -970,15 +887,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
         ],
         choices=AVAILABLE_OPS,
     )
-    ap.add_argument(
-        "--latent_augmix_renorm",
-        action="store_true",
-        help=(
-            "Diagnostic only. The locked main protocol leaves generated "
-            "AugMix waveforms unnormalized until ECGFounder input conversion."
-        ),
-    )
-    ap.add_argument("--latent_augmix_clip_abs", type=float, default=6.0)
     ap.add_argument("--adv_weight", type=float, default=20.0)
     ap.add_argument("--adv_weight_start", type=float, default=None)
     ap.add_argument("--adv_weight_warmup_epochs", type=int, default=0)
@@ -1096,29 +1004,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = build_arg_parser().parse_args()
 
-    args.latent_augmix_severity_profile_params = None
-    args.latent_augmix_severity_profile_metadata = None
-    if args.enable_latent_augmix_branch:
-        (
-            args.latent_augmix_severity_profile_params,
-            args.latent_augmix_severity_profile_metadata,
-        ) = _resolve_latent_augmix_severity_profile(args)
-    elif args.latent_augmix_severity_params_file or args.latent_augmix_severity_params_name:
-        raise ValueError(
-            "--latent_augmix_severity_params_file/name require --enable_latent_augmix_branch"
-        )
-
     if args.stage == "k500" and not args.ref_meta_json:
         raise ValueError("--ref_meta_json is required for --stage k500")
     if args.enable_latent_augmix_branch and not args.enable_vae_adv_stream:
         raise ValueError("--enable_latent_augmix_branch requires --enable_vae_adv_stream")
     if args.enable_latent_augmix_branch:
-        if args.latent_augmix_topology != "locked_three_chain":
-            raise ValueError("--enable_latent_augmix_branch requires --latent_augmix_topology locked_three_chain")
         if int(args.latent_augmix_width) != 3:
-            raise ValueError("--latent_augmix_topology locked_three_chain requires exactly three chains")
-        if bool(args.latent_augmix_renorm):
-            raise ValueError("--latent_augmix_renorm is diagnostic-only and excluded from the locked main protocol")
+            raise ValueError("locked latent AugMix requires exactly three chains")
     if args.stage == "ptbxl_source":
         if args.enable_vae_adv_stream:
             raise ValueError("--stage ptbxl_source does not support VAE adversarial stream")
@@ -1543,7 +1435,7 @@ def main() -> None:
         "init_model": init_model_info,
         "latent_augmix_branch": {
             "enabled": bool(args.enable_latent_augmix_branch),
-            "topology": str(args.latent_augmix_topology),
+            "topology": "locked_three_chain_vae_lhat_augmix",
             "chain_roles": [
                 "corruption",
                 "corruption",
@@ -1556,18 +1448,17 @@ def main() -> None:
             "alpha": float(args.latent_augmix_alpha),
             "severity": int(args.latent_augmix_severity),
             "severity_profile": str(args.latent_augmix_severity_profile),
-            "severity_params_file": args.latent_augmix_severity_params_file,
-            "severity_params_name": args.latent_augmix_severity_params_name,
-            "severity_profile_metadata": args.latent_augmix_severity_profile_metadata,
-            "mixture_mode": str(args.latent_augmix_mixture_mode),
-            "mixture_prob": float(args.latent_augmix_mixture_prob),
-            "mixture_beta_a": float(args.latent_augmix_mixture_beta_a),
-            "mixture_beta_b": float(args.latent_augmix_mixture_beta_b),
-            "op_schedule": str(args.latent_augmix_op_schedule),
-            "chain_weights": _parse_float_csv(args.latent_augmix_chain_weights),
+            "severity_params_file": "",
+            "severity_params_name": "",
+            "mixture_mode": "beta",
+            "mixture_prob": 0.5,
+            "mixture_beta_a": None,
+            "mixture_beta_b": None,
+            "op_schedule": "random",
+            "chain_weights": None,
             "ops": list(args.latent_augmix_ops),
-            "renorm": bool(args.latent_augmix_renorm),
-            "clip_abs": float(args.latent_augmix_clip_abs),
+            "renorm": False,
+            "clip_abs": 6.0,
         },
         "vae_anchor_pool": None if anchor_pool is None else {
             "classes_in_scope": anchor_pool["classes_in_scope"],

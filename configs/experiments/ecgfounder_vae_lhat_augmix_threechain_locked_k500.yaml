@@ -70,7 +70,6 @@ adaptation:
     pgd_batch: 4
   latent_augmix:
     enabled: true
-    topology: locked_three_chain
     chain_roles:
       - name: chain1
         role: official_corruption_chain
@@ -90,8 +89,6 @@ adaptation:
       - baseline_wander
       - baseline_shift
       - random_leads_masking
-    renorm: false
-    clip_abs: 6.0
 
 runner:
   entrypoint: ecg_adv_gen/runner/ecgfounder_fullft.py
