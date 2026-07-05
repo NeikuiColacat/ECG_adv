@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -70,6 +72,37 @@ def _latest_configs(data: dict[str, Any]) -> set[str]:
     return {stage["config"] for stage in data["latest_mainline"]["stages"]}
 
 
+def _resolve_registry_path(raw: str) -> Path:
+    local = yaml.safe_load(LOCAL_EXAMPLE.read_text(encoding="utf-8")) or {}
+    context = {"paths": local["paths"]}
+    for _ in range(8):
+        updated = yaml.safe_load(yaml.safe_dump(context))
+
+        def repl(match: re.Match[str]) -> str:
+            cur: Any = updated
+            for part in match.group(1).split("."):
+                cur = cur[part]
+            return str(cur)
+
+        next_context = {
+            "paths": {
+                key: re.sub(r"\$\{([^}]+)\}", repl, str(value))
+                for key, value in updated["paths"].items()
+            }
+        }
+        if next_context == context:
+            break
+        context = next_context
+
+    def repl_final(match: re.Match[str]) -> str:
+        cur: Any = context
+        for part in match.group(1).split("."):
+            cur = cur[part]
+        return str(cur)
+
+    return Path(re.sub(r"\$\{([^}]+)\}", repl_final, raw))
+
+
 def test_active_script_index_has_no_host_absolute_paths():
     hits = [
         value for value in _walk_strings(_load_index())
@@ -117,6 +150,26 @@ def test_latest_mainline_declares_locked_protocol_identity():
     assert latest["mapping_hash"] == "555ec85d5b51"
     assert latest["class_order"] == ["CD", "HYP", "MI", "NORM", "STTC"]
     assert len(latest["stages"]) == 10
+
+
+def test_active_evidence_comparison_bundle_records_paper_table_manifests():
+    registry = yaml.safe_load((REPO / "configs" / "active_evidence_registry.yaml").read_text(encoding="utf-8"))
+    claim = next(
+        item for item in registry["active_claims"]
+        if item["claim_id"] == "effnet_v7_vae_lhat_improves_direct_k500"
+    )
+    bundle = claim["comparison_bundle"]
+    output_dir = _resolve_registry_path(bundle["output_dir"])
+
+    assert all((output_dir / name).exists() for name in bundle["managed_artifacts"])
+
+    manifest = json.loads((output_dir / "comparison_manifest.json").read_text(encoding="utf-8"))
+    paper_table_manifests = manifest["artifacts"]["paper_table_manifests"]
+    assert set(paper_table_manifests) == {
+        "pn2021_all_zero_kept_refexcluded",
+        "pn2021_drop_all_zero_refexcluded",
+    }
+    assert all(Path(path).exists() for path in paper_table_manifests.values())
 
 
 def test_managed_experiments_are_exactly_latest_mainline_stages():

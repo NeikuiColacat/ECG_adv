@@ -249,7 +249,9 @@ active_claims:
         - metrics_long.csv
         - comparison_delta.csv
         - paper_table_pn2021_all_zero_kept_refexcluded.csv
+        - paper_table_pn2021_all_zero_kept_refexcluded_manifest.json
         - paper_table_pn2021_drop_all_zero_refexcluded.csv
+        - paper_table_pn2021_drop_all_zero_refexcluded_manifest.json
     caveats:
       - Current trusted candidate evidence covers managed locked three-chain PN2021 clean/ref-excluded metrics.
       - PN2021-C registered metrics aggregate official severity-5 corruption results per target center before the four-center mean.

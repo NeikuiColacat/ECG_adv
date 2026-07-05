@@ -231,6 +231,7 @@ def build_comparison_bundle(
     merged_metrics = Path(merge_manifest["metrics_long"])
 
     paper_table_paths: dict[str, str] = {}
+    paper_table_manifest_paths: dict[str, str] = {}
     for view in claim["protocol"]["evaluation_views"]:
         table_dir = out_dir / f"paper_table_{view}"
         table_manifest = export_paper_table(
@@ -245,9 +246,11 @@ def build_comparison_bundle(
         )
         table_path = table_dir / "paper_table.csv"
         final_table = out_dir / f"paper_table_{view}.csv"
+        final_manifest = out_dir / f"paper_table_{view}_manifest.json"
         shutil.copy2(table_path, final_table)
         paper_table_paths[view] = str(final_table)
-        shutil.copy2(table_dir / "paper_table_manifest.json", out_dir / f"paper_table_{view}_manifest.json")
+        shutil.copy2(table_dir / "paper_table_manifest.json", final_manifest)
+        paper_table_manifest_paths[view] = str(final_manifest)
         table_manifest["copied_to"] = str(final_table)
 
     delta_rows = _write_delta_table(
@@ -309,6 +312,7 @@ def build_comparison_bundle(
             "merge_manifest": str(out_dir / "merge_manifest.json"),
             "comparison_delta": str(out_dir / "comparison_delta.csv"),
             "paper_tables": paper_table_paths,
+            "paper_table_manifests": paper_table_manifest_paths,
         },
         "delta_rows": delta_rows,
     }
