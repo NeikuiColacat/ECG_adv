@@ -157,10 +157,6 @@ active_claims:
           mode: managed_yaml
           launcher: scripts/run_experiment.py
           config: configs/experiments/effnet_direct_k500_v7_sjr_rgq.yaml
-        legacy_manifest_commands:
-          status: provenance_only
-          callable_interface: false
-          use_for_new_runs: false
         run_root: ${paths.output_root}/effnet_direct_k500_v7_sjr_rgq/seed20260601_k500_v7_sjr_rgq_20260530_rep1
         manifest: ${paths.output_root}/managed_launches/effnet_direct_seed20260601_k500_v7_sjr_rgq_20260530_rep1_v1/run_manifest.json
         metrics_long: ${paths.output_root}/metrics_export/seed20260601_k500_v7_sjr_rgq_20260530_rep1_effnet_direct_k500_v7_sjr_rgq/metrics_long.csv
@@ -179,10 +175,6 @@ active_claims:
           mode: managed_yaml
           launcher: scripts/run_experiment.py
           config: configs/experiments/effnet_vae_lhat_augmix_threechain_locked_k500.yaml
-        legacy_manifest_commands:
-          status: provenance_only
-          callable_interface: false
-          use_for_new_runs: false
         run_root: ${paths.output_root}/managed_launches/effnet_threechain_locked_rawfirst_20260618_copies2_v1
         manifest: ${paths.output_root}/managed_launches/effnet_threechain_locked_rawfirst_20260618_copies2_v1/run_manifest.json
         metrics_long: ${paths.output_root}/metrics_export/locked_rawfirst_20260618_effnet_copies2_effnet_vae_lhat_augmix_threechain_locked_k500/metrics_long.csv

@@ -644,137 +644,6 @@ def _has_registered_run_for_method(registry: dict[str, Any], method_key: str, me
     return False
 
 
-def _audit_legacy_backfill_registration(
-    registry: dict[str, Any],
-    claim: dict[str, Any],
-    method_key: str,
-    method: dict[str, Any],
-    issues: list[dict[str, Any]],
-) -> None:
-    if not _trusted_mainline_requires_manifest(claim, method):
-        return
-    if method.get("traceability") != "legacy_backfilled_manifest":
-        return
-    if _has_registered_run_for_method(registry, method_key, method):
-        return
-    issues.append(
-        _issue(
-            "error",
-            "trusted_legacy_backfill_missing_registered_run",
-            f"{method_key} is trusted mainline but only has a legacy backfilled manifest; register a run record first",
-            method=method_key,
-            run_id=method.get("run_id", ""),
-        )
-    )
-
-
-def _audit_legacy_backfilled_manifest(
-    method_key: str,
-    method: dict[str, Any],
-    claim: dict[str, Any],
-    manifest: dict[str, Any],
-    issues: list[dict[str, Any]],
-) -> None:
-    protocol = claim["protocol"]
-    checks = {
-        "claim_id": manifest.get("claim_id") == claim.get("claim_id"),
-        "method_key": manifest.get("method_key") == method_key,
-        "run_id": manifest.get("run_id") == method.get("run_id"),
-        "mapping_version": manifest.get("protocol", {}).get("mapping_version") == protocol["mapping_version"],
-        "mapping_hash": manifest.get("protocol", {}).get("mapping_hash") == protocol["mapping_hash"],
-        "class_order": list(manifest.get("protocol", {}).get("class_order") or []) == list(protocol["class_order"]),
-        "target_centers": list(manifest.get("protocol", {}).get("target_centers") or []) == list(protocol["target_centers"]),
-    }
-    for key, ok in checks.items():
-        if not ok:
-            issues.append(
-                _issue(
-                    "error",
-                    "legacy_manifest_mismatch",
-                    f"{method_key} legacy backfilled manifest disagrees on {key}",
-                    key=key,
-                )
-            )
-
-    centers = manifest.get("centers") or []
-    if len(centers) != len(protocol["target_centers"]):
-        issues.append(
-            _issue(
-                "error",
-                "legacy_manifest_center_count_mismatch",
-                f"{method_key} legacy backfilled manifest has the wrong number of centers",
-                observed=len(centers),
-                expected=len(protocol["target_centers"]),
-            )
-        )
-    observed_centers = [str(center_run.get("center", "")) for center_run in centers]
-    if observed_centers != list(protocol["target_centers"]):
-        issues.append(
-            _issue(
-                "error",
-                "legacy_manifest_center_order_mismatch",
-                f"{method_key} legacy backfilled manifest center order differs from registry",
-                observed=observed_centers,
-                expected=list(protocol["target_centers"]),
-            )
-        )
-    for center_run in centers:
-        final_eval = center_run.get("final_eval") or {}
-        for key in ("mapping_version", "mapping_hash"):
-            if final_eval.get(key) != protocol[key]:
-                issues.append(
-                    _issue(
-                        "error",
-                        "legacy_manifest_eval_mapping_mismatch",
-                        f"{method_key} legacy center eval disagrees on {key}",
-                        center=center_run.get("center"),
-                        observed=final_eval.get(key),
-                        expected=protocol[key],
-                    )
-                )
-        artifacts = center_run.get("artifacts") or {}
-        for artifact_name in (
-            "launch_config.json",
-            "train_result.json",
-            "early_stop_info.json",
-            "eval_result_v7_exclrefs_crop1000.json",
-            "best_model.pt",
-        ):
-            record = artifacts.get(artifact_name) or {}
-            record_path = _path_or_none(record.get("path"))
-            if not record.get("exists") or record_path is None or not record_path.exists():
-                issues.append(
-                    _issue(
-                        "error",
-                        "legacy_manifest_artifact_missing",
-                        f"{method_key} legacy manifest missing {artifact_name}",
-                        center=center_run.get("center"),
-                    )
-                )
-                continue
-            observed_sha = _sha256(record_path)
-            if not record.get("sha256"):
-                issues.append(
-                    _issue(
-                        "error",
-                        "legacy_manifest_artifact_unhashed",
-                        f"{method_key} legacy manifest has no sha256 for {artifact_name}",
-                        center=center_run.get("center"),
-                    )
-                )
-            elif record.get("sha256") != observed_sha:
-                issues.append(
-                    _issue(
-                        "error",
-                        "legacy_manifest_artifact_hash_mismatch",
-                        f"{method_key} legacy manifest sha256 mismatch for {artifact_name}",
-                        center=center_run.get("center"),
-                        observed=observed_sha,
-                        expected=record.get("sha256"),
-                    )
-                )
-
-
 def _audit_manifest(
     method_key: str,
     method: dict[str, Any],
@@ -812,16 +681,14 @@ def _audit_manifest(
             )
         )
     manifest_kind = manifest.get("manifest_kind", "managed_launcher_manifest")
-    if method.get("traceability") == "legacy_backfilled_manifest":
-        if manifest_kind != "legacy_backfilled_manifest":
-            issues.append(
-                _issue(
-                    "error",
-                    "legacy_manifest_kind_mismatch",
-                    f"{method_key} is marked legacy_backfilled_manifest but manifest_kind is {manifest_kind!r}",
-                )
+    if manifest_kind != "managed_launcher_manifest":
+        issues.append(
+            _issue(
+                "error",
+                "manifest_kind_not_managed",
+                f"{method_key} manifest_kind is {manifest_kind!r}, expected managed_launcher_manifest",
             )
-        _audit_legacy_backfilled_manifest(method_key, method, claim, manifest, issues)
+        )
     return {
         "declared": True,
         "path": str(manifest_path),
@@ -1014,7 +881,6 @@ def audit_active_evidence_registry(
         method_summaries: dict[str, Any] = {}
         config_summaries: dict[str, Any] = {}
         for method_key, method in claim["methods"].items():
-            _audit_legacy_backfill_registration(registry, claim, method_key, method, issues)
             config_summary = _audit_config(repo_root, local_config_path, claim, method_key, method, issues)
             if config_summary is not None:
                 config_summaries[method_key] = {

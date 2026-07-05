@@ -170,24 +170,9 @@ The latest Direct K500 baseline has a seed20260601 managed metadata record:
 ${paths.output_root}/managed_launches/effnet_direct_seed20260601_k500_v7_sjr_rgq_20260530_rep1_v1/run_manifest.json
 ```
 
-The historical v7 VAE noAug output predates the managed launcher manifest path,
-so it is tracked with a legacy backfilled manifest:
-
-```text
-${paths.output_root}/effnet_vae_lhat_k500_v7_sjr_rgq/v7_sjr_rgq_main_20260528/run_manifest.backfilled.json
-```
-
-Build or refresh it with:
-
-```bash
-micromamba run -n ECGTwin python scripts/agent/backfill_vae_lhat_manifest.py
-```
-
-This manifest records the per-center legacy launch configs, train/eval
-commands, selected checkpoints, and artifact hashes. Future latest-mainline
-reruns should launch the locked three-chain configs through
-`scripts/run_experiment.py --execute` so the original managed
-manifest exists at run time rather than being reconstructed later.
+Legacy backfilled manifests are no longer part of the public cleanup surface.
+Latest-mainline runs must use `scripts/run_experiment.py --execute` so the
+managed manifest exists at run time rather than being reconstructed later.
 
 ## Next Step
 
