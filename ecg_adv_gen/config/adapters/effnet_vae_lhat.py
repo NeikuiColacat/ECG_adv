@@ -72,7 +72,6 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
     latent_augmix_mixture = latent_augmix.get("mixture") or {}
     latent_augmix_consistency = latent_augmix.get("consistency") or {}
     anchors = adaptation.get("anchors") or {}
-    selection = adaptation.get("selection") or {}
     buffer = adaptation.get("buffer") or {}
 
     argv: list[Any] = [
@@ -149,12 +148,6 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
         latent_augmix["alpha"],
         "--latent_augmix_severity",
         latent_augmix["severity"],
-        "--quick_eval_source",
-        selection.get("quick_eval_source", "target_real_val"),
-        "--target_real_val_fraction",
-        selection.get("target_real_val_fraction", 0.2),
-        "--target_real_val_seed",
-        seed,
         "--eval_batch_size",
         training["eval_batch_size"],
         "--eval_min_pos",
@@ -184,11 +177,6 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
         argv,
         "--anchor_class_missing_weight",
         anchors.get("anchor_class_missing_weight"),
-    )
-    _append_optional_value(
-        argv,
-        "--checkpoint_policy",
-        selection.get("checkpoint_policy"),
     )
     _append_optional_value(argv, "--qab_size", buffer.get("qab_size"))
     _append_optional_value(argv, "--rescore_interval", buffer.get("rescore_interval"))
@@ -330,9 +318,6 @@ def audit_effnet_vae_lhat_command(
             "--hull_neighbor_distance_space",
             "--hull_neighbor_mode",
             "--hull_neighbor_pool_size",
-            "--quick_eval_source",
-            "--target_real_val_fraction",
-            "--target_real_val_seed",
         ],
     )
     center = str(opt_first(opts, "--center", ""))
@@ -342,13 +327,6 @@ def audit_effnet_vae_lhat_command(
     if center not in target_centers:
         errors.append(f"{script}: unexpected center {center!r}")
     audit_equals(errors, script, opts, "--seed", expected_command_seed)
-    checkpoint_policy = str(opt_first(opts, "--checkpoint_policy", "best"))
-    quick_eval_source = str(opt_first(opts, "--quick_eval_source", ""))
-    if checkpoint_policy == "last":
-        audit_equals(errors, script, opts, "--quick_eval_source", "none")
-        audit_equals(errors, script, opts, "--target_real_val_fraction", "0.0")
-    else:
-        audit_equals(errors, script, opts, "--quick_eval_source", "target_real_val")
     forbidden_ablation_flags = [
         "--enable_raw_corrupt_consistency",
         "--enable_mask_shift_consistency",
@@ -359,7 +337,6 @@ def audit_effnet_vae_lhat_command(
     present_forbidden = [flag for flag in forbidden_ablation_flags if flag in opts]
     if present_forbidden:
         errors.append(f"{script}: locked mainline must not enable raw/mask-shift ablation flags: {present_forbidden}")
-    audit_equals(errors, script, opts, "--target_real_val_seed", expected_command_seed)
     if opt_first(opts, "--hull_neighbor_distance_space") not in {"raw", "standardized"}:
         errors.append(f"{script}: invalid --hull_neighbor_distance_space")
     if opt_first(opts, "--hull_neighbor_mode") not in {"nearest", "local_random", "random"}:

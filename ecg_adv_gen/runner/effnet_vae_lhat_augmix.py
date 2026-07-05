@@ -119,7 +119,6 @@ def main() -> None:
         default="",
         help="Optional CLASS=weight comma map passed to the latent anchor sampler.",
     )
-    ap.add_argument("--es_metric", choices=["target_macro_auroc", "target_macro_auprc"], default="target_macro_auprc")
     ap.add_argument("--classes_in_scope", nargs="+", default=CLASS_NAMES)
     ap.add_argument(
         "--init_ckpt",
@@ -304,15 +303,6 @@ def main() -> None:
     )
     ap.add_argument("--latent_augmix_bce_weight", type=float, default=1.0)
     ap.add_argument("--latent_augmix_consistency_max_batches", type=int, default=0)
-    ap.add_argument(
-        "--quick_eval_source",
-        choices=["pn2021", "target_real_val", "none"],
-        default="pn2021",
-    )
-    ap.add_argument("--quick_eval_n_per_center", type=int, default=500)
-    ap.add_argument("--target_real_val_fraction", type=float, default=0.2)
-    ap.add_argument("--target_real_val_seed", type=int, default=20260531)
-    ap.add_argument("--checkpoint_policy", choices=["best", "last"], default="best")
     ap.add_argument("--eval_batch_size", type=int, default=192)
     ap.add_argument("--eval_min_pos", type=int, default=10)
     ap.add_argument("--eval_pn2021_limit", type=int, default=0)

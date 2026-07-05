@@ -101,7 +101,6 @@ def _category_for(path: Path, run_dir: Path) -> str:
         "agent_decision.json",
         "training_log.json",
         "train_result.json",
-        "early_stop_info.json",
     }:
         return "diagnostics"
     if rel.startswith("configs/") or name in {

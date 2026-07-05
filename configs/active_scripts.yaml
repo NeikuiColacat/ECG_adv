@@ -43,7 +43,6 @@ source_of_truth:
   selection_policy_semantics: ecg_adv_gen/evaluation/selection.py
   ecgfounder_model_contract: ecg_adv_gen/models/ecgfounder.py
   training_loss_helpers: ecg_adv_gen/training/losses.py
-  online_at_orchestration_helpers: ecg_adv_gen/training/online_at.py
 launch_surface_policy:
   default_launcher: scripts/run_experiment.py
   managed_index: configs/active_scripts.yaml
@@ -218,7 +217,7 @@ managed_experiments:
   method_family: vae_latent_hull_threechain_augmix_locked_pn2021c
   mapping_version: v7_super5_sjr_rgq_review_20260528
   owns_training_logic: false
-  notes: Locked EfficientNet PN2021-C official severity-5 main-method launch surface; uses all K500 target samples, checkpoint_policy=last, quick_eval_source=none, and two corruption chains plus one VAE-LHAT adversarial waveform chain.
+  notes: Locked EfficientNet PN2021-C official severity-5 main-method launch surface; uses all K500 target samples, last checkpoint evaluation, and two corruption chains plus one VAE-LHAT adversarial waveform chain.
 - name: ecgfounder_ptbxl_super5_fullft_locked
   status: active_managed
   evidence_scope: launch_only

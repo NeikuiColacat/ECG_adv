@@ -1005,7 +1005,6 @@ def _vae_child_run(opts: dict[str, Any], center: str) -> dict[str, Any]:
                 "0.3",
             ),
             "hull_steps": _opt_first(opts, "--hull_steps", "3"),
-            "es_metric": _opt_first(opts, "--es_metric", "target_macro_auprc"),
             "classes_in_scope": _opt_list(opts, "--classes_in_scope")
             or ["CD", "HYP", "MI", "NORM", "STTC"],
             "hull_label_mode": _opt_first(opts, "--hull_label_mode", "primary"),
@@ -1023,8 +1022,8 @@ def _vae_child_run(opts: dict[str, Any], center: str) -> dict[str, Any]:
                 "4",
             ),
             "run_tag_extra": _opt_first(opts, "--run_tag_extra", ""),
-            "epochs": _opt_first(opts, "--epochs", "30"),
             "seed": _opt_first(opts, "--seed", "20260531"),
+            "epochs": _opt_first(opts, "--epochs", "30"),
         }
     )
     return {
@@ -1033,6 +1032,10 @@ def _vae_child_run(opts: dict[str, Any], center: str) -> dict[str, Any]:
         "child_run_dir": str(child_dir),
         "expected_artifacts": [
             _path_record("last_model", child_dir / "last_model.pt"),
+            _path_record("training_log", child_dir / "training_log.json"),
+            _path_record("train_result", child_dir / "train_result.json"),
+            _path_record("diagnostics_epoch", child_dir / "diagnostics_epoch.jsonl"),
+            _path_record("checkpoint_latest", child_dir / "checkpoints" / "checkpoint_latest.pt"),
             _path_record("launch_config", child_dir / "launch_config.json"),
             _path_record("train_stdout", child_dir / "train_stdout.log"),
             _path_record("eval_log", child_dir / "eval_full.log"),

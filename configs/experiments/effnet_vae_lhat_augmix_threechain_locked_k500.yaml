@@ -27,6 +27,13 @@ training:
   epochs: 30
 
 logging:
+  child_artifacts:
+    - last_model.pt
+    - training_log.json
+    - train_result.json
+    - diagnostics_epoch.jsonl
+    - checkpoints/checkpoint_latest.pt
+    - eval_result_v7_exclrefs_crop1000.json
   required_epoch_metrics:
     - epoch
     - train_loss
@@ -39,7 +46,6 @@ logging:
     - adv_weight_effective
     - latent_augmix_stats
     - hull_weight_entropy_mean
-    - quick_eval
 
 postprocess:
   commands:
@@ -130,10 +136,6 @@ data:
 
 adaptation:
   run_tag_extra: k500_threechain_s5_locked
-  selection:
-    checkpoint_policy: last
-    quick_eval_source: none
-    target_real_val_fraction: 0.0
   latent_augmix:
     topology: locked_three_chain
     chain_roles:

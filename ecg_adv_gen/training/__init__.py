@@ -32,11 +32,8 @@ from .stream_sampling import (
     build_weighted_feature_stream_loader,
     multilabel_stream_sample_weights,
 )
-from .online_at import QuickEvalPlan, resolve_quick_eval_plan
-from .online_at_records import build_checkpoint_selection_record
 from .resume_contract import (
     resume_contract_mismatches,
-    should_save_initial_best_model,
     validate_resume_contract,
 )
 from .checkpoint_state import (
@@ -76,20 +73,16 @@ __all__ = [
     "TaggedSignalDataset",
     "WeightedFeatureStream",
     "build_weighted_feature_stream_loader",
-    "build_checkpoint_selection_record",
     "multilabel_stream_sample_weights",
     "pairwise_rank_loss",
     "quality_buffer_state",
-    "QuickEvalPlan",
     "random_split_indices",
     "resume_contract_mismatches",
     "resolve_resume_path",
     "restore_quality_buffer_state",
     "restore_rng_state",
-    "resolve_quick_eval_plan",
     "set_module_requires_grad",
     "init_weights",
-    "should_save_initial_best_model",
     "stream_weighted_masked_bce",
     "summarize_fullft_adv_epoch_diagnostics",
     "tag_value",

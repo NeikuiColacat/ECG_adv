@@ -13,10 +13,6 @@ RESUME_CONTRACT_KEYS = (
     "target_real_npz",
     "init_ckpt",
     "model_name",
-    "quick_eval_source",
-    "quick_eval_centers",
-    "target_real_val_fraction",
-    "target_real_val_seed",
     "attack_mode",
     "hull_M",
     "hull_lambda",
@@ -40,11 +36,6 @@ RESUME_CONTRACT_KEYS = (
     "seed",
     "crop_len",
 )
-
-
-def should_save_initial_best_model(resume_path: Path | None) -> bool:
-    """Fresh runs save an initial best model; resumed runs must preserve it."""
-    return resume_path is None
 
 
 def normalize_resume_contract_value(value: Any) -> Any:

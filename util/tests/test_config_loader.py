@@ -323,6 +323,7 @@ def test_vae_configs_declare_required_epoch_metrics():
         "loss_gain",
         "latent_augmix_stats",
     } <= effnet_metrics
+    assert "quick_eval" not in effnet_metrics
 
 
 def _option_value(argv: list[str], option: str) -> str:
@@ -550,9 +551,10 @@ def test_effnet_vae_lhat_threechain_locked_k500_config_uses_official_s5_last_che
         assert _option_value(argv, "--latent_augmix_width") == "3"
         assert _option_value(argv, "--latent_augmix_severity") == "5"
         assert _option_value(argv, "--latent_augmix_severity_profile") == "standard"
-        assert _option_value(argv, "--checkpoint_policy") == "last"
-        assert _option_value(argv, "--quick_eval_source") == "none"
-        assert _option_value(argv, "--target_real_val_fraction") == "0.0"
+        assert "--checkpoint_policy" not in argv
+        assert "--quick_eval_source" not in argv
+        assert "--target_real_val_fraction" not in argv
+        assert "--target_real_val_seed" not in argv
         assert _option_value(argv, "--target_real_norm_mode") == "per_sample_global"
         assert _option_value(argv, "--target_real_npz_override").endswith(
             f"/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets/{command['matrix']['center']}/"
@@ -1127,7 +1129,7 @@ def test_pn2021c_effnet_threechain_locked_official_s5_targets_locked_run_dir():
             f"/home/linbinhao/ECG_adv_data/runs/"
             f"effnet_vae_lhat_augmix_threechain_locked_k500/"
             f"{config['runtime']['run_id']}/"
-            f"{center}_realall_targetheavy_M20_lam0p05_augmix_s5_wlat0p25_hs3_target_macro_auprc_cdhypminormsttc_hlabelcom_anchor_soft_sta_local_random_p120_fullft_k500_threechain_s5_locked_ep30_seed20260601"
+            f"{center}_realall_targetheavy_M20_lam0p05_augmix_s5_wlat0p25_hs3_cdhypminormsttc_hlabelcom_anchor_soft_sta_local_random_p120_fullft_k500_threechain_s5_locked_ep30_seed20260601"
         )
         assert _option_value(argv, "--clean_eval_json") == (
             f"{model_dir}/eval_result_v7_exclrefs_crop1000.json"

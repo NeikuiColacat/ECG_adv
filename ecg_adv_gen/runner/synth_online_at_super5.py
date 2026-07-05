@@ -19,8 +19,8 @@ Each epoch:
        adv buffer  weight 2.0    (cold-start guard: weight=0 in epoch 0/empty)
   F) train_one_epoch with masked BCE on the -1 sentinel + EWA anchor regularizer
      (Plan Issue #21 Q4 — ADR ICLR 2024 EMA self-distill).
-  G) every eval_every epoch: PTB-XL fold9 val + PN2021 quick subset macro AUROC,
-     update best ckpt.
+  G) save the last checkpoint for the managed ref-excluded PN2021/PN2021-C
+     evaluation jobs.
 
 NOT done in this fork (per Plan Rev 8 explicit non-goals):
   - AugMix latent injection (Issue #25 (b) — off in pilot).
@@ -85,32 +85,27 @@ from ecg_adv_gen.training.online_buffer import (  # noqa: E402
     train_one_epoch_masked_bce,
 )
 from ecg_adv_gen.labels import CLASS_NAMES_SUPER5, NUM_SUPER5, get_super5_scheme  # noqa: E402
-from ecg_adv_gen.labels.super5_mapping import SUPER5_TO_IDX, snomed_list_to_super5  # noqa: E402
+from ecg_adv_gen.labels.super5_mapping import SUPER5_TO_IDX  # noqa: E402
 from ecg_adv_gen.models.super5_model_zoo import available_model_names  # noqa: E402
 from ecg_adv_gen.training import (  # noqa: E402
     append_jsonl,
     atomic_torch_save,
-    build_checkpoint_selection_record,
     capture_rng_state,
     compute_pos_weight,
     quality_buffer_state,
-    resolve_quick_eval_plan,
     resolve_resume_path,
     restore_quality_buffer_state,
     restore_rng_state,
-    should_save_initial_best_model,
     validate_resume_contract,
     PTBXLDatasetScheme,
     evaluate,
 )
-from ecg_adv_gen.evaluation import compute_macro_auroc_auprc  # noqa: E402
 from ecg_adv_gen.data.latent_pools import (  # noqa: E402
     LatentPoolError,
     load_synth_pool as _load_synth_pool,
 )
-from ecg_adv_gen.data import parse_header_snomeds  # noqa: E402
 from ecg_adv_gen.data.ptbxl import get_ptbxl_labels_for_scheme, preprocess_ptbxl_all  # noqa: E402
-from ecg_adv_gen.preprocessing import crop_signal_tc, unified_preprocess_to_1000  # noqa: E402
+from ecg_adv_gen.preprocessing import crop_signal_tc  # noqa: E402
 from util.ecgtwin_utils import ECGTwinWrapper  # noqa: E402
 from ecg_adv_gen.adaptation import (  # noqa: E402
     SameLabelLatentIndex,
@@ -118,7 +113,6 @@ from ecg_adv_gen.adaptation import (  # noqa: E402
     agent_attack_decision,
     build_anchor_preserving_soft_labels,
     build_adv_buffer_label,
-    build_k500_internal_val_mask,
     build_three_chain_vae_lhat_augmix_views as _build_three_chain_vae_lhat_augmix_views_core,
     derive_kshot_anchor_class_weights,
     decoded_signal_invalid_stats,
@@ -128,13 +122,10 @@ from ecg_adv_gen.adaptation import (  # noqa: E402
     weighted_anchor_quotas,
 )
 
-DEFAULT_PN2021_DIR = "/root/autodl-tmp/physionet2021/training"
 DEFAULT_PTBXL_RAW = "/root/autodl-tmp/ptbxl/raw100.npy"
 DEFAULT_PTBXL_CSV = "/root/autodl-tmp/ptbxl/ptbxl_database.csv"
 DEFAULT_PTBXL_PREP = "/root/autodl-tmp/crosscenter_v2/ptbxl_preprocessed.npy"
 DEFAULT_SUPER5_CKPT = "/root/autodl-tmp/triple_labels/super5/best_model.pt"
-
-PN2021_FORBIDDEN = {"ptb-xl", "ptbxl"}     # never eval against this shard
 
 
 def _resolve_optional_custom_severity_profile(
@@ -617,180 +608,6 @@ def attack_bce_diagnostics(
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# Quick eval (Super5 PN2021 multi-center stratified subset)
-# ────────────────────────────────────────────────────────────────────────────
-
-def build_quick_eval_subset_super5(
-    centers: List[str],
-    data_dir: str,
-    n_per_center: int,
-    cache_path: str,
-    seed: int = 0,
-    exclude_record_ids: Optional[set] = None,    # Issue #39
-    verbose: bool = True,
-) -> Dict[str, Dict]:
-    """Stratified-by-class-presence subsample of PN2021 records, super5 labels.
-
-    `exclude_record_ids` lets us drop the ref pool's records from the same
-    center's eval split (Issue #39 patient-level isolation).
-    """
-    cache_key = f"{cache_path}.super5.npz"
-    if os.path.exists(cache_key):
-        data = np.load(cache_key, allow_pickle=True)
-        out = {}
-        for c in centers:
-            if f"{c}__signals" in data.files:
-                out[c] = {
-                    "signals_tc": data[f"{c}__signals"],
-                    "labels_5":   data[f"{c}__labels5"],
-                }
-        if len(out) == len(centers):
-            if verbose:
-                print(f"[quick_eval] cache hit: {cache_key}")
-            return out
-
-    import wfdb
-    rng = np.random.default_rng(seed)
-    out: Dict[str, Dict] = {}
-    for center in centers:
-        if center.lower() in PN2021_FORBIDDEN:
-            print(f"[quick_eval] SKIP forbidden shard: {center}")
-            continue
-        center_dir = os.path.join(data_dir, center)
-        if not os.path.isdir(center_dir):
-            continue
-        t0 = time.time()
-        hea_paths = []
-        for root, _, files in os.walk(center_dir):
-            for f in files:
-                if f.endswith('.hea'):
-                    hea_paths.append(os.path.join(root, f))
-        if not hea_paths:
-            continue
-
-        # Parse SNOMED → super5 multi-hot for all
-        labels_5 = []
-        usable_idx = []
-        for i, hea in enumerate(hea_paths):
-            rec_id = os.path.basename(hea)[:-4]
-            if exclude_record_ids and rec_id in exclude_record_ids:
-                continue
-            codes = parse_header_snomeds(hea)
-            labels_5.append(snomed_list_to_super5(codes))
-            usable_idx.append(i)
-        if not usable_idx:
-            continue
-        labels_5 = np.stack(labels_5).astype(np.float32)
-
-        # Stratified pick
-        if len(usable_idx) <= n_per_center:
-            chosen_local = list(range(len(usable_idx)))
-        else:
-            per_class_quota = max(10, n_per_center // 10)
-            picked = set()
-            for cls_i in range(NUM_SUPER5):
-                pos = np.where(labels_5[:, cls_i] == 1.0)[0]
-                pos = np.array([p for p in pos if int(p) not in picked])
-                if len(pos) == 0:
-                    continue
-                n_take = min(per_class_quota, len(pos))
-                chosen = rng.choice(pos, size=n_take, replace=False)
-                picked.update(int(c) for c in chosen)
-            deficit = n_per_center - len(picked)
-            if deficit > 0:
-                rest = np.array([i for i in range(len(usable_idx)) if int(i) not in picked])
-                if len(rest) > 0:
-                    chosen = rng.choice(rest, size=min(deficit, len(rest)), replace=False)
-                    picked.update(int(c) for c in chosen)
-            chosen_local = sorted(picked)
-
-        signals = []
-        kept_labels = []
-        for ci in chosen_local:
-            i = usable_idx[ci]
-            try:
-                rec = wfdb.rdrecord(hea_paths[i][:-4])
-            except Exception:
-                continue
-            sig = rec.p_signal
-            if sig is None or sig.shape[1] < 12:
-                continue
-            sig_names = [s.strip() for s in rec.sig_name] if getattr(rec, 'sig_name', None) else None
-            proc = unified_preprocess_to_1000(
-                sig.astype(np.float32), fs=rec.fs, source_leads=sig_names,
-                target_fs=100, target_len=1000,
-                apply_filter=True, apply_zscore=True,
-            )
-            if proc is None:
-                continue
-            signals.append(proc)
-            kept_labels.append(labels_5[ci])
-        if not signals:
-            continue
-        out[center] = {
-            "signals_tc": np.stack(signals).astype(np.float32),
-            "labels_5":   np.stack(kept_labels).astype(np.float32),
-        }
-        if verbose:
-            print(f"  [quick_eval] {center}: {out[center]['signals_tc'].shape[0]} records "
-                  f"({time.time() - t0:.0f}s)"
-                  + (f"; excluded {len(hea_paths) - len(usable_idx)} ref ids" if exclude_record_ids else ""))
-
-    os.makedirs(os.path.dirname(cache_key) or ".", exist_ok=True)
-    dump = {}
-    for c, d in out.items():
-        dump[f"{c}__signals"] = d["signals_tc"]
-        dump[f"{c}__labels5"] = d["labels_5"]
-    np.savez_compressed(cache_key, **dump)
-    if verbose:
-        print(f"[quick_eval] cached → {cache_key}")
-    return out
-
-
-@torch.no_grad()
-def quick_eval_super5(
-    model: nn.Module, quick_subset: Dict[str, Dict], device: str,
-    crop_len: int = TIERM_INPUT_LENGTH, min_pos: int = 10,
-) -> Dict[str, Any]:
-    model.eval()
-    result: Dict[str, Any] = {"per_center": {}}
-    macro_aurocs, macro_auprcs = [], []
-    for center, data in quick_subset.items():
-        signals_tc = data["signals_tc"]   # (N, 1000, 12)
-        labels_5 = data["labels_5"]       # (N, 5)
-        N = signals_tc.shape[0]
-
-        x_ct = np.transpose(signals_tc, (0, 2, 1)).astype(np.float32)  # (N, 12, 1000)
-        start = (x_ct.shape[-1] - crop_len) // 2
-        x_ct = x_ct[..., start:start + crop_len]
-        x_t = torch.from_numpy(x_ct).to(device)
-
-        all_logits = []
-        for i in range(0, N, 128):
-            lg = model(x_t[i:i + 128])
-            all_logits.append(lg.cpu().numpy())
-        logits = np.concatenate(all_logits)
-        probs = 1.0 / (1.0 + np.exp(-np.clip(logits, -50, 50)))
-
-        m = compute_macro_auroc_auprc(labels_5, probs, CLASS_NAMES_SUPER5,
-                                      min_pos=min_pos)
-        result["per_center"][center] = {
-            "n":           N,
-            "macro_auroc": round(m["macro_auroc"], 4) if not math.isnan(m["macro_auroc"]) else None,
-            "macro_auprc": round(m["macro_auprc"], 4) if not math.isnan(m["macro_auprc"]) else None,
-            "n_classes_used": m["n_classes_used"],
-            "per_class":   m["per_class"],
-        }
-        if not math.isnan(m["macro_auroc"]):
-            macro_aurocs.append(m["macro_auroc"])
-            macro_auprcs.append(m["macro_auprc"])
-
-    result["avg_macro_auroc"] = round(float(np.mean(macro_aurocs)), 4) if macro_aurocs else float('nan')
-    result["avg_macro_auprc"] = round(float(np.mean(macro_auprcs)), 4) if macro_auprcs else float('nan')
-    return result
-
-
-# ────────────────────────────────────────────────────────────────────────────
 # PGD-on-frozen-synth-pool epoch step
 # ────────────────────────────────────────────────────────────────────────────
 
@@ -1117,27 +934,6 @@ def parse_args():
         ),
     )
 
-    # PN2021 quick eval
-    p.add_argument("--data_dir", default=DEFAULT_PN2021_DIR)
-    p.add_argument("--quick_eval_centers", nargs='+',
-                   default=["chapman_shaoxing", "cpsc_2018_extra", "georgia",
-                            "ningbo"])
-    p.add_argument("--quick_eval_n_per_center", type=int, default=1000)
-    p.add_argument(
-        "--quick_eval_source",
-        choices=["pn2021", "target_real_val", "none"],
-        default="pn2021",
-        help=(
-            "pn2021 uses the historical ref-excluded PN2021 quick subset. "
-            "target_real_val selects checkpoints on a validation split held "
-            "out from --target_real_npz, avoiding target-center test leakage. "
-            "none disables quick-eval checkpoint selection for predeclared "
-            "last-checkpoint runs."
-        ),
-    )
-    p.add_argument("--target_real_val_fraction", type=float, default=0.2)
-    p.add_argument("--target_real_val_seed", type=int, default=20260531)
-
     # PTBXL paths
     p.add_argument("--ptbxl_raw", default=DEFAULT_PTBXL_RAW)
     p.add_argument("--ptbxl_csv", default=DEFAULT_PTBXL_CSV)
@@ -1421,24 +1217,8 @@ def parse_args():
     p.add_argument("--class_trust", default=None,
                    help="Path to the real-all-present class_trust.json written by the managed wrapper.")
 
-    # Optim (Plan Rev 13.1: 100 ep + early-stop patience=20 on val_macro_auroc)
+    # Optim
     p.add_argument("--n_epochs", type=int, default=100)
-    p.add_argument("--patience", type=int, default=20,
-                   help="Early stop after this many quick_eval rounds without improvement")
-    p.add_argument(
-        "--checkpoint_policy",
-        choices=["best", "last"],
-        default="best",
-        help="best preserves historical quick-eval selection; last evaluates the final epoch checkpoint.",
-    )
-    p.add_argument("--es_metric",
-                   choices=[
-                       "val_macro_auroc",
-                       "val_macro_auprc",
-                       "target_macro_auroc",
-                       "target_macro_auprc",
-                   ],
-                   default="val_macro_auroc")
     p.add_argument("--lr", type=float, default=5e-5)
     p.add_argument("--weight_decay", type=float, default=1e-4)
     p.add_argument("--batch_size", type=int, default=128)
@@ -1600,9 +1380,6 @@ def main():
                 "than ops; only the first scheduled operators will appear each epoch.",
                 flush=True,
             )
-    if args.quick_eval_source == "none" and args.checkpoint_policy != "last":
-        raise ValueError("--quick_eval_source none requires --checkpoint_policy last")
-
     # ── Load synth pool (Stage 1 frozen) for training ──────────────────────
     synth_latents, synth_labels, synth_center, source_meta = load_synth_pool(args.synth_npz)
     print(f"[setup] synth pool: {synth_latents.shape} labels={synth_labels.shape} "
@@ -1649,19 +1426,11 @@ def main():
     val_ds = PTBXLDatasetScheme(val_signals, val_labels,
                                 crop_len=args.crop_len, mode='eval')
     target_real_ds = None
-    target_val_quick_subset = None
-    target_val_record_ids: set[str] = set()
     target_real_augmix_signals_tc: np.ndarray | None = None
-    target_real_augmix_all_signals_tc: np.ndarray | None = None
     if args.target_real_npz:
         with np.load(args.target_real_npz, allow_pickle=True) as real_data:
             real_signals = np.asarray(real_data["signals"], dtype=np.float32)
             real_labels = np.asarray(real_data["labels"], dtype=np.float32)
-            real_record_ids = (
-                real_data["record_ids"].astype(str)
-                if "record_ids" in real_data.files
-                else np.asarray([str(i) for i in range(real_labels.shape[0])])
-            )
         if real_signals.ndim != 3:
             raise ValueError(f"target_real_npz signals must be 3D, got {real_signals.shape}")
         if real_signals.shape[1:] == (12, 1000):
@@ -1670,35 +1439,7 @@ def main():
             raise ValueError(f"target_real_npz signals must be (N,1000,12) or (N,12,1000), got {real_signals.shape}")
         if real_labels.shape[0] != real_signals.shape[0] or real_labels.shape[1] != NUM_SUPER5:
             raise ValueError(f"target_real_npz labels mismatch: signals={real_signals.shape} labels={real_labels.shape}")
-        target_real_augmix_all_signals_tc = real_signals.astype(np.float32, copy=True)
-        if args.quick_eval_source == "target_real_val":
-            val_mask = build_k500_internal_val_mask(
-                real_labels,
-                val_fraction=args.target_real_val_fraction,
-                seed=args.target_real_val_seed,
-            )
-            train_mask = ~val_mask
-            target_val_record_ids = set(str(x) for x in real_record_ids[val_mask])
-            target_val_quick_subset = {
-                args.center_name: {
-                    "signals_tc": _normalize_target_real_signals(
-                        real_signals[val_mask],
-                        args.target_real_norm_mode,
-                    ),
-                    "labels_5": real_labels[val_mask].astype(np.float32),
-                }
-            }
-            print(
-                f"[setup] target-real internal val split: "
-                f"train={int(train_mask.sum())} val={int(val_mask.sum())} "
-                f"fraction={args.target_real_val_fraction} seed={args.target_real_val_seed}",
-                flush=True,
-            )
-            real_signals = real_signals[train_mask]
-            real_labels = real_labels[train_mask]
-            target_real_augmix_signals_tc = real_signals.astype(np.float32, copy=True)
-        else:
-            target_real_augmix_signals_tc = real_signals.astype(np.float32, copy=True)
+        target_real_augmix_signals_tc = real_signals.astype(np.float32, copy=True)
         target_real_ds = TargetRealWaveformDataset(
             real_signals,
             real_labels,
@@ -1712,31 +1453,6 @@ def main():
             f"path={args.target_real_npz}",
             flush=True,
         )
-    elif args.quick_eval_source == "target_real_val":
-        raise ValueError("--quick_eval_source target_real_val requires --target_real_npz")
-
-    if target_val_record_ids and "record_ids" in source_meta:
-        keep_mask = np.asarray(
-            [str(rid) not in target_val_record_ids for rid in source_meta["record_ids"]],
-            dtype=bool,
-        )
-        n_drop = int((~keep_mask).sum())
-        if n_drop > 0:
-            synth_latents = synth_latents[keep_mask]
-            synth_labels = synth_labels[keep_mask]
-            for key in ("source_ids", "source_labels", "record_ids"):
-                if key in source_meta:
-                    source_meta[key] = source_meta[key][keep_mask]
-            print(
-                f"[setup] removed {n_drop} K500-val records from latent anchor pool; "
-                f"train_latents={len(synth_latents)}",
-                flush=True,
-            )
-            if target_real_augmix_all_signals_tc is not None:
-                target_real_augmix_signals_tc = target_real_augmix_all_signals_tc[keep_mask].astype(
-                    np.float32,
-                    copy=True,
-                )
     if args.latent_augmix_corruption_source == "target_real":
         if target_real_augmix_signals_tc is None:
             raise ValueError("--latent_augmix_corruption_source target_real requires loaded target-real signals")
@@ -1767,66 +1483,6 @@ def main():
     )
     if roundtrip_ds is not None:
         print(f"[setup] roundtrip-anchor: n={len(roundtrip_ds)}, weight={args.roundtrip_weight}")
-
-    # ── Quick eval subset ───────────────────────────────────────────────────
-    target_val_n = (
-        int(target_val_quick_subset[args.center_name]["signals_tc"].shape[0])
-        if target_val_quick_subset is not None
-        else 0
-    )
-    quick_eval_plan = resolve_quick_eval_plan(
-        quick_eval_source=args.quick_eval_source,
-        center_name=args.center_name,
-        quick_eval_centers=args.quick_eval_centers,
-        output_dir=args.output_dir,
-        quick_eval_n_per_center=args.quick_eval_n_per_center,
-        target_val_available=target_val_quick_subset is not None,
-        target_val_n=target_val_n,
-    )
-    if quick_eval_plan.source == "none":
-        quick_subset = {}
-        print(f"[setup] {quick_eval_plan.message}", flush=True)
-    elif quick_eval_plan.source == "target_real_val":
-        assert target_val_quick_subset is not None
-        quick_subset = target_val_quick_subset
-        print(f"[setup] {quick_eval_plan.message}", flush=True)
-    else:
-        # Historical path: ref-excluded PN2021 target-center quick subset.
-        # This is useful for exploration, but final paper-safe model selection
-        # should use --quick_eval_source target_real_val.
-        excluded = None
-        if args.ref_meta_json and os.path.exists(args.ref_meta_json):
-            with open(args.ref_meta_json) as f:
-                meta = json.load(f)
-            excluded = set(meta.get("ref_record_ids", []))
-            print(f"[setup] excluding {len(excluded)} ref_record_ids from "
-                  f"quick_eval (center={args.center_name})")
-
-        assert quick_eval_plan.cache_path is not None
-        qe_cache = str(quick_eval_plan.cache_path)
-        quick_subset = build_quick_eval_subset_super5(
-            centers=list(quick_eval_plan.centers), data_dir=args.data_dir,
-            n_per_center=args.quick_eval_n_per_center, cache_path=qe_cache,
-            seed=args.seed, exclude_record_ids=excluded,
-        )
-
-    if quick_eval_plan.source == "none":
-        baseline_qe = {
-            "enabled": False,
-            "avg_macro_auroc": None,
-            "avg_macro_auprc": None,
-            "per_center": {},
-        }
-        print("[baseline] quick-eval disabled; checkpoint_policy=last", flush=True)
-    else:
-        print("[baseline] Computing baseline quick-eval ...")
-        baseline_qe = quick_eval_super5(victim.model, quick_subset, args.device,
-                                        crop_len=args.crop_len)
-        print(f"[baseline] avg macro AUROC={baseline_qe['avg_macro_auroc']}, "
-              f"AUPRC={baseline_qe['avg_macro_auprc']}")
-        for c, info in baseline_qe["per_center"].items():
-            print(f"    {c}: AUROC={info['macro_auroc']}  AUPRC={info['macro_auprc']}  "
-                  f"(n={info['n']}  classes_used={info['n_classes_used']})")
 
     # ── PGD / Latent-Hull generator + buffer ────────────────────────────────
     # Note: generator __init__ calls victim.parameters().requires_grad_(False)
@@ -1911,7 +1567,6 @@ def main():
 
     log: Dict[str, Any] = {
         "args": vars(args),
-        "baseline_quick_eval": baseline_qe,
         "class_trust": class_trust,
         "adaptation": {
             "n_trainable_tensors": len(trainable_params),
@@ -1978,44 +1633,14 @@ def main():
         },
         "epochs": [],
     }
-    def selected_es_metric(qe: Dict[str, Any]) -> float:
-        if args.checkpoint_policy == "last":
-            return -1.0
-        if args.es_metric == "val_macro_auroc":
-            return float(qe.get("avg_macro_auroc", float("nan")))
-        if args.es_metric == "val_macro_auprc":
-            return float(qe.get("avg_macro_auprc", float("nan")))
-        center_info = qe.get("per_center", {}).get(args.center_name, {})
-        if args.es_metric == "target_macro_auroc":
-            return float(center_info.get("macro_auroc", float("nan")))
-        if args.es_metric == "target_macro_auprc":
-            return float(center_info.get("macro_auprc", float("nan")))
-        raise ValueError(f"unsupported es_metric={args.es_metric}")
-
-    best_metric = selected_es_metric(baseline_qe)
-    if best_metric != best_metric:
-        best_metric = -1.0  # NaN-safe
-    best_epoch = 0
-    epochs_since_best = 0
-    best_ckpt_path = os.path.join(args.output_dir, "best_model.pt")
     last_ckpt_path = os.path.join(args.output_dir, "last_model.pt")
     log_path = os.path.join(args.output_dir, "training_log.json")
-    es_path = os.path.join(args.output_dir, "early_stop_info.json")
     checkpoint_dir = Path(args.output_dir) / "checkpoints"
     checkpoint_latest_path = checkpoint_dir / "checkpoint_latest.pt"
-    checkpoint_best_path = checkpoint_dir / "checkpoint_best.pt"
     checkpoint_index_path = checkpoint_dir / "checkpoint_index.jsonl"
     diagnostics_epoch_path = Path(args.output_dir) / "diagnostics_epoch.jsonl"
     agent_decision_path = Path(args.output_dir) / "agent_decision.json"
     resume_path = _resolve_resume_path(args.resume, args.output_dir)
-    if args.checkpoint_policy == "best" and should_save_initial_best_model(resume_path):
-        torch.save(victim.model.state_dict(), best_ckpt_path)
-    elif args.checkpoint_policy == "best" and not Path(best_ckpt_path).exists():
-        print(
-            f"[resume-warning] best_model.pt is missing before resume: {best_ckpt_path}. "
-            "It will not be recreated unless a later epoch improves.",
-            flush=True,
-        )
 
     # Plan Rev 13.2: stratified pool walker over NORM/MI/STTC scope only
     walker = StratifiedPoolWalker(
@@ -2065,14 +1690,10 @@ def main():
         _restore_walker_state(walker, ckpt.get("walker_state", {}))
         _restore_rng_state(ckpt.get("rng_state", {}), rng)
         log = ckpt.get("training_log", log)
-        best_metric = float(ckpt.get("best_metric", best_metric))
-        best_epoch = int(ckpt.get("best_epoch", best_epoch))
-        epochs_since_best = int(ckpt.get("epochs_since_best", epochs_since_best))
         consecutive_low_asr = int(ckpt.get("consecutive_low_asr", consecutive_low_asr))
         start_epoch = int(ckpt.get("epoch", 0)) + 1
         print(
-            f"[resume] start_epoch={start_epoch} best_epoch={best_epoch} "
-            f"best_metric={best_metric} buffer={len(buffer)}",
+            f"[resume] start_epoch={start_epoch} buffer={len(buffer)}",
             flush=True,
         )
 
@@ -2520,43 +2141,6 @@ def main():
               f"eint_p95={sem_info.get('einthoven_mean_p95', float('nan')):.3f} "
               f"buf={len(buffer)} skip={gate_skipped} attack={args.attack_mode} | {elapsed:.0f}s")
 
-        # Phase F: quick eval (every eval_every; also last epoch)
-        if (epoch % args.eval_every == 0) or (epoch == args.n_epochs):
-            if quick_eval_plan.source == "none":
-                qe = {
-                    "enabled": False,
-                    "reason": "quick_eval_source_none",
-                    "avg_macro_auroc": None,
-                    "avg_macro_auprc": None,
-                    "per_center": {},
-                }
-                entry["quick_eval"] = qe
-                improved = False
-            else:
-                qe = quick_eval_super5(victim.model, quick_subset, args.device,
-                                       crop_len=args.crop_len)
-                entry["quick_eval"] = qe
-                print(f"   quick eval: avg AUROC={qe['avg_macro_auroc']}  "
-                      f"AUPRC={qe['avg_macro_auprc']}")
-                for c, info in qe["per_center"].items():
-                    print(f"      {c}: AUROC={info['macro_auroc']}  AUPRC={info['macro_auprc']}")
-                cur = selected_es_metric(qe)
-                improved = (
-                    args.checkpoint_policy == "best"
-                    and (cur == cur)
-                    and (cur > best_metric + 1e-6)
-                )   # NaN-safe
-            if improved:
-                best_metric = cur
-                best_epoch = epoch
-                epochs_since_best = 0
-                torch.save(victim.model.state_dict(), best_ckpt_path)
-                print(f"   ** saved best @ ep{epoch}: {args.es_metric} {best_metric}")
-                entry["best_update"] = True
-            else:
-                epochs_since_best += args.eval_every
-                entry["best_update"] = False
-
         torch.save(victim.model.state_dict(), last_ckpt_path)
         log["epochs"].append(entry)
         with open(log_path, "w") as f:
@@ -2591,21 +2175,11 @@ def main():
             "decoded_invalid_rate": entry.get("decoded_invalid_rate"),
             "adv_weight_effective": entry.get("adv_weight_effective"),
             "buffer_size": entry.get("buffer_size"),
-            "quick_eval": entry.get("quick_eval"),
             "agent_decision": decision,
             "checkpoint_latest": str(checkpoint_latest_path),
-            "checkpoint_best": str(checkpoint_best_path if best_epoch == epoch else ""),
         }
         _append_jsonl(diagnostics_epoch_path, diagnostics_payload)
 
-        selection_record = build_checkpoint_selection_record(
-            center=args.center_name,
-            best_epoch=best_epoch,
-            metric_name=args.es_metric,
-            metric_value=float(best_metric),
-            selection_source=args.quick_eval_source,
-            heldout_target_labels_used=bool(quick_eval_plan.uses_heldout_selection),
-        )
         ckpt_payload = {
             "schema_version": 1,
             "epoch": epoch,
@@ -2617,12 +2191,6 @@ def main():
             "buffer_state": _buffer_state(buffer),
             "walker_state": _walker_state(walker),
             "rng_state": _rng_state(rng),
-            "best_metric": best_metric,
-            "best_epoch": best_epoch,
-            "checkpoint_selection": selection_record,
-            "best_model_path": best_ckpt_path,
-            "es_metric": args.es_metric,
-            "epochs_since_best": epochs_since_best,
             "consecutive_low_asr": consecutive_low_asr,
             "training_log": log,
             "args": vars(args),
@@ -2634,66 +2202,22 @@ def main():
             "epoch": epoch,
             "path": str(checkpoint_latest_path),
             "kind": "latest",
-            "best_metric": best_metric,
-            "best_epoch": best_epoch,
-            "checkpoint_selection": selection_record,
             "agent_decision": decision["attack_state"],
         }
         _append_jsonl(checkpoint_index_path, latest_index)
-        if entry.get("best_update"):
-            _atomic_torch_save(ckpt_payload, checkpoint_best_path)
-            _append_jsonl(
-                checkpoint_index_path,
-                {
-                    **latest_index,
-                    "path": str(checkpoint_best_path),
-                    "kind": "best",
-                    "reason": f"{args.es_metric} improved",
-                },
-            )
-
-        # Plan Rev 13.1: early-stop on val_macro_auroc plateau
-        if (
-            args.checkpoint_policy == "best"
-            and (epoch % args.eval_every == 0)
-            and epochs_since_best >= args.patience
-        ):
-            print(f"\n[early-stop] patience {args.patience} hit at ep{epoch}; "
-                  f"best @ ep{best_epoch} ({args.es_metric}={best_metric})")
-            with open(es_path, "w") as f:
-                json.dump({
-                    "stopped_epoch": epoch, "best_epoch": best_epoch,
-                    "best_metric": best_metric, "es_metric": args.es_metric, "patience": args.patience,
-                    "n_epochs_run": epoch, "early_stopped": True,
-                }, f, indent=2)
-            break
-    else:
-        # Loop completed without early-stop
-        with open(es_path, "w") as f:
-            json.dump({
-                "stopped_epoch": args.n_epochs, "best_epoch": best_epoch,
-                "best_metric": best_metric, "es_metric": args.es_metric, "patience": args.patience,
-                "n_epochs_run": args.n_epochs, "early_stopped": False,
-            }, f, indent=2)
 
     # Final result
     final = {
         "args":               vars(args),
-        "baseline_quick_eval": baseline_qe,
-        "best_metric":         best_metric,
-        "es_metric":           args.es_metric,
-        "checkpoint_policy":   args.checkpoint_policy,
-        "selected_checkpoint": last_ckpt_path if args.checkpoint_policy == "last" else best_ckpt_path,
+        "selected_checkpoint": last_ckpt_path,
         "last_model_path":     last_ckpt_path,
-        "best_model_path":     best_ckpt_path if Path(best_ckpt_path).exists() else None,
         "n_epochs_run":       len(log["epochs"]),
-        "last_quick_eval":    log["epochs"][-1].get("quick_eval") if log["epochs"] else None,
     }
     with open(os.path.join(args.output_dir, "train_result.json"), "w") as f:
         json.dump(final, f, indent=2, default=str)
 
     print("\n" + "=" * 72)
-    print(f"Training done. best {args.es_metric}={best_metric} → {best_ckpt_path}")
+    print(f"Training done. last checkpoint → {last_ckpt_path}")
 
 
 if __name__ == "__main__":

@@ -100,20 +100,6 @@ def build_effnet_vae_lhat_train_cmd(
         model_name,
         "--output_dir",
         str(paths.out_dir),
-        "--data_dir",
-        str(data_root / "physionet2021/training"),
-        "--quick_eval_source",
-        str(args.quick_eval_source),
-        "--quick_eval_centers",
-        str(args.center),
-        "--quick_eval_n_per_center",
-        str(args.quick_eval_n_per_center),
-        "--target_real_val_fraction",
-        str(args.target_real_val_fraction),
-        "--target_real_val_seed",
-        str(args.target_real_val_seed),
-        "--checkpoint_policy",
-        str(getattr(args, "checkpoint_policy", "best")),
         "--ptbxl_raw",
         str(data_root / "ptbxl/raw100.npy"),
         "--ptbxl_csv",
@@ -205,12 +191,8 @@ def build_effnet_vae_lhat_train_cmd(
         str(args.train_batch_size),
         "--n_epochs",
         str(args.epochs),
-        "--patience",
-        str(args.epochs),
         "--eval_every",
         "2",
-        "--es_metric",
-        str(args.es_metric),
         "--ewa_decay",
         "0.999",
         "--anchor_lambda",
@@ -361,8 +343,7 @@ def build_effnet_vae_lhat_eval_cmd(
         "--skip_mimic",
         "--report_drop_all_zero_pn2021",
     ]
-    if str(getattr(args, "checkpoint_policy", "best")) == "last":
-        eval_cmd.extend(["--checkpoint_name", "last_model.pt"])
+    eval_cmd.extend(["--checkpoint_name", "last_model.pt"])
     try:
         append_target_ref_exclusion_args_from_anchor_base(eval_cmd, paths.anchor_base)
     except ValueError:
