@@ -555,6 +555,10 @@ def test_effnet_vae_lhat_threechain_locked_k500_config_uses_official_s5_last_che
         assert "--quick_eval_source" not in argv
         assert "--target_real_val_fraction" not in argv
         assert "--target_real_val_seed" not in argv
+        assert "--attack_mode" not in argv
+        assert "--pgd_K" not in argv
+        assert "--pgd_alpha" not in argv
+        assert "--delta_init_scale" not in argv
         assert _option_value(argv, "--target_real_norm_mode") == "per_sample_global"
         assert _option_value(argv, "--target_real_npz_override").endswith(
             f"/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets/{command['matrix']['center']}/"

@@ -1,10 +1,9 @@
-"""Online AT on Super5 victim with synth-anchored PGD (Plan Rev 8).
+"""Online AT on Super5 victim with ECGTwin VAE latent-hull anchors.
 
 Each epoch:
   A) Sample K_anchor latents (stratified by class) from a frozen Stage-1 synth
      pool (.latent.npz).
-  B) Run K_pgd-step PGD on the current victim → (K, 12, 1000) adv signals +
-     one-hot target labels.
+  B) Search same-label latent-hull hard samples with the current victim.
   C) Run gates per epoch (Plan Rev 6 Issue #38):
        - ASR gate     : compute_asr → require asr_overall ≥ 0.30 over a sliding
                          3-epoch window (else raise — PGD is broken)
@@ -20,13 +19,6 @@ Each epoch:
      (Plan Issue #21 Q4 — ADR ICLR 2024 EMA self-distill).
   G) save the last checkpoint for the managed ref-excluded PN2021/PN2021-C
      evaluation jobs.
-
-NOT done in this fork (per Plan Rev 8 explicit non-goals):
-  - AugMix latent injection (Issue #25 (b) — off in pilot).
-  - K-sensitivity grid (Issue #25 (a) — K=200 only).
-  - BoundaryAdvDiff (already known to fail -0.91pp; replaced with PGDAdvDiff).
-  - CenterToken hook injection at training time (Stage 1 produced the synth
-    latents already; the trainer only sees decoded signals).
 """
 from __future__ import annotations
 
@@ -67,7 +59,6 @@ from adversarial.efficientnet_victim_tierM import (  # noqa: E402
     EfficientNetVictimTierM, TIERM_INPUT_LENGTH,
 )
 from adversarial.latent_hull_pgd import LatentHullPGDGenerator  # noqa: E402
-from adversarial.pgd_advdiff import PGDAdvDiffGenerator  # noqa: E402
 from methods.augmix.augmix import _apply_op  # noqa: E402
 from methods.augmix.jsd_loss import jsd_multilabel  # noqa: E402
 from methods.augmix.severity import AVAILABLE_OPS  # noqa: E402
@@ -640,16 +631,15 @@ def stratified_sample_synth(
 
 
 def run_pgd_on_synth_pool(
-    pgd_gen: PGDAdvDiffGenerator,
+    pgd_gen: LatentHullPGDGenerator,
     synth_latents: np.ndarray,    # (N, 4, 128)
     synth_labels: np.ndarray,     # (N, C) one-hot
     K_anchor: int,
     pgd_batch: int,
     rng: np.random.Generator,
     device: str,
+    latent_hull_index: SameLabelLatentIndex,
     picked_indices: Optional[np.ndarray] = None,
-    attack_mode: str = "pgd",
-    latent_hull_index: Optional[SameLabelLatentIndex] = None,
     hull_M: int = 10,
     hull_mix_label_mode: str = "anchor",
     hull_label_lambda_y: float = 0.5,
@@ -658,12 +648,10 @@ def run_pgd_on_synth_pool(
     hull_label_new_class_cap: float = 0.5,
     store_raw_decoded: bool = False,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict[str, float]]:
-    """Sample K anchors stratified by class, run PGD in batches of pgd_batch.
+    """Sample K anchors stratified by class, run latent-hull PGD in batches.
 
     If `picked_indices` is given (e.g. from StratifiedPoolWalker), use it and
-    skip the with-replacement stratified sampler. This is the Plan Rev 13.2
-    path; the legacy path (no picked_indices) is kept for backward compat
-    with smoke / Plan Rev 8.
+    skip the with-replacement stratified sampler.
 
     Returns:
       adv_signals_ct:   (K, 12, 1000)  float32
@@ -693,50 +681,42 @@ def run_pgd_on_synth_pool(
     for i in range(0, z_anchors.shape[0], pgd_batch):
         z_b = z_anchors[i:i + pgd_batch].to(device)
         y_b = y_anchors[i:i + pgd_batch].to(device)
-        if attack_mode == "latent_hull":
-            if latent_hull_index is None:
-                raise ValueError("latent_hull_index is required when attack_mode=latent_hull")
-            batch_pick = pick[i:i + pgd_batch]
-            cand_np = latent_hull_index.candidates_for(batch_pick, hull_M)
-            cand_b = torch.from_numpy(cand_np).float().to(device)
-            x_adv, delta = pgd_gen.attack_from_latent(
-                z_b, y_b, candidate_latents=cand_b
-            )
-            if hull_mix_label_mode == "anchor":
-                label_chunks.append(y_anchor_np[i:i + pgd_batch])
-            elif hull_mix_label_mode == "anchor_soft":
-                cand_idx = getattr(latent_hull_index, "last_candidate_indices", None)
-                weights_t = getattr(pgd_gen, "last_weights", None)
-                if cand_idx is None or weights_t is None:
-                    raise RuntimeError(
-                        "latent-hull soft labels require candidate indices and weights"
-                    )
-                weights_np = weights_t.numpy().astype(np.float32, copy=False)
-                cand_labels = synth_labels[cand_idx]
-                label_chunks.append(build_anchor_preserving_soft_labels(
-                    y_anchor_np[i:i + pgd_batch],
-                    cand_labels,
-                    weights_np,
-                    lambda_y=hull_label_lambda_y,
-                    positive_value=hull_label_positive,
-                    negative_floor=hull_label_negative_floor,
-                    new_class_cap=hull_label_new_class_cap,
-                ))
-            else:
-                raise ValueError(
-                    "hull_mix_label_mode must be anchor|anchor_soft, "
-                    f"got {hull_mix_label_mode!r}"
-                )
-            hull_info = getattr(pgd_gen, "last_info", {})
-            if "hull_weight_entropy_mean" in hull_info:
-                hull_entropies.append(float(hull_info["hull_weight_entropy_mean"]))
-            if "hull_weight_top1_mean" in hull_info:
-                hull_top1.append(float(hull_info["hull_weight_top1_mean"]))
-        else:
-            # Random init delta — Plan Issue #41 clean-anchor restart each epoch
-            delta_init = torch.randn_like(z_b) * pgd_gen.delta_init_scale
-            x_adv, delta = pgd_gen.attack_from_latent(z_b, y_b, delta_init=delta_init)
+        batch_pick = pick[i:i + pgd_batch]
+        cand_np = latent_hull_index.candidates_for(batch_pick, hull_M)
+        cand_b = torch.from_numpy(cand_np).float().to(device)
+        x_adv, delta = pgd_gen.attack_from_latent(
+            z_b, y_b, candidate_latents=cand_b
+        )
+        if hull_mix_label_mode == "anchor":
             label_chunks.append(y_anchor_np[i:i + pgd_batch])
+        elif hull_mix_label_mode == "anchor_soft":
+            cand_idx = getattr(latent_hull_index, "last_candidate_indices", None)
+            weights_t = getattr(pgd_gen, "last_weights", None)
+            if cand_idx is None or weights_t is None:
+                raise RuntimeError(
+                    "latent-hull soft labels require candidate indices and weights"
+                )
+            weights_np = weights_t.numpy().astype(np.float32, copy=False)
+            cand_labels = synth_labels[cand_idx]
+            label_chunks.append(build_anchor_preserving_soft_labels(
+                y_anchor_np[i:i + pgd_batch],
+                cand_labels,
+                weights_np,
+                lambda_y=hull_label_lambda_y,
+                positive_value=hull_label_positive,
+                negative_floor=hull_label_negative_floor,
+                new_class_cap=hull_label_new_class_cap,
+            ))
+        else:
+            raise ValueError(
+                "hull_mix_label_mode must be anchor|anchor_soft, "
+                f"got {hull_mix_label_mode!r}"
+            )
+        hull_info = getattr(pgd_gen, "last_info", {})
+        if "hull_weight_entropy_mean" in hull_info:
+            hull_entropies.append(float(hull_info["hull_weight_entropy_mean"]))
+        if "hull_weight_top1_mean" in hull_info:
+            hull_top1.append(float(hull_info["hull_weight_top1_mean"]))
         adv_chunks.append(x_adv.detach().cpu().numpy().astype(np.float32))
         # Clean anchor reference (z_b alone, no delta)
         with torch.no_grad():
@@ -937,15 +917,10 @@ def parse_args():
     p.add_argument("--ptbxl_csv", default=DEFAULT_PTBXL_CSV)
     p.add_argument("--ptbxl_prep", default=DEFAULT_PTBXL_PREP)
 
-    # PGD (Plan Rev 13: K_pgd=10 + ε=2.0 + K_anchor=300)
+    # Latent-hull hard-sample search.
     p.add_argument("--pgd_eps", type=float, default=2.0)
-    p.add_argument("--pgd_K", type=int, default=10)
     p.add_argument("--pgd_batch", type=int, default=32)        # Issue #45
     p.add_argument("--K_anchor", type=int, default=300)
-    p.add_argument("--pgd_alpha", type=float, default=None)
-    p.add_argument("--delta_init_scale", type=float, default=0.1)
-    p.add_argument("--attack_mode", choices=["pgd", "latent_hull"], default="pgd",
-                   help="pgd = free z0+delta PGD; latent_hull = same-label convex hull")
     p.add_argument("--hull_M", type=int, default=10,
                    help="Number of same-label candidate latents for latent_hull")
     p.add_argument("--hull_lambda", type=float, default=0.25)
@@ -1473,42 +1448,33 @@ def main():
     # Note: generator __init__ calls victim.parameters().requires_grad_(False)
     # which would prevent us from training the victim afterwards. We re-enable
     # requires_grad on all params right after, then snapshot EWA + build optimizer.
-    latent_hull_index = None
-    if args.attack_mode == "latent_hull":
-        pgd_gen = LatentHullPGDGenerator(
-            ecgtwin_wrapper=ecgtwin, victim=victim,
-            epsilon=args.pgd_eps,
-            hull_lambda=args.hull_lambda,
-            hull_steps=args.hull_steps,
-            hull_lr=args.hull_lr,
-            weight_mode=args.hull_weight_mode,
-            dirichlet_alpha=args.hull_dirichlet_alpha,
-            device=args.device,
-        )
-        latent_hull_index = SameLabelLatentIndex(
-            synth_latents, synth_labels,
-            label_mode=args.hull_label_mode,
-            seed=args.seed,
-            include_self=args.hull_include_anchor,
-            distance_space=args.hull_neighbor_distance_space,
-            neighbor_mode=args.hull_neighbor_mode,
-            neighbor_pool_size=args.hull_neighbor_pool_size,
-            neighbor_pool_multiplier=args.hull_neighbor_pool_multiplier,
-        )
-        print(f"[setup] latent-hull index mode={args.hull_label_mode} "
-              f"include_anchor={args.hull_include_anchor} "
-              f"distance_space={args.hull_neighbor_distance_space} "
-              f"neighbor_mode={args.hull_neighbor_mode} "
-              f"neighbor_pool_size={args.hull_neighbor_pool_size} "
-              f"neighbor_pool_multiplier={args.hull_neighbor_pool_multiplier} "
-              f"sizes={latent_hull_index.class_sizes()}")
-    else:
-        pgd_gen = PGDAdvDiffGenerator(
-            ecgtwin_wrapper=ecgtwin, victim=victim,
-            epsilon=args.pgd_eps, K_pgd=args.pgd_K,
-            alpha=args.pgd_alpha, delta_init_scale=args.delta_init_scale,
-            device=args.device,
-        )
+    pgd_gen = LatentHullPGDGenerator(
+        ecgtwin_wrapper=ecgtwin, victim=victim,
+        epsilon=args.pgd_eps,
+        hull_lambda=args.hull_lambda,
+        hull_steps=args.hull_steps,
+        hull_lr=args.hull_lr,
+        weight_mode=args.hull_weight_mode,
+        dirichlet_alpha=args.hull_dirichlet_alpha,
+        device=args.device,
+    )
+    latent_hull_index = SameLabelLatentIndex(
+        synth_latents, synth_labels,
+        label_mode=args.hull_label_mode,
+        seed=args.seed,
+        include_self=args.hull_include_anchor,
+        distance_space=args.hull_neighbor_distance_space,
+        neighbor_mode=args.hull_neighbor_mode,
+        neighbor_pool_size=args.hull_neighbor_pool_size,
+        neighbor_pool_multiplier=args.hull_neighbor_pool_multiplier,
+    )
+    print(f"[setup] latent-hull index mode={args.hull_label_mode} "
+          f"include_anchor={args.hull_include_anchor} "
+          f"distance_space={args.hull_neighbor_distance_space} "
+          f"neighbor_mode={args.hull_neighbor_mode} "
+          f"neighbor_pool_size={args.hull_neighbor_pool_size} "
+          f"neighbor_pool_multiplier={args.hull_neighbor_pool_multiplier} "
+          f"sizes={latent_hull_index.class_sizes()}")
     for p in victim.model.parameters():
         p.requires_grad_(True)
     trainable_params = [p for p in victim.model.parameters() if p.requires_grad]
@@ -1716,7 +1682,6 @@ def main():
             pgd_batch=args.pgd_batch,
             rng=rng, device=args.device,
             picked_indices=all_picks,
-            attack_mode=args.attack_mode,
             latent_hull_index=latent_hull_index,
             hull_M=args.hull_M,
             hull_mix_label_mode=args.hull_mix_label_mode,
@@ -2015,7 +1980,7 @@ def main():
         elapsed = time.time() - epoch_t0
         entry = {
             "epoch": epoch,
-            "attack_mode": args.attack_mode,
+            "attack_family": "latent_hull",
             "train_loss": round(train_loss, 4),
             "latent_augmix_consistency_loss": round(
                 float(latent_augmix_consistency_stats.get("loss", float("nan"))), 6
@@ -2094,35 +2059,34 @@ def main():
                 "anchor_source_counts": dict(walker.last_source_counts),
                 "anchor_class_source_counts": walker.last_class_source_counts,
             })
-        if args.attack_mode == "latent_hull":
-            entry.update({
-                "hull_M": args.hull_M,
-                "hull_lambda": args.hull_lambda,
-                "hull_steps": args.hull_steps,
-                "hull_label_mode": args.hull_label_mode,
-                "hull_mix_label_mode": args.hull_mix_label_mode,
-                "hull_label_lambda_y": args.hull_label_lambda_y,
-                "hull_label_positive": args.hull_label_positive,
-                "hull_label_negative_floor": args.hull_label_negative_floor,
-                "hull_label_new_class_cap": args.hull_label_new_class_cap,
-                "hull_include_anchor": args.hull_include_anchor,
-                "hull_neighbor_distance_space": args.hull_neighbor_distance_space,
-                "hull_neighbor_mode": args.hull_neighbor_mode,
-                "hull_neighbor_pool_size": args.hull_neighbor_pool_size,
-                "hull_neighbor_pool_multiplier": args.hull_neighbor_pool_multiplier,
-                "hull_weight_entropy_mean": round(
-                    float(delta_stats.get("hull_weight_entropy_mean", float('nan'))), 4
-                ),
-                "hull_weight_top1_mean": round(
-                    float(delta_stats.get("hull_weight_top1_mean", float('nan'))), 4
-                ),
-            })
+        entry.update({
+            "hull_M": args.hull_M,
+            "hull_lambda": args.hull_lambda,
+            "hull_steps": args.hull_steps,
+            "hull_label_mode": args.hull_label_mode,
+            "hull_mix_label_mode": args.hull_mix_label_mode,
+            "hull_label_lambda_y": args.hull_label_lambda_y,
+            "hull_label_positive": args.hull_label_positive,
+            "hull_label_negative_floor": args.hull_label_negative_floor,
+            "hull_label_new_class_cap": args.hull_label_new_class_cap,
+            "hull_include_anchor": args.hull_include_anchor,
+            "hull_neighbor_distance_space": args.hull_neighbor_distance_space,
+            "hull_neighbor_mode": args.hull_neighbor_mode,
+            "hull_neighbor_pool_size": args.hull_neighbor_pool_size,
+            "hull_neighbor_pool_multiplier": args.hull_neighbor_pool_multiplier,
+            "hull_weight_entropy_mean": round(
+                float(delta_stats.get("hull_weight_entropy_mean", float('nan'))), 4
+            ),
+            "hull_weight_top1_mean": round(
+                float(delta_stats.get("hull_weight_top1_mean", float('nan'))), 4
+            ),
+        })
         print(f"Ep {epoch:2d}/{args.n_epochs} | train={train_loss:.4f} val={val_loss:.4f} | "
               f"asr={asr_info['asr_overall']:.2f} "
               f"ml_any={asr_info.get('sample_any_positive_below_0p5_asr', float('nan')):.2f} "
               f"ml_pos={asr_info.get('multilabel_positive_label_asr', float('nan')):.2f} "
               f"eint_p95={sem_info.get('einthoven_mean_p95', float('nan')):.3f} "
-              f"buf={len(buffer)} skip={gate_skipped} attack={args.attack_mode} | {elapsed:.0f}s")
+              f"buf={len(buffer)} skip={gate_skipped} attack=latent_hull | {elapsed:.0f}s")
 
         torch.save(victim.model.state_dict(), last_ckpt_path)
         log["epochs"].append(entry)

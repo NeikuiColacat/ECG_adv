@@ -13,7 +13,6 @@ RESUME_CONTRACT_KEYS = (
     "target_real_npz",
     "init_ckpt",
     "model_name",
-    "attack_mode",
     "hull_M",
     "hull_lambda",
     "hull_steps",
@@ -36,6 +35,7 @@ RESUME_CONTRACT_KEYS = (
     "seed",
     "crop_len",
 )
+LOCKED_ATTACK_MODE = "latent_hull"
 
 
 def normalize_resume_contract_value(value: Any) -> Any:
@@ -55,6 +55,14 @@ def resume_contract_mismatches(
     keys: tuple[str, ...] = RESUME_CONTRACT_KEYS,
 ) -> list[dict[str, Any]]:
     mismatches: list[dict[str, Any]] = []
+    if "attack_mode" in saved_args:
+        saved_attack_mode = normalize_resume_contract_value(saved_args["attack_mode"])
+        if saved_attack_mode != LOCKED_ATTACK_MODE:
+            mismatches.append({
+                "key": "attack_mode",
+                "saved": saved_attack_mode,
+                "current": LOCKED_ATTACK_MODE,
+            })
     for key in keys:
         if key not in saved_args or key not in current_args:
             continue

@@ -106,8 +106,6 @@ def build_effnet_vae_lhat_train_cmd(
         str(data_root / "ptbxl/ptbxl_database.csv"),
         "--ptbxl_prep",
         str(data_root / "crosscenter_v2/ptbxl_preprocessed.npy"),
-        "--attack_mode",
-        "latent_hull",
         "--hull_M",
         str(args.hull_M),
         "--hull_lambda",
