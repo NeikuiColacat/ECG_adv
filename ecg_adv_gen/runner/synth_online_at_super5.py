@@ -15,8 +15,7 @@ Each epoch:
      into a QualityAwareBuffer (FIFO + informativeness eviction).
   E) Build a mixed DataLoader with three streams:
        PTBXL real  weight 1.0
-       roundtrip   weight 0.5    (Plan Issue #29 — keep against AugMix-off)
-       adv buffer  weight 2.0    (cold-start guard: weight=0 in epoch 0/empty)
+      adv buffer  weight 2.0    (cold-start guard: weight=0 in epoch 0/empty)
   F) train_one_epoch with masked BCE on the -1 sentinel + EWA anchor regularizer
      (Plan Issue #21 Q4 — ADR ICLR 2024 EMA self-distill).
   G) save the last checkpoint for the managed ref-excluded PN2021/PN2021-C
@@ -49,7 +48,7 @@ import torch.nn.functional as F
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import (
-    DataLoader, ConcatDataset, Dataset, TensorDataset, WeightedRandomSampler,
+    DataLoader, ConcatDataset, Dataset, WeightedRandomSampler,
 )
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -80,7 +79,6 @@ from ecg_adv_gen.evaluation.pn2021c import (  # noqa: E402
 
 from ecg_adv_gen.training.online_buffer import (  # noqa: E402
     QualityAwareBuffer,
-    build_roundtrip_anchor_dataset,
     center_crop_ct,
     train_one_epoch_masked_bce,
 )
@@ -1078,7 +1076,6 @@ def parse_args():
     p.add_argument("--ptbxl_weight", type=float, default=1.0)
     p.add_argument("--target_real_weight", type=float, default=0.0,
                    help="Sampling weight for --target_real_npz supervised stream.")
-    p.add_argument("--roundtrip_weight", type=float, default=0.5)
     p.add_argument("--adv_weight", type=float, default=0.5)
     p.add_argument(
         "--adv_weight_warmup_epochs",
@@ -1212,7 +1209,6 @@ def parse_args():
     )
     p.add_argument("--latent_augmix_bce_weight", type=float, default=1.0)
     p.add_argument("--latent_augmix_consistency_max_batches", type=int, default=0)
-    p.add_argument("--roundtrip_anchor_n", type=int, default=1500)
     p.add_argument("--qab_size", type=int, default=2048)
     p.add_argument("--class_trust", default=None,
                    help="Path to the real-all-present class_trust.json written by the managed wrapper.")
@@ -1418,8 +1414,7 @@ def main():
         train_labels = train_labels[:512]
         val_signals = val_signals[:128]
         val_labels = val_labels[:128]
-        args.roundtrip_anchor_n = 64
-        print("[smoke] truncated PTBXL train/val + roundtrip_anchor_n=64")
+        print("[smoke] truncated PTBXL train/val")
 
     train_ds = PTBXLDatasetScheme(train_signals, train_labels,
                                   crop_len=args.crop_len, mode='train')
@@ -1473,16 +1468,6 @@ def main():
 
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False,
                             num_workers=args.num_workers, pin_memory=True)
-
-    # ── Roundtrip anchor (cached) ────────────────────────────────────────────
-    rt_cache = os.path.join(args.output_dir, f"roundtrip_anchor_n{args.roundtrip_anchor_n}.npz")
-    roundtrip_ds: Optional[TensorDataset] = build_roundtrip_anchor_dataset(
-        train_ds=train_ds, ecgtwin=ecgtwin, n_samples=args.roundtrip_anchor_n,
-        device=args.device, crop_len=args.crop_len,
-        seed=args.seed, cache_path=rt_cache,
-    )
-    if roundtrip_ds is not None:
-        print(f"[setup] roundtrip-anchor: n={len(roundtrip_ds)}, weight={args.roundtrip_weight}")
 
     # ── PGD / Latent-Hull generator + buffer ────────────────────────────────
     # Note: generator __init__ calls victim.parameters().requires_grad_(False)
@@ -1930,8 +1915,6 @@ def main():
             streams.append((train_ds, args.ptbxl_weight, None))
         if target_real_ds is not None and args.target_real_weight > 0:
             streams.append((target_real_ds, args.target_real_weight, None))
-        if roundtrip_ds is not None and args.roundtrip_weight > 0:
-            streams.append((roundtrip_ds, args.roundtrip_weight, None))
         epoch_adv_weight = 0.0
         if buf_ds is not None and len(buf_ds) > 0:
             if args.adv_weight_warmup_epochs > 0:
@@ -1945,7 +1928,7 @@ def main():
         if len(streams) == 0:
             raise RuntimeError(
                 "No training streams are active. Check ptbxl_weight, "
-                "target_real_weight, roundtrip_weight, and adv buffer gates."
+                "target_real_weight, and adv buffer gates."
             )
         if len(streams) == 1:
             only_ds = streams[0][0]

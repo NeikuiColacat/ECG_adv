@@ -2,15 +2,11 @@
 
 from __future__ import annotations
 
-import os
-import time
-from pathlib import Path
 from typing import Any
 
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
 
 
@@ -79,84 +75,6 @@ def center_crop_ct(signal_ct: np.ndarray, length: int) -> np.ndarray:
     return signal_ct[:, start : start + length]
 
 
-def build_roundtrip_anchor_dataset(
-    train_ds: Any,
-    ecgtwin: Any,
-    n_samples: int,
-    device: str,
-    crop_len: int,
-    seed: int = 0,
-    cache_path: str | None = None,
-) -> TensorDataset | None:
-    """Decode a small PTB-XL anchor subset through ECGTwin VAE for source anchoring."""
-
-    if n_samples <= 0:
-        return None
-    if cache_path and os.path.exists(cache_path):
-        print(f"[roundtrip_anchor] cache hit: {cache_path}")
-        data = np.load(cache_path)
-        label_key = "labels" if "labels" in data.files else "labels_6"
-        return TensorDataset(
-            torch.from_numpy(data["signals_ct_250"]).float(),
-            torch.from_numpy(data[label_key]).float(),
-        )
-
-    from util.lead_utils import ECGTWIN_TO_PTBXL_INDICES
-
-    n = min(n_samples, len(train_ds))
-    rng = np.random.default_rng(seed)
-    indices = rng.choice(len(train_ds), size=n, replace=False)
-
-    dev = torch.device(device)
-    roundtrip_signals: list[torch.Tensor] = []
-    labels_list: list[torch.Tensor] = []
-    started = time.time()
-    print(f"[roundtrip_anchor] building {n}-sample VAE-roundtrip anchor ...")
-    for start in range(0, n, 32):
-        chunk_idx = indices[start : start + 32]
-        signals_tc = np.stack([train_ds.signals[i] for i in chunk_idx], axis=0).astype(np.float32)
-        labels = np.stack([train_ds.labels[i] for i in chunk_idx], axis=0).astype(np.float32)
-        batch = int(signals_tc.shape[0])
-
-        signals_ct = np.transpose(signals_tc, (0, 2, 1))[:, ECGTWIN_TO_PTBXL_INDICES, :]
-        signals_ct_t = torch.from_numpy(signals_ct).float().to(dev)
-        signals_ct_t = F.interpolate(signals_ct_t, size=1024, mode="linear", align_corners=True)
-        signals_lc_t = signals_ct_t.transpose(1, 2).contiguous()
-        with torch.no_grad():
-            latent = ecgtwin.encode_ecg(signals_lc_t)
-            decoded_lc = ecgtwin.decode_latent(latent)
-        decoded_ct = decoded_lc.transpose(1, 2)
-        decoded_ct = decoded_ct[:, ECGTWIN_TO_PTBXL_INDICES, :]
-        decoded_ct = torch.clamp(decoded_ct, min=-3.0, max=3.0)
-        decoded_ct = F.interpolate(decoded_ct, size=1000, mode="linear", align_corners=True)
-
-        flat = decoded_ct.reshape(batch, -1)
-        mean = flat.mean(dim=1, keepdim=True)
-        std = flat.std(dim=1, keepdim=True).clamp(min=1e-8)
-        decoded_ct = (decoded_ct - mean.unsqueeze(-1)) / std.unsqueeze(-1)
-        crop_start = (1000 - crop_len) // 2
-        roundtrip_signals.append(decoded_ct[..., crop_start : crop_start + crop_len].cpu())
-        labels_list.append(torch.from_numpy(labels))
-
-    signals_tensor = torch.cat(roundtrip_signals, dim=0).float()
-    labels_tensor = torch.cat(labels_list, dim=0).float()
-    print(
-        f"[roundtrip_anchor] done in {time.time() - started:.0f}s. "
-        f"shape={tuple(signals_tensor.shape)}"
-    )
-
-    if cache_path:
-        Path(cache_path).parent.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(
-            cache_path,
-            signals_ct_250=signals_tensor.numpy(),
-            labels=labels_tensor.numpy(),
-            labels_6=labels_tensor.numpy(),
-        )
-        print(f"[roundtrip_anchor] cached -> {cache_path}")
-    return TensorDataset(signals_tensor, labels_tensor)
-
-
 def train_one_epoch_masked_bce(
     model: nn.Module,
     loader: DataLoader,
@@ -203,7 +121,6 @@ def train_one_epoch_masked_bce(
 
 __all__ = [
     "QualityAwareBuffer",
-    "build_roundtrip_anchor_dataset",
     "center_crop_ct",
     "train_one_epoch_masked_bce",
 ]
