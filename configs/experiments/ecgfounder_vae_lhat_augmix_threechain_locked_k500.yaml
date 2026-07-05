@@ -64,7 +64,6 @@ adaptation:
     dirichlet_alpha: 1.0
     include_anchor: true
     label_mode: primary
-    partner_pool: target
     attack_pos_weight_source: none
     attack_pos_weight_clip: 50.0
   attack:

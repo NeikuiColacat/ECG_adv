@@ -92,12 +92,6 @@ def build_ecgfounder_fullft_method_tag(params: Any) -> str:
             method_tag += f"_label{hull_label_mode}"
         if _as_bool(_get(params, "hull_include_anchor", False)):
             method_tag += "_includeanchor"
-        hull_partner_pool = str(_get(params, "hull_partner_pool", "target"))
-        if hull_partner_pool != "target":
-            method_tag += f"_partners{hull_partner_pool}"
-        source_partner_limit = _as_int(_get(params, "source_partner_limit_per_class", 0), 0)
-        if source_partner_limit > 0:
-            method_tag += f"_splim{source_partner_limit}"
         anchor_sample_mode = str(_get(params, "anchor_sample_mode", "stratified"))
         if anchor_sample_mode != "stratified":
             method_tag += f"_as{anchor_sample_mode}"

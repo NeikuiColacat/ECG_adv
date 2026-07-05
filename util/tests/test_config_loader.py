@@ -895,6 +895,7 @@ def test_ecgfounder_locked_threechain_augmix_command_uses_fullft_last_checkpoint
         {"name": "chain2", "role": "official_corruption_chain"},
         {"name": "chain3", "role": "vae_lhat_adversarial_waveform"},
     ]
+    assert "partner_pool" not in config["adaptation"]["hull"]
     assert len(commands) == 4
     for command in commands:
         argv = command["argv"]
@@ -908,6 +909,10 @@ def test_ecgfounder_locked_threechain_augmix_command_uses_fullft_last_checkpoint
         assert "--selection_metric" not in argv
         assert "--source_train_limit" not in argv
         assert "--cache_dir" not in argv
+        assert "--hull_partner_pool" not in argv
+        assert "--source_partner_limit_per_class" not in argv
+        assert "--ptbxl_vae_cache" not in argv
+        assert "target_source" not in joined
         assert _option_value(argv, "--supervised_input_mode") == "raw1000"
         assert _option_value(argv, "--target_raw1000_npz_override").endswith(
             f"/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets/{center}/"

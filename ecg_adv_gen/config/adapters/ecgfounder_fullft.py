@@ -162,9 +162,6 @@ def build_ecgfounder_fullft_argv(config: Mapping[str, Any], context: Mapping[str
         _append_option(argv, "--hull_attack_pos_weight_clip", hull.get("attack_pos_weight_clip", 50.0))
         _append_option(argv, "--hull_label_mode", hull.get("label_mode", "primary"))
         _append_flag(argv, "--hull_include_anchor", hull.get("include_anchor", False))
-        _append_option(argv, "--hull_partner_pool", hull.get("partner_pool", "target"))
-        _append_option(argv, "--ptbxl_vae_cache", hull.get("ptbxl_vae_cache", ""))
-        _append_option(argv, "--source_partner_limit_per_class", hull.get("source_partner_limit_per_class", 0))
         _append_option(argv, "--pgd_eps", attack.get("pgd_eps", 2.0))
         _append_option(argv, "--pgd_batch", attack.get("pgd_batch", 4))
     if bool(latent_augmix.get("enabled", False)):

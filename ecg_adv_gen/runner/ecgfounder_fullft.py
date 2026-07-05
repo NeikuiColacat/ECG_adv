@@ -291,43 +291,6 @@ def load_anchor_pool_for_ids(
     )
 
 
-def load_ptbxl_partner_pool(
-    ptbxl_payload: dict[str, np.ndarray],
-    args: argparse.Namespace,
-) -> dict[str, np.ndarray]:
-    cache_path = Path(args.ptbxl_vae_cache)
-    rows = torch.load(cache_path, map_location="cpu")
-    if not isinstance(rows, list):
-        raise RuntimeError(f"{cache_path} should contain a list, got {type(rows)!r}")
-    labels = ptbxl_payload["labels"].astype(np.float32)
-    folds = ptbxl_payload["folds"].astype(np.int64)
-    if len(rows) != len(labels):
-        raise RuntimeError(
-            f"PTB-XL VAE cache length {len(rows)} does not match PTB-XL labels {len(labels)}"
-        )
-    source_idx = np.nonzero(np.isin(folds, np.arange(1, 9)))[0]
-    if args.source_partner_limit_per_class > 0:
-        rng = np.random.default_rng(args.seed + 90210)
-        selected: set[int] = set()
-        for class_i in range(labels.shape[1]):
-            cls_idx = source_idx[labels[source_idx, class_i] > 0.5]
-            if len(cls_idx) == 0:
-                continue
-            take = min(int(args.source_partner_limit_per_class), len(cls_idx))
-            selected.update(int(i) for i in rng.choice(cls_idx, size=take, replace=False))
-        if selected:
-            source_idx = np.asarray(sorted(selected), dtype=np.int64)
-    latents = np.stack([
-        rows[int(i)]["data"].detach().cpu().numpy().astype(np.float32)
-        for i in source_idx
-    ]).astype(np.float32)
-    return {
-        "latents": latents,
-        "labels": labels[source_idx].astype(np.float32),
-        "indices": source_idx.astype(np.int64),
-    }
-
-
 def load_source_raw1000_dataset(
     args: argparse.Namespace,
     source_indices: np.ndarray,
@@ -1165,23 +1128,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--hull_attack_pos_weight_clip", type=float, default=50.0)
     ap.add_argument("--hull_label_mode", choices=["primary", "exact", "compatible"], default="primary")
     ap.add_argument("--hull_include_anchor", action="store_true")
-    ap.add_argument(
-        "--hull_partner_pool",
-        choices=["target", "target_source"],
-        default="target",
-        help=(
-            "Latent-hull neighbor pool. target uses only the K500 target anchors; "
-            "target_source keeps target anchors as attack anchors but adds PTB-XL "
-            "source-train latents as same-label/compatible hull partners."
-        ),
-    )
-    ap.add_argument("--ptbxl_vae_cache", default=str(REPO_ROOT / "datasets/PTBXL/PTBXL_vae_multi_nomic.pt"))
-    ap.add_argument(
-        "--source_partner_limit_per_class",
-        type=int,
-        default=0,
-        help="Optional per-class cap when --hull_partner_pool=target_source; 0 uses all PTB-XL source-train latents.",
-    )
     ap.add_argument("--pgd_eps", type=float, default=2.0)
     ap.add_argument("--pgd_batch", type=int, default=4)
     ap.add_argument("--preprocess_policy", default="official_ptbxl_eval")
@@ -1371,21 +1317,9 @@ def main() -> None:
             class_to_idx=SUPER5_TO_IDX,
             seed=args.seed,
         )
-        index_latents = anchor_pool["latents"]
-        index_labels = anchor_pool["labels"]
-        source_partner_info = None
-        if args.hull_partner_pool == "target_source":
-            source_partner_info = load_ptbxl_partner_pool(ptbxl, args)
-            index_latents = np.concatenate([index_latents, source_partner_info["latents"]], axis=0)
-            index_labels = np.concatenate([index_labels, source_partner_info["labels"]], axis=0)
-            print(
-                f"[setup] latent partner pool target+source: "
-                f"target={len(anchor_pool['latents'])} source={len(source_partner_info['latents'])}",
-                flush=True,
-            )
         index = SameLabelLatentIndex(
-            index_latents,
-            index_labels,
+            anchor_pool["latents"],
+            anchor_pool["labels"],
             label_mode=args.hull_label_mode,
             seed=args.seed,
             include_self=args.hull_include_anchor,
@@ -1752,10 +1686,6 @@ def main() -> None:
             "requested_classes_in_scope": args.vae_classes_in_scope,
             "min_class_count": int(args.vae_min_class_count),
             "source_base": anchor_pool["source_base"],
-            "hull_partner_pool": args.hull_partner_pool,
-            "source_partner_count": (
-                None if args.hull_partner_pool == "target" else int(len(index.latents) - len(anchor_pool["latents"]))
-            ),
             "anchor_sample_mode": args.anchor_sample_mode,
             "anchor_sample_power": float(args.anchor_sample_power),
             "anchor_sample_min_weight": float(args.anchor_sample_min_weight),
