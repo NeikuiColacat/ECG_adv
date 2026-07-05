@@ -993,9 +993,6 @@ def _direct_child_run(opts: dict[str, Any], center: str) -> dict[str, Any]:
 
 def _vae_child_run(opts: dict[str, Any], center: str) -> dict[str, Any]:
     out_root = Path(str(_opt_first(opts, "--out_root", "")))
-    checkpoint_policy = str(_opt_first(opts, "--checkpoint_policy", "best"))
-    checkpoint_role = "last_model" if checkpoint_policy == "last" else "best_model"
-    checkpoint_name = "last_model.pt" if checkpoint_policy == "last" else "best_model.pt"
     child_dir = out_root / build_effnet_vae_lhat_run_leaf(
         {
             "center": center,
@@ -1035,7 +1032,7 @@ def _vae_child_run(opts: dict[str, Any], center: str) -> dict[str, Any]:
         "output_root": str(out_root),
         "child_run_dir": str(child_dir),
         "expected_artifacts": [
-            _path_record(checkpoint_role, child_dir / checkpoint_name),
+            _path_record("last_model", child_dir / "last_model.pt"),
             _path_record("launch_config", child_dir / "launch_config.json"),
             _path_record("train_stdout", child_dir / "train_stdout.log"),
             _path_record("eval_log", child_dir / "eval_full.log"),
