@@ -38,10 +38,6 @@ adaptation:
   method: ecgfounder_vae_lhat_augmix_threechain_locked_last
   run_name: ${matrix.center}_vae_lhat_augmix_threechain_locked
   supervised_input_mode: raw1000
-  selection:
-    checkpoint_policy: last
-    target_val_count: 0
-    metric: source_auprc
   loss:
     source_weight: 1.0
     target_real_weight: 40.0

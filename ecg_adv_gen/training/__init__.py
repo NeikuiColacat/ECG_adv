@@ -15,7 +15,6 @@ from .losses import (
 from ecg_adv_gen.run_naming import (
     build_ecgfounder_fullft_method_tag,
     build_ecgfounder_fullft_run_leaf,
-    build_ecgfounder_fullft_selection_tag,
     tag_value,
 )
 from .signal_streams import (
@@ -66,7 +65,6 @@ __all__ = [
     "build_weighted_signal_stream_loader",
     "build_ecgfounder_fullft_method_tag",
     "build_ecgfounder_fullft_run_leaf",
-    "build_ecgfounder_fullft_selection_tag",
     "masked_bce_per_sample",
     "masked_bce_with_logits",
     "MemorySignalDataset",

@@ -228,7 +228,7 @@ managed_experiments:
   method_family: ecgfounder_locked_ptbxl_super5_full_finetune
   mapping_version: v7_super5_sjr_rgq_review_20260528
   owns_training_logic: false
-  notes: Locked PTB-XL source full-FT stage for the PN2021-C protocol; runner.adapter=ecgfounder_fullft emits a source-only command, uses official ECGFounder initialization, target_val_count=0, checkpoint_policy=last, and writes last_model.pt for downstream K500 full-FT.
+  notes: Locked PTB-XL source full-FT stage for the PN2021-C protocol; runner.adapter=ecgfounder_fullft emits a source-only command, uses official ECGFounder initialization, and writes last_model.pt for downstream K500 full-FT.
 - name: ecgfounder_k500_fullft_locked
   status: active_managed
   evidence_scope: launch_only
@@ -238,7 +238,7 @@ managed_experiments:
   method_family: ecgfounder_locked_k500_full_finetune
   mapping_version: v7_super5_sjr_rgq_review_20260528
   owns_training_logic: false
-  notes: Locked K500 full-FT stage for the PN2021-C protocol; consumes same-run PTB-XL full-FT last_model.pt via --init_model_path, uses all K500 samples for training, target_val_count=0, checkpoint_policy=last, and never references best_head.pt/residual_adapter routes.
+  notes: Locked K500 full-FT stage for the PN2021-C protocol; consumes same-run PTB-XL full-FT last_model.pt via --init_model_path, uses all K500 samples for training, fixes last-checkpoint output in the runner, and never references best_head.pt/residual_adapter routes.
 - name: ecgfounder_vae_lhat_augmix_threechain_locked_k500
   status: active_managed
   evidence_scope: launch_only
@@ -248,7 +248,7 @@ managed_experiments:
   method_family: ecgfounder_locked_fullft_vae_lhat_threechain_augmix_pn2021c
   mapping_version: v7_super5_sjr_rgq_review_20260528
   owns_training_logic: false
-  notes: Locked ECGFounder PN2021-C main-method launch surface; consumes same-run K500 full-FT last_model.pt, keeps all ECGFounder layers trainable, uses all K500 samples, checkpoint_policy=last, and trains two official corruption chains plus one VAE-LHAT adversarial waveform chain without raw-supervised or stabilizer branches.
+  notes: Locked ECGFounder PN2021-C main-method launch surface; consumes same-run K500 full-FT last_model.pt, keeps all ECGFounder layers trainable, uses all K500 samples, and trains two official corruption chains plus one VAE-LHAT adversarial waveform chain without raw-supervised or stabilizer branches.
 - name: pn2021_eval_v7_sjr_rgq_refexcluded
   status: active_managed
   evidence_scope: evaluation_only

@@ -26,7 +26,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 
@@ -84,23 +84,16 @@ from ecg_adv_gen.data.raw_signals import (  # noqa: E402
     anchor_signal_npz_path,
     apply_augmix_op_np as _raw_signal_apply_augmix_op_np,
 )
-from ecg_adv_gen.evaluation import (  # noqa: E402
-    compute_source_target_selection_score,
-    split_target_train_val_indices,
-)
 from ecg_adv_gen.labels import CLASS_NAMES_SUPER5  # noqa: E402
 from ecg_adv_gen.labels.super5_mapping import SUPER5_TO_IDX  # noqa: E402
 from ecg_adv_gen.labels import pn2021_super5_label_mapping_payload  # noqa: E402
-from ecg_adv_gen.models.ecgfounder_heads import init_dense_from_head_path  # noqa: E402
 from ecg_adv_gen.models.ecgfounder_inference import evaluate_signal_split  # noqa: E402
 from ecg_adv_gen.models.ecgfounder_torch import (  # noqa: E402
     ecg1000_to_ecgfounder_input,
     global_zscore_torch,
-    stabilize_ecg_torch,
 )
 from ecg_adv_gen.training import (  # noqa: E402
     CachedSignalDataset,
-    MemorySignalDataset,
     build_weighted_signal_stream_loader_from_datasets,
     build_weighted_signal_stream_loader,
     compute_pos_weight,
@@ -123,7 +116,7 @@ from util.lead_utils import ECGTWIN_TO_PTBXL_INDICES  # noqa: E402
 
 DEFAULT_OUT_DIR = DATA_ROOT / "paper_ecgfounder_fullft_super5_20260523"
 CENTER_DEFAULT = "cpsc_2018"
-SUPERVISED_INPUT_MODES = ("cached5000", "raw1000", "source_cached_target_raw1000")
+SUPERVISED_INPUT_MODES = ("cached5000", "raw1000")
 DEFAULT_SOURCE_RAW1000_SIGNAL_CACHE = (
     DATA_ROOT / "triple_labels/cache/ptbxl_minimal_resample_per_sample_global_fs100_len1000.npy"
 )
@@ -180,86 +173,31 @@ def set_seed(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
-def input_stabilizer_kwargs_from_args(args: argparse.Namespace) -> dict[str, Any]:
-    kwargs: dict[str, Any] = {}
-    if args.ecgfounder_input_bandpass_low_hz is not None:
-        kwargs["bandpass_low_hz"] = float(args.ecgfounder_input_bandpass_low_hz)
-    if args.ecgfounder_input_bandpass_high_hz is not None:
-        kwargs["bandpass_high_hz"] = float(args.ecgfounder_input_bandpass_high_hz)
-    if bool(args.ecgfounder_input_repair_flat_leads):
-        kwargs["repair_flat_leads"] = True
-    if args.ecgfounder_input_clip_abs is not None:
-        kwargs["clip_abs"] = float(args.ecgfounder_input_clip_abs)
-    return kwargs
-
-
-def prepare_raw_ecgfounder_input(
-    x: torch.Tensor,
-    input_stabilizer_kwargs: dict[str, Any] | None = None,
-) -> torch.Tensor:
-    return ecg1000_to_ecgfounder_input(x, **(input_stabilizer_kwargs or {}))
-
-
-def prepare_cached_ecgfounder_input(
-    x: torch.Tensor,
-    input_stabilizer_kwargs: dict[str, Any] | None = None,
-) -> torch.Tensor:
-    kwargs = dict(input_stabilizer_kwargs or {})
-    if not kwargs:
-        return x
-    y = stabilize_ecg_torch(
-        x,
-        sample_rate_hz=500.0,
-        bandpass_low_hz=kwargs.get("bandpass_low_hz"),
-        bandpass_high_hz=kwargs.get("bandpass_high_hz"),
-        repair_flat_leads=bool(kwargs.get("repair_flat_leads", False)),
-        clip_abs=kwargs.get("clip_abs"),
-    )
-    return global_zscore_torch(y)
+def prepare_raw_ecgfounder_input(x: torch.Tensor) -> torch.Tensor:
+    return ecg1000_to_ecgfounder_input(x)
 
 
 def prepare_supervised_ecgfounder_input(
     x: torch.Tensor,
     supervised_input_mode: str,
-    input_stabilizer_kwargs: dict[str, Any] | None = None,
-    stream: torch.Tensor | None = None,
 ) -> torch.Tensor:
     mode = str(supervised_input_mode)
     if mode == "raw1000":
-        return prepare_raw_ecgfounder_input(x, input_stabilizer_kwargs)
+        return prepare_raw_ecgfounder_input(x)
     if mode == "cached5000":
-        return prepare_cached_ecgfounder_input(x, input_stabilizer_kwargs)
-    if mode == "source_cached_target_raw1000":
-        if stream is None:
-            raise ValueError("source_cached_target_raw1000 requires stream ids")
-        if x.shape[-1] != TARGET_POINTS:
-            raise ValueError(
-                "source_cached_target_raw1000 supervised batches must be pre-aligned "
-                f"to {TARGET_POINTS} points, got {tuple(x.shape)}"
-            )
-        stream = stream.to(device=x.device)
-        source_mask = stream == 0
-        if not bool(source_mask.any()):
-            return x
-        out = x.clone()
-        out[source_mask] = prepare_cached_ecgfounder_input(
-            x[source_mask],
-            input_stabilizer_kwargs,
-        )
-        return out
+        return x
     raise ValueError(f"unknown supervised_input_mode: {mode!r}")
 
 
 def prepare_adv_stream_signal_for_supervised_mode(
     x_adv_1000: torch.Tensor,
     supervised_input_mode: str,
-    input_stabilizer_kwargs: dict[str, Any] | None = None,
 ) -> torch.Tensor:
     mode = str(supervised_input_mode)
     if mode == "raw1000":
         return x_adv_1000
-    if mode in {"cached5000", "source_cached_target_raw1000"}:
-        return prepare_raw_ecgfounder_input(x_adv_1000, input_stabilizer_kwargs)
+    if mode == "cached5000":
+        return prepare_raw_ecgfounder_input(x_adv_1000)
     raise ValueError(f"unknown supervised_input_mode: {mode!r}")
 
 
@@ -270,13 +208,11 @@ class ECGFounderFullFTVictim(nn.Module):
         self,
         model: nn.Module,
         ecgtwin: ECGTwinWrapper,
-        input_stabilizer_kwargs: dict[str, Any] | None = None,
     ) -> None:
         super().__init__()
         self.model = model
         self.ecgtwin = ecgtwin
         self.num_classes = len(CLASS_NAMES_SUPER5)
-        self.input_stabilizer_kwargs = dict(input_stabilizer_kwargs or {})
 
     @staticmethod
     def _global_zscore(x: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
@@ -298,7 +234,7 @@ class ECGFounderFullFTVictim(nn.Module):
 
     def forward_from_latent_to_logits(self, latent: torch.Tensor) -> torch.Tensor:
         ecg_ct = self._ecgtwin_latent_to_ecg1000(latent)
-        return self.model(prepare_raw_ecgfounder_input(ecg_ct, self.input_stabilizer_kwargs))
+        return self.model(prepare_raw_ecgfounder_input(ecg_ct))
 
 
 def build_signal_cache(
@@ -334,28 +270,6 @@ def build_signal_cache(
 
 def load_selected_ref_ids(ref_meta_json: Path, center: str) -> set[str]:
     return load_selected_record_ids_from_meta(ref_meta_json, center, strict_center=True)
-
-
-def init_dense_from_head(model: nn.Module, head_path: Path) -> dict[str, Any]:
-    return init_dense_from_head_path(model, head_path)
-
-
-def split_target_train_val(
-    target_idx: np.ndarray,
-    record_ids: np.ndarray,
-    labels: np.ndarray,
-    val_count: int,
-    split_seed: int,
-    split_mode: str = "random",
-) -> tuple[np.ndarray, np.ndarray, set[str], set[str]]:
-    return split_target_train_val_indices(
-        target_idx,
-        record_ids,
-        labels,
-        val_count,
-        split_seed,
-        split_mode,
-    )
 
 
 def load_anchor_pool_for_ids(
@@ -579,61 +493,6 @@ def summarize_latent_augmix_epoch_stats(stats_batches: list[dict[str, Any]]) -> 
     }
 
 
-def prepare_raw_dataset_as_ecgfounder_dataset(
-    dataset: Dataset,
-    input_stabilizer_kwargs: dict[str, Any] | None = None,
-    *,
-    batch_size: int = 256,
-) -> MemorySignalDataset:
-    """Materialize a small raw1000 dataset as ECGFounder 5000-point tensors."""
-
-    loader = DataLoader(
-        dataset,
-        batch_size=int(batch_size),
-        shuffle=False,
-        num_workers=0,
-        pin_memory=False,
-        drop_last=False,
-    )
-    signal_chunks: list[np.ndarray] = []
-    label_chunks: list[np.ndarray] = []
-    with torch.no_grad():
-        for x, y in loader:
-            prepared = prepare_raw_ecgfounder_input(
-                x.float(),
-                input_stabilizer_kwargs,
-            )
-            signal_chunks.append(prepared.detach().cpu().numpy().astype(np.float32, copy=False))
-            label_chunks.append(y.detach().cpu().numpy().astype(np.float32, copy=False))
-    if not signal_chunks:
-        raise RuntimeError("cannot prepare empty raw1000 dataset")
-    return MemorySignalDataset(
-        np.concatenate(signal_chunks, axis=0).astype(np.float32, copy=False),
-        np.concatenate(label_chunks, axis=0).astype(np.float32, copy=False),
-    )
-
-
-def prepare_adv_signals_for_hybrid_loader(
-    adv_signals: np.ndarray | None,
-    input_stabilizer_kwargs: dict[str, Any] | None = None,
-) -> np.ndarray | None:
-    if adv_signals is None or len(adv_signals) == 0:
-        return adv_signals
-    arr = np.asarray(adv_signals, dtype=np.float32)
-    if arr.ndim != 3 or arr.shape[1] != 12:
-        raise ValueError(f"adv_signals must have shape (N, 12, L), got {arr.shape}")
-    if arr.shape[-1] == TARGET_POINTS:
-        return arr
-    if arr.shape[-1] != 1000:
-        raise ValueError(f"hybrid adv_signals must have length 1000 or {TARGET_POINTS}, got {arr.shape}")
-    with torch.no_grad():
-        prepared = prepare_raw_ecgfounder_input(
-            torch.from_numpy(arr).float(),
-            input_stabilizer_kwargs,
-        )
-    return prepared.detach().cpu().numpy().astype(np.float32, copy=False)
-
-
 def parse_class_weight_string(raw: str) -> dict[str, float]:
     return parse_anchor_class_weight_string(raw)
 
@@ -820,23 +679,9 @@ def eval_split(
     indices: np.ndarray,
     batch_size: int,
     device: torch.device,
-    *,
-    input_stabilizer_kwargs: dict[str, Any] | None = None,
 ) -> dict:
-    eval_model: nn.Module = model
-    if input_stabilizer_kwargs:
-        class _StabilizedModel(nn.Module):
-            def __init__(self, base_model: nn.Module, kwargs: dict[str, Any]) -> None:
-                super().__init__()
-                self.base_model = base_model
-                self.kwargs = dict(kwargs)
-
-            def forward(self, x: torch.Tensor) -> torch.Tensor:
-                return self.base_model(prepare_cached_ecgfounder_input(x, self.kwargs))
-
-        eval_model = _StabilizedModel(model, input_stabilizer_kwargs)
     return evaluate_signal_split(
-        eval_model,
+        model,
         signals,
         labels,
         indices,
@@ -863,41 +708,6 @@ def make_train_loader(
     if args.source_train_limit > 0:
         source_idx = source_idx[: args.source_train_limit]
     effective_adv_weight = float(args.adv_weight if adv_weight is None else adv_weight)
-    if str(args.supervised_input_mode) == "source_cached_target_raw1000":
-        if target_train_record_ids is None:
-            raise ValueError("source_cached_target_raw1000 supervised input mode requires target_train_record_ids")
-        source_ds = CachedSignalDataset(
-            ptbxl_payload["signals"],
-            ptbxl_payload["labels"],
-            source_idx,
-        )
-        target_raw_ds = load_target_raw_dataset(
-            args.center,
-            args,
-            sorted(str(x) for x in target_train_record_ids),
-        )
-        target_ds = prepare_raw_dataset_as_ecgfounder_dataset(
-            target_raw_ds,
-            input_stabilizer_kwargs_from_args(args),
-            batch_size=int(args.eval_batch_size),
-        )
-        adv_signals_for_loader = prepare_adv_signals_for_hybrid_loader(
-            adv_signals,
-            input_stabilizer_kwargs_from_args(args),
-        )
-        return build_weighted_signal_stream_loader_from_datasets(
-            source_dataset=source_ds,
-            target_dataset=target_ds,
-            source_weight=float(args.source_weight),
-            target_real_weight=float(args.target_real_weight),
-            adv_weight=effective_adv_weight,
-            batch_size=args.batch_size,
-            num_workers=args.num_workers,
-            num_classes=len(CLASS_NAMES_SUPER5),
-            adv_signals=adv_signals_for_loader,
-            adv_labels=adv_labels,
-            adv_teacher_logits=adv_teacher_logits,
-        )
     if str(args.supervised_input_mode) == "raw1000":
         if target_train_record_ids is None:
             raise ValueError("raw1000 supervised input mode requires target_train_record_ids")
@@ -1034,7 +844,7 @@ def build_adv_epoch(
                 init_logits = victim.forward_from_latent_to_logits(z_init)
             x_adv_1000, delta = pgd_gen.attack_from_latent(z, y, candidate_latents=cand)
             with torch.no_grad():
-                adv_input = prepare_raw_ecgfounder_input(x_adv_1000, victim.input_stabilizer_kwargs)
+                adv_input = prepare_raw_ecgfounder_input(x_adv_1000)
                 adv_logits = victim.model(adv_input)
                 batch_diagnostics.append(
                     fullft_adv_batch_diagnostics(clean_logits, init_logits, adv_logits, y)
@@ -1083,7 +893,6 @@ def build_adv_epoch(
                         prepare_adv_stream_signal_for_supervised_mode(
                             latent_augmix_t,
                             args.supervised_input_mode,
-                            victim.input_stabilizer_kwargs,
                         )
                         .detach()
                         .cpu()
@@ -1106,7 +915,6 @@ def build_adv_epoch(
                     prepare_adv_stream_signal_for_supervised_mode(
                         x_adv_1000,
                         args.supervised_input_mode,
-                        victim.input_stabilizer_kwargs,
                     )
                     .detach()
                     .cpu()
@@ -1184,76 +992,19 @@ def load_fullft_checkpoint(
     model.load_state_dict(state)
 
 
-def _ecgfounder_tail_train_modules(model: nn.Module, args: argparse.Namespace) -> list[nn.Module]:
-    scope = str(args.trainable_scope)
-    if scope == "dense":
-        return [model.dense]
-    if scope == "last_n_stages":
-        stage_list = getattr(model, "stage_list", None)
-        if stage_list is None:
-            raise RuntimeError("--trainable_scope last_n_stages requires ECGFounder model.stage_list")
-        n_stages = len(stage_list)
-        last_n = int(args.trainable_last_n_stages)
-        if last_n <= 0:
-            raise ValueError("--trainable_last_n_stages must be positive when trainable_scope=last_n_stages")
-        if last_n > n_stages:
-            raise ValueError(
-                f"--trainable_last_n_stages={last_n} exceeds ECGFounder stage count {n_stages}"
-            )
-        return list(stage_list[-last_n:]) + [model.dense]
-    if scope == "full":
-        return [model]
-    raise ValueError(f"unsupported --trainable_scope={scope!r}")
+def configure_ecgfounder_full_train(model: nn.Module) -> dict[str, Any]:
+    """Lock ECGFounder fine-tuning to the paper mainline: all model weights trainable."""
 
-
-def configure_ecgfounder_trainable_scope(
-    model: nn.Module,
-    args: argparse.Namespace,
-) -> dict[str, Any]:
-    """Apply the requested ECGFounder fine-tuning scope and return audit info."""
-
-    scope = str(args.trainable_scope)
-    if scope == "full":
-        set_module_requires_grad(model, True)
-        train_module_names = ["model"]
-    else:
-        set_module_requires_grad(model, False)
-        train_modules = _ecgfounder_tail_train_modules(model, args)
-        for module in train_modules:
-            set_module_requires_grad(module, True)
-        if scope == "dense":
-            train_module_names = ["dense"]
-        else:
-            last_n = int(args.trainable_last_n_stages)
-            stage_count = len(getattr(model, "stage_list"))
-            train_module_names = [
-                *(f"stage_list.{idx}" for idx in range(stage_count - last_n, stage_count)),
-                "dense",
-            ]
+    set_module_requires_grad(model, True)
     trainable_model_params = [p for p in model.parameters() if p.requires_grad]
     return {
-        "scope": scope,
-        "last_n_stages": int(args.trainable_last_n_stages),
-        "train_module_names": train_module_names,
+        "scope": "full",
+        "last_n_stages": 0,
+        "train_module_names": ["model"],
         "n_trainable_model_tensors": int(len(trainable_model_params)),
         "n_trainable_model_params": int(sum(p.numel() for p in trainable_model_params)),
         "n_total_model_params": int(sum(p.numel() for p in model.parameters())),
     }
-
-
-def set_ecgfounder_train_mode_for_scope(
-    model: nn.Module,
-    args: argparse.Namespace,
-) -> None:
-    """Set train/eval modes so frozen ECGFounder blocks do not update BN stats."""
-
-    scope = str(args.trainable_scope)
-    if scope == "full":
-        model.train()
-    else:
-        model.eval()
-        for module in _ecgfounder_tail_train_modules(model, args):
-            module.train()
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -1437,21 +1188,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument("--pgd_eps", type=float, default=2.0)
     ap.add_argument("--pgd_batch", type=int, default=4)
-    ap.add_argument("--target_val_count", type=int, default=0)
-    ap.add_argument("--target_val_seed", type=int, default=None)
-    ap.add_argument("--target_val_split_mode", choices=["random", "stratified"], default="random")
-    ap.add_argument(
-        "--selection_metric",
-        choices=["source_auprc", "target_val_auprc", "source_plus_target_val_auprc"],
-        default="source_auprc",
-    )
-    ap.add_argument("--target_val_score_weight", type=float, default=0.5)
-    ap.add_argument(
-        "--checkpoint_policy",
-        choices=["best", "last"],
-        default="best",
-        help="Checkpoint loaded for final eval_result.json; locked PN2021-C protocol uses last.",
-    )
     ap.add_argument("--source_train_limit", type=int, default=0)
     ap.add_argument(
         "--cache_dir",
@@ -1463,7 +1199,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     ap.add_argument("--preprocess_policy", default="official_ptbxl_eval")
-    ap.add_argument("--run_suffix", default="")
     ap.add_argument(
         "--run_name",
         default="",
@@ -1474,10 +1209,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default="",
         help="Optional full-model ECGFounder checkpoint used before K500 full fine-tuning.",
     )
-    ap.add_argument("--ecgfounder_input_bandpass_low_hz", type=float, default=None)
-    ap.add_argument("--ecgfounder_input_bandpass_high_hz", type=float, default=None)
-    ap.add_argument("--ecgfounder_input_repair_flat_leads", action="store_true")
-    ap.add_argument("--ecgfounder_input_clip_abs", type=float, default=None)
     ap.add_argument(
         "--supervised_input_mode",
         choices=SUPERVISED_INPUT_MODES,
@@ -1500,28 +1231,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     ap.add_argument(
-        "--init_head_path",
-        default="",
-        help="Optional trained Super5 linear head state dict (weight/bias) used to initialize model.dense.",
-    )
-    ap.add_argument(
-        "--trainable_scope",
-        choices=["full", "dense", "last_n_stages"],
-        default="full",
-        help=(
-            "Which ECGFounder parameters are updated during this run. "
-            "full preserves the locked fullFT protocol; dense trains only "
-            "model.dense; last_n_stages trains model.dense plus the last N "
-            "ECGFounder stage_list blocks."
-        ),
-    )
-    ap.add_argument(
-        "--trainable_last_n_stages",
-        type=int,
-        default=0,
-        help="Number of tail stage_list blocks to train when --trainable_scope last_n_stages.",
-    )
-    ap.add_argument(
         "--anchor_base_root",
         default="",
         help=(
@@ -1531,7 +1240,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument("--device", default="cuda:0")
     ap.add_argument("--seed", type=int, default=20260531)
-    ap.add_argument("--force", action="store_true")
     return ap
 
 
@@ -1561,30 +1269,23 @@ def main() -> None:
             raise ValueError("--latent_augmix_topology locked_three_chain requires exactly three chains")
         if bool(args.latent_augmix_renorm):
             raise ValueError("--latent_augmix_renorm is diagnostic-only and excluded from the locked main protocol")
-    if args.trainable_scope == "last_n_stages" and int(args.trainable_last_n_stages) <= 0:
-        raise ValueError("--trainable_scope last_n_stages requires --trainable_last_n_stages > 0")
-    if args.trainable_scope != "last_n_stages" and int(args.trainable_last_n_stages) != 0:
-        raise ValueError("--trainable_last_n_stages is only valid with --trainable_scope last_n_stages")
     if args.stage == "ptbxl_source":
         if args.enable_vae_adv_stream:
             raise ValueError("--stage ptbxl_source does not support VAE adversarial stream")
         if args.enable_latent_augmix_branch:
             raise ValueError("--stage ptbxl_source does not support latent AugMix")
-        if args.init_model_path or args.init_head_path:
+        if args.init_model_path:
             raise ValueError("--stage ptbxl_source must start from the official ECGFounder checkpoint")
 
     set_seed(args.seed)
     device = torch.device(args.device)
-    input_stabilizer_kwargs = input_stabilizer_kwargs_from_args(args)
     out_dir = Path(args.out_dir)
     run_dir = out_dir / "runs" / build_ecgfounder_fullft_run_leaf(args)
     run_dir.mkdir(parents=True, exist_ok=True)
     result_path = run_dir / "eval_result.json"
-    if result_path.exists() and not args.force:
+    if result_path.exists():
         print(result_path.read_text())
         return
-    if input_stabilizer_kwargs:
-        print(f"[setup] ECGFounder input stabilizer enabled: {input_stabilizer_kwargs}", flush=True)
 
     cache_dir = Path(args.cache_dir) if args.cache_dir else out_dir / "cache"
     ptbxl_items, _ = build_ptbxl_items(limit=0)
@@ -1619,16 +1320,10 @@ def main() -> None:
         target_idx = np.asarray([i for i, rid in enumerate(record_ids) if rid in selected_ids], dtype=np.int64)
         if len(target_idx) != args.k:
             print(f"[warn] parsed K={len(target_idx)} target records; requested {args.k}", flush=True)
-        target_train_idx, target_val_idx, target_train_ids, target_val_ids = split_target_train_val(
-            target_idx,
-            record_ids,
-            pn["labels"],
-            args.target_val_count,
-            args.seed if args.target_val_seed is None else args.target_val_seed,
-            args.target_val_split_mode,
-        )
-        if args.selection_metric != "source_auprc" and len(target_val_idx) == 0:
-            raise RuntimeError("--selection_metric needs --target_val_count > 0 unless source_auprc is used")
+        target_train_idx = target_idx
+        target_val_idx = np.empty(0, dtype=np.int64)
+        target_train_ids = set(str(record_ids[i]) for i in target_train_idx)
+        target_val_ids: set[str] = set()
         eval_idx = np.asarray([i for i, rid in enumerate(record_ids) if rid not in selected_ids], dtype=np.int64)
         drop_eval_idx = eval_idx[pn["labels"][eval_idx].sum(axis=1) > 0]
 
@@ -1642,10 +1337,6 @@ def main() -> None:
             "type": "full_model",
         }
         print(f"[setup] initialized full ECGFounder model from {init_model_path}", flush=True)
-    init_head_info = None
-    if args.init_head_path:
-        init_head_info = init_dense_from_head(model, Path(args.init_head_path))
-        print(f"[setup] initialized dense Super5 head from {args.init_head_path}", flush=True)
     model.train()
     anchor_pool = None
     pgd_gen = None
@@ -1659,7 +1350,6 @@ def main() -> None:
         victim = ECGFounderFullFTVictim(
             model=model,
             ecgtwin=ecgtwin,
-            input_stabilizer_kwargs=input_stabilizer_kwargs,
         ).to(device)
         pgd_gen = LatentHullPGDGenerator(
             ecgtwin_wrapper=ecgtwin,
@@ -1761,8 +1451,8 @@ def main() -> None:
             adv_weight=float(args.adv_bce_loss_weight),
         )
 
-    trainable_setup = configure_ecgfounder_trainable_scope(model, args)
-    train_mode_fn = lambda: set_ecgfounder_train_mode_for_scope(model, args)
+    trainable_setup = configure_ecgfounder_full_train(model)
+    train_mode_fn = model.train
     trainable_params = [p for p in model.parameters() if p.requires_grad]
     if not trainable_params:
         raise RuntimeError("no trainable parameters selected for ECGFounder run")
@@ -1805,7 +1495,7 @@ def main() -> None:
                 pos_weight,
                 args,
                 device,
-                restore_trainable_fn=lambda: configure_ecgfounder_trainable_scope(model, args),
+                restore_trainable_fn=lambda: configure_ecgfounder_full_train(model),
             )
         epoch_adv_weight = scheduled_adv_weight(args, epoch)
         if args.stage == "ptbxl_source":
@@ -1837,8 +1527,6 @@ def main() -> None:
                     prepare_supervised_ecgfounder_input(
                         x,
                         args.supervised_input_mode,
-                        input_stabilizer_kwargs,
-                        stream=stream,
                     )
                 )
                 loss = criterion(logits, y, stream)
@@ -1859,20 +1547,6 @@ def main() -> None:
             val_idx,
             args.eval_batch_size,
             device,
-            input_stabilizer_kwargs=input_stabilizer_kwargs,
-        )
-        target_val_metrics = (
-            eval_split(
-                model,
-                pn["signals"],
-                pn["labels"],
-                target_val_idx,
-                args.eval_batch_size,
-                device,
-                input_stabilizer_kwargs=input_stabilizer_kwargs,
-            )
-            if pn is not None and len(target_val_idx) > 0
-            else None
         )
         target_metrics = (
             eval_split(
@@ -1882,7 +1556,6 @@ def main() -> None:
                 eval_idx,
                 args.eval_batch_size,
                 device,
-                input_stabilizer_kwargs=input_stabilizer_kwargs,
             )
             if pn is not None
             else None
@@ -1895,24 +1568,18 @@ def main() -> None:
                 drop_eval_idx,
                 args.eval_batch_size,
                 device,
-                input_stabilizer_kwargs=input_stabilizer_kwargs,
             )
             if pn is not None
             else None
         )
-        selection_score = compute_source_target_selection_score(
-            selection_metric=args.selection_metric,
-            source_metrics=val_metrics,
-            target_val_metrics=target_val_metrics,
-            target_val_score_weight=float(args.target_val_score_weight),
-        )
+        selection_score = float(val_metrics["macro_auprc"])
         entry = {
             "epoch": epoch,
             "loss": float(np.mean(losses)),
             "val_macro_auroc": val_metrics["macro_auroc"],
             "val_macro_auprc": val_metrics["macro_auprc"],
-            "target_val_macro_auroc": None if target_val_metrics is None else target_val_metrics["macro_auroc"],
-            "target_val_macro_auprc": None if target_val_metrics is None else target_val_metrics["macro_auprc"],
+            "target_val_macro_auroc": None,
+            "target_val_macro_auprc": None,
             "target_macro_auroc": None if target_metrics is None else target_metrics["macro_auroc"],
             "target_macro_auprc": None if target_metrics is None else target_metrics["macro_auprc"],
             "target_drop_all_zero_macro_auroc": None if drop_metrics is None else drop_metrics["macro_auroc"],
@@ -1969,10 +1636,6 @@ def main() -> None:
             f"ep={epoch:03d} loss={entry['loss']:.4f} "
             f"val={entry['val_macro_auroc']:.4f}/{entry['val_macro_auprc']:.4f} "
             + (
-                f"tval={entry['target_val_macro_auroc']:.4f}/{entry['target_val_macro_auprc']:.4f} "
-                if target_val_metrics is not None else ""
-            )
-            + (
                 f"target={entry['target_macro_auroc']:.4f}/{entry['target_macro_auprc']:.4f} "
                 f"drop={entry['target_drop_all_zero_macro_auroc']:.4f}/"
                 f"{entry['target_drop_all_zero_macro_auprc']:.4f} "
@@ -2001,10 +1664,9 @@ def main() -> None:
         if score > best:
             best = score
             best_epoch = epoch
-            save_fullft_checkpoint(run_dir / "best_model.pt", model)
         save_fullft_checkpoint(run_dir / "last_model.pt", model)
 
-    selected_checkpoint_name = "last_model.pt" if args.checkpoint_policy == "last" else "best_model.pt"
+    selected_checkpoint_name = "last_model.pt"
     load_fullft_checkpoint(run_dir / selected_checkpoint_name, model, device)
     last_epoch = logs[-1]["epoch"] if logs else None
     result = {
@@ -2016,7 +1678,6 @@ def main() -> None:
         "vae_stream_enabled": bool(args.enable_vae_adv_stream),
         "latent_augmix_branch_enabled": bool(args.enable_latent_augmix_branch),
         "supervised_input_mode": str(args.supervised_input_mode),
-        "input_stabilizer": dict(input_stabilizer_kwargs),
         "trainable_scope": trainable_setup,
         "label_mapping": pn2021_super5_label_mapping_payload(),
         "stage": args.stage,
@@ -2027,14 +1688,13 @@ def main() -> None:
         "selected_ref_record_ids": sorted(selected_ids),
         "target_train_record_ids": sorted(target_train_ids),
         "target_val_record_ids": sorted(target_val_ids),
-        "selection_metric": args.selection_metric,
-        "target_val_split_mode": args.target_val_split_mode,
-        "selection_score_weight": float(args.target_val_score_weight),
-        "checkpoint_policy": args.checkpoint_policy,
+        "selection_metric": "source_auprc",
+        "selection_score_weight": 0.0,
+        "checkpoint_policy": "last",
         "selected_checkpoint": selected_checkpoint_name,
         "last_epoch": last_epoch,
         "best_epoch": best_epoch,
-        "best_selection_score": float(best),
+        "best_source_auprc": float(best),
         "ptbxl_fold10": eval_split(
             model,
             ptbxl["signals"],
@@ -2042,21 +1702,8 @@ def main() -> None:
             test_idx,
             args.eval_batch_size,
             device,
-            input_stabilizer_kwargs=input_stabilizer_kwargs,
         ),
-        "target_val": (
-            eval_split(
-                model,
-                pn["signals"],
-                pn["labels"],
-                target_val_idx,
-                args.eval_batch_size,
-                device,
-                input_stabilizer_kwargs=input_stabilizer_kwargs,
-            )
-            if pn is not None and len(target_val_idx) > 0
-            else None
-        ),
+        "target_val": None,
         "target_excluding_ref": (
             eval_split(
                 model,
@@ -2065,7 +1712,6 @@ def main() -> None:
                 eval_idx,
                 args.eval_batch_size,
                 device,
-                input_stabilizer_kwargs=input_stabilizer_kwargs,
             )
             if pn is not None
             else None
@@ -2078,7 +1724,6 @@ def main() -> None:
                 drop_eval_idx,
                 args.eval_batch_size,
                 device,
-                input_stabilizer_kwargs=input_stabilizer_kwargs,
             )
             if pn is not None
             else None
@@ -2087,7 +1732,6 @@ def main() -> None:
         "n_target_drop_all_zero_eval": int(len(drop_eval_idx)),
         "config": vars(args),
         "init_model": init_model_info,
-        "init_head": init_head_info,
         "latent_augmix_branch": {
             "enabled": bool(args.enable_latent_augmix_branch),
             "topology": str(args.latent_augmix_topology),

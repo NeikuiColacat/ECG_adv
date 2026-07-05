@@ -706,7 +706,6 @@ _PATH_OPTION_NAMES = {
     "--checkpoint",
     "--init_ckpt",
     "--init_base_head_from_k500_root",
-    "--init_head_path",
     "--linear_probe_dir",
     "--metrics-long",
     "--model_dir",
@@ -1056,7 +1055,6 @@ def _ecgfounder_child_run(opts: dict[str, Any], center: str) -> dict[str, Any]:
         "source_weight": _opt_first(opts, "--source_weight", "1.0"),
         "target_real_weight": _opt_first(opts, "--target_real_weight", "40.0"),
         "enable_vae_adv_stream": bool(opts.get("--enable_vae_adv_stream", False)),
-        "init_head_path": _opt_first(opts, "--init_head_path", ""),
         "vae_classes_in_scope": _opt_list(opts, "--vae_classes_in_scope") if "--vae_classes_in_scope" in opts else None,
         "vae_min_class_count": _opt_first(opts, "--vae_min_class_count", "1"),
         "adv_weight": _opt_first(opts, "--adv_weight", "20.0"),
@@ -1079,24 +1077,16 @@ def _ecgfounder_child_run(opts: dict[str, Any], center: str) -> dict[str, Any]:
         "adv_weight_warmup_epochs": _opt_first(opts, "--adv_weight_warmup_epochs", "0"),
         "adv_bce_loss_weight": _opt_first(opts, "--adv_bce_loss_weight", "1.0"),
         "adv_clean_logit_anchor_weight": _opt_first(opts, "--adv_clean_logit_anchor_weight", "0.0"),
-        "run_suffix": _opt_first(opts, "--run_suffix", ""),
-        "target_val_count": _opt_first(opts, "--target_val_count", "0"),
-        "selection_metric": _opt_first(opts, "--selection_metric", "source_auprc"),
-        "target_val_split_mode": _opt_first(opts, "--target_val_split_mode", "random"),
-        "target_val_seed": _opt_first(opts, "--target_val_seed", None),
         "run_name": _opt_first(opts, "--run_name", ""),
         "seed": _opt_first(opts, "--seed", "20260531"),
     }
     child_dir = out_dir / "runs" / build_ecgfounder_fullft_run_leaf(params)
-    checkpoint_policy = str(_opt_first(opts, "--checkpoint_policy", "best"))
-    checkpoint_role = "last_model" if checkpoint_policy == "last" else "best_model"
-    checkpoint_name = "last_model.pt" if checkpoint_policy == "last" else "best_model.pt"
     return {
         "center": center,
         "output_root": str(out_dir),
         "child_run_dir": str(child_dir),
         "expected_artifacts": [
-            _path_record(checkpoint_role, child_dir / checkpoint_name),
+            _path_record("last_model", child_dir / "last_model.pt"),
             _path_record("training_log", child_dir / "training_log.json"),
             _path_record("eval_result", child_dir / "eval_result.json"),
         ],
@@ -1173,8 +1163,6 @@ def build_artifact_trace(
                     Path(str(_opt_first(opts, "--model_dir"))) / checkpoint_name,
                 )
             )
-        if _opt_first(opts, "--init_head_path"):
-            inputs["init_heads"].append(_path_record("command.init_head_path", _opt_first(opts, "--init_head_path")))
         if _opt_first(opts, "--checkpoint"):
             inputs["checkpoints"].append(_path_record("command.checkpoint", _opt_first(opts, "--checkpoint")))
         if _opt_first(opts, "--target_logit_anchor_path"):

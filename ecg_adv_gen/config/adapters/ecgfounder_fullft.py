@@ -34,7 +34,6 @@ def build_ecgfounder_fullft_argv(config: Mapping[str, Any], context: Mapping[str
     data = config["data"]
     model = config["model"]
     adaptation = config.get("adaptation") or {}
-    selection = adaptation.get("selection") or {}
     loss = adaptation.get("loss") or {}
     vae = adaptation.get("vae") or {}
     hull = adaptation.get("hull") or {}
@@ -76,12 +75,6 @@ def build_ecgfounder_fullft_argv(config: Mapping[str, Any], context: Mapping[str
             loss.get("source_weight", 1.0),
             "--target_real_weight",
             0.0,
-            "--target_val_count",
-            0,
-            "--selection_metric",
-            selection.get("metric", "source_auprc"),
-            "--checkpoint_policy",
-            selection.get("checkpoint_policy", "last"),
             "--run_name",
             adaptation.get("run_name", "ptbxl_super5_fullft_locked"),
         ]
@@ -142,18 +135,9 @@ def build_ecgfounder_fullft_argv(config: Mapping[str, Any], context: Mapping[str
         loss.get("source_weight", 1.0),
         "--target_real_weight",
         loss.get("target_real_weight", 40.0),
-        "--target_val_count",
-        selection.get("target_val_count", 0),
-        "--selection_metric",
-        selection.get("metric", "source_auprc"),
-        "--checkpoint_policy",
-        selection.get("checkpoint_policy", "last"),
         "--supervised_input_mode",
         adaptation.get("supervised_input_mode", "raw1000"),
     ]
-    trainable_scope = adaptation.get("trainable_scope") or {}
-    _append_option(argv, "--trainable_scope", trainable_scope.get("scope"))
-    _append_option(argv, "--trainable_last_n_stages", trainable_scope.get("last_n_stages"))
     _append_option(argv, "--target_raw1000_npz_override", target_raw1000_npz_override)
     _append_option(argv, "--init_model_path", model.get("init_model_path", ""))
     _append_option(argv, "--run_name", adaptation.get("run_name", ""))
@@ -243,7 +227,6 @@ def audit_ecgfounder_fullft_command(
     argv = [str(x) for x in command["argv"]]
     script = argv[1].split("/")[-1] if len(argv) > 1 else ""
     opts = argv_option_map(argv)
-    runner_adapter = str(((config.get("runner") or {}).get("adapter")) or "")
     kshot = config["paper_protocol"]["kshot"]
     expected_k = int(kshot["k"])
     expected_seed = int(kshot.get("subset_seed", kshot["seed"]))
@@ -255,34 +238,26 @@ def audit_ecgfounder_fullft_command(
             "warnings": warnings,
         }
 
-    if runner_adapter != "ecgfounder_fullft":
-        audit_require_options(
-            errors,
-            script,
-            opts,
-            [
-                "--out_dir",
-                "--center",
-                "--ref_meta_json",
-                "--k",
-                "--seed",
-                "--init_head_path",
-                "--target_val_count",
-                "--target_val_seed",
-                "--selection_metric",
-            ],
-        )
-        center = str(opt_first(opts, "--center", ""))
-        if center not in target_centers:
-            errors.append(f"{script}: unexpected center {center!r}")
-        audit_equals(errors, script, opts, "--k", str(expected_k))
-        audit_equals(errors, script, opts, "--seed", str(expected_seed))
-        audit_equals(errors, script, opts, "--target_val_seed", str(expected_seed))
-        audit_equals(errors, script, opts, "--selection_metric", "source_plus_target_val_auprc")
-        ref_meta = str(opt_first(opts, "--ref_meta_json", ""))
-        if not ref_meta.endswith(f"_real_k{expected_k}_seed{expected_seed}.ref_meta.json"):
-            errors.append(f"{script}: ref_meta_json does not encode K{expected_k}/seed{expected_seed}")
-        return {"errors": errors, "warnings": warnings}
+    forbidden_options = (
+        "--target_val_count",
+        "--target_val_seed",
+        "--target_val_split_mode",
+        "--target_val_score_weight",
+        "--selection_metric",
+        "--checkpoint_policy",
+        "--init_head_path",
+        "--trainable_scope",
+        "--trainable_last_n_stages",
+        "--ecgfounder_input_repair_flat_leads",
+        "--ecgfounder_input_bandpass_low_hz",
+        "--ecgfounder_input_bandpass_high_hz",
+        "--ecgfounder_input_clip_abs",
+        "--run_suffix",
+        "--force",
+    )
+    for opt in forbidden_options:
+        if opt in opts:
+            errors.append(f"{script}: locked full-FT command must not pass legacy option {opt}")
 
     stage = str(opt_first(opts, "--stage", "k500"))
     if stage == "ptbxl_source":
@@ -295,15 +270,9 @@ def audit_ecgfounder_fullft_command(
                 "--stage",
                 "--epochs",
                 "--seed",
-                "--target_val_count",
-                "--selection_metric",
-                "--checkpoint_policy",
                 "--run_name",
             ],
         )
-        audit_equals(errors, script, opts, "--target_val_count", "0")
-        audit_equals(errors, script, opts, "--selection_metric", "source_auprc")
-        audit_equals(errors, script, opts, "--checkpoint_policy", "last")
         audit_equals(errors, script, opts, "--run_name", "ptbxl_super5_fullft_locked")
         if "--ref_meta_json" in opts or "--center" in opts:
             errors.append(f"{script}: PTB-XL source full-FT stage must not pass K500 center/ref_meta options")
@@ -325,9 +294,6 @@ def audit_ecgfounder_fullft_command(
             "--k",
             "--seed",
             "--init_model_path",
-            "--target_val_count",
-            "--selection_metric",
-            "--checkpoint_policy",
             "--supervised_input_mode",
         ],
     )
@@ -336,9 +302,6 @@ def audit_ecgfounder_fullft_command(
         errors.append(f"{script}: unexpected center {center!r}")
     audit_equals(errors, script, opts, "--k", str(expected_k))
     audit_equals(errors, script, opts, "--seed", str(expected_seed))
-    audit_equals(errors, script, opts, "--target_val_count", "0")
-    audit_equals(errors, script, opts, "--selection_metric", "source_auprc")
-    audit_equals(errors, script, opts, "--checkpoint_policy", "last")
     audit_equals(errors, script, opts, "--supervised_input_mode", "raw1000")
     experiment_name = str((config.get("experiment") or {}).get("name") or "")
     official_composite_supervised = experiment_name.startswith(
@@ -356,14 +319,8 @@ def audit_ecgfounder_fullft_command(
     elif not official_composite_supervised and not target_raw1000.endswith(".raw1000.npz"):
         errors.append(f"{script}: target_raw1000_npz_override must point at .raw1000.npz, got {target_raw1000}")
 
-    if "--target_val_seed" in opts:
-        errors.append(f"{script}: locked full-FT config must not pass --target_val_seed")
-    if "--init_head_path" in opts:
-        errors.append(f"{script}: locked full-FT config must not initialize from best_head.pt")
     if "--enable_raw_corrupt_consistency" in opts or "--enable_raw_corrupt_aux_consistency" in opts:
         errors.append(f"{script}: locked full-FT baseline must not enable raw corruption branches")
-    if any(opt in opts for opt in ("--ecgfounder_input_repair_flat_leads", "--ecgfounder_input_bandpass_low_hz", "--ecgfounder_input_bandpass_high_hz")):
-        errors.append(f"{script}: locked full-FT config must not enable ECGFounder input stabilizers")
     joined = " ".join(argv)
     if "best_head.pt" in joined or "residual_adapter" in joined:
         errors.append(f"{script}: locked full-FT command contains historical head-only/residual-adapter route")

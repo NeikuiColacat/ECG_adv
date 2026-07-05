@@ -63,8 +63,6 @@ def build_ecgfounder_fullft_method_tag(params: Any) -> str:
 
     vae_enabled = _as_bool(_get(params, "enable_vae_adv_stream", False))
     method_tag = "fullft_vae" if vae_enabled else "fullft"
-    if _get(params, "init_head_path", ""):
-        method_tag += "_inithead"
     classes = _as_classes(_get(params, "vae_classes_in_scope", None))
     if vae_enabled and classes is not None:
         method_tag += "_cls" + "-".join(str(c) for c in classes)
@@ -122,27 +120,7 @@ def build_ecgfounder_fullft_method_tag(params: Any) -> str:
         clean_anchor_weight = _as_float(_get(params, "adv_clean_logit_anchor_weight", 0.0), 0.0)
         if clean_anchor_weight > 0:
             method_tag += f"_aclean{tag_value(_get(params, 'adv_clean_logit_anchor_weight', 0.0))}"
-    run_suffix = str(_get(params, "run_suffix", "") or "")
-    if run_suffix:
-        method_tag += f"_{run_suffix}"
     return method_tag
-
-
-def build_ecgfounder_fullft_selection_tag(params: Any) -> str:
-    """Build the optional target-validation selection tag."""
-
-    target_val_count = _as_int(_get(params, "target_val_count", 0), 0)
-    selection_metric = str(_get(params, "selection_metric", "source_auprc"))
-    if target_val_count <= 0 and selection_metric == "source_auprc":
-        return ""
-    selection_tag = f"_tv{target_val_count}_{selection_metric}"
-    split_mode = str(_get(params, "target_val_split_mode", "random"))
-    if split_mode != "random":
-        selection_tag += f"_{split_mode}"
-    target_val_seed = _get(params, "target_val_seed", None)
-    if target_val_seed is not None:
-        selection_tag += f"_tvseed{target_val_seed}"
-    return selection_tag
 
 
 def build_ecgfounder_fullft_run_leaf(params: Any) -> str:
@@ -158,7 +136,6 @@ def build_ecgfounder_fullft_run_leaf(params: Any) -> str:
         f"_sw{tag_value(_get(params, 'source_weight', 1.0))}"
         f"_tw{tag_value(_get(params, 'target_real_weight', 40.0))}"
         f"_{build_ecgfounder_fullft_method_tag(params)}"
-        f"{build_ecgfounder_fullft_selection_tag(params)}"
         f"_seed{_as_int(_get(params, 'seed', 20260531), 20260531)}"
     )
 

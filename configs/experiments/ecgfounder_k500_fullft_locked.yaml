@@ -35,10 +35,6 @@ adaptation:
   method: ecgfounder_k500_full_finetune_locked_last
   run_name: ${matrix.center}_k500_fullft_locked
   supervised_input_mode: raw1000
-  selection:
-    checkpoint_policy: last
-    target_val_count: 0
-    metric: source_auprc
   loss:
     source_weight: 1.0
     target_real_weight: 40.0

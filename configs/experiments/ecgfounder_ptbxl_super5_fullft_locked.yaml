@@ -29,10 +29,6 @@ adaptation:
   method: ecgfounder_ptbxl_super5_full_finetune_locked_last
   stage: ptbxl_source
   run_name: ptbxl_super5_fullft_locked
-  selection:
-    checkpoint_policy: last
-    target_val_count: 0
-    metric: source_auprc
   loss:
     source_weight: 1.0
 
