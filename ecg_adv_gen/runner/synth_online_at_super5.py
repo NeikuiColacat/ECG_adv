@@ -597,46 +597,15 @@ def attack_bce_diagnostics(
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# PGD-on-frozen-synth-pool epoch step
+# Latent-hull epoch step
 # ────────────────────────────────────────────────────────────────────────────
-
-def stratified_sample_synth(
-    labels_npz: np.ndarray, K_anchor: int, num_classes: int, rng: np.random.Generator,
-) -> np.ndarray:
-    """LEGACY (Plan Rev 8): with-replacement stratified sample over all classes.
-
-    Kept for backward compat / smoke. Plan Rev 13.2 onward uses StratifiedPoolWalker
-    instead — that gives no-revisit-per-epoch + restricts to SUPER5_GEN_SUBSET.
-    """
-    cls_ids = labels_npz.argmax(axis=1)
-    per_cls = max(1, K_anchor // num_classes)
-    picked = []
-    for c in range(num_classes):
-        pool = np.where(cls_ids == c)[0]
-        if len(pool) == 0:
-            continue
-        n_take = min(per_cls, len(pool))
-        picked.extend(rng.choice(pool, size=n_take, replace=False).tolist())
-    picked = list(set(picked))
-    deficit = K_anchor - len(picked)
-    if deficit > 0:
-        rest = np.array([i for i in range(len(labels_npz)) if i not in set(picked)])
-        if len(rest) > 0:
-            picked.extend(rng.choice(rest, size=min(deficit, len(rest)), replace=False).tolist())
-    return np.array(sorted(set(picked))[:K_anchor])
-
-
-# Plan Rev 13.2 helper classes are imported from ecg_adv_gen.adaptation. They
-# remain in this module's namespace for older scripts that import from here.
 
 
 def run_pgd_on_synth_pool(
     pgd_gen: LatentHullPGDGenerator,
     synth_latents: np.ndarray,    # (N, 4, 128)
     synth_labels: np.ndarray,     # (N, C) one-hot
-    K_anchor: int,
     pgd_batch: int,
-    rng: np.random.Generator,
     device: str,
     latent_hull_index: SameLabelLatentIndex,
     picked_indices: Optional[np.ndarray] = None,
@@ -650,9 +619,6 @@ def run_pgd_on_synth_pool(
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict[str, float]]:
     """Sample K anchors stratified by class, run latent-hull PGD in batches.
 
-    If `picked_indices` is given (e.g. from StratifiedPoolWalker), use it and
-    skip the with-replacement stratified sampler.
-
     Returns:
       adv_signals_ct:   (K, 12, 1000)  float32
       anchor_signals_ct:(K, 12, 1000)  float32  (clean reference for sem-gate)
@@ -660,10 +626,8 @@ def run_pgd_on_synth_pool(
       delta_stats:      mean / max L2 norm plus optional latent-hull weight stats
     """
     if picked_indices is None:
-        num_classes = synth_labels.shape[1]
-        pick = stratified_sample_synth(synth_labels, K_anchor, num_classes, rng)
-    else:
-        pick = picked_indices
+        raise ValueError("picked_indices is required; latest mainline uses StratifiedPoolWalker")
+    pick = picked_indices
 
     if len(pick) == 0:
         return (np.empty((0, 12, 1000), dtype=np.float32),
@@ -1678,9 +1642,8 @@ def main():
             pgd_gen=pgd_gen,
             synth_latents=synth_latents,
             synth_labels=synth_labels,
-            K_anchor=args.K_anchor,
             pgd_batch=args.pgd_batch,
-            rng=rng, device=args.device,
+            device=args.device,
             picked_indices=all_picks,
             latent_hull_index=latent_hull_index,
             hull_M=args.hull_M,
