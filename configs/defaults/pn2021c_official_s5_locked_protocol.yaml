@@ -1,0 +1,76 @@
+extends: common_v7_sjr_rgq_super5.yaml
+
+model:
+  backbone: efficientnet1dv2
+  num_classes: 5
+  eval_seed: 20260601
+  epochs: 30
+  run_stamp: 20260530_rep1
+  clean_eval_name: eval_result_v7_exclrefs_crop1000.json
+  run_leaf_stem: realall_targetheavy_M20_lam0p05_augmix_s5_threechain_locked_wlat0p25_hs3_target_macro_auprc_cdhypminormsttc_hlabelcom_anchor_soft_sta_local_random_p120
+
+paper_protocol:
+  kshot:
+    seed: 20260601
+    subset_seed: 20260601
+  selection:
+    policy: last_checkpoint_only
+    allowed_data:
+      - target_k500_train_all
+      - ptbxl_source_sanity
+    forbid_k500_validation_split: true
+    forbid_best_checkpoint_selection: true
+    forbid_heldout_target_labels: true
+    forbid_full_target_distribution_tuning: true
+
+training:
+  eval_batch_size: 192
+  num_workers: ${resources.default_num_workers}
+
+data:
+  cache:
+    pn2021_clean_cache_dir: ${paths.data_root}/triple_labels/pn2021_eval_cache_minresample_perglobal
+    pn2021_clean_mmap_cache_dir: ${paths.data_root}/triple_labels/pn2021_eval_cache_mmap_minresample_perglobal
+
+evaluation:
+  views:
+    - pn2021_all_zero_kept_refexcluded
+    - pn2021_drop_all_zero_refexcluded
+    - pn2021c_all_zero_kept_corrupted_refexcluded
+    - pn2021c_drop_all_zero_corrupted_refexcluded
+  model_family: effnet_v7_augmix_vs_noaug
+  corruption_seed: 20260501
+  severity_profile: standard
+  corruptions:
+    - powerline_noise
+    - emg_noise
+    - baseline_wander
+    - baseline_shift
+    - random_leads_masking
+  severities: [5]
+  corruption_input: raw_first
+  output_stem: eval_pn2021_c_v7_refexcluded_stream_standard_official_s5_locked
+
+logging:
+  child_artifacts:
+    - eval_pn2021_c_v7_refexcluded_stream_standard_official_s5_locked.json
+  postprocess_artifacts:
+    - pn2021c_official_s5_locked.csv
+
+runner:
+  entrypoint: ecg_adv_gen/runner/pn2021c_eval.py
+  adapter: pn2021c_eval
+  env:
+    ECG_ADV_GEN_DATA_ROOT: ${paths.data_root}
+    TMPDIR: ${paths.short_tmp_root}
+    XDG_CACHE_HOME: ${paths.cache_root}
+  matrix:
+    center: ${paper_protocol.centers.target_4}
+    method:
+      - name: vae_noaug
+        family: effnet_vae_noaug_k500_v7_sjr_rgq
+        noaug_suffix: _noaugmix
+      - name: vae_lhat
+        family: effnet_vae_lhat_k500_v7_sjr_rgq
+        noaug_suffix: ""
+  name: ${experiment.name}_${matrix.center}_${matrix.method.name}

@@ -6,22 +6,28 @@ import pytest
 import numpy as np
 
 from ecg_adv_gen.labels import (
+    CLASS_NAMES_SUPER5,
+    SUPER5_PN2021_MAPPING_HASH,
+    SUPER5_PN2021_MAPPING_VERSION,
     Super5MetadataError,
     default_class_order,
+    get_super5_scheme,
     get_super5_metadata,
+    mimic_report_to_super5,
     pn2021_super5_label_mapping_payload,
+    ptbxl_scp_to_super5,
+    snomed_list_to_super5,
     validate_super5_metadata,
 )
 from ecg_adv_gen.labels import super5_mapping
-from scripts.triple_labels import label_schemes
 
 
-def test_super5_metadata_matches_legacy_label_scheme_literals():
+def test_super5_metadata_matches_package_label_literals():
     metadata = get_super5_metadata()
 
-    assert list(metadata.class_order) == label_schemes.CLASS_NAMES_SUPER5
-    assert metadata.mapping_version == label_schemes.SUPER5_PN2021_MAPPING_VERSION
-    assert metadata.mapping_hash == label_schemes.SUPER5_PN2021_MAPPING_HASH
+    assert list(metadata.class_order) == list(CLASS_NAMES_SUPER5)
+    assert metadata.mapping_version == SUPER5_PN2021_MAPPING_VERSION
+    assert metadata.mapping_hash == SUPER5_PN2021_MAPPING_HASH
     assert metadata.num_classes == len(metadata.class_order)
 
 
@@ -43,6 +49,16 @@ def test_super5_metadata_validation_accepts_current_protocol():
     }
 
 
+def test_package_super5_scheme_matches_legacy_super5_surface():
+    scheme = get_super5_scheme()
+
+    assert scheme["num_classes"] == 5
+    assert tuple(scheme["class_names"]) == get_super5_metadata().class_order
+    assert scheme["ptbxl_fn"] is super5_mapping.ptbxl_scp_to_super5
+    assert scheme["pn2021_fn"] is super5_mapping.snomed_list_to_super5
+    assert scheme["mimic_fn"] is super5_mapping.mimic_report_to_super5
+
+
 def test_super5_metadata_validation_rejects_drift():
     metadata = get_super5_metadata()
 
@@ -56,15 +72,15 @@ def test_super5_metadata_validation_rejects_drift():
 
 
 def test_pn2021_super5_v7_sjr_rgq_policy_deltas():
-    assert label_schemes.SUPER5_PN2021_MAPPING_VERSION == (
+    assert SUPER5_PN2021_MAPPING_VERSION == (
         "v7_super5_sjr_rgq_review_20260528"
     )
 
     def mapped_classes(*codes: int) -> set[str]:
-        label = label_schemes.snomed_list_to_super5([*codes, 426783006])
+        label = snomed_list_to_super5([*codes, 426783006])
         return {
             name
-            for name, value in zip(label_schemes.CLASS_NAMES_SUPER5, label)
+            for name, value in zip(CLASS_NAMES_SUPER5, label)
             if value == 1.0
         }
 
@@ -98,8 +114,8 @@ def test_package_super5_mapping_owns_conversion_policy():
     assert tuple(super5_mapping.CLASS_NAMES_SUPER5) == get_super5_metadata().class_order
 
     pn2021_label = super5_mapping.snomed_list_to_super5([426783006, 55827005])
-    legacy_pn2021_label = label_schemes.snomed_list_to_super5([426783006, 55827005])
-    np.testing.assert_array_equal(pn2021_label, legacy_pn2021_label)
+    public_pn2021_label = snomed_list_to_super5([426783006, 55827005])
+    np.testing.assert_array_equal(pn2021_label, public_pn2021_label)
     assert {
         name
         for name, value in zip(super5_mapping.CLASS_NAMES_SUPER5, pn2021_label)
@@ -109,10 +125,10 @@ def test_package_super5_mapping_owns_conversion_policy():
     mimic_label = super5_mapping.mimic_report_to_super5(
         "normal sinus rhythm with left bundle branch block"
     )
-    legacy_mimic_label = label_schemes.mimic_report_to_super5(
+    public_mimic_label = mimic_report_to_super5(
         "normal sinus rhythm with left bundle branch block"
     )
-    np.testing.assert_array_equal(mimic_label, legacy_mimic_label)
+    np.testing.assert_array_equal(mimic_label, public_mimic_label)
     assert {
         name
         for name, value in zip(super5_mapping.CLASS_NAMES_SUPER5, mimic_label)
@@ -120,13 +136,5 @@ def test_package_super5_mapping_owns_conversion_policy():
     } == {"CD"}
 
     ptbxl_label = super5_mapping.ptbxl_scp_to_super5({"NORM": 100.0, "IMI": 80.0})
-    legacy_ptbxl_label = label_schemes.ptbxl_scp_to_super5({"NORM": 100.0, "IMI": 80.0})
-    np.testing.assert_array_equal(ptbxl_label, legacy_ptbxl_label)
-
-
-def test_legacy_label_schemes_reexports_package_super5_functions():
-    assert label_schemes.ptbxl_scp_to_super5 is super5_mapping.ptbxl_scp_to_super5
-    assert label_schemes.snomed_list_to_super5 is super5_mapping.snomed_list_to_super5
-    assert label_schemes.mimic_report_to_super5 is super5_mapping.mimic_report_to_super5
-    assert label_schemes.SNOMED_TO_SUPER5_POSITIVE == super5_mapping.SNOMED_TO_SUPER5_POSITIVE
-    assert label_schemes.NORM_SUPPRESS_SNOMEDS == super5_mapping.NORM_SUPPRESS_SNOMEDS
+    public_ptbxl_label = ptbxl_scp_to_super5({"NORM": 100.0, "IMI": 80.0})
+    np.testing.assert_array_equal(ptbxl_label, public_ptbxl_label)

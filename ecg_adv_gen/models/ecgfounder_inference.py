@@ -10,6 +10,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 
+from ecg_adv_gen.models.ecgfounder_torch import ecg1000_to_ecgfounder_input, global_zscore_torch
 from ecg_adv_gen.training import CachedSignalDataset
 
 
@@ -111,6 +112,81 @@ def evaluate_pn2021_feature_head(
 
 
 @torch.no_grad()
+def infer_ecgfounder(
+    feature_model: nn.Module,
+    head: nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+    *,
+    input_stabilizer_kwargs: dict[str, Any] | None = None,
+    apply_input_zscore: bool = True,
+    input_already_ecgfounder: bool = False,
+    target_points: int = 5000,
+) -> tuple[np.ndarray, np.ndarray]:
+    y_true: list[np.ndarray] = []
+    y_score: list[np.ndarray] = []
+    feature_model.eval()
+    head.eval()
+    for ecg_ct, labels in loader:
+        ecg_ct = ecg_ct.to(device, non_blocking=True)
+        if input_already_ecgfounder:
+            if input_stabilizer_kwargs:
+                raise ValueError("input stabilizer is not supported for pre-resampled ECGFounder inputs")
+            x = global_zscore_torch(ecg_ct)
+        else:
+            x = ecg1000_to_ecgfounder_input(
+                ecg_ct,
+                target_points=int(target_points),
+                apply_global_zscore=bool(apply_input_zscore),
+                **(input_stabilizer_kwargs or {}),
+            )
+        with torch.cuda.amp.autocast(enabled=device.type == "cuda"):
+            _, features = feature_model(x)
+            logits = head(features)
+        y_true.append(labels.numpy())
+        y_score.append(sigmoid_clipped(logits.detach().float().cpu().numpy()))
+    return np.concatenate(y_true, axis=0), np.concatenate(y_score, axis=0)
+
+
+@torch.no_grad()
+def infer_ecgfounder_fullft(
+    model: nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+    *,
+    operator_name: str | None = None,
+    input_stabilizer_kwargs: dict[str, Any] | None = None,
+    apply_input_zscore: bool = True,
+    input_already_ecgfounder: bool = False,
+    target_points: int = 5000,
+) -> tuple[np.ndarray, np.ndarray]:
+    y_true: list[np.ndarray] = []
+    y_score: list[np.ndarray] = []
+    model.eval()
+    for ecg_ct, labels in loader:
+        ecg_ct = ecg_ct.to(device, non_blocking=True)
+        if input_already_ecgfounder:
+            if input_stabilizer_kwargs:
+                raise ValueError("input stabilizer is not supported for pre-resampled ECGFounder inputs")
+            x = global_zscore_torch(ecg_ct)
+        else:
+            x = ecg1000_to_ecgfounder_input(
+                ecg_ct,
+                target_points=int(target_points),
+                apply_global_zscore=bool(apply_input_zscore),
+                **(input_stabilizer_kwargs or {}),
+            )
+        with torch.cuda.amp.autocast(enabled=device.type == "cuda"):
+            if operator_name and hasattr(model, "forward_with_operator"):
+                logits = model.forward_with_operator(x, operator_name)
+            else:
+                logits = model(x)
+        y_true.append(labels.numpy())
+        y_score.append(sigmoid_clipped(logits.detach().float().cpu().numpy()))
+    return np.concatenate(y_true, axis=0), np.concatenate(y_score, axis=0)
+
+
+@torch.no_grad()
 def predict_signal_dataset(
     model: nn.Module,
     dataset: Dataset,
@@ -161,6 +237,8 @@ __all__ = [
     "evaluate_pn2021_feature_head",
     "evaluate_signal_split",
     "evaluate_ptbxl_fold_head",
+    "infer_ecgfounder",
+    "infer_ecgfounder_fullft",
     "predict_feature_head",
     "predict_signal_dataset",
     "sigmoid_clipped",

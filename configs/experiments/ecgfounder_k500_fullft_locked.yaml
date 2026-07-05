@@ -44,7 +44,7 @@ adaptation:
     target_real_weight: 40.0
 
 runner:
-  entrypoint: scripts/paper/run_ecgfounder_fullft_super5_pilot_20260523.py
+  entrypoint: ecg_adv_gen/runner/ecgfounder_fullft.py
   adapter: ecgfounder_fullft
   matrix:
     center: ${paper_protocol.centers.target_4}

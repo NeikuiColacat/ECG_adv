@@ -1,0 +1,19 @@
+extends:
+  - pn2021c_ecgfounder_official_s5_depth23_composite.yaml
+
+experiment:
+  name: pn2021c_ecgfounder_c110_official_s5_depth23_replay_georgia_20260624
+  description: Replay Georgia PN2021-C official severity-5 depth2+depth3 composite evaluation for ECGFounder c110 SOTA artifacts.
+
+evaluation:
+  model_family: ecgfounder_c110_vae_lhat_augmix_threechain_officials5
+
+runner:
+  matrix:
+    center:
+      - georgia
+    method:
+      - name: ecgfounder_c110_replay
+        family: ecgfounder_vae_lhat_augmix_threechain_officials5_cand110_weakcombo_cover_c24_georgia_20260624
+        run_dir_template: >-
+          {output_root}/ecgfounder_vae_lhat_augmix_threechain_officials5_cand110_weakcombo_cover_c24_georgia_20260624/goal_ecgfounder_c110_georgia_20260624_train/runs/georgia_vae_lhat_augmix_threechain_officials5_cand110_weakcombo_cover_c24

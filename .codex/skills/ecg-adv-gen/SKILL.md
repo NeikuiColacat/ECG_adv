@@ -7,6 +7,30 @@ description: Work on /root/ECG_adv_Gen ECG generation, ECGTwin author reproducti
 
 This repo-tracked copy mirrors the active local Codex skill.
 
+## Current Mainline Override
+
+As of 2026-07-01, prefer this block over older 2026-05 notes below when they
+conflict.
+
+```text
+repo root: /home/linbinhao/ECG_adv_Gen
+launcher: scripts/run_experiment.py + configs/experiments/*.yaml
+active index: configs/active_scripts.yaml:latest_mainline
+method: PN2021/PN2021-C VAE-LHAT + three-chain AugMix
+mapping: v7_super5_sjr_rgq_review_20260528 / 555ec85d5b51
+class order: CD,HYP,MI,NORM,STTC
+```
+
+Current refactor goal:
+
+- keep latest-mainline business logic under `ecg_adv_gen/`;
+- use package runners and typed YAML adapters, not `runner.argv` or long bash;
+- report PN2021 all-zero-kept and drop-all-zero separately;
+- report PN2021-C all-zero-kept and drop-all-zero separately;
+- exclude K500 refs from target evaluation;
+- drop old scripts/configs from the public tree; keep provenance in
+  `docs/refactor_cleanup/`, without live wrapper shims.
+
 On the current migrated user host initialized 2026-05-23, install/use:
 
 ```text
@@ -166,15 +190,14 @@ Confirmed current choices:
 - ECGTwin center prompt-token plan: `docs/pipelines/ecgtwin_center_prompt_token_pipeline.md`
 - Latent-Hull online AT plan: `docs/pipelines/latent_hull_online_at_pipeline.md`
 - PN2021-C benchmark plan: `docs/pipelines/pn2021_c_corruption_benchmark_pipeline.md`
-- Historical no-IBE plan: `trash/docs_cleanup_20260501/historical_no_ibe/ecgtwin_no_ibe_diffusion_augmenter_recommended_plan.md`
+- Cleanup provenance: `docs/refactor_cleanup/final_cleanup_summary_20260705.md`
 - PTB-XL raw/preprocessed: `/root/ECG_adv_Gen/datasets/PTBXL/`, `/root/autodl-tmp/ptbxl/`
 - PTB-XL VAE/nomic cache: `/root/ECG_adv_Gen/datasets/PTBXL/PTBXL_vae_multi_nomic.pt`
 - PN2021: `/root/autodl-tmp/physionet2021/training/<center>/`
 - MIMIC: `/root/autodl-tmp/MIMIC/`
 - ECGTwin repo: `model/ECGTwin/`
-- ECGTwin author reproduction scripts: `scripts/ecgtwin_author_repro/`
-- Super5 classifier scripts: `scripts/triple_labels/`
-- TA-OMAT / synth-anchor ablations: `scripts/pgd_cross_center/`
+- Latest managed launcher: `scripts/run_experiment.py`
+- Latest package runners: `ecg_adv_gen/runner/`
 
 ## ECGTwin Facts
 
@@ -188,16 +211,17 @@ Confirmed current choices:
 - Never set `text_embed_mask` all zeros; original cross-attention can softmax all `-inf` and produce NaN. Use a null text embedding with mask `1`.
 - Official inference supports open-vocabulary diagnostic text through pretrained `bert-base-uncased` + `nomic-ai/nomic-embed-text-v1.5`; it does not natively train new tokenizer tokens.
 - A center token written in the prompt should be implemented by a prompt compiler that appends/inserts a learnable 768-d embedding into `text_embed`, with mask value `1`.
-- Existing `methods/ecgtwin_gen/center_token/` is a 256-d AdaLN/base-vector hook, not a textual-inversion prompt token. Treat it as historical or ablation unless explicitly requested.
-- Active prompt-token implementation lives in `methods/ecgtwin_gen/prompt_token/` with entry `scripts/ecgtwin_gen/train_center_prompt_tokens.py`.
-- Active prompt-token generation entry is `scripts/ecgtwin_gen/generate_center_prompt_token_synth.py`.
-- Active prompt-token gated export entry is `scripts/ecgtwin_gen/gate_prompt_token_synth.py`.
-- Active prompt-token cache root is `/root/autodl-tmp/ecgtwin_prompt_token_super5/cache_v1/`; training outputs go under `/root/autodl-tmp/ecgtwin_prompt_token_super5/prompt_token_runs/`.
-- Active prompt-token bank supports legacy single-vector, direct multi-vector,
+- The removed center-token implementation was a 256-d AdaLN/base-vector hook,
+  not a textual-inversion prompt token. Treat it as historical or ablation
+  unless explicitly requested.
+- Prompt-token code is historical/provenance for the current refactor. Its old
+  script entrypoints are not latest-mainline launch surfaces.
+- Historical prompt-token cache root was `/root/autodl-tmp/ecgtwin_prompt_token_super5/cache_v1/`; training outputs went under `/root/autodl-tmp/ecgtwin_prompt_token_super5/prompt_token_runs/`.
+- Historical prompt-token bank supports legacy single-vector, direct multi-vector,
   and factorized center+class+residual schemas. Direct MV4 is currently the best
   new schema; factorized MV4 and target-center-only training underperformed.
-- Active reference selector is `scripts/ecgtwin_gen/quality_ref_selection.py`.
-  The quality-ref seed1042 selection improved some class counts but did not beat
+- The old prompt-token reference selector is not part of the public tree. The
+  quality-ref seed1042 selection improved some class counts but did not beat
   old seed42 references downstream.
 - Current prompt-token gated pool:
   `/root/autodl-tmp/ecgtwin_prompt_token_super5/generated_pool_v2/ningbo/gated/`
@@ -255,17 +279,15 @@ Class order is:
 CD, HYP, MI, NORM, STTC
 ```
 
-Use `scripts/triple_labels/label_schemes.py` as the source of truth.
+Use `ecg_adv_gen/labels/super5.py` as the source of truth.
 
 Hard rules:
 
 - PTB-XL super5 uses `diagnostic_class` from `scp_statements.csv`, class order `CD,HYP,MI,NORM,STTC`.
 - Current PTB-XL implementation includes diagnostic SCP keys with likelihood/confidence `0` because it checks `conf >= 0.0`; do not change this threshold without invalidating old label caches and rerunning label distribution sanity checks.
 - If label mapping, confidence threshold, `scp_statements.csv`, or class order changes, delete/regenerate `ptbxl_labels.C5.all.npy` and record new per-class positives.
-- PN2021 super5 uses project-defined v3 semantic projection, not an official PN2021->PTB-XL crosswalk. Current source of truth is `SUPER5_PN2021_MAPPING_VERSION = v3_super5_normsuppress_20260501` in `scripts/triple_labels/label_schemes.py`.
-- PN2021 v3 uses `SNOMED_TO_SUPER5_POSITIVE` for direct CD/HYP/MI/STTC positives, `NORM_POSITIVE_SNOMEDS` for strict normal candidates, and `NORM_SUPPRESS_SNOMEDS` for rhythm/axis/ectopy/low-voltage/boundary codes that cancel NORM without becoming a super5 positive.
-- In PN2021 v3, `Q wave abnormal` and `early repolarization` are suppress-only by default, not direct STTC positives. `sinus bradycardia`, `sinus tachycardia`, and `sinus arrhythmia` are not PTB-XL-normal equivalents by default.
-- PN2021 eval cache version is `v3_super5_normsuppress`; cache metadata includes the super5 mapping version/hash and must be rebuilt if mapping, parser, class order, or preprocessing changes.
+- PN2021 super5 uses a project-defined semantic projection, not an official PN2021->PTB-XL crosswalk. The current latest-mainline mapping is `v7_super5_sjr_rgq_review_20260528` / `555ec85d5b51`.
+- Current managed PN2021 eval cache metadata must include the super5 mapping version/hash and must be rebuilt if mapping, parser, class order, or preprocessing changes.
 - MIMIC super5 is weak regex labeling. Treat it as noisy external reference or optional pretraining/ablation, not as main supervised thesis evidence.
 
 Historical Scheme B prompt table:
@@ -286,14 +308,15 @@ For multi-label samples, concatenate prompt fragments with `|`.
 - Use PN2021 7 centers only:
   `chapman_shaoxing`, `cpsc_2018`, `cpsc_2018_extra`, `georgia`, `ningbo`, `ptb`, `st_petersburg_incart`.
 - Hard-exclude `ptb-xl` / `ptbxl` shard because it leaks PTB-XL training data.
-- After the v3 super5 remapping, old PN2021 JSONs are historical. Any model result cited now must be regenerated into a versioned file such as `eval_result_v3_super5_normsuppress.json`.
-- Existing entry:
+- Old PN2021 JSONs are historical unless they report the current v7 mapping metadata. Any cited latest-mainline result must carry `v7_super5_sjr_rgq_review_20260528` / `555ec85d5b51`.
+- Current managed dry-run entry:
 
 ```bash
-/root/miniforge3/envs/ECGTwin/bin/python scripts/triple_labels/eval_crosscenter.py \
-  --scheme super5 \
-  --model_dir /path/to/model_dir \
-  --skip_mimic
+micromamba run -n ECGTwin python scripts/run_experiment.py \
+  --config configs/experiments/pn2021_eval_v7_sjr_rgq_refexcluded.yaml \
+  --local-config configs/local/linbinhao_server.example.yaml \
+  --run-id smoke_pn2021_eval_v7_refexcluded \
+  --dry-run
 ```
 
 ## Latent-Hull Online AT Rules
@@ -307,11 +330,12 @@ z_adv = (1 - lambda) * z0 + lambda * z_mix
 
 Do not assume arbitrary latent linear combinations preserve medical semantics. For the first version, keep labels fixed only when all mixed anchors share the same super5 vector or primary class and digital/teacher gates pass. Avoid cross-class mixtures unless a later explicit soft-label or union-label experiment is requested.
 
-Active implementation:
+Current latest-mainline launch path:
 
 ```text
-adversarial/latent_hull_pgd.py
-scripts/pgd_cross_center/synth_online_at_super5.py --attack_mode latent_hull
+configs/active_scripts.yaml:latest_mainline
+scripts/run_experiment.py
+ecg_adv_gen/runner/
 ```
 
 Default first-round settings:
@@ -405,16 +429,16 @@ High-priority missing PN2021-C when GPU is free:
 
 ## Implementation Guidance
 
-Keep original `model/ECGTwin/` intact. Current active new code should live in:
+Keep original `model/ECGTwin/` intact. Current active business logic should live in:
 
 ```text
-scripts/ecgtwin_author_repro/      # ECGTwin author IBE + DiT reproduction
-scripts/pgd_cross_center/          # TA-OMAT / synth-anchor ablations
-scripts/triple_labels/             # EfficientNet1DV2 training/eval
-util/ecg_digital_features.py       # digital ECG validation
+ecg_adv_gen/runner/       # managed package runners
+ecg_adv_gen/config/       # YAML loading, typed adapters, launch audit
+ecg_adv_gen/evaluation/   # PN2021/PN2021-C metrics and reports
+ecg_adv_gen/labels/       # Super5 mapping metadata
 ```
 
-Archived/historical no-IBE files may exist under `trash/` and should not be restored into the mainline without an explicit user request.
+Archived/historical no-IBE files should not be restored into the mainline without an explicit user request.
 
 If no-IBE Scheme B is explicitly revived, the old expected layout was:
 

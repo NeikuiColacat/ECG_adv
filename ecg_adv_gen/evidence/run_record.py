@@ -718,6 +718,8 @@ def _validate_run_record_contract(
         errors.append("resolved config artifact is required: run_config.resolved.yaml or run_config.resolved.json")
     if not (run_dir / "command.sh").exists():
         errors.append("command.sh is required")
+    if not (run_dir / "env.json").exists():
+        errors.append("env.json is required")
     if not (run_dir / "selection.json").exists():
         errors.append("selection.json is required")
 

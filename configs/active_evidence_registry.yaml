@@ -94,26 +94,26 @@ managed_runs:
     mapping_version: v7_super5_sjr_rgq_review_20260528
     mapping_hash: 555ec85d5b51
     updated: 2026-06-05
-  - run_id: v7_sjr_rgq_main_20260528
-    experiment_name: effnet_vae_lhat_k500_v7_sjr_rgq
-    status: provisional
+  - run_id: locked_rawfirst_20260618_effnet_copies2
+    experiment_name: effnet_vae_lhat_augmix_threechain_locked_k500
+    status: trusted
     outcome: succeeded
-    purpose: VAE L-HAT K500 EfficientNet1DV2 candidate for the v7 SJR/RGQ mainline comparison.
-    result_summary: Legacy VAE-LHAT run is backfilled with selection/run-record metadata; full trusted registration still requires a finalized run_card chain.
-    run_dir: ${paths.output_root}/effnet_vae_lhat_k500_v7_sjr_rgq/v7_sjr_rgq_main_20260528
-    run_card: ""
-    summary: ""
+    purpose: Managed locked three-chain VAE-LHAT AugMix K500 EfficientNet1DV2 candidate for the latest mainline comparison.
+    result_summary: Locked three-chain PN2021 clean/ref-excluded metrics are registered through metrics_export and paper_table artifacts.
+    run_dir: ${paths.output_root}/managed_launches/effnet_threechain_locked_rawfirst_20260618_copies2_v1
+    run_card: ${paths.output_root}/managed_launches/effnet_threechain_locked_rawfirst_20260618_copies2_v1/run_card.json
+    summary: ${paths.output_root}/managed_launches/effnet_threechain_locked_rawfirst_20260618_copies2_v1/summary.md
     mapping_version: v7_super5_sjr_rgq_review_20260528
     mapping_hash: 555ec85d5b51
-    updated: 2026-06-05
+    updated: 2026-07-02
 
 active_claims:
   - claim_id: effnet_v7_vae_lhat_improves_direct_k500
-    title: EfficientNet1DV2 VAE L-HAT improves over direct K500 on PN2021 v7.
+    title: EfficientNet1DV2 locked VAE-LHAT three-chain AugMix mainline replay surface.
     status: trusted
     paper_use: mainline
     owner: linbinhao
-    evidence_doc: docs/pipelines/v7_sjr_rgq_effnet_mainline_repro_20260528.md
+    evidence_doc: docs/pipelines/pn2021c_vae_lhat_augmix_locked_protocol_20260618.md
     protocol:
       mapping_version: v7_super5_sjr_rgq_review_20260528
       mapping_hash: 555ec85d5b51
@@ -125,17 +125,22 @@ active_claims:
       evaluation_views:
         - pn2021_all_zero_kept_refexcluded
         - pn2021_drop_all_zero_refexcluded
+      required_reporting_views:
+        - pn2021_all_zero_kept_refexcluded
+        - pn2021_drop_all_zero_refexcluded
+        - pn2021c_all_zero_kept_corrupted_refexcluded
+        - pn2021c_drop_all_zero_corrupted_refexcluded
       kshot:
         mode: fixed_k
         k: 500
-        seed: 20260531
-        subset_seed: 20260531
+        seed: 20260601
+        subset_seed: 20260601
         ref_excluded: true
         ref_meta_files:
-          ningbo: ${paths.data_root}/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets/ningbo/k500_seed20260531/ningbo_real_k500_seed20260531.ref_meta.json
-          chapman_shaoxing: ${paths.data_root}/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets/chapman_shaoxing/k500_seed20260531/chapman_shaoxing_real_k500_seed20260531.ref_meta.json
-          cpsc_2018: ${paths.data_root}/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets/cpsc_2018/k500_seed20260531/cpsc_2018_real_k500_seed20260531.ref_meta.json
-          georgia: ${paths.data_root}/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets/georgia/k500_seed20260531/georgia_real_k500_seed20260531.ref_meta.json
+          ningbo: ${paths.data_root}/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets/ningbo/k500_seed20260601/ningbo_real_k500_seed20260601.ref_meta.json
+          chapman_shaoxing: ${paths.data_root}/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets/chapman_shaoxing/k500_seed20260601/chapman_shaoxing_real_k500_seed20260601.ref_meta.json
+          cpsc_2018: ${paths.data_root}/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets/cpsc_2018/k500_seed20260601/cpsc_2018_real_k500_seed20260601.ref_meta.json
+          georgia: ${paths.data_root}/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets/georgia/k500_seed20260601/georgia_real_k500_seed20260601.ref_meta.json
       selection:
         policy: k500_internal_val_plus_source_floor
         forbidden_information:
@@ -148,6 +153,14 @@ active_claims:
         method_family: direct_target_k500_finetune
         run_id: v7_sjr_rgq_main_20260528
         config: configs/experiments/effnet_direct_k500_v7_sjr_rgq.yaml
+        current_replay:
+          mode: managed_yaml
+          launcher: scripts/run_experiment.py
+          config: configs/experiments/effnet_direct_k500_v7_sjr_rgq.yaml
+        legacy_manifest_commands:
+          status: provenance_only
+          callable_interface: false
+          use_for_new_runs: false
         run_root: ${paths.output_root}/effnet_direct_k500_v7_sjr_rgq/v7_sjr_rgq_main_20260528
         manifest: ${paths.output_root}/20260528/v7_sjr_rgq_main_20260528_direct_plan/run_manifest.json
         metrics_long: ${paths.output_root}/metrics_export/v7_sjr_rgq_main_20260528_effnet_direct_k500_v7_sjr_rgq/metrics_long.csv
@@ -158,38 +171,87 @@ active_claims:
       vae_lhat:
         role: candidate
         status: trusted
-        traceability: legacy_backfilled_manifest
-        method_family: vae_latent_hull_online_at
-        run_id: v7_sjr_rgq_main_20260528
-        config: configs/experiments/effnet_vae_lhat_k500_v7_sjr_rgq.yaml
-        run_root: ${paths.output_root}/effnet_vae_lhat_k500_v7_sjr_rgq/v7_sjr_rgq_main_20260528
-        manifest: ${paths.output_root}/effnet_vae_lhat_k500_v7_sjr_rgq/v7_sjr_rgq_main_20260528/run_manifest.backfilled.json
-        metrics_long: ${paths.output_root}/metrics_export/v7_sjr_rgq_main_20260528_effnet_vae_lhat_k500_v7_sjr_rgq/metrics_long.csv
-        artifact_manifest: ${paths.output_root}/metrics_export/v7_sjr_rgq_main_20260528_effnet_vae_lhat_k500_v7_sjr_rgq/artifact_manifest.json
+        traceability: managed_yaml_replay
+        method_family: vae_lhat_threechain_augmix_pn2021c
+        run_id: locked_rawfirst_20260618_effnet_copies2
+        config: configs/experiments/effnet_vae_lhat_augmix_threechain_locked_k500.yaml
+        current_replay:
+          mode: managed_yaml
+          launcher: scripts/run_experiment.py
+          config: configs/experiments/effnet_vae_lhat_augmix_threechain_locked_k500.yaml
+        legacy_manifest_commands:
+          status: provenance_only
+          callable_interface: false
+          use_for_new_runs: false
+        run_root: ${paths.output_root}/managed_launches/effnet_threechain_locked_rawfirst_20260618_copies2_v1
+        manifest: ${paths.output_root}/managed_launches/effnet_threechain_locked_rawfirst_20260618_copies2_v1/run_manifest.json
+        metrics_long: ${paths.output_root}/metrics_export/locked_rawfirst_20260618_effnet_copies2_effnet_vae_lhat_augmix_threechain_locked_k500/metrics_long.csv
+        artifact_manifest: ${paths.output_root}/metrics_export/locked_rawfirst_20260618_effnet_copies2_effnet_vae_lhat_augmix_threechain_locked_k500/artifact_manifest.json
         paper_tables:
-          pn2021_all_zero_kept_refexcluded: ${paths.output_root}/paper_table/v7_sjr_rgq_main_20260528_effnet_vae_lhat_k500_v7_sjr_rgq_all_zero_kept/paper_table.csv
-          pn2021_drop_all_zero_refexcluded: ${paths.output_root}/paper_table/v7_sjr_rgq_main_20260528_effnet_vae_lhat_k500_v7_sjr_rgq_drop_all_zero/paper_table.csv
+          pn2021_all_zero_kept_refexcluded: ${paths.output_root}/paper_table/locked_rawfirst_20260618_effnet_copies2_effnet_vae_lhat_augmix_threechain_locked_k500_all_zero_kept/paper_table.csv
+          pn2021_drop_all_zero_refexcluded: ${paths.output_root}/paper_table/locked_rawfirst_20260618_effnet_copies2_effnet_vae_lhat_augmix_threechain_locked_k500_drop_all_zero/paper_table.csv
     summary_metrics:
       pn2021_all_zero_kept_refexcluded:
         direct: {macro_auroc: 0.8521806591, macro_auprc: 0.5246913957}
-        vae_lhat: {macro_auroc: 0.8711774092, macro_auprc: 0.5543950864}
+        vae_lhat: {macro_auroc: 0.873450206917, macro_auprc: 0.563700861136}
         delta_vae_lhat_minus_direct:
-          macro_auroc_pp: 1.89967501
-          macro_auprc_pp: 2.97036907
+          macro_auroc_pp: 2.12695478
+          macro_auprc_pp: 3.90094654
       pn2021_drop_all_zero_refexcluded:
         direct: {macro_auroc: 0.8763066077, macro_auprc: 0.6666377832}
-        vae_lhat: {macro_auroc: 0.8996374591, macro_auprc: 0.7176495521}
+        vae_lhat: {macro_auroc: 0.901499159253, macro_auprc: 0.73065541338}
         delta_vae_lhat_minus_direct:
-          macro_auroc_pp: 2.33308514
-          macro_auprc_pp: 5.10117689
+          macro_auroc_pp: 2.51925516
+          macro_auprc_pp: 6.40176302
+      pn2021c_all_zero_kept_corrupted_refexcluded:
+        direct: {macro_auroc: 0.8099513373, macro_auprc: 0.4728534587}
+        vae_lhat: {macro_auroc: 0.8286190331, macro_auprc: 0.4940394547}
+        delta_vae_lhat_minus_direct:
+          macro_auroc_pp: 1.86676958
+          macro_auprc_pp: 2.1185996
+      pn2021c_drop_all_zero_corrupted_refexcluded:
+        direct: {macro_auroc: 0.8312063361, macro_auprc: 0.6086938458}
+        vae_lhat: {macro_auroc: 0.8547489876, macro_auprc: 0.6438691561}
+        delta_vae_lhat_minus_direct:
+          macro_auroc_pp: 2.35426514
+          macro_auprc_pp: 3.51753102
+    required_reporting_artifacts:
+      pn2021c_metrics_long: ${paths.output_root}/metrics_export/pn2021c_official_s5_locked_effnet_direct_vs_threechain_locked/metrics_long.csv
+      pn2021c_merge_manifest: ${paths.output_root}/metrics_export/pn2021c_official_s5_locked_effnet_direct_vs_threechain_locked/merge_manifest.json
+      method_metrics_long:
+        direct: ${paths.output_root}/metrics_export/pn2021c_official_s5_locked_effnet_direct_k500_v7_sjr_rgq/metrics_long.csv
+        vae_lhat: ${paths.output_root}/metrics_export/pn2021c_official_s5_locked_effnet_vae_lhat_augmix_threechain_locked_k500/metrics_long.csv
+      method_artifact_manifests:
+        direct: ${paths.output_root}/metrics_export/pn2021c_official_s5_locked_effnet_direct_k500_v7_sjr_rgq/artifact_manifest.json
+        vae_lhat: ${paths.output_root}/metrics_export/pn2021c_official_s5_locked_effnet_vae_lhat_augmix_threechain_locked_k500/artifact_manifest.json
+      paper_tables:
+        pn2021c_all_zero_kept_corrupted_refexcluded: ${paths.output_root}/paper_table/pn2021c_official_s5_locked_effnet_direct_vs_threechain_all_zero_kept/paper_table.csv
+        pn2021c_drop_all_zero_corrupted_refexcluded: ${paths.output_root}/paper_table/pn2021c_official_s5_locked_effnet_direct_vs_threechain_drop_all_zero/paper_table.csv
+      paper_table_manifests:
+        pn2021c_all_zero_kept_corrupted_refexcluded: ${paths.output_root}/paper_table/pn2021c_official_s5_locked_effnet_direct_vs_threechain_all_zero_kept/paper_table_manifest.json
+        pn2021c_drop_all_zero_corrupted_refexcluded: ${paths.output_root}/paper_table/pn2021c_official_s5_locked_effnet_direct_vs_threechain_drop_all_zero/paper_table_manifest.json
+    supporting_reporting_artifacts:
+      ecgfounder_locked_threechain_pn2021c_s5:
+        status: supporting_contrast_no_direct_delta
+        metrics_long: ${paths.output_root}/metrics_export/pn2021c_official_s5_locked_ecgfounder_threechain_locked_k500/metrics_long.csv
+        artifact_manifest: ${paths.output_root}/metrics_export/pn2021c_official_s5_locked_ecgfounder_threechain_locked_k500/artifact_manifest.json
+        summary_metrics:
+          pn2021c_all_zero_kept_corrupted_refexcluded: {macro_auroc: 0.8246779744, macro_auprc: 0.5094402413}
+          pn2021c_drop_all_zero_corrupted_refexcluded: {macro_auroc: 0.8544315655, macro_auprc: 0.6535433412}
+        paper_tables:
+          pn2021c_all_zero_kept_corrupted_refexcluded: ${paths.output_root}/paper_table/pn2021c_official_s5_locked_ecgfounder_threechain_all_zero_kept/paper_table.csv
+          pn2021c_drop_all_zero_corrupted_refexcluded: ${paths.output_root}/paper_table/pn2021c_official_s5_locked_ecgfounder_threechain_drop_all_zero/paper_table.csv
+        paper_table_manifests:
+          pn2021c_all_zero_kept_corrupted_refexcluded: ${paths.output_root}/paper_table/pn2021c_official_s5_locked_ecgfounder_threechain_all_zero_kept/paper_table_manifest.json
+          pn2021c_drop_all_zero_corrupted_refexcluded: ${paths.output_root}/paper_table/pn2021c_official_s5_locked_ecgfounder_threechain_drop_all_zero/paper_table_manifest.json
     comparison_bundle:
-      comparison_id: v7_sjr_rgq_effnet_direct_vs_vae_lhat_20260528
+      comparison_id: v7_sjr_rgq_effnet_direct_vs_threechain_locked_20260618
       status: built
       baseline_method: direct
       candidate_method: vae_lhat
-      output_dir: ${paths.output_root}/comparison_bundles/v7_sjr_rgq_effnet_direct_vs_vae_lhat_20260528
+      output_dir: ${paths.output_root}/comparison_bundles/v7_sjr_rgq_effnet_direct_vs_threechain_locked_20260618
       baseline_run_id: effnet_direct_k500_v7_sjr_rgq
-      candidate_run_id: effnet_vae_lhat_k500_v7_sjr_rgq
+      candidate_run_id: effnet_vae_lhat_augmix_threechain_locked_k500
       managed_artifacts:
         - comparison_manifest.json
         - metrics_long.csv
@@ -197,14 +259,16 @@ active_claims:
         - paper_table_pn2021_all_zero_kept_refexcluded.csv
         - paper_table_pn2021_drop_all_zero_refexcluded.csv
     caveats:
-      - VAE v7 result uses a legacy backfilled manifest because the original run predates managed launcher manifests.
+      - Current trusted candidate evidence covers managed locked three-chain PN2021 clean/ref-excluded metrics.
+      - PN2021-C registered metrics aggregate official severity-5 corruption results per target center before the four-center mean.
       - Do not tune future recipes from held-out PN2021 target labels or full target-center class distributions.
 
 run_catalog:
   trusted:
     - effnet_direct_k500_v7_sjr_rgq/v7_sjr_rgq_main_20260528
-    - effnet_vae_lhat_k500_v7_sjr_rgq/v7_sjr_rgq_main_20260528
+    - managed_launches/effnet_threechain_locked_rawfirst_20260618_copies2_v1
   deprecated:
+    - effnet_vae_lhat_k500_v7_sjr_rgq/v7_sjr_rgq_main_20260528 is legacy clean VAE-LHAT provenance, not the latest three-chain mainline evidence.
     - v3/v5/v6 headline numbers for the final v7 EfficientNet mainline unless explicitly used as historical sensitivity analysis.
 
 external_research_sources:

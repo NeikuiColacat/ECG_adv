@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from .common import argv_option_map, audit_equals, audit_require_options, opt_first, opt_list
+from .common import argv_option_map, audit_equals, audit_require_options, opt_list
 
 
 def build_pn2021_eval_argv(config: Mapping[str, Any], context: Mapping[str, Any]) -> list[Any]:
-    """Build argv for ``scripts/triple_labels/eval_crosscenter.py``."""
+    """Build argv for ``ecg_adv_gen/runner/pn2021_clean_eval.py``."""
 
     matrix = context.get("matrix") or {}
     center = matrix.get("center")
@@ -77,7 +77,7 @@ def audit_pn2021_eval_command(command: Mapping[str, Any], *, config: Mapping[str
     warnings: list[str] = []
     argv = [str(x) for x in command["argv"]]
     opts = argv_option_map(argv)
-    script = "eval_crosscenter.py"
+    script = "pn2021_clean_eval.py"
     kshot = config["paper_protocol"]["kshot"]
     expected_k = str(kshot["k"])
     expected_seed = str(kshot.get("subset_seed", kshot["seed"]))
@@ -134,23 +134,5 @@ def audit_pn2021_eval_command(command: Mapping[str, Any], *, config: Mapping[str
     matrix_center = str((command.get("matrix") or {}).get("center", ""))
     if matrix_center and matrix_center not in target_centers:
         errors.append(f"{script}: unexpected matrix center {matrix_center!r}")
-
-    experiment_name = str((config.get("experiment") or {}).get("name") or "")
-    run_id = str((config.get("runtime") or {}).get("run_id") or "")
-    if experiment_name == "ecgtwin_prompt_token_online_at_minimal_eval":
-        center = matrix_center or str(opt_first(opts, "--center", ""))
-        model_dir = str(opt_first(opts, "--model_dir", ""))
-        output_path = str(opt_first(opts, "--output_path", ""))
-        expected_model_dir_suffix = f"/ecgtwin_prompt_token_online_at_minimal/{run_id}/{center}"
-        expected_output_suffix = (
-            f"/ecgtwin_prompt_token_online_at_minimal_eval/{run_id}/{center}/"
-            "eval_result_v7_super5_sjr_rgq_refexcluded.json"
-        )
-        audit_equals(errors, script, opts, "--model_name", "efficientnet1dv2")
-        audit_equals(errors, script, opts, "--device", "cuda")
-        if run_id and not model_dir.endswith(expected_model_dir_suffix):
-            errors.append(f"{script}: model_dir must point at same-run prompt-token online-AT output")
-        if run_id and not output_path.endswith(expected_output_suffix):
-            errors.append(f"{script}: output_path must be run-id-scoped under ecgtwin_prompt_token_online_at_minimal_eval")
 
     return {"errors": errors, "warnings": warnings}

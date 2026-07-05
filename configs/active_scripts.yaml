@@ -1,11 +1,10 @@
 version: 1
-updated: 2026-06-19
-purpose: Track which legacy scripts are managed by YAML configs during the refactor.
-
+updated: 2026-07-01
+purpose: Track the latest-mainline YAML launch contract and SOTA replay references for the public refactor.
 source_of_truth:
   shared_server_safety: AGENTS.md
-  yaml_refactor_plan: docs/pipelines/ai_agent_workspace_refactor_plan_20260604.md
-  data_layer_refactor_plan: docs/pipelines/data_layer_refactor_plan_20260619.md
+  yaml_refactor_plan: docs/refactor_cleanup/cleanup_manifest_summary_20260705.md
+  data_layer_refactor_plan: docs/refactor_cleanup/cleanup_manifest_summary_20260705.md
   current_handoff_note: docs/codex-handoffs/current_workspace_handoff.md
   config_rules: configs/README.md
   active_evidence_registry: configs/active_evidence_registry.yaml
@@ -17,14 +16,17 @@ source_of_truth:
   direct_finetune_runner_adapter: ecg_adv_gen/config/adapters/direct_finetune.py
   ecgfounder_fullft_runner_adapter: ecg_adv_gen/config/adapters/ecgfounder_fullft.py
   ecgfounder_pn2021c_eval_runner_adapter: ecg_adv_gen/config/adapters/ecgfounder_pn2021c_eval.py
-  ecgfounder_vae_lhat_command_adapter: ecg_adv_gen/config/adapters/ecgfounder_vae_lhat.py
   effnet_vae_lhat_command_adapter: ecg_adv_gen/config/adapters/effnet_vae_lhat.py
   pn2021_eval_runner_adapter: ecg_adv_gen/config/adapters/pn2021_eval.py
   pn2021c_eval_runner_adapter: ecg_adv_gen/config/adapters/pn2021c_eval.py
-  prompt_token_online_at_runner_adapter: ecg_adv_gen/config/adapters/prompt_token_online_at.py
-  effnet_vae_lhat_wrapper_plan_builder: ecg_adv_gen/runner/effnet_vae_lhat.py
+  direct_finetune_runner: ecg_adv_gen/runner/effnet_direct_finetune.py
+  ecgfounder_fullft_runner: ecg_adv_gen/runner/ecgfounder_fullft.py
+  ecgfounder_pn2021c_eval_runner: ecg_adv_gen/runner/ecgfounder_pn2021c_eval.py
+  effnet_vae_lhat_augmix_runner: ecg_adv_gen/runner/effnet_vae_lhat_augmix.py
+  effnet_vae_lhat_plan_builder: ecg_adv_gen/runner/effnet_vae_lhat.py
+  pn2021_clean_eval_runner: ecg_adv_gen/runner/pn2021_clean_eval.py
+  pn2021c_eval_runner: ecg_adv_gen/runner/pn2021c_eval.py
   external_model_link_contract: ecg_adv_gen/config/external_models.py
-  source_training_command_adapter: ecg_adv_gen/config/adapters/source_training.py
   super5_label_mapping: ecg_adv_gen/labels/super5_mapping.py
   super5_label_metadata: ecg_adv_gen/labels/super5.py
   data_preprocess_contract: ecg_adv_gen/data/contracts.py
@@ -33,8 +35,6 @@ source_of_truth:
   pn2021_record_metadata: ecg_adv_gen/data/pn2021_records.py
   pn2021_waveform_materialization: ecg_adv_gen/data/pn2021_waveforms.py
   kshot_artifact_paths: ecg_adv_gen/data/kshot_artifacts.py
-  gated_pool_artifacts: ecg_adv_gen/data/gated_pools.py
-  prompt_token_compiler: ecg_adv_gen/generation/prompt_tokens.py
   launch_plan_writer: ecg_adv_gen/runner/launch_plan.py
   evaluation_view_semantics: ecg_adv_gen/evaluation/views.py
   pn2021_clean_eval_cache: ecg_adv_gen/evaluation/pn2021_eval_cache.py
@@ -44,60 +44,101 @@ source_of_truth:
   ecgfounder_model_contract: ecg_adv_gen/models/ecgfounder.py
   training_loss_helpers: ecg_adv_gen/training/losses.py
   online_at_orchestration_helpers: ecg_adv_gen/training/online_at.py
-
 launch_surface_policy:
   default_launcher: scripts/run_experiment.py
   managed_index: configs/active_scripts.yaml
   config_roots:
-    - configs/defaults
-    - configs/experiments
+  - configs/defaults
+  - configs/experiments
   tracked_yaml_required: true
   new_long_bash_launchers_allowed: false
   new_dated_matrix_scripts_allowed: false
   human_exception_requires_index_update: true
   gpu_binding_location: external_environment_after_nvidia_smi
-  legacy_bash_role: historical_reference_or_project_setup_only
+  archived_bash_role: provenance_only_not_callable_interface
   safety_rules:
-    - no_tracked_gpu_ids
-    - no_host_absolute_paths
-    - run_id_scoped_outputs
-    - legacy_entrypoint_kept_as_thin_wrapper
-    - optional_runner_adapter_builds_legacy_argv_from_typed_yaml
-
+  - no_tracked_gpu_ids
+  - no_host_absolute_paths
+  - run_id_scoped_outputs
+  - only_scripts_run_experiment_is_launch_surface
+  - typed_yaml_adapters_build_managed_commands
+latest_mainline:
+  method: vae_lhat_threechain_augmix_pn2021c
+  launcher: scripts/run_experiment.py
+  mapping_version: v7_super5_sjr_rgq_review_20260528
+  mapping_hash: 555ec85d5b51
+  class_order:
+  - CD
+  - HYP
+  - MI
+  - NORM
+  - STTC
+  historical_policy: drop_from_public_tree_unless_latest_mainline_or_sota_replay
+  excluded_main_method_branches:
+  - stabilizer_frontend
+  - raw_supervised_branch
+  - single_chain_shortcut
+  - operator_oracle
+  - post_hoc_selector
+  stages:
+  - name: effnet_direct_k500_v7
+    role: efficientnet_direct_baseline
+    config: configs/experiments/effnet_direct_k500_v7_sjr_rgq.yaml
+  - name: effnet_direct_k500_v7_pn2021_clean
+    role: efficientnet_direct_baseline_pn2021_clean_refexcluded_eval
+    config: configs/experiments/pn2021_eval_v7_sjr_rgq_refexcluded.yaml
+  - name: effnet_threechain_locked_train
+    role: efficientnet_main_method_train
+    config: configs/experiments/effnet_vae_lhat_augmix_threechain_locked_k500.yaml
+  - name: effnet_threechain_locked_pn2021c_s5
+    role: efficientnet_main_method_pn2021c_eval
+    config: configs/experiments/pn2021c_effnet_threechain_locked_official_s5.yaml
+  - name: effnet_threechain_locked_pn2021c_depth23
+    role: efficientnet_main_method_depth23_composite_eval
+    config: configs/experiments/pn2021c_effnet_official_s5_depth23_composite.yaml
+  - name: ecgfounder_ptbxl_locked_fullft
+    role: ecgfounder_source_fullft_prerequisite
+    config: configs/experiments/ecgfounder_ptbxl_super5_fullft_locked.yaml
+  - name: ecgfounder_k500_locked_fullft
+    role: ecgfounder_k500_fullft_prerequisite
+    config: configs/experiments/ecgfounder_k500_fullft_locked.yaml
+  - name: ecgfounder_threechain_locked_train
+    role: ecgfounder_main_method_train
+    config: configs/experiments/ecgfounder_vae_lhat_augmix_threechain_locked_k500.yaml
+  - name: ecgfounder_threechain_locked_pn2021c_s5
+    role: ecgfounder_main_method_pn2021c_eval
+    config: configs/experiments/pn2021c_ecgfounder_threechain_locked_official_s5.yaml
+  - name: ecgfounder_threechain_locked_pn2021c_depth23
+    role: ecgfounder_main_method_depth23_composite_eval
+    config: configs/experiments/pn2021c_ecgfounder_official_s5_depth23_composite.yaml
 documentation_surface_policy:
   durable_process_docs: docs/pipelines
-  historical_report_archive: docs/reports/archive
+  historical_report_archive: external_provenance_not_public_tree
   handoff_notes: docs/codex-handoffs
   active_evidence_sources:
-    - configs/active_evidence_registry.yaml
-    - registered_run_records
+  - configs/active_evidence_registry.yaml
+  - registered_run_records
   temporary_report_dirs_allowed: false
   dated_archive_subdirs_required: true
   archive_reports_are_active_evidence_by_default: false
   safety_rules:
-    - move_historical_reports_to_docs_reports_archive_YYYYMMDD
-    - cite_archived_reports_from_pipeline_docs_or_registry
-    - keep_raw_tmp_reports_out_of_default_handoff
-
+  - move_historical_reports_to_docs_reports_archive_YYYYMMDD
+  - cite_archived_reports_from_pipeline_docs_or_registry
+  - keep_raw_tmp_reports_out_of_default_handoff
 implementation_surface_policy:
   package_root: ecg_adv_gen
   tests_root: util/tests
-  legacy_wrapper_roots:
-    - scripts/paper
-    - scripts/pgd_cross_center
-    - scripts/triple_labels
-    - scripts/ecgtwin_author_repro
-    - scripts/ecgtwin_gen
+  package_runner_roots:
+  - ecg_adv_gen/runner
   new_shared_logic_target: ecg_adv_gen
-  legacy_entrypoints_can_move_without_index_update: false
-  legacy_wrappers_own_new_shared_abstractions: false
+  package_entrypoints_can_move_without_index_update: false
+  package_runners_own_new_shared_abstractions: false
   package_helpers_require_cpu_tests: true
   safety_rules:
-    - extract_small_cpu_tested_helpers_before_training_loop_moves
-    - keep_script_level_compatibility_exports
-    - update_active_scripts_and_tests_with_entrypoint_moves
-    - do_not_move_full_gpu_orchestration_in_one_step
-
+  - extract_small_cpu_tested_helpers_before_training_loop_moves
+  - archive_legacy_entrypoints_without_compatibility_exports
+  - update_active_scripts_and_tests_with_entrypoint_moves
+  - do_not_move_full_gpu_orchestration_in_one_step
 launcher:
   script: scripts/run_experiment.py
   config_package: ecg_adv_gen/config
@@ -105,880 +146,336 @@ launcher:
     dry_run: supported
     execute: supported_with_gpu_safety_gates
   launch_artifacts:
-    - run_config.resolved.yaml
-    - run_config.resolved.json
-    - run_manifest.json
-    - command.sh
-    - data_manifest.json
-    - k500_ref_ids.json
-    - selection.json
-    - run_card.json
-    - run_file_index.json
-    - summary.md
+  - run_config.resolved.yaml
+  - run_config.resolved.json
+  - run_manifest.json
+  - command.sh
+  - data_manifest.json
+  - k500_ref_ids.json
+  - selection.json
+  - run_card.json
+  - run_file_index.json
+  - summary.md
   content_checks:
-    - eval_result_mapping_metadata
-    - k500_ref_ids_integrity
-    - selection_policy_record
-    - optional_required_epoch_metrics_in_training_log
-    - run_id_scoped_child_and_postprocess_outputs
+  - eval_result_mapping_metadata
+  - k500_ref_ids_integrity
+  - selection_policy_record
+  - optional_required_epoch_metrics_in_training_log
+  - run_id_scoped_child_and_postprocess_outputs
   execution_logs:
-    - logs/command_XX.log
-    - logs/command_XX.stdout.log
-    - logs/command_XX.stderr.log
-    - logs/postprocess_XX.log
-    - logs/postprocess_XX.stdout.log
-    - logs/postprocess_XX.stderr.log
-    - stdout.log
-    - stderr.log
+  - logs/command_XX.log
+  - logs/command_XX.stdout.log
+  - logs/command_XX.stderr.log
+  - logs/postprocess_XX.log
+  - logs/postprocess_XX.stdout.log
+  - logs/postprocess_XX.stderr.log
+  - stdout.log
+  - stderr.log
   postprocess:
     status: supported_for_reporting_exports
     allowlist:
-      - scripts/export_data_manifest.py
-      - scripts/export_metrics_long.py
-      - scripts/merge_metrics_long.py
-      - scripts/export_paper_table.py
-
+    - scripts/export_data_manifest.py
+    - scripts/export_metrics_long.py
+    - scripts/merge_metrics_long.py
+    - scripts/export_paper_table.py
 run_record_layout:
   status: active
   required_files:
-    - run_card.json
-    - run_file_index.json
-    - summary.md
+  - run_card.json
+  - run_file_index.json
+  - summary.md
   required_directories:
-    - configs/
-    - manifests/
-    - logs/
-    - checkpoints/
-    - eval/
-    - diagnostics/
-    - reports/
-    - artifacts/
-
+  - configs/
+  - manifests/
+  - logs/
+  - checkpoints/
+  - eval/
+  - diagnostics/
+  - reports/
+  - artifacts/
 evidence_scope_definitions:
   trusted_registry_linked: Launch config is linked to the current trusted active evidence, but cite metrics only through configs/active_evidence_registry.yaml and recorded artifacts.
   launch_only: Launch surface is managed and auditable, but it is not current experiment evidence by itself.
   prep_only: Preparation/export surface only; generated data must be linked by later run manifests before citation.
   evaluation_only: Evaluation surface only; cite resulting metrics only after registry or run-record registration.
-
 managed_experiments:
-  - name: effnet_direct_k500_v7_sjr_rgq
-    status: active_wrapped
-    evidence_scope: trusted_registry_linked
-    config: configs/experiments/effnet_direct_k500_v7_sjr_rgq.yaml
-    legacy_entrypoint: scripts/paper/run_direct_finetune_k500_20260516.py
-    launcher: scripts/run_experiment.py
-    method_family: direct_target_k500_finetune
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    owns_training_logic: false
-    notes: Current EfficientNet direct K500 v7 SJR/RGQ wrapper; one legacy command covers the four target centers and passes managed --out_root.
-
-  - name: effnet_direct_k500_v7_sjr_rgq_matrix
-    status: active_wrapped
-    evidence_scope: launch_only
-    config: configs/experiments/effnet_direct_k500_v7_sjr_rgq_matrix.yaml
-    legacy_entrypoint: scripts/paper/run_direct_finetune_k500_20260516.py
-    launcher: scripts/run_experiment.py
-    method_family: direct_target_k500_finetune_matrix
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    owns_training_logic: false
-    notes: Per-center Direct K500 v7 matrix launch surface; runner.adapter=direct_finetune expands typed YAML fields and replaces the Direct K500 command expansion in scripts/paper/run_effnet_v7_multiseed_kshot_matrix_20260530.py without tracking GPU ids.
-
-  - name: effnet_v7_sjr_rgq_subset_export
-    status: active_wrapped
-    evidence_scope: prep_only
-    config: configs/experiments/effnet_v7_sjr_rgq_subset_export.yaml
-    legacy_entrypoint: scripts/paper/export_percent_kshot_v7_sjr_rgq_20260530.py
-    launcher: scripts/run_experiment.py
-    method_family: managed_v7_subset_export_prep
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    owns_training_logic: false
-    notes: Managed prep command for K500, p10, and p20 v7 SJR/RGQ ECGTwin-anchor subsets; replaces the subset-export stage embedded in scripts/paper/run_effnet_v7_multiseed_kshot_matrix_20260530.py.
-
-  - name: effnet_direct_percent_v7_sjr_rgq_matrix
-    status: active_wrapped
-    evidence_scope: launch_only
-    config: configs/experiments/effnet_direct_percent_v7_sjr_rgq_matrix.yaml
-    legacy_entrypoint: scripts/paper/run_direct_finetune_k500_20260516.py
-    launcher: scripts/run_experiment.py
-    method_family: direct_target_percent_finetune_matrix
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    owns_training_logic: false
-    notes: Per-center Direct p10/p20 v7 matrix launch surface; consumes seed20260531 percent-shot subsets and replaces that Direct portion of scripts/paper/run_effnet_v7_multiseed_kshot_matrix_20260530.py without tracking GPU ids.
-
-  - name: effnet_vae_lhat_k500_v7_sjr_rgq
-    status: active_wrapped
-    evidence_scope: trusted_registry_linked
-    config: configs/experiments/effnet_vae_lhat_k500_v7_sjr_rgq.yaml
-    legacy_entrypoint: scripts/paper/run_effnet_latent_augmix_stage3_20260524.py
-    launcher: scripts/run_experiment.py
-    method_family: vae_latent_hull_online_at
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    owns_training_logic: false
-    notes: Current EfficientNet VAE-LHAT v7 SJR/RGQ wrapper; runner.adapter=effnet_vae_lhat expands typed YAML fields to one legacy command per target center, uses seed20260531 K500 anchors, direct-K500 init checkpoints, compatsoft direct-init LHAT parameters, and target_real_val quick selection.
-
-  - name: effnet_vae_lhat_augmix_threechain_locked_k500
-    status: active_wrapped
-    evidence_scope: launch_only
-    config: configs/experiments/effnet_vae_lhat_augmix_threechain_locked_k500.yaml
-    legacy_entrypoint: scripts/paper/run_effnet_latent_augmix_stage3_20260524.py
-    launcher: scripts/run_experiment.py
-    method_family: vae_latent_hull_threechain_augmix_locked_pn2021c
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    owns_training_logic: false
-    notes: Locked EfficientNet PN2021-C official severity-5 main-method launch surface; uses all K500 target samples, checkpoint_policy=last, quick_eval_source=none, and two corruption chains plus one VAE-LHAT adversarial waveform chain.
-
-  - name: effnet_vae_lhat_percent_v7_sjr_rgq
-    status: active_wrapped
-    evidence_scope: launch_only
-    config: configs/experiments/effnet_vae_lhat_percent_v7_sjr_rgq.yaml
-    legacy_entrypoint: scripts/paper/run_effnet_latent_augmix_stage3_20260524.py
-    launcher: scripts/run_experiment.py
-    method_family: vae_latent_hull_percent_online_at
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    owns_training_logic: false
-    notes: Per-center VAE-LHAT p10/p20 v7 matrix launch surface; uses protocol-matched Direct percent checkpoints from the same runtime.run_id and replaces that VAE portion of scripts/paper/run_effnet_v7_multiseed_kshot_matrix_20260530.py without tracking GPU ids.
-
-  - name: benchmark_source_v7_sjr_rgq_matrix
-    status: active_wrapped
-    evidence_scope: launch_only
-    config: configs/experiments/benchmark_source_v7_sjr_rgq_matrix.yaml
-    legacy_entrypoint: scripts/triple_labels/train_ptbxl.py
-    launcher: scripts/run_experiment.py
-    method_family: benchmark_source_pretrain_matrix
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    owns_training_logic: false
-    notes: Source PTB-XL Super5 pretraining launch surface for benchmark 1D ECG backbones; replaces the source-pretrain command expansion hidden inside scripts/paper/run_benchmark_backbone_v7_kshot_matrix_20260530.py.
-
-  - name: benchmark_resnet1d_direct_k500_v7_sjr_rgq_matrix
-    status: active_wrapped
-    evidence_scope: launch_only
-    config: configs/experiments/benchmark_resnet1d_direct_k500_v7_sjr_rgq_matrix.yaml
-    legacy_entrypoint: scripts/paper/run_benchmark_direct_finetune_v7_20260530.py
-    launcher: scripts/run_experiment.py
-    method_family: benchmark_direct_target_k500_finetune_matrix
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    owns_training_logic: false
-    notes: Per-center benchmark_resnet1d_wang Direct K500 v7 matrix launch surface; source checkpoint training remains an explicit prerequisite instead of being hidden inside scripts/paper/run_benchmark_backbone_v7_kshot_matrix_20260530.py.
-
-  - name: benchmark_inception1d_direct_k500_v7_sjr_rgq_matrix
-    status: active_wrapped
-    evidence_scope: launch_only
-    config: configs/experiments/benchmark_inception1d_direct_k500_v7_sjr_rgq_matrix.yaml
-    legacy_entrypoint: scripts/paper/run_benchmark_direct_finetune_v7_20260530.py
-    launcher: scripts/run_experiment.py
-    method_family: benchmark_direct_target_k500_finetune_matrix
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    owns_training_logic: false
-    notes: Per-center benchmark_inception1d Direct K500 v7 matrix launch surface; source checkpoint training remains an explicit prerequisite.
-
-  - name: benchmark_fcn_wang_direct_k500_v7_sjr_rgq_matrix
-    status: active_wrapped
-    evidence_scope: launch_only
-    config: configs/experiments/benchmark_fcn_wang_direct_k500_v7_sjr_rgq_matrix.yaml
-    legacy_entrypoint: scripts/paper/run_benchmark_direct_finetune_v7_20260530.py
-    launcher: scripts/run_experiment.py
-    method_family: benchmark_direct_target_k500_finetune_matrix
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    owns_training_logic: false
-    notes: Per-center benchmark_fcn_wang Direct K500 v7 matrix launch surface; source checkpoint training remains an explicit prerequisite.
-
-  - name: benchmark_resnet1d_vae_lhat_k500_v7_sjr_rgq
-    status: active_wrapped
-    evidence_scope: launch_only
-    config: configs/experiments/benchmark_resnet1d_vae_lhat_k500_v7_sjr_rgq.yaml
-    legacy_entrypoint: scripts/paper/run_effnet_latent_augmix_stage3_20260524.py
-    launcher: scripts/run_experiment.py
-    method_family: benchmark_vae_latent_hull_online_at_v7
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    owns_training_logic: false
-    notes: Per-center benchmark_resnet1d_wang VAE-LHAT K500 v7 launch surface; runner.adapter=benchmark_vae_lhat expands typed YAML fields, consumes same-run Direct K500 checkpoints, and leaves GPU selection outside YAML.
-
-  - name: benchmark_inception1d_vae_lhat_k500_v7_sjr_rgq
-    status: active_wrapped
-    evidence_scope: launch_only
-    config: configs/experiments/benchmark_inception1d_vae_lhat_k500_v7_sjr_rgq.yaml
-    legacy_entrypoint: scripts/paper/run_effnet_latent_augmix_stage3_20260524.py
-    launcher: scripts/run_experiment.py
-    method_family: benchmark_vae_latent_hull_online_at_v7
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    owns_training_logic: false
-    notes: Per-center benchmark_inception1d VAE-LHAT K500 v7 launch surface; runner.adapter=benchmark_vae_lhat expands typed YAML fields, consumes same-run Direct K500 checkpoints, and leaves GPU selection outside YAML.
-
-  - name: benchmark_fcn_wang_vae_lhat_k500_v7_sjr_rgq
-    status: active_wrapped
-    evidence_scope: launch_only
-    config: configs/experiments/benchmark_fcn_wang_vae_lhat_k500_v7_sjr_rgq.yaml
-    legacy_entrypoint: scripts/paper/run_effnet_latent_augmix_stage3_20260524.py
-    launcher: scripts/run_experiment.py
-    method_family: benchmark_vae_latent_hull_online_at_v7
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    owns_training_logic: false
-    notes: Per-center benchmark_fcn_wang VAE-LHAT K500 v7 launch surface; runner.adapter=benchmark_vae_lhat expands typed YAML fields, consumes same-run Direct K500 checkpoints, and leaves GPU selection outside YAML.
-
-  - name: benchmark_resnet1d_vae_noaug_k500_v7_sjr_rgq
-    status: active_wrapped
-    evidence_scope: launch_only
-    config: configs/experiments/benchmark_resnet1d_vae_noaug_k500_v7_sjr_rgq.yaml
-    legacy_entrypoint: scripts/paper/run_effnet_latent_augmix_stage3_20260524.py
-    launcher: scripts/run_experiment.py
-    method_family: benchmark_vae_latent_hull_online_at_noaug_v7
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    owns_training_logic: false
-    notes: Per-center benchmark_resnet1d_wang VAE-LHAT noAug K500 v7 launch surface; disables latent AugMix branch, writes to a separate noAug output family, consumes same-run Direct K500 checkpoints, and leaves GPU selection outside YAML.
-
-  - name: benchmark_inception1d_vae_noaug_k500_v7_sjr_rgq
-    status: active_wrapped
-    evidence_scope: launch_only
-    config: configs/experiments/benchmark_inception1d_vae_noaug_k500_v7_sjr_rgq.yaml
-    legacy_entrypoint: scripts/paper/run_effnet_latent_augmix_stage3_20260524.py
-    launcher: scripts/run_experiment.py
-    method_family: benchmark_vae_latent_hull_online_at_noaug_v7
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    owns_training_logic: false
-    notes: Per-center benchmark_inception1d VAE-LHAT noAug K500 v7 launch surface; disables latent AugMix branch, writes to a separate noAug output family, consumes same-run Direct K500 checkpoints, and leaves GPU selection outside YAML.
-
-  - name: benchmark_fcn_wang_vae_noaug_k500_v7_sjr_rgq
-    status: active_wrapped
-    evidence_scope: launch_only
-    config: configs/experiments/benchmark_fcn_wang_vae_noaug_k500_v7_sjr_rgq.yaml
-    legacy_entrypoint: scripts/paper/run_effnet_latent_augmix_stage3_20260524.py
-    launcher: scripts/run_experiment.py
-    method_family: benchmark_vae_latent_hull_online_at_noaug_v7
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    owns_training_logic: false
-    notes: Per-center benchmark_fcn_wang VAE-LHAT noAug K500 v7 launch surface; disables latent AugMix branch, writes to a separate noAug output family, consumes same-run Direct K500 checkpoints, and leaves GPU selection outside YAML.
-
-  - name: benchmark_resnet1d_direct_percent_v7_sjr_rgq_matrix
-    status: active_wrapped
-    evidence_scope: launch_only
-    config: configs/experiments/benchmark_resnet1d_direct_percent_v7_sjr_rgq_matrix.yaml
-    legacy_entrypoint: scripts/paper/run_benchmark_direct_finetune_v7_20260530.py
-    launcher: scripts/run_experiment.py
-    method_family: benchmark_direct_target_percent_finetune_matrix
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    owns_training_logic: false
-    notes: Per-center benchmark_resnet1d_wang Direct p10/p20 v7 matrix launch surface; consumes seed20260531 percent-shot subsets and keeps source checkpoint training as an explicit prerequisite.
-
-  - name: ecgfounder_direct_k500_v7_sjr_rgq_matrix
-    status: active_wrapped
-    evidence_scope: launch_only
-    config: configs/experiments/ecgfounder_direct_k500_v7_sjr_rgq_matrix.yaml
-    legacy_entrypoint: scripts/paper/run_ecgfounder_kshot_head_ft_20260517.py
-    launcher: scripts/run_experiment.py
-    method_family: ecgfounder_frozen_feature_direct_k500_head_finetune_matrix
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    owns_training_logic: false
-    notes: Per-center ECGFounder frozen-feature Direct K500 v7 matrix launch surface; uses the v7 linear-probe cache and seed20260531 SJR/RGQ K500 subset root while leaving GPU selection outside YAML.
-
-  - name: ecgfounder_vae_lhat_k500_v7_sjr_rgq
-    status: active_wrapped
-    evidence_scope: launch_only
-    config: configs/experiments/ecgfounder_vae_lhat_k500_v7_sjr_rgq.yaml
-    legacy_entrypoint: scripts/paper/run_ecgfounder_vae_only_lhat_head_ft_20260523.py
-    launcher: scripts/run_experiment.py
-    method_family: ecgfounder_vae_latent_hull_online_at_v7
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    owns_training_logic: false
-    notes: Per-center ECGFounder residual-adapter VAE-LHAT K500 v7 launch surface; runner.adapter=ecgfounder_vae_lhat expands typed YAML fields to one legacy command per target center, explicitly passes standardized/local-random latent-neighbor policy, consumes v7 Direct K500 heads from the same run_id, and records child checkpoint selection index expectations while leaving GPU selection outside YAML.
-
-  - name: ecgfounder_vae_lhat_augmix_k500_v7_sjr_rgq
-    status: active_wrapped
-    evidence_scope: launch_only
-    config: configs/experiments/ecgfounder_vae_lhat_augmix_k500_v7_sjr_rgq.yaml
-    legacy_entrypoint: scripts/paper/run_ecgfounder_vae_only_lhat_head_ft_20260523.py
-    launcher: scripts/run_experiment.py
-    method_family: ecgfounder_vae_latent_hull_augmix_online_at_v7
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    owns_training_logic: false
-    notes: Per-center ECGFounder residual-adapter VAE-LHAT K500 v7 launch surface with the latent AugMix branch enabled; consumes same-run Direct K500 heads and keeps GPU selection outside YAML.
-
-  - name: ecgfounder_inithead_fullft_k500_v6
-    status: active_wrapped
-    evidence_scope: launch_only
-    config: configs/experiments/ecgfounder_inithead_fullft_k500_v6.yaml
-    legacy_entrypoint: scripts/paper/run_ecgfounder_fullft_super5_pilot_20260523.py
-    launcher: scripts/run_experiment.py
-    method_family: ecgfounder_full_finetune_k500
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    owns_training_logic: false
-    notes: Direct init-head full fine-tune control with explicit ref_meta, K500, init_head, and target-val selector.
-
-  - name: ecgfounder_ptbxl_super5_fullft_locked
-    status: active_wrapped
-    evidence_scope: launch_only
-    config: configs/experiments/ecgfounder_ptbxl_super5_fullft_locked.yaml
-    legacy_entrypoint: scripts/paper/run_ecgfounder_fullft_super5_pilot_20260523.py
-    launcher: scripts/run_experiment.py
-    method_family: ecgfounder_locked_ptbxl_super5_full_finetune
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    owns_training_logic: false
-    notes: Locked PTB-XL source full-FT stage for the PN2021-C protocol; runner.adapter=ecgfounder_fullft emits a source-only command, uses official ECGFounder initialization, target_val_count=0, checkpoint_policy=last, and writes last_model.pt for downstream K500 full-FT.
-
-  - name: ecgfounder_k500_fullft_locked
-    status: active_wrapped
-    evidence_scope: launch_only
-    config: configs/experiments/ecgfounder_k500_fullft_locked.yaml
-    legacy_entrypoint: scripts/paper/run_ecgfounder_fullft_super5_pilot_20260523.py
-    launcher: scripts/run_experiment.py
-    method_family: ecgfounder_locked_k500_full_finetune
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    owns_training_logic: false
-    notes: Locked K500 full-FT stage for the PN2021-C protocol; consumes same-run PTB-XL full-FT last_model.pt via --init_model_path, uses all K500 samples for training, target_val_count=0, checkpoint_policy=last, and never references best_head.pt/residual_adapter routes.
-
-  - name: ecgfounder_vae_lhat_augmix_threechain_locked_k500
-    status: active_wrapped
-    evidence_scope: launch_only
-    config: configs/experiments/ecgfounder_vae_lhat_augmix_threechain_locked_k500.yaml
-    legacy_entrypoint: scripts/paper/run_ecgfounder_fullft_super5_pilot_20260523.py
-    launcher: scripts/run_experiment.py
-    method_family: ecgfounder_locked_fullft_vae_lhat_threechain_augmix_pn2021c
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    owns_training_logic: false
-    notes: Locked ECGFounder PN2021-C main-method launch surface; consumes same-run K500 full-FT last_model.pt, keeps all ECGFounder layers trainable, uses all K500 samples, checkpoint_policy=last, and trains two official corruption chains plus one VAE-LHAT adversarial waveform chain without raw-supervised or stabilizer branches.
-
-  - name: ecgfounder_direct_k500_v6
-    status: active_wrapped
-    evidence_scope: launch_only
-    config: configs/experiments/ecgfounder_direct_k500_v6.yaml
-    legacy_entrypoint: scripts/paper/run_ecgfounder_kshot_head_ft_20260517.py
-    launcher: scripts/run_experiment.py
-    method_family: ecgfounder_frozen_feature_direct_k500_head_finetune
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    owns_training_logic: false
-    notes: Frozen ECGFounder feature direct K500 Super5 head fine-tune baseline; one legacy command covers all four target centers and traces the v6 linear-probe head/features plus K500 ref-meta.
-
-  - name: ecgfounder_vae_lhat_k500_v6
-    status: active_wrapped
-    evidence_scope: launch_only
-    config: configs/experiments/ecgfounder_vae_lhat_k500_v6.yaml
-    legacy_entrypoint: scripts/paper/run_ecgfounder_vae_only_lhat_head_ft_20260523.py
-    launcher: scripts/run_experiment.py
-    method_family: ecgfounder_vae_latent_hull_online_at
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    owns_training_logic: false
-    notes: Residual-adapter VAE-only Latent-Hull online AT wrapper; expands one command per target center, uses seed20260531 K500 latent anchors, K500 direct heads as frozen base heads, hard-BCE anchor sampling, and target_real_val checkpoint selection.
-
-  - name: ecgtwin_author_ibe_repro
-    status: active_wrapped
-    evidence_scope: launch_only
-    config: configs/experiments/ecgtwin_author_ibe_repro.yaml
-    legacy_entrypoint: scripts/ecgtwin_author_repro/train_ibe_repro.py
-    launcher: scripts/run_experiment.py
-    method_family: ecgtwin_author_ibe_stage1_reproduction
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    owns_training_logic: false
-    notes: Managed stage-1 ECGTwin author IBE reproduction launch surface with run-id-scoped output and stable artifact trace; not current classifier evidence by itself.
-
-  - name: ecgtwin_author_dit_repro
-    status: active_wrapped
-    evidence_scope: launch_only
-    config: configs/experiments/ecgtwin_author_dit_repro.yaml
-    legacy_entrypoint: scripts/ecgtwin_author_repro/train_dit_repro.py
-    launcher: scripts/run_experiment.py
-    method_family: ecgtwin_author_dit_stage2_reproduction
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    owns_training_logic: false
-    notes: Managed stage-2 ECGTwin author DiT reproduction launch surface; consumes IBE_best.pth from the managed stage-1 output for the same run_id.
-
-  - name: ecgtwin_prompt_token_train_minimal
-    status: active_wrapped
-    evidence_scope: launch_only
-    config: configs/experiments/ecgtwin_prompt_token_train_minimal.yaml
-    legacy_entrypoint: scripts/ecgtwin_gen/train_center_prompt_tokens.py
-    launcher: scripts/run_experiment.py
-    method_family: ecgtwin_prompt_token_train
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    owns_training_logic: false
-    notes: Minimal managed prompt-token training launch surface; writes a run-id-scoped PN2021 target-center prompt_token_bank.pt without style/semantic auxiliary losses.
-
-  - name: ecgtwin_prompt_token_generate_minimal
-    status: active_wrapped
-    evidence_scope: launch_only
-    config: configs/experiments/ecgtwin_prompt_token_generate_minimal.yaml
-    legacy_entrypoint: scripts/ecgtwin_gen/generate_center_prompt_token_synth.py
-    launcher: scripts/run_experiment.py
-    method_family: ecgtwin_prompt_token_generate
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    owns_training_logic: false
-    notes: Minimal managed prompt-token target-token generation surface for Ningbo NORM/MI/STTC; consumes the same-run prompt token bank and writes samples.npz plus summary.json.
-
-  - name: ecgtwin_prompt_token_gate_minimal
-    status: active_wrapped
-    evidence_scope: launch_only
-    config: configs/experiments/ecgtwin_prompt_token_gate_minimal.yaml
-    legacy_entrypoint: scripts/ecgtwin_gen/gate_prompt_token_synth.py
-    launcher: scripts/run_experiment.py
-    method_family: ecgtwin_prompt_token_gate
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    owns_training_logic: false
-    notes: Minimal managed prompt-token gate/export surface; consumes same-run generated target-token samples and writes gated_samples, latent pool, class trust, ref meta, and gate report artifacts.
-
-  - name: ecgtwin_prompt_token_online_at_minimal
-    status: active_wrapped
-    evidence_scope: launch_only
-    config: configs/experiments/ecgtwin_prompt_token_online_at_minimal.yaml
-    legacy_entrypoint: scripts/pgd_cross_center/synth_online_at_super5.py
-    launcher: scripts/run_experiment.py
-    method_family: ecgtwin_prompt_token_online_at
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    owns_training_logic: false
-    notes: Minimal managed prompt-token online AT launch surface; runner.adapter=prompt_token_online_at expands typed YAML fields, consumes same-run prompt-token gated latent pool/class-trust/ref-meta artifacts plus v7 K500 target-real signals, and writes a run-id-scoped Ningbo adaptation run.
-
-  - name: ecgtwin_prompt_token_online_at_minimal_eval
-    status: active_wrapped
-    evidence_scope: evaluation_only
-    config: configs/experiments/ecgtwin_prompt_token_online_at_minimal_pn2021_eval.yaml
-    legacy_entrypoint: scripts/triple_labels/eval_crosscenter.py
-    launcher: scripts/run_experiment.py
-    method_family: ecgtwin_prompt_token_online_at_eval
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    owns_training_logic: false
-    notes: Minimal managed PN2021 ref-excluded eval surface for the same-run prompt-token online AT Ningbo output; excludes all four target-center K500 ref-meta files and writes metrics/table postprocess artifacts.
-
-  - name: pn2021_eval_v7_sjr_rgq_refexcluded
-    status: active_wrapped
-    evidence_scope: evaluation_only
-    config: configs/experiments/pn2021_eval_v7_sjr_rgq_refexcluded.yaml
-    legacy_entrypoint: scripts/triple_labels/eval_crosscenter.py
-    launcher: scripts/run_experiment.py
-    method_family: managed_pn2021_refexcluded_eval
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    owns_training_logic: false
-    notes: runner.adapter=pn2021_eval expands to one paper_refexcluded eval command per direct-K500 target-center model; each command requires K500 ref exclusion, excludes all four K500 ref-meta files, and reports both all-zero-kept and drop-all-zero PN2021 views.
-
-  - name: pn2021c_effnet_v7_augmix_vs_noaug
-    status: active_wrapped
-    evidence_scope: evaluation_only
-    config: configs/experiments/pn2021c_effnet_v7_augmix_vs_noaug.yaml
-    legacy_entrypoint: scripts/triple_labels/eval_pn2021_corruptions.py
-    launcher: scripts/run_experiment.py
-    method_family: managed_pn2021c_refexcluded_corruption_eval
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    owns_training_logic: false
-    notes: runner.adapter=pn2021c_eval expands to eight PN2021-C eval commands for four target centers times VAE noAug and VAE LHAT EfficientNet v7 runs; each command requires clean eval metadata, required cache version v7_refexcluded_100hz1000, run-id-scoped corruption metrics, and that center's K500 ref-meta exclusion.
-
-  - name: pn2021c_official_s5_locked_protocol
-    status: active_wrapped
-    evidence_scope: evaluation_only
-    config: configs/experiments/pn2021c_official_s5_locked_protocol.yaml
-    legacy_entrypoint: scripts/triple_labels/eval_pn2021_corruptions.py
-    launcher: scripts/run_experiment.py
-    method_family: managed_pn2021c_official_s5_locked_protocol_eval
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    owns_training_logic: false
-    notes: Locked PN2021-C official severity-5 evaluation surface; records waveform-bottleneck-then-corrupt-then-zscore protocol metadata, uses standard profile severity=5, five official operators, four target centers, and K500 ref-meta exclusion.
-
-  - name: pn2021c_effnet_threechain_locked_official_s5
-    status: active_wrapped
-    evidence_scope: evaluation_only
-    config: configs/experiments/pn2021c_effnet_threechain_locked_official_s5.yaml
-    legacy_entrypoint: scripts/triple_labels/eval_pn2021_corruptions.py
-    launcher: scripts/run_experiment.py
-    method_family: managed_pn2021c_effnet_official_s5_locked_eval
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    owns_training_logic: false
-    notes: Locked EfficientNet1DV2 three-chain AugMix PN2021-C official severity-5 evaluation surface; inherits the standard locked protocol and evaluates four target centers with K500 ref-meta exclusion.
-
-  - name: pn2021c_ecgfounder_threechain_locked_official_s5
-    status: active_wrapped
-    evidence_scope: evaluation_only
-    config: configs/experiments/pn2021c_ecgfounder_threechain_locked_official_s5.yaml
-    legacy_entrypoint: scripts/triple_labels/eval_ecgfounder_pn2021_corruptions.py
-    launcher: scripts/run_experiment.py
-    method_family: managed_ecgfounder_pn2021c_official_s5_locked_eval
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    owns_training_logic: false
-    notes: Locked ECGFounder PN2021-C official severity-5 evaluation surface; runner.adapter=ecgfounder_pn2021c_eval consumes the full-FT three-chain run last_model.pt, evaluates bottleneck5000 corruption order, recomputes clean metrics through the same raw->100Hz->500Hz->zscore path, and does not enable stabilizer or repair options.
-
-  - name: pn2021c_effnet_v7_strong_10to20pp
-    status: active_wrapped
-    evidence_scope: evaluation_only
-    config: configs/experiments/pn2021c_effnet_v7_strong_10to20pp.yaml
-    legacy_entrypoint: scripts/triple_labels/eval_pn2021_corruptions.py
-    launcher: scripts/run_experiment.py
-    method_family: managed_pn2021c_refexcluded_strong_corruption_eval
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    owns_training_logic: false
-    notes: runner.adapter=pn2021c_eval expands to eight PN2021-C eval commands for four target centers times VAE noAug and VAE LHAT EfficientNet v7 runs, using the calibrated_10to20pp severity=5 streaming-only profile that was tuned to induce roughly 10-20 pp drops.
-
+- name: effnet_direct_k500_v7_sjr_rgq
+  status: active_managed
+  evidence_scope: trusted_registry_linked
+  config: configs/experiments/effnet_direct_k500_v7_sjr_rgq.yaml
+  runner_entrypoint: ecg_adv_gen/runner/effnet_direct_finetune.py
+  launcher: scripts/run_experiment.py
+  method_family: direct_target_k500_finetune
+  mapping_version: v7_super5_sjr_rgq_review_20260528
+  owns_training_logic: false
+  notes: Current EfficientNet direct K500 v7 SJR/RGQ seed20260601 managed runner for the locked PN2021-C three-chain mainline; runner.adapter=direct_finetune expands typed YAML fields into one command covering the four target centers and passes managed --out_root.
+- name: effnet_vae_lhat_augmix_threechain_locked_k500
+  status: active_managed
+  evidence_scope: launch_only
+  config: configs/experiments/effnet_vae_lhat_augmix_threechain_locked_k500.yaml
+  runner_entrypoint: ecg_adv_gen/runner/effnet_vae_lhat_augmix.py
+  launcher: scripts/run_experiment.py
+  method_family: vae_latent_hull_threechain_augmix_locked_pn2021c
+  mapping_version: v7_super5_sjr_rgq_review_20260528
+  owns_training_logic: false
+  notes: Locked EfficientNet PN2021-C official severity-5 main-method launch surface; uses all K500 target samples, checkpoint_policy=last, quick_eval_source=none, and two corruption chains plus one VAE-LHAT adversarial waveform chain.
+- name: ecgfounder_ptbxl_super5_fullft_locked
+  status: active_managed
+  evidence_scope: launch_only
+  config: configs/experiments/ecgfounder_ptbxl_super5_fullft_locked.yaml
+  runner_entrypoint: ecg_adv_gen/runner/ecgfounder_fullft.py
+  launcher: scripts/run_experiment.py
+  method_family: ecgfounder_locked_ptbxl_super5_full_finetune
+  mapping_version: v7_super5_sjr_rgq_review_20260528
+  owns_training_logic: false
+  notes: Locked PTB-XL source full-FT stage for the PN2021-C protocol; runner.adapter=ecgfounder_fullft emits a source-only command, uses official ECGFounder initialization, target_val_count=0, checkpoint_policy=last, and writes last_model.pt for downstream K500 full-FT.
+- name: ecgfounder_k500_fullft_locked
+  status: active_managed
+  evidence_scope: launch_only
+  config: configs/experiments/ecgfounder_k500_fullft_locked.yaml
+  runner_entrypoint: ecg_adv_gen/runner/ecgfounder_fullft.py
+  launcher: scripts/run_experiment.py
+  method_family: ecgfounder_locked_k500_full_finetune
+  mapping_version: v7_super5_sjr_rgq_review_20260528
+  owns_training_logic: false
+  notes: Locked K500 full-FT stage for the PN2021-C protocol; consumes same-run PTB-XL full-FT last_model.pt via --init_model_path, uses all K500 samples for training, target_val_count=0, checkpoint_policy=last, and never references best_head.pt/residual_adapter routes.
+- name: ecgfounder_vae_lhat_augmix_threechain_locked_k500
+  status: active_managed
+  evidence_scope: launch_only
+  config: configs/experiments/ecgfounder_vae_lhat_augmix_threechain_locked_k500.yaml
+  runner_entrypoint: ecg_adv_gen/runner/ecgfounder_fullft.py
+  launcher: scripts/run_experiment.py
+  method_family: ecgfounder_locked_fullft_vae_lhat_threechain_augmix_pn2021c
+  mapping_version: v7_super5_sjr_rgq_review_20260528
+  owns_training_logic: false
+  notes: Locked ECGFounder PN2021-C main-method launch surface; consumes same-run K500 full-FT last_model.pt, keeps all ECGFounder layers trainable, uses all K500 samples, checkpoint_policy=last, and trains two official corruption chains plus one VAE-LHAT adversarial waveform chain without raw-supervised or stabilizer branches.
+- name: pn2021_eval_v7_sjr_rgq_refexcluded
+  status: active_managed
+  evidence_scope: evaluation_only
+  config: configs/experiments/pn2021_eval_v7_sjr_rgq_refexcluded.yaml
+  runner_entrypoint: ecg_adv_gen/runner/pn2021_clean_eval.py
+  launcher: scripts/run_experiment.py
+  method_family: managed_pn2021_refexcluded_eval
+  mapping_version: v7_super5_sjr_rgq_review_20260528
+  owns_training_logic: false
+  notes: runner.adapter=pn2021_eval expands to one paper_refexcluded eval command per direct-K500 target-center model; each command requires K500 ref exclusion, excludes all four K500 ref-meta files, and reports both all-zero-kept and drop-all-zero PN2021 views.
+- name: pn2021c_effnet_threechain_locked_official_s5
+  status: active_managed
+  evidence_scope: evaluation_only
+  config: configs/experiments/pn2021c_effnet_threechain_locked_official_s5.yaml
+  runner_entrypoint: ecg_adv_gen/runner/pn2021c_eval.py
+  launcher: scripts/run_experiment.py
+  method_family: managed_pn2021c_effnet_official_s5_locked_eval
+  mapping_version: v7_super5_sjr_rgq_review_20260528
+  owns_training_logic: false
+  notes: Locked EfficientNet1DV2 three-chain AugMix PN2021-C official severity-5 evaluation surface; inherits the standard locked protocol and evaluates four target centers with K500 ref-meta exclusion.
+- name: pn2021c_ecgfounder_threechain_locked_official_s5
+  status: active_managed
+  evidence_scope: evaluation_only
+  config: configs/experiments/pn2021c_ecgfounder_threechain_locked_official_s5.yaml
+  runner_entrypoint: ecg_adv_gen/runner/ecgfounder_pn2021c_eval.py
+  launcher: scripts/run_experiment.py
+  method_family: managed_ecgfounder_pn2021c_official_s5_locked_eval
+  mapping_version: v7_super5_sjr_rgq_review_20260528
+  owns_training_logic: false
+  notes: Locked ECGFounder PN2021-C official severity-5 evaluation surface; runner.adapter=ecgfounder_pn2021c_eval consumes the full-FT three-chain run last_model.pt, evaluates bottleneck5000 corruption order, recomputes clean metrics through the same raw->100Hz->500Hz->zscore path, and does not enable stabilizer or repair options.
+- name: pn2021c_effnet_official_s5_depth23_composite
+  status: active_managed
+  evidence_scope: evaluation_only
+  config: configs/experiments/pn2021c_effnet_official_s5_depth23_composite.yaml
+  runner_entrypoint: ecg_adv_gen/runner/pn2021c_eval.py
+  launcher: scripts/run_experiment.py
+  method_family: managed_pn2021c_effnet_official_s5_depth23_composite_eval
+  mapping_version: v7_super5_sjr_rgq_review_20260528
+  owns_training_logic: false
+  notes: Latest EfficientNet1DV2 depth2/depth3 composite PN2021-C official severity-5 evaluation surface for the locked three-chain VAE-LHAT AugMix run.
+- name: pn2021c_ecgfounder_official_s5_depth23_composite
+  status: active_managed
+  evidence_scope: evaluation_only
+  config: configs/experiments/pn2021c_ecgfounder_official_s5_depth23_composite.yaml
+  runner_entrypoint: ecg_adv_gen/runner/ecgfounder_pn2021c_eval.py
+  launcher: scripts/run_experiment.py
+  method_family: managed_ecgfounder_pn2021c_official_s5_depth23_composite_eval
+  mapping_version: v7_super5_sjr_rgq_review_20260528
+  owns_training_logic: false
+  notes: Latest ECGFounder depth2/depth3 composite PN2021-C official severity-5 evaluation surface for the locked three-chain VAE-LHAT AugMix run.
 inactive_experiment_configs:
-  - config: configs/experiments/effnet_direct_k500_v6.yaml
-    status: superseded_by_v7
-    reason: Historical managed Direct K500 config; keep for compatibility, but current active launch/evidence surfaces use v7 SJR/RGQ configs.
-
-  - config: configs/experiments/effnet_direct_k500_v6_smoke.yaml
-    status: smoke_only
-    reason: Engineering smoke config for launcher/runtime checks; not an active paper result surface.
-
-  - config: configs/experiments/effnet_vae_lhat_k500_v6.yaml
-    status: superseded_by_v7
-    reason: Historical managed EfficientNet VAE-LHAT config; current active evidence and launch surfaces use v7 SJR/RGQ configs.
-
-  - config: configs/experiments/effnet_vae_lhat_k500_v6_smoke.yaml
-    status: smoke_only
-    reason: Engineering smoke config for launcher/runtime checks; not an active paper result surface.
-
-  - config: configs/experiments/ecgfounder_inithead_fullft_k500_v6_smoke.yaml
-    status: smoke_only
-    reason: Engineering smoke config for ECGFounder init-head full-FT runtime checks; not an active paper result surface.
-
-  - config: configs/experiments/ecgfounder_vae_lhat_k500_v6_smoke.yaml
-    status: smoke_only
-    reason: Engineering smoke config for ECGFounder VAE-LHAT runtime checks; not an active paper result surface.
-
-  - config: configs/experiments/pn2021_eval_v6_refexcluded.yaml
-    status: superseded_by_v7
-    reason: Historical managed PN2021 ref-excluded eval config; current active eval surface uses v7 SJR/RGQ mapping and ref ids.
-
-  - config: configs/experiments/pn2021_eval_v6_refexcluded_smoke.yaml
-    status: smoke_only
-    reason: Engineering smoke config for PN2021 ref-excluded eval runtime checks; not an active paper result surface.
-
-  - config: configs/experiments/effnet_vae_lhat_calibrated_rawsupervised_k500_v7_sjr_rgq.yaml
-    status: historical_unmanaged
-    reason: Provisional raw-supervised PN2021-C recovery draft config; keep inventoried for preflight completeness, but not an active paper evidence surface.
-
-  - config: configs/experiments/effnet_vae_lhat_calibrated_rawsupervised_k500_v7_sjr_rgq_ningbo.yaml
-    status: historical_unmanaged
-    reason: Provisional single-center raw-supervised PN2021-C recovery draft config; keep inventoried for preflight completeness, but not an active paper evidence surface.
-
-  - config: configs/experiments/effnet_vae_lhat_calibrated_rawsupervised_k500_v7_sjr_rgq_smoke.yaml
-    status: smoke_only
-    reason: Engineering smoke config for calibrated raw-supervised PN2021-C recovery checks; not an active paper result surface.
-
-  - config: configs/experiments/effnet_vae_lhat_calibrated_latent_augmix_k500_v7_sjr_rgq.yaml
-    status: historical_unmanaged
-    reason: Provisional calibrated-profile latent AugMix PN2021-C recovery draft config; keep inventoried for preflight completeness, but not an active paper evidence surface.
-
-  - config: configs/experiments/effnet_vae_lhat_calibrated_latent_augmix_k500_v7_sjr_rgq_cpsc_2018.yaml
-    status: historical_unmanaged
-    reason: Provisional single-center CPSC 2018 calibrated-profile latent AugMix draft config; keep inventoried for preflight completeness, but not an active paper evidence surface.
-
-  - config: configs/experiments/effnet_vae_lhat_calibrated_latent_augmix_norenorm_k500_v7_sjr_rgq_cpsc_2018.yaml
-    status: historical_unmanaged
-    reason: Provisional single-center CPSC 2018 calibrated-profile latent AugMix no-renorm ablation; keep inventoried for preflight completeness, but not an active paper evidence surface.
-
-  - config: configs/experiments/effnet_vae_lhat_calibrated_latent_augmix_directloss_k500_v7_sjr_rgq_cpsc_2018.yaml
-    status: historical_unmanaged
-    reason: Provisional single-center CPSC 2018 calibrated-profile latent AugMix direct-loss ablation; keep inventoried for preflight completeness, but not an active paper evidence surface.
-
-  - config: configs/experiments/effnet_vae_lhat_fullpool_raw_augmix_k500_v7_sjr_rgq_cpsc_2018.yaml
-    status: historical_unmanaged
-    reason: Provisional single-center CPSC 2018 raw-AugMix consistency draft; superseded by the locked three-chain VAE-LHAT AugMix protocol because it uses an independent raw-corruption branch.
-
-  - config: configs/experiments/effnet_vae_lhat_fullpool_raw_augmix_depth1_k500_v7_sjr_rgq_cpsc_2018.yaml
-    status: historical_unmanaged
-    reason: Provisional single-center CPSC 2018 raw-AugMix depth-1 diagnostic; not active mainline because it uses the older raw-corruption consistency branch outside locked three-chain AugMix.
-
-  - config: configs/experiments/effnet_vae_lhat_fullpool_raw_augmix_depth1_m075_k500_v7_sjr_rgq_cpsc_2018.yaml
-    status: historical_unmanaged
-    reason: Provisional single-center CPSC 2018 raw-AugMix fixed-mixture diagnostic; not active mainline because it is a collapsed raw-corruption consistency ablation.
-
-  - config: configs/experiments/effnet_vae_lhat_fullpool_raw_augmix_depth1_noclip_k500_v7_sjr_rgq_cpsc_2018.yaml
-    status: historical_unmanaged
-    reason: Provisional single-center CPSC 2018 raw-AugMix no-clip diagnostic; not active mainline because it uses the older raw-corruption consistency branch.
-
-  - config: configs/experiments/effnet_vae_lhat_fullpool_raw_augmix_depth1_w1_m100_k500_v7_sjr_rgq_cpsc_2018.yaml
-    status: historical_unmanaged
-    reason: Provisional single-center CPSC 2018 width-1 fixed-mixture raw-AugMix diagnostic; explicitly not the locked multi-chain AugMix main method.
-
-  - config: configs/experiments/effnet_vae_lhat_fullpool_raw_augmix_depth1_w1_m100_k500_v7_sjr_rgq_remaining3.yaml
-    status: historical_unmanaged
-    reason: Provisional remaining-center width-1 fixed-mixture raw-AugMix diagnostic; explicitly not the locked multi-chain AugMix main method.
-
-  - config: configs/experiments/effnet_vae_lhat_fullpool_raw_augmix_depth1_w1_m100_hardops_k500_v7_sjr_rgq_chapman.yaml
-    status: historical_unmanaged
-    reason: Provisional Chapman hard-operator raw-AugMix diagnostic; not active mainline because it uses operator-biased collapsed raw-corruption consistency.
-
-  - config: configs/experiments/effnet_vae_lhat_fullpool_raw_augmix_noisemask_w1_m100_k500_v7_sjr_rgq_cpsc_2018.yaml
-    status: historical_unmanaged
-    reason: Provisional CPSC 2018 noise/mask-only raw-AugMix diagnostic; not active mainline because it is operator-filtered and collapsed outside locked three-chain AugMix.
-
-  - config: configs/experiments/effnet_vae_lhat_fullpool_raw_augmix_depth1_w1_m100_stabilizer35_k500_v7_sjr_rgq.yaml
-    status: historical_unmanaged
-    reason: Provisional training-time stabilizer35 raw-AugMix diagnostic; excluded from the locked mainline because stabilizer frontends are diagnostics only.
-
-  - config: configs/experiments/effnet_vae_lhat_fullpool_raw_augmix_depth1_w1_m100_stabilizer35_k500_v7_sjr_rgq_part01.yaml
-    status: historical_unmanaged
-    reason: Provisional partitioned stabilizer35 raw-AugMix diagnostic; excluded from the locked mainline because stabilizer frontends are diagnostics only.
-
-  - config: configs/experiments/effnet_vae_lhat_fullpool_raw_augmix_depth1_w1_m100_stabilizer35_k500_v7_sjr_rgq_part02.yaml
-    status: historical_unmanaged
-    reason: Provisional partitioned stabilizer35 raw-AugMix diagnostic; excluded from the locked mainline because stabilizer frontends are diagnostics only.
-
-  - config: configs/experiments/effnet_vae_lhat_fullpool_raw_augmix_depth1_w1_m100_stabilizer35_k500_v7_sjr_rgq_smoke.yaml
-    status: smoke_only
-    reason: Engineering smoke config for the historical stabilizer35 raw-AugMix diagnostic; not an active paper result surface.
-
-  - config: configs/experiments/ecgfounder_vae_lhat_fullpool_raw_augmix_w1_m100_k500_v7_sjr_rgq_cpsc_2018.yaml
-    status: historical_unmanaged
-    reason: Provisional ECGFounder single-center raw-AugMix consistency diagnostic; superseded by the locked full-FT three-chain ECGFounder mainline because it uses the old residual-adapter/raw-consistency route.
-
-  - config: configs/experiments/ecgfounder_vae_lhat_fullpool_raw_augmix_w1_m100_last_epoch_k500_v7_sjr_rgq_cpsc_2018.yaml
-    status: historical_unmanaged
-    reason: Provisional ECGFounder last-epoch raw-AugMix consistency diagnostic; superseded by the locked full-FT last-checkpoint three-chain ECGFounder mainline.
-
-  - config: configs/experiments/effnet_vae_lhat_maskshift_consistency_k500_v7_sjr_rgq.yaml
-    status: historical_unmanaged
-    reason: Provisional mask/shift consistency PN2021-C recovery draft config; keep inventoried for preflight completeness, but not an active paper evidence surface.
-
-  - config: configs/experiments/effnet_vae_lhat_maskshift_consistency_k500_v7_sjr_rgq_ningbo.yaml
-    status: historical_unmanaged
-    reason: Provisional single-center mask/shift consistency PN2021-C recovery draft config; keep inventoried for preflight completeness, but not an active paper evidence surface.
-
-  - config: configs/experiments/effnet_vae_lhat_maskshift_consistency_k500_v7_sjr_rgq_smoke.yaml
-    status: smoke_only
-    reason: Engineering smoke config for mask/shift consistency PN2021-C recovery checks; not an active paper result surface.
-
-  - config: configs/experiments/effnet_vae_lhat_rawjsd_curriculum_k500_v7_sjr_rgq.yaml
-    status: historical_unmanaged
-    reason: Provisional raw-JSD curriculum PN2021-C recovery draft config; keep inventoried for preflight completeness, but not an active paper evidence surface.
-
-  - config: configs/experiments/effnet_vae_lhat_rawjsd_curriculum_k500_v7_sjr_rgq_smoke.yaml
-    status: smoke_only
-    reason: Engineering smoke config for raw-JSD curriculum PN2021-C recovery checks; not an active paper result surface.
-
-  - config: configs/experiments/effnet_vae_lhat_rawsupervised_stressor_k500_v7_sjr_rgq.yaml
-    status: historical_unmanaged
-    reason: Provisional raw-supervised stressor PN2021-C recovery draft config; keep inventoried for preflight completeness, but not an active paper evidence surface.
-
-  - config: configs/experiments/effnet_vae_lhat_rawsupervised_stressor_k500_v7_sjr_rgq_ningbo.yaml
-    status: historical_unmanaged
-    reason: Provisional single-center raw-supervised stressor PN2021-C recovery draft config; keep inventoried for preflight completeness, but not an active paper evidence surface.
-
-  - config: configs/experiments/effnet_vae_lhat_rawsupervised_stressor_k500_v7_sjr_rgq_smoke.yaml
-    status: smoke_only
-    reason: Engineering smoke config for raw-supervised stressor PN2021-C recovery checks; not an active paper result surface.
-
-  - config: configs/experiments/pn2021c_effnet_v7_strong_10to20pp_smoke.yaml
-    status: smoke_only
-    reason: Engineering smoke config for calibrated 10-20 pp PN2021-C evaluation checks; not an active paper result surface.
-
-  - config: configs/experiments/pn2021c_effnet_v7_strong_calibrated_rawsupervised.yaml
-    status: historical_unmanaged
-    reason: Provisional PN2021-C strong-profile eval draft for calibrated raw-supervised candidates; keep inventoried for preflight completeness, but not an active paper evidence surface.
-
-  - config: configs/experiments/pn2021c_effnet_v7_strong_calibrated_rawsupervised_ningbo.yaml
-    status: historical_unmanaged
-    reason: Provisional single-center PN2021-C strong-profile eval draft for calibrated raw-supervised candidates; keep inventoried for preflight completeness, but not an active paper evidence surface.
-
-  - config: configs/experiments/pn2021c_effnet_v7_strong_maskshift_ningbo.yaml
-    status: historical_unmanaged
-    reason: Provisional single-center PN2021-C strong-profile eval draft for mask/shift candidates; keep inventoried for preflight completeness, but not an active paper evidence surface.
-
-  - config: configs/experiments/pn2021c_effnet_v7_strong_raw_candidates.yaml
-    status: historical_unmanaged
-    reason: Provisional PN2021-C strong-profile eval draft for raw-corruption candidates; keep inventoried for preflight completeness, but not an active paper evidence surface.
-
-  - config: configs/experiments/pn2021c_effnet_v7_strong_raw_candidates_smoke.yaml
-    status: smoke_only
-    reason: Engineering smoke config for PN2021-C strong-profile raw-candidate evaluation checks; not an active paper result surface.
-
-  - config: configs/experiments/pn2021c_effnet_v7_strong_rawsupervised_ningbo.yaml
-    status: historical_unmanaged
-    reason: Provisional single-center PN2021-C strong-profile eval draft for raw-supervised candidates; keep inventoried for preflight completeness, but not an active paper evidence surface.
-
+- config: configs/experiments/pn2021c_effnet_c117_official_s5_depth23_replay_chapman_shaoxing.yaml
+  status: sota_replay_reference
+  reason: Managed replay config for already reported EffNet c117 SOTA artifacts; kept out of latest_mainline because it points to dated historical output directories.
+- config: configs/experiments/pn2021c_effnet_c117_official_s5_depth23_replay_cpsc.yaml
+  status: sota_replay_reference
+  reason: Managed replay config for already reported EffNet c117 SOTA artifacts; kept out of latest_mainline because it points to dated historical output directories.
+- config: configs/experiments/pn2021c_effnet_c117_official_s5_depth23_replay_georgia.yaml
+  status: sota_replay_reference
+  reason: Managed replay config for already reported EffNet c117 SOTA artifacts; kept out of latest_mainline because it points to dated historical output directories.
+- config: configs/experiments/pn2021c_effnet_c117_official_s5_depth23_replay_ningbo.yaml
+  status: sota_replay_reference
+  reason: Managed replay config for already reported EffNet c117 SOTA artifacts; kept out of latest_mainline because it points to dated historical output directories.
+- config: configs/experiments/pn2021c_ecgfounder_c110_official_s5_depth23_replay_chapman_shaoxing_20260624.yaml
+  status: sota_replay_reference
+  reason: Managed replay config for already reported ECGFounder c110 SOTA artifacts; kept out of latest_mainline because it points to dated historical output directories.
+- config: configs/experiments/pn2021c_ecgfounder_c110_official_s5_depth23_replay_cpsc_20260624.yaml
+  status: sota_replay_reference
+  reason: Managed replay config for already reported ECGFounder c110 SOTA artifacts; kept out of latest_mainline because it points to dated historical output directories.
+- config: configs/experiments/pn2021c_ecgfounder_c110_official_s5_depth23_replay_georgia_20260624.yaml
+  status: sota_replay_reference
+  reason: Managed replay config for already reported ECGFounder c110 SOTA artifacts; kept out of latest_mainline because it points to dated historical output directories.
+- config: configs/experiments/pn2021c_ecgfounder_c110_official_s5_depth23_replay_ningbo_20260624.yaml
+  status: sota_replay_reference
+  reason: Managed replay config for already reported ECGFounder c110 SOTA artifacts; kept out of latest_mainline because it points to dated historical output directories.
 reporting_tools:
-  - name: data_manifest_exporter
-    status: active
-    script: scripts/export_data_manifest.py
-    package: ecg_adv_gen/data/manifest.py
-    output_artifacts:
-      - data_manifest.json
-    safety_rules:
-      - checks_paths_stay_under_write_boundary
-      - records_target_and_eval_center_directories_without_recursive_scan
-      - can_require_existing_paths_for_preflight
-
-  - name: metrics_long_exporter
-    status: active
-    script: scripts/export_metrics_long.py
-    package: ecg_adv_gen/reporting/metrics_export.py
-    output_artifacts:
-      - metrics_long.csv
-      - artifact_manifest.json
-    safety_rules:
-      - refuses_mixed_mapping_by_default
-      - keeps_all_zero_and_drop_all_zero_as_separate_views
-      - writes_canonical_view_aliases_without_dropping_raw_view
-      - supports_method_run_id_override_for_per_center_artifacts
-      - can_filter_crosscenter_eval_to_inferred_target_center
-
-  - name: metrics_long_merger
-    status: active
-    script: scripts/merge_metrics_long.py
-    package: ecg_adv_gen/reporting/metrics_merge.py
-    output_artifacts:
-      - metrics_long.csv
-      - merge_manifest.json
-    safety_rules:
-      - refuses_mixed_mapping_by_default
-      - rejects_duplicate_metric_keys_after_merge
-      - preserves_raw_views_and_canonical_views
-
-  - name: paper_table_exporter
-    status: active
-    script: scripts/export_paper_table.py
-    package: ecg_adv_gen/reporting/paper_tables.py
-    output_artifacts:
-      - paper_table.csv
-      - paper_table_manifest.json
-    safety_rules:
-      - requires_explicit_view
-      - refuses_mixed_mapping_by_default
-      - filters_by_canonical_view_and_exports_raw_views
-      - computes_deltas_only_against_matching_baseline_scope
-
-  - name: managed_config_auditor
-    status: active
-    script: scripts/audit_managed_configs.py
-    package: ecg_adv_gen/config/audit.py
-    output_artifacts:
-      - managed_config_audit.json
-      - managed_config_audit.csv
-    safety_rules:
-      - cpu_only_no_legacy_child_scripts
-      - audits_all_active_wrapped_configs_from_active_script_index
-      - can_verify_required_input_artifacts_without_checking_child_outputs
-      - writes_reports_only_under_explicit_write_boundary
-
-  - name: matrix_parallel_launcher
-    status: active
-    script: scripts/agent/run_matrix_parallel.py
-    package: ecg_adv_gen/runner/matrix_parallel.py
-    output_artifacts:
-      - run_manifest.json
-      - command_*.log
-      - run_card.json
-      - run_file_index.json
-    safety_rules:
-      - requires_explicit_gpu_list
-      - one_gpu_per_matrix_command
-      - reuses_yaml_config_loader_and_command_audit
-      - records_gpu_assignment_in_manifest
-      - refuses_more_matrix_commands_than_selected_gpus
-
-  - name: active_evidence_registry_auditor
-    status: active
-    script: scripts/agent/audit_agent_workspace.py
-    package: scripts/agent/audit_agent_workspace.py
-    output_artifacts:
-      - agent_workspace_audit.json
-    safety_rules:
-      - cpu_only_no_gpu_no_child_training
-      - validates_active_evidence_registry
-      - audits_active_script_index_managed_configs
-      - validates_external_model_links_from_local_yaml
-      - checks_mapping_k500_ref_exclusion_metrics_and_comparison_bundle
-      - errors_on_staged_guarded_paths_and_unverified_dirty_model_handles
-      - ignores_verified_external_model_handle_dirty_paths_for_handoff_readiness
-      - summarizes_dirty_workspace_by_agent_handoff_layer
-
-  - name: external_model_link_checker
-    status: active
-    script: scripts/agent/check_external_models.py
-    package: ecg_adv_gen/config/external_models.py
-    output_artifacts:
-      - external_model_link_report.json
-    safety_rules:
-      - cpu_only_no_gpu_no_training
-      - reads_external_model_targets_from_local_yaml
-      - checks_model_handles_are_symlinks_to_configured_targets
-      - checks_targets_stay_under_configured_allowed_roots_and_write_boundary
-      - supports_bootstrap_plan_for_scripts_bootstrap_model_repos
-
-  - name: legacy_vae_manifest_backfiller
-    status: active
-    script: scripts/agent/backfill_vae_lhat_manifest.py
-    package: ecg_adv_gen/evidence/backfill.py
-    output_artifacts:
-      - run_manifest.backfilled.json
-    safety_rules:
-      - cpu_only_no_gpu_no_training
-      - reads_legacy_launch_train_eval_artifacts
-      - writes_only_under_explicit_write_boundary
-      - records_artifact_hashes_for_v7_vae_lhat_evidence
-
-  - name: direct_vs_vae_comparison_bundler
-    status: active
-    script: scripts/agent/build_comparison_bundle.py
-    package: ecg_adv_gen/evidence/comparison.py
-    output_artifacts:
-      - comparison_manifest.json
-      - metrics_long.csv
-      - comparison_delta.csv
-      - paper_table_pn2021_all_zero_kept_refexcluded.csv
-      - paper_table_pn2021_drop_all_zero_refexcluded.csv
-    safety_rules:
-      - builds_from_registry_declared_metrics_only
-      - refuses_nonempty_output_without_force
-      - records_source_metric_hashes_and_baseline_run_id
-      - records_registered_run_metadata_when_available
-
-  - name: run_finalizer
-    status: active
-    script: scripts/agent/finalize_run.py
-    package: ecg_adv_gen/evidence/run_record.py
-    output_artifacts:
-      - run_card.json
-      - run_file_index.json
-      - summary.md
-    safety_rules:
-      - cpu_only_no_gpu_no_training
-      - writes_only_under_explicit_write_boundary
-      - records_experiment_purpose_result_summary_protocol_and_metric_summary
-      - reads_yaml_run_record_defaults_with_manual_override
-      - refuses_missing_git_config_commands_kshot_selection_expected_eval_contract
-      - creates_agent_readable_file_categories_without_moving_large_checkpoints
-
-  - name: run_registry_updater
-    status: active
-    script: scripts/agent/register_run.py
-    package: ecg_adv_gen/evidence/run_record.py
-    output_artifacts:
-      - configs/active_evidence_registry.yaml
-    safety_rules:
-      - cpu_only_no_gpu_no_training
-      - stores_run_paths_with_paths_output_root_placeholders
-      - idempotently_replaces_existing_run_registration
-      - resolves_auto_status_from_finalized_run_record
-      - refuses_run_dirs_outside_paths_output_root
-      - refuses_unfinalized_or_contract_invalid_run_records
-
-legacy_hold:
-  - path: scripts/pgd_cross_center/synth_online_at_super5.py
-    status: do_not_move_yet
-    reason: Large online AT orchestrator; current behavior is encoded in CLI defaults and active wrappers.
-    future_package_target: ecg_adv_gen/adaptation
-
-  - path: scripts/triple_labels/train_ptbxl.py
-    status: do_not_move_yet
-    reason: Stable classifier training entrypoint used by old and new runs; shared loss/pos_weight helpers are now imported from ecg_adv_gen.training for compatibility.
-    future_package_target: ecg_adv_gen/training
-
-  - path: scripts/triple_labels/eval_crosscenter.py
-    status: do_not_move_yet
-    reason: Source of PN2021 evaluation/cache behavior and ref-exclusion mechanics.
-    future_package_target: ecg_adv_gen/evaluation
-
-  - path: scripts/ecgtwin_author_repro
-    status: do_not_move_yet
-    reason: Author reproduction output layout should remain stable for thesis traceability.
-    future_package_target: ecg_adv_gen/ecgtwin
-
-  - path: scripts/paper
-    status: do_not_move_yet
-    reason: Dated experiment snapshots are evidence; wrap first, extract later.
-    future_package_target: scripts_thin_wrappers
-
+- name: data_manifest_exporter
+  status: active
+  script: scripts/export_data_manifest.py
+  package: ecg_adv_gen/data/manifest.py
+  output_artifacts:
+  - data_manifest.json
+  safety_rules:
+  - checks_paths_stay_under_write_boundary
+  - records_target_and_eval_center_directories_without_recursive_scan
+  - can_require_existing_paths_for_preflight
+- name: metrics_long_exporter
+  status: active
+  script: scripts/export_metrics_long.py
+  package: ecg_adv_gen/reporting/metrics_export.py
+  output_artifacts:
+  - metrics_long.csv
+  - artifact_manifest.json
+  safety_rules:
+  - refuses_mixed_mapping_by_default
+  - keeps_all_zero_and_drop_all_zero_as_separate_views
+  - writes_canonical_view_aliases_without_dropping_raw_view
+  - supports_method_run_id_override_for_per_center_artifacts
+  - can_filter_crosscenter_eval_to_inferred_target_center
+- name: metrics_long_merger
+  status: active
+  script: scripts/merge_metrics_long.py
+  package: ecg_adv_gen/reporting/metrics_merge.py
+  output_artifacts:
+  - metrics_long.csv
+  - merge_manifest.json
+  safety_rules:
+  - refuses_mixed_mapping_by_default
+  - rejects_duplicate_metric_keys_after_merge
+  - preserves_raw_views_and_canonical_views
+- name: paper_table_exporter
+  status: active
+  script: scripts/export_paper_table.py
+  package: ecg_adv_gen/reporting/paper_tables.py
+  output_artifacts:
+  - paper_table.csv
+  - paper_table_manifest.json
+  safety_rules:
+  - requires_explicit_view
+  - refuses_mixed_mapping_by_default
+  - filters_by_canonical_view_and_exports_raw_views
+  - computes_deltas_only_against_matching_baseline_scope
+- name: managed_config_auditor
+  status: active
+  script: scripts/audit_managed_configs.py
+  package: ecg_adv_gen/config/audit.py
+  output_artifacts:
+  - managed_config_audit.json
+  - managed_config_audit.csv
+  safety_rules:
+  - cpu_only_no_legacy_child_scripts
+  - audits_all_active_managed_configs_from_active_script_index
+  - can_verify_required_input_artifacts_without_checking_child_outputs
+  - writes_reports_only_under_explicit_write_boundary
+- name: matrix_parallel_planner
+  status: active
+  script: scripts/agent/run_matrix_parallel.py
+  package: ecg_adv_gen/runner/matrix_parallel.py
+  output_artifacts:
+  - run_manifest.json
+  - run_card.json
+  - run_file_index.json
+  safety_rules:
+  - requires_explicit_gpu_list
+  - plans_one_gpu_per_matrix_command
+  - reuses_yaml_config_loader_and_command_audit
+  - records_gpu_assignment_in_manifest
+  - refuses_more_matrix_commands_than_selected_gpus
+  - plan_only_no_child_execution
+- name: active_evidence_registry_auditor
+  status: active
+  script: scripts/agent/audit_agent_workspace.py
+  package: scripts/agent/audit_agent_workspace.py
+  output_artifacts:
+  - agent_workspace_audit.json
+  safety_rules:
+  - cpu_only_no_gpu_no_child_training
+  - validates_active_evidence_registry
+  - audits_active_script_index_managed_configs
+  - validates_external_model_links_from_local_yaml
+  - checks_mapping_k500_ref_exclusion_metrics_and_comparison_bundle
+  - errors_on_staged_guarded_paths_and_unverified_dirty_model_handles
+  - ignores_verified_external_model_handle_dirty_paths_for_handoff_readiness
+  - summarizes_dirty_workspace_by_agent_handoff_layer
+- name: external_model_link_checker
+  status: active
+  script: scripts/agent/check_external_models.py
+  package: ecg_adv_gen/config/external_models.py
+  output_artifacts:
+  - external_model_link_report.json
+  safety_rules:
+  - cpu_only_no_gpu_no_training
+  - reads_external_model_targets_from_local_yaml
+  - checks_model_handles_are_symlinks_to_configured_targets
+  - checks_targets_stay_under_configured_allowed_roots_and_write_boundary
+  - supports_bootstrap_plan_for_scripts_bootstrap_model_repos
+- name: direct_vs_vae_comparison_bundler
+  status: active
+  script: scripts/agent/build_comparison_bundle.py
+  package: ecg_adv_gen/evidence/comparison.py
+  output_artifacts:
+  - comparison_manifest.json
+  - metrics_long.csv
+  - comparison_delta.csv
+  - paper_table_pn2021_all_zero_kept_refexcluded.csv
+  - paper_table_pn2021_drop_all_zero_refexcluded.csv
+  safety_rules:
+  - builds_from_registry_declared_metrics_only
+  - refuses_nonempty_output_without_force
+  - records_source_metric_hashes_and_baseline_run_id
+  - records_registered_run_metadata_when_available
+- name: run_finalizer
+  status: active
+  script: scripts/agent/finalize_run.py
+  package: ecg_adv_gen/evidence/run_record.py
+  output_artifacts:
+  - run_card.json
+  - run_file_index.json
+  - summary.md
+  safety_rules:
+  - cpu_only_no_gpu_no_training
+  - writes_only_under_explicit_write_boundary
+  - records_experiment_purpose_result_summary_protocol_and_metric_summary
+  - reads_yaml_run_record_defaults_with_manual_override
+  - refuses_missing_git_config_commands_kshot_selection_expected_eval_contract
+  - creates_agent_readable_file_categories_without_moving_large_checkpoints
+- name: run_registry_updater
+  status: active
+  script: scripts/agent/register_run.py
+  package: ecg_adv_gen/evidence/run_record.py
+  output_artifacts:
+  - configs/active_evidence_registry.yaml
+  safety_rules:
+  - cpu_only_no_gpu_no_training
+  - stores_run_paths_with_paths_output_root_placeholders
+  - idempotently_replaces_existing_run_registration
+  - resolves_auto_status_from_finalized_run_record
+  - refuses_run_dirs_outside_paths_output_root
+  - refuses_unfinalized_or_contract_invalid_run_records
 do_not_commit_or_move:
-  - path: model/DeepECG
-    reason: External model repo link handle; local target is host-specific.
-  - path: model/ECGTwin
-    reason: External model repo link handle; local target is host-specific.
-  - path: model/advdiff
-    reason: External model repo link handle; local target is host-specific.
-  - path: model/ecg_ptbxl_benchmarking
-    reason: External model repo link handle; local target is host-specific.
-  - path: model/ecgfounder
-    reason: External model repo link handle; local target is host-specific.
+- path: model/DeepECG
+  reason: External model repo link handle; local target is host-specific.
+- path: model/ECGTwin
+  reason: External model repo link handle; local target is host-specific.
+- path: model/advdiff
+  reason: External model repo link handle; local target is host-specific.
+- path: model/ecg_ptbxl_benchmarking
+  reason: External model repo link handle; local target is host-specific.
+- path: model/ecgfounder
+  reason: External model repo link handle; local target is host-specific.

@@ -1,5 +1,5 @@
 extends:
-  - pn2021c_official_s5_locked_protocol.yaml
+  - ../defaults/pn2021c_official_s5_locked_protocol.yaml
 
 experiment:
   name: pn2021c_effnet_threechain_locked_official_s5

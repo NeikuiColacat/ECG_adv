@@ -1,4 +1,4 @@
-"""Command builders for the EfficientNet VAE-LHAT legacy wrapper."""
+"""Command builders for the EfficientNet VAE-LHAT managed runner."""
 
 from __future__ import annotations
 
@@ -75,13 +75,13 @@ def build_effnet_vae_lhat_train_cmd(
     paths: EffNetVaeLhatPaths,
     class_trust: Path,
 ) -> list[str]:
-    """Build the legacy synth-online-AT command used by the wrapper."""
+    """Build the synth-online-AT command used by the managed runner."""
 
     model_name = str(getattr(args, "model_name", "efficientnet1dv2"))
     train_cmd = [
         python,
         "-u",
-        "scripts/pgd_cross_center/synth_online_at_super5.py",
+        "ecg_adv_gen/runner/synth_online_at_super5.py",
         "--center_name",
         str(args.center),
         "--ref_meta_json",
@@ -239,6 +239,8 @@ def build_effnet_vae_lhat_train_cmd(
     ]
     if args.hull_include_anchor:
         train_cmd.append("--hull_include_anchor")
+    if getattr(args, "disable_adv_stream", False):
+        train_cmd.append("--disable_adv_stream")
     if not args.disable_latent_augmix_branch:
         train_cmd.extend(
             [
@@ -351,6 +353,8 @@ def build_effnet_vae_lhat_train_cmd(
                 str(getattr(args, "raw_augmix_mixture_beta_a", 0.0)),
                 "--raw_augmix_mixture_beta_b",
                 str(getattr(args, "raw_augmix_mixture_beta_b", 0.0)),
+                "--raw_augmix_op_schedule",
+                str(getattr(args, "raw_augmix_op_schedule", "random")),
             ]
         )
         if getattr(args, "raw_corrupt_severity_params_file", ""):
@@ -454,7 +458,7 @@ def build_effnet_vae_lhat_eval_cmd(
     eval_cmd = [
         python,
         "-u",
-        "scripts/triple_labels/eval_crosscenter.py",
+        "ecg_adv_gen/runner/pn2021_clean_eval.py",
         "--scheme",
         "super5",
         "--model_dir",

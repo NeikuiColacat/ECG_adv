@@ -1,4 +1,4 @@
-"""Run-name helpers for legacy-compatible experiment entrypoints."""
+"""Run-name helpers for managed experiment outputs."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import Any
 
 
 def tag_value(value: float | int | str) -> str:
-    """Format a numeric CLI value for a legacy run-name token."""
+    """Format a numeric CLI value for a run-name token."""
 
     return str(value).replace(".", "p").replace("-", "m")
 
@@ -59,7 +59,7 @@ def _as_classes(value: Any) -> Sequence[Any] | None:
 
 
 def build_ecgfounder_fullft_method_tag(params: Any) -> str:
-    """Build the ECGFounder full-FT method tag used by the legacy runner."""
+    """Build the ECGFounder full-FT method tag used by the managed runner."""
 
     vae_enabled = _as_bool(_get(params, "enable_vae_adv_stream", False))
     method_tag = "fullft_vae" if vae_enabled else "fullft"

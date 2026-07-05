@@ -18,28 +18,21 @@
     },
     "runner": {
       "type": "object",
-      "required": ["entrypoint"],
-      "oneOf": [
-        {"required": ["argv"]},
-        {"required": ["adapter"]}
-      ],
+      "required": ["entrypoint", "adapter"],
+      "not": {"required": ["argv"]},
       "properties": {
         "entrypoint": {"type": "string"},
         "adapter": {
           "type": "string",
           "enum": [
-            "benchmark_vae_lhat",
             "direct_finetune",
             "ecgfounder_fullft",
             "ecgfounder_pn2021c_eval",
-            "ecgfounder_vae_lhat",
             "effnet_vae_lhat",
             "pn2021_eval",
-            "pn2021c_eval",
-            "prompt_token_online_at"
+            "pn2021c_eval"
           ]
         },
-        "argv": {"type": "array"},
         "env": {"type": "object"},
         "matrix": {"type": "object"}
       },

@@ -13,10 +13,15 @@ from typing import Any
 
 import numpy as np
 
+from ecg_adv_gen.evaluation.pn2021c_protocol import (
+    OFFICIAL_S5_COMPOSITE_OPS,
+    official_s5_depth23_composites,
+)
 from ecg_adv_gen.labels.super5 import CLASS_NAMES_SUPER5
 
 SUPER5_TO_IDX = {name: i for i, name in enumerate(CLASS_NAMES_SUPER5)}
 DEFAULT_TRUST_HARDCODE = {"HYP": 0.0, "CD": 0.0}
+OFFICIAL_S5_DEPTH23_COMPOSITE_CYCLE = "official_s5_depth23_composite_cycle"
 
 
 def build_k500_internal_val_mask(
@@ -774,8 +779,11 @@ def build_three_chain_vae_lhat_augmix_views(
     if mixture_mode == "fixed" and not (0.0 <= float(mixture_prob) <= 1.0):
         raise ValueError("fixed mixture_prob must be in [0, 1]")
     op_schedule = str(op_schedule)
-    if op_schedule not in {"random", "cycle", "per_op"}:
-        raise ValueError(f"op_schedule must be random|cycle|per_op, got {op_schedule!r}")
+    if op_schedule not in {"random", "cycle", "per_op", OFFICIAL_S5_DEPTH23_COMPOSITE_CYCLE}:
+        raise ValueError(
+            "op_schedule must be random|cycle|per_op|"
+            f"{OFFICIAL_S5_DEPTH23_COMPOSITE_CYCLE}, got {op_schedule!r}"
+        )
     beta_a = float(alpha) if mixture_beta_a is None else float(mixture_beta_a)
     beta_b = float(alpha) if mixture_beta_b is None else float(mixture_beta_b)
     if beta_a <= 0 or beta_b <= 0:
@@ -786,6 +794,16 @@ def build_three_chain_vae_lhat_augmix_views(
     for op_name in ops:
         if op_name not in available:
             raise ValueError(f"unknown locked VAE-LHAT AugMix op: {op_name}")
+    official_combos: list[tuple[str, ...]] = []
+    if op_schedule == OFFICIAL_S5_DEPTH23_COMPOSITE_CYCLE:
+        official_ops = set(OFFICIAL_S5_COMPOSITE_OPS)
+        if set(str(op) for op in ops) != official_ops:
+            raise ValueError(
+                f"{OFFICIAL_S5_DEPTH23_COMPOSITE_CYCLE} requires exactly the official S5 ops"
+            )
+        if not official_ops.issubset(available):
+            raise ValueError(f"available_ops must contain all official S5 ops for {op_schedule}")
+        official_combos = [tuple(name.split("+")) for name in official_s5_depth23_composites()]
     fixed_chain_weights: np.ndarray | None = None
     if chain_weights is not None:
         fixed_chain_weights = np.asarray(list(chain_weights), dtype=np.float32)
@@ -804,6 +822,7 @@ def build_three_chain_vae_lhat_augmix_views(
     chain_depths: list[int] = []
     used_ops: list[str] = []
     view_ops: list[str] = []
+    view_combos: list[str] = []
 
     for copy_i in range(int(copies)):
         for i in range(anchor_signals_ct.shape[0]):
@@ -822,6 +841,21 @@ def build_three_chain_vae_lhat_augmix_views(
             branch_mix = np.zeros_like(x0, dtype=np.float32)
             ops_for_view: list[str] = []
             for chain_i in range(2):
+                if official_combos:
+                    combo_i = (copy_i * anchor_signals_ct.shape[0] * 2 + i * 2 + chain_i) % len(official_combos)
+                    combo_ops = official_combos[combo_i]
+                    combo_name = "+".join(combo_ops)
+                    chain_depths.append(len(combo_ops))
+                    sig = x0.copy()
+                    for op_name in combo_ops:
+                        sig = op_apply_fn(sig, op_name, int(severity), str(severity_profile)).astype(
+                            np.float32,
+                            copy=False,
+                        )
+                        used_ops.append(op_name)
+                    ops_for_view.append(combo_name)
+                    branch_mix = branch_mix + float(weights[chain_i]) * sig
+                    continue
                 d = int(depth) if int(depth) > 0 else int(rng.integers(1, 4))
                 chain_depths.append(d)
                 sig = x0.copy()
@@ -858,6 +892,7 @@ def build_three_chain_vae_lhat_augmix_views(
                 if ops_for_view and len(set(ops_for_view)) == 1
                 else "__mixed__"
             )
+            view_combos.append("+".join(ops_for_view) if ops_for_view else "")
 
     arr = np.stack(mixed, axis=0).astype(np.float32) if mixed else np.empty(
         (0,) + tuple(anchor_signals_ct.shape[1:]), dtype=np.float32
@@ -881,6 +916,8 @@ def build_three_chain_vae_lhat_augmix_views(
         "mixture_beta_a": beta_a,
         "mixture_beta_b": beta_b,
         "op_schedule": op_schedule,
+        "composite_schedule": bool(official_combos),
+        "composite_count": int(len(official_combos)),
         "chain_weight_mode": "fixed" if fixed_chain_weights is not None else "dirichlet",
         "chain_weights": (
             [round(float(v), 6) for v in fixed_chain_weights.tolist()]
@@ -899,6 +936,7 @@ def build_three_chain_vae_lhat_augmix_views(
         "ops": list(ops),
         "op_counts": op_counts,
         "view_ops": view_ops,
+        "view_combos": view_combos,
         "renorm": bool(renorm),
         "clip_abs": float(clip_abs),
     }
@@ -999,6 +1037,7 @@ def build_raw_augmix_views(
     mixture_prob: float = 0.5,
     mixture_beta_a: float | None = None,
     mixture_beta_b: float | None = None,
+    op_schedule: str = "random",
     ops: Sequence[str],
     rng: np.random.Generator,
     op_apply_fn: Callable[[np.ndarray, str, int, str], np.ndarray],
@@ -1030,20 +1069,37 @@ def build_raw_augmix_views(
     beta_b = float(alpha) if mixture_beta_b is None else float(mixture_beta_b)
     if beta_a <= 0 or beta_b <= 0:
         raise ValueError("raw AugMix mixture beta parameters must be > 0")
+    op_schedule = str(op_schedule)
+    if op_schedule not in {"random", "cycle", OFFICIAL_S5_DEPTH23_COMPOSITE_CYCLE}:
+        raise ValueError(
+            "raw AugMix op_schedule must be random|cycle|"
+            f"{OFFICIAL_S5_DEPTH23_COMPOSITE_CYCLE}, got {op_schedule!r}"
+        )
     if not ops:
         raise ValueError("ops must contain at least one op")
     available = set(str(op) for op in available_ops)
     for op_name in ops:
         if op_name not in available:
             raise ValueError(f"unknown raw AugMix op: {op_name}")
+    official_combos: list[tuple[str, ...]] = []
+    if op_schedule == OFFICIAL_S5_DEPTH23_COMPOSITE_CYCLE:
+        official_ops = set(OFFICIAL_S5_COMPOSITE_OPS)
+        if set(str(op) for op in ops) != official_ops:
+            raise ValueError(
+                f"{OFFICIAL_S5_DEPTH23_COMPOSITE_CYCLE} requires exactly the official S5 ops"
+            )
+        if not official_ops.issubset(available):
+            raise ValueError(f"available_ops must contain all official S5 ops for {op_schedule}")
+        official_combos = [tuple(name.split("+")) for name in official_s5_depth23_composites()]
 
     mixed: list[np.ndarray] = []
     beta_ms: list[float] = []
     chain_depths: list[int] = []
     used_ops: list[str] = []
     view_ops: list[str] = []
+    view_combos: list[str] = []
 
-    for _copy_i in range(int(copies)):
+    for copy_i in range(int(copies)):
         for i in range(signals_ct.shape[0]):
             x0 = signals_ct[i].astype(np.float32, copy=False)
             weights = rng.dirichlet([float(alpha)] * int(width)).astype(np.float32)
@@ -1056,11 +1112,30 @@ def build_raw_augmix_views(
             branch_mix = np.zeros_like(x0, dtype=np.float32)
             ops_for_view: list[str] = []
             for branch_i in range(int(width)):
+                if official_combos:
+                    combo_i = (copy_i * signals_ct.shape[0] * int(width) + i * int(width) + branch_i) % len(official_combos)
+                    combo_ops = official_combos[combo_i]
+                    combo_name = "+".join(combo_ops)
+                    chain_depths.append(len(combo_ops))
+                    sig = x0.copy()
+                    for op_name in combo_ops:
+                        sig = op_apply_fn(sig, op_name, int(severity), str(severity_profile)).astype(
+                            np.float32,
+                            copy=False,
+                        )
+                        used_ops.append(op_name)
+                    ops_for_view.append(combo_name)
+                    branch_mix = branch_mix + float(weights[branch_i]) * sig
+                    continue
                 d = int(depth) if int(depth) > 0 else int(rng.integers(1, 4))
                 chain_depths.append(d)
                 sig = x0.copy()
-                for _ in range(d):
-                    op_name = str(rng.choice(ops))
+                for step_i in range(d):
+                    if op_schedule == "cycle":
+                        op_i = int(copy_i + i + branch_i + step_i) % len(ops)
+                        op_name = str(ops[op_i])
+                    else:
+                        op_name = str(rng.choice(ops))
                     sig = op_apply_fn(sig, op_name, int(severity), str(severity_profile)).astype(
                         np.float32,
                         copy=False,
@@ -1080,6 +1155,7 @@ def build_raw_augmix_views(
                 out = np.clip(out, -float(clip_abs), float(clip_abs)).astype(np.float32)
             mixed.append(out)
             view_ops.append(ops_for_view[0] if len(ops_for_view) == 1 else "__mixed__")
+            view_combos.append("+".join(ops_for_view) if ops_for_view else "")
 
     arr = np.stack(mixed, axis=0).astype(np.float32) if mixed else np.empty(
         (0,) + tuple(signals_ct.shape[1:]), dtype=np.float32
@@ -1101,11 +1177,15 @@ def build_raw_augmix_views(
         "mixture_prob": float(mixture_prob),
         "mixture_beta_a": beta_a,
         "mixture_beta_b": beta_b,
+        "op_schedule": op_schedule,
+        "composite_schedule": bool(official_combos),
+        "composite_count": int(len(official_combos)),
         "beta_m_mean": float(np.mean(beta_ms)) if beta_ms else float("nan"),
         "chain_depth_mean": float(np.mean(chain_depths)) if chain_depths else float("nan"),
         "ops": list(ops),
         "op_counts": op_counts,
         "view_ops": view_ops,
+        "view_combos": view_combos,
         "renorm": bool(renorm),
         "clip_abs": float(clip_abs),
     }

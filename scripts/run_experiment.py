@@ -24,7 +24,7 @@ from ecg_adv_gen.config import (  # noqa: E402
     make_dry_run_manifest,
     prepare_output_dir,
     require_cuda_visible_devices,
-    run_legacy_commands,
+    run_managed_commands,
     run_postprocess_commands,
     validate_experiment_config,
     verify_required_inputs,
@@ -45,7 +45,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", default="", help="Optional run/plan output directory")
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--dry-run", action="store_true", help="Resolve config and print commands only")
-    mode.add_argument("--execute", action="store_true", help="Run legacy commands after safety gates")
+    mode.add_argument("--execute", action="store_true", help="Run managed commands after safety gates")
     parser.add_argument(
         "--write-plan",
         action="store_true",
@@ -112,13 +112,13 @@ def main() -> int:
         }
         manifest["status"] = "launch_prepared"
         manifest["launcher"]["execute"] = True
-        manifest["safety"]["legacy_child_scripts_invoked"] = False
+        manifest["safety"]["managed_child_commands_invoked"] = False
 
     print(json.dumps(manifest, indent=2, sort_keys=True, ensure_ascii=True, default=str))
     if args.execute:
-        print("\n# Legacy commands (will be executed after plan files and input verification)")
+        print("\n# Managed commands (will be executed after plan files and input verification)")
     else:
-        print("\n# Legacy commands (not executed)")
+        print("\n# Managed commands (not executed)")
     for command in commands:
         print(render_launch_command(command))
     if postprocess_commands:
@@ -162,14 +162,14 @@ def main() -> int:
                     json.dumps(manifest, indent=2, sort_keys=True, ensure_ascii=True, default=str) + "\n",
                     encoding="utf-8",
                 )
-                raise LaunchError("Required input verification failed before legacy commands")
-            manifest["safety"]["legacy_child_scripts_invoked"] = True
+                raise LaunchError("Required input verification failed before managed commands")
+            manifest["safety"]["managed_child_commands_invoked"] = True
             manifest["input_verification"] = input_verification
             manifest_path.write_text(
                 json.dumps(manifest, indent=2, sort_keys=True, ensure_ascii=True, default=str) + "\n",
                 encoding="utf-8",
             )
-            run_legacy_commands(commands, run_dir=out_dir, manifest_path=manifest_path)
+            run_managed_commands(commands, run_dir=out_dir, manifest_path=manifest_path)
             run_postprocess_commands(postprocess_commands, run_dir=out_dir, manifest_path=manifest_path)
             finalize_run_record(
                 out_dir,

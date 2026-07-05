@@ -2,7 +2,7 @@
 
 These helpers are intentionally CPU-only and path-focused. Training/evaluation
 code can use them to avoid hand-writing K/seed/center artifact names in every
-legacy wrapper.
+managed runner.
 """
 
 from __future__ import annotations
@@ -10,7 +10,9 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
+
+import numpy as np
 
 
 REF_RECORD_ID_KEYS = ("ref_record_ids", "record_ids", "selected_ref_record_ids")
@@ -167,3 +169,155 @@ def read_ref_meta_record_ids(
             raise ValueError(f"{meta_path} has seed={meta_seed}, expected {int(expected_seed)}")
 
     return RefMetaRecordIds(center=center, record_ids=record_ids)
+
+
+def _class_names_array(class_names: Sequence[str]) -> np.ndarray:
+    return np.asarray([str(c) for c in class_names])
+
+
+def _primary_class(labels: np.ndarray, class_names: Sequence[str]) -> np.ndarray:
+    labels = np.asarray(labels, dtype=np.float32)
+    names = list(class_names)
+    out: list[str] = []
+    for row in labels:
+        if float(np.max(row)) <= 0.0:
+            out.append("ALL_ZERO")
+        else:
+            out.append(names[int(np.argmax(row))])
+    return np.asarray(out)
+
+
+def _label_counts(labels: np.ndarray, class_names: Sequence[str]) -> dict[str, int]:
+    counts = np.asarray(labels).sum(axis=0).astype(int).tolist()
+    return {str(cls): int(count) for cls, count in zip(class_names, counts)}
+
+
+def _read_optional_json_object(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    if not isinstance(payload, dict):
+        raise ValueError(f"Expected JSON object: {path}")
+    return payload
+
+
+def _copy_npz_with_labels(
+    source_path: Path,
+    output_path: Path,
+    *,
+    labels: np.ndarray,
+    mapping_metadata: Mapping[str, Any],
+    class_names: Sequence[str],
+) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with np.load(source_path, allow_pickle=True) as data:
+        payload = {key: data[key] for key in data.files}
+    payload["labels"] = labels.astype(np.float32, copy=False)
+    payload["class_names"] = _class_names_array(class_names)
+    payload["mapping_version"] = np.asarray(str(mapping_metadata["mapping_version"]))
+    payload["mapping_hash"] = np.asarray(str(mapping_metadata["mapping_hash"]))
+    if "latents" in payload:
+        payload["primary_class"] = _primary_class(labels, class_names)
+    np.savez_compressed(output_path, **payload)
+
+
+def relabel_kshot_artifact_group(
+    *,
+    center: str,
+    source_base: Path,
+    output_base: Path,
+    label_by_record_id: Mapping[str, np.ndarray],
+    mapping_metadata: Mapping[str, Any],
+    class_names: Sequence[str],
+) -> dict[str, Any]:
+    signal_path = source_base.with_suffix(".signals.npz")
+    latent_path = source_base.with_suffix(".latent.npz")
+    meta_path = source_base.with_suffix(".ref_meta.json")
+    if not signal_path.exists() or not latent_path.exists() or not meta_path.exists():
+        raise FileNotFoundError(f"Missing source K-shot artifact group for {source_base}")
+
+    with np.load(signal_path, allow_pickle=True) as data:
+        signals = data["signals"]
+        record_ids = data["record_ids"].astype(str)
+    labels = []
+    missing = []
+    for rid in record_ids:
+        label = label_by_record_id.get(str(rid))
+        if label is None:
+            missing.append(str(rid))
+        else:
+            labels.append(np.asarray(label, dtype=np.float32))
+    if missing:
+        raise RuntimeError(f"{center}: {len(missing)} record ids missing PN2021 labels; first={missing[:5]}")
+    labels_arr = np.stack(labels).astype(np.float32)
+    if labels_arr.shape != (len(record_ids), len(class_names)):
+        raise ValueError(f"{center}: labels shape {labels_arr.shape} does not match records/classes")
+    if len(signals) != len(record_ids):
+        raise ValueError(f"{center}: signals and record_ids length mismatch")
+
+    _copy_npz_with_labels(
+        signal_path,
+        output_base.with_suffix(".signals.npz"),
+        labels=labels_arr,
+        mapping_metadata=mapping_metadata,
+        class_names=class_names,
+    )
+    _copy_npz_with_labels(
+        latent_path,
+        output_base.with_suffix(".latent.npz"),
+        labels=labels_arr,
+        mapping_metadata=mapping_metadata,
+        class_names=class_names,
+    )
+
+    source_meta = _read_optional_json_object(meta_path)
+    label_counts = _label_counts(labels_arr, class_names)
+    output_meta = dict(source_meta)
+    output_meta.update(
+        {
+            "center": center,
+            "ref_record_ids": record_ids.astype(str).tolist(),
+            "parent": str(meta_path),
+            "policy": "same K-shot record ids relabeled under active PN2021 Super5 mapping",
+            "mapping_version": str(mapping_metadata["mapping_version"]),
+            "mapping_hash": str(mapping_metadata["mapping_hash"]),
+            "class_names": [str(c) for c in class_names],
+            "label_counts": label_counts,
+        }
+    )
+    output_base.parent.mkdir(parents=True, exist_ok=True)
+    output_base.with_suffix(".ref_meta.json").write_text(
+        json.dumps(output_meta, indent=2, sort_keys=True, ensure_ascii=True) + "\n",
+        encoding="utf-8",
+    )
+    class_trust = {
+        str(cls): (1.0 if int(label_counts[str(cls)]) > 0 else 0.0)
+        for cls in class_names
+    }
+    output_base.with_suffix(".class_trust.json").write_text(
+        json.dumps(
+            {
+                "center": center,
+                "mapping_version": str(mapping_metadata["mapping_version"]),
+                "mapping_hash": str(mapping_metadata["mapping_hash"]),
+                "policy": "real_all_present under v7 relabeled K-shot subset",
+                "class_trust": class_trust,
+                "label_counts": label_counts,
+            },
+            indent=2,
+            sort_keys=True,
+            ensure_ascii=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return {
+        "center": center,
+        "n": int(len(record_ids)),
+        "source_base": str(source_base),
+        "output_base": str(output_base),
+        "mapping_version": str(mapping_metadata["mapping_version"]),
+        "mapping_hash": str(mapping_metadata["mapping_hash"]),
+        "label_counts": label_counts,
+    }

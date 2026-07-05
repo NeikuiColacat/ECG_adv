@@ -29,8 +29,12 @@ Current agent operating layer, initialized 2026-05-29:
 
 ```text
 active evidence registry: configs/active_evidence_registry.yaml
+latest mainline index:   configs/active_scripts.yaml:latest_mainline
+latest mainline method:  vae_lhat_threechain_augmix_pn2021c
+latest mainline launcher: scripts/run_experiment.py
 CPU-only agent audit:     micromamba run -n ECGTwin python scripts/agent/audit_agent_workspace.py
                          covers active evidence, active scripts, external models, and dirty layers
+latest mainline audit:   inspect_active_scripts_latest_mainline via handoff_contract.latest_mainline
 external model check:     micromamba run -n ECGTwin python scripts/agent/check_external_models.py
 handoff readiness:        inspect handoff_contract.handoff_readiness
 external model status:    inspect external_models and handoff_contract.handoff_readiness.ignored_verified_external_model_dirty_paths
@@ -42,7 +46,6 @@ artifact risk checklist:  inspect git.blocking_artifact_risks
 dirty handoff gate:       inspect git.dirty_summary.handoff_gate in the audit JSON
 dirty layer details:      inspect git.dirty_summary.by_layer for per-layer actions
 current handoff note:     docs/codex-handoffs/current_workspace_handoff.md
-legacy VAE manifest:      micromamba run -n ECGTwin python scripts/agent/backfill_vae_lhat_manifest.py
 comparison bundle build:  micromamba run -n ECGTwin python scripts/agent/build_comparison_bundle.py --force
 run finalizer:            micromamba run -n ECGTwin python scripts/agent/finalize_run.py --run-dir <run_dir>
 run registry update:      micromamba run -n ECGTwin python scripts/agent/register_run.py --run-dir <run_dir> --status auto
@@ -68,7 +71,8 @@ active run index:       configs/active_scripts.yaml
 active evidence facts:  configs/active_evidence_registry.yaml
 label mapping evidence: configs/label_mappings/, docs/labeling/
 managed CLIs:           scripts/run_experiment.py, scripts/agent/
-legacy experiment CLIs: scripts/paper/, scripts/triple_labels/, scripts/pgd_cross_center/
+package runners:        ecg_adv_gen/runner/
+legacy provenance:      removed from public tree; use git history for old scripts
 long-term docs:         docs/pipelines/
 archived reports:       docs/reports/archive/
 external model handles: model/
@@ -88,9 +92,9 @@ AGENTS.md maintenance:
 - Detailed cleanup suggestions are tracked in
   `docs/pipelines/agents_md_organization_suggestions_20260529.md`.
 
-Do not move active legacy entrypoints unless `configs/active_scripts.yaml` and
-the tests are updated in the same change. Prefer extracting pure logic into
-`ecg_adv_gen/` while keeping old script paths as thin wrappers.
+Do not reintroduce archived legacy entrypoints as live paths. Business logic
+belongs under `ecg_adv_gen/`; experiment launches must go through
+`scripts/run_experiment.py` plus tracked YAML.
 
 Every new managed experiment should leave an agent-readable run record:
 `run_card.json`, `run_file_index.json`, `summary.md`, and logical category
@@ -182,23 +186,29 @@ the repo-tracked skill into the active Codex user's runtime skill directory.
 
 ## Current Graduation Project Story
 
-Mainline method:
+Latest locked mainline method:
 
 ```text
 PTB-XL super5 real ECG
 -> EfficientNet1DV2 super5 baseline
--> ECGTwin author training reproduction (IBE + DiT) with thesis-grade logs
--> ECGTwin VAE latent manifold for target-center augmentation
--> TA-OMAT / synth-anchor ablations
--> PhysioNet/CinC 2021 7-center AUROC/AUPRC evaluation
+-> target-center K500 ECGTwin VAE latent anchors
+-> VAE-LHAT + three-chain AugMix
+   chain1/chain2: official PN2021-C corruption chains
+   chain3: VAE-LHAT adversarial waveform
+-> PN2021 clean ref-excluded evaluation
+-> PN2021-C official S5/depth23 evaluation
+-> locked ECGFounder fullFT + VAE-LHAT three-chain comparison
 ```
 
-Current preferred thesis route:
+Current replay contract:
 
 ```text
-reproduce ECGTwin author pipeline
--> use ECGTwin VAE latent space for target-anchored on-manifold augmentation
--> keep direct ECGTwin synthetic augmentation as an ablation, not the main claim
+configs/active_scripts.yaml:latest_mainline
+method: vae_lhat_threechain_augmix_pn2021c
+launcher: scripts/run_experiment.py
+mapping: v7_super5_sjr_rgq_review_20260528 / 555ec85d5b51
+class order: CD,HYP,MI,NORM,STTC
+historical ECGTwin author/prompt-token/direct-synth routes: provenance or ablation only
 ```
 
 Latest 2026-05-23 project state after migration:
@@ -378,31 +388,34 @@ SUPER5_PN2021_MAPPING_VERSION = v7_super5_sjr_rgq_review_20260528
 SUPER5_PN2021_MAPPING_HASH = 555ec85d5b51
 ```
 
-Older v3/v5/v6 command names and result files are historical unless they are
-explicitly listed as active or smoke/superseded in `configs/active_scripts.yaml`.
+Older v3/v5/v6 command names and result files are historical and no longer part
+of the public launch surface unless reintroduced through `configs/active_scripts.yaml`.
 Report the mapping version/hash with all final metrics.
 
 Do not make no-IBE ECGTwin self-training mandatory for the thesis mainline. The
-previous Scheme B/no-IBE implementation is archived under
-`trash/cleanup_20260430/deprecated_no_ibe/` and should only be used as historical
-reference unless the user explicitly revives it.
+previous Scheme B/no-IBE implementation was removed from the public tree and
+should only be recovered from git history if the user explicitly revives it.
 
 Do not make MIMIC mandatory for the thesis mainline. PTB-XL + PN2021 gives the
 clean closed loop; MIMIC is an optional noisy OOD evaluation/pretraining source.
 
-Primary plan document:
+Primary public plan documents:
 
 ```text
-docs/experiment_summary_for_advisor.md
-docs/module_ablation_1_real_vs_synth.md
-trash/docs_cleanup_20260501/historical_no_ibe/ecgtwin_no_ibe_diffusion_augmenter_recommended_plan.md  # historical Scheme B plan
+configs/active_scripts.yaml
+configs/active_evidence_registry.yaml
+docs/pipelines/pn2021c_vae_lhat_augmix_locked_protocol_20260618.md
+docs/refactor_cleanup/
 ```
 
 ## Key Data And Artifact Paths
 
 - ECGTwin original repo: `model/ECGTwin/`
-- ECGTwin author reproduction scripts: `scripts/ecgtwin_author_repro/`
-- Archived no-IBE Scheme B implementation: `trash/cleanup_20260430/deprecated_no_ibe/`
+- ECGTwin author reproduction runners:
+  `ecg_adv_gen/runner/train_ibe_repro.py`,
+  `ecg_adv_gen/runner/train_dit_repro.py`
+- Historical no-IBE Scheme B implementation: removed from public tree; recover
+  from git history only if explicitly revived.
 - PTB-XL raw/preprocessed: `datasets/PTBXL/`, `/root/autodl-tmp/ptbxl/`
 - PTB-XL VAE/nomic cache: `datasets/PTBXL/PTBXL_vae_multi_nomic.pt`
 - PN2021 centers: `/root/autodl-tmp/physionet2021/training/<center>/`
@@ -521,9 +534,8 @@ Source of truth:
 ecg_adv_gen/labels/super5_mapping.py
 ```
 
-`scripts/triple_labels/label_schemes.py` is now a legacy compatibility wrapper
-for Super5. It re-exports the package-owned Super5 API while keeping sub23/pn26
-logic local for older callers.
+The Super5 source of truth is package-owned. The old label-scheme wrapper is
+archived in the legacy provenance tree only.
 
 PN2021 super5 mapping:
 
@@ -563,25 +575,22 @@ For multi-label samples, concatenate fragments with `|`.
 Keep original `model/ECGTwin/` intact. Current active new code should live in:
 
 ```text
-scripts/ecgtwin_author_repro/      # ECGTwin author IBE + DiT reproduction
-scripts/pgd_cross_center/          # TA-OMAT / synth-anchor ablations
-scripts/triple_labels/             # EfficientNet1DV2 training/eval
+ecg_adv_gen/runner/train_ibe_repro.py  # ECGTwin author IBE reproduction
+ecg_adv_gen/runner/train_dit_repro.py  # ECGTwin author DiT reproduction
+ecg_adv_gen/runner/synth_online_at_super5.py  # TA-OMAT / synth-anchor ablations
+ecg_adv_gen/runner/ptbxl_source_train.py      # EfficientNet1DV2 source training
+ecg_adv_gen/runner/pn2021_clean_eval.py       # PN2021 clean/ref-excluded eval
 util/ecg_digital_features.py       # digital ECG validation
 ```
 
-Archived no-IBE implementation:
-
-```text
-trash/cleanup_20260430/deprecated_no_ibe/methods/ecgtwin_class_super5/
-trash/cleanup_20260430/deprecated_no_ibe/scripts/ecgtwin_class_super5/
-```
+Historical no-IBE implementation is not part of this public tree.
 
 ## Current Training And Sampling Commands
 
 ECGTwin author reproduction, stage 1 IBE:
 
 ```bash
-/root/miniforge3/envs/ECGTwin/bin/python -u scripts/ecgtwin_author_repro/train_ibe_repro.py \
+/root/miniforge3/envs/ECGTwin/bin/python -u ecg_adv_gen/runner/train_ibe_repro.py \
   --output_dir /root/autodl-tmp/ecgtwin_author_repro/<run>/ibe_stage1 \
   --epochs 40 --batch_size 65536 --mini_batch_size 512 \
   --num_workers 4 --pin_memory --persistent_workers --prefetch_factor 2 \
@@ -591,7 +600,7 @@ ECGTwin author reproduction, stage 1 IBE:
 ECGTwin author reproduction, stage 2 DiT:
 
 ```bash
-/root/miniforge3/envs/ECGTwin/bin/python -u scripts/ecgtwin_author_repro/train_dit_repro.py \
+/root/miniforge3/envs/ECGTwin/bin/python -u ecg_adv_gen/runner/train_dit_repro.py \
   --output_dir /root/autodl-tmp/ecgtwin_author_repro/<run>/dit_stage2 \
   --ibe_path /root/autodl-tmp/ecgtwin_author_repro/<run>/ibe_stage1/checkpoints/IBE_best.pth \
   --epochs 30 --batch_size 512 --num_workers 4 \
@@ -599,10 +608,11 @@ ECGTwin author reproduction, stage 2 DiT:
   --amp --amp_dtype bf16 --device cuda
 ```
 
-One-shot pipeline:
+Managed YAML stages:
 
 ```bash
-bash scripts/ecgtwin_author_repro/run_author_repro_pipeline.sh
+python scripts/run_experiment.py --config configs/experiments/ecgtwin_author_ibe_repro.yaml --local-config configs/local/linbinhao_server.example.yaml --run-id <run> --dry-run
+python scripts/run_experiment.py --config configs/experiments/ecgtwin_author_dit_repro.yaml --local-config configs/local/linbinhao_server.example.yaml --run-id <run> --dry-run
 ```
 
 Synthetic classifier input:
@@ -612,7 +622,8 @@ signals: (N, 1000, 12) float32, PTB-XL lead order, 100Hz
 labels:  (N, 5) float32, class order CD/HYP/MI/NORM/STTC
 ```
 
-Classifier augmentation is implemented in `scripts/triple_labels/train_ptbxl.py` with:
+Classifier augmentation is exposed through the package-owned PTB-XL source
+runner with:
 
 ```text
 --synth_npz
@@ -622,10 +633,11 @@ Classifier augmentation is implemented in `scripts/triple_labels/train_ptbxl.py`
 PN2021 eval:
 
 ```bash
-/root/miniforge3/envs/ECGTwin/bin/python scripts/triple_labels/eval_crosscenter.py \
-  --scheme super5 \
-  --model_dir /path/to/model_dir \
-  --skip_mimic
+python scripts/run_experiment.py \
+  --config configs/experiments/pn2021_eval_v7_sjr_rgq_refexcluded.yaml \
+  --local-config configs/local/linbinhao_server.example.yaml \
+  --run-id <run> \
+  --dry-run
 ```
 
 ## PN2021 Evaluation Rules
@@ -675,7 +687,7 @@ Do not use full paired MIMIC as a default single-sample/no-IBE route. The paired
 MIMIC report labels:
 
 ```python
-from scripts.triple_labels.label_schemes import mimic_report_to_super5
+from ecg_adv_gen.labels import mimic_report_to_super5
 ```
 
 Apply PTB-XL NORM semantics:

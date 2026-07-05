@@ -264,7 +264,7 @@ def build_legacy_vae_lhat_manifest(
         "source_artifacts": source_artifacts,
         "git": _git_snapshot(repo_root),
         "limitations": [
-            "Backfilled after the legacy wrapper run; git state records the backfill, not the original launch.",
+            "Backfilled after the original historical run; git state records the backfill, not the original launch.",
             "Use the per-center launch_config/train_result/eval artifacts as the replay source for this historical run.",
         ],
     }

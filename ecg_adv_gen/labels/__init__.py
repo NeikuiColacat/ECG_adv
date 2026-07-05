@@ -8,9 +8,16 @@ from .super5 import (
     Super5Metadata,
     Super5MetadataError,
     default_class_order,
+    get_super5_scheme,
+    get_super5_pn2021_mapping_metadata,
     get_super5_metadata,
     pn2021_super5_label_mapping_payload,
     validate_super5_metadata,
+)
+from .super5_mapping import (
+    mimic_report_to_super5,
+    ptbxl_scp_to_super5,
+    snomed_list_to_super5,
 )
 
 __all__ = [
@@ -21,7 +28,12 @@ __all__ = [
     "Super5Metadata",
     "Super5MetadataError",
     "default_class_order",
+    "get_super5_scheme",
+    "get_super5_pn2021_mapping_metadata",
     "get_super5_metadata",
+    "mimic_report_to_super5",
     "pn2021_super5_label_mapping_payload",
+    "ptbxl_scp_to_super5",
+    "snomed_list_to_super5",
     "validate_super5_metadata",
 ]

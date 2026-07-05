@@ -1,5 +1,5 @@
 extends:
-  - pn2021c_official_s5_locked_protocol.yaml
+  - ../defaults/pn2021c_official_s5_locked_protocol.yaml
 
 experiment:
   name: pn2021c_ecgfounder_threechain_locked_official_s5
@@ -33,7 +33,7 @@ logging:
     - pn2021c_ecgfounder_threechain_locked_official_s5.csv
 
 runner:
-  entrypoint: scripts/triple_labels/eval_ecgfounder_pn2021_corruptions.py
+  entrypoint: ecg_adv_gen/runner/ecgfounder_pn2021c_eval.py
   adapter: ecgfounder_pn2021c_eval
   env:
     ECG_ADV_GEN_DATA_ROOT: ${paths.data_root}

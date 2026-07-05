@@ -1,9 +1,9 @@
 """Paper-protocol data and preprocessing contracts.
 
 These constants describe the current PTB-XL -> PN2021 Super5 evaluation
-contract used by the YAML-managed runs. They are not full data loaders; legacy
-dataset reading and waveform conversion remain in existing scripts until the
-data pipeline is extracted.
+contract used by the YAML-managed runs. They are not full data loaders; package
+data readers and waveform conversion modules own those details as the data
+pipeline is extracted.
 """
 
 from __future__ import annotations

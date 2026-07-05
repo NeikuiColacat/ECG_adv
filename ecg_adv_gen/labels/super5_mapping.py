@@ -1,7 +1,8 @@
 """Package-owned PTB-XL Super5 label conversion policy.
 
 This module owns the Super5 class order, PN2021 SNOMED projection, MIMIC report
-regex mapping, and PTB-XL diagnostic-class lookup used by legacy wrappers. Keep
+regex mapping, and PTB-XL diagnostic-class lookup used by managed runners and
+archived provenance configs. Keep
 changes here tightly controlled: any mapping drift changes cited metrics and
 requires a mapping version/hash bump plus cache rebuild.
 """

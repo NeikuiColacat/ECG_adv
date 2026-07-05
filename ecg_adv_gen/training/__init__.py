@@ -1,4 +1,4 @@
-"""Training helpers shared by legacy ECG experiment entrypoints."""
+"""Training helpers shared by managed ECG experiment runners."""
 
 from .losses import (
     attack_success_stats,
@@ -50,6 +50,7 @@ from .checkpoint_state import (
     restore_rng_state,
 )
 from .torch_utils import set_module_requires_grad
+from .effnet_super5 import PTBXLDatasetScheme, SynthNPZDataset, evaluate, init_weights
 
 __all__ = [
     "append_jsonl",
@@ -58,6 +59,8 @@ __all__ = [
     "CachedSignalDataset",
     "compute_pos_weight",
     "capture_rng_state",
+    "PTBXLDatasetScheme",
+    "evaluate",
     "fullft_adv_batch_diagnostics",
     "build_weighted_signal_stream_loader_from_datasets",
     "build_weighted_signal_stream_loader",
@@ -69,6 +72,7 @@ __all__ = [
     "MemorySignalDataset",
     "merge_attack_success_stats",
     "multilabel_bce_per_sample",
+    "SynthNPZDataset",
     "TaggedCachedSignalDataset",
     "TaggedMemorySignalDataset",
     "TaggedSignalDataset",
@@ -86,6 +90,7 @@ __all__ = [
     "restore_rng_state",
     "resolve_quick_eval_plan",
     "set_module_requires_grad",
+    "init_weights",
     "should_save_initial_best_model",
     "stream_weighted_masked_bce",
     "summarize_fullft_adv_epoch_diagnostics",

@@ -9,8 +9,8 @@ from typing import Any, Callable, Sequence
 
 import numpy as np
 
+from ecg_adv_gen.labels.super5_mapping import CLASS_NAMES_SUPER5, snomed_list_to_super5
 from ecg_adv_gen.preprocessing import unified_preprocess_to_1000
-from scripts.triple_labels.label_schemes import CLASS_NAMES_SUPER5, snomed_list_to_super5
 
 from .kshot_artifacts import read_ref_meta_record_ids
 from .pn2021_index import scan_pn2021_center_records

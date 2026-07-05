@@ -21,7 +21,7 @@ from .paths import PathSafetyError, is_under
 
 
 class LaunchError(RuntimeError):
-    """Raised when launching a legacy experiment command would be unsafe."""
+    """Raised when launching a managed experiment command would be unsafe."""
 
 
 def require_cuda_visible_devices(env: dict[str, str] | None = None, *, allow_multi_gpu: bool = False) -> str:
@@ -915,7 +915,7 @@ def _run_logged_subprocess(
     return ret, paths, started_at, finished_at
 
 
-def run_legacy_commands(
+def run_managed_commands(
     commands: list[dict[str, Any]],
     *,
     run_dir: Path,
@@ -968,7 +968,7 @@ def run_legacy_commands(
                     "failed_stderr_log": log_paths["stderr_log_path"],
                 },
             )
-            raise LaunchError(f"Legacy command {idx} failed with return code {ret}; see {log_paths['log_path']}")
+            raise LaunchError(f"Managed command {idx} failed with return code {ret}; see {log_paths['log_path']}")
         _append_manifest_record(manifest_path, "command_runs", run_record)
 
     manifest = _load_manifest(manifest_path)
@@ -981,7 +981,7 @@ def run_legacy_commands(
                 "artifact_verification": verification,
             },
         )
-        raise LaunchError("Required artifact verification failed after legacy commands")
+        raise LaunchError("Required artifact verification failed after managed commands")
 
     update_manifest_file(
         manifest_path,
@@ -1000,7 +1000,7 @@ def run_postprocess_commands(
     manifest_path: Path,
     base_env: dict[str, str] | None = None,
 ) -> None:
-    """Run managed reporting/export commands after legacy child scripts."""
+    """Run managed reporting/export commands after managed child commands."""
     if not commands:
         manifest = _load_manifest(manifest_path)
         update_manifest_file(manifest_path, _final_success_patch(manifest, finished_at=_utc_now()))

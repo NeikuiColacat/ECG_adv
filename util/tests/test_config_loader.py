@@ -29,7 +29,7 @@ from ecg_adv_gen.config import (
     make_dry_run_manifest,
     prepare_output_dir,
     require_cuda_visible_devices,
-    run_legacy_commands,
+    run_managed_commands,
     run_postprocess_commands,
     validate_experiment_config,
     verify_required_inputs,
@@ -37,18 +37,12 @@ from ecg_adv_gen.config import (
     write_k500_ref_ids_artifact,
     write_selection_record_artifact,
 )
-from ecg_adv_gen.config.loader import audit_runner_commands
-from ecg_adv_gen.config.runner_audit import audit_runner_command
-from ecg_adv_gen.config.adapters.direct import audit_direct_finetune_command
-from ecg_adv_gen.config.adapters.source_training import audit_train_ptbxl_command
+from ecg_adv_gen.config.entrypoints import managed_runner_script_names
+from ecg_adv_gen.config.loader import audit_runner_commands, build_artifact_trace
+from ecg_adv_gen.config.runner_audit import DISPATCHED_RUNNER_AUDIT_SCRIPT_NAMES, audit_runner_command
 from ecg_adv_gen.config.paths import PathSafetyError, translate_legacy_path, validate_local_paths
-from ecg_adv_gen.models import ecgfounder_kshot_head_run_dir, ecgfounder_lhat_run_dir
-from ecg_adv_gen.run_naming import (
-    build_benchmark_direct_run_leaf,
-    build_ecgfounder_fullft_run_leaf,
-    build_effnet_direct_run_leaf,
-    build_effnet_vae_lhat_run_leaf,
-)
+from ecg_adv_gen.evaluation.pn2021c_protocol import official_s5_depth23_composites
+from ecg_adv_gen.run_naming import build_effnet_direct_run_leaf
 
 
 REPO = Path(__file__).resolve().parents[2]
@@ -63,103 +57,20 @@ def _load(name: str) -> dict:
     )
 
 
-@pytest.mark.parametrize(
-    ("config_name", "expected_commands"),
-    [
-        ("effnet_direct_k500_v6.yaml", 1),
-        ("effnet_direct_k500_v6_smoke.yaml", 1),
-        ("effnet_direct_k500_v7_sjr_rgq.yaml", 1),
-        ("benchmark_resnet1d_direct_k500_v7_sjr_rgq_matrix.yaml", 4),
-        ("effnet_direct_percent_v7_sjr_rgq_matrix.yaml", 8),
-        ("effnet_vae_lhat_k500_v6.yaml", 4),
-        ("effnet_vae_lhat_k500_v6_smoke.yaml", 4),
-        ("effnet_vae_lhat_k500_v7_sjr_rgq.yaml", 4),
-        ("effnet_vae_lhat_rawjsd_curriculum_k500_v7_sjr_rgq.yaml", 4),
-        ("effnet_vae_lhat_rawjsd_curriculum_k500_v7_sjr_rgq_smoke.yaml", 1),
-        ("effnet_vae_lhat_rawsupervised_stressor_k500_v7_sjr_rgq.yaml", 4),
-        ("effnet_vae_lhat_rawsupervised_stressor_k500_v7_sjr_rgq_ningbo.yaml", 1),
-        ("effnet_vae_lhat_rawsupervised_stressor_k500_v7_sjr_rgq_smoke.yaml", 1),
-        ("effnet_vae_lhat_calibrated_rawsupervised_k500_v7_sjr_rgq.yaml", 4),
-        ("effnet_vae_lhat_calibrated_rawsupervised_k500_v7_sjr_rgq_ningbo.yaml", 1),
-        ("effnet_vae_lhat_calibrated_rawsupervised_k500_v7_sjr_rgq_smoke.yaml", 1),
-        ("effnet_vae_lhat_calibrated_latent_augmix_k500_v7_sjr_rgq.yaml", 4),
-        ("effnet_vae_lhat_calibrated_latent_augmix_k500_v7_sjr_rgq_cpsc_2018.yaml", 1),
-        ("effnet_vae_lhat_calibrated_latent_augmix_norenorm_k500_v7_sjr_rgq_cpsc_2018.yaml", 1),
-        ("effnet_vae_lhat_calibrated_latent_augmix_directloss_k500_v7_sjr_rgq_cpsc_2018.yaml", 1),
-        ("effnet_vae_lhat_augmix_threechain_locked_k500.yaml", 4),
-        ("effnet_vae_lhat_augmix_threechain_dualmodel_k500_cpsc_base.yaml", 1),
-        ("effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_d1_c2_cw2_bce1_m065.yaml", 1),
-        ("effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_d1_c3_cw4_bce1_m065.yaml", 1),
-        ("effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_d1_c3_cw6_bce1_m075.yaml", 1),
-        ("effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_d1_c4_cw4_bce2_m075.yaml", 1),
-        ("effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_randdepth_c3_cw4_bce1_m065.yaml", 1),
-        ("effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_d1_c3_cw4_bce2_m075_hs5.yaml", 1),
-        ("effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_strong_hlam10_aw1p5_c3_cw6_bce2_m085.yaml", 1),
-        ("effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_strong_hlam15_aw2p0_c4_cw8_bce2_m090.yaml", 1),
-        ("effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_highfreq_c6_cw10_bce3_m095.yaml", 1),
-        ("effnet_vae_lhat_augmix_threechain_dualmodel_cpsc_advheavy_hlam20_aw3p0_c4_cw10_bce3_m090.yaml", 1),
-        ("effnet_vae_lhat_augmix_threechain_dualmodel_cand09_highfreq_missing3.yaml", 3),
-        ("effnet_vae_lhat_augmix_threechain_dualmodel_cand10_advheavy_missing3.yaml", 3),
-        ("effnet_vae_lhat_augmix_threechain_dualmodel_cand09_highfreq_ningbo.yaml", 1),
-        ("effnet_vae_lhat_augmix_threechain_dualmodel_cand09_highfreq_chapman_shaoxing.yaml", 1),
-        ("effnet_vae_lhat_augmix_threechain_dualmodel_cand09_highfreq_georgia.yaml", 1),
-        ("effnet_vae_lhat_augmix_threechain_dualmodel_cand10_advheavy_ningbo.yaml", 1),
-        ("effnet_vae_lhat_augmix_threechain_dualmodel_cand10_advheavy_chapman_shaoxing.yaml", 1),
-        ("effnet_vae_lhat_augmix_threechain_dualmodel_cand10_advheavy_georgia.yaml", 1),
-        ("effnet_vae_lhat_fullpool_raw_augmix_depth1_w1_m100_stabilizer35_k500_v7_sjr_rgq.yaml", 4),
-        ("effnet_vae_lhat_fullpool_raw_augmix_depth1_w1_m100_stabilizer35_k500_v7_sjr_rgq_smoke.yaml", 1),
-        ("effnet_vae_lhat_maskshift_consistency_k500_v7_sjr_rgq.yaml", 4),
-        ("effnet_vae_lhat_maskshift_consistency_k500_v7_sjr_rgq_ningbo.yaml", 1),
-        ("effnet_vae_lhat_maskshift_consistency_k500_v7_sjr_rgq_smoke.yaml", 1),
-        ("effnet_vae_lhat_percent_v7_sjr_rgq.yaml", 8),
-        ("ecgfounder_direct_k500_v7_sjr_rgq_matrix.yaml", 4),
-        ("ecgfounder_vae_lhat_augmix_k500_v7_sjr_rgq.yaml", 4),
-        ("benchmark_source_v7_sjr_rgq_matrix.yaml", 3),
-        ("benchmark_resnet1d_direct_percent_v7_sjr_rgq_matrix.yaml", 8),
-        ("benchmark_inception1d_direct_k500_v7_sjr_rgq_matrix.yaml", 4),
-        ("benchmark_fcn_wang_direct_k500_v7_sjr_rgq_matrix.yaml", 4),
-        ("benchmark_resnet1d_vae_lhat_k500_v7_sjr_rgq.yaml", 4),
-        ("benchmark_inception1d_vae_lhat_k500_v7_sjr_rgq.yaml", 4),
-        ("benchmark_fcn_wang_vae_lhat_k500_v7_sjr_rgq.yaml", 4),
-        ("benchmark_resnet1d_vae_noaug_k500_v7_sjr_rgq.yaml", 4),
-        ("benchmark_inception1d_vae_noaug_k500_v7_sjr_rgq.yaml", 4),
-        ("benchmark_fcn_wang_vae_noaug_k500_v7_sjr_rgq.yaml", 4),
-        ("ecgfounder_direct_k500_v6.yaml", 1),
-        ("ecgfounder_inithead_fullft_k500_v6.yaml", 4),
-        ("ecgfounder_inithead_fullft_k500_v6_smoke.yaml", 4),
-        ("ecgfounder_vae_lhat_k500_v7_sjr_rgq.yaml", 4),
-        ("ecgfounder_vae_lhat_k500_v6.yaml", 4),
-        ("ecgfounder_vae_lhat_k500_v6_smoke.yaml", 4),
-        ("ecgtwin_author_ibe_repro.yaml", 1),
-        ("ecgtwin_author_dit_repro.yaml", 1),
-        ("ecgtwin_prompt_token_train_minimal.yaml", 1),
-        ("ecgtwin_prompt_token_generate_minimal.yaml", 1),
-        ("ecgtwin_prompt_token_gate_minimal.yaml", 1),
-        ("ecgtwin_prompt_token_online_at_minimal.yaml", 1),
-        ("ecgtwin_prompt_token_online_at_minimal_pn2021_eval.yaml", 1),
-        ("pn2021_eval_v6_refexcluded.yaml", 4),
-        ("pn2021_eval_v6_refexcluded_smoke.yaml", 4),
-        ("pn2021_eval_v7_sjr_rgq_refexcluded.yaml", 4),
-        ("pn2021c_effnet_v7_augmix_vs_noaug.yaml", 8),
-        ("pn2021c_official_s5_locked_protocol.yaml", 8),
-        ("pn2021c_effnet_threechain_locked_official_s5.yaml", 4),
-        ("pn2021c_ecgfounder_threechain_locked_official_s5.yaml", 4),
-        ("pn2021c_effnet_v7_strong_10to20pp.yaml", 8),
-        ("pn2021c_effnet_v7_strong_10to20pp_smoke.yaml", 2),
-        ("pn2021c_effnet_v7_strong_raw_candidates.yaml", 20),
-        ("pn2021c_effnet_v7_strong_raw_candidates_smoke.yaml", 5),
-        ("pn2021c_effnet_v7_strong_maskshift_ningbo.yaml", 2),
-        ("pn2021c_effnet_v7_strong_rawsupervised_ningbo.yaml", 2),
-        ("pn2021c_effnet_v7_strong_calibrated_rawsupervised.yaml", 8),
-        ("pn2021c_effnet_v7_strong_calibrated_rawsupervised_ningbo.yaml", 2),
-        ("pn2021c_effnet_dual3ch_cpsc_dualmodel_smoke.yaml", 11),
-        ("pn2021c_effnet_dual3ch_selected_dualmodel_missing3.yaml", 15),
-        ("pn2021c_effnet_dual3ch_selected_dualmodel_cpsc.yaml", 5),
-        ("pn2021c_effnet_dual3ch_selected_official_s5_missing3.yaml", 15),
-        ("pn2021c_effnet_dual3ch_selected_official_s5_cpsc.yaml", 5),
-    ],
-)
-def test_tracked_configs_validate_and_expand_commands(config_name: str, expected_commands: int):
+def _latest_mainline_config_names() -> list[str]:
+    index = yaml.safe_load((REPO / "configs" / "active_scripts.yaml").read_text(encoding="utf-8"))
+    return [Path(stage["config"]).name for stage in index["latest_mainline"]["stages"]]
+
+
+def test_command_expansion_contract_covers_latest_mainline_stages_only():
+    index = yaml.safe_load((REPO / "configs" / "active_scripts.yaml").read_text(encoding="utf-8"))
+    latest_mainline_names = {Path(stage["config"]).name for stage in index["latest_mainline"]["stages"]}
+
+    assert set(_latest_mainline_config_names()) == latest_mainline_names
+
+
+@pytest.mark.parametrize("config_name", _latest_mainline_config_names())
+def test_latest_mainline_configs_validate_and_expand_commands(config_name: str):
     config = _load(config_name)
     paths = validate_experiment_config(config, repo_root=REPO)
     commands = build_runner_commands(config)
@@ -169,7 +80,10 @@ def test_tracked_configs_validate_and_expand_commands(config_name: str, expected
     assert config["paper_protocol"]["mapping_hash"] == "555ec85d5b51"
     assert "pn2021_all_zero_kept_refexcluded" in config["evaluation"]["views"]
     assert "pn2021_drop_all_zero_refexcluded" in config["evaluation"]["views"]
-    assert len(commands) == expected_commands
+    if config_name.startswith("pn2021c_"):
+        assert "pn2021c_all_zero_kept_corrupted_refexcluded" in config["evaluation"]["views"]
+        assert "pn2021c_drop_all_zero_corrupted_refexcluded" in config["evaluation"]["views"]
+    assert commands
     for command in commands:
         assert command["cwd"] == paths["project_root"]
         assert command["argv"][0].startswith("/home/linbinhao/")
@@ -178,8 +92,66 @@ def test_tracked_configs_validate_and_expand_commands(config_name: str, expected
         assert len(command["env"]["TMPDIR"]) < len(paths["tmp_root"])
 
 
+@pytest.mark.parametrize(
+    "config_name",
+    [
+        "pn2021_eval_v7_sjr_rgq_refexcluded.yaml",
+        "pn2021c_effnet_threechain_locked_official_s5.yaml",
+        "pn2021c_effnet_official_s5_depth23_composite.yaml",
+    ],
+)
+def test_effnet_latest_eval_refs_use_locked_k500_seed(config_name: str):
+    config = _load(config_name)
+    assert config["paper_protocol"]["kshot"]["seed"] == 20260601
+    assert config["paper_protocol"]["kshot"]["subset_seed"] == 20260601
+
+    argv = " ".join(str(part) for command in build_runner_commands(config) for part in command["argv"])
+    assert "seed20260601" in argv
+    assert "seed20260531" not in argv
+
+
+def test_public_experiment_configs_are_latest_mainline_plus_sota_replay():
+    index = yaml.safe_load((REPO / "configs" / "active_scripts.yaml").read_text(encoding="utf-8"))
+    latest_configs = {Path(stage["config"]).name for stage in index["latest_mainline"]["stages"]}
+    replay_configs = {Path(item["config"]).name for item in index["inactive_experiment_configs"]}
+    actual_configs = {path.name for path in (REPO / "configs" / "experiments").glob("*.yaml")}
+
+    assert len(latest_configs) == 10
+    assert len(replay_configs) == 8
+    assert latest_configs.isdisjoint(replay_configs)
+    assert actual_configs == latest_configs | replay_configs
+    assert {item["status"] for item in index["inactive_experiment_configs"]} == {
+        "sota_replay_reference"
+    }
+
+
+def test_generic_config_framework_tests_use_active_fixtures():
+    index = yaml.safe_load((REPO / "configs" / "active_scripts.yaml").read_text(encoding="utf-8"))
+    inactive_config_names = {Path(item["config"]).name for item in index["inactive_experiment_configs"]}
+    generic_tests = [
+        test_logging_artifacts_are_split_by_lifecycle,
+        test_pipeline_stages_are_recorded_in_dry_run_manifest,
+        test_pipeline_stages_reject_unknown_dependencies,
+        test_pipeline_stages_reject_duplicate_names,
+        test_experiment_schema_rejects_missing_logging_block,
+        test_experiment_schema_rejects_bad_postprocess_artifact_shape,
+        test_local_config_cannot_override_paper_or_runner_sections,
+        test_vae_configs_declare_required_epoch_metrics,
+    ]
+    offenders = []
+    for test_func in generic_tests:
+        source = inspect.getsource(test_func)
+        offenders.extend(
+            f"{test_func.__name__}: {config_name}"
+            for config_name in sorted(inactive_config_names)
+            if config_name in source
+        )
+
+    assert offenders == []
+
+
 def test_logging_artifacts_are_split_by_lifecycle():
-    config = _load("effnet_direct_k500_v6.yaml")
+    config = _load("effnet_direct_k500_v7_sjr_rgq.yaml")
     logging_cfg = config["logging"]
 
     assert "launch_artifacts" in logging_cfg
@@ -197,18 +169,18 @@ def test_logging_artifacts_are_split_by_lifecycle():
 
 
 def test_pipeline_stages_are_recorded_in_dry_run_manifest():
-    config = _load("ecgtwin_prompt_token_online_at_minimal.yaml")
+    config = _load("effnet_direct_k500_v7_sjr_rgq.yaml")
     config = copy.deepcopy(config)
     config["stages"] = [
         {
-            "name": "train_prompt_token_bank",
-            "produces": ["prompt_token_bank"],
-            "skip_if_exists": ["${paths.output_root}/prompt_token_bank.pt"],
+            "name": "direct_k500_train",
+            "produces": ["direct_k500_checkpoint"],
+            "skip_if_exists": ["${paths.output_root}/direct_k500_checkpoint.pt"],
         },
         {
-            "name": "online_at",
-            "requires": ["train_prompt_token_bank"],
-            "produces": ["online_at_checkpoint", "online_at_metrics"],
+            "name": "pn2021_clean_eval",
+            "requires": ["direct_k500_train"],
+            "produces": ["pn2021_clean_metrics"],
         },
     ]
     paths = validate_experiment_config(config, repo_root=REPO)
@@ -225,16 +197,16 @@ def test_pipeline_stages_are_recorded_in_dry_run_manifest():
     assert manifest["pipeline_stages"]["stages"] == [
         {
             "index": 0,
-            "name": "train_prompt_token_bank",
+            "name": "direct_k500_train",
             "requires": [],
-            "produces": ["prompt_token_bank"],
-            "skip_if_exists": ["${paths.output_root}/prompt_token_bank.pt"],
+            "produces": ["direct_k500_checkpoint"],
+            "skip_if_exists": ["${paths.output_root}/direct_k500_checkpoint.pt"],
         },
         {
             "index": 1,
-            "name": "online_at",
-            "requires": ["train_prompt_token_bank"],
-            "produces": ["online_at_checkpoint", "online_at_metrics"],
+            "name": "pn2021_clean_eval",
+            "requires": ["direct_k500_train"],
+            "produces": ["pn2021_clean_metrics"],
             "skip_if_exists": [],
         },
     ]
@@ -242,13 +214,13 @@ def test_pipeline_stages_are_recorded_in_dry_run_manifest():
 
 
 def test_pipeline_stages_reject_unknown_dependencies():
-    config = _load("ecgtwin_prompt_token_online_at_minimal.yaml")
+    config = _load("effnet_direct_k500_v7_sjr_rgq.yaml")
     config = copy.deepcopy(config)
     config["stages"] = [
         {
-            "name": "online_at",
-            "requires": ["missing_prompt_token_bank"],
-            "produces": ["online_at_checkpoint"],
+            "name": "pn2021_clean_eval",
+            "requires": ["missing_direct_k500_train"],
+            "produces": ["pn2021_clean_metrics"],
         }
     ]
 
@@ -257,11 +229,11 @@ def test_pipeline_stages_reject_unknown_dependencies():
 
 
 def test_pipeline_stages_reject_duplicate_names():
-    config = _load("ecgtwin_prompt_token_online_at_minimal.yaml")
+    config = _load("effnet_direct_k500_v7_sjr_rgq.yaml")
     config = copy.deepcopy(config)
     config["stages"] = [
-        {"name": "online_at", "produces": ["ckpt"]},
-        {"name": "online_at", "produces": ["metrics"]},
+        {"name": "pn2021_clean_eval", "produces": ["ckpt"]},
+        {"name": "pn2021_clean_eval", "produces": ["metrics"]},
     ]
 
     with pytest.raises(ConfigError, match="duplicate stage name"):
@@ -296,7 +268,7 @@ def test_dry_run_manifest_preserves_yaml_run_record_metadata():
 
 
 def test_experiment_schema_rejects_missing_logging_block():
-    config = _load("effnet_direct_k500_v6.yaml")
+    config = _load("effnet_direct_k500_v7_sjr_rgq.yaml")
     config = copy.deepcopy(config)
     del config["logging"]
 
@@ -305,7 +277,7 @@ def test_experiment_schema_rejects_missing_logging_block():
 
 
 def test_experiment_schema_rejects_bad_postprocess_artifact_shape():
-    config = _load("effnet_direct_k500_v6.yaml")
+    config = _load("effnet_direct_k500_v7_sjr_rgq.yaml")
     config = copy.deepcopy(config)
     del config["postprocess"]["commands"][0]["expected_artifacts"][0]["path"]
 
@@ -323,17 +295,20 @@ def test_local_config_cannot_override_paper_or_runner_sections(tmp_path: Path):
 
     with pytest.raises(ConfigError, match="Local config may only define"):
         load_experiment_config(
-            REPO / "configs" / "experiments" / "effnet_direct_k500_v6.yaml",
+            REPO / "configs" / "experiments" / "effnet_direct_k500_v7_sjr_rgq.yaml",
             local_path,
             runtime_context={"run_id": "pytest_run"},
         )
 
 
 def test_runner_protocol_audit_rejects_unknown_entrypoint_even_if_it_exists():
-    config = _load("effnet_direct_k500_v6.yaml")
+    config = _load("effnet_direct_k500_v7_sjr_rgq.yaml")
     config = copy.deepcopy(config)
-    config["runner"]["entrypoint"] = "scripts/run_experiment.py"
-    config["runner"]["argv"] = []
+    config["runner"] = {
+        "entrypoint": "scripts/run_experiment.py",
+        "adapter": "direct_finetune",
+        "env": config["runner"]["env"],
+    }
     validate_experiment_config(config, repo_root=REPO)
 
     with pytest.raises(ConfigError, match="not in the managed runner allowlist"):
@@ -341,13 +316,16 @@ def test_runner_protocol_audit_rejects_unknown_entrypoint_even_if_it_exists():
 
 
 def test_vae_configs_declare_required_epoch_metrics():
-    effnet = _load("effnet_vae_lhat_k500_v6.yaml")
-    ecgfounder = _load("ecgfounder_vae_lhat_k500_v6.yaml")
+    effnet = _load("effnet_vae_lhat_augmix_threechain_locked_k500.yaml")
 
     effnet_metrics = set(effnet["logging"]["required_epoch_metrics"])
-    ecgfounder_metrics = set(ecgfounder["logging"]["required_epoch_metrics"])
-    assert {"asr_overall", "sample_any_positive_below_0p5_asr", "latent_augmix_stats"} <= effnet_metrics
-    assert {"attack_success.success_rate", "attack_vs_anchor.success_rate", "ptbxl_macro_auprc"} <= ecgfounder_metrics
+    assert {
+        "asr_overall",
+        "sample_any_positive_below_0p5_asr",
+        "attack_vs_anchor",
+        "loss_gain",
+        "latent_augmix_stats",
+    } <= effnet_metrics
 
 
 def _option_value(argv: list[str], option: str) -> str:
@@ -393,125 +371,21 @@ def test_config_loader_import_does_not_load_torch():
     assert result.stdout.strip() == "torch_loaded False"
 
 
-def test_effnet_vae_lhat_command_is_protocol_equivalent():
-    config = _load("effnet_vae_lhat_k500_v6.yaml")
-    validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-
-    assert len(commands) == 4
-    for command in commands:
-        argv = command["argv"]
-        assert "--anchor_base" in argv
-        assert "seed20260531" in _option_value(argv, "--anchor_base")
-        assert "seed42" not in _option_value(argv, "--anchor_base")
-        assert "--init_ckpt" in argv
-        center = _option_value(argv, "--center")
-        assert _option_value(argv, "--init_ckpt").endswith(
-            f"/{center}_K500_direct_ft_ep30_seed20260531_val0.2/best_model.pt"
-        )
-        assert _option_value(argv, "--hull_lambda") == "0.05"
-        assert _option_value(argv, "--hull_label_lambda_y") == "0.25"
-        assert _option_value(argv, "--hull_label_new_class_cap") == "0.25"
-        assert _option_value(argv, "--hull_neighbor_distance_space") == "standardized"
-        assert _option_value(argv, "--hull_neighbor_mode") == "local_random"
-        assert _option_value(argv, "--hull_neighbor_pool_size") == "120"
-        assert _option_value(argv, "--k_anchor") == "300"
-        assert _option_value(argv, "--pgd_batch") == "32"
-        assert _option_value(argv, "--adv_weight") == "0.3"
-        assert _option_value(argv, "--adv_weight_warmup_epochs") == "10"
-        assert _option_value(argv, "--adv_teacher_mix") == "0.4"
-        assert _option_value(argv, "--train_batch_size") == "128"
-        assert _option_value(argv, "--latent_augmix_latent_weight_cap") == "0.25"
-        assert _option_value(argv, "--quick_eval_source") == "target_real_val"
-        assert _option_value(argv, "--target_real_val_fraction") == "0.2"
-        assert _option_value(argv, "--eval_batch_size") == "192"
-        assert _option_value(argv, "--eval_min_pos") == "10"
-        assert _option_value(argv, "--eval_pn2021_limit") == "0"
-
-
-def test_effnet_raw_corrupt_input_stabilizer_config_maps_to_legacy_flags():
-    config = _load("effnet_vae_lhat_calibrated_rawsupervised_k500_v7_sjr_rgq_smoke.yaml")
-    config = copy.deepcopy(config)
-    config["adaptation"]["raw_corrupt_consistency"]["input_stabilizer"] = {
-        "bandpass_low_hz": 0.5,
-        "bandpass_high_hz": 35.0,
-        "repair_flat_leads": True,
-        "renorm_after_stabilizer": True,
-        "sample_rate_hz": 100.0,
-    }
-    validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-
-    assert len(commands) == 1
-    argv = commands[0]["argv"]
-    assert _option_value(argv, "--raw_input_bandpass_low_hz") == "0.5"
-    assert _option_value(argv, "--raw_input_bandpass_high_hz") == "35.0"
-    assert "--raw_input_repair_flat_leads" in argv
-    assert "--raw_input_renorm_after_stabilizer" in argv
-    assert _option_value(argv, "--raw_input_sample_rate_hz") == "100.0"
-
-
-@pytest.mark.parametrize(
-    ("config_name", "output_family"),
-    [
-        (
-            "benchmark_resnet1d_vae_noaug_k500_v7_sjr_rgq.yaml",
-            "benchmark_resnet1d_wang_vae_noaug_k500_v7_sjr_rgq",
-        ),
-        (
-            "benchmark_inception1d_vae_noaug_k500_v7_sjr_rgq.yaml",
-            "benchmark_inception1d_vae_noaug_k500_v7_sjr_rgq",
-        ),
-        (
-            "benchmark_fcn_wang_vae_noaug_k500_v7_sjr_rgq.yaml",
-            "benchmark_fcn_wang_vae_noaug_k500_v7_sjr_rgq",
-        ),
-    ],
-)
-def test_benchmark_vae_noaug_configs_disable_latent_augmix_branch(
-    config_name: str,
-    output_family: str,
-):
-    config = _load(config_name)
-    validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-
-    assert len(commands) == 4
-    for command in commands:
-        argv = command["argv"]
-        center = command["matrix"]["center"]
-        model_name = _option_value(argv, "--model_name")
-        assert argv[1].endswith("scripts/paper/run_effnet_latent_augmix_stage3_20260524.py")
-        assert _option_value(argv, "--center") == center
-        assert _option_value(argv, "--out_root").endswith(f"/runs/{output_family}/pytest_run")
-        assert f"/{model_name}_direct_k500_v7_sjr_rgq/pytest_run/{center}/runs/" in _option_value(
-            argv,
-            "--init_ckpt",
-        )
-        assert "--disable_latent_augmix_branch" in argv
-        assert _option_value(argv, "--run_tag_extra") == "noaugmix"
-        assert "--latent_augmix_latent_weight_cap" not in argv
-        assert "--latent_augmix_width" not in argv
-        assert "--latent_augmix_depth" not in argv
-        assert "--latent_augmix_alpha" not in argv
-        assert "--latent_augmix_severity" not in argv
-
-
 def test_command_protocol_audit_rejects_missing_vae_init_checkpoint():
-    config = _load("effnet_vae_lhat_k500_v6.yaml")
-    config = copy.deepcopy(config)
-    config["runner"]["argv"] = _remove_option_pair(config["runner"]["argv"], "--init_ckpt")
+    config = _load("effnet_vae_lhat_augmix_threechain_locked_k500.yaml")
     validate_experiment_config(config, repo_root=REPO)
+    command = copy.deepcopy(build_runner_commands(config)[0])
+    command["argv"] = _remove_option_pair(command["argv"], "--init_ckpt")
 
     with pytest.raises(ConfigError, match="missing required option --init_ckpt"):
-        build_runner_commands(config)
+        audit_runner_commands(config, [command])
 
 
 def test_runner_audit_dispatches_eval_crosscenter_command():
     command = {
         "argv": [
             "python",
-            "scripts/triple_labels/eval_crosscenter.py",
+            "ecg_adv_gen/runner/pn2021_clean_eval.py",
             "--scheme",
             "super5",
             "--model_dir",
@@ -571,19 +445,20 @@ def test_runner_audit_dispatches_eval_crosscenter_command():
 def test_effnet_vae_lhat_command_audit_is_split_into_adapter():
     from ecg_adv_gen.config.adapters.effnet_vae_lhat import audit_effnet_vae_lhat_command
 
-    source = inspect.getsource(audit_runner_commands)
+    source = inspect.getsource(audit_runner_command)
     assert "audit_effnet_vae_lhat_command(" in source
     assert "anchor_base does not encode K" not in source
 
-    config = _load("effnet_vae_lhat_k500_v6.yaml")
+    config = _load("effnet_vae_lhat_augmix_threechain_locked_k500.yaml")
     command = build_runner_commands(config)[0]
+    seed = config["paper_protocol"]["kshot"]["seed"]
     result = audit_effnet_vae_lhat_command(
         command,
         expected_k=500,
-        expected_seed=20260531,
+        expected_seed=seed,
         target_centers=set(config["paper_protocol"]["centers"]["target_4"]),
     )
-    assert result == {"errors": [], "warnings": []}
+    assert result["errors"] == []
 
     bad = copy.deepcopy(command)
     bad["argv"] = list(bad["argv"])
@@ -591,220 +466,61 @@ def test_effnet_vae_lhat_command_audit_is_split_into_adapter():
     result = audit_effnet_vae_lhat_command(
         bad,
         expected_k=500,
-        expected_seed=20260531,
+        expected_seed=seed,
         target_centers=set(config["paper_protocol"]["centers"]["target_4"]),
     )
     assert "invalid --hull_neighbor_mode" in "\n".join(result["errors"])
 
 
-def test_effnet_vae_lhat_typed_adapter_matches_legacy_runner_argv():
-    legacy = _load("effnet_vae_lhat_k500_v6.yaml")
-    adapted = copy.deepcopy(legacy)
-    adapted["runner"]["adapter"] = "effnet_vae_lhat"
-    adapted["runner"].pop("argv")
-    validate_experiment_config(adapted, repo_root=REPO)
+def test_runner_command_audit_does_not_keep_unmanaged_runner_branches():
+    unmanaged_names = {
+        "ptbxl_source_train.py",
+        "train_ibe_repro.py",
+        "train_dit_repro.py",
+        "train_center_prompt_tokens.py",
+        "generate_center_prompt_token_synth.py",
+        "gate_prompt_token_synth.py",
+        "synth_online_at_super5.py",
+        "benchmark_direct_finetune.py",
+        "ecgfounder_kshot_head_ft.py",
+        "ecgfounder_vae_lhat.py",
+        "kshot_subset_export.py",
+    }
+    source = inspect.getsource(audit_runner_commands)
 
-    legacy_commands = build_runner_commands(legacy)
-    adapted_commands = build_runner_commands(adapted)
-
-    assert adapted_commands == legacy_commands
-
-
-def test_effnet_vae_lhat_typed_adapter_honors_ptbxl_weight_override():
-    config = _load("effnet_vae_lhat_augmix_threechain_dualmodel_cand15_freq_cpsc.yaml")
-    config = copy.deepcopy(config)
-    config["adaptation"]["loss"]["ptbxl_weight"] = 0.0
-    validate_experiment_config(config, repo_root=REPO)
-
-    commands = build_runner_commands(config)
-
-    assert len(commands) == 1
-    assert _option_value(commands[0]["argv"], "--ptbxl_weight") == "0.0"
+    assert managed_runner_script_names().isdisjoint(unmanaged_names)
+    assert sorted(name for name in unmanaged_names if name in source) == []
 
 
-def test_effnet_vae_lhat_typed_adapter_exposes_source_floor_anchor_options():
-    config = _load("effnet_vae_lhat_augmix_threechain_dualmodel_cand41_trainproxy16_q4096_cpsc.yaml")
-    config = copy.deepcopy(config)
-    config["data"]["synth_npz_override"] = "source_pools/cpsc_source_floor.latent.npz"
-    config["adaptation"]["anchors"].update(
-        {
-            "source_weights": "real_anchor=1.0,ptbxl_source=0.35",
-            "source_class_weights": "MI:ptbxl_source=2.0,HYP:ptbxl_source=1.5",
-            "source_floor_per_class": 12,
-            "anchor_class_weights": "MI=3.0,HYP=2.0",
-            "anchor_class_weight_mode": "inv_freq_kshot",
-            "anchor_class_weight_reference_source": "all",
-            "anchor_class_weight_gamma": 0.7,
-            "anchor_class_weight_min": 0.5,
-            "anchor_class_weight_cap": 5.0,
-            "anchor_class_missing_weight": 1.25,
-        }
-    )
-    validate_experiment_config(config, repo_root=REPO)
+def test_runner_command_dispatcher_does_not_keep_unmanaged_runner_branches():
+    unmanaged_names = {
+        "synth_online_at_super5.py",
+        "benchmark_direct_finetune.py",
+    }
+    source = inspect.getsource(audit_runner_command)
 
-    commands = build_runner_commands(config)
-
-    assert len(commands) == 1
-    argv = commands[0]["argv"]
-    assert _option_value(argv, "--synth_npz_override").endswith(
-        "/ECG_adv_data/source_pools/cpsc_source_floor.latent.npz"
-    )
-    assert _option_value(argv, "--source_weights") == "real_anchor=1.0,ptbxl_source=0.35"
-    assert _option_value(argv, "--source_class_weights") == "MI:ptbxl_source=2.0,HYP:ptbxl_source=1.5"
-    assert _option_value(argv, "--source_floor_per_class") == "12"
-    assert _option_value(argv, "--anchor_class_weights") == "MI=3.0,HYP=2.0"
-    assert _option_value(argv, "--anchor_class_weight_mode") == "inv_freq_kshot"
-    assert _option_value(argv, "--anchor_class_weight_reference_source") == "all"
-    assert _option_value(argv, "--anchor_class_weight_gamma") == "0.7"
-    assert _option_value(argv, "--anchor_class_weight_min") == "0.5"
-    assert _option_value(argv, "--anchor_class_weight_cap") == "5.0"
-    assert _option_value(argv, "--anchor_class_missing_weight") == "1.25"
+    assert DISPATCHED_RUNNER_AUDIT_SCRIPT_NAMES <= managed_runner_script_names()
+    assert sorted(name for name in unmanaged_names if name in source) == []
 
 
-def test_effnet_vae_lhat_v7_config_uses_typed_runner_adapter():
-    config = _load("effnet_vae_lhat_k500_v7_sjr_rgq.yaml")
+def test_artifact_trace_does_not_keep_unmanaged_runner_branches():
+    unmanaged_names = {
+        "ptbxl_source_train.py",
+        "train_ibe_repro.py",
+        "train_dit_repro.py",
+        "train_center_prompt_tokens.py",
+        "generate_center_prompt_token_synth.py",
+        "gate_prompt_token_synth.py",
+        "synth_online_at_super5.py",
+        "benchmark_direct_finetune.py",
+        "ecgfounder_kshot_head_ft.py",
+        "ecgfounder_vae_lhat.py",
+        "kshot_subset_export.py",
+    }
+    source = inspect.getsource(build_artifact_trace)
 
-    assert config["runner"]["adapter"] == "effnet_vae_lhat"
-    assert "argv" not in config["runner"]
-    commands = build_runner_commands(config)
-    assert len(commands) == 4
-    assert all(command["argv"][1].endswith("scripts/paper/run_effnet_latent_augmix_stage3_20260524.py") for command in commands)
-
-
-def test_effnet_vae_lhat_rawjsd_curriculum_config_exposes_raw_corruption_flags():
-    config = _load("effnet_vae_lhat_rawjsd_curriculum_k500_v7_sjr_rgq.yaml")
-    validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-
-    assert len(commands) == 4
-    for command in commands:
-        argv = command["argv"]
-        assert "--enable_raw_corrupt_consistency" in argv
-        assert _option_value(argv, "--raw_corrupt_consistency_loss") == "jsd"
-        assert _option_value(argv, "--raw_corrupt_copies") == "2"
-        assert _option_value(argv, "--raw_corrupt_prob") == "0.75"
-        assert _option_value(argv, "--raw_corrupt_severity") == "5"
-        assert _option_value(argv, "--raw_corrupt_severity_profile") == "standard"
-        assert _option_value(argv, "--raw_corrupt_consistency_weight") == "8.0"
-        assert _option_value(argv, "--raw_corrupt_bce_weight") == "0.05"
-        assert _option_value(argv, "--raw_corrupt_max_batches") == "8"
-        assert _option_value(argv, "--raw_corrupt_scope") == "target"
-        assert "--raw_corrupt_no_renorm" in argv
-        assert _all_option_values(argv, "--latent_augmix_ops") == [
-            "powerline_noise",
-            "emg_noise",
-            "baseline_wander",
-            "baseline_shift",
-            "random_leads_masking",
-        ]
-        assert _all_option_values(argv, "--raw_corrupt_ops") == [
-            "baseline_shift",
-            "random_leads_masking",
-            "baseline_shift",
-            "random_leads_masking",
-            "powerline_noise",
-            "emg_noise",
-            "baseline_wander",
-        ]
-        assert _option_value(argv, "--run_tag_extra") == "k500_rawjsd"
-
-
-def test_effnet_vae_lhat_rawsupervised_stressor_config_exposes_source_target_flags():
-    config = _load("effnet_vae_lhat_rawsupervised_stressor_k500_v7_sjr_rgq.yaml")
-    validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-
-    assert len(commands) == 4
-    for command in commands:
-        argv = command["argv"]
-        assert "--enable_raw_corrupt_consistency" in argv
-        assert _option_value(argv, "--raw_corrupt_consistency_loss") == "jsd"
-        assert _option_value(argv, "--raw_corrupt_copies") == "2"
-        assert _option_value(argv, "--raw_corrupt_prob") == "1.0"
-        assert _option_value(argv, "--raw_corrupt_severity") == "5"
-        assert _option_value(argv, "--raw_corrupt_severity_profile") == "standard"
-        assert _option_value(argv, "--raw_corrupt_consistency_weight") == "2.0"
-        assert _option_value(argv, "--raw_corrupt_bce_weight") == "1.0"
-        assert _option_value(argv, "--raw_corrupt_max_batches") == "64"
-        assert _option_value(argv, "--raw_corrupt_scope") == "source_target"
-        assert "--raw_corrupt_no_renorm" in argv
-        assert _all_option_values(argv, "--raw_corrupt_ops") == [
-            "powerline_noise",
-            "emg_noise",
-            "baseline_wander",
-            "baseline_shift",
-            "random_leads_masking",
-        ]
-        assert _option_value(argv, "--run_tag_extra") == "k500_rawsupervised"
-
-
-def test_effnet_vae_lhat_calibrated_rawsupervised_config_exposes_profile_flag():
-    config = _load("effnet_vae_lhat_calibrated_rawsupervised_k500_v7_sjr_rgq.yaml")
-    validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-
-    assert len(commands) == 4
-    for command in commands:
-        argv = command["argv"]
-        assert "--enable_raw_corrupt_consistency" in argv
-        assert _option_value(argv, "--raw_corrupt_severity") == "5"
-        assert _option_value(argv, "--raw_corrupt_severity_profile") == "calibrated_10to20pp"
-        assert _option_value(argv, "--raw_corrupt_scope") == "source_target"
-        assert _option_value(argv, "--run_tag_extra") == "k500_calrawsupervised"
-
-
-def test_effnet_vae_lhat_calibrated_latent_augmix_config_exposes_profile_flag():
-    config = _load("effnet_vae_lhat_calibrated_latent_augmix_k500_v7_sjr_rgq_cpsc_2018.yaml")
-    validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-
-    assert len(commands) == 1
-    argv = commands[0]["argv"]
-    assert _option_value(argv, "--center") == "cpsc_2018"
-    assert "--enable_raw_corrupt_consistency" not in argv
-    assert _option_value(argv, "--seed") == "20260601"
-    assert _option_value(argv, "--latent_augmix_topology") == "locked_three_chain"
-    assert _option_value(argv, "--latent_augmix_severity") == "5"
-    assert _option_value(argv, "--latent_augmix_severity_profile") == "calibrated_10to20pp"
-    assert _option_value(argv, "--run_tag_extra") == "k500_callatentaugmix"
-    assert _all_option_values(argv, "--latent_augmix_ops") == [
-        "powerline_noise",
-        "emg_noise",
-        "baseline_wander",
-        "baseline_shift",
-        "random_leads_masking",
-    ]
-
-
-def test_effnet_vae_lhat_calibrated_latent_augmix_norenorm_config_exposes_flag():
-    config = _load("effnet_vae_lhat_calibrated_latent_augmix_norenorm_k500_v7_sjr_rgq_cpsc_2018.yaml")
-    validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-
-    assert len(commands) == 1
-    argv = commands[0]["argv"]
-    assert _option_value(argv, "--center") == "cpsc_2018"
-    assert _option_value(argv, "--latent_augmix_severity_profile") == "calibrated_10to20pp"
-    assert "--no_latent_augmix_renorm" in argv
-    assert _option_value(argv, "--run_tag_extra") == "k500_callatentaugmix_norenorm"
-
-
-def test_effnet_vae_lhat_calibrated_latent_augmix_directloss_config_exposes_flags():
-    config = _load("effnet_vae_lhat_calibrated_latent_augmix_directloss_k500_v7_sjr_rgq_cpsc_2018.yaml")
-    validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-
-    assert len(commands) == 1
-    argv = commands[0]["argv"]
-    assert _option_value(argv, "--center") == "cpsc_2018"
-    assert "--enable_raw_corrupt_consistency" not in argv
-    assert _option_value(argv, "--latent_augmix_copies") == "2"
-    assert _option_value(argv, "--latent_augmix_severity_profile") == "calibrated_10to20pp"
-    assert "--enable_latent_augmix_consistency" in argv
-    assert _option_value(argv, "--latent_augmix_consistency_loss") == "jsd"
-    assert _option_value(argv, "--latent_augmix_consistency_weight") == "2.0"
-    assert _option_value(argv, "--latent_augmix_bce_weight") == "1.0"
-    assert _option_value(argv, "--run_tag_extra") == "k500_callatentaugmix_directloss"
+    assert managed_runner_script_names().isdisjoint(unmanaged_names)
+    assert sorted(name for name in unmanaged_names if name in source) == []
 
 
 def test_effnet_vae_lhat_threechain_locked_k500_config_uses_official_s5_last_checkpoint():
@@ -820,6 +536,11 @@ def test_effnet_vae_lhat_threechain_locked_k500_config_uses_official_s5_last_che
     )
 
     assert len(commands) == 4
+    assert config["adaptation"]["latent_augmix"]["chain_roles"] == [
+        {"name": "chain1", "role": "official_corruption_chain"},
+        {"name": "chain2", "role": "official_corruption_chain"},
+        {"name": "chain3", "role": "vae_lhat_adversarial_waveform"},
+    ]
     refs = manifest["artifact_trace"]["inputs"]["k500_refs"]
     assert len(refs) == 4
     assert all(item["signals_npz"]["role"] == "kshot_raw1000_signals" for item in refs)
@@ -850,1554 +571,80 @@ def test_effnet_vae_lhat_threechain_locked_k500_config_uses_official_s5_last_che
         ]
 
 
-@pytest.mark.parametrize(
-    ("config_name", "center", "copies", "mix_prob", "hull_steps", "hull_lambda", "run_tag_extra"),
-    [
-        (
-            "effnet_vae_lhat_augmix_threechain_dualmodel_cand09_highfreq_ningbo.yaml",
-            "ningbo",
-            "6",
-            "0.95",
-            "6",
-            "0.12",
-            "k500_dual3ch_highfreq_hlam12_hs6_lr40_c6_cw10_bce3_m095_aw2p0_ka1600_wlat65_b64",
-        ),
-        (
-            "effnet_vae_lhat_augmix_threechain_dualmodel_cand10_advheavy_georgia.yaml",
-            "georgia",
-            "4",
-            "0.9",
-            "8",
-            "0.2",
-            "k500_dual3ch_advheavy_hlam20_hs8_lr50_c4_cw10_bce3_m090_aw3p0_ka1800_treal40",
-        ),
-    ],
-)
-def test_effnet_vae_lhat_dualmodel_selected_configs_preserve_locked_threechain_mainline(
-    config_name: str,
-    center: str,
-    copies: str,
-    mix_prob: str,
-    hull_steps: str,
-    hull_lambda: str,
-    run_tag_extra: str,
-):
-    config = _load(config_name)
-    validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-
-    assert len(commands) == 1
-    command = commands[0]
-    argv = command["argv"]
-    assert command["matrix"]["center"] == center
-    assert _option_value(argv, "--center") == center
-    assert "--enable_raw_corrupt_consistency" not in argv
-    assert "--raw_input_stabilizer" not in argv
-    assert "--raw_corrupt_view_mode" not in argv
-    assert _option_value(argv, "--latent_augmix_topology") == "locked_three_chain"
-    assert _option_value(argv, "--latent_augmix_width") == "3"
-    assert _option_value(argv, "--latent_augmix_depth") == "1"
-    assert _option_value(argv, "--latent_augmix_copies") == copies
-    assert _option_value(argv, "--latent_augmix_mixture_mode") == "fixed"
-    assert _option_value(argv, "--latent_augmix_mixture_prob") == mix_prob
-    if "opcycle" in config_name:
-        assert _option_value(argv, "--latent_augmix_op_schedule") == "per_op"
-        assert _option_value(argv, "--latent_augmix_chain_weights") == "0.45,0.45,0.10"
-    assert _option_value(argv, "--latent_augmix_severity") == "5"
-    assert _option_value(argv, "--latent_augmix_severity_profile") == "custom"
-    assert _option_value(argv, "--latent_augmix_severity_params_file") == (
-        "configs/corruption_profiles/pn2021c_dual_model_10to15pp_v1.yaml"
-    )
-    assert _option_value(argv, "--latent_augmix_severity_params_name") == "dual_model_10to15pp_v1"
-    assert "--enable_latent_augmix_consistency" in argv
-    assert _option_value(argv, "--latent_augmix_consistency_loss") == "jsd"
-    assert _option_value(argv, "--latent_augmix_consistency_weight") == "10.0"
-    assert _option_value(argv, "--latent_augmix_bce_weight") == "3.0"
-    assert _option_value(argv, "--latent_augmix_consistency_max_batches") == "0"
-    assert _option_value(argv, "--hull_steps") == hull_steps
-    assert _option_value(argv, "--hull_lambda") == hull_lambda
-    assert _option_value(argv, "--checkpoint_policy") == "last"
-    assert _option_value(argv, "--target_real_val_fraction") == "0.0"
-    assert _option_value(argv, "--run_tag_extra") == run_tag_extra
-    assert _all_option_values(argv, "--latent_augmix_ops") == [
-        "powerline_noise",
-        "emg_noise",
-        "baseline_wander",
-        "baseline_shift",
-        "random_leads_masking",
-    ]
-
-
-def test_effnet_vae_lhat_dualmodel_cand11_opcycle_config_preserves_mainline_matrix():
-    config = _load("effnet_vae_lhat_augmix_threechain_dualmodel_cand11_opcycle_rawheavy.yaml")
-    validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-
-    assert len(commands) == 4
-    assert {command["matrix"]["center"] for command in commands} == {
-        "ningbo",
-        "chapman_shaoxing",
-        "cpsc_2018",
-        "georgia",
-    }
-    for command in commands:
-        argv = command["argv"]
-        assert "--enable_raw_corrupt_consistency" not in argv
-        assert "--raw_input_stabilizer" not in argv
-        assert "--raw_corrupt_view_mode" not in argv
-        assert _option_value(argv, "--latent_augmix_topology") == "locked_three_chain"
-        assert _option_value(argv, "--latent_augmix_width") == "3"
-        assert _option_value(argv, "--latent_augmix_depth") == "1"
-        assert _option_value(argv, "--latent_augmix_copies") == "5"
-        assert _option_value(argv, "--latent_augmix_mixture_mode") == "fixed"
-        assert _option_value(argv, "--latent_augmix_mixture_prob") == "1.0"
-        assert _option_value(argv, "--latent_augmix_op_schedule") == "per_op"
-        assert _option_value(argv, "--latent_augmix_chain_weights") == "0.45,0.45,0.10"
-        assert _option_value(argv, "--latent_augmix_severity_profile") == "custom"
-        assert _option_value(argv, "--latent_augmix_severity_params_name") == "dual_model_10to15pp_v1"
-        assert "--enable_latent_augmix_consistency" in argv
-        assert _option_value(argv, "--latent_augmix_consistency_weight") == "12.0"
-        assert _option_value(argv, "--latent_augmix_bce_weight") == "4.0"
-        assert _option_value(argv, "--run_tag_extra") == "opcyraw_c5_w4510_cw12_b4_m1"
-
-
-def test_effnet_vae_lhat_dualmodel_cand12_rawspace_config_preserves_mainline_matrix():
-    config = _load("effnet_vae_lhat_augmix_threechain_dualmodel_cand12_rawspace_advbce.yaml")
-    validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-
-    assert len(commands) == 4
-    assert {command["matrix"]["center"] for command in commands} == {
-        "ningbo",
-        "chapman_shaoxing",
-        "cpsc_2018",
-        "georgia",
-    }
-    for command in commands:
-        argv = command["argv"]
-        assert "--enable_raw_corrupt_consistency" not in argv
-        assert "--raw_input_stabilizer" not in argv
-        assert "--raw_corrupt_view_mode" not in argv
-        assert _option_value(argv, "--latent_augmix_topology") == "locked_three_chain"
-        assert _option_value(argv, "--latent_augmix_signal_space") == "raw_pre_zscore"
-        assert _option_value(argv, "--latent_augmix_op_schedule") == "per_op"
-        assert _option_value(argv, "--latent_augmix_chain_weights") == "0.35,0.35,0.30"
-        assert _option_value(argv, "--latent_augmix_copies") == "5"
-        assert _option_value(argv, "--latent_augmix_mixture_mode") == "fixed"
-        assert _option_value(argv, "--latent_augmix_mixture_prob") == "1.0"
-        assert _option_value(argv, "--latent_augmix_severity_profile") == "custom"
-        assert _option_value(argv, "--latent_augmix_severity_params_name") == "dual_model_10to15pp_v1"
-        assert "--enable_latent_augmix_consistency" in argv
-        assert _option_value(argv, "--latent_augmix_consistency_weight") == "8.0"
-        assert _option_value(argv, "--latent_augmix_bce_weight") == "8.0"
-        assert _option_value(argv, "--hull_steps") == "8"
-        assert _option_value(argv, "--hull_lambda") == "0.15"
-        assert _option_value(argv, "--run_tag_extra") == "rawspace_c5_w353530_cw8_b8_aw3"
-
-
-def test_effnet_vae_lhat_dualmodel_cand13_targetreal_config_preserves_mainline_matrix():
-    config = _load("effnet_vae_lhat_augmix_threechain_dualmodel_cand13_targetrealraw.yaml")
-    validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-
-    assert len(commands) == 4
-    assert {command["matrix"]["center"] for command in commands} == {
-        "ningbo",
-        "chapman_shaoxing",
-        "cpsc_2018",
-        "georgia",
-    }
-    for command in commands:
-        argv = command["argv"]
-        assert "--enable_raw_corrupt_consistency" not in argv
-        assert "--raw_input_stabilizer" not in argv
-        assert "--raw_corrupt_view_mode" not in argv
-        assert _option_value(argv, "--latent_augmix_topology") == "locked_three_chain"
-        assert _option_value(argv, "--latent_augmix_signal_space") == "raw_pre_zscore"
-        assert _option_value(argv, "--latent_augmix_corruption_source") == "target_real"
-        assert _option_value(argv, "--latent_augmix_op_schedule") == "per_op"
-        assert _option_value(argv, "--latent_augmix_chain_weights") == "0.45,0.45,0.10"
-        assert _option_value(argv, "--latent_augmix_copies") == "5"
-        assert _option_value(argv, "--latent_augmix_mixture_mode") == "fixed"
-        assert _option_value(argv, "--latent_augmix_mixture_prob") == "1.0"
-        assert _option_value(argv, "--latent_augmix_severity_profile") == "custom"
-        assert _option_value(argv, "--latent_augmix_severity_params_name") == "dual_model_10to15pp_v1"
-        assert "--enable_latent_augmix_consistency" in argv
-        assert _option_value(argv, "--latent_augmix_consistency_weight") == "12.0"
-        assert _option_value(argv, "--latent_augmix_bce_weight") == "8.0"
-        assert _option_value(argv, "--hull_steps") == "8"
-        assert _option_value(argv, "--hull_lambda") == "0.15"
-        assert _option_value(argv, "--run_tag_extra") == "trraw_c5_w4510_cw12_b8_aw3"
-
-
-def test_effnet_vae_lhat_fullpool_raw_augmix_config_exposes_flags():
-    config = _load("effnet_vae_lhat_fullpool_raw_augmix_k500_v7_sjr_rgq_cpsc_2018.yaml")
-    validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-
-    assert len(commands) == 1
-    argv = commands[0]["argv"]
-    assert _option_value(argv, "--center") == "cpsc_2018"
-    assert "--enable_raw_corrupt_consistency" in argv
-    assert _option_value(argv, "--raw_corrupt_severity_profile") == "calibrated_10to20pp"
-    assert _option_value(argv, "--raw_corrupt_scope") == "source_target"
-    assert _option_value(argv, "--raw_corrupt_view_mode") == "augmix"
-    assert _option_value(argv, "--raw_augmix_width") == "3"
-    assert _option_value(argv, "--raw_augmix_depth") == "-1"
-    assert _option_value(argv, "--raw_augmix_alpha") == "1.0"
-    assert _option_value(argv, "--run_tag_extra") == "k500_fullpool_rawaugmix"
-
-
-def test_effnet_vae_lhat_raw_augmix_config_exposes_mixture_flags():
-    config = _load("effnet_vae_lhat_fullpool_raw_augmix_depth1_k500_v7_sjr_rgq_cpsc_2018.yaml")
-    config = copy.deepcopy(config)
-    config["adaptation"]["raw_corrupt_consistency"]["augmix"]["mixture_mode"] = "fixed"
-    config["adaptation"]["raw_corrupt_consistency"]["augmix"]["mixture_prob"] = 0.75
-    validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-
-    argv = commands[0]["argv"]
-    assert _option_value(argv, "--raw_corrupt_view_mode") == "augmix"
-    assert _option_value(argv, "--raw_augmix_depth") == "1"
-    assert _option_value(argv, "--raw_augmix_mixture_mode") == "fixed"
-    assert _option_value(argv, "--raw_augmix_mixture_prob") == "0.75"
-
-
-def test_effnet_vae_lhat_raw_augmix_w1_m100_remaining3_config_exposes_matrix():
-    config = _load("effnet_vae_lhat_fullpool_raw_augmix_depth1_w1_m100_k500_v7_sjr_rgq_remaining3.yaml")
-    validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-
-    assert [command["matrix"]["center"] for command in commands] == [
-        "ningbo",
-        "chapman_shaoxing",
-        "georgia",
-    ]
-    for command in commands:
-        argv = command["argv"]
-        assert _option_value(argv, "--raw_corrupt_view_mode") == "augmix"
-        assert _option_value(argv, "--raw_augmix_width") == "1"
-        assert _option_value(argv, "--raw_augmix_depth") == "1"
-        assert _option_value(argv, "--raw_augmix_mixture_mode") == "fixed"
-        assert _option_value(argv, "--raw_augmix_mixture_prob") == "1.0"
-        assert _option_value(argv, "--run_tag_extra") == "k500_fullpool_rawaugmix_d1_w1_m100"
-
-
-def test_effnet_vae_lhat_weighted_hardops_raw_augmix_chapman_config():
-    config = _load("effnet_vae_lhat_fullpool_raw_augmix_depth1_w1_m100_hardops_k500_v7_sjr_rgq_chapman.yaml")
-    validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-
-    assert len(commands) == 1
-    argv = commands[0]["argv"]
-    assert _option_value(argv, "--center") == "chapman_shaoxing"
-    assert _option_value(argv, "--raw_corrupt_view_mode") == "augmix"
-    assert _option_value(argv, "--raw_augmix_width") == "1"
-    assert _option_value(argv, "--raw_augmix_depth") == "1"
-    assert _option_value(argv, "--raw_augmix_mixture_mode") == "fixed"
-    assert _option_value(argv, "--raw_augmix_mixture_prob") == "1.0"
-    assert _all_option_values(argv, "--raw_corrupt_ops") == [
-        "powerline_noise",
-        "emg_noise",
-        "emg_noise",
-        "baseline_wander",
-        "baseline_wander",
-        "baseline_shift",
-        "random_leads_masking",
-    ]
-    assert _option_value(argv, "--run_tag_extra") == "k500_fullpool_rawaugmix_d1_w1_m100_hardops"
-
-
-def test_effnet_vae_lhat_maskshift_consistency_config_exposes_targeted_flags():
-    config = _load("effnet_vae_lhat_maskshift_consistency_k500_v7_sjr_rgq.yaml")
-    validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-
-    assert len(commands) == 4
-    for command in commands:
-        argv = command["argv"]
-        assert "--enable_mask_shift_consistency" in argv
-        assert "--enable_raw_corrupt_consistency" not in argv
-        assert _option_value(argv, "--mask_shift_consistency_loss") == "jsd"
-        assert _option_value(argv, "--mask_shift_copies") == "1"
-        assert _option_value(argv, "--mask_shift_mask_severity") == "5"
-        assert _option_value(argv, "--mask_shift_shift_severity") == "5"
-        assert _option_value(argv, "--mask_shift_consistency_weight") == "10.0"
-        assert _option_value(argv, "--mask_shift_bce_weight") == "0.05"
-        assert _option_value(argv, "--mask_shift_max_batches") == "0"
-        assert _option_value(argv, "--mask_shift_scope") == "target"
-        assert "--mask_shift_no_renorm" in argv
-        assert _option_value(argv, "--run_tag_extra") == "k500_maskshift"
-
-
-def test_effnet_vae_lhat_maskshift_smoke_config_targets_ningbo_only():
-    config = _load("effnet_vae_lhat_maskshift_consistency_k500_v7_sjr_rgq_smoke.yaml")
-    validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-
-    assert len(commands) == 1
-    argv = commands[0]["argv"]
-    assert _option_value(argv, "--center") == "ningbo"
-    assert _option_value(argv, "--epochs") == "1"
-    assert _option_value(argv, "--num_workers") == "0"
-    assert _option_value(argv, "--mask_shift_max_batches") == "2"
-
-
 def test_runner_rejects_adapter_and_argv_together():
-    config = _load("effnet_vae_lhat_k500_v7_sjr_rgq.yaml")
+    config = _load("effnet_vae_lhat_augmix_threechain_locked_k500.yaml")
     config["runner"]["argv"] = ["--center", "${matrix.center}"]
 
     with pytest.raises(ConfigError, match="runner.*adapter.*argv"):
         build_runner_commands(config)
 
 
-def test_effnet_direct_command_writes_under_managed_output_root():
-    config = _load("effnet_direct_k500_v6.yaml")
-    validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
+def test_runner_rejects_yaml_argv_launch_surface_without_adapter():
+    config = _load("effnet_vae_lhat_augmix_threechain_locked_k500.yaml")
+    config["runner"].pop("adapter")
+    config["runner"]["argv"] = []
 
-    argv = commands[0]["argv"]
-    assert _option_value(argv, "--k") == "500"
-    assert _option_value(argv, "--subset_seed") == "20260531"
-    assert _option_value(argv, "--val_fraction") == "0.2"
-    assert "--out_root" in argv
-    assert _option_value(argv, "--out_root").endswith("/runs/effnet_direct_k500_v6/pytest_run")
-
-
-def test_effnet_v7_configs_use_v7_subset_root_and_direct_init_dependency():
-    direct = _load("effnet_direct_k500_v7_sjr_rgq.yaml")
-    vae = _load("effnet_vae_lhat_k500_v7_sjr_rgq.yaml")
-    direct_paths = validate_experiment_config(direct, repo_root=REPO)
-    vae_paths = validate_experiment_config(vae, repo_root=REPO)
-    direct_command = build_runner_commands(direct)[0]
-    vae_commands = build_runner_commands(vae)
-
-    direct_subset_root = _option_value(direct_command["argv"], "--subset_root")
-    assert direct_subset_root.endswith("/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets")
-    assert _option_value(direct_command["argv"], "--out_root").endswith(
-        "/runs/effnet_direct_k500_v7_sjr_rgq/pytest_run"
-    )
-
-    direct_manifest = make_dry_run_manifest(
-        direct,
-        commands=[direct_command],
-        local_paths=direct_paths,
-        run_id="pytest_v7_direct",
-        cli_args=argparse.Namespace(dry_run=True, write_plan=False),
-    )
-    assert all(
-        "paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets" in ref["anchor_base"]
-        for ref in direct_manifest["artifact_trace"]["inputs"]["k500_refs"]
-    )
-
-    for command in vae_commands:
-        argv = command["argv"]
-        center = command["matrix"]["center"]
-        assert "paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets" in _option_value(
-            argv,
-            "--anchor_base",
-        )
-        assert _option_value(argv, "--init_ckpt").endswith(
-            f"/runs/effnet_direct_k500_v7_sjr_rgq_matrix/pytest_run/{center}/runs/"
-            f"{center}_K500_direct_ft_ep30_seed20260531_val0.2/best_model.pt"
-        )
-
-    vae_manifest = make_dry_run_manifest(
-        vae,
-        commands=vae_commands,
-        local_paths=vae_paths,
-        run_id="pytest_v7_lhat",
-        cli_args=argparse.Namespace(dry_run=True, write_plan=False),
-    )
-    assert all(
-        "paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets" in ref["anchor_base"]
-        for ref in vae_manifest["artifact_trace"]["inputs"]["k500_refs"]
-    )
-
-
-def test_effnet_direct_k500_v7_matrix_config_generates_per_center_commands():
-    config = _load("effnet_direct_k500_v7_sjr_rgq_matrix.yaml")
-    paths = validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-    manifest = make_dry_run_manifest(
-        config,
-        commands=commands,
-        local_paths=paths,
-        run_id="pytest_effnet_direct_v7_matrix",
-        cli_args=argparse.Namespace(dry_run=True, write_plan=False),
-    )
-
-    assert len(commands) == 4
-    assert {command["matrix"]["center"] for command in commands} == {
-        "ningbo",
-        "chapman_shaoxing",
-        "cpsc_2018",
-        "georgia",
-    }
-    for command in commands:
-        argv = command["argv"]
-        center = command["matrix"]["center"]
-        assert "CUDA_VISIBLE_DEVICES" not in command["env"]
-        assert "CUDA_VISIBLE_DEVICES" not in " ".join(argv)
-        assert "OPENAI_API_KEY" not in command["env"]
-        assert argv[1].endswith("scripts/paper/run_direct_finetune_k500_20260516.py")
-        assert _option_value(argv, "--centers") == center
-        assert _option_value(argv, "--k") == "500"
-        assert _option_value(argv, "--subset_seed") == "20260531"
-        assert _option_value(argv, "--seed") == "20260531"
-        assert _option_value(argv, "--subset_root").endswith(
-            "/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets"
-        )
-        assert _option_value(argv, "--out_root").endswith(
-            f"/runs/effnet_direct_k500_v7_sjr_rgq_matrix/pytest_run/{center}"
-        )
-
-    child_runs = manifest["artifact_trace"]["expected_outputs"]["child_runs"]
-    assert len(child_runs) == 4
-    assert {child["matrix"]["center"] for child in child_runs} == {
-        "ningbo",
-        "chapman_shaoxing",
-        "cpsc_2018",
-        "georgia",
-    }
-
-
-def test_effnet_v7_subset_export_config_generates_percent_and_fixed_k_prep_command():
-    config = _load("effnet_v7_sjr_rgq_subset_export.yaml")
-    paths = validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-    manifest = make_dry_run_manifest(
-        config,
-        commands=commands,
-        local_paths=paths,
-        run_id="pytest_effnet_v7_subset_export",
-        cli_args=argparse.Namespace(dry_run=True, write_plan=False),
-    )
-
-    assert len(commands) == 1
-    command = commands[0]
-    argv = command["argv"]
-    assert argv[1].endswith("scripts/paper/export_percent_kshot_v7_sjr_rgq_20260530.py")
-    assert "CUDA_VISIBLE_DEVICES" not in command["env"]
-    assert "--force" not in argv
-    assert _option_value(argv, "--seed") == "20260531"
-    assert _option_value(argv, "--fixed-ks") == "500"
-    assert _option_value(argv, "--output-root").endswith(
-        "/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets"
-    )
-    assert _option_value(argv, "--summary-path").endswith(
-        "/runs/effnet_v7_sjr_rgq_subset_export/pytest_run/percent_shot_v7_seed20260531_summary.json"
-    )
-    centers = _all_option_values(argv, "--centers")
-    assert centers == ["ningbo", "chapman_shaoxing", "cpsc_2018", "georgia"]
-    percents = _all_option_values(argv, "--percents")
-    assert percents == ["0.1", "0.2"]
-
-    child_runs = manifest["artifact_trace"]["expected_outputs"]["child_runs"]
-    assert child_runs == []
-
-
-def test_effnet_v7_subset_export_audit_rejects_force():
-    config = _load("effnet_v7_sjr_rgq_subset_export.yaml")
-    config = copy.deepcopy(config)
-    config["runner"]["argv"] = [*config["runner"]["argv"], "--force"]
-    validate_experiment_config(config, repo_root=REPO)
-
-    with pytest.raises(ConfigError, match="managed subset export must not pass --force"):
+    with pytest.raises(ConfigError, match="runner.adapter is required"):
         build_runner_commands(config)
 
 
-def test_effnet_direct_percent_v7_matrix_config_generates_protocol_center_commands():
-    config = _load("effnet_direct_percent_v7_sjr_rgq_matrix.yaml")
-    paths = validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-    manifest = make_dry_run_manifest(
-        config,
-        commands=commands,
-        local_paths=paths,
-        run_id="pytest_effnet_direct_percent_v7_matrix",
-        cli_args=argparse.Namespace(dry_run=True, write_plan=False),
-    )
-
-    expected_cases = {
-        ("ningbo", "p10", "1923"),
-        ("ningbo", "p20", "3846"),
-        ("chapman_shaoxing", "p10", "582"),
-        ("chapman_shaoxing", "p20", "1164"),
-        ("cpsc_2018", "p10", "475"),
-        ("cpsc_2018", "p20", "949"),
-        ("georgia", "p10", "871"),
-        ("georgia", "p20", "1742"),
-    }
-
-    assert len(commands) == 8
-    observed_cases = set()
-    for command in commands:
-        argv = command["argv"]
-        case = command["matrix"]["case"]
-        center = case["center"]
-        protocol = case["protocol"]
-        k = str(case["k"])
-        observed_cases.add((center, protocol, k))
-
-        assert "CUDA_VISIBLE_DEVICES" not in command["env"]
-        assert "CUDA_VISIBLE_DEVICES" not in " ".join(argv)
-        assert "OPENAI_API_KEY" not in command["env"]
-        assert argv[1].endswith("scripts/paper/run_direct_finetune_k500_20260516.py")
-        assert _option_value(argv, "--centers") == center
-        assert _option_value(argv, "--k") == k
-        assert _option_value(argv, "--subset_seed") == "20260531"
-        assert _option_value(argv, "--seed") == "20260531"
-        assert _option_value(argv, "--subset_root").endswith(
-            "/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets"
-        )
-        assert _option_value(argv, "--out_root").endswith(
-            f"/runs/effnet_direct_{protocol}_v7_sjr_rgq/pytest_run/{center}"
-        )
-
-    assert observed_cases == expected_cases
-    child_runs = manifest["artifact_trace"]["expected_outputs"]["child_runs"]
-    assert len(child_runs) == 8
-    assert {tuple([child["matrix"]["case"][key] for key in ("center", "protocol")]) for child in child_runs} == {
-        (center, protocol) for center, protocol, _k in expected_cases
-    }
-
-
-def test_effnet_direct_percent_v7_matrix_audit_rejects_case_k_mismatch():
-    config = _load("effnet_direct_percent_v7_sjr_rgq_matrix.yaml")
-    config = copy.deepcopy(config)
-    idx = config["runner"]["argv"].index("--k")
-    config["runner"]["argv"][idx + 1] = "999"
-    validate_experiment_config(config, repo_root=REPO)
-
-    with pytest.raises(ConfigError, match="--k='999', expected '1923'"):
-        build_runner_commands(config)
-
-
-def test_effnet_vae_lhat_percent_v7_matrix_config_uses_protocol_matched_direct_checkpoints():
-    config = _load("effnet_vae_lhat_percent_v7_sjr_rgq.yaml")
-    paths = validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-    manifest = make_dry_run_manifest(
-        config,
-        commands=commands,
-        local_paths=paths,
-        run_id="pytest_effnet_vae_lhat_percent_v7",
-        cli_args=argparse.Namespace(dry_run=True, write_plan=False),
-    )
-
-    expected_cases = {
-        ("ningbo", "p10", "1923"),
-        ("ningbo", "p20", "3846"),
-        ("chapman_shaoxing", "p10", "582"),
-        ("chapman_shaoxing", "p20", "1164"),
-        ("cpsc_2018", "p10", "475"),
-        ("cpsc_2018", "p20", "949"),
-        ("georgia", "p10", "871"),
-        ("georgia", "p20", "1742"),
-    }
-
-    assert len(commands) == 8
-    observed_cases = set()
-    for command in commands:
-        argv = command["argv"]
-        case = command["matrix"]["case"]
-        center = case["center"]
-        protocol = case["protocol"]
-        k = str(case["k"])
-        observed_cases.add((center, protocol, k))
-
-        assert "CUDA_VISIBLE_DEVICES" not in command["env"]
-        assert argv[1].endswith("scripts/paper/run_effnet_latent_augmix_stage3_20260524.py")
-        assert _option_value(argv, "--center") == center
-        assert _option_value(argv, "--seed") == "20260531"
-        assert _option_value(argv, "--out_root").endswith(
-            f"/runs/effnet_vae_lhat_{protocol}_v7_sjr_rgq/pytest_run"
-        )
-        assert _option_value(argv, "--init_ckpt").endswith(
-            f"/runs/effnet_direct_{protocol}_v7_sjr_rgq/pytest_run/{center}/runs/"
-            f"{center}_K{k}_direct_ft_ep30_seed20260531_val0.2/best_model.pt"
-        )
-        assert _option_value(argv, "--anchor_base").endswith(
-            f"/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets/"
-            f"{center}/k{k}_seed20260531/{center}_real_k{k}_seed20260531"
-        )
-        assert _option_value(argv, "--run_tag_extra") == protocol
-        assert _option_value(argv, "--quick_eval_source") == "target_real_val"
-
-    assert observed_cases == expected_cases
-    child_runs = manifest["artifact_trace"]["expected_outputs"]["child_runs"]
-    assert len(child_runs) == 8
-    assert all(
-        f"fullft_{child['matrix']['case']['protocol']}_ep30_seed20260531" in child["child_run_dir"]
-        for child in child_runs
-    )
-
-
-def test_effnet_vae_lhat_percent_v7_matrix_audit_rejects_case_anchor_k_mismatch():
-    config = _load("effnet_vae_lhat_percent_v7_sjr_rgq.yaml")
-    config = copy.deepcopy(config)
-    idx = config["runner"]["argv"].index("--anchor_base")
-    config["runner"]["argv"][idx + 1] = (
-        "${data.kshot_subset_root}/${matrix.case.center}/k999_seed20260531/"
-        "${matrix.case.center}_real_k999_seed20260531"
-    )
-    validate_experiment_config(config, repo_root=REPO)
-
-    with pytest.raises(ConfigError, match="anchor_base does not encode K1923/seed20260531"):
-        build_runner_commands(config)
-
-
-@pytest.mark.parametrize(
-    ("config_name", "model_name"),
-    [
-        ("benchmark_resnet1d_direct_k500_v7_sjr_rgq_matrix.yaml", "benchmark_resnet1d_wang"),
-        ("benchmark_inception1d_direct_k500_v7_sjr_rgq_matrix.yaml", "benchmark_inception1d"),
-        ("benchmark_fcn_wang_direct_k500_v7_sjr_rgq_matrix.yaml", "benchmark_fcn_wang"),
-    ],
-)
-def test_benchmark_direct_k500_v7_matrix_config_generates_model_scoped_commands(
-    config_name: str,
-    model_name: str,
-):
-    config = _load(config_name)
-    paths = validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-    manifest = make_dry_run_manifest(
-        config,
-        commands=commands,
-        local_paths=paths,
-        run_id=f"pytest_{model_name}_direct_k500_v7",
-        cli_args=argparse.Namespace(dry_run=True, write_plan=False),
-    )
-
-    assert len(commands) == 4
-    assert {command["matrix"]["center"] for command in commands} == {
-        "ningbo",
-        "chapman_shaoxing",
-        "cpsc_2018",
-        "georgia",
-    }
-    for command in commands:
-        argv = command["argv"]
-        center = command["matrix"]["center"]
-        assert "CUDA_VISIBLE_DEVICES" not in command["env"]
-        assert "CUDA_VISIBLE_DEVICES" not in " ".join(argv)
-        assert argv[1].endswith("scripts/paper/run_benchmark_direct_finetune_v7_20260530.py")
-        assert _option_value(argv, "--centers") == center
-        assert _option_value(argv, "--model_name") == model_name
-        assert _option_value(argv, "--k") == "500"
-        assert _option_value(argv, "--subset_seed") == "20260531"
-        assert _option_value(argv, "--seed") == "20260531"
-        assert _option_value(argv, "--init_ckpt").endswith(
-            "/runs/benchmark_source_v7_sjr_rgq/"
-            f"{model_name}_seed20260531_v7_sjr_rgq_pytest_run/best_model.pt"
-        )
-        assert _option_value(argv, "--subset_root").endswith(
-            "/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets"
-        )
-        assert _option_value(argv, "--out_root").endswith(
-            f"/runs/{model_name}_direct_k500_v7_sjr_rgq/pytest_run/{center}"
-        )
-
-    child_runs = manifest["artifact_trace"]["expected_outputs"]["child_runs"]
-    assert len(child_runs) == 4
-    for command, child_run in zip(commands, child_runs):
-        argv = command["argv"]
-        center = command["matrix"]["center"]
-        expected_leaf = build_benchmark_direct_run_leaf(
-            {
-                "center": center,
-                "k": _option_value(argv, "--k"),
-                "model_name": _option_value(argv, "--model_name"),
-                "epochs": _option_value(argv, "--epochs"),
-                "seed": _option_value(argv, "--seed"),
-                "val_fraction": _option_value(argv, "--val_fraction"),
-            }
-        )
-        assert Path(child_run["child_run_dir"]).name == expected_leaf
-
-
-def test_benchmark_direct_k500_v7_audit_rejects_force():
-    config = _load("benchmark_resnet1d_direct_k500_v7_sjr_rgq_matrix.yaml")
-    config = copy.deepcopy(config)
-    config["runner"]["argv"] = [*config["runner"]["argv"], "--force"]
-    validate_experiment_config(config, repo_root=REPO)
-
-    with pytest.raises(ConfigError, match="benchmark direct managed config must not pass --force"):
-        build_runner_commands(config)
-
-
-def test_benchmark_source_v7_matrix_config_generates_model_commands():
-    config = _load("benchmark_source_v7_sjr_rgq_matrix.yaml")
-    paths = validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-    manifest = make_dry_run_manifest(
-        config,
-        commands=commands,
-        local_paths=paths,
-        run_id="pytest_benchmark_source_v7",
-        cli_args=argparse.Namespace(dry_run=True, write_plan=False),
-    )
-
-    expected_models = {
-        "benchmark_resnet1d_wang",
-        "benchmark_inception1d",
-        "benchmark_fcn_wang",
-    }
-
-    assert len(commands) == 3
-    observed_models = set()
-    for command in commands:
-        argv = command["argv"]
-        model_name = command["matrix"]["model"]
-        observed_models.add(model_name)
-
-        assert "CUDA_VISIBLE_DEVICES" not in command["env"]
-        assert "CUDA_VISIBLE_DEVICES" not in " ".join(argv)
-        assert "OPENAI_API_KEY" not in command["env"]
-        assert argv[1].endswith("scripts/triple_labels/train_ptbxl.py")
-        assert _option_value(argv, "--scheme") == "super5"
-        assert _option_value(argv, "--model_name") == model_name
-        assert _option_value(argv, "--output_dir").endswith(
-            f"/runs/benchmark_source_v7_sjr_rgq/{model_name}_seed20260531_v7_sjr_rgq_pytest_run"
-        )
-        assert _option_value(argv, "--data_path").endswith("/ptbxl/raw100.npy")
-        assert _option_value(argv, "--csv_path").endswith("/ptbxl/ptbxl_database.csv")
-        assert _option_value(argv, "--cache_path").endswith(
-            "/triple_labels/cache/ptbxl_minimal_resample_per_sample_global_fs100_len1000.npy"
-        )
-        assert _option_value(argv, "--preprocess_mode") == "minimal_resample"
-        assert _option_value(argv, "--norm_mode") == "per_sample_global"
-        assert _option_value(argv, "--device") == "cuda"
-        assert _option_value(argv, "--crop_len") == "1000"
-        assert _option_value(argv, "--batch_size") == "128"
-        assert _option_value(argv, "--epochs") == "30"
-        assert _option_value(argv, "--lr") == "0.001"
-        assert _option_value(argv, "--weight_decay") == "0.01"
-        assert _option_value(argv, "--cosine_tmax") == "30"
-        assert _option_value(argv, "--patience") == "8"
-        assert _option_value(argv, "--seed") == "20260531"
-        assert _option_value(argv, "--checkpoint_metric") == "auprc"
-        assert _option_value(argv, "--pos_weight_clip_max") == "50.0"
-
-    assert observed_models == expected_models
-    child_runs = manifest["artifact_trace"]["expected_outputs"]["child_runs"]
-    assert len(child_runs) == 3
-    assert {child["matrix"]["model"] for child in child_runs} == expected_models
-    for child in child_runs:
-        model_name = child["matrix"]["model"]
-        assert child["child_run_dir"].endswith(
-            f"/runs/benchmark_source_v7_sjr_rgq/{model_name}_seed20260531_v7_sjr_rgq_pytest_run"
-        )
-        artifact_roles = {item["role"] for item in child["expected_artifacts"]}
-        assert artifact_roles >= {"best_model", "best_model_auprc", "training_log", "train_result"}
-
-
-def test_benchmark_source_v7_matrix_audit_rejects_non_auprc_checkpoint_metric():
-    config = _load("benchmark_source_v7_sjr_rgq_matrix.yaml")
-    config = copy.deepcopy(config)
-    idx = config["runner"]["argv"].index("--checkpoint_metric")
-    config["runner"]["argv"][idx + 1] = "auroc"
-    validate_experiment_config(config, repo_root=REPO)
-
-    with pytest.raises(ConfigError, match="benchmark source managed config must use --checkpoint_metric auprc"):
-        build_runner_commands(config)
-
-
-def test_ecgtwin_author_ibe_repro_config_generates_run_scoped_stage_command():
-    config = _load("ecgtwin_author_ibe_repro.yaml")
-    paths = validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-    manifest = make_dry_run_manifest(
-        config,
-        commands=commands,
-        local_paths=paths,
-        run_id="pytest_ecgtwin_author_ibe",
-        cli_args=argparse.Namespace(dry_run=True, write_plan=False),
-    )
-
-    assert len(commands) == 1
-    command = commands[0]
-    argv = command["argv"]
-    assert "CUDA_VISIBLE_DEVICES" not in command["env"]
-    assert "CUDA_VISIBLE_DEVICES" not in " ".join(argv)
-    assert argv[1].endswith("scripts/ecgtwin_author_repro/train_ibe_repro.py")
-    assert _option_value(argv, "--output_dir").endswith(
-        "/runs/ecgtwin_author_repro/pytest_run/ibe_stage1"
-    )
-    assert _option_value(argv, "--train_path").endswith(
-        "/ECGTwin_Data/paired_Mimic_vae_multi_nomic.pt"
-    )
-    assert _option_value(argv, "--val_path").endswith(
-        "/ECGTwin_Data/paired_Mimic_vae_multi_nomic_test.pt"
-    )
-    assert _option_value(argv, "--epochs") == "40"
-    assert _option_value(argv, "--batch_size") == "65536"
-    assert _option_value(argv, "--mini_batch_size") == "512"
-    assert _option_value(argv, "--lr") == "0.001"
-    assert _option_value(argv, "--weight_decay") == "0.001"
-    assert _option_value(argv, "--device") == "cuda"
-    assert _option_value(argv, "--seed") == "20260531"
-    assert "--pin_memory" in argv
-    assert "--drop_last" in argv
-    assert "--amp" in argv
-    assert "--persistent_workers" not in argv
-
-    child_runs = manifest["artifact_trace"]["expected_outputs"]["child_runs"]
-    assert len(child_runs) == 1
-    assert child_runs[0]["stage"] == "ibe_stage1"
-    artifact_roles = {item["role"] for item in child_runs[0]["expected_artifacts"]}
-    assert artifact_roles >= {
-        "ecgtwin_author.ibe_best",
-        "ecgtwin_author.latest_checkpoint",
-        "legacy_run_config",
-        "metrics_jsonl",
-        "loss_curve_png",
-    }
-
-
-def test_ecgtwin_author_dit_repro_config_consumes_same_run_ibe_stage():
-    config = _load("ecgtwin_author_dit_repro.yaml")
-    paths = validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-    manifest = make_dry_run_manifest(
-        config,
-        commands=commands,
-        local_paths=paths,
-        run_id="pytest_ecgtwin_author_dit",
-        cli_args=argparse.Namespace(dry_run=True, write_plan=False),
-    )
-
-    assert len(commands) == 1
-    command = commands[0]
-    argv = command["argv"]
-    assert "CUDA_VISIBLE_DEVICES" not in command["env"]
-    assert "CUDA_VISIBLE_DEVICES" not in " ".join(argv)
-    assert argv[1].endswith("scripts/ecgtwin_author_repro/train_dit_repro.py")
-    assert _option_value(argv, "--output_dir").endswith(
-        "/runs/ecgtwin_author_repro/pytest_run/dit_stage2"
-    )
-    assert _option_value(argv, "--ibe_path").endswith(
-        "/runs/ecgtwin_author_repro/pytest_run/ibe_stage1/checkpoints/IBE_best.pth"
-    )
-    assert _option_value(argv, "--epochs") == "30"
-    assert _option_value(argv, "--batch_size") == "512"
-    assert _option_value(argv, "--val_batch_size") == "512"
-    assert _option_value(argv, "--device") == "cuda"
-    assert _option_value(argv, "--seed") == "20260531"
-    assert "--pin_memory" in argv
-    assert "--amp" in argv
-    assert "--persistent_workers" not in argv
-    assert "--use_pretrained_author_ibe" not in argv
-
-    trace = manifest["artifact_trace"]
-    assert any(
-        item["role"] == "ecgtwin_author.ibe_stage1_best"
-        and item["path"].endswith("/runs/ecgtwin_author_repro/pytest_run/ibe_stage1/checkpoints/IBE_best.pth")
-        for item in trace["inputs"]["checkpoints"]
-    )
-    child_runs = trace["expected_outputs"]["child_runs"]
-    assert len(child_runs) == 1
-    assert child_runs[0]["stage"] == "dit_stage2"
-    artifact_roles = {item["role"] for item in child_runs[0]["expected_artifacts"]}
-    assert artifact_roles >= {
-        "ecgtwin_author.dit_best_val",
-        "ecgtwin_author.dit_latest",
-        "legacy_run_config",
-        "metrics_jsonl",
-        "loss_curve_png",
-    }
-
-
-def test_ecgtwin_author_dit_audit_rejects_pretrained_author_ibe_shortcut():
-    config = _load("ecgtwin_author_dit_repro.yaml")
-    config = copy.deepcopy(config)
-    config["runner"]["argv"] = [*config["runner"]["argv"], "--use_pretrained_author_ibe"]
-    validate_experiment_config(config, repo_root=REPO)
-
-    with pytest.raises(ConfigError, match="must consume the managed IBE stage"):
-        build_runner_commands(config)
-
-
-def test_ecgtwin_prompt_token_train_config_generates_run_scoped_command():
-    config = _load("ecgtwin_prompt_token_train_minimal.yaml")
-    paths = validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-    manifest = make_dry_run_manifest(
-        config,
-        commands=commands,
-        local_paths=paths,
-        run_id="pytest_prompt_token_train",
-        cli_args=argparse.Namespace(dry_run=True, write_plan=False),
-    )
-
-    assert len(commands) == 1
-    command = commands[0]
-    argv = command["argv"]
-    assert "CUDA_VISIBLE_DEVICES" not in command["env"]
-    assert "CUDA_VISIBLE_DEVICES" not in " ".join(argv)
-    assert argv[1].endswith("scripts/ecgtwin_gen/train_center_prompt_tokens.py")
-    assert _option_value(argv, "--save_dir").endswith(
-        "/runs/ecgtwin_prompt_token_minimal/pytest_run/prompt_token_train"
-    )
-    assert _option_value(argv, "--cache_root").endswith("/ecgtwin_prompt_token_super5/cache_v1")
-    assert _option_value(argv, "--prompt_bank").endswith(
-        "/ecgtwin_prompt_token_super5/cache_v1/text_prompt_bank.pt"
-    )
-    assert _option_value(argv, "--ecgtwin_config").endswith("model/ECGTwin/config/DiT_ECGTwin.yaml")
-    assert _all_option_values(argv, "--centers") == [
-        "ningbo",
-        "chapman_shaoxing",
-        "cpsc_2018",
-        "georgia",
-    ]
-    assert _option_value(argv, "--K") == "500"
-    assert _option_value(argv, "--seed") == "20260531"
-    assert _option_value(argv, "--total_steps") == "2500"
-    assert _option_value(argv, "--batch_size") == "16"
-    assert _option_value(argv, "--token_mode") == "direct"
-    assert _option_value(argv, "--n_token_vectors") == "4"
-    assert _option_value(argv, "--ref_text_mode") == "actual_report"
-    assert _option_value(argv, "--sample_strategy") == "center_class_balanced"
-    assert _option_value(argv, "--device") == "cuda"
-
-    trace = manifest["artifact_trace"]
-    assert any(
-        item["role"] == "prompt_token.text_prompt_bank"
-        and item["path"].endswith("/ecgtwin_prompt_token_super5/cache_v1/text_prompt_bank.pt")
-        for item in trace["inputs"]["data_caches"]
-    )
-    child_runs = trace["expected_outputs"]["child_runs"]
-    assert len(child_runs) == 1
-    assert child_runs[0]["stage"] == "prompt_token_train"
-    artifact_roles = {item["role"] for item in child_runs[0]["expected_artifacts"]}
-    assert artifact_roles >= {
-        "prompt_token.prompt_token_bank",
-        "prompt_token.run_config",
-        "prompt_token.metrics_jsonl",
-    }
-
-
-def test_ecgtwin_prompt_token_generate_config_consumes_same_run_token_bank():
-    config = _load("ecgtwin_prompt_token_generate_minimal.yaml")
-    paths = validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-    manifest = make_dry_run_manifest(
-        config,
-        commands=commands,
-        local_paths=paths,
-        run_id="pytest_prompt_token_generate",
-        cli_args=argparse.Namespace(dry_run=True, write_plan=False),
-    )
-
-    assert len(commands) == 1
-    command = commands[0]
-    argv = command["argv"]
-    assert "CUDA_VISIBLE_DEVICES" not in command["env"]
-    assert "CUDA_VISIBLE_DEVICES" not in " ".join(argv)
-    assert argv[1].endswith("scripts/ecgtwin_gen/generate_center_prompt_token_synth.py")
-    assert _option_value(argv, "--center") == "ningbo"
-    assert _all_option_values(argv, "--classes") == ["NORM", "MI", "STTC"]
-    assert _option_value(argv, "--out_dir").endswith(
-        "/runs/ecgtwin_prompt_token_minimal/pytest_run/generated/target_token"
-    )
-    assert _option_value(argv, "--token_bank").endswith(
-        "/runs/ecgtwin_prompt_token_minimal/pytest_run/prompt_token_train/prompt_token_bank.pt"
-    )
-    assert _option_value(argv, "--cache_root").endswith("/ecgtwin_prompt_token_super5/cache_v1")
-    assert _option_value(argv, "--prompt_bank").endswith(
-        "/ecgtwin_prompt_token_super5/cache_v1/text_prompt_bank.pt"
-    )
-    assert _option_value(argv, "--victim_ckpt").endswith("/triple_labels/super5/best_model.pt")
-    assert _option_value(argv, "--arm") == "target_token"
-    assert _option_value(argv, "--K") == "500"
-    assert _option_value(argv, "--selection_seed") == "42"
-    assert _option_value(argv, "--seed") == "20260531"
-    assert _option_value(argv, "--device") == "cuda"
-    assert "--no_token" not in argv
-
-    trace = manifest["artifact_trace"]
-    assert any(
-        item["role"] == "prompt_token.prompt_token_bank"
-        and item["path"].endswith("/runs/ecgtwin_prompt_token_minimal/pytest_run/prompt_token_train/prompt_token_bank.pt")
-        for item in trace["inputs"]["init_heads"]
-    )
-    child_runs = trace["expected_outputs"]["child_runs"]
-    assert len(child_runs) == 1
-    assert child_runs[0]["stage"] == "prompt_token_generate"
-    assert child_runs[0]["center"] == "ningbo"
-    artifact_roles = {item["role"] for item in child_runs[0]["expected_artifacts"]}
-    assert artifact_roles >= {"prompt_token.samples_npz", "prompt_token.summary_json"}
-
-
-def test_ecgtwin_prompt_token_gate_config_consumes_generated_outputs():
-    config = _load("ecgtwin_prompt_token_gate_minimal.yaml")
-    paths = validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-    manifest = make_dry_run_manifest(
-        config,
-        commands=commands,
-        local_paths=paths,
-        run_id="pytest_prompt_token_gate",
-        cli_args=argparse.Namespace(dry_run=True, write_plan=False),
-    )
-
-    assert len(commands) == 1
-    command = commands[0]
-    argv = command["argv"]
-    assert "CUDA_VISIBLE_DEVICES" not in command["env"]
-    assert "CUDA_VISIBLE_DEVICES" not in " ".join(argv)
-    assert argv[1].endswith("scripts/ecgtwin_gen/gate_prompt_token_synth.py")
-    assert _option_value(argv, "--input_dir").endswith(
-        "/runs/ecgtwin_prompt_token_minimal/pytest_run/generated/target_token/ningbo"
-    )
-    assert _option_value(argv, "--out_dir").endswith(
-        "/runs/ecgtwin_prompt_token_minimal/pytest_run/generated/target_token/ningbo/gated"
-    )
-    assert _all_option_values(argv, "--classes") == ["NORM", "MI", "STTC"]
-    assert _option_value(argv, "--min_target_prob") == "0.30"
-    assert _option_value(argv, "--cache_root").endswith("/ecgtwin_prompt_token_super5/cache_v1")
-    assert _option_value(argv, "--K") == "500"
-    assert _option_value(argv, "--selection_seed") == "42"
-
-    trace = manifest["artifact_trace"]
-    input_roles = {item["role"] for item in trace["inputs"]["data_caches"]}
-    assert {"prompt_token.generated_samples", "prompt_token.generated_summary"} <= input_roles
-    child_runs = trace["expected_outputs"]["child_runs"]
-    assert len(child_runs) == 1
-    assert child_runs[0]["stage"] == "prompt_token_gate"
-    artifact_roles = {item["role"] for item in child_runs[0]["expected_artifacts"]}
-    assert artifact_roles >= {
-        "prompt_token.gated_samples_npz",
-        "prompt_token.gated_latent_npz",
-        "prompt_token.class_trust_json",
-        "prompt_token.ref_meta_json",
-        "prompt_token.gate_report_json",
-    }
-
-
-def test_ecgtwin_prompt_token_generate_audit_rejects_no_token_shortcut():
-    config = _load("ecgtwin_prompt_token_generate_minimal.yaml")
-    config = copy.deepcopy(config)
-    config["runner"]["argv"] = [*config["runner"]["argv"], "--no_token"]
-    validate_experiment_config(config, repo_root=REPO)
-
-    with pytest.raises(ConfigError, match="target-token managed config must not pass --no_token"):
-        build_runner_commands(config)
-
-
-def test_ecgtwin_prompt_token_online_at_config_consumes_gated_pool_and_real_k500_refs():
-    config = _load("ecgtwin_prompt_token_online_at_minimal.yaml")
-    paths = validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-    manifest = make_dry_run_manifest(
-        config,
-        commands=commands,
-        local_paths=paths,
-        run_id="pytest_prompt_token_online_at",
-        cli_args=argparse.Namespace(dry_run=True, write_plan=False),
-    )
-
-    assert len(commands) == 1
-    command = commands[0]
-    argv = command["argv"]
-    assert "CUDA_VISIBLE_DEVICES" not in command["env"]
-    assert "CUDA_VISIBLE_DEVICES" not in " ".join(argv)
-    assert argv[1].endswith("scripts/pgd_cross_center/synth_online_at_super5.py")
-    assert _option_value(argv, "--center_name") == "ningbo"
-    assert _option_value(argv, "--model_name") == "efficientnet1dv2"
-    assert _option_value(argv, "--device") == "cuda"
-    assert _option_value(argv, "--quick_eval_source") == "target_real_val"
-    assert _all_option_values(argv, "--quick_eval_centers") == ["ningbo"]
-    assert _option_value(argv, "--target_real_val_seed") == "20260531"
-    assert _option_value(argv, "--attack_mode") == "latent_hull"
-    assert _option_value(argv, "--hull_label_mode") == "compatible"
-    assert _option_value(argv, "--hull_mix_label_mode") == "anchor_soft"
-    assert _all_option_values(argv, "--classes_in_scope") == ["NORM", "MI", "STTC"]
-    assert _option_value(argv, "--adv_label_mode") == "latent_mixed_teacher"
-    assert _option_value(argv, "--adv_teacher_mix") == "0.4"
-    assert _option_value(argv, "--n_epochs") == "20"
-    assert _option_value(argv, "--num_workers") == "4"
-
-    gated_root = "/runs/ecgtwin_prompt_token_minimal/pytest_run/generated/target_token/ningbo/gated"
-    assert _option_value(argv, "--synth_npz").endswith(f"{gated_root}/gated_samples.latent.npz")
-    assert _option_value(argv, "--class_trust").endswith(f"{gated_root}/gated_samples.class_trust.json")
-    assert _option_value(argv, "--ref_meta_json").endswith(f"{gated_root}/gated_samples.ref_meta.json")
-    assert _option_value(argv, "--target_real_npz").endswith(
-        "/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets/"
-        "ningbo/k500_seed20260531/ningbo_real_k500_seed20260531.signals.npz"
-    )
-    assert _option_value(argv, "--init_ckpt").endswith(
-        "/runs/effnet_direct_k500_v7_sjr_rgq/pytest_run/runs/"
-        "ningbo_K500_direct_ft_ep30_seed20260531_val0.2/best_model.pt"
-    )
-    assert _option_value(argv, "--output_dir").endswith(
-        "/runs/ecgtwin_prompt_token_online_at_minimal/pytest_run/ningbo"
-    )
-
-    trace = manifest["artifact_trace"]
-    input_roles = {item["role"] for item in trace["inputs"]["data_caches"]}
-    assert {
-        "prompt_token.gated_latent_npz",
-        "prompt_token.gated_class_trust_json",
-        "prompt_token.gated_ref_meta_json",
-        "target_k500.signals_npz",
-    } <= input_roles
-    assert any(item["role"] == "efficientnet.direct_init_checkpoint" for item in trace["inputs"]["checkpoints"])
-    assert any(item["center"] == "ningbo" for item in trace["inputs"]["k500_refs"])
-    child_runs = trace["expected_outputs"]["child_runs"]
-    assert len(child_runs) == 1
-    assert child_runs[0]["stage"] == "prompt_token_online_at"
-    artifact_roles = {item["role"] for item in child_runs[0]["expected_artifacts"]}
-    assert artifact_roles >= {
-        "best_model",
-        "training_log",
-        "train_result",
-        "checkpoint_latest",
-    }
-
-
-def test_ecgtwin_prompt_token_online_at_audit_rejects_pn2021_quick_eval():
-    config = _load("ecgtwin_prompt_token_online_at_minimal.yaml")
-    config = copy.deepcopy(config)
-    validate_experiment_config(config, repo_root=REPO)
-    command = copy.deepcopy(build_runner_commands(config)[0])
-    argv = command["argv"]
-    argv[argv.index("--quick_eval_source") + 1] = "pn2021"
-
-    with pytest.raises(
-        ConfigError,
-        match=r"--quick_eval_source='pn2021', expected 'target_real_val'",
-    ):
-        audit_runner_commands(config, [command])
-
-
-def test_ecgtwin_prompt_token_online_at_eval_config_uses_same_run_model_and_ref_exclusion():
-    config = _load("ecgtwin_prompt_token_online_at_minimal_pn2021_eval.yaml")
-    paths = validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-    postprocess_commands = build_postprocess_commands(config)
-    manifest = make_dry_run_manifest(
-        config,
-        commands=commands,
-        local_paths=paths,
-        run_id="pytest_prompt_token_online_at_eval",
-        cli_args=argparse.Namespace(dry_run=True, write_plan=False),
-        postprocess_commands=postprocess_commands,
-    )
-
-    assert len(commands) == 1
-    command = commands[0]
-    argv = command["argv"]
-    assert command["matrix"]["center"] == "ningbo"
-    assert "CUDA_VISIBLE_DEVICES" not in command["env"]
-    assert "CUDA_VISIBLE_DEVICES" not in " ".join(argv)
-    assert argv[1].endswith("scripts/triple_labels/eval_crosscenter.py")
-    assert _option_value(argv, "--scheme") == "super5"
-    assert _option_value(argv, "--model_name") == "efficientnet1dv2"
-    assert _option_value(argv, "--device") == "cuda"
-    assert _option_value(argv, "--model_dir").endswith(
-        "/runs/ecgtwin_prompt_token_online_at_minimal/pytest_run/ningbo"
-    )
-    assert _option_value(argv, "--output_path").endswith(
-        "/runs/ecgtwin_prompt_token_online_at_minimal_eval/pytest_run/ningbo/"
-        "eval_result_v7_super5_sjr_rgq_refexcluded.json"
-    )
-    assert "--skip_mimic" in argv
-    assert "--report_drop_all_zero_pn2021" in argv
-    ref_start = argv.index("--exclude_ref_ids") + 1
-    ref_end = argv.index("--output_path")
-    ref_metas = argv[ref_start:ref_end]
-    assert len(ref_metas) == 4
-    assert {Path(path).name for path in ref_metas} == {
-        "ningbo_real_k500_seed20260531.ref_meta.json",
-        "chapman_shaoxing_real_k500_seed20260531.ref_meta.json",
-        "cpsc_2018_real_k500_seed20260531.ref_meta.json",
-        "georgia_real_k500_seed20260531.ref_meta.json",
-    }
-
-    trace = manifest["artifact_trace"]
-    assert any(
-        item["role"] == "command.model_dir.best_model"
-        and item["path"].endswith("/ecgtwin_prompt_token_online_at_minimal/pytest_run/ningbo/best_model.pt")
-        for item in trace["inputs"]["checkpoints"]
-    )
-    assert len(trace["inputs"]["k500_refs"]) == 4
-    child_runs = trace["expected_outputs"]["child_runs"]
-    assert len(child_runs) == 1
-    assert child_runs[0]["center"] == "ningbo"
-    assert child_runs[0]["model_dir"].endswith(
-        "/runs/ecgtwin_prompt_token_online_at_minimal/pytest_run/ningbo"
-    )
-    assert child_runs[0]["expected_artifacts"][0]["role"] == "eval_result"
-    assert len(postprocess_commands) == 3
-    assert postprocess_commands[0]["argv"][1].endswith("scripts/export_metrics_long.py")
-    assert "ecgtwin_prompt_token_online_at_minimal" in postprocess_commands[0]["argv"]
-    assert postprocess_commands[1]["argv"][1].endswith("scripts/export_paper_table.py")
-    assert "pn2021_all_zero_kept_refexcluded" in postprocess_commands[1]["argv"]
-    assert "pn2021_drop_all_zero_refexcluded" in postprocess_commands[2]["argv"]
-    postprocess_runs = trace["expected_outputs"]["postprocess_runs"]
-    assert len(postprocess_runs) == 3
-
-
-def test_ecgtwin_prompt_token_online_at_eval_audit_rejects_wrong_model_dir():
-    config = _load("ecgtwin_prompt_token_online_at_minimal_pn2021_eval.yaml")
-    config = copy.deepcopy(config)
-    argv = config["runner"]["argv"]
-    argv[argv.index("--model_dir") + 1] = (
-        "${paths.output_root}/effnet_direct_k500_v7_sjr_rgq/${runtime.run_id}/runs/"
-        "ningbo_K500_direct_ft_ep30_seed20260531_val0.2"
-    )
-    validate_experiment_config(config, repo_root=REPO)
-
-    with pytest.raises(ConfigError, match="model_dir must point at same-run prompt-token online-AT output"):
-        build_runner_commands(config)
-
-
-def test_benchmark_direct_percent_v7_matrix_config_generates_protocol_center_commands():
-    config = _load("benchmark_resnet1d_direct_percent_v7_sjr_rgq_matrix.yaml")
-    paths = validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-    manifest = make_dry_run_manifest(
-        config,
-        commands=commands,
-        local_paths=paths,
-        run_id="pytest_benchmark_direct_percent_v7",
-        cli_args=argparse.Namespace(dry_run=True, write_plan=False),
-    )
-
-    expected_cases = {
-        ("ningbo", "p10", "1923"),
-        ("ningbo", "p20", "3846"),
-        ("chapman_shaoxing", "p10", "582"),
-        ("chapman_shaoxing", "p20", "1164"),
-        ("cpsc_2018", "p10", "475"),
-        ("cpsc_2018", "p20", "949"),
-        ("georgia", "p10", "871"),
-        ("georgia", "p20", "1742"),
-    }
-
-    assert len(commands) == 8
-    observed_cases = set()
-    for command in commands:
-        argv = command["argv"]
-        case = command["matrix"]["case"]
-        center = case["center"]
-        protocol = case["protocol"]
-        k = str(case["k"])
-        observed_cases.add((center, protocol, k))
-
-        assert "CUDA_VISIBLE_DEVICES" not in command["env"]
-        assert "CUDA_VISIBLE_DEVICES" not in " ".join(argv)
-        assert "OPENAI_API_KEY" not in command["env"]
-        assert argv[1].endswith("scripts/paper/run_benchmark_direct_finetune_v7_20260530.py")
-        assert _option_value(argv, "--centers") == center
-        assert _option_value(argv, "--model_name") == "benchmark_resnet1d_wang"
-        assert _option_value(argv, "--k") == k
-        assert _option_value(argv, "--subset_seed") == "20260531"
-        assert _option_value(argv, "--seed") == "20260531"
-        assert _option_value(argv, "--init_ckpt").endswith(
-            "/runs/benchmark_source_v7_sjr_rgq/"
-            "benchmark_resnet1d_wang_seed20260531_v7_sjr_rgq_pytest_run/best_model.pt"
-        )
-        assert _option_value(argv, "--subset_root").endswith(
-            "/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets"
-        )
-        assert _option_value(argv, "--out_root").endswith(
-            f"/runs/benchmark_resnet1d_wang_direct_{protocol}_v7_sjr_rgq/pytest_run/{center}"
-        )
-
-    assert observed_cases == expected_cases
-    child_runs = manifest["artifact_trace"]["expected_outputs"]["child_runs"]
-    assert len(child_runs) == 8
-    assert {tuple([child["matrix"]["case"][key] for key in ("center", "protocol")]) for child in child_runs} == {
-        (center, protocol) for center, protocol, _k in expected_cases
-    }
-
-
-def test_benchmark_direct_percent_v7_matrix_audit_rejects_case_k_mismatch():
-    config = _load("benchmark_resnet1d_direct_percent_v7_sjr_rgq_matrix.yaml")
-    config = copy.deepcopy(config)
-    idx = config["runner"]["argv"].index("--k")
-    config["runner"]["argv"][idx + 1] = "999"
-    validate_experiment_config(config, repo_root=REPO)
-
-    with pytest.raises(ConfigError, match="--k='999', expected '1923'"):
-        build_runner_commands(config)
-
-
-def test_ecgfounder_direct_k500_v7_matrix_config_generates_center_commands():
-    config = _load("ecgfounder_direct_k500_v7_sjr_rgq_matrix.yaml")
-    paths = validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-    manifest = make_dry_run_manifest(
-        config,
-        commands=commands,
-        local_paths=paths,
-        run_id="pytest_ecgfounder_direct_k500_v7",
-        cli_args=argparse.Namespace(dry_run=True, write_plan=False),
-    )
-
-    assert len(commands) == 4
-    assert {command["matrix"]["center"] for command in commands} == {
-        "ningbo",
-        "chapman_shaoxing",
-        "cpsc_2018",
-        "georgia",
-    }
-    for command in commands:
-        argv = command["argv"]
-        center = command["matrix"]["center"]
-        assert "CUDA_VISIBLE_DEVICES" not in command["env"]
-        assert "CUDA_VISIBLE_DEVICES" not in " ".join(argv)
-        assert argv[1].endswith("scripts/paper/run_ecgfounder_kshot_head_ft_20260517.py")
-        assert _option_value(argv, "--centers") == center
-        assert _option_value(argv, "--linear_probe_dir").endswith(
-            "/paper_foundation_baselines_20260530/ecgfounder_linear_probe_v7_from_v6_cache"
-        )
-        assert _option_value(argv, "--preprocess_policy") == "official_ptbxl_eval"
-        assert _option_value(argv, "--out_dir").endswith(
-            f"/runs/ecgfounder_direct_k500_v7_sjr_rgq/pytest_run/{center}"
-        )
-        assert _option_value(argv, "--ref_root").endswith(
-            "/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets"
-        )
-        assert _option_value(argv, "--k") == "500"
-        assert _option_value(argv, "--source_k") == "500"
-        assert _option_value(argv, "--subset_seed") == "20260531"
-        assert _option_value(argv, "--seed") == "20260531"
-        assert _option_value(argv, "--epochs") == "50"
-        assert _option_value(argv, "--val_fraction") == "0.2"
-        assert _option_value(argv, "--device") == "cuda"
-        assert "--reset_head" not in argv
-        assert "--force" not in argv
-
-    refs = manifest["artifact_trace"]["inputs"]["k500_refs"]
-    assert len(refs) == 4
-    assert all(
-        "/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets/"
-        in item["ref_meta_json"]["path"]
-        for item in refs
-    )
-    child_runs = manifest["artifact_trace"]["expected_outputs"]["child_runs"]
-    assert len(child_runs) == 4
-    for command, child_run in zip(commands, child_runs):
-        argv = command["argv"]
-        center = command["matrix"]["center"]
-        expected = ecgfounder_kshot_head_run_dir(
-            Path(_option_value(argv, "--out_dir")),
-            center=center,
-            k=500,
-            source_k=500,
-            epochs=50,
-            seed=20260531,
-        )
-        assert Path(child_run["child_run_dir"]) == expected
-
-
-def test_ecgfounder_direct_k500_v7_matrix_audit_rejects_missing_ref_root():
-    config = _load("ecgfounder_direct_k500_v7_sjr_rgq_matrix.yaml")
-    config = copy.deepcopy(config)
-    idx = config["runner"]["argv"].index("--ref_root")
-    del config["runner"]["argv"][idx : idx + 2]
-    validate_experiment_config(config, repo_root=REPO)
-
-    with pytest.raises(ConfigError, match="matrix command must pass --ref_root"):
-        build_runner_commands(config)
-
-
-def test_ecgfounder_vae_lhat_k500_v7_config_uses_v7_direct_heads_and_refs():
-    config = _load("ecgfounder_vae_lhat_k500_v7_sjr_rgq.yaml")
-    paths = validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-    manifest = make_dry_run_manifest(
-        config,
-        commands=commands,
-        local_paths=paths,
-        run_id="pytest_ecgfounder_vae_lhat_k500_v7",
-        cli_args=argparse.Namespace(dry_run=True, write_plan=False),
-    )
-
-    assert config["runner"]["adapter"] == "ecgfounder_vae_lhat"
-    assert "argv" not in config["runner"]
-    assert len(commands) == 4
-    for command in commands:
-        argv = command["argv"]
-        center = command["matrix"]["center"]
-        assert "CUDA_VISIBLE_DEVICES" not in command["env"]
-        assert "CUDA_VISIBLE_DEVICES" not in " ".join(argv)
-        assert argv[1].endswith("scripts/paper/run_ecgfounder_vae_only_lhat_head_ft_20260523.py")
-        assert _option_value(argv, "--centers") == center
-        assert _option_value(argv, "--out_dir").endswith(
-            f"/runs/ecgfounder_vae_lhat_k500_v7_sjr_rgq/pytest_run/{center}"
-        )
-        assert _option_value(argv, "--linear_probe_dir").endswith(
-            "/paper_foundation_baselines_20260530/ecgfounder_linear_probe_v7_from_v6_cache"
-        )
-        assert _option_value(argv, "--init_base_head_from_k500_root").endswith(
-            f"/runs/ecgfounder_direct_k500_v7_sjr_rgq/pytest_run/{center}/runs"
-        )
-        assert _option_value(argv, "--anchor_base_root").endswith(
-            "/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets"
-        )
-        assert _option_value(argv, "--ref_root").endswith(
-            "/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets"
-        )
-        assert _option_value(argv, "--k") == "500"
-        assert _option_value(argv, "--k_anchor") == "300"
-        assert _option_value(argv, "--hull_neighbor_distance_space") == "standardized"
-        assert _option_value(argv, "--hull_neighbor_mode") == "local_random"
-        assert _option_value(argv, "--hull_neighbor_pool_size") == "120"
-        assert _option_value(argv, "--hull_neighbor_pool_multiplier") == "4"
-        assert _option_value(argv, "--selection_source") == "target_real_val"
-        assert _option_value(argv, "--target_real_val_seed") == "20260531"
-        assert _option_value(argv, "--head_type") == "residual_adapter"
-        assert "--freeze_base_head" in argv
-        assert "--report_drop_all_zero_pn2021" in argv
-        assert "--enable_latent_augmix_branch" not in argv
-        assert "--force" not in argv
-
-    trace = manifest["artifact_trace"]
-    refs = trace["inputs"]["k500_refs"]
-    assert len(refs) == 4
-    assert all(
-        "/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets/"
-        in item["ref_meta_json"]["path"]
-        for item in refs
-    )
-    assert sum(item["role"] == "ecgfounder.k500_base_head.best_head"
-               for item in trace["inputs"]["init_heads"]) == 4
-    assert all(
-        "/runs/ecgfounder_direct_k500_v7_sjr_rgq/pytest_run/"
-        in item["path"]
-        for item in trace["inputs"]["init_heads"]
-        if item["role"] == "ecgfounder.k500_base_head.best_head"
-    )
-    child_runs = trace["expected_outputs"]["child_runs"]
-    assert len(child_runs) == 4
-    for command, child_run in zip(commands, child_runs):
-        argv = command["argv"]
-        center = command["matrix"]["center"]
-        expected = ecgfounder_lhat_run_dir(
-            Path(_option_value(argv, "--out_dir")),
-            center=center,
-            k=500,
-            hull_m=20,
-            hull_lambda="0.15",
-            epochs=20,
-            seed=20260531,
-        )
-        assert Path(child_run["child_run_dir"]) == expected
-        assert any(
-            item["role"] == "checkpoint_index"
-            and item["path"].endswith("/checkpoint_index.jsonl")
-            for item in child_run["expected_artifacts"]
-        )
-
-
-def test_ecgfounder_vae_lhat_augmix_config_enables_latent_augmix_branch():
-    config = _load("ecgfounder_vae_lhat_augmix_k500_v7_sjr_rgq.yaml")
-    validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-
-    assert config["experiment"]["name"] == "ecgfounder_vae_lhat_augmix_k500_v7_sjr_rgq"
-    assert len(commands) == 4
-    for command in commands:
-        argv = command["argv"]
-        assert "--enable_latent_augmix_branch" in argv
-        assert _option_value(argv, "--latent_augmix_latent_weight_cap") == "0.25"
-        assert _option_value(argv, "--latent_augmix_width") == "3"
-        assert _option_value(argv, "--latent_augmix_depth") == "-1"
-        assert _option_value(argv, "--latent_augmix_alpha") == "1.0"
-        assert _option_value(argv, "--latent_augmix_severity") == "2"
-        assert _all_option_values(argv, "--latent_augmix_ops") == [
-            "powerline_noise",
-            "emg_noise",
-            "baseline_wander",
-            "baseline_shift",
-        ]
-        assert _option_value(argv, "--out_dir").endswith(
-            "/runs/ecgfounder_vae_lhat_augmix_k500_v7_sjr_rgq/pytest_run/"
-            f"{command['matrix']['center']}"
-        )
-
-
-def test_ecgfounder_vae_lhat_raw_augmix_config_exposes_mixture_flags():
-    config = _load("ecgfounder_vae_lhat_k500_v7_sjr_rgq.yaml")
-    config = copy.deepcopy(config)
-    config["adaptation"]["raw_corrupt_consistency"] = {
-        "enabled": True,
-        "batch_size": 128,
-        "copies": 2,
-        "prob": 1.0,
-        "severity": 5,
-        "severity_profile": "calibrated_10to20pp",
-        "consistency_weight": 2.0,
-        "consistency_loss": "jsd",
-        "bce_weight": 1.0,
-        "max_batches": 64,
-        "scope": "source_target",
-        "clip_abs": 6.0,
-        "grad_clip": 1.0,
-        "source_signal_cache_dir": "${paths.data_root}/paper_effnet_source_signal_cache",
-        "ops": [
-            "powerline_noise",
-            "emg_noise",
-            "baseline_wander",
-            "baseline_shift",
-            "random_leads_masking",
-        ],
-        "no_renorm": True,
-        "view_mode": "augmix",
-        "augmix": {
-            "width": 1,
-            "depth": 1,
-            "alpha": 1.0,
-            "mixture_mode": "fixed",
-            "mixture_prob": 1.0,
-            "mixture_beta_a": 0.0,
-            "mixture_beta_b": 0.0,
-        },
-    }
-    validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-
-    assert len(commands) == 4
-    for command in commands:
-        argv = command["argv"]
-        assert "--enable_raw_corrupt_consistency" in argv
-        assert _option_value(argv, "--raw_corrupt_severity_profile") == "calibrated_10to20pp"
-        assert _option_value(argv, "--raw_corrupt_scope") == "source_target"
-        assert "--raw_corrupt_no_renorm" in argv
-        assert _option_value(argv, "--raw_corrupt_view_mode") == "augmix"
-        assert _option_value(argv, "--raw_augmix_width") == "1"
-        assert _option_value(argv, "--raw_augmix_depth") == "1"
-        assert _option_value(argv, "--raw_augmix_alpha") == "1.0"
-        assert _option_value(argv, "--raw_augmix_mixture_mode") == "fixed"
-        assert _option_value(argv, "--raw_augmix_mixture_prob") == "1.0"
-        assert _option_value(argv, "--raw_augmix_mixture_beta_a") == "0.0"
-        assert _option_value(argv, "--raw_augmix_mixture_beta_b") == "0.0"
-
-
-def test_ecgfounder_vae_lhat_diagnostic_last_epoch_config_is_explicitly_allowed():
-    config = _load("ecgfounder_vae_lhat_fullpool_raw_augmix_w1_m100_last_epoch_k500_v7_sjr_rgq_cpsc_2018.yaml")
-    validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-
-    assert config["run_record"]["registration_status"] == "exploratory"
-    assert len(commands) == 1
-    argv = commands[0]["argv"]
-    assert _option_value(argv, "--selection_metric") == "last_epoch"
-    assert _option_value(argv, "--raw_corrupt_view_mode") == "augmix"
-    assert _option_value(argv, "--raw_augmix_width") == "1"
-    assert _option_value(argv, "--raw_augmix_mixture_mode") == "fixed"
-
-
-def test_ecgfounder_vae_lhat_adapter_is_registered():
+def test_runner_adapter_registry_only_exposes_latest_mainline_adapters():
     from ecg_adv_gen.config.adapters.registry import runner_adapter_names
 
-    assert "ecgfounder_vae_lhat" in runner_adapter_names()
+    assert set(runner_adapter_names()) == {
+        "direct_finetune",
+        "ecgfounder_fullft",
+        "ecgfounder_pn2021c_eval",
+        "effnet_vae_lhat",
+        "pn2021_eval",
+        "pn2021c_eval",
+    }
+
+
+def test_experiment_schema_adapter_enum_matches_runtime_registry():
+    from ecg_adv_gen.config.adapters.registry import runner_adapter_names
+
+    schema = json.loads((REPO / "configs/schemas/experiment_config.schema.json").read_text(encoding="utf-8"))
+    adapter_enum = set(schema["properties"]["runner"]["properties"]["adapter"]["enum"])
+
+    assert adapter_enum == set(runner_adapter_names())
+
+
+def test_direct_finetune_adapter_does_not_keep_benchmark_entrypoint_branch():
+    from ecg_adv_gen.config.adapters import direct_finetune
+
+    source = inspect.getsource(direct_finetune)
+
+    assert "benchmark_direct_finetune.py" not in source
+    assert "build_benchmark_direct_finetune_argv" not in source
+
+
+def test_pn2021_eval_adapter_does_not_keep_prompt_token_entrypoint_branch():
+    from ecg_adv_gen.config.adapters import pn2021_eval
+
+    source = inspect.getsource(pn2021_eval)
+
+    assert "ecgtwin_prompt_token_online_at_minimal_eval" not in source
+    assert "prompt-token online-AT" not in source
+
+
+def test_unmanaged_adapter_files_are_removed_from_runtime_tree():
+    from ecg_adv_gen.config.runner_audit import audit_runner_command
+
+    removed_paths = {
+        "ecg_adv_gen/config/adapters/benchmark_vae_lhat.py",
+        "ecg_adv_gen/config/adapters/ecgfounder_vae_lhat.py",
+        "ecg_adv_gen/config/adapters/prompt_token_online_at.py",
+        "ecg_adv_gen/config/adapters/source_training.py",
+        "util/tests/test_benchmark_vae_lhat_adapter.py",
+        "util/tests/test_prompt_token_adapter.py",
+    }
+    active_index = yaml.safe_load((REPO / "configs" / "active_scripts.yaml").read_text(encoding="utf-8"))
+    source_of_truth_paths = set(active_index["source_of_truth"].values())
+
+    assert sorted(path for path in removed_paths if (REPO / path).exists()) == []
+    assert sorted(removed_paths & source_of_truth_paths) == []
+    assert "benchmark_vae_lhat" not in inspect.getsource(audit_runner_command)
 
 
 def test_high_risk_long_argv_adapters_are_registered():
@@ -2407,7 +654,6 @@ def test_high_risk_long_argv_adapters_are_registered():
     assert {
         "pn2021_eval",
         "pn2021c_eval",
-        "prompt_token_online_at",
         "direct_finetune",
     } <= names
 
@@ -2416,9 +662,8 @@ def test_high_risk_long_argv_adapters_are_registered():
     ("config_name", "adapter_name", "expected_commands"),
     [
         ("pn2021_eval_v7_sjr_rgq_refexcluded.yaml", "pn2021_eval", 4),
-        ("pn2021c_effnet_v7_augmix_vs_noaug.yaml", "pn2021c_eval", 8),
-        ("ecgtwin_prompt_token_online_at_minimal.yaml", "prompt_token_online_at", 1),
-        ("effnet_direct_k500_v7_sjr_rgq_matrix.yaml", "direct_finetune", 4),
+        ("pn2021c_effnet_threechain_locked_official_s5.yaml", "pn2021c_eval", 4),
+        ("effnet_direct_k500_v7_sjr_rgq.yaml", "direct_finetune", 1),
     ],
 )
 def test_high_risk_long_argv_configs_use_typed_adapters(config_name: str, adapter_name: str, expected_commands: int):
@@ -2430,19 +675,8 @@ def test_high_risk_long_argv_configs_use_typed_adapters(config_name: str, adapte
     assert len(commands) == expected_commands
 
 
-def test_ecgfounder_vae_lhat_k500_v7_audit_rejects_missing_ref_root():
-    config = _load("ecgfounder_vae_lhat_k500_v7_sjr_rgq.yaml")
-    validate_experiment_config(config, repo_root=REPO)
-    command = copy.deepcopy(build_runner_commands(config)[0])
-    idx = command["argv"].index("--ref_root")
-    del command["argv"][idx : idx + 2]
-
-    with pytest.raises(ConfigError, match="matrix command must pass --ref_root"):
-        audit_runner_commands(config, [command])
-
-
 def test_effnet_direct_manifest_child_dir_uses_shared_run_naming_helper():
-    config = _load("effnet_direct_k500_v6.yaml")
+    config = _load("effnet_direct_k500_v7_sjr_rgq.yaml")
     paths = validate_experiment_config(config, repo_root=REPO)
     command = build_runner_commands(config)[0]
     manifest = make_dry_run_manifest(
@@ -2475,25 +709,25 @@ def test_effnet_direct_manifest_child_dir_uses_shared_run_naming_helper():
 
 
 def test_runner_audit_rejects_unscoped_output_root():
-    config = _load("effnet_direct_k500_v6.yaml")
-    config = copy.deepcopy(config)
-    idx = config["runner"]["argv"].index("--out_root")
-    config["runner"]["argv"][idx + 1] = f"{config['paths']['output_root']}/effnet_direct_k500_v6"
+    config = _load("effnet_direct_k500_v7_sjr_rgq.yaml")
     validate_experiment_config(config, repo_root=REPO)
+    command = copy.deepcopy(build_runner_commands(config)[0])
+    idx = command["argv"].index("--out_root")
+    command["argv"][idx + 1] = f"{config['paths']['output_root']}/effnet_direct_k500_v7_sjr_rgq"
 
     with pytest.raises(ConfigError, match="must include runtime.run_id"):
-        build_runner_commands(config)
+        audit_runner_commands(config, [command])
 
 
 @pytest.mark.parametrize(
-    ("option", "script"),
+    ("option", "script_path"),
     [
-        ("--input_dirs", "merge_gated_prompt_token_pools.py"),
-        ("--gated_dirs", "select_quality_prompt_token_pool.py"),
+        ("--input_dirs", "ecg_adv_gen/runner/merge_gated_prompt_token_pools.py"),
+        ("--gated_dirs", "ecg_adv_gen/runner/select_quality_prompt_token_pool.py"),
     ],
 )
-def test_runner_audit_checks_multi_input_directory_options(option: str, script: str):
-    config = _load("effnet_direct_k500_v6.yaml")
+def test_runner_audit_rejects_historical_prompt_pool_tools(option: str, script_path: str):
+    config = _load("effnet_direct_k500_v7_sjr_rgq.yaml")
     outside_path = "/tmp/outside_gated_pool"
     command = {
         "name": "pytest_multi_input_dir_audit",
@@ -2502,7 +736,7 @@ def test_runner_audit_checks_multi_input_directory_options(option: str, script: 
         "env": {},
         "argv": [
             "/home/linbinhao/micromamba/envs/ECGTwin/bin/python",
-            str(REPO / "scripts" / "ecgtwin_gen" / script),
+            str(REPO / script_path),
             option,
             str(REPO / "safe_gated_pool"),
             outside_path,
@@ -2511,12 +745,12 @@ def test_runner_audit_checks_multi_input_directory_options(option: str, script: 
         ],
     }
 
-    with pytest.raises(ConfigError, match=option):
+    with pytest.raises(ConfigError, match="not in the managed runner allowlist"):
         audit_runner_commands(config, [command])
 
 
 def test_runner_audit_records_managed_entrypoint_profiles():
-    config = _load("ecgtwin_prompt_token_online_at_minimal.yaml")
+    config = _load("effnet_vae_lhat_augmix_threechain_locked_k500.yaml")
     commands = build_runner_commands(config)
     manifest = make_dry_run_manifest(
         config,
@@ -2524,7 +758,7 @@ def test_runner_audit_records_managed_entrypoint_profiles():
         local_paths=validate_experiment_config(config, repo_root=REPO),
         run_id=config["runtime"]["run_id"],
         cli_args=argparse.Namespace(
-            config="configs/experiments/ecgtwin_prompt_token_online_at_minimal.yaml",
+            config="configs/experiments/effnet_vae_lhat_augmix_threechain_locked_k500.yaml",
             local_config=str(LOCAL_EXAMPLE),
             run_id=config["runtime"]["run_id"],
             dry_run=True,
@@ -2540,54 +774,15 @@ def test_runner_audit_records_managed_entrypoint_profiles():
 
     assert command_profiles
     assert {
-        "script_name": "synth_online_at_super5.py",
-        "relative_path": "scripts/pgd_cross_center/synth_online_at_super5.py",
-        "wrapper_root": "scripts/pgd_cross_center",
-        "family": "synthetic_online_adversarial_training",
+        "script_name": "effnet_vae_lhat_augmix.py",
+        "relative_path": "ecg_adv_gen/runner/effnet_vae_lhat_augmix.py",
+        "runner_root": "ecg_adv_gen/runner",
+        "family": "effnet_vae_lhat",
     } in command_profiles
 
 
-def test_train_ptbxl_command_audit_adapter_rejects_non_auprc_checkpoint_metric():
-    config = _load("benchmark_source_v7_sjr_rgq_matrix.yaml")
-    command = build_runner_commands(config)[0]
-
-    assert audit_train_ptbxl_command(command, expected_seed=20260531) == []
-
-    bad = copy.deepcopy(command)
-    idx = bad["argv"].index("--checkpoint_metric")
-    bad["argv"][idx + 1] = "auroc"
-
-    errors = audit_train_ptbxl_command(bad, expected_seed=20260531)
-
-    assert any("--checkpoint_metric" in error for error in errors)
-
-
-def test_direct_finetune_command_audit_adapter_rejects_wrong_matrix_center():
-    config = _load("effnet_direct_k500_v7_sjr_rgq_matrix.yaml")
-    command = build_runner_commands(config)[0]
-
-    assert audit_direct_finetune_command(
-        command,
-        expected_k=500,
-        expected_seed=20260531,
-        target_centers=set(config["paper_protocol"]["centers"]["target_4"]),
-    ) == []
-
-    bad = copy.deepcopy(command)
-    bad["matrix"]["center"] = "georgia"
-
-    errors = audit_direct_finetune_command(
-        bad,
-        expected_k=500,
-        expected_seed=20260531,
-        target_centers=set(config["paper_protocol"]["centers"]["target_4"]),
-    )
-
-    assert any("matrix center" in error for error in errors)
-
-
 def test_postprocess_audit_rejects_unscoped_output_dir():
-    config = _load("effnet_direct_k500_v6.yaml")
+    config = _load("effnet_direct_k500_v7_sjr_rgq.yaml")
     config = copy.deepcopy(config)
     idx = config["postprocess"]["commands"][0]["argv"].index("--output-dir")
     config["postprocess"]["commands"][0]["argv"][idx + 1] = f"{config['paths']['output_root']}/metrics_export"
@@ -2599,7 +794,7 @@ def test_postprocess_audit_rejects_unscoped_output_dir():
 
 def test_cli_set_overrides_are_whitelisted_and_applied_before_interpolation():
     config = load_experiment_config(
-        REPO / "configs" / "experiments" / "effnet_direct_k500_v6.yaml",
+        REPO / "configs" / "experiments" / "effnet_direct_k500_v7_sjr_rgq.yaml",
         LOCAL_EXAMPLE,
         overrides=[
             "training.epochs=2",
@@ -2628,33 +823,13 @@ def test_cli_set_overrides_are_whitelisted_and_applied_before_interpolation():
 
 
 def test_cli_set_rejects_protocol_and_type_changes():
-    config = _load("effnet_direct_k500_v6.yaml")
+    config = _load("effnet_direct_k500_v7_sjr_rgq.yaml")
     with pytest.raises(ConfigError, match="not allowed"):
         apply_cli_overrides(config, ["paper_protocol.kshot.k=100"])
     with pytest.raises(ConfigError, match="expects int"):
         apply_cli_overrides(config, ["training.epochs=two"])
     with pytest.raises(ConfigError, match="key=value"):
         apply_cli_overrides(config, ["training.epochs"])
-
-
-def test_ecgfounder_inithead_command_has_required_k500_inputs():
-    config = _load("ecgfounder_inithead_fullft_k500_v6.yaml")
-    validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-
-    assert len(commands) == 4
-    for command in commands:
-        argv = command["argv"]
-        assert "--ref_meta_json" in argv
-        assert _option_value(argv, "--ref_meta_json").endswith("_real_k500_seed20260531.ref_meta.json")
-        assert _option_value(argv, "--k") == "500"
-        assert "--init_head_path" in argv
-        assert _option_value(argv, "--init_head_path").endswith("best_head.pt")
-        assert _option_value(argv, "--eval_batch_size") == "128"
-        assert _option_value(argv, "--source_train_limit") == "0"
-        assert _option_value(argv, "--cache_dir") == ""
-        assert _option_value(argv, "--selection_metric") == "source_plus_target_val_auprc"
-        assert _option_value(argv, "--target_val_count") == "100"
 
 
 def test_ecgfounder_locked_fullft_adapter_is_registered():
@@ -2674,7 +849,7 @@ def test_ecgfounder_locked_k500_fullft_command_uses_last_checkpoint_no_head_rout
     for command in commands:
         argv = command["argv"]
         center = command["matrix"]["center"]
-        assert argv[1].endswith("scripts/paper/run_ecgfounder_fullft_super5_pilot_20260523.py")
+        assert argv[1].endswith("ecg_adv_gen/runner/ecgfounder_fullft.py")
         assert _option_value(argv, "--center") == center
         assert _option_value(argv, "--ref_meta_json").endswith(
             f"/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets/{center}/"
@@ -2710,12 +885,17 @@ def test_ecgfounder_locked_threechain_augmix_command_uses_fullft_last_checkpoint
 
     assert config["runner"]["adapter"] == "ecgfounder_fullft"
     assert config["paper_protocol"]["selection"]["policy"] == "last_checkpoint_only"
+    assert config["adaptation"]["latent_augmix"]["chain_roles"] == [
+        {"name": "chain1", "role": "official_corruption_chain"},
+        {"name": "chain2", "role": "official_corruption_chain"},
+        {"name": "chain3", "role": "vae_lhat_adversarial_waveform"},
+    ]
     assert len(commands) == 4
     for command in commands:
         argv = command["argv"]
         center = command["matrix"]["center"]
         joined = " ".join(argv)
-        assert argv[1].endswith("scripts/paper/run_ecgfounder_fullft_super5_pilot_20260523.py")
+        assert argv[1].endswith("ecg_adv_gen/runner/ecgfounder_fullft.py")
         assert _option_value(argv, "--center") == center
         assert _option_value(argv, "--checkpoint_policy") == "last"
         assert _option_value(argv, "--target_val_count") == "0"
@@ -2776,6 +956,18 @@ def test_ecgfounder_locked_threechain_augmix_can_reuse_locked_upstream_run_id():
     assert audit["errors"] == []
 
 
+def test_ecgfounder_fullft_adapter_passes_hull_init_logit_gap():
+    config = _load("ecgfounder_vae_lhat_augmix_threechain_locked_k500.yaml")
+    config = copy.deepcopy(config)
+    config["runner"]["matrix"]["center"] = ["cpsc_2018"]
+    config["adaptation"]["hull"]["init_logit_gap"] = 0.0
+
+    commands = build_runner_commands(config)
+
+    argv = commands[0]["argv"]
+    assert _option_value(argv, "--hull_init_logit_gap") == "0.0"
+
+
 def test_ecgfounder_locked_threechain_augmix_manifest_expects_last_model():
     config = _load("ecgfounder_vae_lhat_augmix_threechain_locked_k500.yaml")
     paths = validate_experiment_config(config, repo_root=REPO)
@@ -2821,7 +1013,7 @@ def test_ecgfounder_locked_ptbxl_fullft_command_is_source_only_last_checkpoint()
     assert config["adaptation"]["stage"] == "ptbxl_source"
     assert len(commands) == 1
     argv = commands[0]["argv"]
-    assert argv[1].endswith("scripts/paper/run_ecgfounder_fullft_super5_pilot_20260523.py")
+    assert argv[1].endswith("ecg_adv_gen/runner/ecgfounder_fullft.py")
     assert _option_value(argv, "--stage") == "ptbxl_source"
     assert _option_value(argv, "--checkpoint_policy") == "last"
     assert _option_value(argv, "--selection_metric") == "source_auprc"
@@ -2890,288 +1082,8 @@ def test_ecgfounder_locked_k500_fullft_manifest_expects_last_model():
         assert all(not item["path"].endswith("best_head.pt") for item in child["expected_artifacts"])
 
 
-def test_ecgfounder_inithead_manifest_child_dirs_use_shared_fullft_naming_helper():
-    config = _load("ecgfounder_inithead_fullft_k500_v6.yaml")
-    paths = validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-    manifest = make_dry_run_manifest(
-        config,
-        commands=commands,
-        local_paths=paths,
-        run_id="pytest_ecgfounder_fullft_naming",
-        cli_args=argparse.Namespace(dry_run=True, write_plan=False),
-    )
-    child_runs = manifest["artifact_trace"]["expected_outputs"]["child_runs"]
-
-    assert len(child_runs) == len(commands) == 4
-    for command, child in zip(commands, child_runs):
-        argv = command["argv"]
-        center = command["matrix"]["center"]
-        expected_leaf = build_ecgfounder_fullft_run_leaf(
-            {
-                "center": center,
-                "k": _option_value(argv, "--k"),
-                "epochs": _option_value(argv, "--epochs"),
-                "lr": _option_value(argv, "--lr"),
-                "source_weight": _option_value_or(argv, "--source_weight", "1.0"),
-                "target_real_weight": _option_value_or(argv, "--target_real_weight", "40.0"),
-                "init_head_path": _option_value_or(argv, "--init_head_path", ""),
-                "run_suffix": _option_value_or(argv, "--run_suffix", ""),
-                "target_val_count": _option_value_or(argv, "--target_val_count", "0"),
-                "target_val_seed": _option_value_or(argv, "--target_val_seed"),
-                "selection_metric": _option_value_or(argv, "--selection_metric", "source_auprc"),
-                "seed": _option_value(argv, "--seed"),
-            }
-        )
-
-        assert Path(child["child_run_dir"]).name == expected_leaf
-
-
-def test_ecgfounder_direct_headft_command_has_required_k500_inputs():
-    config = _load("ecgfounder_direct_k500_v6.yaml")
-    validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-
-    assert len(commands) == 1
-    argv = commands[0]["argv"]
-    assert argv[1].endswith("scripts/paper/run_ecgfounder_kshot_head_ft_20260517.py")
-    centers_start = argv.index("--centers") + 1
-    centers_end = argv.index("--linear_probe_dir")
-    assert set(argv[centers_start:centers_end]) == {"ningbo", "chapman_shaoxing", "cpsc_2018", "georgia"}
-    assert _option_value(argv, "--linear_probe_dir").endswith(
-        "/paper_foundation_baselines_20260524/ecgfounder_linear_probe_v6_from_legacy_cache"
-    )
-    assert _option_value(argv, "--preprocess_policy") == "official_ptbxl_eval"
-    assert _option_value(argv, "--out_dir").endswith("/runs/ecgfounder_direct_k500_v6/pytest_run")
-    assert _option_value(argv, "--k") == "500"
-    assert _option_value(argv, "--source_k") == "500"
-    assert _option_value(argv, "--subset_seed") == "20260531"
-    assert _option_value(argv, "--seed") == "20260531"
-    assert _option_value(argv, "--epochs") == "50"
-    assert _option_value(argv, "--val_fraction") == "0.2"
-    assert _option_value(argv, "--device") == "cuda"
-    assert "--reset_head" not in argv
-    assert "--force" not in argv
-
-
-def test_ecgfounder_inithead_smoke_command_reuses_signal_cache_and_limits_runtime():
-    config = _load("ecgfounder_inithead_fullft_k500_v6_smoke.yaml")
-    validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-    postprocess_commands = build_postprocess_commands(config)
-    paths = validate_experiment_config(config, repo_root=REPO)
-    manifest = make_dry_run_manifest(
-        config,
-        commands=commands,
-        local_paths=paths,
-        run_id="pytest_ecgfounder_inithead_smoke",
-        cli_args=argparse.Namespace(dry_run=True, write_plan=False),
-        postprocess_commands=postprocess_commands,
-    )
-
-    assert config["experiment"]["status"] == "smoke-only"
-    assert config["paper_protocol"]["centers"]["target_4"] == [
-        "ningbo",
-        "chapman_shaoxing",
-        "cpsc_2018",
-        "georgia",
-    ]
-    assert len(commands) == 4
-    for command in commands:
-        argv = command["argv"]
-        center = command["matrix"]["center"]
-        assert argv[1].endswith("scripts/paper/run_ecgfounder_fullft_super5_pilot_20260523.py")
-        assert _option_value(argv, "--center") == center
-        assert _option_value(argv, "--epochs") == "1"
-        assert _option_value(argv, "--num_workers") == "0"
-        assert _option_value(argv, "--batch_size") == "32"
-        assert _option_value(argv, "--eval_batch_size") == "64"
-        assert _option_value(argv, "--source_train_limit") == "64"
-        assert _option_value(argv, "--target_val_count") == "20"
-        assert _option_value(argv, "--run_name") == f"{center}_smoke_inithead_fullft_ep1"
-        assert _option_value(argv, "--cache_dir").endswith(
-            "/paper_ecgfounder_fullft_signal_cache_union_20260528/cache"
-        )
-    assert len(postprocess_commands) == 3
-    assert any(
-        item["role"] == "ecgfounder.fullft.signal_cache_dir"
-        for item in manifest["artifact_trace"]["inputs"]["data_caches"]
-    )
-
-
-def test_ecgfounder_vae_lhat_command_has_paper_safe_k500_inputs():
-    config = _load("ecgfounder_vae_lhat_k500_v6.yaml")
-    validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-
-    assert len(commands) == 4
-    for command in commands:
-        argv = command["argv"]
-        center = command["matrix"]["center"]
-        assert argv[1].endswith("scripts/paper/run_ecgfounder_vae_only_lhat_head_ft_20260523.py")
-        assert _option_value(argv, "--centers") == center
-        assert _option_value(argv, "--out_dir").endswith(
-            f"/runs/ecgfounder_vae_lhat_k500_v6/pytest_run/{center}"
-        )
-        assert _option_value(argv, "--linear_probe_dir").endswith(
-            "/paper_foundation_baselines_20260524/ecgfounder_linear_probe_v6_from_legacy_cache"
-        )
-        assert _option_value(argv, "--checkpoint").endswith("/ecgfounder/checkpoint/12_lead_ECGFounder.pth")
-        assert _option_value(argv, "--preprocess_policy") == "official_ptbxl_eval"
-        assert _option_value(argv, "--k") == "500"
-        assert _option_value(argv, "--k_anchor") == "300"
-        assert _option_value(argv, "--anchor_sample_mode") == "hard_bce"
-        assert _option_value(argv, "--hull_m") == "20"
-        assert _option_value(argv, "--hull_lambda") == "0.15"
-        assert _option_value(argv, "--hull_steps") == "5"
-        assert _option_value(argv, "--head_type") == "residual_adapter"
-        assert _option_value(argv, "--source_train_limit") == "0"
-        assert "--freeze_base_head" in argv
-        assert _option_value(argv, "--init_base_head_from_k500_root").endswith(
-            "/paper_foundation_baselines_20260524/ecgfounder_kshot_head_ft_v6_from_legacy_cache/runs"
-        )
-        assert _option_value(argv, "--selection_metric") == "target_auprc"
-        assert _option_value(argv, "--selection_source") == "target_real_val"
-        assert _option_value(argv, "--target_real_val_seed") == "20260531"
-        assert _option_value(argv, "--anchor_base_root").endswith("/paper_vae_only_lhat_kcurve_20260518/subsets")
-        assert _option_value(argv, "--device") == "cuda"
-        assert "--report_drop_all_zero_pn2021" in argv
-        assert "--force" not in argv
-
-
-def test_pn2021_eval_command_has_refexcluded_v6_inputs():
-    config = _load("pn2021_eval_v6_refexcluded.yaml")
-    paths = validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-    postprocess_commands = build_postprocess_commands(config)
-    manifest = make_dry_run_manifest(
-        config,
-        commands=commands,
-        local_paths=paths,
-        run_id="pytest_pn2021_eval_v6",
-        cli_args=argparse.Namespace(dry_run=True, write_plan=False),
-        postprocess_commands=postprocess_commands,
-    )
-
-    assert len(commands) == 4
-    for command in commands:
-        argv = command["argv"]
-        center = command["matrix"]["center"]
-        assert argv[1].endswith("scripts/triple_labels/eval_crosscenter.py")
-        assert _option_value(argv, "--scheme") == "super5"
-        assert _option_value(argv, "--model_name") == "efficientnet1dv2"
-        assert _option_value(argv, "--model_dir").endswith(
-            f"/{center}_K500_direct_ft_ep30_seed20260531_val0.2"
-        )
-        assert _option_value(argv, "--crop_len") == "1000"
-        assert _option_value(argv, "--preprocess_mode") == "minimal_resample"
-        assert _option_value(argv, "--norm_mode") == "per_sample_global"
-        assert "--skip_mimic" in argv
-        assert "--report_drop_all_zero_pn2021" in argv
-        ref_start = argv.index("--exclude_ref_ids") + 1
-        ref_end = argv.index("--output_path")
-        ref_metas = argv[ref_start:ref_end]
-        assert len(ref_metas) == 4
-        assert all("k500_seed20260531" in path for path in ref_metas)
-        assert _option_value(argv, "--output_path").endswith(
-            f"/pn2021_eval_v6_refexcluded/pytest_run/{center}/eval_result_v7_super5_sjr_rgq_refexcluded.json"
-        )
-
-    traced_checkpoints = manifest["artifact_trace"]["inputs"]["checkpoints"]
-    assert any(item["role"] == "command.model_dir.best_model" for item in traced_checkpoints)
-    assert len(manifest["artifact_trace"]["inputs"]["k500_refs"]) == 16
-    assert len(postprocess_commands) == 3
-    assert postprocess_commands[0]["argv"][1].endswith("scripts/export_metrics_long.py")
-    assert "--expected-mapping-version" in postprocess_commands[0]["argv"]
-    assert "v7_super5_sjr_rgq_review_20260528" in postprocess_commands[0]["argv"]
-    assert postprocess_commands[1]["argv"][1].endswith("scripts/export_paper_table.py")
-    assert "pn2021_all_zero_kept_refexcluded" in postprocess_commands[1]["argv"]
-    assert "pn2021_drop_all_zero_refexcluded" in postprocess_commands[2]["argv"]
-    postprocess_runs = manifest["artifact_trace"]["expected_outputs"]["postprocess_runs"]
-    assert len(postprocess_runs) == 3
-    assert any(
-        artifact["role"] == "metrics_long"
-        for run in postprocess_runs
-        for artifact in run["expected_artifacts"]
-    )
-
-
-def test_pn2021_eval_smoke_command_limits_runtime_samples():
-    config = _load("pn2021_eval_v6_refexcluded_smoke.yaml")
-    validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-
-    assert config["experiment"]["status"] == "smoke-only"
-    assert len(commands) == 4
-    for command in commands:
-        argv = command["argv"]
-        center = command["matrix"]["center"]
-        assert argv[1].endswith("scripts/triple_labels/eval_crosscenter.py")
-        assert _option_value(argv, "--pn2021_limit") == "64"
-        assert _option_value(argv, "--num_workers") == "0"
-        assert _option_value(argv, "--min_pos") == "2"
-        assert _option_value(argv, "--output_path").endswith(
-            f"/pn2021_eval_v6_refexcluded_smoke/pytest_run/{center}/eval_result_v7_super5_sjr_rgq_refexcluded_smoke.json"
-        )
-
-
-def test_pn2021c_effnet_v7_augmix_config_generates_refexcluded_corruption_commands():
-    config = _load("pn2021c_effnet_v7_augmix_vs_noaug.yaml")
-    paths = validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-    manifest = make_dry_run_manifest(
-        config,
-        commands=commands,
-        local_paths=paths,
-        run_id="pytest_pn2021c_effnet_v7",
-        cli_args=argparse.Namespace(dry_run=True, write_plan=False),
-    )
-
-    assert len(commands) == 8
-    seen = {(cmd["matrix"]["center"], cmd["matrix"]["method"]["name"]) for cmd in commands}
-    assert seen == {
-        (center, method)
-        for center in ["ningbo", "chapman_shaoxing", "cpsc_2018", "georgia"]
-        for method in ["vae_noaug", "vae_lhat"]
-    }
-    for command in commands:
-        argv = command["argv"]
-        center = command["matrix"]["center"]
-        method = command["matrix"]["method"]["name"]
-        assert argv[1].endswith("scripts/triple_labels/eval_pn2021_corruptions.py")
-        assert _option_value(argv, "--mode") == "stream"
-        assert _option_value(argv, "--scheme") == "super5"
-        assert _option_value(argv, "--centers") == center
-        assert _option_value(argv, "--device") == "cuda"
-        assert _option_value(argv, "--crop_len") == "1000"
-        assert _option_value(argv, "--severity_profile") == "standard"
-        assert _option_value(argv, "--seed") == "20260501"
-        model_dir = _option_value(argv, "--model_dir")
-        assert f"/effnet_{method}_k500_v7_sjr_rgq/" in model_dir
-        assert f"/{center}_realall_" in model_dir
-        assert _option_value(argv, "--clean_eval_json") == f"{model_dir}/eval_result_v7_exclrefs_crop1000.json"
-        assert _option_value(argv, "--exclude_ref_ids").endswith(
-            f"/{center}/k500_seed20260531/{center}_real_k500_seed20260531.ref_meta.json"
-        )
-        assert _option_value(argv, "--output_path").endswith(
-            f"/pn2021c_effnet_v7_augmix_vs_noaug/pytest_run/{center}/{method}/"
-            "eval_pn2021_c_v7_refexcluded_stream_standard.json"
-        )
-        if method == "vae_noaug":
-            assert "_noaugmix_" in model_dir
-        else:
-            assert "_noaugmix_" not in model_dir
-
-    traced_refs = manifest["artifact_trace"]["inputs"]["k500_refs"]
-    assert len(traced_refs) == 8
-    assert {ref["center"] for ref in traced_refs} == {"ningbo", "chapman_shaoxing", "cpsc_2018", "georgia"}
-    child_runs = manifest["artifact_trace"]["expected_outputs"]["child_runs"]
-    assert len(child_runs) == 8
-    assert all(child["expected_artifacts"][0]["role"] == "eval_result" for child in child_runs)
-
-
-def test_pn2021c_official_s5_locked_protocol_overrides_selection_and_raw_order():
-    config = _load("pn2021c_official_s5_locked_protocol.yaml")
+def test_pn2021c_effnet_threechain_locked_protocol_overrides_selection_and_raw_order():
+    config = _load("pn2021c_effnet_threechain_locked_official_s5.yaml")
     paths = validate_experiment_config(config, repo_root=REPO)
     commands = build_runner_commands(config)
     manifest = make_dry_run_manifest(
@@ -3182,7 +1094,7 @@ def test_pn2021c_official_s5_locked_protocol_overrides_selection_and_raw_order()
         cli_args=argparse.Namespace(dry_run=True, write_plan=False),
     )
 
-    assert len(commands) == 8
+    assert len(commands) == 4
     assert config["paper_protocol"]["selection"]["policy"] == "last_checkpoint_only"
     assert config["paper_protocol"]["selection"]["forbid_k500_validation_split"] is True
     assert config["paper_protocol"]["selection"]["forbid_best_checkpoint_selection"] is True
@@ -3254,13 +1166,14 @@ def test_pn2021c_ecgfounder_threechain_locked_official_s5_targets_locked_run_dir
         argv = command["argv"]
         center = command["matrix"]["center"]
         run_dir = _option_value(argv, "--run_dir")
-        assert argv[1].endswith("scripts/triple_labels/eval_ecgfounder_pn2021_corruptions.py")
+        assert argv[1].endswith("ecg_adv_gen/runner/ecgfounder_pn2021c_eval.py")
         assert run_dir == (
             f"/home/linbinhao/ECG_adv_data/runs/"
             f"ecgfounder_vae_lhat_augmix_threechain_locked_k500/"
             f"{config['runtime']['run_id']}/runs/{center}_vae_lhat_augmix_threechain_locked"
         )
         assert _option_value(argv, "--corruption_input") == "bottleneck5000"
+        assert _option_value(argv, "--crop_len") == "1000"
         assert _option_value(argv, "--severity_profile") == "standard"
         assert _option_value(argv, "--severities") == "5"
         assert _option_value(argv, "--output_path").endswith(
@@ -3281,200 +1194,59 @@ def test_pn2021c_ecgfounder_threechain_locked_official_s5_targets_locked_run_dir
     assert all(child["expected_artifacts"][0]["role"] == "eval_result" for child in child_runs)
 
 
-def test_pn2021c_effnet_v7_strong_config_uses_calibrated_profile():
-    config = _load("pn2021c_effnet_v7_strong_10to20pp.yaml")
+def test_pn2021c_ecgfounder_depth23_composite_config_uses_official_locked_surface():
+    config = _load("pn2021c_ecgfounder_official_s5_depth23_composite.yaml")
     validate_experiment_config(config, repo_root=REPO)
     commands = build_runner_commands(config)
 
-    assert len(commands) == 8
-    assert config["experiment"]["name"] == "pn2021c_effnet_v7_strong_10to20pp"
-    assert config["evaluation"]["severity_profile"] == "calibrated_10to20pp"
-    assert config["evaluation"]["severities"] == [5]
+    assert len(commands) == 4
     for command in commands:
         argv = command["argv"]
-        center = command["matrix"]["center"]
-        method = command["matrix"]["method"]["name"]
-        assert _option_value(argv, "--severity_profile") == "calibrated_10to20pp"
+        assert _option_value(argv, "--corruption_input") == "bottleneck5000"
+        assert _option_value(argv, "--crop_len") == "1000"
+        assert _option_value(argv, "--severity_profile") == "standard"
         assert _option_value(argv, "--severities") == "5"
+        assert _all_option_values(argv, "--corruptions") == official_s5_depth23_composites()
         assert _option_value(argv, "--output_path").endswith(
-            f"/pn2021c_effnet_v7_strong_10to20pp/pytest_run/{center}/{method}/"
-            "eval_pn2021_c_v7_refexcluded_stream_calibrated_10to20pp.json"
+            "/ecgfounder_threechain_locked/"
+            "eval_pn2021_c_ecgfounder_v7_refexcluded_stream_standard_official_s5_depth23_composite.json"
         )
 
 
-def test_pn2021c_effnet_v7_strong_smoke_config_targets_ningbo_only(tmp_path: Path):
-    config = _load("pn2021c_effnet_v7_strong_10to20pp_smoke.yaml")
-    local_paths = validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-    manifest = make_dry_run_manifest(
-        config,
-        commands=commands,
-        local_paths=local_paths,
-        run_id="pytest_run",
-        postprocess_commands=[],
-        cli_args=argparse.Namespace(
-            config="configs/experiments/pn2021c_effnet_v7_strong_10to20pp_smoke.yaml",
-            local_config="configs/local/linbinhao_server.example.yaml",
-            run_id="pytest_run",
-            dry_run=True,
-            write_plan=True,
-        ),
-    )
-
-    assert len(commands) == 2
-    assert config["experiment"]["name"] == "pn2021c_effnet_v7_strong_10to20pp_smoke"
-    assert config["paper_protocol"]["centers"]["target_4"] == [
-        "ningbo",
-        "chapman_shaoxing",
-        "cpsc_2018",
-        "georgia",
-    ]
-    assert {command["matrix"]["center"] for command in commands} == {"ningbo"}
-    for command in commands:
-        argv = command["argv"]
-        assert _option_value(argv, "--severity_profile") == "calibrated_10to20pp"
-
-    traced_refs = manifest["artifact_trace"]["inputs"]["k500_refs"]
-    assert len(traced_refs) == 2
-    assert {ref["center"] for ref in traced_refs} == {"ningbo"}
-
-    artifact_path = tmp_path / "k500_ref_ids.json"
-    write_k500_ref_ids_artifact(manifest, artifact_path)
-    k500_payload = json.loads(artifact_path.read_text(encoding="utf-8"))
-    assert set(k500_payload["centers"]) == {"ningbo"}
-
-
-def test_pn2021c_strong_raw_candidates_use_seed20260601_ref_exclusion():
-    config = _load("pn2021c_effnet_v7_strong_raw_candidates_smoke.yaml")
+def test_pn2021c_effnet_depth23_composite_config_uses_official_locked_surface():
+    config = _load("pn2021c_effnet_official_s5_depth23_composite.yaml")
     validate_experiment_config(config, repo_root=REPO)
     commands = build_runner_commands(config)
 
-    assert config["paper_protocol"]["kshot"]["seed"] == 20260601
-    assert config["paper_protocol"]["kshot"]["subset_seed"] == 20260601
-    assert len(commands) == 5
+    assert len(commands) == 4
     for command in commands:
         argv = command["argv"]
-        center = command["matrix"]["center"]
-        assert _option_value(argv, "--exclude_ref_ids").endswith(
-            f"/{center}/k500_seed20260601/{center}_real_k500_seed20260601.ref_meta.json"
-        )
+        assert _option_value(argv, "--corruption_input") == "raw_first"
+        assert _option_value(argv, "--crop_len") == "1000"
+        assert _option_value(argv, "--checkpoint_name") == "last_model.pt"
+        assert _option_value(argv, "--severity_profile") == "standard"
         assert _option_value(argv, "--severities") == "5"
-        assert _option_value(argv, "--num_workers") == "0"
-        assert _option_value(argv, "--centers") == "ningbo"
-
-
-def test_effnet_direct_smoke_command_limits_runtime_eval_samples():
-    config = _load("effnet_direct_k500_v6_smoke.yaml")
-    validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-    postprocess_commands = build_postprocess_commands(config)
-
-    assert config["experiment"]["status"] == "smoke-only"
-    assert len(commands) == 1
-    argv = commands[0]["argv"]
-    assert argv[1].endswith("scripts/paper/run_direct_finetune_k500_20260516.py")
-    assert _option_value(argv, "--epochs") == "1"
-    assert _option_value(argv, "--num_workers") == "0"
-    assert _option_value(argv, "--eval_min_pos") == "2"
-    assert _option_value(argv, "--eval_pn2021_limit") == "64"
-    assert _option_value(argv, "--out_root").endswith("/runs/effnet_direct_k500_v6_smoke/pytest_run")
-    assert len(postprocess_commands) == 3
-
-
-def test_effnet_vae_lhat_smoke_command_limits_runtime_work():
-    config = _load("effnet_vae_lhat_k500_v6_smoke.yaml")
-    validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-    postprocess_commands = build_postprocess_commands(config)
-
-    assert config["experiment"]["status"] == "smoke-only"
-    assert len(commands) == 4
-    for command in commands:
-        argv = command["argv"]
-        center = command["matrix"]["center"]
-        assert argv[1].endswith("scripts/paper/run_effnet_latent_augmix_stage3_20260524.py")
-        assert _option_value(argv, "--center") == center
-        assert _option_value(argv, "--epochs") == "1"
-        assert _option_value(argv, "--num_workers") == "0"
-        assert _option_value(argv, "--hull_M") == "4"
-        assert _option_value(argv, "--hull_steps") == "1"
-        assert _option_value(argv, "--k_anchor") == "32"
-        assert _option_value(argv, "--pgd_batch") == "8"
-        assert _option_value(argv, "--train_batch_size") == "32"
-        assert _option_value(argv, "--eval_batch_size") == "64"
-        assert _option_value(argv, "--eval_min_pos") == "2"
-        assert _option_value(argv, "--eval_pn2021_limit") == "64"
-        assert _option_value(argv, "--latent_augmix_width") == "2"
-        assert _option_value(argv, "--latent_augmix_depth") == "1"
-        assert _option_value(argv, "--latent_augmix_severity") == "1"
-        assert _option_value(argv, "--out_root").endswith("/runs/effnet_vae_lhat_k500_v6_smoke/pytest_run")
-    assert len(postprocess_commands) == 3
-
-
-def test_ecgfounder_vae_lhat_smoke_command_limits_runtime_work():
-    config = _load("ecgfounder_vae_lhat_k500_v6_smoke.yaml")
-    validate_experiment_config(config, repo_root=REPO)
-    commands = build_runner_commands(config)
-    postprocess_commands = build_postprocess_commands(config)
-
-    assert config["experiment"]["status"] == "smoke-only"
-    assert len(commands) == 4
-    for command in commands:
-        argv = command["argv"]
-        center = command["matrix"]["center"]
-        assert argv[1].endswith("scripts/paper/run_ecgfounder_vae_only_lhat_head_ft_20260523.py")
-        assert _option_value(argv, "--centers") == center
-        assert _option_value(argv, "--out_dir").endswith(
-            f"/runs/ecgfounder_vae_lhat_k500_v6_smoke/pytest_run/{center}"
+        assert _all_option_values(argv, "--corruptions") == official_s5_depth23_composites()
+        assert _option_value(argv, "--output_path").endswith(
+            "/effnet_threechain_locked/"
+            "eval_pn2021_c_v7_refexcluded_stream_standard_official_s5_depth23_composite.json"
         )
-        assert _option_value(argv, "--epochs") == "1"
-        assert _option_value(argv, "--eval_every") == "1"
-        assert _option_value(argv, "--source_train_limit") == "64"
-        assert _option_value(argv, "--batch_size") == "64"
-        assert _option_value(argv, "--eval_batch_size") == "512"
-        assert _option_value(argv, "--k") == "500"
-        assert _option_value(argv, "--k_anchor") == "16"
-        assert _option_value(argv, "--hull_m") == "4"
-        assert _option_value(argv, "--hull_lambda") == "0.05"
-        assert _option_value(argv, "--hull_steps") == "1"
-        assert _option_value(argv, "--pgd_batch") == "8"
-        assert _option_value(argv, "--target_real_weight") == "20.0"
-        assert _option_value(argv, "--adv_weight") == "5.0"
-        assert "--report_drop_all_zero_pn2021" in argv
-    assert len(postprocess_commands) == 3
 
 
 def test_pn2021_eval_command_audit_rejects_missing_ref_exclusion():
-    config = _load("pn2021_eval_v6_refexcluded.yaml")
-    config = copy.deepcopy(config)
-    config["runner"]["argv"] = _remove_option_pair(config["runner"]["argv"], "--exclude_ref_ids")
+    config = _load("pn2021_eval_v7_sjr_rgq_refexcluded.yaml")
     validate_experiment_config(config, repo_root=REPO)
+    command = copy.deepcopy(build_runner_commands(config)[0])
+    start = command["argv"].index("--exclude_ref_ids")
+    end = command["argv"].index("--output_path")
+    del command["argv"][start:end]
 
     with pytest.raises(ConfigError, match="missing required option --exclude_ref_ids"):
-        build_runner_commands(config)
-
-
-def test_ecgfounder_checkpoint_matches_legacy_runtime_path():
-    config = _load("ecgfounder_inithead_fullft_k500_v6.yaml")
-    paths = validate_experiment_config(config, repo_root=REPO)
-    manifest = make_dry_run_manifest(
-        config,
-        commands=build_runner_commands(config),
-        local_paths=paths,
-        run_id="pytest_ecgfounder_checkpoint",
-        cli_args=argparse.Namespace(dry_run=True, write_plan=False),
-    )
-    checkpoint = next(
-        item for item in manifest["artifact_trace"]["inputs"]["checkpoints"]
-        if item["role"] == "model.checkpoint"
-    )
-
-    assert checkpoint["path"].endswith("/ecgfounder/checkpoint/12_lead_ECGFounder.pth")
-    assert checkpoint["exists"] is True
+        audit_runner_commands(config, [command])
 
 
 def test_mapping_hash_mismatch_is_rejected():
-    config = _load("effnet_direct_k500_v6.yaml")
+    config = _load("effnet_direct_k500_v7_sjr_rgq.yaml")
     config = copy.deepcopy(config)
     config["paper_protocol"]["mapping_hash"] = "bad_hash"
 
@@ -3483,7 +1255,7 @@ def test_mapping_hash_mismatch_is_rejected():
 
 
 def test_missing_ref_exclusion_is_rejected():
-    config = _load("effnet_direct_k500_v6.yaml")
+    config = _load("effnet_direct_k500_v7_sjr_rgq.yaml")
     config = copy.deepcopy(config)
     config["paper_protocol"]["kshot"]["exclude_refs_from_eval"] = False
 
@@ -3492,24 +1264,12 @@ def test_missing_ref_exclusion_is_rejected():
 
 
 def test_selection_allowed_data_drift_is_rejected():
-    config = _load("effnet_direct_k500_v6.yaml")
+    config = _load("effnet_direct_k500_v7_sjr_rgq.yaml")
     config = copy.deepcopy(config)
     config["paper_protocol"]["selection"]["allowed_data"] = ["target_k500_internal_val"]
 
     with pytest.raises(ConfigError, match="selection.allowed_data"):
         validate_experiment_config(config, repo_root=REPO)
-
-
-def test_runner_audit_rejects_heldout_target_selection_source():
-    config = _load("ecgfounder_vae_lhat_k500_v6.yaml")
-    config = copy.deepcopy(config)
-    argv = config["runner"]["argv"]
-    idx = argv.index("--selection_source")
-    argv[idx + 1] = "pn2021_heldout"
-    validate_experiment_config(config, repo_root=REPO)
-
-    with pytest.raises(ConfigError, match="held-out target selection data"):
-        build_runner_commands(config)
 
 
 def test_tracked_config_rejects_local_absolute_paths(tmp_path: Path):
@@ -3543,7 +1303,7 @@ def test_local_config_accepts_known_root_aliases(tmp_path: Path):
     local_path.write_text(yaml.safe_dump(local), encoding="utf-8")
 
     config = load_experiment_config(
-        REPO / "configs" / "experiments" / "effnet_direct_k500_v6.yaml",
+        REPO / "configs" / "experiments" / "effnet_direct_k500_v7_sjr_rgq.yaml",
         local_path,
         runtime_context={"run_id": "pytest_root_alias"},
     )
@@ -3559,7 +1319,7 @@ def test_local_config_rejects_unknown_root_path(tmp_path: Path):
     local_path.write_text(yaml.safe_dump(local), encoding="utf-8")
 
     config = load_experiment_config(
-        REPO / "configs" / "experiments" / "effnet_direct_k500_v6.yaml",
+        REPO / "configs" / "experiments" / "effnet_direct_k500_v7_sjr_rgq.yaml",
         local_path,
         runtime_context={"run_id": "pytest_bad_root"},
     )
@@ -3568,7 +1328,7 @@ def test_local_config_rejects_unknown_root_path(tmp_path: Path):
 
 
 def test_dry_run_manifest_never_marks_child_scripts_invoked():
-    config = _load("effnet_direct_k500_v6.yaml")
+    config = _load("effnet_direct_k500_v7_sjr_rgq.yaml")
     paths = validate_experiment_config(config, repo_root=REPO)
     commands = build_runner_commands(config)
     cli_args = argparse.Namespace(dry_run=True, write_plan=False)
@@ -3583,7 +1343,7 @@ def test_dry_run_manifest_never_marks_child_scripts_invoked():
 
     assert manifest["status"] == "dry_run"
     assert manifest["manifest_schema_version"] == 2
-    assert manifest["safety"]["legacy_child_scripts_invoked"] is False
+    assert manifest["safety"]["managed_child_commands_invoked"] is False
     assert manifest["safety"]["gpu_launch_requires_cuda_visible_devices"] is True
     assert manifest["paper_protocol"]["selection"]["forbid_heldout_target_labels"] is True
     assert manifest["artifact_trace"]["protocol_audit"]["passed"] is True
@@ -3602,7 +1362,7 @@ def _dry_manifest(config_name: str) -> dict:
 
 
 def test_manifest_contains_metric_views_and_mapping_metadata():
-    manifest = _dry_manifest("effnet_direct_k500_v6.yaml")
+    manifest = _dry_manifest("effnet_direct_k500_v7_sjr_rgq.yaml")
     trace = manifest["artifact_trace"]
 
     assert trace["metrics"]["mapping_version"] == "v7_super5_sjr_rgq_review_20260528"
@@ -3613,7 +1373,7 @@ def test_manifest_contains_metric_views_and_mapping_metadata():
 
 
 def test_manifest_records_direct_k500_checkpoint_refs_and_outputs():
-    manifest = _dry_manifest("effnet_direct_k500_v6.yaml")
+    manifest = _dry_manifest("effnet_direct_k500_v7_sjr_rgq.yaml")
     trace = manifest["artifact_trace"]
 
     checkpoints = trace["inputs"]["checkpoints"]
@@ -3623,148 +1383,15 @@ def test_manifest_records_direct_k500_checkpoint_refs_and_outputs():
     assert {item["center"] for item in refs} == {"ningbo", "chapman_shaoxing", "cpsc_2018", "georgia"}
     for item in refs:
         assert item["k"] == 500
-        assert item["seed"] == 20260531
-        assert item["ref_meta_json"]["path"].endswith("_real_k500_seed20260531.ref_meta.json")
-        assert item["signals_npz"]["path"].endswith("_real_k500_seed20260531.signals.npz")
+        assert item["seed"] == 20260601
+        assert item["ref_meta_json"]["path"].endswith("_real_k500_seed20260601.ref_meta.json")
+        assert item["signals_npz"]["path"].endswith("_real_k500_seed20260601.signals.npz")
         assert item["latent_npz"] is None
     child_runs = trace["expected_outputs"]["child_runs"]
     assert len(child_runs) == 4
     assert all(any(art["role"] == "eval_result" for art in run["expected_artifacts"]) for run in child_runs)
     assert any("eval_result_v7_super5_sjr_rgq_review_exclrefs_crop1000.json" in art["path"]
                for run in child_runs for art in run["expected_artifacts"])
-
-
-def test_manifest_records_vae_direct_init_anchor_refs_and_outputs():
-    manifest = _dry_manifest("effnet_vae_lhat_k500_v6.yaml")
-    trace = manifest["artifact_trace"]
-
-    checkpoints = trace["inputs"]["checkpoints"]
-    assert any(item["role"] == "command.init_ckpt" and "paper_direct_finetune_k500_20260516" in item["path"]
-               for item in checkpoints)
-    refs = trace["inputs"]["k500_refs"]
-    assert len(refs) == 4
-    for item in refs:
-        assert "seed42" not in item["anchor_base"]
-        assert item["latent_npz"] is not None
-        assert item["latent_npz"]["path"].endswith("_real_k500_seed20260531.latent.npz")
-    child_runs = trace["expected_outputs"]["child_runs"]
-    assert len(child_runs) == 4
-    assert all("lam0p05" in run["child_run_dir"] for run in child_runs)
-    assert all("wlat0p25" in run["child_run_dir"] for run in child_runs)
-    for run in child_runs:
-        expected_leaf = build_effnet_vae_lhat_run_leaf(
-            {
-                "center": run["center"],
-                "hull_M": 20,
-                "hull_lambda": 0.05,
-                "latent_augmix_severity": 2,
-                "latent_augmix_latent_weight_cap": 0.25,
-                "hull_steps": 3,
-                "es_metric": "target_macro_auprc",
-                "classes_in_scope": ["CD", "HYP", "MI", "NORM", "STTC"],
-                "hull_label_mode": "compatible",
-                "hull_mix_label_mode": "anchor_soft",
-                "hull_neighbor_distance_space": "standardized",
-                "hull_neighbor_mode": "local_random",
-                "hull_neighbor_pool_size": 120,
-                "hull_neighbor_pool_multiplier": 4,
-                "epochs": 30,
-                "seed": 20260531,
-            }
-        )
-        assert Path(run["child_run_dir"]).name == expected_leaf
-    assert any("eval_result_v7_exclrefs_crop1000.json" in art["path"]
-               for run in child_runs for art in run["expected_artifacts"])
-
-
-def test_manifest_records_ecgfounder_init_head_refs_and_outputs():
-    manifest = _dry_manifest("ecgfounder_inithead_fullft_k500_v6.yaml")
-    trace = manifest["artifact_trace"]
-
-    assert any(item["role"] == "model.checkpoint" for item in trace["inputs"]["checkpoints"])
-    assert len(trace["inputs"]["init_heads"]) == 4
-    assert all(item["path"].endswith("best_head.pt") for item in trace["inputs"]["init_heads"])
-    refs = trace["inputs"]["k500_refs"]
-    assert len(refs) == 4
-    assert all(item["ref_meta_json"]["path"].endswith("_real_k500_seed20260531.ref_meta.json") for item in refs)
-    child_runs = trace["expected_outputs"]["child_runs"]
-    assert len(child_runs) == 4
-    assert any("source_plus_target_val_auprc" in run["child_run_dir"] for run in child_runs)
-    assert any(art["path"].endswith("/eval_result.json")
-               for run in child_runs for art in run["expected_artifacts"])
-
-
-def test_manifest_records_ecgfounder_direct_headft_refs_features_and_outputs():
-    manifest = _dry_manifest("ecgfounder_direct_k500_v6.yaml")
-    trace = manifest["artifact_trace"]
-
-    assert trace["inputs"]["checkpoints"] == []
-    assert any(item["role"] == "ecgfounder.linear_probe.best_head" for item in trace["inputs"]["init_heads"])
-    assert any(
-        item["role"] == "ecgfounder.linear_probe.pn2021_features"
-        and item["path"].endswith("pn2021_ecgfounder_features_official_ptbxl_eval.npz")
-        for item in trace["inputs"]["data_caches"]
-    )
-    refs = trace["inputs"]["k500_refs"]
-    assert len(refs) == 4
-    assert {item["center"] for item in refs} == {"ningbo", "chapman_shaoxing", "cpsc_2018", "georgia"}
-    assert all(item["ref_meta_json"]["path"].endswith("_real_k500_seed20260531.ref_meta.json") for item in refs)
-    child_runs = trace["expected_outputs"]["child_runs"]
-    assert len(child_runs) == 4
-    assert all("fromK500_headft_ep50_seed20260531" in run["child_run_dir"] for run in child_runs)
-    for run in child_runs:
-        expected = ecgfounder_kshot_head_run_dir(
-            Path(run["output_root"]),
-            center=run["center"],
-            k=500,
-            source_k=500,
-            epochs=50,
-            seed=20260531,
-        )
-        assert Path(run["child_run_dir"]) == expected
-    assert all(any(art["role"] == "best_head" for art in run["expected_artifacts"]) for run in child_runs)
-    assert all(any(art["role"] == "eval_result" for art in run["expected_artifacts"]) for run in child_runs)
-
-
-def test_manifest_records_ecgfounder_vae_lhat_refs_heads_features_and_outputs():
-    manifest = _dry_manifest("ecgfounder_vae_lhat_k500_v6.yaml")
-    trace = manifest["artifact_trace"]
-
-    assert any(item["role"] == "model.checkpoint" for item in trace["inputs"]["checkpoints"])
-    assert any(item["role"] == "command.checkpoint" for item in trace["inputs"]["checkpoints"])
-    assert any(item["role"] == "ecgfounder.linear_probe.best_head" for item in trace["inputs"]["init_heads"])
-    assert sum(item["role"] == "ecgfounder.k500_base_head.best_head" for item in trace["inputs"]["init_heads"]) == 4
-    assert any(
-        item["role"] == "ecgfounder.linear_probe.ptbxl_features"
-        and item["path"].endswith("ptbxl_ecgfounder_features_official_ptbxl_eval.npz")
-        for item in trace["inputs"]["data_caches"]
-    )
-    assert any(
-        item["role"] == "ecgfounder.linear_probe.pn2021_features"
-        and item["path"].endswith("pn2021_ecgfounder_features_official_ptbxl_eval.npz")
-        for item in trace["inputs"]["data_caches"]
-    )
-    refs = trace["inputs"]["k500_refs"]
-    assert len(refs) == 4
-    assert {item["center"] for item in refs} == {"ningbo", "chapman_shaoxing", "cpsc_2018", "georgia"}
-    assert all(item["latent_npz"] is not None for item in refs)
-    assert all("paper_vae_only_lhat_kcurve_20260518/subsets" in item["anchor_base"] for item in refs)
-    child_runs = trace["expected_outputs"]["child_runs"]
-    assert len(child_runs) == 4
-    assert all("lam0p15" in run["child_run_dir"] for run in child_runs)
-    for run in child_runs:
-        expected = ecgfounder_lhat_run_dir(
-            Path(run["output_root"]),
-            center=run["center"],
-            k=500,
-            hull_m=20,
-            hull_lambda="0.15",
-            epochs=20,
-            seed=20260531,
-        )
-        assert Path(run["child_run_dir"]) == expected
-    assert all(any(art["role"] == "best_head" for art in run["expected_artifacts"]) for run in child_runs)
-    assert all(any(art["role"] == "eval_result" for art in run["expected_artifacts"]) for run in child_runs)
 
 
 def _small_kshot_manifest(tmp_path: Path, *, bad_count: bool = False) -> dict:
@@ -4024,7 +1651,7 @@ def test_verify_required_artifacts_rejects_missing_mapping_metadata(tmp_path: Pa
     assert report["mapping_errors"][0]["mapping_verified"] is False
 
 
-def test_run_legacy_commands_creates_short_runtime_env_dirs(tmp_path: Path):
+def test_run_managed_commands_creates_short_runtime_env_dirs(tmp_path: Path):
     eval_path = tmp_path / "missing_outputs" / "child_eval.json"
     tmp_env = tmp_path / "missing_short_tmp"
     cache_env = tmp_path / "missing_cache"
@@ -4064,7 +1691,7 @@ Path(sys.argv[1]).write_text(json.dumps({
         },
     }
 
-    run_legacy_commands([command], run_dir=tmp_path / "run", manifest_path=manifest_path)
+    run_managed_commands([command], run_dir=tmp_path / "run", manifest_path=manifest_path)
 
     updated = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert tmp_env.is_dir()
@@ -4092,7 +1719,7 @@ Path(sys.argv[1]).write_text(json.dumps({
     assert child_run["finished_at_utc"]
 
 
-def test_run_legacy_commands_records_failed_child_run(tmp_path: Path):
+def test_run_managed_commands_records_failed_child_run(tmp_path: Path):
     eval_path = tmp_path / "missing_eval.json"
     script = tmp_path / "fail.py"
     script.write_text(
@@ -4109,7 +1736,7 @@ def test_run_legacy_commands_records_failed_child_run(tmp_path: Path):
     }
 
     with pytest.raises(LaunchError, match="return code 7"):
-        run_legacy_commands([command], run_dir=tmp_path / "run", manifest_path=manifest_path, base_env={})
+        run_managed_commands([command], run_dir=tmp_path / "run", manifest_path=manifest_path, base_env={})
 
     updated = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert updated["status"] == "failed"
@@ -4232,7 +1859,7 @@ Path(sys.argv[1]).write_text(json.dumps({
         "env": {},
     }
 
-    run_legacy_commands([command], run_dir=tmp_path / "run", manifest_path=manifest_path, base_env={})
+    run_managed_commands([command], run_dir=tmp_path / "run", manifest_path=manifest_path, base_env={})
     run_postprocess_commands([], run_dir=tmp_path / "run", manifest_path=manifest_path, base_env={})
 
     updated = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -4258,7 +1885,7 @@ def test_verify_required_inputs_rejects_missing_traced_checkpoint(tmp_path: Path
     assert report["missing"][0]["role"] == "model.init_checkpoint"
 
 
-def test_run_legacy_commands_fails_if_required_artifact_missing(tmp_path: Path):
+def test_run_managed_commands_fails_if_required_artifact_missing(tmp_path: Path):
     missing_eval = tmp_path / "missing_eval.json"
     manifest_path = tmp_path / "run_manifest.json"
     manifest_path.write_text(json.dumps(_artifact_manifest(missing_eval)), encoding="utf-8")
@@ -4272,7 +1899,7 @@ def test_run_legacy_commands_fails_if_required_artifact_missing(tmp_path: Path):
     ]
 
     with pytest.raises(LaunchError, match="artifact verification failed"):
-        run_legacy_commands(commands, run_dir=tmp_path, manifest_path=manifest_path, base_env={})
+        run_managed_commands(commands, run_dir=tmp_path, manifest_path=manifest_path, base_env={})
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["status"] == "failed"
@@ -4291,7 +1918,7 @@ def test_require_cuda_visible_devices_rejects_missing_or_broad_values():
 
 
 def test_runner_env_rejects_cuda_visible_devices_override():
-    config = _load("effnet_direct_k500_v6.yaml")
+    config = _load("effnet_direct_k500_v7_sjr_rgq.yaml")
     config = copy.deepcopy(config)
     config["runner"].setdefault("env", {})["CUDA_VISIBLE_DEVICES"] = "0"
     validate_experiment_config(config, repo_root=REPO)
@@ -4316,7 +1943,7 @@ def test_check_nvidia_smi_parses_fake_runner():
 
 
 def test_prepare_output_dir_rejects_nonempty_without_resume_or_force(tmp_path: Path):
-    config = _load("effnet_direct_k500_v6.yaml")
+    config = _load("effnet_direct_k500_v7_sjr_rgq.yaml")
     paths = validate_experiment_config(config, repo_root=REPO)
     out_dir = tmp_path / "run"
     out_dir.mkdir()
@@ -4333,7 +1960,7 @@ def test_prepare_output_dir_rejects_nonempty_without_resume_or_force(tmp_path: P
 
 
 def test_prepare_output_dir_allows_matching_resume_manifest(tmp_path: Path):
-    config = _load("effnet_direct_k500_v6.yaml")
+    config = _load("effnet_direct_k500_v7_sjr_rgq.yaml")
     paths = validate_experiment_config(config, repo_root=REPO)
     out_dir = tmp_path / "run"
     out_dir.mkdir()
@@ -4361,7 +1988,7 @@ def test_prepare_output_dir_allows_matching_resume_manifest(tmp_path: Path):
 
 
 def test_default_run_dir_uses_dry_and_dated_roots():
-    config = _load("effnet_direct_k500_v6.yaml")
+    config = _load("effnet_direct_k500_v7_sjr_rgq.yaml")
     paths = validate_experiment_config(config, repo_root=REPO)
 
     dry = default_run_dir(paths, "abc", dry_run=True)
@@ -4381,7 +2008,7 @@ def test_execute_mode_requires_cuda_before_writing_plan(tmp_path: Path):
             sys.executable,
             str(REPO / "scripts" / "run_experiment.py"),
             "--config",
-            str(REPO / "configs" / "experiments" / "effnet_direct_k500_v6.yaml"),
+            str(REPO / "configs" / "experiments" / "effnet_direct_k500_v7_sjr_rgq.yaml"),
             "--local-config",
             str(LOCAL_EXAMPLE),
             "--run-id",
@@ -4406,6 +2033,66 @@ def test_run_experiment_execute_path_has_finalizer_binding():
     import scripts.run_experiment as run_experiment
 
     assert callable(run_experiment.finalize_run_record)
+
+
+def test_latest_mainline_configs_dry_run_through_run_experiment_cli():
+    index = yaml.safe_load((REPO / "configs" / "active_scripts.yaml").read_text(encoding="utf-8"))
+    stages = index["latest_mainline"]["stages"]
+
+    for stage in stages:
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(REPO / "scripts" / "run_experiment.py"),
+                "--config",
+                str(REPO / stage["config"]),
+                "--local-config",
+                str(LOCAL_EXAMPLE),
+                "--run-id",
+                f"pytest_latest_cli_{stage['name']}",
+                "--dry-run",
+            ],
+            cwd=str(REPO),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        assert proc.returncode == 0, f"{stage['name']}: {proc.stderr}"
+        manifest_text = proc.stdout.split("\n\n# Managed commands", 1)[0]
+        manifest = json.loads(manifest_text)
+        assert manifest["status"] == "dry_run"
+        assert manifest["launcher"]["script"] == "scripts/run_experiment.py"
+        assert manifest["safety"]["managed_child_commands_invoked"] is False
+        assert manifest["experiment"]["name"]
+        assert manifest["commands"]
+
+
+def test_latest_mainline_dry_run_manifests_do_not_expose_legacy_artifact_roles():
+    index = yaml.safe_load((REPO / "configs" / "active_scripts.yaml").read_text(encoding="utf-8"))
+
+    for stage in index["latest_mainline"]["stages"]:
+        config = load_experiment_config(
+            REPO / stage["config"],
+            LOCAL_EXAMPLE,
+            runtime_context={"run_id": f"pytest_latest_roles_{stage['name']}"},
+        )
+        paths = validate_experiment_config(config, repo_root=REPO)
+        commands = build_runner_commands(config)
+        manifest = make_dry_run_manifest(
+            config,
+            commands=commands,
+            local_paths=paths,
+            run_id=f"pytest_latest_roles_{stage['name']}",
+            cli_args=argparse.Namespace(dry_run=True, write_plan=False),
+        )
+
+        roles = [
+            artifact["role"]
+            for child in manifest["artifact_trace"]["expected_outputs"]["child_runs"]
+            for artifact in child.get("expected_artifacts", [])
+        ]
+        assert not [role for role in roles if str(role).startswith("legacy_")]
 
 
 def test_write_plan_command_sh_includes_env_prefixes(tmp_path: Path):
@@ -4437,13 +2124,18 @@ def test_write_plan_command_sh_includes_env_prefixes(tmp_path: Path):
     command_text = (out_dir / "command.sh").read_text(encoding="utf-8")
     assert command_text.startswith("#!/usr/bin/env bash\nset -euo pipefail")
     assert "ECG_ADV_GEN_DATA_ROOT=" in command_text
-    assert "scripts/paper/run_direct_finetune_k500_20260516.py" in command_text
+    assert "ecg_adv_gen/runner/effnet_direct_finetune.py" in command_text
     k500_ref_ids = out_dir / "k500_ref_ids.json"
     assert k500_ref_ids.exists()
     selection_json = out_dir / "selection.json"
     assert selection_json.exists()
     data_manifest = out_dir / "data_manifest.json"
     assert data_manifest.exists()
+    env_json = out_dir / "env.json"
+    assert env_json.exists()
+    env_payload = json.loads(env_json.read_text(encoding="utf-8"))
+    assert env_payload["python_executable"]
+    assert env_payload["python_version"]
     data_payload = json.loads(data_manifest.read_text(encoding="utf-8"))
     assert data_payload["contract"]["classifier_fs"] == 100
     assert data_payload["contract"]["target_dataset"] == "pn2021"

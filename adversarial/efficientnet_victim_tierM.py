@@ -47,13 +47,13 @@ for p in [str(_PROJECT_ROOT), str(_ECGTWIN_ROOT), str(_DEEPECG_NB_LEGACY), str(_
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from scripts.triple_labels.model_zoo import build_super5_model, normalize_model_name  # noqa: E402
+from ecg_adv_gen.models.super5_model_zoo import build_super5_model, normalize_model_name  # noqa: E402
 from util.lead_utils import ECGTWIN_TO_PTBXL_INDICES  # noqa: E402
 
 
 DEFAULT_TIERM_CKPT = "/root/autodl-tmp/crosscenter_tierM/best_model.pt"
 
-# Tier-M victim training input length (match scripts/crosscenter_tierM/train_ptbxl_tierM.py crop_len=250)
+# Tier-M victim training input length (match archived Tier-M PTB-XL crop_len=250)
 TIERM_INPUT_LENGTH = 250
 
 # ECGTwin VAE decoder output is 1024 samples @ 102.4Hz; resample to 1000 for PTBXL preprocessing alignment

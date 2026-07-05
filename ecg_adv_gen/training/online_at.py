@@ -1,4 +1,4 @@
-"""Pure orchestration helpers for legacy online-AT runners."""
+"""Pure orchestration helpers for online-AT runners."""
 
 from __future__ import annotations
 
@@ -11,8 +11,8 @@ from typing import Sequence
 class QuickEvalPlan:
     """Resolved quick-eval branch metadata.
 
-    This object intentionally contains no arrays or DataLoaders. Legacy scripts
-    use it to keep paper-safety semantics visible before building data.
+    This object intentionally contains no arrays or DataLoaders. Managed
+    runners use it to keep paper-safety semantics visible before building data.
     """
 
     source: str

@@ -1062,6 +1062,12 @@ def audit_active_evidence_registry(
                 "claim_id": claim_id,
                 "status": claim.get("status"),
                 "paper_use": claim.get("paper_use"),
+                "evaluation_views": list(claim.get("protocol", {}).get("evaluation_views") or []),
+                "required_reporting_views": list(
+                    claim.get("protocol", {}).get("required_reporting_views")
+                    or claim.get("protocol", {}).get("evaluation_views")
+                    or []
+                ),
                 "k500_refs": k500_summary,
                 "methods": method_summaries,
                 "comparison_bundle": (

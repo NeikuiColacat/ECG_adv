@@ -40,6 +40,8 @@ def build_ecgfounder_fullft_argv(config: Mapping[str, Any], context: Mapping[str
     hull = adaptation.get("hull") or {}
     attack = adaptation.get("attack") or {}
     latent_augmix = adaptation.get("latent_augmix") or {}
+    raw_corrupt = adaptation.get("raw_corrupt_consistency") or {}
+    raw_augmix = raw_corrupt.get("augmix") or {}
     runtime = config.get("runtime") or {}
     experiment = config["experiment"]
     stage = str(adaptation.get("stage", "k500"))
@@ -179,6 +181,7 @@ def build_ecgfounder_fullft_argv(config: Mapping[str, Any], context: Mapping[str
         _append_option(argv, "--hull_lambda", hull.get("lambda", 0.15))
         _append_option(argv, "--hull_steps", hull.get("steps", 3))
         _append_option(argv, "--hull_lr", hull.get("lr", 0.25))
+        _append_option(argv, "--hull_init_logit_gap", hull.get("init_logit_gap", 4.0))
         _append_option(argv, "--hull_weight_mode", hull.get("weight_mode", "optimized"))
         _append_option(argv, "--hull_dirichlet_alpha", hull.get("dirichlet_alpha", 1.0))
         _append_option(argv, "--hull_attack_pos_weight_source", hull.get("attack_pos_weight_source", "none"))
@@ -227,6 +230,32 @@ def build_ecgfounder_fullft_argv(config: Mapping[str, Any], context: Mapping[str
         _append_list_option(argv, "--latent_augmix_ops", latent_augmix.get("ops", []))
         _append_flag(argv, "--latent_augmix_renorm", latent_augmix.get("renorm", False))
         _append_option(argv, "--latent_augmix_clip_abs", latent_augmix.get("clip_abs", 6.0))
+    if bool(raw_corrupt.get("enabled", False)):
+        argv.append("--enable_raw_corrupt_consistency")
+        _append_option(argv, "--raw_corrupt_batch_size", raw_corrupt.get("batch_size"))
+        _append_option(argv, "--raw_corrupt_copies", raw_corrupt.get("copies"))
+        _append_option(argv, "--raw_corrupt_prob", raw_corrupt.get("prob"))
+        _append_option(argv, "--raw_corrupt_severity", raw_corrupt.get("severity"))
+        _append_option(argv, "--raw_corrupt_severity_profile", raw_corrupt.get("severity_profile"))
+        _append_list_option(argv, "--raw_corrupt_ops", raw_corrupt.get("ops", []))
+        _append_option(argv, "--raw_corrupt_consistency_weight", raw_corrupt.get("consistency_weight"))
+        _append_option(argv, "--raw_corrupt_consistency_loss", raw_corrupt.get("consistency_loss"))
+        _append_option(argv, "--raw_corrupt_bce_weight", raw_corrupt.get("bce_weight"))
+        _append_option(argv, "--raw_corrupt_feature_consistency_weight", raw_corrupt.get("feature_consistency_weight"))
+        _append_option(argv, "--raw_corrupt_max_batches", raw_corrupt.get("max_batches"))
+        _append_option(argv, "--raw_corrupt_scope", raw_corrupt.get("scope"))
+        _append_option(argv, "--raw_corrupt_clip_abs", raw_corrupt.get("clip_abs"))
+        _append_option(argv, "--raw_corrupt_grad_clip", raw_corrupt.get("grad_clip"))
+        _append_option(argv, "--raw_corrupt_view_mode", raw_corrupt.get("view_mode"))
+        _append_option(argv, "--raw_corrupt_augmix_width", raw_augmix.get("width"))
+        _append_option(argv, "--raw_corrupt_augmix_depth", raw_augmix.get("depth"))
+        _append_option(argv, "--raw_corrupt_augmix_alpha", raw_augmix.get("alpha"))
+        _append_option(argv, "--raw_corrupt_augmix_mixture_mode", raw_augmix.get("mixture_mode"))
+        _append_option(argv, "--raw_corrupt_augmix_mixture_prob", raw_augmix.get("mixture_prob"))
+        _append_option(argv, "--raw_corrupt_augmix_mixture_beta_a", raw_augmix.get("mixture_beta_a"))
+        _append_option(argv, "--raw_corrupt_augmix_mixture_beta_b", raw_augmix.get("mixture_beta_b"))
+        _append_option(argv, "--raw_corrupt_augmix_op_schedule", raw_augmix.get("op_schedule"))
+        _append_flag(argv, "--raw_corrupt_no_renorm", raw_corrupt.get("no_renorm", False))
     return argv
 
 
@@ -248,7 +277,7 @@ def audit_ecgfounder_fullft_command(
     expected_seed = int(kshot.get("subset_seed", kshot["seed"]))
     target_centers = set(config["paper_protocol"]["centers"]["target_4"])
 
-    if script != "run_ecgfounder_fullft_super5_pilot_20260523.py":
+    if script != "ecgfounder_fullft.py":
         return {
             "errors": [f"{script}: ecgfounder_fullft audit cannot handle this script"],
             "warnings": warnings,
@@ -339,18 +368,38 @@ def audit_ecgfounder_fullft_command(
     audit_equals(errors, script, opts, "--selection_metric", "source_auprc")
     audit_equals(errors, script, opts, "--checkpoint_policy", "last")
     audit_equals(errors, script, opts, "--supervised_input_mode", "raw1000")
+    experiment_name = str((config.get("experiment") or {}).get("name") or "")
+    official_composite_supervised = experiment_name.startswith(
+        "ecgfounder_direct_corrupted_k500_supervised_officials5_depth23_ep10_"
+    )
+
     target_raw1000 = str(opt_first(opts, "--target_raw1000_npz_override", ""))
     if not target_raw1000:
         errors.append(f"{script}: locked raw1000 full-FT command must pass --target_raw1000_npz_override")
-    elif not target_raw1000.endswith(".raw1000.npz"):
+    elif official_composite_supervised and not target_raw1000.endswith(".signals.npz"):
+        errors.append(
+            f"{script}: official composite supervised baseline must use materialized .signals.npz, "
+            f"got {target_raw1000}"
+        )
+    elif not official_composite_supervised and not target_raw1000.endswith(".raw1000.npz"):
         errors.append(f"{script}: target_raw1000_npz_override must point at .raw1000.npz, got {target_raw1000}")
 
     if "--target_val_seed" in opts:
         errors.append(f"{script}: locked full-FT config must not pass --target_val_seed")
     if "--init_head_path" in opts:
         errors.append(f"{script}: locked full-FT config must not initialize from best_head.pt")
-    if "--enable_raw_corrupt_consistency" in opts or "--enable_raw_corrupt_aux_consistency" in opts:
+    raw_corrupt = ((config.get("adaptation") or {}).get("raw_corrupt_consistency")) or {}
+    raw_corrupt_enabled = bool(raw_corrupt.get("enabled", False))
+    if (
+        ("--enable_raw_corrupt_consistency" in opts or "--enable_raw_corrupt_aux_consistency" in opts)
+        and not raw_corrupt_enabled
+    ):
         errors.append(f"{script}: locked full-FT baseline must not enable raw corruption branches")
+    if raw_corrupt_enabled:
+        if "--enable_raw_corrupt_consistency" not in opts:
+            errors.append(f"{script}: raw-corruption ablation config did not emit --enable_raw_corrupt_consistency")
+        audit_equals(errors, script, opts, "--raw_corrupt_view_mode", raw_corrupt.get("view_mode", "single_op"))
+        audit_equals(errors, script, opts, "--raw_corrupt_severity_profile", raw_corrupt.get("severity_profile", "standard"))
     if any(opt in opts for opt in ("--ecgfounder_input_repair_flat_leads", "--ecgfounder_input_bandpass_low_hz", "--ecgfounder_input_bandpass_high_hz")):
         errors.append(f"{script}: locked full-FT config must not enable ECGFounder input stabilizers")
     joined = " ".join(argv)
@@ -408,17 +457,23 @@ def audit_ecgfounder_fullft_command(
             errors.append(f"{script}: locked latent AugMix ops must be {expected_ops}, got {actual_ops}")
 
     ref_meta = str(opt_first(opts, "--ref_meta_json", ""))
-    expected_ref = (
-        f"/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets/{center}/"
-        f"k{expected_k}_seed{expected_seed}/{center}_real_k{expected_k}_seed{expected_seed}.ref_meta.json"
-    )
+    if official_composite_supervised:
+        expected_ref = (
+            f"/pn2021c_official_s5_composite_k500_direct_supervised_20260624/subsets/{center}/"
+            f"k{expected_k}_seed{expected_seed}/{center}_real_k{expected_k}_seed{expected_seed}.ref_meta.json"
+        )
+    else:
+        expected_ref = (
+            f"/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets/{center}/"
+            f"k{expected_k}_seed{expected_seed}/{center}_real_k{expected_k}_seed{expected_seed}.ref_meta.json"
+        )
     if not ref_meta.endswith(expected_ref):
-        errors.append(f"{script}: ref_meta_json does not use locked v7 K500 subset path")
+        errors.append(f"{script}: ref_meta_json does not use locked K500 subset path")
 
     init_model = str(opt_first(opts, "--init_model_path", ""))
     run_id = str((config.get("runtime") or {}).get("run_id") or "")
     upstream_run_id = str(((config.get("model") or {}).get("upstream_run_id")) or run_id)
-    if "--enable_vae_adv_stream" in opts:
+    if "--enable_vae_adv_stream" in opts or raw_corrupt_enabled:
         expected_init = (
             f"/ecgfounder_k500_fullft_locked/{upstream_run_id}/runs/"
             f"{center}_k500_fullft_locked/last_model.pt"

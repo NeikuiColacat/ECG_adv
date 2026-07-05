@@ -30,7 +30,7 @@ def load_active_script_index(path: Path) -> dict[str, Any]:
     return data
 
 
-def managed_experiment_items(index: dict[str, Any], *, status: str = "active_wrapped") -> list[dict[str, Any]]:
+def managed_experiment_items(index: dict[str, Any], *, status: str = "active_managed") -> list[dict[str, Any]]:
     items = index.get("managed_experiments") or []
     if not isinstance(items, list):
         raise ConfigError("configs/active_scripts.yaml managed_experiments must be a list")
@@ -196,6 +196,89 @@ def _config_git_inventory(
     return out
 
 
+def _summarize_latest_mainline(index: dict[str, Any], rows: list[dict[str, Any]]) -> dict[str, Any]:
+    mainline = index.get("latest_mainline") or {}
+    if not isinstance(mainline, dict) or not mainline:
+        return {}
+
+    rows_by_config = {str(row.get("config") or ""): row for row in rows}
+    stages = mainline.get("stages") or []
+    stage_configs: list[str] = []
+    missing_stage_configs: list[str] = []
+    failed_stage_configs: list[str] = []
+    untracked_stage_configs: list[str] = []
+    intent_to_add_stage_configs: list[str] = []
+    dirty_stage_configs: list[str] = []
+    stage_summaries: list[dict[str, Any]] = []
+    for stage in stages:
+        config = str((stage or {}).get("config") or "")
+        row = rows_by_config.get(config)
+        runner_entrypoint = "" if row is None else str(row.get("runner_entrypoint") or "")
+        runner_adapter = "" if row is None else str(row.get("runner_adapter") or "")
+        runner_uses_argv = bool(row and row.get("runner_uses_argv"))
+        uses_package_runner = runner_entrypoint.startswith("ecg_adv_gen/runner/")
+        uses_typed_adapter = bool(runner_adapter) and not runner_uses_argv
+        config_tracked = bool(row and row.get("config_tracked_by_git"))
+        config_git_status = "" if row is None else str(row.get("config_git_status") or "")
+        config_intent_to_add = bool(row and row.get("config_intent_to_add"))
+        passed = bool(row and row.get("passed") and uses_package_runner and uses_typed_adapter)
+        stage_configs.append(config)
+        if row is None:
+            missing_stage_configs.append(config)
+        elif not passed:
+            failed_stage_configs.append(config)
+        if row is not None and not config_tracked:
+            untracked_stage_configs.append(config)
+        if config_intent_to_add:
+            intent_to_add_stage_configs.append(config)
+        if row is not None and config_git_status != "clean":
+            dirty_stage_configs.append(config)
+        stage_summaries.append(
+            {
+                "name": str((stage or {}).get("name") or ""),
+                "role": str((stage or {}).get("role") or ""),
+                "config": config,
+                "config_tracked_by_git": config_tracked,
+                "config_git_status": config_git_status,
+                "config_intent_to_add": config_intent_to_add,
+                "runner_entrypoint": runner_entrypoint,
+                "runner_adapter": runner_adapter,
+                "runner_uses_argv": runner_uses_argv,
+                "uses_package_runner": uses_package_runner,
+                "uses_typed_adapter": uses_typed_adapter,
+                "command_count": 0 if row is None else int(row.get("command_count") or 0),
+                "k500_ref_count": 0 if row is None else int(row.get("k500_ref_count") or 0),
+                "command_audit_passed": bool(row and row.get("command_audit_passed")),
+                "protocol_audit_passed": bool(row and row.get("protocol_audit_passed")),
+                "passed": passed,
+            }
+        )
+
+    return {
+        "method": mainline.get("method"),
+        "launcher": mainline.get("launcher"),
+        "mapping_version": mainline.get("mapping_version"),
+        "mapping_hash": mainline.get("mapping_hash"),
+        "class_order": list(mainline.get("class_order") or []),
+        "excluded_main_method_branches": list(mainline.get("excluded_main_method_branches") or []),
+        "stage_count": len(stages),
+        "stage_configs": stage_configs,
+        "missing_stage_count": len(missing_stage_configs),
+        "missing_stage_configs": missing_stage_configs,
+        "failed_stage_count": len(failed_stage_configs),
+        "failed_stage_configs": failed_stage_configs,
+        "untracked_stage_count": len(untracked_stage_configs),
+        "untracked_stage_configs": untracked_stage_configs,
+        "intent_to_add_stage_count": len(intent_to_add_stage_configs),
+        "intent_to_add_stage_configs": intent_to_add_stage_configs,
+        "dirty_stage_count": len(dirty_stage_configs),
+        "dirty_stage_configs": dirty_stage_configs,
+        "source_control_passed": not untracked_stage_configs and not dirty_stage_configs,
+        "stages": stage_summaries,
+        "passed": not missing_stage_configs and not failed_stage_configs,
+    }
+
+
 def audit_managed_experiment(
     *,
     repo_root: Path,
@@ -241,12 +324,15 @@ def audit_managed_experiment(
     init_heads = inputs.get("init_heads") or []
     k500_refs = inputs.get("k500_refs") or []
     data_caches = inputs.get("data_caches") or []
+    runner = config.get("runner") or {}
     return {
         "name": name,
         "status": item.get("status"),
         "config": config_rel,
         **config_git_status,
-        "legacy_entrypoint": item.get("legacy_entrypoint"),
+        "runner_entrypoint": item.get("runner_entrypoint"),
+        "runner_adapter": runner.get("adapter"),
+        "runner_uses_argv": "argv" in runner,
         "method_family": item.get("method_family"),
         "mapping_version": trace["metrics"]["mapping_version"],
         "mapping_hash": trace["metrics"]["mapping_hash"],
@@ -311,6 +397,7 @@ def audit_active_managed_configs(
         config_git_inventory,
         tracked_yaml_required=bool(launch_surface_policy.get("tracked_yaml_required")),
     )
+    latest_mainline = _summarize_latest_mainline(index, rows)
     return {
         "schema_version": 1,
         "index": str(index_path),
@@ -319,13 +406,14 @@ def audit_active_managed_configs(
         "launch_surface_policy": launch_surface_policy,
         "documentation_surface_policy": index.get("documentation_surface_policy") or {},
         "implementation_surface_policy": index.get("implementation_surface_policy") or {},
+        "latest_mainline": latest_mainline,
         "managed_experiment_count": len(rows),
         "passed_count": sum(1 for row in rows if row["passed"]),
         "failed_count": sum(1 for row in rows if not row["passed"]),
         "config_git_inventory": config_git_inventory,
         "config_git_summary": config_git_summary,
         "rows": rows,
-        "passed": all(row["passed"] for row in rows),
+        "passed": all(row["passed"] for row in rows) and bool(latest_mainline.get("passed", True)),
     }
 
 
@@ -347,7 +435,9 @@ def write_audit_report(report: dict[str, Any], output_dir: Path) -> dict[str, st
         "config_index_status",
         "config_worktree_status",
         "config_intent_to_add",
-        "legacy_entrypoint",
+        "runner_entrypoint",
+        "runner_adapter",
+        "runner_uses_argv",
         "method_family",
         "mapping_version",
         "mapping_hash",

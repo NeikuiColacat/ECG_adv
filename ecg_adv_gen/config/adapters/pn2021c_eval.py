@@ -4,10 +4,26 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from ecg_adv_gen.evaluation.pn2021c_protocol import (
+    OFFICIAL_S5_COMPOSITE_CORRUPTION_SET,
+    OFFICIAL_S5_PUBLIC_SEVERITY,
+    OFFICIAL_S5_SEVERITY_PROFILE,
+    official_s5_depth23_composites,
+)
+
 from .common import argv_option_map, audit_equals, audit_require_options, opt_first, opt_list
 
 
 PN2021C_REQUIRED_CACHE_VERSION = "v7_refexcluded_100hz1000"
+
+
+def resolve_pn2021c_corruptions(evaluation: Mapping[str, Any]) -> list[str]:
+    corruption_set = str(evaluation.get("corruption_set") or "")
+    if corruption_set == OFFICIAL_S5_COMPOSITE_CORRUPTION_SET:
+        return official_s5_depth23_composites()
+    if corruption_set:
+        raise ValueError(f"unknown PN2021-C corruption_set: {corruption_set!r}")
+    return list(evaluation["corruptions"])
 
 
 def _format_model_dir_template(
@@ -34,7 +50,7 @@ def _format_model_dir_template(
 
 
 def build_pn2021c_eval_argv(config: Mapping[str, Any], context: Mapping[str, Any]) -> list[Any]:
-    """Build argv for ``scripts/triple_labels/eval_pn2021_corruptions.py``."""
+    """Build argv for ``ecg_adv_gen/runner/pn2021c_eval.py``."""
 
     matrix = context.get("matrix") or {}
     center = matrix.get("center")
@@ -51,6 +67,7 @@ def build_pn2021c_eval_argv(config: Mapping[str, Any], context: Mapping[str, Any
     training = config["training"]
     data = config["data"]
     evaluation = config["evaluation"]
+    corruptions = resolve_pn2021c_corruptions(evaluation)
     preprocess = config["preprocess"]
     runtime = config.get("runtime") or {}
     experiment = config["experiment"]
@@ -116,7 +133,7 @@ def build_pn2021c_eval_argv(config: Mapping[str, Any], context: Mapping[str, Any
         "--centers",
         center,
         "--corruptions",
-        *list(evaluation["corruptions"]),
+        *corruptions,
         "--severities",
         *list(evaluation["severities"]),
         "--severity_profile",
@@ -172,7 +189,7 @@ def audit_pn2021c_eval_command(command: Mapping[str, Any], *, config: Mapping[st
     warnings: list[str] = []
     argv = [str(x) for x in command["argv"]]
     opts = argv_option_map(argv)
-    script = "eval_pn2021_corruptions.py"
+    script = "pn2021c_eval.py"
     kshot = config["paper_protocol"]["kshot"]
     expected_k = str(kshot["k"])
     expected_seed = str(kshot.get("subset_seed", kshot["seed"]))
@@ -208,6 +225,13 @@ def audit_pn2021c_eval_command(command: Mapping[str, Any], *, config: Mapping[st
     audit_equals(errors, script, opts, "--scheme", "super5")
     audit_equals(errors, script, opts, "--required_cache_version", PN2021C_REQUIRED_CACHE_VERSION)
     audit_equals(errors, script, opts, "--severity_profile", config["evaluation"]["severity_profile"])
+    expected_corruptions = resolve_pn2021c_corruptions(config["evaluation"])
+    if opt_list(opts, "--corruptions") != [str(item) for item in expected_corruptions]:
+        errors.append(f"{script}: --corruptions does not match configured PN2021-C corruption set")
+    if str(config["evaluation"].get("corruption_set") or "") == OFFICIAL_S5_COMPOSITE_CORRUPTION_SET:
+        audit_equals(errors, script, opts, "--severity_profile", OFFICIAL_S5_SEVERITY_PROFILE)
+        if opt_list(opts, "--severities") != [str(OFFICIAL_S5_PUBLIC_SEVERITY)]:
+            errors.append(f"{script}: official S5 composite eval must use --severities 5")
     if str(config["evaluation"]["severity_profile"]) == "custom":
         audit_require_options(errors, script, opts, ["--severity_params_file", "--severity_params_name"])
         audit_equals(errors, script, opts, "--severity_params_file", config["evaluation"]["severity_params_file"])

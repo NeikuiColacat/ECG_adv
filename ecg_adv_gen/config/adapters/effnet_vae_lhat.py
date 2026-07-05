@@ -26,7 +26,7 @@ def _append_optional_sequence(argv: list[Any], option: str, values: Any) -> None
 
 
 def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, Any]) -> list[Any]:
-    """Build legacy argv for the EfficientNet VAE-LHAT wrapper from typed config fields."""
+    """Build managed argv for the EfficientNet VAE-LHAT runner from typed config fields."""
 
     matrix = context.get("matrix") or {}
     center = matrix.get("center")
@@ -66,6 +66,7 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
     if synth_npz_override and not Path(synth_npz_override).is_absolute():
         synth_npz_override = str(Path(paths["data_root"]) / synth_npz_override)
     latent_augmix = adaptation["latent_augmix"]
+    latent_augmix_enabled = bool(latent_augmix.get("enabled", True))
     latent_augmix_mixture = latent_augmix.get("mixture") or {}
     latent_augmix_consistency = latent_augmix.get("consistency") or {}
     anchors = adaptation.get("anchors") or {}
@@ -140,16 +141,22 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
         training["batch_size"],
         "--ptbxl_weight",
         adaptation["loss"].get("ptbxl_weight", "1.0"),
-        "--latent_augmix_latent_weight_cap",
-        latent_augmix["latent_weight_cap"],
-        "--latent_augmix_width",
-        latent_augmix["width"],
-        "--latent_augmix_depth",
-        latent_augmix["depth"],
-        "--latent_augmix_alpha",
-        latent_augmix["alpha"],
-        "--latent_augmix_severity",
-        latent_augmix["severity"],
+        *(
+            [
+                "--latent_augmix_latent_weight_cap",
+                latent_augmix["latent_weight_cap"],
+                "--latent_augmix_width",
+                latent_augmix["width"],
+                "--latent_augmix_depth",
+                latent_augmix["depth"],
+                "--latent_augmix_alpha",
+                latent_augmix["alpha"],
+                "--latent_augmix_severity",
+                latent_augmix["severity"],
+            ]
+            if latent_augmix_enabled
+            else ["--disable_latent_augmix_branch"]
+        ),
         "--quick_eval_source",
         selection.get("quick_eval_source", "target_real_val"),
         "--target_real_val_fraction",
@@ -165,6 +172,8 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
     ]
     _append_optional_value(argv, "--boundary_prob_min", adaptation["attack"].get("boundary_prob_min"))
     _append_optional_value(argv, "--boundary_prob_max", adaptation["attack"].get("boundary_prob_max"))
+    if adaptation.get("disable_adv_stream") or adaptation["attack"].get("disable_adv_stream"):
+        argv.append("--disable_adv_stream")
     _append_optional_value(argv, "--target_real_norm_mode", data.get("target_real_norm_mode"))
     _append_optional_value(argv, "--synth_npz_override", synth_npz_override or None)
     _append_optional_value(argv, "--target_real_npz_override", target_real_npz_override or None)
@@ -195,75 +204,76 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
     _append_optional_value(argv, "--rescore_interval", buffer.get("rescore_interval"))
     _append_optional_value(argv, "--asr_consec_low_max", buffer.get("asr_consec_low_max"))
     _append_optional_value(argv, "--asr_low_threshold", buffer.get("asr_low_threshold"))
-    _append_optional_value(
-        argv,
-        "--latent_augmix_topology",
-        latent_augmix.get("topology"),
-    )
-    _append_optional_value(
-        argv,
-        "--latent_augmix_copies",
-        latent_augmix.get("copies"),
-    )
-    _append_optional_value(
-        argv,
-        "--latent_augmix_mixture_mode",
-        latent_augmix_mixture.get("mode", latent_augmix.get("mixture_mode")),
-    )
-    _append_optional_value(
-        argv,
-        "--latent_augmix_mixture_prob",
-        latent_augmix_mixture.get("prob", latent_augmix.get("mixture_prob")),
-    )
-    _append_optional_value(
-        argv,
-        "--latent_augmix_mixture_beta_a",
-        latent_augmix_mixture.get("beta_a", latent_augmix.get("mixture_beta_a")),
-    )
-    _append_optional_value(
-        argv,
-        "--latent_augmix_mixture_beta_b",
-        latent_augmix_mixture.get("beta_b", latent_augmix.get("mixture_beta_b")),
-    )
-    _append_optional_value(
-        argv,
-        "--latent_augmix_op_schedule",
-        latent_augmix.get("op_schedule"),
-    )
-    _append_optional_value(
-        argv,
-        "--latent_augmix_chain_weights",
-        latent_augmix.get("chain_weights"),
-    )
-    _append_optional_value(
-        argv,
-        "--latent_augmix_signal_space",
-        latent_augmix.get("signal_space"),
-    )
-    _append_optional_value(
-        argv,
-        "--latent_augmix_corruption_source",
-        latent_augmix.get("corruption_source"),
-    )
-    _append_optional_value(
-        argv,
-        "--latent_augmix_severity_profile",
-        latent_augmix.get("severity_profile"),
-    )
-    _append_optional_value(
-        argv,
-        "--latent_augmix_severity_params_file",
-        latent_augmix.get("severity_params_file"),
-    )
-    _append_optional_value(
-        argv,
-        "--latent_augmix_severity_params_name",
-        latent_augmix.get("severity_params_name"),
-    )
-    _append_optional_sequence(argv, "--latent_augmix_ops", latent_augmix.get("ops"))
-    if latent_augmix.get("no_renorm"):
-        argv.append("--no_latent_augmix_renorm")
-    if latent_augmix_consistency.get("enabled"):
+    if latent_augmix_enabled:
+        _append_optional_value(
+            argv,
+            "--latent_augmix_topology",
+            latent_augmix.get("topology"),
+        )
+        _append_optional_value(
+            argv,
+            "--latent_augmix_copies",
+            latent_augmix.get("copies"),
+        )
+        _append_optional_value(
+            argv,
+            "--latent_augmix_mixture_mode",
+            latent_augmix_mixture.get("mode", latent_augmix.get("mixture_mode")),
+        )
+        _append_optional_value(
+            argv,
+            "--latent_augmix_mixture_prob",
+            latent_augmix_mixture.get("prob", latent_augmix.get("mixture_prob")),
+        )
+        _append_optional_value(
+            argv,
+            "--latent_augmix_mixture_beta_a",
+            latent_augmix_mixture.get("beta_a", latent_augmix.get("mixture_beta_a")),
+        )
+        _append_optional_value(
+            argv,
+            "--latent_augmix_mixture_beta_b",
+            latent_augmix_mixture.get("beta_b", latent_augmix.get("mixture_beta_b")),
+        )
+        _append_optional_value(
+            argv,
+            "--latent_augmix_op_schedule",
+            latent_augmix.get("op_schedule"),
+        )
+        _append_optional_value(
+            argv,
+            "--latent_augmix_chain_weights",
+            latent_augmix.get("chain_weights"),
+        )
+        _append_optional_value(
+            argv,
+            "--latent_augmix_signal_space",
+            latent_augmix.get("signal_space"),
+        )
+        _append_optional_value(
+            argv,
+            "--latent_augmix_corruption_source",
+            latent_augmix.get("corruption_source"),
+        )
+        _append_optional_value(
+            argv,
+            "--latent_augmix_severity_profile",
+            latent_augmix.get("severity_profile"),
+        )
+        _append_optional_value(
+            argv,
+            "--latent_augmix_severity_params_file",
+            latent_augmix.get("severity_params_file"),
+        )
+        _append_optional_value(
+            argv,
+            "--latent_augmix_severity_params_name",
+            latent_augmix.get("severity_params_name"),
+        )
+        _append_optional_sequence(argv, "--latent_augmix_ops", latent_augmix.get("ops"))
+        if latent_augmix.get("no_renorm"):
+            argv.append("--no_latent_augmix_renorm")
+    if latent_augmix_enabled and latent_augmix_consistency.get("enabled"):
         argv.append("--enable_latent_augmix_consistency")
         _append_optional_value(
             argv,
@@ -324,6 +334,7 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
         _append_optional_value(argv, "--raw_augmix_mixture_prob", raw_augmix.get("mixture_prob"))
         _append_optional_value(argv, "--raw_augmix_mixture_beta_a", raw_augmix.get("mixture_beta_a"))
         _append_optional_value(argv, "--raw_augmix_mixture_beta_b", raw_augmix.get("mixture_beta_b"))
+        _append_optional_value(argv, "--raw_augmix_op_schedule", raw_augmix.get("op_schedule"))
         if raw_input_stabilizer:
             _append_optional_value(
                 argv,
@@ -391,10 +402,10 @@ def audit_effnet_vae_lhat_command(
     expected_command_k = str(case.get("k", expected_k))
     expected_command_seed = str(case.get("seed", expected_seed))
 
-    if script != "run_effnet_latent_augmix_stage3_20260524.py":
+    if script != "effnet_vae_lhat_augmix.py":
         errors.append(
             f"{script}: EfficientNet VAE-LHAT adapter only accepts "
-            "run_effnet_latent_augmix_stage3_20260524.py"
+            "effnet_vae_lhat_augmix.py"
         )
         return {"errors": errors, "warnings": warnings}
 

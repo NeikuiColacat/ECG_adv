@@ -1,0 +1,23 @@
+extends:
+  - ../defaults/pn2021c_official_s5_depth23_composite_protocol.yaml
+
+experiment:
+  name: pn2021c_effnet_official_s5_depth23_composite
+  description: Official severity-5 depth2+depth3 composite PN2021-C evaluation for EfficientNet1DV2 locked three-chain runs.
+
+logging:
+  child_artifacts:
+    - eval_pn2021_c_v7_refexcluded_stream_standard_official_s5_depth23_composite.json
+  postprocess_artifacts:
+    - pn2021c_effnet_official_s5_depth23_composite.csv
+
+runner:
+  matrix:
+    center: ${paper_protocol.centers.target_4}
+    method:
+      - name: effnet_threechain_locked
+        family: effnet_vae_lhat_augmix_threechain_locked_k500
+        model_dir_template: >-
+          {output_root}/{family}/{run_id}/{center}_realall_targetheavy_M20_lam0p05_augmix_s5_wlat0p25_hs3_target_macro_auprc_cdhypminormsttc_hlabelcom_anchor_soft_sta_local_random_p120_fullft_k500_threechain_s5_locked_ep30_seed{eval_seed}
+        clean_eval_name: eval_result_v7_exclrefs_crop1000.json
+  name: ${experiment.name}_${matrix.center}_${matrix.method.name}

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import copy
+import inspect
 import json
 from pathlib import Path
 
 import pytest
+import yaml
 
 from ecg_adv_gen.config import ConfigError, load_experiment_config, validate_experiment_config
 from ecg_adv_gen.data import (
@@ -56,19 +58,40 @@ def test_data_preprocess_contract_matches_current_pipeline_constants():
     assert ECGTWIN_TO_PTBXL_INDICES == tuple(LEGACY_REORDER)
 
 
+def test_data_contract_tests_use_latest_mainline_or_active_fixtures():
+    index = yaml.safe_load((REPO / "configs" / "active_scripts.yaml").read_text(encoding="utf-8"))
+    inactive_config_names = {Path(item["config"]).name for item in index["inactive_experiment_configs"]}
+    checked_tests = [
+        test_tracked_configs_follow_data_preprocess_contract,
+        test_validate_experiment_config_rejects_center_contract_drift,
+        test_validate_experiment_config_rejects_preprocess_contract_drift,
+        test_validate_experiment_config_rejects_ecgfounder_policy_drift,
+        test_validate_experiment_config_rejects_ecgfounder_feature_shape_drift,
+        test_validate_experiment_config_rejects_ecgfounder_policy_on_effnet,
+        _config_with_tmp_data_roots,
+    ]
+    offenders = []
+    for test_func in checked_tests:
+        source = inspect.getsource(test_func)
+        offenders.extend(
+            f"{test_func.__name__}: {config_name}"
+            for config_name in sorted(inactive_config_names)
+            if config_name in source
+        )
+
+    assert offenders == []
+
+
 def test_tracked_configs_follow_data_preprocess_contract():
-    for name in [
-        "effnet_direct_k500_v6.yaml",
-        "effnet_vae_lhat_k500_v6.yaml",
-        "ecgfounder_inithead_fullft_k500_v6.yaml",
-    ]:
-        config = _load(name)
+    index = yaml.safe_load((REPO / "configs" / "active_scripts.yaml").read_text(encoding="utf-8"))
+    for stage in index["latest_mainline"]["stages"]:
+        config = _load(Path(stage["config"]).name)
         validate_data_preprocess_config(config)
         validate_experiment_config(config, repo_root=REPO)
 
 
 def test_validate_experiment_config_rejects_center_contract_drift():
-    config = _load("effnet_direct_k500_v6.yaml")
+    config = _load("effnet_direct_k500_v7_sjr_rgq.yaml")
     config = copy.deepcopy(config)
     config["paper_protocol"]["centers"]["target_4"] = ["ningbo", "georgia"]
     config["data"]["pn2021_centers"] = ["ningbo", "georgia"]
@@ -78,7 +101,7 @@ def test_validate_experiment_config_rejects_center_contract_drift():
 
 
 def test_validate_experiment_config_rejects_preprocess_contract_drift():
-    config = _load("effnet_direct_k500_v6.yaml")
+    config = _load("effnet_direct_k500_v7_sjr_rgq.yaml")
     config = copy.deepcopy(config)
     config["preprocess"]["classifier_fs"] = 500
 
@@ -87,7 +110,7 @@ def test_validate_experiment_config_rejects_preprocess_contract_drift():
 
 
 def test_validate_experiment_config_rejects_ecgfounder_policy_drift():
-    config = _load("ecgfounder_vae_lhat_k500_v7_sjr_rgq.yaml")
+    config = _load("ecgfounder_vae_lhat_augmix_threechain_locked_k500.yaml")
     config = copy.deepcopy(config)
     config["model"]["preprocess_policy"] = "filtered_dataset"
 
@@ -96,7 +119,7 @@ def test_validate_experiment_config_rejects_ecgfounder_policy_drift():
 
 
 def test_validate_experiment_config_rejects_ecgfounder_feature_shape_drift():
-    config = _load("ecgfounder_vae_lhat_k500_v7_sjr_rgq.yaml")
+    config = _load("ecgfounder_vae_lhat_augmix_threechain_locked_k500.yaml")
     config = copy.deepcopy(config)
     config["preprocess"]["ecgfounder"]["input_len"] = 1000
 
@@ -105,7 +128,7 @@ def test_validate_experiment_config_rejects_ecgfounder_feature_shape_drift():
 
 
 def test_validate_experiment_config_rejects_ecgfounder_policy_on_effnet():
-    config = _load("effnet_vae_lhat_k500_v7_sjr_rgq.yaml")
+    config = _load("effnet_vae_lhat_augmix_threechain_locked_k500.yaml")
     config = copy.deepcopy(config)
     config["model"]["preprocess_policy"] = "official_ptbxl_eval"
 
@@ -114,7 +137,7 @@ def test_validate_experiment_config_rejects_ecgfounder_policy_on_effnet():
 
 
 def _config_with_tmp_data_roots(tmp_path: Path) -> dict:
-    config = copy.deepcopy(_load("effnet_direct_k500_v6.yaml"))
+    config = copy.deepcopy(_load("effnet_direct_k500_v7_sjr_rgq.yaml"))
     data_root = tmp_path / "data"
     config["data"]["roots"] = {
         "ptbxl": str(data_root / "ptbxl"),

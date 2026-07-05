@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 
+from ecg_adv_gen.data.pn2021 import (
+    expected_pn2021_mmap_metadata,
+    load_or_build_pn2021_center,
+)
 from ecg_adv_gen.evaluation.pn2021_eval_cache import (
     PN2021_EVAL_CACHE_VERSION,
     build_pn2021_cache_metadata,
@@ -143,6 +148,33 @@ def test_write_and_load_pn2021_mmap_cache_round_trip_and_rejects_metadata(tmp_pa
     wrong = dict(metadata)
     wrong["center"] = "georgia"
     assert load_pn2021_mmap_cache(tmp_path, wrong) is None
+
+
+def test_package_load_or_build_pn2021_center_uses_existing_mmap_cache(tmp_path: Path):
+    args = SimpleNamespace(
+        scheme="super5",
+        preprocess_mode="minimal_resample",
+        norm_mode="per_sample_global",
+        crop_len=250,
+        pn2021_cache_dir=str(tmp_path / "npz"),
+        pn2021_mmap_cache_dir=str(tmp_path / "mmap"),
+    )
+    scheme = {
+        "class_names": ["CD", "HYP", "MI", "NORM", "STTC"],
+        "pn2021_fn": lambda snomeds: np.zeros(5, dtype=np.float32),
+        "num_classes": 5,
+    }
+    mmap_root = Path(pn2021_mmap_cache_path(args.pn2021_mmap_cache_dir, "super5", "ningbo"))
+    metadata = expected_pn2021_mmap_metadata(args, scheme, "ningbo")
+    signals = np.zeros((2, 1000, 12), dtype=np.float32)
+    labels = np.eye(5, dtype=np.float32)[:2]
+    record_ids = np.asarray(["N1", "N2"], dtype=str)
+    write_pn2021_mmap_cache(mmap_root, signals, labels, record_ids, metadata)
+
+    loaded = load_or_build_pn2021_center("ningbo", tmp_path / "missing_center", scheme, args)
+
+    assert loaded[3:] == (0, 0.0, True, "mmap")
+    np.testing.assert_array_equal(loaded[2], record_ids)
 
 
 def test_load_existing_pn2021_eval_cache_upgrades_valid_npz_to_mmap(tmp_path: Path):

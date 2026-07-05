@@ -161,19 +161,22 @@ def _claim_by_id(registry: dict[str, Any], claim_id: str | None) -> dict[str, An
     raise ComparisonBundleError(f"Unknown claim_id: {claim_id}")
 
 
-def _registered_run_by_id(registry: dict[str, Any], run_id: str) -> dict[str, Any]:
+def _registered_run_record(registry: dict[str, Any], *, experiment_name: str, run_id: str) -> dict[str, Any]:
     for item in registry.get("managed_runs") or []:
-        if str(item.get("run_id") or "") == str(run_id) or str(item.get("experiment_name") or "") == str(run_id):
-            return {
-                "run_id": item.get("run_id", ""),
-                "experiment_name": item.get("experiment_name", ""),
-                "status": item.get("status", ""),
-                "outcome": item.get("outcome", ""),
-                "purpose": item.get("purpose", ""),
-                "result_summary": item.get("result_summary", ""),
-                "run_card": item.get("run_card", ""),
-                "summary": item.get("summary", ""),
-            }
+        if str(item.get("experiment_name") or "") != str(experiment_name):
+            continue
+        if str(item.get("run_id") or "") != str(run_id):
+            continue
+        return {
+            "run_id": item.get("run_id", ""),
+            "experiment_name": item.get("experiment_name", ""),
+            "status": item.get("status", ""),
+            "outcome": item.get("outcome", ""),
+            "purpose": item.get("purpose", ""),
+            "result_summary": item.get("result_summary", ""),
+            "run_card": item.get("run_card", ""),
+            "summary": item.get("summary", ""),
+        }
     return {}
 
 
@@ -183,6 +186,7 @@ def _method_record(
     method: dict[str, Any],
     run_id: str,
 ) -> dict[str, Any]:
+    method_run_id = str(method.get("run_id") or run_id)
     return {
         "run_id": run_id,
         "method_status": method.get("status", ""),
@@ -190,7 +194,11 @@ def _method_record(
         "config": method.get("config", ""),
         "manifest": method.get("manifest", ""),
         "metrics_long": method.get("metrics_long", ""),
-        "registered_run": _registered_run_by_id(registry, run_id),
+        "registered_run": _registered_run_record(
+            registry,
+            experiment_name=str(run_id),
+            run_id=method_run_id,
+        ),
     }
 
 

@@ -1,14 +1,12 @@
-"""Tier-M ECGTwin generation prompts + dir names. Class list itself is the
-canonical TIER_M from scripts.crosscenter_v2.label_alignment_v2 — re-export
-here so the list never drifts between training and adversarial generation.
+"""Tier-M ECGTwin generation prompts + dir names.
+
+Class list itself is the canonical package-owned TIER_M, re-exported here so
+the list never drifts between training and adversarial generation.
 """
 
-import os
-import sys
 from typing import Dict, List
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from scripts.crosscenter_v2.label_alignment_v2 import TIER_M as TIER_M_CLASSES  # noqa: E402
+from ecg_adv_gen.labels.tier26 import TIER_M as TIER_M_CLASSES
 
 TIER_M_CLASS_TO_IDX: Dict[str, int] = {c: i for i, c in enumerate(TIER_M_CLASSES)}
 

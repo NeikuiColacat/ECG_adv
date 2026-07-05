@@ -3,7 +3,12 @@ from ecg_adv_gen.config.adapters.pn2021c_eval import (
     build_pn2021c_eval_argv,
 )
 from ecg_adv_gen.config.adapters.ecgfounder_pn2021c_eval import (
+    audit_ecgfounder_pn2021c_eval_command,
     build_ecgfounder_pn2021c_eval_argv,
+)
+from ecg_adv_gen.evaluation.pn2021c_protocol import (
+    OFFICIAL_S5_COMPOSITE_CORRUPTION_SET,
+    official_s5_depth23_composites,
 )
 
 
@@ -49,6 +54,27 @@ def _ecgfounder_config():
     config["training"]["num_workers"] = 0
     config["evaluation"]["corruption_input"] = "bottleneck5000"
     return config
+
+
+def test_ecgfounder_pn2021c_eval_adapter_requires_k500_ref_exclusion_gate():
+    config = _ecgfounder_config()
+    config["evaluation"]["output_stem"] = "eval_pn2021_c_ecgfounder_official_s5_locked"
+    method = {
+        "name": "threechain_locked",
+        "family": "ecgfounder_vae_lhat_augmix_threechain_locked_k500",
+        "run_dir_template": "{output_root}/{family}/{run_id}/runs/{center}_locked",
+    }
+    command = {
+        "argv": build_ecgfounder_pn2021c_eval_argv(
+            config,
+            {"matrix": {"center": "ningbo", "method": method}},
+        ),
+        "matrix": {"center": "ningbo", "method": method},
+    }
+    argv = [str(x) for x in command["argv"]]
+
+    assert argv[argv.index("--min_target_ref_excluded") + 1] == "500"
+    assert audit_ecgfounder_pn2021c_eval_command(command, config=config)["errors"] == []
 
 
 def test_pn2021c_eval_adapter_requires_clean_eval_and_cache_version():
@@ -107,6 +133,23 @@ def test_pn2021c_eval_adapter_emits_custom_severity_profile_file_and_name():
     assert argv[argv.index("--severity_params_name") + 1] == "emg_amp2p3"
 
 
+def test_pn2021c_eval_adapter_expands_official_s5_depth23_composite_set():
+    config = _config()
+    config["evaluation"]["corruption_set"] = OFFICIAL_S5_COMPOSITE_CORRUPTION_SET
+    config["evaluation"]["severities"] = [5]
+    argv = [
+        str(x)
+        for x in build_pn2021c_eval_argv(
+            config,
+            {"matrix": {"center": "ningbo", "method": {"name": "vae_lhat", "family": "family"}}},
+        )
+    ]
+
+    start = argv.index("--corruptions") + 1
+    end = argv.index("--severities")
+    assert argv[start:end] == official_s5_depth23_composites()
+
+
 def test_ecgfounder_pn2021c_eval_adapter_emits_custom_severity_profile_file_and_name():
     config = _ecgfounder_config()
     config["evaluation"]["severity_profile"] = "custom"
@@ -128,6 +171,28 @@ def test_ecgfounder_pn2021c_eval_adapter_emits_custom_severity_profile_file_and_
     assert argv[argv.index("--severity_profile") + 1] == "custom"
     assert argv[argv.index("--severity_params_file") + 1] == "configs/corruption_profiles/candidates.yaml"
     assert argv[argv.index("--severity_params_name") + 1] == "power_native_amp8"
+
+
+def test_ecgfounder_pn2021c_eval_adapter_expands_official_s5_depth23_composite_set():
+    config = _ecgfounder_config()
+    config["evaluation"]["corruption_set"] = OFFICIAL_S5_COMPOSITE_CORRUPTION_SET
+    config["evaluation"]["severities"] = [5]
+    method = {
+        "name": "ecgfounder_k500_fullft_locked",
+        "family": "ecgfounder_k500_fullft_locked",
+        "run_dir_template": "{output_root}/{family}/{run_id}/runs/{center}_k500_fullft_locked",
+    }
+    argv = [
+        str(x)
+        for x in build_ecgfounder_pn2021c_eval_argv(
+            config,
+            {"matrix": {"center": "georgia", "method": method}},
+        )
+    ]
+
+    start = argv.index("--corruptions") + 1
+    end = argv.index("--severities")
+    assert argv[start:end] == official_s5_depth23_composites()
 
 
 def test_pn2021c_eval_adapter_allows_method_level_run_overrides():

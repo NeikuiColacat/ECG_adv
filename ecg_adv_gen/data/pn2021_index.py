@@ -36,10 +36,20 @@ def record_id_from_path(path: str | Path) -> str:
     return p.stem if p.suffix == PN2021_HEADER_SUFFIX else p.name
 
 
+def center_from_record_path(path: str | Path) -> str:
+    """Return the PN2021 center from a WFDB record path."""
+    parts = Path(path).parts
+    if "training" in parts:
+        idx = parts.index("training")
+        if idx + 1 < len(parts):
+            return parts[idx + 1]
+    return Path(path).parent.name
+
+
 def parse_header_snomeds(header_path: str | Path) -> list[int]:
     """Parse SNOMED codes from a PN2021 ``#Dx:`` header line.
 
-    This preserves the legacy behavior used by ``eval_crosscenter.py``:
+    This preserves the legacy behavior used by ``pn2021_clean_eval.py``:
     malformed code lists return an empty list instead of raising.
     """
     with Path(header_path).open("r", encoding="utf-8") as f:

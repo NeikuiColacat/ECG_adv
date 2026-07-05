@@ -13,7 +13,12 @@ from ecg_adv_gen.evaluation.pn2021_corruptions import (
     require_clean_eval_json,
     load_clean_metric_lookup,
     load_npz_metadata,
+    ref_ids_sha256,
     stable_corruption_seed,
+)
+from ecg_adv_gen.evaluation.pn2021c import (
+    PN2021C_CORRUPTS_PRE_ZSCORE,
+    PN2021C_OFFICIAL_OPERATORS,
 )
 
 
@@ -36,6 +41,17 @@ def test_pn2021_corruption_cache_paths_are_versioned_and_stable():
     assert clean_npz_cache_path(
         "/npz", "super5", "georgia", "vclean"
     ) == "/npz/super5_georgia_100hz1000_vclean.npz"
+
+
+def test_pn2021c_official_single_operator_contract_is_package_owned():
+    assert PN2021C_OFFICIAL_OPERATORS == (
+        "powerline_noise",
+        "emg_noise",
+        "baseline_wander",
+        "baseline_shift",
+        "random_leads_masking",
+    )
+    assert PN2021C_CORRUPTS_PRE_ZSCORE is True
 
 
 def test_load_npz_metadata_decodes_json_scalars_and_falls_back_to_empty_dict():
@@ -63,6 +79,15 @@ def test_filter_record_indices_excludes_string_ids_before_limit():
         limit=1,
     )
     np.testing.assert_array_equal(indices, np.array([0], dtype=np.int64))
+
+
+def test_ref_ids_sha256_sorts_ids_and_keeps_trailing_newline_contract():
+    assert ref_ids_sha256({"b", "a"}) == (
+        "911169ddaaf146aff539f58c26c489af3b892dff0fe283c1c264c65ae5aa59a2"
+    )
+    assert ref_ids_sha256(set()) == (
+        "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+    )
 
 
 def test_load_clean_metric_lookup_reads_per_center_metrics(tmp_path):

@@ -1,5 +1,6 @@
 extends:
-  - effnet_vae_lhat_k500_v7_sjr_rgq.yaml
+  - ../defaults/effnet1dv2_v7_sjr_rgq_defaults.yaml
+  - ../defaults/vae_lhat_defaults.yaml
 
 experiment:
   name: effnet_vae_lhat_augmix_threechain_locked_k500
@@ -22,6 +23,107 @@ paper_protocol:
 model:
   direct_init_root: ${paths.output_root}/effnet_direct_k500_v7_sjr_rgq/seed20260601_k500_v7_sjr_rgq_20260530_rep1/runs
 
+training:
+  epochs: 30
+
+logging:
+  required_epoch_metrics:
+    - epoch
+    - train_loss
+    - val_loss
+    - asr_overall
+    - sample_any_positive_below_0p5_asr
+    - attack_vs_anchor
+    - loss_gain
+    - decoded_invalid_rate
+    - adv_weight_effective
+    - latent_augmix_stats
+    - hull_weight_entropy_mean
+    - quick_eval
+
+postprocess:
+  commands:
+    - name: export_metrics_long
+      entrypoint: scripts/export_metrics_long.py
+      env:
+        TMPDIR: ${paths.short_tmp_root}
+        XDG_CACHE_HOME: ${paths.cache_root}
+      argv:
+        - --input
+        - ${paths.output_root}/${experiment.name}/${runtime.run_id}
+        - --output-dir
+        - ${paths.output_root}/metrics_export/${runtime.run_id}_${experiment.name}
+        - --run-id
+        - ${experiment.name}
+        - --filter-to-target-center
+        - --target-centers
+        - ${paper_protocol.centers.target_4}
+        - --expected-mapping-version
+        - ${paper_protocol.mapping_version}
+        - --expected-mapping-hash
+        - ${paper_protocol.mapping_hash}
+      expected_artifacts:
+        - role: metrics_long
+          path: ${paths.output_root}/metrics_export/${runtime.run_id}_${experiment.name}/metrics_long.csv
+        - role: artifact_manifest
+          path: ${paths.output_root}/metrics_export/${runtime.run_id}_${experiment.name}/artifact_manifest.json
+
+    - name: export_paper_table_all_zero_kept
+      entrypoint: scripts/export_paper_table.py
+      env:
+        TMPDIR: ${paths.short_tmp_root}
+        XDG_CACHE_HOME: ${paths.cache_root}
+      argv:
+        - --metrics-long
+        - ${paths.output_root}/metrics_export/${runtime.run_id}_${experiment.name}/metrics_long.csv
+        - --output-dir
+        - ${paths.output_root}/paper_table/${runtime.run_id}_${experiment.name}_all_zero_kept
+        - --view
+        - pn2021_all_zero_kept_refexcluded
+        - --dataset
+        - pn2021
+        - --centers
+        - ${paper_protocol.centers.target_4}
+        - --no-dataset-rows
+      expected_artifacts:
+        - role: paper_table
+          path: ${paths.output_root}/paper_table/${runtime.run_id}_${experiment.name}_all_zero_kept/paper_table.csv
+        - role: paper_table_manifest
+          path: ${paths.output_root}/paper_table/${runtime.run_id}_${experiment.name}_all_zero_kept/paper_table_manifest.json
+
+    - name: export_paper_table_drop_all_zero
+      entrypoint: scripts/export_paper_table.py
+      env:
+        TMPDIR: ${paths.short_tmp_root}
+        XDG_CACHE_HOME: ${paths.cache_root}
+      argv:
+        - --metrics-long
+        - ${paths.output_root}/metrics_export/${runtime.run_id}_${experiment.name}/metrics_long.csv
+        - --output-dir
+        - ${paths.output_root}/paper_table/${runtime.run_id}_${experiment.name}_drop_all_zero
+        - --view
+        - pn2021_drop_all_zero_refexcluded
+        - --dataset
+        - pn2021
+        - --centers
+        - ${paper_protocol.centers.target_4}
+        - --no-dataset-rows
+      expected_artifacts:
+        - role: paper_table
+          path: ${paths.output_root}/paper_table/${runtime.run_id}_${experiment.name}_drop_all_zero/paper_table.csv
+        - role: paper_table_manifest
+          path: ${paths.output_root}/paper_table/${runtime.run_id}_${experiment.name}_drop_all_zero/paper_table_manifest.json
+
+runner:
+  entrypoint: ecg_adv_gen/runner/effnet_vae_lhat_augmix.py
+  adapter: effnet_vae_lhat
+  env:
+    ECG_ADV_GEN_DATA_ROOT: ${paths.data_root}
+    TMPDIR: ${paths.short_tmp_root}
+    XDG_CACHE_HOME: ${paths.cache_root}
+  matrix:
+    center: ${paper_protocol.centers.target_4}
+
 data:
   target_real_npz_suffix: .raw1000.npz
   target_real_norm_mode: per_sample_global
@@ -34,6 +136,13 @@ adaptation:
     target_real_val_fraction: 0.0
   latent_augmix:
     topology: locked_three_chain
+    chain_roles:
+      - name: chain1
+        role: official_corruption_chain
+      - name: chain2
+        role: official_corruption_chain
+      - name: chain3
+        role: vae_lhat_adversarial_waveform
     copies: 2
     latent_weight_cap: 0.25
     width: 3

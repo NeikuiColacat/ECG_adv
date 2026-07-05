@@ -11,6 +11,8 @@ from __future__ import annotations
 PTBXL_FOLD10_SOURCE_FLOOR = "ptbxl_fold10_source_floor"
 PN2021_ALL_ZERO_KEPT_REFEXCLUDED = "pn2021_all_zero_kept_refexcluded"
 PN2021_DROP_ALL_ZERO_REFEXCLUDED = "pn2021_drop_all_zero_refexcluded"
+PN2021C_ALL_ZERO_KEPT_CORRUPTED_REFEXCLUDED = "pn2021c_all_zero_kept_corrupted_refexcluded"
+PN2021C_DROP_ALL_ZERO_CORRUPTED_REFEXCLUDED = "pn2021c_drop_all_zero_corrupted_refexcluded"
 TARGET_K500_INTERNAL_VAL = "target_k500_internal_val"
 TARGET_ALL_ZERO_KEPT_REFEXCLUDED = "target_all_zero_kept_refexcluded"
 TARGET_DROP_ALL_ZERO_REFEXCLUDED = "target_drop_all_zero_refexcluded"

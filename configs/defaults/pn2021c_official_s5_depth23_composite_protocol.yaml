@@ -1,0 +1,19 @@
+extends: pn2021c_official_s5_locked_protocol.yaml
+
+paper_protocol:
+  kshot:
+    seed: 20260601
+    subset_seed: 20260601
+
+evaluation:
+  corruption_set: official_s5_depth23_composite
+  severity_profile: standard
+  severities: [5]
+  corruption_input: raw_first
+  output_stem: eval_pn2021_c_v7_refexcluded_stream_standard_official_s5_depth23_composite
+
+logging:
+  child_artifacts:
+    - eval_pn2021_c_v7_refexcluded_stream_standard_official_s5_depth23_composite.json
+  postprocess_artifacts:
+    - pn2021c_official_s5_depth23_composite.csv

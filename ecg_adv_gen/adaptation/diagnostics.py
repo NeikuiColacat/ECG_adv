@@ -7,6 +7,12 @@ from typing import Any
 import numpy as np
 
 
+def _float_or_nan(value: Any) -> float:
+    if value is None:
+        return float("nan")
+    return float(value)
+
+
 def decoded_signal_invalid_stats(signals: np.ndarray) -> dict[str, float]:
     """Return invalid, NaN, and flatline rates for decoded ECG batches."""
     if signals.size == 0:
@@ -34,8 +40,8 @@ def agent_attack_decision(
     consecutive_low_asr: int,
 ) -> dict[str, Any]:
     """Classify attack health from epoch diagnostics."""
-    asr = float(entry.get("asr_overall", float("nan")))
-    invalid = float(entry.get("decoded_invalid_rate", float("nan")))
+    asr = _float_or_nan(entry.get("asr_overall", float("nan")))
+    invalid = _float_or_nan(entry.get("decoded_invalid_rate", float("nan")))
     loss_gain = entry.get("attack_vs_anchor", {}).get("loss_gain_mean")
     if asr != asr:
         state = "no_attack_or_disabled"
@@ -46,7 +52,7 @@ def agent_attack_decision(
     elif asr < asr_low_threshold:
         state = "attack_too_weak"
         action = "increase_attack_strength_only_if_repeated_and_source_floor_is_safe"
-    elif asr > 0.85 and (loss_gain is None or float(loss_gain) > 0.05):
+    elif asr > 0.85 and (loss_gain is None or _float_or_nan(loss_gain) > 0.05):
         state = "attack_too_strong"
         action = "lower_adv_weight_or_attack_strength_if_target/source_metrics_drop"
     elif consecutive_low_asr > 0:

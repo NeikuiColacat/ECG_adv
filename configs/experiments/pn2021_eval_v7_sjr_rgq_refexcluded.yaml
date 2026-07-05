@@ -5,6 +5,11 @@ experiment:
   name: pn2021_eval_v7_sjr_rgq_refexcluded
   description: Managed PN2021 Super5 v7 SJR/RGQ ref-excluded evaluation for direct-K500 EfficientNet1DV2 runs.
 
+paper_protocol:
+  kshot:
+    seed: 20260601
+    subset_seed: 20260601
+
 model:
   backbone: efficientnet1dv2
   num_classes: 5
@@ -105,7 +110,7 @@ postprocess:
           path: ${paths.output_root}/paper_table/${runtime.run_id}_drop_all_zero/paper_table_manifest.json
 
 runner:
-  entrypoint: scripts/triple_labels/eval_crosscenter.py
+  entrypoint: ecg_adv_gen/runner/pn2021_clean_eval.py
   adapter: pn2021_eval
   env:
     ECG_ADV_GEN_DATA_ROOT: ${paths.data_root}

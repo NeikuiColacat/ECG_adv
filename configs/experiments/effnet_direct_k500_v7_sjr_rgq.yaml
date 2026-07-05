@@ -3,48 +3,16 @@ extends:
 
 experiment:
   name: effnet_direct_k500_v7_sjr_rgq
-  description: EfficientNet1DV2 direct K500 target-center fine-tuning under PN2021 Super5 v7 SJR/RGQ review mapping.
+  description: EfficientNet1DV2 direct K500 target-center fine-tuning under PN2021 Super5 v7 SJR/RGQ review mapping for the seed20260601 locked mainline.
+
+paper_protocol:
+  kshot:
+    seed: 20260601
+    subset_seed: 20260601
 
 runner:
-  entrypoint: scripts/paper/run_direct_finetune_k500_20260516.py
-  argv:
-    - --centers
-    - ningbo
-    - chapman_shaoxing
-    - cpsc_2018
-    - georgia
-    - --k
-    - ${paper_protocol.kshot.k}
-    - --subset_seed
-    - ${paper_protocol.kshot.subset_seed}
-    - --seed
-    - ${paper_protocol.kshot.seed}
-    - --epochs
-    - ${training.epochs}
-    - --lr
-    - ${training.optimizer.lr}
-    - --weight_decay
-    - ${training.optimizer.weight_decay}
-    - --grad_clip
-    - ${training.grad_clip}
-    - --batch_size
-    - ${training.batch_size}
-    - --eval_batch_size
-    - ${training.eval_batch_size}
-    - --crop_len
-    - ${preprocess.crop_len}
-    - --val_fraction
-    - 0.2
-    - --num_workers
-    - ${training.num_workers}
-    - --device
-    - cuda
-    - --pos_weight_clip_max
-    - ${training.pos_weight_clip_max}
-    - --subset_root
-    - ${data.kshot_subset_root}
-    - --out_root
-    - ${paths.output_root}/${experiment.name}/${runtime.run_id}
+  entrypoint: ecg_adv_gen/runner/effnet_direct_finetune.py
+  adapter: direct_finetune
 
 adaptation:
   method: direct_target_k500_finetune

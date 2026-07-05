@@ -1,9 +1,4 @@
-"""Project-local helpers for ECG_adv_Gen.
-
-The package is introduced as a thin compatibility layer. Existing experiment
-entrypoints under ``scripts/`` remain the runtime source of truth until the
-configuration wrapper is proven stable.
-"""
+"""Stable package code for ECG_adv_Gen managed experiments."""
 
 __all__ = ["__version__"]
 
