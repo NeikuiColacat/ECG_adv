@@ -110,5 +110,5 @@ logging:
 
 run_record:
   purpose: "Locked ECGFounder main-method run: all K500 samples train, full model trainable, no K500 validation split, last checkpoint only, two official corruption chains plus one VAE-LHAT adversarial waveform chain."
-  result_summary: Pending. Evaluate PN2021 clean and PN2021-C official severity 5 after smoke passes.
+  result_summary: Pending. Evaluate PN2021 clean and PN2021-C official severity 5 after managed training completes.
   registration_status: provisional

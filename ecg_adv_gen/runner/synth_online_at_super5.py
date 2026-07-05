@@ -1192,8 +1192,6 @@ def parse_args():
         action="store_true",
         help="Allow critical args in a resume checkpoint to differ from the current command.",
     )
-    p.add_argument("--smoke", action="store_true",
-                   help="Run only --n_epochs but with tiny subsets for sanity")
     return p.parse_args()
 
 
@@ -1347,13 +1345,6 @@ def main():
     all_sig = preprocess_ptbxl_all(args.ptbxl_raw, cache_path)
     train_signals = np.asarray(all_sig[train_idx])
     val_signals = np.asarray(all_sig[val_idx])
-
-    if args.smoke:
-        train_signals = train_signals[:512]
-        train_labels = train_labels[:512]
-        val_signals = val_signals[:128]
-        val_labels = val_labels[:128]
-        print("[smoke] truncated PTBXL train/val")
 
     train_ds = PTBXLDatasetScheme(train_signals, train_labels,
                                   crop_len=args.crop_len, mode='train')
