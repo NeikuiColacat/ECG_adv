@@ -207,15 +207,6 @@ def build_effnet_vae_lhat_run_leaf(params: Any) -> str:
     pool_multiplier = _as_int(_get(params, "hull_neighbor_pool_multiplier", 4), 4)
     neighbor_tag = f"{distance_space[:3]}_{neighbor_mode}_p{pool_size or pool_multiplier}"
 
-    if _as_int(_get(params, "unfreeze_last_n_features", 0), 0) > 0:
-        adapt_tag = f"last{_as_int(_get(params, 'unfreeze_last_n_features', 0), 0)}"
-    elif _as_bool(_get(params, "freeze_backbone_classifier_only", False)):
-        adapt_tag = "headfn" if _as_bool(_get(params, "classifier_only_train_final_norm", False)) else "head"
-        if str(_get(params, "classifier_adapter_type", "none")) == "lora":
-            adapt_tag += f"_lora{_as_int(_get(params, 'classifier_lora_rank', 16), 16)}"
-    else:
-        adapt_tag = "fullft"
-
     extra = str(_get(params, "run_tag_extra", "") or "")
     extra_tag = f"_{extra}" if extra else ""
     epochs = _as_int(_get(params, "epochs", 30), 30)
@@ -228,6 +219,6 @@ def build_effnet_vae_lhat_run_leaf(params: Any) -> str:
         f"_hs{hull_steps}_{es_metric}_{class_tag}"
         f"_hlabel{label_mode[:3]}_{mix_label}"
         f"_{neighbor_tag}"
-        f"_{adapt_tag}"
+        "_fullft"
         f"{extra_tag}_ep{epochs}_seed{seed}"
     )

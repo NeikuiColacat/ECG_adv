@@ -67,6 +67,8 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
         synth_npz_override = str(Path(paths["data_root"]) / synth_npz_override)
     latent_augmix = adaptation["latent_augmix"]
     latent_augmix_enabled = bool(latent_augmix.get("enabled", True))
+    if not latent_augmix_enabled:
+        raise ValueError("effnet_vae_lhat latest-mainline requires latent_augmix.enabled=true")
     latent_augmix_mixture = latent_augmix.get("mixture") or {}
     latent_augmix_consistency = latent_augmix.get("consistency") or {}
     anchors = adaptation.get("anchors") or {}
@@ -137,22 +139,16 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
         training["batch_size"],
         "--ptbxl_weight",
         adaptation["loss"].get("ptbxl_weight", "1.0"),
-        *(
-            [
-                "--latent_augmix_latent_weight_cap",
-                latent_augmix["latent_weight_cap"],
-                "--latent_augmix_width",
-                latent_augmix["width"],
-                "--latent_augmix_depth",
-                latent_augmix["depth"],
-                "--latent_augmix_alpha",
-                latent_augmix["alpha"],
-                "--latent_augmix_severity",
-                latent_augmix["severity"],
-            ]
-            if latent_augmix_enabled
-            else ["--disable_latent_augmix_branch"]
-        ),
+        "--latent_augmix_latent_weight_cap",
+        latent_augmix["latent_weight_cap"],
+        "--latent_augmix_width",
+        latent_augmix["width"],
+        "--latent_augmix_depth",
+        latent_augmix["depth"],
+        "--latent_augmix_alpha",
+        latent_augmix["alpha"],
+        "--latent_augmix_severity",
+        latent_augmix["severity"],
         "--quick_eval_source",
         selection.get("quick_eval_source", "target_real_val"),
         "--target_real_val_fraction",
@@ -168,8 +164,6 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
     ]
     _append_optional_value(argv, "--boundary_prob_min", adaptation["attack"].get("boundary_prob_min"))
     _append_optional_value(argv, "--boundary_prob_max", adaptation["attack"].get("boundary_prob_max"))
-    if adaptation.get("disable_adv_stream") or adaptation["attack"].get("disable_adv_stream"):
-        argv.append("--disable_adv_stream")
     _append_optional_value(argv, "--target_real_norm_mode", data.get("target_real_norm_mode"))
     _append_optional_value(argv, "--synth_npz_override", synth_npz_override or None)
     _append_optional_value(argv, "--target_real_npz_override", target_real_npz_override or None)

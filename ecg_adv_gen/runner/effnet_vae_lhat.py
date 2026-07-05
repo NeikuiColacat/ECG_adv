@@ -187,10 +187,6 @@ def build_effnet_vae_lhat_train_cmd(
         "0.0",
         "--roundtrip_anchor_n",
         "0",
-        "--source_logit_anchor_weight",
-        str(args.source_logit_anchor_weight),
-        "--source_logit_anchor_batches",
-        str(args.source_logit_anchor_batches),
         "--adv_label_mode",
         str(args.adv_label_mode),
         "--adv_teacher_mix",
@@ -239,78 +235,75 @@ def build_effnet_vae_lhat_train_cmd(
     ]
     if args.hull_include_anchor:
         train_cmd.append("--hull_include_anchor")
-    if getattr(args, "disable_adv_stream", False):
-        train_cmd.append("--disable_adv_stream")
-    if not args.disable_latent_augmix_branch:
+    train_cmd.extend(
+        [
+            "--enable_latent_augmix_branch",
+            "--latent_augmix_topology",
+            "locked_three_chain",
+            "--latent_augmix_copies",
+            str(args.latent_augmix_copies),
+            "--latent_augmix_width",
+            str(args.latent_augmix_width),
+            "--latent_augmix_depth",
+            str(args.latent_augmix_depth),
+            "--latent_augmix_alpha",
+            str(args.latent_augmix_alpha),
+            "--latent_augmix_mixture_mode",
+            str(getattr(args, "latent_augmix_mixture_mode", "beta")),
+            "--latent_augmix_mixture_prob",
+            str(getattr(args, "latent_augmix_mixture_prob", 0.5)),
+            "--latent_augmix_mixture_beta_a",
+            str(getattr(args, "latent_augmix_mixture_beta_a", 0.0)),
+            "--latent_augmix_mixture_beta_b",
+            str(getattr(args, "latent_augmix_mixture_beta_b", 0.0)),
+            "--latent_augmix_op_schedule",
+            str(getattr(args, "latent_augmix_op_schedule", "random")),
+            "--latent_augmix_chain_weights",
+            str(getattr(args, "latent_augmix_chain_weights", "")),
+            "--latent_augmix_signal_space",
+            str(getattr(args, "latent_augmix_signal_space", "model_zscore")),
+            "--latent_augmix_corruption_source",
+            str(getattr(args, "latent_augmix_corruption_source", "vae_decode")),
+            "--latent_augmix_severity",
+            str(args.latent_augmix_severity),
+            "--latent_augmix_severity_profile",
+            str(getattr(args, "latent_augmix_severity_profile", "standard")),
+            "--latent_augmix_latent_weight_cap",
+            str(args.latent_augmix_latent_weight_cap),
+            "--latent_augmix_ops",
+            *[str(item) for item in args.latent_augmix_ops],
+        ]
+    )
+    if getattr(args, "latent_augmix_severity_params_file", ""):
         train_cmd.extend(
             [
-                "--enable_latent_augmix_branch",
-                "--latent_augmix_topology",
-                str(getattr(args, "latent_augmix_topology", "legacy_branch")),
-                "--latent_augmix_copies",
-                str(args.latent_augmix_copies),
-                "--latent_augmix_width",
-                str(args.latent_augmix_width),
-                "--latent_augmix_depth",
-                str(args.latent_augmix_depth),
-                "--latent_augmix_alpha",
-                str(args.latent_augmix_alpha),
-                "--latent_augmix_mixture_mode",
-                str(getattr(args, "latent_augmix_mixture_mode", "beta")),
-                "--latent_augmix_mixture_prob",
-                str(getattr(args, "latent_augmix_mixture_prob", 0.5)),
-                "--latent_augmix_mixture_beta_a",
-                str(getattr(args, "latent_augmix_mixture_beta_a", 0.0)),
-                "--latent_augmix_mixture_beta_b",
-                str(getattr(args, "latent_augmix_mixture_beta_b", 0.0)),
-                "--latent_augmix_op_schedule",
-                str(getattr(args, "latent_augmix_op_schedule", "random")),
-                "--latent_augmix_chain_weights",
-                str(getattr(args, "latent_augmix_chain_weights", "")),
-                "--latent_augmix_signal_space",
-                str(getattr(args, "latent_augmix_signal_space", "model_zscore")),
-                "--latent_augmix_corruption_source",
-                str(getattr(args, "latent_augmix_corruption_source", "vae_decode")),
-                "--latent_augmix_severity",
-                str(args.latent_augmix_severity),
-                "--latent_augmix_severity_profile",
-                str(getattr(args, "latent_augmix_severity_profile", "standard")),
-                "--latent_augmix_latent_weight_cap",
-                str(args.latent_augmix_latent_weight_cap),
-                "--latent_augmix_ops",
-                *[str(item) for item in args.latent_augmix_ops],
+                "--latent_augmix_severity_params_file",
+                str(args.latent_augmix_severity_params_file),
             ]
         )
-        if getattr(args, "latent_augmix_severity_params_file", ""):
-            train_cmd.extend(
-                [
-                    "--latent_augmix_severity_params_file",
-                    str(args.latent_augmix_severity_params_file),
-                ]
-            )
-        if getattr(args, "latent_augmix_severity_params_name", ""):
-            train_cmd.extend(
-                [
-                    "--latent_augmix_severity_params_name",
-                    str(args.latent_augmix_severity_params_name),
-                ]
-            )
-        if getattr(args, "no_latent_augmix_renorm", False):
-            train_cmd.append("--no_latent_augmix_renorm")
-        if getattr(args, "enable_latent_augmix_consistency", False):
-            train_cmd.extend(
-                [
-                    "--enable_latent_augmix_consistency",
-                    "--latent_augmix_consistency_weight",
-                    str(args.latent_augmix_consistency_weight),
-                    "--latent_augmix_consistency_loss",
-                    str(args.latent_augmix_consistency_loss),
-                    "--latent_augmix_bce_weight",
-                    str(args.latent_augmix_bce_weight),
-                    "--latent_augmix_consistency_max_batches",
-                    str(args.latent_augmix_consistency_max_batches),
-                ]
-            )
+    if getattr(args, "latent_augmix_severity_params_name", ""):
+        train_cmd.extend(
+            [
+                "--latent_augmix_severity_params_name",
+                str(args.latent_augmix_severity_params_name),
+            ]
+        )
+    if getattr(args, "no_latent_augmix_renorm", False):
+        train_cmd.append("--no_latent_augmix_renorm")
+    if getattr(args, "enable_latent_augmix_consistency", False):
+        train_cmd.extend(
+            [
+                "--enable_latent_augmix_consistency",
+                "--latent_augmix_consistency_weight",
+                str(args.latent_augmix_consistency_weight),
+                "--latent_augmix_consistency_loss",
+                str(args.latent_augmix_consistency_loss),
+                "--latent_augmix_bce_weight",
+                str(args.latent_augmix_bce_weight),
+                "--latent_augmix_consistency_max_batches",
+                str(args.latent_augmix_consistency_max_batches),
+            ]
+        )
     if args.resume:
         train_cmd.extend(["--resume", str(args.resume)])
     if args.allow_resume_config_drift:
@@ -319,22 +312,6 @@ def build_effnet_vae_lhat_train_cmd(
         train_cmd.extend(["--anchor_class_weights", str(args.anchor_class_weights)])
     if args.source_class_weights:
         train_cmd.extend(["--source_class_weights", str(args.source_class_weights)])
-    if args.freeze_backbone_classifier_only:
-        train_cmd.extend(
-            [
-                "--freeze_backbone_classifier_only",
-                "--classifier_adapter_type",
-                str(args.classifier_adapter_type),
-                "--classifier_lora_rank",
-                str(args.classifier_lora_rank),
-                "--classifier_lora_alpha",
-                str(args.classifier_lora_alpha),
-            ]
-        )
-        if args.classifier_only_train_final_norm:
-            train_cmd.append("--classifier_only_train_final_norm")
-    if int(args.unfreeze_last_n_features) > 0:
-        train_cmd.extend(["--unfreeze_last_n_features", str(args.unfreeze_last_n_features)])
     return train_cmd
 
 

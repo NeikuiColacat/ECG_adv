@@ -40,7 +40,7 @@ import random
 import sys
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -121,7 +121,6 @@ from ecg_adv_gen.adaptation import (  # noqa: E402
     build_anchor_preserving_soft_labels,
     build_adv_buffer_label,
     build_k500_internal_val_mask,
-    build_latent_augmix_branch_signals as _build_latent_augmix_branch_signals_core,
     build_three_chain_vae_lhat_augmix_views as _build_three_chain_vae_lhat_augmix_views_core,
     derive_class_trust,
     derive_kshot_anchor_class_weights,
@@ -362,104 +361,6 @@ def set_all_seeds(seed: int) -> None:
     torch.backends.cudnn.benchmark = False
 
 
-def train_source_logit_anchor_epoch(
-    model: nn.Module,
-    teacher_model: nn.Module,
-    loader: DataLoader,
-    optimizer: AdamW,
-    device: str,
-    weight: float,
-    max_batches: int = 0,
-    grad_clip: float = 0.0,
-    trainable_params: Optional[List[nn.Parameter]] = None,
-    freeze_backbone_eval_fn: Optional[Callable[[], None]] = None,
-) -> float:
-    """One lightweight source-consistency pass against the frozen PTB-XL teacher.
-
-    This is used after the mixed target/adv epoch to reduce PTB-XL source
-    forgetting. It does not change labels; it only constrains source logits.
-    """
-    if weight <= 0:
-        return float("nan")
-    model.train()
-    if freeze_backbone_eval_fn is not None:
-        freeze_backbone_eval_fn()
-    teacher_model.eval()
-    grad_params = trainable_params if trainable_params is not None else list(model.parameters())
-    losses: List[float] = []
-    for batch_i, batch in enumerate(loader, start=1):
-        signals = batch[0].to(device, non_blocking=True)
-        optimizer.zero_grad(set_to_none=True)
-        logits = model(signals)
-        with torch.no_grad():
-            teacher_logits = teacher_model(signals)
-        loss = F.mse_loss(logits, teacher_logits) * float(weight)
-        loss.backward()
-        if grad_clip > 0:
-            nn.utils.clip_grad_norm_(grad_params, grad_clip)
-        optimizer.step()
-        losses.append(float(loss.item()))
-        if max_batches > 0 and batch_i >= max_batches:
-            break
-    return float(np.mean(losses)) if losses else float("nan")
-
-
-def train_one_epoch_masked_bce_freeze_aware(
-    model: nn.Module,
-    loader: DataLoader,
-    optimizer: AdamW,
-    criterion: nn.Module,
-    device: str,
-    grad_clip: float,
-    trainable_params: List[nn.Parameter],
-    ewa_params: Optional[List[torch.Tensor]],
-    anchor_lambda: float,
-    ewa_decay: float,
-    freeze_backbone_eval_fn: Optional[Callable[[], None]] = None,
-) -> float:
-    """Masked BCE epoch for frozen-backbone adaptation.
-
-    The shared Tier-M helper calls ``model.train()`` internally and anchors by
-    zipping over all model parameters. That is correct for full-model training,
-    but wrong for classifier-only adaptation: frozen BatchNorm modules would
-    update running statistics, and the EWA anchor list would no longer align
-    with trainable parameters. This local variant keeps the backbone in eval
-    mode and applies anchor/grad clipping only to the trainable head.
-    """
-    model.train()
-    if freeze_backbone_eval_fn is not None:
-        freeze_backbone_eval_fn()
-    losses: List[float] = []
-    for signals, labels in loader:
-        signals = signals.to(device, non_blocking=True)
-        labels = labels.to(device, non_blocking=True)
-        optimizer.zero_grad(set_to_none=True)
-        logits = model(signals)
-        mask = (labels >= 0).float()
-        labels_clamp = labels.clamp(min=0.0)
-        per_elem = criterion(logits, labels_clamp)
-        denom = mask.sum().clamp(min=1.0)
-        bce = (per_elem * mask).sum() / denom
-        if ewa_params is not None and anchor_lambda > 0:
-            anchor = sum(
-                (p - p_anchor.detach()).pow(2).sum()
-                for p, p_anchor in zip(trainable_params, ewa_params)
-            )
-            loss = bce + anchor_lambda * anchor
-        else:
-            loss = bce
-        loss.backward()
-        if grad_clip > 0:
-            nn.utils.clip_grad_norm_(trainable_params, grad_clip)
-        optimizer.step()
-        if ewa_params is not None and ewa_decay > 0 and ewa_decay < 1.0:
-            with torch.no_grad():
-                for p, p_anchor in zip(trainable_params, ewa_params):
-                    p_anchor.mul_(ewa_decay).add_(p.data, alpha=1 - ewa_decay)
-        losses.append(float(bce.item()))
-    return float(np.mean(losses)) if losses else float("nan")
-
-
 def train_latent_augmix_consistency_epoch(
     model: nn.Module,
     clean_signals_ct: np.ndarray,
@@ -477,7 +378,6 @@ def train_latent_augmix_consistency_epoch(
     crop_len: int,
     grad_clip: float,
     trainable_params: List[nn.Parameter],
-    freeze_backbone_eval_fn: Optional[Callable[[], None]] = None,
     max_batches: int = 0,
 ) -> Dict[str, Any]:
     """Train directly on latent-AugMix views generated for the current epoch."""
@@ -544,8 +444,6 @@ def train_latent_augmix_consistency_epoch(
         labels_rep = labels.repeat((int(copies), 1))
 
         model.train()
-        if freeze_backbone_eval_fn is not None:
-            freeze_backbone_eval_fn()
         optimizer.zero_grad(set_to_none=True)
         if consistency_loss == "soft_bce":
             with torch.no_grad():
@@ -609,195 +507,6 @@ def train_latent_augmix_consistency_epoch(
         "bce_weight": float(bce_weight),
         "max_batches": int(max_batches),
     }
-
-
-def configure_classifier_only_adaptation(
-    model: nn.Module,
-    train_final_norm: bool = False,
-    adapter_type: str = "linear",
-    lora_rank: int = 16,
-    lora_alpha: float = 16.0,
-) -> Tuple[List[nn.Parameter], Callable[[], None]]:
-    """Freeze EfficientNet1DV2 backbone and train only the classifier head.
-
-    `adapter_type=linear` trains the existing classifier. `adapter_type=lora`
-    trains a low-rank residual on top of the final classifier Linear; checkpoints
-    are later folded back to the normal EfficientNet state_dict.
-    """
-    for p in model.parameters():
-        p.requires_grad_(False)
-    if not hasattr(model, "classifier"):
-        raise ValueError("classifier-only adaptation requires model.classifier")
-    if adapter_type == "linear":
-        for p in model.classifier.parameters():
-            p.requires_grad_(True)
-    elif adapter_type == "lora":
-        attach_foldable_lora_classifier(model, rank=lora_rank, alpha=lora_alpha)
-        for module in model.modules():
-            if isinstance(module, FoldableLowRankLinear):
-                for p in module.down.parameters():
-                    p.requires_grad_(True)
-                for p in module.up.parameters():
-                    p.requires_grad_(True)
-    else:
-        raise ValueError(f"unsupported classifier adapter_type={adapter_type!r}")
-    if train_final_norm and hasattr(model, "final_norm"):
-        for p in model.final_norm.parameters():
-            p.requires_grad_(True)
-
-    def freeze_backbone_eval() -> None:
-        for name in ("initial_conv", "features", "final_conv", "final_norm"):
-            module = getattr(model, name, None)
-            if module is not None:
-                module.eval()
-
-    freeze_backbone_eval()
-    return [p for p in model.parameters() if p.requires_grad], freeze_backbone_eval
-
-
-def configure_last_blocks_adaptation(
-    model: nn.Module,
-    last_n_features: int,
-    train_final_norm: bool = True,
-) -> Tuple[List[nn.Parameter], Callable[[], None]]:
-    """Train classifier plus the last N EfficientNet feature blocks.
-
-    This is a conservative middle ground between classifier-only adaptation and
-    full-model fine-tuning. BatchNorm running statistics are kept frozen by the
-    returned eval callback; trainable convolution/norm affine parameters still
-    receive gradients.
-    """
-    if last_n_features <= 0:
-        raise ValueError(f"last_n_features must be positive, got {last_n_features}")
-    if not hasattr(model, "features") or not hasattr(model.features, "__len__"):
-        raise ValueError("last-block adaptation requires model.features sequence")
-    for p in model.parameters():
-        p.requires_grad_(False)
-
-    n_features = len(model.features)
-    start = max(0, n_features - int(last_n_features))
-    for module in model.features[start:]:
-        for p in module.parameters():
-            p.requires_grad_(True)
-
-    if hasattr(model, "final_conv"):
-        for p in model.final_conv.parameters():
-            p.requires_grad_(True)
-    if train_final_norm and hasattr(model, "final_norm"):
-        for p in model.final_norm.parameters():
-            p.requires_grad_(True)
-    if hasattr(model, "classifier"):
-        for p in model.classifier.parameters():
-            p.requires_grad_(True)
-
-    def freeze_backbone_eval() -> None:
-        for name in ("initial_conv", "features", "final_conv", "final_norm"):
-            module = getattr(model, name, None)
-            if module is not None:
-                module.eval()
-
-    freeze_backbone_eval()
-    return [p for p in model.parameters() if p.requires_grad], freeze_backbone_eval
-
-
-class FoldableLowRankLinear(nn.Module):
-    """A foldable low-rank residual adapter for a Linear layer.
-
-    Forward uses `base(x) + alpha/rank * up(down(x))`. The base linear layer is
-    frozen. `folded_weight_bias()` returns a normal Linear weight/bias pair, so
-    saved checkpoints stay compatible with vanilla EfficientNet evaluation.
-    """
-
-    def __init__(self, base: nn.Linear, rank: int = 16, alpha: float = 16.0) -> None:
-        super().__init__()
-        if rank <= 0:
-            raise ValueError(f"rank must be positive, got {rank}")
-        self.base = base
-        for p in self.base.parameters():
-            p.requires_grad_(False)
-        self.rank = int(rank)
-        self.alpha = float(alpha)
-        self.down = nn.Linear(base.in_features, self.rank, bias=False)
-        self.up = nn.Linear(self.rank, base.out_features, bias=False)
-        self.down.to(device=base.weight.device, dtype=base.weight.dtype)
-        self.up.to(device=base.weight.device, dtype=base.weight.dtype)
-        nn.init.kaiming_uniform_(self.down.weight, a=math.sqrt(5))
-        nn.init.zeros_(self.up.weight)
-
-    @property
-    def scale(self) -> float:
-        return self.alpha / float(self.rank)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.base(x) + self.scale * self.up(self.down(x))
-
-    def folded_weight_bias(self) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        delta = self.scale * (self.up.weight @ self.down.weight)
-        return self.base.weight.detach() + delta.detach(), (
-            None if self.base.bias is None else self.base.bias.detach()
-        )
-
-
-def _set_child_module(parent: nn.Module, child_name: str, module: nn.Module) -> None:
-    if isinstance(parent, nn.Sequential) and child_name.isdigit():
-        parent[int(child_name)] = module
-    else:
-        setattr(parent, child_name, module)
-
-
-def attach_foldable_lora_classifier(model: nn.Module, rank: int, alpha: float) -> None:
-    classifier = getattr(model, "classifier", None)
-    if classifier is None:
-        raise ValueError("model has no classifier")
-    linear_name = None
-    linear_module = None
-    for name, module in reversed(list(classifier.named_children())):
-        if isinstance(module, FoldableLowRankLinear):
-            return
-        if isinstance(module, nn.Linear):
-            linear_name = name
-            linear_module = module
-            break
-    if linear_name is None or linear_module is None:
-        raise ValueError("could not find final Linear inside model.classifier")
-    _set_child_module(
-        classifier,
-        linear_name,
-        FoldableLowRankLinear(linear_module, rank=rank, alpha=alpha),
-    )
-
-
-def compatible_state_dict_for_save(model: nn.Module) -> Dict[str, torch.Tensor]:
-    """Return a state_dict compatible with vanilla EfficientNet1DV2.
-
-    FoldableLowRankLinear modules are materialized into their corresponding
-    `.weight` and `.bias` keys and their adapter internals are omitted.
-    """
-    state = model.state_dict()
-    out: Dict[str, torch.Tensor] = {}
-    folded_prefixes: Dict[str, FoldableLowRankLinear] = {
-        name: module
-        for name, module in model.named_modules()
-        if isinstance(module, FoldableLowRankLinear)
-    }
-    for key, value in state.items():
-        skip = False
-        for prefix in folded_prefixes:
-            if key.startswith(prefix + "."):
-                skip = True
-                break
-        if not skip:
-            out[key] = value
-    for prefix, module in folded_prefixes.items():
-        weight, bias = module.folded_weight_bias()
-        out[f"{prefix}.weight"] = weight.detach().cpu()
-        if bias is not None:
-            out[f"{prefix}.bias"] = bias.detach().cpu()
-    return out
-
-
-def save_compatible_model_state(model: nn.Module, path: str) -> None:
-    torch.save(compatible_state_dict_for_save(model), path)
 
 
 def _atomic_torch_save(payload: Dict[str, Any], path: Path) -> None:
@@ -1307,61 +1016,6 @@ def run_pgd_on_synth_pool(
     return adv_signals, anc_signals, out_labels, stats
 
 
-def build_latent_augmix_branch_signals(
-    anchor_signals_ct: np.ndarray,
-    adv_signals_ct: np.ndarray,
-    *,
-    copies: int,
-    severity: int,
-    severity_profile: str = "standard",
-    width: int,
-    depth: int,
-    alpha: float,
-    latent_weight_cap: float,
-    ops: List[str],
-    rng: np.random.Generator,
-    renorm: bool = True,
-    clip_abs: float = 6.0,
-    severity_profile_params: Optional[Dict[str, Dict[int, Dict[str, Any]]]] = None,
-) -> Tuple[np.ndarray, Dict[str, Any]]:
-    """Build latent AugMix views through the package-level view core."""
-
-    def _apply_augmix_op_np(
-        sig_ct: np.ndarray,
-        op_name: str,
-        op_severity: int,
-        op_severity_profile: str,
-    ) -> np.ndarray:
-        sig_t = torch.from_numpy(sig_ct.copy()).float()
-        if op_severity_profile == "standard":
-            return _apply_op(sig_t, op_name, int(op_severity)).cpu().numpy().astype(np.float32, copy=False)
-        op = _build_pn2021c_corruption_op(
-            op_name,
-            int(op_severity),
-            op_severity_profile,
-            severity_profile_params=severity_profile_params,
-        )
-        return op(sig_t).cpu().numpy().astype(np.float32, copy=False)
-
-    return _build_latent_augmix_branch_signals_core(
-        anchor_signals_ct,
-        adv_signals_ct,
-        copies=copies,
-        severity=severity,
-        severity_profile=severity_profile,
-        width=width,
-        depth=depth,
-        alpha=alpha,
-        latent_weight_cap=latent_weight_cap,
-        ops=ops,
-        rng=rng,
-        op_apply_fn=_apply_augmix_op_np,
-        available_ops=AVAILABLE_OPS,
-        renorm=renorm,
-        clip_abs=clip_abs,
-    )
-
-
 def build_three_chain_vae_lhat_augmix_views(
     anchor_signals_ct: np.ndarray,
     adv_signals_ct: np.ndarray,
@@ -1702,15 +1356,6 @@ def parse_args():
         ),
     )
     p.add_argument(
-        "--disable_adv_stream",
-        action="store_true",
-        help=(
-            "Skip latent PGD generation and do not add adversarial samples to "
-            "the training stream. Use this as the direct target-real adaptation "
-            "control under the same data/optimizer protocol."
-        ),
-    )
-    p.add_argument(
         "--enable_latent_augmix_branch",
         action="store_true",
         help=(
@@ -1722,10 +1367,9 @@ def parse_args():
     )
     p.add_argument(
         "--latent_augmix_topology",
-        choices=["legacy_branch", "locked_three_chain"],
-        default="legacy_branch",
+        choices=["locked_three_chain"],
+        default="locked_three_chain",
         help=(
-            "legacy_branch preserves historical latent-AugMix weighting. "
             "locked_three_chain enforces the PN2021-C protocol topology: "
             "two raw ECG corruption chains plus one uncorrupted VAE-LHAT "
             "adversarial waveform chain."
@@ -1836,65 +1480,6 @@ def parse_args():
     p.add_argument("--latent_augmix_consistency_max_batches", type=int, default=0)
     p.add_argument("--roundtrip_anchor_n", type=int, default=1500)
     p.add_argument("--qab_size", type=int, default=2048)
-    p.add_argument(
-        "--source_logit_anchor_weight",
-        type=float,
-        default=0.0,
-        help=(
-            "Optional source-consistency distillation weight. After each mixed "
-            "training epoch, run a PTB-XL source pass and penalize MSE between "
-            "current logits and the frozen initial source model logits."
-        ),
-    )
-    p.add_argument(
-        "--source_logit_anchor_batches",
-        type=int,
-        default=0,
-        help="Max PTB-XL source batches per source-logit anchor pass; 0 uses the full source loader.",
-    )
-    p.add_argument(
-        "--freeze_backbone_classifier_only",
-        action="store_true",
-        help=(
-            "Freeze the EfficientNet backbone and train only model.classifier. "
-            "Backbone BatchNorm modules are forced to eval during adaptation. "
-            "This keeps the checkpoint compatible with the normal model while "
-            "testing whether VAE latent-hull samples add value beyond head fitting."
-        ),
-    )
-    p.add_argument(
-        "--classifier_only_train_final_norm",
-        action="store_true",
-        help=(
-            "With --freeze_backbone_classifier_only, also train final_norm affine "
-            "parameters while keeping its BatchNorm running statistics frozen. "
-            "This gives a small domain-calibration adapter without full backbone FT."
-        ),
-    )
-    p.add_argument(
-        "--classifier_adapter_type",
-        choices=["linear", "lora"],
-        default="linear",
-        help=(
-            "Adapter used with --freeze_backbone_classifier_only. linear trains "
-            "the existing classifier; lora trains a foldable low-rank residual "
-            "on the final Linear and saves a vanilla-compatible checkpoint."
-        ),
-    )
-    p.add_argument("--classifier_lora_rank", type=int, default=16)
-    p.add_argument("--classifier_lora_alpha", type=float, default=16.0)
-    p.add_argument(
-        "--unfreeze_last_n_features",
-        type=int,
-        default=0,
-        help=(
-            "Conservative EfficientNet adaptation: train classifier, "
-            "final_conv/final_norm, and the last N feature blocks while "
-            "keeping BatchNorm running statistics frozen. Mutually exclusive "
-            "with --freeze_backbone_classifier_only."
-        ),
-    )
-
     # Class trust (Plan Rev 13 H4 gate)
     p.add_argument("--class_trust", default=None,
                    help="Path to class_trust.json (Stage 0.4 sanity output). Required unless --build_class_trust.")
@@ -2170,22 +1755,6 @@ def main():
                                   crop_len=args.crop_len, mode='train')
     val_ds = PTBXLDatasetScheme(val_signals, val_labels,
                                 crop_len=args.crop_len, mode='eval')
-    source_logit_anchor_loader = None
-    if args.source_logit_anchor_weight > 0:
-        source_logit_anchor_loader = DataLoader(
-            train_ds,
-            batch_size=args.batch_size,
-            shuffle=True,
-            num_workers=args.num_workers,
-            pin_memory=True,
-            drop_last=True,
-            persistent_workers=args.num_workers > 0,
-        )
-        print(
-            f"[setup] source-logit anchor enabled: weight={args.source_logit_anchor_weight} "
-            f"max_batches={args.source_logit_anchor_batches or 'full'}",
-            flush=True,
-        )
     target_real_ds = None
     target_val_quick_subset = None
     target_val_record_ids: set[str] = set()
@@ -2406,51 +1975,9 @@ def main():
             alpha=args.pgd_alpha, delta_init_scale=args.delta_init_scale,
             device=args.device,
         )
-    freeze_backbone_eval_fn: Optional[Callable[[], None]] = None
-    if args.freeze_backbone_classifier_only and args.unfreeze_last_n_features > 0:
-        raise ValueError(
-            "--freeze_backbone_classifier_only and --unfreeze_last_n_features "
-            "are mutually exclusive"
-        )
-    if args.freeze_backbone_classifier_only:
-        trainable_params, freeze_backbone_eval_fn = configure_classifier_only_adaptation(
-            victim.model,
-            train_final_norm=args.classifier_only_train_final_norm,
-            adapter_type=args.classifier_adapter_type,
-            lora_rank=args.classifier_lora_rank,
-            lora_alpha=args.classifier_lora_alpha,
-        )
-        print(
-            "[setup] classifier-only adaptation enabled: "
-            f"{sum(p.numel() for p in trainable_params):,} trainable params "
-            f"(train_final_norm={args.classifier_only_train_final_norm}, "
-            f"adapter={args.classifier_adapter_type})",
-            flush=True,
-        )
-    elif args.unfreeze_last_n_features > 0:
-        trainable_params, freeze_backbone_eval_fn = configure_last_blocks_adaptation(
-            victim.model,
-            last_n_features=args.unfreeze_last_n_features,
-            train_final_norm=True,
-        )
-        print(
-            "[setup] last-block adaptation enabled: "
-            f"{sum(p.numel() for p in trainable_params):,} trainable params "
-            f"(last_n_features={args.unfreeze_last_n_features}, "
-            "final_conv=True, final_norm=True, classifier=True)",
-            flush=True,
-        )
-    else:
-        for p in victim.model.parameters():
-            p.requires_grad_(True)
-        trainable_params = [p for p in victim.model.parameters() if p.requires_grad]
-    source_logit_teacher_model = None
-    if args.source_logit_anchor_weight > 0:
-        source_logit_teacher_model = copy.deepcopy(victim.model).to(args.device)
-        source_logit_teacher_model.eval()
-        for p in source_logit_teacher_model.parameters():
-            p.requires_grad_(False)
-        print("[setup] frozen source-logit teacher enabled")
+    for p in victim.model.parameters():
+        p.requires_grad_(True)
+    trainable_params = [p for p in victim.model.parameters() if p.requires_grad]
     teacher_model = None
     teacher_label_modes = {"mixed_soft", "teacher_soft", "latent_mixed_teacher"}
     if args.adv_label_mode in teacher_label_modes:
@@ -2494,12 +2021,6 @@ def main():
         "baseline_quick_eval": baseline_qe,
         "class_trust": class_trust,
         "adaptation": {
-            "freeze_backbone_classifier_only": bool(args.freeze_backbone_classifier_only),
-            "classifier_only_train_final_norm": bool(args.classifier_only_train_final_norm),
-            "classifier_adapter_type": args.classifier_adapter_type,
-            "classifier_lora_rank": int(args.classifier_lora_rank),
-            "classifier_lora_alpha": float(args.classifier_lora_alpha),
-            "unfreeze_last_n_features": int(args.unfreeze_last_n_features),
             "n_trainable_tensors": len(trainable_params),
             "n_trainable_params": int(sum(p.numel() for p in trainable_params)),
         },
@@ -2595,7 +2116,7 @@ def main():
     agent_decision_path = Path(args.output_dir) / "agent_decision.json"
     resume_path = _resolve_resume_path(args.resume, args.output_dir)
     if args.checkpoint_policy == "best" and should_save_initial_best_model(resume_path):
-        save_compatible_model_state(victim.model, best_ckpt_path)
+        torch.save(victim.model.state_dict(), best_ckpt_path)
     elif args.checkpoint_policy == "best" and not Path(best_ckpt_path).exists():
         print(
             f"[resume-warning] best_model.pt is missing before resume: {best_ckpt_path}. "
@@ -2673,258 +2194,217 @@ def main():
         # Plan Rev 13.2: StratifiedPoolWalker draws no-revisit-per-epoch,
         # restricted to NORM/MI/STTC scope.
         k_per_cls: Dict[str, int] = {}
-        if args.disable_adv_stream:
-            asr_info = {
-                "asr_overall": float("nan"),
-                "per_class_asr": {},
-                "multilabel_positive_label_asr": float("nan"),
-                "sample_any_positive_below_0p5_asr": float("nan"),
-                "sample_all_positive_below_0p5_asr": float("nan"),
-                "sample_all_positive_recognized_rate": float("nan"),
-                "per_class_positive_label_asr": {},
-            }
-            sem_info = {"PASS": True}
-            push_stats = {"n_pushed": 0, "label_mode": "adv_stream_disabled"}
-            latent_augmix_stats = {"enabled": False, "reason": "adv_stream_disabled", "n_generated": 0}
-            latent_augmix_push_stats = {}
-            delta_stats = {"mean_delta_norm": float("nan"), "max_delta_norm": float("nan")}
-            decode_invalid_stats = {
-                "decoded_invalid_rate": float("nan"),
-                "nan_rate": float("nan"),
-                "flatline_rate": float("nan"),
-            }
-            attack_vs_anchor_stats: Dict[str, Any] = {}
+        victim.model.eval()
+        k_per_cls = weighted_anchor_quotas(
+            classes_in_scope,
+            walker_class_sizes,
+            args.K_anchor,
+            anchor_class_weight_map,
+        )
+        drawn = walker.sample(k_per_cls)
+        print(f"[ep{epoch:02d}] anchor class quotas: {k_per_cls}", flush=True)
+        if args.source_sampling_strategy == "source_weighted":
+            print(f"[ep{epoch:02d}] anchor source counts: {walker.last_source_counts} "
+                  f"class_source={walker.last_class_source_counts}", flush=True)
+        all_picks = np.concatenate(
+            [drawn[c] for c in classes_in_scope if drawn[c].size > 0]
+        ) if any(drawn[c].size > 0 for c in classes_in_scope) else np.empty(0, dtype=np.int64)
+        adv_signals, anc_signals, target_oh, delta_stats = run_pgd_on_synth_pool(
+            pgd_gen=pgd_gen,
+            synth_latents=synth_latents,
+            synth_labels=synth_labels,
+            K_anchor=args.K_anchor,
+            pgd_batch=args.pgd_batch,
+            rng=rng, device=args.device,
+            picked_indices=all_picks,
+            attack_mode=args.attack_mode,
+            latent_hull_index=latent_hull_index,
+            hull_M=args.hull_M,
+            hull_mix_label_mode=args.hull_mix_label_mode,
+            hull_label_lambda_y=args.hull_label_lambda_y,
+            hull_label_positive=args.hull_label_positive,
+            hull_label_negative_floor=args.hull_label_negative_floor,
+            hull_label_new_class_cap=args.hull_label_new_class_cap,
+            store_raw_decoded=(
+                bool(args.enable_latent_augmix_branch)
+                and args.latent_augmix_topology == "locked_three_chain"
+                and args.latent_augmix_signal_space == "raw_pre_zscore"
+            ),
+        )
+        if adv_signals.shape[0] == 0:
+            print(f"[ep{epoch:02d}] empty walker pick — skip epoch", flush=True)
+            continue
+
+        # Phase B: gates
+        # ASR (signals → victim)
+        asr_info = compute_asr(victim, adv_signals, target_oh,
+                               device=args.device, batch_size=128)
+        decode_invalid_stats = decoded_signal_invalid_stats(adv_signals)
+        attack_vs_anchor_stats = attack_bce_diagnostics(
+            victim.model,
+            anc_signals,
+            adv_signals,
+            target_oh,
+            device=args.device,
+            crop_len=args.crop_len,
+        )
+        # Semantic (Einthoven, HR, QRS)
+        sem_info = compute_semantic_gate(
+            adv_signals, anc_signals,
+            einthoven_p95_max=args.einthoven_p95_max,
+        )
+
+        gate_skipped = False
+        latent_augmix_stats = {
+            "enabled": bool(args.enable_latent_augmix_branch),
+            "n_generated": 0,
+        }
+        latent_augmix_push_stats = {}
+        if (not args.disable_quality_gate) and (not sem_info.get("PASS", False)):
             gate_skipped = True
+            print(f"[ep{epoch:02d}] medical gate FAIL: {sem_info.get('fail_reasons')} "
+                  f"— skip buffer push this epoch", flush=True)
         else:
-            victim.model.eval()
-            k_per_cls = weighted_anchor_quotas(
-                classes_in_scope,
-                walker_class_sizes,
-                args.K_anchor,
-                anchor_class_weight_map,
-            )
-            drawn = walker.sample(k_per_cls)
-            print(f"[ep{epoch:02d}] anchor class quotas: {k_per_cls}", flush=True)
-            if args.source_sampling_strategy == "source_weighted":
-                print(f"[ep{epoch:02d}] anchor source counts: {walker.last_source_counts} "
-                      f"class_source={walker.last_class_source_counts}", flush=True)
-            all_picks = np.concatenate(
-                [drawn[c] for c in classes_in_scope if drawn[c].size > 0]
-            ) if any(drawn[c].size > 0 for c in classes_in_scope) else np.empty(0, dtype=np.int64)
-            adv_signals, anc_signals, target_oh, delta_stats = run_pgd_on_synth_pool(
-                pgd_gen=pgd_gen,
-                synth_latents=synth_latents,
-                synth_labels=synth_labels,
-                K_anchor=args.K_anchor,
-                pgd_batch=args.pgd_batch,
-                rng=rng, device=args.device,
-                picked_indices=all_picks,
-                attack_mode=args.attack_mode,
-                latent_hull_index=latent_hull_index,
-                hull_M=args.hull_M,
-                hull_mix_label_mode=args.hull_mix_label_mode,
-                hull_label_lambda_y=args.hull_label_lambda_y,
-                hull_label_positive=args.hull_label_positive,
-                hull_label_negative_floor=args.hull_label_negative_floor,
-                hull_label_new_class_cap=args.hull_label_new_class_cap,
-                store_raw_decoded=(
-                    bool(args.enable_latent_augmix_branch)
-                    and args.latent_augmix_topology == "locked_three_chain"
-                    and args.latent_augmix_signal_space == "raw_pre_zscore"
-                ),
-            )
-            if adv_signals.shape[0] == 0:
-                print(f"[ep{epoch:02d}] empty walker pick — skip epoch", flush=True)
-                continue
-
-            # Phase B: gates
-            # ASR (signals → victim)
-            asr_info = compute_asr(victim, adv_signals, target_oh,
-                                   device=args.device, batch_size=128)
-            decode_invalid_stats = decoded_signal_invalid_stats(adv_signals)
-            attack_vs_anchor_stats = attack_bce_diagnostics(
-                victim.model,
-                anc_signals,
-                adv_signals,
-                target_oh,
-                device=args.device,
-                crop_len=args.crop_len,
-            )
-            # Semantic (Einthoven, HR, QRS)
-            sem_info = compute_semantic_gate(
-                adv_signals, anc_signals,
-                einthoven_p95_max=args.einthoven_p95_max,
-            )
-
-            gate_skipped = False
-            latent_augmix_stats = {
-                "enabled": bool(args.enable_latent_augmix_branch),
-                "n_generated": 0,
-            }
-            latent_augmix_push_stats = {}
-            if (not args.disable_quality_gate) and (not sem_info.get("PASS", False)):
-                gate_skipped = True
-                print(f"[ep{epoch:02d}] medical gate FAIL: {sem_info.get('fail_reasons')} "
-                      f"— skip buffer push this epoch", flush=True)
-            else:
-                if args.disable_quality_gate and not sem_info.get("PASS", False):
-                    print(f"[ep{epoch:02d}] medical gate FAIL ignored: "
-                          f"{sem_info.get('fail_reasons')}", flush=True)
-                # Center-crop adv (B, 12, 1000) → (B, 12, crop_len) on the time axis
-                start = (adv_signals.shape[-1] - args.crop_len) // 2
-                adv_ct_crop = adv_signals[..., start:start + args.crop_len]
-                with torch.no_grad():
-                    lg_chunks = []
-                    teacher_prob_chunks = []
-                    for i in range(0, adv_ct_crop.shape[0], 128):
-                        x_t = torch.from_numpy(adv_ct_crop[i:i + 128]).float().to(args.device)
-                        lg_chunks.append(victim.model(x_t).cpu().numpy())
-                        if teacher_model is not None:
-                            teacher_prob_chunks.append(torch.sigmoid(teacher_model(x_t)).cpu().numpy())
-                    logits_arr = np.concatenate(lg_chunks)
-                    teacher_probs_arr = (
-                        np.concatenate(teacher_prob_chunks)
-                        if teacher_prob_chunks else None
-                    )
-                push_stats = push_adv_to_buffer(
-                    buffer=buffer, adv_signals_ct=adv_signals,
-                    target_one_hot=target_oh, victim_logits=logits_arr,
-                    crop_len=args.crop_len, class_trust=class_trust,
-                    boundary_prob_min=args.boundary_prob_min,
-                    boundary_prob_max=args.boundary_prob_max,
-                    teacher_probs=teacher_probs_arr,
-                    label_mode=args.adv_label_mode,
-                    teacher_mix=args.adv_teacher_mix,
-                    soft_target_floor=args.adv_soft_target_floor,
+            if args.disable_quality_gate and not sem_info.get("PASS", False):
+                print(f"[ep{epoch:02d}] medical gate FAIL ignored: "
+                      f"{sem_info.get('fail_reasons')}", flush=True)
+            # Center-crop adv (B, 12, 1000) → (B, 12, crop_len) on the time axis
+            start = (adv_signals.shape[-1] - args.crop_len) // 2
+            adv_ct_crop = adv_signals[..., start:start + args.crop_len]
+            with torch.no_grad():
+                lg_chunks = []
+                teacher_prob_chunks = []
+                for i in range(0, adv_ct_crop.shape[0], 128):
+                    x_t = torch.from_numpy(adv_ct_crop[i:i + 128]).float().to(args.device)
+                    lg_chunks.append(victim.model(x_t).cpu().numpy())
+                    if teacher_model is not None:
+                        teacher_prob_chunks.append(torch.sigmoid(teacher_model(x_t)).cpu().numpy())
+                logits_arr = np.concatenate(lg_chunks)
+                teacher_probs_arr = (
+                    np.concatenate(teacher_prob_chunks)
+                    if teacher_prob_chunks else None
                 )
-                if args.enable_latent_augmix_branch:
-                    augmix_anchor_signals = anc_signals
-                    augmix_adv_signals = adv_signals
-                    latent_augmix_clean_for_consistency = anc_signals
-                    if (
-                        args.latent_augmix_topology == "locked_three_chain"
-                        and args.latent_augmix_signal_space == "raw_pre_zscore"
-                    ):
-                        augmix_anchor_signals = getattr(pgd_gen, "last_anchor_raw_ptbxl_1000", None)
-                        augmix_adv_signals = getattr(pgd_gen, "last_adv_raw_ptbxl_1000", None)
-                        if augmix_anchor_signals is None or augmix_adv_signals is None:
+            push_stats = push_adv_to_buffer(
+                buffer=buffer, adv_signals_ct=adv_signals,
+                target_one_hot=target_oh, victim_logits=logits_arr,
+                crop_len=args.crop_len, class_trust=class_trust,
+                boundary_prob_min=args.boundary_prob_min,
+                boundary_prob_max=args.boundary_prob_max,
+                teacher_probs=teacher_probs_arr,
+                label_mode=args.adv_label_mode,
+                teacher_mix=args.adv_teacher_mix,
+                soft_target_floor=args.adv_soft_target_floor,
+            )
+            if args.enable_latent_augmix_branch:
+                augmix_anchor_signals = anc_signals
+                augmix_adv_signals = adv_signals
+                latent_augmix_clean_for_consistency = anc_signals
+                if (
+                    args.latent_augmix_topology == "locked_three_chain"
+                    and args.latent_augmix_signal_space == "raw_pre_zscore"
+                ):
+                    augmix_anchor_signals = getattr(pgd_gen, "last_anchor_raw_ptbxl_1000", None)
+                    augmix_adv_signals = getattr(pgd_gen, "last_adv_raw_ptbxl_1000", None)
+                    if augmix_anchor_signals is None or augmix_adv_signals is None:
+                        raise RuntimeError(
+                            "raw_pre_zscore latent AugMix requested but raw decoded PGD signals were not cached"
+                        )
+                    if args.latent_augmix_corruption_source == "target_real":
+                        if target_real_augmix_signals_tc is None:
                             raise RuntimeError(
-                                "raw_pre_zscore latent AugMix requested but raw decoded PGD signals were not cached"
+                                "target_real latent AugMix corruption source requested but no target-real raw signals are loaded"
                             )
-                        if args.latent_augmix_corruption_source == "target_real":
-                            if target_real_augmix_signals_tc is None:
-                                raise RuntimeError(
-                                    "target_real latent AugMix corruption source requested but no target-real raw signals are loaded"
+                        augmix_anchor_signals = select_target_real_augmix_anchors_ct(
+                            target_real_augmix_signals_tc,
+                            picked_indices=all_picks,
+                            expected_count=adv_signals.shape[0],
+                        )
+                        latent_augmix_clean_for_consistency = _zscore_ct_batch(augmix_anchor_signals)
+                latent_augmix_signals, latent_augmix_stats = build_three_chain_vae_lhat_augmix_views(
+                    anchor_signals_ct=augmix_anchor_signals,
+                    adv_signals_ct=augmix_adv_signals,
+                    copies=args.latent_augmix_copies,
+                    severity=args.latent_augmix_severity,
+                    severity_profile=args.latent_augmix_severity_profile,
+                    severity_profile_params=latent_augmix_severity_profile_params,
+                    width=args.latent_augmix_width,
+                    depth=args.latent_augmix_depth,
+                    alpha=args.latent_augmix_alpha,
+                    mixture_mode=args.latent_augmix_mixture_mode,
+                    mixture_prob=args.latent_augmix_mixture_prob,
+                    mixture_beta_a=None
+                    if args.latent_augmix_mixture_beta_a <= 0
+                    else args.latent_augmix_mixture_beta_a,
+                    mixture_beta_b=None
+                    if args.latent_augmix_mixture_beta_b <= 0
+                    else args.latent_augmix_mixture_beta_b,
+                    op_schedule=args.latent_augmix_op_schedule,
+                    chain_weights=_parse_optional_float_list(args.latent_augmix_chain_weights),
+                    ops=list(args.latent_augmix_ops),
+                    rng=rng,
+                    renorm=not args.no_latent_augmix_renorm,
+                    clip_abs=args.latent_augmix_clip_abs,
+                )
+                latent_augmix_stats["corruption_source"] = str(args.latent_augmix_corruption_source)
+                if latent_augmix_signals.shape[0] > 0:
+                    start = (latent_augmix_signals.shape[-1] - args.crop_len) // 2
+                    latent_augmix_ct_crop = latent_augmix_signals[..., start:start + args.crop_len]
+                    labels_rep = np.tile(
+                        target_oh,
+                        (max(1, int(args.latent_augmix_copies)), 1),
+                    )[:latent_augmix_signals.shape[0]]
+                    with torch.no_grad():
+                        lg_chunks = []
+                        teacher_prob_chunks = []
+                        for i in range(0, latent_augmix_ct_crop.shape[0], 128):
+                            x_t = torch.from_numpy(
+                                latent_augmix_ct_crop[i:i + 128]
+                            ).float().to(args.device)
+                            lg_chunks.append(victim.model(x_t).cpu().numpy())
+                            if teacher_model is not None:
+                                teacher_prob_chunks.append(
+                                    torch.sigmoid(teacher_model(x_t)).cpu().numpy()
                                 )
-                            augmix_anchor_signals = select_target_real_augmix_anchors_ct(
-                                target_real_augmix_signals_tc,
-                                picked_indices=all_picks,
-                                expected_count=adv_signals.shape[0],
-                            )
-                            latent_augmix_clean_for_consistency = _zscore_ct_batch(augmix_anchor_signals)
-                    if args.latent_augmix_topology == "locked_three_chain":
-                        latent_augmix_signals, latent_augmix_stats = build_three_chain_vae_lhat_augmix_views(
-                            anchor_signals_ct=augmix_anchor_signals,
-                            adv_signals_ct=augmix_adv_signals,
-                            copies=args.latent_augmix_copies,
-                            severity=args.latent_augmix_severity,
-                            severity_profile=args.latent_augmix_severity_profile,
-                            severity_profile_params=latent_augmix_severity_profile_params,
-                            width=args.latent_augmix_width,
-                            depth=args.latent_augmix_depth,
-                            alpha=args.latent_augmix_alpha,
-                            mixture_mode=args.latent_augmix_mixture_mode,
-                            mixture_prob=args.latent_augmix_mixture_prob,
-                            mixture_beta_a=None
-                            if args.latent_augmix_mixture_beta_a <= 0
-                            else args.latent_augmix_mixture_beta_a,
-                            mixture_beta_b=None
-                            if args.latent_augmix_mixture_beta_b <= 0
-                            else args.latent_augmix_mixture_beta_b,
-                            op_schedule=args.latent_augmix_op_schedule,
-                            chain_weights=_parse_optional_float_list(args.latent_augmix_chain_weights),
-                            ops=list(args.latent_augmix_ops),
-                            rng=rng,
-                            renorm=not args.no_latent_augmix_renorm,
-                            clip_abs=args.latent_augmix_clip_abs,
+                        latent_augmix_logits_arr = np.concatenate(lg_chunks)
+                        latent_augmix_teacher_probs_arr = (
+                            np.concatenate(teacher_prob_chunks)
+                            if teacher_prob_chunks else None
                         )
-                    else:
-                        latent_augmix_signals, latent_augmix_stats = build_latent_augmix_branch_signals(
-                            anchor_signals_ct=augmix_anchor_signals,
-                            adv_signals_ct=augmix_adv_signals,
-                            copies=args.latent_augmix_copies,
-                            severity=args.latent_augmix_severity,
-                            severity_profile=args.latent_augmix_severity_profile,
-                            severity_profile_params=latent_augmix_severity_profile_params,
-                            width=args.latent_augmix_width,
-                            depth=args.latent_augmix_depth,
-                            alpha=args.latent_augmix_alpha,
-                            latent_weight_cap=args.latent_augmix_latent_weight_cap,
-                            ops=list(args.latent_augmix_ops),
-                            rng=rng,
-                            renorm=not args.no_latent_augmix_renorm,
-                            clip_abs=args.latent_augmix_clip_abs,
-                        )
-                    latent_augmix_stats["corruption_source"] = str(args.latent_augmix_corruption_source)
-                    if latent_augmix_signals.shape[0] > 0:
-                        start = (latent_augmix_signals.shape[-1] - args.crop_len) // 2
-                        latent_augmix_ct_crop = latent_augmix_signals[..., start:start + args.crop_len]
-                        labels_rep = np.tile(
-                            target_oh,
-                            (max(1, int(args.latent_augmix_copies)), 1),
-                        )[:latent_augmix_signals.shape[0]]
-                        with torch.no_grad():
-                            lg_chunks = []
-                            teacher_prob_chunks = []
-                            for i in range(0, latent_augmix_ct_crop.shape[0], 128):
-                                x_t = torch.from_numpy(
-                                    latent_augmix_ct_crop[i:i + 128]
-                                ).float().to(args.device)
-                                lg_chunks.append(victim.model(x_t).cpu().numpy())
-                                if teacher_model is not None:
-                                    teacher_prob_chunks.append(
-                                        torch.sigmoid(teacher_model(x_t)).cpu().numpy()
-                                    )
-                            latent_augmix_logits_arr = np.concatenate(lg_chunks)
-                            latent_augmix_teacher_probs_arr = (
-                                np.concatenate(teacher_prob_chunks)
-                                if teacher_prob_chunks else None
-                            )
-                        latent_augmix_push_stats = push_adv_to_buffer(
-                            buffer=buffer,
-                            adv_signals_ct=latent_augmix_signals,
-                            target_one_hot=labels_rep,
-                            victim_logits=latent_augmix_logits_arr,
-                            crop_len=args.crop_len,
-                            class_trust=class_trust,
-                            boundary_prob_min=args.boundary_prob_min,
-                            boundary_prob_max=args.boundary_prob_max,
-                            teacher_probs=latent_augmix_teacher_probs_arr,
-                            label_mode=args.adv_label_mode,
-                            teacher_mix=args.adv_teacher_mix,
-                            soft_target_floor=args.adv_soft_target_floor,
-                        )
-                        if args.enable_latent_augmix_consistency:
-                            latent_augmix_direct_clean = latent_augmix_clean_for_consistency.astype(np.float32, copy=False)
-                            latent_augmix_direct_views = latent_augmix_signals.astype(np.float32, copy=False)
-                            latent_augmix_direct_labels = target_oh.astype(np.float32, copy=False)
-                    print(
-                        f"[ep{epoch:02d}] latent-branch AugMix: "
-                        f"generated={latent_augmix_stats.get('n_generated', 0)} "
-                        f"pushed={latent_augmix_push_stats.get('n_pushed', 0)} "
-                        f"w_lat_mean={latent_augmix_stats.get('latent_weight_mean', latent_augmix_stats.get('adv_weight_mean', float('nan'))):.3f} "
-                        f"m_mean={latent_augmix_stats.get('beta_m_mean', float('nan')):.3f}",
-                        flush=True,
+                    latent_augmix_push_stats = push_adv_to_buffer(
+                        buffer=buffer,
+                        adv_signals_ct=latent_augmix_signals,
+                        target_one_hot=labels_rep,
+                        victim_logits=latent_augmix_logits_arr,
+                        crop_len=args.crop_len,
+                        class_trust=class_trust,
+                        boundary_prob_min=args.boundary_prob_min,
+                        boundary_prob_max=args.boundary_prob_max,
+                        teacher_probs=latent_augmix_teacher_probs_arr,
+                        label_mode=args.adv_label_mode,
+                        teacher_mix=args.adv_teacher_mix,
+                        soft_target_floor=args.adv_soft_target_floor,
                     )
-            # Track consecutive low ASR
-            if asr_info["asr_overall"] < args.asr_low_threshold:
-                consecutive_low_asr += 1
-            else:
-                consecutive_low_asr = 0
-            if consecutive_low_asr >= args.asr_consec_low_max:
-                raise RuntimeError(
-                    f"PGD broken: ASR < {args.asr_low_threshold} for "
-                    f"{args.asr_consec_low_max} consecutive epochs — abort training.")
+                    if args.enable_latent_augmix_consistency:
+                        latent_augmix_direct_clean = latent_augmix_clean_for_consistency.astype(np.float32, copy=False)
+                        latent_augmix_direct_views = latent_augmix_signals.astype(np.float32, copy=False)
+                        latent_augmix_direct_labels = target_oh.astype(np.float32, copy=False)
+                print(
+                    f"[ep{epoch:02d}] latent-branch AugMix: "
+                    f"generated={latent_augmix_stats.get('n_generated', 0)} "
+                    f"pushed={latent_augmix_push_stats.get('n_pushed', 0)} "
+                    f"w_lat_mean={latent_augmix_stats.get('latent_weight_mean', latent_augmix_stats.get('adv_weight_mean', float('nan'))):.3f} "
+                    f"m_mean={latent_augmix_stats.get('beta_m_mean', float('nan')):.3f}",
+                    flush=True,
+                )
+        # Track consecutive low ASR
+        if asr_info["asr_overall"] < args.asr_low_threshold:
+            consecutive_low_asr += 1
+        else:
+            consecutive_low_asr = 0
+        if consecutive_low_asr >= args.asr_consec_low_max:
+            raise RuntimeError(
+                f"PGD broken: ASR < {args.asr_low_threshold} for "
+                f"{args.asr_consec_low_max} consecutive epochs — abort training.")
 
         if epoch > 1 and (epoch - 1) % args.rescore_interval == 0 and len(buffer) > 0:
             buffer.rescore(victim.model, args.device)
@@ -2977,22 +2457,11 @@ def main():
                                       persistent_workers=args.num_workers > 0)
 
         # Phase D: train
-        if freeze_backbone_eval_fn is not None:
-            train_loss = train_one_epoch_masked_bce_freeze_aware(
-                victim.model, train_loader, optimizer, criterion, args.device,
-                grad_clip=args.grad_clip,
-                trainable_params=trainable_params,
-                ewa_params=ewa_params,
-                anchor_lambda=args.anchor_lambda,
-                ewa_decay=args.ewa_decay,
-                freeze_backbone_eval_fn=freeze_backbone_eval_fn,
-            )
-        else:
-            train_loss = train_one_epoch_masked_bce(
-                victim.model, train_loader, optimizer, criterion, args.device,
-                grad_clip=args.grad_clip, ewa_params=ewa_params,
-                anchor_lambda=args.anchor_lambda, ewa_decay=args.ewa_decay,
-            )
+        train_loss = train_one_epoch_masked_bce(
+            victim.model, train_loader, optimizer, criterion, args.device,
+            grad_clip=args.grad_clip, ewa_params=ewa_params,
+            anchor_lambda=args.anchor_lambda, ewa_decay=args.ewa_decay,
+        )
         latent_augmix_consistency_stats = {"enabled": False, "reason": "disabled"}
         if args.enable_latent_augmix_consistency:
             if (
@@ -3026,27 +2495,8 @@ def main():
                     crop_len=args.crop_len,
                     grad_clip=args.grad_clip,
                     trainable_params=trainable_params,
-                    freeze_backbone_eval_fn=freeze_backbone_eval_fn,
                     max_batches=args.latent_augmix_consistency_max_batches,
                 )
-        source_logit_anchor_loss = float("nan")
-        if (
-            args.source_logit_anchor_weight > 0
-            and source_logit_teacher_model is not None
-            and source_logit_anchor_loader is not None
-        ):
-            source_logit_anchor_loss = train_source_logit_anchor_epoch(
-                model=victim.model,
-                teacher_model=source_logit_teacher_model,
-                loader=source_logit_anchor_loader,
-                optimizer=optimizer,
-                device=args.device,
-                weight=args.source_logit_anchor_weight,
-                max_batches=args.source_logit_anchor_batches,
-                grad_clip=args.grad_clip,
-                trainable_params=trainable_params,
-                freeze_backbone_eval_fn=freeze_backbone_eval_fn,
-            )
         scheduler.step()
 
         # Phase E: PTBXL val loss
@@ -3088,8 +2538,6 @@ def main():
             if latent_augmix_consistency_stats.get("consistency_loss", float("nan"))
             == latent_augmix_consistency_stats.get("consistency_loss", float("nan"))
             else None,
-            "source_logit_anchor_loss": round(source_logit_anchor_loss, 6)
-            if source_logit_anchor_loss == source_logit_anchor_loss else None,
             "val_loss":   round(val_loss, 4),
             "asr_overall": round(float(asr_info["asr_overall"]), 4),
             "asr_per_class": {k: round(float(v), 4) for k, v in asr_info["per_class_asr"].items()},
@@ -3209,14 +2657,14 @@ def main():
                 best_metric = cur
                 best_epoch = epoch
                 epochs_since_best = 0
-                save_compatible_model_state(victim.model, best_ckpt_path)
+                torch.save(victim.model.state_dict(), best_ckpt_path)
                 print(f"   ** saved best @ ep{epoch}: {args.es_metric} {best_metric}")
                 entry["best_update"] = True
             else:
                 epochs_since_best += args.eval_every
                 entry["best_update"] = False
 
-        save_compatible_model_state(victim.model, last_ckpt_path)
+        torch.save(victim.model.state_dict(), last_ckpt_path)
         log["epochs"].append(entry)
         with open(log_path, "w") as f:
             json.dump(log, f, indent=2, default=str)

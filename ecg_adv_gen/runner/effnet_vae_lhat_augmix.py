@@ -189,11 +189,6 @@ def main() -> None:
     ap.add_argument("--adv_weight", type=float, default=0.2)
     ap.add_argument("--adv_weight_warmup_epochs", type=int, default=0)
     ap.add_argument(
-        "--disable_adv_stream",
-        action="store_true",
-        help="Forward --disable_adv_stream to synth_online_at_super5.py for noVAE/raw-AugMix controls.",
-    )
-    ap.add_argument(
         "--adv_label_mode",
         choices=[
             "hard",
@@ -229,73 +224,7 @@ def main() -> None:
     ap.add_argument("--ptbxl_weight", type=float, default=1.0)
     ap.add_argument("--lr", type=float, default=5e-5)
     ap.add_argument("--train_batch_size", type=int, default=128)
-    ap.add_argument(
-        "--source_logit_anchor_weight",
-        type=float,
-        default=0.0,
-        help="Optional PTB-XL source-logit distillation weight to reduce source forgetting.",
-    )
-    ap.add_argument(
-        "--source_logit_anchor_batches",
-        type=int,
-        default=0,
-        help="Max PTB-XL source batches for each source-logit anchor pass; 0 uses full source loader.",
-    )
-    ap.add_argument(
-        "--freeze_backbone_classifier_only",
-        action="store_true",
-        help=(
-            "Freeze EfficientNet feature extractor and train only the final "
-            "classifier adapter. This tests whether VAE-LHAT helps under a "
-            "source-preserving low-capacity adaptation."
-        ),
-    )
-    ap.add_argument(
-        "--classifier_only_train_final_norm",
-        action="store_true",
-        help=(
-            "With --freeze_backbone_classifier_only, also train final_norm "
-            "affine parameters while keeping running statistics frozen."
-        ),
-    )
-    ap.add_argument(
-        "--classifier_adapter_type",
-        choices=["linear", "lora"],
-        default="linear",
-        help="Classifier adapter used with --freeze_backbone_classifier_only.",
-    )
-    ap.add_argument("--classifier_lora_rank", type=int, default=16)
-    ap.add_argument("--classifier_lora_alpha", type=float, default=16.0)
-    ap.add_argument(
-        "--unfreeze_last_n_features",
-        type=int,
-        default=0,
-        help=(
-            "Train classifier, final_conv/final_norm, and the last N "
-            "EfficientNet feature blocks with BatchNorm running statistics "
-            "frozen. Mutually exclusive with --freeze_backbone_classifier_only."
-        ),
-    )
     ap.add_argument("--latent_augmix_latent_weight_cap", type=float, default=0.3)
-    ap.add_argument(
-        "--latent_augmix_topology",
-        choices=["legacy_branch", "locked_three_chain"],
-        default="legacy_branch",
-        help=(
-            "Forwarded to synth_online_at_super5.py. locked_three_chain keeps "
-            "the PN2021-C main method as two corruption chains plus one "
-            "uncorrupted VAE-LHAT adversarial waveform chain."
-        ),
-    )
-    ap.add_argument(
-        "--disable_latent_augmix_branch",
-        action="store_true",
-        help=(
-            "Do not forward --enable_latent_augmix_branch to "
-            "synth_online_at_super5.py. This creates a true VAE-LHAT-only "
-            "control while keeping the managed runner defaults unchanged."
-        ),
-    )
     ap.add_argument("--latent_augmix_copies", type=int, default=1)
     ap.add_argument("--latent_augmix_width", type=int, default=3)
     ap.add_argument("--latent_augmix_depth", type=int, default=-1)
@@ -436,11 +365,6 @@ def main() -> None:
         data_root / "paper_effnet_latent_augmix_stage3_20260524"
     )
     center = args.center
-    if args.freeze_backbone_classifier_only and args.unfreeze_last_n_features > 0:
-        raise ValueError(
-            "--freeze_backbone_classifier_only and --unfreeze_last_n_features "
-            "are mutually exclusive"
-        )
     paths = resolve_effnet_vae_lhat_paths(args, data_root=data_root, out_root=out_root)
     out_dir = paths.out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
