@@ -105,17 +105,6 @@
           },
           "additionalProperties": true
         },
-        "prompt_token_online_at": {
-          "type": "object",
-          "properties": {
-            "quick_eval_source": {"type": "string"},
-            "classes_in_scope": {
-              "type": "array",
-              "items": {"type": "string"}
-            }
-          },
-          "additionalProperties": true
-        },
         "direct_finetune": {
           "type": "object",
           "properties": {

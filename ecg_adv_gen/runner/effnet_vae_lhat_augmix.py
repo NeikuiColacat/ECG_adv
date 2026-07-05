@@ -114,11 +114,6 @@ def main() -> None:
     ap.add_argument("--hull_neighbor_pool_multiplier", type=int, default=4)
     ap.add_argument("--k_anchor", type=int, default=300)
     ap.add_argument("--pgd_batch", type=int, default=32)
-    ap.add_argument(
-        "--anchor_class_weights",
-        default="",
-        help="Optional CLASS=weight comma map passed to the latent anchor sampler.",
-    )
     ap.add_argument("--classes_in_scope", nargs="+", default=CLASS_NAMES)
     ap.add_argument(
         "--init_ckpt",
@@ -153,37 +148,6 @@ def main() -> None:
             "raw1000 target ECGs inside the online-AT dataset before the model."
         ),
     )
-    ap.add_argument(
-        "--source_weights",
-        default="real_anchor=1.0",
-        help="Comma map passed to synth_online_at_super5 --source_weights.",
-    )
-    ap.add_argument(
-        "--source_class_weights",
-        default="",
-        help="Optional class-source map passed to --source_class_weights.",
-    )
-    ap.add_argument(
-        "--source_floor_per_class",
-        type=int,
-        default=0,
-        help="Optional source floor passed to --source_floor_per_class.",
-    )
-    ap.add_argument(
-        "--anchor_class_weight_mode",
-        choices=["manual", "inv_freq_kshot"],
-        default="manual",
-        help="Passed to synth_online_at_super5 --anchor_class_weight_mode.",
-    )
-    ap.add_argument(
-        "--anchor_class_weight_reference_source",
-        default="real_anchor",
-        help="Passed to synth_online_at_super5 --anchor_class_weight_reference_source.",
-    )
-    ap.add_argument("--anchor_class_weight_gamma", type=float, default=0.5)
-    ap.add_argument("--anchor_class_weight_min", type=float, default=0.35)
-    ap.add_argument("--anchor_class_weight_cap", type=float, default=4.0)
-    ap.add_argument("--anchor_class_missing_weight", type=float, default=0.35)
     ap.add_argument("--target_real_weight", type=float, default=80.0)
     ap.add_argument("--adv_weight", type=float, default=0.2)
     ap.add_argument("--adv_weight_warmup_epochs", type=int, default=0)
@@ -200,26 +164,6 @@ def main() -> None:
         default="mixed_soft",
     )
     ap.add_argument("--adv_teacher_mix", type=float, default=0.3)
-    ap.add_argument("--adv_soft_target_floor", type=float, default=0.0)
-    ap.add_argument(
-        "--boundary_prob_min",
-        type=float,
-        default=0.0,
-        help=(
-            "Only buffer adversarial decoded samples whose post-attack target "
-            "probability is at least this value. This keeps attack strength in "
-            "a useful range without changing the PGD objective."
-        ),
-    )
-    ap.add_argument(
-        "--boundary_prob_max",
-        type=float,
-        default=1.0,
-        help=(
-            "Only buffer adversarial decoded samples whose post-attack target "
-            "probability is at most this value."
-        ),
-    )
     ap.add_argument("--ptbxl_weight", type=float, default=1.0)
     ap.add_argument("--lr", type=float, default=5e-5)
     ap.add_argument("--train_batch_size", type=int, default=128)
@@ -228,40 +172,6 @@ def main() -> None:
     ap.add_argument("--latent_augmix_width", type=int, default=3)
     ap.add_argument("--latent_augmix_depth", type=int, default=-1)
     ap.add_argument("--latent_augmix_alpha", type=float, default=1.0)
-    ap.add_argument("--latent_augmix_mixture_mode", choices=["beta", "fixed"], default="beta")
-    ap.add_argument("--latent_augmix_mixture_prob", type=float, default=0.5)
-    ap.add_argument("--latent_augmix_mixture_beta_a", type=float, default=0.0)
-    ap.add_argument("--latent_augmix_mixture_beta_b", type=float, default=0.0)
-    ap.add_argument(
-        "--latent_augmix_op_schedule",
-        choices=["random", "cycle", "per_op", "official_s5_depth23_composite_cycle"],
-        default="random",
-        help=(
-            "Forwarded to locked three-chain AugMix. per_op maps AugMix copies "
-            "onto the configured PN2021-C operators inside the main three-chain graph."
-        ),
-    )
-    ap.add_argument(
-        "--latent_augmix_chain_weights",
-        default="",
-        help="Optional comma-separated locked-chain weights: raw1,raw2,vae_lhat_adv.",
-    )
-    ap.add_argument(
-        "--latent_augmix_signal_space",
-        choices=["model_zscore", "raw_pre_zscore"],
-        default="model_zscore",
-        help="Forwarded to locked three-chain AugMix corruption input space.",
-    )
-    ap.add_argument(
-        "--latent_augmix_corruption_source",
-        choices=["vae_decode", "target_real"],
-        default="vae_decode",
-        help=(
-            "Forwarded to locked three-chain AugMix. target_real uses the "
-            "picked K500 raw ECG as the two corruption-chain anchors while "
-            "keeping the VAE-LH adversarial waveform as the third chain."
-        ),
-    )
     ap.add_argument("--latent_augmix_severity", type=int, default=2)
     ap.add_argument(
         "--latent_augmix_severity_profile",
@@ -272,8 +182,6 @@ def main() -> None:
             "Use calibrated_10to20pp to match the strong PN2021-C evaluator."
         ),
     )
-    ap.add_argument("--latent_augmix_severity_params_file", default="")
-    ap.add_argument("--latent_augmix_severity_params_name", default="")
     ap.add_argument(
         "--latent_augmix_ops",
         nargs="+",
@@ -284,11 +192,6 @@ def main() -> None:
             "default excludes random_leads_masking; robustness sweeps can pass "
             "all five ops explicitly."
         ),
-    )
-    ap.add_argument(
-        "--no_latent_augmix_renorm",
-        action="store_true",
-        help="Forwarded to latent AugMix so calibrated chains keep their raw corruption scale.",
     )
     ap.add_argument(
         "--enable_latent_augmix_consistency",
@@ -306,30 +209,6 @@ def main() -> None:
     ap.add_argument("--eval_batch_size", type=int, default=192)
     ap.add_argument("--eval_min_pos", type=int, default=10)
     ap.add_argument("--eval_pn2021_limit", type=int, default=0)
-    ap.add_argument(
-        "--qab_size",
-        type=int,
-        default=2048,
-        help="Forwarded to synth_online_at_super5.py QualityAwareBuffer max size.",
-    )
-    ap.add_argument(
-        "--rescore_interval",
-        type=int,
-        default=3,
-        help="Forwarded to synth_online_at_super5.py buffer rescore interval in epochs.",
-    )
-    ap.add_argument(
-        "--asr_consec_low_max",
-        type=int,
-        default=999,
-        help="Forwarded to synth_online_at_super5.py low-ASR stop patience.",
-    )
-    ap.add_argument(
-        "--asr_low_threshold",
-        type=float,
-        default=0.30,
-        help="Forwarded to synth_online_at_super5.py low-ASR threshold.",
-    )
     ap.add_argument(
         "--run_tag_extra",
         default="",

@@ -66,13 +66,8 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
     if synth_npz_override and not Path(synth_npz_override).is_absolute():
         synth_npz_override = str(Path(paths["data_root"]) / synth_npz_override)
     latent_augmix = adaptation["latent_augmix"]
-    latent_augmix_enabled = bool(latent_augmix.get("enabled", True))
-    if not latent_augmix_enabled:
-        raise ValueError("effnet_vae_lhat latest-mainline requires latent_augmix.enabled=true")
-    latent_augmix_mixture = latent_augmix.get("mixture") or {}
     latent_augmix_consistency = latent_augmix.get("consistency") or {}
     anchors = adaptation.get("anchors") or {}
-    buffer = adaptation.get("buffer") or {}
 
     argv: list[Any] = [
         "--center",
@@ -155,103 +150,27 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
         "--eval_pn2021_limit",
         evaluation["pn2021_limit"],
     ]
-    _append_optional_value(argv, "--boundary_prob_min", adaptation["attack"].get("boundary_prob_min"))
-    _append_optional_value(argv, "--boundary_prob_max", adaptation["attack"].get("boundary_prob_max"))
     _append_optional_value(argv, "--target_real_norm_mode", data.get("target_real_norm_mode"))
     _append_optional_value(argv, "--synth_npz_override", synth_npz_override or None)
     _append_optional_value(argv, "--target_real_npz_override", target_real_npz_override or None)
     _append_optional_value(argv, "--source_weights", anchors.get("source_weights"))
-    _append_optional_value(argv, "--source_class_weights", anchors.get("source_class_weights"))
-    _append_optional_value(argv, "--source_floor_per_class", anchors.get("source_floor_per_class"))
-    _append_optional_value(argv, "--anchor_class_weights", anchors.get("anchor_class_weights"))
-    _append_optional_value(argv, "--anchor_class_weight_mode", anchors.get("anchor_class_weight_mode"))
     _append_optional_value(
         argv,
-        "--anchor_class_weight_reference_source",
-        anchors.get("anchor_class_weight_reference_source"),
+        "--latent_augmix_topology",
+        latent_augmix.get("topology"),
     )
-    _append_optional_value(argv, "--anchor_class_weight_gamma", anchors.get("anchor_class_weight_gamma"))
-    _append_optional_value(argv, "--anchor_class_weight_min", anchors.get("anchor_class_weight_min"))
-    _append_optional_value(argv, "--anchor_class_weight_cap", anchors.get("anchor_class_weight_cap"))
     _append_optional_value(
         argv,
-        "--anchor_class_missing_weight",
-        anchors.get("anchor_class_missing_weight"),
+        "--latent_augmix_copies",
+        latent_augmix.get("copies"),
     )
-    _append_optional_value(argv, "--qab_size", buffer.get("qab_size"))
-    _append_optional_value(argv, "--rescore_interval", buffer.get("rescore_interval"))
-    _append_optional_value(argv, "--asr_consec_low_max", buffer.get("asr_consec_low_max"))
-    _append_optional_value(argv, "--asr_low_threshold", buffer.get("asr_low_threshold"))
-    if latent_augmix_enabled:
-        _append_optional_value(
-            argv,
-            "--latent_augmix_topology",
-            latent_augmix.get("topology"),
-        )
-        _append_optional_value(
-            argv,
-            "--latent_augmix_copies",
-            latent_augmix.get("copies"),
-        )
-        _append_optional_value(
-            argv,
-            "--latent_augmix_mixture_mode",
-            latent_augmix_mixture.get("mode", latent_augmix.get("mixture_mode")),
-        )
-        _append_optional_value(
-            argv,
-            "--latent_augmix_mixture_prob",
-            latent_augmix_mixture.get("prob", latent_augmix.get("mixture_prob")),
-        )
-        _append_optional_value(
-            argv,
-            "--latent_augmix_mixture_beta_a",
-            latent_augmix_mixture.get("beta_a", latent_augmix.get("mixture_beta_a")),
-        )
-        _append_optional_value(
-            argv,
-            "--latent_augmix_mixture_beta_b",
-            latent_augmix_mixture.get("beta_b", latent_augmix.get("mixture_beta_b")),
-        )
-        _append_optional_value(
-            argv,
-            "--latent_augmix_op_schedule",
-            latent_augmix.get("op_schedule"),
-        )
-        _append_optional_value(
-            argv,
-            "--latent_augmix_chain_weights",
-            latent_augmix.get("chain_weights"),
-        )
-        _append_optional_value(
-            argv,
-            "--latent_augmix_signal_space",
-            latent_augmix.get("signal_space"),
-        )
-        _append_optional_value(
-            argv,
-            "--latent_augmix_corruption_source",
-            latent_augmix.get("corruption_source"),
-        )
-        _append_optional_value(
-            argv,
-            "--latent_augmix_severity_profile",
-            latent_augmix.get("severity_profile"),
-        )
-        _append_optional_value(
-            argv,
-            "--latent_augmix_severity_params_file",
-            latent_augmix.get("severity_params_file"),
-        )
-        _append_optional_value(
-            argv,
-            "--latent_augmix_severity_params_name",
-            latent_augmix.get("severity_params_name"),
-        )
-        _append_optional_sequence(argv, "--latent_augmix_ops", latent_augmix.get("ops"))
-        if latent_augmix.get("no_renorm"):
-            argv.append("--no_latent_augmix_renorm")
-    if latent_augmix_enabled and latent_augmix_consistency.get("enabled"):
+    _append_optional_value(
+        argv,
+        "--latent_augmix_severity_profile",
+        latent_augmix.get("severity_profile"),
+    )
+    _append_optional_sequence(argv, "--latent_augmix_ops", latent_augmix.get("ops"))
+    if latent_augmix_consistency.get("enabled"):
         argv.append("--enable_latent_augmix_consistency")
         _append_optional_value(
             argv,
@@ -351,6 +270,4 @@ def audit_effnet_vae_lhat_command(
             errors.append(f"{script}: init_ckpt does not match protocol {protocol!r}")
         if f"{center}_K{expected_command_k}_direct_ft_ep" not in init_ckpt:
             errors.append(f"{script}: init_ckpt does not encode {center}/K{expected_command_k}")
-    if "paper_direct_finetune_k500_20260516" not in init_ckpt:
-        warnings.append(f"{script}: init_ckpt is not the historical direct-K500 run root")
     return {"errors": errors, "warnings": warnings}

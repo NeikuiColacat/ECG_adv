@@ -559,6 +559,24 @@ def test_effnet_vae_lhat_threechain_locked_k500_config_uses_official_s5_last_che
         assert "--pgd_K" not in argv
         assert "--pgd_alpha" not in argv
         assert "--delta_init_scale" not in argv
+        assert "--boundary_prob_min" not in argv
+        assert "--boundary_prob_max" not in argv
+        assert "--source_class_weights" not in argv
+        assert "--source_floor_per_class" not in argv
+        assert "--anchor_class_weights" not in argv
+        assert "--anchor_class_weight_mode" not in argv
+        assert "--qab_size" not in argv
+        assert "--rescore_interval" not in argv
+        assert "--asr_consec_low_max" not in argv
+        assert "--asr_low_threshold" not in argv
+        assert "--latent_augmix_mixture_mode" not in argv
+        assert "--latent_augmix_op_schedule" not in argv
+        assert "--latent_augmix_chain_weights" not in argv
+        assert "--latent_augmix_signal_space" not in argv
+        assert "--latent_augmix_corruption_source" not in argv
+        assert "--latent_augmix_severity_params_file" not in argv
+        assert "--latent_augmix_severity_params_name" not in argv
+        assert "--no_latent_augmix_renorm" not in argv
         assert _option_value(argv, "--target_real_norm_mode") == "per_sample_global"
         assert _option_value(argv, "--target_real_npz_override").endswith(
             f"/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets/{command['matrix']['center']}/"
@@ -629,6 +647,12 @@ def test_pn2021_eval_adapter_does_not_keep_prompt_token_entrypoint_branch():
 
     assert "ecgtwin_prompt_token_online_at_minimal_eval" not in source
     assert "prompt-token online-AT" not in source
+
+
+def test_experiment_schema_does_not_keep_prompt_token_online_at_surface():
+    schema = json.loads((REPO / "configs/schemas/experiment_config.schema.json").read_text(encoding="utf-8"))
+
+    assert "prompt_token_online_at" not in schema["properties"]["evaluation"]["properties"]
 
 
 def test_unmanaged_adapter_files_are_removed_from_runtime_tree():

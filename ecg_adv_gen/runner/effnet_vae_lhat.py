@@ -137,21 +137,7 @@ def build_effnet_vae_lhat_train_cmd(
         "--source_sampling_strategy",
         "source_weighted",
         "--source_weights",
-        str(args.source_weights),
-        "--source_floor_per_class",
-        str(args.source_floor_per_class),
-        "--anchor_class_weight_mode",
-        str(args.anchor_class_weight_mode),
-        "--anchor_class_weight_reference_source",
-        str(args.anchor_class_weight_reference_source),
-        "--anchor_class_weight_gamma",
-        str(args.anchor_class_weight_gamma),
-        "--anchor_class_weight_min",
-        str(args.anchor_class_weight_min),
-        "--anchor_class_weight_cap",
-        str(args.anchor_class_weight_cap),
-        "--anchor_class_missing_weight",
-        str(args.anchor_class_missing_weight),
+        "real_anchor=1.0",
         "--K_anchor",
         str(args.k_anchor),
         "--pgd_batch",
@@ -170,12 +156,6 @@ def build_effnet_vae_lhat_train_cmd(
         str(args.adv_label_mode),
         "--adv_teacher_mix",
         str(args.adv_teacher_mix),
-        "--adv_soft_target_floor",
-        str(args.adv_soft_target_floor),
-        "--boundary_prob_min",
-        str(args.boundary_prob_min),
-        "--boundary_prob_max",
-        str(args.boundary_prob_max),
         "--disable_quality_gate",
         "--lr",
         str(args.lr),
@@ -192,13 +172,13 @@ def build_effnet_vae_lhat_train_cmd(
         "--anchor_lambda",
         "0.05",
         "--qab_size",
-        str(args.qab_size),
+        "2048",
         "--rescore_interval",
-        str(args.rescore_interval),
+        "3",
         "--asr_consec_low_max",
-        str(args.asr_consec_low_max),
+        "999",
         "--asr_low_threshold",
-        str(args.asr_low_threshold),
+        "0.30",
         "--num_workers",
         str(args.num_workers),
         "--seed",
@@ -223,22 +203,6 @@ def build_effnet_vae_lhat_train_cmd(
             str(args.latent_augmix_depth),
             "--latent_augmix_alpha",
             str(args.latent_augmix_alpha),
-            "--latent_augmix_mixture_mode",
-            str(getattr(args, "latent_augmix_mixture_mode", "beta")),
-            "--latent_augmix_mixture_prob",
-            str(getattr(args, "latent_augmix_mixture_prob", 0.5)),
-            "--latent_augmix_mixture_beta_a",
-            str(getattr(args, "latent_augmix_mixture_beta_a", 0.0)),
-            "--latent_augmix_mixture_beta_b",
-            str(getattr(args, "latent_augmix_mixture_beta_b", 0.0)),
-            "--latent_augmix_op_schedule",
-            str(getattr(args, "latent_augmix_op_schedule", "random")),
-            "--latent_augmix_chain_weights",
-            str(getattr(args, "latent_augmix_chain_weights", "")),
-            "--latent_augmix_signal_space",
-            str(getattr(args, "latent_augmix_signal_space", "model_zscore")),
-            "--latent_augmix_corruption_source",
-            str(getattr(args, "latent_augmix_corruption_source", "vae_decode")),
             "--latent_augmix_severity",
             str(args.latent_augmix_severity),
             "--latent_augmix_severity_profile",
@@ -249,22 +213,6 @@ def build_effnet_vae_lhat_train_cmd(
             *[str(item) for item in args.latent_augmix_ops],
         ]
     )
-    if getattr(args, "latent_augmix_severity_params_file", ""):
-        train_cmd.extend(
-            [
-                "--latent_augmix_severity_params_file",
-                str(args.latent_augmix_severity_params_file),
-            ]
-        )
-    if getattr(args, "latent_augmix_severity_params_name", ""):
-        train_cmd.extend(
-            [
-                "--latent_augmix_severity_params_name",
-                str(args.latent_augmix_severity_params_name),
-            ]
-        )
-    if getattr(args, "no_latent_augmix_renorm", False):
-        train_cmd.append("--no_latent_augmix_renorm")
     if getattr(args, "enable_latent_augmix_consistency", False):
         train_cmd.extend(
             [
@@ -283,10 +231,6 @@ def build_effnet_vae_lhat_train_cmd(
         train_cmd.extend(["--resume", str(args.resume)])
     if args.allow_resume_config_drift:
         train_cmd.append("--allow_resume_config_drift")
-    if args.anchor_class_weights:
-        train_cmd.extend(["--anchor_class_weights", str(args.anchor_class_weights)])
-    if args.source_class_weights:
-        train_cmd.extend(["--source_class_weights", str(args.source_class_weights)])
     return train_cmd
 
 
