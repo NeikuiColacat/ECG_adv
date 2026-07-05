@@ -127,8 +127,6 @@ def build_ecgfounder_fullft_argv(config: Mapping[str, Any], context: Mapping[str
         loss.get("source_weight", 1.0),
         "--target_real_weight",
         loss.get("target_real_weight", 40.0),
-        "--supervised_input_mode",
-        adaptation.get("supervised_input_mode", "raw1000"),
     ]
     _append_option(argv, "--target_raw1000_npz_override", target_raw1000_npz_override)
     _append_option(argv, "--init_model_path", model.get("init_model_path", ""))
@@ -283,7 +281,6 @@ def audit_ecgfounder_fullft_command(
             "--k",
             "--seed",
             "--init_model_path",
-            "--supervised_input_mode",
         ],
     )
     center = str(opt_first(opts, "--center", ""))
@@ -291,7 +288,6 @@ def audit_ecgfounder_fullft_command(
         errors.append(f"{script}: unexpected center {center!r}")
     audit_equals(errors, script, opts, "--k", str(expected_k))
     audit_equals(errors, script, opts, "--seed", str(expected_seed))
-    audit_equals(errors, script, opts, "--supervised_input_mode", "raw1000")
     experiment_name = str((config.get("experiment") or {}).get("name") or "")
     official_composite_supervised = experiment_name.startswith(
         "ecgfounder_direct_corrupted_k500_supervised_officials5_depth23_ep10_"

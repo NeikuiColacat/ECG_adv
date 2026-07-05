@@ -93,9 +93,7 @@ from ecg_adv_gen.models.ecgfounder_torch import (  # noqa: E402
     global_zscore_torch,
 )
 from ecg_adv_gen.training import (  # noqa: E402
-    CachedSignalDataset,
     build_weighted_signal_stream_loader_from_datasets,
-    build_weighted_signal_stream_loader,
     compute_pos_weight,
     fullft_adv_batch_diagnostics,
     masked_bce_with_logits,
@@ -116,7 +114,6 @@ from util.lead_utils import ECGTWIN_TO_PTBXL_INDICES  # noqa: E402
 
 DEFAULT_OUT_DIR = DATA_ROOT / "paper_ecgfounder_fullft_super5_20260523"
 CENTER_DEFAULT = "cpsc_2018"
-SUPERVISED_INPUT_MODES = ("cached5000", "raw1000")
 DEFAULT_SOURCE_RAW1000_SIGNAL_CACHE = (
     DATA_ROOT / "triple_labels/cache/ptbxl_minimal_resample_per_sample_global_fs100_len1000.npy"
 )
@@ -175,30 +172,6 @@ def set_seed(seed: int) -> None:
 
 def prepare_raw_ecgfounder_input(x: torch.Tensor) -> torch.Tensor:
     return ecg1000_to_ecgfounder_input(x)
-
-
-def prepare_supervised_ecgfounder_input(
-    x: torch.Tensor,
-    supervised_input_mode: str,
-) -> torch.Tensor:
-    mode = str(supervised_input_mode)
-    if mode == "raw1000":
-        return prepare_raw_ecgfounder_input(x)
-    if mode == "cached5000":
-        return x
-    raise ValueError(f"unknown supervised_input_mode: {mode!r}")
-
-
-def prepare_adv_stream_signal_for_supervised_mode(
-    x_adv_1000: torch.Tensor,
-    supervised_input_mode: str,
-) -> torch.Tensor:
-    mode = str(supervised_input_mode)
-    if mode == "raw1000":
-        return x_adv_1000
-    if mode == "cached5000":
-        return prepare_raw_ecgfounder_input(x_adv_1000)
-    raise ValueError(f"unknown supervised_input_mode: {mode!r}")
 
 
 class ECGFounderFullFTVictim(nn.Module):
@@ -657,8 +630,6 @@ def eval_split(
 
 def make_train_loader(
     ptbxl_payload: dict[str, np.ndarray],
-    pn_payload: dict[str, np.ndarray],
-    target_indices: np.ndarray,
     args: argparse.Namespace,
     adv_signals: np.ndarray | None = None,
     adv_labels: np.ndarray | None = None,
@@ -669,39 +640,21 @@ def make_train_loader(
     folds = ptbxl_payload["folds"].astype(np.int64)
     source_idx = np.nonzero(np.isin(folds, np.arange(1, 9)))[0]
     effective_adv_weight = float(args.adv_weight if adv_weight is None else adv_weight)
-    if str(args.supervised_input_mode) == "raw1000":
-        if target_train_record_ids is None:
-            raise ValueError("raw1000 supervised input mode requires target_train_record_ids")
-        source_ds = load_source_raw1000_dataset(
-            args,
-            source_idx,
-            ptbxl_payload["labels"][source_idx],
-        )
-        target_ds = load_target_raw_dataset(
-            args.center,
-            args,
-            sorted(str(x) for x in target_train_record_ids),
-        )
-        return build_weighted_signal_stream_loader_from_datasets(
-            source_dataset=source_ds,
-            target_dataset=target_ds,
-            source_weight=float(args.source_weight),
-            target_real_weight=float(args.target_real_weight),
-            adv_weight=effective_adv_weight,
-            batch_size=args.batch_size,
-            num_workers=args.num_workers,
-            num_classes=len(CLASS_NAMES_SUPER5),
-            adv_signals=adv_signals,
-            adv_labels=adv_labels,
-            adv_teacher_logits=adv_teacher_logits,
-        )
-    return build_weighted_signal_stream_loader(
-        source_signals=ptbxl_payload["signals"],
-        source_labels=ptbxl_payload["labels"],
-        source_indices=source_idx,
-        target_signals=pn_payload["signals"],
-        target_labels=pn_payload["labels"],
-        target_indices=target_indices,
+    if target_train_record_ids is None:
+        raise ValueError("raw1000 supervised training requires target_train_record_ids")
+    source_ds = load_source_raw1000_dataset(
+        args,
+        source_idx,
+        ptbxl_payload["labels"][source_idx],
+    )
+    target_ds = load_target_raw_dataset(
+        args.center,
+        args,
+        sorted(str(x) for x in target_train_record_ids),
+    )
+    return build_weighted_signal_stream_loader_from_datasets(
+        source_dataset=source_ds,
+        target_dataset=target_ds,
         source_weight=float(args.source_weight),
         target_real_weight=float(args.target_real_weight),
         adv_weight=effective_adv_weight,
@@ -722,18 +675,11 @@ def make_source_only_train_loader(
 
     folds = ptbxl_payload["folds"].astype(np.int64)
     source_idx = np.nonzero(np.isin(folds, np.arange(1, 9)))[0]
-    if str(args.supervised_input_mode) == "raw1000":
-        source_ds = load_source_raw1000_dataset(
-            args,
-            source_idx,
-            ptbxl_payload["labels"][source_idx],
-        )
-    else:
-        source_ds = CachedSignalDataset(
-            ptbxl_payload["signals"],
-            ptbxl_payload["labels"],
-            source_idx,
-        )
+    source_ds = load_source_raw1000_dataset(
+        args,
+        source_idx,
+        ptbxl_payload["labels"][source_idx],
+    )
     return build_weighted_signal_stream_loader_from_datasets(
         source_dataset=source_ds,
         target_dataset=source_ds,
@@ -848,16 +794,7 @@ def build_adv_epoch(
                 latent_augmix_stats_batches.append(latent_augmix_stats)
                 if latent_augmix_np.shape[0] > 0:
                     latent_augmix_t = torch.from_numpy(latent_augmix_np).float().to(device)
-                    x_adv_for_stream = (
-                        prepare_adv_stream_signal_for_supervised_mode(
-                            latent_augmix_t,
-                            args.supervised_input_mode,
-                        )
-                        .detach()
-                        .cpu()
-                        .numpy()
-                        .astype(np.float32)
-                    )
+                    x_adv_for_stream = latent_augmix_t.detach().cpu().numpy().astype(np.float32)
                     adv_signals.append(x_adv_for_stream)
                     labels_rep = np.tile(
                         anchor_pool["labels"][batch_idx].astype(np.float32),
@@ -870,16 +807,7 @@ def build_adv_epoch(
                     adv_labels.append(labels_rep.astype(np.float32, copy=False))
                     adv_teacher_logits.append(teacher_rep.astype(np.float32, copy=False))
             else:
-                x_adv_for_stream = (
-                    prepare_adv_stream_signal_for_supervised_mode(
-                        x_adv_1000,
-                        args.supervised_input_mode,
-                    )
-                    .detach()
-                    .cpu()
-                    .numpy()
-                    .astype(np.float32)
-                )
+                x_adv_for_stream = x_adv_1000.detach().cpu().numpy().astype(np.float32)
                 adv_signals.append(x_adv_for_stream)
                 adv_labels.append(anchor_pool["labels"][batch_idx].astype(np.float32))
                 adv_teacher_logits.append(clean_logits.detach().cpu().numpy().astype(np.float32))
@@ -893,7 +821,7 @@ def build_adv_epoch(
         np.concatenate(adv_signals, axis=0).astype(np.float32)
         if adv_signals
         else np.empty(
-            (0, 12, 1000 if str(args.supervised_input_mode) == "raw1000" else TARGET_POINTS),
+            (0, 12, 1000),
             dtype=np.float32,
         )
     )
@@ -1140,16 +1068,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--init_model_path",
         default="",
         help="Optional full-model ECGFounder checkpoint used before K500 full fine-tuning.",
-    )
-    ap.add_argument(
-        "--supervised_input_mode",
-        choices=SUPERVISED_INPUT_MODES,
-        default="cached5000",
-        help=(
-            "cached5000 keeps the historical ECGFounder 12x5000 supervised stream; "
-            "raw1000 feeds source/target supervised ECGs through the same 100Hz "
-            "ecg1000_to_ecgfounder_input path used by raw-AugMix and PN2021-C eval."
-        ),
     )
     ap.add_argument("--source_raw1000_signal_cache", default=str(DEFAULT_SOURCE_RAW1000_SIGNAL_CACHE))
     ap.add_argument("--source_raw1000_label_cache", default=str(DEFAULT_SOURCE_RAW1000_LABEL_CACHE))
@@ -1424,8 +1342,6 @@ def main() -> None:
             assert pn is not None
             train_loader = make_train_loader(
                 ptbxl,
-                pn,
-                target_train_idx,
                 args,
                 adv_info["signals"],
                 adv_info["labels"],
@@ -1443,12 +1359,7 @@ def main() -> None:
             teacher_logits = teacher_logits.to(device, non_blocking=True)
             opt.zero_grad(set_to_none=True)
             with torch.cuda.amp.autocast(enabled=device.type == "cuda"):
-                logits = model(
-                    prepare_supervised_ecgfounder_input(
-                        x,
-                        args.supervised_input_mode,
-                    )
-                )
+                logits = model(prepare_raw_ecgfounder_input(x))
                 loss = criterion(logits, y, stream)
                 if args.adv_clean_logit_anchor_weight > 0:
                     adv_mask = stream == 2
@@ -1597,7 +1508,6 @@ def main() -> None:
         ),
         "vae_stream_enabled": bool(args.enable_vae_adv_stream),
         "latent_augmix_branch_enabled": bool(args.enable_latent_augmix_branch),
-        "supervised_input_mode": str(args.supervised_input_mode),
         "trainable_scope": trainable_setup,
         "label_mapping": pn2021_super5_label_mapping_payload(),
         "stage": args.stage,

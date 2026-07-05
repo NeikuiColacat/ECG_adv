@@ -869,7 +869,7 @@ def test_ecgfounder_locked_k500_fullft_command_uses_last_checkpoint_no_head_rout
         assert _option_value(argv, "--init_model_path").endswith(
             "/ecgfounder_ptbxl_super5_fullft_locked/pytest_run/runs/ptbxl_super5_fullft_locked/last_model.pt"
         )
-        assert _option_value(argv, "--supervised_input_mode") == "raw1000"
+        assert "--supervised_input_mode" not in argv
         assert _option_value(argv, "--target_raw1000_npz_override").endswith(
             f"/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets/{center}/"
             f"k500_seed20260531/{center}_real_k500_seed20260531.raw1000.npz"
@@ -913,7 +913,7 @@ def test_ecgfounder_locked_threechain_augmix_command_uses_fullft_last_checkpoint
         assert "--source_partner_limit_per_class" not in argv
         assert "--ptbxl_vae_cache" not in argv
         assert "target_source" not in joined
-        assert _option_value(argv, "--supervised_input_mode") == "raw1000"
+        assert "--supervised_input_mode" not in argv
         assert _option_value(argv, "--target_raw1000_npz_override").endswith(
             f"/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets/{center}/"
             f"k500_seed20260531/{center}_real_k500_seed20260531.raw1000.npz"
@@ -1031,6 +1031,7 @@ def test_ecgfounder_locked_ptbxl_fullft_command_is_source_only_last_checkpoint()
     assert "--selection_metric" not in argv
     assert "--source_train_limit" not in argv
     assert "--cache_dir" not in argv
+    assert "--supervised_input_mode" not in argv
     assert _option_value(argv, "--run_name") == "ptbxl_super5_fullft_locked"
     assert "--ref_meta_json" not in argv
     assert "--center" not in argv
