@@ -1150,9 +1150,7 @@ def main() -> None:
         selected_ids: set[str] = set()
         target_idx = np.empty(0, dtype=np.int64)
         target_train_idx = np.empty(0, dtype=np.int64)
-        target_val_idx = np.empty(0, dtype=np.int64)
         target_train_ids: set[str] = set()
-        target_val_ids: set[str] = set()
         eval_idx = np.empty(0, dtype=np.int64)
         drop_eval_idx = np.empty(0, dtype=np.int64)
     else:
@@ -1171,9 +1169,7 @@ def main() -> None:
         if len(target_idx) != args.k:
             print(f"[warn] parsed K={len(target_idx)} target records; requested {args.k}", flush=True)
         target_train_idx = target_idx
-        target_val_idx = np.empty(0, dtype=np.int64)
         target_train_ids = set(str(record_ids[i]) for i in target_train_idx)
-        target_val_ids: set[str] = set()
         eval_idx = np.asarray([i for i, rid in enumerate(record_ids) if rid not in selected_ids], dtype=np.int64)
         drop_eval_idx = eval_idx[pn["labels"][eval_idx].sum(axis=1) > 0]
 
@@ -1406,8 +1402,6 @@ def main() -> None:
             "loss": float(np.mean(losses)),
             "val_macro_auroc": val_metrics["macro_auroc"],
             "val_macro_auprc": val_metrics["macro_auprc"],
-            "target_val_macro_auroc": None,
-            "target_val_macro_auprc": None,
             "target_macro_auroc": None if target_metrics is None else target_metrics["macro_auroc"],
             "target_macro_auprc": None if target_metrics is None else target_metrics["macro_auprc"],
             "target_drop_all_zero_macro_auroc": None if drop_metrics is None else drop_metrics["macro_auroc"],
@@ -1506,10 +1500,8 @@ def main() -> None:
         "center": None if args.stage == "ptbxl_source" else args.center,
         "K": int(len(target_idx)),
         "target_train_K": int(len(target_train_idx)),
-        "target_val_K": int(len(target_val_idx)),
         "selected_ref_record_ids": sorted(selected_ids),
         "target_train_record_ids": sorted(target_train_ids),
-        "target_val_record_ids": sorted(target_val_ids),
         "checkpoint_policy": "last",
         "selected_checkpoint": selected_checkpoint_name,
         "last_epoch": last_epoch,
@@ -1521,7 +1513,6 @@ def main() -> None:
             args.eval_batch_size,
             device,
         ),
-        "target_val": None,
         "target_excluding_ref": (
             eval_split(
                 model,
