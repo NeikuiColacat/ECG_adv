@@ -39,6 +39,18 @@ LOCKED_LEGACY_ARGS = {
     "enable_latent_augmix_branch": True,
     "enable_latent_augmix_consistency": True,
     "latent_augmix_topology": "locked_three_chain",
+    "latent_augmix_mixture_mode": "beta",
+    "latent_augmix_mixture_prob": 0.5,
+    "latent_augmix_mixture_beta_a": 0.0,
+    "latent_augmix_mixture_beta_b": 0.0,
+    "latent_augmix_op_schedule": "random",
+    "latent_augmix_chain_weights": "",
+    "latent_augmix_signal_space": "model_zscore",
+    "latent_augmix_corruption_source": "vae_decode",
+    "latent_augmix_severity_params_file": "",
+    "latent_augmix_severity_params_name": "",
+    "no_latent_augmix_renorm": False,
+    "latent_augmix_clip_abs": 6.0,
 }
 
 

@@ -576,6 +576,9 @@ def test_effnet_vae_lhat_threechain_locked_k500_config_uses_official_s5_last_che
         assert "--asr_consec_low_max" not in argv
         assert "--asr_low_threshold" not in argv
         assert "--latent_augmix_mixture_mode" not in argv
+        assert "--latent_augmix_mixture_prob" not in argv
+        assert "--latent_augmix_mixture_beta_a" not in argv
+        assert "--latent_augmix_mixture_beta_b" not in argv
         assert "--latent_augmix_op_schedule" not in argv
         assert "--latent_augmix_chain_weights" not in argv
         assert "--latent_augmix_signal_space" not in argv
@@ -583,6 +586,7 @@ def test_effnet_vae_lhat_threechain_locked_k500_config_uses_official_s5_last_che
         assert "--latent_augmix_severity_params_file" not in argv
         assert "--latent_augmix_severity_params_name" not in argv
         assert "--no_latent_augmix_renorm" not in argv
+        assert "--latent_augmix_clip_abs" not in argv
         assert _option_value(argv, "--target_real_norm_mode") == "per_sample_global"
         assert _option_value(argv, "--target_real_npz_override").endswith(
             f"/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets/{command['matrix']['center']}/"
@@ -705,6 +709,107 @@ def test_synth_online_at_rejects_zero_latent_augmix_copies(monkeypatch):
             "/tmp/out",
             "--latent_augmix_copies",
             "0",
+        ],
+    )
+
+    with pytest.raises(SystemExit):
+        parse_args()
+
+
+def test_synth_online_at_parser_keeps_only_mainline_latent_augmix_knobs(monkeypatch):
+    from ecg_adv_gen.runner.synth_online_at_super5 import parse_args
+
+    base_argv = [
+        "synth_online_at_super5.py",
+        "--center_name",
+        "ningbo",
+        "--synth_npz",
+        "/tmp/anchor.latent.npz",
+        "--output_dir",
+        "/tmp/out",
+        "--latent_augmix_copies",
+        "2",
+        "--latent_augmix_width",
+        "3",
+        "--latent_augmix_depth",
+        "2",
+        "--latent_augmix_alpha",
+        "1.0",
+        "--latent_augmix_severity",
+        "5",
+        "--latent_augmix_severity_profile",
+        "standard",
+        "--latent_augmix_ops",
+        "powerline_noise",
+        "emg_noise",
+    ]
+    monkeypatch.setattr(sys, "argv", base_argv)
+
+    args = parse_args()
+
+    assert args.latent_augmix_copies == 2
+    assert args.latent_augmix_width == 3
+    assert args.latent_augmix_ops == ["powerline_noise", "emg_noise"]
+    assert not hasattr(args, "latent_augmix_mixture_mode")
+    assert not hasattr(args, "latent_augmix_signal_space")
+    assert not hasattr(args, "latent_augmix_clip_abs")
+
+
+@pytest.mark.parametrize(
+    "removed_argv",
+    [
+        ["--latent_augmix_mixture_mode", "fixed"],
+        ["--latent_augmix_mixture_prob", "1.0"],
+        ["--latent_augmix_mixture_beta_a", "0.2"],
+        ["--latent_augmix_mixture_beta_b", "0.2"],
+        ["--latent_augmix_op_schedule", "per_op"],
+        ["--latent_augmix_chain_weights", "0.4,0.4,0.2"],
+        ["--latent_augmix_signal_space", "raw_pre_zscore"],
+        ["--latent_augmix_corruption_source", "target_real"],
+        ["--latent_augmix_severity_params_file", "/tmp/profile.yaml"],
+        ["--latent_augmix_severity_params_name", "stress"],
+        ["--no_latent_augmix_renorm"],
+        ["--latent_augmix_clip_abs", "4.0"],
+    ],
+)
+def test_synth_online_at_parser_rejects_removed_latent_augmix_knobs(monkeypatch, removed_argv):
+    from ecg_adv_gen.runner.synth_online_at_super5 import parse_args
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "synth_online_at_super5.py",
+            "--center_name",
+            "ningbo",
+            "--synth_npz",
+            "/tmp/anchor.latent.npz",
+            "--output_dir",
+            "/tmp/out",
+            *removed_argv,
+        ],
+    )
+
+    with pytest.raises(SystemExit):
+        parse_args()
+
+
+def test_synth_online_at_parser_rejects_custom_latent_augmix_profile(monkeypatch):
+    from ecg_adv_gen.runner.synth_online_at_super5 import parse_args
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "synth_online_at_super5.py",
+            "--center_name",
+            "ningbo",
+            "--synth_npz",
+            "/tmp/anchor.latent.npz",
+            "--output_dir",
+            "/tmp/out",
+            "--latent_augmix_severity_profile",
+            "custom",
         ],
     )
 
