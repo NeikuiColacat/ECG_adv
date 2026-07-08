@@ -33,8 +33,8 @@ def audit_direct_finetune_command(
     expected_command_k = str(case.get("k", expected_k))
     expected_command_seed = str(case.get("seed", expected_seed))
 
-    if script != "run_direct_finetune_k500_20260516.py":
-        errors.append(f"{script}: direct adapter only accepts run_direct_finetune_k500_20260516.py")
+    if script != "effnet_direct_finetune.py":
+        errors.append(f"{script}: direct adapter only accepts effnet_direct_finetune.py")
         return errors
 
     audit_require_options(

@@ -93,42 +93,6 @@ def pn2021_primary_snomed(
     return None
 
 
-def record_to_prompt_token_cache_item(header_path: str | Path) -> dict[str, Any] | None:
-    """Convert one PN2021 header into the shared legacy record-dict shape."""
-    header = Path(header_path)
-    codes = parse_header_snomeds(header)
-    if not codes:
-        return None
-    label = snomed_list_to_super5(tuple(codes)).astype(np.float32, copy=False)
-    primary = pn2021_primary_class(label)
-    if primary is None:
-        return None
-
-    record_path = header.with_suffix("")
-    record_id = record_id_from_path(record_path)
-    meta = parse_pn2021_header_metadata(header)
-    primary_snomed = pn2021_primary_snomed(codes, primary, include_norm_candidate=False)
-    primary_code = pn2021_primary_snomed(codes, primary, include_norm_candidate=True)
-    return {
-        "hea_path": str(header),
-        "record_path": str(record_path),
-        "record_id": record_id,
-        "path": str(record_path),
-        "snomed_codes": codes,
-        "label": label,
-        "multi_hot": label,
-        "primary": primary,
-        "primary_class": primary,
-        "primary_class_idx": SUPER5_TO_IDX[primary],
-        "primary_snomed": primary_snomed,
-        "primary_code": primary_code,
-        "age": meta["age"],
-        "sex": meta["sex"] or "U",
-        "hr": meta["hr"],
-        "strat_fold": pn2021_hash_fold(record_id),
-    }
-
-
 def _record_primary(record: Mapping[str, Any], class_key: str | None) -> str:
     if class_key is not None:
         return str(record[class_key])

@@ -4,8 +4,8 @@ This directory holds tracked experiment definitions. Machine-specific paths
 belong in `configs/local/*.yaml`, which is ignored except for example files.
 
 `configs/active_scripts.yaml` is the machine-readable index of which tracked
-configs wrap which legacy scripts. Keep it synchronized whenever a new YAML
-mainline or reporting CLI is added.
+configs map to managed package runners. Keep it synchronized whenever a new
+YAML mainline or reporting CLI is added.
 
 `configs/label_mappings/` holds structured label-mapping evidence, such as
 PN2021 to PTB-XL Super5 clinician-review JSONL records. Human-readable review
@@ -18,7 +18,7 @@ Tracked YAML may contain:
 - paper protocol facts: mapping version/hash, class order, centers, K-shot policy;
 - model and method names;
 - hyperparameters;
-- legacy script entrypoints and arguments;
+- managed runner entrypoints and arguments;
 - required artifacts and evaluation views.
 
 Tracked YAML must not contain:
@@ -78,7 +78,7 @@ The supported entrypoint can resolve configs as a CPU-only dry-run:
 
 ```bash
 micromamba run -n ECGTwin python scripts/run_experiment.py \
-  --config configs/experiments/effnet_direct_k500_v7_sjr_rgq_matrix.yaml \
+  --config configs/experiments/effnet_direct_k500_v7_sjr_rgq.yaml \
   --local-config configs/local/linbinhao_server.example.yaml \
   --run-id dryrun_effnet_direct_k500_v7 \
   --dry-run
@@ -86,36 +86,23 @@ micromamba run -n ECGTwin python scripts/run_experiment.py \
 
 Dry-run validates the YAML, checks path boundaries, compares Super5 mapping
 metadata and data/preprocess protocol fields against code, and prints the
-legacy commands without invoking child scripts.
+managed commands without invoking child scripts.
 
-The authoritative active/smoke/superseded inventory is
-`configs/active_scripts.yaml`. Current agent-facing active surfaces are v7
-SJR/RGQ configs covering EfficientNet Direct/VAE-LHAT K500 and percent-shot
-matrices, benchmark backbones, ECGFounder Direct/VAE-LHAT K500, ECGTwin author
-reproduction, minimal prompt-token train/generate/gate, PN2021 ref-excluded
-eval, and PN2021-C eval. Older v6 configs are retained only when
-`configs/active_scripts.yaml` classifies them as smoke or superseded.
-
-The smoke configs are not paper result configs. The PN2021 eval smoke passes
-`--pn2021_limit`; the EfficientNet direct smoke uses one training epoch,
-`num_workers=0`, and passes `--eval_pn2021_limit` to the nested PN2021 eval.
-The ECGFounder VAE-LHAT smoke keeps K=500/ref-exclusion semantics but limits
-the source feature training rows, online anchors, hull size, and epoch count.
-The ECGFounder init-head full-FT smoke keeps the same four-target-center
-matrix and K=500/ref-exclusion semantics, but limits source training rows and
-reuses an existing signal-cache union under `${paths.data_root}` to avoid
-rebuilding raw WFDB caches during engineering verification.
-They write under their own output roots so launcher execution, short-TMPDIR
-runtime env, output directory creation, child artifact verification, and
-mapping-metadata checks can be exercised without running full experiments.
+The authoritative public inventory is `configs/active_scripts.yaml`. For the
+current reproducible paper path, use its `latest_mainline` block first: it declares the
+`vae_lhat_threechain_augmix_pn2021c` VAE-LHAT + three-chain AugMix method as
+10 stages, all launched through `scripts/run_experiment.py`, covering EfficientNet
+and ECGFounder baselines, training, PN2021 clean eval, and PN2021-C evaluation.
+Public `configs/experiments/*.yaml` is intentionally limited to those 10
+latest-mainline configs.
 
 Small launch-time overrides are supported only through an audited whitelist:
 
 ```bash
 micromamba run -n ECGTwin python scripts/run_experiment.py \
-  --config configs/experiments/effnet_direct_k500_v7_sjr_rgq_matrix.yaml \
+  --config configs/experiments/effnet_direct_k500_v7_sjr_rgq.yaml \
   --local-config configs/local/linbinhao_server.example.yaml \
-  --run-id smoke_epochs2_workers1 \
+  --run-id dryrun_epochs2_workers1 \
   --dry-run \
   --set training.epochs=2 \
   --set resources.default_num_workers=1
@@ -126,7 +113,7 @@ hyperparameters such as `training.epochs`, `training.batch_size`,
 `training.optimizer.lr`, `resources.default_num_workers`,
 `adaptation.hull.lambda`, and `adaptation.latent_augmix.severity`. The
 launcher rejects overrides for paper protocol, mapping, centers, K-shot, paths,
-checkpoints, environment, and raw runner argv. Every accepted override is saved
+checkpoints, environment, and runner launch semantics. Every accepted override is saved
 in the resolved config and `run_manifest.json`.
 
 Managed child output paths are scoped by the launcher `run_id` through the
@@ -137,8 +124,8 @@ artifacts under paths like:
 ${paths.output_root}/${experiment.name}/${runtime.run_id}/...
 ```
 
-This keeps repeated dry-runs, smoke runs, and full runs from overwriting each
-other while preserving a stable method-level grouping under
+This keeps repeated dry-runs and full runs from overwriting each other while
+preserving a stable method-level grouping under
 `${paths.output_root}/${experiment.name}`.
 The protocol audit also rejects managed child or postprocess output options
 (`--out_root`, `--out_dir`, `--output_path`, `--output-dir`, and
@@ -149,24 +136,23 @@ Optional `stages[]` records can describe future multi-step orchestration with
 in dry-run `pipeline_stages` manifests for handoff and planning; it does not
 yet turn them into a multi-stage scheduler.
 
-Runner commands can be expressed either as legacy-compatible `runner.argv` or,
-for selected mainline families, as typed `runner.adapter` entries. The adapter
-registry lives in `ecg_adv_gen/config/adapters/registry.py` and currently owns
-`effnet_vae_lhat`, `ecgfounder_vae_lhat`, `ecgfounder_fullft`,
-`ecgfounder_pn2021c_eval`, `pn2021_eval`, `pn2021c_eval`,
-`prompt_token_online_at`, and `direct_finetune`; each builds the legacy argv
-from typed YAML fields, so old script entrypoints and CLI behavior remain
-unchanged while active configs no longer carry full argument lists. The
+Latest replay configs use typed `runner.adapter` entries instead of tracked
+argument lists. The adapter registry lives in
+`ecg_adv_gen/config/adapters/registry.py` and the active replay surface uses
+`direct_finetune`, `effnet_vae_lhat`, `ecgfounder_fullft`,
+`ecgfounder_pn2021c_eval`, `pn2021_eval`, and `pn2021c_eval`; each builds the
+managed commands from typed YAML fields, so active configs do not carry full
+argument lists.
 PN2021 eval adapter always emits `--eval_protocol paper_refexcluded` and a
 K500 `--min_target_ref_excluded` gate. The PN2021-C adapter requires a clean
 eval JSON, `v7_refexcluded_100hz1000` cache metadata, and explicit K500 ref
 exclusion. The ECGFounder PN2021-C adapter consumes locked full-FT run
 directories, evaluates the `bottleneck5000` order, and rejects stabilizer
-options for the main method. The ECGFounder training adapter also makes the
-latent-neighbor policy explicit instead of relying on legacy runner defaults.
-`runner.adapter` and
-`runner.argv` are mutually exclusive; configs must not keep stale argv beside
-a typed adapter.
+options for the main method. ECGFounder locked training uses the full-FT
+adapter; residual-adapter VAE-LHAT recipes are provenance only, not active
+replay adapters.
+`runner.argv` is not a supported launch surface; configs must use typed
+`runner.adapter` fields.
 
 All active configs share `preprocess.contract_id` for PTB-XL/PN2021/ECGTwin
 decode contracts. ECGFounder configs additionally declare
@@ -181,14 +167,14 @@ Execution is intentionally stricter than dry-run:
 ```bash
 nvidia-smi
 CUDA_VISIBLE_DEVICES=3 micromamba run -n ECGTwin python scripts/run_experiment.py \
-  --config configs/experiments/effnet_direct_k500_v7_sjr_rgq_matrix.yaml \
+  --config configs/experiments/effnet_direct_k500_v7_sjr_rgq.yaml \
   --local-config configs/local/linbinhao_server.yaml \
-  --run-id effnet_direct_k500_v7_seed20260531 \
+  --run-id effnet_direct_k500_v7_seed20260601 \
   --execute
 ```
 
 Run `--execute` only after the selected GPU is actually free. Before invoking
-any legacy child script, the launcher requires explicit `CUDA_VISIBLE_DEVICES`,
+any managed child command, the launcher requires explicit `CUDA_VISIBLE_DEVICES`,
 runs its own `nvidia-smi` snapshot, writes `run_config.resolved.yaml`,
 `run_config.resolved.json`, `run_manifest.json`, `command.sh`,
 `data_manifest.json`, `k500_ref_ids.json`, `selection.json`, `run_card.json`,
@@ -271,12 +257,11 @@ The common pattern is:
 - `scripts/export_paper_table.py` for `pn2021_all_zero_kept_refexcluded`
 - `scripts/export_paper_table.py` for `pn2021_drop_all_zero_refexcluded`
 
-Older smoke/superseded configs may carry narrower postprocess coverage when
-the legacy result script does not emit every view. Check
-`configs/active_scripts.yaml` before treating any such config as a current
-paper surface.
+Latest-mainline paper/evaluation configs should emit both PN2021 metric views.
+Check `configs/active_scripts.yaml:latest_mainline` before treating any config
+as a current paper surface.
 
-The generated `command.sh` includes both the legacy child commands and these
+The generated `command.sh` includes both the managed child commands and these
 postprocess commands, so a managed run produces paper-table inputs without a
 separate hand-written shell step after child artifacts pass verification.
 
@@ -287,7 +272,7 @@ waveforms or recursively scanning large datasets:
 
 ```bash
 micromamba run -n ECGTwin python scripts/export_data_manifest.py \
-  --config configs/experiments/effnet_direct_k500_v7_sjr_rgq_matrix.yaml \
+  --config configs/experiments/effnet_direct_k500_v7_sjr_rgq.yaml \
   --local-config configs/local/linbinhao_server.example.yaml \
   --output-dir /home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/data_manifest/<name>
 ```
@@ -361,7 +346,7 @@ for auditability.
 ## Managed Config Audit
 
 Use the active-config auditor when you want a quick CPU-only preflight across
-every `active_wrapped` experiment listed in `configs/active_scripts.yaml`:
+every `active_managed` experiment listed in `configs/active_scripts.yaml`:
 
 ```bash
 micromamba run -n ECGTwin python scripts/audit_managed_configs.py \
@@ -370,75 +355,10 @@ micromamba run -n ECGTwin python scripts/audit_managed_configs.py \
   --output-dir /home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/config_audit/<name>
 ```
 
-It does not invoke legacy child scripts or use GPU. It resolves each tracked
+It does not invoke managed child commands or use GPU. It resolves each tracked
 config, runs the same command/protocol audit as the launcher, builds the same
 artifact trace, and optionally verifies required input checkpoints, heads,
 feature caches, and K500 ref artifacts exist.
-
-Current verification snapshot:
-
-```text
-micromamba run -n ECGTwin python scripts/audit_managed_configs.py \
-  --local-config configs/local/linbinhao_server.example.yaml
-
-managed_experiment_count=23
-passed_count=23
-failed_count=0
-```
-
-Historical 2026-05 execute-smoke evidence:
-
-- `pn2021_eval_v6_refexcluded`: `refactor_execute_postprocess_pn2021_eval_20260528`
-  succeeded with managed postprocess and two paper-table views.
-- `effnet_direct_k500_v6_smoke`: `refactor_smoke_effnet_direct_limit64_ep1_20260528`
-  succeeded with nested limited PN2021 eval and managed postprocess.
-- `effnet_vae_lhat_k500_v6_smoke`:
-  `refactor_smoke_effnet_vae_lhat_width2_limit64_ep1_20260528` succeeded with
-  ECGTwin VAE decode, latent-hull PGD, latent AugMix, and managed postprocess.
-- `ecgfounder_direct_k500_v6`:
-  `refactor_smoke_ecgfounder_direct_postprocess_ep2_20260528` succeeded with
-  cached ECGFounder features and managed postprocess.
-- `ecgfounder_vae_lhat_k500_v6_smoke`:
-  `refactor_smoke_ecgfounder_vae_lhat_limit64src_ep1_20260528` succeeded with
-  84 metrics rows; center means were all-zero-kept AUROC/AUPRC
-  `0.9045766643 / 0.5976623929` and drop-all-zero
-  `0.9221097550 / 0.7048084381`.
-- `ecgfounder_inithead_fullft_k500_v6_smoke`:
-  `refactor_smoke_ecgfounder_inithead_cacheunion_ep1_20260528` succeeded with
-  126 metrics rows; center means were all-zero-kept AUROC/AUPRC
-  `0.9092978816 / 0.6049917842` and drop-all-zero
-  `0.9256955173 / 0.7112885361`.
-
-Dry-run/write-plan manifests were also regenerated for all six active configs
-under:
-
-```text
-/home/linbinhao/ECG/ecg_paper_migration_full_20260522_extract/root/autodl-tmp/runs/dry_runs/refactor_all_postprocess_plan_*_20260528/
-```
-
-Additional historical 2026-05 execute-smoke evidence:
-
-- `ecgfounder_direct_k500_v6` has a cached-feature 2-epoch training smoke:
-  `refactor_smoke_ecgfounder_direct_postprocess_ep2_20260528`, with
-  `status=succeeded`, input/artifact verification passed, 22 checked
-  artifacts, and managed metrics/table postprocess verified.
-- `effnet_direct_k500_v6_smoke` has a one-epoch EfficientNet1DV2 direct-K500
-  smoke:
-  `refactor_smoke_effnet_direct_limit64_ep1_20260528`, with
-  `status=succeeded`, input/artifact verification passed, 32 checked
-  artifacts, 6 managed postprocess artifacts verified, and nested PN2021 eval
-  limited by `--eval_pn2021_limit 64`.
-- `effnet_vae_lhat_k500_v6_smoke` has a one-epoch four-center
-  EfficientNet1DV2 VAE-LHAT smoke:
-  `refactor_smoke_effnet_vae_lhat_width2_limit64_ep1_20260528`, with
-  `status=succeeded`, input/artifact verification passed, 32 checked
-  artifacts, 6 managed postprocess artifacts verified, and nested PN2021 eval
-  limited by `--eval_pn2021_limit 64`. This smoke also exercises ECGTwin VAE
-  decode, latent-hull PGD, latent AugMix, target K500 internal validation, and
-  final ref-excluded PN2021 eval.
-
-Both are engineering smokes for the launcher/wrapper/postprocess path, not
-paper result runs.
 
 ## Agent Operating Layer
 
@@ -458,11 +378,8 @@ CPU-only audit:
 micromamba run -n ECGTwin python scripts/agent/audit_agent_workspace.py
 ```
 
-Backfill the legacy VAE-LHAT run manifest when local artifacts exist:
-
-```bash
-micromamba run -n ECGTwin python scripts/agent/backfill_vae_lhat_manifest.py
-```
+Historical v7 VAE-LHAT manifest backfill is provenance-only and remains listed
+under `historical_reporting_tools`; it is not a latest mainline replay command.
 
 Managed Direct vs VAE comparison bundle:
 

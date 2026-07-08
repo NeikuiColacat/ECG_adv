@@ -2,6 +2,16 @@
 
 本目录保存项目长期维护的标准化流程文档。它们是论文实验、复现实验和后续代码改动的事实依据。
 
+## 当前主线入口
+
+当前复现入口以 `configs/active_scripts.yaml` 的 `latest_mainline` 为准，
+方法为 `vae_lhat_threechain_augmix_pn2021c`：
+PN2021/PN2021-C VAE-LHAT + three-chain AugMix。实验只通过
+`scripts/run_experiment.py` 和 tracked YAML 启动；事实证据以
+`configs/active_evidence_registry.yaml` 为准。本目录其余文档提供背景和
+provenance，除非被 `latest_mainline` 或 evidence registry 引用，否则不是当前
+主线复现入口。
+
 ## 文档定位
 
 | 文件 | 范围 |
@@ -26,13 +36,13 @@
 | `next_auto_execution_plan.md` | 当前四项任务的自动执行顺序、产物和阻塞条件 |
 | `refactor_source_of_truth_20260527.md` | YAML 配置重构期间的事实源、active script index、暂不移动脚本和 reporting 规则 |
 | `refactor_fact_check_decision_20260527.md` | 多 subagent 事实核查后的重构决策、已修正协议缺口和下一步验收计划 |
-| `refactor_phase12_handoff_20260528.md` | 1 小时收口后的 YAML wrapper / package helper 重构交接状态、验证证据和停止边界 |
+| `refactor_phase12_handoff_20260528.md` | 1 小时收口后的 managed YAML / package helper 重构交接状态、验证证据和停止边界 |
 | `managed_v6_main_repro_20260528.md` | phase 1/2 重构后 managed-YAML 主实验 v6 复跑结果、指标和验收记录 |
 | `agent_operating_layer_20260529.md` | Active Evidence Registry、CPU-only agent audit、Direct vs VAE comparison bundle 和 VAE-AT checkpoint/resume contract |
 | `run_record_management_20260529.md` | 每次实验的 run_card、run_file_index、summary、分类目录和 registry 登记规则 |
 | `agents_md_organization_suggestions_20260529.md` | AGENTS.md 的长度、历史路径、旧 mapping 事实和归档边界整理建议 |
-| `ai_agent_workspace_refactor_plan_20260604.md` | 多 subagent 扫描后的 AI-agent 友好重构计划：YAML 启动、package helper 抽象、legacy wrapper 和验证门禁 |
-| `data_layer_refactor_plan_20260619.md` | 数据读取、预处理、清洗和缓存相关模块的当前重构计划：契约优先、legacy wrapper、CPU 测试门禁 |
+| `ai_agent_workspace_refactor_plan_20260604.md` | 多 subagent 扫描后的 AI-agent 友好重构计划：YAML 启动、package helper 抽象、归档 provenance 和验证门禁 |
+| `data_layer_refactor_plan_20260619.md` | 数据读取、预处理、清洗和缓存相关模块的当前重构计划：契约优先、package-owned runner、CPU 测试门禁 |
 
 ## Docs 还是 Skill
 

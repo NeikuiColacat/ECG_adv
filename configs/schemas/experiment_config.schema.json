@@ -18,28 +18,21 @@
     },
     "runner": {
       "type": "object",
-      "required": ["entrypoint"],
-      "oneOf": [
-        {"required": ["argv"]},
-        {"required": ["adapter"]}
-      ],
+      "required": ["entrypoint", "adapter"],
+      "not": {"required": ["argv"]},
       "properties": {
         "entrypoint": {"type": "string"},
         "adapter": {
           "type": "string",
           "enum": [
-            "benchmark_vae_lhat",
             "direct_finetune",
             "ecgfounder_fullft",
             "ecgfounder_pn2021c_eval",
-            "ecgfounder_vae_lhat",
             "effnet_vae_lhat",
             "pn2021_eval",
-            "pn2021c_eval",
-            "prompt_token_online_at"
+            "pn2021c_eval"
           ]
         },
-        "argv": {"type": "array"},
         "env": {"type": "object"},
         "matrix": {"type": "object"}
       },
@@ -109,17 +102,6 @@
             "severity_params_file": {"type": "string"},
             "severity_params_name": {"type": "string"},
             "corruption_seed": {"type": "integer"}
-          },
-          "additionalProperties": true
-        },
-        "prompt_token_online_at": {
-          "type": "object",
-          "properties": {
-            "quick_eval_source": {"type": "string"},
-            "classes_in_scope": {
-              "type": "array",
-              "items": {"type": "string"}
-            }
           },
           "additionalProperties": true
         },

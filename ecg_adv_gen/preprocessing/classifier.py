@@ -1,8 +1,7 @@
 """Classifier ECG preprocessing helpers.
 
-This module owns the legacy ``scripts.crosscenter_v2.preprocess_utils``
-behavior so package code can depend on ``ecg_adv_gen.preprocessing`` without
-importing from a script directory.
+This module owns shared classifier preprocessing behavior so package code can
+depend on ``ecg_adv_gen.preprocessing``.
 """
 
 from __future__ import annotations

@@ -10,6 +10,10 @@ from .super5_mapping import (
     NUM_SUPER5,
     SUPER5_PN2021_MAPPING_HASH,
     SUPER5_PN2021_MAPPING_VERSION,
+    get_super5_pn2021_mapping_metadata,
+    mimic_report_to_super5,
+    ptbxl_scp_to_super5,
+    snomed_list_to_super5,
 )
 
 
@@ -36,6 +40,16 @@ def get_super5_metadata() -> Super5Metadata:
 
 def default_class_order() -> list[str]:
     return list(CLASS_NAMES_SUPER5)
+
+
+def get_super5_scheme() -> dict[str, object]:
+    return {
+        "num_classes": NUM_SUPER5,
+        "class_names": list(CLASS_NAMES_SUPER5),
+        "ptbxl_fn": ptbxl_scp_to_super5,
+        "pn2021_fn": snomed_list_to_super5,
+        "mimic_fn": mimic_report_to_super5,
+    }
 
 
 def pn2021_super5_label_mapping_payload() -> dict[str, dict[str, str]]:

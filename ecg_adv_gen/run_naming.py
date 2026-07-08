@@ -1,4 +1,4 @@
-"""Run-name helpers for legacy-compatible experiment entrypoints."""
+"""Run-name helpers for managed experiment outputs."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import Any
 
 
 def tag_value(value: float | int | str) -> str:
-    """Format a numeric CLI value for a legacy run-name token."""
+    """Format a numeric CLI value for a run-name token."""
 
     return str(value).replace(".", "p").replace("-", "m")
 
@@ -59,12 +59,10 @@ def _as_classes(value: Any) -> Sequence[Any] | None:
 
 
 def build_ecgfounder_fullft_method_tag(params: Any) -> str:
-    """Build the ECGFounder full-FT method tag used by the legacy runner."""
+    """Build the ECGFounder full-FT method tag used by the managed runner."""
 
     vae_enabled = _as_bool(_get(params, "enable_vae_adv_stream", False))
     method_tag = "fullft_vae" if vae_enabled else "fullft"
-    if _get(params, "init_head_path", ""):
-        method_tag += "_inithead"
     classes = _as_classes(_get(params, "vae_classes_in_scope", None))
     if vae_enabled and classes is not None:
         method_tag += "_cls" + "-".join(str(c) for c in classes)
@@ -94,12 +92,6 @@ def build_ecgfounder_fullft_method_tag(params: Any) -> str:
             method_tag += f"_label{hull_label_mode}"
         if _as_bool(_get(params, "hull_include_anchor", False)):
             method_tag += "_includeanchor"
-        hull_partner_pool = str(_get(params, "hull_partner_pool", "target"))
-        if hull_partner_pool != "target":
-            method_tag += f"_partners{hull_partner_pool}"
-        source_partner_limit = _as_int(_get(params, "source_partner_limit_per_class", 0), 0)
-        if source_partner_limit > 0:
-            method_tag += f"_splim{source_partner_limit}"
         anchor_sample_mode = str(_get(params, "anchor_sample_mode", "stratified"))
         if anchor_sample_mode != "stratified":
             method_tag += f"_as{anchor_sample_mode}"
@@ -122,27 +114,7 @@ def build_ecgfounder_fullft_method_tag(params: Any) -> str:
         clean_anchor_weight = _as_float(_get(params, "adv_clean_logit_anchor_weight", 0.0), 0.0)
         if clean_anchor_weight > 0:
             method_tag += f"_aclean{tag_value(_get(params, 'adv_clean_logit_anchor_weight', 0.0))}"
-    run_suffix = str(_get(params, "run_suffix", "") or "")
-    if run_suffix:
-        method_tag += f"_{run_suffix}"
     return method_tag
-
-
-def build_ecgfounder_fullft_selection_tag(params: Any) -> str:
-    """Build the optional target-validation selection tag."""
-
-    target_val_count = _as_int(_get(params, "target_val_count", 0), 0)
-    selection_metric = str(_get(params, "selection_metric", "source_auprc"))
-    if target_val_count <= 0 and selection_metric == "source_auprc":
-        return ""
-    selection_tag = f"_tv{target_val_count}_{selection_metric}"
-    split_mode = str(_get(params, "target_val_split_mode", "random"))
-    if split_mode != "random":
-        selection_tag += f"_{split_mode}"
-    target_val_seed = _get(params, "target_val_seed", None)
-    if target_val_seed is not None:
-        selection_tag += f"_tvseed{target_val_seed}"
-    return selection_tag
 
 
 def build_ecgfounder_fullft_run_leaf(params: Any) -> str:
@@ -158,7 +130,6 @@ def build_ecgfounder_fullft_run_leaf(params: Any) -> str:
         f"_sw{tag_value(_get(params, 'source_weight', 1.0))}"
         f"_tw{tag_value(_get(params, 'target_real_weight', 40.0))}"
         f"_{build_ecgfounder_fullft_method_tag(params)}"
-        f"{build_ecgfounder_fullft_selection_tag(params)}"
         f"_seed{_as_int(_get(params, 'seed', 20260531), 20260531)}"
     )
 
@@ -196,7 +167,6 @@ def build_effnet_vae_lhat_run_leaf(params: Any) -> str:
     severity = _as_int(_get(params, "latent_augmix_severity", 2), 2)
     latent_cap = _get(params, "latent_augmix_latent_weight_cap", 0.3)
     hull_steps = _as_int(_get(params, "hull_steps", 3), 3)
-    es_metric = str(_get(params, "es_metric", "target_macro_auprc"))
     classes = _as_classes(_get(params, "classes_in_scope", ["CD", "HYP", "MI", "NORM", "STTC"])) or []
     class_tag = "".join(str(cls).lower() for cls in classes)
     label_mode = str(_get(params, "hull_label_mode", "primary"))
@@ -207,15 +177,6 @@ def build_effnet_vae_lhat_run_leaf(params: Any) -> str:
     pool_multiplier = _as_int(_get(params, "hull_neighbor_pool_multiplier", 4), 4)
     neighbor_tag = f"{distance_space[:3]}_{neighbor_mode}_p{pool_size or pool_multiplier}"
 
-    if _as_int(_get(params, "unfreeze_last_n_features", 0), 0) > 0:
-        adapt_tag = f"last{_as_int(_get(params, 'unfreeze_last_n_features', 0), 0)}"
-    elif _as_bool(_get(params, "freeze_backbone_classifier_only", False)):
-        adapt_tag = "headfn" if _as_bool(_get(params, "classifier_only_train_final_norm", False)) else "head"
-        if str(_get(params, "classifier_adapter_type", "none")) == "lora":
-            adapt_tag += f"_lora{_as_int(_get(params, 'classifier_lora_rank', 16), 16)}"
-    else:
-        adapt_tag = "fullft"
-
     extra = str(_get(params, "run_tag_extra", "") or "")
     extra_tag = f"_{extra}" if extra else ""
     epochs = _as_int(_get(params, "epochs", 30), 30)
@@ -225,9 +186,9 @@ def build_effnet_vae_lhat_run_leaf(params: Any) -> str:
         f"_lam{_tag_float_3g(hull_lambda)}"
         f"_augmix_s{severity}"
         f"_wlat{_tag_float_3g(latent_cap)}"
-        f"_hs{hull_steps}_{es_metric}_{class_tag}"
+        f"_hs{hull_steps}_{class_tag}"
         f"_hlabel{label_mode[:3]}_{mix_label}"
         f"_{neighbor_tag}"
-        f"_{adapt_tag}"
+        "_fullft"
         f"{extra_tag}_ep{epochs}_seed{seed}"
     )

@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from ecg_adv_gen.data import apply_ref_exclusion
 from ecg_adv_gen.evaluation.ref_exclusion import (
     append_target_ref_exclusion_args,
     target_ref_meta_paths,
@@ -42,3 +43,9 @@ def test_append_target_ref_exclusion_args_uses_single_nargs_block():
 
     assert argv[2] == "--exclude_ref_ids"
     assert len(argv[3:]) == 4
+
+
+def test_apply_ref_exclusion_preserves_complete_center_order():
+    records = ["a", "b", "c"]
+
+    assert apply_ref_exclusion(records, excluded_record_ids={"b"}) == ["a", "c"]

@@ -4,13 +4,18 @@ ECG_adv_Gen is the working repo for the PTB-XL Super5 to PN2021 cross-center
 ECG adaptation project. The current mainline is:
 
 ```text
-PTB-XL Super5 EfficientNet1DV2 baseline
--> fixed K=500 target-center PN2021 adaptation
--> ECGTwin VAE latent-hull online adversarial training
--> PN2021 held-out, ref-excluded AUROC/AUPRC evaluation
+PN2021/PN2021-C VAE-LHAT + three-chain AugMix
+chain1/chain2: official corruption chains
+chain3: ECGTwin VAE-LHAT adversarial waveform
+-> clean PN2021 and PN2021-C ref-excluded AUROC/AUPRC evaluation
 ```
 
-For the latest trusted experiment facts, start from
+For the latest reproducible experiment path, start from
+`latest_mainline` in
+[`configs/active_scripts.yaml`](configs/active_scripts.yaml). It declares the
+`vae_lhat_threechain_augmix_pn2021c` method as 10 stages, all launched through
+[`scripts/run_experiment.py`](scripts/run_experiment.py).
+For the latest trusted experiment facts, use
 [`configs/active_evidence_registry.yaml`](configs/active_evidence_registry.yaml).
 For agent safety and shared-server rules, start from [`AGENTS.md`](AGENTS.md).
 
@@ -38,44 +43,39 @@ project work under `/home/linbinhao`.
 |---|---|
 | `AGENTS.md` | Durable agent memory, shared-server rules, current mainline facts |
 | `configs/active_evidence_registry.yaml` | Current trusted claim, run lineage, metrics, artifact policy |
-| `configs/active_scripts.yaml` | Which YAML configs wrap which legacy scripts and which paths must not move |
+| `configs/active_scripts.yaml` | Which YAML configs map to managed package runners and which paths must not move |
 | `configs/defaults/` | Shared YAML defaults for mapping, model, VAE-LHAT, ECGFounder, EfficientNet |
 | `configs/experiments/` | Reproducible managed experiment configs |
 | `configs/local/*.example.yaml` | Host-local path examples; real local YAML is ignored |
 | `configs/label_mappings/` | Structured label-mapping evidence, including PN2021 Super5 review JSONL |
 | `ecg_adv_gen/` | Stable Python package code for config, data, labels, adaptation, evaluation, evidence, reporting, training |
+| `ecg_adv_gen/runner/` | Package-owned experiment runner modules used by managed YAML configs |
 | `scripts/run_experiment.py` | Managed YAML launcher |
 | `scripts/agent/` | CPU-only audit, run finalization/registration, manifest backfill, comparison bundle, retrospective inventory tools |
-| `scripts/paper/` | Dated experiment wrappers kept for evidence and reproducibility |
-| `scripts/triple_labels/` | Legacy Super5 train/eval entrypoints and current label-scheme source |
-| `scripts/pgd_cross_center/` | Legacy online AT / latent-hull orchestrators |
 | `docs/pipelines/` | Long-term pipeline, refactor, reproduction, and evidence docs |
 | `docs/labeling/` | Human-readable label mapping review and clinician audit material |
-| `docs/reports/archive/` | Archived HTML/MD reports that are useful context but not canonical facts |
+| `docs/refactor_cleanup/` | Cleanup manifests and public-tree reduction reports |
 | `model/` | External model repo handles and submodules; do not stage host-specific symlink changes |
 | `util/tests/` | Project-wide tests. Future target layout is top-level `tests/` |
-| `trash/` | Ignored cold archive; do not import active code from here without migrating and testing it |
 
 ## Current Evidence
 
 The active EfficientNet1DV2 v7 claim is registered in
 [`configs/active_evidence_registry.yaml`](configs/active_evidence_registry.yaml):
 
-| Comparison | AUROC | AUPRC |
-|---|---:|---:|
-| Direct K500, all-zero kept | 0.8522 | 0.5247 |
-| VAE-LHAT K500, all-zero kept | 0.8712 | 0.5544 |
-| Delta | +1.90 pp | +2.97 pp |
-| Direct K500, drop-all-zero | 0.8763 | 0.6666 |
-| VAE-LHAT K500, drop-all-zero | 0.8996 | 0.7176 |
-| Delta | +2.33 pp | +5.10 pp |
+| View | Direct K500 | VAE-LHAT three-chain | Delta |
+|---|---:|---:|---:|
+| `pn2021_all_zero_kept_refexcluded` AUROC / AUPRC | 0.8492 / 0.5271 | 0.8735 / 0.5637 | +2.43 pp / +3.66 pp |
+| `pn2021_drop_all_zero_refexcluded` AUROC / AUPRC | 0.8732 / 0.6703 | 0.9015 / 0.7307 | +2.83 pp / +6.03 pp |
+| `pn2021c_all_zero_kept_corrupted_refexcluded` AUROC / AUPRC | 0.8100 / 0.4729 | 0.8286 / 0.4940 | +1.87 pp / +2.12 pp |
+| `pn2021c_drop_all_zero_corrupted_refexcluded` AUROC / AUPRC | 0.8312 / 0.6087 | 0.8547 / 0.6439 | +2.35 pp / +3.52 pp |
 
 Protocol facts:
 
 - mapping: `v7_super5_sjr_rgq_review_20260528`, hash `555ec85d5b51`;
 - class order: `CD, HYP, MI, NORM, STTC`;
 - target centers: `ningbo`, `chapman_shaoxing`, `cpsc_2018`, `georgia`;
-- K-shot protocol: fixed `K=500`, seed `20260531`, ref ids excluded from eval;
+- K-shot protocol: fixed `K=500`, seed `20260601`, ref ids excluded from eval;
 - selection policy: K500-internal validation plus source-performance floor.
 
 ## Managed Commands
@@ -96,17 +96,21 @@ micromamba run -n ECGTwin python scripts/run_experiment.py \
   --dry-run
 ```
 
+Dry-run every `latest_mainline` stage before launching GPU work:
+
+```bash
+micromamba run -n ECGTwin python -m pytest \
+  util/tests/test_config_loader.py::test_latest_mainline_configs_dry_run_through_run_experiment_cli -q
+```
+
 Build the registered direct-vs-VAE comparison bundle:
 
 ```bash
 micromamba run -n ECGTwin python scripts/agent/build_comparison_bundle.py --force
 ```
 
-Backfill the legacy VAE-LHAT run manifest:
-
-```bash
-micromamba run -n ECGTwin python scripts/agent/backfill_vae_lhat_manifest.py
-```
+The legacy VAE-LHAT manifest backfiller is provenance-only for old v7 evidence;
+it is not part of the `latest_mainline` replay path.
 
 Finalize and register a completed run for future agent handoff:
 
@@ -129,15 +133,11 @@ standard per-run record automatically: `run_card.json`, `run_file_index.json`,
 
 ## What Not To Move
 
-The following are still active or evidence-sensitive paths. Extract reusable
-logic into `ecg_adv_gen/`, but keep these entrypoint paths stable unless the
-YAML index, docs, and tests are updated in the same change:
+The following external model handles are evidence-sensitive host-local paths.
+Keep package logic in `ecg_adv_gen/` and experiment launch through
+`scripts/run_experiment.py` plus tracked YAML. Legacy script archives were
+removed from the public tree; do not restore them as callable entrypoints.
 
-- `scripts/paper/`
-- `scripts/triple_labels/train_ptbxl.py`
-- `scripts/triple_labels/eval_crosscenter.py`
-- `scripts/pgd_cross_center/synth_online_at_super5.py`
-- `scripts/ecgtwin_author_repro/`
 - `model/DeepECG`
 - `model/ECGTwin`
 - `model/advdiff`

@@ -1,8 +1,11 @@
-"""Run-plan file materialization for YAML-managed legacy launches."""
+"""Run-plan file materialization for YAML-managed experiment launches."""
 
 from __future__ import annotations
 
 import json
+import platform
+import sys
+from importlib import metadata
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +47,37 @@ def experiment_purpose(config: dict[str, Any]) -> str:
     return str(experiment.get("purpose") or experiment.get("description") or "")
 
 
+def _package_versions() -> dict[str, str]:
+    packages: dict[str, str] = {}
+    for key, distribution in (
+        ("numpy", "numpy"),
+        ("torch", "torch"),
+        ("pandas", "pandas"),
+        ("scipy", "scipy"),
+        ("scikit_learn", "scikit-learn"),
+        ("wfdb", "wfdb"),
+        ("pyyaml", "PyYAML"),
+    ):
+        try:
+            packages[key] = metadata.version(distribution)
+        except metadata.PackageNotFoundError:
+            continue
+    return packages
+
+
+def _write_env_snapshot(out_dir: Path) -> None:
+    payload = {
+        "python_executable": sys.executable,
+        "python_version": platform.python_version(),
+        "platform": platform.platform(),
+        "packages": _package_versions(),
+    }
+    (out_dir / "env.json").write_text(
+        json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=True) + "\n",
+        encoding="utf-8",
+    )
+
+
 def write_launch_plan_files(
     out_dir: Path,
     config: dict[str, Any],
@@ -80,6 +114,7 @@ def write_launch_plan_files(
         out_dir / "data_manifest.json",
         local_paths=manifest.get("local_paths") or {},
     )
+    _write_env_snapshot(out_dir)
     if _should_write_launch_artifact(manifest, "k500_ref_ids.json"):
         write_k500_ref_ids_artifact(manifest, out_dir / "k500_ref_ids.json")
     if _should_write_launch_artifact(manifest, "selection.json"):

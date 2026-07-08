@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import hashlib
+import json
 import shlex
 import subprocess
 from dataclasses import dataclass
@@ -61,6 +63,15 @@ def build_process_env(
     return env
 
 
+def _transient_stream_log_path(log_path: Path, env: Mapping[str, str]) -> tuple[Path, Path | None]:
+    root = env.get("ECG_ADV_GEN_STREAM_LOG_ROOT") or os.environ.get("ECG_ADV_GEN_STREAM_LOG_ROOT")
+    if not root:
+        return log_path, None
+    digest = hashlib.sha1(str(log_path).encode("utf-8")).hexdigest()[:12]
+    suffix = log_path.suffix or ".log"
+    return Path(root) / f"{log_path.stem}.{digest}{suffix}", log_path
+
+
 def run_stream(
     argv: list[PathValue] | tuple[PathValue, ...],
     *,
@@ -81,7 +92,8 @@ def run_stream(
     cmd = [str(part) for part in argv]
     env_for_render = _stringify_env(env)
     rendered = render_command(cmd)
-    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_target, pointer_path = _transient_stream_log_path(log_path, env_for_render)
+    log_target.parent.mkdir(parents=True, exist_ok=True)
     print(f"[run] {' '.join(shlex.quote(part) for part in cmd)}", flush=True)
 
     mode = "a" if append else "w"
@@ -95,7 +107,7 @@ def run_stream(
         updates=env_for_render,
         mkdir_keys=(),
     )
-    with log_path.open(mode, encoding="utf-8") as log:
+    with log_target.open(mode, encoding="utf-8") as log:
         proc = subprocess.Popen(
             cmd,
             cwd=str(cwd) if cwd is not None else None,
@@ -111,6 +123,23 @@ def run_stream(
             log.write(line)
             log.flush()
         ret = proc.wait()
+
+    if pointer_path is not None:
+        pointer_path.parent.mkdir(parents=True, exist_ok=True)
+        pointer_path.write_text(
+            json.dumps(
+                {
+                    "note": "Full stdout/stderr was written to transient storage to reduce disk IO.",
+                    "requested_log_path": str(log_path),
+                    "transient_log_path": str(log_target),
+                    "returncode": int(ret),
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
 
     result = StreamRunResult(tuple(cmd), log_path, int(ret), False, rendered)
     if ret != 0:

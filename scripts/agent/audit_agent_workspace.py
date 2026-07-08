@@ -559,8 +559,10 @@ def build_handoff_contract(report: dict) -> dict:
             "run_scripts_agent_audit_agent_workspace",
             "inspect_git_dirty_summary_handoff_gate",
             "inspect_active_scripts_policies",
+            "inspect_active_scripts_latest_mainline",
             "inspect_active_scripts_config_git_summary",
         ],
+        "latest_mainline": active_scripts.get("latest_mainline") or {},
         "source_of_truth": {
             "active_evidence_registry": str(report.get("registry_path") or ""),
             "active_scripts_index": active_scripts_index,

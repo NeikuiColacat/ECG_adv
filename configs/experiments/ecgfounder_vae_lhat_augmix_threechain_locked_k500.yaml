@@ -28,7 +28,6 @@ training:
   batch_size: 64
   eval_batch_size: 128
   num_workers: ${resources.default_num_workers}
-  source_train_limit: 0
   optimizer:
     name: adamw
     lr: 0.00002
@@ -37,11 +36,6 @@ training:
 adaptation:
   method: ecgfounder_vae_lhat_augmix_threechain_locked_last
   run_name: ${matrix.center}_vae_lhat_augmix_threechain_locked
-  supervised_input_mode: raw1000
-  selection:
-    checkpoint_policy: last
-    target_val_count: 0
-    metric: source_auprc
   loss:
     source_weight: 1.0
     target_real_weight: 40.0
@@ -52,6 +46,7 @@ adaptation:
   vae:
     enabled: true
     adv_weight: 20.0
+    adv_stream_sample_scale: 0.10
     adv_weight_warmup_epochs: 0
     k_anchor: 160
     anchor_sample_mode: hard_bce
@@ -69,7 +64,6 @@ adaptation:
     dirichlet_alpha: 1.0
     include_anchor: true
     label_mode: primary
-    partner_pool: target
     attack_pos_weight_source: none
     attack_pos_weight_clip: 50.0
   attack:
@@ -77,7 +71,14 @@ adaptation:
     pgd_batch: 4
   latent_augmix:
     enabled: true
-    topology: locked_three_chain
+    chain_roles:
+      - name: chain1
+        role: clean_anchor_corruption_chain
+      - name: chain2
+        role: clean_anchor_corruption_chain
+      - name: chain3
+        role: clean_anchor_corruption_chain
+    chain_base_mode: all_clean_plus_vae_adv
     copies: 1
     width: 3
     depth: -1
@@ -90,11 +91,9 @@ adaptation:
       - baseline_wander
       - baseline_shift
       - random_leads_masking
-    renorm: false
-    clip_abs: 6.0
 
 runner:
-  entrypoint: scripts/paper/run_ecgfounder_fullft_super5_pilot_20260523.py
+  entrypoint: ecg_adv_gen/runner/ecgfounder_fullft.py
   adapter: ecgfounder_fullft
   matrix:
     center: ${paper_protocol.centers.target_4}
@@ -106,6 +105,6 @@ logging:
     - eval_result.json
 
 run_record:
-  purpose: "Locked ECGFounder main-method run: all K500 samples train, full model trainable, no K500 validation split, last checkpoint only, two official corruption chains plus one VAE-LHAT adversarial waveform chain."
-  result_summary: Pending. Evaluate PN2021 clean and PN2021-C official severity 5 after smoke passes.
+  purpose: "Locked ECGFounder main-method run: all K500 samples train, full model trainable, no K500 validation split, last checkpoint only, clean-anchor three-chain AugMix plus a separately supervised VAE-LHAT adversarial stream."
+  result_summary: Pending. Evaluate PN2021 clean and PN2021-C official severity 5 after managed training completes.
   registration_status: provisional

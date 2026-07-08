@@ -13,11 +13,6 @@ RESUME_CONTRACT_KEYS = (
     "target_real_npz",
     "init_ckpt",
     "model_name",
-    "quick_eval_source",
-    "quick_eval_centers",
-    "target_real_val_fraction",
-    "target_real_val_seed",
-    "attack_mode",
     "hull_M",
     "hull_lambda",
     "hull_steps",
@@ -31,7 +26,6 @@ RESUME_CONTRACT_KEYS = (
     "hull_neighbor_pool_size",
     "adv_label_mode",
     "adv_teacher_mix",
-    "enable_latent_augmix_branch",
     "latent_augmix_width",
     "latent_augmix_depth",
     "latent_augmix_severity",
@@ -40,11 +34,24 @@ RESUME_CONTRACT_KEYS = (
     "seed",
     "crop_len",
 )
-
-
-def should_save_initial_best_model(resume_path: Path | None) -> bool:
-    """Fresh runs save an initial best model; resumed runs must preserve it."""
-    return resume_path is None
+LOCKED_ATTACK_MODE = "latent_hull"
+LOCKED_LEGACY_ARGS = {
+    "enable_latent_augmix_branch": True,
+    "enable_latent_augmix_consistency": True,
+    "latent_augmix_topology": "locked_three_chain",
+    "latent_augmix_mixture_mode": "beta",
+    "latent_augmix_mixture_prob": 0.5,
+    "latent_augmix_mixture_beta_a": 0.0,
+    "latent_augmix_mixture_beta_b": 0.0,
+    "latent_augmix_op_schedule": "random",
+    "latent_augmix_chain_weights": "",
+    "latent_augmix_signal_space": "model_zscore",
+    "latent_augmix_corruption_source": "vae_decode",
+    "latent_augmix_severity_params_file": "",
+    "latent_augmix_severity_params_name": "",
+    "no_latent_augmix_renorm": False,
+    "latent_augmix_clip_abs": 6.0,
+}
 
 
 def normalize_resume_contract_value(value: Any) -> Any:
@@ -64,6 +71,19 @@ def resume_contract_mismatches(
     keys: tuple[str, ...] = RESUME_CONTRACT_KEYS,
 ) -> list[dict[str, Any]]:
     mismatches: list[dict[str, Any]] = []
+    if "attack_mode" in saved_args:
+        saved_attack_mode = normalize_resume_contract_value(saved_args["attack_mode"])
+        if saved_attack_mode != LOCKED_ATTACK_MODE:
+            mismatches.append({
+                "key": "attack_mode",
+                "saved": saved_attack_mode,
+                "current": LOCKED_ATTACK_MODE,
+            })
+    for key, current in LOCKED_LEGACY_ARGS.items():
+        if key in saved_args:
+            saved = normalize_resume_contract_value(saved_args[key])
+            if saved != current:
+                mismatches.append({"key": key, "saved": saved, "current": current})
     for key in keys:
         if key not in saved_args or key not in current_args:
             continue

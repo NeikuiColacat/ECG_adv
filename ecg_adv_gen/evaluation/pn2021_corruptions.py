@@ -82,6 +82,11 @@ def filter_record_indices(
     return indices
 
 
+def ref_ids_sha256(ids: set[str] | frozenset[str] | Sequence[object]) -> str:
+    values = sorted(str(item) for item in ids)
+    return hashlib.sha256(("\n".join(values) + "\n").encode("utf-8")).hexdigest()
+
+
 def load_clean_metric_lookup(clean_eval_json: os.PathLike[str] | str | None) -> dict[str, dict[str, float | None]]:
     if not clean_eval_json:
         return {}
@@ -167,6 +172,7 @@ __all__ = [
     "load_json_payload",
     "load_clean_metric_lookup",
     "load_npz_metadata",
+    "ref_ids_sha256",
     "require_clean_eval_json",
     "stable_corruption_seed",
 ]

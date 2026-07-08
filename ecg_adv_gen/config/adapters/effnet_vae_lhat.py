@@ -26,7 +26,7 @@ def _append_optional_sequence(argv: list[Any], option: str, values: Any) -> None
 
 
 def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, Any]) -> list[Any]:
-    """Build legacy argv for the EfficientNet VAE-LHAT wrapper from typed config fields."""
+    """Build managed argv for the EfficientNet VAE-LHAT runner from typed config fields."""
 
     matrix = context.get("matrix") or {}
     center = matrix.get("center")
@@ -62,15 +62,12 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
     if not target_real_npz_override and target_real_npz_suffix:
         suffix = target_real_npz_suffix if target_real_npz_suffix.startswith(".") else f".{target_real_npz_suffix}"
         target_real_npz_override = f"{anchor_base}{suffix}"
+    synth_npz_override = str(data.get("synth_npz_override") or "")
+    if synth_npz_override and not Path(synth_npz_override).is_absolute():
+        synth_npz_override = str(Path(paths["data_root"]) / synth_npz_override)
     latent_augmix = adaptation["latent_augmix"]
-    latent_augmix_mixture = latent_augmix.get("mixture") or {}
-    latent_augmix_consistency = latent_augmix.get("consistency") or {}
-    selection = adaptation.get("selection") or {}
-    buffer = adaptation.get("buffer") or {}
-    raw_corrupt = adaptation.get("raw_corrupt_consistency") or {}
-    raw_augmix = raw_corrupt.get("augmix") or {}
-    raw_input_stabilizer = raw_corrupt.get("input_stabilizer") or {}
-    mask_shift = adaptation.get("mask_shift_consistency") or {}
+    latent_augmix_consistency = latent_augmix["consistency"]
+    anchors = adaptation["anchors"]
 
     argv: list[Any] = [
         "--center",
@@ -117,13 +114,17 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
         "--hull_neighbor_pool_multiplier",
         adaptation["hull"]["neighbor_pool_multiplier"],
         "--k_anchor",
-        adaptation["anchors"]["k_anchor"],
+        anchors["k_anchor"],
         "--pgd_batch",
         adaptation["attack"]["pgd_batch"],
         "--target_real_weight",
         adaptation["loss"]["target_real_weight"],
         "--adv_weight",
         adaptation["loss"]["adv_weight"],
+        "--vae_adv_stream_sample_scale",
+        adaptation["loss"].get("vae_adv_stream_sample_scale", 1.0),
+        "--vae_adv_consistency_weight",
+        adaptation["loss"].get("vae_adv_consistency_weight", 0.0),
         "--adv_weight_warmup_epochs",
         adaptation["loss"]["adv_weight_warmup_epochs"],
         "--adv_label_mode",
@@ -146,12 +147,12 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
         latent_augmix["alpha"],
         "--latent_augmix_severity",
         latent_augmix["severity"],
-        "--quick_eval_source",
-        selection.get("quick_eval_source", "target_real_val"),
-        "--target_real_val_fraction",
-        selection.get("target_real_val_fraction", 0.2),
-        "--target_real_val_seed",
-        seed,
+        "--latent_augmix_third_chain_role",
+        latent_augmix.get("third_chain_role", "vae_lhat_adversarial_waveform"),
+        "--latent_augmix_chain_base_mode",
+        latent_augmix.get("chain_base_mode", "clean_clean_third"),
+        "--latent_augmix_adv_base_mix",
+        latent_augmix.get("adv_base_mix", 1.0),
         "--eval_batch_size",
         training["eval_batch_size"],
         "--eval_min_pos",
@@ -159,24 +160,9 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
         "--eval_pn2021_limit",
         evaluation["pn2021_limit"],
     ]
-    _append_optional_value(argv, "--boundary_prob_min", adaptation["attack"].get("boundary_prob_min"))
-    _append_optional_value(argv, "--boundary_prob_max", adaptation["attack"].get("boundary_prob_max"))
     _append_optional_value(argv, "--target_real_norm_mode", data.get("target_real_norm_mode"))
+    _append_optional_value(argv, "--synth_npz_override", synth_npz_override or None)
     _append_optional_value(argv, "--target_real_npz_override", target_real_npz_override or None)
-    _append_optional_value(
-        argv,
-        "--checkpoint_policy",
-        selection.get("checkpoint_policy"),
-    )
-    _append_optional_value(argv, "--qab_size", buffer.get("qab_size"))
-    _append_optional_value(argv, "--rescore_interval", buffer.get("rescore_interval"))
-    _append_optional_value(argv, "--asr_consec_low_max", buffer.get("asr_consec_low_max"))
-    _append_optional_value(argv, "--asr_low_threshold", buffer.get("asr_low_threshold"))
-    _append_optional_value(
-        argv,
-        "--latent_augmix_topology",
-        latent_augmix.get("topology"),
-    )
     _append_optional_value(
         argv,
         "--latent_augmix_copies",
@@ -184,29 +170,10 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
     )
     _append_optional_value(
         argv,
-        "--latent_augmix_mixture_mode",
-        latent_augmix_mixture.get("mode", latent_augmix.get("mixture_mode")),
+        "--latent_augmix_severity_profile",
+        latent_augmix.get("severity_profile"),
     )
-    _append_optional_value(
-        argv,
-        "--latent_augmix_mixture_prob",
-        latent_augmix_mixture.get("prob", latent_augmix.get("mixture_prob")),
-    )
-    _append_optional_value(
-        argv,
-        "--latent_augmix_mixture_beta_a",
-        latent_augmix_mixture.get("beta_a", latent_augmix.get("mixture_beta_a")),
-    )
-    _append_optional_value(
-        argv,
-        "--latent_augmix_mixture_beta_b",
-        latent_augmix_mixture.get("beta_b", latent_augmix.get("mixture_beta_b")),
-    )
-    _append_optional_value(
-        argv,
-        "--latent_augmix_op_schedule",
-        latent_augmix.get("op_schedule"),
-    )
+    _append_optional_sequence(argv, "--latent_augmix_ops", latent_augmix.get("ops"))
     _append_optional_value(
         argv,
         "--latent_augmix_chain_weights",
@@ -214,139 +181,28 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
     )
     _append_optional_value(
         argv,
-        "--latent_augmix_signal_space",
-        latent_augmix.get("signal_space"),
+        "--latent_augmix_consistency_weight",
+        latent_augmix_consistency.get("consistency_weight"),
     )
     _append_optional_value(
         argv,
-        "--latent_augmix_corruption_source",
-        latent_augmix.get("corruption_source"),
+        "--latent_augmix_consistency_loss",
+        latent_augmix_consistency.get("consistency_loss"),
     )
     _append_optional_value(
         argv,
-        "--latent_augmix_severity_profile",
-        latent_augmix.get("severity_profile"),
+        "--latent_augmix_bce_weight",
+        latent_augmix_consistency.get("bce_weight"),
     )
     _append_optional_value(
         argv,
-        "--latent_augmix_severity_params_file",
-        latent_augmix.get("severity_params_file"),
+        "--latent_augmix_consistency_max_batches",
+        latent_augmix_consistency.get("max_batches"),
     )
-    _append_optional_value(
-        argv,
-        "--latent_augmix_severity_params_name",
-        latent_augmix.get("severity_params_name"),
-    )
-    _append_optional_sequence(argv, "--latent_augmix_ops", latent_augmix.get("ops"))
-    if latent_augmix.get("no_renorm"):
-        argv.append("--no_latent_augmix_renorm")
-    if latent_augmix_consistency.get("enabled"):
-        argv.append("--enable_latent_augmix_consistency")
-        _append_optional_value(
-            argv,
-            "--latent_augmix_consistency_weight",
-            latent_augmix_consistency.get("consistency_weight"),
-        )
-        _append_optional_value(
-            argv,
-            "--latent_augmix_consistency_loss",
-            latent_augmix_consistency.get("consistency_loss"),
-        )
-        _append_optional_value(
-            argv,
-            "--latent_augmix_bce_weight",
-            latent_augmix_consistency.get("bce_weight"),
-        )
-        _append_optional_value(
-            argv,
-            "--latent_augmix_consistency_max_batches",
-            latent_augmix_consistency.get("max_batches"),
-        )
-    if raw_corrupt.get("enabled"):
-        argv.append("--enable_raw_corrupt_consistency")
-        _append_optional_value(argv, "--raw_corrupt_copies", raw_corrupt.get("copies"))
-        _append_optional_value(argv, "--raw_corrupt_prob", raw_corrupt.get("prob"))
-        _append_optional_value(argv, "--raw_corrupt_severity", raw_corrupt.get("severity"))
-        _append_optional_value(
-            argv,
-            "--raw_corrupt_severity_profile",
-            raw_corrupt.get("severity_profile", "standard"),
-        )
-        _append_optional_value(
-            argv,
-            "--raw_corrupt_severity_params_file",
-            raw_corrupt.get("severity_params_file"),
-        )
-        _append_optional_value(
-            argv,
-            "--raw_corrupt_severity_params_name",
-            raw_corrupt.get("severity_params_name"),
-        )
-        _append_optional_sequence(argv, "--raw_corrupt_ops", raw_corrupt.get("ops"))
-        _append_optional_value(
-            argv,
-            "--raw_corrupt_consistency_weight",
-            raw_corrupt.get("consistency_weight"),
-        )
-        _append_optional_value(argv, "--raw_corrupt_consistency_loss", raw_corrupt.get("consistency_loss"))
-        _append_optional_value(argv, "--raw_corrupt_bce_weight", raw_corrupt.get("bce_weight"))
-        _append_optional_value(argv, "--raw_corrupt_max_batches", raw_corrupt.get("max_batches"))
-        _append_optional_value(argv, "--raw_corrupt_scope", raw_corrupt.get("scope"))
-        _append_optional_value(argv, "--raw_corrupt_clip_abs", raw_corrupt.get("clip_abs"))
-        _append_optional_value(argv, "--raw_corrupt_view_mode", raw_corrupt.get("view_mode"))
-        _append_optional_value(argv, "--raw_augmix_width", raw_augmix.get("width"))
-        _append_optional_value(argv, "--raw_augmix_depth", raw_augmix.get("depth"))
-        _append_optional_value(argv, "--raw_augmix_alpha", raw_augmix.get("alpha"))
-        _append_optional_value(argv, "--raw_augmix_mixture_mode", raw_augmix.get("mixture_mode"))
-        _append_optional_value(argv, "--raw_augmix_mixture_prob", raw_augmix.get("mixture_prob"))
-        _append_optional_value(argv, "--raw_augmix_mixture_beta_a", raw_augmix.get("mixture_beta_a"))
-        _append_optional_value(argv, "--raw_augmix_mixture_beta_b", raw_augmix.get("mixture_beta_b"))
-        if raw_input_stabilizer:
-            _append_optional_value(
-                argv,
-                "--raw_input_bandpass_low_hz",
-                raw_input_stabilizer.get("bandpass_low_hz"),
-            )
-            _append_optional_value(
-                argv,
-                "--raw_input_bandpass_high_hz",
-                raw_input_stabilizer.get("bandpass_high_hz"),
-            )
-            if raw_input_stabilizer.get("repair_flat_leads"):
-                argv.append("--raw_input_repair_flat_leads")
-            _append_optional_value(argv, "--raw_input_clip_abs", raw_input_stabilizer.get("clip_abs"))
-            if raw_input_stabilizer.get("renorm_after_stabilizer"):
-                argv.append("--raw_input_renorm_after_stabilizer")
-            _append_optional_value(
-                argv,
-                "--raw_input_sample_rate_hz",
-                raw_input_stabilizer.get("sample_rate_hz"),
-            )
-        if raw_corrupt.get("no_renorm"):
-            argv.append("--raw_corrupt_no_renorm")
-    if mask_shift.get("enabled"):
-        argv.append("--enable_mask_shift_consistency")
-        _append_optional_value(argv, "--mask_shift_copies", mask_shift.get("copies"))
-        _append_optional_value(argv, "--mask_shift_mask_severity", mask_shift.get("mask_severity"))
-        _append_optional_value(argv, "--mask_shift_shift_severity", mask_shift.get("shift_severity"))
-        _append_optional_value(
-            argv,
-            "--mask_shift_consistency_weight",
-            mask_shift.get("consistency_weight"),
-        )
-        _append_optional_value(argv, "--mask_shift_consistency_loss", mask_shift.get("consistency_loss"))
-        _append_optional_value(argv, "--mask_shift_bce_weight", mask_shift.get("bce_weight"))
-        _append_optional_value(argv, "--mask_shift_max_batches", mask_shift.get("max_batches"))
-        _append_optional_value(argv, "--mask_shift_scope", mask_shift.get("scope"))
-        _append_optional_value(argv, "--mask_shift_clip_abs", mask_shift.get("clip_abs"))
-        if mask_shift.get("no_renorm"):
-            argv.append("--mask_shift_no_renorm")
-    run_tag_extra = (
-        adaptation.get("run_tag_extra")
-        or mask_shift.get("run_tag_extra")
-        or raw_corrupt.get("run_tag_extra")
-    )
+    run_tag_extra = adaptation.get("run_tag_extra")
     _append_optional_value(argv, "--run_tag_extra", run_tag_extra)
+    if bool(training.get("final_checkpoint_only", False)):
+        argv.append("--final_checkpoint_only")
     return argv
 
 
@@ -368,10 +224,10 @@ def audit_effnet_vae_lhat_command(
     expected_command_k = str(case.get("k", expected_k))
     expected_command_seed = str(case.get("seed", expected_seed))
 
-    if script != "run_effnet_latent_augmix_stage3_20260524.py":
+    if script != "effnet_vae_lhat_augmix.py":
         errors.append(
             f"{script}: EfficientNet VAE-LHAT adapter only accepts "
-            "run_effnet_latent_augmix_stage3_20260524.py"
+            "effnet_vae_lhat_augmix.py"
         )
         return {"errors": errors, "warnings": warnings}
 
@@ -390,9 +246,6 @@ def audit_effnet_vae_lhat_command(
             "--hull_neighbor_distance_space",
             "--hull_neighbor_mode",
             "--hull_neighbor_pool_size",
-            "--quick_eval_source",
-            "--target_real_val_fraction",
-            "--target_real_val_seed",
         ],
     )
     center = str(opt_first(opts, "--center", ""))
@@ -402,14 +255,16 @@ def audit_effnet_vae_lhat_command(
     if center not in target_centers:
         errors.append(f"{script}: unexpected center {center!r}")
     audit_equals(errors, script, opts, "--seed", expected_command_seed)
-    checkpoint_policy = str(opt_first(opts, "--checkpoint_policy", "best"))
-    quick_eval_source = str(opt_first(opts, "--quick_eval_source", ""))
-    if checkpoint_policy == "last":
-        audit_equals(errors, script, opts, "--quick_eval_source", "none")
-        audit_equals(errors, script, opts, "--target_real_val_fraction", "0.0")
-    else:
-        audit_equals(errors, script, opts, "--quick_eval_source", "target_real_val")
-    audit_equals(errors, script, opts, "--target_real_val_seed", expected_command_seed)
+    forbidden_ablation_flags = [
+        "--enable_raw_corrupt_consistency",
+        "--enable_mask_shift_consistency",
+        "--raw_input_repair_flat_leads",
+        "--raw_input_bandpass_low_hz",
+        "--raw_input_bandpass_high_hz",
+    ]
+    present_forbidden = [flag for flag in forbidden_ablation_flags if flag in opts]
+    if present_forbidden:
+        errors.append(f"{script}: locked mainline must not enable raw/mask-shift ablation flags: {present_forbidden}")
     if opt_first(opts, "--hull_neighbor_distance_space") not in {"raw", "standardized"}:
         errors.append(f"{script}: invalid --hull_neighbor_distance_space")
     if opt_first(opts, "--hull_neighbor_mode") not in {"nearest", "local_random", "random"}:
@@ -424,6 +279,4 @@ def audit_effnet_vae_lhat_command(
             errors.append(f"{script}: init_ckpt does not match protocol {protocol!r}")
         if f"{center}_K{expected_command_k}_direct_ft_ep" not in init_ckpt:
             errors.append(f"{script}: init_ckpt does not encode {center}/K{expected_command_k}")
-    if "paper_direct_finetune_k500_20260516" not in init_ckpt:
-        warnings.append(f"{script}: init_ckpt is not the historical direct-K500 run root")
     return {"errors": errors, "warnings": warnings}

@@ -11,6 +11,7 @@ from ecg_adv_gen.evaluation import (
     filter_pn2021_center_records,
     summarize_center_view,
 )
+from ecg_adv_gen.evaluation.pn2021_metric_views import select_center_clean_metric_row
 
 
 def fake_metric(labels: np.ndarray, scores: np.ndarray) -> dict:
@@ -147,6 +148,59 @@ def test_summarize_center_view_matches_eval_crosscenter_legacy_row_shape():
             "1": {"n_pos": 1, "n_valid": 2, "auroc": None, "auprc": None},
         },
     }
+
+
+def test_select_center_clean_metric_row_reads_known_result_shapes():
+    final_views = {
+        "final_pn2021_views": {
+            "ningbo": {
+                "per_center": {
+                    "ningbo": {"macro_auroc": 0.92, "macro_auprc": 0.66},
+                },
+            },
+        },
+        "target_excluding_ref": {"macro_auroc": 0.1, "macro_auprc": 0.1},
+    }
+    assert select_center_clean_metric_row(final_views, "ningbo") == {
+        "macro_auroc": 0.92,
+        "macro_auprc": 0.66,
+    }
+
+    fullft_target = {
+        "center": "cpsc_2018",
+        "target_excluding_ref": {"macro_auroc": 0.91, "macro_auprc": 0.64},
+    }
+    assert select_center_clean_metric_row(fullft_target, "cpsc_2018") == {
+        "macro_auroc": 0.91,
+        "macro_auprc": 0.64,
+    }
+
+    target_view = {
+        "target_view": {
+            "per_center": {
+                "georgia": {"macro_auroc": 0.88, "macro_auprc": 0.55},
+            },
+        },
+    }
+    assert select_center_clean_metric_row(target_view, "georgia") == {
+        "macro_auroc": 0.88,
+        "macro_auprc": 0.55,
+    }
+
+    all_views = {
+        "all_views": {
+            "chapman_shaoxing": {
+                "per_center": {
+                    "chapman_shaoxing": {"macro_auroc": 0.86, "macro_auprc": 0.52},
+                },
+            },
+        },
+    }
+    assert select_center_clean_metric_row(all_views, "chapman_shaoxing") == {
+        "macro_auroc": 0.86,
+        "macro_auprc": 0.52,
+    }
+    assert select_center_clean_metric_row({}, "ningbo") == {}
 
 
 def test_assemble_target_refexcluded_views_only_excludes_target_center_refs():

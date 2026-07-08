@@ -25,7 +25,6 @@ training:
   batch_size: 64
   eval_batch_size: 128
   num_workers: ${resources.default_num_workers}
-  source_train_limit: 0
   optimizer:
     name: adamw
     lr: 0.00002
@@ -34,17 +33,12 @@ training:
 adaptation:
   method: ecgfounder_k500_full_finetune_locked_last
   run_name: ${matrix.center}_k500_fullft_locked
-  supervised_input_mode: raw1000
-  selection:
-    checkpoint_policy: last
-    target_val_count: 0
-    metric: source_auprc
   loss:
     source_weight: 1.0
     target_real_weight: 40.0
 
 runner:
-  entrypoint: scripts/paper/run_ecgfounder_fullft_super5_pilot_20260523.py
+  entrypoint: ecg_adv_gen/runner/ecgfounder_fullft.py
   adapter: ecgfounder_fullft
   matrix:
     center: ${paper_protocol.centers.target_4}

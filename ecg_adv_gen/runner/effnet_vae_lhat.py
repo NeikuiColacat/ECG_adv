@@ -1,4 +1,4 @@
-"""Command builders for the EfficientNet VAE-LHAT legacy wrapper."""
+"""Command builders for the EfficientNet VAE-LHAT managed runner."""
 
 from __future__ import annotations
 
@@ -75,13 +75,13 @@ def build_effnet_vae_lhat_train_cmd(
     paths: EffNetVaeLhatPaths,
     class_trust: Path,
 ) -> list[str]:
-    """Build the legacy synth-online-AT command used by the wrapper."""
+    """Build the synth-online-AT command used by the managed runner."""
 
     model_name = str(getattr(args, "model_name", "efficientnet1dv2"))
     train_cmd = [
         python,
         "-u",
-        "scripts/pgd_cross_center/synth_online_at_super5.py",
+        "ecg_adv_gen/runner/synth_online_at_super5.py",
         "--center_name",
         str(args.center),
         "--ref_meta_json",
@@ -100,28 +100,12 @@ def build_effnet_vae_lhat_train_cmd(
         model_name,
         "--output_dir",
         str(paths.out_dir),
-        "--data_dir",
-        str(data_root / "physionet2021/training"),
-        "--quick_eval_source",
-        str(args.quick_eval_source),
-        "--quick_eval_centers",
-        str(args.center),
-        "--quick_eval_n_per_center",
-        str(args.quick_eval_n_per_center),
-        "--target_real_val_fraction",
-        str(args.target_real_val_fraction),
-        "--target_real_val_seed",
-        str(args.target_real_val_seed),
-        "--checkpoint_policy",
-        str(getattr(args, "checkpoint_policy", "best")),
         "--ptbxl_raw",
         str(data_root / "ptbxl/raw100.npy"),
         "--ptbxl_csv",
         str(data_root / "ptbxl/ptbxl_database.csv"),
         "--ptbxl_prep",
         str(data_root / "crosscenter_v2/ptbxl_preprocessed.npy"),
-        "--attack_mode",
-        "latent_hull",
         "--hull_M",
         str(args.hull_M),
         "--hull_lambda",
@@ -150,57 +134,26 @@ def build_effnet_vae_lhat_train_cmd(
         str(args.hull_neighbor_pool_size),
         "--hull_neighbor_pool_multiplier",
         str(args.hull_neighbor_pool_multiplier),
-        "--source_sampling_strategy",
-        "source_weighted",
-        "--source_weights",
-        str(args.source_weights),
-        "--source_floor_per_class",
-        str(args.source_floor_per_class),
-        "--anchor_class_weight_mode",
-        str(args.anchor_class_weight_mode),
-        "--anchor_class_weight_reference_source",
-        str(args.anchor_class_weight_reference_source),
-        "--anchor_class_weight_gamma",
-        str(args.anchor_class_weight_gamma),
-        "--anchor_class_weight_min",
-        str(args.anchor_class_weight_min),
-        "--anchor_class_weight_cap",
-        str(args.anchor_class_weight_cap),
-        "--anchor_class_missing_weight",
-        str(args.anchor_class_missing_weight),
         "--K_anchor",
         str(args.k_anchor),
         "--pgd_batch",
         str(args.pgd_batch),
         "--classes_in_scope",
         *[str(item) for item in args.classes_in_scope],
-        "--allow_hyp_cd_trust",
         "--target_real_weight",
         str(args.target_real_weight),
         "--adv_weight",
         str(args.adv_weight),
+        "--vae_adv_stream_sample_scale",
+        str(getattr(args, "vae_adv_stream_sample_scale", 1.0)),
         "--adv_weight_warmup_epochs",
         str(args.adv_weight_warmup_epochs),
         "--ptbxl_weight",
         str(args.ptbxl_weight),
-        "--roundtrip_weight",
-        "0.0",
-        "--roundtrip_anchor_n",
-        "0",
-        "--source_logit_anchor_weight",
-        str(args.source_logit_anchor_weight),
-        "--source_logit_anchor_batches",
-        str(args.source_logit_anchor_batches),
         "--adv_label_mode",
         str(args.adv_label_mode),
         "--adv_teacher_mix",
         str(args.adv_teacher_mix),
-        "--adv_soft_target_floor",
-        str(args.adv_soft_target_floor),
-        "--boundary_prob_min",
-        str(args.boundary_prob_min),
-        "--boundary_prob_max",
-        str(args.boundary_prob_max),
         "--disable_quality_gate",
         "--lr",
         str(args.lr),
@@ -210,24 +163,20 @@ def build_effnet_vae_lhat_train_cmd(
         str(args.train_batch_size),
         "--n_epochs",
         str(args.epochs),
-        "--patience",
-        str(args.epochs),
         "--eval_every",
         "2",
-        "--es_metric",
-        str(args.es_metric),
         "--ewa_decay",
         "0.999",
         "--anchor_lambda",
         "0.05",
         "--qab_size",
-        str(args.qab_size),
+        "2048",
         "--rescore_interval",
-        str(args.rescore_interval),
+        "3",
         "--asr_consec_low_max",
-        str(args.asr_consec_low_max),
+        "999",
         "--asr_low_threshold",
-        str(args.asr_low_threshold),
+        "0.30",
         "--num_workers",
         str(args.num_workers),
         "--seed",
@@ -239,205 +188,50 @@ def build_effnet_vae_lhat_train_cmd(
     ]
     if args.hull_include_anchor:
         train_cmd.append("--hull_include_anchor")
-    if not args.disable_latent_augmix_branch:
-        train_cmd.extend(
-            [
-                "--enable_latent_augmix_branch",
-                "--latent_augmix_topology",
-                str(getattr(args, "latent_augmix_topology", "legacy_branch")),
-                "--latent_augmix_copies",
-                str(args.latent_augmix_copies),
-                "--latent_augmix_width",
-                str(args.latent_augmix_width),
-                "--latent_augmix_depth",
-                str(args.latent_augmix_depth),
-                "--latent_augmix_alpha",
-                str(args.latent_augmix_alpha),
-                "--latent_augmix_mixture_mode",
-                str(getattr(args, "latent_augmix_mixture_mode", "beta")),
-                "--latent_augmix_mixture_prob",
-                str(getattr(args, "latent_augmix_mixture_prob", 0.5)),
-                "--latent_augmix_mixture_beta_a",
-                str(getattr(args, "latent_augmix_mixture_beta_a", 0.0)),
-                "--latent_augmix_mixture_beta_b",
-                str(getattr(args, "latent_augmix_mixture_beta_b", 0.0)),
-                "--latent_augmix_op_schedule",
-                str(getattr(args, "latent_augmix_op_schedule", "random")),
-                "--latent_augmix_chain_weights",
-                str(getattr(args, "latent_augmix_chain_weights", "")),
-                "--latent_augmix_signal_space",
-                str(getattr(args, "latent_augmix_signal_space", "model_zscore")),
-                "--latent_augmix_corruption_source",
-                str(getattr(args, "latent_augmix_corruption_source", "vae_decode")),
-                "--latent_augmix_severity",
-                str(args.latent_augmix_severity),
-                "--latent_augmix_severity_profile",
-                str(getattr(args, "latent_augmix_severity_profile", "standard")),
-                "--latent_augmix_latent_weight_cap",
-                str(args.latent_augmix_latent_weight_cap),
-                "--latent_augmix_ops",
-                *[str(item) for item in args.latent_augmix_ops],
-            ]
-        )
-        if getattr(args, "latent_augmix_severity_params_file", ""):
-            train_cmd.extend(
-                [
-                    "--latent_augmix_severity_params_file",
-                    str(args.latent_augmix_severity_params_file),
-                ]
-            )
-        if getattr(args, "latent_augmix_severity_params_name", ""):
-            train_cmd.extend(
-                [
-                    "--latent_augmix_severity_params_name",
-                    str(args.latent_augmix_severity_params_name),
-                ]
-            )
-        if getattr(args, "no_latent_augmix_renorm", False):
-            train_cmd.append("--no_latent_augmix_renorm")
-        if getattr(args, "enable_latent_augmix_consistency", False):
-            train_cmd.extend(
-                [
-                    "--enable_latent_augmix_consistency",
-                    "--latent_augmix_consistency_weight",
-                    str(args.latent_augmix_consistency_weight),
-                    "--latent_augmix_consistency_loss",
-                    str(args.latent_augmix_consistency_loss),
-                    "--latent_augmix_bce_weight",
-                    str(args.latent_augmix_bce_weight),
-                    "--latent_augmix_consistency_max_batches",
-                    str(args.latent_augmix_consistency_max_batches),
-                ]
-            )
-    if args.enable_raw_corrupt_consistency:
-        train_cmd.extend(
-            [
-                "--enable_raw_corrupt_consistency",
-                "--raw_corrupt_copies",
-                str(args.raw_corrupt_copies),
-                "--raw_corrupt_prob",
-                str(args.raw_corrupt_prob),
-                "--raw_corrupt_severity",
-                str(args.raw_corrupt_severity),
-                "--raw_corrupt_severity_profile",
-                str(args.raw_corrupt_severity_profile),
-                "--raw_corrupt_ops",
-                *[str(item) for item in args.raw_corrupt_ops],
-                "--raw_corrupt_consistency_weight",
-                str(args.raw_corrupt_consistency_weight),
-                "--raw_corrupt_consistency_loss",
-                str(args.raw_corrupt_consistency_loss),
-                "--raw_corrupt_bce_weight",
-                str(args.raw_corrupt_bce_weight),
-                "--raw_corrupt_max_batches",
-                str(args.raw_corrupt_max_batches),
-                "--raw_corrupt_scope",
-                str(args.raw_corrupt_scope),
-                "--raw_corrupt_clip_abs",
-                str(args.raw_corrupt_clip_abs),
-                "--raw_corrupt_view_mode",
-                str(getattr(args, "raw_corrupt_view_mode", "single_op")),
-                "--raw_augmix_width",
-                str(getattr(args, "raw_augmix_width", 3)),
-                "--raw_augmix_depth",
-                str(getattr(args, "raw_augmix_depth", -1)),
-                "--raw_augmix_alpha",
-                str(getattr(args, "raw_augmix_alpha", 1.0)),
-                "--raw_augmix_mixture_mode",
-                str(getattr(args, "raw_augmix_mixture_mode", "beta")),
-                "--raw_augmix_mixture_prob",
-                str(getattr(args, "raw_augmix_mixture_prob", 0.5)),
-                "--raw_augmix_mixture_beta_a",
-                str(getattr(args, "raw_augmix_mixture_beta_a", 0.0)),
-                "--raw_augmix_mixture_beta_b",
-                str(getattr(args, "raw_augmix_mixture_beta_b", 0.0)),
-            ]
-        )
-        if getattr(args, "raw_corrupt_severity_params_file", ""):
-            train_cmd.extend(
-                [
-                    "--raw_corrupt_severity_params_file",
-                    str(args.raw_corrupt_severity_params_file),
-                ]
-            )
-        if getattr(args, "raw_corrupt_severity_params_name", ""):
-            train_cmd.extend(
-                [
-                    "--raw_corrupt_severity_params_name",
-                    str(args.raw_corrupt_severity_params_name),
-                ]
-            )
-        raw_input_enabled = bool(
-            getattr(args, "raw_input_bandpass_low_hz", None) is not None
-            or getattr(args, "raw_input_bandpass_high_hz", None) is not None
-            or getattr(args, "raw_input_repair_flat_leads", False)
-            or getattr(args, "raw_input_clip_abs", None) is not None
-            or getattr(args, "raw_input_renorm_after_stabilizer", False)
-        )
-        if raw_input_enabled and getattr(args, "raw_input_bandpass_low_hz", None) is not None:
-            train_cmd.extend(["--raw_input_bandpass_low_hz", str(args.raw_input_bandpass_low_hz)])
-        if raw_input_enabled and getattr(args, "raw_input_bandpass_high_hz", None) is not None:
-            train_cmd.extend(["--raw_input_bandpass_high_hz", str(args.raw_input_bandpass_high_hz)])
-        if raw_input_enabled and getattr(args, "raw_input_repair_flat_leads", False):
-            train_cmd.append("--raw_input_repair_flat_leads")
-        if raw_input_enabled and getattr(args, "raw_input_clip_abs", None) is not None:
-            train_cmd.extend(["--raw_input_clip_abs", str(args.raw_input_clip_abs)])
-        if raw_input_enabled and getattr(args, "raw_input_renorm_after_stabilizer", False):
-            train_cmd.append("--raw_input_renorm_after_stabilizer")
-        if raw_input_enabled and getattr(args, "raw_input_sample_rate_hz", None) is not None:
-            train_cmd.extend(["--raw_input_sample_rate_hz", str(args.raw_input_sample_rate_hz)])
-        if args.raw_corrupt_no_renorm:
-            train_cmd.append("--raw_corrupt_no_renorm")
-    if args.enable_mask_shift_consistency:
-        train_cmd.extend(
-            [
-                "--enable_mask_shift_consistency",
-                "--mask_shift_copies",
-                str(args.mask_shift_copies),
-                "--mask_shift_mask_severity",
-                str(args.mask_shift_mask_severity),
-                "--mask_shift_shift_severity",
-                str(args.mask_shift_shift_severity),
-                "--mask_shift_consistency_weight",
-                str(args.mask_shift_consistency_weight),
-                "--mask_shift_consistency_loss",
-                str(args.mask_shift_consistency_loss),
-                "--mask_shift_bce_weight",
-                str(args.mask_shift_bce_weight),
-                "--mask_shift_max_batches",
-                str(args.mask_shift_max_batches),
-                "--mask_shift_scope",
-                str(args.mask_shift_scope),
-                "--mask_shift_clip_abs",
-                str(args.mask_shift_clip_abs),
-            ]
-        )
-        if args.mask_shift_no_renorm:
-            train_cmd.append("--mask_shift_no_renorm")
+    train_cmd.extend(
+        [
+            "--latent_augmix_copies",
+            str(args.latent_augmix_copies),
+            "--latent_augmix_width",
+            str(args.latent_augmix_width),
+            "--latent_augmix_depth",
+            str(args.latent_augmix_depth),
+            "--latent_augmix_alpha",
+            str(args.latent_augmix_alpha),
+            "--latent_augmix_severity",
+            str(args.latent_augmix_severity),
+            "--latent_augmix_severity_profile",
+            str(getattr(args, "latent_augmix_severity_profile", "standard")),
+            "--latent_augmix_latent_weight_cap",
+            str(args.latent_augmix_latent_weight_cap),
+            "--latent_augmix_third_chain_role",
+            str(getattr(args, "latent_augmix_third_chain_role", "vae_lhat_adversarial_waveform")),
+            "--latent_augmix_chain_base_mode",
+            str(getattr(args, "latent_augmix_chain_base_mode", "clean_clean_third")),
+            "--latent_augmix_chain_weights",
+            str(getattr(args, "latent_augmix_chain_weights", "")),
+            "--latent_augmix_ops",
+            *[str(item) for item in args.latent_augmix_ops],
+        ]
+    )
+    train_cmd.extend(
+        [
+            "--latent_augmix_consistency_weight",
+            str(args.latent_augmix_consistency_weight),
+            "--latent_augmix_consistency_loss",
+            str(args.latent_augmix_consistency_loss),
+            "--latent_augmix_bce_weight",
+            str(args.latent_augmix_bce_weight),
+            "--latent_augmix_consistency_max_batches",
+            str(args.latent_augmix_consistency_max_batches),
+        ]
+    )
     if args.resume:
         train_cmd.extend(["--resume", str(args.resume)])
     if args.allow_resume_config_drift:
         train_cmd.append("--allow_resume_config_drift")
-    if args.anchor_class_weights:
-        train_cmd.extend(["--anchor_class_weights", str(args.anchor_class_weights)])
-    if args.source_class_weights:
-        train_cmd.extend(["--source_class_weights", str(args.source_class_weights)])
-    if args.freeze_backbone_classifier_only:
-        train_cmd.extend(
-            [
-                "--freeze_backbone_classifier_only",
-                "--classifier_adapter_type",
-                str(args.classifier_adapter_type),
-                "--classifier_lora_rank",
-                str(args.classifier_lora_rank),
-                "--classifier_lora_alpha",
-                str(args.classifier_lora_alpha),
-            ]
-        )
-        if args.classifier_only_train_final_norm:
-            train_cmd.append("--classifier_only_train_final_norm")
-    if int(args.unfreeze_last_n_features) > 0:
-        train_cmd.extend(["--unfreeze_last_n_features", str(args.unfreeze_last_n_features)])
+    if getattr(args, "final_checkpoint_only", False):
+        train_cmd.append("--final_checkpoint_only")
     return train_cmd
 
 
@@ -454,7 +248,7 @@ def build_effnet_vae_lhat_eval_cmd(
     eval_cmd = [
         python,
         "-u",
-        "scripts/triple_labels/eval_crosscenter.py",
+        "ecg_adv_gen/runner/pn2021_clean_eval.py",
         "--scheme",
         "super5",
         "--model_dir",
@@ -488,8 +282,7 @@ def build_effnet_vae_lhat_eval_cmd(
         "--skip_mimic",
         "--report_drop_all_zero_pn2021",
     ]
-    if str(getattr(args, "checkpoint_policy", "best")) == "last":
-        eval_cmd.extend(["--checkpoint_name", "last_model.pt"])
+    eval_cmd.extend(["--checkpoint_name", "last_model.pt"])
     try:
         append_target_ref_exclusion_args_from_anchor_base(eval_cmd, paths.anchor_base)
     except ValueError:

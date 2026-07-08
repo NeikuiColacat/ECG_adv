@@ -101,7 +101,6 @@ def _category_for(path: Path, run_dir: Path) -> str:
         "agent_decision.json",
         "training_log.json",
         "train_result.json",
-        "early_stop_info.json",
     }:
         return "diagnostics"
     if rel.startswith("configs/") or name in {
@@ -718,6 +717,8 @@ def _validate_run_record_contract(
         errors.append("resolved config artifact is required: run_config.resolved.yaml or run_config.resolved.json")
     if not (run_dir / "command.sh").exists():
         errors.append("command.sh is required")
+    if not (run_dir / "env.json").exists():
+        errors.append("env.json is required")
     if not (run_dir / "selection.json").exists():
         errors.append("selection.json is required")
 

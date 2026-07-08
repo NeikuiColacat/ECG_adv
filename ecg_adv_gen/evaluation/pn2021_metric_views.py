@@ -8,7 +8,11 @@ from typing import Any
 
 import numpy as np
 
-from ecg_adv_gen.data import PN2021_EVAL_CENTERS_7, PN2021_TARGET_CENTERS_4
+from ecg_adv_gen.data import (
+    PN2021_EVAL_CENTERS_7,
+    PN2021_TARGET_CENTERS_4,
+    apply_ref_exclusion,
+)
 
 MetricFn = Callable[[np.ndarray, np.ndarray], dict[str, Any]]
 
@@ -80,9 +84,11 @@ def filter_pn2021_center_records(
     n_excluded_ref = 0
     if ref_ids:
         ref_set = {str(rid) for rid in ref_ids}
-        ref_mask = np.asarray([str(rid) in ref_set for rid in record_ids], dtype=bool)
-        n_excluded_ref = int((keep_mask & ref_mask).sum())
-        keep_mask &= ~ref_mask
+        kept_before_ref = record_ids[keep_mask].tolist()
+        kept_after_ref = apply_ref_exclusion(kept_before_ref, excluded_record_ids=ref_set)
+        n_excluded_ref = len(kept_before_ref) - len(kept_after_ref)
+        kept_after_ref_set = set(kept_after_ref)
+        keep_mask &= np.asarray([str(rid) in kept_after_ref_set for rid in record_ids], dtype=bool)
     return FilteredPN2021CenterRecords(
         signals=signals[keep_mask],
         labels=labels[keep_mask],
@@ -143,6 +149,31 @@ def summarize_center_view(
                 "drop_all_zero_per_class": {},
             })
     return out
+
+
+def select_center_clean_metric_row(result: dict[str, Any], center: str) -> dict[str, Any]:
+    """Return the clean PN2021 metric row for one center from known result shapes."""
+
+    views = result.get("final_pn2021_views")
+    if isinstance(views, dict) and center in views:
+        row = views[center].get("per_center", {}).get(center, {})
+        if row:
+            return row
+    if center == str(result.get("center")):
+        row = result.get("target_excluding_ref")
+        if isinstance(row, dict) and row:
+            return row
+    target_view = result.get("target_view")
+    if isinstance(target_view, dict):
+        row = target_view.get("per_center", {}).get(center, {})
+        if row:
+            return row
+    all_views = result.get("all_views")
+    if isinstance(all_views, dict) and center in all_views:
+        row = all_views[center].get("per_center", {}).get(center, {})
+        if row:
+            return row
+    return {}
 
 
 def assemble_pn2021_center_metrics(

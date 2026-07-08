@@ -4,6 +4,8 @@ from .views import (
     MACRO_METRIC_ALIASES,
     PN2021_ALL_ZERO_KEPT_REFEXCLUDED,
     PN2021_DROP_ALL_ZERO_REFEXCLUDED,
+    PN2021C_ALL_ZERO_KEPT_CORRUPTED_REFEXCLUDED,
+    PN2021C_DROP_ALL_ZERO_CORRUPTED_REFEXCLUDED,
     PTBXL_FOLD10_SOURCE_FLOOR,
     TARGET_ALL_ZERO_KEPT_REFEXCLUDED,
     TARGET_DROP_ALL_ZERO_REFEXCLUDED,
@@ -34,16 +36,14 @@ from .pn2021c_metadata import (
     canonical_pn2021c_metadata,
     validate_pn2021c_metadata_compatibility,
 )
-from .metrics import MetricRow, compute_macro_metric_dict, compute_macro_metrics
+from .pn2021c import PN2021C_CORRUPTS_PRE_ZSCORE, PN2021C_OFFICIAL_OPERATORS
+from .metrics import MetricRow, compute_macro_auroc_auprc, compute_macro_metric_dict, compute_macro_metrics
 from .selection import (
     ALLOWED_SELECTION_DATA,
     FORBIDDEN_SELECTION_REFERENCES,
     SELECTION_POLICY,
     SelectionPolicyError,
-    compute_ecgfounder_lhat_selection_score,
-    compute_source_target_selection_score,
     has_forbidden_selection_reference,
-    validate_ecgfounder_lhat_runtime_selection,
     validate_selection_policy,
 )
 from .target_splits import TargetSplitMode, split_target_train_val_indices
@@ -54,6 +54,7 @@ from .pn2021_corruptions import (
     corruption_cache_path,
     filter_record_indices,
     load_clean_metric_lookup,
+    ref_ids_sha256,
     stable_corruption_seed,
 )
 from .pn2021_eval_cache import (
@@ -77,6 +78,8 @@ __all__ = [
     "MACRO_METRIC_ALIASES",
     "PN2021_ALL_ZERO_KEPT_REFEXCLUDED",
     "PN2021_DROP_ALL_ZERO_REFEXCLUDED",
+    "PN2021C_ALL_ZERO_KEPT_CORRUPTED_REFEXCLUDED",
+    "PN2021C_DROP_ALL_ZERO_CORRUPTED_REFEXCLUDED",
     "PTBXL_FOLD10_SOURCE_FLOOR",
     "TARGET_ALL_ZERO_KEPT_REFEXCLUDED",
     "TARGET_DROP_ALL_ZERO_REFEXCLUDED",
@@ -95,6 +98,8 @@ __all__ = [
     "PN2021EvalCache",
     "PN2021EvalCacheLoad",
     "PN2021CMetadataError",
+    "PN2021C_CORRUPTS_PRE_ZSCORE",
+    "PN2021C_OFFICIAL_OPERATORS",
     "PN2021ProtocolError",
     "SelectionPolicyError",
     "TargetSplitMode",
@@ -108,15 +113,13 @@ __all__ = [
     "canonical_pn2021c_metadata",
     "clean_mmap_cache_path",
     "clean_npz_cache_path",
-    "compute_ecgfounder_lhat_selection_score",
     "compute_macro_metric_dict",
+    "compute_macro_auroc_auprc",
     "compute_macro_metrics",
-    "compute_source_target_selection_score",
     "corruption_cache_path",
     "filter_record_indices",
     "filter_pn2021_center_records",
     "has_forbidden_selection_reference",
-    "validate_ecgfounder_lhat_runtime_selection",
     "legacy_default_metadata_variant",
     "load_existing_pn2021_eval_cache",
     "load_clean_metric_lookup",
@@ -128,6 +131,7 @@ __all__ = [
     "normalize_macro_metric",
     "pn2021_mmap_cache_path",
     "pn2021_npz_cache_path",
+    "ref_ids_sha256",
     "stable_corruption_seed",
     "summarize_center_view",
     "split_target_train_val_indices",

@@ -1,0 +1,20 @@
+extends:
+  - pn2021c_ecgfounder_threechain_locked_official_s5.yaml
+
+experiment:
+  name: pn2021c_ecgfounder_official_s5_depth23_composite
+  description: Official severity-5 depth2+depth3 composite PN2021-C evaluation for ECGFounder locked three-chain runs.
+
+evaluation:
+  model_family: ecgfounder_fullft_threechain_locked
+  corruption_set: official_s5_depth23_composite
+  corruption_input: bottleneck5000
+  severity_profile: standard
+  severities: [5]
+  output_stem: eval_pn2021_c_ecgfounder_v7_refexcluded_stream_standard_official_s5_depth23_composite
+
+logging:
+  child_artifacts:
+    - eval_pn2021_c_ecgfounder_v7_refexcluded_stream_standard_official_s5_depth23_composite.json
+  postprocess_artifacts:
+    - pn2021c_ecgfounder_official_s5_depth23_composite.csv

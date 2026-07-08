@@ -1,7 +1,7 @@
 """
 可微分 Tier-M 6 类 EfficientNet1DV2 victim（对抗 / 在线微调路径）
 
-与 77-class JIT 版本 efficientnet_victim.py 的区别：
+与旧 77-class JIT victim 的区别：
   - 权重来自 state_dict（`/root/autodl-tmp/crosscenter_tierM/best_model.pt`）
   - 输出维度 6（NSR / STach / AF / IAVB / LBBB / RBBB）
   - 输入预处理与 `unified_preprocess_to_1000` 一致：
@@ -21,7 +21,7 @@
     → center crop 1000 → 250
     → EfficientNet1DV2 → logits (B, 6)
 
-API 与 77-class victim 对齐，`BoundaryAdvDiffGenerator` 无需改动即可 swap-in。
+API 保持 latent-PGD generator 所需的最小 victim 接口。
 """
 
 import sys
@@ -47,13 +47,13 @@ for p in [str(_PROJECT_ROOT), str(_ECGTWIN_ROOT), str(_DEEPECG_NB_LEGACY), str(_
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from scripts.triple_labels.model_zoo import build_super5_model, normalize_model_name  # noqa: E402
+from ecg_adv_gen.models.super5_model_zoo import build_super5_model, normalize_model_name  # noqa: E402
 from util.lead_utils import ECGTWIN_TO_PTBXL_INDICES  # noqa: E402
 
 
 DEFAULT_TIERM_CKPT = "/root/autodl-tmp/crosscenter_tierM/best_model.pt"
 
-# Tier-M victim training input length (match scripts/crosscenter_tierM/train_ptbxl_tierM.py crop_len=250)
+# Tier-M victim training input length (match archived Tier-M PTB-XL crop_len=250)
 TIERM_INPUT_LENGTH = 250
 
 # ECGTwin VAE decoder output is 1024 samples @ 102.4Hz; resample to 1000 for PTBXL preprocessing alignment

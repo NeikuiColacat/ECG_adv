@@ -48,6 +48,7 @@ def quality_buffer_state(buffer: Any) -> dict[str, Any]:
         "max_size": int(buffer.max_size),
         "size": int(len(buffer)),
         "score_list": list(buffer.score_list),
+        "sample_weight_list": list(getattr(buffer, "sample_weight_list", [])),
     }
     if len(buffer) > 0:
         state["ecg_tensor"] = torch.stack(buffer.ecg_list).cpu()
@@ -67,10 +68,17 @@ def restore_quality_buffer_state(buffer: Any, state: dict[str, Any]) -> None:
         buffer.ecg_list = []
         buffer.label_list = []
         buffer.score_list = []
+        buffer.sample_weight_list = []
         return
     buffer.ecg_list = [row.detach().cpu() for row in ecg_tensor]
     buffer.label_list = [row.detach().cpu() for row in label_tensor]
+    if len(scores) < len(buffer.ecg_list):
+        scores.extend([0.05] * (len(buffer.ecg_list) - len(scores)))
     buffer.score_list = [float(x) for x in scores[: len(buffer.ecg_list)]]
+    sample_weights = list(state.get("sample_weight_list") or [])
+    if len(sample_weights) < len(buffer.ecg_list):
+        sample_weights.extend([1.0] * (len(buffer.ecg_list) - len(sample_weights)))
+    buffer.sample_weight_list = [float(x) for x in sample_weights[: len(buffer.ecg_list)]]
 
 
 def capture_rng_state(epoch_rng: np.random.Generator, *, include_cuda: bool = True) -> dict[str, Any]:
@@ -85,6 +93,12 @@ def capture_rng_state(epoch_rng: np.random.Generator, *, include_cuda: bool = Tr
     if include_cuda and torch.cuda.is_available():
         state["torch_cuda_all"] = torch.cuda.get_rng_state_all()
     return state
+
+
+def _as_cpu_byte_tensor(value: Any) -> torch.Tensor:
+    if isinstance(value, torch.Tensor):
+        return value.detach().to(device="cpu", dtype=torch.uint8)
+    return torch.as_tensor(value, dtype=torch.uint8, device="cpu")
 
 
 def restore_rng_state(
@@ -104,9 +118,11 @@ def restore_rng_state(
     if "numpy_epoch_generator" in state:
         epoch_rng.bit_generator.state = state["numpy_epoch_generator"]
     if "torch_cpu" in state:
-        torch.set_rng_state(state["torch_cpu"])
+        torch.set_rng_state(_as_cpu_byte_tensor(state["torch_cpu"]))
     if restore_cuda and torch.cuda.is_available() and "torch_cuda_all" in state:
-        torch.cuda.set_rng_state_all(state["torch_cuda_all"])
+        torch.cuda.set_rng_state_all(
+            [_as_cpu_byte_tensor(item) for item in state["torch_cuda_all"]]
+        )
 
 
 __all__ = [

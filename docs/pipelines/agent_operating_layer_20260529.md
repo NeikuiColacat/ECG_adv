@@ -21,16 +21,19 @@ The design follows a lightweight subset of established practice:
 
 ## Implemented Layer
 
-Tracked entry point:
+Tracked legacy evidence entry point:
 
 ```text
 configs/active_evidence_registry.yaml
 ```
 
-It records the current trusted mainline:
+It records older trusted/provisional evidence and backfilled manifests. The
+current replay surface is `configs/active_scripts.yaml:latest_mainline`, which
+is locked to VAE-LHAT + three-chain AugMix.
 
 - Direct baseline: `effnet_direct_k500_v7_sjr_rgq`
-- VAE method: `effnet_vae_lhat_k500_v7_sjr_rgq`
+- Historical VAE noAug evidence: `effnet_vae_lhat_k500_v7_sjr_rgq`
+- Latest VAE-LHAT + AugMix replay: `effnet_vae_lhat_augmix_threechain_locked_k500`
 - Mapping: `v7_super5_sjr_rgq_review_20260528`
 - Mapping hash: `555ec85d5b51`
 - Fixed K500 seed: `20260531`
@@ -120,7 +123,7 @@ VAE gains are:
 
 ## VAE-AT Checkpoint Contract
 
-`scripts/pgd_cross_center/synth_online_at_super5.py` now writes epoch-boundary
+`ecg_adv_gen/runner/synth_online_at_super5.py` now writes epoch-boundary
 state for future interrupted runs:
 
 ```text
@@ -144,13 +147,13 @@ agent_decision.json
 Resume is epoch-boundary only:
 
 ```bash
-... scripts/pgd_cross_center/synth_online_at_super5.py ... --resume latest
+... ecg_adv_gen/runner/synth_online_at_super5.py ... --resume latest
 ```
 
 or through the v7 wrapper:
 
 ```bash
-... scripts/paper/run_effnet_latent_augmix_stage3_20260524.py ... --resume latest
+... ecg_adv_gen/runner/effnet_vae_lhat_augmix.py ... --resume latest
 ```
 
 `diagnostics_epoch.jsonl` records ASR, `atk_anchor`, clean/adversarial BCE,
@@ -161,29 +164,15 @@ is explicit rather than silently absent.
 
 ## Legacy Traceability Closure
 
-The v7 Direct run has a managed launcher manifest:
+The latest Direct K500 baseline has a seed20260601 managed metadata record:
 
 ```text
-${paths.output_root}/20260528/v7_sjr_rgq_main_20260528_direct_plan/run_manifest.json
+${paths.output_root}/managed_launches/effnet_direct_seed20260601_k500_v7_sjr_rgq_20260530_rep1_v1/run_manifest.json
 ```
 
-The v7 VAE output predates the managed launcher manifest path, so it is tracked
-with a legacy backfilled manifest:
-
-```text
-${paths.output_root}/effnet_vae_lhat_k500_v7_sjr_rgq/v7_sjr_rgq_main_20260528/run_manifest.backfilled.json
-```
-
-Build or refresh it with:
-
-```bash
-micromamba run -n ECGTwin python scripts/agent/backfill_vae_lhat_manifest.py
-```
-
-This manifest records the per-center legacy launch configs, train/eval
-commands, selected checkpoints, and artifact hashes. Future reruns should still
-launch VAE through `scripts/run_experiment.py --execute` so the original managed
-manifest exists at run time rather than being reconstructed later.
+Legacy backfilled manifests are no longer part of the public cleanup surface.
+Latest-mainline runs must use `scripts/run_experiment.py --execute` so the
+managed manifest exists at run time rather than being reconstructed later.
 
 ## Next Step
 

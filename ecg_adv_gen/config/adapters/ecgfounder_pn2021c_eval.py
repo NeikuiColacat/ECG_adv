@@ -4,8 +4,14 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from ecg_adv_gen.evaluation.pn2021c_protocol import (
+    OFFICIAL_S5_COMPOSITE_CORRUPTION_SET,
+    OFFICIAL_S5_PUBLIC_SEVERITY,
+    OFFICIAL_S5_SEVERITY_PROFILE,
+)
+
 from .common import argv_option_map, audit_equals, audit_require_options, opt_first, opt_list
-from .pn2021c_eval import PN2021C_REQUIRED_CACHE_VERSION
+from .pn2021c_eval import PN2021C_REQUIRED_CACHE_VERSION, resolve_pn2021c_corruptions
 
 
 def _format_run_dir_template(
@@ -26,7 +32,7 @@ def _format_run_dir_template(
 
 
 def build_ecgfounder_pn2021c_eval_argv(config: Mapping[str, Any], context: Mapping[str, Any]) -> list[Any]:
-    """Build argv for ``scripts/triple_labels/eval_ecgfounder_pn2021_corruptions.py``."""
+    """Build argv for ``ecg_adv_gen/runner/ecgfounder_pn2021c_eval.py``."""
 
     matrix = context.get("matrix") or {}
     center = matrix.get("center")
@@ -42,6 +48,7 @@ def build_ecgfounder_pn2021c_eval_argv(config: Mapping[str, Any], context: Mappi
     training = config["training"]
     data = config["data"]
     evaluation = config["evaluation"]
+    corruptions = resolve_pn2021c_corruptions(evaluation)
     preprocess = config["preprocess"]
     runtime = config.get("runtime") or {}
     experiment = config["experiment"]
@@ -79,10 +86,12 @@ def build_ecgfounder_pn2021c_eval_argv(config: Mapping[str, Any], context: Mappi
         data["cache"]["pn2021_clean_cache_dir"],
         "--required_cache_version",
         PN2021C_REQUIRED_CACHE_VERSION,
+        "--min_target_ref_excluded",
+        paper["kshot"]["k"],
         "--centers",
         center,
         "--corruptions",
-        *list(evaluation["corruptions"]),
+        *corruptions,
         "--severities",
         *list(evaluation["severities"]),
         "--severity_profile",
@@ -132,7 +141,7 @@ def audit_ecgfounder_pn2021c_eval_command(
     warnings: list[str] = []
     argv = [str(x) for x in command["argv"]]
     opts = argv_option_map(argv)
-    script = "eval_ecgfounder_pn2021_corruptions.py"
+    script = "ecgfounder_pn2021c_eval.py"
     kshot = config["paper_protocol"]["kshot"]
     expected_k = str(kshot["k"])
     expected_seed = str(kshot.get("subset_seed", kshot["seed"]))
@@ -150,6 +159,7 @@ def audit_ecgfounder_pn2021c_eval_command(
             "--clean_mmap_cache_dir",
             "--clean_cache_dir",
             "--required_cache_version",
+            "--min_target_ref_excluded",
             "--centers",
             "--corruptions",
             "--severities",
@@ -167,7 +177,15 @@ def audit_ecgfounder_pn2021c_eval_command(
     )
     audit_equals(errors, script, opts, "--scheme", "super5")
     audit_equals(errors, script, opts, "--required_cache_version", PN2021C_REQUIRED_CACHE_VERSION)
+    audit_equals(errors, script, opts, "--min_target_ref_excluded", expected_k)
     audit_equals(errors, script, opts, "--severity_profile", config["evaluation"]["severity_profile"])
+    expected_corruptions = resolve_pn2021c_corruptions(config["evaluation"])
+    if opt_list(opts, "--corruptions") != [str(item) for item in expected_corruptions]:
+        errors.append(f"{script}: --corruptions does not match configured PN2021-C corruption set")
+    if str(config["evaluation"].get("corruption_set") or "") == OFFICIAL_S5_COMPOSITE_CORRUPTION_SET:
+        audit_equals(errors, script, opts, "--severity_profile", OFFICIAL_S5_SEVERITY_PROFILE)
+        if opt_list(opts, "--severities") != [str(OFFICIAL_S5_PUBLIC_SEVERITY)]:
+            errors.append(f"{script}: official S5 composite eval must use --severities 5")
     if str(config["evaluation"]["severity_profile"]) == "custom":
         audit_require_options(errors, script, opts, ["--severity_params_file", "--severity_params_name"])
         audit_equals(errors, script, opts, "--severity_params_file", config["evaluation"]["severity_params_file"])
@@ -200,8 +218,8 @@ def audit_ecgfounder_pn2021c_eval_command(
         errors.append(f"{script}: matrix center {matrix_center!r} must match --centers {centers!r}")
 
     output_path = str(opt_first(opts, "--output_path", ""))
-    if "official_s5_locked" not in output_path:
-        errors.append(f"{script}: locked PN2021-C output_path must include official_s5_locked")
+    if "official_s5_locked" not in output_path and "official_s5_depth23_composite" not in output_path:
+        errors.append(f"{script}: locked PN2021-C output_path must include official_s5_locked or official_s5_depth23_composite")
 
     run_dir = str(opt_first(opts, "--run_dir", ""))
     method = (command.get("matrix") or {}).get("method") or {}
@@ -218,8 +236,21 @@ def audit_ecgfounder_pn2021c_eval_command(
             )
             if run_dir != expected_run_dir:
                 errors.append(f"{script}: run_dir does not match locked method template")
-    if run_id and "/ecgfounder_vae_lhat_augmix_threechain_locked_k500/" not in run_dir:
-        errors.append(f"{script}: run_dir must target the locked ECGFounder three-chain run family")
+    allowed_run_family_fragments = (
+        "/ecgfounder_k500_fullft_locked/",
+        "/ecgfounder_vae_lhat_augmix_threechain_locked_k500/",
+        "/ecgfounder_vae_lhat_augmix_threechain_aligned_effnet_sota_",
+        "/ecgfounder_vae_lhat_augmix_threechain_cand93_matched_seed20260601_",
+        "/ecgfounder_vae_lhat_augmix_threechain_officials5_cand110_weakcombo_cover_c24_",
+        "/ecgfounder_vae_lhat_augmix_threechain_officials5_cand113_attackgap0_lam30_c4_",
+        "/ecgfounder_vae_lhat_augmix_threechain_officials5_cand114_attackgap0_lam15_c4_",
+        "/ecgfounder_vae_lhat_augmix_threechain_officials5_cand115_c110_attackgap0_lam15_",
+        "/ecgfounder_vae_lhat_officials5_noaug_ablation_ep10_",
+        "/ecgfounder_raw_augmix_novae_officials5_depth23cycle_ep10_",
+        "/ecgfounder_direct_corrupted_k500_supervised_officials5_depth23_ep10_",
+    )
+    if run_id and not any(fragment in run_dir for fragment in allowed_run_family_fragments):
+        errors.append(f"{script}: run_dir must target a locked ECGFounder run family")
 
     if "--limit" in opts and str(opt_first(opts, "--limit")) not in {"0", ""}:
         errors.append(f"{script}: managed main ECGFounder PN2021-C eval must not limit samples")

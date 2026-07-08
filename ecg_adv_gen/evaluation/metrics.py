@@ -137,3 +137,21 @@ def compute_macro_metric_dict(
         empty_value=empty_value,
         skip_metric_errors=skip_metric_errors,
     ).to_dict()
+
+
+def compute_macro_auroc_auprc(
+    y_true: np.ndarray,
+    y_score: np.ndarray,
+    class_names: Sequence[str],
+    min_pos: int = 10,
+) -> dict[str, Any]:
+    """EffNet Super5 macro AUROC/AUPRC wrapper with the historical signature."""
+    return compute_macro_metric_dict(
+        y_true,
+        y_score,
+        class_names=class_names,
+        min_pos=min_pos,
+        valid_label_min=0.0,
+        empty_value=float("nan"),
+        skip_metric_errors=True,
+    )

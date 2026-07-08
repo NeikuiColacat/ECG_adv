@@ -15,7 +15,7 @@ from .loader import (
     _validate_local_config_overlay,
     interpolate_config,
 )
-from .paths import is_under, translate_legacy_path
+from .paths import is_under
 
 
 DEFAULT_EXTERNAL_MODEL_REPOS: "OrderedDict[str, str]" = OrderedDict(
@@ -41,8 +41,7 @@ def _load_local_external_model_config(local_config_path: Path, repo_root: Path) 
 
 
 def _resolve_config_path(raw_value: Any, *, repo_root: Path) -> Path:
-    translated = translate_legacy_path(raw_value)
-    path = Path(str(translated)).expanduser()
+    path = Path(str(raw_value)).expanduser()
     if not path.is_absolute():
         path = repo_root / path
     return path.resolve(strict=False)

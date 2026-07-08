@@ -18,6 +18,8 @@ from typing import Any, Iterable
 from ecg_adv_gen.evaluation import (
     PN2021_ALL_ZERO_KEPT_REFEXCLUDED,
     PN2021_DROP_ALL_ZERO_REFEXCLUDED,
+    PN2021C_ALL_ZERO_KEPT_CORRUPTED_REFEXCLUDED,
+    PN2021C_DROP_ALL_ZERO_CORRUPTED_REFEXCLUDED,
     PTBXL_FOLD10_SOURCE_FLOOR,
     TARGET_ALL_ZERO_KEPT_REFEXCLUDED,
     TARGET_DROP_ALL_ZERO_REFEXCLUDED,
@@ -53,6 +55,8 @@ METRICS_FIELDNAMES = [
 
 ARTIFACT_PATTERNS = [
     "eval_result*.json",
+    "eval_pn2021_c*.json",
+    "eval_pn2021c*.json",
     "run_manifest.json",
     "train_result.json",
     "selection.json",
@@ -103,7 +107,7 @@ def collect_artifacts(inputs: Iterable[Path]) -> list[Path]:
 
 def _artifact_type(path: Path) -> str:
     name = path.name
-    if name.startswith("eval_result"):
+    if name.startswith("eval_result") or name.startswith("eval_pn2021_c") or name.startswith("eval_pn2021c"):
         return "eval_result"
     if name == "run_manifest.json":
         return "run_manifest"
@@ -205,6 +209,25 @@ def _drop_all_zero_stats(stats: dict[str, Any]) -> dict[str, Any]:
     if stats.get("drop_all_zero_n_classes_used") is not None:
         out["n_classes_used"] = stats["drop_all_zero_n_classes_used"]
     return out
+
+
+def _float_or_none(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _mean_metric(blocks: list[dict[str, Any]], key: str) -> float | None:
+    values = [
+        value for block in blocks
+        if (value := _float_or_none(block.get(key))) is not None
+    ]
+    if not values:
+        return None
+    return sum(values) / len(values)
 
 
 def _emit_metric(
@@ -440,6 +463,79 @@ def _extract_eval_crosscenter_rows(
     return rows
 
 
+def _pn2021c_metric_blocks(center_payload: dict[str, Any]) -> list[dict[str, Any]]:
+    blocks: list[dict[str, Any]] = []
+    for severity_map in center_payload.values():
+        if not isinstance(severity_map, dict):
+            continue
+        for metrics in severity_map.values():
+            if isinstance(metrics, dict) and (
+                metrics.get("macro_auroc") is not None
+                or metrics.get("macro_auprc") is not None
+            ):
+                blocks.append(metrics)
+    return blocks
+
+
+def _extract_pn2021c_rows(
+    data: dict[str, Any],
+    *,
+    path: Path,
+    artifact_type: str,
+    run_id: str,
+    mapping_version: str | None,
+    mapping_hash: str | None,
+    class_order: list[str] | None,
+) -> list[dict[str, Any]]:
+    per_center = data.get("per_center")
+    if not isinstance(per_center, dict):
+        return []
+
+    rows: list[dict[str, Any]] = []
+    for center, center_payload in sorted(per_center.items()):
+        if not isinstance(center_payload, dict):
+            continue
+        blocks = _pn2021c_metric_blocks(center_payload)
+        if not blocks:
+            continue
+        stats = blocks[0]
+        for metric in ("macro_auroc", "macro_auprc"):
+            _emit_metric(
+                rows,
+                path=path,
+                artifact_type=artifact_type,
+                run_id=run_id,
+                dataset="pn2021c",
+                view=PN2021C_ALL_ZERO_KEPT_CORRUPTED_REFEXCLUDED,
+                scope="center",
+                center=str(center),
+                metric=metric,
+                value=_mean_metric(blocks, metric),
+                stats=stats,
+                mapping_version=mapping_version,
+                mapping_hash=mapping_hash,
+                class_order=class_order,
+            )
+        for metric in ("drop_all_zero_macro_auroc", "drop_all_zero_macro_auprc"):
+            _emit_metric(
+                rows,
+                path=path,
+                artifact_type=artifact_type,
+                run_id=run_id,
+                dataset="pn2021c",
+                view=PN2021C_DROP_ALL_ZERO_CORRUPTED_REFEXCLUDED,
+                scope="center",
+                center=str(center),
+                metric=metric,
+                value=_mean_metric(blocks, metric),
+                stats=_drop_all_zero_stats(stats),
+                mapping_version=mapping_version,
+                mapping_hash=mapping_hash,
+                class_order=class_order,
+            )
+    return rows
+
+
 def _extract_named_metric_block(
     rows: list[dict[str, Any]],
     *,
@@ -644,6 +740,17 @@ def _extract_rows(
     if artifact_type == "eval_result":
         rows.extend(
             _extract_eval_crosscenter_rows(
+                data,
+                path=path,
+                artifact_type=artifact_type,
+                run_id=run_id,
+                mapping_version=mapping_version,
+                mapping_hash=mapping_hash,
+                class_order=class_order,
+            )
+        )
+        rows.extend(
+            _extract_pn2021c_rows(
                 data,
                 path=path,
                 artifact_type=artifact_type,

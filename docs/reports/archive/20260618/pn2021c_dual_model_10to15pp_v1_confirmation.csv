@@ -1,6 +1,0 @@
-operator,candidate,centers,corruption_inputs,powerline_branch,effnet_mean_drop_auroc_pp,ecgfounder_mean_drop_auroc_pp,effnet_mean_drop_auprc_pp,ecgfounder_mean_drop_auprc_pp,inter_model_gap_auroc_pp,four_center_status
-baseline_shift,dual_model_10to15pp_v1,"chapman_shaoxing,cpsc_2018,georgia,ningbo","bottleneck5000,raw_first",,12.7556,6.3555,15.2647,10.6119,6.4001,miss_low
-baseline_wander,dual_model_10to15pp_v1,"chapman_shaoxing,cpsc_2018,georgia,ningbo","bottleneck5000,raw_first",,12.0069,12.4982,15.3547,17.9549,0.4913,in_band
-emg_noise,dual_model_10to15pp_v1,"chapman_shaoxing,cpsc_2018,georgia,ningbo","bottleneck5000,raw_first",,15.1512,15.3773,18.0616,22.8573,0.2261,miss_high
-powerline_noise,dual_model_10to15pp_v1,"chapman_shaoxing,cpsc_2018,georgia,ningbo",native_raw_first,native_raw_first,11.2029,16.2444,11.4525,18.9817,5.0415,miss_high
-random_leads_masking,dual_model_10to15pp_v1,"chapman_shaoxing,cpsc_2018,georgia,ningbo","bottleneck5000,raw_first",,12.5482,11.9601,15.7645,19.1756,0.5882,in_band
