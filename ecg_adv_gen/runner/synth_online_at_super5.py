@@ -61,7 +61,7 @@ from adversarial.efficientnet_victim_tierM import (  # noqa: E402
 from adversarial.latent_hull_pgd import LatentHullPGDGenerator  # noqa: E402
 from methods.augmix.augmix import _apply_op  # noqa: E402
 from methods.augmix.jsd_loss import jsd_multilabel  # noqa: E402
-from methods.augmix.severity import AVAILABLE_OPS  # noqa: E402
+from methods.augmix.severity import AVAILABLE_OPS, build_op  # noqa: E402
 from ecg_adv_gen.evaluation.pn2021c import (  # noqa: E402
     STRESS_PROFILE_CHOICES as PN2021C_STRESS_PROFILE_CHOICES,
     build_corruption_op as _build_pn2021c_corruption_op,
@@ -253,6 +253,86 @@ class TargetRealRawFirstCorruptionDataset(Dataset):
         )
 
 
+def _adjust_channel_dependency_np(ecg: np.ndarray) -> np.ndarray:
+    ecg[2] = ecg[1] - ecg[0]
+    ecg[3] = -(ecg[1] + ecg[0]) / 2
+    ecg[4] = ecg[0] - ecg[1] / 2
+    ecg[5] = ecg[1] - ecg[0] / 2
+    return ecg
+
+
+def _standard_augmix_op_np(sig_ct: np.ndarray, op_name: str, severity: int) -> np.ndarray:
+    """NumPy equivalent of methods.augmix severity ops for standard profiles."""
+
+    op = build_op(op_name, int(severity))
+    out = np.asarray(sig_ct, dtype=np.float32).copy()
+    if getattr(op, "p", 1.0) <= np.random.uniform(0, 1):
+        return out
+    csz, tsz = out.shape
+    if op_name == "powerline_noise":
+        amp = np.random.uniform(op.min_amplitude, op.max_amplitude, size=(1, 1))
+        f = 50 if np.random.uniform(0, 1) > 0.5 else 60
+        t = np.linspace(0, tsz - 1, tsz)
+        phase = np.random.uniform(0, 2 * np.pi)
+        noise = np.cos(2 * np.pi * f * (t / op.freq) + phase)
+        out = out + noise * amp
+        if getattr(op, "dependency", False):
+            out = _adjust_channel_dependency_np(out)
+    elif op_name == "emg_noise":
+        amp = np.random.uniform(op.min_amplitude, op.max_amplitude, size=(csz, 1))
+        noise = np.random.normal(0, 1, [csz, tsz])
+        out = out + noise * amp
+        if getattr(op, "dependency", False):
+            out = _adjust_channel_dependency_np(out)
+    elif op_name == "baseline_shift":
+        shift_length = tsz * op.shift_ratio
+        amp_channel = np.random.choice([1, -1], size=(csz, 1))
+        amp_general = np.random.uniform(op.min_amplitude, op.max_amplitude, size=(1, 1))
+        amp = amp_channel - amp_general
+        noise = np.zeros(shape=(csz, tsz), dtype=np.float32)
+        for _ in range(op.num_segment):
+            segment_len = np.random.normal(shift_length, shift_length * 0.2)
+            t0 = int(np.random.uniform(0, tsz - segment_len))
+            t = int(t0 + segment_len)
+            noise[np.arange(csz), t0:t] = 1
+        out = out + noise * amp
+        if getattr(op, "dependency", False):
+            out = _adjust_channel_dependency_np(out)
+    elif op_name == "baseline_wander":
+        amp_channel = np.random.normal(1, 0.5, size=(csz, 1))
+        amp_general = np.random.uniform(op.min_amplitude, op.max_amplitude, size=op.k)
+        noise = np.zeros(shape=(1, tsz), dtype=np.float32)
+        t = np.linspace(0, tsz - 1, tsz)
+        for k in range(op.k):
+            f = np.random.uniform(op.min_freq, op.max_freq)
+            phase = np.random.uniform(0, 2 * np.pi)
+            noise += np.cos(2 * np.pi * f * (t / op.freq) + phase) * amp_general[k]
+        out = out + (noise * amp_channel).astype(np.float32)
+        if getattr(op, "dependency", False):
+            out = _adjust_channel_dependency_np(out)
+    elif op_name == "random_leads_masking":
+        new_sample = np.zeros_like(out)
+        if op.mask_leads_selection == "random":
+            if op.max_masked_leads is None:
+                survivors = np.random.uniform(0, 1, size=12) >= op.mask_leads_prob
+            else:
+                max_masked = min(12, max(0, int(op.max_masked_leads)))
+                min_masked = min(max_masked, max(0, int(op.min_masked_leads)))
+                survivors = np.ones(12, dtype=bool)
+                if max_masked > 0:
+                    n_masked = int(np.random.randint(min_masked, max_masked + 1))
+                    if n_masked > 0:
+                        masked = np.random.choice(np.arange(12), size=n_masked, replace=False)
+                        survivors[masked] = False
+            new_sample[survivors] = out[survivors]
+            out = new_sample
+        else:
+            raise ValueError("standard NumPy fast path only supports random lead masking")
+    else:
+        raise ValueError(f"unknown op: {op_name}")
+    return out.astype(np.float32, copy=False)
+
+
 def set_all_seeds(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
@@ -260,6 +340,12 @@ def set_all_seeds(seed: int) -> None:
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+
+
+def parse_float_sequence(value: str | None) -> List[float] | None:
+    if value is None or value == "":
+        return None
+    return [float(x.strip()) for x in value.split(",") if x.strip()]
 
 
 def train_latent_augmix_consistency_epoch(
@@ -656,6 +742,10 @@ def build_three_chain_vae_lhat_augmix_views(
     alpha: float,
     ops: List[str],
     rng: np.random.Generator,
+    third_chain_role: str = "vae_lhat_adversarial_waveform",
+    chain_base_mode: str = "clean_clean_third",
+    chain_weights: List[float] | None = None,
+    adv_base_mix: float = 1.0,
 ) -> Tuple[np.ndarray, Dict[str, Any]]:
     """Locked wrapper: two ECG corruption chains plus one uncorrupted VAE-LHAT chain."""
 
@@ -665,9 +755,9 @@ def build_three_chain_vae_lhat_augmix_views(
         op_severity: int,
         op_severity_profile: str,
     ) -> np.ndarray:
-        sig_t = torch.from_numpy(sig_ct.copy()).float()
         if op_severity_profile == "standard":
-            return _apply_op(sig_t, op_name, int(op_severity)).cpu().numpy().astype(np.float32, copy=False)
+            return _standard_augmix_op_np(sig_ct, op_name, int(op_severity))
+        sig_t = torch.from_numpy(sig_ct.copy()).float()
         op = _build_pn2021c_corruption_op(
             op_name,
             int(op_severity),
@@ -690,14 +780,74 @@ def build_three_chain_vae_lhat_augmix_views(
         mixture_beta_a=None,
         mixture_beta_b=None,
         op_schedule="random",
-        chain_weights=None,
+        chain_weights=chain_weights,
         ops=ops,
         rng=rng,
         op_apply_fn=_apply_augmix_op_np,
         available_ops=AVAILABLE_OPS,
         renorm=True,
         clip_abs=6.0,
+        third_chain_role=third_chain_role,
+        chain_base_mode=chain_base_mode,
+        adv_base_mix=adv_base_mix,
     )
+
+
+def build_clean_anchor_augmix_epoch(
+    target_real_ds: TargetRealWaveformDataset,
+    args: argparse.Namespace,
+    epoch: int,
+) -> Dict[str, Any]:
+    """Build no-VAE three-chain AugMix views from K500 clean anchors."""
+
+    n = len(target_real_ds)
+    if n <= 0:
+        raise RuntimeError("clean-anchor AugMix requires a non-empty target_real_npz")
+    k_anchor = max(1, int(args.K_anchor))
+    rng = np.random.default_rng(int(args.seed) + int(epoch) * 100003)
+    picks = rng.choice(n, size=k_anchor, replace=k_anchor > n)
+    clean: List[np.ndarray] = []
+    labels: List[np.ndarray] = []
+    for idx in picks:
+        sig_t, label_t = target_real_ds[int(idx)]
+        clean.append(sig_t.detach().cpu().numpy().astype(np.float32, copy=False))
+        labels.append(label_t.detach().cpu().numpy().astype(np.float32, copy=False))
+    clean_np = np.stack(clean, axis=0).astype(np.float32, copy=False)
+    labels_np = np.stack(labels, axis=0).astype(np.float32, copy=False)
+    views_np, stats = build_three_chain_vae_lhat_augmix_views(
+        anchor_signals_ct=clean_np,
+        adv_signals_ct=clean_np,
+        copies=args.latent_augmix_copies,
+        severity=args.latent_augmix_severity,
+        severity_profile=args.latent_augmix_severity_profile,
+        width=args.latent_augmix_width,
+        depth=args.latent_augmix_depth,
+        alpha=args.latent_augmix_alpha,
+        ops=list(args.latent_augmix_ops),
+        rng=rng,
+        third_chain_role="clean_anchor_control",
+        chain_base_mode=args.latent_augmix_chain_base_mode,
+        chain_weights=parse_float_sequence(args.latent_augmix_chain_weights),
+    )
+    labels_rep = np.tile(
+        labels_np,
+        (max(1, int(args.latent_augmix_copies)), 1),
+    )[: views_np.shape[0]]
+    clean_rep = np.tile(
+        clean_np,
+        (max(1, int(args.latent_augmix_copies)), 1, 1),
+    )[: views_np.shape[0]]
+    stats["corruption_source"] = "target_real_clean_anchor"
+    stats["anchor_sample_mode"] = "clean_anchor_control"
+    stats["anchor_count"] = int(clean_np.shape[0])
+    return {
+        "clean": clean_np,
+        "clean_rep": clean_rep.astype(np.float32, copy=False),
+        "views": views_np.astype(np.float32, copy=False),
+        "labels": labels_np.astype(np.float32, copy=False),
+        "labels_rep": labels_rep.astype(np.float32, copy=False),
+        "stats": stats,
+    }
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -717,6 +867,7 @@ def push_adv_to_buffer(
     label_mode: str = "hard",
     teacher_mix: float = 0.7,
     soft_target_floor: float = 0.0,
+    sample_weight_scale: float = 1.0,
 ) -> Dict[str, int]:
     """Push gates-passed adv signals into the buffer with -1 sentinel labels.
 
@@ -753,11 +904,12 @@ def push_adv_to_buffer(
                 soft_target_floor=soft_target_floor,
             )
         )
-        score = (1.0 - 2.0 * abs(prob_t - 0.5)) * trust                # ∈ [0, trust]
+        score = (1.0 - 2.0 * abs(prob_t - 0.5)) * trust  # ∈ [0, trust]
         buffer.add_one(
             torch.from_numpy(np.ascontiguousarray(sig_250)).float(),
             lbl,
             score,
+            sample_weight=float(sample_weight_scale),
         )
         n_pushed += 1
     return {
@@ -765,6 +917,7 @@ def push_adv_to_buffer(
         "n_dropped_by_trust": n_dropped_by_trust,
         "n_dropped_by_boundary": n_dropped_by_boundary,
         "label_mode": label_mode,
+        "sample_weight_scale": float(sample_weight_scale),
     }
 
 
@@ -925,6 +1078,12 @@ def parse_args():
                    help="Sampling weight for --target_real_npz supervised stream.")
     p.add_argument("--adv_weight", type=float, default=0.5)
     p.add_argument(
+        "--vae_adv_stream_sample_scale",
+        type=float,
+        default=1.0,
+        help="Quality-buffer score multiplier for VAE hard samples when clean AugMix views share the augment stream.",
+    )
+    p.add_argument(
         "--adv_weight_warmup_epochs",
         type=int,
         default=0,
@@ -954,6 +1113,36 @@ def parse_args():
     p.add_argument("--latent_augmix_latent_weight_cap", type=float, default=0.30,
                    help="Maximum Dirichlet weight assigned to the x_adv branch.")
     p.add_argument(
+        "--latent_augmix_third_chain_role",
+        choices=["vae_lhat_adversarial_waveform", "clean_anchor_control"],
+        default="vae_lhat_adversarial_waveform",
+        help=(
+            "Role of the third locked AugMix chain. clean_anchor_control "
+            "skips VAE-LHAT adversarial generation and uses clean K500 anchors."
+        ),
+    )
+    p.add_argument(
+        "--latent_augmix_chain_base_mode",
+        choices=["clean_clean_third", "all_clean", "one_adv", "all_adv", "all_clean_plus_vae_adv"],
+        default="clean_clean_third",
+        help=(
+            "Base waveform for locked AugMix chains. Default keeps c117: two "
+            "clean-anchor corruption chains plus the third chain role. "
+            "all_clean/all_adv corrupt all three chains from clean anchors or "
+            "VAE-LHAT adversarial waveforms; one_adv corrupts one chain from "
+            "the VAE-LHAT adversarial waveform. all_clean_plus_vae_adv keeps "
+            "clean-anchor AugMix chains while adding a separate VAE-LHAT "
+            "supervised hard-sample stream."
+        ),
+    )
+    p.add_argument(
+        "--latent_augmix_adv_base_mix",
+        type=float,
+        default=1.0,
+        help="For one_adv/all_adv, use (1-rho)*clean + rho*VAE-adv as the corruption base.",
+    )
+    p.add_argument("--latent_augmix_chain_weights", default="")
+    p.add_argument(
         "--latent_augmix_ops",
         nargs="+",
         default=["powerline_noise", "emg_noise", "baseline_wander", "baseline_shift"],
@@ -968,6 +1157,12 @@ def parse_args():
     )
     p.add_argument("--latent_augmix_bce_weight", type=float, default=1.0)
     p.add_argument("--latent_augmix_consistency_max_batches", type=int, default=0)
+    p.add_argument(
+        "--vae_adv_consistency_weight",
+        type=float,
+        default=0.0,
+        help="Extra soft-BCE consistency from clean VAE anchor to VAE-LHAT adversarial waveform.",
+    )
     p.add_argument("--qab_size", type=int, default=2048)
     p.add_argument("--class_trust", default=None,
                    help="Path to the real-all-present class_trust.json written by the managed wrapper.")
@@ -1012,9 +1207,41 @@ def parse_args():
         action="store_true",
         help="Allow critical args in a resume checkpoint to differ from the current command.",
     )
+    p.add_argument(
+        "--final_checkpoint_only",
+        action="store_true",
+        help="Skip epoch-boundary resume checkpoints and write last_model.pt once at the end.",
+    )
     args = p.parse_args()
+    if float(args.vae_adv_stream_sample_scale) < 0.0:
+        p.error("--vae_adv_stream_sample_scale must be non-negative")
+    if not (0.0 <= float(args.latent_augmix_adv_base_mix) <= 1.0):
+        p.error("--latent_augmix_adv_base_mix must be in [0, 1]")
+    if float(args.vae_adv_consistency_weight) < 0.0:
+        p.error("--vae_adv_consistency_weight must be non-negative")
     if int(args.latent_augmix_copies) <= 0:
         p.error("--latent_augmix_copies must be > 0 for locked latent AugMix")
+    if (
+        args.latent_augmix_chain_base_mode in {"one_adv", "all_adv"}
+        and args.latent_augmix_third_chain_role == "clean_anchor_control"
+    ):
+        p.error(
+            f"--latent_augmix_chain_base_mode {args.latent_augmix_chain_base_mode} "
+            "cannot use clean_anchor_control"
+        )
+    if (
+        (
+            args.latent_augmix_third_chain_role == "clean_anchor_control"
+            or args.latent_augmix_chain_base_mode in {"all_clean", "all_clean_plus_vae_adv"}
+        )
+        and not args.target_real_npz
+    ):
+        p.error("clean-anchor latent AugMix requires --target_real_npz")
+    if (
+        args.latent_augmix_third_chain_role == "clean_anchor_control"
+        or args.latent_augmix_chain_base_mode in {"all_clean", "all_clean_plus_vae_adv"}
+    ) and float(args.adv_weight) <= 0.0:
+        p.error("clean-anchor latent AugMix requires --adv_weight > 0; it samples the augment stream")
     return args
 
 
@@ -1088,6 +1315,10 @@ def main():
         f"profile={args.latent_augmix_severity_profile} "
         "mixture=beta:0.5 op_schedule=random chain_weights=dirichlet "
         "signal_space=model_zscore corruption_source=vae_decode "
+        f"third_chain_role={args.latent_augmix_third_chain_role} "
+        f"chain_base_mode={args.latent_augmix_chain_base_mode} "
+        f"adv_base_mix={args.latent_augmix_adv_base_mix} "
+        f"chain_weights={args.latent_augmix_chain_weights or 'dirichlet'} "
         f"w_lat_cap={args.latent_augmix_latent_weight_cap} "
         f"ops={args.latent_augmix_ops}",
         flush=True,
@@ -1102,6 +1333,9 @@ def main():
     )
     if int(args.latent_augmix_width) != 3:
         raise ValueError("locked three-chain latent AugMix requires --latent_augmix_width 3")
+    chain_weights = parse_float_sequence(args.latent_augmix_chain_weights)
+    if chain_weights is not None and len(chain_weights) != 3:
+        raise ValueError("--latent_augmix_chain_weights must contain exactly three comma-separated values")
     # ── Load synth pool (Stage 1 frozen) for training ──────────────────────
     synth_latents, synth_labels, synth_center, source_meta = load_synth_pool(args.synth_npz)
     print(f"[setup] synth pool: {synth_latents.shape} labels={synth_labels.shape} "
@@ -1290,9 +1524,16 @@ def main():
             "mixture_beta_a": None,
             "mixture_beta_b": None,
             "op_schedule": "random",
-            "chain_weights": None,
+            "chain_weights": parse_float_sequence(args.latent_augmix_chain_weights),
             "signal_space": "model_zscore",
-            "corruption_source": "vae_decode",
+            "corruption_source": (
+                "vae_decode"
+                if args.latent_augmix_third_chain_role == "vae_lhat_adversarial_waveform"
+                else "target_real_clean_anchor"
+            ),
+            "third_chain_role": str(args.latent_augmix_third_chain_role),
+            "chain_base_mode": str(args.latent_augmix_chain_base_mode),
+            "adv_base_mix": float(args.latent_augmix_adv_base_mix),
             "severity": int(args.latent_augmix_severity),
             "severity_profile": str(args.latent_augmix_severity_profile),
             "severity_params_file": "",
@@ -1371,45 +1612,79 @@ def main():
         latent_augmix_direct_clean: np.ndarray | None = None
         latent_augmix_direct_views: np.ndarray | None = None
         latent_augmix_direct_labels: np.ndarray | None = None
+        decoupled_clean_augmix_mode = (
+            args.latent_augmix_chain_base_mode == "all_clean_plus_vae_adv"
+        )
+        clean_anchor_mode = (
+            not decoupled_clean_augmix_mode
+            and (
+                args.latent_augmix_third_chain_role == "clean_anchor_control"
+                or args.latent_augmix_chain_base_mode == "all_clean"
+            )
+        )
+        clean_anchor_bundle: Dict[str, Any] | None = None
 
-        # Phase A: PGD on synth pool with the *current* victim
-        # Plan Rev 13.2: StratifiedPoolWalker draws no-revisit-per-epoch,
-        # restricted to NORM/MI/STTC scope.
         k_per_cls: Dict[str, int] = {}
         victim.model.eval()
-        k_per_cls = weighted_anchor_quotas(
-            classes_in_scope,
-            walker_class_sizes,
-            args.K_anchor,
-            anchor_class_weight_map,
-        )
-        drawn = walker.sample(k_per_cls)
-        print(f"[ep{epoch:02d}] anchor class quotas: {k_per_cls}", flush=True)
-        all_picks = np.concatenate(
-            [drawn[c] for c in classes_in_scope if drawn[c].size > 0]
-        ) if any(drawn[c].size > 0 for c in classes_in_scope) else np.empty(0, dtype=np.int64)
-        adv_signals, anc_signals, target_oh, delta_stats = run_pgd_on_synth_pool(
-            pgd_gen=pgd_gen,
-            synth_latents=synth_latents,
-            synth_labels=synth_labels,
-            pgd_batch=args.pgd_batch,
-            device=args.device,
-            picked_indices=all_picks,
-            latent_hull_index=latent_hull_index,
-            hull_M=args.hull_M,
-            hull_mix_label_mode=args.hull_mix_label_mode,
-            hull_label_lambda_y=args.hull_label_lambda_y,
-            hull_label_positive=args.hull_label_positive,
-            hull_label_negative_floor=args.hull_label_negative_floor,
-            hull_label_new_class_cap=args.hull_label_new_class_cap,
-            store_raw_decoded=False,
-        )
-        if adv_signals.shape[0] == 0:
-            print(f"[ep{epoch:02d}] empty walker pick — skip epoch", flush=True)
-            continue
+        if clean_anchor_mode:
+            if target_real_ds is None:
+                raise RuntimeError("clean-anchor AugMix requires target_real_ds")
+            clean_anchor_bundle = build_clean_anchor_augmix_epoch(target_real_ds, args, epoch)
+            n_clean = int(clean_anchor_bundle["clean"].shape[0])
+            anc_signals = clean_anchor_bundle["clean"]
+            adv_signals = clean_anchor_bundle["views"][:n_clean]
+            target_oh = clean_anchor_bundle["labels"]
+            if clean_anchor_bundle["views"].shape[0] == 0:
+                print(f"[ep{epoch:02d}] empty clean-anchor AugMix view set — skip epoch", flush=True)
+                continue
+            diff = adv_signals.reshape(adv_signals.shape[0], -1) - anc_signals.reshape(anc_signals.shape[0], -1)
+            delta_norms = np.linalg.norm(diff, axis=1)
+            delta_stats = {
+                "mean_delta_norm": float(np.mean(delta_norms)),
+                "max_delta_norm": float(np.max(delta_norms)),
+                "hull_weight_entropy_mean": float("nan"),
+                "hull_weight_top1_mean": float("nan"),
+            }
+            k_per_cls = {"clean_anchor_control": n_clean}
+            print(
+                f"[ep{epoch:02d}] clean-anchor AugMix anchors: "
+                f"k={k_per_cls['clean_anchor_control']} generated={clean_anchor_bundle['views'].shape[0]}",
+                flush=True,
+            )
+        else:
+            # Phase A: PGD on synth pool with the *current* victim.
+            k_per_cls = weighted_anchor_quotas(
+                classes_in_scope,
+                walker_class_sizes,
+                args.K_anchor,
+                anchor_class_weight_map,
+            )
+            drawn = walker.sample(k_per_cls)
+            print(f"[ep{epoch:02d}] anchor class quotas: {k_per_cls}", flush=True)
+            all_picks = np.concatenate(
+                [drawn[c] for c in classes_in_scope if drawn[c].size > 0]
+            ) if any(drawn[c].size > 0 for c in classes_in_scope) else np.empty(0, dtype=np.int64)
+            adv_signals, anc_signals, target_oh, delta_stats = run_pgd_on_synth_pool(
+                pgd_gen=pgd_gen,
+                synth_latents=synth_latents,
+                synth_labels=synth_labels,
+                pgd_batch=args.pgd_batch,
+                device=args.device,
+                picked_indices=all_picks,
+                latent_hull_index=latent_hull_index,
+                hull_M=args.hull_M,
+                hull_mix_label_mode=args.hull_mix_label_mode,
+                hull_label_lambda_y=args.hull_label_lambda_y,
+                hull_label_positive=args.hull_label_positive,
+                hull_label_negative_floor=args.hull_label_negative_floor,
+                hull_label_new_class_cap=args.hull_label_new_class_cap,
+                store_raw_decoded=False,
+            )
+            if adv_signals.shape[0] == 0:
+                print(f"[ep{epoch:02d}] empty walker pick — skip epoch", flush=True)
+                continue
 
-        # Phase B: gates
-        # ASR (signals → victim)
+        # Phase B: gates and diagnostics.
         asr_info = compute_asr(victim, adv_signals, target_oh,
                                device=args.device, batch_size=128)
         decode_invalid_stats = decoded_signal_invalid_stats(adv_signals)
@@ -1421,7 +1696,6 @@ def main():
             device=args.device,
             crop_len=args.crop_len,
         )
-        # Semantic (Einthoven, HR, QRS)
         sem_info = compute_semantic_gate(
             adv_signals, anc_signals,
             einthoven_p95_max=args.einthoven_p95_max,
@@ -1441,54 +1715,83 @@ def main():
             if args.disable_quality_gate and not sem_info.get("PASS", False):
                 print(f"[ep{epoch:02d}] medical gate FAIL ignored: "
                       f"{sem_info.get('fail_reasons')}", flush=True)
-            # Center-crop adv (B, 12, 1000) → (B, 12, crop_len) on the time axis
-            start = (adv_signals.shape[-1] - args.crop_len) // 2
-            adv_ct_crop = adv_signals[..., start:start + args.crop_len]
-            with torch.no_grad():
-                lg_chunks = []
-                teacher_prob_chunks = []
-                for i in range(0, adv_ct_crop.shape[0], 128):
-                    x_t = torch.from_numpy(adv_ct_crop[i:i + 128]).float().to(args.device)
-                    lg_chunks.append(victim.model(x_t).cpu().numpy())
-                    if teacher_model is not None:
-                        teacher_prob_chunks.append(torch.sigmoid(teacher_model(x_t)).cpu().numpy())
-                logits_arr = np.concatenate(lg_chunks)
-                teacher_probs_arr = (
-                    np.concatenate(teacher_prob_chunks)
-                    if teacher_prob_chunks else None
+            push_stats = {}
+            if clean_anchor_mode:
+                latent_augmix_signals = clean_anchor_bundle["views"]
+                latent_augmix_stats = clean_anchor_bundle["stats"]
+                labels_rep = clean_anchor_bundle["labels_rep"]
+                latent_augmix_clean_for_consistency = clean_anchor_bundle["clean"]
+                latent_augmix_labels_for_consistency = clean_anchor_bundle["labels"]
+            else:
+                # Center-crop adv (B, 12, 1000) → (B, 12, crop_len) on the time axis
+                start = (adv_signals.shape[-1] - args.crop_len) // 2
+                adv_ct_crop = adv_signals[..., start:start + args.crop_len]
+                with torch.no_grad():
+                    lg_chunks = []
+                    teacher_prob_chunks = []
+                    for i in range(0, adv_ct_crop.shape[0], 128):
+                        x_t = torch.from_numpy(adv_ct_crop[i:i + 128]).float().to(args.device)
+                        lg_chunks.append(victim.model(x_t).cpu().numpy())
+                        if teacher_model is not None:
+                            teacher_prob_chunks.append(torch.sigmoid(teacher_model(x_t)).cpu().numpy())
+                    logits_arr = np.concatenate(lg_chunks)
+                    teacher_probs_arr = (
+                        np.concatenate(teacher_prob_chunks)
+                        if teacher_prob_chunks else None
+                    )
+                push_stats = push_adv_to_buffer(
+                    buffer=buffer, adv_signals_ct=adv_signals,
+                    target_one_hot=target_oh, victim_logits=logits_arr,
+                    crop_len=args.crop_len, class_trust=class_trust,
+                    boundary_prob_min=args.boundary_prob_min,
+                    boundary_prob_max=args.boundary_prob_max,
+                    teacher_probs=teacher_probs_arr,
+                    label_mode=args.adv_label_mode,
+                    teacher_mix=args.adv_teacher_mix,
+                    soft_target_floor=args.adv_soft_target_floor,
+                    sample_weight_scale=float(args.vae_adv_stream_sample_scale),
                 )
-            push_stats = push_adv_to_buffer(
-                buffer=buffer, adv_signals_ct=adv_signals,
-                target_one_hot=target_oh, victim_logits=logits_arr,
-                crop_len=args.crop_len, class_trust=class_trust,
-                boundary_prob_min=args.boundary_prob_min,
-                boundary_prob_max=args.boundary_prob_max,
-                teacher_probs=teacher_probs_arr,
-                label_mode=args.adv_label_mode,
-                teacher_mix=args.adv_teacher_mix,
-                soft_target_floor=args.adv_soft_target_floor,
-            )
-            latent_augmix_clean_for_consistency = anc_signals
-            latent_augmix_signals, latent_augmix_stats = build_three_chain_vae_lhat_augmix_views(
-                anchor_signals_ct=anc_signals,
-                adv_signals_ct=adv_signals,
-                copies=args.latent_augmix_copies,
-                severity=args.latent_augmix_severity,
-                severity_profile=args.latent_augmix_severity_profile,
-                width=args.latent_augmix_width,
-                depth=args.latent_augmix_depth,
-                alpha=args.latent_augmix_alpha,
-                ops=list(args.latent_augmix_ops),
-                rng=rng,
-            )
-            latent_augmix_stats["corruption_source"] = "vae_decode"
+                if decoupled_clean_augmix_mode:
+                    if target_real_ds is None:
+                        raise RuntimeError("all_clean_plus_vae_adv requires target_real_ds")
+                    clean_anchor_bundle = build_clean_anchor_augmix_epoch(target_real_ds, args, epoch)
+                    latent_augmix_signals = clean_anchor_bundle["views"]
+                    latent_augmix_stats = clean_anchor_bundle["stats"]
+                    latent_augmix_stats["decoupled_vae_adv_stream"] = True
+                    latent_augmix_stats["vae_adv_pushed"] = int(push_stats.get("n_pushed", 0))
+                    labels_rep = clean_anchor_bundle["labels_rep"]
+                    latent_augmix_clean_for_consistency = clean_anchor_bundle["clean"]
+                    latent_augmix_labels_for_consistency = clean_anchor_bundle["labels"]
+                else:
+                    latent_augmix_clean_for_consistency = anc_signals
+                    latent_augmix_labels_for_consistency = target_oh
+                    latent_augmix_signals, latent_augmix_stats = build_three_chain_vae_lhat_augmix_views(
+                        anchor_signals_ct=anc_signals,
+                        adv_signals_ct=adv_signals,
+                        copies=args.latent_augmix_copies,
+                        severity=args.latent_augmix_severity,
+                        severity_profile=args.latent_augmix_severity_profile,
+                        width=args.latent_augmix_width,
+                        depth=args.latent_augmix_depth,
+                        alpha=args.latent_augmix_alpha,
+                        ops=list(args.latent_augmix_ops),
+                        rng=rng,
+                        third_chain_role=args.latent_augmix_third_chain_role,
+                        chain_base_mode=args.latent_augmix_chain_base_mode,
+                        chain_weights=parse_float_sequence(args.latent_augmix_chain_weights),
+                        adv_base_mix=float(args.latent_augmix_adv_base_mix),
+                    )
+                    latent_augmix_stats["corruption_source"] = "vae_decode"
             if latent_augmix_signals.shape[0] > 0:
                 start = (latent_augmix_signals.shape[-1] - args.crop_len) // 2
                 latent_augmix_ct_crop = latent_augmix_signals[..., start:start + args.crop_len]
-                labels_rep = np.tile(
-                    target_oh,
-                    (max(1, int(args.latent_augmix_copies)), 1),
-                )[:latent_augmix_signals.shape[0]]
+                if decoupled_clean_augmix_mode:
+                    labels_rep = clean_anchor_bundle["labels_rep"]
+                elif not clean_anchor_mode:
+                    labels_rep = np.tile(
+                        target_oh,
+                        (max(1, int(args.latent_augmix_copies)), 1),
+                    )[:latent_augmix_signals.shape[0]]
                 with torch.no_grad():
                     lg_chunks = []
                     teacher_prob_chunks = []
@@ -1522,7 +1825,7 @@ def main():
                 )
                 latent_augmix_direct_clean = latent_augmix_clean_for_consistency.astype(np.float32, copy=False)
                 latent_augmix_direct_views = latent_augmix_signals.astype(np.float32, copy=False)
-                latent_augmix_direct_labels = target_oh.astype(np.float32, copy=False)
+                latent_augmix_direct_labels = latent_augmix_labels_for_consistency.astype(np.float32, copy=False)
             print(
                 f"[ep{epoch:02d}] latent-branch AugMix: "
                 f"generated={latent_augmix_stats.get('n_generated', 0)} "
@@ -1628,6 +1931,39 @@ def main():
                 trainable_params=trainable_params,
                 max_batches=args.latent_augmix_consistency_max_batches,
             )
+        vae_adv_consistency_stats = {
+            "enabled": False,
+            "reason": "disabled_or_no_vae_adv",
+            "loss": float("nan"),
+            "bce_loss": float("nan"),
+            "consistency_loss": float("nan"),
+            "n_batches": 0,
+            "n_generated": 0,
+        }
+        if (
+            float(args.vae_adv_consistency_weight) > 0.0
+            and (not clean_anchor_mode)
+            and adv_signals.shape[0] > 0
+            and anc_signals.shape[0] == adv_signals.shape[0]
+        ):
+            vae_adv_consistency_stats = train_latent_augmix_consistency_epoch(
+                model=victim.model,
+                clean_signals_ct=anc_signals,
+                augmix_signals_ct=adv_signals,
+                labels_np=target_oh,
+                optimizer=optimizer,
+                criterion=criterion,
+                device=args.device,
+                copies=1,
+                consistency_weight=args.vae_adv_consistency_weight,
+                bce_weight=0.0,
+                consistency_loss="soft_bce",
+                batch_size=args.batch_size,
+                crop_len=args.crop_len,
+                grad_clip=args.grad_clip,
+                trainable_params=trainable_params,
+                max_batches=args.latent_augmix_consistency_max_batches,
+            )
         scheduler.step()
 
         # Phase E: PTBXL val loss
@@ -1715,6 +2051,7 @@ def main():
             "latent_augmix_stats": latent_augmix_stats,
             "latent_augmix_push_stats": latent_augmix_push_stats,
             "latent_augmix_consistency_stats": latent_augmix_consistency_stats,
+            "vae_adv_consistency_stats": vae_adv_consistency_stats,
             "adv_weight_effective": round(float(epoch_adv_weight), 6),
             "adv_weight_warmup_epochs": int(args.adv_weight_warmup_epochs),
             "anchor_class_quotas": dict(k_per_cls),
@@ -1752,7 +2089,8 @@ def main():
               f"eint_p95={sem_info.get('einthoven_mean_p95', float('nan')):.3f} "
               f"buf={len(buffer)} skip={gate_skipped} attack=latent_hull | {elapsed:.0f}s")
 
-        torch.save(victim.model.state_dict(), last_ckpt_path)
+        if not args.final_checkpoint_only:
+            torch.save(victim.model.state_dict(), last_ckpt_path)
         log["epochs"].append(entry)
         with open(log_path, "w") as f:
             json.dump(log, f, indent=2, default=str)
@@ -1770,54 +2108,57 @@ def main():
         }
         with agent_decision_path.open("w", encoding="utf-8") as f:
             json.dump(decision_payload, f, indent=2, sort_keys=True, ensure_ascii=True, default=str)
-        diagnostics_payload = {
-            "schema_version": 1,
-            "epoch": epoch,
-            "run_dir": args.output_dir,
-            "status": "epoch_complete",
-            "train_loss": entry.get("train_loss"),
-            "val_loss": entry.get("val_loss"),
-            "asr": entry.get("asr_overall"),
-            "atk_init": entry.get("atk_init"),
-            "atk_anchor": entry.get("atk_anchor"),
-            "loss_gain": entry.get("loss_gain"),
-            "clean_bce": entry.get("clean_bce"),
-            "adv_bce": entry.get("adv_bce"),
-            "decoded_invalid_rate": entry.get("decoded_invalid_rate"),
-            "adv_weight_effective": entry.get("adv_weight_effective"),
-            "buffer_size": entry.get("buffer_size"),
-            "agent_decision": decision,
-            "checkpoint_latest": str(checkpoint_latest_path),
-        }
-        _append_jsonl(diagnostics_epoch_path, diagnostics_payload)
+        if not args.final_checkpoint_only:
+            diagnostics_payload = {
+                "schema_version": 1,
+                "epoch": epoch,
+                "run_dir": args.output_dir,
+                "status": "epoch_complete",
+                "train_loss": entry.get("train_loss"),
+                "val_loss": entry.get("val_loss"),
+                "asr": entry.get("asr_overall"),
+                "atk_init": entry.get("atk_init"),
+                "atk_anchor": entry.get("atk_anchor"),
+                "loss_gain": entry.get("loss_gain"),
+                "clean_bce": entry.get("clean_bce"),
+                "adv_bce": entry.get("adv_bce"),
+                "decoded_invalid_rate": entry.get("decoded_invalid_rate"),
+                "adv_weight_effective": entry.get("adv_weight_effective"),
+                "buffer_size": entry.get("buffer_size"),
+                "agent_decision": decision,
+                "checkpoint_latest": str(checkpoint_latest_path),
+            }
+            _append_jsonl(diagnostics_epoch_path, diagnostics_payload)
 
-        ckpt_payload = {
-            "schema_version": 1,
-            "epoch": epoch,
-            "global_step": epoch,
-            "model_state_dict": victim.model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
-            "scheduler_state_dict": scheduler.state_dict(),
-            "ewa_params": [p.detach().cpu() for p in ewa_params],
-            "buffer_state": _buffer_state(buffer),
-            "walker_state": _walker_state(walker),
-            "rng_state": _rng_state(rng),
-            "consecutive_low_asr": consecutive_low_asr,
-            "training_log": log,
-            "args": vars(args),
-            "diagnostics_epoch_jsonl": str(diagnostics_epoch_path),
-            "agent_decision_json": str(agent_decision_path),
-        }
-        _atomic_torch_save(ckpt_payload, checkpoint_latest_path)
-        latest_index = {
-            "epoch": epoch,
-            "path": str(checkpoint_latest_path),
-            "kind": "latest",
-            "agent_decision": decision["attack_state"],
-        }
-        _append_jsonl(checkpoint_index_path, latest_index)
+            ckpt_payload = {
+                "schema_version": 1,
+                "epoch": epoch,
+                "global_step": epoch,
+                "model_state_dict": victim.model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "scheduler_state_dict": scheduler.state_dict(),
+                "ewa_params": [p.detach().cpu() for p in ewa_params],
+                "buffer_state": _buffer_state(buffer),
+                "walker_state": _walker_state(walker),
+                "rng_state": _rng_state(rng),
+                "consecutive_low_asr": consecutive_low_asr,
+                "training_log": log,
+                "args": vars(args),
+                "diagnostics_epoch_jsonl": str(diagnostics_epoch_path),
+                "agent_decision_json": str(agent_decision_path),
+            }
+            _atomic_torch_save(ckpt_payload, checkpoint_latest_path)
+            latest_index = {
+                "epoch": epoch,
+                "path": str(checkpoint_latest_path),
+                "kind": "latest",
+                "agent_decision": decision["attack_state"],
+            }
+            _append_jsonl(checkpoint_index_path, latest_index)
 
     # Final result
+    if args.final_checkpoint_only:
+        torch.save(victim.model.state_dict(), last_ckpt_path)
     final = {
         "args":               vars(args),
         "selected_checkpoint": last_ckpt_path,

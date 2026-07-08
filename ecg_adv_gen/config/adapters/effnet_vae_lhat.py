@@ -121,6 +121,10 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
         adaptation["loss"]["target_real_weight"],
         "--adv_weight",
         adaptation["loss"]["adv_weight"],
+        "--vae_adv_stream_sample_scale",
+        adaptation["loss"].get("vae_adv_stream_sample_scale", 1.0),
+        "--vae_adv_consistency_weight",
+        adaptation["loss"].get("vae_adv_consistency_weight", 0.0),
         "--adv_weight_warmup_epochs",
         adaptation["loss"]["adv_weight_warmup_epochs"],
         "--adv_label_mode",
@@ -143,6 +147,12 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
         latent_augmix["alpha"],
         "--latent_augmix_severity",
         latent_augmix["severity"],
+        "--latent_augmix_third_chain_role",
+        latent_augmix.get("third_chain_role", "vae_lhat_adversarial_waveform"),
+        "--latent_augmix_chain_base_mode",
+        latent_augmix.get("chain_base_mode", "clean_clean_third"),
+        "--latent_augmix_adv_base_mix",
+        latent_augmix.get("adv_base_mix", 1.0),
         "--eval_batch_size",
         training["eval_batch_size"],
         "--eval_min_pos",
@@ -166,6 +176,11 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
     _append_optional_sequence(argv, "--latent_augmix_ops", latent_augmix.get("ops"))
     _append_optional_value(
         argv,
+        "--latent_augmix_chain_weights",
+        latent_augmix.get("chain_weights"),
+    )
+    _append_optional_value(
+        argv,
         "--latent_augmix_consistency_weight",
         latent_augmix_consistency.get("consistency_weight"),
     )
@@ -186,6 +201,8 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
     )
     run_tag_extra = adaptation.get("run_tag_extra")
     _append_optional_value(argv, "--run_tag_extra", run_tag_extra)
+    if bool(training.get("final_checkpoint_only", False)):
+        argv.append("--final_checkpoint_only")
     return argv
 
 

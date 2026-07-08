@@ -150,6 +150,7 @@ def main() -> None:
     )
     ap.add_argument("--target_real_weight", type=float, default=80.0)
     ap.add_argument("--adv_weight", type=float, default=0.2)
+    ap.add_argument("--vae_adv_stream_sample_scale", type=float, default=1.0)
     ap.add_argument("--adv_weight_warmup_epochs", type=int, default=0)
     ap.add_argument(
         "--adv_label_mode",
@@ -168,6 +169,16 @@ def main() -> None:
     ap.add_argument("--lr", type=float, default=5e-5)
     ap.add_argument("--train_batch_size", type=int, default=128)
     ap.add_argument("--latent_augmix_latent_weight_cap", type=float, default=0.3)
+    ap.add_argument(
+        "--latent_augmix_third_chain_role",
+        choices=["vae_lhat_adversarial_waveform", "clean_anchor_control"],
+        default="vae_lhat_adversarial_waveform",
+    )
+    ap.add_argument(
+        "--latent_augmix_chain_base_mode",
+        choices=["clean_clean_third", "all_clean", "one_adv", "all_adv", "all_clean_plus_vae_adv"],
+        default="clean_clean_third",
+    )
     ap.add_argument("--latent_augmix_copies", type=int, default=1)
     ap.add_argument("--latent_augmix_width", type=int, default=3)
     ap.add_argument("--latent_augmix_depth", type=int, default=-1)
@@ -200,6 +211,7 @@ def main() -> None:
         default="jsd",
     )
     ap.add_argument("--latent_augmix_bce_weight", type=float, default=1.0)
+    ap.add_argument("--latent_augmix_chain_weights", default="")
     ap.add_argument("--latent_augmix_consistency_max_batches", type=int, default=0)
     ap.add_argument("--eval_batch_size", type=int, default=192)
     ap.add_argument("--eval_min_pos", type=int, default=10)
@@ -221,6 +233,11 @@ def main() -> None:
         "--allow_resume_config_drift",
         action="store_true",
         help="Forwarded to synth_online_at_super5.py for intentional recovery only.",
+    )
+    ap.add_argument(
+        "--final_checkpoint_only",
+        action="store_true",
+        help="Forwarded to synth_online_at_super5.py to avoid epoch resume checkpoint writes.",
     )
     args = ap.parse_args()
 

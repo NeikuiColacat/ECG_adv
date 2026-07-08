@@ -144,6 +144,8 @@ def build_effnet_vae_lhat_train_cmd(
         str(args.target_real_weight),
         "--adv_weight",
         str(args.adv_weight),
+        "--vae_adv_stream_sample_scale",
+        str(getattr(args, "vae_adv_stream_sample_scale", 1.0)),
         "--adv_weight_warmup_epochs",
         str(args.adv_weight_warmup_epochs),
         "--ptbxl_weight",
@@ -202,6 +204,12 @@ def build_effnet_vae_lhat_train_cmd(
             str(getattr(args, "latent_augmix_severity_profile", "standard")),
             "--latent_augmix_latent_weight_cap",
             str(args.latent_augmix_latent_weight_cap),
+            "--latent_augmix_third_chain_role",
+            str(getattr(args, "latent_augmix_third_chain_role", "vae_lhat_adversarial_waveform")),
+            "--latent_augmix_chain_base_mode",
+            str(getattr(args, "latent_augmix_chain_base_mode", "clean_clean_third")),
+            "--latent_augmix_chain_weights",
+            str(getattr(args, "latent_augmix_chain_weights", "")),
             "--latent_augmix_ops",
             *[str(item) for item in args.latent_augmix_ops],
         ]
@@ -222,6 +230,8 @@ def build_effnet_vae_lhat_train_cmd(
         train_cmd.extend(["--resume", str(args.resume)])
     if args.allow_resume_config_drift:
         train_cmd.append("--allow_resume_config_drift")
+    if getattr(args, "final_checkpoint_only", False):
+        train_cmd.append("--final_checkpoint_only")
     return train_cmd
 
 

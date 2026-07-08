@@ -139,11 +139,12 @@ adaptation:
   latent_augmix:
     chain_roles:
       - name: chain1
-        role: official_corruption_chain
+        role: vae_lhat_adversarial_corruption_chain
       - name: chain2
-        role: official_corruption_chain
+        role: vae_lhat_adversarial_corruption_chain
       - name: chain3
-        role: vae_lhat_adversarial_waveform
+        role: vae_lhat_adversarial_corruption_chain
+    chain_base_mode: all_adv
     copies: 2
     latent_weight_cap: 0.25
     width: 3
@@ -165,6 +166,6 @@ adaptation:
       max_batches: 0
 
 run_record:
-  purpose: "Locked EfficientNet1DV2 main-method run: all K500 samples train, no K500 validation split, last checkpoint only, two official corruption chains plus one VAE-LHAT adversarial waveform chain."
+  purpose: "Locked EfficientNet1DV2 main-method run: all K500 samples train, no K500 validation split, last checkpoint only, three official corruption chains built from the VAE-LHAT adversarial waveform base."
   result_summary: Pending. Evaluate PN2021 clean and PN2021-C official severity 5 after managed training completes.
   registration_status: provisional

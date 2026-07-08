@@ -123,6 +123,7 @@ def build_weighted_signal_stream_loader_from_datasets(
     adv_signals: np.ndarray | None = None,
     adv_labels: np.ndarray | None = None,
     adv_teacher_logits: np.ndarray | None = None,
+    adv_sample_weights: np.ndarray | None = None,
     pin_memory: bool = True,
     drop_last: bool = False,
 ) -> DataLoader:
@@ -151,7 +152,15 @@ def build_weighted_signal_stream_loader_from_datasets(
             teacher_logits=adv_teacher_logits,
         )
         datasets.append(adv_ds)
-        weights.extend([float(adv_weight)] * len(adv_ds))
+        if adv_sample_weights is None:
+            weights.extend([float(adv_weight)] * len(adv_ds))
+        else:
+            adv_sample_weights = np.asarray(adv_sample_weights, dtype=np.float64)
+            if adv_sample_weights.shape != (len(adv_ds),):
+                raise ValueError("adv_sample_weights length must match adv_signals")
+            if not np.isfinite(adv_sample_weights).all() or np.any(adv_sample_weights < 0):
+                raise ValueError("adv_sample_weights must be finite and non-negative")
+            weights.extend((float(adv_weight) * adv_sample_weights).tolist())
     if not datasets:
         raise RuntimeError("no active training streams; check source/target/adv weights")
 
@@ -185,6 +194,7 @@ def build_weighted_signal_stream_loader(
     adv_signals: np.ndarray | None = None,
     adv_labels: np.ndarray | None = None,
     adv_teacher_logits: np.ndarray | None = None,
+    adv_sample_weights: np.ndarray | None = None,
     pin_memory: bool = True,
     drop_last: bool = False,
 ) -> DataLoader:
@@ -203,6 +213,7 @@ def build_weighted_signal_stream_loader(
         adv_signals=adv_signals,
         adv_labels=adv_labels,
         adv_teacher_logits=adv_teacher_logits,
+        adv_sample_weights=adv_sample_weights,
         pin_memory=pin_memory,
         drop_last=drop_last,
     )

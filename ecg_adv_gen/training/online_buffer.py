@@ -18,14 +18,22 @@ class QualityAwareBuffer:
         self.ecg_list: list[torch.Tensor] = []
         self.label_list: list[torch.Tensor] = []
         self.score_list: list[float] = []
+        self.sample_weight_list: list[float] = []
 
     def __len__(self) -> int:
         return len(self.ecg_list)
 
-    def add_one(self, ecg_ct: torch.Tensor, label: torch.Tensor, score: float) -> None:
+    def add_one(
+        self,
+        ecg_ct: torch.Tensor,
+        label: torch.Tensor,
+        score: float,
+        sample_weight: float = 1.0,
+    ) -> None:
         self.ecg_list.append(ecg_ct.detach().cpu())
         self.label_list.append(label.detach().cpu())
         self.score_list.append(float(score))
+        self.sample_weight_list.append(float(sample_weight))
         self._evict()
 
     def _evict(self) -> None:
@@ -34,6 +42,7 @@ class QualityAwareBuffer:
             self.ecg_list.pop(idx)
             self.label_list.pop(idx)
             self.score_list.pop(idx)
+            self.sample_weight_list.pop(idx)
 
     def to_dataset(self) -> TensorDataset | None:
         if not self.ecg_list:
@@ -57,7 +66,12 @@ class QualityAwareBuffer:
         self.score_list = new_scores
 
     def get_sampling_weights(self) -> list[float]:
-        return [max(score, 0.05) for score in self.score_list]
+        if len(self.sample_weight_list) != len(self.score_list):
+            self.sample_weight_list = [1.0] * len(self.score_list)
+        return [
+            max(score, 0.05) * max(sample_weight, 0.0)
+            for score, sample_weight in zip(self.score_list, self.sample_weight_list)
+        ]
 
 
 def center_crop_ct(signal_ct: np.ndarray, length: int) -> np.ndarray:

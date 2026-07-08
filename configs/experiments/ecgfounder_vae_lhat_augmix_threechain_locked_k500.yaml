@@ -46,6 +46,7 @@ adaptation:
   vae:
     enabled: true
     adv_weight: 20.0
+    adv_stream_sample_scale: 0.10
     adv_weight_warmup_epochs: 0
     k_anchor: 160
     anchor_sample_mode: hard_bce
@@ -72,11 +73,12 @@ adaptation:
     enabled: true
     chain_roles:
       - name: chain1
-        role: official_corruption_chain
+        role: clean_anchor_corruption_chain
       - name: chain2
-        role: official_corruption_chain
+        role: clean_anchor_corruption_chain
       - name: chain3
-        role: vae_lhat_adversarial_waveform
+        role: clean_anchor_corruption_chain
+    chain_base_mode: all_clean_plus_vae_adv
     copies: 1
     width: 3
     depth: -1
@@ -103,6 +105,6 @@ logging:
     - eval_result.json
 
 run_record:
-  purpose: "Locked ECGFounder main-method run: all K500 samples train, full model trainable, no K500 validation split, last checkpoint only, two official corruption chains plus one VAE-LHAT adversarial waveform chain."
+  purpose: "Locked ECGFounder main-method run: all K500 samples train, full model trainable, no K500 validation split, last checkpoint only, clean-anchor three-chain AugMix plus a separately supervised VAE-LHAT adversarial stream."
   result_summary: Pending. Evaluate PN2021 clean and PN2021-C official severity 5 after managed training completes.
   registration_status: provisional

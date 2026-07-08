@@ -650,8 +650,11 @@ def build_three_chain_vae_lhat_augmix_views(
     chain_weights: Sequence[float] | None = None,
     renorm: bool = False,
     clip_abs: float = 6.0,
+    third_chain_role: str = "vae_lhat_adversarial_waveform",
+    chain_base_mode: str = "clean_clean_third",
+    adv_base_mix: float = 1.0,
 ) -> tuple[np.ndarray, dict[str, Any]]:
-    """Locked PN2021-C topology: two raw corruption chains plus one VAE-LHAT chain."""
+    """Locked PN2021-C topology with an explicit chain base ablation knob."""
     if copies <= 0:
         return (
             np.empty((0,) + tuple(anchor_signals_ct.shape[1:]), dtype=np.float32),
@@ -688,6 +691,26 @@ def build_three_chain_vae_lhat_augmix_views(
         raise ValueError("mixture beta parameters must be > 0")
     if not ops:
         raise ValueError("ops must contain at least one op")
+    third_chain_role = str(third_chain_role)
+    if third_chain_role not in {"vae_lhat_adversarial_waveform", "clean_anchor_control"}:
+        raise ValueError(
+            "third_chain_role must be vae_lhat_adversarial_waveform or clean_anchor_control"
+        )
+    chain_base_mode = str(chain_base_mode)
+    if chain_base_mode not in {
+        "clean_clean_third",
+        "all_clean",
+        "one_adv",
+        "all_adv",
+        "all_clean_plus_vae_adv",
+    }:
+        raise ValueError(
+            "chain_base_mode must be clean_clean_third, all_clean, one_adv, "
+            "all_adv, or all_clean_plus_vae_adv"
+        )
+    adv_base_mix = float(adv_base_mix)
+    if not (0.0 <= adv_base_mix <= 1.0):
+        raise ValueError("adv_base_mix must be in [0, 1]")
     available = set(str(op) for op in available_ops)
     for op_name in ops:
         if op_name not in available:
@@ -738,13 +761,26 @@ def build_three_chain_vae_lhat_augmix_views(
 
             branch_mix = np.zeros_like(x0, dtype=np.float32)
             ops_for_view: list[str] = []
-            for chain_i in range(2):
+            full_corruption_modes = {"all_clean", "one_adv", "all_adv", "all_clean_plus_vae_adv"}
+            corruption_chain_count = 3 if chain_base_mode in full_corruption_modes else 2
+            soft_adv_base = (1.0 - adv_base_mix) * x0 + adv_base_mix * x_adv
+            for chain_i in range(corruption_chain_count):
+                corruption_base = (
+                    soft_adv_base
+                    if chain_base_mode == "all_adv"
+                    or (chain_base_mode == "one_adv" and chain_i == 2)
+                    else x0
+                )
                 if official_combos:
-                    combo_i = (copy_i * anchor_signals_ct.shape[0] * 2 + i * 2 + chain_i) % len(official_combos)
+                    combo_i = (
+                        copy_i * anchor_signals_ct.shape[0] * corruption_chain_count
+                        + i * corruption_chain_count
+                        + chain_i
+                    ) % len(official_combos)
                     combo_ops = official_combos[combo_i]
                     combo_name = "+".join(combo_ops)
                     chain_depths.append(len(combo_ops))
-                    sig = x0.copy()
+                    sig = corruption_base.copy()
                     for op_name in combo_ops:
                         sig = op_apply_fn(sig, op_name, int(severity), str(severity_profile)).astype(
                             np.float32,
@@ -756,7 +792,7 @@ def build_three_chain_vae_lhat_augmix_views(
                     continue
                 d = int(depth) if int(depth) > 0 else int(rng.integers(1, 4))
                 chain_depths.append(d)
-                sig = x0.copy()
+                sig = corruption_base.copy()
                 for step_i in range(d):
                     if op_schedule == "per_op":
                         op_name = str(ops[int(copy_i) % len(ops)])
@@ -773,11 +809,28 @@ def build_three_chain_vae_lhat_augmix_views(
                     ops_for_view.append(op_name)
                 branch_mix = branch_mix + float(weights[chain_i]) * sig
 
-            adv_weight = float(weights[2])
-            adv_weights.append(adv_weight)
-            branch_mix = branch_mix + adv_weight * x_adv
+            if chain_base_mode == "clean_clean_third":
+                third_chain_weight = float(weights[2])
+                adv_weights.append(
+                    third_chain_weight
+                    if third_chain_role == "vae_lhat_adversarial_waveform"
+                    else 0.0
+                )
+                third_chain_signal = (
+                    x_adv
+                    if third_chain_role == "vae_lhat_adversarial_waveform"
+                    else x0
+                )
+                branch_mix = branch_mix + third_chain_weight * third_chain_signal
+            else:
+                adv_weights.append(
+                    float(weights[2])
+                    if chain_base_mode == "one_adv"
+                    else 1.0 if chain_base_mode == "all_adv" else 0.0
+                )
 
-            out = (1.0 - m) * x0 + m * branch_mix
+            mix_base = soft_adv_base if chain_base_mode == "all_adv" else x0
+            out = (1.0 - m) * mix_base + m * branch_mix
             if renorm:
                 out = global_zscore_np(out)
             else:
@@ -796,6 +849,18 @@ def build_three_chain_vae_lhat_augmix_views(
         (0,) + tuple(anchor_signals_ct.shape[1:]), dtype=np.float32
     )
     op_counts = {op: int(used_ops.count(op)) for op in sorted(set(used_ops))}
+    if chain_base_mode == "all_adv":
+        chain_roles = ["vae_lhat_adversarial_corruption"] * 3
+    elif chain_base_mode == "one_adv":
+        chain_roles = [
+            "clean_anchor_corruption",
+            "clean_anchor_corruption",
+            "vae_lhat_adversarial_corruption",
+        ]
+    elif chain_base_mode in {"all_clean", "all_clean_plus_vae_adv"}:
+        chain_roles = ["clean_anchor_corruption"] * 3
+    else:
+        chain_roles = ["corruption", "corruption", third_chain_role]
     stats = {
         "enabled": True,
         "topology": "locked_three_chain_vae_lhat_augmix",
@@ -814,6 +879,8 @@ def build_three_chain_vae_lhat_augmix_views(
         "mixture_beta_a": beta_a,
         "mixture_beta_b": beta_b,
         "op_schedule": op_schedule,
+        "chain_base_mode": chain_base_mode,
+        "adv_base_mix": float(adv_base_mix),
         "composite_schedule": bool(official_combos),
         "composite_count": int(len(official_combos)),
         "chain_weight_mode": "fixed" if fixed_chain_weights is not None else "dirichlet",
@@ -822,11 +889,25 @@ def build_three_chain_vae_lhat_augmix_views(
             if fixed_chain_weights is not None
             else []
         ),
-        "corruption_chain_count": 2,
-        "adversarial_chain_count": 1,
-        "adversarial_chain_index": 2,
-        "adversarial_chain_corrupted": False,
-        "chain_roles": ["corruption", "corruption", "vae_lhat_adversarial_waveform"],
+        "corruption_chain_count": (
+            3
+            if chain_base_mode in {"all_clean", "one_adv", "all_adv", "all_clean_plus_vae_adv"}
+            else 2
+        ),
+        "adversarial_chain_count": (
+            3 if chain_base_mode == "all_adv"
+            else 1 if chain_base_mode == "one_adv"
+            else 0 if chain_base_mode in {"all_clean", "all_clean_plus_vae_adv"}
+            else 1 if third_chain_role == "vae_lhat_adversarial_waveform"
+            else 0
+        ),
+        "clean_anchor_control_chain_count": 3 if chain_base_mode in {"all_clean", "all_clean_plus_vae_adv"} else (
+            2 if chain_base_mode == "one_adv" else
+            1 if third_chain_role == "clean_anchor_control" else 0
+        ),
+        "adversarial_chain_index": 2 if chain_base_mode in {"clean_clean_third", "one_adv"} else None,
+        "adversarial_chain_corrupted": chain_base_mode in {"one_adv", "all_adv"},
+        "chain_roles": chain_roles,
         "adv_weight_mean": float(np.mean(adv_weights)) if adv_weights else float("nan"),
         "adv_weight_max": float(np.max(adv_weights)) if adv_weights else float("nan"),
         "beta_m_mean": float(np.mean(beta_ms)) if beta_ms else float("nan"),

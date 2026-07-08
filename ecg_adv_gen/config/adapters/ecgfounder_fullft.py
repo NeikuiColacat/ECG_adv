@@ -134,12 +134,17 @@ def build_ecgfounder_fullft_argv(config: Mapping[str, Any], context: Mapping[str
     if bool(vae.get("enabled", False)):
         argv.append("--enable_vae_adv_stream")
         _append_option(argv, "--adv_weight", vae.get("adv_weight", 20.0))
+        _append_option(argv, "--vae_adv_stream_sample_scale", vae.get("adv_stream_sample_scale"))
+        _append_option(argv, "--vae_adv_consistency_weight", vae.get("adv_consistency_weight"))
         _append_option(argv, "--adv_weight_start", vae.get("adv_weight_start"))
         _append_option(argv, "--adv_weight_warmup_epochs", vae.get("adv_weight_warmup_epochs", 0))
         _append_option(argv, "--source_bce_loss_weight", loss.get("source_bce_loss_weight", 1.0))
         _append_option(argv, "--target_real_bce_loss_weight", loss.get("target_real_bce_loss_weight", 1.0))
         _append_option(argv, "--adv_bce_loss_weight", loss.get("adv_bce_loss_weight", 1.0))
         _append_option(argv, "--adv_clean_logit_anchor_weight", loss.get("adv_clean_logit_anchor_weight", 0.0))
+        _append_option(argv, "--adv_label_mode", loss.get("label_mode"))
+        _append_option(argv, "--adv_teacher_mix", loss.get("teacher_mix"))
+        _append_option(argv, "--adv_soft_target_floor", loss.get("soft_target_floor"))
         _append_option(argv, "--k_anchor", vae.get("k_anchor", 100))
         _append_option(argv, "--anchor_sample_mode", vae.get("anchor_sample_mode", "stratified"))
         _append_option(argv, "--anchor_sample_power", vae.get("anchor_sample_power", 1.0))
@@ -169,8 +174,17 @@ def build_ecgfounder_fullft_argv(config: Mapping[str, Any], context: Mapping[str
         _append_option(argv, "--latent_augmix_depth", latent_augmix.get("depth", -1))
         _append_option(argv, "--latent_augmix_alpha", latent_augmix.get("alpha", 1.0))
         _append_option(argv, "--latent_augmix_severity", latent_augmix.get("severity", 5))
+        _append_option(argv, "--latent_augmix_third_chain_role", latent_augmix.get("third_chain_role"))
+        _append_option(argv, "--latent_augmix_chain_base_mode", latent_augmix.get("chain_base_mode"))
+        _append_option(argv, "--latent_augmix_adv_base_mix", latent_augmix.get("adv_base_mix"))
         _append_option(argv, "--latent_augmix_severity_profile", latent_augmix.get("severity_profile", "standard"))
         _append_list_option(argv, "--latent_augmix_ops", latent_augmix.get("ops", []))
+        consistency = latent_augmix.get("consistency") or {}
+        _append_option(argv, "--latent_augmix_consistency_weight", consistency.get("consistency_weight"))
+        _append_option(argv, "--latent_augmix_consistency_loss", consistency.get("consistency_loss"))
+        _append_option(argv, "--latent_augmix_bce_weight", consistency.get("bce_weight"))
+        _append_option(argv, "--latent_augmix_consistency_max_batches", consistency.get("max_batches"))
+        _append_option(argv, "--latent_augmix_consistency_batch_size", consistency.get("batch_size"))
     return argv
 
 
@@ -281,9 +295,45 @@ def audit_ecgfounder_fullft_command(
     joined = " ".join(argv)
     if "best_head.pt" in joined or "residual_adapter" in joined:
         errors.append(f"{script}: locked full-FT command contains historical head-only/residual-adapter route")
+    latent_augmix_third_chain_role = str(
+        opt_first(opts, "--latent_augmix_third_chain_role", "vae_lhat_adversarial_waveform")
+    )
+    latent_augmix_chain_base_mode = str(
+        opt_first(opts, "--latent_augmix_chain_base_mode", "clean_clean_third")
+    )
     if "--enable_latent_augmix_branch" in opts:
-        if "--enable_vae_adv_stream" not in opts:
+        third_chain_role = latent_augmix_third_chain_role
+        if latent_augmix_chain_base_mode in {"one_adv", "all_adv"} and third_chain_role == "clean_anchor_control":
+            errors.append(f"{script}: {latent_augmix_chain_base_mode} latent AugMix cannot use clean_anchor_control")
+        needs_vae_augmix = (
+            latent_augmix_chain_base_mode in {"one_adv", "all_adv"}
+            or (
+                latent_augmix_chain_base_mode == "clean_clean_third"
+                and third_chain_role == "vae_lhat_adversarial_waveform"
+            )
+        )
+        if needs_vae_augmix and "--enable_vae_adv_stream" not in opts:
             errors.append(f"{script}: locked latent AugMix requires --enable_vae_adv_stream")
+        if latent_augmix_chain_base_mode == "all_clean_plus_vae_adv" and "--enable_vae_adv_stream" not in opts:
+            errors.append(f"{script}: all_clean_plus_vae_adv requires --enable_vae_adv_stream")
+        if (
+            latent_augmix_chain_base_mode == "all_clean"
+            or (
+                third_chain_role == "clean_anchor_control"
+                and latent_augmix_chain_base_mode != "all_clean_plus_vae_adv"
+            )
+        ) and "--enable_vae_adv_stream" in opts:
+            errors.append(f"{script}: clean-anchor no-VAE AugMix ablation must not enable --enable_vae_adv_stream")
+        if (
+            latent_augmix_chain_base_mode in {"all_clean", "all_clean_plus_vae_adv"}
+            or third_chain_role == "clean_anchor_control"
+        ):
+            try:
+                adv_weight = float(opt_first(opts, "--adv_weight", "0"))
+            except (TypeError, ValueError):
+                adv_weight = 0.0
+            if adv_weight <= 0.0:
+                errors.append(f"{script}: clean-anchor latent AugMix requires --adv_weight > 0")
         audit_equals(errors, script, opts, "--latent_augmix_width", "3")
         audit_equals(errors, script, opts, "--latent_augmix_severity", "5")
         latent_augmix = ((config.get("adaptation") or {}).get("latent_augmix")) or {}
@@ -295,14 +345,6 @@ def audit_ecgfounder_fullft_command(
             "--latent_augmix_topology",
             "--latent_augmix_severity_params_file",
             "--latent_augmix_severity_params_name",
-            "--latent_augmix_mixture_mode",
-            "--latent_augmix_mixture_prob",
-            "--latent_augmix_mixture_beta_a",
-            "--latent_augmix_mixture_beta_b",
-            "--latent_augmix_op_schedule",
-            "--latent_augmix_chain_weights",
-            "--latent_augmix_renorm",
-            "--latent_augmix_clip_abs",
         ]
         present_removed = [opt for opt in removed_latent_augmix_opts if opt in opts]
         if present_removed:
@@ -340,7 +382,17 @@ def audit_ecgfounder_fullft_command(
     init_model = str(opt_first(opts, "--init_model_path", ""))
     run_id = str((config.get("runtime") or {}).get("run_id") or "")
     upstream_run_id = str(((config.get("model") or {}).get("upstream_run_id")) or run_id)
-    if "--enable_vae_adv_stream" in opts:
+    uses_k500_fullft_init = (
+            "--enable_vae_adv_stream" in opts
+            or (
+                "--enable_latent_augmix_branch" in opts
+                and (
+                    latent_augmix_third_chain_role == "clean_anchor_control"
+                    or latent_augmix_chain_base_mode in {"all_clean", "all_clean_plus_vae_adv"}
+                )
+            )
+        )
+    if uses_k500_fullft_init:
         expected_init = (
             f"/ecgfounder_k500_fullft_locked/{upstream_run_id}/runs/"
             f"{center}_k500_fullft_locked/last_model.pt"

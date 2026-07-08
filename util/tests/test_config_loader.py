@@ -539,10 +539,11 @@ def test_effnet_vae_lhat_threechain_locked_k500_config_uses_official_s5_last_che
 
     assert len(commands) == 4
     assert config["adaptation"]["latent_augmix"]["chain_roles"] == [
-        {"name": "chain1", "role": "official_corruption_chain"},
-        {"name": "chain2", "role": "official_corruption_chain"},
-        {"name": "chain3", "role": "vae_lhat_adversarial_waveform"},
+        {"name": "chain1", "role": "vae_lhat_adversarial_corruption_chain"},
+        {"name": "chain2", "role": "vae_lhat_adversarial_corruption_chain"},
+        {"name": "chain3", "role": "vae_lhat_adversarial_corruption_chain"},
     ]
+    assert config["adaptation"]["latent_augmix"]["chain_base_mode"] == "all_adv"
     refs = manifest["artifact_trace"]["inputs"]["k500_refs"]
     assert len(refs) == 4
     assert all(item["signals_npz"]["role"] == "kshot_raw1000_signals" for item in refs)
@@ -554,6 +555,7 @@ def test_effnet_vae_lhat_threechain_locked_k500_config_uses_official_s5_last_che
         assert "--enable_latent_augmix_consistency" not in argv
         assert _option_value(argv, "--latent_augmix_copies") == "2"
         assert _option_value(argv, "--latent_augmix_width") == "3"
+        assert _option_value(argv, "--latent_augmix_chain_base_mode") == "all_adv"
         assert _option_value(argv, "--latent_augmix_severity") == "5"
         assert _option_value(argv, "--latent_augmix_severity_profile") == "standard"
         assert "--checkpoint_policy" not in argv
@@ -629,6 +631,7 @@ def test_effnet_vae_lhat_train_builder_locks_threechain_consistency():
         classes_in_scope=["CD", "HYP", "MI", "NORM", "STTC"],
         target_real_weight=80.0,
         adv_weight=0.2,
+        vae_adv_stream_sample_scale=0.1,
         adv_weight_warmup_epochs=0,
         ptbxl_weight=1.0,
         adv_label_mode="latent_mixed_teacher",
@@ -647,6 +650,8 @@ def test_effnet_vae_lhat_train_builder_locks_threechain_consistency():
         latent_augmix_severity=5,
         latent_augmix_severity_profile="standard",
         latent_augmix_latent_weight_cap=0.25,
+        latent_augmix_third_chain_role="clean_anchor_control",
+        latent_augmix_chain_base_mode="all_clean",
         latent_augmix_ops=[
             "powerline_noise",
             "emg_noise",
@@ -683,6 +688,9 @@ def test_effnet_vae_lhat_train_builder_locks_threechain_consistency():
     assert "--source_sampling_strategy" not in cmd
     assert "--source_weights" not in cmd
     assert _option_value(cmd, "--latent_augmix_width") == "3"
+    assert _option_value(cmd, "--vae_adv_stream_sample_scale") == "0.1"
+    assert _option_value(cmd, "--latent_augmix_third_chain_role") == "clean_anchor_control"
+    assert _option_value(cmd, "--latent_augmix_chain_base_mode") == "all_clean"
     assert _option_value(cmd, "--latent_augmix_consistency_loss") == "jsd"
     assert _all_option_values(cmd, "--latent_augmix_ops") == [
         "powerline_noise",
@@ -749,10 +757,151 @@ def test_synth_online_at_parser_keeps_only_mainline_latent_augmix_knobs(monkeypa
 
     assert args.latent_augmix_copies == 2
     assert args.latent_augmix_width == 3
+    assert args.latent_augmix_third_chain_role == "vae_lhat_adversarial_waveform"
+    assert args.latent_augmix_chain_base_mode == "clean_clean_third"
     assert args.latent_augmix_ops == ["powerline_noise", "emg_noise"]
     assert not hasattr(args, "latent_augmix_mixture_mode")
     assert not hasattr(args, "latent_augmix_signal_space")
     assert not hasattr(args, "latent_augmix_clip_abs")
+
+
+def test_synth_online_at_parser_accepts_clean_anchor_third_chain(monkeypatch):
+    from ecg_adv_gen.runner.synth_online_at_super5 import parse_args
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "synth_online_at_super5.py",
+            "--center_name",
+            "ningbo",
+            "--synth_npz",
+            "/tmp/anchor.latent.npz",
+            "--target_real_npz",
+            "/tmp/target.raw1000.npz",
+            "--output_dir",
+            "/tmp/out",
+            "--latent_augmix_third_chain_role",
+            "clean_anchor_control",
+            "--latent_augmix_chain_base_mode",
+            "all_clean",
+        ],
+    )
+
+    args = parse_args()
+
+    assert args.latent_augmix_third_chain_role == "clean_anchor_control"
+    assert args.latent_augmix_chain_base_mode == "all_clean"
+
+
+def test_synth_online_at_parser_rejects_clean_anchor_augmix_zero_adv_weight(monkeypatch):
+    from ecg_adv_gen.runner.synth_online_at_super5 import parse_args
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "synth_online_at_super5.py",
+            "--center_name",
+            "ningbo",
+            "--synth_npz",
+            "/tmp/anchor.latent.npz",
+            "--target_real_npz",
+            "/tmp/target.raw1000.npz",
+            "--output_dir",
+            "/tmp/out",
+            "--latent_augmix_chain_base_mode",
+            "all_clean",
+            "--adv_weight",
+            "0",
+        ],
+    )
+
+    with pytest.raises(SystemExit):
+        parse_args()
+
+
+def test_synth_online_at_parser_accepts_decoupled_clean_augmix_vae_mode(monkeypatch):
+    from ecg_adv_gen.runner.synth_online_at_super5 import parse_args
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "synth_online_at_super5.py",
+            "--center_name",
+            "ningbo",
+            "--synth_npz",
+            "/tmp/anchor.latent.npz",
+            "--target_real_npz",
+            "/tmp/target.raw1000.npz",
+            "--output_dir",
+            "/tmp/out",
+            "--latent_augmix_chain_base_mode",
+            "all_clean_plus_vae_adv",
+            "--latent_augmix_adv_base_mix",
+            "0.25",
+            "--vae_adv_stream_sample_scale",
+            "0.1",
+            "--vae_adv_consistency_weight",
+            "0.25",
+        ],
+    )
+
+    args = parse_args()
+
+    assert args.latent_augmix_chain_base_mode == "all_clean_plus_vae_adv"
+    assert args.latent_augmix_adv_base_mix == 0.25
+    assert args.vae_adv_stream_sample_scale == 0.1
+    assert args.vae_adv_consistency_weight == 0.25
+
+
+def test_synth_online_at_parser_accepts_one_adv_chain_mode(monkeypatch):
+    from ecg_adv_gen.runner.synth_online_at_super5 import parse_args
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "synth_online_at_super5.py",
+            "--center_name",
+            "ningbo",
+            "--synth_npz",
+            "/tmp/anchor.latent.npz",
+            "--output_dir",
+            "/tmp/out",
+            "--latent_augmix_chain_base_mode",
+            "one_adv",
+        ],
+    )
+
+    args = parse_args()
+
+    assert args.latent_augmix_chain_base_mode == "one_adv"
+
+
+def test_synth_online_at_parser_accepts_fixed_chain_weights(monkeypatch):
+    from ecg_adv_gen.runner.synth_online_at_super5 import parse_args
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "synth_online_at_super5.py",
+            "--center_name",
+            "ningbo",
+            "--synth_npz",
+            "/tmp/anchor.latent.npz",
+            "--output_dir",
+            "/tmp/out",
+            "--latent_augmix_chain_weights",
+            "0.475,0.475,0.05",
+        ],
+    )
+
+    args = parse_args()
+
+    assert args.latent_augmix_chain_weights == "0.475,0.475,0.05"
 
 
 @pytest.mark.parametrize(
@@ -763,7 +912,6 @@ def test_synth_online_at_parser_keeps_only_mainline_latent_augmix_knobs(monkeypa
         ["--latent_augmix_mixture_beta_a", "0.2"],
         ["--latent_augmix_mixture_beta_b", "0.2"],
         ["--latent_augmix_op_schedule", "per_op"],
-        ["--latent_augmix_chain_weights", "0.4,0.4,0.2"],
         ["--latent_augmix_signal_space", "raw_pre_zscore"],
         ["--latent_augmix_corruption_source", "target_real"],
         ["--latent_augmix_severity_params_file", "/tmp/profile.yaml"],
@@ -852,11 +1000,68 @@ def test_ecgfounder_fullft_parser_keeps_only_mainline_latent_augmix_knobs():
 
     assert args.enable_latent_augmix_branch is True
     assert args.latent_augmix_width == 3
+    assert args.latent_augmix_chain_base_mode == "clean_clean_third"
     assert args.latent_augmix_ops == ["powerline_noise", "emg_noise"]
     assert not hasattr(args, "latent_augmix_topology")
-    assert not hasattr(args, "latent_augmix_mixture_mode")
-    assert not hasattr(args, "latent_augmix_renorm")
-    assert not hasattr(args, "latent_augmix_clip_abs")
+
+
+def test_ecgfounder_fullft_parser_accepts_decoupled_clean_augmix_vae_mode():
+    from ecg_adv_gen.runner.ecgfounder_fullft import build_arg_parser
+
+    parser = build_arg_parser()
+
+    args = parser.parse_args(
+        [
+            "--stage",
+            "k500",
+            "--center",
+            "ningbo",
+            "--ref_meta_json",
+            "/tmp/ref_meta.json",
+            "--enable_vae_adv_stream",
+            "--enable_latent_augmix_branch",
+            "--latent_augmix_chain_base_mode",
+            "all_clean_plus_vae_adv",
+            "--latent_augmix_adv_base_mix",
+            "0.25",
+            "--vae_adv_stream_sample_scale",
+            "0.1",
+            "--vae_adv_consistency_weight",
+            "0.25",
+        ]
+    )
+
+    assert args.enable_vae_adv_stream is True
+    assert args.enable_latent_augmix_branch is True
+    assert args.latent_augmix_chain_base_mode == "all_clean_plus_vae_adv"
+    assert args.latent_augmix_adv_base_mix == 0.25
+    assert args.vae_adv_stream_sample_scale == 0.1
+    assert args.vae_adv_consistency_weight == 0.25
+
+
+def test_ecgfounder_fullft_parser_accepts_one_adv_chain_mode():
+    from ecg_adv_gen.runner.ecgfounder_fullft import build_arg_parser
+
+    parser = build_arg_parser()
+
+    args = parser.parse_args(
+        [
+            "--stage",
+            "k500",
+            "--center",
+            "ningbo",
+            "--ref_meta_json",
+            "/tmp/ref_meta.json",
+            "--enable_vae_adv_stream",
+            "--enable_latent_augmix_branch",
+            "--latent_augmix_chain_base_mode",
+            "one_adv",
+        ]
+    )
+
+    assert args.enable_vae_adv_stream is True
+    assert args.enable_latent_augmix_branch is True
+    assert args.latent_augmix_chain_base_mode == "one_adv"
 
 
 @pytest.mark.parametrize(
@@ -1241,10 +1446,12 @@ def test_ecgfounder_locked_threechain_augmix_command_uses_fullft_last_checkpoint
     assert config["runner"]["adapter"] == "ecgfounder_fullft"
     assert config["paper_protocol"]["selection"]["policy"] == "last_checkpoint_only"
     assert config["adaptation"]["latent_augmix"]["chain_roles"] == [
-        {"name": "chain1", "role": "official_corruption_chain"},
-        {"name": "chain2", "role": "official_corruption_chain"},
-        {"name": "chain3", "role": "vae_lhat_adversarial_waveform"},
+        {"name": "chain1", "role": "clean_anchor_corruption_chain"},
+        {"name": "chain2", "role": "clean_anchor_corruption_chain"},
+        {"name": "chain3", "role": "clean_anchor_corruption_chain"},
     ]
+    assert config["adaptation"]["vae"]["adv_stream_sample_scale"] == 0.10
+    assert config["adaptation"]["latent_augmix"]["chain_base_mode"] == "all_clean_plus_vae_adv"
     assert "partner_pool" not in config["adaptation"]["hull"]
     assert len(commands) == 4
     for command in commands:
@@ -1275,6 +1482,8 @@ def test_ecgfounder_locked_threechain_augmix_command_uses_fullft_last_checkpoint
         assert "--enable_latent_augmix_branch" in argv
         assert "--latent_augmix_topology" not in argv
         assert _option_value(argv, "--latent_augmix_width") == "3"
+        assert _option_value(argv, "--vae_adv_stream_sample_scale") == "0.1"
+        assert _option_value(argv, "--latent_augmix_chain_base_mode") == "all_clean_plus_vae_adv"
         assert _option_value(argv, "--latent_augmix_severity") == "5"
         assert _option_value(argv, "--latent_augmix_severity_profile") == "standard"
         assert "--latent_augmix_severity_params_file" not in argv
@@ -1338,6 +1547,18 @@ def test_ecgfounder_fullft_adapter_passes_hull_init_logit_gap():
 
     argv = commands[0]["argv"]
     assert _option_value(argv, "--hull_init_logit_gap") == "0.0"
+
+
+def test_ecgfounder_fullft_audit_rejects_clean_anchor_augmix_zero_adv_weight():
+    config = _load("ecgfounder_vae_lhat_augmix_threechain_locked_k500.yaml")
+    config = copy.deepcopy(config)
+    config["runner"]["matrix"]["center"] = ["cpsc_2018"]
+    config["adaptation"]["vae"]["enabled"] = False
+    config["adaptation"]["latent_augmix"]["chain_base_mode"] = "all_clean"
+    config["adaptation"]["latent_augmix"]["third_chain_role"] = "clean_anchor_control"
+
+    with pytest.raises(ConfigError, match="clean-anchor latent AugMix requires --adv_weight > 0"):
+        build_runner_commands(config)
 
 
 def test_ecgfounder_locked_threechain_augmix_manifest_expects_last_model():
