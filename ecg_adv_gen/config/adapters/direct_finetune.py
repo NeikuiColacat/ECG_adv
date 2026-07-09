@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from .direct import audit_direct_finetune_command as audit_legacy_direct_finetune_command
+from .common import argv_option_map, audit_equals, audit_require_options, matrix_case, opt_first, opt_list
 
 
 def build_direct_finetune_argv(config: Mapping[str, Any], context: Mapping[str, Any]) -> list[Any]:
@@ -85,16 +85,37 @@ def audit_direct_finetune_command(command: Mapping[str, Any], *, config: Mapping
     expected_seed = int(kshot.get("subset_seed", kshot["seed"]))
     target_centers = set(config["paper_protocol"]["centers"]["target_4"])
 
-    if script == "effnet_direct_finetune.py":
-        errors.extend(
-            audit_legacy_direct_finetune_command(
-                command,
-                expected_k=expected_k,
-                expected_seed=expected_seed,
-                target_centers=target_centers,
-            )
-        )
+    if script != "effnet_direct_finetune.py":
+        errors.append(f"{script}: direct_finetune audit cannot handle this script")
         return {"errors": errors, "warnings": warnings}
 
-    errors.append(f"{script}: direct_finetune audit cannot handle this script")
+    opts = argv_option_map(argv)
+    matrix = command.get("matrix") or {}
+    case = matrix_case(command)
+    expected_command_k = str(case.get("k", expected_k))
+    expected_command_seed = str(case.get("seed", expected_seed))
+    audit_require_options(
+        errors,
+        script,
+        opts,
+        ["--centers", "--k", "--subset_seed", "--seed", "--val_fraction", "--out_root"],
+    )
+    audit_equals(errors, script, opts, "--k", expected_command_k)
+    audit_equals(errors, script, opts, "--subset_seed", expected_command_seed)
+    audit_equals(errors, script, opts, "--seed", expected_command_seed)
+    centers = set(opt_list(opts, "--centers"))
+    matrix_center = str(matrix.get("center") or case.get("center") or "")
+    if matrix_center:
+        if centers != {matrix_center}:
+            errors.append(f"{script}: matrix center {matrix_center!r} must match --centers {sorted(centers)!r}")
+        if matrix_center not in target_centers:
+            errors.append(f"{script}: unexpected matrix center {matrix_center!r}")
+    elif centers != target_centers:
+        errors.append(f"{script}: centers={sorted(centers)!r}, expected {sorted(target_centers)!r}")
+    subset_root = str(opt_first(opts, "--subset_root", ""))
+    if subset_root:
+        if f"k{expected_command_k}_seed{expected_command_seed}" in subset_root:
+            errors.append(f"{script}: subset_root should be the root directory, not one center-specific K-shot base")
+        if "subsets" not in subset_root:
+            errors.append(f"{script}: subset_root does not point at a K-shot subsets directory")
     return {"errors": errors, "warnings": warnings}

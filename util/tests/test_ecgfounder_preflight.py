@@ -48,11 +48,15 @@ def test_zero_weight_default_jsd_with_one_copy_reaches_post_validation(monkeypat
         ecgfounder_fullft.main()
 
 
-def test_enabled_jsd_with_one_copy_still_fails_preflight(monkeypatch):
+@pytest.mark.parametrize(
+    "weight_flag",
+    ["--latent_augmix_consistency_weight", "--latent_augmix_bce_weight"],
+)
+def test_enabled_jsd_with_one_copy_still_fails_preflight(monkeypatch, weight_flag):
     monkeypatch.setattr(
         sys,
         "argv",
-        _locked_k500_argv("--latent_augmix_consistency_weight", "1.0"),
+        _locked_k500_argv(weight_flag, "1.0"),
     )
     monkeypatch.setattr(ecgfounder_fullft, "set_seed", _stop_after_validation)
 

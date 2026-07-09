@@ -1,7 +1,6 @@
 """Command audit adapters for YAML-managed latest-mainline entrypoints."""
 
-from .direct_finetune import build_direct_finetune_argv
-from .direct import audit_direct_finetune_command
+from .direct_finetune import audit_direct_finetune_command, build_direct_finetune_argv
 from .ecgfounder_fullft import build_ecgfounder_fullft_argv
 from .ecgfounder_pn2021c_eval import build_ecgfounder_pn2021c_eval_argv
 from .effnet_vae_lhat import build_effnet_vae_lhat_argv
