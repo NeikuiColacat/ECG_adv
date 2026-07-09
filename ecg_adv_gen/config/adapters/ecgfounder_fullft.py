@@ -303,6 +303,36 @@ def audit_ecgfounder_fullft_command(
     )
     if "--enable_latent_augmix_branch" in opts:
         third_chain_role = latent_augmix_third_chain_role
+        numeric_values: dict[str, int | float | None] = {}
+        for option, default, parse in (
+            ("--latent_augmix_copies", 1, int),
+            ("--latent_augmix_consistency_weight", 0.0, float),
+            ("--latent_augmix_bce_weight", 0.0, float),
+        ):
+            raw_value = opt_first(opts, option, default)
+            try:
+                if isinstance(raw_value, bool):
+                    raise ValueError
+                numeric_values[option] = parse(raw_value)
+            except (TypeError, ValueError):
+                errors.append(f"{script}: {option} has invalid numeric value {raw_value!r}")
+                numeric_values[option] = None
+        consistency_loss = str(opt_first(opts, "--latent_augmix_consistency_loss", "jsd"))
+        copies = numeric_values["--latent_augmix_copies"]
+        consistency_weight = numeric_values["--latent_augmix_consistency_weight"]
+        bce_weight = numeric_values["--latent_augmix_bce_weight"]
+        if (
+            copies is not None
+            and consistency_weight is not None
+            and bce_weight is not None
+            and (consistency_weight > 0.0 or bce_weight > 0.0)
+            and consistency_loss == "jsd"
+            and copies < 2
+        ):
+            errors.append(
+                f"{script}: --latent_augmix_consistency_loss jsd requires "
+                "--latent_augmix_copies >= 2 when either consistency weight is positive"
+            )
         if latent_augmix_chain_base_mode in {"one_adv", "all_adv"} and third_chain_role == "clean_anchor_control":
             errors.append(f"{script}: {latent_augmix_chain_base_mode} latent AugMix cannot use clean_anchor_control")
         needs_vae_augmix = (
