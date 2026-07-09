@@ -13,7 +13,6 @@ import argparse
 import csv
 import json
 import os
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -42,6 +41,7 @@ from ecg_adv_gen.labels import CLASS_NAMES_SUPER5, NUM_SUPER5  # noqa: E402
 from ecg_adv_gen.run_naming import build_effnet_direct_run_leaf  # noqa: E402
 from ecg_adv_gen.evaluation.ref_exclusion import append_target_ref_exclusion_args  # noqa: E402
 from ecg_adv_gen.evaluation import compute_macro_auroc_auprc  # noqa: E402
+from ecg_adv_gen.runner.process import build_process_env, run_stream  # noqa: E402
 from ecg_adv_gen.training import compute_pos_weight, masked_bce_with_logits, random_split_indices  # noqa: E402
 
 
@@ -140,33 +140,6 @@ def evaluate(model: nn.Module, loader: DataLoader, criterion, device: torch.devi
     metrics = compute_macro_auroc_auprc(labels, probs, CLASS_NAMES_SUPER5, min_pos=1)
     metrics["loss"] = float(np.mean(losses)) if losses else float("nan")
     return metrics
-
-
-def run_cmd(cmd: list[str], log_path: Path) -> None:
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    print("[run]", " ".join(cmd), flush=True)
-    env = os.environ.copy()
-    env.setdefault("TMPDIR", str(DATA_ROOT / "tmp"))
-    env.setdefault("XDG_CACHE_HOME", str(DATA_ROOT / "cache"))
-    Path(env["TMPDIR"]).mkdir(parents=True, exist_ok=True)
-    Path(env["XDG_CACHE_HOME"]).mkdir(parents=True, exist_ok=True)
-    with log_path.open("w") as log:
-        proc = subprocess.Popen(
-            cmd,
-            cwd=str(PROJECT_ROOT),
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-        )
-        assert proc.stdout is not None
-        for line in proc.stdout:
-            print(line, end="")
-            log.write(line)
-        ret = proc.wait()
-    if ret != 0:
-        raise subprocess.CalledProcessError(ret, cmd)
 
 
 def train_one(center: str, args: argparse.Namespace) -> Path:
@@ -369,7 +342,15 @@ def train_one(center: str, args: argparse.Namespace) -> Path:
     ])
     if args.eval_pn2021_limit:
         eval_cmd.extend(["--pn2021_limit", str(args.eval_pn2021_limit)])
-    run_cmd(eval_cmd, out_dir / "eval_full.log")
+    env = os.environ.copy()
+    env.setdefault("TMPDIR", str(DATA_ROOT / "tmp"))
+    env.setdefault("XDG_CACHE_HOME", str(DATA_ROOT / "cache"))
+    run_stream(
+        eval_cmd,
+        log_path=out_dir / "eval_full.log",
+        cwd=PROJECT_ROOT,
+        env=build_process_env(base=env),
+    )
     return eval_path
 
 
