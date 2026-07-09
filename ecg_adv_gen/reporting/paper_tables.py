@@ -268,6 +268,8 @@ def export_paper_table(
     baseline_run_id: str | None = None,
     allow_mixed_mapping: bool = False,
 ) -> dict[str, Any]:
+    if not view or not str(view).strip():
+        raise PaperTableError("view must be explicitly specified")
     rows = _read_metrics(metrics_long)
     filtered = _filter_rows(rows, dataset=dataset, view=view)
     mapping_version, mapping_hash, class_order = _validate_single_mapping(
