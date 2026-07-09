@@ -6,18 +6,6 @@ from pathlib import Path
 from typing import Any, Mapping
 
 
-DISPATCHED_RUNNER_AUDIT_SCRIPT_NAMES = frozenset(
-    {
-        "pn2021_clean_eval.py",
-        "ecgfounder_pn2021c_eval.py",
-        "pn2021c_eval.py",
-        "effnet_direct_finetune.py",
-        "effnet_vae_lhat_augmix.py",
-        "ecgfounder_fullft.py",
-    }
-)
-
-
 def script_name(command: Mapping[str, Any]) -> str:
     argv = [str(x) for x in command.get("argv", [])]
     if len(argv) < 2:

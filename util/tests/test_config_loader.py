@@ -39,7 +39,7 @@ from ecg_adv_gen.config import (
 )
 from ecg_adv_gen.config.entrypoints import managed_runner_script_names
 from ecg_adv_gen.config.loader import _audit_runtime_path, audit_runner_commands, build_artifact_trace
-from ecg_adv_gen.config.runner_audit import DISPATCHED_RUNNER_AUDIT_SCRIPT_NAMES, audit_runner_command
+from ecg_adv_gen.config.runner_audit import audit_runner_command
 from ecg_adv_gen.config.paths import PathSafetyError, validate_local_paths
 from ecg_adv_gen.evaluation.pn2021c_protocol import official_s5_depth23_composites
 from ecg_adv_gen.run_naming import build_effnet_direct_run_leaf
@@ -501,7 +501,6 @@ def test_runner_command_dispatcher_does_not_keep_unmanaged_runner_branches():
     }
     source = inspect.getsource(audit_runner_command)
 
-    assert DISPATCHED_RUNNER_AUDIT_SCRIPT_NAMES <= managed_runner_script_names()
     assert sorted(name for name in unmanaged_names if name in source) == []
 
 

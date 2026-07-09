@@ -29,9 +29,9 @@ from .artifact_trace import (
     append_k500_ref as _append_k500_ref,
     dedupe_path_records as _dedupe_path_records,
     path_record as _path_record,
-    strip_known_suffix as _strip_known_suffix,
 )
-from .runner_audit import DISPATCHED_RUNNER_AUDIT_SCRIPT_NAMES, audit_runner_command
+from .adapters.common import argv_option_map as _argv_option_map, opt_first as _opt_first, opt_list as _opt_list
+from .runner_audit import audit_runner_command
 from ecg_adv_gen.data import DataContractError, validate_data_preprocess_config
 from ecg_adv_gen.data.kshot_artifacts import canonical_kshot_base
 from ecg_adv_gen.evaluation import (
@@ -614,47 +614,6 @@ def build_postprocess_commands(config: dict[str, Any]) -> list[dict[str, Any]]:
     return commands
 
 
-def _argv_option_map(argv: list[str]) -> dict[str, Any]:
-    opts: dict[str, Any] = {}
-    idx = 2  # argv[0] is Python, argv[1] is the legacy entrypoint.
-    while idx < len(argv):
-        token = argv[idx]
-        if not token.startswith("--"):
-            idx += 1
-            continue
-        key = token
-        idx += 1
-        values: list[str] = []
-        while idx < len(argv) and not argv[idx].startswith("--"):
-            values.append(argv[idx])
-            idx += 1
-        if not values:
-            opts[key] = True
-        elif len(values) == 1:
-            opts[key] = values[0]
-        else:
-            opts[key] = values
-    return opts
-
-
-def _opt_first(opts: dict[str, Any], name: str, default: Any = None) -> Any:
-    value = opts.get(name, default)
-    if isinstance(value, list):
-        return value[0] if value else default
-    return value
-
-
-def _opt_list(opts: dict[str, Any], name: str) -> list[str]:
-    value = opts.get(name)
-    if value is None:
-        return []
-    if isinstance(value, list):
-        return [str(v) for v in value]
-    if value is True:
-        return []
-    return [str(value)]
-
-
 def _audit_require_options(errors: list[str], script: str, opts: dict[str, Any], options: list[str]) -> None:
     for option in options:
         if option not in opts:
@@ -861,11 +820,9 @@ def audit_runner_commands(config: dict[str, Any], commands: list[dict[str, Any]]
         _audit_command_path_safety(errors, script, command, opts, boundary=boundary)
         _audit_output_paths_are_run_scoped(errors, script, opts, run_id=run_id)
 
-        if script in DISPATCHED_RUNNER_AUDIT_SCRIPT_NAMES:
-            report = audit_runner_command(command, config=config)
-            errors.extend(report.get("errors", []))
-            warnings.extend(report.get("warnings", []))
-            continue
+        report = audit_runner_command(command, config=config)
+        errors.extend(report.get("errors", []))
+        warnings.extend(report.get("warnings", []))
 
     if errors:
         joined = "\n".join(f"  - {error}" for error in errors)
@@ -1200,7 +1157,7 @@ def build_artifact_trace(
             stage = str(_opt_first(opts, "--stage", "k500"))
             if stage != "ptbxl_source":
                 ref_meta = str(_opt_first(opts, "--ref_meta_json", ""))
-                base = Path(_strip_known_suffix(ref_meta, ".ref_meta.json"))
+                base = Path(ref_meta.removesuffix(".ref_meta.json"))
                 signal_override = str(_opt_first(opts, "--target_raw1000_npz_override", ""))
                 _append_k500_ref(
                     inputs["k500_refs"],
@@ -1224,7 +1181,7 @@ def build_artifact_trace(
                 ref_name = Path(ref_meta).name
                 ref_center = ref_name.split(f"_real_k{k}_seed{seed}.ref_meta.json")[0]
                 if ref_center:
-                    base = Path(_strip_known_suffix(ref_meta, ".ref_meta.json"))
+                    base = Path(ref_meta.removesuffix(".ref_meta.json"))
                     _append_k500_ref(
                         inputs["k500_refs"],
                         center=ref_center,
@@ -1241,7 +1198,7 @@ def build_artifact_trace(
                 ref_name = Path(ref_meta).name
                 ref_center = ref_name.split(f"_real_k{k}_seed{seed}.ref_meta.json")[0]
                 if ref_center:
-                    base = Path(_strip_known_suffix(ref_meta, ".ref_meta.json"))
+                    base = Path(ref_meta.removesuffix(".ref_meta.json"))
                     _append_k500_ref(
                         inputs["k500_refs"],
                         center=ref_center,

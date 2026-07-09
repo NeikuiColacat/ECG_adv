@@ -8,10 +8,6 @@ from typing import Any
 from ecg_adv_gen.data.kshot_artifacts import KShotArtifactGroup
 
 
-def strip_known_suffix(path: str, suffix: str) -> str:
-    return path[: -len(suffix)] if path.endswith(suffix) else path
-
-
 def path_record(role: str, path: str | Path, *, required: bool = True) -> dict[str, Any]:
     resolved = Path(path).expanduser()
     exists = resolved.exists()
