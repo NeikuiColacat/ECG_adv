@@ -46,7 +46,6 @@ from .selection import (
     has_forbidden_selection_reference,
     validate_selection_policy,
 )
-from .target_splits import TargetSplitMode, split_target_train_val_indices
 from .pn2021_corruptions import (
     aggregate_corruption_summary,
     clean_mmap_cache_path,
@@ -102,7 +101,6 @@ __all__ = [
     "PN2021C_OFFICIAL_OPERATORS",
     "PN2021ProtocolError",
     "SelectionPolicyError",
-    "TargetSplitMode",
     "assemble_pn2021_center_metrics",
     "assemble_target_refexcluded_views",
     "aggregate_corruption_summary",
@@ -134,7 +132,6 @@ __all__ = [
     "ref_ids_sha256",
     "stable_corruption_seed",
     "summarize_center_view",
-    "split_target_train_val_indices",
     "validate_selection_policy",
     "validate_pn2021_eval_protocol",
     "validate_pn2021c_metadata_compatibility",
