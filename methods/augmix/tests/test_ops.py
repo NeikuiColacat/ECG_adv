@@ -97,3 +97,8 @@ def test_random_leads_mask_can_cap_masked_lead_count():
 
     assert min(masked_counts) >= 1
     assert max(masked_counts) <= 3
+
+
+def test_random_leads_mask_rejects_removed_conditional_mode():
+    with pytest.raises(ValueError, match="only supports.*random"):
+        RandomLeadsMask(mask_leads_selection="conditional")

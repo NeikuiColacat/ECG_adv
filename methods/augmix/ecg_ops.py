@@ -6,44 +6,15 @@ Source: model/DeepECG/fairseq-signals/fairseq_signals/data/ecg/augmentations.py
 RandomLeadsMask + adjust_channel_dependency)
 
 Changes vs. upstream:
-  1. Removed `fairseq_signals.dataclass.ChoiceEnum` dependency (use Literal str).
+  1. Removed `fairseq_signals.dataclass.ChoiceEnum` dependency (use plain strings).
   2. Fixed typo in PowerlineNoise: `self.denpendency` -> `self.dependency`.
-  3. Fixed RandomLeadsMask conditional mode: `self.mask_leads_selection`
-     (a str) -> `self.mask_leads_condition` (the tuple).
+  3. Kept only the random RandomLeadsMask mode used by tracked profiles.
 
 No other logic changed. Input/output contract preserved:
   sample: torch.Tensor shape (12, L) -> torch.Tensor shape (12, L) float32
 """
-import random
-from typing import Literal
 
 import numpy as np
-
-
-PERTURBATION_CHOICES = Literal[
-    "3kg",
-    "random_leads_masking",
-    "powerline_noise",
-    "emg_noise",
-    "baseline_shift",
-    "baseline_wander",
-]
-MASKING_LEADS_STRATEGY_CHOICES = Literal["random", "conditional"]
-
-
-def instantiate_from_name(name: str, **kwargs):
-    if name == "random_leads_masking":
-        return RandomLeadsMask(**kwargs)
-    elif name == "powerline_noise":
-        return PowerlineNoise(**kwargs)
-    elif name == "emg_noise":
-        return EMGNoise(**kwargs)
-    elif name == "baseline_shift":
-        return BaselineShift(**kwargs)
-    elif name == "baseline_wander":
-        return BaselineWander(**kwargs)
-    else:
-        raise ValueError(f"inappropriate perturbation choice: {name}")
 
 
 def adjust_channel_dependency(ecg):
@@ -209,52 +180,33 @@ class RandomLeadsMask(object):
         p=1,
         mask_leads_selection: str = "random",
         mask_leads_prob=0.5,
-        mask_leads_condition=None,
         max_masked_leads=None,
         min_masked_leads=1,
         **kwargs,
     ):
+        if mask_leads_selection != "random":
+            raise ValueError("RandomLeadsMask only supports mask_leads_selection='random'")
         self.p = p
         self.mask_leads_prob = mask_leads_prob
-        self.mask_leads_selection = mask_leads_selection
-        self.mask_leads_condition = mask_leads_condition
+        self.mask_leads_selection = "random"
         self.max_masked_leads = None if max_masked_leads is None else int(max_masked_leads)
         self.min_masked_leads = int(min_masked_leads)
 
     def __call__(self, sample):
         if self.p >= np.random.uniform(0, 1):
             new_sample = sample.new_zeros(sample.size())
-            if self.mask_leads_selection == "random":
-                if self.max_masked_leads is None:
-                    survivors = np.random.uniform(0, 1, size=12) >= self.mask_leads_prob
-                else:
-                    max_masked = min(12, max(0, int(self.max_masked_leads)))
-                    min_masked = min(max_masked, max(0, int(self.min_masked_leads)))
-                    survivors = np.ones(12, dtype=bool)
-                    if max_masked > 0:
-                        n_masked = int(np.random.randint(min_masked, max_masked + 1))
-                        if n_masked > 0:
-                            masked = np.random.choice(np.arange(12), size=n_masked, replace=False)
-                            survivors[masked] = False
-                new_sample[survivors] = sample[survivors]
-            elif self.mask_leads_selection == "conditional":
-                # FIX: upstream used self.mask_leads_selection (str) instead of condition (tuple)
-                assert self.mask_leads_condition is not None, (
-                    "mask_leads_condition must be set when using 'conditional' mode"
-                )
-                (n1, n2) = self.mask_leads_condition
-                assert (
-                    (0 <= n1 and n1 <= 6) and
-                    (0 <= n2 and n2 <= 6)
-                ), (n1, n2)
-                s1 = np.array(
-                    random.sample(list(np.arange(6)), 6 - n1)
-                )
-                s2 = np.array(
-                    random.sample(list(np.arange(6)), 6 - n2)
-                ) + 6
-                new_sample[s1] = sample[s1]
-                new_sample[s2] = sample[s2]
+            if self.max_masked_leads is None:
+                survivors = np.random.uniform(0, 1, size=12) >= self.mask_leads_prob
+            else:
+                max_masked = min(12, max(0, int(self.max_masked_leads)))
+                min_masked = min(max_masked, max(0, int(self.min_masked_leads)))
+                survivors = np.ones(12, dtype=bool)
+                if max_masked > 0:
+                    n_masked = int(np.random.randint(min_masked, max_masked + 1))
+                    if n_masked > 0:
+                        masked = np.random.choice(np.arange(12), size=n_masked, replace=False)
+                        survivors[masked] = False
+            new_sample[survivors] = sample[survivors]
         else:
             new_sample = sample.clone()
         return new_sample.float()
