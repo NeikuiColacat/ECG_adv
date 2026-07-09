@@ -15,6 +15,19 @@ Critical startup rule for this shared server:
 - Keep all operations for this project inside the current user's home tree.
   For this migrated host, that means paths under `/home/linbinhao`, especially
   `/home/linbinhao/ECG_adv_Gen` and the migrated data root below.
+- Prefer memory-backed temporary storage such as `/dev/shm` for verbose logs,
+  transient diagnostics, and regenerable intermediate files when practical,
+  so SSD writes stay low. Before any sizable or long-lived memory-backed write,
+  check `free -h` and `df -h /dev/shm`, estimate peak use, and leave substantial
+  headroom for other users and the OS; the host's approximately 250 GB RAM is
+  shared capacity, not a per-task allocation.
+- Apply the same discipline to SSD writes: check free space on the target
+  filesystem before sizable writes, never fill the disk, avoid duplicate
+  materializations, and reduce or stop work when shared headroom becomes tight.
+- Treat `/dev/shm` as volatile. Persist only final and reproduction-critical
+  commands, manifests, metrics, reports, plots, and selected weights to
+  user-owned storage, then remove only temporary files owned by the current
+  task. Never keep the sole copy of a required artifact in memory-backed storage.
 
 Current migrated host override, initialized 2026-05-23:
 
@@ -101,13 +114,6 @@ Every new managed experiment should leave an agent-readable run record:
 directories (`configs/`, `manifests/`, `logs/`, `checkpoints/`, `eval/`,
 `diagnostics/`, `reports/`, `artifacts/`). Record the experiment purpose and
 result summary before treating the run as handoff-ready.
-
-For exploratory sweeps and long evaluations, avoid high-frequency disk writes.
-Prefer in-memory or temporary stdout/stderr under `/dev/shm` for verbose logs
-and intermediate diagnostics, then persist only the final command, manifest,
-CSV/JSON metrics, important plots/reports, and selected evaluation weights.
-Do not keep large resume-state checkpoints or regenerated signal caches unless
-they are explicitly needed for reproduction.
 
 This host is not running as root. Do not assume `/root/autodl-tmp` or
 `/root/miniforge3/envs/ECGTwin/bin/python` are accessible here unless a later
