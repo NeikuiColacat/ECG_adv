@@ -71,7 +71,7 @@ from ecg_adv_gen.adaptation.anchor_sampling import (  # noqa: E402
     signal_anchor_difficulty_scores,
     signal_anchor_positive_boundary_scores,
     weighted_class_quotas_with_caps,
-    weighted_sample_indices as package_weighted_sample_indices,
+    weighted_sample_indices,
 )
 from ecg_adv_gen.data import (  # noqa: E402
     build_signal_cache_metadata,
@@ -84,7 +84,7 @@ from ecg_adv_gen.data import (  # noqa: E402
 from ecg_adv_gen.data.raw_signals import (  # noqa: E402
     RawSignalDataset,
     anchor_signal_npz_path,
-    apply_augmix_op_np as _raw_signal_apply_augmix_op_np,
+    apply_augmix_op_np,
 )
 from ecg_adv_gen.labels import CLASS_NAMES_SUPER5  # noqa: E402
 from ecg_adv_gen.labels.super5_mapping import SUPER5_TO_IDX  # noqa: E402
@@ -127,34 +127,12 @@ REAL_ROOTS = [
 ]
 
 
-def apply_augmix_op_np(
-    sig_ct: np.ndarray,
-    op_name: str,
-    op_severity: int,
-    severity_profile: str = "standard",
-    severity_profile_params: dict[str, Any] | None = None,
-) -> np.ndarray:
-    """Apply one ECG AugMix op with the locked PN2021-C profile table."""
-
-    return _raw_signal_apply_augmix_op_np(
-        sig_ct,
-        op_name,
-        op_severity,
-        severity_profile,
-        severity_profile_params=severity_profile_params,
-    )
-
-
 def set_seed(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
-
-
-def prepare_raw_ecgfounder_input(x: torch.Tensor) -> torch.Tensor:
-    return ecg1000_to_ecgfounder_input(x)
 
 
 class ECGFounderFullFTVictim(nn.Module):
@@ -190,7 +168,7 @@ class ECGFounderFullFTVictim(nn.Module):
 
     def forward_from_latent_to_logits(self, latent: torch.Tensor) -> torch.Tensor:
         ecg_ct = self._ecgtwin_latent_to_ecg1000(latent)
-        return self.model(prepare_raw_ecgfounder_input(ecg_ct))
+        return self.model(ecg1000_to_ecgfounder_input(ecg_ct))
 
 
 def build_signal_cache(
@@ -265,10 +243,6 @@ def parse_float_sequence(value: str | list[float] | tuple[float, ...] | None) ->
     if isinstance(value, str):
         return [float(x.strip()) for x in value.split(",") if x.strip()]
     return [float(x) for x in value]
-
-
-def load_selected_ref_ids(ref_meta_json: Path, center: str) -> set[str]:
-    return load_selected_record_ids_from_meta(ref_meta_json, center, strict_center=True)
 
 
 def load_anchor_pool_for_ids(
@@ -546,9 +520,9 @@ def train_latent_augmix_consistency_epoch(
         with torch.cuda.amp.autocast(enabled=device.type == "cuda"):
             if consistency_loss == "soft_bce":
                 with torch.no_grad():
-                    clean_logits = model(prepare_raw_ecgfounder_input(clean))
+                    clean_logits = model(ecg1000_to_ecgfounder_input(clean))
                     soft_targets = torch.sigmoid(clean_logits).detach()
-                logits = model(prepare_raw_ecgfounder_input(views))
+                logits = model(ecg1000_to_ecgfounder_input(views))
                 soft_rep = soft_targets.repeat((int(copies), 1))
 
                 mask = (labels_rep >= 0).float()
@@ -564,8 +538,8 @@ def train_latent_augmix_consistency_epoch(
                     F.binary_cross_entropy_with_logits(logits, soft_rep, reduction="none") * mask
                 ).sum() / denom
             else:
-                clean_logits = model(prepare_raw_ecgfounder_input(clean))
-                logits = model(prepare_raw_ecgfounder_input(views))
+                clean_logits = model(ecg1000_to_ecgfounder_input(clean))
+                logits = model(ecg1000_to_ecgfounder_input(views))
                 logits_views = logits.view(int(copies), clean.shape[0], -1)
 
                 mask_clean = (labels >= 0).float()
@@ -619,44 +593,6 @@ def train_latent_augmix_consistency_epoch(
     }
 
 
-def parse_class_weight_string(raw: str) -> dict[str, float]:
-    return parse_anchor_class_weight_string(raw)
-
-
-def weighted_class_quotas(
-    classes: list[str],
-    k_total: int,
-    class_weights: dict[str, float],
-    labels: np.ndarray,
-    max_repeat_per_class: int = 0,
-) -> dict[str, int]:
-    return weighted_class_quotas_with_caps(
-        classes,
-        k_total,
-        class_weights,
-        labels,
-        max_repeat_per_class=max_repeat_per_class,
-        class_to_idx=SUPER5_TO_IDX,
-    )
-
-
-def weighted_sample_indices(
-    rng: np.random.Generator,
-    indices: np.ndarray,
-    weights: np.ndarray,
-    k: int,
-    *,
-    replace_when_needed: bool,
-) -> np.ndarray:
-    return package_weighted_sample_indices(
-        rng,
-        indices,
-        weights,
-        k,
-        replace_when_needed=replace_when_needed,
-    )
-
-
 def sample_anchor_indices(
     model: nn.Module,
     anchor_pool: dict[str, Any],
@@ -668,14 +604,15 @@ def sample_anchor_indices(
     mode = str(args.anchor_sample_mode)
     classes = list(anchor_pool["classes_in_scope"])
     labels = np.asarray(anchor_pool["labels"], dtype=np.float32)
-    class_weights = parse_class_weight_string(args.anchor_class_sample_weights)
+    class_weights = parse_anchor_class_weight_string(args.anchor_class_sample_weights)
     rng = np.random.default_rng(args.seed + int(args.current_epoch) * 1009 + 97)
-    quotas = weighted_class_quotas(
+    quotas = weighted_class_quotas_with_caps(
         classes,
         int(args.k_anchor),
         class_weights,
         labels,
-        int(args.anchor_class_max_repeat),
+        max_repeat_per_class=int(args.anchor_class_max_repeat),
+        class_to_idx=SUPER5_TO_IDX,
     )
 
     difficulty_mode = None
@@ -884,15 +821,6 @@ def make_source_only_train_loader(
     )
 
 
-def scheduled_adv_weight(args: argparse.Namespace, epoch: int) -> float:
-    return linear_warmup_value(
-        args.adv_weight,
-        epoch,
-        args.adv_weight_warmup_epochs,
-        start=args.adv_weight_start,
-    )
-
-
 def build_clean_anchor_augmix_epoch(
     target_dataset: RawSignalDataset,
     args: argparse.Namespace,
@@ -1013,7 +941,7 @@ def build_adv_epoch(
                 init_logits = victim.forward_from_latent_to_logits(z_init)
             x_adv_1000, delta = pgd_gen.attack_from_latent(z, y, candidate_latents=cand)
             with torch.no_grad():
-                adv_input = prepare_raw_ecgfounder_input(x_adv_1000)
+                adv_input = ecg1000_to_ecgfounder_input(x_adv_1000)
                 adv_logits = victim.model(adv_input)
                 batch_diagnostics.append(
                     fullft_adv_batch_diagnostics(clean_logits, init_logits, adv_logits, y)
@@ -1559,7 +1487,7 @@ def main() -> None:
             args.preprocess_policy,
         )
 
-        selected_ids = load_selected_ref_ids(Path(args.ref_meta_json), args.center)
+        selected_ids = load_selected_record_ids_from_meta(Path(args.ref_meta_json), args.center, strict_center=True)
         record_ids = pn["record_ids"].astype(str)
         target_idx = np.asarray([i for i, rid in enumerate(record_ids) if rid in selected_ids], dtype=np.int64)
         if len(target_idx) != args.k:
@@ -1786,7 +1714,12 @@ def main() -> None:
         ):
             assert clean_anchor_augmix_dataset is not None
             adv_info = build_clean_anchor_augmix_epoch(clean_anchor_augmix_dataset, args, epoch)
-        epoch_adv_weight = scheduled_adv_weight(args, epoch)
+        epoch_adv_weight = linear_warmup_value(
+            args.adv_weight,
+            epoch,
+            args.adv_weight_warmup_epochs,
+            start=args.adv_weight_start,
+        )
         if args.stage == "ptbxl_source":
             train_loader = make_source_only_train_loader(ptbxl, args)
         else:
@@ -1811,7 +1744,7 @@ def main() -> None:
             teacher_logits = teacher_logits.to(device, non_blocking=True)
             opt.zero_grad(set_to_none=True)
             with torch.cuda.amp.autocast(enabled=device.type == "cuda"):
-                logits = model(prepare_raw_ecgfounder_input(x))
+                logits = model(ecg1000_to_ecgfounder_input(x))
                 loss = criterion(logits, y, stream)
                 if args.adv_clean_logit_anchor_weight > 0:
                     adv_mask = stream == 2
@@ -2196,7 +2129,7 @@ def main() -> None:
             "anchor_sample_mode": args.anchor_sample_mode,
             "anchor_sample_power": float(args.anchor_sample_power),
             "anchor_sample_min_weight": float(args.anchor_sample_min_weight),
-            "anchor_class_sample_weights": parse_class_weight_string(args.anchor_class_sample_weights),
+            "anchor_class_sample_weights": parse_anchor_class_weight_string(args.anchor_class_sample_weights),
             "anchor_class_max_repeat": int(args.anchor_class_max_repeat),
             "hull_attack_pos_weight_source": args.hull_attack_pos_weight_source,
             "hull_attack_pos_weight_clip": float(args.hull_attack_pos_weight_clip),
