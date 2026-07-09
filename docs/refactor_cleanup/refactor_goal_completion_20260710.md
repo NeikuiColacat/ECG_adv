@@ -4,6 +4,7 @@ Date: 2026-07-10
 Branch: `refactor/data-module-20260620`
 Goal baseline: `fc5766299bdeaeb0e53bf3e9a9f255d7bb7ce557`
 Implementation snapshot: `6e4e4cf13810f1ce986b5d4475a1bd7fe432019a`
+Verified documentation snapshot: `0c47ab022e9a4c0b438e93cc0029a1c964272fa2`
 Upstream base after explicit fetch: `afec2b883106b0e05339f62cb62476b967301e45`
 Push status: **not pushed**
 
@@ -66,9 +67,9 @@ The 21 implementation/evidence commits after the baseline are:
 | `a883315` | Add schema-v2 managed-run integrity snapshots. |
 | `6e4e4cf` | Enforce active-evidence Registry integrity. |
 
-The documentation closeout commit is the commit containing this report and the
-one-day pack/RFC/handoff updates. Use the `git log` command above for its exact
-hash.
+Documentation commit `0c47ab0` publishes this report, the one-day pack, RFC,
+handoff update, and evidence amendment. The final verification-record commit
+updates only this report; use the `git log` command above for its exact hash.
 
 ## Compression accounting
 
@@ -92,7 +93,8 @@ At implementation snapshot `6e4e4cf`, the entire Goal range changes 47 files
 with 5,757 insertions and 1,282 deletions, net +4,475 lines. The increase is
 primarily golden data, behavioral tests, Registry/run-record integrity code,
 and evidence documentation. It must not be described as a repository-wide net
-reduction. The final documentation-only delta is reported below.
+reduction. At verified documentation snapshot `0c47ab0`, the range changes 51
+files with 6,561 insertions and 1,306 deletions, net +5,255 lines.
 
 ## One-day review surface
 
@@ -209,7 +211,33 @@ well as the Goal commits. No part of the range has been pushed by this work.
 
 ## Final post-documentation verification
 
-This section is updated after committing the review pack, RFC, handoff,
-evidence amendment, and initial report. It records the final committed-state
-SHA, ahead/behind count, whole-Goal diff, audit warnings, and repeated CPU
-gates.
+Verification was repeated from committed documentation snapshot
+`0c47ab022e9a4c0b438e93cc0029a1c964272fa2`:
+
+- Complete CPU pytest: `414 passed, 13 warnings in 46.54s`; warnings are only
+  the existing Matplotlib/PyParsing deprecations.
+- Golden contract: PASS, SHA-256
+  `df5d6597167e3eb27b63054ed0e62e823b43c5a48f037c048e8bb6c307b404e1`.
+- Deep Registry/workspace audit: `passed=true`, `error_count=0`,
+  `warning_count=12`, active configs `10/10`, managed records `6/6`, and 44
+  artifact hashes computed.
+- The 12 warnings are fully classified: five historical non-ready records,
+  five guarded dirty `model/*` handles, and two external targets that are
+  directories rather than Git checkouts. There is no dirty source-of-truth or
+  staged-artifact warning.
+- YAML parse: six managed records and one active claim.
+- `git diff --check`, `git diff --cached --check`, guarded staged-path checks,
+  and blocked artifact-pattern checks passed; the index was empty.
+- Git relation after the explicit fetch: ahead 64 / behind 0 at `0c47ab0`.
+  The only remaining worktree state was the five preserved `model/*` handles
+  and untracked user-owned `docs/superpowers/`.
+- Lineage checks passed: `b57ee16` is an ancestor and `git cherry` reports
+  `- 02f7cef`, proving patch-equivalent evidence integration without a second
+  cherry-pick.
+
+The final verification-record commit changes only this report. It makes the
+Goal range 23 commits after `fc57662`; the final tree changes 51 files with
+6,589 insertions and 1,306 deletions (net +5,283). It also makes the
+future-push relation ahead 65 / behind 0, provided the fetched upstream remains
+`afec2b883106b0e05339f62cb62476b967301e45`. The exact final SHA is the result
+of the report-local `git log` command at the top of this file. No push was run.
