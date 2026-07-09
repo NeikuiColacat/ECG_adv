@@ -5,12 +5,17 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
-import shutil
+import os
+import stat
+import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+from ecg_adv_gen.config.loader import interpolate_config
 
 
 class RunRecordError(ValueError):
@@ -33,6 +38,9 @@ _GENERIC_RESULT_SUMMARIES = {
     "Run finalized with evaluation metrics; see metric_summary and eval artifacts.",
 }
 REGISTRATION_STATUSES = {"trusted", "provisional", "deprecated", "failed", "exploratory"}
+_RUN_FILE_INDEX_INTEGRITY_SCOPE = (
+    "required_manifest_outputs_required_file_inputs_and_env_excluding_self_index"
+)
 
 
 def _utc_now() -> str:
@@ -51,11 +59,110 @@ def _read_json(path: Path) -> dict[str, Any]:
     return data
 
 
-def _write_json(path: Path, data: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
+def _read_json_snapshot(path: Path) -> tuple[dict[str, Any], str]:
+    path = _absolute_no_resolve(path)
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(fd, "rb") as handle:
+            before = os.fstat(handle.fileno())
+            raw = handle.read()
+            after = os.fstat(handle.fileno())
+        current = os.stat(path, follow_symlinks=False)
+    except OSError as exc:
+        raise RunRecordError(f"Could not read stable JSON file: {path}: {exc}") from exc
+    signatures = {
+        (item.st_dev, item.st_ino, item.st_size, item.st_mtime_ns, item.st_ctime_ns)
+        for item in (before, after, current)
+    }
+    if len(signatures) != 1 or stat.S_ISLNK(current.st_mode):
+        raise RunRecordError(f"JSON file changed during read or is a symbolic link: {path}")
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RunRecordError(f"Invalid JSON file: {path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise RunRecordError(f"JSON root must be an object: {path}")
+    return data, hashlib.sha256(raw).hexdigest()
+
+
+def _absolute_no_resolve(path: Path) -> Path:
+    return Path(os.path.abspath(os.fspath(Path(path).expanduser())))
+
+
+def _assert_safe_write_path(path: Path, *, root: Path | None = None) -> None:
+    path = _absolute_no_resolve(path)
+    if path.is_symlink():
+        raise RunRecordError(f"Refusing to write through symbolic link: {path}")
+    if root is None:
+        return
+    root = Path(root).resolve()
+    try:
+        path.parent.relative_to(root)
+    except ValueError as exc:
+        raise RunRecordError(f"Refusing to write outside run_dir: {path}") from exc
+
+
+@contextmanager
+def _safe_parent_fd(path: Path, *, root: Path | None):
+    path = _absolute_no_resolve(path)
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptors: list[int] = []
+    try:
+        if root is None:
+            descriptors.append(os.open(path.parent, directory_flags))
+        else:
+            root = Path(root).resolve()
+            try:
+                relative_parent = path.parent.relative_to(root)
+            except ValueError as exc:
+                raise RunRecordError(f"Refusing to write outside run_dir: {path}") from exc
+            descriptors.append(os.open(root, directory_flags))
+            for part in relative_parent.parts:
+                descriptors.append(os.open(part, directory_flags, dir_fd=descriptors[-1]))
+        yield descriptors[-1], path.name
+    finally:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
+
+
+def _reject_symlink_destination(parent_fd: int, name: str) -> None:
+    try:
+        target = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return
+    if stat.S_ISLNK(target.st_mode):
+        raise RunRecordError(f"Refusing to write through symbolic link: {name}")
+
+
+def _atomic_write_text(path: Path, text: str, *, root: Path | None = None) -> None:
+    path = _absolute_no_resolve(path)
+    if root is None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    _assert_safe_write_path(path, root=root)
+    temporary = f".{path.name}.{uuid.uuid4().hex}.tmp"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    with _safe_parent_fd(path, root=root) as (parent_fd, name):
+        _reject_symlink_destination(parent_fd, name)
+        created = False
+        try:
+            fd = os.open(temporary, flags, 0o666, dir_fd=parent_fd)
+            created = True
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(text)
+            os.replace(temporary, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+        finally:
+            if created:
+                try:
+                    os.unlink(temporary, dir_fd=parent_fd)
+                except FileNotFoundError:
+                    pass
+
+
+def _write_json(path: Path, data: dict[str, Any], *, root: Path | None = None) -> None:
+    _atomic_write_text(
+        path,
         json.dumps(data, indent=2, sort_keys=True, ensure_ascii=True, default=str) + "\n",
-        encoding="utf-8",
+        root=root,
     )
 
 
@@ -70,15 +177,16 @@ def _read_yaml(path: Path) -> dict[str, Any]:
 
 
 def _write_yaml(path: Path, data: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=False), encoding="utf-8")
+    _atomic_write_text(path, yaml.safe_dump(data, sort_keys=False, allow_unicode=False))
 
 
 def _relative(path: Path, root: Path) -> str:
+    path = _absolute_no_resolve(path)
+    root = Path(root).resolve()
     try:
-        return path.resolve().relative_to(root.resolve()).as_posix()
+        return path.relative_to(root).as_posix()
     except ValueError:
-        return str(path.resolve())
+        return str(path)
 
 
 def _category_for(path: Path, run_dir: Path) -> str:
@@ -128,24 +236,61 @@ def ensure_run_layout(run_dir: Path) -> dict[str, str]:
     """Create the standard logical run layout directories."""
     run_dir = Path(run_dir).expanduser().resolve()
     run_dir.mkdir(parents=True, exist_ok=True)
-    for dirname, description in RUN_LAYOUT_DIRS.items():
-        directory = run_dir / dirname
-        directory.mkdir(parents=True, exist_ok=True)
-        readme = directory / "README.md"
-        if not readme.exists():
-            readme.write_text(f"# {dirname}\n\n{description}\n", encoding="utf-8")
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    root_fd = os.open(run_dir, flags)
+    try:
+        for dirname, description in RUN_LAYOUT_DIRS.items():
+            try:
+                os.mkdir(dirname, dir_fd=root_fd)
+            except FileExistsError:
+                pass
+            directory_fd = os.open(dirname, flags, dir_fd=root_fd)
+            os.close(directory_fd)
+            readme = run_dir / dirname / "README.md"
+            if readme.is_symlink():
+                raise RunRecordError(f"Refusing symbolic link run layout file: {readme}")
+            if not readme.exists():
+                _atomic_write_text(readme, f"# {dirname}\n\n{description}\n", root=run_dir)
+    finally:
+        os.close(root_fd)
     return {name: str((run_dir / name).resolve()) for name in RUN_LAYOUT_DIRS}
 
 
-def _copy_small_file(src: Path, dst: Path) -> None:
-    if not src.exists() or not src.is_file():
+def _copy_small_file(src: Path, dst: Path, *, root: Path | None = None) -> None:
+    src = _absolute_no_resolve(src)
+    dst = _absolute_no_resolve(dst)
+    _assert_safe_write_path(dst, root=root)
+    if src == dst:
         return
-    if src.resolve() == dst.resolve():
+    source_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        source_fd = os.open(src, source_flags)
+    except FileNotFoundError:
         return
-    if src.stat().st_size > _SMALL_COPY_LIMIT_BYTES:
-        return
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dst)
+    with os.fdopen(source_fd, "rb") as source:
+        source_stat = os.fstat(source.fileno())
+        if not stat.S_ISREG(source_stat.st_mode):
+            raise RunRecordError(f"Refusing non-regular mirror source: {src}")
+        if source_stat.st_size > _SMALL_COPY_LIMIT_BYTES:
+            return
+        temporary = f".{dst.name}.{uuid.uuid4().hex}.tmp"
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        with _safe_parent_fd(dst, root=root) as (parent_fd, name):
+            _reject_symlink_destination(parent_fd, name)
+            created = False
+            try:
+                destination_fd = os.open(temporary, flags, 0o666, dir_fd=parent_fd)
+                created = True
+                with os.fdopen(destination_fd, "wb") as destination:
+                    for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                        destination.write(chunk)
+                os.replace(temporary, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+            finally:
+                if created:
+                    try:
+                        os.unlink(temporary, dir_fd=parent_fd)
+                    except FileNotFoundError:
+                        pass
 
 
 def _mirror_known_small_files(run_dir: Path) -> None:
@@ -162,7 +307,7 @@ def _mirror_known_small_files(run_dir: Path) -> None:
         "summary.md": "reports/summary.md",
     }
     for src_name, dst_name in mirrors.items():
-        _copy_small_file(run_dir / src_name, run_dir / dst_name)
+        _copy_small_file(run_dir / src_name, run_dir / dst_name, root=run_dir)
 
 
 def _iter_expected_artifact_records(manifest: dict[str, Any]) -> list[dict[str, Any]]:
@@ -170,7 +315,14 @@ def _iter_expected_artifact_records(manifest: dict[str, Any]) -> list[dict[str, 
     records: list[dict[str, Any]] = []
     for artifact in expected.get("launch_artifacts") or []:
         if artifact.get("path"):
-            records.append({"path": Path(str(artifact["path"])), "role": artifact.get("role"), "source": "launch"})
+            records.append(
+                {
+                    "path": Path(str(artifact["path"])),
+                    "role": artifact.get("role"),
+                    "source": "launch",
+                    "required": artifact.get("required", True),
+                }
+            )
     for group in ("child_runs", "postprocess_runs"):
         for run in expected.get(group) or []:
             for artifact in run.get("expected_artifacts") or []:
@@ -182,8 +334,52 @@ def _iter_expected_artifact_records(manifest: dict[str, Any]) -> list[dict[str, 
                             "source": group,
                             "center": run.get("center"),
                             "command_index": run.get("command_index"),
+                            "required": artifact.get("required", True),
                         }
                     )
+    return records
+
+
+def _iter_required_input_file_records(value: Any):
+    if isinstance(value, dict):
+        path_text = value.get("path")
+        role = str(value.get("role") or "")
+        if path_text and value.get("required") is True:
+            path = Path(str(path_text)).expanduser()
+            if not path.is_dir() and not role.endswith(("_dir", "_root")):
+                yield {**value, "path": path, "source": "inputs"}
+        for nested in value.values():
+            yield from _iter_required_input_file_records(nested)
+    elif isinstance(value, list):
+        for nested in value:
+            yield from _iter_required_input_file_records(nested)
+
+
+def _critical_records_by_path(manifest: dict[str, Any], run_dir: Path) -> dict[str, dict[str, Any]]:
+    records: dict[str, dict[str, Any]] = {}
+    self_index_paths = {
+        str(_absolute_no_resolve(run_dir / "run_file_index.json")),
+        str(_absolute_no_resolve(run_dir / "manifests/run_file_index.json")),
+    }
+
+    def add(record: dict[str, Any]) -> None:
+        path = _absolute_no_resolve(Path(str(record["path"])))
+        key = str(path)
+        required = record.get("required") is not False
+        if key in records:
+            required = required or records[key].get("required") is not False
+        records[key] = {**record, "path": path, "required": required}
+
+    for record in _iter_expected_artifact_records(manifest):
+        if record.get("required") is not False:
+            declared = str(_absolute_no_resolve(Path(str(record["path"]))))
+            if declared in self_index_paths:
+                continue
+            add(record)
+    inputs = (manifest.get("artifact_trace") or {}).get("inputs") or {}
+    for record in _iter_required_input_file_records(inputs):
+        add(record)
+    add({"path": run_dir / "env.json", "role": "environment", "source": "run_record", "required": True})
     return records
 
 
@@ -247,47 +443,177 @@ def _build_metric_summary(run_dir: Path, manifest: dict[str, Any]) -> dict[str, 
     return summary
 
 
-def _build_file_index(run_dir: Path, manifest: dict[str, Any]) -> dict[str, Any]:
+def _build_file_index(
+    run_dir: Path,
+    manifest: dict[str, Any],
+    *,
+    include_sha256: bool = True,
+) -> dict[str, Any]:
     categories: dict[str, list[dict[str, Any]]] = {name: [] for name in RUN_LAYOUT_DIRS}
-    expected_paths = {str(path.expanduser().resolve()) for path in _iter_expected_artifact_paths(manifest)}
+    expected_records = _iter_expected_artifact_records(manifest)
+    expected_by_path = {
+        str(_absolute_no_resolve(record["path"])): record
+        for record in expected_records
+    }
+    critical_by_path = _critical_records_by_path(manifest, run_dir)
+    declared_by_path = {**critical_by_path, **expected_by_path}
+    self_paths = {
+        str(_absolute_no_resolve(run_dir / "run_file_index.json")),
+        str(_absolute_no_resolve(run_dir / "manifests/run_file_index.json")),
+    }
     seen_paths: set[str] = set()
     for path in sorted(p for p in run_dir.rglob("*") if p.is_file()):
-        resolved_key = str(path.resolve())
-        seen_paths.add(resolved_key)
+        declared_key = str(_absolute_no_resolve(path))
+        if declared_key in self_paths:
+            continue
+        seen_paths.add(declared_key)
         category = _category_for(path, run_dir)
         record = {
             "relative_path": _relative(path, run_dir),
-            "path": str(path.resolve()),
+            "path": declared_key,
             "size_bytes": path.stat().st_size,
-            "expected_artifact": str(path.resolve()) in expected_paths,
+            "expected_artifact": declared_key in expected_by_path,
             "external": False,
         }
+        if include_sha256 and declared_key in critical_by_path:
+            record["sha256"] = _sha256_file(path)
         categories.setdefault(category, []).append(record)
-    for artifact in _iter_expected_artifact_records(manifest):
-        path = artifact["path"].expanduser().resolve()
-        resolved_key = str(path)
-        if resolved_key in seen_paths:
+    for declared_key, artifact in declared_by_path.items():
+        if declared_key in seen_paths or declared_key in self_paths:
             continue
+        path = Path(declared_key)
+        seen_paths.add(declared_key)
         category = _category_for(path, run_dir)
         record = {
             "relative_path": _relative(path, run_dir),
             "path": str(path),
             "exists": path.exists(),
             "size_bytes": path.stat().st_size if path.is_file() else None,
-            "expected_artifact": True,
+            "expected_artifact": declared_key in expected_by_path,
             "external": True,
             "role": artifact.get("role"),
             "source": artifact.get("source"),
             "center": artifact.get("center"),
             "command_index": artifact.get("command_index"),
         }
+        if include_sha256 and declared_key in critical_by_path and path.is_file():
+            record["sha256"] = _sha256_file(path)
         categories.setdefault(category, []).append(record)
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "generated_at_utc": _utc_now(),
         "run_dir": str(run_dir),
+        "integrity": {
+            "algorithm": "sha256",
+            "scope": _RUN_FILE_INDEX_INTEGRITY_SCOPE,
+        },
         "categories": categories,
     }
+
+
+def verify_run_file_index(run_dir: Path) -> dict[str, Any]:
+    """Verify manifest-declared reproduction-critical files against their index."""
+    run_dir = Path(run_dir).expanduser().resolve()
+    errors: list[str] = []
+    index_sha256 = ""
+
+    def report(
+        status: str,
+        *,
+        checked_count: int = 0,
+        warnings: list[str] | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "passed": status == "verified",
+            "status": status,
+            "checked_count": checked_count,
+            "index_sha256": index_sha256,
+            "warnings": warnings or [],
+            "errors": errors,
+        }
+
+    try:
+        index, index_sha256 = _read_json_snapshot(run_dir / "run_file_index.json")
+    except RunRecordError as exc:
+        errors.append(str(exc))
+        return report("failed")
+
+    schema_version = index.get("schema_version")
+    if schema_version == 1:
+        return report(
+            "unchecked",
+            warnings=["run_file_index schema_version=1 has no required SHA-256 contract"],
+        )
+    if schema_version != 2:
+        errors.append(f"unsupported run_file_index schema_version={schema_version!r}")
+        return report("failed")
+    integrity = index.get("integrity") or {}
+    if integrity.get("algorithm") != "sha256" or integrity.get("scope") != _RUN_FILE_INDEX_INTEGRITY_SCOPE:
+        errors.append("run_file_index integrity algorithm/scope mismatch")
+        return report("failed")
+
+    try:
+        manifest = _read_json(run_dir / "run_manifest.json")
+    except RunRecordError as exc:
+        errors.append(str(exc))
+        return report("failed")
+
+    indexed_by_path: dict[str, dict[str, Any]] = {}
+    categories = index.get("categories") or {}
+    if not isinstance(categories, dict):
+        errors.append("run_file_index.categories must be an object")
+        return report("failed")
+    records = [
+        record
+        for category_records in categories.values()
+        if isinstance(category_records, list)
+        for record in category_records
+        if isinstance(record, dict) and record.get("path")
+    ]
+    for record in records:
+        key = str(_absolute_no_resolve(Path(str(record["path"]))))
+        if key not in indexed_by_path or record.get("sha256"):
+            indexed_by_path[key] = record
+
+    checked_count = 0
+    for declared_key, artifact in _critical_records_by_path(manifest, run_dir).items():
+        path = Path(declared_key)
+        record = indexed_by_path.get(declared_key)
+        if path.is_symlink():
+            errors.append(f"reproduction-critical file is a symbolic link: {path}")
+            continue
+        if not path.is_file():
+            if artifact.get("required") is not False:
+                errors.append(f"reproduction-critical file is missing: {path}")
+            continue
+        if record is None:
+            errors.append(f"reproduction-critical file is absent from run_file_index: {path}")
+            continue
+        if not record.get("sha256"):
+            errors.append(f"reproduction-critical file has no sha256: {path}")
+            continue
+        label = str(record.get("relative_path") or path)
+        checked_count += 1
+        try:
+            before = path.stat()
+            actual_sha256 = _sha256_file(path)
+            after = path.stat()
+        except OSError as exc:
+            errors.append(f"reproduction-critical file could not be verified: {path}: {exc}")
+            continue
+        actual_size = after.st_size
+        if record.get("size_bytes") != actual_size:
+            errors.append(
+                f"size_bytes mismatch for {label}: indexed={record.get('size_bytes')!r}, actual={actual_size}"
+            )
+        before_signature = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+        after_signature = (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+        if before_signature != after_signature:
+            errors.append(f"reproduction-critical file changed during verification: {label}")
+        if record.get("sha256") != actual_sha256:
+            errors.append(f"sha256 mismatch for {label}")
+
+    return report("failed" if errors else "verified", checked_count=checked_count)
 
 
 def _refresh_launch_artifact_status(manifest: dict[str, Any]) -> dict[str, Any]:
@@ -353,6 +679,9 @@ def _artifact_records_by_source(manifest: dict[str, Any], source: str) -> list[d
 
 _REGISTRATION_REQUIRED_ROLE_ALIASES = {
     "run_manifest": {"run_manifest"},
+    "run_card": {"run_card"},
+    "run_file_index": {"run_file_index"},
+    "run_summary": {"run_summary"},
     "resolved_config": {"resolved_config", "run_config_yaml", "run_config_json"},
     "command": {"command", "command_sh"},
     "data_manifest": {"data_manifest"},
@@ -431,7 +760,8 @@ def _metric_centers_from_metrics_long(paths: list[Path]) -> set[str]:
 
 def _sha256_file(path: Path) -> str:
     h = hashlib.sha256()
-    with path.open("rb") as f:
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    with os.fdopen(fd, "rb") as f:
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
@@ -750,7 +1080,6 @@ def _validate_run_record_contract(
     expected_eval = _expected_eval_artifact_records(manifest)
     expected_metrics_long = _expected_metrics_long_artifact_records(manifest)
     metric_paths = _discover_metrics_paths(run_dir, manifest)
-    errors.extend(_validate_content_artifacts(run_dir, manifest, metric_paths))
 
     status = str(manifest.get("status") or "")
     if status == "succeeded":
@@ -780,6 +1109,9 @@ def _validate_run_record_contract(
         for name in ("run_card.json", "run_file_index.json", "summary.md"):
             if not (run_dir / name).exists():
                 errors.append(f"{name} is required before registry registration")
+
+    if not errors:
+        errors.extend(_validate_content_artifacts(run_dir, manifest, metric_paths))
 
     if errors:
         raise RunRecordError("Run record contract failed:\n" + "\n".join(f"- {error}" for error in errors))
@@ -876,7 +1208,7 @@ def finalize_run_record(
             "summary": str(run_dir / "summary.md"),
         },
     }
-    _write_json(run_dir / "run_card.json", card)
+    _write_json(run_dir / "run_card.json", card, root=run_dir)
     manifest["run_record"] = {
         **manifest_run_record,
         "finalized_at_utc": card["generated_at_utc"],
@@ -888,16 +1220,23 @@ def finalize_run_record(
         "outcome": resolved_outcome,
     }
     manifest["updated_at_utc"] = _utc_now()
-    _write_json(manifest_path, manifest)
+    _write_json(manifest_path, manifest, root=run_dir)
     _mirror_known_small_files(run_dir)
-    file_index = _build_file_index(run_dir, manifest)
-    _write_json(run_dir / "run_file_index.json", file_index)
+    file_index = _build_file_index(run_dir, manifest, include_sha256=False)
+    _write_json(run_dir / "run_file_index.json", file_index, root=run_dir)
     summary_md = _render_summary_md(card, file_index)
-    (run_dir / "summary.md").write_text(summary_md, encoding="utf-8")
+    _atomic_write_text(run_dir / "summary.md", summary_md, root=run_dir)
     _mirror_known_small_files(run_dir)
     manifest = _refresh_launch_artifact_status(_read_json(manifest_path))
-    _write_json(manifest_path, manifest)
+    _write_json(manifest_path, manifest, root=run_dir)
     _mirror_known_small_files(run_dir)
+    file_index = _build_file_index(run_dir, manifest)
+    _write_json(run_dir / "run_file_index.json", file_index, root=run_dir)
+    _copy_small_file(
+        run_dir / "run_file_index.json",
+        run_dir / "manifests/run_file_index.json",
+        root=run_dir,
+    )
     return card
 
 
@@ -918,6 +1257,8 @@ def _resolve_registration_status(
     card: dict[str, Any],
 ) -> str:
     if requested_status and requested_status != "auto":
+        if requested_status not in REGISTRATION_STATUSES:
+            raise RunRecordError(f"Unsupported registration status: {requested_status!r}")
         return requested_status
     run_record = manifest.get("run_record") or {}
     experiment = manifest.get("experiment") or {}
@@ -934,6 +1275,34 @@ def _resolve_registration_status(
     return "provisional"
 
 
+def _validate_run_card_matches_manifest(run_dir: Path, card: dict[str, Any], manifest: dict[str, Any]) -> None:
+    experiment = manifest.get("experiment") if isinstance(manifest.get("experiment"), dict) else {}
+    paper = manifest.get("paper_protocol") if isinstance(manifest.get("paper_protocol"), dict) else {}
+    run_record = manifest.get("run_record") if isinstance(manifest.get("run_record"), dict) else {}
+    card_experiment = card.get("experiment") if isinstance(card.get("experiment"), dict) else {}
+    card_result = card.get("result") if isinstance(card.get("result"), dict) else {}
+    card_protocol = card.get("protocol") if isinstance(card.get("protocol"), dict) else {}
+    expected_centers = (paper.get("centers") or {}).get("target_4") or paper.get("target_centers") or []
+    checks = {
+        "run_id": (card.get("run_id"), manifest.get("run_id")),
+        "run_dir": (str(Path(str(card.get("run_dir") or "")).expanduser().resolve()), str(run_dir)),
+        "experiment.name": (card_experiment.get("name"), experiment.get("name")),
+        "experiment.purpose": (card_experiment.get("purpose"), run_record.get("purpose")),
+        "result.status": (card_result.get("status"), manifest.get("status")),
+        "result.summary": (card_result.get("summary"), run_record.get("result_summary")),
+        "protocol.mapping_version": (card_protocol.get("mapping_version"), paper.get("mapping_version")),
+        "protocol.mapping_hash": (card_protocol.get("mapping_hash"), paper.get("mapping_hash")),
+        "protocol.class_order": (list(card_protocol.get("class_order") or []), list(paper.get("class_order") or [])),
+        "protocol.target_centers": (list(card_protocol.get("target_centers") or []), list(expected_centers)),
+        "protocol.kshot": (card_protocol.get("kshot") or {}, paper.get("kshot") or {}),
+    }
+    mismatches = [field for field, (observed, expected) in checks.items() if observed != expected]
+    if mismatches:
+        raise RunRecordError(
+            "run_card.json disagrees with run_manifest.json: " + ", ".join(mismatches)
+        )
+
+
 def register_run_in_registry(
     *,
     registry_path: Path,
@@ -946,6 +1315,18 @@ def register_run_in_registry(
     local_config_path = Path(local_config_path).expanduser().resolve()
     run_dir = Path(run_dir).expanduser().resolve()
     card_path = run_dir / "run_card.json"
+    summary_path = run_dir / "summary.md"
+    index_path = run_dir / "run_file_index.json"
+    registry = _read_yaml(registry_path)
+    local_config = interpolate_config(_read_yaml(local_config_path))
+    output_root_raw = ((local_config.get("paths") or {}).get("output_root"))
+    if not output_root_raw:
+        raise RunRecordError(f"Local config has no paths.output_root: {local_config_path}")
+    output_root = Path(str(output_root_raw)).expanduser().resolve()
+    run_dir_ref = _path_ref(run_dir, output_root=output_root)
+    card_ref = _path_ref(card_path, output_root=output_root)
+    summary_ref = _path_ref(summary_path, output_root=output_root)
+    index_ref = _path_ref(index_path, output_root=output_root)
     if not card_path.exists():
         raise RunRecordError(f"Missing run_card.json; finalize the run before registry registration: {card_path}")
     card = _read_json(card_path)
@@ -955,6 +1336,7 @@ def register_run_in_registry(
         manifest=manifest,
         card=card,
     )
+    _validate_run_card_matches_manifest(run_dir, card, manifest)
     _validate_run_record_contract(
         run_dir,
         manifest,
@@ -964,12 +1346,16 @@ def register_run_in_registry(
         require_registration_ready=True,
         registration_status=resolved_status,
     )
-    registry = _read_yaml(registry_path)
-    local_config = _read_yaml(local_config_path)
-    output_root_raw = ((local_config.get("paths") or {}).get("output_root"))
-    if not output_root_raw:
-        raise RunRecordError(f"Local config has no paths.output_root: {local_config_path}")
-    output_root = Path(str(output_root_raw)).expanduser().resolve()
+    integrity = verify_run_file_index(run_dir)
+    if resolved_status in {"trusted", "provisional"} and not integrity["passed"]:
+        details = [*integrity["errors"], *integrity["warnings"]]
+        raise RunRecordError(
+            "Run file integrity verification failed:\n"
+            + "\n".join(f"- {detail}" for detail in details)
+        )
+    index_sha256 = str(integrity.get("index_sha256") or "")
+    if not index_sha256:
+        raise RunRecordError("Run file index could not be read as a stable snapshot")
 
     entry = {
         "run_id": card.get("run_id", run_dir.name),
@@ -978,18 +1364,42 @@ def register_run_in_registry(
         "outcome": (card.get("result") or {}).get("outcome", ""),
         "purpose": (card.get("experiment") or {}).get("purpose", ""),
         "result_summary": (card.get("result") or {}).get("summary", ""),
-        "run_dir": _path_ref(run_dir, output_root=output_root),
-        "run_card": _path_ref(card_path, output_root=output_root),
-        "summary": _path_ref(run_dir / "summary.md", output_root=output_root),
+        "run_dir": run_dir_ref,
+        "run_card": card_ref,
+        "summary": summary_ref,
+        "run_file_index": index_ref,
+        "run_file_index_sha256": index_sha256,
+        "replay_status": (
+            "replay_ready" if resolved_status in {"trusted", "provisional"}
+            else "historical_evaluation_only"
+        ),
         "mapping_version": (card.get("protocol") or {}).get("mapping_version", ""),
         "mapping_hash": (card.get("protocol") or {}).get("mapping_hash", ""),
         "updated": _utc_now().split("T", 1)[0],
     }
-    managed_runs = list(registry.get("managed_runs") or [])
-    key = (entry["run_id"], entry["experiment_name"], entry["run_dir"])
+    managed_runs_raw = registry.get("managed_runs")
+    if managed_runs_raw is None:
+        managed_runs = []
+    elif isinstance(managed_runs_raw, list):
+        managed_runs = list(managed_runs_raw)
+    else:
+        raise RunRecordError("Registry managed_runs must be a list")
+    identity = (entry["run_id"], entry["experiment_name"])
+    for item in managed_runs:
+        item_identity = (item.get("run_id"), item.get("experiment_name"))
+        same_run_dir = item.get("run_dir") == entry["run_dir"]
+        if same_run_dir and item_identity != identity:
+            raise RunRecordError("Existing registry run_dir is already anchored to a different run identity")
+        if item_identity == identity and not same_run_dir:
+            raise RunRecordError("Existing registry run identity is already anchored to a different run_dir")
+        anchored_sha = str(item.get("run_file_index_sha256") or "")
+        if same_run_dir and anchored_sha and anchored_sha != index_sha256:
+            raise RunRecordError(
+                "Existing registry entry has a different anchored run_file_index SHA-256"
+            )
     next_runs = [
         item for item in managed_runs
-        if (item.get("run_id"), item.get("experiment_name"), item.get("run_dir")) != key
+        if (item.get("run_id"), item.get("experiment_name")) != identity
     ]
     next_runs.append(entry)
     registry["managed_runs"] = next_runs
