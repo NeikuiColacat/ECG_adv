@@ -59,7 +59,6 @@ from adversarial.efficientnet_victim_tierM import (  # noqa: E402
     EfficientNetVictimTierM, TIERM_INPUT_LENGTH,
 )
 from adversarial.latent_hull_pgd import LatentHullPGDGenerator  # noqa: E402
-from methods.augmix.augmix import _apply_op  # noqa: E402
 from methods.augmix.jsd_loss import jsd_multilabel  # noqa: E402
 from methods.augmix.severity import AVAILABLE_OPS, build_op  # noqa: E402
 from ecg_adv_gen.evaluation.pn2021c import (  # noqa: E402
@@ -496,26 +495,6 @@ def train_latent_augmix_consistency_epoch(
     }
 
 
-def _atomic_torch_save(payload: Dict[str, Any], path: Path) -> None:
-    atomic_torch_save(payload, path)
-
-
-def _append_jsonl(path: Path, payload: Dict[str, Any]) -> None:
-    append_jsonl(path, payload)
-
-
-def _resolve_resume_path(resume: str, output_dir: str) -> Optional[Path]:
-    return resolve_resume_path(resume, output_dir)
-
-
-def _buffer_state(buffer: QualityAwareBuffer) -> Dict[str, Any]:
-    return quality_buffer_state(buffer)
-
-
-def _restore_buffer_state(buffer: QualityAwareBuffer, state: Dict[str, Any]) -> None:
-    restore_quality_buffer_state(buffer, state)
-
-
 def _walker_state(walker: StratifiedPoolWalker) -> Dict[str, Any]:
     return {
         "cls_pools": {k: v.copy() for k, v in walker.cls_pools.items()},
@@ -559,14 +538,6 @@ def _restore_walker_state(walker: StratifiedPoolWalker, state: Dict[str, Any]) -
     }
     walker.last_source_counts = dict(state.get("last_source_counts", {}))
     walker.last_class_source_counts = dict(state.get("last_class_source_counts", {}))
-
-
-def _rng_state(epoch_rng: np.random.Generator) -> Dict[str, Any]:
-    return capture_rng_state(epoch_rng)
-
-
-def _restore_rng_state(state: Dict[str, Any], epoch_rng: np.random.Generator) -> None:
-    restore_rng_state(state, epoch_rng)
 
 
 @torch.no_grad()
@@ -1559,7 +1530,7 @@ def main():
     checkpoint_index_path = checkpoint_dir / "checkpoint_index.jsonl"
     diagnostics_epoch_path = Path(args.output_dir) / "diagnostics_epoch.jsonl"
     agent_decision_path = Path(args.output_dir) / "agent_decision.json"
-    resume_path = _resolve_resume_path(args.resume, args.output_dir)
+    resume_path = resolve_resume_path(args.resume, args.output_dir)
 
     # Plan Rev 13.2: stratified pool walker over NORM/MI/STTC scope only
     walker = StratifiedPoolWalker(
@@ -1595,9 +1566,9 @@ def main():
         scheduler.load_state_dict(ckpt["scheduler_state_dict"])
         if "ewa_params" in ckpt:
             ewa_params = [p.to(args.device) for p in ckpt["ewa_params"]]
-        _restore_buffer_state(buffer, ckpt.get("buffer_state", {}))
+        restore_quality_buffer_state(buffer, ckpt.get("buffer_state", {}))
         _restore_walker_state(walker, ckpt.get("walker_state", {}))
-        _restore_rng_state(ckpt.get("rng_state", {}), rng)
+        restore_rng_state(ckpt.get("rng_state", {}), rng)
         log = ckpt.get("training_log", log)
         consecutive_low_asr = int(ckpt.get("consecutive_low_asr", consecutive_low_asr))
         start_epoch = int(ckpt.get("epoch", 0)) + 1
@@ -2128,7 +2099,7 @@ def main():
                 "agent_decision": decision,
                 "checkpoint_latest": str(checkpoint_latest_path),
             }
-            _append_jsonl(diagnostics_epoch_path, diagnostics_payload)
+            append_jsonl(diagnostics_epoch_path, diagnostics_payload)
 
             ckpt_payload = {
                 "schema_version": 1,
@@ -2138,23 +2109,23 @@ def main():
                 "optimizer_state_dict": optimizer.state_dict(),
                 "scheduler_state_dict": scheduler.state_dict(),
                 "ewa_params": [p.detach().cpu() for p in ewa_params],
-                "buffer_state": _buffer_state(buffer),
+                "buffer_state": quality_buffer_state(buffer),
                 "walker_state": _walker_state(walker),
-                "rng_state": _rng_state(rng),
+                "rng_state": capture_rng_state(rng),
                 "consecutive_low_asr": consecutive_low_asr,
                 "training_log": log,
                 "args": vars(args),
                 "diagnostics_epoch_jsonl": str(diagnostics_epoch_path),
                 "agent_decision_json": str(agent_decision_path),
             }
-            _atomic_torch_save(ckpt_payload, checkpoint_latest_path)
+            atomic_torch_save(ckpt_payload, checkpoint_latest_path)
             latest_index = {
                 "epoch": epoch,
                 "path": str(checkpoint_latest_path),
                 "kind": "latest",
                 "agent_decision": decision["attack_state"],
             }
-            _append_jsonl(checkpoint_index_path, latest_index)
+            append_jsonl(checkpoint_index_path, latest_index)
 
     # Final result
     if args.final_checkpoint_only:
