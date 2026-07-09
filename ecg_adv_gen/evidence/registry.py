@@ -20,6 +20,7 @@ from ecg_adv_gen.config import (
     validate_experiment_config,
 )
 from ecg_adv_gen.reporting.metrics_export import METRICS_FIELDNAMES
+from ecg_adv_gen.evidence.run_record import REGISTRATION_STATUSES, verify_run_file_index
 
 
 class EvidenceAuditError(ValueError):
@@ -301,9 +302,19 @@ def _issue(level: str, code: str, message: str, **extra: Any) -> dict[str, Any]:
     return item
 
 
-def _read_csv(path: Path) -> list[dict[str, str]]:
-    with path.open("r", encoding="utf-8", newline="") as f:
-        return list(csv.DictReader(f))
+def _read_csv(
+    path: Path,
+    issues: list[dict[str, Any]],
+    *,
+    code: str,
+    label: str,
+) -> list[dict[str, str | None]] | None:
+    try:
+        with path.open("r", encoding="utf-8", newline="") as f:
+            return list(csv.DictReader(f))
+    except (OSError, UnicodeDecodeError, csv.Error) as exc:
+        issues.append(_issue("error", code, f"{label} is invalid CSV: {exc}"))
+        return None
 
 
 def _float(value: Any) -> float | None:
@@ -338,6 +349,396 @@ def _require_file(path: Path | None, issues: list[dict[str, Any]], *, code: str,
         issues.append(_issue("error", code, f"{label} is not a file: {path}", path=str(path)))
         return False
     return True
+
+
+def _add_error(issues: list[dict[str, Any]], code: str, message: str, **extra: Any) -> None:
+    issues.append(_issue("error", code, message, **extra))
+
+
+def _resolved_path(raw: Any, base: Path) -> Path | None:
+    if not isinstance(raw, str) or not raw:
+        return None
+    path = Path(raw).expanduser()
+    return (path if path.is_absolute() else base / path).resolve()
+
+
+def _error_count(issues: list[dict[str, Any]]) -> int:
+    return sum(issue["level"] == "error" for issue in issues)
+
+
+def _require_path(path: Path | None, issues: list[dict[str, Any]], code: str, label: str, *, directory=False) -> bool:
+    ok = path is not None and (path.is_dir() if directory else path.is_file())
+    if not ok:
+        _add_error(issues, code, f"{label} is missing: {path or '<not declared>'}", path=str(path or ""))
+    return ok
+
+
+def _read_json_object(path: Path, issues: list[dict[str, Any]], code: str, label: str) -> dict[str, Any] | None:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        _add_error(issues, code, f"{label} is invalid JSON: {exc}")
+        return None
+    if not isinstance(value, dict):
+        _add_error(issues, code, f"{label} root must be an object")
+        return None
+    return value
+
+
+_CLAIM_STATUSES = {"trusted", "provisional", "deprecated", "exploratory"}
+_METHOD_STATUSES = {"trusted", "provisional", "supporting", "deprecated", "exploratory"}
+_NON_READY_REPLAY_STATUSES = {"artifact_missing", "historical_evaluation_only"}
+
+
+def _claim_shape_is_valid(claim: dict[str, Any], index: int, issues: list[dict[str, Any]]) -> bool:
+    valid = True
+    claim_status = str(claim.get("status") or "")
+    claim_id = claim.get("claim_id")
+    if not isinstance(claim_id, str) or not claim_id:
+        _add_error(issues, "active_claim_id_missing", f"active_claims[{index}] needs claim_id")
+        valid = False
+    if claim_status not in _CLAIM_STATUSES:
+        _add_error(issues, "active_claim_status_invalid", f"active_claims[{index}] has invalid status")
+        valid = False
+    methods = claim.get("methods")
+    if not isinstance(methods, dict):
+        _add_error(issues, "active_claim_methods_invalid", f"active_claims[{index}].methods must be a mapping")
+        valid = False
+    else:
+        if claim_status in {"trusted", "provisional"} and not methods:
+            _add_error(issues, "active_claim_methods_invalid", f"active_claims[{index}].methods must not be empty")
+            valid = False
+        for method_key, method in methods.items():
+            if not isinstance(method_key, str) or not method_key:
+                _add_error(issues, "active_claim_method_key_invalid", f"active_claims[{index}] method keys must be strings")
+                valid = False
+                continue
+            if not isinstance(method, dict):
+                _add_error(issues, "active_claim_method_invalid", f"active_claims[{index}].methods.{method_key} must be a mapping")
+                valid = False
+                continue
+            if str(method.get("status") or "") not in _METHOD_STATUSES:
+                _add_error(issues, "active_claim_method_status_invalid", f"{method_key} has invalid status")
+                valid = False
+            for field in ("run_id", "experiment_name", "config"):
+                if not isinstance(method.get(field), str) or not method[field]:
+                    _add_error(issues, "active_claim_method_field_missing", f"{method_key} needs {field}")
+                    valid = False
+            if "paper_tables" in method and not isinstance(method["paper_tables"], dict):
+                _add_error(issues, "active_claim_method_field_invalid", f"{method_key}.paper_tables must be a mapping")
+                valid = False
+    protocol = claim.get("protocol")
+    if not isinstance(protocol, dict):
+        _add_error(issues, "active_claim_protocol_invalid", f"active_claims[{index}].protocol must be a mapping")
+        return False
+    for field in ("mapping_version", "mapping_hash", "model_backbone"):
+        if not isinstance(protocol.get(field), str) or not protocol[field]:
+            _add_error(issues, "active_claim_protocol_invalid", f"active_claims[{index}].protocol needs {field}")
+            valid = False
+    for field in ("class_order", "target_centers", "evaluation_views"):
+        value = protocol.get(field)
+        if (not isinstance(value, list) or not all(isinstance(item, str) and item for item in value)
+                or (claim_status in {"trusted", "provisional"} and not value)):
+            _add_error(issues, "active_claim_protocol_invalid", f"active_claims[{index}].protocol.{field} must be a non-empty list")
+            valid = False
+    reporting_views = protocol.get("required_reporting_views")
+    if reporting_views is not None and (
+        not isinstance(reporting_views, list)
+        or not all(isinstance(item, str) and item for item in reporting_views)
+    ):
+        _add_error(issues, "active_claim_protocol_invalid", f"active_claims[{index}].protocol.required_reporting_views is invalid")
+        valid = False
+    kshot = protocol.get("kshot")
+    if not isinstance(kshot, dict) or not isinstance(kshot.get("ref_meta_files"), dict):
+        _add_error(issues, "active_claim_protocol_invalid", f"active_claims[{index}].protocol.kshot is invalid")
+        valid = False
+    elif (not isinstance(kshot.get("k"), int) or isinstance(kshot.get("k"), bool) or kshot["k"] <= 0
+          or not isinstance(kshot.get("seed"), int) or isinstance(kshot.get("seed"), bool)
+          or not isinstance(kshot.get("ref_excluded"), bool)):
+        _add_error(issues, "active_claim_protocol_invalid", f"active_claims[{index}].protocol.kshot contract is incomplete")
+        valid = False
+    elif claim_status in {"trusted", "provisional"}:
+        centers = protocol.get("target_centers") if isinstance(protocol.get("target_centers"), list) else []
+        ref_files = kshot["ref_meta_files"]
+        if any(not isinstance(center, str) or not isinstance(ref_files.get(center), str) or not ref_files[center]
+               for center in centers):
+            _add_error(issues, "active_claim_protocol_invalid", f"active_claims[{index}] needs one K500 ref path per center")
+            valid = False
+    if "comparison_bundle" in claim and not isinstance(claim["comparison_bundle"], dict):
+        _add_error(issues, "active_claim_comparison_bundle_invalid", f"active_claims[{index}].comparison_bundle must be a mapping")
+        valid = False
+    elif isinstance(claim.get("comparison_bundle"), dict):
+        bundle = claim["comparison_bundle"]
+        if "status" in bundle and not isinstance(bundle["status"], str):
+            _add_error(issues, "active_claim_comparison_bundle_invalid", f"active_claims[{index}].comparison_bundle.status is invalid")
+            valid = False
+        managed_artifacts = bundle.get("managed_artifacts")
+        if managed_artifacts is not None and (
+            not isinstance(managed_artifacts, list)
+            or not all(isinstance(item, str) and item for item in managed_artifacts)
+        ):
+            _add_error(issues, "active_claim_comparison_bundle_invalid", f"active_claims[{index}].comparison_bundle.managed_artifacts is invalid")
+            valid = False
+    summaries = claim.get("summary_metrics")
+    if summaries is not None and not isinstance(summaries, dict):
+        _add_error(issues, "active_claim_summary_metrics_invalid", f"active_claims[{index}].summary_metrics must be a mapping")
+        valid = False
+    elif isinstance(summaries, dict):
+        for view, methods_summary in summaries.items():
+            if (not isinstance(view, str) or not isinstance(methods_summary, dict)
+                    or not all(isinstance(name, str) and isinstance(value, dict)
+                               for name, value in methods_summary.items())):
+                _add_error(issues, "active_claim_summary_metrics_invalid", f"active_claims[{index}].summary_metrics is invalid")
+                valid = False
+                break
+    return valid
+
+
+def _managed_claim_pairs(registry: dict[str, Any]) -> dict[tuple[str, str], set[tuple[str, str]]]:
+    pairs: dict[tuple[str, str], set[tuple[str, str]]] = {}
+    claims = registry.get("active_claims")
+    if not isinstance(claims, list):
+        return pairs
+    for claim in claims:
+        if (not isinstance(claim, dict) or claim.get("status") not in {"trusted", "provisional"}
+                or not isinstance(claim.get("methods"), dict)):
+            continue
+        protocol = claim.get("protocol") if isinstance(claim.get("protocol"), dict) else {}
+        pair = (str(protocol.get("mapping_version") or ""), str(protocol.get("mapping_hash") or ""))
+        for method in claim["methods"].values():
+            if (isinstance(method, dict) and method.get("status") in {"trusted", "provisional"}
+                    and method.get("run_id") and method.get("experiment_name")):
+                key = (str(method["run_id"]), str(method["experiment_name"]))
+                pairs.setdefault(key, set()).add(pair)
+    return pairs
+
+
+_RUN_FILES = (("run_card.json", "run_card", "managed_run_card_missing"),
+              ("summary.md", "summary", "managed_run_summary_missing"),
+              ("run_file_index.json", "run_file_index", "managed_run_file_index_missing"))
+
+
+def _audit_managed_runs(repo_root: Path, registry: dict[str, Any], issues, *, check_files: bool,
+                        cache: dict[Path, str], stats: dict[str, int]) -> dict[str, Any]:
+    raw_runs = registry.get("managed_runs")
+    if raw_runs is None:
+        runs = []
+    elif not isinstance(raw_runs, list):
+        _add_error(issues, "managed_runs_invalid", "managed_runs must be a list")
+        runs = []
+    else:
+        runs = raw_runs
+    entries, seen, valid, allowed = [], set(), 0, _managed_claim_pairs(registry)
+    for index, item in enumerate(runs):
+        before = _error_count(issues)
+        if not isinstance(item, dict):
+            _add_error(issues, "managed_run_invalid", f"managed_runs[{index}] must be a mapping")
+            continue
+        run_id, experiment = map(lambda key: str(item.get(key) or ""), ("run_id", "experiment_name"))
+        pair = tuple(str(item.get(key) or "") for key in ("mapping_version", "mapping_hash"))
+        key, replay, status = (run_id, experiment), str(item.get("replay_status") or ""), str(item.get("status") or "")
+        if status not in REGISTRATION_STATUSES:
+            _add_error(issues, "managed_run_status_invalid", f"{run_id} has invalid status={status!r}")
+        if not all(key):
+            _add_error(issues, "managed_run_key_not_declared", f"managed_runs[{index}] needs run_id/experiment_name")
+        if key in seen:
+            _add_error(issues, "managed_run_duplicate_key", f"Duplicate managed run key: {run_id}/{experiment}")
+        seen.add(key)
+        active = status in {"trusted", "provisional"}
+        if (active and replay != "replay_ready") or (not active and replay not in _NON_READY_REPLAY_STATUSES):
+            _add_error(issues, "managed_run_replay_status_invalid", f"{run_id} status/replay_status disagree")
+        claim_pairs = allowed.get(key, set())
+        if active and len(claim_pairs) > 1:
+            _add_error(issues, "managed_run_claim_mapping_conflict", f"{run_id} has conflicting claim mappings")
+        if not all(pair) or (active and claim_pairs != {pair}):
+            _add_error(issues, "managed_run_claim_mapping_mismatch", f"{run_id} mapping is not the active mapping")
+
+        run_dir = _resolved_path(item.get("run_dir"), repo_root)
+        canonical = {name: run_dir / name if run_dir else None for name, _, _ in _RUN_FILES}
+        for name, field, _ in _RUN_FILES:
+            declared = _resolved_path(item.get(field), repo_root) or (canonical[name] if field == "run_file_index" else None)
+            if declared != canonical[name]:
+                _add_error(issues, "managed_run_path_mismatch", f"{run_id} {name} must be inside run_dir")
+        required = card_matches = None
+        integrity = {"passed": False, "status": "skipped", "checked_count": 0, "warnings": [], "errors": []}
+        declared_index_sha = str(item.get("run_file_index_sha256") or "")
+        if not _SHA256_RE.fullmatch(declared_index_sha):
+            _add_error(issues, "managed_run_index_sha_invalid", f"{run_id} needs run_file_index_sha256")
+        if check_files:
+            checks = [_require_path(run_dir, issues, "managed_run_dir_missing", f"{run_id} run_dir", directory=True)]
+            checks += [_require_path(canonical[name], issues, code, f"{run_id} {name}") for name, _, code in _RUN_FILES]
+            required = all(checks)
+            card = _read_json_object(canonical["run_card.json"], issues, "managed_run_card_invalid", run_id) if checks[1] else None
+            experiment_obj, protocol = (card or {}).get("experiment", {}), (card or {}).get("protocol", {})
+            observed = ((card or {}).get("run_id"), experiment_obj.get("name") if isinstance(experiment_obj, dict) else None,
+                        protocol.get("mapping_version") if isinstance(protocol, dict) else None,
+                        protocol.get("mapping_hash") if isinstance(protocol, dict) else None)
+            card_matches = observed == (run_id, experiment, *pair)
+            if not card_matches:
+                _add_error(issues, "managed_run_card_mismatch", f"{run_id} run_card disagrees with registry")
+            if checks[3] and _SHA256_RE.fullmatch(declared_index_sha):
+                observed_index_sha = _cached_sha(canonical["run_file_index.json"], cache, stats)
+                if observed_index_sha != declared_index_sha:
+                    _add_error(issues, "managed_run_index_sha_mismatch", f"{run_id} run_file_index SHA256 mismatch")
+            if required:
+                integrity = verify_run_file_index(run_dir)
+                if integrity.get("status") != "verified":
+                    level, code = (("error", "managed_run_integrity_failed") if active
+                                   else ("warning", "managed_run_integrity_non_ready"))
+                    issues.append(_issue(level, code, f"{run_id} run_file_index status={integrity.get('status')}"))
+        ok = _error_count(issues) == before
+        valid += ok
+        entries.append({"run_id": run_id, "experiment_name": experiment, "run_dir": str(run_dir or ""),
+                        "required_files_present": required, "card_matches_registry": card_matches,
+                        "replay_ready": ok and active and replay == "replay_ready"
+                        and integrity.get("status") == "verified", "integrity": integrity})
+    return {"count": len(entries), "valid_count": valid, "entries": entries}
+
+
+_SUPPORT_FILES = ("evidence_doc", "method_config", "metrics_long", "data_manifest", "artifact_manifest", "summary_csv",
+                  "center_csv", "summary_json", "provenance_gap", "artifact_integrity")
+_SUPPORT_DIRS = ("training_root", "evaluation_root")
+_SUPPORT_MAPS = {"method_artifact_manifests": True, "paper_tables": False, "paper_table_manifests": False}
+_SHA256_RE = re.compile(r"[0-9a-f]{64}")
+_GIT_COMMIT_RE = re.compile(r"[0-9a-f]{40}")
+_SUPPORT_STATUSES = {
+    "trusted", "provisional", "provisional_single_seed", "supporting_contrast_no_direct_delta",
+    "deprecated", "exploratory",
+}
+
+
+def _cached_sha(path: Path, cache: dict[Path, str], stats: dict[str, int]) -> str:
+    if path in cache:
+        stats["cache_hits"] += 1
+    else:
+        cache[path], stats["computed"] = _sha256(path), stats["computed"] + 1
+    return cache[path]
+
+
+def _manifest_artifact_path(artifact: dict[str, Any], manifest: Path, context: dict[str, Any], issues, label) -> Path | None:
+    path = _resolved_path(artifact.get("path"), manifest.parent)
+    ref = artifact.get("path_ref")
+    ref_path = None
+    if ref is not None:
+        try:
+            resolved = _resolve_value(ref, context) if isinstance(ref, str) else None
+        except EvidenceAuditError as exc:
+            _add_error(issues, "supporting_manifest_path_ref_unresolvable", f"{label}: {exc}")
+        else:
+            ref_path = _resolved_path(resolved, manifest.parent)
+            if ref_path is None:
+                _add_error(issues, "supporting_manifest_path_ref_unresolvable", f"{label} path_ref is invalid")
+    if path and path.is_file():
+        return path
+    return ref_path or path
+
+
+def _audit_strict_manifest(path: Path, field: str, item: dict[str, Any], context: dict[str, Any],
+                           issues, cache, stats) -> dict[str, int]:
+    out = {"checked": 0, "missing": 0, "mismatch": 0}
+    manifest = _read_json_object(path, issues, "supporting_manifest_invalid", field)
+    artifacts = manifest.get("artifacts") if manifest else None
+    if field == "artifact_integrity":
+        declared = str(item.get("artifact_integrity_sha256") or "")
+        observed = _cached_sha(path, cache, stats)
+        if _SHA256_RE.fullmatch(declared) and observed != declared:
+            _add_error(issues, "supporting_integrity_root_sha_mismatch", f"{field} root SHA256 mismatch")
+    if not isinstance(artifacts, list) or not artifacts:
+        _add_error(issues, "supporting_manifest_artifacts_invalid", f"{field}.artifacts must be a non-empty list")
+        return out
+    for index, artifact in enumerate(artifacts):
+        if not isinstance(artifact, dict) or not _SHA256_RE.fullmatch(str(artifact.get("sha256") or "")):
+            _add_error(issues, "supporting_manifest_artifact_invalid", f"{field}.artifacts[{index}] needs path/path_ref and sha256")
+            continue
+        artifact_path = _manifest_artifact_path(artifact, path, context, issues, f"{field}.artifacts[{index}]")
+        if artifact_path is None:
+            _add_error(issues, "supporting_manifest_artifact_invalid", f"{field}.artifacts[{index}] has no usable path")
+        elif not artifact_path.is_file():
+            out["missing"] += 1
+            _add_error(issues, "supporting_manifest_artifact_missing", f"{field} artifact missing: {artifact_path}")
+        else:
+            out["checked"] += 1
+            if _cached_sha(artifact_path, cache, stats) != artifact["sha256"]:
+                out["mismatch"] += 1
+                _add_error(issues, "supporting_manifest_sha256_mismatch", f"{field} artifact SHA mismatch: {artifact_path}")
+    return out
+
+
+def _audit_supporting_reporting_artifacts(repo_root: Path, claim: dict[str, Any], issues, *, check_files: bool,
+                                          check_git: bool, context, cache, stats) -> dict[str, Any]:
+    raw = claim.get("supporting_reporting_artifacts")
+    raw = {} if raw is None else raw
+    if not isinstance(raw, dict):
+        _add_error(issues, "supporting_artifacts_invalid", "supporting_reporting_artifacts must be a mapping")
+        return {"count": 0, "valid_count": 0, "entries": []}
+    entries = []
+    for artifact_id, item in raw.items():
+        before = _error_count(issues)
+        if not isinstance(item, dict):
+            _add_error(issues, "supporting_artifact_invalid", f"{artifact_id} must be a mapping")
+            continue
+        commit, replay = str(item.get("implementation_commit") or ""), str(item.get("replay_status") or "")
+        support_status = str(item.get("status") or "")
+        if support_status not in _SUPPORT_STATUSES:
+            _add_error(issues, "supporting_status_invalid", f"{artifact_id} has invalid status")
+        if not item.get("evidence_doc"):
+            _add_error(issues, "supporting_evidence_doc_not_declared", f"{artifact_id} needs evidence_doc")
+        if not commit:
+            _add_error(issues, "supporting_implementation_commit_not_declared", f"{artifact_id} needs implementation_commit")
+        elif not _GIT_COMMIT_RE.fullmatch(commit):
+            _add_error(issues, "supporting_implementation_commit_invalid", f"{artifact_id} implementation_commit must be a full SHA")
+        if support_status in {"trusted", "provisional", "provisional_single_seed"}:
+            for field in ("provenance_gap", "artifact_integrity", "artifact_integrity_sha256"):
+                if not item.get(field):
+                    _add_error(issues, f"supporting_{field}_not_declared", f"{artifact_id} needs {field}")
+        if item.get("artifact_integrity") and not _SHA256_RE.fullmatch(str(item.get("artifact_integrity_sha256") or "")):
+            _add_error(issues, "supporting_integrity_root_sha_mismatch", f"{artifact_id} artifact_integrity_sha256 is invalid")
+        if check_git and _GIT_COMMIT_RE.fullmatch(commit) and subprocess.run(["git", "cat-file", "-e", f"{commit}^{{commit}}"], cwd=repo_root,
+                                                   capture_output=True, check=False).returncode:
+            _add_error(issues, "supporting_implementation_commit_unresolvable", f"{artifact_id} commit is unresolvable")
+
+        refs: list[tuple[str, Path, bool]] = []
+        for field in _SUPPORT_FILES:
+            if field in item:
+                path = _resolved_path(item[field], repo_root)
+                if path is None:
+                    _add_error(issues, "supporting_path_invalid", f"{artifact_id} {field} must be a path string")
+                else:
+                    refs.append((field, path, field in {"artifact_manifest", "artifact_integrity"}))
+        for map_field, strict in _SUPPORT_MAPS.items():
+            value = item.get(map_field)
+            if value is not None and not isinstance(value, dict):
+                _add_error(issues, "supporting_path_map_invalid", f"{artifact_id} {map_field} must be a mapping")
+            elif isinstance(value, dict):
+                for name, raw_path in value.items():
+                    path = _resolved_path(raw_path, repo_root)
+                    if path is None:
+                        _add_error(issues, "supporting_path_invalid", f"{artifact_id} {map_field}.{name} is invalid")
+                    else:
+                        refs.append((f"{map_field}.{name}", path, strict))
+        dirs = []
+        for field in _SUPPORT_DIRS:
+            if field in item:
+                path = _resolved_path(item[field], repo_root)
+                if path is None:
+                    _add_error(issues, "supporting_path_invalid", f"{artifact_id} {field} must be a path string")
+                else:
+                    dirs.append((field, path))
+        integrity = {"checked": 0, "missing": 0, "mismatch": 0}
+        if check_files:
+            for field, path, strict in refs:
+                if not _require_path(path, issues, "supporting_file_missing", f"{artifact_id} {field}"):
+                    continue
+                if strict:
+                    result = _audit_strict_manifest(path, field, item, context, issues, cache, stats)
+                    for key in integrity:
+                        integrity[key] += result[key]
+            for field, path in dirs:
+                _require_path(path, issues, "supporting_directory_missing", f"{artifact_id} {field}", directory=True)
+        entries.append({"artifact_id": str(artifact_id), "status": support_status, "replay_status": replay,
+                        "declared_file_count": len(refs), "integrity": integrity,
+                        "valid": _error_count(issues) == before})
+    return {"count": len(entries), "valid_count": sum(e["valid"] for e in entries), "entries": entries}
 
 
 def _audit_raw_registry_boundaries(raw: dict[str, Any], issues: list[dict[str, Any]]) -> None:
@@ -380,6 +781,18 @@ def _audit_config(
         issues.append(_issue("error", "config_audit_failed", f"{method_key} config audit failed: {exc}"))
         return None
 
+    configured_experiment = (config.get("experiment") or {}).get("name")
+    if method.get("experiment_name") != configured_experiment:
+        issues.append(
+            _issue(
+                "error",
+                "config_experiment_mismatch",
+                f"{method_key} experiment_name disagrees with resolved config",
+                observed=method.get("experiment_name"),
+                expected=configured_experiment,
+            )
+        )
+
     protocol = claim["protocol"]
     pp = config["paper_protocol"]
     checks = {
@@ -421,17 +834,26 @@ def _audit_k500_refs(claim: dict[str, Any], issues: list[dict[str, Any]]) -> dic
         assert ref_path is not None
         try:
             meta = json.loads(ref_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             issues.append(_issue("error", "k500_ref_bad_json", f"Invalid K500 ref JSON: {ref_path}: {exc}"))
             continue
-        ref_ids = meta.get("ref_record_ids") or []
+        if not isinstance(meta, dict):
+            issues.append(_issue("error", "k500_ref_invalid", f"K500 ref JSON root must be an object: {ref_path}"))
+            continue
+        ref_ids = meta.get("ref_record_ids")
+        if (not isinstance(meta.get("K"), int) or isinstance(meta.get("K"), bool)
+                or not isinstance(meta.get("selection_seed"), int) or isinstance(meta.get("selection_seed"), bool)
+                or not isinstance(ref_ids, list) or not all(isinstance(item, str) and item for item in ref_ids)
+                or len(set(ref_ids)) != len(ref_ids)):
+            issues.append(_issue("error", "k500_ref_invalid", f"K500 ref JSON field types are invalid: {ref_path}"))
+            continue
         checks = {
             "center": meta.get("center") == center,
-            "K": int(meta.get("K", -1)) == int(kshot["k"]),
-            "seed": int(meta.get("selection_seed", -1)) == int(kshot["seed"]),
+            "K": meta["K"] == kshot["k"],
+            "seed": meta["selection_seed"] == kshot["seed"],
             "mapping_version": meta.get("mapping_version") == protocol["mapping_version"],
             "mapping_hash": meta.get("mapping_hash") == protocol["mapping_hash"],
-            "ref_record_ids": len(ref_ids) == int(kshot["k"]),
+            "ref_record_ids": len(ref_ids) == kshot["k"],
         }
         for key, ok in checks.items():
             if not ok:
@@ -465,12 +887,29 @@ def _audit_metrics(
     if not _require_file(metrics_path, issues, code="metrics_long_missing", label=f"{method_key} metrics_long"):
         return out
     assert metrics_path is not None
-    rows = _read_csv(metrics_path)
+    rows = _read_csv(
+        metrics_path,
+        issues,
+        code="metrics_long_invalid",
+        label=f"{method_key} metrics_long",
+    )
+    if rows is None:
+        return out
     if not rows:
         issues.append(_issue("error", "metrics_long_empty", f"{method_key} metrics_long has no rows"))
         return out
     if list(rows[0].keys()) != METRICS_FIELDNAMES:
         issues.append(_issue("error", "metrics_long_bad_columns", f"{method_key} metrics_long columns changed"))
+        out["n_rows"] = len(rows)
+        return out
+    if any(
+        not isinstance(row.get(field), str)
+        for row in rows
+        for field in METRICS_FIELDNAMES
+    ):
+        issues.append(_issue("error", "metrics_long_bad_values", f"{method_key} metrics_long has truncated rows"))
+        out["n_rows"] = len(rows)
+        return out
     mapping_pairs = {
         (r["mapping_version"], r["mapping_hash"], r["class_order"])
         for r in rows if r.get("mapping_version") or r.get("mapping_hash")
@@ -531,7 +970,14 @@ def _audit_paper_tables(
         if not _require_file(table_path, issues, code="paper_table_missing", label=f"{method_key} paper table {view}"):
             continue
         assert table_path is not None
-        rows = _read_csv(table_path)
+        rows = _read_csv(
+            table_path,
+            issues,
+            code="paper_table_invalid",
+            label=f"{method_key} paper table {view}",
+        )
+        if rows is None:
+            continue
         center_mean = [r for r in rows if r.get("scope") == "center_mean"]
         if len(center_mean) != 1:
             issues.append(
@@ -634,11 +1080,23 @@ def _audit_manifest(
         return {"declared": True, "path": str(manifest_path), "exists": False}
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         issues.append(_issue("error", "manifest_bad_json", f"{method_key} manifest invalid: {exc}"))
         return {"declared": True, "path": str(manifest_path), "exists": True}
+    if not isinstance(manifest, dict):
+        issues.append(_issue("error", "manifest_invalid", f"{method_key} manifest root must be an object"))
+        return {"declared": True, "path": str(manifest_path), "exists": True}
     status = manifest.get("status")
-    if status not in {"succeeded", "dry_run"}:
+    if not isinstance(status, str):
+        issues.append(
+            _issue(
+                "error",
+                "manifest_status_invalid",
+                f"{method_key} manifest status must be a string",
+                method=method_key,
+            )
+        )
+    elif status not in {"succeeded", "dry_run"}:
         issues.append(
             _issue(
                 "warning",
@@ -711,9 +1169,12 @@ def _audit_comparison_bundle(claim: dict[str, Any], issues: list[dict[str, Any]]
     if manifest_path.exists():
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             issues.append(_issue("error", "comparison_manifest_bad_json", f"Invalid comparison manifest: {exc}"))
         else:
+            if not isinstance(manifest, dict):
+                issues.append(_issue("error", "comparison_manifest_invalid", "Comparison manifest root must be an object"))
+                return summary
             for key in ("comparison_id", "baseline_run_id", "candidate_run_id"):
                 if manifest.get(key) != bundle.get(key):
                     issues.append(
@@ -838,11 +1299,52 @@ def audit_active_evidence_registry(
     local_config_path = Path(local_config_path).expanduser().resolve()
     raw_registry = load_evidence_registry(registry_path)
     registry = load_evidence_registry(registry_path, local_config_path)
+    local_context = _resolve_context(_read_yaml(local_config_path))
+    sha_cache: dict[Path, str] = {}
+    hash_stats = {"computed": 0, "cache_hits": 0}
     issues: list[dict[str, Any]] = []
     _audit_raw_registry_boundaries(raw_registry, issues)
+    artifact_policy = registry.get("artifact_policy")
+    if artifact_policy is None:
+        registry["artifact_policy"] = {}
+    elif not isinstance(artifact_policy, dict):
+        _add_error(issues, "artifact_policy_invalid", "artifact_policy must be a mapping")
+        registry["artifact_policy"] = {}
+    else:
+        do_not_commit = artifact_policy.get("do_not_commit")
+        if do_not_commit is not None and (
+            not isinstance(do_not_commit, list)
+            or not all(isinstance(item, str) and item for item in do_not_commit)
+        ):
+            _add_error(issues, "artifact_policy_invalid", "artifact_policy.do_not_commit must be a string list")
+            registry["artifact_policy"] = {**artifact_policy, "do_not_commit": []}
+    raw_claims_value = registry.get("active_claims")
+    if raw_claims_value is None:
+        raw_claims = []
+    elif not isinstance(raw_claims_value, list):
+        _add_error(issues, "active_claims_invalid", "active_claims must be a list")
+        raw_claims = []
+    else:
+        raw_claims = raw_claims_value
+    claims = []
+    for index, claim in enumerate(raw_claims):
+        if not isinstance(claim, dict):
+            _add_error(issues, "active_claim_invalid", f"active_claims[{index}] must be a mapping")
+            continue
+        if _claim_shape_is_valid(claim, index, issues):
+            claims.append(claim)
+    registry["active_claims"] = claims
+    managed_run_summary = _audit_managed_runs(
+        repo_root,
+        registry,
+        issues,
+        check_files=require_existing_artifacts,
+        cache=sha_cache,
+        stats=hash_stats,
+    )
 
     claim_summaries: list[dict[str, Any]] = []
-    for claim in registry.get("active_claims", []):
+    for claim in claims:
         claim_id = claim["claim_id"]
         k500_summary = _audit_k500_refs(claim, issues) if require_existing_artifacts else {}
         method_summaries: dict[str, Any] = {}
@@ -903,6 +1405,16 @@ def audit_active_evidence_registry(
                 ),
                 "k500_refs": k500_summary,
                 "methods": method_summaries,
+                "supporting_reporting_artifacts": _audit_supporting_reporting_artifacts(
+                    repo_root,
+                    claim,
+                    issues,
+                    check_files=require_existing_artifacts,
+                    check_git=check_git,
+                    context=local_context,
+                    cache=sha_cache,
+                    stats=hash_stats,
+                ),
                 "comparison_bundle": (
                     _audit_comparison_bundle(claim, issues)
                     if require_existing_artifacts else {"skipped": True}
@@ -922,6 +1434,8 @@ def audit_active_evidence_registry(
         "local_config_path": str(local_config_path),
         "evidence_surface_policy": raw_registry.get("evidence_surface_policy") or {},
         "claim_count": len(registry.get("active_claims", [])),
+        "managed_runs": managed_run_summary,
+        "artifact_hashing": hash_stats,
         "claims": claim_summaries,
         "git": git_summary,
     }
