@@ -1,5 +1,5 @@
 schema_version: 1
-updated: 2026-05-29
+updated: 2026-07-10
 purpose: >
   Single tracked entry point for the current trusted ECG_adv_Gen experimental
   facts. New agents should start here after reading AGENTS.md instead of
@@ -223,6 +223,60 @@ active_claims:
         pn2021c_all_zero_kept_corrupted_refexcluded: ${paths.output_root}/paper_table/pn2021c_official_s5_locked_effnet_direct_vs_threechain_all_zero_kept/paper_table_manifest.json
         pn2021c_drop_all_zero_corrupted_refexcluded: ${paths.output_root}/paper_table/pn2021c_official_s5_locked_effnet_direct_vs_threechain_drop_all_zero/paper_table_manifest.json
     supporting_reporting_artifacts:
+      ecgfounder_decoupled_depth23_fourcenter_20260709:
+        status: provisional_single_seed
+        role: current_internal_best_ecgfounder_depth23_candidate
+        evidence_doc: docs/reports/archive/20260709/ecgfounder_decoupled_fourcenter_depth23_summary.md
+        implementation_commit: b57ee1600e468ce7bc0765708c9d78d7f8f65217
+        method_config: configs/experiments/ecgfounder_vae_lhat_augmix_threechain_locked_k500.yaml
+        replay_status: oneoff_resolved_args_in_eval_result_not_managed_run_record
+        training_root: ${paths.output_root}/ecgfounder_vae_lhat_augmix_threechain_locked_k500/ecgf_decoupled_scale0p1_c24_ep15_fourcenter_20260709
+        evaluation_root: ${paths.output_root}/pn2021c_ecgfounder_official_s5_depth23_composite/ecgf_decoupled_scale0p1_c24_ep15_fourcenter_20260709
+        summary_csv: ${paths.output_root}/pn2021c_ecgfounder_official_s5_depth23_composite/ecgf_decoupled_scale0p1_c24_ep15_fourcenter_20260709/summary/ecgfounder_decoupled_scale0p1_c24_ep15_depth23_summary.csv
+        center_csv: ${paths.output_root}/pn2021c_ecgfounder_official_s5_depth23_composite/ecgf_decoupled_scale0p1_c24_ep15_fourcenter_20260709/summary/ecgfounder_decoupled_scale0p1_c24_ep15_depth23_center_summary.csv
+        summary_json: ${paths.output_root}/pn2021c_ecgfounder_official_s5_depth23_composite/ecgf_decoupled_scale0p1_c24_ep15_fourcenter_20260709/summary/ecgfounder_decoupled_scale0p1_c24_ep15_depth23_summary.json
+        protocol:
+          mapping_version: v7_super5_sjr_rgq_review_20260528
+          mapping_hash: 555ec85d5b51
+          class_order: [CD, HYP, MI, NORM, STTC]
+          target_centers: [ningbo, chapman_shaoxing, cpsc_2018, georgia]
+          k: 500
+          seed: 20260531
+          ref_excluded: true
+          checkpoint_policy: last_checkpoint_only
+          corruption_profile: official_standard_severity_5
+          composite_depths: [2, 3]
+          metric_view: all_zero_kept_macro
+        method:
+          backbone: ecgfounder_fullft
+          chain_base_mode: all_clean_plus_vae_adv
+          latent_augmix_copies: 24
+          latent_augmix_width: 3
+          latent_augmix_depth: -1
+          vae_adv_stream_sample_scale: 0.10
+          epochs: 15
+          jsd_consistency_enabled: false
+        summary_metrics:
+          depth2:
+            clean: {macro_auroc: 0.9004081421, macro_auprc: 0.6439567133}
+            pn2021c: {macro_auroc: 0.8307388887, macro_auprc: 0.5384574918}
+            delta_vs_matched_direct_pp: {macro_auroc: 4.3336966324, macro_auprc: 7.5490744751}
+          depth3:
+            clean: {macro_auroc: 0.9004081421, macro_auprc: 0.6439567133}
+            pn2021c: {macro_auroc: 0.8015357718, macro_auprc: 0.4941763398}
+            delta_vs_matched_direct_pp: {macro_auroc: 4.6234668715, macro_auprc: 7.5014430241}
+          depth2_plus_depth3:
+            clean: {macro_auroc: 0.9004081421, macro_auprc: 0.6439567133}
+            pn2021c: {macro_auroc: 0.8161373303, macro_auprc: 0.5163169158}
+            drop_from_clean_pp: {macro_auroc: 8.4270811869, macro_auprc: 12.7639797538}
+            delta_vs_matched_direct_pp: {macro_auroc: 4.4785817520, macro_auprc: 7.5252587496}
+            delta_vs_corrupted_k500_supervised_pp: {macro_auroc: 2.5416159214, macro_auprc: 5.6136170834}
+            delta_vs_ecgfounder_c117_pp: {macro_auroc: 1.8537501798, macro_auprc: 1.9612442512}
+            gap_vs_effnet_c117_pp: {macro_auroc: 0.8458722097, macro_auprc: 3.6662930588}
+        caveats:
+          - Single-seed result; multi-seed replication is missing.
+          - Exact launch command and Git SHA were not persisted in the run artifacts.
+          - Managed config records the routing topology but not the c24/ep15 one-off overrides or asrboost_g9 initialization.
       ecgfounder_locked_threechain_pn2021c_s5:
         status: supporting_contrast_no_direct_delta
         metrics_long: ${paths.output_root}/metrics_export/pn2021c_official_s5_locked_ecgfounder_threechain_locked_k500/metrics_long.csv
