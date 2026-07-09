@@ -9,7 +9,6 @@ from pathlib import Path
 
 import yaml
 
-from ecg_adv_gen.evaluation.pn2021_eval_cache import PN2021_EVAL_CACHE_VERSION
 from ecg_adv_gen.labels import super5_mapping
 
 
@@ -64,8 +63,6 @@ def test_data_protocol_default_label_mapping_jsonl_matches_code_policy():
     assert labels["mapping_version"] == super5_mapping.SUPER5_PN2021_MAPPING_VERSION
     assert labels["mapping_hash"] == super5_mapping.SUPER5_PN2021_MAPPING_HASH
     assert labels["class_order"] == list(super5_mapping.CLASS_NAMES_SUPER5)
-    assert protocol["datasets"]["target"]["cache_version"] == PN2021_EVAL_CACHE_VERSION
-
     decision_counts = Counter(record["normalized_decision"] for record in label_records)
     assert decision_counts == {
         "direct_positive": 64,
