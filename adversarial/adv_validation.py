@@ -10,7 +10,7 @@ plus Einthoven residual |II-I-III| p95 < 0.5 (z-scored units).
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 import numpy as np
 import torch
@@ -57,9 +57,8 @@ def compute_asr(
     logits = np.concatenate(all_logits, axis=0)        # (N, 6)
     pred_primary = logits.argmax(axis=1)               # (N,)
 
-    # Probability victim assigns to each sample's primary true class
     probs = 1.0 / (1.0 + np.exp(-logits))              # (N, 6) sigmoid
-    prob_on_true = probs[np.arange(N), y_primary]      # (N,)
+    prob_on_true = probs[np.arange(N), y_primary]
 
     asr_overall = float((pred_primary != y_primary).mean())
     per_class_asr: Dict[str, float] = {}
@@ -272,53 +271,3 @@ def compute_semantic_gate(
         PASS=len(fail_reasons) == 0,
         fail_reasons=fail_reasons,
     )
-
-
-# ============================================================
-# Combined validator
-# ============================================================
-
-def validate_buffer(
-    adv_signals: np.ndarray,                 # (N, 12, 1000)
-    adv_labels_multi_hot: np.ndarray,        # (N, 6)
-    anchor_signals: np.ndarray,              # (N_anc, 12, 1000) — decoded z0 references
-    victim,
-    device: str = "cuda",
-) -> Dict:
-    """Run Gate 1 + Gate 2. Returns combined result dict with top-level PASS."""
-    gate1 = compute_asr(
-        victim=victim,
-        signals_ct_1000=adv_signals,
-        labels_multi_hot=adv_labels_multi_hot,
-        device=device,
-    )
-    gate2 = compute_semantic_gate(
-        adv_signals_ct_1000=adv_signals,
-        anchor_signals_ct_1000=anchor_signals,
-    )
-    overall_pass = bool(gate1["PASS"] and gate2["PASS"])
-    return dict(
-        PASS=overall_pass,
-        gate1=gate1,
-        gate2=gate2,
-        fail_reasons=(gate1["fail_reasons"] + gate2["fail_reasons"]),
-    )
-
-
-if __name__ == "__main__":
-    # Minimal smoke: random inputs
-    print("[smoke] adv_validation module self-test")
-    rng = np.random.default_rng(42)
-    N_adv, N_anc = 100, 50
-    # Simulate "adv is slightly perturbed anchor" (same baseline stats)
-    anchors = rng.normal(0, 1, size=(N_anc, 12, 1000)).astype(np.float32)
-    advs = rng.normal(0, 1, size=(N_adv, 12, 1000)).astype(np.float32)
-    labels = np.zeros((N_adv, 6), dtype=np.float32)
-    labels[:, rng.integers(0, 6, size=N_adv)] = 1.0  # random one-hot
-
-    # Gate 2 only (no victim needed)
-    g2 = compute_semantic_gate(advs, anchors)
-    print(f"Gate 2 PASS={g2['PASS']} reasons={g2['fail_reasons']}")
-    print(f"  HR mean adv={g2['adv_feat_stats']['hr_bpm']['mean']:.1f}  "
-          f"anc={g2['anchor_feat_stats']['hr_bpm']['mean']:.1f}")
-    print(f"  einthoven p95 adv={g2['einthoven_mean_p95']}")

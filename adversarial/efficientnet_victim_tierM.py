@@ -27,7 +27,6 @@ API 保持 latent-PGD generator 所需的最小 victim 接口。
 import sys
 import os
 from pathlib import Path
-from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -63,35 +62,14 @@ TIERM_PREPROC_LENGTH = 1000
 TIERM_AMP_CLAMP = 3.0
 
 
-def _build_efficientnet_tierM(num_classes: int = 6) -> nn.Module:
-    """Backward-compatible EfficientNet constructor."""
-    return build_super5_model("efficientnet1dv2", num_classes=num_classes)
-
-
-def load_efficientnet_tierM(
-    weight_path: str = DEFAULT_TIERM_CKPT,
-    device: str = "cuda",
-    num_classes: int = 6,
-    model_name: str = "efficientnet1dv2",
-) -> nn.Module:
-    """Load a Super5/Tier-M victim backbone from a plain state_dict checkpoint."""
-    model_name = normalize_model_name(model_name)
-    model = build_super5_model(model_name, num_classes=num_classes)
-    state = torch.load(weight_path, map_location="cpu")
-    model.load_state_dict(state)
-    model.to(device)
-    return model
-
-
 class EfficientNetVictimTierM(nn.Module):
     """
     Tier-M 6-class EfficientNet1DV2 可微分 victim。
 
-    同时支持 4 种前向入口：
+    同时支持 3 种前向入口：
       1. forward_from_latent_to_logits(latent) — 对抗生成时用（raw logits，支持梯度）
-      2. forward_from_latent(latent, enable_grad=True) — 返回 sigmoid 概率
-      3. forward_from_ecg(ecg_ct) — 输入 (B, 12, L)，自动 center crop 到 250 后推理
-      4. forward(ecg_ct) — 默认入口，等价 forward_from_ecg
+      2. forward_from_ecg(ecg_ct) — 输入 (B, 12, L)，自动 center crop 到 250 后推理
+      3. forward(ecg_ct) — 默认入口，等价 forward_from_ecg
     """
 
     def __init__(
@@ -109,12 +87,10 @@ class EfficientNetVictimTierM(nn.Module):
         self.num_classes = num_classes
         self.crop_len = crop_len
         self.model_name = normalize_model_name(model_name)
-        self.model = load_efficientnet_tierM(
-            weight_path=weight_path,
-            device=device,
-            num_classes=num_classes,
-            model_name=self.model_name,
-        )
+        self.model = build_super5_model(self.model_name, num_classes=num_classes)
+        state = torch.load(weight_path, map_location="cpu")
+        self.model.load_state_dict(state)
+        self.model.to(device)
         # Default to eval — BatchNorm collapses to bias-only output at batch=1
         # in train mode (yields identical "fake" probs across distinct inputs).
         # Training loops explicitly call .train()/.eval() per phase, so zero
@@ -173,16 +149,6 @@ class EfficientNetVictimTierM(nn.Module):
     def forward_from_latent_to_logits(self, latent: torch.Tensor) -> torch.Tensor:
         return self._latent_to_logits(latent)
 
-    def forward_from_latent(
-        self, latent: torch.Tensor, enable_grad: bool = True
-    ) -> torch.Tensor:
-        if enable_grad:
-            logits = self._latent_to_logits(latent)
-        else:
-            with torch.no_grad():
-                logits = self._latent_to_logits(latent.clone())
-        return torch.sigmoid(logits)
-
     def forward_from_ecg(self, ecg_ct: torch.Tensor) -> torch.Tensor:
         """(B, 12, L) → sigmoid probs (B, 6). Center-crops to `self.crop_len` if needed."""
         if ecg_ct.shape[-1] != self.crop_len:
@@ -197,23 +163,3 @@ class EfficientNetVictimTierM(nn.Module):
 
     def forward(self, ecg_ct: torch.Tensor) -> torch.Tensor:
         return self.forward_from_ecg(ecg_ct)
-
-
-if __name__ == "__main__":
-    # Minimal smoke: construct victim from the Tier-M checkpoint and forward random (B, 12, 250)
-    import time
-    t0 = time.time()
-    print("[smoke] Loading Tier-M victim state_dict...")
-    victim = EfficientNetVictimTierM(
-        weight_path=DEFAULT_TIERM_CKPT,
-        device="cuda",
-        ecgtwin_wrapper=None,   # not needed for ecg-input path
-    )
-    victim.eval()
-    x = torch.randn(2, 12, TIERM_INPUT_LENGTH, device="cuda")
-    with torch.no_grad():
-        probs = victim(x)
-        logits = victim.compute_logits_from_ecg(x)
-    assert probs.shape == (2, 6), probs.shape
-    assert logits.shape == (2, 6), logits.shape
-    print(f"[smoke] OK in {time.time()-t0:.2f}s. Example probs[0]={probs[0].cpu().tolist()}")

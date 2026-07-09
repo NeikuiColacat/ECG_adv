@@ -12,9 +12,7 @@ come from the same primary class or exact same multi-hot label as ``z0``.
 
 from __future__ import annotations
 
-import argparse
 import sys
-import time
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
@@ -194,67 +192,3 @@ class LatentHullPGDGenerator(PGDAdvDiffGenerator):
                 "hull_weight_mode": self.weight_mode,
             }
         return x_adv_1000, delta.detach()
-
-
-def _smoke(args: argparse.Namespace) -> None:
-    from util.ecgtwin_utils import ECGTwinWrapper
-
-    print("[smoke] loading ECGTwin wrapper ...")
-    wrapper = ECGTwinWrapper(device=args.device, load_encoder=False, load_text_model=False)
-    print(f"[smoke] loading victim from {args.ckpt} ...")
-    victim = EfficientNetVictimTierM(
-        weight_path=args.ckpt,
-        device=args.device,
-        ecgtwin_wrapper=wrapper,
-        num_classes=args.num_classes,
-    )
-    gen = LatentHullPGDGenerator(
-        ecgtwin_wrapper=wrapper,
-        victim=victim,
-        epsilon=args.epsilon,
-        hull_lambda=args.hull_lambda,
-        hull_steps=args.hull_steps,
-        hull_lr=args.hull_lr,
-        weight_mode=args.weight_mode,
-        dirichlet_alpha=args.dirichlet_alpha,
-        device=args.device,
-    )
-    z0 = torch.randn(args.batch_size, 4, 128, device=args.device) * 0.5
-    cand = z0[:, None] + torch.randn(args.batch_size, args.M, 4, 128, device=args.device) * 0.1
-    y = torch.zeros(args.batch_size, args.num_classes, device=args.device)
-    y[:, min(2, args.num_classes - 1)] = 1.0
-    t0 = time.time()
-    x, delta = gen.attack_from_latent(z0, y, cand)
-    print(f"[smoke] {args.batch_size} samples in {time.time() - t0:.2f}s")
-    print(f"  x: {tuple(x.shape)} finite={torch.isfinite(x).all().item()}")
-    print(f"  delta: {tuple(delta.shape)} mean_norm={delta.flatten(1).norm(dim=1).mean().item():.4f}")
-    print(f"  info: {gen.last_info}")
-
-
-def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--smoke", action="store_true")
-    ap.add_argument("--device", default="cuda:0")
-    ap.add_argument("--ckpt", default="/root/autodl-tmp/triple_labels/super5/best_model.pt")
-    ap.add_argument("--num_classes", type=int, default=5)
-    ap.add_argument("--batch_size", type=int, default=2)
-    ap.add_argument("--M", type=int, default=5)
-    ap.add_argument("--hull_lambda", type=float, default=0.25)
-    ap.add_argument("--hull_steps", type=int, default=2)
-    ap.add_argument("--hull_lr", type=float, default=0.3)
-    ap.add_argument(
-        "--weight_mode",
-        choices=["optimized", "one_hot", "uniform", "dirichlet"],
-        default="optimized",
-    )
-    ap.add_argument("--dirichlet_alpha", type=float, default=1.0)
-    ap.add_argument("--epsilon", type=float, default=2.0)
-    args = ap.parse_args()
-    if args.smoke:
-        _smoke(args)
-    else:
-        ap.print_help()
-
-
-if __name__ == "__main__":
-    main()
