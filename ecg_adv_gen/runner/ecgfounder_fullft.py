@@ -1506,7 +1506,14 @@ def main() -> None:
             raise ValueError("clean-anchor latent AugMix requires --adv_weight > 0; it samples the augment stream")
         if int(args.latent_augmix_width) != 3:
             raise ValueError("locked latent AugMix requires exactly three chains")
-        if args.latent_augmix_consistency_loss == "jsd" and int(args.latent_augmix_copies) < 2:
+        if (
+            (
+                float(args.latent_augmix_consistency_weight) > 0.0
+                or float(args.latent_augmix_bce_weight) > 0.0
+            )
+            and args.latent_augmix_consistency_loss == "jsd"
+            and int(args.latent_augmix_copies) < 2
+        ):
             raise ValueError("--latent_augmix_consistency_loss jsd requires --latent_augmix_copies >= 2")
     if args.stage == "ptbxl_source":
         if args.enable_vae_adv_stream:

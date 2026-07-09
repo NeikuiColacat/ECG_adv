@@ -12,7 +12,6 @@ source_of_truth:
   managed_entrypoint_registry: ecg_adv_gen/config/entrypoints.py
   runner_adapter_registry: ecg_adv_gen/config/adapters/registry.py
   command_adapter_helpers: ecg_adv_gen/config/adapters/common.py
-  direct_command_adapter: ecg_adv_gen/config/adapters/direct.py
   direct_finetune_runner_adapter: ecg_adv_gen/config/adapters/direct_finetune.py
   ecgfounder_fullft_runner_adapter: ecg_adv_gen/config/adapters/ecgfounder_fullft.py
   ecgfounder_pn2021c_eval_runner_adapter: ecg_adv_gen/config/adapters/ecgfounder_pn2021c_eval.py
