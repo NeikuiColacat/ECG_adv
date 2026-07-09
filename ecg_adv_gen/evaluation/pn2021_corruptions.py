@@ -10,6 +10,8 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 
+from ecg_adv_gen.evaluation.pn2021_eval_cache import load_npz_metadata as _load_eval_cache_npz_metadata
+
 
 def corruption_cache_path(
     cache_dir: os.PathLike[str] | str,
@@ -47,18 +49,7 @@ def clean_npz_cache_path(
 
 
 def load_npz_metadata(data: Any) -> dict[str, Any]:
-    if "metadata_json" not in getattr(data, "files", []):
-        return {}
-    raw = data["metadata_json"]
-    if hasattr(raw, "item"):
-        raw = raw.item()
-    if isinstance(raw, bytes):
-        raw = raw.decode("utf-8")
-    try:
-        decoded = json.loads(str(raw))
-    except Exception:
-        return {}
-    return decoded if isinstance(decoded, dict) else {}
+    return _load_eval_cache_npz_metadata(data) or {}
 
 
 def stable_corruption_seed(base_seed: int, *parts: object) -> int:

@@ -67,28 +67,19 @@ class RawSignalDataset(Dataset):
         return sig_ct.astype(np.float32, copy=True), self.labels[real_idx].astype(np.float32, copy=True)
 
 
-def real_anchor_base(
-    center: str,
-    args: Any,
-    *,
-    default_roots: Iterable[str | Path] = (),
-) -> Path:
-    return find_real_anchor_base(
-        center,
-        anchor_base_root=getattr(args, "anchor_base_root", ""),
-        k=int(getattr(args, "k", 500)),
-        seed=int(getattr(args, "seed", 42)),
-        default_roots=default_roots,
-    )
-
-
 def anchor_signal_npz_path(
     center: str,
     args: Any,
     *,
     default_roots: Iterable[str | Path] = (),
 ) -> Path:
-    base = real_anchor_base(center, args, default_roots=default_roots)
+    base = find_real_anchor_base(
+        center,
+        anchor_base_root=getattr(args, "anchor_base_root", ""),
+        k=int(getattr(args, "k", 500)),
+        seed=int(getattr(args, "seed", 42)),
+        default_roots=default_roots,
+    )
     candidates = [
         Path(str(base) + ".signals.npz"),
         base.with_suffix(".signals.npz"),
