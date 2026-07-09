@@ -8,6 +8,7 @@ source_of_truth:
   current_handoff_note: docs/codex-handoffs/current_workspace_handoff.md
   config_rules: configs/README.md
   active_evidence_registry: configs/active_evidence_registry.yaml
+  latest_mainline_golden_contract: configs/golden/latest_mainline_contract_v1.json
   pipeline_index: docs/pipelines/README.md
   managed_entrypoint_registry: ecg_adv_gen/config/entrypoints.py
   runner_adapter_registry: ecg_adv_gen/config/adapters/registry.py
