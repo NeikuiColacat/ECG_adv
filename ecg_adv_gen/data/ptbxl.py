@@ -2,57 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping
 
 import numpy as np
-
-from ecg_adv_gen.labels.super5_mapping import CLASS_NAMES_SUPER5
-
-SUPER5_ORDER = CLASS_NAMES_SUPER5
-
-
-@dataclass(frozen=True)
-class FoldSplit:
-    train_ids: list[int]
-    val_ids: list[int]
-    test_ids: list[int]
-
-
-def _ids_for_folds(frame: Any, folds: set[int]) -> list[int]:
-    rows = frame[frame["strat_fold"].isin(folds)]
-    return [int(value) for value in rows["ecg_id"].tolist()]
-
-
-def fold_split(
-    frame: Any,
-    train_folds: set[int],
-    val_folds: set[int],
-    test_folds: set[int],
-) -> FoldSplit:
-    if "ecg_id" not in frame or "strat_fold" not in frame:
-        raise ValueError("PTB-XL frame must contain ecg_id and strat_fold")
-    overlap = (train_folds & val_folds) | (train_folds & test_folds) | (val_folds & test_folds)
-    if overlap:
-        raise ValueError(f"PTB-XL fold sets overlap: {sorted(overlap)}")
-    return FoldSplit(
-        train_ids=_ids_for_folds(frame, train_folds),
-        val_ids=_ids_for_folds(frame, val_folds),
-        test_ids=_ids_for_folds(frame, test_folds),
-    )
-
-
-def normalize_super5_labels(
-    rows: Sequence[Mapping[str, int | float | bool]],
-) -> np.ndarray:
-    labels = []
-    for idx, row in enumerate(rows):
-        missing = [name for name in SUPER5_ORDER if name not in row]
-        if missing:
-            raise ValueError(f"row {idx} missing Super5 labels: {missing}")
-        labels.append([float(row[name]) for name in SUPER5_ORDER])
-    return np.asarray(labels, dtype=np.float32)
 
 
 def get_ptbxl_labels_for_scheme(csv_path: str | Path, scheme: Mapping[str, Any], label_cache_path: str | Path, folds=None):

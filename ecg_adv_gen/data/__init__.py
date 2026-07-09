@@ -23,12 +23,6 @@ from .manifest import (
     validate_data_path_manifest,
     write_data_path_manifest,
 )
-from .ptbxl import (
-    SUPER5_ORDER,
-    FoldSplit,
-    fold_split,
-    normalize_super5_labels,
-)
 from .pn2021 import apply_ref_exclusion
 from .kshot import (
     INCLUDE_RECORD_ID_KEYS,
@@ -147,10 +141,8 @@ __all__ = [
     "RefMetaRecordIds",
     "SIGNAL_NPZ_REQUIRED_KEYS",
     "SIGNAL_CACHE_METADATA_KEYS",
-    "SUPER5_ORDER",
     "SUPER5_PRIMARY_PRIORITY",
     "SyntheticNPZArrays",
-    "FoldSplit",
     "assert_not_forbidden_center",
     "center_from_record_path",
     "anchor_classes_in_scope",
@@ -162,7 +154,6 @@ __all__ = [
     "center_offset_seed",
     "count_center_header_files",
     "default_eval_centers",
-    "fold_split",
     "get_data_preprocess_contract",
     "find_real_anchor_base",
     "kshot_ref_meta_path",
@@ -181,7 +172,6 @@ __all__ = [
     "materialize_pn2021_center_records",
     "materialize_selected_raw1000_from_ref_meta",
     "normalize_synthetic_signals",
-    "normalize_super5_labels",
     "parse_header_snomeds",
     "parse_pn2021_header_metadata",
     "pn2021_hash_fold",
