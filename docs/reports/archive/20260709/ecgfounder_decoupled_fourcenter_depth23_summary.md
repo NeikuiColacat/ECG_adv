@@ -85,6 +85,19 @@ Current host resolves `${paths.output_root}` to
 - Summary JSON:
   `${paths.output_root}/pn2021c_ecgfounder_official_s5_depth23_composite/ecgf_decoupled_scale0p1_c24_ep15_fourcenter_20260709/summary/ecgfounder_decoupled_scale0p1_c24_ep15_depth23_summary.json`
   (`sha256:7b7c22b7fdd1db737253fdb792ce215adebf08aac3a8cc4085f8487d3fbc67a0`)
+- Artifact integrity manifest:
+  `${paths.output_root}/evidence_records/ecgfounder_decoupled_fourcenter_depth23_20260709/artifact_integrity.json`
+  (`33` selected input/output artifacts, `1,129,751,679` bytes;
+  manifest `sha256:f4a102770b673d1074540688400f9f2630e3b863908b78a19ea7df66dbe4e9ce`).
+- Provenance-gap record:
+  `${paths.output_root}/evidence_records/ecgfounder_decoupled_fourcenter_depth23_20260709/provenance_gap.json`
+  (`sha256:a28b084a5a6e5eb8b89caa7e5c0df54750988998240f8041f526360fd7c1d3f4`).
+
+The integrity scope includes selected and initialization checkpoints, K500
+reference metadata/raw1000 subsets, training logs, clean and PN2021-C result
+JSON, the PN2021 manifest, and summary files. It intentionally excludes the
+regenerable 20 GiB waveform cache and does not convert this one-off run into a
+managed replay.
 
 Each center's `eval_result.json` records the resolved training arguments,
 mapping, trainable scope, selected `last_model.pt`, ref-excluded clean metrics,
@@ -94,6 +107,8 @@ and source PTB-XL sanity metrics.
 
 - The run predates the current managed run-card contract and does not contain a
   `run_card.json`, `run_file_index.json`, or persisted exact launch command.
+  The new provenance-gap/integrity records preserve what can be verified now;
+  they are not substitutes for those missing launch records.
 - The artifacts do not record an exact Git SHA; `b57ee16` is the matching
   implementation commit and predates the run, but the artifact itself does not
   independently prove code provenance.

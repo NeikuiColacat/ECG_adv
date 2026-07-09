@@ -1,16 +1,16 @@
 # Current Workspace Handoff
 
-Updated: 2026-07-05
+Updated: 2026-07-10
 
 This is the stable human-readable entrypoint for the current AI-agent refactor
 handoff. It complements the machine-readable audit JSON; it does not replace
 `AGENTS.md`, `configs/active_evidence_registry.yaml`, or
 `configs/active_scripts.yaml`.
 
-Current cleanup state: the public tree keeps only
-`configs/active_scripts.yaml:latest_mainline` plus the 8 SOTA replay YAMLs.
-Old executable scripts/configs and legacy provenance directories were removed
-from the public tree; use
+Current cleanup state: `configs/experiments/` contains exactly the 10 YAMLs
+referenced by `configs/active_scripts.yaml:latest_mainline`; there is no second
+public SOTA-replay YAML set. Old executable scripts/configs and legacy
+provenance directories were removed from the public tree; use
 `docs/refactor_cleanup/cleanup_manifest_summary_20260705.md` and
 `docs/refactor_cleanup/latest_mainline_dry_run_20260705.md` for the compact
 deletion manifest and dry-run verification record.
@@ -57,11 +57,10 @@ micromamba run -n ECGTwin python scripts/agent/audit_agent_workspace.py --skip-e
    `scripts/run_experiment.py`, and the `inspect_active_scripts_latest_mainline`
    startup check all come from `configs/active_scripts.yaml`.
    Also inspect `claims[0].evaluation_views` and
-   `claims[0].required_reporting_views` before writing results: trusted
-   registered metrics currently cover `pn2021_all_zero_kept_refexcluded` and
-   `pn2021_drop_all_zero_refexcluded`, while latest-mainline reporting must
-   also keep `pn2021c_all_zero_kept_corrupted_refexcluded` and
-   `pn2021c_drop_all_zero_corrupted_refexcluded` separate.
+   `claims[0].required_reporting_views` before writing results. The active
+   registry keeps PN2021 and PN2021-C all-zero-kept/drop-all-zero views as four
+   distinct reporting contracts; do not merge those views when quoting a
+   result.
    Its `current_handoff_note` entry reports whether this file exists, is
    tracked by git, and what its current git/index status is.
    Also inspect the top-level `active_scripts.config_git_inventory` and
@@ -106,10 +105,11 @@ micromamba run -n ECGTwin python scripts/agent/audit_agent_workspace.py --skip-e
   its runner allowlist from that registry. Dry-run manifests expose invoked
   managed runner families under
   `artifact_trace.protocol_audit.command_audit.managed_entrypoints`.
-- Direct K-shot fine-tune command expansion lives in
-  `ecg_adv_gen/config/adapters/direct_finetune.py`, with legacy direct-command
-  audit helpers kept in `ecg_adv_gen/config/adapters/direct.py` and shared argv
-  helpers in `ecg_adv_gen/config/adapters/common.py`.
+- Direct K-shot fine-tune command expansion and its managed command audit live
+  together in `ecg_adv_gen/config/adapters/direct_finetune.py`; shared argv
+  helpers remain in `ecg_adv_gen/config/adapters/common.py`. The deleted
+  `ecg_adv_gen/config/adapters/direct.py` compatibility shim is not a live
+  source of truth.
 - Typed VAE-LHAT command expansion for the current EfficientNet mainline lives
   in `ecg_adv_gen/config/adapters/effnet_vae_lhat.py`. ECGFounder locked
   source/K500/three-chain training now routes through the full fine-tune
@@ -135,10 +135,12 @@ micromamba run -n ECGTwin python scripts/agent/audit_agent_workspace.py --skip-e
 - The data/preprocess contract now explicitly records the shared
   PTB-XL/PN2021/ECGTwin decode rules plus ECGFounder
   `official_ptbxl_eval` 500Hz/5000-point feature-cache policy.
-- Run finalization and registration can consume YAML-derived
-  `run_record` metadata; `register_run.py --status auto` resolves the
-  registration status from finalized run-record metadata before falling back to
-  `provisional`.
+- Run finalization and registration consume YAML-derived `run_record` metadata.
+  New trusted/provisional registrations require a schema-v2
+  `run_file_index.json`, SHA-256 coverage of every reproduction-critical input
+  and output, and a registry-pinned index digest. Schema v1 remains readable
+  only for exploratory/historical records. `register_run.py --status auto`
+  resolves status from finalized metadata before falling back to `provisional`.
 - Reusable shared logic belongs under `ecg_adv_gen/`, with focused CPU tests
   under `util/tests/`.
 - Historical reports belong under `docs/reports/archive/` and are not active
@@ -167,7 +169,47 @@ micromamba run -n ECGTwin python scripts/agent/audit_agent_workspace.py --skip-e
 - Documentation changes should separate durable pipeline docs from archived
   historical reports.
 
-## 2026-07-01 Refactor State
+## 2026-07-10 Current Refactor Closeout
+
+The implementation snapshot before this documentation closeout is
+`6e4e4cf13810f1ce986b5d4475a1bd7fe432019a`. The authoritative completion
+details and final post-documentation SHA live in
+`docs/refactor_cleanup/refactor_goal_completion_20260710.md`; use that report
+instead of copying counts from the historical sections below.
+
+- ECGFounder method commit `b57ee16` remains in branch history. Evidence commit
+  `02f7cef` was integrated exactly once as equivalent local commit `b799e13`,
+  touching only the registry and archived depth23 report.
+- The 10 latest-mainline stages resolve through the managed launcher and typed
+  adapters; the golden contract passes with SHA-256
+  `df5d6597167e3eb27b63054ed0e62e823b43c5a48f037c048e8bb6c307b404e1`.
+- Startup P0 issues, preprocessing behavior, K500/ref-exclusion wiring,
+  ECGFounder copies/JSD preflight, PN2021-C metadata, and all-zero reporting
+  views have focused CPU contracts.
+- Ten behavior-preserving compression commits remove a raw net 821 LOC. The
+  15-file algorithm review surface fell from 11,609 to 11,410 whole-file LOC;
+  the one-day review plan covers 3,008 LOC deeply plus 2,877 LOC through guided
+  invariant review.
+- The active Registry contains six managed records. The direct run is the only
+  replay-ready record (45 critical files verified); five incomplete historical
+  records remain explicitly non-ready rather than being promoted from their
+  surviving evaluation outputs.
+- ECGFounder depth2+3 evidence (`0.8161 / 0.5163`, matched-direct gains
+  `+4.48 / +7.53 pp`) is registered as single-seed provisional evidence. It is
+  not a multi-seed paper conclusion, and its provenance-gap record remains
+  active.
+- The complete CPU suite passed with 414 tests and 13 third-party deprecation
+  warnings. The live workspace audit passed with Registry `error_count=0`, six
+  structurally valid managed records, and active configs 10/10.
+- The refreshed upstream base is `afec2b883106b0e05339f62cb62476b967301e45`.
+  Nothing was pushed, no GPU work was run, and guarded `model/*` handles remain
+  local-only and unstaged.
+
+## Historical snapshots (2026-07-01 through 2026-07-05)
+
+The staged counts, test totals, YAML counts, and readiness statements below are
+dated provenance. They do not describe the 2026-07-10 worktree and must not
+override the current closeout section or the final report.
 
 The current branch is an active, dirty refactor workspace, not a clean handoff
 checkpoint. The latest-mainline replay contract itself passes audit: all 10
@@ -350,9 +392,9 @@ Pasted-goal completion audit on 2026-07-02:
 | Artifacts and external models | Staged model paths, checkpoint/data/cache artifacts, generated samples, and secrets are absent; local `model/*` handle changes remain unstaged. |
 | No automatic commit | Branch remains staged/dirty by design; `source_control_ready=false` until user approves final review/commit. |
 
-Depth23 PN2021-C remains a protected latest-mainline evaluation surface, not a
-registered evidence claim. Do not cite depth23 gains until outputs are run and
-registered.
+This historical section originally treated depth23 as unregistered. Since
+2026-07-09, its outputs are registered only as single-seed provisional evidence;
+the current closeout rules above supersede that older boundary.
 
 ## Launch Policy
 
@@ -374,7 +416,10 @@ real staged content before any commit or handoff claim.
 Minimum CPU-only handoff checks for this layer:
 
 ```bash
-micromamba run -n ECGTwin python -m pytest util/tests/test_agent_operating_layer.py util/tests/test_active_script_index.py -q
-micromamba run -n ECGTwin python scripts/agent/audit_agent_workspace.py --skip-existing-artifacts
+CUDA_VISIBLE_DEVICES='' micromamba run -n ECGTwin python -m pytest -q util/tests methods/augmix/tests
+micromamba run -n ECGTwin python scripts/agent/build_latest_mainline_golden.py --check
+micromamba run -n ECGTwin python scripts/agent/audit_agent_workspace.py
+git diff --check
+git diff --cached --check
 git diff --cached --name-only -- model
 ```
