@@ -370,6 +370,31 @@ def test_vae_configs_declare_required_epoch_metrics():
     assert "quick_eval" not in effnet_metrics
 
 
+def test_effnet_provisional_latent_hull_recipe_is_explicit_and_balanced():
+    path = REPO / "configs" / "experiments" / "effnet_vae_lhat_augmix_threechain_locked_k500.yaml"
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    config = _load(path.name)
+    commands = build_runner_commands(config)
+
+    assert raw["adaptation"]["hull"] == {
+        "M": 20,
+        "lambda": 0.6,
+        "steps": 5,
+        "include_anchor": False,
+        "init_logit_gap": 0.0,
+    }
+    assert raw["adaptation"]["attack"]["pgd_eps"] == 2.0
+    assert config["run_record"]["registration_status"] == "provisional"
+    for command in commands:
+        argv = command["argv"]
+        assert "--hull_include_anchor" not in argv
+        assert _option_value(argv, "--hull_M") == "20"
+        assert _option_value(argv, "--hull_init_logit_gap") == "0.0"
+        assert _option_value(argv, "--hull_lambda") == "0.6"
+        assert _option_value(argv, "--hull_steps") == "5"
+        assert _option_value(argv, "--pgd_eps") == "2.0"
+
+
 def _option_value(argv: list[str], option: str) -> str:
     idx = argv.index(option)
     return argv[idx + 1]

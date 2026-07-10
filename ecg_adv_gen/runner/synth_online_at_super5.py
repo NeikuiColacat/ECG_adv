@@ -87,6 +87,7 @@ from ecg_adv_gen.labels import CLASS_NAMES_SUPER5, NUM_SUPER5, get_super5_scheme
 from ecg_adv_gen.labels.super5_mapping import SUPER5_TO_IDX  # noqa: E402
 from ecg_adv_gen.models.super5_model_zoo import available_model_names  # noqa: E402
 from ecg_adv_gen.training import (  # noqa: E402
+    attack_success_stats,
     append_jsonl,
     atomic_torch_save,
     capture_rng_state,
@@ -618,6 +619,7 @@ def _restore_walker_state(walker: StratifiedPoolWalker, state: Dict[str, Any]) -
 def attack_bce_diagnostics(
     model: nn.Module,
     clean_signals_ct: np.ndarray,
+    initial_signals_ct: Optional[np.ndarray],
     adv_signals_ct: np.ndarray,
     labels: np.ndarray,
     *,
@@ -639,26 +641,119 @@ def attack_bce_diagnostics(
 
     model.eval()
     clean_logits = logits_for(clean_signals_ct)
+    initial_logits = logits_for(initial_signals_ct) if initial_signals_ct is not None else None
     adv_logits = logits_for(adv_signals_ct)
     labels_t = torch.from_numpy(labels.astype(np.float32, copy=False))
-    clean_bce = F.binary_cross_entropy_with_logits(clean_logits, labels_t, reduction="none").mean(dim=1)
-    adv_bce = F.binary_cross_entropy_with_logits(adv_logits, labels_t, reduction="none").mean(dim=1)
-    gain = adv_bce - clean_bce
-    success = gain > 0.0
+    attack_vs_anchor = attack_success_stats(clean_logits, adv_logits, labels_t, margin=0.0)
+    attack_vs_init = (
+        attack_success_stats(initial_logits, adv_logits, labels_t, margin=0.0)
+        if initial_logits is not None
+        else None
+    )
     return {
-        "n": int(labels_t.shape[0]),
-        "success_rate": float(success.float().mean().item()),
-        "clean_bce_mean": float(clean_bce.mean().item()),
-        "adv_bce_mean": float(adv_bce.mean().item()),
-        "loss_gain_mean": float(gain.mean().item()),
-        "loss_gain_p50": float(torch.quantile(gain, 0.50).item()),
-        "loss_gain_p90": float(torch.quantile(gain, 0.90).item()),
+        "atk_anchor": attack_vs_anchor["success_rate"],
+        "atk_init": None if attack_vs_init is None else attack_vs_init["success_rate"],
+        "attack_vs_anchor": attack_vs_anchor,
+        "attack_vs_init": attack_vs_init,
+        "clean_bce": attack_vs_anchor["clean_loss_mean"],
+        "initial_bce": None if attack_vs_init is None else attack_vs_init["clean_loss_mean"],
+        "adv_bce": attack_vs_anchor["adv_loss_mean"],
+        "loss_gain": attack_vs_anchor["loss_gain_mean"],
     }
 
 
 # ────────────────────────────────────────────────────────────────────────────
 # Latent-hull epoch step
 # ────────────────────────────────────────────────────────────────────────────
+
+
+_LATENT_HULL_GEOMETRY_FIELDS = (
+    "pre_projection_norm", "post_projection_norm", "projection_scale",
+    "effective_lambda", "candidate_anchor_weight", "effective_original_share",
+)
+_LATENT_HULL_ARRAY_FIELDS = (
+    "anchor_pool_indices",
+    "candidate_pool_indices",
+    "candidate_is_anchor",
+    "initial_weights",
+    "final_weights",
+    "initial_top1_candidate_pool_indices",
+    "final_top1_candidate_pool_indices",
+    "initial_top1_weights",
+    "final_top1_weights",
+) + tuple(
+    f"{stage}_{field}"
+    for stage in ("initial", "final")
+    for field in _LATENT_HULL_GEOMETRY_FIELDS
+)
+
+
+def merge_latent_hull_batch_diagnostics(batches: List[Dict[str, Any]]) -> Dict[str, Any]:
+    merged: Dict[str, Any] = {"schema_version": 1, "n": 0}
+    merged.update({field: [] for field in _LATENT_HULL_ARRAY_FIELDS})
+    for batch_index, batch in enumerate(batches):
+        anchors = batch.get("anchor_pool_indices")
+        if anchors is None:
+            raise RuntimeError("latent-hull generator omitted diagnostic field 'anchor_pool_indices'")
+        try:
+            anchor_rows = len(anchors)
+        except TypeError:
+            raise RuntimeError(
+                f"latent-hull diagnostic batch {batch_index} anchor_pool_indices has no row axis"
+            ) from None
+        for field in _LATENT_HULL_ARRAY_FIELDS:
+            values = batch.get(field)
+            if values is None:
+                raise RuntimeError(f"latent-hull generator omitted diagnostic field {field!r}")
+            try:
+                rows = len(values)
+            except TypeError:
+                raise RuntimeError(
+                    f"latent-hull diagnostic batch {batch_index} field {field!r} has no row axis; "
+                    f"expected {anchor_rows} anchor rows"
+                ) from None
+            if rows != anchor_rows:
+                raise RuntimeError(
+                    f"latent-hull diagnostic batch {batch_index} field {field!r} has {rows} rows; "
+                    f"expected {anchor_rows} anchor rows"
+                )
+            merged[field].extend(values)
+    merged["n"] = len(merged["anchor_pool_indices"])
+    for field in _LATENT_HULL_ARRAY_FIELDS:
+        if len(merged[field]) != merged["n"]:
+            raise RuntimeError(
+                f"merged latent-hull diagnostic field {field!r} has {len(merged[field])} rows; "
+                f"expected {merged['n']} anchor rows"
+            )
+    return merged
+
+
+def summarize_latent_hull_diagnostics(diagnostics: Dict[str, Any]) -> Dict[str, Any]:
+    summary: Dict[str, Any] = {"schema_version": 1, "n": int(diagnostics.get("n", 0))}
+    for field in (*_LATENT_HULL_GEOMETRY_FIELDS, "top1_weights"):
+        for stage in ("initial", "final"):
+            key = f"{stage}_{field}"
+            values = np.asarray(diagnostics.get(key, []), dtype=np.float64)
+            if values.ndim != 1 or values.size == 0:
+                continue
+            bad = np.flatnonzero(~np.isfinite(values))
+            if bad.size:
+                raise RuntimeError(
+                    f"latent-hull diagnostic field {key!r} is non-finite at sample {int(bad[0])}"
+                )
+            field_summary = {}
+            with np.errstate(over="ignore", invalid="ignore"):
+                for name, fn in (("mean", np.mean), ("p50", lambda x: np.percentile(x, 50)),
+                                 ("p90", lambda x: np.percentile(x, 90))):
+                    value = float(fn(values))
+                    if not np.isfinite(value):
+                        raise RuntimeError(
+                            f"latent-hull diagnostic summary field {key!r} statistic {name!r} "
+                            "is non-finite"
+                        )
+                    field_summary[name] = value
+            summary[key] = field_summary
+    return summary
 
 
 def run_pgd_on_synth_pool(
@@ -676,7 +771,8 @@ def run_pgd_on_synth_pool(
     hull_label_negative_floor: float = 0.0,
     hull_label_new_class_cap: float = 0.5,
     store_raw_decoded: bool = False,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict[str, float]]:
+    pool_record_ids: Optional[np.ndarray] = None,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
     """Sample K anchors stratified by class, run latent-hull PGD in batches.
 
     Returns:
@@ -688,6 +784,8 @@ def run_pgd_on_synth_pool(
     if picked_indices is None:
         raise ValueError("picked_indices is required; latest mainline uses StratifiedPoolWalker")
     pick = picked_indices
+    if pool_record_ids is not None and len(pool_record_ids) != len(synth_latents):
+        raise ValueError("pool_record_ids must align with synth_latents")
 
     if len(pick) == 0:
         return (np.empty((0, 12, 1000), dtype=np.float32),
@@ -699,29 +797,39 @@ def run_pgd_on_synth_pool(
     z_anchors = torch.from_numpy(synth_latents[pick]).float()        # (K, 4, 128)
     y_anchors = torch.from_numpy(y_anchor_np).float()                # (K, C)
 
-    adv_chunks, anc_chunks, label_chunks, delta_norms = [], [], [], []
+    adv_chunks, anc_chunks, init_chunks, label_chunks, delta_norms = [], [], [], [], []
     raw_adv_chunks, raw_anc_chunks = [], []
-    hull_entropies, hull_top1 = [], []
+    diagnostic_batches: List[Dict[str, Any]] = []
     for i in range(0, z_anchors.shape[0], pgd_batch):
         z_b = z_anchors[i:i + pgd_batch].to(device)
         y_b = y_anchors[i:i + pgd_batch].to(device)
         batch_pick = pick[i:i + pgd_batch]
         cand_np = latent_hull_index.candidates_for(batch_pick, hull_M)
+        candidate_indices = np.asarray(
+            getattr(latent_hull_index, "last_candidate_indices", None), dtype=np.int64
+        ).copy()
+        if candidate_indices.shape != (len(batch_pick), hull_M):
+            raise RuntimeError("latent-hull index did not expose aligned candidate identities")
+        candidate_is_anchor = candidate_indices == batch_pick[:, None]
         cand_b = torch.from_numpy(cand_np).float().to(device)
         x_adv, delta = pgd_gen.attack_from_latent(
-            z_b, y_b, candidate_latents=cand_b
+            z_b,
+            y_b,
+            candidate_latents=cand_b,
+            anchor_pool_indices=torch.from_numpy(batch_pick),
+            candidate_pool_indices=torch.from_numpy(candidate_indices),
+            candidate_is_anchor=torch.from_numpy(candidate_is_anchor),
         )
         if hull_mix_label_mode == "anchor":
             label_chunks.append(y_anchor_np[i:i + pgd_batch])
         elif hull_mix_label_mode == "anchor_soft":
-            cand_idx = getattr(latent_hull_index, "last_candidate_indices", None)
             weights_t = getattr(pgd_gen, "last_weights", None)
-            if cand_idx is None or weights_t is None:
+            if weights_t is None:
                 raise RuntimeError(
                     "latent-hull soft labels require candidate indices and weights"
                 )
             weights_np = weights_t.numpy().astype(np.float32, copy=False)
-            cand_labels = synth_labels[cand_idx]
+            cand_labels = synth_labels[candidate_indices]
             label_chunks.append(build_anchor_preserving_soft_labels(
                 y_anchor_np[i:i + pgd_batch],
                 cand_labels,
@@ -737,10 +845,11 @@ def run_pgd_on_synth_pool(
                 f"got {hull_mix_label_mode!r}"
             )
         hull_info = getattr(pgd_gen, "last_info", {})
-        if "hull_weight_entropy_mean" in hull_info:
-            hull_entropies.append(float(hull_info["hull_weight_entropy_mean"]))
-        if "hull_weight_top1_mean" in hull_info:
-            hull_top1.append(float(hull_info["hull_weight_top1_mean"]))
+        diagnostic_batches.append(hull_info)
+        initial_signals = getattr(pgd_gen, "last_initial_signals", None)
+        if initial_signals is None:
+            raise RuntimeError("latent-hull generator did not retain the true initial decoded signals")
+        init_chunks.append(initial_signals.numpy().astype(np.float32, copy=False))
         adv_chunks.append(x_adv.detach().cpu().numpy().astype(np.float32))
         # Clean anchor reference (z_b alone, no delta)
         with torch.no_grad():
@@ -756,6 +865,7 @@ def run_pgd_on_synth_pool(
 
     adv_signals = np.concatenate(adv_chunks, axis=0)                  # (K, 12, 1000)
     anc_signals = np.concatenate(anc_chunks, axis=0)
+    pgd_gen.last_initial_signals_ptbxl_1000 = np.concatenate(init_chunks, axis=0)
     if store_raw_decoded:
         pgd_gen.last_anchor_raw_ptbxl_1000 = np.concatenate(raw_anc_chunks, axis=0)
         pgd_gen.last_adv_raw_ptbxl_1000 = np.concatenate(raw_adv_chunks, axis=0)
@@ -766,11 +876,28 @@ def run_pgd_on_synth_pool(
         "mean_delta_norm": float(np.mean(delta_norms)),
         "max_delta_norm":  float(np.max(delta_norms)),
     }
-    if hull_entropies:
-        stats.update({
-            "hull_weight_entropy_mean": float(np.mean(hull_entropies)),
-            "hull_weight_top1_mean": float(np.mean(hull_top1)) if hull_top1 else float('nan'),
+    diagnostics = merge_latent_hull_batch_diagnostics(diagnostic_batches)
+    if pool_record_ids is not None:
+        record_ids = np.asarray(pool_record_ids).astype(str)
+        candidate_ids = np.asarray(diagnostics["candidate_pool_indices"], dtype=np.int64)
+        diagnostics.update({
+            "anchor_record_ids": record_ids[np.asarray(diagnostics["anchor_pool_indices"], dtype=np.int64)].tolist(),
+            "candidate_record_ids": record_ids[candidate_ids].tolist(),
+            "initial_top1_candidate_record_ids": record_ids[
+                np.asarray(diagnostics["initial_top1_candidate_pool_indices"], dtype=np.int64)
+            ].tolist(),
+            "final_top1_candidate_record_ids": record_ids[
+                np.asarray(diagnostics["final_top1_candidate_pool_indices"], dtype=np.int64)
+            ].tolist(),
         })
+    final_weights = np.asarray(diagnostics["final_weights"], dtype=np.float64)
+    entropy = -(final_weights * np.log(np.clip(final_weights, 1e-12, None))).sum(axis=1)
+    stats.update({
+        "hull_weight_entropy_mean": float(np.mean(entropy)),
+        "hull_weight_top1_mean": float(np.mean(final_weights.max(axis=1))),
+        "latent_hull_diagnostics": diagnostics,
+        "latent_hull_diagnostics_summary": summarize_latent_hull_diagnostics(diagnostics),
+    })
     out_labels = np.concatenate(label_chunks, axis=0).astype(np.float32)
     return adv_signals, anc_signals, out_labels, stats
 
@@ -1928,6 +2055,7 @@ def main():
                 hull_label_negative_floor=args.hull_label_negative_floor,
                 hull_label_new_class_cap=args.hull_label_new_class_cap,
                 store_raw_decoded=locked_mixed_view_mode,
+                pool_record_ids=source_meta.get("record_ids"),
             )
             if adv_signals.shape[0] == 0:
                 print(f"[ep{epoch:02d}] empty walker pick — skip epoch", flush=True)
@@ -1946,9 +2074,10 @@ def main():
         asr_info = compute_asr(victim, adv_signals, target_oh,
                                device=args.device, batch_size=128)
         decode_invalid_stats = decoded_signal_invalid_stats(adv_signals)
-        attack_vs_anchor_stats = attack_bce_diagnostics(
+        attack_diagnostics = attack_bce_diagnostics(
             victim.model,
             anc_signals,
+            None if clean_anchor_mode else pgd_gen.last_initial_signals_ptbxl_1000,
             adv_signals,
             target_oh,
             device=args.device,
@@ -2349,6 +2478,13 @@ def main():
                 torch.save(victim.model.state_dict(), best_ckpt_path)
 
         elapsed = time.time() - epoch_t0
+        latent_hull_diagnostics = delta_stats.get(
+            "latent_hull_diagnostics", {"schema_version": 1, "n": 0}
+        )
+        latent_hull_diagnostics_summary = delta_stats.get(
+            "latent_hull_diagnostics_summary",
+            summarize_latent_hull_diagnostics(latent_hull_diagnostics),
+        )
         entry = {
             "epoch": epoch,
             "comparison_arm": args.comparison_arm,
@@ -2405,13 +2541,14 @@ def main():
             "sample_all_positive_recognized_rate": round(
                 float(asr_info.get("sample_all_positive_recognized_rate", float("nan"))), 4
             ),
-            "atk_init": None,
-            "atk_init_reason": "not_available_for_current_latent_hull_generator",
-            "atk_anchor": attack_vs_anchor_stats.get("success_rate"),
-            "attack_vs_anchor": attack_vs_anchor_stats,
-            "clean_bce": attack_vs_anchor_stats.get("clean_bce_mean"),
-            "adv_bce": attack_vs_anchor_stats.get("adv_bce_mean"),
-            "loss_gain": attack_vs_anchor_stats.get("loss_gain_mean"),
+            "atk_init": attack_diagnostics.get("atk_init"),
+            "atk_anchor": attack_diagnostics.get("atk_anchor"),
+            "attack_vs_init": attack_diagnostics.get("attack_vs_init"),
+            "attack_vs_anchor": attack_diagnostics.get("attack_vs_anchor"),
+            "clean_bce": attack_diagnostics.get("clean_bce"),
+            "initial_bce": attack_diagnostics.get("initial_bce"),
+            "adv_bce": attack_diagnostics.get("adv_bce"),
+            "loss_gain": attack_diagnostics.get("loss_gain"),
             "decoded_invalid_rate": round(float(decode_invalid_stats["decoded_invalid_rate"]), 6)
             if decode_invalid_stats["decoded_invalid_rate"] == decode_invalid_stats["decoded_invalid_rate"]
             else None,
@@ -2444,6 +2581,14 @@ def main():
             "anchor_class_quotas": dict(k_per_cls),
             "delta_mean":    round(delta_stats["mean_delta_norm"], 4),
             "delta_max":     round(delta_stats["max_delta_norm"], 4),
+            "latent_hull_diagnostics": latent_hull_diagnostics,
+            "latent_hull_diagnostics_summary": latent_hull_diagnostics_summary,
+            "latent_hull_final_effective_original_share_p50": (
+                latent_hull_diagnostics_summary.get("final_effective_original_share", {}).get("p50")
+            ),
+            "latent_hull_final_projection_scale_p50": (
+                latent_hull_diagnostics_summary.get("final_projection_scale", {}).get("p50")
+            ),
             "lr":            round(optimizer.param_groups[0]["lr"], 6),
             "time_s":        round(elapsed, 1),
         }
@@ -2508,7 +2653,17 @@ def main():
                 "atk_anchor": entry.get("atk_anchor"),
                 "loss_gain": entry.get("loss_gain"),
                 "clean_bce": entry.get("clean_bce"),
+                "initial_bce": entry.get("initial_bce"),
                 "adv_bce": entry.get("adv_bce"),
+                "attack_vs_init": entry.get("attack_vs_init"),
+                "attack_vs_anchor": entry.get("attack_vs_anchor"),
+                "latent_hull_diagnostics_summary": entry.get("latent_hull_diagnostics_summary"),
+                "latent_hull_final_effective_original_share_p50": entry.get(
+                    "latent_hull_final_effective_original_share_p50"
+                ),
+                "latent_hull_final_projection_scale_p50": entry.get(
+                    "latent_hull_final_projection_scale_p50"
+                ),
                 "decoded_invalid_rate": entry.get("decoded_invalid_rate"),
                 "adv_weight_effective": entry.get("adv_weight_effective"),
                 "buffer_size": entry.get("buffer_size"),

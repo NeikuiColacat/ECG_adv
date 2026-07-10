@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 import torch
@@ -26,6 +26,10 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from adversarial.efficientnet_victim_tierM import EfficientNetVictimTierM  # noqa: E402
 from adversarial.pgd_advdiff import PGDAdvDiffGenerator  # noqa: E402
+from ecg_adv_gen.adaptation.latent_hull_torch import (  # noqa: E402
+    initial_hull_weights,
+    latent_hull_geometry,
+)
 
 
 class LatentHullPGDGenerator(PGDAdvDiffGenerator):
@@ -66,8 +70,9 @@ class LatentHullPGDGenerator(PGDAdvDiffGenerator):
         self.dirichlet_alpha = float(dirichlet_alpha)
         self.init_logit_gap = float(init_logit_gap)
         self.attack_pos_weight: Optional[torch.Tensor] = None
-        self.last_info: Dict[str, float] = {}
+        self.last_info: Dict[str, Any] = {}
         self.last_weights: Optional[torch.Tensor] = None
+        self.last_initial_signals: Optional[torch.Tensor] = None
 
     @staticmethod
     def _enable_rnn_backward_only(module: torch.nn.Module) -> list[tuple[torch.nn.Module, bool]]:
@@ -90,15 +95,31 @@ class LatentHullPGDGenerator(PGDAdvDiffGenerator):
         for child, was_training in states:
             child.train(was_training)
 
+    @staticmethod
+    def _require_finite_diagnostics(diagnostics: Dict[str, Any]) -> None:
+        for field, value in diagnostics.items():
+            if value is None:
+                continue
+            values = np.asarray(value)
+            if values.dtype.kind not in "fc":
+                continue
+            bad = np.argwhere(~np.isfinite(values))
+            if bad.size:
+                location = f"sample {int(bad[0, 0])}" if values.ndim else "aggregate"
+                raise RuntimeError(
+                    f"latent-hull generator diagnostic field {field!r} is non-finite "
+                    f"at {location}"
+                )
+
     def _fixed_weights(self, bsz: int, m: int) -> Optional[torch.Tensor]:
         if self.weight_mode == "optimized":
             return None
-        if self.weight_mode == "one_hot":
-            w = torch.zeros((bsz, m), device=self.device)
-            w[:, 0] = 1.0
-            return w
-        if self.weight_mode == "uniform":
-            return torch.full((bsz, m), 1.0 / float(m), device=self.device)
+        weights = initial_hull_weights(
+            bsz, m, weight_mode=self.weight_mode, init_logit_gap=self.init_logit_gap,
+            device=self.device, dtype=torch.float32,
+        )
+        if weights is not None:
+            return weights
         concentration = torch.full((m,), self.dirichlet_alpha, device=self.device)
         return torch.distributions.Dirichlet(concentration).sample((bsz,))
 
@@ -108,6 +129,10 @@ class LatentHullPGDGenerator(PGDAdvDiffGenerator):
         y0: torch.Tensor,
         candidate_latents: torch.Tensor,
         init_logits: Optional[torch.Tensor] = None,
+        *,
+        anchor_pool_indices: Optional[torch.Tensor] = None,
+        candidate_pool_indices: Optional[torch.Tensor] = None,
+        candidate_is_anchor: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Optimize same-label mixture weights and return decoded adv signals.
 
@@ -130,16 +155,46 @@ class LatentHullPGDGenerator(PGDAdvDiffGenerator):
             raise ValueError(f"bad y0 shape: {tuple(y0.shape)}")
 
         bsz, m = cand.shape[:2]
+        anchor_ids = None if anchor_pool_indices is None else torch.as_tensor(anchor_pool_indices).long().cpu()
+        candidate_ids = (
+            None if candidate_pool_indices is None else torch.as_tensor(candidate_pool_indices).long().cpu()
+        )
+        if ((anchor_ids is not None and anchor_ids.shape != (bsz,)) or
+                (candidate_ids is not None and candidate_ids.shape != (bsz, m))):
+            raise ValueError("latent-hull pool identities do not match the attack batch")
+        derived_mask = (
+            candidate_ids == anchor_ids[:, None]
+            if anchor_ids is not None and candidate_ids is not None else None
+        )
+        identity_mask = (
+            torch.as_tensor(candidate_is_anchor).bool().cpu()
+            if candidate_is_anchor is not None else derived_mask
+        )
+        if identity_mask is None:
+            identity_mask = torch.zeros((bsz, m), dtype=torch.bool)
+        if identity_mask.shape != (bsz, m) or (derived_mask is not None and not torch.equal(identity_mask, derived_mask)):
+            raise ValueError("candidate anchor identities do not match the supplied pool identities")
+        identity_mask_device = identity_mask.to(self.device)
+
         last_loss = None
         fixed_w = self._fixed_weights(bsz, m)
         if fixed_w is None:
             if init_logits is None:
-                logits_a = torch.full((bsz, m), -self.init_logit_gap, device=self.device)
-                logits_a[:, 0] = self.init_logit_gap
+                initial_w = initial_hull_weights(
+                    bsz,
+                    m,
+                    weight_mode="optimized",
+                    init_logit_gap=self.init_logit_gap,
+                    device=self.device,
+                    dtype=z0.dtype,
+                )
+                assert initial_w is not None
+                logits_a = initial_w.clamp_min(1e-12).log()
             else:
                 logits_a = init_logits.to(self.device).detach().float().clone()
                 if logits_a.shape != (bsz, m):
                     raise ValueError(f"bad init_logits shape: {tuple(logits_a.shape)}")
+                initial_w = torch.softmax(logits_a.detach(), dim=-1)
             logits_a.requires_grad_(True)
 
             opt = torch.optim.Adam([logits_a], lr=self.hull_lr)
@@ -167,28 +222,83 @@ class LatentHullPGDGenerator(PGDAdvDiffGenerator):
                 self._restore_module_training_states(rnn_states)
         else:
             logits_a = None
+            initial_w = fixed_w.detach().clone()
+
+        with torch.no_grad():
+            initial_geometry = latent_hull_geometry(
+                z0,
+                cand,
+                initial_w,
+                hull_lambda=self.hull_lambda,
+                epsilon=self.hull_epsilon,
+                candidate_is_anchor=identity_mask_device,
+            )
 
         with torch.no_grad():
             if fixed_w is None:
                 w = torch.softmax(logits_a.detach(), dim=-1)
             else:
                 w = fixed_w
-            self.last_weights = w.detach().cpu()
-            z_mix = (w.view(bsz, m, 1, 1) * cand).sum(dim=1)
-            z_adv = (1.0 - self.hull_lambda) * z0 + self.hull_lambda * z_mix
-            delta = z_adv - z0
-            if self.hull_epsilon is not None and self.hull_epsilon > 0:
-                delta = self._project_l2_ball(delta)
-                z_adv = z0 + delta
+            final_geometry = latent_hull_geometry(
+                z0,
+                cand,
+                w,
+                hull_lambda=self.hull_lambda,
+                epsilon=self.hull_epsilon,
+                candidate_is_anchor=identity_mask_device,
+            )
+            z_adv = final_geometry["latent"]
+            delta = final_geometry["delta_post"]
             x_adv_1000 = self._decode_to_ptbxl_1000(z_adv)
+            self.last_initial_signals = self._decode_to_ptbxl_1000(
+                initial_geometry["latent_pre"]
+            ).detach().cpu()
+            self.last_weights = w.detach().cpu()
             entropy = -(w * w.clamp(min=1e-12).log()).sum(dim=-1)
-            self.last_info = {
+            initial_cpu = initial_w.detach().cpu()
+            final_cpu = w.detach().cpu()
+            initial_top1_weights, initial_top1_positions = initial_cpu.max(dim=-1)
+            final_top1_weights, final_top1_positions = final_cpu.max(dim=-1)
+
+            def top1_pool_ids(positions: torch.Tensor) -> list[int]:
+                if candidate_ids is None:
+                    return positions.tolist()
+                return candidate_ids.gather(1, positions[:, None]).squeeze(1).tolist()
+
+            def geometry_lists(prefix: str, geometry: Dict[str, torch.Tensor]) -> Dict[str, list[float]]:
+                return {
+                    f"{prefix}_{key}": geometry[key].detach().float().cpu().tolist()
+                    for key in (
+                        "pre_projection_norm",
+                        "post_projection_norm",
+                        "projection_scale",
+                        "effective_lambda",
+                        "candidate_anchor_weight",
+                        "effective_original_share",
+                    )
+                }
+
+            last_info = {
+                "schema_version": 1,
+                "anchor_pool_indices": None if anchor_ids is None else anchor_ids.tolist(),
+                "candidate_pool_indices": None if candidate_ids is None else candidate_ids.tolist(),
+                "candidate_is_anchor": identity_mask.tolist(),
+                "initial_weights": initial_cpu.tolist(),
+                "final_weights": final_cpu.tolist(),
+                "initial_top1_candidate_pool_indices": top1_pool_ids(initial_top1_positions),
+                "final_top1_candidate_pool_indices": top1_pool_ids(final_top1_positions),
+                "initial_top1_weights": initial_top1_weights.tolist(),
+                "final_top1_weights": final_top1_weights.tolist(),
+                **geometry_lists("initial", initial_geometry),
+                **geometry_lists("final", final_geometry),
                 "hull_weight_entropy_mean": float(entropy.mean().cpu()),
                 "hull_weight_entropy_max": float(entropy.max().cpu()),
                 "hull_weight_top1_mean": float(w.max(dim=-1).values.mean().cpu()),
                 "hull_delta_norm_mean": float(delta.flatten(1).norm(dim=1).mean().cpu()),
                 "hull_delta_norm_max": float(delta.flatten(1).norm(dim=1).max().cpu()),
-                "hull_inner_loss": float(last_loss.cpu()) if last_loss is not None else float("nan"),
+                "hull_inner_loss": float(last_loss.cpu()) if last_loss is not None else None,
                 "hull_weight_mode": self.weight_mode,
             }
+            self._require_finite_diagnostics(last_info)
+            self.last_info = last_info
         return x_adv_1000, delta.detach()

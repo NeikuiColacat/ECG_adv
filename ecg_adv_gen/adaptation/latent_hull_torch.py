@@ -5,6 +5,89 @@ from __future__ import annotations
 import torch
 
 
+def initial_hull_weights(
+    batch_size: int,
+    candidate_count: int,
+    *,
+    weight_mode: str,
+    init_logit_gap: float,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> torch.Tensor | None:
+    """Return the deterministic coefficient state used at attack start."""
+    if candidate_count <= 0:
+        raise ValueError("candidate_count must be positive")
+    if weight_mode == "optimized":
+        logits = torch.full((batch_size, candidate_count), -float(init_logit_gap), device=device, dtype=dtype)
+        logits[:, 0] = float(init_logit_gap)
+        return torch.softmax(logits, dim=-1)
+    if weight_mode == "one_hot":
+        weights = torch.zeros((batch_size, candidate_count), device=device, dtype=dtype)
+        weights[:, 0] = 1.0
+        return weights
+    if weight_mode == "uniform":
+        return torch.full((batch_size, candidate_count), 1.0 / candidate_count, device=device, dtype=dtype)
+    return None
+
+
+def latent_hull_geometry(
+    z0: torch.Tensor,
+    cand: torch.Tensor,
+    weights: torch.Tensor,
+    *,
+    hull_lambda: float,
+    epsilon: float | None,
+    candidate_is_anchor: torch.Tensor | None = None,
+) -> dict[str, torch.Tensor]:
+    """Apply one hull coefficient state and report its projection geometry."""
+    batch_size, candidate_count = cand.shape[:2]
+    if weights.shape != (batch_size, candidate_count):
+        raise ValueError(f"weights must have shape {(batch_size, candidate_count)}, got {tuple(weights.shape)}")
+    anchor_mask = (
+        torch.zeros_like(weights, dtype=torch.bool)
+        if candidate_is_anchor is None
+        else candidate_is_anchor
+    )
+    if anchor_mask.shape != weights.shape:
+        raise ValueError("candidate_is_anchor must match weights")
+    z_mix = (weights.view((batch_size, candidate_count) + (1,) * (cand.ndim - 2)) * cand).sum(1)
+    latent_pre = (1.0 - float(hull_lambda)) * z0 + float(hull_lambda) * z_mix
+    delta_pre = latent_pre - z0
+    norm_pre = delta_pre.flatten(1).norm(dim=1)
+    scale = (
+        torch.clamp(float(epsilon) / norm_pre.clamp_min(1e-12), max=1.0)
+        if epsilon is not None and float(epsilon) > 0
+        else torch.ones_like(norm_pre)
+    )
+    scale = torch.where(norm_pre > 0, scale, torch.ones_like(scale))
+    delta_post = delta_pre * scale.view((batch_size,) + (1,) * (z0.ndim - 1))
+    anchor_weight = (weights * anchor_mask.to(weights.dtype)).sum(dim=1)
+    effective_lambda = float(hull_lambda) * scale
+    geometry = {
+        "latent_pre": latent_pre,
+        "latent": z0 + delta_post,
+        "delta_pre": delta_pre,
+        "delta_post": delta_post,
+        "pre_projection_norm": norm_pre,
+        "post_projection_norm": delta_post.flatten(1).norm(dim=1),
+        "projection_scale": scale,
+        "effective_lambda": effective_lambda,
+        "candidate_anchor_weight": anchor_weight,
+        "effective_original_share": 1.0 - effective_lambda * (1.0 - anchor_weight),
+    }
+    for field in (
+        "pre_projection_norm", "post_projection_norm", "projection_scale",
+        "effective_lambda", "candidate_anchor_weight", "effective_original_share",
+    ):
+        bad = (~torch.isfinite(geometry[field])).nonzero(as_tuple=False)
+        if bad.numel():
+            raise RuntimeError(
+                f"latent-hull geometry diagnostic field {field!r} is non-finite "
+                f"at sample {int(bad[0, 0])}"
+            )
+    return geometry
+
+
 def initial_hull_latent(
     z0: torch.Tensor,
     cand: torch.Tensor,
@@ -15,29 +98,28 @@ def initial_hull_latent(
 ) -> torch.Tensor:
     """Reconstruct the latent-hull optimizer's deterministic starting point.
 
-    ``cand`` is expected to include the anchor candidate at index 0. For
-    stochastic ``dirichlet`` starts, return ``z0`` as the deterministic
-    diagnostic reference rather than guessing the random draw.
+    Legacy optimized/one-hot modes emphasize coefficient position 0; they do
+    not infer anchor identity. For stochastic ``dirichlet`` starts, return
+    ``z0`` rather than guessing the random draw.
     """
     if cand.ndim < 3:
         raise ValueError(f"expected candidate tensor with batch and candidate axes, got {tuple(cand.shape)}")
     bsz, m = cand.shape[:2]
     if z0.shape[0] != bsz:
         raise ValueError(f"z0 batch {z0.shape[0]} does not match candidate batch {bsz}")
-    if weight_mode == "optimized":
-        logits_a = torch.full((bsz, m), -float(init_logit_gap), device=z0.device, dtype=z0.dtype)
-        logits_a[:, 0] = float(init_logit_gap)
-        w = torch.softmax(logits_a, dim=-1)
-    elif weight_mode == "one_hot":
-        w = torch.zeros((bsz, m), device=z0.device, dtype=z0.dtype)
-        w[:, 0] = 1.0
-    elif weight_mode == "uniform":
-        w = torch.full((bsz, m), 1.0 / float(m), device=z0.device, dtype=z0.dtype)
-    else:
+    w = initial_hull_weights(
+        bsz,
+        m,
+        weight_mode=weight_mode,
+        init_logit_gap=init_logit_gap,
+        device=z0.device,
+        dtype=z0.dtype,
+    )
+    if w is None:
         return z0
     view_shape = (bsz, m) + (1,) * (cand.ndim - 2)
     z_mix = (w.view(view_shape) * cand).sum(dim=1)
     return (1.0 - float(hull_lambda)) * z0 + float(hull_lambda) * z_mix
 
 
-__all__ = ["initial_hull_latent"]
+__all__ = ["initial_hull_latent", "initial_hull_weights", "latent_hull_geometry"]

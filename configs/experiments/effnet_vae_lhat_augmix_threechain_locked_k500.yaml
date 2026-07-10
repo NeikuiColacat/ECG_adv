@@ -37,6 +37,10 @@ logging:
     - asr_overall
     - sample_any_positive_below_0p5_asr
     - attack_vs_anchor
+    - attack_vs_init
+    - atk_init
+    - atk_anchor
+    - initial_bce
     - loss_gain
     - decoded_invalid_rate
     - adv_weight_effective
@@ -45,6 +49,22 @@ logging:
     - latent_augmix_consistency_stats
     - target_adv_fraction_effective
     - hull_weight_entropy_mean
+    - latent_hull_diagnostics
+    - latent_hull_diagnostics.candidate_is_anchor
+    - latent_hull_diagnostics.initial_weights
+    - latent_hull_diagnostics.final_weights
+    - latent_hull_diagnostics.initial_top1_candidate_pool_indices
+    - latent_hull_diagnostics.final_top1_candidate_pool_indices
+    - latent_hull_diagnostics.initial_pre_projection_norm
+    - latent_hull_diagnostics.final_pre_projection_norm
+    - latent_hull_diagnostics.final_post_projection_norm
+    - latent_hull_diagnostics.final_projection_scale
+    - latent_hull_diagnostics.final_effective_lambda
+    - latent_hull_diagnostics.final_candidate_anchor_weight
+    - latent_hull_diagnostics.final_effective_original_share
+    - latent_hull_diagnostics_summary
+    - latent_hull_final_effective_original_share_p50
+    - latent_hull_final_projection_scale_p50
     - target_val_macro_auprc
     - source_val_macro_auprc
     - source_floor_passed
@@ -67,6 +87,14 @@ data:
 adaptation:
   comparison_arm: a5
   run_tag_extra: matched_source_k500_threechain_s5_locked
+  hull:
+    M: 20
+    lambda: 0.6
+    steps: 5
+    include_anchor: false
+    init_logit_gap: 0.0
+  attack:
+    pgd_eps: 2.0
   loss:
     ptbxl_weight: 0.0
   latent_augmix:
