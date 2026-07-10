@@ -895,6 +895,7 @@ def test_effnet_vae_lhat_train_builder_locks_threechain_consistency():
     assert "--latent_augmix_latent_weight_cap" not in cmd
     assert "--source_sampling_strategy" not in cmd
     assert "--source_weights" not in cmd
+    assert "--target_adv_fraction" not in cmd
     assert _option_value(cmd, "--latent_augmix_width") == "3"
     assert _option_value(cmd, "--vae_adv_stream_sample_scale") == "0.1"
     assert _option_value(cmd, "--vae_adv_consistency_weight") == "0.7"

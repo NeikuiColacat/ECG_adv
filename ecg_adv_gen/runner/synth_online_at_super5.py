@@ -40,7 +40,7 @@ import torch.nn.functional as F
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import (
-    DataLoader, ConcatDataset, Dataset, WeightedRandomSampler,
+    DataLoader, ConcatDataset, Dataset, TensorDataset, WeightedRandomSampler,
 )
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -77,11 +77,8 @@ from ecg_adv_gen.data.kshot import filter_latent_candidates, matched_k500_split 
 from ecg_adv_gen.training.online_buffer import (  # noqa: E402
     QualityAwareBuffer,
     center_crop_ct,
+    train_one_epoch_grouped_target_bce,
     train_one_epoch_masked_bce,
-)
-from ecg_adv_gen.training.losses import (  # noqa: E402
-    masked_bce_per_sample,
-    target_clean_adv_objective,
 )
 from ecg_adv_gen.training.resume_contract import (  # noqa: E402
     LOCKED_LATENT_AUGMIX_SIGNAL_SPACE,
@@ -224,6 +221,35 @@ class TargetRealWaveformDataset(Dataset):
             torch.from_numpy(np.ascontiguousarray(sig_ct)).float(),
             torch.from_numpy(self.labels[idx]).float(),
         )
+
+
+def _build_primary_adv_dataset(
+    signals_ct: np.ndarray,
+    labels: np.ndarray,
+    *,
+    crop_len: int,
+) -> TensorDataset:
+    """Build the primary adversarial stream at the classifier input length."""
+    signals = np.asarray(signals_ct, dtype=np.float32)
+    labels_arr = np.asarray(labels, dtype=np.float32)
+    crop_len = int(crop_len)
+    if signals.ndim != 3 or signals.shape[1] != 12:
+        raise ValueError(f"primary adversarial signals must be (N,12,T), got {signals.shape}")
+    if labels_arr.shape[0] != signals.shape[0]:
+        raise ValueError(
+            "primary adversarial labels mismatch: "
+            f"signals={signals.shape} labels={labels_arr.shape}"
+        )
+    if crop_len <= 0:
+        raise ValueError("primary adversarial crop_len must be positive")
+    cropped = np.stack(
+        [center_crop_ct(signal, crop_len) for signal in signals],
+        axis=0,
+    ).astype(np.float32, copy=False)
+    return TensorDataset(
+        torch.from_numpy(np.ascontiguousarray(cropped)).float(),
+        torch.from_numpy(np.ascontiguousarray(labels_arr)).float(),
+    )
 
 
 class TargetRealRawFirstCorruptionDataset(Dataset):
@@ -423,10 +449,6 @@ def train_latent_augmix_consistency_epoch(
     grad_clip: float,
     trainable_params: List[nn.Parameter],
     max_batches: int = 0,
-    target_clean_signals_ct: np.ndarray | None = None,
-    target_adv_signals_ct: np.ndarray | None = None,
-    target_labels_np: np.ndarray | None = None,
-    target_adv_fraction: float | None = None,
 ) -> Dict[str, Any]:
     """Train directly on latent-AugMix views generated for the current epoch."""
     if copies <= 0 or (consistency_weight <= 0 and bce_weight <= 0):
@@ -449,15 +471,6 @@ def train_latent_augmix_consistency_epoch(
     aug_np = np.asarray(augmix_signals_ct, dtype=np.float32)
     labels_arr = np.asarray(labels_np, dtype=np.float32)
     n = int(clean_np.shape[0])
-    target_objective_enabled = target_adv_fraction is not None
-    if target_objective_enabled:
-        if target_clean_signals_ct is None or target_adv_signals_ct is None or target_labels_np is None:
-            raise ValueError("target objective requires clean signals, adversarial signals, and labels")
-        target_clean_np = np.asarray(target_clean_signals_ct, dtype=np.float32)
-        target_adv_np = np.asarray(target_adv_signals_ct, dtype=np.float32)
-        target_labels_arr = np.asarray(target_labels_np, dtype=np.float32)
-        if target_clean_np.shape[0] != n or target_adv_np.shape[0] != n or target_labels_arr.shape[0] != n:
-            raise ValueError("target objective inputs must match the clean AugMix batch count")
     if n == 0 or aug_np.shape[0] == 0:
         return {
             "enabled": True,
@@ -483,16 +496,10 @@ def train_latent_augmix_consistency_epoch(
     clean_np = clean_np[..., start:stop]
     aug_views_np = aug_np.reshape(int(copies), n, *aug_np.shape[1:])[..., start:stop]
     labels_t = torch.from_numpy(labels_arr).float()
-    if target_objective_enabled:
-        target_clean_np = target_clean_np[..., start:stop]
-        target_adv_np = target_adv_np[..., start:stop]
-        target_labels_t = torch.from_numpy(target_labels_arr).float()
 
     losses: List[float] = []
     bce_losses: List[float] = []
     consistency_losses: List[float] = []
-    target_clean_losses: List[torch.Tensor] = []
-    target_adv_losses: List[torch.Tensor] = []
     batch_size = max(1, int(batch_size))
     order = np.arange(n)
 
@@ -535,25 +542,6 @@ def train_latent_augmix_consistency_epoch(
                     for copy_i in range(int(copies))
                 ]
             ).mean()
-        if target_objective_enabled:
-            target_labels = target_labels_t[idx].to(device, non_blocking=True)
-            clean_target_loss = masked_bce_per_sample(
-                model(torch.from_numpy(target_clean_np[idx]).float().to(device, non_blocking=True)),
-                target_labels,
-                criterion.pos_weight,
-            )
-            adv_target_loss = masked_bce_per_sample(
-                model(torch.from_numpy(target_adv_np[idx]).float().to(device, non_blocking=True)),
-                target_labels,
-                criterion.pos_weight,
-            )
-            hard_bce, _ = target_clean_adv_objective(
-                clean_target_loss,
-                adv_target_loss,
-                float(target_adv_fraction),
-            )
-            target_clean_losses.append(clean_target_loss.detach().cpu())
-            target_adv_losses.append(adv_target_loss.detach().cpu())
         loss = float(bce_weight) * hard_bce + float(consistency_weight) * direct_consistency
         loss.backward()
         if grad_clip > 0:
@@ -566,7 +554,7 @@ def train_latent_augmix_consistency_epoch(
         if max_batches > 0 and batch_i >= max_batches:
             break
 
-    result = {
+    return {
         "enabled": True,
         "loss": float(np.mean(losses)) if losses else float("nan"),
         "bce_loss": float(np.mean(bce_losses)) if bce_losses else float("nan"),
@@ -579,15 +567,6 @@ def train_latent_augmix_consistency_epoch(
         "bce_weight": float(bce_weight),
         "max_batches": int(max_batches),
     }
-    if target_objective_enabled and target_clean_losses:
-        target_objective, target_stats = target_clean_adv_objective(
-            torch.cat(target_clean_losses),
-            torch.cat(target_adv_losses),
-            float(target_adv_fraction),
-        )
-        result["bce_loss"] = float(target_objective.item())
-        result.update(target_stats)
-    return result
 
 
 def _walker_state(walker: StratifiedPoolWalker) -> Dict[str, Any]:
@@ -2131,13 +2110,8 @@ def main():
         if epoch > 1 and (epoch - 1) % args.rescore_interval == 0 and len(buffer) > 0:
             buffer.rescore(victim.model, args.device)
 
-        # Phase C: build mixed loader (cold-start guard for empty buffer)
+        # Phase C/D: train matched groups explicitly; keep the legacy sampler for unmatched runs.
         buf_ds = buffer.to_dataset()
-        streams = []
-        if args.ptbxl_weight > 0:
-            streams.append((train_ds, args.ptbxl_weight, None))
-        if target_real_ds is not None and args.target_real_weight > 0:
-            streams.append((target_real_ds, args.target_real_weight, None))
         epoch_adv_weight = 0.0
         if buf_ds is not None and len(buf_ds) > 0:
             if args.adv_weight_warmup_epochs > 0:
@@ -2145,52 +2119,124 @@ def main():
             else:
                 adv_scale = 1.0
             epoch_adv_weight = float(args.adv_weight) * adv_scale
-            if epoch_adv_weight > 0 and not matched_comparison:
-                streams.append((buf_ds, epoch_adv_weight, buffer.get_sampling_weights()))
-
-        if len(streams) == 0:
-            raise RuntimeError(
-                "No training streams are active. Check ptbxl_weight, "
-                "target_real_weight, and adv buffer gates."
-            )
-        if len(streams) == 1:
-            only_ds = streams[0][0]
-            loader_generator = torch.Generator().manual_seed(int(args.seed) + int(epoch))
-            train_loader = DataLoader(only_ds, batch_size=args.batch_size, shuffle=True,
-                                      num_workers=args.num_workers, pin_memory=True,
-                                      drop_last=True,
-                                      persistent_workers=args.num_workers > 0,
-                                      generator=loader_generator)
-        else:
-            weights = []
-            total_n = 0
-            for ds_i, base_w, per_sample_w in streams:
-                n = len(ds_i)
-                if per_sample_w is None:
-                    weights.extend([base_w] * n)
-                else:
-                    weights.extend([base_w * max(w, 0.05) for w in per_sample_w])
-                total_n += n
-            num_samples = len(target_real_ds) if matched_comparison else total_n
-            sampler = WeightedRandomSampler(
-                weights,
-                num_samples=num_samples,
-                replacement=True,
+        primary_objective_stats: Dict[str, Any] = {
+            "enabled": False,
+            "reason": "legacy_unmatched_sampler",
+        }
+        if matched_comparison:
+            assert target_real_ds is not None and args.target_adv_fraction is not None
+            target_clean_loader = DataLoader(
+                target_real_ds,
+                batch_size=args.batch_size,
+                shuffle=True,
+                num_workers=args.num_workers,
+                pin_memory=True,
+                drop_last=True,
+                persistent_workers=args.num_workers > 0,
                 generator=torch.Generator().manual_seed(int(args.seed) + int(epoch)),
             )
-            combined = ConcatDataset([s[0] for s in streams])
-            train_loader = DataLoader(combined, batch_size=args.batch_size, sampler=sampler,
-                                      num_workers=args.num_workers, pin_memory=True,
-                                      drop_last=True,
-                                      persistent_workers=args.num_workers > 0)
-
-        # Phase D: train
-        train_loss = train_one_epoch_masked_bce(
-            victim.model, train_loader, optimizer, criterion, args.device,
-            grad_clip=args.grad_clip, ewa_params=ewa_params,
-            anchor_lambda=args.anchor_lambda, ewa_decay=args.ewa_decay,
-        )
-        realized_epoch_optimizer_steps = len(train_loader)
+            primary_adv_signals = anc_signals if args.comparison_arm == "a0" else adv_signals
+            target_adv_loader = DataLoader(
+                _build_primary_adv_dataset(
+                    primary_adv_signals,
+                    target_oh,
+                    crop_len=args.crop_len,
+                ),
+                batch_size=args.batch_size,
+                shuffle=True,
+                generator=torch.Generator().manual_seed(int(args.seed) + int(epoch) + 100_000),
+            )
+            source_loader = (
+                DataLoader(
+                    train_ds,
+                    batch_size=args.batch_size,
+                    shuffle=True,
+                    num_workers=args.num_workers,
+                    pin_memory=True,
+                    persistent_workers=args.num_workers > 0,
+                    generator=torch.Generator().manual_seed(
+                        int(args.seed) + int(epoch) + 200_000
+                    ),
+                )
+                if args.ptbxl_weight > 0
+                else None
+            )
+            primary_objective_stats = train_one_epoch_grouped_target_bce(
+                model=victim.model,
+                target_clean_loader=target_clean_loader,
+                target_adv_loader=target_adv_loader,
+                source_loader=source_loader,
+                optimizer=optimizer,
+                criterion=criterion,
+                device=args.device,
+                target_adv_fraction=args.target_adv_fraction,
+                source_coefficient=args.ptbxl_weight,
+                target_coefficient=args.target_real_weight,
+                grad_clip=args.grad_clip,
+                ewa_params=ewa_params,
+                anchor_lambda=args.anchor_lambda,
+                ewa_decay=args.ewa_decay,
+            )
+            primary_objective_stats["enabled"] = True
+            train_loss = float(primary_objective_stats["loss"])
+            realized_epoch_optimizer_steps = int(primary_objective_stats["n_batches"])
+        else:
+            streams = []
+            if args.ptbxl_weight > 0:
+                streams.append((train_ds, args.ptbxl_weight, None))
+            if target_real_ds is not None and args.target_real_weight > 0:
+                streams.append((target_real_ds, args.target_real_weight, None))
+            if buf_ds is not None and epoch_adv_weight > 0:
+                streams.append((buf_ds, epoch_adv_weight, buffer.get_sampling_weights()))
+            if len(streams) == 0:
+                raise RuntimeError(
+                    "No training streams are active. Check ptbxl_weight, "
+                    "target_real_weight, and adv buffer gates."
+                )
+            if len(streams) == 1:
+                only_ds = streams[0][0]
+                train_loader = DataLoader(
+                    only_ds,
+                    batch_size=args.batch_size,
+                    shuffle=True,
+                    num_workers=args.num_workers,
+                    pin_memory=True,
+                    drop_last=True,
+                    persistent_workers=args.num_workers > 0,
+                    generator=torch.Generator().manual_seed(int(args.seed) + int(epoch)),
+                )
+            else:
+                weights = []
+                total_n = 0
+                for ds_i, base_w, per_sample_w in streams:
+                    n = len(ds_i)
+                    if per_sample_w is None:
+                        weights.extend([base_w] * n)
+                    else:
+                        weights.extend([base_w * max(w, 0.05) for w in per_sample_w])
+                    total_n += n
+                sampler = WeightedRandomSampler(
+                    weights,
+                    num_samples=total_n,
+                    replacement=True,
+                    generator=torch.Generator().manual_seed(int(args.seed) + int(epoch)),
+                )
+                combined = ConcatDataset([s[0] for s in streams])
+                train_loader = DataLoader(
+                    combined,
+                    batch_size=args.batch_size,
+                    sampler=sampler,
+                    num_workers=args.num_workers,
+                    pin_memory=True,
+                    drop_last=True,
+                    persistent_workers=args.num_workers > 0,
+                )
+            train_loss = train_one_epoch_masked_bce(
+                victim.model, train_loader, optimizer, criterion, args.device,
+                grad_clip=args.grad_clip, ewa_params=ewa_params,
+                anchor_lambda=args.anchor_lambda, ewa_decay=args.ewa_decay,
+            )
+            realized_epoch_optimizer_steps = len(train_loader)
         if (
             not args.enable_latent_augmix_consistency
             or (method_updates_enabled and latent_augmix_direct_clean is None)
@@ -2226,17 +2272,13 @@ def main():
                 device=args.device,
                 copies=args.latent_augmix_copies,
                 consistency_weight=args.latent_augmix_consistency_weight,
-                bce_weight=args.latent_augmix_bce_weight,
+                bce_weight=(0.0 if matched_comparison else args.latent_augmix_bce_weight),
                 consistency_loss=args.latent_augmix_consistency_loss,
                 batch_size=args.batch_size,
                 crop_len=args.crop_len,
                 grad_clip=args.grad_clip,
                 trainable_params=trainable_params,
                 max_batches=args.latent_augmix_consistency_max_batches,
-                target_clean_signals_ct=anc_signals,
-                target_adv_signals_ct=(anc_signals if args.comparison_arm == "a0" else adv_signals),
-                target_labels_np=target_oh,
-                target_adv_fraction=args.target_adv_fraction,
             )
             latent_augmix_consistency_stats["control"] = (
                 "vae_lhat_augmix_jsd" if method_updates_enabled else "clean_control_steps"
@@ -2393,6 +2435,7 @@ def main():
             "push_stats": push_stats if not gate_skipped else {},
             "latent_augmix_stats": latent_augmix_stats,
             "latent_augmix_push_stats": latent_augmix_push_stats,
+            "primary_objective_stats": primary_objective_stats,
             "latent_augmix_consistency_stats": latent_augmix_consistency_stats,
             "target_adv_fraction_effective": args.target_adv_fraction,
             "vae_adv_consistency_stats": vae_adv_consistency_stats,

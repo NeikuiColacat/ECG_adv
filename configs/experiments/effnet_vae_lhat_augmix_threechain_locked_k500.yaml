@@ -40,6 +40,7 @@ logging:
     - loss_gain
     - decoded_invalid_rate
     - adv_weight_effective
+    - primary_objective_stats
     - latent_augmix_stats
     - latent_augmix_consistency_stats
     - target_adv_fraction_effective

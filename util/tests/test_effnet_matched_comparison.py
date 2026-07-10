@@ -20,6 +20,7 @@ from ecg_adv_gen.config import (
 from ecg_adv_gen.config.launch import verify_required_inputs
 from ecg_adv_gen.data import kshot
 from ecg_adv_gen.evaluation import selection
+from ecg_adv_gen.runner import synth_online_at_super5 as synth_runner
 from ecg_adv_gen.runner.synth_online_at_super5 import train_latent_augmix_consistency_epoch
 
 
@@ -82,7 +83,7 @@ def test_a0_clean_control_and_a5_augmix_have_equal_auxiliary_optimizer_steps():
     labels = (np.arange(12) % 2).astype(np.float32)[:, None]
     criterion = nn.BCEWithLogitsLoss(reduction="none")
 
-    def run(views: np.ndarray, target_adv: np.ndarray, rho: float) -> tuple[int, dict]:
+    def run(views: np.ndarray) -> tuple[int, dict]:
         model = nn.Sequential(nn.Flatten(), nn.Linear(2, 1))
         optimizer = _CountingSGD(model.parameters())
         stats = train_latent_augmix_consistency_epoch(
@@ -95,46 +96,33 @@ def test_a0_clean_control_and_a5_augmix_have_equal_auxiliary_optimizer_steps():
             device="cpu",
             copies=2,
             consistency_weight=0.5,
-            bce_weight=1.0,
+            bce_weight=0.0,
             consistency_loss="jsd",
             batch_size=4,
             crop_len=2,
             grad_clip=0.0,
             trainable_params=list(model.parameters()),
-            target_clean_signals_ct=clean,
-            target_adv_signals_ct=target_adv,
-            target_labels_np=labels,
-            target_adv_fraction=rho,
         )
         return optimizer.realized_steps, stats
 
-    a0_steps, a0 = run(np.tile(clean, (2, 1, 1)), clean, 0.0)
-    a5_steps, a5 = run(np.tile(clean + 0.1, (2, 1, 1)), clean + 0.1, 0.5)
+    a0_steps, a0 = run(np.tile(clean, (2, 1, 1)))
+    a5_steps, a5 = run(np.tile(clean + 0.1, (2, 1, 1)))
 
     assert a0_steps == a5_steps == 3
     assert a0["n_batches"] == a5["n_batches"] == 3
+    assert a0["bce_weight"] == a5["bce_weight"] == 0.0
     assert abs(a0["consistency_loss"]) < 1e-7
     assert a5["consistency_loss"] > 0.0
-    assert a0["target_adv_nominal_fraction"] == 0.0
-    assert a5["target_adv_nominal_fraction"] == 0.5
 
 
-def test_auxiliary_step_logs_paired_pure_vae_target_objective():
+def test_matched_auxiliary_step_does_not_apply_hard_bce():
     torch.manual_seed(4)
     clean = np.asarray([[[0.0, 1.0]], [[1.0, 0.0]]], dtype=np.float32)
-    adv = clean + 0.5
     views = np.tile(clean + 2.0, (2, 1, 1))
     labels = np.asarray([[0.0], [1.0]], dtype=np.float32)
     model = nn.Sequential(nn.Flatten(), nn.Linear(2, 1))
     optimizer = _CountingSGD(model.parameters())
     criterion = nn.BCEWithLogitsLoss(reduction="none")
-    with torch.no_grad():
-        clean_loss = nn.functional.binary_cross_entropy_with_logits(
-            model(torch.from_numpy(clean)), torch.from_numpy(labels), reduction="none"
-        ).mean(dim=1)
-        adv_loss = nn.functional.binary_cross_entropy_with_logits(
-            model(torch.from_numpy(adv)), torch.from_numpy(labels), reduction="none"
-        ).mean(dim=1)
 
     stats = train_latent_augmix_consistency_epoch(
         model=model,
@@ -146,30 +134,43 @@ def test_auxiliary_step_logs_paired_pure_vae_target_objective():
         device="cpu",
         copies=2,
         consistency_weight=0.5,
-        bce_weight=1.0,
+        bce_weight=0.0,
         consistency_loss="jsd",
         batch_size=2,
         crop_len=2,
         grad_clip=0.0,
         trainable_params=list(model.parameters()),
-        target_clean_signals_ct=clean,
-        target_adv_signals_ct=adv,
-        target_labels_np=labels,
-        target_adv_fraction=0.5,
     )
 
     assert optimizer.realized_steps == stats["n_batches"] == 1
     assert stats["n_generated"] == 4
-    assert stats["target_clean_count"] == stats["target_adv_count"] == 2
-    assert stats["target_clean_loss_mean"] == pytest.approx(clean_loss.mean().item())
-    assert stats["target_adv_loss_mean"] == pytest.approx(adv_loss.mean().item())
-    assert stats["target_clean_weighted_loss"] == pytest.approx(0.5 * clean_loss.mean().item())
-    assert stats["target_adv_weighted_loss"] == pytest.approx(0.5 * adv_loss.mean().item())
-    expected_total = 0.5 * (clean_loss.mean() + adv_loss.mean())
-    assert stats["bce_loss"] == pytest.approx(expected_total.item())
-    assert stats["target_clean_contribution_fraction"] + stats[
-        "target_adv_contribution_fraction"
-    ] == pytest.approx(1.0)
+    assert stats["bce_weight"] == 0.0
+    assert stats["bce_loss"] > 0.0
+    assert stats["loss"] == pytest.approx(0.5 * stats["consistency_loss"])
+    assert "target_adv_count" not in stats
+
+
+def test_primary_adversarial_dataset_center_crops_and_pads_to_crop_len():
+    labels = np.eye(5, dtype=np.float32)[:2]
+    signals = np.arange(2 * 12 * 1000, dtype=np.float32).reshape(2, 12, 1000)
+    builder = getattr(synth_runner, "_build_primary_adv_dataset", None)
+
+    assert callable(builder), "runner must expose primary adversarial dataset construction"
+    cropped = builder(signals, labels, crop_len=250)
+    cropped_signals, cropped_labels = cropped.tensors
+    assert cropped_signals.shape == (2, 12, 250)
+    assert torch.equal(cropped_signals, torch.from_numpy(signals[..., 375:625]))
+    assert torch.equal(cropped_labels, torch.from_numpy(labels))
+
+    unchanged_signals, _ = builder(signals, labels, crop_len=1000).tensors
+    assert torch.equal(unchanged_signals, torch.from_numpy(signals))
+
+    short = signals[..., :200]
+    padded_signals, _ = builder(short, labels, crop_len=250).tensors
+    assert padded_signals.shape == (2, 12, 250)
+    assert torch.count_nonzero(padded_signals[..., :25]) == 0
+    assert torch.equal(padded_signals[..., 25:225], torch.from_numpy(short))
+    assert torch.count_nonzero(padded_signals[..., 225:]) == 0
 
 
 def test_best_source_floor_result_tracks_selected_epoch_and_survives_resume():
@@ -483,6 +484,12 @@ def test_unmanaged_child_target_adv_fraction_defaults_to_legacy_none(monkeypatch
     )
 
     assert child.parse_args().target_adv_fraction is None
+
+
+def test_unmanaged_wrapper_target_adv_fraction_defaults_to_legacy_none():
+    from ecg_adv_gen.runner import effnet_vae_lhat_augmix as wrapper
+
+    assert wrapper.parse_args([]).target_adv_fraction is None
 
 
 def test_run_record_contract_differs_only_by_declared_arm():
