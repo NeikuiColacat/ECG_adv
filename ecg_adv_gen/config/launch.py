@@ -692,6 +692,13 @@ def verify_required_inputs(manifest: dict[str, Any]) -> dict[str, Any]:
             evidence_path = Path(str(initialization.get("evidence_path") or ""))
             evidence = _read_json_object(evidence_path, label="ptbxl_source evidence")
             evidence_config = evidence.get("config") if isinstance(evidence.get("config"), dict) else {}
+            binding = evidence.get("checkpoint") if isinstance(evidence.get("checkpoint"), dict) else {}
+            bound_path = str(binding.get("path") or "")
+            path_matches = Path(bound_path) == checkpoint or str(checkpoint).endswith(
+                f"/{bound_path.lstrip('/')}"
+            )
+            if not path_matches or str(binding.get("sha256") or "") != actual_sha:
+                raise ValueError("ptbxl_source evidence checkpoint binding mismatch")
             if str(evidence.get("scheme") or "") != "super5" or int(evidence.get("num_classes") or 0) != 5:
                 raise ValueError("ptbxl_source evidence must be a Super5 source-training result")
             if "ptbxl" not in str(evidence_config.get("data_path") or "").lower() or any(

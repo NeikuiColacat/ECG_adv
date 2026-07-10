@@ -15,7 +15,7 @@ model:
   init_lineage:
     stage: ptbxl_source
     checkpoint_sha256: f7a4b05d85da8352013b67a0d56d8d47378ab2abc196d1f3a6ba8bbf15aa40ea
-    evidence_path: ${paths.data_root}/triple_labels/super5_minresample_full10_perglobal_20260503/train_result.json
+    evidence_path: configs/evidence/effnet1dv2_ptbxl_source_super5_20260503.json
 
 training:
   epochs: 30

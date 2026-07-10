@@ -385,6 +385,31 @@ def evaluate_loader_macro(
     }
 
 
+def update_best_selection_state(
+    best_metric: float,
+    best_epoch: int,
+    best_source_floor_result: Dict[str, Any],
+    candidate_result: Dict[str, Any],
+    *,
+    epoch: int,
+) -> tuple[float, int, Dict[str, Any]]:
+    if candidate_result["selected"]:
+        return float(candidate_result["candidate_metric"]), int(epoch), dict(candidate_result)
+    return best_metric, best_epoch, best_source_floor_result
+
+
+def restore_best_selection_state(
+    checkpoint: Dict[str, Any],
+    fallback: tuple[float, int, Dict[str, Any]],
+) -> tuple[float, int, Dict[str, Any]]:
+    metric, epoch, result = fallback
+    return (
+        float(checkpoint.get("best_metric", metric)),
+        int(checkpoint.get("best_epoch", epoch)),
+        dict(checkpoint.get("best_source_floor_result", result)),
+    )
+
+
 def train_latent_augmix_consistency_epoch(
     model: nn.Module,
     clean_signals_ct: np.ndarray,
@@ -1556,6 +1581,7 @@ def main():
     source_baseline_metrics: Dict[str, float] = {}
     target_baseline_metrics: Dict[str, float] = {}
     source_floor_result: Dict[str, Any] = {}
+    best_source_floor_result: Dict[str, Any] = {}
     realized_optimizer_steps = 0
     scheduler_steps = 0
     optimizer_steps_per_epoch = 0
@@ -1580,6 +1606,7 @@ def main():
             source_baseline_metric=float(source_baseline_metrics[args.source_floor_metric]),
             source_max_drop=args.source_floor_max_drop,
         )
+        best_source_floor_result = dict(source_floor_result)
         if not args.resume:
             torch.save(victim.model.state_dict(), best_ckpt_path)
 
@@ -1596,7 +1623,7 @@ def main():
             return {"contract": "historical_unmatched"}
         return build_matched_training_record(
             **contract_base, realized_optimizer_steps=realized_steps,
-            scheduler_steps=scheduler_count, source_floor_result=source_floor_result,
+            scheduler_steps=scheduler_count, source_floor_result=best_source_floor_result,
         )
 
     # ── PGD / Latent-Hull generator + buffer ────────────────────────────────
@@ -1792,8 +1819,9 @@ def main():
         _restore_walker_state(walker, ckpt.get("walker_state", {}))
         restore_rng_state(ckpt.get("rng_state", {}), rng)
         log = ckpt.get("training_log", log)
-        best_metric = float(ckpt.get("best_metric", best_metric))
-        best_epoch = int(ckpt.get("best_epoch", best_epoch))
+        best_metric, best_epoch, best_source_floor_result = restore_best_selection_state(
+            ckpt, (best_metric, best_epoch, best_source_floor_result)
+        )
         realized_optimizer_steps = int(
             ckpt.get("realized_optimizer_steps", realized_optimizer_steps)
         )
@@ -2227,9 +2255,11 @@ def main():
                 source_baseline_metric=float(source_baseline_metrics[args.source_floor_metric]),
                 source_max_drop=args.source_floor_max_drop,
             )
+            best_metric, best_epoch, best_source_floor_result = update_best_selection_state(
+                best_metric, best_epoch, best_source_floor_result,
+                source_floor_result, epoch=epoch,
+            )
             if source_floor_result["selected"]:
-                best_metric = candidate_metric
-                best_epoch = epoch
                 torch.save(victim.model.state_dict(), best_ckpt_path)
 
         elapsed = time.time() - epoch_t0
@@ -2413,6 +2443,7 @@ def main():
                 "consecutive_low_asr": consecutive_low_asr,
                 "best_metric": best_metric,
                 "best_epoch": best_epoch,
+                "best_source_floor_result": best_source_floor_result,
                 "realized_optimizer_steps": realized_optimizer_steps,
                 "scheduler_steps": scheduler_steps,
                 "training_log": log,

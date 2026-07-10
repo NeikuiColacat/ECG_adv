@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
+from argparse import Namespace
 from pathlib import Path
 
 import numpy as np
@@ -136,6 +137,37 @@ def test_checkpoint_selection_uses_target_metric_with_a_hard_source_floor():
     assert accepted["selected"] is True
 
 
+def test_best_source_floor_result_tracks_selected_epoch_and_survives_resume():
+    from ecg_adv_gen.runner.synth_online_at_super5 import (
+        restore_best_selection_state,
+        update_best_selection_state,
+    )
+
+    accepted = selection.update_matched_checkpoint_selection(
+        best_metric=0.51, candidate_metric=0.55, source_metric=0.75,
+        source_baseline_metric=0.76, source_max_drop=0.02,
+    )
+    rejected = selection.update_matched_checkpoint_selection(
+        best_metric=0.55, candidate_metric=0.60, source_metric=0.73,
+        source_baseline_metric=0.76, source_max_drop=0.02,
+    )
+    state = update_best_selection_state(0.51, 0, {}, accepted, epoch=1)
+    state = update_best_selection_state(*state, rejected, epoch=2)
+
+    assert state[0] == 0.55
+    assert state[1] == 1
+    assert state[2] == accepted
+    resumed = restore_best_selection_state(
+        {
+            "best_metric": state[0],
+            "best_epoch": state[1],
+            "best_source_floor_result": state[2],
+        },
+        (-1.0, 0, {}),
+    )
+    assert resumed == state
+
+
 def test_preflight_accepts_verified_ptbxl_source_lineage_without_k500_identity(tmp_path: Path):
     checkpoint = tmp_path / "best_model.pt"
     checkpoint.write_bytes(b"source-only-checkpoint")
@@ -147,6 +179,7 @@ def test_preflight_accepts_verified_ptbxl_source_lineage_without_k500_identity(t
                 "scheme": "super5",
                 "num_classes": 5,
                 "class_names": ["CD", "HYP", "MI", "NORM", "STTC"],
+                "checkpoint": {"path": str(checkpoint), "sha256": checkpoint_sha},
                 "config": {
                     "data_path": "/data/ptbxl/raw100.npy",
                     "synth_npz": None,
@@ -185,6 +218,50 @@ def test_preflight_accepts_verified_ptbxl_source_lineage_without_k500_identity(t
     assert report["passed"] is True, report
     assert report["initialization_lineage"]["stage"] == "ptbxl_source"
     assert report["initialization_lineage"]["source_only"] is True
+
+
+def test_preflight_rejects_source_evidence_bound_to_a_different_checkpoint(tmp_path: Path):
+    checkpoint = tmp_path / "best_model.pt"
+    checkpoint.write_bytes(b"selected-source-checkpoint")
+    checkpoint_sha = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
+    other = tmp_path / "other_model.pt"
+    other.write_bytes(b"other-source-checkpoint")
+    evidence = tmp_path / "train_result.json"
+    evidence.write_text(
+        json.dumps(
+            {
+                "scheme": "super5",
+                "num_classes": 5,
+                "checkpoint": {
+                    "path": str(other),
+                    "sha256": hashlib.sha256(other.read_bytes()).hexdigest(),
+                },
+                "config": {
+                    "data_path": "/data/ptbxl/raw100.npy",
+                    "synth_npz": None,
+                    "init_ckpt": None,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    report = verify_required_inputs(
+        {
+            "artifact_trace": {
+                "inputs": {"checkpoints": [], "k500_refs": [], "data_caches": []},
+                "initialization": {
+                    "stage": "ptbxl_source",
+                    "checkpoint_path": str(checkpoint),
+                    "checkpoint_sha256": checkpoint_sha,
+                    "evidence_path": str(evidence),
+                },
+            },
+            "commands": [],
+        }
+    )
+
+    assert report["passed"] is False
+    assert "evidence checkpoint binding mismatch" in report["lineage_errors"][0]["error"]
 
 
 def test_managed_matched_a0_a5_commands_share_every_non_method_contract():
@@ -236,6 +313,30 @@ def test_managed_matched_a0_a5_commands_share_every_non_method_contract():
     assert init["stage"] == "ptbxl_source"
     assert len(init["checkpoint_sha256"]) == 64
     assert init["checkpoint_path"].endswith("/best_model.pt")
+
+
+def test_matched_a0_a5_resolve_to_distinct_arm_named_run_directories():
+    from ecg_adv_gen.runner.effnet_vae_lhat import resolve_effnet_vae_lhat_paths
+
+    common = dict(
+        center="ningbo", anchor_base="", target_real_npz_override="",
+        synth_npz_override="", hull_M=20, hull_lambda=0.05,
+        latent_augmix_severity=5, hull_steps=3, classes_in_scope=["CD"],
+        hull_label_mode="compatible", hull_mix_label_mode="anchor_soft",
+        hull_neighbor_distance_space="standardized", hull_neighbor_mode="local_random",
+        hull_neighbor_pool_size=120, hull_neighbor_pool_multiplier=4,
+        run_tag_extra="matched", epochs=30, seed=20260601,
+    )
+    a0 = resolve_effnet_vae_lhat_paths(
+        Namespace(**common, comparison_arm="a0"), data_root=Path("/data"), out_root=Path("/out")
+    )
+    a5 = resolve_effnet_vae_lhat_paths(
+        Namespace(**common, comparison_arm="a5"), data_root=Path("/data"), out_root=Path("/out")
+    )
+
+    assert a0.out_dir != a5.out_dir
+    assert "_arma0_" in a0.out_dir.name
+    assert "_arma5_" in a5.out_dir.name
 
 
 def test_historical_direct_runner_cannot_be_mistaken_for_matched_a0():

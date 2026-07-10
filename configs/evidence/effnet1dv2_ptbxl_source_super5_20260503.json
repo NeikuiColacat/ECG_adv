@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "stage": "ptbxl_source",
+  "scheme": "super5",
+  "num_classes": 5,
+  "class_names": ["CD", "HYP", "MI", "NORM", "STTC"],
+  "checkpoint": {
+    "path": "triple_labels/super5_minresample_full10_perglobal_20260503/best_model.pt",
+    "sha256": "f7a4b05d85da8352013b67a0d56d8d47378ab2abc196d1f3a6ba8bbf15aa40ea"
+  },
+  "source_train_result": {
+    "path": "triple_labels/super5_minresample_full10_perglobal_20260503/train_result.json",
+    "sha256": "99747e98e465169f19ec53b59dd04b2e9cefba11c839c03bcb73dba009125e76"
+  },
+  "config": {
+    "data_path": "ptbxl/raw100.npy",
+    "synth_npz": null,
+    "init_ckpt": null
+  }
+}

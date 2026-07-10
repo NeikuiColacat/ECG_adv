@@ -178,6 +178,7 @@ def build_effnet_vae_lhat_run_leaf(params: Any) -> str:
 
     extra = str(_get(params, "run_tag_extra", "") or "")
     extra_tag = f"_{extra}" if extra else ""
+    comparison_arm = str(_get(params, "comparison_arm", "historical_unmatched"))
     epochs = _as_int(_get(params, "epochs", 30), 30)
     seed = _as_int(_get(params, "seed", 20260531), 20260531)
     return (
@@ -187,6 +188,6 @@ def build_effnet_vae_lhat_run_leaf(params: Any) -> str:
         f"_hs{hull_steps}_{class_tag}"
         f"_hlabel{label_mode[:3]}_{mix_label}"
         f"_{neighbor_tag}"
-        "_fullft"
+        f"_fullft_arm{comparison_arm}"
         f"{extra_tag}_ep{epochs}_seed{seed}"
     )
