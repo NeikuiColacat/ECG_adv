@@ -18,6 +18,6 @@ runner:
       - name: effnet_threechain_locked
         family: effnet_vae_lhat_augmix_threechain_locked_k500
         model_dir_template: >-
-          {output_root}/{family}/{run_id}/{center}_realall_targetheavy_M20_lam0p05_augmix_s5_wlat0p25_hs3_cdhypminormsttc_hlabelcom_anchor_soft_sta_local_random_p120_fullft_k500_threechain_s5_locked_ep30_seed{eval_seed}
+          {output_root}/{family}/{run_id}/{center}_realall_targetheavy_M20_lam0p05_augmix_s5_hs3_cdhypminormsttc_hlabelcom_anchor_soft_sta_local_random_p120_fullft_k500_threechain_s5_locked_ep30_seed{eval_seed}
         clean_eval_name: eval_result_v7_exclrefs_crop1000.json
   name: ${experiment.name}_${matrix.center}_${matrix.method.name}

@@ -78,7 +78,6 @@ ALLOWED_CLI_OVERRIDE_KEYS = frozenset(
         "adaptation.loss.adv_weight",
         "adaptation.loss.adv_weight_warmup_epochs",
         "adaptation.loss.teacher_mix",
-        "adaptation.latent_augmix.latent_weight_cap",
         "adaptation.latent_augmix.width",
         "adaptation.latent_augmix.depth",
         "adaptation.latent_augmix.alpha",
@@ -958,11 +957,6 @@ def _vae_child_run(opts: dict[str, Any], center: str) -> dict[str, Any]:
             "hull_M": _opt_first(opts, "--hull_M", "20"),
             "hull_lambda": _opt_first(opts, "--hull_lambda", "0.15"),
             "latent_augmix_severity": _opt_first(opts, "--latent_augmix_severity", "2"),
-            "latent_augmix_latent_weight_cap": _opt_first(
-                opts,
-                "--latent_augmix_latent_weight_cap",
-                "0.3",
-            ),
             "hull_steps": _opt_first(opts, "--hull_steps", "3"),
             "classes_in_scope": _opt_list(opts, "--classes_in_scope")
             or ["CD", "HYP", "MI", "NORM", "STTC"],

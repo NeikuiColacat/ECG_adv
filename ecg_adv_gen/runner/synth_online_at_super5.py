@@ -71,6 +71,9 @@ from ecg_adv_gen.training.online_buffer import (  # noqa: E402
     center_crop_ct,
     train_one_epoch_masked_bce,
 )
+from ecg_adv_gen.training.resume_contract import (  # noqa: E402
+    LOCKED_LATENT_AUGMIX_SIGNAL_SPACE,
+)
 from ecg_adv_gen.labels import CLASS_NAMES_SUPER5, NUM_SUPER5, get_super5_scheme  # noqa: E402
 from ecg_adv_gen.labels.super5_mapping import SUPER5_TO_IDX  # noqa: E402
 from ecg_adv_gen.models.super5_model_zoo import available_model_names  # noqa: E402
@@ -1081,8 +1084,6 @@ def parse_args():
             "'calibrated_10to20pp' matches the strong PN2021-C evaluation profile."
         ),
     )
-    p.add_argument("--latent_augmix_latent_weight_cap", type=float, default=0.30,
-                   help="Maximum Dirichlet weight assigned to the x_adv branch.")
     p.add_argument(
         "--latent_augmix_third_chain_role",
         choices=["vae_lhat_adversarial_waveform", "clean_anchor_control"],
@@ -1213,6 +1214,14 @@ def parse_args():
         or args.latent_augmix_chain_base_mode in {"all_clean", "all_clean_plus_vae_adv"}
     ) and float(args.adv_weight) <= 0.0:
         p.error("clean-anchor latent AugMix requires --adv_weight > 0; it samples the augment stream")
+    args.latent_augmix_signal_space = (
+        LOCKED_LATENT_AUGMIX_SIGNAL_SPACE
+        if (
+            args.latent_augmix_chain_base_mode == "clean_clean_third"
+            and args.latent_augmix_third_chain_role == "vae_lhat_adversarial_waveform"
+        )
+        else "model_zscore"
+    )
     return args
 
 
@@ -1290,7 +1299,6 @@ def main():
         f"chain_base_mode={args.latent_augmix_chain_base_mode} "
         f"adv_base_mix={args.latent_augmix_adv_base_mix} "
         f"chain_weights={args.latent_augmix_chain_weights or 'dirichlet'} "
-        f"w_lat_cap={args.latent_augmix_latent_weight_cap} "
         f"ops={args.latent_augmix_ops}",
         flush=True,
     )
@@ -1496,7 +1504,7 @@ def main():
             "mixture_beta_b": None,
             "op_schedule": "random",
             "chain_weights": parse_float_sequence(args.latent_augmix_chain_weights),
-            "signal_space": "model_zscore",
+            "signal_space": str(args.latent_augmix_signal_space),
             "corruption_source": (
                 "vae_decode"
                 if args.latent_augmix_third_chain_role == "vae_lhat_adversarial_waveform"
@@ -1509,7 +1517,6 @@ def main():
             "severity_profile": str(args.latent_augmix_severity_profile),
             "severity_params_file": "",
             "severity_params_name": "",
-            "latent_weight_cap": float(args.latent_augmix_latent_weight_cap),
             "ops": list(args.latent_augmix_ops),
             "renorm": True,
             "clip_abs": 6.0,
@@ -1583,6 +1590,9 @@ def main():
         latent_augmix_direct_clean: np.ndarray | None = None
         latent_augmix_direct_views: np.ndarray | None = None
         latent_augmix_direct_labels: np.ndarray | None = None
+        locked_mixed_view_mode = (
+            args.latent_augmix_signal_space == LOCKED_LATENT_AUGMIX_SIGNAL_SPACE
+        )
         decoupled_clean_augmix_mode = (
             args.latent_augmix_chain_base_mode == "all_clean_plus_vae_adv"
         )
@@ -1649,7 +1659,7 @@ def main():
                 hull_label_positive=args.hull_label_positive,
                 hull_label_negative_floor=args.hull_label_negative_floor,
                 hull_label_new_class_cap=args.hull_label_new_class_cap,
-                store_raw_decoded=False,
+                store_raw_decoded=locked_mixed_view_mode,
             )
             if adv_signals.shape[0] == 0:
                 print(f"[ep{epoch:02d}] empty walker pick — skip epoch", flush=True)
@@ -1694,7 +1704,6 @@ def main():
                 latent_augmix_clean_for_consistency = clean_anchor_bundle["clean"]
                 latent_augmix_labels_for_consistency = clean_anchor_bundle["labels"]
             else:
-                # Center-crop adv (B, 12, 1000) → (B, 12, crop_len) on the time axis
                 start = (adv_signals.shape[-1] - args.crop_len) // 2
                 adv_ct_crop = adv_signals[..., start:start + args.crop_len]
                 with torch.no_grad():
@@ -1710,18 +1719,21 @@ def main():
                         np.concatenate(teacher_prob_chunks)
                         if teacher_prob_chunks else None
                     )
-                push_stats = push_adv_to_buffer(
-                    buffer=buffer, adv_signals_ct=adv_signals,
-                    target_one_hot=target_oh, victim_logits=logits_arr,
-                    crop_len=args.crop_len, class_trust=class_trust,
-                    boundary_prob_min=args.boundary_prob_min,
-                    boundary_prob_max=args.boundary_prob_max,
-                    teacher_probs=teacher_probs_arr,
-                    label_mode=args.adv_label_mode,
-                    teacher_mix=args.adv_teacher_mix,
-                    soft_target_floor=args.adv_soft_target_floor,
-                    sample_weight_scale=float(args.vae_adv_stream_sample_scale),
-                )
+                if not locked_mixed_view_mode:
+                    push_stats = push_adv_to_buffer(
+                        buffer=buffer, adv_signals_ct=adv_signals,
+                        target_one_hot=target_oh, victim_logits=logits_arr,
+                        crop_len=args.crop_len, class_trust=class_trust,
+                        boundary_prob_min=args.boundary_prob_min,
+                        boundary_prob_max=args.boundary_prob_max,
+                        teacher_probs=teacher_probs_arr,
+                        label_mode=args.adv_label_mode,
+                        teacher_mix=args.adv_teacher_mix,
+                        soft_target_floor=args.adv_soft_target_floor,
+                        sample_weight_scale=float(args.vae_adv_stream_sample_scale),
+                    )
+                else:
+                    push_stats = {"n_pushed": 0, "reason": "locked_mixed_views_only"}
                 if decoupled_clean_augmix_mode:
                     if target_real_ds is None:
                         raise RuntimeError("all_clean_plus_vae_adv requires target_real_ds")
@@ -1736,9 +1748,16 @@ def main():
                 else:
                     latent_augmix_clean_for_consistency = anc_signals
                     latent_augmix_labels_for_consistency = target_oh
+                    latent_augmix_anchor_signals = anc_signals
+                    latent_augmix_adv_signals = adv_signals
+                    if locked_mixed_view_mode:
+                        latent_augmix_anchor_signals = pgd_gen.last_anchor_raw_ptbxl_1000
+                        latent_augmix_adv_signals = pgd_gen.last_adv_raw_ptbxl_1000
+                        if latent_augmix_anchor_signals is None or latent_augmix_adv_signals is None:
+                            raise RuntimeError("locked raw-first AugMix requires stored raw VAE decodes")
                     latent_augmix_signals, latent_augmix_stats = build_three_chain_vae_lhat_augmix_views(
-                        anchor_signals_ct=anc_signals,
-                        adv_signals_ct=adv_signals,
+                        anchor_signals_ct=latent_augmix_anchor_signals,
+                        adv_signals_ct=latent_augmix_adv_signals,
                         copies=args.latent_augmix_copies,
                         severity=args.latent_augmix_severity,
                         severity_profile=args.latent_augmix_severity_profile,
@@ -1752,7 +1771,10 @@ def main():
                         chain_weights=parse_float_sequence(args.latent_augmix_chain_weights),
                         adv_base_mix=float(args.latent_augmix_adv_base_mix),
                     )
-                    latent_augmix_stats["corruption_source"] = "vae_decode"
+                    latent_augmix_stats["corruption_source"] = (
+                        "vae_decode_raw" if locked_mixed_view_mode else "vae_decode"
+                    )
+                    latent_augmix_stats["signal_space"] = str(args.latent_augmix_signal_space)
             if latent_augmix_signals.shape[0] > 0:
                 start = (latent_augmix_signals.shape[-1] - args.crop_len) // 2
                 latent_augmix_ct_crop = latent_augmix_signals[..., start:start + args.crop_len]

@@ -204,8 +204,6 @@ def build_effnet_vae_lhat_train_cmd(
             str(args.latent_augmix_severity),
             "--latent_augmix_severity_profile",
             str(getattr(args, "latent_augmix_severity_profile", "standard")),
-            "--latent_augmix_latent_weight_cap",
-            str(args.latent_augmix_latent_weight_cap),
             "--latent_augmix_third_chain_role",
             str(getattr(args, "latent_augmix_third_chain_role", "vae_lhat_adversarial_waveform")),
             "--latent_augmix_chain_base_mode",

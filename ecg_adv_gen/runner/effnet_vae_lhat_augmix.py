@@ -169,7 +169,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--ptbxl_weight", type=float, default=1.0)
     ap.add_argument("--lr", type=float, default=5e-5)
     ap.add_argument("--train_batch_size", type=int, default=128)
-    ap.add_argument("--latent_augmix_latent_weight_cap", type=float, default=0.3)
     ap.add_argument(
         "--latent_augmix_third_chain_role",
         choices=["vae_lhat_adversarial_waveform", "clean_anchor_control"],

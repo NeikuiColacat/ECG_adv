@@ -165,7 +165,6 @@ def build_effnet_vae_lhat_run_leaf(params: Any) -> str:
     hull_m = _as_int(_get(params, "hull_M", _get(params, "hull_m", 20)), 20)
     hull_lambda = _get(params, "hull_lambda", 0.15)
     severity = _as_int(_get(params, "latent_augmix_severity", 2), 2)
-    latent_cap = _get(params, "latent_augmix_latent_weight_cap", 0.3)
     hull_steps = _as_int(_get(params, "hull_steps", 3), 3)
     classes = _as_classes(_get(params, "classes_in_scope", ["CD", "HYP", "MI", "NORM", "STTC"])) or []
     class_tag = "".join(str(cls).lower() for cls in classes)
@@ -185,7 +184,6 @@ def build_effnet_vae_lhat_run_leaf(params: Any) -> str:
         f"{center}_realall_targetheavy_M{hull_m}"
         f"_lam{_tag_float_3g(hull_lambda)}"
         f"_augmix_s{severity}"
-        f"_wlat{_tag_float_3g(latent_cap)}"
         f"_hs{hull_steps}_{class_tag}"
         f"_hlabel{label_mode[:3]}_{mix_label}"
         f"_{neighbor_tag}"

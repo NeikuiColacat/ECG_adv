@@ -29,12 +29,13 @@ RESUME_CONTRACT_KEYS = (
     "latent_augmix_width",
     "latent_augmix_depth",
     "latent_augmix_severity",
-    "latent_augmix_latent_weight_cap",
+    "latent_augmix_signal_space",
     "classes_in_scope",
     "seed",
     "crop_len",
 )
 LOCKED_ATTACK_MODE = "latent_hull"
+LOCKED_LATENT_AUGMIX_SIGNAL_SPACE = "raw_pre_zscore"
 LOCKED_LEGACY_ARGS = {
     "enable_latent_augmix_branch": True,
     "enable_latent_augmix_consistency": True,
@@ -45,7 +46,6 @@ LOCKED_LEGACY_ARGS = {
     "latent_augmix_mixture_beta_b": 0.0,
     "latent_augmix_op_schedule": "random",
     "latent_augmix_chain_weights": "",
-    "latent_augmix_signal_space": "model_zscore",
     "latent_augmix_corruption_source": "vae_decode",
     "latent_augmix_severity_params_file": "",
     "latent_augmix_severity_params_name": "",
@@ -80,12 +80,17 @@ def resume_contract_mismatches(
                 "current": LOCKED_ATTACK_MODE,
             })
     for key, current in LOCKED_LEGACY_ARGS.items():
-        if key in saved_args:
-            saved = normalize_resume_contract_value(saved_args[key])
-            if saved != current:
-                mismatches.append({"key": key, "saved": saved, "current": current})
+        if key not in saved_args:
+            continue
+        saved = normalize_resume_contract_value(saved_args[key])
+        if saved != current:
+            mismatches.append({"key": key, "saved": saved, "current": current})
     for key in keys:
-        if key not in saved_args or key not in current_args:
+        if key not in current_args:
+            continue
+        if key not in saved_args:
+            if key == "latent_augmix_signal_space":
+                mismatches.append({"key": key, "saved": None, "current": current_args[key]})
             continue
         saved = normalize_resume_contract_value(saved_args[key])
         current = normalize_resume_contract_value(current_args[key])

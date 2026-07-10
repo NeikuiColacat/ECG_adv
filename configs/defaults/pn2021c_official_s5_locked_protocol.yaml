@@ -7,7 +7,7 @@ model:
   epochs: 30
   run_stamp: 20260530_rep1
   clean_eval_name: eval_result_v7_exclrefs_crop1000.json
-  run_leaf_stem: realall_targetheavy_M20_lam0p05_augmix_s5_threechain_locked_wlat0p25_hs3_cdhypminormsttc_hlabelcom_anchor_soft_sta_local_random_p120
+  run_leaf_stem: realall_targetheavy_M20_lam0p05_augmix_s5_threechain_locked_hs3_cdhypminormsttc_hlabelcom_anchor_soft_sta_local_random_p120
 
 paper_protocol:
   kshot:

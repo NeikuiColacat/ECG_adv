@@ -538,11 +538,13 @@ def test_effnet_vae_lhat_threechain_locked_k500_config_uses_official_s5_last_che
 
     assert len(commands) == 4
     assert config["adaptation"]["latent_augmix"]["chain_roles"] == [
-        {"name": "chain1", "role": "vae_lhat_adversarial_corruption_chain"},
-        {"name": "chain2", "role": "vae_lhat_adversarial_corruption_chain"},
-        {"name": "chain3", "role": "vae_lhat_adversarial_corruption_chain"},
+        {"name": "chain1", "role": "clean_anchor_corruption_chain"},
+        {"name": "chain2", "role": "clean_anchor_corruption_chain"},
+        {"name": "chain3", "role": "vae_lhat_adversarial_waveform"},
     ]
-    assert config["adaptation"]["latent_augmix"]["chain_base_mode"] == "all_adv"
+    assert config["adaptation"]["latent_augmix"]["chain_base_mode"] == "clean_clean_third"
+    assert "latent_weight_cap" not in config["adaptation"]["latent_augmix"]
+    assert "adaptation.latent_augmix.latent_weight_cap" not in ALLOWED_CLI_OVERRIDE_KEYS
     refs = manifest["artifact_trace"]["inputs"]["k500_refs"]
     assert len(refs) == 4
     assert all(item["signals_npz"]["role"] == "kshot_raw1000_signals" for item in refs)
@@ -554,7 +556,8 @@ def test_effnet_vae_lhat_threechain_locked_k500_config_uses_official_s5_last_che
         assert "--enable_latent_augmix_consistency" not in argv
         assert _option_value(argv, "--latent_augmix_copies") == "2"
         assert _option_value(argv, "--latent_augmix_width") == "3"
-        assert _option_value(argv, "--latent_augmix_chain_base_mode") == "all_adv"
+        assert _option_value(argv, "--latent_augmix_chain_base_mode") == "clean_clean_third"
+        assert "--latent_augmix_latent_weight_cap" not in argv
         assert _option_value(argv, "--latent_augmix_severity") == "5"
         assert _option_value(argv, "--latent_augmix_severity_profile") == "standard"
         assert "--checkpoint_policy" not in argv
@@ -617,6 +620,7 @@ def test_effnet_vae_lhat_wrapper_parser_accepts_locked_consistency_knobs():
 
     assert args.vae_adv_consistency_weight == 0.7
     assert args.latent_augmix_adv_base_mix == 0.4
+    assert not hasattr(args, "latent_augmix_latent_weight_cap")
 
 
 def test_effnet_vae_lhat_train_builder_locks_threechain_consistency():
@@ -665,7 +669,6 @@ def test_effnet_vae_lhat_train_builder_locks_threechain_consistency():
         latent_augmix_alpha=1.0,
         latent_augmix_severity=5,
         latent_augmix_severity_profile="standard",
-        latent_augmix_latent_weight_cap=0.25,
         latent_augmix_third_chain_role="clean_anchor_control",
         latent_augmix_chain_base_mode="all_clean",
         latent_augmix_adv_base_mix=0.4,
@@ -702,6 +705,7 @@ def test_effnet_vae_lhat_train_builder_locks_threechain_consistency():
     assert "--enable_latent_augmix_branch" not in cmd
     assert "--latent_augmix_topology" not in cmd
     assert "--enable_latent_augmix_consistency" not in cmd
+    assert "--latent_augmix_latent_weight_cap" not in cmd
     assert "--source_sampling_strategy" not in cmd
     assert "--source_weights" not in cmd
     assert _option_value(cmd, "--latent_augmix_width") == "3"
@@ -779,9 +783,26 @@ def test_synth_online_at_parser_keeps_only_mainline_latent_augmix_knobs(monkeypa
     assert args.latent_augmix_third_chain_role == "vae_lhat_adversarial_waveform"
     assert args.latent_augmix_chain_base_mode == "clean_clean_third"
     assert args.latent_augmix_ops == ["powerline_noise", "emg_noise"]
+    assert not hasattr(args, "latent_augmix_latent_weight_cap")
     assert not hasattr(args, "latent_augmix_mixture_mode")
-    assert not hasattr(args, "latent_augmix_signal_space")
+    assert args.latent_augmix_signal_space == "raw_pre_zscore"
     assert not hasattr(args, "latent_augmix_clip_abs")
+
+
+def test_effnet_locked_runner_uses_raw_decodes_and_enqueues_only_mixed_views():
+    from ecg_adv_gen.runner import synth_online_at_super5
+
+    source = inspect.getsource(synth_online_at_super5.main)
+
+    assert "store_raw_decoded=locked_mixed_view_mode" in source
+    assert "latent_augmix_anchor_signals = pgd_gen.last_anchor_raw_ptbxl_1000" in source
+    assert "latent_augmix_adv_signals = pgd_gen.last_adv_raw_ptbxl_1000" in source
+    assert "anchor_signals_ct=latent_augmix_anchor_signals" in source
+    assert "adv_signals_ct=latent_augmix_adv_signals" in source
+    independent_push = source.index("push_stats = push_adv_to_buffer(")
+    mixed_push = source.index("latent_augmix_push_stats = push_adv_to_buffer(")
+    assert source.rfind("if not locked_mixed_view_mode:", 0, independent_push) >= 0
+    assert independent_push < mixed_push
 
 
 def test_synth_online_at_parser_accepts_clean_anchor_third_chain(monkeypatch):
@@ -811,6 +832,7 @@ def test_synth_online_at_parser_accepts_clean_anchor_third_chain(monkeypatch):
 
     assert args.latent_augmix_third_chain_role == "clean_anchor_control"
     assert args.latent_augmix_chain_base_mode == "all_clean"
+    assert args.latent_augmix_signal_space == "model_zscore"
 
 
 def test_synth_online_at_parser_rejects_clean_anchor_augmix_zero_adv_weight(monkeypatch):
@@ -1745,7 +1767,7 @@ def test_pn2021c_effnet_threechain_locked_official_s5_targets_locked_run_dir():
             f"/home/linbinhao/ECG_adv_data/runs/"
             f"effnet_vae_lhat_augmix_threechain_locked_k500/"
             f"{config['runtime']['run_id']}/"
-            f"{center}_realall_targetheavy_M20_lam0p05_augmix_s5_wlat0p25_hs3_cdhypminormsttc_hlabelcom_anchor_soft_sta_local_random_p120_fullft_k500_threechain_s5_locked_ep30_seed20260601"
+            f"{center}_realall_targetheavy_M20_lam0p05_augmix_s5_hs3_cdhypminormsttc_hlabelcom_anchor_soft_sta_local_random_p120_fullft_k500_threechain_s5_locked_ep30_seed20260601"
         )
         assert _option_value(argv, "--clean_eval_json") == (
             f"{model_dir}/eval_result_v7_exclrefs_crop1000.json"

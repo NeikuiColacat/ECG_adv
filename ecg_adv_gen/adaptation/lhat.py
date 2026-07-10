@@ -607,27 +607,6 @@ def global_zscore_np(sig_ct: np.ndarray) -> np.ndarray:
     return ((sig_ct - mean) / std).astype(np.float32)
 
 
-def dirichlet_with_first_weight_cap(
-    width: int,
-    alpha: float,
-    first_weight_cap: float,
-    rng: np.random.Generator,
-) -> np.ndarray:
-    """Sample AugMix branch weights while capping branch 0."""
-    weights = rng.dirichlet([float(alpha)] * int(width)).astype(np.float32)
-    cap = float(np.clip(first_weight_cap, 0.0, 1.0))
-    if width <= 1 or weights[0] <= cap:
-        return weights
-    rest = weights[1:]
-    rest_sum = float(rest.sum())
-    weights[0] = cap
-    if rest_sum <= 1e-8:
-        weights[1:] = (1.0 - cap) / float(width - 1)
-    else:
-        weights[1:] = (1.0 - cap) * rest / rest_sum
-    return weights.astype(np.float32)
-
-
 def build_three_chain_vae_lhat_augmix_views(
     anchor_signals_ct: np.ndarray,
     adv_signals_ct: np.ndarray,
@@ -860,7 +839,7 @@ def build_three_chain_vae_lhat_augmix_views(
     elif chain_base_mode in {"all_clean", "all_clean_plus_vae_adv"}:
         chain_roles = ["clean_anchor_corruption"] * 3
     else:
-        chain_roles = ["corruption", "corruption", third_chain_role]
+        chain_roles = ["clean_anchor_corruption", "clean_anchor_corruption", third_chain_role]
     stats = {
         "enabled": True,
         "topology": "locked_three_chain_vae_lhat_augmix",
