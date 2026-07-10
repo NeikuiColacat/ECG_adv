@@ -15,10 +15,6 @@ def _run_k500_identity(payload: Mapping[str, Any], *, label: str) -> dict[str, A
     stage = str(payload.get("stage") or "")
     config = payload.get("config") if isinstance(payload.get("config"), Mapping) else {}
     config_stage = str(config.get("stage") or "")
-    if stage and config_stage and config_stage != stage:
-        raise PN2021CMetadataError(
-            f"{label} stage={stage!r} conflicts with config.stage={config_stage!r}"
-        )
     if stage == "ptbxl_source":
         required = ("center", "K", "target_train_K", "selected_ref_record_ids", "target_train_record_ids")
         missing = [field for field in required if field not in payload]
@@ -39,19 +35,42 @@ def _run_k500_identity(payload: Mapping[str, Any], *, label: str) -> dict[str, A
             if not isinstance(payload[field], list) or payload[field]:
                 raise PN2021CMetadataError(f"{label} marked ptbxl_source but {field} is not an empty list")
         return {"source_only": True, "stage": stage}
-    selected = [str(item) for item in payload.get("selected_ref_record_ids") or []]
-    target_train = [str(item) for item in payload.get("target_train_record_ids") or []]
-    if not selected:
-        raise PN2021CMetadataError(f"{label} does not expose selected_ref_record_ids")
-    selected_hash = ref_ids_sha256(selected)
-    if target_train and ref_ids_sha256(target_train) != selected_hash:
+
+    required = ("stage", "center", "K", "target_train_K", "selected_ref_record_ids", "target_train_record_ids")
+    missing = [field for field in required if field not in payload]
+    if missing or "stage" not in config:
+        raise PN2021CMetadataError(
+            f"{label} K500 contract is missing fields: {missing + ([] if 'stage' in config else ['config.stage'])}"
+        )
+    if stage != "k500" or config_stage != stage:
+        raise PN2021CMetadataError(
+            f"{label} stage={stage!r} conflicts with required config.stage='k500'"
+        )
+    center = str(payload["center"] or "")
+    if not center:
+        raise PN2021CMetadataError(f"{label} K500 center is empty")
+    for field in ("K", "target_train_K"):
+        if type(payload[field]) is not int or payload[field] != 500:
+            raise PN2021CMetadataError(f"{label} {field} must be integer 500")
+    k = payload["K"]
+    for field in ("selected_ref_record_ids", "target_train_record_ids"):
+        values = payload[field]
+        if not isinstance(values, list) or len(values) != k:
+            raise PN2021CMetadataError(f"{label} {field} must be a list with exactly {k} ids")
+        normalized = [str(item) for item in values]
+        if len(set(normalized)) != k:
+            raise PN2021CMetadataError(f"{label} {field} must contain {k} unique ids")
+    selected = [str(item) for item in payload["selected_ref_record_ids"]]
+    target_train = [str(item) for item in payload["target_train_record_ids"]]
+    if set(target_train) != set(selected):
         raise PN2021CMetadataError(f"{label} target_train_record_ids do not match selected_ref_record_ids")
+    selected_hash = ref_ids_sha256(selected)
     seed = config.get("subset_seed", config.get("seed"))
     return {
         "source_only": False,
-        "stage": stage or "k500",
-        "center": str(payload.get("center") or ""),
-        "k": len(selected),
+        "stage": stage,
+        "center": center,
+        "k": k,
         "seed": int(seed) if seed is not None else None,
         "ref_record_ids_sha256": selected_hash,
     }

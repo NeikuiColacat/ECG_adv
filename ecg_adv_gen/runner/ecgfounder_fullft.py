@@ -1563,7 +1563,9 @@ def main() -> None:
         record_ids = pn["record_ids"].astype(str)
         target_idx = np.asarray([i for i, rid in enumerate(record_ids) if rid in selected_ids], dtype=np.int64)
         if len(target_idx) != args.k:
-            print(f"[warn] parsed K={len(target_idx)} target records; requested {args.k}", flush=True)
+            raise RuntimeError(
+                f"{args.center}: matched {len(target_idx)} target records; requested {args.k}"
+            )
         target_train_idx = target_idx
         target_train_ids = set(str(record_ids[i]) for i in target_train_idx)
         eval_idx = np.asarray([i for i, rid in enumerate(record_ids) if rid not in selected_ids], dtype=np.int64)

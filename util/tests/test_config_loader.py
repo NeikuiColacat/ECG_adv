@@ -42,8 +42,6 @@ from ecg_adv_gen.config.entrypoints import managed_runner_script_names
 from ecg_adv_gen.config.loader import _audit_runtime_path, audit_runner_commands, build_artifact_trace
 from ecg_adv_gen.config.runner_audit import audit_runner_command
 from ecg_adv_gen.config.paths import PathSafetyError, validate_local_paths
-from ecg_adv_gen.data.kshot_artifacts import read_ref_meta_record_ids
-from ecg_adv_gen.evaluation.pn2021_corruptions import ref_ids_sha256
 from ecg_adv_gen.evaluation.pn2021c_protocol import official_s5_depth23_composites
 from ecg_adv_gen.run_naming import build_effnet_direct_run_leaf
 from ecg_adv_gen.runner.effnet_vae_lhat import (
@@ -153,19 +151,6 @@ def test_linked_ecgfounder_train_eval_use_same_k500_identity(eval_config_name: s
         train_ref = Path(option(train_argv, "--ref_meta_json"))
         eval_ref = Path(option(eval_argv, "--exclude_ref_ids"))
         assert eval_ref == train_ref
-        train_ids = read_ref_meta_record_ids(
-            train_ref,
-            expected_center=center,
-            expected_k=500,
-            expected_seed=20260531,
-        ).record_ids
-        eval_ids = read_ref_meta_record_ids(
-            eval_ref,
-            expected_center=center,
-            expected_k=500,
-            expected_seed=20260531,
-        ).record_ids
-        assert ref_ids_sha256(eval_ids) == ref_ids_sha256(train_ids)
 
 
 def test_public_experiment_configs_are_latest_mainline_only():
@@ -919,6 +904,43 @@ def test_effnet_locked_runner_uses_raw_decodes_and_enqueues_only_mixed_views(mon
 
     assert len(pushed) == 1
     assert np.array_equal(pushed[0], mixed[0])
+
+
+def test_effnet_locked_raw_chain_uses_official_s5_at_100hz(monkeypatch):
+    from ecg_adv_gen.evaluation import pn2021c
+    from ecg_adv_gen.runner import synth_online_at_super5
+
+    real_build_op = pn2021c.build_op
+    resolved = []
+
+    def recording_build_op(name, severity):
+        op = real_build_op(name, severity)
+        resolved.append((name, severity, float(op.freq), float(op.max_amplitude)))
+        return op
+
+    monkeypatch.setattr(pn2021c, "build_op", recording_build_op)
+    zeros = np.zeros((1, 12, 1000), dtype=np.float32)
+
+    synth_online_at_super5.build_three_chain_vae_lhat_augmix_views(
+        anchor_signals_ct=zeros,
+        adv_signals_ct=zeros,
+        copies=1,
+        severity=5,
+        severity_profile="standard",
+        width=3,
+        depth=1,
+        alpha=1.0,
+        ops=["powerline_noise"],
+        rng=np.random.default_rng(7),
+        chain_weights=[1.0, 0.0, 0.0],
+        locked_raw_chain=True,
+    )
+
+    assert [(name, severity, freq) for name, severity, freq, _ in resolved] == [
+        ("powerline_noise", 10, 100.0),
+        ("powerline_noise", 10, 100.0),
+    ]
+    assert [amplitude for *_, amplitude in resolved] == pytest.approx([0.30, 0.30])
 
 
 def test_synth_online_at_parser_accepts_clean_anchor_third_chain(monkeypatch):
@@ -2692,6 +2714,58 @@ def test_verify_required_inputs_rejects_missing_traced_checkpoint(tmp_path: Path
 
     assert report["passed"] is False
     assert report["missing"][0]["role"] == "model.init_checkpoint"
+
+
+def test_verify_required_inputs_accepts_complete_k500_lineage(tmp_path: Path):
+    record_ids = [f"r{i}" for i in range(500)]
+    ref_meta = tmp_path / "refs.json"
+    ref_meta.write_text(
+        json.dumps({"center": "ningbo", "record_ids": record_ids, "selection_seed": 20260531}),
+        encoding="utf-8",
+    )
+    init_dir = tmp_path / "init"
+    init_dir.mkdir()
+    init_model = init_dir / "last_model.pt"
+    init_model.write_bytes(b"checkpoint")
+    (init_dir / "eval_result.json").write_text(
+        json.dumps(
+            {
+                "stage": "k500",
+                "center": "ningbo",
+                "K": 500,
+                "target_train_K": 500,
+                "selected_ref_record_ids": record_ids,
+                "target_train_record_ids": record_ids,
+                "config": {"stage": "k500", "seed": 20260531},
+            }
+        ),
+        encoding="utf-8",
+    )
+    manifest = {
+        "artifact_trace": {"inputs": {}},
+        "commands": [
+            {
+                "argv": [
+                    sys.executable,
+                    str(REPO / "ecg_adv_gen" / "runner" / "ecgfounder_fullft.py"),
+                    "--stage",
+                    "k500",
+                    "--center",
+                    "ningbo",
+                    "--k",
+                    "500",
+                    "--ref_meta_json",
+                    str(ref_meta),
+                    "--init_model_path",
+                    str(init_model),
+                ]
+            }
+        ],
+    }
+
+    report = verify_required_inputs(manifest)
+
+    assert report["passed"] is True, report
 
 
 def test_run_managed_commands_fails_if_required_artifact_missing(tmp_path: Path):

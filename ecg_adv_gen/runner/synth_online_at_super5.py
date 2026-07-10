@@ -63,6 +63,7 @@ from methods.augmix.jsd_loss import jsd_multilabel  # noqa: E402
 from methods.augmix.severity import AVAILABLE_OPS, build_op  # noqa: E402
 from ecg_adv_gen.evaluation.pn2021c import (  # noqa: E402
     STRESS_PROFILE_CHOICES as PN2021C_STRESS_PROFILE_CHOICES,
+    apply_corruption_sequence,
     build_corruption_op as _build_pn2021c_corruption_op,
 )
 
@@ -720,6 +721,7 @@ def build_three_chain_vae_lhat_augmix_views(
     chain_base_mode: str = "clean_clean_third",
     chain_weights: List[float] | None = None,
     adv_base_mix: float = 1.0,
+    locked_raw_chain: bool = False,
 ) -> Tuple[np.ndarray, Dict[str, Any]]:
     """Locked wrapper: two ECG corruption chains plus one uncorrupted VAE-LHAT chain."""
 
@@ -729,6 +731,17 @@ def build_three_chain_vae_lhat_augmix_views(
         op_severity: int,
         op_severity_profile: str,
     ) -> np.ndarray:
+        if locked_raw_chain:
+            sig_t = torch.from_numpy(sig_ct.copy()).float()
+            return apply_corruption_sequence(
+                sig_t,
+                op_name,
+                int(op_severity),
+                op_severity_profile,
+                base_seed=int(rng.integers(0, 2**31)),
+                seed_parts=("effnet_locked_raw_augmix", op_name),
+                sample_rate_hz=100.0,
+            ).cpu().numpy().astype(np.float32, copy=False)
         if op_severity_profile == "standard":
             return _standard_augmix_op_np(sig_ct, op_name, int(op_severity))
         sig_t = torch.from_numpy(sig_ct.copy()).float()
@@ -818,6 +831,7 @@ def build_clean_anchor_augmix_epoch(
         third_chain_role="clean_anchor_control",
         chain_base_mode=args.latent_augmix_chain_base_mode,
         chain_weights=parse_float_sequence(args.latent_augmix_chain_weights),
+        locked_raw_chain=args.latent_augmix_signal_space == LOCKED_LATENT_AUGMIX_SIGNAL_SPACE,
     )
     labels_rep = np.tile(
         labels_np,
@@ -1796,6 +1810,7 @@ def main():
                         chain_base_mode=args.latent_augmix_chain_base_mode,
                         chain_weights=parse_float_sequence(args.latent_augmix_chain_weights),
                         adv_base_mix=float(args.latent_augmix_adv_base_mix),
+                        locked_raw_chain=locked_mixed_view_mode,
                     )
                     latent_augmix_stats["corruption_source"] = (
                         "vae_decode_raw" if locked_mixed_view_mode else "vae_decode"

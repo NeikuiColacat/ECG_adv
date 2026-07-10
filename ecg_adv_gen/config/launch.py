@@ -688,11 +688,19 @@ def verify_required_inputs(manifest: dict[str, Any]) -> dict[str, Any]:
             ref_meta_path = f"{opt_first(opts, '--anchor_base')}.ref_meta.json"
         try:
             ref_meta = _read_json_object(Path(str(ref_meta_path)), label="current K500 ref meta")
+            selected_ids = _extract_ref_record_ids(ref_meta, Path(str(ref_meta_path)))
+            expected_k = int(opt_first(opts, "--k", "500"))
             current = {
                 "stage": "k500",
                 "center": ref_meta.get("center") or opt_first(opts, "--center"),
-                "selected_ref_record_ids": _extract_ref_record_ids(ref_meta, Path(str(ref_meta_path))),
-                "config": {"seed": ref_meta.get("selection_seed", ref_meta.get("seed"))},
+                "K": expected_k,
+                "target_train_K": expected_k,
+                "selected_ref_record_ids": selected_ids,
+                "target_train_record_ids": list(selected_ids),
+                "config": {
+                    "stage": "k500",
+                    "seed": ref_meta.get("selection_seed", ref_meta.get("seed")),
+                },
             }
             init_dir = Path(str(init_path)).parent
             init_result_path = init_dir / "eval_result.json"

@@ -99,10 +99,12 @@ def _ecgfounder_preflight_manifest(ref_meta: Path, init_checkpoint: Path) -> dic
 
 
 def test_preflight_rejects_target_adapted_init_with_different_k500_identity(tmp_path: Path):
+    current_ids = [f"r{i}" for i in range(500)]
+    init_ids = [*current_ids[:-1], "other"]
     ref_meta = tmp_path / "current.ref_meta.json"
     _write_json(
         ref_meta,
-        {"center": "ningbo", "K": 2, "selection_seed": 20260531, "ref_record_ids": ["r1", "r2"]},
+        {"center": "ningbo", "K": 500, "selection_seed": 20260531, "ref_record_ids": current_ids},
     )
     init_dir = tmp_path / "init"
     init_dir.mkdir()
@@ -113,8 +115,11 @@ def test_preflight_rejects_target_adapted_init_with_different_k500_identity(tmp_
         {
             "stage": "k500",
             "center": "ningbo",
-            "selected_ref_record_ids": ["r2", "r3"],
-            "config": {"seed": 20260601},
+            "K": 500,
+            "target_train_K": 500,
+            "selected_ref_record_ids": init_ids,
+            "target_train_record_ids": init_ids,
+            "config": {"stage": "k500", "seed": 20260601},
         },
     )
 
@@ -125,10 +130,11 @@ def test_preflight_rejects_target_adapted_init_with_different_k500_identity(tmp_
 
 
 def test_preflight_allows_explicit_source_only_init(tmp_path: Path):
+    record_ids = [f"r{i}" for i in range(500)]
     ref_meta = tmp_path / "current.ref_meta.json"
     _write_json(
         ref_meta,
-        {"center": "ningbo", "K": 1, "selection_seed": 20260531, "ref_record_ids": ["r1"]},
+        {"center": "ningbo", "K": 500, "selection_seed": 20260531, "ref_record_ids": record_ids},
     )
     init_dir = tmp_path / "init"
     init_dir.mkdir()

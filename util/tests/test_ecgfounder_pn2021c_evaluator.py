@@ -97,30 +97,6 @@ def test_ecgfounder_runtime_does_not_import_external_repo_at_module_import_time(
     )
 
 
-def test_ecgfounder_pn2021c_evaluator_does_not_define_package_owned_runtime_helpers():
-    tree = ast.parse(
-        (REPO / "ecg_adv_gen" / "runner" / "ecgfounder_pn2021c_eval.py").read_text()
-    )
-    names = {node.name for node in ast.walk(tree) if isinstance(node, (ast.ClassDef, ast.FunctionDef))}
-
-    assert "ECGFounderStreamingCorruptedDataset" not in names
-    assert "ECGFounderCleanDataset" not in names
-    assert "ECGFounderBottleneck5000CleanDataset" not in names
-    assert "ECGFounderBottleneck5000CorruptedDataset" not in names
-    assert "infer_ecgfounder" not in names
-    assert "infer_ecgfounder_fullft" not in names
-    assert "_clean_metric_for_center" not in names
-    assert "_ref_ids_sha256" not in names
-    assert "build_ecgfounder_feature_model" not in names
-    assert "_detect_eval_mode" not in names
-    assert "_fullft_model_path" not in names
-    assert "_infer_feature_dim" not in names
-    assert "_build_head" not in names
-    assert "_build_fullft_model" not in names
-    assert "_forward_logits_features" not in names
-    assert "OperatorConditionedFullFTModel" not in names
-
-
 def test_ecgfounder_pn2021c_evaluator_uses_package_label_mapping_payload():
     tree = ast.parse(
         (REPO / "ecg_adv_gen" / "runner" / "ecgfounder_pn2021c_eval.py").read_text()
@@ -189,6 +165,8 @@ def test_ecgfounder_pn2021c_rejects_training_evaluation_exclusion_mismatch():
 def test_ecgfounder_pn2021c_load_rejects_target_adapted_init_k500_mismatch(tmp_path: Path):
     import ecg_adv_gen.runner.ecgfounder_pn2021c_eval as evaluator
 
+    current_ids = [f"r{i}" for i in range(500)]
+    init_ids = [*current_ids[:-1], "other"]
     init_dir = tmp_path / "init"
     current_dir = tmp_path / "current"
     init_dir.mkdir()
@@ -200,8 +178,11 @@ def test_ecgfounder_pn2021c_load_rejects_target_adapted_init_k500_mismatch(tmp_p
             {
                 "stage": "k500",
                 "center": "ningbo",
-                "selected_ref_record_ids": ["r2", "r3"],
-                "config": {"seed": 20260601},
+                "K": 500,
+                "target_train_K": 500,
+                "selected_ref_record_ids": init_ids,
+                "target_train_record_ids": init_ids,
+                "config": {"stage": "k500", "seed": 20260601},
             }
         ),
         encoding="utf-8",
@@ -211,8 +192,11 @@ def test_ecgfounder_pn2021c_load_rejects_target_adapted_init_k500_mismatch(tmp_p
             {
                 "stage": "k500",
                 "center": "ningbo",
-                "selected_ref_record_ids": ["r1", "r2"],
-                "config": {"seed": 20260531},
+                "K": 500,
+                "target_train_K": 500,
+                "selected_ref_record_ids": current_ids,
+                "target_train_record_ids": current_ids,
+                "config": {"stage": "k500", "seed": 20260531},
                 "init_model": {"path": str(init_checkpoint)},
             }
         ),

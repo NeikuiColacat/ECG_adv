@@ -13,7 +13,6 @@ import torch.nn as nn
 
 from ecg_adv_gen.runner import ecgfounder_fullft
 from ecg_adv_gen.evaluation import pn2021c
-from ecg_adv_gen.training.resume_contract import validate_resume_contract
 
 
 def test_locked_augmix_corrupts_raw5000_then_zscores_and_batches_match(monkeypatch, tmp_path):
@@ -227,19 +226,13 @@ def test_locked_augmix_uses_official_s5_corruption_at_500hz(monkeypatch):
     ]
 
 
-def test_ecgfounder_signal_space_contract_rejects_normalized_first_resume(monkeypatch, tmp_path):
+def test_ecgfounder_signal_space_contract_rejects_normalized_first_existing_run(monkeypatch, tmp_path):
     locked = ecgfounder_fullft.latent_augmix_signal_space(
         "clean_clean_third",
         "vae_lhat_adversarial_waveform",
     )
     assert locked == "raw_pre_zscore"
     assert ecgfounder_fullft.latent_augmix_signal_space("all_clean", "clean_anchor_control") == "model_zscore"
-    with pytest.raises(ValueError, match="latent_augmix_signal_space"):
-        validate_resume_contract(
-            {"latent_augmix_signal_space": "model_zscore"},
-            {"latent_augmix_signal_space": locked},
-            allow_drift=False,
-        )
     old_result = tmp_path / "eval_result.json"
     old_result.write_text(
         json.dumps({"config": {"latent_augmix_signal_space": "model_zscore"}}),

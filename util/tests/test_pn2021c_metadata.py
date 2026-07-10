@@ -17,6 +17,19 @@ CACHE_VERSION = "pn2021c_v1"
 REF_HASH = "a" * 64
 
 
+def _target_k500_run() -> dict:
+    record_ids = [f"r{i}" for i in range(500)]
+    return {
+        "stage": "k500",
+        "center": CENTER,
+        "K": 500,
+        "target_train_K": 500,
+        "selected_ref_record_ids": record_ids,
+        "target_train_record_ids": list(record_ids),
+        "config": {"stage": "k500", "seed": 20260531},
+    }
+
+
 def _compatible_metadata() -> tuple[dict, dict]:
     source = {
         "label_mapping": {
@@ -93,30 +106,65 @@ def test_clean_and_corrupt_metadata_reject_ref_record_ids_sha256_mismatch():
 
 
 def test_target_adapted_init_must_use_current_k500_identity():
-    current = {
-        "stage": "k500",
-        "center": CENTER,
-        "selected_ref_record_ids": ["r1", "r2"],
-        "config": {"seed": 20260531},
-    }
-    init = {
-        "stage": "k500",
-        "center": CENTER,
-        "selected_ref_record_ids": ["r2", "r3"],
-        "config": {"seed": 20260601},
-    }
+    current = _target_k500_run()
+    init = _target_k500_run()
+    init["selected_ref_record_ids"][-1] = "other"
+    init["target_train_record_ids"] = list(init["selected_ref_record_ids"])
+    init["config"]["seed"] = 20260601
 
     with pytest.raises(PN2021CMetadataError, match="target-adapted initialization K500 identity mismatch"):
         validate_target_init_k500_identity(current, init)
 
 
+@pytest.mark.parametrize(
+    "case",
+    [
+        "missing_stage",
+        "missing_config_stage",
+        "empty_center",
+        "bool_k",
+        "wrong_k",
+        "wrong_target_train_k",
+        "selected_tuple",
+        "selected_duplicate",
+        "selected_short",
+        "missing_target_train_ids",
+        "target_train_tuple",
+    ],
+)
+def test_target_identity_rejects_incomplete_k500_contract(case: str):
+    current = _target_k500_run()
+    if case == "missing_stage":
+        current.pop("stage")
+    elif case == "missing_config_stage":
+        current["config"].pop("stage")
+    elif case == "empty_center":
+        current["center"] = ""
+    elif case == "bool_k":
+        current["K"] = True
+    elif case == "wrong_k":
+        current["K"] = 499
+    elif case == "wrong_target_train_k":
+        current["target_train_K"] = 499
+    elif case == "selected_tuple":
+        current["selected_ref_record_ids"] = tuple(current["selected_ref_record_ids"])
+    elif case == "selected_duplicate":
+        current["selected_ref_record_ids"][-1] = current["selected_ref_record_ids"][0]
+        current["target_train_record_ids"] = list(current["selected_ref_record_ids"])
+    elif case == "selected_short":
+        current["selected_ref_record_ids"].pop()
+        current["target_train_record_ids"].pop()
+    elif case == "missing_target_train_ids":
+        current.pop("target_train_record_ids")
+    elif case == "target_train_tuple":
+        current["target_train_record_ids"] = tuple(current["target_train_record_ids"])
+
+    with pytest.raises(PN2021CMetadataError):
+        validate_target_init_k500_identity(current, deepcopy(current))
+
+
 def test_source_only_init_is_allowed_without_k500_identity():
-    current = {
-        "stage": "k500",
-        "center": CENTER,
-        "selected_ref_record_ids": ["r1"],
-        "config": {"stage": "k500", "seed": 20260531},
-    }
+    current = _target_k500_run()
     source_only = {
         "stage": "ptbxl_source",
         "center": None,
@@ -131,15 +179,7 @@ def test_source_only_init_is_allowed_without_k500_identity():
 
 
 def test_source_only_identity_rejects_conflicting_config_stage():
-    current = {
-        "stage": "k500",
-        "center": CENTER,
-        "K": 2,
-        "target_train_K": 2,
-        "selected_ref_record_ids": ["r1", "r2"],
-        "target_train_record_ids": ["r1", "r2"],
-        "config": {"stage": "k500", "seed": 20260531},
-    }
+    current = _target_k500_run()
     contradictory_source = {
         "stage": "ptbxl_source",
         "center": None,
@@ -159,12 +199,7 @@ def test_source_only_identity_rejects_conflicting_config_stage():
     [("center", CENTER), ("K", 1), ("target_train_K", 1)],
 )
 def test_source_only_identity_rejects_target_state(field: str, value: object):
-    current = {
-        "stage": "k500",
-        "center": CENTER,
-        "selected_ref_record_ids": ["r1"],
-        "config": {"stage": "k500", "seed": 20260531},
-    }
+    current = _target_k500_run()
     source_only = {
         "stage": "ptbxl_source",
         "center": None,
@@ -185,12 +220,7 @@ def test_source_only_identity_rejects_target_state(field: str, value: object):
     ["center", "K", "target_train_K", "selected_ref_record_ids", "target_train_record_ids", "config.stage"],
 )
 def test_source_only_identity_rejects_missing_contract_field(field: str):
-    current = {
-        "stage": "k500",
-        "center": CENTER,
-        "selected_ref_record_ids": ["r1"],
-        "config": {"stage": "k500", "seed": 20260531},
-    }
+    current = _target_k500_run()
     source_only = {
         "stage": "ptbxl_source",
         "center": None,
@@ -210,27 +240,12 @@ def test_source_only_identity_rejects_missing_contract_field(field: str):
 
 
 def test_target_identity_rejects_source_only_config_stage():
-    current = {
-        "stage": "k500",
-        "center": CENTER,
-        "selected_ref_record_ids": ["r1"],
-        "config": {"stage": "k500", "seed": 20260531},
-    }
-    contradictory_target = {
-        "stage": "k500",
-        "center": CENTER,
-        "selected_ref_record_ids": ["r1"],
-        "config": {"stage": "ptbxl_source", "seed": 20260531},
-    }
+    current = _target_k500_run()
+    contradictory_target = _target_k500_run()
+    contradictory_target["config"]["stage"] = "ptbxl_source"
 
     with pytest.raises(PN2021CMetadataError, match="stage"):
         validate_target_init_k500_identity(current, contradictory_target)
-
-
-def test_metadata_reuses_shared_ref_id_hash_helper():
-    import ecg_adv_gen.evaluation.pn2021c_metadata as metadata
-
-    assert not hasattr(metadata, "_ref_ids_sha256")
 
 
 def test_evaluation_k500_identity_rejects_multiple_hashes_for_one_center():

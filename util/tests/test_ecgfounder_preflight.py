@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from ecg_adv_gen.config import build_runner_commands, load_experiment_config, validate_experiment_config
@@ -138,3 +139,47 @@ def test_tracked_adapter_reports_malformed_latent_augmix_numbers(flag):
     audit = audit_ecgfounder_fullft_command(command, config=config)
 
     assert any(f"{flag} has invalid numeric value" in error for error in audit["errors"]), audit
+
+
+def test_k500_fullft_rejects_unmatched_target_records_before_model_load(monkeypatch, tmp_path):
+    selected_ids = {f"r{i}" for i in range(500)}
+    matched_ids = sorted(selected_ids)[:-1]
+    caches = iter(
+        [
+            {},
+            {
+                "record_ids": np.asarray(matched_ids),
+                "labels": np.zeros((len(matched_ids), 5), dtype=np.float32),
+            },
+        ]
+    )
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        _locked_k500_argv(
+            "--k",
+            "500",
+            "--out_dir",
+            str(tmp_path),
+            "--device",
+            "cpu",
+        ),
+    )
+    monkeypatch.setattr(ecgfounder_fullft, "set_seed", lambda _seed: None)
+    monkeypatch.setattr(ecgfounder_fullft, "build_ptbxl_items", lambda limit=0: ([], {}))
+    monkeypatch.setattr(ecgfounder_fullft, "build_pn2021_items", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(ecgfounder_fullft, "build_signal_cache", lambda *_args, **_kwargs: next(caches))
+    monkeypatch.setattr(
+        ecgfounder_fullft,
+        "load_selected_record_ids_from_meta",
+        lambda *_args, **_kwargs: selected_ids,
+    )
+    monkeypatch.setattr(
+        ecgfounder_fullft,
+        "ft_12lead_ECGFounder",
+        lambda *_args, **_kwargs: pytest.fail("model loaded before K500 match validation"),
+    )
+
+    with pytest.raises(RuntimeError, match="matched 499 target records; requested 500"):
+        ecgfounder_fullft.main()
