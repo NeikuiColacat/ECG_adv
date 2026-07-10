@@ -156,6 +156,62 @@ def test_preflight_allows_explicit_source_only_init(tmp_path: Path):
     assert verify_required_inputs(_ecgfounder_preflight_manifest(ref_meta, init_checkpoint))["passed"] is True
 
 
+def test_preflight_accepts_direct_initializer_run_config_complete_k500_identity(tmp_path: Path):
+    record_ids = [f"r{i}" for i in range(500)]
+    anchor_base = tmp_path / "current"
+    ref_meta = anchor_base.with_suffix(".ref_meta.json")
+    _write_json(
+        ref_meta,
+        {"center": "ningbo", "K": 500, "selection_seed": 20260531, "ref_record_ids": record_ids},
+    )
+    init_dir = tmp_path / "direct"
+    init_dir.mkdir()
+    init_checkpoint = init_dir / "best_model.pt"
+    init_checkpoint.write_bytes(b"checkpoint")
+    _write_json(
+        init_dir / "run_config.json",
+        {
+            "center": "ningbo",
+            "k": 500,
+            "seed": 20260531,
+            "ref_meta": str(ref_meta),
+            "train_record_ids": record_ids[:400],
+            "val_record_ids": record_ids[400:],
+        },
+    )
+    manifest = {
+        "commands": [
+            {
+                "argv": [
+                    "python",
+                    "effnet_vae_lhat_augmix.py",
+                    "--center",
+                    "ningbo",
+                    "--anchor_base",
+                    str(anchor_base),
+                    "--init_ckpt",
+                    str(init_checkpoint),
+                ]
+            }
+        ],
+        "artifact_trace": {
+            "inputs": {
+                "checkpoints": [_required_file(init_checkpoint, "command.init_ckpt")],
+                "k500_refs": [
+                    {
+                        "center": "ningbo",
+                        "ref_meta_json": _required_file(ref_meta, "kshot_ref_meta"),
+                    }
+                ],
+            }
+        },
+    }
+
+    report = verify_required_inputs(manifest)
+
+    assert report["passed"] is True, report
+
+
 def _make_registerable_run(tmp_path: Path) -> tuple[dict, dict[str, Path]]:
     output_root = tmp_path / "output"
     run_dir = output_root / "integrity" / "run1"

@@ -708,12 +708,22 @@ def verify_required_inputs(manifest: dict[str, Any]) -> dict[str, Any]:
                 init_result = _read_json_object(init_result_path, label="initialization eval result")
             else:
                 init_config = _read_json_object(init_dir / "run_config.json", label="initialization run config")
+                train_ids = init_config.get("train_record_ids")
+                val_ids = init_config.get("val_record_ids")
+                if not isinstance(train_ids, list) or not isinstance(val_ids, list):
+                    raise ValueError("initialization run config must expose train_record_ids and val_record_ids lists")
+                all_ids = [str(item) for item in train_ids + val_ids]
+                selected_ids = list(dict.fromkeys(all_ids))
+                if len(selected_ids) != len(all_ids):
+                    raise ValueError("initialization run config contains duplicate train/val record ids")
                 init_result = {
                     "stage": "k500",
                     "center": init_config.get("center"),
-                    "selected_ref_record_ids": list(init_config.get("train_record_ids") or [])
-                    + list(init_config.get("val_record_ids") or []),
-                    "config": init_config,
+                    "K": init_config.get("k"),
+                    "target_train_K": expected_k,
+                    "selected_ref_record_ids": selected_ids,
+                    "target_train_record_ids": list(selected_ids),
+                    "config": {**init_config, "stage": "k500"},
                 }
             validate_target_init_k500_identity(current, init_result)
         except (LaunchError, OSError, ValueError) as exc:
