@@ -120,15 +120,19 @@ def _load_result(run_dir: Path) -> dict[str, Any]:
         raise ValueError(f"{result_path} does not record center")
     init_model = result.get("init_model") or {}
     init_path = init_model.get("path") if isinstance(init_model, dict) else None
-    if init_path:
-        init_result_path = Path(str(init_path)).parent / "eval_result.json"
-        if not init_result_path.is_file():
-            raise ValueError(f"initialization checkpoint does not expose eval_result.json: {init_result_path}")
-        with init_result_path.open() as f:
-            init_result = json.load(f)
-        if not isinstance(init_result, dict):
-            raise ValueError(f"initialization eval_result.json root must be an object: {init_result_path}")
-        validate_target_init_k500_identity(result, init_result)
+    if not init_path:
+        if str(result.get("stage") or "") == "ptbxl_source":
+            validate_target_init_k500_identity(result, result)
+            return result
+        raise ValueError(f"target-adapted eval_result.json does not record init_model.path: {result_path}")
+    init_result_path = Path(str(init_path)).parent / "eval_result.json"
+    if not init_result_path.is_file():
+        raise ValueError(f"initialization checkpoint does not expose eval_result.json: {init_result_path}")
+    with init_result_path.open() as f:
+        init_result = json.load(f)
+    if not isinstance(init_result, dict):
+        raise ValueError(f"initialization eval_result.json root must be an object: {init_result_path}")
+    validate_target_init_k500_identity(result, init_result)
     return result
 
 
@@ -142,7 +146,9 @@ def _excluded_ref_ids_for_center(
     if center != str(result["center"]):
         return set()
     selected_ids = {str(x) for x in result.get("selected_ref_record_ids", [])}
-    exclude_ids = selected_ids if evaluation_ref_ids is None else {str(x) for x in evaluation_ref_ids}
+    if evaluation_ref_ids is None and (selected_ids or int(min_target_ref_excluded or 0) > 0):
+        raise ValueError(f"{center}: target K500 evaluation requires explicit --exclude_ref_ids")
+    exclude_ids = {str(x) for x in evaluation_ref_ids or set()}
     if exclude_ids != selected_ids:
         raise ValueError(
             f"training/evaluation K500 identity mismatch for {center}: "
@@ -647,6 +653,13 @@ def main() -> None:
     unknown = sorted(set(centers).difference(DEFAULT_CENTERS))
     if unknown:
         raise ValueError(f"unknown PN2021-C centers: {unknown}")
+    for center in centers:
+        _excluded_ref_ids_for_center(
+            result,
+            center,
+            args.min_target_ref_excluded,
+            evaluation_ref_ids=args.exclude_ref_ids_by_center.get(center),
+        )
 
     device = torch.device(args.device)
     eval_mode = detect_eval_mode(run_dir)

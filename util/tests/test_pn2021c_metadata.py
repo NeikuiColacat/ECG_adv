@@ -115,16 +115,93 @@ def test_source_only_init_is_allowed_without_k500_identity():
         "stage": "k500",
         "center": CENTER,
         "selected_ref_record_ids": ["r1"],
-        "config": {"seed": 20260531},
+        "config": {"stage": "k500", "seed": 20260531},
     }
     source_only = {
         "stage": "ptbxl_source",
         "center": None,
+        "K": 0,
+        "target_train_K": 0,
         "selected_ref_record_ids": [],
         "target_train_record_ids": [],
+        "config": {"stage": "ptbxl_source"},
     }
 
     assert validate_target_init_k500_identity(current, source_only)["source_only"] is True
+
+
+def test_source_only_identity_rejects_conflicting_config_stage():
+    current = {
+        "stage": "k500",
+        "center": CENTER,
+        "K": 2,
+        "target_train_K": 2,
+        "selected_ref_record_ids": ["r1", "r2"],
+        "target_train_record_ids": ["r1", "r2"],
+        "config": {"stage": "k500", "seed": 20260531},
+    }
+    contradictory_source = {
+        "stage": "ptbxl_source",
+        "center": None,
+        "K": 0,
+        "target_train_K": 0,
+        "selected_ref_record_ids": [],
+        "target_train_record_ids": [],
+        "config": {"stage": "k500"},
+    }
+
+    with pytest.raises(PN2021CMetadataError, match="stage"):
+        validate_target_init_k500_identity(current, contradictory_source)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("center", CENTER), ("K", 1), ("target_train_K", 1)],
+)
+def test_source_only_identity_rejects_target_state(field: str, value: object):
+    current = {
+        "stage": "k500",
+        "center": CENTER,
+        "selected_ref_record_ids": ["r1"],
+        "config": {"stage": "k500", "seed": 20260531},
+    }
+    source_only = {
+        "stage": "ptbxl_source",
+        "center": None,
+        "K": 0,
+        "target_train_K": 0,
+        "selected_ref_record_ids": [],
+        "target_train_record_ids": [],
+        "config": {"stage": "ptbxl_source"},
+    }
+    source_only[field] = value
+
+    with pytest.raises(PN2021CMetadataError, match=field):
+        validate_target_init_k500_identity(current, source_only)
+
+
+def test_target_identity_rejects_source_only_config_stage():
+    current = {
+        "stage": "k500",
+        "center": CENTER,
+        "selected_ref_record_ids": ["r1"],
+        "config": {"stage": "k500", "seed": 20260531},
+    }
+    contradictory_target = {
+        "stage": "k500",
+        "center": CENTER,
+        "selected_ref_record_ids": ["r1"],
+        "config": {"stage": "ptbxl_source", "seed": 20260531},
+    }
+
+    with pytest.raises(PN2021CMetadataError, match="stage"):
+        validate_target_init_k500_identity(current, contradictory_target)
+
+
+def test_metadata_reuses_shared_ref_id_hash_helper():
+    import ecg_adv_gen.evaluation.pn2021c_metadata as metadata
+
+    assert not hasattr(metadata, "_ref_ids_sha256")
 
 
 def test_evaluation_k500_identity_rejects_multiple_hashes_for_one_center():
@@ -145,6 +222,23 @@ def test_evaluation_k500_identity_rejects_multiple_hashes_for_one_center():
         evaluation_k500_identities(payload)
 
 
+def test_evaluation_k500_identity_ignores_unrelated_nested_hashes():
+    payload = {
+        "per_center": {
+            CENTER: {
+                "unrelated": {
+                    "deep": {
+                        "n_excluded_ref": 500,
+                        "ref_record_ids_sha256": REF_HASH,
+                    }
+                }
+            }
+        }
+    }
+
+    assert evaluation_k500_identities(payload) == {}
+
+
 def test_stream_metadata_keeps_clean_evaluation_ref_identity():
     from ecg_adv_gen.runner.pn2021c_eval import _merge_clean_metadata
 
@@ -160,6 +254,11 @@ def test_stream_metadata_keeps_clean_evaluation_ref_identity():
         },
     }
 
-    merged = _merge_clean_metadata({}, clean_eval)
+    merged = _merge_clean_metadata(
+        {"pn2021": {"cache_version": "v7", "records": 123}},
+        clean_eval,
+    )
 
     assert merged["pn2021"]["eval_protocol"]["target_ref_id_hashes"][CENTER] == REF_HASH
+    assert merged["pn2021"]["cache_version"] == "v7"
+    assert merged["pn2021"]["records"] == 123

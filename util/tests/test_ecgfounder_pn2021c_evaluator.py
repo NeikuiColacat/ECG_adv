@@ -160,17 +160,12 @@ def test_ecgfounder_pn2021c_evaluator_uses_package_super5_scheme():
 def test_ecgfounder_pn2021c_requires_min_target_ref_exclusion_for_run_center():
     import ecg_adv_gen.runner.ecgfounder_pn2021c_eval as evaluator
 
-    try:
+    with pytest.raises(ValueError, match="--exclude_ref_ids"):
         evaluator._excluded_ref_ids_for_center(
             {"center": "ningbo", "selected_ref_record_ids": ["r1"]},
             "ningbo",
             500,
         )
-    except ValueError as exc:
-        assert "selected_ref_record_ids" in str(exc)
-        assert "500" in str(exc)
-    else:
-        raise AssertionError("missing K-shot ref ids must raise for the run center")
 
     assert evaluator._excluded_ref_ids_for_center(
         {"center": "ningbo", "selected_ref_record_ids": ["r1"]},
@@ -226,6 +221,51 @@ def test_ecgfounder_pn2021c_load_rejects_target_adapted_init_k500_mismatch(tmp_p
 
     with pytest.raises(ValueError, match="target-adapted initialization K500 identity mismatch"):
         evaluator._load_result(current_dir)
+
+
+def test_ecgfounder_pn2021c_load_rejects_target_run_without_init_lineage(tmp_path: Path):
+    import ecg_adv_gen.runner.ecgfounder_pn2021c_eval as evaluator
+
+    run_dir = tmp_path / "current"
+    run_dir.mkdir()
+    (run_dir / "eval_result.json").write_text(
+        json.dumps(
+            {
+                "stage": "k500",
+                "center": "ningbo",
+                "K": 1,
+                "target_train_K": 1,
+                "selected_ref_record_ids": ["r1"],
+                "target_train_record_ids": ["r1"],
+                "config": {"stage": "k500", "seed": 20260531},
+                "init_model": None,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="init_model.path"):
+        evaluator._load_result(run_dir)
+
+
+def test_ecgfounder_pn2021c_load_allows_strict_source_only_without_init(tmp_path: Path):
+    import ecg_adv_gen.runner.ecgfounder_pn2021c_eval as evaluator
+
+    run_dir = tmp_path / "source"
+    run_dir.mkdir()
+    source = {
+        "stage": "ptbxl_source",
+        "center": None,
+        "K": 0,
+        "target_train_K": 0,
+        "selected_ref_record_ids": [],
+        "target_train_record_ids": [],
+        "config": {"stage": "ptbxl_source"},
+        "init_model": None,
+    }
+    (run_dir / "eval_result.json").write_text(json.dumps(source), encoding="utf-8")
+
+    assert evaluator._load_result(run_dir) == source
 
 
 def test_locked_ecgfounder_eval_one_records_package_pn2021c_metadata(monkeypatch):
@@ -299,6 +339,7 @@ def test_locked_ecgfounder_eval_one_records_package_pn2021c_metadata(monkeypatch
         num_workers=0,
         min_pos=1,
         required_cache_version="v7_refexcluded_100hz1000",
+        exclude_ref_ids_by_center={"ningbo": {"r1", "r2"}},
     )
 
     row = evaluator.eval_one(

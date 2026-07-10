@@ -55,11 +55,8 @@ For the combined depth2+3 view, the separately observed direct fullFT baseline
 is `0.7714 / 0.4411` on PN2021-C and `0.8879 / 0.6103` on clean data. Because
 the K500 identities are unmatched, the numeric differences in the last column
 are descriptive arithmetic only and are not evidence of improvement. The
-previously recorded differences against other baselines were:
-
-- corrupted-K500 supervised: `+2.54 / +5.61 pp`;
-- the controlled ECGFounder c117 replay: `+1.85 / +1.96 pp`;
-- the EffNet c117 replay: `+0.85 / +3.67 pp` in absolute PN2021-C score.
+previously recorded unmatched comparisons against other baselines are
+removed because their unmatched identities do not support comparative claims.
 
 ## K500 Lineage Audit
 

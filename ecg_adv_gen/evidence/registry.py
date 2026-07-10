@@ -25,6 +25,7 @@ from ecg_adv_gen.evaluation.pn2021c_metadata import (
     PN2021CMetadataError,
     evaluation_k500_identities,
 )
+from ecg_adv_gen.evaluation.pn2021_corruptions import ref_ids_sha256
 
 
 class EvidenceAuditError(ValueError):
@@ -872,6 +873,9 @@ def _audit_k500_refs(claim: dict[str, Any], issues: list[dict[str, Any]]) -> dic
                 )
         out[center] = {
             "path": str(ref_path),
+            "k": len(ref_ids),
+            "selection_seed": meta["selection_seed"],
+            "ref_record_ids_sha256": ref_ids_sha256(ref_ids),
             "n_ref_record_ids": len(ref_ids),
             "label_counts": meta.get("label_counts", {}),
         }
@@ -1130,16 +1134,24 @@ def _audit_evaluation_k500_identity(
     claim: dict[str, Any],
     method_key: str,
     method: dict[str, Any],
+    claim_identities: dict[str, Any],
     issues: list[dict[str, Any]],
 ) -> dict[str, Any]:
     if claim.get("status") not in {"trusted", "provisional"} or method.get("status") not in {"trusted", "provisional"}:
         return {"skipped": True}
-    manifests = (claim.get("required_reporting_artifacts") or {}).get("method_artifact_manifests") or {}
+    code = "evaluation_k500_identity_missing"
+    required = claim.get("required_reporting_artifacts")
+    if not isinstance(required, dict):
+        _add_error(issues, code, f"{method_key} required_reporting_artifacts must be a mapping")
+        return {"skipped": False, "training": {}, "evaluation": {}}
+    manifests = required.get("method_artifact_manifests")
+    if not isinstance(manifests, dict):
+        _add_error(issues, code, f"{method_key} method_artifact_manifests must be a mapping")
+        return {"skipped": False, "training": {}, "evaluation": {}}
     eval_manifest_path = _path_or_none(manifests.get(method_key))
     if eval_manifest_path is None:
-        return {"skipped": True}
-
-    code = "evaluation_k500_identity_missing"
+        _add_error(issues, code, f"{method_key} has no evaluation artifact manifest")
+        return {"skipped": False, "training": {}, "evaluation": {}}
 
     def read(path: Path | None, label: str) -> dict[str, Any]:
         if not _require_path(path, issues, code, label):
@@ -1159,13 +1171,85 @@ def _audit_evaluation_k500_identity(
         _resolved_path(k500_record.get("path"), base),
         f"{method_key} k500_ref_ids artifact",
     ).get("centers") or {}
+    expected_centers = {str(center) for center in (claim.get("protocol") or {}).get("target_centers") or []}
+    if not isinstance(expected, dict) or not expected:
+        _add_error(issues, code, f"{method_key} training K500 identities are empty")
+        expected = {}
+    elif set(expected) != expected_centers:
+        _add_error(
+            issues,
+            "evaluation_k500_identity_mismatch",
+            f"{method_key} training K500 centers do not match claim",
+            expected=sorted(expected_centers),
+            observed=sorted(expected),
+        )
+    claim_kshot = (claim.get("protocol") or {}).get("kshot") or {}
+    for center in expected_centers:
+        identity = expected.get(center)
+        claimed = claim_identities.get(center)
+        if not isinstance(identity, dict) or not isinstance(claimed, dict):
+            _add_error(issues, code, f"{method_key} training identity missing for {center}")
+            continue
+        identity_hash = str(identity.get("ref_record_ids_sha256") or "")
+        if (
+            not isinstance(identity.get("k"), int)
+            or isinstance(identity.get("k"), bool)
+            or not isinstance(identity.get("selection_seed"), int)
+            or isinstance(identity.get("selection_seed"), bool)
+            or not _SHA256_RE.fullmatch(identity_hash)
+        ):
+            _add_error(issues, code, f"{method_key} training identity is invalid for {center}")
+            continue
+        claimed_identity = {
+            "k": claimed.get("k"),
+            "selection_seed": claimed.get("selection_seed"),
+            "ref_record_ids_sha256": claimed.get("ref_record_ids_sha256"),
+        }
+        observed_identity = {
+            "k": identity.get("k"),
+            "selection_seed": identity.get("selection_seed"),
+            "ref_record_ids_sha256": identity_hash,
+        }
+        registry_identity = {
+            "k": claim_kshot.get("k"),
+            "selection_seed": claim_kshot.get("seed"),
+            "ref_record_ids_sha256": claimed_identity["ref_record_ids_sha256"],
+        }
+        if observed_identity != claimed_identity or observed_identity != registry_identity:
+            _add_error(
+                issues,
+                "evaluation_k500_identity_mismatch",
+                f"{method_key} training K500 identity disagrees with claim for {center}",
+                expected=registry_identity,
+                observed=observed_identity,
+            )
 
     eval_manifest = read(eval_manifest_path, f"{method_key} evaluation artifact manifest")
     observed: dict[str, dict[str, Any]] = {}
-    for artifact in eval_manifest.get("artifacts") or []:
-        if not isinstance(artifact, dict) or artifact.get("artifact_type") != "eval_result":
-            continue
+    artifacts = eval_manifest.get("artifacts")
+    eval_artifacts = [
+        artifact
+        for artifact in artifacts or []
+        if isinstance(artifact, dict) and artifact.get("artifact_type") == "eval_result"
+    ] if isinstance(artifacts, list) else []
+    if not eval_artifacts:
+        _add_error(issues, code, f"{method_key} evaluation artifact manifest has no eval_result artifacts")
+    for artifact in eval_artifacts:
         eval_path = _resolved_path(artifact.get("path"), eval_manifest_path.parent)
+        declared_sha = str(artifact.get("sha256") or "")
+        if not _SHA256_RE.fullmatch(declared_sha):
+            _add_error(issues, "evaluation_artifact_sha256_mismatch", f"{method_key} eval_result has no valid sha256")
+            continue
+        if not _require_path(eval_path, issues, code, f"{method_key} evaluation result"):
+            continue
+        assert eval_path is not None
+        if _sha256(eval_path) != declared_sha:
+            _add_error(
+                issues,
+                "evaluation_artifact_sha256_mismatch",
+                f"{method_key} eval_result SHA mismatch: {eval_path}",
+            )
+            continue
         try:
             identities = evaluation_k500_identities(read(eval_path, f"{method_key} evaluation result"))
         except PN2021CMetadataError as exc:
@@ -1176,7 +1260,17 @@ def _audit_evaluation_k500_identity(
                 _add_error(issues, "evaluation_k500_identity_mismatch", f"{method_key} has multiple identities for {center}")
             observed[center] = identity
 
-    for center, training_identity in expected.items():
+    if set(observed) != expected_centers:
+        _add_error(
+            issues,
+            "evaluation_k500_identity_mismatch",
+            f"{method_key} evaluation K500 centers do not match claim",
+            expected=sorted(expected_centers),
+            observed=sorted(observed),
+        )
+
+    for center in expected_centers:
+        training_identity = expected.get(center) or {}
         actual = observed.get(str(center))
         expected_pair = {
             "k": training_identity.get("k"),
@@ -1439,7 +1533,7 @@ def audit_active_evidence_registry(
                 method_summary["metrics"] = _audit_metrics(claim, method_key, method, issues)
                 method_summary["paper_tables"] = _audit_paper_tables(claim, method_key, method, issues)
                 method_summary["evaluation_k500_identity"] = _audit_evaluation_k500_identity(
-                    claim, method_key, method, issues
+                    claim, method_key, method, k500_summary, issues
                 )
             method_summaries[method_key] = method_summary
 

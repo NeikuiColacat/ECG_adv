@@ -253,6 +253,7 @@ active_claims:
       vae_lhat:
         role: candidate
         status: deprecated
+        paper_use: prohibited_protocol_invalid
         traceability: managed_yaml_replay
         method_family: vae_lhat_threechain_augmix_pn2021c
         run_id: locked_rawfirst_20260618_effnet_copies2

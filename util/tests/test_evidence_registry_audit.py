@@ -89,6 +89,69 @@ def evidence_case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, 
             "ref_record_ids": ["r1"],
         },
     )
+    ref_hash = hashlib.sha256(b"r1\n").hexdigest()
+    k500_ids = support / "k500_ref_ids.json"
+    _write_json(
+        k500_ids,
+        {
+            "paper_protocol": {"seed": 1, "subset_seed": 1},
+            "centers": {
+                "ningbo": {
+                    "center": "ningbo",
+                    "consumers": ["evaluation"],
+                    "k": 1,
+                    "selection_seed": 1,
+                    "ref_record_ids_sha256": ref_hash,
+                }
+            },
+        },
+    )
+    method_manifest = support / "method_run_manifest.json"
+    _write_json(
+        method_manifest,
+        {
+            "status": "succeeded",
+            "manifest_kind": "managed_launcher_manifest",
+            "artifact_trace": {
+                "expected_outputs": {
+                    "launch_artifacts": [
+                        {"role": "k500_ref_ids", "path": str(k500_ids), "required": True}
+                    ]
+                }
+            },
+        },
+    )
+    eval_result = support / "pn2021c_eval.json"
+    _write_json(
+        eval_result,
+        {
+            "per_center": {
+                "ningbo": {
+                    "emg_noise": {
+                        "5": {
+                            "metadata_compatibility": {
+                                "n_excluded_ref": 1,
+                                "ref_record_ids_sha256": ref_hash,
+                            }
+                        }
+                    }
+                }
+            }
+        },
+    )
+    eval_manifest = support / "pn2021c_artifact_manifest.json"
+    _write_json(
+        eval_manifest,
+        {
+            "artifacts": [
+                {
+                    "artifact_type": "eval_result",
+                    "path": str(eval_result),
+                    "sha256": hashlib.sha256(eval_result.read_bytes()).hexdigest(),
+                }
+            ]
+        },
+    )
 
     registry = {
         "managed_runs": [
@@ -131,7 +194,11 @@ def evidence_case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, 
                         "experiment_name": "experiment-1",
                         "status": "provisional",
                         "config": "method.yaml",
+                        "manifest": str(method_manifest),
                     }
+                },
+                "required_reporting_artifacts": {
+                    "method_artifact_manifests": {"baseline": str(eval_manifest)}
                 },
                 "supporting_reporting_artifacts": {
                     "support-1": {
@@ -198,6 +265,9 @@ def evidence_case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, 
         "repo": repo,
         "run_dir": run_dir,
         "support": support,
+        "k500_ids": k500_ids,
+        "eval_result": eval_result,
+        "eval_manifest": eval_manifest,
         "verify_calls": verify_calls,
     }
 
@@ -214,6 +284,15 @@ def _rewrite_integrity(case: dict[str, object], value: object) -> None:
     path = case["support"] / "artifact_integrity.json"
     _write_json(path, value)
     _support(case)["artifact_integrity_sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _rewrite_eval_result(case: dict[str, object], value: object) -> None:
+    path = case["eval_result"]
+    _write_json(path, value)
+    manifest_path = case["eval_manifest"]
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["artifacts"][0]["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    _write_json(manifest_path, manifest)
 
 
 def test_valid_registry_audits_explicit_paths_and_integrity(evidence_case: dict[str, object]) -> None:
@@ -621,7 +700,15 @@ def test_active_claim_audits_recorded_evaluation_k500_identity(
     eval_manifest = support / "pn2021c_artifact_manifest.json"
     _write_json(
         eval_manifest,
-        {"artifacts": [{"artifact_type": "eval_result", "path": str(eval_result)}]},
+        {
+            "artifacts": [
+                {
+                    "artifact_type": "eval_result",
+                    "path": str(eval_result),
+                    "sha256": hashlib.sha256(eval_result.read_bytes()).hexdigest(),
+                }
+            ]
+        },
     )
     claim = evidence_case["registry"]["active_claims"][0]
     claim["methods"]["baseline"]["manifest"] = str(method_manifest)
@@ -634,6 +721,114 @@ def test_active_claim_audits_recorded_evaluation_k500_identity(
     assert "evaluation_k500_identity_mismatch" in _codes(report)
 
 
+def test_active_method_requires_evaluation_artifact_manifest(
+    evidence_case: dict[str, object],
+) -> None:
+    claim = evidence_case["registry"]["active_claims"][0]
+    claim["required_reporting_artifacts"] = {"method_artifact_manifests": {}}
+
+    assert "evaluation_k500_identity_missing" in _codes(evidence_case["audit"]())
+
+
+def test_active_method_rejects_non_mapping_evaluation_artifact_manifests(
+    evidence_case: dict[str, object],
+) -> None:
+    claim = evidence_case["registry"]["active_claims"][0]
+    claim["required_reporting_artifacts"] = ["bad"]
+
+    assert "evaluation_k500_identity_missing" in _codes(evidence_case["audit"]())
+
+
+def test_active_method_rejects_empty_training_k500_identities(
+    evidence_case: dict[str, object],
+) -> None:
+    _write_json(evidence_case["k500_ids"], {"centers": {}})
+
+    assert "evaluation_k500_identity_missing" in _codes(evidence_case["audit"]())
+
+
+def test_active_method_binds_training_identity_to_claim_ref_ids(
+    evidence_case: dict[str, object],
+) -> None:
+    wrong_hash = "b" * 64
+    k500 = json.loads(evidence_case["k500_ids"].read_text(encoding="utf-8"))
+    k500["centers"]["ningbo"]["ref_record_ids_sha256"] = wrong_hash
+    _write_json(evidence_case["k500_ids"], k500)
+    _rewrite_eval_result(
+        evidence_case,
+        {
+            "per_center": {
+                "ningbo": {
+                    "emg_noise": {
+                        "5": {
+                            "metadata_compatibility": {
+                                "n_excluded_ref": 1,
+                                "ref_record_ids_sha256": wrong_hash,
+                            }
+                        }
+                    }
+                }
+            }
+        },
+    )
+
+    assert "evaluation_k500_identity_mismatch" in _codes(evidence_case["audit"]())
+
+
+def test_active_method_binds_training_seed_to_claim(
+    evidence_case: dict[str, object],
+) -> None:
+    k500 = json.loads(evidence_case["k500_ids"].read_text(encoding="utf-8"))
+    k500["centers"]["ningbo"]["selection_seed"] = 2
+    _write_json(evidence_case["k500_ids"], k500)
+
+    assert "evaluation_k500_identity_mismatch" in _codes(evidence_case["audit"]())
+
+
+def test_active_method_rejects_unexpected_evaluation_center(
+    evidence_case: dict[str, object],
+) -> None:
+    ref_hash = hashlib.sha256(b"r1\n").hexdigest()
+    row = {
+        "emg_noise": {
+            "5": {
+                "metadata_compatibility": {
+                    "n_excluded_ref": 1,
+                    "ref_record_ids_sha256": ref_hash,
+                }
+            }
+        }
+    }
+    _rewrite_eval_result(
+        evidence_case,
+        {"per_center": {"ningbo": row, "georgia": row}},
+    )
+
+    assert "evaluation_k500_identity_mismatch" in _codes(evidence_case["audit"]())
+
+
+def test_active_method_requires_recorded_evaluation_artifacts(
+    evidence_case: dict[str, object],
+) -> None:
+    _write_json(evidence_case["eval_manifest"], {"artifacts": []})
+
+    assert "evaluation_k500_identity_missing" in _codes(evidence_case["audit"]())
+
+
+@pytest.mark.parametrize("declared_sha", [None, "0" * 64])
+def test_active_method_validates_eval_artifact_sha_before_read(
+    evidence_case: dict[str, object], declared_sha: str | None,
+) -> None:
+    manifest = json.loads(evidence_case["eval_manifest"].read_text(encoding="utf-8"))
+    if declared_sha is None:
+        manifest["artifacts"][0].pop("sha256")
+    else:
+        manifest["artifacts"][0]["sha256"] = declared_sha
+    _write_json(evidence_case["eval_manifest"], manifest)
+
+    assert "evaluation_artifact_sha256_mismatch" in _codes(evidence_case["audit"]())
+
+
 def test_trusted_method_keeps_managed_run_mapping_when_comparison_is_deprecated(
     evidence_case: dict[str, object],
 ) -> None:
@@ -642,7 +837,10 @@ def test_trusted_method_keeps_managed_run_mapping_when_comparison_is_deprecated(
     claim["paper_use"] = "prohibited_protocol_invalid"
     claim["methods"]["baseline"]["status"] = "trusted"
 
-    assert "managed_run_claim_mapping_mismatch" not in _codes(evidence_case["audit"]())
+    claim.pop("required_reporting_artifacts")
+    codes = _codes(evidence_case["audit"]())
+    assert "managed_run_claim_mapping_mismatch" not in codes
+    assert not any(code.startswith("evaluation_k500_") for code in codes)
 
 
 @pytest.mark.parametrize(

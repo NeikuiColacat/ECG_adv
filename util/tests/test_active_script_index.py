@@ -172,6 +172,17 @@ def test_active_evidence_comparison_bundle_records_paper_table_manifests():
     assert all(Path(path).exists() for path in paper_table_manifests.values())
 
 
+def test_deprecated_effnet_candidate_is_prohibited_from_paper_use():
+    registry = yaml.safe_load((REPO / "configs" / "active_evidence_registry.yaml").read_text(encoding="utf-8"))
+    claim = next(
+        item for item in registry["active_claims"]
+        if item["claim_id"] == "effnet_v7_vae_lhat_improves_direct_k500"
+    )
+
+    assert claim["methods"]["vae_lhat"]["status"] == "deprecated"
+    assert claim["methods"]["vae_lhat"]["paper_use"] == "prohibited_protocol_invalid"
+
+
 def test_managed_experiments_are_exactly_latest_mainline_stages():
     data = _load_index()
     latest_configs = _latest_configs(data)

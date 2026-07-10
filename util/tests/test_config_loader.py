@@ -42,6 +42,8 @@ from ecg_adv_gen.config.entrypoints import managed_runner_script_names
 from ecg_adv_gen.config.loader import _audit_runtime_path, audit_runner_commands, build_artifact_trace
 from ecg_adv_gen.config.runner_audit import audit_runner_command
 from ecg_adv_gen.config.paths import PathSafetyError, validate_local_paths
+from ecg_adv_gen.data.kshot_artifacts import read_ref_meta_record_ids
+from ecg_adv_gen.evaluation.pn2021_corruptions import ref_ids_sha256
 from ecg_adv_gen.evaluation.pn2021c_protocol import official_s5_depth23_composites
 from ecg_adv_gen.run_naming import build_effnet_direct_run_leaf
 from ecg_adv_gen.runner.effnet_vae_lhat import (
@@ -113,6 +115,57 @@ def test_effnet_latest_eval_refs_use_locked_k500_seed(config_name: str):
     argv = " ".join(str(part) for command in build_runner_commands(config) for part in command["argv"])
     assert "seed20260601" in argv
     assert "seed20260531" not in argv
+
+
+@pytest.mark.parametrize(
+    "eval_config_name",
+    [
+        "pn2021c_ecgfounder_threechain_locked_official_s5.yaml",
+        "pn2021c_ecgfounder_official_s5_depth23_composite.yaml",
+    ],
+)
+def test_linked_ecgfounder_train_eval_use_same_k500_identity(eval_config_name: str):
+    train = _load("ecgfounder_vae_lhat_augmix_threechain_locked_k500.yaml")
+    evaluation = _load(eval_config_name)
+    train_kshot = train["paper_protocol"]["kshot"]
+    eval_kshot = evaluation["paper_protocol"]["kshot"]
+
+    assert eval_kshot["k"] == train_kshot["k"] == 500
+    assert eval_kshot["seed"] == train_kshot["seed"] == 20260531
+    assert eval_kshot["subset_seed"] == train_kshot["subset_seed"] == 20260531
+
+    def option(argv: list[object], flag: str) -> str:
+        values = [str(item) for item in argv]
+        return values[values.index(flag) + 1]
+
+    train_commands = {
+        option(command["argv"], "--center"): command["argv"]
+        for command in build_runner_commands(train)
+    }
+    eval_commands = {
+        option(command["argv"], "--centers"): command["argv"]
+        for command in build_runner_commands(evaluation)
+    }
+    expected_centers = set(train["paper_protocol"]["centers"]["target_4"])
+    assert set(eval_commands) == set(train_commands) == expected_centers
+    for center, train_argv in train_commands.items():
+        eval_argv = eval_commands[center]
+        train_ref = Path(option(train_argv, "--ref_meta_json"))
+        eval_ref = Path(option(eval_argv, "--exclude_ref_ids"))
+        assert eval_ref == train_ref
+        train_ids = read_ref_meta_record_ids(
+            train_ref,
+            expected_center=center,
+            expected_k=500,
+            expected_seed=20260531,
+        ).record_ids
+        eval_ids = read_ref_meta_record_ids(
+            eval_ref,
+            expected_center=center,
+            expected_k=500,
+            expected_seed=20260531,
+        ).record_ids
+        assert ref_ids_sha256(eval_ids) == ref_ids_sha256(train_ids)
 
 
 def test_public_experiment_configs_are_latest_mainline_only():

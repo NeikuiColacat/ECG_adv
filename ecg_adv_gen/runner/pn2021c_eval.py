@@ -135,7 +135,9 @@ def _merge_clean_metadata(clean_cache_metadata, clean_eval_payload):
             metadata["preprocess"] = clean_eval_payload["preprocess"]
         clean_protocol = (clean_eval_payload.get("pn2021") or {}).get("eval_protocol")
         if clean_protocol:
-            metadata["pn2021"] = {"eval_protocol": dict(clean_protocol)}
+            pn2021 = dict(metadata.get("pn2021") or {})
+            pn2021["eval_protocol"] = dict(clean_protocol)
+            metadata["pn2021"] = pn2021
     return metadata
 
 

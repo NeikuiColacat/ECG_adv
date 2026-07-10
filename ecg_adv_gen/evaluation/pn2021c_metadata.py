@@ -2,33 +2,39 @@
 
 from __future__ import annotations
 
-import hashlib
 from typing import Any, Mapping
+
+from .pn2021_corruptions import ref_ids_sha256
 
 
 class PN2021CMetadataError(ValueError):
     """Raised when PN2021-C metadata is incompatible with the clean baseline."""
 
 
-def _ref_ids_sha256(values: Any) -> str:
-    ids = sorted(str(item) for item in values)
-    return hashlib.sha256(("\n".join(ids) + "\n").encode("utf-8")).hexdigest()
-
-
 def _run_k500_identity(payload: Mapping[str, Any], *, label: str) -> dict[str, Any]:
     stage = str(payload.get("stage") or "")
+    config = payload.get("config") if isinstance(payload.get("config"), Mapping) else {}
+    config_stage = str(config.get("stage") or "")
+    if stage and config_stage and config_stage != stage:
+        raise PN2021CMetadataError(
+            f"{label} stage={stage!r} conflicts with config.stage={config_stage!r}"
+        )
     selected = [str(item) for item in payload.get("selected_ref_record_ids") or []]
     target_train = [str(item) for item in payload.get("target_train_record_ids") or []]
     if stage == "ptbxl_source":
         if selected or target_train:
             raise PN2021CMetadataError(f"{label} marked ptbxl_source but records target K500 ids")
+        if payload.get("center") not in (None, ""):
+            raise PN2021CMetadataError(f"{label} marked ptbxl_source but center is not empty")
+        for field in ("K", "target_train_K"):
+            if payload.get(field) not in (None, 0):
+                raise PN2021CMetadataError(f"{label} marked ptbxl_source but {field} is not zero")
         return {"source_only": True, "stage": stage}
     if not selected:
         raise PN2021CMetadataError(f"{label} does not expose selected_ref_record_ids")
-    selected_hash = _ref_ids_sha256(selected)
-    if target_train and _ref_ids_sha256(target_train) != selected_hash:
+    selected_hash = ref_ids_sha256(selected)
+    if target_train and ref_ids_sha256(target_train) != selected_hash:
         raise PN2021CMetadataError(f"{label} target_train_record_ids do not match selected_ref_record_ids")
-    config = payload.get("config") if isinstance(payload.get("config"), Mapping) else {}
     seed = config.get("subset_seed", config.get("seed"))
     return {
         "source_only": False,
@@ -71,6 +77,8 @@ def evaluation_k500_identities(payload: Mapping[str, Any]) -> dict[str, dict[str
     found: dict[str, dict[str, set[Any]]] = {}
 
     def add(center: object, ref_hash: object = None, count: object = None) -> None:
+        if ref_hash in (None, "") and count is None:
+            return
         values = found.setdefault(str(center), {"hashes": set(), "counts": set()})
         if ref_hash not in (None, ""):
             values["hashes"].add(str(ref_hash))
@@ -87,28 +95,32 @@ def evaluation_k500_identities(payload: Mapping[str, Any]) -> dict[str, dict[str
             if isinstance(row, Mapping):
                 add(center, count=row.get("n_excluded_ref"))
 
-    def collect(center: str, value: Any) -> None:
-        if isinstance(value, Mapping):
-            add(
-                center,
-                value.get("ref_record_ids_sha256"),
-                value.get("n_excluded_ref", value.get("n_excluded_ref_ids_for_center")),
-            )
-            for nested in value.values():
-                collect(center, nested)
-        elif isinstance(value, list):
-            for nested in value:
-                collect(center, nested)
-
     per_center = payload.get("per_center")
     if isinstance(per_center, Mapping):
-        for center, value in per_center.items():
-            collect(str(center), value)
+        for center, corruptions in per_center.items():
+            if not isinstance(corruptions, Mapping):
+                continue
+            for severities in corruptions.values():
+                if not isinstance(severities, Mapping):
+                    continue
+                for severity, row in severities.items():
+                    if not str(severity).isdigit() or not isinstance(row, Mapping):
+                        continue
+                    compatibility = row.get("metadata_compatibility")
+                    metadata = row.get("metadata")
+                    pn2021c = metadata.get("pn2021c") if isinstance(metadata, Mapping) else None
+                    for source in (row, compatibility, pn2021c):
+                        if isinstance(source, Mapping):
+                            add(
+                                center,
+                                source.get("ref_record_ids_sha256"),
+                                source.get("n_excluded_ref", source.get("n_excluded_ref_ids_for_center")),
+                            )
 
     selected = payload.get("selected_ref_record_ids")
     center = str(payload.get("center") or "")
     if center and isinstance(selected, list) and selected:
-        add(center, _ref_ids_sha256(selected), len(selected))
+        add(center, ref_ids_sha256(selected), len(selected))
 
     out: dict[str, dict[str, Any]] = {}
     for center, values in sorted(found.items()):

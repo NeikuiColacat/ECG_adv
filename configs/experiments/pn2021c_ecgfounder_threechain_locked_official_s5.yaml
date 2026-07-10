@@ -5,6 +5,11 @@ experiment:
   name: pn2021c_ecgfounder_threechain_locked_official_s5
   description: Official severity-5 PN2021-C evaluation for the locked ECGFounder full-FT three-chain AugMix run.
 
+paper_protocol:
+  kshot:
+    seed: 20260531
+    subset_seed: 20260531
+
 model:
   backbone: ecgfounder
   checkpoint: ${paths.data_root}/ecgfounder/checkpoint/12_lead_ECGFounder.pth
