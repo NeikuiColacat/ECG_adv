@@ -21,6 +21,10 @@ from ecg_adv_gen.config import (
 )
 from ecg_adv_gen.reporting.metrics_export import METRICS_FIELDNAMES
 from ecg_adv_gen.evidence.run_record import REGISTRATION_STATUSES, verify_run_file_index
+from ecg_adv_gen.evaluation.pn2021c_metadata import (
+    PN2021CMetadataError,
+    evaluation_k500_identities,
+)
 
 
 class EvidenceAuditError(ValueError):
@@ -500,8 +504,7 @@ def _managed_claim_pairs(registry: dict[str, Any]) -> dict[tuple[str, str], set[
     if not isinstance(claims, list):
         return pairs
     for claim in claims:
-        if (not isinstance(claim, dict) or claim.get("status") not in {"trusted", "provisional"}
-                or not isinstance(claim.get("methods"), dict)):
+        if not isinstance(claim, dict) or not isinstance(claim.get("methods"), dict):
             continue
         protocol = claim.get("protocol") if isinstance(claim.get("protocol"), dict) else {}
         pair = (str(protocol.get("mapping_version") or ""), str(protocol.get("mapping_hash") or ""))
@@ -1123,6 +1126,77 @@ def _audit_manifest(
     }
 
 
+def _audit_evaluation_k500_identity(
+    claim: dict[str, Any],
+    method_key: str,
+    method: dict[str, Any],
+    issues: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if claim.get("status") not in {"trusted", "provisional"} or method.get("status") not in {"trusted", "provisional"}:
+        return {"skipped": True}
+    manifests = (claim.get("required_reporting_artifacts") or {}).get("method_artifact_manifests") or {}
+    eval_manifest_path = _path_or_none(manifests.get(method_key))
+    if eval_manifest_path is None:
+        return {"skipped": True}
+
+    code = "evaluation_k500_identity_missing"
+
+    def read(path: Path | None, label: str) -> dict[str, Any]:
+        if not _require_path(path, issues, code, label):
+            return {}
+        assert path is not None
+        return _read_json_object(path, issues, code, label) or {}
+
+    method_manifest_path = _path_or_none(method.get("manifest"))
+    method_manifest = read(method_manifest_path, f"{method_key} training manifest")
+    launch_artifacts = (((method_manifest.get("artifact_trace") or {}).get("expected_outputs") or {}).get("launch_artifacts") or [])
+    k500_record = next(
+        (record for record in launch_artifacts if isinstance(record, dict) and record.get("role") == "k500_ref_ids"),
+        {},
+    )
+    base = method_manifest_path.parent if method_manifest_path else Path()
+    expected = read(
+        _resolved_path(k500_record.get("path"), base),
+        f"{method_key} k500_ref_ids artifact",
+    ).get("centers") or {}
+
+    eval_manifest = read(eval_manifest_path, f"{method_key} evaluation artifact manifest")
+    observed: dict[str, dict[str, Any]] = {}
+    for artifact in eval_manifest.get("artifacts") or []:
+        if not isinstance(artifact, dict) or artifact.get("artifact_type") != "eval_result":
+            continue
+        eval_path = _resolved_path(artifact.get("path"), eval_manifest_path.parent)
+        try:
+            identities = evaluation_k500_identities(read(eval_path, f"{method_key} evaluation result"))
+        except PN2021CMetadataError as exc:
+            _add_error(issues, code, f"{method_key} evaluation identity is invalid: {exc}")
+            continue
+        for center, identity in identities.items():
+            if center in observed and observed[center] != identity:
+                _add_error(issues, "evaluation_k500_identity_mismatch", f"{method_key} has multiple identities for {center}")
+            observed[center] = identity
+
+    for center, training_identity in expected.items():
+        actual = observed.get(str(center))
+        expected_pair = {
+            "k": training_identity.get("k"),
+            "ref_record_ids_sha256": training_identity.get("ref_record_ids_sha256"),
+        }
+        if actual is None:
+            _add_error(issues, code, f"{method_key} evaluation identity missing for {center}")
+        elif actual != expected_pair:
+            _add_error(
+                issues,
+                "evaluation_k500_identity_mismatch",
+                f"{method_key} training/evaluation K500 identity mismatch for {center}",
+                method=method_key,
+                center=center,
+                expected=expected_pair,
+                observed=actual,
+            )
+    return {"skipped": False, "training": expected, "evaluation": observed}
+
+
 def _audit_comparison_bundle(claim: dict[str, Any], issues: list[dict[str, Any]]) -> dict[str, Any]:
     bundle = claim.get("comparison_bundle") or {}
     if not bundle:
@@ -1364,6 +1438,9 @@ def audit_active_evidence_registry(
             if require_existing_artifacts:
                 method_summary["metrics"] = _audit_metrics(claim, method_key, method, issues)
                 method_summary["paper_tables"] = _audit_paper_tables(claim, method_key, method, issues)
+                method_summary["evaluation_k500_identity"] = _audit_evaluation_k500_identity(
+                    claim, method_key, method, issues
+                )
             method_summaries[method_key] = method_summary
 
         if len(config_summaries) >= 2:

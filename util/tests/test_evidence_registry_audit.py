@@ -566,6 +566,85 @@ def test_k500_ref_ids_must_be_nonempty_and_unique(
     assert "k500_ref_invalid" in _codes(evidence_case["audit"]())
 
 
+def test_active_claim_audits_recorded_evaluation_k500_identity(
+    evidence_case: dict[str, object],
+) -> None:
+    support = evidence_case["support"]
+    expected_hash = hashlib.sha256(b"r1\n").hexdigest()
+    k500_ids = support / "k500_ref_ids.json"
+    _write_json(
+        k500_ids,
+        {
+            "paper_protocol": {"seed": 1, "subset_seed": 1},
+            "centers": {
+                "ningbo": {
+                    "k": 1,
+                    "selection_seed": 1,
+                    "ref_record_ids_sha256": expected_hash,
+                }
+            },
+        },
+    )
+    method_manifest = support / "method_run_manifest.json"
+    _write_json(
+        method_manifest,
+        {
+            "status": "succeeded",
+            "manifest_kind": "managed_launcher_manifest",
+            "artifact_trace": {
+                "expected_outputs": {
+                    "launch_artifacts": [
+                        {"role": "k500_ref_ids", "path": str(k500_ids), "required": True}
+                    ]
+                }
+            },
+        },
+    )
+    eval_result = support / "pn2021c_eval.json"
+    _write_json(
+        eval_result,
+        {
+            "per_center": {
+                "ningbo": {
+                    "emg_noise": {
+                        "5": {
+                            "metadata_compatibility": {
+                                "n_excluded_ref": 1,
+                                "ref_record_ids_sha256": "b" * 64,
+                            }
+                        }
+                    }
+                }
+            }
+        },
+    )
+    eval_manifest = support / "pn2021c_artifact_manifest.json"
+    _write_json(
+        eval_manifest,
+        {"artifacts": [{"artifact_type": "eval_result", "path": str(eval_result)}]},
+    )
+    claim = evidence_case["registry"]["active_claims"][0]
+    claim["methods"]["baseline"]["manifest"] = str(method_manifest)
+    claim["required_reporting_artifacts"] = {
+        "method_artifact_manifests": {"baseline": str(eval_manifest)}
+    }
+
+    report = evidence_case["audit"]()
+
+    assert "evaluation_k500_identity_mismatch" in _codes(report)
+
+
+def test_trusted_method_keeps_managed_run_mapping_when_comparison_is_deprecated(
+    evidence_case: dict[str, object],
+) -> None:
+    claim = evidence_case["registry"]["active_claims"][0]
+    claim["status"] = "deprecated"
+    claim["paper_use"] = "prohibited_protocol_invalid"
+    claim["methods"]["baseline"]["status"] = "trusted"
+
+    assert "managed_run_claim_mapping_mismatch" not in _codes(evidence_case["audit"]())
+
+
 @pytest.mark.parametrize(
     ("mutation", "code"),
     [

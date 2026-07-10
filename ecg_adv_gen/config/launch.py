@@ -16,7 +16,9 @@ from ecg_adv_gen.evaluation.selection import (
     has_forbidden_selection_reference,
     validate_selection_policy,
 )
+from ecg_adv_gen.evaluation.pn2021c_metadata import validate_target_init_k500_identity
 
+from .adapters.common import argv_option_map, opt_first
 from .paths import PathSafetyError, is_under
 
 
@@ -647,6 +649,7 @@ def verify_required_inputs(manifest: dict[str, Any]) -> dict[str, Any]:
     trace = manifest.get("artifact_trace") or {}
     inputs = trace.get("inputs") or {}
     missing: list[dict[str, Any]] = []
+    lineage_errors: list[dict[str, Any]] = []
     verified: list[dict[str, Any]] = []
 
     def check_record(record: dict[str, Any] | None) -> None:
@@ -673,11 +676,47 @@ def verify_required_inputs(manifest: dict[str, Any]) -> dict[str, Any]:
         check_record(ref.get("signals_npz"))
         check_record(ref.get("latent_npz"))
 
+    for command in manifest.get("commands") or []:
+        argv = [str(item) for item in command.get("argv") or []]
+        script = Path(argv[1]).name if len(argv) > 1 else ""
+        opts = argv_option_map(argv)
+        init_path = opt_first(opts, "--init_model_path" if script == "ecgfounder_fullft.py" else "--init_ckpt")
+        if not init_path or script not in {"ecgfounder_fullft.py", "effnet_vae_lhat_augmix.py"}:
+            continue
+        ref_meta_path = opt_first(opts, "--ref_meta_json")
+        if not ref_meta_path and opt_first(opts, "--anchor_base"):
+            ref_meta_path = f"{opt_first(opts, '--anchor_base')}.ref_meta.json"
+        try:
+            ref_meta = _read_json_object(Path(str(ref_meta_path)), label="current K500 ref meta")
+            current = {
+                "stage": "k500",
+                "center": ref_meta.get("center") or opt_first(opts, "--center"),
+                "selected_ref_record_ids": _extract_ref_record_ids(ref_meta, Path(str(ref_meta_path))),
+                "config": {"seed": ref_meta.get("selection_seed", ref_meta.get("seed"))},
+            }
+            init_dir = Path(str(init_path)).parent
+            init_result_path = init_dir / "eval_result.json"
+            if init_result_path.is_file():
+                init_result = _read_json_object(init_result_path, label="initialization eval result")
+            else:
+                init_config = _read_json_object(init_dir / "run_config.json", label="initialization run config")
+                init_result = {
+                    "stage": "k500",
+                    "center": init_config.get("center"),
+                    "selected_ref_record_ids": list(init_config.get("train_record_ids") or [])
+                    + list(init_config.get("val_record_ids") or []),
+                    "config": init_config,
+                }
+            validate_target_init_k500_identity(current, init_result)
+        except (LaunchError, OSError, ValueError) as exc:
+            lineage_errors.append({"role": "checkpoint_k500_lineage", "path": str(init_path), "error": str(exc)})
+
     return {
-        "passed": not missing,
+        "passed": not missing and not lineage_errors,
         "checked_at_utc": datetime.now(timezone.utc).isoformat(),
         "n_checked": len(verified),
         "missing": missing,
+        "lineage_errors": lineage_errors,
         "verified_inputs": verified,
     }
 

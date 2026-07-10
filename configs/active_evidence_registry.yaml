@@ -193,9 +193,9 @@ managed_runs:
 
 active_claims:
   - claim_id: effnet_v7_vae_lhat_improves_direct_k500
-    title: EfficientNet1DV2 locked VAE-LHAT three-chain AugMix mainline replay surface.
-    status: trusted
-    paper_use: mainline
+    title: Historical EfficientNet1DV2 VAE-LHAT three-chain AugMix comparison with unmatched K500 exclusion.
+    status: deprecated
+    paper_use: prohibited_protocol_invalid
     owner: linbinhao
     evidence_doc: docs/pipelines/pn2021c_vae_lhat_augmix_locked_protocol_20260618.md
     protocol:
@@ -252,7 +252,7 @@ active_claims:
           pn2021_drop_all_zero_refexcluded: ${paths.output_root}/paper_table/seed20260601_k500_v7_sjr_rgq_20260530_rep1_effnet_direct_k500_v7_sjr_rgq_drop_all_zero/paper_table.csv
       vae_lhat:
         role: candidate
-        status: trusted
+        status: deprecated
         traceability: managed_yaml_replay
         method_family: vae_lhat_threechain_augmix_pn2021c
         run_id: locked_rawfirst_20260618_effnet_copies2
@@ -274,25 +274,25 @@ active_claims:
       pn2021_all_zero_kept_refexcluded:
         direct: {macro_auroc: 0.8491815467, macro_auprc: 0.5271229623}
         vae_lhat: {macro_auroc: 0.873450206917, macro_auprc: 0.563700861136}
-        delta_vae_lhat_minus_direct:
+        observed_unmatched_not_for_claim:
           macro_auroc_pp: 2.42686602
           macro_auprc_pp: 3.65778988
       pn2021_drop_all_zero_refexcluded:
         direct: {macro_auroc: 0.8732016318, macro_auprc: 0.6703137497}
         vae_lhat: {macro_auroc: 0.901499159253, macro_auprc: 0.73065541338}
-        delta_vae_lhat_minus_direct:
+        observed_unmatched_not_for_claim:
           macro_auroc_pp: 2.82975275
           macro_auprc_pp: 6.03416637
       pn2021c_all_zero_kept_corrupted_refexcluded:
         direct: {macro_auroc: 0.8099513373, macro_auprc: 0.4728534587}
         vae_lhat: {macro_auroc: 0.8286190331, macro_auprc: 0.4940394547}
-        delta_vae_lhat_minus_direct:
+        observed_unmatched_not_for_claim:
           macro_auroc_pp: 1.86676958
           macro_auprc_pp: 2.1185996
       pn2021c_drop_all_zero_corrupted_refexcluded:
         direct: {macro_auroc: 0.8312063361, macro_auprc: 0.6086938458}
         vae_lhat: {macro_auroc: 0.8547489876, macro_auprc: 0.6438691561}
-        delta_vae_lhat_minus_direct:
+        observed_unmatched_not_for_claim:
           macro_auroc_pp: 2.35426514
           macro_auprc_pp: 3.51753102
     required_reporting_artifacts:
@@ -312,8 +312,9 @@ active_claims:
         pn2021c_drop_all_zero_corrupted_refexcluded: ${paths.output_root}/paper_table/pn2021c_official_s5_locked_effnet_direct_vs_threechain_drop_all_zero/paper_table_manifest.json
     supporting_reporting_artifacts:
       ecgfounder_decoupled_depth23_fourcenter_20260709:
-        status: provisional_single_seed
-        role: current_internal_best_ecgfounder_depth23_candidate
+        status: deprecated
+        paper_use: prohibited_protocol_invalid
+        role: historical_descriptive_ecgfounder_depth23_candidate
         evidence_doc: docs/reports/archive/20260709/ecgfounder_decoupled_fourcenter_depth23_summary.md
         implementation_commit: b57ee1600e468ce7bc0765708c9d78d7f8f65217
         method_config: configs/experiments/ecgfounder_vae_lhat_augmix_threechain_locked_k500.yaml
@@ -351,23 +352,22 @@ active_claims:
           depth2:
             clean: {macro_auroc: 0.9004081421, macro_auprc: 0.6439567133}
             pn2021c: {macro_auroc: 0.8307388887, macro_auprc: 0.5384574918}
-            delta_vs_matched_direct_pp: {macro_auroc: 4.3336966324, macro_auprc: 7.5490744751}
+            observed_unmatched_not_for_claim: {macro_auroc_pp: 4.3336966324, macro_auprc_pp: 7.5490744751}
           depth3:
             clean: {macro_auroc: 0.9004081421, macro_auprc: 0.6439567133}
             pn2021c: {macro_auroc: 0.8015357718, macro_auprc: 0.4941763398}
-            delta_vs_matched_direct_pp: {macro_auroc: 4.6234668715, macro_auprc: 7.5014430241}
+            observed_unmatched_not_for_claim: {macro_auroc_pp: 4.6234668715, macro_auprc_pp: 7.5014430241}
           depth2_plus_depth3:
             clean: {macro_auroc: 0.9004081421, macro_auprc: 0.6439567133}
             pn2021c: {macro_auroc: 0.8161373303, macro_auprc: 0.5163169158}
             drop_from_clean_pp: {macro_auroc: 8.4270811869, macro_auprc: 12.7639797538}
-            delta_vs_matched_direct_pp: {macro_auroc: 4.4785817520, macro_auprc: 7.5252587496}
-            delta_vs_corrupted_k500_supervised_pp: {macro_auroc: 2.5416159214, macro_auprc: 5.6136170834}
-            delta_vs_ecgfounder_c117_pp: {macro_auroc: 1.8537501798, macro_auprc: 1.9612442512}
-            gap_vs_effnet_c117_pp: {macro_auroc: 0.8458722097, macro_auprc: 3.6662930588}
+            observed_unmatched_not_for_claim: {macro_auroc_pp: 4.4785817520, macro_auprc_pp: 7.5252587496}
         caveats:
           - Single-seed result; multi-seed replication is missing.
           - Exact launch command and Git SHA were not persisted in the run artifacts.
           - Managed config records the routing topology but not the c24/ep15 one-off overrides or asrboost_g9 initialization.
+          - Protocol invalid for paper comparison: current K500 is seed20260531, while the target-adapted asrboost_g9 initialization used seed20260601.
+          - Unexcluded initialization records by center are ningbo=488, chapman_shaoxing=456, cpsc_2018=445, georgia=466.
       ecgfounder_locked_threechain_pn2021c_s5:
         status: supporting_contrast_no_direct_delta
         evidence_doc: docs/pipelines/pn2021c_vae_lhat_augmix_locked_protocol_20260618.md
@@ -386,7 +386,8 @@ active_claims:
           pn2021c_drop_all_zero_corrupted_refexcluded: ${paths.output_root}/paper_table/pn2021c_official_s5_locked_ecgfounder_threechain_drop_all_zero/paper_table_manifest.json
     comparison_bundle:
       comparison_id: v7_sjr_rgq_effnet_direct_vs_threechain_locked_20260618
-      status: built
+      status: deprecated
+      paper_use: prohibited_protocol_invalid
       baseline_method: direct
       candidate_method: vae_lhat
       output_dir: ${paths.output_root}/comparison_bundles/v7_sjr_rgq_effnet_direct_vs_threechain_locked_20260618
@@ -401,7 +402,8 @@ active_claims:
         - paper_table_pn2021_drop_all_zero_refexcluded.csv
         - paper_table_pn2021_drop_all_zero_refexcluded_manifest.json
     caveats:
-      - Current trusted candidate evidence covers managed locked three-chain PN2021 clean/ref-excluded metrics.
+      - Historical absolute metrics remain descriptive only; the direct/candidate comparison is prohibited because the PN2021-C candidate artifact excluded seed20260531 while training used seed20260601.
+      - Unexcluded training records by center are ningbo=488, chapman_shaoxing=456, cpsc_2018=445, georgia=466.
       - The historical candidate managed run is evaluation-only because four declared last_model.pt files are missing; rerun the managed YAML before claiming byte-identical replay.
       - PN2021-C registered metrics aggregate official severity-5 corruption results per target center before the four-center mean.
       - Do not tune future recipes from held-out PN2021 target labels or full target-center class distributions.

@@ -39,6 +39,7 @@ for path in (ECGFOUNDER_ROOT, REPO_ROOT):
 from physionet2021_dataset import TARGET_POINTS  # noqa: E402
 
 from ecg_adv_gen.data.contracts import PREPROCESS_CONTRACT_ID  # noqa: E402
+from ecg_adv_gen.data.kshot import load_ref_record_ids_by_center  # noqa: E402
 from ecg_adv_gen.data.waveform_datasets import (  # noqa: E402
     ECGFounderBottleneck5000CleanDataset,
     ECGFounderBottleneck5000CorruptedDataset,
@@ -62,7 +63,10 @@ from ecg_adv_gen.evaluation.pn2021_corruptions import (  # noqa: E402
 from ecg_adv_gen.evaluation.pn2021_metric_views import (  # noqa: E402
     select_center_clean_metric_row,
 )
-from ecg_adv_gen.evaluation.pn2021c_metadata import build_pn2021c_metadata_payload  # noqa: E402
+from ecg_adv_gen.evaluation.pn2021c_metadata import (  # noqa: E402
+    build_pn2021c_metadata_payload,
+    validate_target_init_k500_identity,
+)
 from ecg_adv_gen.evaluation.pn2021c_protocol import (  # noqa: E402
     LOCKED_ECGFOUNDER_CORRUPTION_INPUT,
     ecgfounder_pn2021c_corruption_order,
@@ -114,6 +118,17 @@ def _load_result(run_dir: Path) -> dict[str, Any]:
         result = json.load(f)
     if "center" not in result:
         raise ValueError(f"{result_path} does not record center")
+    init_model = result.get("init_model") or {}
+    init_path = init_model.get("path") if isinstance(init_model, dict) else None
+    if init_path:
+        init_result_path = Path(str(init_path)).parent / "eval_result.json"
+        if not init_result_path.is_file():
+            raise ValueError(f"initialization checkpoint does not expose eval_result.json: {init_result_path}")
+        with init_result_path.open() as f:
+            init_result = json.load(f)
+        if not isinstance(init_result, dict):
+            raise ValueError(f"initialization eval_result.json root must be an object: {init_result_path}")
+        validate_target_init_k500_identity(result, init_result)
     return result
 
 
@@ -122,11 +137,18 @@ def _excluded_ref_ids_for_center(
     center: str,
     min_target_ref_excluded: int = 0,
     record_ids: Any = None,
+    evaluation_ref_ids: set[str] | None = None,
 ) -> set[str]:
     if center != str(result["center"]):
         return set()
     selected_ids = {str(x) for x in result.get("selected_ref_record_ids", [])}
-    matched_ids = selected_ids
+    exclude_ids = selected_ids if evaluation_ref_ids is None else {str(x) for x in evaluation_ref_ids}
+    if exclude_ids != selected_ids:
+        raise ValueError(
+            f"training/evaluation K500 identity mismatch for {center}: "
+            f"training={len(selected_ids)} ids, evaluation={len(exclude_ids)} ids"
+        )
+    matched_ids = exclude_ids
     if record_ids is not None:
         matched_ids = selected_ids.intersection(set(np.asarray(record_ids).astype(str)))
     if len(matched_ids) < int(min_target_ref_excluded or 0):
@@ -135,7 +157,7 @@ def _excluded_ref_ids_for_center(
             f"{len(selected_ids)} ids for {center}; matched {len(matched_ids)} loaded records; "
             f"expected at least {int(min_target_ref_excluded)} for K-shot ref exclusion"
         )
-    return selected_ids
+    return exclude_ids
 
 
 def _input_stabilizer_kwargs_from_args(args: argparse.Namespace) -> dict[str, Any]:
@@ -197,6 +219,7 @@ def eval_clean_center(
         center,
         getattr(args, "min_target_ref_excluded", 0),
         record_ids,
+        evaluation_ref_ids=getattr(args, "exclude_ref_ids_by_center", {}).get(center),
     )
     indices = filter_record_indices(record_ids, exclude_ids, args.limit)
     if args.corruption_input == "native_raw_first":
@@ -336,6 +359,7 @@ def eval_one(
         center,
         getattr(args, "min_target_ref_excluded", 0),
         record_ids,
+        evaluation_ref_ids=getattr(args, "exclude_ref_ids_by_center", {}).get(center),
     )
     indices = filter_record_indices(record_ids, exclude_ids, args.limit)
     if args.corruption_input == "native_raw_first":
@@ -598,6 +622,7 @@ def main() -> None:
     p.add_argument("--seed", type=int, default=20260501)
     p.add_argument("--limit", type=int, default=None)
     p.add_argument("--min_target_ref_excluded", type=int, default=0)
+    p.add_argument("--exclude_ref_ids", nargs="+", default=[])
     p.add_argument("--ecgfounder_input_bandpass_low_hz", type=float, default=None)
     p.add_argument("--ecgfounder_input_bandpass_high_hz", type=float, default=None)
     p.add_argument("--ecgfounder_input_repair_flat_leads", action="store_true")
@@ -617,6 +642,7 @@ def main() -> None:
 
     run_dir = Path(args.run_dir)
     result = _load_result(run_dir)
+    args.exclude_ref_ids_by_center = load_ref_record_ids_by_center(args.exclude_ref_ids)
     centers = list(args.centers or [str(result["center"])])
     unknown = sorted(set(centers).difference(DEFAULT_CENTERS))
     if unknown:

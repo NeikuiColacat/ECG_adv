@@ -2,9 +2,10 @@
 
 Date: 2026-07-09
 
-Status: provisional single-seed internal best for the ECGFounder official
-severity-5 depth2+3 composite protocol. This result is registered for handoff
-and replay work, but it is not yet a multi-seed paper claim.
+Status: deprecated protocol-invalid historical observation. The absolute
+metrics remain registered for traceability, but this result is prohibited from
+paper comparison because its target-adapted initialization used a different
+K500 identity.
 
 ## Method
 
@@ -14,8 +15,8 @@ sources separately:
 - ECGFounder 12-lead model, full-model fine-tuning, 30,670,389 trainable
   parameters.
 - Four target centers: Ningbo, Chapman-Shaoxing, CPSC 2018, and Georgia.
-- K=500 target records per center, seed `20260531`; K500 references are excluded
-  from evaluation.
+- K=500 current target records per center, seed `20260531`; those current refs
+  are excluded from evaluation.
 - Fifteen training epochs; only `last_model.pt` is evaluated.
 - VAE-LH latent-hull search: M=20, lambda=0.05, 5 optimization steps,
   latent learning rate 0.25, PGD epsilon 2.0, and 160 searched anchors.
@@ -42,21 +43,43 @@ exactly replay this one-off `epochs=15`, `copies=24` result.
 - Primary metric view in this report: ref-excluded, all-zero-kept macro AUROC
   and macro AUPRC.
 
-## Four-Center Result
+## Four-Center Descriptive Result
 
-| Composite depth | Clean AUROC / AUPRC | PN2021-C AUROC / AUPRC | Drop from clean | Gain vs matched direct fullFT |
+| Composite depth | Clean AUROC / AUPRC | PN2021-C AUROC / AUPRC | Drop from clean | Observed unmatched difference vs direct fullFT (not for claim) |
 |---|---:|---:|---:|---:|
 | 2 | 0.9004 / 0.6440 | 0.8307 / 0.5385 | 6.97 / 10.55 pp | +4.33 / +7.55 pp |
 | 3 | 0.9004 / 0.6440 | 0.8015 / 0.4942 | 9.89 / 14.98 pp | +4.62 / +7.50 pp |
 | 2+3 | 0.9004 / 0.6440 | 0.8161 / 0.5163 | 8.43 / 12.76 pp | +4.48 / +7.53 pp |
 
-For the combined depth2+3 view, the matched direct fullFT baseline is
-`0.7714 / 0.4411` on PN2021-C and `0.8879 / 0.6103` on the matched clean
-reference. The candidate also exceeds:
+For the combined depth2+3 view, the separately observed direct fullFT baseline
+is `0.7714 / 0.4411` on PN2021-C and `0.8879 / 0.6103` on clean data. Because
+the K500 identities are unmatched, the numeric differences in the last column
+are descriptive arithmetic only and are not evidence of improvement. The
+previously recorded differences against other baselines were:
 
 - corrupted-K500 supervised: `+2.54 / +5.61 pp`;
 - the controlled ECGFounder c117 replay: `+1.85 / +1.96 pp`;
 - the EffNet c117 replay: `+0.85 / +3.67 pp` in absolute PN2021-C score.
+
+## K500 Lineage Audit
+
+The current run trained on and excluded seed `20260531`, but every center was
+initialized from the target-adapted `asrboost_g9` K500 full-FT checkpoint using
+seed `20260601`. A target-adapted initialization is already exposed to its K500
+records; excluding only the current seed does not remove those records from the
+evaluation set.
+
+| Center | Current/evaluation seed | Initialization seed | K500 intersection | Initialization records left in evaluation |
+|---|---:|---:|---:|---:|
+| Ningbo | 20260531 | 20260601 | 12 | 488 |
+| Chapman-Shaoxing | 20260531 | 20260601 | 44 | 456 |
+| CPSC 2018 | 20260531 | 20260601 | 55 | 445 |
+| Georgia | 20260531 | 20260601 | 34 | 466 |
+| Total | — | — | 145 | 1855 / 2000 |
+
+This is not repaired by taking a union exclusion larger than K=500. The locked
+protocol instead rejects a different target-adapted initialization and permits
+only the same K500 identity or an explicitly source-only initialization.
 
 ## Per-Center Combined Depth2+3
 
@@ -114,6 +137,7 @@ and source PTB-XL sanity metrics.
   independently prove code provenance.
 - The tracked managed config has the correct model-aware routing but not the
   exact copies/epoch overrides or the one-off `asrboost_g9` initialization.
-- One seed is complete. Multi-seed replication and a managed replay are still
-  required before promoting this result from provisional to trusted paper
-  evidence.
+- The K500 lineage mismatch is protocol-invalid, not merely a missing
+  replication. A new managed run with matching current/init/evaluation identity
+  (or a source-only initialization) is required before any paper comparison;
+  multi-seed replication remains a separate later requirement.

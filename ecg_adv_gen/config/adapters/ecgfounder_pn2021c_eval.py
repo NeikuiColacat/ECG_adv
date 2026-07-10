@@ -60,6 +60,12 @@ def build_ecgfounder_pn2021c_eval_argv(config: Mapping[str, Any], context: Mappi
         )
     )
     corruption_input = str(evaluation.get("corruption_input", "bottleneck5000"))
+    kshot = paper["kshot"]
+    subset_seed = kshot.get("subset_seed", kshot["seed"])
+    ref_meta = (
+        f"{data['kshot_subset_root']}/{center}/k{kshot['k']}_seed{subset_seed}/"
+        f"{center}_real_k{kshot['k']}_seed{subset_seed}.ref_meta.json"
+    )
     run_dir_template = method.get("run_dir_template") or method.get("run_dir")
     if not run_dir_template:
         raise ValueError("ecgfounder_pn2021c_eval adapter requires method.run_dir_template")
@@ -88,6 +94,8 @@ def build_ecgfounder_pn2021c_eval_argv(config: Mapping[str, Any], context: Mappi
         PN2021C_REQUIRED_CACHE_VERSION,
         "--min_target_ref_excluded",
         paper["kshot"]["k"],
+        "--exclude_ref_ids",
+        ref_meta,
         "--centers",
         center,
         "--corruptions",
@@ -160,6 +168,7 @@ def audit_ecgfounder_pn2021c_eval_command(
             "--clean_cache_dir",
             "--required_cache_version",
             "--min_target_ref_excluded",
+            "--exclude_ref_ids",
             "--centers",
             "--corruptions",
             "--severities",
@@ -216,6 +225,12 @@ def audit_ecgfounder_pn2021c_eval_command(
         errors.append(f"{script}: unexpected center {center!r}")
     if matrix_center and center != matrix_center:
         errors.append(f"{script}: matrix center {matrix_center!r} must match --centers {centers!r}")
+    expected_ref = (
+        f"{config['data']['kshot_subset_root']}/{center}/k{expected_k}_seed{expected_seed}/"
+        f"{center}_real_k{expected_k}_seed{expected_seed}.ref_meta.json"
+    )
+    if opt_list(opts, "--exclude_ref_ids") != [expected_ref]:
+        errors.append(f"{script}: --exclude_ref_ids must match the current training K500 identity")
 
     output_path = str(opt_first(opts, "--output_path", ""))
     if "official_s5_locked" not in output_path and "official_s5_depth23_composite" not in output_path:

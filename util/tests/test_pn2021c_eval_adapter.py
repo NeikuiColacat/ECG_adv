@@ -74,7 +74,17 @@ def test_ecgfounder_pn2021c_eval_adapter_requires_k500_ref_exclusion_gate():
     argv = [str(x) for x in command["argv"]]
 
     assert argv[argv.index("--min_target_ref_excluded") + 1] == "500"
+    assert argv[argv.index("--exclude_ref_ids") + 1].endswith(
+        "/ningbo/k500_seed20260531/ningbo_real_k500_seed20260531.ref_meta.json"
+    )
     assert audit_ecgfounder_pn2021c_eval_command(command, config=config)["errors"] == []
+
+    start = command["argv"].index("--exclude_ref_ids")
+    del command["argv"][start : start + 2]
+    assert any(
+        "--exclude_ref_ids" in error
+        for error in audit_ecgfounder_pn2021c_eval_command(command, config=config)["errors"]
+    )
 
 
 def test_pn2021c_eval_adapter_requires_clean_eval_and_cache_version():

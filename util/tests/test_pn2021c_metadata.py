@@ -6,7 +6,9 @@ from ecg_adv_gen.evaluation.pn2021c_metadata import (
     PN2021CMetadataError,
     build_center_scoped_clean_eval_payload,
     build_pn2021c_metadata_payload,
+    evaluation_k500_identities,
     validate_pn2021c_metadata_compatibility,
+    validate_target_init_k500_identity,
 )
 
 
@@ -88,3 +90,76 @@ def test_clean_and_corrupt_metadata_reject_ref_record_ids_sha256_mismatch():
 
     with pytest.raises(PN2021CMetadataError, match="ref_record_ids_sha256 mismatch for ningbo"):
         _validate(clean, corrupt)
+
+
+def test_target_adapted_init_must_use_current_k500_identity():
+    current = {
+        "stage": "k500",
+        "center": CENTER,
+        "selected_ref_record_ids": ["r1", "r2"],
+        "config": {"seed": 20260531},
+    }
+    init = {
+        "stage": "k500",
+        "center": CENTER,
+        "selected_ref_record_ids": ["r2", "r3"],
+        "config": {"seed": 20260601},
+    }
+
+    with pytest.raises(PN2021CMetadataError, match="target-adapted initialization K500 identity mismatch"):
+        validate_target_init_k500_identity(current, init)
+
+
+def test_source_only_init_is_allowed_without_k500_identity():
+    current = {
+        "stage": "k500",
+        "center": CENTER,
+        "selected_ref_record_ids": ["r1"],
+        "config": {"seed": 20260531},
+    }
+    source_only = {
+        "stage": "ptbxl_source",
+        "center": None,
+        "selected_ref_record_ids": [],
+        "target_train_record_ids": [],
+    }
+
+    assert validate_target_init_k500_identity(current, source_only)["source_only"] is True
+
+
+def test_evaluation_k500_identity_rejects_multiple_hashes_for_one_center():
+    payload = {
+        "per_center": {
+            CENTER: {
+                "powerline_noise": {
+                    "5": {"metadata_compatibility": {"n_excluded_ref": 500, "ref_record_ids_sha256": "a" * 64}}
+                },
+                "emg_noise": {
+                    "5": {"metadata_compatibility": {"n_excluded_ref": 500, "ref_record_ids_sha256": "b" * 64}}
+                },
+            }
+        }
+    }
+
+    with pytest.raises(PN2021CMetadataError, match="multiple evaluation K500 identities"):
+        evaluation_k500_identities(payload)
+
+
+def test_stream_metadata_keeps_clean_evaluation_ref_identity():
+    from ecg_adv_gen.runner.pn2021c_eval import _merge_clean_metadata
+
+    clean_eval = {
+        "label_mapping": {"version": "v7", "hash": "555ec85d5b51"},
+        "preprocess": {"contract_id": "contract"},
+        "pn2021": {
+            "eval_protocol": {
+                "status": "paper_safe",
+                "eval_protocol": "paper_refexcluded",
+                "target_ref_id_hashes": {CENTER: REF_HASH},
+            }
+        },
+    }
+
+    merged = _merge_clean_metadata({}, clean_eval)
+
+    assert merged["pn2021"]["eval_protocol"]["target_ref_id_hashes"][CENTER] == REF_HASH

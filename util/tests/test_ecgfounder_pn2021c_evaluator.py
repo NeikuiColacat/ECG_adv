@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import argparse
 import ast
+import json
 from pathlib import Path
 
 import numpy as np
+import pytest
 import torch
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
@@ -175,6 +177,55 @@ def test_ecgfounder_pn2021c_requires_min_target_ref_exclusion_for_run_center():
         "georgia",
         500,
     ) == set()
+
+
+def test_ecgfounder_pn2021c_rejects_training_evaluation_exclusion_mismatch():
+    import ecg_adv_gen.runner.ecgfounder_pn2021c_eval as evaluator
+
+    with pytest.raises(ValueError, match="training/evaluation K500 identity mismatch"):
+        evaluator._excluded_ref_ids_for_center(
+            {"center": "ningbo", "selected_ref_record_ids": ["r1", "r2"]},
+            "ningbo",
+            2,
+            evaluation_ref_ids={"r2", "r3"},
+        )
+
+
+def test_ecgfounder_pn2021c_load_rejects_target_adapted_init_k500_mismatch(tmp_path: Path):
+    import ecg_adv_gen.runner.ecgfounder_pn2021c_eval as evaluator
+
+    init_dir = tmp_path / "init"
+    current_dir = tmp_path / "current"
+    init_dir.mkdir()
+    current_dir.mkdir()
+    init_checkpoint = init_dir / "last_model.pt"
+    init_checkpoint.write_bytes(b"checkpoint")
+    (init_dir / "eval_result.json").write_text(
+        json.dumps(
+            {
+                "stage": "k500",
+                "center": "ningbo",
+                "selected_ref_record_ids": ["r2", "r3"],
+                "config": {"seed": 20260601},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (current_dir / "eval_result.json").write_text(
+        json.dumps(
+            {
+                "stage": "k500",
+                "center": "ningbo",
+                "selected_ref_record_ids": ["r1", "r2"],
+                "config": {"seed": 20260531},
+                "init_model": {"path": str(init_checkpoint)},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="target-adapted initialization K500 identity mismatch"):
+        evaluator._load_result(current_dir)
 
 
 def test_locked_ecgfounder_eval_one_records_package_pn2021c_metadata(monkeypatch):

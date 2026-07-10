@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from ecg_adv_gen.config import attach_launch_artifacts
+from ecg_adv_gen.config.launch import verify_required_inputs
 from ecg_adv_gen.evidence import run_record
 
 
@@ -63,6 +64,87 @@ def _write_json(path: Path, payload: dict) -> None:
 
 def _required_file(path: Path, role: str) -> dict:
     return {"path": str(path), "role": role, "required": True}
+
+
+def _ecgfounder_preflight_manifest(ref_meta: Path, init_checkpoint: Path) -> dict:
+    return {
+        "commands": [
+            {
+                "argv": [
+                    "python",
+                    "ecgfounder_fullft.py",
+                    "--stage",
+                    "k500",
+                    "--center",
+                    "ningbo",
+                    "--ref_meta_json",
+                    str(ref_meta),
+                    "--init_model_path",
+                    str(init_checkpoint),
+                ]
+            }
+        ],
+        "artifact_trace": {
+            "inputs": {
+                "checkpoints": [_required_file(init_checkpoint, "command.init_model_path")],
+                "k500_refs": [
+                    {
+                        "center": "ningbo",
+                        "ref_meta_json": _required_file(ref_meta, "kshot_ref_meta"),
+                    }
+                ],
+            }
+        },
+    }
+
+
+def test_preflight_rejects_target_adapted_init_with_different_k500_identity(tmp_path: Path):
+    ref_meta = tmp_path / "current.ref_meta.json"
+    _write_json(
+        ref_meta,
+        {"center": "ningbo", "K": 2, "selection_seed": 20260531, "ref_record_ids": ["r1", "r2"]},
+    )
+    init_dir = tmp_path / "init"
+    init_dir.mkdir()
+    init_checkpoint = init_dir / "last_model.pt"
+    init_checkpoint.write_bytes(b"checkpoint")
+    _write_json(
+        init_dir / "eval_result.json",
+        {
+            "stage": "k500",
+            "center": "ningbo",
+            "selected_ref_record_ids": ["r2", "r3"],
+            "config": {"seed": 20260601},
+        },
+    )
+
+    report = verify_required_inputs(_ecgfounder_preflight_manifest(ref_meta, init_checkpoint))
+
+    assert report["passed"] is False
+    assert "target-adapted initialization K500 identity mismatch" in report["lineage_errors"][0]["error"]
+
+
+def test_preflight_allows_explicit_source_only_init(tmp_path: Path):
+    ref_meta = tmp_path / "current.ref_meta.json"
+    _write_json(
+        ref_meta,
+        {"center": "ningbo", "K": 1, "selection_seed": 20260531, "ref_record_ids": ["r1"]},
+    )
+    init_dir = tmp_path / "init"
+    init_dir.mkdir()
+    init_checkpoint = init_dir / "last_model.pt"
+    init_checkpoint.write_bytes(b"checkpoint")
+    _write_json(
+        init_dir / "eval_result.json",
+        {
+            "stage": "ptbxl_source",
+            "center": None,
+            "selected_ref_record_ids": [],
+            "target_train_record_ids": [],
+        },
+    )
+
+    assert verify_required_inputs(_ecgfounder_preflight_manifest(ref_meta, init_checkpoint))["passed"] is True
 
 
 def _make_registerable_run(tmp_path: Path) -> tuple[dict, dict[str, Path]]:
