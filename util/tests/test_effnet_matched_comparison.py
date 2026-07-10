@@ -339,6 +339,38 @@ def test_matched_a0_a5_resolve_to_distinct_arm_named_run_directories():
     assert "_arma5_" in a5.out_dir.name
 
 
+def test_matched_manifest_child_paths_equal_runtime_arm_paths():
+    from ecg_adv_gen.runner import effnet_vae_lhat_augmix as wrapper
+    from ecg_adv_gen.runner.effnet_vae_lhat import resolve_effnet_vae_lhat_paths
+
+    config = load_experiment_config(
+        REPO / "configs/experiments/effnet_vae_lhat_augmix_threechain_locked_k500.yaml",
+        LOCAL_CONFIG,
+        runtime_context={"run_id": "pytest_manifest_arms"},
+    )
+    config["runner"]["matrix"] = {"center": ["ningbo"], "comparison_arm": ["a0", "a5"]}
+    commands = build_runner_commands(config)
+    manifest = make_dry_run_manifest(
+        config,
+        commands=commands,
+        local_paths=validate_experiment_config(config, repo_root=REPO),
+        run_id="pytest_manifest_arms",
+        cli_args=Namespace(dry_run=True, write_plan=True),
+    )
+    child_paths = {
+        child["matrix"]["comparison_arm"]: child["child_run_dir"]
+        for child in manifest["artifact_trace"]["expected_outputs"]["child_runs"]
+    }
+
+    for command in commands:
+        args = wrapper.parse_args(command["argv"][2:])
+        runtime_path = resolve_effnet_vae_lhat_paths(
+            args, data_root=Path(args.data_root), out_root=Path(args.out_root)
+        ).out_dir
+        arm = command["matrix"]["comparison_arm"]
+        assert child_paths[arm] == str(runtime_path)
+
+
 def test_historical_direct_runner_cannot_be_mistaken_for_matched_a0():
     source = (REPO / "ecg_adv_gen/runner/effnet_direct_finetune.py").read_text(encoding="utf-8")
 

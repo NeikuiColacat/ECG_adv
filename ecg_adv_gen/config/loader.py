@@ -954,6 +954,7 @@ def _vae_child_run(opts: dict[str, Any], center: str) -> dict[str, Any]:
     child_dir = out_root / build_effnet_vae_lhat_run_leaf(
         {
             "center": center,
+            "comparison_arm": _opt_first(opts, "--comparison_arm", "historical_unmatched"),
             "hull_M": _opt_first(opts, "--hull_M", "20"),
             "hull_lambda": _opt_first(opts, "--hull_lambda", "0.15"),
             "latent_augmix_severity": _opt_first(opts, "--latent_augmix_severity", "2"),
