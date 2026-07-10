@@ -47,6 +47,7 @@ from ecg_adv_gen.run_naming import build_effnet_direct_run_leaf
 from ecg_adv_gen.runner.effnet_vae_lhat import (
     EffNetVaeLhatPaths,
     build_effnet_vae_lhat_train_cmd,
+    resolve_effnet_vae_lhat_paths,
 )
 
 
@@ -492,24 +493,13 @@ def test_effnet_vae_lhat_command_audit_is_split_into_adapter():
 
     config = _load("effnet_vae_lhat_augmix_threechain_locked_k500.yaml")
     command = build_runner_commands(config)[0]
-    seed = config["paper_protocol"]["kshot"]["seed"]
-    result = audit_effnet_vae_lhat_command(
-        command,
-        expected_k=500,
-        expected_seed=seed,
-        target_centers=set(config["paper_protocol"]["centers"]["target_4"]),
-    )
+    result = audit_effnet_vae_lhat_command(command, config=config)
     assert result["errors"] == []
 
     bad = copy.deepcopy(command)
     bad["argv"] = list(bad["argv"])
     bad["argv"][bad["argv"].index("--hull_neighbor_mode") + 1] = "heldout_oracle"
-    result = audit_effnet_vae_lhat_command(
-        bad,
-        expected_k=500,
-        expected_seed=seed,
-        target_centers=set(config["paper_protocol"]["centers"]["target_4"]),
-    )
+    result = audit_effnet_vae_lhat_command(bad, config=config)
     assert "invalid --hull_neighbor_mode" in "\n".join(result["errors"])
 
 
@@ -592,7 +582,7 @@ def test_effnet_vae_lhat_threechain_locked_k500_config_uses_official_s5_last_che
         argv = command["argv"]
         assert "--enable_raw_corrupt_consistency" not in argv
         assert "--latent_augmix_topology" not in argv
-        assert "--enable_latent_augmix_consistency" not in argv
+        assert "--enable_latent_augmix_consistency" in argv
         assert _option_value(argv, "--latent_augmix_copies") == "2"
         assert _option_value(argv, "--latent_augmix_width") == "3"
         assert _option_value(argv, "--latent_augmix_chain_base_mode") == "clean_clean_third"
@@ -617,7 +607,8 @@ def test_effnet_vae_lhat_threechain_locked_k500_config_uses_official_s5_last_che
         assert "--qab_size" not in argv
         assert "--rescore_interval" not in argv
         assert "--asr_consec_low_max" not in argv
-        assert "--asr_low_threshold" not in argv
+        assert _option_value(argv, "--asr_low_threshold") == "0.3"
+        assert _option_value(argv, "--asr_high_threshold") == "0.7"
         assert "--latent_augmix_mixture_mode" not in argv
         assert "--latent_augmix_mixture_prob" not in argv
         assert "--latent_augmix_mixture_beta_a" not in argv
@@ -643,6 +634,153 @@ def test_effnet_vae_lhat_threechain_locked_k500_config_uses_official_s5_last_che
             "baseline_shift",
             "random_leads_masking",
         ]
+
+
+def _effnet_vae_lhat_final_train_cmd(config: dict) -> list[str]:
+    from ecg_adv_gen.runner import effnet_vae_lhat_augmix
+
+    config["runner"]["matrix"]["center"] = ["ningbo"]
+    wrapper_argv = build_runner_commands(config)[0]["argv"]
+    args = effnet_vae_lhat_augmix.parse_args(wrapper_argv[2:])
+    data_root = Path(args.data_root)
+    paths = resolve_effnet_vae_lhat_paths(
+        args,
+        data_root=data_root,
+        out_root=Path(args.out_root),
+    )
+    return build_effnet_vae_lhat_train_cmd(
+        args,
+        python=sys.executable,
+        data_root=data_root,
+        paths=paths,
+        class_trust=Path("/tmp/class_trust.json"),
+    )
+
+
+@pytest.mark.parametrize(
+    ("mutate", "expected_values", "present", "absent"),
+    [
+        (
+            lambda cfg: cfg["model"].update(init_checkpoint="/home/linbinhao/nondefault-init.pt"),
+            {"--init_ckpt": "/home/linbinhao/nondefault-init.pt"},
+            (),
+            (),
+        ),
+        (
+            lambda cfg: cfg["paper_protocol"]["selection"].update(policy="last_checkpoint_only"),
+            {},
+            ("--final_checkpoint_only",),
+            (),
+        ),
+        (
+            lambda cfg: cfg["adaptation"]["hull"].update(include_anchor=False),
+            {},
+            (),
+            ("--hull_include_anchor",),
+        ),
+        (
+            lambda cfg: cfg["adaptation"]["hull"].update(init_logit_gap=0.0),
+            {"--hull_init_logit_gap": "0.0"},
+            (),
+            (),
+        ),
+        (
+            lambda cfg: cfg["adaptation"]["attack"].update(pgd_eps=3.25),
+            {"--pgd_eps": "3.25"},
+            (),
+            (),
+        ),
+        (
+            lambda cfg: cfg["adaptation"]["attack"].update(target_asr_range=[0.2, 0.8]),
+            {"--asr_low_threshold": "0.2", "--asr_high_threshold": "0.8"},
+            (),
+            (),
+        ),
+        (
+            lambda cfg: cfg["adaptation"]["latent_augmix"]["consistency"].update(enabled=False),
+            {},
+            ("--disable_latent_augmix_consistency",),
+            ("--enable_latent_augmix_consistency",),
+        ),
+    ],
+    ids=[
+        "model-init-checkpoint",
+        "selection-last-checkpoint",
+        "exclude-anchor",
+        "zero-init-logit-gap",
+        "pgd-epsilon",
+        "asr-bounds",
+        "disable-consistency",
+    ],
+)
+def test_effnet_managed_protocol_fields_reach_final_child_command(
+    mutate,
+    expected_values: dict[str, str],
+    present: tuple[str, ...],
+    absent: tuple[str, ...],
+):
+    config = copy.deepcopy(_load("effnet_vae_lhat_augmix_threechain_locked_k500.yaml"))
+    mutate(config)
+
+    cmd = _effnet_vae_lhat_final_train_cmd(config)
+
+    for option, value in expected_values.items():
+        assert _option_value(cmd, option) == value
+    for option in present:
+        assert option in cmd
+    for option in absent:
+        assert option not in cmd
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "model-init-checkpoint",
+        "selection-last-checkpoint",
+        "exclude-anchor",
+        "zero-init-logit-gap",
+        "pgd-epsilon",
+        "asr-bounds",
+        "disable-consistency",
+    ],
+)
+def test_effnet_command_audit_rejects_managed_protocol_field_drift(case: str):
+    config = copy.deepcopy(_load("effnet_vae_lhat_augmix_threechain_locked_k500.yaml"))
+    config["runner"]["matrix"]["center"] = ["ningbo"]
+    if case == "model-init-checkpoint":
+        config["model"]["init_checkpoint"] = "/home/linbinhao/nondefault-init.pt"
+    elif case == "exclude-anchor":
+        config["adaptation"]["hull"]["include_anchor"] = False
+    elif case == "zero-init-logit-gap":
+        config["adaptation"]["hull"]["init_logit_gap"] = 0.0
+    elif case == "pgd-epsilon":
+        config["adaptation"]["attack"]["pgd_eps"] = 3.25
+    elif case == "asr-bounds":
+        config["adaptation"]["attack"]["target_asr_range"] = [0.2, 0.8]
+    elif case == "disable-consistency":
+        config["adaptation"]["latent_augmix"]["consistency"]["enabled"] = False
+
+    command = copy.deepcopy(build_runner_commands(config)[0])
+    argv = command["argv"]
+    if case == "model-init-checkpoint":
+        argv[argv.index("--init_ckpt") + 1] = "/tmp/wrong-init.pt"
+    elif case == "selection-last-checkpoint":
+        if "--final_checkpoint_only" in argv:
+            argv.remove("--final_checkpoint_only")
+    elif case == "exclude-anchor":
+        argv.append("--hull_include_anchor")
+    elif case == "zero-init-logit-gap":
+        argv.extend(["--hull_init_logit_gap", "4.0"])
+    elif case == "pgd-epsilon":
+        argv.extend(["--pgd_eps", "2.0"])
+    elif case == "asr-bounds":
+        argv.extend(["--asr_low_threshold", "0.3", "--asr_high_threshold", "0.7"])
+    elif case == "disable-consistency":
+        argv.append("--enable_latent_augmix_consistency")
+
+    result = audit_runner_command(command, config=config)
+
+    assert result["errors"], case
 
 
 def test_effnet_vae_lhat_wrapper_parser_accepts_locked_consistency_knobs():
@@ -743,7 +881,7 @@ def test_effnet_vae_lhat_train_builder_locks_threechain_consistency():
 
     assert "--enable_latent_augmix_branch" not in cmd
     assert "--latent_augmix_topology" not in cmd
-    assert "--enable_latent_augmix_consistency" not in cmd
+    assert "--enable_latent_augmix_consistency" in cmd
     assert "--latent_augmix_latent_weight_cap" not in cmd
     assert "--source_sampling_strategy" not in cmd
     assert "--source_weights" not in cmd

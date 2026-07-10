@@ -18,6 +18,7 @@ adaptation:
     steps: 3
     lr: 0.25
     include_anchor: true
+    init_logit_gap: 4.0
     label_mode: compatible
     mix_label_mode: anchor_soft
     label_lambda_y: 0.25
@@ -28,6 +29,7 @@ adaptation:
     neighbor_pool_multiplier: 4
   attack:
     name: latent_pgd
+    pgd_eps: 2.0
     pgd_batch: 32
     target_asr_range: [0.30, 0.70]
   loss:

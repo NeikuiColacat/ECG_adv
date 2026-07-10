@@ -20,13 +20,7 @@ def audit_runner_command(command: Mapping[str, Any], *, config: Mapping[str, Any
     if name == "effnet_vae_lhat_augmix.py":
         from ecg_adv_gen.config.adapters.effnet_vae_lhat import audit_effnet_vae_lhat_command
 
-        kshot = config["paper_protocol"]["kshot"]
-        return audit_effnet_vae_lhat_command(
-            command,
-            expected_k=int(kshot["k"]),
-            expected_seed=int(kshot.get("subset_seed", kshot["seed"])),
-            target_centers=set(config["paper_protocol"]["centers"]["target_4"]),
-        )
+        return audit_effnet_vae_lhat_command(command, config=config)
     if name == "pn2021_clean_eval.py":
         from ecg_adv_gen.config.adapters.pn2021_eval import audit_pn2021_eval_command
 

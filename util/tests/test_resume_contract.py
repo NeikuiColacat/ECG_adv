@@ -191,3 +191,37 @@ def test_resume_contract_rejects_nondefault_removed_latent_augmix_knobs():
         {"key": "no_latent_augmix_renorm", "saved": True, "current": False},
         {"key": "latent_augmix_signal_space", "saved": "model_zscore", "current": "raw_pre_zscore"},
     ]
+
+
+@pytest.mark.parametrize(
+    ("key", "saved_value", "current_value"),
+    [
+        ("init_ckpt", "/tmp/old.pt", "/tmp/new.pt"),
+        ("final_checkpoint_only", False, True),
+        ("hull_include_anchor", True, False),
+        ("hull_init_logit_gap", 4.0, 0.0),
+        ("pgd_eps", 2.0, 3.25),
+        ("asr_low_threshold", 0.3, 0.2),
+        ("asr_high_threshold", 0.7, 0.8),
+        ("enable_latent_augmix_consistency", True, False),
+    ],
+)
+def test_resume_contract_rejects_operational_protocol_field_drift(
+    key: str,
+    saved_value,
+    current_value,
+):
+    saved = {
+        "attack_mode": "latent_hull",
+        "center_name": "ningbo",
+        "latent_augmix_signal_space": "raw_pre_zscore",
+        key: saved_value,
+    }
+    current = {
+        "center_name": "ningbo",
+        "latent_augmix_signal_space": "raw_pre_zscore",
+        key: current_value,
+    }
+
+    with pytest.raises(ValueError, match=key):
+        validate_resume_contract(saved, current, allow_drift=False)

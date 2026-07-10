@@ -114,6 +114,8 @@ def build_effnet_vae_lhat_train_cmd(
         str(args.hull_steps),
         "--hull_lr",
         str(args.hull_lr),
+        "--hull_init_logit_gap",
+        str(getattr(args, "hull_init_logit_gap", 4.0)),
         "--hull_label_mode",
         str(args.hull_label_mode),
         "--hull_mix_label_mode",
@@ -136,6 +138,8 @@ def build_effnet_vae_lhat_train_cmd(
         str(args.hull_neighbor_pool_multiplier),
         "--K_anchor",
         str(args.k_anchor),
+        "--pgd_eps",
+        str(getattr(args, "pgd_eps", 2.0)),
         "--pgd_batch",
         str(args.pgd_batch),
         "--classes_in_scope",
@@ -178,7 +182,9 @@ def build_effnet_vae_lhat_train_cmd(
         "--asr_consec_low_max",
         "999",
         "--asr_low_threshold",
-        "0.30",
+        str(getattr(args, "asr_low_threshold", 0.30)),
+        "--asr_high_threshold",
+        str(getattr(args, "asr_high_threshold", 0.70)),
         "--num_workers",
         str(args.num_workers),
         "--seed",
@@ -190,6 +196,11 @@ def build_effnet_vae_lhat_train_cmd(
     ]
     if args.hull_include_anchor:
         train_cmd.append("--hull_include_anchor")
+    train_cmd.append(
+        "--enable_latent_augmix_consistency"
+        if getattr(args, "enable_latent_augmix_consistency", True)
+        else "--disable_latent_augmix_consistency"
+    )
     train_cmd.extend(
         [
             "--latent_augmix_copies",

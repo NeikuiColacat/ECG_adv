@@ -76,6 +76,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--hull_lambda", type=float, default=0.15)
     ap.add_argument("--hull_lr", type=float, default=0.25)
     ap.add_argument("--hull_include_anchor", action="store_true")
+    ap.add_argument("--hull_init_logit_gap", type=float, default=4.0)
     ap.add_argument(
         "--hull_label_mode",
         choices=["primary", "exact", "compatible"],
@@ -113,7 +114,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--hull_neighbor_pool_size", type=int, default=0)
     ap.add_argument("--hull_neighbor_pool_multiplier", type=int, default=4)
     ap.add_argument("--k_anchor", type=int, default=300)
+    ap.add_argument("--pgd_eps", type=float, default=2.0)
     ap.add_argument("--pgd_batch", type=int, default=32)
+    ap.add_argument("--asr_low_threshold", type=float, default=0.30)
+    ap.add_argument("--asr_high_threshold", type=float, default=0.70)
     ap.add_argument("--classes_in_scope", nargs="+", default=CLASS_NAMES)
     ap.add_argument(
         "--init_ckpt",
@@ -214,6 +218,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--latent_augmix_bce_weight", type=float, default=1.0)
     ap.add_argument("--latent_augmix_chain_weights", default="")
     ap.add_argument("--latent_augmix_consistency_max_batches", type=int, default=0)
+    consistency = ap.add_mutually_exclusive_group()
+    consistency.add_argument(
+        "--enable_latent_augmix_consistency",
+        dest="enable_latent_augmix_consistency",
+        action="store_true",
+    )
+    consistency.add_argument(
+        "--disable_latent_augmix_consistency",
+        dest="enable_latent_augmix_consistency",
+        action="store_false",
+    )
+    ap.set_defaults(enable_latent_augmix_consistency=True)
     ap.add_argument("--eval_batch_size", type=int, default=192)
     ap.add_argument("--eval_min_pos", type=int, default=10)
     ap.add_argument("--eval_pn2021_limit", type=int, default=0)

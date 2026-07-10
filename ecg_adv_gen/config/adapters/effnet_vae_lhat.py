@@ -47,12 +47,8 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
     k = kshot["k"]
     seed = kshot["seed"]
     out_root = f"{paths['output_root']}/{experiment['name']}/{runtime['run_id']}"
-    direct_init_root = model.get("direct_init_root") or f"{paths['data_root']}/paper_direct_finetune_k500_20260516/runs"
     kshot_subset_root = data.get("kshot_subset_root") or f"{paths['data_root']}/paper_vae_only_latenthull_sweep_20260516/subsets"
-    init_ckpt = (
-        f"{direct_init_root}/{center}_K{k}_direct_ft_ep30_seed{seed}_val0.2/"
-        "best_model.pt"
-    )
+    init_ckpt = model["init_checkpoint"]
     anchor_base = (
         f"{kshot_subset_root}/{center}/k{k}_seed{seed}/"
         f"{center}_real_k{k}_seed{seed}"
@@ -68,6 +64,11 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
     latent_augmix = adaptation["latent_augmix"]
     latent_augmix_consistency = latent_augmix["consistency"]
     anchors = adaptation["anchors"]
+    hull = adaptation["hull"]
+    attack = adaptation["attack"]
+    asr_low, asr_high = attack["target_asr_range"]
+    if not 0.0 <= float(asr_low) <= float(asr_high) <= 1.0:
+        raise ValueError("adaptation.attack.target_asr_range must be ordered within [0, 1]")
 
     argv: list[Any] = [
         "--center",
@@ -89,34 +90,41 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
         "--anchor_base",
         anchor_base,
         "--hull_steps",
-        adaptation["hull"]["steps"],
+        hull["steps"],
         "--hull_M",
-        adaptation["hull"]["M"],
+        hull["M"],
         "--hull_lambda",
-        adaptation["hull"]["lambda"],
+        hull["lambda"],
         "--hull_lr",
-        adaptation["hull"]["lr"],
-        "--hull_include_anchor",
+        hull["lr"],
+        "--hull_init_logit_gap",
+        hull["init_logit_gap"],
         "--hull_label_mode",
-        adaptation["hull"]["label_mode"],
+        hull["label_mode"],
         "--hull_mix_label_mode",
-        adaptation["hull"]["mix_label_mode"],
+        hull["mix_label_mode"],
         "--hull_label_lambda_y",
-        adaptation["hull"]["label_lambda_y"],
+        hull["label_lambda_y"],
         "--hull_label_new_class_cap",
-        adaptation["hull"]["label_new_class_cap"],
+        hull["label_new_class_cap"],
         "--hull_neighbor_distance_space",
-        adaptation["hull"]["neighbor_distance_space"],
+        hull["neighbor_distance_space"],
         "--hull_neighbor_mode",
-        adaptation["hull"]["neighbor_mode"],
+        hull["neighbor_mode"],
         "--hull_neighbor_pool_size",
-        adaptation["hull"]["neighbor_pool_size"],
+        hull["neighbor_pool_size"],
         "--hull_neighbor_pool_multiplier",
-        adaptation["hull"]["neighbor_pool_multiplier"],
+        hull["neighbor_pool_multiplier"],
         "--k_anchor",
         anchors["k_anchor"],
+        "--pgd_eps",
+        attack["pgd_eps"],
         "--pgd_batch",
-        adaptation["attack"]["pgd_batch"],
+        attack["pgd_batch"],
+        "--asr_low_threshold",
+        asr_low,
+        "--asr_high_threshold",
+        asr_high,
         "--target_real_weight",
         adaptation["loss"]["target_real_weight"],
         "--adv_weight",
@@ -158,6 +166,13 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
         "--eval_pn2021_limit",
         evaluation["pn2021_limit"],
     ]
+    if bool(hull["include_anchor"]):
+        argv.append("--hull_include_anchor")
+    argv.append(
+        "--enable_latent_augmix_consistency"
+        if bool(latent_augmix_consistency["enabled"])
+        else "--disable_latent_augmix_consistency"
+    )
     _append_optional_value(argv, "--target_real_norm_mode", data.get("target_real_norm_mode"))
     _append_optional_value(argv, "--synth_npz_override", synth_npz_override or None)
     _append_optional_value(argv, "--target_real_npz_override", target_real_npz_override or None)
@@ -199,7 +214,7 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
     )
     run_tag_extra = adaptation.get("run_tag_extra")
     _append_optional_value(argv, "--run_tag_extra", run_tag_extra)
-    if bool(training.get("final_checkpoint_only", False)):
+    if paper["selection"]["policy"] == "last_checkpoint_only":
         argv.append("--final_checkpoint_only")
     return argv
 
@@ -207,9 +222,7 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
 def audit_effnet_vae_lhat_command(
     command: Mapping[str, Any],
     *,
-    expected_k: int | str,
-    expected_seed: int | str,
-    target_centers: set[str],
+    config: Mapping[str, Any],
 ) -> dict[str, list[str]]:
     """Return protocol-audit errors and warnings for managed EfficientNet VAE-LHAT commands."""
 
@@ -219,6 +232,15 @@ def audit_effnet_vae_lhat_command(
     script = Path(argv[1]).name
     opts = argv_option_map(argv)
     case = matrix_case(command)
+    paper = config["paper_protocol"]
+    adaptation = config["adaptation"]
+    hull = adaptation["hull"]
+    attack = adaptation["attack"]
+    consistency = adaptation["latent_augmix"]["consistency"]
+    kshot = paper["kshot"]
+    expected_k = int(kshot["k"])
+    expected_seed = int(kshot.get("subset_seed", kshot["seed"]))
+    target_centers = set(paper["centers"]["target_4"])
     expected_command_k = str(case.get("k", expected_k))
     expected_command_seed = str(case.get("seed", expected_seed))
 
@@ -241,9 +263,13 @@ def audit_effnet_vae_lhat_command(
             "--init_ckpt",
             "--anchor_base",
             "--hull_lambda",
+            "--hull_init_logit_gap",
             "--hull_neighbor_distance_space",
             "--hull_neighbor_mode",
             "--hull_neighbor_pool_size",
+            "--pgd_eps",
+            "--asr_low_threshold",
+            "--asr_high_threshold",
         ],
     )
     center = str(opt_first(opts, "--center", ""))
@@ -253,6 +279,22 @@ def audit_effnet_vae_lhat_command(
     if center not in target_centers:
         errors.append(f"{script}: unexpected center {center!r}")
     audit_equals(errors, script, opts, "--seed", expected_command_seed)
+    expected_init_ckpt = str(config["model"]["init_checkpoint"]).replace("${matrix.center}", center)
+    audit_equals(errors, script, opts, "--init_ckpt", expected_init_ckpt)
+    audit_equals(errors, script, opts, "--hull_init_logit_gap", hull["init_logit_gap"])
+    audit_equals(errors, script, opts, "--pgd_eps", attack["pgd_eps"])
+    asr_low, asr_high = attack["target_asr_range"]
+    audit_equals(errors, script, opts, "--asr_low_threshold", asr_low)
+    audit_equals(errors, script, opts, "--asr_high_threshold", asr_high)
+    expected_flags = {
+        "--hull_include_anchor": bool(hull["include_anchor"]),
+        "--final_checkpoint_only": paper["selection"]["policy"] == "last_checkpoint_only",
+        "--enable_latent_augmix_consistency": bool(consistency["enabled"]),
+        "--disable_latent_augmix_consistency": not bool(consistency["enabled"]),
+    }
+    for flag, expected in expected_flags.items():
+        if (flag in opts) != expected:
+            errors.append(f"{script}: {flag} presence must be {expected}")
     forbidden_ablation_flags = [
         "--enable_raw_corrupt_consistency",
         "--enable_mask_shift_consistency",

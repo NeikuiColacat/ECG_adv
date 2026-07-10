@@ -21,6 +21,7 @@ paper_protocol:
     forbid_full_target_distribution_tuning: true
 
 model:
+  init_checkpoint: ${paths.output_root}/effnet_direct_k500_v7_sjr_rgq/seed20260601_k500_v7_sjr_rgq_20260530_rep1/runs/${matrix.center}_K500_direct_ft_ep30_seed20260601_val0.2/best_model.pt
   direct_init_root: ${paths.output_root}/effnet_direct_k500_v7_sjr_rgq/seed20260601_k500_v7_sjr_rgq_20260530_rep1/runs
 
 training:

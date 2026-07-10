@@ -977,6 +977,7 @@ def parse_args():
     p.add_argument("--hull_lambda", type=float, default=0.25)
     p.add_argument("--hull_steps", type=int, default=5)
     p.add_argument("--hull_lr", type=float, default=0.3)
+    p.add_argument("--hull_init_logit_gap", type=float, default=4.0)
     p.add_argument(
         "--hull_weight_mode",
         choices=["optimized", "one_hot", "uniform", "dirichlet"],
@@ -1169,6 +1170,18 @@ def parse_args():
     )
     p.add_argument("--latent_augmix_bce_weight", type=float, default=1.0)
     p.add_argument("--latent_augmix_consistency_max_batches", type=int, default=0)
+    consistency = p.add_mutually_exclusive_group()
+    consistency.add_argument(
+        "--enable_latent_augmix_consistency",
+        dest="enable_latent_augmix_consistency",
+        action="store_true",
+    )
+    consistency.add_argument(
+        "--disable_latent_augmix_consistency",
+        dest="enable_latent_augmix_consistency",
+        action="store_false",
+    )
+    p.set_defaults(enable_latent_augmix_consistency=True)
     p.add_argument(
         "--vae_adv_consistency_weight",
         type=float,
@@ -1195,6 +1208,7 @@ def parse_args():
     p.add_argument("--asr_consec_low_max", type=int, default=3,
                    help="Halt with RuntimeError after this many consecutive low-ASR epochs")
     p.add_argument("--asr_low_threshold", type=float, default=0.30)
+    p.add_argument("--asr_high_threshold", type=float, default=0.70)
     p.add_argument("--einthoven_p95_max", type=float, default=0.5)
     p.add_argument(
         "--disable_quality_gate",
@@ -1343,7 +1357,7 @@ def main():
         flush=True,
     )
     print(
-        "[setup] latent-branch AugMix direct consistency enabled: "
+        f"[setup] latent-branch AugMix direct consistency enabled={args.enable_latent_augmix_consistency}: "
         f"loss={args.latent_augmix_consistency_loss} "
         f"weights=(consistency={args.latent_augmix_consistency_weight}, "
         f"bce={args.latent_augmix_bce_weight}) "
@@ -1436,6 +1450,7 @@ def main():
         hull_lambda=args.hull_lambda,
         hull_steps=args.hull_steps,
         hull_lr=args.hull_lr,
+        init_logit_gap=args.hull_init_logit_gap,
         weight_mode=args.hull_weight_mode,
         dirichlet_alpha=args.hull_dirichlet_alpha,
         device=args.device,
@@ -1561,7 +1576,7 @@ def main():
             "renorm": True,
             "clip_abs": 6.0,
             "direct_consistency": {
-                "enabled": True,
+                "enabled": bool(args.enable_latent_augmix_consistency),
                 "consistency_weight": float(args.latent_augmix_consistency_weight),
                 "consistency_loss": str(args.latent_augmix_consistency_loss),
                 "bce_weight": float(args.latent_augmix_bce_weight),
@@ -1933,7 +1948,8 @@ def main():
             anchor_lambda=args.anchor_lambda, ewa_decay=args.ewa_decay,
         )
         if (
-            latent_augmix_direct_clean is None
+            not args.enable_latent_augmix_consistency
+            or latent_augmix_direct_clean is None
             or latent_augmix_direct_views is None
             or latent_augmix_direct_labels is None
         ):
