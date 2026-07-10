@@ -3,7 +3,7 @@ extends:
 
 experiment:
   name: ecgfounder_vae_lhat_augmix_threechain_locked_k500
-  description: Locked ECGFounder K500 full-FT VAE-LHAT plus three-chain AugMix with official PN2021-C severity 5 and last-checkpoint evaluation.
+  description: Locked ECGFounder K500 full-FT VAE-LHAT plus raw-5000 three-chain AugMix with official PN2021-C severity 5 and last-checkpoint evaluation.
 
 paper_protocol:
   kshot:
@@ -77,8 +77,8 @@ adaptation:
       - name: chain2
         role: clean_anchor_corruption_chain
       - name: chain3
-        role: clean_anchor_corruption_chain
-    chain_base_mode: all_clean_plus_vae_adv
+        role: vae_lhat_adversarial_waveform
+    chain_base_mode: clean_clean_third
     copies: 1
     width: 3
     depth: -1
@@ -105,6 +105,6 @@ logging:
     - eval_result.json
 
 run_record:
-  purpose: "Locked ECGFounder main-method run: all K500 samples train, full model trainable, no K500 validation split, last checkpoint only, clean-anchor three-chain AugMix plus a separately supervised VAE-LHAT adversarial stream."
+  purpose: "Locked ECGFounder main-method run: all K500 samples train, full model trainable, no K500 validation split, last checkpoint only, two raw-5000 clean-anchor corruption chains plus one uncorrupted raw-5000 VAE-LHAT adversarial chain; global z-score occurs after mixing at the model boundary."
   result_summary: Pending. Evaluate PN2021 clean and PN2021-C official severity 5 after managed training completes.
   registration_status: provisional

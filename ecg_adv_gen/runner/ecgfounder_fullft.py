@@ -103,6 +103,10 @@ from ecg_adv_gen.training import (  # noqa: E402
     stream_weighted_masked_bce,
     summarize_fullft_adv_epoch_diagnostics,
 )
+from ecg_adv_gen.training.resume_contract import (  # noqa: E402
+    LOCKED_LATENT_AUGMIX_SIGNAL_SPACE,
+    validate_resume_contract,
+)
 from ecg_adv_gen.run_naming import build_ecgfounder_fullft_run_leaf  # noqa: E402
 from ecg_adv_gen.evaluation.pn2021c import (  # noqa: E402
     STRESS_PROFILE_CHOICES,
@@ -133,6 +137,30 @@ def set_seed(seed: int) -> None:
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+
+
+def latent_augmix_signal_space(
+    chain_base_mode: str,
+    third_chain_role: str,
+    *,
+    enabled: bool = True,
+) -> str:
+    return (
+        LOCKED_LATENT_AUGMIX_SIGNAL_SPACE
+        if enabled
+        and chain_base_mode == "clean_clean_third"
+        and third_chain_role == "vae_lhat_adversarial_waveform"
+        else "model_zscore"
+    )
+
+
+def validate_existing_run_signal_space(result_path: Path, current_signal_space: str) -> None:
+    payload = json.loads(result_path.read_text(encoding="utf-8"))
+    validate_resume_contract(
+        payload.get("config"),
+        {"latent_augmix_signal_space": current_signal_space},
+        allow_drift=False,
+    )
 
 
 class ECGFounderFullFTVictim(nn.Module):
@@ -286,7 +314,7 @@ def load_source_raw1000_dataset(
         )
     if not np.allclose(labels[source_indices], expected_labels.astype(np.float32), atol=1e-6):
         raise ValueError("source raw1000 labels do not align with ECGFounder supervised cache labels")
-    return RawSignalDataset(signals, labels, indices=source_indices)
+    return RawSignalDataset(signals, labels, indices=source_indices, target_len=TARGET_POINTS)
 
 
 def load_target_raw_dataset(
@@ -311,7 +339,7 @@ def load_target_raw_dataset(
     indices = np.asarray([i for i, rid in enumerate(record_ids.astype(str)) if str(rid) in train_ids], dtype=np.int64)
     if indices.size == 0:
         raise RuntimeError(f"{center}: no target raw signals matched target train record ids")
-    return RawSignalDataset(signals, labels, indices=indices)
+    return RawSignalDataset(signals, labels, indices=indices, target_len=TARGET_POINTS)
 
 
 def build_locked_three_chain_latent_augmix_views(
@@ -422,6 +450,7 @@ def summarize_latent_augmix_epoch_stats(stats_batches: list[dict[str, Any]]) -> 
         "mixture_beta_b": first.get("mixture_beta_b"),
         "op_schedule": str(first.get("op_schedule", "")),
         "chain_base_mode": str(first.get("chain_base_mode", "")),
+        "signal_space": str(first.get("signal_space", "")),
         "adv_base_mix": first.get("adv_base_mix"),
         "chain_weight_mode": str(first.get("chain_weight_mode", "")),
         "chain_weights": list(first.get("chain_weights", [])),
@@ -915,6 +944,11 @@ def build_adv_epoch(
         bool(args.enable_latent_augmix_branch)
         and args.latent_augmix_chain_base_mode != "all_clean_plus_vae_adv"
     )
+    signal_space = latent_augmix_signal_space(
+        args.latent_augmix_chain_base_mode,
+        args.latent_augmix_third_chain_role,
+        enabled=bool(args.enable_latent_augmix_branch),
+    )
     try:
         picks, anchor_sample_stats = sample_anchor_indices(
             model,
@@ -946,6 +980,16 @@ def build_adv_epoch(
                 batch_diagnostics.append(
                     fullft_adv_batch_diagnostics(clean_logits, init_logits, adv_logits, y)
                 )
+                adv_wave_1000 = (
+                    pgd_gen._decode_to_ptbxl_1000_raw(z + delta)
+                    if signal_space == LOCKED_LATENT_AUGMIX_SIGNAL_SPACE
+                    else x_adv_1000
+                )
+                adv_wave_5000 = ecg1000_to_ecgfounder_input(
+                    adv_wave_1000,
+                    target_points=TARGET_POINTS,
+                    apply_global_zscore=False,
+                )
             anchor_labels_np = anchor_pool["labels"][batch_idx].astype(np.float32, copy=False)
             clean_probs_np = torch.sigmoid(clean_logits).detach().cpu().numpy().astype(np.float32)
             buffer_labels_np = np.stack(
@@ -963,23 +1007,40 @@ def build_adv_epoch(
             ).astype(np.float32, copy=False)
             if build_vae_augmix_views:
                 with torch.no_grad():
-                    anchor_x_1000 = victim._ecgtwin_latent_to_ecg1000(z)
+                    anchor_x_1000 = (
+                        pgd_gen._decode_to_ptbxl_1000_raw(z)
+                        if signal_space == LOCKED_LATENT_AUGMIX_SIGNAL_SPACE
+                        else victim._ecgtwin_latent_to_ecg1000(z)
+                    )
+                    anchor_x_5000 = ecg1000_to_ecgfounder_input(
+                        anchor_x_1000,
+                        target_points=TARGET_POINTS,
+                        apply_global_zscore=False,
+                    )
             elif float(args.vae_adv_consistency_weight) > 0.0:
                 with torch.no_grad():
                     anchor_x_1000 = victim._ecgtwin_latent_to_ecg1000(z)
+                    anchor_x_5000 = ecg1000_to_ecgfounder_input(
+                        anchor_x_1000,
+                        target_points=TARGET_POINTS,
+                        apply_global_zscore=False,
+                    )
             else:
                 anchor_x_1000 = None
+                anchor_x_5000 = None
             if anchor_x_1000 is not None and float(args.vae_adv_consistency_weight) > 0.0:
-                vae_clean_signals.append(anchor_x_1000.detach().cpu().numpy().astype(np.float32, copy=False))
-                vae_adv_signals_for_consistency.append(x_adv_1000.detach().cpu().numpy().astype(np.float32, copy=False))
+                assert anchor_x_5000 is not None
+                vae_clean_signals.append(anchor_x_5000.detach().cpu().numpy().astype(np.float32, copy=False))
+                vae_adv_signals_for_consistency.append(adv_wave_5000.detach().cpu().numpy().astype(np.float32, copy=False))
                 vae_adv_labels_for_consistency.append(buffer_labels_np)
             if build_vae_augmix_views:
+                assert anchor_x_5000 is not None
                 latent_augmix_rng = np.random.default_rng(
                     int(args.seed) + int(getattr(args, "current_epoch", 0)) * 100003 + int(start)
                 )
                 latent_augmix_np, latent_augmix_stats = build_locked_three_chain_latent_augmix_views(
-                    anchor_x_1000.detach().cpu().numpy().astype(np.float32, copy=False),
-                    x_adv_1000.detach().cpu().numpy().astype(np.float32, copy=False),
+                    anchor_x_5000.detach().cpu().numpy().astype(np.float32, copy=False),
+                    adv_wave_5000.detach().cpu().numpy().astype(np.float32, copy=False),
                     copies=args.latent_augmix_copies,
                     severity=args.latent_augmix_severity,
                     severity_profile=args.latent_augmix_severity_profile,
@@ -1000,9 +1061,10 @@ def build_adv_epoch(
                     adv_base_mix=float(args.latent_augmix_adv_base_mix),
                     rng=latent_augmix_rng,
                 )
+                latent_augmix_stats["signal_space"] = signal_space
                 latent_augmix_stats_batches.append(latent_augmix_stats)
                 if latent_augmix_np.shape[0] > 0:
-                    augmix_clean_signals.append(anchor_x_1000.detach().cpu().numpy().astype(np.float32, copy=False))
+                    augmix_clean_signals.append(anchor_x_5000.detach().cpu().numpy().astype(np.float32, copy=False))
                     augmix_clean_labels.append(buffer_labels_np)
                     latent_augmix_t = torch.from_numpy(latent_augmix_np).float().to(device)
                     x_adv_for_stream = latent_augmix_t.detach().cpu().numpy().astype(np.float32)
@@ -1018,7 +1080,7 @@ def build_adv_epoch(
                     adv_labels.append(labels_rep.astype(np.float32, copy=False))
                     adv_teacher_logits.append(teacher_rep.astype(np.float32, copy=False))
             else:
-                x_adv_for_stream = x_adv_1000.detach().cpu().numpy().astype(np.float32)
+                x_adv_for_stream = adv_wave_5000.detach().cpu().numpy().astype(np.float32)
                 adv_signals.append(x_adv_for_stream)
                 adv_labels.append(buffer_labels_np)
                 adv_teacher_logits.append(clean_logits.detach().cpu().numpy().astype(np.float32))
@@ -1032,7 +1094,7 @@ def build_adv_epoch(
         np.concatenate(adv_signals, axis=0).astype(np.float32)
         if adv_signals
         else np.empty(
-            (0, 12, 1000),
+            (0, 12, TARGET_POINTS),
             dtype=np.float32,
         )
     )
@@ -1049,7 +1111,7 @@ def build_adv_epoch(
     augmix_clean = (
         np.concatenate(augmix_clean_signals, axis=0).astype(np.float32)
         if augmix_clean_signals
-        else np.empty((0, 12, 1000), dtype=np.float32)
+        else np.empty((0, 12, TARGET_POINTS), dtype=np.float32)
     )
     augmix_labels = (
         np.concatenate(augmix_clean_labels, axis=0).astype(np.float32)
@@ -1059,12 +1121,12 @@ def build_adv_epoch(
     vae_clean = (
         np.concatenate(vae_clean_signals, axis=0).astype(np.float32)
         if vae_clean_signals
-        else np.empty((0, 12, 1000), dtype=np.float32)
+        else np.empty((0, 12, TARGET_POINTS), dtype=np.float32)
     )
     vae_adv_consistency = (
         np.concatenate(vae_adv_signals_for_consistency, axis=0).astype(np.float32)
         if vae_adv_signals_for_consistency
-        else np.empty((0, 12, 1000), dtype=np.float32)
+        else np.empty((0, 12, TARGET_POINTS), dtype=np.float32)
     )
     vae_labels_consistency = (
         np.concatenate(vae_adv_labels_for_consistency, axis=0).astype(np.float32)
@@ -1093,7 +1155,7 @@ def build_adv_epoch(
         "teacher_logits": teacher_logits,
         "augmix_clean_signals": augmix_clean,
         "augmix_clean_labels": augmix_labels,
-        "augmix_view_signals": signals if build_vae_augmix_views else np.empty((0, 12, 1000), dtype=np.float32),
+        "augmix_view_signals": signals if build_vae_augmix_views else np.empty((0, 12, TARGET_POINTS), dtype=np.float32),
         "vae_clean_signals": vae_clean,
         "vae_adv_signals": vae_adv_consistency,
         "vae_adv_labels": vae_labels_consistency,
@@ -1383,6 +1445,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_arg_parser().parse_args()
+    args.latent_augmix_signal_space = latent_augmix_signal_space(
+        args.latent_augmix_chain_base_mode,
+        args.latent_augmix_third_chain_role,
+        enabled=bool(args.enable_latent_augmix_branch),
+    )
 
     if int(args.torch_num_threads) > 0:
         torch.set_num_threads(int(args.torch_num_threads))
@@ -1458,6 +1525,7 @@ def main() -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
     result_path = run_dir / "eval_result.json"
     if result_path.exists():
+        validate_existing_run_signal_space(result_path, args.latent_augmix_signal_space)
         print(result_path.read_text())
         return
 
@@ -2069,6 +2137,7 @@ def main() -> None:
             "topology": "locked_three_chain_vae_lhat_augmix",
             "chain_roles": latent_augmix_chain_roles if args.enable_latent_augmix_branch else [],
             "chain_base_mode": str(args.latent_augmix_chain_base_mode),
+            "signal_space": str(args.latent_augmix_signal_space),
             "adv_base_mix": float(args.latent_augmix_adv_base_mix),
             "adversarial_chain_corrupted": (
                 args.latent_augmix_chain_base_mode in {"one_adv", "all_adv"}

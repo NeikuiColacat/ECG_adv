@@ -1552,10 +1552,10 @@ def test_ecgfounder_locked_threechain_augmix_command_uses_fullft_last_checkpoint
     assert config["adaptation"]["latent_augmix"]["chain_roles"] == [
         {"name": "chain1", "role": "clean_anchor_corruption_chain"},
         {"name": "chain2", "role": "clean_anchor_corruption_chain"},
-        {"name": "chain3", "role": "clean_anchor_corruption_chain"},
+        {"name": "chain3", "role": "vae_lhat_adversarial_waveform"},
     ]
     assert config["adaptation"]["vae"]["adv_stream_sample_scale"] == 0.10
-    assert config["adaptation"]["latent_augmix"]["chain_base_mode"] == "all_clean_plus_vae_adv"
+    assert config["adaptation"]["latent_augmix"]["chain_base_mode"] == "clean_clean_third"
     assert "partner_pool" not in config["adaptation"]["hull"]
     assert len(commands) == 4
     for command in commands:
@@ -1587,7 +1587,7 @@ def test_ecgfounder_locked_threechain_augmix_command_uses_fullft_last_checkpoint
         assert "--latent_augmix_topology" not in argv
         assert _option_value(argv, "--latent_augmix_width") == "3"
         assert _option_value(argv, "--vae_adv_stream_sample_scale") == "0.1"
-        assert _option_value(argv, "--latent_augmix_chain_base_mode") == "all_clean_plus_vae_adv"
+        assert _option_value(argv, "--latent_augmix_chain_base_mode") == "clean_clean_third"
         assert _option_value(argv, "--latent_augmix_severity") == "5"
         assert _option_value(argv, "--latent_augmix_severity_profile") == "standard"
         assert "--latent_augmix_severity_params_file" not in argv
