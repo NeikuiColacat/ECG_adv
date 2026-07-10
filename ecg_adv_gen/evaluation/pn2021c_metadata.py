@@ -94,13 +94,11 @@ def evaluation_k500_identities(payload: Mapping[str, Any]) -> dict[str, dict[str
         if ref_hash not in (None, ""):
             values["hashes"].add(str(ref_hash))
         if count is not None:
-            try:
-                parsed_count = int(count)
-            except (TypeError, ValueError, OverflowError) as exc:
+            if type(count) is not int:
                 raise PN2021CMetadataError(
                     f"invalid evaluation K500 count for {center}: {count!r}"
-                ) from exc
-            values["counts"].add(parsed_count)
+                )
+            values["counts"].add(count)
 
     protocol_hashes = _get(payload, "pn2021.eval_protocol.target_ref_id_hashes")
     if isinstance(protocol_hashes, Mapping):

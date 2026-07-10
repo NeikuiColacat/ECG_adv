@@ -288,6 +288,27 @@ def test_evaluation_k500_identity_wraps_malformed_count():
         evaluation_k500_identities(payload)
 
 
+@pytest.mark.parametrize("count", [True, 500.9, "500"])
+def test_evaluation_k500_identity_rejects_non_integer_count_types(count: object):
+    payload = {
+        "per_center": {
+            CENTER: {
+                "emg_noise": {
+                    "5": {
+                        "metadata_compatibility": {
+                            "n_excluded_ref": count,
+                            "ref_record_ids_sha256": REF_HASH,
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    with pytest.raises(PN2021CMetadataError, match="count"):
+        evaluation_k500_identities(payload)
+
+
 def test_evaluation_k500_identity_rejects_embedded_center_mismatch():
     payload = {
         "per_center": {
