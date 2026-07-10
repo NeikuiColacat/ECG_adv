@@ -383,8 +383,10 @@ def load_experiment_config(
     experiment_raw = _load_with_extends(config_path)
     local_raw = _load_with_extends(local_config_path)
     configs_root = _configs_root_for(config_path)
+    project_root = configs_root.parent.resolve()
     _validate_local_config_overlay(local_raw)
-    _validate_json_schema(local_raw, configs_root / "schemas" / "local_config.schema.json")
+    local_for_schema = _deep_merge({"paths": {"project_root": str(project_root)}}, local_raw)
+    _validate_json_schema(local_for_schema, configs_root / "schemas" / "local_config.schema.json")
 
     forbidden_hits = _scan_for_forbidden_local_paths(experiment_raw)
     if forbidden_hits:
@@ -394,6 +396,7 @@ def load_experiment_config(
         )
 
     merged = _deep_merge(experiment_raw, local_raw)
+    merged["_project_root"] = str(project_root)
     merged = apply_cli_overrides(merged, overrides)
     if runtime_context:
         runtime = copy.deepcopy(merged.get("runtime") or {})

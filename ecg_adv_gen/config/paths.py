@@ -48,7 +48,19 @@ def resolve_local_paths(config: dict[str, Any]) -> dict[str, Path]:
         safety_cfg.get("write_boundary") or paths_cfg.get("home_root") or "/home/linbinhao",
         field="safety.write_boundary",
     )
-    project_root = _as_path(paths_cfg.get("project_root"), field="paths.project_root")
+    configured_project_root = paths_cfg.get("project_root")
+    project_root = _as_path(
+        config.get("_project_root") or configured_project_root,
+        field="paths.project_root",
+    )
+    if configured_project_root and _as_path(
+        configured_project_root,
+        field="paths.project_root",
+    ) != project_root:
+        raise PathSafetyError(
+            f"paths.project_root={configured_project_root} must match "
+            f"experiment config checkout {project_root}"
+        )
     data_root = _as_path(paths_cfg.get("data_root"), field="paths.data_root")
     model_root = _as_path(paths_cfg.get("model_root") or data_root / "models", field="paths.model_root")
     output_root = _as_path(paths_cfg.get("output_root") or data_root / "runs", field="paths.output_root")

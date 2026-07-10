@@ -79,7 +79,7 @@ def test_latest_mainline_configs_validate_and_expand_commands(config_name: str):
     paths = validate_experiment_config(config, repo_root=REPO)
     commands = build_runner_commands(config)
 
-    assert paths["project_root"].endswith("ECG_adv_Gen")
+    assert paths["project_root"] == str(REPO)
     assert config["paper_protocol"]["mapping_version"] == "v7_super5_sjr_rgq_review_20260528"
     assert config["paper_protocol"]["mapping_hash"] == "555ec85d5b51"
     assert "pn2021_all_zero_kept_refexcluded" in config["evaluation"]["views"]
@@ -603,6 +603,22 @@ def test_effnet_vae_lhat_threechain_locked_k500_config_uses_official_s5_last_che
         ]
 
 
+def test_effnet_vae_lhat_wrapper_parser_accepts_locked_consistency_knobs():
+    from ecg_adv_gen.runner import effnet_vae_lhat_augmix
+
+    args = effnet_vae_lhat_augmix.parse_args(
+        [
+            "--vae_adv_consistency_weight",
+            "0.7",
+            "--latent_augmix_adv_base_mix",
+            "0.4",
+        ]
+    )
+
+    assert args.vae_adv_consistency_weight == 0.7
+    assert args.latent_augmix_adv_base_mix == 0.4
+
+
 def test_effnet_vae_lhat_train_builder_locks_threechain_consistency():
     args = argparse.Namespace(
         center="ningbo",
@@ -631,6 +647,7 @@ def test_effnet_vae_lhat_train_builder_locks_threechain_consistency():
         target_real_weight=80.0,
         adv_weight=0.2,
         vae_adv_stream_sample_scale=0.1,
+        vae_adv_consistency_weight=0.7,
         adv_weight_warmup_epochs=0,
         ptbxl_weight=1.0,
         adv_label_mode="latent_mixed_teacher",
@@ -651,6 +668,7 @@ def test_effnet_vae_lhat_train_builder_locks_threechain_consistency():
         latent_augmix_latent_weight_cap=0.25,
         latent_augmix_third_chain_role="clean_anchor_control",
         latent_augmix_chain_base_mode="all_clean",
+        latent_augmix_adv_base_mix=0.4,
         latent_augmix_ops=[
             "powerline_noise",
             "emg_noise",
@@ -688,8 +706,10 @@ def test_effnet_vae_lhat_train_builder_locks_threechain_consistency():
     assert "--source_weights" not in cmd
     assert _option_value(cmd, "--latent_augmix_width") == "3"
     assert _option_value(cmd, "--vae_adv_stream_sample_scale") == "0.1"
+    assert _option_value(cmd, "--vae_adv_consistency_weight") == "0.7"
     assert _option_value(cmd, "--latent_augmix_third_chain_role") == "clean_anchor_control"
     assert _option_value(cmd, "--latent_augmix_chain_base_mode") == "all_clean"
+    assert _option_value(cmd, "--latent_augmix_adv_base_mix") == "0.4"
     assert _option_value(cmd, "--latent_augmix_consistency_loss") == "jsd"
     assert _all_option_values(cmd, "--latent_augmix_ops") == [
         "powerline_noise",
@@ -1911,6 +1931,71 @@ def test_local_config_rejects_unknown_root_path(tmp_path: Path):
     )
     with pytest.raises(PathSafetyError, match="root-era path"):
         validate_local_paths(config)
+
+
+def test_project_root_is_derived_from_entry_config_checkout(tmp_path: Path):
+    local = yaml.safe_load(LOCAL_EXAMPLE.read_text(encoding="utf-8"))
+    local["paths"].pop("project_root", None)
+    local_path = tmp_path / "local_without_project_root.yaml"
+    local_path.write_text(yaml.safe_dump(local), encoding="utf-8")
+    config = load_experiment_config(
+        REPO / "configs" / "experiments" / "effnet_direct_k500_v7_sjr_rgq.yaml",
+        local_path,
+        runtime_context={"run_id": "pytest_checkout_root"},
+    )
+
+    paths = validate_experiment_config(config, repo_root=REPO)
+    commands = build_runner_commands(config)
+    manifest = make_dry_run_manifest(
+        config,
+        commands=commands,
+        local_paths=paths,
+        run_id="pytest_checkout_root",
+        cli_args=argparse.Namespace(dry_run=True, write_plan=False),
+    )
+
+    assert paths["project_root"] == str(REPO)
+    assert {command["cwd"] for command in commands} == {str(REPO)}
+    assert all(Path(command["argv"][1]).is_relative_to(REPO) for command in commands)
+    assert manifest["local_paths"]["project_root"] == str(REPO)
+    assert manifest["git"]["commit"] == subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=REPO, text=True
+    ).strip()
+
+
+def test_explicit_sibling_checkout_project_root_is_rejected(tmp_path: Path):
+    local = yaml.safe_load(LOCAL_EXAMPLE.read_text(encoding="utf-8"))
+    local["paths"]["project_root"] = str(REPO.parent / "ECG_adv_Gen")
+    local_path = tmp_path / "local_with_sibling_project_root.yaml"
+    local_path.write_text(yaml.safe_dump(local), encoding="utf-8")
+    config = load_experiment_config(
+        REPO / "configs" / "experiments" / "effnet_direct_k500_v7_sjr_rgq.yaml",
+        local_path,
+        runtime_context={"run_id": "pytest_sibling_checkout"},
+    )
+
+    with pytest.raises(PathSafetyError, match="must match experiment config checkout"):
+        validate_experiment_config(config, repo_root=REPO)
+
+
+def test_external_model_check_accepts_derived_project_root_local_config():
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(REPO / "scripts" / "agent" / "check_external_models.py"),
+            "--repo-root",
+            str(REPO),
+            "--local-config",
+            str(LOCAL_EXAMPLE),
+            "--no-require-existing",
+        ],
+        cwd=REPO,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_dry_run_manifest_never_marks_child_scripts_invoked():

@@ -52,7 +52,7 @@ def run(cmd: list[str], log_path: Path, env: dict[str, str]) -> None:
     run_stream(cmd, log_path=log_path, env=env, cwd=REPO)
 
 
-def main() -> None:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap = argparse.ArgumentParser()
     ap.add_argument("--center", default="cpsc_2018")
     ap.add_argument("--epochs", type=int, default=30)
@@ -151,6 +151,7 @@ def main() -> None:
     ap.add_argument("--target_real_weight", type=float, default=80.0)
     ap.add_argument("--adv_weight", type=float, default=0.2)
     ap.add_argument("--vae_adv_stream_sample_scale", type=float, default=1.0)
+    ap.add_argument("--vae_adv_consistency_weight", type=float, default=0.0)
     ap.add_argument("--adv_weight_warmup_epochs", type=int, default=0)
     ap.add_argument(
         "--adv_label_mode",
@@ -179,6 +180,7 @@ def main() -> None:
         choices=["clean_clean_third", "all_clean", "one_adv", "all_adv", "all_clean_plus_vae_adv"],
         default="clean_clean_third",
     )
+    ap.add_argument("--latent_augmix_adv_base_mix", type=float, default=1.0)
     ap.add_argument("--latent_augmix_copies", type=int, default=1)
     ap.add_argument("--latent_augmix_width", type=int, default=3)
     ap.add_argument("--latent_augmix_depth", type=int, default=-1)
@@ -239,7 +241,11 @@ def main() -> None:
         action="store_true",
         help="Forwarded to synth_online_at_super5.py to avoid epoch resume checkpoint writes.",
     )
-    args = ap.parse_args()
+    return ap.parse_args(argv)
+
+
+def main() -> None:
+    args = parse_args()
 
     data_root = Path(args.data_root)
     out_root = Path(args.out_root) if args.out_root else (

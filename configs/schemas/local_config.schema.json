@@ -10,7 +10,7 @@
     },
     "paths": {
       "type": "object",
-      "required": ["project_root", "data_root", "model_root", "output_root", "cache_root", "tmp_root"],
+      "required": ["data_root", "model_root", "output_root", "cache_root", "tmp_root"],
       "additionalProperties": true
     },
     "python": {
