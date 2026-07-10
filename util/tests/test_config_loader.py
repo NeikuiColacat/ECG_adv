@@ -12,6 +12,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 import yaml
 
@@ -789,20 +790,82 @@ def test_synth_online_at_parser_keeps_only_mainline_latent_augmix_knobs(monkeypa
     assert not hasattr(args, "latent_augmix_clip_abs")
 
 
-def test_effnet_locked_runner_uses_raw_decodes_and_enqueues_only_mixed_views():
+def test_effnet_locked_runner_uses_raw_decodes_and_enqueues_only_mixed_views(monkeypatch):
     from ecg_adv_gen.runner import synth_online_at_super5
 
-    source = inspect.getsource(synth_online_at_super5.main)
+    resolve_route = getattr(synth_online_at_super5, "_resolve_latent_augmix_epoch_route", None)
+    assert callable(resolve_route)
 
-    assert "store_raw_decoded=locked_mixed_view_mode" in source
-    assert "latent_augmix_anchor_signals = pgd_gen.last_anchor_raw_ptbxl_1000" in source
-    assert "latent_augmix_adv_signals = pgd_gen.last_adv_raw_ptbxl_1000" in source
-    assert "anchor_signals_ct=latent_augmix_anchor_signals" in source
-    assert "adv_signals_ct=latent_augmix_adv_signals" in source
-    independent_push = source.index("push_stats = push_adv_to_buffer(")
-    mixed_push = source.index("latent_augmix_push_stats = push_adv_to_buffer(")
-    assert source.rfind("if not locked_mixed_view_mode:", 0, independent_push) >= 0
-    assert independent_push < mixed_push
+    normalized_anchor = np.full((1, 12, 4), -1.0, dtype=np.float32)
+    normalized_adv = np.full((1, 12, 4), -2.0, dtype=np.float32)
+    raw_anchor = np.full((1, 12, 4), 11.0, dtype=np.float32)
+    raw_adv = np.full((1, 12, 4), 22.0, dtype=np.float32)
+    mixed = np.full((1, 12, 4), 33.0, dtype=np.float32)
+    captured = {}
+
+    def fake_build(anchor_signals_ct, adv_signals_ct, **kwargs):
+        captured["anchor"] = anchor_signals_ct.copy()
+        captured["adv"] = adv_signals_ct.copy()
+        return mixed, {"n_generated": 1}
+
+    monkeypatch.setattr(synth_online_at_super5, "build_three_chain_vae_lhat_augmix_views", fake_build)
+    pgd_gen = argparse.Namespace(
+        last_anchor_raw_ptbxl_1000=raw_anchor,
+        last_adv_raw_ptbxl_1000=raw_adv,
+    )
+
+    routed_anchor, routed_adv, push_independent = resolve_route(
+        pgd_gen=pgd_gen,
+        normalized_anchor_signals=normalized_anchor,
+        normalized_adv_signals=normalized_adv,
+        signal_space="raw_pre_zscore",
+    )
+
+    views, _ = synth_online_at_super5.build_three_chain_vae_lhat_augmix_views(
+        anchor_signals_ct=routed_anchor,
+        adv_signals_ct=routed_adv,
+        copies=1,
+        severity=5,
+        severity_profile="standard",
+        width=3,
+        depth=1,
+        alpha=1.0,
+        ops=["baseline_shift"],
+        rng=np.random.default_rng(7),
+        third_chain_role="vae_lhat_adversarial_waveform",
+        chain_base_mode="clean_clean_third",
+        chain_weights=None,
+        adv_base_mix=1.0,
+    )
+
+    assert np.array_equal(captured["anchor"], raw_anchor)
+    assert np.array_equal(captured["adv"], raw_adv)
+    assert push_independent is False
+
+    pushed = []
+    buffer = argparse.Namespace(
+        add_one=lambda signal, *_args, **_kwargs: pushed.append(signal.numpy())
+    )
+    labels = np.array([[1, 0, 0, 0, 0]], dtype=np.float32)
+    logits = np.zeros((1, 5), dtype=np.float32)
+    synth_online_at_super5.push_adv_to_buffer(
+        buffer,
+        normalized_adv,
+        labels,
+        logits,
+        crop_len=4,
+        enabled=push_independent,
+    )
+    synth_online_at_super5.push_adv_to_buffer(
+        buffer,
+        views,
+        labels,
+        logits,
+        crop_len=4,
+    )
+
+    assert len(pushed) == 1
+    assert np.array_equal(pushed[0], mixed[0])
 
 
 def test_synth_online_at_parser_accepts_clean_anchor_third_chain(monkeypatch):

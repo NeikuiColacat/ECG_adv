@@ -29,6 +29,7 @@ RESUME_CONTRACT_KEYS = (
     "latent_augmix_width",
     "latent_augmix_depth",
     "latent_augmix_severity",
+    "latent_augmix_chain_weights",
     "latent_augmix_signal_space",
     "classes_in_scope",
     "seed",
@@ -45,7 +46,6 @@ LOCKED_LEGACY_ARGS = {
     "latent_augmix_mixture_beta_a": 0.0,
     "latent_augmix_mixture_beta_b": 0.0,
     "latent_augmix_op_schedule": "random",
-    "latent_augmix_chain_weights": "",
     "latent_augmix_corruption_source": "vae_decode",
     "latent_augmix_severity_params_file": "",
     "latent_augmix_severity_params_name": "",
@@ -89,7 +89,10 @@ def resume_contract_mismatches(
         if key not in current_args:
             continue
         if key not in saved_args:
-            if key == "latent_augmix_signal_space":
+            if (
+                key == "latent_augmix_signal_space"
+                and current_args[key] == LOCKED_LATENT_AUGMIX_SIGNAL_SPACE
+            ):
                 mismatches.append({"key": key, "saved": None, "current": current_args[key]})
             continue
         saved = normalize_resume_contract_value(saved_args[key])

@@ -767,6 +767,22 @@ def build_three_chain_vae_lhat_augmix_views(
     )
 
 
+def _resolve_latent_augmix_epoch_route(
+    pgd_gen: LatentHullPGDGenerator,
+    normalized_anchor_signals: np.ndarray,
+    normalized_adv_signals: np.ndarray,
+    signal_space: str,
+) -> Tuple[np.ndarray, np.ndarray, bool]:
+    """Return AugMix inputs and whether the independent VAE stream is enabled."""
+    if signal_space != LOCKED_LATENT_AUGMIX_SIGNAL_SPACE:
+        return normalized_anchor_signals, normalized_adv_signals, True
+    raw_anchor = getattr(pgd_gen, "last_anchor_raw_ptbxl_1000", None)
+    raw_adv = getattr(pgd_gen, "last_adv_raw_ptbxl_1000", None)
+    if raw_anchor is None or raw_adv is None:
+        raise RuntimeError("locked raw-first AugMix requires stored raw VAE decodes")
+    return raw_anchor, raw_adv, False
+
+
 def build_clean_anchor_augmix_epoch(
     target_real_ds: TargetRealWaveformDataset,
     args: argparse.Namespace,
@@ -842,6 +858,7 @@ def push_adv_to_buffer(
     teacher_mix: float = 0.7,
     soft_target_floor: float = 0.0,
     sample_weight_scale: float = 1.0,
+    enabled: bool = True,
 ) -> Dict[str, int]:
     """Push gates-passed adv signals into the buffer with -1 sentinel labels.
 
@@ -853,6 +870,15 @@ def push_adv_to_buffer(
     the 3-class generation scope (NORM/MI/STTC) HYP/CD synth is already absent
     from the synth pool; this is a defense-in-depth check.
     """
+    if not enabled:
+        return {
+            "n_pushed": 0,
+            "n_dropped_by_trust": 0,
+            "n_dropped_by_boundary": 0,
+            "label_mode": label_mode,
+            "sample_weight_scale": float(sample_weight_scale),
+            "reason": "disabled",
+        }
     n_pushed = 0
     n_dropped_by_trust = 0
     n_dropped_by_boundary = 0
@@ -1294,7 +1320,7 @@ def main():
         f"depth={args.latent_augmix_depth} severity={args.latent_augmix_severity} "
         f"profile={args.latent_augmix_severity_profile} "
         "mixture=beta:0.5 op_schedule=random chain_weights=dirichlet "
-        "signal_space=model_zscore corruption_source=vae_decode "
+        f"signal_space={args.latent_augmix_signal_space} corruption_source=vae_decode "
         f"third_chain_role={args.latent_augmix_third_chain_role} "
         f"chain_base_mode={args.latent_augmix_chain_base_mode} "
         f"adv_base_mix={args.latent_augmix_adv_base_mix} "
@@ -1665,6 +1691,15 @@ def main():
                 print(f"[ep{epoch:02d}] empty walker pick — skip epoch", flush=True)
                 continue
 
+        latent_augmix_anchor_signals, latent_augmix_adv_signals, push_independent_vae_stream = (
+            _resolve_latent_augmix_epoch_route(
+                pgd_gen,
+                anc_signals,
+                adv_signals,
+                args.latent_augmix_signal_space,
+            )
+        )
+
         # Phase B: gates and diagnostics.
         asr_info = compute_asr(victim, adv_signals, target_oh,
                                device=args.device, batch_size=128)
@@ -1719,21 +1754,19 @@ def main():
                         np.concatenate(teacher_prob_chunks)
                         if teacher_prob_chunks else None
                     )
-                if not locked_mixed_view_mode:
-                    push_stats = push_adv_to_buffer(
-                        buffer=buffer, adv_signals_ct=adv_signals,
-                        target_one_hot=target_oh, victim_logits=logits_arr,
-                        crop_len=args.crop_len, class_trust=class_trust,
-                        boundary_prob_min=args.boundary_prob_min,
-                        boundary_prob_max=args.boundary_prob_max,
-                        teacher_probs=teacher_probs_arr,
-                        label_mode=args.adv_label_mode,
-                        teacher_mix=args.adv_teacher_mix,
-                        soft_target_floor=args.adv_soft_target_floor,
-                        sample_weight_scale=float(args.vae_adv_stream_sample_scale),
-                    )
-                else:
-                    push_stats = {"n_pushed": 0, "reason": "locked_mixed_views_only"}
+                push_stats = push_adv_to_buffer(
+                    buffer=buffer, adv_signals_ct=adv_signals,
+                    target_one_hot=target_oh, victim_logits=logits_arr,
+                    crop_len=args.crop_len, class_trust=class_trust,
+                    boundary_prob_min=args.boundary_prob_min,
+                    boundary_prob_max=args.boundary_prob_max,
+                    teacher_probs=teacher_probs_arr,
+                    label_mode=args.adv_label_mode,
+                    teacher_mix=args.adv_teacher_mix,
+                    soft_target_floor=args.adv_soft_target_floor,
+                    sample_weight_scale=float(args.vae_adv_stream_sample_scale),
+                    enabled=push_independent_vae_stream,
+                )
                 if decoupled_clean_augmix_mode:
                     if target_real_ds is None:
                         raise RuntimeError("all_clean_plus_vae_adv requires target_real_ds")
@@ -1748,13 +1781,6 @@ def main():
                 else:
                     latent_augmix_clean_for_consistency = anc_signals
                     latent_augmix_labels_for_consistency = target_oh
-                    latent_augmix_anchor_signals = anc_signals
-                    latent_augmix_adv_signals = adv_signals
-                    if locked_mixed_view_mode:
-                        latent_augmix_anchor_signals = pgd_gen.last_anchor_raw_ptbxl_1000
-                        latent_augmix_adv_signals = pgd_gen.last_adv_raw_ptbxl_1000
-                        if latent_augmix_anchor_signals is None or latent_augmix_adv_signals is None:
-                            raise RuntimeError("locked raw-first AugMix requires stored raw VAE decodes")
                     latent_augmix_signals, latent_augmix_stats = build_three_chain_vae_lhat_augmix_views(
                         anchor_signals_ct=latent_augmix_anchor_signals,
                         adv_signals_ct=latent_augmix_adv_signals,

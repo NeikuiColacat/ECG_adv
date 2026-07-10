@@ -51,6 +51,16 @@ def test_resume_contract_rejects_checkpoint_without_signal_space_contract():
         validate_resume_contract(saved, current, allow_drift=False)
 
 
+def test_resume_contract_accepts_missing_signal_space_for_normalized_ablation():
+    saved = {"attack_mode": "latent_hull", "center_name": "ningbo"}
+    current = {
+        "center_name": "ningbo",
+        "latent_augmix_signal_space": "model_zscore",
+    }
+
+    assert validate_resume_contract(saved, current, allow_drift=False) == []
+
+
 def test_resume_contract_drops_dead_latent_weight_cap():
     assert "latent_augmix_latent_weight_cap" not in RESUME_CONTRACT_KEYS
 
@@ -67,6 +77,48 @@ def test_resume_contract_preserves_normalized_signal_space_ablation():
     }
 
     assert validate_resume_contract(saved, current, allow_drift=False) == []
+
+
+def test_resume_contract_accepts_matching_explicit_chain_weights():
+    weights = "0.475,0.475,0.05"
+    saved = {
+        "attack_mode": "latent_hull",
+        "center_name": "ningbo",
+        "latent_augmix_chain_weights": weights,
+        "latent_augmix_signal_space": "raw_pre_zscore",
+    }
+    current = {
+        "center_name": "ningbo",
+        "latent_augmix_chain_weights": weights,
+        "latent_augmix_signal_space": "raw_pre_zscore",
+    }
+
+    assert validate_resume_contract(saved, current, allow_drift=False) == []
+
+
+def test_resume_contract_rejects_different_explicit_chain_weights():
+    saved = {
+        "attack_mode": "latent_hull",
+        "center_name": "ningbo",
+        "latent_augmix_chain_weights": "0.475,0.475,0.05",
+        "latent_augmix_signal_space": "raw_pre_zscore",
+    }
+    current = {
+        "center_name": "ningbo",
+        "latent_augmix_chain_weights": "0.45,0.45,0.10",
+        "latent_augmix_signal_space": "raw_pre_zscore",
+    }
+
+    with pytest.raises(ValueError, match="latent_augmix_chain_weights"):
+        validate_resume_contract(saved, current, allow_drift=False)
+
+    assert resume_contract_mismatches(saved, current) == [
+        {
+            "key": "latent_augmix_chain_weights",
+            "saved": "0.475,0.475,0.05",
+            "current": "0.45,0.45,0.10",
+        }
+    ]
 
 
 def test_resume_contract_rejects_disabled_legacy_latent_augmix_checkpoint():
