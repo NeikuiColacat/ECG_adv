@@ -180,6 +180,35 @@ def test_source_only_identity_rejects_target_state(field: str, value: object):
         validate_target_init_k500_identity(current, source_only)
 
 
+@pytest.mark.parametrize(
+    "field",
+    ["center", "K", "target_train_K", "selected_ref_record_ids", "target_train_record_ids", "config.stage"],
+)
+def test_source_only_identity_rejects_missing_contract_field(field: str):
+    current = {
+        "stage": "k500",
+        "center": CENTER,
+        "selected_ref_record_ids": ["r1"],
+        "config": {"stage": "k500", "seed": 20260531},
+    }
+    source_only = {
+        "stage": "ptbxl_source",
+        "center": None,
+        "K": 0,
+        "target_train_K": 0,
+        "selected_ref_record_ids": [],
+        "target_train_record_ids": [],
+        "config": {"stage": "ptbxl_source"},
+    }
+    if field == "config.stage":
+        source_only["config"].pop("stage")
+    else:
+        source_only.pop(field)
+
+    with pytest.raises(PN2021CMetadataError):
+        validate_target_init_k500_identity(current, source_only)
+
+
 def test_target_identity_rejects_source_only_config_stage():
     current = {
         "stage": "k500",
@@ -237,6 +266,49 @@ def test_evaluation_k500_identity_ignores_unrelated_nested_hashes():
     }
 
     assert evaluation_k500_identities(payload) == {}
+
+
+def test_evaluation_k500_identity_wraps_malformed_count():
+    payload = {
+        "per_center": {
+            CENTER: {
+                "emg_noise": {
+                    "5": {
+                        "metadata_compatibility": {
+                            "n_excluded_ref": "not-an-int",
+                            "ref_record_ids_sha256": REF_HASH,
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    with pytest.raises(PN2021CMetadataError, match="count"):
+        evaluation_k500_identities(payload)
+
+
+def test_evaluation_k500_identity_rejects_embedded_center_mismatch():
+    payload = {
+        "per_center": {
+            CENTER: {
+                "emg_noise": {
+                    "5": {
+                        "metadata": {
+                            "pn2021c": {
+                                "center": "georgia",
+                                "n_excluded_ref": 500,
+                                "ref_record_ids_sha256": REF_HASH,
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    with pytest.raises(PN2021CMetadataError, match="center"):
+        evaluation_k500_identities(payload)
 
 
 def test_stream_metadata_keeps_clean_evaluation_ref_identity():

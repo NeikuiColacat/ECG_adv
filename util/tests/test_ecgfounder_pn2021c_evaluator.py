@@ -268,6 +268,26 @@ def test_ecgfounder_pn2021c_load_allows_strict_source_only_without_init(tmp_path
     assert evaluator._load_result(run_dir) == source
 
 
+def test_ecgfounder_pn2021c_load_rejects_incomplete_source_only_contract(tmp_path: Path):
+    import ecg_adv_gen.runner.ecgfounder_pn2021c_eval as evaluator
+
+    run_dir = tmp_path / "source"
+    run_dir.mkdir()
+    source = {
+        "stage": "ptbxl_source",
+        "center": None,
+        "K": 0,
+        "selected_ref_record_ids": [],
+        "target_train_record_ids": [],
+        "config": {"stage": "ptbxl_source"},
+        "init_model": None,
+    }
+    (run_dir / "eval_result.json").write_text(json.dumps(source), encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        evaluator._load_result(run_dir)
+
+
 def test_locked_ecgfounder_eval_one_records_package_pn2021c_metadata(monkeypatch):
     import ecg_adv_gen.runner.ecgfounder_pn2021c_eval as evaluator
 

@@ -19,17 +19,28 @@ def _run_k500_identity(payload: Mapping[str, Any], *, label: str) -> dict[str, A
         raise PN2021CMetadataError(
             f"{label} stage={stage!r} conflicts with config.stage={config_stage!r}"
         )
-    selected = [str(item) for item in payload.get("selected_ref_record_ids") or []]
-    target_train = [str(item) for item in payload.get("target_train_record_ids") or []]
     if stage == "ptbxl_source":
-        if selected or target_train:
-            raise PN2021CMetadataError(f"{label} marked ptbxl_source but records target K500 ids")
-        if payload.get("center") not in (None, ""):
+        required = ("center", "K", "target_train_K", "selected_ref_record_ids", "target_train_record_ids")
+        missing = [field for field in required if field not in payload]
+        if missing or "stage" not in config:
+            raise PN2021CMetadataError(
+                f"{label} ptbxl_source contract is missing fields: {missing + ([] if 'stage' in config else ['config.stage'])}"
+            )
+        if config_stage != stage:
+            raise PN2021CMetadataError(
+                f"{label} stage={stage!r} conflicts with config.stage={config_stage!r}"
+            )
+        if payload["center"] not in (None, ""):
             raise PN2021CMetadataError(f"{label} marked ptbxl_source but center is not empty")
         for field in ("K", "target_train_K"):
-            if payload.get(field) not in (None, 0):
+            if type(payload[field]) is not int or payload[field] != 0:
                 raise PN2021CMetadataError(f"{label} marked ptbxl_source but {field} is not zero")
+        for field in ("selected_ref_record_ids", "target_train_record_ids"):
+            if not isinstance(payload[field], list) or payload[field]:
+                raise PN2021CMetadataError(f"{label} marked ptbxl_source but {field} is not an empty list")
         return {"source_only": True, "stage": stage}
+    selected = [str(item) for item in payload.get("selected_ref_record_ids") or []]
+    target_train = [str(item) for item in payload.get("target_train_record_ids") or []]
     if not selected:
         raise PN2021CMetadataError(f"{label} does not expose selected_ref_record_ids")
     selected_hash = ref_ids_sha256(selected)
@@ -83,7 +94,13 @@ def evaluation_k500_identities(payload: Mapping[str, Any]) -> dict[str, dict[str
         if ref_hash not in (None, ""):
             values["hashes"].add(str(ref_hash))
         if count is not None:
-            values["counts"].add(int(count))
+            try:
+                parsed_count = int(count)
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise PN2021CMetadataError(
+                    f"invalid evaluation K500 count for {center}: {count!r}"
+                ) from exc
+            values["counts"].add(parsed_count)
 
     protocol_hashes = _get(payload, "pn2021.eval_protocol.target_ref_id_hashes")
     if isinstance(protocol_hashes, Mapping):
@@ -109,6 +126,12 @@ def evaluation_k500_identities(payload: Mapping[str, Any]) -> dict[str, dict[str
                     compatibility = row.get("metadata_compatibility")
                     metadata = row.get("metadata")
                     pn2021c = metadata.get("pn2021c") if isinstance(metadata, Mapping) else None
+                    if isinstance(pn2021c, Mapping):
+                        embedded_center = str(pn2021c.get("center") or "")
+                        if embedded_center and embedded_center != str(center):
+                            raise PN2021CMetadataError(
+                                f"embedded PN2021-C center {embedded_center!r} does not match outer center {center!r}"
+                            )
                     for source in (row, compatibility, pn2021c):
                         if isinstance(source, Mapping):
                             add(

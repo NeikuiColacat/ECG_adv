@@ -830,6 +830,7 @@ def _audit_config(
 def _audit_k500_refs(claim: dict[str, Any], issues: list[dict[str, Any]]) -> dict[str, Any]:
     protocol = claim["protocol"]
     kshot = protocol["kshot"]
+    selection_seed = kshot.get("subset_seed", kshot["seed"])
     out: dict[str, Any] = {}
     for center in protocol["target_centers"]:
         ref_path = _path_or_none(kshot["ref_meta_files"].get(center))
@@ -854,7 +855,7 @@ def _audit_k500_refs(claim: dict[str, Any], issues: list[dict[str, Any]]) -> dic
         checks = {
             "center": meta.get("center") == center,
             "K": meta["K"] == kshot["k"],
-            "seed": meta["selection_seed"] == kshot["seed"],
+            "seed": meta["selection_seed"] == selection_seed,
             "mapping_version": meta.get("mapping_version") == protocol["mapping_version"],
             "mapping_hash": meta.get("mapping_hash") == protocol["mapping_hash"],
             "ref_record_ids": len(ref_ids) == kshot["k"],
@@ -1137,7 +1138,7 @@ def _audit_evaluation_k500_identity(
     claim_identities: dict[str, Any],
     issues: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    if claim.get("status") not in {"trusted", "provisional"} or method.get("status") not in {"trusted", "provisional"}:
+    if claim.get("status") not in {"trusted", "provisional"} or method.get("status") in {"deprecated", "exploratory"}:
         return {"skipped": True}
     code = "evaluation_k500_identity_missing"
     required = claim.get("required_reporting_artifacts")
@@ -1212,7 +1213,7 @@ def _audit_evaluation_k500_identity(
         }
         registry_identity = {
             "k": claim_kshot.get("k"),
-            "selection_seed": claim_kshot.get("seed"),
+            "selection_seed": claim_kshot.get("subset_seed", claim_kshot.get("seed")),
             "ref_record_ids_sha256": claimed_identity["ref_record_ids_sha256"],
         }
         if observed_identity != claimed_identity or observed_identity != registry_identity:

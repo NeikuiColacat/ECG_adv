@@ -139,8 +139,11 @@ def test_preflight_allows_explicit_source_only_init(tmp_path: Path):
         {
             "stage": "ptbxl_source",
             "center": None,
+            "K": 0,
+            "target_train_K": 0,
             "selected_ref_record_ids": [],
             "target_train_record_ids": [],
+            "config": {"stage": "ptbxl_source"},
         },
     )
 

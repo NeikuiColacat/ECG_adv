@@ -829,6 +829,62 @@ def test_active_method_validates_eval_artifact_sha_before_read(
     assert "evaluation_artifact_sha256_mismatch" in _codes(evidence_case["audit"]())
 
 
+def test_active_method_malformed_evaluation_count_is_fail_closed(
+    evidence_case: dict[str, object],
+) -> None:
+    _rewrite_eval_result(
+        evidence_case,
+        {
+            "per_center": {
+                "ningbo": {
+                    "emg_noise": {
+                        "5": {
+                            "metadata_compatibility": {
+                                "n_excluded_ref": "not-an-int",
+                                "ref_record_ids_sha256": hashlib.sha256(b"r1\n").hexdigest(),
+                            }
+                        }
+                    }
+                }
+            }
+        },
+    )
+
+    assert "evaluation_k500_identity_missing" in _codes(evidence_case["audit"]())
+
+
+def test_trusted_claim_supporting_method_cannot_skip_lineage_gate(
+    evidence_case: dict[str, object],
+) -> None:
+    claim = evidence_case["registry"]["active_claims"][0]
+    claim["status"] = "trusted"
+    method = claim["methods"]["baseline"]
+    method["status"] = "supporting"
+    method.pop("manifest")
+    claim.pop("required_reporting_artifacts")
+
+    assert "evaluation_k500_identity_missing" in _codes(evidence_case["audit"]())
+
+
+def test_active_method_prefers_subset_seed_over_seed(
+    evidence_case: dict[str, object],
+) -> None:
+    claim = evidence_case["registry"]["active_claims"][0]
+    claim["protocol"]["kshot"]["subset_seed"] = 2
+    ref_path = Path(claim["protocol"]["kshot"]["ref_meta_files"]["ningbo"])
+    ref_meta = json.loads(ref_path.read_text(encoding="utf-8"))
+    ref_meta["selection_seed"] = 2
+    _write_json(ref_path, ref_meta)
+    k500 = json.loads(evidence_case["k500_ids"].read_text(encoding="utf-8"))
+    k500["paper_protocol"]["subset_seed"] = 2
+    k500["centers"]["ningbo"]["selection_seed"] = 2
+    _write_json(evidence_case["k500_ids"], k500)
+
+    codes = _codes(evidence_case["audit"]())
+    assert "k500_ref_protocol_mismatch" not in codes
+    assert "evaluation_k500_identity_mismatch" not in codes
+
+
 def test_trusted_method_keeps_managed_run_mapping_when_comparison_is_deprecated(
     evidence_case: dict[str, object],
 ) -> None:
