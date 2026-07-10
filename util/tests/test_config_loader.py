@@ -595,7 +595,6 @@ def test_effnet_vae_lhat_threechain_locked_k500_config_uses_matched_source_best_
         assert _option_value(argv, "--target_real_val_fraction") == "0.2"
         assert _option_value(argv, "--target_real_val_seed") == "20260601"
         assert _option_value(argv, "--selection_metric") == "macro_auprc"
-        assert _option_value(argv, "--source_floor_metric") == "macro_auprc"
         assert _option_value(argv, "--source_floor_max_drop") == "0.02"
         assert _option_value(argv, "--ptbxl_weight") == "0.0"
         assert "/triple_labels/super5_minresample_full10_perglobal_20260503/best_model.pt" in _option_value(

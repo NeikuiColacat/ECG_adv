@@ -57,7 +57,6 @@ def build_matched_training_record(
     source_checkpoint_sha256: str,
     split: dict[str, Any],
     selection_metric: str,
-    source_floor_metric: str,
     source_floor_max_drop: float,
     epochs: int,
     optimizer_steps_per_epoch: int,
@@ -84,7 +83,7 @@ def build_matched_training_record(
             "seed": int(split["seed"]),
         },
         "selection": dict(
-            metric=str(selection_metric), source_floor_metric=str(source_floor_metric),
+            metric=str(selection_metric), source_floor_metric=str(selection_metric),
             source_floor_max_drop=float(source_floor_max_drop), checkpoint="best_model.pt",
             source_floor_result=source_floor_result,
         ),

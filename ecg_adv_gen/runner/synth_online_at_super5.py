@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import argparse
 import copy
-import hashlib
 import json
 import math
 import os
@@ -66,6 +65,7 @@ from ecg_adv_gen.evaluation.pn2021c import (  # noqa: E402
     STRESS_PROFILE_CHOICES as PN2021C_STRESS_PROFILE_CHOICES,
     apply_corruption_sequence,
     build_corruption_op as _build_pn2021c_corruption_op,
+    file_sha256,
 )
 from ecg_adv_gen.evaluation import compute_macro_auroc_auprc  # noqa: E402
 from ecg_adv_gen.evaluation.selection import (  # noqa: E402
@@ -90,6 +90,7 @@ from ecg_adv_gen.training import (  # noqa: E402
     atomic_torch_save,
     capture_rng_state,
     compute_pos_weight,
+    masked_bce_with_logits,
     quality_buffer_state,
     resolve_resume_path,
     restore_quality_buffer_state,
@@ -358,14 +359,6 @@ def parse_float_sequence(value: str | None) -> List[float] | None:
     return [float(x.strip()) for x in value.split(",") if x.strip()]
 
 
-def _sha256_file(path: str | Path) -> str:
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def evaluate_loader_macro(
     model: nn.Module,
     loader: DataLoader,
@@ -373,8 +366,7 @@ def evaluate_loader_macro(
     device: str,
 ) -> Dict[str, float]:
     def masked_criterion(logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-        mask = (labels >= 0).float()
-        return (criterion(logits, labels.clamp(min=0.0)) * mask).sum() / mask.sum().clamp(min=1.0)
+        return masked_bce_with_logits(logits, labels, criterion.pos_weight)
 
     loss, labels_np, probs = evaluate(model, loader, masked_criterion, device)
     metrics = compute_macro_auroc_auprc(labels_np, probs, CLASS_NAMES_SUPER5, min_pos=1)
@@ -393,9 +385,11 @@ def update_best_selection_state(
     *,
     epoch: int,
 ) -> tuple[float, int, Dict[str, Any]]:
-    if candidate_result["selected"]:
-        return float(candidate_result["candidate_metric"]), int(epoch), dict(candidate_result)
-    return best_metric, best_epoch, best_source_floor_result
+    return (
+        (float(candidate_result["candidate_metric"]), int(epoch), dict(candidate_result))
+        if candidate_result["selected"]
+        else (best_metric, best_epoch, best_source_floor_result)
+    )
 
 
 def restore_best_selection_state(
@@ -403,11 +397,8 @@ def restore_best_selection_state(
     fallback: tuple[float, int, Dict[str, Any]],
 ) -> tuple[float, int, Dict[str, Any]]:
     metric, epoch, result = fallback
-    return (
-        float(checkpoint.get("best_metric", metric)),
-        int(checkpoint.get("best_epoch", epoch)),
-        dict(checkpoint.get("best_source_floor_result", result)),
-    )
+    return (float(checkpoint.get("best_metric", metric)), int(checkpoint.get("best_epoch", epoch)),
+            dict(checkpoint.get("best_source_floor_result", result)))
 
 
 def train_latent_augmix_consistency_epoch(
@@ -500,7 +491,7 @@ def train_latent_augmix_consistency_epoch(
             soft_rep = soft_targets.repeat((int(copies), 1))
             mask = (labels_rep >= 0).float()
             denom = mask.sum().clamp(min=1.0)
-            hard_bce = (criterion(logits, labels_rep.clamp(min=0.0)) * mask).sum() / denom
+            hard_bce = masked_bce_with_logits(logits, labels_rep, criterion.pos_weight)
             direct_consistency = (
                 F.binary_cross_entropy_with_logits(logits, soft_rep, reduction="none") * mask
             ).sum() / denom
@@ -508,14 +499,8 @@ def train_latent_augmix_consistency_epoch(
             clean_logits = model(clean)
             logits = model(views)
             logits_views = logits.view(int(copies), clean.shape[0], -1)
-            mask_clean = (labels >= 0).float()
-            clean_hard_bce = (
-                criterion(clean_logits, labels.clamp(min=0.0)) * mask_clean
-            ).sum() / mask_clean.sum().clamp(min=1.0)
-            mask_rep = (labels_rep >= 0).float()
-            aug_hard_bce = (
-                criterion(logits, labels_rep.clamp(min=0.0)) * mask_rep
-            ).sum() / mask_rep.sum().clamp(min=1.0)
+            clean_hard_bce = masked_bce_with_logits(clean_logits, labels, criterion.pos_weight)
+            aug_hard_bce = masked_bce_with_logits(logits, labels_rep, criterion.pos_weight)
             hard_bce = 0.5 * (clean_hard_bce + aug_hard_bce)
             direct_consistency = torch.stack(
                 [
@@ -1009,7 +994,6 @@ def parse_args():
     p.add_argument("--init_ckpt", default=DEFAULT_SUPER5_CKPT)
     p.add_argument("--init_checkpoint_sha256", default="")
     p.add_argument("--init_lineage_stage", default="")
-    p.add_argument("--init_lineage_evidence", default="")
     p.add_argument("--model_name", default="efficientnet1dv2",
                    choices=available_model_names())
     p.add_argument("--output_dir", required=True)
@@ -1157,7 +1141,6 @@ def parse_args():
     p.add_argument("--target_real_val_fraction", type=float, default=0.2)
     p.add_argument("--target_real_val_seed", type=int, default=20260531)
     p.add_argument("--selection_metric", choices=["macro_auroc", "macro_auprc"], default="macro_auprc")
-    p.add_argument("--source_floor_metric", choices=["macro_auroc", "macro_auprc"], default="macro_auprc")
     p.add_argument("--source_floor_max_drop", type=float, default=0.02)
     p.add_argument("--adv_weight", type=float, default=0.5)
     p.add_argument(
@@ -1312,8 +1295,6 @@ def parse_args():
             p.error("matched comparison requires verified ptbxl_source initialization")
         if not 0.0 < args.target_real_val_fraction < 0.5:
             p.error("matched comparison requires --target_real_val_fraction in (0, 0.5)")
-        if args.selection_metric != args.source_floor_metric:
-            p.error("matched comparison selection/source-floor metrics must match")
     if float(args.vae_adv_stream_sample_scale) < 0.0:
         p.error("--vae_adv_stream_sample_scale must be non-negative")
     if not (0.0 <= float(args.latent_augmix_adv_base_mix) <= 1.0):
@@ -1372,7 +1353,7 @@ def main():
     args = parse_args()
     matched_comparison = args.comparison_arm in {"a0", "a5"}
     method_updates_enabled = args.comparison_arm != "a0"
-    source_checkpoint_sha256 = _sha256_file(args.init_ckpt)
+    source_checkpoint_sha256 = file_sha256(args.init_ckpt)
     if matched_comparison and source_checkpoint_sha256 != args.init_checkpoint_sha256:
         raise RuntimeError("matched comparison source checkpoint sha256 mismatch")
     set_all_seeds(args.seed)
@@ -1579,7 +1560,6 @@ def main():
     best_epoch = 0
     best_ckpt_path = os.path.join(args.output_dir, "best_model.pt")
     source_baseline_metrics: Dict[str, float] = {}
-    target_baseline_metrics: Dict[str, float] = {}
     source_floor_result: Dict[str, Any] = {}
     best_source_floor_result: Dict[str, Any] = {}
     realized_optimizer_steps = 0
@@ -1595,15 +1575,14 @@ def main():
         source_baseline_metrics = evaluate_loader_macro(
             victim.model, val_loader, criterion, args.device
         )
-        target_baseline_metrics = evaluate_loader_macro(
+        best_metric = float(evaluate_loader_macro(
             victim.model, target_val_loader, criterion, args.device
-        )
-        best_metric = float(target_baseline_metrics[args.selection_metric])
+        )[args.selection_metric])
         source_floor_result = update_matched_checkpoint_selection(
             best_metric=-float("inf"),
             candidate_metric=best_metric,
-            source_metric=float(source_baseline_metrics[args.source_floor_metric]),
-            source_baseline_metric=float(source_baseline_metrics[args.source_floor_metric]),
+            source_metric=float(source_baseline_metrics[args.selection_metric]),
+            source_baseline_metric=float(source_baseline_metrics[args.selection_metric]),
             source_max_drop=args.source_floor_max_drop,
         )
         best_source_floor_result = dict(source_floor_result)
@@ -1613,7 +1592,7 @@ def main():
     contract_base = dict(
         comparison_arm=args.comparison_arm, source_checkpoint_path=args.init_ckpt,
         source_checkpoint_sha256=source_checkpoint_sha256, split=matched_split,
-        selection_metric=args.selection_metric, source_floor_metric=args.source_floor_metric,
+        selection_metric=args.selection_metric,
         source_floor_max_drop=args.source_floor_max_drop, epochs=args.n_epochs,
         optimizer_steps_per_epoch=optimizer_steps_per_epoch,
     )
@@ -2251,8 +2230,8 @@ def main():
             source_floor_result = update_matched_checkpoint_selection(
                 best_metric=best_metric,
                 candidate_metric=candidate_metric,
-                source_metric=float(source_val_metrics[args.source_floor_metric]),
-                source_baseline_metric=float(source_baseline_metrics[args.source_floor_metric]),
+                source_metric=float(source_val_metrics[args.selection_metric]),
+                source_baseline_metric=float(source_baseline_metrics[args.selection_metric]),
                 source_max_drop=args.source_floor_max_drop,
             )
             best_metric, best_epoch, best_source_floor_result = update_best_selection_state(

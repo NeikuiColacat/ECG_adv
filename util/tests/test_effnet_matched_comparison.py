@@ -35,8 +35,6 @@ def _ids_hash(values: list[str]) -> str:
 
 
 def test_matched_a0_a5_share_split_and_validation_never_enters_latent_candidates():
-    assert hasattr(kshot, "matched_k500_split")
-    assert hasattr(kshot, "filter_latent_candidates")
     record_ids = np.asarray([f"r{i:03d}" for i in range(500)])
     labels = np.eye(5, dtype=np.float32)[np.arange(500) % 5]
 
@@ -114,29 +112,6 @@ def test_a0_clean_control_and_a5_augmix_have_equal_auxiliary_optimizer_steps():
     assert a5["consistency_loss"] > 0.0
 
 
-def test_checkpoint_selection_uses_target_metric_with_a_hard_source_floor():
-    assert hasattr(selection, "update_matched_checkpoint_selection")
-    blocked = selection.update_matched_checkpoint_selection(
-        best_metric=0.51,
-        candidate_metric=0.60,
-        source_metric=0.73,
-        source_baseline_metric=0.76,
-        source_max_drop=0.02,
-    )
-    accepted = selection.update_matched_checkpoint_selection(
-        best_metric=0.51,
-        candidate_metric=0.55,
-        source_metric=0.75,
-        source_baseline_metric=0.76,
-        source_max_drop=0.02,
-    )
-
-    assert blocked["source_floor_passed"] is False
-    assert blocked["selected"] is False
-    assert accepted["source_floor_passed"] is True
-    assert accepted["selected"] is True
-
-
 def test_best_source_floor_result_tracks_selected_epoch_and_survives_resume():
     from ecg_adv_gen.runner.synth_online_at_super5 import (
         restore_best_selection_state,
@@ -151,6 +126,8 @@ def test_best_source_floor_result_tracks_selected_epoch_and_survives_resume():
         best_metric=0.55, candidate_metric=0.60, source_metric=0.73,
         source_baseline_metric=0.76, source_max_drop=0.02,
     )
+    assert accepted["source_floor_passed"] is accepted["selected"] is True
+    assert rejected["source_floor_passed"] is rejected["selected"] is False
     state = update_best_selection_state(0.51, 0, {}, accepted, epoch=1)
     state = update_best_selection_state(*state, rejected, epoch=2)
 
@@ -291,7 +268,6 @@ def test_managed_matched_a0_a5_commands_share_every_non_method_contract():
         "--target_real_val_fraction",
         "--target_real_val_seed",
         "--selection_metric",
-        "--source_floor_metric",
         "--source_floor_max_drop",
     )
     for arms in pairs.values():
@@ -301,43 +277,6 @@ def test_managed_matched_a0_a5_commands_share_every_non_method_contract():
         for option in shared_options:
             assert _option(arms["a0"], option) == _option(arms["a5"], option)
         assert _option(arms["a0"], "--ptbxl_weight") == "0.0"
-
-    manifest = make_dry_run_manifest(
-        config,
-        commands=commands,
-        local_paths=validate_experiment_config(config, repo_root=REPO),
-        run_id="pytest_matched",
-        cli_args=type("Args", (), {"dry_run": True, "write_plan": True})(),
-    )
-    init = manifest["artifact_trace"]["initialization"]
-    assert init["stage"] == "ptbxl_source"
-    assert len(init["checkpoint_sha256"]) == 64
-    assert init["checkpoint_path"].endswith("/best_model.pt")
-
-
-def test_matched_a0_a5_resolve_to_distinct_arm_named_run_directories():
-    from ecg_adv_gen.runner.effnet_vae_lhat import resolve_effnet_vae_lhat_paths
-
-    common = dict(
-        center="ningbo", anchor_base="", target_real_npz_override="",
-        synth_npz_override="", hull_M=20, hull_lambda=0.05,
-        latent_augmix_severity=5, hull_steps=3, classes_in_scope=["CD"],
-        hull_label_mode="compatible", hull_mix_label_mode="anchor_soft",
-        hull_neighbor_distance_space="standardized", hull_neighbor_mode="local_random",
-        hull_neighbor_pool_size=120, hull_neighbor_pool_multiplier=4,
-        run_tag_extra="matched", epochs=30, seed=20260601,
-    )
-    a0 = resolve_effnet_vae_lhat_paths(
-        Namespace(**common, comparison_arm="a0"), data_root=Path("/data"), out_root=Path("/out")
-    )
-    a5 = resolve_effnet_vae_lhat_paths(
-        Namespace(**common, comparison_arm="a5"), data_root=Path("/data"), out_root=Path("/out")
-    )
-
-    assert a0.out_dir != a5.out_dir
-    assert "_arma0_" in a0.out_dir.name
-    assert "_arma5_" in a5.out_dir.name
-
 
 def test_matched_manifest_child_paths_equal_runtime_arm_paths():
     from ecg_adv_gen.runner import effnet_vae_lhat_augmix as wrapper
@@ -361,6 +300,13 @@ def test_matched_manifest_child_paths_equal_runtime_arm_paths():
         child["matrix"]["comparison_arm"]: child["child_run_dir"]
         for child in manifest["artifact_trace"]["expected_outputs"]["child_runs"]
     }
+    assert child_paths["a0"] != child_paths["a5"]
+    assert "_arma0_" in child_paths["a0"]
+    assert "_arma5_" in child_paths["a5"]
+    init = manifest["artifact_trace"]["initialization"]
+    assert init["stage"] == "ptbxl_source"
+    assert len(init["checkpoint_sha256"]) == 64
+    assert init["checkpoint_path"].endswith("/best_model.pt")
 
     for command in commands:
         args = wrapper.parse_args(command["argv"][2:])
@@ -419,12 +365,10 @@ def test_matched_contract_reaches_the_shared_child_parser(monkeypatch):
     assert child_args.target_real_val_fraction == 0.2
     assert child_args.target_real_val_seed == 20260601
     assert child_args.selection_metric == "macro_auprc"
-    assert child_args.source_floor_metric == "macro_auprc"
     assert child_args.source_floor_max_drop == 0.02
 
 
 def test_run_record_contract_differs_only_by_declared_arm():
-    assert hasattr(selection, "build_matched_training_record")
     split = {
         "train_record_ids_sha256": "a" * 64,
         "val_record_ids_sha256": "b" * 64,
@@ -438,7 +382,6 @@ def test_run_record_contract_differs_only_by_declared_arm():
         "source_checkpoint_sha256": "c" * 64,
         "split": split,
         "selection_metric": "macro_auprc",
-        "source_floor_metric": "macro_auprc",
         "source_floor_max_drop": 0.02,
         "epochs": 2,
         "optimizer_steps_per_epoch": 3,

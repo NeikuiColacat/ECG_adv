@@ -131,7 +131,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     ap.add_argument("--init_checkpoint_sha256", default="")
     ap.add_argument("--init_lineage_stage", default="")
-    ap.add_argument("--init_lineage_evidence", default="")
     ap.add_argument(
         "--synth_npz_override",
         default="",
@@ -182,7 +181,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--target_real_val_fraction", type=float, default=0.2)
     ap.add_argument("--target_real_val_seed", type=int, default=20260531)
     ap.add_argument("--selection_metric", choices=["macro_auroc", "macro_auprc"], default="macro_auprc")
-    ap.add_argument("--source_floor_metric", choices=["macro_auroc", "macro_auprc"], default="macro_auprc")
     ap.add_argument("--source_floor_max_drop", type=float, default=0.02)
     ap.add_argument("--lr", type=float, default=5e-5)
     ap.add_argument("--train_batch_size", type=int, default=128)
