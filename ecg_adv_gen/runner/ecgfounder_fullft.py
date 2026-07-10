@@ -84,7 +84,6 @@ from ecg_adv_gen.data import (  # noqa: E402
 from ecg_adv_gen.data.raw_signals import (  # noqa: E402
     RawSignalDataset,
     anchor_signal_npz_path,
-    apply_augmix_op_np,
 )
 from ecg_adv_gen.labels import CLASS_NAMES_SUPER5  # noqa: E402
 from ecg_adv_gen.labels.super5_mapping import SUPER5_TO_IDX  # noqa: E402
@@ -110,6 +109,7 @@ from ecg_adv_gen.training.resume_contract import (  # noqa: E402
 from ecg_adv_gen.run_naming import build_ecgfounder_fullft_run_leaf  # noqa: E402
 from ecg_adv_gen.evaluation.pn2021c import (  # noqa: E402
     STRESS_PROFILE_CHOICES,
+    apply_corruption_sequence,
 )
 from methods.augmix.jsd_loss import jsd_multilabel  # noqa: E402
 from methods.augmix.severity import AVAILABLE_OPS  # noqa: E402
@@ -369,13 +369,17 @@ def build_locked_three_chain_latent_augmix_views(
     """Build locked ECGFounder three-chain VAE-LHAT AugMix waveform views."""
 
     def _apply(sig_ct: np.ndarray, op_name: str, op_severity: int, op_profile: str) -> np.ndarray:
-        return apply_augmix_op_np(
-            sig_ct,
+        sig_t = torch.from_numpy(sig_ct.copy()).float()
+        return apply_corruption_sequence(
+            sig_t,
             op_name,
             op_severity,
             op_profile,
+            base_seed=int(rng.integers(0, 2**31)),
+            seed_parts=("ecgfounder_latent_augmix", op_name),
+            sample_rate_hz=500.0,
             severity_profile_params=None,
-        )
+        ).cpu().numpy().astype(np.float32, copy=False)
 
     views, stats = build_three_chain_vae_lhat_augmix_views_core(
         anchor_signals_ct,

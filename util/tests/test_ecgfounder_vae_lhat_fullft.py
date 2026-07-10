@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from argparse import Namespace
 
 import numpy as np
@@ -11,6 +12,7 @@ import torch
 import torch.nn as nn
 
 from ecg_adv_gen.runner import ecgfounder_fullft
+from ecg_adv_gen.evaluation import pn2021c
 from ecg_adv_gen.training.resume_contract import validate_resume_contract
 
 
@@ -173,7 +175,59 @@ def test_locked_augmix_corrupts_raw5000_then_zscores_and_batches_match(monkeypat
     assert all(float(x.std()) == pytest.approx(1.0, abs=1e-4) for x in capture_model.inputs)
 
 
-def test_ecgfounder_signal_space_contract_rejects_normalized_first_resume(tmp_path):
+def test_locked_augmix_uses_official_s5_corruption_at_500hz(monkeypatch):
+    seen: list[tuple] = []
+
+    class _IdentityOp:
+        freq = 100.0
+
+        def __call__(self, ecg_ct):
+            seen.append(("apply", tuple(ecg_ct.shape), float(ecg_ct.mean()), self.freq))
+            return ecg_ct
+
+    def _build_op(op_name, internal_severity):
+        seen.append(("build", op_name, internal_severity))
+        return _IdentityOp()
+
+    monkeypatch.setattr(pn2021c, "build_op", _build_op)
+    raw = np.linspace(2.0, 4.0, 5000, dtype=np.float32)[None, None, :]
+    raw = np.repeat(raw, 12, axis=1)
+    views, _ = ecgfounder_fullft.build_locked_three_chain_latent_augmix_views(
+        raw,
+        -raw,
+        copies=1,
+        severity=5,
+        severity_profile="standard",
+        width=3,
+        depth=1,
+        alpha=1.0,
+        ops=["baseline_wander"],
+        mixture_mode="fixed",
+        mixture_prob=1.0,
+        mixture_beta_a=None,
+        mixture_beta_b=None,
+        op_schedule="random",
+        chain_weights=[0.5, 0.5, 0.0],
+        renorm=False,
+        clip_abs=0.0,
+        third_chain_role="vae_lhat_adversarial_waveform",
+        chain_base_mode="clean_clean_third",
+        adv_base_mix=1.0,
+        rng=np.random.default_rng(7),
+    )
+
+    assert views.shape == (1, 12, 5000)
+    assert [item for item in seen if item[0] == "build"] == [
+        ("build", "baseline_wander", 10),
+        ("build", "baseline_wander", 10),
+    ]
+    assert [item[1:] for item in seen if item[0] == "apply"] == [
+        ((12, 5000), pytest.approx(3.0), 500.0),
+        ((12, 5000), pytest.approx(3.0), 500.0),
+    ]
+
+
+def test_ecgfounder_signal_space_contract_rejects_normalized_first_resume(monkeypatch, tmp_path):
     locked = ecgfounder_fullft.latent_augmix_signal_space(
         "clean_clean_third",
         "vae_lhat_adversarial_waveform",
@@ -191,5 +245,27 @@ def test_ecgfounder_signal_space_contract_rejects_normalized_first_resume(tmp_pa
         json.dumps({"config": {"latent_augmix_signal_space": "model_zscore"}}),
         encoding="utf-8",
     )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ecgfounder_fullft.py",
+            "--out_dir",
+            str(tmp_path),
+            "--stage",
+            "k500",
+            "--ref_meta_json",
+            "/tmp/unused.json",
+            "--enable_vae_adv_stream",
+            "--enable_latent_augmix_branch",
+            "--run_name",
+            "existing",
+            "--device",
+            "cpu",
+        ],
+    )
+    run_result = tmp_path / "runs" / "existing" / "eval_result.json"
+    run_result.parent.mkdir(parents=True)
+    run_result.write_text(old_result.read_text(encoding="utf-8"), encoding="utf-8")
     with pytest.raises(ValueError, match="latent_augmix_signal_space"):
-        ecgfounder_fullft.validate_existing_run_signal_space(old_result, locked)
+        ecgfounder_fullft.main()
