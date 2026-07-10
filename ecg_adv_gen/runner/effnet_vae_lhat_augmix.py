@@ -55,6 +55,11 @@ def run(cmd: list[str], log_path: Path, env: dict[str, str]) -> None:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap = argparse.ArgumentParser()
     ap.add_argument("--center", default="cpsc_2018")
+    ap.add_argument(
+        "--comparison_arm",
+        choices=["historical_unmatched", "a0", "a5"],
+        default="historical_unmatched",
+    )
     ap.add_argument("--epochs", type=int, default=30)
     ap.add_argument("--seed", type=int, default=20260524)
     ap.add_argument("--device", default="cuda:0")
@@ -124,6 +129,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="",
         help="Optional EfficientNet checkpoint to initialize from; defaults to the PTB-XL source baseline.",
     )
+    ap.add_argument("--init_checkpoint_sha256", default="")
+    ap.add_argument("--init_lineage_stage", default="")
+    ap.add_argument("--init_lineage_evidence", default="")
     ap.add_argument(
         "--synth_npz_override",
         default="",
@@ -171,6 +179,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     ap.add_argument("--adv_teacher_mix", type=float, default=0.3)
     ap.add_argument("--ptbxl_weight", type=float, default=1.0)
+    ap.add_argument("--target_real_val_fraction", type=float, default=0.2)
+    ap.add_argument("--target_real_val_seed", type=int, default=20260531)
+    ap.add_argument("--selection_metric", choices=["macro_auroc", "macro_auprc"], default="macro_auprc")
+    ap.add_argument("--source_floor_metric", choices=["macro_auroc", "macro_auprc"], default="macro_auprc")
+    ap.add_argument("--source_floor_max_drop", type=float, default=0.02)
     ap.add_argument("--lr", type=float, default=5e-5)
     ap.add_argument("--train_batch_size", type=int, default=128)
     ap.add_argument(

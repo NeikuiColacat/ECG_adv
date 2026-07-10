@@ -84,6 +84,8 @@ def build_effnet_vae_lhat_train_cmd(
         "ecg_adv_gen/runner/synth_online_at_super5.py",
         "--center_name",
         str(args.center),
+        "--comparison_arm",
+        str(getattr(args, "comparison_arm", "historical_unmatched")),
         "--ref_meta_json",
         str(paths.ref_meta),
         "--synth_npz",
@@ -96,6 +98,12 @@ def build_effnet_vae_lhat_train_cmd(
         str(class_trust),
         "--init_ckpt",
         str(_default_init_ckpt(args, data_root)),
+        "--init_checkpoint_sha256",
+        str(getattr(args, "init_checkpoint_sha256", "")),
+        "--init_lineage_stage",
+        str(getattr(args, "init_lineage_stage", "")),
+        "--init_lineage_evidence",
+        str(getattr(args, "init_lineage_evidence", "")),
         "--model_name",
         model_name,
         "--output_dir",
@@ -156,6 +164,16 @@ def build_effnet_vae_lhat_train_cmd(
         str(args.adv_weight_warmup_epochs),
         "--ptbxl_weight",
         str(args.ptbxl_weight),
+        "--target_real_val_fraction",
+        str(getattr(args, "target_real_val_fraction", 0.2)),
+        "--target_real_val_seed",
+        str(getattr(args, "target_real_val_seed", args.seed)),
+        "--selection_metric",
+        str(getattr(args, "selection_metric", "macro_auprc")),
+        "--source_floor_metric",
+        str(getattr(args, "source_floor_metric", "macro_auprc")),
+        "--source_floor_max_drop",
+        str(getattr(args, "source_floor_max_drop", 0.02)),
         "--adv_label_mode",
         str(args.adv_label_mode),
         "--adv_teacher_mix",
@@ -295,7 +313,12 @@ def build_effnet_vae_lhat_eval_cmd(
         "--skip_mimic",
         "--report_drop_all_zero_pn2021",
     ]
-    eval_cmd.extend(["--checkpoint_name", "last_model.pt"])
+    checkpoint_name = (
+        "best_model.pt"
+        if str(getattr(args, "comparison_arm", "historical_unmatched")) in {"a0", "a5"}
+        else "last_model.pt"
+    )
+    eval_cmd.extend(["--checkpoint_name", checkpoint_name])
     try:
         append_target_ref_exclusion_args_from_anchor_base(eval_cmd, paths.anchor_base)
     except ValueError:

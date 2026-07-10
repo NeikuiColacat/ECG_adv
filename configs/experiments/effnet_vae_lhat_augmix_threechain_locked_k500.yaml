@@ -4,32 +4,27 @@ extends:
 
 experiment:
   name: effnet_vae_lhat_augmix_threechain_locked_k500
-  description: EfficientNet1DV2 K500 VAE-LHAT plus locked three-chain AugMix with official PN2021-C severity 5 and last-checkpoint evaluation.
+  description: Matched-source EfficientNet1DV2 A5 K500 VAE-LHAT plus locked three-chain AugMix; pair with the A0 arm exposed by the shared trainer contract.
 
 paper_protocol:
   kshot:
     seed: 20260601
     subset_seed: 20260601
-  selection:
-    policy: last_checkpoint_only
-    allowed_data:
-      - target_k500_train_all
-      - ptbxl_source_sanity
-    forbid_k500_validation_split: true
-    forbid_best_checkpoint_selection: true
-    forbid_heldout_target_labels: true
-    forbid_full_target_distribution_tuning: true
 
 model:
-  init_checkpoint: ${paths.output_root}/effnet_direct_k500_v7_sjr_rgq/seed20260601_k500_v7_sjr_rgq_20260530_rep1/runs/${matrix.center}_K500_direct_ft_ep30_seed20260601_val0.2/best_model.pt
-  direct_init_root: ${paths.output_root}/effnet_direct_k500_v7_sjr_rgq/seed20260601_k500_v7_sjr_rgq_20260530_rep1/runs
+  init_lineage:
+    stage: ptbxl_source
+    checkpoint_sha256: f7a4b05d85da8352013b67a0d56d8d47378ab2abc196d1f3a6ba8bbf15aa40ea
+    evidence_path: ${paths.data_root}/triple_labels/super5_minresample_full10_perglobal_20260503/train_result.json
 
 training:
   epochs: 30
 
 logging:
   child_artifacts:
+    - best_model.pt
     - last_model.pt
+    - run_config.json
     - training_log.json
     - train_result.json
     - diagnostics_epoch.jsonl
@@ -47,6 +42,10 @@ logging:
     - adv_weight_effective
     - latent_augmix_stats
     - hull_weight_entropy_mean
+    - target_val_macro_auprc
+    - source_val_macro_auprc
+    - source_floor_passed
+    - realized_optimizer_steps
 
 runner:
   entrypoint: ecg_adv_gen/runner/effnet_vae_lhat_augmix.py
@@ -63,7 +62,10 @@ data:
   target_real_norm_mode: per_sample_global
 
 adaptation:
-  run_tag_extra: k500_threechain_s5_locked
+  comparison_arm: a5
+  run_tag_extra: matched_source_k500_threechain_s5_locked
+  loss:
+    ptbxl_weight: 0.0
   latent_augmix:
     chain_roles:
       - name: chain1
@@ -93,6 +95,6 @@ adaptation:
       max_batches: 0
 
 run_record:
-  purpose: "Locked EfficientNet1DV2 main-method run: all K500 samples train, no K500 validation split, last checkpoint only, two official clean-anchor corruption chains plus one uncorrupted VAE-LHAT adversarial waveform."
-  result_summary: Pending. Evaluate PN2021 clean and PN2021-C official severity 5 after managed training completes.
+  purpose: "Matched-source A5 mechanical contract: K500 internal validation, PTB-XL source floor, and the same optimizer budget as A0."
+  result_summary: EVIDENCE_PENDING until paired A0/A5 reruns complete.
   registration_status: provisional

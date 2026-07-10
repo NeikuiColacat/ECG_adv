@@ -979,12 +979,23 @@ def _vae_child_run(opts: dict[str, Any], center: str) -> dict[str, Any]:
             "epochs": _opt_first(opts, "--epochs", "30"),
         }
     )
+    checkpoint_role = (
+        "best_model"
+        if str(_opt_first(opts, "--comparison_arm", "historical_unmatched")) in {"a0", "a5"}
+        else "last_model"
+    )
     return {
         "center": center,
         "output_root": str(out_root),
         "child_run_dir": str(child_dir),
         "expected_artifacts": [
+            *(
+                [_path_record("best_model", child_dir / "best_model.pt")]
+                if checkpoint_role == "best_model"
+                else []
+            ),
             _path_record("last_model", child_dir / "last_model.pt"),
+            _path_record("run_config", child_dir / "run_config.json"),
             _path_record("training_log", child_dir / "training_log.json"),
             _path_record("train_result", child_dir / "train_result.json"),
             _path_record("diagnostics_epoch", child_dir / "diagnostics_epoch.jsonl"),
@@ -1089,7 +1100,11 @@ def build_artifact_trace(
 
     model_cfg = config.get("model") or {}
     if model_cfg.get("init_checkpoint"):
-        inputs["checkpoints"].append(_path_record("model.init_checkpoint", model_cfg["init_checkpoint"]))
+        init_record = _path_record("model.init_checkpoint", model_cfg["init_checkpoint"])
+        init_sha = str((model_cfg.get("init_lineage") or {}).get("checkpoint_sha256") or "")
+        if init_sha:
+            init_record["sha256"] = init_sha
+        inputs["checkpoints"].append(init_record)
     if model_cfg.get("checkpoint"):
         inputs["checkpoints"].append(_path_record("model.checkpoint", model_cfg["checkpoint"]))
 
@@ -1272,6 +1287,18 @@ def build_artifact_trace(
             "class_order": config["paper_protocol"]["class_order"],
         },
         "selection_policy": config["paper_protocol"]["selection"],
+        "initialization": (
+            {
+                "stage": str((model_cfg.get("init_lineage") or {}).get("stage") or ""),
+                "checkpoint_path": str(model_cfg.get("init_checkpoint") or ""),
+                "checkpoint_sha256": str(
+                    (model_cfg.get("init_lineage") or {}).get("checkpoint_sha256") or ""
+                ),
+                "evidence_path": str((model_cfg.get("init_lineage") or {}).get("evidence_path") or ""),
+            }
+            if model_cfg.get("init_lineage")
+            else {}
+        ),
         "inputs": inputs,
         "expected_outputs": {
             "launch_artifacts_declared": config.get("logging", {}).get("launch_artifacts", []),

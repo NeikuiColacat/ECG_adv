@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Direct K-shot target-center fine-tuning baseline for the paper route.
+"""Historical unmatched Direct K-shot target-center fine-tuning runner.
 
-This is the deliberately simple comparator for VAE-only Latent-Hull AT:
-start from the same PTB-XL super5 EfficientNet1DV2 checkpoint and fine-tune on
-the same target-center K=500 real ECG subset, with no ECGTwin latent mixing,
-no PGD buffer, and no synthetic ECG.
+This legacy runner has an independent optimizer/selection path and therefore
+must not be reported as matched A0. New matched A0/A5 runs use the shared
+``synth_online_at_super5.py`` trainer.
 """
 
 from __future__ import annotations
@@ -56,6 +55,7 @@ DATA_ROOT = Path(
 )
 OUT_ROOT = DATA_ROOT / "paper_direct_finetune_k500_20260516"
 SUBSET_ROOT = DATA_ROOT / "paper_vae_only_latenthull_sweep_20260516/subsets"
+COMPARISON_STATUS = "historical_unmatched"
 
 
 class NPZRealDataset(Dataset):
@@ -228,6 +228,7 @@ def train_one(center: str, args: argparse.Namespace) -> Path:
             "train_record_ids": record_ids[train_idx].tolist(),
             "val_record_ids": record_ids[val_idx].tolist(),
             "selection_policy": "direct target-center real fine-tune; no latent hull, no PGD, no synthetic ECG",
+            "comparison_status": COMPARISON_STATUS,
         }
     )
     with (out_dir / "run_config.json").open("w") as f:
@@ -290,6 +291,7 @@ def train_one(center: str, args: argparse.Namespace) -> Path:
                 "n_train": int(len(train_ds)),
                 "n_val": int(len(val_ds)),
                 "pos_weight": pos_weight.detach().cpu().tolist(),
+                "comparison_status": COMPARISON_STATUS,
             },
             f,
             indent=2,
@@ -448,6 +450,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    print("[warning] historical_unmatched Direct runner; not the matched A0 contract", flush=True)
     out_root = Path(args.out_root) if args.out_root else OUT_ROOT
     out_root.mkdir(parents=True, exist_ok=True)
     rows = []

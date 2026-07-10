@@ -651,6 +651,8 @@ def verify_required_inputs(manifest: dict[str, Any]) -> dict[str, Any]:
     missing: list[dict[str, Any]] = []
     lineage_errors: list[dict[str, Any]] = []
     verified: list[dict[str, Any]] = []
+    initialization = trace.get("initialization") or {}
+    initialization_lineage: dict[str, Any] = {}
 
     def check_record(record: dict[str, Any] | None) -> None:
         if not record or record.get("required") is False:
@@ -676,12 +678,52 @@ def verify_required_inputs(manifest: dict[str, Any]) -> dict[str, Any]:
         check_record(ref.get("signals_npz"))
         check_record(ref.get("latent_npz"))
 
+    if initialization:
+        try:
+            if initialization.get("stage") != "ptbxl_source":
+                raise ValueError("initialization.stage must be ptbxl_source")
+            checkpoint = Path(str(initialization.get("checkpoint_path") or ""))
+            expected_sha = str(initialization.get("checkpoint_sha256") or "")
+            if not checkpoint.is_file() or not expected_sha:
+                raise ValueError("ptbxl_source initialization requires checkpoint_path and checkpoint_sha256")
+            actual_sha = _sha256_file(checkpoint)
+            if actual_sha != expected_sha:
+                raise ValueError("ptbxl_source checkpoint sha256 mismatch")
+            evidence_path = Path(str(initialization.get("evidence_path") or ""))
+            evidence = _read_json_object(evidence_path, label="ptbxl_source evidence")
+            evidence_config = evidence.get("config") if isinstance(evidence.get("config"), dict) else {}
+            if str(evidence.get("scheme") or "") != "super5" or int(evidence.get("num_classes") or 0) != 5:
+                raise ValueError("ptbxl_source evidence must be a Super5 source-training result")
+            if "ptbxl" not in str(evidence_config.get("data_path") or "").lower() or any(
+                evidence_config.get(key) not in (None, "") for key in ("synth_npz", "init_ckpt")
+            ):
+                raise ValueError("ptbxl_source evidence must be source-only PTB-XL")
+            initialization_lineage = {
+                "stage": "ptbxl_source",
+                "source_only": True,
+                "checkpoint_path": str(checkpoint),
+                "checkpoint_sha256": actual_sha,
+                "evidence_path": str(evidence_path),
+            }
+        except (LaunchError, OSError, ValueError) as exc:
+            lineage_errors.append(
+                {
+                    "role": "checkpoint_source_lineage",
+                    "path": str(initialization.get("checkpoint_path") or ""),
+                    "error": str(exc),
+                }
+            )
+
     for command in manifest.get("commands") or []:
         argv = [str(item) for item in command.get("argv") or []]
         script = Path(argv[1]).name if len(argv) > 1 else ""
         opts = argv_option_map(argv)
         init_path = opt_first(opts, "--init_model_path" if script == "ecgfounder_fullft.py" else "--init_ckpt")
         if not init_path or script not in {"ecgfounder_fullft.py", "effnet_vae_lhat_augmix.py"}:
+            continue
+        if initialization_lineage.get("source_only") and Path(str(init_path)) == Path(
+            initialization_lineage["checkpoint_path"]
+        ):
             continue
         ref_meta_path = opt_first(opts, "--ref_meta_json")
         if not ref_meta_path and opt_first(opts, "--anchor_base"):
@@ -735,6 +777,7 @@ def verify_required_inputs(manifest: dict[str, Any]) -> dict[str, Any]:
         "n_checked": len(verified),
         "missing": missing,
         "lineage_errors": lineage_errors,
+        "initialization_lineage": initialization_lineage,
         "verified_inputs": verified,
     }
 

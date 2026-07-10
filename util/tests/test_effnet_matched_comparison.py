@@ -1,0 +1,330 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+import numpy as np
+import torch
+import torch.nn as nn
+
+from ecg_adv_gen.config import (
+    build_runner_commands,
+    load_experiment_config,
+    make_dry_run_manifest,
+    validate_experiment_config,
+)
+from ecg_adv_gen.config.launch import verify_required_inputs
+from ecg_adv_gen.data import kshot
+from ecg_adv_gen.evaluation import selection
+from ecg_adv_gen.runner.synth_online_at_super5 import train_latent_augmix_consistency_epoch
+
+
+REPO = Path(__file__).resolve().parents[2]
+LOCAL_CONFIG = REPO / "configs/local/linbinhao_server.example.yaml"
+
+
+def _option(argv: list[str], name: str) -> str:
+    return argv[argv.index(name) + 1]
+
+
+def _ids_hash(values: list[str]) -> str:
+    return hashlib.sha256(("\n".join(sorted(values)) + "\n").encode()).hexdigest()
+
+
+def test_matched_a0_a5_share_split_and_validation_never_enters_latent_candidates():
+    assert hasattr(kshot, "matched_k500_split")
+    assert hasattr(kshot, "filter_latent_candidates")
+    record_ids = np.asarray([f"r{i:03d}" for i in range(500)])
+    labels = np.eye(5, dtype=np.float32)[np.arange(500) % 5]
+
+    a0 = kshot.matched_k500_split(record_ids, labels, val_fraction=0.2, seed=20260601)
+    a5 = kshot.matched_k500_split(record_ids, labels, val_fraction=0.2, seed=20260601)
+
+    assert a0 == a5
+    assert len(a0["train_record_ids"]) == 400
+    assert len(a0["val_record_ids"]) == 100
+    assert set(a0["train_record_ids"]).isdisjoint(a0["val_record_ids"])
+    assert a0["train_record_ids_sha256"] == _ids_hash(a0["train_record_ids"])
+    assert a0["val_record_ids_sha256"] == _ids_hash(a0["val_record_ids"])
+
+    order = np.random.default_rng(9).permutation(500)
+    latents = np.arange(500 * 2, dtype=np.float32).reshape(500, 2)[order]
+    latent_labels = labels[order]
+    source_meta = {"record_ids": record_ids[order], "source_ids": order}
+    kept_latents, kept_labels, kept_meta = kshot.filter_latent_candidates(
+        latents,
+        latent_labels,
+        source_meta,
+        train_record_ids=a0["train_record_ids"],
+        validation_record_ids=a0["val_record_ids"],
+    )
+
+    assert kept_latents.shape[0] == kept_labels.shape[0] == 400
+    assert set(kept_meta["record_ids"]) == set(a0["train_record_ids"])
+    assert set(kept_meta["record_ids"]).isdisjoint(a0["val_record_ids"])
+
+
+class _CountingSGD(torch.optim.SGD):
+    def __init__(self, params):
+        super().__init__(params, lr=0.01)
+        self.realized_steps = 0
+
+    def step(self, closure=None):
+        self.realized_steps += 1
+        return super().step(closure)
+
+
+def test_a0_clean_control_and_a5_augmix_have_equal_auxiliary_optimizer_steps():
+    torch.manual_seed(3)
+    clean = np.random.default_rng(3).normal(size=(12, 1, 2)).astype(np.float32)
+    labels = (np.arange(12) % 2).astype(np.float32)[:, None]
+    criterion = nn.BCEWithLogitsLoss(reduction="none")
+
+    def run(views: np.ndarray) -> tuple[int, dict]:
+        model = nn.Sequential(nn.Flatten(), nn.Linear(2, 1))
+        optimizer = _CountingSGD(model.parameters())
+        stats = train_latent_augmix_consistency_epoch(
+            model=model,
+            clean_signals_ct=clean,
+            augmix_signals_ct=views,
+            labels_np=labels,
+            optimizer=optimizer,
+            criterion=criterion,
+            device="cpu",
+            copies=2,
+            consistency_weight=0.5,
+            bce_weight=1.0,
+            consistency_loss="jsd",
+            batch_size=4,
+            crop_len=2,
+            grad_clip=0.0,
+            trainable_params=list(model.parameters()),
+        )
+        return optimizer.realized_steps, stats
+
+    a0_steps, a0 = run(np.tile(clean, (2, 1, 1)))
+    a5_steps, a5 = run(np.tile(clean + 0.1, (2, 1, 1)))
+
+    assert a0_steps == a5_steps == 3
+    assert a0["n_batches"] == a5["n_batches"] == 3
+    assert abs(a0["consistency_loss"]) < 1e-7
+    assert a5["consistency_loss"] > 0.0
+
+
+def test_checkpoint_selection_uses_target_metric_with_a_hard_source_floor():
+    assert hasattr(selection, "update_matched_checkpoint_selection")
+    blocked = selection.update_matched_checkpoint_selection(
+        best_metric=0.51,
+        candidate_metric=0.60,
+        source_metric=0.73,
+        source_baseline_metric=0.76,
+        source_max_drop=0.02,
+    )
+    accepted = selection.update_matched_checkpoint_selection(
+        best_metric=0.51,
+        candidate_metric=0.55,
+        source_metric=0.75,
+        source_baseline_metric=0.76,
+        source_max_drop=0.02,
+    )
+
+    assert blocked["source_floor_passed"] is False
+    assert blocked["selected"] is False
+    assert accepted["source_floor_passed"] is True
+    assert accepted["selected"] is True
+
+
+def test_preflight_accepts_verified_ptbxl_source_lineage_without_k500_identity(tmp_path: Path):
+    checkpoint = tmp_path / "best_model.pt"
+    checkpoint.write_bytes(b"source-only-checkpoint")
+    checkpoint_sha = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
+    evidence = tmp_path / "train_result.json"
+    evidence.write_text(
+        json.dumps(
+            {
+                "scheme": "super5",
+                "num_classes": 5,
+                "class_names": ["CD", "HYP", "MI", "NORM", "STTC"],
+                "config": {
+                    "data_path": "/data/ptbxl/raw100.npy",
+                    "synth_npz": None,
+                    "init_ckpt": None,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    manifest = {
+        "artifact_trace": {
+            "inputs": {
+                "checkpoints": [
+                    {
+                        "role": "model.init_checkpoint",
+                        "path": str(checkpoint),
+                        "required": True,
+                        "sha256": checkpoint_sha,
+                    }
+                ],
+                "k500_refs": [],
+                "data_caches": [],
+            },
+            "initialization": {
+                "stage": "ptbxl_source",
+                "checkpoint_path": str(checkpoint),
+                "checkpoint_sha256": checkpoint_sha,
+                "evidence_path": str(evidence),
+            },
+        },
+        "commands": [],
+    }
+
+    report = verify_required_inputs(manifest)
+
+    assert report["passed"] is True, report
+    assert report["initialization_lineage"]["stage"] == "ptbxl_source"
+    assert report["initialization_lineage"]["source_only"] is True
+
+
+def test_managed_matched_a0_a5_commands_share_every_non_method_contract():
+    config_path = REPO / "configs/experiments/effnet_vae_lhat_augmix_threechain_locked_k500.yaml"
+    config = load_experiment_config(
+        config_path,
+        LOCAL_CONFIG,
+        runtime_context={"run_id": "pytest_matched"},
+    )
+    config["runner"]["matrix"]["comparison_arm"] = ["a0", "a5"]
+    commands = build_runner_commands(config)
+    pairs: dict[str, dict[str, list[str]]] = {}
+    for command in commands:
+        pairs.setdefault(command["matrix"]["center"], {})[
+            command["matrix"]["comparison_arm"]
+        ] = command["argv"]
+
+    assert set(pairs) == {"ningbo", "chapman_shaoxing", "cpsc_2018", "georgia"}
+    shared_options = (
+        "--init_ckpt",
+        "--epochs",
+        "--seed",
+        "--train_batch_size",
+        "--lr",
+        "--ptbxl_weight",
+        "--target_real_weight",
+        "--target_real_val_fraction",
+        "--target_real_val_seed",
+        "--selection_metric",
+        "--source_floor_metric",
+        "--source_floor_max_drop",
+    )
+    for arms in pairs.values():
+        assert set(arms) == {"a0", "a5"}
+        assert _option(arms["a0"], "--comparison_arm") == "a0"
+        assert _option(arms["a5"], "--comparison_arm") == "a5"
+        for option in shared_options:
+            assert _option(arms["a0"], option) == _option(arms["a5"], option)
+        assert _option(arms["a0"], "--ptbxl_weight") == "0.0"
+
+    manifest = make_dry_run_manifest(
+        config,
+        commands=commands,
+        local_paths=validate_experiment_config(config, repo_root=REPO),
+        run_id="pytest_matched",
+        cli_args=type("Args", (), {"dry_run": True, "write_plan": True})(),
+    )
+    init = manifest["artifact_trace"]["initialization"]
+    assert init["stage"] == "ptbxl_source"
+    assert len(init["checkpoint_sha256"]) == 64
+    assert init["checkpoint_path"].endswith("/best_model.pt")
+
+
+def test_historical_direct_runner_cannot_be_mistaken_for_matched_a0():
+    source = (REPO / "ecg_adv_gen/runner/effnet_direct_finetune.py").read_text(encoding="utf-8")
+
+    assert "historical_unmatched" in source
+
+
+def test_matched_contract_reaches_the_shared_child_parser(monkeypatch):
+    from ecg_adv_gen.runner import effnet_vae_lhat_augmix as wrapper
+    from ecg_adv_gen.runner.effnet_vae_lhat import (
+        build_effnet_vae_lhat_train_cmd,
+        resolve_effnet_vae_lhat_paths,
+    )
+    from ecg_adv_gen.runner import synth_online_at_super5 as child
+
+    config = load_experiment_config(
+        REPO / "configs/experiments/effnet_vae_lhat_augmix_threechain_locked_k500.yaml",
+        LOCAL_CONFIG,
+        runtime_context={"run_id": "pytest_matched"},
+    )
+    config["runner"]["matrix"]["comparison_arm"] = ["a0", "a5"]
+    command = next(
+        item
+        for item in build_runner_commands(config)
+        if item["matrix"] == {"center": "ningbo", "comparison_arm": "a5"}
+    )
+    args = wrapper.parse_args(command["argv"][2:])
+    paths = resolve_effnet_vae_lhat_paths(
+        args,
+        data_root=Path(args.data_root),
+        out_root=Path(args.out_root),
+    )
+    child_command = build_effnet_vae_lhat_train_cmd(
+        args,
+        python=sys.executable,
+        data_root=Path(args.data_root),
+        paths=paths,
+        class_trust=Path("/tmp/class_trust.json"),
+    )
+    monkeypatch.setattr(sys, "argv", ["synth_online_at_super5.py", *child_command[3:]])
+
+    child_args = child.parse_args()
+
+    assert child_args.comparison_arm == "a5"
+    assert child_args.init_lineage_stage == "ptbxl_source"
+    assert len(child_args.init_checkpoint_sha256) == 64
+    assert child_args.target_real_val_fraction == 0.2
+    assert child_args.target_real_val_seed == 20260601
+    assert child_args.selection_metric == "macro_auprc"
+    assert child_args.source_floor_metric == "macro_auprc"
+    assert child_args.source_floor_max_drop == 0.02
+
+
+def test_run_record_contract_differs_only_by_declared_arm():
+    assert hasattr(selection, "build_matched_training_record")
+    split = {
+        "train_record_ids_sha256": "a" * 64,
+        "val_record_ids_sha256": "b" * 64,
+        "train_record_ids": ["r1", "r2"],
+        "val_record_ids": ["r3"],
+        "val_fraction": 1 / 3,
+        "seed": 7,
+    }
+    kwargs = {
+        "source_checkpoint_path": "/data/source.pt",
+        "source_checkpoint_sha256": "c" * 64,
+        "split": split,
+        "selection_metric": "macro_auprc",
+        "source_floor_metric": "macro_auprc",
+        "source_floor_max_drop": 0.02,
+        "epochs": 2,
+        "optimizer_steps_per_epoch": 3,
+        "realized_optimizer_steps": 6,
+        "scheduler_steps": 2,
+        "source_floor_result": {"source_floor_passed": True},
+    }
+    a0 = selection.build_matched_training_record(comparison_arm="a0", **kwargs)
+    a5 = selection.build_matched_training_record(comparison_arm="a5", **kwargs)
+
+    assert a0["comparison_arm"] == "a0"
+    assert a5["comparison_arm"] == "a5"
+    allowed_differences = {"comparison_arm", "method_components"}
+    assert {k: v for k, v in a0.items() if k not in allowed_differences} == {
+        k: v for k, v in a5.items() if k not in allowed_differences
+    }
+    assert a0["method_components"] == {"vae_lhat": False, "three_chain_augmix": False, "jsd": False}
+    assert a5["method_components"] == {"vae_lhat": True, "three_chain_augmix": True, "jsd": True}
+    assert a0["source_checkpoint"]["stage"] == "ptbxl_source"
+    assert a0["k500_split"]["train_record_ids_sha256"] == "a" * 64
+    assert a0["selection"]["source_floor_result"]["source_floor_passed"] is True
+    assert a0["budget"]["realized_optimizer_steps"] == 6

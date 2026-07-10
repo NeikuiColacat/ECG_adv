@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +18,71 @@ INCLUDE_RECORD_ID_KEYS = (
 )
 SIGNAL_NPZ_REQUIRED_KEYS = ("signals", "labels", "record_ids")
 LATENT_NPZ_REQUIRED_KEYS = ("latents", "labels", "record_ids")
+
+
+def record_ids_sha256(record_ids: Iterable[str]) -> str:
+    payload = "\n".join(sorted(map(str, record_ids))) + "\n"
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def matched_k500_split(
+    record_ids: np.ndarray,
+    labels: np.ndarray,
+    *,
+    val_fraction: float,
+    seed: int,
+) -> dict[str, Any]:
+    record_ids = np.asarray(record_ids, dtype=str)
+    labels = np.asarray(labels, dtype=np.float32)
+    if labels.ndim != 2 or len(record_ids) != len(labels):
+        raise ValueError("record_ids and 2D labels must have matching lengths")
+    if len(set(record_ids.tolist())) != len(record_ids):
+        raise ValueError("K500 record_ids must be unique")
+
+    from ecg_adv_gen.adaptation.lhat import build_k500_internal_val_mask
+
+    val_mask = build_k500_internal_val_mask(labels, val_fraction=val_fraction, seed=seed)
+    train_indices, val_indices = (np.flatnonzero(mask).tolist() for mask in (~val_mask, val_mask))
+    train_ids, val_ids = (record_ids[idx].tolist() for idx in (train_indices, val_indices))
+    return {
+        "train_indices": train_indices,
+        "val_indices": val_indices,
+        "train_record_ids": train_ids,
+        "val_record_ids": val_ids,
+        "train_record_ids_sha256": record_ids_sha256(train_ids),
+        "val_record_ids_sha256": record_ids_sha256(val_ids),
+        "val_fraction": float(val_fraction),
+        "seed": int(seed),
+    }
+
+
+def filter_latent_candidates(
+    latents: np.ndarray,
+    labels: np.ndarray,
+    source_meta: dict[str, Any],
+    *,
+    train_record_ids: Iterable[str],
+    validation_record_ids: Iterable[str],
+) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+    if "record_ids" not in source_meta:
+        raise ValueError("matched latent candidates require record_ids metadata")
+    latent_ids = np.asarray(source_meta["record_ids"], dtype=str)
+    latents, labels = np.asarray(latents), np.asarray(labels)
+    if len(latent_ids) != len(latents) or len(labels) != len(latents):
+        raise ValueError("latent candidates, labels, and record_ids must align")
+    train_ids, val_ids = set(map(str, train_record_ids)), set(map(str, validation_record_ids))
+    if train_ids & val_ids:
+        raise ValueError("matched K500 train/validation IDs overlap")
+    keep = np.asarray([record_id in train_ids for record_id in latent_ids], dtype=bool)
+    if set(latent_ids[keep]) != train_ids:
+        raise ValueError("latent candidate record_ids do not match the K500 train split")
+    filtered_meta = {
+        key: (np.asarray(value)[keep] if isinstance(value, np.ndarray) and len(value) == len(keep) else value)
+        for key, value in source_meta.items()
+    }
+    if set(np.asarray(filtered_meta["record_ids"], dtype=str)) & val_ids:
+        raise AssertionError("K500 validation IDs entered latent candidates")
+    return latents[keep], labels[keep], filtered_meta
 
 
 @dataclass(frozen=True)

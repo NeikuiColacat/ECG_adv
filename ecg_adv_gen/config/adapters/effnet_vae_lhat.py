@@ -35,6 +35,7 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
 
     paper = config["paper_protocol"]
     kshot = paper["kshot"]
+    selection = paper["selection"]
     paths = config["paths"]
     data = config["data"]
     model = config["model"]
@@ -73,6 +74,8 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
     argv: list[Any] = [
         "--center",
         center,
+        "--comparison_arm",
+        matrix.get("comparison_arm", adaptation.get("comparison_arm", "historical_unmatched")),
         "--epochs",
         training["epochs"],
         "--seed",
@@ -87,6 +90,12 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
         out_root,
         "--init_ckpt",
         init_ckpt,
+        "--init_checkpoint_sha256",
+        (model.get("init_lineage") or {}).get("checkpoint_sha256", ""),
+        "--init_lineage_stage",
+        (model.get("init_lineage") or {}).get("stage", ""),
+        "--init_lineage_evidence",
+        (model.get("init_lineage") or {}).get("evidence_path", ""),
         "--anchor_base",
         anchor_base,
         "--hull_steps",
@@ -145,6 +154,16 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
         training["batch_size"],
         "--ptbxl_weight",
         adaptation["loss"].get("ptbxl_weight", "1.0"),
+        "--target_real_val_fraction",
+        selection.get("validation_fraction", 0.2),
+        "--target_real_val_seed",
+        selection.get("seed", kshot["seed"]),
+        "--selection_metric",
+        selection.get("metric", "macro_auprc"),
+        "--source_floor_metric",
+        (selection.get("source_floor") or {}).get("metric", "macro_auprc"),
+        "--source_floor_max_drop",
+        (selection.get("source_floor") or {}).get("max_drop", 0.02),
         "--latent_augmix_width",
         latent_augmix["width"],
         "--latent_augmix_depth",
@@ -237,6 +256,7 @@ def audit_effnet_vae_lhat_command(
     hull = adaptation["hull"]
     attack = adaptation["attack"]
     consistency = adaptation["latent_augmix"]["consistency"]
+    selection = paper["selection"]
     kshot = paper["kshot"]
     expected_k = int(kshot["k"])
     expected_seed = int(kshot.get("subset_seed", kshot["seed"]))
@@ -257,6 +277,7 @@ def audit_effnet_vae_lhat_command(
         opts,
         [
             "--center",
+            "--comparison_arm",
             "--seed",
             "--data_root",
             "--out_root",
@@ -270,6 +291,11 @@ def audit_effnet_vae_lhat_command(
             "--pgd_eps",
             "--asr_low_threshold",
             "--asr_high_threshold",
+            "--target_real_val_fraction",
+            "--target_real_val_seed",
+            "--selection_metric",
+            "--source_floor_metric",
+            "--source_floor_max_drop",
         ],
     )
     center = str(opt_first(opts, "--center", ""))
@@ -280,12 +306,23 @@ def audit_effnet_vae_lhat_command(
         errors.append(f"{script}: unexpected center {center!r}")
     audit_equals(errors, script, opts, "--seed", expected_command_seed)
     expected_init_ckpt = str(config["model"]["init_checkpoint"]).replace("${matrix.center}", center)
-    audit_equals(errors, script, opts, "--init_ckpt", expected_init_ckpt)
     audit_equals(errors, script, opts, "--hull_init_logit_gap", hull["init_logit_gap"])
     audit_equals(errors, script, opts, "--pgd_eps", attack["pgd_eps"])
     asr_low, asr_high = attack["target_asr_range"]
     audit_equals(errors, script, opts, "--asr_low_threshold", asr_low)
     audit_equals(errors, script, opts, "--asr_high_threshold", asr_high)
+    source_floor = selection.get("source_floor") or {}
+    expected_options = {
+        "--comparison_arm": case.get("comparison_arm") or adaptation.get("comparison_arm", "historical_unmatched"),
+        "--init_ckpt": expected_init_ckpt,
+        "--target_real_val_fraction": selection.get("validation_fraction", 0.2),
+        "--target_real_val_seed": selection.get("seed", kshot["seed"]),
+        "--selection_metric": selection.get("metric", "macro_auprc"),
+        "--source_floor_metric": source_floor.get("metric", "macro_auprc"),
+        "--source_floor_max_drop": source_floor.get("max_drop", 0.02),
+    }
+    for option, expected in expected_options.items():
+        audit_equals(errors, script, opts, option, expected)
     expected_flags = {
         "--hull_include_anchor": bool(hull["include_anchor"]),
         "--final_checkpoint_only": paper["selection"]["policy"] == "last_checkpoint_only",

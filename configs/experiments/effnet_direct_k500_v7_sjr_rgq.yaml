@@ -3,7 +3,7 @@ extends:
 
 experiment:
   name: effnet_direct_k500_v7_sjr_rgq
-  description: EfficientNet1DV2 direct K500 target-center fine-tuning under PN2021 Super5 v7 SJR/RGQ review mapping for the seed20260601 locked mainline.
+  description: EfficientNet1DV2 direct K500 historical unmatched artifact replay; retain for provenance, not as the new matched A0.
 
 paper_protocol:
   kshot:
@@ -16,3 +16,4 @@ runner:
 
 adaptation:
   method: direct_target_k500_finetune
+  comparison_status: historical_unmatched

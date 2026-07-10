@@ -553,7 +553,7 @@ def test_artifact_trace_does_not_keep_unmanaged_runner_branches():
     assert sorted(name for name in unmanaged_names if name in source) == []
 
 
-def test_effnet_vae_lhat_threechain_locked_k500_config_uses_official_s5_last_checkpoint():
+def test_effnet_vae_lhat_threechain_locked_k500_config_uses_matched_source_best_checkpoint():
     config = _load("effnet_vae_lhat_augmix_threechain_locked_k500.yaml")
     paths = validate_experiment_config(config, repo_root=REPO)
     commands = build_runner_commands(config)
@@ -591,8 +591,17 @@ def test_effnet_vae_lhat_threechain_locked_k500_config_uses_official_s5_last_che
         assert _option_value(argv, "--latent_augmix_severity_profile") == "standard"
         assert "--checkpoint_policy" not in argv
         assert "--quick_eval_source" not in argv
-        assert "--target_real_val_fraction" not in argv
-        assert "--target_real_val_seed" not in argv
+        assert _option_value(argv, "--comparison_arm") == "a5"
+        assert _option_value(argv, "--target_real_val_fraction") == "0.2"
+        assert _option_value(argv, "--target_real_val_seed") == "20260601"
+        assert _option_value(argv, "--selection_metric") == "macro_auprc"
+        assert _option_value(argv, "--source_floor_metric") == "macro_auprc"
+        assert _option_value(argv, "--source_floor_max_drop") == "0.02"
+        assert _option_value(argv, "--ptbxl_weight") == "0.0"
+        assert "/triple_labels/super5_minresample_full10_perglobal_20260503/best_model.pt" in _option_value(
+            argv, "--init_ckpt"
+        )
+        assert "--final_checkpoint_only" not in argv
         assert "--attack_mode" not in argv
         assert "--pgd_K" not in argv
         assert "--pgd_alpha" not in argv
@@ -626,7 +635,7 @@ def test_effnet_vae_lhat_threechain_locked_k500_config_uses_official_s5_last_che
             f"/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets/{command['matrix']['center']}/"
             f"k500_seed20260601/{command['matrix']['center']}_real_k500_seed20260601.raw1000.npz"
         )
-        assert _option_value(argv, "--run_tag_extra") == "k500_threechain_s5_locked"
+        assert _option_value(argv, "--run_tag_extra") == "matched_source_k500_threechain_s5_locked"
         assert _all_option_values(argv, "--latent_augmix_ops") == [
             "powerline_noise",
             "emg_noise",
@@ -749,6 +758,8 @@ def test_effnet_command_audit_rejects_managed_protocol_field_drift(case: str):
     config["runner"]["matrix"]["center"] = ["ningbo"]
     if case == "model-init-checkpoint":
         config["model"]["init_checkpoint"] = "/home/linbinhao/nondefault-init.pt"
+    elif case == "selection-last-checkpoint":
+        config["paper_protocol"]["selection"]["policy"] = "last_checkpoint_only"
     elif case == "exclude-anchor":
         config["adaptation"]["hull"]["include_anchor"] = False
     elif case == "zero-init-logit-gap":
@@ -2427,6 +2438,11 @@ def _small_kshot_manifest(tmp_path: Path, *, bad_count: bool = False) -> dict:
                     "target_k500_internal_val",
                     "ptbxl_source_floor",
                 ],
+                "validation_fraction": 0.2,
+                "seed": 20260531,
+                "metric": "macro_auprc",
+                "source_floor": {"metric": "macro_auprc", "max_drop": 0.02},
+                "checkpoint": "best_model.pt",
                 "forbid_heldout_target_labels": True,
                 "forbid_full_target_distribution_tuning": True,
             },

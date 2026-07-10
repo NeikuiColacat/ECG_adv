@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import json
 import math
 import os
@@ -66,6 +67,12 @@ from ecg_adv_gen.evaluation.pn2021c import (  # noqa: E402
     apply_corruption_sequence,
     build_corruption_op as _build_pn2021c_corruption_op,
 )
+from ecg_adv_gen.evaluation import compute_macro_auroc_auprc  # noqa: E402
+from ecg_adv_gen.evaluation.selection import (  # noqa: E402
+    build_matched_training_record,
+    update_matched_checkpoint_selection,
+)
+from ecg_adv_gen.data.kshot import filter_latent_candidates, matched_k500_split  # noqa: E402
 
 from ecg_adv_gen.training.online_buffer import (  # noqa: E402
     QualityAwareBuffer,
@@ -351,6 +358,33 @@ def parse_float_sequence(value: str | None) -> List[float] | None:
     return [float(x.strip()) for x in value.split(",") if x.strip()]
 
 
+def _sha256_file(path: str | Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def evaluate_loader_macro(
+    model: nn.Module,
+    loader: DataLoader,
+    criterion: nn.Module,
+    device: str,
+) -> Dict[str, float]:
+    def masked_criterion(logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        mask = (labels >= 0).float()
+        return (criterion(logits, labels.clamp(min=0.0)) * mask).sum() / mask.sum().clamp(min=1.0)
+
+    loss, labels_np, probs = evaluate(model, loader, masked_criterion, device)
+    metrics = compute_macro_auroc_auprc(labels_np, probs, CLASS_NAMES_SUPER5, min_pos=1)
+    return {
+        "loss": float(loss),
+        "macro_auroc": float(metrics["macro_auroc"]),
+        "macro_auprc": float(metrics["macro_auprc"]),
+    }
+
+
 def train_latent_augmix_consistency_epoch(
     model: nn.Module,
     clean_signals_ct: np.ndarray,
@@ -432,20 +466,16 @@ def train_latent_augmix_consistency_epoch(
             non_blocking=True,
         )
         labels_rep = labels.repeat((int(copies), 1))
-
         model.train()
         optimizer.zero_grad(set_to_none=True)
         if consistency_loss == "soft_bce":
             with torch.no_grad():
-                clean_logits = model(clean)
-                soft_targets = torch.sigmoid(clean_logits).detach()
+                soft_targets = torch.sigmoid(model(clean)).detach()
             logits = model(views)
             soft_rep = soft_targets.repeat((int(copies), 1))
-
             mask = (labels_rep >= 0).float()
-            labels_clamp = labels_rep.clamp(min=0.0)
             denom = mask.sum().clamp(min=1.0)
-            hard_bce = (criterion(logits, labels_clamp) * mask).sum() / denom
+            hard_bce = (criterion(logits, labels_rep.clamp(min=0.0)) * mask).sum() / denom
             direct_consistency = (
                 F.binary_cross_entropy_with_logits(logits, soft_rep, reduction="none") * mask
             ).sum() / denom
@@ -453,25 +483,25 @@ def train_latent_augmix_consistency_epoch(
             clean_logits = model(clean)
             logits = model(views)
             logits_views = logits.view(int(copies), clean.shape[0], -1)
-
             mask_clean = (labels >= 0).float()
-            denom_clean = mask_clean.sum().clamp(min=1.0)
             clean_hard_bce = (
                 criterion(clean_logits, labels.clamp(min=0.0)) * mask_clean
-            ).sum() / denom_clean
-
+            ).sum() / mask_clean.sum().clamp(min=1.0)
             mask_rep = (labels_rep >= 0).float()
-            labels_rep_clamp = labels_rep.clamp(min=0.0)
-            denom_rep = mask_rep.sum().clamp(min=1.0)
-            aug_hard_bce = (criterion(logits, labels_rep_clamp) * mask_rep).sum() / denom_rep
+            aug_hard_bce = (
+                criterion(logits, labels_rep.clamp(min=0.0)) * mask_rep
+            ).sum() / mask_rep.sum().clamp(min=1.0)
             hard_bce = 0.5 * (clean_hard_bce + aug_hard_bce)
-
-            jsd_terms = []
-            for copy_i in range(int(copies)):
-                copy_j = (copy_i + 1) % int(copies)
-                jsd_terms.append(jsd_multilabel(clean_logits, logits_views[copy_i], logits_views[copy_j]))
-            direct_consistency = torch.stack(jsd_terms).mean()
-
+            direct_consistency = torch.stack(
+                [
+                    jsd_multilabel(
+                        clean_logits,
+                        logits_views[copy_i],
+                        logits_views[(copy_i + 1) % int(copies)],
+                    )
+                    for copy_i in range(int(copies))
+                ]
+            ).mean()
         loss = float(bce_weight) * hard_bce + float(consistency_weight) * direct_consistency
         loss.backward()
         if grad_clip > 0:
@@ -942,11 +972,19 @@ def push_adv_to_buffer(
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--center_name", required=True, help="cpsc_2018_extra | ningbo")
+    p.add_argument(
+        "--comparison_arm",
+        choices=["historical_unmatched", "a0", "a5"],
+        default="historical_unmatched",
+    )
     p.add_argument("--ref_meta_json",
                    help="path to {tag}_k200.meta.json (for record_id exclusion in eval)")
     p.add_argument("--synth_npz", required=True,
                    help="Stage 1 latent npz: {latents (N,4,128), labels (N,5)}")
     p.add_argument("--init_ckpt", default=DEFAULT_SUPER5_CKPT)
+    p.add_argument("--init_checkpoint_sha256", default="")
+    p.add_argument("--init_lineage_stage", default="")
+    p.add_argument("--init_lineage_evidence", default="")
     p.add_argument("--model_name", default="efficientnet1dv2",
                    choices=available_model_names())
     p.add_argument("--output_dir", required=True)
@@ -1091,6 +1129,11 @@ def parse_args():
     p.add_argument("--ptbxl_weight", type=float, default=1.0)
     p.add_argument("--target_real_weight", type=float, default=0.0,
                    help="Sampling weight for --target_real_npz supervised stream.")
+    p.add_argument("--target_real_val_fraction", type=float, default=0.2)
+    p.add_argument("--target_real_val_seed", type=int, default=20260531)
+    p.add_argument("--selection_metric", choices=["macro_auroc", "macro_auprc"], default="macro_auprc")
+    p.add_argument("--source_floor_metric", choices=["macro_auroc", "macro_auprc"], default="macro_auprc")
+    p.add_argument("--source_floor_max_drop", type=float, default=0.02)
     p.add_argument("--adv_weight", type=float, default=0.5)
     p.add_argument(
         "--vae_adv_stream_sample_scale",
@@ -1239,6 +1282,13 @@ def parse_args():
         help="Skip epoch-boundary resume checkpoints and write last_model.pt once at the end.",
     )
     args = p.parse_args()
+    if args.comparison_arm in {"a0", "a5"}:
+        if args.init_lineage_stage != "ptbxl_source" or len(args.init_checkpoint_sha256) != 64:
+            p.error("matched comparison requires verified ptbxl_source initialization")
+        if not 0.0 < args.target_real_val_fraction < 0.5:
+            p.error("matched comparison requires --target_real_val_fraction in (0, 0.5)")
+        if args.selection_metric != args.source_floor_metric:
+            p.error("matched comparison selection/source-floor metrics must match")
     if float(args.vae_adv_stream_sample_scale) < 0.0:
         p.error("--vae_adv_stream_sample_scale must be non-negative")
     if not (0.0 <= float(args.latent_augmix_adv_base_mix) <= 1.0):
@@ -1295,6 +1345,11 @@ def load_synth_pool(synth_npz_path: str) -> Tuple[np.ndarray, np.ndarray, str, D
 
 def main():
     args = parse_args()
+    matched_comparison = args.comparison_arm in {"a0", "a5"}
+    method_updates_enabled = args.comparison_arm != "a0"
+    source_checkpoint_sha256 = _sha256_file(args.init_ckpt)
+    if matched_comparison and source_checkpoint_sha256 != args.init_checkpoint_sha256:
+        raise RuntimeError("matched comparison source checkpoint sha256 mismatch")
     set_all_seeds(args.seed)
     os.makedirs(args.output_dir, exist_ok=True)
 
@@ -1403,10 +1458,17 @@ def main():
     val_ds = PTBXLDatasetScheme(val_signals, val_labels,
                                 crop_len=args.crop_len, mode='eval')
     target_real_ds = None
+    target_val_ds = None
+    matched_split: Dict[str, Any] | None = None
     if args.target_real_npz:
         with np.load(args.target_real_npz, allow_pickle=True) as real_data:
             real_signals = np.asarray(real_data["signals"], dtype=np.float32)
             real_labels = np.asarray(real_data["labels"], dtype=np.float32)
+            real_record_ids = (
+                np.asarray(real_data["record_ids"]).astype(str)
+                if "record_ids" in real_data.files
+                else None
+            )
         if real_signals.ndim != 3:
             raise ValueError(f"target_real_npz signals must be 3D, got {real_signals.shape}")
         if real_signals.shape[1:] == (12, 1000):
@@ -1415,6 +1477,42 @@ def main():
             raise ValueError(f"target_real_npz signals must be (N,1000,12) or (N,12,1000), got {real_signals.shape}")
         if real_labels.shape[0] != real_signals.shape[0] or real_labels.shape[1] != NUM_SUPER5:
             raise ValueError(f"target_real_npz labels mismatch: signals={real_signals.shape} labels={real_labels.shape}")
+        if matched_comparison:
+            if real_record_ids is None:
+                raise ValueError("matched comparison target_real_npz requires record_ids")
+            matched_split = matched_k500_split(
+                real_record_ids,
+                real_labels,
+                val_fraction=args.target_real_val_fraction,
+                seed=args.target_real_val_seed,
+            )
+            train_indices = np.asarray(matched_split["train_indices"], dtype=np.int64)
+            val_indices = np.asarray(matched_split["val_indices"], dtype=np.int64)
+            target_val_ds = TargetRealWaveformDataset(
+                real_signals[val_indices],
+                real_labels[val_indices],
+                crop_len=args.crop_len,
+                mode="eval",
+                norm_mode=args.target_real_norm_mode,
+            )
+            real_signals = real_signals[train_indices]
+            real_labels = real_labels[train_indices]
+            synth_latents, synth_labels, source_meta = filter_latent_candidates(
+                synth_latents,
+                synth_labels,
+                source_meta,
+                train_record_ids=matched_split["train_record_ids"],
+                validation_record_ids=matched_split["val_record_ids"],
+            )
+            cls_dist = synth_labels.argmax(1)
+            pool_class_counts = Counter(int(c) for c in cls_dist)
+            source_counts = Counter(str(s) for s in source_meta["source_labels"])
+            print(
+                f"[setup] matched K500 split: train={len(train_indices)} val={len(val_indices)} "
+                f"train_hash={matched_split['train_record_ids_sha256']} "
+                f"val_hash={matched_split['val_record_ids_sha256']}",
+                flush=True,
+            )
         target_real_ds = TargetRealWaveformDataset(
             real_signals,
             real_labels,
@@ -1428,6 +1526,8 @@ def main():
             f"path={args.target_real_npz}",
             flush=True,
         )
+    elif matched_comparison:
+        raise ValueError("matched comparison requires --target_real_npz")
 
     pos_weight = torch.tensor(
         compute_pos_weight(train_labels, NUM_SUPER5),
@@ -1439,6 +1539,65 @@ def main():
 
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False,
                             num_workers=args.num_workers, pin_memory=True)
+    target_val_loader = (
+        DataLoader(
+            target_val_ds,
+            batch_size=args.batch_size,
+            shuffle=False,
+            num_workers=args.num_workers,
+            pin_memory=True,
+        )
+        if target_val_ds is not None
+        else None
+    )
+    best_metric = -float("inf")
+    best_epoch = 0
+    best_ckpt_path = os.path.join(args.output_dir, "best_model.pt")
+    source_baseline_metrics: Dict[str, float] = {}
+    target_baseline_metrics: Dict[str, float] = {}
+    source_floor_result: Dict[str, Any] = {}
+    realized_optimizer_steps = 0
+    scheduler_steps = 0
+    optimizer_steps_per_epoch = 0
+    if matched_comparison and target_real_ds is not None:
+        auxiliary_steps = math.ceil(int(args.K_anchor) / int(args.batch_size))
+        if args.latent_augmix_consistency_max_batches > 0:
+            auxiliary_steps = min(auxiliary_steps, args.latent_augmix_consistency_max_batches)
+        optimizer_steps_per_epoch = len(target_real_ds) // int(args.batch_size) + auxiliary_steps
+    if matched_comparison:
+        assert target_val_loader is not None and matched_split is not None
+        source_baseline_metrics = evaluate_loader_macro(
+            victim.model, val_loader, criterion, args.device
+        )
+        target_baseline_metrics = evaluate_loader_macro(
+            victim.model, target_val_loader, criterion, args.device
+        )
+        best_metric = float(target_baseline_metrics[args.selection_metric])
+        source_floor_result = update_matched_checkpoint_selection(
+            best_metric=-float("inf"),
+            candidate_metric=best_metric,
+            source_metric=float(source_baseline_metrics[args.source_floor_metric]),
+            source_baseline_metric=float(source_baseline_metrics[args.source_floor_metric]),
+            source_max_drop=args.source_floor_max_drop,
+        )
+        if not args.resume:
+            torch.save(victim.model.state_dict(), best_ckpt_path)
+
+    contract_base = dict(
+        comparison_arm=args.comparison_arm, source_checkpoint_path=args.init_ckpt,
+        source_checkpoint_sha256=source_checkpoint_sha256, split=matched_split,
+        selection_metric=args.selection_metric, source_floor_metric=args.source_floor_metric,
+        source_floor_max_drop=args.source_floor_max_drop, epochs=args.n_epochs,
+        optimizer_steps_per_epoch=optimizer_steps_per_epoch,
+    )
+
+    def comparison_contract(realized_steps: int = 0, scheduler_count: int = 0) -> Dict[str, Any]:
+        if not matched_comparison or matched_split is None:
+            return {"contract": "historical_unmatched"}
+        return build_matched_training_record(
+            **contract_base, realized_optimizer_steps=realized_steps,
+            scheduler_steps=scheduler_count, source_floor_result=source_floor_result,
+        )
 
     # ── PGD / Latent-Hull generator + buffer ────────────────────────────────
     # Note: generator __init__ calls victim.parameters().requires_grad_(False)
@@ -1513,6 +1672,7 @@ def main():
 
     log: Dict[str, Any] = {
         "args": vars(args),
+        "comparison_contract": comparison_contract(),
         "class_trust": class_trust,
         "adaptation": {
             "n_trainable_tensors": len(trainable_params),
@@ -1632,6 +1792,12 @@ def main():
         _restore_walker_state(walker, ckpt.get("walker_state", {}))
         restore_rng_state(ckpt.get("rng_state", {}), rng)
         log = ckpt.get("training_log", log)
+        best_metric = float(ckpt.get("best_metric", best_metric))
+        best_epoch = int(ckpt.get("best_epoch", best_epoch))
+        realized_optimizer_steps = int(
+            ckpt.get("realized_optimizer_steps", realized_optimizer_steps)
+        )
+        scheduler_steps = int(ckpt.get("scheduler_steps", scheduler_steps))
         consecutive_low_asr = int(ckpt.get("consecutive_low_asr", consecutive_low_asr))
         start_epoch = int(ckpt.get("epoch", 0)) + 1
         print(
@@ -1794,7 +1960,7 @@ def main():
                     teacher_mix=args.adv_teacher_mix,
                     soft_target_floor=args.adv_soft_target_floor,
                     sample_weight_scale=float(args.vae_adv_stream_sample_scale),
-                    enabled=push_independent_vae_stream,
+                    enabled=push_independent_vae_stream and method_updates_enabled,
                 )
                 if decoupled_clean_augmix_mode:
                     if target_real_ds is None:
@@ -1871,6 +2037,7 @@ def main():
                     label_mode=args.adv_label_mode,
                     teacher_mix=args.adv_teacher_mix,
                     soft_target_floor=args.adv_soft_target_floor,
+                    enabled=method_updates_enabled,
                 )
                 latent_augmix_direct_clean = latent_augmix_clean_for_consistency.astype(np.float32, copy=False)
                 latent_augmix_direct_views = latent_augmix_signals.astype(np.float32, copy=False)
@@ -1884,7 +2051,7 @@ def main():
                 flush=True,
             )
         # Track consecutive low ASR
-        if asr_info["asr_overall"] < args.asr_low_threshold:
+        if method_updates_enabled and asr_info["asr_overall"] < args.asr_low_threshold:
             consecutive_low_asr += 1
         else:
             consecutive_low_asr = 0
@@ -1910,7 +2077,7 @@ def main():
             else:
                 adv_scale = 1.0
             epoch_adv_weight = float(args.adv_weight) * adv_scale
-            if epoch_adv_weight > 0:
+            if epoch_adv_weight > 0 and not matched_comparison:
                 streams.append((buf_ds, epoch_adv_weight, buffer.get_sampling_weights()))
 
         if len(streams) == 0:
@@ -1920,10 +2087,12 @@ def main():
             )
         if len(streams) == 1:
             only_ds = streams[0][0]
+            loader_generator = torch.Generator().manual_seed(int(args.seed) + int(epoch))
             train_loader = DataLoader(only_ds, batch_size=args.batch_size, shuffle=True,
                                       num_workers=args.num_workers, pin_memory=True,
                                       drop_last=True,
-                                      persistent_workers=args.num_workers > 0)
+                                      persistent_workers=args.num_workers > 0,
+                                      generator=loader_generator)
         else:
             weights = []
             total_n = 0
@@ -1934,7 +2103,13 @@ def main():
                 else:
                     weights.extend([base_w * max(w, 0.05) for w in per_sample_w])
                 total_n += n
-            sampler = WeightedRandomSampler(weights, num_samples=total_n, replacement=True)
+            num_samples = len(target_real_ds) if matched_comparison else total_n
+            sampler = WeightedRandomSampler(
+                weights,
+                num_samples=num_samples,
+                replacement=True,
+                generator=torch.Generator().manual_seed(int(args.seed) + int(epoch)),
+            )
             combined = ConcatDataset([s[0] for s in streams])
             train_loader = DataLoader(combined, batch_size=args.batch_size, sampler=sampler,
                                       num_workers=args.num_workers, pin_memory=True,
@@ -1947,11 +2122,10 @@ def main():
             grad_clip=args.grad_clip, ewa_params=ewa_params,
             anchor_lambda=args.anchor_lambda, ewa_decay=args.ewa_decay,
         )
+        realized_epoch_optimizer_steps = len(train_loader)
         if (
             not args.enable_latent_augmix_consistency
-            or latent_augmix_direct_clean is None
-            or latent_augmix_direct_views is None
-            or latent_augmix_direct_labels is None
+            or (method_updates_enabled and latent_augmix_direct_clean is None)
         ):
             latent_augmix_consistency_stats = {
                 "enabled": False,
@@ -1963,11 +2137,22 @@ def main():
                 "n_generated": 0,
             }
         else:
+            if method_updates_enabled:
+                aux_clean = latent_augmix_direct_clean
+                aux_views = latent_augmix_direct_views
+                aux_labels = latent_augmix_direct_labels
+            else:
+                assert target_real_ds is not None
+                n_aux = int(args.K_anchor)
+                idx = np.arange(n_aux, dtype=np.int64) % len(target_real_ds)
+                aux_clean = np.transpose(target_real_ds.signals[idx], (0, 2, 1))
+                aux_views = np.tile(aux_clean, (int(args.latent_augmix_copies), 1, 1))
+                aux_labels = target_real_ds.labels[idx]
             latent_augmix_consistency_stats = train_latent_augmix_consistency_epoch(
                 model=victim.model,
-                clean_signals_ct=latent_augmix_direct_clean,
-                augmix_signals_ct=latent_augmix_direct_views,
-                labels_np=latent_augmix_direct_labels,
+                clean_signals_ct=aux_clean,
+                augmix_signals_ct=aux_views,
+                labels_np=aux_labels,
                 optimizer=optimizer,
                 criterion=criterion,
                 device=args.device,
@@ -1981,6 +2166,10 @@ def main():
                 trainable_params=trainable_params,
                 max_batches=args.latent_augmix_consistency_max_batches,
             )
+            latent_augmix_consistency_stats["control"] = (
+                "vae_lhat_augmix_jsd" if method_updates_enabled else "clean_control_steps"
+            )
+            realized_epoch_optimizer_steps += int(latent_augmix_consistency_stats["n_batches"])
         vae_adv_consistency_stats = {
             "enabled": False,
             "reason": "disabled_or_no_vae_adv",
@@ -2014,29 +2203,59 @@ def main():
                 trainable_params=trainable_params,
                 max_batches=args.latent_augmix_consistency_max_batches,
             )
+            realized_epoch_optimizer_steps += int(vae_adv_consistency_stats["n_batches"])
+        if matched_comparison:
+            realized_optimizer_steps += realized_epoch_optimizer_steps
         scheduler.step()
+        if matched_comparison:
+            scheduler_steps += 1
 
         # Phase E: PTBXL val loss
-        victim.model.eval()
-        val_losses = []
-        with torch.no_grad():
-            for sigs, labels in val_loader:
-                sigs = sigs.to(args.device)
-                labels = labels.to(args.device)
-                logits = victim.model(sigs)
-                mask = (labels >= 0).float()
-                labels_safe = torch.where(mask.bool(), labels, torch.zeros_like(labels))
-                per_elem = criterion(logits, labels_safe)
-                denom = mask.sum().clamp(min=1.0)
-                vl = (per_elem * mask).sum() / denom
-                val_losses.append(vl.item())
-        val_loss = float(np.mean(val_losses)) if val_losses else float('nan')
+        source_val_metrics = evaluate_loader_macro(victim.model, val_loader, criterion, args.device)
+        val_loss = float(source_val_metrics["loss"])
+        target_val_metrics: Dict[str, float] = {}
+        if matched_comparison:
+            assert target_val_loader is not None
+            target_val_metrics = evaluate_loader_macro(
+                victim.model, target_val_loader, criterion, args.device
+            )
+            candidate_metric = float(target_val_metrics[args.selection_metric])
+            source_floor_result = update_matched_checkpoint_selection(
+                best_metric=best_metric,
+                candidate_metric=candidate_metric,
+                source_metric=float(source_val_metrics[args.source_floor_metric]),
+                source_baseline_metric=float(source_baseline_metrics[args.source_floor_metric]),
+                source_max_drop=args.source_floor_max_drop,
+            )
+            if source_floor_result["selected"]:
+                best_metric = candidate_metric
+                best_epoch = epoch
+                torch.save(victim.model.state_dict(), best_ckpt_path)
 
         elapsed = time.time() - epoch_t0
         entry = {
             "epoch": epoch,
+            "comparison_arm": args.comparison_arm,
             "attack_family": "latent_hull",
             "train_loss": round(train_loss, 4),
+            "target_val_macro_auroc": target_val_metrics.get("macro_auroc"),
+            "target_val_macro_auprc": target_val_metrics.get("macro_auprc"),
+            "source_val_macro_auroc": source_val_metrics.get("macro_auroc"),
+            "source_val_macro_auprc": source_val_metrics.get("macro_auprc"),
+            "source_floor_passed": source_floor_result.get("source_floor_passed")
+            if matched_comparison
+            else None,
+            "source_floor_result": source_floor_result if matched_comparison else {},
+            "realized_optimizer_steps": realized_epoch_optimizer_steps
+            if matched_comparison
+            else None,
+            "realized_optimizer_steps_total": realized_optimizer_steps
+            if matched_comparison
+            else None,
+            "optimizer_steps_per_epoch": optimizer_steps_per_epoch
+            if matched_comparison
+            else None,
+            "scheduler_steps": scheduler_steps if matched_comparison else None,
             "latent_augmix_consistency_loss": round(
                 float(latent_augmix_consistency_stats.get("loss", float("nan"))), 6
             )
@@ -2192,6 +2411,10 @@ def main():
                 "walker_state": _walker_state(walker),
                 "rng_state": capture_rng_state(rng),
                 "consecutive_low_asr": consecutive_low_asr,
+                "best_metric": best_metric,
+                "best_epoch": best_epoch,
+                "realized_optimizer_steps": realized_optimizer_steps,
+                "scheduler_steps": scheduler_steps,
                 "training_log": log,
                 "args": vars(args),
                 "diagnostics_epoch_jsonl": str(diagnostics_epoch_path),
@@ -2209,14 +2432,22 @@ def main():
     # Final result
     if args.final_checkpoint_only:
         torch.save(victim.model.state_dict(), last_ckpt_path)
+    final_contract = comparison_contract(realized_optimizer_steps, scheduler_steps)
     final = {
         "args":               vars(args),
-        "selected_checkpoint": last_ckpt_path,
+        "comparison_contract": final_contract,
+        "selected_checkpoint": best_ckpt_path if matched_comparison else last_ckpt_path,
+        "best_model_path": best_ckpt_path if matched_comparison else None,
+        "best_epoch": best_epoch if matched_comparison else None,
+        "best_metric": best_metric if matched_comparison else None,
         "last_model_path":     last_ckpt_path,
         "n_epochs_run":       len(log["epochs"]),
     }
     with open(os.path.join(args.output_dir, "train_result.json"), "w") as f:
         json.dump(final, f, indent=2, default=str)
+    if matched_comparison and matched_split is not None:
+        with open(os.path.join(args.output_dir, "run_config.json"), "w") as handle:
+            json.dump({"args": vars(args), "comparison_contract": final_contract}, handle, indent=2)
 
     print("\n" + "=" * 72)
     print(f"Training done. last checkpoint → {last_ckpt_path}")
