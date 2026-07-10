@@ -35,6 +35,7 @@ adaptation:
   loss:
     clean_weight: 1.0
     target_real_weight: 80.0
+    target_adv_fraction: 0.5
     adv_weight: 0.3
     adv_weight_warmup_epochs: 10
     label_mode: latent_mixed_teacher

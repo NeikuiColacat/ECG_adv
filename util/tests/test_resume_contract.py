@@ -204,6 +204,7 @@ def test_resume_contract_rejects_nondefault_removed_latent_augmix_knobs():
         ("asr_low_threshold", 0.3, 0.2),
         ("asr_high_threshold", 0.7, 0.8),
         ("enable_latent_augmix_consistency", True, False),
+        ("target_adv_fraction", 0.25, 0.5),
     ],
 )
 def test_resume_contract_rejects_operational_protocol_field_drift(

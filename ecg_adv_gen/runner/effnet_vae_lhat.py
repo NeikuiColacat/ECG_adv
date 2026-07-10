@@ -152,6 +152,8 @@ def build_effnet_vae_lhat_train_cmd(
         *[str(item) for item in args.classes_in_scope],
         "--target_real_weight",
         str(args.target_real_weight),
+        "--target_adv_fraction",
+        str(getattr(args, "target_adv_fraction", 0.5)),
         "--adv_weight",
         str(args.adv_weight),
         "--vae_adv_stream_sample_scale",

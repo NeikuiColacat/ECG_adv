@@ -79,6 +79,10 @@ from ecg_adv_gen.training.online_buffer import (  # noqa: E402
     center_crop_ct,
     train_one_epoch_masked_bce,
 )
+from ecg_adv_gen.training.losses import (  # noqa: E402
+    masked_bce_per_sample,
+    target_clean_adv_objective,
+)
 from ecg_adv_gen.training.resume_contract import (  # noqa: E402
     LOCKED_LATENT_AUGMIX_SIGNAL_SPACE,
 )
@@ -419,6 +423,10 @@ def train_latent_augmix_consistency_epoch(
     grad_clip: float,
     trainable_params: List[nn.Parameter],
     max_batches: int = 0,
+    target_clean_signals_ct: np.ndarray | None = None,
+    target_adv_signals_ct: np.ndarray | None = None,
+    target_labels_np: np.ndarray | None = None,
+    target_adv_fraction: float | None = None,
 ) -> Dict[str, Any]:
     """Train directly on latent-AugMix views generated for the current epoch."""
     if copies <= 0 or (consistency_weight <= 0 and bce_weight <= 0):
@@ -441,6 +449,15 @@ def train_latent_augmix_consistency_epoch(
     aug_np = np.asarray(augmix_signals_ct, dtype=np.float32)
     labels_arr = np.asarray(labels_np, dtype=np.float32)
     n = int(clean_np.shape[0])
+    target_objective_enabled = target_adv_fraction is not None
+    if target_objective_enabled:
+        if target_clean_signals_ct is None or target_adv_signals_ct is None or target_labels_np is None:
+            raise ValueError("target objective requires clean signals, adversarial signals, and labels")
+        target_clean_np = np.asarray(target_clean_signals_ct, dtype=np.float32)
+        target_adv_np = np.asarray(target_adv_signals_ct, dtype=np.float32)
+        target_labels_arr = np.asarray(target_labels_np, dtype=np.float32)
+        if target_clean_np.shape[0] != n or target_adv_np.shape[0] != n or target_labels_arr.shape[0] != n:
+            raise ValueError("target objective inputs must match the clean AugMix batch count")
     if n == 0 or aug_np.shape[0] == 0:
         return {
             "enabled": True,
@@ -466,10 +483,16 @@ def train_latent_augmix_consistency_epoch(
     clean_np = clean_np[..., start:stop]
     aug_views_np = aug_np.reshape(int(copies), n, *aug_np.shape[1:])[..., start:stop]
     labels_t = torch.from_numpy(labels_arr).float()
+    if target_objective_enabled:
+        target_clean_np = target_clean_np[..., start:stop]
+        target_adv_np = target_adv_np[..., start:stop]
+        target_labels_t = torch.from_numpy(target_labels_arr).float()
 
     losses: List[float] = []
     bce_losses: List[float] = []
     consistency_losses: List[float] = []
+    target_clean_losses: List[torch.Tensor] = []
+    target_adv_losses: List[torch.Tensor] = []
     batch_size = max(1, int(batch_size))
     order = np.arange(n)
 
@@ -512,6 +535,25 @@ def train_latent_augmix_consistency_epoch(
                     for copy_i in range(int(copies))
                 ]
             ).mean()
+        if target_objective_enabled:
+            target_labels = target_labels_t[idx].to(device, non_blocking=True)
+            clean_target_loss = masked_bce_per_sample(
+                model(torch.from_numpy(target_clean_np[idx]).float().to(device, non_blocking=True)),
+                target_labels,
+                criterion.pos_weight,
+            )
+            adv_target_loss = masked_bce_per_sample(
+                model(torch.from_numpy(target_adv_np[idx]).float().to(device, non_blocking=True)),
+                target_labels,
+                criterion.pos_weight,
+            )
+            hard_bce, _ = target_clean_adv_objective(
+                clean_target_loss,
+                adv_target_loss,
+                float(target_adv_fraction),
+            )
+            target_clean_losses.append(clean_target_loss.detach().cpu())
+            target_adv_losses.append(adv_target_loss.detach().cpu())
         loss = float(bce_weight) * hard_bce + float(consistency_weight) * direct_consistency
         loss.backward()
         if grad_clip > 0:
@@ -524,7 +566,7 @@ def train_latent_augmix_consistency_epoch(
         if max_batches > 0 and batch_i >= max_batches:
             break
 
-    return {
+    result = {
         "enabled": True,
         "loss": float(np.mean(losses)) if losses else float("nan"),
         "bce_loss": float(np.mean(bce_losses)) if bce_losses else float("nan"),
@@ -537,6 +579,15 @@ def train_latent_augmix_consistency_epoch(
         "bce_weight": float(bce_weight),
         "max_batches": int(max_batches),
     }
+    if target_objective_enabled and target_clean_losses:
+        target_objective, target_stats = target_clean_adv_objective(
+            torch.cat(target_clean_losses),
+            torch.cat(target_adv_losses),
+            float(target_adv_fraction),
+        )
+        result["bce_loss"] = float(target_objective.item())
+        result.update(target_stats)
+    return result
 
 
 def _walker_state(walker: StratifiedPoolWalker) -> Dict[str, Any]:
@@ -1142,6 +1193,12 @@ def parse_args():
     p.add_argument("--target_real_val_seed", type=int, default=20260531)
     p.add_argument("--selection_metric", choices=["macro_auroc", "macro_auprc"], default="macro_auprc")
     p.add_argument("--source_floor_max_drop", type=float, default=0.02)
+    p.add_argument(
+        "--target_adv_fraction",
+        type=float,
+        default=None,
+        help="Target-objective coefficient for paired clean and pure VAE-LHAT losses.",
+    )
     p.add_argument("--adv_weight", type=float, default=0.5)
     p.add_argument(
         "--vae_adv_stream_sample_scale",
@@ -1295,6 +1352,10 @@ def parse_args():
             p.error("matched comparison requires verified ptbxl_source initialization")
         if not 0.0 < args.target_real_val_fraction < 0.5:
             p.error("matched comparison requires --target_real_val_fraction in (0, 0.5)")
+    if args.target_adv_fraction is not None and not 0.0 <= args.target_adv_fraction <= 1.0:
+        p.error("--target_adv_fraction must be in [0, 1]")
+    if args.comparison_arm == "a0":
+        args.target_adv_fraction = 0.0
     if float(args.vae_adv_stream_sample_scale) < 0.0:
         p.error("--vae_adv_stream_sample_scale must be non-negative")
     if not (0.0 <= float(args.latent_augmix_adv_base_mix) <= 1.0):
@@ -2172,6 +2233,10 @@ def main():
                 grad_clip=args.grad_clip,
                 trainable_params=trainable_params,
                 max_batches=args.latent_augmix_consistency_max_batches,
+                target_clean_signals_ct=anc_signals,
+                target_adv_signals_ct=(anc_signals if args.comparison_arm == "a0" else adv_signals),
+                target_labels_np=target_oh,
+                target_adv_fraction=args.target_adv_fraction,
             )
             latent_augmix_consistency_stats["control"] = (
                 "vae_lhat_augmix_jsd" if method_updates_enabled else "clean_control_steps"
@@ -2329,6 +2394,7 @@ def main():
             "latent_augmix_stats": latent_augmix_stats,
             "latent_augmix_push_stats": latent_augmix_push_stats,
             "latent_augmix_consistency_stats": latent_augmix_consistency_stats,
+            "target_adv_fraction_effective": args.target_adv_fraction,
             "vae_adv_consistency_stats": vae_adv_consistency_stats,
             "adv_weight_effective": round(float(epoch_adv_weight), 6),
             "adv_weight_warmup_epochs": int(args.adv_weight_warmup_epochs),

@@ -160,6 +160,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     ap.add_argument("--target_real_weight", type=float, default=80.0)
+    ap.add_argument("--target_adv_fraction", type=float, choices=[0.0, 0.25, 0.5], default=0.5)
     ap.add_argument("--adv_weight", type=float, default=0.2)
     ap.add_argument("--vae_adv_stream_sample_scale", type=float, default=1.0)
     ap.add_argument("--vae_adv_consistency_weight", type=float, default=0.0)

@@ -97,6 +97,40 @@ def multilabel_bce_per_sample(
     ).mean(dim=1)
 
 
+def target_clean_adv_objective(
+    clean_losses: torch.Tensor,
+    adv_losses: torch.Tensor,
+    rho: float,
+) -> tuple[torch.Tensor, dict[str, float | int]]:
+    """Combine clean and VAE-adversarial target losses with an explicit coefficient."""
+    rho = float(rho)
+    if not 0.0 <= rho <= 1.0:
+        raise ValueError("rho must be in [0, 1]")
+    if clean_losses.numel() == 0 or adv_losses.numel() == 0:
+        raise ValueError("clean and adversarial losses must be nonempty")
+
+    clean_mean = clean_losses.mean()
+    adv_mean = adv_losses.mean()
+    clean_weighted = (1.0 - rho) * clean_mean
+    adv_weighted = rho * adv_mean
+    objective = clean_weighted + adv_weighted
+    total = float(objective.detach().item())
+    clean_value = float(clean_weighted.detach().item())
+    adv_value = float(adv_weighted.detach().item())
+    return objective, {
+        "target_clean_count": int(clean_losses.numel()),
+        "target_adv_count": int(adv_losses.numel()),
+        "target_clean_loss_mean": float(clean_mean.detach().item()),
+        "target_adv_loss_mean": float(adv_mean.detach().item()),
+        "target_clean_weighted_loss": clean_value,
+        "target_adv_weighted_loss": adv_value,
+        "target_clean_nominal_fraction": 1.0 - rho,
+        "target_adv_nominal_fraction": rho,
+        "target_clean_contribution_fraction": clean_value / total if total else 0.0,
+        "target_adv_contribution_fraction": adv_value / total if total else 0.0,
+    }
+
+
 @torch.no_grad()
 def attack_success_stats(
     clean_logits: torch.Tensor,

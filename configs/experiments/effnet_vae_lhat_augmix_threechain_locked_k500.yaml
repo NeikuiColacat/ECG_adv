@@ -41,6 +41,8 @@ logging:
     - decoded_invalid_rate
     - adv_weight_effective
     - latent_augmix_stats
+    - latent_augmix_consistency_stats
+    - target_adv_fraction_effective
     - hull_weight_entropy_mean
     - target_val_macro_auprc
     - source_val_macro_auprc

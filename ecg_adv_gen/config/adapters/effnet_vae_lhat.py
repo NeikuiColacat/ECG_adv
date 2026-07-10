@@ -70,12 +70,20 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
     asr_low, asr_high = attack["target_asr_range"]
     if not 0.0 <= float(asr_low) <= float(asr_high) <= 1.0:
         raise ValueError("adaptation.attack.target_asr_range must be ordered within [0, 1]")
+    comparison_arm = matrix.get("comparison_arm", adaptation.get("comparison_arm", "historical_unmatched"))
+    target_adv_fraction = float(
+        matrix.get("target_adv_fraction", adaptation["loss"]["target_adv_fraction"])
+    )
+    if target_adv_fraction not in {0.0, 0.25, 0.5}:
+        raise ValueError("target_adv_fraction matrix value must be one of 0, 0.25, 0.5")
+    if comparison_arm == "a0":
+        target_adv_fraction = 0.0
 
     argv: list[Any] = [
         "--center",
         center,
         "--comparison_arm",
-        matrix.get("comparison_arm", adaptation.get("comparison_arm", "historical_unmatched")),
+        comparison_arm,
         "--epochs",
         training["epochs"],
         "--seed",
@@ -134,6 +142,8 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
         asr_high,
         "--target_real_weight",
         adaptation["loss"]["target_real_weight"],
+        "--target_adv_fraction",
+        target_adv_fraction,
         "--adv_weight",
         adaptation["loss"]["adv_weight"],
         "--vae_adv_stream_sample_scale",
@@ -291,6 +301,7 @@ def audit_effnet_vae_lhat_command(
             "--target_real_val_seed",
             "--selection_metric",
             "--source_floor_max_drop",
+            "--target_adv_fraction",
         ],
     )
     center = str(opt_first(opts, "--center", ""))
@@ -307,13 +318,20 @@ def audit_effnet_vae_lhat_command(
     audit_equals(errors, script, opts, "--asr_low_threshold", asr_low)
     audit_equals(errors, script, opts, "--asr_high_threshold", asr_high)
     source_floor = selection.get("source_floor") or {}
+    comparison_arm = case.get("comparison_arm") or adaptation.get("comparison_arm", "historical_unmatched")
+    target_adv_fraction = float(
+        case.get("target_adv_fraction", adaptation["loss"]["target_adv_fraction"])
+    )
+    if comparison_arm == "a0":
+        target_adv_fraction = 0.0
     expected_options = {
-        "--comparison_arm": case.get("comparison_arm") or adaptation.get("comparison_arm", "historical_unmatched"),
+        "--comparison_arm": comparison_arm,
         "--init_ckpt": expected_init_ckpt,
         "--target_real_val_fraction": selection.get("validation_fraction", 0.2),
         "--target_real_val_seed": selection.get("seed", kshot["seed"]),
         "--selection_metric": selection.get("metric", "macro_auprc"),
         "--source_floor_max_drop": source_floor.get("max_drop", 0.02),
+        "--target_adv_fraction": target_adv_fraction,
     }
     for option, expected in expected_options.items():
         audit_equals(errors, script, opts, option, expected)

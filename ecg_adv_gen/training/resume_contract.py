@@ -28,6 +28,7 @@ RESUME_CONTRACT_KEYS = (
     "pgd_eps",
     "asr_low_threshold",
     "asr_high_threshold",
+    "target_adv_fraction",
     "enable_latent_augmix_consistency",
     "final_checkpoint_only",
     "adv_label_mode",
