@@ -1432,6 +1432,8 @@ def build_artifact_trace(
                         else False
                     ),
                     signal_path=Path(signal_override) if signal_override else None,
+                    command_index=command_index,
+                    input_index=0,
                 )
             cache_dir = str(_opt_first(opts, "--cache_dir", ""))
             if cache_dir:
@@ -1522,6 +1524,8 @@ def build_artifact_trace(
                     seed=seed,
                     base=ref_base,
                     include_latent=False,
+                    command_index=command_index,
+                    input_index=0,
                 )
             for option, role in [
                 ("--clean_cache_dir", "pn2021_clean_cache_dir"),

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from pathlib import Path
+import argparse
+import copy
 import json
 import subprocess
 import sys
 from collections import Counter
-import argparse
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -14,6 +15,7 @@ import yaml
 from torch.utils.data import TensorDataset
 
 from ecg_adv_gen.config import (
+    attach_replication_preflight,
     build_runner_commands,
     load_experiment_config,
     make_dry_run_manifest,
@@ -32,6 +34,7 @@ STAGE_CONFIGS = {
 }
 CENTERS = ("ningbo", "chapman_shaoxing", "cpsc_2018", "georgia")
 ARMS = ("a0", "a3", "a5")
+INDEX = REPO / "configs" / "active_scripts.yaml"
 
 
 def _load(path: str, run_id: str = "pytest_ecgfounder_matched") -> dict:
@@ -52,6 +55,37 @@ def _command_key(command: dict) -> tuple[str, str]:
     matrix = command["matrix"]
     case = matrix.get("case") or {}
     return str(matrix["center"]), str(case["arm"])
+
+
+def _manifest(path: str, run_id: str = "pytest_ecgfounder_binding") -> tuple[dict, dict]:
+    config = _load(path, run_id)
+    commands = build_runner_commands(config)
+    return config, make_dry_run_manifest(
+        config,
+        commands=commands,
+        local_paths=validate_experiment_config(config, repo_root=REPO),
+        run_id=run_id,
+        cli_args=argparse.Namespace(dry_run=True, write_plan=False),
+    )
+
+
+def _attach(path: str, run_id: str = "pytest_ecgfounder_binding") -> tuple[dict, dict]:
+    config, current = _manifest(path, run_id)
+    return config, attach_replication_preflight(
+        current,
+        config,
+        repo_root=REPO,
+        index_path=INDEX,
+    )
+
+
+def _replace_option(argv: list[str], name: str, value: str) -> None:
+    argv[argv.index(name) + 1] = value
+
+
+def _remove_option(argv: list[str], name: str) -> None:
+    index = argv.index(name)
+    del argv[index : index + 2]
 
 
 def test_matched_ecgfounder_arm_allowlist_and_components_are_exact():
@@ -746,6 +780,183 @@ def test_matched_manifests_trace_best_selection_and_exact_producer_consumers():
         assert "command.run_dir.last_model" not in checkpoint_roles
     binding = audit_replication_producer_consumers(children, consumer_commands)
     assert binding["passed"], binding["errors"]
+
+
+@pytest.mark.parametrize("stage", ("train", "clean", "s5", "depth23"))
+def test_ecgfounder_replication_preflight_binds_each_command_input_exactly(
+    stage: str,
+):
+    _config, current = _attach(
+        STAGE_CONFIGS[stage],
+        run_id=f"pytest_ecgfounder_binding_{stage}",
+    )
+    trace = current["artifact_trace"]
+    bindings = trace["inputs"]["replication_command_input_bindings"]
+    contract = trace["replication_preflight"]["command_input_contract"]
+
+    assert len(current["commands"]) == len(bindings) == 12
+    assert len(trace["inputs"]["replication_k500_groups"]) == 4
+    assert contract == {
+        "passed": True,
+        "per_command_passed": True,
+        "expected_cell_count": 12,
+        "actual_argv_cell_count": 12,
+        "manifest_ref_cell_count": 12,
+        "attached_group_cell_count": 12,
+    }
+    for binding in bindings:
+        assert binding["runner_family"] == "ecgfounder"
+        assert binding["input_index"] == 0
+        assert binding["ref_meta_json"] == binding["actual_consumed"]["ref_meta_json"]
+        assert binding["ref_meta_json"].endswith(".ref_meta.json")
+        if stage == "train":
+            expected_latent = binding["arm"] in {"a3", "a5"}
+            consumed = binding["actual_consumed"]
+            companions = binding["manifest_companions"]
+            assert binding["consume_latent"] is expected_latent
+            assert consumed["raw1000_npz"] == str(
+                Path(binding["anchor_base"]).with_suffix(".raw1000.npz")
+            )
+            assert companions["signals_npz"] == consumed["raw1000_npz"]
+            assert consumed["class_trust"] is None
+            assert bool(consumed["latent_npz"]) is expected_latent
+            assert companions["latent_npz"] == consumed["latent_npz"]
+            if expected_latent:
+                assert consumed["latent_npz"] == str(
+                    Path(binding["anchor_base"]).with_suffix(".latent.npz")
+                )
+        else:
+            assert binding["consume_latent"] is False
+            assert binding["actual_consumed"] == {
+                "ref_meta_json": binding["ref_meta_json"],
+                "raw1000_npz": None,
+                "latent_npz": None,
+                "class_trust": None,
+            }
+            assert binding["manifest_companions"]["signals_npz"].endswith(
+                ".signals.npz"
+            )
+            assert binding["manifest_companions"]["latent_npz"] is None
+
+
+@pytest.mark.parametrize(
+    "drift",
+    (
+        "foreign_ref_meta",
+        "foreign_target_raw1000",
+        "foreign_anchor_root",
+        "a0_enables_latent",
+        "a3_missing_anchor_root",
+    ),
+)
+def test_ecgfounder_replication_rejects_actual_argv_path_or_arm_drift(
+    drift: str,
+):
+    config, current = _manifest(STAGE_CONFIGS["train"], f"pytest_ecg_actual_{drift}")
+    commands = current["commands"]
+    a0 = next(command for command in commands if command["matrix"]["case"]["arm"] == "a0")
+    a3 = next(command for command in commands if command["matrix"]["case"]["arm"] == "a3")
+
+    if drift == "foreign_ref_meta":
+        _replace_option(a3["argv"], "--ref_meta_json", "/dev/shm/foreign.ref_meta.json")
+    elif drift == "foreign_target_raw1000":
+        _replace_option(
+            a3["argv"],
+            "--target_raw1000_npz_override",
+            "/dev/shm/foreign.raw1000.npz",
+        )
+    elif drift == "foreign_anchor_root":
+        _replace_option(a3["argv"], "--anchor_base_root", "/dev/shm/foreign/subsets")
+    elif drift == "a0_enables_latent":
+        a0["argv"].extend(
+            ["--anchor_base_root", str(config["data"]["kshot_subset_root"]), "--enable_vae_adv_stream"]
+        )
+    else:
+        _remove_option(a3["argv"], "--anchor_base_root")
+
+    with pytest.raises(ValueError, match="actual child|canonical|latent|arm"):
+        attach_replication_preflight(
+            current,
+            config,
+            repo_root=REPO,
+            index_path=INDEX,
+        )
+
+
+@pytest.mark.parametrize(
+    "drift",
+    ("duplicate_identity", "missing_a3_latent", "extra_a0_latent", "wrong_ref_role"),
+)
+def test_ecgfounder_replication_rejects_manifest_identity_or_artifact_drift(
+    drift: str,
+):
+    config, current = _manifest(STAGE_CONFIGS["train"], f"pytest_ecg_manifest_{drift}")
+    refs = current["artifact_trace"]["inputs"]["k500_refs"]
+    commands = current["commands"]
+    command_arm = {
+        index: command["matrix"]["case"]["arm"]
+        for index, command in enumerate(commands)
+    }
+    a0 = next(ref for ref in refs if command_arm[ref["command_index"]] == "a0")
+    a3 = next(ref for ref in refs if command_arm[ref["command_index"]] == "a3")
+    if drift == "duplicate_identity":
+        refs.append(copy.deepcopy(refs[0]))
+    elif drift == "missing_a3_latent":
+        a3["latent_npz"] = None
+    elif drift == "extra_a0_latent":
+        a0["latent_npz"] = copy.deepcopy(a3["latent_npz"])
+    else:
+        a3["ref_meta_json"]["role"] = "forged_ref_meta"
+
+    with pytest.raises(ValueError, match="manifest K500 refs|input cell"):
+        attach_replication_preflight(
+            current,
+            config,
+            repo_root=REPO,
+            index_path=INDEX,
+        )
+
+
+def test_ecgfounder_replication_rejects_foreign_materialization_root():
+    config, current = _manifest(STAGE_CONFIGS["train"], "pytest_ecg_foreign_group")
+    config["data"]["kshot_subset_root"] = "/dev/shm/foreign_family/subsets"
+    with pytest.raises(ValueError, match="canonical input root"):
+        attach_replication_preflight(
+            current,
+            config,
+            repo_root=REPO,
+            index_path=INDEX,
+        )
+
+
+@pytest.mark.parametrize("drift", ("foreign_ref", "duplicate_ref"))
+def test_ecgfounder_eval_requires_one_canonical_ref_per_command(drift: str):
+    config, current = _manifest(STAGE_CONFIGS["s5"], f"pytest_ecg_eval_{drift}")
+    argv = current["commands"][0]["argv"]
+    index = argv.index("--exclude_ref_ids")
+    if drift == "foreign_ref":
+        argv[index + 1] = "/dev/shm/foreign.ref_meta.json"
+    else:
+        argv.insert(index + 2, argv[index + 1])
+    with pytest.raises(ValueError, match="exclude_ref_ids|canonical|count"):
+        attach_replication_preflight(
+            current,
+            config,
+            repo_root=REPO,
+            index_path=INDEX,
+        )
+
+
+def test_ecgfounder_source_only_stays_outside_k500_preflight():
+    config, current = _manifest(SOURCE_CONFIG, "pytest_ecg_source_only_binding")
+    attached = attach_replication_preflight(
+        current,
+        config,
+        repo_root=REPO,
+        index_path=INDEX,
+    )
+    assert attached["artifact_trace"]["inputs"]["k500_refs"] == []
+    assert "replication_preflight" not in attached["artifact_trace"]
 
 
 def test_active_replication_audit_binds_one_source_best_to_all_training_commands(

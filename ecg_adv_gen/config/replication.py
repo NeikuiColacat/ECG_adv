@@ -24,6 +24,10 @@ from ecg_adv_gen.matched_effnet import (
     is_matched_effnet_arm,
     matched_effnet_arm,
 )
+from ecg_adv_gen.matched_ecgfounder import (
+    MATCHED_ECGFOUNDER_CONTRACT_VERSION,
+    matched_ecgfounder_arm,
+)
 
 from .adapters.common import argv_option_map, opt_first, opt_list
 from .loader import (
@@ -36,10 +40,12 @@ from .loader import (
 
 FIXED_K_SAMPLING_POLICY = "deterministic_random_from_v7_nonzero_eligible_pool"
 SUPER5_CLASS_ORDER = ("CD", "HYP", "MI", "NORM", "STTC")
-_COMMAND_INPUT_SCOPE = {
-    "effnet_vae_lhat_augmix.py": "train",
-    "pn2021_clean_eval.py": "clean_eval",
-    "pn2021c_eval.py": "center_eval",
+_COMMAND_INPUT_ROUTE = {
+    "effnet_vae_lhat_augmix.py": ("effnet", "train"),
+    "pn2021_clean_eval.py": ("effnet", "clean_eval"),
+    "pn2021c_eval.py": ("effnet", "center_eval"),
+    "ecgfounder_fullft.py": ("ecgfounder", "train"),
+    "ecgfounder_pn2021c_eval.py": ("ecgfounder", "center_eval"),
 }
 
 
@@ -473,6 +479,7 @@ class CommandInputBinding:
 
     command_index: int
     input_index: int
+    runner_family: str
     arm: str
     artifact_center: str
     k: int
@@ -492,13 +499,15 @@ class CommandInputBinding:
         """Return the duplicate-preserving identity compared across four surfaces."""
 
         return (
-            self.command_index, self.input_index, self.arm, self.artifact_center,
-            self.k, self.seed, str(_resolved_path(self.base)), self.consume_latent,
+            self.command_index, self.input_index, self.runner_family, self.arm,
+            self.artifact_center, self.k, self.seed, str(_resolved_path(self.base)),
+            self.consume_latent,
         )
 
     def identity_record(self) -> dict[str, Any]:
         return {
             "command_index": self.command_index, "input_index": self.input_index,
+            "runner_family": self.runner_family,
             "arm": self.arm, "artifact_center": self.artifact_center,
             "k": self.k, "seed": self.seed,
             "anchor_base": str(_resolved_path(self.base)),
@@ -509,13 +518,14 @@ class CommandInputBinding:
 
 def _command_argv_scope(
     command: Mapping[str, Any], command_index: int
-) -> tuple[list[str], str]:
+) -> tuple[list[str], str, str]:
     argv = [str(item) for item in command.get("argv") or []]
     if len(argv) < 2:
         raise ValueError(f"indexed auxiliary manifest command[{command_index}] argv is incomplete")
     script = Path(argv[1]).name
     try:
-        return argv, _COMMAND_INPUT_SCOPE[script]
+        runner_family, scope = _COMMAND_INPUT_ROUTE[script]
+        return argv, runner_family, scope
     except KeyError:
         raise ValueError(
             f"indexed auxiliary command[{command_index}] uses unsupported runner {script!r}"
@@ -539,8 +549,17 @@ def _command_arm(
 
 
 def _train_consumes_latent(
-    paper: Mapping[str, Any], arm: str, command_index: int
+    paper: Mapping[str, Any], arm: str, command_index: int, runner_family: str
 ) -> bool:
+    if runner_family == "ecgfounder":
+        if (
+            str(paper.get("comparison_protocol") or "")
+            != MATCHED_ECGFOUNDER_CONTRACT_VERSION
+        ):
+            raise ValueError(
+                f"indexed ECGFounder train command[{command_index}] is not matched"
+            )
+        return bool(matched_ecgfounder_arm(arm).vae_lhat)
     if str(paper.get("comparison_protocol") or "") == F004_RHO_SWEEP_PROTOCOL:
         return True
     if not is_matched_effnet_arm(arm):
@@ -569,7 +588,7 @@ def _expected_command_input_bindings(
         if not isinstance(raw_command, Mapping):
             raise ValueError(f"indexed auxiliary manifest command[{command_index}] is not a mapping")
         command = dict(raw_command)
-        argv, scope = _command_argv_scope(command, command_index)
+        argv, runner_family, scope = _command_argv_scope(command, command_index)
         opts = argv_option_map(argv)
         matrix = command.get("matrix") or {}
         case = matrix.get("case") if isinstance(matrix.get("case"), Mapping) else {}
@@ -588,7 +607,7 @@ def _expected_command_input_bindings(
         else:
             artifact_centers = [producer_center]
         consume_latent = (
-            _train_consumes_latent(paper, arm, command_index)
+            _train_consumes_latent(paper, arm, command_index, runner_family)
             if scope == "train"
             else False
         )
@@ -596,7 +615,8 @@ def _expected_command_input_bindings(
             base = canonical_kshot_base(expected_root, artifact_center, k=k, seed=seed)
             bindings.append(
                 CommandInputBinding(
-                    command_index=command_index, input_index=input_index, arm=arm,
+                    command_index=command_index, input_index=input_index,
+                    runner_family=runner_family, arm=arm,
                     artifact_center=artifact_center, k=k, seed=seed,
                     base=_resolved_path(base),
                     consume_latent=consume_latent,
@@ -690,16 +710,101 @@ def _actual_command_input_bindings(
         cells = sorted(grouped.get(command_index, []), key=lambda item: item.input_index)
         if not cells:
             raise ValueError(f"expected input cells are missing for command[{command_index}]")
-        argv, scope = _command_argv_scope(command, command_index)
+        argv, runner_family, scope = _command_argv_scope(command, command_index)
         prefix = f"actual child command[{command_index}]"
         if scope == "train":
             if len(cells) != 1:
                 raise ValueError(f"train command[{command_index}] must bind exactly one K500 input")
+            cell = cells[0]
+            if runner_family == "ecgfounder":
+                opts = argv_option_map(argv)
+                identity = (
+                    str(opt_first(opts, "--center", "")),
+                    int(opt_first(opts, "--k", -1)),
+                    int(opt_first(opts, "--seed", -1)),
+                    str(opt_first(opts, "--comparison_arm", "")),
+                )
+                expected_identity = (
+                    cell.artifact_center,
+                    cell.k,
+                    cell.seed,
+                    cell.arm,
+                )
+                if identity != expected_identity:
+                    raise ValueError(
+                        f"{prefix} ECGFounder center/K/seed/arm input identity "
+                        f"drift: {identity} != {expected_identity}"
+                    )
+                if (
+                    str(opt_first(opts, "--matched_contract", ""))
+                    != MATCHED_ECGFOUNDER_CONTRACT_VERSION
+                ):
+                    raise ValueError(f"{prefix} ECGFounder matched contract drift")
+                final = _require_exact_paths(f"{prefix} final", {
+                    "ref_meta_json": (
+                        opt_first(opts, "--ref_meta_json", ""),
+                        cell.ref_meta_json,
+                    ),
+                    "target_raw1000_npz": (
+                        opt_first(opts, "--target_raw1000_npz_override", ""),
+                        cell.raw1000_npz,
+                    ),
+                })
+                vae_enabled = "--enable_vae_adv_stream" in opts
+                anchor_root = str(opt_first(opts, "--anchor_base_root", ""))
+                if vae_enabled != cell.consume_latent:
+                    raise ValueError(
+                        f"{prefix} ECGFounder arm {cell.arm} latent consumption "
+                        f"drift: {vae_enabled} != {cell.consume_latent}"
+                    )
+                if cell.consume_latent:
+                    canonical_root = cell.base.parents[2]
+                    resolved_root = _require_exact_path(
+                        anchor_root,
+                        canonical_root,
+                        label=f"{prefix} final anchor_base_root",
+                    )
+                    derived_base = canonical_kshot_base(
+                        resolved_root,
+                        cell.artifact_center,
+                        k=cell.k,
+                        seed=cell.seed,
+                    )
+                    _require_exact_path(
+                        derived_base,
+                        cell.base,
+                        label=f"{prefix} derived ECGFounder anchor base",
+                    )
+                    latent = _resolved_path(cell.latent_npz)
+                else:
+                    if anchor_root:
+                        raise ValueError(
+                            f"{prefix} ECGFounder non-VAE arm must not bind latent root"
+                        )
+                    latent = None
+                ref_meta = final["ref_meta_json"]
+                actual = _binding_from_base(
+                    cell,
+                    base=_base_from_ref_meta(
+                        ref_meta, label=f"{prefix} ref_meta_json"
+                    ),
+                    consume_latent=latent is not None,
+                )
+                observed.append(actual)
+                records.append(
+                    _actual_input_record(
+                        actual,
+                        ref_meta=ref_meta,
+                        raw1000=final["target_raw1000_npz"],
+                        latent=latent,
+                    )
+                )
+                continue
+
             try:
                 args = effnet_wrapper.parse_args(argv[2:])
             except SystemExit as exc:
                 raise ValueError(f"{prefix} wrapper argv is invalid") from exc
-            cell = cells[0]
             if (str(args.center), int(args.seed)) != (cell.artifact_center, cell.seed):
                 raise ValueError(f"{prefix} center/seed input identity drift")
             data_root = Path(args.data_root)
@@ -743,9 +848,27 @@ def _actual_command_input_bindings(
         ref_values = opt_list(opts, "--exclude_ref_ids")
         if len(ref_values) != len(cells):
             raise ValueError(f"{prefix} exclude_ref_ids count {len(ref_values)} != {len(cells)}")
-        forbidden = {"--target_real_npz", "--synth_npz", "--class_trust"}.intersection(opts)
+        forbidden_options = {
+            "--target_real_npz", "--synth_npz", "--class_trust",
+            "--target_raw1000_npz_override", "--anchor_base_root",
+            "--enable_vae_adv_stream",
+        }
+        forbidden = forbidden_options.intersection(opts)
         if forbidden:
             raise ValueError(f"{prefix} evaluation consumes {sorted(forbidden)}")
+        if runner_family == "ecgfounder":
+            if len(cells) != 1:
+                raise ValueError(
+                    f"{prefix} ECGFounder evaluation must bind exactly one K500 input"
+                )
+            cell = cells[0]
+            centers = opt_list(opts, "--centers")
+            variant = str(opt_first(opts, "--variant", ""))
+            if centers != [cell.artifact_center] or variant != cell.arm:
+                raise ValueError(
+                    f"{prefix} ECGFounder center/arm input identity drift: "
+                    f"centers={centers}, variant={variant!r}"
+                )
         for cell, value in zip(cells, ref_values):
             ref_meta = _require_exact_path(
                 value, cell.ref_meta_json,
@@ -824,7 +947,9 @@ def _manifest_command_input_bindings(
             ref, "ref_meta_json", expected_path=cell.ref_meta_json,
             expected_role="kshot_ref_meta", ref_index=ref_index,
         )
-        _, scope = _command_argv_scope(commands[cell.command_index], cell.command_index)
+        _, _, scope = _command_argv_scope(
+            commands[cell.command_index], cell.command_index
+        )
         is_train = scope == "train"
         signals_path = _manifest_path_record(
             ref, "signals_npz",
