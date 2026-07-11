@@ -286,23 +286,31 @@ within the declared free-memory/utilization thresholds, then sets each child
 environment to exactly one physical `CUDA_VISIBLE_DEVICES` id. GPU ids remain
 runtime input and must never be committed to tracked YAML.
 
-The queue reuses replication preflight and required-input verification, holds
-an output-directory execute lock, and atomically writes `matrix_progress.json`
-and the queue state in `run_manifest.json` from the parent process only. N
+The queue reuses replication preflight and required-input verification. A
+sibling execute lock covers output preparation, plan/resume validation,
+preflight, child execution, postprocess, and finalization without making a
+fresh run directory non-empty. The parent alone atomically writes
+`matrix_progress.json` and queue/lifecycle state in `run_manifest.json`. N
 commands are dispatched over the bounded GPU pool. The first child failure
 stops new dispatch; children already running may finish. Ctrl-C terminates only
 process groups created by this queue.
 
 Resume uses the same command with `--resume`; it does not regenerate the
-existing resolved config or replace the prior manifest, and only updates
-preflight/progress fields atomically. A previously successful command is
-skipped only after its declared artifacts pass the
-standard per-command verifier again. Failed, pending, stale, or artifact-invalid
-commands are retried individually. EfficientNet VAE-LHAT training appends
+existing resolved config or replace the prior manifest. Its frozen normalized
+contract covers commands, postprocess, replication preflight/K500/validation
+groups, initialization, required inputs, and every expected output. A
+previously successful command is skipped only after its declared artifacts pass
+the standard per-command verifier again. Failed, pending, proven-stale, or
+artifact-invalid commands are retried individually. A prior `running` attempt
+is retried only when its positive PID probe returns `ESRCH`; a live PID,
+`EPERM`, or missing/invalid PID rejects resume without sending a signal.
+EfficientNet VAE-LHAT training appends
 `--resume latest` only when that command owns
 `checkpoints/checkpoint_latest.pt`; other training families restart only the
 affected command. After all children pass, reporting commands run serially and
-the full artifact verifier/finalizer runs once.
+the full artifact verifier/finalizer runs once. Top-level status remains
+`running` until the finalizer returns; every failure or interruption records its
+phase, error summary, and finish time atomically.
 
 The matrix queue keeps only per-command stdout/stderr logs such as
 `logs/command_003_attempt_02.stdout.log`; it does not create combined command

@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+import signal
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -17,6 +20,7 @@ from ecg_adv_gen.runner.matrix_parallel import (
     validate_gpu_snapshot,
     verify_command_artifacts,
 )
+from scripts.agent import run_matrix_parallel as matrix_cli
 from scripts.agent.run_matrix_parallel import _resume_manifest, parse_args
 
 
@@ -141,6 +145,52 @@ def _write_manifest(run_dir: Path, commands: list[dict[str, object]], outputs: l
     path = run_dir / "run_manifest.json"
     path.write_text(json.dumps(manifest), encoding="utf-8")
     return path
+
+
+def _write_running_progress(run_dir: Path, command: dict[str, object], pid: object) -> None:
+    progress = {
+        "schema_version": 1,
+        "run_id": "queue-test",
+        "status": "running",
+        "created_at_utc": "2026-07-11T00:00:00+00:00",
+        "updated_at_utc": "2026-07-11T00:00:00+00:00",
+        "commands": [
+            {
+                "command_index": 0,
+                "name": command["name"],
+                "matrix": command["matrix"],
+                "status": "running",
+                "attempts": [
+                    {
+                        "attempt": 1,
+                        "gpu": "0",
+                        "pid": pid,
+                        "started_at_utc": "2026-07-11T00:00:00+00:00",
+                        "finished_at_utc": None,
+                        "returncode": None,
+                        "status": "running",
+                        "stdout_log_path": str(run_dir / "old.stdout.log"),
+                        "stderr_log_path": str(run_dir / "old.stderr.log"),
+                        "resume": None,
+                    }
+                ],
+            }
+        ],
+    }
+    (run_dir / "matrix_progress.json").write_text(json.dumps(progress), encoding="utf-8")
+
+
+def _execution_args() -> object:
+    return type(
+        "Args",
+        (),
+        {
+            "min_free_memory_mb": 0,
+            "max_utilization_pct": 100,
+            "max_parallel": 1,
+            "resume": False,
+        },
+    )()
 
 
 def test_cli_requires_exactly_one_mode_and_bounds_parallelism() -> None:
@@ -356,7 +406,9 @@ raise SystemExit(7)
     assert progress["commands"][1]["attempts"][1]["resume"] == "latest"
     assert json.loads(argv_record.read_text()) == ["--resume", "latest"]
     assert json.loads((run_dir / "matrix_progress.json").read_text())["status"] == "succeeded"
-    assert json.loads(manifest_path.read_text())["status"] == "succeeded"
+    queue_manifest = json.loads(manifest_path.read_text())
+    assert queue_manifest["status"] == "launch_prepared"
+    assert queue_manifest["matrix_parallel"]["status"] == "succeeded"
     assert not list(run_dir.glob("*.tmp"))
 
 
@@ -485,7 +537,8 @@ def test_postprocess_runs_serially_then_performs_full_artifact_verification(tmp_
 
     assert report["passed"] is True
     final_manifest = json.loads(manifest_path.read_text())
-    assert final_manifest["status"] == "succeeded"
+    assert final_manifest["status"] == "launch_prepared"
+    assert final_manifest["postprocess_status"] == "succeeded"
     assert final_manifest["postprocess_runs"][0]["status"] == "succeeded"
     assert (run_dir / "logs" / "postprocess_000.stdout.log").is_file()
     assert (run_dir / "logs" / "postprocess_000.stderr.log").is_file()
@@ -515,3 +568,529 @@ def test_resume_loads_but_does_not_rewrite_manifest_or_resolved_config(tmp_path:
 
     assert loaded["commands"] == commands
     assert {path: path.read_bytes() for path in before} == before
+
+
+def test_resume_rejects_live_running_pid_without_killing_it(tmp_path: Path) -> None:
+    script = tmp_path / "fake_child.py"
+    _write_fake_child(script)
+    output = tmp_path / "output.txt"
+    command = _command(script, output, index=0)
+    run_dir = tmp_path / "run"
+    manifest_path = _write_manifest(run_dir, [command], [output])
+    child = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)"],
+        start_new_session=True,
+    )
+    try:
+        _write_running_progress(run_dir, command, child.pid)
+        with pytest.raises(LaunchError, match="still alive"):
+            run_matrix_queue(
+                [command],
+                gpus=["0"],
+                max_parallel=1,
+                run_dir=run_dir,
+                manifest_path=manifest_path,
+                resume=True,
+                base_env={"PATH": os.environ["PATH"]},
+            )
+        assert child.poll() is None
+        assert not output.exists()
+    finally:
+        if child.poll() is None:
+            os.killpg(child.pid, signal.SIGTERM)
+            child.wait(timeout=5)
+
+
+def test_resume_allows_esrch_running_pid_as_stale(tmp_path: Path) -> None:
+    script = tmp_path / "fake_child.py"
+    _write_fake_child(script)
+    output = tmp_path / "output.txt"
+    command = _command(script, output, index=0)
+    run_dir = tmp_path / "run"
+    manifest_path = _write_manifest(run_dir, [command], [output])
+    _write_running_progress(run_dir, command, 2_147_483_647)
+
+    progress = run_matrix_queue(
+        [command],
+        gpus=["0"],
+        max_parallel=1,
+        run_dir=run_dir,
+        manifest_path=manifest_path,
+        resume=True,
+        base_env={"PATH": os.environ["PATH"]},
+        poll_interval=0.005,
+    )
+
+    assert progress["commands"][0]["resume_action"] == "retry_stale"
+    assert len(progress["commands"][0]["attempts"]) == 2
+
+
+def test_resume_rejects_eperm_running_pid_fail_closed(tmp_path: Path, monkeypatch) -> None:
+    script = tmp_path / "fake_child.py"
+    _write_fake_child(script)
+    output = tmp_path / "output.txt"
+    command = _command(script, output, index=0)
+    run_dir = tmp_path / "run"
+    manifest_path = _write_manifest(run_dir, [command], [output])
+    _write_running_progress(run_dir, command, 12345)
+
+    def deny_signal(pid: int, sig: int) -> None:
+        raise PermissionError("not permitted")
+
+    monkeypatch.setattr("ecg_adv_gen.runner.matrix_parallel.os.kill", deny_signal)
+    with pytest.raises(LaunchError, match="cannot prove stale"):
+        run_matrix_queue(
+            [command],
+            gpus=["0"],
+            max_parallel=1,
+            run_dir=run_dir,
+            manifest_path=manifest_path,
+            resume=True,
+            base_env={"PATH": os.environ["PATH"]},
+        )
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("bad_pid", [None, 0, -1, "123", True])
+def test_resume_rejects_missing_or_invalid_running_pid(tmp_path: Path, bad_pid: object) -> None:
+    script = tmp_path / "fake_child.py"
+    _write_fake_child(script)
+    output = tmp_path / "output.txt"
+    command = _command(script, output, index=0)
+    run_dir = tmp_path / "run"
+    manifest_path = _write_manifest(run_dir, [command], [output])
+    _write_running_progress(run_dir, command, bad_pid)
+
+    with pytest.raises(LaunchError, match="pid"):
+        run_matrix_queue(
+            [command],
+            gpus=["0"],
+            max_parallel=1,
+            run_dir=run_dir,
+            manifest_path=manifest_path,
+            resume=True,
+            base_env={"PATH": os.environ["PATH"]},
+        )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "schema",
+        "run_id",
+        "matrix",
+        "root_status",
+        "root_timestamp",
+        "root_success_inconsistent",
+        "command_status",
+        "attempts",
+    ],
+)
+def test_resume_rejects_malformed_progress_schema(tmp_path: Path, mutation: str) -> None:
+    script = tmp_path / "fake_child.py"
+    _write_fake_child(script)
+    output = tmp_path / "output.txt"
+    command = _command(script, output, index=0)
+    run_dir = tmp_path / "run"
+    manifest_path = _write_manifest(run_dir, [command], [output])
+    progress = {
+        "schema_version": 1,
+        "run_id": "queue-test",
+        "status": "failed",
+        "created_at_utc": "2026-07-11T00:00:00+00:00",
+        "updated_at_utc": "2026-07-11T00:00:00+00:00",
+        "commands": [
+            {
+                "command_index": 0,
+                "name": command["name"],
+                "matrix": command["matrix"],
+                "status": "pending",
+                "attempts": [],
+            }
+        ],
+    }
+    if mutation == "schema":
+        progress["schema_version"] = 2
+    elif mutation == "run_id":
+        progress["run_id"] = "other"
+    elif mutation == "matrix":
+        progress["commands"][0]["matrix"] = {"center": "other"}
+    elif mutation == "root_status":
+        progress["status"] = "mystery"
+    elif mutation == "root_timestamp":
+        progress["created_at_utc"] = None
+    elif mutation == "root_success_inconsistent":
+        progress["status"] = "succeeded"
+    elif mutation == "command_status":
+        progress["commands"][0]["status"] = "mystery"
+    else:
+        progress["commands"][0]["attempts"] = {}
+    (run_dir / "matrix_progress.json").write_text(json.dumps(progress), encoding="utf-8")
+
+    with pytest.raises(LaunchError, match="progress"):
+        run_matrix_queue(
+            [command],
+            gpus=["0"],
+            max_parallel=1,
+            run_dir=run_dir,
+            manifest_path=manifest_path,
+            resume=True,
+            base_env={"PATH": os.environ["PATH"]},
+        )
+
+
+@pytest.mark.parametrize(
+    "mutation", ["stale_returncode", "nonfinal_running", "hidden_running"]
+)
+def test_resume_rejects_malformed_attempt_structure(
+    tmp_path: Path, mutation: str
+) -> None:
+    script = tmp_path / "fake_child.py"
+    _write_fake_child(script)
+    output = tmp_path / "output.txt"
+    command = _command(script, output, index=0)
+    run_dir = tmp_path / "run"
+    manifest_path = _write_manifest(run_dir, [command], [output])
+    _write_running_progress(run_dir, command, 2_147_483_647)
+    progress_path = run_dir / "matrix_progress.json"
+    progress = json.loads(progress_path.read_text())
+    state = progress["commands"][0]
+    if mutation == "stale_returncode":
+        state["status"] = "pending"
+        state["attempts"][0].update(
+            {
+                "status": "stale",
+                "finished_at_utc": "2026-07-11T00:01:00+00:00",
+                "returncode": "unknown",
+            }
+        )
+    elif mutation == "nonfinal_running":
+        state["status"] = "failed"
+        state["attempts"].append(
+            {
+                **state["attempts"][0],
+                "attempt": 2,
+                "status": "failed",
+                "finished_at_utc": "2026-07-11T00:01:00+00:00",
+                "returncode": 1,
+            }
+        )
+    else:
+        state["status"] = "pending"
+    progress_path.write_text(json.dumps(progress), encoding="utf-8")
+
+    with pytest.raises(LaunchError, match="progress"):
+        run_matrix_queue(
+            [command],
+            gpus=["0"],
+            max_parallel=1,
+            run_dir=run_dir,
+            manifest_path=manifest_path,
+            resume=True,
+            base_env={"PATH": os.environ["PATH"]},
+        )
+
+
+@pytest.mark.parametrize(
+    "lane",
+    [
+        "replication_preflight",
+        "replication_k500_groups",
+        "replication_validation_groups",
+        "initialization",
+        "required_inputs",
+        "required_input_size",
+        "expected_outputs",
+        "commands",
+        "postprocess_commands",
+    ],
+)
+def test_resume_contract_rejects_any_execution_surface_drift(tmp_path: Path, lane: str) -> None:
+    from ecg_adv_gen.runner.matrix_parallel import bind_matrix_resume_contract
+
+    commands = [{"name": "one", "argv": ["python", "child.py"], "cwd": ".", "matrix": {}}]
+    postprocess = [{"name": "report", "argv": ["python", "report.py"], "cwd": "."}]
+    manifest = {
+        "run_id": "r1",
+        "config_hash_sha256": "a" * 64,
+        "commands": commands,
+        "postprocess_commands": postprocess,
+        "artifact_trace": {
+            "replication_preflight": {"surface": "s", "validation_report": {"sha256": "v1"}},
+            "initialization": {"checkpoint_path": "/tmp/init.pt", "checkpoint_sha256": "i1"},
+            "inputs": {
+                "replication_k500_groups": [{"center": "ningbo", "base": "/tmp/k500"}],
+                "replication_validation_groups": [{"center": "ningbo", "sha256": "g1"}],
+                "checkpoints": [
+                    {
+                        "role": "init",
+                        "path": "/tmp/init.pt",
+                        "required": True,
+                        "size_bytes": 123,
+                    }
+                ],
+            },
+            "expected_outputs": {
+                "launch_artifacts": [
+                    {"role": "manifest", "path": str(tmp_path / "run_manifest.json"), "required": True}
+                ],
+                "child_runs": [
+                    {
+                        "command_index": 0,
+                        "expected_artifacts": [
+                            {"role": "result", "path": str(tmp_path / "result.json"), "required": True}
+                        ],
+                    }
+                ],
+                "postprocess_runs": [],
+            },
+        },
+        "matrix_parallel": {"enabled": True},
+    }
+    manifest = bind_matrix_resume_contract(manifest)
+    manifest_path = tmp_path / "run_manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    (tmp_path / "run_config.resolved.yaml").write_text("marker: true\n", encoding="utf-8")
+    (tmp_path / "run_config.resolved.json").write_text("{}\n", encoding="utf-8")
+    drifted = json.loads(json.dumps(manifest))
+    if lane == "replication_preflight":
+        drifted["artifact_trace"]["replication_preflight"]["surface"] = "other"
+    elif lane in {"replication_k500_groups", "replication_validation_groups"}:
+        drifted["artifact_trace"]["inputs"][lane][0]["center"] = "other"
+    elif lane == "initialization":
+        drifted["artifact_trace"]["initialization"]["checkpoint_sha256"] = "i2"
+    elif lane == "required_inputs":
+        drifted["artifact_trace"]["inputs"]["checkpoints"][0]["path"] = "/tmp/other.pt"
+    elif lane == "required_input_size":
+        drifted["artifact_trace"]["inputs"]["checkpoints"][0]["size_bytes"] = 456
+    elif lane == "expected_outputs":
+        drifted["artifact_trace"]["expected_outputs"]["child_runs"][0]["command_index"] = 1
+    elif lane == "commands":
+        drifted["commands"][0]["argv"].append("--changed")
+    else:
+        drifted["postprocess_commands"][0]["argv"].append("--changed")
+    manifest_path.write_text(json.dumps(drifted), encoding="utf-8")
+
+    with pytest.raises(LaunchError, match="resume contract"):
+        _resume_manifest(
+            manifest_path,
+            commands=drifted["commands"],
+            postprocess_commands=drifted["postprocess_commands"],
+            expected_manifest=manifest,
+        )
+
+
+def test_sibling_execution_lock_blocks_concurrent_process_without_touching_run_dir(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "fresh_run"
+    ready = tmp_path / "ready"
+    release = tmp_path / "release"
+    holder = tmp_path / "hold_lock.py"
+    holder.write_text(
+        """
+import sys
+import time
+from pathlib import Path
+from ecg_adv_gen.runner.matrix_parallel import execution_lock
+
+run_dir, ready, release = map(Path, sys.argv[1:])
+with execution_lock(run_dir):
+    ready.write_text("ready", encoding="utf-8")
+    while not release.exists():
+        time.sleep(0.01)
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    proc = subprocess.Popen(
+        [sys.executable, str(holder), str(run_dir), str(ready), str(release)],
+        cwd=Path(__file__).resolve().parents[2],
+        env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[2])},
+    )
+    try:
+        deadline = time.monotonic() + 5
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert ready.exists()
+        assert not run_dir.exists()
+        with pytest.raises(LaunchError, match="already locked"):
+            with execution_lock(run_dir):
+                pass
+        assert not run_dir.exists()
+    finally:
+        release.write_text("release", encoding="utf-8")
+        proc.wait(timeout=5)
+
+
+def test_execute_main_acquires_sibling_lock_before_prepare_output(
+    tmp_path: Path, monkeypatch
+) -> None:
+    run_dir = tmp_path / "fresh_run"
+    command = {"name": "one", "argv": ["python"], "cwd": ".", "matrix": {"center": "c"}}
+    manifest = {
+        "run_id": "r1",
+        "config_hash_sha256": "a" * 64,
+        "commands": [command],
+        "postprocess_commands": [],
+        "launcher": {},
+        "safety": {},
+        "artifact_trace": {"expected_outputs": {}},
+    }
+    monkeypatch.setattr(matrix_cli, "load_experiment_config", lambda *args, **kwargs: {})
+    monkeypatch.setattr(
+        matrix_cli,
+        "validate_experiment_config",
+        lambda *args, **kwargs: {
+            "output_root": str(tmp_path),
+            "write_boundary": str(tmp_path),
+        },
+    )
+    monkeypatch.setattr(matrix_cli, "build_runner_commands", lambda config: [command])
+    monkeypatch.setattr(matrix_cli, "build_postprocess_commands", lambda config: [])
+    monkeypatch.setattr(matrix_cli, "make_dry_run_manifest", lambda *args, **kwargs: manifest)
+    monkeypatch.setattr(matrix_cli, "attach_replication_preflight", lambda value, *args, **kwargs: value)
+
+    def must_not_prepare(*args, **kwargs):
+        raise AssertionError("prepare_output_dir ran before the execution lock")
+
+    monkeypatch.setattr(matrix_cli, "prepare_output_dir", must_not_prepare)
+    argv = [
+        "--config",
+        "experiment.yaml",
+        "--local-config",
+        "local.yaml",
+        "--run-id",
+        "r1",
+        "--gpus",
+        "0",
+        "--output-dir",
+        str(run_dir),
+        "--execute",
+    ]
+    with execution_lock(run_dir):
+        assert matrix_cli.main(argv) == 3
+    assert not run_dir.exists()
+
+
+@pytest.mark.parametrize(
+    ("failing_step", "phase"),
+    [
+        ("check_nvidia_smi", "gpu_preflight"),
+        ("verify_required_inputs", "input_preflight"),
+        ("run_matrix_queue", "queue"),
+        ("run_postprocess_serial", "postprocess"),
+        ("finalize_run_record", "finalizer"),
+    ],
+)
+def test_execute_lifecycle_records_every_phase_failure_atomically(
+    tmp_path: Path,
+    monkeypatch,
+    failing_step: str,
+    phase: str,
+) -> None:
+    manifest_path = _write_manifest(tmp_path, [], [])
+    monkeypatch.setattr(
+        matrix_cli,
+        "check_nvidia_smi",
+        lambda: {
+            "gpus": [
+                {
+                    "index": "0",
+                    "name": "fake",
+                    "memory_used_mb": "0",
+                    "memory_total_mb": "24000",
+                    "utilization_gpu_pct": "0",
+                }
+            ]
+        },
+    )
+    monkeypatch.setattr(matrix_cli, "verify_required_inputs", lambda manifest: {"passed": True})
+    monkeypatch.setattr(matrix_cli, "run_matrix_queue", lambda *args, **kwargs: {})
+    monkeypatch.setattr(matrix_cli, "run_postprocess_serial", lambda *args, **kwargs: {"passed": True})
+    monkeypatch.setattr(matrix_cli, "finalize_run_record", lambda *args, **kwargs: {})
+
+    def fail(*args, **kwargs):
+        raise RuntimeError(f"boom-{phase}")
+
+    monkeypatch.setattr(matrix_cli, failing_step, fail)
+    with pytest.raises(RuntimeError, match=f"boom-{phase}"):
+        matrix_cli._execute_pipeline(
+            args=_execution_args(),
+            config={"experiment": {"purpose": "test"}},
+            commands=[],
+            postprocess_commands=[],
+            out_dir=tmp_path,
+            manifest_path=manifest_path,
+            gpus=["0"],
+        )
+
+    manifest = json.loads(manifest_path.read_text())
+    assert manifest["status"] == "failed"
+    assert manifest["execution_lifecycle"]["phase"] == phase
+    assert "boom" in manifest["execution_lifecycle"]["error_summary"]
+    assert manifest["execution_lifecycle"]["finished_at_utc"]
+
+
+def test_execute_lifecycle_marks_success_only_after_finalizer_returns(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest_path = _write_manifest(tmp_path, [], [])
+    monkeypatch.setattr(
+        matrix_cli,
+        "check_nvidia_smi",
+        lambda: {
+            "gpus": [
+                {
+                    "index": "0",
+                    "name": "fake",
+                    "memory_used_mb": "0",
+                    "memory_total_mb": "24000",
+                    "utilization_gpu_pct": "0",
+                }
+            ]
+        },
+    )
+    monkeypatch.setattr(matrix_cli, "verify_required_inputs", lambda manifest: {"passed": True})
+    monkeypatch.setattr(matrix_cli, "run_matrix_queue", lambda *args, **kwargs: {})
+    monkeypatch.setattr(matrix_cli, "run_postprocess_serial", lambda *args, **kwargs: {"passed": True})
+    observed: list[str] = []
+
+    def finalize(*args, **kwargs):
+        observed.append(json.loads(manifest_path.read_text())["status"])
+
+    monkeypatch.setattr(matrix_cli, "finalize_run_record", finalize)
+    matrix_cli._execute_pipeline(
+        args=_execution_args(),
+        config={"experiment": {"purpose": "test"}},
+        commands=[],
+        postprocess_commands=[],
+        out_dir=tmp_path,
+        manifest_path=manifest_path,
+        gpus=["0"],
+    )
+
+    manifest = json.loads(manifest_path.read_text())
+    assert observed == ["running"]
+    assert manifest["status"] == "succeeded"
+    assert manifest["execution_lifecycle"]["phase"] == "completed"
+    assert manifest["execution_lifecycle"]["finished_at_utc"]
+
+
+def test_execute_lifecycle_records_keyboard_interrupt(tmp_path: Path, monkeypatch) -> None:
+    manifest_path = _write_manifest(tmp_path, [], [])
+    monkeypatch.setattr(matrix_cli, "check_nvidia_smi", lambda: (_ for _ in ()).throw(KeyboardInterrupt()))
+    with pytest.raises(KeyboardInterrupt):
+        matrix_cli._execute_pipeline(
+            args=_execution_args(),
+            config={"experiment": {"purpose": "test"}},
+            commands=[],
+            postprocess_commands=[],
+            out_dir=tmp_path,
+            manifest_path=manifest_path,
+            gpus=["0"],
+        )
+    manifest = json.loads(manifest_path.read_text())
+    assert manifest["status"] == "interrupted"
+    assert manifest["execution_lifecycle"]["phase"] == "gpu_preflight"
+    assert manifest["execution_lifecycle"]["finished_at_utc"]

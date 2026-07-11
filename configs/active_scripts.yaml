@@ -534,8 +534,12 @@ reporting_tools:
   - reuses_yaml_config_loader_and_command_audit
   - reuses_replication_preflight_and_required_input_verification
   - queues_more_matrix_commands_than_selected_gpus
-  - locks_execute_output_directory
+  - sibling_lock_covers_prepare_resume_preflight_queue_postprocess_finalizer
   - parent_only_atomic_manifest_and_progress_writes
+  - immutable_full_artifact_trace_resume_contract
+  - running_pid_resume_is_fail_closed_unless_esrch
+  - strict_progress_schema_and_attempt_validation
+  - top_level_success_only_after_finalizer_returns
   - resume_skips_only_revalidated_command_artifacts
   - effnet_checkpoint_latest_resumes_with_latest
   - first_failure_stops_new_dispatch_and_allows_running_children_to_finish

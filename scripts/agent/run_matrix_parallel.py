@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,7 @@ if str(REPO_ROOT) not in sys.path:
 from ecg_adv_gen.config import (  # noqa: E402
     ConfigError,
     LaunchError,
+    attach_launch_artifacts,
     attach_replication_preflight,
     build_postprocess_commands,
     build_runner_commands,
@@ -28,6 +30,7 @@ from ecg_adv_gen.config import (  # noqa: E402
     verify_required_inputs,
 )
 from ecg_adv_gen.evidence import RunRecordError, finalize_run_record  # noqa: E402
+from ecg_adv_gen.config.paths import is_under  # noqa: E402
 from ecg_adv_gen.runner.launch_plan import (  # noqa: E402
     experiment_purpose,
     render_launch_command,
@@ -36,12 +39,14 @@ from ecg_adv_gen.runner.launch_plan import (  # noqa: E402
 from ecg_adv_gen.runner.matrix_parallel import (  # noqa: E402
     assign_gpus_to_commands,
     atomic_write_json,
+    bind_matrix_resume_contract,
     execution_lock,
     parse_gpu_list,
     read_json_object,
     run_matrix_queue,
     run_postprocess_serial,
     validate_gpu_snapshot,
+    validate_matrix_resume_contract,
     validate_parallelism,
 )
 
@@ -111,21 +116,7 @@ def _resume_manifest(
         if not (path.parent / name).is_file():
             raise LaunchError(f"resume must preserve the existing resolved config, but {name} is missing")
     if expected_manifest is not None:
-        expected_trace = expected_manifest.get("artifact_trace") or {}
-        existing_trace = manifest.get("artifact_trace") or {}
-        expected_contract = (
-            expected_trace.get("replication_preflight"),
-            (expected_trace.get("inputs") or {}).get("replication_k500_groups"),
-        )
-        existing_contract = (
-            existing_trace.get("replication_preflight"),
-            (existing_trace.get("inputs") or {}).get("replication_k500_groups"),
-        )
-        if any(expected_contract) and existing_contract != expected_contract:
-            raise LaunchError(
-                "resume manifest does not match the current active replication preflight; "
-                "start a fresh stage output directory"
-            )
+        validate_matrix_resume_contract(manifest, expected_manifest)
     return manifest
 
 
@@ -155,6 +146,214 @@ def _matrix_contract(
             for item in assignments
         ],
     }
+
+
+def _update_execution_lifecycle(
+    manifest_path: Path,
+    *,
+    status: str,
+    phase: str,
+    error: BaseException | None = None,
+    finished: bool = False,
+    patch: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    manifest = read_json_object(manifest_path)
+    now = datetime.now(timezone.utc).isoformat()
+    lifecycle = dict(manifest.get("execution_lifecycle") or {})
+    lifecycle.update({"status": status, "phase": phase, "updated_at_utc": now})
+    lifecycle.setdefault("started_at_utc", now)
+    if status == "running":
+        lifecycle.pop("error_summary", None)
+        lifecycle.pop("finished_at_utc", None)
+        manifest.pop("error_summary", None)
+        manifest.pop("finished_at_utc", None)
+    if error is not None:
+        summary = f"{type(error).__name__}: {str(error)}"[:1000]
+        lifecycle["error_summary"] = summary
+        manifest["error_summary"] = summary
+    if finished:
+        lifecycle["finished_at_utc"] = now
+        manifest["finished_at_utc"] = now
+    manifest.update(patch or {})
+    manifest.update(
+        {
+            "status": status,
+            "execution_phase": phase,
+            "execution_lifecycle": lifecycle,
+            "updated_at_utc": now,
+        }
+    )
+    atomic_write_json(manifest_path, manifest)
+    return manifest
+
+
+def _execute_pipeline(
+    *,
+    args: argparse.Namespace,
+    config: dict[str, Any],
+    commands: list[dict[str, Any]],
+    postprocess_commands: list[dict[str, Any]],
+    out_dir: Path,
+    manifest_path: Path,
+    gpus: list[str],
+) -> None:
+    phase = "gpu_preflight"
+    _update_execution_lifecycle(manifest_path, status="running", phase=phase)
+    try:
+        snapshot = check_nvidia_smi()
+        selected_rows = validate_gpu_snapshot(
+            gpus,
+            snapshot,
+            min_free_memory_mb=args.min_free_memory_mb,
+            max_utilization_pct=args.max_utilization_pct,
+        )
+        phase = "input_preflight"
+        current = _update_execution_lifecycle(
+            manifest_path,
+            status="running",
+            phase=phase,
+            patch={
+                "gpu_prelaunch": {
+                    "nvidia_smi": snapshot,
+                    "selected_gpus": selected_rows,
+                    "child_cuda_visible_devices_policy": "one physical id per child",
+                }
+            },
+        )
+        input_verification = verify_required_inputs(current)
+        current = _update_execution_lifecycle(
+            manifest_path,
+            status="running",
+            phase=phase,
+            patch={"input_verification": input_verification},
+        )
+        if not input_verification["passed"]:
+            raise LaunchError("Required input verification failed before matrix commands")
+
+        phase = "queue"
+        safety = dict(current.get("safety") or {})
+        safety["managed_child_commands_invoked"] = True
+        _update_execution_lifecycle(
+            manifest_path,
+            status="running",
+            phase=phase,
+            patch={"safety": safety},
+        )
+        run_matrix_queue(
+            commands,
+            gpus=gpus,
+            max_parallel=args.max_parallel,
+            run_dir=out_dir,
+            manifest_path=manifest_path,
+            resume=args.resume,
+            acquire_lock=False,
+        )
+        phase = "postprocess"
+        _update_execution_lifecycle(manifest_path, status="running", phase=phase)
+        run_postprocess_serial(
+            postprocess_commands,
+            run_dir=out_dir,
+            manifest_path=manifest_path,
+            acquire_lock=False,
+        )
+        phase = "finalizer"
+        _update_execution_lifecycle(manifest_path, status="running", phase=phase)
+        finalize_run_record(
+            out_dir,
+            purpose=experiment_purpose(config),
+            result_summary=(
+                "Bounded matrix execution and serial postprocess completed; all declared "
+                "artifacts passed full verification."
+            ),
+            outcome="succeeded",
+        )
+        _update_execution_lifecycle(
+            manifest_path,
+            status="succeeded",
+            phase="completed",
+            finished=True,
+        )
+    except BaseException as exc:
+        terminal = "interrupted" if isinstance(exc, KeyboardInterrupt) else "failed"
+        _update_execution_lifecycle(
+            manifest_path,
+            status=terminal,
+            phase=phase,
+            error=exc,
+            finished=True,
+        )
+        raise
+
+
+def _prepare_plan(
+    *,
+    args: argparse.Namespace,
+    config: dict[str, Any],
+    commands: list[dict[str, Any]],
+    postprocess_commands: list[dict[str, Any]],
+    local_paths: dict[str, str],
+    manifest: dict[str, Any],
+    out_dir: Path,
+) -> tuple[Path, dict[str, Any]]:
+    out_dir = prepare_output_dir(
+        out_dir,
+        local_paths=local_paths,
+        run_id=args.run_id,
+        config_hash=manifest["config_hash_sha256"],
+        resume=args.resume,
+        force=args.force,
+    )
+    manifest_path = out_dir / "run_manifest.json"
+    expected = bind_matrix_resume_contract(
+        attach_launch_artifacts(manifest, run_dir=out_dir)
+    )
+    if args.resume:
+        return out_dir, _resume_manifest(
+            manifest_path,
+            commands=commands,
+            postprocess_commands=postprocess_commands,
+            expected_manifest=expected,
+        )
+    return out_dir, write_launch_plan_files(
+        out_dir,
+        config,
+        expected,
+        commands,
+        postprocess_commands,
+    )
+
+
+def _record_setup_failure(
+    manifest_path: Path,
+    *,
+    phase: str,
+    error: BaseException,
+) -> None:
+    if not manifest_path.is_file():
+        return
+    try:
+        current = read_json_object(manifest_path)
+        lifecycle = current.get("execution_lifecycle") or {}
+        if lifecycle.get("status") in {"failed", "interrupted", "succeeded"}:
+            return
+        _update_execution_lifecycle(
+            manifest_path,
+            status="interrupted" if isinstance(error, KeyboardInterrupt) else "failed",
+            phase=phase,
+            error=error,
+            finished=True,
+        )
+    except Exception:
+        # Preserve the original setup error when the manifest itself is unreadable.
+        return
+
+
+def _validate_lock_target(out_dir: Path, local_paths: dict[str, str]) -> Path:
+    target = out_dir.expanduser().resolve()
+    boundary = Path(local_paths["write_boundary"]).expanduser().resolve()
+    if not is_under(target, boundary):
+        raise LaunchError(f"output_dir={target} is outside write boundary {boundary}")
+    return target
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -193,7 +392,6 @@ def main(argv: list[str] | None = None) -> int:
         manifest["launcher"]["execute"] = args.execute
         manifest["safety"]["managed_child_commands_invoked"] = False
         manifest["status"] = "launch_prepared" if args.execute else "dry_run"
-        expected_manifest = manifest
     except (ConfigError, LaunchError, OSError, ValueError) as exc:
         print(f"[config-error] {exc}", file=sys.stderr)
         return 2
@@ -216,97 +414,67 @@ def main(argv: list[str] | None = None) -> int:
         if args.output_dir
         else default_run_dir(local_paths, args.run_id, dry_run=args.dry_run)
     )
-    try:
-        out_dir = prepare_output_dir(
-            out_dir,
-            local_paths=local_paths,
-            run_id=args.run_id,
-            config_hash=manifest["config_hash_sha256"],
-            resume=args.resume,
-            force=args.force,
-        )
-        manifest_path = out_dir / "run_manifest.json"
-        if args.resume:
-            manifest = _resume_manifest(
-                manifest_path,
+    if not args.execute:
+        try:
+            out_dir, manifest = _prepare_plan(
+                args=args,
+                config=config,
                 commands=commands,
                 postprocess_commands=postprocess_commands,
-                expected_manifest=expected_manifest,
+                local_paths=local_paths,
+                manifest=manifest,
+                out_dir=out_dir,
             )
-        else:
-            manifest = write_launch_plan_files(
-                out_dir,
-                config,
-                manifest,
-                commands,
-                postprocess_commands,
-            )
-    except (LaunchError, RunRecordError, ValueError) as exc:
-        print(f"[launch-error] {exc}", file=sys.stderr)
-        return 3
-
-    print(f"\nWrote run plan files: {out_dir}" if not args.resume else f"\nReusing run plan files: {out_dir}")
-    if not args.execute:
+        except (LaunchError, RunRecordError, OSError, ValueError) as exc:
+            print(f"[launch-error] {exc}", file=sys.stderr)
+            return 3
+        print(f"\nWrote run plan files: {out_dir}")
         return 0
 
+    phase = "prepare_output"
+    manifest_path = out_dir / "run_manifest.json"
+    lock_acquired = False
     try:
+        out_dir = _validate_lock_target(out_dir, local_paths)
+        manifest_path = out_dir / "run_manifest.json"
         with execution_lock(out_dir):
-            snapshot = check_nvidia_smi()
-            selected_rows = validate_gpu_snapshot(
-                gpus,
-                snapshot,
-                min_free_memory_mb=args.min_free_memory_mb,
-                max_utilization_pct=args.max_utilization_pct,
+            lock_acquired = True
+            phase = "resume_contract" if args.resume else "plan"
+            out_dir, manifest = _prepare_plan(
+                args=args,
+                config=config,
+                commands=commands,
+                postprocess_commands=postprocess_commands,
+                local_paths=local_paths,
+                manifest=manifest,
+                out_dir=out_dir,
             )
-            current = read_json_object(manifest_path)
-            input_verification = verify_required_inputs(current)
-            current.update(
-                {
-                    "status": "launch_prepared" if input_verification["passed"] else "failed",
-                    "input_verification": input_verification,
-                    "gpu_prelaunch": {
-                        "nvidia_smi": snapshot,
-                        "selected_gpus": selected_rows,
-                        "child_cuda_visible_devices_policy": "one physical id per child",
-                    },
-                }
+            manifest_path = out_dir / "run_manifest.json"
+            print(
+                f"\nReusing run plan files: {out_dir}"
+                if args.resume
+                else f"\nWrote run plan files: {out_dir}"
             )
-            current.setdefault("launcher", {})["execute"] = True
-            current.setdefault("safety", {})["managed_child_commands_invoked"] = False
-            atomic_write_json(manifest_path, current)
-            if not input_verification["passed"]:
-                raise LaunchError("Required input verification failed before matrix commands")
-
-            current["safety"]["managed_child_commands_invoked"] = True
-            atomic_write_json(manifest_path, current)
-            run_matrix_queue(
-                commands,
+            _execute_pipeline(
+                args=args,
+                config=config,
+                commands=commands,
+                postprocess_commands=postprocess_commands,
+                out_dir=out_dir,
+                manifest_path=manifest_path,
                 gpus=gpus,
-                max_parallel=args.max_parallel,
-                run_dir=out_dir,
-                manifest_path=manifest_path,
-                resume=args.resume,
-                acquire_lock=False,
             )
-            run_postprocess_serial(
-                postprocess_commands,
-                run_dir=out_dir,
-                manifest_path=manifest_path,
-                acquire_lock=False,
-            )
-            finalize_run_record(
-                out_dir,
-                purpose=experiment_purpose(config),
-                result_summary=(
-                    "Bounded matrix execution and serial postprocess completed; all declared "
-                    "artifacts passed full verification."
-                ),
-                outcome="succeeded",
-            )
-    except KeyboardInterrupt:
-        print("[interrupted] matrix execution interrupted; only owned process groups were stopped", file=sys.stderr)
+    except KeyboardInterrupt as exc:
+        if lock_acquired:
+            _record_setup_failure(manifest_path, phase=phase, error=exc)
+        print(
+            "[interrupted] matrix execution interrupted; only owned process groups were stopped",
+            file=sys.stderr,
+        )
         return 130
-    except (LaunchError, RunRecordError) as exc:
+    except Exception as exc:
+        if lock_acquired:
+            _record_setup_failure(manifest_path, phase=phase, error=exc)
         print(f"[launch-error] {exc}", file=sys.stderr)
         return 3
     return 0

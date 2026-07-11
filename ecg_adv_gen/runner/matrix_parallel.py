@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import copy
+import errno
 import fcntl
+import hashlib
 import json
 import os
 import signal
@@ -17,6 +19,14 @@ from typing import Any, Callable, Iterator, Mapping, Sequence
 
 from ecg_adv_gen.config.launch import LaunchError, verify_required_artifacts
 from ecg_adv_gen.runner.process import build_process_env
+
+
+_PROGRESS_STATUSES = frozenset({"pending", "running", "failed", "interrupted", "succeeded"})
+_COMMAND_STATUSES = _PROGRESS_STATUSES
+_ATTEMPT_STATUSES = frozenset({"running", "stale", "failed", "interrupted", "succeeded"})
+_RESUME_VOLATILE_KEYS = frozenset(
+    {"checked_at_utc", "created_at_utc", "exists", "updated_at_utc"}
+)
 
 
 @dataclass(frozen=True)
@@ -135,6 +145,90 @@ def atomic_write_json(path: Path, value: Mapping[str, Any]) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _normalize_resume_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {
+            str(key): _normalize_resume_value(nested)
+            for key, nested in sorted(value.items(), key=lambda item: str(item[0]))
+            if str(key) not in _RESUME_VOLATILE_KEYS
+        }
+    if isinstance(value, (list, tuple)):
+        return [_normalize_resume_value(item) for item in value]
+    if isinstance(value, Path):
+        return str(value)
+    return value
+
+
+def _normalize_expected_outputs(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {
+            str(key): _normalize_expected_outputs(nested)
+            for key, nested in sorted(value.items(), key=lambda item: str(item[0]))
+            if str(key) not in {"exists", "size_bytes"}
+        }
+    if isinstance(value, (list, tuple)):
+        return [_normalize_expected_outputs(item) for item in value]
+    return value
+
+
+def build_matrix_resume_contract(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the normalized immutable execution surface used for resume."""
+
+    artifact_trace = copy.deepcopy(dict(manifest.get("artifact_trace") or {}))
+    if "expected_outputs" in artifact_trace:
+        artifact_trace["expected_outputs"] = _normalize_expected_outputs(
+            artifact_trace["expected_outputs"]
+        )
+    return _normalize_resume_value(
+        {
+            "schema_version": 1,
+            "run_id": manifest.get("run_id"),
+            "config_hash_sha256": manifest.get("config_hash_sha256"),
+            "entry_config": manifest.get("entry_config"),
+            "commands": manifest.get("commands") or [],
+            "postprocess_commands": manifest.get("postprocess_commands") or [],
+            "artifact_trace": artifact_trace,
+        }
+    )
+
+
+def _resume_contract_sha256(contract: Mapping[str, Any]) -> str:
+    payload = json.dumps(contract, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def bind_matrix_resume_contract(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    out = copy.deepcopy(dict(manifest))
+    contract = build_matrix_resume_contract(out)
+    matrix = dict(out.get("matrix_parallel") or {})
+    matrix["resume_contract"] = {
+        "schema_version": 1,
+        "sha256": _resume_contract_sha256(contract),
+        "contract": contract,
+    }
+    out["matrix_parallel"] = matrix
+    return out
+
+
+def validate_matrix_resume_contract(
+    existing: Mapping[str, Any], expected: Mapping[str, Any]
+) -> None:
+    record = (existing.get("matrix_parallel") or {}).get("resume_contract")
+    if not isinstance(record, Mapping) or record.get("schema_version") != 1:
+        raise LaunchError("matrix resume contract is missing or has an unsupported schema")
+    stored = record.get("contract")
+    if not isinstance(stored, Mapping):
+        raise LaunchError("matrix resume contract payload is missing")
+    observed = build_matrix_resume_contract(existing)
+    stored_normalized = _normalize_resume_value(stored)
+    stored_sha = _resume_contract_sha256(stored_normalized)
+    if record.get("sha256") != stored_sha or stored_normalized != observed:
+        raise LaunchError("matrix resume contract does not match the persisted execution surface")
+    expected_contract = build_matrix_resume_contract(expected)
+    if stored_sha != _resume_contract_sha256(expected_contract) or stored_normalized != expected_contract:
+        raise LaunchError("matrix resume contract drifted from the current execution surface")
+
+
 def _patch_manifest(path: Path, **patch: Any) -> dict[str, Any]:
     manifest = read_json_object(path)
     manifest.update(patch)
@@ -145,8 +239,9 @@ def _patch_manifest(path: Path, **patch: Any) -> dict[str, Any]:
 
 @contextmanager
 def execution_lock(run_dir: Path) -> Iterator[Path]:
-    run_dir.mkdir(parents=True, exist_ok=True)
-    path = run_dir / ".matrix_execute.lock"
+    run_dir = Path(run_dir).expanduser().resolve()
+    run_dir.parent.mkdir(parents=True, exist_ok=True)
+    path = run_dir.parent / f".{run_dir.name}.matrix_execute.lock"
     with path.open("a+", encoding="utf-8") as handle:
         try:
             fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -243,7 +338,6 @@ class _StateStore:
         ]
         manifest.update(
             {
-                "status": self.progress["status"],
                 "matrix_parallel": matrix,
                 "command_runs": [*old, *_flatten_attempts(self.progress)],
                 "updated_at_utc": self.progress["updated_at_utc"],
@@ -252,13 +346,100 @@ class _StateStore:
         atomic_write_json(self.manifest_path, manifest)
 
 
-def _validate_progress(progress: Mapping[str, Any], commands: Sequence[Mapping[str, Any]]) -> None:
-    states = progress.get("commands") or []
-    if len(states) != len(commands):
+def _positive_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _validate_attempt(attempt: Any, *, command_index: int, position: int) -> None:
+    prefix = f"matrix progress command {command_index} attempt {position}"
+    if not isinstance(attempt, Mapping):
+        raise LaunchError(f"{prefix} must be an object")
+    if attempt.get("attempt") != position or not _positive_int(attempt.get("pid")):
+        raise LaunchError(f"{prefix} has invalid attempt number or pid")
+    if not isinstance(attempt.get("gpu"), str) or not str(attempt["gpu"]).isdigit():
+        raise LaunchError(f"{prefix} has invalid gpu")
+    status = attempt.get("status")
+    if status not in _ATTEMPT_STATUSES:
+        raise LaunchError(f"{prefix} has invalid status={status!r}")
+    if not isinstance(attempt.get("started_at_utc"), str) or not attempt["started_at_utc"]:
+        raise LaunchError(f"{prefix} has invalid started_at_utc")
+    for key in ("stdout_log_path", "stderr_log_path"):
+        if not isinstance(attempt.get(key), str) or not attempt[key]:
+            raise LaunchError(f"{prefix} has invalid {key}")
+    if attempt.get("resume") not in {None, "latest"}:
+        raise LaunchError(f"{prefix} has invalid resume mode")
+    finished, returncode = attempt.get("finished_at_utc"), attempt.get("returncode")
+    if status == "running" and (finished is not None or returncode is not None):
+        raise LaunchError(f"{prefix} running state must not be finished")
+    if status in {"failed", "interrupted", "succeeded"} and (
+        not isinstance(finished, str)
+        or not finished
+        or not isinstance(returncode, int)
+        or isinstance(returncode, bool)
+    ):
+        raise LaunchError(f"{prefix} terminal state is incomplete")
+    if status == "stale" and (not isinstance(finished, str) or not finished):
+        raise LaunchError(f"{prefix} stale state needs finished_at_utc")
+    if status == "stale" and (
+        returncode is not None
+        and (not isinstance(returncode, int) or isinstance(returncode, bool))
+    ):
+        raise LaunchError(f"{prefix} stale state has invalid returncode")
+
+
+def _validate_progress(
+    progress: Mapping[str, Any],
+    commands: Sequence[Mapping[str, Any]],
+    *,
+    run_id: Any,
+) -> None:
+    if progress.get("schema_version") != 1:
+        raise LaunchError("matrix progress schema_version must be 1")
+    if not isinstance(run_id, str) or not run_id or progress.get("run_id") != run_id:
+        raise LaunchError("matrix progress run_id does not match the manifest")
+    if progress.get("status") not in _PROGRESS_STATUSES:
+        raise LaunchError(f"matrix progress has invalid status={progress.get('status')!r}")
+    for key in ("created_at_utc", "updated_at_utc"):
+        if not isinstance(progress.get(key), str) or not progress[key]:
+            raise LaunchError(f"matrix progress has invalid {key}")
+    states = progress.get("commands")
+    if not isinstance(states, list) or len(states) != len(commands):
         raise LaunchError("matrix progress command count does not match the current config")
-    for index, state in enumerate(states):
-        if int(state.get("command_index", -1)) != index or state.get("name") != commands[index].get("name"):
-            raise LaunchError(f"matrix progress command {index} does not match the current config")
+    for index, (state, command) in enumerate(zip(states, commands, strict=True)):
+        if not isinstance(state, Mapping):
+            raise LaunchError(f"matrix progress command {index} must be an object")
+        if state.get("command_index") != index or state.get("name") != command.get("name"):
+            raise LaunchError(f"matrix progress command {index} identity does not match")
+        if not isinstance(state.get("matrix"), Mapping) or dict(state["matrix"]) != dict(
+            command.get("matrix") or {}
+        ):
+            raise LaunchError(f"matrix progress command {index} matrix does not match")
+        status = state.get("status")
+        if status not in _COMMAND_STATUSES:
+            raise LaunchError(f"matrix progress command {index} has invalid status={status!r}")
+        attempts = state.get("attempts")
+        if not isinstance(attempts, list):
+            raise LaunchError(f"matrix progress command {index} attempts must be a list")
+        for position, attempt in enumerate(attempts, start=1):
+            _validate_attempt(attempt, command_index=index, position=position)
+            if position < len(attempts) and attempt["status"] == "running":
+                raise LaunchError(
+                    f"matrix progress command {index} has a non-final running attempt"
+                )
+        if status == "running" and (not attempts or attempts[-1]["status"] != "running"):
+            raise LaunchError(f"matrix progress command {index} running state has no live attempt")
+        if status != "running" and attempts and attempts[-1]["status"] == "running":
+            raise LaunchError(
+                f"matrix progress command {index} hides a running attempt as {status}"
+            )
+        if status in {"failed", "interrupted", "succeeded"} and (
+            not attempts or attempts[-1]["status"] != status
+        ):
+            raise LaunchError(f"matrix progress command {index} terminal state is inconsistent")
+    if progress.get("status") == "succeeded" and any(
+        state.get("status") != "succeeded" for state in states
+    ):
+        raise LaunchError("matrix progress succeeded state has incomplete commands")
 
 
 def _expected_runs(manifest: Mapping[str, Any], bucket: str) -> list[Mapping[str, Any]]:
@@ -356,9 +537,27 @@ def _terminate_running(running: Mapping[int, dict[str, Any]], status: str) -> No
         item["state"]["status"] = status
 
 
-def _resume_states(
-    progress: dict[str, Any], manifest: Mapping[str, Any], resume: bool
-) -> None:
+def _require_stale_pid(pid: int, command_index: int) -> None:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return
+    except PermissionError as exc:
+        raise LaunchError(
+            f"matrix progress command {command_index} pid={pid} cannot prove stale (EPERM)"
+        ) from exc
+    except OSError as exc:
+        if exc.errno == errno.ESRCH:
+            return
+        raise LaunchError(
+            f"matrix progress command {command_index} pid={pid} cannot prove stale: {exc}"
+        ) from exc
+    raise LaunchError(
+        f"matrix progress command {command_index} pid={pid} is still alive; refusing resume"
+    )
+
+
+def _resume_states(progress: dict[str, Any], manifest: Mapping[str, Any], resume: bool) -> None:
     if not resume:
         return
     for state in progress["commands"]:
@@ -371,8 +570,13 @@ def _resume_states(
                 state["resume_action"] = "skipped_revalidated"
                 continue
             state["resume_action"] = "retry_artifacts_invalid"
+        elif prior == "running":
+            attempt = state["attempts"][-1]
+            _require_stale_pid(int(attempt["pid"]), index)
+            attempt.update({"status": "stale", "finished_at_utc": _utc_now()})
+            state["resume_action"] = "retry_stale"
         else:
-            state["resume_action"] = "retry_stale" if prior == "running" else f"retry_{prior}"
+            state["resume_action"] = f"retry_{prior}"
         state["status"] = "pending"
 
 
@@ -406,7 +610,7 @@ def run_matrix_queue(
             if progress_path.exists()
             else _new_progress(commands, manifest.get("run_id"))
         )
-        _validate_progress(progress, commands)
+        _validate_progress(progress, commands, run_id=manifest.get("run_id"))
         _resume_states(progress, manifest, resume)
         store = _StateStore(progress, progress_path, manifest_path, gpus, max_parallel)
         store.save("running")
@@ -507,7 +711,7 @@ def run_postprocess_serial(
     logs_dir.mkdir(parents=True, exist_ok=True)
     lock = execution_lock(run_dir) if acquire_lock else nullcontext()
     with lock:
-        manifest = _patch_manifest(manifest_path, status="postprocessing")
+        manifest = _patch_manifest(manifest_path, postprocess_status="running")
         records = list(manifest.get("postprocess_runs") or [])
         env_base = dict(base_env or os.environ)
         for index, command in enumerate(commands):
@@ -522,7 +726,7 @@ def run_postprocess_serial(
             except BaseException as exc:
                 _terminate_process(process)
                 status = "interrupted" if isinstance(exc, KeyboardInterrupt) else "failed"
-                _patch_manifest(manifest_path, status=status)
+                _patch_manifest(manifest_path, postprocess_status=status)
                 raise
             record = {
                 "command_index": index,
@@ -538,7 +742,7 @@ def run_postprocess_serial(
             records.append(record)
             _patch_manifest(
                 manifest_path,
-                status="postprocessing" if returncode == 0 else "failed",
+                postprocess_status="running" if returncode == 0 else "failed",
                 postprocess_runs=records,
             )
             if returncode:
@@ -547,9 +751,8 @@ def run_postprocess_serial(
         verification = verify_required_artifacts(read_json_object(manifest_path), include_postprocess=True)
         _patch_manifest(
             manifest_path,
-            status="succeeded" if verification["passed"] else "failed",
+            postprocess_status="succeeded" if verification["passed"] else "failed",
             artifact_verification=verification,
-            finished_at_utc=_utc_now(),
         )
         if not verification["passed"]:
             raise LaunchError("Required artifact verification failed after postprocess commands")
