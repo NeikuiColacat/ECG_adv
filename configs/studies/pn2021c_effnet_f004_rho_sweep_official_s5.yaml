@@ -1,6 +1,7 @@
 extends:
   - ../defaults/pn2021c_official_s5_locked_protocol.yaml
   - ../defaults/effnet_f004_rho_sweep_locked.yaml
+  - ../defaults/f004_pn2021c_reporting.yaml
 
 experiment:
   name: pn2021c_effnet_f004_rho_sweep_official_s5
@@ -9,8 +10,6 @@ experiment:
 logging:
   child_artifacts:
     - eval_pn2021_c_v7_refexcluded_stream_standard_official_s5_locked.json
-  postprocess_artifacts:
-    - pn2021c_effnet_f004_rho_sweep_official_s5.csv
 
 runner:
   matrix:

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import csv
+import copy
+import json
 from pathlib import Path
 
 import pytest
@@ -12,6 +15,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from ecg_adv_gen.config import (
     ConfigError,
+    build_postprocess_commands,
     build_runner_commands,
     load_experiment_config,
     make_dry_run_manifest,
@@ -33,10 +37,10 @@ from ecg_adv_gen.training.resume_contract import resume_contract_mismatches
 REPO = Path(__file__).resolve().parents[2]
 LOCAL = REPO / "configs/local/linbinhao_server.example.yaml"
 CANONICAL = REPO / "configs/experiments/effnet_vae_lhat_augmix_threechain_locked_k500.yaml"
-SMOKE = REPO / "configs/experiments/effnet_f004_rho_sweep_onecenter_smoke.yaml"
-TRAIN = REPO / "configs/experiments/effnet_f004_rho_sweep_k500.yaml"
-S5 = REPO / "configs/experiments/pn2021c_effnet_f004_rho_sweep_official_s5.yaml"
-DEPTH23 = REPO / "configs/experiments/pn2021c_effnet_f004_rho_sweep_depth23.yaml"
+SMOKE = REPO / "configs/studies/effnet_f004_rho_sweep_onecenter_smoke.yaml"
+TRAIN = REPO / "configs/studies/effnet_f004_rho_sweep_k500.yaml"
+S5 = REPO / "configs/studies/pn2021c_effnet_f004_rho_sweep_official_s5.yaml"
+DEPTH23 = REPO / "configs/studies/pn2021c_effnet_f004_rho_sweep_depth23.yaml"
 
 
 def _split() -> dict:
@@ -203,6 +207,7 @@ def test_f004_wrapper_propagates_identity_to_child_command():
     assert _option(child, "--comparison_protocol") == F004_RHO_SWEEP_PROTOCOL
     assert _option(child, "--comparison_variant") == "f004_rho0p25"
     assert _option(child, "--comparison_topology_version") == "matched_effnet_a0_a2_a3_a4_a5_v2"
+    assert _option(child, "--comparison_topology_sha256") == f004_identity(0.25)["topology_sha256"]
     assert _option(child, "--target_adv_fraction") == "0.25"
     assert Path(_option(child, "--output_dir")).name == "f004_rho0p25"
 
@@ -225,21 +230,13 @@ def test_f004_eval_consumers_match_exact_train_producers(eval_path: Path):
 
 
 def test_f004_runtime_rejects_topology_drift_and_arm_masquerading():
-    base = dict(
-        comparison_protocol=F004_RHO_SWEEP_PROTOCOL,
-        comparison_arm="historical_unmatched",
-        comparison_variant="f004_rho0p25",
-        target_adv_fraction=0.25,
-        enable_vae_lhat=True,
-        enable_raw_augmix=True,
-        enable_auxiliary_steps=True,
-        bce_weight=1.0,
-        jsd_weight=2.0,
-        third_chain_route="vae_lhat_adversarial_waveform",
-        latent_augmix_signal_space="raw_pre_zscore",
-    )
+    base = _f004_runtime_kwargs()
     assert validate_f004_runtime(**base)["rho"] == 0.25
-    for key, value in [("comparison_arm", "a5"), ("enable_raw_augmix", False), ("jsd_weight", 0.0)]:
+    for key, value in [
+        ("comparison_arm", "a5"),
+        ("enable_raw_augmix", False),
+        ("latent_augmix_consistency_weight", 0.0),
+    ]:
         drifted = {**base, key: value}
         with pytest.raises(ValueError, match="F-004"):
             validate_f004_runtime(**drifted)
@@ -268,20 +265,223 @@ def test_f004_record_reports_actual_rho_and_preserves_source_floor_and_budget():
 
 
 def test_f004_resume_contract_rejects_protocol_variant_topology_and_rho_drift():
+    from ecg_adv_gen import matched_effnet
+
     current = {
         "comparison_protocol": F004_RHO_SWEEP_PROTOCOL,
         "comparison_variant": "f004_rho0p25",
         "comparison_topology_version": "matched_effnet_a0_a2_a3_a4_a5_v2",
+        "comparison_topology_sha256": matched_effnet.F004_FROZEN_TOPOLOGY_SHA256,
         "target_adv_fraction": 0.25,
     }
     for key, value in [
         ("comparison_protocol", "other"),
         ("comparison_variant", "f004_rho0p5"),
         ("comparison_topology_version", "other"),
+        ("comparison_topology_sha256", "0" * 64),
         ("target_adv_fraction", 0.5),
     ]:
         saved = {**current, key: value}
         assert [row["key"] for row in resume_contract_mismatches(saved, current)] == [key]
+
+
+@pytest.mark.parametrize(
+    "missing_key",
+    [
+        "comparison_protocol",
+        "comparison_variant",
+        "comparison_topology_version",
+        "comparison_topology_sha256",
+        "target_adv_fraction",
+    ],
+)
+def test_f004_resume_contract_treats_missing_identity_as_drift(missing_key: str):
+    from ecg_adv_gen import matched_effnet
+
+    current = {
+        "comparison_protocol": F004_RHO_SWEEP_PROTOCOL,
+        "comparison_variant": "f004_rho0p25",
+        "comparison_topology_version": "matched_effnet_a0_a2_a3_a4_a5_v2",
+        "comparison_topology_sha256": matched_effnet.F004_FROZEN_TOPOLOGY_SHA256,
+        "target_adv_fraction": 0.25,
+    }
+    saved = {key: value for key, value in current.items() if key != missing_key}
+    assert resume_contract_mismatches(saved, current) == [
+        {"key": missing_key, "saved": None, "current": current[missing_key]}
+    ]
+
+
+def _f004_runtime_kwargs() -> dict:
+    from ecg_adv_gen import matched_effnet
+
+    topology = dict(matched_effnet.F004_FROZEN_TOPOLOGY)
+    return {
+        "comparison_protocol": F004_RHO_SWEEP_PROTOCOL,
+        "comparison_arm": "historical_unmatched",
+        "comparison_variant": "f004_rho0p25",
+        "comparison_topology_sha256": matched_effnet.F004_FROZEN_TOPOLOGY_SHA256,
+        "target_adv_fraction": 0.25,
+        **topology,
+    }
+
+
+@pytest.mark.parametrize(
+    ("key", "drift"),
+    [
+        ("enable_vae_lhat", False),
+        ("enable_raw_augmix", False),
+        ("enable_latent_augmix_consistency", False),
+        ("latent_augmix_bce_weight", 0.0),
+        ("latent_augmix_consistency_weight", 0.0),
+        ("latent_augmix_consistency_loss", "soft_bce"),
+        ("latent_augmix_third_chain_role", "clean_anchor_control"),
+        ("latent_augmix_width", 1),
+        ("latent_augmix_depth", 1),
+        ("latent_augmix_copies", 1),
+        ("latent_augmix_chain_base_mode", "all_clean"),
+        ("latent_augmix_adv_base_mix", 0.5),
+        ("latent_augmix_alpha", 0.5),
+        ("latent_augmix_severity", 1),
+        ("latent_augmix_severity_profile", "calibrated_10to20pp"),
+        ("latent_augmix_ops", ["powerline_noise"]),
+        ("latent_augmix_signal_space", "model_zscore"),
+        ("hull_M", 5),
+        ("hull_lambda", 0.5),
+        ("hull_steps", 3),
+        ("hull_include_anchor", True),
+        ("hull_init_logit_gap", 4.0),
+        ("pgd_eps", 1.0),
+    ],
+)
+def test_f004_shared_frozen_topology_rejects_every_component_drift(key: str, drift):
+    kwargs = _f004_runtime_kwargs()
+    kwargs[key] = drift
+    with pytest.raises(ValueError, match=f"F-004 frozen full topology drift.*{key}"):
+        validate_f004_runtime(**kwargs)
+
+
+def test_f004_managed_config_declares_shared_topology_fingerprint_and_rejects_drift():
+    from ecg_adv_gen import matched_effnet
+
+    config = _load(TRAIN)
+    assert config["paper_protocol"]["topology_sha256"] == matched_effnet.F004_FROZEN_TOPOLOGY_SHA256
+    commands = build_runner_commands(config)
+    assert {
+        _option(command["argv"], "--comparison_topology_sha256")
+        for command in commands
+    } == {matched_effnet.F004_FROZEN_TOPOLOGY_SHA256}
+
+    drifted = copy.deepcopy(config)
+    drifted["adaptation"]["latent_augmix"]["width"] = 1
+    with pytest.raises(ConfigError, match="F-004 frozen full topology drift.*latent_augmix_width"):
+        build_runner_commands(drifted)
+
+
+def test_f004_eval_identity_resolver_is_fail_closed(tmp_path: Path):
+    from ecg_adv_gen.evaluation.comparison_identity import (
+        ComparisonIdentityError,
+        resolve_producer_comparison_identity,
+    )
+
+    identity = f004_identity(0.25)
+    producer = tmp_path / "producer"
+    producer.mkdir()
+    expected = json.dumps(identity, sort_keys=True)
+    with pytest.raises(ComparisonIdentityError, match="run_config.json"):
+        resolve_producer_comparison_identity(producer, expected)
+
+    (producer / "run_config.json").write_text(
+        json.dumps({"comparison_contract": {"comparison_identity": identity}}),
+        encoding="utf-8",
+    )
+    assert resolve_producer_comparison_identity(producer, expected) == identity
+
+    mismatch = {**identity, "variant": "f004_rho0p5"}
+    with pytest.raises(ComparisonIdentityError, match="mismatch"):
+        resolve_producer_comparison_identity(producer, json.dumps(mismatch))
+
+
+def test_f004_eval_commands_carry_exact_identity_for_clean_s5_and_depth23():
+    train_commands = build_runner_commands(_load(TRAIN))
+    for command in train_commands:
+        argv = command["argv"]
+        expected = f004_identity(command["matrix"]["rho"])
+        from ecg_adv_gen.runner import effnet_vae_lhat_augmix as wrapper
+        from ecg_adv_gen.runner.effnet_vae_lhat import (
+            build_effnet_vae_lhat_eval_cmd,
+            resolve_effnet_vae_lhat_paths,
+        )
+
+        args = wrapper.parse_args(argv[2:])
+        paths = resolve_effnet_vae_lhat_paths(
+            args, data_root=Path(args.data_root), out_root=Path(args.out_root)
+        )
+        clean_argv = build_effnet_vae_lhat_eval_cmd(
+            args, python="python", data_root=Path(args.data_root), paths=paths
+        )
+        assert json.loads(_option(clean_argv, "--comparison_identity_json")) == expected
+
+    for config_path in (S5, DEPTH23):
+        for command in build_runner_commands(_load(config_path)):
+            expected = f004_identity(command["matrix"]["rho"])
+            assert json.loads(_option(command["argv"], "--comparison_identity_json")) == expected
+
+
+def test_f004_metrics_and_table_preserve_exact_identity(tmp_path: Path):
+    from ecg_adv_gen.evaluation import PN2021_ALL_ZERO_KEPT_REFEXCLUDED
+    from ecg_adv_gen.reporting import export_metrics, export_paper_table
+
+    centers = ["ningbo", "chapman_shaoxing", "cpsc_2018", "georgia"]
+    for rho in F004_RHO_VALUES:
+        identity = f004_identity(rho)
+        for center in centers:
+            path = tmp_path / center / identity["variant"] / "eval_result.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({
+                "comparison_identity": identity,
+                "mapping": {"mapping_version": "v7_super5_sjr_rgq_review_20260528", "mapping_hash": "555ec85d5b51"},
+                "class_names": ["CD", "HYP", "MI", "NORM", "STTC"],
+                "pn2021": {"per_center": {center: {"macro_auroc": 0.8, "macro_auprc": 0.5}}},
+            }), encoding="utf-8")
+
+    metrics = export_metrics(
+        [tmp_path],
+        tmp_path / "metrics",
+        required_comparison_protocol=F004_RHO_SWEEP_PROTOCOL,
+        filter_to_target_center=True,
+        target_centers=centers,
+    )
+    with Path(metrics["metrics_long"]).open(encoding="utf-8", newline="") as handle:
+        metric_rows = list(csv.DictReader(handle))
+    assert {row["comparison_variant"] for row in metric_rows} == set(F004_VARIANTS)
+    assert all(row["comparison_topology_sha256"] == f004_identity(float(row["comparison_rho"]))["topology_sha256"] for row in metric_rows)
+
+    table = export_paper_table(
+        Path(metrics["metrics_long"]),
+        tmp_path / "table",
+        view=PN2021_ALL_ZERO_KEPT_REFEXCLUDED,
+        dataset="pn2021",
+        centers=centers,
+        include_dataset_rows=False,
+        baseline_run_id="f004_rho0",
+    )
+    with Path(table["paper_table"]).open(encoding="utf-8", newline="") as handle:
+        table_rows = list(csv.DictReader(handle))
+    assert {row["comparison_variant"] for row in table_rows} == set(F004_VARIANTS)
+    assert all(row["comparison_protocol"] == F004_RHO_SWEEP_PROTOCOL for row in table_rows)
+
+
+@pytest.mark.parametrize("config_path", [S5, DEPTH23])
+def test_f004_corruption_stages_export_identity_preserving_metrics_and_tables(config_path: Path):
+    commands = build_postprocess_commands(_load(config_path))
+    assert len(commands) == 3
+    metrics_argv = commands[0]["argv"]
+    assert _option(metrics_argv, "--require-comparison-protocol") == F004_RHO_SWEEP_PROTOCOL
+    assert "--run-id" not in metrics_argv
+    assert {
+        _option(command["argv"], "--baseline-run-id")
+        for command in commands[1:]
+    } == {"f004_rho0"}
 
 
 def test_realized_within_target_fractions_exclude_source_objective():

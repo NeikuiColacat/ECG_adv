@@ -1,0 +1,65 @@
+logging:
+  postprocess_artifacts:
+    - metrics_long.csv
+    - pn2021c_all_zero_kept_rho_table.csv
+    - pn2021c_drop_all_zero_rho_table.csv
+
+postprocess:
+  commands:
+    - name: export_f004_pn2021c_metrics
+      entrypoint: scripts/export_metrics_long.py
+      argv:
+        - --input
+        - ${paths.output_root}/${experiment.name}/${runtime.run_id}
+        - --output-dir
+        - ${paths.output_root}/metrics_export/${runtime.run_id}_${experiment.name}
+        - --filter-to-target-center
+        - --target-centers
+        - ${paper_protocol.centers.target_4}
+        - --expected-mapping-version
+        - ${paper_protocol.mapping_version}
+        - --expected-mapping-hash
+        - ${paper_protocol.mapping_hash}
+        - --require-comparison-protocol
+        - ${paper_protocol.comparison_protocol}
+      expected_artifacts:
+        - {role: metrics_long, path: "${paths.output_root}/metrics_export/${runtime.run_id}_${experiment.name}/metrics_long.csv"}
+        - {role: artifact_manifest, path: "${paths.output_root}/metrics_export/${runtime.run_id}_${experiment.name}/artifact_manifest.json"}
+    - name: export_f004_pn2021c_kept_table
+      entrypoint: scripts/export_paper_table.py
+      argv:
+        - --metrics-long
+        - ${paths.output_root}/metrics_export/${runtime.run_id}_${experiment.name}/metrics_long.csv
+        - --output-dir
+        - ${paths.output_root}/paper_table/${runtime.run_id}_${experiment.name}_all_zero_kept
+        - --view
+        - pn2021c_all_zero_kept_corrupted_refexcluded
+        - --dataset
+        - pn2021c
+        - --centers
+        - ${paper_protocol.centers.target_4}
+        - --baseline-run-id
+        - f004_rho0
+        - --no-dataset-rows
+      expected_artifacts:
+        - {role: pn2021c_all_zero_kept_rho_table, path: "${paths.output_root}/paper_table/${runtime.run_id}_${experiment.name}_all_zero_kept/paper_table.csv"}
+        - {role: paper_table_manifest, path: "${paths.output_root}/paper_table/${runtime.run_id}_${experiment.name}_all_zero_kept/paper_table_manifest.json"}
+    - name: export_f004_pn2021c_dropzero_table
+      entrypoint: scripts/export_paper_table.py
+      argv:
+        - --metrics-long
+        - ${paths.output_root}/metrics_export/${runtime.run_id}_${experiment.name}/metrics_long.csv
+        - --output-dir
+        - ${paths.output_root}/paper_table/${runtime.run_id}_${experiment.name}_drop_all_zero
+        - --view
+        - pn2021c_drop_all_zero_corrupted_refexcluded
+        - --dataset
+        - pn2021c
+        - --centers
+        - ${paper_protocol.centers.target_4}
+        - --baseline-run-id
+        - f004_rho0
+        - --no-dataset-rows
+      expected_artifacts:
+        - {role: pn2021c_drop_all_zero_rho_table, path: "${paths.output_root}/paper_table/${runtime.run_id}_${experiment.name}_drop_all_zero/paper_table.csv"}
+        - {role: paper_table_manifest, path: "${paths.output_root}/paper_table/${runtime.run_id}_${experiment.name}_drop_all_zero/paper_table_manifest.json"}

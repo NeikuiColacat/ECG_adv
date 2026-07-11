@@ -1227,6 +1227,7 @@ def parse_args(argv: list[str] | None = None):
     p.add_argument("--comparison_protocol", default="")
     p.add_argument("--comparison_variant", default="")
     p.add_argument("--comparison_topology_version", default="")
+    p.add_argument("--comparison_topology_sha256", default="")
     p.add_argument("--ref_meta_json",
                    help="path to {tag}_k200.meta.json (for record_id exclusion in eval)")
     p.add_argument("--synth_npz", required=True,
@@ -1603,7 +1604,10 @@ def parse_args(argv: list[str] | None = None):
     args.latent_augmix_signal_space = (
         LOCKED_LATENT_AUGMIX_SIGNAL_SPACE if raw_signal_space else "model_zscore"
     )
-    if args.comparison_protocol or args.comparison_variant or args.comparison_topology_version:
+    if (
+        args.comparison_protocol or args.comparison_variant
+        or args.comparison_topology_version or args.comparison_topology_sha256
+    ):
         if not is_f004_rho_sweep(args.comparison_protocol):
             p.error(f"unsupported --comparison_protocol {args.comparison_protocol!r}")
         if args.comparison_topology_version != MATCHED_EFFNET_CONTRACT_VERSION:
@@ -1613,14 +1617,31 @@ def parse_args(argv: list[str] | None = None):
                 comparison_protocol=args.comparison_protocol,
                 comparison_arm=args.comparison_arm,
                 comparison_variant=args.comparison_variant,
+                comparison_topology_sha256=args.comparison_topology_sha256,
                 target_adv_fraction=args.target_adv_fraction,
                 enable_vae_lhat=args.enable_vae_lhat,
                 enable_raw_augmix=args.enable_raw_augmix,
-                enable_auxiliary_steps=args.enable_latent_augmix_consistency,
-                bce_weight=args.latent_augmix_bce_weight,
-                jsd_weight=args.latent_augmix_consistency_weight,
-                third_chain_route=args.latent_augmix_third_chain_role,
+                enable_latent_augmix_consistency=args.enable_latent_augmix_consistency,
+                latent_augmix_bce_weight=args.latent_augmix_bce_weight,
+                latent_augmix_consistency_weight=args.latent_augmix_consistency_weight,
+                latent_augmix_consistency_loss=args.latent_augmix_consistency_loss,
+                latent_augmix_third_chain_role=args.latent_augmix_third_chain_role,
+                latent_augmix_width=args.latent_augmix_width,
+                latent_augmix_depth=args.latent_augmix_depth,
+                latent_augmix_copies=args.latent_augmix_copies,
+                latent_augmix_chain_base_mode=args.latent_augmix_chain_base_mode,
+                latent_augmix_adv_base_mix=args.latent_augmix_adv_base_mix,
+                latent_augmix_alpha=args.latent_augmix_alpha,
+                latent_augmix_severity=args.latent_augmix_severity,
+                latent_augmix_severity_profile=args.latent_augmix_severity_profile,
+                latent_augmix_ops=args.latent_augmix_ops,
                 latent_augmix_signal_space=args.latent_augmix_signal_space,
+                hull_M=args.hull_M,
+                hull_lambda=args.hull_lambda,
+                hull_steps=args.hull_steps,
+                hull_include_anchor=args.hull_include_anchor,
+                hull_init_logit_gap=args.hull_init_logit_gap,
+                pgd_eps=args.pgd_eps,
             )
         except (TypeError, ValueError) as exc:
             p.error(str(exc))

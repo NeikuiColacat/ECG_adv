@@ -7,10 +7,12 @@ from typing import Any, Mapping
 
 from ecg_adv_gen.matched_effnet import (
     F004_RHO_SWEEP_PROTOCOL,
+    F004_FROZEN_TOPOLOGY_SHA256,
     MATCHED_EFFNET_CONTRACT_VERSION,
     f004_variant_for_rho,
     is_matched_effnet_arm,
     matched_effnet_arm,
+    validate_f004_runtime,
     validate_matched_effnet_case,
 )
 
@@ -94,6 +96,39 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
         comparison_arm, arm_components = "historical_unmatched", matched_effnet_arm("a5")
         target_adv_fraction = float(matrix["rho"])
         comparison_variant = f004_variant_for_rho(target_adv_fraction)
+        declared_topology_sha256 = str(paper.get("topology_sha256") or "")
+        validate_f004_runtime(
+            comparison_protocol=comparison_protocol,
+            comparison_arm=comparison_arm,
+            comparison_variant=comparison_variant,
+            comparison_topology_sha256=declared_topology_sha256,
+            target_adv_fraction=target_adv_fraction,
+            enable_vae_lhat=True,
+            enable_raw_augmix=True,
+            enable_latent_augmix_consistency=bool(latent_augmix_consistency["enabled"]),
+            latent_augmix_bce_weight=latent_augmix_consistency["bce_weight"],
+            latent_augmix_consistency_weight=latent_augmix_consistency["consistency_weight"],
+            latent_augmix_consistency_loss=latent_augmix_consistency["consistency_loss"],
+            latent_augmix_third_chain_role=latent_augmix.get(
+                "third_chain_role", "vae_lhat_adversarial_waveform"
+            ),
+            latent_augmix_width=latent_augmix["width"],
+            latent_augmix_depth=latent_augmix["depth"],
+            latent_augmix_copies=latent_augmix["copies"],
+            latent_augmix_chain_base_mode=latent_augmix["chain_base_mode"],
+            latent_augmix_adv_base_mix=latent_augmix.get("adv_base_mix", 1.0),
+            latent_augmix_alpha=latent_augmix["alpha"],
+            latent_augmix_severity=latent_augmix["severity"],
+            latent_augmix_severity_profile=latent_augmix["severity_profile"],
+            latent_augmix_ops=latent_augmix["ops"],
+            latent_augmix_signal_space="raw_pre_zscore",
+            hull_M=hull["M"],
+            hull_lambda=hull["lambda"],
+            hull_steps=hull["steps"],
+            hull_include_anchor=hull["include_anchor"],
+            hull_init_logit_gap=hull["init_logit_gap"],
+            pgd_eps=attack["pgd_eps"],
+        )
     else:
         comparison_arm, arm_components = _resolve_arm(
             case, matrix.get("comparison_arm", adaptation.get("comparison_arm", "historical_unmatched"))
@@ -236,6 +271,7 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
             "--comparison_protocol", comparison_protocol,
             "--comparison_variant", comparison_variant,
             "--comparison_topology_version", MATCHED_EFFNET_CONTRACT_VERSION,
+            "--comparison_topology_sha256", F004_FROZEN_TOPOLOGY_SHA256,
         ]
     if bool(hull["include_anchor"]):
         argv.append("--hull_include_anchor")
@@ -393,6 +429,7 @@ def audit_effnet_vae_lhat_command(
             "--comparison_protocol": F004_RHO_SWEEP_PROTOCOL,
             "--comparison_variant": f004_variant_for_rho(target_adv_fraction),
             "--comparison_topology_version": MATCHED_EFFNET_CONTRACT_VERSION,
+            "--comparison_topology_sha256": F004_FROZEN_TOPOLOGY_SHA256,
         })
     for option, expected in expected_options.items():
         audit_equals(errors, script, opts, option, expected)

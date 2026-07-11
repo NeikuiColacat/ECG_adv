@@ -27,6 +27,11 @@ from ecg_adv_gen.data.waveform_datasets import (  # noqa: E402
 )
 from ecg_adv_gen.evaluation import compute_macro_auroc_auprc, summarize_center_view  # noqa: E402
 from ecg_adv_gen.evaluation.inference import infer_dataset  # noqa: E402
+from ecg_adv_gen.evaluation.comparison_identity import (  # noqa: E402
+    ComparisonIdentityError,
+    require_matching_comparison_identity,
+    resolve_producer_comparison_identity,
+)
 from ecg_adv_gen.labels import (  # noqa: E402
     get_super5_scheme,
     get_super5_pn2021_mapping_metadata,
@@ -564,6 +569,7 @@ def main():
     p.add_argument("--limit", type=int, default=None,
                    help="Evaluate only the first N records per cache for smoke tests.")
     p.add_argument("--output_path", default=None)
+    p.add_argument("--comparison_identity_json", default="")
     args = p.parse_args()
     try:
         args.severity_profile_params = _resolve_severity_profile_args(args)
@@ -580,6 +586,21 @@ def main():
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
     clean_eval_payload = load_json_payload(args.clean_eval_json)
+    try:
+        comparison_identity = resolve_producer_comparison_identity(
+            args.model_dir, args.comparison_identity_json
+        )
+        clean_identity = clean_eval_payload.get("comparison_identity")
+        if comparison_identity is not None:
+            require_matching_comparison_identity(
+                comparison_identity, clean_identity, source=str(args.clean_eval_json)
+            )
+        elif clean_identity is not None:
+            raise ComparisonIdentityError(
+                "clean eval has comparison_identity but producer run_config does not"
+            )
+    except ComparisonIdentityError as exc:
+        raise SystemExit(str(exc)) from exc
 
     device = torch.device(args.device)
     scheme = get_super5_scheme()
@@ -632,6 +653,8 @@ def main():
         ),
         "per_center": {},
     }
+    if comparison_identity is not None:
+        output["comparison_identity"] = comparison_identity
     output["preprocess"] = {
         "contract_id": PREPROCESS_CONTRACT_ID,
         "preprocess_mode": "minimal_resample",

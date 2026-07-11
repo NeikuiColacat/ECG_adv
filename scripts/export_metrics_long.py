@@ -22,6 +22,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--output-dir", required=True)
     p.add_argument("--expected-mapping-version", default="")
     p.add_argument("--expected-mapping-hash", default="")
+    p.add_argument("--require-comparison-protocol", default="")
     p.add_argument("--allow-mixed-mapping", action="store_true")
     p.add_argument("--no-require-mapping", action="store_true")
     p.add_argument(
@@ -65,6 +66,7 @@ def main() -> int:
             run_id_override=args.run_id or None,
             filter_to_target_center=args.filter_to_target_center,
             target_centers=args.target_centers,
+            required_comparison_protocol=args.require_comparison_protocol or None,
         )
     except (MetricsExportError, PathSafetyError, OSError) as exc:
         print(f"[metrics-export-error] {exc}", file=sys.stderr)

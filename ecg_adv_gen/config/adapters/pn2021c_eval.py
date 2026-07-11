@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, Mapping
 
 from ecg_adv_gen.evaluation.pn2021c_protocol import (
@@ -10,7 +11,11 @@ from ecg_adv_gen.evaluation.pn2021c_protocol import (
     OFFICIAL_S5_SEVERITY_PROFILE,
     official_s5_depth23_composites,
 )
-from ecg_adv_gen.matched_effnet import F004_RHO_SWEEP_PROTOCOL, f004_variant_for_rho
+from ecg_adv_gen.matched_effnet import (
+    F004_RHO_SWEEP_PROTOCOL,
+    f004_identity,
+    f004_variant_for_rho,
+)
 from ecg_adv_gen.run_naming import (
     build_f004_effnet_producer_dir,
     build_matched_effnet_producer_dir,
@@ -179,6 +184,11 @@ def build_pn2021c_eval_argv(config: Mapping[str, Any], context: Mapping[str, Any
             f"{output_role}/{output_stem}.json"
         ),
     ]
+    if is_f004:
+        argv.extend([
+            "--comparison_identity_json",
+            json.dumps(f004_identity(rho), sort_keys=True, separators=(",", ":")),
+        ])
     if severity_profile == "custom":
         argv.extend(
             [
@@ -212,6 +222,7 @@ def audit_pn2021c_eval_command(command: Mapping[str, Any], *, config: Mapping[st
     expected_k = str(kshot["k"])
     expected_seed = str(kshot.get("subset_seed", kshot["seed"]))
     target_centers = set(config["paper_protocol"]["centers"]["target_4"])
+    is_f004 = str(config["paper_protocol"].get("comparison_protocol") or "") == F004_RHO_SWEEP_PROTOCOL
 
     audit_require_options(
         errors,
@@ -243,6 +254,12 @@ def audit_pn2021c_eval_command(command: Mapping[str, Any], *, config: Mapping[st
     audit_equals(errors, script, opts, "--mode", "stream")
     audit_equals(errors, script, opts, "--scheme", "super5")
     audit_equals(errors, script, opts, "--required_cache_version", PN2021C_REQUIRED_CACHE_VERSION)
+    if is_f004:
+        matrix_rho = (command.get("matrix") or {}).get("rho")
+        audit_equals(
+            errors, script, opts, "--comparison_identity_json",
+            json.dumps(f004_identity(matrix_rho), sort_keys=True, separators=(",", ":")),
+        )
     audit_equals(errors, script, opts, "--severity_profile", config["evaluation"]["severity_profile"])
     expected_corruptions = resolve_pn2021c_corruptions(config["evaluation"])
     if opt_list(opts, "--corruptions") != [str(item) for item in expected_corruptions]:

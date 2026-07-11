@@ -91,6 +91,8 @@ postprocess:
         - ${paper_protocol.mapping_version}
         - --expected-mapping-hash
         - ${paper_protocol.mapping_hash}
+        - --require-comparison-protocol
+        - ${paper_protocol.comparison_protocol}
       expected_artifacts:
         - {role: metrics_long, path: "${paths.output_root}/metrics_export/${runtime.run_id}_${experiment.name}/metrics_long.csv"}
         - {role: artifact_manifest, path: "${paths.output_root}/metrics_export/${runtime.run_id}_${experiment.name}/artifact_manifest.json"}

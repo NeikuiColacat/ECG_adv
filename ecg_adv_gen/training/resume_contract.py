@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from ecg_adv_gen.matched_effnet import F004_RHO_SWEEP_PROTOCOL
+
 
 RESUME_CONTRACT_KEYS = (
     "center_name",
@@ -17,6 +19,7 @@ RESUME_CONTRACT_KEYS = (
     "comparison_protocol",
     "comparison_variant",
     "comparison_topology_version",
+    "comparison_topology_sha256",
     "enable_vae_lhat",
     "enable_raw_augmix",
     "hull_M",
@@ -91,6 +94,11 @@ def resume_contract_mismatches(
     keys: tuple[str, ...] = RESUME_CONTRACT_KEYS,
 ) -> list[dict[str, Any]]:
     mismatches: list[dict[str, Any]] = []
+    f004_current = current_args.get("comparison_protocol") == F004_RHO_SWEEP_PROTOCOL
+    f004_required = {
+        "comparison_protocol", "comparison_variant", "comparison_topology_version",
+        "comparison_topology_sha256", "target_adv_fraction",
+    }
     if "attack_mode" in saved_args:
         saved_attack_mode = normalize_resume_contract_value(saved_args["attack_mode"])
         if saved_attack_mode != LOCKED_ATTACK_MODE:
@@ -109,6 +117,9 @@ def resume_contract_mismatches(
         if key not in current_args:
             continue
         if key not in saved_args:
+            if f004_current and key in f004_required:
+                mismatches.append({"key": key, "saved": None, "current": current_args[key]})
+                continue
             if (
                 key == "latent_augmix_signal_space"
                 and current_args[key] == LOCKED_LATENT_AUGMIX_SIGNAL_SPACE

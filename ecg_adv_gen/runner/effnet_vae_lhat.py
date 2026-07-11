@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from ecg_adv_gen.evaluation.ref_exclusion import append_target_ref_exclusion_args_from_anchor_base
 from ecg_adv_gen.run_naming import build_effnet_vae_lhat_run_leaf
-from ecg_adv_gen.matched_effnet import is_paper_matched_effnet_run
+from ecg_adv_gen.matched_effnet import (
+    f004_identity,
+    is_f004_rho_sweep,
+    is_paper_matched_effnet_run,
+)
 
 
 @dataclass(frozen=True)
@@ -214,6 +219,7 @@ def build_effnet_vae_lhat_train_cmd(
             "--comparison_protocol", str(args.comparison_protocol),
             "--comparison_variant", str(args.comparison_variant),
             "--comparison_topology_version", str(args.comparison_topology_version),
+            "--comparison_topology_sha256", str(args.comparison_topology_sha256),
         ]
     if getattr(args, "target_adv_fraction", None) is not None:
         train_cmd.extend(["--target_adv_fraction", str(args.target_adv_fraction)])
@@ -332,6 +338,11 @@ def build_effnet_vae_lhat_eval_cmd(
         else "last_model.pt"
     )
     eval_cmd.extend(["--checkpoint_name", checkpoint_name])
+    if is_f004_rho_sweep(getattr(args, "comparison_protocol", "")):
+        eval_cmd.extend([
+            "--comparison_identity_json",
+            json.dumps(f004_identity(args.target_adv_fraction), sort_keys=True, separators=(",", ":")),
+        ])
     try:
         append_target_ref_exclusion_args_from_anchor_base(eval_cmd, paths.anchor_base)
     except ValueError:

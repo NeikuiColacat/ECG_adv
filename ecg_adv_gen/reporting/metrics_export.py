@@ -27,6 +27,11 @@ from ecg_adv_gen.evaluation import (
     canonicalize_view,
 )
 from ecg_adv_gen.labels import default_class_order
+from ecg_adv_gen.evaluation.comparison_identity import (
+    ComparisonIdentityError,
+    flatten_comparison_identity,
+    validate_comparison_identity,
+)
 
 
 METRICS_FIELDNAMES = [
@@ -51,7 +56,14 @@ METRICS_FIELDNAMES = [
     "mapping_version",
     "mapping_hash",
     "class_order",
+    "comparison_protocol",
+    "comparison_variant",
+    "comparison_rho",
+    "comparison_topology_version",
+    "comparison_topology_sha256",
+    "comparison_identity_json",
 ]
+COMPARISON_FIELDNAMES = METRICS_FIELDNAMES[-6:]
 
 ARTIFACT_PATTERNS = [
     "eval_result*.json",
@@ -728,6 +740,7 @@ def _extract_rows(
     run_id_override: str | None = None,
     filter_to_target_center: bool = False,
     target_centers: Iterable[str] | None = None,
+    required_comparison_protocol: str | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     artifact_type = _artifact_type(path)
     mapping_version, mapping_hash, mapping_source = _mapping_metadata(
@@ -781,6 +794,26 @@ def _extract_rows(
     if filter_to_target_center:
         rows = _filter_rows_to_target_center(rows, path=path, target_center=target_center)
 
+    identity_raw = data.get("comparison_identity")
+    identity: dict[str, Any] | None = None
+    if identity_raw is not None:
+        try:
+            identity = validate_comparison_identity(identity_raw)
+        except ComparisonIdentityError as exc:
+            raise MetricsExportError(f"Invalid comparison_identity in {path}: {exc}") from exc
+    if required_comparison_protocol and rows:
+        if identity is None:
+            raise MetricsExportError(
+                f"Metrics artifact is missing required comparison_identity: {path}"
+            )
+        if identity["comparison_protocol"] != required_comparison_protocol:
+            raise MetricsExportError(
+                f"Metrics artifact comparison protocol mismatch: {path}"
+            )
+    identity_fields = flatten_comparison_identity(identity)
+    for row in rows:
+        row.update(identity_fields)
+
     artifact = {
         "path": str(path),
         "artifact_type": artifact_type,
@@ -795,6 +828,7 @@ def _extract_rows(
         "mapping_source": mapping_source,
         "class_order": class_order or [],
         "metrics_rows": len(rows),
+        "comparison_identity": identity or {},
     }
     return rows, artifact
 
@@ -835,6 +869,7 @@ def export_metrics(
     run_id_override: str | None = None,
     filter_to_target_center: bool = False,
     target_centers: Iterable[str] | None = None,
+    required_comparison_protocol: str | None = None,
 ) -> dict[str, Any]:
     output_dir = Path(output_dir).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -854,6 +889,7 @@ def export_metrics(
             run_id_override=run_id_override,
             filter_to_target_center=filter_to_target_center,
             target_centers=target_centers,
+            required_comparison_protocol=required_comparison_protocol,
         )
         rows.extend(extracted)
         artifacts.append(artifact)
@@ -863,6 +899,18 @@ def export_metrics(
         allow_mixed_mapping=allow_mixed_mapping,
         require_mapping=require_mapping,
     )
+    identities_by_run: dict[str, set[tuple[str, str, str, str, str]]] = {}
+    for row in rows:
+        identity_key = tuple(str(row.get(key, "")) for key in COMPARISON_FIELDNAMES)
+        identities_by_run.setdefault(str(row["run_id"]), set()).add(identity_key)
+        if row.get("comparison_protocol") and row["run_id"] != row.get("comparison_variant"):
+            raise MetricsExportError(
+                f"run_id/comparison_variant mismatch: {row['run_id']!r} != "
+                f"{row.get('comparison_variant')!r}"
+            )
+    inconsistent = {run_id: values for run_id, values in identities_by_run.items() if len(values) != 1}
+    if inconsistent:
+        raise MetricsExportError(f"Inconsistent comparison identity for run ids: {sorted(inconsistent)}")
 
     metrics_path = output_dir / "metrics_long.csv"
     with metrics_path.open("w", encoding="utf-8", newline="") as f:
@@ -882,6 +930,7 @@ def export_metrics(
         "run_id_override": run_id_override or "",
         "filter_to_target_center": bool(filter_to_target_center),
         "target_centers": sorted({str(c) for c in target_centers or [] if str(c)}),
+        "required_comparison_protocol": required_comparison_protocol or "",
         "views": dict(sorted(view_counts.items())),
         "canonical_views": dict(sorted(canonical_view_counts.items())),
         "mapping_pairs": sorted(
@@ -892,6 +941,12 @@ def export_metrics(
             }
         ),
         "artifacts": artifacts,
+        "comparison_identities": sorted(
+            {
+                json.dumps(a["comparison_identity"], sort_keys=True, separators=(",", ":"))
+                for a in artifacts if a.get("comparison_identity")
+            }
+        ),
     }
     manifest_path = output_dir / "artifact_manifest.json"
     manifest_path.write_text(

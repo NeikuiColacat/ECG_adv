@@ -7,6 +7,7 @@ paper_protocol:
   comparison_protocol: f004_full_topology_rho_sweep_v1
   topology_reference: a5_components_only
   topology_version: matched_effnet_a0_a2_a3_a4_a5_v2
+  topology_sha256: 76e387a34cc0f7b51e91ef89cd9bb1518f49e3e95a542b33aaec3608030cef73
   only_varied_parameter: target_adv_fraction
 
 adaptation:

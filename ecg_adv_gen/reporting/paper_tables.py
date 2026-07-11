@@ -10,6 +10,10 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from ecg_adv_gen.evaluation import canonicalize_view, normalize_macro_metric
+from ecg_adv_gen.evaluation.comparison_identity import (
+    ComparisonIdentityError,
+    validate_comparison_identity,
+)
 
 
 TABLE_FIELDNAMES = [
@@ -29,7 +33,14 @@ TABLE_FIELDNAMES = [
     "mapping_hash",
     "class_order",
     "source_files",
+    "comparison_protocol",
+    "comparison_variant",
+    "comparison_rho",
+    "comparison_topology_version",
+    "comparison_topology_sha256",
+    "comparison_identity_json",
 ]
+COMPARISON_FIELDS = TABLE_FIELDNAMES[-6:]
 
 
 class PaperTableError(ValueError):
@@ -113,6 +124,44 @@ def _source_files(rows: Iterable[dict[str, str]]) -> str:
 
 def _raw_views(rows: Iterable[dict[str, str]]) -> str:
     return "|".join(sorted({row.get("raw_view") or row.get("view", "") for row in rows if row.get("view")}))
+
+
+def _comparison_identity_by_run(rows: list[dict[str, str]]) -> dict[str, dict[str, str]]:
+    grouped: dict[str, set[tuple[str, ...]]] = defaultdict(set)
+    for row in rows:
+        grouped[row["run_id"]].add(tuple(row.get(key, "") for key in COMPARISON_FIELDS))
+    resolved: dict[str, dict[str, str]] = {}
+    for run_id, values in grouped.items():
+        if len(values) != 1:
+            raise PaperTableError(f"Inconsistent comparison identity for run {run_id!r}")
+        values_tuple = next(iter(values))
+        flat = dict(zip(COMPARISON_FIELDS, values_tuple))
+        identity_required = bool(flat["comparison_protocol"]) or run_id.startswith("f004_")
+        if not identity_required:
+            resolved[run_id] = flat
+            continue
+        if any(not flat[key] for key in COMPARISON_FIELDS):
+            raise PaperTableError(f"Missing comparison identity for run {run_id!r}")
+        try:
+            candidate = json.loads(flat["comparison_identity_json"])
+            validate_comparison_identity(candidate)
+        except (ComparisonIdentityError, json.JSONDecodeError) as exc:
+            raise PaperTableError(f"Invalid comparison identity for run {run_id!r}: {exc}") from exc
+        if flat != {
+            "comparison_protocol": candidate["comparison_protocol"],
+            "comparison_variant": candidate["variant"],
+            "comparison_rho": str(candidate["rho"]),
+            "comparison_topology_version": candidate["topology_version"],
+            "comparison_topology_sha256": candidate["topology_sha256"],
+            "comparison_identity_json": json.dumps(
+                candidate, sort_keys=True, separators=(",", ":")
+            ),
+        }:
+            raise PaperTableError(f"Flattened comparison identity mismatch for run {run_id!r}")
+        if run_id != flat["comparison_variant"]:
+            raise PaperTableError(f"run_id/comparison_variant mismatch for {run_id!r}")
+        resolved[run_id] = flat
+    return resolved
 
 
 def _build_dataset_rows(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
@@ -272,6 +321,7 @@ def export_paper_table(
         raise PaperTableError("view must be explicitly specified")
     rows = _read_metrics(metrics_long)
     filtered = _filter_rows(rows, dataset=dataset, view=view)
+    comparison_identities = _comparison_identity_by_run(filtered)
     mapping_version, mapping_hash, class_order = _validate_single_mapping(
         filtered,
         allow_mixed_mapping=allow_mixed_mapping,
@@ -285,6 +335,8 @@ def export_paper_table(
     if not table_rows:
         raise PaperTableError("No table rows produced")
     _add_baseline_deltas(table_rows, baseline_run_id)
+    for row in table_rows:
+        row.update(comparison_identities[row["run_id"]])
 
     output_dir = Path(output_dir).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -318,6 +370,7 @@ def export_paper_table(
         "class_order": class_order,
         "n_input_metric_rows": len(filtered),
         "n_table_rows": len(table_rows),
+        "comparison_identities": comparison_identities,
     }
     manifest_path = output_dir / "paper_table_manifest.json"
     manifest_path.write_text(

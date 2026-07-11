@@ -56,6 +56,10 @@ from ecg_adv_gen.evaluation import (
 )
 from ecg_adv_gen.evaluation.pn2021_eval_cache import PN2021_EVAL_CACHE_VERSION
 from ecg_adv_gen.evaluation.inference import infer_dataset
+from ecg_adv_gen.evaluation.comparison_identity import (
+    ComparisonIdentityError,
+    resolve_producer_comparison_identity,
+)
 from ecg_adv_gen.data.contracts import PREPROCESS_CONTRACT_ID
 
 
@@ -435,6 +439,7 @@ def main():
     p.add_argument('--skip_pn2021', action='store_true')
     p.add_argument('--skip_mimic', action='store_true')
     p.add_argument('--output_path', default=None)
+    p.add_argument('--comparison_identity_json', default='')
     p.add_argument('--exclude_ref_ids', nargs='+', default=[],
                    help='Plan Rev 7 Issue #39: paths to one or more '
                         '{tag}_k{K}.meta.json files. Records whose '
@@ -461,6 +466,12 @@ def main():
     p.add_argument('--min_target_ref_excluded', type=int, default=500,
                    help='Minimum excluded K-shot refs required per target center in paper mode.')
     args = p.parse_args()
+    try:
+        comparison_identity = resolve_producer_comparison_identity(
+            args.model_dir, args.comparison_identity_json
+        )
+    except ComparisonIdentityError as exc:
+        raise SystemExit(str(exc)) from exc
     args._excluded_by_center = _load_excluded_ref_ids(args.exclude_ref_ids)
     args._included_by_center = _load_included_record_ids(args.include_record_ids)
 
@@ -487,6 +498,8 @@ def main():
         },
         'config': {k: v for k, v in vars(args).items() if not k.startswith('_')},
     }
+    if comparison_identity is not None:
+        output['comparison_identity'] = comparison_identity
     output['preprocess'] = {
         'contract_id': PREPROCESS_CONTRACT_ID,
         'preprocess_mode': args.preprocess_mode,
