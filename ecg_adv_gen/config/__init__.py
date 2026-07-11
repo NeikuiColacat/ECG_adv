@@ -37,6 +37,15 @@ from .audit import (
     managed_experiment_items,
     write_audit_report,
 )
+from .replication import (
+    attach_replication_preflight,
+    audit_replication_command_grid,
+    audit_replication_path_isolation,
+    audit_replication_producer_consumers,
+    audit_replication_surfaces,
+    build_replication_k500_groups,
+    verify_replication_k500_groups,
+)
 
 __all__ = [
     "ConfigError",
@@ -68,4 +77,11 @@ __all__ = [
     "load_active_script_index",
     "managed_experiment_items",
     "write_audit_report",
+    "attach_replication_preflight",
+    "audit_replication_command_grid",
+    "audit_replication_path_isolation",
+    "audit_replication_producer_consumers",
+    "audit_replication_surfaces",
+    "build_replication_k500_groups",
+    "verify_replication_k500_groups",
 ]

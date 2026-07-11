@@ -102,11 +102,21 @@ latest-mainline configs.
 `configs/replications/` contains thin, indexed wrappers for reruns that must not
 expand the canonical 10-stage latest-mainline snapshot or its golden contract.
 The matched EfficientNet three-seed surface is recorded under
-`configs/active_scripts.yaml:replication_surfaces`. Seed `20260601` keeps using
-the four canonical configs; seeds `20260531` and `20260611` each use four thin
-wrappers that only change `paper_protocol.kshot.seed`,
+`configs/active_scripts.yaml:replication_surfaces`. All three seeds use thin
+non-canonical wrappers that only change their replication namespace,
+`paper_protocol.kshot.seed`,
 `paper_protocol.kshot.subset_seed`, and, for PN2021-C evaluation, the matching
-`model.eval_seed`.
+`model.eval_seed`. Their K500 inputs use the isolated
+`paper_matched_effnet_k500_v7_fixedk_three_seed_20260711` data family, so materializing a
+replication cannot overwrite older K500 artifacts.
+
+The replication `20260601` selection IDs, mmap rows, signals, labels, and
+eligible/missing counts reproduce the latest-mainline canonical selection, but
+the fresh shared cache has different source indices and VAE latent realization.
+It is the selection-identity reference seed only, not a bitwise canonical run.
+The canonical configs and golden contract continue to use their original root;
+all three replication seeds use the same fresh cache version recorded in the
+active index for a fair latent comparison.
 
 Within one seed, launch train, clean, S5, and depth23 with exactly the same
 `--run-id`. Their launcher plan directories must still be different, for
@@ -115,10 +125,18 @@ example `--output-dir "$PLAN_ROOT/train"`, `.../clean`, `.../s5`, and
 `--set` to change K500 or paper-protocol seeds. The corruption RNG seed remains
 fixed at `20260501` across all selection/training seeds.
 
-The `20260611` K500 inputs are intentionally marked missing in the index. They
-must be materialized and identity-checked before GPU execution. Never copy or
-rename another seed's K500 artifacts to satisfy that preflight: these wrappers
-bind the K500 draw and the training seed to the same declared value.
+All three replication K500 inputs were freshly materialized and are indexed as
+validated. Existing legacy `20260531` files are v7 relabels of older K500
+IDs, not a deterministic fixed-K draw from the v7 nonzero eligible pool, so
+they are not paired replication inputs. Before GPU execution, the isolated
+replication family must contain and identity-check each center's ref metadata,
+selected signals, latents, raw1000 waveforms, and class-trust companion. The
+runner consumes ref metadata, latents, and raw1000 directly and regenerates its
+runtime class-trust file from raw1000 labels; selected signals and class-trust
+remain required materialization/provenance companions, not falsely described
+as child-parser inputs. The indexed validation report covers 12/12 groups; its
+hash is checked by the replication audit. Never copy or rename another seed's
+K500 artifacts to satisfy this preflight.
 
 Small launch-time overrides are supported only through an audited whitelist:
 

@@ -20,6 +20,7 @@ from .loader import (
     make_dry_run_manifest,
     validate_experiment_config,
 )
+from .replication import audit_replication_surfaces
 
 
 def load_active_script_index(path: Path) -> dict[str, Any]:
@@ -395,6 +396,19 @@ def audit_active_managed_configs(
         tracked_yaml_required=bool(launch_surface_policy.get("tracked_yaml_required")),
     )
     latest_mainline = _summarize_latest_mainline(index, rows)
+    replication_surfaces = audit_replication_surfaces(
+        repo_root=repo_root,
+        index_path=index_path,
+        local_config_path=local_config_path,
+    )
+    replication_contract_passed = bool(replication_surfaces.get("contract_passed", True))
+    replication_execution_ready = bool(replication_surfaces.get("execution_ready", True))
+    passed = (
+        all(row["passed"] for row in rows)
+        and bool(latest_mainline.get("passed", True))
+        and replication_contract_passed
+        and (not require_existing_inputs or replication_execution_ready)
+    )
     return {
         "schema_version": 1,
         "index": str(index_path),
@@ -404,13 +418,19 @@ def audit_active_managed_configs(
         "documentation_surface_policy": index.get("documentation_surface_policy") or {},
         "implementation_surface_policy": index.get("implementation_surface_policy") or {},
         "latest_mainline": latest_mainline,
+        "replication_surfaces": replication_surfaces,
         "managed_experiment_count": len(rows),
         "passed_count": sum(1 for row in rows if row["passed"]),
         "failed_count": sum(1 for row in rows if not row["passed"]),
+        "audit_failure_count": (
+            sum(1 for row in rows if not row["passed"])
+            + int(replication_surfaces.get("failed_count") or 0)
+            + int(require_existing_inputs and not replication_execution_ready)
+        ),
         "config_git_inventory": config_git_inventory,
         "config_git_summary": config_git_summary,
         "rows": rows,
-        "passed": all(row["passed"] for row in rows) and bool(latest_mainline.get("passed", True)),
+        "passed": passed,
     }
 
 

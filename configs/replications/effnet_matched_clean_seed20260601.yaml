@@ -1,12 +1,12 @@
 extends: ../experiments/pn2021_eval_v7_sjr_rgq_refexcluded.yaml
 
 experiment:
-  name: pn2021_eval_v7_sjr_rgq_refexcluded_seed20260531
+  name: pn2021_eval_v7_sjr_rgq_refexcluded_seed20260601
 
 paper_protocol:
   kshot:
-    seed: 20260531
-    subset_seed: 20260531
+    seed: 20260601
+    subset_seed: 20260601
 
 data:
   kshot_subset_root: ${paths.data_root}/paper_matched_effnet_k500_v7_fixedk_three_seed_20260711/subsets

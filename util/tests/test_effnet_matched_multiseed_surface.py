@@ -99,30 +99,43 @@ def test_replication_index_and_wrapper_inventory_are_exact_and_tracked():
     assert surface["seeds"] == list(SEEDS)
     assert surface["canonical_seed"] == 20260601
     assert surface["command_count_per_stage"] == 20
+    assert surface["pipeline_contract"] == {
+        "stage_order": list(STAGES),
+        "producer_stage": "train",
+        "consumer_stages": ["clean", "s5", "depth23"],
+        "matrix": {"centers": list(CENTERS), "arms": list(ARMS)},
+    }
     assert surface["same_run_id_across_stages"] is True
     assert surface["stage_specific_plan_output_dirs"] is True
     assert surface["cli_seed_override_allowed"] is False
     assert surface["corruption_seed"] == 20260501
-    assert surface["required_k500_artifact_suffixes"] == [
+    assert surface["materialization_artifact_suffixes"] == [
         "ref_meta.json",
         "signals.npz",
         "latent.npz",
         "raw1000.npz",
         "class_trust.json",
     ]
+    assert surface["runtime_consumed_artifact_suffixes"] == [
+        "ref_meta.json",
+        "latent.npz",
+        "raw1000.npz",
+    ]
+    assert surface["provenance_companion_suffixes"] == ["signals.npz", "class_trust.json"]
     assert surface["execute_preflight"] == "require_all_four_centers_x_five_k500_artifacts"
     assert set(records) == set(SEEDS)
     assert all(tuple(record["stages"]) == STAGES for record in records.values())
-    assert records[20260601]["canonical"] is True
-    assert records[20260601]["stages"] == CANONICAL_CONFIGS
-    assert records[20260611]["k500_input_status"] == "missing_requires_materialization"
-    assert records[20260611]["materialization_required_before_execute"] is True
+    assert all(record["canonical"] is False for record in records.values())
+    assert records[20260601]["canonical_reference_seed"] is True
+    assert records[20260601]["selection_ids_expected_equal_to_latest_canonical"] is True
+    assert records[20260601]["latent_realization_expected_bitwise_equal_to_latest_canonical"] is False
+    assert all(record["k500_input_status"] == "present_validated_2026-07-11" for record in records.values())
+    assert all(record["materialization_required_before_execute"] is False for record in records.values())
     assert records[20260611]["copy_or_rename_from_other_seed_allowed"] is False
 
     indexed_wrappers = {
         path
-        for seed, record in records.items()
-        if seed != 20260601
+        for record in records.values()
         for path in record["stages"].values()
     }
     actual_wrappers = {
@@ -130,7 +143,7 @@ def test_replication_index_and_wrapper_inventory_are_exact_and_tracked():
         for path in REPLICATION_ROOT.glob("*.yaml")
     }
     assert actual_wrappers == indexed_wrappers
-    assert len(actual_wrappers) == 8
+    assert len(actual_wrappers) == 12
     for path in sorted(actual_wrappers):
         proc = subprocess.run(
             ["git", "ls-files", "--error-unmatch", path],
@@ -142,12 +155,21 @@ def test_replication_index_and_wrapper_inventory_are_exact_and_tracked():
         assert proc.returncode == 0, f"untracked replication config: {path}"
 
 
-@pytest.mark.parametrize("seed", (20260531, 20260611))
+@pytest.mark.parametrize("seed", SEEDS)
 def test_wrappers_only_override_seed_fields(seed: int):
     record = _records_by_seed()[seed]
     for stage, path in record["stages"].items():
         raw = yaml.safe_load((REPO / path).read_text(encoding="utf-8"))
-        expected_keys = {"extends", "paper_protocol"}
+        expected_keys = {"extends", "paper_protocol", "data"}
+        assert raw["data"] == {
+            "kshot_subset_root": (
+                "${paths.data_root}/"
+                "paper_matched_effnet_k500_v7_fixedk_three_seed_20260711/subsets"
+            )
+        }
+        if stage != "train":
+            expected_keys.add("experiment")
+            assert raw["experiment"]["name"].endswith(f"_seed{seed}")
         if stage in {"s5", "depth23"}:
             expected_keys.add("model")
             assert raw["model"] == {"eval_seed": seed}
@@ -232,6 +254,32 @@ def test_consumers_match_each_seed_producer_and_keep_corruption_seed_fixed():
                     assert _option(command["argv"], "--clean_eval_json") == (
                         f"{model_dir}/eval_result_v7_exclrefs_crop1000.json"
                     )
+
+
+def test_same_run_id_is_path_isolated_across_all_three_seeds():
+    records = _records_by_seed()
+    run_id = "pytest_effnet_matched_shared_run_id"
+    producer_dirs_by_seed: dict[int, set[str]] = {}
+    consumer_outputs_by_seed: dict[int, set[str]] = {}
+    for seed in SEEDS:
+        train = _load(records[seed]["stages"]["train"], seed=seed, run_id=run_id)
+        train_manifest = _manifest(train, build_runner_commands(train), run_id)
+        producer_dirs_by_seed[seed] = {
+            child["child_run_dir"]
+            for child in train_manifest["artifact_trace"]["expected_outputs"]["child_runs"]
+        }
+        consumer_outputs_by_seed[seed] = set()
+        for stage in ("clean", "s5", "depth23"):
+            config = _load(records[seed]["stages"][stage], seed=seed, run_id=run_id)
+            commands = build_runner_commands(config)
+            consumer_outputs_by_seed[seed].update(
+                _option(command["argv"], "--output_path") for command in commands
+            )
+
+    for left_index, left_seed in enumerate(SEEDS):
+        for right_seed in SEEDS[left_index + 1 :]:
+            assert producer_dirs_by_seed[left_seed].isdisjoint(producer_dirs_by_seed[right_seed])
+            assert consumer_outputs_by_seed[left_seed].isdisjoint(consumer_outputs_by_seed[right_seed])
 
 
 def test_cross_seed_or_run_id_consumer_cannot_equal_the_producer_path():

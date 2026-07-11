@@ -4,3 +4,6 @@ paper_protocol:
   kshot:
     seed: 20260611
     subset_seed: 20260611
+
+data:
+  kshot_subset_root: ${paths.data_root}/paper_matched_effnet_k500_v7_fixedk_three_seed_20260711/subsets

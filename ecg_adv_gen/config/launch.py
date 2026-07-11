@@ -20,6 +20,7 @@ from ecg_adv_gen.evaluation.pn2021c_metadata import validate_target_init_k500_id
 
 from .adapters.common import argv_option_map, opt_first
 from .paths import PathSafetyError, is_under
+from .replication import verify_replication_k500_groups
 
 
 class LaunchError(RuntimeError):
@@ -656,6 +657,7 @@ def verify_required_inputs(manifest: dict[str, Any]) -> dict[str, Any]:
     verified: list[dict[str, Any]] = []
     initialization = trace.get("initialization") or {}
     initialization_lineage: dict[str, Any] = {}
+    replication_preflight: dict[str, Any] | None = None
 
     def check_record(record: dict[str, Any] | None) -> None:
         if not record or record.get("required") is False:
@@ -680,6 +682,25 @@ def verify_required_inputs(manifest: dict[str, Any]) -> dict[str, Any]:
         check_record(ref.get("ref_meta_json"))
         check_record(ref.get("signals_npz"))
         check_record(ref.get("latent_npz"))
+    replication_groups = inputs.get("replication_k500_groups") or []
+    if replication_groups:
+        metrics = trace.get("metrics") or {}
+        replication_preflight = verify_replication_k500_groups(
+            replication_groups,
+            mapping_version=str(metrics.get("mapping_version") or ""),
+            mapping_hash=str(metrics.get("mapping_hash") or ""),
+        )
+        missing.extend(replication_preflight["missing"])
+        lineage_errors.extend(
+            {
+                "role": "replication_k500_identity",
+                "path": str(item.get("base") or ""),
+                "error": str(item.get("error") or ""),
+                "center": item.get("center"),
+            }
+            for item in replication_preflight["identity_errors"]
+        )
+        verified.extend(replication_preflight["verified_inputs"])
 
     if initialization:
         try:
@@ -781,7 +802,7 @@ def verify_required_inputs(manifest: dict[str, Any]) -> dict[str, Any]:
         except (LaunchError, OSError, ValueError) as exc:
             lineage_errors.append({"role": "checkpoint_k500_lineage", "path": str(init_path), "error": str(exc)})
 
-    return {
+    report = {
         "passed": not missing and not lineage_errors,
         "checked_at_utc": datetime.now(timezone.utc).isoformat(),
         "n_checked": len(verified),
@@ -790,6 +811,9 @@ def verify_required_inputs(manifest: dict[str, Any]) -> dict[str, Any]:
         "initialization_lineage": initialization_lineage,
         "verified_inputs": verified,
     }
+    if replication_preflight is not None:
+        report["replication_k500_preflight"] = replication_preflight
+    return report
 
 
 def verify_required_artifacts(manifest: dict[str, Any], *, include_postprocess: bool = True) -> dict[str, Any]:

@@ -563,6 +563,7 @@ def build_handoff_contract(report: dict) -> dict:
             "inspect_active_scripts_config_git_summary",
         ],
         "latest_mainline": active_scripts.get("latest_mainline") or {},
+        "replication_surfaces": active_scripts.get("replication_surfaces") or {},
         "source_of_truth": {
             "active_evidence_registry": str(report.get("registry_path") or ""),
             "active_scripts_index": active_scripts_index,
@@ -618,7 +619,9 @@ def main() -> int:
             report["active_scripts"] = active_scripts
             report["passed"] = bool(report["passed"]) and bool(active_scripts["passed"])
             if not active_scripts["passed"]:
-                report["error_count"] += int(active_scripts["failed_count"])
+                report["error_count"] += int(
+                    active_scripts.get("audit_failure_count", active_scripts["failed_count"])
+                )
         report["external_models"] = audit_external_model_links(
             repo_root=REPO_ROOT,
             local_config_path=REPO_ROOT / args.local_config,

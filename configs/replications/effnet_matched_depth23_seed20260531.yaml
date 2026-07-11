@@ -1,5 +1,8 @@
 extends: ../experiments/pn2021c_effnet_official_s5_depth23_composite.yaml
 
+experiment:
+  name: pn2021c_effnet_official_s5_depth23_composite_seed20260531
+
 paper_protocol:
   kshot:
     seed: 20260531
@@ -7,3 +10,6 @@ paper_protocol:
 
 model:
   eval_seed: 20260531
+
+data:
+  kshot_subset_root: ${paths.data_root}/paper_matched_effnet_k500_v7_fixedk_three_seed_20260711/subsets

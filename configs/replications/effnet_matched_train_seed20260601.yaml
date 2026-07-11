@@ -2,8 +2,8 @@ extends: ../experiments/effnet_vae_lhat_augmix_threechain_locked_k500.yaml
 
 paper_protocol:
   kshot:
-    seed: 20260531
-    subset_seed: 20260531
+    seed: 20260601
+    subset_seed: 20260601
 
 data:
   kshot_subset_root: ${paths.data_root}/paper_matched_effnet_k500_v7_fixedk_three_seed_20260711/subsets

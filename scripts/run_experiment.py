@@ -28,6 +28,7 @@ from ecg_adv_gen.config import (  # noqa: E402
     run_postprocess_commands,
     validate_experiment_config,
     verify_required_inputs,
+    attach_replication_preflight,
 )
 from ecg_adv_gen.evidence import RunRecordError, finalize_run_record  # noqa: E402
 from ecg_adv_gen.runner.launch_plan import (  # noqa: E402
@@ -93,6 +94,12 @@ def main() -> int:
             run_id=args.run_id,
             cli_args=args,
             postprocess_commands=postprocess_commands,
+        )
+        manifest = attach_replication_preflight(
+            manifest,
+            config,
+            repo_root=REPO_ROOT,
+            index_path=REPO_ROOT / "configs" / "active_scripts.yaml",
         )
     except (ConfigError, OSError, ValueError) as exc:
         print(f"[config-error] {exc}", file=sys.stderr)

@@ -1,15 +1,15 @@
 extends: ../experiments/pn2021c_effnet_threechain_locked_official_s5.yaml
 
 experiment:
-  name: pn2021c_effnet_threechain_locked_official_s5_seed20260611
+  name: pn2021c_effnet_threechain_locked_official_s5_seed20260601
 
 paper_protocol:
   kshot:
-    seed: 20260611
-    subset_seed: 20260611
+    seed: 20260601
+    subset_seed: 20260601
 
 model:
-  eval_seed: 20260611
+  eval_seed: 20260601
 
 data:
   kshot_subset_root: ${paths.data_root}/paper_matched_effnet_k500_v7_fixedk_three_seed_20260711/subsets

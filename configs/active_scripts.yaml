@@ -143,37 +143,74 @@ replication_surfaces:
   launcher: scripts/run_experiment.py
   seeds: [20260531, 20260601, 20260611]
   canonical_seed: 20260601
+  canonical_seed_role: selection_identity_reference_only
+  latent_cache_version: pn2021_v3_seed42_batch64_fresh_rebuild_20260711
+  latent_cache_contract: all_three_replication_seeds_share_the_same_fresh_rebuild
+  validation_report:
+    relative_to_input_root: validation_report.json
+    sha256: 3909fea253f2bf588f305d746aca3dd360a993e7dca86a8046b97246a6e36ea6
+    expected_group_count: 12
+  f005_exact_partner_eligibility:
+    seed20260531: {ningbo: 497, chapman_shaoxing: 497, cpsc_2018: 500, georgia: 500}
+    seed20260601: {ningbo: 497, chapman_shaoxing: 498, cpsc_2018: 500, georgia: 499}
+    seed20260611: {ningbo: 497, chapman_shaoxing: 500, cpsc_2018: 500, georgia: 500}
+    singleton_policy: fail_closed_filter_before_training
+  canonical_equivalence:
+    seed20260601_equal: [selected_record_ids, mmap_rows, signals, labels, eligible_count, missing_count]
+    seed20260601_not_equal: [source_indices, vae_latent_realization]
+    bitwise_canonical_claim_allowed: false
   command_count_per_stage: 20
+  pipeline_contract:
+    stage_order: [train, clean, s5, depth23]
+    producer_stage: train
+    consumer_stages: [clean, s5, depth23]
+    matrix:
+      centers: [ningbo, chapman_shaoxing, cpsc_2018, georgia]
+      arms: [a0, a2, a3, a4, a5]
   same_run_id_across_stages: true
   stage_specific_plan_output_dirs: true
   cli_seed_override_allowed: false
   corruption_seed: 20260501
-  required_k500_artifact_suffixes: [ref_meta.json, signals.npz, latent.npz, raw1000.npz, class_trust.json]
+  materialization_artifact_suffixes: [ref_meta.json, signals.npz, latent.npz, raw1000.npz, class_trust.json]
+  runtime_consumed_artifact_suffixes: [ref_meta.json, latent.npz, raw1000.npz]
+  provenance_companion_suffixes: [signals.npz, class_trust.json]
+  class_trust_runtime_semantics: wrapper_regenerates_real_all_present_trust_from_raw1000_labels
   execute_preflight: require_all_four_centers_x_five_k500_artifacts
   evidence_scope: launch_only
   notes: Thin wrappers change the matched K500 draw and training seed together; they are not evidence until their inputs and runs are registered.
   replicates:
   - seed: 20260531
     canonical: false
-    k500_input_status: present_as_of_2026-07-11
+    k500_input_status: present_validated_2026-07-11
+    materialization_required_before_execute: false
+    copy_or_rename_from_other_seed_allowed: false
+    input_root_family: paper_matched_effnet_k500_v7_fixedk_three_seed_20260711
+    reason: Existing legacy seed20260531 artifacts are v7 relabels of old K500 IDs, not deterministic fixed-K draws from the v7 nonzero eligible pool.
     stages:
       train: configs/replications/effnet_matched_train_seed20260531.yaml
       clean: configs/replications/effnet_matched_clean_seed20260531.yaml
       s5: configs/replications/effnet_matched_s5_seed20260531.yaml
       depth23: configs/replications/effnet_matched_depth23_seed20260531.yaml
   - seed: 20260601
-    canonical: true
-    k500_input_status: present_as_of_2026-07-11
+    canonical: false
+    canonical_reference_seed: true
+    k500_input_status: present_validated_2026-07-11
+    materialization_required_before_execute: false
+    copy_or_rename_from_other_seed_allowed: false
+    input_root_family: paper_matched_effnet_k500_v7_fixedk_three_seed_20260711
+    selection_ids_expected_equal_to_latest_canonical: true
+    latent_realization_expected_bitwise_equal_to_latest_canonical: false
     stages:
-      train: configs/experiments/effnet_vae_lhat_augmix_threechain_locked_k500.yaml
-      clean: configs/experiments/pn2021_eval_v7_sjr_rgq_refexcluded.yaml
-      s5: configs/experiments/pn2021c_effnet_threechain_locked_official_s5.yaml
-      depth23: configs/experiments/pn2021c_effnet_official_s5_depth23_composite.yaml
+      train: configs/replications/effnet_matched_train_seed20260601.yaml
+      clean: configs/replications/effnet_matched_clean_seed20260601.yaml
+      s5: configs/replications/effnet_matched_s5_seed20260601.yaml
+      depth23: configs/replications/effnet_matched_depth23_seed20260601.yaml
   - seed: 20260611
     canonical: false
-    k500_input_status: missing_requires_materialization
-    materialization_required_before_execute: true
+    k500_input_status: present_validated_2026-07-11
+    materialization_required_before_execute: false
     copy_or_rename_from_other_seed_allowed: false
+    input_root_family: paper_matched_effnet_k500_v7_fixedk_three_seed_20260711
     stages:
       train: configs/replications/effnet_matched_train_seed20260611.yaml
       clean: configs/replications/effnet_matched_clean_seed20260611.yaml
