@@ -391,6 +391,7 @@ def test_effnet_provisional_latent_hull_recipe_is_explicit_and_balanced():
         "steps": 5,
         "include_anchor": False,
         "init_logit_gap": 0.0,
+        "label_mode": "exact",
     }
     assert shared["adaptation"]["attack"]["pgd_eps"] == 2.0
     assert config["run_record"]["registration_status"] == "provisional"
