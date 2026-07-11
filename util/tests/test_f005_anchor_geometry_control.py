@@ -300,10 +300,16 @@ def test_f005_run_leaf_is_unique_by_scope_variant_seed_and_lambda() -> None:
 
 
 def test_smoke_and_full_training_expand_exact_paired_cells() -> None:
-    smoke = build_runner_commands(_load(SMOKE, "pytest_f005_smoke"))
+    smoke_config = _load(SMOKE, "pytest_f005_smoke")
+    smoke = build_runner_commands(smoke_config)
     full = build_runner_commands(_load(TRAIN, "pytest_f005_full"))
     assert len(smoke) == 2
     assert len(full) == 24
+    smoke_seeds = {int(command["matrix"]["case"]["seed"]) for command in smoke}
+    assert smoke_seeds == {20260601}
+    assert int(smoke_config["paper_protocol"]["kshot"]["seed"]) in smoke_seeds
+    assert int(smoke_config["paper_protocol"]["kshot"]["subset_seed"]) in smoke_seeds
+    assert int(smoke_config["paper_protocol"]["selection"]["seed"]) in smoke_seeds
     assert {(c["matrix"]["center"], c["matrix"]["case"]["seed"], c["matrix"]["case"]["variant"])
             for c in full} == {
         (center, seed, variant)

@@ -7,6 +7,13 @@ experiment:
 study:
   expected_seeds: [20260601]
 
+paper_protocol:
+  kshot:
+    seed: 20260601
+    subset_seed: 20260601
+  selection:
+    seed: 20260601
+
 training:
   epochs: 2
 
