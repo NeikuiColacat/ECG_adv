@@ -1,0 +1,30 @@
+extends:
+  - ../experiments/pn2021c_ecgfounder_threechain_locked_official_s5.yaml
+
+experiment:
+  name: pn2021c_ecgfounder_matched_a035_v1_s5_seed20260531
+  description: Official severity-5 PN2021-C evaluation for matched ECGFounder A0/A3/A5 checkpoints.
+
+paper_protocol:
+  comparison_protocol: ecgfounder_matched_a035_v1
+  kshot: {seed: 20260531, subset_seed: 20260531}
+
+data:
+  kshot_subset_root: ${paths.data_root}/paper_matched_effnet_k500_v7_fixedk_three_seed_20260711/subsets
+
+evaluation:
+  model_family: ecgfounder_matched_a035_v1
+  output_stem: eval_pn2021_c_ecgfounder_matched_a035_v1_official_s5_locked
+
+logging:
+  child_artifacts:
+    - eval_pn2021_c_ecgfounder_matched_a035_v1_official_s5_locked.json
+
+runner:
+  matrix:
+    center: ${paper_protocol.centers.target_4}
+    case:
+      - {arm: a0}
+      - {arm: a3}
+      - {arm: a5}
+  name: ${experiment.name}_${matrix.center}_${matrix.case.arm}

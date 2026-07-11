@@ -5,6 +5,7 @@ ECGTwin 模型加载与采样工具
 支持可微分采样用于对抗攻击
 """
 
+import os
 import sys
 import torch
 import torch.nn as nn
@@ -18,7 +19,9 @@ import types
 sys.modules['tensorflow'] = None  # type: ignore
 
 # 添加 ECGTwin 模块路径
-ECGTWIN_ROOT = Path(__file__).parent.parent / "model" / "ECGTwin"
+ECGTWIN_ROOT = Path(
+    os.environ.get("ECGTWIN_ROOT", str(Path(__file__).parent.parent / "model" / "ECGTwin"))
+).expanduser().resolve(strict=False)
 sys.path.insert(0, str(ECGTWIN_ROOT))
 
 # Several external ECG repos also expose a top-level ``utils`` package.  If one

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from ecg_adv_gen.matched_ecgfounder import MATCHED_ECGFOUNDER_CONTRACT_VERSION
+
 from .pn2021_corruptions import ref_ids_sha256
 
 
@@ -49,11 +51,21 @@ def _run_k500_identity(payload: Mapping[str, Any], *, label: str) -> dict[str, A
     center = str(payload["center"] or "")
     if not center:
         raise PN2021CMetadataError(f"{label} K500 center is empty")
-    for field in ("K", "target_train_K"):
-        if type(payload[field]) is not int or payload[field] != 500:
-            raise PN2021CMetadataError(f"{label} {field} must be integer 500")
+    if type(payload["K"]) is not int or payload["K"] != 500:
+        raise PN2021CMetadataError(f"{label} K must be integer 500")
+    matched = (
+        str(payload.get("matched_contract") or config.get("matched_contract") or "")
+        == MATCHED_ECGFOUNDER_CONTRACT_VERSION
+    )
+    if type(payload["target_train_K"]) is not int:
+        raise PN2021CMetadataError(f"{label} target_train_K must be an integer")
+    if matched:
+        if not 0 < payload["target_train_K"] < payload["K"]:
+            raise PN2021CMetadataError(f"{label} matched target_train_K must be in (0, 500)")
+    elif payload["target_train_K"] != 500:
+        raise PN2021CMetadataError(f"{label} target_train_K must be integer 500")
     k = payload["K"]
-    for field in ("selected_ref_record_ids", "target_train_record_ids"):
+    for field in ("selected_ref_record_ids",):
         values = payload[field]
         if not isinstance(values, list) or len(values) != k:
             raise PN2021CMetadataError(f"{label} {field} must be a list with exactly {k} ids")
@@ -62,7 +74,17 @@ def _run_k500_identity(payload: Mapping[str, Any], *, label: str) -> dict[str, A
             raise PN2021CMetadataError(f"{label} {field} must contain {k} unique ids")
     selected = [str(item) for item in payload["selected_ref_record_ids"]]
     target_train = [str(item) for item in payload["target_train_record_ids"]]
-    if set(target_train) != set(selected):
+    if len(target_train) != payload["target_train_K"] or len(set(target_train)) != len(target_train):
+        raise PN2021CMetadataError(f"{label} target_train_record_ids do not match target_train_K")
+    if matched:
+        split = payload.get("k500_split") if isinstance(payload.get("k500_split"), Mapping) else {}
+        split_train = [str(item) for item in split.get("train_record_ids") or []]
+        split_val = [str(item) for item in split.get("val_record_ids") or []]
+        if set(split_train) != set(target_train):
+            raise PN2021CMetadataError(f"{label} matched train IDs do not match k500_split")
+        if set(split_train).intersection(split_val) or set(split_train).union(split_val) != set(selected):
+            raise PN2021CMetadataError(f"{label} matched K500 split does not partition all 500 refs")
+    elif set(target_train) != set(selected):
         raise PN2021CMetadataError(f"{label} target_train_record_ids do not match selected_ref_record_ids")
     selected_hash = ref_ids_sha256(selected)
     seed = config.get("subset_seed", config.get("seed"))

@@ -8,14 +8,15 @@ replace the dense layer with a Super5 head, and fine-tune the whole model on
 PTB-XL source plus K target-center real ECGs.
 
 The locked 2026-06-18 protocol also uses this entrypoint for ECGFounder
-VAE-LHAT and VAE-LHAT plus three-chain AugMix, while keeping all layers
-trainable and selecting only the last checkpoint.
+VAE-LHAT and VAE-LHAT plus three-chain AugMix. Legacy runs keep last-checkpoint
+selection; the optional matched A0/A3/A5 surface uses its explicit best policy.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import random
 import sys
@@ -98,15 +99,30 @@ from ecg_adv_gen.training import (  # noqa: E402
     compute_pos_weight,
     fullft_adv_batch_diagnostics,
     masked_bce_with_logits,
+    optimizer_parameter_step,
+    select_matched_auxiliary_clean_examples,
     set_module_requires_grad,
     stream_weighted_masked_bce,
     summarize_fullft_adv_epoch_diagnostics,
+    train_matched_auxiliary_epoch,
 )
 from ecg_adv_gen.training.resume_contract import (  # noqa: E402
     LOCKED_LATENT_AUGMIX_SIGNAL_SPACE,
     validate_resume_contract,
 )
 from ecg_adv_gen.run_naming import build_ecgfounder_fullft_run_leaf  # noqa: E402
+from ecg_adv_gen.matched_ecgfounder import (  # noqa: E402
+    MATCHED_ECGFOUNDER_CONTRACT_VERSION,
+    build_matched_ecgfounder_training_record,
+    build_matched_k500_contract,
+    build_view_anchor_identity,
+    external_repository_provenance,
+    load_source_checkpoint_identity,
+    should_evaluate_heldout_target,
+    source_fold9_selection_result,
+    validate_matched_runtime_args,
+)
+from ecg_adv_gen.evaluation.selection import update_matched_checkpoint_selection  # noqa: E402
 from ecg_adv_gen.evaluation.pn2021c import (  # noqa: E402
     STRESS_PROFILE_CHOICES,
     apply_corruption_sequence,
@@ -764,6 +780,11 @@ def sample_anchor_indices(
         "anchor_score_p90": float(np.percentile(picked_scores, 90)) if picked_scores.size > 0 else None,
         "anchor_score_max": float(np.max(picked_scores)) if picked_scores.size > 0 else None,
         "anchor_sample_ess": ess,
+        "anchor_picked_record_ids": (
+            np.asarray(anchor_pool["record_ids"]).astype(str)[picks].tolist()
+            if len(picks) > 0
+            else []
+        ),
     }
     return picks.astype(np.int64), stats
 
@@ -813,6 +834,7 @@ def make_train_loader(
         args,
         sorted(str(x) for x in target_train_record_ids),
     )
+    matched = str(getattr(args, "matched_contract", "")) == MATCHED_ECGFOUNDER_CONTRACT_VERSION
     return build_weighted_signal_stream_loader_from_datasets(
         source_dataset=source_ds,
         target_dataset=target_ds,
@@ -826,6 +848,9 @@ def make_train_loader(
         adv_labels=adv_labels,
         adv_teacher_logits=adv_teacher_logits,
         adv_sample_weights=adv_sample_weights,
+        target_adv_fraction=float(args.target_adv_fraction) if matched else None,
+        fixed_num_samples=(len(source_ds) + len(target_ds)) if matched else None,
+        sampler_seed=(int(args.seed) + int(getattr(args, "current_epoch", 0)) * 1009) if matched else None,
     )
 
 
@@ -1217,6 +1242,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--num_workers", type=int, default=4)
     ap.add_argument("--source_weight", type=float, default=1.0)
     ap.add_argument("--target_real_weight", type=float, default=40.0)
+    ap.add_argument("--matched_contract", default="")
+    ap.add_argument("--comparison_arm", choices=["a0", "a3", "a5"], default="a0")
+    ap.add_argument("--target_adv_fraction", type=float, default=0.0)
+    ap.add_argument("--target_real_val_fraction", type=float, default=0.2)
+    ap.add_argument("--target_real_val_seed", type=int, default=20260531)
+    ap.add_argument("--selection_metric", choices=["macro_auprc", "macro_auroc"], default="macro_auprc")
+    ap.add_argument("--source_floor_max_drop", type=float, default=0.02)
+    ap.add_argument("--expected_exact_eligible_count", type=int, default=0)
     ap.add_argument("--enable_vae_adv_stream", action="store_true")
     ap.add_argument(
         "--enable_latent_augmix_branch",
@@ -1399,6 +1432,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--hull_attack_pos_weight_clip", type=float, default=50.0)
     ap.add_argument("--hull_label_mode", choices=["primary", "exact", "compatible"], default="primary")
     ap.add_argument("--hull_include_anchor", action="store_true")
+    ap.add_argument("--hull_neighbor_distance_space", choices=["raw", "standardized"], default="raw")
+    ap.add_argument("--hull_neighbor_mode", choices=["nearest", "local_random", "random"], default="nearest")
+    ap.add_argument("--hull_neighbor_pool_size", type=int, default=0)
+    ap.add_argument("--hull_neighbor_pool_multiplier", type=int, default=4)
     ap.add_argument("--pgd_eps", type=float, default=2.0)
     ap.add_argument("--pgd_batch", type=int, default=4)
     ap.add_argument("--preprocess_policy", default="official_ptbxl_eval")
@@ -1449,6 +1486,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_arg_parser().parse_args()
+    matched_components = validate_matched_runtime_args(args)
+    is_matched = str(args.matched_contract) == MATCHED_ECGFOUNDER_CONTRACT_VERSION
     args.latent_augmix_signal_space = latent_augmix_signal_space(
         args.latent_augmix_chain_base_mode,
         args.latent_augmix_third_chain_role,
@@ -1541,12 +1580,16 @@ def main() -> None:
         cache_dir / f"ptbxl_{args.preprocess_policy}.meta.npz",
         args.preprocess_policy,
     )
+    matched_k500: dict[str, Any] | None = None
+    exact_eligibility: dict[str, Any] | None = None
+    target_val_idx = np.empty(0, dtype=np.int64)
     if args.stage == "ptbxl_source":
         pn = None
         selected_ids: set[str] = set()
         target_idx = np.empty(0, dtype=np.int64)
         target_train_idx = np.empty(0, dtype=np.int64)
         target_train_ids: set[str] = set()
+        target_val_ids: set[str] = set()
         eval_idx = np.empty(0, dtype=np.int64)
         drop_eval_idx = np.empty(0, dtype=np.int64)
     else:
@@ -1566,19 +1609,56 @@ def main() -> None:
             raise RuntimeError(
                 f"{args.center}: matched {len(target_idx)} target records; requested {args.k}"
             )
-        target_train_idx = target_idx
+        if is_matched:
+            matched_k500 = build_matched_k500_contract(
+                record_ids[target_idx],
+                pn["labels"][target_idx],
+                val_fraction=float(args.target_real_val_fraction),
+                seed=int(args.target_real_val_seed),
+            )
+            split = matched_k500["split"]
+            target_train_idx = target_idx[np.asarray(split["train_indices"], dtype=np.int64)]
+            target_val_idx = target_idx[np.asarray(split["val_indices"], dtype=np.int64)]
+            exact_eligibility = dict(matched_k500["exact_eligibility"])
+            expected_eligible = int(args.expected_exact_eligible_count)
+            if expected_eligible > 0 and int(exact_eligibility["eligible_count"]) != expected_eligible:
+                raise RuntimeError(
+                    f"{args.center}: exact/non-self eligible_count="
+                    f"{exact_eligibility['eligible_count']}, expected {expected_eligible}"
+                )
+            if set(split["train_record_ids"]).intersection(split["val_record_ids"]):
+                raise AssertionError("matched K500 train/validation IDs overlap")
+            (run_dir / "eligible_anchor_manifest.json").write_text(
+                json.dumps(exact_eligibility, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+        else:
+            target_train_idx = target_idx
         target_train_ids = set(str(record_ids[i]) for i in target_train_idx)
+        target_val_ids = set(str(record_ids[i]) for i in target_val_idx)
         eval_idx = np.asarray([i for i, rid in enumerate(record_ids) if rid not in selected_ids], dtype=np.int64)
         drop_eval_idx = eval_idx[pn["labels"][eval_idx].sum(axis=1) > 0]
 
     model = ft_12lead_ECGFounder(device, str(CHECKPOINT), 5, linear_prob=False)
     init_model_info = None
+    source_checkpoint_identity: dict[str, Any] | None = None
     if args.init_model_path:
         init_model_path = Path(args.init_model_path)
+        if is_matched:
+            source_checkpoint_identity = load_source_checkpoint_identity(init_model_path)
         load_fullft_checkpoint(init_model_path, model, device)
         init_model_info = {
             "path": str(init_model_path),
             "type": "full_model",
+            **(
+                {
+                    "sha256": source_checkpoint_identity["sha256"],
+                    "stage": source_checkpoint_identity["stage"],
+                    "selected_checkpoint": source_checkpoint_identity["selected_checkpoint"],
+                }
+                if source_checkpoint_identity is not None
+                else {}
+            ),
         }
         print(f"[setup] initialized full ECGFounder model from {init_model_path}", flush=True)
     model.train()
@@ -1623,11 +1703,24 @@ def main() -> None:
             ]
         if not anchor_pool["classes_in_scope"]:
             raise RuntimeError("VAE stream enabled but no classes remain after class filtering")
+        eligible_indices = None
+        if is_matched:
+            if exact_eligibility is None:
+                raise RuntimeError("matched VAE stream is missing exact eligibility")
+            eligible_ids = set(str(value) for value in exact_eligibility["eligible_record_ids"])
+            eligible_indices = [
+                index
+                for index, record_id in enumerate(np.asarray(anchor_pool["record_ids"]).astype(str))
+                if str(record_id) in eligible_ids
+            ]
+            if len(eligible_indices) != int(exact_eligibility["eligible_count"]):
+                raise RuntimeError("matched exact eligibility does not align with the train latent pool")
         walker = StratifiedPoolWalker(
             labels_one_hot=anchor_pool["labels"],
             classes_in_scope=anchor_pool["classes_in_scope"],
             class_to_idx=SUPER5_TO_IDX,
             seed=args.seed,
+            eligible_indices=eligible_indices,
         )
         index = SameLabelLatentIndex(
             anchor_pool["latents"],
@@ -1635,6 +1728,10 @@ def main() -> None:
             label_mode=args.hull_label_mode,
             seed=args.seed,
             include_self=args.hull_include_anchor,
+            distance_space=args.hull_neighbor_distance_space,
+            neighbor_mode=args.hull_neighbor_mode,
+            neighbor_pool_size=args.hull_neighbor_pool_size,
+            neighbor_pool_multiplier=args.hull_neighbor_pool_multiplier,
         )
         set_module_requires_grad(model, True)
     clean_anchor_augmix_dataset = None
@@ -1713,8 +1810,49 @@ def main() -> None:
     folds = ptbxl["folds"].astype(np.int64)
     val_idx = np.nonzero(folds == 9)[0]
     test_idx = np.nonzero(folds == 10)[0]
+    best_metric = -float("inf")
+    best_epoch = 0
+    source_baseline_metrics: dict[str, Any] = {}
+    best_source_floor_result: dict[str, Any] = {}
+    selection_history: list[dict[str, Any]] = []
+    realized_optimizer_steps = 0
+    actual_param_update_steps_total = 0
+    scheduler_steps = 0
+    optimizer_steps_per_epoch = 0
+    aggregate_stream_counts = {"source": 0, "target_clean": 0, "target_adv": 0}
+    if is_matched and args.stage == "k500":
+        if source_checkpoint_identity is None or matched_k500 is None or len(target_val_idx) == 0:
+            raise RuntimeError("matched target run is missing source identity or internal validation split")
+        source_baseline_metrics = eval_split(
+            model,
+            ptbxl["signals"],
+            ptbxl["labels"],
+            val_idx,
+            args.eval_batch_size,
+            device,
+        )
+        initial_target_val = eval_split(
+            model,
+            pn["signals"],
+            pn["labels"],
+            target_val_idx,
+            args.eval_batch_size,
+            device,
+        )
+        best_metric = float(initial_target_val[args.selection_metric])
+        best_source_floor_result = update_matched_checkpoint_selection(
+            best_metric=-float("inf"),
+            candidate_metric=best_metric,
+            source_metric=float(source_baseline_metrics[args.selection_metric]),
+            source_baseline_metric=float(source_baseline_metrics[args.selection_metric]),
+            source_max_drop=float(args.source_floor_max_drop),
+        )
+        best_source_floor_result["epoch"] = 0
+        selection_history.append(dict(best_source_floor_result))
+        save_fullft_checkpoint(run_dir / "best_model.pt", model)
     logs = []
     for epoch in range(1, args.epochs + 1):
+        args.current_epoch = epoch
         adv_info = {
             "signals": None,
             "labels": None,
@@ -1733,7 +1871,6 @@ def main() -> None:
         )
         if args.enable_vae_adv_stream and args.adv_weight > 0 and args.k_anchor > 0:
             assert anchor_pool is not None and pgd_gen is not None and walker is not None and index is not None
-            args.current_epoch = epoch
             adv_info = build_adv_epoch(
                 model,
                 pgd_gen.victim,
@@ -1746,6 +1883,12 @@ def main() -> None:
                 device,
                 restore_trainable_fn=lambda: configure_ecgfounder_full_train(model),
             )
+            if is_matched:
+                adv_info["view_anchor_identity"] = build_view_anchor_identity(
+                    adv_info.get("anchor_picked_record_ids") or [],
+                    train_record_ids=target_train_ids,
+                    val_record_ids=target_val_ids,
+                )
             if decoupled_clean_augmix_mode:
                 assert clean_anchor_augmix_dataset is not None
                 clean_augmix_info = build_clean_anchor_augmix_epoch(clean_anchor_augmix_dataset, args, epoch)
@@ -1811,6 +1954,8 @@ def main() -> None:
         train_mode_fn()
         losses = []
         clean_anchor_losses = []
+        epoch_base_param_update_steps = 0
+        epoch_stream_counts = {"source": 0, "target_clean": 0, "target_adv": 0}
         for x, y, stream, teacher_logits in tqdm(train_loader, desc=f"epoch {epoch}/{args.epochs}"):
             x = x.to(device, non_blocking=True)
             y = y.to(device, non_blocking=True)
@@ -1827,13 +1972,85 @@ def main() -> None:
                         loss = loss + float(args.adv_clean_logit_anchor_weight) * clean_anchor_loss
                         clean_anchor_losses.append(float(clean_anchor_loss.detach().item()))
             loss.backward()
+            stepped_parameter = None
+            parameter_step_before = 0
+            if is_matched and args.stage == "k500":
+                stepped_parameter = next(
+                    (
+                        parameter
+                        for parameter in trainable_params
+                        if parameter.grad is not None
+                        and bool(torch.isfinite(parameter.grad).all())
+                        and bool(torch.count_nonzero(parameter.grad).item())
+                    ),
+                    None,
+                )
+                if stepped_parameter is None:
+                    raise RuntimeError("base matched optimizer step has no finite nonzero gradient")
+                parameter_step_before = optimizer_parameter_step(opt, stepped_parameter)
             opt.step()
+            if stepped_parameter is not None:
+                if optimizer_parameter_step(opt, stepped_parameter) <= parameter_step_before:
+                    raise RuntimeError("base matched optimizer parameter step did not advance")
+                epoch_base_param_update_steps += 1
             losses.append(float(loss.item()))
+            epoch_stream_counts["source"] += int((stream == 0).sum().item())
+            epoch_stream_counts["target_clean"] += int((stream == 1).sum().item())
+            epoch_stream_counts["target_adv"] += int((stream == 2).sum().item())
         augmix_clean = adv_info.get("augmix_clean_signals")
         augmix_views = adv_info.get("augmix_view_signals")
         if augmix_views is None:
             augmix_views = adv_info.get("signals")
-        if (
+        matched_auxiliary_exposure: dict[str, Any] | None = None
+        if is_matched and args.stage == "k500":
+            assert pn is not None
+            matched_auxiliary_exposure = select_matched_auxiliary_clean_examples(
+                signals=pn["signals"],
+                labels=pn["labels"],
+                record_ids=pn["record_ids"],
+                train_record_ids=target_train_ids,
+                val_record_ids=target_val_ids,
+                n_samples=int(args.k_anchor),
+                seed=int(args.seed),
+                epoch=int(epoch),
+            )
+            use_raw_views = bool(matched_components and matched_components.raw_augmix)
+            if use_raw_views and (
+                augmix_clean is None
+                or augmix_views is None
+                or adv_info.get("augmix_clean_labels") is None
+            ):
+                raise RuntimeError("matched A5 did not produce its declared raw augmented views")
+            latent_augmix_consistency_stats = train_matched_auxiliary_epoch(
+                model=model,
+                clean_signals_ct=matched_auxiliary_exposure["signals"],
+                labels_np=matched_auxiliary_exposure["labels"],
+                optimizer=opt,
+                pos_weight=pos_weight,
+                device=device,
+                trainable_params=trainable_params,
+                batch_size=int(args.batch_size),
+                max_batches=int(args.latent_augmix_consistency_max_batches),
+                view_clean_signals_ct=augmix_clean if use_raw_views else None,
+                augmix_signals_ct=augmix_views if use_raw_views else None,
+                view_labels_np=(
+                    adv_info.get("augmix_clean_labels") if use_raw_views else None
+                ),
+                copies=int(args.latent_augmix_copies) if use_raw_views else 0,
+                view_bce_weight=(
+                    float(args.latent_augmix_bce_weight) if use_raw_views else 0.0
+                ),
+                consistency_weight=(
+                    float(args.latent_augmix_consistency_weight) if use_raw_views else 0.0
+                ),
+            )
+            latent_augmix_consistency_stats["clean_record_ids_sha256"] = (
+                matched_auxiliary_exposure["record_ids_sha256"]
+            )
+            latent_augmix_consistency_stats["clean_val_overlap_count"] = (
+                matched_auxiliary_exposure["val_overlap_count"]
+            )
+        elif (
             args.enable_latent_augmix_branch
             and augmix_clean is not None
             and augmix_views is not None
@@ -1881,6 +2098,8 @@ def main() -> None:
         vae_adv = adv_info.get("vae_adv_signals")
         vae_labels = adv_info.get("vae_adv_labels")
         if (
+            not (is_matched and args.stage == "k500")
+            and
             float(args.vae_adv_consistency_weight) > 0.0
             and vae_clean is not None
             and vae_adv is not None
@@ -1908,7 +2127,37 @@ def main() -> None:
                 ),
                 max_batches=args.latent_augmix_consistency_max_batches,
             )
+        if is_matched and args.stage == "k500":
+            assert matched_components is not None
+            auxiliary_budget = math.ceil(int(args.k_anchor) / int(args.batch_size))
+            if int(args.latent_augmix_consistency_max_batches) > 0:
+                auxiliary_budget = min(auxiliary_budget, int(args.latent_augmix_consistency_max_batches))
+            if int(latent_augmix_consistency_stats["n_batches"]) != auxiliary_budget:
+                raise RuntimeError(
+                    "matched auxiliary optimizer-step budget drift: "
+                    f"realized={latent_augmix_consistency_stats['n_batches']} expected={auxiliary_budget}"
+                )
+            if epoch_base_param_update_steps != len(train_loader):
+                raise RuntimeError("matched base optimizer parameter-step count drift")
+            if int(latent_augmix_consistency_stats["actual_param_update_steps"]) != auxiliary_budget:
+                raise RuntimeError("matched auxiliary optimizer calls were not real parameter updates")
+            realized_epoch_steps = epoch_base_param_update_steps + int(
+                latent_augmix_consistency_stats["actual_param_update_steps"]
+            )
+            expected_epoch_steps = len(train_loader) + auxiliary_budget
+            if realized_epoch_steps != expected_epoch_steps:
+                raise RuntimeError(
+                    f"matched optimizer-step budget drift: {realized_epoch_steps} != {expected_epoch_steps}"
+                )
+            if optimizer_steps_per_epoch not in {0, expected_epoch_steps}:
+                raise RuntimeError("matched base sampler/optimizer-step budget changed between epochs")
+            optimizer_steps_per_epoch = expected_epoch_steps
+            realized_optimizer_steps += realized_epoch_steps
+            actual_param_update_steps_total += realized_epoch_steps
+            for key in aggregate_stream_counts:
+                aggregate_stream_counts[key] += int(epoch_stream_counts[key])
         sched.step()
+        scheduler_steps += 1
         val_metrics = eval_split(
             model,
             ptbxl["signals"],
@@ -1916,6 +2165,18 @@ def main() -> None:
             val_idx,
             args.eval_batch_size,
             device,
+        )
+        target_val_metrics = (
+            eval_split(
+                model,
+                pn["signals"],
+                pn["labels"],
+                target_val_idx,
+                args.eval_batch_size,
+                device,
+            )
+            if is_matched and args.stage == "k500"
+            else None
         )
         target_metrics = (
             eval_split(
@@ -1926,7 +2187,7 @@ def main() -> None:
                 args.eval_batch_size,
                 device,
             )
-            if pn is not None
+            if pn is not None and should_evaluate_heldout_target(args.matched_contract)
             else None
         )
         drop_metrics = (
@@ -1938,14 +2199,54 @@ def main() -> None:
                 args.eval_batch_size,
                 device,
             )
-            if pn is not None
+            if pn is not None and should_evaluate_heldout_target(args.matched_contract)
             else None
+        )
+        source_floor_result: dict[str, Any] = {}
+        if is_matched and args.stage == "ptbxl_source":
+            candidate_metric = float(val_metrics[args.selection_metric])
+            source_floor_result = source_fold9_selection_result(
+                best_metric=best_metric,
+                candidate_fold9_metric=candidate_metric,
+                epoch=epoch,
+            )
+            selection_history.append(dict(source_floor_result))
+            if bool(source_floor_result["selected"]):
+                best_metric = candidate_metric
+                best_epoch = epoch
+                best_source_floor_result = dict(source_floor_result)
+                save_fullft_checkpoint(run_dir / "best_model.pt", model)
+        elif is_matched and args.stage == "k500":
+            assert target_val_metrics is not None and source_baseline_metrics
+            source_floor_result = update_matched_checkpoint_selection(
+                best_metric=best_metric,
+                candidate_metric=float(target_val_metrics[args.selection_metric]),
+                source_metric=float(val_metrics[args.selection_metric]),
+                source_baseline_metric=float(source_baseline_metrics[args.selection_metric]),
+                source_max_drop=float(args.source_floor_max_drop),
+            )
+            source_floor_result["epoch"] = epoch
+            selection_history.append(dict(source_floor_result))
+            if bool(source_floor_result["selected"]):
+                best_metric = float(source_floor_result["candidate_metric"])
+                best_epoch = epoch
+                best_source_floor_result = dict(source_floor_result)
+                save_fullft_checkpoint(run_dir / "best_model.pt", model)
+        target_total = epoch_stream_counts["target_clean"] + epoch_stream_counts["target_adv"]
+        realized_target_adv_fraction = (
+            float(epoch_stream_counts["target_adv"] / target_total) if target_total else 0.0
         )
         entry = {
             "epoch": epoch,
             "loss": float(np.mean(losses)),
             "val_macro_auroc": val_metrics["macro_auroc"],
             "val_macro_auprc": val_metrics["macro_auprc"],
+            "target_internal_val_macro_auroc": (
+                None if target_val_metrics is None else target_val_metrics["macro_auroc"]
+            ),
+            "target_internal_val_macro_auprc": (
+                None if target_val_metrics is None else target_val_metrics["macro_auprc"]
+            ),
             "target_macro_auroc": None if target_metrics is None else target_metrics["macro_auroc"],
             "target_macro_auprc": None if target_metrics is None else target_metrics["macro_auprc"],
             "target_drop_all_zero_macro_auroc": None if drop_metrics is None else drop_metrics["macro_auroc"],
@@ -1968,6 +2269,14 @@ def main() -> None:
             "adv_init_loss_gain_mean": adv_info.get("init_loss_gain_mean"),
             "adv_init_loss_gain_p50": adv_info.get("init_loss_gain_p50"),
             "adv_init_loss_gain_p90": adv_info.get("init_loss_gain_p90"),
+            "atk_anchor": {
+                "bce_mean": adv_info.get("clean_bce_mean"),
+                "loss_gain_to_adversarial_mean": adv_info.get("loss_gain_mean"),
+            },
+            "atk_init": {
+                "bce_mean": adv_info.get("init_bce_mean"),
+                "loss_gain_to_adversarial_mean": adv_info.get("init_loss_gain_mean"),
+            },
             "adv_signed_margin_drop_mean": adv_info.get("signed_margin_drop_mean"),
             "adv_signed_margin_drop_p90": adv_info.get("signed_margin_drop_p90"),
             "adv_pos_signed_margin_drop_mean": adv_info.get("pos_signed_margin_drop_mean"),
@@ -1985,6 +2294,8 @@ def main() -> None:
             "adv_anchor_class_max_repeat": adv_info.get("anchor_class_max_repeat"),
             "adv_anchor_k_per_class": adv_info.get("anchor_k_per_class"),
             "adv_anchor_picked_unique": adv_info.get("anchor_picked_unique"),
+            "effective_anchor_count": adv_info.get("anchor_picked_unique"),
+            "view_anchor_identity": adv_info.get("view_anchor_identity"),
             "adv_anchor_picked_class_counts": adv_info.get("anchor_picked_class_counts"),
             "adv_anchor_score_mean": adv_info.get("anchor_score_mean"),
             "adv_anchor_score_p90": adv_info.get("anchor_score_p90"),
@@ -1996,6 +2307,39 @@ def main() -> None:
             "latent_augmix_consistency_loss": latent_augmix_consistency_stats.get("loss"),
             "latent_augmix_consistency_bce_loss": latent_augmix_consistency_stats.get("bce_loss"),
             "latent_augmix_consistency_objective_loss": latent_augmix_consistency_stats.get("consistency_loss"),
+            "source_floor_result": source_floor_result or None,
+            "realized_stream_counts": dict(epoch_stream_counts),
+            "realized_target_adv_fraction": realized_target_adv_fraction,
+            "realized_optimizer_steps": (
+                len(train_loader)
+                + int(latent_augmix_consistency_stats["n_batches"])
+                + int(vae_adv_consistency_stats["n_batches"])
+            ),
+            "realized_optimizer_steps_total": int(realized_optimizer_steps),
+            "actual_param_update_steps": (
+                epoch_base_param_update_steps
+                + int(latent_augmix_consistency_stats.get("actual_param_update_steps", 0))
+                if is_matched and args.stage == "k500"
+                else None
+            ),
+            "actual_param_update_steps_total": (
+                int(actual_param_update_steps_total)
+                if is_matched and args.stage == "k500"
+                else None
+            ),
+            "matched_auxiliary_clean_exposure": (
+                {
+                    "record_ids_sha256": matched_auxiliary_exposure["record_ids_sha256"],
+                    "n_samples": matched_auxiliary_exposure["n_samples"],
+                    "val_overlap_count": matched_auxiliary_exposure["val_overlap_count"],
+                    "selection_seed": matched_auxiliary_exposure["selection_seed"],
+                    "epoch": matched_auxiliary_exposure["epoch"],
+                }
+                if matched_auxiliary_exposure is not None
+                else None
+            ),
+            "optimizer_steps_per_epoch": int(optimizer_steps_per_epoch),
+            "scheduler_steps": int(scheduler_steps),
             "trainable_scope": trainable_setup,
             "lr": float(opt.param_groups[0]["lr"]),
         }
@@ -2037,7 +2381,7 @@ def main() -> None:
         )
         save_fullft_checkpoint(run_dir / "last_model.pt", model)
 
-    selected_checkpoint_name = "last_model.pt"
+    selected_checkpoint_name = "best_model.pt" if is_matched else "last_model.pt"
     load_fullft_checkpoint(run_dir / selected_checkpoint_name, model, device)
     last_epoch = logs[-1]["epoch"] if logs else None
     if args.latent_augmix_chain_base_mode == "one_adv":
@@ -2099,9 +2443,47 @@ def main() -> None:
         "target_train_K": int(len(target_train_idx)),
         "selected_ref_record_ids": sorted(selected_ids),
         "target_train_record_ids": sorted(target_train_ids),
-        "checkpoint_policy": "last",
+        "checkpoint_policy": (
+            "best_fold9_source_val"
+            if is_matched and args.stage == "ptbxl_source"
+            else "k500_internal_val_plus_source_floor"
+            if is_matched
+            else "last"
+        ),
         "selected_checkpoint": selected_checkpoint_name,
+        "selection": (
+            {
+                "metric": str(args.selection_metric),
+                "selection_data": "ptbxl_fold9",
+                "report_only_data": ["ptbxl_fold10"],
+                "best_epoch": int(best_epoch),
+                "best_metric": float(best_metric),
+                "history": selection_history,
+            }
+            if is_matched and args.stage == "ptbxl_source"
+            else {
+                "metric": str(args.selection_metric),
+                "selection_data": "target_k500_internal_val",
+                "source_floor_data": "ptbxl_fold9",
+                "forbidden_data": ["pn2021_heldout"],
+                "source_floor_max_drop": float(args.source_floor_max_drop),
+                "best_epoch": int(best_epoch),
+                "best_metric": float(best_metric),
+                "source_floor_result": best_source_floor_result,
+                "history": selection_history,
+            }
+            if is_matched
+            else None
+        ),
         "last_epoch": last_epoch,
+        "ptbxl_fold9": eval_split(
+            model,
+            ptbxl["signals"],
+            ptbxl["labels"],
+            val_idx,
+            args.eval_batch_size,
+            device,
+        ),
         "ptbxl_fold10": eval_split(
             model,
             ptbxl["signals"],
@@ -2119,7 +2501,7 @@ def main() -> None:
                 args.eval_batch_size,
                 device,
             )
-            if pn is not None
+            if pn is not None and should_evaluate_heldout_target(args.matched_contract)
             else None
         ),
         "target_drop_all_zero_excluding_ref": (
@@ -2131,13 +2513,51 @@ def main() -> None:
                 args.eval_batch_size,
                 device,
             )
-            if pn is not None
+            if pn is not None and should_evaluate_heldout_target(args.matched_contract)
             else None
         ),
-        "n_target_eval": int(len(eval_idx)),
-        "n_target_drop_all_zero_eval": int(len(drop_eval_idx)),
+        "target_internal_val": (
+            eval_split(
+                model,
+                pn["signals"],
+                pn["labels"],
+                target_val_idx,
+                args.eval_batch_size,
+                device,
+            )
+            if is_matched and pn is not None
+            else None
+        ),
+        "n_target_eval": 0 if is_matched else int(len(eval_idx)),
+        "n_target_drop_all_zero_eval": 0 if is_matched else int(len(drop_eval_idx)),
         "config": vars(args),
         "init_model": init_model_info,
+        "matched_contract": MATCHED_ECGFOUNDER_CONTRACT_VERSION if is_matched else None,
+        "comparison_arm": args.comparison_arm if is_matched and args.stage == "k500" else None,
+        "source_checkpoint": source_checkpoint_identity,
+        "k500_split": None if matched_k500 is None else matched_k500["split"],
+        "exact_eligibility": exact_eligibility,
+        "optimizer_budget": {
+            "epochs": int(args.epochs),
+            "optimizer_steps_per_epoch": int(optimizer_steps_per_epoch),
+            "realized_optimizer_steps": int(realized_optimizer_steps),
+            "actual_param_update_steps": int(actual_param_update_steps_total),
+            "scheduler_steps": int(scheduler_steps),
+        },
+        "matched_auxiliary_clean_exposure": [
+            entry["matched_auxiliary_clean_exposure"]
+            for entry in logs
+            if entry.get("matched_auxiliary_clean_exposure") is not None
+        ],
+        "matched_view_anchor_exposure": [
+            {
+                "epoch": entry["epoch"],
+                **entry["view_anchor_identity"],
+            }
+            for entry in logs
+            if entry.get("view_anchor_identity") is not None
+        ],
+        "realized_stream_counts": dict(aggregate_stream_counts),
         "latent_augmix_branch": {
             "enabled": bool(args.enable_latent_augmix_branch),
             "topology": "locked_three_chain_vae_lhat_augmix",
@@ -2215,6 +2635,57 @@ def main() -> None:
             "preprocess": "ECGFounder 12 x 5000, official_ptbxl_eval preprocessing",
         },
     }
+    external_provenance = {
+        "ecgfounder": external_repository_provenance(ECGFOUNDER_ROOT),
+        "ecgtwin": external_repository_provenance(
+            os.environ.get("ECGTWIN_ROOT", str(REPO_ROOT / "model" / "ECGTwin"))
+        ),
+    }
+    result["external_repositories"] = external_provenance
+    (run_dir / "external_repo_provenance.json").write_text(
+        json.dumps(external_provenance, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    if is_matched:
+        selection_record = {
+            "contract": MATCHED_ECGFOUNDER_CONTRACT_VERSION,
+            "selected_checkpoint": selected_checkpoint_name,
+            "checkpoint_policy": result["checkpoint_policy"],
+            "selection": result["selection"],
+        }
+        (run_dir / "selection.json").write_text(
+            json.dumps(selection_record, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    if is_matched and args.stage == "k500":
+        assert source_checkpoint_identity is not None and matched_k500 is not None and exact_eligibility is not None
+        target_total = aggregate_stream_counts["target_clean"] + aggregate_stream_counts["target_adv"]
+        aggregate_rho = (
+            float(aggregate_stream_counts["target_adv"] / target_total) if target_total else 0.0
+        )
+        matched_record = build_matched_ecgfounder_training_record(
+            comparison_arm=args.comparison_arm,
+            source_checkpoint=source_checkpoint_identity,
+            split=matched_k500["split"],
+            exact_eligibility=exact_eligibility,
+            selection_metric=args.selection_metric,
+            source_floor_max_drop=args.source_floor_max_drop,
+            source_floor_result=best_source_floor_result,
+            epochs=args.epochs,
+            optimizer_steps_per_epoch=optimizer_steps_per_epoch,
+            realized_optimizer_steps=realized_optimizer_steps,
+            actual_param_update_steps=actual_param_update_steps_total,
+            scheduler_steps=scheduler_steps,
+            realized_stream_counts=aggregate_stream_counts,
+            realized_target_adv_fraction=aggregate_rho,
+            auxiliary_clean_exposure=result["matched_auxiliary_clean_exposure"],
+            view_anchor_exposure=result["matched_view_anchor_exposure"],
+        )
+        result["matched_training_record"] = matched_record
+        (run_dir / "matched_training_record.json").write_text(
+            json.dumps(matched_record, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
     with result_path.open("w") as f:
         json.dump(result, f, indent=2)
     print(json.dumps(result, indent=2), flush=True)

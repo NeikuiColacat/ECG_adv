@@ -384,6 +384,15 @@ def _replication_input_contract(surface: Mapping[str, Any]) -> dict[str, Any]:
     declared_seeds = [int(seed) for seed in surface.get("seeds") or seeds]
     if not seeds or seeds != declared_seeds or len(seeds) != len(set(seeds)):
         raise ValueError("input contract seeds are empty, duplicate, or disagree with replicates")
+    validation_seeds = [int(seed) for seed in surface.get("validation_seeds") or seeds]
+    if (
+        not validation_seeds
+        or validation_seeds != sorted(set(validation_seeds))
+        or not set(seeds).issubset(validation_seeds)
+    ):
+        raise ValueError(
+            "input contract validation_seeds must be sorted, unique, and include replicate seeds"
+        )
     families = {str(item.get("input_root_family") or "") for item in replicates}
     if len(families) != 1 or not next(iter(families)):
         raise ValueError("input contract must declare one non-empty root family")
@@ -399,7 +408,7 @@ def _replication_input_contract(surface: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "source_surface": dict(surface),
         "root_family": next(iter(families)),
-        "validation_seeds": seeds,
+        "validation_seeds": validation_seeds,
     }
 
 
@@ -504,6 +513,20 @@ def _indexed_auxiliary_bindings(index: Mapping[str, Any]):
     for raw_surface in index.get("replication_surfaces") or []:
         surface = dict(raw_surface)
         contract = contracts[str(surface["name"])]
+        source_config = str(surface.get("source_config") or "")
+        if source_config:
+            yield {
+                "surface": surface,
+                "entry": {"canonical": False},
+                "stage": "source",
+                "config": source_config,
+                "input_seeds": [],
+                "expected_command_count": int(
+                    (surface.get("source_stage") or {}).get("command_count") or 0
+                ),
+                "input_contract": contract,
+                "source_only": True,
+            }
         for raw_replicate in surface.get("replicates") or []:
             replicate = dict(raw_replicate)
             for stage, config in (replicate.get("stages") or {}).items():
@@ -593,6 +616,14 @@ def _validate_replication_binding(
         raise ValueError(f"indexed replication entry must be git tracked: {target}")
     if target not in sources:
         raise ValueError(f"indexed auxiliary config sources do not contain entry {target}")
+    if binding.get("source_only"):
+        expected_count = int(binding.get("expected_command_count") or 0)
+        observed_count = len((manifest or {}).get("commands") or [])
+        if expected_count <= 0 or observed_count != expected_count:
+            raise ValueError(
+                f"indexed source command count drift: {observed_count} != {expected_count}"
+            )
+        return binding
     family = str(binding["input_contract"]["root_family"])
     expected_root = _canonical_study_input_root(config, root_family=family)
     observed_root = _resolved_path(subset_root)
@@ -717,6 +748,8 @@ def attach_replication_preflight(
         index, config, repo_root=repo_root, manifest=manifest
     )
     if binding is None:
+        return manifest
+    if binding.get("source_only"):
         return manifest
     surface = binding["surface"]
     entry = binding["entry"]
@@ -961,10 +994,14 @@ def audit_replication_producer_consumers(
         for command in commands:
             options = argv_option_map([str(value) for value in command["argv"]])
             key = _command_key(command)
-            model_dir = str(opt_first(options, "--model_dir"))
+            model_dir = str(
+                opt_first(options, "--model_dir", "")
+                or opt_first(options, "--run_dir", "")
+            )
             if producers.get(key) != model_dir:
                 errors.append(
-                    f"{stage}:{key} model_dir={model_dir!r}, producer={producers.get(key)!r}"
+                    f"{stage}:{key} consumer_run_dir={model_dir!r}, "
+                    f"producer={producers.get(key)!r}"
                 )
             outputs.add(str(opt_first(options, "--output_path")))
     return {
@@ -972,6 +1009,55 @@ def audit_replication_producer_consumers(
         "producer_count": len(producers),
         "producer_dirs": sorted(producers.values()),
         "consumer_output_paths": sorted(outputs),
+        "errors": errors,
+    }
+
+
+def audit_replication_source_checkpoint_binding(
+    source_children: Sequence[Mapping[str, Any]],
+    training_commands: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Require every matched training command to start from one source best model."""
+
+    errors: list[str] = []
+    source_best_model = ""
+    if len(source_children) != 1:
+        errors.append(
+            f"source config must produce exactly one child run, observed {len(source_children)}"
+        )
+    else:
+        artifacts = source_children[0].get("expected_artifacts") or []
+        best_paths = [
+            str(item.get("path") or "")
+            for item in artifacts
+            if str(item.get("role") or "") == "best_model"
+        ]
+        if len(best_paths) != 1 or not best_paths[0].endswith("/best_model.pt"):
+            errors.append("source child must declare exactly one best_model.pt artifact")
+        else:
+            source_best_model = best_paths[0]
+
+    bound_count = 0
+    observed_paths: set[str] = set()
+    for command in training_commands:
+        options = argv_option_map([str(value) for value in command["argv"]])
+        init_path = str(opt_first(options, "--init_model_path", ""))
+        observed_paths.add(init_path)
+        if source_best_model and init_path == source_best_model:
+            bound_count += 1
+        else:
+            errors.append(
+                f"training command {_command_key(command)} init_model_path={init_path!r}, "
+                f"source_best_model={source_best_model!r}"
+            )
+    if not training_commands:
+        errors.append("matched source binding requires at least one training command")
+
+    return {
+        "passed": not errors,
+        "source_best_model": source_best_model,
+        "bound_training_command_count": bound_count,
+        "observed_init_model_paths": sorted(observed_paths),
         "errors": errors,
     }
 
@@ -993,6 +1079,97 @@ def audit_replication_path_isolation(
             if consumer_overlap:
                 errors.append(f"consumer output paths overlap for seeds {left} and {right}: {consumer_overlap}")
     return {"passed": not errors, "errors": errors}
+
+
+def _audit_replication_source_config(
+    surface: Mapping[str, Any],
+    *,
+    repo_root: Path,
+    local_config_path: Path,
+    run_id: str,
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    """Load the optional source producer and expose its selected checkpoint contract."""
+
+    config_rel = str(surface.get("source_config") or "")
+    if not config_rel:
+        return None, []
+    source_stage = dict(surface.get("source_stage") or {})
+    config_path = repo_root / config_rel
+    tracked = _git_tracked(repo_root, config_rel)
+    errors: list[str] = []
+    children: list[dict[str, Any]] = []
+    command_count = 0
+    checkpoint = ""
+    try:
+        config = load_experiment_config(
+            config_path,
+            local_config_path,
+            runtime_context={"run_id": run_id},
+        )
+        local_paths = validate_experiment_config(config, repo_root=repo_root)
+        commands = build_runner_commands(config)
+        command_count = len(commands)
+        expected_count = int(source_stage.get("command_count") or 0)
+        if command_count != expected_count or expected_count != 1:
+            errors.append(
+                f"source command_count={command_count}, declared={expected_count}; expected one"
+            )
+        for command in commands:
+            options = argv_option_map([str(value) for value in command["argv"]])
+            if str(opt_first(options, "--stage", "")) != "ptbxl_source":
+                errors.append("source command must use --stage ptbxl_source")
+        manifest = make_dry_run_manifest(
+            config,
+            commands=commands,
+            local_paths=local_paths,
+            run_id=run_id,
+            cli_args=type("Args", (), {"dry_run": True, "write_plan": False})(),
+        )
+        children = list(
+            manifest["artifact_trace"]["expected_outputs"]["child_runs"]
+        )
+        if len(children) == 1:
+            artifacts = children[0].get("expected_artifacts") or []
+            roles = {str(item.get("role") or "") for item in artifacts}
+            if "selection" not in roles:
+                errors.append("source child does not declare selection.json")
+            checkpoint_paths = [
+                Path(str(item.get("path") or ""))
+                for item in artifacts
+                if str(item.get("role") or "") == "best_model"
+            ]
+            if len(checkpoint_paths) == 1:
+                checkpoint = checkpoint_paths[0].name
+            else:
+                errors.append("source child does not declare exactly one best_model artifact")
+        else:
+            errors.append(f"source config produced {len(children)} child runs, expected one")
+        if checkpoint != str(source_stage.get("checkpoint") or ""):
+            errors.append(
+                f"source checkpoint={checkpoint!r}, declared={source_stage.get('checkpoint')!r}"
+            )
+        if source_stage.get("selection_data") != "ptbxl_fold9_only":
+            errors.append("source selection_data must be ptbxl_fold9_only")
+        if source_stage.get("report_only_data") != "ptbxl_fold10":
+            errors.append("source report_only_data must be ptbxl_fold10")
+    except (KeyError, OSError, TypeError, ValueError) as exc:
+        errors.append(str(exc))
+    if not tracked:
+        errors.append(f"source config is not tracked: {config_rel}")
+    return (
+        {
+            "config": config_rel,
+            "config_exists": config_path.is_file(),
+            "config_tracked_by_git": tracked,
+            "command_count": command_count,
+            "selection_data": source_stage.get("selection_data"),
+            "report_only_data": source_stage.get("report_only_data"),
+            "checkpoint": checkpoint,
+            "contract_passed": not errors,
+            "errors": errors,
+        },
+        children,
+    )
 
 
 def _declared_ready(status: str) -> bool | None:
@@ -1076,7 +1253,7 @@ def audit_study_surfaces(
         bindings = [
             item
             for item in _indexed_auxiliary_bindings(index)
-            if item["expected_command_count"] is not None
+            if item["expected_command_count"] is not None and not item.get("source_only")
         ]
     except (KeyError, TypeError, ValueError) as exc:
         inventory_errors.append(str(exc))
@@ -1152,21 +1329,33 @@ def audit_replication_surfaces(
         centers = tuple(str(center) for center in matrix_contract.get("centers") or [])
         arms = tuple(str(arm) for arm in matrix_contract.get("arms") or [])
         surface_errors: list[str] = []
+        shared_run_id = f"audit_{surface.get('name')}_shared_run_id"
         if not stage_order or producer_stage not in stage_order or not centers or not arms:
             surface_errors.append("pipeline_contract must declare stages, producer, centers, and arms")
         if set(consumer_stages) != set(stage_order).difference({producer_stage}):
             surface_errors.append("pipeline_contract consumer_stages must be every non-producer stage")
         if int(surface.get("command_count_per_stage") or 0) != len(centers) * len(arms):
             surface_errors.append("command_count_per_stage does not match centers x arms")
+        source_report, source_children = _audit_replication_source_config(
+            surface,
+            repo_root=repo_root,
+            local_config_path=local_config_path,
+            run_id=shared_run_id,
+        )
+        if source_report is not None:
+            surface_errors.extend(
+                f"source_config: {error}" for error in source_report["errors"]
+            )
         replicate_reports: list[dict[str, Any]] = []
         producers_by_seed: dict[int, set[str]] = {}
         outputs_by_seed: dict[int, set[str]] = {}
         input_roots: set[str] = set()
         materialization_groups: list[dict[str, Any]] = []
+        validation_groups: list[dict[str, Any]] = []
         for raw_replicate in surface.get("replicates") or []:
             replicate = dict(raw_replicate)
             seed = int(replicate.get("seed"))
-            run_id = f"audit_{surface.get('name')}_shared_run_id"
+            run_id = shared_run_id
             stage_reports: list[dict[str, Any]] = []
             configs: dict[str, dict[str, Any]] = {}
             commands_by_stage: dict[str, list[dict[str, Any]]] = {}
@@ -1224,6 +1413,7 @@ def audit_replication_surfaces(
                     )
 
             producer_consumer_match = False
+            source_checkpoint_binding: dict[str, Any] | None = None
             preflight = {"passed": False, "missing": [], "identity_errors": []}
             if producer_stage and set(configs) == set(stage_order):
                 train_manifest = make_dry_run_manifest(
@@ -1248,7 +1438,22 @@ def audit_replication_surfaces(
                 outputs_by_seed[seed] = set(binding_audit["consumer_output_paths"])
                 producer_consumer_match = bool(binding_audit["passed"])
                 seed_errors.extend(binding_audit["errors"])
+                if source_report is not None:
+                    source_checkpoint_binding = audit_replication_source_checkpoint_binding(
+                        source_children,
+                        commands_by_stage[producer_stage],
+                    )
+                    seed_errors.extend(source_checkpoint_binding["errors"])
                 groups = train_manifest["artifact_trace"]["inputs"]["replication_k500_groups"]
+                current_validation_groups = train_manifest["artifact_trace"]["inputs"][
+                    "replication_validation_groups"
+                ]
+                if not validation_groups:
+                    validation_groups = list(current_validation_groups)
+                elif [group["base"] for group in validation_groups] != [
+                    group["base"] for group in current_validation_groups
+                ]:
+                    seed_errors.append("replication validation group scope changed between seeds")
                 if groups:
                     input_roots.add(str(Path(groups[0]["base"]).parents[3]))
                     materialization_groups.extend(groups)
@@ -1277,6 +1482,7 @@ def audit_replication_surfaces(
                     "status_errors": status_errors,
                     "stages": stage_reports,
                     "producer_consumer_paths_match": producer_consumer_match,
+                    "source_checkpoint_binding": source_checkpoint_binding,
                     "k500_preflight": preflight,
                     "contract_passed": not seed_errors and status_consistent,
                     "execution_ready": not seed_errors and bool(preflight["passed"]),
@@ -1290,7 +1496,7 @@ def audit_replication_surfaces(
         validation_report = _audit_validation_report(
             surface,
             input_roots=input_roots,
-            groups=materialization_groups,
+            groups=validation_groups or materialization_groups,
         )
         surface_errors.extend(validation_report["errors"])
         contract_passed = not surface_errors and all(item["contract_passed"] for item in replicate_reports)
@@ -1298,6 +1504,7 @@ def audit_replication_surfaces(
             {
                 "name": surface.get("name"),
                 "status": surface.get("status"),
+                "source_config": source_report,
                 "path_isolation_passed": path_isolation_passed,
                 "contract_passed": contract_passed,
                 "execution_ready": contract_passed and all(item["execution_ready"] for item in replicate_reports),

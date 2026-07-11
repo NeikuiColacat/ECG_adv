@@ -110,6 +110,53 @@ class TaggedMemorySignalDataset(Dataset):
         )
 
 
+def matched_signal_stream_weights(
+    *,
+    source_count: int,
+    target_clean_count: int,
+    target_adv_count: int,
+    source_weight: float,
+    target_weight: float,
+    target_adv_fraction: float,
+) -> dict[str, float | int]:
+    """Return copy-invariant row weights for a matched source/target stream."""
+
+    source_count = int(source_count)
+    target_clean_count = int(target_clean_count)
+    target_adv_count = int(target_adv_count)
+    rho = float(target_adv_fraction)
+    if min(source_count, target_clean_count, target_adv_count) < 0:
+        raise ValueError("matched stream counts must be non-negative")
+    if not 0.0 <= rho <= 1.0:
+        raise ValueError("target_adv_fraction must be in [0, 1]")
+    if float(source_weight) < 0.0 or float(target_weight) <= 0.0:
+        raise ValueError("matched stream weights require source_weight >= 0 and target_weight > 0")
+    if target_clean_count <= 0:
+        raise ValueError("matched stream requires a non-empty target-clean split")
+    if rho > 0.0 and target_adv_count <= 0:
+        raise ValueError("positive target_adv_fraction requires target adversarial samples")
+
+    target_total_mass = float(target_weight) * target_clean_count
+    target_clean_mass = target_total_mass * (1.0 - rho)
+    target_adv_mass = target_total_mass * rho
+    return {
+        "source_count": source_count,
+        "target_clean_count": target_clean_count,
+        "target_adv_count": target_adv_count,
+        "source_row_weight": float(source_weight),
+        "target_clean_row_weight": target_clean_mass / target_clean_count,
+        "target_adv_row_weight": (
+            target_adv_mass / target_adv_count if target_adv_count else 0.0
+        ),
+        "source_total_mass": float(source_weight) * source_count,
+        "target_clean_mass": target_clean_mass,
+        "target_adv_mass": target_adv_mass,
+        "target_total_mass": target_total_mass,
+        "target_adv_mass_fraction": rho,
+        "num_samples": source_count + target_clean_count,
+    }
+
+
 def build_weighted_signal_stream_loader_from_datasets(
     *,
     source_dataset: Dataset,
@@ -126,6 +173,9 @@ def build_weighted_signal_stream_loader_from_datasets(
     adv_sample_weights: np.ndarray | None = None,
     pin_memory: bool = True,
     drop_last: bool = False,
+    target_adv_fraction: float | None = None,
+    fixed_num_samples: int | None = None,
+    sampler_seed: int | None = None,
 ) -> DataLoader:
     """Build source/target/adversarial ECG stream loader from prepared datasets."""
     source_ds = TaggedSignalDataset(source_dataset, stream_id=0, num_classes=num_classes)
@@ -133,6 +183,28 @@ def build_weighted_signal_stream_loader_from_datasets(
 
     datasets: list[Dataset] = []
     weights: list[float] = []
+    matched_contract: dict[str, float | int] | None = None
+    matched_adv_weights: np.ndarray | None = None
+    if target_adv_fraction is not None:
+        matched_contract = matched_signal_stream_weights(
+            source_count=len(source_ds),
+            target_clean_count=len(target_ds),
+            target_adv_count=0 if adv_signals is None else len(adv_signals),
+            source_weight=source_weight,
+            target_weight=target_real_weight,
+            target_adv_fraction=target_adv_fraction,
+        )
+        source_weight = float(matched_contract["source_row_weight"])
+        target_real_weight = float(matched_contract["target_clean_row_weight"])
+        adv_weight = float(matched_contract["target_adv_row_weight"])
+        if adv_sample_weights is not None and len(adv_sample_weights) > 0:
+            matched_adv_weights = np.asarray(adv_sample_weights, dtype=np.float64)
+            if not np.isfinite(matched_adv_weights).all() or np.any(matched_adv_weights < 0):
+                raise ValueError("adv_sample_weights must be finite and non-negative")
+            total = float(matched_adv_weights.sum())
+            if total <= 0.0:
+                raise ValueError("matched adv_sample_weights must have positive mass")
+            matched_adv_weights = matched_adv_weights * (len(matched_adv_weights) / total)
     if float(source_weight) > 0.0:
         datasets.append(source_ds)
         weights.extend([float(source_weight)] * len(source_ds))
@@ -152,7 +224,9 @@ def build_weighted_signal_stream_loader_from_datasets(
             teacher_logits=adv_teacher_logits,
         )
         datasets.append(adv_ds)
-        if adv_sample_weights is None:
+        if matched_adv_weights is not None:
+            weights.extend((float(adv_weight) * matched_adv_weights).tolist())
+        elif adv_sample_weights is None or target_adv_fraction is not None:
             weights.extend([float(adv_weight)] * len(adv_ds))
         else:
             adv_sample_weights = np.asarray(adv_sample_weights, dtype=np.float64)
@@ -165,8 +239,22 @@ def build_weighted_signal_stream_loader_from_datasets(
         raise RuntimeError("no active training streams; check source/target/adv weights")
 
     combined = ConcatDataset(datasets)
-    sampler = WeightedRandomSampler(weights, num_samples=len(weights), replacement=True)
-    return DataLoader(
+    num_samples = len(weights) if fixed_num_samples is None else int(fixed_num_samples)
+    if matched_contract is not None and fixed_num_samples is None:
+        num_samples = int(matched_contract["num_samples"])
+    if num_samples <= 0:
+        raise ValueError("fixed_num_samples must be positive")
+    generator = None
+    if sampler_seed is not None:
+        generator = torch.Generator()
+        generator.manual_seed(int(sampler_seed))
+    sampler = WeightedRandomSampler(
+        weights,
+        num_samples=num_samples,
+        replacement=True,
+        generator=generator,
+    )
+    loader = DataLoader(
         combined,
         batch_size=int(batch_size),
         sampler=sampler,
@@ -175,6 +263,11 @@ def build_weighted_signal_stream_loader_from_datasets(
         persistent_workers=int(num_workers) > 0,
         drop_last=bool(drop_last),
     )
+    if matched_contract is not None:
+        matched_contract = dict(matched_contract)
+        matched_contract["num_samples"] = num_samples
+        loader.stream_sampling_contract = matched_contract
+    return loader
 
 
 def build_weighted_signal_stream_loader(
@@ -227,4 +320,5 @@ __all__ = [
     "TaggedSignalDataset",
     "build_weighted_signal_stream_loader",
     "build_weighted_signal_stream_loader_from_datasets",
+    "matched_signal_stream_weights",
 ]

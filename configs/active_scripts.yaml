@@ -220,6 +220,52 @@ replication_surfaces:
       clean: configs/replications/effnet_matched_clean_seed20260611.yaml
       s5: configs/replications/effnet_matched_s5_seed20260611.yaml
       depth23: configs/replications/effnet_matched_depth23_seed20260611.yaml
+- name: ecgfounder_matched_a035_v1
+  status: launch_only_evidence_pending
+  launcher: scripts/run_experiment.py
+  source_config: configs/defaults/ecgfounder_matched_a035_v1.yaml
+  source_stage:
+    command_count: 1
+    selection_data: ptbxl_fold9_only
+    report_only_data: ptbxl_fold10
+    checkpoint: best_model.pt
+  seeds: [20260531]
+  canonical_seed: 20260531
+  validation_seeds: [20260531, 20260601, 20260611]
+  validation_report:
+    relative_to_input_root: validation_report.json
+    sha256: 3909fea253f2bf588f305d746aca3dd360a993e7dca86a8046b97246a6e36ea6
+    expected_group_count: 12
+  command_count_per_stage: 12
+  pipeline_contract:
+    stage_order: [train, clean, s5, depth23]
+    producer_stage: train
+    consumer_stages: [clean, s5, depth23]
+    matrix:
+      centers: [ningbo, chapman_shaoxing, cpsc_2018, georgia]
+      arms: [a0, a3, a5]
+  same_run_id_across_stages: true
+  stage_specific_plan_output_dirs: true
+  cli_seed_override_allowed: false
+  corruption_seed: 20260501
+  materialization_artifact_suffixes: [ref_meta.json, signals.npz, latent.npz, raw1000.npz, class_trust.json]
+  runtime_consumed_artifact_suffixes: [ref_meta.json, latent.npz, raw1000.npz]
+  provenance_companion_suffixes: [signals.npz, class_trust.json]
+  execute_preflight: require_all_four_centers_k500_artifacts
+  evidence_scope: launch_only
+  notes: Optional matched ECGFounder replication; run the source_config once, then use one run id for train, clean, S5, and depth23. No result is evidence until registered.
+  replicates:
+  - seed: 20260531
+    canonical: false
+    k500_input_status: present_validated_2026-07-11
+    materialization_required_before_execute: false
+    copy_or_rename_from_other_seed_allowed: false
+    input_root_family: paper_matched_effnet_k500_v7_fixedk_three_seed_20260711
+    stages:
+      train: configs/replications/ecgfounder_matched_train_seed20260531.yaml
+      clean: configs/replications/ecgfounder_matched_clean_seed20260531.yaml
+      s5: configs/replications/ecgfounder_matched_s5_seed20260531.yaml
+      depth23: configs/replications/ecgfounder_matched_depth23_seed20260531.yaml
 study_surfaces:
 - name: effnet_f004_rho_sweep
   status: launch_only_evidence_pending

@@ -144,7 +144,7 @@ def test_replication_index_and_wrapper_inventory_are_exact_and_tracked():
     }
     actual_wrappers = {
         path.relative_to(REPO).as_posix()
-        for path in REPLICATION_ROOT.glob("*.yaml")
+        for path in REPLICATION_ROOT.glob("effnet_matched_*.yaml")
     }
     assert actual_wrappers == indexed_wrappers
     assert len(actual_wrappers) == 12

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -16,13 +17,33 @@ from ecg_adv_gen.models.ecgfounder_heads import (
 
 
 def fullft_model_path(run_dir: str | Path) -> Path:
-    """Return the full-FT checkpoint path, preferring locked last checkpoint."""
+    """Return a recorded selection, otherwise preserve legacy last-model semantics."""
 
     run_dir = Path(run_dir)
+    for record_name in ("eval_result.json", "selection.json"):
+        record_path = run_dir / record_name
+        if not record_path.exists():
+            continue
+        payload = json.loads(record_path.read_text(encoding="utf-8"))
+        selected = payload.get("selected_checkpoint")
+        if not selected and isinstance(payload.get("selection"), dict):
+            selected = payload["selection"].get("checkpoint")
+        if not selected:
+            continue
+        selected_name = str(selected)
+        if Path(selected_name).name != selected_name:
+            raise ValueError(f"selected checkpoint must be a run-local filename: {selected_name!r}")
+        selected_path = run_dir / selected_name
+        if not selected_path.exists():
+            raise FileNotFoundError(f"recorded selected checkpoint does not exist: {selected_path}")
+        return selected_path
     last_path = run_dir / "last_model.pt"
     if last_path.exists():
         return last_path
-    return run_dir / "best_model.pt"
+    best_path = run_dir / "best_model.pt"
+    if best_path.exists():
+        return best_path
+    return best_path
 
 
 def detect_eval_mode(run_dir: str | Path) -> str:

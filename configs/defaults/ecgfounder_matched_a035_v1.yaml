@@ -1,0 +1,129 @@
+extends:
+  - ecgfounder_v7_sjr_rgq_defaults.yaml
+
+experiment:
+  name: ecgfounder_matched_a035_v1
+  description: Matched ECGFounder source full-FT producer for the optional A0/A3/A5 replication.
+
+paper_protocol:
+  comparison_protocol: ecgfounder_matched_a035_v1
+  kshot:
+    seed: 20260531
+    subset_seed: 20260531
+  selection:
+    policy: k500_internal_val_plus_source_floor
+    allowed_data: [target_k500_train_split, target_k500_internal_val, ptbxl_source_floor]
+    validation_fraction: 0.2
+    seed: 20260531
+    metric: macro_auprc
+    source_floor: {metric: macro_auprc, max_drop: 0.02}
+    checkpoint: best_model.pt
+    forbid_heldout_target_labels: true
+    forbid_full_target_distribution_tuning: true
+  exact_eligible_train_count:
+    ningbo: 374
+    chapman_shaoxing: 386
+    cpsc_2018: 400
+    georgia: 376
+
+data:
+  kshot_subset_root: ${paths.data_root}/paper_matched_effnet_k500_v7_fixedk_three_seed_20260711/subsets
+  target_real_npz_suffix: .raw1000.npz
+
+model:
+  init_model_path: >-
+    ${paths.output_root}/ecgfounder_matched_a035_v1/${runtime.run_id}/runs/ptbxl_source_fullft/best_model.pt
+
+training:
+  epochs: 5
+  batch_size: 64
+  eval_batch_size: 128
+  num_workers: ${resources.default_num_workers}
+  optimizer:
+    name: adamw
+    lr: 0.00002
+    weight_decay: 0.0001
+
+adaptation:
+  stage: ptbxl_source
+  method: ecgfounder_matched_source_fullft
+  run_name: ptbxl_source_fullft
+  loss:
+    source_weight: 1.0
+    target_real_weight: 40.0
+    source_bce_loss_weight: 1.0
+    target_real_bce_loss_weight: 1.0
+    adv_bce_loss_weight: 1.0
+    adv_clean_logit_anchor_weight: 0.0
+  vae:
+    enabled: true
+    adv_weight: 1.0
+    k_anchor: 160
+    anchor_sample_mode: stratified
+    anchor_sample_power: 1.0
+    anchor_sample_min_weight: 0.000001
+    anchor_class_max_repeat: 0
+    min_class_count: 1
+    anchor_base_root: ${data.kshot_subset_root}
+  hull:
+    M: 20
+    lambda: 0.6
+    steps: 5
+    lr: 0.25
+    init_logit_gap: 0.0
+    weight_mode: optimized
+    dirichlet_alpha: 1.0
+    include_anchor: false
+    label_mode: exact
+    neighbor_distance_space: standardized
+    neighbor_mode: local_random
+    neighbor_pool_size: 120
+    neighbor_pool_multiplier: 4
+    attack_pos_weight_source: none
+    attack_pos_weight_clip: 50.0
+  attack:
+    pgd_eps: 2.0
+    pgd_batch: 4
+  latent_augmix:
+    enabled: true
+    chain_base_mode: clean_clean_third
+    third_chain_role: vae_lhat_adversarial_waveform
+    copies: 2
+    width: 3
+    depth: -1
+    alpha: 1.0
+    severity: 5
+    severity_profile: standard
+    ops: ${paper_protocol.operator_sets.train_atomic}
+    consistency:
+      consistency_weight: 2.0
+      consistency_loss: jsd
+      bce_weight: 1.0
+      max_batches: 0
+      batch_size: 64
+
+runner:
+  entrypoint: ecg_adv_gen/runner/ecgfounder_fullft.py
+  adapter: ecgfounder_fullft
+  name: ecgfounder_matched_source_fullft
+  env:
+    ECGTWIN_ROOT: ${paths.model_root}/ECGTwin
+
+logging:
+  launch_artifacts:
+    - run_config.resolved.yaml
+    - run_config.resolved.json
+    - run_manifest.json
+    - command.sh
+    - data_manifest.json
+    - selection.json
+    - run_card.json
+    - run_file_index.json
+    - summary.md
+  child_artifacts:
+    - best_model.pt
+    - last_model.pt
+    - training_log.json
+    - selection.json
+    - eval_result.json
+    - external_repo_provenance.json

@@ -1,0 +1,47 @@
+extends:
+  - ../defaults/ecgfounder_matched_a035_v1.yaml
+
+experiment:
+  name: ecgfounder_matched_a035_v1
+  description: Matched ECGFounder A0/A3/A5 K500 training grid initialized from one source best checkpoint.
+
+training:
+  epochs: 10
+
+adaptation:
+  stage: k500
+  method: ecgfounder_matched_a035_v1
+
+runner:
+  matrix:
+    center: ${paper_protocol.centers.target_4}
+    case:
+      - {arm: a0}
+      - {arm: a3}
+      - {arm: a5}
+  name: ${experiment.name}_${matrix.center}_${matrix.case.arm}
+
+logging:
+  required_epoch_metrics:
+    - realized_stream_counts
+    - realized_target_adv_fraction
+    - realized_optimizer_steps
+    - actual_param_update_steps
+    - matched_auxiliary_clean_exposure
+    - atk_anchor
+    - atk_init
+    - effective_anchor_count
+    - view_anchor_identity
+    - adv_loss_gain_mean
+    - latent_augmix_consistency_stats
+    - scheduler_steps
+    - source_floor_result
+  child_artifacts:
+    - best_model.pt
+    - last_model.pt
+    - training_log.json
+    - selection.json
+    - matched_training_record.json
+    - eligible_anchor_manifest.json
+    - eval_result.json
+    - external_repo_provenance.json

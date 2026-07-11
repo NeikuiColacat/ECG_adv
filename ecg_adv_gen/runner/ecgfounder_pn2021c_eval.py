@@ -857,6 +857,27 @@ def eval_one(
     }
 
 
+def add_matched_evaluation_args(parser: argparse.ArgumentParser) -> None:
+    """Add the selected-checkpoint and clean-only matched evaluation switches."""
+
+    parser.add_argument("--clean_only", action="store_true")
+    parser.add_argument("--require_selected_checkpoint", action="store_true")
+
+
+def require_selected_checkpoint(run_dir: str | Path) -> Path:
+    """Require the matched evaluator to score the recorded best checkpoint."""
+
+    run_path = Path(run_dir)
+    result_path = run_path / "eval_result.json"
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    if result.get("selected_checkpoint") != "best_model.pt":
+        raise ValueError("matched ECGFounder evaluation requires selected best_model.pt")
+    selected = fullft_model_path(run_path)
+    if selected.name != "best_model.pt":
+        raise ValueError("matched ECGFounder evaluation resolved a non-best checkpoint")
+    return selected
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--scheme", default="super5", choices=["super5"])
@@ -927,6 +948,7 @@ def main() -> None:
         help="Recompute clean PN2021 metrics through the same ECGFounder input stabilizer before reporting drops.",
     )
     p.add_argument("--output_path", default=None)
+    add_matched_evaluation_args(p)
     args = p.parse_args()
     try:
         args.severity_profile_params = _resolve_severity_profile_args(args)
@@ -935,6 +957,8 @@ def main() -> None:
         raise SystemExit(str(exc)) from exc
 
     run_dir = Path(args.run_dir)
+    if args.require_selected_checkpoint:
+        require_selected_checkpoint(run_dir)
     eval_result_identity = _file_identity(run_dir / "eval_result.json")
     result = _load_result(run_dir)
     if eval_result_identity != _file_identity(run_dir / "eval_result.json"):
@@ -1072,6 +1096,16 @@ def main() -> None:
             apply_input_zscore=apply_input_zscore,
             input_already_ecgfounder=input_already_ecgfounder,
         )
+
+    if args.clean_only:
+        clean_output = build_base_output()
+        clean_output["evaluation_mode"] = "clean_only"
+        clean_output["corruptions"] = []
+        clean_output["severities"] = []
+        clean_output["aggregate_by_corruption_severity"] = []
+        _atomic_write_json(out_path, clean_output)
+        print(f"[done] saved clean-only evaluation {out_path}", flush=True)
+        return
 
     ordered_units = [
         (center, corruption, int(severity))

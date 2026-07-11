@@ -4,6 +4,12 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from ecg_adv_gen.matched_ecgfounder import (
+    MATCHED_ECGFOUNDER_CONTRACT_VERSION,
+    matched_ecgfounder_arm,
+    validate_matched_ecgfounder_case,
+)
+
 from .common import audit_equals, audit_require_options, argv_option_map, opt_first
 
 
@@ -42,6 +48,9 @@ def build_ecgfounder_fullft_argv(config: Mapping[str, Any], context: Mapping[str
     runtime = config.get("runtime") or {}
     experiment = config["experiment"]
     stage = str(adaptation.get("stage", "k500"))
+    selection = paper.get("selection") or {}
+    matched_contract = str(paper.get("comparison_protocol") or "")
+    is_matched = matched_contract == MATCHED_ECGFOUNDER_CONTRACT_VERSION
 
     seed = kshot["seed"]
     subset_seed = kshot.get("subset_seed", seed)
@@ -74,12 +83,22 @@ def build_ecgfounder_fullft_argv(config: Mapping[str, Any], context: Mapping[str
             "--run_name",
             adaptation.get("run_name", "ptbxl_super5_fullft_locked"),
         ]
+        if is_matched:
+            _append_option(argv, "--matched_contract", MATCHED_ECGFOUNDER_CONTRACT_VERSION)
+            _append_option(argv, "--selection_metric", selection.get("metric", "macro_auprc"))
         return argv
 
     matrix = context.get("matrix") or {}
     center = matrix.get("center")
     if not center:
         raise ValueError("ecgfounder_fullft adapter requires runner.matrix.center for K500 stage")
+    arm = ""
+    arm_components = None
+    if is_matched:
+        case = matrix.get("case")
+        if not isinstance(case, Mapping):
+            raise ValueError("matched ECGFounder commands require runner.matrix.case")
+        arm, arm_components = validate_matched_ecgfounder_case(case)
 
     ref_meta = (
         f"{data['kshot_subset_root']}/{center}/k{kshot['k']}_seed{subset_seed}/"
@@ -128,10 +147,34 @@ def build_ecgfounder_fullft_argv(config: Mapping[str, Any], context: Mapping[str
         "--target_real_weight",
         loss.get("target_real_weight", 40.0),
     ]
+    if is_matched:
+        assert arm_components is not None
+        _append_option(argv, "--matched_contract", MATCHED_ECGFOUNDER_CONTRACT_VERSION)
+        _append_option(argv, "--comparison_arm", arm)
+        _append_option(argv, "--target_adv_fraction", arm_components.target_adv_fraction)
+        _append_option(argv, "--target_real_val_fraction", selection.get("validation_fraction", 0.2))
+        _append_option(argv, "--target_real_val_seed", selection.get("seed", seed))
+        _append_option(argv, "--selection_metric", selection.get("metric", "macro_auprc"))
+        _append_option(
+            argv,
+            "--source_floor_max_drop",
+            (selection.get("source_floor") or {}).get("max_drop", 0.02),
+        )
+        _append_option(
+            argv,
+            "--expected_exact_eligible_count",
+            (paper.get("exact_eligible_train_count") or {}).get(str(center)),
+        )
     _append_option(argv, "--target_raw1000_npz_override", target_raw1000_npz_override)
     _append_option(argv, "--init_model_path", model.get("init_model_path", ""))
-    _append_option(argv, "--run_name", adaptation.get("run_name", ""))
-    if bool(vae.get("enabled", False)):
+    _append_option(argv, "--run_name", f"{center}_{arm}" if is_matched else adaptation.get("run_name", ""))
+    vae_enabled = arm_components.vae_lhat if arm_components is not None else bool(vae.get("enabled", False))
+    latent_augmix_enabled = (
+        arm_components.raw_augmix
+        if arm_components is not None
+        else bool(latent_augmix.get("enabled", False))
+    )
+    if vae_enabled:
         argv.append("--enable_vae_adv_stream")
         _append_option(argv, "--adv_weight", vae.get("adv_weight", 20.0))
         _append_option(argv, "--vae_adv_stream_sample_scale", vae.get("adv_stream_sample_scale"))
@@ -165,9 +208,30 @@ def build_ecgfounder_fullft_argv(config: Mapping[str, Any], context: Mapping[str
         _append_option(argv, "--hull_attack_pos_weight_clip", hull.get("attack_pos_weight_clip", 50.0))
         _append_option(argv, "--hull_label_mode", hull.get("label_mode", "primary"))
         _append_flag(argv, "--hull_include_anchor", hull.get("include_anchor", False))
+        if is_matched or any(
+            key in hull
+            for key in (
+                "neighbor_distance_space",
+                "neighbor_mode",
+                "neighbor_pool_size",
+                "neighbor_pool_multiplier",
+            )
+        ):
+            _append_option(
+                argv,
+                "--hull_neighbor_distance_space",
+                hull.get("neighbor_distance_space", "raw"),
+            )
+            _append_option(argv, "--hull_neighbor_mode", hull.get("neighbor_mode", "nearest"))
+            _append_option(argv, "--hull_neighbor_pool_size", hull.get("neighbor_pool_size", 0))
+            _append_option(
+                argv,
+                "--hull_neighbor_pool_multiplier",
+                hull.get("neighbor_pool_multiplier", 4),
+            )
         _append_option(argv, "--pgd_eps", attack.get("pgd_eps", 2.0))
         _append_option(argv, "--pgd_batch", attack.get("pgd_batch", 4))
-    if bool(latent_augmix.get("enabled", False)):
+    if latent_augmix_enabled:
         argv.append("--enable_latent_augmix_branch")
         _append_option(argv, "--latent_augmix_copies", latent_augmix.get("copies", 1))
         _append_option(argv, "--latent_augmix_width", latent_augmix.get("width", 3))
@@ -180,9 +244,19 @@ def build_ecgfounder_fullft_argv(config: Mapping[str, Any], context: Mapping[str
         _append_option(argv, "--latent_augmix_severity_profile", latent_augmix.get("severity_profile", "standard"))
         _append_list_option(argv, "--latent_augmix_ops", latent_augmix.get("ops", []))
         consistency = latent_augmix.get("consistency") or {}
-        _append_option(argv, "--latent_augmix_consistency_weight", consistency.get("consistency_weight"))
+        _append_option(
+            argv,
+            "--latent_augmix_consistency_weight",
+            consistency.get("consistency_weight") if arm_components is None or arm_components.jsd else 0.0,
+        )
         _append_option(argv, "--latent_augmix_consistency_loss", consistency.get("consistency_loss"))
-        _append_option(argv, "--latent_augmix_bce_weight", consistency.get("bce_weight"))
+        _append_option(
+            argv,
+            "--latent_augmix_bce_weight",
+            consistency.get("bce_weight")
+            if arm_components is None or arm_components.augmix_view_bce
+            else 0.0,
+        )
         _append_option(argv, "--latent_augmix_consistency_max_batches", consistency.get("max_batches"))
         _append_option(argv, "--latent_augmix_consistency_batch_size", consistency.get("batch_size"))
     return argv
@@ -204,6 +278,11 @@ def audit_ecgfounder_fullft_command(
     expected_k = int(kshot["k"])
     expected_seed = int(kshot.get("subset_seed", kshot["seed"]))
     target_centers = set(config["paper_protocol"]["centers"]["target_4"])
+    matched_contract = str(opt_first(opts, "--matched_contract", ""))
+    is_matched = matched_contract == MATCHED_ECGFOUNDER_CONTRACT_VERSION
+    declared_contract = str(config["paper_protocol"].get("comparison_protocol") or "")
+    if (declared_contract == MATCHED_ECGFOUNDER_CONTRACT_VERSION) != is_matched:
+        errors.append(f"{script}: managed matched contract declaration/argv mismatch")
 
     if script != "ecgfounder_fullft.py":
         return {
@@ -216,7 +295,6 @@ def audit_ecgfounder_fullft_command(
         "--target_val_seed",
         "--target_val_split_mode",
         "--target_val_score_weight",
-        "--selection_metric",
         "--checkpoint_policy",
         "--init_head_path",
         "--trainable_scope",
@@ -228,6 +306,8 @@ def audit_ecgfounder_fullft_command(
         "--run_suffix",
         "--force",
     )
+    if not is_matched:
+        forbidden_options = (*forbidden_options, "--selection_metric", "--target_real_val_fraction", "--target_real_val_seed")
     for opt in forbidden_options:
         if opt in opts:
             errors.append(f"{script}: locked full-FT command must not pass legacy option {opt}")
@@ -246,7 +326,16 @@ def audit_ecgfounder_fullft_command(
                 "--run_name",
             ],
         )
-        audit_equals(errors, script, opts, "--run_name", "ptbxl_super5_fullft_locked")
+        audit_equals(
+            errors,
+            script,
+            opts,
+            "--run_name",
+            "ptbxl_source_fullft" if is_matched else "ptbxl_super5_fullft_locked",
+        )
+        if is_matched:
+            audit_require_options(errors, script, opts, ["--matched_contract", "--selection_metric"])
+            audit_equals(errors, script, opts, "--selection_metric", "macro_auprc")
         if "--ref_meta_json" in opts or "--center" in opts:
             errors.append(f"{script}: PTB-XL source full-FT stage must not pass K500 center/ref_meta options")
         if "--init_model_path" in opts or "--init_head_path" in opts:
@@ -274,6 +363,45 @@ def audit_ecgfounder_fullft_command(
         errors.append(f"{script}: unexpected center {center!r}")
     audit_equals(errors, script, opts, "--k", str(expected_k))
     audit_equals(errors, script, opts, "--seed", str(expected_seed))
+    arm = ""
+    arm_components = None
+    if is_matched:
+        audit_require_options(
+            errors,
+            script,
+            opts,
+            [
+                "--comparison_arm",
+                "--target_adv_fraction",
+                "--target_real_val_fraction",
+                "--target_real_val_seed",
+                "--selection_metric",
+                "--source_floor_max_drop",
+                "--expected_exact_eligible_count",
+            ],
+        )
+        arm = str(opt_first(opts, "--comparison_arm", ""))
+        try:
+            arm_components = matched_ecgfounder_arm(arm)
+        except ValueError as exc:
+            errors.append(f"{script}: {exc}")
+        if arm_components is not None:
+            if ("--enable_vae_adv_stream" in opts) != arm_components.vae_lhat:
+                errors.append(f"{script}: matched {arm} VAE component drift")
+            if ("--enable_latent_augmix_branch" in opts) != arm_components.raw_augmix:
+                errors.append(f"{script}: matched {arm} raw AugMix component drift")
+            audit_equals(
+                errors,
+                script,
+                opts,
+                "--target_adv_fraction",
+                str(arm_components.target_adv_fraction),
+            )
+        audit_equals(errors, script, opts, "--target_real_val_fraction", "0.2")
+        audit_equals(errors, script, opts, "--target_real_val_seed", str(expected_seed))
+        audit_equals(errors, script, opts, "--selection_metric", "macro_auprc")
+        audit_equals(errors, script, opts, "--source_floor_max_drop", "0.02")
+        audit_equals(errors, script, opts, "--run_name", f"{center}_{arm}")
     experiment_name = str((config.get("experiment") or {}).get("name") or "")
     official_composite_supervised = experiment_name.startswith(
         "ecgfounder_direct_corrupted_k500_supervised_officials5_depth23_ep10_"
@@ -396,7 +524,12 @@ def audit_ecgfounder_fullft_command(
             errors.append(f"{script}: locked latent AugMix ops must be {expected_ops}, got {actual_ops}")
 
     ref_meta = str(opt_first(opts, "--ref_meta_json", ""))
-    if official_composite_supervised:
+    if is_matched:
+        expected_ref = (
+            f"/paper_matched_effnet_k500_v7_fixedk_three_seed_20260711/subsets/{center}/"
+            f"k{expected_k}_seed{expected_seed}/{center}_real_k{expected_k}_seed{expected_seed}.ref_meta.json"
+        )
+    elif official_composite_supervised:
         expected_ref = (
             f"/pn2021c_official_s5_composite_k500_direct_supervised_20260624/subsets/{center}/"
             f"k{expected_k}_seed{expected_seed}/{center}_real_k{expected_k}_seed{expected_seed}.ref_meta.json"
@@ -422,7 +555,12 @@ def audit_ecgfounder_fullft_command(
                 )
             )
         )
-    if uses_k500_fullft_init:
+    if is_matched:
+        expected_init = (
+            f"/ecgfounder_matched_a035_v1/{upstream_run_id}/runs/"
+            "ptbxl_source_fullft/best_model.pt"
+        )
+    elif uses_k500_fullft_init:
         expected_init = (
             f"/ecgfounder_k500_fullft_locked/{upstream_run_id}/runs/"
             f"{center}_k500_fullft_locked/last_model.pt"
@@ -434,7 +572,7 @@ def audit_ecgfounder_fullft_command(
         )
     if upstream_run_id and not init_model.endswith(expected_init):
         errors.append(
-            f"{script}: init_model_path must consume the locked upstream last_model.pt "
+            f"{script}: init_model_path must consume the declared upstream selected checkpoint "
             "from runtime.run_id or model.upstream_run_id"
         )
     return {"errors": errors, "warnings": warnings}

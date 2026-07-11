@@ -1031,8 +1031,10 @@ def test_replication_audit_reports_contract_and_execution_readiness_separately(
     )
     assert report["contract_passed"] is True
     assert report["execution_ready"] is False
-    assert report["surface_count"] == 1
-    surface = report["surfaces"][0]
+    assert report["surface_count"] == 2
+    surface = next(
+        item for item in report["surfaces"] if item["name"] == "effnet_matched_three_seed"
+    )
     assert surface["path_isolation_passed"] is True
     seeds = {item["seed"]: item for item in surface["replicates"]}
     assert seeds[20260531]["execution_ready"] is True

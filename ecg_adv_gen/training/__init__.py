@@ -48,6 +48,11 @@ from .checkpoint_state import (
 )
 from .torch_utils import set_module_requires_grad
 from .effnet_super5 import PTBXLDatasetScheme, SynthNPZDataset, evaluate, init_weights
+from .ecgfounder_matched_auxiliary import (
+    optimizer_parameter_step,
+    select_matched_auxiliary_clean_examples,
+    train_matched_auxiliary_epoch,
+)
 
 __all__ = [
     "append_jsonl",
@@ -75,6 +80,7 @@ __all__ = [
     "WeightedFeatureStream",
     "build_weighted_feature_stream_loader",
     "multilabel_stream_sample_weights",
+    "optimizer_parameter_step",
     "pairwise_rank_loss",
     "quality_buffer_state",
     "random_split_indices",
@@ -83,10 +89,12 @@ __all__ = [
     "restore_quality_buffer_state",
     "restore_rng_state",
     "set_module_requires_grad",
+    "select_matched_auxiliary_clean_examples",
     "init_weights",
     "stream_weighted_masked_bce",
     "summarize_fullft_adv_epoch_diagnostics",
     "tag_value",
+    "train_matched_auxiliary_epoch",
     "validate_resume_contract",
     "validate_f004_checkpoint_identity",
 ]

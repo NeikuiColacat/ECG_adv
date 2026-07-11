@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from ecg_adv_gen.matched_ecgfounder import (
+    MATCHED_ECGFOUNDER_CONTRACT_VERSION,
+    validate_matched_ecgfounder_case,
+)
 from ecg_adv_gen.evaluation.pn2021c_protocol import (
     OFFICIAL_S5_COMPOSITE_CORRUPTION_SET,
     OFFICIAL_S5_PUBLIC_SEVERITY,
@@ -36,7 +40,23 @@ def build_ecgfounder_pn2021c_eval_argv(config: Mapping[str, Any], context: Mappi
 
     matrix = context.get("matrix") or {}
     center = matrix.get("center")
-    method = matrix.get("method") or {}
+    matched_contract = str(config["paper_protocol"].get("comparison_protocol") or "")
+    is_matched = matched_contract == MATCHED_ECGFOUNDER_CONTRACT_VERSION
+    if is_matched:
+        case = matrix.get("case")
+        if not isinstance(case, Mapping):
+            raise ValueError("matched ECGFounder eval requires runner.matrix.case")
+        arm, _ = validate_matched_ecgfounder_case(case)
+        method: Mapping[str, Any] = {
+            "name": arm,
+            "family": MATCHED_ECGFOUNDER_CONTRACT_VERSION,
+            "run_dir_template": (
+                "{output_root}/ecgfounder_matched_a035_v1/{run_id}/runs/"
+                "{center}_{method_name}"
+            ),
+        }
+    else:
+        method = matrix.get("method") or {}
     if not center:
         raise ValueError("ecgfounder_pn2021c_eval adapter requires runner.matrix.center")
     if not isinstance(method, Mapping) or not method.get("family") or not method.get("name"):
@@ -126,6 +146,10 @@ def build_ecgfounder_pn2021c_eval_argv(config: Mapping[str, Any], context: Mappi
             f"{method['name']}/{output_stem}.json"
         ),
     ]
+    if is_matched:
+        argv.append("--require_selected_checkpoint")
+        if str(evaluation.get("mode") or "") == "clean":
+            argv.append("--clean_only")
     if severity_profile == "custom":
         argv.extend(
             [
@@ -233,13 +257,20 @@ def audit_ecgfounder_pn2021c_eval_command(
         errors.append(f"{script}: --exclude_ref_ids must match the current training K500 identity")
 
     output_path = str(opt_first(opts, "--output_path", ""))
-    if "official_s5_locked" not in output_path and "official_s5_depth23_composite" not in output_path:
+    is_clean_only = "--clean_only" in opts
+    if (
+        not is_clean_only
+        and "official_s5_locked" not in output_path
+        and "official_s5_depth23_composite" not in output_path
+    ):
         errors.append(f"{script}: locked PN2021-C output_path must include official_s5_locked or official_s5_depth23_composite")
 
     run_dir = str(opt_first(opts, "--run_dir", ""))
     method = (command.get("matrix") or {}).get("method") or {}
     run_id = str((config.get("runtime") or {}).get("run_id") or "")
-    if isinstance(method, Mapping):
+    matched_contract = str(config["paper_protocol"].get("comparison_protocol") or "")
+    is_matched = matched_contract == MATCHED_ECGFOUNDER_CONTRACT_VERSION
+    if isinstance(method, Mapping) and not is_matched:
         template = method.get("run_dir_template") or method.get("run_dir")
         if template:
             expected_run_dir = _format_run_dir_template(
@@ -252,6 +283,7 @@ def audit_ecgfounder_pn2021c_eval_command(
             if run_dir != expected_run_dir:
                 errors.append(f"{script}: run_dir does not match locked method template")
     allowed_run_family_fragments = (
+        "/ecgfounder_matched_a035_v1/",
         "/ecgfounder_k500_fullft_locked/",
         "/ecgfounder_vae_lhat_augmix_threechain_locked_k500/",
         "/ecgfounder_vae_lhat_augmix_threechain_aligned_effnet_sota_",
@@ -266,6 +298,24 @@ def audit_ecgfounder_pn2021c_eval_command(
     )
     if run_id and not any(fragment in run_dir for fragment in allowed_run_family_fragments):
         errors.append(f"{script}: run_dir must target a locked ECGFounder run family")
+
+    if is_matched:
+        case = (command.get("matrix") or {}).get("case") or {}
+        try:
+            arm, _ = validate_matched_ecgfounder_case(case)
+        except ValueError as exc:
+            errors.append(f"{script}: {exc}")
+            arm = ""
+        expected_run_dir = (
+            f"{config['paths']['output_root']}/ecgfounder_matched_a035_v1/{run_id}/runs/"
+            f"{center}_{arm}"
+        )
+        if run_dir != expected_run_dir:
+            errors.append(f"{script}: matched evaluator run_dir does not match producer path")
+        if "--require_selected_checkpoint" not in opts:
+            errors.append(f"{script}: matched evaluator must require the recorded selected checkpoint")
+        if str(config["evaluation"].get("mode") or "") == "clean" and not is_clean_only:
+            errors.append(f"{script}: matched clean stage must pass --clean_only")
 
     if "--limit" in opts and str(opt_first(opts, "--limit")) not in {"0", ""}:
         errors.append(f"{script}: managed main ECGFounder PN2021-C eval must not limit samples")

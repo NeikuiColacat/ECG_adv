@@ -61,6 +61,10 @@ from ecg_adv_gen.matched_effnet import (
     validate_f004_protocol_declaration,
     validate_matched_effnet_case,
 )
+from ecg_adv_gen.matched_ecgfounder import (
+    MATCHED_ECGFOUNDER_CONTRACT_VERSION,
+    matched_ecgfounder_arm,
+)
 
 
 class ConfigError(ValueError):
@@ -1255,21 +1259,40 @@ def _ecgfounder_child_run(opts: dict[str, Any], center: str) -> dict[str, Any]:
         "seed": _opt_first(opts, "--seed", "20260531"),
     }
     child_dir = out_dir / "runs" / build_ecgfounder_fullft_run_leaf(params)
+    matched = str(_opt_first(opts, "--matched_contract", "")) == MATCHED_ECGFOUNDER_CONTRACT_VERSION
+    expected_artifacts = [
+        *([_path_record("best_model", child_dir / "best_model.pt")] if matched else []),
+        _path_record("last_model", child_dir / "last_model.pt"),
+        _path_record("training_log", child_dir / "training_log.json"),
+        *([_path_record("selection", child_dir / "selection.json")] if matched else []),
+        *(
+            [
+                _path_record("matched_training_record", child_dir / "matched_training_record.json"),
+                _path_record("eligible_anchor_manifest", child_dir / "eligible_anchor_manifest.json"),
+            ]
+            if matched and str(_opt_first(opts, "--stage", "k500")) == "k500"
+            else []
+        ),
+        _path_record("eval_result", child_dir / "eval_result.json"),
+        *(
+            [_path_record("external_repo_provenance", child_dir / "external_repo_provenance.json")]
+            if matched
+            else []
+        ),
+    ]
     return {
         "center": center,
         "output_root": str(out_dir),
         "child_run_dir": str(child_dir),
-        "expected_artifacts": [
-            _path_record("last_model", child_dir / "last_model.pt"),
-            _path_record("training_log", child_dir / "training_log.json"),
-            _path_record("eval_result", child_dir / "eval_result.json"),
-        ],
+        "expected_artifacts": expected_artifacts,
     }
 
 
 def _eval_child_run(opts: dict[str, Any], center: str) -> dict[str, Any]:
     output_path = Path(str(_opt_first(opts, "--output_path", "")))
-    model_dir = Path(str(_opt_first(opts, "--model_dir", "")))
+    model_dir = Path(
+        str(_opt_first(opts, "--model_dir", "") or _opt_first(opts, "--run_dir", ""))
+    )
     return {
         "center": center,
         "output_root": str(output_path.parent),
@@ -1400,7 +1423,12 @@ def build_artifact_trace(
                     k=k,
                     seed=seed,
                     base=base,
-                    include_latent=False,
+                    include_latent=(
+                        matched_ecgfounder_arm(str(_opt_first(opts, "--comparison_arm", "a0"))).vae_lhat
+                        if str(_opt_first(opts, "--matched_contract", ""))
+                        == MATCHED_ECGFOUNDER_CONTRACT_VERSION
+                        else False
+                    ),
                     signal_path=Path(signal_override) if signal_override else None,
                 )
             cache_dir = str(_opt_first(opts, "--cache_dir", ""))
@@ -1464,7 +1492,15 @@ def build_artifact_trace(
         elif script == "ecgfounder_pn2021c_eval.py":
             run_dir = Path(str(_opt_first(opts, "--run_dir", "")))
             if run_dir:
-                inputs["checkpoints"].append(_path_record("command.run_dir.last_model", run_dir / "last_model.pt"))
+                checkpoint_name = (
+                    "best_model.pt" if "--require_selected_checkpoint" in opts else "last_model.pt"
+                )
+                inputs["checkpoints"].append(
+                    _path_record(
+                        f"command.run_dir.{Path(checkpoint_name).stem}",
+                        run_dir / checkpoint_name,
+                    )
+                )
                 inputs["data_caches"].append(_path_record("command.run_dir.eval_result", run_dir / "eval_result.json"))
             if center:
                 ref_base = (

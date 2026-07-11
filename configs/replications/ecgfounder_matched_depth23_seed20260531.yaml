@@ -1,0 +1,14 @@
+extends:
+  - ecgfounder_matched_s5_seed20260531.yaml
+
+experiment:
+  name: pn2021c_ecgfounder_matched_a035_v1_depth23_seed20260531
+  description: Official severity-5 depth2+3 PN2021-C evaluation for matched ECGFounder A0/A3/A5 checkpoints.
+
+evaluation:
+  corruption_set: official_s5_depth23_composite
+  output_stem: eval_pn2021_c_ecgfounder_matched_a035_v1_official_s5_depth23_composite
+
+logging:
+  child_artifacts:
+    - eval_pn2021_c_ecgfounder_matched_a035_v1_official_s5_depth23_composite.json
