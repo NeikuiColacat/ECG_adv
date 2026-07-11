@@ -1,10 +1,10 @@
 extends:
   - ../defaults/effnet1dv2_v7_sjr_rgq_defaults.yaml
-  - ../defaults/vae_lhat_defaults.yaml
+  - ../defaults/effnet_matched_f005_locked.yaml
 
 experiment:
   name: effnet_vae_lhat_augmix_threechain_locked_k500
-  description: Matched-source EfficientNet1DV2 A5 K500 VAE-LHAT plus locked three-chain AugMix; pair with the A0 arm exposed by the shared trainer contract.
+  description: Matched-source EfficientNet1DV2 A0/A2/A3/A4/A5 K500 ablation matrix for known-family corruption robustness.
 
 paper_protocol:
   kshot:
@@ -21,6 +21,7 @@ training:
   epochs: 30
 
 logging:
+  postprocess_artifacts: []
   child_artifacts:
     - best_model.pt
     - last_model.pt
@@ -34,41 +35,51 @@ logging:
     - epoch
     - train_loss
     - val_loss
-    - asr_overall
-    - sample_any_positive_below_0p5_asr
-    - attack_vs_anchor
-    - attack_vs_init
-    - atk_init
-    - atk_anchor
-    - initial_bce
-    - loss_gain
-    - decoded_invalid_rate
-    - adv_weight_effective
     - primary_objective_stats
     - latent_augmix_stats
     - latent_augmix_consistency_stats
     - target_adv_fraction_effective
-    - hull_weight_entropy_mean
-    - latent_hull_diagnostics
-    - latent_hull_diagnostics.candidate_is_anchor
-    - latent_hull_diagnostics.initial_weights
-    - latent_hull_diagnostics.final_weights
-    - latent_hull_diagnostics.initial_top1_candidate_pool_indices
-    - latent_hull_diagnostics.final_top1_candidate_pool_indices
-    - latent_hull_diagnostics.initial_pre_projection_norm
-    - latent_hull_diagnostics.final_pre_projection_norm
-    - latent_hull_diagnostics.final_post_projection_norm
-    - latent_hull_diagnostics.final_projection_scale
-    - latent_hull_diagnostics.final_effective_lambda
-    - latent_hull_diagnostics.final_candidate_anchor_weight
-    - latent_hull_diagnostics.final_effective_original_share
-    - latent_hull_diagnostics_summary
-    - latent_hull_final_effective_original_share_p50
-    - latent_hull_final_projection_scale_p50
     - target_val_macro_auprc
     - source_val_macro_auprc
     - source_floor_passed
     - realized_optimizer_steps
+  required_epoch_metrics_by_arm:
+    a3: &vae_lhat_required_metrics
+      - asr_overall
+      - sample_any_positive_below_0p5_asr
+      - attack_vs_anchor
+      - attack_vs_init
+      - atk_init
+      - atk_anchor
+      - initial_bce
+      - loss_gain
+      - decoded_invalid_rate
+      - adv_weight_effective
+      - hull_weight_entropy_mean
+      - latent_hull_diagnostics
+      - latent_hull_diagnostics.candidate_is_anchor
+      - latent_hull_diagnostics.initial_weights
+      - latent_hull_diagnostics.final_weights
+      - latent_hull_diagnostics.initial_top1_candidate_pool_indices
+      - latent_hull_diagnostics.final_top1_candidate_pool_indices
+      - latent_hull_diagnostics.initial_pre_projection_norm
+      - latent_hull_diagnostics.final_pre_projection_norm
+      - latent_hull_diagnostics.final_post_projection_norm
+      - latent_hull_diagnostics.final_projection_scale
+      - latent_hull_diagnostics.final_effective_lambda
+      - latent_hull_diagnostics.final_candidate_anchor_weight
+      - latent_hull_diagnostics.final_effective_original_share
+      - latent_hull_diagnostics_summary
+      - latent_hull_final_effective_original_share_p50
+      - latent_hull_final_projection_scale_p50
+    a4: *vae_lhat_required_metrics
+    a5: *vae_lhat_required_metrics
+
+# Per-arm PN2021 paper tables are produced only after the dedicated clean
+# center x arm evaluation stage. The inherited generic exporter cannot project
+# this center x case matrix into five arm identities without collapsing rows.
+postprocess:
+  commands: []
 
 runner:
   entrypoint: ecg_adv_gen/runner/effnet_vae_lhat_augmix.py
@@ -79,53 +90,19 @@ runner:
     XDG_CACHE_HOME: ${paths.cache_root}
   matrix:
     center: ${paper_protocol.centers.target_4}
+    case:
+      - {arm: a0, role: matched_direct_k500_baseline, vae_lhat: false, raw_augmix: false, augmix_view_bce: false, jsd: false, rho: 0.0, third_chain_route: clean_budget_control}
+      - {arm: a2, role: raw_augmix_clean_third_control, vae_lhat: false, raw_augmix: true, augmix_view_bce: true, jsd: true, rho: 0.0, third_chain_route: clean_anchor_control}
+      - {arm: a3, role: vae_lhat_only, vae_lhat: true, raw_augmix: false, augmix_view_bce: false, jsd: false, rho: 0.5, third_chain_route: no_augmix_route}
+      - {arm: a4, role: vae_lhat_threechain_no_jsd, vae_lhat: true, raw_augmix: true, augmix_view_bce: true, jsd: false, rho: 0.5, third_chain_route: vae_lhat_adversarial_waveform}
+      - {arm: a5, role: vae_lhat_threechain_full, vae_lhat: true, raw_augmix: true, augmix_view_bce: true, jsd: true, rho: 0.5, third_chain_route: vae_lhat_adversarial_waveform}
+  name: ${experiment.name}_${matrix.center}_${matrix.case.arm}
 
 data:
   target_real_npz_suffix: .raw1000.npz
   target_real_norm_mode: per_sample_global
 
-adaptation:
-  comparison_arm: a5
-  run_tag_extra: matched_source_k500_threechain_s5_locked
-  hull:
-    M: 20
-    lambda: 0.6
-    steps: 5
-    include_anchor: false
-    init_logit_gap: 0.0
-  attack:
-    pgd_eps: 2.0
-  loss:
-    ptbxl_weight: 0.0
-  latent_augmix:
-    chain_roles:
-      - name: chain1
-        role: clean_anchor_corruption_chain
-      - name: chain2
-        role: clean_anchor_corruption_chain
-      - name: chain3
-        role: vae_lhat_adversarial_waveform
-    chain_base_mode: clean_clean_third
-    copies: 2
-    width: 3
-    depth: -1
-    alpha: 1.0
-    severity: 5
-    severity_profile: standard
-    ops:
-      - powerline_noise
-      - emg_noise
-      - baseline_wander
-      - baseline_shift
-      - random_leads_masking
-    consistency:
-      enabled: true
-      consistency_weight: 2.0
-      consistency_loss: jsd
-      bce_weight: 1.0
-      max_batches: 0
-
 run_record:
-  purpose: "Matched-source A5 mechanical contract: K500 internal validation, PTB-XL source floor, and the same optimizer budget as A0."
-  result_summary: EVIDENCE_PENDING until paired A0/A5 reruns complete.
+  purpose: "Matched-source A0/A2/A3/A4/A5 mechanical contract with shared K500 split, PTB-XL source floor, and optimizer budget."
+  result_summary: EVIDENCE_PENDING until paired five-arm reruns complete.
   registration_status: provisional

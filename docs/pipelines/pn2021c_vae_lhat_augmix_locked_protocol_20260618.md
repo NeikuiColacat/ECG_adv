@@ -11,6 +11,12 @@ allowed to use the four PN2021 target centers as a development scoreboard to
 judge whether the method direction works. Results from this phase must be
 labeled exploratory if reported externally.
 
+The mechanically supported claim is
+`known_family_corruption_robustness`: training and evaluation use the same five
+declared corruption families. Depth-2/3 rows are known-family compositions.
+Describe results only as robustness to corruption families represented during
+training; this protocol does not support held-out-family conclusions.
+
 The target method remains VAE-LHAT plus AugMix: ECGTwin VAE latent hard-sample
 search must be trained into the classifier parameters through an AugMix-style
 multi-chain training topology. Gains from standalone preprocessing, post-hoc
@@ -19,11 +25,12 @@ not count as the main method.
 
 ## Locked Data And Evaluation Protocol
 
-- K500 target-center samples are all used for training.
-- Do not split K500 into train/validation during this exploration phase.
-- Use only the last checkpoint for method comparison.
-- Do not use best checkpoint selection, K500 validation selection, PN2021
-  heldout selection, PN2021-C operator selection, or oracle epoch selection.
+- The matched EfficientNet matrix uses the same deterministic K500 internal
+  train/validation split for A0/A2/A3/A4/A5.
+- Select `best_model.pt` by K500-internal macro AUPRC subject to the declared
+  PTB-XL source-floor constraint.
+- Do not use PN2021 heldout labels, PN2021-C operator results, full target
+  distributions, or oracle epoch selection.
 - Exclude the K500 record ids from the corresponding PN2021 target-center
   evaluation set.
 - Treat the four target centers as an exploratory development scoreboard:
@@ -31,8 +38,7 @@ not count as the main method.
 - Do not use non-K500 target-center label distribution information for class
   weights, sampling rules, operator-specific tuning, or center-specific recipe
   changes.
-- PTB-XL/source clean performance is a sanity check only in this phase; it is
-  not a checkpoint-selection rule.
+- PTB-XL/source clean performance is the shared source-floor gate.
 
 ## Backbone Training Protocol
 
@@ -57,12 +63,12 @@ ECGFounder:
   `base_head`, and `best_head.pt` routes are historical or ablation-only and
   must not appear as the main ECGFounder baseline or main method.
 
-## Model Universality Gate
+## Optional Backbone Replication
 
-An EfficientNet1DV2-only improvement is not enough to claim the main method is
-generally effective. Whenever a tuned VAE-LHAT plus three-chain AugMix recipe is
-promoted as a candidate SOTA, run a matched ECGFounder replication before making
-a model-agnostic claim.
+ECGFounder A0/A3/A5 is an `optional_backbone_replication`, not part of the
+default command matrix. Activate it only after an ECGFounder-specific matched
+initialization, split, selection, and budget contract exists. EfficientNet-only
+results must remain scoped to the evaluated EfficientNet protocol.
 
 The matched ECGFounder replication must keep the following fixed relative to
 the EfficientNet1DV2 candidate unless a run is explicitly labeled as an
@@ -74,7 +80,7 @@ ablation:
   adversarial waveform chain.
 - No stabilizer, repair frontend, raw-supervised branch, operator oracle, or
   heldout selector.
-- Last-checkpoint evaluation policy during this exploratory phase.
+- A backbone-specific matched checkpoint-selection policy declared before runs.
 
 Required cross-backbone reporting rows:
 
@@ -227,9 +233,9 @@ The following are not the main method:
 - `stabilizer35`, flat-lead repair, bandpass frontend, or other matched input
   stabilizer frontends.
 - Post-hoc operator-aware oracle selection.
-- Last-epoch forcing only to rescue a failed method after looking at heldout
-  behavior; fixed last-checkpoint evaluation is allowed only because it is
-  predeclared here.
+- Last-epoch forcing or fixed last-checkpoint evaluation. Every matched
+  EfficientNet arm uses `best_model.pt`, selected by K500-internal macro AUPRC
+  subject to the declared PTB-XL source-floor constraint.
 - Standalone raw-supervised or raw-corruption consistency branches outside the
   three-chain AugMix topology.
 

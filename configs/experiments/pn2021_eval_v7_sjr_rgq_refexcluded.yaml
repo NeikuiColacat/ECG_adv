@@ -1,9 +1,10 @@
 extends:
   - ../defaults/common_v7_sjr_rgq_super5.yaml
+  - ../defaults/effnet_matched_f005_locked.yaml
 
 experiment:
   name: pn2021_eval_v7_sjr_rgq_refexcluded
-  description: Managed PN2021 Super5 v7 SJR/RGQ ref-excluded evaluation for direct-K500 EfficientNet1DV2 runs.
+  description: Managed PN2021 Super5 v7 ref-excluded evaluation for matched EfficientNet A0/A2/A3/A4/A5 runs.
 
 paper_protocol:
   kshot:
@@ -13,7 +14,7 @@ paper_protocol:
 model:
   backbone: efficientnet1dv2
   num_classes: 5
-  direct_init_root: ${paths.output_root}/effnet_direct_k500_v7_sjr_rgq/${runtime.run_id}/runs
+  checkpoint_name: best_model.pt
 
 training:
   eval_batch_size: 192
@@ -26,7 +27,6 @@ logging:
     - metrics_long.csv
 
 evaluation:
-  model_family: effnet_direct_k500_v7_sjr_rgq
   ref_exclusion_meta:
     - ${data.kshot_subset_root}/ningbo/k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}/ningbo_real_k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}.ref_meta.json
     - ${data.kshot_subset_root}/chapman_shaoxing/k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}/chapman_shaoxing_real_k${paper_protocol.kshot.k}_seed${paper_protocol.kshot.seed}.ref_meta.json
@@ -42,14 +42,9 @@ postprocess:
         XDG_CACHE_HOME: ${paths.cache_root}
       argv:
         - --input
-        - ${paths.output_root}/${experiment.name}/${runtime.run_id}/ningbo/eval_result_v7_super5_sjr_rgq_refexcluded.json
-        - ${paths.output_root}/${experiment.name}/${runtime.run_id}/chapman_shaoxing/eval_result_v7_super5_sjr_rgq_refexcluded.json
-        - ${paths.output_root}/${experiment.name}/${runtime.run_id}/cpsc_2018/eval_result_v7_super5_sjr_rgq_refexcluded.json
-        - ${paths.output_root}/${experiment.name}/${runtime.run_id}/georgia/eval_result_v7_super5_sjr_rgq_refexcluded.json
+        - ${paths.output_root}/${experiment.name}/${runtime.run_id}
         - --output-dir
         - ${paths.output_root}/metrics_export/${runtime.run_id}
-        - --run-id
-        - ${evaluation.model_family}
         - --filter-to-target-center
         - --target-centers
         - ${paper_protocol.centers.target_4}
@@ -118,3 +113,5 @@ runner:
     XDG_CACHE_HOME: ${paths.cache_root}
   matrix:
     center: ${paper_protocol.centers.target_4}
+    arm: [a0, a2, a3, a4, a5]
+  name: ${experiment.name}_${matrix.center}_${matrix.arm}

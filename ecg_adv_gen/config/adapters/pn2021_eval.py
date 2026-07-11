@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from .common import argv_option_map, audit_equals, audit_require_options, opt_list
+from ecg_adv_gen.run_naming import build_matched_effnet_producer_dir
+
+from .common import argv_option_map, audit_equals, audit_require_options, opt_first, opt_list
 
 
 def build_pn2021_eval_argv(config: Mapping[str, Any], context: Mapping[str, Any]) -> list[Any]:
@@ -12,8 +14,11 @@ def build_pn2021_eval_argv(config: Mapping[str, Any], context: Mapping[str, Any]
 
     matrix = context.get("matrix") or {}
     center = matrix.get("center")
+    arm = str(matrix.get("arm") or "")
     if not center:
         raise ValueError("pn2021_eval adapter requires runner.matrix.center")
+    if not arm:
+        raise ValueError("pn2021_eval adapter requires runner.matrix.arm")
 
     paths = config["paths"]
     paper = config["paper_protocol"]
@@ -26,11 +31,14 @@ def build_pn2021_eval_argv(config: Mapping[str, Any], context: Mapping[str, Any]
     runtime = config.get("runtime") or {}
     experiment = config["experiment"]
 
+    model_dir = build_matched_effnet_producer_dir(config, center=str(center), arm=arm)
     return [
         "--scheme",
         "super5",
         "--model_dir",
-        f"{model['direct_init_root']}/{center}_K{kshot['k']}_direct_ft_ep30_seed{kshot['seed']}_val0.2",
+        model_dir,
+        "--checkpoint_name",
+        model.get("checkpoint_name", "best_model.pt"),
         "--model_name",
         model["backbone"],
         "--device",
@@ -66,7 +74,7 @@ def build_pn2021_eval_argv(config: Mapping[str, Any], context: Mapping[str, Any]
         "--exclude_ref_ids",
         *list(evaluation["ref_exclusion_meta"]),
         "--output_path",
-        f"{paths['output_root']}/{experiment['name']}/{runtime['run_id']}/{center}/eval_result_v7_super5_sjr_rgq_refexcluded.json",
+        f"{paths['output_root']}/{experiment['name']}/{runtime['run_id']}/{center}/{arm}/eval_result_v7_super5_sjr_rgq_refexcluded.json",
     ]
 
 
@@ -132,7 +140,21 @@ def audit_pn2021_eval_command(command: Mapping[str, Any], *, config: Mapping[str
         )
 
     matrix_center = str((command.get("matrix") or {}).get("center", ""))
+    matrix_arm = str((command.get("matrix") or {}).get("arm", ""))
     if matrix_center and matrix_center not in target_centers:
         errors.append(f"{script}: unexpected matrix center {matrix_center!r}")
+    if matrix_arm:
+        if "--checkpoint_name" not in opts:
+            errors.append(f"{script}: missing required option --checkpoint_name")
+        try:
+            expected_model_dir = build_matched_effnet_producer_dir(
+                config, center=matrix_center, arm=matrix_arm
+            )
+            audit_equals(errors, script, opts, "--model_dir", expected_model_dir)
+        except ValueError as exc:
+            errors.append(f"{script}: {exc}")
+        audit_equals(errors, script, opts, "--checkpoint_name", "best_model.pt")
+        if f"/{matrix_arm}/" not in str(opt_first(opts, "--output_path", "")):
+            errors.append(f"{script}: output_path must include matched arm {matrix_arm!r}")
 
     return {"errors": errors, "warnings": warnings}

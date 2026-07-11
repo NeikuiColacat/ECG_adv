@@ -43,7 +43,7 @@ from ecg_adv_gen.config.loader import _audit_runtime_path, audit_runner_commands
 from ecg_adv_gen.config.runner_audit import audit_runner_command
 from ecg_adv_gen.config.paths import PathSafetyError, validate_local_paths
 from ecg_adv_gen.evaluation.pn2021c_protocol import official_s5_depth23_composites
-from ecg_adv_gen.run_naming import build_effnet_direct_run_leaf
+from ecg_adv_gen.run_naming import build_effnet_direct_run_leaf, build_matched_effnet_producer_dir
 from ecg_adv_gen.runner.effnet_vae_lhat import (
     EffNetVaeLhatPaths,
     build_effnet_vae_lhat_train_cmd,
@@ -360,30 +360,39 @@ def test_vae_configs_declare_required_epoch_metrics():
     effnet = _load("effnet_vae_lhat_augmix_threechain_locked_k500.yaml")
 
     effnet_metrics = set(effnet["logging"]["required_epoch_metrics"])
-    assert {
+    assert {"latent_augmix_stats", "target_val_macro_auprc", "source_floor_passed"} <= effnet_metrics
+    vae_only = {
         "asr_overall",
         "sample_any_positive_below_0p5_asr",
         "attack_vs_anchor",
         "loss_gain",
-        "latent_augmix_stats",
-    } <= effnet_metrics
+        "latent_hull_diagnostics",
+    }
+    by_arm = effnet["logging"]["required_epoch_metrics_by_arm"]
+    assert vae_only.isdisjoint(effnet_metrics)
+    assert all(vae_only <= set(by_arm[arm]) for arm in ("a3", "a4", "a5"))
+    assert "a0" not in by_arm and "a2" not in by_arm
     assert "quick_eval" not in effnet_metrics
 
 
 def test_effnet_provisional_latent_hull_recipe_is_explicit_and_balanced():
     path = REPO / "configs" / "experiments" / "effnet_vae_lhat_augmix_threechain_locked_k500.yaml"
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    shared_path = REPO / "configs/defaults/effnet_matched_f005_locked.yaml"
+    shared = yaml.safe_load(shared_path.read_text(encoding="utf-8"))
     config = _load(path.name)
     commands = build_runner_commands(config)
 
-    assert raw["adaptation"]["hull"] == {
+    assert "../defaults/effnet_matched_f005_locked.yaml" in raw["extends"]
+    assert "adaptation" not in raw
+    assert shared["adaptation"]["hull"] == {
         "M": 20,
         "lambda": 0.6,
         "steps": 5,
         "include_anchor": False,
         "init_logit_gap": 0.0,
     }
-    assert raw["adaptation"]["attack"]["pgd_eps"] == 2.0
+    assert shared["adaptation"]["attack"]["pgd_eps"] == 2.0
     assert config["run_record"]["registration_status"] == "provisional"
     for command in commands:
         argv = command["argv"]
@@ -590,7 +599,7 @@ def test_effnet_vae_lhat_threechain_locked_k500_config_uses_matched_source_best_
         cli_args=argparse.Namespace(dry_run=True, write_plan=False),
     )
 
-    assert len(commands) == 4
+    assert len(commands) == 20
     assert config["adaptation"]["latent_augmix"]["chain_roles"] == [
         {"name": "chain1", "role": "clean_anchor_corruption_chain"},
         {"name": "chain2", "role": "clean_anchor_corruption_chain"},
@@ -600,7 +609,9 @@ def test_effnet_vae_lhat_threechain_locked_k500_config_uses_matched_source_best_
     assert "latent_weight_cap" not in config["adaptation"]["latent_augmix"]
     assert "adaptation.latent_augmix.latent_weight_cap" not in ALLOWED_CLI_OVERRIDE_KEYS
     refs = manifest["artifact_trace"]["inputs"]["k500_refs"]
-    assert len(refs) == 4
+    assert len(refs) == 20
+    assert len({item["ref_meta_json"]["path"] for item in refs}) == 4
+    assert all(sum(item["center"] == center for item in refs) == 5 for center in config["paper_protocol"]["centers"]["target_4"])
     assert all(item["signals_npz"]["role"] == "kshot_raw1000_signals" for item in refs)
     assert all(item["signals_npz"]["path"].endswith(".raw1000.npz") for item in refs)
     for command in commands:
@@ -616,7 +627,7 @@ def test_effnet_vae_lhat_threechain_locked_k500_config_uses_matched_source_best_
         assert _option_value(argv, "--latent_augmix_severity_profile") == "standard"
         assert "--checkpoint_policy" not in argv
         assert "--quick_eval_source" not in argv
-        assert _option_value(argv, "--comparison_arm") == "a5"
+        assert _option_value(argv, "--comparison_arm") == command["matrix"]["case"]["arm"]
         assert _option_value(argv, "--target_real_val_fraction") == "0.2"
         assert _option_value(argv, "--target_real_val_seed") == "20260601"
         assert _option_value(argv, "--selection_metric") == "macro_auprc"
@@ -673,6 +684,9 @@ def _effnet_vae_lhat_final_train_cmd(config: dict) -> list[str]:
     from ecg_adv_gen.runner import effnet_vae_lhat_augmix
 
     config["runner"]["matrix"]["center"] = ["ningbo"]
+    config["runner"]["matrix"]["case"] = [
+        case for case in config["runner"]["matrix"]["case"] if case["arm"] == "a5"
+    ]
     wrapper_argv = build_runner_commands(config)[0]["argv"]
     args = effnet_vae_lhat_augmix.parse_args(wrapper_argv[2:])
     data_root = Path(args.data_root)
@@ -1572,8 +1586,8 @@ def test_high_risk_long_argv_adapters_are_registered():
 @pytest.mark.parametrize(
     ("config_name", "adapter_name", "expected_commands"),
     [
-        ("pn2021_eval_v7_sjr_rgq_refexcluded.yaml", "pn2021_eval", 4),
-        ("pn2021c_effnet_threechain_locked_official_s5.yaml", "pn2021c_eval", 4),
+        ("pn2021_eval_v7_sjr_rgq_refexcluded.yaml", "pn2021_eval", 20),
+        ("pn2021c_effnet_threechain_locked_official_s5.yaml", "pn2021c_eval", 20),
         ("effnet_direct_k500_v7_sjr_rgq.yaml", "direct_finetune", 1),
     ],
 )
@@ -2043,11 +2057,9 @@ def test_pn2021c_effnet_threechain_locked_protocol_overrides_selection_and_raw_o
         cli_args=argparse.Namespace(dry_run=True, write_plan=False),
     )
 
-    assert len(commands) == 4
-    assert config["paper_protocol"]["selection"]["policy"] == "last_checkpoint_only"
-    assert config["paper_protocol"]["selection"]["forbid_k500_validation_split"] is True
-    assert config["paper_protocol"]["selection"]["forbid_best_checkpoint_selection"] is True
-    assert manifest["artifact_trace"]["selection_policy"]["policy"] == "last_checkpoint_only"
+    assert len(commands) == 20
+    assert config["paper_protocol"]["selection"]["policy"] == "k500_internal_val_plus_source_floor"
+    assert manifest["artifact_trace"]["selection_policy"]["policy"] == "k500_internal_val_plus_source_floor"
     for command in commands:
         argv = command["argv"]
         assert _option_value(argv, "--corruption_input") == "raw_first"
@@ -2070,32 +2082,27 @@ def test_pn2021c_effnet_threechain_locked_official_s5_targets_locked_run_dir():
         cli_args=argparse.Namespace(dry_run=True, write_plan=False),
     )
 
-    assert len(commands) == 4
+    assert len(commands) == 20
     for command in commands:
         argv = command["argv"]
         center = command["matrix"]["center"]
+        arm = command["matrix"]["arm"]
         model_dir = _option_value(argv, "--model_dir")
-        assert model_dir == (
-            f"/home/linbinhao/ECG_adv_data/runs/"
-            f"effnet_vae_lhat_augmix_threechain_locked_k500/"
-            f"{config['runtime']['run_id']}/"
-            f"{center}_realall_targetheavy_M20_lam0p05_augmix_s5_hs3_cdhypminormsttc_hlabelcom_anchor_soft_sta_local_random_p120_fullft_k500_threechain_s5_locked_ep30_seed20260601"
-        )
+        assert model_dir == build_matched_effnet_producer_dir(config, center=center, arm=arm)
         assert _option_value(argv, "--clean_eval_json") == (
             f"{model_dir}/eval_result_v7_exclrefs_crop1000.json"
         )
         assert _option_value(argv, "--corruption_input") == "raw_first"
         assert _option_value(argv, "--severity_profile") == "standard"
         assert _option_value(argv, "--severities") == "5"
-        assert _option_value(argv, "--checkpoint_name") == "last_model.pt"
+        assert _option_value(argv, "--checkpoint_name") == "best_model.pt"
 
     traced_checkpoints = manifest["artifact_trace"]["inputs"]["checkpoints"]
     assert any(
-        item["role"] == "command.model_dir.last_model"
-        and item["path"].endswith("/last_model.pt")
+        item["role"] == "command.model_dir.best_model"
+        and item["path"].endswith("/best_model.pt")
         for item in traced_checkpoints
     )
-    assert not any(item["role"] == "command.model_dir.best_model" for item in traced_checkpoints)
 
 
 def test_pn2021c_ecgfounder_threechain_locked_official_s5_targets_locked_run_dir():
@@ -2167,17 +2174,17 @@ def test_pn2021c_effnet_depth23_composite_config_uses_official_locked_surface():
     validate_experiment_config(config, repo_root=REPO)
     commands = build_runner_commands(config)
 
-    assert len(commands) == 4
+    assert len(commands) == 20
     for command in commands:
         argv = command["argv"]
         assert _option_value(argv, "--corruption_input") == "raw_first"
         assert _option_value(argv, "--crop_len") == "1000"
-        assert _option_value(argv, "--checkpoint_name") == "last_model.pt"
+        assert _option_value(argv, "--checkpoint_name") == "best_model.pt"
         assert _option_value(argv, "--severity_profile") == "standard"
         assert _option_value(argv, "--severities") == "5"
         assert _all_option_values(argv, "--corruptions") == official_s5_depth23_composites()
         assert _option_value(argv, "--output_path").endswith(
-            "/effnet_threechain_locked/"
+            f"/{command['matrix']['arm']}/"
             "eval_pn2021_c_v7_refexcluded_stream_standard_official_s5_depth23_composite.json"
         )
 

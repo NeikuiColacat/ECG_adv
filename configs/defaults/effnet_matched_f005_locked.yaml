@@ -1,0 +1,50 @@
+extends: vae_lhat_defaults.yaml
+
+matched_effnet_producer:
+  experiment_name: effnet_vae_lhat_augmix_threechain_locked_k500
+
+paper_protocol:
+  selection:
+    policy: k500_internal_val_plus_source_floor
+    allowed_data: [target_k500_train_split, target_k500_internal_val, ptbxl_source_floor]
+    validation_fraction: 0.2
+    seed: ${paper_protocol.kshot.seed}
+    metric: macro_auprc
+    source_floor: {metric: macro_auprc, max_drop: 0.02}
+    forbid_heldout_target_labels: true
+    forbid_full_target_distribution_tuning: true
+
+training:
+  epochs: 30
+
+adaptation:
+  run_tag_extra: matched_source_k500_threechain_s5_locked
+  hull:
+    M: 20
+    lambda: 0.6
+    steps: 5
+    include_anchor: false
+    init_logit_gap: 0.0
+  attack:
+    pgd_eps: 2.0
+  loss:
+    ptbxl_weight: 0.0
+  latent_augmix:
+    chain_roles:
+      - {name: chain1, role: clean_anchor_corruption_chain}
+      - {name: chain2, role: clean_anchor_corruption_chain}
+      - {name: chain3, role: vae_lhat_adversarial_waveform}
+    chain_base_mode: clean_clean_third
+    copies: 2
+    width: 3
+    depth: -1
+    alpha: 1.0
+    severity: 5
+    severity_profile: standard
+    ops: ${paper_protocol.operator_sets.train_atomic}
+    consistency:
+      enabled: true
+      consistency_weight: 2.0
+      consistency_loss: jsd
+      bce_weight: 1.0
+      max_batches: 0

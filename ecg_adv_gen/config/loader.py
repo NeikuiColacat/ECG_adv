@@ -32,6 +32,7 @@ from .artifact_trace import (
 )
 from .adapters.common import argv_option_map as _argv_option_map, opt_first as _opt_first, opt_list as _opt_list
 from .runner_audit import audit_runner_command
+from .protocol_claim import ProtocolClaimError, resolve_protocol_claim
 from ecg_adv_gen.data import DataContractError, validate_data_preprocess_config
 from ecg_adv_gen.data.kshot_artifacts import canonical_kshot_base
 from ecg_adv_gen.evaluation import (
@@ -45,7 +46,11 @@ from ecg_adv_gen.run_naming import (
     build_effnet_direct_run_leaf,
     build_effnet_vae_lhat_run_leaf,
 )
-from ecg_adv_gen.matched_effnet import is_matched_effnet_arm, matched_effnet_arm
+from ecg_adv_gen.matched_effnet import (
+    is_matched_effnet_arm,
+    matched_effnet_arm,
+    validate_matched_effnet_case,
+)
 
 
 class ConfigError(ValueError):
@@ -432,6 +437,52 @@ def _validate_mapping(config: dict[str, Any]) -> None:
         raise ConfigError(str(exc)) from exc
 
 
+def _claim_evaluation_operators(config: dict[str, Any]) -> list[Any] | None:
+    if (config.get("evaluation") or {}).get("corruption_set"):
+        from .adapters.pn2021c_eval import resolve_pn2021c_corruptions
+
+        return resolve_pn2021c_corruptions(config["evaluation"])
+    evaluation = config.get("evaluation") or {}
+    if "corruptions" not in evaluation:
+        return None
+    operators = evaluation.get("corruptions")
+    return list(operators) if isinstance(operators, list) else operators
+
+
+def _claim_arm(config: dict[str, Any], matrix: dict[str, Any]) -> str | None:
+    case = matrix.get("case") if isinstance(matrix.get("case"), dict) else {}
+    arm = case.get("arm") or matrix.get("arm") or matrix.get("comparison_arm")
+    if arm is None:
+        arm = (config.get("adaptation") or {}).get("comparison_arm")
+    return str(arm) if arm else None
+
+
+def _validate_protocol_claim(config: dict[str, Any]) -> dict[str, Any] | None:
+    paper = config.get("paper_protocol") or {}
+    if "claim_scope" not in paper and "operator_sets" not in paper:
+        return None
+    evaluation_operators = _claim_evaluation_operators(config)
+    training_operators = None
+    if (config.get("runner") or {}).get("adapter") == "effnet_vae_lhat":
+        training_operators = ((config.get("adaptation") or {}).get("latent_augmix") or {}).get("ops")
+    try:
+        global_claim = resolve_protocol_claim(
+            paper,
+            evaluation_operators=evaluation_operators,
+            training_operators=training_operators,
+        )
+        for context in _matrix_contexts(config):
+            resolve_protocol_claim(
+                paper,
+                arm=_claim_arm(config, context["matrix"]),
+                evaluation_operators=evaluation_operators,
+                training_operators=training_operators,
+            )
+    except ProtocolClaimError as exc:
+        raise ConfigError(str(exc)) from exc
+    return global_claim
+
+
 def validate_experiment_config(config: dict[str, Any], *, repo_root: Path) -> dict[str, str]:
     schema_path = repo_root / "configs" / "schemas" / "experiment_config.schema.json"
     _validate_json_schema(config, schema_path)
@@ -476,6 +527,7 @@ def validate_experiment_config(config: dict[str, Any], *, repo_root: Path) -> di
     except DataContractError as exc:
         raise ConfigError(str(exc)) from exc
     normalize_pipeline_stages(config)
+    _validate_protocol_claim(config)
     return validate_local_paths(config)
 
 
@@ -484,6 +536,24 @@ def _matrix_contexts(config: dict[str, Any]) -> list[dict[str, Any]]:
     if not matrix:
         return [{"matrix": {}}]
     keys = list(matrix.keys())
+    if (config.get("runner") or {}).get("adapter") == "effnet_vae_lhat" and "case" in matrix:
+        if set(keys) != {"center", "case"}:
+            raise ConfigError("effnet_vae_lhat case matrix keys must be exactly center and case")
+        centers = matrix.get("center") or []
+        cases = matrix.get("case") or []
+        if len(centers) != len(set(str(center) for center in centers)):
+            raise ConfigError("runner.matrix.center contains duplicate centers")
+        seen_arms: set[str] = set()
+        for case in cases:
+            if not isinstance(case, dict):
+                raise ConfigError("runner.matrix.case entries must be mappings")
+            try:
+                arm, _ = validate_matched_effnet_case(case)
+            except ValueError as exc:
+                raise ConfigError(str(exc)) from exc
+            if arm in seen_arms:
+                raise ConfigError(f"runner.matrix.case contains duplicate arm {arm!r}")
+            seen_arms.add(arm)
     value_lists = []
     for key in keys:
         values = matrix[key]
@@ -492,7 +562,7 @@ def _matrix_contexts(config: dict[str, Any]) -> list[dict[str, Any]]:
         value_lists.append(values)
     contexts = []
     for combo in itertools.product(*value_lists):
-        contexts.append({"matrix": dict(zip(keys, combo))})
+        contexts.append({"matrix": copy.deepcopy(dict(zip(keys, combo)))})
     return contexts
 
 
@@ -513,6 +583,7 @@ def _flatten_argv(argv: list[Any], context: dict[str, Any]) -> list[str]:
 
 
 def build_runner_commands(config: dict[str, Any]) -> list[dict[str, Any]]:
+    _validate_protocol_claim(config)
     paths = validate_local_paths(config)
     runner = config.get("runner") or {}
     adapter_name = runner.get("adapter")
@@ -850,6 +921,14 @@ def audit_postprocess_commands(config: dict[str, Any], commands: list[dict[str, 
         "merge_metrics_long.py",
         "export_paper_table.py",
     }
+    runner_matrix = (config.get("runner") or {}).get("matrix") or {}
+    has_arm_axis = isinstance(runner_matrix, dict) and (
+        "arm" in runner_matrix
+        or any(
+            isinstance(case, dict) and "arm" in case
+            for case in (runner_matrix.get("case") or [])
+        )
+    )
 
     for command in commands:
         argv = [str(x) for x in command["argv"]]
@@ -883,6 +962,10 @@ def audit_postprocess_commands(config: dict[str, Any], commands: list[dict[str, 
                 "--expected-mapping-hash",
                 config["paper_protocol"]["mapping_hash"],
             )
+            if has_arm_axis and "--run-id" in opts:
+                errors.append(
+                    f"{script}: omit --run-id to preserve per-arm run identity"
+                )
         elif script == "export_paper_table.py":
             _audit_require_options(errors, script, opts, ["--metrics-long", "--output-dir", "--view", "--dataset"])
             view = str(_opt_first(opts, "--view", ""))
@@ -1289,6 +1372,33 @@ def build_artifact_trace(
     inputs["checkpoints"] = _dedupe_path_records(inputs["checkpoints"])
     inputs["data_caches"] = _dedupe_path_records(inputs["data_caches"])
 
+    global_claim = _validate_protocol_claim(config)
+    if global_claim is not None:
+        evaluation_operators = _claim_evaluation_operators(config)
+        for child in child_runs:
+            command = commands[int(child["command_index"])]
+            argv = [str(item) for item in command["argv"]]
+            opts = _argv_option_map(argv)
+            arm = _claim_arm(config, command.get("matrix") or {})
+            if not arm:
+                arm = str(_opt_first(opts, "--comparison_arm", "not_applicable"))
+            evaluation_operators = (
+                _opt_list(opts, "--corruptions")
+                if "--corruptions" in opts
+                else evaluation_operators
+            )
+            training_operators = (
+                _opt_list(opts, "--latent_augmix_ops")
+                if "--latent_augmix_ops" in opts
+                else None
+            )
+            child["protocol_claim"] = resolve_protocol_claim(
+                config["paper_protocol"],
+                arm=arm,
+                evaluation_operators=evaluation_operators,
+                training_operators=training_operators,
+            )
+
     artifact_trace = {
         "schema_version": 1,
         "metrics": {
@@ -1330,6 +1440,8 @@ def build_artifact_trace(
             "postprocess_audit": postprocess_audit,
         },
     }
+    if global_claim is not None:
+        artifact_trace["protocol_claim"] = global_claim
     pipeline_stages = normalize_pipeline_stages(config)
     if pipeline_stages["stages"]:
         artifact_trace["pipeline_stages"] = pipeline_stages

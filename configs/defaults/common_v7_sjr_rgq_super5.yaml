@@ -4,6 +4,11 @@ experiment:
   status: active-main
 
 paper_protocol:
+  claim_scope: known_family_corruption_robustness
+  operator_sets:
+    train_atomic: &known_corruption_families
+      [powerline_noise, emg_noise, baseline_wander, baseline_shift, random_leads_masking]
+    eval_atomic: *known_corruption_families
   mapping_version: v7_super5_sjr_rgq_review_20260528
   mapping_hash: 555ec85d5b51
   class_order: [CD, HYP, MI, NORM, STTC]

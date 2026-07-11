@@ -309,12 +309,14 @@ def test_managed_matched_a0_a5_commands_share_every_non_method_contract():
         LOCAL_CONFIG,
         runtime_context={"run_id": "pytest_matched"},
     )
-    config["runner"]["matrix"]["comparison_arm"] = ["a0", "a5"]
+    config["runner"]["matrix"]["case"] = [
+        case for case in config["runner"]["matrix"]["case"] if case["arm"] in {"a0", "a5"}
+    ]
     commands = build_runner_commands(config)
     pairs: dict[str, dict[str, list[str]]] = {}
     for command in commands:
         pairs.setdefault(command["matrix"]["center"], {})[
-            command["matrix"]["comparison_arm"]
+            command["matrix"]["case"]["arm"]
         ] = command["argv"]
 
     assert set(pairs) == {"ningbo", "chapman_shaoxing", "cpsc_2018", "georgia"}
@@ -384,7 +386,12 @@ def test_matched_manifest_child_paths_equal_runtime_arm_paths():
         LOCAL_CONFIG,
         runtime_context={"run_id": "pytest_manifest_arms"},
     )
-    config["runner"]["matrix"] = {"center": ["ningbo"], "comparison_arm": ["a0", "a5"]}
+    config["runner"]["matrix"] = {
+        "center": ["ningbo"],
+        "case": [
+            case for case in config["runner"]["matrix"]["case"] if case["arm"] in {"a0", "a5"}
+        ],
+    }
     commands = build_runner_commands(config)
     manifest = make_dry_run_manifest(
         config,
@@ -394,7 +401,7 @@ def test_matched_manifest_child_paths_equal_runtime_arm_paths():
         cli_args=Namespace(dry_run=True, write_plan=True),
     )
     child_paths = {
-        child["matrix"]["comparison_arm"]: child["child_run_dir"]
+        child["matrix"]["case"]["arm"]: child["child_run_dir"]
         for child in manifest["artifact_trace"]["expected_outputs"]["child_runs"]
     }
     assert child_paths["a0"] != child_paths["a5"]
@@ -410,7 +417,7 @@ def test_matched_manifest_child_paths_equal_runtime_arm_paths():
         runtime_path = resolve_effnet_vae_lhat_paths(
             args, data_root=Path(args.data_root), out_root=Path(args.out_root)
         ).out_dir
-        arm = command["matrix"]["comparison_arm"]
+        arm = command["matrix"]["case"]["arm"]
         assert child_paths[arm] == str(runtime_path)
 
 
@@ -433,11 +440,13 @@ def test_matched_contract_reaches_the_shared_child_parser(monkeypatch):
         LOCAL_CONFIG,
         runtime_context={"run_id": "pytest_matched"},
     )
-    config["runner"]["matrix"]["comparison_arm"] = ["a0", "a5"]
+    config["runner"]["matrix"]["case"] = [
+        case for case in config["runner"]["matrix"]["case"] if case["arm"] in {"a0", "a5"}
+    ]
     command = next(
         item
         for item in build_runner_commands(config)
-        if item["matrix"] == {"center": "ningbo", "comparison_arm": "a5"}
+        if item["matrix"]["center"] == "ningbo" and item["matrix"]["case"]["arm"] == "a5"
     )
     args = wrapper.parse_args(command["argv"][2:])
     paths = resolve_effnet_vae_lhat_paths(

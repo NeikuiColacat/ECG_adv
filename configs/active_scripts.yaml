@@ -1,5 +1,5 @@
 version: 1
-updated: 2026-07-01
+updated: 2026-07-11
 purpose: Track the latest-mainline YAML launch contract for the public refactor.
 source_of_truth:
   shared_server_safety: AGENTS.md
@@ -8,6 +8,8 @@ source_of_truth:
   current_handoff_note: docs/codex-handoffs/current_workspace_handoff.md
   config_rules: configs/README.md
   active_evidence_registry: configs/active_evidence_registry.yaml
+  matched_effnet_arm_contract: ecg_adv_gen/matched_effnet.py
+  effnet_source_reference_evidence: configs/evidence/effnet1dv2_ptbxl_source_super5_20260503.json
   latest_mainline_golden_contract: configs/golden/latest_mainline_contract_v1.json
   pipeline_index: docs/pipelines/README.md
   managed_entrypoint_registry: ecg_adv_gen/config/entrypoints.py
@@ -66,6 +68,7 @@ latest_mainline:
   launcher: scripts/run_experiment.py
   mapping_version: v7_super5_sjr_rgq_review_20260528
   mapping_hash: 555ec85d5b51
+  claim_scope: known_family_corruption_robustness
   class_order:
   - CD
   - HYP
@@ -79,21 +82,44 @@ latest_mainline:
   - single_chain_shortcut
   - operator_oracle
   - post_hoc_selector
+  comparison_surface:
+    claim_scope: known_family_corruption_robustness
+    efficientnet_arms:
+      a0: {role: matched_direct_k500_baseline, evidence_status: EVIDENCE_PENDING}
+      a2: {role: raw_augmix_clean_third_control, evidence_status: EVIDENCE_PENDING}
+      a3: {role: vae_lhat_only, evidence_status: EVIDENCE_PENDING}
+      a4: {role: vae_lhat_threechain_no_jsd, evidence_status: EVIDENCE_PENDING}
+      a5: {role: vae_lhat_threechain_full, evidence_status: EVIDENCE_PENDING}
+    source_reference:
+      role: reference_only_ptbxl_source_initialization
+      evidence_path: configs/evidence/effnet1dv2_ptbxl_source_super5_20260503.json
+      checkpoint_sha256: f7a4b05d85da8352013b67a0d56d8d47378ab2abc196d1f3a6ba8bbf15aa40ea
+      training_arm: false
+      evaluation_ref_exclusion: same_k500_ref_exclusion_as_matched_arms
+    historical_direct_k500:
+      config: configs/experiments/effnet_direct_k500_v7_sjr_rgq.yaml
+      comparison_arm: null
+      matched_baseline: false
+      role: historical_unmatched_provenance
+    optional_ecgfounder_replication:
+      scope: optional_backbone_replication
+      arms: [a0, a3, a5]
+      included_in_default_commands: false
   stages:
   - name: effnet_direct_k500_v7
-    role: efficientnet_direct_baseline
+    role: historical_unmatched_efficientnet_direct_reference
     config: configs/experiments/effnet_direct_k500_v7_sjr_rgq.yaml
-  - name: effnet_direct_k500_v7_pn2021_clean
-    role: efficientnet_direct_baseline_pn2021_clean_refexcluded_eval
+  - name: effnet_matched_pn2021_clean
+    role: efficientnet_matched_ablation_pn2021_clean_refexcluded_eval
     config: configs/experiments/pn2021_eval_v7_sjr_rgq_refexcluded.yaml
   - name: effnet_threechain_locked_train
-    role: efficientnet_main_method_train
+    role: efficientnet_matched_ablation_matrix_train
     config: configs/experiments/effnet_vae_lhat_augmix_threechain_locked_k500.yaml
   - name: effnet_threechain_locked_pn2021c_s5
-    role: efficientnet_main_method_pn2021c_eval
+    role: efficientnet_matched_ablation_pn2021c_s5_eval
     config: configs/experiments/pn2021c_effnet_threechain_locked_official_s5.yaml
   - name: effnet_threechain_locked_pn2021c_depth23
-    role: efficientnet_main_method_depth23_composite_eval
+    role: efficientnet_matched_ablation_known_family_depth23_eval
     config: configs/experiments/pn2021c_effnet_official_s5_depth23_composite.yaml
   - name: ecgfounder_ptbxl_locked_fullft
     role: ecgfounder_source_fullft_prerequisite
@@ -207,17 +233,17 @@ managed_experiments:
   method_family: direct_target_k500_finetune
   mapping_version: v7_super5_sjr_rgq_review_20260528
   owns_training_logic: false
-  notes: Current EfficientNet direct K500 v7 SJR/RGQ seed20260601 managed runner for the locked PN2021-C three-chain mainline; runner.adapter=direct_finetune expands typed YAML fields into one command covering the four target centers and passes managed --out_root.
+  notes: Historical unmatched EfficientNet direct-K500 provenance; it is not the matched A0 arm.
 - name: effnet_vae_lhat_augmix_threechain_locked_k500
   status: active_managed
   evidence_scope: launch_only
   config: configs/experiments/effnet_vae_lhat_augmix_threechain_locked_k500.yaml
   runner_entrypoint: ecg_adv_gen/runner/effnet_vae_lhat_augmix.py
   launcher: scripts/run_experiment.py
-  method_family: vae_latent_hull_threechain_augmix_locked_pn2021c
+  method_family: matched_effnet_a0_a2_a3_a4_a5_known_family_robustness
   mapping_version: v7_super5_sjr_rgq_review_20260528
   owns_training_logic: false
-  notes: Locked EfficientNet PN2021-C official severity-5 main-method launch surface; uses all K500 target samples, last checkpoint evaluation, and two corruption chains plus one VAE-LHAT adversarial waveform chain.
+  notes: Launch-only 4-center x 5-arm matched matrix with shared PTB-XL initialization, K500 internal validation, source floor, budget, and best-checkpoint selection; evidence remains pending.
 - name: ecgfounder_ptbxl_super5_fullft_locked
   status: active_managed
   evidence_scope: launch_only
@@ -254,10 +280,10 @@ managed_experiments:
   config: configs/experiments/pn2021_eval_v7_sjr_rgq_refexcluded.yaml
   runner_entrypoint: ecg_adv_gen/runner/pn2021_clean_eval.py
   launcher: scripts/run_experiment.py
-  method_family: managed_pn2021_refexcluded_eval
+  method_family: managed_matched_effnet_pn2021_refexcluded_eval
   mapping_version: v7_super5_sjr_rgq_review_20260528
   owns_training_logic: false
-  notes: runner.adapter=pn2021_eval expands to one paper_refexcluded eval command per direct-K500 target-center model; each command requires K500 ref exclusion, excludes all four K500 ref-meta files, and reports both all-zero-kept and drop-all-zero PN2021 views.
+  notes: Expands 4 centers x A0/A2/A3/A4/A5 with identical K500 ref exclusion and both all-zero reporting views; consumes canonical matched best checkpoints.
 - name: pn2021c_effnet_threechain_locked_official_s5
   status: active_managed
   evidence_scope: evaluation_only
@@ -267,7 +293,7 @@ managed_experiments:
   method_family: managed_pn2021c_effnet_official_s5_locked_eval
   mapping_version: v7_super5_sjr_rgq_review_20260528
   owns_training_logic: false
-  notes: Locked EfficientNet1DV2 three-chain AugMix PN2021-C official severity-5 evaluation surface; inherits the standard locked protocol and evaluates four target centers with K500 ref-meta exclusion.
+  notes: Evaluates the 20 matched center-arm best checkpoints on five represented corruption families at official severity 5 with K500 ref exclusion.
 - name: pn2021c_ecgfounder_threechain_locked_official_s5
   status: active_managed
   evidence_scope: evaluation_only
@@ -287,7 +313,7 @@ managed_experiments:
   method_family: managed_pn2021c_effnet_official_s5_depth23_composite_eval
   mapping_version: v7_super5_sjr_rgq_review_20260528
   owns_training_logic: false
-  notes: Latest EfficientNet1DV2 depth2/depth3 composite PN2021-C official severity-5 evaluation surface for the locked three-chain VAE-LHAT AugMix run.
+  notes: Evaluates depth2/depth3 known-family compositions for the 20 matched EfficientNet center-arm best checkpoints; it does not support held-out-family claims.
 - name: pn2021c_ecgfounder_official_s5_depth23_composite
   status: active_managed
   evidence_scope: evaluation_only

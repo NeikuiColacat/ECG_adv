@@ -191,3 +191,43 @@ def build_effnet_vae_lhat_run_leaf(params: Any) -> str:
         f"_fullft_arm{comparison_arm}"
         f"{extra_tag}_ep{epochs}_seed{seed}"
     )
+
+
+def build_matched_effnet_producer_dir(
+    config: Mapping[str, Any], *, center: str, arm: str
+) -> str:
+    """Derive the canonical matched-arm producer directory from resolved config."""
+
+    from ecg_adv_gen.matched_effnet import matched_effnet_arm
+
+    matched_effnet_arm(arm)
+    adaptation = config["adaptation"]
+    hull = adaptation["hull"]
+    latent_augmix = adaptation["latent_augmix"]
+    training = config["training"]
+    paper = config["paper_protocol"]
+    producer = config["matched_effnet_producer"]
+    leaf = build_effnet_vae_lhat_run_leaf(
+        {
+            "center": center,
+            "comparison_arm": arm,
+            "hull_M": hull["M"],
+            "hull_lambda": hull["lambda"],
+            "latent_augmix_severity": latent_augmix["severity"],
+            "hull_steps": hull["steps"],
+            "classes_in_scope": adaptation.get("classes_in_scope", ["CD", "HYP", "MI", "NORM", "STTC"]),
+            "hull_label_mode": hull["label_mode"],
+            "hull_mix_label_mode": hull["mix_label_mode"],
+            "hull_neighbor_distance_space": hull["neighbor_distance_space"],
+            "hull_neighbor_mode": hull["neighbor_mode"],
+            "hull_neighbor_pool_size": hull["neighbor_pool_size"],
+            "hull_neighbor_pool_multiplier": hull["neighbor_pool_multiplier"],
+            "run_tag_extra": adaptation.get("run_tag_extra", ""),
+            "epochs": training["epochs"],
+            "seed": paper["kshot"]["seed"],
+        }
+    )
+    return (
+        f"{config['paths']['output_root']}/{producer['experiment_name']}/"
+        f"{config.get('runtime', {}).get('run_id', '')}/{leaf}"
+    )

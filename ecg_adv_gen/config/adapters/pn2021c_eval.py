@@ -10,6 +10,7 @@ from ecg_adv_gen.evaluation.pn2021c_protocol import (
     OFFICIAL_S5_SEVERITY_PROFILE,
     official_s5_depth23_composites,
 )
+from ecg_adv_gen.run_naming import build_matched_effnet_producer_dir
 
 from .common import argv_option_map, audit_equals, audit_require_options, opt_first, opt_list
 
@@ -54,10 +55,11 @@ def build_pn2021c_eval_argv(config: Mapping[str, Any], context: Mapping[str, Any
 
     matrix = context.get("matrix") or {}
     center = matrix.get("center")
+    arm = str(matrix.get("arm") or "")
     method = matrix.get("method") or {}
     if not center:
         raise ValueError("pn2021c_eval adapter requires runner.matrix.center")
-    if not isinstance(method, Mapping) or not method.get("family") or not method.get("name"):
+    if not arm and (not isinstance(method, Mapping) or not method.get("family") or not method.get("name")):
         raise ValueError("pn2021c_eval adapter requires runner.matrix.method name/family")
 
     paths = config["paths"]
@@ -79,11 +81,8 @@ def build_pn2021c_eval_argv(config: Mapping[str, Any], context: Mapping[str, Any
             f"eval_pn2021_c_v7_refexcluded_stream_{severity_profile}",
         )
     )
-    noaug_suffix = method.get("noaug_suffix", "")
     eval_seed = method.get("eval_seed", model["eval_seed"])
     epochs = method.get("epochs", model["epochs"])
-    run_stamp = method.get("run_stamp", model["run_stamp"])
-    run_leaf_stem = method.get("run_leaf_stem", model["run_leaf_stem"])
     clean_eval_name = method.get("clean_eval_name", model["clean_eval_name"])
     selection_policy = str((paper.get("selection") or {}).get("policy", ""))
     checkpoint_name = str(
@@ -91,14 +90,12 @@ def build_pn2021c_eval_argv(config: Mapping[str, Any], context: Mapping[str, Any
         or model.get("checkpoint_name")
         or ("last_model.pt" if selection_policy == "last_checkpoint_only" else "best_model.pt")
     )
-    run_leaf = (
-        f"{center}_{run_leaf_stem}_fullft_k{kshot['k']}"
-        f"{noaug_suffix}_ep{epochs}_seed{eval_seed}"
-    )
-    model_dir_template = method.get("model_dir_template") or method.get("model_dir")
-    if model_dir_template:
+    if arm:
+        method_root = build_matched_effnet_producer_dir(config, center=str(center), arm=arm)
+        output_role = arm
+    elif method.get("model_dir_template") or method.get("model_dir"):
         method_root = _format_model_dir_template(
-            str(model_dir_template),
+            str(method.get("model_dir_template") or method.get("model_dir")),
             center=str(center),
             method=method,
             paths=paths,
@@ -107,11 +104,20 @@ def build_pn2021c_eval_argv(config: Mapping[str, Any], context: Mapping[str, Any
             epochs=epochs,
             k=kshot["k"],
         )
+        output_role = str(method["name"])
     else:
+        run_stamp = method.get("run_stamp", model["run_stamp"])
+        run_leaf_stem = method.get("run_leaf_stem", model["run_leaf_stem"])
+        noaug_suffix = method.get("noaug_suffix", "")
+        run_leaf = (
+            f"{center}_{run_leaf_stem}_fullft_k{kshot['k']}"
+            f"{noaug_suffix}_ep{epochs}_seed{eval_seed}"
+        )
         method_root = (
             f"{paths['output_root']}/{method['family']}/"
             f"seed{eval_seed}_k{kshot['k']}_v7_sjr_rgq_{run_stamp}/{run_leaf}"
         )
+        output_role = str(method["name"])
 
     argv: list[Any] = [
         "--mode",
@@ -158,7 +164,7 @@ def build_pn2021c_eval_argv(config: Mapping[str, Any], context: Mapping[str, Any
         "--output_path",
         (
             f"{paths['output_root']}/{experiment['name']}/{runtime['run_id']}/{center}/"
-            f"{method['name']}/{output_stem}.json"
+            f"{output_role}/{output_stem}.json"
         ),
     ]
     if severity_profile == "custom":
@@ -206,6 +212,7 @@ def audit_pn2021c_eval_command(command: Mapping[str, Any], *, config: Mapping[st
             "--clean_mmap_cache_dir",
             "--clean_cache_dir",
             "--clean_eval_json",
+            "--checkpoint_name",
             "--required_cache_version",
             "--centers",
             "--corruptions",
@@ -253,6 +260,7 @@ def audit_pn2021c_eval_command(command: Mapping[str, Any], *, config: Mapping[st
 
     centers = opt_list(opts, "--centers")
     matrix_center = str((command.get("matrix") or {}).get("center", ""))
+    matrix_arm = str((command.get("matrix") or {}).get("arm", ""))
     if len(centers) != 1:
         errors.append(f"{script}: managed PN2021-C eval must target exactly one center per command")
     center = centers[0] if centers else matrix_center
@@ -281,6 +289,20 @@ def audit_pn2021c_eval_command(command: Mapping[str, Any], *, config: Mapping[st
         )
     if model_dir and clean_eval != f"{model_dir}/{expected_clean_name}":
         errors.append(f"{script}: clean_eval_json must point inside --model_dir")
+    if matrix_arm:
+        try:
+            audit_equals(
+                errors,
+                script,
+                opts,
+                "--model_dir",
+                build_matched_effnet_producer_dir(config, center=matrix_center, arm=matrix_arm),
+            )
+        except ValueError as exc:
+            errors.append(f"{script}: {exc}")
+        audit_equals(errors, script, opts, "--checkpoint_name", "best_model.pt")
+        if f"/{matrix_arm}/" not in str(opt_first(opts, "--output_path", "")):
+            errors.append(f"{script}: output_path must include matched arm {matrix_arm!r}")
     if "--diagnostic_without_clean" in opts:
         errors.append(f"{script}: managed PN2021-C eval must require a clean paper-safe eval JSON")
     if "--limit" in opts and str(opt_first(opts, "--limit")) not in {"0", ""}:
