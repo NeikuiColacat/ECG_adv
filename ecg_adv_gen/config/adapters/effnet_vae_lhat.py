@@ -9,11 +9,13 @@ from ecg_adv_gen.matched_effnet import (
     F004_RHO_SWEEP_PROTOCOL,
     F004_FROZEN_TOPOLOGY_SHA256,
     MATCHED_EFFNET_CONTRACT_VERSION,
+    MATCHED_EFFNET_NON_VAE_HULL_LABEL_MODE,
     f004_variant_for_rho,
     is_matched_effnet_arm,
     matched_effnet_arm,
     validate_f004_runtime,
     validate_matched_effnet_case,
+    validate_matched_effnet_runtime,
 )
 from ecg_adv_gen.f005_control import F005_STUDY_SCOPE, validate_f005_case
 
@@ -109,6 +111,8 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
             comparison_variant=comparison_variant,
             comparison_topology_sha256=declared_topology_sha256,
             target_adv_fraction=target_adv_fraction,
+            kshot_seed=seed,
+            kshot_path=kshot_subset_root,
             enable_vae_lhat=True,
             enable_raw_augmix=True,
             enable_latent_augmix_consistency=bool(latent_augmix_consistency["enabled"]),
@@ -133,6 +137,13 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
             hull_steps=hull["steps"],
             hull_include_anchor=hull["include_anchor"],
             hull_init_logit_gap=hull["init_logit_gap"],
+            hull_label_mode=hull["label_mode"],
+            hull_mix_label_mode=hull["mix_label_mode"],
+            hull_lr=hull["lr"],
+            hull_neighbor_distance_space=hull["neighbor_distance_space"],
+            hull_neighbor_mode=hull["neighbor_mode"],
+            hull_neighbor_pool_size=hull["neighbor_pool_size"],
+            hull_neighbor_pool_multiplier=hull["neighbor_pool_multiplier"],
             pgd_eps=attack["pgd_eps"],
         )
     else:
@@ -155,6 +166,12 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
         target_adv_fraction = arm_components.target_adv_fraction
     elif arm_components is not None and not arm_components.vae_lhat:
         target_adv_fraction = arm_components.target_adv_fraction
+    if (
+        arm_components is not None
+        and is_matched_effnet_arm(comparison_arm)
+        and not arm_components.vae_lhat
+    ):
+        resolved_hull_label_mode = MATCHED_EFFNET_NON_VAE_HULL_LABEL_MODE
     third_chain_route = (
         arm_components.third_chain_route
         if arm_components is not None
@@ -165,6 +182,19 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
     if arm_components is not None:
         bce_weight = bce_weight if arm_components.augmix_view_bce else 0.0
         consistency_weight = consistency_weight if arm_components.jsd else 0.0
+    if is_matched_effnet_arm(comparison_arm):
+        validate_matched_effnet_runtime(
+            comparison_arm,
+            enable_vae_lhat=arm_components.vae_lhat,
+            enable_raw_augmix=arm_components.raw_augmix,
+            enable_auxiliary_steps=True,
+            bce_weight=bce_weight,
+            jsd_weight=consistency_weight,
+            third_chain_route=third_chain_route,
+            hull_label_mode=resolved_hull_label_mode,
+            hull_include_anchor=resolved_hull_include_anchor,
+            target_adv_fraction=target_adv_fraction,
+        )
 
     argv: list[Any] = [
         "--center",
@@ -428,13 +458,16 @@ def audit_effnet_vae_lhat_command(
         "--hull_lambda",
         study_variant.hull_lambda if study_variant is not None else hull["lambda"],
     )
-    audit_equals(
-        errors,
-        script,
-        opts,
-        "--hull_label_mode",
-        study_variant.label_mode if study_variant is not None else hull["label_mode"],
+    expected_hull_label_mode = (
+        study_variant.label_mode if study_variant is not None else hull["label_mode"]
     )
+    canonical_case_arm = str(case.get("arm") or "")
+    if (
+        is_matched_effnet_arm(canonical_case_arm)
+        and not matched_effnet_arm(canonical_case_arm).vae_lhat
+    ):
+        expected_hull_label_mode = MATCHED_EFFNET_NON_VAE_HULL_LABEL_MODE
+    audit_equals(errors, script, opts, "--hull_label_mode", expected_hull_label_mode)
     audit_equals(errors, script, opts, "--pgd_eps", attack["pgd_eps"])
     asr_low, asr_high = attack["target_asr_range"]
     audit_equals(errors, script, opts, "--asr_low_threshold", asr_low)

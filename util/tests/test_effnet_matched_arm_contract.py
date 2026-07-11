@@ -11,8 +11,10 @@ import pytest
 import numpy as np
 import torch
 import torch.nn as nn
+import yaml
 
 from ecg_adv_gen.config import (
+    ConfigError,
     build_runner_commands,
     load_experiment_config,
     make_dry_run_manifest,
@@ -71,7 +73,7 @@ def test_canonical_effnet_arm_table_has_exact_five_operational_rows():
 
     assert matched.MATCHED_EFFNET_ARMS == ("a0", "a2", "a3", "a4", "a5")
     assert "a1" not in matched.MATCHED_EFFNET_ARM_COMPONENTS
-    assert matched.MATCHED_EFFNET_CONTRACT_VERSION == "matched_effnet_a0_a2_a3_a4_a5_v2"
+    assert matched.MATCHED_EFFNET_CONTRACT_VERSION == "matched_effnet_a0_a2_a3_a4_a5_v3"
     expected = {
         "a0": ("matched_direct_k500_baseline", False, False, False, False, 0.0, "clean_budget_control"),
         "a2": ("raw_augmix_clean_third_control", False, True, True, True, 0.0, "clean_anchor_control"),
@@ -132,14 +134,35 @@ def test_adapter_resolves_canonical_case_rows_into_distinct_operational_argv():
         assert "--enable_latent_augmix_consistency" in argv
 
     assert by_arm["a3"] != by_arm["a4"]
+    for arm in ("a0", "a2"):
+        argv = by_arm[arm]
+        assert _option(argv, "--hull_label_mode") == "compatible"
+        assert "--hull_include_anchor" not in argv
     for arm in ("a3", "a4", "a5"):
         argv = by_arm[arm]
         assert _option(argv, "--hull_M") == "20"
         assert _option(argv, "--hull_lambda") == "0.6"
         assert _option(argv, "--hull_steps") == "5"
         assert _option(argv, "--hull_init_logit_gap") == "0.0"
+        assert _option(argv, "--hull_label_mode") == "exact"
         assert _option(argv, "--pgd_eps") == "2.0"
         assert "--hull_include_anchor" not in argv
+
+
+def test_matched_default_promotes_exact_without_changing_generic_vae_defaults():
+    generic = yaml.safe_load(
+        (REPO / "configs/defaults/vae_lhat_defaults.yaml").read_text(encoding="utf-8")
+    )
+    matched = yaml.safe_load(
+        (REPO / "configs/defaults/effnet_matched_f005_locked.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert generic["adaptation"]["hull"]["label_mode"] == "compatible"
+    assert generic["adaptation"]["hull"]["include_anchor"] is True
+    assert matched["adaptation"]["hull"]["label_mode"] == "exact"
+    assert matched["adaptation"]["hull"]["include_anchor"] is False
 
 
 def test_adapter_rejects_case_component_drift_from_canonical_table():
@@ -154,6 +177,27 @@ def test_adapter_rejects_case_component_drift_from_canonical_table():
     config["runner"]["matrix"] = {"center": ["ningbo"], "case": [case]}
 
     with pytest.raises(ValueError, match="canonical matched EffNet arm a4"):
+        build_runner_commands(config)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("label_mode", "compatible"), ("include_anchor", True)],
+)
+def test_adapter_rejects_canonical_vae_hull_geometry_drift(field: str, value):
+    matched = importlib.import_module("ecg_adv_gen.matched_effnet")
+    config = load_experiment_config(
+        REPO / "configs/experiments/effnet_vae_lhat_augmix_threechain_locked_k500.yaml",
+        LOCAL_CONFIG,
+        runtime_context={"run_id": "pytest_task8_geometry_drift"},
+    )
+    config["runner"]["matrix"] = {
+        "center": ["ningbo"],
+        "case": [_arm_case(matched.MATCHED_EFFNET_ARM_COMPONENTS["a3"], "a3")],
+    }
+    config["adaptation"]["hull"][field] = value
+
+    with pytest.raises(ConfigError, match="canonical matched EffNet arm a3"):
         build_runner_commands(config)
 
 
@@ -193,6 +237,53 @@ def test_wrapper_and_child_parser_preserve_canonical_components(monkeypatch):
             if arm in {"a2", "a4", "a5"}
             else "model_zscore"
         )
+        if row.vae_lhat:
+            assert parsed.hull_label_mode == "exact"
+            assert parsed.hull_include_anchor is False
+
+
+def test_canonical_vae_arms_prepare_exact_eligibility_but_no_vae_arms_do_not(
+    tmp_path: Path,
+):
+    from ecg_adv_gen.runner import effnet_vae_lhat_augmix as wrapper
+    from ecg_adv_gen.runner import synth_online_at_super5 as child
+    from ecg_adv_gen.runner.effnet_vae_lhat import (
+        build_effnet_vae_lhat_train_cmd,
+        resolve_effnet_vae_lhat_paths,
+    )
+
+    labels = np.asarray([[1, 0, 0, 0, 0]] * 3, dtype=np.float32)
+    source_meta = {"record_ids": np.asarray(["r0", "r1", "r2"])}
+    matched, _, commands = _five_arm_commands()
+    for command in commands:
+        arm = command["matrix"]["case"]["arm"]
+        row = matched.MATCHED_EFFNET_ARM_COMPONENTS[arm]
+        args = wrapper.parse_args(command["argv"][2:])
+        paths = resolve_effnet_vae_lhat_paths(
+            args, data_root=Path(args.data_root), out_root=Path(args.out_root)
+        )
+        child_argv = build_effnet_vae_lhat_train_cmd(
+            args,
+            python=sys.executable,
+            data_root=Path(args.data_root),
+            paths=paths,
+            class_trust=Path("/dev/shm/class_trust.json"),
+        )
+        parsed = child.parse_args(child_argv[3:])
+        parsed.output_dir = str(tmp_path / arm)
+        (tmp_path / arm).mkdir()
+
+        manifest, eligible = child.prepare_exact_nonself_eligibility(
+            parsed, labels, source_meta
+        )
+        manifest_path = tmp_path / arm / "eligible_anchor_manifest.json"
+        if row.vae_lhat:
+            assert manifest is not None
+            assert eligible == [0, 1, 2]
+            assert manifest_path.exists()
+        else:
+            assert manifest is None and eligible is None
+            assert not manifest_path.exists()
 
 
 def test_selection_and_artifact_contract_use_best_checkpoint_for_all_five_arms():

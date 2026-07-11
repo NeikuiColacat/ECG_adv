@@ -233,9 +233,12 @@ def build_matched_effnet_producer_dir(
 ) -> str:
     """Derive the canonical matched-arm producer directory from resolved config."""
 
-    from ecg_adv_gen.matched_effnet import matched_effnet_arm
+    from ecg_adv_gen.matched_effnet import (
+        MATCHED_EFFNET_NON_VAE_HULL_LABEL_MODE,
+        matched_effnet_arm,
+    )
 
-    matched_effnet_arm(arm)
+    arm_components = matched_effnet_arm(arm)
     adaptation = config["adaptation"]
     hull = adaptation["hull"]
     latent_augmix = adaptation["latent_augmix"]
@@ -251,7 +254,11 @@ def build_matched_effnet_producer_dir(
             "latent_augmix_severity": latent_augmix["severity"],
             "hull_steps": hull["steps"],
             "classes_in_scope": adaptation.get("classes_in_scope", ["CD", "HYP", "MI", "NORM", "STTC"]),
-            "hull_label_mode": hull["label_mode"],
+            "hull_label_mode": (
+                hull["label_mode"]
+                if arm_components.vae_lhat
+                else MATCHED_EFFNET_NON_VAE_HULL_LABEL_MODE
+            ),
             "hull_mix_label_mode": hull["mix_label_mode"],
             "hull_neighbor_distance_space": hull["neighbor_distance_space"],
             "hull_neighbor_mode": hull["neighbor_mode"],

@@ -5,13 +5,20 @@ import json
 from types import MappingProxyType
 from typing import Any, Mapping, NamedTuple
 
-MATCHED_EFFNET_CONTRACT_VERSION = "matched_effnet_a0_a2_a3_a4_a5_v2"
+MATCHED_EFFNET_CONTRACT_VERSION = "matched_effnet_a0_a2_a3_a4_a5_v3"
 MATCHED_EFFNET_ARMS = ("a0", "a2", "a3", "a4", "a5")
+MATCHED_EFFNET_VAE_HULL_LABEL_MODE = "exact"
+MATCHED_EFFNET_VAE_HULL_INCLUDE_ANCHOR = False
+MATCHED_EFFNET_NON_VAE_HULL_LABEL_MODE = "compatible"
 F004_RHO_SWEEP_PROTOCOL = "f004_full_topology_rho_sweep_v1"
 F004_RHO_VALUES = (0.0, 0.25, 0.5)
 F004_TOPOLOGY_REFERENCE = "a5_components_only"
 F004_ONLY_VARIED_PARAMETER = "target_adv_fraction"
 F004_VARIANTS = ("f004_rho0", "f004_rho0p25", "f004_rho0p5")
+F004_KSHOT_SEED = 20260601
+F004_KSHOT_SUBSET_ROOT_FAMILY = (
+    "paper_matched_effnet_k500_v7_fixedk_three_seed_20260711/subsets"
+)
 F004_FROZEN_TOPOLOGY = MappingProxyType({
     "enable_vae_lhat": True,
     "enable_raw_augmix": True,
@@ -38,6 +45,13 @@ F004_FROZEN_TOPOLOGY = MappingProxyType({
     "hull_steps": 5,
     "hull_include_anchor": False,
     "hull_init_logit_gap": 0.0,
+    "hull_label_mode": "exact",
+    "hull_mix_label_mode": "anchor_soft",
+    "hull_lr": 0.25,
+    "hull_neighbor_distance_space": "standardized",
+    "hull_neighbor_mode": "local_random",
+    "hull_neighbor_pool_size": 120,
+    "hull_neighbor_pool_multiplier": 4,
     "pgd_eps": 2.0,
 })
 F004_FROZEN_TOPOLOGY_SHA256 = hashlib.sha256(
@@ -98,8 +112,22 @@ def f004_identity(rho: object) -> dict[str, Any]:
         "topology_version": MATCHED_EFFNET_CONTRACT_VERSION,
         "topology_sha256": F004_FROZEN_TOPOLOGY_SHA256,
         "only_varied_parameter": F004_ONLY_VARIED_PARAMETER,
+        "kshot_seed": F004_KSHOT_SEED,
+        "kshot_subset_root_family": F004_KSHOT_SUBSET_ROOT_FAMILY,
         "canonical_arm": None,
     }
+
+
+def validate_f004_kshot_identity(*, kshot_seed: int, kshot_path: str) -> None:
+    normalized_kshot_path = str(kshot_path).replace("\\", "/")
+    normalized_kshot_path = f"/{normalized_kshot_path.strip('/')}/"
+    expected_root_token = f"/{F004_KSHOT_SUBSET_ROOT_FAMILY}/"
+    if int(kshot_seed) != F004_KSHOT_SEED or expected_root_token not in normalized_kshot_path:
+        raise ValueError(
+            "F-004 K500 identity mismatch: "
+            f"seed={kshot_seed!r}, path={kshot_path!r}, expected seed "
+            f"{F004_KSHOT_SEED} under {F004_KSHOT_SUBSET_ROOT_FAMILY!r}"
+        )
 
 def validate_matched_effnet_case(case: Mapping[str, Any]) -> tuple[str, MatchedEffnetArm]:
     arm = str(case.get("arm") or case.get("comparison_arm") or "")
@@ -114,7 +142,8 @@ def validate_matched_effnet_case(case: Mapping[str, Any]) -> tuple[str, MatchedE
 def validate_matched_effnet_runtime(
     arm: str, *, enable_vae_lhat: bool, enable_raw_augmix: bool,
     enable_auxiliary_steps: bool, bce_weight: float, jsd_weight: float,
-    third_chain_route: str, target_adv_fraction: float | None = None,
+    third_chain_route: str, hull_label_mode: str, hull_include_anchor: bool,
+    target_adv_fraction: float | None = None,
 ) -> MatchedEffnetArm:
     row = matched_effnet_arm(arm)
     checks = {
@@ -127,6 +156,15 @@ def validate_matched_effnet_runtime(
     }
     if target_adv_fraction is not None:
         checks["target_adv_fraction"] = (float(target_adv_fraction), row.target_adv_fraction)
+    if row.vae_lhat:
+        checks.update({
+            "hull_label_mode": (
+                str(hull_label_mode), MATCHED_EFFNET_VAE_HULL_LABEL_MODE
+            ),
+            "hull_include_anchor": (
+                bool(hull_include_anchor), MATCHED_EFFNET_VAE_HULL_INCLUDE_ANCHOR
+            ),
+        })
     drift = {key: values for key, values in checks.items() if values[0] != values[1]}
     if drift:
         raise ValueError(f"canonical matched EffNet arm {arm} component drift: {drift}")
@@ -136,6 +174,7 @@ def validate_matched_effnet_runtime(
 def validate_f004_runtime(
     *, comparison_protocol: str, comparison_arm: str, comparison_variant: str,
     comparison_topology_sha256: str, target_adv_fraction: float,
+    kshot_seed: int, kshot_path: str,
     enable_vae_lhat: bool, enable_raw_augmix: bool,
     enable_latent_augmix_consistency: bool,
     latent_augmix_bce_weight: float, latent_augmix_consistency_weight: float,
@@ -146,6 +185,9 @@ def validate_f004_runtime(
     latent_augmix_severity_profile: str, latent_augmix_ops: list[str] | tuple[str, ...],
     latent_augmix_signal_space: str, hull_M: int, hull_lambda: float,
     hull_steps: int, hull_include_anchor: bool, hull_init_logit_gap: float,
+    hull_label_mode: str, hull_mix_label_mode: str, hull_lr: float,
+    hull_neighbor_distance_space: str, hull_neighbor_mode: str,
+    hull_neighbor_pool_size: int, hull_neighbor_pool_multiplier: int,
     pgd_eps: float,
 ) -> dict[str, Any]:
     if not is_f004_rho_sweep(comparison_protocol):
@@ -157,6 +199,7 @@ def validate_f004_runtime(
             "F-004 frozen full topology fingerprint mismatch: "
             f"{comparison_topology_sha256!r}"
         )
+    validate_f004_kshot_identity(kshot_seed=kshot_seed, kshot_path=kshot_path)
     identity = f004_identity(target_adv_fraction)
     if comparison_variant != identity["variant"]:
         raise ValueError(
@@ -186,6 +229,13 @@ def validate_f004_runtime(
         "hull_steps": int(hull_steps),
         "hull_include_anchor": bool(hull_include_anchor),
         "hull_init_logit_gap": float(hull_init_logit_gap),
+        "hull_label_mode": str(hull_label_mode),
+        "hull_mix_label_mode": str(hull_mix_label_mode),
+        "hull_lr": float(hull_lr),
+        "hull_neighbor_distance_space": str(hull_neighbor_distance_space),
+        "hull_neighbor_mode": str(hull_neighbor_mode),
+        "hull_neighbor_pool_size": int(hull_neighbor_pool_size),
+        "hull_neighbor_pool_multiplier": int(hull_neighbor_pool_multiplier),
         "pgd_eps": float(pgd_eps),
     }
     drift = {

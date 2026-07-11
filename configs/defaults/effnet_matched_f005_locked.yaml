@@ -23,6 +23,7 @@ adaptation:
     M: 20
     lambda: 0.6
     steps: 5
+    label_mode: exact
     include_anchor: false
     init_logit_gap: 0.0
   attack:

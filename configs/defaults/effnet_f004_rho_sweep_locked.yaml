@@ -6,9 +6,21 @@ f004_effnet_producer:
 paper_protocol:
   comparison_protocol: f004_full_topology_rho_sweep_v1
   topology_reference: a5_components_only
-  topology_version: matched_effnet_a0_a2_a3_a4_a5_v2
-  topology_sha256: 76e387a34cc0f7b51e91ef89cd9bb1518f49e3e95a542b33aaec3608030cef73
+  topology_version: matched_effnet_a0_a2_a3_a4_a5_v3
+  topology_sha256: 4f75c38410fb332897226b7186988ab5f0a429e2c59d0c5406084f4c349b34bd
   only_varied_parameter: target_adv_fraction
+
+data:
+  kshot_subset_root: ${paths.data_root}/paper_matched_effnet_k500_v7_fixedk_three_seed_20260711/subsets
 
 adaptation:
   comparison_arm: historical_unmatched
+  hull:
+    label_mode: exact
+    mix_label_mode: anchor_soft
+    lr: 0.25
+    include_anchor: false
+    neighbor_distance_space: standardized
+    neighbor_mode: local_random
+    neighbor_pool_size: 120
+    neighbor_pool_multiplier: 4

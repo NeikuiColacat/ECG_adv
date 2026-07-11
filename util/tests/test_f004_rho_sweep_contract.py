@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 import torch
 import torch.nn as nn
+import yaml
 from torch.utils.data import DataLoader, TensorDataset
 
 from ecg_adv_gen.config import (
@@ -23,6 +24,7 @@ from ecg_adv_gen.config import (
 )
 from ecg_adv_gen.evaluation import selection
 from ecg_adv_gen.matched_effnet import (
+    F004_FROZEN_TOPOLOGY,
     F004_RHO_SWEEP_PROTOCOL,
     F004_RHO_VALUES,
     F004_VARIANTS,
@@ -31,16 +33,22 @@ from ecg_adv_gen.matched_effnet import (
     validate_f004_runtime,
 )
 from ecg_adv_gen.training.online_buffer import train_one_epoch_grouped_target_bce
-from ecg_adv_gen.training.resume_contract import resume_contract_mismatches
+from ecg_adv_gen.training.resume_contract import RESUME_CONTRACT_KEYS, resume_contract_mismatches
 
 
 REPO = Path(__file__).resolve().parents[2]
 LOCAL = REPO / "configs/local/linbinhao_server.example.yaml"
 CANONICAL = REPO / "configs/experiments/effnet_vae_lhat_augmix_threechain_locked_k500.yaml"
+CLEAN = REPO / "configs/experiments/pn2021_eval_v7_sjr_rgq_refexcluded.yaml"
 SMOKE = REPO / "configs/studies/effnet_f004_rho_sweep_onecenter_smoke.yaml"
 TRAIN = REPO / "configs/studies/effnet_f004_rho_sweep_k500.yaml"
 S5 = REPO / "configs/studies/pn2021c_effnet_f004_rho_sweep_official_s5.yaml"
 DEPTH23 = REPO / "configs/studies/pn2021c_effnet_f004_rho_sweep_depth23.yaml"
+F004_DEFAULT = REPO / "configs/defaults/effnet_f004_rho_sweep_locked.yaml"
+F004_EXPECTED_KSHOT_SEED = 20260601
+F004_EXPECTED_KSHOT_ROOT_FAMILY = (
+    "paper_matched_effnet_k500_v7_fixedk_three_seed_20260711/subsets"
+)
 
 
 def _split() -> dict:
@@ -113,6 +121,15 @@ def test_f004_is_independent_from_canonical_arms_and_has_stable_identity():
     assert F004_VARIANTS == ("f004_rho0", "f004_rho0p25", "f004_rho0p5")
     assert [f004_identity(rho)["variant"] for rho in F004_RHO_VALUES] == list(F004_VARIANTS)
     assert all(f004_identity(rho)["canonical_arm"] is None for rho in F004_RHO_VALUES)
+    assert all(
+        f004_identity(rho)["kshot_seed"] == F004_EXPECTED_KSHOT_SEED
+        for rho in F004_RHO_VALUES
+    )
+    assert all(
+        f004_identity(rho)["kshot_subset_root_family"]
+        == F004_EXPECTED_KSHOT_ROOT_FAMILY
+        for rho in F004_RHO_VALUES
+    )
 
 
 @pytest.mark.parametrize(
@@ -129,6 +146,41 @@ def test_f004_managed_matrices_are_exact_center_by_rho(path: Path, centers, coun
     commands = build_runner_commands(config)
     assert len(commands) == count
     assert len({(item["matrix"]["center"], item["matrix"]["rho"]) for item in commands}) == count
+
+
+@pytest.mark.parametrize("path", [SMOKE, TRAIN, S5, DEPTH23])
+def test_f004_uses_canonical_fresh_k500_root_without_five_arm_cross_product(path: Path):
+    config = _load(path)
+
+    assert config["data"]["kshot_subset_root"].endswith(
+        "/paper_matched_effnet_k500_v7_fixedk_three_seed_20260711/subsets"
+    )
+    assert config["paper_protocol"]["kshot"]["seed"] == 20260601
+    assert config["paper_protocol"]["kshot"]["subset_seed"] == 20260601
+    assert set(config["runner"]["matrix"]) == {"center", "rho"}
+
+    drifted = copy.deepcopy(config)
+    drifted["data"]["kshot_subset_root"] = (
+        "${paths.data_root}/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets"
+    )
+    with pytest.raises(ConfigError, match="F-004 K500 identity"):
+        build_runner_commands(drifted)
+
+
+def test_f004_clean_consumer_rejects_old_ref_exclusion_root_before_build():
+    from ecg_adv_gen.config.adapters.pn2021_eval import build_pn2021_eval_argv
+
+    config = _load(CLEAN, "pytest-f004-clean-root-drift")
+    config["paper_protocol"]["comparison_protocol"] = F004_RHO_SWEEP_PROTOCOL
+    config["data"]["kshot_subset_root"] = (
+        "/data/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets"
+    )
+
+    with pytest.raises(ValueError, match="F-004 K500 identity"):
+        build_pn2021_eval_argv(
+            config,
+            {"matrix": {"center": "ningbo", "arm": "a0"}},
+        )
 
 
 @pytest.mark.parametrize(
@@ -206,9 +258,17 @@ def test_f004_wrapper_propagates_identity_to_child_command():
     )
     assert _option(child, "--comparison_protocol") == F004_RHO_SWEEP_PROTOCOL
     assert _option(child, "--comparison_variant") == "f004_rho0p25"
-    assert _option(child, "--comparison_topology_version") == "matched_effnet_a0_a2_a3_a4_a5_v2"
+    assert _option(child, "--comparison_topology_version") == "matched_effnet_a0_a2_a3_a4_a5_v3"
     assert _option(child, "--comparison_topology_sha256") == f004_identity(0.25)["topology_sha256"]
     assert _option(child, "--target_adv_fraction") == "0.25"
+    assert _option(child, "--hull_label_mode") == "exact"
+    assert _option(child, "--hull_mix_label_mode") == "anchor_soft"
+    assert _option(child, "--hull_lr") == "0.25"
+    assert _option(child, "--hull_neighbor_distance_space") == "standardized"
+    assert _option(child, "--hull_neighbor_mode") == "local_random"
+    assert _option(child, "--hull_neighbor_pool_size") == "120"
+    assert _option(child, "--hull_neighbor_pool_multiplier") == "4"
+    assert "--hull_include_anchor" not in child
     assert Path(_option(child, "--output_dir")).name == "f004_rho0p25"
 
 
@@ -270,7 +330,7 @@ def test_f004_resume_contract_rejects_protocol_variant_topology_and_rho_drift():
     current = {
         "comparison_protocol": F004_RHO_SWEEP_PROTOCOL,
         "comparison_variant": "f004_rho0p25",
-        "comparison_topology_version": "matched_effnet_a0_a2_a3_a4_a5_v2",
+        "comparison_topology_version": "matched_effnet_a0_a2_a3_a4_a5_v3",
         "comparison_topology_sha256": matched_effnet.F004_FROZEN_TOPOLOGY_SHA256,
         "target_adv_fraction": 0.25,
     }
@@ -301,7 +361,7 @@ def test_f004_resume_contract_treats_missing_identity_as_drift(missing_key: str)
     current = {
         "comparison_protocol": F004_RHO_SWEEP_PROTOCOL,
         "comparison_variant": "f004_rho0p25",
-        "comparison_topology_version": "matched_effnet_a0_a2_a3_a4_a5_v2",
+        "comparison_topology_version": "matched_effnet_a0_a2_a3_a4_a5_v3",
         "comparison_topology_sha256": matched_effnet.F004_FROZEN_TOPOLOGY_SHA256,
         "target_adv_fraction": 0.25,
     }
@@ -321,6 +381,8 @@ def _f004_runtime_kwargs() -> dict:
         "comparison_variant": "f004_rho0p25",
         "comparison_topology_sha256": matched_effnet.F004_FROZEN_TOPOLOGY_SHA256,
         "target_adv_fraction": 0.25,
+        "kshot_seed": F004_EXPECTED_KSHOT_SEED,
+        "kshot_path": f"/data/{F004_EXPECTED_KSHOT_ROOT_FAMILY}",
         **topology,
     }
 
@@ -350,6 +412,13 @@ def _f004_runtime_kwargs() -> dict:
         ("hull_steps", 3),
         ("hull_include_anchor", True),
         ("hull_init_logit_gap", 4.0),
+        ("hull_label_mode", "compatible"),
+        ("hull_mix_label_mode", "anchor"),
+        ("hull_lr", 0.5),
+        ("hull_neighbor_distance_space", "raw"),
+        ("hull_neighbor_mode", "nearest"),
+        ("hull_neighbor_pool_size", 20),
+        ("hull_neighbor_pool_multiplier", 2),
         ("pgd_eps", 1.0),
     ],
 )
@@ -375,6 +444,83 @@ def test_f004_managed_config_declares_shared_topology_fingerprint_and_rejects_dr
     drifted["adaptation"]["latent_augmix"]["width"] = 1
     with pytest.raises(ConfigError, match="F-004 frozen full topology drift.*latent_augmix_width"):
         build_runner_commands(drifted)
+
+
+def test_f004_default_explicitly_locks_all_hull_identity_fields():
+    raw = yaml.safe_load(F004_DEFAULT.read_text(encoding="utf-8"))
+    hull = (raw.get("adaptation") or {}).get("hull") or {}
+
+    assert {
+        "label_mode": hull.get("label_mode"),
+        "mix_label_mode": hull.get("mix_label_mode"),
+        "lr": hull.get("lr"),
+        "include_anchor": hull.get("include_anchor"),
+        "neighbor_distance_space": hull.get("neighbor_distance_space"),
+        "neighbor_mode": hull.get("neighbor_mode"),
+        "neighbor_pool_size": hull.get("neighbor_pool_size"),
+        "neighbor_pool_multiplier": hull.get("neighbor_pool_multiplier"),
+    } == {
+        "label_mode": "exact",
+        "mix_label_mode": "anchor_soft",
+        "lr": 0.25,
+        "include_anchor": False,
+        "neighbor_distance_space": "standardized",
+        "neighbor_mode": "local_random",
+        "neighbor_pool_size": 120,
+        "neighbor_pool_multiplier": 4,
+    }
+
+
+def test_f004_child_locks_make_parent_f005_default_drift_command_invariant(monkeypatch):
+    from ecg_adv_gen.config import loader
+
+    options = (
+        "--hull_label_mode",
+        "--hull_mix_label_mode",
+        "--hull_lr",
+        "--hull_neighbor_distance_space",
+        "--hull_neighbor_mode",
+        "--hull_neighbor_pool_size",
+        "--hull_neighbor_pool_multiplier",
+        "--comparison_topology_version",
+        "--comparison_topology_sha256",
+    )
+    baseline = build_runner_commands(_load(TRAIN, "pytest-f004-parent-baseline"))[0]["argv"]
+    real_read_yaml = loader._read_yaml
+
+    def drifting_read_yaml(path: Path) -> dict:
+        raw = real_read_yaml(path)
+        if path.name == "effnet_matched_f005_locked.yaml":
+            raw = copy.deepcopy(raw)
+            raw["adaptation"]["hull"].update({
+                "label_mode": "primary",
+                "mix_label_mode": "anchor",
+                "lr": 0.9,
+                "include_anchor": True,
+                "neighbor_distance_space": "raw",
+                "neighbor_mode": "nearest",
+                "neighbor_pool_size": 5,
+                "neighbor_pool_multiplier": 2,
+            })
+        return raw
+
+    monkeypatch.setattr(loader, "_read_yaml", drifting_read_yaml)
+    drifted = build_runner_commands(_load(TRAIN, "pytest-f004-parent-drift"))[0]["argv"]
+    for option in options:
+        assert _option(drifted, option) == _option(baseline, option)
+    assert ("--hull_include_anchor" in drifted) is False
+
+
+@pytest.mark.parametrize("key", tuple(F004_FROZEN_TOPOLOGY))
+def test_f004_resume_contract_requires_every_frozen_topology_field(key: str):
+    assert key in RESUME_CONTRACT_KEYS
+    current = {
+        "comparison_protocol": F004_RHO_SWEEP_PROTOCOL,
+        key: F004_FROZEN_TOPOLOGY[key],
+    }
+    saved = {"comparison_protocol": F004_RHO_SWEEP_PROTOCOL}
+    mismatches = resume_contract_mismatches(saved, current)
+    assert [row["key"] for row in mismatches] == [key]
 
 
 def test_f004_eval_identity_resolver_is_fail_closed(tmp_path: Path):
@@ -484,6 +630,37 @@ def test_f004_corruption_stages_export_identity_preserving_metrics_and_tables(co
     } == {"f004_rho0"}
 
 
+def _f004_checkpoint_runtime_args() -> dict:
+    identity = f004_identity(0.25)
+    anchor = (
+        f"/data/{F004_EXPECTED_KSHOT_ROOT_FAMILY}/cpsc_2018/"
+        f"k500_seed{F004_EXPECTED_KSHOT_SEED}/cpsc_2018_real_k500_"
+        f"seed{F004_EXPECTED_KSHOT_SEED}"
+    )
+    return {
+        "comparison_protocol": identity["comparison_protocol"],
+        "comparison_variant": identity["variant"],
+        "comparison_topology_version": identity["topology_version"],
+        "comparison_topology_sha256": identity["topology_sha256"],
+        "target_adv_fraction": identity["rho"],
+        "seed": F004_EXPECTED_KSHOT_SEED,
+        "ref_meta_json": f"{anchor}.ref_meta.json",
+        "synth_npz": f"{anchor}.latent.npz",
+        "target_real_npz": f"{anchor}.raw1000.npz",
+        **dict(F004_FROZEN_TOPOLOGY),
+    }
+
+
+def _drift_value(value):
+    if isinstance(value, bool):
+        return not value
+    if isinstance(value, (int, float)):
+        return value + 1
+    if isinstance(value, tuple):
+        return ("intentional_drift",)
+    return f"{value}_intentional_drift"
+
+
 @pytest.mark.parametrize(
     ("layer", "key", "value"),
     [
@@ -505,17 +682,60 @@ def test_f004_checkpoint_identity_hard_gate_rejects_tampering_even_with_drift_ov
     from ecg_adv_gen.training.resume_contract import validate_f004_checkpoint_identity
 
     identity = f004_identity(0.25)
-    current = {
-        "comparison_protocol": identity["comparison_protocol"],
-        "comparison_variant": identity["variant"],
-        "comparison_topology_version": identity["topology_version"],
-        "comparison_topology_sha256": identity["topology_sha256"],
-        "target_adv_fraction": identity["rho"],
-        "allow_resume_config_drift": True,
-    }
+    current = {**_f004_checkpoint_runtime_args(), "allow_resume_config_drift": True}
     checkpoint = {"comparison_identity": dict(identity), "args": dict(current)}
     checkpoint[layer if layer == "args" else "comparison_identity"][key] = value
     with pytest.raises(ValueError, match="F-004 checkpoint identity"):
+        validate_f004_checkpoint_identity(checkpoint, current)
+
+
+@pytest.mark.parametrize(
+    "key",
+    (
+        "seed",
+        "ref_meta_json",
+        "synth_npz",
+        "target_real_npz",
+        *F004_FROZEN_TOPOLOGY,
+    ),
+)
+def test_f004_checkpoint_hard_gate_rejects_runtime_tamper_despite_override(key: str):
+    from ecg_adv_gen.training.resume_contract import validate_f004_checkpoint_identity
+
+    current = {**_f004_checkpoint_runtime_args(), "allow_resume_config_drift": True}
+    checkpoint = {
+        "comparison_identity": f004_identity(0.25),
+        "args": dict(current),
+    }
+    checkpoint["args"][key] = _drift_value(checkpoint["args"][key])
+
+    with pytest.raises(ValueError, match=f"F-004 checkpoint identity.*{key}"):
+        validate_f004_checkpoint_identity(checkpoint, current)
+
+
+@pytest.mark.parametrize(
+    "key",
+    (
+        "seed",
+        "ref_meta_json",
+        "synth_npz",
+        "target_real_npz",
+        *F004_FROZEN_TOPOLOGY,
+    ),
+)
+def test_f004_checkpoint_hard_gate_rejects_missing_runtime_field_despite_override(
+    key: str,
+):
+    from ecg_adv_gen.training.resume_contract import validate_f004_checkpoint_identity
+
+    current = {**_f004_checkpoint_runtime_args(), "allow_resume_config_drift": True}
+    checkpoint = {
+        "comparison_identity": f004_identity(0.25),
+        "args": dict(current),
+    }
+    checkpoint["args"].pop(key)
+
+    with pytest.raises(ValueError, match=f"F-004 checkpoint identity.*{key}"):
         validate_f004_checkpoint_identity(checkpoint, current)
 
 
@@ -534,13 +754,7 @@ def test_f004_checkpoint_identity_hard_gate_rejects_missing_fields(layer: str, k
     from ecg_adv_gen.training.resume_contract import validate_f004_checkpoint_identity
 
     identity = f004_identity(0.25)
-    current = {
-        "comparison_protocol": identity["comparison_protocol"],
-        "comparison_variant": identity["variant"],
-        "comparison_topology_version": identity["topology_version"],
-        "comparison_topology_sha256": identity["topology_sha256"],
-        "target_adv_fraction": identity["rho"],
-    }
+    current = _f004_checkpoint_runtime_args()
     checkpoint = {"comparison_identity": dict(identity), "args": dict(current)}
     if layer == "top":
         checkpoint.pop(key)

@@ -15,6 +15,7 @@ from ecg_adv_gen.matched_effnet import (
     F004_RHO_SWEEP_PROTOCOL,
     f004_identity,
     f004_variant_for_rho,
+    validate_f004_kshot_identity,
 )
 from ecg_adv_gen.run_naming import (
     build_f005_control_producer_dir,
@@ -106,6 +107,10 @@ def build_pn2021c_eval_argv(config: Mapping[str, Any], context: Mapping[str, Any
         or ("last_model.pt" if selection_policy == "last_checkpoint_only" else "best_model.pt")
     )
     if is_f004:
+        validate_f004_kshot_identity(
+            kshot_seed=int(kshot.get("subset_seed", kshot["seed"])),
+            kshot_path=str(data["kshot_subset_root"]),
+        )
         output_role = f004_variant_for_rho(rho)
         method_root = build_f004_effnet_producer_dir(
             config, center=str(center), rho=float(rho)

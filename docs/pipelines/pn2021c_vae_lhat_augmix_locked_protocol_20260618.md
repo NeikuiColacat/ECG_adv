@@ -39,6 +39,14 @@ not count as the main method.
   weights, sampling rules, operator-specific tuning, or center-specific recipe
   changes.
 - PTB-XL/source clean performance is the shared source-floor gate.
+- The canonical EfficientNet VAE arms A3/A4/A5 use exact-label, non-self latent
+  partners with `include_anchor=false`. Before epoch 1 they must emit the
+  deterministic exact-partner eligibility manifest; A0/A2 remain non-VAE arms
+  and do not load latent assets or create that manifest.
+- The independent F-004 rho sweep uses seed `20260601` from the fresh
+  `paper_matched_effnet_k500_v7_fixedk_three_seed_20260711/subsets` family. Its
+  v3 topology freezes label/mix modes, hull learning rate, and neighbor search
+  geometry; only `target_adv_fraction` varies across 0/0.25/0.5.
 
 ## Backbone Training Protocol
 

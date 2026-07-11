@@ -107,6 +107,14 @@ def test_latest_mainline_golden_identity_order_and_content():
         for arm in ("a0", "a2", "a3", "a4", "a5")
     ]
     assert train["matrix_cases"] == expected_cases
+    for case, command in zip(train["matrix_cases"], train["runner_commands"]):
+        argv = shlex.split(command.split("\t", 1)[1])
+        if case["arm"] in {"a3", "a4", "a5"}:
+            assert argv[argv.index("--hull_label_mode") + 1] == "exact"
+            assert "--hull_include_anchor" not in argv
+        else:
+            assert argv[argv.index("--hull_label_mode") + 1] == "compatible"
+            assert "--disable_vae_lhat" in argv
     for config_rel in (
         "configs/experiments/pn2021_eval_v7_sjr_rgq_refexcluded.yaml",
         "configs/experiments/pn2021c_effnet_threechain_locked_official_s5.yaml",

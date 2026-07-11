@@ -9,6 +9,10 @@ from ecg_adv_gen.run_naming import (
     build_matched_effnet_producer_dir,
 )
 from ecg_adv_gen.f005_control import validate_f005_case
+from ecg_adv_gen.matched_effnet import (
+    F004_RHO_SWEEP_PROTOCOL,
+    validate_f004_kshot_identity,
+)
 
 from .common import argv_option_map, audit_equals, audit_require_options, opt_first, opt_list
 
@@ -35,6 +39,11 @@ def build_pn2021_eval_argv(config: Mapping[str, Any], context: Mapping[str, Any]
     data = config["data"]
     runtime = config.get("runtime") or {}
     experiment = config["experiment"]
+    if str(paper.get("comparison_protocol") or "") == F004_RHO_SWEEP_PROTOCOL:
+        validate_f004_kshot_identity(
+            kshot_seed=int(kshot.get("subset_seed", kshot["seed"])),
+            kshot_path=str(data["kshot_subset_root"]),
+        )
 
     if case is not None and case.get("study_scope"):
         variant, seed, _ = validate_f005_case(case)

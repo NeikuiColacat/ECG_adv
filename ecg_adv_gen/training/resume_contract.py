@@ -5,7 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ecg_adv_gen.matched_effnet import F004_RHO_SWEEP_PROTOCOL, f004_identity
+from ecg_adv_gen.matched_effnet import (
+    F004_FROZEN_TOPOLOGY,
+    F004_RHO_SWEEP_PROTOCOL,
+    f004_identity,
+    validate_f004_kshot_identity,
+)
 
 
 RESUME_CONTRACT_KEYS = (
@@ -37,6 +42,7 @@ RESUME_CONTRACT_KEYS = (
     "hull_neighbor_distance_space",
     "hull_neighbor_mode",
     "hull_neighbor_pool_size",
+    "hull_neighbor_pool_multiplier",
     "pgd_eps",
     "asr_low_threshold",
     "asr_high_threshold",
@@ -47,7 +53,11 @@ RESUME_CONTRACT_KEYS = (
     "adv_teacher_mix",
     "latent_augmix_width",
     "latent_augmix_depth",
+    "latent_augmix_copies",
+    "latent_augmix_adv_base_mix",
+    "latent_augmix_alpha",
     "latent_augmix_severity",
+    "latent_augmix_severity_profile",
     "latent_augmix_third_chain_role",
     "latent_augmix_chain_base_mode",
     "latent_augmix_ops",
@@ -101,6 +111,8 @@ def resume_contract_mismatches(
     f004_required = {
         "comparison_protocol", "comparison_variant", "comparison_topology_version",
         "comparison_topology_sha256", "target_adv_fraction",
+        "seed", "ref_meta_json", "synth_npz", "target_real_npz",
+        *F004_FROZEN_TOPOLOGY,
     }
     if "attack_mode" in saved_args:
         saved_attack_mode = normalize_resume_contract_value(saved_args["attack_mode"])
@@ -121,7 +133,11 @@ def resume_contract_mismatches(
             continue
         if key not in saved_args:
             if f004_current and key in f004_required:
-                mismatches.append({"key": key, "saved": None, "current": current_args[key]})
+                mismatches.append({
+                    "key": key,
+                    "saved": None,
+                    "current": normalize_resume_contract_value(current_args[key]),
+                })
                 continue
             if (
                 key == "latent_augmix_signal_space"
@@ -216,4 +232,57 @@ def validate_f004_checkpoint_identity(
             "F-004 checkpoint identity args mismatch: "
             f"{args_projection!r} != {expected_projection!r}"
         )
+    hard_runtime_keys = (
+        "seed",
+        "ref_meta_json",
+        "synth_npz",
+        "target_real_npz",
+        *F004_FROZEN_TOPOLOGY,
+    )
+    for layer, args in (("current", current_args), ("saved args", saved_args)):
+        missing = [key for key in hard_runtime_keys if key not in args]
+        if missing:
+            raise ValueError(
+                f"F-004 checkpoint identity {layer} missing hard runtime fields: {missing}"
+            )
+    current_hard = {
+        key: normalize_resume_contract_value(current_args[key])
+        for key in hard_runtime_keys
+    }
+    saved_hard = {
+        key: normalize_resume_contract_value(saved_args[key])
+        for key in hard_runtime_keys
+    }
+    runtime_drift = {
+        key: {"saved": saved_hard[key], "current": current_hard[key]}
+        for key in hard_runtime_keys
+        if saved_hard[key] != current_hard[key]
+    }
+    if runtime_drift:
+        raise ValueError(
+            f"F-004 checkpoint identity hard runtime mismatch: {runtime_drift}"
+        )
+    expected_topology = {
+        key: normalize_resume_contract_value(value)
+        for key, value in F004_FROZEN_TOPOLOGY.items()
+    }
+    topology_drift = {
+        key: {"current": current_hard[key], "expected": expected}
+        for key, expected in expected_topology.items()
+        if current_hard[key] != expected
+    }
+    if topology_drift:
+        raise ValueError(
+            f"F-004 checkpoint identity current frozen topology mismatch: {topology_drift}"
+        )
+    for path_key in ("ref_meta_json", "synth_npz", "target_real_npz"):
+        try:
+            validate_f004_kshot_identity(
+                kshot_seed=int(current_hard["seed"]),
+                kshot_path=str(current_hard[path_key]),
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"F-004 checkpoint identity {path_key} mismatch: {exc}"
+            ) from exc
     return expected

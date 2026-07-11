@@ -1649,6 +1649,8 @@ def parse_args(argv: list[str] | None = None):
                 bce_weight=args.latent_augmix_bce_weight,
                 jsd_weight=args.latent_augmix_consistency_weight,
                 third_chain_route=args.latent_augmix_third_chain_role,
+                hull_label_mode=args.hull_label_mode,
+                hull_include_anchor=args.hull_include_anchor,
                 target_adv_fraction=args.target_adv_fraction,
             )
         except ValueError as exc:
@@ -1715,6 +1717,8 @@ def parse_args(argv: list[str] | None = None):
                 comparison_variant=args.comparison_variant,
                 comparison_topology_sha256=args.comparison_topology_sha256,
                 target_adv_fraction=args.target_adv_fraction,
+                kshot_seed=args.seed,
+                kshot_path=args.synth_npz,
                 enable_vae_lhat=args.enable_vae_lhat,
                 enable_raw_augmix=args.enable_raw_augmix,
                 enable_latent_augmix_consistency=args.enable_latent_augmix_consistency,
@@ -1737,6 +1741,13 @@ def parse_args(argv: list[str] | None = None):
                 hull_steps=args.hull_steps,
                 hull_include_anchor=args.hull_include_anchor,
                 hull_init_logit_gap=args.hull_init_logit_gap,
+                hull_label_mode=args.hull_label_mode,
+                hull_mix_label_mode=args.hull_mix_label_mode,
+                hull_lr=args.hull_lr,
+                hull_neighbor_distance_space=args.hull_neighbor_distance_space,
+                hull_neighbor_mode=args.hull_neighbor_mode,
+                hull_neighbor_pool_size=args.hull_neighbor_pool_size,
+                hull_neighbor_pool_multiplier=args.hull_neighbor_pool_multiplier,
                 pgd_eps=args.pgd_eps,
             )
         except (TypeError, ValueError) as exc:
