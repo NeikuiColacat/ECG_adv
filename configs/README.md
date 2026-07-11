@@ -247,6 +247,60 @@ and postprocess commands. The manifest records execute-level
 `execution_started_at_utc`, final `finished_at_utc`, and `duration_seconds`
 when a managed run finishes.
 
+### Bounded matrix GPU queue
+
+For a YAML stage that expands to more commands than available GPUs, use the
+indexed matrix queue instead of manually splitting waves:
+
+```bash
+nvidia-smi
+FREE_GPUS="<comma-separated verified physical GPU ids>"
+PLAN_ROOT="<user-owned plan root>"
+micromamba run -n ECGTwin python scripts/agent/run_matrix_parallel.py \
+  --config configs/replications/effnet_matched_train_seed20260601.yaml \
+  --local-config configs/local/linbinhao_server.yaml \
+  --run-id effnet_matched_seed20260601 \
+  --gpus "$FREE_GPUS" \
+  --max-parallel 4 \
+  --min-free-memory-mb 20000 \
+  --max-utilization-pct 10 \
+  --output-dir "$PLAN_ROOT/train" \
+  --execute
+```
+
+`--dry-run` and `--execute` are mutually exclusive, and `--max-parallel` must
+not exceed the number of selected GPUs. Execute mode reads its own
+`nvidia-smi` snapshot, requires every selected id to be numeric, present, and
+within the declared free-memory/utilization thresholds, then sets each child
+environment to exactly one physical `CUDA_VISIBLE_DEVICES` id. GPU ids remain
+runtime input and must never be committed to tracked YAML.
+
+The queue reuses replication preflight and required-input verification, holds
+an output-directory execute lock, and atomically writes `matrix_progress.json`
+and the queue state in `run_manifest.json` from the parent process only. N
+commands are dispatched over the bounded GPU pool. The first child failure
+stops new dispatch; children already running may finish. Ctrl-C terminates only
+process groups created by this queue.
+
+Resume uses the same command with `--resume`; it does not regenerate the
+existing resolved config or replace the prior manifest, and only updates
+preflight/progress fields atomically. A previously successful command is
+skipped only after its declared artifacts pass the
+standard per-command verifier again. Failed, pending, stale, or artifact-invalid
+commands are retried individually. EfficientNet VAE-LHAT training appends
+`--resume latest` only when that command owns
+`checkpoints/checkpoint_latest.pt`; other training families restart only the
+affected command. After all children pass, reporting commands run serially and
+the full artifact verifier/finalizer runs once.
+
+The matrix queue keeps only per-command stdout/stderr logs such as
+`logs/command_003_attempt_02.stdout.log`; it does not create combined command
+logs or aggregate `stdout.log`/`stderr.log` copies. Across train, clean, S5,
+and depth23 stages, keep the same method `--run-id` but use distinct launcher
+output directories (`train/`, `clean/`, `s5/`, and `depth23/`). Reusing one
+launcher output directory across different stage configs is rejected by the
+config-hash guard.
+
 Each managed run is also finalized into an agent-readable layout:
 
 ```text

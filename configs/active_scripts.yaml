@@ -62,7 +62,7 @@ launch_surface_policy:
   - no_tracked_gpu_ids
   - no_host_absolute_paths
   - run_id_scoped_outputs
-  - only_scripts_run_experiment_is_launch_surface
+  - only_indexed_managed_launchers_are_launch_surfaces
   - typed_yaml_adapters_build_managed_commands
 latest_mainline:
   method: vae_lhat_threechain_augmix_pn2021c
@@ -466,21 +466,34 @@ reporting_tools:
   - audits_all_active_managed_configs_from_active_script_index
   - can_verify_required_input_artifacts_without_checking_child_outputs
   - writes_reports_only_under_explicit_write_boundary
-- name: matrix_parallel_planner
+- name: matrix_parallel_queue
   status: active
   script: scripts/agent/run_matrix_parallel.py
   package: ecg_adv_gen/runner/matrix_parallel.py
   output_artifacts:
   - run_manifest.json
+  - matrix_progress.json
   - run_card.json
   - run_file_index.json
+  - logs/command_NNN_attempt_NN.stdout.log
+  - logs/command_NNN_attempt_NN.stderr.log
   safety_rules:
   - requires_explicit_gpu_list
-  - plans_one_gpu_per_matrix_command
+  - dry_run_and_execute_are_mutually_exclusive
+  - max_parallel_cannot_exceed_selected_gpu_count
+  - validates_numeric_existing_free_gpu_ids_from_nvidia_smi
+  - injects_exactly_one_physical_cuda_visible_devices_id_per_child
   - reuses_yaml_config_loader_and_command_audit
-  - records_gpu_assignment_in_manifest
-  - refuses_more_matrix_commands_than_selected_gpus
-  - plan_only_no_child_execution
+  - reuses_replication_preflight_and_required_input_verification
+  - queues_more_matrix_commands_than_selected_gpus
+  - locks_execute_output_directory
+  - parent_only_atomic_manifest_and_progress_writes
+  - resume_skips_only_revalidated_command_artifacts
+  - effnet_checkpoint_latest_resumes_with_latest
+  - first_failure_stops_new_dispatch_and_allows_running_children_to_finish
+  - interrupts_only_owned_process_groups
+  - serial_postprocess_then_full_artifact_verification
+  - per_command_split_logs_without_combined_or_global_log_duplication
 - name: active_evidence_registry_auditor
   status: active
   script: scripts/agent/audit_agent_workspace.py

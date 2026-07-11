@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plan one YAML-managed matrix config with explicit one-GPU-per-command assignment."""
+"""Plan or execute one YAML-managed matrix config over a bounded GPU queue."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
@@ -15,38 +16,149 @@ if str(REPO_ROOT) not in sys.path:
 from ecg_adv_gen.config import (  # noqa: E402
     ConfigError,
     LaunchError,
+    attach_replication_preflight,
     build_postprocess_commands,
     build_runner_commands,
+    check_nvidia_smi,
     default_run_dir,
     load_experiment_config,
     make_dry_run_manifest,
     prepare_output_dir,
     validate_experiment_config,
+    verify_required_inputs,
 )
-from ecg_adv_gen.runner.launch_plan import render_launch_command, write_launch_plan_files  # noqa: E402
-from ecg_adv_gen.runner.matrix_parallel import assign_gpus_to_commands, parse_gpu_list  # noqa: E402
+from ecg_adv_gen.evidence import RunRecordError, finalize_run_record  # noqa: E402
+from ecg_adv_gen.runner.launch_plan import (  # noqa: E402
+    experiment_purpose,
+    render_launch_command,
+    write_launch_plan_files,
+)
+from ecg_adv_gen.runner.matrix_parallel import (  # noqa: E402
+    assign_gpus_to_commands,
+    atomic_write_json,
+    execution_lock,
+    parse_gpu_list,
+    read_json_object,
+    run_matrix_queue,
+    run_postprocess_serial,
+    validate_gpu_snapshot,
+    validate_parallelism,
+)
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
     parser.add_argument("--local-config", required=True)
     parser.add_argument("--run-id", required=True)
-    parser.add_argument("--gpus", required=True, help="Comma-separated GPU ids, one per matrix command")
+    parser.add_argument("--gpus", required=True, help="Comma-separated physical GPU ids")
+    parser.add_argument("--max-parallel", type=int, default=None)
     parser.add_argument("--matrix-key", default="center")
     parser.add_argument("--output-dir", default="")
-    parser.add_argument("--dry-run", action="store_true", required=True)
+    parser.add_argument(
+        "--min-free-memory-mb",
+        type=int,
+        default=20_000,
+        help="Minimum nvidia-smi free memory required on every selected GPU",
+    )
+    parser.add_argument(
+        "--max-utilization-pct",
+        type=int,
+        default=10,
+        help="Maximum prelaunch nvidia-smi utilization on every selected GPU",
+    )
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--dry-run", action="store_true")
+    mode.add_argument("--execute", action="store_true")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--force", action="store_true")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.resume and args.force:
-        raise SystemExit("--resume and --force are mutually exclusive")
+        parser.error("--resume and --force are mutually exclusive")
+    if args.resume and not args.execute:
+        parser.error("--resume requires --execute")
+    if args.force and args.execute:
+        parser.error("--force is dry-run only for the matrix queue; use --resume after execution")
+    if args.min_free_memory_mb < 0:
+        parser.error("--min-free-memory-mb must be non-negative")
+    if not 0 <= args.max_utilization_pct <= 100:
+        parser.error("--max-utilization-pct must be between 0 and 100")
+    try:
+        gpus = parse_gpu_list(args.gpus)
+        parallel = len(gpus) if args.max_parallel is None else args.max_parallel
+        args.max_parallel = validate_parallelism(parallel, gpus)
+    except ValueError as exc:
+        parser.error(str(exc))
     args.write_plan = True
     return args
 
 
-def main() -> int:
-    args = parse_args()
+def _resume_manifest(
+    path: Path,
+    *,
+    commands: list[dict[str, Any]],
+    postprocess_commands: list[dict[str, Any]],
+    expected_manifest: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Load an existing plan without rewriting its manifest or resolved config."""
+
+    manifest = read_json_object(path)
+    if manifest.get("commands") != commands:
+        raise LaunchError("resume manifest commands do not match the current resolved config")
+    if manifest.get("postprocess_commands") != postprocess_commands:
+        raise LaunchError("resume manifest postprocess commands do not match the current resolved config")
+    for name in ("run_config.resolved.yaml", "run_config.resolved.json"):
+        if not (path.parent / name).is_file():
+            raise LaunchError(f"resume must preserve the existing resolved config, but {name} is missing")
+    if expected_manifest is not None:
+        expected_trace = expected_manifest.get("artifact_trace") or {}
+        existing_trace = manifest.get("artifact_trace") or {}
+        expected_contract = (
+            expected_trace.get("replication_preflight"),
+            (expected_trace.get("inputs") or {}).get("replication_k500_groups"),
+        )
+        existing_contract = (
+            existing_trace.get("replication_preflight"),
+            (existing_trace.get("inputs") or {}).get("replication_k500_groups"),
+        )
+        if any(expected_contract) and existing_contract != expected_contract:
+            raise LaunchError(
+                "resume manifest does not match the current active replication preflight; "
+                "start a fresh stage output directory"
+            )
+    return manifest
+
+
+def _matrix_contract(
+    *,
+    assignments: list[Any],
+    args: argparse.Namespace,
+    gpus: list[str],
+) -> dict[str, Any]:
+    return {
+        "enabled": True,
+        "executor": "bounded_queue" if args.execute else "dry_run_preview",
+        "matrix_key": args.matrix_key,
+        "gpus": gpus,
+        "max_parallel": args.max_parallel,
+        "prelaunch_thresholds": {
+            "min_free_memory_mb": args.min_free_memory_mb,
+            "max_utilization_pct": args.max_utilization_pct,
+        },
+        "assignments": [
+            {
+                "command_index": item.command_index,
+                "name": item.command.get("name"),
+                "matrix_value": item.matrix_value,
+                "preview_cuda_visible_devices": item.gpu,
+            }
+            for item in assignments
+        ],
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
     try:
         gpus = parse_gpu_list(args.gpus)
         config = load_experiment_config(
@@ -66,37 +178,44 @@ def main() -> int:
             cli_args=args,
             postprocess_commands=postprocess_commands,
         )
-        manifest["matrix_parallel"] = {
-            "enabled": True,
-            "matrix_key": args.matrix_key,
-            "assignments": [
-                {
-                    "command_index": item.command_index,
-                    "name": item.command.get("name"),
-                    "matrix_value": item.matrix_value,
-                    "cuda_visible_devices": item.gpu,
-                }
-                for item in assignments
-            ],
-        }
+        manifest = attach_replication_preflight(
+            manifest,
+            config,
+            repo_root=REPO_ROOT,
+            index_path=REPO_ROOT / "configs" / "active_scripts.yaml",
+        )
+        manifest["matrix_parallel"] = _matrix_contract(
+            assignments=assignments,
+            args=args,
+            gpus=gpus,
+        )
         manifest["launcher"]["script"] = "scripts/agent/run_matrix_parallel.py"
-        manifest["launcher"]["execute"] = False
+        manifest["launcher"]["execute"] = args.execute
         manifest["safety"]["managed_child_commands_invoked"] = False
-        manifest["status"] = "dry_run"
+        manifest["status"] = "launch_prepared" if args.execute else "dry_run"
+        expected_manifest = manifest
     except (ConfigError, LaunchError, OSError, ValueError) as exc:
         print(f"[config-error] {exc}", file=sys.stderr)
         return 2
 
     print(json.dumps(manifest, indent=2, sort_keys=True, ensure_ascii=True, default=str))
-    print("\n# Planned matrix child commands; not executed by this tool")
+    print("\n# Matrix child commands" + (" (queued for execution)" if args.execute else " (not executed)"))
     for assignment in assignments:
-        print(f"# command {assignment.command_index} matrix.{args.matrix_key}={assignment.matrix_value} gpu={assignment.gpu}")
+        print(
+            f"# command {assignment.command_index} matrix.{args.matrix_key}="
+            f"{assignment.matrix_value} preview_gpu={assignment.gpu}"
+        )
         print(render_launch_command(assignment.command))
+    if postprocess_commands:
+        print("\n# Serial postprocess commands")
+        for command in postprocess_commands:
+            print(render_launch_command(command))
 
-    if args.output_dir:
-        out_dir = Path(args.output_dir).expanduser().resolve()
-    else:
-        out_dir = default_run_dir(local_paths, args.run_id, dry_run=True)
+    out_dir = (
+        Path(args.output_dir).expanduser().resolve()
+        if args.output_dir
+        else default_run_dir(local_paths, args.run_id, dry_run=args.dry_run)
+    )
     try:
         out_dir = prepare_output_dir(
             out_dir,
@@ -106,11 +225,90 @@ def main() -> int:
             resume=args.resume,
             force=args.force,
         )
-        manifest = write_launch_plan_files(out_dir, config, manifest, commands, postprocess_commands)
-    except (LaunchError, ValueError) as exc:
+        manifest_path = out_dir / "run_manifest.json"
+        if args.resume:
+            manifest = _resume_manifest(
+                manifest_path,
+                commands=commands,
+                postprocess_commands=postprocess_commands,
+                expected_manifest=expected_manifest,
+            )
+        else:
+            manifest = write_launch_plan_files(
+                out_dir,
+                config,
+                manifest,
+                commands,
+                postprocess_commands,
+            )
+    except (LaunchError, RunRecordError, ValueError) as exc:
         print(f"[launch-error] {exc}", file=sys.stderr)
         return 3
-    print(f"\nWrote run plan files: {out_dir}")
+
+    print(f"\nWrote run plan files: {out_dir}" if not args.resume else f"\nReusing run plan files: {out_dir}")
+    if not args.execute:
+        return 0
+
+    try:
+        with execution_lock(out_dir):
+            snapshot = check_nvidia_smi()
+            selected_rows = validate_gpu_snapshot(
+                gpus,
+                snapshot,
+                min_free_memory_mb=args.min_free_memory_mb,
+                max_utilization_pct=args.max_utilization_pct,
+            )
+            current = read_json_object(manifest_path)
+            input_verification = verify_required_inputs(current)
+            current.update(
+                {
+                    "status": "launch_prepared" if input_verification["passed"] else "failed",
+                    "input_verification": input_verification,
+                    "gpu_prelaunch": {
+                        "nvidia_smi": snapshot,
+                        "selected_gpus": selected_rows,
+                        "child_cuda_visible_devices_policy": "one physical id per child",
+                    },
+                }
+            )
+            current.setdefault("launcher", {})["execute"] = True
+            current.setdefault("safety", {})["managed_child_commands_invoked"] = False
+            atomic_write_json(manifest_path, current)
+            if not input_verification["passed"]:
+                raise LaunchError("Required input verification failed before matrix commands")
+
+            current["safety"]["managed_child_commands_invoked"] = True
+            atomic_write_json(manifest_path, current)
+            run_matrix_queue(
+                commands,
+                gpus=gpus,
+                max_parallel=args.max_parallel,
+                run_dir=out_dir,
+                manifest_path=manifest_path,
+                resume=args.resume,
+                acquire_lock=False,
+            )
+            run_postprocess_serial(
+                postprocess_commands,
+                run_dir=out_dir,
+                manifest_path=manifest_path,
+                acquire_lock=False,
+            )
+            finalize_run_record(
+                out_dir,
+                purpose=experiment_purpose(config),
+                result_summary=(
+                    "Bounded matrix execution and serial postprocess completed; all declared "
+                    "artifacts passed full verification."
+                ),
+                outcome="succeeded",
+            )
+    except KeyboardInterrupt:
+        print("[interrupted] matrix execution interrupted; only owned process groups were stopped", file=sys.stderr)
+        return 130
+    except (LaunchError, RunRecordError) as exc:
+        print(f"[launch-error] {exc}", file=sys.stderr)
+        return 3
     return 0
 
 
