@@ -8,6 +8,7 @@ from typing import Any
 
 from ecg_adv_gen.evaluation.ref_exclusion import append_target_ref_exclusion_args_from_anchor_base
 from ecg_adv_gen.run_naming import build_effnet_vae_lhat_run_leaf
+from ecg_adv_gen.matched_effnet import is_matched_effnet_arm
 
 
 @dataclass(frozen=True)
@@ -212,6 +213,9 @@ def build_effnet_vae_lhat_train_cmd(
         train_cmd.extend(["--target_adv_fraction", str(args.target_adv_fraction)])
     if args.hull_include_anchor:
         train_cmd.append("--hull_include_anchor")
+    if is_matched_effnet_arm(getattr(args, "comparison_arm", "")):
+        train_cmd.append("--enable_vae_lhat" if args.enable_vae_lhat else "--disable_vae_lhat")
+        train_cmd.append("--enable_raw_augmix" if args.enable_raw_augmix else "--disable_raw_augmix")
     train_cmd.append(
         "--enable_latent_augmix_consistency"
         if getattr(args, "enable_latent_augmix_consistency", True)
@@ -313,7 +317,7 @@ def build_effnet_vae_lhat_eval_cmd(
     ]
     checkpoint_name = (
         "best_model.pt"
-        if str(getattr(args, "comparison_arm", "historical_unmatched")) in {"a0", "a5"}
+        if is_matched_effnet_arm(getattr(args, "comparison_arm", "historical_unmatched"))
         else "last_model.pt"
     )
     eval_cmd.extend(["--checkpoint_name", checkpoint_name])

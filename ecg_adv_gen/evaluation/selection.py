@@ -4,6 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from ecg_adv_gen.matched_effnet import (
+    MATCHED_EFFNET_CONTRACT_VERSION,
+    matched_effnet_arm,
+)
+
 
 SELECTION_POLICY = "k500_internal_val_plus_source_floor"
 LAST_CHECKPOINT_SELECTION_POLICY = "last_checkpoint_only"
@@ -64,13 +69,19 @@ def build_matched_training_record(
     scheduler_steps: int,
     source_floor_result: dict[str, Any],
 ) -> dict[str, Any]:
-    if comparison_arm not in {"a0", "a5"}:
-        raise ValueError(f"invalid matched comparison arm: {comparison_arm!r}")
-    method_enabled = comparison_arm == "a5"
+    components = matched_effnet_arm(comparison_arm)
     return {
-        "contract": "matched_effnet_a0_a5_v1",
+        "contract": MATCHED_EFFNET_CONTRACT_VERSION,
         "comparison_arm": comparison_arm,
-        "method_components": dict.fromkeys(("vae_lhat", "three_chain_augmix", "jsd"), method_enabled),
+        "role": components.role,
+        "method_components": {
+            "vae_lhat": components.vae_lhat,
+            "raw_augmix": components.raw_augmix,
+            "augmix_view_bce": components.augmix_view_bce,
+            "jsd": components.jsd,
+        },
+        "target_adv_fraction": components.target_adv_fraction,
+        "third_chain_route": components.third_chain_route,
         "source_checkpoint": dict(
             stage="ptbxl_source", path=str(source_checkpoint_path), sha256=str(source_checkpoint_sha256)
         ),

@@ -45,6 +45,7 @@ from ecg_adv_gen.run_naming import (
     build_effnet_direct_run_leaf,
     build_effnet_vae_lhat_run_leaf,
 )
+from ecg_adv_gen.matched_effnet import is_matched_effnet_arm, matched_effnet_arm
 
 
 class ConfigError(ValueError):
@@ -982,7 +983,7 @@ def _vae_child_run(opts: dict[str, Any], center: str) -> dict[str, Any]:
     )
     checkpoint_role = (
         "best_model"
-        if str(_opt_first(opts, "--comparison_arm", "historical_unmatched")) in {"a0", "a5"}
+        if is_matched_effnet_arm(_opt_first(opts, "--comparison_arm", "historical_unmatched"))
         else "last_model"
     )
     return {
@@ -1160,11 +1161,21 @@ def build_artifact_trace(
                 k=command_k,
                 seed=command_seed,
                 base=anchor_base,
-                include_latent=True,
+                include_latent=(
+                    matched_effnet_arm(_opt_first(opts, "--comparison_arm")).vae_lhat
+                    if is_matched_effnet_arm(_opt_first(opts, "--comparison_arm"))
+                    else True
+                ),
                 signal_path=Path(signal_override) if signal_override else None,
             )
             child = _vae_child_run(opts, center)
             child.update({"command_index": command_index, "name": command["name"], "matrix": command["matrix"]})
+            common_metrics = list((config.get("logging") or {}).get("required_epoch_metrics") or [])
+            per_arm_metrics = (config.get("logging") or {}).get("required_epoch_metrics_by_arm") or {}
+            arm = str(_opt_first(opts, "--comparison_arm", "historical_unmatched"))
+            child["required_epoch_metrics"] = list(dict.fromkeys(
+                [*common_metrics, *list(per_arm_metrics.get(arm) or [])]
+            ))
             child_runs.append(child)
         elif script == "ecgfounder_fullft.py":
             stage = str(_opt_first(opts, "--stage", "k500"))

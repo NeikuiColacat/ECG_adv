@@ -732,8 +732,8 @@ def _effnet_vae_lhat_final_train_cmd(config: dict) -> list[str]:
         (
             lambda cfg: cfg["adaptation"]["latent_augmix"]["consistency"].update(enabled=False),
             {},
-            ("--disable_latent_augmix_consistency",),
             ("--enable_latent_augmix_consistency",),
+            ("--disable_latent_augmix_consistency",),
         ),
     ],
     ids=[
@@ -743,7 +743,7 @@ def _effnet_vae_lhat_final_train_cmd(config: dict) -> list[str]:
         "zero-init-logit-gap",
         "pgd-epsilon",
         "asr-bounds",
-        "disable-consistency",
+        "matched-aux-budget-control",
     ],
 )
 def test_effnet_managed_protocol_fields_reach_final_child_command(
@@ -811,7 +811,7 @@ def test_effnet_command_audit_rejects_managed_protocol_field_drift(case: str):
     elif case == "asr-bounds":
         argv.extend(["--asr_low_threshold", "0.3", "--asr_high_threshold", "0.7"])
     elif case == "disable-consistency":
-        argv.append("--enable_latent_augmix_consistency")
+        argv.append("--disable_latent_augmix_consistency")
 
     result = audit_runner_command(command, config=config)
 

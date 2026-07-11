@@ -83,6 +83,13 @@ from ecg_adv_gen.training.online_buffer import (  # noqa: E402
 from ecg_adv_gen.training.resume_contract import (  # noqa: E402
     LOCKED_LATENT_AUGMIX_SIGNAL_SPACE,
 )
+from ecg_adv_gen.matched_effnet import (  # noqa: E402
+    MATCHED_EFFNET_ARMS,
+    MATCHED_EFFNET_THIRD_CHAIN_ROUTES,
+    is_matched_effnet_arm,
+    matched_effnet_arm,
+    validate_matched_effnet_runtime,
+)
 from ecg_adv_gen.labels import CLASS_NAMES_SUPER5, NUM_SUPER5, get_super5_scheme  # noqa: E402
 from ecg_adv_gen.labels.super5_mapping import SUPER5_TO_IDX  # noqa: E402
 from ecg_adv_gen.models.super5_model_zoo import available_model_names  # noqa: E402
@@ -140,19 +147,6 @@ def _per_sample_global_zscore_np(signal_tc: np.ndarray, eps: float = 1e-8) -> np
     mean = float(np.mean(signal_tc))
     std = float(np.std(signal_tc))
     return ((signal_tc - mean) / (std + eps)).astype(np.float32, copy=False)
-
-
-def _normalize_target_real_signals(signals_tc: np.ndarray, norm_mode: str) -> np.ndarray:
-    signals_tc = np.asarray(signals_tc, dtype=np.float32)
-    if norm_mode == "pre_zscored":
-        return signals_tc.astype(np.float32, copy=False)
-    if norm_mode == "per_sample_global":
-        if signals_tc.ndim != 3:
-            raise ValueError(f"target-real signals must be 3D for z-score, got {signals_tc.shape}")
-        mean = signals_tc.mean(axis=(1, 2), keepdims=True)
-        std = signals_tc.std(axis=(1, 2), keepdims=True)
-        return ((signals_tc - mean) / (std + 1e-8)).astype(np.float32, copy=False)
-    raise ValueError(f"unknown target_real_norm_mode={norm_mode!r}")
 
 
 def _crop_signal_pair_tc(
@@ -281,13 +275,14 @@ class TargetRealRawFirstCorruptionDataset(Dataset):
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         raw_tc = self.signals[idx]
-        clean_tc = _per_sample_global_zscore_np(raw_tc) if self.clean_norm_mode == "per_sample_global" else raw_tc
         clean_crop, raw_crop = _crop_signal_pair_tc(
-            clean_tc,
+            raw_tc,
             raw_tc,
             self.crop_len,
             mode="random" if self.mode == "train" else "center",
         )
+        if self.clean_norm_mode == "per_sample_global":
+            clean_crop = _per_sample_global_zscore_np(clean_crop)
         return (
             torch.from_numpy(np.ascontiguousarray(clean_crop.T)).float(),
             torch.from_numpy(self.labels[idx]).float(),
@@ -432,6 +427,39 @@ def restore_best_selection_state(
             dict(checkpoint.get("best_source_floor_result", result)))
 
 
+def run_zero_effect_auxiliary_optimizer_control(
+    optimizer: torch.optim.Optimizer,
+    *,
+    n_samples: int,
+    batch_size: int,
+    max_batches: int = 0,
+) -> Dict[str, Any]:
+    """Consume a matched auxiliary step budget without model or parameter updates."""
+
+    n_samples = max(0, int(n_samples))
+    batch_size = max(1, int(batch_size))
+    n_batches = math.ceil(n_samples / batch_size) if n_samples else 0
+    if int(max_batches) > 0:
+        n_batches = min(n_batches, int(max_batches))
+    for _ in range(n_batches):
+        optimizer.zero_grad(set_to_none=True)
+        optimizer.step()
+    return {
+        "enabled": True,
+        "control": "zero_effect_optimizer_control",
+        "loss": 0.0,
+        "bce_loss": 0.0,
+        "consistency_loss": 0.0,
+        "n_batches": int(n_batches),
+    }
+
+
+def should_run_zero_effect_auxiliary_control(
+    *, matched_comparison: bool, consistency_weight: float, bce_weight: float
+) -> bool:
+    return bool(matched_comparison) and consistency_weight <= 0.0 and bce_weight <= 0.0
+
+
 def train_latent_augmix_consistency_epoch(
     model: nn.Module,
     clean_signals_ct: np.ndarray,
@@ -530,9 +558,8 @@ def train_latent_augmix_consistency_epoch(
             clean_logits = model(clean)
             logits = model(views)
             logits_views = logits.view(int(copies), clean.shape[0], -1)
-            clean_hard_bce = masked_bce_with_logits(clean_logits, labels, criterion.pos_weight)
             aug_hard_bce = masked_bce_with_logits(logits, labels_rep, criterion.pos_weight)
-            hard_bce = 0.5 * (clean_hard_bce + aug_hard_bce)
+            hard_bce = aug_hard_bce
             direct_consistency = torch.stack(
                 [
                     jsd_multilabel(
@@ -994,7 +1021,7 @@ def _resolve_latent_augmix_epoch_route(
 
 
 def build_clean_anchor_augmix_epoch(
-    target_real_ds: TargetRealWaveformDataset,
+    target_real_ds: TargetRealWaveformDataset | TargetRealRawFirstCorruptionDataset,
     args: argparse.Namespace,
     epoch: int,
 ) -> Dict[str, Any]:
@@ -1007,29 +1034,53 @@ def build_clean_anchor_augmix_epoch(
     rng = np.random.default_rng(int(args.seed) + int(epoch) * 100003)
     picks = rng.choice(n, size=k_anchor, replace=k_anchor > n)
     clean: List[np.ndarray] = []
+    raw: List[np.ndarray] = []
     labels: List[np.ndarray] = []
     for idx in picks:
-        sig_t, label_t = target_real_ds[int(idx)]
+        item = target_real_ds[int(idx)]
+        if len(item) == 3:
+            sig_t, label_t, raw_t = item
+            raw.append(raw_t.detach().cpu().numpy().astype(np.float32, copy=False))
+        else:
+            sig_t, label_t = item
         clean.append(sig_t.detach().cpu().numpy().astype(np.float32, copy=False))
         labels.append(label_t.detach().cpu().numpy().astype(np.float32, copy=False))
     clean_np = np.stack(clean, axis=0).astype(np.float32, copy=False)
+    raw_np = np.stack(raw, axis=0).astype(np.float32, copy=False) if raw else None
     labels_np = np.stack(labels, axis=0).astype(np.float32, copy=False)
-    views_np, stats = build_three_chain_vae_lhat_augmix_views(
-        anchor_signals_ct=clean_np,
-        adv_signals_ct=clean_np,
-        copies=args.latent_augmix_copies,
-        severity=args.latent_augmix_severity,
-        severity_profile=args.latent_augmix_severity_profile,
-        width=args.latent_augmix_width,
-        depth=args.latent_augmix_depth,
-        alpha=args.latent_augmix_alpha,
-        ops=list(args.latent_augmix_ops),
-        rng=rng,
-        third_chain_role="clean_anchor_control",
-        chain_base_mode=args.latent_augmix_chain_base_mode,
-        chain_weights=parse_float_sequence(args.latent_augmix_chain_weights),
-        locked_raw_chain=args.latent_augmix_signal_space == LOCKED_LATENT_AUGMIX_SIGNAL_SPACE,
-    )
+    if bool(args.enable_raw_augmix):
+        locked_raw_chain = (
+            args.latent_augmix_signal_space == LOCKED_LATENT_AUGMIX_SIGNAL_SPACE
+        )
+        if locked_raw_chain and raw_np is None:
+            raise RuntimeError(
+                "locked target-real AugMix requires paired raw-pre-zscore crops"
+            )
+        corruption_base_np = raw_np if locked_raw_chain else clean_np
+        views_np, stats = build_three_chain_vae_lhat_augmix_views(
+            anchor_signals_ct=corruption_base_np,
+            adv_signals_ct=corruption_base_np,
+            copies=args.latent_augmix_copies,
+            severity=args.latent_augmix_severity,
+            severity_profile=args.latent_augmix_severity_profile,
+            width=args.latent_augmix_width,
+            depth=args.latent_augmix_depth,
+            alpha=args.latent_augmix_alpha,
+            ops=list(args.latent_augmix_ops),
+            rng=rng,
+            third_chain_role="clean_anchor_control",
+            chain_base_mode=args.latent_augmix_chain_base_mode,
+            chain_weights=parse_float_sequence(args.latent_augmix_chain_weights),
+            locked_raw_chain=locked_raw_chain,
+        )
+    else:
+        views_np = np.tile(clean_np, (max(1, int(args.latent_augmix_copies)), 1, 1))
+        stats = {
+            "enabled": True,
+            "control": "clean_budget_control",
+            "raw_augmix": False,
+            "n_generated": int(views_np.shape[0]),
+        }
     labels_rep = np.tile(
         labels_np,
         (max(1, int(args.latent_augmix_copies)), 1),
@@ -1038,17 +1089,40 @@ def build_clean_anchor_augmix_epoch(
         clean_np,
         (max(1, int(args.latent_augmix_copies)), 1, 1),
     )[: views_np.shape[0]]
-    stats["corruption_source"] = "target_real_clean_anchor"
+    stats["corruption_source"] = (
+        "target_real_npz.signals_raw1000"
+        if raw_np is not None and bool(args.enable_raw_augmix)
+        else "target_real_clean_anchor"
+    )
+    stats["signal_space"] = str(
+        getattr(args, "latent_augmix_signal_space", "model_zscore")
+    )
     stats["anchor_sample_mode"] = "clean_anchor_control"
     stats["anchor_count"] = int(clean_np.shape[0])
     return {
         "clean": clean_np,
+        "raw": raw_np,
         "clean_rep": clean_rep.astype(np.float32, copy=False),
         "views": views_np.astype(np.float32, copy=False),
         "labels": labels_np.astype(np.float32, copy=False),
         "labels_rep": labels_rep.astype(np.float32, copy=False),
         "stats": stats,
     }
+
+
+def build_no_raw_augmix_epoch(
+    target_real_ds: TargetRealWaveformDataset,
+    args: argparse.Namespace,
+    epoch: int,
+    *,
+    matched_comparison: bool,
+) -> Dict[str, Any] | None:
+    return None if matched_comparison else build_clean_anchor_augmix_epoch(target_real_ds, args, epoch)
+
+
+def raw_augmix_disabled_stats(signal_space: str) -> Dict[str, Any]:
+    return {"enabled": False, "reason": "raw_augmix_disabled", "raw_augmix": False,
+            "n_generated": 0, "signal_space": str(signal_space)}
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -1136,12 +1210,12 @@ def push_adv_to_buffer(
 # Main
 # ────────────────────────────────────────────────────────────────────────────
 
-def parse_args():
+def parse_args(argv: list[str] | None = None):
     p = argparse.ArgumentParser()
     p.add_argument("--center_name", required=True, help="cpsc_2018_extra | ningbo")
     p.add_argument(
         "--comparison_arm",
-        choices=["historical_unmatched", "a0", "a5"],
+        choices=["historical_unmatched", *MATCHED_EFFNET_ARMS],
         default="historical_unmatched",
     )
     p.add_argument("--ref_meta_json",
@@ -1341,7 +1415,7 @@ def parse_args():
     )
     p.add_argument(
         "--latent_augmix_third_chain_role",
-        choices=["vae_lhat_adversarial_waveform", "clean_anchor_control"],
+        choices=list(MATCHED_EFFNET_THIRD_CHAIN_ROUTES),
         default="vae_lhat_adversarial_waveform",
         help=(
             "Role of the third locked AugMix chain. clean_anchor_control "
@@ -1396,6 +1470,13 @@ def parse_args():
         action="store_false",
     )
     p.set_defaults(enable_latent_augmix_consistency=True)
+    vae_lhat = p.add_mutually_exclusive_group()
+    vae_lhat.add_argument("--enable_vae_lhat", dest="enable_vae_lhat", action="store_true")
+    vae_lhat.add_argument("--disable_vae_lhat", dest="enable_vae_lhat", action="store_false")
+    raw_augmix = p.add_mutually_exclusive_group()
+    raw_augmix.add_argument("--enable_raw_augmix", dest="enable_raw_augmix", action="store_true")
+    raw_augmix.add_argument("--disable_raw_augmix", dest="enable_raw_augmix", action="store_false")
+    p.set_defaults(enable_vae_lhat=True, enable_raw_augmix=True)
     p.add_argument(
         "--vae_adv_consistency_weight",
         type=float,
@@ -1452,16 +1533,27 @@ def parse_args():
         action="store_true",
         help="Skip epoch-boundary resume checkpoints and write last_model.pt once at the end.",
     )
-    args = p.parse_args()
-    if args.comparison_arm in {"a0", "a5"}:
+    args = p.parse_args(argv)
+    if is_matched_effnet_arm(args.comparison_arm):
         if args.init_lineage_stage != "ptbxl_source" or len(args.init_checkpoint_sha256) != 64:
             p.error("matched comparison requires verified ptbxl_source initialization")
         if not 0.0 < args.target_real_val_fraction < 0.5:
             p.error("matched comparison requires --target_real_val_fraction in (0, 0.5)")
     if args.target_adv_fraction is not None and not 0.0 <= args.target_adv_fraction <= 1.0:
         p.error("--target_adv_fraction must be in [0, 1]")
-    if args.comparison_arm == "a0":
-        args.target_adv_fraction = 0.0
+    if is_matched_effnet_arm(args.comparison_arm):
+        try:
+            validate_matched_effnet_runtime(
+                args.comparison_arm,
+                enable_vae_lhat=args.enable_vae_lhat,
+                enable_raw_augmix=args.enable_raw_augmix,
+                enable_auxiliary_steps=args.enable_latent_augmix_consistency,
+                bce_weight=args.latent_augmix_bce_weight,
+                jsd_weight=args.latent_augmix_consistency_weight,
+                third_chain_route=args.latent_augmix_third_chain_role,
+            )
+        except ValueError as exc:
+            p.error(str(exc))
     if float(args.vae_adv_stream_sample_scale) < 0.0:
         p.error("--vae_adv_stream_sample_scale must be non-negative")
     if not (0.0 <= float(args.latent_augmix_adv_base_mix) <= 1.0):
@@ -1491,13 +1583,13 @@ def parse_args():
         or args.latent_augmix_chain_base_mode in {"all_clean", "all_clean_plus_vae_adv"}
     ) and float(args.adv_weight) <= 0.0:
         p.error("clean-anchor latent AugMix requires --adv_weight > 0; it samples the augment stream")
+    matched_arm = is_matched_effnet_arm(args.comparison_arm)
+    raw_signal_space = args.enable_raw_augmix if matched_arm else (
+        args.latent_augmix_chain_base_mode == "clean_clean_third"
+        and args.latent_augmix_third_chain_role == "vae_lhat_adversarial_waveform"
+    )
     args.latent_augmix_signal_space = (
-        LOCKED_LATENT_AUGMIX_SIGNAL_SPACE
-        if (
-            args.latent_augmix_chain_base_mode == "clean_clean_third"
-            and args.latent_augmix_third_chain_role == "vae_lhat_adversarial_waveform"
-        )
-        else "model_zscore"
+        LOCKED_LATENT_AUGMIX_SIGNAL_SPACE if raw_signal_space else "model_zscore"
     )
     return args
 
@@ -1516,10 +1608,32 @@ def load_synth_pool(synth_npz_path: str) -> Tuple[np.ndarray, np.ndarray, str, D
         raise SystemExit(str(exc)) from exc
 
 
+def load_optional_vae_assets(
+    args: argparse.Namespace,
+    *,
+    ecgtwin_factory=ECGTwinWrapper,
+    latent_pool_loader=load_synth_pool,
+):
+    """Load VAE-only assets only for arms whose canonical contract enables them."""
+    if not bool(args.enable_vae_lhat):
+        return None, None
+    return (
+        ecgtwin_factory(device=args.device, load_encoder=True, load_text_model=False),
+        latent_pool_loader(args.synth_npz),
+    )
+
+
+def load_optional_vae_component(enabled: bool, factory):
+    return factory() if enabled else None
+
+
 def main():
     args = parse_args()
-    matched_comparison = args.comparison_arm in {"a0", "a5"}
-    method_updates_enabled = args.comparison_arm != "a0"
+    matched_comparison = is_matched_effnet_arm(args.comparison_arm)
+    arm_components = matched_effnet_arm(args.comparison_arm) if matched_comparison else None
+    method_updates_enabled = bool(
+        arm_components.vae_lhat or arm_components.raw_augmix
+    ) if arm_components else True
     source_checkpoint_sha256 = file_sha256(args.init_ckpt)
     if matched_comparison and source_checkpoint_sha256 != args.init_checkpoint_sha256:
         raise RuntimeError("matched comparison source checkpoint sha256 mismatch")
@@ -1533,9 +1647,7 @@ def main():
         print(f"  {k}: {v}")
     print("-" * 72)
 
-    # ── Build Super5 victim early (needed for both sanity + training) ──────
-    print("[setup] Loading ECGTwin (encoder + decoder, no text model)...")
-    ecgtwin = ECGTwinWrapper(device=args.device, load_encoder=True, load_text_model=False)
+    ecgtwin, latent_pool = load_optional_vae_assets(args)
     print(f"[setup] Loading Super5 victim from {args.init_ckpt}")
     victim = EfficientNetVictimTierM(
         weight_path=args.init_ckpt,
@@ -1546,7 +1658,6 @@ def main():
         model_name=args.model_name,
     )
 
-    # ── Load class_trust (required for training) ───────────────────────────
     if not args.class_trust or not os.path.exists(args.class_trust):
         raise SystemExit(f"--class_trust required for training (got {args.class_trust!r}). "
                           f"Launch through effnet_vae_lhat_augmix.py so the managed wrapper writes it.")
@@ -1597,18 +1708,22 @@ def main():
     chain_weights = parse_float_sequence(args.latent_augmix_chain_weights)
     if chain_weights is not None and len(chain_weights) != 3:
         raise ValueError("--latent_augmix_chain_weights must contain exactly three comma-separated values")
-    # ── Load synth pool (Stage 1 frozen) for training ──────────────────────
-    synth_latents, synth_labels, synth_center, source_meta = load_synth_pool(args.synth_npz)
+    if latent_pool is not None:
+        synth_latents, synth_labels, synth_center, source_meta = latent_pool
+    else:
+        synth_latents = synth_labels = None
+        synth_center, source_meta = args.center_name, {
+            "source_labels": [], "source_names": [], "has_source_metadata": False,
+        }
     print(f"[setup] synth pool: {synth_latents.shape} labels={synth_labels.shape} "
-          f"center={synth_center}")
-    cls_dist = synth_labels.argmax(1)
+          f"center={synth_center}" if synth_latents is not None else "[setup] VAE pool bypassed")
+    cls_dist = synth_labels.argmax(1) if synth_labels is not None else np.empty(0, dtype=np.int64)
     from collections import Counter
     pool_class_counts = Counter(int(c) for c in cls_dist)
     print(f"[setup] synth class counts (idx): {dict(pool_class_counts)}")
     source_counts = Counter(str(s) for s in source_meta["source_labels"])
     print(f"[setup] synth source counts: {dict(source_counts)} "
           f"has_metadata={source_meta['has_source_metadata']}")
-    # ── PTBXL super5 train / val ────────────────────────────────────────────
     scheme = get_super5_scheme()
 
     label_cache = os.path.join(args.output_dir, "ptbxl_labels")
@@ -1631,6 +1746,7 @@ def main():
     val_ds = PTBXLDatasetScheme(val_signals, val_labels,
                                 crop_len=args.crop_len, mode='eval')
     target_real_ds = None
+    target_real_raw_augmix_ds = None
     target_val_ds = None
     matched_split: Dict[str, Any] | None = None
     if args.target_real_npz:
@@ -1670,16 +1786,15 @@ def main():
             )
             real_signals = real_signals[train_indices]
             real_labels = real_labels[train_indices]
-            synth_latents, synth_labels, source_meta = filter_latent_candidates(
-                synth_latents,
-                synth_labels,
-                source_meta,
-                train_record_ids=matched_split["train_record_ids"],
-                validation_record_ids=matched_split["val_record_ids"],
-            )
-            cls_dist = synth_labels.argmax(1)
-            pool_class_counts = Counter(int(c) for c in cls_dist)
-            source_counts = Counter(str(s) for s in source_meta["source_labels"])
+            if args.enable_vae_lhat:
+                synth_latents, synth_labels, source_meta = filter_latent_candidates(
+                    synth_latents, synth_labels, source_meta,
+                    train_record_ids=matched_split["train_record_ids"],
+                    validation_record_ids=matched_split["val_record_ids"],
+                )
+                cls_dist = synth_labels.argmax(1)
+                pool_class_counts = Counter(int(c) for c in cls_dist)
+                source_counts = Counter(str(s) for s in source_meta["source_labels"])
             print(
                 f"[setup] matched K500 split: train={len(train_indices)} val={len(val_indices)} "
                 f"train_hash={matched_split['train_record_ids_sha256']} "
@@ -1693,6 +1808,17 @@ def main():
             mode='train',
             norm_mode=args.target_real_norm_mode,
         )
+        if (
+            args.enable_raw_augmix
+            and args.latent_augmix_signal_space == LOCKED_LATENT_AUGMIX_SIGNAL_SPACE
+        ):
+            target_real_raw_augmix_ds = TargetRealRawFirstCorruptionDataset(
+                real_signals,
+                real_labels,
+                crop_len=args.crop_len,
+                mode="train",
+                clean_norm_mode=args.target_real_norm_mode,
+            )
         print(
             f"[setup] target-real supervised stream: n={len(target_real_ds)} "
             f"weight={args.target_real_weight} norm_mode={args.target_real_norm_mode} "
@@ -1772,38 +1898,18 @@ def main():
             scheduler_steps=scheduler_count, source_floor_result=best_source_floor_result,
         )
 
-    # ── PGD / Latent-Hull generator + buffer ────────────────────────────────
-    # Note: generator __init__ calls victim.parameters().requires_grad_(False)
-    # which would prevent us from training the victim afterwards. We re-enable
-    # requires_grad on all params right after, then snapshot EWA + build optimizer.
-    pgd_gen = LatentHullPGDGenerator(
-        ecgtwin_wrapper=ecgtwin, victim=victim,
-        epsilon=args.pgd_eps,
-        hull_lambda=args.hull_lambda,
-        hull_steps=args.hull_steps,
-        hull_lr=args.hull_lr,
-        init_logit_gap=args.hull_init_logit_gap,
-        weight_mode=args.hull_weight_mode,
-        dirichlet_alpha=args.hull_dirichlet_alpha,
-        device=args.device,
-    )
-    latent_hull_index = SameLabelLatentIndex(
-        synth_latents, synth_labels,
-        label_mode=args.hull_label_mode,
-        seed=args.seed,
-        include_self=args.hull_include_anchor,
-        distance_space=args.hull_neighbor_distance_space,
-        neighbor_mode=args.hull_neighbor_mode,
-        neighbor_pool_size=args.hull_neighbor_pool_size,
+    pgd_gen = load_optional_vae_component(args.enable_vae_lhat, lambda: LatentHullPGDGenerator(
+        ecgtwin_wrapper=ecgtwin, victim=victim, epsilon=args.pgd_eps,
+        hull_lambda=args.hull_lambda, hull_steps=args.hull_steps, hull_lr=args.hull_lr,
+        init_logit_gap=args.hull_init_logit_gap, weight_mode=args.hull_weight_mode,
+        dirichlet_alpha=args.hull_dirichlet_alpha, device=args.device,
+    ))
+    latent_hull_index = load_optional_vae_component(args.enable_vae_lhat, lambda: SameLabelLatentIndex(
+        synth_latents, synth_labels, label_mode=args.hull_label_mode, seed=args.seed,
+        include_self=args.hull_include_anchor, distance_space=args.hull_neighbor_distance_space,
+        neighbor_mode=args.hull_neighbor_mode, neighbor_pool_size=args.hull_neighbor_pool_size,
         neighbor_pool_multiplier=args.hull_neighbor_pool_multiplier,
-    )
-    print(f"[setup] latent-hull index mode={args.hull_label_mode} "
-          f"include_anchor={args.hull_include_anchor} "
-          f"distance_space={args.hull_neighbor_distance_space} "
-          f"neighbor_mode={args.hull_neighbor_mode} "
-          f"neighbor_pool_size={args.hull_neighbor_pool_size} "
-          f"neighbor_pool_multiplier={args.hull_neighbor_pool_multiplier} "
-          f"sizes={latent_hull_index.class_sizes()}")
+    ))
     for p in victim.model.parameters():
         p.requires_grad_(True)
     trainable_params = [p for p in victim.model.parameters() if p.requires_grad]
@@ -1822,25 +1928,21 @@ def main():
     print(f"[setup] EWA anchor: {len(ewa_params)} param tensors snapshotted "
           f"({sum(p.numel() for p in ewa_params):,} elements)")
 
-    # ── Optimizer / scheduler ───────────────────────────────────────────────
     optimizer = AdamW(trainable_params, lr=args.lr, weight_decay=args.weight_decay)
     scheduler = CosineAnnealingLR(optimizer, T_max=args.n_epochs,
                                   eta_min=args.lr * 0.01)
 
-    manual_anchor_class_weight_map = parse_class_weight_map(args.anchor_class_weights)
-    anchor_class_weight_map, anchor_class_weight_info = derive_kshot_anchor_class_weights(
-        synth_labels,
-        classes_in_scope,
-        SUPER5_TO_IDX,
-        mode=args.anchor_class_weight_mode,
-        source_labels=source_meta.get("source_labels"),
-        reference_source=args.anchor_class_weight_reference_source,
-        gamma=args.anchor_class_weight_gamma,
-        min_weight=args.anchor_class_weight_min,
-        max_weight=args.anchor_class_weight_cap,
-        missing_weight=args.anchor_class_missing_weight,
-        manual_prior=manual_anchor_class_weight_map,
-    )
+    if args.enable_vae_lhat:
+        anchor_class_weight_map, anchor_class_weight_info = derive_kshot_anchor_class_weights(
+            synth_labels, classes_in_scope, SUPER5_TO_IDX, mode=args.anchor_class_weight_mode,
+            source_labels=source_meta.get("source_labels"),
+            reference_source=args.anchor_class_weight_reference_source,
+            gamma=args.anchor_class_weight_gamma, min_weight=args.anchor_class_weight_min,
+            max_weight=args.anchor_class_weight_cap, missing_weight=args.anchor_class_missing_weight,
+            manual_prior=parse_class_weight_map(args.anchor_class_weights),
+        )
+    else:
+        anchor_class_weight_map, anchor_class_weight_info = {}, {"mode": "disabled_no_vae"}
     print(f"[setup] anchor class weight policy: {anchor_class_weight_info}", flush=True)
 
     log: Dict[str, Any] = {
@@ -1927,13 +2029,11 @@ def main():
     agent_decision_path = Path(args.output_dir) / "agent_decision.json"
     resume_path = resolve_resume_path(args.resume, args.output_dir)
 
-    # Plan Rev 13.2: stratified pool walker over NORM/MI/STTC scope only
-    walker = StratifiedPoolWalker(
-        labels_one_hot=synth_labels,
-        classes_in_scope=classes_in_scope,
+    walker = load_optional_vae_component(args.enable_vae_lhat, lambda: StratifiedPoolWalker(
+        labels_one_hot=synth_labels, classes_in_scope=classes_in_scope,
         class_to_idx=SUPER5_TO_IDX, seed=args.seed,
-    )
-    walker_class_sizes = walker.class_sizes()
+    ))
+    walker_class_sizes = walker.class_sizes() if walker is not None else {}
     print(f"[setup] walker class sizes: {walker_class_sizes}")
     print(f"[setup] anchor class weights: {anchor_class_weight_map or {'<default>': 1.0}}")
 
@@ -1962,7 +2062,8 @@ def main():
         if "ewa_params" in ckpt:
             ewa_params = [p.to(args.device) for p in ckpt["ewa_params"]]
         restore_quality_buffer_state(buffer, ckpt.get("buffer_state", {}))
-        _restore_walker_state(walker, ckpt.get("walker_state", {}))
+        if walker is not None:
+            _restore_walker_state(walker, ckpt.get("walker_state", {}))
         restore_rng_state(ckpt.get("rng_state", {}), rng)
         log = ckpt.get("training_log", log)
         best_metric, best_epoch, best_source_floor_result = restore_best_selection_state(
@@ -1994,6 +2095,8 @@ def main():
         clean_anchor_mode = (
             not decoupled_clean_augmix_mode
             and (
+                not args.enable_vae_lhat
+                or
                 args.latent_augmix_third_chain_role == "clean_anchor_control"
                 or args.latent_augmix_chain_base_mode == "all_clean"
             )
@@ -2005,7 +2108,10 @@ def main():
         if clean_anchor_mode:
             if target_real_ds is None:
                 raise RuntimeError("clean-anchor AugMix requires target_real_ds")
-            clean_anchor_bundle = build_clean_anchor_augmix_epoch(target_real_ds, args, epoch)
+            clean_anchor_source_ds = target_real_raw_augmix_ds or target_real_ds
+            clean_anchor_bundle = build_clean_anchor_augmix_epoch(
+                clean_anchor_source_ds, args, epoch
+            )
             n_clean = int(clean_anchor_bundle["clean"].shape[0])
             anc_signals = clean_anchor_bundle["clean"]
             adv_signals = clean_anchor_bundle["views"][:n_clean]
@@ -2018,8 +2124,6 @@ def main():
             delta_stats = {
                 "mean_delta_norm": float(np.mean(delta_norms)),
                 "max_delta_norm": float(np.max(delta_norms)),
-                "hull_weight_entropy_mean": float("nan"),
-                "hull_weight_top1_mean": float("nan"),
             }
             k_per_cls = {"clean_anchor_control": n_clean}
             print(
@@ -2068,6 +2172,8 @@ def main():
                 adv_signals,
                 args.latent_augmix_signal_space,
             )
+            if args.enable_vae_lhat
+            else (anc_signals, adv_signals, False)
         )
 
         # Phase B: gates and diagnostics.
@@ -2082,7 +2188,7 @@ def main():
             target_oh,
             device=args.device,
             crop_len=args.crop_len,
-        )
+        ) if args.enable_vae_lhat else {}
         sem_info = compute_semantic_gate(
             adv_signals, anc_signals,
             einthoven_p95_max=args.einthoven_p95_max,
@@ -2093,6 +2199,8 @@ def main():
             "enabled": True,
             "n_generated": 0,
         }
+        if matched_comparison and args.enable_vae_lhat and not args.enable_raw_augmix:
+            latent_augmix_stats = raw_augmix_disabled_stats(args.latent_augmix_signal_space)
         latent_augmix_push_stats = {}
         if (not args.disable_quality_gate) and (not sem_info.get("PASS", False)):
             gate_skipped = True
@@ -2138,10 +2246,32 @@ def main():
                     sample_weight_scale=float(args.vae_adv_stream_sample_scale),
                     enabled=push_independent_vae_stream and method_updates_enabled,
                 )
-                if decoupled_clean_augmix_mode:
+                if not args.enable_raw_augmix:
+                    if target_real_ds is None:
+                        raise RuntimeError("clean budget control requires target_real_ds")
+                    clean_anchor_bundle = build_no_raw_augmix_epoch(
+                        target_real_ds,
+                        args,
+                        epoch,
+                        matched_comparison=matched_comparison,
+                    )
+                    if clean_anchor_bundle is None:
+                        latent_augmix_signals = np.empty(
+                            (0,) + tuple(anc_signals.shape[1:]), dtype=np.float32
+                        )
+                    else:
+                        latent_augmix_signals = clean_anchor_bundle["views"]
+                        latent_augmix_stats = clean_anchor_bundle["stats"]
+                        labels_rep = clean_anchor_bundle["labels_rep"]
+                        latent_augmix_clean_for_consistency = clean_anchor_bundle["clean"]
+                        latent_augmix_labels_for_consistency = clean_anchor_bundle["labels"]
+                elif decoupled_clean_augmix_mode:
                     if target_real_ds is None:
                         raise RuntimeError("all_clean_plus_vae_adv requires target_real_ds")
-                    clean_anchor_bundle = build_clean_anchor_augmix_epoch(target_real_ds, args, epoch)
+                    clean_anchor_source_ds = target_real_raw_augmix_ds or target_real_ds
+                    clean_anchor_bundle = build_clean_anchor_augmix_epoch(
+                        clean_anchor_source_ds, args, epoch
+                    )
                     latent_augmix_signals = clean_anchor_bundle["views"]
                     latent_augmix_stats = clean_anchor_bundle["stats"]
                     latent_augmix_stats["decoupled_vae_adv_stream"] = True
@@ -2184,21 +2314,15 @@ def main():
                         (max(1, int(args.latent_augmix_copies)), 1),
                     )[:latent_augmix_signals.shape[0]]
                 with torch.no_grad():
-                    lg_chunks = []
-                    teacher_prob_chunks = []
+                    lg_chunks, teacher_prob_chunks = [], []
                     for i in range(0, latent_augmix_ct_crop.shape[0], 128):
-                        x_t = torch.from_numpy(
-                            latent_augmix_ct_crop[i:i + 128]
-                        ).float().to(args.device)
+                        x_t = torch.from_numpy(latent_augmix_ct_crop[i:i + 128]).float().to(args.device)
                         lg_chunks.append(victim.model(x_t).cpu().numpy())
                         if teacher_model is not None:
-                            teacher_prob_chunks.append(
-                                torch.sigmoid(teacher_model(x_t)).cpu().numpy()
-                            )
+                            teacher_prob_chunks.append(torch.sigmoid(teacher_model(x_t)).cpu().numpy())
                     latent_augmix_logits_arr = np.concatenate(lg_chunks)
                     latent_augmix_teacher_probs_arr = (
-                        np.concatenate(teacher_prob_chunks)
-                        if teacher_prob_chunks else None
+                        np.concatenate(teacher_prob_chunks) if teacher_prob_chunks else None
                     )
                 latent_augmix_push_stats = push_adv_to_buffer(
                     buffer=buffer,
@@ -2213,7 +2337,7 @@ def main():
                     label_mode=args.adv_label_mode,
                     teacher_mix=args.adv_teacher_mix,
                     soft_target_floor=args.adv_soft_target_floor,
-                    enabled=method_updates_enabled,
+                    enabled=method_updates_enabled and args.enable_raw_augmix,
                 )
                 latent_augmix_direct_clean = latent_augmix_clean_for_consistency.astype(np.float32, copy=False)
                 latent_augmix_direct_views = latent_augmix_signals.astype(np.float32, copy=False)
@@ -2227,7 +2351,7 @@ def main():
                 flush=True,
             )
         # Track consecutive low ASR
-        if method_updates_enabled and asr_info["asr_overall"] < args.asr_low_threshold:
+        if args.enable_vae_lhat and asr_info["asr_overall"] < args.asr_low_threshold:
             consecutive_low_asr += 1
         else:
             consecutive_low_asr = 0
@@ -2264,7 +2388,7 @@ def main():
                 persistent_workers=args.num_workers > 0,
                 generator=torch.Generator().manual_seed(int(args.seed) + int(epoch)),
             )
-            primary_adv_signals = anc_signals if args.comparison_arm == "a0" else adv_signals
+            primary_adv_signals = adv_signals if args.enable_vae_lhat else anc_signals
             target_adv_loader = DataLoader(
                 _build_primary_adv_dataset(
                     primary_adv_signals,
@@ -2366,9 +2490,13 @@ def main():
                 anchor_lambda=args.anchor_lambda, ewa_decay=args.ewa_decay,
             )
             realized_epoch_optimizer_steps = len(train_loader)
-        if (
-            not args.enable_latent_augmix_consistency
-            or (method_updates_enabled and latent_augmix_direct_clean is None)
+        zero_effect_aux_control = should_run_zero_effect_auxiliary_control(
+            matched_comparison=matched_comparison,
+            consistency_weight=float(args.latent_augmix_consistency_weight),
+            bce_weight=float(args.latent_augmix_bce_weight),
+        )
+        if not args.enable_latent_augmix_consistency or (
+            not zero_effect_aux_control and latent_augmix_direct_clean is None
         ):
             latent_augmix_consistency_stats = {
                 "enabled": False,
@@ -2380,38 +2508,45 @@ def main():
                 "n_generated": 0,
             }
         else:
-            if method_updates_enabled:
-                aux_clean = latent_augmix_direct_clean
-                aux_views = latent_augmix_direct_views
-                aux_labels = latent_augmix_direct_labels
+            if zero_effect_aux_control:
+                latent_augmix_consistency_stats = run_zero_effect_auxiliary_optimizer_control(
+                    optimizer,
+                    n_samples=int(args.K_anchor),
+                    batch_size=args.batch_size,
+                    max_batches=args.latent_augmix_consistency_max_batches,
+                )
+                latent_augmix_consistency_stats.update({
+                    "n_generated": int(args.K_anchor) * int(args.latent_augmix_copies),
+                    "copies": int(args.latent_augmix_copies),
+                    "consistency_weight": 0.0,
+                    "consistency_objective": str(args.latent_augmix_consistency_loss),
+                    "bce_weight": 0.0,
+                })
             else:
-                assert target_real_ds is not None
-                n_aux = int(args.K_anchor)
-                idx = np.arange(n_aux, dtype=np.int64) % len(target_real_ds)
-                aux_clean = np.transpose(target_real_ds.signals[idx], (0, 2, 1))
-                aux_views = np.tile(aux_clean, (int(args.latent_augmix_copies), 1, 1))
-                aux_labels = target_real_ds.labels[idx]
-            latent_augmix_consistency_stats = train_latent_augmix_consistency_epoch(
-                model=victim.model,
-                clean_signals_ct=aux_clean,
-                augmix_signals_ct=aux_views,
-                labels_np=aux_labels,
-                optimizer=optimizer,
-                criterion=criterion,
-                device=args.device,
-                copies=args.latent_augmix_copies,
-                consistency_weight=args.latent_augmix_consistency_weight,
-                bce_weight=(0.0 if matched_comparison else args.latent_augmix_bce_weight),
-                consistency_loss=args.latent_augmix_consistency_loss,
-                batch_size=args.batch_size,
-                crop_len=args.crop_len,
-                grad_clip=args.grad_clip,
-                trainable_params=trainable_params,
-                max_batches=args.latent_augmix_consistency_max_batches,
-            )
-            latent_augmix_consistency_stats["control"] = (
-                "vae_lhat_augmix_jsd" if method_updates_enabled else "clean_control_steps"
-            )
+                assert latent_augmix_direct_clean is not None
+                assert latent_augmix_direct_views is not None
+                assert latent_augmix_direct_labels is not None
+                latent_augmix_consistency_stats = train_latent_augmix_consistency_epoch(
+                    model=victim.model,
+                    clean_signals_ct=latent_augmix_direct_clean,
+                    augmix_signals_ct=latent_augmix_direct_views,
+                    labels_np=latent_augmix_direct_labels,
+                    optimizer=optimizer,
+                    criterion=criterion,
+                    device=args.device,
+                    copies=args.latent_augmix_copies,
+                    consistency_weight=args.latent_augmix_consistency_weight,
+                    bce_weight=args.latent_augmix_bce_weight,
+                    consistency_loss=args.latent_augmix_consistency_loss,
+                    batch_size=args.batch_size,
+                    crop_len=args.crop_len,
+                    grad_clip=args.grad_clip,
+                    trainable_params=trainable_params,
+                    max_batches=args.latent_augmix_consistency_max_batches,
+                )
+                latent_augmix_consistency_stats["control"] = (
+                    "vae_lhat_augmix_jsd" if method_updates_enabled else "clean_control_steps"
+                )
             realized_epoch_optimizer_steps += int(latent_augmix_consistency_stats["n_batches"])
         vae_adv_consistency_stats = {
             "enabled": False,
@@ -2478,17 +2613,12 @@ def main():
                 torch.save(victim.model.state_dict(), best_ckpt_path)
 
         elapsed = time.time() - epoch_t0
-        latent_hull_diagnostics = delta_stats.get(
-            "latent_hull_diagnostics", {"schema_version": 1, "n": 0}
-        )
-        latent_hull_diagnostics_summary = delta_stats.get(
-            "latent_hull_diagnostics_summary",
-            summarize_latent_hull_diagnostics(latent_hull_diagnostics),
-        )
+        latent_hull_diagnostics = delta_stats.get("latent_hull_diagnostics")
+        latent_hull_diagnostics_summary = delta_stats.get("latent_hull_diagnostics_summary")
         entry = {
             "epoch": epoch,
             "comparison_arm": args.comparison_arm,
-            "attack_family": "latent_hull",
+            "attack_family": "latent_hull" if args.enable_vae_lhat else None,
             "train_loss": round(train_loss, 4),
             "target_val_macro_auroc": target_val_metrics.get("macro_auroc"),
             "target_val_macro_auprc": target_val_metrics.get("macro_auprc"),
@@ -2585,9 +2715,11 @@ def main():
             "latent_hull_diagnostics_summary": latent_hull_diagnostics_summary,
             "latent_hull_final_effective_original_share_p50": (
                 latent_hull_diagnostics_summary.get("final_effective_original_share", {}).get("p50")
+                if latent_hull_diagnostics_summary else None
             ),
             "latent_hull_final_projection_scale_p50": (
                 latent_hull_diagnostics_summary.get("final_projection_scale", {}).get("p50")
+                if latent_hull_diagnostics_summary else None
             ),
             "lr":            round(optimizer.param_groups[0]["lr"], 6),
             "time_s":        round(elapsed, 1),
@@ -2609,10 +2741,10 @@ def main():
             "hull_neighbor_pool_multiplier": args.hull_neighbor_pool_multiplier,
             "hull_weight_entropy_mean": round(
                 float(delta_stats.get("hull_weight_entropy_mean", float('nan'))), 4
-            ),
+            ) if args.enable_vae_lhat else None,
             "hull_weight_top1_mean": round(
                 float(delta_stats.get("hull_weight_top1_mean", float('nan'))), 4
-            ),
+            ) if args.enable_vae_lhat else None,
         })
         print(f"Ep {epoch:2d}/{args.n_epochs} | train={train_loss:.4f} val={val_loss:.4f} | "
               f"asr={asr_info['asr_overall']:.2f} "
@@ -2681,7 +2813,7 @@ def main():
                 "scheduler_state_dict": scheduler.state_dict(),
                 "ewa_params": [p.detach().cpu() for p in ewa_params],
                 "buffer_state": quality_buffer_state(buffer),
-                "walker_state": _walker_state(walker),
+                "walker_state": _walker_state(walker) if walker is not None else {},
                 "rng_state": capture_rng_state(rng),
                 "consecutive_low_asr": consecutive_low_asr,
                 "best_metric": best_metric,

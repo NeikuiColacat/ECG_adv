@@ -5,6 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Mapping
 
+from ecg_adv_gen.matched_effnet import (
+    is_matched_effnet_arm,
+    matched_effnet_arm,
+    validate_matched_effnet_case,
+)
+
 from .common import (
     argv_option_map,
     audit_equals,
@@ -25,10 +31,17 @@ def _append_optional_sequence(argv: list[Any], option: str, values: Any) -> None
         argv.extend(list(values))
 
 
+def _resolve_arm(case: Mapping[str, Any] | None, fallback: str):
+    if case is not None:
+        return validate_matched_effnet_case(case)
+    return fallback, matched_effnet_arm(fallback) if is_matched_effnet_arm(fallback) else None
+
+
 def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, Any]) -> list[Any]:
     """Build managed argv for the EfficientNet VAE-LHAT runner from typed config fields."""
 
     matrix = context.get("matrix") or {}
+    case = matrix.get("case") if isinstance(matrix.get("case"), Mapping) else None
     center = matrix.get("center")
     if not center:
         raise ValueError("effnet_vae_lhat adapter requires runner.matrix.center")
@@ -70,14 +83,28 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
     asr_low, asr_high = attack["target_asr_range"]
     if not 0.0 <= float(asr_low) <= float(asr_high) <= 1.0:
         raise ValueError("adaptation.attack.target_asr_range must be ordered within [0, 1]")
-    comparison_arm = matrix.get("comparison_arm", adaptation.get("comparison_arm", "historical_unmatched"))
+    comparison_arm, arm_components = _resolve_arm(
+        case, matrix.get("comparison_arm", adaptation.get("comparison_arm", "historical_unmatched"))
+    )
     target_adv_fraction = float(
         matrix.get("target_adv_fraction", adaptation["loss"]["target_adv_fraction"])
     )
     if target_adv_fraction not in {0.0, 0.25, 0.5}:
         raise ValueError("target_adv_fraction matrix value must be one of 0, 0.25, 0.5")
-    if comparison_arm == "a0":
-        target_adv_fraction = 0.0
+    if case is not None:
+        target_adv_fraction = arm_components.target_adv_fraction
+    elif arm_components is not None and not arm_components.vae_lhat:
+        target_adv_fraction = arm_components.target_adv_fraction
+    third_chain_route = (
+        arm_components.third_chain_route
+        if arm_components is not None
+        else latent_augmix.get("third_chain_role", "vae_lhat_adversarial_waveform")
+    )
+    bce_weight = latent_augmix_consistency.get("bce_weight")
+    consistency_weight = latent_augmix_consistency.get("consistency_weight")
+    if arm_components is not None:
+        bce_weight = bce_weight if arm_components.augmix_view_bce else 0.0
+        consistency_weight = consistency_weight if arm_components.jsd else 0.0
 
     argv: list[Any] = [
         "--center",
@@ -179,7 +206,7 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
         "--latent_augmix_severity",
         latent_augmix["severity"],
         "--latent_augmix_third_chain_role",
-        latent_augmix.get("third_chain_role", "vae_lhat_adversarial_waveform"),
+        third_chain_route,
         "--latent_augmix_chain_base_mode",
         latent_augmix.get("chain_base_mode", "clean_clean_third"),
         "--latent_augmix_adv_base_mix",
@@ -193,9 +220,12 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
     ]
     if bool(hull["include_anchor"]):
         argv.append("--hull_include_anchor")
+    if arm_components is not None:
+        argv.append("--enable_vae_lhat" if arm_components.vae_lhat else "--disable_vae_lhat")
+        argv.append("--enable_raw_augmix" if arm_components.raw_augmix else "--disable_raw_augmix")
     argv.append(
         "--enable_latent_augmix_consistency"
-        if bool(latent_augmix_consistency["enabled"])
+        if arm_components is not None or bool(latent_augmix_consistency["enabled"])
         else "--disable_latent_augmix_consistency"
     )
     _append_optional_value(argv, "--target_real_norm_mode", data.get("target_real_norm_mode"))
@@ -220,7 +250,7 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
     _append_optional_value(
         argv,
         "--latent_augmix_consistency_weight",
-        latent_augmix_consistency.get("consistency_weight"),
+        consistency_weight,
     )
     _append_optional_value(
         argv,
@@ -230,7 +260,7 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
     _append_optional_value(
         argv,
         "--latent_augmix_bce_weight",
-        latent_augmix_consistency.get("bce_weight"),
+        bce_weight,
     )
     _append_optional_value(
         argv,
@@ -318,12 +348,13 @@ def audit_effnet_vae_lhat_command(
     audit_equals(errors, script, opts, "--asr_low_threshold", asr_low)
     audit_equals(errors, script, opts, "--asr_high_threshold", asr_high)
     source_floor = selection.get("source_floor") or {}
-    comparison_arm = case.get("comparison_arm") or adaptation.get("comparison_arm", "historical_unmatched")
+    fallback_arm = case.get("comparison_arm") or adaptation.get("comparison_arm", "historical_unmatched")
+    comparison_arm, arm_components = _resolve_arm(case if "arm" in case else None, fallback_arm)
     target_adv_fraction = float(
         case.get("target_adv_fraction", adaptation["loss"]["target_adv_fraction"])
     )
-    if comparison_arm == "a0":
-        target_adv_fraction = 0.0
+    if arm_components is not None and ("arm" in case or not arm_components.vae_lhat):
+        target_adv_fraction = arm_components.target_adv_fraction
     expected_options = {
         "--comparison_arm": comparison_arm,
         "--init_ckpt": expected_init_ckpt,
@@ -335,12 +366,35 @@ def audit_effnet_vae_lhat_command(
     }
     for option, expected in expected_options.items():
         audit_equals(errors, script, opts, option, expected)
+    if arm_components is not None:
+        component_options = {
+            "--latent_augmix_third_chain_role": arm_components.third_chain_route,
+            "--latent_augmix_bce_weight": (
+                consistency.get("bce_weight") if arm_components.augmix_view_bce else 0.0
+            ),
+            "--latent_augmix_consistency_weight": (
+                consistency.get("consistency_weight") if arm_components.jsd else 0.0
+            ),
+        }
+        for option, expected in component_options.items():
+            audit_equals(errors, script, opts, option, expected)
     expected_flags = {
         "--hull_include_anchor": bool(hull["include_anchor"]),
         "--final_checkpoint_only": paper["selection"]["policy"] == "last_checkpoint_only",
-        "--enable_latent_augmix_consistency": bool(consistency["enabled"]),
-        "--disable_latent_augmix_consistency": not bool(consistency["enabled"]),
+        "--enable_latent_augmix_consistency": (
+            arm_components is not None or bool(consistency["enabled"])
+        ),
+        "--disable_latent_augmix_consistency": (
+            arm_components is None and not bool(consistency["enabled"])
+        ),
     }
+    if arm_components is not None:
+        expected_flags.update({
+            "--enable_vae_lhat": arm_components.vae_lhat,
+            "--disable_vae_lhat": not arm_components.vae_lhat,
+            "--enable_raw_augmix": arm_components.raw_augmix,
+            "--disable_raw_augmix": not arm_components.raw_augmix,
+        })
     for flag, expected in expected_flags.items():
         if (flag in opts) != expected:
             errors.append(f"{script}: {flag} presence must be {expected}")

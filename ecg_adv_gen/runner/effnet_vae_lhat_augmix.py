@@ -44,6 +44,12 @@ from ecg_adv_gen.evaluation.pn2021c import (  # noqa: E402
     STRESS_PROFILE_CHOICES as PN2021C_STRESS_PROFILE_CHOICES,
 )
 from ecg_adv_gen.models.super5_model_zoo import available_model_names  # noqa: E402
+from ecg_adv_gen.matched_effnet import (  # noqa: E402
+    MATCHED_EFFNET_ARMS,
+    MATCHED_EFFNET_THIRD_CHAIN_ROUTES,
+    is_matched_effnet_arm,
+    validate_matched_effnet_runtime,
+)
 
 CLASS_NAMES = list(CLASS_NAMES_SUPER5)
 
@@ -57,7 +63,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--center", default="cpsc_2018")
     ap.add_argument(
         "--comparison_arm",
-        choices=["historical_unmatched", "a0", "a5"],
+        choices=["historical_unmatched", *MATCHED_EFFNET_ARMS],
         default="historical_unmatched",
     )
     ap.add_argument("--epochs", type=int, default=30)
@@ -187,7 +193,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--train_batch_size", type=int, default=128)
     ap.add_argument(
         "--latent_augmix_third_chain_role",
-        choices=["vae_lhat_adversarial_waveform", "clean_anchor_control"],
+        choices=list(MATCHED_EFFNET_THIRD_CHAIN_ROUTES),
         default="vae_lhat_adversarial_waveform",
     )
     ap.add_argument(
@@ -242,6 +248,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_false",
     )
     ap.set_defaults(enable_latent_augmix_consistency=True)
+    vae_lhat = ap.add_mutually_exclusive_group()
+    vae_lhat.add_argument("--enable_vae_lhat", dest="enable_vae_lhat", action="store_true")
+    vae_lhat.add_argument("--disable_vae_lhat", dest="enable_vae_lhat", action="store_false")
+    raw_augmix = ap.add_mutually_exclusive_group()
+    raw_augmix.add_argument("--enable_raw_augmix", dest="enable_raw_augmix", action="store_true")
+    raw_augmix.add_argument("--disable_raw_augmix", dest="enable_raw_augmix", action="store_false")
+    ap.set_defaults(enable_vae_lhat=True, enable_raw_augmix=True)
     ap.add_argument("--eval_batch_size", type=int, default=192)
     ap.add_argument("--eval_min_pos", type=int, default=10)
     ap.add_argument("--eval_pn2021_limit", type=int, default=0)
@@ -268,7 +281,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Forwarded to synth_online_at_super5.py to avoid epoch resume checkpoint writes.",
     )
-    return ap.parse_args(argv)
+    args = ap.parse_args(argv)
+    if is_matched_effnet_arm(args.comparison_arm):
+        try:
+            validate_matched_effnet_runtime(
+                args.comparison_arm,
+                enable_vae_lhat=args.enable_vae_lhat,
+                enable_raw_augmix=args.enable_raw_augmix,
+                enable_auxiliary_steps=args.enable_latent_augmix_consistency,
+                bce_weight=args.latent_augmix_bce_weight,
+                jsd_weight=args.latent_augmix_consistency_weight,
+                third_chain_route=args.latent_augmix_third_chain_role,
+            )
+        except ValueError as exc:
+            ap.error(str(exc))
+    return args
 
 
 def main() -> None:

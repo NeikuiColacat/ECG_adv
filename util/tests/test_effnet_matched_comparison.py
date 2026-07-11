@@ -518,12 +518,19 @@ def test_run_record_contract_differs_only_by_declared_arm():
 
     assert a0["comparison_arm"] == "a0"
     assert a5["comparison_arm"] == "a5"
-    allowed_differences = {"comparison_arm", "method_components"}
+    allowed_differences = {
+        "comparison_arm", "method_components", "role",
+        "target_adv_fraction", "third_chain_route",
+    }
     assert {k: v for k, v in a0.items() if k not in allowed_differences} == {
         k: v for k, v in a5.items() if k not in allowed_differences
     }
-    assert a0["method_components"] == {"vae_lhat": False, "three_chain_augmix": False, "jsd": False}
-    assert a5["method_components"] == {"vae_lhat": True, "three_chain_augmix": True, "jsd": True}
+    assert a0["method_components"] == {
+        "vae_lhat": False, "raw_augmix": False, "augmix_view_bce": False, "jsd": False,
+    }
+    assert a5["method_components"] == {
+        "vae_lhat": True, "raw_augmix": True, "augmix_view_bce": True, "jsd": True,
+    }
     assert a0["source_checkpoint"]["stage"] == "ptbxl_source"
     assert a0["k500_split"]["train_record_ids_sha256"] == "a" * 64
     assert a0["selection"]["source_floor_result"]["source_floor_passed"] is True

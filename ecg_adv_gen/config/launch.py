@@ -611,7 +611,10 @@ def _validate_training_log_metrics(
     record: dict[str, Any],
 ) -> list[dict[str, Any]]:
     expected = ((manifest.get("artifact_trace") or {}).get("expected_outputs") or {})
-    required_metrics = [str(item) for item in expected.get("required_epoch_metrics") or []]
+    required_metrics = list(dict.fromkeys([
+        *[str(item) for item in expected.get("required_epoch_metrics") or []],
+        *[str(item) for item in record.get("required_epoch_metrics") or []],
+    ]))
     if not required_metrics:
         return []
     errors: list[dict[str, Any]] = []
@@ -853,6 +856,7 @@ def verify_required_artifacts(manifest: dict[str, Any], *, include_postprocess: 
                 "role": artifact.get("role"),
                 "path": str(path),
                 "exists": path.exists(),
+                "required_epoch_metrics": run.get("required_epoch_metrics") or [],
             }
             if not path.exists():
                 missing.append(record)
