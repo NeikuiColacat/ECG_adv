@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-import hashlib
-import json
-from types import MappingProxyType
 from typing import Any, Mapping, NamedTuple
 
-MATCHED_EFFNET_CONTRACT_VERSION = "matched_effnet_a0_a2_a3_a4_a5_v3"
+from ecg_adv_gen.f004_contract import (
+    F004_FROZEN_PROJECTION,
+    F004_FROZEN_PROJECTION_SHA256,
+    validate_f004_projection,
+)
+
+MATCHED_EFFNET_CONTRACT_VERSION = "matched_effnet_a0_a2_a3_a4_a5_v4"
 MATCHED_EFFNET_ARMS = ("a0", "a2", "a3", "a4", "a5")
 MATCHED_EFFNET_VAE_HULL_LABEL_MODE = "exact"
 MATCHED_EFFNET_VAE_HULL_INCLUDE_ANCHOR = False
@@ -19,44 +22,10 @@ F004_KSHOT_SEED = 20260601
 F004_KSHOT_SUBSET_ROOT_FAMILY = (
     "paper_matched_effnet_k500_v7_fixedk_three_seed_20260711/subsets"
 )
-F004_FROZEN_TOPOLOGY = MappingProxyType({
-    "enable_vae_lhat": True,
-    "enable_raw_augmix": True,
-    "enable_latent_augmix_consistency": True,
-    "latent_augmix_bce_weight": 1.0,
-    "latent_augmix_consistency_weight": 2.0,
-    "latent_augmix_consistency_loss": "jsd",
-    "latent_augmix_third_chain_role": "vae_lhat_adversarial_waveform",
-    "latent_augmix_width": 3,
-    "latent_augmix_depth": -1,
-    "latent_augmix_copies": 2,
-    "latent_augmix_chain_base_mode": "clean_clean_third",
-    "latent_augmix_adv_base_mix": 1.0,
-    "latent_augmix_alpha": 1.0,
-    "latent_augmix_severity": 5,
-    "latent_augmix_severity_profile": "standard",
-    "latent_augmix_ops": (
-        "powerline_noise", "emg_noise", "baseline_wander",
-        "baseline_shift", "random_leads_masking",
-    ),
-    "latent_augmix_signal_space": "raw_pre_zscore",
-    "hull_M": 20,
-    "hull_lambda": 0.6,
-    "hull_steps": 5,
-    "hull_include_anchor": False,
-    "hull_init_logit_gap": 0.0,
-    "hull_label_mode": "exact",
-    "hull_mix_label_mode": "anchor_soft",
-    "hull_lr": 0.25,
-    "hull_neighbor_distance_space": "standardized",
-    "hull_neighbor_mode": "local_random",
-    "hull_neighbor_pool_size": 120,
-    "hull_neighbor_pool_multiplier": 4,
-    "pgd_eps": 2.0,
-})
-F004_FROZEN_TOPOLOGY_SHA256 = hashlib.sha256(
-    json.dumps(dict(F004_FROZEN_TOPOLOGY), sort_keys=True, separators=(",", ":")).encode()
-).hexdigest()
+# Backward-compatible names.  The package-owned projection is the sole source
+# of truth; no second topology mapping is maintained here.
+F004_FROZEN_TOPOLOGY = F004_FROZEN_PROJECTION
+F004_FROZEN_TOPOLOGY_SHA256 = F004_FROZEN_PROJECTION_SHA256
 
 class MatchedEffnetArm(NamedTuple):
     role: str; vae_lhat: bool; raw_augmix: bool; augmix_view_bce: bool
@@ -174,21 +143,7 @@ def validate_matched_effnet_runtime(
 def validate_f004_runtime(
     *, comparison_protocol: str, comparison_arm: str, comparison_variant: str,
     comparison_topology_sha256: str, target_adv_fraction: float,
-    kshot_seed: int, kshot_path: str,
-    enable_vae_lhat: bool, enable_raw_augmix: bool,
-    enable_latent_augmix_consistency: bool,
-    latent_augmix_bce_weight: float, latent_augmix_consistency_weight: float,
-    latent_augmix_consistency_loss: str, latent_augmix_third_chain_role: str,
-    latent_augmix_width: int, latent_augmix_depth: int, latent_augmix_copies: int,
-    latent_augmix_chain_base_mode: str, latent_augmix_adv_base_mix: float,
-    latent_augmix_alpha: float, latent_augmix_severity: int,
-    latent_augmix_severity_profile: str, latent_augmix_ops: list[str] | tuple[str, ...],
-    latent_augmix_signal_space: str, hull_M: int, hull_lambda: float,
-    hull_steps: int, hull_include_anchor: bool, hull_init_logit_gap: float,
-    hull_label_mode: str, hull_mix_label_mode: str, hull_lr: float,
-    hull_neighbor_distance_space: str, hull_neighbor_mode: str,
-    hull_neighbor_pool_size: int, hull_neighbor_pool_multiplier: int,
-    pgd_eps: float,
+    kshot_seed: int, kshot_path: str, behavior_projection: Mapping[str, Any],
 ) -> dict[str, Any]:
     if not is_f004_rho_sweep(comparison_protocol):
         raise ValueError(f"invalid F-004 comparison protocol: {comparison_protocol!r}")
@@ -206,45 +161,7 @@ def validate_f004_runtime(
             f"F-004 variant/rho mismatch: expected {identity['variant']!r}, "
             f"got {comparison_variant!r}"
         )
-    observed = {
-        "enable_vae_lhat": bool(enable_vae_lhat),
-        "enable_raw_augmix": bool(enable_raw_augmix),
-        "enable_latent_augmix_consistency": bool(enable_latent_augmix_consistency),
-        "latent_augmix_bce_weight": float(latent_augmix_bce_weight),
-        "latent_augmix_consistency_weight": float(latent_augmix_consistency_weight),
-        "latent_augmix_consistency_loss": str(latent_augmix_consistency_loss),
-        "latent_augmix_third_chain_role": str(latent_augmix_third_chain_role),
-        "latent_augmix_width": int(latent_augmix_width),
-        "latent_augmix_depth": int(latent_augmix_depth),
-        "latent_augmix_copies": int(latent_augmix_copies),
-        "latent_augmix_chain_base_mode": str(latent_augmix_chain_base_mode),
-        "latent_augmix_adv_base_mix": float(latent_augmix_adv_base_mix),
-        "latent_augmix_alpha": float(latent_augmix_alpha),
-        "latent_augmix_severity": int(latent_augmix_severity),
-        "latent_augmix_severity_profile": str(latent_augmix_severity_profile),
-        "latent_augmix_ops": tuple(str(item) for item in latent_augmix_ops),
-        "latent_augmix_signal_space": str(latent_augmix_signal_space),
-        "hull_M": int(hull_M),
-        "hull_lambda": float(hull_lambda),
-        "hull_steps": int(hull_steps),
-        "hull_include_anchor": bool(hull_include_anchor),
-        "hull_init_logit_gap": float(hull_init_logit_gap),
-        "hull_label_mode": str(hull_label_mode),
-        "hull_mix_label_mode": str(hull_mix_label_mode),
-        "hull_lr": float(hull_lr),
-        "hull_neighbor_distance_space": str(hull_neighbor_distance_space),
-        "hull_neighbor_mode": str(hull_neighbor_mode),
-        "hull_neighbor_pool_size": int(hull_neighbor_pool_size),
-        "hull_neighbor_pool_multiplier": int(hull_neighbor_pool_multiplier),
-        "pgd_eps": float(pgd_eps),
-    }
-    drift = {
-        key: {"observed": observed[key], "expected": expected}
-        for key, expected in F004_FROZEN_TOPOLOGY.items()
-        if observed[key] != expected
-    }
-    if drift:
-        raise ValueError(f"F-004 frozen full topology drift: {drift}")
+    validate_f004_projection(behavior_projection, source="runtime")
     return identity
 
 

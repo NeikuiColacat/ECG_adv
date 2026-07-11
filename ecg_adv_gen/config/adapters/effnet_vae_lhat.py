@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Mapping
 
+from ecg_adv_gen.f004_contract import project_f004_adapter_config
 from ecg_adv_gen.matched_effnet import (
     F004_RHO_SWEEP_PROTOCOL,
     F004_FROZEN_TOPOLOGY_SHA256,
@@ -113,38 +114,12 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
             target_adv_fraction=target_adv_fraction,
             kshot_seed=seed,
             kshot_path=kshot_subset_root,
-            enable_vae_lhat=True,
-            enable_raw_augmix=True,
-            enable_latent_augmix_consistency=bool(latent_augmix_consistency["enabled"]),
-            latent_augmix_bce_weight=latent_augmix_consistency["bce_weight"],
-            latent_augmix_consistency_weight=latent_augmix_consistency["consistency_weight"],
-            latent_augmix_consistency_loss=latent_augmix_consistency["consistency_loss"],
-            latent_augmix_third_chain_role=latent_augmix.get(
-                "third_chain_role", "vae_lhat_adversarial_waveform"
+            behavior_projection=project_f004_adapter_config(
+                config,
+                comparison_arm=comparison_arm,
+                comparison_protocol=comparison_protocol,
+                seed=seed,
             ),
-            latent_augmix_width=latent_augmix["width"],
-            latent_augmix_depth=latent_augmix["depth"],
-            latent_augmix_copies=latent_augmix["copies"],
-            latent_augmix_chain_base_mode=latent_augmix["chain_base_mode"],
-            latent_augmix_adv_base_mix=latent_augmix.get("adv_base_mix", 1.0),
-            latent_augmix_alpha=latent_augmix["alpha"],
-            latent_augmix_severity=latent_augmix["severity"],
-            latent_augmix_severity_profile=latent_augmix["severity_profile"],
-            latent_augmix_ops=latent_augmix["ops"],
-            latent_augmix_signal_space="raw_pre_zscore",
-            hull_M=hull["M"],
-            hull_lambda=hull["lambda"],
-            hull_steps=hull["steps"],
-            hull_include_anchor=hull["include_anchor"],
-            hull_init_logit_gap=hull["init_logit_gap"],
-            hull_label_mode=hull["label_mode"],
-            hull_mix_label_mode=hull["mix_label_mode"],
-            hull_lr=hull["lr"],
-            hull_neighbor_distance_space=hull["neighbor_distance_space"],
-            hull_neighbor_mode=hull["neighbor_mode"],
-            hull_neighbor_pool_size=hull["neighbor_pool_size"],
-            hull_neighbor_pool_multiplier=hull["neighbor_pool_multiplier"],
-            pgd_eps=attack["pgd_eps"],
         )
     else:
         comparison_arm, arm_components = _resolve_arm(

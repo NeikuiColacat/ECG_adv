@@ -44,6 +44,7 @@ from ecg_adv_gen.evaluation.pn2021c import (  # noqa: E402
     STRESS_PROFILE_CHOICES as PN2021C_STRESS_PROFILE_CHOICES,
 )
 from ecg_adv_gen.models.super5_model_zoo import available_model_names  # noqa: E402
+from ecg_adv_gen.f004_contract import project_f004_wrapper_args  # noqa: E402
 from ecg_adv_gen.matched_effnet import (  # noqa: E402
     MATCHED_EFFNET_ARMS,
     MATCHED_EFFNET_CONTRACT_VERSION,
@@ -326,36 +327,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                 target_adv_fraction=args.target_adv_fraction,
                 kshot_seed=args.seed,
                 kshot_path=args.anchor_base,
-                enable_vae_lhat=args.enable_vae_lhat,
-                enable_raw_augmix=args.enable_raw_augmix,
-                enable_latent_augmix_consistency=args.enable_latent_augmix_consistency,
-                latent_augmix_bce_weight=args.latent_augmix_bce_weight,
-                latent_augmix_consistency_weight=args.latent_augmix_consistency_weight,
-                latent_augmix_consistency_loss=args.latent_augmix_consistency_loss,
-                latent_augmix_third_chain_role=args.latent_augmix_third_chain_role,
-                latent_augmix_width=args.latent_augmix_width,
-                latent_augmix_depth=args.latent_augmix_depth,
-                latent_augmix_copies=args.latent_augmix_copies,
-                latent_augmix_chain_base_mode=args.latent_augmix_chain_base_mode,
-                latent_augmix_adv_base_mix=args.latent_augmix_adv_base_mix,
-                latent_augmix_alpha=args.latent_augmix_alpha,
-                latent_augmix_severity=args.latent_augmix_severity,
-                latent_augmix_severity_profile=args.latent_augmix_severity_profile,
-                latent_augmix_ops=args.latent_augmix_ops,
-                latent_augmix_signal_space="raw_pre_zscore",
-                hull_M=args.hull_M,
-                hull_lambda=args.hull_lambda,
-                hull_steps=args.hull_steps,
-                hull_include_anchor=args.hull_include_anchor,
-                hull_init_logit_gap=args.hull_init_logit_gap,
-                hull_label_mode=args.hull_label_mode,
-                hull_mix_label_mode=args.hull_mix_label_mode,
-                hull_lr=args.hull_lr,
-                hull_neighbor_distance_space=args.hull_neighbor_distance_space,
-                hull_neighbor_mode=args.hull_neighbor_mode,
-                hull_neighbor_pool_size=args.hull_neighbor_pool_size,
-                hull_neighbor_pool_multiplier=args.hull_neighbor_pool_multiplier,
-                pgd_eps=args.pgd_eps,
+                behavior_projection=project_f004_wrapper_args(vars(args)),
             )
         except (TypeError, ValueError) as exc:
             ap.error(str(exc))

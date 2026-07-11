@@ -48,6 +48,11 @@ from .replication import (
     verify_replication_k500_groups,
     verify_replication_validation_report,
 )
+from .source_clean import (
+    ExecutionSourceError,
+    inspect_execution_sources,
+    require_clean_execution_sources,
+)
 
 __all__ = [
     "ConfigError",
@@ -88,4 +93,7 @@ __all__ = [
     "build_replication_k500_groups",
     "verify_replication_k500_groups",
     "verify_replication_validation_report",
+    "ExecutionSourceError",
+    "inspect_execution_sources",
+    "require_clean_execution_sources",
 ]

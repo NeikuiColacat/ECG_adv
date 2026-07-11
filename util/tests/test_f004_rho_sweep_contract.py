@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import csv
 import copy
+import importlib
+import importlib.util
 import json
 from pathlib import Path
 
@@ -49,6 +51,22 @@ F004_EXPECTED_KSHOT_SEED = 20260601
 F004_EXPECTED_KSHOT_ROOT_FAMILY = (
     "paper_matched_effnet_k500_v7_fixedk_three_seed_20260711/subsets"
 )
+
+
+def test_f004_contract_has_package_owned_projection_module():
+    assert importlib.util.find_spec("ecg_adv_gen.f004_contract") is not None
+
+
+def test_f004_contract_exposes_single_projection_api():
+    contract = importlib.import_module("ecg_adv_gen.f004_contract")
+    assert {
+        "F004_FROZEN_PROJECTION",
+        "F004_FROZEN_PROJECTION_SHA256",
+        "F004_EXEMPT_CHILD_OPTIONS",
+        "project_f004_child_argv",
+        "project_f004_runtime_args",
+        "validate_f004_projection",
+    } <= set(dir(contract))
 
 
 def _split() -> dict:
@@ -100,6 +118,162 @@ def _load(path: Path, run_id: str = "pytest-f004") -> dict:
 
 def _option(argv: list[str], option: str) -> str:
     return argv[argv.index(option) + 1]
+
+
+def _f004_child_command(rho: float = 0.25) -> list[str]:
+    from ecg_adv_gen.runner import effnet_vae_lhat_augmix as wrapper
+    from ecg_adv_gen.runner.effnet_vae_lhat import (
+        build_effnet_vae_lhat_train_cmd,
+        resolve_effnet_vae_lhat_paths,
+    )
+
+    command = next(
+        item
+        for item in build_runner_commands(_load(TRAIN, "pytest-f004-projection"))
+        if item["matrix"] == {"center": "cpsc_2018", "rho": rho}
+    )
+    args = wrapper.parse_args(command["argv"][2:])
+    paths = resolve_effnet_vae_lhat_paths(
+        args, data_root=Path(args.data_root), out_root=Path(args.out_root)
+    )
+    return build_effnet_vae_lhat_train_cmd(
+        args,
+        python="python",
+        data_root=Path(args.data_root),
+        paths=paths,
+        class_trust=Path("/dev/shm/f004-projection-class-trust.json"),
+    )
+
+
+def _child_option_names(argv: list[str]) -> set[str]:
+    return {str(token)[2:] for token in argv[3:] if str(token).startswith("--")}
+
+
+def _set_nested(config: dict, dotted: str, value) -> None:
+    current = config
+    parts = dotted.split(".")
+    for part in parts[:-1]:
+        current = current[part]
+    current[parts[-1]] = value
+
+
+def test_f004_projection_covers_every_actual_child_behavior_option():
+    from ecg_adv_gen.f004_contract import (
+        F004_EXEMPT_CHILD_OPTIONS,
+        F004_FROZEN_PROJECTION,
+        project_f004_child_argv,
+    )
+
+    assert F004_EXEMPT_CHILD_OPTIONS == {
+        "allow_resume_config_drift",
+        "center_name",
+        "class_trust",
+        "comparison_topology_sha256",
+        "comparison_topology_version",
+        "comparison_variant",
+        "device",
+        "init_ckpt",
+        "num_workers",
+        "output_dir",
+        "ptbxl_csv",
+        "ptbxl_prep",
+        "ptbxl_raw",
+        "ref_meta_json",
+        "resume",
+        "synth_npz",
+        "target_adv_fraction",
+        "target_real_npz",
+    }
+    child = _f004_child_command()
+    actual = project_f004_child_argv(child)
+    child_behavior = _child_option_names(child) - F004_EXEMPT_CHILD_OPTIONS
+
+    assert actual == dict(F004_FROZEN_PROJECTION)
+    assert child_behavior <= set(actual)
+    assert set(actual) - child_behavior == {
+        "final_checkpoint_only",
+        "hull_include_anchor",
+        "latent_augmix_signal_space",
+    }
+    assert {
+        "K_anchor",
+        "latent_augmix_chain_weights",
+        "latent_augmix_consistency_max_batches",
+        "weight_decay",
+        "anchor_lambda",
+        "hull_label_positive",
+        "hull_label_negative_floor",
+    } <= set(actual)
+
+
+def test_f004_projection_is_rho_invariant_and_sha_covers_all_fields():
+    import hashlib
+
+    from ecg_adv_gen.f004_contract import (
+        F004_FROZEN_PROJECTION,
+        F004_FROZEN_PROJECTION_SHA256,
+        project_f004_child_argv,
+    )
+
+    projections = [
+        project_f004_child_argv(_f004_child_command(rho))
+        for rho in F004_RHO_VALUES
+    ]
+    assert projections[0] == projections[1] == projections[2]
+    rendered = json.dumps(
+        dict(F004_FROZEN_PROJECTION), sort_keys=True, separators=(",", ":")
+    )
+    assert F004_FROZEN_PROJECTION_SHA256 == hashlib.sha256(
+        rendered.encode()
+    ).hexdigest()
+
+
+def test_f004_projection_rejects_every_field_drift():
+    from ecg_adv_gen.f004_contract import (
+        F004_FROZEN_PROJECTION,
+        validate_f004_projection,
+    )
+
+    assert F004_FROZEN_PROJECTION
+    for field, value in F004_FROZEN_PROJECTION.items():
+        drifted = dict(F004_FROZEN_PROJECTION)
+        drifted[field] = _drift_value(value)
+        with pytest.raises(ValueError, match=f"F-004 frozen projection.*{field}"):
+            validate_f004_projection(drifted, source="pytest")
+
+
+@pytest.mark.parametrize(
+    ("path", "value", "field"),
+    [
+        ("adaptation.anchors.k_anchor", 299, "K_anchor"),
+        ("adaptation.latent_augmix.chain_weights", "1,0,0", "latent_augmix_chain_weights"),
+        ("adaptation.latent_augmix.consistency.max_batches", 1, "latent_augmix_consistency_max_batches"),
+        ("training.optimizer.weight_decay", 0.0002, "weight_decay"),
+        ("adaptation.hull.label_lambda_y", 0.3, "hull_label_lambda_y"),
+        ("adaptation.attack.pgd_batch", 16, "pgd_batch"),
+        ("adaptation.loss.target_real_weight", 81.0, "target_real_weight"),
+        ("adaptation.loss.adv_weight", 0.4, "adv_weight"),
+        ("adaptation.loss.adv_weight_warmup_epochs", 9, "adv_weight_warmup_epochs"),
+        ("adaptation.loss.label_mode", "hard", "adv_label_mode"),
+        ("adaptation.loss.teacher_mix", 0.2, "adv_teacher_mix"),
+        ("adaptation.loss.ptbxl_weight", 0.1, "ptbxl_weight"),
+        ("adaptation.loss.vae_adv_stream_sample_scale", 0.9, "vae_adv_stream_sample_scale"),
+        ("adaptation.loss.vae_adv_consistency_weight", 0.1, "vae_adv_consistency_weight"),
+        ("training.batch_size", 64, "batch_size"),
+        ("training.epochs", 29, "n_epochs"),
+        ("training.optimizer.lr", 0.0001, "lr"),
+        ("paper_protocol.selection.validation_fraction", 0.25, "target_real_val_fraction"),
+        ("paper_protocol.selection.source_floor.max_drop", 0.03, "source_floor_max_drop"),
+        ("data.target_real_norm_mode", "pre_zscored", "target_real_norm_mode"),
+    ],
+)
+def test_f004_managed_build_rejects_every_config_sourced_projection_drift(
+    path: str, value, field: str
+):
+    config = _load(SMOKE, "pytest-f004-managed-projection-drift")
+    _set_nested(config, path, value)
+    with pytest.raises(ConfigError, match=f"F-004 frozen projection.*{field}"):
+        build_runner_commands(config)
 
 
 def _manifest(path: Path, run_id: str = "pytest-f004") -> tuple[dict, list[dict]]:
@@ -258,7 +432,7 @@ def test_f004_wrapper_propagates_identity_to_child_command():
     )
     assert _option(child, "--comparison_protocol") == F004_RHO_SWEEP_PROTOCOL
     assert _option(child, "--comparison_variant") == "f004_rho0p25"
-    assert _option(child, "--comparison_topology_version") == "matched_effnet_a0_a2_a3_a4_a5_v3"
+    assert _option(child, "--comparison_topology_version") == "matched_effnet_a0_a2_a3_a4_a5_v4"
     assert _option(child, "--comparison_topology_sha256") == f004_identity(0.25)["topology_sha256"]
     assert _option(child, "--target_adv_fraction") == "0.25"
     assert _option(child, "--hull_label_mode") == "exact"
@@ -292,12 +466,14 @@ def test_f004_eval_consumers_match_exact_train_producers(eval_path: Path):
 def test_f004_runtime_rejects_topology_drift_and_arm_masquerading():
     base = _f004_runtime_kwargs()
     assert validate_f004_runtime(**base)["rho"] == 0.25
+    drifted_cases = [{**base, "comparison_arm": "a5"}]
     for key, value in [
-        ("comparison_arm", "a5"),
         ("enable_raw_augmix", False),
         ("latent_augmix_consistency_weight", 0.0),
     ]:
-        drifted = {**base, key: value}
+        projection = {**base["behavior_projection"], key: value}
+        drifted_cases.append({**base, "behavior_projection": projection})
+    for drifted in drifted_cases:
         with pytest.raises(ValueError, match="F-004"):
             validate_f004_runtime(**drifted)
 
@@ -330,7 +506,7 @@ def test_f004_resume_contract_rejects_protocol_variant_topology_and_rho_drift():
     current = {
         "comparison_protocol": F004_RHO_SWEEP_PROTOCOL,
         "comparison_variant": "f004_rho0p25",
-        "comparison_topology_version": "matched_effnet_a0_a2_a3_a4_a5_v3",
+        "comparison_topology_version": "matched_effnet_a0_a2_a3_a4_a5_v4",
         "comparison_topology_sha256": matched_effnet.F004_FROZEN_TOPOLOGY_SHA256,
         "target_adv_fraction": 0.25,
     }
@@ -361,7 +537,7 @@ def test_f004_resume_contract_treats_missing_identity_as_drift(missing_key: str)
     current = {
         "comparison_protocol": F004_RHO_SWEEP_PROTOCOL,
         "comparison_variant": "f004_rho0p25",
-        "comparison_topology_version": "matched_effnet_a0_a2_a3_a4_a5_v3",
+        "comparison_topology_version": "matched_effnet_a0_a2_a3_a4_a5_v4",
         "comparison_topology_sha256": matched_effnet.F004_FROZEN_TOPOLOGY_SHA256,
         "target_adv_fraction": 0.25,
     }
@@ -383,7 +559,7 @@ def _f004_runtime_kwargs() -> dict:
         "target_adv_fraction": 0.25,
         "kshot_seed": F004_EXPECTED_KSHOT_SEED,
         "kshot_path": f"/data/{F004_EXPECTED_KSHOT_ROOT_FAMILY}",
-        **topology,
+        "behavior_projection": topology,
     }
 
 
@@ -424,8 +600,8 @@ def _f004_runtime_kwargs() -> dict:
 )
 def test_f004_shared_frozen_topology_rejects_every_component_drift(key: str, drift):
     kwargs = _f004_runtime_kwargs()
-    kwargs[key] = drift
-    with pytest.raises(ValueError, match=f"F-004 frozen full topology drift.*{key}"):
+    kwargs["behavior_projection"] = {**kwargs["behavior_projection"], key: drift}
+    with pytest.raises(ValueError, match=f"F-004 frozen projection.*{key}"):
         validate_f004_runtime(**kwargs)
 
 
@@ -442,7 +618,7 @@ def test_f004_managed_config_declares_shared_topology_fingerprint_and_rejects_dr
 
     drifted = copy.deepcopy(config)
     drifted["adaptation"]["latent_augmix"]["width"] = 1
-    with pytest.raises(ConfigError, match="F-004 frozen full topology drift.*latent_augmix_width"):
+    with pytest.raises(ConfigError, match="F-004 frozen projection.*latent_augmix_width"):
         build_runner_commands(drifted)
 
 
@@ -518,7 +694,11 @@ def test_f004_resume_contract_requires_every_frozen_topology_field(key: str):
         "comparison_protocol": F004_RHO_SWEEP_PROTOCOL,
         key: F004_FROZEN_TOPOLOGY[key],
     }
-    saved = {"comparison_protocol": F004_RHO_SWEEP_PROTOCOL}
+    saved = (
+        {}
+        if key == "comparison_protocol"
+        else {"comparison_protocol": F004_RHO_SWEEP_PROTOCOL}
+    )
     mismatches = resume_contract_mismatches(saved, current)
     assert [row["key"] for row in mismatches] == [key]
 

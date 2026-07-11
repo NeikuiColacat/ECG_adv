@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from ecg_adv_gen.evaluation.ref_exclusion import append_target_ref_exclusion_args_from_anchor_base
+from ecg_adv_gen.f004_contract import validate_f004_child_argv
 from ecg_adv_gen.run_naming import (
     build_effnet_vae_lhat_run_leaf,
     build_f005_control_run_leaf,
@@ -296,6 +297,8 @@ def build_effnet_vae_lhat_train_cmd(
         train_cmd.append("--allow_resume_config_drift")
     if getattr(args, "final_checkpoint_only", False):
         train_cmd.append("--final_checkpoint_only")
+    if is_f004_rho_sweep(getattr(args, "comparison_protocol", "")):
+        validate_f004_child_argv(train_cmd, source="wrapper-to-child argv")
     return train_cmd
 
 

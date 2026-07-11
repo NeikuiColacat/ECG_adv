@@ -23,6 +23,8 @@ from ecg_adv_gen.config import (  # noqa: E402
     load_experiment_config,
     make_dry_run_manifest,
     prepare_output_dir,
+    inspect_execution_sources,
+    require_clean_execution_sources,
     require_cuda_visible_devices,
     run_managed_commands,
     run_postprocess_commands,
@@ -101,12 +103,27 @@ def main() -> int:
             repo_root=REPO_ROOT,
             index_path=REPO_ROOT / "configs" / "active_scripts.yaml",
         )
+        source_report = inspect_execution_sources(
+            config,
+            repo_root=REPO_ROOT,
+            index_path=REPO_ROOT / "configs" / "active_scripts.yaml",
+        )
+        source_report["phase"] = "pre_execute" if args.execute else "diagnostic"
+        manifest["execution_source_cleanliness"] = {
+            "policy": (
+                "execute requires active_scripts.yaml, the entry config, and every "
+                "experiment _config_sources file to be clean, tracked, and present; "
+                "_local_config_sources are excluded"
+            ),
+            "checks": [source_report],
+        }
     except (ConfigError, OSError, ValueError) as exc:
         print(f"[config-error] {exc}", file=sys.stderr)
         return 2
 
     if args.execute:
         try:
+            require_clean_execution_sources(source_report, phase="pre_execute")
             visible = require_cuda_visible_devices()
             gpu_snapshot = check_nvidia_smi()
         except (LaunchError, RunRecordError) as exc:
@@ -170,6 +187,24 @@ def main() -> int:
                     encoding="utf-8",
                 )
                 raise LaunchError("Required input verification failed before managed commands")
+            source_recheck = inspect_execution_sources(
+                config,
+                repo_root=REPO_ROOT,
+                index_path=REPO_ROOT / "configs" / "active_scripts.yaml",
+            )
+            source_recheck["phase"] = "pre_child_invocation"
+            manifest["execution_source_cleanliness"]["checks"].append(source_recheck)
+            if not source_recheck["passed"]:
+                manifest["status"] = "failed"
+                manifest["input_verification"] = input_verification
+                manifest["safety"]["managed_child_commands_invoked"] = False
+                manifest_path.write_text(
+                    json.dumps(manifest, indent=2, sort_keys=True, ensure_ascii=True, default=str) + "\n",
+                    encoding="utf-8",
+                )
+                require_clean_execution_sources(
+                    source_recheck, phase="pre_child_invocation"
+                )
             manifest["safety"]["managed_child_commands_invoked"] = True
             manifest["input_verification"] = input_verification
             manifest_path.write_text(

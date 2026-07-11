@@ -2,10 +2,10 @@ extends: effnet_f004_rho_sweep_k500.yaml
 
 experiment:
   name: effnet_f004_rho_sweep_onecenter_smoke
-  description: Exploratory one-epoch CPSC-2018 identity/mechanism smoke for F-004; never paper evidence.
+  description: CPSC-2018 identity/mechanism command smoke using the frozen F-004 training behavior; never paper evidence.
 
 training:
-  epochs: 1
+  epochs: 30
 
 evaluation:
   pn2021_limit: 64

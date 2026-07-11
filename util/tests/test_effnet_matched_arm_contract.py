@@ -73,7 +73,7 @@ def test_canonical_effnet_arm_table_has_exact_five_operational_rows():
 
     assert matched.MATCHED_EFFNET_ARMS == ("a0", "a2", "a3", "a4", "a5")
     assert "a1" not in matched.MATCHED_EFFNET_ARM_COMPONENTS
-    assert matched.MATCHED_EFFNET_CONTRACT_VERSION == "matched_effnet_a0_a2_a3_a4_a5_v3"
+    assert matched.MATCHED_EFFNET_CONTRACT_VERSION == "matched_effnet_a0_a2_a3_a4_a5_v4"
     expected = {
         "a0": ("matched_direct_k500_baseline", False, False, False, False, 0.0, "clean_budget_control"),
         "a2": ("raw_augmix_clean_third_control", False, True, True, True, 0.0, "clean_anchor_control"),

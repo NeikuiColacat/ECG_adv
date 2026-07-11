@@ -6,8 +6,8 @@ f004_effnet_producer:
 paper_protocol:
   comparison_protocol: f004_full_topology_rho_sweep_v1
   topology_reference: a5_components_only
-  topology_version: matched_effnet_a0_a2_a3_a4_a5_v3
-  topology_sha256: 4f75c38410fb332897226b7186988ab5f0a429e2c59d0c5406084f4c349b34bd
+  topology_version: matched_effnet_a0_a2_a3_a4_a5_v4
+  topology_sha256: 44d296e0f9e814127a8cc1f129537964bbe3937f1d711b5ec249bd7a5bc17856
   only_varied_parameter: target_adv_fraction
 
 data:

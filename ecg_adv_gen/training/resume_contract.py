@@ -5,8 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from ecg_adv_gen.f004_contract import (
+    F004_FROZEN_PROJECTION,
+    project_f004_runtime_args,
+    validate_f004_projection,
+)
 from ecg_adv_gen.matched_effnet import (
-    F004_FROZEN_TOPOLOGY,
     F004_RHO_SWEEP_PROTOCOL,
     f004_identity,
     validate_f004_kshot_identity,
@@ -71,6 +75,9 @@ RESUME_CONTRACT_KEYS = (
     "seed",
     "crop_len",
 )
+RESUME_CONTRACT_KEYS = tuple(
+    dict.fromkeys((*RESUME_CONTRACT_KEYS, *F004_FROZEN_PROJECTION))
+)
 LOCKED_ATTACK_MODE = "latent_hull"
 LOCKED_LATENT_AUGMIX_SIGNAL_SPACE = "raw_pre_zscore"
 LOCKED_LEGACY_ARGS = {
@@ -112,7 +119,7 @@ def resume_contract_mismatches(
         "comparison_protocol", "comparison_variant", "comparison_topology_version",
         "comparison_topology_sha256", "target_adv_fraction",
         "seed", "ref_meta_json", "synth_npz", "target_real_npz",
-        *F004_FROZEN_TOPOLOGY,
+        *F004_FROZEN_PROJECTION,
     }
     if "attack_mode" in saved_args:
         saved_attack_mode = normalize_resume_contract_value(saved_args["attack_mode"])
@@ -232,53 +239,53 @@ def validate_f004_checkpoint_identity(
             "F-004 checkpoint identity args mismatch: "
             f"{args_projection!r} != {expected_projection!r}"
         )
-    hard_runtime_keys = (
-        "seed",
-        "ref_meta_json",
-        "synth_npz",
-        "target_real_npz",
-        *F004_FROZEN_TOPOLOGY,
-    )
+    hard_runtime_keys = ("ref_meta_json", "synth_npz", "target_real_npz")
     for layer, args in (("current", current_args), ("saved args", saved_args)):
         missing = [key for key in hard_runtime_keys if key not in args]
         if missing:
             raise ValueError(
                 f"F-004 checkpoint identity {layer} missing hard runtime fields: {missing}"
             )
+    try:
+        current_behavior = project_f004_runtime_args(current_args)
+        saved_behavior = project_f004_runtime_args(saved_args)
+        validate_f004_projection(current_behavior, source="resume current args")
+        validate_f004_projection(saved_behavior, source="resume saved args")
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(f"F-004 checkpoint identity frozen projection mismatch: {exc}") from exc
     current_hard = {
-        key: normalize_resume_contract_value(current_args[key])
-        for key in hard_runtime_keys
+        **{
+            key: normalize_resume_contract_value(current_args[key])
+            for key in hard_runtime_keys
+        },
+        **{
+            key: normalize_resume_contract_value(value)
+            for key, value in current_behavior.items()
+        },
     }
     saved_hard = {
-        key: normalize_resume_contract_value(saved_args[key])
-        for key in hard_runtime_keys
+        **{
+            key: normalize_resume_contract_value(saved_args[key])
+            for key in hard_runtime_keys
+        },
+        **{
+            key: normalize_resume_contract_value(value)
+            for key, value in saved_behavior.items()
+        },
     }
     runtime_drift = {
         key: {"saved": saved_hard[key], "current": current_hard[key]}
-        for key in hard_runtime_keys
+        for key in current_hard
         if saved_hard[key] != current_hard[key]
     }
     if runtime_drift:
         raise ValueError(
             f"F-004 checkpoint identity hard runtime mismatch: {runtime_drift}"
         )
-    expected_topology = {
-        key: normalize_resume_contract_value(value)
-        for key, value in F004_FROZEN_TOPOLOGY.items()
-    }
-    topology_drift = {
-        key: {"current": current_hard[key], "expected": expected}
-        for key, expected in expected_topology.items()
-        if current_hard[key] != expected
-    }
-    if topology_drift:
-        raise ValueError(
-            f"F-004 checkpoint identity current frozen topology mismatch: {topology_drift}"
-        )
     for path_key in ("ref_meta_json", "synth_npz", "target_real_npz"):
         try:
             validate_f004_kshot_identity(
-                kshot_seed=int(current_hard["seed"]),
+                kshot_seed=int(current_behavior["seed"]),
                 kshot_path=str(current_hard[path_key]),
             )
         except (TypeError, ValueError) as exc:

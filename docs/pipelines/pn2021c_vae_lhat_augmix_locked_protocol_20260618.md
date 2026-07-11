@@ -45,8 +45,12 @@ not count as the main method.
   and do not load latent assets or create that manifest.
 - The independent F-004 rho sweep uses seed `20260601` from the fresh
   `paper_matched_effnet_k500_v7_fixedk_three_seed_20260711/subsets` family. Its
-  v3 topology freezes label/mix modes, hull learning rate, and neighbor search
-  geometry; only `target_adv_fraction` varies across 0/0.25/0.5.
+  v4 behavior projection (`44d296e0f9e814127a8cc1f129537964bbe3937f1d711b5ec249bd7a5bc17856`)
+  freezes every adapter-to-training-child behavior option, including K-anchor,
+  optimizer/budget, label/loss, VAE-LHAT, AugMix chain weights and auxiliary
+  batch caps, selection, normalization, and source-lineage fields. Only
+  `target_adv_fraction` varies across 0/0.25/0.5; center, paths/run identity,
+  and pure execution resources are outside the behavior fingerprint.
 
 ## Backbone Training Protocol
 
