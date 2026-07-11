@@ -1318,7 +1318,7 @@ def parse_args(argv: list[str] | None = None):
     p.add_argument("--mechanism_variant", default="")
     p.add_argument("--ref_meta_json",
                    help="path to {tag}_k200.meta.json (for record_id exclusion in eval)")
-    p.add_argument("--synth_npz", required=True,
+    p.add_argument("--synth_npz", default="",
                    help="Stage 1 latent npz: {latents (N,4,128), labels (N,5)}")
     p.add_argument("--init_ckpt", default=DEFAULT_SUPER5_CKPT)
     p.add_argument("--init_checkpoint_sha256", default="")
@@ -1658,6 +1658,8 @@ def parse_args(argv: list[str] | None = None):
             )
         except ValueError as exc:
             p.error(str(exc))
+    if args.enable_vae_lhat and not args.synth_npz:
+        p.error("--synth_npz is required when VAE-LHAT is enabled")
     try:
         validate_f005_runtime(
             study_scope=args.study_scope,

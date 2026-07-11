@@ -1401,6 +1401,8 @@ def build_artifact_trace(
                     else True
                 ),
                 signal_path=Path(signal_override) if signal_override else None,
+                command_index=command_index,
+                input_index=0,
             )
             child = _vae_child_run(opts, center)
             child.update({"command_index": command_index, "name": command["name"], "matrix": command["matrix"]})
@@ -1441,7 +1443,7 @@ def build_artifact_trace(
             child_runs.append(child)
         elif script == "pn2021_clean_eval.py":
             command_seed = int(_matrix_case(command).get("seed", seed))
-            for ref_meta in _opt_list(opts, "--exclude_ref_ids"):
+            for input_index, ref_meta in enumerate(_opt_list(opts, "--exclude_ref_ids")):
                 ref_name = Path(ref_meta).name
                 ref_center = ref_name.split(
                     f"_real_k{k}_seed{command_seed}.ref_meta.json"
@@ -1455,13 +1457,15 @@ def build_artifact_trace(
                         seed=command_seed,
                         base=base,
                         include_latent=False,
+                        command_index=command_index,
+                        input_index=input_index,
                     )
             child = _eval_child_run(opts, center)
             child.update({"command_index": command_index, "name": command["name"], "matrix": command["matrix"]})
             child_runs.append(child)
         elif script == "pn2021c_eval.py":
             command_seed = int(_matrix_case(command).get("seed", seed))
-            for ref_meta in _opt_list(opts, "--exclude_ref_ids"):
+            for input_index, ref_meta in enumerate(_opt_list(opts, "--exclude_ref_ids")):
                 ref_name = Path(ref_meta).name
                 ref_center = ref_name.split(
                     f"_real_k{k}_seed{command_seed}.ref_meta.json"
@@ -1475,6 +1479,8 @@ def build_artifact_trace(
                         seed=command_seed,
                         base=base,
                         include_latent=False,
+                        command_index=command_index,
+                        input_index=input_index,
                     )
             for option, role in [
                 ("--clean_cache_dir", "pn2021_clean_cache_dir"),

@@ -34,6 +34,8 @@ def append_k500_ref(
     base: Path,
     include_latent: bool,
     signal_path: Path | None = None,
+    command_index: int | None = None,
+    input_index: int | None = None,
 ) -> None:
     group = KShotArtifactGroup.from_base(
         base,
@@ -44,21 +46,22 @@ def append_k500_ref(
     )
     signal_path = signal_path or group.signals
     signal_role = "kshot_raw1000_signals" if str(signal_path).endswith(".raw1000.npz") else "kshot_signals"
-    refs.append(
-        {
-            "center": group.center,
-            "k": group.k,
-            "seed": group.seed,
-            "anchor_base": str(group.base),
-            "ref_meta_json": path_record("kshot_ref_meta", group.ref_meta),
-            "signals_npz": path_record(signal_role, signal_path),
-            "latent_npz": (
-                path_record("kshot_latents", group.latents)
-                if include_latent
-                else None
-            ),
-        }
-    )
+    record = {
+        "center": group.center,
+        "k": group.k,
+        "seed": group.seed,
+        "anchor_base": str(group.base),
+        "ref_meta_json": path_record("kshot_ref_meta", group.ref_meta),
+        "signals_npz": path_record(signal_role, signal_path),
+        "latent_npz": (
+            path_record("kshot_latents", group.latents) if include_latent else None
+        ),
+    }
+    if command_index is not None:
+        record["command_index"] = int(command_index)
+    if input_index is not None:
+        record["input_index"] = int(input_index)
+    refs.append(record)
 
 
 def dedupe_path_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:

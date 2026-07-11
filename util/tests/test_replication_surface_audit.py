@@ -277,6 +277,20 @@ def _manifest(config: dict[str, Any], *, run_id: str = "pytest-study-surface") -
     )
 
 
+def _attached_manifest(config_path: Path, *, run_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    config = load_experiment_config(
+        config_path,
+        LOCAL_EXAMPLE,
+        runtime_context={"run_id": run_id},
+    )
+    return config, attach_replication_preflight(
+        _manifest(config, run_id=run_id),
+        config,
+        repo_root=REPO,
+        index_path=INDEX,
+    )
+
+
 def test_study_surface_inventory_and_input_contract_are_exact() -> None:
     index = yaml.safe_load(INDEX.read_text(encoding="utf-8"))
     entries = _study_entries(index)
@@ -401,6 +415,198 @@ def test_indexed_study_requires_manifest_k500_refs_even_when_top_seed_matches() 
             repo_root=REPO,
             index_path=INDEX,
         )
+
+
+@pytest.mark.parametrize(
+    ("override_key", "suffix"),
+    [
+        ("synth_npz_override", ".latent.npz"),
+        ("target_real_npz_override", ".raw1000.npz"),
+    ],
+)
+def test_study_rejects_foreign_wrapper_input_override(
+    override_key: str,
+    suffix: str,
+    tmp_path: Path,
+) -> None:
+    path = REPO / "configs/studies/effnet_f004_rho_sweep_k500.yaml"
+    config = load_experiment_config(
+        path,
+        LOCAL_EXAMPLE,
+        runtime_context={"run_id": f"pytest-foreign-{override_key}"},
+    )
+    config["data"][override_key] = str(tmp_path / f"foreign{suffix}")
+    manifest = _manifest(config, run_id=f"pytest-foreign-{override_key}")
+
+    with pytest.raises(ValueError, match="actual child|canonical.*input|override"):
+        attach_replication_preflight(
+            manifest,
+            config,
+            repo_root=REPO,
+            index_path=INDEX,
+        )
+
+
+@pytest.mark.parametrize(
+    ("nested_key", "mutation"),
+    [
+        ("ref_meta_json", "foreign.ref_meta.json"),
+        ("signals_npz", "foreign.raw1000.npz"),
+        ("latent_npz", "foreign.latent.npz"),
+    ],
+)
+def test_study_rejects_nested_manifest_path_tamper(
+    nested_key: str,
+    mutation: str,
+    tmp_path: Path,
+) -> None:
+    path = REPO / "configs/studies/effnet_f004_rho_sweep_k500.yaml"
+    config = load_experiment_config(
+        path,
+        LOCAL_EXAMPLE,
+        runtime_context={"run_id": f"pytest-nested-{nested_key}"},
+    )
+    manifest = _manifest(config, run_id=f"pytest-nested-{nested_key}")
+    nested = manifest["artifact_trace"]["inputs"]["k500_refs"][0][nested_key]
+    assert isinstance(nested, dict)
+    nested["path"] = str(tmp_path / mutation)
+
+    with pytest.raises(ValueError, match=f"manifest.*{nested_key}|{nested_key}.*canonical"):
+        attach_replication_preflight(
+            manifest,
+            config,
+            repo_root=REPO,
+            index_path=INDEX,
+        )
+
+
+def test_study_rejects_missing_required_manifest_latent() -> None:
+    path = REPO / "configs/studies/f005_anchor_geometry_control_train.yaml"
+    config = load_experiment_config(
+        path,
+        LOCAL_EXAMPLE,
+        runtime_context={"run_id": "pytest-missing-latent"},
+    )
+    manifest = _manifest(config, run_id="pytest-missing-latent")
+    manifest["artifact_trace"]["inputs"]["k500_refs"][0]["latent_npz"] = None
+
+    with pytest.raises(ValueError, match="manifest.*latent_npz|latent_npz.*required"):
+        attach_replication_preflight(
+            manifest,
+            config,
+            repo_root=REPO,
+            index_path=INDEX,
+        )
+
+
+def test_study_rejects_final_child_argv_manifest_divergence(tmp_path: Path) -> None:
+    path = REPO / "configs/studies/effnet_f004_rho_sweep_onecenter_smoke.yaml"
+    config = load_experiment_config(
+        path,
+        LOCAL_EXAMPLE,
+        runtime_context={"run_id": "pytest-argv-manifest-divergence"},
+    )
+    manifest = _manifest(config, run_id="pytest-argv-manifest-divergence")
+    argv = manifest["commands"][0]["argv"]
+    option_index = argv.index("--target_real_npz_override")
+    argv[option_index + 1] = str(tmp_path / "foreign.raw1000.npz")
+
+    with pytest.raises(ValueError, match="actual child|manifest.*input|canonical"):
+        attach_replication_preflight(
+            manifest,
+            config,
+            repo_root=REPO,
+            index_path=INDEX,
+        )
+
+
+def test_canonical_train_bindings_follow_actual_arm_consumption() -> None:
+    path = REPO / "configs/replications/effnet_matched_train_seed20260601.yaml"
+    _config, manifest = _attached_manifest(path, run_id="pytest-canonical-arm-inputs")
+    bindings = manifest["artifact_trace"]["inputs"][
+        "replication_command_input_bindings"
+    ]
+
+    assert len(bindings) == len(manifest["commands"]) == 20
+    for binding in bindings:
+        arm = binding["arm"]
+        consumed = binding["actual_consumed"]
+        companions = binding["manifest_companions"]
+        assert consumed["ref_meta_json"].endswith(".ref_meta.json")
+        assert consumed["raw1000_npz"].endswith(".raw1000.npz")
+        assert companions["signals_npz"] == consumed["raw1000_npz"]
+        assert consumed["class_trust"]["provenance_only"] is True
+        assert consumed["class_trust"]["source_raw1000"] == consumed["raw1000_npz"]
+        if arm in {"a3", "a4", "a5"}:
+            assert consumed["latent_npz"].endswith(".latent.npz")
+            assert companions["latent_npz"] == consumed["latent_npz"]
+        else:
+            assert arm in {"a0", "a2"}
+            assert consumed["latent_npz"] is None
+            assert companions["latent_npz"] is None
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "effnet_f004_rho_sweep_onecenter_smoke.yaml",
+        "effnet_f004_rho_sweep_k500.yaml",
+        "f005_anchor_geometry_control_smoke.yaml",
+        "f005_anchor_geometry_control_train.yaml",
+    ],
+)
+def test_f004_f005_a5_training_bindings_consume_canonical_triplet(name: str) -> None:
+    _config, manifest = _attached_manifest(
+        REPO / "configs/studies" / name,
+        run_id=f"pytest-training-binding-{Path(name).stem}",
+    )
+    bindings = manifest["artifact_trace"]["inputs"][
+        "replication_command_input_bindings"
+    ]
+    assert len(bindings) == len(manifest["commands"])
+    assert all(item["actual_consumed"]["ref_meta_json"].endswith(".ref_meta.json") for item in bindings)
+    assert all(item["actual_consumed"]["raw1000_npz"].endswith(".raw1000.npz") for item in bindings)
+    assert all(item["actual_consumed"]["latent_npz"].endswith(".latent.npz") for item in bindings)
+
+
+@pytest.mark.parametrize("stage", ("clean", "s5", "depth23"))
+def test_canonical_eval_bindings_use_only_ref_ids_and_provenance_signals(
+    stage: str,
+) -> None:
+    path = REPO / f"configs/replications/effnet_matched_{stage}_seed20260601.yaml"
+    _config, manifest = _attached_manifest(path, run_id=f"pytest-canonical-{stage}-inputs")
+    bindings = manifest["artifact_trace"]["inputs"][
+        "replication_command_input_bindings"
+    ]
+    expected_per_command = 4 if stage == "clean" else 1
+    assert len(bindings) == len(manifest["commands"]) * expected_per_command
+    for binding in bindings:
+        consumed = binding["actual_consumed"]
+        companions = binding["manifest_companions"]
+        assert consumed == {
+            "ref_meta_json": binding["ref_meta_json"],
+            "raw1000_npz": None,
+            "latent_npz": None,
+            "class_trust": None,
+        }
+        assert companions["signals_npz"].endswith(".signals.npz")
+        assert companions["latent_npz"] is None
+
+
+def test_command_input_contract_compares_all_four_cell_surfaces_without_dedup() -> None:
+    _config, manifest = _attached_manifest(
+        REPO / "configs/studies/effnet_f004_rho_sweep_onecenter_smoke.yaml",
+        run_id="pytest-four-cell-surfaces",
+    )
+    contract = manifest["artifact_trace"]["replication_preflight"][
+        "command_input_contract"
+    ]
+    assert contract["passed"] is True
+    assert contract["per_command_passed"] is True
+    assert contract["expected_cell_count"] == 3
+    assert contract["actual_argv_cell_count"] == 3
+    assert contract["manifest_ref_cell_count"] == 3
+    assert contract["attached_group_cell_count"] == 3
 
 
 @pytest.mark.parametrize("layout", ("foreign_parent", "prefixed_data_root"))
@@ -766,7 +972,7 @@ def test_indexed_entry_attaches_current_and_full_surface_groups(seed: int):
         runtime_context={"run_id": "pytest-replication-binding"},
     )
     manifest = attach_replication_preflight(
-        {"artifact_trace": {"inputs": {}}},
+        _manifest(config, run_id="pytest-replication-binding"),
         config,
         repo_root=REPO,
         index_path=INDEX,
@@ -1044,6 +1250,11 @@ def test_replication_audit_reports_contract_and_execution_readiness_separately(
     for seed_report in seeds.values():
         assert len(seed_report["stages"]) == 4
         assert all(stage["command_count"] == 20 for stage in seed_report["stages"])
+        assert all(
+            stage["command_input_contract"]["passed"] is True
+            and stage["command_input_contract"]["per_command_passed"] is True
+            for stage in seed_report["stages"]
+        )
         assert seed_report["producer_consumer_paths_match"] is True
 
 

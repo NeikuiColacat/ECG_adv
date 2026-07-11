@@ -7,6 +7,7 @@ import hashlib
 import json
 import subprocess
 from collections import Counter
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -17,8 +18,14 @@ from ecg_adv_gen.data.kshot_artifacts import (
     canonical_kshot_base,
     read_ref_meta_record_ids,
 )
+from ecg_adv_gen.data.class_trust import real_all_present_trust_path
+from ecg_adv_gen.matched_effnet import (
+    F004_RHO_SWEEP_PROTOCOL,
+    is_matched_effnet_arm,
+    matched_effnet_arm,
+)
 
-from .adapters.common import argv_option_map, opt_first
+from .adapters.common import argv_option_map, opt_first, opt_list
 from .loader import (
     build_runner_commands,
     load_experiment_config,
@@ -29,6 +36,11 @@ from .loader import (
 
 FIXED_K_SAMPLING_POLICY = "deterministic_random_from_v7_nonzero_eligible_pool"
 SUPER5_CLASS_ORDER = ("CD", "HYP", "MI", "NORM", "STTC")
+_COMMAND_INPUT_SCOPE = {
+    "effnet_vae_lhat_augmix.py": "train",
+    "pn2021_clean_eval.py": "clean_eval",
+    "pn2021c_eval.py": "center_eval",
+}
 
 
 def build_replication_k500_groups(
@@ -451,61 +463,434 @@ def _input_cell(
     return str(center), int(k), int(seed), str(_resolved_path(base))
 
 
-def _manifest_ref_cells(
-    refs: Sequence[Mapping[str, Any]], *, expected_root: Path
-) -> set[tuple[str, int, int, str]]:
-    cells: set[tuple[str, int, int, str]] = set()
-    for index, ref in enumerate(refs):
-        try:
-            center = str(ref["center"])
-            k = int(ref["k"])
-            seed = int(ref["seed"])
-            base = _resolved_path(str(ref["anchor_base"]))
-        except (KeyError, TypeError, ValueError) as exc:
-            raise ValueError(f"manifest K500 refs[{index}] is incomplete: {exc}") from exc
-        expected_base = _resolved_path(
-            canonical_kshot_base(expected_root, center, k=k, seed=seed)
+def _binding_input_cell(item: "CommandInputBinding") -> tuple[str, int, int, str]:
+    return _input_cell(center=item.artifact_center, k=item.k, seed=item.seed, base=item.base)
+
+
+@dataclass(frozen=True)
+class CommandInputBinding:
+    """One command/input K-shot identity, retained before any de-duplication."""
+
+    command_index: int
+    input_index: int
+    arm: str
+    artifact_center: str
+    k: int
+    seed: int
+    base: Path
+    consume_latent: bool
+
+    def path(self, suffix: str) -> Path:
+        return self.base.with_suffix(suffix)
+
+    ref_meta_json = property(lambda self: self.path(".ref_meta.json"))
+    raw1000_npz = property(lambda self: self.path(".raw1000.npz"))
+    signals_npz = property(lambda self: self.path(".signals.npz"))
+    latent_npz = property(lambda self: self.path(".latent.npz"))
+
+    def cell(self) -> tuple[Any, ...]:
+        """Return the duplicate-preserving identity compared across four surfaces."""
+
+        return (
+            self.command_index, self.input_index, self.arm, self.artifact_center,
+            self.k, self.seed, str(_resolved_path(self.base)), self.consume_latent,
         )
-        if base != expected_base:
-            raise ValueError(
-                "manifest K500 refs do not bind the canonical input root: "
-                f"{center}/K{k}/seed{seed} base={base}, expected={expected_base}"
-            )
-        cells.add(_input_cell(center=center, k=k, seed=seed, base=base))
-    return cells
+
+    def identity_record(self) -> dict[str, Any]:
+        return {
+            "command_index": self.command_index, "input_index": self.input_index,
+            "arm": self.arm, "artifact_center": self.artifact_center,
+            "k": self.k, "seed": self.seed,
+            "anchor_base": str(_resolved_path(self.base)),
+            "ref_meta_json": str(_resolved_path(self.ref_meta_json)),
+            "consume_latent": self.consume_latent,
+        }
 
 
-def _manifest_matrix_cells(
-    manifest: Mapping[str, Any],
+def _command_argv_scope(
+    command: Mapping[str, Any], command_index: int
+) -> tuple[list[str], str]:
+    argv = [str(item) for item in command.get("argv") or []]
+    if len(argv) < 2:
+        raise ValueError(f"indexed auxiliary manifest command[{command_index}] argv is incomplete")
+    script = Path(argv[1]).name
+    try:
+        return argv, _COMMAND_INPUT_SCOPE[script]
+    except KeyError:
+        raise ValueError(
+            f"indexed auxiliary command[{command_index}] uses unsupported runner {script!r}"
+        ) from None
+
+
+def _command_arm(
     config: Mapping[str, Any],
+    matrix: Mapping[str, Any],
+    opts: Mapping[str, Any],
+) -> str:
+    case = matrix.get("case") if isinstance(matrix.get("case"), Mapping) else {}
+    protocol = str((config.get("paper_protocol") or {}).get("comparison_protocol") or "")
+    if protocol == F004_RHO_SWEEP_PROTOCOL:
+        return "a5"
+    return str(
+        case.get("arm")
+        or matrix.get("arm")
+        or opt_first(opts, "--comparison_arm", "")
+    )
+
+
+def _train_consumes_latent(
+    paper: Mapping[str, Any], arm: str, command_index: int
+) -> bool:
+    if str(paper.get("comparison_protocol") or "") == F004_RHO_SWEEP_PROTOCOL:
+        return True
+    if not is_matched_effnet_arm(arm):
+        raise ValueError(
+            f"indexed auxiliary train command[{command_index}] has unsupported arm {arm!r}"
+        )
+    return bool(matched_effnet_arm(arm).vae_lhat)
+
+
+def _expected_command_input_bindings(
+    config: Mapping[str, Any],
+    manifest: Mapping[str, Any],
     *,
     expected_root: Path,
-) -> set[tuple[str, int, int, str]]:
+) -> list[CommandInputBinding]:
     commands = manifest.get("commands") or []
     if not isinstance(commands, list) or not commands:
-        raise ValueError("indexed study manifest commands are missing")
-    kshot = (config.get("paper_protocol") or {}).get("kshot") or {}
+        raise ValueError("indexed auxiliary manifest commands are missing")
+    paper = config.get("paper_protocol") or {}
+    kshot = paper.get("kshot") or {}
     default_k = int(kshot["k"])
     default_seed = int(kshot.get("subset_seed", kshot["seed"]))
-    cells: set[tuple[str, int, int, str]] = set()
-    for index, command in enumerate(commands):
-        if not isinstance(command, Mapping):
-            raise ValueError(f"indexed study manifest command[{index}] is not a mapping")
+    target_centers = [str(center) for center in (paper.get("centers") or {}).get("target_4") or []]
+    bindings: list[CommandInputBinding] = []
+    for command_index, raw_command in enumerate(commands):
+        if not isinstance(raw_command, Mapping):
+            raise ValueError(f"indexed auxiliary manifest command[{command_index}] is not a mapping")
+        command = dict(raw_command)
+        argv, scope = _command_argv_scope(command, command_index)
+        opts = argv_option_map(argv)
         matrix = command.get("matrix") or {}
         case = matrix.get("case") if isinstance(matrix.get("case"), Mapping) else {}
-        argv = [str(item) for item in command.get("argv") or []]
-        opts = argv_option_map(argv)
-        center = str(matrix.get("center") or opt_first(opts, "--center", ""))
-        if not center:
-            raise ValueError(f"indexed study manifest command[{index}] has no center cell")
-        # Evaluation ``--seed`` values are corruption RNG seeds, not K-shot
-        # identities.  The auxiliary matrix case (or its frozen K-shot
-        # contract) is the only matrix-cell source for K and subset seed.
+        producer_center = str(matrix.get("center") or opt_first(opts, "--center", ""))
+        if not producer_center:
+            raise ValueError(f"indexed auxiliary manifest command[{command_index}] has no center cell")
         k = int(case.get("k", default_k))
+        # Evaluation --seed is corruption RNG state. K-shot identity comes only
+        # from the matrix case or the frozen paper subset seed.
         seed = int(case.get("seed", default_seed))
-        base = canonical_kshot_base(expected_root, center, k=k, seed=seed)
-        cells.add(_input_cell(center=center, k=k, seed=seed, base=base))
-    return cells
+        arm = _command_arm(config, matrix, opts)
+        if scope == "clean_eval":
+            if not target_centers:
+                raise ValueError("indexed clean evaluation has no target_4 center contract")
+            artifact_centers = target_centers
+        else:
+            artifact_centers = [producer_center]
+        consume_latent = (
+            _train_consumes_latent(paper, arm, command_index)
+            if scope == "train"
+            else False
+        )
+        for input_index, artifact_center in enumerate(artifact_centers):
+            base = canonical_kshot_base(expected_root, artifact_center, k=k, seed=seed)
+            bindings.append(
+                CommandInputBinding(
+                    command_index=command_index, input_index=input_index, arm=arm,
+                    artifact_center=artifact_center, k=k, seed=seed,
+                    base=_resolved_path(base),
+                    consume_latent=consume_latent,
+                )
+            )
+    return bindings
+
+
+def _require_exact_path(observed: Any, expected: Path, *, label: str) -> Path:
+    if not observed:
+        raise ValueError(f"{label} is required")
+    actual = _resolved_path(str(observed))
+    wanted = _resolved_path(expected)
+    if actual != wanted:
+        raise ValueError(f"{label} does not bind canonical input: {actual} != {wanted}")
+    return actual
+
+
+def _require_exact_paths(
+    prefix: str,
+    specs: Mapping[str, tuple[Any, Path]],
+) -> dict[str, Path]:
+    return {
+        name: _require_exact_path(observed, expected, label=f"{prefix} {name}")
+        for name, (observed, expected) in specs.items()
+    }
+
+
+def _binding_from_base(
+    expected: CommandInputBinding,
+    *,
+    base: Path,
+    consume_latent: bool,
+) -> CommandInputBinding:
+    return replace(
+        expected,
+        base=_resolved_path(base),
+        consume_latent=bool(consume_latent),
+    )
+
+
+def _base_from_ref_meta(path: Path, *, label: str) -> Path:
+    text = str(_resolved_path(path))
+    suffix = ".ref_meta.json"
+    if not text.endswith(suffix):
+        raise ValueError(f"{label} must end with {suffix}: {text}")
+    return _resolved_path(text[: -len(suffix)])
+
+
+def _actual_input_record(
+    binding: CommandInputBinding,
+    *,
+    ref_meta: Path,
+    raw1000: Path | None = None,
+    latent: Path | None = None,
+    class_trust: Path | None = None,
+) -> dict[str, Any]:
+    trust_record = None if class_trust is None else {
+        "path": str(class_trust), "provenance_only": True,
+        "source_raw1000": str(raw1000),
+    }
+    return {
+        **binding.identity_record(),
+        "actual_consumed": {
+            "ref_meta_json": str(ref_meta),
+            "raw1000_npz": str(raw1000) if raw1000 else None,
+            "latent_npz": str(latent) if latent else None, "class_trust": trust_record,
+        },
+    }
+
+
+def _actual_command_input_bindings(
+    manifest: Mapping[str, Any],
+    expected_bindings: Sequence[CommandInputBinding],
+) -> tuple[list[CommandInputBinding], list[dict[str, Any]]]:
+    """Rebuild wrapper children and read the paths their final argv consumes."""
+
+    from ecg_adv_gen.runner import effnet_vae_lhat_augmix as effnet_wrapper
+    from ecg_adv_gen.runner.effnet_vae_lhat import (
+        build_effnet_vae_lhat_train_cmd,
+        resolve_effnet_vae_lhat_paths,
+    )
+
+    commands = manifest.get("commands") or []
+    grouped: dict[int, list[CommandInputBinding]] = {}
+    for item in expected_bindings:
+        grouped.setdefault(item.command_index, []).append(item)
+    observed: list[CommandInputBinding] = []
+    records: list[dict[str, Any]] = []
+    for command_index, command in enumerate(commands):
+        cells = sorted(grouped.get(command_index, []), key=lambda item: item.input_index)
+        if not cells:
+            raise ValueError(f"expected input cells are missing for command[{command_index}]")
+        argv, scope = _command_argv_scope(command, command_index)
+        prefix = f"actual child command[{command_index}]"
+        if scope == "train":
+            if len(cells) != 1:
+                raise ValueError(f"train command[{command_index}] must bind exactly one K500 input")
+            try:
+                args = effnet_wrapper.parse_args(argv[2:])
+            except SystemExit as exc:
+                raise ValueError(f"{prefix} wrapper argv is invalid") from exc
+            cell = cells[0]
+            if (str(args.center), int(args.seed)) != (cell.artifact_center, cell.seed):
+                raise ValueError(f"{prefix} center/seed input identity drift")
+            data_root = Path(args.data_root)
+            out_root = Path(args.out_root) if args.out_root else data_root / "paper_effnet_latent_augmix_stage3_20260524"
+            paths = resolve_effnet_vae_lhat_paths(args, data_root=data_root, out_root=out_root)
+            wrapper = _require_exact_paths(prefix, {
+                "anchor override": (paths.anchor_base, cell.base),
+                "target override": (paths.signal_npz, cell.raw1000_npz),
+                "synth override": (paths.latent_npz, cell.latent_npz),
+            })
+            trust = real_all_present_trust_path(wrapper["target override"], out_root / "config")
+            child = build_effnet_vae_lhat_train_cmd(
+                args, python=argv[0], data_root=data_root, paths=paths, class_trust=trust
+            )
+            opts = argv_option_map(child)
+            final = _require_exact_paths(f"{prefix} final", {
+                "ref_meta_json": (opt_first(opts, "--ref_meta_json", ""), cell.ref_meta_json),
+                "target_real_npz": (opt_first(opts, "--target_real_npz", ""), cell.raw1000_npz),
+                "generated class_trust": (opt_first(opts, "--class_trust", ""), trust),
+            })
+            raw_latent = opt_first(opts, "--synth_npz", "")
+            latent = (
+                _require_exact_path(raw_latent, cell.latent_npz, label=f"{prefix} final synth_npz")
+                if cell.consume_latent else None
+            )
+            if not cell.consume_latent and raw_latent:
+                raise ValueError(f"{prefix} non-VAE arm must not consume latent")
+            ref_meta = final["ref_meta_json"]
+            actual = _binding_from_base(
+                cell, base=_base_from_ref_meta(ref_meta, label=f"{prefix} ref_meta_json"),
+                consume_latent=latent is not None,
+            )
+            observed.append(actual)
+            records.append(_actual_input_record(
+                actual, ref_meta=ref_meta, raw1000=final["target_real_npz"],
+                latent=latent, class_trust=final["generated class_trust"],
+            ))
+            continue
+
+        opts = argv_option_map(argv)
+        ref_values = opt_list(opts, "--exclude_ref_ids")
+        if len(ref_values) != len(cells):
+            raise ValueError(f"{prefix} exclude_ref_ids count {len(ref_values)} != {len(cells)}")
+        forbidden = {"--target_real_npz", "--synth_npz", "--class_trust"}.intersection(opts)
+        if forbidden:
+            raise ValueError(f"{prefix} evaluation consumes {sorted(forbidden)}")
+        for cell, value in zip(cells, ref_values):
+            ref_meta = _require_exact_path(
+                value, cell.ref_meta_json,
+                label=f"{prefix} input[{cell.input_index}] exclude_ref_ids",
+            )
+            actual = _binding_from_base(
+                cell, base=_base_from_ref_meta(ref_meta, label=f"{prefix} exclude_ref_ids"),
+                consume_latent=False,
+            )
+            observed.append(actual)
+            records.append(_actual_input_record(actual, ref_meta=ref_meta))
+    return observed, records
+
+
+def _manifest_path_record(
+    ref: Mapping[str, Any], key: str, *, expected_path: Path,
+    expected_role: str, ref_index: int,
+) -> Path:
+    record = ref.get(key)
+    if not isinstance(record, Mapping):
+        raise ValueError(f"manifest K500 refs[{ref_index}].{key} is required")
+    if record.get("required") is not True:
+        raise ValueError(f"manifest K500 refs[{ref_index}].{key}.required must be true")
+    if str(record.get("role") or "") != expected_role:
+        raise ValueError(f"manifest K500 refs[{ref_index}].{key}.role must be {expected_role!r}")
+    return _require_exact_path(
+        record.get("path"), expected_path,
+        label=f"manifest K500 refs[{ref_index}].{key}.path",
+    )
+
+
+def _manifest_command_input_bindings(
+    manifest: Mapping[str, Any],
+    expected_bindings: Sequence[CommandInputBinding],
+) -> tuple[list[CommandInputBinding], list[dict[str, Any]]]:
+    refs = (((manifest.get("artifact_trace") or {}).get("inputs") or {})
+            .get("k500_refs") or [])
+    if not isinstance(refs, list) or not refs:
+        raise ValueError("indexed auxiliary has no manifest K500 refs")
+    indexed: dict[tuple[int, int], tuple[int, Mapping[str, Any]]] = {}
+    for ref_index, ref in enumerate(refs):
+        if not isinstance(ref, Mapping):
+            raise ValueError(f"manifest K500 refs[{ref_index}] is not a mapping")
+        try:
+            key = int(ref["command_index"]), int(ref["input_index"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"manifest K500 refs[{ref_index}] lacks command/input identity") from exc
+        if key in indexed:
+            raise ValueError(f"manifest K500 refs duplicate command/input identity {key}")
+        indexed[key] = (ref_index, ref)
+
+    commands = manifest.get("commands") or []
+    expected_keys = {(item.command_index, item.input_index) for item in expected_bindings}
+    if set(indexed) != expected_keys:
+        raise ValueError(
+            "manifest K500 refs/input cell mismatch: "
+            f"observed={sorted(indexed)}, expected={sorted(expected_keys)}"
+        )
+
+    manifest_bindings: list[CommandInputBinding] = []
+    public_records: list[dict[str, Any]] = []
+    for cell in expected_bindings:
+        ref_index, ref = indexed[(cell.command_index, cell.input_index)]
+        try:
+            identity = str(ref["center"]), int(ref["k"]), int(ref["seed"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"manifest K500 refs[{ref_index}] is incomplete: {exc}") from exc
+        if identity != (cell.artifact_center, cell.k, cell.seed):
+            raise ValueError(f"manifest K500 refs[{ref_index}] center/K/seed input identity drift")
+        base = _require_exact_path(
+            ref.get("anchor_base"),
+            cell.base,
+            label=f"manifest K500 refs[{ref_index}].anchor_base",
+        )
+        ref_path = _manifest_path_record(
+            ref, "ref_meta_json", expected_path=cell.ref_meta_json,
+            expected_role="kshot_ref_meta", ref_index=ref_index,
+        )
+        _, scope = _command_argv_scope(commands[cell.command_index], cell.command_index)
+        is_train = scope == "train"
+        signals_path = _manifest_path_record(
+            ref, "signals_npz",
+            expected_path=cell.raw1000_npz if is_train else cell.signals_npz,
+            expected_role="kshot_raw1000_signals" if is_train else "kshot_signals",
+            ref_index=ref_index,
+        )
+        if is_train and cell.consume_latent:
+            latent_path = _manifest_path_record(
+                ref, "latent_npz", expected_path=cell.latent_npz,
+                expected_role="kshot_latents", ref_index=ref_index,
+            )
+        else:
+            if ref.get("latent_npz") is not None:
+                raise ValueError(
+                    f"manifest K500 refs[{ref_index}].latent_npz must be absent for this command"
+                )
+            latent_path = None
+        manifest_binding = _binding_from_base(
+            cell, base=base, consume_latent=latent_path is not None,
+        )
+        manifest_bindings.append(manifest_binding)
+        public_records.append(
+            {
+                **manifest_binding.identity_record(),
+                "manifest_companions": {
+                    "signals_npz": str(signals_path),
+                    "latent_npz": str(latent_path) if latent_path else None,
+                },
+            }
+        )
+    return manifest_bindings, public_records
+
+
+def _binding_counter(bindings: Sequence[CommandInputBinding]) -> Counter:
+    return Counter(binding.cell() for binding in bindings)
+
+
+def _assert_exact_binding_cells(
+    expected: Sequence[CommandInputBinding],
+    observed: Sequence[CommandInputBinding],
+    *,
+    label: str,
+) -> None:
+    wanted = _binding_counter(expected)
+    actual = _binding_counter(observed)
+    if actual != wanted:
+        missing = list((wanted - actual).elements())
+        unexpected = list((actual - wanted).elements())
+        raise ValueError(
+            f"{label} input cell mismatch: missing={missing}, unexpected={unexpected}"
+        )
+
+
+def _per_command_binding_cells_match(
+    expected: Sequence[CommandInputBinding],
+    *observed_surfaces: Sequence[CommandInputBinding],
+) -> bool:
+    for command_index in {item.command_index for item in expected}:
+        select = lambda surface: [  # noqa: E731 - compact local projection
+            item for item in surface if item.command_index == command_index
+        ]
+        wanted = _binding_counter(select(expected))
+        if any(_binding_counter(select(surface)) != wanted for surface in observed_surfaces):
+            return False
+    return True
 
 
 def _indexed_auxiliary_bindings(index: Mapping[str, Any]):
@@ -633,48 +1018,63 @@ def _validate_replication_binding(
             f"{observed_root} != {expected_root}"
         )
 
-    trace_inputs = (((manifest or {}).get("artifact_trace") or {}).get("inputs") or {})
-    refs = trace_inputs.get("k500_refs") or []
     expected_count = binding.get("expected_command_count")
-    if expected_count is not None and not refs:
-        raise ValueError(f"indexed study {binding['stage']} has no manifest K500 refs")
-    observed_seeds = sorted(
-        {int(ref["seed"]) for ref in refs if isinstance(ref, Mapping) and ref.get("seed") is not None}
-    )
-    if not observed_seeds:
+    if expected_count is None:
         kshot = (config.get("paper_protocol") or {}).get("kshot") or {}
-        observed_seeds = sorted(
+        config_seeds = sorted(
             {int(kshot.get(key, -1)) for key in ("seed", "subset_seed")}
         )
+        if config_seeds != binding["input_seeds"]:
+            raise ValueError(
+                f"indexed replication input seed drift for {binding['stage']}: "
+                f"{config_seeds} != {binding['input_seeds']}"
+            )
+    observed_count = len((manifest or {}).get("commands") or [])
+    declared_count = (
+        int(expected_count)
+        if expected_count is not None
+        else int(binding["surface"].get("command_count_per_stage") or 0)
+    )
+    if declared_count and observed_count != declared_count:
+        label = "study" if expected_count is not None else "replication"
+        raise ValueError(
+            f"indexed {label} command count drift for {binding['stage']}: "
+            f"{observed_count} != {declared_count}"
+        )
+
+    expected_bindings = _expected_command_input_bindings(
+        config, manifest or {}, expected_root=expected_root
+    )
+    actual_bindings, actual_records = _actual_command_input_bindings(
+        manifest or {}, expected_bindings
+    )
+    manifest_bindings, manifest_records = _manifest_command_input_bindings(
+        manifest or {}, expected_bindings
+    )
+    _assert_exact_binding_cells(expected_bindings, actual_bindings, label="actual child argv")
+    _assert_exact_binding_cells(expected_bindings, manifest_bindings, label="manifest K500 refs")
+    observed_seeds = sorted({item.seed for item in manifest_bindings})
     if observed_seeds != binding["input_seeds"]:
         raise ValueError(
             f"indexed auxiliary input seeds drift for {binding['stage']}: "
             f"{observed_seeds} != {binding['input_seeds']}"
         )
-    if expected_count is not None:
-        ref_cells = _manifest_ref_cells(refs, expected_root=expected_root)
-        matrix_cells = _manifest_matrix_cells(
-            manifest or {}, config, expected_root=expected_root
-        )
-        if ref_cells != matrix_cells:
-            raise ValueError(
-                f"indexed study {binding['stage']} manifest K500 refs/input cell "
-                f"mismatch: refs={sorted(ref_cells)}, matrix={sorted(matrix_cells)}"
-            )
-        matrix_seeds = sorted({cell[2] for cell in matrix_cells})
-        if matrix_seeds != binding["input_seeds"]:
-            raise ValueError(
-                f"indexed auxiliary matrix input seeds drift for {binding['stage']}: "
-                f"{matrix_seeds} != {binding['input_seeds']}"
-            )
-        observed_count = len((manifest or {}).get("commands") or [])
-        if observed_count != int(expected_count):
-            raise ValueError(
-                f"indexed study command count drift for {binding['stage']}: "
-                f"{observed_count} != {expected_count}"
-            )
-        binding = {**binding, "current_input_cells": sorted(matrix_cells)}
-    return {**binding, "expected_subset_root": str(expected_root)}
+
+    companions = {
+        (item["command_index"], item["input_index"]): item["manifest_companions"]
+        for item in manifest_records
+    }
+    command_records = [
+        {**item, "manifest_companions": companions[(item["command_index"], item["input_index"])]}
+        for item in actual_records
+    ]
+    return {
+        **binding,
+        "expected_command_input_bindings": expected_bindings,
+        "actual_command_input_bindings": actual_bindings,
+        "manifest_command_input_bindings": manifest_bindings,
+        "command_input_records": command_records,
+    }
 
 
 def _surface_materialization_groups(
@@ -761,31 +1161,39 @@ def attach_replication_preflight(
     subset_root = Path(str(config["data"]["kshot_subset_root"]))
     centers = list(paper["centers"]["target_4"])
     k = int(paper["kshot"]["k"])
-    current_cells = binding.get("current_input_cells")
-    if current_cells is not None:
-        groups = _materialization_groups_for_cells(contract, current_cells)
-        attached_cells = {
-            _input_cell(
-                center=str(group["center"]),
-                k=int(group["k"]),
-                seed=int(group["seed"]),
-                base=str(group["base"]),
-            )
-            for group in groups
-        }
-        if attached_cells != {tuple(cell) for cell in current_cells}:
-            raise ValueError(
-                f"indexed study {stage} attached group/input cell mismatch: "
-                f"groups={sorted(attached_cells)}, matrix={sorted(current_cells)}"
-            )
-    else:
-        groups = _materialization_groups_for_seeds(
-            contract,
-            subset_root=subset_root,
-            centers=centers,
-            k=k,
-            seeds=input_seeds,
+    expected_bindings = binding["expected_command_input_bindings"]
+    actual_bindings = binding["actual_command_input_bindings"]
+    manifest_bindings = binding["manifest_command_input_bindings"]
+    unique_cells = list(dict.fromkeys(map(_binding_input_cell, expected_bindings)))
+    groups = _materialization_groups_for_cells(contract, unique_cells)
+    groups_by_cell = {
+        _input_cell(center=group["center"], k=group["k"], seed=group["seed"], base=group["base"]): group
+        for group in groups
+    }
+    if set(groups_by_cell) != set(unique_cells):
+        raise ValueError(
+            f"indexed auxiliary {stage} attached materialization group identities drift"
         )
+    attached_bindings = [
+        _binding_from_base(
+            item, base=Path(str(groups_by_cell[_binding_input_cell(item)]["base"])),
+            consume_latent=item.consume_latent,
+        )
+        for item in expected_bindings
+    ]
+    _assert_exact_binding_cells(
+        expected_bindings,
+        attached_bindings,
+        label="attached replication K500 groups",
+    )
+    per_command_passed = _per_command_binding_cells_match(
+        expected_bindings,
+        actual_bindings,
+        manifest_bindings,
+        attached_bindings,
+    )
+    if not per_command_passed:
+        raise ValueError(f"indexed auxiliary {stage} per-command input cell mismatch")
     validation_groups = _materialization_groups_for_seeds(
         contract,
         subset_root=subset_root,
@@ -804,6 +1212,9 @@ def attach_replication_preflight(
     trace = out.setdefault("artifact_trace", {})
     trace.setdefault("inputs", {})["replication_k500_groups"] = groups
     trace["inputs"]["replication_validation_groups"] = validation_groups
+    trace["inputs"]["replication_command_input_bindings"] = binding[
+        "command_input_records"
+    ]
     trace["replication_preflight"] = {
         "surface": surface["name"],
         "stage": stage,
@@ -826,6 +1237,14 @@ def attach_replication_preflight(
             len(group.get("artifacts") or {}) for group in validation_groups
         ),
         "execute_gate": True,
+        "command_input_contract": {
+            "passed": True,
+            "per_command_passed": per_command_passed,
+            "expected_cell_count": len(expected_bindings),
+            "actual_argv_cell_count": len(actual_bindings),
+            "manifest_ref_cell_count": len(manifest_bindings),
+            "attached_group_cell_count": len(attached_bindings),
+        },
         "validation_report": {
             "path": str(
                 Path(str(config["data"]["kshot_subset_root"])).parent
@@ -1359,6 +1778,7 @@ def audit_replication_surfaces(
             stage_reports: list[dict[str, Any]] = []
             configs: dict[str, dict[str, Any]] = {}
             commands_by_stage: dict[str, list[dict[str, Any]]] = {}
+            manifests_by_stage: dict[str, dict[str, Any]] = {}
             seed_errors: list[str] = []
             for stage in stage_order:
                 config_rel = str((replicate.get("stages") or {}).get(stage) or "")
@@ -1385,7 +1805,26 @@ def audit_replication_surfaces(
                         seed_errors.append(f"{stage}: config subset_seed={config_seed}, expected {seed}")
                     if not tracked:
                         seed_errors.append(f"{stage}: config is not tracked: {config_rel}")
+                    stage_manifest = make_dry_run_manifest(
+                        config,
+                        commands=commands,
+                        local_paths=validate_experiment_config(config, repo_root=repo_root),
+                        run_id=run_id,
+                        cli_args=type(
+                            "Args", (), {"dry_run": True, "write_plan": False}
+                        )(),
+                    )
+                    stage_manifest = attach_replication_preflight(
+                        stage_manifest,
+                        config,
+                        repo_root=repo_root,
+                        index_path=index_path,
+                    )
+                    command_input_contract = stage_manifest["artifact_trace"][
+                        "replication_preflight"
+                    ]["command_input_contract"]
                     configs[stage], commands_by_stage[stage] = config, commands
+                    manifests_by_stage[stage] = stage_manifest
                     stage_reports.append(
                         {
                             "stage": stage,
@@ -1396,6 +1835,7 @@ def audit_replication_surfaces(
                             "exact_grid_passed": grid_passed,
                             "grid_audit": grid_audit,
                             "seed": config_seed,
+                            "command_input_contract": command_input_contract,
                         }
                     )
                 except (KeyError, OSError, ValueError) as exc:
@@ -1408,6 +1848,10 @@ def audit_replication_surfaces(
                             "config_tracked_by_git": tracked,
                             "command_count": 0,
                             "exact_grid_passed": False,
+                            "command_input_contract": {
+                                "passed": False,
+                                "per_command_passed": False,
+                            },
                             "error": str(exc),
                         }
                     )
@@ -1416,19 +1860,7 @@ def audit_replication_surfaces(
             source_checkpoint_binding: dict[str, Any] | None = None
             preflight = {"passed": False, "missing": [], "identity_errors": []}
             if producer_stage and set(configs) == set(stage_order):
-                train_manifest = make_dry_run_manifest(
-                    configs[producer_stage],
-                    commands=commands_by_stage[producer_stage],
-                    local_paths=validate_experiment_config(configs[producer_stage], repo_root=repo_root),
-                    run_id=run_id,
-                    cli_args=type("Args", (), {"dry_run": True, "write_plan": False})(),
-                )
-                train_manifest = attach_replication_preflight(
-                    train_manifest,
-                    configs[producer_stage],
-                    repo_root=repo_root,
-                    index_path=index_path,
-                )
+                train_manifest = manifests_by_stage[producer_stage]
                 children = train_manifest["artifact_trace"]["expected_outputs"]["child_runs"]
                 binding_audit = audit_replication_producer_consumers(
                     children,

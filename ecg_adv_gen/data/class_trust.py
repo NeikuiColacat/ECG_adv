@@ -15,6 +15,13 @@ DEFAULT_REAL_ALL_PRESENT_POLICY = (
 )
 
 
+def real_all_present_trust_path(signal_npz: Path | str, out_dir: Path | str) -> Path:
+    """Return the generated trust path without reading or writing artifacts."""
+
+    tag = Path(signal_npz).name.removesuffix(".signals.npz")
+    return Path(out_dir) / f"{tag}.real_all_present.class_trust.json"
+
+
 def write_real_all_present_trust(
     signal_npz: Path | str,
     out_dir: Path | str,
@@ -28,7 +35,7 @@ def write_real_all_present_trust(
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     tag = signal_npz.name.removesuffix(".signals.npz")
-    out_path = out_dir / f"{tag}.real_all_present.class_trust.json"
+    out_path = real_all_present_trust_path(signal_npz, out_dir)
 
     with np.load(signal_npz) as data:
         labels = data["labels"].astype(np.float32)

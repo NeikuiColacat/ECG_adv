@@ -107,8 +107,6 @@ def build_effnet_vae_lhat_train_cmd(
         str(getattr(args, "comparison_arm", "historical_unmatched")),
         "--ref_meta_json",
         str(paths.ref_meta),
-        "--synth_npz",
-        str(paths.latent_npz),
         "--target_real_npz",
         str(paths.signal_npz),
         "--target_real_norm_mode",
@@ -255,6 +253,8 @@ def build_effnet_vae_lhat_train_cmd(
         "--device",
         str(args.device),
     ]
+    if bool(getattr(args, "enable_vae_lhat", True)):
+        train_cmd.extend(["--synth_npz", str(paths.latent_npz)])
     if getattr(args, "comparison_protocol", ""):
         train_cmd[7:7] = [
             "--comparison_protocol", str(args.comparison_protocol),
