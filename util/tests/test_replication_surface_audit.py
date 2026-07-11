@@ -7,6 +7,7 @@ import hashlib
 import json
 import subprocess
 import sys
+from argparse import Namespace
 from pathlib import Path
 from typing import Any
 
@@ -16,12 +17,16 @@ import yaml
 
 from ecg_adv_gen.config import (
     attach_replication_preflight,
+    audit_active_managed_configs,
     audit_replication_command_grid,
     audit_replication_path_isolation,
     audit_replication_producer_consumers,
     audit_replication_surfaces,
+    build_runner_commands,
     build_replication_k500_groups,
     load_experiment_config,
+    make_dry_run_manifest,
+    validate_experiment_config,
     verify_replication_k500_groups,
     verify_replication_validation_report,
     verify_required_inputs,
@@ -36,6 +41,17 @@ MAPPING_VERSION = "v7_super5_sjr_rgq_review_20260528"
 MAPPING_HASH = "555ec85d5b51"
 CENTERS = ("ningbo", "chapman_shaoxing", "cpsc_2018", "georgia")
 SUFFIXES = ("ref_meta.json", "signals.npz", "latent.npz", "raw1000.npz", "class_trust.json")
+STUDY_EXPECTATIONS = {
+    "effnet_f004_rho_sweep_onecenter_smoke.yaml": ([20260601], 3),
+    "effnet_f004_rho_sweep_k500.yaml": ([20260601], 12),
+    "pn2021c_effnet_f004_rho_sweep_official_s5.yaml": ([20260601], 12),
+    "pn2021c_effnet_f004_rho_sweep_depth23.yaml": ([20260601], 12),
+    "f005_anchor_geometry_control_smoke.yaml": ([20260601], 2),
+    "f005_anchor_geometry_control_train.yaml": ([20260531, 20260601, 20260611], 24),
+    "f005_anchor_geometry_control_pn2021_clean.yaml": ([20260531, 20260601, 20260611], 24),
+    "f005_anchor_geometry_control_pn2021c_s5.yaml": ([20260531, 20260601, 20260611], 24),
+    "f005_anchor_geometry_control_pn2021c_depth23.yaml": ([20260531, 20260601, 20260611], 24),
+}
 
 
 def _write_local_config(tmp_path: Path) -> Path:
@@ -239,6 +255,148 @@ def _rewrite_npz(path: Path, *, allow_pickle: bool, updates: dict[str, Any]) -> 
 def _surface() -> dict[str, Any]:
     index = yaml.safe_load(INDEX.read_text(encoding="utf-8"))
     return index["replication_surfaces"][0]
+
+
+def _study_entries(index: dict[str, Any] | None = None) -> dict[str, dict[str, Any]]:
+    index = index or yaml.safe_load(INDEX.read_text(encoding="utf-8"))
+    return {
+        Path(entry["config"]).name: {"surface": surface["name"], **entry}
+        for surface in index.get("study_surfaces") or []
+        for entry in surface.get("entries") or []
+    }
+
+
+def _manifest(config: dict[str, Any], *, run_id: str = "pytest-study-surface") -> dict[str, Any]:
+    commands = build_runner_commands(config)
+    return make_dry_run_manifest(
+        config,
+        commands=commands,
+        local_paths=validate_experiment_config(config, repo_root=REPO),
+        run_id=run_id,
+        cli_args=Namespace(dry_run=True, write_plan=False),
+    )
+
+
+def test_study_surface_inventory_and_input_contract_are_exact() -> None:
+    index = yaml.safe_load(INDEX.read_text(encoding="utf-8"))
+    entries = _study_entries(index)
+    actual = {path.name for path in (REPO / "configs/studies").glob("*.yaml")}
+
+    assert set(entries) == actual == set(STUDY_EXPECTATIONS)
+    assert len(index["latest_mainline"]["stages"]) == 10
+    assert len(index["managed_experiments"]) == 10
+    assert "configs/studies" in index["launch_surface_policy"]["config_roots"]
+    assert {surface["input_contract_ref"] for surface in index["study_surfaces"]} == {
+        "effnet_matched_three_seed"
+    }
+    for name, (seeds, command_count) in STUDY_EXPECTATIONS.items():
+        assert entries[name]["input_seeds"] == seeds
+        assert entries[name]["expected_command_count"] == command_count
+
+
+@pytest.mark.parametrize("name", sorted(STUDY_EXPECTATIONS))
+def test_indexed_study_entry_binds_observed_seeds_and_full_validation_scope(name: str) -> None:
+    expected_seeds, expected_commands = STUDY_EXPECTATIONS[name]
+    path = REPO / "configs/studies" / name
+    config = load_experiment_config(
+        path,
+        LOCAL_EXAMPLE,
+        runtime_context={"run_id": f"pytest-study-{path.stem}"},
+    )
+    manifest = _manifest(config)
+    assert len(manifest["commands"]) == expected_commands
+
+    attached = attach_replication_preflight(
+        manifest,
+        config,
+        repo_root=REPO,
+        index_path=INDEX,
+    )
+    trace = attached["artifact_trace"]
+    current = trace["inputs"]["replication_k500_groups"]
+    validation = trace["inputs"]["replication_validation_groups"]
+    preflight = trace["replication_preflight"]
+    input_contract = _surface()
+    assert sorted({int(group["seed"]) for group in current}) == expected_seeds
+    assert len(current) == 4 * len(expected_seeds)
+    assert sorted({int(group["seed"]) for group in validation}) == [
+        20260531,
+        20260601,
+        20260611,
+    ]
+    assert len(validation) == 12
+    assert preflight["seeds"] == expected_seeds
+    assert preflight["validation_group_count"] == 12
+    assert preflight["validation_artifact_count"] == 60
+    assert preflight["materialization_artifact_suffixes"] == input_contract[
+        "materialization_artifact_suffixes"
+    ]
+    assert preflight["validation_report"]["expected_sha256"] == input_contract[
+        "validation_report"
+    ]["sha256"]
+
+
+@pytest.mark.parametrize("drift", ("duplicate", "seeds", "root", "sources", "command_count"))
+def test_study_surface_binding_rejects_index_and_config_drift(
+    drift: str, tmp_path: Path
+) -> None:
+    path = REPO / "configs/studies/f005_anchor_geometry_control_smoke.yaml"
+    config = load_experiment_config(
+        path,
+        LOCAL_EXAMPLE,
+        runtime_context={"run_id": "pytest-study-drift"},
+    )
+    manifest = _manifest(config, run_id="pytest-study-drift")
+    index = yaml.safe_load(INDEX.read_text(encoding="utf-8"))
+    entries = [
+        entry
+        for surface in index["study_surfaces"]
+        for entry in surface["entries"]
+        if entry["config"] == "configs/studies/f005_anchor_geometry_control_smoke.yaml"
+    ]
+    assert len(entries) == 1
+    if drift == "duplicate":
+        index["study_surfaces"][0]["entries"].append(copy.deepcopy(entries[0]))
+    elif drift == "seeds":
+        entries[0]["input_seeds"] = [20260531]
+    elif drift == "root":
+        config["data"]["kshot_subset_root"] = str(
+            Path(config["data"]["kshot_subset_root"]).parent.parent / "wrong-family" / "subsets"
+        )
+    elif drift == "sources":
+        config["_config_sources"] = [
+            str(REPO / "configs/studies/f005_anchor_geometry_control_train.yaml")
+        ]
+    else:
+        entries[0]["expected_command_count"] = 3
+    fixture = tmp_path / "active_scripts.yaml"
+    fixture.write_text(yaml.safe_dump(index, sort_keys=False), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=drift.replace("command_count", "command count")):
+        attach_replication_preflight(
+            manifest,
+            config,
+            repo_root=REPO,
+            index_path=fixture,
+        )
+
+
+def test_indexed_study_requires_manifest_k500_refs_even_when_top_seed_matches() -> None:
+    path = REPO / "configs/studies/effnet_f004_rho_sweep_k500.yaml"
+    config = load_experiment_config(
+        path,
+        LOCAL_EXAMPLE,
+        runtime_context={"run_id": "pytest-study-missing-refs"},
+    )
+    manifest = _manifest(config, run_id="pytest-study-missing-refs")
+    manifest["artifact_trace"]["inputs"]["k500_refs"] = []
+    with pytest.raises(ValueError, match="manifest K500 refs"):
+        attach_replication_preflight(
+            manifest,
+            config,
+            repo_root=REPO,
+            index_path=INDEX,
+        )
 
 
 def test_auxiliary_surface_pure_audits_are_reusable_and_fail_closed():
@@ -580,13 +738,18 @@ def test_unindexed_derived_replication_entry_is_rejected(tmp_path: Path):
         )
 
 
-def test_unindexed_f005_study_using_replication_family_is_explicitly_blocked():
+def test_unindexed_f005_derived_study_using_replication_family_is_explicitly_blocked(
+    tmp_path: Path,
+):
     entry = REPO / "configs/studies/f005_anchor_geometry_control_train.yaml"
     config = load_experiment_config(
         entry,
         LOCAL_EXAMPLE,
         runtime_context={"run_id": "pytest-unindexed-f005-study"},
     )
+    derived = tmp_path / "unindexed_f005_study.yaml"
+    config["_entry_config"] = str(derived)
+    config["_config_sources"] = [*config["_config_sources"], str(derived)]
     with pytest.raises(ValueError, match="indexed.*replication/study surface"):
         attach_replication_preflight(
             {"artifact_trace": {"inputs": {}}},
@@ -865,6 +1028,56 @@ def test_workspace_handoff_contract_exposes_replication_audit(tmp_path: Path):
     assert handoff["replication_surfaces"] == active["replication_surfaces"]
     assert handoff["replication_surfaces"]["contract_passed"] is False
     assert handoff["replication_surfaces"]["surfaces"][0]["replicates"]
+    assert handoff["study_surfaces"] == active["study_surfaces"]
+    assert handoff["study_surfaces"]["contract_passed"] is True
+    assert handoff["study_surfaces"]["surface_count"] == 2
+    assert handoff["study_surfaces"]["entry_count"] == 9
+
+
+def test_study_surface_audit_is_part_of_active_total_verdict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ecg_adv_gen.config import audit as audit_module
+
+    monkeypatch.setattr(
+        audit_module,
+        "audit_replication_surfaces",
+        lambda **_kwargs: {
+            "contract_passed": True,
+            "execution_ready": True,
+            "failed_count": 0,
+            "surfaces": [],
+        },
+    )
+    report = audit_module.audit_active_managed_configs(
+        repo_root=REPO,
+        index_path=INDEX,
+        local_config_path=LOCAL_EXAMPLE,
+        require_existing_inputs=False,
+    )
+    assert report["study_surfaces"]["contract_passed"] is True
+    assert report["study_surfaces"]["entry_count"] == 9
+
+    monkeypatch.setattr(
+        audit_module,
+        "audit_study_surfaces",
+        lambda **_kwargs: {
+            "contract_passed": False,
+            "failed_count": 1,
+            "surface_count": 1,
+            "entry_count": 1,
+            "surfaces": [],
+        },
+        raising=False,
+    )
+    failed = audit_module.audit_active_managed_configs(
+        repo_root=REPO,
+        index_path=INDEX,
+        local_config_path=LOCAL_EXAMPLE,
+        require_existing_inputs=False,
+    )
+    assert failed["study_surfaces"]["contract_passed"] is False
+    assert failed["passed"] is False
 
 
 def test_tracked_yaml_attention_fails_the_active_audit_total_verdict(

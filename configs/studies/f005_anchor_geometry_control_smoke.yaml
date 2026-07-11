@@ -20,4 +20,4 @@ runner:
 run_record:
   purpose: Runtime go/no-go only; cannot close F005 or select a paper recipe.
   result_summary: EVIDENCE_PENDING
-  registration_status: provisional_launch_only
+  registration_status: provisional

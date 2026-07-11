@@ -1367,16 +1367,19 @@ def build_artifact_trace(
             child.update({"command_index": command_index, "name": command["name"], "matrix": command["matrix"]})
             child_runs.append(child)
         elif script == "pn2021_clean_eval.py":
+            command_seed = int(_matrix_case(command).get("seed", seed))
             for ref_meta in _opt_list(opts, "--exclude_ref_ids"):
                 ref_name = Path(ref_meta).name
-                ref_center = ref_name.split(f"_real_k{k}_seed{seed}.ref_meta.json")[0]
+                ref_center = ref_name.split(
+                    f"_real_k{k}_seed{command_seed}.ref_meta.json"
+                )[0]
                 if ref_center:
                     base = Path(ref_meta.removesuffix(".ref_meta.json"))
                     _append_k500_ref(
                         inputs["k500_refs"],
                         center=ref_center,
                         k=k,
-                        seed=seed,
+                        seed=command_seed,
                         base=base,
                         include_latent=False,
                     )
@@ -1384,16 +1387,19 @@ def build_artifact_trace(
             child.update({"command_index": command_index, "name": command["name"], "matrix": command["matrix"]})
             child_runs.append(child)
         elif script == "pn2021c_eval.py":
+            command_seed = int(_matrix_case(command).get("seed", seed))
             for ref_meta in _opt_list(opts, "--exclude_ref_ids"):
                 ref_name = Path(ref_meta).name
-                ref_center = ref_name.split(f"_real_k{k}_seed{seed}.ref_meta.json")[0]
+                ref_center = ref_name.split(
+                    f"_real_k{k}_seed{command_seed}.ref_meta.json"
+                )[0]
                 if ref_center:
                     base = Path(ref_meta.removesuffix(".ref_meta.json"))
                     _append_k500_ref(
                         inputs["k500_refs"],
                         center=ref_center,
                         k=k,
-                        seed=seed,
+                        seed=command_seed,
                         base=base,
                         include_latent=False,
                     )

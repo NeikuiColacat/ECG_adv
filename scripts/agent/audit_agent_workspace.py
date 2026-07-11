@@ -564,6 +564,7 @@ def build_handoff_contract(report: dict) -> dict:
         ],
         "latest_mainline": active_scripts.get("latest_mainline") or {},
         "replication_surfaces": active_scripts.get("replication_surfaces") or {},
+        "study_surfaces": active_scripts.get("study_surfaces") or {},
         "source_of_truth": {
             "active_evidence_registry": str(report.get("registry_path") or ""),
             "active_scripts_index": active_scripts_index,

@@ -64,4 +64,4 @@ data:
 run_record:
   purpose: Fixed-A5 exact/exact F005 mechanism control; not a sixth canonical arm.
   result_summary: EVIDENCE_PENDING until preflight, paired seeds, consumers, and 20-step audits pass.
-  registration_status: provisional_launch_only
+  registration_status: provisional

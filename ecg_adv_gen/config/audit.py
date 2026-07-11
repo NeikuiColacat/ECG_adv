@@ -20,7 +20,7 @@ from .loader import (
     make_dry_run_manifest,
     validate_experiment_config,
 )
-from .replication import audit_replication_surfaces
+from .replication import audit_replication_surfaces, audit_study_surfaces
 
 
 def load_active_script_index(path: Path) -> dict[str, Any]:
@@ -401,8 +401,14 @@ def audit_active_managed_configs(
         index_path=index_path,
         local_config_path=local_config_path,
     )
+    study_surfaces = audit_study_surfaces(
+        repo_root=repo_root,
+        index_path=index_path,
+        local_config_path=local_config_path,
+    )
     replication_contract_passed = bool(replication_surfaces.get("contract_passed", True))
     replication_execution_ready = bool(replication_surfaces.get("execution_ready", True))
+    study_contract_passed = bool(study_surfaces.get("contract_passed", True))
     config_git_passed = not (
         bool(launch_surface_policy.get("tracked_yaml_required"))
         and bool(config_git_summary.get("requires_attention"))
@@ -411,6 +417,7 @@ def audit_active_managed_configs(
         all(row["passed"] for row in rows)
         and bool(latest_mainline.get("passed", True))
         and replication_contract_passed
+        and study_contract_passed
         and config_git_passed
         and (not require_existing_inputs or replication_execution_ready)
     )
@@ -424,12 +431,14 @@ def audit_active_managed_configs(
         "implementation_surface_policy": index.get("implementation_surface_policy") or {},
         "latest_mainline": latest_mainline,
         "replication_surfaces": replication_surfaces,
+        "study_surfaces": study_surfaces,
         "managed_experiment_count": len(rows),
         "passed_count": sum(1 for row in rows if row["passed"]),
         "failed_count": sum(1 for row in rows if not row["passed"]),
         "audit_failure_count": (
             sum(1 for row in rows if not row["passed"])
             + int(replication_surfaces.get("failed_count") or 0)
+            + int(study_surfaces.get("failed_count") or 0)
             + int(not config_git_passed)
             + int(require_existing_inputs and not replication_execution_ready)
         ),

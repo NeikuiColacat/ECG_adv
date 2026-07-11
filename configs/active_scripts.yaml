@@ -52,6 +52,7 @@ launch_surface_policy:
   - configs/defaults
   - configs/experiments
   - configs/replications
+  - configs/studies
   tracked_yaml_required: true
   new_long_bash_launchers_allowed: false
   new_dated_matrix_scripts_allowed: false
@@ -219,6 +220,53 @@ replication_surfaces:
       clean: configs/replications/effnet_matched_clean_seed20260611.yaml
       s5: configs/replications/effnet_matched_s5_seed20260611.yaml
       depth23: configs/replications/effnet_matched_depth23_seed20260611.yaml
+study_surfaces:
+- name: effnet_f004_rho_sweep
+  status: launch_only_evidence_pending
+  launcher: scripts/run_experiment.py
+  input_contract_ref: effnet_matched_three_seed
+  entries:
+  - role: smoke
+    config: configs/studies/effnet_f004_rho_sweep_onecenter_smoke.yaml
+    input_seeds: [20260601]
+    expected_command_count: 3
+  - role: train
+    config: configs/studies/effnet_f004_rho_sweep_k500.yaml
+    input_seeds: [20260601]
+    expected_command_count: 12
+  - role: s5
+    config: configs/studies/pn2021c_effnet_f004_rho_sweep_official_s5.yaml
+    input_seeds: [20260601]
+    expected_command_count: 12
+  - role: depth23
+    config: configs/studies/pn2021c_effnet_f004_rho_sweep_depth23.yaml
+    input_seeds: [20260601]
+    expected_command_count: 12
+- name: f005_anchor_geometry_control
+  status: launch_only_evidence_pending
+  launcher: scripts/run_experiment.py
+  input_contract_ref: effnet_matched_three_seed
+  entries:
+  - role: smoke
+    config: configs/studies/f005_anchor_geometry_control_smoke.yaml
+    input_seeds: [20260601]
+    expected_command_count: 2
+  - role: train
+    config: configs/studies/f005_anchor_geometry_control_train.yaml
+    input_seeds: [20260531, 20260601, 20260611]
+    expected_command_count: 24
+  - role: clean
+    config: configs/studies/f005_anchor_geometry_control_pn2021_clean.yaml
+    input_seeds: [20260531, 20260601, 20260611]
+    expected_command_count: 24
+  - role: s5
+    config: configs/studies/f005_anchor_geometry_control_pn2021c_s5.yaml
+    input_seeds: [20260531, 20260601, 20260611]
+    expected_command_count: 24
+  - role: depth23
+    config: configs/studies/f005_anchor_geometry_control_pn2021c_depth23.yaml
+    input_seeds: [20260531, 20260601, 20260611]
+    expected_command_count: 24
 documentation_surface_policy:
   durable_process_docs: docs/pipelines
   historical_report_archive: external_provenance_not_public_tree

@@ -31,8 +31,8 @@ Tracked YAML must not contain:
 - credentials.
 
 `util/tests/test_active_script_index.py` enforces this boundary for
-`configs/defaults/`, `configs/experiments/`, `configs/replications/`, and
-`configs/active_scripts.yaml`.
+`configs/defaults/`, `configs/experiments/`, `configs/replications/`,
+`configs/studies/`, and `configs/active_scripts.yaml`.
 Machine-local paths belong only in `configs/local/*.yaml`, with example files
 kept for host setup documentation. `configs/local/.gitignore` is intentionally
 restricted to:
@@ -137,6 +137,17 @@ remain required materialization/provenance companions, not falsely described
 as child-parser inputs. The indexed validation report covers 12/12 groups; its
 hash is checked by the replication audit. Never copy or rename another seed's
 K500 artifacts to satisfy this preflight.
+
+## Non-canonical studies
+
+Tracked `configs/studies/*.yaml` must appear exactly once under
+`configs/active_scripts.yaml:study_surfaces`. Each entry declares its actual
+`input_seeds` and command count, and references the existing
+`effnet_matched_three_seed` input contract instead of copying its root, report
+hash, or artifact suffixes. The launcher derives consumed seeds from the
+resolved manifest's K500 references and rejects seed, root, source-chain,
+command-count, duplicate, derived, or unindexed drift. Study registration does
+not add stages to `latest_mainline` or entries to `managed_experiments`.
 
 Small launch-time overrides are supported only through an audited whitelist:
 
