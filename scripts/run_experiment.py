@@ -205,7 +205,10 @@ def main() -> int:
                 require_clean_execution_sources(
                     source_recheck, phase="pre_child_invocation"
                 )
-            manifest["safety"]["managed_child_commands_invoked"] = True
+            manifest["safety"].update(
+                managed_child_commands_invoked=True,
+                managed_child_commands_state="possible",
+            )
             manifest["input_verification"] = input_verification
             manifest_path.write_text(
                 json.dumps(manifest, indent=2, sort_keys=True, ensure_ascii=True, default=str) + "\n",

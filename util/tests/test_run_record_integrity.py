@@ -576,6 +576,97 @@ def test_finalize_run_record_writes_immediately_verifiable_v2_index(tmp_path: Pa
     assert hashed_paths.count(selected_checkpoint.resolve()) == 2  # index build + verification
 
 
+@pytest.mark.parametrize(
+    "failing_stage",
+    [
+        "mirror:configs/run_config.resolved.yaml",
+        "mirror:configs/command.sh",
+        "run_card",
+        "run_card_mirror",
+        "summary",
+        "summary_mirror",
+        "manifest_snapshot",
+        "file_index",
+        "file_index_mirror",
+        "manifest_commit",
+    ],
+)
+def test_finalizer_publish_failures_never_commit_false_success(
+    tmp_path: Path, failing_stage: str
+) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    resolved = run_dir / "run_config.resolved.yaml"
+    resolved.write_text("seed: 42\n", encoding="utf-8")
+    (run_dir / "command.sh").write_text("python train.py\n", encoding="utf-8")
+    (run_dir / "env.json").write_text("{}\n", encoding="utf-8")
+    (run_dir / "selection.json").write_text("{}\n", encoding="utf-8")
+    manifest_path = run_dir / "run_manifest.json"
+    manifest = {
+        "manifest_schema_version": 2,
+        "run_id": "atomic-finalizer",
+        "status": "running",
+        "git": {"commit": "a" * 40},
+        "config_hash_sha256": "b" * 64,
+        "commands": [{"argv": ["python", "train.py"], "cwd": str(run_dir)}],
+        "experiment": {"name": "atomic-finalizer"},
+        "paper_protocol": {
+            "mapping_version": "v7",
+            "mapping_hash": "555ec85d5b51",
+            "class_order": ["CD", "HYP", "MI", "NORM", "STTC"],
+            "target_centers": ["ningbo"],
+            "kshot": {"k": 500, "seed": 42},
+            "selection": {"policy": "k500_internal"},
+        },
+        "artifact_verification": {"passed": True},
+        "artifact_trace": {
+            "schema_version": 1,
+            "inputs": {},
+            "expected_outputs": {
+                "launch_artifacts": [
+                    {"path": str(manifest_path), "role": "run_manifest", "required": True},
+                    {"path": str(resolved), "role": "resolved_config", "required": True},
+                ]
+            },
+        },
+        "run_record": {
+            "purpose": "Prove finalizer publish failure atomicity.",
+            "result_summary": "The synthetic finalizer closure completed explicitly.",
+        },
+    }
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    candidate = json.loads(json.dumps(manifest))
+    candidate.update(
+        {
+            "status": "succeeded",
+            "execution_phase": "completed",
+            "execution_lifecycle": {"status": "succeeded", "phase": "completed"},
+        }
+    )
+
+    def fail(stage: str, _path: Path) -> None:
+        if stage == failing_stage:
+            raise RuntimeError(f"publish-failure:{stage}")
+
+    with pytest.raises(RuntimeError, match="publish-failure"):
+        run_record.finalize_run_record(
+            run_dir,
+            final_manifest=candidate,
+            publish_hook=fail,
+        )
+
+    persisted = json.loads(manifest_path.read_text())
+    assert persisted["status"] == "running"
+
+    run_record.finalize_run_record(run_dir, final_manifest=candidate)
+    committed = json.loads(manifest_path.read_text())
+    card = json.loads((run_dir / "run_card.json").read_text())
+    snapshot = json.loads((run_dir / "manifests/run_manifest.snapshot.json").read_text())
+    assert committed["status"] == card["result"]["status"] == "succeeded"
+    assert snapshot == committed
+    assert run_record.verify_run_file_index(run_dir)["passed"] is True
+
+
 def test_file_index_hashes_required_nested_inputs_and_mandatory_env(tmp_path: Path):
     run_dir = tmp_path / "run"
     run_dir.mkdir()
@@ -674,7 +765,11 @@ def test_mirror_refuses_symlink_destination_without_touching_target(tmp_path: Pa
     (manifests / "run_card.json").symlink_to(outside)
 
     with pytest.raises(run_record.RunRecordError, match="symbolic link"):
-        run_record._mirror_known_small_files(run_dir)
+        run_record._copy_small_file(
+            run_dir / "run_card.json",
+            manifests / "run_card.json",
+            root=run_dir,
+        )
 
     assert outside.read_text(encoding="utf-8") == "outside\n"
 

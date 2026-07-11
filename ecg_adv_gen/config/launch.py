@@ -846,7 +846,7 @@ def verify_required_artifacts(manifest: dict[str, Any], *, include_postprocess: 
     content_errors: list[dict[str, Any]] = []
     verified: list[dict[str, Any]] = []
 
-    if not child_runs and not launch_artifacts:
+    if not child_runs and not launch_artifacts and not (include_postprocess and postprocess_runs):
         return {
             "passed": False,
             "checked_at_utc": datetime.now(timezone.utc).isoformat(),

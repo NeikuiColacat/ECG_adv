@@ -41,7 +41,6 @@ from ecg_adv_gen.runner.launch_plan import (  # noqa: E402
 from ecg_adv_gen.runner.matrix_parallel import (  # noqa: E402
     assign_gpus_to_commands,
     atomic_write_json,
-    bind_matrix_resume_contract,
     execution_lock,
     parse_gpu_list,
     read_json_object,
@@ -123,8 +122,9 @@ def _resume_manifest(
     for name in ("run_config.resolved.yaml", "run_config.resolved.json"):
         if not (path.parent / name).is_file():
             raise LaunchError(f"resume must preserve the existing resolved config, but {name} is missing")
-    if expected_manifest is not None:
-        validate_matrix_resume_contract(manifest, expected_manifest)
+    if expected_manifest is None:
+        raise LaunchError("resume requires an expected manifest with a bound plan digest")
+    validate_matrix_resume_contract(manifest, expected_manifest, run_dir=path.parent)
     return manifest
 
 
@@ -194,8 +194,18 @@ def _with_source_check(
     cleanliness["policy"] = _SOURCE_POLICY
     cleanliness["checks"] = [*(cleanliness.get("checks") or []), report]
     safety = dict(manifest.get("safety") or {})
-    safety["managed_child_commands_invoked"] = bool(
-        safety.get("managed_child_commands_invoked") or child_invoked
+    state = safety.get("managed_child_commands_state")
+    state = state if state in {"none", "possible", "confirmed"} else (
+        "possible" if safety.get("managed_child_commands_invoked") else "none"
+    )
+    if child_invoked and state == "none":
+        state = "possible"
+    count = safety.get("managed_child_confirmed_pid_count", 0)
+    count = count if isinstance(count, int) and not isinstance(count, bool) and count >= 0 else 0
+    safety.update(
+        managed_child_commands_state=state,
+        managed_child_confirmed_pid_count=count,
+        managed_child_commands_invoked=state != "none",
     )
     manifest.update(
         {
@@ -227,8 +237,10 @@ def _update_execution_lifecycle(
     error: BaseException | None = None,
     finished: bool = False,
     patch: dict[str, Any] | None = None,
+    source: dict[str, Any] | None = None,
+    persist: bool = True,
 ) -> dict[str, Any]:
-    manifest = read_json_object(manifest_path)
+    manifest = json.loads(json.dumps(source, default=str)) if source is not None else read_json_object(manifest_path)
     now = datetime.now(timezone.utc).isoformat()
     lifecycle = dict(manifest.get("execution_lifecycle") or {})
     lifecycle.update({"status": status, "phase": phase, "updated_at_utc": now})
@@ -254,7 +266,8 @@ def _update_execution_lifecycle(
             "updated_at_utc": now,
         }
     )
-    atomic_write_json(manifest_path, manifest)
+    if persist:
+        atomic_write_json(manifest_path, manifest)
     return manifest
 
 
@@ -342,6 +355,24 @@ def _execute_pipeline(
             require_clean_execution_sources(report, phase=phase)
             phase = "postprocess" if dispatch_kind == "postprocess" else "queue"
 
+        def before_gpu_dispatch(
+            index: int,
+            command: Any,
+            attempt: int,
+            gpu: str,
+        ) -> dict[str, Any]:
+            snapshot = check_nvidia_smi()
+            return {
+                "checked_at_utc": datetime.now(timezone.utc).isoformat(),
+                "assigned_gpu": gpu,
+                "nvidia_smi": snapshot,
+                "selected_gpu": validate_gpu_snapshot(
+                    [gpu], snapshot,
+                    min_free_memory_mb=args.min_free_memory_mb,
+                    max_utilization_pct=args.max_utilization_pct,
+                )[0],
+            }
+
         run_matrix_queue(
             commands,
             gpus=gpus,
@@ -350,6 +381,7 @@ def _execute_pipeline(
             manifest_path=manifest_path,
             resume=args.resume,
             before_dispatch=before_dispatch,
+            before_gpu_dispatch=before_gpu_dispatch,
             acquire_lock=False,
         )
         phase = "postprocess"
@@ -364,10 +396,19 @@ def _execute_pipeline(
                 attempt,
                 dispatch_kind="postprocess",
             ),
+            resume=args.resume,
             acquire_lock=False,
         )
         phase = "finalizer"
-        _update_execution_lifecycle(manifest_path, status="running", phase=phase)
+        current = _update_execution_lifecycle(manifest_path, status="running", phase=phase)
+        final_manifest = _update_execution_lifecycle(
+            manifest_path,
+            status="succeeded",
+            phase="completed",
+            finished=True,
+            source=current,
+            persist=False,
+        )
         finalize_run_record(
             out_dir,
             purpose=experiment_purpose(config),
@@ -376,12 +417,7 @@ def _execute_pipeline(
                 "artifacts passed full verification."
             ),
             outcome="succeeded",
-        )
-        _update_execution_lifecycle(
-            manifest_path,
-            status="succeeded",
-            phase="completed",
-            finished=True,
+            final_manifest=final_manifest,
         )
     except BaseException as exc:
         terminal = "interrupted" if isinstance(exc, KeyboardInterrupt) else "failed"
@@ -414,9 +450,7 @@ def _prepare_plan(
         force=args.force,
     )
     manifest_path = out_dir / "run_manifest.json"
-    expected = bind_matrix_resume_contract(
-        attach_launch_artifacts(manifest, run_dir=out_dir)
-    )
+    expected = attach_launch_artifacts(manifest, run_dir=out_dir)
     if args.resume:
         existing = _resume_manifest(
             manifest_path,
@@ -436,6 +470,7 @@ def _prepare_plan(
         expected,
         commands,
         postprocess_commands,
+        bind_matrix_resume=True,
     )
 
 
@@ -510,7 +545,11 @@ def main(argv: list[str] | None = None) -> int:
         )
         manifest["launcher"]["script"] = "scripts/agent/run_matrix_parallel.py"
         manifest["launcher"]["execute"] = args.execute
-        manifest["safety"]["managed_child_commands_invoked"] = False
+        manifest["safety"].update(
+            managed_child_commands_invoked=False,
+            managed_child_commands_state="none",
+            managed_child_confirmed_pid_count=0,
+        )
         manifest["status"] = "launch_prepared" if args.execute else "dry_run"
     except (ConfigError, LaunchError, OSError, ValueError) as exc:
         print(f"[config-error] {exc}", file=sys.stderr)

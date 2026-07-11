@@ -11,7 +11,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Mapping
 
 import yaml
 
@@ -189,6 +189,14 @@ def _relative(path: Path, root: Path) -> str:
         return str(path)
 
 
+def _is_within_lexical(path: Path, root: Path) -> bool:
+    try:
+        _absolute_no_resolve(path).relative_to(_absolute_no_resolve(root))
+    except ValueError:
+        return False
+    return True
+
+
 def _category_for(path: Path, run_dir: Path) -> str:
     rel = _relative(path, run_dir).lower()
     name = path.name.lower()
@@ -291,23 +299,6 @@ def _copy_small_file(src: Path, dst: Path, *, root: Path | None = None) -> None:
                         os.unlink(temporary, dir_fd=parent_fd)
                     except FileNotFoundError:
                         pass
-
-
-def _mirror_known_small_files(run_dir: Path) -> None:
-    mirrors = {
-        "run_config.resolved.yaml": "configs/run_config.resolved.yaml",
-        "run_config.resolved.json": "configs/run_config.resolved.json",
-        "command.sh": "configs/command.sh",
-        "run_manifest.json": "manifests/run_manifest.snapshot.json",
-        "data_manifest.json": "manifests/data_manifest.json",
-        "k500_ref_ids.json": "manifests/k500_ref_ids.json",
-        "selection.json": "manifests/selection.json",
-        "run_card.json": "manifests/run_card.json",
-        "run_file_index.json": "manifests/run_file_index.json",
-        "summary.md": "reports/summary.md",
-    }
-    for src_name, dst_name in mirrors.items():
-        _copy_small_file(run_dir / src_name, run_dir / dst_name, root=run_dir)
 
 
 def _iter_expected_artifact_records(manifest: dict[str, Any]) -> list[dict[str, Any]]:
@@ -448,7 +439,14 @@ def _build_file_index(
     manifest: dict[str, Any],
     *,
     include_sha256: bool = True,
+    content_overrides: dict[str, bytes] | None = None,
+    generated_at_utc: str | None = None,
+    sha256_cache: dict[tuple[Any, ...], str] | None = None,
 ) -> dict[str, Any]:
+    overrides = {
+        str(_absolute_no_resolve(Path(path))): payload
+        for path, payload in (content_overrides or {}).items()
+    }
     categories: dict[str, list[dict[str, Any]]] = {name: [] for name in RUN_LAYOUT_DIRS}
     expected_records = _iter_expected_artifact_records(manifest)
     expected_by_path = {
@@ -462,21 +460,45 @@ def _build_file_index(
         str(_absolute_no_resolve(run_dir / "manifests/run_file_index.json")),
     }
     seen_paths: set[str] = set()
-    for path in sorted(p for p in run_dir.rglob("*") if p.is_file()):
+    actual_paths = {p for p in run_dir.rglob("*") if p.is_file()}
+    virtual_paths = {
+        Path(path)
+        for path in overrides
+        if _is_within_lexical(Path(path), run_dir)
+    }
+    for path in sorted(actual_paths | virtual_paths):
         declared_key = str(_absolute_no_resolve(path))
         if declared_key in self_paths:
             continue
         seen_paths.add(declared_key)
         category = _category_for(path, run_dir)
+        override = overrides.get(declared_key)
         record = {
             "relative_path": _relative(path, run_dir),
             "path": declared_key,
-            "size_bytes": path.stat().st_size,
+            "size_bytes": len(override) if override is not None else path.stat().st_size,
             "expected_artifact": declared_key in expected_by_path,
             "external": False,
         }
         if include_sha256 and declared_key in critical_by_path:
-            record["sha256"] = _sha256_file(path)
+            if override is not None:
+                record["sha256"] = hashlib.sha256(override).hexdigest()
+            else:
+                st = path.stat()
+                cache_key = (
+                    declared_key,
+                    st.st_dev,
+                    st.st_ino,
+                    st.st_size,
+                    st.st_mtime_ns,
+                    st.st_ctime_ns,
+                )
+                if sha256_cache is not None and cache_key in sha256_cache:
+                    record["sha256"] = sha256_cache[cache_key]
+                else:
+                    record["sha256"] = _sha256_file(path)
+                    if sha256_cache is not None:
+                        sha256_cache[cache_key] = record["sha256"]
         categories.setdefault(category, []).append(record)
     for declared_key, artifact in declared_by_path.items():
         if declared_key in seen_paths or declared_key in self_paths:
@@ -501,7 +523,7 @@ def _build_file_index(
         categories.setdefault(category, []).append(record)
     return {
         "schema_version": 2,
-        "generated_at_utc": _utc_now(),
+        "generated_at_utc": generated_at_utc or _utc_now(),
         "run_dir": str(run_dir),
         "integrity": {
             "algorithm": "sha256",
@@ -614,31 +636,6 @@ def verify_run_file_index(run_dir: Path) -> dict[str, Any]:
             errors.append(f"sha256 mismatch for {label}")
 
     return report("failed" if errors else "verified", checked_count=checked_count)
-
-
-def _refresh_launch_artifact_status(manifest: dict[str, Any]) -> dict[str, Any]:
-    manifest = dict(manifest)
-    trace = dict(manifest.get("artifact_trace") or {})
-    expected = dict(trace.get("expected_outputs") or {})
-    refreshed = []
-    for artifact in expected.get("launch_artifacts") or []:
-        item = dict(artifact)
-        path = Path(str(item.get("path", "")))
-        item["exists"] = path.exists()
-        item["size_bytes"] = path.stat().st_size if path.is_file() else None
-        refreshed.append(item)
-    if refreshed:
-        expected["launch_artifacts"] = refreshed
-        trace["expected_outputs"] = expected
-        manifest["artifact_trace"] = trace
-    return manifest
-
-
-def _default_result_summary(manifest: dict[str, Any], metric_summary: dict[str, Any]) -> str:
-    status = str(manifest.get("status", "unknown"))
-    if metric_summary:
-        return "Run finalized with evaluation metrics; see metric_summary and eval artifacts."
-    return f"Run finalized with status={status}; evaluation metrics were not discovered."
 
 
 def _non_empty_text(value: Any) -> str:
@@ -1150,48 +1147,64 @@ def _render_summary_md(card: dict[str, Any], file_index: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def finalize_run_record(
-    run_dir: Path,
-    *,
-    purpose: str | None = None,
-    result_summary: str | None = None,
-    outcome: str | None = None,
+def _json_bytes(value: Mapping[str, Any]) -> bytes:
+    return (
+        json.dumps(value, indent=2, sort_keys=True, ensure_ascii=True, default=str) + "\n"
+    ).encode("utf-8")
+
+
+def _refresh_launch_artifacts_for_payloads(
+    manifest: dict[str, Any], payloads: Mapping[str, bytes]
 ) -> dict[str, Any]:
-    """Finalize a run directory with an agent-readable card, summary, and file index."""
-    run_dir = Path(run_dir).expanduser().resolve()
-    ensure_run_layout(run_dir)
-    manifest_path = run_dir / "run_manifest.json"
-    manifest = _read_json(manifest_path)
-    metric_summary = _build_metric_summary(run_dir, manifest)
+    out = dict(manifest)
+    trace = dict(out.get("artifact_trace") or {})
+    expected = dict(trace.get("expected_outputs") or {})
+    refreshed: list[dict[str, Any]] = []
+    for artifact in expected.get("launch_artifacts") or []:
+        item = dict(artifact)
+        path = _absolute_no_resolve(Path(str(item.get("path", ""))))
+        override = payloads.get(str(path))
+        item["exists"] = override is not None or path.exists()
+        item["size_bytes"] = (
+            len(override)
+            if override is not None
+            else path.stat().st_size if path.is_file() else None
+        )
+        refreshed.append(item)
+    if refreshed:
+        expected["launch_artifacts"] = refreshed
+        trace["expected_outputs"] = expected
+        out["artifact_trace"] = trace
+    return out
+
+
+def _run_card_for_manifest(
+    run_dir: Path,
+    manifest: dict[str, Any],
+    *,
+    purpose: str,
+    result_summary: str,
+    outcome: str,
+    metric_summary: dict[str, Any],
+    generated_at_utc: str,
+) -> dict[str, Any]:
     experiment = manifest.get("experiment") or {}
-    manifest_run_record = manifest.get("run_record") or {}
     paper = manifest.get("paper_protocol") or {}
     centers = (paper.get("centers") or {}).get("target_4") or paper.get("target_centers") or []
-    resolved_purpose = purpose or manifest_run_record.get("purpose") or experiment.get("purpose") or experiment.get("description") or ""
-    resolved_result = result_summary or manifest_run_record.get("result_summary") or ""
-    resolved_outcome = outcome or manifest_run_record.get("outcome") or manifest_run_record.get("status") or manifest.get("status") or "unknown"
-    _validate_run_record_contract(
-        run_dir,
-        manifest,
-        purpose=str(resolved_purpose),
-        result_summary=str(resolved_result),
-        metric_summary=metric_summary,
-    )
-
-    card = {
+    return {
         "schema_version": 1,
-        "generated_at_utc": _utc_now(),
+        "generated_at_utc": generated_at_utc,
         "run_id": manifest.get("run_id", run_dir.name),
         "run_dir": str(run_dir),
         "experiment": {
             "name": experiment.get("name", ""),
             "description": experiment.get("description", ""),
-            "purpose": resolved_purpose,
+            "purpose": purpose,
         },
         "result": {
             "status": manifest.get("status", "unknown"),
-            "outcome": resolved_outcome,
-            "summary": resolved_result,
+            "outcome": outcome,
+            "summary": result_summary,
         },
         "protocol": {
             "mapping_version": paper.get("mapping_version", ""),
@@ -1203,15 +1216,48 @@ def finalize_run_record(
         },
         "metric_summary": metric_summary,
         "artifacts": {
-            "manifest": str(manifest_path),
+            "manifest": str(run_dir / "run_manifest.json"),
             "file_index": str(run_dir / "run_file_index.json"),
             "summary": str(run_dir / "summary.md"),
         },
     }
-    _write_json(run_dir / "run_card.json", card, root=run_dir)
+
+
+def finalize_run_record(
+    run_dir: Path,
+    *,
+    purpose: str | None = None,
+    result_summary: str | None = None,
+    outcome: str | None = None,
+    final_manifest: Mapping[str, Any] | None = None,
+    publish_hook: Callable[[str, Path], None] | None = None,
+) -> dict[str, Any]:
+    """Publish derivatives first and the final manifest as the sole commit marker."""
+    run_dir = Path(run_dir).expanduser().resolve()
+    ensure_run_layout(run_dir)
+    manifest_path = run_dir / "run_manifest.json"
+    persisted = _read_json(manifest_path)
+    manifest = json.loads(json.dumps(final_manifest if final_manifest is not None else persisted, default=str))
+    if manifest.get("run_id") != persisted.get("run_id"):
+        raise RunRecordError("final manifest run_id does not match the persisted run")
+    metric_summary = _build_metric_summary(run_dir, manifest)
+    experiment = manifest.get("experiment") or {}
+    manifest_run_record = manifest.get("run_record") or {}
+    resolved_purpose = purpose or manifest_run_record.get("purpose") or experiment.get("purpose") or experiment.get("description") or ""
+    resolved_result = result_summary or manifest_run_record.get("result_summary") or ""
+    resolved_outcome = outcome or manifest_run_record.get("outcome") or manifest_run_record.get("status") or manifest.get("status") or "unknown"
+    _validate_run_record_contract(
+        run_dir,
+        manifest,
+        purpose=str(resolved_purpose),
+        result_summary=str(resolved_result),
+        metric_summary=metric_summary,
+    )
+
+    finalized_at = _utc_now()
     manifest["run_record"] = {
         **manifest_run_record,
-        "finalized_at_utc": card["generated_at_utc"],
+        "finalized_at_utc": finalized_at,
         "run_card": str(run_dir / "run_card.json"),
         "file_index": str(run_dir / "run_file_index.json"),
         "summary": str(run_dir / "summary.md"),
@@ -1219,24 +1265,126 @@ def finalize_run_record(
         "result_summary": resolved_result,
         "outcome": resolved_outcome,
     }
-    manifest["updated_at_utc"] = _utc_now()
-    _write_json(manifest_path, manifest, root=run_dir)
-    _mirror_known_small_files(run_dir)
-    file_index = _build_file_index(run_dir, manifest, include_sha256=False)
-    _write_json(run_dir / "run_file_index.json", file_index, root=run_dir)
-    summary_md = _render_summary_md(card, file_index)
-    _atomic_write_text(run_dir / "summary.md", summary_md, root=run_dir)
-    _mirror_known_small_files(run_dir)
-    manifest = _refresh_launch_artifact_status(_read_json(manifest_path))
-    _write_json(manifest_path, manifest, root=run_dir)
-    _mirror_known_small_files(run_dir)
-    file_index = _build_file_index(run_dir, manifest)
-    _write_json(run_dir / "run_file_index.json", file_index, root=run_dir)
-    _copy_small_file(
-        run_dir / "run_file_index.json",
-        run_dir / "manifests/run_file_index.json",
-        root=run_dir,
+    manifest["updated_at_utc"] = finalized_at
+    card = _run_card_for_manifest(
+        run_dir,
+        manifest,
+        purpose=str(resolved_purpose),
+        result_summary=str(resolved_result),
+        outcome=str(resolved_outcome),
+        metric_summary=metric_summary,
+        generated_at_utc=finalized_at,
     )
+
+    def publish(stage: str, path: Path, payload: bytes) -> None:
+        if publish_hook is not None:
+            publish_hook(stage, path)
+        _atomic_write_text(path, payload.decode("utf-8"), root=run_dir)
+
+    # Static mirrors are also completed before the manifest commit marker.
+    for source_name, destination_name in (
+        ("run_config.resolved.yaml", "configs/run_config.resolved.yaml"),
+        ("run_config.resolved.json", "configs/run_config.resolved.json"),
+        ("command.sh", "configs/command.sh"),
+        ("data_manifest.json", "manifests/data_manifest.json"),
+        ("k500_ref_ids.json", "manifests/k500_ref_ids.json"),
+        ("selection.json", "manifests/selection.json"),
+    ):
+        source = run_dir / source_name
+        if source.is_file() and source.stat().st_size <= _SMALL_COPY_LIMIT_BYTES:
+            publish(f"mirror:{destination_name}", run_dir / destination_name, source.read_bytes())
+
+    card_bytes = _json_bytes(card)
+    summary_bytes = b""
+    index_bytes = b""
+    sha256_cache: dict[tuple[Any, ...], str] = {}
+    previous_signature: tuple[bytes, bytes, bytes] | None = None
+    for _ in range(12):
+        manifest_bytes = _json_bytes(manifest)
+        virtual = {
+            str(manifest_path): manifest_bytes,
+            str(run_dir / "manifests/run_manifest.snapshot.json"): manifest_bytes,
+            str(run_dir / "run_card.json"): card_bytes,
+            str(run_dir / "manifests/run_card.json"): card_bytes,
+            str(run_dir / "summary.md"): summary_bytes,
+            str(run_dir / "reports/summary.md"): summary_bytes,
+        }
+        preliminary = _build_file_index(
+            run_dir,
+            manifest,
+            content_overrides=virtual,
+            generated_at_utc=finalized_at,
+            sha256_cache=sha256_cache,
+        )
+        summary_bytes = _render_summary_md(card, preliminary).encode("utf-8")
+        virtual[str(run_dir / "summary.md")] = summary_bytes
+        virtual[str(run_dir / "reports/summary.md")] = summary_bytes
+        file_index = _build_file_index(
+            run_dir,
+            manifest,
+            content_overrides=virtual,
+            generated_at_utc=finalized_at,
+            sha256_cache=sha256_cache,
+        )
+        index_bytes = _json_bytes(file_index)
+        virtual.update(
+            {
+                str(run_dir / "run_file_index.json"): index_bytes,
+                str(run_dir / "manifests/run_file_index.json"): index_bytes,
+            }
+        )
+        refreshed = _refresh_launch_artifacts_for_payloads(manifest, virtual)
+        refreshed_bytes = _json_bytes(refreshed)
+        signature = (refreshed_bytes, summary_bytes, index_bytes)
+        manifest = refreshed
+        if signature == previous_signature:
+            break
+        previous_signature = signature
+    else:
+        raise RunRecordError("finalizer derivative payloads did not converge")
+
+    # Rebuild once with the converged manifest bytes, then validate the exact
+    # payload that will be committed.
+    manifest_bytes = _json_bytes(manifest)
+    virtual = {
+        str(manifest_path): manifest_bytes,
+        str(run_dir / "manifests/run_manifest.snapshot.json"): manifest_bytes,
+        str(run_dir / "run_card.json"): card_bytes,
+        str(run_dir / "manifests/run_card.json"): card_bytes,
+        str(run_dir / "summary.md"): summary_bytes,
+        str(run_dir / "reports/summary.md"): summary_bytes,
+    }
+    file_index = _build_file_index(
+        run_dir,
+        manifest,
+        content_overrides=virtual,
+        generated_at_utc=finalized_at,
+        sha256_cache=sha256_cache,
+    )
+    index_bytes = _json_bytes(file_index)
+    manifest_record = next(
+        record
+        for records in file_index["categories"].values()
+        for record in records
+        if record.get("path") == str(manifest_path)
+    )
+    if manifest_record.get("sha256") != hashlib.sha256(manifest_bytes).hexdigest():
+        raise RunRecordError("prebuilt file index does not bind the final manifest payload")
+    if card["result"]["status"] != manifest.get("status"):
+        raise RunRecordError("prebuilt run card status does not match final manifest status")
+
+    for stage, path, payload in (
+        ("run_card", run_dir / "run_card.json", card_bytes),
+        ("run_card_mirror", run_dir / "manifests/run_card.json", card_bytes),
+        ("summary", run_dir / "summary.md", summary_bytes),
+        ("summary_mirror", run_dir / "reports/summary.md", summary_bytes),
+        ("manifest_snapshot", run_dir / "manifests/run_manifest.snapshot.json", manifest_bytes),
+        ("file_index", run_dir / "run_file_index.json", index_bytes),
+        ("file_index_mirror", run_dir / "manifests/run_file_index.json", index_bytes),
+    ):
+        publish(stage, path, payload)
+    # No filesystem write is allowed after this final commit marker.
+    publish("manifest_commit", manifest_path, manifest_bytes)
     return card
 
 

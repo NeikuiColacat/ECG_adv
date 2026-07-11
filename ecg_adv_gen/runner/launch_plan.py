@@ -84,6 +84,8 @@ def write_launch_plan_files(
     manifest: dict[str, Any],
     commands: list[dict[str, Any]],
     postprocess_commands: list[dict[str, Any]],
+    *,
+    bind_matrix_resume: bool = False,
 ) -> dict[str, Any]:
     """Write resolved config, command manifest, and agent-readable run records."""
 
@@ -120,6 +122,12 @@ def write_launch_plan_files(
     if _should_write_launch_artifact(manifest, "selection.json"):
         write_selection_record_artifact(manifest, out_dir / "selection.json")
     manifest = attach_launch_artifacts(manifest, run_dir=out_dir)
+    if bind_matrix_resume:
+        # Local import avoids coupling the general launch-plan module to the
+        # matrix executor unless this explicit launch mode is requested.
+        from .matrix_parallel import bind_matrix_resume_contract
+
+        manifest = bind_matrix_resume_contract(manifest, run_dir=out_dir)
     (out_dir / "run_manifest.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True, ensure_ascii=True, default=str) + "\n",
         encoding="utf-8",

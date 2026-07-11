@@ -567,6 +567,7 @@ reporting_tools:
   output_artifacts:
   - run_manifest.json
   - matrix_progress.json
+  - postprocess_progress.json
   - run_card.json
   - run_file_index.json
   - logs/command_NNN_attempt_NN.stdout.log
@@ -575,21 +576,24 @@ reporting_tools:
   - requires_explicit_gpu_list
   - dry_run_and_execute_are_mutually_exclusive
   - max_parallel_cannot_exceed_selected_gpu_count
-  - validates_numeric_existing_free_gpu_ids_from_nvidia_smi
+  - validates_assigned_gpu_again_from_fresh_nvidia_smi_before_every_dispatch
   - injects_exactly_one_physical_cuda_visible_devices_id_per_child
   - reuses_yaml_config_loader_and_command_audit
   - reuses_replication_preflight_and_required_input_verification
   - queues_more_matrix_commands_than_selected_gpus
   - sibling_lock_covers_prepare_resume_preflight_queue_postprocess_finalizer
   - parent_only_atomic_manifest_and_progress_writes
-  - immutable_full_artifact_trace_resume_contract
-  - running_pid_resume_is_fail_closed_unless_esrch
+  - immutable_plan_byte_and_semantic_resume_contract
+  - schema_v1_progress_requires_new_output_directory
+  - dispatching_spawn_intent_is_persisted_before_spawn
+  - running_process_group_resume_is_fail_closed_unless_esrch
   - strict_progress_schema_and_attempt_validation
-  - top_level_success_only_after_finalizer_returns
+  - final_manifest_is_the_last_success_commit_marker
   - dry_run_records_execution_source_diagnostics_without_blocking
   - execute_and_resume_source_gate_precedes_nvidia_preflight
   - source_gate_rechecks_after_inputs_and_before_every_child_spawn
-  - child_invoked_flag_changes_only_after_clean_per_dispatch_gate
+  - managed_child_state_is_none_possible_or_confirmed_with_pid_count
+  - postprocess_forces_empty_cuda_visible_devices
   - resume_skips_only_revalidated_command_artifacts
   - effnet_checkpoint_latest_resumes_with_latest
   - first_failure_stops_new_dispatch_and_allows_running_children_to_finish

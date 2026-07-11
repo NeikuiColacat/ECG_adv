@@ -1692,6 +1692,8 @@ def make_dry_run_manifest(
         "safety": {
             "gpu_launch_requires_cuda_visible_devices": True,
             "managed_child_commands_invoked": False,
+            "managed_child_commands_state": "none",
+            "managed_child_confirmed_pid_count": 0,
             "heldout_target_labels_for_selection": False,
         },
     }

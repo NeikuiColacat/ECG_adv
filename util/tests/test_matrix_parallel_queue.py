@@ -149,7 +149,7 @@ def _write_manifest(run_dir: Path, commands: list[dict[str, object]], outputs: l
 
 def _write_running_progress(run_dir: Path, command: dict[str, object], pid: object) -> None:
     progress = {
-        "schema_version": 1,
+        "schema_version": 2,
         "run_id": "queue-test",
         "status": "running",
         "created_at_utc": "2026-07-11T00:00:00+00:00",
@@ -165,6 +165,9 @@ def _write_running_progress(run_dir: Path, command: dict[str, object], pid: obje
                         "attempt": 1,
                         "gpu": "0",
                         "pid": pid,
+                        "pgid": pid,
+                        "start_new_session": True,
+                        "spawn_intent_at_utc": "2026-07-11T00:00:00+00:00",
                         "started_at_utc": "2026-07-11T00:00:00+00:00",
                         "finished_at_utc": None,
                         "returncode": None,
@@ -172,6 +175,7 @@ def _write_running_progress(run_dir: Path, command: dict[str, object], pid: obje
                         "stdout_log_path": str(run_dir / "old.stdout.log"),
                         "stderr_log_path": str(run_dir / "old.stderr.log"),
                         "resume": None,
+                        "reason": None,
                     }
                 ],
             }
@@ -587,8 +591,8 @@ def test_postprocess_runs_serially_then_performs_full_artifact_verification(tmp_
     assert final_manifest["status"] == "launch_prepared"
     assert final_manifest["postprocess_status"] == "succeeded"
     assert final_manifest["postprocess_runs"][0]["status"] == "succeeded"
-    assert (run_dir / "logs" / "postprocess_000.stdout.log").is_file()
-    assert (run_dir / "logs" / "postprocess_000.stderr.log").is_file()
+    assert (run_dir / "logs" / "postprocess_000_attempt_01.stdout.log").is_file()
+    assert (run_dir / "logs" / "postprocess_000_attempt_01.stderr.log").is_file()
     assert not (run_dir / "stdout.log").exists()
     assert not (run_dir / "stderr.log").exists()
 
@@ -627,23 +631,29 @@ def test_postprocess_before_dispatch_gate_blocks_the_child_spawn(tmp_path: Path)
 
 
 def test_resume_loads_but_does_not_rewrite_manifest_or_resolved_config(tmp_path: Path) -> None:
+    from ecg_adv_gen.runner.matrix_parallel import bind_matrix_resume_contract
+
     commands = [{"name": "one", "argv": ["python"], "cwd": ".", "matrix": {}}]
     postprocess = [{"name": "report", "argv": ["python"], "cwd": "."}]
     manifest_path = tmp_path / "run_manifest.json"
-    manifest_path.write_text(
-        json.dumps({"commands": commands, "postprocess_commands": postprocess}, indent=1) + "\n",
-        encoding="utf-8",
-    )
     yaml_path = tmp_path / "run_config.resolved.yaml"
     json_path = tmp_path / "run_config.resolved.json"
-    yaml_path.write_text("marker: yaml\n", encoding="utf-8")
-    json_path.write_text('{"marker":"json"}\n', encoding="utf-8")
+    yaml_path.write_text("marker: same\n", encoding="utf-8")
+    json_path.write_text('{"marker":"same"}\n', encoding="utf-8")
+    (tmp_path / "command.sh").write_text("python\n", encoding="utf-8")
+    (tmp_path / "data_manifest.json").write_text("{}\n", encoding="utf-8")
+    (tmp_path / "env.json").write_text("{}\n", encoding="utf-8")
+    expected = bind_matrix_resume_contract(
+        {"commands": commands, "postprocess_commands": postprocess}, run_dir=tmp_path
+    )
+    manifest_path.write_text(json.dumps(expected, indent=1) + "\n", encoding="utf-8")
     before = {path: path.read_bytes() for path in (manifest_path, yaml_path, json_path)}
 
     loaded = _resume_manifest(
         manifest_path,
         commands=commands,
         postprocess_commands=postprocess,
+        expected_manifest=expected,
     )
 
     assert loaded["commands"] == commands
@@ -717,7 +727,7 @@ def test_resume_rejects_eperm_running_pid_fail_closed(tmp_path: Path, monkeypatc
     def deny_signal(pid: int, sig: int) -> None:
         raise PermissionError("not permitted")
 
-    monkeypatch.setattr("ecg_adv_gen.runner.matrix_parallel.os.kill", deny_signal)
+    monkeypatch.setattr("ecg_adv_gen.runner.matrix_parallel.os.killpg", deny_signal)
     with pytest.raises(LaunchError, match="cannot prove stale"):
         run_matrix_queue(
             [command],
@@ -927,11 +937,14 @@ def test_resume_contract_rejects_any_execution_surface_drift(tmp_path: Path, lan
         },
         "matrix_parallel": {"enabled": True},
     }
-    manifest = bind_matrix_resume_contract(manifest)
+    (tmp_path / "run_config.resolved.yaml").write_text("marker: true\n", encoding="utf-8")
+    (tmp_path / "run_config.resolved.json").write_text('{"marker": true}\n', encoding="utf-8")
+    (tmp_path / "command.sh").write_text("python child.py\n", encoding="utf-8")
+    (tmp_path / "data_manifest.json").write_text("{}\n", encoding="utf-8")
+    (tmp_path / "env.json").write_text("{}\n", encoding="utf-8")
+    manifest = bind_matrix_resume_contract(manifest, run_dir=tmp_path)
     manifest_path = tmp_path / "run_manifest.json"
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
-    (tmp_path / "run_config.resolved.yaml").write_text("marker: true\n", encoding="utf-8")
-    (tmp_path / "run_config.resolved.json").write_text("{}\n", encoding="utf-8")
     drifted = json.loads(json.dumps(manifest))
     if lane == "replication_preflight":
         drifted["artifact_trace"]["replication_preflight"]["surface"] = "other"
@@ -1140,6 +1153,11 @@ def test_execute_lifecycle_marks_success_only_after_finalizer_returns(
 
     def finalize(*args, **kwargs):
         observed.append(json.loads(manifest_path.read_text())["status"])
+        candidate = kwargs["final_manifest"]
+        assert candidate["status"] == "succeeded"
+        assert candidate["execution_lifecycle"]["phase"] == "completed"
+        candidate["finalizer_commit_marker"] = "published-last"
+        manifest_path.write_text(json.dumps(candidate), encoding="utf-8")
 
     monkeypatch.setattr(matrix_cli, "finalize_run_record", finalize)
     matrix_cli._execute_pipeline(
@@ -1157,6 +1175,7 @@ def test_execute_lifecycle_marks_success_only_after_finalizer_returns(
     assert manifest["status"] == "succeeded"
     assert manifest["execution_lifecycle"]["phase"] == "completed"
     assert manifest["execution_lifecycle"]["finished_at_utc"]
+    assert manifest["finalizer_commit_marker"] == "published-last"
 
 
 def test_execute_lifecycle_records_keyboard_interrupt(tmp_path: Path, monkeypatch) -> None:

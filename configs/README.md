@@ -280,20 +280,21 @@ micromamba run -n ECGTwin python scripts/agent/run_matrix_parallel.py \
 ```
 
 `--dry-run` and `--execute` are mutually exclusive, and `--max-parallel` must
-not exceed the number of selected GPUs. Execute mode reads its own
-`nvidia-smi` snapshot, requires every selected id to be numeric, present, and
-within the declared free-memory/utilization thresholds, then sets each child
-environment to exactly one physical `CUDA_VISIBLE_DEVICES` id. GPU ids remain
-runtime input and must never be committed to tracked YAML.
+not exceed the number of selected GPUs. Execute mode checks `nvidia-smi` at
+preflight and again immediately before every dispatch, records that attempt's
+snapshot, and spawns only when the assigned physical GPU still passes the
+declared memory/utilization thresholds. Each matrix child receives exactly one
+physical `CUDA_VISIBLE_DEVICES` id; postprocess children receive an empty value.
 
 The queue reuses replication preflight and required-input verification. A
 sibling execute lock covers output preparation, plan/resume validation,
 preflight, child execution, postprocess, and finalization without making a
 fresh run directory non-empty. The parent alone atomically writes
-`matrix_progress.json` and queue/lifecycle state in `run_manifest.json`. N
-commands are dispatched over the bounded GPU pool. The first child failure
-stops new dispatch; children already running may finish. Ctrl-C terminates only
-process groups created by this queue.
+schema-v2 `matrix_progress.json`, `postprocess_progress.json`, and lifecycle
+state in `run_manifest.json`. Each attempt persists `dispatching` before spawn,
+then `running` with `start_new_session=true` and `pgid==pid`, `verifying`, and a
+strict terminal state. The first failure stops new dispatch; children already
+running may finish. Ctrl-C terminates only process groups created by this queue.
 
 Dry-run records execution-source cleanliness as diagnostics without blocking.
 Execute and resume inspect the active-script index, entry YAML, and every
@@ -302,25 +303,27 @@ non-local `_config_sources` YAML again after plan/resume and before any
 before every matrix or postprocess child spawn. Each `diagnostic`,
 `pre_execute`, and `pre_child` report is appended atomically to
 `run_manifest.json`. A failed check follows the normal failed lifecycle and
-cannot start that child; `managed_child_commands_invoked` changes from false
-only after a clean per-dispatch check.
+cannot start that child. Safety state is `none|possible|confirmed`, includes the
+confirmed PID count, and keeps the old boolean as a conservative projection.
 
 Resume uses the same command with `--resume`; it does not regenerate the
 existing resolved config or replace the prior manifest. Its frozen normalized
 contract covers commands, postprocess, replication preflight/K500/validation
-groups, initialization, required inputs, and every expected output. A
+groups, initialization, required inputs, expected outputs, byte SHA-256 for
+immutable plan files, and equal YAML/JSON resolved-config semantics. A
 previously successful command is skipped only after its declared artifacts pass
 the standard per-command verifier again. Failed, pending, proven-stale, or
 artifact-invalid commands are retried individually. A prior `running` attempt
-is retried only when its positive PID probe returns `ESRCH`; a live PID,
-`EPERM`, or missing/invalid PID rejects resume without sending a signal.
+is retried only when its complete process-group probe returns `ESRCH`; live,
+`EPERM`, malformed, `dispatching`, or otherwise ambiguous state fails closed.
+Progress schema v1 is never auto-migrated; use a fresh output directory.
 EfficientNet VAE-LHAT training appends
 `--resume latest` only when that command owns
 `checkpoints/checkpoint_latest.pt`; other training families restart only the
 affected command. After all children pass, reporting commands run serially and
-the full artifact verifier/finalizer runs once. Top-level status remains
-`running` until the finalizer returns; every failure or interruption records its
-phase, error summary, and finish time atomically.
+the full artifact verifier/finalizer runs once. The finalizer prebuilds the
+card, snapshot, summary, and integrity index, then publishes the final manifest
+last as the success commit marker; no fallible write follows it.
 
 The matrix queue keeps only per-command stdout/stderr logs such as
 `logs/command_003_attempt_02.stdout.log`; it does not create combined command
