@@ -308,9 +308,10 @@ confirmed PID count, and keeps the old boolean as a conservative projection.
 
 Resume uses the same command with `--resume`; it does not regenerate the
 existing resolved config or replace the prior manifest. Its frozen normalized
-contract covers commands, postprocess, replication preflight/K500/validation
-groups, initialization, required inputs, expected outputs, byte SHA-256 for
-immutable plan files, and equal YAML/JSON resolved-config semantics. A
+contract binds the clean Git commit and initial clean managed-source snapshot,
+plus commands, postprocess, replication preflight/K500/validation groups,
+initialization, required inputs, expected outputs, byte SHA-256 for immutable
+plan files, and equal YAML/JSON resolved-config semantics. A
 previously successful command is skipped only after its declared artifacts pass
 the standard per-command verifier again. Failed, pending, proven-stale, or
 artifact-invalid commands are retried individually. A prior `running` attempt

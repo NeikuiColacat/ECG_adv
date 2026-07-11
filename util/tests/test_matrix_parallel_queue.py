@@ -644,7 +644,12 @@ def test_resume_loads_but_does_not_rewrite_manifest_or_resolved_config(tmp_path:
     (tmp_path / "data_manifest.json").write_text("{}\n", encoding="utf-8")
     (tmp_path / "env.json").write_text("{}\n", encoding="utf-8")
     expected = bind_matrix_resume_contract(
-        {"commands": commands, "postprocess_commands": postprocess}, run_dir=tmp_path
+        {
+            "git": {"commit": "a" * 40, "branch": "test", "status_short": ""},
+            "commands": commands,
+            "postprocess_commands": postprocess,
+        },
+        run_dir=tmp_path,
     )
     manifest_path.write_text(json.dumps(expected, indent=1) + "\n", encoding="utf-8")
     before = {path: path.read_bytes() for path in (manifest_path, yaml_path, json_path)}
@@ -902,6 +907,7 @@ def test_resume_contract_rejects_any_execution_surface_drift(tmp_path: Path, lan
     postprocess = [{"name": "report", "argv": ["python", "report.py"], "cwd": "."}]
     manifest = {
         "run_id": "r1",
+        "git": {"commit": "a" * 40, "branch": "test", "status_short": ""},
         "config_hash_sha256": "a" * 64,
         "commands": commands,
         "postprocess_commands": postprocess,

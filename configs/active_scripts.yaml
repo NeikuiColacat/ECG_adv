@@ -584,6 +584,7 @@ reporting_tools:
   - sibling_lock_covers_prepare_resume_preflight_queue_postprocess_finalizer
   - parent_only_atomic_manifest_and_progress_writes
   - immutable_plan_byte_and_semantic_resume_contract
+  - resume_contract_binds_clean_git_commit_and_initial_source_snapshot
   - schema_v1_progress_requires_new_output_directory
   - dispatching_spawn_intent_is_persisted_before_spawn
   - running_process_group_resume_is_fail_closed_unless_esrch

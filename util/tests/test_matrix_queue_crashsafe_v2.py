@@ -360,6 +360,7 @@ def test_resume_contract_binds_plan_bytes_and_config_semantics(tmp_path: Path) -
     (tmp_path / "env.json").write_text("{}\n", encoding="utf-8")
     manifest = {
         "run_id": "r1",
+        "git": {"commit": "a" * 40, "branch": "test", "status_short": ""},
         "config_hash_sha256": "a" * 64,
         "entry_config": "config.yaml",
         "commands": [],
@@ -398,7 +399,12 @@ def test_old_manifest_without_resume_digest_is_not_auto_recovered(tmp_path: Path
     (tmp_path / "data_manifest.json").write_text("{}\n", encoding="utf-8")
     (tmp_path / "env.json").write_text("{}\n", encoding="utf-8")
     commands: list[dict] = []
-    old = {"run_id": "old", "commands": commands, "postprocess_commands": []}
+    old = {
+        "run_id": "old",
+        "git": {"commit": "a" * 40, "branch": "test", "status_short": ""},
+        "commands": commands,
+        "postprocess_commands": [],
+    }
     expected = bind_matrix_resume_contract(old, run_dir=tmp_path)
     manifest_path = tmp_path / "run_manifest.json"
     manifest_path.write_text(json.dumps(old), encoding="utf-8")
@@ -619,3 +625,154 @@ def test_v2_terminal_root_returncode_reason_and_artifacts_are_strict(
             manifest_path=manifest_path,
             resume=True,
         )
+
+
+def test_resume_contract_rejects_clean_git_commit_drift(tmp_path: Path) -> None:
+    config = {"experiment": {"name": "x"}, "value": 1}
+    (tmp_path / "run_config.resolved.yaml").write_text(
+        "experiment:\n  name: x\nvalue: 1\n", encoding="utf-8"
+    )
+    (tmp_path / "run_config.resolved.json").write_text(
+        json.dumps(config, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    (tmp_path / "command.sh").write_text("python child.py\n", encoding="utf-8")
+    (tmp_path / "data_manifest.json").write_text("{}\n", encoding="utf-8")
+    (tmp_path / "env.json").write_text("{}\n", encoding="utf-8")
+    manifest = {
+        "run_id": "git-bound",
+        "git": {"commit": "a" * 40, "branch": "test", "status_short": ""},
+        "config_hash_sha256": "b" * 64,
+        "entry_config": "configs/test.yaml",
+        "commands": [],
+        "postprocess_commands": [],
+        "artifact_trace": {"expected_outputs": {}},
+    }
+    bound = bind_matrix_resume_contract(manifest, run_dir=tmp_path)
+    current = copy.deepcopy(bound)
+    current["git"]["commit"] = "c" * 40
+
+    with pytest.raises(LaunchError, match="git commit|execution surface"):
+        validate_matrix_resume_contract(bound, current, run_dir=tmp_path)
+
+
+@pytest.mark.parametrize("dirty_status", [" M ecg_adv_gen/runner/x.py", "?? local.py"])
+def test_resume_contract_rejects_recorded_dirty_git_state(
+    tmp_path: Path, dirty_status: str
+) -> None:
+    config = {"value": 1}
+    (tmp_path / "run_config.resolved.yaml").write_text("value: 1\n", encoding="utf-8")
+    (tmp_path / "run_config.resolved.json").write_text(json.dumps(config), encoding="utf-8")
+    (tmp_path / "command.sh").write_text("true\n", encoding="utf-8")
+    (tmp_path / "data_manifest.json").write_text("{}\n", encoding="utf-8")
+    (tmp_path / "env.json").write_text("{}\n", encoding="utf-8")
+    manifest = {
+        "run_id": "dirty-git",
+        "git": {"commit": "a" * 40, "branch": "test", "status_short": dirty_status},
+        "commands": [],
+        "postprocess_commands": [],
+        "artifact_trace": {"expected_outputs": {}},
+    }
+
+    with pytest.raises(LaunchError, match="clean git state"):
+        bind_matrix_resume_contract(manifest, run_dir=tmp_path)
+
+
+def test_resume_contract_rejects_recorded_dirty_source_snapshot(tmp_path: Path) -> None:
+    config = {"value": 1}
+    (tmp_path / "run_config.resolved.yaml").write_text("value: 1\n", encoding="utf-8")
+    (tmp_path / "run_config.resolved.json").write_text(json.dumps(config), encoding="utf-8")
+    (tmp_path / "command.sh").write_text("true\n", encoding="utf-8")
+    (tmp_path / "data_manifest.json").write_text("{}\n", encoding="utf-8")
+    (tmp_path / "env.json").write_text("{}\n", encoding="utf-8")
+    manifest = {
+        "run_id": "dirty-source",
+        "git": {"commit": "a" * 40, "branch": "test", "status_short": ""},
+        "commands": [],
+        "postprocess_commands": [],
+        "artifact_trace": {"expected_outputs": {}},
+        "execution_source_cleanliness": {
+            "checks": [
+                {
+                    "passed": False,
+                    "repo_root": "/repo",
+                    "sources": [
+                        {
+                            "path": "/repo/configs/test.yaml",
+                            "repo_path": "configs/test.yaml",
+                            "roles": ["entry_config"],
+                            "exists": True,
+                            "tracked": True,
+                            "state": "unstaged",
+                        }
+                    ],
+                }
+            ]
+        },
+    }
+
+    with pytest.raises(LaunchError, match="source snapshot"):
+        bind_matrix_resume_contract(manifest, run_dir=tmp_path)
+
+
+@pytest.mark.parametrize("postprocess_count", [0, 2])
+def test_full_artifact_failure_keeps_command_progress_valid_and_resume_recovers(
+    tmp_path: Path, postprocess_count: int
+) -> None:
+    script = tmp_path / "child.py"
+    _child(script)
+    outputs = [tmp_path / f"report_{index}.json" for index in range(postprocess_count)]
+    env_outputs = [tmp_path / f"env_{index}.json" for index in range(postprocess_count)]
+    commands = [
+        _command(script, output, env_outputs[index], index=index)
+        for index, output in enumerate(outputs)
+    ]
+    run_dir = tmp_path / "run"
+    manifest_path = _manifest(run_dir, [], [])
+    missing_launch = tmp_path / "required_launch.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["postprocess_commands"] = commands
+    manifest["artifact_trace"]["expected_outputs"].update(
+        {
+            "launch_artifacts": [
+                {"path": str(missing_launch), "role": "required_launch", "required": True}
+            ],
+            "postprocess_runs": [
+                {
+                    "command_index": index,
+                    "expected_artifacts": [
+                        {"path": str(output), "role": "report", "required": True}
+                    ],
+                }
+                for index, output in enumerate(outputs)
+            ],
+        }
+    )
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(LaunchError, match="artifact verification failed"):
+        run_postprocess_serial(
+            commands,
+            run_dir=run_dir,
+            manifest_path=manifest_path,
+            base_env={"PATH": os.environ["PATH"]},
+        )
+
+    progress = json.loads((run_dir / "postprocess_progress.json").read_text())
+    assert progress["status"] == "succeeded"
+    assert [state["status"] for state in progress["commands"]] == [
+        "succeeded"
+    ] * postprocess_count
+    assert json.loads(manifest_path.read_text())["artifact_verification"]["passed"] is False
+
+    missing_launch.write_text("{}\n", encoding="utf-8")
+    verification = run_postprocess_serial(
+        commands,
+        run_dir=run_dir,
+        manifest_path=manifest_path,
+        base_env={"PATH": os.environ["PATH"]},
+        resume=True,
+    )
+    assert verification["passed"] is True
+    recovered = json.loads((run_dir / "postprocess_progress.json").read_text())
+    assert recovered["status"] == "succeeded"
+    assert all(len(state["attempts"]) == 1 for state in recovered["commands"])

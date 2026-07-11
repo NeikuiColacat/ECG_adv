@@ -198,6 +198,67 @@ def _stable_json_sha256(value: Any) -> str:
     return _sha256_bytes(payload.encode("utf-8"))
 
 
+def _git_resume_contract(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    git = manifest.get("git")
+    if not isinstance(git, Mapping):
+        raise LaunchError("matrix resume contract requires a recorded clean git commit")
+    commit = str(git.get("commit") or "").strip().lower()
+    if len(commit) not in {40, 64} or any(char not in "0123456789abcdef" for char in commit):
+        raise LaunchError("matrix resume contract requires a recorded clean git commit")
+    status = git.get("status_short", "")
+    if not isinstance(status, str) or status.strip():
+        raise LaunchError("matrix resume contract requires a clean git state")
+    return {"commit": commit, "clean": True}
+
+
+def _source_resume_contract(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    cleanliness = manifest.get("execution_source_cleanliness")
+    if cleanliness is None:
+        return {"recorded": False, "sources": []}
+    if not isinstance(cleanliness, Mapping):
+        raise LaunchError("matrix resume contract has an invalid execution source snapshot")
+    checks = cleanliness.get("checks")
+    if not isinstance(checks, list) or not checks or not isinstance(checks[0], Mapping):
+        raise LaunchError("matrix resume contract has no valid execution source snapshot")
+    snapshot = checks[0]
+    if snapshot.get("passed") is not True:
+        raise LaunchError("matrix resume contract refuses a non-clean execution source snapshot")
+    sources = snapshot.get("sources")
+    if not isinstance(sources, list):
+        raise LaunchError("matrix resume contract has an invalid execution source snapshot")
+    normalized_sources: list[dict[str, Any]] = []
+    for index, source in enumerate(sources):
+        if not isinstance(source, Mapping):
+            raise LaunchError(
+                f"matrix resume contract execution source snapshot row {index} is invalid"
+            )
+        if (
+            source.get("exists") is not True
+            or source.get("tracked") is not True
+            or source.get("state") != "clean"
+        ):
+            raise LaunchError("matrix resume contract refuses a non-clean execution source snapshot")
+        path = str(source.get("path") or "").strip()
+        repo_path = str(source.get("repo_path") or "").strip()
+        roles = source.get("roles")
+        if not path or not repo_path or not isinstance(roles, list):
+            raise LaunchError(
+                f"matrix resume contract execution source snapshot row {index} is incomplete"
+            )
+        normalized_sources.append(
+            {
+                "path": path,
+                "repo_path": repo_path,
+                "roles": sorted(str(role) for role in roles),
+            }
+        )
+    return {
+        "recorded": True,
+        "repo_root": str(snapshot.get("repo_root") or ""),
+        "sources": sorted(normalized_sources, key=lambda item: (item["repo_path"], item["path"])),
+    }
+
+
 def _plan_artifact_contract(run_dir: Path) -> dict[str, Any]:
     run_dir = Path(run_dir).expanduser().resolve()
     records: list[dict[str, Any]] = []
@@ -248,6 +309,8 @@ def build_matrix_resume_contract(
         {
             "schema_version": 2,
             "run_id": manifest.get("run_id"),
+            "git": _git_resume_contract(manifest),
+            "execution_sources": _source_resume_contract(manifest),
             "config_hash_sha256": manifest.get("config_hash_sha256"),
             "entry_config": manifest.get("entry_config"),
             "commands": manifest.get("commands") or [],
@@ -293,6 +356,10 @@ def validate_matrix_resume_contract(
     if record.get("sha256") != stored_sha or stored_normalized != observed:
         raise LaunchError("matrix resume contract does not match the persisted execution surface")
     expected_contract = build_matrix_resume_contract(expected, run_dir=run_dir)
+    stored_git = stored_normalized.get("git")
+    expected_git = expected_contract.get("git")
+    if stored_git != expected_git:
+        raise LaunchError("matrix resume contract git commit drifted from the current execution surface")
     if stored_sha != _resume_contract_sha256(expected_contract) or stored_normalized != expected_contract:
         raise LaunchError("matrix resume contract drifted from the current execution surface")
 
@@ -1206,7 +1273,10 @@ def run_postprocess_serial(
         manifest["artifact_verification"] = verification
         atomic_write_json(manifest_path, manifest)
         if not verification["passed"]:
-            store.save("failed")
+            # Command progress remains succeeded: this is a run-level artifact
+            # failure, not a failed child attempt.  Keeping the v2 command
+            # state valid lets --resume revalidate the same commands and the
+            # full artifact surface after the missing artifact is repaired.
             raise LaunchError("Required artifact verification failed after postprocess commands")
         store.save("succeeded")
         return verification
