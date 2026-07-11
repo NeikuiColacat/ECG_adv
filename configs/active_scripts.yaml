@@ -51,6 +51,7 @@ launch_surface_policy:
   config_roots:
   - configs/defaults
   - configs/experiments
+  - configs/replications
   tracked_yaml_required: true
   new_long_bash_launchers_allowed: false
   new_dated_matrix_scripts_allowed: false
@@ -136,6 +137,48 @@ latest_mainline:
   - name: ecgfounder_threechain_locked_pn2021c_depth23
     role: ecgfounder_main_method_depth23_composite_eval
     config: configs/experiments/pn2021c_ecgfounder_official_s5_depth23_composite.yaml
+replication_surfaces:
+- name: effnet_matched_three_seed
+  status: launch_only_evidence_pending
+  launcher: scripts/run_experiment.py
+  seeds: [20260531, 20260601, 20260611]
+  canonical_seed: 20260601
+  command_count_per_stage: 20
+  same_run_id_across_stages: true
+  stage_specific_plan_output_dirs: true
+  cli_seed_override_allowed: false
+  corruption_seed: 20260501
+  required_k500_artifact_suffixes: [ref_meta.json, signals.npz, latent.npz, raw1000.npz, class_trust.json]
+  execute_preflight: require_all_four_centers_x_five_k500_artifacts
+  evidence_scope: launch_only
+  notes: Thin wrappers change the matched K500 draw and training seed together; they are not evidence until their inputs and runs are registered.
+  replicates:
+  - seed: 20260531
+    canonical: false
+    k500_input_status: present_as_of_2026-07-11
+    stages:
+      train: configs/replications/effnet_matched_train_seed20260531.yaml
+      clean: configs/replications/effnet_matched_clean_seed20260531.yaml
+      s5: configs/replications/effnet_matched_s5_seed20260531.yaml
+      depth23: configs/replications/effnet_matched_depth23_seed20260531.yaml
+  - seed: 20260601
+    canonical: true
+    k500_input_status: present_as_of_2026-07-11
+    stages:
+      train: configs/experiments/effnet_vae_lhat_augmix_threechain_locked_k500.yaml
+      clean: configs/experiments/pn2021_eval_v7_sjr_rgq_refexcluded.yaml
+      s5: configs/experiments/pn2021c_effnet_threechain_locked_official_s5.yaml
+      depth23: configs/experiments/pn2021c_effnet_official_s5_depth23_composite.yaml
+  - seed: 20260611
+    canonical: false
+    k500_input_status: missing_requires_materialization
+    materialization_required_before_execute: true
+    copy_or_rename_from_other_seed_allowed: false
+    stages:
+      train: configs/replications/effnet_matched_train_seed20260611.yaml
+      clean: configs/replications/effnet_matched_clean_seed20260611.yaml
+      s5: configs/replications/effnet_matched_s5_seed20260611.yaml
+      depth23: configs/replications/effnet_matched_depth23_seed20260611.yaml
 documentation_surface_policy:
   durable_process_docs: docs/pipelines
   historical_report_archive: external_provenance_not_public_tree

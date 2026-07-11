@@ -65,6 +65,7 @@ def _tracked_public_yaml() -> list[Path]:
         REPO / "configs" / "active_evidence_registry.yaml",
         *sorted((REPO / "configs" / "defaults").glob("*.yaml")),
         *sorted((REPO / "configs" / "experiments").glob("*.yaml")),
+        *sorted((REPO / "configs" / "replications").glob("*.yaml")),
     ]
 
 
@@ -287,4 +288,6 @@ def test_active_managed_audit_reflects_public_mainline_contract():
     for item in report["config_git_inventory"]:
         rel_path = item["config"]
         assert not rel_path.startswith("trash/")
-        assert rel_path.startswith(("configs/defaults/", "configs/experiments/"))
+        assert rel_path.startswith(
+            ("configs/defaults/", "configs/experiments/", "configs/replications/")
+        )

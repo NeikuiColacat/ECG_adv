@@ -1,0 +1,9 @@
+extends: ../experiments/pn2021c_effnet_official_s5_depth23_composite.yaml
+
+paper_protocol:
+  kshot:
+    seed: 20260531
+    subset_seed: 20260531
+
+model:
+  eval_seed: 20260531

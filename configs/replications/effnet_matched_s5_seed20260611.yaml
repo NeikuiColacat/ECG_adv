@@ -1,0 +1,9 @@
+extends: ../experiments/pn2021c_effnet_threechain_locked_official_s5.yaml
+
+paper_protocol:
+  kshot:
+    seed: 20260611
+    subset_seed: 20260611
+
+model:
+  eval_seed: 20260611

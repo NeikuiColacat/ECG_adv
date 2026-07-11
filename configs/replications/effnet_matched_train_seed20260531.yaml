@@ -1,0 +1,6 @@
+extends: ../experiments/effnet_vae_lhat_augmix_threechain_locked_k500.yaml
+
+paper_protocol:
+  kshot:
+    seed: 20260531
+    subset_seed: 20260531

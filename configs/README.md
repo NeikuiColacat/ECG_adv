@@ -31,7 +31,8 @@ Tracked YAML must not contain:
 - credentials.
 
 `util/tests/test_active_script_index.py` enforces this boundary for
-`configs/defaults/`, `configs/experiments/`, and `configs/active_scripts.yaml`.
+`configs/defaults/`, `configs/experiments/`, `configs/replications/`, and
+`configs/active_scripts.yaml`.
 Machine-local paths belong only in `configs/local/*.yaml`, with example files
 kept for host setup documentation. `configs/local/.gitignore` is intentionally
 restricted to:
@@ -95,6 +96,29 @@ current reproducible paper path, use its `latest_mainline` block first: it decla
 and ECGFounder baselines, training, PN2021 clean eval, and PN2021-C evaluation.
 Public `configs/experiments/*.yaml` is intentionally limited to those 10
 latest-mainline configs.
+
+## Non-canonical replications
+
+`configs/replications/` contains thin, indexed wrappers for reruns that must not
+expand the canonical 10-stage latest-mainline snapshot or its golden contract.
+The matched EfficientNet three-seed surface is recorded under
+`configs/active_scripts.yaml:replication_surfaces`. Seed `20260601` keeps using
+the four canonical configs; seeds `20260531` and `20260611` each use four thin
+wrappers that only change `paper_protocol.kshot.seed`,
+`paper_protocol.kshot.subset_seed`, and, for PN2021-C evaluation, the matching
+`model.eval_seed`.
+
+Within one seed, launch train, clean, S5, and depth23 with exactly the same
+`--run-id`. Their launcher plan directories must still be different, for
+example `--output-dir "$PLAN_ROOT/train"`, `.../clean`, `.../s5`, and
+`.../depth23`; otherwise the four launcher manifests would collide. Do not use
+`--set` to change K500 or paper-protocol seeds. The corruption RNG seed remains
+fixed at `20260501` across all selection/training seeds.
+
+The `20260611` K500 inputs are intentionally marked missing in the index. They
+must be materialized and identity-checked before GPU execution. Never copy or
+rename another seed's K500 artifacts to satisfy that preflight: these wrappers
+bind the K500 draw and the training seed to the same declared value.
 
 Small launch-time overrides are supported only through an audited whitelist:
 

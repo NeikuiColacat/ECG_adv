@@ -1,0 +1,6 @@
+extends: ../experiments/pn2021_eval_v7_sjr_rgq_refexcluded.yaml
+
+paper_protocol:
+  kshot:
+    seed: 20260531
+    subset_seed: 20260531
