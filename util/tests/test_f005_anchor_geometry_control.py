@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+from argparse import Namespace
 from pathlib import Path
 
 import numpy as np
@@ -129,6 +130,74 @@ def test_exact_candidates_have_no_anchor_and_at_least_two_unique_nonself_ids() -
     assert set(identities) == {1, 2}
 
 
+def test_canonical_exact_noanchor_without_study_prepares_manifest_and_filters_walker(
+    tmp_path: Path,
+) -> None:
+    from ecg_adv_gen.runner.synth_online_at_super5 import prepare_exact_nonself_eligibility
+
+    labels = np.asarray(
+        [
+            [1, 0, 0, 0, 0],
+            [0, 1, 0, 0, 0], [0, 1, 0, 0, 0],
+            [0, 0, 1, 0, 0], [0, 0, 1, 0, 0], [0, 0, 1, 0, 0],
+        ],
+        dtype=np.float32,
+    )
+    args = Namespace(
+        enable_vae_lhat=True,
+        hull_label_mode="exact",
+        hull_include_anchor=False,
+        study_scope="",
+        output_dir=str(tmp_path),
+        eligibility_manifest_sha256="",
+    )
+    manifest, eligible = prepare_exact_nonself_eligibility(
+        args,
+        labels,
+        {"record_ids": np.asarray([f"r{i}" for i in range(len(labels))])},
+    )
+
+    assert manifest["eligible_pool_indices"] == [3, 4, 5]
+    assert eligible == [3, 4, 5]
+    assert args.eligibility_manifest_sha256 == manifest["manifest_sha256"]
+    assert json.loads((tmp_path / "eligible_anchor_manifest.json").read_text()) == manifest
+    walker = __import__(
+        "ecg_adv_gen.adaptation.lhat", fromlist=["StratifiedPoolWalker"]
+    ).StratifiedPoolWalker(
+        labels,
+        classes_in_scope=["MI"],
+        class_to_idx={"MI": 2},
+        eligible_indices=eligible,
+    )
+    assert set(walker.sample({"MI": 3})["MI"].tolist()) == {3, 4, 5}
+
+
+@pytest.mark.parametrize(
+    ("label_mode", "include_anchor"),
+    [("compatible", False), ("primary", False), ("exact", True)],
+)
+def test_nonexact_or_include_anchor_does_not_enable_general_eligibility_filter(
+    tmp_path: Path, label_mode: str, include_anchor: bool
+) -> None:
+    from ecg_adv_gen.runner.synth_online_at_super5 import prepare_exact_nonself_eligibility
+
+    args = Namespace(
+        enable_vae_lhat=True,
+        hull_label_mode=label_mode,
+        hull_include_anchor=include_anchor,
+        study_scope="",
+        output_dir=str(tmp_path),
+        eligibility_manifest_sha256="",
+    )
+    manifest, eligible = prepare_exact_nonself_eligibility(
+        args,
+        np.ones((2, 5), dtype=np.float32),
+        {"record_ids": np.asarray(["a", "b"])},
+    )
+    assert manifest is None and eligible is None
+    assert not (tmp_path / "eligible_anchor_manifest.json").exists()
+
+
 def test_identity_metrics_collapse_duplicate_positions_before_entropy() -> None:
     metrics = identity_collapsed_weight_metrics(
         candidate_pool_indices=torch.tensor([[4, 4, 9, 9]]),
@@ -159,6 +228,36 @@ class _ToyGenerator(LatentHullPGDGenerator):
     def _decode_to_ptbxl_1000(self, latent: torch.Tensor) -> torch.Tensor:
         value = latent.flatten(1).mean(dim=1).view(-1, 1, 1)
         return value.expand(-1, 12, 1000)
+
+
+def test_general_exact_nonself_runtime_gate_rejects_two_record_pool() -> None:
+    from ecg_adv_gen.runner.synth_online_at_super5 import run_pgd_on_synth_pool
+
+    latents = np.zeros((2, 4, 128), dtype=np.float32)
+    labels = np.ones((2, 1), dtype=np.float32)
+    index = SameLabelLatentIndex(
+        latents,
+        labels,
+        label_mode="exact",
+        include_self=False,
+    )
+    generator = _ToyGenerator(
+        ecgtwin_wrapper=object(), victim=_ToyVictim(), epsilon=0.25,
+        hull_lambda=1.0, hull_steps=1, hull_lr=0.1, init_logit_gap=0.0, device="cpu",
+    )
+
+    with pytest.raises(RuntimeError, match="exact/no-anchor candidate geometry"):
+        run_pgd_on_synth_pool(
+            pgd_gen=generator,
+            synth_latents=latents,
+            synth_labels=labels,
+            pgd_batch=1,
+            device="cpu",
+            latent_hull_index=index,
+            picked_indices=np.asarray([0]),
+            hull_M=2,
+            require_exact_nonself=True,
+        )
 
 
 def test_inner_attack_scores_projected_states_and_atk_init_snapshot_is_projected() -> None:

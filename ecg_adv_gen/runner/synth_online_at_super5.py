@@ -850,7 +850,7 @@ def run_pgd_on_synth_pool(
     hull_label_new_class_cap: float = 0.5,
     store_raw_decoded: bool = False,
     pool_record_ids: Optional[np.ndarray] = None,
-    study_scope: str = "",
+    require_exact_nonself: bool = False,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
     """Sample K anchors stratified by class, run latent-hull PGD in batches.
 
@@ -982,7 +982,7 @@ def run_pgd_on_synth_pool(
     diagnostics["candidate_exact_label_match_all"] = np.all(
         (candidate_labels > 0.5) == (anchor_labels[:, None, :] > 0.5), axis=(1, 2)
     ).tolist()
-    if study_scope == F005_STUDY_SCOPE:
+    if require_exact_nonself:
         invalid = [
             row for row in range(int(diagnostics["n"]))
             if int(diagnostics["candidate_anchor_count"][row]) != 0
@@ -991,7 +991,7 @@ def run_pgd_on_synth_pool(
         ]
         if invalid:
             raise RuntimeError(
-                "F005 candidate geometry contract failed for rows "
+                "exact/no-anchor candidate geometry contract failed for rows "
                 f"{invalid[:8]} (anchor fallback, <2 unique non-self candidates, or label drift)"
             )
     if pool_record_ids is not None:
@@ -1778,6 +1778,48 @@ def load_optional_vae_component(enabled: bool, factory):
     return factory() if enabled else None
 
 
+def prepare_exact_nonself_eligibility(
+    args: argparse.Namespace,
+    synth_labels: Optional[np.ndarray],
+    source_meta: Dict[str, Any],
+) -> tuple[Dict[str, Any] | None, list[int] | None]:
+    """Prepare the general exact/no-anchor candidate contract before epoch 1."""
+    required = (
+        bool(args.enable_vae_lhat)
+        and str(args.hull_label_mode) == "exact"
+        and not bool(args.hull_include_anchor)
+    )
+    if not required:
+        args.eligibility_manifest_sha256 = ""
+        return None, None
+    if synth_labels is None:
+        raise RuntimeError("exact/no-anchor eligibility requires an enabled latent pool")
+    pool_record_ids = source_meta.get("record_ids")
+    if pool_record_ids is None:
+        raise RuntimeError("exact/no-anchor eligibility requires latent-pool record_ids")
+    manifest = build_exact_eligibility_manifest(
+        synth_labels,
+        pool_record_ids,
+        min_nonself=2,
+    )
+    eligible_indices = list(manifest["eligible_pool_indices"])
+    if not eligible_indices:
+        raise RuntimeError("exact/no-anchor eligibility produced no attackable anchors")
+    args.eligibility_manifest_sha256 = str(manifest["manifest_sha256"])
+    eligibility_path = Path(args.output_dir) / "eligible_anchor_manifest.json"
+    eligibility_path.write_text(
+        json.dumps(
+            manifest,
+            indent=2,
+            sort_keys=True,
+            ensure_ascii=True,
+            allow_nan=False,
+        ) + "\n",
+        encoding="utf-8",
+    )
+    return manifest, eligible_indices
+
+
 def main():
     args = parse_args()
     matched_comparison = is_paper_matched_effnet_run(
@@ -1985,40 +2027,14 @@ def main():
     elif matched_comparison:
         raise ValueError("matched comparison requires --target_real_npz")
 
-    f005_eligibility_manifest: Dict[str, Any] | None = None
-    f005_eligible_indices: list[int] | None = None
-    if args.study_scope == F005_STUDY_SCOPE:
-        if not args.enable_vae_lhat or synth_labels is None:
-            raise RuntimeError("F005 requires the A5 VAE-LHAT route")
-        pool_record_ids = source_meta.get("record_ids")
-        if pool_record_ids is None:
-            raise RuntimeError("F005 exact eligibility requires latent-pool record_ids")
-        f005_eligibility_manifest = build_exact_eligibility_manifest(
-            synth_labels,
-            pool_record_ids,
-            min_nonself=2,
-        )
-        f005_eligible_indices = list(f005_eligibility_manifest["eligible_pool_indices"])
-        if not f005_eligible_indices:
-            raise RuntimeError("F005 exact eligibility produced no attackable anchors")
-        args.eligibility_manifest_sha256 = str(
-            f005_eligibility_manifest["manifest_sha256"]
-        )
-        eligibility_path = Path(args.output_dir) / "eligible_anchor_manifest.json"
-        eligibility_path.write_text(
-            json.dumps(
-                f005_eligibility_manifest,
-                indent=2,
-                sort_keys=True,
-                ensure_ascii=True,
-                allow_nan=False,
-            ) + "\n",
-            encoding="utf-8",
-        )
+    exact_eligibility_manifest, exact_eligible_indices = (
+        prepare_exact_nonself_eligibility(args, synth_labels, source_meta)
+    )
+    if exact_eligibility_manifest is not None:
         print(
-            "[setup] F005 exact eligibility: "
-            f"eligible={f005_eligibility_manifest['eligible_count']}/"
-            f"{f005_eligibility_manifest['total_count']} "
+            "[setup] exact/no-anchor eligibility: "
+            f"eligible={exact_eligibility_manifest['eligible_count']}/"
+            f"{exact_eligibility_manifest['total_count']} "
             f"sha256={args.eligibility_manifest_sha256}",
             flush=True,
         )
@@ -2160,7 +2176,7 @@ def main():
             "primary_comparison_eligible": False if args.study_scope else None,
             "eligibility_manifest_sha256": args.eligibility_manifest_sha256,
         },
-        "exact_eligibility_manifest": f005_eligibility_manifest,
+        "exact_eligibility_manifest": exact_eligibility_manifest,
         "class_trust": class_trust,
         "adaptation": {
             "n_trainable_tensors": len(trainable_params),
@@ -2245,7 +2261,7 @@ def main():
     walker = load_optional_vae_component(args.enable_vae_lhat, lambda: StratifiedPoolWalker(
         labels_one_hot=synth_labels, classes_in_scope=classes_in_scope,
         class_to_idx=SUPER5_TO_IDX, seed=args.seed,
-        eligible_indices=f005_eligible_indices,
+        eligible_indices=exact_eligible_indices,
     ))
     walker_class_sizes = walker.class_sizes() if walker is not None else {}
     print(f"[setup] walker class sizes: {walker_class_sizes}")
@@ -2375,7 +2391,7 @@ def main():
                 hull_label_new_class_cap=args.hull_label_new_class_cap,
                 store_raw_decoded=locked_mixed_view_mode,
                 pool_record_ids=source_meta.get("record_ids"),
-                study_scope=args.study_scope,
+                require_exact_nonself=exact_eligibility_manifest is not None,
             )
             if adv_signals.shape[0] == 0:
                 print(f"[ep{epoch:02d}] empty walker pick — skip epoch", flush=True)
@@ -3069,7 +3085,7 @@ def main():
         "args":               vars(args),
         "comparison_contract": final_contract,
         "mechanism_study": log.get("mechanism_study"),
-        "exact_eligibility_manifest": f005_eligibility_manifest,
+        "exact_eligibility_manifest": exact_eligibility_manifest,
         "selected_checkpoint": best_ckpt_path if matched_comparison else last_ckpt_path,
         "best_model_path": best_ckpt_path if matched_comparison else None,
         "best_epoch": best_epoch if matched_comparison else None,
