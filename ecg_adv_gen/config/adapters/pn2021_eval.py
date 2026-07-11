@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from ecg_adv_gen.run_naming import build_matched_effnet_producer_dir
+from ecg_adv_gen.run_naming import (
+    build_f005_control_producer_dir,
+    build_matched_effnet_producer_dir,
+)
+from ecg_adv_gen.f005_control import validate_f005_case
 
 from .common import argv_option_map, audit_equals, audit_require_options, opt_first, opt_list
 
@@ -14,7 +18,8 @@ def build_pn2021_eval_argv(config: Mapping[str, Any], context: Mapping[str, Any]
 
     matrix = context.get("matrix") or {}
     center = matrix.get("center")
-    arm = str(matrix.get("arm") or "")
+    case = matrix.get("case") if isinstance(matrix.get("case"), Mapping) else None
+    arm = str((case or {}).get("arm") or matrix.get("arm") or "")
     if not center:
         raise ValueError("pn2021_eval adapter requires runner.matrix.center")
     if not arm:
@@ -31,7 +36,21 @@ def build_pn2021_eval_argv(config: Mapping[str, Any], context: Mapping[str, Any]
     runtime = config.get("runtime") or {}
     experiment = config["experiment"]
 
-    model_dir = build_matched_effnet_producer_dir(config, center=str(center), arm=arm)
+    if case is not None and case.get("study_scope"):
+        variant, seed, _ = validate_f005_case(case)
+        model_dir = build_f005_control_producer_dir(
+            config, center=str(center), seed=seed, variant=variant
+        )
+        ref_exclusion_meta = [
+            f"{data['kshot_subset_root']}/{target}/k{kshot['k']}_seed{seed}/"
+            f"{target}_real_k{kshot['k']}_seed{seed}.ref_meta.json"
+            for target in paper["centers"]["target_4"]
+        ]
+        output_role = f"seed{seed}/{variant}"
+    else:
+        model_dir = build_matched_effnet_producer_dir(config, center=str(center), arm=arm)
+        ref_exclusion_meta = list(evaluation["ref_exclusion_meta"])
+        output_role = arm
     return [
         "--scheme",
         "super5",
@@ -72,9 +91,9 @@ def build_pn2021_eval_argv(config: Mapping[str, Any], context: Mapping[str, Any]
         "--min_target_ref_excluded",
         kshot["k"],
         "--exclude_ref_ids",
-        *list(evaluation["ref_exclusion_meta"]),
+        *ref_exclusion_meta,
         "--output_path",
-        f"{paths['output_root']}/{experiment['name']}/{runtime['run_id']}/{center}/{arm}/eval_result_v7_super5_sjr_rgq_refexcluded.json",
+        f"{paths['output_root']}/{experiment['name']}/{runtime['run_id']}/{center}/{output_role}/eval_result_v7_super5_sjr_rgq_refexcluded.json",
     ]
 
 
@@ -128,6 +147,16 @@ def audit_pn2021_eval_command(command: Mapping[str, Any], *, config: Mapping[str
         errors.append(f"{script}: missing --report_drop_all_zero_pn2021")
 
     ref_metas = opt_list(opts, "--exclude_ref_ids")
+    command_matrix = command.get("matrix") or {}
+    command_case = command_matrix.get("case") if isinstance(command_matrix.get("case"), Mapping) else None
+    study_variant = None
+    study_seed = None
+    if command_case is not None and command_case.get("study_scope"):
+        try:
+            study_variant, study_seed, _ = validate_f005_case(command_case)
+            expected_seed = str(study_seed)
+        except ValueError as exc:
+            errors.append(f"{script}: {exc}")
     expected_suffixes = {
         f"{center}_real_k{expected_k}_seed{expected_seed}.ref_meta.json"
         for center in target_centers
@@ -139,22 +168,33 @@ def audit_pn2021_eval_command(command: Mapping[str, Any], *, config: Mapping[str
             f"expected {sorted(expected_suffixes)!r}"
         )
 
-    matrix_center = str((command.get("matrix") or {}).get("center", ""))
-    matrix_arm = str((command.get("matrix") or {}).get("arm", ""))
+    matrix_center = str(command_matrix.get("center", ""))
+    matrix_arm = str((command_case or {}).get("arm") or command_matrix.get("arm", ""))
     if matrix_center and matrix_center not in target_centers:
         errors.append(f"{script}: unexpected matrix center {matrix_center!r}")
     if matrix_arm:
         if "--checkpoint_name" not in opts:
             errors.append(f"{script}: missing required option --checkpoint_name")
         try:
-            expected_model_dir = build_matched_effnet_producer_dir(
-                config, center=matrix_center, arm=matrix_arm
+            expected_model_dir = (
+                build_f005_control_producer_dir(
+                    config,
+                    center=matrix_center,
+                    seed=int(study_seed),
+                    variant=str(study_variant),
+                )
+                if study_variant is not None and study_seed is not None
+                else build_matched_effnet_producer_dir(
+                    config, center=matrix_center, arm=matrix_arm
+                )
             )
             audit_equals(errors, script, opts, "--model_dir", expected_model_dir)
         except ValueError as exc:
             errors.append(f"{script}: {exc}")
         audit_equals(errors, script, opts, "--checkpoint_name", "best_model.pt")
-        if f"/{matrix_arm}/" not in str(opt_first(opts, "--output_path", "")):
-            errors.append(f"{script}: output_path must include matched arm {matrix_arm!r}")
+        output_path = str(opt_first(opts, "--output_path", ""))
+        expected_role = str(study_variant) if study_variant is not None else matrix_arm
+        if f"/{expected_role}/" not in output_path:
+            errors.append(f"{script}: output_path must include role {expected_role!r}")
 
     return {"errors": errors, "warnings": warnings}

@@ -8,7 +8,10 @@ from pathlib import Path
 from typing import Any
 
 from ecg_adv_gen.evaluation.ref_exclusion import append_target_ref_exclusion_args_from_anchor_base
-from ecg_adv_gen.run_naming import build_effnet_vae_lhat_run_leaf
+from ecg_adv_gen.run_naming import (
+    build_effnet_vae_lhat_run_leaf,
+    build_f005_control_run_leaf,
+)
 from ecg_adv_gen.matched_effnet import (
     f004_identity,
     is_f004_rho_sweep,
@@ -36,7 +39,16 @@ def resolve_effnet_vae_lhat_paths(
     """Resolve wrapper output and K-shot anchor paths without touching disk."""
 
     center = str(args.center)
-    out_dir = out_root / build_effnet_vae_lhat_run_leaf(args)
+    out_dir = out_root / (
+        build_f005_control_run_leaf(
+            center,
+            int(args.seed),
+            str(args.mechanism_variant),
+            epochs=int(args.epochs),
+        )
+        if getattr(args, "study_scope", "")
+        else build_effnet_vae_lhat_run_leaf(args)
+    )
     anchor_base = (
         Path(args.anchor_base)
         if args.anchor_base
@@ -223,6 +235,11 @@ def build_effnet_vae_lhat_train_cmd(
         ]
     if getattr(args, "target_adv_fraction", None) is not None:
         train_cmd.extend(["--target_adv_fraction", str(args.target_adv_fraction)])
+    if getattr(args, "study_scope", ""):
+        train_cmd.extend([
+            "--study_scope", str(args.study_scope),
+            "--mechanism_variant", str(args.mechanism_variant),
+        ])
     if args.hull_include_anchor:
         train_cmd.append("--hull_include_anchor")
     if is_paper_matched_effnet_run(

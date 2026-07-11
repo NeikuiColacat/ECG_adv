@@ -1,0 +1,13 @@
+extends:
+  - ../experiments/pn2021c_effnet_official_s5_depth23_composite.yaml
+  - ../defaults/f005_anchor_geometry_control.yaml
+
+experiment:
+  name: f005_anchor_geometry_control_pn2021c_depth23
+  description: Official depth2+3 consumers for the isolated F005 paired control.
+
+postprocess:
+  commands: []
+
+runner:
+  name: ${experiment.name}_${matrix.center}_seed${matrix.case.seed}_${matrix.case.variant}

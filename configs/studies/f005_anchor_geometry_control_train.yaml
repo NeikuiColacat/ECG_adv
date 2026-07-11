@@ -1,0 +1,67 @@
+extends:
+  - ../defaults/effnet1dv2_v7_sjr_rgq_defaults.yaml
+  - ../defaults/effnet_matched_f005_locked.yaml
+  - ../defaults/f005_anchor_geometry_control.yaml
+
+experiment:
+  name: f005_anchor_geometry_control_train
+  description: Isolated exact/exact A5 balanced-lambda versus neighbor-only F005 control.
+
+model:
+  init_lineage:
+    stage: ptbxl_source
+    checkpoint_sha256: f7a4b05d85da8352013b67a0d56d8d47378ab2abc196d1f3a6ba8bbf15aa40ea
+    evidence_path: configs/evidence/effnet1dv2_ptbxl_source_super5_20260503.json
+
+training:
+  epochs: 30
+
+logging:
+  child_artifacts:
+    - best_model.pt
+    - last_model.pt
+    - run_config.json
+    - training_log.json
+    - train_result.json
+    - eligible_anchor_manifest.json
+    - diagnostics_epoch.jsonl
+    - checkpoints/checkpoint_latest.pt
+  required_epoch_metrics:
+    - epoch
+    - study_scope
+    - mechanism_variant
+    - eligibility_manifest_sha256
+    - primary_objective_stats
+    - target_adv_fraction_effective
+    - source_floor_passed
+    - latent_hull_diagnostics.candidate_unique_nonself_count
+    - latent_hull_diagnostics.candidate_duplicate_fraction
+    - latent_hull_diagnostics.candidate_exact_label_match_all
+    - latent_hull_diagnostics.candidate_anchor_count
+    - latent_hull_diagnostics.initial_identity_top1_weight
+    - latent_hull_diagnostics.final_identity_top1_weight
+    - latent_hull_diagnostics.initial_identity_entropy
+    - latent_hull_diagnostics.final_identity_entropy
+    - latent_hull_diagnostics.initial_effective_candidate_count
+    - latent_hull_diagnostics.final_effective_candidate_count
+
+postprocess:
+  commands: []
+
+runner:
+  entrypoint: ecg_adv_gen/runner/effnet_vae_lhat_augmix.py
+  adapter: effnet_vae_lhat
+  env:
+    ECG_ADV_GEN_DATA_ROOT: ${paths.data_root}
+    TMPDIR: ${paths.short_tmp_root}
+    XDG_CACHE_HOME: ${paths.cache_root}
+  name: ${experiment.name}_${matrix.center}_seed${matrix.case.seed}_${matrix.case.variant}
+
+data:
+  target_real_npz_suffix: .raw1000.npz
+  target_real_norm_mode: per_sample_global
+
+run_record:
+  purpose: Fixed-A5 exact/exact F005 mechanism control; not a sixth canonical arm.
+  result_summary: EVIDENCE_PENDING until preflight, paired seeds, consumers, and 20-step audits pass.
+  registration_status: provisional_launch_only

@@ -42,9 +42,14 @@ from ecg_adv_gen.evaluation import (
 )
 from ecg_adv_gen.labels import Super5MetadataError, validate_super5_metadata
 from ecg_adv_gen.run_naming import (
+    build_f005_control_run_leaf,
     build_ecgfounder_fullft_run_leaf,
     build_effnet_direct_run_leaf,
     build_effnet_vae_lhat_run_leaf,
+)
+from ecg_adv_gen.f005_control import (
+    F005_STUDY_SCOPE,
+    validate_f005_matrix_cases,
 )
 from ecg_adv_gen.matched_effnet import (
     F004_RHO_SWEEP_PROTOCOL,
@@ -547,6 +552,23 @@ def _matrix_contexts(config: dict[str, Any]) -> list[dict[str, Any]]:
     matrix = (config.get("runner") or {}).get("matrix") or {}
     if not matrix:
         return [{"matrix": {}}]
+    study = config.get("study") or {}
+    f005_matrix = study.get("scope") == F005_STUDY_SCOPE and "case" in matrix
+    if f005_matrix:
+        if "center" not in matrix:
+            raise ConfigError("F005 matrix requires center and case axes")
+        matrix = {"center": matrix["center"], "case": matrix["case"]}
+        centers = matrix.get("center") or []
+        if len(centers) != len(set(str(center) for center in centers)):
+            raise ConfigError("runner.matrix.center contains duplicate centers")
+        try:
+            validate_f005_matrix_cases(
+                matrix.get("case") or [],
+                expected_seeds=study.get("expected_seeds") or [],
+                expected_variants=study.get("expected_variants") or [],
+            )
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise ConfigError(str(exc)) from exc
     keys = list(matrix.keys())
     adapter = (config.get("runner") or {}).get("adapter")
     comparison_protocol = str((config.get("paper_protocol") or {}).get("comparison_protocol") or "")
@@ -568,17 +590,20 @@ def _matrix_contexts(config: dict[str, Any]) -> list[dict[str, Any]]:
         cases = matrix.get("case") or []
         if len(centers) != len(set(str(center) for center in centers)):
             raise ConfigError("runner.matrix.center contains duplicate centers")
-        seen_arms: set[str] = set()
-        for case in cases:
-            if not isinstance(case, dict):
-                raise ConfigError("runner.matrix.case entries must be mappings")
-            try:
-                arm, _ = validate_matched_effnet_case(case)
-            except ValueError as exc:
-                raise ConfigError(str(exc)) from exc
-            if arm in seen_arms:
-                raise ConfigError(f"runner.matrix.case contains duplicate arm {arm!r}")
-            seen_arms.add(arm)
+        if f005_matrix:
+            pass
+        else:
+            seen_arms: set[str] = set()
+            for case in cases:
+                if not isinstance(case, dict):
+                    raise ConfigError("runner.matrix.case entries must be mappings")
+                try:
+                    arm, _ = validate_matched_effnet_case(case)
+                except ValueError as exc:
+                    raise ConfigError(str(exc)) from exc
+                if arm in seen_arms:
+                    raise ConfigError(f"runner.matrix.case contains duplicate arm {arm!r}")
+                seen_arms.add(arm)
     elif adapter == "effnet_vae_lhat" and any(
         key in matrix for key in ("arm", "comparison_arm", "target_adv_fraction", "rho")
     ):
@@ -1067,7 +1092,16 @@ def _direct_child_run(opts: dict[str, Any], center: str) -> dict[str, Any]:
 
 def _vae_child_run(opts: dict[str, Any], center: str) -> dict[str, Any]:
     out_root = Path(str(_opt_first(opts, "--out_root", "")))
-    child_dir = out_root / build_effnet_vae_lhat_run_leaf(
+    study_scope = str(_opt_first(opts, "--study_scope", ""))
+    child_leaf = (
+        build_f005_control_run_leaf(
+            center,
+            int(_opt_first(opts, "--seed", "20260531")),
+            str(_opt_first(opts, "--mechanism_variant", "")),
+            epochs=int(_opt_first(opts, "--epochs", "30")),
+        )
+        if study_scope == F005_STUDY_SCOPE
+        else build_effnet_vae_lhat_run_leaf(
         {
             "center": center,
             "comparison_arm": _opt_first(opts, "--comparison_arm", "historical_unmatched"),
@@ -1098,7 +1132,9 @@ def _vae_child_run(opts: dict[str, Any], center: str) -> dict[str, Any]:
             "seed": _opt_first(opts, "--seed", "20260531"),
             "epochs": _opt_first(opts, "--epochs", "30"),
         }
+        )
     )
+    child_dir = out_root / child_leaf
     checkpoint_role = (
         "best_model"
         if is_paper_matched_effnet_run(

@@ -1,0 +1,23 @@
+extends: f005_anchor_geometry_control_train.yaml
+
+experiment:
+  name: f005_anchor_geometry_control_smoke
+  description: Ningbo seed20260601 two-variant two-epoch F005 runtime smoke only.
+
+study:
+  expected_seeds: [20260601]
+
+training:
+  epochs: 2
+
+runner:
+  matrix:
+    center: [ningbo]
+    case:
+      - {arm: a5, role: vae_lhat_threechain_full, vae_lhat: true, raw_augmix: true, augmix_view_bce: true, jsd: true, rho: 0.5, third_chain_route: vae_lhat_adversarial_waveform, study_scope: f005_anchor_geometry_control, base_topology: a5, variant: balanced_l060, seed: 20260601, primary_comparison_eligible: false}
+      - {arm: a5, role: vae_lhat_threechain_full, vae_lhat: true, raw_augmix: true, augmix_view_bce: true, jsd: true, rho: 0.5, third_chain_route: vae_lhat_adversarial_waveform, study_scope: f005_anchor_geometry_control, base_topology: a5, variant: neighbor_only_l100, seed: 20260601, primary_comparison_eligible: false}
+
+run_record:
+  purpose: Runtime go/no-go only; cannot close F005 or select a paper recipe.
+  result_summary: EVIDENCE_PENDING
+  registration_status: provisional_launch_only

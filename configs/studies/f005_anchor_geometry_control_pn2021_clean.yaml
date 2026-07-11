@@ -1,0 +1,13 @@
+extends:
+  - ../experiments/pn2021_eval_v7_sjr_rgq_refexcluded.yaml
+  - ../defaults/f005_anchor_geometry_control.yaml
+
+experiment:
+  name: f005_anchor_geometry_control_pn2021_clean
+  description: Ref-excluded clean PN2021 consumers for the isolated F005 paired control.
+
+postprocess:
+  commands: []
+
+runner:
+  name: ${experiment.name}_${matrix.center}_seed${matrix.case.seed}_${matrix.case.variant}

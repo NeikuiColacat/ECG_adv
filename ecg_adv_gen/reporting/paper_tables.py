@@ -320,6 +320,21 @@ def export_paper_table(
     if not view or not str(view).strip():
         raise PaperTableError("view must be explicitly specified")
     rows = _read_metrics(metrics_long)
+    study_scopes = sorted({
+        str(row.get("study_scope") or "").strip()
+        for row in rows
+        if str(row.get("study_scope") or "").strip()
+    })
+    has_f005_path_identity = any(
+        "f005_anchor_geometry_control" in str(row.get(field) or "")
+        for row in rows
+        for field in ("run_id", "source_file")
+    )
+    if study_scopes or has_f005_path_identity:
+        raise PaperTableError(
+            "Ordinary paper tables reject mechanism-study rows; use the dedicated "
+            f"paired control bundle instead: {study_scopes}"
+        )
     filtered = _filter_rows(rows, dataset=dataset, view=view)
     comparison_identities = _comparison_identity_by_run(filtered)
     mapping_version, mapping_hash, class_order = _validate_single_mapping(

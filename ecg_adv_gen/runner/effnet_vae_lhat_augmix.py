@@ -54,6 +54,7 @@ from ecg_adv_gen.matched_effnet import (  # noqa: E402
     validate_f004_runtime,
     validate_matched_effnet_runtime,
 )
+from ecg_adv_gen.f005_control import validate_f005_runtime  # noqa: E402
 
 CLASS_NAMES = list(CLASS_NAMES_SUPER5)
 
@@ -74,6 +75,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--comparison_variant", default="")
     ap.add_argument("--comparison_topology_version", default="")
     ap.add_argument("--comparison_topology_sha256", default="")
+    ap.add_argument("--study_scope", default="")
+    ap.add_argument("--mechanism_variant", default="")
     ap.add_argument("--epochs", type=int, default=30)
     ap.add_argument("--seed", type=int, default=20260524)
     ap.add_argument("--device", default="cuda:0")
@@ -345,6 +348,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             )
         except (TypeError, ValueError) as exc:
             ap.error(str(exc))
+    try:
+        validate_f005_runtime(
+            study_scope=args.study_scope,
+            mechanism_variant=args.mechanism_variant,
+            comparison_arm=args.comparison_arm,
+            hull_lambda=args.hull_lambda,
+            hull_label_mode=args.hull_label_mode,
+            hull_include_anchor=args.hull_include_anchor,
+        )
+    except ValueError as exc:
+        ap.error(str(exc))
     return args
 
 

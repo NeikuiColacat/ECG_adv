@@ -1,0 +1,30 @@
+study:
+  scope: f005_anchor_geometry_control
+  base_topology: a5
+  expected_seeds: [20260531, 20260601, 20260611]
+  expected_variants: [balanced_l060, neighbor_only_l100]
+  primary_comparison_eligible: false
+  evidence_status: EVIDENCE_PENDING
+
+f005_producer:
+  experiment_name: f005_anchor_geometry_control_train
+  epochs: 30
+
+data:
+  kshot_subset_root: ${paths.data_root}/paper_matched_effnet_k500_v7_fixedk_three_seed_20260711/subsets
+
+adaptation:
+  hull:
+    label_mode: exact
+    include_anchor: false
+
+runner:
+  matrix:
+    center: ${paper_protocol.centers.target_4}
+    case:
+      - {arm: a5, role: vae_lhat_threechain_full, vae_lhat: true, raw_augmix: true, augmix_view_bce: true, jsd: true, rho: 0.5, third_chain_route: vae_lhat_adversarial_waveform, study_scope: f005_anchor_geometry_control, base_topology: a5, variant: balanced_l060, seed: 20260531, primary_comparison_eligible: false}
+      - {arm: a5, role: vae_lhat_threechain_full, vae_lhat: true, raw_augmix: true, augmix_view_bce: true, jsd: true, rho: 0.5, third_chain_route: vae_lhat_adversarial_waveform, study_scope: f005_anchor_geometry_control, base_topology: a5, variant: neighbor_only_l100, seed: 20260531, primary_comparison_eligible: false}
+      - {arm: a5, role: vae_lhat_threechain_full, vae_lhat: true, raw_augmix: true, augmix_view_bce: true, jsd: true, rho: 0.5, third_chain_route: vae_lhat_adversarial_waveform, study_scope: f005_anchor_geometry_control, base_topology: a5, variant: balanced_l060, seed: 20260601, primary_comparison_eligible: false}
+      - {arm: a5, role: vae_lhat_threechain_full, vae_lhat: true, raw_augmix: true, augmix_view_bce: true, jsd: true, rho: 0.5, third_chain_route: vae_lhat_adversarial_waveform, study_scope: f005_anchor_geometry_control, base_topology: a5, variant: neighbor_only_l100, seed: 20260601, primary_comparison_eligible: false}
+      - {arm: a5, role: vae_lhat_threechain_full, vae_lhat: true, raw_augmix: true, augmix_view_bce: true, jsd: true, rho: 0.5, third_chain_route: vae_lhat_adversarial_waveform, study_scope: f005_anchor_geometry_control, base_topology: a5, variant: balanced_l060, seed: 20260611, primary_comparison_eligible: false}
+      - {arm: a5, role: vae_lhat_threechain_full, vae_lhat: true, raw_augmix: true, augmix_view_bce: true, jsd: true, rho: 0.5, third_chain_route: vae_lhat_adversarial_waveform, study_scope: f005_anchor_geometry_control, base_topology: a5, variant: neighbor_only_l100, seed: 20260611, primary_comparison_eligible: false}

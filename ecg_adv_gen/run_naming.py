@@ -202,6 +202,32 @@ def build_effnet_vae_lhat_run_leaf(params: Any) -> str:
     )
 
 
+def build_f005_control_run_leaf(
+    center: str, seed: int, variant: str, *, epochs: int
+) -> str:
+    """Delegate the orthogonal F005 identity without expanding canonical arms."""
+    from ecg_adv_gen.f005_control import build_f005_control_run_leaf as _build
+
+    return _build(center, seed, variant, epochs=epochs)
+
+
+def build_f005_control_producer_dir(
+    config: Mapping[str, Any], *, center: str, seed: int, variant: str
+) -> str:
+    """Derive one exact F005 producer directory for all evaluation consumers."""
+    producer = config["f005_producer"]
+    leaf = build_f005_control_run_leaf(
+        center,
+        int(seed),
+        variant,
+        epochs=int(producer.get("epochs", config["training"]["epochs"])),
+    )
+    return (
+        f"{config['paths']['output_root']}/{producer['experiment_name']}/"
+        f"{config.get('runtime', {}).get('run_id', '')}/{leaf}"
+    )
+
+
 def build_matched_effnet_producer_dir(
     config: Mapping[str, Any], *, center: str, arm: str
 ) -> str:

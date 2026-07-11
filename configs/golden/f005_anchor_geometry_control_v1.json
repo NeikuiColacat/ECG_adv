@@ -1,0 +1,933 @@
+{
+  "command_counts": {
+    "clean": 24,
+    "depth23": 24,
+    "s5": 24,
+    "smoke": 2,
+    "train": 24
+  },
+  "config_digests": {
+    "clean": {
+      "path": "configs/studies/f005_anchor_geometry_control_pn2021_clean.yaml",
+      "sha256": "e31d39f01aaeb76cff1ff24c7b3a85da19eb76c79bf7ca6ee91af88e6c926cc1"
+    },
+    "depth23": {
+      "path": "configs/studies/f005_anchor_geometry_control_pn2021c_depth23.yaml",
+      "sha256": "d6983362118f99615bfc6b651582f696a4dcc00d1806aab0df8cbbd4e16a2eed"
+    },
+    "s5": {
+      "path": "configs/studies/f005_anchor_geometry_control_pn2021c_s5.yaml",
+      "sha256": "6053d0d8f600e57adc01b3977abe14db1009875fa01cecd9b92756c3ce67c75a"
+    },
+    "smoke": {
+      "path": "configs/studies/f005_anchor_geometry_control_smoke.yaml",
+      "sha256": "b2d7d9ce716c6a472a9b0e392544cb8abc29bbda6696d00a6fb6070c478820c6"
+    },
+    "train": {
+      "path": "configs/studies/f005_anchor_geometry_control_train.yaml",
+      "sha256": "255784f4a40b265f62b8fc02e6f1777411deece819985c07688556a4c3f9b2aa"
+    }
+  },
+  "primary_comparison_eligible": false,
+  "run_id": "F005_ANCHOR_GEOMETRY_CONTROL_V1",
+  "schema_version": 1,
+  "stages": {
+    "clean": [
+      {
+        "center": "ningbo",
+        "command_name": "f005_anchor_geometry_control_pn2021_clean_ningbo_seed20260531_balanced_l060",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_ningbo_a5_balanced_l060_lam0p6_exact_noanchor_ep30_seed20260531",
+        "normalized_argv_sha256": "44c7f3757091ad8cab59e607cacfeb20fe91714da89a2a615d564a8e13cfe805",
+        "seed": 20260531,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "ningbo",
+        "command_name": "f005_anchor_geometry_control_pn2021_clean_ningbo_seed20260531_neighbor_only_l100",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_ningbo_a5_neighbor_only_l100_lam1_exact_noanchor_ep30_seed20260531",
+        "normalized_argv_sha256": "070edcad8d89e59ac13bb78f61756d2e8ddd59ebe2750e662446cdb6784c084a",
+        "seed": 20260531,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "ningbo",
+        "command_name": "f005_anchor_geometry_control_pn2021_clean_ningbo_seed20260601_balanced_l060",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_ningbo_a5_balanced_l060_lam0p6_exact_noanchor_ep30_seed20260601",
+        "normalized_argv_sha256": "ad7576fe6e7e0e67dbfac37895b13d4dac878cfbe98e4e444d3cb1d0b2d7764b",
+        "seed": 20260601,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "ningbo",
+        "command_name": "f005_anchor_geometry_control_pn2021_clean_ningbo_seed20260601_neighbor_only_l100",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_ningbo_a5_neighbor_only_l100_lam1_exact_noanchor_ep30_seed20260601",
+        "normalized_argv_sha256": "0d0de7aefcb80316211fdebf23c1df8e54d288dbaeeb78dc1f0fee774275d8d1",
+        "seed": 20260601,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "ningbo",
+        "command_name": "f005_anchor_geometry_control_pn2021_clean_ningbo_seed20260611_balanced_l060",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_ningbo_a5_balanced_l060_lam0p6_exact_noanchor_ep30_seed20260611",
+        "normalized_argv_sha256": "7ad8f6a349ff966f1169172290a22e38d7433fac9c7ed8d80bc9a1a826671993",
+        "seed": 20260611,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "ningbo",
+        "command_name": "f005_anchor_geometry_control_pn2021_clean_ningbo_seed20260611_neighbor_only_l100",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_ningbo_a5_neighbor_only_l100_lam1_exact_noanchor_ep30_seed20260611",
+        "normalized_argv_sha256": "e55bbc4750f65cedf2a8383d84f2d1b59faf43e5372e08dfa744f42aac608254",
+        "seed": 20260611,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "chapman_shaoxing",
+        "command_name": "f005_anchor_geometry_control_pn2021_clean_chapman_shaoxing_seed20260531_balanced_l060",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_chapman_shaoxing_a5_balanced_l060_lam0p6_exact_noanchor_ep30_seed20260531",
+        "normalized_argv_sha256": "80705ddfd4e1f8afce6eae7ceb5a62071763054b8186b95f6247d3fc5418bb30",
+        "seed": 20260531,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "chapman_shaoxing",
+        "command_name": "f005_anchor_geometry_control_pn2021_clean_chapman_shaoxing_seed20260531_neighbor_only_l100",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_chapman_shaoxing_a5_neighbor_only_l100_lam1_exact_noanchor_ep30_seed20260531",
+        "normalized_argv_sha256": "8259dd94ea22b28a7c26b2801cc287941847b6eddce37fee132b29415a566507",
+        "seed": 20260531,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "chapman_shaoxing",
+        "command_name": "f005_anchor_geometry_control_pn2021_clean_chapman_shaoxing_seed20260601_balanced_l060",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_chapman_shaoxing_a5_balanced_l060_lam0p6_exact_noanchor_ep30_seed20260601",
+        "normalized_argv_sha256": "3fccdd4f2aed8c864928c1ea3853b8229c791720276c13b7ac2d15eeddcbd36d",
+        "seed": 20260601,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "chapman_shaoxing",
+        "command_name": "f005_anchor_geometry_control_pn2021_clean_chapman_shaoxing_seed20260601_neighbor_only_l100",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_chapman_shaoxing_a5_neighbor_only_l100_lam1_exact_noanchor_ep30_seed20260601",
+        "normalized_argv_sha256": "85ea9b0cd56a0fc49af00102dbe7f3b5c053e38de8bc92772682b40d8bfa896a",
+        "seed": 20260601,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "chapman_shaoxing",
+        "command_name": "f005_anchor_geometry_control_pn2021_clean_chapman_shaoxing_seed20260611_balanced_l060",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_chapman_shaoxing_a5_balanced_l060_lam0p6_exact_noanchor_ep30_seed20260611",
+        "normalized_argv_sha256": "23b48979a0aca28a918a3a0688155d68bf97d4ba3dbdfc92470477b6e431bee7",
+        "seed": 20260611,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "chapman_shaoxing",
+        "command_name": "f005_anchor_geometry_control_pn2021_clean_chapman_shaoxing_seed20260611_neighbor_only_l100",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_chapman_shaoxing_a5_neighbor_only_l100_lam1_exact_noanchor_ep30_seed20260611",
+        "normalized_argv_sha256": "f45cf9d163c5f7f129004d4655ac2b7a283594bfb8ec23e5f899f0b833e07501",
+        "seed": 20260611,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "cpsc_2018",
+        "command_name": "f005_anchor_geometry_control_pn2021_clean_cpsc_2018_seed20260531_balanced_l060",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_cpsc_2018_a5_balanced_l060_lam0p6_exact_noanchor_ep30_seed20260531",
+        "normalized_argv_sha256": "80d341599e887bd051d2434fb49325078e799a7222eb018dce6ea153039c96a0",
+        "seed": 20260531,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "cpsc_2018",
+        "command_name": "f005_anchor_geometry_control_pn2021_clean_cpsc_2018_seed20260531_neighbor_only_l100",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_cpsc_2018_a5_neighbor_only_l100_lam1_exact_noanchor_ep30_seed20260531",
+        "normalized_argv_sha256": "4f35aa4ff9c802a7d86f69a2ec9ff2dca7157fd5fb5c73c4ac8f0afa1fae3cc0",
+        "seed": 20260531,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "cpsc_2018",
+        "command_name": "f005_anchor_geometry_control_pn2021_clean_cpsc_2018_seed20260601_balanced_l060",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_cpsc_2018_a5_balanced_l060_lam0p6_exact_noanchor_ep30_seed20260601",
+        "normalized_argv_sha256": "786cf83f4f55118f9e08106230e8223a73506c5d67e7385baff5467246695af3",
+        "seed": 20260601,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "cpsc_2018",
+        "command_name": "f005_anchor_geometry_control_pn2021_clean_cpsc_2018_seed20260601_neighbor_only_l100",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_cpsc_2018_a5_neighbor_only_l100_lam1_exact_noanchor_ep30_seed20260601",
+        "normalized_argv_sha256": "e7c593c49f6e87c9c1978172191f84f6bfdd3eca4b7b7a7945a5c81d6d4b5f4d",
+        "seed": 20260601,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "cpsc_2018",
+        "command_name": "f005_anchor_geometry_control_pn2021_clean_cpsc_2018_seed20260611_balanced_l060",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_cpsc_2018_a5_balanced_l060_lam0p6_exact_noanchor_ep30_seed20260611",
+        "normalized_argv_sha256": "f8e3bba154c53e11ffa8655cbbecbbc140844d8753d84e0cd510a2c11ee5afca",
+        "seed": 20260611,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "cpsc_2018",
+        "command_name": "f005_anchor_geometry_control_pn2021_clean_cpsc_2018_seed20260611_neighbor_only_l100",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_cpsc_2018_a5_neighbor_only_l100_lam1_exact_noanchor_ep30_seed20260611",
+        "normalized_argv_sha256": "df7a8e091e582b7c2fb67839d2387ea684848e2758ff1990a9de51db89f41ed4",
+        "seed": 20260611,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "georgia",
+        "command_name": "f005_anchor_geometry_control_pn2021_clean_georgia_seed20260531_balanced_l060",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_georgia_a5_balanced_l060_lam0p6_exact_noanchor_ep30_seed20260531",
+        "normalized_argv_sha256": "61e4a52a96f386fa84e834b9dd5feda91fca022e9b3bd20bef3383e6e912e1aa",
+        "seed": 20260531,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "georgia",
+        "command_name": "f005_anchor_geometry_control_pn2021_clean_georgia_seed20260531_neighbor_only_l100",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_georgia_a5_neighbor_only_l100_lam1_exact_noanchor_ep30_seed20260531",
+        "normalized_argv_sha256": "56ef979b82633fb15087ee9966cb4ace7d70214ea08d1e21d59a0a3bb2abedc7",
+        "seed": 20260531,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "georgia",
+        "command_name": "f005_anchor_geometry_control_pn2021_clean_georgia_seed20260601_balanced_l060",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_georgia_a5_balanced_l060_lam0p6_exact_noanchor_ep30_seed20260601",
+        "normalized_argv_sha256": "1d175e00fce1990f848a06c4204b45af8b839cc3fa477c87846f25710d76e716",
+        "seed": 20260601,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "georgia",
+        "command_name": "f005_anchor_geometry_control_pn2021_clean_georgia_seed20260601_neighbor_only_l100",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_georgia_a5_neighbor_only_l100_lam1_exact_noanchor_ep30_seed20260601",
+        "normalized_argv_sha256": "c1499e7578513c806884436836a922f6346d05e602ec9902922f3612634008fe",
+        "seed": 20260601,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "georgia",
+        "command_name": "f005_anchor_geometry_control_pn2021_clean_georgia_seed20260611_balanced_l060",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_georgia_a5_balanced_l060_lam0p6_exact_noanchor_ep30_seed20260611",
+        "normalized_argv_sha256": "0aa921cbdb49956cd8fd7a0c7e6309cb8f1a5e99a697c453f91fc2afaa55c275",
+        "seed": 20260611,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "georgia",
+        "command_name": "f005_anchor_geometry_control_pn2021_clean_georgia_seed20260611_neighbor_only_l100",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_georgia_a5_neighbor_only_l100_lam1_exact_noanchor_ep30_seed20260611",
+        "normalized_argv_sha256": "842e49fe0d0916892c842bbb23285897b6a8a69d0f77973da182b8129580bfc7",
+        "seed": 20260611,
+        "variant": "neighbor_only_l100"
+      }
+    ],
+    "depth23": [
+      {
+        "center": "ningbo",
+        "command_name": "f005_anchor_geometry_control_pn2021c_depth23_ningbo_seed20260531_balanced_l060",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_ningbo_a5_balanced_l060_lam0p6_exact_noanchor_ep30_seed20260531",
+        "normalized_argv_sha256": "dd963896b832b4d3e5736a76f4412d60197ac4dc87b43d90345d3a184e3f042e",
+        "seed": 20260531,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "ningbo",
+        "command_name": "f005_anchor_geometry_control_pn2021c_depth23_ningbo_seed20260531_neighbor_only_l100",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_ningbo_a5_neighbor_only_l100_lam1_exact_noanchor_ep30_seed20260531",
+        "normalized_argv_sha256": "ac3f0e2e260f021c2244cca7ee3c499c3e201300b1fb4e6385a6c3daa5935c54",
+        "seed": 20260531,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "ningbo",
+        "command_name": "f005_anchor_geometry_control_pn2021c_depth23_ningbo_seed20260601_balanced_l060",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_ningbo_a5_balanced_l060_lam0p6_exact_noanchor_ep30_seed20260601",
+        "normalized_argv_sha256": "5a53a674289d98ff4377408915edf860f5903ec3889953469f6d02a5881025e4",
+        "seed": 20260601,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "ningbo",
+        "command_name": "f005_anchor_geometry_control_pn2021c_depth23_ningbo_seed20260601_neighbor_only_l100",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_ningbo_a5_neighbor_only_l100_lam1_exact_noanchor_ep30_seed20260601",
+        "normalized_argv_sha256": "30a91e7ee63853f74377bf0959aa6ebe2399c7fc3bd0f367fcfa8ceb4f0a0c4f",
+        "seed": 20260601,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "ningbo",
+        "command_name": "f005_anchor_geometry_control_pn2021c_depth23_ningbo_seed20260611_balanced_l060",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_ningbo_a5_balanced_l060_lam0p6_exact_noanchor_ep30_seed20260611",
+        "normalized_argv_sha256": "c22a655a8170569c1509d0a8fc97802bf1c40de222a095243892c19b4ea1c76f",
+        "seed": 20260611,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "ningbo",
+        "command_name": "f005_anchor_geometry_control_pn2021c_depth23_ningbo_seed20260611_neighbor_only_l100",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_ningbo_a5_neighbor_only_l100_lam1_exact_noanchor_ep30_seed20260611",
+        "normalized_argv_sha256": "50bfa3ddd0440845873ad95ef561439f0f43ea7c8f9f752700a046794dc09677",
+        "seed": 20260611,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "chapman_shaoxing",
+        "command_name": "f005_anchor_geometry_control_pn2021c_depth23_chapman_shaoxing_seed20260531_balanced_l060",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_chapman_shaoxing_a5_balanced_l060_lam0p6_exact_noanchor_ep30_seed20260531",
+        "normalized_argv_sha256": "382831f7c0d7b898ab317cb1cd7508d65d46a521bf63316d621d33d16419201e",
+        "seed": 20260531,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "chapman_shaoxing",
+        "command_name": "f005_anchor_geometry_control_pn2021c_depth23_chapman_shaoxing_seed20260531_neighbor_only_l100",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_chapman_shaoxing_a5_neighbor_only_l100_lam1_exact_noanchor_ep30_seed20260531",
+        "normalized_argv_sha256": "2fa325955feaed74207c76657116f00d8c4af7f0d481be721144a20b4686f3a1",
+        "seed": 20260531,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "chapman_shaoxing",
+        "command_name": "f005_anchor_geometry_control_pn2021c_depth23_chapman_shaoxing_seed20260601_balanced_l060",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_chapman_shaoxing_a5_balanced_l060_lam0p6_exact_noanchor_ep30_seed20260601",
+        "normalized_argv_sha256": "db2bc7f2a272de1dd002353e551189f526d7db0810bfe6af03a0e627862ca49e",
+        "seed": 20260601,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "chapman_shaoxing",
+        "command_name": "f005_anchor_geometry_control_pn2021c_depth23_chapman_shaoxing_seed20260601_neighbor_only_l100",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_chapman_shaoxing_a5_neighbor_only_l100_lam1_exact_noanchor_ep30_seed20260601",
+        "normalized_argv_sha256": "adf4cc761340bd95b92ab4e1fad5c4598d745c8274b485fd48adeed21e4bc165",
+        "seed": 20260601,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "chapman_shaoxing",
+        "command_name": "f005_anchor_geometry_control_pn2021c_depth23_chapman_shaoxing_seed20260611_balanced_l060",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_chapman_shaoxing_a5_balanced_l060_lam0p6_exact_noanchor_ep30_seed20260611",
+        "normalized_argv_sha256": "d93c2b255771028553edb3ce5b968cd887d69ca670426a7d7d810ba9fcc14281",
+        "seed": 20260611,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "chapman_shaoxing",
+        "command_name": "f005_anchor_geometry_control_pn2021c_depth23_chapman_shaoxing_seed20260611_neighbor_only_l100",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_chapman_shaoxing_a5_neighbor_only_l100_lam1_exact_noanchor_ep30_seed20260611",
+        "normalized_argv_sha256": "761a4f853f77747c346cc62e262cb8fdc6fbe98def5fefe0489ba8a27456a0e4",
+        "seed": 20260611,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "cpsc_2018",
+        "command_name": "f005_anchor_geometry_control_pn2021c_depth23_cpsc_2018_seed20260531_balanced_l060",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_cpsc_2018_a5_balanced_l060_lam0p6_exact_noanchor_ep30_seed20260531",
+        "normalized_argv_sha256": "d0300406747cd3c8cebef93803458bb4a99afe64d53d8a9b0892f95bc8e84144",
+        "seed": 20260531,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "cpsc_2018",
+        "command_name": "f005_anchor_geometry_control_pn2021c_depth23_cpsc_2018_seed20260531_neighbor_only_l100",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_cpsc_2018_a5_neighbor_only_l100_lam1_exact_noanchor_ep30_seed20260531",
+        "normalized_argv_sha256": "26c2e6ee61167a5417a46e9fcb1a6413731e82f39f8ff8e54c5f7aa82bed8c3a",
+        "seed": 20260531,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "cpsc_2018",
+        "command_name": "f005_anchor_geometry_control_pn2021c_depth23_cpsc_2018_seed20260601_balanced_l060",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_cpsc_2018_a5_balanced_l060_lam0p6_exact_noanchor_ep30_seed20260601",
+        "normalized_argv_sha256": "3498244f0d3d8e37904e0b3d4c39d6ea86db44837f4e5c5eab93ebc680ce8b4a",
+        "seed": 20260601,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "cpsc_2018",
+        "command_name": "f005_anchor_geometry_control_pn2021c_depth23_cpsc_2018_seed20260601_neighbor_only_l100",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_cpsc_2018_a5_neighbor_only_l100_lam1_exact_noanchor_ep30_seed20260601",
+        "normalized_argv_sha256": "aa5e3c2db2405c92a48f9c29a1a359ec554dca452c3dc74d730b640bb83875be",
+        "seed": 20260601,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "cpsc_2018",
+        "command_name": "f005_anchor_geometry_control_pn2021c_depth23_cpsc_2018_seed20260611_balanced_l060",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_cpsc_2018_a5_balanced_l060_lam0p6_exact_noanchor_ep30_seed20260611",
+        "normalized_argv_sha256": "6e207c98e37209046b7401c828682ed7c93937ead918e3f07194ed9e6e2dcd4d",
+        "seed": 20260611,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "cpsc_2018",
+        "command_name": "f005_anchor_geometry_control_pn2021c_depth23_cpsc_2018_seed20260611_neighbor_only_l100",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_cpsc_2018_a5_neighbor_only_l100_lam1_exact_noanchor_ep30_seed20260611",
+        "normalized_argv_sha256": "f90164a371698efc520d8be5e4621c56818795067ca7890e6bb4673a5627fbfb",
+        "seed": 20260611,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "georgia",
+        "command_name": "f005_anchor_geometry_control_pn2021c_depth23_georgia_seed20260531_balanced_l060",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_georgia_a5_balanced_l060_lam0p6_exact_noanchor_ep30_seed20260531",
+        "normalized_argv_sha256": "666e0946fc1d8d1250313f9f4eb6c000b6f4652ae6a5f68a3c4a08a52c95c53a",
+        "seed": 20260531,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "georgia",
+        "command_name": "f005_anchor_geometry_control_pn2021c_depth23_georgia_seed20260531_neighbor_only_l100",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_georgia_a5_neighbor_only_l100_lam1_exact_noanchor_ep30_seed20260531",
+        "normalized_argv_sha256": "6ac72309532ccb8eacef960f3008dd2bb17cf3536c282bf47209978562f5eb68",
+        "seed": 20260531,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "georgia",
+        "command_name": "f005_anchor_geometry_control_pn2021c_depth23_georgia_seed20260601_balanced_l060",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_georgia_a5_balanced_l060_lam0p6_exact_noanchor_ep30_seed20260601",
+        "normalized_argv_sha256": "49855f873454e2de454a89376613eefb3a4633055dd8a8c6dbd0525026735a39",
+        "seed": 20260601,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "georgia",
+        "command_name": "f005_anchor_geometry_control_pn2021c_depth23_georgia_seed20260601_neighbor_only_l100",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_georgia_a5_neighbor_only_l100_lam1_exact_noanchor_ep30_seed20260601",
+        "normalized_argv_sha256": "b7cf53e6de005cbb5f9e74e2dcc022158b8dcb25c5f2259a4c0f0a16ef51933c",
+        "seed": 20260601,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "georgia",
+        "command_name": "f005_anchor_geometry_control_pn2021c_depth23_georgia_seed20260611_balanced_l060",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_georgia_a5_balanced_l060_lam0p6_exact_noanchor_ep30_seed20260611",
+        "normalized_argv_sha256": "76c1248b58f34aac5dbe5d02de0a423f46fc78546589840b9f9cc7956c5dc420",
+        "seed": 20260611,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "georgia",
+        "command_name": "f005_anchor_geometry_control_pn2021c_depth23_georgia_seed20260611_neighbor_only_l100",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_georgia_a5_neighbor_only_l100_lam1_exact_noanchor_ep30_seed20260611",
+        "normalized_argv_sha256": "0323c35f39353e493865506df3ccd5093ca5b2dac93608f387e7465626d83e1a",
+        "seed": 20260611,
+        "variant": "neighbor_only_l100"
+      }
+    ],
+    "s5": [
+      {
+        "center": "ningbo",
+        "command_name": "f005_anchor_geometry_control_pn2021c_s5_ningbo_seed20260531_balanced_l060",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_ningbo_a5_balanced_l060_lam0p6_exact_noanchor_ep30_seed20260531",
+        "normalized_argv_sha256": "20620521e9b7de9e589ed50f688c8fca36428f14b1b65979a86a108fb3decf54",
+        "seed": 20260531,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "ningbo",
+        "command_name": "f005_anchor_geometry_control_pn2021c_s5_ningbo_seed20260531_neighbor_only_l100",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_ningbo_a5_neighbor_only_l100_lam1_exact_noanchor_ep30_seed20260531",
+        "normalized_argv_sha256": "71af5a29cbfd05faf495795fb344cc3b813e5df4cc5b6908ea11005ce82c6989",
+        "seed": 20260531,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "ningbo",
+        "command_name": "f005_anchor_geometry_control_pn2021c_s5_ningbo_seed20260601_balanced_l060",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_ningbo_a5_balanced_l060_lam0p6_exact_noanchor_ep30_seed20260601",
+        "normalized_argv_sha256": "4181652e044e9bd835a717bf205e8c0bc4b53d8c7e33da4290087fe87d2c3717",
+        "seed": 20260601,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "ningbo",
+        "command_name": "f005_anchor_geometry_control_pn2021c_s5_ningbo_seed20260601_neighbor_only_l100",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_ningbo_a5_neighbor_only_l100_lam1_exact_noanchor_ep30_seed20260601",
+        "normalized_argv_sha256": "e80b185f778e671f794cddc0ba71351f87c18eff5b265a2960b8afd608ac57c7",
+        "seed": 20260601,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "ningbo",
+        "command_name": "f005_anchor_geometry_control_pn2021c_s5_ningbo_seed20260611_balanced_l060",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_ningbo_a5_balanced_l060_lam0p6_exact_noanchor_ep30_seed20260611",
+        "normalized_argv_sha256": "e14b6ded56a59c8d4767f1eeb0b8e595f6aee46dc9c20d46affd98459a4170cf",
+        "seed": 20260611,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "ningbo",
+        "command_name": "f005_anchor_geometry_control_pn2021c_s5_ningbo_seed20260611_neighbor_only_l100",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_ningbo_a5_neighbor_only_l100_lam1_exact_noanchor_ep30_seed20260611",
+        "normalized_argv_sha256": "675e84f2f446021145121a38375c31b6acdd525e4384409c95476ddbebdc7d3b",
+        "seed": 20260611,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "chapman_shaoxing",
+        "command_name": "f005_anchor_geometry_control_pn2021c_s5_chapman_shaoxing_seed20260531_balanced_l060",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_chapman_shaoxing_a5_balanced_l060_lam0p6_exact_noanchor_ep30_seed20260531",
+        "normalized_argv_sha256": "b79c50ffd4e9402766ae5846e8aa24915848c4973f193290f686047488c63ffe",
+        "seed": 20260531,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "chapman_shaoxing",
+        "command_name": "f005_anchor_geometry_control_pn2021c_s5_chapman_shaoxing_seed20260531_neighbor_only_l100",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_chapman_shaoxing_a5_neighbor_only_l100_lam1_exact_noanchor_ep30_seed20260531",
+        "normalized_argv_sha256": "dfa45d5adce8e3ebad2ce68f5014c8cb494a2cab36a4f5a876ef2f8b7b520fef",
+        "seed": 20260531,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "chapman_shaoxing",
+        "command_name": "f005_anchor_geometry_control_pn2021c_s5_chapman_shaoxing_seed20260601_balanced_l060",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_chapman_shaoxing_a5_balanced_l060_lam0p6_exact_noanchor_ep30_seed20260601",
+        "normalized_argv_sha256": "67dab4574f4911c7fc7c29ee971537bfac00b1d07b8a2aaa148e96f1595db91d",
+        "seed": 20260601,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "chapman_shaoxing",
+        "command_name": "f005_anchor_geometry_control_pn2021c_s5_chapman_shaoxing_seed20260601_neighbor_only_l100",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_chapman_shaoxing_a5_neighbor_only_l100_lam1_exact_noanchor_ep30_seed20260601",
+        "normalized_argv_sha256": "659f8c881df07623f82bbf39e93ed529c72f7c12a499b60d66f7b4f6bb853007",
+        "seed": 20260601,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "chapman_shaoxing",
+        "command_name": "f005_anchor_geometry_control_pn2021c_s5_chapman_shaoxing_seed20260611_balanced_l060",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_chapman_shaoxing_a5_balanced_l060_lam0p6_exact_noanchor_ep30_seed20260611",
+        "normalized_argv_sha256": "e2f1745ff5eeaa1dc908738fb24f8b50f0af9778efeea1e9b9f7111875c56fd4",
+        "seed": 20260611,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "chapman_shaoxing",
+        "command_name": "f005_anchor_geometry_control_pn2021c_s5_chapman_shaoxing_seed20260611_neighbor_only_l100",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_chapman_shaoxing_a5_neighbor_only_l100_lam1_exact_noanchor_ep30_seed20260611",
+        "normalized_argv_sha256": "8a478f18fb03c1e44b886a75071249d8842a52c073d12e2eef2ef2c087d6195f",
+        "seed": 20260611,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "cpsc_2018",
+        "command_name": "f005_anchor_geometry_control_pn2021c_s5_cpsc_2018_seed20260531_balanced_l060",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_cpsc_2018_a5_balanced_l060_lam0p6_exact_noanchor_ep30_seed20260531",
+        "normalized_argv_sha256": "44beb9744e93fb5fa5153628673732d3fc4d9170b886b678632ebf86185ee65f",
+        "seed": 20260531,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "cpsc_2018",
+        "command_name": "f005_anchor_geometry_control_pn2021c_s5_cpsc_2018_seed20260531_neighbor_only_l100",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_cpsc_2018_a5_neighbor_only_l100_lam1_exact_noanchor_ep30_seed20260531",
+        "normalized_argv_sha256": "251b1668bc24f231d0d5cc69398e92a9df57bacbf845a619389036f8e0c3f6f4",
+        "seed": 20260531,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "cpsc_2018",
+        "command_name": "f005_anchor_geometry_control_pn2021c_s5_cpsc_2018_seed20260601_balanced_l060",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_cpsc_2018_a5_balanced_l060_lam0p6_exact_noanchor_ep30_seed20260601",
+        "normalized_argv_sha256": "781f09a09b5ee9ab424d64834235330cd4bc04d46f729db61969a1410d0ca4c8",
+        "seed": 20260601,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "cpsc_2018",
+        "command_name": "f005_anchor_geometry_control_pn2021c_s5_cpsc_2018_seed20260601_neighbor_only_l100",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_cpsc_2018_a5_neighbor_only_l100_lam1_exact_noanchor_ep30_seed20260601",
+        "normalized_argv_sha256": "3c90509fca68e1cf698825b8ac97668280dd11946a3896ee2e4fe81020b2ba56",
+        "seed": 20260601,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "cpsc_2018",
+        "command_name": "f005_anchor_geometry_control_pn2021c_s5_cpsc_2018_seed20260611_balanced_l060",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_cpsc_2018_a5_balanced_l060_lam0p6_exact_noanchor_ep30_seed20260611",
+        "normalized_argv_sha256": "0f00a362a0a2dca7d47b6d7014015a1afa9354b5333a4839699d7699cb2bddcd",
+        "seed": 20260611,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "cpsc_2018",
+        "command_name": "f005_anchor_geometry_control_pn2021c_s5_cpsc_2018_seed20260611_neighbor_only_l100",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_cpsc_2018_a5_neighbor_only_l100_lam1_exact_noanchor_ep30_seed20260611",
+        "normalized_argv_sha256": "d5b419b0af5dc6a7b72c287a13ed220eaf92da3eba0ce43e918b35f39dcb25ca",
+        "seed": 20260611,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "georgia",
+        "command_name": "f005_anchor_geometry_control_pn2021c_s5_georgia_seed20260531_balanced_l060",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_georgia_a5_balanced_l060_lam0p6_exact_noanchor_ep30_seed20260531",
+        "normalized_argv_sha256": "7c9741b6f47e1ca7b0793db4d937752bef09dfcb3515d522004772ac3d4b58a8",
+        "seed": 20260531,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "georgia",
+        "command_name": "f005_anchor_geometry_control_pn2021c_s5_georgia_seed20260531_neighbor_only_l100",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_georgia_a5_neighbor_only_l100_lam1_exact_noanchor_ep30_seed20260531",
+        "normalized_argv_sha256": "80fbad45829c09e4b0c42ac8230410c2db6e7fb5612cfc95c17c365f316eb133",
+        "seed": 20260531,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "georgia",
+        "command_name": "f005_anchor_geometry_control_pn2021c_s5_georgia_seed20260601_balanced_l060",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_georgia_a5_balanced_l060_lam0p6_exact_noanchor_ep30_seed20260601",
+        "normalized_argv_sha256": "b8e1c5eca871f255a51bbba2bc60e4fccfd75daad3847133b874f0ca4add8285",
+        "seed": 20260601,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "georgia",
+        "command_name": "f005_anchor_geometry_control_pn2021c_s5_georgia_seed20260601_neighbor_only_l100",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_georgia_a5_neighbor_only_l100_lam1_exact_noanchor_ep30_seed20260601",
+        "normalized_argv_sha256": "c6a4ed42fad56f85fea36436cb62dac2a84dc6ee6c78821d260fbed3ca1c3e3d",
+        "seed": 20260601,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "georgia",
+        "command_name": "f005_anchor_geometry_control_pn2021c_s5_georgia_seed20260611_balanced_l060",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_georgia_a5_balanced_l060_lam0p6_exact_noanchor_ep30_seed20260611",
+        "normalized_argv_sha256": "9ad6b8b7388a6bb87eecb806d068493fc0f75b771bd348bb73edab78e8cd6eb9",
+        "seed": 20260611,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "georgia",
+        "command_name": "f005_anchor_geometry_control_pn2021c_s5_georgia_seed20260611_neighbor_only_l100",
+        "hull_lambda": "",
+        "model_dir": "<DATA_ROOT>/runs/f005_anchor_geometry_control_train/F005_ANCHOR_GEOMETRY_CONTROL_V1/f005_anchor_geometry_control_georgia_a5_neighbor_only_l100_lam1_exact_noanchor_ep30_seed20260611",
+        "normalized_argv_sha256": "dacdcdbab3e694c6cc449380b74e114d5751327370118022ff080c914c06e4eb",
+        "seed": 20260611,
+        "variant": "neighbor_only_l100"
+      }
+    ],
+    "smoke": [
+      {
+        "center": "ningbo",
+        "command_name": "f005_anchor_geometry_control_smoke_ningbo_seed20260601_balanced_l060",
+        "hull_lambda": "0.6",
+        "model_dir": "",
+        "normalized_argv_sha256": "2b6e9ddf6e63b4aac1cb4865ed9e85d4d90c1569b118150eb57f8124ff101675",
+        "seed": 20260601,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "ningbo",
+        "command_name": "f005_anchor_geometry_control_smoke_ningbo_seed20260601_neighbor_only_l100",
+        "hull_lambda": "1.0",
+        "model_dir": "",
+        "normalized_argv_sha256": "726e31a82beccb35587457142d25b788e6603f73e616355f3c03c73bbee23120",
+        "seed": 20260601,
+        "variant": "neighbor_only_l100"
+      }
+    ],
+    "train": [
+      {
+        "center": "ningbo",
+        "command_name": "f005_anchor_geometry_control_train_ningbo_seed20260531_balanced_l060",
+        "hull_lambda": "0.6",
+        "model_dir": "",
+        "normalized_argv_sha256": "db7b47b65b057465fb62847b519cfc1cfd1ccce17254c13c491e76cfba5ebb5c",
+        "seed": 20260531,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "ningbo",
+        "command_name": "f005_anchor_geometry_control_train_ningbo_seed20260531_neighbor_only_l100",
+        "hull_lambda": "1.0",
+        "model_dir": "",
+        "normalized_argv_sha256": "148b85dc11aaefe0f8c8a65a2805c5ff4c4ee5c7f84c5a3f0956b7c329669819",
+        "seed": 20260531,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "ningbo",
+        "command_name": "f005_anchor_geometry_control_train_ningbo_seed20260601_balanced_l060",
+        "hull_lambda": "0.6",
+        "model_dir": "",
+        "normalized_argv_sha256": "118db07c73708c0ac5557723716ad629c715df1bc0a3ed3c0c1460ee7ee6ddd1",
+        "seed": 20260601,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "ningbo",
+        "command_name": "f005_anchor_geometry_control_train_ningbo_seed20260601_neighbor_only_l100",
+        "hull_lambda": "1.0",
+        "model_dir": "",
+        "normalized_argv_sha256": "c80d32782f58ff1f2a7e56b4d2127387677d41b4690cee89ee29c4de153044de",
+        "seed": 20260601,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "ningbo",
+        "command_name": "f005_anchor_geometry_control_train_ningbo_seed20260611_balanced_l060",
+        "hull_lambda": "0.6",
+        "model_dir": "",
+        "normalized_argv_sha256": "63c9dc95d06315e42a6f00ddd075804533176345715d44db073134f9928be51b",
+        "seed": 20260611,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "ningbo",
+        "command_name": "f005_anchor_geometry_control_train_ningbo_seed20260611_neighbor_only_l100",
+        "hull_lambda": "1.0",
+        "model_dir": "",
+        "normalized_argv_sha256": "d16885b0ba5624db0fdef518886203ec01745c087cb82c99bb0140fb72fc049d",
+        "seed": 20260611,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "chapman_shaoxing",
+        "command_name": "f005_anchor_geometry_control_train_chapman_shaoxing_seed20260531_balanced_l060",
+        "hull_lambda": "0.6",
+        "model_dir": "",
+        "normalized_argv_sha256": "d5b29cf3d3b18887936c4af34a88c66056d880e6f82606630a7068b1a612dac2",
+        "seed": 20260531,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "chapman_shaoxing",
+        "command_name": "f005_anchor_geometry_control_train_chapman_shaoxing_seed20260531_neighbor_only_l100",
+        "hull_lambda": "1.0",
+        "model_dir": "",
+        "normalized_argv_sha256": "8235bbc44f9a4ee4f7175aed7b6447790c20021816b4bc4be400bed99b327fcc",
+        "seed": 20260531,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "chapman_shaoxing",
+        "command_name": "f005_anchor_geometry_control_train_chapman_shaoxing_seed20260601_balanced_l060",
+        "hull_lambda": "0.6",
+        "model_dir": "",
+        "normalized_argv_sha256": "b33a99acbe2a0ae2c8310e9d1e52c7e2bd4fcf42bdef1c9d0985a6282352e33f",
+        "seed": 20260601,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "chapman_shaoxing",
+        "command_name": "f005_anchor_geometry_control_train_chapman_shaoxing_seed20260601_neighbor_only_l100",
+        "hull_lambda": "1.0",
+        "model_dir": "",
+        "normalized_argv_sha256": "3f07f16e6ff3c9139b7cb6d4026a3b1d6457af31d6adf989c081f20be36d410a",
+        "seed": 20260601,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "chapman_shaoxing",
+        "command_name": "f005_anchor_geometry_control_train_chapman_shaoxing_seed20260611_balanced_l060",
+        "hull_lambda": "0.6",
+        "model_dir": "",
+        "normalized_argv_sha256": "f6a9fd15af4ad10aaf1725ae8bca6e8989344909a8951b3eb34ed507fbd07a19",
+        "seed": 20260611,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "chapman_shaoxing",
+        "command_name": "f005_anchor_geometry_control_train_chapman_shaoxing_seed20260611_neighbor_only_l100",
+        "hull_lambda": "1.0",
+        "model_dir": "",
+        "normalized_argv_sha256": "3de93a243f5e398020f09124ddea75a2251aad90c85ab1c00514a44e19db14d4",
+        "seed": 20260611,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "cpsc_2018",
+        "command_name": "f005_anchor_geometry_control_train_cpsc_2018_seed20260531_balanced_l060",
+        "hull_lambda": "0.6",
+        "model_dir": "",
+        "normalized_argv_sha256": "6961e1d9b792a4c1b18d18168ab73c6bcc4343cb65df9449e2df84e9a7a492f2",
+        "seed": 20260531,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "cpsc_2018",
+        "command_name": "f005_anchor_geometry_control_train_cpsc_2018_seed20260531_neighbor_only_l100",
+        "hull_lambda": "1.0",
+        "model_dir": "",
+        "normalized_argv_sha256": "93fbe3a3d90e53902950ac54681c3057f844c685ab7a387faa3d72e87ce357fe",
+        "seed": 20260531,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "cpsc_2018",
+        "command_name": "f005_anchor_geometry_control_train_cpsc_2018_seed20260601_balanced_l060",
+        "hull_lambda": "0.6",
+        "model_dir": "",
+        "normalized_argv_sha256": "23048bec06d9198cf7a03f8659b02fb20b2725d035639c474cb4d35b9f45a55e",
+        "seed": 20260601,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "cpsc_2018",
+        "command_name": "f005_anchor_geometry_control_train_cpsc_2018_seed20260601_neighbor_only_l100",
+        "hull_lambda": "1.0",
+        "model_dir": "",
+        "normalized_argv_sha256": "b8ef6b93b4c9d17164f81c7f300989ca34d1455513859284e69ade2c6b209a80",
+        "seed": 20260601,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "cpsc_2018",
+        "command_name": "f005_anchor_geometry_control_train_cpsc_2018_seed20260611_balanced_l060",
+        "hull_lambda": "0.6",
+        "model_dir": "",
+        "normalized_argv_sha256": "2b2656d8439a5b0021ae29e24c10c2ab4d5774eb998dab04e196128720529edf",
+        "seed": 20260611,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "cpsc_2018",
+        "command_name": "f005_anchor_geometry_control_train_cpsc_2018_seed20260611_neighbor_only_l100",
+        "hull_lambda": "1.0",
+        "model_dir": "",
+        "normalized_argv_sha256": "618fbaaf81a87403d9fafd1f2d759710307d4be8f8a153db5ee56dc819f63bf3",
+        "seed": 20260611,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "georgia",
+        "command_name": "f005_anchor_geometry_control_train_georgia_seed20260531_balanced_l060",
+        "hull_lambda": "0.6",
+        "model_dir": "",
+        "normalized_argv_sha256": "3951b4c9f985490a5fe69736fe683708b63e2e63654bd9de722bdad0268f13da",
+        "seed": 20260531,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "georgia",
+        "command_name": "f005_anchor_geometry_control_train_georgia_seed20260531_neighbor_only_l100",
+        "hull_lambda": "1.0",
+        "model_dir": "",
+        "normalized_argv_sha256": "d3d3f1349056ba3d43125b5c1d8dfa921d700ff7695a6e161c0725c433664410",
+        "seed": 20260531,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "georgia",
+        "command_name": "f005_anchor_geometry_control_train_georgia_seed20260601_balanced_l060",
+        "hull_lambda": "0.6",
+        "model_dir": "",
+        "normalized_argv_sha256": "61d2b7f86038c6fdc43532388c7e580ade0e9a54029674a13dbae93fdb4290be",
+        "seed": 20260601,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "georgia",
+        "command_name": "f005_anchor_geometry_control_train_georgia_seed20260601_neighbor_only_l100",
+        "hull_lambda": "1.0",
+        "model_dir": "",
+        "normalized_argv_sha256": "35d00684839803b470e03139ca3626a99f87a9d2b8a6e3b9d66af4ec08b169fe",
+        "seed": 20260601,
+        "variant": "neighbor_only_l100"
+      },
+      {
+        "center": "georgia",
+        "command_name": "f005_anchor_geometry_control_train_georgia_seed20260611_balanced_l060",
+        "hull_lambda": "0.6",
+        "model_dir": "",
+        "normalized_argv_sha256": "45c7a87a0eaa4c78e66079e763a52e0c73f8f0df89b14e3d808ac109df3df804",
+        "seed": 20260611,
+        "variant": "balanced_l060"
+      },
+      {
+        "center": "georgia",
+        "command_name": "f005_anchor_geometry_control_train_georgia_seed20260611_neighbor_only_l100",
+        "hull_lambda": "1.0",
+        "model_dir": "",
+        "normalized_argv_sha256": "1b66438bb51e868b6114b19d19529e831dcbe64b5bcf5a1a9c12a3a32f2bed18",
+        "seed": 20260611,
+        "variant": "neighbor_only_l100"
+      }
+    ]
+  },
+  "study_scope": "f005_anchor_geometry_control",
+  "variants": [
+    "balanced_l060",
+    "neighbor_only_l100"
+  ]
+}

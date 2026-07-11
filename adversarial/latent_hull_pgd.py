@@ -27,6 +27,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 from adversarial.efficientnet_victim_tierM import EfficientNetVictimTierM  # noqa: E402
 from adversarial.pgd_advdiff import PGDAdvDiffGenerator  # noqa: E402
 from ecg_adv_gen.adaptation.latent_hull_torch import (  # noqa: E402
+    identity_collapsed_weight_metrics,
     initial_hull_weights,
     latent_hull_geometry,
 )
@@ -177,6 +178,7 @@ class LatentHullPGDGenerator(PGDAdvDiffGenerator):
         identity_mask_device = identity_mask.to(self.device)
 
         last_loss = None
+        inner_post_projection_norm_max = 0.0
         fixed_w = self._fixed_weights(bsz, m)
         if fixed_w is None:
             if init_logits is None:
@@ -197,32 +199,78 @@ class LatentHullPGDGenerator(PGDAdvDiffGenerator):
                 initial_w = torch.softmax(logits_a.detach(), dim=-1)
             logits_a.requires_grad_(True)
 
+            best_w = initial_w.detach().clone()
+            best_loss_rows: torch.Tensor | None = None
+
+            def projected_loss_rows(weights: torch.Tensor) -> tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+                geometry = latent_hull_geometry(
+                    z0,
+                    cand,
+                    weights,
+                    hull_lambda=self.hull_lambda,
+                    epsilon=self.hull_epsilon,
+                    candidate_is_anchor=identity_mask_device,
+                )
+                logits = self.victim.forward_from_latent_to_logits(geometry["latent"])
+                pos_weight = None
+                if self.attack_pos_weight is not None:
+                    pos_weight = self.attack_pos_weight.to(device=logits.device, dtype=logits.dtype)
+                loss_rows = F.binary_cross_entropy_with_logits(
+                    logits,
+                    y0,
+                    pos_weight=pos_weight,
+                    reduction="none",
+                ).mean(dim=1)
+                return loss_rows, geometry
+
             opt = torch.optim.Adam([logits_a], lr=self.hull_lr)
             rnn_states = self._enable_rnn_backward_only(self.victim.model)
             try:
                 for _ in range(self.hull_steps):
                     w = torch.softmax(logits_a, dim=-1)
-                    z_mix = (w.view(bsz, m, 1, 1) * cand).sum(dim=1)
-                    z_adv = (1.0 - self.hull_lambda) * z0 + self.hull_lambda * z_mix
-                    logits = self.victim.forward_from_latent_to_logits(z_adv)
-                    pos_weight = None
-                    if self.attack_pos_weight is not None:
-                        pos_weight = self.attack_pos_weight.to(device=logits.device, dtype=logits.dtype)
-                    loss = F.binary_cross_entropy_with_logits(
-                        logits,
-                        y0,
-                        pos_weight=pos_weight,
-                        reduction="mean",
+                    loss_rows, step_geometry = projected_loss_rows(w)
+                    step_max = float(step_geometry["post_projection_norm"].detach().max().cpu())
+                    inner_post_projection_norm_max = max(inner_post_projection_norm_max, step_max)
+                    if self.hull_epsilon is not None and step_max > self.hull_epsilon + 1e-5:
+                        raise RuntimeError("latent-hull inner objective escaped the projected epsilon ball")
+                    improved = (
+                        torch.ones_like(loss_rows, dtype=torch.bool)
+                        if best_loss_rows is None
+                        else loss_rows.detach() > best_loss_rows
                     )
+                    best_w[improved] = w.detach()[improved]
+                    best_loss_rows = (
+                        loss_rows.detach().clone()
+                        if best_loss_rows is None
+                        else torch.maximum(best_loss_rows, loss_rows.detach())
+                    )
+                    loss = loss_rows.mean()
                     opt.zero_grad(set_to_none=True)
                     (-loss).backward()
                     opt.step()
-                    last_loss = loss.detach()
+                with torch.no_grad():
+                    post_step_w = torch.softmax(logits_a.detach(), dim=-1)
+                    post_loss_rows, post_geometry = projected_loss_rows(post_step_w)
+                    step_max = float(post_geometry["post_projection_norm"].max().cpu())
+                    inner_post_projection_norm_max = max(inner_post_projection_norm_max, step_max)
+                    improved = (
+                        torch.ones_like(post_loss_rows, dtype=torch.bool)
+                        if best_loss_rows is None
+                        else post_loss_rows > best_loss_rows
+                    )
+                    best_w[improved] = post_step_w[improved]
+                    best_loss_rows = (
+                        post_loss_rows.clone()
+                        if best_loss_rows is None
+                        else torch.maximum(best_loss_rows, post_loss_rows)
+                    )
+                    last_loss = best_loss_rows.mean()
             finally:
                 self._restore_module_training_states(rnn_states)
         else:
             logits_a = None
             initial_w = fixed_w.detach().clone()
+            best_w = fixed_w.detach().clone()
 
         with torch.no_grad():
             initial_geometry = latent_hull_geometry(
@@ -235,10 +283,7 @@ class LatentHullPGDGenerator(PGDAdvDiffGenerator):
             )
 
         with torch.no_grad():
-            if fixed_w is None:
-                w = torch.softmax(logits_a.detach(), dim=-1)
-            else:
-                w = fixed_w
+            w = best_w
             final_geometry = latent_hull_geometry(
                 z0,
                 cand,
@@ -247,11 +292,14 @@ class LatentHullPGDGenerator(PGDAdvDiffGenerator):
                 epsilon=self.hull_epsilon,
                 candidate_is_anchor=identity_mask_device,
             )
+            final_post_max = float(final_geometry["post_projection_norm"].max().cpu())
+            if self.hull_epsilon is not None and final_post_max > self.hull_epsilon + 1e-5:
+                raise RuntimeError("latent-hull final state escaped the projected epsilon ball")
             z_adv = final_geometry["latent"]
             delta = final_geometry["delta_post"]
             x_adv_1000 = self._decode_to_ptbxl_1000(z_adv)
             self.last_initial_signals = self._decode_to_ptbxl_1000(
-                initial_geometry["latent_pre"]
+                initial_geometry["latent"]
             ).detach().cpu()
             self.last_weights = w.detach().cpu()
             entropy = -(w * w.clamp(min=1e-12).log()).sum(dim=-1)
@@ -259,6 +307,28 @@ class LatentHullPGDGenerator(PGDAdvDiffGenerator):
             final_cpu = w.detach().cpu()
             initial_top1_weights, initial_top1_positions = initial_cpu.max(dim=-1)
             final_top1_weights, final_top1_positions = final_cpu.max(dim=-1)
+
+            def projected_bce_mean(latent: torch.Tensor) -> float:
+                logits = self.victim.forward_from_latent_to_logits(latent)
+                pos_weight = None
+                if self.attack_pos_weight is not None:
+                    pos_weight = self.attack_pos_weight.to(device=logits.device, dtype=logits.dtype)
+                return float(F.binary_cross_entropy_with_logits(
+                    logits, y0, pos_weight=pos_weight, reduction="mean"
+                ).cpu())
+
+            projected_initial_bce = projected_bce_mean(initial_geometry["latent"])
+            projected_final_bce = projected_bce_mean(final_geometry["latent"])
+            initial_identity = identity_collapsed_weight_metrics(
+                torch.arange(m).view(1, m).expand(bsz, -1) if candidate_ids is None else candidate_ids,
+                initial_cpu,
+                identity_mask,
+            )
+            final_identity = identity_collapsed_weight_metrics(
+                torch.arange(m).view(1, m).expand(bsz, -1) if candidate_ids is None else candidate_ids,
+                final_cpu,
+                identity_mask,
+            )
 
             def top1_pool_ids(positions: torch.Tensor) -> list[int]:
                 if candidate_ids is None:
@@ -289,8 +359,21 @@ class LatentHullPGDGenerator(PGDAdvDiffGenerator):
                 "final_top1_candidate_pool_indices": top1_pool_ids(final_top1_positions),
                 "initial_top1_weights": initial_top1_weights.tolist(),
                 "final_top1_weights": final_top1_weights.tolist(),
+                "candidate_unique_nonself_count": final_identity["candidate_unique_nonself_count"],
+                "candidate_duplicate_fraction": final_identity["candidate_duplicate_fraction"],
+                "candidate_anchor_count": final_identity["candidate_anchor_count"],
+                "initial_identity_top1_weight": initial_identity["identity_top1_weight"],
+                "final_identity_top1_weight": final_identity["identity_top1_weight"],
+                "initial_identity_entropy": initial_identity["identity_entropy"],
+                "final_identity_entropy": final_identity["identity_entropy"],
+                "initial_effective_candidate_count": initial_identity["effective_candidate_count"],
+                "final_effective_candidate_count": final_identity["effective_candidate_count"],
                 **geometry_lists("initial", initial_geometry),
                 **geometry_lists("final", final_geometry),
+                "inner_post_projection_norm_max": inner_post_projection_norm_max,
+                "initial_projected_latent_mean": initial_geometry["latent"].flatten(1).mean(dim=1).cpu().tolist(),
+                "projected_initial_bce_mean": projected_initial_bce,
+                "projected_final_bce_mean": projected_final_bce,
                 "hull_weight_entropy_mean": float(entropy.mean().cpu()),
                 "hull_weight_entropy_max": float(entropy.max().cpu()),
                 "hull_weight_top1_mean": float(w.max(dim=-1).values.mean().cpu()),

@@ -5,6 +5,61 @@ from __future__ import annotations
 import torch
 
 
+def identity_collapsed_weight_metrics(
+    candidate_pool_indices: torch.Tensor,
+    weights: torch.Tensor,
+    candidate_is_anchor: torch.Tensor | None = None,
+) -> dict[str, list[float] | list[int]]:
+    """Aggregate positional coefficients by candidate identity before scoring use."""
+    ids = torch.as_tensor(candidate_pool_indices).long().cpu()
+    values = torch.as_tensor(weights).detach().float().cpu()
+    if ids.ndim != 2 or values.shape != ids.shape:
+        raise ValueError("candidate_pool_indices and weights must be aligned 2D tensors")
+    anchor_mask = (
+        torch.zeros_like(ids, dtype=torch.bool)
+        if candidate_is_anchor is None
+        else torch.as_tensor(candidate_is_anchor).bool().cpu()
+    )
+    if anchor_mask.shape != ids.shape:
+        raise ValueError("candidate_is_anchor must align with candidate identities")
+    if not torch.isfinite(values).all() or (values < 0).any():
+        raise ValueError("identity weights must be finite and non-negative")
+
+    unique_nonself: list[int] = []
+    duplicate_fraction: list[float] = []
+    top1: list[float] = []
+    entropy: list[float] = []
+    effective_count: list[float] = []
+    anchor_count: list[int] = []
+    for row_ids, row_weights, row_anchor in zip(ids, values, anchor_mask):
+        collapsed: dict[int, float] = {}
+        nonself: set[int] = set()
+        for identity, weight, is_anchor in zip(row_ids.tolist(), row_weights.tolist(), row_anchor.tolist()):
+            collapsed[int(identity)] = collapsed.get(int(identity), 0.0) + float(weight)
+            if not is_anchor:
+                nonself.add(int(identity))
+        collapsed_weights = torch.tensor(list(collapsed.values()), dtype=torch.float64)
+        total = float(collapsed_weights.sum())
+        if total <= 0.0:
+            raise ValueError("identity weights must have positive row sums")
+        probs = collapsed_weights / total
+        row_entropy = float(-(probs * probs.clamp_min(1e-12).log()).sum())
+        unique_nonself.append(len(nonself))
+        duplicate_fraction.append(1.0 - len(collapsed) / max(1, len(row_ids)))
+        top1.append(float(probs.max()))
+        entropy.append(row_entropy)
+        effective_count.append(float(torch.exp(torch.tensor(row_entropy, dtype=torch.float64))))
+        anchor_count.append(int(row_anchor.sum()))
+    return {
+        "candidate_unique_nonself_count": unique_nonself,
+        "candidate_duplicate_fraction": duplicate_fraction,
+        "identity_top1_weight": top1,
+        "identity_entropy": entropy,
+        "effective_candidate_count": effective_count,
+        "candidate_anchor_count": anchor_count,
+    }
+
+
 def initial_hull_weights(
     batch_size: int,
     candidate_count: int,
@@ -122,4 +177,7 @@ def initial_hull_latent(
     return (1.0 - float(hull_lambda)) * z0 + float(hull_lambda) * z_mix
 
 
-__all__ = ["initial_hull_latent", "initial_hull_weights", "latent_hull_geometry"]
+__all__ = [
+    "identity_collapsed_weight_metrics", "initial_hull_latent",
+    "initial_hull_weights", "latent_hull_geometry",
+]

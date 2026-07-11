@@ -17,9 +17,11 @@ from ecg_adv_gen.matched_effnet import (
     f004_variant_for_rho,
 )
 from ecg_adv_gen.run_naming import (
+    build_f005_control_producer_dir,
     build_f004_effnet_producer_dir,
     build_matched_effnet_producer_dir,
 )
+from ecg_adv_gen.f005_control import validate_f005_case
 
 from .common import argv_option_map, audit_equals, audit_require_options, opt_first, opt_list
 
@@ -64,7 +66,8 @@ def build_pn2021c_eval_argv(config: Mapping[str, Any], context: Mapping[str, Any
 
     matrix = context.get("matrix") or {}
     center = matrix.get("center")
-    arm = str(matrix.get("arm") or "")
+    case = matrix.get("case") if isinstance(matrix.get("case"), Mapping) else None
+    arm = str((case or {}).get("arm") or matrix.get("arm") or "")
     rho = matrix.get("rho")
     method = matrix.get("method") or {}
     if not center:
@@ -107,6 +110,12 @@ def build_pn2021c_eval_argv(config: Mapping[str, Any], context: Mapping[str, Any
         method_root = build_f004_effnet_producer_dir(
             config, center=str(center), rho=float(rho)
         )
+    elif case is not None and case.get("study_scope"):
+        variant, study_seed, _ = validate_f005_case(case)
+        method_root = build_f005_control_producer_dir(
+            config, center=str(center), seed=study_seed, variant=variant
+        )
+        output_role = f"seed{study_seed}/{variant}"
     elif arm:
         method_root = build_matched_effnet_producer_dir(config, center=str(center), arm=arm)
         output_role = arm
@@ -175,8 +184,10 @@ def build_pn2021c_eval_argv(config: Mapping[str, Any], context: Mapping[str, Any
         evaluation["corruption_seed"],
         "--exclude_ref_ids",
         (
-            f"{data['kshot_subset_root']}/{center}/k{kshot['k']}_seed{kshot['seed']}/"
-            f"{center}_real_k{kshot['k']}_seed{kshot['seed']}.ref_meta.json"
+            f"{data['kshot_subset_root']}/{center}/k{kshot['k']}_seed"
+            f"{study_seed if case is not None and case.get('study_scope') else kshot['seed']}/"
+            f"{center}_real_k{kshot['k']}_seed"
+            f"{study_seed if case is not None and case.get('study_scope') else kshot['seed']}.ref_meta.json"
         ),
         "--output_path",
         (
@@ -287,9 +298,19 @@ def audit_pn2021c_eval_command(command: Mapping[str, Any], *, config: Mapping[st
             if "official_s5_locked" not in output_path:
                 errors.append(f"{script}: locked PN2021-C output_path must include official_s5_locked")
 
+    command_matrix = command.get("matrix") or {}
+    command_case = command_matrix.get("case") if isinstance(command_matrix.get("case"), Mapping) else None
+    study_variant = None
+    study_seed = None
+    if command_case is not None and command_case.get("study_scope"):
+        try:
+            study_variant, study_seed, _ = validate_f005_case(command_case)
+            expected_seed = str(study_seed)
+        except ValueError as exc:
+            errors.append(f"{script}: {exc}")
     centers = opt_list(opts, "--centers")
-    matrix_center = str((command.get("matrix") or {}).get("center", ""))
-    matrix_arm = str((command.get("matrix") or {}).get("arm", ""))
+    matrix_center = str(command_matrix.get("center", ""))
+    matrix_arm = str((command_case or {}).get("arm") or command_matrix.get("arm", ""))
     if len(centers) != 1:
         errors.append(f"{script}: managed PN2021-C eval must target exactly one center per command")
     center = centers[0] if centers else matrix_center
@@ -325,13 +346,26 @@ def audit_pn2021c_eval_command(command: Mapping[str, Any], *, config: Mapping[st
                 script,
                 opts,
                 "--model_dir",
-                build_matched_effnet_producer_dir(config, center=matrix_center, arm=matrix_arm),
+                (
+                    build_f005_control_producer_dir(
+                        config,
+                        center=matrix_center,
+                        seed=int(study_seed),
+                        variant=str(study_variant),
+                    )
+                    if study_variant is not None and study_seed is not None
+                    else build_matched_effnet_producer_dir(
+                        config, center=matrix_center, arm=matrix_arm
+                    )
+                ),
             )
         except ValueError as exc:
             errors.append(f"{script}: {exc}")
         audit_equals(errors, script, opts, "--checkpoint_name", "best_model.pt")
-        if f"/{matrix_arm}/" not in str(opt_first(opts, "--output_path", "")):
-            errors.append(f"{script}: output_path must include matched arm {matrix_arm!r}")
+        output_path = str(opt_first(opts, "--output_path", ""))
+        expected_role = str(study_variant) if study_variant is not None else matrix_arm
+        if f"/{expected_role}/" not in output_path:
+            errors.append(f"{script}: output_path must include role {expected_role!r}")
     if "--diagnostic_without_clean" in opts:
         errors.append(f"{script}: managed PN2021-C eval must require a clean paper-safe eval JSON")
     if "--limit" in opts and str(opt_first(opts, "--limit")) not in {"0", ""}:

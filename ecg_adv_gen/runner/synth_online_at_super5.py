@@ -74,6 +74,10 @@ from ecg_adv_gen.evaluation.selection import (  # noqa: E402
     update_matched_checkpoint_selection,
 )
 from ecg_adv_gen.data.kshot import filter_latent_candidates, matched_k500_split  # noqa: E402
+from ecg_adv_gen.f005_control import (  # noqa: E402
+    F005_STUDY_SCOPE,
+    validate_f005_runtime,
+)
 
 from ecg_adv_gen.training.online_buffer import (  # noqa: E402
     QualityAwareBuffer,
@@ -133,6 +137,10 @@ from ecg_adv_gen.adaptation import (  # noqa: E402
     decoded_signal_invalid_stats,
     parse_class_weight_map,
     weighted_anchor_quotas,
+)
+from ecg_adv_gen.adaptation.lhat import build_exact_eligibility_manifest  # noqa: E402
+from ecg_adv_gen.adaptation.latent_hull_torch import (  # noqa: E402
+    identity_collapsed_weight_metrics,
 )
 
 DEFAULT_PTBXL_RAW = "/root/autodl-tmp/ptbxl/raw100.npy"
@@ -720,6 +728,18 @@ _LATENT_HULL_ARRAY_FIELDS = (
     for stage in ("initial", "final")
     for field in _LATENT_HULL_GEOMETRY_FIELDS
 )
+_LATENT_HULL_IDENTITY_FIELDS = (
+    "candidate_unique_nonself_count",
+    "candidate_duplicate_fraction",
+    "candidate_exact_label_match_all",
+    "candidate_anchor_count",
+    "initial_identity_top1_weight",
+    "final_identity_top1_weight",
+    "initial_identity_entropy",
+    "final_identity_entropy",
+    "initial_effective_candidate_count",
+    "final_effective_candidate_count",
+)
 
 
 def merge_latent_hull_batch_diagnostics(batches: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -787,6 +807,30 @@ def summarize_latent_hull_diagnostics(diagnostics: Dict[str, Any]) -> Dict[str, 
                         )
                     field_summary[name] = value
             summary[key] = field_summary
+    for key in _LATENT_HULL_IDENTITY_FIELDS:
+        values = np.asarray(diagnostics.get(key, []), dtype=np.float64)
+        if values.ndim != 1 or values.size == 0:
+            continue
+        bad = np.flatnonzero(~np.isfinite(values))
+        if bad.size:
+            raise RuntimeError(
+                f"latent-hull diagnostic field {key!r} is non-finite at sample {int(bad[0])}"
+            )
+        summary[key] = {
+            "mean": float(np.mean(values)),
+            "p10": float(np.percentile(values, 10)),
+            "p50": float(np.percentile(values, 50)),
+            "p90": float(np.percentile(values, 90)),
+            "max": float(np.max(values)),
+        }
+    if diagnostics.get("candidate_anchor_count"):
+        summary["candidate_anchor_count_all_zero"] = all(
+            int(value) == 0 for value in diagnostics["candidate_anchor_count"]
+        )
+    if diagnostics.get("candidate_exact_label_match_all"):
+        summary["candidate_exact_label_match_all_rows"] = all(
+            bool(value) for value in diagnostics["candidate_exact_label_match_all"]
+        )
     return summary
 
 
@@ -806,6 +850,7 @@ def run_pgd_on_synth_pool(
     hull_label_new_class_cap: float = 0.5,
     store_raw_decoded: bool = False,
     pool_record_ids: Optional[np.ndarray] = None,
+    study_scope: str = "",
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
     """Sample K anchors stratified by class, run latent-hull PGD in batches.
 
@@ -911,12 +956,49 @@ def run_pgd_on_synth_pool(
         "max_delta_norm":  float(np.max(delta_norms)),
     }
     diagnostics = merge_latent_hull_batch_diagnostics(diagnostic_batches)
+    candidate_indices = np.asarray(diagnostics["candidate_pool_indices"], dtype=np.int64)
+    candidate_anchor = np.asarray(diagnostics["candidate_is_anchor"], dtype=bool)
+    for stage in ("initial", "final"):
+        identity = identity_collapsed_weight_metrics(
+            torch.from_numpy(candidate_indices),
+            torch.as_tensor(diagnostics[f"{stage}_weights"], dtype=torch.float32),
+            torch.from_numpy(candidate_anchor),
+        )
+        if stage == "final":
+            diagnostics["candidate_unique_nonself_count"] = identity[
+                "candidate_unique_nonself_count"
+            ]
+            diagnostics["candidate_duplicate_fraction"] = identity[
+                "candidate_duplicate_fraction"
+            ]
+            diagnostics["candidate_anchor_count"] = identity["candidate_anchor_count"]
+        diagnostics[f"{stage}_identity_top1_weight"] = identity["identity_top1_weight"]
+        diagnostics[f"{stage}_identity_entropy"] = identity["identity_entropy"]
+        diagnostics[f"{stage}_effective_candidate_count"] = identity[
+            "effective_candidate_count"
+        ]
+    anchor_labels = synth_labels[np.asarray(diagnostics["anchor_pool_indices"], dtype=np.int64)]
+    candidate_labels = synth_labels[candidate_indices]
+    diagnostics["candidate_exact_label_match_all"] = np.all(
+        (candidate_labels > 0.5) == (anchor_labels[:, None, :] > 0.5), axis=(1, 2)
+    ).tolist()
+    if study_scope == F005_STUDY_SCOPE:
+        invalid = [
+            row for row in range(int(diagnostics["n"]))
+            if int(diagnostics["candidate_anchor_count"][row]) != 0
+            or int(diagnostics["candidate_unique_nonself_count"][row]) < 2
+            or not bool(diagnostics["candidate_exact_label_match_all"][row])
+        ]
+        if invalid:
+            raise RuntimeError(
+                "F005 candidate geometry contract failed for rows "
+                f"{invalid[:8]} (anchor fallback, <2 unique non-self candidates, or label drift)"
+            )
     if pool_record_ids is not None:
         record_ids = np.asarray(pool_record_ids).astype(str)
-        candidate_ids = np.asarray(diagnostics["candidate_pool_indices"], dtype=np.int64)
         diagnostics.update({
             "anchor_record_ids": record_ids[np.asarray(diagnostics["anchor_pool_indices"], dtype=np.int64)].tolist(),
-            "candidate_record_ids": record_ids[candidate_ids].tolist(),
+            "candidate_record_ids": record_ids[candidate_indices].tolist(),
             "initial_top1_candidate_record_ids": record_ids[
                 np.asarray(diagnostics["initial_top1_candidate_pool_indices"], dtype=np.int64)
             ].tolist(),
@@ -1229,6 +1311,8 @@ def parse_args(argv: list[str] | None = None):
     p.add_argument("--comparison_variant", default="")
     p.add_argument("--comparison_topology_version", default="")
     p.add_argument("--comparison_topology_sha256", default="")
+    p.add_argument("--study_scope", default="")
+    p.add_argument("--mechanism_variant", default="")
     p.add_argument("--ref_meta_json",
                    help="path to {tag}_k200.meta.json (for record_id exclusion in eval)")
     p.add_argument("--synth_npz", required=True,
@@ -1569,6 +1653,17 @@ def parse_args(argv: list[str] | None = None):
             )
         except ValueError as exc:
             p.error(str(exc))
+    try:
+        validate_f005_runtime(
+            study_scope=args.study_scope,
+            mechanism_variant=args.mechanism_variant,
+            comparison_arm=args.comparison_arm,
+            hull_lambda=args.hull_lambda,
+            hull_label_mode=args.hull_label_mode,
+            hull_include_anchor=args.hull_include_anchor,
+        )
+    except ValueError as exc:
+        p.error(str(exc))
     if float(args.vae_adv_stream_sample_scale) < 0.0:
         p.error("--vae_adv_stream_sample_scale must be non-negative")
     if not (0.0 <= float(args.latent_augmix_adv_base_mix) <= 1.0):
@@ -1646,6 +1741,7 @@ def parse_args(argv: list[str] | None = None):
             )
         except (TypeError, ValueError) as exc:
             p.error(str(exc))
+    args.eligibility_manifest_sha256 = ""
     return args
 
 
@@ -1889,6 +1985,44 @@ def main():
     elif matched_comparison:
         raise ValueError("matched comparison requires --target_real_npz")
 
+    f005_eligibility_manifest: Dict[str, Any] | None = None
+    f005_eligible_indices: list[int] | None = None
+    if args.study_scope == F005_STUDY_SCOPE:
+        if not args.enable_vae_lhat or synth_labels is None:
+            raise RuntimeError("F005 requires the A5 VAE-LHAT route")
+        pool_record_ids = source_meta.get("record_ids")
+        if pool_record_ids is None:
+            raise RuntimeError("F005 exact eligibility requires latent-pool record_ids")
+        f005_eligibility_manifest = build_exact_eligibility_manifest(
+            synth_labels,
+            pool_record_ids,
+            min_nonself=2,
+        )
+        f005_eligible_indices = list(f005_eligibility_manifest["eligible_pool_indices"])
+        if not f005_eligible_indices:
+            raise RuntimeError("F005 exact eligibility produced no attackable anchors")
+        args.eligibility_manifest_sha256 = str(
+            f005_eligibility_manifest["manifest_sha256"]
+        )
+        eligibility_path = Path(args.output_dir) / "eligible_anchor_manifest.json"
+        eligibility_path.write_text(
+            json.dumps(
+                f005_eligibility_manifest,
+                indent=2,
+                sort_keys=True,
+                ensure_ascii=True,
+                allow_nan=False,
+            ) + "\n",
+            encoding="utf-8",
+        )
+        print(
+            "[setup] F005 exact eligibility: "
+            f"eligible={f005_eligibility_manifest['eligible_count']}/"
+            f"{f005_eligibility_manifest['total_count']} "
+            f"sha256={args.eligibility_manifest_sha256}",
+            flush=True,
+        )
+
     pos_weight = torch.tensor(
         compute_pos_weight(train_labels, NUM_SUPER5),
         dtype=torch.float32, device=args.device)
@@ -2019,6 +2153,14 @@ def main():
     log: Dict[str, Any] = {
         "args": vars(args),
         "comparison_contract": comparison_contract(),
+        "mechanism_study": {
+            "scope": args.study_scope,
+            "variant": args.mechanism_variant,
+            "base_topology": args.comparison_arm if args.study_scope else "",
+            "primary_comparison_eligible": False if args.study_scope else None,
+            "eligibility_manifest_sha256": args.eligibility_manifest_sha256,
+        },
+        "exact_eligibility_manifest": f005_eligibility_manifest,
         "class_trust": class_trust,
         "adaptation": {
             "n_trainable_tensors": len(trainable_params),
@@ -2103,6 +2245,7 @@ def main():
     walker = load_optional_vae_component(args.enable_vae_lhat, lambda: StratifiedPoolWalker(
         labels_one_hot=synth_labels, classes_in_scope=classes_in_scope,
         class_to_idx=SUPER5_TO_IDX, seed=args.seed,
+        eligible_indices=f005_eligible_indices,
     ))
     walker_class_sizes = walker.class_sizes() if walker is not None else {}
     print(f"[setup] walker class sizes: {walker_class_sizes}")
@@ -2232,6 +2375,7 @@ def main():
                 hull_label_new_class_cap=args.hull_label_new_class_cap,
                 store_raw_decoded=locked_mixed_view_mode,
                 pool_record_ids=source_meta.get("record_ids"),
+                study_scope=args.study_scope,
             )
             if adv_signals.shape[0] == 0:
                 print(f"[ep{epoch:02d}] empty walker pick — skip epoch", flush=True)
@@ -2692,6 +2836,9 @@ def main():
             "comparison_arm": args.comparison_arm,
             "comparison_protocol": args.comparison_protocol or None,
             "comparison_variant": args.comparison_variant or None,
+            "study_scope": args.study_scope,
+            "mechanism_variant": args.mechanism_variant,
+            "eligibility_manifest_sha256": args.eligibility_manifest_sha256,
             "attack_family": "latent_hull" if args.enable_vae_lhat else None,
             "train_loss": round(train_loss, 4),
             "target_val_macro_auroc": target_val_metrics.get("macro_auroc"),
@@ -2921,6 +3068,8 @@ def main():
     final = {
         "args":               vars(args),
         "comparison_contract": final_contract,
+        "mechanism_study": log.get("mechanism_study"),
+        "exact_eligibility_manifest": f005_eligibility_manifest,
         "selected_checkpoint": best_ckpt_path if matched_comparison else last_ckpt_path,
         "best_model_path": best_ckpt_path if matched_comparison else None,
         "best_epoch": best_epoch if matched_comparison else None,

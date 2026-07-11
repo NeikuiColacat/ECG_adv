@@ -8,6 +8,8 @@ legacy VAE-LHAT scripts.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Callable, Sequence
 from typing import Any
 
@@ -22,6 +24,76 @@ from ecg_adv_gen.labels.super5 import CLASS_NAMES_SUPER5
 SUPER5_TO_IDX = {name: i for i, name in enumerate(CLASS_NAMES_SUPER5)}
 DEFAULT_TRUST_HARDCODE = {"HYP": 0.0, "CD": 0.0}
 OFFICIAL_S5_DEPTH23_COMPOSITE_CYCLE = "official_s5_depth23_composite_cycle"
+
+
+def _ordered_ids_sha256(record_ids: Sequence[str]) -> str:
+    payload = "\n".join(str(item) for item in record_ids) + "\n"
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def build_exact_eligibility_manifest(
+    labels_one_hot: np.ndarray,
+    record_ids: Sequence[str],
+    *,
+    min_nonself: int = 2,
+) -> dict[str, Any]:
+    """Describe anchors with enough distinct exact-label non-self partners."""
+    labels = np.asarray(labels_one_hot, dtype=np.float32)
+    ids = np.asarray(record_ids).astype(str)
+    if labels.ndim != 2 or len(ids) != len(labels):
+        raise ValueError("record_ids and 2D labels must align for exact eligibility")
+    if len(set(ids.tolist())) != len(ids):
+        raise ValueError("exact eligibility record_ids must be unique")
+    min_nonself = int(min_nonself)
+    if min_nonself < 1:
+        raise ValueError("min_nonself must be positive")
+    binary = (labels > 0.5).astype(np.int8)
+    keys = ["".join(str(int(value)) for value in row) for row in binary]
+    pools: dict[str, list[int]] = {}
+    for index, key in enumerate(keys):
+        pools.setdefault(key, []).append(index)
+    eligible = [
+        index for index, key in enumerate(keys)
+        if len(pools[key]) - 1 >= min_nonself
+    ]
+    eligible_set = set(eligible)
+    label_sets = {
+        key: {
+            "total_count": len(indices),
+            "eligible_count": sum(index in eligible_set for index in indices),
+            "distinct_nonself_count": max(0, len(indices) - 1),
+        }
+        for key, indices in sorted(pools.items())
+    }
+    class_counts = {}
+    for class_index in range(labels.shape[1]):
+        class_name = (
+            CLASS_NAMES_SUPER5[class_index]
+            if class_index < len(CLASS_NAMES_SUPER5)
+            else f"class_{class_index}"
+        )
+        positive = np.flatnonzero(binary[:, class_index] > 0).tolist()
+        class_counts[class_name] = {
+            "total_positive": len(positive),
+            "eligible_positive": sum(index in eligible_set for index in positive),
+        }
+    eligible_ids = ids[np.asarray(eligible, dtype=np.int64)].tolist()
+    payload: dict[str, Any] = {
+        "schema_version": 1,
+        "partner_policy": "exact_nonself",
+        "min_nonself": min_nonself,
+        "total_count": int(len(labels)),
+        "eligible_count": len(eligible),
+        "ineligible_count": int(len(labels) - len(eligible)),
+        "eligible_pool_indices": eligible,
+        "eligible_record_ids": eligible_ids,
+        "ordered_record_ids_sha256": _ordered_ids_sha256(eligible_ids),
+        "exact_label_sets": label_sets,
+        "class_counts": class_counts,
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    payload["manifest_sha256"] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return payload
 
 
 def build_k500_internal_val_mask(
@@ -287,6 +359,7 @@ class StratifiedPoolWalker:
         source_weights: dict[str, float] | None = None,
         source_class_weights: dict[str, dict[str, float]] | None = None,
         source_floor_per_class: int = 0,
+        eligible_indices: Sequence[int] | None = None,
     ):
         self.classes = list(classes_in_scope)
         self.class_to_idx = class_to_idx
@@ -305,6 +378,13 @@ class StratifiedPoolWalker:
         self.source_epochs_completed: dict[tuple[str, str], int] = {}
         self.last_source_counts: dict[str, int] = {}
         self.last_class_source_counts: dict[str, dict[str, int]] = {}
+        eligible_mask = np.ones(labels_one_hot.shape[0], dtype=bool)
+        if eligible_indices is not None:
+            eligible_mask[:] = False
+            indices = np.asarray(list(eligible_indices), dtype=np.int64)
+            if indices.size and (indices.min() < 0 or indices.max() >= len(eligible_mask)):
+                raise ValueError("eligible_indices contains an out-of-range pool index")
+            eligible_mask[indices] = True
         if source_labels is not None:
             if len(source_labels) != labels_one_hot.shape[0]:
                 raise ValueError("source_labels length must match labels_one_hot")
@@ -312,7 +392,7 @@ class StratifiedPoolWalker:
             self.source_names = sorted(str(s) for s in np.unique(self.source_labels))
         for c in self.classes:
             j = class_to_idx[c]
-            mask = labels_one_hot[:, j] > 0.5
+            mask = (labels_one_hot[:, j] > 0.5) & eligible_mask
             idx = np.where(mask)[0].copy()
             if len(idx) > 0:
                 self.rng.shuffle(idx)
@@ -495,6 +575,18 @@ class SameLabelLatentIndex:
     def class_sizes(self) -> dict[str, int]:
         return {str(k): int(len(v)) for k, v in self.pools.items()}
 
+    def eligible_anchor_indices(self, *, min_nonself: int = 2) -> np.ndarray:
+        min_nonself = int(min_nonself)
+        if min_nonself < 1:
+            raise ValueError("min_nonself must be positive")
+        return np.asarray(
+            [
+                index for index, key in enumerate(self.keys)
+                if len(self.pools.get(key, ())) - 1 >= min_nonself
+            ],
+            dtype=np.int64,
+        )
+
     def _choose_neighbors(self, pool: np.ndarray, order: np.ndarray, M: int) -> np.ndarray:
         if self.neighbor_mode == "nearest":
             return pool[order[:M]]
@@ -517,10 +609,13 @@ class SameLabelLatentIndex:
         for row_i, anchor_idx in enumerate(anchor_indices):
             anchor_idx = int(anchor_idx)
             key = self.keys[anchor_idx]
-            pool = self.pools.get(key, np.asarray([anchor_idx], dtype=np.int64))
+            pool = self.pools.get(key, np.empty((0,), dtype=np.int64))
             pool = pool[pool != anchor_idx]
-            if len(pool) == 0:
-                pool = np.asarray([anchor_idx], dtype=np.int64)
+            if len(pool) == 0 and not self.include_self:
+                raise ValueError(
+                    f"anchor {anchor_idx} has no non-self candidate for "
+                    f"label_mode={self.label_mode!r}; anchor fallback is forbidden"
+                )
             diff = self.flat_distance[pool] - self.flat_distance[anchor_idx]
             dist2 = np.einsum("ij,ij->i", diff, diff)
             order = np.argsort(dist2)

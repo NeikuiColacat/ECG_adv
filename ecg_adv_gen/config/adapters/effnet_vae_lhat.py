@@ -15,6 +15,7 @@ from ecg_adv_gen.matched_effnet import (
     validate_f004_runtime,
     validate_matched_effnet_case,
 )
+from ecg_adv_gen.f005_control import F005_STUDY_SCOPE, validate_f005_case
 
 from .common import (
     argv_option_map,
@@ -64,7 +65,7 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
     experiment = config["experiment"]
 
     k = kshot["k"]
-    seed = kshot["seed"]
+    seed = int(case.get("seed", kshot["seed"])) if case is not None else kshot["seed"]
     comparison_protocol = str(paper.get("comparison_protocol") or "")
     is_f004 = comparison_protocol == F004_RHO_SWEEP_PROTOCOL
     out_root = f"{paths['output_root']}/{experiment['name']}/{runtime['run_id']}"
@@ -92,6 +93,11 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
     asr_low, asr_high = attack["target_asr_range"]
     if not 0.0 <= float(asr_low) <= float(asr_high) <= 1.0:
         raise ValueError("adaptation.attack.target_asr_range must be ordered within [0, 1]")
+    study_scope = ""
+    mechanism_variant = ""
+    resolved_hull_lambda = hull["lambda"]
+    resolved_hull_label_mode = hull["label_mode"]
+    resolved_hull_include_anchor = bool(hull["include_anchor"])
     if is_f004:
         comparison_arm, arm_components = "historical_unmatched", matched_effnet_arm("a5")
         target_adv_fraction = float(matrix["rho"])
@@ -133,6 +139,12 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
         comparison_arm, arm_components = _resolve_arm(
             case, matrix.get("comparison_arm", adaptation.get("comparison_arm", "historical_unmatched"))
         )
+        if case is not None and case.get("study_scope"):
+            mechanism_variant, seed, study_variant = validate_f005_case(case)
+            study_scope = F005_STUDY_SCOPE
+            resolved_hull_lambda = study_variant.hull_lambda
+            resolved_hull_label_mode = study_variant.label_mode
+            resolved_hull_include_anchor = study_variant.include_anchor
         target_adv_fraction = float(
             matrix.get("target_adv_fraction", adaptation["loss"]["target_adv_fraction"])
         )
@@ -159,6 +171,8 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
         center,
         "--comparison_arm",
         comparison_arm,
+        *(["--study_scope", study_scope, "--mechanism_variant", mechanism_variant]
+          if study_scope else []),
         "--epochs",
         training["epochs"],
         "--seed",
@@ -184,13 +198,13 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
         "--hull_M",
         hull["M"],
         "--hull_lambda",
-        hull["lambda"],
+        resolved_hull_lambda,
         "--hull_lr",
         hull["lr"],
         "--hull_init_logit_gap",
         hull["init_logit_gap"],
         "--hull_label_mode",
-        hull["label_mode"],
+        resolved_hull_label_mode,
         "--hull_mix_label_mode",
         hull["mix_label_mode"],
         "--hull_label_lambda_y",
@@ -240,7 +254,7 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
         "--target_real_val_fraction",
         selection.get("validation_fraction", 0.2),
         "--target_real_val_seed",
-        selection.get("seed", kshot["seed"]),
+        seed if study_scope else selection.get("seed", kshot["seed"]),
         "--selection_metric",
         selection.get("metric", "macro_auprc"),
         "--source_floor_max_drop",
@@ -273,7 +287,7 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
             "--comparison_topology_version", MATCHED_EFFNET_CONTRACT_VERSION,
             "--comparison_topology_sha256", F004_FROZEN_TOPOLOGY_SHA256,
         ]
-    if bool(hull["include_anchor"]):
+    if resolved_hull_include_anchor:
         argv.append("--hull_include_anchor")
     if arm_components is not None:
         argv.append("--enable_vae_lhat" if arm_components.vae_lhat else "--disable_vae_lhat")
@@ -354,6 +368,15 @@ def audit_effnet_vae_lhat_command(
     target_centers = set(paper["centers"]["target_4"])
     expected_command_k = str(case.get("k", expected_k))
     expected_command_seed = str(case.get("seed", expected_seed))
+    study_variant = None
+    if case.get("study_scope"):
+        try:
+            variant_name, _, study_variant = validate_f005_case(case)
+        except ValueError as exc:
+            errors.append(f"{script}: {exc}")
+            variant_name = str(case.get("variant") or "")
+        audit_equals(errors, script, opts, "--study_scope", F005_STUDY_SCOPE)
+        audit_equals(errors, script, opts, "--mechanism_variant", variant_name)
 
     if script != "effnet_vae_lhat_augmix.py":
         errors.append(
@@ -398,6 +421,20 @@ def audit_effnet_vae_lhat_command(
     audit_equals(errors, script, opts, "--seed", expected_command_seed)
     expected_init_ckpt = str(config["model"]["init_checkpoint"]).replace("${matrix.center}", center)
     audit_equals(errors, script, opts, "--hull_init_logit_gap", hull["init_logit_gap"])
+    audit_equals(
+        errors,
+        script,
+        opts,
+        "--hull_lambda",
+        study_variant.hull_lambda if study_variant is not None else hull["lambda"],
+    )
+    audit_equals(
+        errors,
+        script,
+        opts,
+        "--hull_label_mode",
+        study_variant.label_mode if study_variant is not None else hull["label_mode"],
+    )
     audit_equals(errors, script, opts, "--pgd_eps", attack["pgd_eps"])
     asr_low, asr_high = attack["target_asr_range"]
     audit_equals(errors, script, opts, "--asr_low_threshold", asr_low)
@@ -419,7 +456,10 @@ def audit_effnet_vae_lhat_command(
         "--comparison_arm": comparison_arm,
         "--init_ckpt": expected_init_ckpt,
         "--target_real_val_fraction": selection.get("validation_fraction", 0.2),
-        "--target_real_val_seed": selection.get("seed", kshot["seed"]),
+        "--target_real_val_seed": (
+            expected_command_seed if study_variant is not None
+            else selection.get("seed", kshot["seed"])
+        ),
         "--selection_metric": selection.get("metric", "macro_auprc"),
         "--source_floor_max_drop": source_floor.get("max_drop", 0.02),
         "--target_adv_fraction": target_adv_fraction,
@@ -446,7 +486,9 @@ def audit_effnet_vae_lhat_command(
         for option, expected in component_options.items():
             audit_equals(errors, script, opts, option, expected)
     expected_flags = {
-        "--hull_include_anchor": bool(hull["include_anchor"]),
+        "--hull_include_anchor": (
+            study_variant.include_anchor if study_variant is not None else bool(hull["include_anchor"])
+        ),
         "--final_checkpoint_only": paper["selection"]["policy"] == "last_checkpoint_only",
         "--enable_latent_augmix_consistency": (
             arm_components is not None or bool(consistency["enabled"])
