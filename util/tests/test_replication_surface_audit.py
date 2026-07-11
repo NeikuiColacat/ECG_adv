@@ -15,11 +15,13 @@ import pytest
 import yaml
 
 from ecg_adv_gen.config import (
+    attach_replication_preflight,
     audit_replication_command_grid,
     audit_replication_path_isolation,
     audit_replication_producer_consumers,
     audit_replication_surfaces,
     build_replication_k500_groups,
+    load_experiment_config,
     verify_replication_k500_groups,
     verify_replication_validation_report,
     verify_required_inputs,
@@ -140,6 +142,7 @@ def _write_group(root: Path, *, center: str, k: int, seed: int) -> Path:
                 "ref_record_ids": record_ids.tolist(),
                 "mapping_version": MAPPING_VERSION,
                 "mapping_hash": MAPPING_HASH,
+                "class_names": class_names.tolist(),
                 "label_counts": label_counts,
             }
         ),
@@ -176,6 +179,61 @@ def _write_validation_report(root: Path, *, seeds: tuple[int, ...]) -> tuple[Pat
         encoding="utf-8",
     )
     return path, hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _artifact_bound_report(
+    root: Path, *, seeds: tuple[int, ...], k: int
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    key_map = {
+        "ref_meta.json": "ref_meta",
+        "signals.npz": "signals",
+        "latent.npz": "latent",
+        "raw1000.npz": "raw1000",
+        "class_trust.json": "class_trust",
+    }
+    groups = [
+        group
+        for seed in seeds
+        for group in build_replication_k500_groups(
+            subset_root=root,
+            centers=CENTERS,
+            k=k,
+            seed=seed,
+            artifact_suffixes=SUFFIXES,
+        )
+    ]
+    rows = []
+    for group in groups:
+        artifacts = group["artifacts"]
+        rows.append(
+            {
+                "seed": group["seed"],
+                "center": group["center"],
+                "checks": {"identity": True, "numeric": True},
+                "artifact_sha256": {
+                    key_map[suffix]: hashlib.sha256(Path(record["path"]).read_bytes()).hexdigest()
+                    for suffix, record in artifacts.items()
+                },
+                "artifact_sizes": {
+                    key_map[suffix]: Path(record["path"]).stat().st_size
+                    for suffix, record in artifacts.items()
+                },
+            }
+        )
+    path = root.parent / "validation_report.json"
+    path.write_text(json.dumps({"passed": True, "errors": [], "groups": rows}), encoding="utf-8")
+    return {
+        "path": str(path),
+        "expected_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "expected_group_count": len(groups),
+    }, groups
+
+
+def _rewrite_npz(path: Path, *, allow_pickle: bool, updates: dict[str, Any]) -> None:
+    with np.load(path, allow_pickle=allow_pickle) as payload:
+        values = {key: payload[key] for key in payload.files}
+    values.update(updates)
+    np.savez_compressed(path, **values)
 
 
 def _surface() -> dict[str, Any]:
@@ -421,6 +479,249 @@ def test_validation_report_binds_each_artifact_hash_and_blocks_tamper(tmp_path: 
     assert manifest["safety"]["managed_child_commands_invoked"] is False
 
 
+def test_single_seed_numeric_preflight_uses_four_groups_but_report_binds_all_twelve(
+    tmp_path: Path,
+):
+    root = tmp_path / "family" / "subsets"
+    seeds = (20260531, 20260601, 20260611)
+    for seed in seeds:
+        for center in CENTERS:
+            _write_group(root, center=center, k=2, seed=seed)
+    contract, all_groups = _artifact_bound_report(root, seeds=seeds, k=2)
+
+    for seed in seeds:
+        current_groups = [group for group in all_groups if group["seed"] == seed]
+        manifest = {
+            "artifact_trace": {
+                "inputs": {
+                    "checkpoints": [],
+                    "data_caches": [],
+                    "k500_refs": [],
+                    "replication_k500_groups": current_groups,
+                    "replication_validation_groups": all_groups,
+                },
+                "initialization": {},
+                "metrics": {"mapping_version": MAPPING_VERSION, "mapping_hash": MAPPING_HASH},
+                "replication_preflight": {"validation_report": contract},
+            },
+            "commands": [],
+            "safety": {"managed_child_commands_invoked": False},
+        }
+        report = verify_required_inputs(manifest)
+        assert report["passed"] is True, report
+        preflight = report["replication_k500_preflight"]
+        assert preflight["group_count"] == 4
+        assert preflight["validation_report"]["bound_group_count"] == 12
+        assert preflight["validation_report"]["bound_artifact_count"] == 60
+
+    other_seed = next(group for group in all_groups if group["seed"] == 20260611)
+    tampered = Path(other_seed["artifacts"]["latent.npz"]["path"])
+    tampered.write_bytes(tampered.read_bytes() + b"tamper")
+    current_groups = [group for group in all_groups if group["seed"] == 20260531]
+    manifest["artifact_trace"]["inputs"]["replication_k500_groups"] = current_groups
+    assert verify_required_inputs(manifest)["passed"] is False
+    assert manifest["safety"]["managed_child_commands_invoked"] is False
+
+
+@pytest.mark.parametrize("seed", (20260531, 20260601, 20260611))
+def test_indexed_entry_attaches_current_and_full_surface_groups(seed: int):
+    config_path = REPO / f"configs/replications/effnet_matched_train_seed{seed}.yaml"
+    config = load_experiment_config(
+        config_path,
+        LOCAL_EXAMPLE,
+        runtime_context={"run_id": "pytest-replication-binding"},
+    )
+    manifest = attach_replication_preflight(
+        {"artifact_trace": {"inputs": {}}},
+        config,
+        repo_root=REPO,
+        index_path=INDEX,
+    )
+    inputs = manifest["artifact_trace"]["inputs"]
+    assert len(inputs["replication_k500_groups"]) == 4
+    assert {group["seed"] for group in inputs["replication_k500_groups"]} == {seed}
+    assert len(inputs["replication_validation_groups"]) == 12
+    assert {group["seed"] for group in inputs["replication_validation_groups"]} == {
+        20260531,
+        20260601,
+        20260611,
+    }
+
+
+def test_loader_preserves_replication_experiment_source_chain():
+    entry = REPO / "configs/replications/effnet_matched_train_seed20260531.yaml"
+    config = load_experiment_config(
+        entry,
+        LOCAL_EXAMPLE,
+        runtime_context={"run_id": "pytest-replication-sources"},
+    )
+    sources = {Path(path).resolve() for path in config["_config_sources"]}
+    assert entry.resolve() in sources
+    assert (REPO / "configs/experiments/effnet_vae_lhat_augmix_threechain_locked_k500.yaml").resolve() in sources
+    assert LOCAL_EXAMPLE.resolve() not in sources
+
+
+def test_unindexed_derived_replication_entry_is_rejected(tmp_path: Path):
+    indexed = REPO / "configs/replications/effnet_matched_train_seed20260531.yaml"
+    config = load_experiment_config(
+        indexed,
+        LOCAL_EXAMPLE,
+        runtime_context={"run_id": "pytest-derived-replication"},
+    )
+    derived = tmp_path / "derived_replication.yaml"
+    config["_entry_config"] = str(derived)
+    config["_config_sources"] = [*config.get("_config_sources", []), str(derived)]
+    with pytest.raises(ValueError, match="indexed.*replication/study surface"):
+        attach_replication_preflight(
+            {"artifact_trace": {"inputs": {}}},
+            config,
+            repo_root=REPO,
+            index_path=INDEX,
+        )
+
+
+def test_unindexed_f005_study_using_replication_family_is_explicitly_blocked():
+    entry = REPO / "configs/studies/f005_anchor_geometry_control_train.yaml"
+    config = load_experiment_config(
+        entry,
+        LOCAL_EXAMPLE,
+        runtime_context={"run_id": "pytest-unindexed-f005-study"},
+    )
+    with pytest.raises(ValueError, match="indexed.*replication/study surface"):
+        attach_replication_preflight(
+            {"artifact_trace": {"inputs": {}}},
+            config,
+            repo_root=REPO,
+            index_path=INDEX,
+        )
+
+
+@pytest.mark.parametrize("drift", ("seed", "root", "sources"))
+def test_indexed_replication_binding_rejects_seed_root_or_source_drift(drift: str):
+    entry = REPO / "configs/replications/effnet_matched_train_seed20260531.yaml"
+    config = load_experiment_config(
+        entry,
+        LOCAL_EXAMPLE,
+        runtime_context={"run_id": "pytest-replication-drift"},
+    )
+    if drift == "seed":
+        config["paper_protocol"]["kshot"]["seed"] = 20260611
+        config["paper_protocol"]["kshot"]["subset_seed"] = 20260611
+    elif drift == "root":
+        config["data"]["kshot_subset_root"] = str(
+            Path(config["data"]["kshot_subset_root"]).parent.parent / "other_family" / "subsets"
+        )
+    else:
+        config["_config_sources"] = [str(REPO / "configs/experiments/effnet_vae_lhat_augmix_threechain_locked_k500.yaml")]
+    with pytest.raises(ValueError, match=drift):
+        attach_replication_preflight(
+            {"artifact_trace": {"inputs": {}}},
+            config,
+            repo_root=REPO,
+            index_path=INDEX,
+        )
+
+
+def test_indexed_replication_entry_must_be_git_tracked(monkeypatch: pytest.MonkeyPatch):
+    from ecg_adv_gen.config import replication as replication_module
+
+    entry = REPO / "configs/replications/effnet_matched_train_seed20260531.yaml"
+    config = load_experiment_config(
+        entry,
+        LOCAL_EXAMPLE,
+        runtime_context={"run_id": "pytest-replication-untracked"},
+    )
+    monkeypatch.setattr(replication_module, "_git_tracked", lambda *_args, **_kwargs: False)
+    with pytest.raises(ValueError, match="tracked"):
+        attach_replication_preflight(
+            {"artifact_trace": {"inputs": {}}},
+            config,
+            repo_root=REPO,
+            index_path=INDEX,
+        )
+
+
+def test_replication_rejects_coordinated_noncanonical_class_order(tmp_path: Path):
+    root = tmp_path / "subsets"
+    base = _write_group(root, center="ningbo", k=2, seed=17)
+    reverse = np.asarray(["STTC", "NORM", "MI", "HYP", "CD"])
+    for suffix in ("signals.npz", "latent.npz"):
+        path = base.with_suffix(f".{suffix}")
+        with np.load(path, allow_pickle=False) as payload:
+            labels = payload["labels"][:, ::-1]
+        _rewrite_npz(path, allow_pickle=False, updates={"labels": labels, "class_names": reverse})
+    raw_path = base.with_suffix(".raw1000.npz")
+    with np.load(raw_path, allow_pickle=True) as payload:
+        raw_labels = payload["labels"][:, ::-1]
+        metadata = dict(payload["metadata"].reshape(-1)[0])
+    metadata["class_names"] = reverse.tolist()
+    _rewrite_npz(
+        raw_path,
+        allow_pickle=True,
+        updates={"labels": raw_labels, "metadata": np.asarray([metadata], dtype=object)},
+    )
+    ref_path = base.with_suffix(".ref_meta.json")
+    ref = json.loads(ref_path.read_text(encoding="utf-8"))
+    ref["class_names"] = reverse.tolist()
+    ref_path.write_text(json.dumps(ref), encoding="utf-8")
+
+    groups = build_replication_k500_groups(
+        subset_root=root, centers=["ningbo"], k=2, seed=17, artifact_suffixes=SUFFIXES
+    )
+    report = verify_replication_k500_groups(
+        groups, mapping_version=MAPPING_VERSION, mapping_hash=MAPPING_HASH
+    )
+    assert report["passed"] is False
+    assert any("class order" in item["error"] for item in report["identity_errors"])
+
+
+def test_replication_rejects_consistent_nonbinary_multihot_labels(tmp_path: Path):
+    root = tmp_path / "subsets"
+    base = _write_group(root, center="ningbo", k=2, seed=17)
+    for suffix, allow_pickle in (("signals.npz", False), ("latent.npz", False), ("raw1000.npz", True)):
+        path = base.with_suffix(f".{suffix}")
+        with np.load(path, allow_pickle=allow_pickle) as payload:
+            labels = payload["labels"].astype(np.float32) * 0.5
+        _rewrite_npz(path, allow_pickle=allow_pickle, updates={"labels": labels})
+    ref_path = base.with_suffix(".ref_meta.json")
+    ref = json.loads(ref_path.read_text(encoding="utf-8"))
+    ref["label_counts"]["NORM"] = 1
+    ref_path.write_text(json.dumps(ref), encoding="utf-8")
+    trust_path = base.with_suffix(".class_trust.json")
+    trust = json.loads(trust_path.read_text(encoding="utf-8"))
+    trust["label_counts"]["NORM"] = 1
+    trust_path.write_text(json.dumps(trust), encoding="utf-8")
+
+    report = verify_replication_k500_groups(
+        build_replication_k500_groups(
+            subset_root=root, centers=["ningbo"], k=2, seed=17, artifact_suffixes=SUFFIXES
+        ),
+        mapping_version=MAPPING_VERSION,
+        mapping_hash=MAPPING_HASH,
+    )
+    assert report["passed"] is False
+    assert any("binary multi-hot" in item["error"] for item in report["identity_errors"])
+
+
+def test_replication_rejects_one_flat_latent_sample(tmp_path: Path):
+    root = tmp_path / "subsets"
+    base = _write_group(root, center="ningbo", k=2, seed=17)
+    path = base.with_suffix(".latent.npz")
+    with np.load(path, allow_pickle=False) as payload:
+        latents = payload["latents"].copy()
+    latents[0] = 0.0
+    _rewrite_npz(path, allow_pickle=False, updates={"latents": latents})
+    report = verify_replication_k500_groups(
+        build_replication_k500_groups(
+            subset_root=root, centers=["ningbo"], k=2, seed=17, artifact_suffixes=SUFFIXES
+        ),
+        mapping_version=MAPPING_VERSION,
+        mapping_hash=MAPPING_HASH,
+    )
+    assert report["passed"] is False
+    assert any("latent" in item["error"] and "non-flat" in item["error"] for item in report["identity_errors"])
+
+
 def test_replication_preflight_rejects_old_id_relabel_protocol(tmp_path: Path):
     root = tmp_path / "subsets"
     base = _write_group(root, center="ningbo", k=2, seed=17)
@@ -564,3 +865,42 @@ def test_workspace_handoff_contract_exposes_replication_audit(tmp_path: Path):
     assert handoff["replication_surfaces"] == active["replication_surfaces"]
     assert handoff["replication_surfaces"]["contract_passed"] is False
     assert handoff["replication_surfaces"]["surfaces"][0]["replicates"]
+
+
+def test_tracked_yaml_attention_fails_the_active_audit_total_verdict(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from ecg_adv_gen.config import audit as audit_module
+
+    original = audit_module._summarize_config_git_status
+
+    def attention_summary(items, *, tracked_yaml_required):
+        summary = original(items, tracked_yaml_required=tracked_yaml_required)
+        return {
+            **summary,
+            "requires_attention": True,
+            "untracked_count": 1,
+            "untracked_paths": ["configs/replications/unindexed.yaml"],
+        }
+
+    monkeypatch.setattr(audit_module, "_summarize_config_git_status", attention_summary)
+    monkeypatch.setattr(
+        audit_module,
+        "audit_replication_surfaces",
+        lambda **_kwargs: {
+            "contract_passed": True,
+            "execution_ready": True,
+            "failed_count": 0,
+            "surfaces": [],
+        },
+    )
+    report = audit_module.audit_active_managed_configs(
+        repo_root=REPO,
+        index_path=INDEX,
+        local_config_path=LOCAL_EXAMPLE,
+        require_existing_inputs=False,
+    )
+    assert report["launch_surface_policy"]["tracked_yaml_required"] is True
+    assert report["config_git_summary"]["requires_attention"] is True
+    assert report["passed"] is False
+    assert report["audit_failure_count"] >= 1

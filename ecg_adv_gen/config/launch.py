@@ -703,8 +703,9 @@ def verify_required_inputs(manifest: dict[str, Any]) -> dict[str, Any]:
         verified.extend(replication_preflight["verified_inputs"])
         validation_contract = (trace.get("replication_preflight") or {}).get("validation_report") or {}
         if validation_contract:
+            validation_groups = inputs.get("replication_validation_groups") or replication_groups
             validation_report = verify_replication_validation_report(
-                validation_contract, replication_groups
+                validation_contract, validation_groups
             )
             replication_preflight["validation_report"] = validation_report
             lineage_errors.extend(

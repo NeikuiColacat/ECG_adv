@@ -397,6 +397,8 @@ def load_experiment_config(
     local_config_path = local_config_path.resolve()
     experiment_raw = _load_with_extends(config_path)
     local_raw = _load_with_extends(local_config_path)
+    experiment_sources = list(experiment_raw.get("_config_sources") or [])
+    local_sources = list(local_raw.get("_config_sources") or [])
     configs_root = _configs_root_for(config_path)
     project_root = configs_root.parent.resolve()
     _validate_local_config_overlay(local_raw)
@@ -411,6 +413,8 @@ def load_experiment_config(
         )
 
     merged = _deep_merge(experiment_raw, local_raw)
+    merged["_config_sources"] = experiment_sources
+    merged["_local_config_sources"] = local_sources
     merged["_project_root"] = str(project_root)
     merged = apply_cli_overrides(merged, overrides)
     if runtime_context:

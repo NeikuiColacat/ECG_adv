@@ -403,10 +403,15 @@ def audit_active_managed_configs(
     )
     replication_contract_passed = bool(replication_surfaces.get("contract_passed", True))
     replication_execution_ready = bool(replication_surfaces.get("execution_ready", True))
+    config_git_passed = not (
+        bool(launch_surface_policy.get("tracked_yaml_required"))
+        and bool(config_git_summary.get("requires_attention"))
+    )
     passed = (
         all(row["passed"] for row in rows)
         and bool(latest_mainline.get("passed", True))
         and replication_contract_passed
+        and config_git_passed
         and (not require_existing_inputs or replication_execution_ready)
     )
     return {
@@ -425,6 +430,7 @@ def audit_active_managed_configs(
         "audit_failure_count": (
             sum(1 for row in rows if not row["passed"])
             + int(replication_surfaces.get("failed_count") or 0)
+            + int(not config_git_passed)
             + int(require_existing_inputs and not replication_execution_ready)
         ),
         "config_git_inventory": config_git_inventory,

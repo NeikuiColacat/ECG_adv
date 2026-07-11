@@ -28,6 +28,10 @@ from .loader import (
 
 
 FIXED_K_SAMPLING_POLICY = "deterministic_random_from_v7_nonzero_eligible_pool"
+SUPER5_CLASS_ORDER = ("CD", "HYP", "MI", "NORM", "STTC")
+INDEXED_AUXILIARY_SURFACE_KEYS = ("replication_surfaces", "study_surfaces")
+
+
 def build_replication_k500_groups(
     *,
     subset_root: str | Path,
@@ -75,6 +79,43 @@ def _scalar_text(value: Any) -> str:
     return str(array.reshape(-1)[0])
 
 
+def _validate_class_order(value: Any, source: str) -> None:
+    observed = tuple(str(item) for item in np.asarray(value).reshape(-1).tolist())
+    if observed != SUPER5_CLASS_ORDER:
+        raise ValueError(
+            f"{source} class order={observed!r}, expected {SUPER5_CLASS_ORDER!r}"
+        )
+
+
+def _require_matches(source: str, **checks: tuple[Any, Any]) -> None:
+    drift = {key: values for key, values in checks.items() if values[0] != values[1]}
+    if drift:
+        raise ValueError(f"{source} metadata mismatch: {drift}")
+
+
+def _validate_multihot(labels: Any, *, k: int, source: str) -> np.ndarray:
+    array = np.asarray(labels, dtype=np.float32)
+    if array.shape != (k, len(SUPER5_CLASS_ORDER)) or not np.isfinite(array).all():
+        raise ValueError(f"{source} labels must be finite with shape ({k}, 5)")
+    if not np.logical_or(array == 0.0, array == 1.0).all():
+        raise ValueError(f"{source} labels must be binary multi-hot values")
+    if np.any(array.sum(axis=1) <= 0):
+        raise ValueError(f"{source} contains all-zero labels outside the v7 nonzero eligible pool")
+    return array
+
+
+def _validate_numeric_samples(
+    values: Any, *, shape: tuple[int, ...], source: str, payload_key: str
+) -> np.ndarray:
+    array = np.asarray(values)
+    if array.shape != shape:
+        raise ValueError(f"{source} {payload_key} shape={array.shape}, expected {shape}")
+    rows = array.reshape(shape[0], -1)
+    if not np.isfinite(rows).all(axis=1).all() or np.any(np.ptp(rows, axis=1) <= 1e-8):
+        raise ValueError(f"{source} {payload_key} must be finite and non-flat per sample")
+    return array
+
+
 def _validate_ref_meta(
     path: Path,
     *,
@@ -99,12 +140,11 @@ def _validate_ref_meta(
         "mapping_version": mapping_version,
         "mapping_hash": mapping_hash,
     }
-    for key, expected_value in expected.items():
-        if meta.get(key) != expected_value:
-            raise ValueError(f"ref_meta {key}={meta.get(key)!r}, expected {expected_value!r}")
+    _require_matches("ref_meta", **{key: (meta.get(key), value) for key, value in expected.items()})
     for key in ("raw_v7_nonzero_count", "eligible_v7_nonzero_with_latents"):
         if type(meta.get(key)) is not int or int(meta[key]) < k:
             raise ValueError(f"ref_meta {key} must be an integer >= K={k}")
+    _validate_class_order(meta.get("class_names"), path.name)
     return parsed.record_ids, meta
 
 
@@ -120,33 +160,26 @@ def _validate_array_npz(
     expected_payload_shape: tuple[int, ...],
 ) -> np.ndarray:
     with np.load(path, allow_pickle=False) as payload:
-        required = {payload_key, "labels", "record_ids", "center_name", "mapping_version", "mapping_hash"}
+        required = {
+            payload_key, "labels", "record_ids", "center_name", "class_names",
+            "mapping_version", "mapping_hash",
+        }
         missing = sorted(required.difference(payload.files))
         if missing:
             raise ValueError(f"{path.name} missing arrays {missing}")
-        values = np.asarray(payload[payload_key])
-        labels = np.asarray(payload["labels"], dtype=np.float32)
-        if values.shape != expected_payload_shape:
-            raise ValueError(
-                f"{path.name} {payload_key} shape={values.shape}, expected {expected_payload_shape}"
-            )
-        ids = payload["record_ids"].astype(str).tolist()
-        if ids != record_ids:
-            raise ValueError(f"{path.name} record_ids do not match ref_meta order")
-        if _scalar_text(payload["center_name"]) != center:
-            raise ValueError(f"{path.name} center_name does not match {center}")
-        if _scalar_text(payload["mapping_version"]) != mapping_version:
-            raise ValueError(f"{path.name} mapping_version mismatch")
-        if _scalar_text(payload["mapping_hash"]) != mapping_hash:
-            raise ValueError(f"{path.name} mapping_hash mismatch")
-    if labels.ndim != 2 or labels.shape != (k, 5):
-        raise ValueError(f"{path.name} labels shape={labels.shape}, expected ({k}, 5)")
-    if not np.isfinite(values).all() or not np.isfinite(labels).all():
-        raise ValueError(f"{path.name} contains non-finite values")
-    if payload_key == "signals" and np.any(np.ptp(values, axis=(1, 2)) <= 1e-8):
-        raise ValueError(f"{path.name} contains flat waveforms")
-    if np.any(labels.sum(axis=1) <= 0):
-        raise ValueError(f"{path.name} contains all-zero labels outside the v7 nonzero eligible pool")
+        _validate_numeric_samples(
+            payload[payload_key], shape=expected_payload_shape,
+            source=path.name, payload_key=payload_key,
+        )
+        labels = _validate_multihot(payload["labels"], k=k, source=path.name)
+        _validate_class_order(payload["class_names"], path.name)
+        _require_matches(
+            path.name,
+            record_ids=(payload["record_ids"].astype(str).tolist() == record_ids, True),
+            center_name=(_scalar_text(payload["center_name"]), center),
+            mapping_version=(_scalar_text(payload["mapping_version"]), mapping_version),
+            mapping_hash=(_scalar_text(payload["mapping_hash"]), mapping_hash),
+        )
     return labels
 
 
@@ -163,44 +196,35 @@ def _validate_raw1000(
         missing = sorted(required.difference(payload.files))
         if missing:
             raise ValueError(f"{path.name} missing arrays {missing}")
-        signals = np.asarray(payload["signals"], dtype=np.float32)
-        labels = np.asarray(payload["labels"], dtype=np.float32)
-        if signals.shape != (k, 1000, 12):
-            raise ValueError(f"{path.name} signals shape={signals.shape}, expected ({k}, 1000, 12)")
+        _validate_numeric_samples(
+            payload["signals"], shape=(k, 1000, 12),
+            source=path.name, payload_key="signals",
+        )
+        labels = _validate_multihot(payload["labels"], k=k, source=path.name)
         ids = payload["record_ids"].astype(str).tolist()
-        if ids != record_ids:
-            raise ValueError(f"{path.name} record_ids do not match ref_meta order")
         metadata_array = np.asarray(payload["metadata"], dtype=object).reshape(-1)
         metadata = metadata_array[0] if len(metadata_array) == 1 else None
     if not isinstance(metadata, dict):
         raise ValueError(f"{path.name} metadata must contain one mapping")
-    if str(metadata.get("center") or "") != center:
-        raise ValueError(f"{path.name} metadata center does not match {center}")
-    if int(metadata.get("n_records", -1)) != k:
-        raise ValueError(f"{path.name} metadata n_records does not equal K={k}")
-    if Path(str(metadata.get("source_ref_meta_json") or "")).resolve() != ref_meta_path.resolve():
-        raise ValueError(f"{path.name} source_ref_meta_json does not match current seed group")
-    if labels.shape != (k, 5) or not np.isfinite(labels).all():
-        raise ValueError(f"{path.name} labels must be finite with shape ({k}, 5)")
-    if not np.isfinite(signals).all() or np.any(np.ptp(signals, axis=(1, 2)) <= 1e-8):
-        raise ValueError(f"{path.name} signals must be finite and non-flat")
-    if np.any(labels.sum(axis=1) <= 0):
-        raise ValueError(f"{path.name} labels violate the v7 nonzero K-shot contract")
-    expected_preprocess = {
-        "target_fs": 100,
-        "target_len": 1000,
-        "preprocess_mode": "minimal_resample",
-        "norm_mode": "none",
-    }
-    if metadata.get("preprocess") != expected_preprocess:
-        raise ValueError(f"{path.name} preprocess metadata mismatch")
-    if metadata.get("model_input_preprocess") != {
-        "norm_mode": "per_sample_global",
-        "crop_len": 1000,
-    }:
-        raise ValueError(f"{path.name} model_input_preprocess metadata mismatch")
-    if metadata.get("signals_are_pre_zscore") is not True:
-        raise ValueError(f"{path.name} must declare signals_are_pre_zscore=true")
+    _validate_class_order(metadata.get("class_names"), path.name)
+    _require_matches(
+        path.name,
+        record_ids=(ids == record_ids, True),
+        center=(str(metadata.get("center") or ""), center),
+        n_records=(int(metadata.get("n_records", -1)), k),
+        source_ref_meta_json=(
+            Path(str(metadata.get("source_ref_meta_json") or "")).resolve(),
+            ref_meta_path.resolve(),
+        ),
+        preprocess=(metadata.get("preprocess"), {
+            "target_fs": 100, "target_len": 1000,
+            "preprocess_mode": "minimal_resample", "norm_mode": "none",
+        }),
+        model_input_preprocess=(metadata.get("model_input_preprocess"), {
+            "norm_mode": "per_sample_global", "crop_len": 1000,
+        }),
+        signals_are_pre_zscore=(metadata.get("signals_are_pre_zscore"), True),
+    )
     return labels
 
 
@@ -213,17 +237,23 @@ def _validate_class_trust(
     mapping_hash: str,
 ) -> None:
     payload = _json_object(path)
-    if str(payload.get("center") or "") != center:
-        raise ValueError(f"{path.name} center does not match {center}")
-    if payload.get("mapping_version") != mapping_version or payload.get("mapping_hash") != mapping_hash:
-        raise ValueError(f"{path.name} mapping metadata mismatch")
+    _require_matches(
+        path.name,
+        center=(str(payload.get("center") or ""), center),
+        mapping_version=(payload.get("mapping_version"), mapping_version),
+        mapping_hash=(payload.get("mapping_hash"), mapping_hash),
+    )
     observed_counts = {str(key): int(value) for key, value in (payload.get("label_counts") or {}).items()}
+    if set(observed_counts) != set(SUPER5_CLASS_ORDER):
+        raise ValueError(f"{path.name} label_counts keys do not match canonical class order")
     if observed_counts != dict(label_counts):
         raise ValueError(f"{path.name} label_counts do not match selected signal labels")
     if not isinstance(payload.get("class_trust"), dict):
         raise ValueError(f"{path.name} class_trust must be a mapping")
     expected_trust = {name: float(count > 0) for name, count in label_counts.items()}
     observed_trust = {str(key): float(value) for key, value in payload["class_trust"].items()}
+    if set(observed_trust) != set(SUPER5_CLASS_ORDER):
+        raise ValueError(f"{path.name} class_trust keys do not match canonical class order")
     if observed_trust != expected_trust:
         raise ValueError(f"{path.name} class_trust values do not match label_counts > 0")
 
@@ -234,7 +264,7 @@ def verify_replication_k500_groups(
     mapping_version: str,
     mapping_hash: str,
 ) -> dict[str, Any]:
-    """Verify existence plus center/K/seed/nonzero identity without loading waveforms."""
+    """Fully validate each current seed's K-shot numeric artifact groups serially."""
 
     missing: list[dict[str, Any]] = []
     identity_errors: list[dict[str, Any]] = []
@@ -302,9 +332,11 @@ def verify_replication_k500_groups(
                     raise ValueError("raw1000 labels do not match selected signals labels")
                 if not np.array_equal(labels, latent_labels):
                     raise ValueError("latent labels do not match selected signals labels")
-                class_names = [str(value) for value in ref_meta.get("class_names") or ["CD", "HYP", "MI", "NORM", "STTC"]]
+                class_names = list(SUPER5_CLASS_ORDER)
                 label_counts = dict(zip(class_names, labels.sum(axis=0).astype(int).tolist()))
                 ref_counts = {str(key): int(value) for key, value in (ref_meta.get("label_counts") or {}).items()}
+                if set(ref_counts) != set(SUPER5_CLASS_ORDER):
+                    raise ValueError("ref_meta label_counts keys do not match canonical class order")
                 if ref_counts != label_counts:
                     raise ValueError("ref_meta label_counts do not match selected signals labels")
                 _validate_class_trust(
@@ -341,24 +373,95 @@ def _relative_config(repo_root: Path, value: str | Path) -> str:
     path = Path(value)
     if not path.is_absolute():
         return path.as_posix()
-    return path.resolve().relative_to(repo_root.resolve()).as_posix()
+    try:
+        return path.resolve().relative_to(repo_root.resolve()).as_posix()
+    except ValueError:
+        return path.resolve().as_posix()
 
 
-def _replication_binding(
-    index: Mapping[str, Any], *, repo_root: Path, entry_config: str | Path
+def _indexed_auxiliary_bindings(index: Mapping[str, Any]):
+    for key in INDEXED_AUXILIARY_SURFACE_KEYS:
+        for raw_surface in index.get(key) or []:
+            surface = dict(raw_surface)
+            for raw_replicate in surface.get("replicates") or []:
+                replicate = dict(raw_replicate)
+                for stage, config in (replicate.get("stages") or {}).items():
+                    yield surface, replicate, str(stage), str(config)
+
+
+def _validate_replication_binding(
+    index: Mapping[str, Any], config: Mapping[str, Any], *, repo_root: Path
 ) -> tuple[dict[str, Any], dict[str, Any], str] | None:
-    target = _relative_config(repo_root, entry_config)
-    found = []
-    for raw_surface in index.get("replication_surfaces") or []:
-        surface = dict(raw_surface)
-        for raw_replicate in surface.get("replicates") or []:
-            replicate = dict(raw_replicate)
-            for stage, config in (replicate.get("stages") or {}).items():
-                if str(config) == target:
-                    found.append((surface, replicate, str(stage)))
+    entry = str(config.get("_entry_config") or "")
+    target = _relative_config(repo_root, entry)
+    records = list(_indexed_auxiliary_bindings(index))
+    found = [record[:3] for record in records if record[3] == target]
     if len(found) > 1:
-        raise ValueError(f"config appears more than once in replication surfaces: {target}")
-    return found[0] if found else None
+        raise ValueError(f"config appears more than once in auxiliary surfaces: {target}")
+    binding = found[0] if found else None
+    indexed_paths = {record[3] for record in records}
+    families = {
+        str(record[1].get("input_root_family") or "")
+        for record in records
+        if record[1].get("input_root_family")
+    }
+    sources = {
+        _relative_config(repo_root, source)
+        for source in (config.get("_config_sources") or [])
+    }
+    subset_root = Path(str((config.get("data") or {}).get("kshot_subset_root") or ""))
+    uses_indexed_family = subset_root.name == "subsets" and subset_root.parent.name in families
+    derived_from_indexed = bool(sources.intersection(indexed_paths))
+    under_replication_root = target.startswith("configs/replications/")
+    if binding is None:
+        if uses_indexed_family or derived_from_indexed or under_replication_root:
+            raise ValueError(
+                f"entry {target!r} must be indexed in an active replication/study surface"
+            )
+        return None
+
+    surface, replicate, stage = binding
+    if not _git_tracked(repo_root, target):
+        raise ValueError(f"indexed replication entry must be git tracked: {target}")
+    if target not in sources:
+        raise ValueError(f"indexed replication stage config sources do not contain entry {target}")
+    expected_seed = int(replicate["seed"])
+    kshot = (config.get("paper_protocol") or {}).get("kshot") or {}
+    observed_seeds = {int(kshot.get(key, -1)) for key in ("seed", "subset_seed")}
+    if observed_seeds != {expected_seed}:
+        raise ValueError(
+            f"indexed replication seed drift for {stage}: {sorted(observed_seeds)} != {expected_seed}"
+        )
+    family = str(replicate.get("input_root_family") or "")
+    if subset_root.name != "subsets" or subset_root.parent.name != family:
+        raise ValueError(
+            f"indexed replication input root drift for {stage}: {subset_root} does not bind {family}"
+        )
+    return surface, replicate, stage
+
+
+def _surface_materialization_groups(
+    surface: Mapping[str, Any], *, subset_root: Path, centers: Sequence[str], k: int
+) -> list[dict[str, Any]]:
+    replicates = [dict(item) for item in surface.get("replicates") or []]
+    seeds = [int(item["seed"]) for item in replicates]
+    if seeds != [int(seed) for seed in surface.get("seeds") or seeds] or len(seeds) != len(set(seeds)):
+        raise ValueError("replication surface seeds are duplicate or disagree with the index")
+    expected_family = subset_root.parent.name
+    if {str(item.get("input_root_family") or "") for item in replicates} != {expected_family}:
+        raise ValueError("replication surface input root families are inconsistent")
+    suffixes = list(surface["materialization_artifact_suffixes"])
+    return [
+        group
+        for seed in seeds
+        for group in build_replication_k500_groups(
+            subset_root=subset_root,
+            centers=centers,
+            k=k,
+            seed=seed,
+            artifact_suffixes=suffixes,
+        )
+    ]
 
 
 def attach_replication_preflight(
@@ -371,21 +474,35 @@ def attach_replication_preflight(
     """Attach the indexed replication materialization gate to a launcher manifest."""
 
     index = yaml.safe_load(index_path.read_text(encoding="utf-8")) or {}
-    binding = _replication_binding(index, repo_root=repo_root, entry_config=str(config.get("_entry_config") or ""))
+    binding = _validate_replication_binding(index, config, repo_root=repo_root)
     if binding is None:
         return manifest
     surface, replicate, stage = binding
     paper = config["paper_protocol"]
+    subset_root = Path(str(config["data"]["kshot_subset_root"]))
+    centers = list(paper["centers"]["target_4"])
+    k = int(paper["kshot"]["k"])
     groups = build_replication_k500_groups(
-        subset_root=config["data"]["kshot_subset_root"],
-        centers=paper["centers"]["target_4"],
-        k=int(paper["kshot"]["k"]),
+        subset_root=subset_root,
+        centers=centers,
+        k=k,
         seed=int(paper["kshot"]["subset_seed"]),
         artifact_suffixes=surface["materialization_artifact_suffixes"],
     )
+    validation_groups = _surface_materialization_groups(
+        surface, subset_root=subset_root, centers=centers, k=k
+    )
+    expected_group_count = int(
+        (surface.get("validation_report") or {}).get("expected_group_count") or 0
+    )
+    if expected_group_count != len(validation_groups):
+        raise ValueError(
+            f"replication validation report scope={expected_group_count}, expected {len(validation_groups)}"
+        )
     out = copy.deepcopy(manifest)
     trace = out.setdefault("artifact_trace", {})
     trace.setdefault("inputs", {})["replication_k500_groups"] = groups
+    trace["inputs"]["replication_validation_groups"] = validation_groups
     trace["replication_preflight"] = {
         "surface": surface["name"],
         "stage": stage,
@@ -395,7 +512,11 @@ def attach_replication_preflight(
         "materialization_artifact_suffixes": list(surface["materialization_artifact_suffixes"]),
         "runtime_consumed_artifact_suffixes": list(surface.get("runtime_consumed_artifact_suffixes") or []),
         "provenance_companion_suffixes": list(surface.get("provenance_companion_suffixes") or []),
-        "group_count": len(groups),
+        "current_group_count": len(groups),
+        "validation_group_count": len(validation_groups),
+        "validation_artifact_count": sum(
+            len(group.get("artifacts") or {}) for group in validation_groups
+        ),
         "execute_gate": True,
         "validation_report": {
             "path": str(
@@ -403,9 +524,7 @@ def attach_replication_preflight(
                 / str((surface.get("validation_report") or {}).get("relative_to_input_root"))
             ),
             "expected_sha256": str((surface.get("validation_report") or {}).get("sha256") or ""),
-            "expected_group_count": int(
-                (surface.get("validation_report") or {}).get("expected_group_count") or 0
-            ),
+            "expected_group_count": expected_group_count,
         },
     }
     return out
@@ -432,12 +551,13 @@ def _sha256_file(path: Path) -> str:
 def verify_replication_validation_report(
     contract: Mapping[str, Any], groups: Sequence[Mapping[str, Any]]
 ) -> dict[str, Any]:
-    """Bind a validation report to every current materialized artifact hash."""
+    """Bind the surface report to every indexed seed/center artifact hash and size."""
 
     errors: list[str] = []
     path = Path(str(contract.get("path") or ""))
     report: dict[str, Any] = {}
     actual_sha = ""
+    bound_artifact_count = 0
     try:
         actual_sha = _sha256_file(path)
         if actual_sha != str(contract.get("expected_sha256") or ""):
@@ -473,6 +593,7 @@ def verify_replication_validation_report(
             row = rows.get((int(group["seed"]), str(group["center"]))) or {}
             hashes, sizes = row.get("artifact_sha256") or {}, row.get("artifact_sizes") or {}
             for suffix, artifact in (group.get("artifacts") or {}).items():
+                bound_artifact_count += 1
                 report_key, artifact_path = key_map.get(str(suffix)), Path(str(artifact.get("path") or ""))
                 if not report_key or not artifact_path.is_file():
                     errors.append(f"validation report cannot bind {group['center']}:{suffix}")
@@ -487,6 +608,8 @@ def verify_replication_validation_report(
         "path": str(path),
         "expected_sha256": str(contract.get("expected_sha256") or ""),
         "actual_sha256": actual_sha,
+        "bound_group_count": len(groups),
+        "bound_artifact_count": bound_artifact_count,
         "errors": errors,
     }
 
