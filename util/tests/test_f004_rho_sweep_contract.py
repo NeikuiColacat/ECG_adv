@@ -484,6 +484,95 @@ def test_f004_corruption_stages_export_identity_preserving_metrics_and_tables(co
     } == {"f004_rho0"}
 
 
+@pytest.mark.parametrize(
+    ("layer", "key", "value"),
+    [
+        ("top", "comparison_protocol", "other"),
+        ("top", "variant", "f004_rho0p5"),
+        ("top", "topology_version", "other"),
+        ("top", "topology_sha256", "0" * 64),
+        ("top", "rho", 0.5),
+        ("args", "comparison_protocol", "other"),
+        ("args", "comparison_variant", "f004_rho0p5"),
+        ("args", "comparison_topology_version", "other"),
+        ("args", "comparison_topology_sha256", "0" * 64),
+        ("args", "target_adv_fraction", 0.5),
+    ],
+)
+def test_f004_checkpoint_identity_hard_gate_rejects_tampering_even_with_drift_override(
+    layer: str, key: str, value
+):
+    from ecg_adv_gen.training.resume_contract import validate_f004_checkpoint_identity
+
+    identity = f004_identity(0.25)
+    current = {
+        "comparison_protocol": identity["comparison_protocol"],
+        "comparison_variant": identity["variant"],
+        "comparison_topology_version": identity["topology_version"],
+        "comparison_topology_sha256": identity["topology_sha256"],
+        "target_adv_fraction": identity["rho"],
+        "allow_resume_config_drift": True,
+    }
+    checkpoint = {"comparison_identity": dict(identity), "args": dict(current)}
+    checkpoint[layer if layer == "args" else "comparison_identity"][key] = value
+    with pytest.raises(ValueError, match="F-004 checkpoint identity"):
+        validate_f004_checkpoint_identity(checkpoint, current)
+
+
+@pytest.mark.parametrize(
+    ("layer", "key"),
+    [
+        ("top", "comparison_identity"),
+        ("args", "comparison_protocol"),
+        ("args", "comparison_variant"),
+        ("args", "comparison_topology_version"),
+        ("args", "comparison_topology_sha256"),
+        ("args", "target_adv_fraction"),
+    ],
+)
+def test_f004_checkpoint_identity_hard_gate_rejects_missing_fields(layer: str, key: str):
+    from ecg_adv_gen.training.resume_contract import validate_f004_checkpoint_identity
+
+    identity = f004_identity(0.25)
+    current = {
+        "comparison_protocol": identity["comparison_protocol"],
+        "comparison_variant": identity["variant"],
+        "comparison_topology_version": identity["topology_version"],
+        "comparison_topology_sha256": identity["topology_sha256"],
+        "target_adv_fraction": identity["rho"],
+    }
+    checkpoint = {"comparison_identity": dict(identity), "args": dict(current)}
+    if layer == "top":
+        checkpoint.pop(key)
+    else:
+        checkpoint["args"].pop(key)
+    with pytest.raises(ValueError, match="F-004 checkpoint identity"):
+        validate_f004_checkpoint_identity(checkpoint, current)
+
+
+def test_non_f004_legacy_checkpoint_keeps_resume_compatibility():
+    from ecg_adv_gen.training.resume_contract import validate_f004_checkpoint_identity
+
+    assert validate_f004_checkpoint_identity(
+        {"args": {"center_name": "ningbo"}}, {"center_name": "ningbo"}
+    ) is None
+
+
+@pytest.mark.parametrize(
+    ("field", "wrong"),
+    [
+        ("topology_reference", "a5"),
+        ("topology_version", "wrong_version"),
+        ("only_varied_parameter", "hull_lambda"),
+    ],
+)
+def test_f004_managed_yaml_rejects_false_protocol_declarations(field: str, wrong: str):
+    config = _load(TRAIN)
+    config["paper_protocol"][field] = wrong
+    with pytest.raises(ConfigError, match=field):
+        build_runner_commands(config)
+
+
 def test_realized_within_target_fractions_exclude_source_objective():
     clean = TensorDataset(torch.tensor([[0.0], [1.0]]), torch.tensor([[0.0], [1.0]]))
     adv = TensorDataset(torch.tensor([[1.0], [0.0]]), torch.tensor([[0.0], [1.0]]))

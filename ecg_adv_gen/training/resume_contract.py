@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ecg_adv_gen.matched_effnet import F004_RHO_SWEEP_PROTOCOL
+from ecg_adv_gen.matched_effnet import F004_RHO_SWEEP_PROTOCOL, f004_identity
 
 
 RESUME_CONTRACT_KEYS = (
@@ -152,3 +152,65 @@ def validate_resume_contract(
         "resume checkpoint args disagree with current command on critical keys: "
         f"{preview}. Use --allow_resume_config_drift only for intentional recovery."
     )
+
+
+def validate_f004_checkpoint_identity(
+    checkpoint: Any, current_args: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Hard-gate F-004 top-level and args identity, independent of drift overrides."""
+
+    current_f004 = current_args.get("comparison_protocol") == F004_RHO_SWEEP_PROTOCOL
+    saved_args = checkpoint.get("args") if isinstance(checkpoint, dict) else None
+    top_identity = checkpoint.get("comparison_identity") if isinstance(checkpoint, dict) else None
+    checkpoint_f004 = (
+        isinstance(saved_args, dict)
+        and saved_args.get("comparison_protocol") == F004_RHO_SWEEP_PROTOCOL
+    ) or (
+        isinstance(top_identity, dict)
+        and top_identity.get("comparison_protocol") == F004_RHO_SWEEP_PROTOCOL
+    )
+    if not current_f004:
+        if checkpoint_f004:
+            raise ValueError("F-004 checkpoint identity cannot resume into a non-F004 run")
+        return None
+    try:
+        expected = f004_identity(current_args["target_adv_fraction"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(f"F-004 checkpoint identity current command is incomplete: {exc}") from exc
+    current_projection = {
+        "comparison_protocol": current_args.get("comparison_protocol"),
+        "variant": current_args.get("comparison_variant"),
+        "rho": current_args.get("target_adv_fraction"),
+        "topology_version": current_args.get("comparison_topology_version"),
+        "topology_sha256": current_args.get("comparison_topology_sha256"),
+    }
+    expected_projection = {
+        key: expected[key]
+        for key in (
+            "comparison_protocol", "variant", "rho", "topology_version", "topology_sha256"
+        )
+    }
+    if current_projection != expected_projection:
+        raise ValueError(
+            "F-004 checkpoint identity current command mismatch: "
+            f"{current_projection!r} != {expected_projection!r}"
+        )
+    if top_identity != expected:
+        raise ValueError(
+            f"F-004 checkpoint identity top-level mismatch: {top_identity!r} != {expected!r}"
+        )
+    if not isinstance(saved_args, dict):
+        raise ValueError("F-004 checkpoint identity args mapping is missing")
+    args_projection = {
+        "comparison_protocol": saved_args.get("comparison_protocol"),
+        "variant": saved_args.get("comparison_variant"),
+        "rho": saved_args.get("target_adv_fraction"),
+        "topology_version": saved_args.get("comparison_topology_version"),
+        "topology_sha256": saved_args.get("comparison_topology_sha256"),
+    }
+    if args_projection != expected_projection:
+        raise ValueError(
+            "F-004 checkpoint identity args mismatch: "
+            f"{args_projection!r} != {expected_projection!r}"
+        )
+    return expected

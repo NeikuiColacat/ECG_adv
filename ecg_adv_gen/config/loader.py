@@ -53,6 +53,7 @@ from ecg_adv_gen.matched_effnet import (
     is_paper_matched_effnet_run,
     f004_identity,
     matched_effnet_arm,
+    validate_f004_protocol_declaration,
     validate_matched_effnet_case,
 )
 
@@ -465,6 +466,11 @@ def _claim_arm(config: dict[str, Any], matrix: dict[str, Any]) -> str | None:
 
 def _validate_protocol_claim(config: dict[str, Any]) -> dict[str, Any] | None:
     paper = config.get("paper_protocol") or {}
+    if str(paper.get("comparison_protocol") or "") == F004_RHO_SWEEP_PROTOCOL:
+        try:
+            validate_f004_protocol_declaration(paper)
+        except ValueError as exc:
+            raise ConfigError(str(exc)) from exc
     if "claim_scope" not in paper and "operator_sets" not in paper:
         return None
     evaluation_operators = _claim_evaluation_operators(config)

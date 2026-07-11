@@ -110,6 +110,7 @@ from ecg_adv_gen.training import (  # noqa: E402
     resolve_resume_path,
     restore_quality_buffer_state,
     restore_rng_state,
+    validate_f004_checkpoint_identity,
     validate_resume_contract,
     PTBXLDatasetScheme,
     evaluate,
@@ -2119,6 +2120,7 @@ def main():
             raise FileNotFoundError(f"--resume checkpoint not found: {resume_path}")
         print(f"[resume] loading training checkpoint: {resume_path}", flush=True)
         ckpt = torch.load(resume_path, map_location=args.device)
+        validate_f004_checkpoint_identity(ckpt, vars(args))
         resume_mismatches = validate_resume_contract(
             ckpt.get("args"),
             vars(args),

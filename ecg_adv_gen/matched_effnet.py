@@ -10,6 +10,7 @@ MATCHED_EFFNET_ARMS = ("a0", "a2", "a3", "a4", "a5")
 F004_RHO_SWEEP_PROTOCOL = "f004_full_topology_rho_sweep_v1"
 F004_RHO_VALUES = (0.0, 0.25, 0.5)
 F004_TOPOLOGY_REFERENCE = "a5_components_only"
+F004_ONLY_VARIED_PARAMETER = "target_adv_fraction"
 F004_VARIANTS = ("f004_rho0", "f004_rho0p25", "f004_rho0p5")
 F004_FROZEN_TOPOLOGY = MappingProxyType({
     "enable_vae_lhat": True,
@@ -96,7 +97,7 @@ def f004_identity(rho: object) -> dict[str, Any]:
         "topology_reference": F004_TOPOLOGY_REFERENCE,
         "topology_version": MATCHED_EFFNET_CONTRACT_VERSION,
         "topology_sha256": F004_FROZEN_TOPOLOGY_SHA256,
-        "only_varied_parameter": "target_adv_fraction",
+        "only_varied_parameter": F004_ONLY_VARIED_PARAMETER,
         "canonical_arm": None,
     }
 
@@ -195,3 +196,20 @@ def validate_f004_runtime(
     if drift:
         raise ValueError(f"F-004 frozen full topology drift: {drift}")
     return identity
+
+
+def validate_f004_protocol_declaration(paper_protocol: Mapping[str, Any]) -> None:
+    """Reject managed YAML declarations that disagree with the frozen study."""
+
+    expected = {
+        "topology_reference": F004_TOPOLOGY_REFERENCE,
+        "topology_version": MATCHED_EFFNET_CONTRACT_VERSION,
+        "topology_sha256": F004_FROZEN_TOPOLOGY_SHA256,
+        "only_varied_parameter": F004_ONLY_VARIED_PARAMETER,
+    }
+    for field, value in expected.items():
+        observed = paper_protocol.get(field)
+        if observed != value:
+            raise ValueError(
+                f"F-004 paper_protocol.{field}={observed!r}, expected {value!r}"
+            )

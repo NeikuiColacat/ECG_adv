@@ -34,6 +34,7 @@ from .stream_sampling import (
 )
 from .resume_contract import (
     resume_contract_mismatches,
+    validate_f004_checkpoint_identity,
     validate_resume_contract,
 )
 from .checkpoint_state import (
@@ -87,4 +88,5 @@ __all__ = [
     "summarize_fullft_adv_epoch_diagnostics",
     "tag_value",
     "validate_resume_contract",
+    "validate_f004_checkpoint_identity",
 ]
