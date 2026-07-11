@@ -22,6 +22,7 @@ F004_EXEMPT_CHILD_OPTIONS = frozenset({
     "comparison_variant",
     "device",
     "init_ckpt",
+    "mechanism_variant",
     "num_workers",
     "output_dir",
     "ptbxl_csv",
@@ -30,6 +31,7 @@ F004_EXEMPT_CHILD_OPTIONS = frozenset({
     "ref_meta_json",
     "resume",
     "synth_npz",
+    "study_scope",
     "target_adv_fraction",
     "target_real_npz",
 })
@@ -37,14 +39,24 @@ F004_EXEMPT_CHILD_OPTIONS = frozenset({
 F004_FROZEN_PROJECTION = MappingProxyType({
     "K_anchor": 300,
     "adv_label_mode": "latent_mixed_teacher",
+    "adv_soft_target_floor": 0.0,
     "adv_teacher_mix": 0.4,
     "adv_weight": 0.3,
     "adv_weight_warmup_epochs": 10,
     "anchor_lambda": 0.05,
+    "anchor_class_missing_weight": 0.35,
+    "anchor_class_weight_cap": 4.0,
+    "anchor_class_weight_gamma": 0.5,
+    "anchor_class_weight_min": 0.35,
+    "anchor_class_weight_mode": "manual",
+    "anchor_class_weight_reference_source": "real_anchor",
+    "anchor_class_weights": "",
     "asr_consec_low_max": 999,
     "asr_high_threshold": 0.7,
     "asr_low_threshold": 0.3,
     "batch_size": 128,
+    "boundary_prob_max": 1.0,
+    "boundary_prob_min": 0.0,
     "classes_in_scope": ("CD", "HYP", "MI", "NORM", "STTC"),
     "comparison_arm": "historical_unmatched",
     "comparison_protocol": "f004_full_topology_rho_sweep_v1",
@@ -54,11 +66,14 @@ F004_FROZEN_PROJECTION = MappingProxyType({
     "enable_raw_augmix": True,
     "enable_vae_lhat": True,
     "eval_every": 2,
+    "einthoven_p95_max": 0.5,
     "ewa_decay": 0.999,
     "final_checkpoint_only": False,
+    "grad_clip": 1.0,
     "hull_M": 20,
     "hull_include_anchor": False,
     "hull_init_logit_gap": 0.0,
+    "hull_dirichlet_alpha": 1.0,
     "hull_label_lambda_y": 0.25,
     "hull_label_mode": "exact",
     "hull_label_negative_floor": 0.0,
@@ -72,6 +87,7 @@ F004_FROZEN_PROJECTION = MappingProxyType({
     "hull_neighbor_pool_multiplier": 4,
     "hull_neighbor_pool_size": 120,
     "hull_steps": 5,
+    "hull_weight_mode": "optimized",
     "init_checkpoint_sha256": "f7a4b05d85da8352013b67a0d56d8d47378ab2abc196d1f3a6ba8bbf15aa40ea",
     "init_lineage_stage": "ptbxl_source",
     "latent_augmix_adv_base_mix": 1.0,
@@ -125,6 +141,23 @@ def _projection_digest(projection: Mapping[str, Any]) -> str:
 
 
 F004_FROZEN_PROJECTION_SHA256 = _projection_digest(F004_FROZEN_PROJECTION)
+F004_DERIVED_CHILD_OPTIONS = frozenset({"latent_augmix_signal_space"})
+
+
+def validate_f004_parser_destinations(destinations: Sequence[str]) -> None:
+    """Fail closed when the child parser gains an unclassified F004 option."""
+
+    observed = {str(destination) for destination in destinations} - {"help"}
+    expected_scientific = set(F004_FROZEN_PROJECTION) - F004_DERIVED_CHILD_OPTIONS
+    unclassified = sorted(
+        observed - expected_scientific - F004_EXEMPT_CHILD_OPTIONS
+    )
+    missing = sorted(expected_scientific - observed)
+    if unclassified or missing:
+        raise ValueError(
+            "F-004 parser destinations are not exhaustively classified: "
+            f"unclassified={unclassified}, missing_scientific={missing}"
+        )
 
 
 def _coerce(field: str, value: Any) -> Any:
@@ -253,19 +286,33 @@ def project_f004_adapter_config(
     observed.update({
         "K_anchor": anchors["k_anchor"],
         "adv_label_mode": loss["label_mode"],
+        "adv_soft_target_floor": loss["soft_target_floor"],
         "adv_teacher_mix": loss["teacher_mix"],
         "adv_weight": loss["adv_weight"],
         "adv_weight_warmup_epochs": loss["adv_weight_warmup_epochs"],
+        "anchor_class_missing_weight": anchors["class_missing_weight"],
+        "anchor_class_weight_cap": anchors["class_weight_cap"],
+        "anchor_class_weight_gamma": anchors["class_weight_gamma"],
+        "anchor_class_weight_min": anchors["class_weight_min"],
+        "anchor_class_weight_mode": anchors["class_weight_mode"],
+        "anchor_class_weight_reference_source": anchors[
+            "class_weight_reference_source"
+        ],
+        "anchor_class_weights": anchors["class_weights"],
         "asr_high_threshold": attack["target_asr_range"][1],
         "asr_low_threshold": attack["target_asr_range"][0],
         "batch_size": training["batch_size"],
+        "boundary_prob_max": attack["boundary_prob_max"],
+        "boundary_prob_min": attack["boundary_prob_min"],
         "classes_in_scope": adaptation.get(
             "classes_in_scope", ("CD", "HYP", "MI", "NORM", "STTC")
         ),
         "comparison_arm": comparison_arm,
         "comparison_protocol": comparison_protocol,
         "final_checkpoint_only": selection["policy"] == "last_checkpoint_only",
+        "grad_clip": training["grad_clip"],
         "hull_M": hull["M"],
+        "hull_dirichlet_alpha": hull["dirichlet_alpha"],
         "hull_include_anchor": hull["include_anchor"],
         "hull_init_logit_gap": hull["init_logit_gap"],
         "hull_label_lambda_y": hull["label_lambda_y"],
@@ -279,6 +326,7 @@ def project_f004_adapter_config(
         "hull_neighbor_pool_multiplier": hull["neighbor_pool_multiplier"],
         "hull_neighbor_pool_size": hull["neighbor_pool_size"],
         "hull_steps": hull["steps"],
+        "hull_weight_mode": hull["weight_mode"],
         "init_checkpoint_sha256": (model.get("init_lineage") or {}).get(
             "checkpoint_sha256", ""
         ),
@@ -306,6 +354,7 @@ def project_f004_adapter_config(
         "pgd_batch": attack["pgd_batch"],
         "pgd_eps": attack["pgd_eps"],
         "ptbxl_weight": loss.get("ptbxl_weight", 1.0),
+        "einthoven_p95_max": attack["einthoven_p95_max"],
         "seed": seed,
         "selection_metric": selection.get("metric", "macro_auprc"),
         "source_floor_max_drop": (selection.get("source_floor") or {}).get(

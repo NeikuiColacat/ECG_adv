@@ -101,6 +101,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--hull_include_anchor", action="store_true")
     ap.add_argument("--hull_init_logit_gap", type=float, default=4.0)
     ap.add_argument(
+        "--hull_weight_mode",
+        choices=["optimized", "one_hot", "uniform", "dirichlet"],
+        default="optimized",
+    )
+    ap.add_argument("--hull_dirichlet_alpha", type=float, default=1.0)
+    ap.add_argument(
         "--hull_label_mode",
         choices=["primary", "exact", "compatible"],
         default="primary",
@@ -136,11 +142,25 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     ap.add_argument("--hull_neighbor_pool_size", type=int, default=0)
     ap.add_argument("--hull_neighbor_pool_multiplier", type=int, default=4)
+    ap.add_argument("--anchor_class_weights", default="")
+    ap.add_argument(
+        "--anchor_class_weight_mode",
+        choices=["manual", "inv_freq_kshot"],
+        default="manual",
+    )
+    ap.add_argument("--anchor_class_weight_reference_source", default="real_anchor")
+    ap.add_argument("--anchor_class_weight_gamma", type=float, default=0.5)
+    ap.add_argument("--anchor_class_weight_min", type=float, default=0.35)
+    ap.add_argument("--anchor_class_weight_cap", type=float, default=4.0)
+    ap.add_argument("--anchor_class_missing_weight", type=float, default=0.35)
     ap.add_argument("--k_anchor", type=int, default=300)
     ap.add_argument("--pgd_eps", type=float, default=2.0)
     ap.add_argument("--pgd_batch", type=int, default=32)
     ap.add_argument("--asr_low_threshold", type=float, default=0.30)
     ap.add_argument("--asr_high_threshold", type=float, default=0.70)
+    ap.add_argument("--boundary_prob_min", type=float, default=0.0)
+    ap.add_argument("--boundary_prob_max", type=float, default=1.0)
+    ap.add_argument("--einthoven_p95_max", type=float, default=0.5)
     ap.add_argument("--classes_in_scope", nargs="+", default=CLASS_NAMES)
     ap.add_argument(
         "--init_ckpt",
@@ -196,12 +216,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="mixed_soft",
     )
     ap.add_argument("--adv_teacher_mix", type=float, default=0.3)
+    ap.add_argument("--adv_soft_target_floor", type=float, default=0.0)
     ap.add_argument("--ptbxl_weight", type=float, default=1.0)
     ap.add_argument("--target_real_val_fraction", type=float, default=0.2)
     ap.add_argument("--target_real_val_seed", type=int, default=20260531)
     ap.add_argument("--selection_metric", choices=["macro_auroc", "macro_auprc"], default="macro_auprc")
     ap.add_argument("--source_floor_max_drop", type=float, default=0.02)
     ap.add_argument("--lr", type=float, default=5e-5)
+    ap.add_argument("--grad_clip", type=float, default=1.0)
     ap.add_argument("--train_batch_size", type=int, default=128)
     ap.add_argument(
         "--latent_augmix_third_chain_role",

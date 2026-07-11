@@ -69,6 +69,16 @@ class ConfigError(ValueError):
 
 _VAR_RE = re.compile(r"\$\{([^}]+)\}")
 _CLI_OVERRIDE_KEY_RE = re.compile(r"^[A-Za-z0-9_.]+$")
+RESERVED_LOADER_INTERNAL_KEYS = frozenset(
+    {
+        "_cli_overrides",
+        "_config_sources",
+        "_entry_config",
+        "_local_config",
+        "_local_config_sources",
+        "_project_root",
+    }
+)
 
 ALLOWED_CLI_OVERRIDE_KEYS = frozenset(
     {
@@ -200,23 +210,58 @@ def normalize_pipeline_stages(config: dict[str, Any]) -> dict[str, Any]:
     return {"schema_version": 1, "stages": normalized}
 
 
-def _load_with_extends(path: Path, seen: set[Path] | None = None) -> dict[str, Any]:
+def _reject_reserved_loader_keys(
+    value: Any,
+    *,
+    source: Path,
+    prefix: str = "",
+) -> None:
+    if isinstance(value, dict):
+        for raw_key, child in value.items():
+            key = str(raw_key)
+            location = f"{prefix}.{key}" if prefix else key
+            if key in RESERVED_LOADER_INTERNAL_KEYS:
+                raise ConfigError(
+                    f"YAML may not declare reserved loader key {key!r} "
+                    f"at {source}:{location}"
+                )
+            _reject_reserved_loader_keys(child, source=source, prefix=location)
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            _reject_reserved_loader_keys(
+                child,
+                source=source,
+                prefix=f"{prefix}[{index}]",
+            )
+
+
+def _load_with_extends(
+    path: Path,
+    seen: set[Path] | None = None,
+    *,
+    sources: list[str] | None = None,
+) -> dict[str, Any]:
     path = path.resolve()
     seen = seen or set()
+    source_chain = sources if sources is not None else []
     if path in seen:
         raise ConfigError(f"Config extends cycle detected at {path}")
     seen.add(path)
 
     data = _read_yaml(path)
+    _reject_reserved_loader_keys(data, source=path)
     extends = data.pop("extends", [])
     if isinstance(extends, (str, os.PathLike)):
         extends = [extends]
     merged: dict[str, Any] = {}
     for parent in extends:
         parent_path = (path.parent / str(parent)).resolve()
-        merged = _deep_merge(merged, _load_with_extends(parent_path, seen))
+        merged = _deep_merge(
+            merged,
+            _load_with_extends(parent_path, seen, sources=source_chain),
+        )
     merged = _deep_merge(merged, data)
-    merged.setdefault("_config_sources", []).append(str(path))
+    source_chain.append(str(path))
     return merged
 
 
@@ -395,10 +440,10 @@ def load_experiment_config(
 ) -> dict[str, Any]:
     config_path = config_path.resolve()
     local_config_path = local_config_path.resolve()
-    experiment_raw = _load_with_extends(config_path)
-    local_raw = _load_with_extends(local_config_path)
-    experiment_sources = list(experiment_raw.get("_config_sources") or [])
-    local_sources = list(local_raw.get("_config_sources") or [])
+    experiment_sources: list[str] = []
+    local_sources: list[str] = []
+    experiment_raw = _load_with_extends(config_path, sources=experiment_sources)
+    local_raw = _load_with_extends(local_config_path, sources=local_sources)
     configs_root = _configs_root_for(config_path)
     project_root = configs_root.parent.resolve()
     _validate_local_config_overlay(local_raw)

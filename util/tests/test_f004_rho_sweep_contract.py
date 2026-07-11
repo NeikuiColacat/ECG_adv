@@ -51,6 +51,22 @@ F004_EXPECTED_KSHOT_SEED = 20260601
 F004_EXPECTED_KSHOT_ROOT_FAMILY = (
     "paper_matched_effnet_k500_v7_fixedk_three_seed_20260711/subsets"
 )
+F004_REVIEWER_MISSING_SCIENTIFIC_FIELDS = (
+    "adv_soft_target_floor",
+    "anchor_class_missing_weight",
+    "anchor_class_weight_cap",
+    "anchor_class_weight_gamma",
+    "anchor_class_weight_min",
+    "anchor_class_weight_mode",
+    "anchor_class_weight_reference_source",
+    "anchor_class_weights",
+    "boundary_prob_max",
+    "boundary_prob_min",
+    "einthoven_p95_max",
+    "grad_clip",
+    "hull_dirichlet_alpha",
+    "hull_weight_mode",
+)
 
 
 def test_f004_contract_has_package_owned_projection_module():
@@ -65,6 +81,7 @@ def test_f004_contract_exposes_single_projection_api():
         "F004_EXEMPT_CHILD_OPTIONS",
         "project_f004_child_argv",
         "project_f004_runtime_args",
+        "validate_f004_parser_destinations",
         "validate_f004_projection",
     } <= set(dir(contract))
 
@@ -173,6 +190,7 @@ def test_f004_projection_covers_every_actual_child_behavior_option():
         "comparison_variant",
         "device",
         "init_ckpt",
+        "mechanism_variant",
         "num_workers",
         "output_dir",
         "ptbxl_csv",
@@ -181,6 +199,7 @@ def test_f004_projection_covers_every_actual_child_behavior_option():
         "ref_meta_json",
         "resume",
         "synth_npz",
+        "study_scope",
         "target_adv_fraction",
         "target_real_npz",
     }
@@ -203,7 +222,49 @@ def test_f004_projection_covers_every_actual_child_behavior_option():
         "anchor_lambda",
         "hull_label_positive",
         "hull_label_negative_floor",
+        *F004_REVIEWER_MISSING_SCIENTIFIC_FIELDS,
     } <= set(actual)
+
+
+def test_f004_parser_destination_classifier_fails_closed_for_new_fields():
+    from ecg_adv_gen.f004_contract import (
+        F004_EXEMPT_CHILD_OPTIONS,
+        F004_FROZEN_PROJECTION,
+        validate_f004_parser_destinations,
+    )
+
+    classified = {
+        *(set(F004_FROZEN_PROJECTION) - {"latent_augmix_signal_space"}),
+        *F004_EXEMPT_CHILD_OPTIONS,
+    }
+    validate_f004_parser_destinations(classified)
+    with pytest.raises(ValueError, match="unclassified.*future_scientific_knob"):
+        validate_f004_parser_destinations({*classified, "future_scientific_knob"})
+
+
+@pytest.mark.parametrize("field", F004_REVIEWER_MISSING_SCIENTIFIC_FIELDS)
+def test_f004_direct_child_parser_rejects_reviewer_field_tamper(
+    field: str, capsys: pytest.CaptureFixture[str]
+):
+    from ecg_adv_gen.f004_contract import F004_FROZEN_PROJECTION
+    from ecg_adv_gen.runner import synth_online_at_super5 as child_runner
+
+    argv = _f004_child_command()[3:]
+    option = f"--{field}"
+    assert option in argv
+    index = argv.index(option)
+    tampered = list(argv)
+    alternate = {
+        "anchor_class_weight_mode": "inv_freq_kshot",
+        "hull_weight_mode": "uniform",
+    }.get(field, _drift_value(F004_FROZEN_PROJECTION[field]))
+    tampered[index + 1] = str(alternate)
+
+    with pytest.raises(SystemExit):
+        child_runner.parse_args(tampered)
+    error = capsys.readouterr().err
+    assert "F-004 frozen projection" in error
+    assert field in error
 
 
 def test_f004_projection_is_rho_invariant_and_sha_covers_all_fields():
@@ -265,6 +326,20 @@ def test_f004_projection_rejects_every_field_drift():
         ("paper_protocol.selection.validation_fraction", 0.25, "target_real_val_fraction"),
         ("paper_protocol.selection.source_floor.max_drop", 0.03, "source_floor_max_drop"),
         ("data.target_real_norm_mode", "pre_zscored", "target_real_norm_mode"),
+        ("adaptation.loss.soft_target_floor", 0.2, "adv_soft_target_floor"),
+        ("adaptation.anchors.class_missing_weight", 0.4, "anchor_class_missing_weight"),
+        ("adaptation.anchors.class_weight_cap", 5.0, "anchor_class_weight_cap"),
+        ("adaptation.anchors.class_weight_gamma", 0.7, "anchor_class_weight_gamma"),
+        ("adaptation.anchors.class_weight_min", 0.4, "anchor_class_weight_min"),
+        ("adaptation.anchors.class_weight_mode", "inv_freq_kshot", "anchor_class_weight_mode"),
+        ("adaptation.anchors.class_weight_reference_source", "all", "anchor_class_weight_reference_source"),
+        ("adaptation.anchors.class_weights", "HYP=2", "anchor_class_weights"),
+        ("adaptation.attack.boundary_prob_max", 0.9, "boundary_prob_max"),
+        ("adaptation.attack.boundary_prob_min", 0.1, "boundary_prob_min"),
+        ("adaptation.attack.einthoven_p95_max", 0.6, "einthoven_p95_max"),
+        ("training.grad_clip", 2.0, "grad_clip"),
+        ("adaptation.hull.dirichlet_alpha", 2.0, "hull_dirichlet_alpha"),
+        ("adaptation.hull.weight_mode", "uniform", "hull_weight_mode"),
     ],
 )
 def test_f004_managed_build_rejects_every_config_sourced_projection_drift(
@@ -432,7 +507,7 @@ def test_f004_wrapper_propagates_identity_to_child_command():
     )
     assert _option(child, "--comparison_protocol") == F004_RHO_SWEEP_PROTOCOL
     assert _option(child, "--comparison_variant") == "f004_rho0p25"
-    assert _option(child, "--comparison_topology_version") == "matched_effnet_a0_a2_a3_a4_a5_v4"
+    assert _option(child, "--comparison_topology_version") == "matched_effnet_a0_a2_a3_a4_a5_v5"
     assert _option(child, "--comparison_topology_sha256") == f004_identity(0.25)["topology_sha256"]
     assert _option(child, "--target_adv_fraction") == "0.25"
     assert _option(child, "--hull_label_mode") == "exact"
@@ -506,7 +581,7 @@ def test_f004_resume_contract_rejects_protocol_variant_topology_and_rho_drift():
     current = {
         "comparison_protocol": F004_RHO_SWEEP_PROTOCOL,
         "comparison_variant": "f004_rho0p25",
-        "comparison_topology_version": "matched_effnet_a0_a2_a3_a4_a5_v4",
+        "comparison_topology_version": "matched_effnet_a0_a2_a3_a4_a5_v5",
         "comparison_topology_sha256": matched_effnet.F004_FROZEN_TOPOLOGY_SHA256,
         "target_adv_fraction": 0.25,
     }
@@ -537,7 +612,7 @@ def test_f004_resume_contract_treats_missing_identity_as_drift(missing_key: str)
     current = {
         "comparison_protocol": F004_RHO_SWEEP_PROTOCOL,
         "comparison_variant": "f004_rho0p25",
-        "comparison_topology_version": "matched_effnet_a0_a2_a3_a4_a5_v4",
+        "comparison_topology_version": "matched_effnet_a0_a2_a3_a4_a5_v5",
         "comparison_topology_sha256": matched_effnet.F004_FROZEN_TOPOLOGY_SHA256,
         "target_adv_fraction": 0.25,
     }

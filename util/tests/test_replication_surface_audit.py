@@ -317,8 +317,12 @@ def test_indexed_study_entry_binds_observed_seeds_and_full_validation_scope(name
     validation = trace["inputs"]["replication_validation_groups"]
     preflight = trace["replication_preflight"]
     input_contract = _surface()
+    matrix_centers = {
+        str(command["matrix"]["center"])
+        for command in manifest["commands"]
+    }
     assert sorted({int(group["seed"]) for group in current}) == expected_seeds
-    assert len(current) == 4 * len(expected_seeds)
+    assert len(current) == len(matrix_centers) * len(expected_seeds)
     assert sorted({int(group["seed"]) for group in validation}) == [
         20260531,
         20260601,
@@ -391,6 +395,78 @@ def test_indexed_study_requires_manifest_k500_refs_even_when_top_seed_matches() 
     manifest = _manifest(config, run_id="pytest-study-missing-refs")
     manifest["artifact_trace"]["inputs"]["k500_refs"] = []
     with pytest.raises(ValueError, match="manifest K500 refs"):
+        attach_replication_preflight(
+            manifest,
+            config,
+            repo_root=REPO,
+            index_path=INDEX,
+        )
+
+
+@pytest.mark.parametrize("layout", ("foreign_parent", "prefixed_data_root"))
+def test_indexed_study_rejects_same_family_under_noncanonical_data_root(
+    layout: str, tmp_path: Path
+) -> None:
+    path = REPO / "configs/studies/effnet_f004_rho_sweep_k500.yaml"
+    config = load_experiment_config(
+        path,
+        LOCAL_EXAMPLE,
+        runtime_context={"run_id": f"pytest-study-{layout}"},
+    )
+    manifest = _manifest(config, run_id=f"pytest-study-{layout}")
+    family = _surface()["replicates"][0]["input_root_family"]
+    if layout == "foreign_parent":
+        foreign_root = tmp_path / "foreign_data" / family / "subsets"
+    else:
+        foreign_root = Path(f"{config['paths']['data_root']}_shadow") / family / "subsets"
+    config["data"]["kshot_subset_root"] = str(foreign_root)
+    for ref in manifest["artifact_trace"]["inputs"]["k500_refs"]:
+        ref["anchor_base"] = str(
+            canonical_kshot_base(
+                foreign_root,
+                str(ref["center"]),
+                k=int(ref["k"]),
+                seed=int(ref["seed"]),
+            )
+        )
+
+    with pytest.raises(ValueError, match="canonical.*input root|input root.*canonical"):
+        attach_replication_preflight(
+            manifest,
+            config,
+            repo_root=REPO,
+            index_path=INDEX,
+        )
+
+
+@pytest.mark.parametrize("drift", ("foreign_child_base", "missing_child_group"))
+def test_indexed_study_rejects_manifest_ref_and_attached_group_divergence(
+    drift: str,
+) -> None:
+    path = REPO / "configs/studies/effnet_f004_rho_sweep_k500.yaml"
+    config = load_experiment_config(
+        path,
+        LOCAL_EXAMPLE,
+        runtime_context={"run_id": f"pytest-study-{drift}"},
+    )
+    manifest = _manifest(config, run_id=f"pytest-study-{drift}")
+    refs = manifest["artifact_trace"]["inputs"]["k500_refs"]
+    if drift == "foreign_child_base":
+        target = next(ref for ref in refs if ref["center"] == "ningbo")
+        target["anchor_base"] = str(
+            canonical_kshot_base(
+                Path(config["data"]["kshot_subset_root"]),
+                "georgia",
+                k=int(target["k"]),
+                seed=int(target["seed"]),
+            )
+        )
+    else:
+        manifest["artifact_trace"]["inputs"]["k500_refs"] = [
+            ref for ref in refs if ref["center"] != "ningbo"
+        ]
+
+    with pytest.raises(ValueError, match="manifest K500 refs|input cell"):
         attach_replication_preflight(
             manifest,
             config,

@@ -6,15 +6,26 @@ f004_effnet_producer:
 paper_protocol:
   comparison_protocol: f004_full_topology_rho_sweep_v1
   topology_reference: a5_components_only
-  topology_version: matched_effnet_a0_a2_a3_a4_a5_v4
-  topology_sha256: 44d296e0f9e814127a8cc1f129537964bbe3937f1d711b5ec249bd7a5bc17856
+  topology_version: matched_effnet_a0_a2_a3_a4_a5_v5
+  topology_sha256: 535cfba0492151c8edd0049ec7734900bc349facafef6c5d3b19d33f5e63ad92
   only_varied_parameter: target_adv_fraction
 
 data:
   kshot_subset_root: ${paths.data_root}/paper_matched_effnet_k500_v7_fixedk_three_seed_20260711/subsets
 
+training:
+  grad_clip: 1.0
+
 adaptation:
   comparison_arm: historical_unmatched
+  anchors:
+    class_weights: ""
+    class_weight_mode: manual
+    class_weight_reference_source: real_anchor
+    class_weight_gamma: 0.5
+    class_weight_min: 0.35
+    class_weight_cap: 4.0
+    class_missing_weight: 0.35
   hull:
     label_mode: exact
     mix_label_mode: anchor_soft
@@ -24,3 +35,11 @@ adaptation:
     neighbor_mode: local_random
     neighbor_pool_size: 120
     neighbor_pool_multiplier: 4
+    weight_mode: optimized
+    dirichlet_alpha: 1.0
+  attack:
+    boundary_prob_min: 0.0
+    boundary_prob_max: 1.0
+    einthoven_p95_max: 0.5
+  loss:
+    soft_target_floor: 0.0

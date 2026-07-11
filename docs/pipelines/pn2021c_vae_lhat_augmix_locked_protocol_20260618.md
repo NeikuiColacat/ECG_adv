@@ -45,7 +45,7 @@ not count as the main method.
   and do not load latent assets or create that manifest.
 - The independent F-004 rho sweep uses seed `20260601` from the fresh
   `paper_matched_effnet_k500_v7_fixedk_three_seed_20260711/subsets` family. Its
-  v4 behavior projection (`44d296e0f9e814127a8cc1f129537964bbe3937f1d711b5ec249bd7a5bc17856`)
+  v5 behavior projection (`535cfba0492151c8edd0049ec7734900bc349facafef6c5d3b19d33f5e63ad92`)
   freezes every adapter-to-training-child behavior option, including K-anchor,
   optimizer/budget, label/loss, VAE-LHAT, AugMix chain weights and auxiliary
   batch caps, selection, normalization, and source-lineage fields. Only

@@ -423,6 +423,82 @@ def _normalized_input_seeds(value: Any, *, label: str) -> list[int]:
     return seeds
 
 
+def _resolved_path(value: str | Path) -> Path:
+    return Path(value).expanduser().resolve(strict=False)
+
+
+def _canonical_study_input_root(
+    config: Mapping[str, Any], *, root_family: str
+) -> Path:
+    data_root = _resolved_path(str((config.get("paths") or {}).get("data_root") or ""))
+    if not str((config.get("paths") or {}).get("data_root") or ""):
+        raise ValueError("indexed auxiliary config has no paths.data_root")
+    return _resolved_path(data_root / root_family / "subsets")
+
+
+def _input_cell(
+    *, center: str, k: int, seed: int, base: str | Path
+) -> tuple[str, int, int, str]:
+    return str(center), int(k), int(seed), str(_resolved_path(base))
+
+
+def _manifest_ref_cells(
+    refs: Sequence[Mapping[str, Any]], *, expected_root: Path
+) -> set[tuple[str, int, int, str]]:
+    cells: set[tuple[str, int, int, str]] = set()
+    for index, ref in enumerate(refs):
+        try:
+            center = str(ref["center"])
+            k = int(ref["k"])
+            seed = int(ref["seed"])
+            base = _resolved_path(str(ref["anchor_base"]))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"manifest K500 refs[{index}] is incomplete: {exc}") from exc
+        expected_base = _resolved_path(
+            canonical_kshot_base(expected_root, center, k=k, seed=seed)
+        )
+        if base != expected_base:
+            raise ValueError(
+                "manifest K500 refs do not bind the canonical input root: "
+                f"{center}/K{k}/seed{seed} base={base}, expected={expected_base}"
+            )
+        cells.add(_input_cell(center=center, k=k, seed=seed, base=base))
+    return cells
+
+
+def _manifest_matrix_cells(
+    manifest: Mapping[str, Any],
+    config: Mapping[str, Any],
+    *,
+    expected_root: Path,
+) -> set[tuple[str, int, int, str]]:
+    commands = manifest.get("commands") or []
+    if not isinstance(commands, list) or not commands:
+        raise ValueError("indexed study manifest commands are missing")
+    kshot = (config.get("paper_protocol") or {}).get("kshot") or {}
+    default_k = int(kshot["k"])
+    default_seed = int(kshot.get("subset_seed", kshot["seed"]))
+    cells: set[tuple[str, int, int, str]] = set()
+    for index, command in enumerate(commands):
+        if not isinstance(command, Mapping):
+            raise ValueError(f"indexed study manifest command[{index}] is not a mapping")
+        matrix = command.get("matrix") or {}
+        case = matrix.get("case") if isinstance(matrix.get("case"), Mapping) else {}
+        argv = [str(item) for item in command.get("argv") or []]
+        opts = argv_option_map(argv)
+        center = str(matrix.get("center") or opt_first(opts, "--center", ""))
+        if not center:
+            raise ValueError(f"indexed study manifest command[{index}] has no center cell")
+        # Evaluation ``--seed`` values are corruption RNG seeds, not K-shot
+        # identities.  The auxiliary matrix case (or its frozen K-shot
+        # contract) is the only matrix-cell source for K and subset seed.
+        k = int(case.get("k", default_k))
+        seed = int(case.get("seed", default_seed))
+        base = canonical_kshot_base(expected_root, center, k=k, seed=seed)
+        cells.add(_input_cell(center=center, k=k, seed=seed, base=base))
+    return cells
+
+
 def _indexed_auxiliary_bindings(index: Mapping[str, Any]):
     contracts = _replication_surface_contracts(index)
     for raw_surface in index.get("replication_surfaces") or []:
@@ -518,10 +594,12 @@ def _validate_replication_binding(
     if target not in sources:
         raise ValueError(f"indexed auxiliary config sources do not contain entry {target}")
     family = str(binding["input_contract"]["root_family"])
-    if subset_root.name != "subsets" or subset_root.parent.name != family:
+    expected_root = _canonical_study_input_root(config, root_family=family)
+    observed_root = _resolved_path(subset_root)
+    if observed_root != expected_root:
         raise ValueError(
-            f"indexed auxiliary input root drift for {binding['stage']}: "
-            f"{subset_root} does not bind {family}"
+            f"indexed auxiliary canonical input root drift for {binding['stage']}: "
+            f"{observed_root} != {expected_root}"
         )
 
     trace_inputs = (((manifest or {}).get("artifact_trace") or {}).get("inputs") or {})
@@ -543,13 +621,29 @@ def _validate_replication_binding(
             f"{observed_seeds} != {binding['input_seeds']}"
         )
     if expected_count is not None:
+        ref_cells = _manifest_ref_cells(refs, expected_root=expected_root)
+        matrix_cells = _manifest_matrix_cells(
+            manifest or {}, config, expected_root=expected_root
+        )
+        if ref_cells != matrix_cells:
+            raise ValueError(
+                f"indexed study {binding['stage']} manifest K500 refs/input cell "
+                f"mismatch: refs={sorted(ref_cells)}, matrix={sorted(matrix_cells)}"
+            )
+        matrix_seeds = sorted({cell[2] for cell in matrix_cells})
+        if matrix_seeds != binding["input_seeds"]:
+            raise ValueError(
+                f"indexed auxiliary matrix input seeds drift for {binding['stage']}: "
+                f"{matrix_seeds} != {binding['input_seeds']}"
+            )
         observed_count = len((manifest or {}).get("commands") or [])
         if observed_count != int(expected_count):
             raise ValueError(
                 f"indexed study command count drift for {binding['stage']}: "
                 f"{observed_count} != {expected_count}"
             )
-    return binding
+        binding = {**binding, "current_input_cells": sorted(matrix_cells)}
+    return {**binding, "expected_subset_root": str(expected_root)}
 
 
 def _surface_materialization_groups(
@@ -590,6 +684,25 @@ def _materialization_groups_for_seeds(
     ]
 
 
+def _materialization_groups_for_cells(
+    contract: Mapping[str, Any],
+    cells: Sequence[tuple[str, int, int, str]],
+) -> list[dict[str, Any]]:
+    groups: list[dict[str, Any]] = []
+    for center, k, seed, base in cells:
+        built = build_replication_k500_groups(
+            subset_root=_resolved_path(base).parents[2],
+            centers=[center],
+            k=k,
+            seed=seed,
+            artifact_suffixes=contract["source_surface"][
+                "materialization_artifact_suffixes"
+            ],
+        )
+        groups.extend(built)
+    return groups
+
+
 def attach_replication_preflight(
     manifest: dict[str, Any],
     config: Mapping[str, Any],
@@ -615,13 +728,31 @@ def attach_replication_preflight(
     subset_root = Path(str(config["data"]["kshot_subset_root"]))
     centers = list(paper["centers"]["target_4"])
     k = int(paper["kshot"]["k"])
-    groups = _materialization_groups_for_seeds(
-        contract,
-        subset_root=subset_root,
-        centers=centers,
-        k=k,
-        seeds=input_seeds,
-    )
+    current_cells = binding.get("current_input_cells")
+    if current_cells is not None:
+        groups = _materialization_groups_for_cells(contract, current_cells)
+        attached_cells = {
+            _input_cell(
+                center=str(group["center"]),
+                k=int(group["k"]),
+                seed=int(group["seed"]),
+                base=str(group["base"]),
+            )
+            for group in groups
+        }
+        if attached_cells != {tuple(cell) for cell in current_cells}:
+            raise ValueError(
+                f"indexed study {stage} attached group/input cell mismatch: "
+                f"groups={sorted(attached_cells)}, matrix={sorted(current_cells)}"
+            )
+    else:
+        groups = _materialization_groups_for_seeds(
+            contract,
+            subset_root=subset_root,
+            centers=centers,
+            k=k,
+            seeds=input_seeds,
+        )
     validation_groups = _materialization_groups_for_seeds(
         contract,
         subset_root=subset_root,

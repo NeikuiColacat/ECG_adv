@@ -106,6 +106,80 @@ def test_dirty_local_overlay_and_unrelated_model_path_do_not_block(source_repo):
     assert all("model/" not in row["repo_path"] for row in report["sources"])
 
 
+@pytest.mark.parametrize(
+    ("layer_name", "reserved_key"),
+    [
+        ("effnet_f004_rho_sweep_onecenter_smoke.yaml", "_config_sources"),
+        ("effnet_f004_rho_sweep_locked.yaml", "_local_config_sources"),
+        ("effnet_matched_f005_locked.yaml", "_entry_config"),
+        ("vae_lhat_defaults.yaml", "_project_root"),
+        ("effnet_f004_rho_sweep_locked.yaml", "_cli_overrides"),
+        ("effnet_f004_rho_sweep_onecenter_smoke.yaml", "_local_config"),
+    ],
+)
+def test_loader_rejects_reserved_internal_key_in_entry_or_ancestor(
+    monkeypatch: pytest.MonkeyPatch,
+    layer_name: str,
+    reserved_key: str,
+) -> None:
+    from ecg_adv_gen.config import ConfigError, load_experiment_config
+    from ecg_adv_gen.config import loader
+
+    repo = Path(__file__).resolve().parents[2]
+    entry = repo / "configs/studies/effnet_f004_rho_sweep_onecenter_smoke.yaml"
+    local = repo / "configs/local/linbinhao_server.example.yaml"
+    real_read_yaml = loader._read_yaml
+
+    def injecting_read_yaml(path: Path) -> dict:
+        data = real_read_yaml(path)
+        if path.name == layer_name:
+            data[reserved_key] = ["forged.yaml"]
+        return data
+
+    monkeypatch.setattr(loader, "_read_yaml", injecting_read_yaml)
+    with pytest.raises(ConfigError, match=f"reserved.*{reserved_key}"):
+        load_experiment_config(
+            entry,
+            local,
+            runtime_context={"run_id": "pytest-reserved-provenance"},
+        )
+
+
+def test_loader_accumulates_ancestor_provenance_outside_merged_yaml_and_blocks_dirty_parent(
+    source_repo,
+) -> None:
+    from ecg_adv_gen.config.loader import _load_with_extends
+    from ecg_adv_gen.config.source_clean import inspect_execution_sources
+
+    repo, _config, paths = source_repo
+    paths["base"].write_text("base_value: 1\n", encoding="utf-8")
+    paths["entry"].write_text(
+        "extends: ../defaults/base.yaml\nentry_value: 2\n",
+        encoding="utf-8",
+    )
+    _git(repo, "add", "configs/defaults/base.yaml", "configs/experiments/study.yaml")
+    _git(repo, "commit", "-qm", "add extends chain")
+
+    sources: list[str] = []
+    merged = _load_with_extends(paths["entry"], sources=sources)
+    assert merged == {"base_value": 1, "entry_value": 2}
+    assert not any(str(key).startswith("_") for key in merged)
+    assert sources == [str(paths["base"].resolve()), str(paths["entry"].resolve())]
+
+    paths["base"].write_text("base_value: dirty\n", encoding="utf-8")
+    report = inspect_execution_sources(
+        {
+            "_entry_config": str(paths["entry"]),
+            "_config_sources": sources,
+            "_local_config_sources": [str(paths["local"])],
+        },
+        repo_root=repo,
+    )
+    assert report["passed"] is False
+    parent = next(row for row in report["sources"] if row["path"] == str(paths["base"].resolve()))
+    assert parent["unstaged"] is True
+
+
 def test_require_clean_execution_sources_reports_phase(source_repo):
     from ecg_adv_gen.config.source_clean import (
         ExecutionSourceError,

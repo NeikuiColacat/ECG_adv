@@ -292,6 +292,38 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
             "--comparison_topology_version", MATCHED_EFFNET_CONTRACT_VERSION,
             "--comparison_topology_sha256", F004_FROZEN_TOPOLOGY_SHA256,
         ]
+        argv.extend(
+            [
+                "--adv_soft_target_floor",
+                adaptation["loss"]["soft_target_floor"],
+                "--anchor_class_missing_weight",
+                anchors["class_missing_weight"],
+                "--anchor_class_weight_cap",
+                anchors["class_weight_cap"],
+                "--anchor_class_weight_gamma",
+                anchors["class_weight_gamma"],
+                "--anchor_class_weight_min",
+                anchors["class_weight_min"],
+                "--anchor_class_weight_mode",
+                anchors["class_weight_mode"],
+                "--anchor_class_weight_reference_source",
+                anchors["class_weight_reference_source"],
+                "--anchor_class_weights",
+                anchors["class_weights"],
+                "--boundary_prob_max",
+                attack["boundary_prob_max"],
+                "--boundary_prob_min",
+                attack["boundary_prob_min"],
+                "--einthoven_p95_max",
+                attack["einthoven_p95_max"],
+                "--grad_clip",
+                training["grad_clip"],
+                "--hull_dirichlet_alpha",
+                hull["dirichlet_alpha"],
+                "--hull_weight_mode",
+                hull["weight_mode"],
+            ]
+        )
     if resolved_hull_include_anchor:
         argv.append("--hull_include_anchor")
     if arm_components is not None:

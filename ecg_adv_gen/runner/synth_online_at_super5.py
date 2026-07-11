@@ -88,7 +88,10 @@ from ecg_adv_gen.training.online_buffer import (  # noqa: E402
 from ecg_adv_gen.training.resume_contract import (  # noqa: E402
     LOCKED_LATENT_AUGMIX_SIGNAL_SPACE,
 )
-from ecg_adv_gen.f004_contract import project_f004_runtime_args  # noqa: E402
+from ecg_adv_gen.f004_contract import (  # noqa: E402
+    project_f004_runtime_args,
+    validate_f004_parser_destinations,
+)
 from ecg_adv_gen.matched_effnet import (  # noqa: E402
     MATCHED_EFFNET_ARMS,
     MATCHED_EFFNET_CONTRACT_VERSION,
@@ -126,7 +129,6 @@ from ecg_adv_gen.data.latent_pools import (  # noqa: E402
 )
 from ecg_adv_gen.data.ptbxl import get_ptbxl_labels_for_scheme, preprocess_ptbxl_all  # noqa: E402
 from ecg_adv_gen.preprocessing import crop_signal_tc  # noqa: E402
-from util.ecgtwin_utils import ECGTwinWrapper  # noqa: E402
 from ecg_adv_gen.adaptation import (  # noqa: E402
     SameLabelLatentIndex,
     StratifiedPoolWalker,
@@ -1712,6 +1714,9 @@ def parse_args(argv: list[str] | None = None):
         if args.comparison_topology_version != MATCHED_EFFNET_CONTRACT_VERSION:
             p.error("F-004 comparison topology version mismatch")
         try:
+            validate_f004_parser_destinations(
+                [action.dest for action in p._actions]
+            )
             validate_f004_runtime(
                 comparison_protocol=args.comparison_protocol,
                 comparison_arm=args.comparison_arm,
@@ -1745,12 +1750,16 @@ def load_synth_pool(synth_npz_path: str) -> Tuple[np.ndarray, np.ndarray, str, D
 def load_optional_vae_assets(
     args: argparse.Namespace,
     *,
-    ecgtwin_factory=ECGTwinWrapper,
+    ecgtwin_factory=None,
     latent_pool_loader=load_synth_pool,
 ):
     """Load VAE-only assets only for arms whose canonical contract enables them."""
     if not bool(args.enable_vae_lhat):
         return None, None
+    if ecgtwin_factory is None:
+        from util.ecgtwin_utils import ECGTwinWrapper
+
+        ecgtwin_factory = ECGTwinWrapper
     return (
         ecgtwin_factory(device=args.device, load_encoder=True, load_text_model=False),
         latent_pool_loader(args.synth_npz),

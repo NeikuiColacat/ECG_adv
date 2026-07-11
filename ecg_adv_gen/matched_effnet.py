@@ -8,7 +8,7 @@ from ecg_adv_gen.f004_contract import (
     validate_f004_projection,
 )
 
-MATCHED_EFFNET_CONTRACT_VERSION = "matched_effnet_a0_a2_a3_a4_a5_v4"
+MATCHED_EFFNET_CONTRACT_VERSION = "matched_effnet_a0_a2_a3_a4_a5_v5"
 MATCHED_EFFNET_ARMS = ("a0", "a2", "a3", "a4", "a5")
 MATCHED_EFFNET_VAE_HULL_LABEL_MODE = "exact"
 MATCHED_EFFNET_VAE_HULL_INCLUDE_ANCHOR = False
