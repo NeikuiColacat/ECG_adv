@@ -45,6 +45,7 @@ from .replication import (
     audit_replication_surfaces,
     build_replication_k500_groups,
     verify_replication_k500_groups,
+    verify_replication_validation_report,
 )
 
 __all__ = [
@@ -84,4 +85,5 @@ __all__ = [
     "audit_replication_surfaces",
     "build_replication_k500_groups",
     "verify_replication_k500_groups",
+    "verify_replication_validation_report",
 ]

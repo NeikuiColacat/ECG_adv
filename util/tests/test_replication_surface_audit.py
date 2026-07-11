@@ -21,6 +21,7 @@ from ecg_adv_gen.config import (
     audit_replication_surfaces,
     build_replication_k500_groups,
     verify_replication_k500_groups,
+    verify_replication_validation_report,
     verify_required_inputs,
 )
 from ecg_adv_gen.data.kshot_artifacts import canonical_kshot_base
@@ -78,6 +79,14 @@ def _write_group(root: Path, *, center: str, k: int, seed: int) -> Path:
     record_ids = np.asarray([f"{center}_{idx:04d}" for idx in range(k)])
     labels = np.zeros((k, 5), dtype=np.float32)
     labels[:, 3] = 1.0
+    waveform = np.broadcast_to(
+        np.linspace(-1.0, 1.0, 1000, dtype=np.float32)[None, :, None],
+        (k, 1000, 12),
+    ).copy()
+    latents = np.broadcast_to(
+        np.linspace(-0.5, 0.5, 128, dtype=np.float32)[None, None, :],
+        (k, 4, 128),
+    ).copy()
     class_names = np.asarray(["CD", "HYP", "MI", "NORM", "STTC"])
     shared = {
         "labels": labels,
@@ -87,11 +96,11 @@ def _write_group(root: Path, *, center: str, k: int, seed: int) -> Path:
         "mapping_version": np.asarray(MAPPING_VERSION),
         "mapping_hash": np.asarray(MAPPING_HASH),
     }
-    np.savez(base.with_suffix(".signals.npz"), signals=np.zeros((k, 2, 1), dtype=np.float32), **shared)
-    np.savez(base.with_suffix(".latent.npz"), latents=np.zeros((k, 1, 2), dtype=np.float32), **shared)
-    np.savez(
+    np.savez_compressed(base.with_suffix(".signals.npz"), signals=waveform, **shared)
+    np.savez_compressed(base.with_suffix(".latent.npz"), latents=latents, **shared)
+    np.savez_compressed(
         base.with_suffix(".raw1000.npz"),
-        signals=np.zeros((k, 2, 1), dtype=np.float32),
+        signals=waveform,
         labels=labels,
         record_ids=record_ids,
         metadata=np.asarray(
@@ -100,6 +109,16 @@ def _write_group(root: Path, *, center: str, k: int, seed: int) -> Path:
                     "center": center,
                     "source_ref_meta_json": str(base.with_suffix(".ref_meta.json")),
                     "n_records": k,
+                    "class_names": class_names.tolist(),
+                    "record_ids_source": "ref_meta_order",
+                    "signals_are_pre_zscore": True,
+                    "preprocess": {
+                        "target_fs": 100,
+                        "target_len": 1000,
+                        "preprocess_mode": "minimal_resample",
+                        "norm_mode": "none",
+                    },
+                    "model_input_preprocess": {"norm_mode": "per_sample_global", "crop_len": 1000},
                 }
             ],
             dtype=object,
@@ -273,6 +292,135 @@ def test_replication_preflight_rejects_wrong_seed_identity_and_blocks_children(t
     assert manifest["safety"]["managed_child_commands_invoked"] is False
 
 
+@pytest.mark.parametrize("artifact", ("signals", "latent", "raw1000"))
+def test_replication_preflight_rejects_nonfinite_or_wrong_shape_arrays(tmp_path: Path, artifact: str):
+    root = tmp_path / "subsets"
+    base = _write_group(root, center="ningbo", k=2, seed=17)
+    path = base.with_suffix(f".{artifact}.npz")
+    allow_pickle = artifact == "raw1000"
+    with np.load(path, allow_pickle=allow_pickle) as payload:
+        values = {key: payload[key] for key in payload.files}
+    payload_key = "latents" if artifact == "latent" else "signals"
+    values[payload_key] = np.zeros((2, 2, 1), dtype=np.float32)
+    values[payload_key].reshape(-1)[0] = np.nan
+    np.savez_compressed(path, **values)
+    groups = build_replication_k500_groups(
+        subset_root=root,
+        centers=["ningbo"],
+        k=2,
+        seed=17,
+        artifact_suffixes=list(SUFFIXES),
+    )
+    report = verify_replication_k500_groups(
+        groups,
+        mapping_version=MAPPING_VERSION,
+        mapping_hash=MAPPING_HASH,
+    )
+    assert report["passed"] is False
+    assert report["identity_errors"]
+
+
+def test_replication_preflight_rejects_cross_artifact_label_drift(tmp_path: Path):
+    root = tmp_path / "subsets"
+    base = _write_group(root, center="ningbo", k=2, seed=17)
+    path = base.with_suffix(".latent.npz")
+    with np.load(path, allow_pickle=False) as payload:
+        values = {key: payload[key] for key in payload.files}
+    values["labels"] = np.zeros((2, 5), dtype=np.float32)
+    values["labels"][:, 0] = 1.0
+    np.savez_compressed(path, **values)
+    groups = build_replication_k500_groups(
+        subset_root=root,
+        centers=["ningbo"],
+        k=2,
+        seed=17,
+        artifact_suffixes=list(SUFFIXES),
+    )
+    report = verify_replication_k500_groups(
+        groups,
+        mapping_version=MAPPING_VERSION,
+        mapping_hash=MAPPING_HASH,
+    )
+    assert report["passed"] is False
+    assert any("labels" in item["error"] for item in report["identity_errors"])
+
+
+def test_replication_preflight_rejects_incorrect_class_trust_value(tmp_path: Path):
+    root = tmp_path / "subsets"
+    base = _write_group(root, center="ningbo", k=2, seed=17)
+    path = base.with_suffix(".class_trust.json")
+    trust = json.loads(path.read_text(encoding="utf-8"))
+    trust["class_trust"]["NORM"] = 0.0
+    path.write_text(json.dumps(trust), encoding="utf-8")
+    groups = build_replication_k500_groups(
+        subset_root=root,
+        centers=["ningbo"],
+        k=2,
+        seed=17,
+        artifact_suffixes=list(SUFFIXES),
+    )
+    report = verify_replication_k500_groups(
+        groups,
+        mapping_version=MAPPING_VERSION,
+        mapping_hash=MAPPING_HASH,
+    )
+    assert report["passed"] is False
+    assert any("class_trust" in item["error"] for item in report["identity_errors"])
+
+
+def test_validation_report_binds_each_artifact_hash_and_blocks_tamper(tmp_path: Path):
+    root = tmp_path / "subsets"
+    base = _write_group(root, center="ningbo", k=2, seed=17)
+    groups = build_replication_k500_groups(
+        subset_root=root, centers=["ningbo"], k=2, seed=17, artifact_suffixes=list(SUFFIXES)
+    )
+    key_map = {
+        "ref_meta.json": "ref_meta", "signals.npz": "signals", "latent.npz": "latent",
+        "raw1000.npz": "raw1000", "class_trust.json": "class_trust",
+    }
+    artifacts = groups[0]["artifacts"]
+    hashes = {
+        key_map[suffix]: hashlib.sha256(Path(record["path"]).read_bytes()).hexdigest()
+        for suffix, record in artifacts.items()
+    }
+    sizes = {key_map[suffix]: Path(record["path"]).stat().st_size for suffix, record in artifacts.items()}
+    report_path = tmp_path / "validation_report.json"
+    report_path.write_text(
+        json.dumps({
+            "passed": True, "errors": [],
+            "groups": [{"seed": 17, "center": "ningbo", "checks": {"identity": True},
+                        "artifact_sha256": hashes, "artifact_sizes": sizes}],
+        }),
+        encoding="utf-8",
+    )
+    contract = {
+        "path": str(report_path),
+        "expected_sha256": hashlib.sha256(report_path.read_bytes()).hexdigest(),
+        "expected_group_count": 1,
+    }
+    assert verify_replication_validation_report(contract, groups)["passed"] is True
+    latent_path = base.with_suffix(".latent.npz")
+    with np.load(latent_path, allow_pickle=False) as payload:
+        values = {key: payload[key] for key in payload.files}
+    values["latents"] = values["latents"].copy()
+    values["latents"][0, 0, 0] += 0.125
+    np.savez_compressed(latent_path, **values)
+    assert verify_replication_validation_report(contract, groups)["passed"] is False
+    manifest = {
+        "artifact_trace": {
+            "inputs": {"checkpoints": [], "data_caches": [], "k500_refs": [],
+                       "replication_k500_groups": groups},
+            "initialization": {},
+            "metrics": {"mapping_version": MAPPING_VERSION, "mapping_hash": MAPPING_HASH},
+            "replication_preflight": {"validation_report": contract},
+        },
+        "commands": [],
+        "safety": {"managed_child_commands_invoked": False},
+    }
+    assert verify_required_inputs(manifest)["passed"] is False
+    assert manifest["safety"]["managed_child_commands_invoked"] is False
+
+
 def test_replication_preflight_rejects_old_id_relabel_protocol(tmp_path: Path):
     root = tmp_path / "subsets"
     base = _write_group(root, center="ningbo", k=2, seed=17)
@@ -307,7 +455,16 @@ def test_replication_preflight_rejects_old_id_relabel_protocol(tmp_path: Path):
     )
 
 
-def test_replication_audit_reports_contract_and_execution_readiness_separately(tmp_path: Path):
+def test_replication_audit_reports_contract_and_execution_readiness_separately(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    import ecg_adv_gen.config.replication as replication_module
+
+    monkeypatch.setattr(
+        replication_module,
+        "verify_replication_validation_report",
+        lambda contract, groups: {"passed": True, "path": contract["path"], "errors": []},
+    )
     local = _write_local_config(tmp_path)
     for center in CENTERS:
         _write_group(_subset_root(tmp_path, canonical=False), center=center, k=500, seed=20260531)

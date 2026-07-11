@@ -122,6 +122,10 @@ def test_replication_index_and_wrapper_inventory_are_exact_and_tracked():
         "raw1000.npz",
     ]
     assert surface["provenance_companion_suffixes"] == ["signals.npz", "class_trust.json"]
+    assert surface["f005_pre_split_exact_partner_eligibility"]["scope"] == (
+        "full_K500_pre_split_descriptive_only"
+    )
+    assert surface["f005_pre_split_exact_partner_eligibility"]["post_split_promotion_evidence"] is False
     assert surface["execute_preflight"] == "require_all_four_centers_x_five_k500_artifacts"
     assert set(records) == set(SEEDS)
     assert all(tuple(record["stages"]) == STAGES for record in records.values())

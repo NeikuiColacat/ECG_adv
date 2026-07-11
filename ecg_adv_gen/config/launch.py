@@ -20,7 +20,7 @@ from ecg_adv_gen.evaluation.pn2021c_metadata import validate_target_init_k500_id
 
 from .adapters.common import argv_option_map, opt_first
 from .paths import PathSafetyError, is_under
-from .replication import verify_replication_k500_groups
+from .replication import verify_replication_k500_groups, verify_replication_validation_report
 
 
 class LaunchError(RuntimeError):
@@ -701,6 +701,20 @@ def verify_required_inputs(manifest: dict[str, Any]) -> dict[str, Any]:
             for item in replication_preflight["identity_errors"]
         )
         verified.extend(replication_preflight["verified_inputs"])
+        validation_contract = (trace.get("replication_preflight") or {}).get("validation_report") or {}
+        if validation_contract:
+            validation_report = verify_replication_validation_report(
+                validation_contract, replication_groups
+            )
+            replication_preflight["validation_report"] = validation_report
+            lineage_errors.extend(
+                {
+                    "role": "replication_validation_report",
+                    "path": str(validation_report.get("path") or ""),
+                    "error": error,
+                }
+                for error in validation_report["errors"]
+            )
 
     if initialization:
         try:

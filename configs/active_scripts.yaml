@@ -150,7 +150,10 @@ replication_surfaces:
     relative_to_input_root: validation_report.json
     sha256: 3909fea253f2bf588f305d746aca3dd360a993e7dca86a8046b97246a6e36ea6
     expected_group_count: 12
-  f005_exact_partner_eligibility:
+  f005_pre_split_exact_partner_eligibility:
+    scope: full_K500_pre_split_descriptive_only
+    post_split_promotion_evidence: false
+    promotion_gate: per_run_F005_preflight_after_train_val_split
     seed20260531: {ningbo: 497, chapman_shaoxing: 497, cpsc_2018: 500, georgia: 500}
     seed20260601: {ningbo: 497, chapman_shaoxing: 498, cpsc_2018: 500, georgia: 499}
     seed20260611: {ningbo: 497, chapman_shaoxing: 500, cpsc_2018: 500, georgia: 500}
