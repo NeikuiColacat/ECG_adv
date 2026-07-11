@@ -591,6 +591,7 @@ def run_matrix_queue(
     base_env: Mapping[str, str] | None = None,
     poll_interval: float = 0.1,
     tick_hook: Callable[[], None] | None = None,
+    before_dispatch: Callable[[int, Mapping[str, Any], int], None] | None = None,
     acquire_lock: bool = True,
 ) -> dict[str, Any]:
     """Execute N commands over a bounded GPU pool with atomic per-command resume."""
@@ -634,6 +635,8 @@ def run_matrix_queue(
                         base=env_base,
                         updates={**(command.get("env") or {}), "CUDA_VISIBLE_DEVICES": gpu},
                     )
+                    if before_dispatch is not None:
+                        before_dispatch(index, command, number)
                     process = _spawn(command, argv, env, stdout_path, stderr_path)
                     attempt = {
                         "attempt": number,
@@ -702,6 +705,7 @@ def run_postprocess_serial(
     run_dir: Path,
     manifest_path: Path,
     base_env: Mapping[str, str] | None = None,
+    before_dispatch: Callable[[int, Mapping[str, Any], int], None] | None = None,
     acquire_lock: bool = True,
 ) -> dict[str, Any]:
     """Run reporting serially, then perform the full standard artifact check."""
@@ -720,6 +724,13 @@ def run_postprocess_serial(
             stderr_path = logs_dir / f"postprocess_{index:03d}.stderr.log"
             env = build_process_env(base=env_base, updates=command.get("env") or {})
             started = _utc_now()
+            if before_dispatch is not None:
+                try:
+                    before_dispatch(index, command, 1)
+                except BaseException as exc:
+                    status = "interrupted" if isinstance(exc, KeyboardInterrupt) else "failed"
+                    _patch_manifest(manifest_path, postprocess_status=status)
+                    raise
             process = _spawn(command, [str(x) for x in command.get("argv") or []], env, stdout_path, stderr_path)
             try:
                 returncode = process.wait()

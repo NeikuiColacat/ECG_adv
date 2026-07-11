@@ -193,6 +193,20 @@ def _execution_args() -> object:
     )()
 
 
+def _patch_clean_source_checks(monkeypatch) -> None:
+    monkeypatch.setattr(
+        matrix_cli,
+        "inspect_execution_sources",
+        lambda *args, **kwargs: {
+            "passed": True,
+            "sources": [],
+            "blocking_sources": [],
+            "errors": [],
+            "excluded_local_config_sources": [],
+        },
+    )
+
+
 def test_cli_requires_exactly_one_mode_and_bounds_parallelism() -> None:
     base = [
         "--config",
@@ -448,6 +462,39 @@ def test_first_failure_stops_dispatch_but_allows_running_child_to_finish(tmp_pat
     assert not outputs[3].exists()
 
 
+def test_before_dispatch_gate_runs_for_each_actual_child_and_blocks_the_next_spawn(
+    tmp_path: Path,
+) -> None:
+    script = tmp_path / "fake_child.py"
+    _write_fake_child(script)
+    outputs = [tmp_path / "first.txt", tmp_path / "second.txt"]
+    commands = [_command(script, output, index=index) for index, output in enumerate(outputs)]
+    run_dir = tmp_path / "run"
+    manifest_path = _write_manifest(run_dir, commands, outputs)
+    checked: list[tuple[int, int]] = []
+
+    def gate(index: int, _command: object, attempt: int) -> None:
+        checked.append((index, attempt))
+        if index == 1:
+            raise LaunchError("source became dirty")
+
+    with pytest.raises(LaunchError, match="source became dirty"):
+        run_matrix_queue(
+            commands,
+            gpus=["0"],
+            max_parallel=1,
+            run_dir=run_dir,
+            manifest_path=manifest_path,
+            base_env={"PATH": os.environ["PATH"]},
+            poll_interval=0.005,
+            before_dispatch=gate,
+        )
+
+    assert checked == [(0, 1), (1, 1)]
+    assert outputs[0].is_file()
+    assert not outputs[1].exists()
+
+
 def test_interrupt_terminates_only_owned_child_process_groups(tmp_path: Path) -> None:
     script = tmp_path / "fake_child.py"
     _write_fake_child(script)
@@ -544,6 +591,39 @@ def test_postprocess_runs_serially_then_performs_full_artifact_verification(tmp_
     assert (run_dir / "logs" / "postprocess_000.stderr.log").is_file()
     assert not (run_dir / "stdout.log").exists()
     assert not (run_dir / "stderr.log").exists()
+
+
+def test_postprocess_before_dispatch_gate_blocks_the_child_spawn(tmp_path: Path) -> None:
+    script = tmp_path / "fake_child.py"
+    _write_fake_child(script)
+    child_output = tmp_path / "child.txt"
+    child_output.write_text("ok\n", encoding="utf-8")
+    post_output = tmp_path / "report.json"
+    postprocess = _command(script, post_output, index=0)
+    run_dir = tmp_path / "run"
+    manifest_path = _write_manifest(
+        run_dir,
+        [_command(script, child_output, index=0)],
+        [child_output],
+    )
+    manifest = json.loads(manifest_path.read_text())
+    manifest["postprocess_commands"] = [postprocess]
+    manifest["artifact_trace"]["expected_outputs"]["postprocess_runs"] = []
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    def reject(*_args) -> None:
+        raise LaunchError("postprocess source became dirty")
+
+    with pytest.raises(LaunchError, match="postprocess source became dirty"):
+        run_postprocess_serial(
+            [postprocess],
+            run_dir=run_dir,
+            manifest_path=manifest_path,
+            base_env={"PATH": os.environ["PATH"]},
+            before_dispatch=reject,
+        )
+
+    assert not post_output.exists()
 
 
 def test_resume_loads_but_does_not_rewrite_manifest_or_resolved_config(tmp_path: Path) -> None:
@@ -990,6 +1070,7 @@ def test_execute_lifecycle_records_every_phase_failure_atomically(
     phase: str,
 ) -> None:
     manifest_path = _write_manifest(tmp_path, [], [])
+    _patch_clean_source_checks(monkeypatch)
     monkeypatch.setattr(
         matrix_cli,
         "check_nvidia_smi",
@@ -1036,6 +1117,7 @@ def test_execute_lifecycle_marks_success_only_after_finalizer_returns(
     tmp_path: Path, monkeypatch
 ) -> None:
     manifest_path = _write_manifest(tmp_path, [], [])
+    _patch_clean_source_checks(monkeypatch)
     monkeypatch.setattr(
         matrix_cli,
         "check_nvidia_smi",
@@ -1079,6 +1161,7 @@ def test_execute_lifecycle_marks_success_only_after_finalizer_returns(
 
 def test_execute_lifecycle_records_keyboard_interrupt(tmp_path: Path, monkeypatch) -> None:
     manifest_path = _write_manifest(tmp_path, [], [])
+    _patch_clean_source_checks(monkeypatch)
     monkeypatch.setattr(matrix_cli, "check_nvidia_smi", lambda: (_ for _ in ()).throw(KeyboardInterrupt()))
     with pytest.raises(KeyboardInterrupt):
         matrix_cli._execute_pipeline(

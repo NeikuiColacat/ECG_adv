@@ -295,6 +295,16 @@ commands are dispatched over the bounded GPU pool. The first child failure
 stops new dispatch; children already running may finish. Ctrl-C terminates only
 process groups created by this queue.
 
+Dry-run records execution-source cleanliness as diagnostics without blocking.
+Execute and resume inspect the active-script index, entry YAML, and every
+non-local `_config_sources` YAML again after plan/resume and before any
+`nvidia-smi` preflight, after required-input verification, and immediately
+before every matrix or postprocess child spawn. Each `diagnostic`,
+`pre_execute`, and `pre_child` report is appended atomically to
+`run_manifest.json`. A failed check follows the normal failed lifecycle and
+cannot start that child; `managed_child_commands_invoked` changes from false
+only after a clean per-dispatch check.
+
 Resume uses the same command with `--resume`; it does not regenerate the
 existing resolved config or replace the prior manifest. Its frozen normalized
 contract covers commands, postprocess, replication preflight/K500/validation

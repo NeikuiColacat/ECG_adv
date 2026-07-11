@@ -23,14 +23,16 @@ from ecg_adv_gen.config import (  # noqa: E402
     build_runner_commands,
     check_nvidia_smi,
     default_run_dir,
+    inspect_execution_sources,
     load_experiment_config,
     make_dry_run_manifest,
     prepare_output_dir,
+    require_clean_execution_sources,
     validate_experiment_config,
     verify_required_inputs,
 )
-from ecg_adv_gen.evidence import RunRecordError, finalize_run_record  # noqa: E402
 from ecg_adv_gen.config.paths import is_under  # noqa: E402
+from ecg_adv_gen.evidence import RunRecordError, finalize_run_record  # noqa: E402
 from ecg_adv_gen.runner.launch_plan import (  # noqa: E402
     experiment_purpose,
     render_launch_command,
@@ -48,6 +50,12 @@ from ecg_adv_gen.runner.matrix_parallel import (  # noqa: E402
     validate_gpu_snapshot,
     validate_matrix_resume_contract,
     validate_parallelism,
+)
+
+
+_SOURCE_POLICY = (
+    "execute requires active_scripts.yaml, the entry config, and every experiment "
+    "_config_sources file to be clean, tracked, and present; _local_config_sources are excluded"
 )
 
 
@@ -148,6 +156,69 @@ def _matrix_contract(
     }
 
 
+def _inspect_source_check(
+    config: dict[str, Any],
+    *,
+    phase: str,
+    command_index: int | None = None,
+    command_name: Any = None,
+    attempt: int | None = None,
+    dispatch_kind: str | None = None,
+) -> dict[str, Any]:
+    report = inspect_execution_sources(
+        config,
+        repo_root=REPO_ROOT,
+        index_path=REPO_ROOT / "configs" / "active_scripts.yaml",
+    )
+    report["phase"] = phase
+    report["checked_at_utc"] = datetime.now(timezone.utc).isoformat()
+    if command_index is not None:
+        report.update(
+            {
+                "command_index": command_index,
+                "command_name": command_name,
+                "attempt": attempt,
+                "dispatch_kind": dispatch_kind,
+            }
+        )
+    return report
+
+
+def _with_source_check(
+    manifest: dict[str, Any],
+    report: dict[str, Any],
+    *,
+    child_invoked: bool = False,
+) -> dict[str, Any]:
+    cleanliness = dict(manifest.get("execution_source_cleanliness") or {})
+    cleanliness["policy"] = _SOURCE_POLICY
+    cleanliness["checks"] = [*(cleanliness.get("checks") or []), report]
+    safety = dict(manifest.get("safety") or {})
+    safety["managed_child_commands_invoked"] = bool(
+        safety.get("managed_child_commands_invoked") or child_invoked
+    )
+    manifest.update(
+        {
+            "execution_source_cleanliness": cleanliness,
+            "safety": safety,
+        }
+    )
+    return manifest
+
+
+def _record_source_check(
+    manifest_path: Path,
+    report: dict[str, Any],
+    *,
+    child_invoked: bool = False,
+) -> dict[str, Any]:
+    manifest = _with_source_check(
+        read_json_object(manifest_path), report, child_invoked=child_invoked
+    )
+    atomic_write_json(manifest_path, manifest)
+    return manifest
+
+
 def _update_execution_lifecycle(
     manifest_path: Path,
     *,
@@ -197,9 +268,15 @@ def _execute_pipeline(
     manifest_path: Path,
     gpus: list[str],
 ) -> None:
-    phase = "gpu_preflight"
+    phase = "pre_execute"
     _update_execution_lifecycle(manifest_path, status="running", phase=phase)
     try:
+        source_report = _inspect_source_check(config, phase=phase)
+        _record_source_check(manifest_path, source_report)
+        require_clean_execution_sources(source_report, phase=phase)
+
+        phase = "gpu_preflight"
+        _update_execution_lifecycle(manifest_path, status="running", phase=phase)
         snapshot = check_nvidia_smi()
         selected_rows = validate_gpu_snapshot(
             gpus,
@@ -230,15 +307,41 @@ def _execute_pipeline(
         if not input_verification["passed"]:
             raise LaunchError("Required input verification failed before matrix commands")
 
+        phase = "pre_child"
+        _update_execution_lifecycle(manifest_path, status="running", phase=phase)
+        source_report = _inspect_source_check(config, phase=phase)
+        _record_source_check(manifest_path, source_report)
+        require_clean_execution_sources(source_report, phase=phase)
+
         phase = "queue"
-        safety = dict(current.get("safety") or {})
-        safety["managed_child_commands_invoked"] = True
-        _update_execution_lifecycle(
-            manifest_path,
-            status="running",
-            phase=phase,
-            patch={"safety": safety},
-        )
+        _update_execution_lifecycle(manifest_path, status="running", phase=phase)
+
+        def before_dispatch(
+            index: int,
+            command: Any,
+            attempt: int,
+            *,
+            dispatch_kind: str = "matrix",
+        ) -> None:
+            nonlocal phase
+            phase = "pre_child"
+            _update_execution_lifecycle(manifest_path, status="running", phase=phase)
+            report = _inspect_source_check(
+                config,
+                phase=phase,
+                command_index=index,
+                command_name=command.get("name"),
+                attempt=attempt,
+                dispatch_kind=dispatch_kind,
+            )
+            _record_source_check(
+                manifest_path,
+                report,
+                child_invoked=report.get("passed") is True,
+            )
+            require_clean_execution_sources(report, phase=phase)
+            phase = "postprocess" if dispatch_kind == "postprocess" else "queue"
+
         run_matrix_queue(
             commands,
             gpus=gpus,
@@ -246,6 +349,7 @@ def _execute_pipeline(
             run_dir=out_dir,
             manifest_path=manifest_path,
             resume=args.resume,
+            before_dispatch=before_dispatch,
             acquire_lock=False,
         )
         phase = "postprocess"
@@ -254,6 +358,12 @@ def _execute_pipeline(
             postprocess_commands,
             run_dir=out_dir,
             manifest_path=manifest_path,
+            before_dispatch=lambda index, command, attempt: before_dispatch(
+                index,
+                command,
+                attempt,
+                dispatch_kind="postprocess",
+            ),
             acquire_lock=False,
         )
         phase = "finalizer"
@@ -308,12 +418,18 @@ def _prepare_plan(
         attach_launch_artifacts(manifest, run_dir=out_dir)
     )
     if args.resume:
-        return out_dir, _resume_manifest(
+        existing = _resume_manifest(
             manifest_path,
             commands=commands,
             postprocess_commands=postprocess_commands,
             expected_manifest=expected,
         )
+        for report in (
+            (manifest.get("execution_source_cleanliness") or {}).get("checks") or []
+        ):
+            existing = _with_source_check(existing, report)
+        atomic_write_json(manifest_path, existing)
+        return out_dir, existing
     return out_dir, write_launch_plan_files(
         out_dir,
         config,
@@ -382,6 +498,10 @@ def main(argv: list[str] | None = None) -> int:
             config,
             repo_root=REPO_ROOT,
             index_path=REPO_ROOT / "configs" / "active_scripts.yaml",
+        )
+        manifest = _with_source_check(
+            manifest,
+            _inspect_source_check(config, phase="diagnostic"),
         )
         manifest["matrix_parallel"] = _matrix_contract(
             assignments=assignments,

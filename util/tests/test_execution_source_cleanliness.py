@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from argparse import Namespace
 from pathlib import Path
 
@@ -199,3 +200,315 @@ def test_launcher_rechecks_sources_immediately_before_child_invocation(
     assert checks[0]["passed"] is True
     assert checks[1]["passed"] is False
     assert persisted["safety"]["managed_child_commands_invoked"] is False
+
+
+def _matrix_args(out_dir: Path, *, execute: bool, resume: bool = False) -> Namespace:
+    return Namespace(
+        config="experiment.yaml",
+        local_config="local.yaml",
+        run_id="matrix-source-gate",
+        gpus="0",
+        max_parallel=1,
+        matrix_key="center",
+        output_dir=str(out_dir),
+        min_free_memory_mb=0,
+        max_utilization_pct=100,
+        dry_run=not execute,
+        execute=execute,
+        resume=resume,
+        force=False,
+        write_plan=True,
+    )
+
+
+def _matrix_command(script: Path, output: Path, index: int, *extra: str) -> dict:
+    return {
+        "name": f"child_{index}",
+        "argv": [sys.executable, str(script), str(output), *extra],
+        "cwd": str(script.parent),
+        "env": {},
+        "matrix": {"center": f"center_{index}"},
+    }
+
+
+def _matrix_manifest(commands: list[dict], outputs: list[Path]) -> dict:
+    return {
+        "manifest_schema_version": 2,
+        "run_id": "matrix-source-gate",
+        "status": "launch_prepared",
+        "config_hash_sha256": "a" * 64,
+        "commands": commands,
+        "postprocess_commands": [],
+        "launcher": {},
+        "safety": {"managed_child_commands_invoked": False},
+        "artifact_trace": {
+            "metrics": {},
+            "expected_outputs": {
+                "launch_artifacts": [],
+                "child_runs": [
+                    {
+                        "command_index": index,
+                        "name": command["name"],
+                        "expected_artifacts": [
+                            {"role": "result", "path": str(output), "required": True}
+                        ],
+                    }
+                    for index, (command, output) in enumerate(
+                        zip(commands, outputs, strict=True)
+                    )
+                ],
+                "postprocess_runs": [],
+            },
+        },
+    }
+
+
+def _patch_matrix_config(
+    monkeypatch,
+    launcher,
+    *,
+    repo: Path,
+    config: dict,
+    args: Namespace,
+    manifest: dict,
+    commands: list[dict],
+) -> None:
+    monkeypatch.setattr(launcher, "REPO_ROOT", repo)
+    monkeypatch.setattr(launcher, "parse_args", lambda _argv=None: args)
+    monkeypatch.setattr(launcher, "load_experiment_config", lambda *a, **k: config)
+    monkeypatch.setattr(
+        launcher,
+        "validate_experiment_config",
+        lambda *a, **k: {
+            "output_root": str(Path(args.output_dir).parent),
+            "write_boundary": str(Path(args.output_dir).parent),
+        },
+    )
+    monkeypatch.setattr(launcher, "build_runner_commands", lambda *_a, **_k: commands)
+    monkeypatch.setattr(launcher, "build_postprocess_commands", lambda *_a, **_k: [])
+    monkeypatch.setattr(
+        launcher, "make_dry_run_manifest", lambda *_a, **_k: json.loads(json.dumps(manifest))
+    )
+    monkeypatch.setattr(
+        launcher, "attach_replication_preflight", lambda value, *_a, **_k: value
+    )
+
+
+def test_matrix_dry_run_records_dirty_source_diagnostic_without_blocking(
+    monkeypatch, tmp_path: Path, source_repo
+) -> None:
+    from scripts.agent import run_matrix_parallel as launcher
+
+    repo, config, paths = source_repo
+    paths["entry"].write_text("dirty: diagnostic\n", encoding="utf-8")
+    out_dir = tmp_path / "dry-run"
+    args = _matrix_args(out_dir, execute=False)
+    commands = [_matrix_command(paths["entry"], tmp_path / "unused", 0)]
+    manifest = _matrix_manifest(commands, [tmp_path / "unused"])
+    captured: dict = {}
+    _patch_matrix_config(
+        monkeypatch,
+        launcher,
+        repo=repo,
+        config=config,
+        args=args,
+        manifest=manifest,
+        commands=commands,
+    )
+
+    def capture_plan(**kwargs):
+        captured.update(kwargs["manifest"])
+        return kwargs["out_dir"], kwargs["manifest"]
+
+    monkeypatch.setattr(launcher, "_prepare_plan", capture_plan)
+
+    assert launcher.main([]) == 0
+    check = captured["execution_source_cleanliness"]["checks"][0]
+    assert check["phase"] == "diagnostic"
+    assert check["passed"] is False
+    assert captured["safety"]["managed_child_commands_invoked"] is False
+
+
+@pytest.mark.parametrize("resume", [False, True])
+def test_matrix_execute_rechecks_sources_after_plan_before_gpu_preflight(
+    monkeypatch, tmp_path: Path, source_repo, resume: bool
+) -> None:
+    from scripts.agent import run_matrix_parallel as launcher
+
+    repo, config, paths = source_repo
+    out_dir = tmp_path / ("resume" if resume else "fresh")
+    args = _matrix_args(out_dir, execute=True, resume=resume)
+    commands = [_matrix_command(paths["entry"], tmp_path / "unused", 0)]
+    manifest = _matrix_manifest(commands, [tmp_path / "unused"])
+    _patch_matrix_config(
+        monkeypatch,
+        launcher,
+        repo=repo,
+        config=config,
+        args=args,
+        manifest=manifest,
+        commands=commands,
+    )
+
+    def write_plan_then_dirty(**kwargs):
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "run_manifest.json").write_text(
+            json.dumps(kwargs["manifest"]), encoding="utf-8"
+        )
+        paths["base"].write_text("dirty: after-plan\n", encoding="utf-8")
+        return out_dir, kwargs["manifest"]
+
+    gpu_calls: list[bool] = []
+    monkeypatch.setattr(launcher, "_prepare_plan", write_plan_then_dirty)
+    monkeypatch.setattr(launcher, "check_nvidia_smi", lambda: gpu_calls.append(True))
+
+    assert launcher.main([]) == 3
+    assert gpu_calls == []
+    persisted = json.loads((out_dir / "run_manifest.json").read_text())
+    checks = persisted["execution_source_cleanliness"]["checks"]
+    assert [row["phase"] for row in checks] == ["diagnostic", "pre_execute"]
+    assert checks[0]["passed"] is True
+    assert checks[1]["passed"] is False
+    assert persisted["status"] == "failed"
+    assert persisted["execution_lifecycle"]["phase"] == "pre_execute"
+    assert persisted["safety"]["managed_child_commands_invoked"] is False
+
+
+def test_matrix_execute_rechecks_after_inputs_before_first_child(
+    monkeypatch, tmp_path: Path, source_repo
+) -> None:
+    from ecg_adv_gen.config import LaunchError
+    from scripts.agent import run_matrix_parallel as launcher
+
+    repo, config, paths = source_repo
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    manifest_path = run_dir / "run_manifest.json"
+    manifest = _matrix_manifest([], [])
+    manifest["execution_source_cleanliness"] = {"policy": "fixture", "checks": []}
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    args = _matrix_args(run_dir, execute=True)
+    queue_calls: list[bool] = []
+    monkeypatch.setattr(launcher, "REPO_ROOT", repo)
+    monkeypatch.setattr(
+        launcher,
+        "check_nvidia_smi",
+        lambda: {
+            "gpus": [
+                {
+                    "index": "0",
+                    "memory_used_mb": "0",
+                    "memory_total_mb": "24000",
+                    "utilization_gpu_pct": "0",
+                }
+            ]
+        },
+    )
+
+    def verify_then_dirty(_manifest):
+        paths["base"].write_text("dirty: after-inputs\n", encoding="utf-8")
+        return {"passed": True}
+
+    monkeypatch.setattr(launcher, "verify_required_inputs", verify_then_dirty)
+    monkeypatch.setattr(
+        launcher, "run_matrix_queue", lambda *a, **k: queue_calls.append(True)
+    )
+
+    with pytest.raises(LaunchError, match="pre_child"):
+        launcher._execute_pipeline(
+            args=args,
+            config=config,
+            commands=[],
+            postprocess_commands=[],
+            out_dir=run_dir,
+            manifest_path=manifest_path,
+            gpus=["0"],
+        )
+
+    assert queue_calls == []
+    persisted = json.loads(manifest_path.read_text())
+    assert persisted["status"] == "failed"
+    assert persisted["execution_lifecycle"]["phase"] == "pre_child"
+    assert persisted["execution_source_cleanliness"]["checks"][-1]["passed"] is False
+    assert persisted["safety"]["managed_child_commands_invoked"] is False
+
+
+def test_matrix_queue_blocks_later_child_when_source_becomes_dirty(
+    monkeypatch, tmp_path: Path, source_repo
+) -> None:
+    from ecg_adv_gen.config import LaunchError
+    from scripts.agent import run_matrix_parallel as launcher
+
+    repo, config, paths = source_repo
+    script = tmp_path / "child.py"
+    script.write_text(
+        """
+import sys
+from pathlib import Path
+
+output = Path(sys.argv[1])
+output.write_text("ok\\n", encoding="utf-8")
+if len(sys.argv) > 2:
+    Path(sys.argv[2]).write_text("dirty: by-first-child\\n", encoding="utf-8")
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    outputs = [tmp_path / "first.txt", tmp_path / "second.txt"]
+    commands = [
+        _matrix_command(script, outputs[0], 0, str(paths["base"])),
+        _matrix_command(script, outputs[1], 1),
+    ]
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    manifest_path = run_dir / "run_manifest.json"
+    manifest = _matrix_manifest(commands, outputs)
+    manifest["execution_source_cleanliness"] = {"policy": "fixture", "checks": []}
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    args = _matrix_args(run_dir, execute=True)
+    monkeypatch.setattr(launcher, "REPO_ROOT", repo)
+    monkeypatch.setattr(
+        launcher,
+        "check_nvidia_smi",
+        lambda: {
+            "gpus": [
+                {
+                    "index": "0",
+                    "memory_used_mb": "0",
+                    "memory_total_mb": "24000",
+                    "utilization_gpu_pct": "0",
+                }
+            ]
+        },
+    )
+    monkeypatch.setattr(launcher, "verify_required_inputs", lambda _manifest: {"passed": True})
+    monkeypatch.setattr(
+        launcher,
+        "run_postprocess_serial",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("postprocess must not run")),
+    )
+
+    with pytest.raises(LaunchError, match="pre_child"):
+        launcher._execute_pipeline(
+            args=args,
+            config=config,
+            commands=commands,
+            postprocess_commands=[],
+            out_dir=run_dir,
+            manifest_path=manifest_path,
+            gpus=["0"],
+        )
+
+    assert outputs[0].is_file()
+    assert not outputs[1].exists()
+    persisted = json.loads(manifest_path.read_text())
+    dispatch_checks = [
+        row
+        for row in persisted["execution_source_cleanliness"]["checks"]
+        if "command_index" in row
+    ]
+    assert [row["command_index"] for row in dispatch_checks] == [0, 1]
+    assert [row["passed"] for row in dispatch_checks] == [True, False]
+    assert persisted["status"] == "failed"
+    assert persisted["execution_lifecycle"]["phase"] == "pre_child"
+    assert persisted["safety"]["managed_child_commands_invoked"] is True

@@ -540,6 +540,10 @@ reporting_tools:
   - running_pid_resume_is_fail_closed_unless_esrch
   - strict_progress_schema_and_attempt_validation
   - top_level_success_only_after_finalizer_returns
+  - dry_run_records_execution_source_diagnostics_without_blocking
+  - execute_and_resume_source_gate_precedes_nvidia_preflight
+  - source_gate_rechecks_after_inputs_and_before_every_child_spawn
+  - child_invoked_flag_changes_only_after_clean_per_dispatch_gate
   - resume_skips_only_revalidated_command_artifacts
   - effnet_checkpoint_latest_resumes_with_latest
   - first_failure_stops_new_dispatch_and_allows_running_children_to_finish
