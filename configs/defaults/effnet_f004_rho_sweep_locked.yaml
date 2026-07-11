@@ -1,0 +1,13 @@
+extends: effnet_matched_f005_locked.yaml
+
+f004_effnet_producer:
+  experiment_name: effnet_f004_rho_sweep_k500
+
+paper_protocol:
+  comparison_protocol: f004_full_topology_rho_sweep_v1
+  topology_reference: a5_components_only
+  topology_version: matched_effnet_a0_a2_a3_a4_a5_v2
+  only_varied_parameter: target_adv_fraction
+
+adaptation:
+  comparison_arm: historical_unmatched

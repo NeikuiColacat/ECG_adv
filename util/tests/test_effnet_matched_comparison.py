@@ -344,8 +344,8 @@ def test_managed_matched_a0_a5_commands_share_every_non_method_contract():
         assert _option(arms["a5"], "--target_adv_fraction") == "0.5"
 
 
-@pytest.mark.parametrize("rho", [0.0, 0.25, 0.5])
-def test_managed_target_adv_fraction_accepts_declared_matrix_values(rho: float):
+@pytest.mark.parametrize("rho", [0.0, 0.25])
+def test_managed_fake_a5_rho_matrix_is_rejected_before_path_collision(rho: float):
     config = load_experiment_config(
         REPO / "configs/experiments/effnet_vae_lhat_augmix_threechain_locked_k500.yaml",
         LOCAL_CONFIG,
@@ -357,9 +357,35 @@ def test_managed_target_adv_fraction_accepts_declared_matrix_values(rho: float):
         "target_adv_fraction": [rho],
     }
 
-    command = build_runner_commands(config)[0]
+    with pytest.raises(ValueError, match="canonical matched EffNet|matrix keys"):
+        build_runner_commands(config)
 
-    assert _option(command["argv"], "--target_adv_fraction") == str(rho)
+
+@pytest.mark.parametrize("rho", [0.0, 0.25])
+def test_canonical_a5_record_cannot_report_a_noncanonical_runtime_rho(rho: float):
+    split = {
+        "train_record_ids_sha256": "a" * 64,
+        "val_record_ids_sha256": "b" * 64,
+        "train_record_ids": ["r1"],
+        "val_record_ids": ["r2"],
+        "val_fraction": 0.5,
+        "seed": 7,
+    }
+    with pytest.raises(ValueError, match="canonical matched EffNet arm a5 requires target_adv_fraction=0.5"):
+        selection.build_matched_training_record(
+            comparison_arm="a5",
+            runtime_target_adv_fraction=rho,
+            source_checkpoint_path="/data/source.pt",
+            source_checkpoint_sha256="c" * 64,
+            split=split,
+            selection_metric="macro_auprc",
+            source_floor_max_drop=0.02,
+            epochs=2,
+            optimizer_steps_per_epoch=3,
+            realized_optimizer_steps=6,
+            scheduler_steps=2,
+            source_floor_result={"source_floor_passed": True},
+        )
 
 
 def test_managed_target_adv_fraction_rejects_undeclared_matrix_value():

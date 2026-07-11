@@ -161,6 +161,15 @@ def build_benchmark_direct_run_leaf(params: Any) -> str:
 def build_effnet_vae_lhat_run_leaf(params: Any) -> str:
     """Build the run directory leaf for EfficientNet VAE-LHAT/AugMix pilots."""
 
+    from ecg_adv_gen.matched_effnet import F004_RHO_SWEEP_PROTOCOL, f004_variant_for_rho
+
+    if str(_get(params, "comparison_protocol", "")) == F004_RHO_SWEEP_PROTOCOL:
+        variant = f004_variant_for_rho(_get(params, "target_adv_fraction", None))
+        declared = str(_get(params, "comparison_variant", variant) or variant)
+        if declared != variant:
+            raise ValueError(f"F-004 variant/rho mismatch: expected {variant!r}, got {declared!r}")
+        return variant
+
     center = str(_get(params, "center", ""))
     hull_m = _as_int(_get(params, "hull_M", _get(params, "hull_m", 20)), 20)
     hull_lambda = _get(params, "hull_lambda", 0.15)
@@ -230,4 +239,22 @@ def build_matched_effnet_producer_dir(
     return (
         f"{config['paths']['output_root']}/{producer['experiment_name']}/"
         f"{config.get('runtime', {}).get('run_id', '')}/{leaf}"
+    )
+
+
+def build_f004_effnet_producer_dir(
+    config: Mapping[str, Any], *, center: str, rho: float
+) -> str:
+    """Derive the short F-004 producer directory shared by train and eval."""
+
+    from ecg_adv_gen.matched_effnet import f004_variant_for_rho
+
+    producer = config.get("f004_effnet_producer") or {}
+    experiment_name = str(
+        producer.get("experiment_name") or "effnet_f004_rho_sweep_k500"
+    )
+    variant = f004_variant_for_rho(rho)
+    return (
+        f"{config['paths']['output_root']}/{experiment_name}/"
+        f"{config.get('runtime', {}).get('run_id', '')}/runs/{center}/{variant}"
     )

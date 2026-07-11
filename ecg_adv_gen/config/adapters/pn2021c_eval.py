@@ -10,7 +10,11 @@ from ecg_adv_gen.evaluation.pn2021c_protocol import (
     OFFICIAL_S5_SEVERITY_PROFILE,
     official_s5_depth23_composites,
 )
-from ecg_adv_gen.run_naming import build_matched_effnet_producer_dir
+from ecg_adv_gen.matched_effnet import F004_RHO_SWEEP_PROTOCOL, f004_variant_for_rho
+from ecg_adv_gen.run_naming import (
+    build_f004_effnet_producer_dir,
+    build_matched_effnet_producer_dir,
+)
 
 from .common import argv_option_map, audit_equals, audit_require_options, opt_first, opt_list
 
@@ -56,10 +60,13 @@ def build_pn2021c_eval_argv(config: Mapping[str, Any], context: Mapping[str, Any
     matrix = context.get("matrix") or {}
     center = matrix.get("center")
     arm = str(matrix.get("arm") or "")
+    rho = matrix.get("rho")
     method = matrix.get("method") or {}
     if not center:
         raise ValueError("pn2021c_eval adapter requires runner.matrix.center")
-    if not arm and (not isinstance(method, Mapping) or not method.get("family") or not method.get("name")):
+    comparison_protocol = str((config.get("paper_protocol") or {}).get("comparison_protocol") or "")
+    is_f004 = comparison_protocol == F004_RHO_SWEEP_PROTOCOL
+    if not arm and not is_f004 and (not isinstance(method, Mapping) or not method.get("family") or not method.get("name")):
         raise ValueError("pn2021c_eval adapter requires runner.matrix.method name/family")
 
     paths = config["paths"]
@@ -90,7 +97,12 @@ def build_pn2021c_eval_argv(config: Mapping[str, Any], context: Mapping[str, Any
         or model.get("checkpoint_name")
         or ("last_model.pt" if selection_policy == "last_checkpoint_only" else "best_model.pt")
     )
-    if arm:
+    if is_f004:
+        output_role = f004_variant_for_rho(rho)
+        method_root = build_f004_effnet_producer_dir(
+            config, center=str(center), rho=float(rho)
+        )
+    elif arm:
         method_root = build_matched_effnet_producer_dir(config, center=str(center), arm=arm)
         output_role = arm
     elif method.get("model_dir_template") or method.get("model_dir"):

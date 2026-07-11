@@ -46,8 +46,12 @@ from ecg_adv_gen.evaluation.pn2021c import (  # noqa: E402
 from ecg_adv_gen.models.super5_model_zoo import available_model_names  # noqa: E402
 from ecg_adv_gen.matched_effnet import (  # noqa: E402
     MATCHED_EFFNET_ARMS,
+    MATCHED_EFFNET_CONTRACT_VERSION,
     MATCHED_EFFNET_THIRD_CHAIN_ROUTES,
+    f004_identity,
+    is_f004_rho_sweep,
     is_matched_effnet_arm,
+    validate_f004_runtime,
     validate_matched_effnet_runtime,
 )
 
@@ -66,6 +70,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         choices=["historical_unmatched", *MATCHED_EFFNET_ARMS],
         default="historical_unmatched",
     )
+    ap.add_argument("--comparison_protocol", default="")
+    ap.add_argument("--comparison_variant", default="")
+    ap.add_argument("--comparison_topology_version", default="")
     ap.add_argument("--epochs", type=int, default=30)
     ap.add_argument("--seed", type=int, default=20260524)
     ap.add_argument("--device", default="cuda:0")
@@ -292,8 +299,30 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                 bce_weight=args.latent_augmix_bce_weight,
                 jsd_weight=args.latent_augmix_consistency_weight,
                 third_chain_route=args.latent_augmix_third_chain_role,
+                target_adv_fraction=args.target_adv_fraction,
             )
         except ValueError as exc:
+            ap.error(str(exc))
+    if args.comparison_protocol or args.comparison_variant or args.comparison_topology_version:
+        if not is_f004_rho_sweep(args.comparison_protocol):
+            ap.error(f"unsupported --comparison_protocol {args.comparison_protocol!r}")
+        if args.comparison_topology_version != MATCHED_EFFNET_CONTRACT_VERSION:
+            ap.error("F-004 comparison topology version mismatch")
+        try:
+            validate_f004_runtime(
+                comparison_protocol=args.comparison_protocol,
+                comparison_arm=args.comparison_arm,
+                comparison_variant=args.comparison_variant,
+                target_adv_fraction=args.target_adv_fraction,
+                enable_vae_lhat=args.enable_vae_lhat,
+                enable_raw_augmix=args.enable_raw_augmix,
+                enable_auxiliary_steps=args.enable_latent_augmix_consistency,
+                bce_weight=args.latent_augmix_bce_weight,
+                jsd_weight=args.latent_augmix_consistency_weight,
+                third_chain_route=args.latent_augmix_third_chain_role,
+                latent_augmix_signal_space="raw_pre_zscore",
+            )
+        except (TypeError, ValueError) as exc:
             ap.error(str(exc))
     return args
 
@@ -350,12 +379,15 @@ def main() -> None:
         paths=paths,
     )
 
-    (out_dir / "launch_config.json").write_text(json.dumps({
+    launch_payload = {
         "args": vars(args),
         "class_trust": str(class_trust),
         "train_cmd": train_cmd,
         "eval_cmd": eval_cmd,
-    }, indent=2))
+    }
+    if is_f004_rho_sweep(args.comparison_protocol):
+        launch_payload["comparison_identity"] = f004_identity(args.target_adv_fraction)
+    (out_dir / "launch_config.json").write_text(json.dumps(launch_payload, indent=2))
 
     run(train_cmd, out_dir / "train_stdout.log", env)
     run(eval_cmd, out_dir / "eval_full.log", env)

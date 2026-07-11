@@ -1,0 +1,27 @@
+extends: effnet_f004_rho_sweep_k500.yaml
+
+experiment:
+  name: effnet_f004_rho_sweep_onecenter_smoke
+  description: Exploratory one-epoch CPSC-2018 identity/mechanism smoke for F-004; never paper evidence.
+
+training:
+  epochs: 1
+
+evaluation:
+  pn2021_limit: 64
+
+logging:
+  postprocess_artifacts: []
+
+postprocess:
+  commands: []
+
+runner:
+  matrix:
+    center: [cpsc_2018]
+    rho: [0.0, 0.25, 0.5]
+
+run_record:
+  purpose: "Bounded F-004 command/path/resume smoke only."
+  result_summary: EXPLORATORY_ONLY; never paper evidence.
+  registration_status: provisional

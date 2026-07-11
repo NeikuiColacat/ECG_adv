@@ -8,7 +8,7 @@ from typing import Any
 
 from ecg_adv_gen.evaluation.ref_exclusion import append_target_ref_exclusion_args_from_anchor_base
 from ecg_adv_gen.run_naming import build_effnet_vae_lhat_run_leaf
-from ecg_adv_gen.matched_effnet import is_matched_effnet_arm
+from ecg_adv_gen.matched_effnet import is_paper_matched_effnet_run
 
 
 @dataclass(frozen=True)
@@ -209,11 +209,19 @@ def build_effnet_vae_lhat_train_cmd(
         "--device",
         str(args.device),
     ]
+    if getattr(args, "comparison_protocol", ""):
+        train_cmd[7:7] = [
+            "--comparison_protocol", str(args.comparison_protocol),
+            "--comparison_variant", str(args.comparison_variant),
+            "--comparison_topology_version", str(args.comparison_topology_version),
+        ]
     if getattr(args, "target_adv_fraction", None) is not None:
         train_cmd.extend(["--target_adv_fraction", str(args.target_adv_fraction)])
     if args.hull_include_anchor:
         train_cmd.append("--hull_include_anchor")
-    if is_matched_effnet_arm(getattr(args, "comparison_arm", "")):
+    if is_paper_matched_effnet_run(
+        getattr(args, "comparison_arm", ""), getattr(args, "comparison_protocol", "")
+    ):
         train_cmd.append("--enable_vae_lhat" if args.enable_vae_lhat else "--disable_vae_lhat")
         train_cmd.append("--enable_raw_augmix" if args.enable_raw_augmix else "--disable_raw_augmix")
     train_cmd.append(
@@ -317,7 +325,10 @@ def build_effnet_vae_lhat_eval_cmd(
     ]
     checkpoint_name = (
         "best_model.pt"
-        if is_matched_effnet_arm(getattr(args, "comparison_arm", "historical_unmatched"))
+        if is_paper_matched_effnet_run(
+            getattr(args, "comparison_arm", "historical_unmatched"),
+            getattr(args, "comparison_protocol", ""),
+        )
         else "last_model.pt"
     )
     eval_cmd.extend(["--checkpoint_name", checkpoint_name])

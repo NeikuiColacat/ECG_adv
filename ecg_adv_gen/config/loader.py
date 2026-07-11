@@ -47,7 +47,11 @@ from ecg_adv_gen.run_naming import (
     build_effnet_vae_lhat_run_leaf,
 )
 from ecg_adv_gen.matched_effnet import (
+    F004_RHO_SWEEP_PROTOCOL,
+    F004_RHO_VALUES,
     is_matched_effnet_arm,
+    is_paper_matched_effnet_run,
+    f004_identity,
     matched_effnet_arm,
     validate_matched_effnet_case,
 )
@@ -450,6 +454,8 @@ def _claim_evaluation_operators(config: dict[str, Any]) -> list[Any] | None:
 
 
 def _claim_arm(config: dict[str, Any], matrix: dict[str, Any]) -> str | None:
+    if str((config.get("paper_protocol") or {}).get("comparison_protocol") or "") == F004_RHO_SWEEP_PROTOCOL:
+        return None
     case = matrix.get("case") if isinstance(matrix.get("case"), dict) else {}
     arm = case.get("arm") or matrix.get("arm") or matrix.get("comparison_arm")
     if arm is None:
@@ -536,7 +542,20 @@ def _matrix_contexts(config: dict[str, Any]) -> list[dict[str, Any]]:
     if not matrix:
         return [{"matrix": {}}]
     keys = list(matrix.keys())
-    if (config.get("runner") or {}).get("adapter") == "effnet_vae_lhat" and "case" in matrix:
+    adapter = (config.get("runner") or {}).get("adapter")
+    comparison_protocol = str((config.get("paper_protocol") or {}).get("comparison_protocol") or "")
+    if comparison_protocol == F004_RHO_SWEEP_PROTOCOL:
+        if set(keys) != {"center", "rho"}:
+            raise ConfigError("F-004 runner.matrix keys must be exactly center and rho")
+        centers = matrix.get("center") or []
+        rho_values = matrix.get("rho") or []
+        if len(centers) != len(set(str(center) for center in centers)):
+            raise ConfigError("F-004 runner.matrix.center contains duplicate centers")
+        if tuple(rho_values) != F004_RHO_VALUES:
+            raise ConfigError(
+                f"F-004 runner.matrix.rho must be exactly {list(F004_RHO_VALUES)!r} in order"
+            )
+    elif adapter == "effnet_vae_lhat" and "case" in matrix:
         if set(keys) != {"center", "case"}:
             raise ConfigError("effnet_vae_lhat case matrix keys must be exactly center and case")
         centers = matrix.get("center") or []
@@ -554,6 +573,13 @@ def _matrix_contexts(config: dict[str, Any]) -> list[dict[str, Any]]:
             if arm in seen_arms:
                 raise ConfigError(f"runner.matrix.case contains duplicate arm {arm!r}")
             seen_arms.add(arm)
+    elif adapter == "effnet_vae_lhat" and any(
+        key in matrix for key in ("arm", "comparison_arm", "target_adv_fraction", "rho")
+    ):
+        raise ConfigError(
+            "canonical matched EffNet matrices must use exactly center x canonical case; "
+            "generic arm/comparison_arm/target_adv_fraction/rho axes are forbidden"
+        )
     value_lists = []
     for key in keys:
         values = matrix[key]
@@ -1039,6 +1065,9 @@ def _vae_child_run(opts: dict[str, Any], center: str) -> dict[str, Any]:
         {
             "center": center,
             "comparison_arm": _opt_first(opts, "--comparison_arm", "historical_unmatched"),
+            "comparison_protocol": _opt_first(opts, "--comparison_protocol", ""),
+            "comparison_variant": _opt_first(opts, "--comparison_variant", ""),
+            "target_adv_fraction": _opt_first(opts, "--target_adv_fraction", None),
             "hull_M": _opt_first(opts, "--hull_M", "20"),
             "hull_lambda": _opt_first(opts, "--hull_lambda", "0.15"),
             "latent_augmix_severity": _opt_first(opts, "--latent_augmix_severity", "2"),
@@ -1066,10 +1095,13 @@ def _vae_child_run(opts: dict[str, Any], center: str) -> dict[str, Any]:
     )
     checkpoint_role = (
         "best_model"
-        if is_matched_effnet_arm(_opt_first(opts, "--comparison_arm", "historical_unmatched"))
+        if is_paper_matched_effnet_run(
+            _opt_first(opts, "--comparison_arm", "historical_unmatched"),
+            _opt_first(opts, "--comparison_protocol", ""),
+        )
         else "last_model"
     )
-    return {
+    result = {
         "center": center,
         "output_root": str(out_root),
         "child_run_dir": str(child_dir),
@@ -1091,6 +1123,11 @@ def _vae_child_run(opts: dict[str, Any], center: str) -> dict[str, Any]:
             _path_record("eval_result", child_dir / "eval_result_v7_exclrefs_crop1000.json"),
         ],
     }
+    if str(_opt_first(opts, "--comparison_protocol", "")) == F004_RHO_SWEEP_PROTOCOL:
+        result["comparison_identity"] = f004_identity(
+            float(_opt_first(opts, "--target_adv_fraction"))
+        )
+    return result
 
 
 def _ecgfounder_child_run(opts: dict[str, Any], center: str) -> dict[str, Any]:
@@ -1380,7 +1417,7 @@ def build_artifact_trace(
             argv = [str(item) for item in command["argv"]]
             opts = _argv_option_map(argv)
             arm = _claim_arm(config, command.get("matrix") or {})
-            if not arm:
+            if not arm and str(config["paper_protocol"].get("comparison_protocol") or "") != F004_RHO_SWEEP_PROTOCOL:
                 arm = str(_opt_first(opts, "--comparison_arm", "not_applicable"))
             evaluation_operators = (
                 _opt_list(opts, "--corruptions")

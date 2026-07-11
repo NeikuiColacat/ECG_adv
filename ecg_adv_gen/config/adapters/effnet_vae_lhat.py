@@ -6,6 +6,9 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from ecg_adv_gen.matched_effnet import (
+    F004_RHO_SWEEP_PROTOCOL,
+    MATCHED_EFFNET_CONTRACT_VERSION,
+    f004_variant_for_rho,
     is_matched_effnet_arm,
     matched_effnet_arm,
     validate_matched_effnet_case,
@@ -60,7 +63,11 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
 
     k = kshot["k"]
     seed = kshot["seed"]
+    comparison_protocol = str(paper.get("comparison_protocol") or "")
+    is_f004 = comparison_protocol == F004_RHO_SWEEP_PROTOCOL
     out_root = f"{paths['output_root']}/{experiment['name']}/{runtime['run_id']}"
+    if is_f004:
+        out_root = f"{out_root}/runs/{center}"
     kshot_subset_root = data.get("kshot_subset_root") or f"{paths['data_root']}/paper_vae_only_latenthull_sweep_20260516/subsets"
     init_ckpt = model["init_checkpoint"]
     anchor_base = (
@@ -83,12 +90,18 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
     asr_low, asr_high = attack["target_asr_range"]
     if not 0.0 <= float(asr_low) <= float(asr_high) <= 1.0:
         raise ValueError("adaptation.attack.target_asr_range must be ordered within [0, 1]")
-    comparison_arm, arm_components = _resolve_arm(
-        case, matrix.get("comparison_arm", adaptation.get("comparison_arm", "historical_unmatched"))
-    )
-    target_adv_fraction = float(
-        matrix.get("target_adv_fraction", adaptation["loss"]["target_adv_fraction"])
-    )
+    if is_f004:
+        comparison_arm, arm_components = "historical_unmatched", matched_effnet_arm("a5")
+        target_adv_fraction = float(matrix["rho"])
+        comparison_variant = f004_variant_for_rho(target_adv_fraction)
+    else:
+        comparison_arm, arm_components = _resolve_arm(
+            case, matrix.get("comparison_arm", adaptation.get("comparison_arm", "historical_unmatched"))
+        )
+        target_adv_fraction = float(
+            matrix.get("target_adv_fraction", adaptation["loss"]["target_adv_fraction"])
+        )
+        comparison_variant = ""
     if target_adv_fraction not in {0.0, 0.25, 0.5}:
         raise ValueError("target_adv_fraction matrix value must be one of 0, 0.25, 0.5")
     if case is not None:
@@ -218,6 +231,12 @@ def build_effnet_vae_lhat_argv(config: Mapping[str, Any], context: Mapping[str, 
         "--eval_pn2021_limit",
         evaluation["pn2021_limit"],
     ]
+    if is_f004:
+        argv[4:4] = [
+            "--comparison_protocol", comparison_protocol,
+            "--comparison_variant", comparison_variant,
+            "--comparison_topology_version", MATCHED_EFFNET_CONTRACT_VERSION,
+        ]
     if bool(hull["include_anchor"]):
         argv.append("--hull_include_anchor")
     if arm_components is not None:
@@ -349,9 +368,14 @@ def audit_effnet_vae_lhat_command(
     audit_equals(errors, script, opts, "--asr_high_threshold", asr_high)
     source_floor = selection.get("source_floor") or {}
     fallback_arm = case.get("comparison_arm") or adaptation.get("comparison_arm", "historical_unmatched")
-    comparison_arm, arm_components = _resolve_arm(case if "arm" in case else None, fallback_arm)
+    comparison_protocol = str(paper.get("comparison_protocol") or "")
+    is_f004 = comparison_protocol == F004_RHO_SWEEP_PROTOCOL
+    if is_f004:
+        comparison_arm, arm_components = "historical_unmatched", matched_effnet_arm("a5")
+    else:
+        comparison_arm, arm_components = _resolve_arm(case if "arm" in case else None, fallback_arm)
     target_adv_fraction = float(
-        case.get("target_adv_fraction", adaptation["loss"]["target_adv_fraction"])
+        case.get("rho" if is_f004 else "target_adv_fraction", adaptation["loss"]["target_adv_fraction"])
     )
     if arm_components is not None and ("arm" in case or not arm_components.vae_lhat):
         target_adv_fraction = arm_components.target_adv_fraction
@@ -364,6 +388,12 @@ def audit_effnet_vae_lhat_command(
         "--source_floor_max_drop": source_floor.get("max_drop", 0.02),
         "--target_adv_fraction": target_adv_fraction,
     }
+    if is_f004:
+        expected_options.update({
+            "--comparison_protocol": F004_RHO_SWEEP_PROTOCOL,
+            "--comparison_variant": f004_variant_for_rho(target_adv_fraction),
+            "--comparison_topology_version": MATCHED_EFFNET_CONTRACT_VERSION,
+        })
     for option, expected in expected_options.items():
         audit_equals(errors, script, opts, option, expected)
     if arm_components is not None:

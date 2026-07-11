@@ -69,6 +69,7 @@ from ecg_adv_gen.evaluation.pn2021c import (  # noqa: E402
 )
 from ecg_adv_gen.evaluation import compute_macro_auroc_auprc  # noqa: E402
 from ecg_adv_gen.evaluation.selection import (  # noqa: E402
+    build_f004_training_record,
     build_matched_training_record,
     update_matched_checkpoint_selection,
 )
@@ -85,9 +86,14 @@ from ecg_adv_gen.training.resume_contract import (  # noqa: E402
 )
 from ecg_adv_gen.matched_effnet import (  # noqa: E402
     MATCHED_EFFNET_ARMS,
+    MATCHED_EFFNET_CONTRACT_VERSION,
     MATCHED_EFFNET_THIRD_CHAIN_ROUTES,
+    f004_identity,
+    is_f004_rho_sweep,
     is_matched_effnet_arm,
+    is_paper_matched_effnet_run,
     matched_effnet_arm,
+    validate_f004_runtime,
     validate_matched_effnet_runtime,
 )
 from ecg_adv_gen.labels import CLASS_NAMES_SUPER5, NUM_SUPER5, get_super5_scheme  # noqa: E402
@@ -1218,6 +1224,9 @@ def parse_args(argv: list[str] | None = None):
         choices=["historical_unmatched", *MATCHED_EFFNET_ARMS],
         default="historical_unmatched",
     )
+    p.add_argument("--comparison_protocol", default="")
+    p.add_argument("--comparison_variant", default="")
+    p.add_argument("--comparison_topology_version", default="")
     p.add_argument("--ref_meta_json",
                    help="path to {tag}_k200.meta.json (for record_id exclusion in eval)")
     p.add_argument("--synth_npz", required=True,
@@ -1534,7 +1543,10 @@ def parse_args(argv: list[str] | None = None):
         help="Skip epoch-boundary resume checkpoints and write last_model.pt once at the end.",
     )
     args = p.parse_args(argv)
-    if is_matched_effnet_arm(args.comparison_arm):
+    paper_matched = is_paper_matched_effnet_run(
+        args.comparison_arm, args.comparison_protocol
+    )
+    if paper_matched:
         if args.init_lineage_stage != "ptbxl_source" or len(args.init_checkpoint_sha256) != 64:
             p.error("matched comparison requires verified ptbxl_source initialization")
         if not 0.0 < args.target_real_val_fraction < 0.5:
@@ -1551,6 +1563,7 @@ def parse_args(argv: list[str] | None = None):
                 bce_weight=args.latent_augmix_bce_weight,
                 jsd_weight=args.latent_augmix_consistency_weight,
                 third_chain_route=args.latent_augmix_third_chain_role,
+                target_adv_fraction=args.target_adv_fraction,
             )
         except ValueError as exc:
             p.error(str(exc))
@@ -1583,14 +1596,34 @@ def parse_args(argv: list[str] | None = None):
         or args.latent_augmix_chain_base_mode in {"all_clean", "all_clean_plus_vae_adv"}
     ) and float(args.adv_weight) <= 0.0:
         p.error("clean-anchor latent AugMix requires --adv_weight > 0; it samples the augment stream")
-    matched_arm = is_matched_effnet_arm(args.comparison_arm)
-    raw_signal_space = args.enable_raw_augmix if matched_arm else (
+    raw_signal_space = args.enable_raw_augmix if paper_matched else (
         args.latent_augmix_chain_base_mode == "clean_clean_third"
         and args.latent_augmix_third_chain_role == "vae_lhat_adversarial_waveform"
     )
     args.latent_augmix_signal_space = (
         LOCKED_LATENT_AUGMIX_SIGNAL_SPACE if raw_signal_space else "model_zscore"
     )
+    if args.comparison_protocol or args.comparison_variant or args.comparison_topology_version:
+        if not is_f004_rho_sweep(args.comparison_protocol):
+            p.error(f"unsupported --comparison_protocol {args.comparison_protocol!r}")
+        if args.comparison_topology_version != MATCHED_EFFNET_CONTRACT_VERSION:
+            p.error("F-004 comparison topology version mismatch")
+        try:
+            validate_f004_runtime(
+                comparison_protocol=args.comparison_protocol,
+                comparison_arm=args.comparison_arm,
+                comparison_variant=args.comparison_variant,
+                target_adv_fraction=args.target_adv_fraction,
+                enable_vae_lhat=args.enable_vae_lhat,
+                enable_raw_augmix=args.enable_raw_augmix,
+                enable_auxiliary_steps=args.enable_latent_augmix_consistency,
+                bce_weight=args.latent_augmix_bce_weight,
+                jsd_weight=args.latent_augmix_consistency_weight,
+                third_chain_route=args.latent_augmix_third_chain_role,
+                latent_augmix_signal_space=args.latent_augmix_signal_space,
+            )
+        except (TypeError, ValueError) as exc:
+            p.error(str(exc))
     return args
 
 
@@ -1629,8 +1662,14 @@ def load_optional_vae_component(enabled: bool, factory):
 
 def main():
     args = parse_args()
-    matched_comparison = is_matched_effnet_arm(args.comparison_arm)
-    arm_components = matched_effnet_arm(args.comparison_arm) if matched_comparison else None
+    matched_comparison = is_paper_matched_effnet_run(
+        args.comparison_arm, args.comparison_protocol
+    )
+    arm_components = (
+        matched_effnet_arm("a5")
+        if is_f004_rho_sweep(args.comparison_protocol)
+        else matched_effnet_arm(args.comparison_arm) if matched_comparison else None
+    )
     method_updates_enabled = bool(
         arm_components.vae_lhat or arm_components.raw_augmix
     ) if arm_components else True
@@ -1883,7 +1922,7 @@ def main():
             torch.save(victim.model.state_dict(), best_ckpt_path)
 
     contract_base = dict(
-        comparison_arm=args.comparison_arm, source_checkpoint_path=args.init_ckpt,
+        source_checkpoint_path=args.init_ckpt,
         source_checkpoint_sha256=source_checkpoint_sha256, split=matched_split,
         selection_metric=args.selection_metric,
         source_floor_max_drop=args.source_floor_max_drop, epochs=args.n_epochs,
@@ -1893,7 +1932,17 @@ def main():
     def comparison_contract(realized_steps: int = 0, scheduler_count: int = 0) -> Dict[str, Any]:
         if not matched_comparison or matched_split is None:
             return {"contract": "historical_unmatched"}
+        if is_f004_rho_sweep(args.comparison_protocol):
+            return build_f004_training_record(
+                target_adv_fraction=args.target_adv_fraction,
+                **contract_base,
+                realized_optimizer_steps=realized_steps,
+                scheduler_steps=scheduler_count,
+                source_floor_result=best_source_floor_result,
+            )
         return build_matched_training_record(
+            comparison_arm=args.comparison_arm,
+            runtime_target_adv_fraction=args.target_adv_fraction,
             **contract_base, realized_optimizer_steps=realized_steps,
             scheduler_steps=scheduler_count, source_floor_result=best_source_floor_result,
         )
@@ -2618,6 +2667,8 @@ def main():
         entry = {
             "epoch": epoch,
             "comparison_arm": args.comparison_arm,
+            "comparison_protocol": args.comparison_protocol or None,
+            "comparison_variant": args.comparison_variant or None,
             "attack_family": "latent_hull" if args.enable_vae_lhat else None,
             "train_loss": round(train_loss, 4),
             "target_val_macro_auroc": target_val_metrics.get("macro_auroc"),
@@ -2823,6 +2874,11 @@ def main():
                 "scheduler_steps": scheduler_steps,
                 "training_log": log,
                 "args": vars(args),
+                "comparison_identity": (
+                    f004_identity(args.target_adv_fraction)
+                    if is_f004_rho_sweep(args.comparison_protocol)
+                    else None
+                ),
                 "diagnostics_epoch_jsonl": str(diagnostics_epoch_path),
                 "agent_decision_json": str(agent_decision_path),
             }

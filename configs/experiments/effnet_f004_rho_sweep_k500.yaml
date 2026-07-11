@@ -1,0 +1,155 @@
+extends:
+  - ../defaults/effnet1dv2_v7_sjr_rgq_defaults.yaml
+  - ../defaults/effnet_f004_rho_sweep_locked.yaml
+
+experiment:
+  name: effnet_f004_rho_sweep_k500
+  description: Independent F-004 full-topology rho sweep; not a canonical matched arm.
+
+paper_protocol:
+  kshot:
+    seed: 20260601
+    subset_seed: 20260601
+
+model:
+  init_lineage:
+    stage: ptbxl_source
+    checkpoint_sha256: f7a4b05d85da8352013b67a0d56d8d47378ab2abc196d1f3a6ba8bbf15aa40ea
+    evidence_path: configs/evidence/effnet1dv2_ptbxl_source_super5_20260503.json
+
+training:
+  epochs: 30
+
+data:
+  target_real_npz_suffix: .raw1000.npz
+  target_real_norm_mode: per_sample_global
+
+logging:
+  child_artifacts:
+    - best_model.pt
+    - last_model.pt
+    - run_config.json
+    - training_log.json
+    - train_result.json
+    - diagnostics_epoch.jsonl
+    - checkpoints/checkpoint_latest.pt
+    - eval_result_v7_exclrefs_crop1000.json
+  postprocess_artifacts:
+    - metrics_long.csv
+    - pn2021_all_zero_kept_rho_table.csv
+    - pn2021_drop_all_zero_rho_table.csv
+    - ptbxl_source_floor_rho_table.csv
+  required_epoch_metrics:
+    - epoch
+    - train_loss
+    - val_loss
+    - primary_objective_stats
+    - primary_objective_stats.target_clean_realized_within_target_fraction
+    - primary_objective_stats.target_adv_realized_within_target_fraction
+    - latent_augmix_stats
+    - latent_augmix_consistency_stats
+    - target_adv_fraction_effective
+    - target_val_macro_auprc
+    - source_val_macro_auprc
+    - source_floor_passed
+    - realized_optimizer_steps
+    - asr_overall
+    - attack_vs_anchor
+    - attack_vs_init
+    - atk_init
+    - atk_anchor
+    - initial_bce
+    - loss_gain
+    - decoded_invalid_rate
+    - latent_hull_diagnostics_summary
+
+runner:
+  entrypoint: ecg_adv_gen/runner/effnet_vae_lhat_augmix.py
+  adapter: effnet_vae_lhat
+  env:
+    ECG_ADV_GEN_DATA_ROOT: ${paths.data_root}
+    TMPDIR: ${paths.short_tmp_root}
+    XDG_CACHE_HOME: ${paths.cache_root}
+  matrix:
+    center: ${paper_protocol.centers.target_4}
+    rho: [0.0, 0.25, 0.5]
+  name: ${experiment.name}_${matrix.center}_rho${matrix.rho}
+
+postprocess:
+  commands:
+    - name: export_f004_clean_metrics
+      entrypoint: scripts/export_metrics_long.py
+      argv:
+        - --input
+        - ${paths.output_root}/${experiment.name}/${runtime.run_id}
+        - --output-dir
+        - ${paths.output_root}/metrics_export/${runtime.run_id}_${experiment.name}
+        - --filter-to-target-center
+        - --target-centers
+        - ${paper_protocol.centers.target_4}
+        - --expected-mapping-version
+        - ${paper_protocol.mapping_version}
+        - --expected-mapping-hash
+        - ${paper_protocol.mapping_hash}
+      expected_artifacts:
+        - {role: metrics_long, path: "${paths.output_root}/metrics_export/${runtime.run_id}_${experiment.name}/metrics_long.csv"}
+        - {role: artifact_manifest, path: "${paths.output_root}/metrics_export/${runtime.run_id}_${experiment.name}/artifact_manifest.json"}
+    - name: export_f004_clean_kept_table
+      entrypoint: scripts/export_paper_table.py
+      argv:
+        - --metrics-long
+        - ${paths.output_root}/metrics_export/${runtime.run_id}_${experiment.name}/metrics_long.csv
+        - --output-dir
+        - ${paths.output_root}/paper_table/${runtime.run_id}_${experiment.name}_all_zero_kept
+        - --view
+        - pn2021_all_zero_kept_refexcluded
+        - --dataset
+        - pn2021
+        - --centers
+        - ${paper_protocol.centers.target_4}
+        - --baseline-run-id
+        - f004_rho0
+        - --no-dataset-rows
+      expected_artifacts:
+        - {role: pn2021_all_zero_kept_rho_table, path: "${paths.output_root}/paper_table/${runtime.run_id}_${experiment.name}_all_zero_kept/paper_table.csv"}
+    - name: export_f004_clean_dropzero_table
+      entrypoint: scripts/export_paper_table.py
+      argv:
+        - --metrics-long
+        - ${paths.output_root}/metrics_export/${runtime.run_id}_${experiment.name}/metrics_long.csv
+        - --output-dir
+        - ${paths.output_root}/paper_table/${runtime.run_id}_${experiment.name}_drop_all_zero
+        - --view
+        - pn2021_drop_all_zero_refexcluded
+        - --dataset
+        - pn2021
+        - --centers
+        - ${paper_protocol.centers.target_4}
+        - --baseline-run-id
+        - f004_rho0
+        - --no-dataset-rows
+      expected_artifacts:
+        - {role: pn2021_drop_all_zero_rho_table, path: "${paths.output_root}/paper_table/${runtime.run_id}_${experiment.name}_drop_all_zero/paper_table.csv"}
+    - name: export_f004_source_floor_table
+      entrypoint: scripts/export_paper_table.py
+      argv:
+        - --metrics-long
+        - ${paths.output_root}/metrics_export/${runtime.run_id}_${experiment.name}/metrics_long.csv
+        - --output-dir
+        - ${paths.output_root}/paper_table/${runtime.run_id}_${experiment.name}_source_floor
+        - --view
+        - ptbxl_fold10_source_floor
+        - --dataset
+        - ptbxl
+        - --centers
+        - ${paper_protocol.centers.target_4}
+        - --baseline-run-id
+        - f004_rho0
+        - --no-dataset-rows
+      expected_artifacts:
+        - {role: ptbxl_source_floor_rho_table, path: "${paths.output_root}/paper_table/${runtime.run_id}_${experiment.name}_source_floor/paper_table.csv"}
+
+run_record:
+  purpose: "F-004 marginal rho comparison with frozen A5 component topology; rho0 is not a no-VAE control."
+  result_summary: EVIDENCE_PENDING until paired real runs pass mechanism and floor gates.
+  registration_status: provisional

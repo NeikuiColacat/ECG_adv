@@ -706,11 +706,17 @@ def _filter_rows_to_target_center(
 ) -> list[dict[str, Any]]:
     if not target_center:
         raise MetricsExportError(f"Could not infer target center for artifact: {path}")
-    return [
-        row
-        for row in rows
-        if row.get("center") == target_center
-    ]
+    filtered: list[dict[str, Any]] = []
+    for row in rows:
+        if row.get("center") == target_center:
+            filtered.append(row)
+        elif (
+            row.get("dataset") == "ptbxl"
+            and row.get("view") == PTBXL_FOLD10_SOURCE_FLOOR
+            and not row.get("center")
+        ):
+            filtered.append({**row, "center": target_center, "scope": "center"})
+    return filtered
 
 
 def _extract_rows(

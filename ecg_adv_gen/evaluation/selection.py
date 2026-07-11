@@ -5,7 +5,9 @@ from __future__ import annotations
 from typing import Any
 
 from ecg_adv_gen.matched_effnet import (
+    F004_RHO_SWEEP_PROTOCOL,
     MATCHED_EFFNET_CONTRACT_VERSION,
+    f004_identity,
     matched_effnet_arm,
 )
 
@@ -68,8 +70,17 @@ def build_matched_training_record(
     realized_optimizer_steps: int,
     scheduler_steps: int,
     source_floor_result: dict[str, Any],
+    runtime_target_adv_fraction: float | None = None,
 ) -> dict[str, Any]:
     components = matched_effnet_arm(comparison_arm)
+    if (
+        runtime_target_adv_fraction is not None
+        and float(runtime_target_adv_fraction) != components.target_adv_fraction
+    ):
+        raise ValueError(
+            f"canonical matched EffNet arm {comparison_arm} requires "
+            f"target_adv_fraction={components.target_adv_fraction}"
+        )
     return {
         "contract": MATCHED_EFFNET_CONTRACT_VERSION,
         "comparison_arm": comparison_arm,
@@ -82,6 +93,57 @@ def build_matched_training_record(
         },
         "target_adv_fraction": components.target_adv_fraction,
         "third_chain_route": components.third_chain_route,
+        "source_checkpoint": dict(
+            stage="ptbxl_source", path=str(source_checkpoint_path), sha256=str(source_checkpoint_sha256)
+        ),
+        "k500_split": {
+            "train_count": len(split["train_record_ids"]),
+            "val_count": len(split["val_record_ids"]),
+            "train_record_ids_sha256": split["train_record_ids_sha256"],
+            "val_record_ids_sha256": split["val_record_ids_sha256"],
+            "validation_fraction": float(split["val_fraction"]),
+            "seed": int(split["seed"]),
+        },
+        "selection": dict(
+            metric=str(selection_metric), source_floor_metric=str(selection_metric),
+            source_floor_max_drop=float(source_floor_max_drop), checkpoint="best_model.pt",
+            source_floor_result=source_floor_result,
+        ),
+        "budget": dict(
+            epochs=int(epochs), optimizer_steps_per_epoch=int(optimizer_steps_per_epoch),
+            realized_optimizer_steps=int(realized_optimizer_steps), scheduler_steps=int(scheduler_steps),
+        ),
+    }
+
+
+def build_f004_training_record(
+    *,
+    target_adv_fraction: float,
+    source_checkpoint_path: str,
+    source_checkpoint_sha256: str,
+    split: dict[str, Any],
+    selection_metric: str,
+    source_floor_max_drop: float,
+    epochs: int,
+    optimizer_steps_per_epoch: int,
+    realized_optimizer_steps: int,
+    scheduler_steps: int,
+    source_floor_result: dict[str, Any],
+) -> dict[str, Any]:
+    identity = f004_identity(target_adv_fraction)
+    return {
+        "contract": F004_RHO_SWEEP_PROTOCOL,
+        "comparison_identity": identity,
+        "comparison_arm": None,
+        "role": "f004_full_topology_rho_sweep",
+        "method_components": {
+            "vae_lhat": True,
+            "raw_augmix": True,
+            "augmix_view_bce": True,
+            "jsd": True,
+        },
+        "target_adv_fraction": float(target_adv_fraction),
+        "third_chain_route": "vae_lhat_adversarial_waveform",
         "source_checkpoint": dict(
             stage="ptbxl_source", path=str(source_checkpoint_path), sha256=str(source_checkpoint_sha256)
         ),

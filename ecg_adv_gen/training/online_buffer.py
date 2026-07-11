@@ -277,6 +277,11 @@ def train_one_epoch_grouped_target_bce(
     def realized(value: float) -> float:
         return value / objective if objective else 0.0
 
+    target_weighted_total = clean_weighted + adv_weighted
+
+    def realized_within_target(value: float) -> float:
+        return value / target_weighted_total if target_weighted_total else 0.0
+
     target_stats: dict[str, Any] = {
         "target_clean_count": int(clean_all.numel()),
         "target_adv_count": int(adv_all.numel()) if adv_all is not None else 0,
@@ -294,6 +299,8 @@ def train_one_epoch_grouped_target_bce(
         "target_adv_nominal_contribution_fraction": adv_nominal,
         "target_clean_realized_contribution_fraction": realized(clean_weighted),
         "target_adv_realized_contribution_fraction": realized(adv_weighted),
+        "target_clean_realized_within_target_fraction": realized_within_target(clean_weighted),
+        "target_adv_realized_within_target_fraction": realized_within_target(adv_weighted),
         "target_clean_contribution_fraction": realized(clean_weighted),
         "target_adv_contribution_fraction": realized(adv_weighted),
     }
