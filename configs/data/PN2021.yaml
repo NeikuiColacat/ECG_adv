@@ -1,0 +1,31 @@
+dataset: pn2021
+dataset_version: physionet2021
+data_root: /home/linbinhao/ECG_adv_data
+
+root: ${data_root}/physionet2021
+waveform_dir: training
+waveform_format: wfdb
+cache_dir: ${data_root}/cache/pn2021_100hz_linear_v2
+cache_dtype: float32
+label_mapping_file: PN2021_super5_v7.yaml
+
+nonfinite_policy:
+  repair_method: linear_per_lead_nearest_edge
+  max_record_fraction: 0.01
+  max_lead_fraction: 0.05
+
+sampling_rate_hz: native
+target_sampling_rate_hz: 100
+target_duration_seconds: 10
+target_num_samples: 1000
+target_interpolation: linear_align_corners
+window_policy: center
+derived_sampling_rate_hz: 500
+derived_num_samples: 5000
+derived_interpolation: linear_align_corners
+derived_batch_size: 64
+waveform_layout: time_channel
+lead_order: [I, II, III, aVR, aVL, aVF, V1, V2, V3, V4, V5, V6]
+
+centers: [chapman_shaoxing, cpsc_2018, cpsc_2018_extra, georgia, ningbo, ptb, st_petersburg_incart]
+exclude_centers: [ptb-xl, ptbxl]

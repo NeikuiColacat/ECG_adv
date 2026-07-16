@@ -1,0 +1,52 @@
+schema_version: 1
+
+dataset: pn2021c
+cache_version: pn2021c_paper_anchored_s5_depth23_5center_dualrate_v1
+
+source:
+  cache_dir: /data/linbinhao/ECG_manual_refactor_cache/pn2021_100hz_linear_qc_v3_20260716
+  manifest_file: manifest.json
+  waveform_100hz_file: signals.npy
+  waveform_500hz_file: signals_500hz.npy
+  metadata_file: records.parquet
+  labels_file: labels_super5.npy
+  record_ids_file: record_ids.npy
+  hash_ids_file: hash_ids.npy
+  required_mapping_version: v7_super5_sjr_rgq_review_20260528
+  required_mapping_hash: 555ec85d5b51
+  centers:
+    - ningbo
+    - chapman_shaoxing
+    - cpsc_2018
+    - cpsc_2018_extra
+    - georgia
+
+corruption:
+  operators_config: augmentation/operators.yaml
+  profile: pn2021c_paper_anchored_s5_v1
+  severity: 5
+  random_seed_file: random_seed.yaml
+  domain_sampling_rate_hz: 500
+  output_sampling_rates_hz: [100, 500]
+  depths: [2, 3]
+  combinations_per_depth:
+    2: 10
+    3: 10
+  combination_policy: all_canonical_combinations_without_replacement
+  operator_order_policy: canonical_order
+  normalization: none
+  signal_units: mV
+
+output:
+  cache_dir: /data/linbinhao/ECG_manual_refactor_cache/pn2021c_paper_anchored_s5_depth23_5center_dualrate_v1
+  waveform_100hz_file: signals_100hz.npy
+  waveform_500hz_file: signals_500hz.npy
+  layout: view_record_time_channel
+  dtype: float32
+  interpolation_500_to_100: linear_align_corners
+
+execution:
+  backend: numpy
+  chunk_size: 16
+  checkpoint_every_chunks: 8
+  resume: true

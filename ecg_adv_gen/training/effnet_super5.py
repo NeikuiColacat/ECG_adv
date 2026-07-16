@@ -15,7 +15,7 @@ class PTBXLDatasetScheme(Dataset):
     """PTB-XL dataset emitting ``(12, crop_len)`` tensors plus labels."""
 
     def __init__(self, signals_1000: np.ndarray, labels: np.ndarray, crop_len: int = 250, mode: str = "train"):
-        self.signals = signals_1000
+        self.signals = normalize_synthetic_signals(signals_1000)
         self.labels = labels.astype(np.float32, copy=False)
         self.crop_len = int(crop_len)
         self.mode = mode
@@ -26,8 +26,9 @@ class PTBXLDatasetScheme(Dataset):
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
         sig_tc = self.signals[idx]
         crop = crop_signal_tc(sig_tc, self.crop_len, mode="random" if self.mode == "train" else "center")
+        model_input = np.array(crop.T, dtype=np.float32, order="C", copy=True)
         return (
-            torch.from_numpy(np.ascontiguousarray(crop.T)).float(),
+            torch.from_numpy(model_input).float(),
             torch.from_numpy(self.labels[idx]).float(),
         )
 

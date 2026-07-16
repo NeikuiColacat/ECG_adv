@@ -6,6 +6,7 @@ import copy
 import json
 from pathlib import Path
 
+import numpy as np
 import pytest
 import yaml
 
@@ -55,6 +56,62 @@ def test_data_preprocess_contract_matches_current_pipeline_constants():
     assert contract.ecgfounder_input_len == 5000
     assert contract.ecgfounder_input_shape == (12, 5000)
     assert ECGTWIN_TO_PTBXL_INDICES == tuple(LEGACY_REORDER)
+
+
+def test_ptbxl_dataset_normalizes_known_tc_and_ct_cache_layouts():
+    from ecg_adv_gen.training import PTBXLDatasetScheme
+
+    signals_tc = np.arange(2 * 1000 * 12, dtype=np.float32).reshape(2, 1000, 12)
+    labels = np.zeros((2, 5), dtype=np.float32)
+    sample_tc, _ = PTBXLDatasetScheme(signals_tc, labels, crop_len=1000, mode="eval")[0]
+    sample_ct, _ = PTBXLDatasetScheme(
+        signals_tc.transpose(0, 2, 1), labels, crop_len=1000, mode="eval"
+    )[0]
+
+    assert tuple(sample_tc.shape) == tuple(sample_ct.shape) == (12, 1000)
+    np.testing.assert_array_equal(sample_ct.numpy(), sample_tc.numpy())
+    with pytest.raises(ValueError, match="Expected classifier signals"):
+        PTBXLDatasetScheme(np.zeros((2, 1000, 8), dtype=np.float32), labels)
+
+
+def test_manual_pn2021_preprocess_uses_aligned_corner_linear_interpolation():
+    from data_preprocess.PN2021_preprocess import _resample_crop_pad
+
+    signal = np.arange(5, dtype=np.float32)[:, None]
+    signal = np.repeat(signal, 12, axis=1)
+    resized, details = _resample_crop_pad(
+        signal,
+        source_fs=5.0,
+        target_fs=2,
+        duration_seconds=1,
+        target_num_samples=2,
+        window_policy="center",
+    )
+
+    np.testing.assert_allclose(resized[:, 0], [0.0, 4.0])
+    assert details["valid_target_samples"] == 2
+    assert details["was_padded"] is False
+
+    short, short_details = _resample_crop_pad(
+        signal[:4],
+        source_fs=4.0,
+        target_fs=2,
+        duration_seconds=2,
+        target_num_samples=4,
+        window_policy="center",
+    )
+    np.testing.assert_allclose(short[:, 0], [0.0, 3.0, 0.0, 0.0])
+    assert short_details["valid_target_samples"] == 2
+    assert short_details["was_padded"] is True
+
+
+def test_manual_data_configs_record_linear_interpolation_contract():
+    pn2021 = yaml.safe_load((REPO / "configs" / "data" / "PN2021.yaml").read_text())
+    ptbxl = yaml.safe_load((REPO / "configs" / "data" / "PTBXL.yaml").read_text())
+
+    assert pn2021["target_interpolation"] == "linear_align_corners"
+    assert pn2021["derived_interpolation"] == "linear_align_corners"
+    assert ptbxl["derived_interpolation"] == "linear_align_corners"
 
 
 def test_data_contract_tests_use_latest_mainline_or_active_fixtures():

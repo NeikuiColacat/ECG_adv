@@ -10,8 +10,12 @@ Changes vs. upstream:
   2. Fixed typo in PowerlineNoise: `self.denpendency` -> `self.dependency`.
   3. Fixed RandomLeadsMask conditional mode: `self.mask_leads_selection`
      (a str) -> `self.mask_leads_condition` (the tuple).
+  4. Added opt-in, profile-controlled safety modes for PN2021-C calibration:
+     `BaselineShift(amplitude_mode="signed_shared_uniform")` and
+     `RandomLeadsMask(ensure_at_least_one_lead=True)`. Legacy behavior remains
+     the default so historical profiles are reproducible.
 
-No other logic changed. Input/output contract preserved:
+Input/output contract preserved:
   sample: torch.Tensor shape (12, L) -> torch.Tensor shape (12, L) float32
 """
 import random
@@ -126,6 +130,7 @@ class BaselineShift(object):
         freq=500,
         dependency=False,
         p=1.0,
+        amplitude_mode="legacy_upstream",
         **kwargs,
     ):
         self.max_amplitude = max_amplitude
@@ -135,6 +140,9 @@ class BaselineShift(object):
         self.freq = freq
         self.p = p
         self.dependency = dependency
+        if amplitude_mode not in {"legacy_upstream", "signed_shared_uniform"}:
+            raise ValueError(f"unknown baseline-shift amplitude_mode: {amplitude_mode!r}")
+        self.amplitude_mode = amplitude_mode
 
     def __call__(self, sample):
         new_sample = sample.clone()
@@ -143,7 +151,11 @@ class BaselineShift(object):
             shift_length = tsz * self.shift_ratio
             amp_channel = np.random.choice([1, -1], size=(csz, 1))
             amp_general = np.random.uniform(self.min_amplitude, self.max_amplitude, size=(1, 1))
-            amp = amp_channel - amp_general
+            if self.amplitude_mode == "signed_shared_uniform":
+                amp = amp_channel * amp_general
+            else:
+                # Preserve the upstream subtraction formula for historical runs.
+                amp = amp_channel - amp_general
             noise = np.zeros(shape=(csz, tsz))
             for i in range(self.num_segment):
                 segment_len = np.random.normal(shift_length, shift_length * 0.2)
@@ -212,6 +224,7 @@ class RandomLeadsMask(object):
         mask_leads_condition=None,
         max_masked_leads=None,
         min_masked_leads=1,
+        ensure_at_least_one_lead=False,
         **kwargs,
     ):
         self.p = p
@@ -220,6 +233,7 @@ class RandomLeadsMask(object):
         self.mask_leads_condition = mask_leads_condition
         self.max_masked_leads = None if max_masked_leads is None else int(max_masked_leads)
         self.min_masked_leads = int(min_masked_leads)
+        self.ensure_at_least_one_lead = bool(ensure_at_least_one_lead)
 
     def __call__(self, sample):
         if self.p >= np.random.uniform(0, 1):
@@ -236,6 +250,8 @@ class RandomLeadsMask(object):
                         if n_masked > 0:
                             masked = np.random.choice(np.arange(12), size=n_masked, replace=False)
                             survivors[masked] = False
+                if self.ensure_at_least_one_lead and not np.any(survivors):
+                    survivors[int(np.random.randint(0, 12))] = True
                 new_sample[survivors] = sample[survivors]
             elif self.mask_leads_selection == "conditional":
                 # FIX: upstream used self.mask_leads_selection (str) instead of condition (tuple)

@@ -1,0 +1,26 @@
+dataset: ptbxl
+dataset_version: v1.0.3
+data_root: /home/linbinhao/ECG_adv_data
+
+root: ${data_root}/ptbxl
+metadata_file: ptbxl_database.csv
+scp_statements_file: scp_statements.csv
+waveform_dir: records100
+waveform_format: wfdb
+cache_dir: ${data_root}/cache/ptbxl_100hz_v1
+cache_dtype: float32
+
+nonfinite_policy:
+  repair_method: linear_per_lead_nearest_edge
+  max_record_fraction: 0.01
+  max_lead_fraction: 0.05
+
+sampling_rate_hz: 100
+duration_seconds: 10
+num_samples: 1000
+derived_sampling_rate_hz: 500
+derived_num_samples: 5000
+derived_interpolation: linear_align_corners
+derived_batch_size: 64
+waveform_layout: time_channel
+lead_order: [I, II, III, aVR, aVL, aVF, V1, V2, V3, V4, V5, V6]

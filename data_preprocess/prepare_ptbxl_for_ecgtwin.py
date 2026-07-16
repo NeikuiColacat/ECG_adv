@@ -2,7 +2,7 @@
 PTBXL 数据预处理：将 PTBXL 数据集转为 ECGTwin 可用的 .pt 格式
 
 流程：
-1. 加载 raw100.npy (100Hz, 1000 samples) → resample to 1024
+1. 加载 raw100.npy (100Hz, 1000 samples) → 线性插值到 1024
 2. 导联重排 (PTBXL → ECGTwin: swap aVL/aVF at positions 4,5)
 3. SCP code → 自然语言文本
 4. VAE 编码 → latent (4, 128)
@@ -64,6 +64,33 @@ if _sys2.modules.get('tensorflow') is None:
 
 # 导联重排: PTBXL [I,II,III,AVR,AVL,AVF,...] → ECGTwin [I,II,III,aVR,aVF,aVL,...]
 PTBXL_TO_ECGTWIN_INDICES = [0, 1, 2, 3, 5, 4, 6, 7, 8, 9, 10, 11]
+
+
+def _linear_interpolate_time_batch(
+    signals_ntc: np.ndarray,
+    target_num_samples: int,
+) -> np.ndarray:
+    """Resize ``(N,T,C)`` signals with aligned-corner linear interpolation."""
+
+    signals_ntc = np.asarray(signals_ntc)
+    if signals_ntc.ndim != 3 or signals_ntc.shape[1] < 2:
+        raise ValueError(
+            "Expected batched time-channel signals with at least two time points, "
+            f"got {signals_ntc.shape}"
+        )
+    if target_num_samples < 2:
+        raise ValueError(
+            f"target_num_samples must be at least 2, got {target_num_samples}"
+        )
+    source = torch.from_numpy(np.array(signals_ntc, copy=True, order="C")).permute(0, 2, 1)
+    with torch.no_grad():
+        resized = F.interpolate(
+            source,
+            size=int(target_num_samples),
+            mode="linear",
+            align_corners=True,
+        )
+    return resized.permute(0, 2, 1).contiguous().numpy()
 
 
 def load_scp_mapping(scp_statements_path: str) -> dict:
@@ -239,9 +266,19 @@ def prepare_ptbxl(
     raw_signals = np.nan_to_num(raw_signals)
     print(f"  Shape: {raw_signals.shape}")  # (21799, 1000, 12)
 
-    # 3. Resample 1000 → 1024 并重排导联
-    print("Resampling to 1024 and reordering leads...")
-    resampled = scipy_signal.resample(raw_signals, 1024, axis=1)  # (N, 1024, 12)
+    # 3. 线性插值 1000 → 1024 并重排导联
+    print("Linearly interpolating to 1024 and reordering leads...")
+    resampled = np.empty(
+        (len(raw_signals), 1024, raw_signals.shape[2]),
+        dtype=raw_signals.dtype,
+    )
+    interpolation_batch_size = 256
+    for start in range(0, len(raw_signals), interpolation_batch_size):
+        end = min(start + interpolation_batch_size, len(raw_signals))
+        resampled[start:end] = _linear_interpolate_time_batch(
+            raw_signals[start:end],
+            1024,
+        )
     # 导联重排: PTBXL → ECGTwin
     resampled = resampled[:, :, PTBXL_TO_ECGTWIN_INDICES]
 

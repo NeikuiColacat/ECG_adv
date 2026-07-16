@@ -31,12 +31,12 @@ def normalize_synthetic_signals(signals: np.ndarray) -> np.ndarray:
     """Return synthetic signals as ``(N, 1000, 12)`` float32 arrays."""
     arr = np.asarray(signals, dtype=np.float32)
     if arr.ndim != 3:
-        raise ValueError(f"Expected synth signals ndim=3, got {arr.shape}")
+        raise ValueError(f"Expected classifier signals ndim=3, got {arr.shape}")
     if arr.shape[1:] == (12, 1000):
         arr = arr.transpose(0, 2, 1)
     if arr.shape[1:] != (1000, 12):
         raise ValueError(
-            "Expected synth signals as (N,1000,12) or (N,12,1000), "
+            "Expected classifier signals as (N,1000,12) or (N,12,1000), "
             f"got {arr.shape}"
         )
     return arr.astype(np.float32, copy=False)

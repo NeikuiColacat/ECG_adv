@@ -1,0 +1,27 @@
+schema_version: 1
+
+# Shared data-runtime defaults. Explicit get_dataloader(...) arguments override
+# these values, so experiment YAML adapters can still lock model-specific
+# batch sizes without changing this file.
+dataloader:
+  batch_size: 64
+  num_workers: 4
+  pin_memory: true
+  persistent_workers: true
+  prefetch_factor: 2
+  drop_last: false
+
+  # Multi-worker access must remain mmap-backed; loading the full cache into
+  # each worker would duplicate resident memory.
+  cache_mode: mmap
+  validate_values: sample
+
+  # Evaluation partitions remain sequential by default.
+  shuffle_partitions: [train, k500]
+
+model_input:
+  prepare_for_model: true
+  sanitize: true
+  global_zscore: true
+  output_layout: channel_time
+  epsilon: 1.0e-6

@@ -18,6 +18,9 @@ latest-mainline boundary was committed.
 
 - This compact manifest.
 - `docs/refactor_cleanup/latest_mainline_dry_run_20260705.md`
+- `docs/refactor_cleanup/manual_refactor_keep_manifest.md` records the newer
+  hand-written rebuild whitelist and the deletion gates that must be satisfied
+  before removing legacy files.
 
 ## Counts
 

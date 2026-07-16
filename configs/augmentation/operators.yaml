@@ -1,0 +1,71 @@
+schema_version: 1
+
+metadata:
+  profile_name: pn2021c_paper_anchored_s5_v1
+  status: project_defined_paper_anchored
+  warning: This is not an official fairseq-signals severity preset.
+  random_seed_file: random_seed.yaml
+  signal_units: mV
+  corruption_timing: before_per_sample_global_zscore
+  sampling_rate_policy: use_actual_corruption_domain_hz
+  intended_domains_hz: [100, 500]
+  public_severity: 5
+  operator_probability: 1.0
+  dependency: false
+  composite:
+    depths: [2, 3]
+    n_depth2: 10
+    n_depth3: 10
+    canonical_order:
+      - powerline_noise
+      - emg_noise
+      - baseline_wander
+      - baseline_shift
+      - random_leads_masking
+  rationale:
+    - Physical amplitudes stay near published ECG augmentation examples.
+    - Baseline shift uses signed magnitude instead of the legacy subtraction formula.
+    - Random lead masking always preserves at least one lead.
+  references:
+    - https://github.com/Jwoo5/fairseq-signals
+    - https://proceedings.mlr.press/v174/oh22a.html
+    - https://doi.org/10.1016/j.compbiomed.2021.105114
+
+profiles:
+  pn2021c_paper_anchored_s5_v1:
+    powerline_noise:
+      5:
+        min_amplitude: 0.0
+        max_amplitude: 0.5
+        p: 1.0
+        dependency: false
+    emg_noise:
+      5:
+        min_amplitude: 0.0
+        max_amplitude: 0.2
+        p: 1.0
+        dependency: false
+    baseline_wander:
+      5:
+        min_amplitude: 0.0
+        max_amplitude: 0.4
+        min_freq: 0.01
+        max_freq: 0.2
+        k: 3
+        p: 1.0
+        dependency: false
+    baseline_shift:
+      5:
+        min_amplitude: 0.0
+        max_amplitude: 0.5
+        shift_ratio: 0.3
+        num_segment: 1
+        amplitude_mode: signed_shared_uniform
+        p: 1.0
+        dependency: false
+    random_leads_masking:
+      5:
+        mask_leads_selection: random
+        mask_leads_prob: 0.5
+        ensure_at_least_one_lead: true
+        p: 1.0

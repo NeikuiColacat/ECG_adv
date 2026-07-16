@@ -1,8 +1,10 @@
 import json
 import math
+from pathlib import Path
 
 import numpy as np
 import pytest
+import torch
 
 from ecg_adv_gen.evaluation.pn2021_corruptions import (
     aggregate_corruption_summary,
@@ -19,7 +21,10 @@ from ecg_adv_gen.evaluation.pn2021_corruptions import (
 from ecg_adv_gen.evaluation.pn2021c import (
     PN2021C_CORRUPTS_PRE_ZSCORE,
     PN2021C_OFFICIAL_OPERATORS,
+    build_corruption_op,
+    load_custom_severity_profile,
 )
+from methods.augmix.ecg_ops import BaselineShift, RandomLeadsMask
 
 
 class _NpzLike:
@@ -52,6 +57,49 @@ def test_pn2021c_official_single_operator_contract_is_package_owned():
         "random_leads_masking",
     )
     assert PN2021C_CORRUPTS_PRE_ZSCORE is True
+
+
+def test_paper_anchored_operator_profile_loads_and_builds():
+    profile_path = (
+        Path(__file__).resolve().parents[2] / "configs" / "augmentation" / "operators.yaml"
+    )
+    profile = load_custom_severity_profile(profile_path, "pn2021c_paper_anchored_s5_v1")
+    assert profile["powerline_noise"][5]["max_amplitude"] == 0.5
+    assert profile["baseline_shift"][5]["amplitude_mode"] == "signed_shared_uniform"
+    assert profile["random_leads_masking"][5]["ensure_at_least_one_lead"] is True
+    op = build_corruption_op(
+        "powerline_noise",
+        5,
+        "custom",
+        sample_rate_hz=500,
+        severity_profile_params=profile,
+    )
+    assert op.freq == 500
+
+
+def test_baseline_shift_signed_shared_uniform_respects_configured_amplitude():
+    np.random.seed(7)
+    shifted = BaselineShift(
+        max_amplitude=0.5,
+        shift_ratio=0.3,
+        num_segment=1,
+        p=1.0,
+        amplitude_mode="signed_shared_uniform",
+    )(torch.zeros(12, 1000))
+    assert float(shifted.abs().max()) <= 0.5
+    assert float(shifted.abs().max()) > 0.0
+
+
+def test_random_leads_mask_can_guarantee_one_survivor():
+    np.random.seed(11)
+    sample = torch.ones(12, 100)
+    masked = RandomLeadsMask(
+        p=1.0,
+        mask_leads_prob=1.0,
+        ensure_at_least_one_lead=True,
+    )(sample)
+    surviving_leads = (masked.abs().sum(dim=1) > 0).sum().item()
+    assert surviving_leads == 1
 
 
 def test_load_npz_metadata_decodes_json_scalars_and_falls_back_to_empty_dict():
