@@ -1,0 +1,19 @@
+schema_version: 1
+
+experiment:
+  name: manual_refactor_pn2021_eval_effnet_v1
+  purpose: Evaluate one fixed EfficientNet checkpoint on clean PN2021 and all PN2021-C depth2+3 views.
+
+entrypoint:
+  name: evaluate_pn2021
+  config: eval/PN2021.yaml
+  arguments:
+    - --model
+    - efficientnet1dv2
+    - --checkpoint
+    - /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_ptbxl_effnet_source_v1/training/checkpoints/best.pt
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_pn2021_eval_effnet_v1
+  if_exists: error
+  delegate_output_subdir: evaluation

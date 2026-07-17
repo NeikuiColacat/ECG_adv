@@ -35,13 +35,16 @@ from util.augmentations import (
     powerline_noise,
     random_leads_masking,
 )
+from util.augmentations.profile import (  # noqa: E402
+    AugmentationProfile,
+    load_augmentation_profile,
+)
 from util.config_bundle import (  # noqa: E402
     resolve_config_reference,
     resolve_entry_config_path,
 )
 from util.random_seed import (  # noqa: E402
     DEFAULT_RANDOM_SEED_CONFIG_PATH,
-    load_random_seed_config,
     make_numpy_rng,
     make_python_rng,
 )
@@ -148,13 +151,16 @@ def load_cache_config(path: str | Path = DEFAULT_CONFIG) -> dict[str, Any]:
     return config
 
 
-def load_operators_config(
+def load_operators_profile(
     path: str | Path,
     *,
     owner_config_path: str | Path = DEFAULT_CONFIG,
     config_root: str | Path | None = None,
-) -> dict[str, Any]:
-    """Load and validate the tracked five-operator severity profile."""
+    profile_name: str | None = None,
+    severity: int | None = None,
+    expected_seed_config_path: str | Path | None = None,
+) -> AugmentationProfile:
+    """Resolve one operators reference through the shared strict loader."""
 
     resolved = resolve_config_reference(
         str(path),
@@ -163,33 +169,44 @@ def load_operators_config(
         description="augmentation operators config",
         must_exist=True,
     )
-    config = _read_yaml_mapping(
-        resolved, description="augmentation operators config"
+    return load_augmentation_profile(
+        resolved,
+        profile_name=profile_name,
+        severity=severity,
+        expected_canonical_order=tuple(OPERATOR_FUNCTIONS),
+        expected_seed_config_path=expected_seed_config_path,
+        config_root=config_root,
     )
-    if config.get("schema_version") != 1:
-        raise ValueError("operators schema_version must be 1")
-    metadata = config.get("metadata")
-    profiles = config.get("profiles")
-    if not isinstance(metadata, dict) or not isinstance(profiles, dict):
-        raise ValueError("operators config requires metadata and profiles mappings")
-    canonical = metadata.get("composite", {}).get("canonical_order")
-    if canonical != list(OPERATOR_FUNCTIONS):
-        raise ValueError(
-            f"operator canonical order must be {list(OPERATOR_FUNCTIONS)}, got {canonical}"
-        )
-    return config
+
+
+def load_operators_config(
+    path: str | Path,
+    *,
+    owner_config_path: str | Path = DEFAULT_CONFIG,
+    config_root: str | Path | None = None,
+) -> dict[str, Any]:
+    """Return a validated document copy for compatibility and snapshots."""
+
+    return load_operators_profile(
+        path,
+        owner_config_path=owner_config_path,
+        config_root=config_root,
+    ).snapshot()
 
 
 def build_compositions(
     config: dict[str, Any],
-    operator_config: dict[str, Any],
+    operator_config: AugmentationProfile | dict[str, Any],
 ) -> list[dict[str, Any]]:
     """Expand five operators into all 10 pairs and all 10 triples."""
 
-    canonical = [
-        str(value)
-        for value in operator_config["metadata"]["composite"]["canonical_order"]
-    ]
+    if isinstance(operator_config, AugmentationProfile):
+        canonical = list(operator_config.canonical_order)
+    else:
+        canonical = [
+            str(value)
+            for value in operator_config["metadata"]["composite"]["canonical_order"]
+        ]
     corruption = config["corruption"]
     declared_counts = {
         int(depth): int(count)
@@ -221,8 +238,15 @@ def _severity_params(
     *,
     operator_name: str,
     config: dict[str, Any],
-    operator_config: dict[str, Any],
+    operator_config: AugmentationProfile | dict[str, Any],
 ) -> dict[str, Any]:
+    if isinstance(operator_config, AugmentationProfile):
+        if str(config["corruption"]["profile"]) != operator_config.profile_name:
+            raise ValueError("cache profile does not match the loaded operator profile")
+        if int(config["corruption"]["severity"]) != operator_config.severity:
+            raise ValueError("cache severity does not match the loaded operator profile")
+        return operator_config.parameters_for(operator_name)
+
     profile_name = str(config["corruption"]["profile"])
     severity = int(config["corruption"]["severity"])
     try:
@@ -245,7 +269,7 @@ def apply_composition(
     source_hash: str,
     composition: dict[str, Any],
     config: dict[str, Any],
-    operator_config: dict[str, Any],
+    operator_config: AugmentationProfile | dict[str, Any],
     seed_config_path: str | Path = DEFAULT_RANDOM_SEED_CONFIG_PATH,
 ) -> np.ndarray:
     """Apply one deterministic composition to one raw-mV 500 Hz ECG."""
@@ -563,6 +587,27 @@ def _validate_complete_output(
                 )
 
 
+def _load_cache_operator_profile(
+    *,
+    config_path: Path,
+    config: dict[str, Any],
+) -> AugmentationProfile:
+    corruption = config["corruption"]
+    seed_path = resolve_config_reference(
+        corruption["random_seed_file"],
+        owner_config_path=config_path,
+        description="corruption.random_seed_file",
+        must_exist=True,
+    )
+    return load_operators_profile(
+        corruption["operators_config"],
+        owner_config_path=config_path,
+        profile_name=str(corruption["profile"]),
+        severity=int(corruption["severity"]),
+        expected_seed_config_path=seed_path,
+    )
+
+
 def describe_cache_plan(
     config_path: str | Path = DEFAULT_CONFIG,
 ) -> dict[str, Any]:
@@ -570,16 +615,11 @@ def describe_cache_plan(
 
     config_path = resolve_entry_config_path(config_path)
     config = load_cache_config(config_path)
-    operator_path = resolve_config_reference(
-        config["corruption"]["operators_config"],
-        owner_config_path=config_path,
-        description="corruption.operators_config",
-        must_exist=True,
+    operator_profile = _load_cache_operator_profile(
+        config_path=config_path,
+        config=config,
     )
-    operator_config = load_operators_config(
-        operator_path, owner_config_path=config_path
-    )
-    compositions = build_compositions(config, operator_config)
+    compositions = build_compositions(config, operator_profile)
     source_dir, source_manifest, source_manifest_sha256 = _load_source_contract(config)
     selected_records, _ = _select_source_records(
         source_dir=source_dir,
@@ -618,39 +658,14 @@ def build_augmentations_cache(
 
     config_path = resolve_entry_config_path(config_path)
     config = load_cache_config(config_path)
-    operator_path = resolve_config_reference(
-        config["corruption"]["operators_config"],
-        owner_config_path=config_path,
-        description="corruption.operators_config",
-        must_exist=True,
+    operator_profile = _load_cache_operator_profile(
+        config_path=config_path,
+        config=config,
     )
-    seed_path = resolve_config_reference(
-        config["corruption"]["random_seed_file"],
-        owner_config_path=config_path,
-        description="corruption.random_seed_file",
-        must_exist=True,
-    )
-    operator_config = load_operators_config(
-        operator_path, owner_config_path=config_path
-    )
-    compositions = build_compositions(config, operator_config)
-
-    profile_name = str(config["corruption"]["profile"])
-    if profile_name != operator_config["metadata"]["profile_name"]:
-        raise ValueError("cache profile does not match operators metadata.profile_name")
-    if int(config["corruption"]["severity"]) != int(
-        operator_config["metadata"]["public_severity"]
-    ):
-        raise ValueError("cache severity does not match operators public_severity")
-    declared_seed = load_random_seed_config(seed_path)
-    operator_seed_path = resolve_config_reference(
-        operator_config["metadata"].get("random_seed_file"),
-        owner_config_path=operator_path,
-        description="operators.metadata.random_seed_file",
-        must_exist=True,
-    )
-    if operator_seed_path != seed_path:
-        raise ValueError("operators and cache configs must reference the same seed file")
+    compositions = build_compositions(config, operator_profile)
+    profile_name = operator_profile.profile_name
+    declared_seed = operator_profile.random_seed_config
+    seed_path = declared_seed.path
 
     source_dir, source_manifest, source_manifest_sha256 = _load_source_contract(config)
     source_record_count = int(source_manifest["record_count"])
@@ -674,8 +689,8 @@ def build_augmentations_cache(
 
     config_identity = {
         "config_sha256": _sha256_file(config_path),
-        "operators_sha256": _sha256_file(operator_path),
-        "random_seed_sha256": _sha256_file(seed_path),
+        "operators_sha256": operator_profile.config_sha256,
+        "random_seed_sha256": declared_seed.sha256,
         "source_manifest_sha256": source_manifest_sha256,
     }
     config_identity["config_identity_hash"] = _stable_payload_hash(config_identity)
@@ -704,7 +719,9 @@ def build_augmentations_cache(
             encoding="utf-8",
         )
         (staging_dir / "operators_config_snapshot.yaml").write_text(
-            yaml.safe_dump(operator_config, sort_keys=False, allow_unicode=True),
+            yaml.safe_dump(
+                operator_profile.snapshot(), sort_keys=False, allow_unicode=True
+            ),
             encoding="utf-8",
         )
 
@@ -731,7 +748,7 @@ def build_augmentations_cache(
                     source_hash=str(selected_hash_ids[record_index]),
                     composition=composition,
                     config=config,
-                    operator_config=operator_config,
+                    operator_config=operator_profile,
                     seed_config_path=seed_path,
                 )
             if not np.isfinite(corrupted_500).all():

@@ -1,0 +1,157 @@
+schema_version: 1
+
+method:
+  id: a5_lhat_threechain_v1
+  profile_version: 1
+  api_version: 1
+  scientific_arm: A5
+  status: locked_main_method
+  description: Repaired VAE-LHAT plus canonical-500 three-chain AugMix.
+
+nodes:
+  clean_identity:
+    type: identity_raw100_view
+    implementation: builtin
+    implementation_version: 1
+    status: implemented
+    inputs:
+      waveform: clean_raw
+    outputs:
+      waveform: clean_view
+  lhat:
+    type: vae_lhat_hard_view
+    implementation: registered
+    implementation_version: 1
+    status: implemented
+    inputs:
+      waveform: clean_view
+      targets: targets
+      hash_ids: hash_ids
+      latent_pool: latent_pool
+      decoder: vae_decoder
+      classifier: model
+      rng: lhat_rng
+      config: lhat_config
+    outputs:
+      waveform: lhat_view
+      diagnostics: lhat_diagnostics
+      accepted_indices: lhat_accepted_indices
+  threechain_augmix:
+    type: vae_lhat_threechain_augmix_view
+    implementation: registered
+    implementation_version: 1
+    status: implemented
+    inputs:
+      clean_waveform: clean_view
+      chain3_waveform: lhat_view
+      rng: augmix_rng
+      config: augmix_config
+    outputs:
+      waveform: augmix_view
+      diagnostics: augmix_diagnostics
+
+inputs:
+  clean_raw:
+    type: ecg_waveform
+    domain: raw_mV
+    layout: batch_time_lead
+    sampling_rate_hz: 100
+    points: 1000
+    leads: 12
+  targets:
+    type: multilabel_targets
+    class_order: [CD, HYP, MI, NORM, STTC]
+  hash_ids:
+    type: unique_record_ids
+
+outputs:
+  clean_view:
+    type: ecg_waveform
+    source: clean_identity.waveform
+    domain: raw_mV
+    sampling_rate_hz: 100
+    points: 1000
+  lhat_view:
+    type: ecg_waveform
+    source: lhat.waveform
+    domain: raw_mV
+    sampling_rate_hz: 100
+    points: 1000
+    consumers:
+      - objective.lhat_direct_bce
+      - nodes.threechain_augmix.inputs.chain3_waveform
+  augmix_view:
+    type: ecg_waveform
+    source: threechain_augmix.waveform
+    domain: raw_mV
+    sampling_rate_hz: 100
+    points: 1000
+  lhat_diagnostics:
+    type: namespaced_method_diagnostics
+    source: lhat.diagnostics
+  augmix_diagnostics:
+    type: namespaced_method_diagnostics
+    source: threechain_augmix.diagnostics
+
+objective:
+  eligibility_scaling: eligible_count_over_batch_size
+  terms:
+    - id: clean_bce
+      type: multilabel_bce_with_logits
+      view: clean_view
+      targets: targets
+      weight: 1.0
+    - id: lhat_direct_bce
+      type: multilabel_bce_with_logits
+      view: lhat_view
+      targets: targets
+      weight: 1.0
+    - id: augmix_bce
+      type: multilabel_bce_with_logits
+      view: augmix_view
+      targets: targets
+      weight: 1.0
+    - id: clean_lhat_augmix_jsd
+      type: multilabel_bernoulli_jsd
+      views: [clean_view, lhat_view, augmix_view]
+      weight: 2.0
+
+resources:
+  model:
+    type: caller_owned_classifier
+  vae:
+    type: config_reference
+    path: train/vae.yaml
+  latent_pool:
+    type: runtime_train_only_exact_label_pool
+  vae_decoder:
+    type: runtime_frozen_decoder
+  lhat_config:
+    type: config_reference
+    path: train/lhat.yaml
+  augmix_config:
+    type: config_reference
+    path: train/augmix.yaml
+  lhat_rng:
+    type: isolated_torch_generator
+    seed_config: random_seed.yaml
+    namespace: ecg_manual_refactor_lhat_v1
+  augmix_rng:
+    type: isolated_torch_generator
+    seed_config: random_seed.yaml
+    namespace: ecg_manual_refactor_augmix_v2_canonical500_batched
+
+contracts:
+  normalization_owner: online_trainer
+  optimizer_owner: online_trainer
+  canonical_input_sampling_rate_hz: 100
+  augmix_operator_domain_sampling_rate_hz: 500
+  canonical_output_sampling_rate_hz: 100
+  lhat_view_single_generation_per_record_step: true
+  lhat_direct_bce_and_augmix_chain3_share_exact_view: true
+  augmix_chain3_source: lhat_view
+  augmix_chain3_additional_corruption: false
+  quality_rejected_anchor_policy: clean_loss_only
+  one_outer_optimizer_step_per_clean_batch: true
+  complete_k500_base_record_exposure: true
+  heldout_target_feedback_allowed: false

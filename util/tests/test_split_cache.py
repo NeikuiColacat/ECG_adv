@@ -8,8 +8,10 @@ import numpy as np
 import pandas as pd
 import yaml
 
+import data_preprocess.split_cache as split_module
 from data_preprocess.load_cache import EXPECTED_CLASS_ORDER, EXPECTED_LEADS
 from data_preprocess.split_cache import build_cache_splits
+from util.random_seed import derive_seed
 
 
 def _hash_id(dataset: str, index: int) -> str:
@@ -121,6 +123,10 @@ def _write_pn2021_cache(root: Path) -> Path:
     labels = np.zeros((count, 5), dtype=np.uint8)
     for start in range(0, 20, 4):
         labels[start : start + 3, start // 4] = 1
+    # The two physical CPSC sources form one logical center and therefore share
+    # one label distribution in this compact fixture.
+    labels[12:16] = 0
+    labels[12:15, 2] = 1
     labels[20:, 3] = 1
     return _write_cache(root, dataset="pn2021", records=records, labels=labels)
 
@@ -192,6 +198,17 @@ def test_split_builder_uses_official_ptbxl_folds_and_combines_cpsc_sources(
                 "validation_split": False,
                 "checkpoint_policy": "last_checkpoint_only",
             },
+            "tuning_split": {
+                "parent_partition": "k500",
+                "train_partition": "k500_tune_train",
+                "validation_partition": "k500_tune_validation",
+                "train_count": 1,
+                "validation_count": 1,
+                "policy": "deterministic_multilabel_source_stratified",
+                "preserve_source_proportions": True,
+                "singleton_positive_policy": "prefer_train",
+                "seed_namespace": "test_k500_tuning_split_v1",
+            },
             "evaluation": {
                 "exclude_k500_hashes": True,
                 "emit_all_zero_kept": True,
@@ -241,6 +258,42 @@ def test_split_builder_uses_official_ptbxl_folds_and_combines_cpsc_sources(
     assert len(k500) == 2
     assert k500.isdisjoint(eval_kept)
     assert k500.isdisjoint(eval_drop)
+    tune_train = set(
+        np.load(center_dir / "k500_tune_train_hash_ids.npy").astype(str)
+    )
+    tune_validation = set(
+        np.load(center_dir / "k500_tune_validation_hash_ids.npy").astype(str)
+    )
+    assert len(tune_train) == 1
+    assert len(tune_validation) == 1
+    assert tune_train.isdisjoint(tune_validation)
+    assert tune_train | tune_validation == k500
+    tuning = cpsc["k500_tuning_split"]
+    assert tuning["parent_hash_id_set_sha256"] == cpsc[
+        "k500_hash_id_set_sha256"
+    ]
+    assert tuning["overlap_count"] == 0
+    assert tuning["union_matches_parent"] is True
+    assert tuning["validation_source_center_counts"] == tuning[
+        "validation_source_target_counts"
+    ]
+
+    candidate_hashes = np.load(
+        center_dir / "candidate_nonzero_hash_ids.npy"
+    ).astype(str)
+    parent_seed = derive_seed(
+        config["random_seed"]["namespace"],
+        "pn2021",
+        config["pn2021"]["split_id"],
+        "cpsc_2018",
+        "k2",
+        base_seed=20260501,
+    )
+    expected_positions = np.random.RandomState(parent_seed).choice(
+        candidate_hashes.size, size=2, replace=False
+    )
+    expected_parent = np.sort(candidate_hashes[expected_positions])
+    np.testing.assert_array_equal(np.sort(np.asarray(tuple(k500))), expected_parent)
 
     replay_root = tmp_path / "splits-replay"
     replay_config_path = tmp_path / "splits-replay.yaml"
@@ -255,3 +308,105 @@ def test_split_builder_uses_official_ptbxl_folds_and_combines_cpsc_sources(
         )
         replay = np.load(replay_root / "pn2021" / center / "k500_hash_ids.npy")
         np.testing.assert_array_equal(original, replay)
+        original_train = np.load(
+            output_root / "pn2021" / center / "k500_tune_train_hash_ids.npy"
+        )
+        replay_train = np.load(
+            replay_root / "pn2021" / center / "k500_tune_train_hash_ids.npy"
+        )
+        np.testing.assert_array_equal(original_train, replay_train)
+
+
+def _tuning_policy(*, train_count: int, validation_count: int) -> dict[str, object]:
+    return {
+        "parent_partition": "k500",
+        "train_partition": "k500_tune_train",
+        "validation_partition": "k500_tune_validation",
+        "train_count": train_count,
+        "validation_count": validation_count,
+        "policy": "deterministic_multilabel_source_stratified",
+        "preserve_source_proportions": True,
+        "singleton_positive_policy": "prefer_train",
+        "seed_namespace": "test_k500_tuning_split_v1",
+    }
+
+
+def _algorithm_cache(*, centers: list[str], labels: np.ndarray):
+    count = len(centers)
+    return type(
+        "AlgorithmCache",
+        (),
+        {
+            "labels": labels,
+            "hash_ids": np.asarray(
+                [_hash_id("algorithm", index) for index in range(count)],
+                dtype="<U64",
+            ),
+            "records": pd.DataFrame({"center": centers}),
+        },
+    )()
+
+
+def test_k500_tuning_split_preserves_cpsc_ratio_and_georgia_single_mi() -> None:
+    count = 500
+    cpsc_labels = np.zeros((count, 5), dtype=np.uint8)
+    cpsc_labels[np.arange(count), np.arange(count) % 5] = 1
+    cpsc_labels[np.arange(0, count, 11), 4] = 1
+    cpsc_cache = _algorithm_cache(
+        centers=["cpsc_2018"] * 320 + ["cpsc_2018_extra"] * 180,
+        labels=cpsc_labels,
+    )
+    cpsc_train, cpsc_validation, cpsc_evidence = (
+        split_module._build_k500_tuning_split(
+            cpsc_cache,
+            parent_indices=np.arange(count, dtype=np.int64),
+            source_centers=("cpsc_2018", "cpsc_2018_extra"),
+            config=_tuning_policy(train_count=400, validation_count=100),
+            base_seed=20260501,
+            split_id="pn2021_super5_k500_cpsc_combined_v1",
+            logical_center="cpsc_2018",
+        )
+    )
+    assert cpsc_train.size == 400
+    assert cpsc_validation.size == 100
+    assert cpsc_evidence["validation_source_target_counts"] == {
+        "cpsc_2018": 64,
+        "cpsc_2018_extra": 36,
+    }
+    assert cpsc_evidence["validation_source_center_counts"] == {
+        "cpsc_2018": 64,
+        "cpsc_2018_extra": 36,
+    }
+
+    georgia_labels = np.zeros((count, 5), dtype=np.uint8)
+    non_mi_classes = np.asarray([0, 1, 3, 4], dtype=np.int64)
+    georgia_rows = np.arange(1, count)
+    georgia_labels[
+        georgia_rows, non_mi_classes[(georgia_rows - 1) % 4]
+    ] = 1
+    georgia_labels[0, 2] = 1
+    georgia_cache = _algorithm_cache(
+        centers=["georgia"] * count,
+        labels=georgia_labels,
+    )
+    georgia_train, georgia_validation, georgia_evidence = (
+        split_module._build_k500_tuning_split(
+            georgia_cache,
+            parent_indices=np.arange(count, dtype=np.int64),
+            source_centers=("georgia",),
+            config=_tuning_policy(train_count=400, validation_count=100),
+            base_seed=20260501,
+            split_id="pn2021_super5_k500_cpsc_combined_v1",
+            logical_center="georgia",
+        )
+    )
+    assert 0 in georgia_train
+    assert 0 not in georgia_validation
+    assert georgia_evidence["singleton_positive_classes"] == ["MI"]
+    assert georgia_evidence["singleton_positive_all_kept_in_train"] is True
+    for class_name in EXPECTED_CLASS_ORDER:
+        assert (
+            georgia_evidence["train_class_positive_counts"][class_name]
+            + georgia_evidence["validation_class_positive_counts"][class_name]
+            == georgia_evidence["parent_class_positive_counts"][class_name]
+        )

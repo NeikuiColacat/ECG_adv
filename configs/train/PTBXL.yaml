@@ -1,0 +1,144 @@
+schema_version: 1
+profile_name: ptbxl_super5_source_training_v1
+
+protocol_lock:
+  status: locked_source_baseline
+  locked_on: "2026-07-17"
+  selection_rule: fold9_best_macro_auprc
+  final_evaluation: fold10_once_after_restoring_best
+  note: Downstream experiments must use the registered best.pt, never last.pt.
+
+references:
+  split_config: data/splits.yaml
+  data_load_config: data/data_load.yaml
+  random_seed_config: random_seed.yaml
+
+random_seed:
+  stream_namespace: supervised_training
+  comparison_group: ptbxl_super5_source_v1
+  replicate_id: 0
+  deterministic_algorithms: false
+
+data:
+  dataset: ptbxl
+  train_partition: train
+  validation_partition: validation
+  test_partition: test
+  sampling_rate_hz: from_model_spec
+  duration_seconds: 10
+  lead_order: [I, II, III, aVR, aVL, aVF, V1, V2, V3, V4, V5, V6]
+  class_order: [CD, HYP, MI, NORM, STTC]
+  input_layout: channel_time
+  normalization: per_sample_global_zscore
+
+# Thin boot scripts consume these model-specific defaults, then pass the
+# resolved values into the same train_ptbxl(...) adapter. CLI values override
+# only the named field and are recorded by the trainer.
+# These defaults were selected on PTB-XL fold 9 without constructing or
+# evaluating the fold-10 test loader. Training must still restore the
+# fold-9-best macro-AUPRC checkpoint rather than hard-coding an epoch number.
+boot_models:
+  efficientnet1dv2:
+    checkpoint_path: null
+    output_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor/ptbxl_effnet1dv2_source_v1
+    training_parameters:
+      epochs: 30
+      learning_rate: 0.001
+      weight_decay: 0.0001
+      minimum_learning_rate_ratio: 0.01
+      gradient_clip_norm: 1.0
+      amp_enabled: true
+      amp_dtype: bfloat16
+    dataloader_parameters:
+      train_batch_size: 128
+      eval_batch_size: 256
+  ecgfounder:
+    pretrained_checkpoint_path: /home/linbinhao/ECG_adv_data/ecgfounder/checkpoint/12_lead_ECGFounder.pth
+    task_checkpoint_path: null
+    trainable_scope: full
+    output_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor/ptbxl_ecgfounder_source_v1
+    training_parameters:
+      epochs: 5
+      learning_rate: 0.0001
+      weight_decay: 0.00001
+      minimum_learning_rate_ratio: 1.0
+      gradient_clip_norm: 1.0
+      amp_enabled: true
+      amp_dtype: bfloat16
+    dataloader_parameters:
+      train_batch_size: 64
+      eval_batch_size: 128
+
+training:
+  epochs: 30
+  train_batch_size: 128
+  eval_batch_size: 256
+  num_workers: 4
+  pin_memory: true
+  persistent_workers: true
+  prefetch_factor: 2
+  cache_mode: mmap
+  validate_values: sample
+  device: cuda
+  batch_keys:
+    input: waveform
+    target: label
+  optimizer:
+    name: adamw
+    learning_rate: 0.001
+    weight_decay: 0.0001
+  scheduler:
+    name: cosine_annealing
+    minimum_learning_rate_ratio: 0.01
+  loss:
+    name: bce_with_logits
+    pos_weight: optional_argument
+  gradient_clip_norm: 1.0
+  amp:
+    enabled: true
+    dtype: bfloat16
+
+selection:
+  partition: validation
+  metric: macro_auprc
+  mode: max
+  restore_best_at_end: true
+  evaluate_test_at_end: true
+
+logging:
+  tensorboard:
+    enabled: true
+    subdir: tensorboard
+    max_queue: 10
+    flush_secs: 30
+    scalars:
+      epoch_metrics: true
+      batch_loss_interval_steps: 20
+    # Source-only PTB-XL training has no online LHAT/AugMix waveform. Online
+    # training profiles may enable this and pass fixed raw-mV probes explicitly.
+    ecg_figures:
+      enabled: false
+      interval_epochs: 5
+      max_samples: 4
+      fixed_hash_ids: []
+      views:
+        - clean
+        - lhat
+        - lhat_difference
+        - augmix
+        - augmix_difference
+      signal_domain: raw_mv
+      save_png: true
+      save_raw_arrays: true
+      raw_arrays_subdir: samples
+
+output:
+  # Fallback used when train_model/train_ptbxl is called directly. The two
+  # boot scripts use the model-specific output_dir values above.
+  run_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor/ptbxl_source_v1
+  if_exists: error
+  checkpoints_dir: checkpoints
+  best_checkpoint_file: best.pt
+  last_checkpoint_file: last.pt
+  history_file: training_history.json
+  result_file: train_result.json

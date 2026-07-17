@@ -14,6 +14,12 @@ from .operators import (
     powerline_noise,
     random_leads_masking,
 )
+from .profile import (
+    AugmentationProfile,
+    CANONICAL_OPERATOR_ORDER,
+    DEFAULT_OPERATOR_CONFIG_PATH,
+    load_augmentation_profile,
+)
 from .torch_operators import (
     baseline_shift as torch_baseline_shift,
     baseline_wander as torch_baseline_wander,
@@ -25,11 +31,15 @@ from .torch_operators import (
 __all__ = [
     "UPSTREAM_COMMIT",
     "UPSTREAM_SOURCE_URL",
+    "AugmentationProfile",
+    "CANONICAL_OPERATOR_ORDER",
+    "DEFAULT_OPERATOR_CONFIG_PATH",
     "powerline_noise",
     "emg_noise",
     "baseline_wander",
     "baseline_shift",
     "random_leads_masking",
+    "load_augmentation_profile",
     "torch_powerline_noise",
     "torch_emg_noise",
     "torch_baseline_wander",

@@ -15,7 +15,7 @@ import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 import numpy as np
 import yaml
@@ -50,6 +50,9 @@ EXPECTED_LOGICAL_CENTERS = (
     ("georgia", ("georgia",)),
 )
 EXPECTED_QUALITY_STATUSES = ("clean", "repaired")
+TUNING_TRAIN_PARTITION = "k500_tune_train"
+TUNING_VALIDATION_PARTITION = "k500_tune_validation"
+TUNING_SPLIT_POLICY = "deterministic_multilabel_source_stratified"
 
 
 def _resolve_project_path(value: str | Path) -> Path:
@@ -128,6 +131,66 @@ def _validate_logical_centers(value: Any) -> list[dict[str, Any]]:
             f"got {actual}"
         )
     return resolved
+
+
+def _validate_tuning_split(value: Any, *, k: int) -> dict[str, Any]:
+    tuning = _require_mapping(value, description="pn2021.tuning_split")
+    expected_keys = {
+        "parent_partition",
+        "train_partition",
+        "validation_partition",
+        "train_count",
+        "validation_count",
+        "policy",
+        "preserve_source_proportions",
+        "singleton_positive_policy",
+        "seed_namespace",
+    }
+    if set(tuning) != expected_keys:
+        raise ValueError(
+            "pn2021.tuning_split keys are incomplete or unexpected: "
+            f"expected={sorted(expected_keys)}, actual={sorted(tuning)}"
+        )
+    if tuning["parent_partition"] != "k500":
+        raise ValueError("pn2021.tuning_split parent_partition must be k500")
+    if tuning["train_partition"] != TUNING_TRAIN_PARTITION:
+        raise ValueError(
+            f"pn2021.tuning_split train_partition must be {TUNING_TRAIN_PARTITION}"
+        )
+    if tuning["validation_partition"] != TUNING_VALIDATION_PARTITION:
+        raise ValueError(
+            "pn2021.tuning_split validation_partition must be "
+            f"{TUNING_VALIDATION_PARTITION}"
+        )
+    counts: dict[str, int] = {}
+    for key in ("train_count", "validation_count"):
+        raw = tuning[key]
+        if isinstance(raw, bool) or not isinstance(raw, int) or raw <= 0:
+            raise ValueError(f"pn2021.tuning_split {key} must be positive")
+        counts[key] = int(raw)
+    if counts["train_count"] + counts["validation_count"] != int(k):
+        raise ValueError(
+            "pn2021.tuning_split train_count + validation_count must equal k"
+        )
+    if tuning["policy"] != TUNING_SPLIT_POLICY:
+        raise ValueError(
+            f"pn2021.tuning_split policy must be {TUNING_SPLIT_POLICY}"
+        )
+    if tuning["preserve_source_proportions"] is not True:
+        raise ValueError(
+            "pn2021.tuning_split preserve_source_proportions must be true"
+        )
+    if tuning["singleton_positive_policy"] != "prefer_train":
+        raise ValueError(
+            "pn2021.tuning_split singleton_positive_policy must be prefer_train"
+        )
+    if not isinstance(tuning["seed_namespace"], str) or not tuning[
+        "seed_namespace"
+    ]:
+        raise ValueError(
+            "pn2021.tuning_split seed_namespace must be a non-empty string"
+        )
+    return dict(tuning)
 
 
 def load_split_config(path: str | Path = DEFAULT_CONFIG) -> dict[str, Any]:
@@ -225,6 +288,9 @@ def load_split_config(path: str | Path = DEFAULT_CONFIG) -> dict[str, Any]:
         "checkpoint_policy": "last_checkpoint_only",
     }:
         raise ValueError("PN2021 K500 must use all records and last checkpoint")
+    pn2021["tuning_split"] = _validate_tuning_split(
+        pn2021.get("tuning_split"), k=int(k)
+    )
     evaluation = _require_mapping(
         pn2021.get("evaluation"), description="pn2021.evaluation"
     )
@@ -434,6 +500,304 @@ def _source_counts(
     return {source: int(counts.get(source, 0)) for source in source_centers}
 
 
+def _class_positive_counts(cache: ECGCache, indices: np.ndarray) -> dict[str, int]:
+    labels = np.asarray(cache.labels[np.asarray(indices, dtype=np.int64)])
+    positives = labels.astype(np.int64, copy=False).sum(axis=0)
+    return {
+        class_name: int(positives[position])
+        for position, class_name in enumerate(EXPECTED_CLASS_ORDER)
+    }
+
+
+def _largest_remainder_quotas(
+    counts: Mapping[str, int],
+    *,
+    selected_count: int,
+    source_order: Sequence[str],
+) -> dict[str, int]:
+    total = sum(int(counts[source]) for source in source_order)
+    if total <= 0 or not 0 <= int(selected_count) <= total:
+        raise ValueError("invalid proportional source-quota request")
+    raw = {
+        source: int(counts[source]) * int(selected_count) / total
+        for source in source_order
+    }
+    quotas = {source: int(np.floor(raw[source])) for source in source_order}
+    remainder = int(selected_count) - sum(quotas.values())
+    ranked = sorted(
+        source_order,
+        key=lambda source: (
+            -(raw[source] - quotas[source]),
+            source_order.index(source),
+        ),
+    )
+    for source in ranked[:remainder]:
+        quotas[source] += 1
+    if sum(quotas.values()) != int(selected_count):
+        raise RuntimeError("proportional source quotas do not sum to target")
+    return quotas
+
+
+def _multilabel_error(actual: np.ndarray, target: np.ndarray) -> float:
+    scale = np.maximum(target.astype(np.float64, copy=False), 1.0)
+    delta = (actual.astype(np.float64, copy=False) - target) / scale
+    return float(np.dot(delta, delta))
+
+
+def _build_k500_tuning_split(
+    cache: ECGCache,
+    *,
+    parent_indices: np.ndarray,
+    source_centers: Sequence[str],
+    config: Mapping[str, Any],
+    base_seed: int,
+    split_id: str,
+    logical_center: str,
+) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+    """Derive a deterministic train/validation split inside one fixed K set.
+
+    Source-center validation counts use largest-remainder proportional quotas.
+    Within those hard quotas, deterministic greedy selection plus same-source
+    swaps minimizes marginal Super5 count error. Records carrying a class that
+    appears only once in the parent K set are kept in training; this protects
+    the single Georgia MI anchor without special-casing a center or class name.
+    """
+
+    parent = np.asarray(parent_indices, dtype=np.int64)
+    train_count = int(config["train_count"])
+    validation_count = int(config["validation_count"])
+    if parent.ndim != 1 or parent.size != train_count + validation_count:
+        raise ValueError("K500 tuning counts do not match the fixed parent selection")
+    parent_hash = _hash_id_set_sha256(cache.hash_ids[parent].astype(str))
+    effective_seed = derive_seed(
+        str(config["seed_namespace"]),
+        "pn2021",
+        str(split_id),
+        str(logical_center),
+        parent_hash,
+        f"train{train_count}",
+        f"validation{validation_count}",
+        base_seed=base_seed,
+    )
+    rng = np.random.RandomState(effective_seed)
+    labels = np.asarray(cache.labels[parent], dtype=np.int64)
+    if labels.shape != (parent.size, len(EXPECTED_CLASS_ORDER)):
+        raise ValueError("K500 tuning labels violate the Super5 shape contract")
+    if np.any(labels.sum(axis=1) == 0):
+        raise ValueError("K500 tuning parent unexpectedly contains all-zero labels")
+    parent_positive = labels.sum(axis=0)
+    validation_target = np.floor(
+        parent_positive * (validation_count / parent.size) + 0.5
+    ).astype(np.int64)
+    singleton_classes = np.flatnonzero(parent_positive == 1)
+    protected = (
+        labels[:, singleton_classes].any(axis=1)
+        if singleton_classes.size
+        else np.zeros(parent.size, dtype=bool)
+    )
+
+    source_values = (
+        cache.records.iloc[parent]["center"].astype(str).to_numpy()
+    )
+    unexpected_sources = set(source_values).difference(source_centers)
+    if unexpected_sources:
+        raise ValueError(
+            "K500 tuning parent contains unexpected physical sources: "
+            f"{sorted(unexpected_sources)}"
+        )
+    parent_source_counts = {
+        source: int(np.sum(source_values == source)) for source in source_centers
+    }
+    source_targets = _largest_remainder_quotas(
+        parent_source_counts,
+        selected_count=validation_count,
+        source_order=source_centers,
+    )
+    for source in source_centers:
+        eligible = int(np.sum((source_values == source) & ~protected))
+        if eligible < source_targets[source]:
+            raise ValueError(
+                "singleton-positive train protection conflicts with the physical "
+                f"source quota for {logical_center}/{source}: "
+                f"eligible={eligible}, quota={source_targets[source]}"
+            )
+
+    tie_rank = np.empty(parent.size, dtype=np.int64)
+    tie_rank[rng.permutation(parent.size)] = np.arange(parent.size)
+    chosen = np.zeros(parent.size, dtype=bool)
+    validation_positive = np.zeros(len(EXPECTED_CLASS_ORDER), dtype=np.int64)
+    chosen_sources = {source: 0 for source in source_centers}
+    for _ in range(validation_count):
+        available_mask = ~chosen & ~protected
+        forced_sources: list[str] = []
+        for source in source_centers:
+            remaining = source_targets[source] - chosen_sources[source]
+            if remaining < 0:
+                raise RuntimeError("physical source quota was exceeded")
+            source_available = int(
+                np.sum(available_mask & (source_values == source))
+            )
+            if source_available < remaining:
+                raise RuntimeError("physical source quota became infeasible")
+            if remaining and source_available == remaining:
+                forced_sources.append(source)
+        candidates = np.flatnonzero(
+            available_mask
+            & np.asarray(
+                [
+                    chosen_sources[source] < source_targets[source]
+                    and (not forced_sources or source in forced_sources)
+                    for source in source_values
+                ],
+                dtype=bool,
+            )
+        )
+        if candidates.size == 0:
+            raise RuntimeError("no eligible record remains for K500 validation")
+        current_error = _multilabel_error(
+            validation_positive, validation_target
+        )
+        best = min(
+            candidates.tolist(),
+            key=lambda position: (
+                _multilabel_error(
+                    validation_positive + labels[position], validation_target
+                )
+                - current_error,
+                int(tie_rank[position]),
+                str(cache.hash_ids[parent[position]]),
+            ),
+        )
+        chosen[best] = True
+        validation_positive += labels[best]
+        chosen_sources[str(source_values[best])] += 1
+
+    # Improve marginal label balance without changing any physical-source quota.
+    for _ in range(parent.size):
+        current_error = _multilabel_error(
+            validation_positive, validation_target
+        )
+        best_swap: tuple[int, int] | None = None
+        best_error = current_error
+        best_tie: tuple[int, int, str, str] | None = None
+        for outgoing in np.flatnonzero(chosen):
+            incoming_candidates = np.flatnonzero(
+                ~chosen
+                & ~protected
+                & (source_values == source_values[outgoing])
+            )
+            for incoming in incoming_candidates:
+                candidate_positive = (
+                    validation_positive - labels[outgoing] + labels[incoming]
+                )
+                candidate_error = _multilabel_error(
+                    candidate_positive, validation_target
+                )
+                tie = (
+                    int(tie_rank[incoming]),
+                    int(tie_rank[outgoing]),
+                    str(cache.hash_ids[parent[incoming]]),
+                    str(cache.hash_ids[parent[outgoing]]),
+                )
+                if candidate_error < best_error - 1.0e-12 or (
+                    abs(candidate_error - best_error) <= 1.0e-12
+                    and candidate_error < current_error - 1.0e-12
+                    and (best_tie is None or tie < best_tie)
+                ):
+                    best_error = candidate_error
+                    best_swap = (int(outgoing), int(incoming))
+                    best_tie = tie
+        if best_swap is None:
+            break
+        outgoing, incoming = best_swap
+        chosen[outgoing] = False
+        chosen[incoming] = True
+        validation_positive = (
+            validation_positive - labels[outgoing] + labels[incoming]
+        )
+
+    validation = _sorted_indices_by_hash(cache, parent[chosen])
+    train = _sorted_indices_by_hash(cache, parent[~chosen])
+    train_hashes = set(cache.hash_ids[train].astype(str))
+    validation_hashes = set(cache.hash_ids[validation].astype(str))
+    parent_hashes = set(cache.hash_ids[parent].astype(str))
+    overlap = train_hashes.intersection(validation_hashes)
+    union = train_hashes.union(validation_hashes)
+    if train.size != train_count or validation.size != validation_count:
+        raise RuntimeError("K500 tuning split produced incorrect record counts")
+    if overlap or union != parent_hashes:
+        raise RuntimeError("K500 tuning split is not an exact parent partition")
+    singleton_hashes = sorted(
+        str(cache.hash_ids[parent[position]])
+        for position in np.flatnonzero(protected)
+    )
+    if set(singleton_hashes).intersection(validation_hashes):
+        raise RuntimeError("singleton-positive record leaked into validation")
+
+    evidence = {
+        "schema_version": 1,
+        "policy": TUNING_SPLIT_POLICY,
+        "parent_partition": "k500",
+        "parent_count": int(parent.size),
+        "parent_hash_id_set_sha256": parent_hash,
+        "train_partition": str(config["train_partition"]),
+        "train_count": int(train.size),
+        "train_hash_id_set_sha256": _hash_id_set_sha256(
+            cache.hash_ids[train].astype(str)
+        ),
+        "validation_partition": str(config["validation_partition"]),
+        "validation_count": int(validation.size),
+        "validation_hash_id_set_sha256": _hash_id_set_sha256(
+            cache.hash_ids[validation].astype(str)
+        ),
+        "overlap_count": len(overlap),
+        "union_count": len(union),
+        "union_matches_parent": union == parent_hashes,
+        "union_hash_id_set_sha256": _hash_id_set_sha256(union),
+        "base_seed": int(base_seed),
+        "effective_seed": int(effective_seed),
+        "seed_namespace": str(config["seed_namespace"]),
+        "seed_identity": [
+            "pn2021",
+            str(split_id),
+            str(logical_center),
+            parent_hash,
+            f"train{train_count}",
+            f"validation{validation_count}",
+        ],
+        "singleton_positive_policy": str(
+            config["singleton_positive_policy"]
+        ),
+        "singleton_positive_classes": [
+            EXPECTED_CLASS_ORDER[position] for position in singleton_classes
+        ],
+        "singleton_positive_hash_ids": singleton_hashes,
+        "singleton_positive_all_kept_in_train": set(singleton_hashes).issubset(
+            train_hashes
+        ),
+        "parent_class_positive_counts": _class_positive_counts(cache, parent),
+        "train_class_positive_counts": _class_positive_counts(cache, train),
+        "validation_class_positive_counts": _class_positive_counts(
+            cache, validation
+        ),
+        "validation_class_target_counts": {
+            class_name: int(validation_target[position])
+            for position, class_name in enumerate(EXPECTED_CLASS_ORDER)
+        },
+        "parent_source_center_counts": parent_source_counts,
+        "train_source_center_counts": _source_counts(
+            cache, train, source_centers
+        ),
+        "validation_source_center_counts": _source_counts(
+            cache, validation, source_centers
+        ),
+        "validation_source_target_counts": source_targets,
+    }
+    if evidence["validation_source_center_counts"] != source_targets:
+        raise RuntimeError("K500 validation physical-source quotas were not preserved")
+    return train, validation, evidence
+
+
 def _build_pn2021_split(
     *,
     config: dict[str, Any],
@@ -482,6 +846,7 @@ def _build_pn2021_split(
         all_centers = cache.records["center"].astype(str).to_numpy()
         nonzero = np.asarray(cache.labels).sum(axis=1) > 0
         k = int(config["k"])
+        tuning_config = config["tuning_split"]
         center_manifests: dict[str, Any] = {}
         for item in config["logical_centers"]:
             logical_name = str(item["name"])
@@ -514,6 +879,17 @@ def _build_pn2021_split(
             selected_indices = _sorted_indices_by_hash(
                 cache, candidate_indices[positions]
             )
+            tuning_train_indices, tuning_validation_indices, tuning_evidence = (
+                _build_k500_tuning_split(
+                    cache,
+                    parent_indices=selected_indices,
+                    source_centers=source_centers,
+                    config=tuning_config,
+                    base_seed=base_seed,
+                    split_id=str(config["split_id"]),
+                    logical_center=logical_name,
+                )
+            )
             selected_mask = np.zeros(len(cache), dtype=bool)
             selected_mask[selected_indices] = True
             eval_kept_indices = _sorted_indices_by_hash(
@@ -545,6 +921,18 @@ def _build_pn2021_split(
                     prefix="k500",
                     cache=cache,
                     indices=selected_indices,
+                ),
+                TUNING_TRAIN_PARTITION: _write_identity_arrays(
+                    center_dir,
+                    prefix=TUNING_TRAIN_PARTITION,
+                    cache=cache,
+                    indices=tuning_train_indices,
+                ),
+                TUNING_VALIDATION_PARTITION: _write_identity_arrays(
+                    center_dir,
+                    prefix=TUNING_VALIDATION_PARTITION,
+                    cache=cache,
+                    indices=tuning_validation_indices,
                 ),
                 "evaluation_all_zero_kept": _write_identity_arrays(
                     center_dir,
@@ -584,6 +972,17 @@ def _build_pn2021_split(
                 "k500_hash_id_set_sha256": _hash_id_set_sha256(
                     cache.hash_ids[selected_indices].astype(str)
                 ),
+                "k500_tune_train_count": int(tuning_train_indices.size),
+                "k500_tune_train_hash_id_set_sha256": _hash_id_set_sha256(
+                    cache.hash_ids[tuning_train_indices].astype(str)
+                ),
+                "k500_tune_validation_count": int(
+                    tuning_validation_indices.size
+                ),
+                "k500_tune_validation_hash_id_set_sha256": _hash_id_set_sha256(
+                    cache.hash_ids[tuning_validation_indices].astype(str)
+                ),
+                "k500_tuning_split": tuning_evidence,
                 "evaluation_all_zero_kept_count": int(eval_kept_indices.size),
                 "evaluation_all_zero_kept_hash_id_set_sha256": (
                     _hash_id_set_sha256(cache.hash_ids[eval_kept_indices].astype(str))
@@ -618,6 +1017,7 @@ def _build_pn2021_split(
                 "k500_all_zero_policy": "exclude",
                 "sampling": config["sampling"],
                 "training": config["training"],
+                "tuning_split": config["tuning_split"],
                 "evaluation": config["evaluation"],
                 "ignored_source_centers": config["ignored_source_centers"],
                 "hard_excluded_source_centers": config[
@@ -625,7 +1025,9 @@ def _build_pn2021_split(
                 ],
                 "logical_center_note": (
                     "cpsc_2018 combines physical sources cpsc_2018 and "
-                    "cpsc_2018_extra without source quotas"
+                    "cpsc_2018_extra; parent K sampling has no source quota, "
+                    "while the internal validation split preserves the realized "
+                    "parent source proportions"
                 ),
             },
             "logical_center_order": [
@@ -645,6 +1047,16 @@ def _build_pn2021_split(
             "source_manifest_sha256": cache.identity.manifest_sha256,
             "k500_hashes": {
                 name: entry["k500_hash_id_set_sha256"]
+                for name, entry in center_manifests.items()
+            },
+            "k500_tuning_hashes": {
+                name: {
+                    "parent": entry["k500_hash_id_set_sha256"],
+                    "train": entry["k500_tune_train_hash_id_set_sha256"],
+                    "validation": entry[
+                        "k500_tune_validation_hash_id_set_sha256"
+                    ],
+                }
                 for name, entry in center_manifests.items()
             },
         }

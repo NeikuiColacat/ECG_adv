@@ -59,6 +59,22 @@ def _validate_ecg_batch(signal: torch.Tensor) -> torch.Tensor:
     return signal
 
 
+def _prepare_ecg_batch(
+    signal: torch.Tensor,
+    *,
+    prevalidated: bool,
+) -> torch.Tensor:
+    """Avoid repeated CUDA finite-value synchronizations inside one pipeline.
+
+    Public operators always use the full validator.  The canonical corruption
+    kernel validates its complete batch once, then calls the private batched
+    implementations with ``prevalidated=True`` while it applies multiple
+    operators to the same tensor.
+    """
+
+    return signal if prevalidated else _validate_ecg_batch(signal)
+
+
 def _validate_common_params(
     *,
     min_amplitude: float,
@@ -212,8 +228,9 @@ def _powerline_noise_batch(
     freq: float,
     dependency: bool,
     rng: TorchGenerator,
+    _prevalidated: bool = False,
 ) -> torch.Tensor:
-    tensor = _validate_ecg_batch(signal)
+    tensor = _prepare_ecg_batch(signal, prevalidated=_prevalidated)
     _validate_common_params(
         min_amplitude=min_amplitude, max_amplitude=max_amplitude, p=p
     )
@@ -264,8 +281,9 @@ def _emg_noise_batch(
     dependency: bool,
     p: float,
     rng: TorchGenerator,
+    _prevalidated: bool = False,
 ) -> torch.Tensor:
-    tensor = _validate_ecg_batch(signal)
+    tensor = _prepare_ecg_batch(signal, prevalidated=_prevalidated)
     _validate_common_params(
         min_amplitude=min_amplitude, max_amplitude=max_amplitude, p=p
     )
@@ -309,8 +327,9 @@ def _baseline_shift_batch(
     p: float,
     amplitude_mode: str,
     rng: TorchGenerator,
+    _prevalidated: bool = False,
 ) -> torch.Tensor:
-    tensor = _validate_ecg_batch(signal)
+    tensor = _prepare_ecg_batch(signal, prevalidated=_prevalidated)
     _validate_common_params(
         min_amplitude=min_amplitude, max_amplitude=max_amplitude, p=p
     )
@@ -387,8 +406,9 @@ def _baseline_wander_batch(
     freq: float,
     dependency: bool,
     rng: TorchGenerator,
+    _prevalidated: bool = False,
 ) -> torch.Tensor:
-    tensor = _validate_ecg_batch(signal)
+    tensor = _prepare_ecg_batch(signal, prevalidated=_prevalidated)
     _validate_common_params(
         min_amplitude=min_amplitude, max_amplitude=max_amplitude, p=p
     )
@@ -458,8 +478,9 @@ def _random_leads_masking_batch(
     mask_leads_condition: tuple[int, int] | None,
     ensure_at_least_one_lead: bool,
     rng: TorchGenerator,
+    _prevalidated: bool = False,
 ) -> torch.Tensor:
-    tensor = _validate_ecg_batch(signal)
+    tensor = _prepare_ecg_batch(signal, prevalidated=_prevalidated)
     if not 0.0 <= float(p) <= 1.0:
         raise ValueError("p must be in [0, 1]")
     if not 0.0 <= float(mask_leads_prob) <= 1.0:
@@ -508,6 +529,40 @@ def _random_leads_masking_batch(
         survivors = torch.cat((limb, chest), dim=1)
     candidate = output_bct * survivors.to(dtype=torch.float32).unsqueeze(-1)
     return _output_btc(torch.where(apply_mask, candidate, output_bct))
+
+
+def apply_operator_batch_prevalidated(
+    operator: str,
+    signal: torch.Tensor,
+    *,
+    params: dict[str, object],
+    sampling_rate_hz: int,
+    rng: TorchGenerator,
+) -> torch.Tensor:
+    """Apply one named batched operator after an outer contract validation.
+
+    This is an internal pipeline hook, not an alternative public operator API.
+    It intentionally skips only the tensor-wide finite check; parameter and RNG
+    device validation remain identical to the public functions.
+    """
+
+    kwargs = dict(params)
+    if operator in {"powerline_noise", "baseline_wander", "baseline_shift"}:
+        kwargs["freq"] = float(sampling_rate_hz)
+    kwargs["rng"] = rng
+    kwargs["_prevalidated"] = True
+    if operator == "powerline_noise":
+        return _powerline_noise_batch(signal, **kwargs)
+    if operator == "emg_noise":
+        return _emg_noise_batch(signal, **kwargs)
+    if operator == "baseline_wander":
+        return _baseline_wander_batch(signal, **kwargs)
+    if operator == "baseline_shift":
+        return _baseline_shift_batch(signal, **kwargs)
+    if operator == "random_leads_masking":
+        kwargs.setdefault("mask_leads_condition", None)
+        return _random_leads_masking_batch(signal, **kwargs)
+    raise ValueError(f"unknown Torch ECG operator: {operator!r}")
 
 
 def powerline_noise(

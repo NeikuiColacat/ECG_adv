@@ -21,8 +21,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from ecg_adv_gen.data.pn2021_index import parse_header_snomeds  # noqa: E402
-from ecg_adv_gen.data.pn2021_records import parse_pn2021_header_metadata  # noqa: E402
+from data_preprocess.pn2021_metadata import (  # noqa: E402
+    parse_header_snomeds,
+    parse_pn2021_header_metadata,
+)
 
 
 DEFAULT_CONFIG = PROJECT_ROOT / "configs" / "data" / "PN2021.yaml"

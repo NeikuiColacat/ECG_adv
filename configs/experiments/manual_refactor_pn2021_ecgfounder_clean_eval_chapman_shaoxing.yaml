@@ -1,0 +1,21 @@
+schema_version: 1
+
+experiment:
+  name: manual_refactor_pn2021_ecgfounder_clean_eval_chapman_shaoxing_v2
+  purpose: Evaluate the full-K500 ECGFounder clean Direct checkpoint on ref-excluded Chapman-Shaoxing clean PN2021 and all twenty PN2021-C depth2/depth3 views.
+
+entrypoint:
+  name: evaluate_pn2021
+  config: eval/PN2021.yaml
+  arguments:
+    - --model
+    - ecgfounder
+    - --checkpoint
+    - /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_pn2021_ecgfounder_clean_refit_chapman_shaoxing_v2/training/checkpoints/last.pt
+    - --center
+    - chapman_shaoxing
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_pn2021_ecgfounder_clean_eval_chapman_shaoxing_v2
+  if_exists: error
+  delegate_output_subdir: evaluation

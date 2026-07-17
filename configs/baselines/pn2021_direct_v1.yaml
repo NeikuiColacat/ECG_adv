@@ -1,0 +1,277 @@
+schema_version: 1
+config_closure: managed_run_snapshots_and_sha256
+
+baseline:
+  id: pn2021_super5_direct_family_balanced_fixed20
+  status: locked_single_seed
+  evidence_role: active_direct_fixed20_control
+  locked_on: '2026-07-18'
+  decision_log: docs/baselines/pn2021_direct_v1.md
+  file_name_retained_for_whitelist_stability: true
+  class_order: [CD, HYP, MI, NORM, STTC]
+  mapping_version: v7_super5_sjr_rgq_review_20260528
+  mapping_hash: 555ec85d5b51
+  logical_centers: [ningbo, chapman_shaoxing, cpsc_2018, georgia]
+  merge_cpsc_2018_extra_into_cpsc_2018: true
+  replicate_id: 0
+  heldout_evaluation_used_for_selection: false
+  paper_eligibility: single_seed_control_only
+  generated_from_git_commit: 153b5fe3142b175735d837e1e494370df6a448c5
+  generated_from_dirty_worktree: true
+  note: >-
+    This file is the active family-balanced Direct+fixed20 baseline registry.
+    Historical exposure-expanded fixed20 evidence remains available in git
+    history but is not a replay or comparison target for new experiments.
+
+references:
+  source_baseline_registry:
+    path: baselines/ptbxl_source_v1.yaml
+    sha256: 27443d14e8184739c15c60e0ffe6f4c87f12642bb725bdca62341a33543e445f
+  random_seed_config:
+    path: random_seed.yaml
+    sha256: 8b337606c43b6fec2959dd185477ce32f48b139f5fce5112ee26efe58eb4bbbc
+  split_config:
+    path: data/splits.yaml
+    sha256: d19eddb5b41854fcd6d8a554efb3454dec2c6994f407eaa7cb82ed805629daf9
+  data_load_config:
+    path: data/data_load.yaml
+    sha256: 4873d56fe3e8e6077139e043019e70829db2d2f8ed4703c3b00ff0afc611c2b8
+  operator_config:
+    path: augmentation/operators.yaml
+    sha256: cfc4e243f569226a8f444a38d9dd4fbc00ccf7de724c47886dcc9319b9c790cc
+  corruption_cache_config:
+    path: augmentation/cache.yaml
+    sha256: e2181af9aa43e478d36884dd9689b2495b875ca358996a327fbae44a0066652e
+  training_config:
+    path: train/PN2021_fixed20.yaml
+    sha256: 3f482f9684d8a010a899243a9b3237bffbe3300f4c41430be2c4c590df715f86
+  tuning_config:
+    path: train/PN2021_direct_tune.yaml
+    sha256: c9de1dc188781a259ae4976a15e36685a820e6c377b7e31d408db69b598d729f
+  method_profile:
+    path: train/methods/direct_depth23_fixed20.yaml
+    sha256: d41e77219726f983ad90a0b9db98cd99668c354dc903e83ecbbe24e6b53b5c9f
+  evaluation_config:
+    path: eval/PN2021.yaml
+    sha256: 6d3e7df9f8223f1450c26e2fd8f76e716cafea8288ba12deb46589fe7bbdda03
+
+data_protocol:
+  dataset: PN2021
+  label_budget_per_center: 500
+  tuning_partition:
+    train_records_per_center: 400
+    validation_records_per_center: 100
+    pooled_validation_records: 400
+    selection_score: 0.5_clean_macro_auprc_plus_0.5_robust_macro_auprc
+    robust_metric: mean_of_20_composition_macro_auprc
+    clean_floor: same_backbone_locked_clean_macro_auprc_minus_0.01
+    metric_definition: sklearn_average_precision_not_trapezoidal_pr_auc
+    aggregation: concatenate_four_centers_before_each_metric
+    tie_break: earliest_epoch_on_exact_tie
+    heldout_evaluation_used: false
+  refit_partition:
+    partition: k500
+    records_per_center: 500
+    validation_split: false
+    checkpoint_policy: last_at_globally_selected_epoch
+  evaluation:
+    reference_ids_excluded: true
+    corruption_profile: pn2021c_paper_anchored_s5_v1
+    severity: 5
+    depth2_views: 10
+    depth3_views: 10
+    aggregation: equal_views_then_equal_centers
+    canonical_views:
+      clean_kept: pn2021_all_zero_kept_refexcluded
+      clean_drop: pn2021_drop_all_zero_refexcluded
+      corrupted_kept: pn2021c_all_zero_kept_corrupted_refexcluded
+      corrupted_drop: pn2021c_drop_all_zero_corrupted_refexcluded
+  clean_cache:
+    manifest_path: /data/linbinhao/ECG_manual_refactor_cache/pn2021_100hz_linear_qc_v3_20260716/manifest.json
+    manifest_sha256: fa06cf268147d451e2925c17311ba13f565962dcf28acee27cb991a915dbb31f
+  split_manifest:
+    path: /home/linbinhao/ECG_adv_data/splits/manual_refactor_super5_v2_k500_tune_seed20260501/pn2021_super5_k500_cpsc_combined_v1/split_manifest.json
+    sha256: 58210d9b192bc18e9085f235453094814c9caed2cf9142998084ae7a004e9a42
+  corruption_cache:
+    manifest_path: /data/linbinhao/ECG_manual_refactor_cache/pn2021c_paper_anchored_s5_depth23_5center_dualrate_v1/manifest.json
+    manifest_sha256: a7d976374d8f5b7de3748dd67dc8a779879316ee5249eb59ec6dd8899c852c02
+    compositions_sha256: 18ceee2be0f236898777b878affaf8d4f1cd7fbee880a3af89c0e84cb9427ce1
+
+input_contract:
+  canonical_input: raw_mV_time_channel_100hz_1000x12
+  nonfinite_policy: replace_with_zero_before_model_adaptation
+  operator_domain: raw_mV_500hz_5000x12
+  corruption_bridge: linear100_to500_then_linear500_to100_align_corners_true
+  normalization: per_sample_global_zscore_after_corruption
+  model_input_layout: channel_time
+  model_input_dtype: float32
+
+method_contract:
+  clean_views_per_record: 1
+  corrupted_views_per_record: 20
+  composition_order: all_depth2_then_all_depth3_canonical
+  loss: 0.5_clean_bce_plus_0.5_mean_twenty_corrupted_bce
+  optimizer_step_policy: one_step_after_all_21_weighted_backward_calls_per_base_batch
+  batch_norm_running_stats_policy: family_loss_weighted_once_per_base_batch
+  materialized_corruption_cache_used_for_training: false
+  online_torch_gpu_generation: true
+
+models:
+  efficientnet1dv2:
+    source_checkpoint: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_ptbxl_effnet_source_v1/training/checkpoints/best.pt
+    source_checkpoint_sha256: fff9bd293677be54a606e28775c66d410d55b0ad7440a4e7fbde55357ec13e68
+    trainable_scope: full
+    selection:
+      purpose: historical_clean_floor_only
+      artifact_path: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_pn2021_effnet_direct_selection_v2/training/direct_baseline_selection.json
+      artifact_sha256: 0d8e015e4704fde09af9b54a1adeb3d70761f7445fe32f911219305145ed11d7
+      pooled_validation_macro_auroc: 0.8924062847180316
+      pooled_validation_macro_auprc: 0.7281201919362863
+    fixed20_selection:
+      run_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_pn2021_effnet_direct_selection_h30
+      artifact_path: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_pn2021_effnet_direct_selection_h30/training/direct_baseline_selection.json
+      artifact_sha256: 8a5df25d7f3e656aa2d3e7758772c6440cda9903004ff166519036f440504afa
+      comparison_identity_sha256: c930d19312bb8200c2043ee811fefc0865a18c4d79d769ef8350a58c660232c9
+      frozen_corruption_identity_sha256: ab38a829f1a7b9748c4348b38a4c893fc766555bdbc36c7a99d87657c0c2ce11
+      selected_epoch: 23
+      clean_macro_auroc: 0.8922731926284697
+      clean_macro_auprc: 0.7287076883752672
+      robust_macro_auroc: 0.8304661431217351
+      robust_macro_auprc: 0.6264591619823536
+      selection_score: 0.6775834251788104
+      clean_floor: 0.7181201919362863
+      heldout_evaluation_used: false
+    optimization:
+      optimizer: adamw
+      learning_rate: 5.0e-05
+      weight_decay: 1.0e-04
+      batch_size: 128
+      scheduler: cosine_annealing
+      scheduler_horizon_epochs: 30
+      selected_refit_epochs: 23
+      gradient_clip_norm: 1.0
+      amp_dtype: bfloat16
+    centers:
+      ningbo:
+        refit_run_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_pn2021_effnet_fixed20_refit_ningbo
+        checkpoint_sha256: 81fd33ce07d3681db31444d9260f21f9fdf2281d588db2b27f5869efaeeaadca
+        train_result_sha256: fff58f0bd38190a670b4becb17b7c287110e049642bf0aca4cb4db4452988e1e
+        refit_contract_sha256: 7b94530b7acab5c8d2520859091c89988ebd301a83aa5e270413037c1bb8e563
+        evaluation_result_sha256: 0d0388381fc7a2344e7df703c77e98d5a612b51564ed9927227eaff6af78fb1c
+        metrics: {clean_kept: [0.8816916843573732, 0.5031275119742264], clean_drop: [0.9072875720298595, 0.6958927974771536], corrupted_kept: [0.8368675910559139, 0.42766042743044225], corrupted_drop: [0.8589007835926724, 0.6136550703112815]}
+      chapman_shaoxing:
+        refit_run_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_pn2021_effnet_fixed20_refit_chapman_shaoxing
+        checkpoint_sha256: 456300b09bdecb69216e5a1c95a6f02e7498d4566f9667f644c57daa16150eb2
+        train_result_sha256: 30c4567e7147bd7d7bb4d290c56c6fa4a94a6f3c62e0908c62d8e17ec5e21ab7
+        refit_contract_sha256: 5113878f80e7dd68ba9733fdbd9042df124191a61f6635b58f4405fc603160eb
+        evaluation_result_sha256: 224a03eb7efca5be4bf80b351888d1b90e7f6aab492bcf6a5066c25224bc1a38
+        metrics: {clean_kept: [0.8730712793940407, 0.46124734660148003], clean_drop: [0.898400832865606, 0.6535075619202229], corrupted_kept: [0.8320481469392693, 0.40437364051259567], corrupted_drop: [0.8503329274158229, 0.5779881114820828]}
+      cpsc_2018:
+        refit_run_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_pn2021_effnet_fixed20_refit_cpsc_2018
+        checkpoint_sha256: e9186ff9082a1ebcf3dd340e79abf3917c44023b9f341c7aa4d420e8a360801c
+        train_result_sha256: ac5ae67f4c9ee6674cdd41bda8c0caa5be33ace9badb0fcefa0525f3c2c0b2b4
+        refit_contract_sha256: 59db057f2c925cc53dd2d58307636e037f2bec8ce58db052da43de27fb949cf9
+        evaluation_result_sha256: 08658708b8474f811b5d704cbbcfb1640af5becb4ff0d53d37edfeb5099bfdb5
+        metrics: {clean_kept: [0.8647300636126733, 0.5636808212487532], clean_drop: [0.8922055251355179, 0.6688582366963896], corrupted_kept: [0.809076938775906, 0.47113013552664046], corrupted_drop: [0.8310517393044282, 0.564292967446063]}
+      georgia:
+        refit_run_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_pn2021_effnet_fixed20_refit_georgia
+        checkpoint_sha256: 4dc79c1949232e0aacd5642139e9e13c3260bbb11af75a9a3ba7f3fd90b8acce
+        train_result_sha256: dc40c7c8a2ab4564c9033564e671174c91070ef5ece5a62b936da07a547b6bab
+        refit_contract_sha256: c2af7a804862ea6b1d3e6e7994585e9f4b4de1018e27fc63459f3969a1268f5b
+        evaluation_result_sha256: 234fdd4d3e7e3dabfdff560d9878e6e2d557c8a93e622bfb1fcb439ad4c99b59
+        metrics: {clean_kept: [0.7805433652048397, 0.4934637964232098], clean_drop: [0.7868378666475054, 0.5571439092802178], corrupted_kept: [0.761765218446006, 0.4498628175942729], corrupted_drop: [0.7673913867583987, 0.5106357802075283]}
+    four_center_mean:
+      clean_kept: [0.8500090981422317, 0.5053798690619173]
+      clean_drop: [0.8711829491696222, 0.6438506263434959]
+      corrupted_kept: [0.8099394738042738, 0.43825675526598784]
+      corrupted_drop: [0.8269192092678306, 0.5666429823617389]
+      clean_to_corrupted_drop_pp_kept: [4.006962433795791, 6.7123113795929505]
+
+  ecgfounder:
+    source_checkpoint: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_ptbxl_ecgfounder_source_v1/training/checkpoints/best.pt
+    source_checkpoint_sha256: c23ec4361b097b74a4efed427488c4dd6a3753adfc75f7d1fc281e4df0989948
+    trainable_scope: full
+    selection:
+      purpose: historical_clean_floor_only
+      artifact_path: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_pn2021_ecgfounder_direct_selection_v2/training/direct_baseline_selection.json
+      artifact_sha256: bc78b00a90f2fd5b8e968822b089e7e0344dc8dcf7021c311fce61239fe4fbc0
+      pooled_validation_macro_auroc: 0.9118790182195184
+      pooled_validation_macro_auprc: 0.802509237280925
+    fixed20_selection:
+      run_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_pn2021_ecgfounder_direct_selection_h20
+      artifact_path: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_pn2021_ecgfounder_direct_selection_h20/training/direct_baseline_selection.json
+      artifact_sha256: 42e78a2d02f4152d916c1acdc8721aa8e435fd58af314362e31b2176a81b796c
+      comparison_identity_sha256: 4a3ab6a9f5dbe544bb3d1f4ceb87415987ee70484363dccee129755b39ac2b12
+      frozen_corruption_identity_sha256: ab38a829f1a7b9748c4348b38a4c893fc766555bdbc36c7a99d87657c0c2ce11
+      selected_epoch: 20
+      clean_macro_auroc: 0.9211486115764643
+      clean_macro_auprc: 0.8202718169248033
+      robust_macro_auroc: 0.87746041135733
+      robust_macro_auprc: 0.7243489279433682
+      selection_score: 0.7723103724340858
+      clean_floor: 0.792509237280925
+      heldout_evaluation_used: false
+    optimization:
+      optimizer: adamw
+      learning_rate: 2.0e-05
+      weight_decay: 1.0e-04
+      batch_size: 64
+      scheduler: cosine_annealing
+      scheduler_horizon_epochs: 20
+      selected_refit_epochs: 20
+      gradient_clip_norm: 1.0
+      amp_dtype: bfloat16
+    centers:
+      ningbo:
+        refit_run_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_pn2021_ecgfounder_fixed20_refit_ningbo
+        checkpoint_sha256: 691924dc86f060a20834e80bd1f5657496f86b79aaee9a68b406759ec423e1a1
+        train_result_sha256: be6054e3625cf1963828a5088c3cde8d3c6c9d4deb39585fd9721572fbde7ec0
+        refit_contract_sha256: e378b228ab1128eeac65cb34b7555c0834c188815599c9d19dc4824de369341c
+        evaluation_result_sha256: 83461128df4948a0493d43947fb4233e90daaff3d3b6ae6f9c2481bf5ea59233
+        metrics: {clean_kept: [0.9109585995983895, 0.5957469274954739], clean_drop: [0.9348348589244152, 0.7521197756001566], corrupted_kept: [0.8598701442386438, 0.5150609856937469], corrupted_drop: [0.8868727307543111, 0.6760649074926247]}
+      chapman_shaoxing:
+        refit_run_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_pn2021_ecgfounder_fixed20_refit_chapman_shaoxing
+        checkpoint_sha256: 90892cbbe2bb885ee4d2e6eaa51a72ad31031700be81302782c842deaac2af90
+        train_result_sha256: 1b73d89b5f7b8ecc93467ee89ce89070202d7bf45d62646d0ce33b194c0f420e
+        refit_contract_sha256: 0bd1fbce081b34b082c24865a2911e145509e89bc9d55ea12ce0bc026feefe40
+        evaluation_result_sha256: 5ace384a7a930fa9eef034c4f7f80e6e75e9a1ac893293db6cb11ed380fb0c7c
+        metrics: {clean_kept: [0.914274966266144, 0.5825903421700317], clean_drop: [0.935134061793384, 0.7140787299697164], corrupted_kept: [0.8627067406089062, 0.5096227229520991], corrupted_drop: [0.8886773449561378, 0.6484977780073284]}
+      cpsc_2018:
+        refit_run_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_pn2021_ecgfounder_fixed20_refit_cpsc_2018
+        checkpoint_sha256: 618d10993097e7112553ce33ee502ae14fc03536b4463f1d1868c9912d5068ba
+        train_result_sha256: 3a569fd0bc64d3189aceea19ac075f12c80344bcc57b06352dc9995967bb6709
+        refit_contract_sha256: 6bc4722e37b6a6f94b243049c43c365b357d5400b3f5acf52f9035505f2402a9
+        evaluation_result_sha256: f0707e5075f8170da2e62c7e4654b4a03d98f2e45881980b1be8b8dd95536b01
+        metrics: {clean_kept: [0.8807204944550382, 0.5874604022220066], clean_drop: [0.906884326883393, 0.6934771894571152], corrupted_kept: [0.8114388130337092, 0.4779804808978037], corrupted_drop: [0.8377988034665623, 0.5741263835739966]}
+      georgia:
+        refit_run_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_pn2021_ecgfounder_fixed20_refit_georgia
+        checkpoint_sha256: 97c204f9bdb7bbcdda4bcfdc274d04cd4a1ed3ac9c53715140e5d1214bed9d4b
+        train_result_sha256: 3d6f32416be73beadc8d886cd7aae9e0d058bdda7d4d0fd27dfd78bfbacae184
+        refit_contract_sha256: 5a4b98de48e4b500e592bf30a984f60f338130dceec66a8ad7c802e11269f2d2
+        evaluation_result_sha256: db88e53ab6403283a7dc97425ff0ddac5053b4a314db0f5c96ad85d3e9b47514
+        metrics: {clean_kept: [0.8530065303791693, 0.5642341087145227], clean_drop: [0.864311473506039, 0.6288670229591358], corrupted_kept: [0.7867861487131832, 0.483849257395765], corrupted_drop: [0.7994086983904423, 0.5460162716595913]}
+    four_center_mean:
+      clean_kept: [0.8897401476746852, 0.5825079451505086]
+      clean_drop: [0.9102911802768078, 0.6971356794965309]
+      corrupted_kept: [0.8302004616486106, 0.4966283617348537]
+      corrupted_drop: [0.8531893943918634, 0.6111763351833852]
+      clean_to_corrupted_drop_pp_kept: [5.953968602607462, 8.587958341565493]
+
+metric_field_order: [macro_auroc, macro_auprc]
+tensorboard:
+  command: >-
+    /home/linbinhao/micromamba/envs/ECGTwin/bin/tensorboard
+    --logdir /home/linbinhao/ECG_adv_data/runs/manual_refactor
+    --host 127.0.0.1 --port 9091
+  tuning_log_dirs:
+    efficientnet1dv2: managed_pn2021_effnet_direct_tune_{center}_h30/training/tensorboard
+    ecgfounder: managed_pn2021_ecgfounder_direct_tune_{center}_h20/training/tensorboard
+  refit_log_dirs:
+    efficientnet1dv2: managed_pn2021_effnet_fixed20_refit_{center}/training/tensorboard
+    ecgfounder: managed_pn2021_ecgfounder_fixed20_refit_{center}/training/tensorboard
+
+limitations:
+  - Single replicate only; no statistical significance claim.
+  - The clean-floor artifacts are historical clean-only selections retained solely as an internal guardrail.
+  - Held-out PN2021 and PN2021-C results are reporting evidence and must not be used to choose future checkpoints.
+  - New VAE/AugMix methods must compare against these exact per-center checkpoints under the same mapping, K500 split, reference exclusion, and evaluation views.

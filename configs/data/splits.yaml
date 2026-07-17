@@ -5,7 +5,7 @@ random_seed:
   namespace: ecg_manual_refactor_split_v1
 
 output:
-  root_dir: /home/linbinhao/ECG_adv_data/splits/manual_refactor_super5_v1_seed20260501
+  root_dir: /home/linbinhao/ECG_adv_data/splits/manual_refactor_super5_v2_k500_tune_seed20260501
   if_exists: error
 
 ptbxl:
@@ -51,6 +51,16 @@ pn2021:
     use_all_k500: true
     validation_split: false
     checkpoint_policy: last_checkpoint_only
+  tuning_split:
+    parent_partition: k500
+    train_partition: k500_tune_train
+    validation_partition: k500_tune_validation
+    train_count: 400
+    validation_count: 100
+    policy: deterministic_multilabel_source_stratified
+    preserve_source_proportions: true
+    singleton_positive_policy: prefer_train
+    seed_namespace: pn2021_k500_tuning_split_v1
   evaluation:
     exclude_k500_hashes: true
     emit_all_zero_kept: true

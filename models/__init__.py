@@ -16,6 +16,7 @@ from models.contracts import (
 from models.ecgfounder import ECGFounderNet1D, build_ecgfounder
 from models.efficientnet1d import EfficientNet1DV2, build_efficientnet1dv2
 from models.factory import available_models, build_model, get_model_spec
+from models.input_adapter import prepare_canonical_model_input
 from models.vae import (
     ECGTWIN_TO_PTBXL_INDICES,
     LATENT_SCALE,
@@ -52,6 +53,7 @@ __all__ = [
     "get_model_spec",
     "load_model_checkpoint",
     "load_vae_config",
+    "prepare_canonical_model_input",
     "prepare_ecgtwin_encoder_input",
     "validate_model_input",
     "validate_model_output",

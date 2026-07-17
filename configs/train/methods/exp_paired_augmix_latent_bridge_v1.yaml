@@ -1,0 +1,110 @@
+schema_version: 1
+
+method:
+  id: exp_paired_augmix_latent_bridge_v1
+  profile_version: 1
+  api_version: 1
+  scientific_arm: experimental
+  status: experimental_unimplemented_nodes
+  description: Couple paired raw AugMix mixtures through a shared latent bridge state.
+
+nodes:
+  clean_identity:
+    type: identity_raw100_view
+    implementation: builtin
+    implementation_version: 1
+    status: implemented
+    inputs: {waveform: clean_raw}
+    outputs: {waveform: clean_view}
+  latent_bridge:
+    type: paired_latent_bridge
+    implementation: null
+    implementation_version: 1
+    status: experimental_unimplemented
+    inputs:
+      waveform: clean_view
+      targets: targets
+      hash_ids: hash_ids
+      latent_pool: latent_pool
+      decoder: vae_decoder
+      rng: latent_bridge_rng
+    outputs:
+      left_waveform: latent_left_view
+      right_waveform: latent_right_view
+      bridge_state: latent_bridge_state
+      diagnostics: latent_bridge_diagnostics
+  paired_augmix:
+    type: paired_threechain_augmix_views
+    implementation: null
+    implementation_version: 1
+    status: experimental_unimplemented
+    inputs:
+      clean_waveform: clean_view
+      left_chain3_waveform: latent_left_view
+      right_chain3_waveform: latent_right_view
+      config: augmix_config
+      rng: augmix_rng
+    outputs:
+      left_waveform: paired_augmix_left_view
+      right_waveform: paired_augmix_right_view
+      diagnostics: paired_augmix_diagnostics
+
+inputs:
+  clean_raw:
+    type: ecg_waveform
+    domain: raw_mV
+    layout: batch_time_lead
+    sampling_rate_hz: 100
+    points: 1000
+    leads: 12
+  targets: {type: multilabel_targets, class_order: [CD, HYP, MI, NORM, STTC]}
+  hash_ids: {type: unique_record_ids}
+
+outputs:
+  clean_view: {type: ecg_waveform, source: clean_identity.waveform}
+  latent_left_view: {type: ecg_waveform, source: latent_bridge.left_waveform}
+  latent_right_view: {type: ecg_waveform, source: latent_bridge.right_waveform}
+  paired_augmix_left_view: {type: ecg_waveform, source: paired_augmix.left_waveform}
+  paired_augmix_right_view: {type: ecg_waveform, source: paired_augmix.right_waveform}
+  latent_bridge_state: {type: checkpointed_method_state, source: latent_bridge.bridge_state}
+  method_diagnostics:
+    type: namespaced_method_diagnostics
+    sources: [latent_bridge.diagnostics, paired_augmix.diagnostics]
+
+objective:
+  eligibility_scaling: eligible_count_over_batch_size
+  terms:
+    - {id: clean_bce, type: multilabel_bce_with_logits, view: clean_view, targets: targets, weight: 1.0}
+    - {id: left_bce, type: multilabel_bce_with_logits, view: paired_augmix_left_view, targets: targets, weight: 1.0}
+    - {id: right_bce, type: multilabel_bce_with_logits, view: paired_augmix_right_view, targets: targets, weight: 1.0}
+    - id: paired_consistency
+      type: multilabel_bernoulli_jsd
+      views: [clean_view, paired_augmix_left_view, paired_augmix_right_view]
+      weight: 2.0
+
+resources:
+  model: {type: caller_owned_classifier}
+  vae: {type: config_reference, path: train/vae.yaml}
+  latent_pool: {type: runtime_train_only_exact_label_pool}
+  vae_decoder: {type: runtime_frozen_decoder}
+  augmix_config: {type: config_reference, path: train/augmix.yaml}
+  latent_bridge_rng:
+    type: isolated_torch_generator
+    seed_config: random_seed.yaml
+    namespace: exp_paired_augmix_latent_bridge_v1_bridge
+  augmix_rng:
+    type: isolated_torch_generator
+    seed_config: random_seed.yaml
+    namespace: exp_paired_augmix_latent_bridge_v1_augmix
+
+contracts:
+  normalization_owner: online_trainer
+  optimizer_owner: online_trainer
+  canonical_input_output_sampling_rate_hz: 100
+  augmix_operator_domain_sampling_rate_hz: 500
+  paired_views_share_one_declared_latent_bridge_state: true
+  each_augmix_chain3_uses_its_corresponding_latent_view: true
+  chain3_additional_corruption: false
+  bridge_state_checkpoint_required: true
+  one_outer_optimizer_step_per_clean_batch: true
+  executable: false

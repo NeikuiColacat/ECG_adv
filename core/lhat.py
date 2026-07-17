@@ -48,6 +48,7 @@ class LHATConfig:
     learning_rate: float
     pgd_epsilon: float
     normalization_epsilon: float
+    canonical_domain: AttackDomain
     model_domains: dict[str, AttackDomain]
 
 
@@ -134,26 +135,44 @@ class LHATDiagnostics:
     decoded_max_abs_mV: torch.Tensor
 
     def mean_dict(self) -> dict[str, float]:
-        return {
-            "anchor_bce": float(self.anchor_bce.mean().item()),
-            "initial_bce": float(self.initial_bce.mean().item()),
-            "final_bce": float(self.final_bce.mean().item()),
-            "loss_gain": float(self.loss_gain.mean().item()),
-            "atk_init_l2": float(self.atk_init_l2.mean().item()),
-            "atk_anchor_l2": float(self.atk_anchor_l2.mean().item()),
-            "attack_success": float(self.attack_success.float().mean().item()),
-            "coefficient_entropy": float(self.coefficient_entropy.mean().item()),
-            "coefficient_top1": float(self.coefficient_top1.mean().item()),
-            "projection_scale": float(self.projection_scale.mean().item()),
-            "effective_lambda": float(self.effective_lambda.mean().item()),
-            "effective_anchor_share": float(
-                self.effective_anchor_share.mean().item()
-            ),
-            "decoded_invalid_rate": float(
-                self.decoded_invalid.float().mean().item()
-            ),
-            "decoded_max_abs_mV": float(self.decoded_max_abs_mV.mean().item()),
-        }
+        names = (
+            "anchor_bce",
+            "initial_bce",
+            "final_bce",
+            "loss_gain",
+            "atk_init_l2",
+            "atk_anchor_l2",
+            "attack_success",
+            "coefficient_entropy",
+            "coefficient_top1",
+            "projection_scale",
+            "effective_lambda",
+            "effective_anchor_share",
+            "decoded_invalid_rate",
+            "decoded_max_abs_mV",
+        )
+        tensors = (
+            self.anchor_bce,
+            self.initial_bce,
+            self.final_bce,
+            self.loss_gain,
+            self.atk_init_l2,
+            self.atk_anchor_l2,
+            self.attack_success.float(),
+            self.coefficient_entropy,
+            self.coefficient_top1,
+            self.projection_scale,
+            self.effective_lambda,
+            self.effective_anchor_share,
+            self.decoded_invalid.float(),
+            self.decoded_max_abs_mV,
+        )
+        # One compact device-to-host transfer replaces fourteen scalar .item()
+        # synchronizations in every LHAT batch.
+        values = torch.stack(
+            [value.float().mean() for value in tensors]
+        ).detach().cpu().tolist()
+        return dict(zip(names, (float(value) for value in values), strict=True))
 
 
 @dataclass(frozen=True)
@@ -181,15 +200,44 @@ def load_lhat_config(
     payload = _mapping(
         yaml.safe_load(config_path.read_text(encoding="utf-8")), "LHAT config"
     )
+    expected_root_keys = {
+        "schema_version",
+        "method",
+        "latent_standardization",
+        "candidates",
+        "hull_attack",
+        "decoder_bridge",
+        "diagnostics",
+    }
+    if set(payload) != expected_root_keys:
+        raise ValueError("LHAT config keys are incomplete or unexpected")
     if payload.get("schema_version") != 1:
         raise ValueError("LHAT config schema_version must be 1")
     standardization = _mapping(
         payload.get("latent_standardization"), "latent_standardization"
     )
     method = _mapping(payload.get("method"), "method")
+    if set(method) != {"name", "random_seed_file", "random_namespace"}:
+        raise ValueError("LHAT method keys are incomplete or unexpected")
     candidates = _mapping(payload.get("candidates"), "candidates")
     attack = _mapping(payload.get("hull_attack"), "hull_attack")
     bridge = _mapping(payload.get("decoder_bridge"), "decoder_bridge")
+    if set(bridge) != {
+        "native_points",
+        "canonical_domain",
+        "interpolation",
+        "model_domains",
+        "normalization_after_decode",
+        "normalization_epsilon",
+    }:
+        raise ValueError("LHAT decoder_bridge keys are incomplete or unexpected")
+    raw_canonical_domain = _mapping(
+        bridge.get("canonical_domain"), "canonical_domain"
+    )
+    canonical_domain = AttackDomain(
+        sampling_rate_hz=int(raw_canonical_domain.get("sampling_rate_hz", 0)),
+        points=int(raw_canonical_domain.get("points", 0)),
+    )
     raw_domains = _mapping(bridge.get("model_domains"), "model_domains")
     domains = {
         name: AttackDomain(
@@ -221,6 +269,7 @@ def load_lhat_config(
         learning_rate=float(attack.get("learning_rate", 0.0)),
         pgd_epsilon=float(attack.get("pgd_epsilon_l2_standardized", 0.0)),
         normalization_epsilon=float(bridge.get("normalization_epsilon", 0.0)),
+        canonical_domain=canonical_domain,
         model_domains=domains,
     )
     if candidates.get("label_policy") != "exact_positive_set":
@@ -247,6 +296,10 @@ def load_lhat_config(
     }
     if domains != expected_domains:
         raise ValueError("LHAT model-domain contract does not match both backbones")
+    if canonical_domain != AttackDomain(100, 1000):
+        raise ValueError("LHAT decoded waveform must use the canonical 100 Hz domain")
+    if bridge.get("interpolation") != "linear_align_corners":
+        raise ValueError("LHAT domain bridges must use linear align_corners interpolation")
     return config
 
 
@@ -272,8 +325,16 @@ def _validate_generator(generator: torch.Generator, device: torch.device) -> Non
     generator_device = torch.device(generator.device)
     if generator_device.type != device.type:
         raise ValueError("generator device must match latent device")
-    if device.type == "cuda" and generator_device.index != device.index:
-        raise ValueError("generator CUDA index must match latent CUDA index")
+    if device.type == "cuda":
+        current_index = torch.cuda.current_device()
+        latent_index = current_index if device.index is None else device.index
+        generator_index = (
+            current_index
+            if generator_device.index is None
+            else generator_device.index
+        )
+        if generator_index != latent_index:
+            raise ValueError("generator CUDA index must match latent CUDA index")
 
 
 def select_exact_label_candidates(
@@ -361,6 +422,25 @@ def _global_zscore_bct(raw_btc: torch.Tensor, epsilon: float) -> torch.Tensor:
     return normalized.view_as(raw_btc).transpose(1, 2).contiguous()
 
 
+def _canonical_to_attack_domain(
+    raw_canonical_btc: torch.Tensor,
+    domain: AttackDomain,
+    canonical_domain: AttackDomain,
+) -> torch.Tensor:
+    if tuple(raw_canonical_btc.shape[1:]) != (canonical_domain.points, 12):
+        raise ValueError("decoded LHAT waveform is outside the canonical 100 Hz domain")
+    if domain == canonical_domain:
+        return raw_canonical_btc.contiguous()
+    if domain != AttackDomain(500, 5000):
+        raise ValueError("unsupported LHAT attack-domain bridge")
+    return F.interpolate(
+        raw_canonical_btc.transpose(1, 2),
+        size=domain.points,
+        mode="linear",
+        align_corners=True,
+    ).transpose(1, 2).contiguous()
+
+
 def _bce_per_sample(logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
     if logits.shape != targets.shape:
         raise ValueError(
@@ -404,10 +484,12 @@ def generate_lhat_adversarial(
         raise ValueError("candidate latent shape must match anchor latent shape")
     if targets.shape != (batch, 5):
         raise ValueError("LHAT targets must have shape (B,5)")
-    if not all(
-        bool(torch.isfinite(value).all())
-        for value in (anchor_standardized, candidates_standardized, targets)
-    ):
+    inputs_finite = (
+        torch.isfinite(anchor_standardized).all()
+        & torch.isfinite(candidates_standardized).all()
+        & torch.isfinite(targets).all()
+    )
+    if not bool(inputs_finite.item()):
         raise ValueError("LHAT inputs contain NaN or Inf")
 
     classifier_was_training = classifier.training
@@ -426,13 +508,18 @@ def generate_lhat_adversarial(
     def decoded_from_standardized(value: torch.Tensor) -> torch.Tensor:
         latent = standardizer.inverse_transform(value)
         return decode_to_ptbxl_waveform(
-            decoder, latent, target_points=domain.points
+            decoder, latent, target_points=resolved.canonical_domain.points
         )
 
     def logits_from_standardized(value: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        raw = decoded_from_standardized(value)
-        model_input = _global_zscore_bct(raw, resolved.normalization_epsilon)
-        return classifier(model_input), raw
+        raw_canonical = decoded_from_standardized(value)
+        raw_model = _canonical_to_attack_domain(
+            raw_canonical,
+            domain,
+            resolved.canonical_domain,
+        )
+        model_input = _global_zscore_bct(raw_model, resolved.normalization_epsilon)
+        return classifier(model_input), raw_canonical
 
     try:
         with torch.no_grad():
@@ -443,8 +530,14 @@ def generate_lhat_adversarial(
                 hull_lambda=resolved.hull_lambda,
                 epsilon=resolved.pgd_epsilon,
             )
-            anchor_logits, _ = logits_from_standardized(anchor_standardized)
-            initial_logits, _ = logits_from_standardized(initial_latent)
+            # Both probes are inference-only and independent along the batch
+            # axis.  Decode/classify them in one 2B launch to reduce kernel
+            # launch overhead while preserving the exact anchor/initial
+            # tensors, ordering and loss definitions.
+            paired_logits, _ = logits_from_standardized(
+                torch.cat((anchor_standardized, initial_latent), dim=0)
+            )
+            anchor_logits, initial_logits = paired_logits.split(batch, dim=0)
             anchor_bce = _bce_per_sample(anchor_logits, targets)
             initial_bce = _bce_per_sample(initial_logits, targets)
 

@@ -1,0 +1,15 @@
+schema_version: 1
+
+experiment:
+  name: manual_refactor_pn2021_effnet_direct_tune_chapman_shaoxing
+  purpose: Tune the family-balanced EfficientNet Direct baseline on Chapman-Shaoxing train400 with frozen clean and twenty-view validation100.
+
+entrypoint:
+  name: tune_pn2021_direct
+  config: train/PN2021_direct_tune.yaml
+  arguments: [--model, efficientnet1dv2, --center, chapman_shaoxing]
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_pn2021_effnet_direct_tune_chapman_shaoxing_h30
+  if_exists: error
+  delegate_output_subdir: training

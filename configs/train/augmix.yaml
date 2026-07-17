@@ -3,7 +3,7 @@ schema_version: 1
 method:
   name: vae_lhat_three_chain_augmix
   random_seed_file: random_seed.yaml
-  random_namespace: ecg_manual_refactor_augmix_v1
+  random_namespace: ecg_manual_refactor_augmix_v2_canonical500_batched
   corruption_timing: before_per_sample_global_zscore
 
 topology:
@@ -14,7 +14,14 @@ topology:
     - vae_lhat_adversarial_waveform
   chain3_additional_corruption: false
   raw_supervised_side_branch: false
-  allowed_sampling_rates_hz: [100, 500]
+  input_sampling_rate_hz: 100
+  input_points: 1000
+  operator_domain_sampling_rate_hz: 500
+  operator_domain_points: 5000
+  output_sampling_rate_hz: 100
+  output_points: 1000
+  interpolation_mode: linear
+  interpolation_align_corners: true
 
 corruption_chains:
   operator_config: augmentation/operators.yaml
@@ -44,12 +51,3 @@ output:
   return_raw_mixture: true
   return_global_zscore_mixture: true
   normalization_epsilon: 1.0e-6
-
-training_loss_defaults:
-  clean_bce_weight: 1.0
-  augmented_view_bce_weight: 1.0
-  consistency:
-    name: multilabel_bernoulli_jsd
-    weight: 2.0
-    minimum_views: 2
-  direct_vae_hard_view_bce: true

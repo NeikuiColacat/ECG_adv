@@ -1,0 +1,102 @@
+schema_version: 1
+
+method:
+  id: exp_lhat_replay_pool_v1
+  profile_version: 1
+  api_version: 1
+  scientific_arm: experimental
+  status: experimental_unimplemented_nodes
+  description: Reuse previously generated eligible LHAT views through a run-scoped replay pool.
+
+nodes:
+  clean_identity:
+    type: identity_raw100_view
+    implementation: builtin
+    implementation_version: 1
+    status: implemented
+    inputs: {waveform: clean_raw}
+    outputs: {waveform: clean_view}
+  lhat:
+    type: vae_lhat_hard_view
+    implementation: registered
+    implementation_version: 1
+    status: implemented
+    inputs:
+      waveform: clean_view
+      targets: targets
+      hash_ids: hash_ids
+      latent_pool: latent_pool
+      decoder: vae_decoder
+      classifier: model
+      rng: lhat_rng
+      config: lhat_config
+    outputs: {waveform: fresh_lhat_view, diagnostics: lhat_diagnostics}
+  replay_pool:
+    type: run_scoped_lhat_replay_pool
+    implementation: null
+    implementation_version: 1
+    status: experimental_unimplemented
+    inputs:
+      fresh_waveform: fresh_lhat_view
+      targets: targets
+      hash_ids: hash_ids
+      rng: replay_rng
+    outputs:
+      waveform: replay_lhat_view
+      state: replay_pool_state
+      diagnostics: replay_diagnostics
+
+inputs:
+  clean_raw:
+    type: ecg_waveform
+    domain: raw_mV
+    layout: batch_time_lead
+    sampling_rate_hz: 100
+    points: 1000
+    leads: 12
+  targets:
+    type: multilabel_targets
+    class_order: [CD, HYP, MI, NORM, STTC]
+  hash_ids:
+    type: unique_record_ids
+
+outputs:
+  clean_view: {type: ecg_waveform, source: clean_identity.waveform}
+  fresh_lhat_view: {type: ecg_waveform, source: lhat.waveform}
+  replay_lhat_view: {type: ecg_waveform, source: replay_pool.waveform}
+  replay_pool_state: {type: checkpointed_method_state, source: replay_pool.state}
+  method_diagnostics:
+    type: namespaced_method_diagnostics
+    sources: [lhat.diagnostics, replay_pool.diagnostics]
+
+objective:
+  eligibility_scaling: eligible_count_over_batch_size
+  terms:
+    - {id: clean_bce, type: multilabel_bce_with_logits, view: clean_view, targets: targets, weight: 1.0}
+    - {id: replay_lhat_bce, type: multilabel_bce_with_logits, view: replay_lhat_view, targets: targets, weight: 1.0}
+
+resources:
+  model: {type: caller_owned_classifier}
+  vae: {type: config_reference, path: train/vae.yaml}
+  latent_pool: {type: runtime_train_only_exact_label_pool}
+  vae_decoder: {type: runtime_frozen_decoder}
+  lhat_config: {type: config_reference, path: train/lhat.yaml}
+  lhat_rng:
+    type: isolated_torch_generator
+    seed_config: random_seed.yaml
+    namespace: exp_lhat_replay_pool_v1_lhat
+  replay_rng:
+    type: isolated_torch_generator
+    seed_config: random_seed.yaml
+    namespace: exp_lhat_replay_pool_v1_replay
+
+contracts:
+  normalization_owner: online_trainer
+  optimizer_owner: online_trainer
+  canonical_input_output_sampling_rate_hz: 100
+  replay_membership_bound_to_hash_and_label: true
+  replay_rng_state_checkpoint_required: true
+  replay_pool_state_checkpoint_required: true
+  validation_or_heldout_records_allowed_in_replay: false
+  one_outer_optimizer_step_per_clean_batch: true
+  executable: false

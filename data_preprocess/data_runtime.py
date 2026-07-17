@@ -19,7 +19,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Literal, Mapping, Sequence, cast
 
@@ -59,9 +59,16 @@ DEFAULT_CORRUPTION_CACHE_CONFIG = (
 )
 RuntimeLayout = Literal["time_channel", "channel_time"]
 RuntimeDatasetName = Literal["ptbxl", "pn2021", "pn2021c"]
+MMapAccessOrder = Literal["split", "cache_index"]
+MMapAdvice = Literal["none", "sequential_willneed"]
 PTBXL_PARTITIONS = ("train", "validation", "test")
-PN2021_PARTITIONS = (
+PN2021_K500_PARTITIONS = (
     "k500",
+    "k500_tune_train",
+    "k500_tune_validation",
+)
+PN2021_PARTITIONS = (
+    *PN2021_K500_PARTITIONS,
     "evaluation_all_zero_kept",
     "evaluation_drop_all_zero",
 )
@@ -282,6 +289,10 @@ def _validate_split_cache_identity(
 def _partition_hash_key(partition: str) -> str:
     return {
         "k500": "k500_hash_id_set_sha256",
+        "k500_tune_train": "k500_tune_train_hash_id_set_sha256",
+        "k500_tune_validation": (
+            "k500_tune_validation_hash_id_set_sha256"
+        ),
         "evaluation_all_zero_kept": (
             "evaluation_all_zero_kept_hash_id_set_sha256"
         ),
@@ -289,6 +300,87 @@ def _partition_hash_key(partition: str) -> str:
             "evaluation_drop_all_zero_hash_id_set_sha256"
         ),
     }[partition]
+
+
+def _validate_k500_tuning_contract(
+    artifact_base: Path,
+    center_manifest: Mapping[str, Any],
+    file_groups: Mapping[str, Any],
+) -> None:
+    evidence = _require_mapping(
+        center_manifest.get("k500_tuning_split"),
+        description="k500_tuning_split",
+    )
+    if evidence.get("parent_partition") != "k500":
+        raise ValueError("K500 tuning parent partition must be k500")
+    if evidence.get("train_partition") != "k500_tune_train":
+        raise ValueError("K500 tuning train partition identity mismatch")
+    if evidence.get("validation_partition") != "k500_tune_validation":
+        raise ValueError("K500 tuning validation partition identity mismatch")
+    hashes: dict[str, np.ndarray] = {}
+    for partition in PN2021_K500_PARTITIONS:
+        files = _require_mapping(
+            file_groups.get(partition),
+            description=f"partition {partition} files",
+        )
+        hashes[partition] = _load_artifact_array(
+            artifact_base,
+            files.get("hash_ids"),
+            description=f"{partition} hash IDs",
+        ).astype(str, copy=False)
+    parent = set(hashes["k500"].tolist())
+    train = set(hashes["k500_tune_train"].tolist())
+    validation = set(hashes["k500_tune_validation"].tolist())
+    overlap = train.intersection(validation)
+    union = train.union(validation)
+    expected = {
+        "k500": (
+            "parent_count",
+            "parent_hash_id_set_sha256",
+            "k500_count",
+            "k500_hash_id_set_sha256",
+        ),
+        "k500_tune_train": (
+            "train_count",
+            "train_hash_id_set_sha256",
+            "k500_tune_train_count",
+            "k500_tune_train_hash_id_set_sha256",
+        ),
+        "k500_tune_validation": (
+            "validation_count",
+            "validation_hash_id_set_sha256",
+            "k500_tune_validation_count",
+            "k500_tune_validation_hash_id_set_sha256",
+        ),
+    }
+    for partition, (
+        evidence_count_key,
+        evidence_hash_key,
+        manifest_count_key,
+        manifest_hash_key,
+    ) in expected.items():
+        values = hashes[partition]
+        actual_hash = _hash_id_set_sha256(values)
+        if int(evidence.get(evidence_count_key, -1)) != values.size:
+            raise ValueError(f"{partition} evidence count mismatch")
+        if int(center_manifest.get(manifest_count_key, -1)) != values.size:
+            raise ValueError(f"{partition} manifest count mismatch")
+        if str(evidence.get(evidence_hash_key, "")) != actual_hash:
+            raise ValueError(f"{partition} evidence hash mismatch")
+        if str(center_manifest.get(manifest_hash_key, "")) != actual_hash:
+            raise ValueError(f"{partition} manifest hash mismatch")
+    if overlap or union != parent:
+        raise ValueError(
+            "K500 tuning partitions are not disjoint or do not cover the parent"
+        )
+    union_hash = _hash_id_set_sha256(tuple(union))
+    if (
+        int(evidence.get("overlap_count", -1)) != 0
+        or int(evidence.get("union_count", -1)) != len(parent)
+        or evidence.get("union_matches_parent") is not True
+        or str(evidence.get("union_hash_id_set_sha256", "")) != union_hash
+    ):
+        raise ValueError("K500 tuning union evidence mismatch")
 
 
 def load_selection(
@@ -345,10 +437,10 @@ def load_selection(
             raise ValueError("PN2021 split selection requires logical_center")
         if partition not in PN2021_PARTITIONS:
             raise ValueError(f"PN2021 partition must be one of {PN2021_PARTITIONS}")
-        if cache.is_corruption and partition == "k500":
+        if cache.is_corruption and partition in {"k500", "k500_tune_train"}:
             raise ValueError(
-                "PN2021-C may only use ref-excluded evaluation partitions; "
-                "K500 training anchors must come from the clean PN2021 cache"
+                "PN2021-C may not supply K500 training records; only the frozen "
+                "k500_tune_validation partition or ref-excluded evaluation is allowed"
             )
         centers = _require_mapping(
             manifest.get("logical_centers"), description="logical_centers"
@@ -383,6 +475,12 @@ def load_selection(
         file_groups = _require_mapping(
             center_manifest.get("files"), description="center files"
         )
+        if partition in {"k500_tune_train", "k500_tune_validation"}:
+            _validate_k500_tuning_contract(
+                artifact_base,
+                center_manifest,
+                file_groups,
+            )
         selection_manifest = {
             "files": _require_mapping(
                 file_groups.get(partition), description=f"partition {partition} files"
@@ -449,7 +547,10 @@ def load_selection(
     if not np.array_equal(cache_record_ids, record_ids):
         raise ValueError("split record IDs no longer align with resolved hash IDs")
     labels = np.asarray(cache.labels[indices])
-    if partition in {"k500", "evaluation_drop_all_zero"}:
+    if partition in {
+        *PN2021_K500_PARTITIONS,
+        "evaluation_drop_all_zero",
+    }:
         if np.any(labels.sum(axis=1) == 0):
             raise ValueError(f"partition {partition} unexpectedly contains all-zero labels")
     if source_centers:
@@ -616,6 +717,163 @@ class ECGModelTransform:
         )
 
 
+@dataclass(frozen=True)
+class MMapPrefetchConfig:
+    """Bounded Linux page-cache hints for ordered mmap evaluation reads."""
+
+    enabled: bool = False
+    advice: MMapAdvice = "sequential_willneed"
+    window_mib: int = 1024
+    ahead_batches: int = 2
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.enabled, bool):
+            raise ValueError("mmap prefetch enabled must be boolean")
+        if self.advice not in {"none", "sequential_willneed"}:
+            raise ValueError(
+                "mmap prefetch advice must be none or sequential_willneed"
+            )
+        if (
+            isinstance(self.window_mib, bool)
+            or not isinstance(self.window_mib, int)
+            or self.window_mib <= 0
+        ):
+            raise ValueError("mmap prefetch window_mib must be a positive integer")
+        if (
+            isinstance(self.ahead_batches, bool)
+            or not isinstance(self.ahead_batches, int)
+            or self.ahead_batches <= 0
+        ):
+            raise ValueError(
+                "mmap prefetch ahead_batches must be a positive integer"
+            )
+
+    def describe(self) -> dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "advice": self.advice,
+            "window_mib": self.window_mib,
+            "ahead_batches": self.ahead_batches,
+        }
+
+
+class MMapPrefetcher:
+    """Issue best-effort Linux access hints for one contiguous cache view.
+
+    The helper owns a process-local read-only file descriptor. Advice affects
+    only the kernel page-cache policy; it never changes waveform bytes or the
+    split selection. Unsupported platforms and filesystems safely become a
+    no-op.
+    """
+
+    def __init__(
+        self,
+        cache: ECGCache,
+        *,
+        view_index: int | None,
+        config: MMapPrefetchConfig,
+    ) -> None:
+        self.config = config
+        self._fd: int | None = None
+        self._supported = False
+        self._last_prefetch_end = 0
+        self.record_bytes = 0
+        self.view_offset = 0
+        self.view_bytes = 0
+        if (
+            not config.enabled
+            or config.advice == "none"
+            or cache.storage_mode != "mmap"
+            or not isinstance(cache.signals, np.memmap)
+            or not hasattr(os, "posix_fadvise")
+            or not hasattr(os, "POSIX_FADV_SEQUENTIAL")
+            or not hasattr(os, "POSIX_FADV_WILLNEED")
+        ):
+            return
+
+        record_shape = (
+            cache.signals.shape[2:]
+            if cache.is_corruption
+            else cache.signals.shape[1:]
+        )
+        self.record_bytes = int(np.prod(record_shape)) * int(
+            cache.signals.dtype.itemsize
+        )
+        self.view_bytes = len(cache) * self.record_bytes
+        data_offset = int(cache.signals.offset)
+        if cache.is_corruption:
+            if view_index is None:
+                raise ValueError("PN2021-C mmap prefetch requires a resolved view")
+            self.view_offset = data_offset + int(view_index) * self.view_bytes
+        else:
+            self.view_offset = data_offset
+        try:
+            self._fd = os.open(cache.identity.signals_path, os.O_RDONLY)
+            os.posix_fadvise(
+                self._fd,
+                self.view_offset,
+                self.view_bytes,
+                os.POSIX_FADV_SEQUENTIAL,
+            )
+            self._supported = True
+        except (AttributeError, OSError):
+            self.close()
+
+    def prefetch_after(self, cache_indices: np.ndarray) -> None:
+        """Hint a bounded window immediately after one increasing batch."""
+
+        if not self._supported or self._fd is None:
+            return
+        indices = np.asarray(cache_indices, dtype=np.int64)
+        if indices.ndim != 1 or indices.size == 0:
+            return
+        if indices.size > 1 and not np.all(np.diff(indices) > 0):
+            return
+        next_record = int(indices[-1]) + 1
+        if next_record * self.record_bytes >= self.view_bytes:
+            return
+        requested = min(
+            self.config.window_mib * 1024**2,
+            int(indices.size) * self.config.ahead_batches * self.record_bytes,
+            self.view_bytes - next_record * self.record_bytes,
+        )
+        start = self.view_offset + next_record * self.record_bytes
+        if self._last_prefetch_end > start:
+            overlap = self._last_prefetch_end - start
+            start = self._last_prefetch_end
+            requested -= overlap
+        if requested <= 0:
+            return
+        try:
+            os.posix_fadvise(
+                self._fd,
+                start,
+                requested,
+                os.POSIX_FADV_WILLNEED,
+            )
+            self._last_prefetch_end = start + requested
+        except (AttributeError, OSError):
+            self.close()
+
+    def describe(self) -> dict[str, Any]:
+        return {
+            **self.config.describe(),
+            "supported": self._supported,
+            "record_bytes": self.record_bytes,
+            "view_offset": self.view_offset,
+            "view_bytes": self.view_bytes,
+        }
+
+    def close(self) -> None:
+        if self._fd is not None:
+            try:
+                os.close(self._fd)
+            except OSError:
+                pass
+        self._fd = None
+        self._supported = False
+
+
 class RuntimeECGDataset(Dataset[dict[str, Any]]):
     """Lazy, worker-safe Dataset backed by the validated NumPy cache."""
 
@@ -631,6 +889,11 @@ class RuntimeECGDataset(Dataset[dict[str, Any]]):
         view: ViewSelector = None,
         transform: Callable[[np.ndarray | torch.Tensor], torch.Tensor] | None = None,
         validate_values: ValueValidation = "sample",
+        access_order: MMapAccessOrder = "split",
+        batch_read: bool = True,
+        mmap_prefetch: MMapPrefetchConfig | None = None,
+        shared_cache: ECGCache | None = None,
+        shared_selection: ECGSelection | None = None,
     ) -> None:
         self.cache_dir = Path(cache_dir).expanduser().resolve()
         self.split_dir = Path(split_dir).expanduser().resolve()
@@ -641,32 +904,85 @@ class RuntimeECGDataset(Dataset[dict[str, Any]]):
         self.view = view
         self.transform = transform
         self.validate_values = validate_values
-        self._cache: ECGCache | None = load_cache(
-            self.cache_dir,
-            sampling_rate_hz=self.sampling_rate_hz,
-            mode=self.requested_cache_mode,
-            validate_values=self.validate_values,
+        if access_order not in {"split", "cache_index"}:
+            raise ValueError("access_order must be split or cache_index")
+        if not isinstance(batch_read, bool):
+            raise ValueError("batch_read must be boolean")
+        if mmap_prefetch is not None and not isinstance(
+            mmap_prefetch, MMapPrefetchConfig
+        ):
+            raise TypeError("mmap_prefetch must be an MMapPrefetchConfig")
+        self.access_order = access_order
+        self.batch_read = batch_read
+        self.mmap_prefetch = mmap_prefetch or MMapPrefetchConfig()
+        self._prefetcher: MMapPrefetcher | None = None
+        self._prefetcher_pid: int | None = None
+        self._resolved_view_index: int | None = None
+        if (shared_cache is None) != (shared_selection is None):
+            raise ValueError(
+                "shared_cache and shared_selection must be supplied together"
+            )
+        self._owns_cache = shared_cache is None
+        self._cache: ECGCache | None = (
+            load_cache(
+                self.cache_dir,
+                sampling_rate_hz=self.sampling_rate_hz,
+                mode=self.requested_cache_mode,
+                validate_values=self.validate_values,
+            )
+            if shared_cache is None
+            else shared_cache
         )
         self._cache_pid: int | None = os.getpid()
         try:
+            if self._cache.identity.cache_dir != self.cache_dir:
+                raise ValueError("shared cache directory differs from dataset cache_dir")
+            if self._cache.sampling_rate_hz != self.sampling_rate_hz:
+                raise ValueError("shared cache sampling rate differs from dataset request")
             self.cache_mode = self._cache.storage_mode
-            self.selection = load_selection(
-                self._cache,
-                self.split_dir,
-                partition=self.partition,
-                logical_center=self.logical_center,
+            self.selection = (
+                load_selection(
+                    self._cache,
+                    self.split_dir,
+                    partition=self.partition,
+                    logical_center=self.logical_center,
+                )
+                if shared_selection is None
+                else shared_selection
             )
+            if (
+                self.selection.partition != self.partition
+                or self.selection.logical_center != self.logical_center
+                or self.selection.source_manifest_sha256
+                != _source_manifest_sha256(self._cache)
+            ):
+                raise ValueError("shared selection differs from dataset request/cache")
+            if self.access_order == "cache_index":
+                order = np.argsort(self.selection.indices, kind="stable")
+                reordered = replace(
+                    self.selection,
+                    indices=_readonly(self.selection.indices[order]),
+                    hash_ids=_readonly(self.selection.hash_ids[order]),
+                    record_ids=_readonly(self.selection.record_ids[order]),
+                )
+                if (
+                    _hash_id_set_sha256(reordered.hash_ids)
+                    != self.selection.hash_id_set_sha256
+                ):
+                    raise RuntimeError("cache-index ordering changed split membership")
+                self.selection = reordered
             if self._cache.is_corruption and self.view is None:
                 raise ValueError("PN2021-C RuntimeECGDataset requires an explicit view")
             if not self._cache.is_corruption and self.view is not None:
                 raise ValueError("clean RuntimeECGDataset does not accept a view")
             if self._cache.is_corruption:
-                self._cache.get_record(
+                first_record = self._cache.get_record(
                     int(self.selection.indices[0]),
                     view=self.view,
                     copy=False,
                     check_finite=False,
                 )
+                self._resolved_view_index = first_record.view_index
         except Exception:
             self.close()
             raise
@@ -675,14 +991,24 @@ class RuntimeECGDataset(Dataset[dict[str, Any]]):
         return len(self.selection)
 
     def __getstate__(self) -> dict[str, Any]:
+        if not self._owns_cache:
+            raise RuntimeError(
+                "session-owned datasets require num_workers=0 and cannot be pickled"
+            )
         state = self.__dict__.copy()
         state["_cache"] = None
         state["_cache_pid"] = None
+        state["_prefetcher"] = None
+        state["_prefetcher_pid"] = None
         return state
 
     def _get_cache(self) -> ECGCache:
         current_pid = os.getpid()
         if self._cache is None or self._cache_pid != current_pid:
+            if not self._owns_cache:
+                raise RuntimeError(
+                    "session-owned cache access is restricted to its creating process"
+                )
             if self._cache is not None:
                 self._cache.close()
             self._cache = load_cache(
@@ -693,6 +1019,27 @@ class RuntimeECGDataset(Dataset[dict[str, Any]]):
             )
             self._cache_pid = current_pid
         return self._cache
+
+    def _get_prefetcher(self, cache: ECGCache) -> MMapPrefetcher | None:
+        current_pid = os.getpid()
+        if self._prefetcher is not None and self._prefetcher_pid != current_pid:
+            self._prefetcher.close()
+            self._prefetcher = None
+            self._prefetcher_pid = None
+        if (
+            self._prefetcher is None
+            and self.mmap_prefetch.enabled
+            and self.access_order == "cache_index"
+            and self.batch_read
+            and cache.storage_mode == "mmap"
+        ):
+            self._prefetcher = MMapPrefetcher(
+                cache,
+                view_index=self._resolved_view_index,
+                config=self.mmap_prefetch,
+            )
+            self._prefetcher_pid = current_pid
+        return self._prefetcher
 
     def __getitem__(self, position: int) -> dict[str, Any]:
         if isinstance(position, bool) or not isinstance(position, (int, np.integer)):
@@ -743,22 +1090,243 @@ class RuntimeECGDataset(Dataset[dict[str, Any]]):
             "composition_id": record.composition_id or "",
         }
 
+    def __getitems__(self, positions: Sequence[int]) -> list[dict[str, Any]]:
+        """Fetch one DataLoader batch with a single validated mmap operation.
+
+        PyTorch calls this optional map-style Dataset hook when automatic
+        batching is enabled.  Runtime augmentation keeps the scalar path so its
+        random-call semantics do not change; clean model transforms are safe to
+        apply over the leading batch dimension and are therefore vectorized.
+        """
+
+        normalized_positions: list[int] = []
+        for raw_position in positions:
+            if isinstance(raw_position, bool) or not isinstance(
+                raw_position, (int, np.integer)
+            ):
+                raise TypeError("dataset positions must be integers")
+            position = int(raw_position)
+            if position < 0:
+                position += len(self)
+            if not 0 <= position < len(self):
+                raise IndexError(
+                    f"dataset position {position} is outside [0, {len(self)})"
+                )
+            normalized_positions.append(position)
+        if not normalized_positions:
+            return []
+        if not self.batch_read:
+            return [self[position] for position in normalized_positions]
+        if self.transform is not None and not isinstance(
+            self.transform, ECGModelTransform
+        ):
+            return [self[position] for position in normalized_positions]
+        if isinstance(self.transform, ECGModelTransform) and (
+            self.transform.augmentation is not None
+        ):
+            return [self[position] for position in normalized_positions]
+
+        cache = self._get_cache()
+        selection_positions = np.asarray(normalized_positions, dtype=np.int64)
+        cache_indices = np.asarray(
+            self.selection.indices[selection_positions], dtype=np.int64
+        )
+        strictly_increasing = bool(
+            cache_indices.size == 1 or np.all(np.diff(cache_indices) > 0)
+        )
+        dense_start = int(cache_indices[0])
+        dense_stop = int(cache_indices[-1]) + 1
+        dense_span = dense_stop - dense_start
+        use_dense_read = strictly_increasing and dense_span <= (
+            len(cache_indices) + max(16, len(cache_indices) // 4)
+        )
+        if use_dense_read:
+            dense_batch = cache.get_batch(
+                slice(dense_start, dense_stop),
+                view=self.view,
+                layout="time_channel",
+                copy=True,
+                check_finite=True,
+            )
+            offsets = cache_indices - dense_start
+            signals = dense_batch.signals[offsets]
+            labels_array = dense_batch.labels[offsets]
+            record_ids = dense_batch.record_ids[offsets]
+            hash_ids = dense_batch.hash_ids[offsets]
+            resolved_indices = dense_batch.indices[offsets]
+            view_index = dense_batch.view_index
+            composition_id = dense_batch.composition_id
+        else:
+            sparse_batch = cache.get_batch(
+                cache_indices,
+                view=self.view,
+                layout="time_channel",
+                copy=True,
+                check_finite=True,
+            )
+            signals = sparse_batch.signals
+            labels_array = sparse_batch.labels
+            record_ids = sparse_batch.record_ids
+            hash_ids = sparse_batch.hash_ids
+            resolved_indices = sparse_batch.indices
+            view_index = sparse_batch.view_index
+            composition_id = sparse_batch.composition_id
+        expected_hashes = self.selection.hash_ids[selection_positions].astype(str)
+        expected_records = self.selection.record_ids[selection_positions].astype(str)
+        if not np.array_equal(hash_ids, expected_hashes) or not np.array_equal(
+            record_ids, expected_records
+        ):
+            raise RuntimeError("cache identity changed after dataset initialization")
+        prefetcher = self._get_prefetcher(cache)
+        if prefetcher is not None:
+            prefetcher.prefetch_after(cache_indices)
+        waveforms = (
+            torch.as_tensor(signals, dtype=torch.float32)
+            if self.transform is None
+            else self.transform(signals)
+        )
+        if not isinstance(waveforms, torch.Tensor):
+            raise TypeError("runtime transform must return a torch.Tensor")
+        if waveforms.ndim < 3 or int(waveforms.shape[0]) != len(
+            normalized_positions
+        ):
+            raise ValueError("batched runtime transform changed the leading batch axis")
+        labels = torch.as_tensor(labels_array, dtype=torch.float32)
+        centers = (
+            cache.records.iloc[resolved_indices]["center"].astype(str).to_numpy()
+            if "center" in cache.records.columns
+            else np.full(len(normalized_positions), "", dtype=str)
+        )
+        return [
+            {
+                "waveform": waveforms[offset],
+                "label": labels[offset],
+                "selection_index": torch.tensor(position, dtype=torch.int64),
+                "cache_index": torch.tensor(
+                    int(resolved_indices[offset]), dtype=torch.int64
+                ),
+                "record_id": str(record_ids[offset]),
+                "hash_id": str(hash_ids[offset]),
+                "dataset": cache.dataset,
+                "logical_center": self.selection.logical_center or "",
+                "source_center": str(centers[offset]),
+                "sampling_rate_hz": torch.tensor(
+                    cache.sampling_rate_hz, dtype=torch.int64
+                ),
+                "view_index": torch.tensor(
+                    -1 if view_index is None else view_index,
+                    dtype=torch.int64,
+                ),
+                "composition_id": composition_id or "",
+            }
+            for offset, position in enumerate(normalized_positions)
+        ]
+
+    def get_raw_items_by_hashes(
+        self,
+        hash_ids: Sequence[str],
+    ) -> tuple[dict[str, Any], ...]:
+        """Return ordered raw-mV probe records from this verified selection.
+
+        This is a monitoring/inspection interface, not a training fast path.
+        It deliberately bypasses ``self.transform`` and returns immutable
+        ``(time, lead)`` float32 copies so TensorBoard visualization cannot
+        mutate mmap-backed cache data or accidentally plot z-scored inputs.
+        Every requested hash must belong to this dataset's current split.
+        """
+
+        if isinstance(hash_ids, (str, bytes, np.str_, np.bytes_)):
+            raise TypeError("hash_ids must be a sequence of strings")
+        values = tuple(hash_ids)
+        if any(not isinstance(value, (str, np.str_)) for value in values):
+            raise TypeError("hash_ids must contain only string values")
+        requested = tuple(str(value) for value in values)
+        if not requested:
+            raise ValueError("hash_ids must not be empty")
+        if len(set(requested)) != len(requested):
+            raise ValueError("hash_ids must not contain duplicates")
+        positions = {
+            str(value): position
+            for position, value in enumerate(self.selection.hash_ids)
+        }
+        missing = [value for value in requested if value not in positions]
+        if missing:
+            raise KeyError(
+                "hash_id is outside this runtime selection: "
+                f"count={len(missing)}, preview={missing[:5]}"
+            )
+
+        cache = self._get_cache()
+        results: list[dict[str, Any]] = []
+        for hash_id in requested:
+            selection_position = positions[hash_id]
+            cache_index = int(self.selection.indices[selection_position])
+            record = cache.get_record(
+                cache_index,
+                view=self.view,
+                layout="time_channel",
+                copy=True,
+                check_finite=True,
+            )
+            if record.hash_id != hash_id:
+                raise RuntimeError("cache identity changed during raw probe access")
+            waveform = np.array(
+                record.signal,
+                dtype=np.float32,
+                order="C",
+                copy=True,
+            )
+            waveform.flags.writeable = False
+            label = np.asarray(record.label, dtype=np.uint8).copy()
+            label.flags.writeable = False
+            results.append(
+                {
+                    "waveform_raw": waveform,
+                    "label": label,
+                    "selection_index": selection_position,
+                    "cache_index": cache_index,
+                    "record_id": record.record_id,
+                    "hash_id": record.hash_id,
+                    "dataset": cache.dataset,
+                    "logical_center": self.selection.logical_center or "",
+                    "source_center": str(record.metadata.get("center", "")),
+                    "sampling_rate_hz": cache.sampling_rate_hz,
+                    "duration_seconds": cache.identity.duration_seconds,
+                    "lead_order": cache.identity.lead_order,
+                    "layout": "time_channel",
+                    "physical_unit": cache.identity.physical_unit,
+                    "normalization": cache.identity.normalization,
+                    "view_index": record.view_index,
+                    "composition_id": record.composition_id or "",
+                }
+            )
+        return tuple(results)
+
     def describe(self) -> dict[str, Any]:
         cache = self._get_cache()
         return {
             "cache": cache.describe(),
             "selection": self.selection.describe(),
             "view": self.view,
+            "mmap": {
+                "access_order": self.access_order,
+                "batch_read": self.batch_read,
+                "prefetch": self.mmap_prefetch.describe(),
+            },
             "transform": None
             if self.transform is None
             else self.transform.__class__.__name__,
         }
 
     def close(self) -> None:
-        if self._cache is not None:
+        if self._prefetcher is not None:
+            self._prefetcher.close()
+            self._prefetcher = None
+            self._prefetcher_pid = None
+        if self._cache is not None and self._owns_cache:
             self._cache.close()
-            self._cache = None
-            self._cache_pid = None
+        self._cache = None
+        self._cache_pid = None
 
     def __enter__(self) -> RuntimeECGDataset:
         return self
@@ -771,6 +1339,266 @@ class RuntimeECGDataset(Dataset[dict[str, Any]]):
             self.close()
         except Exception:
             pass
+
+
+class SelectionResidentECGDataset(Dataset[dict[str, Any]]):
+    """Contiguous CPU copy of one immutable PN2021 selection.
+
+    Only records named by the already-validated split are gathered. Global
+    cache indices, stable hashes, record IDs and physical source centers remain
+    unchanged, so replacing the mmap-backed dataset cannot alter sampler
+    positions or random-number streams. The source cache is not retained by
+    this object and can be closed immediately after construction.
+    """
+
+    def __init__(
+        self,
+        source: RuntimeECGDataset,
+        *,
+        pin_memory: bool = False,
+    ) -> None:
+        if not isinstance(source, RuntimeECGDataset):
+            raise TypeError("source must be a RuntimeECGDataset")
+        cache = source._get_cache()
+        clean_k500 = (
+            cache.dataset == "pn2021"
+            and not cache.is_corruption
+            and source.selection.partition in PN2021_K500_PARTITIONS
+            and source.view is None
+        )
+        frozen_corruption_validation = (
+            cache.dataset == "pn2021c"
+            and cache.is_corruption
+            and source.selection.partition == "k500_tune_validation"
+            and source.view is not None
+        )
+        if not (clean_k500 or frozen_corruption_validation):
+            raise ValueError(
+                "selection residency supports clean PN2021 K500 splits or one "
+                "explicit PN2021-C k500_tune_validation view"
+            )
+        if source.transform is not None:
+            raise ValueError(
+                "selection residency stores canonical raw data and rejects transforms"
+            )
+        if cache.storage_mode != "mmap":
+            raise ValueError("selection residency requires a mmap source cache")
+        if not isinstance(pin_memory, bool):
+            raise ValueError("selection residency pin_memory must be boolean")
+
+        cache_indices = np.asarray(source.selection.indices, dtype=np.int64)
+        batch = cache.get_batch(
+            cache_indices,
+            view=source.view,
+            layout="time_channel",
+            copy=True,
+            check_finite=True,
+        )
+        expected_hashes = source.selection.hash_ids.astype(str)
+        expected_records = source.selection.record_ids.astype(str)
+        if not np.array_equal(batch.indices, cache_indices):
+            raise RuntimeError("resident gather changed global cache indices")
+        if not np.array_equal(batch.hash_ids, expected_hashes):
+            raise RuntimeError("resident gather changed K500 hash order")
+        if not np.array_equal(batch.record_ids, expected_records):
+            raise RuntimeError("resident gather changed K500 record order")
+
+        waveform_array = np.array(
+            batch.signals,
+            dtype=np.float32,
+            order="C",
+            copy=False,
+        )
+        label_array = np.array(
+            batch.labels,
+            dtype=np.float32,
+            order="C",
+            copy=True,
+        )
+        waveforms = torch.from_numpy(waveform_array)
+        labels = torch.from_numpy(label_array)
+        if pin_memory:
+            waveforms = waveforms.pin_memory()
+            labels = labels.pin_memory()
+        if waveforms.device.type != "cpu" or not waveforms.is_contiguous():
+            raise RuntimeError("resident K500 waveforms must be contiguous CPU data")
+        if labels.device.type != "cpu" or not labels.is_contiguous():
+            raise RuntimeError("resident K500 labels must be contiguous CPU data")
+
+        self.selection = source.selection
+        self.sampling_rate_hz = source.sampling_rate_hz
+        self.transform = source.transform
+        self.cache_mode = "selection_ram"
+        self.view = source.view
+        self._dataset_name = cache.dataset
+        self._view_index = None if batch.view_index is None else int(batch.view_index)
+        self._composition_id = str(batch.composition_id or "")
+        self._waveforms = waveforms
+        self._labels = labels
+        self._cache_indices = cache_indices.copy()
+        self._record_ids = expected_records.copy()
+        self._hash_ids = expected_hashes.copy()
+        self._source_centers = (
+            cache.records.iloc[cache_indices]["center"].astype(str).to_numpy(copy=True)
+            if "center" in cache.records.columns
+            else np.full(len(cache_indices), "", dtype=str)
+        )
+        self._cache_description = cache.describe()
+        self._access_order = source.access_order
+        self._batch_read = source.batch_read
+        self._pin_memory = pin_memory
+        self._closed = False
+
+    def __len__(self) -> int:
+        return len(self.selection)
+
+    @property
+    def waveforms(self) -> torch.Tensor:
+        """The immutable selection-sized contiguous CPU tensor."""
+
+        self._require_open()
+        return self._waveforms
+
+    @property
+    def labels(self) -> torch.Tensor:
+        self._require_open()
+        return self._labels
+
+    @property
+    def is_pinned(self) -> bool:
+        return bool(self._pin_memory)
+
+    def _require_open(self) -> None:
+        if self._closed:
+            raise RuntimeError("selection-resident dataset is closed")
+
+    def _normalize_position(self, position: int) -> int:
+        if isinstance(position, bool) or not isinstance(position, (int, np.integer)):
+            raise TypeError("dataset position must be an integer")
+        resolved = int(position)
+        if resolved < 0:
+            resolved += len(self)
+        if not 0 <= resolved < len(self):
+            raise IndexError(f"dataset position {position} is outside [0, {len(self)})")
+        return resolved
+
+    def _item(self, position: int) -> dict[str, Any]:
+        self._require_open()
+        waveform = self._waveforms[position]
+        if self.transform is not None:
+            waveform = self.transform(waveform)
+        if not isinstance(waveform, torch.Tensor):
+            raise TypeError("runtime transform must return a torch.Tensor")
+        return {
+            "waveform": waveform,
+            "label": self._labels[position],
+            "selection_index": torch.tensor(position, dtype=torch.int64),
+            "cache_index": torch.tensor(
+                int(self._cache_indices[position]), dtype=torch.int64
+            ),
+            "record_id": str(self._record_ids[position]),
+            "hash_id": str(self._hash_ids[position]),
+            "dataset": self._dataset_name,
+            "logical_center": self.selection.logical_center or "",
+            "source_center": str(self._source_centers[position]),
+            "sampling_rate_hz": torch.tensor(
+                self.sampling_rate_hz, dtype=torch.int64
+            ),
+            "view_index": torch.tensor(
+                -1 if self._view_index is None else self._view_index,
+                dtype=torch.int64,
+            ),
+            "composition_id": self._composition_id,
+        }
+
+    def __getitem__(self, position: int) -> dict[str, Any]:
+        return self._item(self._normalize_position(position))
+
+    def __getitems__(self, positions: Sequence[int]) -> list[dict[str, Any]]:
+        # Keeping the scalar item contract delegates batching/shuffle entirely
+        # to the unchanged PyTorch sampler and collate path.
+        return [self._item(self._normalize_position(value)) for value in positions]
+
+    def get_raw_items_by_hashes(
+        self,
+        hash_ids: Sequence[str],
+    ) -> tuple[dict[str, Any], ...]:
+        self._require_open()
+        if isinstance(hash_ids, (str, bytes, np.str_, np.bytes_)):
+            raise TypeError("hash_ids must be a sequence of strings")
+        requested = tuple(str(value) for value in hash_ids)
+        if not requested or len(set(requested)) != len(requested):
+            raise ValueError("hash_ids must be non-empty and unique")
+        positions = {value: index for index, value in enumerate(self._hash_ids)}
+        missing = [value for value in requested if value not in positions]
+        if missing:
+            raise KeyError(
+                "hash_id is outside this resident selection: "
+                f"count={len(missing)}, preview={missing[:5]}"
+            )
+        results: list[dict[str, Any]] = []
+        for hash_id in requested:
+            position = positions[hash_id]
+            waveform = self._waveforms[position].detach().cpu().numpy().copy()
+            waveform.flags.writeable = False
+            label = self._labels[position].detach().cpu().numpy().astype(
+                np.uint8, copy=True
+            )
+            label.flags.writeable = False
+            results.append(
+                {
+                    "waveform_raw": waveform,
+                    "label": label,
+                    "selection_index": position,
+                    "cache_index": int(self._cache_indices[position]),
+                    "record_id": str(self._record_ids[position]),
+                    "hash_id": hash_id,
+                    "dataset": self._dataset_name,
+                    "logical_center": self.selection.logical_center or "",
+                    "source_center": str(self._source_centers[position]),
+                    "sampling_rate_hz": self.sampling_rate_hz,
+                    "duration_seconds": self._cache_description["duration_seconds"],
+                    "lead_order": tuple(self._cache_description["lead_order"]),
+                    "layout": "time_channel",
+                    "physical_unit": self._cache_description["physical_unit"],
+                    "normalization": self._cache_description["normalization"],
+                    "view_index": self._view_index,
+                    "composition_id": self._composition_id,
+                }
+            )
+        return tuple(results)
+
+    def describe(self) -> dict[str, Any]:
+        return {
+            "cache": dict(self._cache_description),
+            "selection": self.selection.describe(),
+            "view": self.view,
+            "composition_id": self._composition_id,
+            "mmap": {
+                "access_order": self._access_order,
+                "batch_read": self._batch_read,
+                "prefetch": MMapPrefetchConfig(enabled=False).describe(),
+            },
+            "residency": {
+                "mode": "selection_ram",
+                "record_count": len(self),
+                "waveform_shape": list(self._waveforms.shape),
+                "waveform_dtype": str(self._waveforms.dtype),
+                "contiguous": self._waveforms.is_contiguous(),
+                "pinned": self._pin_memory,
+                "source_cache_closed_after_gather": True,
+            },
+            "transform": None
+            if self.transform is None
+            else self.transform.__class__.__name__,
+        }
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._waveforms = torch.empty((0, 0, 0), dtype=torch.float32)
+        self._labels = torch.empty((0, 0), dtype=torch.float32)
+        self._closed = True
 
 
 @dataclass(frozen=True)
@@ -807,6 +1635,11 @@ class DataLoadConfig:
     cache_mode: StorageMode
     validate_values: ValueValidation
     shuffle_partitions: tuple[str, ...]
+    mmap_access_order: MMapAccessOrder
+    mmap_batch_read: bool
+    mmap_prefetch: MMapPrefetchConfig
+    selection_resident: bool
+    selection_resident_pin_memory: bool
     prepare_for_model: bool
     sanitize: bool
     global_zscore: bool
@@ -827,6 +1660,15 @@ class DataLoadConfig:
                 "cache_mode": self.cache_mode,
                 "validate_values": self.validate_values,
                 "shuffle_partitions": list(self.shuffle_partitions),
+                "mmap": {
+                    "access_order": self.mmap_access_order,
+                    "batch_read": self.mmap_batch_read,
+                    "prefetch": self.mmap_prefetch.describe(),
+                },
+                "selection_residency": {
+                    "enabled": self.selection_resident,
+                    "pin_memory": self.selection_resident_pin_memory,
+                },
                 "prepare_for_model": self.prepare_for_model,
                 "sanitize": self.sanitize,
                 "global_zscore": self.global_zscore,
@@ -880,11 +1722,22 @@ def load_data_load_config(
         raise FileNotFoundError(f"data-load config not found: {config_path}") from None
     if not isinstance(payload, dict):
         raise ValueError("data-load config must be a YAML mapping")
-    _require_exact_keys(
-        payload,
-        expected={"schema_version", "dataloader", "model_input"},
-        description="data-load config",
-    )
+    required_root_keys = {
+        "schema_version",
+        "dataloader",
+        "model_input",
+        "mmap",
+    }
+    optional_root_keys = {"selection_residency"}
+    actual_root_keys = set(payload)
+    missing_root_keys = required_root_keys - actual_root_keys
+    unexpected_root_keys = actual_root_keys - required_root_keys - optional_root_keys
+    if missing_root_keys or unexpected_root_keys:
+        raise ValueError(
+            "data-load config keys mismatch: "
+            f"missing={sorted(missing_root_keys)}, "
+            f"unexpected={sorted(unexpected_root_keys)}"
+        )
     if payload["schema_version"] != 1:
         raise ValueError("data-load config schema_version must be 1")
     dataloader = _require_mapping(
@@ -892,6 +1745,16 @@ def load_data_load_config(
     )
     model_input = _require_mapping(
         payload["model_input"], description="data-load config.model_input"
+    )
+    mmap_config = _require_mapping(
+        payload["mmap"], description="data-load config.mmap"
+    )
+    selection_residency = _require_mapping(
+        payload.get(
+            "selection_residency",
+            {"enabled": False, "pin_memory": False},
+        ),
+        description="data-load config.selection_residency",
     )
     _require_exact_keys(
         dataloader,
@@ -918,6 +1781,24 @@ def load_data_load_config(
             "epsilon",
         },
         description="data-load config.model_input",
+    )
+    _require_exact_keys(
+        mmap_config,
+        expected={"access_order", "batch_read", "prefetch"},
+        description="data-load config.mmap",
+    )
+    mmap_prefetch = _require_mapping(
+        mmap_config["prefetch"], description="data-load config.mmap.prefetch"
+    )
+    _require_exact_keys(
+        mmap_prefetch,
+        expected={"enabled", "advice", "window_mib", "ahead_batches"},
+        description="data-load config.mmap.prefetch",
+    )
+    _require_exact_keys(
+        selection_residency,
+        expected={"enabled", "pin_memory"},
+        description="data-load config.selection_residency",
     )
     batch_size = _require_positive_int(
         dataloader["batch_size"], description="dataloader.batch_size"
@@ -960,6 +1841,43 @@ def load_data_load_config(
         raise ValueError(
             "only train and k500 may be shuffled by shared defaults; "
             f"got {sorted(unexpected_shuffle)}"
+        )
+    mmap_access_order = str(mmap_config["access_order"])
+    if mmap_access_order not in {"split", "cache_index"}:
+        raise ValueError("mmap.access_order must be split or cache_index")
+    mmap_batch_read = _require_bool(
+        mmap_config["batch_read"], description="mmap.batch_read"
+    )
+    mmap_prefetch_enabled = _require_bool(
+        mmap_prefetch["enabled"], description="mmap.prefetch.enabled"
+    )
+    mmap_prefetch_advice = str(mmap_prefetch["advice"])
+    if mmap_prefetch_advice not in {"none", "sequential_willneed"}:
+        raise ValueError(
+            "mmap.prefetch.advice must be none or sequential_willneed"
+        )
+    mmap_prefetch_config = MMapPrefetchConfig(
+        enabled=mmap_prefetch_enabled,
+        advice=cast(MMapAdvice, mmap_prefetch_advice),
+        window_mib=_require_positive_int(
+            mmap_prefetch["window_mib"], description="mmap.prefetch.window_mib"
+        ),
+        ahead_batches=_require_positive_int(
+            mmap_prefetch["ahead_batches"],
+            description="mmap.prefetch.ahead_batches",
+        ),
+    )
+    selection_resident = _require_bool(
+        selection_residency["enabled"],
+        description="selection_residency.enabled",
+    )
+    selection_resident_pin_memory = _require_bool(
+        selection_residency["pin_memory"],
+        description="selection_residency.pin_memory",
+    )
+    if selection_resident_pin_memory and not selection_resident:
+        raise ValueError(
+            "selection_residency.pin_memory requires selection residency enabled"
         )
     prepare_for_model = _require_bool(
         model_input["prepare_for_model"],
@@ -1004,6 +1922,11 @@ def load_data_load_config(
         cache_mode=cast(StorageMode, cache_mode),
         validate_values=cast(ValueValidation, validate_values),
         shuffle_partitions=shuffle_partitions,
+        mmap_access_order=cast(MMapAccessOrder, mmap_access_order),
+        mmap_batch_read=mmap_batch_read,
+        mmap_prefetch=mmap_prefetch_config,
+        selection_resident=selection_resident,
+        selection_resident_pin_memory=selection_resident_pin_memory,
         prepare_for_model=prepare_for_model,
         sanitize=sanitize,
         global_zscore=global_zscore,
@@ -1027,10 +1950,9 @@ class RuntimeDataLoader(DataLoader[dict[str, Any]]):
 
     def describe(self) -> dict[str, Any]:
         dataset = self.dataset
+        describe = getattr(dataset, "describe", None)
         return {
-            "dataset": dataset.describe()
-            if isinstance(dataset, RuntimeECGDataset)
-            else dataset.__class__.__name__,
+            "dataset": describe() if callable(describe) else dataset.__class__.__name__,
             "batch_size": self.batch_size,
             "num_workers": self.num_workers,
             "drop_last": self.drop_last,
@@ -1039,8 +1961,21 @@ class RuntimeDataLoader(DataLoader[dict[str, Any]]):
         }
 
     def close(self) -> None:
-        if isinstance(self.dataset, RuntimeECGDataset):
-            self.dataset.close()
+        # PyTorch keeps a persistent multiprocessing iterator on the loader.
+        # Closing only the mmap dataset leaves those workers alive when a
+        # caller creates one loader per evaluation view. Shut them down
+        # explicitly so sequential clean/corruption evaluation cannot leak
+        # four processes (and their inherited mappings) per view.
+        iterator = getattr(self, "_iterator", None)
+        try:
+            shutdown = getattr(iterator, "_shutdown_workers", None)
+            if callable(shutdown):
+                shutdown()
+        finally:
+            self._iterator = None
+            close = getattr(self.dataset, "close", None)
+            if callable(close):
+                close()
 
     def __enter__(self) -> RuntimeDataLoader:
         return self
@@ -1050,7 +1985,7 @@ class RuntimeDataLoader(DataLoader[dict[str, Any]]):
 
 
 def build_dataloader(
-    dataset: RuntimeECGDataset,
+    dataset: RuntimeECGDataset | SelectionResidentECGDataset,
     *,
     batch_size: int,
     shuffle: bool,
@@ -1064,8 +1999,10 @@ def build_dataloader(
 ) -> tuple[RuntimeDataLoader, DataLoaderSeedIdentity]:
     """Build a deterministic DataLoader and return its recorded seed identity."""
 
-    if not isinstance(dataset, RuntimeECGDataset):
-        raise TypeError("dataset must be a RuntimeECGDataset")
+    if not isinstance(dataset, (RuntimeECGDataset, SelectionResidentECGDataset)):
+        raise TypeError(
+            "dataset must be a RuntimeECGDataset or SelectionResidentECGDataset"
+        )
     if isinstance(batch_size, bool) or int(batch_size) <= 0:
         raise ValueError("batch_size must be positive")
     if isinstance(num_workers, bool) or int(num_workers) < 0:
@@ -1232,6 +2169,115 @@ def _resolve_runtime_seed_config(
     )
 
 
+class SequentialEvaluationDataSession:
+    """Reuse validated mmap caches and split selections across eval views.
+
+    ``get_dataloader`` has the same keyword interface as the module-level
+    function and is intended to be passed directly as an evaluation loader
+    factory. Loaders are strictly single-process and sequential. Closing one
+    loader releases only its lightweight dataset wrapper; the session owns and
+    closes the shared mmap handles on context exit.
+    """
+
+    def __init__(self) -> None:
+        self._caches: dict[tuple[Path, int], ECGCache] = {}
+        self._validation_levels: dict[tuple[Path, int], ValueValidation] = {}
+        self._selections: dict[
+            tuple[Path, int, Path, str, str | None], ECGSelection
+        ] = {}
+        self._closed = False
+
+    def _require_open(self) -> None:
+        if self._closed:
+            raise RuntimeError("sequential evaluation data session is closed")
+
+    def _acquire(
+        self,
+        *,
+        cache_dir: Path,
+        split_dir: Path,
+        partition: str,
+        logical_center: str | None,
+        sampling_rate_hz: int,
+        validate_values: ValueValidation,
+    ) -> tuple[ECGCache, ECGSelection]:
+        self._require_open()
+        cache_key = (cache_dir, int(sampling_rate_hz))
+        cache = self._caches.get(cache_key)
+        if cache is None:
+            cache = load_cache(
+                cache_dir,
+                sampling_rate_hz=sampling_rate_hz,
+                mode="mmap",
+                validate_values=validate_values,
+            )
+            self._caches[cache_key] = cache
+            self._validation_levels[cache_key] = validate_values
+        else:
+            rank = {"none": 0, "sample": 1, "full": 2}
+            completed = self._validation_levels[cache_key]
+            if rank[validate_values] > rank[completed]:
+                cache.validate_waveforms(full=validate_values == "full")
+                self._validation_levels[cache_key] = validate_values
+
+        selection_key = (
+            cache_dir,
+            int(sampling_rate_hz),
+            split_dir,
+            str(partition),
+            logical_center,
+        )
+        selection = self._selections.get(selection_key)
+        if selection is None:
+            selection = load_selection(
+                cache,
+                split_dir,
+                partition=partition,
+                logical_center=logical_center,
+            )
+            self._selections[selection_key] = selection
+        return cache, selection
+
+    def get_dataloader(self, **kwargs: Any) -> RuntimeDataLoader:
+        """Build one sequential loader while retaining shared session state."""
+
+        self._require_open()
+        if "evaluation_session" in kwargs:
+            raise ValueError("evaluation_session is owned by this factory")
+        return get_dataloader(evaluation_session=self, **kwargs)
+
+    def describe(self) -> dict[str, Any]:
+        return {
+            "closed": self._closed,
+            "cache_open_count": len(self._caches),
+            "selection_count": len(self._selections),
+            "caches": [
+                {
+                    **cache.describe(),
+                    "validated_values": self._validation_levels[key],
+                }
+                for key, cache in self._caches.items()
+            ],
+        }
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        for cache in self._caches.values():
+            cache.close()
+        self._caches.clear()
+        self._validation_levels.clear()
+        self._selections.clear()
+        self._closed = True
+
+    def __enter__(self) -> SequentialEvaluationDataSession:
+        self._require_open()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        self.close()
+
+
 def get_dataloader(
     *,
     dataset: RuntimeDatasetName,
@@ -1248,6 +2294,14 @@ def get_dataloader(
     prefetch_factor: int | None = None,
     cache_mode: StorageMode | None = None,
     validate_values: ValueValidation | None = None,
+    selection_resident: bool | None = None,
+    selection_resident_pin_memory: bool | None = None,
+    mmap_access_order: MMapAccessOrder | None = None,
+    mmap_batch_read: bool | None = None,
+    mmap_prefetch_enabled: bool | None = None,
+    mmap_prefetch_advice: MMapAdvice | None = None,
+    mmap_prefetch_window_mib: int | None = None,
+    mmap_prefetch_ahead_batches: int | None = None,
     prepare_for_model: bool | None = None,
     augmentation: Callable[[torch.Tensor], np.ndarray | torch.Tensor] | None = None,
     sanitize: bool | None = None,
@@ -1262,15 +2316,17 @@ def get_dataloader(
     corruption_cache_config_path: str | Path | None = None,
     cache_dir: str | Path | None = None,
     split_dir: str | Path | None = None,
+    evaluation_session: SequentialEvaluationDataSession | None = None,
 ) -> RuntimeDataLoader:
     """Return one ready-to-iterate loader for any managed ECG split.
 
     Supported requests are:
 
     - ``dataset="ptbxl"`` with ``train``, ``validation`` or ``test``;
-    - ``dataset="pn2021"`` with ``k500`` or either ref-excluded evaluation;
-    - ``dataset="pn2021c"`` with either corrupted ref-excluded evaluation and
-      an explicit ``view``.
+    - ``dataset="pn2021"`` with the full ``k500``, either managed K500 tuning
+      partition, or either ref-excluded evaluation;
+    - ``dataset="pn2021c"`` with frozen ``k500_tune_validation`` or corrupted
+      ref-excluded evaluation and an explicit ``view``.
 
     Omitted runtime arguments are loaded from ``config_root`` (the repository
     ``configs/`` by default); explicit config paths take precedence. Canonical
@@ -1350,6 +2406,88 @@ def get_dataloader(
         raise ValueError(
             "resolved validate_values must be none, sample or full"
         )
+    resolved_selection_resident = _require_bool(
+        data_load_config.selection_resident
+        if selection_resident is None
+        else selection_resident,
+        description="resolved selection_resident",
+    )
+    resolved_selection_resident_pin_memory = _require_bool(
+        data_load_config.selection_resident_pin_memory
+        if selection_resident_pin_memory is None
+        else selection_resident_pin_memory,
+        description="resolved selection_resident_pin_memory",
+    )
+    if resolved_selection_resident_pin_memory and not resolved_selection_resident:
+        raise ValueError(
+            "selection_resident_pin_memory requires selection_resident=true"
+        )
+    if shuffle is None:
+        resolved_shuffle = (
+            resolved_partition in data_load_config.shuffle_partitions
+            or (
+                resolved_partition == "k500_tune_train"
+                and "k500" in data_load_config.shuffle_partitions
+            )
+        )
+    else:
+        resolved_shuffle = _require_bool(shuffle, description="resolved shuffle")
+    requested_mmap_access_order = (
+        data_load_config.mmap_access_order
+        if mmap_access_order is None
+        else mmap_access_order
+    )
+    if requested_mmap_access_order not in {"split", "cache_index"}:
+        raise ValueError("resolved mmap_access_order must be split or cache_index")
+    resolved_mmap_batch_read = _require_bool(
+        data_load_config.mmap_batch_read
+        if mmap_batch_read is None
+        else mmap_batch_read,
+        description="resolved mmap_batch_read",
+    )
+    requested_prefetch_enabled = _require_bool(
+        data_load_config.mmap_prefetch.enabled
+        if mmap_prefetch_enabled is None
+        else mmap_prefetch_enabled,
+        description="resolved mmap_prefetch_enabled",
+    )
+    resolved_prefetch_advice = (
+        data_load_config.mmap_prefetch.advice
+        if mmap_prefetch_advice is None
+        else mmap_prefetch_advice
+    )
+    if resolved_prefetch_advice not in {"none", "sequential_willneed"}:
+        raise ValueError(
+            "resolved mmap_prefetch_advice must be none or sequential_willneed"
+        )
+    resolved_prefetch_window_mib = _require_positive_int(
+        data_load_config.mmap_prefetch.window_mib
+        if mmap_prefetch_window_mib is None
+        else mmap_prefetch_window_mib,
+        description="resolved mmap_prefetch_window_mib",
+    )
+    resolved_prefetch_ahead_batches = _require_positive_int(
+        data_load_config.mmap_prefetch.ahead_batches
+        if mmap_prefetch_ahead_batches is None
+        else mmap_prefetch_ahead_batches,
+        description="resolved mmap_prefetch_ahead_batches",
+    )
+    # Sorting a shuffled split would change its seeded training semantics. Keep
+    # training/K500 shuffle in persisted split order and reserve page-cache
+    # look-ahead for deterministic evaluation traversal.
+    resolved_mmap_access_order: MMapAccessOrder = (
+        "split" if resolved_shuffle else requested_mmap_access_order
+    )
+    resolved_mmap_prefetch = MMapPrefetchConfig(
+        enabled=(
+            requested_prefetch_enabled
+            and not resolved_shuffle
+            and resolved_cache_mode == "mmap"
+        ),
+        advice=cast(MMapAdvice, resolved_prefetch_advice),
+        window_mib=resolved_prefetch_window_mib,
+        ahead_batches=resolved_prefetch_ahead_batches,
+    )
     resolved_prepare_for_model = _require_bool(
         data_load_config.prepare_for_model
         if prepare_for_model is None
@@ -1402,6 +2540,53 @@ def get_dataloader(
             "num_workers > 0 requires cache_mode='mmap' to avoid one full "
             "cache copy per worker"
         )
+    if resolved_selection_resident:
+        clean_k500_residency = (
+            dataset == "pn2021"
+            and resolved_partition in PN2021_K500_PARTITIONS
+            and view is None
+        )
+        frozen_corruption_validation_residency = (
+            dataset == "pn2021c"
+            and resolved_partition == "k500_tune_validation"
+            and view is not None
+        )
+        if not (
+            clean_k500_residency or frozen_corruption_validation_residency
+        ):
+            raise ValueError(
+                "selection residency supports clean PN2021 K500 splits or one "
+                "explicit PN2021-C k500_tune_validation view"
+            )
+        if resolved_num_workers != 0:
+            raise ValueError("selection residency requires num_workers=0")
+        if resolved_persistent_workers:
+            raise ValueError("selection residency requires persistent_workers=false")
+        if resolved_cache_mode != "mmap":
+            raise ValueError("selection residency requires a mmap source cache")
+        if resolved_prepare_for_model:
+            raise ValueError(
+                "selection residency requires prepare_for_model=false raw K500 data"
+            )
+    if evaluation_session is not None:
+        if not isinstance(evaluation_session, SequentialEvaluationDataSession):
+            raise TypeError(
+                "evaluation_session must be a SequentialEvaluationDataSession"
+            )
+        if resolved_shuffle:
+            raise ValueError("sequential evaluation sessions require shuffle=false")
+        if resolved_num_workers != 0:
+            raise ValueError("sequential evaluation sessions require num_workers=0")
+        if resolved_persistent_workers:
+            raise ValueError(
+                "sequential evaluation sessions require persistent_workers=false"
+            )
+        if resolved_cache_mode != "mmap":
+            raise ValueError("sequential evaluation sessions require cache_mode=mmap")
+        if resolved_selection_resident:
+            raise ValueError(
+                "sequential evaluation sessions reject selection residency"
+            )
 
     resolved_cache_dir, resolved_split_dir = _resolve_runtime_locations(
         dataset=dataset,
@@ -1422,6 +2607,17 @@ def get_dataloader(
         )
     else:
         transform = None
+    shared_cache: ECGCache | None = None
+    shared_selection: ECGSelection | None = None
+    if evaluation_session is not None:
+        shared_cache, shared_selection = evaluation_session._acquire(
+            cache_dir=resolved_cache_dir,
+            split_dir=resolved_split_dir,
+            partition=resolved_partition,
+            logical_center=logical_center,
+            sampling_rate_hz=sampling_rate_hz,
+            validate_values=cast(ValueValidation, resolved_validate_values),
+        )
     runtime_dataset = RuntimeECGDataset(
         cache_dir=resolved_cache_dir,
         split_dir=resolved_split_dir,
@@ -1432,13 +2628,23 @@ def get_dataloader(
         view=view,
         transform=transform,
         validate_values=resolved_validate_values,
+        access_order=resolved_mmap_access_order,
+        batch_read=resolved_mmap_batch_read,
+        mmap_prefetch=resolved_mmap_prefetch,
+        shared_cache=shared_cache,
+        shared_selection=shared_selection,
     )
-    if shuffle is None:
-        resolved_shuffle = (
-            resolved_partition in data_load_config.shuffle_partitions
-        )
+    runtime_data: RuntimeECGDataset | SelectionResidentECGDataset
+    if resolved_selection_resident:
+        try:
+            runtime_data = SelectionResidentECGDataset(
+                runtime_dataset,
+                pin_memory=resolved_selection_resident_pin_memory,
+            )
+        finally:
+            runtime_dataset.close()
     else:
-        resolved_shuffle = _require_bool(shuffle, description="resolved shuffle")
+        runtime_data = runtime_dataset
     effective_namespace = seed_namespace or ":".join(
         (
             dataset,
@@ -1454,7 +2660,7 @@ def get_dataloader(
     )
     try:
         loader, _ = build_dataloader(
-            runtime_dataset,
+            runtime_data,
             batch_size=resolved_batch_size,
             shuffle=resolved_shuffle,
             num_workers=resolved_num_workers,
@@ -1476,6 +2682,15 @@ def get_dataloader(
             "shuffle": resolved_shuffle,
             "cache_mode": resolved_cache_mode,
             "validate_values": resolved_validate_values,
+            "selection_residency": {
+                "enabled": resolved_selection_resident,
+                "pin_memory": resolved_selection_resident_pin_memory,
+            },
+            "mmap": {
+                "access_order": resolved_mmap_access_order,
+                "batch_read": resolved_mmap_batch_read,
+                "prefetch": resolved_mmap_prefetch.describe(),
+            },
             "prepare_for_model": resolved_prepare_for_model,
             "sanitize": resolved_sanitize,
             "global_zscore": resolved_global_zscore,
@@ -1485,7 +2700,7 @@ def get_dataloader(
         loader.runtime_config_identity = config_identity
         return loader
     except Exception:
-        runtime_dataset.close()
+        runtime_data.close()
         raise
 
 
@@ -1498,10 +2713,17 @@ __all__ = [
     "DataLoaderSeedIdentity",
     "ECGModelTransform",
     "ECGSelection",
+    "MMapAccessOrder",
+    "MMapAdvice",
+    "MMapPrefetchConfig",
+    "MMapPrefetcher",
+    "PN2021_K500_PARTITIONS",
     "PN2021_PARTITIONS",
     "PTBXL_PARTITIONS",
     "RuntimeECGDataset",
     "RuntimeDataLoader",
+    "SelectionResidentECGDataset",
+    "SequentialEvaluationDataSession",
     "assert_disjoint_selections",
     "build_dataloader",
     "convert_layout",

@@ -1,0 +1,15 @@
+schema_version: 1
+
+experiment:
+  name: manual_refactor_pn2021_ecgfounder_direct_tune_ningbo
+  purpose: Tune the family-balanced ECGFounder Direct baseline on Ningbo train400 with frozen clean and twenty-view validation100.
+
+entrypoint:
+  name: tune_pn2021_direct
+  config: train/PN2021_direct_tune.yaml
+  arguments: [--model, ecgfounder, --center, ningbo]
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_pn2021_ecgfounder_direct_tune_ningbo_h20
+  if_exists: error
+  delegate_output_subdir: training

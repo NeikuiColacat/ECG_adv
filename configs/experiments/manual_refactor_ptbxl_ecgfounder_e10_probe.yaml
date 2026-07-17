@@ -1,0 +1,19 @@
+schema_version: 1
+
+experiment:
+  name: manual_refactor_ptbxl_ecgfounder_source_v1_e10_probe
+  purpose: Test whether extending the locked ECGFounder PTB-XL source recipe from 5 to 10 epochs improves fold9 macro AUPRC.
+
+entrypoint:
+  name: train_ptbxl_ecgfounder
+  config: train/PTBXL.yaml
+  # Single-variable sensitivity test: all locked defaults stay unchanged except
+  # for the explicitly recorded training horizon override.
+  arguments:
+    - --epochs
+    - "10"
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_ptbxl_ecgfounder_source_v1_e10_probe
+  if_exists: error
+  delegate_output_subdir: training

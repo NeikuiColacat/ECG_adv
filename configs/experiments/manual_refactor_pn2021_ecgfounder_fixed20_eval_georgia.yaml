@@ -1,0 +1,21 @@
+schema_version: 1
+
+experiment:
+  name: manual_refactor_pn2021_ecgfounder_fixed20_eval_georgia
+  purpose: Evaluate the full-K500 ECGFounder fixed20 Direct checkpoint on ref-excluded Georgia clean PN2021 and all twenty PN2021-C depth2/depth3 views.
+
+entrypoint:
+  name: evaluate_pn2021
+  config: eval/PN2021.yaml
+  arguments:
+    - --model
+    - ecgfounder
+    - --checkpoint
+    - /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_pn2021_ecgfounder_fixed20_refit_georgia/training/checkpoints/last.pt
+    - --center
+    - georgia
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_pn2021_ecgfounder_fixed20_eval_georgia
+  if_exists: error
+  delegate_output_subdir: evaluation

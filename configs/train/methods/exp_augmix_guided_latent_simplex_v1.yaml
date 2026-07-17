@@ -1,0 +1,108 @@
+schema_version: 1
+
+method:
+  id: exp_augmix_guided_latent_simplex_v1
+  profile_version: 1
+  api_version: 1
+  scientific_arm: experimental
+  status: experimental_unimplemented_nodes
+  description: Use raw AugMix response as a guide for a constrained latent-simplex hard view.
+
+nodes:
+  clean_identity:
+    type: identity_raw100_view
+    implementation: builtin
+    implementation_version: 1
+    status: implemented
+    inputs: {waveform: clean_raw}
+    outputs: {waveform: clean_view}
+  augmix_probe:
+    type: canonical_augmix_guidance_probe
+    implementation: null
+    implementation_version: 1
+    status: experimental_unimplemented
+    inputs:
+      waveform: clean_view
+      classifier: model
+      config: augmix_config
+      rng: augmix_rng
+    outputs:
+      waveform: augmix_probe_view
+      guidance: augmix_guidance
+      diagnostics: augmix_probe_diagnostics
+  guided_latent_simplex:
+    type: augmix_guided_latent_simplex_search
+    implementation: null
+    implementation_version: 1
+    status: experimental_unimplemented
+    inputs:
+      waveform: clean_view
+      targets: targets
+      hash_ids: hash_ids
+      guidance: augmix_guidance
+      latent_pool: latent_pool
+      decoder: vae_decoder
+      classifier: model
+      rng: simplex_rng
+    outputs:
+      waveform: guided_latent_view
+      simplex_state: latent_simplex_state
+      diagnostics: simplex_diagnostics
+
+inputs:
+  clean_raw:
+    type: ecg_waveform
+    domain: raw_mV
+    layout: batch_time_lead
+    sampling_rate_hz: 100
+    points: 1000
+    leads: 12
+  targets: {type: multilabel_targets, class_order: [CD, HYP, MI, NORM, STTC]}
+  hash_ids: {type: unique_record_ids}
+
+outputs:
+  clean_view: {type: ecg_waveform, source: clean_identity.waveform}
+  augmix_probe_view: {type: ecg_waveform, source: augmix_probe.waveform}
+  augmix_guidance: {type: detached_per_record_guidance, source: augmix_probe.guidance}
+  guided_latent_view: {type: ecg_waveform, source: guided_latent_simplex.waveform}
+  latent_simplex_state: {type: checkpointed_method_state, source: guided_latent_simplex.simplex_state}
+  method_diagnostics:
+    type: namespaced_method_diagnostics
+    sources: [augmix_probe.diagnostics, guided_latent_simplex.diagnostics]
+
+objective:
+  eligibility_scaling: eligible_count_over_batch_size
+  terms:
+    - {id: clean_bce, type: multilabel_bce_with_logits, view: clean_view, targets: targets, weight: 1.0}
+    - {id: guided_latent_bce, type: multilabel_bce_with_logits, view: guided_latent_view, targets: targets, weight: 1.0}
+    - id: guided_consistency
+      type: multilabel_bernoulli_jsd
+      views: [clean_view, augmix_probe_view, guided_latent_view]
+      weight: 2.0
+
+resources:
+  model: {type: caller_owned_classifier}
+  vae: {type: config_reference, path: train/vae.yaml}
+  latent_pool: {type: runtime_train_only_exact_label_pool}
+  vae_decoder: {type: runtime_frozen_decoder}
+  augmix_config: {type: config_reference, path: train/augmix.yaml}
+  augmix_rng:
+    type: isolated_torch_generator
+    seed_config: random_seed.yaml
+    namespace: exp_augmix_guided_latent_simplex_v1_probe
+  simplex_rng:
+    type: isolated_torch_generator
+    seed_config: random_seed.yaml
+    namespace: exp_augmix_guided_latent_simplex_v1_simplex
+
+contracts:
+  normalization_owner: online_trainer
+  optimizer_owner: online_trainer
+  canonical_input_output_sampling_rate_hz: 100
+  augmix_operator_domain_sampling_rate_hz: 500
+  augmix_guidance_must_be_detached_before_simplex_search: true
+  latent_candidates_exact_label_non_self: true
+  norm_abnormal_latent_mix_allowed: false
+  simplex_state_checkpoint_required: true
+  one_outer_optimizer_step_per_clean_batch: true
+  executable: false

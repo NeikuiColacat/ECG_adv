@@ -7,6 +7,8 @@ artifacts/
 checkpoints/
 mlruns/
 wandb/
+tensorboard/
+events.out.tfevents.*
 *.pt
 *.pth
 *.ckpt

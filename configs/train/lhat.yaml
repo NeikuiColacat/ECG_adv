@@ -34,7 +34,9 @@ hull_attack:
 
 decoder_bridge:
   native_points: 1024
-  first_bottleneck_points: 1000
+  canonical_domain:
+    sampling_rate_hz: 100
+    points: 1000
   interpolation: linear_align_corners
   model_domains:
     efficientnet1dv2:

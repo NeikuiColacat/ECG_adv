@@ -1,0 +1,78 @@
+schema_version: 1
+
+baseline:
+  id: ptbxl_super5_source_v1
+  status: locked_single_seed
+  locked_on: "2026-07-17"
+  decision_log: docs/baselines/ptbxl_source_v1.md
+  training_config: train/PTBXL.yaml
+  training_config_sha256: ff984500052e0e64e245c68b8c51a1080efd7bd375c70a44dbd49bf9a9cf9f4c
+  random_seed_config: random_seed.yaml
+  random_seed_config_sha256: 8b337606c43b6fec2959dd185477ce32f48b139f5fce5112ee26efe58eb4bbbc
+  selection_rule: fold9_best_macro_auprc
+  final_evaluation: fold10_once_after_restoring_best
+  class_order: [CD, HYP, MI, NORM, STTC]
+  normalization: per_sample_global_zscore
+
+models:
+  efficientnet1dv2:
+    experiment_config: experiments/manual_refactor_ptbxl_effnet.yaml
+    run_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_ptbxl_effnet_source_v1
+    selected_checkpoint: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_ptbxl_effnet_source_v1/training/checkpoints/best.pt
+    selected_checkpoint_sha256: fff9bd293677be54a606e28775c66d410d55b0ad7440a4e7fbde55357ec13e68
+    selected_epoch: 17
+    fold9:
+      macro_auroc: 0.9101598501244723
+      macro_auprc: 0.7790583673241367
+    fold10:
+      sample_count: 2158
+      macro_auroc: 0.9012814737298787
+      macro_auprc: 0.7679513573583656
+    tensorboard_log_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_ptbxl_effnet_source_v1/training/tensorboard
+
+  ecgfounder:
+    experiment_config: experiments/manual_refactor_ptbxl_ecgfounder.yaml
+    pretrained_checkpoint: /home/linbinhao/ECG_adv_data/ecgfounder/checkpoint/12_lead_ECGFounder.pth
+    pretrained_checkpoint_sha256: ee199f3781f4ae1f732973267f003da0a759ea12bddb0dd28a77faa60aca7997
+    trainable_scope: full
+    run_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_ptbxl_ecgfounder_source_v1
+    selected_checkpoint: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_ptbxl_ecgfounder_source_v1/training/checkpoints/best.pt
+    selected_checkpoint_sha256: c23ec4361b097b74a4efed427488c4dd6a3753adfc75f7d1fc281e4df0989948
+    selected_epoch: 4
+    fold9:
+      macro_auroc: 0.9288568848107241
+      macro_auprc: 0.8178208069430708
+    fold10:
+      sample_count: 2158
+      macro_auroc: 0.9294071005568604
+      macro_auprc: 0.8241644199783998
+    tensorboard_log_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_ptbxl_ecgfounder_source_v1/training/tensorboard
+
+downstream_policy:
+  checkpoint_field: selected_checkpoint
+  require_sha256_match: true
+  prohibit_last_checkpoint: true
+  note: All downstream PTB-XL-to-PN2021 experiments must start from these registered best.pt checkpoints unless a new versioned baseline registry replaces this file.
+
+sensitivity_evidence:
+  ecgfounder_e10_probe:
+    status: completed_not_adopted
+    changed_variable: epochs_5_to_10
+    experiment_config: experiments/manual_refactor_ptbxl_ecgfounder_e10_probe.yaml
+    experiment_config_sha256: 00bdf2c2742a40db22ecfd30eef1ed48284d1a3a437db4a83b1d328db22d0575
+    run_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_ptbxl_ecgfounder_source_v1_e10_probe
+    selected_checkpoint: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_ptbxl_ecgfounder_source_v1_e10_probe/training/checkpoints/best.pt
+    selected_checkpoint_sha256: efdda348ede549b40843b655d1a61d05536805b470d3af26e8060c673d0f6116
+    selected_epoch: 3
+    fold9:
+      macro_auroc: 0.9264162090379221
+      macro_auprc: 0.8166351325551062
+    fold10:
+      sample_count: 2158
+      macro_auroc: 0.9266822270396297
+      macro_auprc: 0.8203571196645159
+    epoch10_fold9:
+      loss: 0.5590736095525345
+      macro_auroc: 0.9034021126361941
+      macro_auprc: 0.7742166717996989
+    conclusion: Epochs 6 through 10 showed monotonic overfitting and did not improve the locked 5-epoch source baseline.

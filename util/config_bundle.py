@@ -12,6 +12,7 @@ CONFIG_SECTION_NAMES = {
     "augmentation",
     "data",
     "defaults",
+    "eval",
     "experiments",
     "local",
     "train",
@@ -42,10 +43,17 @@ def config_bundle_root(
     owner = resolve_entry_config_path(owner_config_path)
     if config_root is not None:
         root = Path(config_root).expanduser().resolve()
-    elif owner.parent.name in CONFIG_SECTION_NAMES:
-        root = owner.parent.parent
     else:
+        # A portable bundle may organize one section more deeply, for example
+        # ``<bundle>/train/methods/a5.yaml``.  Locate the nearest ancestor for
+        # which the owner's first relative component is a known top-level
+        # section instead of assuming every YAML is directly inside it.
         root = owner.parent
+        for candidate in owner.parents:
+            relative = owner.relative_to(candidate)
+            if len(relative.parts) >= 2 and relative.parts[0] in CONFIG_SECTION_NAMES:
+                root = candidate
+                break
     try:
         owner.relative_to(root)
     except ValueError:

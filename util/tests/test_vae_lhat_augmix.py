@@ -130,18 +130,23 @@ class _TinyDecoder(nn.Module):
 
 
 class _TinyClassifier(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.seen_points: list[int] = []
+
     def forward(self, signal_bct: torch.Tensor) -> torch.Tensor:
+        self.seen_points.append(int(signal_bct.shape[-1]))
         features = signal_bct[:, :, : signal_bct.shape[-1] // 2].mean(dim=(1, 2))
         return features.unsqueeze(1).repeat(1, 5)
 
 
 @pytest.mark.parametrize(
-    ("model_name", "expected_points"),
+    ("model_name", "expected_classifier_points"),
     (("efficientnet1dv2", 1000), ("ecgfounder", 5000)),
 )
 def test_lhat_attack_returns_raw_chain3_and_non_null_diagnostics(
     model_name: str,
-    expected_points: int,
+    expected_classifier_points: int,
 ) -> None:
     config = load_lhat_config()
     assert config.num_candidates == 20
@@ -164,8 +169,9 @@ def test_lhat_attack_returns_raw_chain3_and_non_null_diagnostics(
     candidate_std = standardizer.transform(candidates)
     labels = torch.tensor([[1, 0, 0, 0, 0], [0, 1, 0, 0, 0]], dtype=torch.float32)
 
+    classifier = _TinyClassifier()
     result = generate_lhat_adversarial(
-        classifier=_TinyClassifier(),
+        classifier=classifier,
         decoder=_TinyDecoder(),
         anchor_standardized=anchor_std,
         candidates_standardized=candidate_std,
@@ -174,7 +180,9 @@ def test_lhat_attack_returns_raw_chain3_and_non_null_diagnostics(
         model_name=model_name,
         config=config,
     )
-    assert result.waveform_raw.shape == (2, expected_points, 12)
+    assert result.waveform_raw.shape == (2, 1000, 12)
+    assert classifier.seen_points
+    assert set(classifier.seen_points) == {expected_classifier_points}
     assert result.latent_standardized.shape == anchor.shape
     assert result.weights.shape == (2, 20)
     torch.testing.assert_close(result.weights.sum(dim=1), torch.ones(2))
@@ -185,16 +193,24 @@ def test_lhat_attack_returns_raw_chain3_and_non_null_diagnostics(
     assert result.diagnostics.mean_dict()["decoded_invalid_rate"] == 0.0
 
 
-@pytest.mark.parametrize(
-    ("sampling_rate_hz", "points"), ((100, 1000), (500, 5000))
-)
-def test_three_chain_augmix_is_deterministic_and_keeps_chain3_unmodified(
-    sampling_rate_hz: int,
-    points: int,
-) -> None:
+def test_three_chain_augmix_is_deterministic_and_keeps_chain3_unmodified() -> None:
+    sampling_rate_hz = 100
+    points = 1000
     config = load_augmix_config()
     assert config.width == 3
     assert config.depths == (2, 3)
+    assert (
+        config.input_sampling_rate_hz,
+        config.operator_domain_sampling_rate_hz,
+        config.output_sampling_rate_hz,
+    ) == (100, 500, 100)
+    assert (
+        config.input_points,
+        config.operator_domain_points,
+        config.output_points,
+    ) == (1000, 5000, 1000)
+    assert config.interpolation_mode == "linear"
+    assert config.interpolation_align_corners is True
     assert config.chain_roles == (
         "paper_anchored_s5_corruption_chain",
         "paper_anchored_s5_corruption_chain",
@@ -219,13 +235,28 @@ def test_three_chain_augmix_is_deterministic_and_keeps_chain3_unmodified(
         config=config,
         generator=make_torch_generator("cpu", "test_augmix_same"),
     )
+    raw_only = generate_three_chain_augmix(
+        clean,
+        adversarial,
+        sampling_rate_hz=sampling_rate_hz,
+        config=config,
+        generator=make_torch_generator("cpu", "test_augmix_same"),
+        include_normalized=False,
+    )
     assert first.mixed_raw.shape == first.mixed_normalized.shape == clean.shape
+    assert raw_only.mixed_normalized is None
+    torch.testing.assert_close(raw_only.mixed_raw, first.mixed_raw)
     torch.testing.assert_close(first.chain3_raw, adversarial)
     torch.testing.assert_close(first.mixed_raw, second.mixed_raw)
     torch.testing.assert_close(first.mixture_weights, second.mixture_weights)
     torch.testing.assert_close(first.mixture_weights.sum(dim=1), torch.ones(3))
     assert set(first.chain1_depth.tolist()).issubset({2, 3})
     assert set(first.chain2_depth.tolist()).issubset({2, 3})
+    assert first.operator_domain_sampling_rate_hz == 500
+    assert first.chain1_operator_mask.shape == (3, 5)
+    assert first.chain2_operator_mask.shape == (3, 5)
+    assert torch.count_nonzero(first.chain1_output_nonfinite_count) == 0
+    assert torch.count_nonzero(first.chain2_output_nonfinite_count) == 0
     torch.testing.assert_close(clean, clean_before)
     torch.testing.assert_close(adversarial, adversarial_before)
 
@@ -241,10 +272,59 @@ def test_three_chain_augmix_is_deterministic_and_keeps_chain3_unmodified(
     torch.testing.assert_close(first.mixed_raw, expected)
 
 
+def test_three_chain_augmix_rejects_noncanonical_500hz_input() -> None:
+    clean = torch.zeros(2, 5000, 12)
+    with pytest.raises(ValueError, match="only canonical raw 100 Hz"):
+        generate_three_chain_augmix(
+            clean,
+            clean,
+            sampling_rate_hz=500,
+            config=load_augmix_config(),
+            generator=make_torch_generator("cpu", "test_augmix_500_rejected"),
+        )
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is unavailable")
+def test_augmix_accepts_current_cuda_alias_for_explicit_generator_device() -> None:
+    config = load_augmix_config()
+    device = torch.device("cuda")
+    clean = torch.linspace(
+        -0.5,
+        0.5,
+        1000 * 12,
+        device=device,
+        dtype=torch.float32,
+    ).reshape(1, 1000, 12)
+    result = generate_three_chain_augmix(
+        clean,
+        clean,
+        sampling_rate_hz=100,
+        config=config,
+        generator=make_torch_generator(device, "test_augmix_cuda_alias"),
+    )
+    assert result.mixed_raw.device.type == "cuda"
+    assert torch.isfinite(result.mixed_raw).all()
+
+
 def test_multilabel_jsd_is_zero_for_identical_logits() -> None:
     logits = torch.randn(4, 5)
     loss = multilabel_jsd((logits, logits.clone(), logits.clone()))
     torch.testing.assert_close(loss, torch.zeros_like(loss), atol=1e-7, rtol=0)
+
+
+def test_multilabel_jsd_computes_low_precision_logits_in_float32() -> None:
+    first = torch.tensor(
+        [[-8.0, -2.0, 0.0, 2.0, 8.0]], dtype=torch.bfloat16, requires_grad=True
+    )
+    second = (-first.detach()).requires_grad_(True)
+
+    loss = multilabel_jsd((first, second))
+
+    assert loss.dtype == torch.float32
+    assert torch.isfinite(loss)
+    loss.backward()
+    assert first.grad is not None and torch.isfinite(first.grad).all()
+    assert second.grad is not None and torch.isfinite(second.grad).all()
 
 
 def test_new_online_modules_only_import_manual_whitelist_surfaces() -> None:
@@ -256,8 +336,10 @@ def test_new_online_modules_only_import_manual_whitelist_surfaces() -> None:
         "hashlib",
         "functools",
         "itertools",
+        "json",
         "math",
         "pathlib",
+        "time",
         "typing",
         "torch",
         "yaml",
@@ -265,7 +347,13 @@ def test_new_online_modules_only_import_manual_whitelist_surfaces() -> None:
         "util",
         "core",
     }
-    for relative in ("models/vae.py", "core/lhat.py", "core/augmix.py"):
+    for relative in (
+        "models/vae.py",
+        "core/corruption.py",
+        "core/lhat.py",
+        "core/augmix.py",
+        "core/online_trainer.py",
+    ):
         tree = ast.parse((ROOT / relative).read_text(encoding="utf-8"))
         roots: set[str] = set()
         for node in ast.walk(tree):

@@ -5,7 +5,7 @@ schema_version: 1
 # batch sizes without changing this file.
 dataloader:
   batch_size: 64
-  num_workers: 4
+  num_workers: 1
   pin_memory: true
   persistent_workers: true
   prefetch_factor: 2
@@ -18,6 +18,25 @@ dataloader:
 
   # Evaluation partitions remain sequential by default.
   shuffle_partitions: [train, k500]
+
+# HDD/mmap evaluation reads in cache-index order and asks Linux to begin paging
+# in a small number of upcoming batches. Shuffled train/K500 loaders force
+# split order and disable these hints automatically.
+mmap:
+  access_order: cache_index
+  batch_read: true
+  prefetch:
+    enabled: true
+    advice: sequential_willneed
+    window_mib: 1024
+    ahead_batches: 2
+
+# K500-only fast path. Training profiles opt in explicitly; the selected
+# records are gathered once into contiguous CPU storage and the source mmap is
+# closed before optimization begins.
+selection_residency:
+  enabled: false
+  pin_memory: false
 
 model_input:
   prepare_for_model: true
