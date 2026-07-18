@@ -1,5 +1,5 @@
 schema_version: 1
-profile_name: pn2021_k500_method_graph_v1
+profile_name: pn2021_k500_matched_lr3e5_comparison
 
 references:
   split_config: data/splits.yaml
@@ -8,7 +8,7 @@ references:
   source_baseline_registry: baselines/ptbxl_source_v1.yaml
 
 protocol:
-  status: exploratory_locked_mechanism
+  status: locked_matched_k500_comparison
   centers: [ningbo, chapman_shaoxing, cpsc_2018, georgia]
   merge_cpsc_2018_extra_into_cpsc_2018: true
   partition: k500
@@ -19,14 +19,20 @@ protocol:
   mapping_version: v7_super5_sjr_rgq_review_20260528
   mapping_hash: 555ec85d5b51
   class_order: [CD, HYP, MI, NORM, STTC]
+  tuning:
+    train_partition: k500_tune_train
+    validation_partition: k500_tune_validation
+    train_records_per_center: 400
+    validation_records_per_center: 100
 
 random_seed:
-  stream_namespace: pn2021_online_training
-  comparison_group: pn2021_k500_matched_v1
+  stream_namespace: pn2021_fixed20_family_balanced_training
+  comparison_group: pn2021_direct_depth23_fixed20_family_balanced
   replicate_id: 0
   deterministic_algorithms: false
 
 fairness:
+  budget_policy: matched_base
   method_profile_required: true
   matched_outer_optimizer_steps: true
   same_source_checkpoint_required: true
@@ -79,9 +85,9 @@ training:
       weight_decay: 1.0e-4
       minimum_learning_rate_ratio: 0.01
     ecgfounder:
-      epochs: 10
+      epochs: 20
       batch_size: 64
-      learning_rate: 2.0e-5
+      learning_rate: 3.0e-5
       weight_decay: 1.0e-4
       minimum_learning_rate_ratio: 0.01
 
@@ -117,7 +123,7 @@ logging:
       raw_arrays_subdir: samples
 
 output:
-  root_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor/pn2021_k500
+  root_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor/pn2021_k500_matched_lr3e5
   if_exists: error
   checkpoint_write_policy: final_only
   checkpoints_dir: checkpoints

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
+
+import yaml
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -92,10 +94,61 @@ def resolve_config_reference(
     return resolved
 
 
+def _yaml_references(value: Any) -> list[str]:
+    references: list[str] = []
+    if isinstance(value, dict):
+        if value.get("config_closure") == "snapshot_only":
+            return references
+        for child in value.values():
+            references.extend(_yaml_references(child))
+    elif isinstance(value, (list, tuple)):
+        for child in value:
+            references.extend(_yaml_references(child))
+    elif isinstance(value, str) and Path(value).suffix.lower() in {".yaml", ".yml"}:
+        references.append(value)
+    return references
+
+
+def resolve_yaml_config_closure(
+    entry_paths: Sequence[str | Path],
+    *,
+    config_root: str | Path,
+) -> tuple[Path, ...]:
+    """Resolve the transitive YAML closure used by managed run snapshots."""
+
+    root = Path(config_root).expanduser().resolve()
+    ordered = [resolve_entry_config_path(path) for path in entry_paths]
+    seen: set[Path] = set()
+    index = 0
+    while index < len(ordered):
+        path = ordered[index].resolve()
+        index += 1
+        if path in seen:
+            continue
+        seen.add(path)
+        if not path.is_file():
+            raise FileNotFoundError(f"config closure entry not found: {path}")
+        payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError(f"config closure YAML must be a mapping: {path}")
+        for raw_reference in _yaml_references(payload):
+            referenced = resolve_config_reference(
+                raw_reference,
+                owner_config_path=path,
+                config_root=root,
+                description=f"YAML reference in {path.name}",
+                must_exist=True,
+            )
+            if referenced not in seen and referenced not in ordered:
+                ordered.append(referenced)
+    return tuple(path.resolve() for path in ordered)
+
+
 __all__ = [
     "CONFIG_SECTION_NAMES",
     "DEFAULT_CONFIG_ROOT",
     "config_bundle_root",
     "resolve_config_reference",
     "resolve_entry_config_path",
+    "resolve_yaml_config_closure",
 ]

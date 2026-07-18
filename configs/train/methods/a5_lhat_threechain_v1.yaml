@@ -153,5 +153,10 @@ contracts:
   augmix_chain3_additional_corruption: false
   quality_rejected_anchor_policy: clean_loss_only
   one_outer_optimizer_step_per_clean_batch: true
+  batch_norm_running_stats_policy: objective_view_weighted_once_per_base_batch
+  batch_norm_objective_view_weights:
+    clean_view: 0.3333333333333333
+    lhat_view: 0.3333333333333333
+    augmix_view: 0.3333333333333333
   complete_k500_base_record_exposure: true
   heldout_target_feedback_allowed: false

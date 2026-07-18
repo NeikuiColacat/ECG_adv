@@ -1,12 +1,12 @@
 schema_version: 1
 
 method:
-  id: exp_paired_augmix_latent_bridge_v1
+  id: latent_threechain_augmix_residual_depth23_aug075
   profile_version: 1
   api_version: 1
-  scientific_arm: experimental
-  status: experimental_unimplemented_nodes
-  description: Couple paired raw AugMix mixtures through a shared latent bridge state.
+  scientific_arm: latent_augmix
+  status: project_defined_candidate
+  description: Supervised dual latent AugMix views with residual bypass, depth2/3 chains, and 0.75 BCE per augmented view.
 
 nodes:
   clean_identity:
@@ -14,40 +14,38 @@ nodes:
     implementation: builtin
     implementation_version: 1
     status: implemented
-    inputs: {waveform: clean_raw}
-    outputs: {waveform: clean_view}
-  latent_bridge:
-    type: paired_latent_bridge
-    implementation: null
+    inputs:
+      waveform: clean_raw
+    outputs:
+      waveform: clean_view
+  augmix_view_1:
+    type: latent_threechain_augmix_view
+    implementation: registered
     implementation_version: 1
-    status: experimental_unimplemented
+    status: implemented
     inputs:
       waveform: clean_view
-      targets: targets
-      hash_ids: hash_ids
-      latent_pool: latent_pool
+      encoder: vae_encoder
       decoder: vae_decoder
-      rng: latent_bridge_rng
-    outputs:
-      left_waveform: latent_left_view
-      right_waveform: latent_right_view
-      bridge_state: latent_bridge_state
-      diagnostics: latent_bridge_diagnostics
-  paired_augmix:
-    type: paired_threechain_augmix_views
-    implementation: null
-    implementation_version: 1
-    status: experimental_unimplemented
-    inputs:
-      clean_waveform: clean_view
-      left_chain3_waveform: latent_left_view
-      right_chain3_waveform: latent_right_view
       config: augmix_config
-      rng: augmix_rng
+      rng: latent_augmix_rng
     outputs:
-      left_waveform: paired_augmix_left_view
-      right_waveform: paired_augmix_right_view
-      diagnostics: paired_augmix_diagnostics
+      waveform: augmix_view_1
+      diagnostics: augmix_view_1_diagnostics
+  augmix_view_2:
+    type: latent_threechain_augmix_view
+    implementation: registered
+    implementation_version: 1
+    status: implemented
+    inputs:
+      waveform: clean_view
+      encoder: vae_encoder
+      decoder: vae_decoder
+      config: augmix_config
+      rng: latent_augmix_rng
+    outputs:
+      waveform: augmix_view_2
+      diagnostics: augmix_view_2_diagnostics
 
 inputs:
   clean_raw:
@@ -57,54 +55,99 @@ inputs:
     sampling_rate_hz: 100
     points: 1000
     leads: 12
-  targets: {type: multilabel_targets, class_order: [CD, HYP, MI, NORM, STTC]}
-  hash_ids: {type: unique_record_ids}
+  targets:
+    type: multilabel_targets
+    class_order: [CD, HYP, MI, NORM, STTC]
+  hash_ids:
+    type: unique_record_ids
 
 outputs:
-  clean_view: {type: ecg_waveform, source: clean_identity.waveform}
-  latent_left_view: {type: ecg_waveform, source: latent_bridge.left_waveform}
-  latent_right_view: {type: ecg_waveform, source: latent_bridge.right_waveform}
-  paired_augmix_left_view: {type: ecg_waveform, source: paired_augmix.left_waveform}
-  paired_augmix_right_view: {type: ecg_waveform, source: paired_augmix.right_waveform}
-  latent_bridge_state: {type: checkpointed_method_state, source: latent_bridge.bridge_state}
-  method_diagnostics:
+  clean_view:
+    type: ecg_waveform
+    source: clean_identity.waveform
+    domain: raw_mV
+    sampling_rate_hz: 100
+    points: 1000
+  augmix_view_1:
+    type: ecg_waveform
+    source: augmix_view_1.waveform
+    domain: raw_mV
+    sampling_rate_hz: 100
+    points: 1000
+  augmix_view_2:
+    type: ecg_waveform
+    source: augmix_view_2.waveform
+    domain: raw_mV
+    sampling_rate_hz: 100
+    points: 1000
+  augmix_view_1_diagnostics:
     type: namespaced_method_diagnostics
-    sources: [latent_bridge.diagnostics, paired_augmix.diagnostics]
+    source: augmix_view_1.diagnostics
+  augmix_view_2_diagnostics:
+    type: namespaced_method_diagnostics
+    source: augmix_view_2.diagnostics
 
 objective:
   eligibility_scaling: eligible_count_over_batch_size
   terms:
-    - {id: clean_bce, type: multilabel_bce_with_logits, view: clean_view, targets: targets, weight: 1.0}
-    - {id: left_bce, type: multilabel_bce_with_logits, view: paired_augmix_left_view, targets: targets, weight: 1.0}
-    - {id: right_bce, type: multilabel_bce_with_logits, view: paired_augmix_right_view, targets: targets, weight: 1.0}
-    - id: paired_consistency
+    - id: clean_bce
+      type: multilabel_bce_with_logits
+      view: clean_view
+      targets: targets
+      weight: 1.0
+    - id: clean_augmix_jsd
       type: multilabel_bernoulli_jsd
-      views: [clean_view, paired_augmix_left_view, paired_augmix_right_view]
-      weight: 2.0
+      views: [clean_view, augmix_view_1, augmix_view_2]
+      weight: 3.0
+    - id: augmix_view_1_bce
+      type: multilabel_bce_with_logits
+      view: augmix_view_1
+      targets: targets
+      weight: 0.75
+    - id: augmix_view_2_bce
+      type: multilabel_bce_with_logits
+      view: augmix_view_2
+      targets: targets
+      weight: 0.75
 
 resources:
-  model: {type: caller_owned_classifier}
-  vae: {type: config_reference, path: train/vae.yaml}
-  latent_pool: {type: runtime_train_only_exact_label_pool}
-  vae_decoder: {type: runtime_frozen_decoder}
-  augmix_config: {type: config_reference, path: train/augmix.yaml}
-  latent_bridge_rng:
+  model:
+    type: caller_owned_classifier
+  vae:
+    type: config_reference
+    path: train/vae.yaml
+  vae_encoder:
+    type: runtime_frozen_encoder
+  vae_decoder:
+    type: runtime_frozen_decoder
+  augmix_config:
+    type: config_reference
+    path: train/augmix.yaml
+  latent_augmix_rng:
     type: isolated_torch_generator
     seed_config: random_seed.yaml
-    namespace: exp_paired_augmix_latent_bridge_v1_bridge
-  augmix_rng:
-    type: isolated_torch_generator
-    seed_config: random_seed.yaml
-    namespace: exp_paired_augmix_latent_bridge_v1_augmix
+    namespace: ecg_manual_refactor_latent_threechain_augmix
 
 contracts:
   normalization_owner: online_trainer
   optimizer_owner: online_trainer
   canonical_input_output_sampling_rate_hz: 100
-  augmix_operator_domain_sampling_rate_hz: 500
-  paired_views_share_one_declared_latent_bridge_state: true
-  each_augmix_chain3_uses_its_corresponding_latent_view: true
-  chain3_additional_corruption: false
-  bridge_state_checkpoint_required: true
+  operator_domain_sampling_rate_hz: 500
+  chain_width: 3
+  chain_depth_sampling: uniform_integer_2_to_3
+  operator_sampling: random_subset_without_replacement
+  operator_application_order: canonical_order
+  latent_mixing: dirichlet_alpha_1
+  vae_posterior: deterministic_mean
+  reconstruction_residual_bypass: weighted_chain_residuals
+  post_decode_clean_beta_mix: false
+  objective: clean_bce_plus_two_0p75_view_bce_plus_3x_jsd
+  batch_norm_running_stats_policy: objective_view_weighted_once_per_base_batch
+  batch_norm_objective_view_weights:
+    clean_view: 0.5
+    augmix_view_1: 0.25
+    augmix_view_2: 0.25
   one_outer_optimizer_step_per_clean_batch: true
-  executable: false
+  complete_k500_base_record_exposure: true
+  heldout_target_feedback_allowed: false
+  executable: true

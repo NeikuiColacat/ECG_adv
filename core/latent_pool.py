@@ -96,10 +96,20 @@ def _module_device(
         raise ValueError("VAE encoder parameters and buffers must share one device")
     current = next(iter(devices), torch.device("cpu"))
     resolved = current if requested is None else torch.device(requested)
-    if devices and resolved != current:
-        raise ValueError(
-            f"requested device {resolved} does not match encoder device {current}"
-        )
+    if devices:
+        same_device = resolved == current
+        if resolved.type == current.type == "cuda":
+            default_index = torch.cuda.current_device()
+            resolved_index = (
+                default_index if resolved.index is None else resolved.index
+            )
+            current_index = default_index if current.index is None else current.index
+            same_device = resolved_index == current_index
+        if not same_device:
+            raise ValueError(
+                f"requested device {resolved} does not match encoder device {current}"
+            )
+        return current
     return resolved
 
 

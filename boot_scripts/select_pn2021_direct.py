@@ -1,4 +1,4 @@
-"""Select one global Direct baseline epoch from four center tuning runs."""
+"""Select one global epoch from four managed PN2021 tuning runs."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ FAILED_CLEAN_FLOOR_EXIT_CODE = 3
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Pool four Direct validation100 runs and select global E*."
+        description="Pool four PN2021 validation100 runs and select global E*."
     )
     parser.add_argument("--config", type=Path, default=DEFAULT_DIRECT_TUNE_CONFIG)
     parser.add_argument("--config-root", type=Path)
@@ -115,7 +115,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         None if args.output_dir is None else args.output_dir.expanduser().resolve()
     )
     plan = {
-        "action": "select_pn2021_direct_global_epoch",
+        "action": (
+            "select_pn2021_direct_global_epoch"
+            if config.method_id == "direct_depth23_fixed20"
+            else "select_pn2021_global_epoch"
+        ),
         "config": config.describe(),
         "center_run_dirs": {
             center: str(center_dirs[center]) for center in config.centers
@@ -154,7 +158,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if status == "failed_clean_floor":
         return FAILED_CLEAN_FLOOR_EXIT_CODE
-    raise RuntimeError(f"unexpected Direct selection status: {status!r}")
+    raise RuntimeError(f"unexpected PN2021 selection status: {status!r}")
 
 
 if __name__ == "__main__":

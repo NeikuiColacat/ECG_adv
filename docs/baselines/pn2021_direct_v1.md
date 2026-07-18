@@ -51,6 +51,81 @@ Clean-to-PN2021-C degradation on the primary all-zero-kept view:
 | EfficientNet1DV2 | 4.007 pp | 6.712 pp |
 | ECGFounder | 5.954 pp | 8.588 pp |
 
+## Matched LR attribution control and latent-threechain candidate
+
+The original `2e-5` Direct baseline above remains frozen. A single-variable
+ECGFounder control then changed only the learning rate to `3e-5`; the same
+`3e-5`, 20-epoch cosine horizon and globally selected epoch 19 were used for
+the latent-threechain candidate. Selection continued to use only the pooled
+four-center K500-internal validation400 contract.
+
+| ECGFounder arm | Internal clean AUPRC | Internal robust AUPRC | Score | Selected epoch |
+|---|---:|---:|---:|---:|
+| Direct, LR `2e-5` | 0.820272 | 0.724349 | 0.772310 | 20 |
+| Direct, LR `3e-5` | 0.837184 | 0.750341 | 0.793762 | 19 |
+| Latent-threechain, LR `3e-5` | 0.838297 | 0.756702 | 0.797499 | 19 |
+
+Held-out four-center all-zero-kept results:
+
+| ECGFounder arm | Clean AUROC / AUPRC | PN2021-C AUROC / AUPRC |
+|---|---:|---:|
+| Direct, LR `2e-5` | `0.889740 / 0.582508` | `0.830200 / 0.496628` |
+| Direct, LR `3e-5` | `0.894629 / 0.599474` | `0.836593 / 0.517625` |
+| Latent-threechain, LR `3e-5` | `0.893416 / 0.597813` | `0.839047 / 0.523479` |
+
+The latent candidate therefore improves PN2021-C by
+`+0.885 AUROC / +2.685 AUPRC pp` over the original locked Direct baseline, but
+only by `+0.245 / +0.585 pp` over the learning-rate-matched Direct control. The
+latter is the honest LR-matched full method-bundle delta at this single seed;
+it does not isolate latent mixing from every other component in the bundle,
+and the larger number must not be presented as entirely caused by the method.
+
+The method is frozen in
+`configs/train/methods/exp_paired_augmix_latent_bridge_v1.yaml`: two independent
+views each use three depth-2/3 corruption chains, deterministic VAE means,
+Dirichlet(1) latent mixing, reconstruction-residual bypass, clean BCE, `0.75`
+BCE per augmented view and `3x` multilabel Bernoulli JSD. It is a supervised
+latent-AugMix candidate, not LHAT and not an exact reproduction of original
+AugMix.
+
+Managed selection evidence is stored at:
+
+```text
+/home/linbinhao/ECG_adv_data/runs/manual_refactor/
+  managed_pn2021_ecgfounder_direct_lr3e5_control_selection/
+  managed_pn2021_ecgfounder_latent_threechain_residual_depth23_aug075_lr3e5_selection/
+```
+
+The latent refits actually consumed selection SHA `930566547104...`; the
+canonical managed re-selection is SHA `f89e04ebf67...`. Their scientific
+content, selected E19 and metrics are identical, and the only byte-level field
+difference after JSON parsing is `generated_at_utc`. Both identities are
+recorded in the machine-readable registry; future replays must use the managed
+selection.
+
+Replay is fail-closed against the managed selection snapshots. Direct refit
+uses the byte-identical `configs/train/PN2021_fixed20.yaml`; the latent arm uses
+`configs/train/PN2021.yaml` and may differ from its tuning snapshot only in the
+profile/status and operational diagnostics, logging and output sections. Seed
+namespace/determinism, data/normalization/quality gates, loader policy,
+`drop_last`, method resources, the complete pooled-selection rule and selected
+E*/scheduler contract must remain identical.
+
+The full-K500 direct-invocation artifact directories are:
+
+```text
+managed_pn2021_ecgfounder_direct_lr3e5_control_{refit|eval}_<center>/
+managed_pn2021_ecgfounder_latent_threechain_residual_depth23_aug075_lr3e5_{refit|eval}_<center>/
+```
+
+Exact checkpoint, selection, train-result, refit-contract and evaluation
+SHA256 values are in the machine-readable registry. Despite the historical
+`managed_` directory prefix, these eight refit and eight evaluation directories
+do not contain execution-time `run_manifest.json`, `run_card.json` or
+`run_file_index.json`. Their command/Git/environment metadata cannot be
+reconstructed honestly after the fact, so this limitation is recorded rather
+than backfilled with current state.
+
 ## Frozen artifacts
 
 Canonical refit checkpoints are:
@@ -69,9 +144,10 @@ Canonical evaluation records are:
 
 The registry records every checkpoint, train result, refit contract, evaluation
 result SHA256, per-center metrics, selection identity, cache identity, source
-checkpoint, and exact config hash. New VAE/AugMix experiments must start from
-these per-center checkpoints and use the same K500/ref-exclusion/evaluation
-contract.
+checkpoint, and exact config hash. Matched VAE/AugMix comparisons must restart
+from the same registered PTB-XL source checkpoint—not from an already adapted
+Direct K500 checkpoint—and use the same K500/ref-exclusion/evaluation contract.
+Direct-initialized training is a separate ablation and must be labeled as such.
 
 ## TensorBoard
 

@@ -17,7 +17,12 @@ from typing import Any, Mapping, Sequence
 import torch
 import torch.nn as nn
 
-from core.augmix import AugMixConfig, generate_three_chain_augmix, load_augmix_config
+from core.augmix import (
+    AugMixConfig,
+    generate_latent_three_chain_augmix,
+    generate_three_chain_augmix,
+    load_augmix_config,
+)
 from core.corruption import generate_canonical_corruption
 from core.lhat import LHATConfig, generate_lhat_adversarial, load_lhat_config
 from core.methods.contracts import (
@@ -43,7 +48,14 @@ def _sha256(path: Path) -> str:
 
 
 def _positions(mask: torch.Tensor) -> tuple[int, ...]:
-    return tuple(int(value) for value in torch.nonzero(mask, as_tuple=False).flatten())
+    return tuple(
+        int(value)
+        for value in torch.nonzero(mask, as_tuple=False)
+        .flatten()
+        .detach()
+        .cpu()
+        .tolist()
+    )
 
 
 def _quality_mask(
@@ -93,6 +105,8 @@ class GeneratedMethodBatch:
     diagnostic_weights: Mapping[str, int]
     candidate_eligible_positions: tuple[int, ...]
     accepted_positions: tuple[int, ...]
+    quality_view_total_count: int
+    quality_view_accepted_count: int
     ineligible_hash_ids: tuple[str, ...]
     quality_rejected: tuple[dict[str, str], ...]
 
@@ -110,6 +124,12 @@ class GeneratedMethodBatch:
                 "diagnostic_weights must map non-empty names to positive integers"
             )
         object.__setattr__(self, "diagnostic_weights", MappingProxyType(weights))
+        if self.quality_view_total_count < 0:
+            raise ValueError("quality_view_total_count must be non-negative")
+        if not 0 <= self.quality_view_accepted_count <= self.quality_view_total_count:
+            raise ValueError(
+                "quality_view_accepted_count must be within the total view count"
+            )
 
     @property
     def batch_size(self) -> int:
@@ -145,6 +165,7 @@ class MethodViewRuntime:
         model_name: str,
         config_root: Path,
         latent_pool: Any | None,
+        encoder: nn.Module | None,
         decoder: nn.Module | None,
         minimum_std_mV: float,
         maximum_abs_mV: float,
@@ -161,6 +182,7 @@ class MethodViewRuntime:
         self.model_name = str(model_name)
         self.config_root = Path(config_root).expanduser().resolve()
         self.latent_pool = latent_pool
+        self.encoder = encoder
         self.decoder = decoder
         self.minimum_std_mV = float(minimum_std_mV)
         self.maximum_abs_mV = float(maximum_abs_mV)
@@ -168,18 +190,40 @@ class MethodViewRuntime:
             raise ValueError("method quality thresholds must be positive")
 
         self._resource_paths: dict[str, Path] = {}
+        self._rng_seed_paths: dict[str, Path] = {}
         for name, raw_resource in method.resources.items():
             if not isinstance(raw_resource, Mapping):
                 raise ValueError(f"method resource {name!r} must be a mapping")
-            if raw_resource.get("type") != "config_reference":
-                continue
-            self._resource_paths[name] = resolve_config_reference(
-                raw_resource.get("path"),
-                owner_config_path=method.source_path,
-                config_root=self.config_root,
-                description=f"method.resources.{name}",
-                must_exist=True,
-            )
+            resource_type = raw_resource.get("type")
+            if resource_type == "config_reference":
+                self._resource_paths[name] = resolve_config_reference(
+                    raw_resource.get("path"),
+                    owner_config_path=method.source_path,
+                    config_root=self.config_root,
+                    description=f"method.resources.{name}",
+                    must_exist=True,
+                )
+            elif resource_type == "isolated_torch_generator":
+                self._rng_seed_paths[name] = resolve_config_reference(
+                    raw_resource.get("seed_config"),
+                    owner_config_path=method.source_path,
+                    config_root=self.config_root,
+                    description=f"method.resources.{name}.seed_config",
+                    must_exist=True,
+                )
+            elif resource_type in {
+                "caller_owned_classifier",
+                "none",
+                "runtime_frozen_decoder",
+                "runtime_frozen_encoder",
+                "runtime_train_only_exact_label_pool",
+            }:
+                pass
+            else:
+                raise ValueError(
+                    f"method resource {name!r} has unsupported type "
+                    f"{resource_type!r}"
+                )
 
         self.operator_profile: AugmentationProfile | None = None
         operator_resource = method.resources.get("operator_profile")
@@ -211,14 +255,22 @@ class MethodViewRuntime:
             raise ValueError("method requires a train-only latent_pool")
         if method.requirements.vae_decoder and decoder is None:
             raise ValueError("method requires a frozen VAE decoder")
+        if method.requirements.vae_encoder and encoder is None:
+            raise ValueError("method requires a frozen VAE encoder")
         if not method.requirements.latent_pool and latent_pool is not None:
             raise ValueError("method without latent_pool requirement may not consume one")
         if not method.requirements.vae_decoder and decoder is not None:
             raise ValueError("method without VAE decoder requirement may not consume one")
+        if not method.requirements.vae_encoder and encoder is not None:
+            raise ValueError("method without VAE encoder requirement may not consume one")
 
     @property
     def requires_latent_pool(self) -> bool:
         return bool(self.method.requirements.latent_pool)
+
+    @property
+    def rng_seed_config_paths(self) -> Mapping[str, Path]:
+        return MappingProxyType(dict(self._rng_seed_paths))
 
     def describe(self) -> dict[str, Any]:
         return {
@@ -228,10 +280,31 @@ class MethodViewRuntime:
                 name: {"path": str(path), "sha256": _sha256(path)}
                 for name, path in self._resource_paths.items()
             },
+            "rng_seed_configs": {
+                name: {"path": str(path), "sha256": _sha256(path)}
+                for name, path in self._rng_seed_paths.items()
+            },
             "operator_profile": (
                 None
                 if self.operator_profile is None
                 else self.operator_profile.describe()
+            ),
+            "augmix": (
+                None
+                if self.augmix_config is None
+                else {
+                    "config_path": str(self.augmix_config.config_path),
+                    "config_sha256": _sha256(self.augmix_config.config_path),
+                    "random_seed_config_path": str(
+                        self.augmix_config.random_seed_config_path
+                    ),
+                    "random_seed_config_sha256": _sha256(
+                        self.augmix_config.random_seed_config_path
+                    ),
+                    "operator_profile": (
+                        self.augmix_config.operator_profile_config.describe()
+                    ),
+                }
             ),
             "quality_gate": {
                 "minimum_global_std_mV": self.minimum_std_mV,
@@ -577,6 +650,142 @@ class MethodViewRuntime:
             },
         )
 
+    def _latent_threechain_augmix(
+        self,
+        context: NodeContext,
+        inputs: tuple[ViewValue, ...],
+    ) -> ViewValue:
+        if len(inputs) != 1 or not isinstance(inputs[0], WaveformView):
+            raise TypeError("latent three-chain AugMix requires one clean view")
+        if self.encoder is None or self.decoder is None or self.augmix_config is None:
+            raise RuntimeError("latent three-chain AugMix resources are incomplete")
+        source = inputs[0]
+        generator = context.torch_generator(
+            "depth_operators_and_latent_mixing",
+            device=source.waveform.device,
+        )
+        result = generate_latent_three_chain_augmix(
+            source.waveform,
+            encoder=context.resource("vae_encoder"),
+            decoder=context.resource("vae_decoder"),
+            sampling_rate_hz=100,
+            config=self.augmix_config,
+            generator=generator,
+        )
+        accepted, reasons = _quality_mask(
+            result.mixed_raw,
+            minimum_std_mV=self.minimum_std_mV,
+            maximum_abs_mV=self.maximum_abs_mV,
+        )
+        repaired = result.chain_output_nonfinite_count.sum(dim=1) > 0
+        accepted &= ~repaired
+        accepted_positions = _positions(accepted)
+        full_waveform = source.waveform.clone()
+        if accepted_positions:
+            positions = torch.as_tensor(
+                accepted_positions,
+                device=source.waveform.device,
+                dtype=torch.long,
+            )
+            full_waveform.index_copy_(
+                0,
+                positions,
+                result.mixed_raw.index_select(0, positions),
+            )
+        repaired_cpu = repaired.detach().cpu().tolist()
+        rejected: list[dict[str, str]] = []
+        for index, quality_reason in enumerate(reasons):
+            failures: list[str] = []
+            if bool(repaired_cpu[index]):
+                failures.append("chain_nonfinite_repaired")
+            if quality_reason != "accepted":
+                failures.append(quality_reason)
+            if failures:
+                rejected.append(
+                    {
+                        "node_id": context.node_id,
+                        "hash_id": source.sample_ids[index],
+                        "reason": "+".join(failures),
+                    }
+                )
+        diagnostic_values = torch.stack(
+            (
+                result.chain_depths.float().mean(),
+                result.mixture_weights[:, 0].mean(),
+                result.mixture_weights[:, 1].mean(),
+                result.mixture_weights[:, 2].mean(),
+                result.augmented_strength.mean(),
+                result.residual_rms_ratio.mean(),
+                result.chain_output_nonfinite_count.float().sum(),
+            )
+        ).detach().cpu().tolist()
+        diagnostics = dict(
+            zip(
+                (
+                    "mean_chain_depth",
+                    "latent_weight_0",
+                    "latent_weight_1",
+                    "latent_weight_2",
+                    "augmented_strength",
+                    "residual_rms_ratio",
+                    "repaired_nonfinite_count",
+                ),
+                (float(value) for value in diagnostic_values),
+                strict=True,
+            )
+        )
+        for name, value in diagnostics.items():
+            context.record_diagnostic(name, value)
+        context.record_diagnostic("quality_accepted_count", len(accepted_positions))
+        context.record_diagnostic("quality_rejected_count", len(rejected))
+        return WaveformView(
+            name=context.node_id,
+            waveform=full_waveform,
+            labels=source.labels,
+            sample_ids=source.sample_ids,
+            valid_mask=source.valid_mask & accepted,
+            provenance=Provenance(
+                node_id=context.node_id,
+                operation=context.node_type,
+                parent_names=(source.name,),
+                rng_namespace=context.rng_namespace,
+                parameters={
+                    "width": self.augmix_config.latent_threechain_width,
+                    "depths": list(self.augmix_config.latent_threechain_depths),
+                    "dirichlet_alpha": (
+                        self.augmix_config.latent_threechain_dirichlet_alpha
+                    ),
+                    "operator_sampling": "random_subset_without_replacement",
+                    "operator_application_order": "canonical_order",
+                    "posterior_sample": False,
+                    "reconstruction_residual_bypass": (
+                        self.augmix_config.latent_threechain_reconstruction_residual_bypass
+                    ),
+                    "post_decode_clean_beta_mix": (
+                        self.augmix_config.latent_threechain_post_decode_clean_beta_mix
+                    ),
+                    "beta_alpha": self.augmix_config.beta_alpha,
+                    "operator_domain_sampling_rate_hz": 500,
+                },
+            ),
+            metadata={
+                "candidate_eligible_positions": tuple(range(source.batch_size)),
+                "accepted_positions": accepted_positions,
+                "ineligible_hash_ids": (),
+                "quality_rejected": tuple(rejected),
+                "diagnostic_means": diagnostics,
+            },
+        )
+
+    def _dispatch_augmix(
+        self,
+        context: NodeContext,
+        inputs: tuple[ViewValue, ...],
+    ) -> ViewValue:
+        if context.node_type == "latent_threechain_augmix_view":
+            return self._latent_threechain_augmix(context, inputs)
+        return self._augmix(context, inputs)
+
     def generate(
         self,
         *,
@@ -615,7 +824,7 @@ class MethodViewRuntime:
                 composition_indices=composition_indices,
             ),
             "lhat_attack": self._lhat_attack,
-            "augmix": self._augmix,
+            "augmix": self._dispatch_augmix,
         }
         bundle = execute_method(
             self.method,
@@ -623,6 +832,7 @@ class MethodViewRuntime:
                 sources={"clean_raw": clean},
                 adapters=adapters,
                 classifier=classifier,
+                vae_encoder=self.encoder,
                 vae_decoder=self.decoder,
                 latent_pool=self.latent_pool,
                 base_seed=int(base_seed),
@@ -630,7 +840,9 @@ class MethodViewRuntime:
             ),
         )
         candidate_position_set: set[int] = set()
-        accepted_position_set: set[int] = set()
+        accepted_position_sets: list[set[int]] = []
+        quality_view_total_count = 0
+        quality_view_accepted_count = 0
         ineligible_values: list[str] = []
         rejected_values: list[dict[str, str]] = []
         diagnostic_weights: dict[str, int] = {}
@@ -649,15 +861,19 @@ class MethodViewRuntime:
                     int(position)
                     for position in metadata["candidate_eligible_positions"]
                 )
-                accepted_position_set.update(
+                accepted_for_accounting = {
                     int(position) for position in metadata["accepted_positions"]
-                )
+                }
+                accepted_position_sets.append(accepted_for_accounting)
+                quality_view_total_count += value.batch_size
+                quality_view_accepted_count += len(accepted_for_accounting)
                 ineligible_values.extend(
                     str(hash_id) for hash_id in metadata["ineligible_hash_ids"]
                 )
-                rejected_values.extend(
-                    dict(item) for item in metadata["quality_rejected"]
-                )
+                for item in metadata["quality_rejected"]:
+                    rejection = dict(item)
+                    rejection.setdefault("node_id", value.provenance.node_id)
+                    rejected_values.append(rejection)
             accepted_for_node = metadata.get("accepted_positions")
             if isinstance(accepted_for_node, (tuple, list)):
                 node_weight = max(1, len(accepted_for_node))
@@ -671,12 +887,18 @@ class MethodViewRuntime:
                     diagnostic_weights[diagnostic_name] = node_weight
 
         candidate_positions = tuple(sorted(candidate_position_set))
-        accepted_positions = tuple(sorted(accepted_position_set))
+        accepted_positions = tuple(
+            sorted(
+                set.intersection(*accepted_position_sets)
+                if accepted_position_sets
+                else set()
+            )
+        )
         ineligible = tuple(dict.fromkeys(ineligible_values))
         rejected = tuple(
             dict(item)
             for item in {
-                (entry["hash_id"], entry["reason"]): entry
+                (entry.get("node_id", ""), entry["hash_id"], entry["reason"]): entry
                 for entry in rejected_values
             }.values()
         )
@@ -685,6 +907,8 @@ class MethodViewRuntime:
             diagnostic_weights=diagnostic_weights,
             candidate_eligible_positions=candidate_positions,
             accepted_positions=accepted_positions,
+            quality_view_total_count=quality_view_total_count,
+            quality_view_accepted_count=quality_view_accepted_count,
             ineligible_hash_ids=ineligible,
             quality_rejected=rejected,
         )
@@ -696,6 +920,7 @@ def build_method_runtime(
     model_name: str,
     config_root: str | Path,
     latent_pool: Any | None = None,
+    encoder: nn.Module | None = None,
     decoder: nn.Module | None = None,
     minimum_std_mV: float = 1.0e-4,
     maximum_abs_mV: float = 20.0,
@@ -705,6 +930,7 @@ def build_method_runtime(
         model_name=model_name,
         config_root=Path(config_root),
         latent_pool=latent_pool,
+        encoder=encoder,
         decoder=decoder,
         minimum_std_mV=minimum_std_mV,
         maximum_abs_mV=maximum_abs_mV,

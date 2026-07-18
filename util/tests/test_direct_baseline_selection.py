@@ -228,6 +228,7 @@ def test_selector_pools_four_centers_per_composition_and_averages_twenty(
     )
 
     assert result["selected_epoch"] == 2
+    assert result["artifact_type"] == "direct_k500_pooled_epoch_selection"
     assert result["record_count"] == 400
     assert result["composition_count"] == 20
     selected = result["per_epoch"][1]

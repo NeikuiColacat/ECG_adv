@@ -1,4 +1,4 @@
-"""Four-center robust epoch selection for the Direct family-balanced baseline."""
+"""Four-center robust epoch selection for managed PN2021 K500 methods."""
 
 from __future__ import annotations
 
@@ -22,6 +22,25 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DIRECT_TUNE_CONFIG = PROJECT_ROOT / "configs" / "train" / "PN2021_direct_tune.yaml"
 ARTIFACT_TYPE = "pn2021_family_balanced_validation_predictions"
 ARTIFACT_SCHEMA = "pn2021_family_balanced_validation_predictions"
+
+
+def locked_pooled_selection_rule() -> dict[str, Any]:
+    """Return the single paper-facing pooled K500 checkpoint rule."""
+
+    return {
+        "training_partition": "k500_tune_train",
+        "validation_partition": "k500_tune_validation",
+        "clean_aggregation": "concatenate_four_centers_before_metric",
+        "corrupted_aggregation": "concatenate_four_centers_per_composition_before_metric",
+        "robust_aggregation": "mean_of_20_composition_macro_auprc",
+        "score": "0.5_clean_macro_auprc_plus_0.5_robust_macro_auprc",
+        "clean_floor": "same_backbone_locked_clean_macro_auprc_minus_0.01",
+        "metric_definition": "sklearn_average_precision",
+        "input_type": "raw_logits",
+        "strict_all_five_classes": True,
+        "tie_break": "earliest_epoch_on_exact_tie",
+        "heldout_evaluation_used": False,
+    }
 
 
 def _sha256_file(path: Path) -> str:
@@ -546,23 +565,14 @@ def select_direct_baseline_epoch(
     )
     result: dict[str, Any] = {
         "schema_version": 1,
-        "artifact_type": "direct_k500_pooled_epoch_selection",
+        "artifact_type": (
+            "direct_k500_pooled_epoch_selection"
+            if config.method_id == "direct_depth23_fixed20"
+            else "pn2021_k500_pooled_epoch_selection"
+        ),
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "status": status,
-        "selection_rule": {
-            "training_partition": "k500_tune_train",
-            "validation_partition": "k500_tune_validation",
-            "clean_aggregation": "concatenate_four_centers_before_metric",
-            "corrupted_aggregation": "concatenate_four_centers_per_composition_before_metric",
-            "robust_aggregation": "mean_of_20_composition_macro_auprc",
-            "score": "0.5_clean_macro_auprc_plus_0.5_robust_macro_auprc",
-            "clean_floor": "same_backbone_locked_clean_macro_auprc_minus_0.01",
-            "metric_definition": "sklearn_average_precision",
-            "input_type": "raw_logits",
-            "strict_all_five_classes": True,
-            "tie_break": config.tie_break,
-            "heldout_evaluation_used": False,
-        },
+        "selection_rule": locked_pooled_selection_rule(),
         "selected_epoch": None if selected is None else int(selected["epoch"]),
         "selected_score": None if selected is None else float(selected["score"]),
         "selected_clean_macro_auprc": None if selected is None else float(selected["clean"]["macro_auprc"]),
@@ -607,6 +617,7 @@ __all__ = [
     "DirectSelectionConfig",
     "ValidationPredictionArtifact",
     "discover_validation_prediction_artifacts",
+    "locked_pooled_selection_rule",
     "load_direct_selection_config",
     "load_validation_prediction_artifact",
     "select_direct_baseline_epoch",

@@ -6,8 +6,10 @@ from pathlib import Path
 import pytest
 import torch
 import torch.nn as nn
+import yaml
 
 from core.augmix import (
+    generate_latent_three_chain_augmix,
     generate_three_chain_augmix,
     load_augmix_config,
     multilabel_jsd,
@@ -127,6 +129,27 @@ class _TinyDecoder(nn.Module):
         time = torch.linspace(-1.0, 1.0, 1024, device=latent.device).view(1, -1, 1)
         leads = torch.linspace(0.5, 1.5, 12, device=latent.device).view(1, 1, -1)
         return level * leads + time * leads
+
+
+class _TinyLatentEncoder(nn.Module):
+    def forward(self, waveform: torch.Tensor, *, sample: bool):
+        assert sample is False
+        batch = waveform.shape[0]
+        pooled = torch.nn.functional.adaptive_avg_pool1d(
+            waveform.flatten(1).unsqueeze(1), 512
+        ).reshape(batch, 4, 128)
+        return pooled, pooled, torch.zeros_like(pooled)
+
+
+class _TinyLatentDecoder(nn.Module):
+    def forward(self, latent: torch.Tensor) -> torch.Tensor:
+        batch = latent.shape[0]
+        return torch.nn.functional.interpolate(
+            latent.flatten(1).unsqueeze(1),
+            size=1024 * 12,
+            mode="linear",
+            align_corners=True,
+        ).reshape(batch, 1024, 12)
 
 
 class _TinyClassifier(nn.Module):
@@ -259,7 +282,6 @@ def test_three_chain_augmix_is_deterministic_and_keeps_chain3_unmodified() -> No
     assert torch.count_nonzero(first.chain2_output_nonfinite_count) == 0
     torch.testing.assert_close(clean, clean_before)
     torch.testing.assert_close(adversarial, adversarial_before)
-
     expected = (
         (1.0 - first.augmented_strength.view(-1, 1, 1)) * clean
         + first.augmented_strength.view(-1, 1, 1)
@@ -271,6 +293,150 @@ def test_three_chain_augmix_is_deterministic_and_keeps_chain3_unmodified() -> No
     )
     torch.testing.assert_close(first.mixed_raw, expected)
 
+
+def test_latent_threechain_augmix_is_deterministic_and_preserves_contract() -> None:
+    config = load_augmix_config()
+    assert config.latent_threechain_width == 3
+    assert config.latent_threechain_depths == (2, 3)
+    assert config.latent_threechain_dirichlet_alpha == 1.0
+    assert config.latent_threechain_posterior_sample is False
+    assert config.latent_threechain_reconstruction_residual_bypass is True
+    assert config.latent_threechain_post_decode_clean_beta_mix is False
+
+    clean = torch.linspace(-0.4, 0.4, 2 * 1000 * 12).reshape(2, 1000, 12)
+    clean_before = clean.clone()
+    encoder = _TinyLatentEncoder()
+    decoder = _TinyLatentDecoder()
+    first = generate_latent_three_chain_augmix(
+        clean,
+        encoder=encoder,
+        decoder=decoder,
+        sampling_rate_hz=100,
+        config=config,
+        generator=make_torch_generator("cpu", "latent_threechain_same"),
+    )
+    second = generate_latent_three_chain_augmix(
+        clean,
+        encoder=encoder,
+        decoder=decoder,
+        sampling_rate_hz=100,
+        config=config,
+        generator=make_torch_generator("cpu", "latent_threechain_same"),
+    )
+    different = generate_latent_three_chain_augmix(
+        clean,
+        encoder=encoder,
+        decoder=decoder,
+        sampling_rate_hz=100,
+        config=config,
+        generator=make_torch_generator("cpu", "latent_threechain_different"),
+    )
+
+    assert first.mixed_raw.shape == clean.shape
+    assert first.mixture_weights.shape == (2, 3)
+    torch.testing.assert_close(first.augmented_strength, torch.ones(2))
+    assert torch.count_nonzero(first.residual_rms_ratio) > 0
+    assert first.chain_depths.shape == (2, 3)
+    assert first.chain_operator_mask.shape == (2, 3, 5)
+    assert first.chain_output_nonfinite_count.shape == (2, 3)
+    assert set(first.chain_depths.flatten().tolist()).issubset({2, 3})
+    assert torch.equal(
+        first.chain_operator_mask.sum(dim=2), first.chain_depths
+    )
+    torch.testing.assert_close(first.mixture_weights.sum(dim=1), torch.ones(2))
+    torch.testing.assert_close(first.mixed_raw, second.mixed_raw)
+    torch.testing.assert_close(first.mixture_weights, second.mixture_weights)
+    assert not torch.equal(first.mixture_weights, different.mixture_weights)
+    assert torch.count_nonzero(first.chain_output_nonfinite_count) == 0
+    assert first.operator_domain_sampling_rate_hz == 500
+    torch.testing.assert_close(clean, clean_before)
+
+
+def test_latent_threechain_augmix_supports_original_beta_clean_mix(tmp_path) -> None:
+    config_path = tmp_path / "augmix.yaml"
+    payload = yaml.safe_load(
+        (ROOT / "configs" / "train" / "augmix.yaml").read_text(encoding="utf-8")
+    )
+    payload["method"]["random_seed_file"] = str(
+        (ROOT / "configs" / "random_seed.yaml").resolve()
+    )
+    payload["corruption_chains"]["operator_config"] = str(
+        (ROOT / "configs" / "augmentation" / "operators.yaml").resolve()
+    )
+    payload["latent_threechain"]["post_decode_clean_beta_mix"] = True
+    config_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+    config = load_augmix_config(config_path)
+
+    clean = torch.linspace(-0.4, 0.4, 2 * 1000 * 12).reshape(2, 1000, 12)
+    result = generate_latent_three_chain_augmix(
+        clean,
+        encoder=_TinyLatentEncoder(),
+        decoder=_TinyLatentDecoder(),
+        sampling_rate_hz=100,
+        config=config,
+        generator=make_torch_generator("cpu", "latent_threechain_beta_mix"),
+    )
+    assert torch.all(result.augmented_strength >= 0.0)
+    assert torch.all(result.augmented_strength <= 1.0)
+    assert not torch.equal(result.augmented_strength, torch.ones(2))
+
+
+def test_latent_threechain_augmix_preserves_reconstruction_residuals(tmp_path) -> None:
+    config_path = tmp_path / "augmix.yaml"
+    payload = yaml.safe_load(
+        (ROOT / "configs" / "train" / "augmix.yaml").read_text(encoding="utf-8")
+    )
+    payload["method"]["random_seed_file"] = str(
+        (ROOT / "configs" / "random_seed.yaml").resolve()
+    )
+    payload["corruption_chains"]["operator_config"] = str(
+        (ROOT / "configs" / "augmentation" / "operators.yaml").resolve()
+    )
+    payload["latent_threechain"]["reconstruction_residual_bypass"] = True
+    config_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+    config = load_augmix_config(config_path)
+
+    clean = torch.linspace(-0.4, 0.4, 2 * 1000 * 12).reshape(2, 1000, 12)
+    result = generate_latent_three_chain_augmix(
+        clean,
+        encoder=_TinyLatentEncoder(),
+        decoder=_TinyLatentDecoder(),
+        sampling_rate_hz=100,
+        config=config,
+        generator=make_torch_generator("cpu", "latent_threechain_residual"),
+    )
+    assert torch.isfinite(result.mixed_raw).all()
+    assert torch.all(result.residual_rms_ratio >= 0.0)
+    assert torch.count_nonzero(result.residual_rms_ratio) > 0
+
+
+def test_latent_threechain_augmix_supports_depth23_target_profile(tmp_path) -> None:
+    config_path = tmp_path / "augmix.yaml"
+    payload = yaml.safe_load(
+        (ROOT / "configs" / "train" / "augmix.yaml").read_text(encoding="utf-8")
+    )
+    payload["method"]["random_seed_file"] = str(
+        (ROOT / "configs" / "random_seed.yaml").resolve()
+    )
+    payload["corruption_chains"]["operator_config"] = str(
+        (ROOT / "configs" / "augmentation" / "operators.yaml").resolve()
+    )
+    payload["latent_threechain"]["depths"] = [2, 3]
+    payload["latent_threechain"]["depth_sampling"] = "uniform_integer_2_to_3"
+    config_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+    config = load_augmix_config(config_path)
+
+    clean = torch.linspace(-0.4, 0.4, 4 * 1000 * 12).reshape(4, 1000, 12)
+    result = generate_latent_three_chain_augmix(
+        clean,
+        encoder=_TinyLatentEncoder(),
+        decoder=_TinyLatentDecoder(),
+        sampling_rate_hz=100,
+        config=config,
+        generator=make_torch_generator("cpu", "latent_threechain_depth23"),
+    )
+    assert set(result.chain_depths.flatten().tolist()).issubset({2, 3})
+    assert torch.equal(result.chain_operator_mask.sum(dim=2), result.chain_depths)
 
 def test_three_chain_augmix_rejects_noncanonical_500hz_input() -> None:
     clean = torch.zeros(2, 5000, 12)

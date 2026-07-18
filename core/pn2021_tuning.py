@@ -19,6 +19,8 @@ import torch
 import torch.nn as nn
 import yaml
 
+from core.latent_pool import build_latent_pool
+from core.lhat import load_lhat_config
 from core.methods import compile_method_profile
 from core.online_trainer import (
     OnlineTrainConfig,
@@ -104,6 +106,16 @@ def _hash_label_set_sha256(hash_ids: Sequence[str], targets: np.ndarray) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def _encoder_sha256(encoder: nn.Module) -> str:
+    identity = getattr(encoder, "checkpoint_identity", None)
+    value = getattr(identity, "sha256", None)
+    if not isinstance(value, str) or len(value) != 64:
+        raise ValueError(
+            "VAE encoder must carry its strict checkpoint SHA256 identity"
+        )
+    return value
+
+
 def _mapping(value: Any, description: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"{description} must be a mapping")
@@ -168,6 +180,14 @@ class PN2021TuningConfig:
     def profile_name(self) -> str:
         return str(self.payload["profile_name"])
 
+    @property
+    def protocol_id(self) -> str:
+        return str(self.payload["protocol_lock"]["protocol_id"])
+
+    @property
+    def method_id(self) -> str:
+        return str(self.payload["protocol_lock"]["method_id"])
+
     def describe(self) -> dict[str, Any]:
         return {
             "path": str(self.path),
@@ -205,9 +225,6 @@ def load_pn2021_tuning_config(
     }
     if set(root_payload) != expected_keys or root_payload.get("schema_version") != 1:
         raise ValueError("PN2021 tuning config schema or root keys are invalid")
-    if root_payload.get("profile_name") != DIRECT_TUNING_PROTOCOL_ID:
-        raise ValueError(f"profile_name must be {DIRECT_TUNING_PROTOCOL_ID}")
-
     raw_references = _mapping(root_payload["references"], "references")
     expected_references = {
         "online_training_config",
@@ -235,10 +252,12 @@ def load_pn2021_tuning_config(
     protocol = _mapping(root_payload["protocol_lock"], "protocol_lock")
     if protocol.get("status") != "k500_internal_tuning_only":
         raise ValueError("protocol status must be k500_internal_tuning_only")
-    if protocol.get("protocol_id") != DIRECT_TUNING_PROTOCOL_ID:
-        raise ValueError("protocol_id mismatch")
-    if protocol.get("method_id") != DIRECT_METHOD_ID:
-        raise ValueError(f"protocol method_id must be {DIRECT_METHOD_ID}")
+    protocol_id = str(protocol.get("protocol_id", ""))
+    method_id = str(protocol.get("method_id", ""))
+    if not protocol_id or root_payload.get("profile_name") != protocol_id:
+        raise ValueError("profile_name must equal the non-empty protocol_id")
+    if not method_id:
+        raise ValueError("protocol method_id must be non-empty")
     if tuple(protocol.get("centers", ())) != ALLOWED_CENTERS:
         raise ValueError(f"protocol centers must be {ALLOWED_CENTERS}")
     if protocol.get("merge_cpsc_2018_extra_into_cpsc_2018") is not True:
@@ -297,8 +316,15 @@ def load_pn2021_tuning_config(
         references["online_training_config"], config_root=root
     )
     method = compile_method_profile(references["method_config"])
-    if method.profile_name != DIRECT_METHOD_ID or not method.executable:
-        raise ValueError("tuning requires the executable family-balanced Direct method")
+    if method.profile_name != method_id or not method.executable:
+        raise ValueError(
+            "tuning method profile must be executable and match protocol method_id"
+        )
+    if method.requirements.replay_buffer:
+        raise ValueError("this train400 tuning path does not own a replay buffer")
+    training = _mapping(root_payload["training"], "training")
+    if training.get("method") != method_id:
+        raise ValueError("training.method must match protocol method_id")
     if online.payload["protocol"].get("tuning") is None:
         raise ValueError("online training config does not permit the managed 400/100 split")
     return PN2021TuningConfig(
@@ -350,6 +376,135 @@ def validate_locked_source_checkpoint(model: nn.Module, config: Any) -> dict[str
         "model_family": spec.name,
         "path": str(identity.path),
         "sha256": identity.sha256,
+    }
+
+
+def _scientific_refit_config_payload(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Strip only operational fields that may change between tuning and refit."""
+
+    normalized = json.loads(
+        json.dumps(dict(value), ensure_ascii=False, sort_keys=True)
+    )
+    normalized.pop("profile_name", None)
+    for key in ("diagnostics", "logging", "output"):
+        normalized.pop(key, None)
+    protocol = normalized.get("protocol")
+    if isinstance(protocol, dict):
+        protocol.pop("status", None)
+    return normalized
+
+
+def validate_refit_reproducibility_context(
+    comparison_identity: Mapping[str, Any],
+    config: Any,
+    *,
+    selection_online_config_path: str | Path,
+    strict_online_config_sha256: bool,
+    trainable_scope: str,
+    pos_weight: torch.Tensor | Sequence[float] | None,
+) -> dict[str, Any]:
+    """Reject a refit whose stochastic or optimization context differs from tuning."""
+
+    if trainable_scope != "full":
+        raise ValueError("PN2021 pooled tuning/refit requires trainable_scope=full")
+
+    random_seed = _mapping(config.payload.get("random_seed"), "random_seed")
+    for key in ("comparison_group", "replicate_id"):
+        if comparison_identity.get(key) != random_seed.get(key):
+            raise ValueError(f"refit random_seed.{key} differs from pooled tuning")
+
+    selected_online_sha256 = comparison_identity.get(
+        "online_training_config_sha256"
+    )
+    if not isinstance(selected_online_sha256, str) or len(selected_online_sha256) != 64:
+        raise ValueError("selection has no valid online_training_config_sha256")
+    selection_config_path = Path(selection_online_config_path).expanduser().resolve()
+    if not selection_config_path.is_file() or selection_config_path.is_symlink():
+        raise ValueError("selection online-training config snapshot is unavailable")
+    if _sha256_file(selection_config_path) != selected_online_sha256:
+        raise ValueError("selection online-training config snapshot SHA256 mismatch")
+    current_config_sha256 = getattr(config, "sha256", None)
+    if not isinstance(current_config_sha256, str) or len(current_config_sha256) != 64:
+        raise ValueError("current online-training config has no valid SHA256")
+    current_config_path = getattr(config, "path", None)
+    if current_config_path is not None:
+        resolved_current_path = Path(current_config_path).expanduser().resolve()
+        if _sha256_file(resolved_current_path) != current_config_sha256:
+            raise ValueError("current online-training config SHA256 is stale")
+    if strict_online_config_sha256:
+        if current_config_sha256 != selected_online_sha256:
+            raise ValueError(
+                "refit online-training config SHA256 differs from pooled tuning"
+            )
+        online_config_match = "exact_sha256"
+    else:
+        selected_payload = yaml.safe_load(
+            selection_config_path.read_text(encoding="utf-8")
+        )
+        if not isinstance(selected_payload, dict):
+            raise ValueError("selection online-training config must be a mapping")
+        if _scientific_refit_config_payload(selected_payload) != (
+            _scientific_refit_config_payload(config.payload)
+        ):
+            raise ValueError(
+                "refit scientific online-training config differs from pooled tuning"
+            )
+        online_config_match = "scientific_payload"
+
+    current_pos_weight = (
+        None
+        if pos_weight is None
+        else [float(value) for value in torch.as_tensor(pos_weight).flatten().tolist()]
+    )
+    selected_pos_weight = comparison_identity.get("pos_weight")
+    if selected_pos_weight is not None:
+        if not isinstance(selected_pos_weight, (list, tuple)):
+            raise ValueError("selection pos_weight must be null or a five-value sequence")
+        selected_pos_weight = [float(value) for value in selected_pos_weight]
+    if current_pos_weight is not None and len(current_pos_weight) != len(CLASS_ORDER):
+        raise ValueError("refit pos_weight must contain one value per Super5 class")
+    if selected_pos_weight is not None and len(selected_pos_weight) != len(CLASS_ORDER):
+        raise ValueError("selection pos_weight must contain one value per Super5 class")
+    if current_pos_weight is None or selected_pos_weight is None:
+        same_pos_weight = current_pos_weight is selected_pos_weight
+    else:
+        same_pos_weight = all(
+            math.isclose(left, right, rel_tol=0.0, abs_tol=1.0e-12)
+            for left, right in zip(current_pos_weight, selected_pos_weight, strict=True)
+        )
+    if not same_pos_weight:
+        raise ValueError("refit pos_weight differs from the pooled tuning contract")
+
+    registry = _load_source_registry(config)
+    baseline = _mapping(registry.get("baseline"), "source registry baseline")
+    expected_seed_sha256 = baseline.get("random_seed_config_sha256")
+    seed_path = config.references.get("random_seed_config")
+    if not isinstance(seed_path, Path):
+        raise ValueError("config must resolve random_seed_config")
+    actual_seed_sha256 = _sha256_file(seed_path)
+    if expected_seed_sha256 != actual_seed_sha256:
+        raise ValueError(
+            "refit random_seed config SHA256 differs from the locked source registry"
+        )
+
+    return {
+        "trainable_scope": trainable_scope,
+        "pos_weight": current_pos_weight,
+        "comparison_group": random_seed["comparison_group"],
+        "replicate_id": random_seed["replicate_id"],
+        "random_seed_config": {
+            "path": str(seed_path),
+            "sha256": actual_seed_sha256,
+        },
+        "online_training_config": {
+            "current_path": (
+                None if current_config_path is None else str(resolved_current_path)
+            ),
+            "current_sha256": current_config_sha256,
+            "selection_snapshot_path": str(selection_config_path),
+            "selection_sha256": selected_online_sha256,
+            "match_policy": online_config_match,
+        },
     }
 
 
@@ -418,6 +573,7 @@ def _selection_hashes(loader: RuntimeDataLoader) -> tuple[str, ...]:
 @dataclass(frozen=True)
 class PN2021TuningDataLoaders:
     train: RuntimeDataLoader
+    latent_pool_source: RuntimeDataLoader | None
     clean_validation: RuntimeDataLoader
     corrupted_validation: tuple[RuntimeDataLoader, ...]
     center: str
@@ -428,6 +584,8 @@ class PN2021TuningDataLoaders:
 
     def close(self) -> None:
         self.train.close()
+        if self.latent_pool_source is not None:
+            self.latent_pool_source.close()
         self.clean_validation.close()
         for loader in self.corrupted_validation:
             loader.close()
@@ -440,6 +598,11 @@ class PN2021TuningDataLoaders:
             "resolved_parameters": self.resolved_parameters,
             "explicit_overrides": self.explicit_overrides,
             "train": self.train.describe(),
+            "latent_pool_source": (
+                None
+                if self.latent_pool_source is None
+                else self.latent_pool_source.describe()
+            ),
             "clean_validation": self.clean_validation.describe(),
             "corrupted_validation": [
                 loader.describe() for loader in self.corrupted_validation
@@ -459,6 +622,7 @@ def build_pn2021_tuning_dataloaders(
     if center not in ALLOWED_CENTERS:
         raise ValueError(f"center must be one of {ALLOWED_CENTERS}")
     config = load_pn2021_tuning_config(config_path, config_root=config_root)
+    method = compile_method_profile(config.references["method_config"])
     spec = _model_spec(model)
     resolved_training, _ = resolve_online_training_parameters(
         config.online, spec.name, training_parameters
@@ -504,6 +668,21 @@ def build_pn2021_tuning_dataloaders(
             **common,
         )
         opened.append(train)
+        latent_pool_source = None
+        if method.requirements.latent_pool:
+            latent_pool_source = get_dataloader(
+                dataset="pn2021",
+                partition="k500_tune_train",
+                batch_size=int(resolved["train_batch_size"]),
+                shuffle=False,
+                seed_namespace=(
+                    f"pn2021_tune:{random_seed['comparison_group']}:"
+                    f"{random_seed['replicate_id']}:{center}:{spec.name}:"
+                    "latent_pool"
+                ),
+                **common,
+            )
+            opened.append(latent_pool_source)
         clean_validation = get_dataloader(
             dataset="pn2021",
             partition="k500_tune_validation",
@@ -539,11 +718,32 @@ def build_pn2021_tuning_dataloaders(
             loader.close()
         raise
 
+    train_hashes = _selection_hashes(train)
+    if len(train_hashes) != 400 or len(set(train_hashes)) != 400:
+        for loader in opened:
+            loader.close()
+        raise RuntimeError("tuning train partition must contain 400 unique hashes")
     expected_hashes = _selection_hashes(clean_validation)
     if len(expected_hashes) != 100 or len(set(expected_hashes)) != 100:
         for loader in opened:
             loader.close()
         raise RuntimeError("clean validation must contain 100 unique hashes")
+    if set(train_hashes) & set(expected_hashes):
+        for loader in opened:
+            loader.close()
+        raise RuntimeError("tuning train400 and validation100 hashes overlap")
+    if latent_pool_source is not None:
+        pool_hashes = _selection_hashes(latent_pool_source)
+        if (
+            len(pool_hashes) != 400
+            or len(set(pool_hashes)) != 400
+            or set(pool_hashes) != set(train_hashes)
+        ):
+            for loader in opened:
+                loader.close()
+            raise RuntimeError(
+                "latent pool source must contain exactly the train400 hash set"
+            )
     for index, loader in enumerate(corrupted):
         if _selection_hashes(loader) != expected_hashes:
             for member in opened:
@@ -553,6 +753,7 @@ def build_pn2021_tuning_dataloaders(
             )
     return PN2021TuningDataLoaders(
         train=train,
+        latent_pool_source=latent_pool_source,
         clean_validation=clean_validation,
         corrupted_validation=tuple(corrupted),
         center=center,
@@ -768,8 +969,8 @@ class FrozenValidationEvaluator:
             run_identity.get("training_parameters"), "run training parameters"
         )
         comparison_identity = {
-            "protocol_id": DIRECT_TUNING_PROTOCOL_ID,
-            "method_id": DIRECT_METHOD_ID,
+            "protocol_id": self.config.protocol_id,
+            "method_id": self.config.method_id,
             "model_family": self.spec.name,
             "model_spec": model_identity.get("spec"),
             "source_checkpoint_identity": source_checkpoint,
@@ -787,6 +988,28 @@ class FrozenValidationEvaluator:
                 "replicate_id"
             ],
         }
+        for resource_name in (
+            "vae_encoder_checkpoint",
+            "vae_decoder_checkpoint",
+        ):
+            resource_identity = run_identity.get(resource_name)
+            if resource_identity is not None:
+                comparison_identity[resource_name] = resource_identity
+        if "vae_encoder_checkpoint" not in comparison_identity:
+            pool = run_identity.get("latent_pool")
+            pool_identity = (
+                pool.get("identity") if isinstance(pool, Mapping) else None
+            )
+            encoder_sha256 = (
+                pool_identity.get("encoder_identity")
+                if isinstance(pool_identity, Mapping)
+                else None
+            )
+            if isinstance(encoder_sha256, str) and len(encoder_sha256) == 64:
+                comparison_identity["vae_encoder_checkpoint"] = {
+                    "sha256": encoder_sha256,
+                    "source": "latent_pool.identity.encoder_identity",
+                }
         _write_json(
             sidecar_path,
             {
@@ -832,6 +1055,8 @@ def train_pn2021_direct_tuning(
     model: nn.Module,
     *,
     center: str,
+    encoder: nn.Module | None = None,
+    decoder: nn.Module | None = None,
     config_path: str | Path = DEFAULT_DIRECT_TUNE_CONFIG,
     config_root: str | Path | None = None,
     output_dir: str | Path | None = None,
@@ -841,6 +1066,18 @@ def train_pn2021_direct_tuning(
     dataloader_parameters: Mapping[str, Any] | None = None,
 ) -> OnlineTrainingResult:
     config = load_pn2021_tuning_config(config_path, config_root=config_root)
+    method = compile_method_profile(config.references["method_config"])
+    requires_pool = bool(method.requirements.latent_pool)
+    requires_runtime_encoder = bool(method.requirements.vae_encoder)
+    requires_encoder_component = requires_pool or requires_runtime_encoder
+    if requires_encoder_component != (encoder is not None):
+        raise ValueError(
+            "VAE encoder presence must match the tuning pool/runtime requirement"
+        )
+    if bool(method.requirements.vae_decoder) != (decoder is not None):
+        raise ValueError(
+            "VAE decoder presence must exactly match the tuning method requirement"
+        )
     validate_locked_source_checkpoint(model, config)
     spec = _model_spec(model)
     resolved_training, _ = resolve_online_training_parameters(
@@ -854,26 +1091,65 @@ def train_pn2021_direct_tuning(
         training_parameters=training_parameters,
         dataloader_parameters=dataloader_parameters,
     )
-    output = (
-        Path(config.payload["output"]["run_dir"]).expanduser().resolve()
-        / spec.name
-        / center
-        if output_dir is None
-        else Path(output_dir).expanduser().resolve()
-    )
-    evaluator = FrozenValidationEvaluator(
-        loaders,
-        config,
-        output_dir=output,
-        amp_enabled=bool(resolved_training["amp_enabled"]),
-        amp_dtype=str(resolved_training["amp_dtype"]),
-    )
     try:
+        output = (
+            Path(config.payload["output"]["run_dir"]).expanduser().resolve()
+            / spec.name
+            / center
+            if output_dir is None
+            else Path(output_dir).expanduser().resolve()
+        )
+        evaluator = FrozenValidationEvaluator(
+            loaders,
+            config,
+            output_dir=output,
+            amp_enabled=bool(resolved_training["amp_enabled"]),
+            amp_dtype=str(resolved_training["amp_dtype"]),
+        )
+        latent_pool = None
+        runtime_encoder = encoder if requires_runtime_encoder else None
+        if requires_pool:
+            assert encoder is not None
+            if loaders.latent_pool_source is None:
+                raise RuntimeError("latent-pool method has no train400 pool source")
+            requested_device = str(
+                device or config.online.payload["training"]["device"]
+            )
+            if requested_device == "auto":
+                requested_device = "cuda" if torch.cuda.is_available() else "cpu"
+            resolved_device = torch.device(requested_device)
+            if resolved_device.type == "cuda" and not torch.cuda.is_available():
+                raise RuntimeError("CUDA was requested but is unavailable")
+            resource = method.resources.get("lhat_config")
+            if not isinstance(resource, Mapping):
+                raise ValueError("latent-pool method must declare lhat_config")
+            lhat_path = resolve_config_reference(
+                resource.get("path"),
+                owner_config_path=method.source_path,
+                config_root=config.config_root,
+                description="method.resources.lhat_config",
+                must_exist=True,
+            )
+            lhat = load_lhat_config(lhat_path, config_root=config.config_root)
+            encoder.to(resolved_device).eval()
+            latent_pool = build_latent_pool(
+                encoder,
+                loaders.latent_pool_source,
+                encoder_identity=_encoder_sha256(encoder),
+                device=resolved_device,
+                num_candidates=lhat.num_candidates,
+                standardizer_epsilon=lhat.standardizer_epsilon,
+            )
+            if not requires_runtime_encoder:
+                encoder.to("cpu")
         return train_online_model(
             model,
             loaders.train,
             center=center,
             method_config_path=config.references["method_config"],
+            latent_pool=latent_pool,
+            encoder=runtime_encoder,
+            decoder=decoder,
             config_path=config.online.path,
             config_root=config.config_root,
             output_dir=output,
@@ -884,6 +1160,10 @@ def train_pn2021_direct_tuning(
         )
     finally:
         loaders.close()
+        if encoder is not None:
+            encoder.to("cpu")
+        if decoder is not None:
+            decoder.to("cpu")
 
 
 __all__ = [
@@ -902,4 +1182,5 @@ __all__ = [
     "load_pn2021_tuning_config",
     "train_pn2021_direct_tuning",
     "validate_locked_source_checkpoint",
+    "validate_refit_reproducibility_context",
 ]

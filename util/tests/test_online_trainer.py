@@ -93,6 +93,19 @@ class _CaptureMonitor:
         return None
 
 
+def test_unknown_nonempty_batch_norm_policy_is_rejected() -> None:
+    method = SimpleNamespace(
+        contracts={"batch_norm_running_stats_policy": "typo_policy"},
+        objective=SimpleNamespace(terms=()),
+    )
+    with pytest.raises(ValueError, match="unsupported BatchNorm"):
+        online_module._build_batch_norm_momentum_plan(
+            _TinyBatchNormManagedModel(),
+            method,
+            fixed20_exposure=False,
+        )
+
+
 class _FakePool:
     hash_ids = ("hash-0", "hash-1")
     eligible_hash_ids = ("hash-0",)
@@ -135,6 +148,19 @@ class _FakePool:
 class _FakeDiagnostics:
     def mean_dict(self):
         return {"loss_gain": 0.2, "attack_success": 0.5}
+
+
+class _FakeCheckpointIdentity:
+    def __init__(self, token: str) -> None:
+        self.token = token
+
+    def describe(self):
+        return {"component": "test_fixture", "sha256": self.token * 64}
+
+
+def _managed_component(module: torch.nn.Module, token: str = "d"):
+    module.checkpoint_identity = _FakeCheckpointIdentity(token)
+    return module
 
 
 def _config_bundle(tmp_path: Path) -> Path:
@@ -196,6 +222,38 @@ def _fake_augmix(observed=None):
             chain2_depth=torch.tensor([3]),
             mixture_weights=torch.tensor([[0.2, 0.3, 0.5]]),
             augmented_strength=torch.tensor([0.4]),
+        )
+
+    return generate
+
+
+def _fake_latent_augmix(observed=None):
+    def generate(clean, **kwargs):
+        if observed is not None:
+            observed.append(
+                {
+                    "shape": tuple(clean.shape),
+                    "sampling_rate_hz": int(kwargs["sampling_rate_hz"]),
+                }
+            )
+        offset = torch.rand(
+            clean.shape[0],
+            device=clean.device,
+            generator=kwargs["generator"],
+        ).view(-1, 1, 1)
+        return SimpleNamespace(
+            mixed_raw=clean + 0.05 * offset,
+            chain_depths=torch.tensor(
+                [[1, 2, 3]] * clean.shape[0], device=clean.device
+            ),
+            mixture_weights=torch.tensor(
+                [[0.2, 0.3, 0.5]] * clean.shape[0], device=clean.device
+            ),
+            augmented_strength=torch.ones(clean.shape[0], device=clean.device),
+            residual_rms_ratio=torch.zeros(clean.shape[0], device=clean.device),
+            chain_output_nonfinite_count=torch.zeros(
+                clean.shape[0], 3, dtype=torch.int64, device=clean.device
+            ),
         )
 
     return generate
@@ -465,7 +523,7 @@ def test_a5_preserves_eligible_over_batch_weighting_and_chain3_reuse(
         center="ningbo",
         method_config_path=_method(path, "a5_lhat_threechain_v1"),
         latent_pool=_FakePool(),
-        decoder=torch.nn.Identity(),
+        decoder=_managed_component(torch.nn.Identity()),
         config_path=path,
         output_dir=tmp_path / "a5-run",
         device="cpu",
@@ -517,6 +575,184 @@ def test_a5_preserves_eligible_over_batch_weighting_and_chain3_reuse(
     ] is False
 
 
+def test_latent_threechain_online_method_uses_encoder_without_latent_pool(
+    monkeypatch, tmp_path
+):
+    path = _config_bundle(tmp_path)
+    loader = DataLoader(_RawDataset(), batch_size=2, shuffle=False)
+    observed = []
+    monkeypatch.setattr(
+        runtime_module,
+        "generate_latent_three_chain_augmix",
+        _fake_latent_augmix(observed),
+    )
+    encoder = _managed_component(torch.nn.Identity(), "e")
+    decoder = _managed_component(torch.nn.Identity(), "d")
+    method_path = (
+        path.parent / "methods" / "exp_paired_augmix_latent_bridge_v1.yaml"
+    )
+
+    model = _TinyBatchNormManagedModel()
+    observed_bn_momenta = []
+    hook = model.bn.register_forward_pre_hook(
+        lambda module, inputs: observed_bn_momenta.append(float(module.momentum))
+    )
+    try:
+        result = train_online_model(
+            model,
+            loader,
+            center="ningbo",
+            method_config_path=method_path,
+            encoder=encoder,
+            decoder=decoder,
+            config_path=path,
+            output_dir=tmp_path / "latent-threechain-run",
+            device="cpu",
+            training_parameters={"epochs": 1, "batch_size": 2, "amp_enabled": False},
+        )
+    finally:
+        hook.remove()
+
+    assert result.method_id == "latent_threechain_augmix_residual_depth23_aug075"
+    assert result.optimizer_steps == 1
+    assert observed == [
+        {"shape": (2, 1000, 12), "sampling_rate_hz": 100},
+        {"shape": (2, 1000, 12), "sampling_rate_hz": 100},
+    ]
+    history = result.history[0]["train"]
+    assert history["objective_valid_counts"] == {
+        "clean_bce": 2,
+        "clean_augmix_jsd": 2,
+        "augmix_view_1_bce": 2,
+        "augmix_view_2_bce": 2,
+    }
+    resources = json.loads(
+        (result.output_dir / "method_resources.json").read_text(encoding="utf-8")
+    )
+    assert resources["latent_pool"] is None
+    assert resources["vae_encoder_checkpoint"]["sha256"] == "e" * 64
+    assert resources["vae_decoder_checkpoint"]["sha256"] == "d" * 64
+    assert resources["rng_seed_configs"]["latent_augmix_rng"]["path"] == str(
+        path.parents[1] / "random_seed.yaml"
+    )
+    assert history["quality_view_total_count"] == 4
+    assert history["quality_view_accepted_count"] == 4
+    assert history["quality_view_accepted_fraction"] == pytest.approx(1.0)
+    assert history["both_views_accepted_record_count"] == 2
+    assert history["both_views_accepted_fraction"] == pytest.approx(1.0)
+    assert observed_bn_momenta == pytest.approx(
+        online_module._family_balanced_batch_norm_momenta(
+            0.1,
+            (0.5, 0.25, 0.25),
+        )
+    )
+    assert model.bn.momentum == pytest.approx(0.1)
+
+
+def test_latent_threechain_rejected_view_keeps_bn_schedule_and_reports_intersection(
+    monkeypatch, tmp_path
+):
+    path = _config_bundle(tmp_path)
+    loader = DataLoader(_RawDataset(), batch_size=2, shuffle=False)
+    calls = 0
+
+    def fake_latent(clean, **kwargs):
+        nonlocal calls
+        del kwargs
+        calls += 1
+        waveform = torch.zeros_like(clean) if calls == 1 else clean + 0.05
+        return SimpleNamespace(
+            mixed_raw=waveform,
+            chain_depths=torch.tensor([[1, 2, 3]] * clean.shape[0]),
+            mixture_weights=torch.tensor([[0.2, 0.3, 0.5]] * clean.shape[0]),
+            augmented_strength=torch.ones(clean.shape[0]),
+            residual_rms_ratio=torch.zeros(clean.shape[0]),
+            chain_output_nonfinite_count=torch.zeros(
+                clean.shape[0], 3, dtype=torch.int64
+            ),
+        )
+
+    monkeypatch.setattr(
+        runtime_module, "generate_latent_three_chain_augmix", fake_latent
+    )
+    model = _TinyBatchNormManagedModel()
+    observed_bn_momenta = []
+    hook = model.bn.register_forward_pre_hook(
+        lambda module, inputs: observed_bn_momenta.append(float(module.momentum))
+    )
+    try:
+        result = train_online_model(
+            model,
+            loader,
+            center="ningbo",
+            method_config_path=(
+                path.parent / "methods" / "exp_paired_augmix_latent_bridge_v1.yaml"
+            ),
+            encoder=_managed_component(torch.nn.Identity(), "e"),
+            decoder=_managed_component(torch.nn.Identity(), "d"),
+            config_path=path,
+            output_dir=tmp_path / "latent-one-view-rejected",
+            device="cpu",
+            training_parameters={"epochs": 1, "batch_size": 2, "amp_enabled": False},
+        )
+    finally:
+        hook.remove()
+
+    train = result.history[0]["train"]
+    assert train["objective_valid_counts"] == {
+        "clean_bce": 2,
+        "clean_augmix_jsd": 0,
+        "augmix_view_1_bce": 0,
+        "augmix_view_2_bce": 2,
+    }
+    assert train["quality_accepted_count"] == 0
+    assert train["quality_view_total_count"] == 4
+    assert train["quality_view_accepted_count"] == 2
+    assert train["quality_view_accepted_fraction"] == pytest.approx(0.5)
+    assert train["both_views_accepted_record_count"] == 0
+    assert train["both_views_accepted_fraction"] == pytest.approx(0.0)
+    assert observed_bn_momenta == pytest.approx(
+        online_module._family_balanced_batch_norm_momenta(
+            0.1,
+            (0.5, 0.25, 0.25),
+        )
+    )
+    assert {item["node_id"] for item in result.history[0]["quality_rejected"]} == {
+        "augmix_view_1"
+    }
+
+
+def test_latent_threechain_rejects_method_rng_seed_config_drift(
+    monkeypatch, tmp_path
+):
+    path = _config_bundle(tmp_path)
+    method_path = (
+        path.parent / "methods" / "exp_paired_augmix_latent_bridge_v1.yaml"
+    )
+    payload = yaml.safe_load(method_path.read_text(encoding="utf-8"))
+    payload["resources"]["latent_augmix_rng"]["seed_config"] = "train/augmix.yaml"
+    method_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+    monkeypatch.setattr(
+        runtime_module,
+        "generate_latent_three_chain_augmix",
+        _fake_latent_augmix(),
+    )
+
+    with pytest.raises(ValueError, match="method RNG resources"):
+        train_online_model(
+            _TinyManagedModel(),
+            DataLoader(_RawDataset(), batch_size=2, shuffle=False),
+            center="ningbo",
+            method_config_path=method_path,
+            encoder=_managed_component(torch.nn.Identity(), "e"),
+            decoder=_managed_component(torch.nn.Identity(), "d"),
+            config_path=path,
+            output_dir=tmp_path / "latent-rng-drift",
+            device="cpu",
+            training_parameters={"epochs": 1, "batch_size": 2, "amp_enabled": False},
+        )
+
+
 def test_a5_rejected_waveform_falls_back_to_clean_only(monkeypatch, tmp_path):
     path = _config_bundle(tmp_path)
     loader = DataLoader(_RawDataset(), batch_size=2, shuffle=False)
@@ -534,7 +770,7 @@ def test_a5_rejected_waveform_falls_back_to_clean_only(monkeypatch, tmp_path):
         center="ningbo",
         method_config_path=_method(path, "a5_lhat_threechain_v1"),
         latent_pool=_FakePool(),
-        decoder=torch.nn.Identity(),
+        decoder=_managed_component(torch.nn.Identity()),
         config_path=path,
         output_dir=tmp_path / "a5-rejected",
         device="cpu",
@@ -546,7 +782,7 @@ def test_a5_rejected_waveform_falls_back_to_clean_only(monkeypatch, tmp_path):
     assert train["weighted_lhat_contribution"] == 0.0
     assert train["weighted_augmix_contribution"] == 0.0
     assert result.history[0]["quality_rejected"] == [
-        {"hash_id": "hash-0", "reason": "flatline"}
+        {"node_id": "lhat", "hash_id": "hash-0", "reason": "flatline"}
     ]
 
 
@@ -570,7 +806,7 @@ def test_ecgfounder_a5_generates_at_100hz_before_model_domain_adapter(
         center="ningbo",
         method_config_path=_method(path, "a5_lhat_threechain_v1"),
         latent_pool=_FakePool(),
-        decoder=torch.nn.Identity(),
+        decoder=_managed_component(torch.nn.Identity()),
         config_path=path,
         output_dir=tmp_path / "a5-ecgfounder",
         device="cpu",
@@ -603,7 +839,7 @@ def test_train_step_logs_generic_terms_and_locked_a5_aliases(
         center="ningbo",
         method_config_path=_method(path, "a5_lhat_threechain_v1"),
         latent_pool=_FakePool(),
-        decoder=torch.nn.Identity(),
+        decoder=_managed_component(torch.nn.Identity()),
         config_path=path,
         output_dir=tmp_path / "a5-logging",
         device="cpu",
@@ -646,7 +882,7 @@ def test_unknown_loader_hash_fails_instead_of_becoming_clean_only(
             center="ningbo",
             method_config_path=_method(path, "a5_lhat_threechain_v1"),
             latent_pool=_FakePool(),
-            decoder=torch.nn.Identity(),
+            decoder=_managed_component(torch.nn.Identity()),
             config_path=path,
             output_dir=tmp_path / "a5-unknown-hash",
             device="cpu",

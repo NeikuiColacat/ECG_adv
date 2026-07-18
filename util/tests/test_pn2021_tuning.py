@@ -17,6 +17,54 @@ REPO = Path(__file__).resolve().parents[2]
 CONFIG = REPO / "configs" / "train" / "PN2021_direct_tune.yaml"
 
 
+def _latent_tuning_bundle(tmp_path: Path) -> Path:
+    root = tmp_path / "configs"
+    shutil.copytree(REPO / "configs", root)
+    path = root / "train" / "PN2021_direct_tune.yaml"
+    payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    protocol_id = "pn2021_latent_threechain_augmix_residual_depth23_aug075_tuning"
+    payload["profile_name"] = protocol_id
+    payload["protocol_lock"]["protocol_id"] = protocol_id
+    payload["protocol_lock"]["method_id"] = (
+        "latent_threechain_augmix_residual_depth23_aug075"
+    )
+    payload["references"]["method_config"] = (
+        "train/methods/exp_paired_augmix_latent_bridge_v1.yaml"
+    )
+    payload["training"]["method"] = (
+        "latent_threechain_augmix_residual_depth23_aug075"
+    )
+    payload["training"].pop("family_loss_weights", None)
+    payload["training"]["objective_source"] = "method_profile"
+    payload["pooled_selection"]["output_file"] = (
+        "latent_threechain_residual_depth23_selection.json"
+    )
+    path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+    return path
+
+
+def _a5_tuning_bundle(tmp_path: Path) -> Path:
+    root = tmp_path / "configs"
+    shutil.copytree(REPO / "configs", root)
+    path = root / "train" / "PN2021_direct_tune.yaml"
+    payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    protocol_id = "pn2021_a5_lhat_threechain_tuning"
+    payload["profile_name"] = protocol_id
+    payload["protocol_lock"]["protocol_id"] = protocol_id
+    payload["protocol_lock"]["method_id"] = "a5_lhat_threechain_v1"
+    payload["references"]["method_config"] = (
+        "train/methods/a5_lhat_threechain_v1.yaml"
+    )
+    payload["training"]["method"] = "a5_lhat_threechain_v1"
+    payload["training"].pop("family_loss_weights", None)
+    payload["training"]["objective_source"] = "method_profile"
+    payload["pooled_selection"]["output_file"] = (
+        "a5_lhat_threechain_selection.json"
+    )
+    path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+    return path
+
+
 class _Model(torch.nn.Module):
     model_spec = EFFICIENTNET1DV2_SPEC
 
@@ -129,6 +177,28 @@ def test_tuning_config_rejects_model_spec_rate_cache_contract(tmp_path: Path):
         tuning.load_pn2021_tuning_config(config_path)
 
 
+def test_tuning_config_accepts_executable_encoder_decoder_method_without_pool(
+    tmp_path: Path,
+):
+    path = _latent_tuning_bundle(tmp_path)
+    config = tuning.load_pn2021_tuning_config(path)
+
+    assert config.protocol_id == (
+        "pn2021_latent_threechain_augmix_residual_depth23_aug075_tuning"
+    )
+    assert config.method_id == "latent_threechain_augmix_residual_depth23_aug075"
+    assert config.payload["training"]["objective_source"] == "method_profile"
+
+
+def test_tuning_config_accepts_a5_latent_pool_method(tmp_path: Path):
+    path = _a5_tuning_bundle(tmp_path)
+    config = tuning.load_pn2021_tuning_config(path)
+
+    assert config.protocol_id == "pn2021_a5_lhat_threechain_tuning"
+    assert config.method_id == "a5_lhat_threechain_v1"
+    assert config.payload["training"]["objective_source"] == "method_profile"
+
+
 def test_tuning_builds_train400_clean100_and_twenty_frozen_views(monkeypatch):
     calls: list[dict[str, object]] = []
 
@@ -154,6 +224,7 @@ def test_tuning_builds_train400_clean100_and_twenty_frozen_views(monkeypatch):
             assert current[0]["dataset"] == "pn2021"
             assert current[0]["partition"] == "k500_tune_train"
             assert current[0]["shuffle"] is True
+            assert loaders.latent_pool_source is None
             assert current[1]["dataset"] == "pn2021"
             assert current[1]["partition"] == "k500_tune_validation"
             assert current[1]["shuffle"] is False
@@ -194,6 +265,57 @@ def test_tuning_builds_train400_clean100_and_twenty_frozen_views(monkeypatch):
         assert loaders.train.closed
         assert loaders.clean_validation.closed
         assert all(loader.closed for loader in loaders.corrupted_validation)
+
+
+def test_a5_tuning_builds_pool_from_independent_train400_loader(
+    monkeypatch, tmp_path: Path
+):
+    path = _a5_tuning_bundle(tmp_path)
+    calls: list[dict[str, object]] = []
+
+    def fake_get_dataloader(**kwargs):
+        calls.append(kwargs)
+        loader = _fake_loader_from_call(kwargs)
+        if len(calls) == 2:
+            loader.dataset.selection.hash_ids = tuple(
+                reversed(loader.dataset.selection.hash_ids)
+            )
+        return loader
+
+    monkeypatch.setattr(tuning, "get_dataloader", fake_get_dataloader)
+    loaders = tuning.build_pn2021_tuning_dataloaders(
+        _Model(),
+        center="ningbo",
+        config_path=path,
+        dataloader_parameters={"num_workers": 0},
+    )
+    try:
+        assert len(calls) == 23
+        assert calls[0]["partition"] == "k500_tune_train"
+        assert calls[0]["shuffle"] is True
+        assert calls[1]["partition"] == "k500_tune_train"
+        assert calls[1]["shuffle"] is False
+        assert calls[2]["partition"] == "k500_tune_validation"
+        assert calls[2]["shuffle"] is False
+        assert [call["view"] for call in calls[3:]] == list(range(20))
+        assert loaders.latent_pool_source is not None
+        assert (
+            set(loaders.latent_pool_source.dataset.selection.hash_ids)
+            == set(loaders.train.dataset.selection.hash_ids)
+        )
+        assert (
+            loaders.latent_pool_source.dataset.selection.hash_ids
+            != loaders.train.dataset.selection.hash_ids
+        )
+        assert not (
+            set(loaders.latent_pool_source.dataset.selection.hash_ids)
+            & set(loaders.clean_validation.dataset.selection.hash_ids)
+        )
+    finally:
+        loaders.close()
+    assert all(loader.closed for loader in (loaders.train, loaders.latent_pool_source))
+    assert loaders.clean_validation.closed
+    assert all(loader.closed for loader in loaders.corrupted_validation)
 
 
 def test_tuning_rejects_corruption_hash_order_drift_and_closes_all(monkeypatch):
@@ -256,6 +378,7 @@ def test_direct_tuning_delegates_train400_and_epoch_frozen_evaluator(monkeypatch
     )
     loaders = tuning.PN2021TuningDataLoaders(
         train=train_loader,
+        latent_pool_source=None,
         clean_validation=clean_loader,
         corrupted_validation=corrupted_loaders,
         center="ningbo",
@@ -299,4 +422,150 @@ def test_direct_tuning_delegates_train400_and_epoch_frozen_evaluator(monkeypatch
     assert observed["evaluator_loaders"] is loaders
     assert Path(observed["method_config_path"]).name == "direct_depth23_fixed20.yaml"
     assert train_loader.closed and clean_loader.closed
+    assert all(loader.closed for loader in corrupted_loaders)
+
+
+def test_tuning_routes_encoder_decoder_for_latent_method(monkeypatch, tmp_path):
+    path = _latent_tuning_bundle(tmp_path)
+    model = _Model()
+    train_loader = _Loader("k500_tune_train")
+    clean_loader = _Loader("k500_tune_validation")
+    corrupted_loaders = tuple(
+        _Loader(
+            "k500_tune_validation",
+            dataset_name="pn2021c",
+            view=index,
+            hash_ids=clean_loader.dataset.selection.hash_ids,
+        )
+        for index in range(20)
+    )
+    loaders = tuning.PN2021TuningDataLoaders(
+        train=train_loader,
+        latent_pool_source=None,
+        clean_validation=clean_loader,
+        corrupted_validation=corrupted_loaders,
+        center="ningbo",
+        model_name="efficientnet1dv2",
+        input_adapter=tuning.CanonicalTuningInputAdapter(EFFICIENTNET1DV2_SPEC),
+        resolved_parameters={},
+        explicit_overrides={},
+    )
+    monkeypatch.setattr(tuning, "validate_locked_source_checkpoint", lambda *args: {})
+    monkeypatch.setattr(
+        tuning, "build_pn2021_tuning_dataloaders", lambda *args, **kwargs: loaders
+    )
+    monkeypatch.setattr(
+        tuning, "FrozenValidationEvaluator", lambda *args, **kwargs: object()
+    )
+    captured = {}
+    sentinel = object()
+
+    def fake_train_online_model(*args, **kwargs):
+        captured.update(kwargs)
+        return sentinel
+
+    monkeypatch.setattr(tuning, "train_online_model", fake_train_online_model)
+    encoder = torch.nn.Identity()
+    decoder = torch.nn.Identity()
+    result = tuning.train_pn2021_direct_tuning(
+        model,
+        center="ningbo",
+        encoder=encoder,
+        decoder=decoder,
+        config_path=path,
+    )
+
+    assert result is sentinel
+    assert captured["encoder"] is encoder
+    assert captured["decoder"] is decoder
+    assert Path(captured["method_config_path"]).name == (
+        "exp_paired_augmix_latent_bridge_v1.yaml"
+    )
+    assert train_loader.closed and clean_loader.closed
+    assert all(loader.closed for loader in corrupted_loaders)
+
+
+def test_a5_tuning_builds_train400_pool_and_routes_pool_only_encoder(
+    monkeypatch, tmp_path: Path
+):
+    path = _a5_tuning_bundle(tmp_path)
+    model = _Model()
+    train_loader = _Loader("k500_tune_train")
+    pool_loader = _Loader(
+        "k500_tune_train",
+        hash_ids=train_loader.dataset.selection.hash_ids,
+    )
+    clean_loader = _Loader("k500_tune_validation")
+    corrupted_loaders = tuple(
+        _Loader(
+            "k500_tune_validation",
+            dataset_name="pn2021c",
+            view=index,
+            hash_ids=clean_loader.dataset.selection.hash_ids,
+        )
+        for index in range(20)
+    )
+    loaders = tuning.PN2021TuningDataLoaders(
+        train=train_loader,
+        latent_pool_source=pool_loader,
+        clean_validation=clean_loader,
+        corrupted_validation=corrupted_loaders,
+        center="ningbo",
+        model_name="efficientnet1dv2",
+        input_adapter=tuning.CanonicalTuningInputAdapter(EFFICIENTNET1DV2_SPEC),
+        resolved_parameters={},
+        explicit_overrides={},
+    )
+    monkeypatch.setattr(tuning, "validate_locked_source_checkpoint", lambda *args: {})
+    monkeypatch.setattr(
+        tuning, "build_pn2021_tuning_dataloaders", lambda *args, **kwargs: loaders
+    )
+    monkeypatch.setattr(
+        tuning, "FrozenValidationEvaluator", lambda *args, **kwargs: object()
+    )
+    latent_pool = object()
+    observed: dict[str, object] = {}
+
+    def fake_build_latent_pool(encoder_arg, loader_arg, **kwargs):
+        observed["pool_encoder"] = encoder_arg
+        observed["pool_loader"] = loader_arg
+        observed["pool_kwargs"] = kwargs
+        assert not (
+            set(loader_arg.dataset.selection.hash_ids)
+            & set(clean_loader.dataset.selection.hash_ids)
+        )
+        return latent_pool
+
+    def fake_train_online_model(*args, **kwargs):
+        observed.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(tuning, "build_latent_pool", fake_build_latent_pool)
+    monkeypatch.setattr(tuning, "train_online_model", fake_train_online_model)
+    encoder = torch.nn.Identity()
+    encoder.checkpoint_identity = CheckpointIdentity(
+        path=tmp_path / "vae.pt",
+        sha256="a" * 64,
+        state_key_count=1,
+        missing_keys=(),
+        unexpected_keys=(),
+    )
+    decoder = torch.nn.Identity()
+
+    tuning.train_pn2021_direct_tuning(
+        model,
+        center="ningbo",
+        encoder=encoder,
+        decoder=decoder,
+        config_path=path,
+        device="cpu",
+    )
+
+    assert observed["pool_encoder"] is encoder
+    assert observed["pool_loader"] is pool_loader
+    assert observed["pool_kwargs"]["encoder_identity"] == "a" * 64
+    assert observed["latent_pool"] is latent_pool
+    assert observed["encoder"] is None
+    assert observed["decoder"] is decoder
+    assert train_loader.closed and pool_loader.closed and clean_loader.closed
     assert all(loader.closed for loader in corrupted_loaders)

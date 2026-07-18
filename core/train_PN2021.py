@@ -303,13 +303,23 @@ def train_pn2021(
     if spec not in {EFFICIENTNET1DV2_SPEC, ECGFOUNDER_SPEC}:
         raise ValueError("model must expose a managed EfficientNet/ECGFounder spec")
     validate_locked_source_checkpoint(model, config)
-    if not method.requirements.latent_pool:
-        if encoder is not None or decoder is not None:
-            raise ValueError("method without latent resources rejects VAE components")
-        pool = None
-    else:
-        if encoder is None or decoder is None:
-            raise ValueError("latent method requires frozen VAE encoder and decoder")
+    requires_pool = bool(method.requirements.latent_pool)
+    requires_runtime_encoder = bool(method.requirements.vae_encoder)
+    requires_decoder = bool(method.requirements.vae_decoder)
+    requires_encoder_component = requires_pool or requires_runtime_encoder
+    if requires_encoder_component != (encoder is not None):
+        raise ValueError(
+            "VAE encoder presence must match the method pool/runtime requirement"
+        )
+    if requires_decoder != (decoder is not None):
+        raise ValueError(
+            "VAE decoder presence must exactly match the method requirement"
+        )
+
+    pool = None
+    runtime_encoder = encoder if requires_runtime_encoder else None
+    if requires_pool:
+        assert encoder is not None
         requested_device = str(device or config.payload["training"]["device"])
         if requested_device == "auto":
             requested_device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -330,12 +340,11 @@ def train_pn2021(
                 dataloader_parameters=dataloader_parameters,
             )
         finally:
-            # The encoder is no longer needed after deterministic K500 means
-            # are materialized. Release its accelerator allocation before the
-            # outer classifier loop; the decoder is moved only afterwards to
-            # avoid holding both large VAE components on the GPU at once.
-            encoder.to("cpu")
-        decoder.to(resolved_device).eval()
+            if not requires_runtime_encoder:
+                # Pool-only methods release the encoder before the classifier
+                # loop. Methods that explicitly require it keep the same
+                # managed component for online waveform-to-latent generation.
+                encoder.to("cpu")
 
     loader: RuntimeDataLoader | None = None
     try:
@@ -354,6 +363,7 @@ def train_pn2021(
             center=center,
             method_config_path=method.source_path,
             latent_pool=pool,
+            encoder=runtime_encoder,
             decoder=decoder,
             config_path=config_path,
             config_root=config_root,
@@ -365,6 +375,8 @@ def train_pn2021(
     finally:
         if loader is not None:
             loader.close()
+        if encoder is not None:
+            encoder.to("cpu")
         if decoder is not None:
             decoder.to("cpu")
 

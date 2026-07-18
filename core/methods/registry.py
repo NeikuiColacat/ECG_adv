@@ -48,6 +48,38 @@ OBJECTIVE_TYPE_MAP = {
     "multilabel_bce_with_logits": "bce",
     "multilabel_bernoulli_jsd": "bernoulli_jsd",
 }
+_RESOURCE_SCHEMAS_BY_NAME: Mapping[str, tuple[str, frozenset[str]]] = {
+    "model": ("caller_owned_classifier", frozenset({"type"})),
+    "method_rng": ("none", frozenset({"type"})),
+    "operator_profile": (
+        "config_reference",
+        frozenset({"type", "path", "profile", "severity"}),
+    ),
+    "vae": ("config_reference", frozenset({"type", "path"})),
+    "lhat_config": ("config_reference", frozenset({"type", "path"})),
+    "augmix_config": ("config_reference", frozenset({"type", "path"})),
+    "latent_pool": (
+        "runtime_train_only_exact_label_pool",
+        frozenset({"type"}),
+    ),
+    "vae_encoder": ("runtime_frozen_encoder", frozenset({"type"})),
+    "vae_decoder": ("runtime_frozen_decoder", frozenset({"type"})),
+    **{
+        name: (
+            "isolated_torch_generator",
+            frozenset({"type", "seed_config", "namespace"}),
+        )
+        for name in (
+            "augmix_rng",
+            "branch_rng",
+            "corruption_rng",
+            "latent_augmix_rng",
+            "lhat_rng",
+            "replay_rng",
+            "simplex_rng",
+        )
+    },
+}
 
 
 def _mapping(value: Any, description: str) -> dict[str, Any]:
@@ -79,6 +111,33 @@ def _reject_dynamic_keys(value: Any, path: str = "profile") -> None:
     elif isinstance(value, list):
         for index, nested in enumerate(value):
             _reject_dynamic_keys(nested, f"{path}[{index}]")
+
+
+def _validate_resources(value: Any) -> dict[str, Any]:
+    resources = _mapping(value, "resources")
+    for raw_name, raw_resource in resources.items():
+        name = _name(raw_name, "resource name")
+        try:
+            expected_type, expected_keys = _RESOURCE_SCHEMAS_BY_NAME[name]
+        except KeyError:
+            raise ValueError(f"unregistered method resource {name!r}") from None
+        resource = _mapping(raw_resource, f"resources.{name}")
+        if set(resource) != expected_keys:
+            raise ValueError(
+                f"resources.{name} keys must be exactly {sorted(expected_keys)}"
+            )
+        if resource.get("type") != expected_type:
+            raise ValueError(
+                f"resources.{name}.type must be {expected_type!r}"
+            )
+        for key in ("path", "profile", "seed_config", "namespace"):
+            if key in resource:
+                _name(resource[key], f"resources.{name}.{key}")
+        if "severity" in resource:
+            severity = resource["severity"]
+            if isinstance(severity, bool) or not isinstance(severity, int) or severity <= 0:
+                raise ValueError(f"resources.{name}.severity must be a positive integer")
+    return resources
 
 
 @dataclass(frozen=True)
@@ -190,6 +249,16 @@ DEFAULT_REGISTRY = NodeRegistry(
             input_kinds=(ValueKind.WAVEFORM, ValueKind.WAVEFORM),
             output_kind=ValueKind.WAVEFORM,
             execute=augmix,
+        ),
+        NodeDefinition(
+            type_name="latent_threechain_augmix_view",
+            input_kinds=(ValueKind.WAVEFORM,),
+            output_kind=ValueKind.WAVEFORM,
+            execute=augmix,
+            requirements=MethodRequirements(
+                vae_encoder=True,
+                vae_decoder=True,
+            ),
         ),
         NodeDefinition(
             type_name="paired_latent_bridge",
@@ -474,6 +543,54 @@ def _profile_rng_namespace(
     return method_id
 
 
+_NODE_RESOURCE_BINDINGS: Mapping[str, Mapping[str, str]] = MappingProxyType(
+    {
+        "canonical_depth23_corruption_view": {
+            "rng": "corruption_rng",
+            "operator_profile": "operator_profile",
+        },
+        "vae_lhat_hard_view": {
+            "latent_pool": "latent_pool",
+            "decoder": "vae_decoder",
+            "classifier": "model",
+            "rng": "lhat_rng",
+            "config": "lhat_config",
+        },
+        "vae_lhat_threechain_augmix_view": {
+            "rng": "augmix_rng",
+            "config": "augmix_config",
+        },
+        "latent_threechain_augmix_view": {
+            "encoder": "vae_encoder",
+            "decoder": "vae_decoder",
+            "rng": "latent_augmix_rng",
+            "config": "augmix_config",
+        },
+    }
+)
+
+
+def _validate_node_resource_bindings(
+    node_id: str,
+    node_type: str,
+    input_bindings: Mapping[str, Any],
+    resources: Mapping[str, Any],
+) -> None:
+    expected = _NODE_RESOURCE_BINDINGS.get(node_type)
+    if expected is None:
+        return
+    for port, resource_name in expected.items():
+        if input_bindings.get(port) != resource_name:
+            raise ValueError(
+                f"nodes.{node_id}.inputs.{port} must bind {resource_name!r}"
+            )
+        if resource_name not in resources:
+            raise ValueError(
+                f"nodes.{node_id}.inputs.{port} references missing resource "
+                f"{resource_name!r}"
+            )
+
+
 def load_method_profile(source: str | Path | Mapping[str, Any]) -> MethodProfile:
     """Load the tracked project method schema without importing user code."""
 
@@ -524,7 +641,7 @@ def load_method_profile(source: str | Path | Mapping[str, Any]) -> MethodProfile
     method_id = _name(method.get("id"), "method.id")
     status = _name(method.get("status"), "method.status")
 
-    resources = _mapping(root["resources"], "resources")
+    resources = _validate_resources(root["resources"])
     contracts = _mapping(root["contracts"], "contracts")
     executable = contracts.get("executable", True)
     if not isinstance(executable, bool):
@@ -569,6 +686,12 @@ def load_method_profile(source: str | Path | Mapping[str, Any]) -> MethodProfile
     node_rng_namespaces: list[str] = []
     for node_id, payload in parsed_nodes.items():
         input_bindings = _mapping(payload["inputs"], f"nodes.{node_id}.inputs")
+        _validate_node_resource_bindings(
+            node_id,
+            str(payload["type"]),
+            input_bindings,
+            resources,
+        )
         graph_inputs = tuple(
             alias_to_node[value]
             for value in input_bindings.values()

@@ -1,4 +1,4 @@
-"""Run one managed PN2021 Direct K500 train400/validation100 tuning job."""
+"""Run one managed PN2021 method on the K500 train400/validation100 split."""
 
 from __future__ import annotations
 
@@ -21,8 +21,15 @@ from core.pn2021_tuning import (  # noqa: E402
     load_pn2021_tuning_config,
     train_pn2021_direct_tuning,
 )
+from core.methods import compile_method_profile  # noqa: E402
 from core.online_trainer import resolve_online_training_parameters  # noqa: E402
-from models import build_model, get_model_spec  # noqa: E402
+from models import (  # noqa: E402
+    build_ecgtwin_vae,
+    build_model,
+    get_model_spec,
+    load_vae_config,
+)
+from util.config_bundle import resolve_config_reference  # noqa: E402
 
 
 MODEL_NAMES = ("efficientnet1dv2", "ecgfounder")
@@ -30,13 +37,14 @@ MODEL_NAMES = ("efficientnet1dv2", "ecgfounder")
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Tune one Direct PN2021 K500 baseline on train400/validation100."
+        description="Tune one PN2021 K500 method on train400/validation100."
     )
     parser.add_argument("--config", type=Path, default=DEFAULT_DIRECT_TUNE_CONFIG)
     parser.add_argument("--config-root", type=Path)
     parser.add_argument("--model", required=True, choices=MODEL_NAMES)
     parser.add_argument("--center", required=True, choices=ALLOWED_CENTERS)
     parser.add_argument("--source-checkpoint", type=Path)
+    parser.add_argument("--vae-checkpoint", type=Path)
     parser.add_argument("--trainable-scope", choices=("full", "head"))
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--device")
@@ -91,6 +99,33 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.config,
         config_root=args.config_root,
     )
+    method = compile_method_profile(config.references["method_config"])
+    needs_pool = bool(method.requirements.latent_pool)
+    needs_runtime_encoder = bool(method.requirements.vae_encoder)
+    needs_encoder_component = needs_pool or needs_runtime_encoder
+    needs_decoder = bool(method.requirements.vae_decoder)
+    needs_vae = needs_encoder_component or needs_decoder
+    if not needs_vae and args.vae_checkpoint is not None:
+        raise ValueError("method without VAE resources rejects --vae-checkpoint")
+    vae_config_path = None
+    resolved_vae_checkpoint = None
+    if needs_vae:
+        vae_resource = method.resources.get("vae")
+        if not isinstance(vae_resource, dict):
+            raise ValueError("VAE-backed tuning method must declare resources.vae")
+        vae_config_path = resolve_config_reference(
+            vae_resource.get("path"),
+            owner_config_path=method.source_path,
+            config_root=config.config_root,
+            description="method.resources.vae",
+            must_exist=True,
+        )
+        vae_config = load_vae_config(vae_config_path)
+        resolved_vae_checkpoint = (
+            vae_config.checkpoint_path
+            if args.vae_checkpoint is None
+            else args.vae_checkpoint.expanduser().resolve()
+        )
     source_profile = _source_profile(config, args.model)
     training_parameters, _ = resolve_online_training_parameters(
         config.online, args.model, None
@@ -128,7 +163,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         source_profile.get("trainable_scope", "full")
     )
     if trainable_scope != "full":
-        raise ValueError("locked Direct baseline tuning requires full fine-tuning")
+        raise ValueError("managed PN2021 tuning requires full fine-tuning")
     output_dir = (
         Path(config.payload["output"]["run_dir"]).expanduser().resolve()
         / args.model
@@ -136,8 +171,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.output_dir is None
         else args.output_dir.expanduser().resolve()
     )
+    direct_protocol = method.profile_name == "direct_depth23_fixed20"
     plan = {
-        "action": "pn2021_direct_k500_internal_tuning",
+        "action": (
+            "pn2021_direct_k500_internal_tuning"
+            if direct_protocol
+            else "pn2021_k500_internal_tuning"
+        ),
         "model": get_model_spec(args.model).describe(),
         "center": args.center,
         "config": config.describe(),
@@ -146,6 +186,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             "selected_checkpoint_sha256"
         ),
         "method_config": str(config.references["method_config"]),
+        "method": method.describe(),
+        "vae_checkpoint": (
+            None if resolved_vae_checkpoint is None else str(resolved_vae_checkpoint)
+        ),
+        "vae_requirements": {
+            "encoder": needs_encoder_component,
+            "decoder": needs_decoder,
+            "latent_pool": needs_pool,
+        },
         "trainable_scope": trainable_scope,
         "output_dir": str(output_dir),
         "device": args.device or config.online.payload["training"]["device"],
@@ -160,6 +209,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if not source_checkpoint.is_file():
         raise FileNotFoundError(f"source checkpoint not found: {source_checkpoint}")
+    if (
+        resolved_vae_checkpoint is not None
+        and not resolved_vae_checkpoint.is_file()
+    ):
+        raise FileNotFoundError(
+            f"VAE checkpoint not found: {resolved_vae_checkpoint}"
+        )
 
     seed = config.online.payload["random_seed"]
     model_kwargs: dict[str, Any]
@@ -177,7 +233,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     model = build_model(
         args.model,
         config_root=config.config_root,
-        seed_namespace="pn2021_direct_tune_model_initialization",
+        seed_namespace=(
+            "pn2021_direct_tune_model_initialization"
+            if direct_protocol
+            else "pn2021_tune_model_initialization"
+        ),
         seed_identity=(
             seed["comparison_group"],
             seed["replicate_id"],
@@ -185,9 +245,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
         **model_kwargs,
     )
+    encoder = decoder = None
+    if needs_vae:
+        assert vae_config_path is not None
+        loaded_encoder, loaded_decoder = build_ecgtwin_vae(
+            config_path=vae_config_path,
+            checkpoint_path=resolved_vae_checkpoint,
+            map_location="cpu",
+        )
+        encoder = loaded_encoder if needs_encoder_component else None
+        decoder = loaded_decoder if needs_decoder else None
     result = train_pn2021_direct_tuning(
         model,
         center=args.center,
+        encoder=encoder,
+        decoder=decoder,
         config_path=config.path,
         config_root=config.config_root,
         output_dir=output_dir,

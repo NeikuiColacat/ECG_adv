@@ -79,6 +79,7 @@ ONLINE_PARAMETER_NAMES = frozenset(
 FIXED20_EXPOSURE_POLICY = "clean_once_then_exhaustive_depth23"
 FIXED20_COMPOSITION_ORDER = tuple(range(20))
 FAMILY_BALANCED_BN_POLICY = "family_loss_weighted_once_per_base_batch"
+OBJECTIVE_VIEW_BALANCED_BN_POLICY = "objective_view_weighted_once_per_base_batch"
 
 
 @dataclass(frozen=True)
@@ -163,24 +164,46 @@ def _build_batch_norm_momentum_plan(
     *,
     fixed20_exposure: bool,
 ) -> _BatchNormMomentumPlan | None:
-    if not fixed20_exposure:
-        return None
     policy = str(method.contracts.get("batch_norm_running_stats_policy", ""))
-    if policy != FAMILY_BALANCED_BN_POLICY:
-        raise ValueError(
-            "fixed20 must declare family-loss-weighted BatchNorm running stats"
+    if fixed20_exposure:
+        if policy != FAMILY_BALANCED_BN_POLICY:
+            raise ValueError(
+                "fixed20 must declare family-loss-weighted BatchNorm running stats"
+            )
+        family_weights = _mapping(
+            method.contracts.get("family_loss_weights"),
+            "fixed20 family_loss_weights",
         )
-    family_weights = _mapping(
-        method.contracts.get("family_loss_weights"),
-        "fixed20 family_loss_weights",
-    )
-    exposure_weights = (
-        float(family_weights["clean"]),
-        *(
-            float(family_weights["corrupted_per_composition"])
-            for _ in FIXED20_COMPOSITION_ORDER
-        ),
-    )
+        exposure_weights = (
+            float(family_weights["clean"]),
+            *(
+                float(family_weights["corrupted_per_composition"])
+                for _ in FIXED20_COMPOSITION_ORDER
+            ),
+        )
+    elif policy == OBJECTIVE_VIEW_BALANCED_BN_POLICY:
+        ordered_views: list[str] = []
+        for term in method.objective.terms:
+            for name in term.views:
+                if name not in ordered_views:
+                    ordered_views.append(name)
+        weights = _mapping(
+            method.contracts.get("batch_norm_objective_view_weights"),
+            "batch_norm_objective_view_weights",
+        )
+        if set(weights) != set(ordered_views):
+            raise ValueError(
+                "BatchNorm objective-view weights must cover every objective view"
+            )
+        exposure_weights = tuple(float(weights[name]) for name in ordered_views)
+        if not math.isclose(
+            sum(exposure_weights), 1.0, rel_tol=0.0, abs_tol=1.0e-12
+        ):
+            raise ValueError("BatchNorm objective-view weights must sum to one")
+    elif policy:
+        raise ValueError(f"unsupported BatchNorm running-stats policy: {policy}")
+    else:
+        return None
     named_modules = tuple(
         (name, module)
         for name, module in model.named_modules()
@@ -871,6 +894,19 @@ def _pool_identity(pool: Any | None) -> dict[str, Any] | None:
     raise TypeError("latent_pool must expose a serializable identity")
 
 
+def _module_checkpoint_identity(module: nn.Module | None) -> dict[str, Any] | None:
+    if module is None:
+        return None
+    identity = getattr(module, "checkpoint_identity", None)
+    describe = getattr(identity, "describe", None)
+    if not callable(describe):
+        raise ValueError("managed VAE components must expose checkpoint_identity")
+    value = describe()
+    if not isinstance(value, dict) or len(str(value.get("sha256", ""))) != 64:
+        raise ValueError("managed VAE checkpoint identity is invalid")
+    return value
+
+
 def _write_json(path: Path, payload: Any) -> None:
     temporary = path.with_name(f".{path.name}.tmp")
     temporary.write_text(
@@ -925,6 +961,7 @@ def _compute_objective(
     normalization_epsilon: float,
     pos_weight: torch.Tensor | None,
     objective_term_names: Sequence[str] | None = None,
+    batch_norm_plan: _BatchNormMomentumPlan | None = None,
 ) -> _ObjectiveBatch:
     """Compute profile-declared losses with one mean contribution per origin.
 
@@ -970,7 +1007,13 @@ def _compute_objective(
     positions: dict[str, torch.Tensor] = {}
     logits: dict[str, torch.Tensor] = {}
     full_to_local: dict[str, torch.Tensor] = {}
-    for name in ordered_views:
+    if batch_norm_plan is not None and len(batch_norm_plan.exposure_weights) != len(
+        ordered_views
+    ):
+        raise ValueError(
+            "objective-view BatchNorm plan does not match the objective views"
+        )
+    for view_index, name in enumerate(ordered_views):
         value = bundle.require(name)
         if not isinstance(value, WaveformView):
             raise TypeError(f"objective view {name!r} must be a WaveformView")
@@ -978,33 +1021,38 @@ def _compute_objective(
             raise RuntimeError(f"objective view {name!r} changed origin order")
         if not torch.equal(value.labels, clean.labels):
             raise RuntimeError(f"objective view {name!r} changed labels")
-        valid_positions = torch.nonzero(
-            value.valid_mask, as_tuple=False
-        ).flatten()
+        valid_positions = torch.nonzero(value.valid_mask, as_tuple=False).flatten()
         views[name] = value
         positions[name] = valid_positions
+        forward_positions = (
+            torch.arange(batch_size, device=value.waveform.device, dtype=torch.long)
+            if batch_norm_plan is not None
+            else valid_positions
+        )
         lookup = torch.full(
             (batch_size,),
             -1,
             device=value.waveform.device,
             dtype=torch.long,
         )
-        if valid_positions.numel():
-            lookup[valid_positions] = torch.arange(
-                valid_positions.numel(),
+        if forward_positions.numel():
+            lookup[forward_positions] = torch.arange(
+                forward_positions.numel(),
                 device=value.waveform.device,
                 dtype=torch.long,
             )
-            raw_subset = value.waveform.index_select(0, valid_positions)
+            raw_subset = value.waveform.index_select(0, forward_positions)
             model_input = prepare_canonical_model_input(
                 raw_subset,
                 spec,
                 epsilon=normalization_epsilon,
             )
+            if batch_norm_plan is not None:
+                batch_norm_plan.apply(view_index)
             logits[name] = validate_model_output(
                 model(model_input),
                 spec,
-                batch_size=int(valid_positions.numel()),
+                batch_size=int(forward_positions.numel()),
                 check_finite=False,
             )
         else:
@@ -1022,8 +1070,12 @@ def _compute_objective(
             count = int(positions[name].numel())
             if count:
                 targets = views[name].labels.index_select(0, positions[name])
+                selected_logits = logits[name].index_select(
+                    0,
+                    full_to_local[name].index_select(0, positions[name]),
+                )
                 raw_loss = F.binary_cross_entropy_with_logits(
-                    logits[name], targets, pos_weight=pos_weight
+                    selected_logits, targets, pos_weight=pos_weight
                 )
             else:
                 raw_loss = reference.sum() * 0.0
@@ -1135,6 +1187,7 @@ def train_online_model(
     center: str,
     method_config_path: str | Path,
     latent_pool: "LatentPool | None" = None,
+    encoder: nn.Module | None = None,
     decoder: nn.Module | None = None,
     config_path: str | Path = DEFAULT_ONLINE_CONFIG_PATH,
     config_root: str | Path | None = None,
@@ -1225,6 +1278,7 @@ def train_online_model(
         )
 
     requires_latent = bool(method.requirements.latent_pool)
+    requires_encoder = bool(method.requirements.vae_encoder)
     requires_decoder = bool(method.requirements.vae_decoder)
     if requires_latent != (latent_pool is not None):
         raise ValueError(
@@ -1233,6 +1287,10 @@ def train_online_model(
     if requires_decoder != (decoder is not None):
         raise ValueError(
             "VAE decoder presence must exactly match the method profile requirement"
+        )
+    if requires_encoder != (encoder is not None):
+        raise ValueError(
+            "VAE encoder presence must exactly match the method profile requirement"
         )
 
     requested_device = str(device or config.payload["training"]["device"])
@@ -1295,6 +1353,10 @@ def train_online_model(
         method,
         fixed20_exposure=fixed20_exposure,
     )
+    if encoder is not None:
+        encoder.to(resolved_device).eval()
+        for parameter in encoder.parameters():
+            parameter.requires_grad_(False)
     if decoder is not None:
         decoder.to(resolved_device).eval()
         for parameter in decoder.parameters():
@@ -1317,6 +1379,8 @@ def train_online_model(
         )
     )
     pool_identity = _pool_identity(latent_pool)
+    encoder_identity = _module_checkpoint_identity(encoder)
+    decoder_identity = _module_checkpoint_identity(decoder)
 
     quality = config.payload["data"]["hard_sample_quality_gate"]
     runtime = build_method_runtime(
@@ -1324,12 +1388,34 @@ def train_online_model(
         model_name=spec.name,
         config_root=config.config_root,
         latent_pool=latent_pool,
+        encoder=encoder,
         decoder=decoder,
         minimum_std_mV=float(quality["minimum_global_std_mV"]),
         maximum_abs_mV=float(quality["maximum_absolute_mV"]),
     )
+    if (
+        runtime.augmix_config is not None
+        and runtime.augmix_config.random_seed_config_path
+        != config.references["random_seed_config"]
+    ):
+        raise ValueError(
+            "online training and AugMix must use the same random_seed config"
+        )
+    mismatched_method_rngs = sorted(
+        name
+        for name, path in runtime.rng_seed_config_paths.items()
+        if path != config.references["random_seed_config"]
+    )
+    if mismatched_method_rngs:
+        raise ValueError(
+            "online training and method RNG resources must use the same "
+            "random_seed config: "
+            + ", ".join(mismatched_method_rngs)
+        )
     method_resource_identity = runtime.describe()
     method_resource_identity["latent_pool"] = pool_identity
+    method_resource_identity["vae_encoder_checkpoint"] = encoder_identity
+    method_resource_identity["vae_decoder_checkpoint"] = decoder_identity
     _write_json(method_resources_path, method_resource_identity)
 
     trainable = [value for value in model.parameters() if value.requires_grad]
@@ -1384,21 +1470,8 @@ def train_online_model(
         "center": center,
         "scientific_arm": method.scientific_arm,
         "model": _model_identity(model, spec),
-        "vae_decoder_checkpoint": (
-            None
-            if decoder is None
-            else (
-                decoder.checkpoint_identity.describe()
-                if callable(
-                    getattr(
-                        getattr(decoder, "checkpoint_identity", None),
-                        "describe",
-                        None,
-                    )
-                )
-                else None
-            )
-        ),
+        "vae_encoder_checkpoint": encoder_identity,
+        "vae_decoder_checkpoint": decoder_identity,
         "training_parameters": {
             "resolved": resolved,
             "explicit_overrides": supplied,
@@ -1503,6 +1576,8 @@ def train_online_model(
             }
             epoch_candidate_eligible = 0
             epoch_quality_accepted = 0
+            epoch_quality_view_total = 0
+            epoch_quality_view_accepted = 0
             epoch_ineligible_hashes: list[str] = []
             epoch_quality_rejected: list[dict[str, str]] = []
             diagnostic_sums: dict[str, float] = {}
@@ -1624,7 +1699,7 @@ def train_online_model(
                     if not fixed20_exposure
                     else (0.5 if exposure_name == "clean" else 0.025)
                 )
-                if batch_norm_plan is not None:
+                if batch_norm_plan is not None and fixed20_exposure:
                     batch_norm_plan.apply(
                         0 if composition_index == -1 else int(composition_index) + 1
                     )
@@ -1673,6 +1748,9 @@ def train_online_model(
                         normalization_epsilon=epsilon,
                         pos_weight=resolved_pos_weight,
                         objective_term_names=objective_terms,
+                        batch_norm_plan=(
+                            None if fixed20_exposure else batch_norm_plan
+                        ),
                     )
                 if not bool(torch.isfinite(objective.total).item()):
                     raise FloatingPointError(
@@ -1836,6 +1914,10 @@ def train_online_model(
                     generated.candidate_eligible_positions
                 )
                 epoch_quality_accepted += len(generated.accepted_positions)
+                epoch_quality_view_total += generated.quality_view_total_count
+                epoch_quality_view_accepted += (
+                    generated.quality_view_accepted_count
+                )
                 epoch_ineligible_hashes.extend(generated.ineligible_hash_ids)
                 epoch_quality_rejected.extend(generated.quality_rejected)
 
@@ -1872,6 +1954,12 @@ def train_online_model(
                             ),
                             "quality_accepted_count": len(
                                 generated.accepted_positions
+                            ),
+                            "quality_view_total_count": (
+                                generated.quality_view_total_count
+                            ),
+                            "quality_view_accepted_count": (
+                                generated.quality_view_accepted_count
                             ),
                             "quality_rejected_count": len(
                                 generated.quality_rejected
@@ -1920,10 +2008,14 @@ def train_online_model(
             scheduler.step()
             ineligible_unique = tuple(sorted(set(epoch_ineligible_hashes)))
             quality_rejected = [
-                {"hash_id": hash_id, "reason": reason}
-                for hash_id, reason in sorted(
+                {"node_id": node_id, "hash_id": hash_id, "reason": reason}
+                for node_id, hash_id, reason in sorted(
                     {
-                        (item["hash_id"], item["reason"])
+                        (
+                            item.get("node_id", ""),
+                            item["hash_id"],
+                            item["reason"],
+                        )
                         for item in epoch_quality_rejected
                     }
                 )
@@ -2026,12 +2118,16 @@ def train_online_model(
             for source, target in legacy_weighted_names.items():
                 if source in legacy:
                     train_metrics[target] = legacy[source]
-            if method.requirements.latent_pool:
+            if method.requirements.latent_pool or method.requirements.vae_encoder:
                 train_metrics.update(
                     {
                         "eligible_count": epoch_quality_accepted,
                         "candidate_eligible_count": epoch_candidate_eligible,
                         "quality_accepted_count": epoch_quality_accepted,
+                        "quality_view_total_count": epoch_quality_view_total,
+                        "quality_view_accepted_count": (
+                            epoch_quality_view_accepted
+                        ),
                         "ineligible_count": len(ineligible_unique),
                         "quality_rejected_count": len(quality_rejected),
                         "candidate_eligible_fraction": (
@@ -2040,8 +2136,27 @@ def train_online_model(
                         "quality_accepted_fraction": (
                             epoch_quality_accepted / epoch_samples
                         ),
+                        "quality_view_accepted_fraction": (
+                            epoch_quality_view_accepted / epoch_quality_view_total
+                            if epoch_quality_view_total
+                            else 0.0
+                        ),
+                        "all_quality_views_accepted_fraction": (
+                            epoch_quality_accepted / epoch_samples
+                        ),
                     }
                 )
+                if epoch_quality_view_total == 2 * epoch_samples:
+                    train_metrics.update(
+                        {
+                            "both_views_accepted_record_count": (
+                                epoch_quality_accepted
+                            ),
+                            "both_views_accepted_fraction": (
+                                epoch_quality_accepted / epoch_samples
+                            ),
+                        }
+                    )
             epoch_record = {
                 "epoch": epoch,
                 "learning_rate": learning_rate,
@@ -2065,6 +2180,8 @@ def train_online_model(
                     "view_valid_counts": epoch_view_counts,
                     "candidate_eligible_count": epoch_candidate_eligible,
                     "quality_accepted_count": epoch_quality_accepted,
+                    "quality_view_total_count": epoch_quality_view_total,
+                    "quality_view_accepted_count": epoch_quality_view_accepted,
                     "quality_rejected_count": len(quality_rejected),
                     "ineligible_count": len(ineligible_unique),
                     "ineligible_hash_ids": list(ineligible_unique),

@@ -61,7 +61,6 @@ EXPERIMENTAL_PROFILES = (
     "exp_augmix_guided_latent_simplex_v1.yaml",
     "exp_lhat_as_sixth_branch_v1.yaml",
     "exp_lhat_replay_pool_v1.yaml",
-    "exp_paired_augmix_latent_bridge_v1.yaml",
 )
 
 FORBIDDEN_DYNAMIC_KEYS = (
@@ -126,6 +125,21 @@ def test_locked_a0_a3c_a5_profiles_compile(
     assert len(compiled.profile_sha256) == 64
 
 
+def test_a5_balances_batch_norm_once_across_its_three_objective_views() -> None:
+    compiled = compile_method_profile(
+        METHOD_PROFILES / "a5_lhat_threechain_v1.yaml"
+    )
+
+    assert compiled.contracts["batch_norm_running_stats_policy"] == (
+        "objective_view_weighted_once_per_base_batch"
+    )
+    assert compiled.contracts["batch_norm_objective_view_weights"] == {
+        "clean_view": pytest.approx(1.0 / 3.0),
+        "lhat_view": pytest.approx(1.0 / 3.0),
+        "augmix_view": pytest.approx(1.0 / 3.0),
+    }
+
+
 @pytest.mark.parametrize("filename", EXPERIMENTAL_PROFILES)
 def test_experimental_profiles_compile_but_execution_is_rejected(filename: str) -> None:
     compiled = compile_method_profile(METHOD_PROFILES / filename)
@@ -137,6 +151,146 @@ def test_experimental_profiles_compile_but_execution_is_rejected(filename: str) 
         match=r"audit-only: contracts\.executable=false",
     ):
         execute_method(compiled, ExecutionResources(sources={}))
+
+
+def test_latent_threechain_profile_is_executable_and_uses_supervised_augmix_loss() -> None:
+    compiled = compile_method_profile(
+        METHOD_PROFILES / "exp_paired_augmix_latent_bridge_v1.yaml"
+    )
+
+    assert compiled.profile_name == "latent_threechain_augmix_residual_depth23_aug075"
+    assert compiled.scientific_arm == "latent_augmix"
+    assert compiled.executable is True
+    assert tuple(node.profile.node_id for node in compiled.nodes) == (
+        "clean_identity",
+        "augmix_view_1",
+        "augmix_view_2",
+    )
+    assert set(compiled.outputs) == {
+        "clean_view",
+        "augmix_view_1",
+        "augmix_view_2",
+    }
+    assert compiled.requirements.names() == (
+        "classifier",
+        "vae_encoder",
+        "vae_decoder",
+    )
+    assert tuple(term.name for term in compiled.objective.terms) == (
+        "clean_bce",
+        "clean_augmix_jsd",
+        "augmix_view_1_bce",
+        "augmix_view_2_bce",
+    )
+    assert compiled.objective.terms[0].weight == pytest.approx(1.0)
+    assert compiled.objective.terms[1].weight == pytest.approx(3.0)
+    assert compiled.objective.terms[2].weight == pytest.approx(0.75)
+    assert compiled.objective.terms[3].weight == pytest.approx(0.75)
+    assert compiled.contracts["batch_norm_running_stats_policy"] == (
+        "objective_view_weighted_once_per_base_batch"
+    )
+    assert compiled.contracts["batch_norm_objective_view_weights"] == {
+        "clean_view": pytest.approx(0.5),
+        "augmix_view_1": pytest.approx(0.25),
+        "augmix_view_2": pytest.approx(0.25),
+    }
+    assert compiled.contracts["chain_depth_sampling"] == "uniform_integer_2_to_3"
+    assert compiled.contracts["reconstruction_residual_bypass"] == (
+        "weighted_chain_residuals"
+    )
+
+
+def test_latent_threechain_profile_rejects_resource_binding_drift() -> None:
+    payload = yaml.safe_load(
+        (METHOD_PROFILES / "exp_paired_augmix_latent_bridge_v1.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    payload["nodes"]["augmix_view_1"]["inputs"]["encoder"] = "vae_decoder"
+
+    with pytest.raises(ValueError, match=r"inputs\.encoder.*vae_encoder"):
+        load_method_profile(payload)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (
+            lambda resources: resources["latent_augmix_rng"].__setitem__(
+                "type", "typo"
+            ),
+            r"latent_augmix_rng\.type.*isolated_torch_generator",
+        ),
+        (
+            lambda resources: resources["latent_augmix_rng"].pop("seed_config"),
+            r"latent_augmix_rng keys must be exactly",
+        ),
+    ],
+)
+def test_latent_threechain_profile_rejects_rng_resource_schema_drift(
+    mutation, message
+) -> None:
+    payload = yaml.safe_load(
+        (METHOD_PROFILES / "exp_paired_augmix_latent_bridge_v1.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    mutation(payload["resources"])
+
+    with pytest.raises(ValueError, match=message):
+        load_method_profile(payload)
+
+
+def test_latent_threechain_profile_uses_two_replayable_independent_node_streams() -> None:
+    compiled = compile_method_profile(
+        METHOD_PROFILES / "exp_paired_augmix_latent_bridge_v1.yaml"
+    )
+    source = _clean_view()
+
+    def fake_augmix(context, inputs):
+        clean = inputs[0]
+        generator = context.torch_generator("fixture", device=clean.waveform.device)
+        offset = torch.rand((), generator=generator)
+        return WaveformView(
+            name=context.node_id,
+            waveform=clean.waveform + offset,
+            labels=clean.labels,
+            sample_ids=clean.sample_ids,
+            provenance=Provenance(
+                node_id=context.node_id,
+                operation=context.node_type,
+                parent_names=(clean.name,),
+                rng_namespace=context.rng_namespace,
+            ),
+        )
+
+    def run_once():
+        return execute_method(
+            compiled,
+            ExecutionResources(
+                sources={"clean_raw": source},
+                adapters={"augmix": fake_augmix},
+                classifier=object(),
+                vae_encoder=object(),
+                vae_decoder=object(),
+                base_seed=20260717,
+                rng_identity=("replicate=0", "epoch=1", "step=0"),
+            ),
+        )
+
+    first = run_once()
+    second = run_once()
+    left = first.require("augmix_view_1", ValueKind.WAVEFORM)
+    right = first.require("augmix_view_2", ValueKind.WAVEFORM)
+    assert not torch.equal(left.waveform, right.waveform)
+    torch.testing.assert_close(
+        left.waveform,
+        second.require("augmix_view_1", ValueKind.WAVEFORM).waveform,
+    )
+    torch.testing.assert_close(
+        right.waveform,
+        second.require("augmix_view_2", ValueKind.WAVEFORM).waveform,
+    )
 
 
 def test_a0_executes_as_a_typed_clean_waveform_graph() -> None:

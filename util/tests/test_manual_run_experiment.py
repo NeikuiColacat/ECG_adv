@@ -12,6 +12,7 @@ from boot_scripts.run_experiment import (
     load_experiment_plan,
     main,
 )
+from util.evaluation.direct_baseline_selection import locked_pooled_selection_rule
 from util.run_record import verify_run_file_index
 
 
@@ -254,24 +255,43 @@ def test_run_record_uses_typed_method_identity_and_last_selection(
     )
 
 
-def test_run_record_extracts_direct_pooled_selection(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("filename", "artifact_type", "protocol_id", "method_id"),
+    [
+        (
+            "direct_baseline_selection.json",
+            "direct_k500_pooled_epoch_selection",
+            "pn2021_direct_family_balanced_tuning",
+            "direct_depth23_fixed20",
+        ),
+        (
+            "latent_threechain_selection.json",
+            "pn2021_k500_pooled_epoch_selection",
+            "pn2021_latent_threechain_tuning",
+            "latent_threechain_augmix_residual_depth23_aug075",
+        ),
+    ],
+)
+def test_run_record_extracts_pooled_selection(
+    tmp_path: Path,
+    filename: str,
+    artifact_type: str,
+    protocol_id: str,
+    method_id: str,
+) -> None:
     experiment = _write_bundle(tmp_path)
     plan = load_experiment_plan(experiment)
 
     def fake_delegate(argv: list[str], log_path: Path) -> int:
         delegate_output = Path(argv[argv.index("--output-dir") + 1])
         delegate_output.mkdir(parents=True)
-        (delegate_output / "direct_baseline_selection.json").write_text(
+        (delegate_output / filename).write_text(
             json.dumps(
                 {
                     "schema_version": 1,
-                    "artifact_type": "direct_k500_pooled_epoch_selection",
+                    "artifact_type": artifact_type,
                     "status": "selected",
-                    "selection_rule": {
-                        "heldout_evaluation_used": False,
-                        "robust_aggregation": "mean_of_20_composition_macro_auprc",
-                        "score": "0.5_clean_macro_auprc_plus_0.5_robust_macro_auprc",
-                    },
+                    "selection_rule": locked_pooled_selection_rule(),
                     "selected_epoch": 7,
                     "selected_score": 0.61,
                     "selected_clean_macro_auprc": 0.70,
@@ -287,11 +307,11 @@ def test_run_record_extracts_direct_pooled_selection(tmp_path: Path) -> None:
                         "georgia",
                     ],
                     "config": {
-                        "protocol_id": "pn2021_direct_family_balanced_tuning"
+                        "protocol_id": protocol_id
                     },
                     "comparison_identity": {
-                        "protocol_id": "pn2021_direct_family_balanced_tuning",
-                        "method_id": "direct_depth23_fixed20",
+                        "protocol_id": protocol_id,
+                        "method_id": method_id,
                         "model_family": "efficientnet1dv2",
                     },
                     "frozen_corruption_identity_sha256": "fixture-cache-sha",

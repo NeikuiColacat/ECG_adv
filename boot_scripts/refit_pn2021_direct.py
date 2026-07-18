@@ -17,10 +17,20 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.online_trainer import ALLOWED_CENTERS, load_online_train_config  # noqa: E402
+from core.pn2021_tuning import validate_refit_reproducibility_context  # noqa: E402
 from core.train_PN2021 import load_pn2021_method_profile, train_pn2021  # noqa: E402
 from models import build_model, get_model_spec  # noqa: E402
 from models.checkpoints import sha256_file  # noqa: E402
 from models.contracts import CLASS_ORDER  # noqa: E402
+from util.config_bundle import resolve_yaml_config_closure  # noqa: E402
+from util.evaluation.direct_baseline_selection import (  # noqa: E402
+    locked_pooled_selection_rule,
+)
+from util.run_record import (  # noqa: E402
+    resolve_run_config_snapshot_by_sha256,
+    validate_managed_run_member,
+    validate_run_config_snapshots,
+)
 
 
 MODEL_NAMES = ("efficientnet1dv2", "ecgfounder")
@@ -51,39 +61,9 @@ def _canonical_sha256(value: Any) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _validate_managed_selection_file(path: Path) -> None:
-    try:
-        relative = path.relative_to(path.parent.parent)
-    except ValueError:
-        raise ValueError("selection path has no managed run root") from None
-    run_root = path.parent.parent
-    index_path = run_root / "run_file_index.json"
-    card_path = run_root / "run_card.json"
-    if not index_path.is_file() or not card_path.is_file():
-        raise ValueError("selection must belong to a finalized managed run")
-    index = _mapping(
-        json.loads(index_path.read_text(encoding="utf-8")),
-        "selection run_file_index",
-    )
-    files = index.get("files")
-    if not isinstance(files, list):
-        raise ValueError("selection run_file_index.files must be a list")
-    members = [
-        item
-        for item in files
-        if isinstance(item, dict) and item.get("path") == relative.as_posix()
-    ]
-    if len(members) != 1 or members[0].get("sha256") != _sha256(path):
-        raise ValueError("selection SHA256 differs from its managed run index")
-    card = _mapping(
-        json.loads(card_path.read_text(encoding="utf-8")),
-        "selection run_card",
-    )
-    if card.get("status") != "complete" or int(card.get("exit_code", -1)) != 0:
-        raise ValueError("selection managed run is not complete with exit_code=0")
-
-
-def _load_selection(path: Path, model_name: str) -> dict[str, Any]:
+def _load_selection(
+    path: Path, model_name: str
+) -> tuple[dict[str, Any], dict[str, Any]]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -91,7 +71,7 @@ def _load_selection(path: Path, model_name: str) -> dict[str, Any]:
     except json.JSONDecodeError as exc:
         raise ValueError(f"invalid pooled selection JSON: {exc}") from exc
     root = _mapping(payload, "pooled selection")
-    _validate_managed_selection_file(path)
+    managed = validate_managed_run_member(path)
     if root.get("schema_version") != 1 or root.get("status") != "selected":
         raise ValueError("pooled selection must be a selected schema_version=1 artifact")
     if root.get("artifact_type") != "direct_k500_pooled_epoch_selection":
@@ -105,21 +85,7 @@ def _load_selection(path: Path, model_name: str) -> dict[str, Any]:
     if int(root.get("composition_count", -1)) != 20:
         raise ValueError("pooled selection must contain twenty corruption compositions")
     rule = _mapping(root.get("selection_rule"), "selection_rule")
-    expected_rule = {
-        "training_partition": "k500_tune_train",
-        "validation_partition": "k500_tune_validation",
-        "clean_aggregation": "concatenate_four_centers_before_metric",
-        "corrupted_aggregation": "concatenate_four_centers_per_composition_before_metric",
-        "robust_aggregation": "mean_of_20_composition_macro_auprc",
-        "score": "0.5_clean_macro_auprc_plus_0.5_robust_macro_auprc",
-        "clean_floor": "same_backbone_locked_clean_macro_auprc_minus_0.01",
-        "metric_definition": "sklearn_average_precision",
-        "input_type": "raw_logits",
-        "strict_all_five_classes": True,
-        "tie_break": "earliest_epoch_on_exact_tie",
-        "heldout_evaluation_used": False,
-    }
-    if rule != expected_rule:
+    if rule != locked_pooled_selection_rule():
         raise ValueError("pooled selection rule differs from the locked protocol")
     comparison = _mapping(root.get("comparison_identity"), "comparison_identity")
     if comparison.get("protocol_id") != TUNING_PROTOCOL_ID:
@@ -186,7 +152,7 @@ def _load_selection(path: Path, model_name: str) -> dict[str, Any]:
     batch_size = parameters.get("batch_size")
     if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size <= 0:
         raise ValueError("selection train batch_size must be positive")
-    return root
+    return root, managed
 
 
 def _training_parameters(
@@ -240,9 +206,45 @@ def main(argv: Sequence[str] | None = None) -> int:
     if method.profile_name != FIXED20_METHOD_ID:
         raise ValueError("Direct refit requires the family-balanced fixed20 profile")
     selection_path = args.selection_json.expanduser().resolve()
-    selection = _load_selection(selection_path, args.model)
+    selection, managed_selection = _load_selection(selection_path, args.model)
     training_parameters = _training_parameters(selection)
     comparison = selection["comparison_identity"]
+    if comparison.get("method_profile_sha256") != sha256_file(method.source_path):
+        raise ValueError("selection method profile SHA256 mismatch")
+    online_config_snapshot = resolve_run_config_snapshot_by_sha256(
+        managed_selection["run_dir"],
+        comparison.get("online_training_config_sha256"),
+    )
+    tuning_config_snapshot = resolve_run_config_snapshot_by_sha256(
+        managed_selection["run_dir"],
+        comparison.get("tuning_config_sha256"),
+    )
+    reproducibility = validate_refit_reproducibility_context(
+        comparison,
+        config,
+        selection_online_config_path=online_config_snapshot["path"],
+        strict_online_config_sha256=True,
+        trainable_scope="full",
+        pos_weight=None,
+    )
+    current_tuning_config = (
+        config.config_root / "train" / "PN2021_direct_tune.yaml"
+    ).resolve()
+    if (
+        not current_tuning_config.is_file()
+        or sha256_file(current_tuning_config)
+        != comparison.get("tuning_config_sha256")
+    ):
+        raise ValueError("current Direct tuning config differs from pooled selection")
+    config_closure = resolve_yaml_config_closure(
+        (method.source_path, *config.references.values()),
+        config_root=config.config_root,
+    )
+    config_snapshots = validate_run_config_snapshots(
+        managed_selection["run_dir"],
+        config_closure,
+        config_root=config.config_root,
+    )
     source_checkpoint = Path(
         comparison["source_checkpoint_identity"]["path"]
     ).expanduser().resolve()
@@ -276,6 +278,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             "sha256": comparison["source_checkpoint_identity"]["sha256"],
         },
         "training_parameters": training_parameters,
+        "reproducibility": reproducibility,
+        "selection_config_snapshots": {
+            "online_training": {
+                key: str(value) if isinstance(value, Path) else value
+                for key, value in online_config_snapshot.items()
+            },
+            "tuning": {
+                key: str(value) if isinstance(value, Path) else value
+                for key, value in tuning_config_snapshot.items()
+            },
+        },
+        "managed_selection": {
+            "run_dir": str(managed_selection["run_dir"]),
+            "relative_path": managed_selection["relative_path"],
+            "config_snapshots": config_snapshots,
+        },
         "dataloader_parameters": dataloader_parameters,
         "output_dir": None if output_dir is None else str(output_dir),
         "device": args.device or config.payload["training"]["device"],

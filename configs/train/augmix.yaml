@@ -51,3 +51,14 @@ output:
   return_raw_mixture: true
   return_global_zscore_mixture: true
   normalization_epsilon: 1.0e-6
+
+latent_threechain:
+  width: 3
+  depths: [2, 3]
+  depth_sampling: uniform_integer_2_to_3
+  operator_sampling: random_subset_without_replacement
+  operator_application_order: canonical_order
+  dirichlet_alpha: 1.0
+  posterior_sample: false
+  reconstruction_residual_bypass: true
+  post_decode_clean_beta_mix: false

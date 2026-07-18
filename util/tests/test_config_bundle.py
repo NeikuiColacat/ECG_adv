@@ -78,7 +78,12 @@ def test_method_profiles_are_typed_bundle_portable_descriptions(
         "contracts",
     }
     assert payload["schema_version"] == 1
-    assert payload["method"]["id"] == profile_name
+    expected_id = (
+        "latent_threechain_augmix_residual_depth23_aug075"
+        if profile_name == "exp_paired_augmix_latent_bridge_v1"
+        else profile_name
+    )
+    assert payload["method"]["id"] == expected_id
     assert payload["method"]["profile_version"] == 1
     assert payload["method"]["api_version"] == 1
     assert payload["nodes"]
@@ -155,7 +160,12 @@ def test_a5_reuses_one_lhat_view_for_bce_and_uncorrupted_chain3() -> None:
 
 @pytest.mark.parametrize(
     "profile_name",
-    tuple(name for name in METHOD_PROFILE_NAMES if name.startswith("exp_")),
+    tuple(
+        name
+        for name in METHOD_PROFILE_NAMES
+        if name.startswith("exp_")
+        and name != "exp_paired_augmix_latent_bridge_v1"
+    ),
 )
 def test_experimental_profiles_mark_unimplemented_nodes(profile_name: str) -> None:
     path = (

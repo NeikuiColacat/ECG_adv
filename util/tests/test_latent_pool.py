@@ -2,18 +2,34 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Mapping
 
 import pytest
 import torch
 import torch.nn as nn
 
+import core.latent_pool as latent_pool_module
 from core.latent_pool import LatentPool, build_latent_pool
 from core.lhat import select_exact_label_candidates
 
 
 ROOT = Path(__file__).resolve().parents[2]
 ENCODER_IDENTITY = "a" * 64
+
+
+def test_unsuffixed_cuda_device_matches_current_explicit_cuda_index(
+    monkeypatch,
+) -> None:
+    module = nn.Module()
+    fake_parameter = SimpleNamespace(device=torch.device("cuda:0"))
+    monkeypatch.setattr(module, "parameters", lambda: iter((fake_parameter,)))
+    monkeypatch.setattr(module, "buffers", lambda: iter(()))
+    monkeypatch.setattr(torch.cuda, "current_device", lambda: 0)
+
+    assert latent_pool_module._module_device(module, "cuda") == torch.device(
+        "cuda:0"
+    )
 
 
 class _DeterministicMeanEncoder(nn.Module):

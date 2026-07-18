@@ -290,6 +290,156 @@ def verify_run_file_index(run_dir: str | Path) -> list[str]:
     return errors
 
 
+def validate_managed_run_member(path: str | Path) -> dict[str, Any]:
+    """Validate one immutable member of a complete indexed managed run."""
+
+    member = Path(path).expanduser().resolve()
+    if not member.is_file() or member.is_symlink():
+        raise FileNotFoundError(f"managed run member not found: {member}")
+    run_dir = next(
+        (
+            parent
+            for parent in member.parents
+            if (parent / "run_manifest.json").is_file()
+            and (parent / "run_file_index.json").is_file()
+            and (parent / "run_card.json").is_file()
+        ),
+        None,
+    )
+    if run_dir is None:
+        raise ValueError("artifact must belong to a finalized managed run")
+    errors = verify_run_file_index(run_dir)
+    if errors:
+        raise ValueError("managed run integrity check failed: " + "; ".join(errors))
+    card = json.loads((run_dir / "run_card.json").read_text(encoding="utf-8"))
+    if card.get("status") != "complete" or int(card.get("exit_code", -1)) != 0:
+        raise ValueError("managed run is not complete with exit_code=0")
+    index = json.loads((run_dir / "run_file_index.json").read_text(encoding="utf-8"))
+    relative = member.relative_to(run_dir).as_posix()
+    matches = [
+        item
+        for item in index.get("files", ())
+        if isinstance(item, dict) and item.get("path") == relative
+    ]
+    if len(matches) != 1 or matches[0].get("sha256") != sha256_file(member):
+        raise ValueError("artifact SHA256 differs from its managed run index")
+    manifest = json.loads(
+        (run_dir / "run_manifest.json").read_text(encoding="utf-8")
+    )
+    return {
+        "run_dir": run_dir,
+        "relative_path": relative,
+        "manifest": manifest,
+        "member_sha256": matches[0]["sha256"],
+    }
+
+
+def validate_run_config_snapshots(
+    run_dir: str | Path,
+    sources: Sequence[str | Path],
+    *,
+    config_root: str | Path,
+) -> list[dict[str, Any]]:
+    """Match current YAML bytes to the immutable snapshots of a managed run."""
+
+    root = Path(run_dir).expanduser().resolve()
+    manifest = json.loads((root / "run_manifest.json").read_text(encoding="utf-8"))
+    snapshots = manifest.get("config_snapshots")
+    if not isinstance(snapshots, list):
+        raise ValueError("managed run manifest has no config_snapshots list")
+    by_destination: dict[str, list[dict[str, Any]]] = {}
+    for item in snapshots:
+        if isinstance(item, dict) and isinstance(item.get("snapshot_path"), str):
+            by_destination.setdefault(item["snapshot_path"], []).append(item)
+    evidence: list[dict[str, Any]] = []
+    config_root_path = Path(config_root).expanduser().resolve()
+    for raw_source in sources:
+        source = Path(raw_source).expanduser().resolve()
+        destination = _snapshot_destination(source, config_root=config_root_path)
+        matches = by_destination.get(destination.as_posix(), [])
+        if len(matches) != 1:
+            raise ValueError(
+                f"managed selection has no unique config snapshot for {source}"
+            )
+        expected = matches[0]
+        current_sha256 = sha256_file(source)
+        snapshot_path = (root / destination).resolve()
+        try:
+            snapshot_path.relative_to(root)
+        except ValueError:
+            raise ValueError("managed config snapshot escapes run directory") from None
+        if not snapshot_path.is_file() or snapshot_path.is_symlink():
+            raise ValueError(f"managed config snapshot is missing: {destination}")
+        snapshot_sha256 = sha256_file(snapshot_path)
+        if expected.get("sha256") != snapshot_sha256:
+            raise ValueError(f"managed config snapshot SHA256 mismatch: {destination}")
+        if current_sha256 != snapshot_sha256:
+            raise ValueError(
+                f"current config differs from pooled tuning snapshot: {source}"
+            )
+        evidence.append(
+            {
+                "path": str(source),
+                "snapshot_path": destination.as_posix(),
+                "sha256": current_sha256,
+            }
+        )
+    return evidence
+
+
+def resolve_run_config_snapshot_by_sha256(
+    run_dir: str | Path,
+    expected_sha256: str,
+) -> dict[str, Any]:
+    """Resolve one immutable YAML snapshot by its recorded content digest."""
+
+    root = Path(run_dir).expanduser().resolve()
+    if not isinstance(expected_sha256, str) or len(expected_sha256) != 64:
+        raise ValueError("expected config snapshot SHA256 must be a 64-character string")
+    manifest_path = root / "run_manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            f"managed run manifest not found: {manifest_path}"
+        ) from None
+    snapshots = manifest.get("config_snapshots")
+    if not isinstance(snapshots, list):
+        raise ValueError("managed run manifest has no config_snapshots list")
+    matches = [
+        item
+        for item in snapshots
+        if isinstance(item, dict) and item.get("sha256") == expected_sha256
+    ]
+    if len(matches) != 1:
+        raise ValueError(
+            "managed run must contain exactly one config snapshot with the "
+            "selection online-training SHA256"
+        )
+    relative = Path(str(matches[0].get("snapshot_path", "")))
+    if (
+        not str(relative)
+        or relative.is_absolute()
+        or ".." in relative.parts
+        or relative.suffix.lower() not in {".yaml", ".yml"}
+    ):
+        raise ValueError("managed config snapshot path is unsafe or not YAML")
+    snapshot = (root / relative).resolve()
+    try:
+        snapshot.relative_to(root)
+    except ValueError:
+        raise ValueError("managed config snapshot escapes run directory") from None
+    if not snapshot.is_file() or snapshot.is_symlink():
+        raise ValueError(f"managed config snapshot is missing: {relative}")
+    if sha256_file(snapshot) != expected_sha256:
+        raise ValueError("managed config snapshot SHA256 mismatch")
+    return {
+        "path": snapshot,
+        "snapshot_path": relative.as_posix(),
+        "sha256": expected_sha256,
+    }
+
+
 @dataclass
 class RunRecorder:
     run_dir: Path
@@ -384,18 +534,32 @@ class RunRecorder:
         evaluation_path = (
             evaluation_candidates[0] if len(evaluation_candidates) == 1 else None
         )
-        direct_selection_candidates = tuple(
-            self.run_dir.glob("*/direct_baseline_selection.json")
-        )
-        direct_selection_path = (
-            direct_selection_candidates[0]
-            if len(direct_selection_candidates) == 1
+        pooled_selection_candidates: list[Path] = []
+        for candidate in self.run_dir.glob("*/*selection*.json"):
+            try:
+                candidate_payload = json.loads(candidate.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                if candidate.name == "direct_baseline_selection.json":
+                    pooled_selection_candidates.append(candidate)
+                continue
+            if isinstance(candidate_payload, dict) and candidate_payload.get(
+                "artifact_type"
+            ) in {
+                "direct_k500_pooled_epoch_selection",
+                "pn2021_k500_pooled_epoch_selection",
+            }:
+                pooled_selection_candidates.append(candidate)
+        if len(pooled_selection_candidates) > 1:
+            raise ValueError("delegate emitted multiple pooled-selection artifacts")
+        pooled_selection_path = (
+            pooled_selection_candidates[0]
+            if len(pooled_selection_candidates) == 1
             else None
         )
         if (
             not result_path.is_file()
             and evaluation_path is None
-            and direct_selection_path is None
+            and pooled_selection_path is None
         ):
             data_manifest = {
                 "schema_version": 1,
@@ -498,51 +662,66 @@ class RunRecorder:
                     "selected_checkpoint": selected_checkpoint,
                     "heldout_evaluation_used_for_selection": heldout_used,
                 }
-        elif direct_selection_path is not None:
+        elif pooled_selection_path is not None:
             try:
                 result = json.loads(
-                    direct_selection_path.read_text(encoding="utf-8")
+                    pooled_selection_path.read_text(encoding="utf-8")
                 )
             except (json.JSONDecodeError, OSError) as exc:
                 data_manifest = {
                     "schema_version": 1,
-                    "status": "invalid_direct_baseline_selection",
+                    "status": "invalid_pooled_selection",
                     "source": {
-                        "path": direct_selection_path.relative_to(
+                        "path": pooled_selection_path.relative_to(
                             self.run_dir
                         ).as_posix(),
-                        "sha256": sha256_file(direct_selection_path),
+                        "sha256": sha256_file(pooled_selection_path),
                     },
                     "error": f"{type(exc).__name__}: {exc}",
                 }
                 selection = {
                     "schema_version": 1,
-                    "status": "invalid_direct_baseline_selection",
+                    "status": "invalid_pooled_selection",
                     "policy": None,
                     "selected_checkpoint": None,
                 }
             else:
+                from util.evaluation.direct_baseline_selection import (
+                    locked_pooled_selection_rule,
+                )
+
                 rule = result.get("selection_rule")
                 comparison = result.get("comparison_identity")
                 selection_status = result.get("status")
+                artifact_type = result.get("artifact_type")
+                direct_selection = artifact_type == "direct_k500_pooled_epoch_selection"
                 if (
-                    result.get("artifact_type")
-                    != "direct_k500_pooled_epoch_selection"
+                    artifact_type
+                    not in {
+                        "direct_k500_pooled_epoch_selection",
+                        "pn2021_k500_pooled_epoch_selection",
+                    }
                     or selection_status not in {"selected", "failed_clean_floor"}
-                    or not isinstance(rule, dict)
+                    or rule != locked_pooled_selection_rule()
                     or not isinstance(comparison, dict)
-                    or rule.get("heldout_evaluation_used") is not False
-                    or rule.get("robust_aggregation")
-                    != "mean_of_20_composition_macro_auprc"
-                    or rule.get("score")
-                    != "0.5_clean_macro_auprc_plus_0.5_robust_macro_auprc"
-                    or comparison.get("protocol_id")
-                    != "pn2021_direct_family_balanced_tuning"
-                    or comparison.get("method_id") != "direct_depth23_fixed20"
                     or result.get("record_count") != 400
                     or result.get("composition_count") != 20
                 ):
-                    raise ValueError("invalid Direct pooled-selection evidence")
+                    raise ValueError("invalid pooled-selection evidence")
+                if direct_selection and (
+                    comparison.get("protocol_id")
+                    != "pn2021_direct_family_balanced_tuning"
+                    or comparison.get("method_id") != "direct_depth23_fixed20"
+                ):
+                    raise ValueError("invalid Direct pooled-selection identity")
+                if not direct_selection and (
+                    not isinstance(comparison.get("protocol_id"), str)
+                    or not comparison.get("protocol_id")
+                    or not isinstance(comparison.get("method_id"), str)
+                    or not comparison.get("method_id")
+                    or comparison.get("method_id") == "direct_depth23_fixed20"
+                ):
+                    raise ValueError("invalid non-Direct pooled-selection identity")
                 selected_epoch = result.get("selected_epoch")
                 selected_score = result.get("selected_score")
                 selected_clean = result.get("selected_clean_macro_auprc")
@@ -560,7 +739,7 @@ class RunRecorder:
                             for value in numeric
                         )
                     ):
-                        raise ValueError("selected Direct evidence is incomplete")
+                        raise ValueError("selected pooled evidence is incomplete")
                 elif any(
                     value is not None
                     for value in (
@@ -572,14 +751,14 @@ class RunRecorder:
                 ):
                     raise ValueError("failed clean-floor evidence must not select an epoch")
                 source = {
-                    "path": direct_selection_path.relative_to(
+                    "path": pooled_selection_path.relative_to(
                         self.run_dir
                     ).as_posix(),
-                    "sha256": sha256_file(direct_selection_path),
+                    "sha256": sha256_file(pooled_selection_path),
                 }
                 data_manifest = {
                     "schema_version": 1,
-                    "status": "recorded_from_direct_pooled_selection",
+                    "status": "recorded_from_pooled_selection",
                     "source": source,
                     "config": result.get("config"),
                     "comparison_identity": comparison,
@@ -597,7 +776,7 @@ class RunRecorder:
                 selection = {
                     "schema_version": 1,
                     "status": (
-                        "recorded_from_direct_pooled_selection"
+                        "recorded_from_pooled_selection"
                         if selection_status == "selected"
                         else "recorded_failed_clean_floor"
                     ),
@@ -700,8 +879,11 @@ __all__ = [
     "capture_environment",
     "capture_git_state",
     "ensure_output_outside_worktree",
+    "resolve_run_config_snapshot_by_sha256",
     "sha256_file",
     "snapshot_yaml_files",
     "utc_now",
+    "validate_managed_run_member",
+    "validate_run_config_snapshots",
     "verify_run_file_index",
 ]
