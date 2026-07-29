@@ -112,6 +112,71 @@ remains a frozen sandbox replay surface pending a small whitelist extraction;
 the lock does not silently promote the large search controller into the clean
 runtime architecture.
 
+## Current ECGFounder VAE-LHAT mechanism candidate
+
+Status: `LOCKED_TWO_SEED_MECHANISM_POSITIVE_SOURCE_FLOOR_FAILED` on
+2026-07-30.
+
+The compact ECGFounder candidate uses the same main mechanism as L37, adapted
+to the locked ECGFounder training budget:
+
+```text
+locked PTB-XL ECGFounder
+-> 1024 K500-only two-chain AugMix-SimCLR updates
+   + PTB-XL source replay 0.30
+   + source-logit anchor 5.0
+-> 40 epochs clean + rotating-four supervised adaptation
+   + AdamW, LR 2e-5, WD 1e-4, batch 64, cosine T40
+-> one exact-label VAE-LHAT hard view
+   + M=20 from a local pool of 80
+   + hull lambda 0.6
+   + standardized latent L2 epsilon 2.0
+   + 5 search steps at learning rate 0.25
+   + 1.5 * (0.5 hard BCE + 0.5 clean/hard Bernoulli JSD)
+```
+
+The matched no-VAE arm removes only the final VAE-LHAT auxiliary. Both arms
+retain identical source initialization, K500 records, Stage-1 target/source
+orders, 320 Stage-2 optimizer updates, corruption traces, optimizer and fixed
+last-E40 checkpoint rule. The independent seed-1 replay did not use a held-out
+epoch oracle.
+
+| Replay | Clean AUROC | Clean AUPRC | PN2021-C AUROC | PN2021-C AUPRC |
+|---|---:|---:|---:|---:|
+| Seed 0, L35 minus L34 (pp) | +0.068 | +1.019 | -0.036 | +0.474 |
+| Seed 1, VAE-LHAT minus no-VAE (pp) | +0.144 | +0.635 | +0.045 | +0.367 |
+| Two-seed mean delta (pp) | +0.106 | +0.827 | +0.005 | +0.420 |
+
+Clean and PN2021-C AUPRC increase in all four centers in both seeds. This is
+the current strongest evidence that the online VAE-LHAT branch itself is
+useful rather than merely inheriting gain from AugMix-SimCLR or rotating
+corruption supervision. The mean AUROC increment is effectively zero, so the
+supported mechanism claim is an AUPRC refinement, not a general one-point
+improvement in every metric.
+
+The source-domain result prevents paper-final promotion:
+
+| Replay | No-VAE PTB-XL AUROC/AUPRC | VAE-LHAT PTB-XL AUROC/AUPRC | VAE minus no-VAE |
+|---|---:|---:|---:|
+| Seed 0 | `0.915372 / 0.795770` | `0.908378 / 0.780632` | `-0.699 / -1.514 pp` |
+| Seed 1 | `0.915389 / 0.795914` | `0.908806 / 0.780515` | `-0.658 / -1.540 pp` |
+
+The locked ECGFounder source is `0.929407 / 0.824164`; therefore both shared
+scaffolds already fail the absolute source floor, and VAE-LHAT adds further
+forgetting. This lock means “target-side mechanism-positive and reproducibly
+directional,” not “no-trade-off final method.”
+
+Increasing only the VAE auxiliary coefficient from `1.5` to `2.0` was also
+rejected. It reached `+0.966 pp` Clean AUPRC and `+0.549 pp` PN2021-C AUPRC
+against the seed-1 no-VAE arm, but fell to `0.906104 / 0.774686` on PTB-XL,
+which is another `-0.270 / -0.583 pp` below the alpha-1.5 arm. The current
+frozen coefficient therefore remains `1.5`.
+
+Exact config, target summaries and source-floor SHA256 identities are recorded
+under `current_ecgfounder_mechanism_candidate` in the machine-readable
+registry. The replay/search controllers remain isolated sandbox surfaces and
+are not promoted into the whitelist runtime by this evidence lock.
+
 ## Matched LR attribution control and latent-threechain candidate
 
 The original `2e-5` Direct baseline above remains frozen. A single-variable

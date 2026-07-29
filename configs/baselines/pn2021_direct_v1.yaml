@@ -251,6 +251,139 @@ current_effective_method:
     - The predeclared PTB-XL absolute source-retention rule fails.
     - Paper-final use requires a frozen independent-seed replay without further held-out tuning.
 
+current_ecgfounder_mechanism_candidate:
+  id: ecgfounder_l35_augmix_simclr_rotating4_vae_lhat
+  status: locked_two_seed_mechanism_positive_source_floor_failed
+  evidence_role: current_ecgfounder_k500_only_mechanism_candidate
+  locked_on: '2026-07-30'
+  backbone: ecgfounder
+  replicate_ids: [0, 1]
+  paper_eligibility: not_eligible_source_floor_failed_and_heldout_tuned
+  independent_seed_replay_complete: true
+  heldout_evaluation_used_for_method_family_selection: true
+  independent_replay_used_fixed_last_epoch_without_heldout_oracle: true
+  outside_k500_target_model_access: false
+  adaptation_population: per_center_k500_only
+  source_data_replay: ptbxl_train_only
+  class_order: [CD, HYP, MI, NORM, STTC]
+  mapping_version: v7_super5_sjr_rgq_review_20260528
+  mapping_hash: 555ec85d5b51
+  implementation:
+    git_commit: d27d5941cdd03db1ef639d46ef5aa4b426f18c63
+    controller: agent_workspace/diverse_latent_augmax_v1/a7_global_search.py
+    controller_sha256: e837c3a75ce3d9bd66176baff07240c5e0e345fbba6d6e691d6aca35b4b181a6
+    configuration_manifest: agent_workspace/diverse_latent_augmax_v1/configs/generated_search/a7_global_search_20260726/l35d_ecgfounder_ssl1024_augmix_replay030_rot4_vae_hard_e40/manifest.json
+    configuration_manifest_sha256: 35cbf2e951c206cbb90cd1d04faa7e33381e793ff77444750b058eb26f6cda8c
+    whitelist_promotion_status: frozen_sandbox_replay_surface_pending_source_retention_repair
+  stage1:
+    objective: twochain_augmix_simclr
+    target_partition: k500
+    target_labels_consumed: false
+    steps: 1024
+    learning_rate: 1.0e-03
+    weight_decay: 1.0e-04
+    simclr_temperature: 0.5
+    augmix_dirichlet_alpha: 0.5
+    augmix_beta_alpha: 0.5
+    source_replay_dataset: ptbxl_train
+    source_replay_batches_per_step: 1
+    source_replay_weight: 0.3
+    source_logit_anchor_weight: 5.0
+    vicreg_weight: 0.0
+  stage2:
+    epochs: 40
+    scheduler_horizon_epochs: 40
+    optimizer_steps: 320
+    optimizer: adamw
+    learning_rate: 2.0e-05
+    weight_decay: 1.0e-04
+    batch_size: 64
+    trainable_scope: full
+    supervised_logit_anchor_weight: 2.0
+    base_supervision:
+      clean_weight: 0.5
+      rotating_corruption_total_weight: 0.5
+      schedule: rotating_depth23_2plus2_v1
+      views_per_epoch: {depth2: 2, depth3: 2}
+      coverage: all_20_compositions_per_record_every_5_epochs
+    vae_lhat:
+      label_policy: exact_positive_set_nonself
+      search_mode: optimized_softmax
+      local_pool_size: 80
+      candidate_count: 20
+      hull_lambda: 0.6
+      pgd_epsilon_l2_standardized: 2.0
+      steps: 5
+      learning_rate: 0.25
+      auxiliary_alpha: 1.5
+      auxiliary_objective: 0.5_hard_bce_plus_0.5_clean_hard_bernoulli_jsd
+      decoded_invalid_rate: 0.0
+    excluded_components:
+      - vae_random
+      - stage2_augmix
+      - stage2_raw_auxiliary
+      - stage2_source_replay
+  evaluation:
+    reference_ids_excluded: true
+    all_zero_policy: kept
+    corruption_profile: pn2021c_paper_anchored_s5_v1
+    severity: 5
+    depth_views: [2, 3]
+    aggregation: equal_views_then_equal_centers
+    logical_centers: [ningbo, chapman_shaoxing, cpsc_2018, georgia]
+    merge_cpsc_2018_extra_into_cpsc_2018: true
+  matched_results:
+    metric_order: [clean_macro_auroc, clean_macro_auprc, pn2021c_macro_auroc, pn2021c_macro_auprc]
+    seed0:
+      no_vae_four_center_mean: [0.8868606655267687, 0.5675579676237206, 0.868132803006965, 0.5428634166719727]
+      vae_lhat_four_center_mean: [0.8875357787886853, 0.5777483269648822, 0.8677772493707432, 0.547598494739563]
+      vae_lhat_minus_no_vae_pp: [0.06751132619166045, 1.0190359341161637, -0.03555536362218614, 0.4735078067590326]
+      paired_summary_path: /home/linbinhao/ECG_adv_data/runs/agent_workspace/a7_global_search_20260726/l35d_ecgfounder_ssl1024_augmix_replay030_rot4_vae_hard_e40/summary.json
+      paired_summary_sha256: 27e82b7dd37a01ee88dc2d3601f5bbf8952574221856d0b581c98a575b6affd4
+    seed1:
+      no_vae_four_center_mean: [0.8862901286859882, 0.568632857835347, 0.8663040557456776, 0.5420247548057207]
+      vae_lhat_four_center_mean: [0.8877331187734703, 0.5749796966383993, 0.8667503254411177, 0.5456954393112554]
+      vae_lhat_minus_no_vae_pp: [0.14429900874820545, 0.6346838803052313, 0.044626969544014905, 0.36706845055347603]
+      paired_summary_path: /home/linbinhao/ECG_adv_data/runs/agent_workspace/ecgfounder_l35_seed1_replay_20260729/seed1_matched_summary.json
+      paired_summary_sha256: f59f3ed4938a99230f02d5e3dae996c9038863be3d3dd2d7b4277903546fa965
+    two_seed_mean_vae_lhat_minus_no_vae_pp: [0.10590516746993295, 0.8268599072106975, 0.004535802960914383, 0.4202881286562543]
+    mechanism_gate:
+      clean_auprc_positive_in_all_four_centers_both_seeds: true
+      pn2021c_auprc_positive_in_all_four_centers_both_seeds: true
+      target_domain_gate_passed: true
+  source_floor:
+    partition: ptbxl_fold10
+    metric_order: [macro_auroc, macro_auprc]
+    locked_source_checkpoint: [0.9294071005568604, 0.8241644199783998]
+    seed0:
+      no_vae_four_center_mean: [0.9153716926265538, 0.7957697264595548]
+      vae_lhat_four_center_mean: [0.908377837739107, 0.7806320066766956]
+      vae_lhat_minus_no_vae_pp: [-0.6993854887446809, -1.5137719782859178]
+      no_vae_summary_sha256: ab526e54c0ddf3d0059a2b219bd220d44720ae2cfcf0dfd96a448c363842c590
+      vae_lhat_summary_sha256: 6d58de23b2b179149afbfd735739dcd2d4d567b657dd0cc44fe5fcd1bbcdbd6b
+    seed1:
+      no_vae_four_center_mean: [0.915388799020661, 0.7959140138936325]
+      vae_lhat_four_center_mean: [0.9088059121475233, 0.7805153097248159]
+      vae_lhat_minus_no_vae_pp: [-0.6582886873137683, -1.5398704168816613]
+      pair_summary_path: /home/linbinhao/ECG_adv_data/runs/agent_workspace/ecgfounder_l35_seed1_replay_20260729/source_floor/pair_summary.json
+      pair_summary_sha256: 6d9c516f86f8937583162a32f81cb3477273239f037cf221ec021c12895f18ad
+    predeclared_absolute_retention_rule_passed: false
+  rejected_sensitivity:
+    id: ecgfounder_l35_seed1_auxiliary_alpha_2p0
+    only_change_from_seed1_l35: auxiliary_alpha_1p5_to_2p0
+    target_delta_vs_no_vae_pp: [0.1398625997045877, 0.9657425722046531, 0.0015477702529742565, 0.5492868718449784]
+    target_summary_sha256: 05981d1ea4b130061e16734f9d507470087551f1d3d5af1536006846c82cf36b
+    source_delta_vs_locked_source_pp: [-2.3303181293624187, -4.9478129631503105]
+    source_delta_vs_seed1_l35_pp: [-0.27019928842870744, -0.5829019377919131]
+    source_summary_sha256: 636fc6dde9e4b97eccaa3618bafa8a1bfab535cf884d30194271def5396d1cd0
+    decision: rejected_source_floor_regression
+  limitations:
+    - The target-domain VAE-LHAT AUPRC increment is positive across two seeds, but AUROC is effectively flat.
+    - The method family was originally selected using held-out PN2021 and PN2021-C development feedback.
+    - Both the no-VAE scaffold and VAE-LHAT arm fail the absolute PTB-XL source-retention rule.
+    - VAE-LHAT adds about 1.5 AUPRC pp of source forgetting relative to the matched no-VAE arm in both seeds.
+    - This lock records a mechanism-positive development candidate and must not be cited as a no-trade-off paper-final method.
+
 models:
   efficientnet1dv2:
     source_checkpoint: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_ptbxl_effnet_source_v1/training/checkpoints/best.pt
