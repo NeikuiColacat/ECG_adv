@@ -116,6 +116,141 @@ method_contract:
   materialized_corruption_cache_used_for_training: false
   online_torch_gpu_generation: true
 
+current_effective_method:
+  id: effnet_l37_augmix_simclr_rotating4_vae_lhat
+  status: locked_current_development_single_seed
+  evidence_role: current_effective_k500_only_method
+  locked_on: '2026-07-30'
+  backbone: efficientnet1dv2
+  replicate_id: 0
+  paper_eligibility: heldout_tuned_development_only
+  independent_seed_replay_complete: false
+  heldout_evaluation_used_for_method_selection: true
+  outside_k500_target_model_access: false
+  adaptation_population: per_center_k500_only
+  source_data_replay: ptbxl_train_only
+  class_order: [CD, HYP, MI, NORM, STTC]
+  mapping_version: v7_super5_sjr_rgq_review_20260528
+  mapping_hash: 555ec85d5b51
+  implementation:
+    git_commit: d27d5941cdd03db1ef639d46ef5aa4b426f18c63
+    controller: agent_workspace/diverse_latent_augmax_v1/a7_global_search.py
+    controller_sha256: e837c3a75ce3d9bd66176baff07240c5e0e345fbba6d6e691d6aca35b4b181a6
+    configuration_root: agent_workspace/diverse_latent_augmax_v1/configs
+    configuration_manifest: agent_workspace/diverse_latent_augmax_v1/configs/generated_search/a7_global_search_20260726/l37d_effnet_ssl1024_augmix_replay030_rot4_vae_hard_h30_e23/manifest.json
+    configuration_manifest_sha256: 3678ce6feea2e106a5acb0c194a02408aab120e587291b9de553927aea7ee777
+    whitelist_promotion_status: frozen_sandbox_replay_surface_pending_minimal_extraction
+  stage1:
+    objective: twochain_augmix_simclr
+    target_partition: k500
+    target_labels_consumed: false
+    steps: 1024
+    learning_rate: 1.0e-03
+    weight_decay: 1.0e-04
+    simclr_temperature: 0.5
+    augmix_dirichlet_alpha: 0.5
+    augmix_beta_alpha: 0.5
+    source_replay_dataset: ptbxl_train
+    source_replay_batches_per_step: 1
+    source_replay_weight: 0.3
+    source_logit_anchor_weight: 5.0
+    vicreg_weight: 0.0
+  stage2:
+    epochs: 23
+    scheduler_horizon_epochs: 30
+    optimizer_steps: 92
+    optimizer: adamw
+    learning_rate: 5.0e-05
+    weight_decay: 1.0e-04
+    batch_size: 128
+    trainable_scope: full
+    supervised_logit_anchor_weight: 2.0
+    base_supervision:
+      clean_weight: 0.5
+      rotating_corruption_total_weight: 0.5
+      schedule: rotating_depth23_2plus2_v1
+      views_per_epoch: {depth2: 2, depth3: 2}
+      coverage: all_20_compositions_per_record_every_5_epochs
+    vae_lhat:
+      label_policy: exact_positive_set_nonself
+      search_mode: optimized_softmax
+      hull_lambda: 0.6
+      pgd_epsilon_l2_standardized: 2.0
+      steps: 5
+      learning_rate: 0.25
+      auxiliary_alpha: 1.5
+      auxiliary_objective: 0.5_hard_bce_plus_0.5_clean_hard_bernoulli_jsd
+      decoded_invalid_rate: 0.0
+    excluded_components:
+      - vae_random
+      - stage2_augmix
+      - stage2_raw_auxiliary
+      - stage2_source_replay
+  evaluation:
+    reference_ids_excluded: true
+    all_zero_policy: kept
+    corruption_profile: pn2021c_paper_anchored_s5_v1
+    severity: 5
+    depth_views: [2, 3]
+    aggregation: equal_views_then_equal_centers
+    logical_centers: [ningbo, chapman_shaoxing, cpsc_2018, georgia]
+    merge_cpsc_2018_extra_into_cpsc_2018: true
+  results:
+    metric_order: [clean_macro_auroc, clean_macro_auprc, pn2021c_macro_auroc, pn2021c_macro_auprc]
+    four_center_mean: [0.8580010503146873, 0.5234827883536519, 0.8416848368534529, 0.49476245600181423]
+    delta_vs_locked_direct_fixed20_pp: [0.799195217245563, 1.8102919291734576, 3.1745363049179076, 5.650570073582639]
+    delta_vs_matched_no_vae_l36_pp: [0.24942853011421517, 0.4964586254261327, 0.19742972359145794, 0.33966382017355246]
+    paired_summary_path: /home/linbinhao/ECG_adv_data/runs/agent_workspace/a7_global_search_20260726/l37d_effnet_ssl1024_augmix_replay030_rot4_vae_hard_h30_e23/summary.json
+    paired_summary_sha256: 1bdedb29dc1e8f602054d57b1c3ccca289225dc2bc075c7d84341398cff29ca4
+  matched_no_vae_control:
+    id: l36d_effnet_ssl1024_augmix_replay030_rot4_no_vae_h30_e23
+    status: locked_matched_ablation
+    configuration_manifest_sha256: a86ba6d04f9dc16be3eb72a49d06de8ecab84c3d2b02b305fc172551ca187b85
+    four_center_mean: [0.8555067650135452, 0.5185182020993906, 0.8397105396175383, 0.4913658178000787]
+    source_floor_summary_sha256: 3b065bac83c4581b29e3c13c0a3654691b80a8d0d37a6e76f773c93161ead92e
+  source_floor:
+    partition: ptbxl_fold10
+    four_center_checkpoint_mean: [0.8805767961809754, 0.732554011621654]
+    metric_order: [macro_auroc, macro_auprc]
+    locked_source_checkpoint: [0.9012814737298787, 0.7679513573583656]
+    predeclared_retention_rule_passed: false
+    summary_sha256: cb3ec0696d1c171c3340b6ca3a5f10929b5a752d78def178def8cc55f0f70697
+  run_root: /home/linbinhao/ECG_adv_data/runs/agent_workspace/a7_global_search_20260726/l37d_effnet_ssl1024_augmix_replay030_rot4_vae_hard_h30_e23
+  center_artifacts:
+    ningbo:
+      run_subdir: candidate/ningbo
+      checkpoint_sha256: 7501f01f224eff76cd223da42465bd797cf2162846e24d6e4b103bd4dc8a0bc0
+      train_result_sha256: bb16b05a4c85107a62bab7bd43318f8d7f60075d559da4630a5bced5cfefa2e4
+      train_manifest_sha256: f8eaed1f9e7340b5f9b43a0a37d2ff95bec829f030182b0ed560e3da46f44fd8
+      evaluation_result_sha256: 6b53d1608afa1ee4209539b46139d18f466d9dcac328ef30136790cd8998b392
+      metrics: {clean_kept: [0.8871728794961518, 0.5366320432921908], corrupted_kept: [0.8682861946913553, 0.5002481384191865]}
+    chapman_shaoxing:
+      run_subdir: candidate/chapman_shaoxing
+      checkpoint_sha256: 5fa1a0c57293e622ba2a17808fae0f45a60572bdbccc2b534b9eedc06ae80928
+      train_result_sha256: f8958f03ce6476c6437b817147bcf9fa2a9b8f79978923c98e7f0a44c3deaf05
+      train_manifest_sha256: d0ab59fccfab269a07be1fe061da1276730dfa3f41c070ff988954de1fd98d7a
+      evaluation_result_sha256: 1aecace2aeb9bb38597e7bbbf21c1e7e2d0e750016008b6f94950c6b184440ac
+      metrics: {clean_kept: [0.8830937006479205, 0.4941750067091282], corrupted_kept: [0.8673318725381154, 0.46916568415923693]}
+    cpsc_2018:
+      run_subdir: candidate/cpsc_2018
+      checkpoint_sha256: 6966d81f2607e00b77e2e30e51c383b348fbd80dffba205e940d2181db16d437
+      train_result_sha256: 2526db162fffcf31c0582bb3c988d8888cc4f699e313e0cb8f58dc6d6411e217
+      train_manifest_sha256: 260138a8cead51b884fe013e066a436845ff4e40e6a68cc9fd44b9c99ee60b29
+      evaluation_result_sha256: b1e860bca2f54423298b751d4ca86124ce4cb9fa5aa30309baf2ae5ef8f9e24c
+      metrics: {clean_kept: [0.8557795333199533, 0.5617232496689151], corrupted_kept: [0.8352212594469048, 0.5224471498737603]}
+    georgia:
+      run_subdir: candidate/georgia
+      checkpoint_sha256: 67dbfa8e277f58e7601cb90809ff00b67d49ad422770183cb387673635ab47fe
+      train_result_sha256: 586b668cfa7f2ec77f973bf80bbc04ac2e774ac4b694432a7d3a1a0a768de8a9
+      train_manifest_sha256: d36d646e96607c204ff9a960c584d4b90e5e7daff7259590cb20497a3d4a6695
+      evaluation_result_sha256: 42fd62aee2ef4e31a256c91cd1e494ee6fe5ee4a8471c5b755b4856175ca6f6d
+      metrics: {clean_kept: [0.8059580877947237, 0.5014008537443739], corrupted_kept: [0.7959000207374364, 0.4871888515550734]}
+  limitations:
+    - Single replicate only; this lock preserves the current development winner, not a statistical significance claim.
+    - The method family was selected using held-out PN2021 and PN2021-C development feedback.
+    - The predeclared PTB-XL absolute source-retention rule fails.
+    - Paper-final use requires a frozen independent-seed replay without further held-out tuning.
+
 models:
   efficientnet1dv2:
     source_checkpoint: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_ptbxl_effnet_source_v1/training/checkpoints/best.pt

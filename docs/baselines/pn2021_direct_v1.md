@@ -51,6 +51,67 @@ Clean-to-PN2021-C degradation on the primary all-zero-kept view:
 | EfficientNet1DV2 | 4.007 pp | 6.712 pp |
 | ECGFounder | 5.954 pp | 8.588 pp |
 
+## Current effective EfficientNet method
+
+Status: `LOCKED_CURRENT_DEVELOPMENT_SINGLE_SEED` on 2026-07-30.
+
+The current completed winner is L37:
+
+```text
+locked PTB-XL EfficientNet1DV2
+-> 1024 K500-only two-chain AugMix-SimCLR updates
+   + PTB-XL source replay 0.30
+   + source-logit anchor 5.0
+-> 23 epochs clean + rotating-four supervised adaptation
+   + two depth-2 and two depth-3 views per epoch
+   + all 20 compositions covered every five epochs
+-> one exact-label VAE-LHAT hard view
+   + hull lambda 0.6
+   + standardized latent L2 epsilon 2.0
+   + 5 search steps at learning rate 0.25
+   + 1.5 * (0.5 hard BCE + 0.5 clean/hard Bernoulli JSD)
+```
+
+Stage 2 keeps the locked EfficientNet optimizer recipe: AdamW, learning rate
+`5e-5`, weight decay `1e-4`, batch size 128, bfloat16, epoch 23 under a
+30-epoch cosine horizon. Target adaptation consumes only the selected center's
+K500. No target-center record outside K500 enters the model; Stage-1 replay is
+PTB-XL source data.
+
+The primary view keeps all-zero Super5 records, excludes K500 references,
+combines CPSC 2018 and Extra as one logical center, averages 20 PN2021-C views
+inside each center, and then averages four centers equally.
+
+| Arm | Clean AUROC | Clean AUPRC | PN2021-C AUROC | PN2021-C AUPRC |
+|---|---:|---:|---:|---:|
+| Locked Direct+fixed20 | 0.850009 | 0.505380 | 0.809939 | 0.438257 |
+| L36, matched pipeline without VAE-LHAT | 0.855507 | 0.518518 | 0.839711 | 0.491366 |
+| L37, L36 + VAE-LHAT | 0.858001 | 0.523483 | 0.841685 | 0.494762 |
+| L37 minus Direct+fixed20 (pp) | +0.799 | +1.810 | +3.175 | +5.651 |
+| L37 minus L36 (pp) | +0.249 | +0.496 | +0.197 | +0.340 |
+
+The full pipeline has the strongest completed EfficientNet development result.
+The strictly matched L37-minus-L36 comparison also shows a positive VAE-LHAT
+increment in all four centers. Most of the total gain over Direct+fixed20,
+however, comes from the AugMix-SimCLR, source-replay and rotating-corruption
+base pipeline; only the final matched increment may be attributed to VAE-LHAT.
+
+This is deliberately a development lock, not a paper-final statistical claim.
+The family was chosen using held-out PN2021/PN2021-C feedback, only one seed is
+complete, and the predeclared absolute PTB-XL source-retention rule fails:
+L37 gives `0.880577 / 0.732554` on fold10 versus
+`0.901281 / 0.767951` for the locked source checkpoint. Paper-final use
+requires an independently seeded replay of this exact frozen recipe without
+more held-out tuning.
+
+The executable source and generated config closure are frozen by implementation
+commit `d27d5941cdd03db1ef639d46ef5aa4b426f18c63`. Exact checkpoint,
+train-manifest, evaluation and summary SHA256 identities are recorded under
+`current_effective_method` in the machine-readable registry. The implementation
+remains a frozen sandbox replay surface pending a small whitelist extraction;
+the lock does not silently promote the large search controller into the clean
+runtime architecture.
+
 ## Matched LR attribution control and latent-threechain candidate
 
 The original `2e-5` Direct baseline above remains frozen. A single-variable
