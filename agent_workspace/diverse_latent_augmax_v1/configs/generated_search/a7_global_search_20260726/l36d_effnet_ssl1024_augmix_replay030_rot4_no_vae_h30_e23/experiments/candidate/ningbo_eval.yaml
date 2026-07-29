@@ -1,0 +1,22 @@
+schema_version: 1
+experiment:
+  name: a7_global_l36d_effnet_ssl1024_augmix_replay030_rot4_no_vae_h30_e23_ningbo_eval
+  purpose: Metric-only ref-excluded Clean and PN2021-C development evaluation.
+entrypoint:
+  name: evaluate_pn2021
+  config: eval/PN2021.yaml
+  arguments:
+  - --model
+  - efficientnet1dv2
+  - --checkpoint
+  - /home/linbinhao/ECG_adv_data/runs/agent_workspace/a7_global_search_20260726/l36d_effnet_ssl1024_augmix_replay030_rot4_no_vae_h30_e23/candidate/ningbo/train/training/checkpoints/last.pt
+  - --center
+  - ningbo
+  - --batch-size
+  - '1024'
+  - --num-workers
+  - '0'
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/agent_workspace/a7_global_search_20260726/l36d_effnet_ssl1024_augmix_replay030_rot4_no_vae_h30_e23/candidate/ningbo/eval
+  if_exists: error
+  delegate_output_subdir: evaluation

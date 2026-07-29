@@ -71,6 +71,11 @@ validation_predictions:
   enabled: true
   subdir: validation_predictions
   artifact_schema: pn2021_family_balanced_validation_predictions
+  execution:
+    mode: packed_resident
+    layout: view_record_time_lead
+    view_order: clean_then_composition_indices
+    source_loader_release: after_pack
   clean_view: pn2021_k500_tune_validation
   corrupted_dataset: pn2021c
   composition_indices: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]

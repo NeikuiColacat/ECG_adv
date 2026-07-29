@@ -8,7 +8,7 @@ remain untouched while gradients flow through both models to those hull logits.
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +24,14 @@ from util.random_seed import load_random_seed_config, make_torch_generator
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_LHAT_CONFIG_PATH = PROJECT_ROOT / "configs" / "train" / "lhat.yaml"
+ATTACK_OBJECTIVES = frozenset(
+    {
+        "maximize_multilabel_bce_with_logits",
+        "maximize_equal_positive_negative_bce_with_logits",
+        "maximize_bernoulli_kl_from_decoded_anchor",
+        "compute_matched_uniform_latent_control",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -47,6 +55,8 @@ class LHATConfig:
     steps: int
     learning_rate: float
     pgd_epsilon: float
+    attack_weight_mode: str
+    attack_objective: str
     normalization_epsilon: float
     canonical_domain: AttackDomain
     model_domains: dict[str, AttackDomain]
@@ -119,13 +129,27 @@ class LatentStandardizer:
 
 @dataclass(frozen=True)
 class LHATDiagnostics:
-    anchor_bce: torch.Tensor
+    raw_clean_bce: torch.Tensor
+    decoded_anchor_bce: torch.Tensor
     initial_bce: torch.Tensor
     final_bce: torch.Tensor
+    initial_attack_objective: torch.Tensor
+    final_attack_objective: torch.Tensor
+    attack_objective_gain: torch.Tensor
+    reconstruction_delta: torch.Tensor
+    adversarial_delta: torch.Tensor
+    total_delta: torch.Tensor
+    gain_vs_initial: torch.Tensor
+    normalized_gain: torch.Tensor
     loss_gain: torch.Tensor
     atk_init_l2: torch.Tensor
     atk_anchor_l2: torch.Tensor
-    attack_success: torch.Tensor
+    sample_anyflip_eligible: torch.Tensor
+    sample_anyflip_success: torch.Tensor
+    positive_hide_numerator: torch.Tensor
+    positive_hide_denominator: torch.Tensor
+    negative_add_numerator: torch.Tensor
+    negative_add_denominator: torch.Tensor
     coefficient_entropy: torch.Tensor
     coefficient_top1: torch.Tensor
     projection_scale: torch.Tensor
@@ -134,43 +158,117 @@ class LHATDiagnostics:
     decoded_invalid: torch.Tensor
     decoded_max_abs_mV: torch.Tensor
 
+    def __post_init__(self) -> None:
+        values = tuple(getattr(self, item.name) for item in fields(self))
+        if not values or any(
+            not isinstance(value, torch.Tensor) or value.ndim != 1
+            for value in values
+        ):
+            raise TypeError("LHAT diagnostics must be rank-1 tensors")
+        length = values[0].shape[0]
+        if any(value.shape[0] != length for value in values):
+            raise ValueError("LHAT diagnostic tensors must share one batch length")
+        if any(value.requires_grad for value in values):
+            raise ValueError("LHAT diagnostic tensors must be detached")
+
+    def select(self, mask: torch.Tensor) -> "LHATDiagnostics":
+        if (
+            not isinstance(mask, torch.Tensor)
+            or mask.dtype != torch.bool
+            or mask.ndim != 1
+            or mask.shape[0] != self.raw_clean_bce.shape[0]
+        ):
+            raise ValueError("LHAT diagnostic selection mask must be bool shape (B,)")
+        return LHATDiagnostics(
+            **{
+                item.name: getattr(self, item.name)[mask].detach()
+                for item in fields(self)
+            }
+        )
+
+    def sample_tensor_dict(self) -> dict[str, torch.Tensor]:
+        return {
+            "raw_clean_bce": self.raw_clean_bce,
+            "decoded_anchor_bce": self.decoded_anchor_bce,
+            "initial_bce": self.initial_bce,
+            "final_bce": self.final_bce,
+            "initial_attack_objective": self.initial_attack_objective,
+            "final_attack_objective": self.final_attack_objective,
+            "attack_objective_gain": self.attack_objective_gain,
+            "reconstruction_delta": self.reconstruction_delta,
+            "adversarial_delta": self.adversarial_delta,
+            "total_delta": self.total_delta,
+            "gain_vs_initial": self.gain_vs_initial,
+            "normalized_gain": self.normalized_gain,
+            "atk_init_l2": self.atk_init_l2,
+            "atk_anchor_l2": self.atk_anchor_l2,
+            "sample_anyflip_eligible": self.sample_anyflip_eligible.float(),
+            "sample_anyflip_success": self.sample_anyflip_success.float(),
+            "positive_hide_numerator": self.positive_hide_numerator.float(),
+            "positive_hide_denominator": self.positive_hide_denominator.float(),
+            "negative_add_numerator": self.negative_add_numerator.float(),
+            "negative_add_denominator": self.negative_add_denominator.float(),
+        }
+
+    def mean_tensor_dict(self) -> dict[str, torch.Tensor]:
+        ordinary = {
+            "raw_clean_bce": self.raw_clean_bce,
+            "decoded_anchor_bce": self.decoded_anchor_bce,
+            "initial_bce": self.initial_bce,
+            "final_bce": self.final_bce,
+            "initial_attack_objective": self.initial_attack_objective,
+            "final_attack_objective": self.final_attack_objective,
+            "attack_objective_gain": self.attack_objective_gain,
+            "reconstruction_delta": self.reconstruction_delta,
+            "adversarial_delta": self.adversarial_delta,
+            "total_delta": self.total_delta,
+            "gain_vs_initial": self.gain_vs_initial,
+            "normalized_gain": self.normalized_gain,
+            # Retain the established name with its now-explicit meaning:
+            # final hard BCE minus decoded-anchor BCE.
+            "loss_gain": self.loss_gain,
+            "atk_init_l2": self.atk_init_l2,
+            "atk_anchor_l2": self.atk_anchor_l2,
+            "coefficient_entropy": self.coefficient_entropy,
+            "coefficient_top1": self.coefficient_top1,
+            "projection_scale": self.projection_scale,
+            "effective_lambda": self.effective_lambda,
+            "effective_anchor_share": self.effective_anchor_share,
+            "decoded_invalid_rate": self.decoded_invalid.float(),
+            "decoded_max_abs_mV": self.decoded_max_abs_mV,
+        }
+        result = {
+            name: value.float().mean().detach() for name, value in ordinary.items()
+        }
+        result.update(
+            {
+                "sample_anyflip_numerator": self.sample_anyflip_success.float()
+                .sum()
+                .detach(),
+                "sample_anyflip_denominator": self.sample_anyflip_eligible.float()
+                .sum()
+                .detach(),
+                "positive_hide_numerator": self.positive_hide_numerator.float()
+                .sum()
+                .detach(),
+                "positive_hide_denominator": self.positive_hide_denominator.float()
+                .sum()
+                .detach(),
+                "negative_add_numerator": self.negative_add_numerator.float()
+                .sum()
+                .detach(),
+                "negative_add_denominator": self.negative_add_denominator.float()
+                .sum()
+                .detach(),
+            }
+        )
+        return result
+
     def mean_dict(self) -> dict[str, float]:
-        names = (
-            "anchor_bce",
-            "initial_bce",
-            "final_bce",
-            "loss_gain",
-            "atk_init_l2",
-            "atk_anchor_l2",
-            "attack_success",
-            "coefficient_entropy",
-            "coefficient_top1",
-            "projection_scale",
-            "effective_lambda",
-            "effective_anchor_share",
-            "decoded_invalid_rate",
-            "decoded_max_abs_mV",
-        )
-        tensors = (
-            self.anchor_bce,
-            self.initial_bce,
-            self.final_bce,
-            self.loss_gain,
-            self.atk_init_l2,
-            self.atk_anchor_l2,
-            self.attack_success.float(),
-            self.coefficient_entropy,
-            self.coefficient_top1,
-            self.projection_scale,
-            self.effective_lambda,
-            self.effective_anchor_share,
-            self.decoded_invalid.float(),
-            self.decoded_max_abs_mV,
-        )
-        # One compact device-to-host transfer replaces fourteen scalar .item()
-        # synchronizations in every LHAT batch.
+        tensors = self.mean_tensor_dict()
+        names = tuple(tensors)
         values = torch.stack(
-            [value.float().mean() for value in tensors]
+            [tensors[name].float() for name in names]
         ).detach().cpu().tolist()
         return dict(zip(names, (float(value) for value in values), strict=True))
 
@@ -178,6 +276,7 @@ class LHATDiagnostics:
 @dataclass(frozen=True)
 class LHATResult:
     waveform_raw: torch.Tensor
+    anchor_waveform_raw: torch.Tensor
     latent_standardized: torch.Tensor
     weights: torch.Tensor
     diagnostics: LHATDiagnostics
@@ -221,6 +320,18 @@ def load_lhat_config(
         raise ValueError("LHAT method keys are incomplete or unexpected")
     candidates = _mapping(payload.get("candidates"), "candidates")
     attack = _mapping(payload.get("hull_attack"), "hull_attack")
+    expected_attack_keys = {
+        "weight_mode",
+        "init_logit_gap",
+        "hull_lambda",
+        "steps",
+        "learning_rate",
+        "pgd_epsilon_l2_standardized",
+        "objective",
+        "optimizer",
+    }
+    if set(attack) != expected_attack_keys:
+        raise ValueError("LHAT hull_attack keys are incomplete or unexpected")
     bridge = _mapping(payload.get("decoder_bridge"), "decoder_bridge")
     if set(bridge) != {
         "native_points",
@@ -268,6 +379,8 @@ def load_lhat_config(
         steps=int(attack.get("steps", 0)),
         learning_rate=float(attack.get("learning_rate", 0.0)),
         pgd_epsilon=float(attack.get("pgd_epsilon_l2_standardized", 0.0)),
+        attack_weight_mode=str(attack.get("weight_mode", "")),
+        attack_objective=str(attack.get("objective", "")),
         normalization_epsilon=float(bridge.get("normalization_epsilon", 0.0)),
         canonical_domain=canonical_domain,
         model_domains=domains,
@@ -286,6 +399,22 @@ def load_lhat_config(
         raise ValueError("hull_lambda must be in (0, 1]")
     if config.steps < 1 or config.learning_rate <= 0.0 or config.pgd_epsilon <= 0.0:
         raise ValueError("LHAT steps, learning_rate and pgd epsilon must be positive")
+    if config.attack_weight_mode not in {
+        "optimized_softmax",
+        "uniform_compute_matched",
+    }:
+        raise ValueError("LHAT attack weight_mode is unsupported")
+    if config.attack_objective not in ATTACK_OBJECTIVES:
+        raise ValueError("LHAT attack objective is unsupported")
+    if attack.get("optimizer") != "adam":
+        raise ValueError("LHAT attack optimizer must be adam")
+    is_uniform_control = config.attack_weight_mode == "uniform_compute_matched"
+    if is_uniform_control != (
+        config.attack_objective == "compute_matched_uniform_latent_control"
+    ):
+        raise ValueError(
+            "uniform compute-matched weight mode and objective must be paired"
+        )
     if config.candidate_mode not in {"nearest", "local_random"}:
         raise ValueError("candidate mode must be nearest or local_random")
     if config.local_pool_size < config.num_candidates:
@@ -451,12 +580,86 @@ def _bce_per_sample(logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor
     )
 
 
+def _equal_positive_negative_bce_per_sample(
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+) -> torch.Tensor:
+    """Give each record's positive and negative label families equal mass."""
+
+    if logits.shape != targets.shape:
+        raise ValueError(
+            f"classifier logits/targets shape mismatch: {logits.shape}/{targets.shape}"
+        )
+    elementwise = F.binary_cross_entropy_with_logits(
+        logits,
+        targets,
+        reduction="none",
+    )
+    positive = targets >= 0.5
+    negative = ~positive
+    positive_count = positive.sum(dim=1)
+    negative_count = negative.sum(dim=1)
+    positive_mean = (elementwise * positive).sum(dim=1) / positive_count.clamp_min(1)
+    negative_mean = (elementwise * negative).sum(dim=1) / negative_count.clamp_min(1)
+    both = (positive_count > 0) & (negative_count > 0)
+    return torch.where(
+        both,
+        0.5 * (positive_mean + negative_mean),
+        torch.where(positive_count > 0, positive_mean, negative_mean),
+    )
+
+
+def _bernoulli_kl_from_reference_per_sample(
+    logits: torch.Tensor,
+    reference_logits: torch.Tensor,
+) -> torch.Tensor:
+    """Independent-Bernoulli KL(reference || current), averaged over labels."""
+
+    if logits.shape != reference_logits.shape:
+        raise ValueError(
+            "classifier/reference logits shape mismatch: "
+            f"{logits.shape}/{reference_logits.shape}"
+        )
+    reference = reference_logits.detach()
+    probability = torch.sigmoid(reference)
+    reference_log_positive = F.logsigmoid(reference)
+    reference_log_negative = F.logsigmoid(-reference)
+    current_log_positive = F.logsigmoid(logits)
+    current_log_negative = F.logsigmoid(-logits)
+    divergence = probability * (
+        reference_log_positive - current_log_positive
+    ) + (1.0 - probability) * (
+        reference_log_negative - current_log_negative
+    )
+    return divergence.mean(dim=1)
+
+
+def _attack_objective_per_sample(
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+    *,
+    objective: str,
+    reference_logits: torch.Tensor,
+) -> torch.Tensor:
+    if objective in {
+        "maximize_multilabel_bce_with_logits",
+        "compute_matched_uniform_latent_control",
+    }:
+        return _bce_per_sample(logits, targets)
+    if objective == "maximize_equal_positive_negative_bce_with_logits":
+        return _equal_positive_negative_bce_per_sample(logits, targets)
+    if objective == "maximize_bernoulli_kl_from_decoded_anchor":
+        return _bernoulli_kl_from_reference_per_sample(logits, reference_logits)
+    raise ValueError(f"unsupported LHAT attack objective: {objective!r}")
+
+
 def generate_lhat_adversarial(
     *,
     classifier: nn.Module,
     decoder: nn.Module,
     anchor_standardized: torch.Tensor,
     candidates_standardized: torch.Tensor,
+    raw_clean_waveform: torch.Tensor,
     targets: torch.Tensor,
     standardizer: LatentStandardizer,
     model_name: str,
@@ -484,9 +687,16 @@ def generate_lhat_adversarial(
         raise ValueError("candidate latent shape must match anchor latent shape")
     if targets.shape != (batch, 5):
         raise ValueError("LHAT targets must have shape (B,5)")
+    if tuple(raw_clean_waveform.shape) != (
+        batch,
+        resolved.canonical_domain.points,
+        12,
+    ):
+        raise ValueError("LHAT raw_clean_waveform must be canonical shape (B,1000,12)")
     inputs_finite = (
         torch.isfinite(anchor_standardized).all()
         & torch.isfinite(candidates_standardized).all()
+        & torch.isfinite(raw_clean_waveform).all()
         & torch.isfinite(targets).all()
     )
     if not bool(inputs_finite.item()):
@@ -523,6 +733,18 @@ def generate_lhat_adversarial(
 
     try:
         with torch.no_grad():
+            raw_clean_model = _canonical_to_attack_domain(
+                raw_clean_waveform,
+                domain,
+                resolved.canonical_domain,
+            )
+            raw_clean_logits = classifier(
+                _global_zscore_bct(
+                    raw_clean_model,
+                    resolved.normalization_epsilon,
+                )
+            )
+            raw_clean_bce = _bce_per_sample(raw_clean_logits, targets)
             initial_latent, _, _, _ = _projected_hull(
                 anchor_standardized,
                 candidates_standardized,
@@ -534,12 +756,19 @@ def generate_lhat_adversarial(
             # axis.  Decode/classify them in one 2B launch to reduce kernel
             # launch overhead while preserving the exact anchor/initial
             # tensors, ordering and loss definitions.
-            paired_logits, _ = logits_from_standardized(
+            paired_logits, paired_raw = logits_from_standardized(
                 torch.cat((anchor_standardized, initial_latent), dim=0)
             )
             anchor_logits, initial_logits = paired_logits.split(batch, dim=0)
-            anchor_bce = _bce_per_sample(anchor_logits, targets)
+            anchor_raw, _initial_raw = paired_raw.split(batch, dim=0)
+            decoded_anchor_bce = _bce_per_sample(anchor_logits, targets)
             initial_bce = _bce_per_sample(initial_logits, targets)
+            initial_attack_objective = _attack_objective_per_sample(
+                initial_logits,
+                targets,
+                objective=resolved.attack_objective,
+                reference_logits=anchor_logits,
+            )
 
         for _ in range(resolved.steps):
             optimizer.zero_grad(set_to_none=True)
@@ -551,7 +780,12 @@ def generate_lhat_adversarial(
                 epsilon=resolved.pgd_epsilon,
             )
             attack_logits, _ = logits_from_standardized(attack_latent)
-            objective = _bce_per_sample(attack_logits, targets).mean()
+            objective = _attack_objective_per_sample(
+                attack_logits,
+                targets,
+                objective=resolved.attack_objective,
+                reference_logits=anchor_logits,
+            ).mean()
             (gradient,) = torch.autograd.grad(objective, weight_logits)
             weight_logits.grad = -gradient
             optimizer.step()
@@ -568,12 +802,29 @@ def generate_lhat_adversarial(
             )
             final_logits, final_raw = logits_from_standardized(final_latent)
             final_bce = _bce_per_sample(final_logits, targets)
+            final_attack_objective = _attack_objective_per_sample(
+                final_logits,
+                targets,
+                objective=resolved.attack_objective,
+                reference_logits=anchor_logits,
+            )
             final_prediction = torch.sigmoid(final_logits) >= 0.5
             anchor_prediction = torch.sigmoid(anchor_logits) >= 0.5
             truth = targets >= 0.5
-            clean_correct = anchor_prediction == truth
+            decoded_anchor_correct = anchor_prediction == truth
             final_wrong = final_prediction != truth
-            attack_success = (clean_correct & final_wrong).any(dim=1)
+            sample_anyflip_eligible = decoded_anchor_correct.all(dim=1)
+            sample_anyflip_success = sample_anyflip_eligible & final_wrong.any(dim=1)
+            positive_hide_eligible = truth & anchor_prediction
+            negative_add_eligible = (~truth) & (~anchor_prediction)
+            positive_hide_numerator = (
+                positive_hide_eligible & (~final_prediction)
+            ).sum(dim=1)
+            positive_hide_denominator = positive_hide_eligible.sum(dim=1)
+            negative_add_numerator = (
+                negative_add_eligible & final_prediction
+            ).sum(dim=1)
+            negative_add_denominator = negative_add_eligible.sum(dim=1)
             coefficient_entropy = -(
                 weights * weights.clamp_min(1e-12).log()
             ).sum(dim=1)
@@ -582,10 +833,24 @@ def generate_lhat_adversarial(
                 1
             ).amax(dim=1)
             diagnostics = LHATDiagnostics(
-                anchor_bce=anchor_bce.detach(),
+                raw_clean_bce=raw_clean_bce.detach(),
+                decoded_anchor_bce=decoded_anchor_bce.detach(),
                 initial_bce=initial_bce.detach(),
                 final_bce=final_bce.detach(),
-                loss_gain=(final_bce - anchor_bce).detach(),
+                initial_attack_objective=initial_attack_objective.detach(),
+                final_attack_objective=final_attack_objective.detach(),
+                attack_objective_gain=(
+                    final_attack_objective - initial_attack_objective
+                ).detach(),
+                reconstruction_delta=(decoded_anchor_bce - raw_clean_bce).detach(),
+                adversarial_delta=(final_bce - decoded_anchor_bce).detach(),
+                total_delta=(final_bce - raw_clean_bce).detach(),
+                gain_vs_initial=(final_bce - initial_bce).detach(),
+                normalized_gain=(
+                    (final_bce - decoded_anchor_bce)
+                    / decoded_anchor_bce.clamp_min(1.0e-6)
+                ).detach(),
+                loss_gain=(final_bce - decoded_anchor_bce).detach(),
                 atk_init_l2=(final_latent - initial_latent)
                 .flatten(1)
                 .norm(p=2, dim=1)
@@ -594,7 +859,12 @@ def generate_lhat_adversarial(
                 .flatten(1)
                 .norm(p=2, dim=1)
                 .detach(),
-                attack_success=attack_success.detach(),
+                sample_anyflip_eligible=sample_anyflip_eligible.detach(),
+                sample_anyflip_success=sample_anyflip_success.detach(),
+                positive_hide_numerator=positive_hide_numerator.detach(),
+                positive_hide_denominator=positive_hide_denominator.detach(),
+                negative_add_numerator=negative_add_numerator.detach(),
+                negative_add_denominator=negative_add_denominator.detach(),
                 coefficient_entropy=coefficient_entropy.detach(),
                 coefficient_top1=weights.max(dim=1).values.detach(),
                 projection_scale=projection_scale.detach(),
@@ -605,6 +875,7 @@ def generate_lhat_adversarial(
             )
             return LHATResult(
                 waveform_raw=final_raw.detach().contiguous(),
+                anchor_waveform_raw=anchor_raw.detach().contiguous(),
                 latent_standardized=final_latent.detach().contiguous(),
                 weights=weights.detach().contiguous(),
                 diagnostics=diagnostics,

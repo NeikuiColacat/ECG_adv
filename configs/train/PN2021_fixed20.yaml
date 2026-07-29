@@ -98,7 +98,7 @@ diagnostics:
     enabled: true
     interval_steps: 20
     cuda_events: true
-    scope: sampled_core_step_excludes_logging
+    scope: fixed20_base_group_excludes_logging_otherwise_sampled_step
 
 logging:
   tensorboard:

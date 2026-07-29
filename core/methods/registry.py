@@ -358,6 +358,7 @@ class MethodProfile:
     status: str
     executable: bool
     rng_namespace: str
+    comparison_rng_identity: str
     nodes: tuple[NodeProfile, ...]
     outputs: Mapping[str, str]
     output_kinds: Mapping[str, ValueKind]
@@ -374,6 +375,7 @@ class MethodProfile:
         if not isinstance(self.executable, bool):
             raise TypeError("contracts.executable must be boolean")
         _name(self.rng_namespace, "rng_namespace")
+        _name(self.comparison_rng_identity, "contracts.comparison_rng_identity")
         if not self.nodes:
             raise ValueError("method profile must contain at least one node")
         outputs = dict(self.outputs)
@@ -402,6 +404,7 @@ class CompiledMethod:
     status: str
     executable: bool
     rng_namespace: str
+    comparison_rng_identity: str
     nodes: tuple[CompiledNode, ...]
     outputs: Mapping[str, str]
     output_kinds: Mapping[str, ValueKind]
@@ -429,6 +432,7 @@ class CompiledMethod:
             "profile_sha256": self.profile_sha256,
             "source_path": None if self.source_path is None else str(self.source_path),
             "rng_namespace": self.rng_namespace,
+            "comparison_rng_identity": self.comparison_rng_identity,
             "topological_nodes": [node.profile.node_id for node in self.nodes],
             "outputs": dict(self.outputs),
             "output_kinds": {
@@ -566,6 +570,12 @@ _NODE_RESOURCE_BINDINGS: Mapping[str, Mapping[str, str]] = MappingProxyType(
             "rng": "latent_augmix_rng",
             "config": "augmix_config",
         },
+        "ecgtwin_vae_encode_view": {
+            "encoder": "vae_encoder",
+        },
+        "ecgtwin_vae_decode_view": {
+            "decoder": "vae_decoder",
+        },
     }
 )
 
@@ -643,6 +653,10 @@ def load_method_profile(source: str | Path | Mapping[str, Any]) -> MethodProfile
 
     resources = _validate_resources(root["resources"])
     contracts = _mapping(root["contracts"], "contracts")
+    comparison_rng_identity = _name(
+        contracts.get("comparison_rng_identity", method_id),
+        "contracts.comparison_rng_identity",
+    )
     executable = contracts.get("executable", True)
     if not isinstance(executable, bool):
         raise TypeError("contracts.executable must be boolean")
@@ -749,6 +763,7 @@ def load_method_profile(source: str | Path | Mapping[str, Any]) -> MethodProfile
             if len(set(node_rng_namespaces)) == 1 and node_rng_namespaces
             else method_id
         ),
+        comparison_rng_identity=comparison_rng_identity,
         nodes=tuple(nodes),
         outputs=outputs,
         output_kinds=output_kinds,
@@ -851,6 +866,7 @@ def compile_method_profile(
         status=resolved.status,
         executable=resolved.executable,
         rng_namespace=resolved.rng_namespace,
+        comparison_rng_identity=resolved.comparison_rng_identity,
         nodes=tuple(compiled),
         outputs=resolved.outputs,
         output_kinds=resolved.output_kinds,

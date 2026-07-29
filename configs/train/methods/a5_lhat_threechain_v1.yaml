@@ -151,6 +151,7 @@ contracts:
   lhat_direct_bce_and_augmix_chain3_share_exact_view: true
   augmix_chain3_source: lhat_view
   augmix_chain3_additional_corruption: false
+  augmix_full_base_batch_random_draw_before_quality_mask: true
   quality_rejected_anchor_policy: clean_loss_only
   one_outer_optimizer_step_per_clean_batch: true
   batch_norm_running_stats_policy: objective_view_weighted_once_per_base_batch

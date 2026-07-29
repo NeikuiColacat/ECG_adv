@@ -5,12 +5,14 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import numpy as np
 import torch
 import yaml
 
 import core.pn2021_tuning as tuning
 from models.checkpoints import CheckpointIdentity
 from models.contracts import ECGFOUNDER_SPEC, EFFICIENTNET1DV2_SPEC
+from util.evaluation.metrics import compute_classification_metrics
 
 
 REPO = Path(__file__).resolve().parents[2]
@@ -77,6 +79,13 @@ class _ECGFounderModel(_Model):
     model_spec = ECGFOUNDER_SPEC
 
 
+class _PackedParityModel(torch.nn.Module):
+    model_spec = EFFICIENTNET1DV2_SPEC
+
+    def forward(self, value: torch.Tensor) -> torch.Tensor:
+        return value[:, :5, :17].mean(dim=2)
+
+
 class _Loader:
     def __init__(
         self,
@@ -114,6 +123,60 @@ class _Loader:
         return {"dataset": dataset}
 
 
+class _ResidentDataset:
+    def __init__(
+        self,
+        waveforms: torch.Tensor,
+        labels: torch.Tensor,
+        hash_ids: tuple[str, ...],
+    ) -> None:
+        self._waveforms = waveforms.contiguous()
+        self._labels = labels.contiguous()
+        self.selection = SimpleNamespace(hash_ids=hash_ids)
+        self.closed = False
+
+    @property
+    def waveforms(self) -> torch.Tensor:
+        if self.closed:
+            raise RuntimeError("resident test dataset is closed")
+        return self._waveforms
+
+    @property
+    def labels(self) -> torch.Tensor:
+        if self.closed:
+            raise RuntimeError("resident test dataset is closed")
+        return self._labels
+
+    def close(self) -> None:
+        self.closed = True
+        self._waveforms = torch.empty((0, 0, 0), dtype=torch.float32)
+        self._labels = torch.empty((0, 0), dtype=torch.float32)
+
+
+class _ResidentLoader(_Loader):
+    def __init__(
+        self,
+        partition: str,
+        *,
+        waveforms: torch.Tensor,
+        labels: torch.Tensor,
+        hash_ids: tuple[str, ...],
+        dataset_name: str,
+        view: int | None,
+    ) -> None:
+        super().__init__(
+            partition,
+            dataset_name=dataset_name,
+            view=view,
+            hash_ids=hash_ids,
+        )
+        self.dataset = _ResidentDataset(waveforms, labels, hash_ids)
+
+    def close(self) -> None:
+        self.closed = True
+        self.dataset.close()
+
+
 def _fake_loader_from_call(kwargs: dict[str, object]) -> _Loader:
     partition = str(kwargs["partition"])
     dataset_name = str(kwargs["dataset"])
@@ -149,6 +212,12 @@ def test_tuning_config_locks_family_balanced_frozen_validation_protocol():
     assert config.payload["validation_predictions"]["composition_indices"] == list(
         range(20)
     )
+    assert config.payload["validation_predictions"]["execution"] == {
+        "mode": "packed_resident",
+        "layout": "view_record_time_lead",
+        "view_order": "clean_then_composition_indices",
+        "source_loader_release": "after_pack",
+    }
     assert config.payload["pooled_selection"]["score"] == {
         "clean_weight": 0.5,
         "robust_weight": 0.5,
@@ -163,6 +232,104 @@ def test_tuning_config_locks_family_balanced_frozen_validation_protocol():
     assert config.payload["data"]["model_domain_adapter"]["normalization"] == (
         "per_sample_global_zscore"
     )
+
+
+def test_packed_validation_matches_sequential_view_logits_and_metrics():
+    hashes = tuple(f"packed-validation-{index:03d}" for index in range(100))
+    record = torch.arange(100, dtype=torch.float32).view(100, 1, 1)
+    time_axis = torch.linspace(-1.0, 1.0, 1000).view(1, 1000, 1)
+    lead = torch.arange(12, dtype=torch.float32).view(1, 1, 12)
+    clean = time_axis + lead * 0.07 + record * lead * 0.0003
+    labels = torch.stack(
+        [
+            ((torch.arange(100) + class_index) % (class_index + 2) == 0)
+            for class_index in range(5)
+        ],
+        dim=1,
+    ).to(dtype=torch.float32)
+    clean_loader = _ResidentLoader(
+        "k500_tune_validation",
+        waveforms=clean,
+        labels=labels,
+        hash_ids=hashes,
+        dataset_name="pn2021",
+        view=None,
+    )
+    corrupt_loaders = tuple(
+        _ResidentLoader(
+            "k500_tune_validation",
+            waveforms=(clean + float(view + 1) * 0.01),
+            labels=labels,
+            hash_ids=hashes,
+            dataset_name="pn2021c",
+            view=view,
+        )
+        for view in range(20)
+    )
+    loaders = tuning.PN2021TuningDataLoaders(
+        train=_Loader("k500_tune_train"),
+        latent_pool_source=None,
+        clean_validation=clean_loader,
+        corrupted_validation=corrupt_loaders,
+        center="ningbo",
+        model_name="efficientnet1dv2",
+        input_adapter=tuning.CanonicalTuningInputAdapter(EFFICIENTNET1DV2_SPEC),
+        resolved_parameters={"pin_memory": False, "eval_batch_size": 256},
+        explicit_overrides={},
+    )
+    model = _PackedParityModel().eval()
+    source_views = (clean_loader, *corrupt_loaders)
+    with torch.inference_mode():
+        sequential = np.stack(
+            [
+                model(loaders.input_adapter(loader.dataset.waveforms))
+                .float()
+                .numpy()
+                for loader in source_views
+            ],
+            axis=0,
+        )
+    bank = tuning._materialize_packed_validation_bank(
+        loaders,
+        composition_ids=tuple(f"composition_{index:02d}" for index in range(20)),
+    )
+    evaluator = object.__new__(tuning.FrozenValidationEvaluator)
+    evaluator.validation_bank = bank
+    evaluator.eval_batch_size = 256
+    evaluator.loaders = loaders
+    evaluator.amp_enabled = False
+    evaluator.amp_dtype = torch.bfloat16
+    evaluator.spec = EFFICIENTNET1DV2_SPEC
+    packed, _, forward_batches = evaluator._predict_packed(model, torch.device("cpu"))
+
+    assert forward_batches == 9
+    assert torch.equal(bank.waveforms[0], clean)
+    assert bank.hash_ids == hashes
+    assert bank.view_ids == (
+        "clean",
+        *(f"composition_{index:02d}" for index in range(20)),
+    )
+    assert np.array_equal(packed, sequential)
+    assert clean_loader.closed
+    assert all(loader.closed for loader in corrupt_loaders)
+    targets = labels.numpy().astype(np.uint8)
+    sequential_metrics = [
+        compute_classification_metrics(
+            view,
+            targets,
+            undefined_class_policy="skip_undefined",
+        )
+        for view in sequential
+    ]
+    packed_metrics = [
+        compute_classification_metrics(
+            view,
+            targets,
+            undefined_class_policy="skip_undefined",
+        )
+        for view in packed
+    ]
+    assert packed_metrics == sequential_metrics
 
 
 def test_tuning_config_rejects_model_spec_rate_cache_contract(tmp_path: Path):

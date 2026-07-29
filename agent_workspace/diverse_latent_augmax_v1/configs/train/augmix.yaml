@@ -1,0 +1,64 @@
+schema_version: 1
+
+method:
+  name: vae_lhat_three_chain_augmix
+  random_seed_file: random_seed.yaml
+  random_namespace: ecg_manual_refactor_augmix_v2_canonical500_batched
+  corruption_timing: before_per_sample_global_zscore
+
+topology:
+  width: 3
+  chain_roles:
+    - paper_anchored_s5_corruption_chain
+    - paper_anchored_s5_corruption_chain
+    - vae_lhat_adversarial_waveform
+  chain3_additional_corruption: false
+  raw_supervised_side_branch: false
+  input_sampling_rate_hz: 100
+  input_points: 1000
+  operator_domain_sampling_rate_hz: 500
+  operator_domain_points: 5000
+  output_sampling_rate_hz: 100
+  output_points: 1000
+  interpolation_mode: linear
+  interpolation_align_corners: true
+
+corruption_chains:
+  operator_config: augmentation/operators.yaml
+  profile: pn2021c_paper_anchored_s5_v1
+  profile_status: project_defined_paper_anchored_not_official_preset
+  severity: 5
+  depths: [2, 3]
+  sampling: uniform_over_all_depth2_depth3_compositions
+  replacement_within_chain: false
+  canonical_operator_order:
+    - powerline_noise
+    - emg_noise
+    - baseline_wander
+    - baseline_shift
+    - random_leads_masking
+  independent_chains: true
+
+mixing:
+  chain_weights: dirichlet
+  dirichlet_alpha: 1.0
+  clean_augmented_mix: beta
+  beta_alpha: 1.0
+  vae_chain_weight_cap: null
+
+output:
+  return_raw_components: true
+  return_raw_mixture: true
+  return_global_zscore_mixture: true
+  normalization_epsilon: 1.0e-6
+
+latent_threechain:
+  width: 3
+  depths: [1, 2, 3]
+  depth_sampling: uniform_integer_1_to_3
+  operator_sampling: random_subset_without_replacement
+  operator_application_order: canonical_order
+  dirichlet_alpha: 1.0
+  posterior_sample: false
+  reconstruction_residual_bypass: true
+  post_decode_clean_beta_mix: false

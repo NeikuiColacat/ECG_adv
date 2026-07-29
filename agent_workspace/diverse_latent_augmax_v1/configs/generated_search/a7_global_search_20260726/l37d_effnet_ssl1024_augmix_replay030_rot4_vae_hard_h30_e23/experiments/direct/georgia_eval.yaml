@@ -1,0 +1,22 @@
+schema_version: 1
+experiment:
+  name: a7_global_l37d_effnet_ssl1024_augmix_replay030_rot4_vae_hard_h30_e23_georgia_direct_eval
+  purpose: Ref-excluded Clean and PN2021-C evaluation of the matched Direct+fixed20 control.
+entrypoint:
+  name: evaluate_pn2021
+  config: eval/PN2021.yaml
+  arguments:
+  - --model
+  - efficientnet1dv2
+  - --checkpoint
+  - /home/linbinhao/ECG_adv_data/runs/agent_workspace/a7_global_search_20260726/l37d_effnet_ssl1024_augmix_replay030_rot4_vae_hard_h30_e23/direct/georgia/train/training/checkpoints/last.pt
+  - --center
+  - georgia
+  - --batch-size
+  - '1024'
+  - --num-workers
+  - '0'
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/agent_workspace/a7_global_search_20260726/l37d_effnet_ssl1024_augmix_replay030_rot4_vae_hard_h30_e23/direct/georgia/eval
+  if_exists: error
+  delegate_output_subdir: evaluation

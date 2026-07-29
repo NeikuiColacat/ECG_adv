@@ -1,0 +1,71 @@
+schema_version: 1
+method:
+  name: vae_latent_hull_online_adversarial_training
+  random_seed_file: random_seed.yaml
+  random_namespace: ecg_manual_refactor_lhat_v1
+latent_standardization:
+  fit_scope: eligible_k500_training_pool_only
+  reduction: per_latent_coordinate_across_records
+  epsilon: 1.0e-06
+  persist_identity: true
+candidates:
+  label_policy: exact_positive_set
+  mode: nearest
+  local_pool_size: 80
+  num_candidates: 20
+  include_anchor: false
+  require_distinct: true
+  require_non_self: true
+  forbid_norm_abnormal_mix: true
+  validation_records_allowed: false
+hull_attack:
+  weight_mode: optimized_softmax
+  init_logit_gap: 0.0
+  hull_lambda: 0.6
+  steps: 5
+  learning_rate: 0.25
+  pgd_epsilon_l2_standardized: 8.0
+  objective: maximize_multilabel_bce_with_logits
+  optimizer: adam
+decoder_bridge:
+  native_points: 1024
+  canonical_domain:
+    sampling_rate_hz: 100
+    points: 1000
+  interpolation: linear_align_corners
+  model_domains:
+    efficientnet1dv2:
+      sampling_rate_hz: 100
+      points: 1000
+    ecgfounder:
+      sampling_rate_hz: 500
+      points: 5000
+  normalization_after_decode: per_sample_global_zscore
+  normalization_epsilon: 1.0e-06
+diagnostics:
+  required:
+  - raw_clean_bce
+  - decoded_anchor_bce
+  - initial_bce
+  - final_bce
+  - reconstruction_delta
+  - adversarial_delta
+  - total_delta
+  - gain_vs_initial
+  - normalized_gain
+  - loss_gain
+  - atk_init_l2
+  - atk_anchor_l2
+  - sample_anyflip_numerator
+  - sample_anyflip_denominator
+  - positive_hide_numerator
+  - positive_hide_denominator
+  - negative_add_numerator
+  - negative_add_denominator
+  - coefficient_entropy
+  - coefficient_top1
+  - projection_scale
+  - effective_lambda
+  - effective_anchor_share
+  - decoded_invalid_rate
+  - decoded_max_abs_mV

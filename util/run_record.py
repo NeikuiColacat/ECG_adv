@@ -709,8 +709,14 @@ class RunRecorder:
                 ):
                     raise ValueError("invalid pooled-selection evidence")
                 if direct_selection and (
-                    comparison.get("protocol_id")
-                    != "pn2021_direct_family_balanced_tuning"
+                    not isinstance(comparison.get("protocol_id"), str)
+                    or not comparison.get("protocol_id")
+                    or comparison.get("protocol_id")
+                    != (
+                        result.get("config", {}).get("protocol_id")
+                        if isinstance(result.get("config"), dict)
+                        else None
+                    )
                     or comparison.get("method_id") != "direct_depth23_fixed20"
                 ):
                     raise ValueError("invalid Direct pooled-selection identity")

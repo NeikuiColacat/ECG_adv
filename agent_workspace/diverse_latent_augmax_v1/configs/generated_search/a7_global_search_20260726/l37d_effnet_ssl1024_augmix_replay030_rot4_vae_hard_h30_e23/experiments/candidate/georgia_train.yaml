@@ -1,0 +1,41 @@
+schema_version: 1
+experiment:
+  name: a7_global_l37d_effnet_ssl1024_augmix_replay030_rot4_vae_hard_h30_e23_georgia_train
+  purpose: 'K500-only two-chain AugMix SimCLR pretraining followed by clean plus deterministic rotating
+    corruption supervision: two depth-2 and two depth-3 canonical views per epoch, with per-record SHA256
+    offsets and complete twenty-composition coverage every five epochs. One exact-label online VAE-LHAT
+    hard view adds direct BCE and clean/hard Bernoulli-JSD at multiplier 1.5. Stage-1 additionally consumes
+    labeled PTB-XL train semantic replay at weight 0.3 with 1 source batch per target step; no target-center
+    records outside K500 are consumed.'
+entrypoint:
+  name: train_pn2021
+  config: generated_search/a7_global_search_20260726/l37d_effnet_ssl1024_augmix_replay030_rot4_vae_hard_h30_e23/online/georgia.yaml
+  arguments:
+  - --model
+  - efficientnet1dv2
+  - --method-config
+  - generated_search/a7_global_search_20260726/l37d_effnet_ssl1024_augmix_replay030_rot4_vae_hard_h30_e23/methods/georgia.yaml
+  - --center
+  - georgia
+  - --source-checkpoint
+  - /data/linbinhao/ECG_manual_refactor_runs/manual_refactor_20260721/managed_ptbxl_effnet_source_v1/training/checkpoints/best.pt
+  - --vae-checkpoint
+  - /home/linbinhao/ECG_adv_data/models/ECGTwin/checkpoints/vae_model.pth
+  - --epochs
+  - '23'
+  - --scheduler-horizon-epochs
+  - '30'
+  - --trainable-scope
+  - full
+  - --num-workers
+  - '0'
+  - --learning-rate
+  - 5e-05
+  - --batch-size
+  - '128'
+  - --weight-decay
+  - '0.0001'
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/agent_workspace/a7_global_search_20260726/l37d_effnet_ssl1024_augmix_replay030_rot4_vae_hard_h30_e23/candidate/georgia/train
+  if_exists: error
+  delegate_output_subdir: training

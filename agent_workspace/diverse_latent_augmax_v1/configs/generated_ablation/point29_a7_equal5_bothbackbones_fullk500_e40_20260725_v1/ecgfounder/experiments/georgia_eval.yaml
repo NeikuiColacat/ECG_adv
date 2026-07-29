@@ -1,0 +1,22 @@
+schema_version: 1
+experiment:
+  name: point29_a7_equal5_bothbackbones_fullk500_e40_20260725_v1_ecgfounder_georgia_eval
+  purpose: K500-ref-excluded PN2021 Clean and PN2021-C evaluation of A7 equal-five anchors on ecgfounder.
+entrypoint:
+  name: evaluate_pn2021
+  config: eval/PN2021.yaml
+  arguments:
+  - --model
+  - ecgfounder
+  - --checkpoint
+  - /home/linbinhao/ECG_adv_data/runs/agent_workspace/diverse_latent_augmax_v1/point29_a7_equal5_bothbackbones_fullk500_e40_20260725_v1/ecgfounder/georgia/train/training/checkpoints/last.pt
+  - --center
+  - georgia
+  - --batch-size
+  - '128'
+  - --num-workers
+  - '0'
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/agent_workspace/diverse_latent_augmax_v1/point29_a7_equal5_bothbackbones_fullk500_e40_20260725_v1/ecgfounder/georgia/eval
+  if_exists: error
+  delegate_output_subdir: evaluation

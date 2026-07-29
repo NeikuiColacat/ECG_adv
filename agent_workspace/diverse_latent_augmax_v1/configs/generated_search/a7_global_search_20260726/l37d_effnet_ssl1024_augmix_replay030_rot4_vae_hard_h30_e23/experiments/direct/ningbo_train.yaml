@@ -1,0 +1,34 @@
+schema_version: 1
+experiment:
+  name: a7_global_l37d_effnet_ssl1024_augmix_replay030_rot4_vae_hard_h30_e23_ningbo_direct_train
+  purpose: Optimizer-, budget-, source-, seed-, and K500-matched Direct+fixed20 control.
+entrypoint:
+  name: train_pn2021
+  config: generated_search/a7_global_search_20260726/l37d_effnet_ssl1024_augmix_replay030_rot4_vae_hard_h30_e23/direct_train/ningbo.yaml
+  arguments:
+  - --model
+  - efficientnet1dv2
+  - --method-config
+  - generated_search/a7_global_search_20260726/l37d_effnet_ssl1024_augmix_replay030_rot4_vae_hard_h30_e23/direct_methods/ningbo.yaml
+  - --center
+  - ningbo
+  - --source-checkpoint
+  - /data/linbinhao/ECG_manual_refactor_runs/manual_refactor_20260721/managed_ptbxl_effnet_source_v1/training/checkpoints/best.pt
+  - --epochs
+  - '23'
+  - --scheduler-horizon-epochs
+  - '30'
+  - --trainable-scope
+  - full
+  - --num-workers
+  - '0'
+  - --learning-rate
+  - 5e-05
+  - --weight-decay
+  - '0.0001'
+  - --batch-size
+  - '128'
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/agent_workspace/a7_global_search_20260726/l37d_effnet_ssl1024_augmix_replay030_rot4_vae_hard_h30_e23/direct/ningbo/train
+  if_exists: error
+  delegate_output_subdir: training

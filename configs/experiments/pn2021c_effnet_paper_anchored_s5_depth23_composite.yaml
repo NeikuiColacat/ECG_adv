@@ -1,0 +1,54 @@
+extends:
+  - ../defaults/pn2021c_official_s5_depth23_composite_protocol.yaml
+
+experiment:
+  name: pn2021c_effnet_paper_anchored_s5_depth23_composite
+  description: Paper-anchored project-defined S5 depth2+depth3 PN2021-C calibration on the trusted direct-K500 EfficientNet baseline.
+
+evaluation:
+  model_family: effnet_direct_k500_v7_sjr_rgq
+  corruption_set: null
+  severity_profile: custom
+  severity_params_file: configs/augmentation/operators.yaml
+  severity_params_name: pn2021c_paper_anchored_s5_v1
+  severities: [5]
+  corruption_input: raw_first
+  corruptions:
+    - powerline_noise+emg_noise
+    - powerline_noise+baseline_wander
+    - powerline_noise+baseline_shift
+    - powerline_noise+random_leads_masking
+    - emg_noise+baseline_wander
+    - emg_noise+baseline_shift
+    - emg_noise+random_leads_masking
+    - baseline_wander+baseline_shift
+    - baseline_wander+random_leads_masking
+    - baseline_shift+random_leads_masking
+    - powerline_noise+emg_noise+baseline_wander
+    - powerline_noise+emg_noise+baseline_shift
+    - powerline_noise+emg_noise+random_leads_masking
+    - powerline_noise+baseline_wander+baseline_shift
+    - powerline_noise+baseline_wander+random_leads_masking
+    - powerline_noise+baseline_shift+random_leads_masking
+    - emg_noise+baseline_wander+baseline_shift
+    - emg_noise+baseline_wander+random_leads_masking
+    - emg_noise+baseline_shift+random_leads_masking
+    - baseline_wander+baseline_shift+random_leads_masking
+  output_stem: eval_pn2021_c_v7_refexcluded_paper_anchored_s5_depth23_composite
+
+logging:
+  child_artifacts:
+    - eval_pn2021_c_v7_refexcluded_paper_anchored_s5_depth23_composite.json
+  postprocess_artifacts: []
+
+runner:
+  matrix:
+    center: ${paper_protocol.centers.target_4}
+    method:
+      - name: effnet_direct_k500
+        family: effnet_direct_k500_v7_sjr_rgq
+        model_dir_template: >-
+          {output_root}/effnet_direct_k500_v7_sjr_rgq/seed20260601_k500_v7_sjr_rgq_20260530_rep1/runs/{center}_K500_direct_ft_ep30_seed20260601_val0.2
+        checkpoint_name: best_model.pt
+        clean_eval_name: eval_result_v7_super5_sjr_rgq_review_exclrefs_crop1000.json
+  name: ${experiment.name}_${matrix.center}_${matrix.method.name}

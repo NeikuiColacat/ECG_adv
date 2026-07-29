@@ -1,0 +1,86 @@
+schema_version: 1
+profile_name: pn2021_super5_refexcluded_depth23_v2
+
+references:
+  split_config: data/splits.yaml
+  data_load_config: data/data_load.yaml
+  corruption_cache_config: augmentation/cache.yaml
+  random_seed_config: random_seed.yaml
+
+protocol:
+  mapping_version: v7_super5_sjr_rgq_review_20260528
+  mapping_hash: 555ec85d5b51
+  class_order: [CD, HYP, MI, NORM, STTC]
+  logical_centers:
+    - ningbo
+    - chapman_shaoxing
+    - cpsc_2018
+    - georgia
+  reference_count_per_center: 500
+  partitions:
+    clean: pn2021_all_zero_kept_refexcluded
+    corrupted: pn2021c_all_zero_kept_corrupted_refexcluded
+  canonical_views:
+    clean_kept: pn2021_all_zero_kept_refexcluded
+    clean_drop: pn2021_drop_all_zero_refexcluded
+    corrupted_kept: pn2021c_all_zero_kept_corrupted_refexcluded
+    corrupted_drop: pn2021c_drop_all_zero_corrupted_refexcluded
+  corruption:
+    expected_view_count: 20
+    depths: [2, 3]
+    combinations_per_depth:
+      2: 10
+      3: 10
+    aggregation: equal_views_then_equal_centers
+  input_pipeline:
+    canonical_domain:
+      sampling_rate_hz: 100
+      duration_seconds: 10.0
+      points: 1000
+      channels: 12
+      layout: time_channel
+      physical_unit: mV
+      normalization: none
+    sanitization:
+      stage: before_model_domain_adaptation
+      nonfinite_replacement: zero
+    model_domains:
+      efficientnet1dv2:
+        sampling_rate_hz: 100
+        points: 1000
+        adaptation: identity
+      ecgfounder:
+        sampling_rate_hz: 500
+        points: 5000
+        adaptation: interpolate
+        mode: linear
+        align_corners: true
+    normalization:
+      stage: after_model_domain_adaptation
+      method: per_sample_global_zscore
+      epsilon: 1.0e-6
+      variance_correction: 0
+    output:
+      layout: channel_time
+      dtype: float32
+
+runtime:
+  device: auto
+  batch_size_by_model:
+    efficientnet1dv2: 512
+    ecgfounder: 128
+  # One process owns and reuses the clean/PN2021-C mmap sessions across views.
+  num_workers: 0
+  pin_memory: true
+  persistent_workers: false
+  prefetch_factor: 2
+  cache_mode: mmap
+  validate_values: sample
+  amp:
+    enabled: true
+    dtype: bfloat16
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor/pn2021_evaluation_v2
+  if_exists: error
+  result_file: evaluation_result.json

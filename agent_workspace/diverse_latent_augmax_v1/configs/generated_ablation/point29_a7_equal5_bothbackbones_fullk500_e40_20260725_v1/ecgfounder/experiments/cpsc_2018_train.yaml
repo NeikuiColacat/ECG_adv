@@ -1,0 +1,34 @@
+schema_version: 1
+experiment:
+  name: point29_a7_equal5_bothbackbones_fullk500_e40_20260725_v1_ecgfounder_cpsc_2018_train
+  purpose: Full-K500 E40 A7 ablation with equal five-class logit anchors on ecgfounder.
+entrypoint:
+  name: train_pn2021
+  config: generated_ablation/point29_a7_equal5_bothbackbones_fullk500_e40_20260725_v1/ecgfounder/online/cpsc_2018.yaml
+  arguments:
+  - --model
+  - ecgfounder
+  - --method-config
+  - generated_ablation/point29_a7_equal5_bothbackbones_fullk500_e40_20260725_v1/ecgfounder/methods/cpsc_2018.yaml
+  - --center
+  - cpsc_2018
+  - --source-checkpoint
+  - /data/linbinhao/ECG_manual_refactor_runs/manual_refactor_20260721/managed_ptbxl_ecgfounder_source_v1/training/checkpoints/best.pt
+  - --vae-checkpoint
+  - /home/linbinhao/ECG_adv_data/models/ECGTwin/checkpoints/vae_model.pth
+  - --epochs
+  - '40'
+  - --scheduler-horizon-epochs
+  - '40'
+  - --trainable-scope
+  - full
+  - --num-workers
+  - '0'
+  - --learning-rate
+  - 2e-05
+  - --batch-size
+  - '64'
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/agent_workspace/diverse_latent_augmax_v1/point29_a7_equal5_bothbackbones_fullk500_e40_20260725_v1/ecgfounder/cpsc_2018/train
+  if_exists: error
+  delegate_output_subdir: training

@@ -1,0 +1,143 @@
+schema_version: 1
+
+method:
+  id: direct_depth23_fixed20
+  profile_version: 1
+  api_version: 1
+  scientific_arm: DirectDepth23Fixed20FamilyBalanced
+  status: locked_family_balanced_baseline
+  description: >-
+    Direct supervised adaptation with one clean view and every canonical
+    depth-2/3 corruption composition. The twenty-one losses are accumulated as
+    0.5 clean plus 0.5 mean corruption before one optimizer step.
+
+nodes:
+  clean_identity:
+    type: identity_raw100_view
+    implementation: builtin
+    implementation_version: 1
+    status: implemented
+    inputs:
+      waveform: clean_raw
+    outputs:
+      waveform: clean_view
+  depth23_corruption:
+    type: canonical_depth23_corruption_view
+    implementation: registered
+    implementation_version: 1
+    status: implemented_engine
+    inputs:
+      waveform: clean_view
+      rng: corruption_rng
+      operator_profile: operator_profile
+    outputs:
+      waveform: corrupted_view
+      provenance: corruption_provenance
+
+inputs:
+  clean_raw:
+    type: ecg_waveform
+    domain: raw_mV
+    layout: batch_time_lead
+    sampling_rate_hz: 100
+    points: 1000
+    leads: 12
+  targets:
+    type: multilabel_targets
+    class_order: [CD, HYP, MI, NORM, STTC]
+  hash_ids:
+    type: unique_record_ids
+
+outputs:
+  clean_view:
+    type: ecg_waveform
+    source: clean_identity.waveform
+    domain: raw_mV
+    sampling_rate_hz: 100
+    points: 1000
+  corrupted_view:
+    type: ecg_waveform
+    source: depth23_corruption.waveform
+    domain: raw_mV
+    sampling_rate_hz: 100
+    points: 1000
+  corruption_provenance:
+    type: per_record_corruption_provenance
+    source: depth23_corruption.provenance
+
+objective:
+  terms:
+    - id: clean_bce
+      type: multilabel_bce_with_logits
+      view: clean_view
+      targets: targets
+      weight: 1.0
+    - id: corrupted_bce
+      type: multilabel_bce_with_logits
+      view: corrupted_view
+      targets: targets
+      weight: 1.0
+
+resources:
+  model:
+    type: caller_owned_classifier
+  operator_profile:
+    type: config_reference
+    path: augmentation/operators.yaml
+    profile: pn2021c_paper_anchored_s5_v1
+    severity: 5
+  corruption_rng:
+    type: isolated_torch_generator
+    seed_config: random_seed.yaml
+    namespace: method_direct_depth23_fixed20
+
+contracts:
+  normalization_owner: online_trainer
+  optimizer_owner: online_trainer
+  canonical_input_sampling_rate_hz: 100
+  operator_domain_sampling_rate_hz: 500
+  canonical_output_sampling_rate_hz: 100
+  exposure_policy: clean_once_then_exhaustive_depth23
+  clean_exposures_per_base_record: 1
+  corrupted_exposures_per_base_record: 20
+  total_exposures_per_base_record: 21
+  composition_indices:
+    - 0
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    - 6
+    - 7
+    - 8
+    - 9
+    - 10
+    - 11
+    - 12
+    - 13
+    - 14
+    - 15
+    - 16
+    - 17
+    - 18
+    - 19
+  composition_order: all_depth2_then_all_depth3_canonical
+  composition_depth_counts:
+    depth2: 10
+    depth3: 10
+  objective_term_routing:
+    clean_exposure: clean_bce
+    corrupted_exposure: corrupted_bce
+  tensorboard_probe_composition_indices: [0, 10, 19]
+  family_loss_weights:
+    clean: 0.5
+    corrupted_total: 0.5
+    corrupted_per_composition: 0.025
+  optimizer_step_policy: accumulate_family_balanced_once_per_base_batch
+  batch_norm_running_stats_policy: family_loss_weighted_once_per_base_batch
+  exposure_budget_match: matched_one_optimizer_step_per_base_batch
+  online_gpu_generation_required: true
+  materialized_dataset_expansion_allowed: false
+  complete_k500_base_record_exposure: true
+  heldout_target_feedback_allowed: false

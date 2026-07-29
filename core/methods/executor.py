@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Callable, Mapping, TypeAlias
+from typing import Any, Callable, Mapping, Sequence, TypeAlias
 
 import torch
 
@@ -85,7 +85,7 @@ class ExecutionResources:
 
 def _derive_seed(
     base_seed: int,
-    profile_name: str,
+    comparison_rng_identity: str,
     namespace: str,
     node_id: str,
     stream: str,
@@ -96,7 +96,7 @@ def _derive_seed(
     payload = "|".join(
         (
             str(base_seed),
-            profile_name,
+            comparison_rng_identity,
             namespace,
             node_id,
             stream,
@@ -190,7 +190,7 @@ class _ExecutionContext:
         if generator is None:
             seed = _derive_seed(
                 self._resources.base_seed,
-                self._method.profile_name,
+                self._method.comparison_rng_identity,
                 self.rng_namespace,
                 self.node_id,
                 stream,
@@ -202,6 +202,7 @@ class _ExecutionContext:
             self._diagnostics[f"{self.node_id}/rng/{stream}/{resolved_device}"] = {
                 "seed": seed,
                 "namespace": self.rng_namespace,
+                "comparison_rng_identity": self._method.comparison_rng_identity,
                 "execution_identity": list(self._resources.rng_identity),
             }
         return generator
@@ -210,6 +211,8 @@ class _ExecutionContext:
 def execute_method(
     method: CompiledMethod,
     resources: ExecutionResources,
+    *,
+    required_outputs: Sequence[str] | None = None,
 ) -> ViewBundle:
     """Execute a compiled graph and return only its declared named outputs.
 
@@ -227,14 +230,36 @@ def execute_method(
             "contracts.executable=false"
         )
     resources.validate_requirements(method)
+    selected_outputs = (
+        tuple(method.outputs)
+        if required_outputs is None
+        else tuple(str(value) for value in required_outputs)
+    )
+    if not selected_outputs or len(set(selected_outputs)) != len(selected_outputs):
+        raise ValueError("required_outputs must be non-empty and unique")
+    unknown_outputs = sorted(set(selected_outputs) - set(method.outputs))
+    if unknown_outputs:
+        raise ValueError(f"required_outputs contains unknown outputs: {unknown_outputs}")
+    required_nodes = {method.outputs[name] for name in selected_outputs}
+    by_id = {node.profile.node_id: node.profile for node in method.nodes}
+    pending = list(required_nodes)
+    while pending:
+        node_id = pending.pop()
+        for parent in by_id[node_id].inputs:
+            if parent not in required_nodes:
+                required_nodes.add(parent)
+                pending.append(parent)
     results: dict[str, ViewValue] = {}
     diagnostics: dict[str, Any] = {
         "method/profile_name": method.profile_name,
         "method/profile_sha256": method.profile_sha256,
         "method/rng_namespace": method.rng_namespace,
+        "method/comparison_rng_identity": method.comparison_rng_identity,
     }
     for compiled_node in method.nodes:
         node = compiled_node.profile
+        if node.node_id not in required_nodes:
+            continue
         definition = compiled_node.definition
         inputs = tuple(results[parent] for parent in node.inputs)
         actual_input_kinds = tuple(value_kind(value) for value in inputs)
@@ -268,8 +293,10 @@ def execute_method(
     named = {
         output_name: results[node_id]
         for output_name, node_id in method.outputs.items()
+        if output_name in selected_outputs
     }
-    for output_name, expected_kind in method.output_kinds.items():
+    for output_name in selected_outputs:
+        expected_kind = method.output_kinds[output_name]
         if value_kind(named[output_name]) is not expected_kind:
             raise RuntimeError(f"compiled output kind drifted for {output_name!r}")
     return ViewBundle(

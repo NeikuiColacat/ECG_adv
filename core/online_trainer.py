@@ -16,9 +16,10 @@ import hashlib
 import json
 import math
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence, TYPE_CHECKING
+from typing import Any, Callable, Iterator, Mapping, Sequence, TYPE_CHECKING
 
 import torch
 import torch.nn as nn
@@ -77,6 +78,22 @@ ONLINE_PARAMETER_NAMES = frozenset(
     }
 )
 FIXED20_EXPOSURE_POLICY = "clean_once_then_exhaustive_depth23"
+FIXED20_AUX_EXPOSURE_POLICY = (
+    "clean_once_then_exhaustive_depth23_then_auxiliary"
+)
+# Sandbox PCGrad attaches its auxiliary objective to the clean exposure while
+# preserving the canonical clean + 20-corruption optimizer group.  Its scoped
+# runtime adapter owns validation and exposure construction; the whitelist
+# trainer still needs to recognize that group as fixed20 for accumulation,
+# BatchNorm weighting, timing, and one-step-per-base-batch semantics.
+FIXED20_PCGRAD_EXPOSURE_POLICY = "clean_aux_once_then_exhaustive_depth23"
+FIXED20_GROUPED_EXPOSURE_POLICIES = frozenset(
+    {
+        FIXED20_EXPOSURE_POLICY,
+        FIXED20_AUX_EXPOSURE_POLICY,
+        FIXED20_PCGRAD_EXPOSURE_POLICY,
+    }
+)
 FIXED20_COMPOSITION_ORDER = tuple(range(20))
 FAMILY_BALANCED_BN_POLICY = "family_loss_weighted_once_per_base_batch"
 OBJECTIVE_VIEW_BALANCED_BN_POLICY = "objective_view_weighted_once_per_base_batch"
@@ -87,6 +104,7 @@ class _ExposureStep:
     name: str
     composition_index: int | None
     objective_terms: tuple[str, ...] | None
+    loss_scale: float = 1.0
 
 
 @dataclass
@@ -163,6 +181,7 @@ def _build_batch_norm_momentum_plan(
     method: CompiledMethod,
     *,
     fixed20_exposure: bool,
+    exposure_steps: Sequence[_ExposureStep] | None = None,
 ) -> _BatchNormMomentumPlan | None:
     policy = str(method.contracts.get("batch_norm_running_stats_policy", ""))
     if fixed20_exposure:
@@ -170,17 +189,20 @@ def _build_batch_norm_momentum_plan(
             raise ValueError(
                 "fixed20 must declare family-loss-weighted BatchNorm running stats"
             )
-        family_weights = _mapping(
-            method.contracts.get("family_loss_weights"),
-            "fixed20 family_loss_weights",
-        )
-        exposure_weights = (
-            float(family_weights["clean"]),
-            *(
-                float(family_weights["corrupted_per_composition"])
-                for _ in FIXED20_COMPOSITION_ORDER
-            ),
-        )
+        if exposure_steps is None:
+            family_weights = _mapping(
+                method.contracts.get("family_loss_weights"),
+                "fixed20 family_loss_weights",
+            )
+            exposure_weights = (
+                float(family_weights["clean"]),
+                *(
+                    float(family_weights["corrupted_per_composition"])
+                    for _ in FIXED20_COMPOSITION_ORDER
+                ),
+            )
+        else:
+            exposure_weights = tuple(float(step.loss_scale) for step in exposure_steps)
     elif policy == OBJECTIVE_VIEW_BALANCED_BN_POLICY:
         ordered_views: list[str] = []
         for term in method.objective.terms:
@@ -238,7 +260,7 @@ def _method_exposure_steps(method: CompiledMethod) -> tuple[_ExposureStep, ...]:
     policy = method.contracts.get("exposure_policy")
     if policy is None:
         return (_ExposureStep("base", None, None),)
-    if policy != FIXED20_EXPOSURE_POLICY:
+    if policy not in {FIXED20_EXPOSURE_POLICY, FIXED20_AUX_EXPOSURE_POLICY}:
         raise ValueError(f"unsupported method exposure_policy: {policy!r}")
     raw_order = method.contracts.get("composition_indices")
     if not isinstance(raw_order, (list, tuple)):
@@ -259,16 +281,51 @@ def _method_exposure_steps(method: CompiledMethod) -> tuple[_ExposureStep, ...]:
     ):
         raise ValueError("fixed20 TensorBoard probes must be compositions 0, 10 and 19")
     names = {term.name for term in method.objective.terms}
-    if names != {"clean_bce", "corrupted_bce"}:
-        raise ValueError(
-            "fixed20 method objective must contain clean_bce and corrupted_bce"
+    auxiliary_terms: tuple[str, ...] = ()
+    if policy == FIXED20_EXPOSURE_POLICY:
+        if names != {"clean_bce", "corrupted_bce"}:
+            raise ValueError(
+                "fixed20 method objective must contain clean_bce and corrupted_bce"
+            )
+        expected_optimizer_policy = "accumulate_family_balanced_once_per_base_batch"
+    else:
+        raw_auxiliary_terms = method.contracts.get("auxiliary_objective_terms")
+        if not isinstance(raw_auxiliary_terms, (list, tuple)):
+            raise ValueError(
+                "fixed20 auxiliary method must declare auxiliary_objective_terms"
+            )
+        auxiliary_terms = tuple(str(value) for value in raw_auxiliary_terms)
+        if (
+            not auxiliary_terms
+            or len(set(auxiliary_terms)) != len(auxiliary_terms)
+            or any(not value for value in auxiliary_terms)
+        ):
+            raise ValueError("auxiliary_objective_terms must be non-empty and unique")
+        if names != {"clean_bce", "corrupted_bce", *auxiliary_terms}:
+            raise ValueError(
+                "fixed20 auxiliary objective must contain only base and declared "
+                "auxiliary terms"
+            )
+        term_weights = {
+            term.name: float(term.weight) for term in method.objective.terms
+        }
+        if not math.isclose(
+            sum(term_weights[name] for name in auxiliary_terms),
+            1.0,
+            rel_tol=0.0,
+            abs_tol=1.0e-12,
+        ):
+            raise ValueError("auxiliary objective term weights must sum to one")
+        if method.contracts.get("auxiliary_exposures_per_base_record") != 1:
+            raise ValueError("fixed20 auxiliary method must expose one auxiliary view")
+        if method.contracts.get("total_exposures_per_base_record") != 22:
+            raise ValueError("fixed20 auxiliary method must declare 22 total exposures")
+        expected_optimizer_policy = (
+            "accumulate_normalized_auxiliary_once_per_base_batch"
         )
-    if (
-        method.contracts.get("optimizer_step_policy")
-        != "accumulate_family_balanced_once_per_base_batch"
-    ):
+    if method.contracts.get("optimizer_step_policy") != expected_optimizer_policy:
         raise ValueError(
-            "fixed20 must accumulate all family-balanced losses before one step"
+            "fixed20 optimizer_step_policy does not match its exposure contract"
         )
     if (
         method.contracts.get("batch_norm_running_stats_policy")
@@ -281,24 +338,78 @@ def _method_exposure_steps(method: CompiledMethod) -> tuple[_ExposureStep, ...]:
         method.contracts.get("family_loss_weights"),
         "fixed20 family_loss_weights",
     )
-    expected_weights = {
-        "clean": 0.5,
-        "corrupted_total": 0.5,
-        "corrupted_per_composition": 0.025,
-    }
-    if family_weights != expected_weights:
-        raise ValueError(
-            "fixed20 family weights must be clean=0.5 and 20x corruption=0.025"
-        )
-    return (
-        _ExposureStep("clean", -1, ("clean_bce",)),
+    if policy == FIXED20_EXPOSURE_POLICY:
+        expected_weights = {
+            "clean": 0.5,
+            "corrupted_total": 0.5,
+            "corrupted_per_composition": 0.025,
+        }
+        if family_weights != expected_weights:
+            raise ValueError(
+                "fixed20 family weights must be clean=0.5 and 20x corruption=0.025"
+            )
+        auxiliary_weight = None
+    else:
+        expected_keys = {
+            "clean",
+            "corrupted_total",
+            "corrupted_per_composition",
+            "auxiliary",
+        }
+        if set(family_weights) != expected_keys:
+            raise ValueError("fixed20 auxiliary family weights are incomplete")
+        clean_weight = float(family_weights["clean"])
+        corrupted_total = float(family_weights["corrupted_total"])
+        corrupted_per = float(family_weights["corrupted_per_composition"])
+        auxiliary_weight = float(family_weights["auxiliary"])
+        if not 0.0 < auxiliary_weight <= 0.5:
+            raise ValueError("fixed20 auxiliary weight must be in (0,0.5]")
+        expected_base_family = (1.0 - auxiliary_weight) / 2.0
+        if not (
+            math.isclose(clean_weight, expected_base_family, abs_tol=1.0e-12)
+            and math.isclose(
+                corrupted_total, expected_base_family, abs_tol=1.0e-12
+            )
+            and math.isclose(
+                corrupted_per,
+                corrupted_total / 20.0,
+                abs_tol=1.0e-12,
+            )
+        ):
+            raise ValueError(
+                "fixed20 auxiliary weights must preserve equal clean/corruption "
+                "base families and normalized total mass"
+            )
+    steps = (
+        _ExposureStep("clean", -1, ("clean_bce",), float(family_weights["clean"])),
         *tuple(
             _ExposureStep(
-                f"corruption_{index:02d}", index, ("corrupted_bce",)
+                f"corruption_{index:02d}",
+                index,
+                ("corrupted_bce",),
+                float(family_weights["corrupted_per_composition"]),
             )
             for index in order
         ),
     )
+    if auxiliary_weight is not None:
+        steps = (
+            *steps,
+            _ExposureStep(
+                "auxiliary",
+                None,
+                auxiliary_terms,
+                auxiliary_weight,
+            ),
+        )
+    if not math.isclose(
+        sum(step.loss_scale for step in steps),
+        1.0,
+        rel_tol=0.0,
+        abs_tol=1.0e-12,
+    ):
+        raise ValueError("fixed20 exposure loss scales must sum to one")
+    return steps
 
 
 def _iter_exposure_batches(
@@ -313,12 +424,14 @@ def _iter_exposure_batches(
             yield raw_batch
             continue
         group += 1
-        for exposure in exposure_steps:
+        for exposure_index, exposure in enumerate(exposure_steps):
             batch = dict(raw_batch)
             batch["__exposure_name"] = exposure.name
             batch["__exposure_group"] = group
+            batch["__exposure_index"] = exposure_index
             batch["__composition_index"] = exposure.composition_index
             batch["__objective_terms"] = exposure.objective_terms
+            batch["__loss_scale"] = exposure.loss_scale
             yield batch
 
 
@@ -426,9 +539,24 @@ class OnlineTrainingResult:
 
 
 class _SampledStepTimer:
-    """Measure one sampled step without synchronizing every training step."""
+    """Measure one step or one fixed20 group with a single final sync."""
 
-    _PHASES = ("h2d", "augmentation", "forward_backward")
+    _CORE_PHASES = (
+        "h2d",
+        "augmentation",
+        "forward_backward",
+        "optimizer",
+    )
+    _DETAIL_PHASES = (
+        "method_generation",
+        "candidate_generation",
+        "fixed20_generation",
+        "raw_chain3_generation",
+        "lhat_search",
+        "augmix",
+        "gradient_combine",
+    )
+    _PHASES = _CORE_PHASES + _DETAIL_PHASES
 
     def __init__(
         self,
@@ -440,47 +568,144 @@ class _SampledStepTimer:
         self.device = device
         self.data_wait_ms = max(0.0, float(data_wait_ms))
         self.use_cuda_events = device.type == "cuda" and bool(cuda_events)
+        self._wall_started = time.perf_counter() - self.data_wait_ms / 1000.0
+        self._excluded_host_started: float | None = None
+        self._excluded_host_ms = 0.0
         self._cpu_started: dict[str, float] = {}
         self._cpu_elapsed: dict[str, float] = {}
-        self._cuda_events: dict[str, tuple[torch.cuda.Event, torch.cuda.Event]] = {}
+        self._cuda_events: dict[
+            str, list[tuple[torch.cuda.Event, torch.cuda.Event]]
+        ] = {}
+
+    def add_data_wait(self, milliseconds: float) -> None:
+        self.data_wait_ms += max(0.0, float(milliseconds))
+
+    def start_excluded_host(self) -> None:
+        """Start host-only observer work excluded from training throughput.
+
+        CUDA phase events remain the source of truth for device work.  This
+        interval is only for optional logging/visualization which can otherwise
+        make a sampled fixed20 group look compute-bound on the host.
+        """
+
+        if self._excluded_host_started is not None:
+            raise RuntimeError("excluded host timing is already active")
+        self._excluded_host_started = time.perf_counter()
+
+    def stop_excluded_host(self) -> None:
+        if self._excluded_host_started is None:
+            raise RuntimeError("excluded host timing was not started")
+        self._excluded_host_ms += max(
+            0.0,
+            (time.perf_counter() - self._excluded_host_started) * 1000.0,
+        )
+        self._excluded_host_started = None
 
     def start(self, phase: str) -> None:
         if phase not in self._PHASES:
             raise ValueError(f"unsupported timing phase: {phase}")
+        if phase in self._cpu_started:
+            raise RuntimeError(f"timing phase {phase!r} is already active")
         if self.use_cuda_events:
             start = torch.cuda.Event(enable_timing=True)
             end = torch.cuda.Event(enable_timing=True)
             start.record()
-            self._cuda_events[phase] = (start, end)
+            self._cuda_events.setdefault(phase, []).append((start, end))
         else:
             self._cpu_started[phase] = time.perf_counter()
 
     def stop(self, phase: str) -> None:
+        if phase not in self._PHASES:
+            raise ValueError(f"unsupported timing phase: {phase}")
         if self.use_cuda_events:
-            self._cuda_events[phase][1].record()
+            if phase not in self._cuda_events or not self._cuda_events[phase]:
+                raise RuntimeError(f"timing phase {phase!r} was not started")
+            self._cuda_events[phase][-1][1].record()
         else:
+            if phase not in self._cpu_started:
+                raise RuntimeError(f"timing phase {phase!r} was not started")
             started = self._cpu_started.pop(phase)
-            self._cpu_elapsed[phase] = max(
-                0.0, (time.perf_counter() - started) * 1000.0
+            self._cpu_elapsed[phase] = self._cpu_elapsed.get(phase, 0.0) + max(
+                0.0,
+                (time.perf_counter() - started) * 1000.0,
             )
 
-    def finish(self, *, batch_size: int, grad_norm: float) -> dict[str, float]:
+    def finish(
+        self,
+        *,
+        batch_size: int,
+        grad_norm: float | torch.Tensor,
+        view_executions: int = 1,
+    ) -> dict[str, float]:
+        if view_executions <= 0:
+            raise ValueError("view_executions must be positive")
+        if self._excluded_host_started is not None:
+            raise RuntimeError("cannot finish timing with active excluded host work")
+        if self._cpu_started:
+            raise RuntimeError(
+                "cannot finish timing with active CPU phases: "
+                + ", ".join(sorted(self._cpu_started))
+            )
         if self.use_cuda_events:
             # All phases use the current training stream. Synchronizing the last
             # event once makes every earlier event elapsed-time query valid.
-            self._cuda_events[self._PHASES[-1]][1].synchronize()
+            last_event = next(
+                (
+                    self._cuda_events[phase][-1][1]
+                    for phase in reversed(self._CORE_PHASES)
+                    if self._cuda_events.get(phase)
+                ),
+                None,
+            )
+            if last_event is None:
+                raise RuntimeError("sampled CUDA timing recorded no core phase")
+            last_event.synchronize()
             elapsed = {
-                phase: max(0.0, float(start.elapsed_time(end)))
-                for phase, (start, end) in self._cuda_events.items()
+                phase: sum(
+                    max(0.0, float(start.elapsed_time(end)))
+                    for start, end in pairs
+                )
+                for phase, pairs in self._cuda_events.items()
             }
         else:
             elapsed = dict(self._cpu_elapsed)
+        observed_wall_ms = max(
+            0.0, (time.perf_counter() - self._wall_started) * 1000.0
+        )
+        grad_norm_value = (
+            float(grad_norm.detach().cpu())
+            if isinstance(grad_norm, torch.Tensor)
+            else float(grad_norm)
+        )
+        phase_total_ms = sum(
+            (
+                self.data_wait_ms,
+                elapsed.get("h2d", 0.0),
+                elapsed.get("augmentation", 0.0),
+                elapsed.get("forward_backward", 0.0),
+                elapsed.get("optimizer", 0.0),
+            )
+        )
+        wall_ms = max(
+            phase_total_ms,
+            observed_wall_ms - self._excluded_host_ms,
+        )
         values = {
-            "data_wait_ms": self.data_wait_ms,
-            "h2d_ms": elapsed.get("h2d", 0.0),
-            "augmentation_ms": elapsed.get("augmentation", 0.0),
-            "forward_backward_ms": elapsed.get("forward_backward", 0.0),
+            "data_wait_ms": self.data_wait_ms / view_executions,
+            "h2d_ms": elapsed.get("h2d", 0.0) / view_executions,
+            "augmentation_ms": elapsed.get("augmentation", 0.0)
+            / view_executions,
+            "forward_backward_ms": elapsed.get("forward_backward", 0.0)
+            / view_executions,
+            "optimizer_ms": elapsed.get("optimizer", 0.0) / view_executions,
         }
+        values.update(
+            {
+                f"{phase}_ms": elapsed.get(phase, 0.0)
+                for phase in self._DETAIL_PHASES
+                if phase in elapsed
+            }
+        )
         values["step_ms"] = max(
             1.0e-9,
             sum(values[name] for name in (
@@ -488,11 +713,51 @@ class _SampledStepTimer:
                 "h2d_ms",
                 "augmentation_ms",
                 "forward_backward_ms",
+                "optimizer_ms",
             )),
         )
         values["samples_per_sec"] = float(batch_size) * 1000.0 / values["step_ms"]
-        values["grad_norm"] = max(0.0, float(grad_norm))
+        values["grad_norm"] = max(0.0, grad_norm_value)
+        if view_executions > 1:
+            values.update(
+                {
+                    "base_group_data_wait_ms": self.data_wait_ms,
+                    "base_group_h2d_ms": elapsed.get("h2d", 0.0),
+                    "base_group_augmentation_ms": elapsed.get(
+                        "augmentation", 0.0
+                    ),
+                    "base_group_forward_backward_ms": elapsed.get(
+                        "forward_backward", 0.0
+                    ),
+                    "base_group_optimizer_ms": elapsed.get("optimizer", 0.0),
+                    "base_group_gpu_plus_data_ms": phase_total_ms,
+                    "base_group_wall_ms": wall_ms,
+                    "base_group_observed_wall_ms": observed_wall_ms,
+                    "base_group_excluded_logging_ms": self._excluded_host_ms,
+                    "base_group_host_gap_ms": max(0.0, wall_ms - phase_total_ms),
+                    "base_records_per_sec": float(batch_size)
+                    * 1000.0
+                    / max(1.0e-9, wall_ms),
+                    "view_executions": float(view_executions),
+                }
+            )
         return values
+
+
+@contextmanager
+def _excluded_observer_work(
+    timer: _SampledStepTimer | None,
+) -> Iterator[None]:
+    """Exclude optional host logging from an open fixed20 group timer."""
+
+    if timer is None:
+        yield
+        return
+    timer.start_excluded_host()
+    try:
+        yield
+    finally:
+        timer.stop_excluded_host()
 
 
 def load_online_train_config(
@@ -720,8 +985,14 @@ def load_online_train_config(
         raise ValueError("performance_timing.interval_steps must be positive")
     if performance_timing.get("cuda_events") is not True:
         raise ValueError("sampled CUDA timing must use cuda_events=true")
-    if performance_timing.get("scope") != "sampled_core_step_excludes_logging":
-        raise ValueError("performance_timing.scope must disclose logging exclusion")
+    if performance_timing.get("scope") not in {
+        "sampled_core_step_excludes_logging",
+        "fixed20_base_group_excludes_logging_otherwise_sampled_step",
+    }:
+        raise ValueError(
+            "performance_timing.scope must disclose sampled-step or fixed20 "
+            "base-group timing and logging exclusion"
+        )
     parse_tensorboard_logging_config(
         _mapping(root_payload.get("logging"), "logging")
     )
@@ -1180,6 +1451,291 @@ def _objective_host_scalars(
     )
 
 
+def _materialize_finite_scalar_mapping(
+    values: Mapping[str, float | int | torch.Tensor],
+) -> dict[str, float]:
+    """Transfer detached device scalars in one synchronization.
+
+    Method runtimes may keep diagnostic reductions on-device throughout the
+    fixed20 hot path.  Host conversion is deferred to a sampled logging boundary
+    or epoch end instead of forcing several CUDA synchronizations per view.
+    """
+
+    resolved: dict[str, float] = {}
+    tensor_names: list[str] = []
+    tensors: list[torch.Tensor] = []
+    target_device: torch.device | None = None
+    for name, value in values.items():
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, torch.Tensor):
+            if value.numel() != 1:
+                continue
+            target_device = value.device if target_device is None else target_device
+            tensor_names.append(name)
+            tensors.append(value.detach().reshape(()))
+            continue
+        if isinstance(value, (int, float)):
+            scalar = float(value)
+            if math.isfinite(scalar):
+                resolved[name] = scalar
+    if tensors:
+        assert target_device is not None
+        host_values = (
+            torch.stack(
+                tuple(
+                    value.to(device=target_device, dtype=torch.float32)
+                    for value in tensors
+                )
+            )
+            .cpu()
+            .tolist()
+        )
+        for name, value in zip(tensor_names, host_values, strict=True):
+            scalar = float(value)
+            if math.isfinite(scalar):
+                resolved[name] = scalar
+    return resolved
+
+
+_DIAGNOSTIC_RATE_COMPONENTS = (
+    (
+        "decoded_anchor_sample_anyflip_asr",
+        "sample_anyflip_success",
+        "sample_anyflip_eligible",
+        "sample_anyflip_numerator",
+        "sample_anyflip_denominator",
+    ),
+    (
+        "decoded_anchor_positive_hide_asr",
+        "positive_hide_numerator",
+        "positive_hide_denominator",
+        "positive_hide_numerator",
+        "positive_hide_denominator",
+    ),
+    (
+        "decoded_anchor_negative_add_asr",
+        "negative_add_numerator",
+        "negative_add_denominator",
+        "negative_add_numerator",
+        "negative_add_denominator",
+    ),
+)
+_DIAGNOSTIC_RATE_SAMPLE_SUFFIXES = frozenset(
+    suffix
+    for _, numerator, denominator, _, _ in _DIAGNOSTIC_RATE_COMPONENTS
+    for suffix in (numerator, denominator)
+)
+
+
+def _diagnostic_sample_summary(
+    chunks: Mapping[str, Sequence[torch.Tensor]],
+) -> tuple[
+    dict[str, dict[str, float | int]],
+    dict[str, float],
+    dict[str, dict[str, float | None]],
+]:
+    """Compute exact epoch statistics with one device-to-host transfer."""
+
+    samples: dict[str, torch.Tensor] = {}
+    for name in sorted(chunks):
+        values = tuple(chunks[name])
+        if not values:
+            continue
+        combined = torch.cat(values, dim=0).detach().to(dtype=torch.float32)
+        if combined.ndim != 1:
+            raise ValueError("diagnostic sample chunks must concatenate to rank 1")
+        if combined.numel() > 0:
+            samples[name] = combined
+    if not samples:
+        return {}, {}, {}
+
+    devices = {value.device for value in samples.values()}
+    if len(devices) != 1:
+        raise ValueError("diagnostic sample chunks must share one device")
+    stat_names = tuple(samples)
+    stat_tensors: list[torch.Tensor] = []
+    counts: dict[str, int] = {}
+    for name in stat_names:
+        values = samples[name]
+        counts[name] = int(values.numel())
+        quantiles = torch.quantile(
+            values,
+            torch.tensor((0.5, 0.9), device=values.device, dtype=values.dtype),
+        )
+        stat_tensors.extend(
+            (
+                torch.isfinite(values).sum().to(dtype=torch.float32),
+                values.sum(),
+                values.mean(),
+                quantiles[0],
+                quantiles[1],
+            )
+        )
+    host_values = torch.stack(stat_tensors).detach().cpu().tolist()
+    distributions: dict[str, dict[str, float | int]] = {}
+    flat: dict[str, float] = {}
+    offset = 0
+    for name in stat_names:
+        finite_count, total, mean, median, p90 = (
+            float(value) for value in host_values[offset : offset + 5]
+        )
+        offset += 5
+        count = counts[name]
+        if int(finite_count) != count or not all(
+            math.isfinite(value) for value in (total, mean, median, p90)
+        ):
+            raise FloatingPointError(
+                f"diagnostic sample {name!r} contains NaN or Inf"
+            )
+        distributions[name] = {
+            "count": count,
+            "sum": total,
+            "mean": mean,
+            "median": median,
+            "p90": p90,
+        }
+        suffix = name.rsplit("/", 1)[-1]
+        if suffix not in _DIAGNOSTIC_RATE_SAMPLE_SUFFIXES:
+            flat[f"{name}_count"] = float(count)
+            flat[f"{name}_mean"] = mean
+            flat[f"{name}_median"] = median
+            flat[f"{name}_p90"] = p90
+
+    rates: dict[str, dict[str, float | None]] = {}
+    for (
+        rate_suffix,
+        numerator_suffix,
+        denominator_suffix,
+        aggregate_numerator_suffix,
+        aggregate_denominator_suffix,
+    ) in _DIAGNOSTIC_RATE_COMPONENTS:
+        for numerator_name in tuple(distributions):
+            if numerator_name.rsplit("/", 1)[-1] != numerator_suffix:
+                continue
+            prefix = (
+                numerator_name.rsplit("/", 1)[0]
+                if "/" in numerator_name
+                else ""
+            )
+            denominator_name = (
+                f"{prefix}/{denominator_suffix}"
+                if prefix
+                else denominator_suffix
+            )
+            if denominator_name not in distributions:
+                raise ValueError(
+                    f"diagnostic rate {rate_suffix!r} lacks {denominator_name!r}"
+                )
+            numerator = float(distributions[numerator_name]["sum"])
+            denominator = float(distributions[denominator_name]["sum"])
+            if numerator < 0.0 or denominator < 0.0 or numerator > denominator:
+                raise ValueError(
+                    f"diagnostic rate {rate_suffix!r} has invalid counts"
+                )
+            rate = numerator / denominator if denominator > 0.0 else None
+            rate_name = f"{prefix}/{rate_suffix}" if prefix else rate_suffix
+            rates[rate_name] = {
+                "numerator": numerator,
+                "denominator": denominator,
+                "rate": rate,
+            }
+            aggregate_numerator_name = (
+                f"{prefix}/{aggregate_numerator_suffix}"
+                if prefix
+                else aggregate_numerator_suffix
+            )
+            aggregate_denominator_name = (
+                f"{prefix}/{aggregate_denominator_suffix}"
+                if prefix
+                else aggregate_denominator_suffix
+            )
+            flat[aggregate_numerator_name] = numerator
+            flat[aggregate_denominator_name] = denominator
+            if rate is not None:
+                flat[rate_name] = rate
+    return distributions, flat, rates
+
+
+def _update_framed_sha256(digest: Any, payload: bytes) -> None:
+    digest.update(len(payload).to_bytes(8, byteorder="little", signed=False))
+    digest.update(payload)
+
+
+def _stochastic_trace_summary(
+    *,
+    input_identity_sha256: str,
+    input_record_count: int,
+    chunks: Mapping[str, Sequence[torch.Tensor]],
+) -> dict[str, Any]:
+    """Hash compact realized RNG/outcome tensors at the epoch boundary."""
+
+    if len(input_identity_sha256) != 64:
+        raise ValueError("stochastic input identity must be a SHA256 hex digest")
+    if input_record_count < 0:
+        raise ValueError("stochastic input record count must be non-negative")
+    tensor_records: dict[str, dict[str, Any]] = {}
+    for name in sorted(chunks):
+        values = tuple(chunks[name])
+        if not values:
+            continue
+        trailing_shapes = {tuple(value.shape[1:]) for value in values}
+        dtypes = {value.dtype for value in values}
+        if len(trailing_shapes) != 1 or len(dtypes) != 1:
+            raise ValueError(
+                f"stochastic trace {name!r} changed shape or dtype within an epoch"
+            )
+        combined = torch.cat(values, dim=0).detach().contiguous().cpu()
+        if combined.dtype not in {
+            torch.bool,
+            torch.uint8,
+            torch.int8,
+            torch.int16,
+            torch.int32,
+            torch.int64,
+            torch.float16,
+            torch.float32,
+            torch.float64,
+        }:
+            raise TypeError(
+                f"stochastic trace {name!r} uses unsupported dtype {combined.dtype}"
+            )
+        header = {
+            "schema_version": 1,
+            "name": name,
+            "dtype": str(combined.dtype),
+            "shape": list(combined.shape),
+        }
+        tensor_digest = hashlib.sha256()
+        _update_framed_sha256(
+            tensor_digest,
+            json.dumps(
+                header, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8"),
+        )
+        _update_framed_sha256(tensor_digest, combined.numpy().tobytes(order="C"))
+        tensor_records[name] = {
+            "dtype": header["dtype"],
+            "shape": header["shape"],
+            "sha256": tensor_digest.hexdigest(),
+        }
+    aggregate_payload = {
+        "schema_version": 1,
+        "input_identity_sha256": input_identity_sha256,
+        "input_record_count": input_record_count,
+        "tensors": tensor_records,
+    }
+    aggregate_sha256 = hashlib.sha256(
+        json.dumps(
+            aggregate_payload, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()
+    return {
+        **aggregate_payload,
+        "aggregate_sha256": aggregate_sha256,
+    }
+
+
 def train_online_model(
     model: nn.Module,
     train_dataloader: Any,
@@ -1246,7 +1802,16 @@ def train_online_model(
             "every executable method must declare one unit-weight clean_view BCE"
         )
     exposure_steps = _method_exposure_steps(method)
-    fixed20_exposure = len(exposure_steps) == 21
+    objective_term_weights = {
+        term.name: float(term.weight) for term in method.objective.terms
+    }
+    fixed20_exposure = (
+        method.contracts.get("exposure_policy")
+        in FIXED20_GROUPED_EXPOSURE_POLICIES
+    )
+    auxiliary_exposure = (
+        method.contracts.get("exposure_policy") == FIXED20_AUX_EXPOSURE_POLICY
+    )
     fairness = config.payload["fairness"]
     budget_policy = str(fairness.get("budget_policy", "matched_base"))
     if budget_policy != "matched_base":
@@ -1352,6 +1917,7 @@ def train_online_model(
         model,
         method,
         fixed20_exposure=fixed20_exposure,
+        exposure_steps=exposure_steps if fixed20_exposure else None,
     )
     if encoder is not None:
         encoder.to(resolved_device).eval()
@@ -1393,6 +1959,18 @@ def train_online_model(
         minimum_std_mV=float(quality["minimum_global_std_mV"]),
         maximum_abs_mV=float(quality["maximum_absolute_mV"]),
     )
+    runtime_generate_code = getattr(runtime.generate, "__code__", None)
+    runtime_supports_composition_hint = bool(
+        runtime_generate_code is not None
+        and "composition_index_hint"
+        in runtime_generate_code.co_varnames[
+            : runtime_generate_code.co_argcount
+            + runtime_generate_code.co_kwonlyargcount
+        ]
+    )
+    runtime_timer_setter = getattr(runtime, "set_performance_timer", None)
+    if runtime_timer_setter is not None and not callable(runtime_timer_setter):
+        raise TypeError("method runtime set_performance_timer must be callable")
     if (
         runtime.augmix_config is not None
         and runtime.augmix_config.random_seed_config_path
@@ -1413,6 +1991,12 @@ def train_online_model(
             + ", ".join(mismatched_method_rngs)
         )
     method_resource_identity = runtime.describe()
+    method_resource_identity["composition_index_hint_supported"] = (
+        runtime_supports_composition_hint
+    )
+    method_resource_identity["performance_timer_hook_supported"] = bool(
+        runtime_timer_setter is not None
+    )
     method_resource_identity["latent_pool"] = pool_identity
     method_resource_identity["vae_encoder_checkpoint"] = encoder_identity
     method_resource_identity["vae_decoder_checkpoint"] = decoder_identity
@@ -1499,6 +2083,7 @@ def train_online_model(
                         if exposure.objective_terms is None
                         else list(exposure.objective_terms)
                     ),
+                    "loss_scale": exposure.loss_scale,
                 }
                 for exposure in exposure_steps
             ],
@@ -1510,6 +2095,7 @@ def train_online_model(
         "method_rng_derivation": {
             "base_seed": seed.base_seed,
             "profile_namespace": method.rng_namespace,
+            "comparison_rng_identity": method.comparison_rng_identity,
             "execution_identity": [
                 "comparison_group",
                 "replicate_id",
@@ -1567,6 +2153,9 @@ def train_online_model(
                 term.name: torch.zeros((), device=resolved_device)
                 for term in method.objective.terms
             }
+            epoch_effective_loss_mass_sums = {
+                term.name: 0.0 for term in method.objective.terms
+            }
             epoch_term_counts = {
                 term.name: 0 for term in method.objective.terms
             }
@@ -1580,8 +2169,12 @@ def train_online_model(
             epoch_quality_view_accepted = 0
             epoch_ineligible_hashes: list[str] = []
             epoch_quality_rejected: list[dict[str, str]] = []
-            diagnostic_sums: dict[str, float] = {}
+            diagnostic_sums: dict[str, float | torch.Tensor] = {}
             diagnostic_weights: dict[str, int] = {}
+            diagnostic_sample_chunks: dict[str, list[torch.Tensor]] = {}
+            stochastic_trace_chunks: dict[str, list[torch.Tensor]] = {}
+            stochastic_input_digest = hashlib.sha256()
+            stochastic_input_record_count = 0
             performance_sums: dict[str, float] = {}
             timed_step_count = 0
             epoch_seen_hashes: dict[str, set[str]] = {
@@ -1595,6 +2188,9 @@ def train_online_model(
             cached_exposure_group: int | None = None
             cached_raw: torch.Tensor | None = None
             cached_targets: torch.Tensor | None = None
+            fixed20_group_timer: _SampledStepTimer | None = None
+            fixed20_group_finite: torch.Tensor | None = None
+            fixed20_group_view_executions = 0
 
             for batch in _iter_exposure_batches(train_dataloader, exposure_steps):
                 batch_received = time.perf_counter()
@@ -1602,16 +2198,6 @@ def train_online_model(
                     0.0, (batch_received - previous_step_end) * 1000.0
                 )
                 next_execution_step = view_execution_step + 1
-                timer = (
-                    _SampledStepTimer(
-                        device=resolved_device,
-                        data_wait_ms=data_wait_ms,
-                        cuda_events=bool(timing_config["cuda_events"]),
-                    )
-                    if timing_enabled
-                    and next_execution_step % timing_interval == 0
-                    else None
-                )
                 if not isinstance(batch, Mapping):
                     raise TypeError("online dataloader batches must be mappings")
                 exposure_name = str(batch.get("__exposure_name", "base"))
@@ -1629,6 +2215,57 @@ def train_online_model(
                     if composition_index_raw is None
                     else int(composition_index_raw)
                 )
+                exposure_index = int(batch.get("__exposure_index", 0))
+                group_start = not fixed20_exposure or exposure_name == "clean"
+                group_end = not fixed20_exposure or (
+                    exposure_name == "auxiliary"
+                    if auxiliary_exposure
+                    else composition_index == 19
+                )
+                if fixed20_exposure and group_start:
+                    if fixed20_group_finite is not None:
+                        raise RuntimeError(
+                            "fixed20 finite-loss group started before the prior "
+                            "group ended"
+                        )
+                    fixed20_group_finite = torch.ones(
+                        (), device=resolved_device, dtype=torch.bool
+                    )
+                if fixed20_exposure:
+                    if group_start:
+                        if fixed20_group_timer is not None:
+                            raise RuntimeError(
+                                "fixed20 timing group started before the prior group ended"
+                            )
+                        sample_group = timing_enabled and (
+                            (optimizer_steps + 1) % timing_interval == 0
+                        )
+                        fixed20_group_timer = (
+                            _SampledStepTimer(
+                                device=resolved_device,
+                                data_wait_ms=data_wait_ms,
+                                cuda_events=bool(timing_config["cuda_events"]),
+                            )
+                            if sample_group
+                            else None
+                        )
+                        fixed20_group_view_executions = 0
+                    elif fixed20_group_timer is not None:
+                        fixed20_group_timer.add_data_wait(data_wait_ms)
+                    timer = fixed20_group_timer
+                    if timer is not None:
+                        fixed20_group_view_executions += 1
+                else:
+                    timer = (
+                        _SampledStepTimer(
+                            device=resolved_device,
+                            data_wait_ms=data_wait_ms,
+                            cuda_events=bool(timing_config["cuda_events"]),
+                        )
+                        if timing_enabled
+                        and next_execution_step % timing_interval == 0
+                        else None
+                    )
                 objective_terms_raw = batch.get("__objective_terms")
                 objective_terms = (
                     None
@@ -1685,54 +2322,87 @@ def train_online_model(
                 if timer is not None:
                     timer.stop("h2d")
                     timer.start("augmentation")
+                if runtime_timer_setter is not None and group_start:
+                    runtime_timer_setter(timer)
 
-                group_start = not fixed20_exposure or exposure_name == "clean"
-                group_end = (
-                    not fixed20_exposure or composition_index == 19
-                )
                 if group_start:
                     optimizer.zero_grad(set_to_none=True)
                     epoch_origin_samples += batch_size
                     epoch_base_batches += 1
-                family_loss_scale = (
-                    1.0
-                    if not fixed20_exposure
-                    else (0.5 if exposure_name == "clean" else 0.025)
-                )
+                family_loss_scale = float(batch.get("__loss_scale", 1.0))
                 if batch_norm_plan is not None and fixed20_exposure:
-                    batch_norm_plan.apply(
-                        0 if composition_index == -1 else int(composition_index) + 1
-                    )
+                    batch_norm_plan.apply(exposure_index)
                 hash_digest = hashlib.sha256(
                     "\n".join(hashes).encode("utf-8")
                 ).hexdigest()
-                generated = runtime.generate(
-                    clean_raw=raw,
-                    targets=targets,
-                    hash_ids=hashes,
-                    classifier=model,
-                    base_seed=seed.base_seed,
-                    rng_identity=(
-                        str(random_seed["comparison_group"]),
-                        str(random_seed["replicate_id"]),
-                        center,
-                        spec.name,
-                        f"epoch={epoch}",
-                        f"view_execution_step={next_execution_step}",
-                        f"exposure={exposure_name}",
-                        f"batch_hash_sha256={hash_digest}",
-                    ),
-                    composition_indices=(
-                        None
-                        if composition_index is None
-                        else torch.full(
-                            (batch_size,),
-                            composition_index,
-                            device=resolved_device,
-                            dtype=torch.int64,
-                        )
-                    ),
+                composition_indices = (
+                    None
+                    if composition_index is None
+                    else torch.full(
+                        (batch_size,),
+                        composition_index,
+                        device=resolved_device,
+                        dtype=torch.int64,
+                    )
                 )
+                rng_identity = (
+                    str(random_seed["comparison_group"]),
+                    str(random_seed["replicate_id"]),
+                    center,
+                    spec.name,
+                    f"epoch={epoch}",
+                    f"view_execution_step={next_execution_step}",
+                    f"exposure={exposure_name}",
+                    f"batch_hash_sha256={hash_digest}",
+                )
+                trace_input_payload = json.dumps(
+                    {
+                        "schema_version": 1,
+                        "base_seed": seed.base_seed,
+                        "comparison_rng_identity": method.comparison_rng_identity,
+                        "rng_identity": list(rng_identity),
+                        "composition_index": composition_index,
+                        "exposure_loss_scale": family_loss_scale,
+                        "ordered_hash_ids": list(hashes),
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+                _update_framed_sha256(
+                    stochastic_input_digest,
+                    trace_input_payload,
+                )
+                stochastic_input_record_count += batch_size
+                generate_arguments: dict[str, Any] = {
+                    "clean_raw": raw,
+                    "targets": targets,
+                    "hash_ids": hashes,
+                    "classifier": model,
+                    "base_seed": seed.base_seed,
+                    "rng_identity": rng_identity,
+                    "composition_indices": composition_indices,
+                    "objective_term_names": objective_terms,
+                }
+                if runtime_supports_composition_hint:
+                    generate_arguments["composition_index_hint"] = composition_index
+                generation_phase = (
+                    "method_generation"
+                    if not fixed20_exposure
+                    else (
+                        "candidate_generation"
+                        if group_start or exposure_name == "auxiliary"
+                        else "fixed20_generation"
+                    )
+                )
+                if timer is not None:
+                    timer.start(generation_phase)
+                try:
+                    generated = runtime.generate(
+                        **generate_arguments,
+                    )
+                finally:
+                    if timer is not None:
+                        timer.stop(generation_phase)
                 if timer is not None:
                     timer.stop("augmentation")
                     timer.start("forward_backward")
@@ -1752,14 +2422,34 @@ def train_online_model(
                             None if fixed20_exposure else batch_norm_plan
                         ),
                     )
-                if not bool(torch.isfinite(objective.total).item()):
+                objective_finite = torch.isfinite(objective.total)
+                if fixed20_exposure:
+                    if fixed20_group_finite is None:
+                        raise RuntimeError(
+                            "fixed20 finite-loss check lacks an active group"
+                        )
+                    fixed20_group_finite &= objective_finite.detach()
+                    if group_end and not bool(fixed20_group_finite.item()):
+                        raise FloatingPointError(
+                            "online fixed20 group loss became NaN or Inf"
+                        )
+                elif not bool(objective_finite.item()):
                     raise FloatingPointError(
                         "online training loss became NaN or Inf"
                     )
                 scaled_objective = objective.total * family_loss_scale
                 if scaler.is_enabled():
                     scaler.scale(scaled_objective).backward()
-                    if group_end:
+                else:
+                    scaled_objective.backward()
+                if timer is not None:
+                    timer.stop("forward_backward")
+
+                grad_norm = torch.zeros((), device=resolved_device)
+                if group_end:
+                    if timer is not None:
+                        timer.start("optimizer")
+                    if scaler.is_enabled():
                         scaler.unscale_(optimizer)
                         grad_norm = torch.nn.utils.clip_grad_norm_(
                             trainable, float(resolved["gradient_clip_norm"])
@@ -1767,30 +2457,35 @@ def train_online_model(
                         scaler.step(optimizer)
                         scaler.update()
                     else:
-                        grad_norm = torch.zeros((), device=resolved_device)
-                else:
-                    scaled_objective.backward()
-                    if group_end:
                         grad_norm = torch.nn.utils.clip_grad_norm_(
                             trainable, float(resolved["gradient_clip_norm"])
                         )
                         optimizer.step()
-                    else:
-                        grad_norm = torch.zeros((), device=resolved_device)
-                if group_end:
                     optimizer_steps += 1
-                if timer is not None:
-                    timer.stop("forward_backward")
+                    if timer is not None:
+                        timer.stop("optimizer")
+                    if runtime_timer_setter is not None:
+                        runtime_timer_setter(None)
 
                 view_execution_step += 1
-                performance = (
-                    None
-                    if timer is None
-                    else timer.finish(
+                finish_group_timer = fixed20_exposure and group_end
+                performance = None
+                if timer is not None and (
+                    not fixed20_exposure or finish_group_timer
+                ):
+                    performance = timer.finish(
                         batch_size=batch_size,
-                        grad_norm=float(grad_norm),
+                        grad_norm=grad_norm,
+                        view_executions=(
+                            fixed20_group_view_executions
+                            if fixed20_exposure
+                            else 1
+                        ),
                     )
-                )
+                if finish_group_timer:
+                    fixed20_group_timer = None
+                    fixed20_group_finite = None
+                    fixed20_group_view_executions = 0
                 if performance is not None:
                     timed_step_count += 1
                     for name, value in performance.items():
@@ -1800,7 +2495,11 @@ def train_online_model(
                     _append_jsonl(
                         diagnostics_path,
                         {
-                            "kind": "performance_step",
+                            "kind": (
+                                "performance_base_group"
+                                if fixed20_exposure
+                                else "performance_step"
+                            ),
                             "epoch": epoch,
                             "view_execution_step": view_execution_step,
                             "optimizer_step": optimizer_steps,
@@ -1817,84 +2516,101 @@ def train_online_model(
                 raw_scalars: dict[str, float] = {}
                 weighted_scalars: dict[str, float] = {}
                 objective_total_scalar: float | None = None
-                if write_tensorboard_step or write_diagnostic_step:
-                    (
-                        objective_total_scalar,
-                        raw_scalars,
-                        weighted_scalars,
-                    ) = _objective_host_scalars(objective)
-                    objective_total_scalar *= family_loss_scale
-                    weighted_scalars = {
-                        name: value * family_loss_scale
-                        for name, value in weighted_scalars.items()
-                    }
-                if write_tensorboard_step:
-                    if objective_total_scalar is None:
-                        raise RuntimeError("sampled objective scalar is unavailable")
-                    step_components = {
-                        **raw_scalars,
-                        **{
-                            f"weighted_{name}": value
+                observer_timer = (
+                    timer
+                    if fixed20_exposure and timer is not None and not group_end
+                    else None
+                )
+                with _excluded_observer_work(observer_timer):
+                    if write_tensorboard_step or write_diagnostic_step:
+                        (
+                            objective_total_scalar,
+                            raw_scalars,
+                            weighted_scalars,
+                        ) = _objective_host_scalars(objective)
+                        objective_total_scalar *= family_loss_scale
+                        weighted_scalars = {
+                            name: value * family_loss_scale
                             for name, value in weighted_scalars.items()
-                        },
-                        **_legacy_loss_aliases(raw_scalars, weighted_scalars),
-                    }
-                    monitor.log_train_step(
-                        loss=objective_total_scalar,
-                        learning_rate=learning_rate,
-                        global_step=view_execution_step,
-                        loss_components=step_components,
-                        performance=performance,
-                    )
-
-                probe_logger = getattr(monitor, "log_ecg_views", None)
-                probe_preflight = getattr(monitor, "should_log_ecg_views", None)
-                fixed20_probe_indices = tuple(
-                    int(value)
-                    for value in method.contracts.get(
-                        "tensorboard_probe_composition_indices", ()
-                    )
-                )
-                probe_allowed = (
-                    not fixed20_exposure
-                    or composition_index == -1
-                    or composition_index in fixed20_probe_indices
-                )
-                probe_id = (
-                    "default"
-                    if not fixed20_exposure
-                    else (
-                        "clean"
-                        if composition_index == -1
-                        else f"composition_{int(composition_index):02d}"
-                    )
-                )
-                if callable(probe_logger) and probe_allowed:
-                    is_final_epoch = epoch == epochs
-                    for batch_position, hash_id in enumerate(hashes):
-                        if callable(probe_preflight) and not probe_preflight(
-                            hash_id=hash_id,
-                            epoch=epoch,
-                            probe_id=probe_id,
-                            is_final_epoch=is_final_epoch,
-                        ):
-                            continue
-                        probe_logger(
-                            hash_id=hash_id,
-                            epoch=epoch,
-                            sampling_rate_hz=100,
-                            raw_views=generated.probe_views(batch_position),
-                            probe_id=probe_id,
-                            is_final_epoch=is_final_epoch,
-                            metadata={
-                                "center": center,
-                                "model": spec.name,
-                                "method_id": method.profile_name,
-                                "method_profile_sha256": method.profile_sha256,
-                                "exposure": exposure_name,
-                                "composition_index": composition_index,
+                        }
+                    if write_tensorboard_step:
+                        if objective_total_scalar is None:
+                            raise RuntimeError(
+                                "sampled objective scalar is unavailable"
+                            )
+                        step_components = {
+                            **raw_scalars,
+                            **{
+                                f"weighted_{name}": value
+                                for name, value in weighted_scalars.items()
                             },
+                            **_legacy_loss_aliases(raw_scalars, weighted_scalars),
+                        }
+                        monitor.log_train_step(
+                            loss=objective_total_scalar,
+                            learning_rate=learning_rate,
+                            global_step=view_execution_step,
+                            loss_components=step_components,
+                            performance=performance,
                         )
+
+                    probe_logger = getattr(monitor, "log_ecg_views", None)
+                    probe_preflight = getattr(
+                        monitor, "should_log_ecg_views", None
+                    )
+                    fixed20_probe_indices = tuple(
+                        int(value)
+                        for value in method.contracts.get(
+                            "tensorboard_probe_composition_indices", ()
+                        )
+                    )
+                    probe_allowed = (
+                        not fixed20_exposure
+                        or exposure_name == "auxiliary"
+                        or composition_index == -1
+                        or composition_index in fixed20_probe_indices
+                    )
+                    probe_id = (
+                        "default"
+                        if not fixed20_exposure
+                        else (
+                            "auxiliary"
+                            if exposure_name == "auxiliary"
+                            else (
+                                "clean"
+                                if composition_index == -1
+                                else f"composition_{int(composition_index):02d}"
+                            )
+                        )
+                    )
+                    if callable(probe_logger) and probe_allowed:
+                        is_final_epoch = epoch == epochs
+                        for batch_position, hash_id in enumerate(hashes):
+                            if callable(probe_preflight) and not probe_preflight(
+                                hash_id=hash_id,
+                                epoch=epoch,
+                                probe_id=probe_id,
+                                is_final_epoch=is_final_epoch,
+                            ):
+                                continue
+                            probe_logger(
+                                hash_id=hash_id,
+                                epoch=epoch,
+                                sampling_rate_hz=100,
+                                raw_views=generated.probe_views(batch_position),
+                                probe_id=probe_id,
+                                is_final_epoch=is_final_epoch,
+                                metadata={
+                                    "center": center,
+                                    "model": spec.name,
+                                    "method_id": method.profile_name,
+                                    "method_profile_sha256": (
+                                        method.profile_sha256
+                                    ),
+                                    "exposure": exposure_name,
+                                    "composition_index": composition_index,
+                                },
+                            )
 
                 epoch_samples += batch_size
                 epoch_loss_sum += scaled_objective.detach() * batch_size
@@ -1907,6 +2623,9 @@ def train_online_model(
                         * batch_size
                     )
                     epoch_term_counts[name] += count
+                    epoch_effective_loss_mass_sums[name] += (
+                        family_loss_scale * objective_term_weights[name] * count
+                    )
                 for name, value in generated.bundle.values.items():
                     if isinstance(value, WaveformView):
                         epoch_view_count_sums[name] += value.valid_mask.sum()
@@ -1920,60 +2639,112 @@ def train_online_model(
                 )
                 epoch_ineligible_hashes.extend(generated.ineligible_hash_ids)
                 epoch_quality_rejected.extend(generated.quality_rejected)
-
-                step_diagnostics: dict[str, float] = {}
-                for name, value in generated.bundle.diagnostics.items():
-                    if isinstance(value, bool) or not isinstance(
-                        value, (int, float)
-                    ):
-                        continue
-                    scalar = float(value)
-                    if not math.isfinite(scalar):
-                        continue
-                    step_diagnostics[name] = scalar
-                    weight = generated.diagnostic_weights.get(name, batch_size)
-                    diagnostic_sums[name] = (
-                        diagnostic_sums.get(name, 0.0) + scalar * weight
+                for name, values in generated.diagnostic_samples.items():
+                    if values.numel() > 0:
+                        diagnostic_sample_chunks.setdefault(name, []).append(
+                            values.detach()
+                        )
+                for name, values in generated.stochastic_trace.items():
+                    stochastic_trace_chunks.setdefault(name, []).append(
+                        values.detach()
                     )
+
+                step_diagnostic_values: dict[
+                    str, float | int | torch.Tensor
+                ] = {}
+                for name, value in generated.bundle.diagnostics.items():
+                    if isinstance(value, bool):
+                        continue
+                    if isinstance(value, torch.Tensor):
+                        if value.numel() != 1:
+                            continue
+                        scalar_value: float | torch.Tensor = value.detach().to(
+                            device=resolved_device,
+                            dtype=torch.float32,
+                        ).reshape(())
+                    elif isinstance(value, (int, float)):
+                        scalar_value = float(value)
+                        if not math.isfinite(scalar_value):
+                            continue
+                    else:
+                        continue
+                    weight = generated.diagnostic_weights.get(name, batch_size)
+                    previous = diagnostic_sums.get(name)
+                    weighted_value = scalar_value * weight
+                    if previous is None:
+                        diagnostic_sums[name] = weighted_value
+                    elif isinstance(previous, torch.Tensor) or isinstance(
+                        weighted_value, torch.Tensor
+                    ):
+                        previous_tensor = (
+                            previous
+                            if isinstance(previous, torch.Tensor)
+                            else torch.tensor(
+                                previous,
+                                device=resolved_device,
+                                dtype=torch.float32,
+                            )
+                        )
+                        weighted_tensor = (
+                            weighted_value
+                            if isinstance(weighted_value, torch.Tensor)
+                            else torch.tensor(
+                                weighted_value,
+                                device=resolved_device,
+                                dtype=torch.float32,
+                            )
+                        )
+                        diagnostic_sums[name] = previous_tensor + weighted_tensor
+                    else:
+                        diagnostic_sums[name] = previous + weighted_value
                     diagnostic_weights[name] = (
                         diagnostic_weights.get(name, 0) + weight
                     )
-                if write_diagnostic_step:
-                    _append_jsonl(
-                        diagnostics_path,
-                        {
-                            "kind": "step",
-                            "epoch": epoch,
-                            "view_execution_step": view_execution_step,
-                            "optimizer_step": optimizer_steps,
-                            "method_id": method.profile_name,
-                            "exposure": exposure_name,
-                            "composition_index": composition_index,
-                            "candidate_eligible_count": len(
-                                generated.candidate_eligible_positions
-                            ),
-                            "quality_accepted_count": len(
-                                generated.accepted_positions
-                            ),
-                            "quality_view_total_count": (
-                                generated.quality_view_total_count
-                            ),
-                            "quality_view_accepted_count": (
-                                generated.quality_view_accepted_count
-                            ),
-                            "quality_rejected_count": len(
-                                generated.quality_rejected
-                            ),
-                            "ineligible_count": len(
-                                generated.ineligible_hash_ids
-                            ),
-                            "objective_raw": raw_scalars,
-                            "objective_weighted": weighted_scalars,
-                            "metrics": step_diagnostics,
-                        },
+                    step_diagnostic_values[name] = scalar_value
+                with _excluded_observer_work(observer_timer):
+                    step_diagnostics = (
+                        _materialize_finite_scalar_mapping(step_diagnostic_values)
+                        if write_diagnostic_step
+                        else {}
                     )
+                    if write_diagnostic_step:
+                        _append_jsonl(
+                            diagnostics_path,
+                            {
+                                "kind": "step",
+                                "epoch": epoch,
+                                "view_execution_step": view_execution_step,
+                                "optimizer_step": optimizer_steps,
+                                "method_id": method.profile_name,
+                                "exposure": exposure_name,
+                                "composition_index": composition_index,
+                                "candidate_eligible_count": len(
+                                    generated.candidate_eligible_positions
+                                ),
+                                "quality_accepted_count": len(
+                                    generated.accepted_positions
+                                ),
+                                "quality_view_total_count": (
+                                    generated.quality_view_total_count
+                                ),
+                                "quality_view_accepted_count": (
+                                    generated.quality_view_accepted_count
+                                ),
+                                "quality_rejected_count": len(
+                                    generated.quality_rejected
+                                ),
+                                "ineligible_count": len(
+                                    generated.ineligible_hash_ids
+                                ),
+                                "objective_raw": raw_scalars,
+                                "objective_weighted": weighted_scalars,
+                                "metrics": step_diagnostics,
+                            },
+                        )
                 previous_step_end = time.perf_counter()
 
+            if fixed20_group_timer is not None or fixed20_group_finite is not None:
+                raise RuntimeError("fixed20 timing/finite group did not terminate")
             if epoch_samples == 0 or epoch_origin_samples == 0:
                 raise ValueError("online train dataloader is empty")
             if optimizer_steps - optimizer_steps_at_epoch_start != epoch_base_batches:
@@ -2046,11 +2817,29 @@ def train_online_model(
                 name: float(value.detach().cpu()) / epoch_origin_samples
                 for name, value in epoch_weighted_sums.items()
             }
-            diagnostics_mean = {
+            effective_loss_masses = {
+                name: value / epoch_origin_samples
+                for name, value in epoch_effective_loss_mass_sums.items()
+            }
+            diagnostic_mean_values = {
                 name: value / diagnostic_weights[name]
                 for name, value in diagnostic_sums.items()
                 if diagnostic_weights.get(name, 0) > 0
             }
+            diagnostics_mean = _materialize_finite_scalar_mapping(
+                diagnostic_mean_values
+            )
+            (
+                diagnostic_distributions,
+                diagnostic_distribution_scalars,
+                diagnostic_rates,
+            ) = _diagnostic_sample_summary(diagnostic_sample_chunks)
+            diagnostics_mean.update(diagnostic_distribution_scalars)
+            stochastic_trace = _stochastic_trace_summary(
+                input_identity_sha256=stochastic_input_digest.hexdigest(),
+                input_record_count=stochastic_input_record_count,
+                chunks=stochastic_trace_chunks,
+            )
             performance_mean = {
                 name: value / timed_step_count
                 for name, value in performance_sums.items()
@@ -2089,12 +2878,34 @@ def train_online_model(
                 "per_exposure_counts": dict(epoch_exposure_counts),
                 "materialized_corruption_cache": False,
             }
+            if auxiliary_exposure:
+                auxiliary_names = tuple(
+                    str(value)
+                    for value in method.contracts["auxiliary_objective_terms"]
+                )
+                nominal_auxiliary_mass = float(
+                    method.contracts["family_loss_weights"]["auxiliary"]
+                )
+                effective_auxiliary_mass = sum(
+                    effective_loss_masses[name] for name in auxiliary_names
+                )
+                exposure_metrics.update(
+                    {
+                        "auxiliary_objective_terms": list(auxiliary_names),
+                        "auxiliary_nominal_loss_mass": nominal_auxiliary_mass,
+                        "auxiliary_effective_loss_mass": effective_auxiliary_mass,
+                        "auxiliary_effective_fraction_of_nominal": (
+                            effective_auxiliary_mass / nominal_auxiliary_mass
+                        ),
+                    }
+                )
             train_metrics: dict[str, Any] = {
                 "loss": (
                     float(epoch_loss_sum.detach().cpu()) / epoch_origin_samples
                 ),
                 "objective_terms": raw_means,
                 "weighted_objective_terms": weighted_means,
+                "objective_effective_loss_mass": effective_loss_masses,
                 "objective_valid_counts": dict(epoch_term_counts),
                 "view_valid_counts": dict(epoch_view_counts),
                 "sample_count": epoch_origin_samples,
@@ -2131,10 +2942,10 @@ def train_online_model(
                         "ineligible_count": len(ineligible_unique),
                         "quality_rejected_count": len(quality_rejected),
                         "candidate_eligible_fraction": (
-                            epoch_candidate_eligible / epoch_samples
+                            epoch_candidate_eligible / epoch_origin_samples
                         ),
                         "quality_accepted_fraction": (
-                            epoch_quality_accepted / epoch_samples
+                            epoch_quality_accepted / epoch_origin_samples
                         ),
                         "quality_view_accepted_fraction": (
                             epoch_quality_view_accepted / epoch_quality_view_total
@@ -2142,7 +2953,7 @@ def train_online_model(
                             else 0.0
                         ),
                         "all_quality_views_accepted_fraction": (
-                            epoch_quality_accepted / epoch_samples
+                            epoch_quality_accepted / epoch_origin_samples
                         ),
                     }
                 )
@@ -2153,7 +2964,7 @@ def train_online_model(
                                 epoch_quality_accepted
                             ),
                             "both_views_accepted_fraction": (
-                                epoch_quality_accepted / epoch_samples
+                                epoch_quality_accepted / epoch_origin_samples
                             ),
                         }
                     )
@@ -2163,6 +2974,9 @@ def train_online_model(
                 "train": train_metrics,
                 "validation": validation_metrics,
                 "diagnostics": diagnostics_mean,
+                "diagnostic_distributions": diagnostic_distributions,
+                "diagnostic_rates": diagnostic_rates,
+                "stochastic_trace": stochastic_trace,
                 "performance": performance_mean,
                 "exposure": exposure_metrics,
                 "ineligible_hash_ids": list(ineligible_unique),
@@ -2177,6 +2991,7 @@ def train_online_model(
                     "method_id": method.profile_name,
                     "objective_terms": raw_means,
                     "weighted_objective_terms": weighted_means,
+                    "objective_effective_loss_mass": effective_loss_masses,
                     "view_valid_counts": epoch_view_counts,
                     "candidate_eligible_count": epoch_candidate_eligible,
                     "quality_accepted_count": epoch_quality_accepted,
@@ -2187,6 +3002,9 @@ def train_online_model(
                     "ineligible_hash_ids": list(ineligible_unique),
                     "quality_rejected": quality_rejected,
                     "metrics": diagnostics_mean,
+                    "diagnostic_distributions": diagnostic_distributions,
+                    "diagnostic_rates": diagnostic_rates,
+                    "stochastic_trace": stochastic_trace,
                     "performance": performance_mean,
                     "exposure": exposure_metrics,
                 },

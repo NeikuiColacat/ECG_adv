@@ -1,0 +1,123 @@
+schema_version: 1
+
+method:
+  id: fixed20_pcgrad_strong_lhat_augmix_v1
+  profile_version: 1
+  api_version: 1
+  scientific_arm: fixed20_base_plus_pcgrad_strong_lhat_augmix
+  status: exploratory_preregistered_internal_screen
+  description: >-
+    Preserve the complete family-balanced Direct+fixed20 gradient. Once per
+    base batch, add a low-dose exact-label LHAT three-chain AugMix auxiliary
+    gradient with PCGrad conflict projection and alpha 0.25. LHAT is calibrated
+    to a moderate attack-success regime before entering AugMix chain three.
+
+nodes:
+  clean_identity:
+    type: identity_raw100_view
+    implementation: builtin
+    implementation_version: 1
+    status: implemented
+    inputs: {waveform: clean_raw}
+    outputs: {waveform: clean_view}
+  depth23_corruption:
+    type: canonical_depth23_corruption_view
+    implementation: registered
+    implementation_version: 1
+    status: implemented_engine
+    inputs: {waveform: clean_view, rng: corruption_rng, operator_profile: operator_profile}
+    outputs: {waveform: corrupted_view, provenance: corruption_provenance}
+  lhat:
+    type: vae_lhat_hard_view
+    implementation: registered
+    implementation_version: 1
+    status: implemented
+    inputs:
+      waveform: clean_view
+      targets: targets
+      hash_ids: hash_ids
+      latent_pool: latent_pool
+      decoder: vae_decoder
+      classifier: model
+      rng: lhat_rng
+      config: lhat_config
+    outputs: {waveform: lhat_view, diagnostics: lhat_diagnostics, accepted_indices: lhat_accepted_indices}
+  threechain_augmix:
+    type: vae_lhat_threechain_augmix_view
+    implementation: registered
+    implementation_version: 1
+    status: implemented
+    inputs: {clean_waveform: clean_view, chain3_waveform: lhat_view, rng: augmix_rng, config: augmix_config}
+    outputs: {waveform: augmix_view, diagnostics: augmix_diagnostics}
+
+inputs:
+  clean_raw: {type: ecg_waveform, domain: raw_mV, layout: batch_time_lead, sampling_rate_hz: 100, points: 1000, leads: 12}
+  targets: {type: multilabel_targets, class_order: [CD, HYP, MI, NORM, STTC]}
+  hash_ids: {type: unique_record_ids}
+
+outputs:
+  clean_view: {type: ecg_waveform, source: clean_identity.waveform, domain: raw_mV, sampling_rate_hz: 100, points: 1000}
+  corrupted_view: {type: ecg_waveform, source: depth23_corruption.waveform, domain: raw_mV, sampling_rate_hz: 100, points: 1000}
+  lhat_view: {type: ecg_waveform, source: lhat.waveform, domain: raw_mV, sampling_rate_hz: 100, points: 1000}
+  augmix_view: {type: ecg_waveform, source: threechain_augmix.waveform, domain: raw_mV, sampling_rate_hz: 100, points: 1000}
+  corruption_provenance: {type: per_record_corruption_provenance, source: depth23_corruption.provenance}
+  lhat_diagnostics: {type: namespaced_method_diagnostics, source: lhat.diagnostics}
+  augmix_diagnostics: {type: namespaced_method_diagnostics, source: threechain_augmix.diagnostics}
+
+objective:
+  eligibility_scaling: eligible_count_over_batch_size
+  terms:
+    - {id: clean_bce, type: multilabel_bce_with_logits, view: clean_view, targets: targets, weight: 1.0}
+    - {id: corrupted_bce, type: multilabel_bce_with_logits, view: corrupted_view, targets: targets, weight: 1.0}
+    - {id: augmix_bce, type: multilabel_bce_with_logits, view: augmix_view, targets: targets, weight: 1.0}
+    - id: clean_lhat_augmix_jsd
+      type: multilabel_bernoulli_jsd
+      views: [clean_view, lhat_view, augmix_view]
+      weight: 0.5
+
+resources:
+  model: {type: caller_owned_classifier}
+  vae: {type: config_reference, path: train/vae.yaml}
+  latent_pool: {type: runtime_train_only_exact_label_pool}
+  vae_decoder: {type: runtime_frozen_decoder}
+  lhat_config: {type: config_reference, path: train/lhat_h060_s5_eps8.yaml}
+  augmix_config: {type: config_reference, path: train/augmix.yaml}
+  operator_profile: {type: config_reference, path: augmentation/operators.yaml, profile: pn2021c_paper_anchored_s5_v1, severity: 5}
+  corruption_rng: {type: isolated_torch_generator, seed_config: random_seed.yaml, namespace: method_direct_depth23_fixed20}
+  lhat_rng: {type: isolated_torch_generator, seed_config: random_seed.yaml, namespace: pcgrad_lowdose_lhat}
+  augmix_rng: {type: isolated_torch_generator, seed_config: random_seed.yaml, namespace: pcgrad_lhat_threechain}
+
+contracts:
+  executable: true
+  normalization_owner: online_trainer
+  optimizer_owner: online_trainer
+  canonical_input_sampling_rate_hz: 100
+  operator_domain_sampling_rate_hz: 500
+  canonical_output_sampling_rate_hz: 100
+  exposure_policy: clean_aux_once_then_exhaustive_depth23
+  clean_exposures_per_base_record: 1
+  corrupted_exposures_per_base_record: 20
+  total_exposures_per_base_record: 21
+  composition_indices: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+  tensorboard_probe_composition_indices: [0, 10, 19]
+  family_loss_weights: {clean: 0.5, corrupted_total: 0.5, corrupted_per_composition: 0.025}
+  optimizer_step_policy: accumulate_family_balanced_once_per_base_batch
+  batch_norm_running_stats_policy: family_loss_weighted_once_per_base_batch
+  exposure_budget_match: matched_one_optimizer_step_per_base_batch
+  fixed20_base_gradient_preserved: true
+  pcgrad_auxiliary_mode: fixed20_base_plus_projected_lhat_augmix_aux_v1
+  pcgrad_auxiliary_alpha: 0.25
+  pcgrad_projection_epsilon: 1.0e-12
+  pcgrad_auxiliary_terms: [augmix_bce, clean_lhat_augmix_jsd]
+  pcgrad_batch_norm_policy: snapshot_restore_auxiliary
+  pcgrad_rng_policy: snapshot_restore_global_rng
+  lhat_label_policy: exact_positive_set_nonself
+  lhat_hull_lambda: 0.60
+  lhat_steps: 5
+  lhat_direct_supervision: false
+  augmix_chain3_source: lhat_view
+  online_gpu_generation_required: true
+  materialized_dataset_expansion_allowed: false
+  tuning_partition_only: k500_tune_train
+  full_k500_refit_supported: false
+  heldout_target_feedback_allowed: false

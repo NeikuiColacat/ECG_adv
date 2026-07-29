@@ -1,0 +1,67 @@
+schema_version: 1
+
+random_seed:
+  file: random_seed.yaml
+  namespace: ecg_manual_refactor_split_v1
+
+output:
+  root_dir: /home/linbinhao/ECG_adv_data/splits/manual_refactor_super5_v2_k500_tune_seed20260501
+  if_exists: error
+
+ptbxl:
+  cache_dir: /data/linbinhao/ECG_manual_refactor_cache/ptbxl_100hz_qc_v3_20260716
+  sampling_rate_hz: 100
+  split_id: ptbxl_super5_official_folds_v1
+  output_subdir: ptbxl_super5_official_folds_v1
+  eligible_quality_status: [clean, repaired]
+  all_zero_policy: exclude
+  folds:
+    train: [1, 2, 3, 4, 5, 6, 7, 8]
+    validation: [9]
+    test: [10]
+  patient_id_column: patient_id
+  require_patient_disjoint: true
+
+pn2021:
+  cache_dir: /data/linbinhao/ECG_manual_refactor_cache/pn2021_100hz_linear_qc_v3_20260716
+  sampling_rate_hz: 100
+  split_id: pn2021_super5_k500_cpsc_combined_v1
+  output_subdir: pn2021_super5_k500_cpsc_combined_v1
+  required_mapping_version: v7_super5_sjr_rgq_review_20260528
+  required_mapping_hash: 555ec85d5b51
+  eligible_quality_status: [clean, repaired]
+  k: 500
+  k500_all_zero_policy: exclude
+  sampling:
+    policy: uniform_without_replacement
+    candidate_order: hash_id_lexicographic
+    replacement: false
+  logical_centers:
+    - name: ningbo
+      source_centers: [ningbo]
+    - name: chapman_shaoxing
+      source_centers: [chapman_shaoxing]
+    - name: cpsc_2018
+      source_centers: [cpsc_2018, cpsc_2018_extra]
+    - name: georgia
+      source_centers: [georgia]
+  ignored_source_centers: [ptb, st_petersburg_incart]
+  hard_excluded_source_centers: [ptb-xl, ptbxl]
+  training:
+    use_all_k500: true
+    validation_split: false
+    checkpoint_policy: last_checkpoint_only
+  tuning_split:
+    parent_partition: k500
+    train_partition: k500_tune_train
+    validation_partition: k500_tune_validation
+    train_count: 400
+    validation_count: 100
+    policy: deterministic_multilabel_source_stratified
+    preserve_source_proportions: true
+    singleton_positive_policy: prefer_train
+    seed_namespace: pn2021_k500_tuning_split_v1
+  evaluation:
+    exclude_k500_hashes: true
+    emit_all_zero_kept: true
+    emit_drop_all_zero: true

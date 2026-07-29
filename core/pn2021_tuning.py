@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -302,6 +303,16 @@ def load_pn2021_tuning_config(
         raise ValueError("validation artifact schema mismatch")
     if tuple(validation.get("composition_indices", ())) != COMPOSITION_INDICES:
         raise ValueError("validation must use the canonical twenty compositions")
+    execution = _mapping(validation.get("execution"), "validation_predictions.execution")
+    if execution != {
+        "mode": "packed_resident",
+        "layout": "view_record_time_lead",
+        "view_order": "clean_then_composition_indices",
+        "source_loader_release": "after_pack",
+    }:
+        raise ValueError(
+            "validation execution must use the locked packed-resident contract"
+        )
     selection = _mapping(root_payload["pooled_selection"], "pooled_selection")
     if selection.get("expected_records_per_center") != 100:
         raise ValueError("selection expects 100 records per center")
@@ -610,6 +621,142 @@ class PN2021TuningDataLoaders:
         }
 
 
+@dataclass(frozen=True)
+class PackedFrozenValidationBank:
+    """One immutable view-major CPU bank for clean plus twenty frozen views."""
+
+    waveforms: torch.Tensor
+    targets: torch.Tensor
+    hash_ids: tuple[str, ...]
+    view_ids: tuple[str, ...]
+    pinned: bool
+    materialization_wall_seconds: float
+
+    def __post_init__(self) -> None:
+        if self.waveforms.shape != (21, 100, 1000, 12):
+            raise ValueError(
+                "packed validation waveforms must have shape (21,100,1000,12)"
+            )
+        if self.waveforms.device.type != "cpu" or self.waveforms.dtype != torch.float32:
+            raise TypeError("packed validation waveforms must be CPU float32")
+        if not self.waveforms.is_contiguous():
+            raise ValueError("packed validation waveforms must be contiguous")
+        if self.targets.shape != (100, 5):
+            raise ValueError("packed validation targets must have shape (100,5)")
+        if self.targets.device.type != "cpu" or self.targets.dtype != torch.uint8:
+            raise TypeError("packed validation targets must be CPU uint8")
+        if len(self.hash_ids) != 100 or len(set(self.hash_ids)) != 100:
+            raise ValueError("packed validation requires 100 unique hash IDs")
+        if len(self.view_ids) != 21 or self.view_ids[0] != "clean":
+            raise ValueError("packed validation requires clean plus twenty view IDs")
+        if len(set(self.view_ids)) != 21:
+            raise ValueError("packed validation view IDs must be unique")
+        if self.waveforms.is_pinned() != self.pinned:
+            raise ValueError("packed validation pinned-memory identity drifted")
+        if self.materialization_wall_seconds < 0:
+            raise ValueError("materialization wall time must be non-negative")
+
+    @property
+    def flattened_waveforms(self) -> torch.Tensor:
+        return self.waveforms.view(2100, 1000, 12)
+
+    def describe(self) -> dict[str, Any]:
+        return {
+            "mode": "packed_resident",
+            "layout": "view_record_time_lead",
+            "view_order": "clean_then_composition_indices",
+            "shape": list(self.waveforms.shape),
+            "dtype": str(self.waveforms.dtype),
+            "record_count": 100,
+            "view_count": 21,
+            "flattened_record_count": 2100,
+            "storage_bytes": int(
+                self.waveforms.numel() * self.waveforms.element_size()
+                + self.targets.numel() * self.targets.element_size()
+            ),
+            "pinned": self.pinned,
+            "source_loader_release": "after_pack",
+            "materialization_wall_seconds": self.materialization_wall_seconds,
+            "ordered_hash_ids_sha256": _sha256_lines(self.hash_ids, sort=False),
+            "view_ids": list(self.view_ids),
+        }
+
+
+def _resident_validation_tensors(
+    loader: RuntimeDataLoader,
+    *,
+    description: str,
+) -> tuple[torch.Tensor, torch.Tensor, tuple[str, ...]]:
+    dataset = getattr(loader, "dataset", None)
+    waveforms = getattr(dataset, "waveforms", None)
+    labels = getattr(dataset, "labels", None)
+    if not isinstance(waveforms, torch.Tensor) or not isinstance(labels, torch.Tensor):
+        raise TypeError(f"{description} must expose resident waveform/label tensors")
+    if waveforms.shape != (100, 1000, 12):
+        raise ValueError(f"{description} waveform shape must be (100,1000,12)")
+    if labels.shape != (100, 5):
+        raise ValueError(f"{description} label shape must be (100,5)")
+    if waveforms.device.type != "cpu" or waveforms.dtype != torch.float32:
+        raise TypeError(f"{description} waveforms must be CPU float32")
+    if labels.device.type != "cpu" or not torch.is_floating_point(labels):
+        raise TypeError(f"{description} labels must be floating CPU tensors")
+    if not waveforms.is_contiguous() or not labels.is_contiguous():
+        raise ValueError(f"{description} resident tensors must be contiguous")
+    if not bool(torch.logical_or(labels == 0, labels == 1).all()):
+        raise ValueError(f"{description} labels must be binary")
+    return waveforms, labels, _selection_hashes(loader)
+
+
+def _materialize_packed_validation_bank(
+    loaders: PN2021TuningDataLoaders,
+    *,
+    composition_ids: Sequence[str],
+) -> PackedFrozenValidationBank:
+    if len(composition_ids) != 20 or len(set(composition_ids)) != 20:
+        raise ValueError("packed validation requires twenty unique composition IDs")
+    started = time.perf_counter()
+    clean_waveforms, clean_labels, clean_hashes = _resident_validation_tensors(
+        loaders.clean_validation,
+        description="clean validation",
+    )
+    requested_pin = bool(loaders.resolved_parameters["pin_memory"])
+    effective_pin = requested_pin and torch.cuda.is_available()
+    bank = torch.empty(
+        (21, 100, 1000, 12),
+        dtype=torch.float32,
+        device="cpu",
+        pin_memory=effective_pin,
+    )
+    bank[0].copy_(clean_waveforms)
+    clean_targets = clean_labels.to(dtype=torch.uint8, copy=True)
+    for offset, loader in enumerate(loaders.corrupted_validation, start=1):
+        waveforms, labels, hashes = _resident_validation_tensors(
+            loader,
+            description=f"corruption composition {offset - 1}",
+        )
+        if hashes != clean_hashes:
+            raise RuntimeError(
+                f"corruption composition {offset - 1} changed validation hash order"
+            )
+        if not torch.equal(labels.to(dtype=torch.uint8), clean_targets):
+            raise RuntimeError(
+                f"corruption composition {offset - 1} changed validation labels"
+            )
+        bank[offset].copy_(waveforms)
+    packed = PackedFrozenValidationBank(
+        waveforms=bank,
+        targets=clean_targets,
+        hash_ids=clean_hashes,
+        view_ids=("clean", *(str(value) for value in composition_ids)),
+        pinned=bool(bank.is_pinned()),
+        materialization_wall_seconds=max(0.0, time.perf_counter() - started),
+    )
+    loaders.clean_validation.close()
+    for loader in loaders.corrupted_validation:
+        loader.close()
+    return packed
+
+
 def build_pn2021_tuning_dataloaders(
     model: nn.Module,
     *,
@@ -838,6 +985,11 @@ class FrozenValidationEvaluator:
                 "source_manifest_sha256"
             ],
         }
+        self.validation_bank = _materialize_packed_validation_bank(
+            loaders,
+            composition_ids=self.composition_ids,
+        )
+        self.eval_batch_size = int(loaders.resolved_parameters["eval_batch_size"])
 
     def describe(self) -> dict[str, Any]:
         return {
@@ -845,30 +997,28 @@ class FrozenValidationEvaluator:
             "output_dir": str(self.output_dir),
             "clean_selection": self.clean_identity,
             "frozen_corruption": self.frozen_identity,
+            "packed_validation": self.validation_bank.describe(),
+            "eval_batch_size": self.eval_batch_size,
             "input_adapter": self.loaders.input_adapter.describe(),
         }
 
-    def _predict(
+    def _predict_packed(
         self,
         model: nn.Module,
-        loader: RuntimeDataLoader,
         device: torch.device,
-    ) -> tuple[np.ndarray, np.ndarray, tuple[str, ...]]:
+    ) -> tuple[np.ndarray, float, int]:
         logits_parts: list[np.ndarray] = []
-        targets_parts: list[np.ndarray] = []
-        hashes: list[str] = []
         use_amp = self.amp_enabled and device.type == "cuda"
+        flattened = self.validation_bank.flattened_waveforms
+        started = time.perf_counter()
+        forward_batches = 0
         with torch.inference_mode():
-            for batch in loader:
-                raw = batch.get("waveform")
-                targets = batch.get("label")
-                batch_hashes = batch.get("hash_id")
-                if not isinstance(raw, torch.Tensor) or not isinstance(targets, torch.Tensor):
-                    raise TypeError("validation batch waveform/label must be tensors")
-                if not isinstance(batch_hashes, (list, tuple)):
-                    raise TypeError("validation batch must provide hash_id strings")
-                raw = raw.to(device=device, dtype=torch.float32, non_blocking=True)
-                targets = targets.to(dtype=torch.float32)
+            for start in range(0, int(flattened.shape[0]), self.eval_batch_size):
+                raw = flattened[start : start + self.eval_batch_size].to(
+                    device=device,
+                    dtype=torch.float32,
+                    non_blocking=True,
+                )
                 model_input = self.loaders.input_adapter(raw)
                 with torch.cuda.amp.autocast(enabled=use_amp, dtype=self.amp_dtype):
                     output = validate_model_output(
@@ -877,28 +1027,18 @@ class FrozenValidationEvaluator:
                         batch_size=int(raw.shape[0]),
                     )
                 logits_parts.append(output.detach().float().cpu().numpy())
-                targets_parts.append(targets.cpu().numpy())
-                hashes.extend(str(value) for value in batch_hashes)
-        logits = np.concatenate(logits_parts, axis=0).astype(np.float32, copy=False)
-        truth = np.concatenate(targets_parts, axis=0).astype(np.uint8, copy=False)
-        if logits.shape != (100, 5) or truth.shape != (100, 5):
-            raise RuntimeError("frozen validation prediction shape must be (100,5)")
-        if len(hashes) != 100 or len(set(hashes)) != 100:
-            raise RuntimeError("frozen validation hashes must be 100 unique records")
-        return logits, truth, tuple(hashes)
-
-    @staticmethod
-    def _align(
-        logits: np.ndarray,
-        targets: np.ndarray,
-        hashes: Sequence[str],
-        reference_hashes: Sequence[str],
-    ) -> tuple[np.ndarray, np.ndarray]:
-        positions = {str(value): index for index, value in enumerate(hashes)}
-        if set(positions) != set(reference_hashes):
-            raise RuntimeError("clean and corrupted validation hash sets differ")
-        order = np.asarray([positions[str(value)] for value in reference_hashes])
-        return logits[order], targets[order]
+                forward_batches += 1
+        flattened_logits = np.concatenate(logits_parts, axis=0).astype(
+            np.float32,
+            copy=False,
+        )
+        if flattened_logits.shape != (2100, 5):
+            raise RuntimeError("packed validation logits must have shape (2100,5)")
+        return (
+            flattened_logits.reshape(21, 100, 5),
+            max(0.0, time.perf_counter() - started),
+            forward_batches,
+        )
 
     def __call__(
         self,
@@ -913,20 +1053,14 @@ class FrozenValidationEvaluator:
         if arrays_path.exists() or sidecar_path.exists():
             raise FileExistsError(f"validation artifact already exists for epoch {epoch}")
 
-        clean_logits, targets, hashes = self._predict(
-            model, self.loaders.clean_validation, device
+        packed_logits, prediction_wall_seconds, forward_batch_count = (
+            self._predict_packed(model, device)
         )
-        corrupted_logits: list[np.ndarray] = []
-        for loader in self.loaders.corrupted_validation:
-            logits, current_targets, current_hashes = self._predict(model, loader, device)
-            logits, current_targets = self._align(
-                logits, current_targets, current_hashes, hashes
-            )
-            if not np.array_equal(current_targets, targets):
-                raise RuntimeError("clean/corrupted validation labels differ")
-            corrupted_logits.append(logits)
-        corrupted = np.stack(corrupted_logits, axis=0).astype(np.float32, copy=False)
-
+        clean_logits = packed_logits[0]
+        corrupted = packed_logits[1:]
+        targets = self.validation_bank.targets.numpy()
+        hashes = self.validation_bank.hash_ids
+        metric_started = time.perf_counter()
         clean_metrics = compute_classification_metrics(
             clean_logits,
             targets,
@@ -946,8 +1080,10 @@ class FrozenValidationEvaluator:
             np.mean([item["macro_auprc"] for item in composition_metrics])
         )
         local_score = 0.5 * float(clean_metrics["macro_auprc"]) + 0.5 * local_robust_auprc
+        metric_wall_seconds = max(0.0, time.perf_counter() - metric_started)
 
         temporary = arrays_path.with_name(f".{arrays_path.name}.tmp")
+        artifact_started = time.perf_counter()
         with temporary.open("wb") as handle:
             np.savez_compressed(
                 handle,
@@ -958,6 +1094,10 @@ class FrozenValidationEvaluator:
                 composition_ids=np.asarray(self.composition_ids, dtype=np.str_),
             )
         temporary.replace(arrays_path)
+        arrays_write_wall_seconds = max(
+            0.0,
+            time.perf_counter() - artifact_started,
+        )
 
         model_identity = _mapping(run_identity.get("model"), "run model identity")
         source_checkpoint = (
@@ -1030,6 +1170,14 @@ class FrozenValidationEvaluator:
                     "hash_id_set_sha256": _sha256_lines(hashes, sort=True),
                     "hash_label_set_sha256": _hash_label_set_sha256(hashes, targets),
                 },
+                "validation_execution": {
+                    "packed_bank": self.validation_bank.describe(),
+                    "eval_batch_size": self.eval_batch_size,
+                    "forward_batch_count": forward_batch_count,
+                    "prediction_wall_seconds": prediction_wall_seconds,
+                    "metric_wall_seconds": metric_wall_seconds,
+                    "arrays_write_wall_seconds": arrays_write_wall_seconds,
+                },
                 "comparison_identity": comparison_identity,
                 "local_monitoring": {
                     "undefined_class_policy": "skip_undefined",
@@ -1047,6 +1195,8 @@ class FrozenValidationEvaluator:
             "clean_macro_auprc_local": float(clean_metrics["macro_auprc"]),
             "robust_macro_auprc_local": local_robust_auprc,
             "score_local": local_score,
+            "validation_forward_batch_count": forward_batch_count,
+            "validation_prediction_wall_seconds": prediction_wall_seconds,
             "selection_deferred_to_four_center_pool": True,
         }
 

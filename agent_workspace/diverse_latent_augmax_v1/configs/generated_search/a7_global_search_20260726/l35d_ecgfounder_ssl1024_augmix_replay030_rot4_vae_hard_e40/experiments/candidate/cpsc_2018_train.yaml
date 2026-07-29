@@ -1,0 +1,41 @@
+schema_version: 1
+experiment:
+  name: a7_global_l35d_ecgfounder_ssl1024_augmix_replay030_rot4_vae_hard_e40_cpsc_2018_train
+  purpose: 'K500-only two-chain AugMix SimCLR pretraining followed by clean plus deterministic rotating
+    corruption supervision: two depth-2 and two depth-3 canonical views per epoch, with per-record SHA256
+    offsets and complete twenty-composition coverage every five epochs. One exact-label online VAE-LHAT
+    hard view adds direct BCE and clean/hard Bernoulli-JSD at multiplier 1.5. Stage-1 additionally consumes
+    labeled PTB-XL train semantic replay at weight 0.3 with 1 source batch per target step; no target-center
+    records outside K500 are consumed.'
+entrypoint:
+  name: train_pn2021
+  config: generated_search/a7_global_search_20260726/l35d_ecgfounder_ssl1024_augmix_replay030_rot4_vae_hard_e40/online/cpsc_2018.yaml
+  arguments:
+  - --model
+  - ecgfounder
+  - --method-config
+  - generated_search/a7_global_search_20260726/l35d_ecgfounder_ssl1024_augmix_replay030_rot4_vae_hard_e40/methods/cpsc_2018.yaml
+  - --center
+  - cpsc_2018
+  - --source-checkpoint
+  - /data/linbinhao/ECG_manual_refactor_runs/manual_refactor_20260721/managed_ptbxl_ecgfounder_source_v1/training/checkpoints/best.pt
+  - --vae-checkpoint
+  - /home/linbinhao/ECG_adv_data/models/ECGTwin/checkpoints/vae_model.pth
+  - --epochs
+  - '40'
+  - --scheduler-horizon-epochs
+  - '40'
+  - --trainable-scope
+  - full
+  - --num-workers
+  - '0'
+  - --learning-rate
+  - 2e-05
+  - --batch-size
+  - '64'
+  - --weight-decay
+  - '0.0001'
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/agent_workspace/a7_global_search_20260726/l35d_ecgfounder_ssl1024_augmix_replay030_rot4_vae_hard_e40/candidate/cpsc_2018/train
+  if_exists: error
+  delegate_output_subdir: training

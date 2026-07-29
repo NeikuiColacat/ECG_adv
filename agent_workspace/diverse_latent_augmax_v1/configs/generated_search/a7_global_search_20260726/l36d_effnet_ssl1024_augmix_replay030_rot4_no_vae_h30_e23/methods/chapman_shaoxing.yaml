@@ -1,0 +1,248 @@
+schema_version: 1
+method:
+  id: direct_depth23_fixed20
+  profile_version: 1
+  api_version: 1
+  scientific_arm: augmix_simclr_then_rotating4_supervised_adaptation
+  status: heldout_tuned_development_only
+  description: Two-chain AugMix SimCLR pretraining followed by clean supervision and a deterministic depth-balanced
+    rotating corruption schedule (two depth-2 plus two depth-3 views per epoch; five epochs cover all
+    twenty canonical compositions). No VAE/LHAT branch is active. The clean/corruption family mass remains
+    0.5/0.5 and all views accumulate into one optimizer update per base batch.
+nodes:
+  clean_identity:
+    type: identity_raw100_view
+    implementation: builtin
+    implementation_version: 1
+    status: implemented
+    inputs:
+      waveform: clean_raw
+    outputs:
+      waveform: clean_view
+  depth23_corruption:
+    type: canonical_depth23_corruption_view
+    implementation: registered
+    implementation_version: 1
+    status: implemented_engine
+    inputs:
+      waveform: clean_view
+      rng: corruption_rng
+      operator_profile: operator_profile
+    outputs:
+      waveform: corrupted_view
+      provenance: corruption_provenance
+inputs:
+  clean_raw:
+    type: ecg_waveform
+    domain: raw_mV
+    layout: batch_time_lead
+    sampling_rate_hz: 100
+    points: 1000
+    leads: 12
+  targets:
+    type: multilabel_targets
+    class_order:
+    - CD
+    - HYP
+    - MI
+    - NORM
+    - STTC
+  hash_ids:
+    type: unique_record_ids
+outputs:
+  clean_view:
+    type: ecg_waveform
+    source: clean_identity.waveform
+    domain: raw_mV
+    sampling_rate_hz: 100
+    points: 1000
+  corrupted_view:
+    type: ecg_waveform
+    source: depth23_corruption.waveform
+    domain: raw_mV
+    sampling_rate_hz: 100
+    points: 1000
+  corruption_provenance:
+    type: per_record_corruption_provenance
+    source: depth23_corruption.provenance
+objective:
+  terms:
+  - id: clean_bce
+    type: multilabel_bce_with_logits
+    view: clean_view
+    targets: targets
+    weight: 1.0
+  - id: corrupted_bce
+    type: multilabel_bce_with_logits
+    view: corrupted_view
+    targets: targets
+    weight: 1.0
+resources:
+  model:
+    type: caller_owned_classifier
+  operator_profile:
+    type: config_reference
+    path: augmentation/operators.yaml
+    profile: pn2021c_paper_anchored_s5_v1
+    severity: 5
+  corruption_rng:
+    type: isolated_torch_generator
+    seed_config: random_seed.yaml
+    namespace: method_direct_depth23_fixed20
+contracts:
+  normalization_owner: online_trainer
+  optimizer_owner: online_trainer
+  canonical_input_sampling_rate_hz: 100
+  operator_domain_sampling_rate_hz: 500
+  canonical_output_sampling_rate_hz: 100
+  exposure_policy: clean_aux_once_then_rotating_depth23_2plus2
+  clean_exposures_per_base_record: 1
+  corrupted_exposures_per_base_record: 4
+  total_exposures_per_base_record: 5
+  composition_indices:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  - 5
+  - 6
+  - 7
+  - 8
+  - 9
+  - 10
+  - 11
+  - 12
+  - 13
+  - 14
+  - 15
+  - 16
+  - 17
+  - 18
+  - 19
+  composition_order: all_depth2_then_all_depth3_canonical
+  composition_depth_counts:
+    depth2: 10
+    depth3: 10
+  objective_term_routing:
+    clean_exposure: clean_bce
+    corrupted_exposure: corrupted_bce
+  tensorboard_probe_composition_indices:
+  - 0
+  - 10
+  - 19
+  family_loss_weights:
+    clean: 0.5
+    corrupted_total: 0.5
+    corrupted_per_composition: 0.125
+  optimizer_step_policy: accumulate_family_balanced_once_per_base_batch
+  batch_norm_running_stats_policy: family_loss_weighted_once_per_base_batch
+  exposure_budget_match: matched_one_optimizer_step_per_base_batch
+  online_gpu_generation_required: true
+  materialized_dataset_expansion_allowed: false
+  complete_k500_base_record_exposure: true
+  heldout_target_feedback_allowed: false
+  unlabeled_teacher:
+    enabled: true
+    policy: ema_teacher_clean_to_twochain_augmix_strong_v1
+    evidence_status: k500_only_full_refit
+    pool_partition: k500
+    labels_consumed: false
+    total_weight: 0.0
+    ema_decay: 0.99
+    confidence_threshold: 0.7
+    temperature: 1.0
+    strong_views: 2
+    dirichlet_alpha: 0.5
+    beta_alpha: 0.5
+    unlabeled_batches_per_clean: 1
+    simclr_weight: 0.0
+    simclr_temperature: 0.5
+    pretrain_epochs: 1
+    pretrain_steps_per_epoch: 1024
+    pretrain_learning_rate: 0.001
+    pretrain_weight_decay: 0.0001
+    pretrain_clean_anchor: true
+    pretrain_logit_anchor_weight: 5.0
+    pretrain_logit_anchor_class_weights:
+    - 1.0
+    - 1.0
+    - 1.0
+    - 1.0
+    - 1.0
+    supervised_logit_anchor_weight: 2.0
+    supervised_logit_anchor_class_weights:
+    - 1.0
+    - 1.0
+    - 1.0
+    - 1.0
+    - 1.0
+    pretrain_prototype_weight: 0.0
+    pretrain_prototype_temperature: 0.2
+    pretrain_prototype_quantile: 0.2
+    pretrain_prototype_bank_batches: 0
+    pretrain_rank_weight: 0.0
+    pretrain_rank_margin: 0.5
+    pretrain_rank_temperature: 1.0
+    pretrain_strong_pseudo_weight: 0.0
+    residual_head_mode: none
+    residual_head_width: 64
+    residual_head_dropout: 0.1
+    residual_head_scale: 0.1
+    residual_head_freeze_base: false
+    pretrain_ssl_objective: simclr
+    pretrain_vicreg_invariance_weight: 25.0
+    pretrain_vicreg_variance_weight: 25.0
+    pretrain_vicreg_covariance_weight: 1.0
+    pretrain_barlow_offdiagonal_weight: 0.005
+    pretrain_ssl_weight: 1.0
+    pretrain_source_replay_weight: 0.3
+    pretrain_source_batches_per_step: 1
+    pseudo_reduction: element_mean_threshold
+    pseudo_quantile: 0.1
+    online_enabled: false
+    pretrain_vicreg_mix_weight: 0.0
+    pretrain_view_mode: twochain_augmix
+  tuning_partition_only: k500
+  full_k500_refit_supported: true
+  comparison_rng_identity: sequential_effnet_ssl1024_replay030_rotating4_pair_h30_e23_v1
+  rotating4_execution_slot_sentinels:
+  - 0
+  - 1
+  - 10
+  - 19
+  rotating4_schedule:
+    schema_version: 1
+    policy: stable_hash_depth_balanced_rotating_2plus2_v1
+    depth2_composition_indices:
+    - 0
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    - 6
+    - 7
+    - 8
+    - 9
+    depth3_composition_indices:
+    - 10
+    - 11
+    - 12
+    - 13
+    - 14
+    - 15
+    - 16
+    - 17
+    - 18
+    - 19
+    views_per_family_per_epoch: 2
+    cycle_epochs: 5
+    epoch_stride_within_family: 2
+    record_offset: sha256(namespace_pipe_hash_id)_uint64_be_mod10
+    offset_namespace: pn2021_rotating_depth23_2plus2_v1
+    same_offset_for_depth2_and_depth3: true
+    coverage: each_record_sees_all_10_depth2_and_all_10_depth3_compositions_once_per_5_epochs
+    parameter_rng: existing_comparison_rng_identity_and_exposure_identity
+  fixed20_endpoint_supervision: false
+  rotating4_endpoint_supervision: true

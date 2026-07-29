@@ -322,6 +322,49 @@ def test_a0_executes_as_a_typed_clean_waveform_graph() -> None:
     assert bundle.diagnostics["method/profile_sha256"] == compiled.profile_sha256
 
 
+def test_executor_prunes_nodes_not_required_by_the_selected_objective_view() -> None:
+    compiled = compile_method_profile(METHOD_PROFILES / "a3c_depth23_v1.yaml")
+    source = _clean_view()
+
+    def forbidden_corruption(context: Any, inputs: tuple[Any, ...]) -> WaveformView:
+        del context, inputs
+        raise AssertionError("unselected corruption node must not execute")
+
+    bundle = execute_method(
+        compiled,
+        ExecutionResources(
+            sources={"clean_raw": source},
+            adapters={"canonical_corruption": forbidden_corruption},
+            classifier=object(),
+            base_seed=20260717,
+            rng_identity=("replicate=0", "epoch=1", "step=0"),
+        ),
+        required_outputs=("clean_view",),
+    )
+
+    assert tuple(bundle.values) == ("clean_view",)
+    assert tuple(bundle.node_values) == ("clean_identity",)
+    assert torch.equal(
+        bundle.require("clean_view", ValueKind.WAVEFORM).waveform,
+        source.waveform,
+    )
+
+
+def test_executor_rejects_unknown_or_empty_required_outputs() -> None:
+    compiled = compile_method_profile(METHOD_PROFILES / "a0_clean_v1.yaml")
+    resources = ExecutionResources(
+        sources={"clean_raw": _clean_view()},
+        classifier=object(),
+        base_seed=20260717,
+        rng_identity=("replicate=0", "epoch=1", "step=0"),
+    )
+
+    with pytest.raises(ValueError, match="non-empty and unique"):
+        execute_method(compiled, resources, required_outputs=())
+    with pytest.raises(ValueError, match="unknown outputs"):
+        execute_method(compiled, resources, required_outputs=("missing_view",))
+
+
 def test_fixed20_direct_profile_declares_family_balanced_matched_base_exposure() -> None:
     compiled = compile_method_profile(
         METHOD_PROFILES / "direct_depth23_fixed20.yaml"
@@ -360,6 +403,46 @@ def test_fixed20_direct_profile_declares_family_balanced_matched_base_exposure()
         "matched_one_optimizer_step_per_base_batch"
     )
     assert compiled.contracts["materialized_dataset_expansion_allowed"] is False
+
+
+@pytest.mark.parametrize(
+    ("filename", "requirements"),
+    (
+        ("direct_depth23_fixed20_raw_aux.yaml", ("classifier",)),
+        (
+            "direct_depth23_fixed20_vae_reconstruction_aux.yaml",
+            ("classifier", "vae_encoder", "vae_decoder"),
+        ),
+        (
+            "direct_depth23_fixed20_lhat_aux.yaml",
+            ("classifier", "vae_decoder", "latent_pool"),
+        ),
+    ),
+)
+def test_fixed20_aux_profiles_compile_with_one_normalized_auxiliary_exposure(
+    filename: str,
+    requirements: tuple[str, ...],
+) -> None:
+    compiled = compile_method_profile(METHOD_PROFILES / filename)
+
+    assert compiled.executable is True
+    assert compiled.comparison_rng_identity == "direct_depth23_fixed20"
+    assert compiled.requirements.names() == requirements
+    assert compiled.contracts["exposure_policy"] == (
+        "clean_once_then_exhaustive_depth23_then_auxiliary"
+    )
+    assert compiled.contracts["auxiliary_objective_terms"] == ["auxiliary_bce"]
+    assert compiled.contracts["family_loss_weights"] == {
+        "clean": 0.45,
+        "corrupted_total": 0.45,
+        "corrupted_per_composition": 0.0225,
+        "auxiliary": 0.1,
+    }
+    assert tuple(term.name for term in compiled.objective.terms) == (
+        "clean_bce",
+        "corrupted_bce",
+        "auxiliary_bce",
+    )
 
 
 def _fixed20_runtime():
@@ -423,6 +506,73 @@ def test_runtime_all_minus_one_is_identity_without_consuming_corruption_rng() ->
     )
 
 
+def test_reconstruction_auxiliary_executes_only_the_frozen_codec_branch() -> None:
+    class Identity:
+        def describe(self) -> dict[str, str]:
+            return {"sha256": "a" * 64}
+
+    class Encoder(torch.nn.Module):
+        checkpoint_identity = Identity()
+
+        def forward(self, value, *, sample=False):
+            assert value.shape[1:] == (1024, 12)
+            assert sample is False
+            latent = value.new_zeros((value.shape[0], 4, 128))
+            return latent, latent, latent
+
+    class Decoder(torch.nn.Module):
+        checkpoint_identity = Identity()
+
+        def forward(self, latent):
+            time = torch.linspace(
+                -1.0,
+                1.0,
+                1024,
+                device=latent.device,
+                dtype=latent.dtype,
+            ).view(1, 1024, 1)
+            leads = torch.arange(
+                12, device=latent.device, dtype=latent.dtype
+            ).view(1, 1, 12)
+            return time.expand(latent.shape[0], -1, 12) + leads * 0.01
+
+    compiled = compile_method_profile(
+        METHOD_PROFILES / "direct_depth23_fixed20_vae_reconstruction_aux.yaml"
+    )
+    runtime = build_method_runtime(
+        compiled,
+        model_name="efficientnet1dv2",
+        config_root=ROOT / "configs",
+        encoder=Encoder(),
+        decoder=Decoder(),
+    )
+    source = _clean_view()
+
+    generated = runtime.generate(
+        clean_raw=source.waveform,
+        targets=source.labels,
+        hash_ids=source.sample_ids,
+        classifier=torch.nn.Identity(),
+        base_seed=20260717,
+        rng_identity=("replicate=0", "epoch=1", "exposure=auxiliary"),
+        objective_term_names=("auxiliary_bce",),
+    )
+
+    assert tuple(generated.bundle.values) == ("clean_view", "auxiliary_view")
+    assert "depth23_corruption" not in generated.bundle.node_values
+    assert tuple(generated.bundle.node_values) == (
+        "clean_identity",
+        "reconstruction_encode",
+        "reconstruction_decode",
+    )
+    auxiliary = generated.bundle.require("auxiliary_view", ValueKind.WAVEFORM)
+    assert auxiliary.waveform.shape == source.waveform.shape
+    assert bool(auxiliary.valid_mask.all())
+    assert auxiliary.provenance.parameters["quality_rejection_policy"] == (
+        "clean_loss_only"
+    )
+
+
 def test_runtime_rejects_mixed_identity_and_corruption_indices() -> None:
     with pytest.raises(ValueError, match="may be all -1"):
         _generate_fixed20_runtime_view(
@@ -480,8 +630,10 @@ def _random_corruption_adapter(context: Any, inputs: tuple[Any, ...]) -> Wavefor
     )
 
 
-def _execute_a3c_with_rng_identity(rng_identity: tuple[str, ...]):
-    compiled = compile_method_profile(METHOD_PROFILES / "a3c_depth23_v1.yaml")
+def _execute_compiled_with_rng_identity(
+    compiled: Any,
+    rng_identity: tuple[str, ...],
+):
     return execute_method(
         compiled,
         ExecutionResources(
@@ -492,6 +644,124 @@ def _execute_a3c_with_rng_identity(rng_identity: tuple[str, ...]):
             rng_identity=rng_identity,
         ),
     )
+
+
+def _execute_a3c_with_rng_identity(rng_identity: tuple[str, ...]):
+    compiled = compile_method_profile(METHOD_PROFILES / "a3c_depth23_v1.yaml")
+    return _execute_compiled_with_rng_identity(compiled, rng_identity)
+
+
+def test_default_comparison_rng_identity_preserves_profile_scoped_stream() -> None:
+    compiled = compile_method_profile(METHOD_PROFILES / "a3c_depth23_v1.yaml")
+    identity = ("replicate=0", "center=ningbo", "epoch=1", "step=7")
+
+    bundle = _execute_compiled_with_rng_identity(compiled, identity)
+
+    assert compiled.comparison_rng_identity == compiled.profile_name
+    assert compiled.describe()["comparison_rng_identity"] == compiled.profile_name
+    assert bundle.diagnostics["method/comparison_rng_identity"] == compiled.profile_name
+    rng_key = "depth23_corruption/rng/cpu_test/cpu"
+    assert bundle.diagnostics[rng_key]["comparison_rng_identity"] == (
+        compiled.profile_name
+    )
+
+
+def _matched_rng_profile(
+    *,
+    method_id: str,
+    comparison_rng_identity: str,
+) -> Any:
+    path = METHOD_PROFILES / "a3c_depth23_v1.yaml"
+    payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    payload["method"]["id"] = method_id
+    payload["method"]["scientific_arm"] = method_id
+    payload["contracts"]["comparison_rng_identity"] = comparison_rng_identity
+    return compile_method_profile(payload)
+
+
+def test_explicit_comparison_rng_identity_pairs_random_views_across_profiles() -> None:
+    identity = ("replicate=0", "center=ningbo", "epoch=1", "step=7")
+    first_method = _matched_rng_profile(
+        method_id="matched_arm_first",
+        comparison_rng_identity="matched_fixed20_aux_v1",
+    )
+    second_method = _matched_rng_profile(
+        method_id="matched_arm_second",
+        comparison_rng_identity="matched_fixed20_aux_v1",
+    )
+
+    first = _execute_compiled_with_rng_identity(first_method, identity)
+    second = _execute_compiled_with_rng_identity(second_method, identity)
+    first_view = first.require("corrupted_view", ValueKind.WAVEFORM)
+    second_view = second.require("corrupted_view", ValueKind.WAVEFORM)
+    rng_key = "depth23_corruption/rng/cpu_test/cpu"
+
+    assert first_method.profile_sha256 != second_method.profile_sha256
+    assert torch.equal(first_view.waveform, second_view.waveform)
+    assert first.diagnostics[rng_key]["seed"] == second.diagnostics[rng_key]["seed"]
+
+
+def test_fixed20_baseline_and_aux_profile_share_corruption_random_numbers() -> None:
+    identity = (
+        "pn2021_direct_depth23_fixed20_family_balanced",
+        "replicate=0",
+        "ningbo",
+        "efficientnet1dv2",
+        "epoch=1",
+        "view_execution_step=2",
+        "exposure=corruption_00",
+        "batch_hash_sha256=fixture",
+    )
+    baseline = compile_method_profile(
+        METHOD_PROFILES / "direct_depth23_fixed20.yaml"
+    )
+    auxiliary = compile_method_profile(
+        METHOD_PROFILES / "direct_depth23_fixed20_raw_aux.yaml"
+    )
+
+    first = _execute_compiled_with_rng_identity(baseline, identity)
+    second = _execute_compiled_with_rng_identity(auxiliary, identity)
+    first_view = first.require("corrupted_view", ValueKind.WAVEFORM)
+    second_view = second.require("corrupted_view", ValueKind.WAVEFORM)
+    rng_key = "depth23_corruption/rng/cpu_test/cpu"
+
+    assert baseline.comparison_rng_identity == baseline.profile_name
+    assert auxiliary.comparison_rng_identity == baseline.profile_name
+    assert torch.equal(first_view.waveform, second_view.waveform)
+    assert first.diagnostics[rng_key]["seed"] == second.diagnostics[rng_key]["seed"]
+
+
+def test_comparison_rng_identity_separates_random_views_when_requested() -> None:
+    identity = ("replicate=0", "center=ningbo", "epoch=1", "step=7")
+    first_method = _matched_rng_profile(
+        method_id="matched_arm_first",
+        comparison_rng_identity="comparison_family_a",
+    )
+    second_method = _matched_rng_profile(
+        method_id="matched_arm_second",
+        comparison_rng_identity="comparison_family_b",
+    )
+
+    first = _execute_compiled_with_rng_identity(first_method, identity)
+    second = _execute_compiled_with_rng_identity(second_method, identity)
+    first_view = first.require("corrupted_view", ValueKind.WAVEFORM)
+    second_view = second.require("corrupted_view", ValueKind.WAVEFORM)
+    rng_key = "depth23_corruption/rng/cpu_test/cpu"
+
+    assert not torch.equal(first_view.waveform, second_view.waveform)
+    assert first.diagnostics[rng_key]["seed"] != second.diagnostics[rng_key]["seed"]
+
+
+@pytest.mark.parametrize("invalid_identity", [None, "", [], 0])
+def test_comparison_rng_identity_must_be_a_non_empty_string(
+    invalid_identity: Any,
+) -> None:
+    path = METHOD_PROFILES / "a3c_depth23_v1.yaml"
+    payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    payload["contracts"]["comparison_rng_identity"] = invalid_identity
+
+    with pytest.raises(ValueError, match="comparison_rng_identity must be"):
+        load_method_profile(payload)
 
 
 def test_same_rng_identity_reproduces_the_same_typed_view() -> None:

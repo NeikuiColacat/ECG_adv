@@ -27,6 +27,7 @@ from core.corruption import generate_canonical_corruption
 from core.lhat import LHATConfig, generate_lhat_adversarial, load_lhat_config
 from core.methods.contracts import (
     BASE_VIEW_NAME,
+    LatentView,
     NodeContext,
     Provenance,
     ViewBundle,
@@ -35,6 +36,7 @@ from core.methods.contracts import (
 )
 from core.methods.executor import ExecutionResources, execute_method
 from core.methods.registry import CompiledMethod
+from models.vae import decode_to_ptbxl_waveform, prepare_ecgtwin_encoder_input
 from util.augmentations.profile import AugmentationProfile, load_augmentation_profile
 from util.config_bundle import resolve_config_reference
 
@@ -63,6 +65,7 @@ def _quality_mask(
     *,
     minimum_std_mV: float,
     maximum_abs_mV: float,
+    return_reasons: bool = True,
 ) -> tuple[torch.Tensor, tuple[str, ...]]:
     flat = waveform_raw.flatten(1)
     finite = torch.isfinite(flat).all(dim=1)
@@ -72,6 +75,8 @@ def _quality_mask(
     accepted = finite & (standard_deviation >= float(minimum_std_mV)) & (
         maximum_absolute <= float(maximum_abs_mV)
     )
+    if not return_reasons:
+        return accepted, ()
     summary = torch.stack(
         (
             finite.float(),
@@ -103,6 +108,8 @@ class GeneratedMethodBatch:
 
     bundle: ViewBundle
     diagnostic_weights: Mapping[str, int]
+    diagnostic_samples: Mapping[str, torch.Tensor]
+    stochastic_trace: Mapping[str, torch.Tensor]
     candidate_eligible_positions: tuple[int, ...]
     accepted_positions: tuple[int, ...]
     quality_view_total_count: int
@@ -124,6 +131,42 @@ class GeneratedMethodBatch:
                 "diagnostic_weights must map non-empty names to positive integers"
             )
         object.__setattr__(self, "diagnostic_weights", MappingProxyType(weights))
+        samples = dict(self.diagnostic_samples)
+        if any(
+            not isinstance(name, str)
+            or not name
+            or not isinstance(value, torch.Tensor)
+            or value.ndim != 1
+            or value.requires_grad
+            for name, value in samples.items()
+        ):
+            raise ValueError(
+                "diagnostic_samples must map names to detached rank-1 tensors"
+            )
+        object.__setattr__(
+            self,
+            "diagnostic_samples",
+            MappingProxyType(
+                {name: value.detach() for name, value in samples.items()}
+            ),
+        )
+        trace = dict(self.stochastic_trace)
+        if any(
+            not isinstance(name, str)
+            or not name
+            or not isinstance(value, torch.Tensor)
+            or value.ndim < 1
+            or value.requires_grad
+            for name, value in trace.items()
+        ):
+            raise ValueError(
+                "stochastic_trace must map names to detached non-scalar tensors"
+            )
+        object.__setattr__(
+            self,
+            "stochastic_trace",
+            MappingProxyType({name: value.detach() for name, value in trace.items()}),
+        )
         if self.quality_view_total_count < 0:
             raise ValueError("quality_view_total_count must be non-negative")
         if not 0 <= self.quality_view_accepted_count <= self.quality_view_total_count:
@@ -319,6 +362,7 @@ class MethodViewRuntime:
         inputs: tuple[ViewValue, ...],
         *,
         composition_indices: torch.Tensor | None = None,
+        composition_index_hint: int | None = None,
     ) -> ViewValue:
         if len(inputs) != 1 or not isinstance(inputs[0], WaveformView):
             raise TypeError("canonical corruption requires one WaveformView")
@@ -345,10 +389,34 @@ class MethodViewRuntime:
                 torch.uint8,
             }:
                 raise TypeError("composition_indices must use an integer dtype")
-            identity_mask = composition_indices == -1
-            if bool(identity_mask.all().item()):
-                context.record_diagnostic("mean_depth", 0.0)
-                context.record_diagnostic("repaired_nonfinite_count", 0)
+            if composition_index_hint is not None:
+                if isinstance(composition_index_hint, bool) or not isinstance(
+                    composition_index_hint, int
+                ):
+                    raise TypeError("composition_index_hint must be an integer")
+                if composition_index_hint < -1 or composition_index_hint > 19:
+                    raise ValueError(
+                        "composition_index_hint must be -1 or lie in [0,19]"
+                    )
+                all_identity = composition_index_hint == -1
+                any_identity = all_identity
+            else:
+                identity_mask = composition_indices == -1
+                identity_state = (
+                    torch.stack((identity_mask.all(), identity_mask.any()))
+                    .detach()
+                    .cpu()
+                    .tolist()
+                )
+                all_identity = bool(identity_state[0])
+                any_identity = bool(identity_state[1])
+            if all_identity:
+                context.record_diagnostic(
+                    "mean_depth", source.waveform.new_zeros(())
+                )
+                context.record_diagnostic(
+                    "repaired_nonfinite_count", source.waveform.new_zeros(())
+                )
                 return WaveformView(
                     name=context.node_id,
                     waveform=source.waveform,
@@ -372,9 +440,13 @@ class MethodViewRuntime:
                         "corruption_diagnostics": None,
                         "composition_indices": composition_indices.contiguous(),
                         "exposure_kind": "clean_identity",
+                        "diagnostic_weight": source.batch_size,
+                        "stochastic_trace": {
+                            "composition_index": composition_indices.detach().contiguous(),
+                        },
                     },
                 )
-            if bool(identity_mask.any().item()):
+            if any_identity:
                 raise ValueError(
                     "composition_indices may be all -1 for an identity exposure, "
                     "or all values must be in [0, 19]"
@@ -398,11 +470,11 @@ class MethodViewRuntime:
         )
         valid = source.valid_mask & (result.diagnostics.output_nonfinite_count == 0)
         context.record_diagnostic(
-            "mean_depth", float(result.diagnostics.depth.float().mean().detach().cpu())
+            "mean_depth", result.diagnostics.depth.float().mean().detach()
         )
         context.record_diagnostic(
             "repaired_nonfinite_count",
-            int(result.diagnostics.output_nonfinite_count.sum().detach().cpu()),
+            result.diagnostics.output_nonfinite_count.float().sum().detach(),
         )
         return WaveformView(
             name=context.node_id,
@@ -424,7 +496,19 @@ class MethodViewRuntime:
                     ),
                 },
             ),
-            metadata={"corruption_diagnostics": result.diagnostics},
+            metadata={
+                "corruption_diagnostics": result.diagnostics,
+                "diagnostic_weight": source.batch_size,
+                "stochastic_trace": {
+                    "composition_index": (
+                        result.diagnostics.composition_index.detach().contiguous()
+                    ),
+                    "depth": result.diagnostics.depth.detach().contiguous(),
+                    "operator_mask": (
+                        result.diagnostics.operator_mask.detach().contiguous()
+                    ),
+                },
+            },
         )
 
     def _lhat_attack(
@@ -463,11 +547,15 @@ class MethodViewRuntime:
             if hash_id not in eligible_universe
         )
         full_waveform = source.waveform.clone()
+        full_anchor_reconstruction = source.waveform.clone()
         full_valid = torch.zeros(
             source.batch_size, device=source.waveform.device, dtype=torch.bool
         )
         rejected: list[dict[str, str]] = []
-        diagnostic_means: dict[str, float] = {}
+        diagnostic_means: dict[str, torch.Tensor] = {}
+        diagnostic_samples: dict[str, torch.Tensor] = {}
+        stochastic_trace: dict[str, torch.Tensor] = {}
+        local_diagnostic_weights: dict[str, int] = {}
         accepted_positions: tuple[int, ...] = ()
 
         if candidate_positions:
@@ -501,17 +589,38 @@ class MethodViewRuntime:
                 candidates_standardized=attack_batch.candidates_standardized.to(
                     source.waveform.device, dtype=torch.float32
                 ),
+                raw_clean_waveform=source.waveform.index_select(
+                    0, candidate_index
+                ),
                 targets=candidate_targets,
                 standardizer=pool.standardizer,
                 model_name=self.model_name,
                 config=self.lhat_config,
+            )
+            full_anchor_reconstruction.index_copy_(
+                0,
+                candidate_index,
+                attack.anchor_waveform_raw,
             )
             accepted_local, reasons = _quality_mask(
                 attack.waveform_raw,
                 minimum_std_mV=self.minimum_std_mV,
                 maximum_abs_mV=self.maximum_abs_mV,
             )
-            local_positions = _positions(accepted_local)
+            stochastic_trace = {
+                "candidate_batch_positions": candidate_index.detach().contiguous(),
+                "candidate_pool_indices": (
+                    attack_batch.candidate_pool_indices.detach().contiguous()
+                ),
+                "final_hull_weights": attack.weights.detach().contiguous(),
+                "quality_accepted_mask": accepted_local.detach().contiguous(),
+            }
+            # ``_quality_mask`` already materialized one compact per-record
+            # summary to construct the audit reasons. Reuse that host result
+            # instead of synchronizing the accepted mask a second time.
+            local_positions = tuple(
+                index for index, reason in enumerate(reasons) if reason == "accepted"
+            )
             accepted_positions = tuple(candidate_positions[index] for index in local_positions)
             if local_positions:
                 accepted_local_tensor = torch.as_tensor(
@@ -530,19 +639,40 @@ class MethodViewRuntime:
                     attack.waveform_raw.index_select(0, accepted_local_tensor),
                 )
                 full_valid[accepted_batch_tensor] = True
+                accepted_diagnostics = attack.diagnostics.select(accepted_local)
+                diagnostic_samples = accepted_diagnostics.sample_tensor_dict()
+                diagnostic_means = accepted_diagnostics.mean_tensor_dict()
+                sum_names = {
+                    "sample_anyflip_numerator",
+                    "sample_anyflip_denominator",
+                    "positive_hide_numerator",
+                    "positive_hide_denominator",
+                    "negative_add_numerator",
+                    "negative_add_denominator",
+                }
+                local_diagnostic_weights = {
+                    name: 1 if name in sum_names else len(accepted_positions)
+                    for name in diagnostic_means
+                }
+                for name, value in diagnostic_means.items():
+                    context.record_diagnostic(name, value)
             for local_index, reason in enumerate(reasons):
                 if reason != "accepted":
                     rejected.append(
                         {"hash_id": candidate_hashes[local_index], "reason": reason}
                     )
-            diagnostic_means = attack.diagnostics.mean_dict()
-            for name, value in diagnostic_means.items():
-                context.record_diagnostic(name, float(value))
-
         context.record_diagnostic("candidate_eligible_count", len(candidate_positions))
         context.record_diagnostic("quality_accepted_count", len(accepted_positions))
         context.record_diagnostic("ineligible_count", len(ineligible))
         context.record_diagnostic("quality_rejected_count", len(rejected))
+        local_diagnostic_weights.update(
+            {
+                "candidate_eligible_count": 1,
+                "quality_accepted_count": 1,
+                "ineligible_count": 1,
+                "quality_rejected_count": 1,
+            }
+        )
         return WaveformView(
             name=context.node_id,
             waveform=full_waveform,
@@ -566,6 +696,10 @@ class MethodViewRuntime:
                 "ineligible_hash_ids": ineligible,
                 "quality_rejected": tuple(rejected),
                 "diagnostic_means": diagnostic_means,
+                "diagnostic_samples": diagnostic_samples,
+                "diagnostic_weights": local_diagnostic_weights,
+                "stochastic_trace": stochastic_trace,
+                "anchor_waveform_raw": full_anchor_reconstruction.detach().contiguous(),
             },
         )
 
@@ -587,43 +721,58 @@ class MethodViewRuntime:
             clean.labels, hard.labels
         ):
             raise RuntimeError("AugMix inputs must preserve origin and label alignment")
-        accepted_positions = _positions(hard.valid_mask)
+        recorded_positions = hard.metadata.get("accepted_positions")
+        accepted_positions = (
+            tuple(int(position) for position in recorded_positions)
+            if isinstance(recorded_positions, (tuple, list))
+            else _positions(hard.valid_mask)
+        )
         full_waveform = clean.waveform.clone()
-        diagnostics: dict[str, float] = {}
+        diagnostics: dict[str, torch.Tensor] = {}
+        generator = context.torch_generator(
+            "chains_and_mixing", device=clean.waveform.device
+        )
+        # Draw chain1, chain2 and mixture parameters over the complete ordered
+        # base batch before applying the method-specific hard-view validity
+        # mask. This keeps common-random-number trajectories aligned even when
+        # two methods reject different LHAT endpoints.
+        result = generate_three_chain_augmix(
+            clean.waveform,
+            hard.waveform,
+            sampling_rate_hz=100,
+            config=self.augmix_config,
+            generator=generator,
+            # The trainer consumes raw canonical views and applies one shared
+            # model-domain z-score afterwards. Avoid an unused normalized copy.
+            include_normalized=False,
+        )
         if accepted_positions:
             indices = torch.as_tensor(
                 accepted_positions, device=clean.waveform.device, dtype=torch.long
             )
-            generator = context.torch_generator(
-                "chains_and_mixing", device=clean.waveform.device
+            full_waveform.index_copy_(
+                0,
+                indices,
+                result.mixed_raw.index_select(0, indices),
             )
-            result = generate_three_chain_augmix(
-                clean.waveform.index_select(0, indices),
-                hard.waveform.index_select(0, indices),
-                sampling_rate_hz=100,
-                config=self.augmix_config,
-                generator=generator,
-                # The trainer consumes raw canonical views and applies one
-                # shared model-domain z-score afterwards.  Avoid materializing
-                # an unused second full waveform here.
-                include_normalized=False,
-            )
-            full_waveform.index_copy_(0, indices, result.mixed_raw)
-            names = (
-                "chain1_depth",
-                "chain2_depth",
-                "vae_weight",
-                "strength",
-            )
-            values = torch.stack(
-                (
-                    result.chain1_depth.float().mean(),
-                    result.chain2_depth.float().mean(),
-                    result.mixture_weights[:, 2].mean(),
-                    result.augmented_strength.mean(),
-                )
-            ).detach().cpu().tolist()
-            diagnostics = dict(zip(names, (float(value) for value in values), strict=True))
+            diagnostics = {
+                "chain1_depth": (
+                    result.chain1_depth.index_select(0, indices).float().mean().detach()
+                ),
+                "chain2_depth": (
+                    result.chain2_depth.index_select(0, indices).float().mean().detach()
+                ),
+                "vae_weight": (
+                    result.mixture_weights.index_select(0, indices)[:, 2]
+                    .mean()
+                    .detach()
+                ),
+                "strength": (
+                    result.augmented_strength.index_select(0, indices)
+                    .mean()
+                    .detach()
+                ),
+            }
             for name, value in diagnostics.items():
                 context.record_diagnostic(name, value)
         context.record_diagnostic("accepted_count", len(accepted_positions))
@@ -641,12 +790,33 @@ class MethodViewRuntime:
                 parameters={
                     "chain3_source": hard.name,
                     "chain3_additional_corruption": False,
+                    "common_random_numbers_before_quality_mask": True,
                     "operator_domain_sampling_rate_hz": 500,
                 },
             ),
             metadata={
                 "accepted_positions": accepted_positions,
                 "diagnostic_means": diagnostics,
+                "stochastic_trace": {
+                    "chain1_composition_index": (
+                        result.chain1_composition_index.detach().contiguous()
+                    ),
+                    "chain2_composition_index": (
+                        result.chain2_composition_index.detach().contiguous()
+                    ),
+                    "chain1_depth": result.chain1_depth.detach().contiguous(),
+                    "chain2_depth": result.chain2_depth.detach().contiguous(),
+                    "chain1_operator_mask": (
+                        result.chain1_operator_mask.detach().contiguous()
+                    ),
+                    "chain2_operator_mask": (
+                        result.chain2_operator_mask.detach().contiguous()
+                    ),
+                    "mixture_weights": result.mixture_weights.detach().contiguous(),
+                    "augmented_strength": (
+                        result.augmented_strength.detach().contiguous()
+                    ),
+                },
             },
         )
 
@@ -786,6 +956,97 @@ class MethodViewRuntime:
             return self._latent_threechain_augmix(context, inputs)
         return self._augmix(context, inputs)
 
+    def _vae_encode(
+        self,
+        context: NodeContext,
+        inputs: tuple[ViewValue, ...],
+    ) -> ViewValue:
+        if len(inputs) != 1 or not isinstance(inputs[0], WaveformView):
+            raise TypeError("VAE reconstruction encoder requires one clean waveform")
+        source = inputs[0]
+        encoder = context.resource("vae_encoder")
+        identity = getattr(encoder, "checkpoint_identity", None)
+        describe = getattr(identity, "describe", None)
+        payload = describe() if callable(describe) else None
+        if not isinstance(payload, Mapping) or len(str(payload.get("sha256", ""))) != 64:
+            raise ValueError("managed VAE encoder has no valid checkpoint identity")
+        with torch.no_grad():
+            encoder_input = prepare_ecgtwin_encoder_input(source.waveform)
+            latent, _, _ = encoder(encoder_input, sample=False)
+        return LatentView(
+            name=context.node_id,
+            latent=latent.detach().contiguous(),
+            labels=source.labels,
+            sample_ids=source.sample_ids,
+            valid_mask=source.valid_mask,
+            encoder_identity=str(payload["sha256"]),
+            provenance=Provenance(
+                node_id=context.node_id,
+                operation=context.node_type,
+                parent_names=(source.name,),
+                parameters={"posterior": "deterministic_mean"},
+            ),
+        )
+
+    def _vae_decode(
+        self,
+        context: NodeContext,
+        inputs: tuple[ViewValue, ...],
+    ) -> ViewValue:
+        if len(inputs) != 1 or not isinstance(inputs[0], LatentView):
+            raise TypeError("VAE reconstruction decoder requires one latent view")
+        source = inputs[0]
+        with torch.no_grad():
+            waveform = decode_to_ptbxl_waveform(
+                context.resource("vae_decoder"),
+                source.latent,
+                target_points=1000,
+            ).detach().contiguous()
+        accepted, reasons = _quality_mask(
+            waveform,
+            minimum_std_mV=self.minimum_std_mV,
+            maximum_abs_mV=self.maximum_abs_mV,
+        )
+        accepted_positions = _positions(accepted)
+        rejected = tuple(
+            {
+                "node_id": context.node_id,
+                "hash_id": source.sample_ids[index],
+                "reason": reason,
+            }
+            for index, reason in enumerate(reasons)
+            if reason != "accepted"
+        )
+        context.record_diagnostic("quality_accepted_count", len(accepted_positions))
+        context.record_diagnostic("quality_rejected_count", len(rejected))
+        return WaveformView(
+            name=context.node_id,
+            waveform=waveform,
+            labels=source.labels,
+            sample_ids=source.sample_ids,
+            valid_mask=source.valid_mask & accepted,
+            provenance=Provenance(
+                node_id=context.node_id,
+                operation=context.node_type,
+                parent_names=(source.name,),
+                parameters={
+                    "target_points": 1000,
+                    "lead_order": "ptbxl",
+                    "quality_rejection_policy": "clean_loss_only",
+                },
+            ),
+            metadata={
+                "candidate_eligible_positions": tuple(range(source.batch_size)),
+                "accepted_positions": accepted_positions,
+                "ineligible_hash_ids": (),
+                "quality_rejected": rejected,
+                "diagnostic_weights": {
+                    "quality_accepted_count": 1,
+                    "quality_rejected_count": 1,
+                },
+            },
+        )
+
     def generate(
         self,
         *,
@@ -796,6 +1057,8 @@ class MethodViewRuntime:
         base_seed: int,
         rng_identity: Sequence[str],
         composition_indices: torch.Tensor | None = None,
+        composition_index_hint: int | None = None,
+        objective_term_names: Sequence[str] | None = None,
     ) -> GeneratedMethodBatch:
         """Generate all declared raw views before any outer model forward.
 
@@ -817,15 +1080,44 @@ class MethodViewRuntime:
                 parameters={"normalization": "none", "domain": "raw_mV_100Hz"},
             ),
         )
+
+        def canonical_corruption_adapter(
+            context: NodeContext, inputs: tuple[ViewValue, ...]
+        ) -> ViewValue:
+            kwargs: dict[str, Any] = {
+                "composition_indices": composition_indices,
+            }
+            if composition_index_hint is not None:
+                kwargs["composition_index_hint"] = composition_index_hint
+            return self._canonical_corruption(context, inputs, **kwargs)
+
         adapters = {
-            "canonical_corruption": lambda context, inputs: self._canonical_corruption(
-                context,
-                inputs,
-                composition_indices=composition_indices,
-            ),
+            "canonical_corruption": canonical_corruption_adapter,
             "lhat_attack": self._lhat_attack,
             "augmix": self._dispatch_augmix,
+            "vae_encode": self._vae_encode,
+            "vae_decode": self._vae_decode,
         }
+        selected_terms = (
+            self.method.objective.terms
+            if objective_term_names is None
+            else tuple(
+                term
+                for term in self.method.objective.terms
+                if term.name in set(objective_term_names)
+            )
+        )
+        if objective_term_names is not None:
+            requested_names = tuple(str(value) for value in objective_term_names)
+            if not requested_names or len(set(requested_names)) != len(requested_names):
+                raise ValueError("objective_term_names must be non-empty and unique")
+            resolved_names = {term.name for term in selected_terms}
+            unknown_names = sorted(set(requested_names) - resolved_names)
+            if unknown_names:
+                raise ValueError(f"unknown objective term names: {unknown_names}")
+        required_outputs = {BASE_VIEW_NAME}
+        for term in selected_terms:
+            required_outputs.update(term.views)
         bundle = execute_method(
             self.method,
             ExecutionResources(
@@ -838,6 +1130,9 @@ class MethodViewRuntime:
                 base_seed=int(base_seed),
                 rng_identity=tuple(str(value) for value in rng_identity),
             ),
+            required_outputs=tuple(
+                name for name in self.method.outputs if name in required_outputs
+            ),
         )
         candidate_position_set: set[int] = set()
         accepted_position_sets: list[set[int]] = []
@@ -846,6 +1141,8 @@ class MethodViewRuntime:
         ineligible_values: list[str] = []
         rejected_values: list[dict[str, str]] = []
         diagnostic_weights: dict[str, int] = {}
+        diagnostic_sample_chunks: dict[str, list[torch.Tensor]] = {}
+        stochastic_trace_chunks: dict[str, list[torch.Tensor]] = {}
         accounting_keys = {
             "candidate_eligible_positions",
             "accepted_positions",
@@ -874,17 +1171,61 @@ class MethodViewRuntime:
                     rejection = dict(item)
                     rejection.setdefault("node_id", value.provenance.node_id)
                     rejected_values.append(rejection)
+            prefix = f"{value.provenance.node_id}/"
+            metadata_samples = metadata.get("diagnostic_samples")
+            if isinstance(metadata_samples, Mapping):
+                for local_name, sample_values in metadata_samples.items():
+                    if not isinstance(local_name, str) or not isinstance(
+                        sample_values, torch.Tensor
+                    ):
+                        raise TypeError("runtime diagnostic_samples metadata drifted")
+                    diagnostic_sample_chunks.setdefault(
+                        f"{prefix}{local_name}", []
+                    ).append(sample_values)
+            metadata_trace = metadata.get("stochastic_trace")
+            if isinstance(metadata_trace, Mapping):
+                for local_name, trace_values in metadata_trace.items():
+                    if not isinstance(local_name, str) or not isinstance(
+                        trace_values, torch.Tensor
+                    ):
+                        raise TypeError("runtime stochastic_trace metadata drifted")
+                    stochastic_trace_chunks.setdefault(
+                        f"{prefix}{local_name}", []
+                    ).append(trace_values)
+            node_diagnostics = tuple(
+                name for name in bundle.diagnostics if name.startswith(prefix)
+            )
+            if not node_diagnostics:
+                continue
+            diagnostic_weight = metadata.get("diagnostic_weight")
+            per_name_weights = metadata.get("diagnostic_weights")
             accepted_for_node = metadata.get("accepted_positions")
-            if isinstance(accepted_for_node, (tuple, list)):
+            if (
+                isinstance(diagnostic_weight, int)
+                and not isinstance(diagnostic_weight, bool)
+                and diagnostic_weight > 0
+            ):
+                node_weight = diagnostic_weight
+            elif isinstance(accepted_for_node, (tuple, list)):
                 node_weight = max(1, len(accepted_for_node))
             else:
                 node_weight = max(
                     1, int(value.valid_mask.sum().detach().cpu())
                 )
-            prefix = f"{value.provenance.node_id}/"
-            for diagnostic_name in bundle.diagnostics:
-                if diagnostic_name.startswith(prefix):
-                    diagnostic_weights[diagnostic_name] = node_weight
+            for diagnostic_name in node_diagnostics:
+                local_name = diagnostic_name.removeprefix(prefix)
+                specific_weight = (
+                    per_name_weights.get(local_name)
+                    if isinstance(per_name_weights, Mapping)
+                    else None
+                )
+                diagnostic_weights[diagnostic_name] = (
+                    int(specific_weight)
+                    if isinstance(specific_weight, int)
+                    and not isinstance(specific_weight, bool)
+                    and specific_weight > 0
+                    else node_weight
+                )
 
         candidate_positions = tuple(sorted(candidate_position_set))
         accepted_positions = tuple(
@@ -905,6 +1246,14 @@ class MethodViewRuntime:
         return GeneratedMethodBatch(
             bundle=bundle,
             diagnostic_weights=diagnostic_weights,
+            diagnostic_samples={
+                name: torch.cat(chunks, dim=0).detach()
+                for name, chunks in diagnostic_sample_chunks.items()
+            },
+            stochastic_trace={
+                name: torch.cat(chunks, dim=0).detach()
+                for name, chunks in stochastic_trace_chunks.items()
+            },
             candidate_eligible_positions=candidate_positions,
             accepted_positions=accepted_positions,
             quality_view_total_count=quality_view_total_count,

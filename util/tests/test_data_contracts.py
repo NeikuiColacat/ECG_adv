@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 from pathlib import Path
 
 import numpy as np
@@ -27,6 +28,9 @@ from util.lead_utils import ECGTWIN_TO_PTBXL_INDICES as LEGACY_REORDER
 
 REPO = Path(__file__).resolve().parents[2]
 LOCAL_EXAMPLE = REPO / "configs" / "local" / "linbinhao_server.example.yaml"
+MANUAL_KEEP_MANIFEST = (
+    REPO / "docs" / "refactor_cleanup" / "manual_refactor_keep_manifest.md"
+)
 
 
 def _load(name: str) -> dict:
@@ -114,13 +118,23 @@ def test_manual_data_configs_record_linear_interpolation_contract():
     assert ptbxl["derived_interpolation"] == "linear_align_corners"
 
 
-def test_data_contract_tests_use_latest_mainline_or_active_fixtures():
+def test_data_contract_tests_use_registered_legacy_or_manual_fixtures():
     index = yaml.safe_load((REPO / "configs" / "active_scripts.yaml").read_text(encoding="utf-8"))
     latest_config_names = {Path(stage["config"]).name for stage in index["latest_mainline"]["stages"]}
     public_config_names = {path.name for path in (REPO / "configs" / "experiments").glob("*.yaml")}
+    manual_manifest = MANUAL_KEEP_MANIFEST.read_text(encoding="utf-8")
+    manual_config_names = {
+        Path(value).name
+        for value in re.findall(
+            r"`(configs/experiments/[^`]+\.yaml)`",
+            manual_manifest,
+        )
+    }
 
     assert "inactive_experiment_configs" not in index
-    assert public_config_names == latest_config_names
+    assert latest_config_names <= public_config_names
+    assert manual_config_names
+    assert manual_config_names <= public_config_names
 
 
 def test_tracked_configs_follow_data_preprocess_contract():

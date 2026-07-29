@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,7 @@ import torch
 import torch.nn as nn
 import yaml
 
+import core.lhat as lhat_module
 from core.augmix import (
     generate_latent_three_chain_augmix,
     generate_three_chain_augmix,
@@ -177,6 +179,8 @@ def test_lhat_attack_returns_raw_chain3_and_non_null_diagnostics(
     assert config.init_logit_gap == 0.0
     assert config.hull_lambda == pytest.approx(0.60)
     assert config.steps == 5
+    assert config.attack_weight_mode == "optimized_softmax"
+    assert config.attack_objective == "maximize_multilabel_bce_with_logits"
     assert config.random_namespace == "ecg_manual_refactor_lhat_v1"
 
     anchor = torch.zeros(2, 1, 2)
@@ -193,27 +197,121 @@ def test_lhat_attack_returns_raw_chain3_and_non_null_diagnostics(
     labels = torch.tensor([[1, 0, 0, 0, 0], [0, 1, 0, 0, 0]], dtype=torch.float32)
 
     classifier = _TinyClassifier()
+    raw_clean = torch.linspace(-0.2, 0.2, 1000).view(1, 1000, 1).repeat(
+        2, 1, 12
+    )
     result = generate_lhat_adversarial(
         classifier=classifier,
         decoder=_TinyDecoder(),
         anchor_standardized=anchor_std,
         candidates_standardized=candidate_std,
+        raw_clean_waveform=raw_clean,
         targets=labels,
         standardizer=standardizer,
         model_name=model_name,
         config=config,
     )
     assert result.waveform_raw.shape == (2, 1000, 12)
+    assert result.anchor_waveform_raw.shape == (2, 1000, 12)
     assert classifier.seen_points
     assert set(classifier.seen_points) == {expected_classifier_points}
     assert result.latent_standardized.shape == anchor.shape
     assert result.weights.shape == (2, 20)
     torch.testing.assert_close(result.weights.sum(dim=1), torch.ones(2))
     assert torch.isfinite(result.waveform_raw).all()
+    assert torch.isfinite(result.anchor_waveform_raw).all()
     assert torch.all(result.diagnostics.projection_scale <= 1.0)
     assert torch.all(result.diagnostics.effective_anchor_share >= 0.0)
     assert result.diagnostics.loss_gain.shape == (2,)
-    assert result.diagnostics.mean_dict()["decoded_invalid_rate"] == 0.0
+    diagnostics = result.diagnostics
+    torch.testing.assert_close(
+        diagnostics.reconstruction_delta,
+        diagnostics.decoded_anchor_bce - diagnostics.raw_clean_bce,
+    )
+    torch.testing.assert_close(
+        diagnostics.adversarial_delta,
+        diagnostics.final_bce - diagnostics.decoded_anchor_bce,
+    )
+    torch.testing.assert_close(
+        diagnostics.total_delta,
+        diagnostics.final_bce - diagnostics.raw_clean_bce,
+    )
+    torch.testing.assert_close(
+        diagnostics.initial_attack_objective,
+        diagnostics.initial_bce,
+    )
+    torch.testing.assert_close(
+        diagnostics.final_attack_objective,
+        diagnostics.final_bce,
+    )
+    torch.testing.assert_close(
+        diagnostics.attack_objective_gain,
+        diagnostics.final_attack_objective
+        - diagnostics.initial_attack_objective,
+    )
+    torch.testing.assert_close(diagnostics.loss_gain, diagnostics.adversarial_delta)
+    assert diagnostics.sample_anyflip_eligible.dtype == torch.bool
+    assert diagnostics.sample_anyflip_success.dtype == torch.bool
+    assert bool(
+        (
+            diagnostics.sample_anyflip_success
+            <= diagnostics.sample_anyflip_eligible
+        ).all()
+    )
+    assert diagnostics.mean_dict()["decoded_invalid_rate"] == 0.0
+    selected = diagnostics.select(torch.tensor([True, False]))
+    assert selected.raw_clean_bce.shape == (1,)
+    assert all(
+        value.shape == (1,) for value in selected.sample_tensor_dict().values()
+    )
+    assert all(
+        value.ndim == 0 and not value.requires_grad
+        for value in selected.mean_tensor_dict().values()
+    )
+
+
+def test_lhat_attack_objectives_are_effective_and_multilabel_balanced() -> None:
+    logits = torch.zeros(1, 5, requires_grad=True)
+    targets = torch.tensor([[1, 0, 0, 0, 0]], dtype=torch.float32)
+    reference_logits = torch.zeros_like(logits)
+
+    ordinary = lhat_module._attack_objective_per_sample(
+        logits,
+        targets,
+        objective="maximize_multilabel_bce_with_logits",
+        reference_logits=reference_logits,
+    ).sum()
+    ordinary_gradient = torch.autograd.grad(ordinary, logits, retain_graph=True)[0]
+    balanced = lhat_module._attack_objective_per_sample(
+        logits,
+        targets,
+        objective="maximize_equal_positive_negative_bce_with_logits",
+        reference_logits=reference_logits,
+    ).sum()
+    balanced_gradient = torch.autograd.grad(balanced, logits)[0]
+
+    assert balanced_gradient[0, 0].abs() > ordinary_gradient[0, 0].abs()
+    assert balanced_gradient[0, 1].abs() < ordinary_gradient[0, 1].abs()
+    assert balanced_gradient[0, 1:].abs().unique().numel() == 1
+
+    shifted_logits = torch.full((1, 5), 0.75, requires_grad=True)
+    divergence = lhat_module._attack_objective_per_sample(
+        shifted_logits,
+        targets,
+        objective="maximize_bernoulli_kl_from_decoded_anchor",
+        reference_logits=reference_logits,
+    )
+    assert divergence.item() > 0.0
+    assert torch.autograd.grad(divergence.sum(), shifted_logits)[0].abs().sum() > 0.0
+
+    uniform = replace(
+        load_lhat_config(),
+        attack_weight_mode="uniform_compute_matched",
+        attack_objective="compute_matched_uniform_latent_control",
+        learning_rate=1.0e-30,
+    )
+    assert uniform.attack_weight_mode == "uniform_compute_matched"
+    assert uniform.attack_objective == "compute_matched_uniform_latent_control"
 
 
 def test_three_chain_augmix_is_deterministic_and_keeps_chain3_unmodified() -> None:
