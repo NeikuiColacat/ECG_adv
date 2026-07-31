@@ -40,7 +40,7 @@ data:
 boot_models:
   efficientnet1dv2:
     checkpoint_path: null
-    output_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor/ptbxl_effnet1dv2_source_v1
+    output_dir: runs/ptbxl_effnet1dv2_source_v1
     training_parameters:
       epochs: 30
       learning_rate: 0.001
@@ -53,10 +53,10 @@ boot_models:
       train_batch_size: 128
       eval_batch_size: 256
   ecgfounder:
-    pretrained_checkpoint_path: /home/linbinhao/ECG_adv_data/ecgfounder/checkpoint/12_lead_ECGFounder.pth
+    pretrained_checkpoint_path: handoff_artifacts/ecg_k500_data_models_handoff_20260731/weights/ecgfounder/12_lead_ECGFounder.pth
     task_checkpoint_path: null
     trainable_scope: full
-    output_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor/ptbxl_ecgfounder_source_v1
+    output_dir: runs/ptbxl_ecgfounder_source_v1
     training_parameters:
       epochs: 5
       learning_rate: 0.0001
@@ -135,7 +135,7 @@ logging:
 output:
   # Fallback used when train_model/train_ptbxl is called directly. The two
   # boot scripts use the model-specific output_dir values above.
-  run_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor/ptbxl_source_v1
+  run_dir: runs/ptbxl_source_v1
   if_exists: error
   checkpoints_dir: checkpoints
   best_checkpoint_file: best.pt

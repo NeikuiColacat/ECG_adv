@@ -1,9 +1,10 @@
-schema_version: 1
+schema_version: 2
 profile_name: pn2021_k500_data_interface_handoff
 
 # This file is a portable handoff contract, not a second split generator.
-# Runtime data, caches and ID arrays stay outside Git and are supplied through
-# get_dataloader(..., cache_dir=..., split_dir=...).
+# Runtime data, caches, frozen ID arrays, and weights stay outside Git.
+# The handoff archive supplies split IDs and weights; waveform caches are
+# supplied separately through get_dataloader(..., cache_dir=..., split_dir=...).
 interface:
   module: data_preprocess.data_runtime
   loader: get_dataloader
@@ -26,16 +27,16 @@ interface:
 required_configs:
   ptbxl_dataset:
     path: data/PTBXL.yaml
-    sha256: 26c87a402ed59a22ce7bac58a90d9f3ff5ad392c3d75c27efb5fb1562a0b4324
+    sha256: 5f5daf247b3ec4fe7d9fbcc81188628a0e6f9b027ed548a5aa1aa27c8bae666f
   pn2021_dataset:
     path: data/PN2021.yaml
-    sha256: e1a0fb067b2cc6cee878be9224280e8de9277d2bbff984dc718a28908b43c5b6
+    sha256: ff338449b826f56ffda5c68fa8d12a1d58bda3a02ff707653f5883c6bfa58910
   pn2021_mapping:
     path: data/PN2021_super5_v7.yaml
     sha256: 570483989f5870314be8e40eae9875dd688a8caaeda58580738d7ab9af8a10ea
   splits:
     path: data/splits.yaml
-    sha256: d19eddb5b41854fcd6d8a554efb3454dec2c6994f407eaa7cb82ed805629daf9
+    sha256: 49a09e5d037c2cfdfff5182fa4ef8db116291a4c3d195de2c116548809d98888
   data_load:
     path: data/data_load.yaml
     sha256: 4873d56fe3e8e6077139e043019e70829db2d2f8ed4703c3b00ff0afc611c2b8
@@ -44,13 +45,22 @@ required_configs:
     sha256: 8b337606c43b6fec2959dd185477ce32f48b139f5fce5112ee26efe58eb4bbbc
   evaluation:
     path: eval/PN2021.yaml
-    sha256: 6d3e7df9f8223f1450c26e2fd8f76e716cafea8288ba12deb46589fe7bbdda03
+    sha256: 2d2ce2f8b0f53d3bd8dba3b3d849cfebeb493a751bc39efda06fde47b77a96a5
   corruption_cache:
     path: augmentation/cache.yaml
-    sha256: e2181af9aa43e478d36884dd9689b2495b875ca358996a327fbae44a0066652e
+    sha256: d6ba4a569524289c8cf515ff23c4ae418aa21e622bef294bec9349fe9205619b
   corruption_operators:
     path: augmentation/operators.yaml
     sha256: cfc4e243f569226a8f444a38d9dd4fbc00ccf7de724c47886dcc9319b9c790cc
+  source_training:
+    path: train/PTBXL.yaml
+    sha256: c7052c3cff4609bfa4a19cbf135afcf368d90ea10a804502440bc0d3b64d2efc
+  vae:
+    path: train/vae.yaml
+    sha256: 9aafb228abbd7507b15c50c86d8dddf502fb2536ed554ea86445778900c8062c
+  source_weight_registry:
+    path: baselines/ptbxl_source_v1.yaml
+    sha256: c8b456d20120fde9ee8572e2c08731435669575e5c5341a7f36564e5adbe70c1
 
 required_modules:
   runtime:
@@ -68,12 +78,23 @@ required_modules:
     - util/augmentations/profile.py
     - util/augmentations/operators.py
     - util/augmentations/torch_operators.py
+  model_definitions:
+    - models/__init__.py
+    - models/checkpoints.py
+    - models/contracts.py
+    - models/efficientnet1d.py
+    - models/ecgfounder.py
+    - models/factory.py
+    - models/input_adapter.py
+    - models/vae.py
   contract_tests:
     - util/tests/test_load_cache.py
     - util/tests/test_split_cache.py
     - util/tests/test_data_runtime.py
     - util/tests/test_random_seed.py
-    - util/tests/test_config_bundle.py
+    - util/tests/test_handoff_contract.py
+    - util/tests/test_model_input_adapter.py
+    - util/tests/test_models.py
 
 protocol:
   split_id: pn2021_super5_k500_cpsc_combined_v1
@@ -103,10 +124,11 @@ protocol:
     checkpoint_selection_allowed: false
 
 split_artifacts:
-  transport: external_read_only_directory
+  transport: external_handoff_archive
   git_tracked: false
   runtime_argument: split_dir
-  relative_root: pn2021_super5_k500_cpsc_combined_v1
+  relative_root: splits/manual_refactor_super5_v2_k500_tune_seed20260501
+  pn2021_split_dir: pn2021_super5_k500_cpsc_combined_v1
   parent_manifest:
     file: split_manifest.json
     sha256: 58210d9b192bc18e9085f235453094814c9caed2cf9142998084ae7a004e9a42
@@ -175,3 +197,43 @@ split_artifacts:
         hash_id_set_sha256: 649d3503c3a004fc299b0df7b8cb37ab8c97cc9e15326e9781254a70422489c6
       evaluation_drop_all_zero:
         hash_id_set_sha256: 9658f3bb25ab76eb3ee2f1fcea6c7441192a8cd2cfac5d647dd09bc1d7b1649d
+
+artifact_bundle:
+  git_tracked: false
+  archive_file: ecg_k500_data_models_handoff_20260731.tar.zst
+  extracted_root: ecg_k500_data_models_handoff_20260731
+  compression: zstd
+  contains_raw_ecg: false
+  contains_waveform_caches: false
+  contains_frozen_splits: true
+  contains_model_weights: true
+  manifest_file: MANIFEST.yaml
+
+model_artifacts:
+  ecgtwin_vae:
+    role: frozen_latent_encoder_decoder
+    definition: models/vae.py
+    config: configs/train/vae.yaml
+    packaged_checkpoint: weights/ecgtwin/vae_model.pth
+    checkpoint_size_bytes: 118289354
+    checkpoint_sha256: c2b4ef8060e412bd503f46b66dd44fc460e67a89de0ae1809dcc771358b3fa93
+    license_file: licenses/ECGTwin_LICENSE
+  ecgfounder_official_pretrained:
+    role: official_pretrained_backbone
+    definition: models/ecgfounder.py
+    packaged_checkpoint: weights/ecgfounder/12_lead_ECGFounder.pth
+    checkpoint_size_bytes: 369942585
+    checkpoint_sha256: ee199f3781f4ae1f732973267f003da0a759ea12bddb0dd28a77faa60aca7997
+    license_file: licenses/ECGFounder_LICENSE
+  efficientnet1dv2_source:
+    role: locked_ptbxl_super5_source_checkpoint
+    definition: models/efficientnet1d.py
+    packaged_checkpoint: weights/ptbxl_source/efficientnet1dv2_best.pt
+    checkpoint_size_bytes: 77699342
+    checkpoint_sha256: fff9bd293677be54a606e28775c66d410d55b0ad7440a4e7fbde55357ec13e68
+  ecgfounder_source:
+    role: locked_ptbxl_super5_source_checkpoint
+    definition: models/ecgfounder.py
+    packaged_checkpoint: weights/ptbxl_source/ecgfounder_best.pt
+    checkpoint_size_bytes: 368158862
+    checkpoint_sha256: c23ec4361b097b74a4efed427488c4dd6a3753adfc75f7d1fc281e4df0989948

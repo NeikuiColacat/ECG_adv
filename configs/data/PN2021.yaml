@@ -1,6 +1,6 @@
 dataset: pn2021
 dataset_version: physionet2021
-data_root: /home/linbinhao/ECG_adv_data
+data_root: ./data
 
 root: ${data_root}/physionet2021
 waveform_dir: training

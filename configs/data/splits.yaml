@@ -5,11 +5,11 @@ random_seed:
   namespace: ecg_manual_refactor_split_v1
 
 output:
-  root_dir: /home/linbinhao/ECG_adv_data/splits/manual_refactor_super5_v2_k500_tune_seed20260501
+  root_dir: ./handoff_artifacts/ecg_k500_data_models_handoff_20260731/splits/manual_refactor_super5_v2_k500_tune_seed20260501
   if_exists: error
 
 ptbxl:
-  cache_dir: /data/linbinhao/ECG_manual_refactor_cache/ptbxl_100hz_qc_v3_20260716
+  cache_dir: ./cache/ptbxl_100hz_qc_v3_20260716
   sampling_rate_hz: 100
   split_id: ptbxl_super5_official_folds_v1
   output_subdir: ptbxl_super5_official_folds_v1
@@ -23,7 +23,7 @@ ptbxl:
   require_patient_disjoint: true
 
 pn2021:
-  cache_dir: /data/linbinhao/ECG_manual_refactor_cache/pn2021_100hz_linear_qc_v3_20260716
+  cache_dir: ./cache/pn2021_100hz_linear_qc_v3_20260716
   sampling_rate_hz: 100
   split_id: pn2021_super5_k500_cpsc_combined_v1
   output_subdir: pn2021_super5_k500_cpsc_combined_v1

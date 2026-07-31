@@ -1,6 +1,6 @@
 dataset: ptbxl
 dataset_version: v1.0.3
-data_root: /home/linbinhao/ECG_adv_data
+data_root: ./data
 
 root: ${data_root}/ptbxl
 metadata_file: ptbxl_database.csv

@@ -81,6 +81,6 @@ runtime:
     dtype: bfloat16
 
 output:
-  run_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor/pn2021_evaluation_v2
+  run_dir: runs/pn2021_evaluation_v2
   if_exists: error
   result_file: evaluation_result.json

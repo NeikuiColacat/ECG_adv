@@ -38,9 +38,9 @@ It records the required tracked YAML/config SHA256 values plus each logical
 center's exact `hash_id_set_sha256`.
 
 The base seed is provenance for how the split was created; it is not sufficient
-by itself to identify the selected records. Consumers must use the supplied
-read-only split artifact directory and verify the source-manifest,
-split-manifest, and hash-set identities exposed by
+by itself to identify the selected records. Consumers must use the frozen split
+directory from `ecg_k500_data_models_handoff_20260731.tar.zst` and verify the
+source-manifest, split-manifest, and hash-set identities exposed by
 `loader.dataset.selection.describe()`. They must not re-sample K500 at runtime.
 
 The minimum tracked config bundle is:
@@ -54,6 +54,9 @@ The minimum tracked config bundle is:
 - `eval/PN2021.yaml`
 - `augmentation/cache.yaml`
 - `augmentation/operators.yaml`
+- `train/PTBXL.yaml`
+- `train/vae.yaml`
+- `baselines/ptbxl_source_v1.yaml`
 
 The public data entry point is `data_preprocess.data_runtime.get_dataloader`.
 For a method-owned preprocessing pipeline, request canonical raw mV data:
@@ -82,5 +85,5 @@ order is `CD,HYP,MI,NORM,STTC`. Only K500-derived partitions may be used for
 target-center adaptation or tuning. Ref-excluded evaluation partitions are
 read-only and cannot be used for model adaptation or checkpoint selection.
 
-Runtime caches, split arrays, local paths and model handles remain outside Git.
-Only the portable contract and SHA256 identities are tracked here.
+Runtime caches, split arrays, and model weights remain outside Git. Only the
+portable contract and SHA256 identities are tracked here.

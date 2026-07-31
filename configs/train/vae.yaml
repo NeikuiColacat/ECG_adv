@@ -2,7 +2,7 @@ schema_version: 1
 
 model:
   name: ecgtwin_vae
-  checkpoint_path: model/ECGTwin/checkpoints/vae_model.pth
+  checkpoint_path: handoff_artifacts/ecg_k500_data_models_handoff_20260731/weights/ecgtwin/vae_model.pth
   checkpoint_format: encoder_decoder_state_dict
   input_layout: time_channel
   input_points: 1024
