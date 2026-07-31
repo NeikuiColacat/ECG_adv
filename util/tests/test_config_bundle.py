@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import shutil
 from pathlib import Path
 
@@ -29,6 +30,81 @@ def _copy_configs(tmp_path: Path) -> Path:
     destination = tmp_path / "strategy_configs"
     shutil.copytree(PROJECT_ROOT / "configs", destination)
     return destination
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_k500_handoff_locks_config_and_partition_identities() -> None:
+    config_root = PROJECT_ROOT / "configs"
+    handoff_path = config_root / "data" / "k500_handoff.yaml"
+    handoff = yaml.safe_load(handoff_path.read_text(encoding="utf-8"))
+
+    assert handoff["schema_version"] == 1
+    assert handoff["profile_name"] == "pn2021_k500_data_interface_handoff"
+
+    for name, reference in handoff["required_configs"].items():
+        relative = Path(reference["path"])
+        assert not relative.is_absolute(), name
+        resolved = resolve_config_reference(
+            reference["path"],
+            owner_config_path=handoff_path,
+            config_root=config_root,
+            description=f"{name} handoff config",
+            must_exist=True,
+        )
+        assert _sha256(resolved) == reference["sha256"]
+
+    split_config = yaml.safe_load(
+        (config_root / "data" / "splits.yaml").read_text(encoding="utf-8")
+    )
+    seed_config = yaml.safe_load(
+        (config_root / "random_seed.yaml").read_text(encoding="utf-8")
+    )
+    mapping_config = yaml.safe_load(
+        (config_root / "data" / "PN2021_super5_v7.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    evaluation_config = yaml.safe_load(
+        (config_root / "eval" / "PN2021.yaml").read_text(encoding="utf-8")
+    )
+    protocol = handoff["protocol"]
+
+    assert protocol["split_id"] == split_config["pn2021"]["split_id"]
+    assert protocol["mapping_version"] == mapping_config["mapping_version"]
+    assert protocol["mapping_hash"] == mapping_config["mapping_hash"]
+    assert protocol["class_order"] == mapping_config["class_order"]
+    assert protocol["class_order"] == evaluation_config["protocol"]["class_order"]
+    assert protocol["base_seed"] == seed_config["random_seed"]
+    assert protocol["seed_namespace"] == split_config["random_seed"]["namespace"]
+    assert protocol["k500_count_per_center"] == split_config["pn2021"]["k"]
+    assert protocol["heldout"]["exclude_k500_hashes"] is True
+    assert protocol["heldout"]["model_adaptation_allowed"] is False
+    assert protocol["heldout"]["checkpoint_selection_allowed"] is False
+
+    expected_sources = {
+        center["name"]: center["source_centers"]
+        for center in split_config["pn2021"]["logical_centers"]
+    }
+    centers = handoff["split_artifacts"]["logical_centers"]
+    assert set(centers) == set(expected_sources)
+    for center_name, center in centers.items():
+        assert center["source_centers"] == expected_sources[center_name]
+        assert center["k500"]["count"] == 500
+        assert center["k500_tune_train"]["count"] == 400
+        assert center["k500_tune_validation"]["count"] == 100
+        for partition_name in (
+            "k500",
+            "k500_tune_train",
+            "k500_tune_validation",
+            "evaluation_all_zero_kept",
+            "evaluation_drop_all_zero",
+        ):
+            digest = center[partition_name]["hash_id_set_sha256"]
+            assert len(digest) == 64
+            assert set(digest) <= set("0123456789abcdef")
 
 
 def test_config_reference_resolves_inside_copied_bundle(tmp_path: Path) -> None:

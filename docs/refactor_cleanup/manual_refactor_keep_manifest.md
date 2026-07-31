@@ -1,6 +1,6 @@
 # 手动重构保留清单与旧代码清理闸门
 
-更新日期：2026-07-18
+更新日期：2026-07-31
 
 ## 目的
 
@@ -39,6 +39,7 @@ YAML 或隐式回退入口。
 | `configs/data/PN2021_super5_v7.yaml` | `KEEP-MANUAL` | PN2021 到 Super5 v7 的配置化映射 | 映射版本/hash 和标签测试完全等价 |
 | `configs/data/splits.yaml` | `KEEP-MANUAL` | PTB-XL 官方折与 PN2021 四逻辑中心固定 K500；在不改变父 K500 身份的前提下派生 400/100 内部调参划分；逻辑 `cpsc_2018` 合并 CPSC 2018/Extra | 新配置保留 source cache、患者隔离、合并中心、父 K500 hash、独立 tuning seed、400/100 互斥并集和 ref-exclusion 身份 |
 | `configs/data/data_load.yaml` | `KEEP-MANUAL` | 唯一数据运行配置；统一控制 RAM/mmap、K500 selection-resident、worker、pin-memory 和 prefetch | 新配置保留 split/cache/hash/顺序/RNG 身份，并保证只 gather 已验证 selection、连续 CPU 存储、源 mmap 及时关闭、worker 安全门和 mmap 数值等价 |
+| `configs/data/k500_handoff.yaml` | `KEEP-MANUAL` | 学术方法对比的数据接口交接契约；锁定所需配置 SHA、四中心 K500/K400/K100/ref-excluded hash 身份和只读边界，不复制数据或 split 数组 | 新交接契约保留 source/split manifest、逐中心 hash-set、映射、类序、seed 来源、配置闭包及 heldout 只读语义 |
 | `configs/random_seed.yaml` | `KEEP-MANUAL` | 手动重构代码统一使用的项目基础随机种子 | 新配置保留基础 seed、配置 SHA256 和所有白名单随机入口 |
 
 ### A2. 数据预处理代码

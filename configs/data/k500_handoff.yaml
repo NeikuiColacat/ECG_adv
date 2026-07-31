@@ -1,0 +1,177 @@
+schema_version: 1
+profile_name: pn2021_k500_data_interface_handoff
+
+# This file is a portable handoff contract, not a second split generator.
+# Runtime data, caches and ID arrays stay outside Git and are supplied through
+# get_dataloader(..., cache_dir=..., split_dir=...).
+interface:
+  module: data_preprocess.data_runtime
+  loader: get_dataloader
+  evaluation_session: SequentialEvaluationDataSession
+  selection_identity: ECGSelection.describe
+  canonical_raw_request:
+    sampling_rate_hz: 100
+    prepare_for_model: false
+    sanitize: false
+    global_zscore: false
+    output_layout: time_channel
+    shuffle: false
+  canonical_raw_output:
+    signal_shape: [1000, 12]
+    signal_dtype: float32
+    physical_unit: mV
+    label_shape: [5]
+    class_order: [CD, HYP, MI, NORM, STTC]
+
+required_configs:
+  ptbxl_dataset:
+    path: data/PTBXL.yaml
+    sha256: 26c87a402ed59a22ce7bac58a90d9f3ff5ad392c3d75c27efb5fb1562a0b4324
+  pn2021_dataset:
+    path: data/PN2021.yaml
+    sha256: e1a0fb067b2cc6cee878be9224280e8de9277d2bbff984dc718a28908b43c5b6
+  pn2021_mapping:
+    path: data/PN2021_super5_v7.yaml
+    sha256: 570483989f5870314be8e40eae9875dd688a8caaeda58580738d7ab9af8a10ea
+  splits:
+    path: data/splits.yaml
+    sha256: d19eddb5b41854fcd6d8a554efb3454dec2c6994f407eaa7cb82ed805629daf9
+  data_load:
+    path: data/data_load.yaml
+    sha256: 4873d56fe3e8e6077139e043019e70829db2d2f8ed4703c3b00ff0afc611c2b8
+  random_seed:
+    path: random_seed.yaml
+    sha256: 8b337606c43b6fec2959dd185477ce32f48b139f5fce5112ee26efe58eb4bbbc
+  evaluation:
+    path: eval/PN2021.yaml
+    sha256: 6d3e7df9f8223f1450c26e2fd8f76e716cafea8288ba12deb46589fe7bbdda03
+  corruption_cache:
+    path: augmentation/cache.yaml
+    sha256: e2181af9aa43e478d36884dd9689b2495b875ca358996a327fbae44a0066652e
+  corruption_operators:
+    path: augmentation/operators.yaml
+    sha256: cfc4e243f569226a8f444a38d9dd4fbc00ccf7de724c47886dcc9319b9c790cc
+
+required_modules:
+  runtime:
+    - data_preprocess/load_cache.py
+    - data_preprocess/split_cache.py
+    - data_preprocess/data_runtime.py
+    - util/config_bundle.py
+    - util/random_seed.py
+  cache_builders:
+    - data_preprocess/PTBXL_preprocess.py
+    - data_preprocess/pn2021_metadata.py
+    - data_preprocess/PN2021_preprocess.py
+    - data_preprocess/augmentations_cache.py
+    - util/augmentations/__init__.py
+    - util/augmentations/profile.py
+    - util/augmentations/operators.py
+    - util/augmentations/torch_operators.py
+  contract_tests:
+    - util/tests/test_load_cache.py
+    - util/tests/test_split_cache.py
+    - util/tests/test_data_runtime.py
+    - util/tests/test_random_seed.py
+    - util/tests/test_config_bundle.py
+
+protocol:
+  split_id: pn2021_super5_k500_cpsc_combined_v1
+  source_manifest_sha256: fa06cf268147d451e2925c17311ba13f565962dcf28acee27cb991a915dbb31f
+  mapping_version: v7_super5_sjr_rgq_review_20260528
+  mapping_hash: 555ec85d5b51
+  class_order: [CD, HYP, MI, NORM, STTC]
+  base_seed: 20260501
+  seed_namespace: ecg_manual_refactor_split_v1
+  candidate_order: hash_id_lexicographic
+  sampling_policy: uniform_without_replacement
+  replacement: false
+  k500_count_per_center: 500
+  tuning:
+    train_partition: k500_tune_train
+    train_count: 400
+    validation_partition: k500_tune_validation
+    validation_count: 100
+    union_must_equal_parent_k500: true
+    overlap_count: 0
+  heldout:
+    partitions:
+      - evaluation_all_zero_kept
+      - evaluation_drop_all_zero
+    exclude_k500_hashes: true
+    model_adaptation_allowed: false
+    checkpoint_selection_allowed: false
+
+split_artifacts:
+  transport: external_read_only_directory
+  git_tracked: false
+  runtime_argument: split_dir
+  relative_root: pn2021_super5_k500_cpsc_combined_v1
+  parent_manifest:
+    file: split_manifest.json
+    sha256: 58210d9b192bc18e9085f235453094814c9caed2cf9142998084ae7a004e9a42
+  logical_centers:
+    ningbo:
+      source_centers: [ningbo]
+      split_manifest_sha256: a7b855502ba1f716fd36dff953561687d83c1031032bfdd318dc53a54acd02d5
+      k500:
+        count: 500
+        hash_id_set_sha256: 96b4e0f20d798e4f89564af7bc1565906c30e28e7a4a019ec9840c6be36adc53
+      k500_tune_train:
+        count: 400
+        hash_id_set_sha256: abca3243b19c3a0ff814d3313fb2da23e9dcd28122b731d4e406eb034ce7d865
+      k500_tune_validation:
+        count: 100
+        hash_id_set_sha256: f934e625c096e114cbe3bb48169f3a02b256522a1dddaad15552e53732101b40
+      evaluation_all_zero_kept:
+        hash_id_set_sha256: 9bf2d375a44badc8934827392f9e88a648c1b7dd42175eb5d6a2872deb8f544d
+      evaluation_drop_all_zero:
+        hash_id_set_sha256: d6172052fcd5628ef6766e1ce39a242f9b93043f8b24bc8770fa7a03386b0abb
+    chapman_shaoxing:
+      source_centers: [chapman_shaoxing]
+      split_manifest_sha256: 4c758059aef347ecf986446570fd54150cc6391c1f9a47a87efbd790ee263621
+      k500:
+        count: 500
+        hash_id_set_sha256: 75d0beaf155ac51809cc056cb29f751f5d56fba4d08099bdd928045e011426f4
+      k500_tune_train:
+        count: 400
+        hash_id_set_sha256: 1b40fe6334e3239953cca417c6694e3935092f575e107661251d7cad0632ca9d
+      k500_tune_validation:
+        count: 100
+        hash_id_set_sha256: dac7294c9cc8a0a3e3d30580f2a8e5dd6708ec17ad4b111c78f623fb7a9d03a2
+      evaluation_all_zero_kept:
+        hash_id_set_sha256: 60e1ba32f2c4f683e28602282b781559df41cae863f50a2ae05638792a326216
+      evaluation_drop_all_zero:
+        hash_id_set_sha256: 48189fcf311ce604c9e19c15df63067be5014c5e23c0ea3533b6941f24b6b1b2
+    cpsc_2018:
+      source_centers: [cpsc_2018, cpsc_2018_extra]
+      split_manifest_sha256: 806a339ceefbc9cb346814bd69871df9fa9c58cb19d6a8982140c1d5b8fe5fe8
+      k500:
+        count: 500
+        hash_id_set_sha256: a0973c7015295deca44d4ea195564883e4c784dae1cdbc37a4c2bbb450551729
+      k500_tune_train:
+        count: 400
+        hash_id_set_sha256: 7d1cf25e977a485e5b614a0cac12842a266afde6e7c9a7fb30c18292641c0e57
+      k500_tune_validation:
+        count: 100
+        hash_id_set_sha256: e37ff6c5cc2b960ed516d8bec55c4f62622d161d726c3c77c930d726355fc372
+      evaluation_all_zero_kept:
+        hash_id_set_sha256: 77f238288b125472d9ffa25144b73d51828f5baff7b89f107754d33fe4573780
+      evaluation_drop_all_zero:
+        hash_id_set_sha256: a97599eddabd3b1f83a417117e27517d9754b1c47bb906ba2faa52a9b9299801
+    georgia:
+      source_centers: [georgia]
+      split_manifest_sha256: d346f63a8bc01f29a088cf482cb479f3045c97ac6d781659555a333cf1a77eb4
+      k500:
+        count: 500
+        hash_id_set_sha256: 9d407e4d4b2bc1f23667ffb574e54ddf99cf2e72ecc207df17c5bfe589f4c3c0
+      k500_tune_train:
+        count: 400
+        hash_id_set_sha256: 7d6af0b5308f34256efcdfa501ddae14b35300463e0423ca9db63bf3da2fb676
+      k500_tune_validation:
+        count: 100
+        hash_id_set_sha256: 82726dd774fa5267f87d1482d48a58e7c7a9b56a9dff9894f1832d3dc7b1683d
+      evaluation_all_zero_kept:
+        hash_id_set_sha256: 649d3503c3a004fc299b0df7b8cb37ab8c97cc9e15326e9781254a70422489c6
+      evaluation_drop_all_zero:
+        hash_id_set_sha256: 9658f3bb25ab76eb3ee2f1fcea6c7441192a8cd2cfac5d647dd09bc1d7b1649d
