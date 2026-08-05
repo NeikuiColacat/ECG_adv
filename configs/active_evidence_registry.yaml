@@ -1,5 +1,5 @@
 schema_version: 1
-updated: 2026-07-10
+updated: 2026-08-05
 purpose: >
   Single tracked entry point for the current trusted ECG_adv_Gen experimental
   facts. New agents should start here after reading AGENTS.md instead of
@@ -80,6 +80,46 @@ run_record_policy:
   notes:
     - Store registered run paths with ${paths.output_root} placeholders, not host absolute paths.
     - Do not commit checkpoint or generated dataset payloads.
+
+active_development_mainline:
+  lock_id: aligned_targetonly_augmix_lhat_simplified_20260805
+  method: targetonly_twochain_simclr_rotating4_preflip_lhat_bce
+  status: locked_prospective_replication_recipe
+  paper_use: development_only
+  paper_claim_allowed: false
+  selection_decision: user_directed_simplification_override_after_development_search
+  selection_audit:
+    candidate_count: 94
+    efficientnet1dv2_candidate_count: 52
+    ecgfounder_candidate_count: 42
+    original_preregistered_gate_pass_count: 0
+    independent_test_evidence: false
+  data_contract:
+    mapping_version: v7_super5_sjr_rgq_review_20260528
+    mapping_hash: 555ec85d5b51
+    class_order: [CD, HYP, MI, NORM, STTC]
+    adaptation_population: per_center_fixed_k500_only
+    outside_k500_model_access: false
+    reference_exclusion_per_center: 500
+    logical_centers: [ningbo, chapman_shaoxing, cpsc_2018, georgia]
+    cpsc_2018_includes_extra: true
+    primary_metric_view: drop_all_zero
+  frozen_topology:
+    stage1: clean_vs_twochain_augmix_simclr
+    stage2_base: family_balanced_clean_plus_rotating_depth23_supervision
+    stage2_auxiliary: exact_label_attack_then_contract_vae_lhat_bce
+    auxiliary_gradient_merge: direct_sum
+    excluded: [stage1_vae_lhat_tail, vicreg, ptbxl_source_replay, clean_hard_jsd, pcgrad, multistart, residual_head]
+  evidence:
+    machine_lock: agent_workspace/performance_summary_20260727/aligned_targetonly_augmix_lhat_lock_20260804.json
+    technical_report: agent_workspace/performance_summary_20260727/aligned_targetonly_augmix_lhat_report_20260804.html
+    aggregate_study: agent_workspace/vae_lhat_attack_then_contract_20260805/results.json
+  required_before_paper_promotion:
+    - migrate_recipe_to_package_owned_managed_launcher
+    - freeze_recipe_without_heldout_feedback
+    - run_at_least_three_independent_repeats_per_backbone
+    - report_mean_standard_deviation_and_fixed_recipe_failures
+    - reserve_or_add_an_independent_test_protocol
 
 managed_runs:
   - run_id: seed20260601_k500_v7_sjr_rgq_20260530_rep1

@@ -1,11 +1,22 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "lock_id": "aligned_targetonly_augmix_lhat_simplified_20260805",
   "supersedes_lock_id": "aligned_targetonly_augmix_lhat_20260804",
-  "status": "locked_development_only",
+  "status": "locked_development_mainline_replication_recipe",
   "paper_claim_allowed": false,
   "locked_on": "2026-08-05",
-  "selection_decision": "intermediate_simplified_attack_then_contract",
+  "mainline_role": "prospective_frozen_replication_recipe",
+  "selection_decision": "user_directed_simplification_override_after_development_search",
+  "selection_audit": {
+    "study_candidate_count": 94,
+    "efficientnet1dv2_candidate_count": 52,
+    "ecgfounder_candidate_count": 42,
+    "original_preregistered_gate_pass_count": 0,
+    "selected_candidates_passed_original_gate": false,
+    "override_reason": "freeze one cross-backbone-aligned, attribution-friendly AugMix plus VAE-LHAT topology for prospective replication",
+    "selection_feedback_scope": "four-center ref-excluded PN2021 Clean and PN2021-C development scoreboard",
+    "independent_test_evidence": false
+  },
   "primary_metric_view": "drop_all_zero",
   "mapping": {
     "version": "v7_super5_sjr_rgq_review_20260528",
@@ -23,8 +34,15 @@
   "method_contract": {
     "scientific_arm": "twochain_augmix_simclr_then_rotating4_plus_preflip_lhat_bce",
     "stage1": {
-      "views": "clean_plus_twochain_augmix",
+      "views": "clean_vs_one_twochain_augmix_strong_view",
       "objective": "simclr",
+      "simclr_temperature": 0.5,
+      "augmix_internal_chains": 2,
+      "augmix_dirichlet_alpha": 0.5,
+      "augmix_clean_mix_beta_alpha": 0.5,
+      "pretrain_logit_anchor_weight": 5.0,
+      "pretrain_logit_anchor_class_weights": [1.0, 1.0, 1.0, 1.0, 1.0],
+      "classifier_head_trainable": false,
       "vae_lhat_tail_fraction": 0.0,
       "vicreg_weight": 0.0,
       "ptbxl_replay_weight": 0.0
@@ -55,6 +73,18 @@
       "direct_bce_weight": 1.0,
       "clean_hard_jsd_weight": 0.0,
       "auxiliary_alpha": 2.0
+    },
+    "loss_contract": {
+      "stage1": "L_stage1 = L_NT_Xent(clean, twochain_augmix; tau=0.5) + 5.0 * L_soft_logit_anchor(clean)",
+      "stage1_logit_anchor": "mean_class BCEWithLogits(student_logits, sigmoid(frozen_PTBXL_source_logits)); equal class weights",
+      "stage2_base": "L_base = 0.5 * L_BCE(clean,y) + 0.125 * sum_{j=1..4} L_BCE(rotating_corruption_j,y) + w_anchor * L_soft_logit_anchor(clean)",
+      "stage2_auxiliary_gradient": "g = grad(L_base) + 2.0 * grad(L_BCE(contracted_VAE_LHAT_view,y)); then one combined L2 gradient clip and one optimizer update",
+      "stage2_supervised_logit_anchor_teacher": "frozen post_Stage1 pre_Stage2 model snapshot",
+      "stage2_supervised_logit_anchor_weight_by_backbone": {
+        "efficientnet1dv2": 2.0,
+        "ecgfounder": 0.5
+      },
+      "jsd_weight": 0.0
     },
     "explicitly_excluded": [
       "stage1_vae_lhat_tail",
@@ -140,6 +170,8 @@
       "training_view_sample_anyflip_asr": 0.0,
       "training_acceptance_rate": 0.9174529918435422,
       "selected_t_mean": 0.6177843908755852,
+      "contracted_training_bce_gain_mean": 0.061332405486279294,
+      "contracted_training_bce_gain_sample_count": 40156,
       "raw_decoded_invalid_rate_max": 0.0
     },
     "ecgfounder": {
@@ -147,6 +179,8 @@
       "training_view_sample_anyflip_asr": 0.0,
       "training_acceptance_rate": 0.9264669819583115,
       "selected_t_mean": 0.5906186190728276,
+      "contracted_training_bce_gain_mean": 0.026630500968930798,
+      "contracted_training_bce_gain_sample_count": 52892,
       "raw_decoded_invalid_rate_max": 0.0
     }
   },
@@ -204,6 +238,8 @@
   },
   "limitations": [
     "This is a heldout-tuned, single-seed development lock, not paper-final multi-seed evidence.",
+    "The recipe was frozen by an explicit simplicity/alignment override after a 94-candidate development search; neither selected candidate passed every original preregistered promotion gate.",
+    "The measured robustness scope is the known PN2021-C depth2+3 family used during development, not unseen-corruption generalization.",
     "The backbones share the method topology, VAE-LHAT geometry, loss composition, data boundary, and evaluation contract, but retain model-scale optimizer settings.",
     "The supervised logit-anchor weight remains backbone-specific: 2.0 for EfficientNet1DV2 and 0.5 for ECGFounder.",
     "The zero training-view ASR is enforced by the pre-flip contract; raw-search ASR, loss gain, acceptance, and invalid-decode diagnostics must be reported together.",

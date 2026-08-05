@@ -1,5 +1,5 @@
 version: 1
-updated: 2026-07-01
+updated: 2026-08-05
 purpose: Track the latest-mainline YAML launch contract for the public refactor.
 source_of_truth:
   shared_server_safety: AGENTS.md
@@ -110,6 +110,46 @@ latest_mainline:
   - name: ecgfounder_threechain_locked_pn2021c_depth23
     role: ecgfounder_main_method_depth23_composite_eval
     config: configs/experiments/pn2021c_ecgfounder_official_s5_depth23_composite.yaml
+latest_development_mainline:
+  method: targetonly_twochain_simclr_rotating4_preflip_lhat_bce
+  status: locked_prospective_replication_recipe
+  locked_on: 2026-08-05
+  paper_claim_allowed: false
+  selection_decision: user_directed_simplification_override_after_development_search
+  lock: agent_workspace/performance_summary_20260727/aligned_targetonly_augmix_lhat_lock_20260804.json
+  technical_report: agent_workspace/performance_summary_20260727/aligned_targetonly_augmix_lhat_report_20260804.html
+  primary_metric_view: drop_all_zero
+  mapping_version: v7_super5_sjr_rgq_review_20260528
+  mapping_hash: 555ec85d5b51
+  adaptation_population: per_center_fixed_k500_only
+  outside_k500_model_access: false
+  backbones:
+  - efficientnet1dv2
+  - ecgfounder
+  topology:
+  - clean_vs_twochain_augmix_simclr
+  - family_balanced_clean_plus_rotating_depth23_supervision
+  - exact_label_attack_then_contract_vae_lhat_bce
+  excluded_components:
+  - stage1_vae_lhat_tail
+  - vicreg
+  - ptbxl_source_replay
+  - clean_hard_jsd
+  - pcgrad
+  - multistart
+  - residual_head
+  managed_replay:
+    status: pending_migration_from_locked_development_evidence
+    reason: >
+      The selected implementation currently lives in whitelist-owned
+      agent_workspace exploration code. It must not replace the public managed
+      launcher stages until the same recipe is moved into package-owned runners,
+      tracked YAML, CPU-tested adapters, and registered multi-seed runs.
+  evidence_boundary:
+  - heldout_tuned_development_scoreboard
+  - single_seed_per_locked_backbone_candidate
+  - zero_candidates_passed_every_original_promotion_gate
+  - frozen_for_prospective_replication_not_paper_final
 documentation_surface_policy:
   durable_process_docs: docs/pipelines
   historical_report_archive: external_provenance_not_public_tree

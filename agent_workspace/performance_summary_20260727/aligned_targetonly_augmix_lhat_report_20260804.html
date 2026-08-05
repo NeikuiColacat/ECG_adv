@@ -291,6 +291,58 @@
       background: #fff;
     }
 
+    .tech-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .tech-card {
+      min-width: 0;
+      padding: 22px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: #fff;
+    }
+
+    .tech-card .tag {
+      display: inline-block;
+      margin-bottom: 11px;
+      padding: 4px 9px;
+      border-radius: 999px;
+      color: var(--blue);
+      background: var(--blue-soft);
+      font-size: 11px;
+      font-weight: 850;
+      letter-spacing: .05em;
+    }
+
+    .tech-card ul {
+      margin: 10px 0 0;
+      padding-left: 19px;
+      color: var(--muted);
+    }
+
+    .equation {
+      overflow-x: auto;
+      margin: 13px 0 0;
+      padding: 14px 16px;
+      border: 1px solid #e4ded5;
+      border-radius: 12px;
+      background: #f3efe8;
+      color: #403933;
+      font: 600 13.5px/1.62 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      white-space: nowrap;
+    }
+
+    .equation + .equation { margin-top: 8px; }
+
+    .formula-note {
+      margin: 10px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
     .contract-grid {
       display: grid;
       grid-template-columns: 1.2fr 1fr 1fr;
@@ -417,7 +469,7 @@
       .headline-grid, .timeline { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .flow { grid-template-columns: 1fr; }
       .arrow { transform: rotate(90deg); min-height: 28px; }
-      .split { grid-template-columns: 1fr; }
+      .split, .tech-grid { grid-template-columns: 1fr; }
     }
 
     @media (max-width: 680px) {
@@ -449,7 +501,7 @@
         <span class="pill good">drop_all_zero 主指标</span>
         <span class="pill">v7 · 555ec85d5b51</span>
         <span class="pill">M20 · λ0.6 · ε12 · 10 steps</span>
-        <span class="pill warn">heldout-tuned · single seed · development only</span>
+        <span class="pill warn">冻结复现实验配方 · 非论文终局证据</span>
       </div>
     </header>
 
@@ -477,6 +529,15 @@
     </section>
 
     <section class="section">
+      <div class="callout red">
+        <strong>“锁定主线”不等于“已通过论文晋级门槛”</strong>
+        这次冻结是用户明确选择的简化与跨骨干对齐方案，用于下一轮前瞻性复现。
+        其来源研究共评估 94 个候选（EffNet 52、ECGFounder 42），没有候选通过原先全部预注册门槛；
+        当前指标使用同一组四中心 Clean / PN2021-C 开发反馈筛选，且每个锁定候选只有一个随机重复。
+      </div>
+    </section>
+
+    <section class="section">
       <div class="section-head">
         <h2>锁定的方法流程</h2>
         <p>每个中心单独得到一个适配模型；CPSC 2018 与 Extra 作为同一个逻辑中心。</p>
@@ -499,6 +560,110 @@
         </div>
       </div>
       <p class="note">评估时排除对应中心 K500，先在每个中心内平均 20 个 PN2021-C 组合，再对四个逻辑中心等权平均。</p>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>技术路径与损失函数</h2>
+        <p>下面按真实执行顺序展开；所有腐蚀先作用于 raw mV，再由模型输入层做逐样本全局 z-score。</p>
+      </div>
+
+      <div class="tech-grid">
+        <article class="tech-card">
+          <span class="tag">STAGE 1 · AUGMIX</span>
+          <h3>两条链先混合，再与 Clean 混合</h3>
+          <p class="muted">
+            同一条 K500 ECG 分别经过两条随机复合腐蚀链。算子在 500 Hz 域执行，
+            输出回到 100 Hz；两条链使用 Dirichlet 权重混合，最后使用 Beta 强度与原始 ECG 混合。
+          </p>
+          <div class="equation">m ~ Dirichlet(0.5, 0.5), q ~ Beta(0.5, 0.5)</div>
+          <div class="equation">x_aug = (1-q)x + q[m₁C₁(x) + m₂C₂(x)]</div>
+          <ul>
+            <li>对比学习正对：Clean <code>x</code> 与一个 <code>x_aug</code></li>
+            <li>分类头冻结，只更新 backbone 与临时 projection head</li>
+            <li>无 VAE tail、无 VICReg、无 PTB-XL replay</li>
+          </ul>
+        </article>
+
+        <article class="tech-card">
+          <span class="tag">STAGE 1 · LOSS</span>
+          <h3>SimCLR + source-logit anchor</h3>
+          <p class="muted">
+            SimCLR 用余弦相似度的 NT-Xent，温度 τ=0.5。冻结的 PTB-XL source
+            模型给 Clean ECG 输出五类软概率，约束目标适配时不要任意漂移。
+          </p>
+          <div class="equation">L₁ = L_NT-Xent(x, x_aug; τ=0.5) + 5·L_anchor-src(x)</div>
+          <div class="equation">L_anchor-src = mean BCEWithLogits(f(x), sigmoid(f_src(x)))</div>
+          <p class="formula-note">
+            五类权重均为 1，不使用类别特调。EffNet 做 1024 次更新；ECGFounder 做 256 次更新。
+          </p>
+        </article>
+
+        <article class="tech-card">
+          <span class="tag">STAGE 2 · BASE</span>
+          <h3>Clean 与轮换腐蚀 family-balanced</h3>
+          <p class="muted">
+            每个基础 batch 执行一次 Clean、两种 depth2、两种 depth3 暴露；
+            梯度累计完成后只做一次 optimizer update。四种腐蚀在 5 个 epoch 内覆盖全部 20 个组合。
+          </p>
+          <div class="equation">L_base = 0.5·BCE(x,y) + 0.125·Σⱼ₌₁⁴ BCE(Cⱼ(x),y)</div>
+          <div class="equation">L_base ← L_base + w_anchor·L_anchor-stage2(x)</div>
+          <p class="formula-note">
+            <code>w_anchor</code>：EffNet=2.0，ECGFounder=0.5。教师是 Stage-1
+            结束、Stage-2 开始前冻结的同一模型快照；仍是五类等权软标签 BCE。
+          </p>
+        </article>
+      </div>
+
+      <div class="tech-grid" style="margin-top:16px">
+        <article class="tech-card">
+          <span class="tag">VAE-LHAT · SEARCH</span>
+          <h3>同标签局部凸包内寻找困难终点</h3>
+          <p class="muted">
+            对每个真实 anchor，在标准化 VAE latent 中取 20 个“完全相同正标签集合”的非自身近邻，
+            优化 softmax 系数；anchor 占比由 λ=0.6 和 L2 投影共同决定。
+          </p>
+          <div class="equation">π = softmax(a), z_mix = Σⱼ₌₁²⁰ πⱼzⱼ</div>
+          <div class="equation">z_h = z₀ + 0.6(z_mix-z₀)</div>
+          <div class="equation">z* = z₀ + min(1, 12/‖z_h-z₀‖₂)(z_h-z₀)</div>
+          <p class="formula-note">
+            对系数 <code>a</code> 做 10 步 Adam，步长 0.25，最大化真实多标签 BCE；不是在 ECG
+            像素上做 PGD，也不是 flow matching。
+          </p>
+        </article>
+
+        <article class="tech-card">
+          <span class="tag">VAE-LHAT · CONTRACT</span>
+          <h3>攻击后沿路径回缩到边界前</h3>
+          <p class="muted">
+            解码困难终点后，检查从 anchor 到终点的四个位置。路径波形做线性端点残差修正，
+            使 t=0/1 对齐真实 Clean/困难端点，再选择仍保持原正确类别的最难位置。
+          </p>
+          <div class="equation">z(t) = z₀ + t(z*-z₀), t∈{0.25,0.5,0.75,1}</div>
+          <div class="equation">t* = argmax BCE(f(decode(z(t))), y), subject to pre-flip gate</div>
+          <ul>
+            <li>不得新增原本预测正确类别的翻转</li>
+            <li>正确类别 signed-logit 至少保留 Clean margin 的 50%</li>
+            <li>无合格位置时该记录回退为 Clean，不强行送入坏样本</li>
+          </ul>
+        </article>
+
+        <article class="tech-card">
+          <span class="tag">STAGE 2 · FINAL UPDATE</span>
+          <h3>基础梯度与一个 VAE hard-view 直接相加</h3>
+          <p class="muted">
+            VAE 分支只使用真实标签 BCE。它与基础分支分开求梯度，再直接相加；
+            不做 PCGrad、JSD、multistart 或梯度比例裁剪，最后统一做一次 L2 gradient clip。
+          </p>
+          <div class="equation">L_vae = BCEWithLogits(f(x_LHAT), y)</div>
+          <div class="equation">g = ∇L_base + 2.0·∇L_vae</div>
+          <div class="equation">θ ← Optimizer(θ, clip_L2(g))</div>
+          <p class="formula-note">
+            这里的 2.0 是辅助梯度系数，不表示 VAE 样本占数据的 200%；每个基础 batch
+            仍只有一个 VAE hard view，且总共只更新一次参数。
+          </p>
+        </article>
+      </div>
     </section>
 
     <section class="section">
@@ -647,7 +812,7 @@
               <th>完整方法</th>
               <th>VAE · Clean 增益</th>
               <th>VAE · PN2021-C 增益</th>
-              <th>VAE 占总 C 增益比例</th>
+              <th>VAE / 总 C 增益描述性比值</th>
             </tr>
           </thead>
           <tbody>
@@ -697,6 +862,11 @@
         </div>
       </div>
       <p class="note">回缩后 ASR 为 0 是 pre-flip contract 的设计结果：训练 view 不允许新增原本正确类别的翻转；攻击能力应看回缩前的 raw-search ASR。</p>
+      <p class="note">
+        回缩后的训练 view 仍比对应 Clean 更难：被接受样本的 BCE gain 加权均值为
+        EffNet <strong>0.0613</strong>（n=40,156），ECGFounder
+        <strong>0.0266</strong>（n=52,892）。因此 ASR=0 不等于辅助样本与 Clean 相同。
+      </p>
     </section>
 
     <section class="section">
@@ -754,8 +924,10 @@
       <div>Lock ID: <code>aligned_targetonly_augmix_lhat_simplified_20260805</code></div>
       <div>Supersedes: <code>aligned_targetonly_augmix_lhat_20260804</code></div>
       <div>Machine-readable lock: <code>aligned_targetonly_augmix_lhat_lock_20260804.json</code></div>
+      <div>Development index: <code>configs/active_scripts.yaml:latest_development_mainline</code></div>
+      <div>Evidence registry: <code>configs/active_evidence_registry.yaml:active_development_mainline</code></div>
       <div>Primary metrics: four-center equal-weight macro AUROC / AUPRC, K500 ref-excluded, PN2021-C depth2+3, drop_all_zero.</div>
-      <div>Evidence boundary: heldout-tuned, single-seed development lock; multi-seed frozen reruns remain required for a paper-final claim.</div>
+      <div>Evidence boundary: user-directed freeze after a 94-candidate heldout-tuned search; zero candidates passed every original gate; multi-seed prospective reruns remain required for a paper-final claim.</div>
     </footer>
   </main>
 </body>
