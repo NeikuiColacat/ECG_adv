@@ -1,0 +1,212 @@
+{
+  "schema_version": 2,
+  "lock_id": "aligned_targetonly_augmix_lhat_simplified_20260805",
+  "supersedes_lock_id": "aligned_targetonly_augmix_lhat_20260804",
+  "status": "locked_development_only",
+  "paper_claim_allowed": false,
+  "locked_on": "2026-08-05",
+  "selection_decision": "intermediate_simplified_attack_then_contract",
+  "primary_metric_view": "drop_all_zero",
+  "mapping": {
+    "version": "v7_super5_sjr_rgq_review_20260528",
+    "hash": "555ec85d5b51",
+    "class_order": ["CD", "HYP", "MI", "NORM", "STTC"]
+  },
+  "data_contract": {
+    "adaptation_population": "per_center_fixed_k500_only",
+    "outside_k500_model_access": false,
+    "reference_exclusion_per_center": 500,
+    "logical_centers": ["ningbo", "chapman_shaoxing", "cpsc_2018", "georgia"],
+    "cpsc_2018_includes_extra": true,
+    "aggregation": "equal_weighted_four_center_mean"
+  },
+  "method_contract": {
+    "scientific_arm": "twochain_augmix_simclr_then_rotating4_plus_preflip_lhat_bce",
+    "stage1": {
+      "views": "clean_plus_twochain_augmix",
+      "objective": "simclr",
+      "vae_lhat_tail_fraction": 0.0,
+      "vicreg_weight": 0.0,
+      "ptbxl_replay_weight": 0.0
+    },
+    "stage2": {
+      "clean_family_weight": 0.5,
+      "corrupted_family_weight": 0.5,
+      "corruption_schedule": "rotating_two_depth2_plus_two_depth3",
+      "corruption_domain": "raw_mV_before_per_sample_global_zscore",
+      "vae_lhat_views_per_batch": 1,
+      "auxiliary_gradient_merge": "direct_sum"
+    },
+    "vae_lhat": {
+      "neighbor_policy": "exact_positive_set_nonself",
+      "num_candidates": 20,
+      "search_mode": "optimized_softmax",
+      "hull_lambda": 0.6,
+      "pgd_epsilon_l2_standardized": 12.0,
+      "steps": 10,
+      "learning_rate": 0.25,
+      "attack_objective": "maximize_multilabel_bce_with_logits",
+      "contract": {
+        "version": "preflip_maxloss_grid_v1",
+        "t_values": [0.25, 0.5, 0.75, 1.0],
+        "margin_retention": 0.5,
+        "selection": "maximum_bce_without_new_clean_correct_flip"
+      },
+      "direct_bce_weight": 1.0,
+      "clean_hard_jsd_weight": 0.0,
+      "auxiliary_alpha": 2.0
+    },
+    "explicitly_excluded": [
+      "stage1_vae_lhat_tail",
+      "anchor_kl_attack_objective",
+      "clean_hard_jsd",
+      "vicreg",
+      "ptbxl_source_replay",
+      "pcgrad",
+      "multistart",
+      "residual_head"
+    ]
+  },
+  "alignment_verdict": {
+    "level": "same_core_topology_and_lhat_geometry_with_backbone_scaled_optimization",
+    "not_bitwise_or_optimizer_hyperparameter_identical": true,
+    "common": [
+      "PTB-XL source checkpoint",
+      "target-center K500 only",
+      "two-chain AugMix plus SimCLR",
+      "no VAE-LHAT in Stage-1",
+      "source replay disabled",
+      "VICReg disabled",
+      "clean plus rotating depth2/depth3 supervised adaptation",
+      "one exact-label nonself attack-then-contract VAE-LHAT view",
+      "M20, hull lambda 0.6, epsilon 12, 10 steps, margin retention 0.5",
+      "VAE hard-view BCE only; clean-hard JSD disabled",
+      "direct addition of base and VAE auxiliary gradients",
+      "raw corruption before per-sample global z-score",
+      "K500-ref-excluded Clean and PN2021-C evaluation"
+    ],
+    "differences": {
+      "efficientnet1dv2": {
+        "stage1_steps": 1024,
+        "stage2_epochs": 23,
+        "stage2_learning_rate": 0.00005,
+        "batch_size": 128,
+        "supervised_logit_anchor_weight": 2.0
+      },
+      "ecgfounder": {
+        "stage1_steps": 256,
+        "stage2_epochs": 30,
+        "stage2_learning_rate": 0.00003,
+        "batch_size": 64,
+        "supervised_logit_anchor_weight": 0.5
+      }
+    }
+  },
+  "metrics": {
+    "metric_order": ["clean_auroc", "clean_auprc", "pn2021c_auroc", "pn2021c_auprc"],
+    "efficientnet1dv2": {
+      "source_only": [0.8545268941, 0.609056982, 0.7930014653, 0.5152507843],
+      "locked_direct_fixed20": [0.8711829491696222, 0.6438506263434959, 0.8269192092678306, 0.5666429823617389],
+      "matched_no_vae": [0.8684633933839138, 0.6340389421804762, 0.8539485092377127, 0.6109916309296273],
+      "full_method": [0.8736646664827036, 0.6438283465201069, 0.8588648351802579, 0.6193370668712678],
+      "full_minus_source_pp": [1.913777, 3.477136, 6.586337, 10.408628],
+      "full_minus_locked_direct_pp": [0.248172, -0.002228, 3.194563, 5.269408],
+      "vae_matched_increment_pp": [0.520127, 0.97894, 0.491633, 0.834544]
+    },
+    "ecgfounder": {
+      "source_only": [0.8830424145, 0.6414428647, 0.8029147396, 0.5291886358],
+      "locked_direct_fixed20": [0.9102911803, 0.6971356795, 0.8531893944, 0.6111763352],
+      "matched_no_vae": [0.911454, 0.707424, 0.892195, 0.674808],
+      "full_method": [0.9144271303777564, 0.7152661313087318, 0.8924564865428553, 0.6775164887725343],
+      "full_minus_source_pp": [3.138472, 7.382327, 8.954175, 14.832785],
+      "full_minus_locked_direct_pp": [0.413595, 1.813045, 3.926709, 6.634015],
+      "vae_matched_increment_pp": [0.297313, 0.784213, 0.026149, 0.270849]
+    }
+  },
+  "attribution": {
+    "summary": "The matched VAE-LHAT increment is positive for both backbones and all four aggregate metrics, but most of the PN2021-C gain over locked Direct+fixed20 still comes from the target-adaptation base.",
+    "efficientnet_pn2021c_gain_fraction_from_matched_vae": {
+      "auroc_percent": 15.39,
+      "auprc_percent": 15.838
+    },
+    "ecgfounder_pn2021c_gain_fraction_from_matched_vae": {
+      "auroc_percent": 0.666,
+      "auprc_percent": 4.083
+    }
+  },
+  "attack_diagnostics": {
+    "efficientnet1dv2": {
+      "raw_search_sample_anyflip_asr": 0.6099240053643272,
+      "training_view_sample_anyflip_asr": 0.0,
+      "training_acceptance_rate": 0.9174529918435422,
+      "selected_t_mean": 0.6177843908755852,
+      "raw_decoded_invalid_rate_max": 0.0
+    },
+    "ecgfounder": {
+      "raw_search_sample_anyflip_asr": 0.6103550803362113,
+      "training_view_sample_anyflip_asr": 0.0,
+      "training_acceptance_rate": 0.9264669819583115,
+      "selected_t_mean": 0.5906186190728276,
+      "raw_decoded_invalid_rate_max": 0.0
+    }
+  },
+  "seed": {
+    "base_seed": 20260501,
+    "config_sha256": "8b337606c43b6fec2959dd185477ce32f48b139f5fce5112ee26efe58eb4bbbc",
+    "derivation": "sha256_first_uint32_little_endian"
+  },
+  "evidence": {
+    "aggregate_results": {
+      "path": "agent_workspace/vae_lhat_attack_then_contract_20260805/results.json",
+      "sha256": "dd10f8b585aae74d57b0f640254e407943b875ac4f2d4879d66dbe6b3e8f67b5"
+    },
+    "source_only": {
+      "path": "/home/linbinhao/ECG_adv_data/runs/agent_workspace/source_only_retest_paper_s5_depth23_20260727/aggregate_metrics.json",
+      "sha256": "bbfec6cef00d070f3661075a2005ff29266fdb5f337055e0f8375a5b458caf0a"
+    },
+    "locked_direct_registry": {
+      "path": "configs/baselines/pn2021_direct_v1.yaml"
+    },
+    "efficientnet1dv2": {
+      "candidate_id": "effnet_l37_preflip_bce100_jsd000_labelbce_m050_eps12_s10_a200_e23_20260805",
+      "manifest_path": "agent_workspace/diverse_latent_augmax_v1/configs/generated_search/a7_global_search_20260726/effnet_l37_preflip_bce100_jsd000_labelbce_m050_eps12_s10_a200_e23_20260805/manifest.json",
+      "manifest_sha256": "ff5c013090315cda4ff8c138f26066398bd47e05e52dcef8a249493d163ab758",
+      "checkpoint_sha256_by_center": {
+        "ningbo": "90f90d06157a5fdda5e2ff43f70d3a9db61ea68c74d8ddf4801401a8107de9fe",
+        "chapman_shaoxing": "673b5a946ab4d777a2656b5facada0c18c89af6afde4be503274eea4766a9fdd",
+        "cpsc_2018": "16c5672435ac6ba2f281ac94145f73677754ae0e7ba461d2c7414f16280a7bc4",
+        "georgia": "6cadb935d3c7e71348992de18601590efe433dc55e8457fa3924e5877924433f"
+      },
+      "evaluation_json_sha256_by_center": {
+        "ningbo": "80767cd63d68d31d5460027bbc86f0e472c123dd4d858fa25e030ecc7101be6d",
+        "chapman_shaoxing": "0bfb0b398af2ddc917263e9f22b0eaa2163986b102a4f26e03eb282c749e0ed1",
+        "cpsc_2018": "4ac362286da67f32dc3f586e8819ae82c683ebc28f0913df26f0006f916a3ea3",
+        "georgia": "9a0ab68e75e7fadfce5cc6a552fd65cd06e6ea8e0538784aa4f4ccf818fab3e6"
+      }
+    },
+    "ecgfounder": {
+      "candidate_id": "ecgfounder_l37_preflip_bce100_jsd000_labelbce_m050_eps12_s10_a200_e30_20260805",
+      "manifest_path": "agent_workspace/ecgfounder_l37_strict_match_20260803/config_bundle/generated_search/a7_global_search_20260726/ecgfounder_l37_preflip_bce100_jsd000_labelbce_m050_eps12_s10_a200_e30_20260805/manifest.json",
+      "manifest_sha256": "00bffe8a4bb4237e6791097c5f614d60410e732b79111d3b5b7c38091393ade0",
+      "checkpoint_sha256_by_center": {
+        "ningbo": "78da7c76921ca9093d7f35a84eedd470fc55109dbe121396fe10a0f7984aea25",
+        "chapman_shaoxing": "97ee992956dc5e1968ece01213bc3730dec27a110c8a91e0aec8e61af110796c",
+        "cpsc_2018": "14e3f113e1465a833f78cd1445e7005fefbc65ad140f1426502ee14f6268c19e",
+        "georgia": "a31ada243ebc37d4057e4e893c6e1199ccf70eb1701c28eaa3d2cd8b02f7d985"
+      },
+      "evaluation_json_sha256_by_center": {
+        "ningbo": "8441cc9db96ff7a9f9b4533aa1055761c64b6da09e867a71141a0affd5013e3c",
+        "chapman_shaoxing": "0958c1837833b1670ae4d5d4c33ee23e5ec87990a526fee0f5126e28b8ec3c77",
+        "cpsc_2018": "858fdceaa8d0acb92cbf7c0046f8ca1a783b996ba75b2af85c0757c281d7d60b",
+        "georgia": "1ed2f4cc1800e9e3141f22b32c3a1e52fb6db9123f4856dc15dd8aeec1fcf1b8"
+      }
+    }
+  },
+  "limitations": [
+    "This is a heldout-tuned, single-seed development lock, not paper-final multi-seed evidence.",
+    "The backbones share the method topology, VAE-LHAT geometry, loss composition, data boundary, and evaluation contract, but retain model-scale optimizer settings.",
+    "The supervised logit-anchor weight remains backbone-specific: 2.0 for EfficientNet1DV2 and 0.5 for ECGFounder.",
+    "The zero training-view ASR is enforced by the pre-flip contract; raw-search ASR, loss gain, acceptance, and invalid-decode diagnostics must be reported together.",
+    "The full method does not reach a plus-2-pp Clean improvement over locked Direct+fixed20 on both backbones."
+  ]
+}

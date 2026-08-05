@@ -1,0 +1,762 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EffNet × ECGFounder 精简主线锁定报告</title>
+  <style>
+    :root {
+      --ink: #2f2b27;
+      --muted: #746d65;
+      --paper: #f6f3ed;
+      --card: #fffdf9;
+      --line: #ded7cc;
+      --orange: #b75d35;
+      --orange-soft: #f8e8dd;
+      --green: #41684f;
+      --green-soft: #e7f0e9;
+      --blue: #536d84;
+      --blue-soft: #e8eef3;
+      --red: #a6433c;
+      --red-soft: #f7e6e4;
+      --shadow: 0 16px 44px rgba(60, 45, 30, .08);
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 8% -5%, rgba(183, 93, 53, .10), transparent 30rem),
+        radial-gradient(circle at 92% 8%, rgba(65, 104, 79, .08), transparent 30rem),
+        var(--paper);
+      font: 15.5px/1.68 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+        "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+
+    .page {
+      width: min(1760px, calc(100vw - 48px));
+      margin: 0 auto;
+      padding: 42px 0 72px;
+    }
+
+    .hero {
+      position: relative;
+      overflow: hidden;
+      padding: 46px 50px 42px;
+      border: 1px solid var(--line);
+      border-radius: 28px;
+      background: rgba(255, 253, 249, .92);
+      box-shadow: var(--shadow);
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      right: -80px;
+      top: -110px;
+      width: 360px;
+      height: 360px;
+      border-radius: 50%;
+      border: 70px solid rgba(183, 93, 53, .07);
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      gap: 9px;
+      align-items: center;
+      padding: 7px 12px;
+      color: var(--orange);
+      background: var(--orange-soft);
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      position: relative;
+      z-index: 1;
+      max-width: 1050px;
+      margin: 24px 0 14px;
+      font-family: Georgia, "Noto Serif SC", serif;
+      font-size: clamp(36px, 4.2vw, 66px);
+      line-height: 1.06;
+      letter-spacing: -.035em;
+      font-weight: 600;
+    }
+
+    .lede {
+      position: relative;
+      z-index: 1;
+      max-width: 1180px;
+      margin: 0;
+      color: #5f5850;
+      font-size: 18px;
+    }
+
+    .hero-meta {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 26px;
+    }
+
+    .pill {
+      padding: 8px 12px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      color: #645c54;
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .pill.good { color: var(--green); background: var(--green-soft); border-color: #c8dacd; }
+    .pill.warn { color: #8e532f; background: #fff4e7; border-color: #ead4b8; }
+
+    .headline-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 18px;
+    }
+
+    .headline {
+      min-height: 158px;
+      padding: 22px;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: var(--card);
+      box-shadow: 0 8px 24px rgba(60, 45, 30, .05);
+    }
+
+    .headline .kicker {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+    }
+
+    .headline .value {
+      margin: 8px 0 2px;
+      font-family: Georgia, serif;
+      font-size: 34px;
+      line-height: 1.1;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .headline .label { color: var(--muted); }
+    .headline.orange { border-top: 4px solid var(--orange); }
+    .headline.green { border-top: 4px solid var(--green); }
+    .headline.blue { border-top: 4px solid var(--blue); }
+
+    .section {
+      margin-top: 22px;
+      padding: 30px 32px 34px;
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      background: rgba(255, 253, 249, .93);
+      box-shadow: 0 10px 34px rgba(60, 45, 30, .055);
+    }
+
+    .section-head {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 30px;
+      margin-bottom: 22px;
+    }
+
+    h2 {
+      margin: 0;
+      font-family: Georgia, "Noto Serif SC", serif;
+      font-size: 30px;
+      font-weight: 600;
+      letter-spacing: -.02em;
+    }
+
+    h3 {
+      margin: 0 0 12px;
+      font-size: 18px;
+    }
+
+    .section-head p {
+      max-width: 760px;
+      margin: 0;
+      color: var(--muted);
+      text-align: right;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: 1fr 44px 1.18fr 44px 1.72fr;
+      gap: 8px;
+      align-items: stretch;
+    }
+
+    .flow-box {
+      padding: 22px 20px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: #fff;
+    }
+
+    .flow-box strong {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 17px;
+    }
+
+    .flow-box span {
+      color: var(--muted);
+      font-size: 13.5px;
+    }
+
+    .flow-box.aug { background: var(--orange-soft); border-color: #e9c9b6; }
+    .flow-box.vae { background: var(--green-soft); border-color: #c8dacd; }
+
+    .arrow {
+      display: grid;
+      place-items: center;
+      color: #a29487;
+      font-size: 26px;
+    }
+
+    .table-wrap {
+      width: 100%;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 17px;
+      background: #fff;
+    }
+
+    table {
+      width: 100%;
+      min-width: 1260px;
+      border-collapse: separate;
+      border-spacing: 0;
+      font-variant-numeric: tabular-nums;
+    }
+
+    th, td {
+      padding: 15px 17px;
+      border-top: 1px solid #ece6dd;
+      text-align: center;
+      white-space: nowrap;
+    }
+
+    thead th {
+      border-top: 0;
+      background: #eee9e1;
+      color: #4b453f;
+      font-size: 12.5px;
+      letter-spacing: .025em;
+    }
+
+    tbody th, td:first-child, th:first-child { text-align: left; }
+    tbody tr:first-child td, tbody tr:first-child th { border-top: 0; }
+    tbody tr.full { background: #f6faf6; }
+    tbody tr.source { color: #70685f; }
+    .model-cell { font-weight: 800; color: var(--orange); }
+    .model-cell.ecgf { color: var(--green); }
+    .metric { font-weight: 760; }
+    .pos { color: #287044; font-weight: 760; }
+    .neg { color: var(--red); font-weight: 760; }
+    .muted { color: var(--muted); }
+
+    .note {
+      margin: 13px 2px 0;
+      color: var(--muted);
+      font-size: 13.5px;
+    }
+
+    .split {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+    }
+
+    .mini-card {
+      padding: 22px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: #fff;
+    }
+
+    .contract-grid {
+      display: grid;
+      grid-template-columns: 1.2fr 1fr 1fr;
+      gap: 1px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 17px;
+      background: var(--line);
+    }
+
+    .contract-grid > div {
+      padding: 13px 16px;
+      background: #fff;
+    }
+
+    .contract-grid .head {
+      color: #554e47;
+      background: #eee9e1;
+      font-size: 12.5px;
+      font-weight: 800;
+    }
+
+    .same {
+      color: var(--green);
+      font-weight: 750;
+    }
+
+    .diff {
+      color: #925b34;
+      font-weight: 750;
+    }
+
+    .gain-bars {
+      display: grid;
+      gap: 14px;
+    }
+
+    .gain-row {
+      display: grid;
+      grid-template-columns: 190px 1fr 92px;
+      gap: 14px;
+      align-items: center;
+    }
+
+    .track {
+      height: 14px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #ece7df;
+    }
+
+    .bar {
+      height: 100%;
+      border-radius: 999px;
+      background: linear-gradient(90deg, var(--orange), #d78b63);
+    }
+
+    .bar.green { background: linear-gradient(90deg, var(--green), #7aa089); }
+    .gain-row b { text-align: right; font-variant-numeric: tabular-nums; }
+
+    .timeline {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .timeline article {
+      padding: 20px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: #fff;
+    }
+
+    .timeline .num {
+      display: inline-grid;
+      place-items: center;
+      width: 30px;
+      height: 30px;
+      margin-bottom: 13px;
+      border-radius: 50%;
+      color: #fff;
+      background: var(--orange);
+      font-weight: 850;
+    }
+
+    .timeline p { margin: 0; color: var(--muted); }
+
+    .callout {
+      padding: 19px 21px;
+      border-left: 5px solid var(--orange);
+      border-radius: 12px;
+      background: #fff7ef;
+    }
+
+    .callout.green {
+      border-left-color: var(--green);
+      background: #f0f6f1;
+    }
+
+    .callout.red {
+      border-left-color: var(--red);
+      background: var(--red-soft);
+    }
+
+    .callout strong { display: block; margin-bottom: 4px; }
+
+    .footer {
+      margin-top: 24px;
+      padding: 22px 4px 0;
+      color: var(--muted);
+      font-size: 12.5px;
+    }
+
+    code {
+      padding: .12em .36em;
+      border-radius: 5px;
+      background: #eee9e1;
+      color: #51473f;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: .92em;
+    }
+
+    @media (max-width: 1180px) {
+      .headline-grid, .timeline { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .flow { grid-template-columns: 1fr; }
+      .arrow { transform: rotate(90deg); min-height: 28px; }
+      .split { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 680px) {
+      .page { width: min(100% - 24px, 1760px); padding-top: 18px; }
+      .hero { padding: 30px 24px; }
+      .section { padding: 24px 18px; }
+      .headline-grid, .timeline { grid-template-columns: 1fr; }
+      .section-head { display: block; }
+      .section-head p { margin-top: 8px; text-align: left; }
+      .contract-grid { grid-template-columns: 1fr; }
+      .gain-row { grid-template-columns: 135px 1fr 72px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="hero">
+      <span class="eyebrow">Simplified development lock · 2026-08-05</span>
+      <h1>EffNet 与 ECGFounder<br>精简主线锁定报告</h1>
+      <p class="lede">
+        最终开发主线锁定为清晰的两阶段方法：目标中心 K500 先进行两链
+        AugMix-SimCLR 表征适配，再以 Clean、轮换腐蚀和一个
+        attack-then-contract VAE-LHAT 难样本进行监督鲁棒适配。
+        <strong>VAE 不再进入 Stage-1，JSD、Anchor-KL 和额外稳定器全部删除。</strong>
+      </p>
+      <div class="hero-meta">
+        <span class="pill good">K500-only adaptation</span>
+        <span class="pill good">source replay = 0</span>
+        <span class="pill good">drop_all_zero 主指标</span>
+        <span class="pill">v7 · 555ec85d5b51</span>
+        <span class="pill">M20 · λ0.6 · ε12 · 10 steps</span>
+        <span class="pill warn">heldout-tuned · single seed · development only</span>
+      </div>
+    </header>
+
+    <section class="headline-grid" aria-label="headline metrics">
+      <article class="headline orange">
+        <div class="kicker">EffNet · PN2021-C</div>
+        <div class="value">0.8589 / 0.6193</div>
+        <div class="label">AUROC / AUPRC</div>
+      </article>
+      <article class="headline green">
+        <div class="kicker">ECGFounder · PN2021-C</div>
+        <div class="value">0.8925 / 0.6775</div>
+        <div class="label">AUROC / AUPRC</div>
+      </article>
+      <article class="headline blue">
+        <div class="kicker">EffNet vs Direct</div>
+        <div class="value">+3.19 / +5.27</div>
+        <div class="label">PN2021-C 增益，百分点</div>
+      </article>
+      <article class="headline blue">
+        <div class="kicker">ECGFounder vs Direct</div>
+        <div class="value">+3.93 / +6.63</div>
+        <div class="label">PN2021-C 增益，百分点</div>
+      </article>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>锁定的方法流程</h2>
+        <p>每个中心单独得到一个适配模型；CPSC 2018 与 Extra 作为同一个逻辑中心。</p>
+      </div>
+      <div class="flow">
+        <div class="flow-box">
+          <strong>PTB-XL source</strong>
+          <span>锁定的五分类 checkpoint<br>模型尚未接触目标中心 K500</span>
+        </div>
+        <div class="arrow">→</div>
+        <div class="flow-box aug">
+          <strong>Stage 1 · 表征适配</strong>
+          <span>目标中心 K500：Clean + 两链 AugMix<br>SimCLR；无 VAE tail、无 VICReg、无 replay</span>
+        </div>
+        <div class="arrow">→</div>
+        <div class="flow-box vae">
+          <strong>Stage 2 · 同一次监督更新</strong>
+          <span>50% Clean + 50% 轮换 depth2/3 腐蚀；再加入一个 exact-label
+            attack-then-contract VAE-LHAT view，以真实标签 BCE 训练</span>
+        </div>
+      </div>
+      <p class="note">评估时排除对应中心 K500，先在每个中心内平均 20 个 PN2021-C 组合，再对四个逻辑中心等权平均。</p>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>两个骨干锁定到什么程度</h2>
+        <p>科学机制、数据边界、VAE 几何和损失组成相同；只保留模型体量所需的训练规模差异。</p>
+      </div>
+      <div class="contract-grid">
+        <div class="head">契约</div>
+        <div class="head">EffNet</div>
+        <div class="head">ECGFounder</div>
+
+        <div>Stage-1 视图 / 目标</div>
+        <div class="same">两链 AugMix / SimCLR</div>
+        <div class="same">两链 AugMix / SimCLR</div>
+
+        <div>Stage-1 VAE tail / replay / VICReg</div>
+        <div class="same">0 / 0 / 0</div>
+        <div class="same">0 / 0 / 0</div>
+
+        <div>监督 corruption family</div>
+        <div class="same">Clean 0.5 / Corruption 0.5</div>
+        <div class="same">Clean 0.5 / Corruption 0.5</div>
+
+        <div>VAE-LHAT 几何</div>
+        <div class="same">M20 / λ0.6 / ε12 / 10步</div>
+        <div class="same">M20 / λ0.6 / ε12 / 10步</div>
+
+        <div>边界保护</div>
+        <div class="same">t={0.25,0.5,0.75,1} / margin 0.5</div>
+        <div class="same">t={0.25,0.5,0.75,1} / margin 0.5</div>
+
+        <div>VAE 监督 / 辅助权重 / JSD</div>
+        <div class="same">BCE 1.0 / α2.0 / 0</div>
+        <div class="same">BCE 1.0 / α2.0 / 0</div>
+
+        <div>Stage-1 / Stage-2 训练规模</div>
+        <div class="diff">1024 steps / E23 · LR 5e-5 · B128</div>
+        <div class="diff">256 steps / E30 · LR 3e-5 · B64</div>
+
+        <div>监督 logit-anchor</div>
+        <div class="diff">2.0</div>
+        <div class="diff">0.5</div>
+      </div>
+      <p class="note">因此准确表述是“同一精简 pipeline、骨干尺度优化”，不是“所有训练超参数逐项相同”。</p>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>绝对指标与两类基线</h2>
+        <p>每格均为 AUROC / AUPRC；主表全部是 <code>drop_all_zero</code>。</p>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>骨干</th>
+              <th>训练状态</th>
+              <th>Clean</th>
+              <th>PN2021-C</th>
+              <th>相对 source · Clean</th>
+              <th>相对 source · C</th>
+              <th>相对 locked Direct · Clean</th>
+              <th>相对 locked Direct · C</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="source">
+              <th class="model-cell" rowspan="3">EffNet</th>
+              <td>仅 PTB-XL 训练</td>
+              <td>0.8545 / 0.6091</td>
+              <td>0.7930 / 0.5153</td>
+              <td>基线</td>
+              <td>基线</td>
+              <td>—</td>
+              <td>—</td>
+            </tr>
+            <tr>
+              <td>Direct+fixed20 · 锁定</td>
+              <td>0.8712 / 0.6439</td>
+              <td>0.8269 / 0.5666</td>
+              <td class="pos">+1.67 / +3.48 pp</td>
+              <td class="pos">+3.39 / +5.14 pp</td>
+              <td>基线</td>
+              <td>基线</td>
+            </tr>
+            <tr class="full">
+              <td class="metric">精简锁定方法</td>
+              <td class="metric">0.8737 / 0.6438</td>
+              <td class="metric">0.8589 / 0.6193</td>
+              <td class="pos">+1.91 / +3.48 pp</td>
+              <td class="pos">+6.59 / +10.41 pp</td>
+              <td><span class="pos">+0.25</span> / <span class="muted">−0.00 pp</span></td>
+              <td class="pos">+3.19 / +5.27 pp</td>
+            </tr>
+            <tr class="source">
+              <th class="model-cell ecgf" rowspan="3">ECGFounder</th>
+              <td>仅 PTB-XL 训练</td>
+              <td>0.8830 / 0.6414</td>
+              <td>0.8029 / 0.5292</td>
+              <td>基线</td>
+              <td>基线</td>
+              <td>—</td>
+              <td>—</td>
+            </tr>
+            <tr>
+              <td>Direct+fixed20 · 锁定</td>
+              <td>0.9103 / 0.6971</td>
+              <td>0.8532 / 0.6112</td>
+              <td class="pos">+2.72 / +5.57 pp</td>
+              <td class="pos">+5.03 / +8.20 pp</td>
+              <td>基线</td>
+              <td>基线</td>
+            </tr>
+            <tr class="full">
+              <td class="metric">精简锁定方法</td>
+              <td class="metric">0.9144 / 0.7153</td>
+              <td class="metric">0.8925 / 0.6775</td>
+              <td class="pos">+3.14 / +7.38 pp</td>
+              <td class="pos">+8.95 / +14.83 pp</td>
+              <td class="pos">+0.41 / +1.81 pp</td>
+              <td class="pos">+3.93 / +6.63 pp</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout" style="margin-top:16px">
+        <strong>一句话解读</strong>
+        相比“只在 PTB-XL 上训过”的 source 模型，目标域适配收益很大；相比已调好的 Direct+fixed20，
+        两个骨干的 PN2021-C 均明显提升。EffNet 的 Clean AUPRC 与 Direct 基本持平，
+        ECGFounder 的 Clean AUPRC 提升 1.81 pp。
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>VAE 对抗样本到底贡献多少</h2>
+        <p>这里不用历史 Direct，而使用同一 Stage-1、同一训练输入与预算的“无 VAE”配对臂，才是可归因的 VAE 增益。</p>
+      </div>
+      <div class="table-wrap">
+        <table style="min-width:1100px">
+          <thead>
+            <tr>
+              <th>骨干</th>
+              <th>严格匹配无 VAE</th>
+              <th>完整方法</th>
+              <th>VAE · Clean 增益</th>
+              <th>VAE · PN2021-C 增益</th>
+              <th>VAE 占总 C 增益比例</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th class="model-cell">EffNet</th>
+              <td>0.8685 / 0.6340<br><span class="muted">C: 0.8539 / 0.6110</span></td>
+              <td class="metric">0.8737 / 0.6438<br><span class="muted">C: 0.8589 / 0.6193</span></td>
+              <td class="pos">+0.52 / +0.98 pp</td>
+              <td class="pos">+0.49 / +0.83 pp</td>
+              <td>约 15.4% / 15.8%</td>
+            </tr>
+            <tr>
+              <th class="model-cell ecgf">ECGFounder</th>
+              <td>0.9115 / 0.7074<br><span class="muted">C: 0.8922 / 0.6748</span></td>
+              <td class="metric">0.9144 / 0.7153<br><span class="muted">C: 0.8925 / 0.6775</span></td>
+              <td class="pos">+0.30 / +0.78 pp</td>
+              <td class="pos">+0.03 / +0.27 pp</td>
+              <td>约 0.7% / 4.1%</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="split" style="margin-top:16px">
+        <div class="callout green">
+          <strong>能稳妥说什么</strong>
+          严格匹配无 VAE 对照下，VAE-LHAT 在两个骨干的 Clean 与 PN2021-C
+          汇总指标上均为正；EffNet 的贡献更明显。
+        </div>
+        <div class="callout red">
+          <strong>不能说什么</strong>
+          不能把相对 Direct 的全部 +3～7 pp 都归因给 VAE；当前仍是单 seed
+          开发证据，也不能把正增益表述成已证明统计显著。
+        </div>
+      </div>
+      <div class="split" style="margin-top:16px">
+        <div class="mini-card">
+          <h3>EffNet · 攻击与回缩诊断</h3>
+          <p class="muted">原始搜索 ASR <strong>61.0%</strong> · 回缩训练 view ASR
+            <strong>0%</strong> · 接受率 <strong>91.7%</strong> · 平均 t
+            <strong>0.618</strong> · 无效解码 <strong>0%</strong></p>
+        </div>
+        <div class="mini-card">
+          <h3>ECGFounder · 攻击与回缩诊断</h3>
+          <p class="muted">原始搜索 ASR <strong>61.0%</strong> · 回缩训练 view ASR
+            <strong>0%</strong> · 接受率 <strong>92.6%</strong> · 平均 t
+            <strong>0.591</strong> · 无效解码 <strong>0%</strong></p>
+        </div>
+      </div>
+      <p class="note">回缩后 ASR 为 0 是 pre-flip contract 的设计结果：训练 view 不允许新增原本正确类别的翻转；攻击能力应看回缩前的 raw-search ASR。</p>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>为什么锁定这个精简版本</h2>
+        <p>保留能够跨骨干复现的核心贡献，删除难归因且没有稳定跨骨干收益的分支。</p>
+      </div>
+      <div class="timeline">
+        <article>
+          <span class="num">1</span>
+          <h3>职责分离</h3>
+          <p>AugMix 只负责 Stage-1 表征适配；VAE-LHAT 只负责 Stage-2 困难样本，不再两阶段重复出现。</p>
+        </article>
+        <article>
+          <span class="num">2</span>
+          <h3>统一监督配方</h3>
+          <p>两个骨干都使用 Clean/Corruption 0.5/0.5、一个 VAE hard view 和直接 BCE；JSD 归零。</p>
+        </article>
+        <article>
+          <span class="num">3</span>
+          <h3>攻击后回缩</h3>
+          <p>先生成约 61% raw ASR 的困难终点，再选择不新增正确类别翻转且保留 50% margin 的最难位置。</p>
+        </article>
+        <article>
+          <span class="num">4</span>
+          <h3>只保留规模差异</h3>
+          <p>学习率、batch、训练长度和 logit-anchor 按骨干尺度保留；数据、VAE 几何、损失与评估契约完全一致。</p>
+        </article>
+      </div>
+      <div class="gain-bars" style="margin-top:22px">
+        <div class="gain-row">
+          <span>EffNet · 总 C AUPRC</span>
+          <div class="track"><div class="bar" style="width:76%"></div></div>
+          <b>+5.27 pp</b>
+        </div>
+        <div class="gain-row">
+          <span>EffNet · VAE 贡献</span>
+          <div class="track"><div class="bar" style="width:12%"></div></div>
+          <b>+0.83 pp</b>
+        </div>
+        <div class="gain-row">
+          <span>ECGFounder · 总 C AUPRC</span>
+          <div class="track"><div class="bar green" style="width:100%"></div></div>
+          <b>+6.63 pp</b>
+        </div>
+        <div class="gain-row">
+          <span>ECGFounder · VAE 贡献</span>
+          <div class="track"><div class="bar green" style="width:4%"></div></div>
+          <b>+0.27 pp</b>
+        </div>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <div>Lock ID: <code>aligned_targetonly_augmix_lhat_simplified_20260805</code></div>
+      <div>Supersedes: <code>aligned_targetonly_augmix_lhat_20260804</code></div>
+      <div>Machine-readable lock: <code>aligned_targetonly_augmix_lhat_lock_20260804.json</code></div>
+      <div>Primary metrics: four-center equal-weight macro AUROC / AUPRC, K500 ref-excluded, PN2021-C depth2+3, drop_all_zero.</div>
+      <div>Evidence boundary: heldout-tuned, single-seed development lock; multi-seed frozen reruns remain required for a paper-final claim.</div>
+    </footer>
+  </main>
+</body>
+</html>
