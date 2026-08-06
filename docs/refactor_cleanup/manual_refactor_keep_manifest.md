@@ -35,8 +35,25 @@ YAML 或隐式回退入口。
 |---|---|---|---|
 | `AGENTS.md` | `KEEP-MANUAL` | 共享服务器安全、白名单依赖边界、主线数据/方法/证据契约和验证入口 | 新代理入口完整接管前 100 行安全规则、白名单原则和论文证据边界 |
 | `README.md` | `KEEP-MANUAL` | 人类可读的手工重构入口、目录导航、dry-run 和开发证据边界 | 新项目首页完整接管当前 launcher、数据契约和验证命令 |
+| `.codex/skills/README.md` | `KEEP-MANUAL` | 说明随仓库迁移的公开项目技能及当前用户级安装方式 | 新技能索引完整接管同一公开/私有边界和安装入口 |
+| `.codex/skills/artifact-git-guard/SKILL.md` | `KEEP-MANUAL` | 提交与 push 前阻止权重、缓存、外部模型链接、秘密和运行产物进入 Git | 新 Git 防护流程覆盖相同风险并完成实际提交验证 |
+| `.codex/skills/data-prep-validator/SKILL.md` | `KEEP-MANUAL` | 审核 v7 Super5、100 Hz canonical、VAE 桥、K500 与 ref-exclusion 数据契约 | 新数据验证技能接管相同身份、布局和泄漏闸门 |
+| `.codex/skills/ecg-adv-gen/SKILL.md` | `KEEP-MANUAL` | 当前 clean-room 主线总路由；显式把旧 ECG_adv_Gen 内容降为历史来源 | 新总技能完整指向当前 AGENTS、keep manifest、active index 和 evidence registry |
+| `.codex/skills/ecg-agent-retrospective/SKILL.md` | `KEEP-MANUAL` | 将重复经验路由到 AGENTS、manifest、registry、基线文档或小技能 | 新回顾入口保留最小更新、证据和不读取全局私有会话的约束 |
+| `.codex/skills/ecg-agent-retrospective/references/handoff-template.md` | `KEEP-MANUAL` | 当前 clean worktree 的紧凑交接模板 | 新模板保留目标、状态、证据、未完成项和下一命令字段 |
+| `.codex/skills/ecg-agent-retrospective/references/session-hygiene.md` | `KEEP-MANUAL` | 项目会话卫生与禁止自动删除/归档边界 | 新规则接管相同人工确认和隐私边界 |
+| `.codex/skills/ecg-agent-retrospective/references/update-rules.md` | `KEEP-MANUAL` | 判断经验应进入 AGENTS、技能还是证据文件的最小规则 | 新规则保留可复用性、证据和上下文成本闸门 |
+| `.codex/skills/ecg-vae-online-at/SKILL.md` | `KEEP-MANUAL` | VAE-LHAT 攻击、回缩、诊断、ASR 和论文安全选择的专项流程；当前 YAML 优先于历史设置 | 新专项技能接管当前 M20/λ0.6/ε12/10步契约和历史降级规则 |
+| `.codex/skills/ecg-vae-online-at/references/literature_and_repos.md` | `KEEP-MANUAL` | VAE latent adversarial training、AugMix 及相关实现的文献与仓库线索 | 新参考文件保留来源区分和可追溯链接 |
+| `.codex/skills/model-eval/SKILL.md` | `KEEP-MANUAL` | 统一两骨干 PN2021/PN2021-C、drop-all-zero、逐中心/逐类和 matched baseline 评估口径 | 新评估技能接管全部 metric identity 与 ref-exclusion 闸门 |
+| `.codex/skills/reproducibility-check/SKILL.md` | `KEEP-MANUAL` | 审核配置闭包、Git/seed/checkpoint/命令/指标的可回放身份 | 新复现技能接管相同 run-record 和证据闭环 |
+| `.codex/skills/shared-gpu-server-discipline/SKILL.md` | `KEEP-MANUAL` | GPU、CPU、内存、IO、进程、端口和输出目录的共享服务器前置检查 | 新资源纪律入口完整接管共享服务器安全规则 |
 | `configs/README.md` | `KEEP-MANUAL` | configs-shaped 配置束、单一 launcher 和相对引用规则 | 新配置文档完整接管 bundle root、闭包、输出与覆盖规则 |
 | `docs/refactor_cleanup/manual_refactor_keep_manifest.md` | `KEEP-MANUAL` | 手工重构保护边界、退出候选与破坏性删除闸门 | 新清单逐文件接管全部 KEEP/TRANSITION/证据和用户确认记录 |
+
+仓库技能只保存公开、可复用的项目程序与必要参考。全局
+`/home/linbinhao/.codex/memories`、Codex 会话、个人配置、凭据和本机私有状态
+不属于学术仓库，不复制到本清单。
 
 ### A1. 数据预处理配置
 
@@ -344,6 +361,7 @@ pytest -q util/tests/test_augmentations.py \
 |---|---|---|---|---|---|
 | 2026-08-06 | 批次 1（已执行） | `ecg_adv_gen/data/synthetic_npz.py`；`ecg_adv_gen/training/effnet_super5.py`；`data_preprocess/prepare_ptbxl_for_ecgtwin.py`；`configs/experiments/pn2021c_effnet_paper_anchored_s5_depth23_composite.yaml` | `data_preprocess/load_cache.py` + `data_preprocess/data_runtime.py`；`core/supervised_trainer.py`；`models/vae.py` + `core/train_PN2021.py`；`configs/augmentation/operators.yaml` + `configs/eval/PN2021.yaml` | 删除后：四路径活动引用=0；白名单 Python issue=0；44 个实验 YAML 闭包 issue=0；5 个活动阶段 dry-run 通过；148 passed/16 skipped；`git diff --check` 通过 | 用户于 2026-08-06 明确回复“帮我删除” |
 | 2026-08-06 | 批次 2（干净 worktree 初始裁剪） | 仅在 `/home/linbinhao/ECG_manual_refactor_clean` 删除 A 区以外的 449 个 Git 跟踪项；精确路径由本批次提交相对父提交 `6a662c9` 的删除 diff 定义；排序后 NUL 分隔清单 SHA256 为 `f70452fed8bef77d4b171fa77086f1a727b1cb75746e058b0d1fd15a38079bac` | A0–A9 共 154 个 `KEEP-MANUAL` 文件；源 worktree `/home/linbinhao/ECG_manual_refactor` 保持历史现场 | 索引恰好 154/154，无额外或缺失路径；65 个 Python 文件本地 import issue=0；44 个实验 YAML、70 文件闭包 issue=0；73 passed/10 skipped；5 个活动阶段使用独立 `/home/linbinhao` dry-run 目标全部通过；`git diff --check` 通过 | 用户于 2026-08-06 明确回复“好的接受你的建议开始迁移” |
+| 2026-08-06 | 批次 3（公开代理记忆迁移） | 从迁移边界提交恢复 `.codex/skills/` 13 个项目文件；修正当前 clean worktree 路径、已删除入口和主线优先级 | `AGENTS.md` + keep manifest + active scripts/evidence + 八个 repo-tracked skills；全局 memory/session 不迁移 | skill frontmatter、引用路径、白名单精确集合、最低 CPU 测试和 Git 产物检查通过 | 用户于 2026-08-06 明确要求相关 AGENTS 与 skill 项目记忆一并迁移 |
 
 `methods/augmix/ecg_ops.py` 与 `methods/augmix/severity.py` 暂不放进候选批次 1：
 白名单已经切断依赖，但旧 `ecg_adv_gen/` 与 `methods/` 树内部仍相互引用。

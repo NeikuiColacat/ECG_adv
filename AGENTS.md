@@ -37,13 +37,14 @@ Before GPU training, long inference, or a cache build:
 ## Current Host
 
 ```text
-repo root:    /home/linbinhao/ECG_manual_refactor
+repo root:    /home/linbinhao/ECG_manual_refactor_clean
 data root:    /home/linbinhao/ECG_adv_data
 python:       /home/linbinhao/micromamba/envs/ECGTwin/bin/python
 keep policy:  docs/refactor_cleanup/manual_refactor_keep_manifest.md
 launcher:     boot_scripts/run_experiment.py
 active index: configs/active_scripts.yaml
 evidence:     configs/active_evidence_registry.yaml
+agent skills: .codex/skills/README.md
 ```
 
 The old `ECG_adv_Gen` repository and Git history are read-only provenance
@@ -181,11 +182,7 @@ Use the project Python directly:
   util/tests/test_torch_augmentations.py \
   util/tests/test_data_contracts.py \
   util/tests/test_labels_super5.py \
-  util/tests/test_pn2021_corruptions.py \
-  util/tests/test_method_graph.py \
-  util/tests/test_online_trainer.py \
-  util/tests/test_pn2021_evaluation.py \
-  util/tests/test_manual_run_experiment.py
+  util/tests/test_pn2021_corruptions.py
 ```
 
 Before committing or pushing:

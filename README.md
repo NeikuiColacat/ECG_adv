@@ -27,11 +27,13 @@ surface.
 1. Read [`AGENTS.md`](AGENTS.md) for shared-server safety.
 2. Read the
    [`manual refactor keep manifest`](docs/refactor_cleanup/manual_refactor_keep_manifest.md).
-3. Select a tracked YAML under `configs/experiments/`.
-4. Dry-run it through the single launcher before using data, models, or GPUs.
+3. For Codex-assisted work, use the repo-tracked
+   [project skills](.codex/skills/README.md).
+4. Select a tracked YAML under `configs/experiments/`.
+5. Dry-run it through the single launcher before using data, models, or GPUs.
 
 ```bash
-cd /home/linbinhao/ECG_manual_refactor
+cd /home/linbinhao/ECG_manual_refactor_clean
 
 /home/linbinhao/micromamba/envs/ECGTwin/bin/python \
   boot_scripts/run_experiment.py \
@@ -63,6 +65,7 @@ large artifacts into the repository.
 | `boot_scripts/` | Thin managed CLI entrypoints; no experiment business logic |
 | `util/` | Augmentations, metrics, evaluation, random identity, run records, TensorBoard, and visualization |
 | `util/tests/` | CPU contract tests for the retained execution surface |
+| `.codex/skills/` | Repo-tracked, public project procedures for agents; no private session memory |
 | `docs/refactor_cleanup/manual_refactor_keep_manifest.md` | Authoritative keep/delete boundary |
 | `agent_workspace/performance_summary_20260727/` | Two explicitly retained development evidence artifacts only |
 
@@ -96,11 +99,7 @@ must not become a new runtime dependency.
   util/tests/test_torch_augmentations.py \
   util/tests/test_data_contracts.py \
   util/tests/test_labels_super5.py \
-  util/tests/test_pn2021_corruptions.py \
-  util/tests/test_method_graph.py \
-  util/tests/test_online_trainer.py \
-  util/tests/test_pn2021_evaluation.py \
-  util/tests/test_manual_run_experiment.py
+  util/tests/test_pn2021_corruptions.py
 ```
 
 Run outputs belong under `/home/linbinhao/ECG_adv_data/runs/`, not in Git.
