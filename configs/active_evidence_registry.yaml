@@ -1,47 +1,224 @@
-schema_version: 1
+schema_version: 2
 updated: 2026-08-06
 purpose: >
-  Single tracked entry point for the current trusted ECG_adv_Gen experimental
-  facts. New agents should start here after reading AGENTS.md instead of
-  reconstructing the mainline from old chats or dated HTML reports.
+  Separate the current prospective manual-refactor recipe from historical
+  trusted evidence. A launch config is not evidence by itself.
 
-evidence_surface_policy:
-  trusted_claims_source: active_claims
-  paper_tables_source: registered_artifacts
+evidence_policy:
+  primary_metric_view: drop_all_zero
+  promotion_requires_registered_artifacts: true
   archived_reports_are_evidence_by_default: false
-  managed_launch_configs_are_evidence_by_default: false
-  safety_rules:
-    - cite_metrics_through_registry_or_registered_run_records
-    - do_not_promote_archived_reports_without_registry_link
-    - do_not_treat_launch_only_configs_as_paper_evidence
+  managed_configs_are_evidence_by_default: false
+  forbidden_selection_information:
+    - heldout_target_labels
+    - full_target_center_class_distribution
+  rules:
+    - never_promote_development_scores_to_blind_test_claims
+    - report_mapping_hash_and_reference_exclusion_with_every_main_table
+    - report_backbones_separately_before_cross_backbone_summary
+    - retain_all_zero_kept_only_as_secondary_audit_view
 
-state_machine:
-  current_state: comparison_registered
-  allowed_states:
-    - triage
-    - plan
-    - cpu_audit
-    - gpu_preflight
-    - run
-    - evaluate
-    - register_evidence
-    - comparison_bundle
-    - handoff
-  next_recommended_state: checkpoint_resume_diagnostics
+data_contract:
+  source_dataset: ptbxl_super5
+  target_dataset: pn2021
+  mapping:
+    version: v7_super5_sjr_rgq_review_20260528
+    hash: 555ec85d5b51
+    class_order: [CD, HYP, MI, NORM, STTC]
+  adaptation_population: per_center_fixed_k500_only
+  outside_k500_model_access: false
+  reference_exclusion_per_center: 500
+  logical_centers: [ningbo, chapman_shaoxing, cpsc_2018, georgia]
+  cpsc_2018_includes_extra: true
+  primary_aggregation: equal_weighted_four_center_mean
+  corruption:
+    profile: pn2021c_paper_anchored_s5_v1
+    severity: 5
+    depths: [2, 3]
+    view_count: 20
+    domain: raw_mV_before_per_sample_global_zscore
+
+active_development_mainline:
+  lock_id: aligned_targetonly_augmix_lhat_simplified_20260805
+  status: locked_prospective_replication_recipe
+  paper_use: development_only
+  paper_claim_allowed: false
+  selection:
+    decision: user_directed_simplification_override_after_development_search
+    candidate_count: 94
+    efficientnet1dv2_candidate_count: 52
+    ecgfounder_candidate_count: 42
+    original_preregistered_gate_pass_count: 0
+    independent_test_evidence: false
+    feedback_scope: four_center_ref_excluded_clean_and_pn2021c_development_scores
+  method:
+    scientific_arm: twochain_augmix_simclr_then_rotating4_plus_attack_then_contract_lhat_bce
+    stage1:
+      view_pair: clean_vs_one_twochain_augmix_strong_view
+      objective: simclr
+      temperature: 0.5
+      augmix_internal_chains: 2
+      dirichlet_alpha: 0.5
+      clean_mix_beta_alpha: 0.5
+      frozen_source_logit_anchor_weight: 5.0
+      classifier_head_trainable: false
+      ptbxl_replay_weight: 0.0
+      vicreg_weight: 0.0
+      vae_lhat_tail_fraction: 0.0
+    stage2:
+      clean_family_weight: 0.5
+      corrupted_family_weight: 0.5
+      corruption_schedule: rotating_two_depth2_plus_two_depth3
+      supervised_logit_anchor_teacher: frozen_post_stage1_pre_stage2_snapshot
+      auxiliary_gradient_merge: direct_sum
+    vae_lhat:
+      neighbor_policy: exact_positive_set_nonself
+      num_candidates: 20
+      hull_lambda: 0.6
+      pgd_epsilon_l2_standardized: 12.0
+      steps: 10
+      learning_rate: 0.25
+      attack_objective: maximize_multilabel_bce_with_logits
+      contract_version: preflip_maxloss_grid_v1
+      t_values: [0.25, 0.5, 0.75, 1.0]
+      margin_retention: 0.5
+      selection: maximum_bce_without_new_clean_correct_flip
+      auxiliary_alpha: 2.0
+    backbone_optimization:
+      efficientnet1dv2:
+        stage1_steps: 1024
+        stage2_epochs: 23
+        stage2_learning_rate: 0.00005
+        batch_size: 128
+        supervised_logit_anchor_weight: 2.0
+      ecgfounder:
+        stage1_steps: 256
+        stage2_epochs: 30
+        stage2_learning_rate: 0.00003
+        batch_size: 64
+        supervised_logit_anchor_weight: 0.5
+    excluded:
+      - stage1_vae_lhat_tail
+      - anchor_kl_attack_objective
+      - clean_hard_jsd
+      - vicreg
+      - ptbxl_source_replay
+      - pcgrad
+      - multistart
+      - residual_head
+  development_metrics:
+    metric_order: [clean_auroc, clean_auprc, pn2021c_auroc, pn2021c_auprc]
+    efficientnet1dv2:
+      source_only: [0.8545268941, 0.6090569820, 0.7930014653, 0.5152507843]
+      locked_direct_fixed20: [0.8711829492, 0.6438506263, 0.8269192093, 0.5666429824]
+      matched_no_vae: [0.8684633934, 0.6340389422, 0.8539485092, 0.6109916309]
+      full_method: [0.8736646665, 0.6438283465, 0.8588648352, 0.6193370669]
+      full_minus_locked_direct_pp: [0.248172, -0.002228, 3.194563, 5.269408]
+      vae_matched_increment_pp: [0.520127, 0.978940, 0.491633, 0.834544]
+    ecgfounder:
+      source_only: [0.8830424145, 0.6414428647, 0.8029147396, 0.5291886358]
+      locked_direct_fixed20: [0.9102911803, 0.6971356795, 0.8531893944, 0.6111763352]
+      matched_no_vae: [0.9114540000, 0.7074240000, 0.8921950000, 0.6748080000]
+      full_method: [0.9144271304, 0.7152661313, 0.8924564865, 0.6775164888]
+      full_minus_locked_direct_pp: [0.413595, 1.813045, 3.926709, 6.634015]
+      vae_matched_increment_pp: [0.297313, 0.784213, 0.026149, 0.270849]
+  diagnostics:
+    efficientnet1dv2:
+      raw_search_sample_anyflip_asr: 0.6099240054
+      contracted_training_view_anyflip_asr: 0.0
+      acceptance_rate: 0.9174529918
+      selected_t_mean: 0.6177843909
+      contracted_bce_gain_mean: 0.0613324055
+      decoded_invalid_rate_max: 0.0
+    ecgfounder:
+      raw_search_sample_anyflip_asr: 0.6103550803
+      contracted_training_view_anyflip_asr: 0.0
+      acceptance_rate: 0.9264669820
+      selected_t_mean: 0.5906186191
+      contracted_bce_gain_mean: 0.0266305010
+      decoded_invalid_rate_max: 0.0
+  evidence:
+    machine_lock:
+      path: agent_workspace/performance_summary_20260727/aligned_targetonly_augmix_lhat_lock_20260804.json
+      sha256: fd70ed1c043a7db1a6ce2826f2c05a755a3d2b498312cf986299fb73dd5f52ca
+    technical_report:
+      path: agent_workspace/performance_summary_20260727/aligned_targetonly_augmix_lhat_report_20260804.html
+      sha256: 054e9b508bbe99f598cd765bd51643121dffad34fc0ee3b7822a4b70a527e7c2
+    direct_registry:
+      path: configs/baselines/pn2021_direct_v1.yaml
+      sha256: bd09d5b568ec6881115529a405a1b85941ebe96626452807ff82d25e313e130d
+    random_seed:
+      path: configs/random_seed.yaml
+      sha256: 8b337606c43b6fec2959dd185477ce32f48b139f5fce5112ee26efe58eb4bbbc
+    historical_search_snapshot:
+      retained_live_path: false
+      sha256: dd10f8b585aae74d57b0f640254e407943b875ac4f2d4879d66dbe6b3e8f67b5
+    retention_boundary:
+      only_live_agent_workspace_artifacts:
+        - agent_workspace/performance_summary_20260727/aligned_targetonly_augmix_lhat_lock_20260804.json
+        - agent_workspace/performance_summary_20260727/aligned_targetonly_augmix_lhat_report_20260804.html
+      legacy_paths_embedded_inside_machine_lock: historical_hash_only_provenance
+      runtime_may_open_embedded_legacy_paths: false
+  managed_implementation:
+    status: whitelist_runtime_migrated_cpu_verified
+    launcher: boot_scripts/run_experiment.py
+    canonical_experiment: configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_ningbo.yaml
+    online_config: configs/train/PN2021.yaml
+    method_config: configs/train/methods/augmix_simclr_lhat.yaml
+    trainer: core/online_trainer.py
+    runtime_imports_agent_workspace: false
+    gpu_replication_status: pending
+  limitations:
+    - heldout_tuned_single_seed_development_lock
+    - selected_candidates_failed_at_least_one_original_promotion_gate
+    - measured_corruption_scope_is_known_pn2021c_depth2_plus_depth3
+    - backbone_optimizer_hyperparameters_are_not_identical
+    - supervised_logit_anchor_weight_is_backbone_specific
+    - contracted_training_asr_is_zero_by_design_and_requires_joint_diagnostics
+    - clean_gain_over_locked_direct_is_below_two_pp_on_both_backbones
+  required_before_paper_promotion:
+    - freeze_recipe_without_further_heldout_feedback
+    - add_explicit_four_center_and_two_backbone_managed_yamls
+    - run_at_least_three_independent_repeats_per_backbone
+    - report_mean_standard_deviation_and_per_center_deltas
+    - register_run_records_and_checkpoint_hashes
+    - preserve_same_budget_direct_and_no_vae_ablations
+
+historical_trusted_snapshot:
+  status: provenance_only_not_live_runtime
+  source_commit: 3a39a516420b52c219a782a7b7440f82746f4b90
+  method: vae_lhat_threechain_augmix_pn2021c
+  backbone: efficientnet1dv2
+  mapping:
+    version: v7_super5_sjr_rgq_review_20260528
+    hash: 555ec85d5b51
+  metrics:
+    pn2021_all_zero_kept_refexcluded:
+      direct: {macro_auroc: 0.8491815467, macro_auprc: 0.5271229623}
+      candidate: {macro_auroc: 0.8734502069, macro_auprc: 0.5637008611}
+    pn2021_drop_all_zero_refexcluded:
+      direct: {macro_auroc: 0.8732016318, macro_auprc: 0.6703137497}
+      candidate: {macro_auroc: 0.9014991593, macro_auprc: 0.7306554134}
+    pn2021c_all_zero_kept_corrupted_refexcluded:
+      direct: {macro_auroc: 0.8099513373, macro_auprc: 0.4728534587}
+      candidate: {macro_auroc: 0.8286190331, macro_auprc: 0.4940394547}
+    pn2021c_drop_all_zero_corrupted_refexcluded:
+      direct: {macro_auroc: 0.8312063361, macro_auprc: 0.6086938458}
+      candidate: {macro_auroc: 0.8547489876, macro_auprc: 0.6438691561}
+  replay:
+    live_legacy_code_required: false
+    recovery_policy: git_history_only_if_explicitly_requested
+  claim_boundary:
+    - historical_pipeline_not_the_current_prospective_recipe
+    - embedded_metrics_preserve_comparison_facts_not_live_execution
 
 artifact_policy:
   do_not_commit:
-    - model/DeepECG
-    - model/ECGTwin
-    - model/advdiff
-    - model/ecg_ptbxl_benchmarking
-    - model/ecgfounder
-    - datasets/
-    - runs/
-    - outputs/
-    - checkpoints/
-    - mlruns/
-    - wandb/
+    - datasets
+    - runs
+    - outputs
+    - checkpoints
+    - model
     - "*.pt"
     - "*.pth"
     - "*.ckpt"
@@ -50,351 +227,9 @@ artifact_policy:
     - "*.h5"
     - "*.pkl"
     - "*.mat"
-  tracked_allowed_artifacts:
-    - configs/**/*.yaml
-    - configs/label_mappings/*.jsonl
-    - ecg_adv_gen/**/*.py
-    - scripts/**/*.py
-    - docs/**/*.md
-    - docs/reports/archive/**/*.html
-    - util/tests/**/*.py
-
-run_record_policy:
-  required_files:
-    - run_card.json
-    - run_file_index.json
-    - summary.md
-  required_directories:
-    - configs/
-    - manifests/
-    - logs/
-    - checkpoints/
-    - eval/
-    - diagnostics/
-    - reports/
-    - artifacts/
-  required_narrative_fields:
-    - purpose
-    - result_summary
-  registration_command: micromamba run -n ECGTwin python scripts/agent/register_run.py --run-dir <run_dir> --status auto
-  notes:
-    - Store registered run paths with ${paths.output_root} placeholders, not host absolute paths.
-    - Do not commit checkpoint or generated dataset payloads.
-
-active_development_mainline:
-  lock_id: aligned_targetonly_augmix_lhat_simplified_20260805
-  method: targetonly_twochain_simclr_rotating4_preflip_lhat_bce
-  status: locked_prospective_replication_recipe
-  paper_use: development_only
-  paper_claim_allowed: false
-  selection_decision: user_directed_simplification_override_after_development_search
-  selection_audit:
-    candidate_count: 94
-    efficientnet1dv2_candidate_count: 52
-    ecgfounder_candidate_count: 42
-    original_preregistered_gate_pass_count: 0
-    independent_test_evidence: false
-  data_contract:
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    mapping_hash: 555ec85d5b51
-    class_order: [CD, HYP, MI, NORM, STTC]
-    adaptation_population: per_center_fixed_k500_only
-    outside_k500_model_access: false
-    reference_exclusion_per_center: 500
-    logical_centers: [ningbo, chapman_shaoxing, cpsc_2018, georgia]
-    cpsc_2018_includes_extra: true
-    primary_metric_view: drop_all_zero
-  frozen_topology:
-    stage1: clean_vs_twochain_augmix_simclr
-    stage2_base: family_balanced_clean_plus_rotating_depth23_supervision
-    stage2_auxiliary: exact_label_attack_then_contract_vae_lhat_bce
-    auxiliary_gradient_merge: direct_sum
-    excluded: [stage1_vae_lhat_tail, vicreg, ptbxl_source_replay, clean_hard_jsd, pcgrad, multistart, residual_head]
-  evidence:
-    machine_lock: agent_workspace/performance_summary_20260727/aligned_targetonly_augmix_lhat_lock_20260804.json
-    technical_report: agent_workspace/performance_summary_20260727/aligned_targetonly_augmix_lhat_report_20260804.html
-    aggregate_study: agent_workspace/vae_lhat_attack_then_contract_20260805/results.json
-  managed_implementation:
-    status: whitelist_runtime_migrated_cpu_verified
-    launcher: boot_scripts/run_experiment.py
-    experiment_config: configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_ningbo.yaml
-    online_config: configs/train/PN2021.yaml
-    method_config: configs/train/methods/augmix_simclr_lhat.yaml
-    trainer: core/online_trainer.py
-    runtime_imports_agent_workspace: false
-    gpu_replication_status: pending
-  required_before_paper_promotion:
-    - freeze_recipe_without_heldout_feedback
-    - run_at_least_three_independent_repeats_per_backbone
-    - report_mean_standard_deviation_and_fixed_recipe_failures
-    - reserve_or_add_an_independent_test_protocol
-
-managed_runs:
-  - run_id: seed20260601_k500_v7_sjr_rgq_20260530_rep1
-    experiment_name: effnet_direct_k500_v7_sjr_rgq
-    status: trusted
-    outcome: succeeded
-    purpose: Direct EfficientNet1DV2 K500 target-center baseline for the latest PN2021/PN2021-C VAE-LHAT comparison using seed20260601 references.
-    result_summary: Seed20260601 direct K500 baseline metadata is backfilled from existing four-center training/evaluation outputs and registered metrics/paper-table artifacts.
-    run_dir: ${paths.output_root}/managed_launches/effnet_direct_seed20260601_k500_v7_sjr_rgq_20260530_rep1_v1
-    run_card: ${paths.output_root}/managed_launches/effnet_direct_seed20260601_k500_v7_sjr_rgq_20260530_rep1_v1/run_card.json
-    summary: ${paths.output_root}/managed_launches/effnet_direct_seed20260601_k500_v7_sjr_rgq_20260530_rep1_v1/summary.md
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    mapping_hash: 555ec85d5b51
-    updated: 2026-07-06
-  - run_id: locked_rawfirst_20260618_effnet_copies2
-    experiment_name: effnet_vae_lhat_augmix_threechain_locked_k500
-    status: trusted
-    outcome: succeeded
-    purpose: Managed locked three-chain VAE-LHAT AugMix K500 EfficientNet1DV2 candidate for the latest mainline comparison.
-    result_summary: Locked three-chain PN2021 clean/ref-excluded metrics are registered through metrics_export and paper_table artifacts.
-    run_dir: ${paths.output_root}/managed_launches/effnet_threechain_locked_rawfirst_20260618_copies2_v1
-    run_card: ${paths.output_root}/managed_launches/effnet_threechain_locked_rawfirst_20260618_copies2_v1/run_card.json
-    summary: ${paths.output_root}/managed_launches/effnet_threechain_locked_rawfirst_20260618_copies2_v1/summary.md
-    mapping_version: v7_super5_sjr_rgq_review_20260528
-    mapping_hash: 555ec85d5b51
-    updated: 2026-07-02
-
-active_claims:
-  - claim_id: effnet_v7_vae_lhat_improves_direct_k500
-    title: EfficientNet1DV2 locked VAE-LHAT three-chain AugMix mainline replay surface.
-    status: trusted
-    paper_use: mainline
-    owner: linbinhao
-    evidence_doc: docs/pipelines/pn2021c_vae_lhat_augmix_locked_protocol_20260618.md
-    protocol:
-      mapping_version: v7_super5_sjr_rgq_review_20260528
-      mapping_hash: 555ec85d5b51
-      class_order: [CD, HYP, MI, NORM, STTC]
-      model_backbone: efficientnet1dv2
-      source_dataset: ptbxl
-      target_dataset: pn2021
-      target_centers: [ningbo, chapman_shaoxing, cpsc_2018, georgia]
-      evaluation_views:
-        - pn2021_all_zero_kept_refexcluded
-        - pn2021_drop_all_zero_refexcluded
-      required_reporting_views:
-        - pn2021_all_zero_kept_refexcluded
-        - pn2021_drop_all_zero_refexcluded
-        - pn2021c_all_zero_kept_corrupted_refexcluded
-        - pn2021c_drop_all_zero_corrupted_refexcluded
-      kshot:
-        mode: fixed_k
-        k: 500
-        seed: 20260601
-        subset_seed: 20260601
-        ref_excluded: true
-        ref_meta_files:
-          ningbo: ${paths.data_root}/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets/ningbo/k500_seed20260601/ningbo_real_k500_seed20260601.ref_meta.json
-          chapman_shaoxing: ${paths.data_root}/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets/chapman_shaoxing/k500_seed20260601/chapman_shaoxing_real_k500_seed20260601.ref_meta.json
-          cpsc_2018: ${paths.data_root}/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets/cpsc_2018/k500_seed20260601/cpsc_2018_real_k500_seed20260601.ref_meta.json
-          georgia: ${paths.data_root}/paper_vae_only_latenthull_sweep_20260516_v7_sjr_rgq/subsets/georgia/k500_seed20260601/georgia_real_k500_seed20260601.ref_meta.json
-      selection:
-        policy: k500_internal_val_plus_source_floor
-        forbidden_information:
-          - heldout_target_labels
-          - full_target_center_class_distribution
-    methods:
-      direct:
-        role: baseline
-        status: trusted
-        method_family: direct_target_k500_finetune
-        run_id: seed20260601_k500_v7_sjr_rgq_20260530_rep1
-        config: configs/experiments/effnet_direct_k500_v7_sjr_rgq.yaml
-        current_replay:
-          mode: managed_yaml
-          launcher: scripts/run_experiment.py
-          config: configs/experiments/effnet_direct_k500_v7_sjr_rgq.yaml
-        run_root: ${paths.output_root}/effnet_direct_k500_v7_sjr_rgq/seed20260601_k500_v7_sjr_rgq_20260530_rep1
-        manifest: ${paths.output_root}/managed_launches/effnet_direct_seed20260601_k500_v7_sjr_rgq_20260530_rep1_v1/run_manifest.json
-        metrics_long: ${paths.output_root}/metrics_export/seed20260601_k500_v7_sjr_rgq_20260530_rep1_effnet_direct_k500_v7_sjr_rgq/metrics_long.csv
-        artifact_manifest: ${paths.output_root}/metrics_export/seed20260601_k500_v7_sjr_rgq_20260530_rep1_effnet_direct_k500_v7_sjr_rgq/artifact_manifest.json
-        paper_tables:
-          pn2021_all_zero_kept_refexcluded: ${paths.output_root}/paper_table/seed20260601_k500_v7_sjr_rgq_20260530_rep1_effnet_direct_k500_v7_sjr_rgq_all_zero_kept/paper_table.csv
-          pn2021_drop_all_zero_refexcluded: ${paths.output_root}/paper_table/seed20260601_k500_v7_sjr_rgq_20260530_rep1_effnet_direct_k500_v7_sjr_rgq_drop_all_zero/paper_table.csv
-      vae_lhat:
-        role: candidate
-        status: trusted
-        traceability: managed_yaml_replay
-        method_family: vae_lhat_threechain_augmix_pn2021c
-        run_id: locked_rawfirst_20260618_effnet_copies2
-        config: configs/experiments/effnet_vae_lhat_augmix_threechain_locked_k500.yaml
-        current_replay:
-          mode: managed_yaml
-          launcher: scripts/run_experiment.py
-          config: configs/experiments/effnet_vae_lhat_augmix_threechain_locked_k500.yaml
-        run_root: ${paths.output_root}/managed_launches/effnet_threechain_locked_rawfirst_20260618_copies2_v1
-        manifest: ${paths.output_root}/managed_launches/effnet_threechain_locked_rawfirst_20260618_copies2_v1/run_manifest.json
-        metrics_long: ${paths.output_root}/metrics_export/locked_rawfirst_20260618_effnet_copies2_effnet_vae_lhat_augmix_threechain_locked_k500/metrics_long.csv
-        artifact_manifest: ${paths.output_root}/metrics_export/locked_rawfirst_20260618_effnet_copies2_effnet_vae_lhat_augmix_threechain_locked_k500/artifact_manifest.json
-        paper_tables:
-          pn2021_all_zero_kept_refexcluded: ${paths.output_root}/paper_table/locked_rawfirst_20260618_effnet_copies2_effnet_vae_lhat_augmix_threechain_locked_k500_all_zero_kept/paper_table.csv
-          pn2021_drop_all_zero_refexcluded: ${paths.output_root}/paper_table/locked_rawfirst_20260618_effnet_copies2_effnet_vae_lhat_augmix_threechain_locked_k500_drop_all_zero/paper_table.csv
-    summary_metrics:
-      pn2021_all_zero_kept_refexcluded:
-        direct: {macro_auroc: 0.8491815467, macro_auprc: 0.5271229623}
-        vae_lhat: {macro_auroc: 0.873450206917, macro_auprc: 0.563700861136}
-        delta_vae_lhat_minus_direct:
-          macro_auroc_pp: 2.42686602
-          macro_auprc_pp: 3.65778988
-      pn2021_drop_all_zero_refexcluded:
-        direct: {macro_auroc: 0.8732016318, macro_auprc: 0.6703137497}
-        vae_lhat: {macro_auroc: 0.901499159253, macro_auprc: 0.73065541338}
-        delta_vae_lhat_minus_direct:
-          macro_auroc_pp: 2.82975275
-          macro_auprc_pp: 6.03416637
-      pn2021c_all_zero_kept_corrupted_refexcluded:
-        direct: {macro_auroc: 0.8099513373, macro_auprc: 0.4728534587}
-        vae_lhat: {macro_auroc: 0.8286190331, macro_auprc: 0.4940394547}
-        delta_vae_lhat_minus_direct:
-          macro_auroc_pp: 1.86676958
-          macro_auprc_pp: 2.1185996
-      pn2021c_drop_all_zero_corrupted_refexcluded:
-        direct: {macro_auroc: 0.8312063361, macro_auprc: 0.6086938458}
-        vae_lhat: {macro_auroc: 0.8547489876, macro_auprc: 0.6438691561}
-        delta_vae_lhat_minus_direct:
-          macro_auroc_pp: 2.35426514
-          macro_auprc_pp: 3.51753102
-    required_reporting_artifacts:
-      pn2021c_metrics_long: ${paths.output_root}/metrics_export/pn2021c_official_s5_locked_effnet_direct_vs_threechain_locked/metrics_long.csv
-      pn2021c_merge_manifest: ${paths.output_root}/metrics_export/pn2021c_official_s5_locked_effnet_direct_vs_threechain_locked/merge_manifest.json
-      method_metrics_long:
-        direct: ${paths.output_root}/metrics_export/pn2021c_official_s5_locked_effnet_direct_k500_v7_sjr_rgq/metrics_long.csv
-        vae_lhat: ${paths.output_root}/metrics_export/pn2021c_official_s5_locked_effnet_vae_lhat_augmix_threechain_locked_k500/metrics_long.csv
-      method_artifact_manifests:
-        direct: ${paths.output_root}/metrics_export/pn2021c_official_s5_locked_effnet_direct_k500_v7_sjr_rgq/artifact_manifest.json
-        vae_lhat: ${paths.output_root}/metrics_export/pn2021c_official_s5_locked_effnet_vae_lhat_augmix_threechain_locked_k500/artifact_manifest.json
-      paper_tables:
-        pn2021c_all_zero_kept_corrupted_refexcluded: ${paths.output_root}/paper_table/pn2021c_official_s5_locked_effnet_direct_vs_threechain_all_zero_kept/paper_table.csv
-        pn2021c_drop_all_zero_corrupted_refexcluded: ${paths.output_root}/paper_table/pn2021c_official_s5_locked_effnet_direct_vs_threechain_drop_all_zero/paper_table.csv
-      paper_table_manifests:
-        pn2021c_all_zero_kept_corrupted_refexcluded: ${paths.output_root}/paper_table/pn2021c_official_s5_locked_effnet_direct_vs_threechain_all_zero_kept/paper_table_manifest.json
-        pn2021c_drop_all_zero_corrupted_refexcluded: ${paths.output_root}/paper_table/pn2021c_official_s5_locked_effnet_direct_vs_threechain_drop_all_zero/paper_table_manifest.json
-    supporting_reporting_artifacts:
-      ecgfounder_decoupled_depth23_fourcenter_20260709:
-        status: provisional_single_seed
-        role: current_internal_best_ecgfounder_depth23_candidate
-        evidence_doc: docs/reports/archive/20260709/ecgfounder_decoupled_fourcenter_depth23_summary.md
-        implementation_commit: b57ee1600e468ce7bc0765708c9d78d7f8f65217
-        method_config: configs/experiments/ecgfounder_vae_lhat_augmix_threechain_locked_k500.yaml
-        replay_status: oneoff_resolved_args_in_eval_result_not_managed_run_record
-        training_root: ${paths.output_root}/ecgfounder_vae_lhat_augmix_threechain_locked_k500/ecgf_decoupled_scale0p1_c24_ep15_fourcenter_20260709
-        evaluation_root: ${paths.output_root}/pn2021c_ecgfounder_official_s5_depth23_composite/ecgf_decoupled_scale0p1_c24_ep15_fourcenter_20260709
-        summary_csv: ${paths.output_root}/pn2021c_ecgfounder_official_s5_depth23_composite/ecgf_decoupled_scale0p1_c24_ep15_fourcenter_20260709/summary/ecgfounder_decoupled_scale0p1_c24_ep15_depth23_summary.csv
-        center_csv: ${paths.output_root}/pn2021c_ecgfounder_official_s5_depth23_composite/ecgf_decoupled_scale0p1_c24_ep15_fourcenter_20260709/summary/ecgfounder_decoupled_scale0p1_c24_ep15_depth23_center_summary.csv
-        summary_json: ${paths.output_root}/pn2021c_ecgfounder_official_s5_depth23_composite/ecgf_decoupled_scale0p1_c24_ep15_fourcenter_20260709/summary/ecgfounder_decoupled_scale0p1_c24_ep15_depth23_summary.json
-        protocol:
-          mapping_version: v7_super5_sjr_rgq_review_20260528
-          mapping_hash: 555ec85d5b51
-          class_order: [CD, HYP, MI, NORM, STTC]
-          target_centers: [ningbo, chapman_shaoxing, cpsc_2018, georgia]
-          k: 500
-          seed: 20260531
-          ref_excluded: true
-          checkpoint_policy: last_checkpoint_only
-          corruption_profile: official_standard_severity_5
-          composite_depths: [2, 3]
-          metric_view: all_zero_kept_macro
-        method:
-          backbone: ecgfounder_fullft
-          chain_base_mode: all_clean_plus_vae_adv
-          latent_augmix_copies: 24
-          latent_augmix_width: 3
-          latent_augmix_depth: -1
-          vae_adv_stream_sample_scale: 0.10
-          epochs: 15
-          jsd_consistency_enabled: false
-        summary_metrics:
-          depth2:
-            clean: {macro_auroc: 0.9004081421, macro_auprc: 0.6439567133}
-            pn2021c: {macro_auroc: 0.8307388887, macro_auprc: 0.5384574918}
-            delta_vs_matched_direct_pp: {macro_auroc: 4.3336966324, macro_auprc: 7.5490744751}
-          depth3:
-            clean: {macro_auroc: 0.9004081421, macro_auprc: 0.6439567133}
-            pn2021c: {macro_auroc: 0.8015357718, macro_auprc: 0.4941763398}
-            delta_vs_matched_direct_pp: {macro_auroc: 4.6234668715, macro_auprc: 7.5014430241}
-          depth2_plus_depth3:
-            clean: {macro_auroc: 0.9004081421, macro_auprc: 0.6439567133}
-            pn2021c: {macro_auroc: 0.8161373303, macro_auprc: 0.5163169158}
-            drop_from_clean_pp: {macro_auroc: 8.4270811869, macro_auprc: 12.7639797538}
-            delta_vs_matched_direct_pp: {macro_auroc: 4.4785817520, macro_auprc: 7.5252587496}
-            delta_vs_corrupted_k500_supervised_pp: {macro_auroc: 2.5416159214, macro_auprc: 5.6136170834}
-            delta_vs_ecgfounder_c117_pp: {macro_auroc: 1.8537501798, macro_auprc: 1.9612442512}
-            gap_vs_effnet_c117_pp: {macro_auroc: 0.8458722097, macro_auprc: 3.6662930588}
-        caveats:
-          - Single-seed result; multi-seed replication is missing.
-          - Exact launch command and Git SHA were not persisted in the run artifacts.
-          - Managed config records the routing topology but not the c24/ep15 one-off overrides or asrboost_g9 initialization.
-      ecgfounder_locked_threechain_pn2021c_s5:
-        status: supporting_contrast_no_direct_delta
-        metrics_long: ${paths.output_root}/metrics_export/pn2021c_official_s5_locked_ecgfounder_threechain_locked_k500/metrics_long.csv
-        artifact_manifest: ${paths.output_root}/metrics_export/pn2021c_official_s5_locked_ecgfounder_threechain_locked_k500/artifact_manifest.json
-        summary_metrics:
-          pn2021c_all_zero_kept_corrupted_refexcluded: {macro_auroc: 0.8246779744, macro_auprc: 0.5094402413}
-          pn2021c_drop_all_zero_corrupted_refexcluded: {macro_auroc: 0.8544315655, macro_auprc: 0.6535433412}
-        paper_tables:
-          pn2021c_all_zero_kept_corrupted_refexcluded: ${paths.output_root}/paper_table/pn2021c_official_s5_locked_ecgfounder_threechain_all_zero_kept/paper_table.csv
-          pn2021c_drop_all_zero_corrupted_refexcluded: ${paths.output_root}/paper_table/pn2021c_official_s5_locked_ecgfounder_threechain_drop_all_zero/paper_table.csv
-        paper_table_manifests:
-          pn2021c_all_zero_kept_corrupted_refexcluded: ${paths.output_root}/paper_table/pn2021c_official_s5_locked_ecgfounder_threechain_all_zero_kept/paper_table_manifest.json
-          pn2021c_drop_all_zero_corrupted_refexcluded: ${paths.output_root}/paper_table/pn2021c_official_s5_locked_ecgfounder_threechain_drop_all_zero/paper_table_manifest.json
-    comparison_bundle:
-      comparison_id: v7_sjr_rgq_effnet_direct_vs_threechain_locked_20260618
-      status: built
-      baseline_method: direct
-      candidate_method: vae_lhat
-      output_dir: ${paths.output_root}/comparison_bundles/v7_sjr_rgq_effnet_direct_vs_threechain_locked_20260618
-      baseline_run_id: effnet_direct_k500_v7_sjr_rgq
-      candidate_run_id: effnet_vae_lhat_augmix_threechain_locked_k500
-      managed_artifacts:
-        - comparison_manifest.json
-        - metrics_long.csv
-        - comparison_delta.csv
-        - paper_table_pn2021_all_zero_kept_refexcluded.csv
-        - paper_table_pn2021_all_zero_kept_refexcluded_manifest.json
-        - paper_table_pn2021_drop_all_zero_refexcluded.csv
-        - paper_table_pn2021_drop_all_zero_refexcluded_manifest.json
-    caveats:
-      - Current trusted candidate evidence covers managed locked three-chain PN2021 clean/ref-excluded metrics.
-      - PN2021-C registered metrics aggregate official severity-5 corruption results per target center before the four-center mean.
-      - Do not tune future recipes from held-out PN2021 target labels or full target-center class distributions.
-
-run_catalog:
-  trusted:
-    - effnet_direct_k500_v7_sjr_rgq/seed20260601_k500_v7_sjr_rgq_20260530_rep1
-    - managed_launches/effnet_threechain_locked_rawfirst_20260618_copies2_v1
-  deprecated:
-    - effnet_vae_lhat_k500_v7_sjr_rgq/v7_sjr_rgq_main_20260528 is legacy clean VAE-LHAT provenance, not the latest three-chain mainline evidence.
-    - v3/v5/v6 headline numbers for the final v7 EfficientNet mainline unless explicitly used as historical sensitivity analysis.
-
-external_research_sources:
-  - title: AGENTS.md format
-    url: https://agents.md/
-    source_type: open specification
-    reliability: high
-    takeaway: Keep agent instructions in a predictable, concise entry file.
-  - title: Codex AGENTS.md guide
-    url: https://developers.openai.com/codex/guides/agents-md
-    source_type: official documentation
-    reliability: high
-    takeaway: Layer global/project/subdirectory instructions and keep project-specific rules near the work.
-  - title: MLflow Tracking
-    url: https://mlflow.org/docs/latest/ml/tracking
-    source_type: official documentation
-    reliability: high
-    takeaway: Record params, code versions, metrics, and artifacts per run.
-  - title: PyTorch saving and loading models
-    url: https://docs.pytorch.org/tutorials/beginner/saving_loading_models.html
-    source_type: official documentation
-    reliability: high
-    takeaway: Resume-capable checkpoints need model, optimizer, epoch, loss, and related state.
-  - title: Hydra output working directory
-    url: https://hydra.cc/docs/1.3/tutorials/basic/running_your_app/working_directory/
-    source_type: official documentation
-    reliability: high
-    takeaway: Per-run output directories should include resolved config and overrides.
-  - title: Lightning checkpointing
-    url: https://lightning.ai/docs/pytorch/stable/common/checkpointing_basic.html
-    source_type: official documentation
-    reliability: high
-    takeaway: Latest and best checkpoint semantics should be explicit and resume-safe.
+  tracked_evidence_allowed:
+    - configs
+    - docs
+    - util/tests
+    - agent_workspace/performance_summary_20260727/aligned_targetonly_augmix_lhat_lock_20260804.json
+    - agent_workspace/performance_summary_20260727/aligned_targetonly_augmix_lhat_report_20260804.html

@@ -1,151 +1,155 @@
-"""CPU-only tests for Super5 metadata extraction."""
+"""CPU-only Super5 tests against the rebuilt preprocessing source of truth."""
 
 from __future__ import annotations
 
-import pytest
+from pathlib import Path
+
 import numpy as np
+import pandas as pd
+import pytest
+import yaml
 
-from ecg_adv_gen.labels import (
-    CLASS_NAMES_SUPER5,
-    SUPER5_PN2021_MAPPING_HASH,
-    SUPER5_PN2021_MAPPING_VERSION,
-    Super5MetadataError,
-    default_class_order,
-    get_super5_scheme,
-    get_super5_metadata,
-    mimic_report_to_super5,
-    pn2021_super5_label_mapping_payload,
-    ptbxl_scp_to_super5,
-    snomed_list_to_super5,
-    validate_super5_metadata,
+from data_preprocess.PN2021_preprocess import (
+    EXPECTED_CLASS_ORDER,
+    _load_config,
+    _load_super5_mapping,
+    _snomed_list_to_super5,
 )
-from ecg_adv_gen.labels import super5_mapping
+from data_preprocess.PTBXL_preprocess import (
+    CLASS_ORDER,
+    _build_labels,
+    _load_super5_map,
+)
 
 
-def test_super5_metadata_matches_package_label_literals():
-    metadata = get_super5_metadata()
-
-    assert list(metadata.class_order) == list(CLASS_NAMES_SUPER5)
-    assert metadata.mapping_version == SUPER5_PN2021_MAPPING_VERSION
-    assert metadata.mapping_hash == SUPER5_PN2021_MAPPING_HASH
-    assert metadata.num_classes == len(metadata.class_order)
+REPO = Path(__file__).resolve().parents[2]
+PN2021_CONFIG = REPO / "configs" / "data" / "PN2021.yaml"
+PN2021_MAPPING = REPO / "configs" / "data" / "PN2021_super5_v7.yaml"
+MAPPING_VERSION = "v7_super5_sjr_rgq_review_20260528"
+MAPPING_HASH = "555ec85d5b51"
 
 
-def test_super5_metadata_validation_accepts_current_protocol():
-    metadata = get_super5_metadata()
+def _mapping() -> dict:
+    config = _load_config(PN2021_CONFIG)
+    return _load_super5_mapping(PN2021_CONFIG, config)
 
-    validate_super5_metadata(
-        mapping_version=metadata.mapping_version,
-        mapping_hash=metadata.mapping_hash,
-        class_order=metadata.class_order,
-        num_classes=metadata.num_classes,
-    )
-    assert default_class_order() == list(metadata.class_order)
-    assert pn2021_super5_label_mapping_payload() == {
-        "pn2021_super5": {
-            "mapping_version": metadata.mapping_version,
-            "mapping_hash": metadata.mapping_hash,
-        }
+
+def _mapped_classes(mapping: dict, *codes: int) -> set[str]:
+    label = _snomed_list_to_super5([*codes, 426783006], mapping)
+    return {
+        name
+        for name, value in zip(EXPECTED_CLASS_ORDER, label, strict=True)
+        if value == 1
     }
 
 
-def test_package_super5_scheme_matches_legacy_super5_surface():
-    scheme = get_super5_scheme()
+def test_pn2021_mapping_identity_and_class_order_are_locked() -> None:
+    mapping = _mapping()
 
-    assert scheme["num_classes"] == 5
-    assert tuple(scheme["class_names"]) == get_super5_metadata().class_order
-    assert scheme["ptbxl_fn"] is super5_mapping.ptbxl_scp_to_super5
-    assert scheme["pn2021_fn"] is super5_mapping.snomed_list_to_super5
-    assert scheme["mimic_fn"] is super5_mapping.mimic_report_to_super5
-
-
-def test_super5_metadata_validation_rejects_drift():
-    metadata = get_super5_metadata()
-
-    with pytest.raises(Super5MetadataError, match="Mapping hash mismatch"):
-        validate_super5_metadata(
-            mapping_version=metadata.mapping_version,
-            mapping_hash="bad",
-            class_order=metadata.class_order,
-            num_classes=metadata.num_classes,
-        )
+    assert CLASS_ORDER == EXPECTED_CLASS_ORDER
+    assert mapping["version"] == MAPPING_VERSION
+    assert mapping["hash"] == MAPPING_HASH
+    assert mapping["class_order"] == EXPECTED_CLASS_ORDER
+    assert mapping["all_zero_policy"] == "kept"
+    assert mapping["path"] == PN2021_MAPPING.resolve()
 
 
-def test_pn2021_super5_v7_sjr_rgq_policy_deltas():
-    assert SUPER5_PN2021_MAPPING_VERSION == (
-        "v7_super5_sjr_rgq_review_20260528"
-    )
+def test_pn2021_super5_v7_review_policy() -> None:
+    mapping = _mapping()
 
-    def mapped_classes(*codes: int) -> set[str]:
-        label = snomed_list_to_super5([*codes, 426783006])
-        return {
-            name
-            for name, value in zip(CLASS_NAMES_SUPER5, label)
-            if value == 1.0
-        }
+    assert _mapped_classes(mapping, 418818005) == {"CD"}  # Brugada
+    assert _mapped_classes(mapping, 49578007) == {"CD"}  # shortened PR
+    assert _mapped_classes(mapping, 55827005) == {"HYP"}  # LV high voltage
+    assert _mapped_classes(mapping, 67751000119106) == {"HYP"}  # RA high voltage
+    assert _mapped_classes(mapping, 164912004) == {"HYP"}  # P-wave change
+    assert _mapped_classes(mapping, 251223006) == {"HYP"}  # tall P wave
+    assert _mapped_classes(mapping, 251259000) == {"STTC"}  # high T voltage
 
-    assert mapped_classes(418818005) == {"CD"}  # Brugada
-    assert mapped_classes(49578007) == {"CD"}  # shortened PR interval
-    assert mapped_classes(55827005) == {"HYP"}  # left ventricular high voltage
-    assert mapped_classes(67751000119106) == {"HYP"}  # right atrial high voltage
-    assert mapped_classes(164912004) == {"HYP"}  # P wave change
-    assert mapped_classes(251223006) == {"HYP"}  # tall P wave
-    assert mapped_classes(251259000) == {"STTC"}  # high T-voltage
+    # Suppress-only findings remove sinus-rhythm NORM without inventing a class.
+    assert _mapped_classes(mapping, 5609005) == set()
+    assert _mapped_classes(mapping, 60423000) == set()
+    assert _mapped_classes(mapping, 10370003) == set()
 
-    # SJR/RGQ keeps these outside Super5 but still suppresses sinus-rhythm NORM.
-    assert mapped_classes(5609005) == set()  # sinus arrest
-    assert mapped_classes(60423000) == set()  # sinus node dysfunction
-    assert mapped_classes(10370003) == set()  # pacing rhythm
-
-    # These are fully ignored by the SJR/RGQ strategy, so sinus rhythm remains NORM.
-    assert mapped_classes(251198002) == {"NORM"}  # clockwise rotation
-    assert mapped_classes(251199005) == {"NORM"}  # counterclockwise rotation
-    assert mapped_classes(428417006) == {"NORM"}  # early repolarization
-    assert mapped_classes(61721007) == {"NORM"}  # vectorcardiographic loop
-    assert mapped_classes(251139008) == {"NORM"}  # suspect arm leads reversed
-    assert mapped_classes(53741008) == {"NORM"}  # coronary heart disease
+    # Reviewed ignored codes do not alter the Super5 vector.
+    assert _mapped_classes(mapping, 251198002) == {"NORM"}
+    assert _mapped_classes(mapping, 251199005) == {"NORM"}
+    assert _mapped_classes(mapping, 428417006) == {"NORM"}
+    assert _mapped_classes(mapping, 61721007) == {"NORM"}
+    assert _mapped_classes(mapping, 251139008) == {"NORM"}
+    assert _mapped_classes(mapping, 53741008) == {"NORM"}
 
 
-def test_package_super5_mapping_owns_conversion_policy(tmp_path, monkeypatch, request):
-    assert super5_mapping.SUPER5_PN2021_MAPPING_VERSION == (
-        "v7_super5_sjr_rgq_review_20260528"
-    )
-    assert super5_mapping.SUPER5_PN2021_MAPPING_HASH == "555ec85d5b51"
-    assert tuple(super5_mapping.CLASS_NAMES_SUPER5) == get_super5_metadata().class_order
+def test_abnormal_labels_suppress_norm_and_unknown_codes_are_all_zero() -> None:
+    mapping = _mapping()
+    norm_with_mi = _snomed_list_to_super5([426783006, 22298006], mapping)
+    unknown = _snomed_list_to_super5([999999999], mapping)
 
-    pn2021_label = super5_mapping.snomed_list_to_super5([426783006, 55827005])
-    public_pn2021_label = snomed_list_to_super5([426783006, 55827005])
-    np.testing.assert_array_equal(pn2021_label, public_pn2021_label)
-    assert {
-        name
-        for name, value in zip(super5_mapping.CLASS_NAMES_SUPER5, pn2021_label)
-        if value == 1.0
-    } == {"HYP"}
+    np.testing.assert_array_equal(norm_with_mi, [0, 0, 1, 0, 0])
+    np.testing.assert_array_equal(unknown, np.zeros(5, dtype=np.uint8))
 
-    mimic_label = super5_mapping.mimic_report_to_super5(
-        "normal sinus rhythm with left bundle branch block"
-    )
-    public_mimic_label = mimic_report_to_super5(
-        "normal sinus rhythm with left bundle branch block"
-    )
-    np.testing.assert_array_equal(mimic_label, public_mimic_label)
-    assert {
-        name
-        for name, value in zip(super5_mapping.CLASS_NAMES_SUPER5, mimic_label)
-        if value == 1.0
-    } == {"CD"}
 
-    scp_statements = tmp_path / "scp_statements.csv"
-    scp_statements.write_text(
-        ",diagnostic,diagnostic_class\n"
-        "NORM,1.0,NORM\n"
-        "IMI,1.0,MI\n",
+@pytest.mark.parametrize(
+    ("mutation", "match"),
+    [
+        (
+            lambda payload: payload.__setitem__("mapping_hash", "bad"),
+            "mapping hash mismatch",
+        ),
+        (
+            lambda payload: payload["norm_suppress"].append(426783006),
+            "overlap",
+        ),
+        (
+            lambda payload: payload.__setitem__("all_zero_policy", "drop"),
+            "all_zero_policy",
+        ),
+    ],
+)
+def test_mapping_loader_rejects_identity_or_policy_drift(
+    tmp_path: Path,
+    mutation,
+    match: str,
+) -> None:
+    mapping_payload = yaml.safe_load(PN2021_MAPPING.read_text(encoding="utf-8"))
+    mutation(mapping_payload)
+    mapping_path = tmp_path / "mapping.yaml"
+    mapping_path.write_text(
+        yaml.safe_dump(mapping_payload, sort_keys=False),
         encoding="utf-8",
     )
-    monkeypatch.setattr(super5_mapping, "SCP_STATEMENTS_PATH", scp_statements)
-    super5_mapping._load_scp_super5_map.cache_clear()
-    request.addfinalizer(super5_mapping._load_scp_super5_map.cache_clear)
+    config_payload = yaml.safe_load(PN2021_CONFIG.read_text(encoding="utf-8"))
+    config_payload["label_mapping_file"] = mapping_path.name
+    config_path = tmp_path / "PN2021.yaml"
+    config_path.write_text(
+        yaml.safe_dump(config_payload, sort_keys=False),
+        encoding="utf-8",
+    )
 
-    ptbxl_label = super5_mapping.ptbxl_scp_to_super5({"NORM": 100.0, "IMI": 80.0})
-    public_ptbxl_label = ptbxl_scp_to_super5({"NORM": 100.0, "IMI": 80.0})
-    np.testing.assert_array_equal(ptbxl_label, public_ptbxl_label)
+    with pytest.raises(ValueError, match=match):
+        _load_super5_mapping(config_path, config_payload)
+
+
+def test_ptbxl_super5_conversion_uses_diagnostic_classes(tmp_path: Path) -> None:
+    statements = tmp_path / "scp_statements.csv"
+    statements.write_text(
+        ",diagnostic,diagnostic_class\n"
+        "NORM,1,NORM\n"
+        "IMI,1,MI\n"
+        "NONDIAG,0,STTC\n",
+        encoding="utf-8",
+    )
+    mapping = _load_super5_map(statements)
+    metadata = pd.DataFrame(
+        {
+            "scp_codes": [
+                {"NORM": 100.0},
+                "{'IMI': 80.0, 'NONDIAG': 100.0}",
+            ]
+        }
+    )
+
+    labels = _build_labels(metadata, mapping)
+
+    assert labels.dtype == np.uint8
+    np.testing.assert_array_equal(labels[0], [0, 0, 0, 1, 0])
+    np.testing.assert_array_equal(labels[1], [0, 0, 1, 0, 0])

@@ -711,3 +711,102 @@ limitations:
   - Held-out PN2021 and PN2021-C results are reporting evidence and must not be used to choose future checkpoints.
   - New VAE/AugMix methods must compare against these exact per-center checkpoints under the same mapping, K500 split, reference exclusion, and evaluation views.
   - The new matched-LR refit/evaluation directories were direct invocations and lack execution-time managed run records; their existing contracts, results and SHA256 values are retained, but missing command/Git/environment evidence must not be reconstructed from current state.
+
+aligned_augmix_lhat_development_lock:
+  schema_version: 1
+  lock_id: aligned_targetonly_augmix_lhat_20260804
+  status: locked_development_only
+  locked_on: "2026-08-04"
+  paper_claim_allowed: false
+  limitation: heldout_tuned_development_only
+  primary_metric_view: drop_all_zero
+  aggregation: equal_weighted_four_logical_centers
+  centers: [ningbo, chapman_shaoxing, cpsc_2018, georgia]
+  adaptation_population: per_center_fixed_k500_only
+  reference_exclusion_per_center: 500
+  outside_k500_model_access: false
+  class_order: [CD, HYP, MI, NORM, STTC]
+  mapping_version: v7_super5_sjr_rgq_review_20260528
+  mapping_hash: 555ec85d5b51
+  common_pipeline:
+    - locked_ptbxl_source_checkpoint
+    - target_k500_twochain_augmix_simclr
+    - no_ptbxl_source_replay
+    - clean_and_rotating_depth23_supervision
+    - source_checkpoint_logit_anchor_on_k500
+    - exact_label_nonself_vae_lhat_hard_view
+    - hard_bce_and_clean_hard_bernoulli_jsd
+    - refexcluded_clean_and_pn2021c_evaluation
+  common_lhat:
+    candidate_count: 20
+    label_policy: exact_positive_set_nonself
+    hull_lambda: 0.6
+    epsilon_l2_standardized: 2.0
+    steps: 5
+    search_learning_rate: 0.25
+    search_mode: optimized_softmax
+    multistart_count: 1
+    auxiliary_alpha: 1.5
+  known_backbone_specific_differences:
+    - model_input_length_and_sampling_domain
+    - stage1_update_count
+    - stage2_learning_rate_batch_size_and_epoch_count
+    - supervised_logit_anchor_weight
+  models:
+    efficientnet1dv2:
+      status: locked_current_development_single_seed
+      source_checkpoint_sha256: fff9bd293677be54a606e28775c66d410d55b0ad7440a4e7fbde55357ec13e68
+      candidate_manifest: agent_workspace/diverse_latent_augmax_v1/configs/generated_search/a7_global_search_20260726/effnet_l37_targetonly_rot4_vae_hard_h30_e23_20260804/manifest.json
+      candidate_manifest_sha256: 83dc0d2ccd1cf04ed001bf556e34df18f91468f5c751c27c61d1268244cd6785
+      evidence_summary: /home/linbinhao/ECG_adv_data/runs/agent_workspace/a7_global_search_20260726/effnet_l37_targetonly_rot4_vae_hard_h30_e23_20260804/summary.json
+      evidence_summary_sha256: 675ffacc6db505b2ca0d986ef95137557c9fdbf9e24e233d18277f8ed2edfe04
+      stage1: {steps: 1024, learning_rate: 1.0e-03, logit_anchor_weight: 5.0, source_replay_weight: 0.0, vicreg_weight: 0.0}
+      stage2:
+        epochs: 23
+        scheduler_horizon_epochs: 30
+        learning_rate: 5.0e-05
+        batch_size: 128
+        clean_family_weight: 0.5
+        corruption_family_weight: 0.5
+        supervised_logit_anchor_weight: 2.0
+        gradient_merge: direct_sum
+        gradient_merge_runtime_evidence: four_center_projection_count_zero
+      metrics:
+        source_only: {clean_drop: [0.8545268941, 0.6090569820], corrupted_drop: [0.7930014653, 0.5152507843]}
+        locked_direct_fixed20: {clean_drop: [0.8711829491696222, 0.6438506263434959], corrupted_drop: [0.8269192092678306, 0.5666429823617389]}
+        equal_update_direct_1116: {clean_drop: [0.8695109821641738, 0.6473223435816282], corrupted_drop: [0.8257550946727374, 0.5736822743881864]}
+        matched_no_vae: {clean_drop: [0.8684633933839138, 0.6340389421804762], corrupted_drop: [0.8539485092377127, 0.6109916309296273]}
+        full_method: {clean_drop: [0.8724812249011487, 0.6417669922316291], corrupted_drop: [0.8573716708745356, 0.6167326224218124]}
+      selected_checkpoints:
+        ningbo: {sha256: db2a9495af516d44cd7aae6ecfd6c821b2f502785bbaae432726ae25dcedfb63}
+        chapman_shaoxing: {sha256: 7022c209cb1ca7798bfd0b793e13ed2ff3bc08387a3b35c44567879fa02e0b6b}
+        cpsc_2018: {sha256: c4e840452ff8d5d971ec00e5e4d9274ccffaaa6b9767ea25e1a6323886dc8870}
+        georgia: {sha256: eb478316c32bddeffacccbe383398b838130f0d3a299ee799d29e74a10588079}
+    ecgfounder:
+      status: locked_current_development_single_seed
+      source_checkpoint_sha256: c23ec4361b097b74a4efed427488c4dd6a3753adfc75f7d1fc281e4df0989948
+      candidate_manifest: agent_workspace/ecgfounder_l37_strict_match_20260803/config_bundle/generated_search/a7_global_search_20260726/ecgfounder_targetonly_ssl256_lr3e5_e30_a150_c050_sla050_r3_exactstage1/manifest.json
+      candidate_manifest_sha256: 67b0d96303eab13c9395ad3a227a3666af893213fcd58153e10e3e825437a32d
+      evidence_summary: agent_workspace/ecgfounder_l37_strict_match_20260803/alpha150_single_variable_r3_results_20260804.json
+      evidence_summary_sha256: 998b607b5ae3ba87bc5512319c22ce587d82d688d2d491aba1cf2cb86e18e5cc
+      stage1: {steps: 256, learning_rate: 1.0e-03, logit_anchor_weight: 5.0, source_replay_weight: 0.0, vicreg_weight: 0.0}
+      stage2:
+        epochs: 30
+        scheduler_horizon_epochs: 30
+        learning_rate: 3.0e-05
+        batch_size: 64
+        clean_family_weight: 0.5
+        corruption_family_weight: 0.5
+        supervised_logit_anchor_weight: 0.5
+        gradient_merge: direct_sum
+      metrics:
+        source_only: {clean_drop: [0.8830424145, 0.6414428647], corrupted_drop: [0.8029147396, 0.5291886358]}
+        locked_direct_fixed20: {clean_drop: [0.9102911803, 0.6971356795], corrupted_drop: [0.8531893944, 0.6111763352]}
+        equal_update_direct_496: {clean_drop: [0.9135919364940753, 0.7186328453192201], corrupted_drop: [0.8707716967874015, 0.6514241831073515]}
+        matched_no_vae: {clean_drop: [0.911454, 0.707424], corrupted_drop: [0.892195, 0.674808]}
+        full_method: {clean_drop: [0.912875, 0.712238], corrupted_drop: [0.892670, 0.677466]}
+      selected_checkpoints:
+        ningbo: {sha256: 78a863faf54914c840206de4055bd0b54af85584d6d986961df3671b71d3e95f}
+        chapman_shaoxing: {sha256: a4d393482b0d24503bbb0a168b6b24309a2d8077b5e6df9cdab0c0cbd39d11d7}
+        cpsc_2018: {sha256: 364424ebef39fcc977db1cfd6e8d0c9026188f6cb78048fb8950030739e51ff2}
+        georgia: {sha256: 6a0dd074728596378457911207aa4aa2dcf081c908ddb383c6b7eac732810dc0}

@@ -1,154 +1,121 @@
-# ECG_adv_Gen
+# ECG Manual Refactor
 
-ECG_adv_Gen is the working repo for the PTB-XL Super5 to PN2021 cross-center
-ECG adaptation project. The current mainline is:
+This repository is the clean-room execution surface for the PTB-XL Super5 to
+PN2021 cross-center ECG adaptation study. The old project remains provenance in
+Git history; active code must stay inside the keep manifest.
+
+Current prospective method:
 
 ```text
-PN2021/PN2021-C VAE-LHAT + three-chain AugMix
-chain1/chain2: official corruption chains
-chain3: ECGTwin VAE-LHAT adversarial waveform
--> clean PN2021 and PN2021-C ref-excluded AUROC/AUPRC evaluation
+PTB-XL source checkpoint
+-> one target center's fixed K500 records
+-> two-chain AugMix + SimCLR representation adaptation
+-> 50% clean + 50% rotating depth2/depth3 supervised adaptation
+-> one exact-label attack-then-contract VAE-LHAT view
+-> ref-excluded PN2021 Clean and PN2021-C evaluation
 ```
 
-For the latest reproducible experiment path, start from
-`latest_mainline` in
-[`configs/active_scripts.yaml`](configs/active_scripts.yaml). It declares the
-`vae_lhat_threechain_augmix_pn2021c` method as 10 stages, all launched through
-[`scripts/run_experiment.py`](scripts/run_experiment.py).
-For the latest trusted experiment facts, use
-[`configs/active_evidence_registry.yaml`](configs/active_evidence_registry.yaml).
-For agent safety and shared-server rules, start from [`AGENTS.md`](AGENTS.md).
+The current scores are heldout-tuned, single-seed development evidence. They
+are not paper-final results. See
+[`configs/active_evidence_registry.yaml`](configs/active_evidence_registry.yaml)
+for the exact boundary and
+[`configs/active_scripts.yaml`](configs/active_scripts.yaml) for the executable
+surface.
 
-## Quick Start
+## Start Here
 
-```bash
-cd /home/linbinhao/ECG_adv_Gen
-micromamba run -n cli-tools git status --short --branch
-micromamba run -n ECGTwin python scripts/agent/audit_agent_workspace.py
-```
-
-Before any GPU run on the shared server:
+1. Read [`AGENTS.md`](AGENTS.md) for shared-server safety.
+2. Read the
+   [`manual refactor keep manifest`](docs/refactor_cleanup/manual_refactor_keep_manifest.md).
+3. Select a tracked YAML under `configs/experiments/`.
+4. Dry-run it through the single launcher before using data, models, or GPUs.
 
 ```bash
-nvidia-smi
-CUDA_VISIBLE_DEVICES=<free_gpu_ids> micromamba run -n ECGTwin python ...
-```
+cd /home/linbinhao/ECG_manual_refactor
 
-Do not use `sudo`, do not touch CUDA/NVIDIA drivers/kernel/system env, and keep
-project work under `/home/linbinhao`.
-
-## Navigation For Agents
-
-| Path | Purpose |
-|---|---|
-| `AGENTS.md` | Durable agent memory, shared-server rules, current mainline facts |
-| `configs/active_evidence_registry.yaml` | Current trusted claim, run lineage, metrics, artifact policy |
-| `configs/active_scripts.yaml` | Which YAML configs map to managed package runners and which paths must not move |
-| `configs/defaults/` | Shared YAML defaults for mapping, model, VAE-LHAT, ECGFounder, EfficientNet |
-| `configs/experiments/` | Reproducible managed experiment configs |
-| `configs/local/*.example.yaml` | Host-local path examples; real local YAML is ignored |
-| `configs/label_mappings/` | Structured label-mapping evidence, including PN2021 Super5 review JSONL |
-| `ecg_adv_gen/` | Stable Python package code for config, data, labels, adaptation, evaluation, evidence, reporting, training |
-| `ecg_adv_gen/runner/` | Package-owned experiment runner modules used by managed YAML configs |
-| `scripts/run_experiment.py` | Managed YAML launcher |
-| `scripts/agent/` | CPU-only audit, run finalization/registration, manifest backfill, comparison bundle, retrospective inventory tools |
-| `docs/pipelines/` | Long-term pipeline, refactor, reproduction, and evidence docs |
-| `docs/labeling/` | Human-readable label mapping review and clinician audit material |
-| `docs/refactor_cleanup/` | Cleanup manifests and public-tree reduction reports |
-| `model/` | External model repo handles and submodules; do not stage host-specific symlink changes |
-| `util/tests/` | Project-wide tests. Future target layout is top-level `tests/` |
-
-## Current Evidence
-
-The active EfficientNet1DV2 v7 claim is registered in
-[`configs/active_evidence_registry.yaml`](configs/active_evidence_registry.yaml):
-
-| View | Direct K500 | VAE-LHAT three-chain | Delta |
-|---|---:|---:|---:|
-| `pn2021_all_zero_kept_refexcluded` AUROC / AUPRC | 0.8492 / 0.5271 | 0.8735 / 0.5637 | +2.43 pp / +3.66 pp |
-| `pn2021_drop_all_zero_refexcluded` AUROC / AUPRC | 0.8732 / 0.6703 | 0.9015 / 0.7307 | +2.83 pp / +6.03 pp |
-| `pn2021c_all_zero_kept_corrupted_refexcluded` AUROC / AUPRC | 0.8100 / 0.4729 | 0.8286 / 0.4940 | +1.87 pp / +2.12 pp |
-| `pn2021c_drop_all_zero_corrupted_refexcluded` AUROC / AUPRC | 0.8312 / 0.6087 | 0.8547 / 0.6439 | +2.35 pp / +3.52 pp |
-
-Protocol facts:
-
-- mapping: `v7_super5_sjr_rgq_review_20260528`, hash `555ec85d5b51`;
-- class order: `CD, HYP, MI, NORM, STTC`;
-- target centers: `ningbo`, `chapman_shaoxing`, `cpsc_2018`, `georgia`;
-- K-shot protocol: fixed `K=500`, seed `20260601`, ref ids excluded from eval;
-- selection policy: K500-internal validation plus source-performance floor.
-
-## Managed Commands
-
-CPU-only workspace audit:
-
-```bash
-micromamba run -n ECGTwin python scripts/agent/audit_agent_workspace.py
-```
-
-Managed dry-run example:
-
-```bash
-micromamba run -n ECGTwin python scripts/run_experiment.py \
-  --config configs/experiments/effnet_direct_k500_v7_sjr_rgq.yaml \
-  --local-config configs/local/linbinhao_server.example.yaml \
-  --run-id dryrun_effnet_direct_k500_v7_sjr_rgq \
+/home/linbinhao/micromamba/envs/ECGTwin/bin/python \
+  boot_scripts/run_experiment.py \
+  --config configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_ningbo.yaml \
   --dry-run
 ```
 
-Dry-run every `latest_mainline` stage before launching GPU work:
+Before an actual GPU run:
 
 ```bash
-micromamba run -n ECGTwin python -m pytest \
-  util/tests/test_config_loader.py::test_latest_mainline_configs_dry_run_through_run_experiment_cli -q
+nvidia-smi
+CUDA_VISIBLE_DEVICES=<confirmed_free_gpu> \
+  /home/linbinhao/micromamba/envs/ECGTwin/bin/python \
+  boot_scripts/run_experiment.py \
+  --config <tracked-experiment.yaml>
 ```
 
-Build the registered direct-vs-VAE comparison bundle:
+Do not use `sudo`, change CUDA/drivers, overwrite an existing run, or write
+large artifacts into the repository.
+
+## Active Layout
+
+| Path | Responsibility |
+|---|---|
+| `configs/` | Data, training, method, evaluation, seed, baseline, and experiment contracts |
+| `data_preprocess/` | PTB-XL/PN2021 preprocessing, cache loading, splitting, and runtime datasets |
+| `models/` | Model contracts, input adaptation, factories, checkpoints, EfficientNet, ECGFounder, and VAE interfaces |
+| `core/` | Typed method graph, AugMix/VAE-LHAT execution, supervised training, and online adaptation |
+| `boot_scripts/` | Thin managed CLI entrypoints; no experiment business logic |
+| `util/` | Augmentations, metrics, evaluation, random identity, run records, TensorBoard, and visualization |
+| `util/tests/` | CPU contract tests for the retained execution surface |
+| `docs/refactor_cleanup/manual_refactor_keep_manifest.md` | Authoritative keep/delete boundary |
+| `agent_workspace/performance_summary_20260727/` | Two explicitly retained development evidence artifacts only |
+
+Anything outside the keep manifest is legacy, temporary, or pending review. It
+must not become a new runtime dependency.
+
+## Locked Contracts
+
+- Class order: `CD, HYP, MI, NORM, STTC`.
+- PN2021 mapping: `v7_super5_sjr_rgq_review_20260528`,
+  hash `555ec85d5b51`.
+- Logical target centers: Ningbo, Chapman-Shaoxing, CPSC 2018 plus Extra, and
+  Georgia.
+- Adaptation data: fixed K500 from one logical center only.
+- Evaluation: exclude that center's K500 identities.
+- Primary metrics: macro AUROC and sklearn average precision after
+  `drop_all_zero`.
+- Canonical waveform: raw physical mV, 100 Hz, 1000 points, 12 leads,
+  time-channel layout.
+- EfficientNet input: 100 Hz, then per-sample global z-score.
+- ECGFounder input: linear 100 Hz to 500 Hz adaptation, then per-sample global
+  z-score.
+- PN2021-C: locked five-operator profile, 500 Hz operator domain, all ten
+  depth-2 and ten depth-3 compositions.
+
+## Necessary CPU Verification
 
 ```bash
-micromamba run -n ECGTwin python scripts/agent/build_comparison_bundle.py --force
+/home/linbinhao/micromamba/envs/ECGTwin/bin/python -m pytest -q \
+  util/tests/test_augmentations.py \
+  util/tests/test_torch_augmentations.py \
+  util/tests/test_data_contracts.py \
+  util/tests/test_labels_super5.py \
+  util/tests/test_pn2021_corruptions.py \
+  util/tests/test_method_graph.py \
+  util/tests/test_online_trainer.py \
+  util/tests/test_pn2021_evaluation.py \
+  util/tests/test_manual_run_experiment.py
 ```
 
-The legacy VAE-LHAT manifest backfiller is provenance-only for old v7 evidence;
-it is not part of the `latest_mainline` replay path.
+Run outputs belong under `/home/linbinhao/ECG_adv_data/runs/`, not in Git.
+Every managed run records its resolved config closure, command, Git state,
+seeds, checkpoints, metrics, and file hashes through `util/run_record.py`.
 
-Finalize and register a completed run for future agent handoff:
+## Evidence Boundary
 
-```bash
-micromamba run -n ECGTwin python scripts/agent/finalize_run.py \
-  --run-dir /path/to/run_dir \
-  --purpose "Why this experiment was run" \
-  --result-summary "What happened and how to interpret it" \
-  --outcome provisional
+The current simplified recipe was chosen after a 94-candidate development
+search. Neither selected backbone candidate passed every original promotion
+gate. The locked numbers may guide prospective replication, but final thesis
+claims still require a frozen recipe, at least three independent repeats per
+backbone, registered run records, and mean/standard-deviation reporting.
 
-micromamba run -n ECGTwin python scripts/agent/register_run.py \
-  --run-dir /path/to/run_dir \
-  --status provisional
-```
-
-Managed `scripts/run_experiment.py --write-plan` and `--execute` now create a
-standard per-run record automatically: `run_card.json`, `run_file_index.json`,
-`summary.md`, and category directories such as `configs/`, `manifests/`,
-`logs/`, `checkpoints/`, `eval/`, `diagnostics/`, and `reports/`.
-
-## What Not To Move
-
-The following external model handles are evidence-sensitive host-local paths.
-Keep package logic in `ecg_adv_gen/` and experiment launch through
-`scripts/run_experiment.py` plus tracked YAML. Legacy script archives were
-removed from the public tree; do not restore them as callable entrypoints.
-
-- `model/DeepECG`
-- `model/ECGTwin`
-- `model/advdiff`
-- `model/ecg_ptbxl_benchmarking`
-- `model/ecgfounder`
-
-## Documentation
-
-- Pipeline index: [`docs/pipelines/README.md`](docs/pipelines/README.md)
-- Agent operating layer: [`docs/pipelines/agent_operating_layer_20260529.md`](docs/pipelines/agent_operating_layer_20260529.md)
-- Run record management: [`docs/pipelines/run_record_management_20260529.md`](docs/pipelines/run_record_management_20260529.md)
-- v7 EfficientNet mainline repro: [`docs/pipelines/v7_sjr_rgq_effnet_mainline_repro_20260528.md`](docs/pipelines/v7_sjr_rgq_effnet_mainline_repro_20260528.md)
-- Super5 label mapping pipeline: [`docs/pipelines/super5_label_mapping_pipeline.md`](docs/pipelines/super5_label_mapping_pipeline.md)
-- Config guide: [`configs/README.md`](configs/README.md)
+Historical `ecg_adv_gen` launchers and package modules are not active here.
+Recover them from commit
+`3a39a516420b52c219a782a7b7440f82746f4b90` only when historical provenance is
+explicitly requested.

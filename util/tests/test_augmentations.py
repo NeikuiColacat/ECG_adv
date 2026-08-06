@@ -1,18 +1,10 @@
-"""Reference-alignment tests for the fairseq-signals ECG operators."""
+"""Golden-contract tests for the pinned fairseq-signals ECG operators."""
 
 import random
 
 import numpy as np
 import pytest
-import torch
 
-from methods.augmix.ecg_ops import (
-    BaselineShift,
-    BaselineWander,
-    EMGNoise,
-    PowerlineNoise,
-    RandomLeadsMask,
-)
 from util.augmentations import (
     baseline_shift,
     baseline_wander,
@@ -20,6 +12,7 @@ from util.augmentations import (
     powerline_noise,
     random_leads_masking,
 )
+from util.augmentations.operators import UPSTREAM_COMMIT, UPSTREAM_SOURCE_URL
 
 
 def _signal(dtype=np.float32):
@@ -31,21 +24,20 @@ def _signal(dtype=np.float32):
 
 
 @pytest.mark.parametrize(
-    ("function", "reference_class", "kwargs"),
+    ("function", "kwargs", "expected_summary"),
     [
         (
             powerline_noise,
-            PowerlineNoise,
             {"max_amplitude": 0.3, "freq": 100, "dependency": True},
+            (126.62981554470025, 0.01055248462872502, 0.747640072052713),
         ),
         (
             emg_noise,
-            EMGNoise,
             {"max_amplitude": 0.2, "dependency": True},
+            (130.7209862279051, 0.01089341551899209, 0.7470555287952432),
         ),
         (
             baseline_shift,
-            BaselineShift,
             {
                 "max_amplitude": 0.4,
                 "shift_ratio": 0.3,
@@ -53,10 +45,10 @@ def _signal(dtype=np.float32):
                 "freq": 100,
                 "dependency": False,
             },
+            (726.3211853300302, 0.060526765444169184, 0.9136473937863147),
         ),
         (
             baseline_wander,
-            BaselineWander,
             {
                 "max_amplitude": 0.4,
                 "max_freq": 0.2,
@@ -65,28 +57,38 @@ def _signal(dtype=np.float32):
                 "freq": 100,
                 "dependency": True,
             },
+            (-333.70971428090706, -0.027809142856742256, 0.7449737181900838),
         ),
         (
             random_leads_masking,
-            RandomLeadsMask,
             {"mask_leads_prob": 0.4},
+            (127.50714974911433, 0.010625595812426194, 0.6454097615581246),
         ),
     ],
 )
-def test_matches_vendored_fairseq_signals_reference(
+def test_matches_pinned_fairseq_signals_golden_contract(
     function,
-    reference_class,
     kwargs,
+    expected_summary,
 ):
     signal = _signal()
-    reference = reference_class(p=1.0, **kwargs)
+    actual = function(
+        signal,
+        p=1.0,
+        rng=np.random.RandomState(20260715),
+        **kwargs,
+    )
+    summary = (
+        float(actual.sum(dtype=np.float64)),
+        float(actual.mean(dtype=np.float64)),
+        float(actual.std(dtype=np.float64)),
+    )
+    np.testing.assert_allclose(summary, expected_summary, rtol=0.0, atol=1e-9)
 
-    np.random.seed(20260715)
-    expected = reference(torch.from_numpy(signal.T.copy())).numpy().T
-    np.random.seed(20260715)
-    actual = function(signal, p=1.0, rng=np.random, **kwargs)
 
-    np.testing.assert_allclose(actual, expected, rtol=0.0, atol=1e-6)
+def test_reference_revision_is_explicitly_pinned():
+    assert UPSTREAM_COMMIT == "f8f0ff1c788a82c2059cb452cd5462898867489e"
+    assert UPSTREAM_COMMIT in UPSTREAM_SOURCE_URL
 
 
 @pytest.mark.parametrize(

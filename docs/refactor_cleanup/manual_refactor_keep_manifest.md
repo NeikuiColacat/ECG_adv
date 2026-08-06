@@ -29,6 +29,15 @@ YAML 或隐式回退入口。
 
 ## A. 手动重构保护白名单
 
+### A0. 项目入口与边界
+
+| 文件 | 状态 | 当前职责 | 删除或合并前必须满足 |
+|---|---|---|---|
+| `AGENTS.md` | `KEEP-MANUAL` | 共享服务器安全、白名单依赖边界、主线数据/方法/证据契约和验证入口 | 新代理入口完整接管前 100 行安全规则、白名单原则和论文证据边界 |
+| `README.md` | `KEEP-MANUAL` | 人类可读的手工重构入口、目录导航、dry-run 和开发证据边界 | 新项目首页完整接管当前 launcher、数据契约和验证命令 |
+| `configs/README.md` | `KEEP-MANUAL` | configs-shaped 配置束、单一 launcher 和相对引用规则 | 新配置文档完整接管 bundle root、闭包、输出与覆盖规则 |
+| `docs/refactor_cleanup/manual_refactor_keep_manifest.md` | `KEEP-MANUAL` | 手工重构保护边界、退出候选与破坏性删除闸门 | 新清单逐文件接管全部 KEEP/TRANSITION/证据和用户确认记录 |
+
 ### A1. 数据预处理配置
 
 | 文件 | 状态 | 当前职责 | 删除或合并前必须满足 |
@@ -53,15 +62,8 @@ YAML 或隐式回退入口。
 | `data_preprocess/load_cache.py` | `KEEP-MANUAL` | 统一校验并只读访问 PTB-XL、PN2021、PN2021-C 缓存；按实时可用内存自动选择 RAM/mmap，并支持单条/批量 hash 到 index 的严格解析 | 新数据层保留 manifest/hash、布局、中心、view、内存安全门和原始 mV 契约 |
 | `data_preprocess/split_cache.py` | `KEEP-MANUAL` | 依赖统一 cache loader 生成 ID-only PTB-XL 官方折、PN2021 固定 K500、确定性多标签/物理来源近似分层 400/100 及 ref-excluded 切分；singleton positive 保留在 train，CPSC/Extra validation 按父 K500 来源比例配额 | 新切分层保留 source manifest、映射、父 K500 seed/身份、独立 tuning seed、候选池、split hash、400/100 互斥并集、来源/类别计数、患者隔离和零 K500 泄漏契约 |
 | `data_preprocess/data_runtime.py` | `KEEP-MANUAL` | 校验 split/cache 身份并统一提供各划分 DataLoader；支持批量 mmap/prefetch、只 gather 已验证 K500 到连续 CPU tensor 后关闭源 mmap，以及跨 clean+20 views 复用 mmap/selection 的 `SequentialEvaluationDataSession` | 新运行时层保留父 K500=400+100、cache index/hash/record/source-center/sampler 顺序、原始 mV 到模型输入的顺序、显式 PN2021-C view、CPSC 合并中心、100/500 Hz 布局、seed 身份、resident/mmap 数值等价和 loader/session 所有权契约 |
-| `data_preprocess/prepare_ptbxl_for_ecgtwin.py` | `TRANSITION` | 旧 ECGTwin VAE/Nomic 搬迁脚本；1000→1024 已改为线性插值 | 所需 VAE/Nomic 功能进入正式模块，或确认主线不再需要 |
-
-说明：`data_preprocess/prepare_ptbxl_for_ecgtwin.py` 最初从旧路径原样搬迁，
-现已先将 1000→1024 的 FFT 重采样替换为线性插值，但其余 VAE/Nomic
-职责仍未完成模块化，因此继续标记为 `TRANSITION`。
-
 当前手工预处理插值策略统一为 `linear + align_corners=True`：PN2021
-native-rate 到 100 Hz、100 Hz 到 500 Hz，以及迁移脚本中的 PTB-XL
-1000 点到 ECGTwin 1024 点均使用该策略。PN2021 新缓存身份为
+native-rate 到 100 Hz，以及 100 Hz 到 500 Hz 均使用该策略。PN2021 新缓存身份为
 `pn2021_100hz_linear_v2`，禁止把旧算法缓存改写元数据后复用。
 
 ### A3. 五算子及 PN2021-C 配置
@@ -223,6 +225,17 @@ native-rate 到 100 Hz、100 Hz 到 500 Hz，以及迁移脚本中的 PTB-XL
 | `configs/experiments/manual_refactor_pn2021_ecgfounder_fixed20_eval_cpsc_2018.yaml` | `KEEP-MANUAL` | 固定 ECGFounder fixed20 refit checkpoint，仅评估 ref-excluded CPSC+Extra clean 与 PN2021-C 20 views | 同上 |
 | `configs/experiments/manual_refactor_pn2021_ecgfounder_fixed20_eval_georgia.yaml` | `KEEP-MANUAL` | 固定 ECGFounder fixed20 refit checkpoint，仅评估 ref-excluded Georgia clean 与 PN2021-C 20 views | 同上 |
 
+### A9. 最终基础契约测试
+
+| 文件 | 状态 | 当前职责 | 删除或合并前必须满足 |
+|---|---|---|---|
+| `util/tests/__init__.py` | `KEEP-MANUAL` | 保留测试包边界 | 测试布局整体迁移时同步迁移 |
+| `util/tests/test_augmentations.py` | `KEEP-MANUAL` | 使用固定上游 revision 与 seeded golden summary 验证 NumPy 五算子，不再运行时导入旧 `methods` | 新算子实现接管同一 revision、公式、随机和非原地契约 |
+| `util/tests/test_torch_augmentations.py` | `KEEP-MANUAL` | 验证 Torch 五算子的接口、CPU 数值对齐、批量与设备契约 | 新设备算子接管同一接口与批量数值契约 |
+| `util/tests/test_pn2021_corruptions.py` | `KEEP-MANUAL` | 直接验证白名单 profile、20 个 depth2/3 组合、确定性复合、修正后的 Baseline Shift 与 RLM 生存导联 | 新 PN2021-C 内核接管同一 profile、组合及随机身份 |
+| `util/tests/test_data_contracts.py` | `KEEP-MANUAL` | 直接验证白名单缓存、模型输入、100/500 Hz 线性插值、Super5/导联顺序及主线 YAML 闭包 | 新数据/模型边界接管相同布局、插值顺序和 config closure |
+| `util/tests/test_labels_super5.py` | `KEEP-MANUAL` | 直接验证白名单 PN2021 Super5 v7 映射、hash、NORM 抑制和 PTB-XL diagnostic class 转换 | 新标签层接管相同 mapping identity 和逐代码 golden policy |
+
 ## B. 当前不属于手工主线的文件
 
 ### B1. 非核心支持与待退出文件
@@ -232,14 +245,7 @@ native-rate 到 100 Hz、100 Hz 到 500 Hz，以及迁移脚本中的 PTB-XL
 
 | 文件 | 状态 | 当前作用 | 何时可以删除或还原 |
 |---|---|---|---|
-| `configs/experiments/pn2021c_effnet_paper_anchored_s5_depth23_composite.yaml` | `CALIBRATION-ONLY` | 复现本次四中心 direct-K500 depth2+3 校准 | managed run 已保存 resolved config，且确认不再重跑该校准 |
 | `methods/augmix/ecg_ops.py` | `LEGACY-BRIDGE` | 旧 PN2021-C 调用入口以及临时 profile 兼容 | 调用方全部迁移到 `util/augmentations/`，历史回放测试通过 |
-| `ecg_adv_gen/data/synthetic_npz.py` | `LEGACY-BRIDGE` | 旧分类器输入布局兼容 | 新数据接口统一输出布局并迁移所有训练入口 |
-| `ecg_adv_gen/training/effnet_super5.py` | `LEGACY-BRIDGE` | 旧 EfficientNet Dataset 布局兼容 | 新训练 Dataset 完成并通过 smoke test |
-| `util/tests/test_augmentations.py` | `SUPPORT` | 验证新五算子参考对齐 | 对应契约迁入最终测试目录，或算子实现被整体替代 |
-| `util/tests/test_pn2021_corruptions.py` | `SUPPORT` | 验证旧 PN2021-C bridge 和自定义 profile | bridge 删除后，将仍有价值的测试迁入最终接口测试 |
-| `util/tests/test_data_contracts.py` | `SUPPORT` | 验证旧/新数据布局兼容 | 新数据接口拥有独立契约测试后移除本轮追加部分 |
-| `util/tests/test_labels_super5.py` | `SUPPORT` | 验证 Super5 v7 标签映射 | 映射测试迁入最终数据预处理测试后移除本轮追加部分 |
 | `util/tests/test_pn2021_metadata.py` | `SUPPORT` | 验证独立 PN2021 表头解析语义及预处理入口不再导入旧数据层 | 表头解析器迁移时同步保留相同 golden contract 与 import 闭包检查 |
 | `util/tests/test_preprocess_nonfinite.py` | `SUPPORT` | 验证 PTB-XL/PN2021 非有限值插值修复、边界填补与严重异常剔除契约 | 质量控制逻辑迁入最终数据层时同步迁移这些测试 |
 | `util/tests/test_augmentations_cache.py` | `SUPPORT` | 验证 PN2021-C 白名单依赖、20组合、确定性随机流、双采样率及断点缓存契约 | 缓存入口迁移时同步迁移这些测试 |
@@ -294,10 +300,8 @@ native-rate 到 100 Hz、100 Hz 到 500 Hz，以及迁移脚本中的 PTB-XL
 
 | 候选 | 预期替代 | 当前阻塞条件 |
 |---|---|---|
-| `data/prepare_ptbxl_for_ecgtwin.py` | `data_preprocess/prepare_ptbxl_for_ecgtwin.py` 或未来正式 ECGTwin 预处理模块 | 当前工作树已表现为搬迁；新位置仍是旧实现，尚未完成模块化 |
-| `methods/augmix/ecg_ops.py` | `util/augmentations/` 的最终单一实现 | PN2021-C 和训练代码仍有直接 import；自定义 profile 兼容逻辑仍在此处 |
-| `methods/augmix/severity.py` | `configs/augmentation/operators.yaml` 加统一 profile loader | 旧 standard S5 和历史实验仍需回放；必须先迁移调用方 |
-| `configs/experiments/pn2021c_effnet_paper_anchored_s5_depth23_composite.yaml` | managed run 保存的 resolved config 与 `configs/augmentation/operators.yaml` | 确认不再需要从源码树重新运行该校准 |
+| `methods/augmix/ecg_ops.py` | `util/augmentations/operators.py`、`util/augmentations/torch_operators.py` | 白名单调用与 golden 测试已全部迁移；剩余引用均位于待退出旧树，需与旧调用方同批删除 |
+| `methods/augmix/severity.py` | `configs/augmentation/operators.yaml`、`util/augmentations/profile.py` | 白名单已无引用；剩余引用均位于待退出旧树，需与旧调用方同批删除 |
 | `configs/corruption_profiles/` 中被替代的历史 profile | `configs/augmentation/operators.yaml` | 需要逐文件检查 active config、证据记录和历史回放引用，禁止整目录删除 |
 | 旧数据预处理入口和旧实验 YAML | `data_preprocess/` 与受管实验 YAML | 需要从 `configs/active_scripts.yaml`、import closure 和运行记录生成精确候选清单 |
 
@@ -308,7 +312,7 @@ native-rate 到 100 Hz、100 Hz 到 500 Hz，以及迁移脚本中的 PTB-XL
 1. 在本清单中写明它的精确替代文件和职责映射。
 2. 使用 `rg` 确认没有活动代码、YAML、测试或文档仍引用旧路径。
 3. 新实现通过对应单元测试和数据契约测试。
-4. 相关 `scripts/run_experiment.py --dry-run` 通过协议审计。
+4. 相关 `boot_scripts/run_experiment.py --dry-run` 通过协议审计。
 5. 涉及数据或模型输入时，至少完成一次小规模 smoke test。
 6. 涉及论文结果时，确认旧文件不是唯一的回放或证据来源。
 7. 生成待删除的精确路径清单；禁止使用目录级通配删除。
@@ -324,7 +328,10 @@ pytest -q util/tests/test_augmentations.py \
   util/tests/test_data_contracts.py \
   util/tests/test_labels_super5.py \
   util/tests/test_pn2021_corruptions.py
-micromamba run -n ECGTwin python scripts/agent/audit_agent_workspace.py
+/home/linbinhao/micromamba/envs/ECGTwin/bin/python \
+  boot_scripts/run_experiment.py \
+  --config configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_ningbo.yaml \
+  --dry-run
 ```
 
 涉及 GPU、长推理或缓存构建的验证，仍需先检查共享服务器资源并显式选择 GPU。
@@ -335,7 +342,11 @@ micromamba run -n ECGTwin python scripts/agent/audit_agent_workspace.py
 
 | 日期 | 批次 | 删除路径 | 替代路径 | 验证结果 | 用户确认 |
 |---|---|---|---|---|---|
-| 待执行 | 无 | 无 | 无 | 无 | 无 |
+| 2026-08-06 | 批次 1（已执行） | `ecg_adv_gen/data/synthetic_npz.py`；`ecg_adv_gen/training/effnet_super5.py`；`data_preprocess/prepare_ptbxl_for_ecgtwin.py`；`configs/experiments/pn2021c_effnet_paper_anchored_s5_depth23_composite.yaml` | `data_preprocess/load_cache.py` + `data_preprocess/data_runtime.py`；`core/supervised_trainer.py`；`models/vae.py` + `core/train_PN2021.py`；`configs/augmentation/operators.yaml` + `configs/eval/PN2021.yaml` | 删除后：四路径活动引用=0；白名单 Python issue=0；44 个实验 YAML 闭包 issue=0；5 个活动阶段 dry-run 通过；148 passed/16 skipped；`git diff --check` 通过 | 用户于 2026-08-06 明确回复“帮我删除” |
+
+`methods/augmix/ecg_ops.py` 与 `methods/augmix/severity.py` 暂不放进候选批次 1：
+白名单已经切断依赖，但旧 `ecg_adv_gen/` 与 `methods/` 树内部仍相互引用。
+它们应在后续“整棵旧运行树”批次中一起删除，避免暂时留下明显断裂的旧树。
 
 ## F. 当前下一步
 
@@ -351,8 +362,10 @@ micromamba run -n ECGTwin python scripts/agent/audit_agent_workspace.py
 - [x] 新增 `configs/train/PTBXL.yaml` 和 `core/supervised_trainer.py`；调用方通过统一 `data_runtime` 构建任意 PTB-XL/PN2021 DataLoader，再由通用训练器接受 model + DataLoader，支持验证集 macro-AUPRC 选模、最终测试与无验证集 last-epoch 微调。
 - [x] 新增 `core/train_PTBXL.py` 作为白名单 PTB-XL 数据适配层，并新增 EffNet/ECGFounder 两个 `boot_scripts/` 薄入口；模型采样率自动绑定 100/500 Hz，YAML 默认值和显式覆盖均可审计。
 - [x] 接入 run-scoped TensorBoard 观察层并移植 ECGTwin 作者 `ecg_plot` 绘图路径；监督 trainer 记录标量，在线训练接收 executor 提供的固定 hash raw-mV named views，event、PNG、NPY 和 manifest 均写入实验输出目录且不改变训练 RNG。
-- [ ] 决定 ECGTwin VAE/Nomic 预处理是否保留，并重写或删除 `TRANSITION` 脚本。
-- [ ] 将五算子收敛成单一实现，迁移所有活动 import。
+- [x] 当前主线不保留旧 ECGTwin VAE/Nomic 预处理入口；该 `TRANSITION`
+  脚本已在批次 1 删除。
+- [x] 将五算子收敛到 `util/augmentations/` 与单一 profile loader，并迁移
+  全部白名单活动 import；旧树内部 bridge 留待整树批次删除。
 - [x] 将共享 profile loader 与 `configs/augmentation/operators.yaml` 接入离线
   PN2021-C 缓存和在线 Torch AugMix；两条路径读取相同参数、seed/config SHA，
   不再维护重复 YAML 解析逻辑。
