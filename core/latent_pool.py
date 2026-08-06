@@ -7,9 +7,10 @@ with their already-verified hash and integer identities.
 
 The pool stores the deterministic scaled posterior mean returned by the frozen
 ECGTwin encoder.  Eligibility is exact-positive-set, distinct, and non-self.
-Records with fewer than ``M=20`` candidates remain visible for clean training,
-but attack access fails explicitly instead of padding or silently dropping
-them.
+Records with fewer than the configured ``M`` candidates remain visible for
+clean training, but attack access fails explicitly instead of padding or
+silently dropping them.  The default mainline remains ``M=20``; bounded
+candidate-count ablations use the same explicit registry as the LHAT config.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from typing import Any, Iterable, Mapping, Sequence
 import torch
 import torch.nn as nn
 
-from core.lhat import LatentStandardizer
+from core.lhat import LatentStandardizer, SUPPORTED_NUM_CANDIDATES
 from models.vae import prepare_ecgtwin_encoder_input
 
 
@@ -797,9 +798,13 @@ def build_latent_pool(
     if (
         not isinstance(num_candidates, int)
         or isinstance(num_candidates, bool)
-        or num_candidates != MAIN_NUM_CANDIDATES
+        or num_candidates not in SUPPORTED_NUM_CANDIDATES
     ):
-        raise ValueError("the main latent-pool contract requires M=20 candidates")
+        raise ValueError(
+            "the latent-pool contract requires num_candidates in "
+            f"{sorted(SUPPORTED_NUM_CANDIDATES)}"
+        )
+    resolved_num_candidates = int(num_candidates)
     epsilon = float(standardizer_epsilon)
     if not bool(torch.isfinite(torch.tensor(epsilon))) or epsilon <= 0.0:
         raise ValueError("standardizer_epsilon must be finite and positive")
@@ -862,11 +867,13 @@ def build_latent_pool(
     hash_ids = tuple(all_hash_ids[int(index)] for index in order.tolist())
 
     candidate_counts = _candidate_counts(labels)
-    eligible_mask = candidate_counts >= MAIN_NUM_CANDIDATES
+    eligible_mask = candidate_counts >= resolved_num_candidates
     eligible_latents = latents[eligible_mask]
     if eligible_latents.shape[0] < 2:
         raise ValueError(
-            "fewer than two M=20-eligible train records; cannot fit LatentStandardizer"
+            "fewer than two "
+            f"M={resolved_num_candidates}-eligible train records; "
+            "cannot fit LatentStandardizer"
         )
     standardizer = LatentStandardizer.fit(
         eligible_latents,
@@ -889,7 +896,7 @@ def build_latent_pool(
         eligible_mask=eligible_mask,
         exact_neighbor_indices=exact_neighbor_indices,
         standardizer=standardizer,
-        num_candidates=MAIN_NUM_CANDIDATES,
+        num_candidates=resolved_num_candidates,
     )
     return LatentPool(
         hash_ids=hash_ids,

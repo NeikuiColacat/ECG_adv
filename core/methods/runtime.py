@@ -24,7 +24,12 @@ from core.augmix import (
     load_augmix_config,
 )
 from core.corruption import generate_canonical_corruption
-from core.lhat import LHATConfig, generate_lhat_adversarial, load_lhat_config
+from core.lhat import (
+    LHATConfig,
+    contract_lhat_adversarial,
+    generate_lhat_adversarial,
+    load_lhat_config,
+)
 from core.methods.contracts import (
     BASE_VIEW_NAME,
     LatentView,
@@ -521,6 +526,9 @@ class MethodViewRuntime:
         if self.latent_pool is None or self.decoder is None or self.lhat_config is None:
             raise RuntimeError("LHAT runtime resources are incomplete")
         source = inputs[0]
+        attack_then_contract = (
+            context.node_type == "vae_lhat_attack_then_contract_view"
+        )
         classifier = context.resource("classifier")
         pool = context.resource("latent_pool")
         try:
@@ -597,16 +605,45 @@ class MethodViewRuntime:
                 model_name=self.model_name,
                 config=self.lhat_config,
             )
+            training_waveform = attack.waveform_raw
+            contract_result = None
+            if attack_then_contract:
+                contract_result = contract_lhat_adversarial(
+                    classifier=classifier,
+                    decoder=context.resource("vae_decoder"),
+                    attack=attack,
+                    raw_clean_waveform=source.waveform.index_select(
+                        0, candidate_index
+                    ),
+                    targets=candidate_targets,
+                    standardizer=pool.standardizer,
+                    model_name=self.model_name,
+                    minimum_std_mV=self.minimum_std_mV,
+                    maximum_abs_mV=self.maximum_abs_mV,
+                    config=self.lhat_config,
+                )
+                training_waveform = contract_result.waveform_raw
             full_anchor_reconstruction.index_copy_(
                 0,
                 candidate_index,
                 attack.anchor_waveform_raw,
             )
             accepted_local, reasons = _quality_mask(
-                attack.waveform_raw,
+                training_waveform,
                 minimum_std_mV=self.minimum_std_mV,
                 maximum_abs_mV=self.maximum_abs_mV,
             )
+            if contract_result is not None:
+                accepted_local &= contract_result.valid_mask
+                contract_acceptance = (
+                    contract_result.valid_mask.detach().cpu().tolist()
+                )
+                reasons = tuple(
+                    reason
+                    if bool(contract_acceptance[index])
+                    else "contract_rejected"
+                    for index, reason in enumerate(reasons)
+                )
             stochastic_trace = {
                 "candidate_batch_positions": candidate_index.detach().contiguous(),
                 "candidate_pool_indices": (
@@ -615,6 +652,17 @@ class MethodViewRuntime:
                 "final_hull_weights": attack.weights.detach().contiguous(),
                 "quality_accepted_mask": accepted_local.detach().contiguous(),
             }
+            if contract_result is not None:
+                stochastic_trace.update(
+                    {
+                        "contract_accepted_mask": (
+                            contract_result.valid_mask.detach().contiguous()
+                        ),
+                        "contract_selected_t": (
+                            contract_result.diagnostics.selected_t.detach().contiguous()
+                        ),
+                    }
+                )
             # ``_quality_mask`` already materialized one compact per-record
             # summary to construct the audit reasons. Reuse that host result
             # instead of synchronizing the accepted mask a second time.
@@ -636,12 +684,22 @@ class MethodViewRuntime:
                 full_waveform.index_copy_(
                     0,
                     accepted_batch_tensor,
-                    attack.waveform_raw.index_select(0, accepted_local_tensor),
+                    training_waveform.index_select(0, accepted_local_tensor),
                 )
                 full_valid[accepted_batch_tensor] = True
                 accepted_diagnostics = attack.diagnostics.select(accepted_local)
                 diagnostic_samples = accepted_diagnostics.sample_tensor_dict()
                 diagnostic_means = accepted_diagnostics.mean_tensor_dict()
+                if contract_result is not None:
+                    accepted_contract = contract_result.diagnostics.select(
+                        accepted_local
+                    )
+                    diagnostic_samples.update(
+                        accepted_contract.sample_tensor_dict()
+                    )
+                    diagnostic_means.update(
+                        accepted_contract.mean_tensor_dict()
+                    )
                 sum_names = {
                     "sample_anyflip_numerator",
                     "sample_anyflip_denominator",
@@ -649,6 +707,8 @@ class MethodViewRuntime:
                     "positive_hide_denominator",
                     "negative_add_numerator",
                     "negative_add_denominator",
+                    "contract_training_anyflip_numerator",
+                    "contract_training_anyflip_denominator",
                 }
                 local_diagnostic_weights = {
                     name: 1 if name in sum_names else len(accepted_positions)
@@ -687,6 +747,7 @@ class MethodViewRuntime:
                 parameters={
                     "candidate_mode": self.lhat_config.candidate_mode,
                     "num_candidates": self.lhat_config.num_candidates,
+                    "attack_then_contract": attack_then_contract,
                     "quality_rejection_policy": "clean_loss_only",
                 },
             ),

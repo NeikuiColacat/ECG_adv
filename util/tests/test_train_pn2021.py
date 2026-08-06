@@ -20,6 +20,7 @@ from util.run_record import build_run_file_index, snapshot_yaml_files
 
 REPO = Path(__file__).resolve().parents[2]
 CONFIG = REPO / "configs" / "train" / "PN2021.yaml"
+DIRECT_CONFIG = REPO / "configs" / "train" / "PN2021_fixed20.yaml"
 
 
 def _selection_fixture(
@@ -263,25 +264,6 @@ def test_selected_refit_rejects_unmanaged_selection_copy(tmp_path):
         )
 
 
-def test_locked_matched_boot_requires_selection_json(tmp_path):
-    with pytest.raises(ValueError, match="requires --selection-json"):
-        boot_module.main(
-            [
-                "--config",
-                str(CONFIG),
-                "--model",
-                "efficientnet1dv2",
-                "--method-config",
-                "train/methods/exp_paired_augmix_latent_bridge_v1.yaml",
-                "--center",
-                "ningbo",
-                "--source-checkpoint",
-                str(tmp_path / "source.pt"),
-                "--dry-run",
-            ]
-        )
-
-
 @pytest.mark.parametrize(
     ("override", "message"),
     [
@@ -519,7 +501,7 @@ def test_k500_matched_seed_namespace_does_not_append_method_profile(monkeypatch)
         center="ningbo",
         model_name="efficientnet1dv2",
         shuffle=True,
-        config_path=CONFIG,
+        config_path=DIRECT_CONFIG,
         dataloader_parameters={"num_workers": 0},
     )
 

@@ -52,6 +52,15 @@ output:
   return_global_zscore_mixture: true
   normalization_epsilon: 1.0e-6
 
+stage1_twochain:
+  width: 2
+  view: one_strong_view
+  chain_sampling: independent_sequential_locked_rng
+  dirichlet_alpha: 0.5
+  clean_mix: beta
+  beta_alpha: 0.5
+  simclr_temperature: 0.5
+
 latent_threechain:
   width: 3
   depths: [2, 3]

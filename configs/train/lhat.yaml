@@ -26,11 +26,22 @@ hull_attack:
   weight_mode: optimized_softmax
   init_logit_gap: 0.0
   hull_lambda: 0.60
-  steps: 5
+  steps: 10
   learning_rate: 0.25
-  pgd_epsilon_l2_standardized: 2.0
+  pgd_epsilon_l2_standardized: 12.0
   objective: maximize_multilabel_bce_with_logits
   optimizer: adam
+
+attack_then_contract:
+  enabled: true
+  version: preflip_maxloss_grid_v1
+  t_values: [0.25, 0.5, 0.75, 1.0]
+  margin_retention: 0.5
+  selection: maximum_bce_without_new_clean_correct_flip
+  margin_reference: signed_raw_clean_logit
+  endpoint_residual_correction: linear_clean_hard_endpoint
+  raw_search_diagnostics_retained: true
+  uses_heldout_target: false
 
 decoder_bridge:
   native_points: 1024

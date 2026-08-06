@@ -32,12 +32,26 @@ ATTACK_OBJECTIVES = frozenset(
         "compute_matched_uniform_latent_control",
     }
 )
+SUPPORTED_NUM_CANDIDATES = frozenset({5, 10, 20})
 
 
 @dataclass(frozen=True)
 class AttackDomain:
     sampling_rate_hz: int
     points: int
+
+
+@dataclass(frozen=True)
+class AttackThenContractConfig:
+    enabled: bool
+    version: str
+    t_values: tuple[float, ...]
+    margin_retention: float
+    selection: str
+    margin_reference: str
+    endpoint_residual_correction: str
+    raw_search_diagnostics_retained: bool
+    uses_heldout_target: bool
 
 
 @dataclass(frozen=True)
@@ -60,6 +74,7 @@ class LHATConfig:
     normalization_epsilon: float
     canonical_domain: AttackDomain
     model_domains: dict[str, AttackDomain]
+    attack_then_contract: AttackThenContractConfig
 
 
 @dataclass(frozen=True)
@@ -277,9 +292,90 @@ class LHATDiagnostics:
 class LHATResult:
     waveform_raw: torch.Tensor
     anchor_waveform_raw: torch.Tensor
+    anchor_standardized: torch.Tensor
     latent_standardized: torch.Tensor
     weights: torch.Tensor
     diagnostics: LHATDiagnostics
+
+
+@dataclass(frozen=True)
+class AttackThenContractDiagnostics:
+    accepted: torch.Tensor
+    selected_t: torch.Tensor
+    raw_clean_bce: torch.Tensor
+    selected_bce: torch.Tensor
+    bce_gain: torch.Tensor
+    path_valid_count: torch.Tensor
+    path_preserving_count: torch.Tensor
+    clean_correct_class_count: torch.Tensor
+    training_anyflip_success: torch.Tensor
+
+    def __post_init__(self) -> None:
+        values = tuple(getattr(self, item.name) for item in fields(self))
+        if not values or any(
+            not isinstance(value, torch.Tensor)
+            or value.ndim != 1
+            or value.requires_grad
+            for value in values
+        ):
+            raise TypeError(
+                "attack-then-contract diagnostics must be detached rank-1 tensors"
+            )
+        if any(value.shape != values[0].shape for value in values[1:]):
+            raise ValueError(
+                "attack-then-contract diagnostics must share one batch length"
+            )
+
+    def select(self, mask: torch.Tensor) -> "AttackThenContractDiagnostics":
+        if (
+            not isinstance(mask, torch.Tensor)
+            or mask.dtype != torch.bool
+            or mask.ndim != 1
+            or mask.shape != self.accepted.shape
+        ):
+            raise ValueError("contract diagnostic mask must be bool shape (B,)")
+        return AttackThenContractDiagnostics(
+            **{
+                item.name: getattr(self, item.name)[mask].detach()
+                for item in fields(self)
+            }
+        )
+
+    def sample_tensor_dict(self) -> dict[str, torch.Tensor]:
+        return {
+            item.name: getattr(self, item.name)
+            for item in fields(self)
+        }
+
+    def mean_tensor_dict(self) -> dict[str, torch.Tensor]:
+        return {
+            "contract_acceptance_rate": self.accepted.float().mean().detach(),
+            "contract_selected_t": self.selected_t.float().mean().detach(),
+            "contract_raw_clean_bce": self.raw_clean_bce.float().mean().detach(),
+            "contract_selected_bce": self.selected_bce.float().mean().detach(),
+            "contract_bce_gain": self.bce_gain.float().mean().detach(),
+            "contract_path_valid_count": self.path_valid_count.float().mean().detach(),
+            "contract_path_preserving_count": (
+                self.path_preserving_count.float().mean().detach()
+            ),
+            "contract_clean_correct_class_count": (
+                self.clean_correct_class_count.float().mean().detach()
+            ),
+            "contract_training_anyflip_numerator": (
+                self.training_anyflip_success.float().sum().detach()
+            ),
+            "contract_training_anyflip_denominator": torch.tensor(
+                float(self.training_anyflip_success.numel()),
+                device=self.training_anyflip_success.device,
+            ),
+        }
+
+
+@dataclass(frozen=True)
+class AttackThenContractResult:
+    waveform_raw: torch.Tensor
+    valid_mask: torch.Tensor
+    diagnostics: AttackThenContractDiagnostics
 
 
 def _mapping(value: Any, description: str) -> dict[str, Any]:
@@ -305,6 +401,7 @@ def load_lhat_config(
         "latent_standardization",
         "candidates",
         "hull_attack",
+        "attack_then_contract",
         "decoder_bridge",
         "diagnostics",
     }
@@ -320,6 +417,22 @@ def load_lhat_config(
         raise ValueError("LHAT method keys are incomplete or unexpected")
     candidates = _mapping(payload.get("candidates"), "candidates")
     attack = _mapping(payload.get("hull_attack"), "hull_attack")
+    raw_contract = _mapping(
+        payload.get("attack_then_contract"), "attack_then_contract"
+    )
+    expected_contract_keys = {
+        "enabled",
+        "version",
+        "t_values",
+        "margin_retention",
+        "selection",
+        "margin_reference",
+        "endpoint_residual_correction",
+        "raw_search_diagnostics_retained",
+        "uses_heldout_target",
+    }
+    if set(raw_contract) != expected_contract_keys:
+        raise ValueError("attack_then_contract keys are incomplete or unexpected")
     expected_attack_keys = {
         "weight_mode",
         "init_logit_gap",
@@ -384,13 +497,33 @@ def load_lhat_config(
         normalization_epsilon=float(bridge.get("normalization_epsilon", 0.0)),
         canonical_domain=canonical_domain,
         model_domains=domains,
+        attack_then_contract=AttackThenContractConfig(
+            enabled=bool(raw_contract.get("enabled", False)),
+            version=str(raw_contract.get("version", "")),
+            t_values=tuple(float(value) for value in raw_contract.get("t_values", ())),
+            margin_retention=float(raw_contract.get("margin_retention", 0.0)),
+            selection=str(raw_contract.get("selection", "")),
+            margin_reference=str(raw_contract.get("margin_reference", "")),
+            endpoint_residual_correction=str(
+                raw_contract.get("endpoint_residual_correction", "")
+            ),
+            raw_search_diagnostics_retained=bool(
+                raw_contract.get("raw_search_diagnostics_retained", False)
+            ),
+            uses_heldout_target=bool(
+                raw_contract.get("uses_heldout_target", True)
+            ),
+        ),
     )
     if candidates.get("label_policy") != "exact_positive_set":
         raise ValueError("main LHAT candidate policy must be exact_positive_set")
     if not config.random_namespace:
         raise ValueError("LHAT random namespace must be recorded")
-    if config.num_candidates != 20:
-        raise ValueError("main LHAT contract requires exactly 20 candidates")
+    if config.num_candidates not in SUPPORTED_NUM_CANDIDATES:
+        raise ValueError(
+            "main LHAT contract requires num_candidates in "
+            f"{sorted(SUPPORTED_NUM_CANDIDATES)}"
+        )
     if config.include_anchor:
         raise ValueError("repaired LHAT contract requires include_anchor=false")
     if config.init_logit_gap != 0.0:
@@ -429,6 +562,20 @@ def load_lhat_config(
         raise ValueError("LHAT decoded waveform must use the canonical 100 Hz domain")
     if bridge.get("interpolation") != "linear_align_corners":
         raise ValueError("LHAT domain bridges must use linear align_corners interpolation")
+    contract = config.attack_then_contract
+    if (
+        not contract.enabled
+        or contract.version != "preflip_maxloss_grid_v1"
+        or contract.t_values != (0.25, 0.5, 0.75, 1.0)
+        or contract.margin_retention != 0.5
+        or contract.selection != "maximum_bce_without_new_clean_correct_flip"
+        or contract.margin_reference != "signed_raw_clean_logit"
+        or contract.endpoint_residual_correction
+        != "linear_clean_hard_endpoint"
+        or not contract.raw_search_diagnostics_retained
+        or contract.uses_heldout_target
+    ):
+        raise ValueError("attack_then_contract does not match the frozen contract")
     return config
 
 
@@ -653,6 +800,31 @@ def _attack_objective_per_sample(
     raise ValueError(f"unsupported LHAT attack objective: {objective!r}")
 
 
+def _freeze_parameter_gradients(
+    *modules: nn.Module,
+) -> tuple[tuple[nn.Parameter, bool], ...]:
+    """Freeze module weights while preserving gradients to their inputs."""
+
+    seen: set[int] = set()
+    states: list[tuple[nn.Parameter, bool]] = []
+    for module in modules:
+        for parameter in module.parameters():
+            identity = id(parameter)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            states.append((parameter, bool(parameter.requires_grad)))
+            parameter.requires_grad_(False)
+    return tuple(states)
+
+
+def _restore_parameter_gradients(
+    states: tuple[tuple[nn.Parameter, bool], ...],
+) -> None:
+    for parameter, requires_grad in states:
+        parameter.requires_grad_(requires_grad)
+
+
 def generate_lhat_adversarial(
     *,
     classifier: nn.Module,
@@ -704,6 +876,7 @@ def generate_lhat_adversarial(
 
     classifier_was_training = classifier.training
     decoder_was_training = decoder.training
+    parameter_grad_states = _freeze_parameter_gradients(classifier, decoder)
     classifier.eval()
     decoder.eval()
     weight_logits = torch.zeros(
@@ -876,22 +1049,243 @@ def generate_lhat_adversarial(
             return LHATResult(
                 waveform_raw=final_raw.detach().contiguous(),
                 anchor_waveform_raw=anchor_raw.detach().contiguous(),
+                anchor_standardized=anchor_standardized.detach().contiguous(),
                 latent_standardized=final_latent.detach().contiguous(),
                 weights=weights.detach().contiguous(),
                 diagnostics=diagnostics,
             )
     finally:
+        _restore_parameter_gradients(parameter_grad_states)
+        classifier.train(classifier_was_training)
+        decoder.train(decoder_was_training)
+
+
+def apply_linear_endpoint_residual_correction(
+    decoded_paths: torch.Tensor,
+    *,
+    t_values: torch.Tensor,
+    raw_clean_waveform: torch.Tensor,
+    decoded_anchor_waveform: torch.Tensor,
+    raw_hard_waveform: torch.Tensor,
+    decoded_hard_waveform: torch.Tensor,
+) -> torch.Tensor:
+    """Make the decoded latent path meet both observed waveform endpoints."""
+
+    if decoded_paths.ndim != 4:
+        raise ValueError("decoded_paths must have shape (B,T,time,12)")
+    batch, count, points, leads = decoded_paths.shape
+    expected = (batch, points, leads)
+    endpoints = (
+        raw_clean_waveform,
+        decoded_anchor_waveform,
+        raw_hard_waveform,
+        decoded_hard_waveform,
+    )
+    if any(tuple(value.shape) != expected for value in endpoints):
+        raise ValueError("residual-correction endpoint shapes are inconsistent")
+    if tuple(t_values.shape) != (count,):
+        raise ValueError("t_values must contain one value per decoded path point")
+    t = t_values.to(
+        device=decoded_paths.device,
+        dtype=decoded_paths.dtype,
+    ).view(1, count, 1, 1)
+    clean_residual = raw_clean_waveform - decoded_anchor_waveform
+    hard_residual = raw_hard_waveform - decoded_hard_waveform
+    return (
+        decoded_paths
+        + (1.0 - t) * clean_residual[:, None]
+        + t * hard_residual[:, None]
+    ).contiguous()
+
+
+def contract_lhat_adversarial(
+    *,
+    classifier: nn.Module,
+    decoder: nn.Module,
+    attack: LHATResult,
+    raw_clean_waveform: torch.Tensor,
+    targets: torch.Tensor,
+    standardizer: LatentStandardizer,
+    model_name: str,
+    minimum_std_mV: float,
+    maximum_abs_mV: float,
+    config: LHATConfig | None = None,
+) -> AttackThenContractResult:
+    """Select the hardest label-preserving point on the clean-to-hard path."""
+
+    resolved = load_lhat_config() if config is None else config
+    contract = resolved.attack_then_contract
+    if not contract.enabled:
+        raise ValueError("attack-then-contract is disabled")
+    if model_name not in resolved.model_domains:
+        raise ValueError(f"unsupported LHAT model_name: {model_name!r}")
+    domain = resolved.model_domains[model_name]
+    batch = int(raw_clean_waveform.shape[0])
+    if tuple(raw_clean_waveform.shape) != (
+        batch,
+        resolved.canonical_domain.points,
+        12,
+    ):
+        raise ValueError("contract raw clean waveform must be canonical (B,1000,12)")
+    if targets.shape != (batch, 5):
+        raise ValueError("contract targets must have shape (B,5)")
+    if attack.anchor_standardized.shape != attack.latent_standardized.shape:
+        raise ValueError("contract latent endpoints must have identical shape")
+    if attack.anchor_standardized.shape[0] != batch:
+        raise ValueError("contract latent batch differs from raw clean batch")
+    if minimum_std_mV <= 0.0 or maximum_abs_mV <= 0.0:
+        raise ValueError("contract quality thresholds must be positive")
+
+    classifier_was_training = classifier.training
+    decoder_was_training = decoder.training
+    parameter_grad_states = _freeze_parameter_gradients(classifier, decoder)
+    classifier.eval()
+    decoder.eval()
+    t_values = torch.tensor(
+        contract.t_values,
+        device=attack.latent_standardized.device,
+        dtype=attack.latent_standardized.dtype,
+    )
+    path_count = int(t_values.numel())
+    latent_delta = attack.latent_standardized - attack.anchor_standardized
+    path_standardized = (
+        attack.anchor_standardized[:, None]
+        + t_values.view((1, path_count) + (1,) * (latent_delta.ndim - 1))
+        * latent_delta[:, None]
+    )
+    try:
+        with torch.no_grad():
+            decoded_paths = decode_to_ptbxl_waveform(
+                decoder,
+                standardizer.inverse_transform(
+                    path_standardized.flatten(0, 1)
+                ),
+                target_points=resolved.canonical_domain.points,
+            ).reshape(
+                batch,
+                path_count,
+                resolved.canonical_domain.points,
+                12,
+            )
+            corrected = apply_linear_endpoint_residual_correction(
+                decoded_paths,
+                t_values=t_values,
+                raw_clean_waveform=raw_clean_waveform,
+                decoded_anchor_waveform=attack.anchor_waveform_raw,
+                raw_hard_waveform=attack.waveform_raw,
+                decoded_hard_waveform=decoded_paths[:, -1],
+            )
+            flat = corrected.flatten(2)
+            finite = torch.isfinite(flat).all(dim=2)
+            safe = torch.nan_to_num(
+                flat, nan=0.0, posinf=0.0, neginf=0.0
+            )
+            valid = (
+                finite
+                & (safe.std(dim=2, correction=0) >= float(minimum_std_mV))
+                & (safe.abs().amax(dim=2) <= float(maximum_abs_mV))
+            )
+
+            clean_model = _canonical_to_attack_domain(
+                raw_clean_waveform,
+                domain,
+                resolved.canonical_domain,
+            )
+            clean_logits = classifier(
+                _global_zscore_bct(
+                    clean_model, resolved.normalization_epsilon
+                )
+            )
+            path_model = _canonical_to_attack_domain(
+                corrected.flatten(0, 1),
+                domain,
+                resolved.canonical_domain,
+            )
+            path_logits = classifier(
+                _global_zscore_bct(
+                    path_model, resolved.normalization_epsilon
+                )
+            ).reshape(batch, path_count, 5)
+            expanded_targets = targets[:, None].expand(-1, path_count, -1)
+            path_bce = F.binary_cross_entropy_with_logits(
+                path_logits,
+                expanded_targets,
+                reduction="none",
+            ).mean(dim=2)
+            clean_bce = _bce_per_sample(clean_logits, targets)
+
+            truth_sign = targets.mul(2.0).sub(1.0)
+            clean_signed = clean_logits * truth_sign
+            path_signed = path_logits * truth_sign[:, None]
+            clean_correct = clean_signed >= 0.0
+            retained_margin = (
+                clean_signed.clamp_min(0.0)
+                * float(contract.margin_retention)
+            )
+            preserving = (
+                (~clean_correct[:, None])
+                | (path_signed >= retained_margin[:, None])
+            ).all(dim=2)
+            allowed = valid & preserving
+            ranked = path_bce + t_values.view(1, -1) * 1.0e-8
+            masked = ranked.masked_fill(~allowed, -torch.inf)
+            accepted = allowed.any(dim=1)
+            selected_index = masked.argmax(dim=1)
+            rows = torch.arange(batch, device=corrected.device)
+            selected = corrected[rows, selected_index]
+            selected_logits = path_logits[rows, selected_index]
+            selected_bce = path_bce[rows, selected_index]
+            selected_t = t_values.index_select(0, selected_index)
+            selected = torch.where(
+                accepted.view(-1, 1, 1),
+                selected,
+                raw_clean_waveform,
+            )
+            selected_bce = torch.where(accepted, selected_bce, clean_bce)
+            selected_t = torch.where(
+                accepted, selected_t, torch.zeros_like(selected_t)
+            )
+            selected_prediction = selected_logits >= 0.0
+            clean_prediction = clean_logits >= 0.0
+            training_flip = (
+                clean_correct
+                & (selected_prediction != clean_prediction)
+            ).any(dim=1)
+            training_flip &= accepted
+            diagnostics = AttackThenContractDiagnostics(
+                accepted=accepted.detach(),
+                selected_t=selected_t.detach(),
+                raw_clean_bce=clean_bce.detach(),
+                selected_bce=selected_bce.detach(),
+                bce_gain=(selected_bce - clean_bce).detach(),
+                path_valid_count=valid.sum(dim=1).detach(),
+                path_preserving_count=(valid & preserving).sum(dim=1).detach(),
+                clean_correct_class_count=clean_correct.sum(dim=1).detach(),
+                training_anyflip_success=training_flip.detach(),
+            )
+            return AttackThenContractResult(
+                waveform_raw=selected.detach().contiguous(),
+                valid_mask=accepted.detach(),
+                diagnostics=diagnostics,
+            )
+    finally:
+        _restore_parameter_gradients(parameter_grad_states)
         classifier.train(classifier_was_training)
         decoder.train(decoder_was_training)
 
 
 __all__ = [
+    "AttackThenContractConfig",
+    "AttackThenContractDiagnostics",
+    "AttackThenContractResult",
     "AttackDomain",
     "DEFAULT_LHAT_CONFIG_PATH",
     "LHATConfig",
     "LHATDiagnostics",
     "LHATResult",
     "LatentStandardizer",
+    "apply_linear_endpoint_residual_correction",
+    "contract_lhat_adversarial",
     "generate_lhat_adversarial",
     "load_lhat_config",
     "make_lhat_generator",

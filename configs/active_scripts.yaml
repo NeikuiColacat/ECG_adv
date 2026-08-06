@@ -1,5 +1,5 @@
 version: 1
-updated: 2026-08-05
+updated: 2026-08-06
 purpose: Track the latest-mainline YAML launch contract for the public refactor.
 source_of_truth:
   shared_server_safety: AGENTS.md
@@ -139,12 +139,22 @@ latest_development_mainline:
   - multistart
   - residual_head
   managed_replay:
-    status: pending_migration_from_locked_development_evidence
+    status: whitelist_runtime_migrated_cpu_verified
+    launcher: boot_scripts/run_experiment.py
+    experiment_config: configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_ningbo.yaml
+    online_config: configs/train/PN2021.yaml
+    method_config: configs/train/methods/augmix_simclr_lhat.yaml
+    trainer: core/online_trainer.py
+    verification:
+    - util/tests/test_online_trainer.py
+    - util/tests/test_method_graph.py
+    - util/tests/test_vae_lhat_augmix.py
+    - efficientnet_and_ecgfounder_cpu_dry_runs
     reason: >
-      The selected implementation currently lives in whitelist-owned
-      agent_workspace exploration code. It must not replace the public managed
-      launcher stages until the same recipe is moved into package-owned runners,
-      tracked YAML, CPU-tested adapters, and registered multi-seed runs.
+      The selected recipe now runs entirely through whitelist-owned configs,
+      method/runtime/trainer code, and managed boot scripts without importing
+      agent_workspace. CPU tests and both backbone dry-runs are complete;
+      registered frozen multi-seed GPU replication remains pending.
   evidence_boundary:
   - heldout_tuned_development_scoreboard
   - single_seed_per_locked_backbone_candidate

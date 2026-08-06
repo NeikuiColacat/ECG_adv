@@ -53,11 +53,11 @@ def _a5_tuning_bundle(tmp_path: Path) -> Path:
     protocol_id = "pn2021_a5_lhat_threechain_tuning"
     payload["profile_name"] = protocol_id
     payload["protocol_lock"]["protocol_id"] = protocol_id
-    payload["protocol_lock"]["method_id"] = "a5_lhat_threechain_v1"
+    payload["protocol_lock"]["method_id"] = "augmix_simclr_lhat"
     payload["references"]["method_config"] = (
-        "train/methods/a5_lhat_threechain_v1.yaml"
+        "train/methods/augmix_simclr_lhat.yaml"
     )
-    payload["training"]["method"] = "a5_lhat_threechain_v1"
+    payload["training"]["method"] = "augmix_simclr_lhat"
     payload["training"].pop("family_loss_weights", None)
     payload["training"]["objective_source"] = "method_profile"
     payload["pooled_selection"]["output_file"] = (
@@ -362,7 +362,7 @@ def test_tuning_config_accepts_a5_latent_pool_method(tmp_path: Path):
     config = tuning.load_pn2021_tuning_config(path)
 
     assert config.protocol_id == "pn2021_a5_lhat_threechain_tuning"
-    assert config.method_id == "a5_lhat_threechain_v1"
+    assert config.method_id == "augmix_simclr_lhat"
     assert config.payload["training"]["objective_source"] == "method_profile"
 
 

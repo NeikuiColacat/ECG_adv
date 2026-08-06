@@ -1,5 +1,5 @@
 schema_version: 1
-profile_name: pn2021_k500_matched_lr3e5_comparison
+profile_name: aligned_targetonly_augmix_simclr_lhat
 
 references:
   split_config: data/splits.yaml
@@ -8,7 +8,7 @@ references:
   source_baseline_registry: baselines/ptbxl_source_v1.yaml
 
 protocol:
-  status: locked_matched_k500_comparison
+  status: locked_prospective_replication_recipe
   centers: [ningbo, chapman_shaoxing, cpsc_2018, georgia]
   merge_cpsc_2018_extra_into_cpsc_2018: true
   partition: k500
@@ -26,8 +26,8 @@ protocol:
     validation_records_per_center: 100
 
 random_seed:
-  stream_namespace: pn2021_fixed20_family_balanced_training
-  comparison_group: pn2021_direct_depth23_fixed20_family_balanced
+  stream_namespace: aligned_targetonly_augmix_simclr_lhat
+  comparison_group: aligned_targetonly_augmix_lhat_simplified_20260805
   replicate_id: 0
   deterministic_algorithms: false
 
@@ -79,17 +79,27 @@ training:
     dtype: bfloat16
   model_profiles:
     efficientnet1dv2:
-      epochs: 30
+      epochs: 23
+      scheduler_horizon_epochs: 30
       batch_size: 128
       learning_rate: 5.0e-5
       weight_decay: 1.0e-4
       minimum_learning_rate_ratio: 0.01
+      stage1_steps: 1024
+      stage1_learning_rate: 1.0e-3
+      stage1_weight_decay: 1.0e-4
+      stage1_gradient_clip_norm: 5.0
     ecgfounder:
-      epochs: 20
+      epochs: 30
+      scheduler_horizon_epochs: 30
       batch_size: 64
       learning_rate: 3.0e-5
       weight_decay: 1.0e-4
       minimum_learning_rate_ratio: 0.01
+      stage1_steps: 256
+      stage1_learning_rate: 1.0e-3
+      stage1_weight_decay: 1.0e-4
+      stage1_gradient_clip_norm: 5.0
 
 diagnostics:
   diagnostics_every_steps: 20

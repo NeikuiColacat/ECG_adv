@@ -381,13 +381,21 @@ class EfficientNet1DV2(nn.Module):
                 in_channels = out_channels
         return nn.Sequential(*layers)
 
-    def forward(self, value: torch.Tensor) -> torch.Tensor:
+    def forward_features(self, value: torch.Tensor) -> torch.Tensor:
+        """Return the pooled backbone representation before dropout/head."""
+
         validate_model_input(value, self.model_spec, check_finite=False)
         value = self.initial_conv(value)
         value = self.features(value)
         value = self.final_conv(value)
         value = self.final_norm(value)
-        return self.classifier(value)
+        value = self.classifier[0](value)
+        return self.classifier[1](value)
+
+    def forward(self, value: torch.Tensor) -> torch.Tensor:
+        value = self.forward_features(value)
+        value = self.classifier[2](value)
+        return self.classifier[3](value)
 
 
 def build_efficientnet1dv2(

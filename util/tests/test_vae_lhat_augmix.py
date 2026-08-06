@@ -13,11 +13,13 @@ import core.lhat as lhat_module
 from core.augmix import (
     generate_latent_three_chain_augmix,
     generate_three_chain_augmix,
+    generate_two_chain_augmix_strong_view,
     load_augmix_config,
     multilabel_jsd,
 )
 from core.lhat import (
     LatentStandardizer,
+    contract_lhat_adversarial,
     generate_lhat_adversarial,
     load_lhat_config,
     select_exact_label_candidates,
@@ -178,7 +180,9 @@ def test_lhat_attack_returns_raw_chain3_and_non_null_diagnostics(
     assert config.include_anchor is False
     assert config.init_logit_gap == 0.0
     assert config.hull_lambda == pytest.approx(0.60)
-    assert config.steps == 5
+    assert config.steps == 10
+    assert config.pgd_epsilon == pytest.approx(12.0)
+    assert config.attack_then_contract.t_values == (0.25, 0.5, 0.75, 1.0)
     assert config.attack_weight_mode == "optimized_softmax"
     assert config.attack_objective == "maximize_multilabel_bce_with_logits"
     assert config.random_namespace == "ecg_manual_refactor_lhat_v1"
@@ -213,6 +217,7 @@ def test_lhat_attack_returns_raw_chain3_and_non_null_diagnostics(
     )
     assert result.waveform_raw.shape == (2, 1000, 12)
     assert result.anchor_waveform_raw.shape == (2, 1000, 12)
+    assert result.anchor_standardized.shape == anchor.shape
     assert classifier.seen_points
     assert set(classifier.seen_points) == {expected_classifier_points}
     assert result.latent_standardized.shape == anchor.shape
@@ -270,6 +275,107 @@ def test_lhat_attack_returns_raw_chain3_and_non_null_diagnostics(
     )
 
 
+def test_attack_then_contract_preserves_clean_correct_predictions() -> None:
+    config = load_lhat_config()
+    anchor = torch.zeros(2, 1, 2)
+    candidates = torch.stack(
+        [
+            torch.linspace(-2.0, 2.0, 20).view(20, 1, 1).expand(20, 1, 2),
+            torch.linspace(-1.0, 3.0, 20).view(20, 1, 1).expand(20, 1, 2),
+        ]
+    )
+    standardizer = LatentStandardizer.fit(
+        torch.cat((anchor, candidates.flatten(0, 1)), dim=0)
+    )
+    labels = torch.tensor(
+        [[1, 0, 0, 0, 0], [0, 1, 0, 0, 0]], dtype=torch.float32
+    )
+    clean = torch.linspace(-0.2, 0.2, 1000).view(1, 1000, 1).repeat(
+        2, 1, 12
+    )
+    classifier = _TinyClassifier()
+    decoder = _TinyDecoder()
+    attack = generate_lhat_adversarial(
+        classifier=classifier,
+        decoder=decoder,
+        anchor_standardized=standardizer.transform(anchor),
+        candidates_standardized=standardizer.transform(candidates),
+        raw_clean_waveform=clean,
+        targets=labels,
+        standardizer=standardizer,
+        model_name="efficientnet1dv2",
+        config=config,
+    )
+    contracted = contract_lhat_adversarial(
+        classifier=classifier,
+        decoder=decoder,
+        attack=attack,
+        raw_clean_waveform=clean,
+        targets=labels,
+        standardizer=standardizer,
+        model_name="efficientnet1dv2",
+        minimum_std_mV=1.0e-4,
+        maximum_abs_mV=20.0,
+        config=config,
+    )
+
+    assert contracted.waveform_raw.shape == clean.shape
+    assert contracted.valid_mask.shape == (2,)
+    assert not bool(
+        contracted.diagnostics.training_anyflip_success.any().item()
+    )
+    assert torch.all(contracted.diagnostics.selected_t >= 0.0)
+    assert torch.all(contracted.diagnostics.selected_t <= 1.0)
+
+
+@pytest.mark.parametrize("num_candidates", [5, 10, 20])
+def test_lhat_config_accepts_registered_candidate_counts(
+    tmp_path: Path,
+    num_candidates: int,
+) -> None:
+    payload = yaml.safe_load(
+        (ROOT / "configs" / "train" / "lhat.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    payload["method"]["random_seed_file"] = str(
+        ROOT / "configs" / "random_seed.yaml"
+    )
+    payload["candidates"]["num_candidates"] = num_candidates
+    config_path = tmp_path / f"lhat_m{num_candidates}.yaml"
+    config_path.write_text(
+        yaml.safe_dump(payload, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    assert load_lhat_config(config_path).num_candidates == num_candidates
+
+
+def test_lhat_config_rejects_unregistered_candidate_count(
+    tmp_path: Path,
+) -> None:
+    payload = yaml.safe_load(
+        (ROOT / "configs" / "train" / "lhat.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    payload["method"]["random_seed_file"] = str(
+        ROOT / "configs" / "random_seed.yaml"
+    )
+    payload["candidates"]["num_candidates"] = 12
+    config_path = tmp_path / "lhat_m12.yaml"
+    config_path.write_text(
+        yaml.safe_dump(payload, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"num_candidates in \[5, 10, 20\]",
+    ):
+        load_lhat_config(config_path)
+
+
 def test_lhat_attack_objectives_are_effective_and_multilabel_balanced() -> None:
     logits = torch.zeros(1, 5, requires_grad=True)
     targets = torch.tensor([[1, 0, 0, 0, 0]], dtype=torch.float32)
@@ -312,6 +418,38 @@ def test_lhat_attack_objectives_are_effective_and_multilabel_balanced() -> None:
     )
     assert uniform.attack_weight_mode == "uniform_compute_matched"
     assert uniform.attack_objective == "compute_matched_uniform_latent_control"
+
+
+def test_two_chain_stage1_augmix_is_replayable_and_uses_locked_alpha() -> None:
+    config = load_augmix_config()
+    assert config.stage1_width == 2
+    assert config.stage1_dirichlet_alpha == pytest.approx(0.5)
+    assert config.stage1_beta_alpha == pytest.approx(0.5)
+    assert config.stage1_simclr_temperature == pytest.approx(0.5)
+    clean = torch.linspace(-0.5, 0.5, 2 * 1000 * 12).reshape(2, 1000, 12)
+
+    first = generate_two_chain_augmix_strong_view(
+        clean,
+        sampling_rate_hz=100,
+        config=config,
+        generator=make_torch_generator("cpu", "stage1_twochain_fixture"),
+    )
+    second = generate_two_chain_augmix_strong_view(
+        clean,
+        sampling_rate_hz=100,
+        config=config,
+        generator=make_torch_generator("cpu", "stage1_twochain_fixture"),
+    )
+
+    torch.testing.assert_close(first.mixed_raw, second.mixed_raw)
+    torch.testing.assert_close(first.mixture_weights, second.mixture_weights)
+    torch.testing.assert_close(
+        first.augmented_strength, second.augmented_strength
+    )
+    torch.testing.assert_close(
+        first.mixture_weights.sum(dim=1), torch.ones(2)
+    )
+    assert not torch.equal(first.chain1_raw, first.chain2_raw)
 
 
 def test_three_chain_augmix_is_deterministic_and_keeps_chain3_unmodified() -> None:

@@ -42,16 +42,15 @@ LOCKED_PROFILES = (
         ("classifier",),
     ),
     (
-        "a5_lhat_threechain_v1.yaml",
-        "a5_lhat_threechain_v1",
-        "A5",
-        ("clean_identity", "lhat", "threechain_augmix"),
-        {"clean_view", "lhat_view", "augmix_view"},
+        "augmix_simclr_lhat.yaml",
+        "augmix_simclr_lhat",
+        "augmix_simclr_lhat",
+        ("clean_identity", "depth23_corruption", "lhat"),
+        {"clean_view", "corrupted_view", "lhat_view"},
         (
             "clean_bce",
             "lhat_direct_bce",
-            "augmix_bce",
-            "clean_lhat_augmix_jsd",
+            "corrupted_bce",
         ),
         ("classifier", "vae_decoder", "latent_pool"),
     ),
@@ -103,7 +102,7 @@ def _clean_view(batch_size: int = 2) -> WaveformView:
     ),
     LOCKED_PROFILES,
 )
-def test_locked_a0_a3c_a5_profiles_compile(
+def test_locked_method_profiles_compile(
     filename: str,
     profile_name: str,
     scientific_arm: str,
@@ -125,19 +124,28 @@ def test_locked_a0_a3c_a5_profiles_compile(
     assert len(compiled.profile_sha256) == 64
 
 
-def test_a5_balances_batch_norm_once_across_its_three_objective_views() -> None:
+def test_mainline_locks_rotating_four_and_direct_lhat_gradient_sum() -> None:
     compiled = compile_method_profile(
-        METHOD_PROFILES / "a5_lhat_threechain_v1.yaml"
+        METHOD_PROFILES / "augmix_simclr_lhat.yaml"
     )
 
     assert compiled.contracts["batch_norm_running_stats_policy"] == (
-        "objective_view_weighted_once_per_base_batch"
+        "family_loss_weighted_once_per_base_batch"
     )
-    assert compiled.contracts["batch_norm_objective_view_weights"] == {
-        "clean_view": pytest.approx(1.0 / 3.0),
-        "lhat_view": pytest.approx(1.0 / 3.0),
-        "augmix_view": pytest.approx(1.0 / 3.0),
+    assert compiled.contracts["family_loss_weights"] == {
+        "clean": pytest.approx(0.5),
+        "corrupted_total": pytest.approx(0.5),
+        "corrupted_per_composition": pytest.approx(0.125),
     }
+    assert compiled.contracts["auxiliary_alpha"] == pytest.approx(2.0)
+    assert compiled.contracts["auxiliary_gradient_merge"] == "direct_sum"
+    assert compiled.contracts["auxiliary_batch_norm_policy"] == "snapshot_restore"
+    assert compiled.contracts["auxiliary_rng_policy"] == (
+        "snapshot_restore_global_rng"
+    )
+    assert compiled.contracts["attack_then_contract_version"] == (
+        "preflip_maxloss_grid_v1"
+    )
 
 
 @pytest.mark.parametrize("filename", EXPERIMENTAL_PROFILES)

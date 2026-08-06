@@ -97,6 +97,7 @@ def _build(
     batches: list[Mapping[str, Any]],
     *,
     encoder: _DeterministicMeanEncoder | None = None,
+    num_candidates: int = 20,
 ) -> tuple[LatentPool, _DeterministicMeanEncoder]:
     resolved_encoder = _DeterministicMeanEncoder() if encoder is None else encoder
     resolved_encoder.eval()
@@ -104,7 +105,7 @@ def _build(
         resolved_encoder,
         batches,
         encoder_identity=ENCODER_IDENTITY,
-        num_candidates=20,
+        num_candidates=num_candidates,
     )
     return pool, resolved_encoder
 
@@ -241,6 +242,47 @@ def test_ineligible_anchor_fails_explicitly_without_padding_or_silent_drop() -> 
             mode="nearest",
             local_pool_size=20,
             generator=torch.Generator(device="cpu").manual_seed(1),
+        )
+
+
+def test_registered_m10_pool_changes_eligibility_and_attack_width() -> None:
+    records = _records()
+    for index, record in enumerate(records):
+        record["label"] = (
+            torch.tensor([1, 0, 0, 0, 0], dtype=torch.float32)
+            if index < 13
+            else torch.tensor([0, 1, 0, 0, 0], dtype=torch.float32)
+        )
+    pool, _ = _build(
+        [_collate(records)],
+        num_candidates=10,
+    )
+
+    assert pool.identity.num_candidates == 10
+    assert len(pool.eligible_hash_ids) == 24
+    assert pool.standardizer.count == 24
+    attack = pool.get_attack_batch_by_pool_indices(
+        torch.tensor([0, 13]),
+        mode="local_random",
+        local_pool_size=20,
+        generator=torch.Generator(device="cpu").manual_seed(83),
+    )
+    assert attack.candidates_standardized.shape == (2, 10, 4, 128)
+    assert attack.candidate_pool_indices.shape == (2, 10)
+    assert all(len(set(values)) == 10 for values in attack.candidate_hash_ids)
+
+
+def test_latent_pool_rejects_unregistered_candidate_count() -> None:
+    encoder = _DeterministicMeanEncoder().eval()
+    with pytest.raises(
+        ValueError,
+        match=r"num_candidates in \[5, 10, 20\]",
+    ):
+        build_latent_pool(
+            encoder,
+            [_collate(_records())],
+            encoder_identity=ENCODER_IDENTITY,
+            num_candidates=12,
         )
 
 

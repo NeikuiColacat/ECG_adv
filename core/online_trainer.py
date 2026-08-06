@@ -16,7 +16,7 @@ import hashlib
 import json
 import math
 import time
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping, Sequence, TYPE_CHECKING
@@ -28,7 +28,11 @@ import yaml
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
-from core.augmix import multilabel_jsd
+from core.augmix import (
+    generate_two_chain_augmix_strong_view,
+    load_augmix_config,
+    multilabel_jsd,
+)
 from core.methods import (
     BASE_VIEW_NAME,
     CompiledMethod,
@@ -50,7 +54,7 @@ from util.config_bundle import (
     resolve_config_reference,
     resolve_entry_config_path,
 )
-from util.random_seed import seed_process
+from util.random_seed import make_torch_generator, seed_process
 from util.tensorboard_logging import (
     build_tensorboard_monitor,
     parse_tensorboard_logging_config,
@@ -75,6 +79,10 @@ ONLINE_PARAMETER_NAMES = frozenset(
         "gradient_clip_norm",
         "amp_enabled",
         "amp_dtype",
+        "stage1_steps",
+        "stage1_learning_rate",
+        "stage1_weight_decay",
+        "stage1_gradient_clip_norm",
     }
 )
 FIXED20_EXPOSURE_POLICY = "clean_once_then_exhaustive_depth23"
@@ -87,11 +95,15 @@ FIXED20_AUX_EXPOSURE_POLICY = (
 # trainer still needs to recognize that group as fixed20 for accumulation,
 # BatchNorm weighting, timing, and one-step-per-base-batch semantics.
 FIXED20_PCGRAD_EXPOSURE_POLICY = "clean_aux_once_then_exhaustive_depth23"
+ROTATING4_AUX_EXPOSURE_POLICY = (
+    "clean_aux_once_then_rotating_depth23_2plus2"
+)
 FIXED20_GROUPED_EXPOSURE_POLICIES = frozenset(
     {
         FIXED20_EXPOSURE_POLICY,
         FIXED20_AUX_EXPOSURE_POLICY,
         FIXED20_PCGRAD_EXPOSURE_POLICY,
+        ROTATING4_AUX_EXPOSURE_POLICY,
     }
 )
 FIXED20_COMPOSITION_ORDER = tuple(range(20))
@@ -202,7 +214,14 @@ def _build_batch_norm_momentum_plan(
                 ),
             )
         else:
-            exposure_weights = tuple(float(step.loss_scale) for step in exposure_steps)
+            exposure_weights = tuple(
+                0.0
+                if step.name == "auxiliary"
+                and method.contracts.get("auxiliary_batch_norm_policy")
+                == "snapshot_restore"
+                else float(step.loss_scale)
+                for step in exposure_steps
+            )
     elif policy == OBJECTIVE_VIEW_BALANCED_BN_POLICY:
         ordered_views: list[str] = []
         for term in method.objective.terms:
@@ -254,12 +273,96 @@ def _build_batch_norm_momentum_plan(
     )
 
 
-def _method_exposure_steps(method: CompiledMethod) -> tuple[_ExposureStep, ...]:
+def _method_exposure_steps(
+    method: CompiledMethod,
+    *,
+    epoch: int = 1,
+) -> tuple[_ExposureStep, ...]:
     """Resolve the optimizer-exposure schedule declared by one method profile."""
 
     policy = method.contracts.get("exposure_policy")
     if policy is None:
         return (_ExposureStep("base", None, None),)
+    if policy == ROTATING4_AUX_EXPOSURE_POLICY:
+        if isinstance(epoch, bool) or not isinstance(epoch, int) or epoch < 1:
+            raise ValueError("rotating-four epoch must be a positive integer")
+        if (
+            method.contracts.get("rotating4_schedule")
+            != "epoch_modulo_five_covers_all_depth23_compositions"
+        ):
+            raise ValueError("rotating-four schedule contract is invalid")
+        if tuple(method.contracts.get("composition_indices", ())) != tuple(
+            range(20)
+        ):
+            raise ValueError("rotating-four requires canonical composition 0..19")
+        if method.contracts.get("clean_exposures_per_base_record") != 1:
+            raise ValueError("rotating-four requires one clean exposure")
+        if method.contracts.get("corrupted_exposures_per_base_record") != 4:
+            raise ValueError("rotating-four requires four corruption exposures")
+        if method.contracts.get("auxiliary_exposures_per_base_record") != 1:
+            raise ValueError("rotating-four requires one LHAT exposure")
+        if method.contracts.get("total_exposures_per_base_record") != 6:
+            raise ValueError("rotating-four must declare six total exposures")
+        if method.contracts.get("optimizer_step_policy") != (
+            "accumulate_base_plus_direct_lhat_once_per_base_batch"
+        ):
+            raise ValueError("rotating-four optimizer-step policy is invalid")
+        if method.contracts.get("auxiliary_objective_terms") != [
+            "lhat_direct_bce"
+        ]:
+            raise ValueError("rotating-four auxiliary must be LHAT BCE only")
+        if float(method.contracts.get("auxiliary_alpha", 0.0)) != 2.0:
+            raise ValueError("rotating-four locks VAE-LHAT auxiliary alpha to 2")
+        if method.contracts.get("auxiliary_gradient_merge") != "direct_sum":
+            raise ValueError("rotating-four auxiliary gradients must sum directly")
+        if (
+            method.contracts.get("auxiliary_batch_norm_policy")
+            != "snapshot_restore"
+            or method.contracts.get("auxiliary_rng_policy")
+            != "snapshot_restore_global_rng"
+        ):
+            raise ValueError(
+                "rotating-four auxiliary must restore BatchNorm and global RNG state"
+            )
+        family = _mapping(
+            method.contracts.get("family_loss_weights"),
+            "rotating-four family_loss_weights",
+        )
+        if family != {
+            "clean": 0.5,
+            "corrupted_total": 0.5,
+            "corrupted_per_composition": 0.125,
+        }:
+            raise ValueError("rotating-four family weights must be 0.5/0.5")
+        names = {term.name for term in method.objective.terms}
+        if names != {"clean_bce", "corrupted_bce", "lhat_direct_bce"}:
+            raise ValueError("rotating-four method objective terms drifted")
+        slot = (epoch - 1) % 5
+        compositions = (
+            2 * slot,
+            2 * slot + 1,
+            10 + 2 * slot,
+            10 + 2 * slot + 1,
+        )
+        steps = (
+            _ExposureStep("clean", -1, ("clean_bce",), 0.5),
+            *tuple(
+                _ExposureStep(
+                    f"corruption_{index:02d}",
+                    index,
+                    ("corrupted_bce",),
+                    0.125,
+                )
+                for index in compositions
+            ),
+            _ExposureStep(
+                "auxiliary",
+                None,
+                ("lhat_direct_bce",),
+                2.0,
+            ),
+        )
+        return steps
     if policy not in {FIXED20_EXPOSURE_POLICY, FIXED20_AUX_EXPOSURE_POLICY}:
         raise ValueError(f"unsupported method exposure_policy: {policy!r}")
     raw_order = method.contracts.get("composition_indices")
@@ -938,6 +1041,15 @@ def load_online_train_config(
         batch_size = profile.get("batch_size")
         if isinstance(epochs, bool) or not isinstance(epochs, int) or epochs <= 0:
             raise ValueError(f"{model_name}.epochs must be positive")
+        scheduler_horizon = profile.get("scheduler_horizon_epochs", epochs)
+        if (
+            isinstance(scheduler_horizon, bool)
+            or not isinstance(scheduler_horizon, int)
+            or scheduler_horizon < epochs
+        ):
+            raise ValueError(
+                f"{model_name}.scheduler_horizon_epochs must be >= epochs"
+            )
         if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size <= 0:
             raise ValueError(f"{model_name}.batch_size must be positive")
         _positive_number(profile.get("learning_rate"), f"{model_name}.learning_rate")
@@ -946,6 +1058,37 @@ def load_online_train_config(
             profile.get("minimum_learning_rate_ratio"),
             f"{model_name}.minimum_learning_rate_ratio",
         )
+        stage1_keys = {
+            "stage1_steps",
+            "stage1_learning_rate",
+            "stage1_weight_decay",
+            "stage1_gradient_clip_norm",
+        }
+        present_stage1_keys = stage1_keys.intersection(profile)
+        if present_stage1_keys and present_stage1_keys != stage1_keys:
+            raise ValueError(
+                f"{model_name} Stage-1 parameters must be declared together"
+            )
+        if present_stage1_keys:
+            stage1_steps = profile["stage1_steps"]
+            if (
+                isinstance(stage1_steps, bool)
+                or not isinstance(stage1_steps, int)
+                or stage1_steps <= 0
+            ):
+                raise ValueError(f"{model_name}.stage1_steps must be positive")
+            _positive_number(
+                profile["stage1_learning_rate"],
+                f"{model_name}.stage1_learning_rate",
+            )
+            _nonnegative_number(
+                profile["stage1_weight_decay"],
+                f"{model_name}.stage1_weight_decay",
+            )
+            _positive_number(
+                profile["stage1_gradient_clip_norm"],
+                f"{model_name}.stage1_gradient_clip_norm",
+            )
     amp = _mapping(training.get("amp"), "training.amp")
     if not isinstance(amp.get("enabled"), bool) or amp.get("dtype") not in {
         "bfloat16",
@@ -1034,7 +1177,10 @@ def resolve_online_training_parameters(
         "epochs": supplied.get("epochs", profile["epochs"]),
         "scheduler_horizon_epochs": supplied.get(
             "scheduler_horizon_epochs",
-            supplied.get("epochs", profile["epochs"]),
+            profile.get(
+                "scheduler_horizon_epochs",
+                supplied.get("epochs", profile["epochs"]),
+            ),
         ),
         "batch_size": supplied.get("batch_size", profile["batch_size"]),
         "learning_rate": supplied.get("learning_rate", profile["learning_rate"]),
@@ -1047,6 +1193,19 @@ def resolve_online_training_parameters(
         ),
         "amp_enabled": supplied.get("amp_enabled", amp["enabled"]),
         "amp_dtype": supplied.get("amp_dtype", amp["dtype"]),
+        "stage1_steps": supplied.get(
+            "stage1_steps", profile.get("stage1_steps", 0)
+        ),
+        "stage1_learning_rate": supplied.get(
+            "stage1_learning_rate", profile.get("stage1_learning_rate", 0.0)
+        ),
+        "stage1_weight_decay": supplied.get(
+            "stage1_weight_decay", profile.get("stage1_weight_decay", 0.0)
+        ),
+        "stage1_gradient_clip_norm": supplied.get(
+            "stage1_gradient_clip_norm",
+            profile.get("stage1_gradient_clip_norm", 0.0),
+        ),
     }
     for key in ("epochs", "scheduler_horizon_epochs", "batch_size"):
         value = resolved[key]
@@ -1065,6 +1224,19 @@ def resolve_online_training_parameters(
     resolved["weight_decay"] = _nonnegative_number(
         resolved["weight_decay"], "resolved weight_decay"
     )
+    stage1_steps = resolved["stage1_steps"]
+    if (
+        isinstance(stage1_steps, bool)
+        or not isinstance(stage1_steps, int)
+        or stage1_steps < 0
+    ):
+        raise ValueError("resolved stage1_steps must be a nonnegative integer")
+    if stage1_steps > 0:
+        for key in ("stage1_learning_rate", "stage1_gradient_clip_norm"):
+            resolved[key] = _positive_number(resolved[key], f"resolved {key}")
+        resolved["stage1_weight_decay"] = _nonnegative_number(
+            resolved["stage1_weight_decay"], "resolved stage1_weight_decay"
+        )
     if not isinstance(resolved["amp_enabled"], bool):
         raise ValueError("resolved amp_enabled must be boolean")
     if resolved["amp_dtype"] not in {"bfloat16", "float16"}:
@@ -1384,34 +1556,6 @@ def _compute_objective(
         weighted_terms=weighted_terms,
         valid_counts=valid_counts,
     )
-
-
-def _legacy_loss_aliases(
-    raw_terms: Mapping[str, float],
-    weighted_terms: Mapping[str, float],
-) -> dict[str, float]:
-    """Keep the locked A5 TensorBoard names while exposing generic terms."""
-
-    aliases: dict[str, float] = {}
-    raw_names = {
-        "clean_bce": "clean_bce",
-        "lhat_direct_bce": "lhat_hard_bce",
-        "augmix_bce": "augmix_bce",
-        "clean_lhat_augmix_jsd": "augmix_jsd",
-    }
-    weighted_names = {
-        "clean_bce": "weighted_clean",
-        "lhat_direct_bce": "weighted_lhat",
-        "augmix_bce": "weighted_augmix",
-        "clean_lhat_augmix_jsd": "weighted_jsd",
-    }
-    for source, target in raw_names.items():
-        if source in raw_terms:
-            aliases[target] = float(raw_terms[source])
-    for source, target in weighted_names.items():
-        if source in weighted_terms:
-            aliases[target] = float(weighted_terms[source])
-    return aliases
 
 
 def _objective_host_scalars(
@@ -1736,6 +1880,459 @@ def _stochastic_trace_summary(
     }
 
 
+def _feature_width(model: nn.Module, spec: ModelSpec) -> int:
+    if spec is EFFICIENTNET1DV2_SPEC:
+        classifier = getattr(model, "classifier", None)
+        if not isinstance(classifier, nn.Sequential) or len(classifier) != 4:
+            raise TypeError("EfficientNet Stage-1 requires the canonical classifier")
+        head = classifier[3]
+    elif spec is ECGFOUNDER_SPEC:
+        head = getattr(model, "dense", None)
+    else:
+        raise ValueError(f"unsupported Stage-1 model spec: {spec.name}")
+    if not isinstance(head, nn.Linear):
+        raise TypeError("Stage-1 classifier head must be nn.Linear")
+    return int(head.in_features)
+
+
+def _head_parameters(
+    model: nn.Module,
+    spec: ModelSpec,
+) -> tuple[nn.Parameter, ...]:
+    if spec is EFFICIENTNET1DV2_SPEC:
+        head = getattr(model, "classifier")[3]
+    elif spec is ECGFOUNDER_SPEC:
+        head = getattr(model, "dense")
+    else:
+        raise ValueError(f"unsupported Stage-1 model spec: {spec.name}")
+    if not isinstance(head, nn.Linear):
+        raise TypeError("Stage-1 classifier head must be nn.Linear")
+    return tuple(head.parameters())
+
+
+def _forward_logits_and_features(
+    model: nn.Module,
+    model_input: torch.Tensor,
+    spec: ModelSpec,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    forward_features = getattr(model, "forward_features", None)
+    if not callable(forward_features):
+        raise TypeError(f"{spec.name} must expose forward_features for Stage-1")
+    features = forward_features(model_input)
+    if features.ndim != 2 or features.shape[0] != model_input.shape[0]:
+        raise ValueError("forward_features must return shape (B,D)")
+    if spec is EFFICIENTNET1DV2_SPEC:
+        classifier = getattr(model, "classifier")
+        logits = classifier[3](classifier[2](features))
+    elif spec is ECGFOUNDER_SPEC:
+        logits = getattr(model, "dense")(features)
+    else:
+        raise ValueError(f"unsupported Stage-1 model spec: {spec.name}")
+    return (
+        validate_model_output(
+            logits,
+            spec,
+            batch_size=int(model_input.shape[0]),
+            check_finite=False,
+        ),
+        features,
+    )
+
+
+def _simclr_nt_xent(
+    first: torch.Tensor,
+    second: torch.Tensor,
+    *,
+    temperature: float,
+) -> torch.Tensor:
+    if first.shape != second.shape or first.ndim != 2:
+        raise ValueError("SimCLR projections must share shape (B,D)")
+    if first.shape[0] < 2:
+        raise ValueError("SimCLR requires at least two records per batch")
+    features = F.normalize(torch.cat((first, second), dim=0).float(), dim=1)
+    similarities = features @ features.transpose(0, 1)
+    similarities = similarities / float(temperature)
+    similarities.fill_diagonal_(-torch.inf)
+    batch = int(first.shape[0])
+    positives = torch.cat(
+        (
+            torch.arange(batch, 2 * batch, device=features.device),
+            torch.arange(0, batch, device=features.device),
+        )
+    )
+    rows = torch.arange(2 * batch, device=features.device)
+    loss = (
+        torch.logsumexp(similarities, dim=1)
+        - similarities[rows, positives]
+    ).mean()
+    if not bool(torch.isfinite(loss).item()):
+        raise FloatingPointError("Stage-1 SimCLR loss became NaN or Inf")
+    return loss
+
+
+def _weighted_logit_anchor_loss(
+    student_logits: torch.Tensor,
+    teacher_logits: torch.Tensor,
+    class_weights: Sequence[float],
+) -> torch.Tensor:
+    if student_logits.shape != teacher_logits.shape or student_logits.ndim != 2:
+        raise ValueError("logit anchor expects aligned (B,5) logits")
+    elements = F.binary_cross_entropy_with_logits(
+        student_logits.float(),
+        torch.sigmoid(teacher_logits.float()),
+        reduction="none",
+    )
+    weights = torch.as_tensor(
+        class_weights,
+        device=elements.device,
+        dtype=elements.dtype,
+    )
+    if tuple(weights.shape) != (5,) or float(weights.sum()) <= 0.0:
+        raise ValueError("logit anchor must declare five positive-mass class weights")
+    return (elements * weights.view(1, 5)).sum(dim=1).div(
+        weights.sum()
+    ).mean()
+
+
+def _cache_k500_logits(
+    model: nn.Module,
+    train_dataloader: Any,
+    *,
+    spec: ModelSpec,
+    device: torch.device,
+    normalization_epsilon: float,
+) -> dict[str, torch.Tensor]:
+    """Cache frozen-teacher inference on the bound K500 records only."""
+
+    was_training = model.training
+    model.eval()
+    logits_by_hash: dict[str, torch.Tensor] = {}
+    try:
+        with torch.no_grad():
+            for batch in train_dataloader:
+                if not isinstance(batch, Mapping):
+                    raise TypeError("teacher-cache batches must be mappings")
+                raw = batch.get("waveform")
+                if not isinstance(raw, torch.Tensor):
+                    raise TypeError("teacher-cache waveform must be a tensor")
+                hashes = _batch_hashes(batch, int(raw.shape[0]))
+                raw = raw.to(device, dtype=torch.float32, non_blocking=True)
+                model_input = prepare_canonical_model_input(
+                    raw,
+                    spec,
+                    epsilon=float(normalization_epsilon),
+                )
+                logits = validate_model_output(
+                    model(model_input),
+                    spec,
+                    batch_size=int(raw.shape[0]),
+                    check_finite=True,
+                ).detach().cpu()
+                for index, hash_id in enumerate(hashes):
+                    if hash_id in logits_by_hash:
+                        raise RuntimeError(
+                            f"teacher cache repeated K500 hash {hash_id!r}"
+                        )
+                    logits_by_hash[hash_id] = logits[index].contiguous()
+    finally:
+        model.train(was_training)
+    selected_hashes = _loader_selection_hashes(train_dataloader)
+    if selected_hashes is not None:
+        if set(logits_by_hash) != set(selected_hashes):
+            raise RuntimeError("frozen-teacher cache differs from loader selection")
+    elif not logits_by_hash:
+        raise RuntimeError("frozen-teacher cache is empty")
+    return logits_by_hash
+
+
+def _teacher_logits_for_hashes(
+    cache: Mapping[str, torch.Tensor],
+    hashes: Sequence[str],
+    *,
+    device: torch.device,
+) -> torch.Tensor:
+    try:
+        values = [cache[str(hash_id)] for hash_id in hashes]
+    except KeyError as exc:
+        raise RuntimeError(
+            f"teacher cache is missing K500 hash {exc.args[0]!r}"
+        ) from None
+    return torch.stack(values).to(
+        device=device,
+        dtype=torch.float32,
+        non_blocking=True,
+    )
+
+
+@contextmanager
+def _preserve_batch_norm_buffers(model: nn.Module) -> Iterator[None]:
+    states: list[
+        tuple[
+            nn.Module,
+            torch.Tensor | None,
+            torch.Tensor | None,
+            torch.Tensor | None,
+        ]
+    ] = []
+    for module in model.modules():
+        if not isinstance(module, nn.modules.batchnorm._BatchNorm):
+            continue
+        states.append(
+            (
+                module,
+                None if module.running_mean is None else module.running_mean.clone(),
+                None if module.running_var is None else module.running_var.clone(),
+                None
+                if module.num_batches_tracked is None
+                else module.num_batches_tracked.clone(),
+            )
+        )
+    try:
+        yield
+    finally:
+        with torch.no_grad():
+            for module, mean, variance, tracked in states:
+                if mean is not None:
+                    module.running_mean.copy_(mean)
+                if variance is not None:
+                    module.running_var.copy_(variance)
+                if tracked is not None:
+                    module.num_batches_tracked.copy_(tracked)
+
+
+@contextmanager
+def _preserve_torch_rng(device: torch.device) -> Iterator[None]:
+    cpu_state = torch.random.get_rng_state()
+    cuda_state = (
+        torch.cuda.get_rng_state(device)
+        if device.type == "cuda"
+        else None
+    )
+    try:
+        yield
+    finally:
+        torch.random.set_rng_state(cpu_state)
+        if cuda_state is not None:
+            torch.cuda.set_rng_state(cuda_state, device)
+
+
+def _run_augmix_simclr_stage1(
+    model: nn.Module,
+    train_dataloader: Any,
+    *,
+    spec: ModelSpec,
+    device: torch.device,
+    config: OnlineTrainConfig,
+    method: CompiledMethod,
+    center: str,
+    base_seed: int,
+    resolved: Mapping[str, Any],
+    normalization_epsilon: float,
+    amp_enabled: bool,
+    amp_dtype: torch.dtype,
+    monitor: Any | None = None,
+    logging_interval_steps: int = 20,
+) -> dict[str, Any]:
+    """Run the frozen K500-only AugMix-SimCLR representation stage."""
+
+    if method.contracts.get("stage1_objective") != "simclr":
+        raise ValueError("managed Stage-1 objective must be SimCLR")
+    if method.contracts.get("stage1_view") != (
+        "clean_vs_one_twochain_augmix_strong_view"
+    ):
+        raise ValueError("managed Stage-1 must use the two-chain AugMix view")
+    if method.contracts.get("stage1_classifier_head_trainable") is not False:
+        raise ValueError("managed Stage-1 classifier head must be frozen")
+    if float(method.contracts.get("stage1_ptbxl_source_replay_weight", -1.0)) != 0.0:
+        raise ValueError("managed Stage-1 forbids PTB-XL replay")
+    if method.contracts.get(
+        "stage1_frozen_source_teacher_inference_on_k500"
+    ) is not True:
+        raise ValueError("Stage-1 logit anchor requires declared K500 inference")
+    if float(method.contracts.get("stage1_vicreg_weight", -1.0)) != 0.0:
+        raise ValueError("managed Stage-1 excludes VICReg")
+    if float(method.contracts.get("stage1_vae_lhat_tail_fraction", -1.0)) != 0.0:
+        raise ValueError("managed Stage-1 excludes VAE-LHAT")
+
+    augmix = load_augmix_config(
+        config.config_root / "train" / "augmix.yaml",
+        config_root=config.config_root,
+    )
+    temperature = float(method.contracts["stage1_simclr_temperature"])
+    if temperature != augmix.stage1_simclr_temperature:
+        raise ValueError("method and AugMix SimCLR temperatures differ")
+    teacher_cache = _cache_k500_logits(
+        model,
+        train_dataloader,
+        spec=spec,
+        device=device,
+        normalization_epsilon=normalization_epsilon,
+    )
+    feature_width = _feature_width(model, spec)
+    projector = nn.Sequential(
+        nn.Linear(feature_width, feature_width),
+        nn.ReLU(inplace=True),
+        nn.Linear(feature_width, min(128, feature_width)),
+    ).to(device)
+    head_states = tuple(
+        (parameter, bool(parameter.requires_grad))
+        for parameter in _head_parameters(model, spec)
+    )
+    for parameter, _ in head_states:
+        parameter.requires_grad_(False)
+    trainable = [
+        parameter for parameter in model.parameters() if parameter.requires_grad
+    ]
+    if not trainable:
+        raise ValueError("Stage-1 has no trainable backbone parameters")
+    stage1_steps = int(resolved["stage1_steps"])
+    optimizer = AdamW(
+        [*trainable, *projector.parameters()],
+        lr=float(resolved["stage1_learning_rate"]),
+        weight_decay=float(resolved["stage1_weight_decay"]),
+    )
+    scheduler = CosineAnnealingLR(
+        optimizer,
+        T_max=stage1_steps,
+        eta_min=float(resolved["stage1_learning_rate"]) * 0.01,
+    )
+    losses = torch.zeros(3, device=device, dtype=torch.float64)
+    iterator = iter(train_dataloader)
+    model.train()
+    try:
+        for step in range(stage1_steps):
+            try:
+                batch = next(iterator)
+            except StopIteration:
+                iterator = iter(train_dataloader)
+                batch = next(iterator)
+            if not isinstance(batch, Mapping):
+                raise TypeError("Stage-1 batches must be mappings")
+            raw = batch.get("waveform")
+            if not isinstance(raw, torch.Tensor):
+                raise TypeError("Stage-1 waveform must be a tensor")
+            hashes = _batch_hashes(batch, int(raw.shape[0]))
+            raw = raw.to(device, dtype=torch.float32, non_blocking=True)
+            generator = make_torch_generator(
+                device,
+                augmix.random_namespace,
+                method.comparison_rng_identity,
+                center,
+                spec.name,
+                f"base_seed={base_seed}",
+                f"stage1_step={step}",
+                config_path=augmix.random_seed_config_path,
+            )
+            strong = generate_two_chain_augmix_strong_view(
+                raw,
+                sampling_rate_hz=100,
+                config=augmix,
+                generator=generator,
+            ).mixed_raw
+            clean_input = prepare_canonical_model_input(
+                raw,
+                spec,
+                epsilon=normalization_epsilon,
+            )
+            strong_input = prepare_canonical_model_input(
+                strong,
+                spec,
+                epsilon=normalization_epsilon,
+            )
+            teacher_logits = _teacher_logits_for_hashes(
+                teacher_cache, hashes, device=device
+            )
+            optimizer.zero_grad(set_to_none=True)
+            with torch.cuda.amp.autocast(
+                enabled=amp_enabled,
+                dtype=amp_dtype,
+            ):
+                clean_logits, clean_features = _forward_logits_and_features(
+                    model, clean_input, spec
+                )
+                _, strong_features = _forward_logits_and_features(
+                    model, strong_input, spec
+                )
+                simclr = _simclr_nt_xent(
+                    projector(clean_features),
+                    projector(strong_features),
+                    temperature=temperature,
+                )
+                anchor = _weighted_logit_anchor_loss(
+                    clean_logits,
+                    teacher_logits,
+                    method.contracts[
+                        "stage1_pretrain_logit_anchor_class_weights"
+                    ],
+                )
+                total = simclr + float(
+                    method.contracts["stage1_pretrain_logit_anchor_weight"]
+                ) * anchor
+            if not bool(torch.isfinite(total).item()):
+                raise FloatingPointError("Stage-1 loss became NaN or Inf")
+            total.backward()
+            torch.nn.utils.clip_grad_norm_(
+                [*trainable, *projector.parameters()],
+                float(resolved["stage1_gradient_clip_norm"]),
+            )
+            optimizer.step()
+            scheduler.step()
+            losses += torch.stack(
+                (total.detach(), simclr.detach(), anchor.detach())
+            ).to(dtype=torch.float64)
+            stage1_step = step + 1
+            if (
+                monitor is not None
+                and stage1_step % int(logging_interval_steps) == 0
+            ):
+                total_value, simclr_value, anchor_value = (
+                    torch.stack(
+                        (
+                            total.detach().float(),
+                            simclr.detach().float(),
+                            anchor.detach().float(),
+                        )
+                    )
+                    .cpu()
+                    .tolist()
+                )
+                monitor.log_train_step(
+                    loss=float(total_value),
+                    learning_rate=float(optimizer.param_groups[0]["lr"]),
+                    global_step=stage1_step,
+                    loss_components={
+                        "stage1_total": float(total_value),
+                        "stage1_simclr": float(simclr_value),
+                        "stage1_logit_anchor": float(anchor_value),
+                    },
+                    performance=None,
+                )
+    finally:
+        for parameter, requires_grad in head_states:
+            parameter.requires_grad_(requires_grad)
+    means = (losses / float(stage1_steps)).detach().cpu().tolist()
+    return {
+        "schema_version": 1,
+        "steps": stage1_steps,
+        "optimizer": "adamw",
+        "learning_rate": float(resolved["stage1_learning_rate"]),
+        "weight_decay": float(resolved["stage1_weight_decay"]),
+        "gradient_clip_norm": float(resolved["stage1_gradient_clip_norm"]),
+        "simclr_temperature": temperature,
+        "augmix_internal_chains": augmix.stage1_width,
+        "augmix_dirichlet_alpha": augmix.stage1_dirichlet_alpha,
+        "augmix_beta_alpha": augmix.stage1_beta_alpha,
+        "logit_anchor_weight": float(
+            method.contracts["stage1_pretrain_logit_anchor_weight"]
+        ),
+        "teacher_scope": "frozen_source_checkpoint_inference_on_bound_k500",
+        "ptbxl_replay_weight": 0.0,
+        "mean_total_loss": float(means[0]),
+        "mean_simclr_loss": float(means[1]),
+        "mean_logit_anchor_loss": float(means[2]),
+    }
+
+
 def train_online_model(
     model: nn.Module,
     train_dataloader: Any,
@@ -1810,7 +2407,8 @@ def train_online_model(
         in FIXED20_GROUPED_EXPOSURE_POLICIES
     )
     auxiliary_exposure = (
-        method.contracts.get("exposure_policy") == FIXED20_AUX_EXPOSURE_POLICY
+        method.contracts.get("exposure_policy")
+        in {FIXED20_AUX_EXPOSURE_POLICY, ROTATING4_AUX_EXPOSURE_POLICY}
     )
     fairness = config.payload["fairness"]
     budget_policy = str(fairness.get("budget_policy", "matched_base"))
@@ -2047,6 +2645,65 @@ def train_online_model(
         ]
     )
     monitor = build_tensorboard_monitor(config.payload["logging"], output)
+    staged_method = method.profile_name == "augmix_simclr_lhat"
+    stage1_summary: dict[str, Any] | None = None
+    stage2_teacher_cache: dict[str, torch.Tensor] | None = None
+    if staged_method:
+        if int(resolved["stage1_steps"]) <= 0:
+            raise ValueError("AugMix-SimCLR mainline requires Stage-1 steps")
+        stage1_summary = _run_augmix_simclr_stage1(
+            model,
+            train_dataloader,
+            spec=spec,
+            device=resolved_device,
+            config=config,
+            method=method,
+            center=center,
+            base_seed=seed.base_seed,
+            resolved=resolved,
+            normalization_epsilon=epsilon,
+            amp_enabled=amp_enabled,
+            amp_dtype=amp_dtype,
+            monitor=monitor,
+            logging_interval_steps=tensorboard_step_interval,
+        )
+        stage1_checkpoint = checkpoint_dir / "stage1.pt"
+        temporary_stage1 = stage1_checkpoint.with_name(
+            f".{stage1_checkpoint.name}.tmp"
+        )
+        torch.save(
+            {
+                "schema_version": 1,
+                "stage": "augmix_simclr",
+                "method_id": method.profile_name,
+                "center": center,
+                "model_state_dict": model.state_dict(),
+                "summary": stage1_summary,
+            },
+            temporary_stage1,
+        )
+        temporary_stage1.replace(stage1_checkpoint)
+        stage1_summary["checkpoint"] = {
+            "path": str(stage1_checkpoint),
+            "sha256": sha256_file(stage1_checkpoint),
+        }
+        if method.contracts.get("stage2_teacher") != (
+            "post_stage1_pre_stage2_snapshot"
+        ):
+            raise ValueError("Stage-2 teacher contract drifted")
+        stage2_teacher_cache = _cache_k500_logits(
+            model,
+            train_dataloader,
+            spec=spec,
+            device=resolved_device,
+            normalization_epsilon=epsilon,
+        )
+        method_resource_identity["stage1"] = stage1_summary
+        method_resource_identity["stage2_teacher"] = {
+            "scope": "frozen_post_stage1_pre_stage2_logits_on_bound_k500",
+            "record_count": len(stage2_teacher_cache),
+        }
+        _write_json(method_resources_path, method_resource_identity)
     run_identity = {
         "config": config.describe(),
         "method": method_resource_identity,
@@ -2060,6 +2717,7 @@ def train_online_model(
             "resolved": resolved,
             "explicit_overrides": supplied,
         },
+        "stage1": stage1_summary,
         "pos_weight": (
             None
             if resolved_pos_weight is None
@@ -2069,6 +2727,22 @@ def train_online_model(
             "budget_policy": budget_policy,
             "optimizer_steps_per_base_batch": 1,
             "view_executions_per_base_batch": len(exposure_steps),
+            "five_epoch_rotation_cycle": (
+                [
+                    {
+                        "epoch_modulo_five_slot": epoch,
+                        "composition_indices": [
+                            step.composition_index
+                            for step in _method_exposure_steps(method, epoch=epoch)
+                            if step.name.startswith("corruption_")
+                        ],
+                    }
+                    for epoch in range(1, 6)
+                ]
+                if method.contracts.get("exposure_policy")
+                == ROTATING4_AUX_EXPOSURE_POLICY
+                else None
+            ),
             "family_loss_weights": (
                 method.contracts.get("family_loss_weights")
                 if fixed20_exposure
@@ -2140,6 +2814,7 @@ def train_online_model(
     try:
         for epoch in range(1, epochs + 1):
             model.train()
+            epoch_exposure_steps = _method_exposure_steps(method, epoch=epoch)
             optimizer_steps_at_epoch_start = optimizer_steps
             epoch_base_batches = 0
             epoch_loss_sum = torch.zeros((), device=resolved_device)
@@ -2178,10 +2853,10 @@ def train_online_model(
             performance_sums: dict[str, float] = {}
             timed_step_count = 0
             epoch_seen_hashes: dict[str, set[str]] = {
-                exposure.name: set() for exposure in exposure_steps
+                exposure.name: set() for exposure in epoch_exposure_steps
             }
             epoch_exposure_counts: dict[str, int] = {
-                exposure.name: 0 for exposure in exposure_steps
+                exposure.name: 0 for exposure in epoch_exposure_steps
             }
             learning_rate = float(optimizer.param_groups[0]["lr"])
             previous_step_end = time.perf_counter()
@@ -2192,7 +2867,9 @@ def train_online_model(
             fixed20_group_finite: torch.Tensor | None = None
             fixed20_group_view_executions = 0
 
-            for batch in _iter_exposure_batches(train_dataloader, exposure_steps):
+            for batch in _iter_exposure_batches(
+                train_dataloader, epoch_exposure_steps
+            ):
                 batch_received = time.perf_counter()
                 data_wait_ms = max(
                     0.0, (batch_received - previous_step_end) * 1000.0
@@ -2407,41 +3084,99 @@ def train_online_model(
                     timer.stop("augmentation")
                     timer.start("forward_backward")
 
-                with torch.cuda.amp.autocast(
-                    enabled=amp_enabled, dtype=amp_dtype
-                ):
-                    objective = _compute_objective(
-                        method=method,
-                        bundle=generated.bundle,
-                        model=model,
-                        spec=spec,
-                        normalization_epsilon=epsilon,
-                        pos_weight=resolved_pos_weight,
-                        objective_term_names=objective_terms,
-                        batch_norm_plan=(
-                            None if fixed20_exposure else batch_norm_plan
-                        ),
-                    )
-                objective_finite = torch.isfinite(objective.total)
-                if fixed20_exposure:
-                    if fixed20_group_finite is None:
-                        raise RuntimeError(
-                            "fixed20 finite-loss check lacks an active group"
+                with ExitStack() as auxiliary_state:
+                    if staged_method and exposure_name == "auxiliary":
+                        if method.contracts.get(
+                            "auxiliary_batch_norm_policy"
+                        ) != "snapshot_restore":
+                            raise ValueError(
+                                "VAE-LHAT auxiliary must restore BatchNorm buffers"
+                            )
+                        auxiliary_state.enter_context(
+                            _preserve_batch_norm_buffers(model)
                         )
-                    fixed20_group_finite &= objective_finite.detach()
-                    if group_end and not bool(fixed20_group_finite.item()):
+                        auxiliary_state.enter_context(
+                            _preserve_torch_rng(resolved_device)
+                        )
+                    with torch.cuda.amp.autocast(
+                        enabled=amp_enabled, dtype=amp_dtype
+                    ):
+                        objective = _compute_objective(
+                            method=method,
+                            bundle=generated.bundle,
+                            model=model,
+                            spec=spec,
+                            normalization_epsilon=epsilon,
+                            pos_weight=resolved_pos_weight,
+                            objective_term_names=objective_terms,
+                            batch_norm_plan=(
+                                None if fixed20_exposure else batch_norm_plan
+                            ),
+                        )
+                        if staged_method and exposure_name == "clean":
+                            if stage2_teacher_cache is None:
+                                raise RuntimeError(
+                                    "Stage-2 teacher cache is unavailable"
+                                )
+                            teacher_logits = _teacher_logits_for_hashes(
+                                stage2_teacher_cache,
+                                hashes,
+                                device=resolved_device,
+                            )
+                            clean_input = prepare_canonical_model_input(
+                                raw,
+                                spec,
+                                epsilon=epsilon,
+                            )
+                            with _preserve_batch_norm_buffers(
+                                model
+                            ), _preserve_torch_rng(resolved_device):
+                                student_logits = validate_model_output(
+                                    model(clean_input),
+                                    spec,
+                                    batch_size=batch_size,
+                                    check_finite=False,
+                                )
+                            anchor_loss = _weighted_logit_anchor_loss(
+                                student_logits,
+                                teacher_logits,
+                                (1.0, 1.0, 1.0, 1.0, 1.0),
+                            )
+                            anchor_weights = _mapping(
+                                method.contracts.get(
+                                    "stage2_supervised_logit_anchor_weight_by_backbone"
+                                ),
+                                "stage2 logit-anchor weights",
+                            )
+                            objective = _ObjectiveBatch(
+                                total=objective.total
+                                + anchor_loss
+                                * float(anchor_weights[spec.name])
+                                / family_loss_scale,
+                                raw_terms=objective.raw_terms,
+                                weighted_terms=objective.weighted_terms,
+                                valid_counts=objective.valid_counts,
+                            )
+                    objective_finite = torch.isfinite(objective.total)
+                    if fixed20_exposure:
+                        if fixed20_group_finite is None:
+                            raise RuntimeError(
+                                "fixed20 finite-loss check lacks an active group"
+                            )
+                        fixed20_group_finite &= objective_finite.detach()
+                        if group_end and not bool(fixed20_group_finite.item()):
+                            raise FloatingPointError(
+                                "online fixed20 group loss became NaN or Inf"
+                            )
+                    elif not bool(objective_finite.item()):
                         raise FloatingPointError(
-                            "online fixed20 group loss became NaN or Inf"
+                            "online training loss became NaN or Inf"
                         )
-                elif not bool(objective_finite.item()):
-                    raise FloatingPointError(
-                        "online training loss became NaN or Inf"
-                    )
-                scaled_objective = objective.total * family_loss_scale
-                if scaler.is_enabled():
-                    scaler.scale(scaled_objective).backward()
-                else:
-                    scaled_objective.backward()
+                    scaled_objective = objective.total * family_loss_scale
+                    if scaler.is_enabled():
+                        scaler.scale(scaled_objective).backward()
+                    else:
+                        scaled_objective.backward()
                 if timer is not None:
                     timer.stop("forward_backward")
 
@@ -2544,12 +3279,16 @@ def train_online_model(
                                 f"weighted_{name}": value
                                 for name, value in weighted_scalars.items()
                             },
-                            **_legacy_loss_aliases(raw_scalars, weighted_scalars),
                         }
                         monitor.log_train_step(
                             loss=objective_total_scalar,
                             learning_rate=learning_rate,
-                            global_step=view_execution_step,
+                            global_step=(
+                                int(resolved["stage1_steps"])
+                                + view_execution_step
+                                if staged_method
+                                else view_execution_step
+                            ),
                             loss_components=step_components,
                             performance=performance,
                         )
@@ -2883,8 +3622,11 @@ def train_online_model(
                     str(value)
                     for value in method.contracts["auxiliary_objective_terms"]
                 )
-                nominal_auxiliary_mass = float(
-                    method.contracts["family_loss_weights"]["auxiliary"]
+                nominal_auxiliary_mass = (
+                    float(method.contracts["auxiliary_alpha"])
+                    if method.contracts.get("exposure_policy")
+                    == ROTATING4_AUX_EXPOSURE_POLICY
+                    else float(method.contracts["family_loss_weights"]["auxiliary"])
                 )
                 effective_auxiliary_mass = sum(
                     effective_loss_masses[name] for name in auxiliary_names
@@ -2912,23 +3654,6 @@ def train_online_model(
                 "view_execution_sample_count": epoch_samples,
                 "exposure": exposure_metrics,
             }
-            legacy = _legacy_loss_aliases(raw_means, weighted_means)
-            train_metrics.update(
-                {
-                    key: value
-                    for key, value in legacy.items()
-                    if not key.startswith("weighted_")
-                }
-            )
-            legacy_weighted_names = {
-                "weighted_clean": "weighted_clean_contribution",
-                "weighted_lhat": "weighted_lhat_contribution",
-                "weighted_augmix": "weighted_augmix_contribution",
-                "weighted_jsd": "weighted_jsd_contribution",
-            }
-            for source, target in legacy_weighted_names.items():
-                if source in legacy:
-                    train_metrics[target] = legacy[source]
             if method.requirements.latent_pool or method.requirements.vae_encoder:
                 train_metrics.update(
                     {

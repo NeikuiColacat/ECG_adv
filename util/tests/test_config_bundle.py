@@ -18,7 +18,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 METHOD_PROFILE_NAMES = (
     "a0_clean_v1",
     "a3c_depth23_v1",
-    "a5_lhat_threechain_v1",
+    "augmix_simclr_lhat",
     "exp_lhat_replay_pool_v1",
     "exp_lhat_as_sixth_branch_v1",
     "exp_paired_augmix_latent_bridge_v1",
@@ -121,7 +121,7 @@ def test_config_reference_resolves_inside_copied_bundle(tmp_path: Path) -> None:
 
 def test_nested_method_profile_infers_copied_bundle_root(tmp_path: Path) -> None:
     config_root = _copy_configs(tmp_path)
-    owner = config_root / "train" / "methods" / "a5_lhat_threechain_v1.yaml"
+    owner = config_root / "train" / "methods" / "augmix_simclr_lhat.yaml"
     owner.parent.mkdir(parents=True, exist_ok=True)
     owner.write_text("schema_version: 1\n", encoding="utf-8")
 
@@ -209,18 +209,18 @@ def test_method_profiles_are_typed_bundle_portable_descriptions(
             ).is_file()
 
 
-def test_a5_reuses_one_lhat_view_for_bce_and_uncorrupted_chain3() -> None:
+def test_mainline_separates_stage1_augmix_from_stage2_contracted_lhat() -> None:
     path = (
         PROJECT_ROOT
         / "configs"
         / "train"
         / "methods"
-        / "a5_lhat_threechain_v1.yaml"
+        / "augmix_simclr_lhat.yaml"
     )
     payload = yaml.safe_load(path.read_text(encoding="utf-8"))
 
-    assert payload["nodes"]["threechain_augmix"]["inputs"]["chain3_waveform"] == (
-        "lhat_view"
+    assert payload["nodes"]["lhat"]["type"] == (
+        "vae_lhat_attack_then_contract_view"
     )
     direct_bce = next(
         term
@@ -228,10 +228,14 @@ def test_a5_reuses_one_lhat_view_for_bce_and_uncorrupted_chain3() -> None:
         if term["id"] == "lhat_direct_bce"
     )
     assert direct_bce["view"] == "lhat_view"
-    assert payload["contracts"][
-        "lhat_direct_bce_and_augmix_chain3_share_exact_view"
-    ] is True
-    assert payload["contracts"]["augmix_chain3_additional_corruption"] is False
+    assert payload["contracts"]["stage1_vae_lhat_tail_fraction"] == 0.0
+    assert payload["contracts"]["auxiliary_gradient_merge"] == "direct_sum"
+    assert payload["contracts"]["auxiliary_rng_policy"] == (
+        "snapshot_restore_global_rng"
+    )
+    assert payload["contracts"]["attack_then_contract_version"] == (
+        "preflip_maxloss_grid_v1"
+    )
 
 
 @pytest.mark.parametrize(

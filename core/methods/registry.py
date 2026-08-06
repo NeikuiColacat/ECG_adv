@@ -245,6 +245,17 @@ DEFAULT_REGISTRY = NodeRegistry(
             ),
         ),
         NodeDefinition(
+            type_name="vae_lhat_attack_then_contract_view",
+            input_kinds=(ValueKind.WAVEFORM,),
+            output_kind=ValueKind.WAVEFORM,
+            execute=lhat_attack,
+            requirements=MethodRequirements(
+                classifier=True,
+                vae_decoder=True,
+                latent_pool=True,
+            ),
+        ),
+        NodeDefinition(
             type_name="vae_lhat_threechain_augmix_view",
             input_kinds=(ValueKind.WAVEFORM, ValueKind.WAVEFORM),
             output_kind=ValueKind.WAVEFORM,
@@ -554,6 +565,13 @@ _NODE_RESOURCE_BINDINGS: Mapping[str, Mapping[str, str]] = MappingProxyType(
             "operator_profile": "operator_profile",
         },
         "vae_lhat_hard_view": {
+            "latent_pool": "latent_pool",
+            "decoder": "vae_decoder",
+            "classifier": "model",
+            "rng": "lhat_rng",
+            "config": "lhat_config",
+        },
+        "vae_lhat_attack_then_contract_view": {
             "latent_pool": "latent_pool",
             "decoder": "vae_decoder",
             "classifier": "model",

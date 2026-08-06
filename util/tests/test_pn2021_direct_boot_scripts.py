@@ -55,11 +55,11 @@ def _a5_tuning_bundle(tmp_path: Path) -> tuple[Path, Path]:
     protocol_id = "pn2021_a5_lhat_threechain_tuning"
     payload["profile_name"] = protocol_id
     payload["protocol_lock"]["protocol_id"] = protocol_id
-    payload["protocol_lock"]["method_id"] = "a5_lhat_threechain_v1"
+    payload["protocol_lock"]["method_id"] = "augmix_simclr_lhat"
     payload["references"]["method_config"] = (
-        "train/methods/a5_lhat_threechain_v1.yaml"
+        "train/methods/augmix_simclr_lhat.yaml"
     )
-    payload["training"]["method"] = "a5_lhat_threechain_v1"
+    payload["training"]["method"] = "augmix_simclr_lhat"
     payload["training"].pop("family_loss_weights", None)
     payload["training"]["objective_source"] = "method_profile"
     payload["pooled_selection"]["output_file"] = (
@@ -71,6 +71,8 @@ def _a5_tuning_bundle(tmp_path: Path) -> tuple[Path, Path]:
 
 def _selection(
     tmp_path: Path,
+    *,
+    online_config_sha256: str | None = None,
 ) -> Path:
     source = tmp_path / "source.pt"
     source.write_bytes(b"locked-source")
@@ -88,7 +90,9 @@ def _selection(
         "pos_weight": None,
         "model_family": "efficientnet1dv2",
         "method_profile_sha256": sha256_file(method_path),
-        "online_training_config_sha256": sha256_file(online_config_path),
+        "online_training_config_sha256": (
+            online_config_sha256 or sha256_file(online_config_path)
+        ),
         "tuning_config_sha256": sha256_file(tuning_config_path),
         "source_checkpoint_identity": {
             "path": str(source),
@@ -294,7 +298,7 @@ def test_a5_tuning_dry_run_declares_train400_pool_without_loading_weights(
     payload = json.loads(capsys.readouterr().out)
 
     assert payload["action"] == "pn2021_k500_internal_tuning"
-    assert payload["method"]["profile_name"] == "a5_lhat_threechain_v1"
+    assert payload["method"]["profile_name"] == "augmix_simclr_lhat"
     assert payload["vae_requirements"] == {
         "encoder": True,
         "decoder": True,
@@ -421,12 +425,17 @@ def test_direct_refit_dry_run_consumes_selection_epoch_and_horizon(tmp_path, cap
 
 
 def test_direct_refit_rejects_online_config_sha_drift(tmp_path):
-    selection = _selection(tmp_path)
+    selection = _selection(
+        tmp_path,
+        online_config_sha256=sha256_file(
+            REPO / "configs" / "train" / "PN2021_direct_tune.yaml"
+        ),
+    )
     with pytest.raises(ValueError, match="online-training config SHA256 differs"):
         refit_main(
             [
                 "--config",
-                str(REPO / "configs" / "train" / "PN2021.yaml"),
+                str(REPO / "configs" / "train" / "PN2021_fixed20.yaml"),
                 "--model",
                 "efficientnet1dv2",
                 "--method-config",

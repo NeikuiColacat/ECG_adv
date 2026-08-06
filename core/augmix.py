@@ -65,6 +65,10 @@ class AugMixConfig:
     beta_alpha: float
     vae_chain_weight_cap: float | None
     normalization_epsilon: float
+    stage1_width: int
+    stage1_dirichlet_alpha: float
+    stage1_beta_alpha: float
+    stage1_simclr_temperature: float
     latent_threechain_width: int
     latent_threechain_depths: tuple[int, ...]
     latent_threechain_dirichlet_alpha: float
@@ -80,6 +84,26 @@ class AugMixBatch:
     chain3_raw: torch.Tensor
     mixed_raw: torch.Tensor
     mixed_normalized: torch.Tensor | None
+    mixture_weights: torch.Tensor
+    augmented_strength: torch.Tensor
+    chain1_composition_index: torch.Tensor
+    chain2_composition_index: torch.Tensor
+    chain1_depth: torch.Tensor
+    chain2_depth: torch.Tensor
+    chain1_operator_mask: torch.Tensor
+    chain2_operator_mask: torch.Tensor
+    chain1_output_nonfinite_count: torch.Tensor
+    chain2_output_nonfinite_count: torch.Tensor
+    operator_domain_sampling_rate_hz: int
+
+
+@dataclass(frozen=True)
+class TwoChainAugMixBatch:
+    """One Stage-1 strong view built from two independent corruption chains."""
+
+    chain1_raw: torch.Tensor
+    chain2_raw: torch.Tensor
+    mixed_raw: torch.Tensor
     mixture_weights: torch.Tensor
     augmented_strength: torch.Tensor
     chain1_composition_index: torch.Tensor
@@ -131,6 +155,7 @@ def load_augmix_config(
         "corruption_chains",
         "mixing",
         "output",
+        "stage1_twochain",
         "latent_threechain",
     }
     if set(payload) != expected_root_keys:
@@ -165,6 +190,19 @@ def load_augmix_config(
     corruptions = _mapping(payload.get("corruption_chains"), "corruption_chains")
     mixing = _mapping(payload.get("mixing"), "mixing")
     output = _mapping(payload.get("output"), "output")
+    stage1_twochain = _mapping(
+        payload.get("stage1_twochain"), "stage1_twochain"
+    )
+    if set(stage1_twochain) != {
+        "width",
+        "view",
+        "chain_sampling",
+        "dirichlet_alpha",
+        "clean_mix",
+        "beta_alpha",
+        "simclr_temperature",
+    }:
+        raise ValueError("stage1_twochain keys are incomplete or unexpected")
     latent_threechain = _mapping(
         payload.get("latent_threechain"), "latent_threechain"
     )
@@ -244,6 +282,14 @@ def load_augmix_config(
         beta_alpha=float(mixing.get("beta_alpha", 0.0)),
         vae_chain_weight_cap=None if cap is None else float(cap),
         normalization_epsilon=float(output.get("normalization_epsilon", 0.0)),
+        stage1_width=int(stage1_twochain.get("width", 0)),
+        stage1_dirichlet_alpha=float(
+            stage1_twochain.get("dirichlet_alpha", 0.0)
+        ),
+        stage1_beta_alpha=float(stage1_twochain.get("beta_alpha", 0.0)),
+        stage1_simclr_temperature=float(
+            stage1_twochain.get("simclr_temperature", 0.0)
+        ),
         latent_threechain_width=int(latent_threechain.get("width", 0)),
         latent_threechain_depths=tuple(
             int(value) for value in latent_threechain.get("depths", ())
@@ -316,6 +362,22 @@ def load_augmix_config(
         raise ValueError("main AugMix v1 uses uncapped transparent Dirichlet weights")
     if config.normalization_epsilon <= 0.0:
         raise ValueError("AugMix normalization epsilon must be positive")
+    if (
+        config.stage1_width != 2
+        or stage1_twochain.get("view") != "one_strong_view"
+        or stage1_twochain.get("chain_sampling")
+        != "independent_sequential_locked_rng"
+        or stage1_twochain.get("clean_mix") != "beta"
+    ):
+        raise ValueError("Stage-1 AugMix must use the locked two-chain strong view")
+    if (
+        config.stage1_dirichlet_alpha != 0.5
+        or config.stage1_beta_alpha != 0.5
+        or config.stage1_simclr_temperature != 0.5
+    ):
+        raise ValueError(
+            "Stage-1 AugMix locks Dirichlet/Beta alpha and SimCLR temperature to 0.5"
+        )
     if config.latent_threechain_width != 3:
         raise ValueError("latent three-chain AugMix width must be 3")
     allowed_depth_profiles = {
@@ -422,6 +484,45 @@ def _dirichlet_one(
     ).clamp_min(torch.finfo(torch.float32).tiny)
     exponentials = -uniform.log()
     return exponentials / exponentials.sum(dim=1, keepdim=True)
+
+
+def _symmetric_beta(
+    batch: int,
+    *,
+    alpha: float,
+    device: torch.device,
+    generator: torch.Generator,
+) -> torch.Tensor:
+    concentration = torch.full(
+        (batch, 2),
+        float(alpha),
+        device=device,
+        dtype=torch.float32,
+    )
+    gamma = torch._standard_gamma(concentration, generator=generator).clamp_min(
+        torch.finfo(torch.float32).tiny
+    )
+    return (gamma[:, 0] / gamma.sum(dim=1)).contiguous()
+
+
+def _dirichlet(
+    batch: int,
+    width: int,
+    *,
+    alpha: float,
+    device: torch.device,
+    generator: torch.Generator,
+) -> torch.Tensor:
+    concentration = torch.full(
+        (batch, width),
+        float(alpha),
+        device=device,
+        dtype=torch.float32,
+    )
+    gamma = torch._standard_gamma(concentration, generator=generator).clamp_min(
+        torch.finfo(torch.float32).tiny
+    )
+    return (gamma / gamma.sum(dim=1, keepdim=True)).contiguous()
 
 
 def _global_zscore_btc(signal: torch.Tensor, epsilon: float) -> torch.Tensor:
@@ -549,6 +650,90 @@ def generate_three_chain_augmix(
         chain2_output_nonfinite_count=chain2_nonfinite,
         operator_domain_sampling_rate_hz=(
             diagnostics.operator_domain_sampling_rate_hz
+        ),
+    )
+
+
+def generate_two_chain_augmix_strong_view(
+    clean_raw: torch.Tensor,
+    *,
+    sampling_rate_hz: int,
+    config: AugMixConfig | None = None,
+    generator: torch.Generator,
+) -> TwoChainAugMixBatch:
+    """Generate the frozen Stage-1 two-chain AugMix strong view.
+
+    The two corruption calls deliberately remain sequential.  This preserves
+    the stochastic identity of the development lock; combining them into one
+    2B call would change the operator RNG stream even though it is faster.
+    """
+
+    resolved = load_augmix_config() if config is None else config
+    clean = _validate_waveform(clean_raw, "clean_raw")
+    if int(sampling_rate_hz) != resolved.input_sampling_rate_hz:
+        raise ValueError("Stage-1 AugMix accepts only canonical raw 100 Hz input")
+    if tuple(clean.shape[1:]) != (resolved.input_points, 12):
+        raise ValueError("Stage-1 AugMix expects raw (B,1000,12) input")
+    if not bool(torch.isfinite(clean).all().item()):
+        raise ValueError("Stage-1 AugMix clean input must be finite raw mV")
+    _validate_generator(generator, clean.device)
+
+    operator_params = _load_operator_profile(resolved)
+    first = generate_canonical_corruption(
+        clean,
+        operator_params=operator_params,
+        generator=generator,
+        _input_prevalidated=True,
+    )
+    second = generate_canonical_corruption(
+        clean,
+        operator_params=operator_params,
+        generator=generator,
+        _input_prevalidated=True,
+    )
+    batch = int(clean.shape[0])
+    weights = _dirichlet(
+        batch,
+        resolved.stage1_width,
+        alpha=resolved.stage1_dirichlet_alpha,
+        device=clean.device,
+        generator=generator,
+    )
+    augmented_strength = _symmetric_beta(
+        batch,
+        alpha=resolved.stage1_beta_alpha,
+        device=clean.device,
+        generator=generator,
+    )
+    mixture = (
+        weights[:, 0].view(-1, 1, 1) * first.waveform_raw_100hz
+        + weights[:, 1].view(-1, 1, 1) * second.waveform_raw_100hz
+    )
+    strength = augmented_strength.view(-1, 1, 1)
+    mixed = (
+        (1.0 - strength) * clean.to(dtype=torch.float32)
+        + strength * mixture
+    )
+    return TwoChainAugMixBatch(
+        chain1_raw=first.waveform_raw_100hz,
+        chain2_raw=second.waveform_raw_100hz,
+        mixed_raw=mixed.contiguous(),
+        mixture_weights=weights,
+        augmented_strength=augmented_strength,
+        chain1_composition_index=first.diagnostics.composition_index,
+        chain2_composition_index=second.diagnostics.composition_index,
+        chain1_depth=first.diagnostics.depth,
+        chain2_depth=second.diagnostics.depth,
+        chain1_operator_mask=first.diagnostics.operator_mask,
+        chain2_operator_mask=second.diagnostics.operator_mask,
+        chain1_output_nonfinite_count=(
+            first.diagnostics.output_nonfinite_count
+        ),
+        chain2_output_nonfinite_count=(
+            second.diagnostics.output_nonfinite_count
+        ),
+        operator_domain_sampling_rate_hz=(
+            first.diagnostics.operator_domain_sampling_rate_hz
         ),
     )
 
@@ -785,10 +970,12 @@ __all__ = [
     "AugMixBatch",
     "AugMixConfig",
     "LatentThreeChainAugMixBatch",
+    "TwoChainAugMixBatch",
     "CANONICAL_OPERATORS",
     "DEFAULT_AUGMIX_CONFIG_PATH",
     "generate_three_chain_augmix",
     "generate_latent_three_chain_augmix",
+    "generate_two_chain_augmix_strong_view",
     "load_augmix_config",
     "make_augmix_generator",
     "multilabel_jsd",

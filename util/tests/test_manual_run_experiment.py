@@ -203,8 +203,8 @@ def test_run_record_uses_typed_method_identity_and_last_selection(
         (delegate_output / "train_result.json").write_text(
             json.dumps(
                 {
-                    "method_id": "a5_lhat_threechain_v1",
-                    "scientific_arm": "A5",
+                    "method_id": "augmix_simclr_lhat",
+                    "scientific_arm": "augmix_simclr_lhat",
                     "center": "ningbo",
                     "epochs_completed": 3,
                     "optimizer_steps": 6,
@@ -245,8 +245,8 @@ def test_run_record_uses_typed_method_identity_and_last_selection(
     selection = json.loads(
         (plan.run_dir / "selection.json").read_text(encoding="utf-8")
     )
-    assert data_manifest["method_id"] == "a5_lhat_threechain_v1"
-    assert data_manifest["scientific_arm"] == "A5"
+    assert data_manifest["method_id"] == "augmix_simclr_lhat"
+    assert data_manifest["scientific_arm"] == "augmix_simclr_lhat"
     assert "arm" not in data_manifest
     assert selection["policy"] == "last"
     assert selection["selected_epoch"] == 3

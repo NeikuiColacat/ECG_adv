@@ -1,6 +1,6 @@
 # 手动重构保留清单与旧代码清理闸门
 
-更新日期：2026-07-31
+更新日期：2026-08-06
 
 ## 目的
 
@@ -85,19 +85,19 @@ native-rate 到 100 Hz、100 Hz 到 500 Hz，以及迁移脚本中的 PTB-XL
 | `models/contracts.py` | `KEEP-MANUAL` | 锁定 EfficientNet `(B,12,1000)`、ECGFounder `(B,12,5000)` 与 Super5 五原始 logits 契约 | 新实现保留采样率、布局、类别顺序及输入输出严格校验 |
 | `models/input_adapter.py` | `KEEP-MANUAL` | 统一 canonical raw 100 Hz BTC 到两模型输入域的设备驻留适配：sanitize、ECGFounder 线性升采样、全局 z-score、BCT | 新实现保留 EffNet identity、ECGFounder `1000→5000` linear `align_corners=True`、先升采样后归一化、有限 float32 输出及非原地语义 |
 | `models/checkpoints.py` | `KEEP-MANUAL` | 严格提取 raw/state_dict/model_state_dict、去除并行前缀、记录 SHA256，并仅为显式官方 ECGFounder checkpoint 开放 trusted 读取 | 新实现保留安全默认、严格键校验和 checkpoint 身份记录 |
-| `models/efficientnet1d.py` | `KEEP-MANUAL` | 独立重写历史 EfficientNet1DV2 S-V2 五分类定义及 checkpoint 构建接口 | 新实现与571个state key、旧checkpoint和100 Hz前向逐元素兼容 |
-| `models/ecgfounder.py` | `KEEP-MANUAL` | 独立重写官方12导联 ECGFounder Net1D、预训练backbone加载、Super5 head及 full/head trainable scope | 新实现与509个官方state key/shape、官方checkpoint和500 Hz前向兼容 |
+| `models/efficientnet1d.py` | `KEEP-MANUAL` | 独立重写历史 EfficientNet1DV2 S-V2 五分类定义及 checkpoint 构建接口，并显式暴露冻结分类头前的 `forward_features` 供两链 AugMix-SimCLR 使用 | 新实现与571个state key、旧checkpoint和100 Hz前向逐元素兼容，且 feature API 不改变原分类前向 |
+| `models/ecgfounder.py` | `KEEP-MANUAL` | 独立重写官方12导联 ECGFounder Net1D、预训练backbone加载、Super5 head及 full/head trainable scope；复用既有 `forward_features` 接入同一 Stage-1 | 新实现与509个官方state key/shape、官方checkpoint和500 Hz前向兼容，且两个骨干共享同一表征学习接口 |
 | `models/factory.py` | `KEEP-MANUAL` | `build_model`、模型名规范化、可用模型和输入spec统一查询 | 新模型工厂完整接管两个backbone且不引入旧训练器依赖 |
 | `models/vae.py` | `KEEP-MANUAL` | 独立重写 ECGTwin VAE encoder/decoder、严格读取双 state-dict checkpoint，并返回冻结的可微解码组件 | 新实现保留 `(B,1024,12)` raw mV、scaled `(B,4,128)` latent、导联交换、0.18215 scale、240个 state key 和真实 checkpoint 前向契约 |
 
-### A5. 在线 VAE-LHAT 与三链 AugMix 核心
+### A5. 两链 AugMix-SimCLR 与收缩式 VAE-LHAT 主线
 
 | 文件 | 状态 | 当前职责 | 删除或合并前必须满足 |
 |---|---|---|---|
 | `configs/train/vae.yaml` | `KEEP-MANUAL` | ECGTwin VAE checkpoint、输入/latent、冻结方式和分类器桥接契约 | 新配置保留 checkpoint 双组件、raw mV、1024点、lead reorder、latent scale 和严格键数量 |
-| `configs/train/lhat.yaml` | `KEEP-MANUAL` | repaired M20 exact-label/non-self latent hull、标准化、L2投影、可执行攻击目标、固定 100 Hz canonical 解码域、模型攻击域桥接和诊断参数 | 新配置保留 train-only standardizer、`include_anchor=false`、显式 epsilon、攻击几何/目标、100 Hz 信息瓶颈和全部诊断 |
-| `configs/train/augmix.yaml` | `KEEP-MANUAL` | 共享 A5 波形三链与 latent-threechain candidate 的生成参数；两者均锁定 `100→500 Hz算子域→100 Hz canonical`、pre-zscore 和隔离 RNG，训练 loss 仍由方法 profile 独占 | 新配置保留 A5 chain3 不再腐蚀及 Dirichlet/Beta 公式，同时保留 latent 模式的三条独立 depth2/3 腐蚀链、无重复算子子集、canonical 顺序、deterministic VAE posterior、latent Dirichlet 和无 post-decode Beta |
-| `configs/train/PN2021.yaml` | `KEEP-MANUAL` | 四中心完整 K500 的 matched comparison 配置；ECGFounder 锁定 LR `3e-5`、20-epoch cosine horizon，并统一 resident、单进程 loader、最终 checkpoint/probe 和 TensorBoard 行为 | 新配置保留同源 checkpoint、400/100 协议身份、完整 K500、matched-base 预算、无 heldout 选模、ref-exclusion、v7 映射和100 Hz bottleneck |
+| `configs/train/lhat.yaml` | `KEEP-MANUAL` | M20 exact-label/non-self latent hull、标准化、λ0.6、ε12、10步 BCE 困难搜索，以及 `[0.25,0.5,0.75,1]` 预翻转最大损失收缩网格和端点残差修正 | 新配置保留 train-only standardizer、`include_anchor=false`、100 Hz 信息瓶颈、clean-correct margin 50% 保留、无 heldout feedback 和 raw/contract 双层诊断 |
+| `configs/train/augmix.yaml` | `KEEP-MANUAL` | Stage-1 两条独立 depth2/3 腐蚀链在 500 Hz 算子域执行并回到 canonical100，以 Dirichlet(0.5,0.5) 混链、Beta(0.5,0.5) 混 clean；同文件继续承载非主线 latent-threechain 配置 | 新配置保留顺序隔离 RNG、pre-zscore raw mV、两链公式/温度0.5、非原地输入和配置束内单一算子来源 |
+| `configs/train/PN2021.yaml` | `KEEP-MANUAL` | 冻结的前瞻复现配方：EffNet Stage-1 1024步 + E23/T30，ECGFounder Stage-1 256步 + E30/T30；统一完整 K500、resident loader、最后 checkpoint、TensorBoard 和无 heldout 选模 | 新配置保留同源 checkpoint、完整 K500、两阶段超参、matched-base 单步预算、ref-exclusion、v7 映射、drop-all-zero 主口径和100 Hz bottleneck |
 | `configs/train/PN2021_fixed20.yaml` | `KEEP-MANUAL` | family-balanced Direct fixed20 唯一配置；定义400/100调参与完整K500 refit、EffNet 30轮和ECGFounder 20轮搜索上限及运行参数 | 新配置保留固定20组合、clean/corruption 各50% loss、每 base batch 一次 optimizer step、source registry、resident loader 和不物化训练腐蚀缓存 |
 | `configs/train/methods/a0_clean_v1.yaml` | `KEEP-MANUAL` | 锁定 clean K500 监督适配的 typed graph、objective 和零 VAE 资源契约 | 新 profile 保留 A0 身份、单 clean BCE、完整 base exposure 和一个 outer optimizer step |
 | `configs/train/methods/a3c_depth23_v1.yaml` | `KEEP-MANUAL` | 锁定在线 depth2/3 canonical 腐蚀基线的 typed graph、双 BCE 和 500 Hz 算子域 | 新 profile 保留 A3c 身份、每 origin 单一腐蚀 view、A0 相同 base budget 且不物化 20 倍数据集 |
@@ -105,21 +105,21 @@ native-rate 到 100 Hz、100 Hz 到 500 Hz，以及迁移脚本中的 PTB-XL
 | `configs/train/methods/direct_depth23_fixed20_raw_aux.yaml` | `KEEP-MANUAL` | matched 22-exposure 原始 clean 辅助分支控制：`0.45 clean + 0.45 fixed20 + 0.10 raw auxiliary`，匹配额外 forward、BN 和优化器步预算 | 新 profile 保留与 Direct 公共 corruption RNG 身份/namespace、单次 outer step、raw auxiliary 独立 forward 及禁止 heldout feedback |
 | `configs/train/methods/direct_depth23_fixed20_vae_reconstruction_aux.yaml` | `KEEP-MANUAL` | matched 22-exposure VAE reconstruction-only 控制；使用 deterministic posterior mean 拆分 raw→reconstruction 位移 | 新 profile 保留同预算/同随机 fixed20、冻结 encoder/decoder、1000↔1024/导联桥、质量拒绝 clean-only 和无 latent-hull 搜索 |
 | `configs/train/methods/direct_depth23_fixed20_lhat_aux.yaml` | `KEEP-MANUAL` | matched 22-exposure LHAT hard-endpoint 候选；在相同 normalized auxiliary 路径中隔离 reconstruction→hard 位移 | 新 profile 保留 exact-label train-only pool、公共 fixed20 随机轨迹、0.10 auxiliary 总权重、accepted-mask 诊断、单次 outer step 和无 heldout feedback |
-| `configs/train/methods/a5_lhat_threechain_v1.yaml` | `KEEP-MANUAL` | 锁定 repaired LHAT + 三链 AugMix 主方法的 typed graph、objective、资源和复用契约 | 新 profile 必须让同一 `lhat_view` 同时进入 direct BCE 与 chain3，保持 E/B、坏波形 clean-only 和无 heldout feedback |
+| `configs/train/methods/augmix_simclr_lhat.yaml` | `KEEP-MANUAL` | 唯一主线方法身份：Stage-1 两链 AugMix-SimCLR + 等权 source-logit anchor；Stage-2 clean/四轮换腐蚀 family balance + contracted VAE-LHAT BCE | 新 profile 保留 K500-only、无 replay/VICReg/JSD/PCGrad、五轮覆盖20组合、一次 outer step、辅助权重2、BN/RNG snapshot-restore、坏波形 clean-only 和无 heldout feedback |
 | `configs/train/methods/exp_lhat_replay_pool_v1.yaml` | `KEEP-MANUAL` | LHAT replay-pool 组合方案的可审计、暂不可执行 profile | 实现 replay 生命周期、预算和 stale-view 契约前必须保持 `contracts.executable=false` |
 | `configs/train/methods/exp_lhat_as_sixth_branch_v1.yaml` | `KEEP-MANUAL` | 把 LHAT 作为第六分支的可审计、暂不可执行 profile | 完成六分支采样和公平 exposure 定义前必须保持 `contracts.executable=false` |
 | `configs/train/methods/exp_paired_augmix_latent_bridge_v1.yaml` | `KEEP-MANUAL` | 为保持白名单稳定文件名而原位覆盖为锁定的可执行 latent-threechain candidate：同一 clean 生成两个独立三腐蚀链 latent 混合 view，以 clean BCE + 每 view `0.75` BCE + `3×` Bernoulli JSD 训练；ECGFounder 由 K500 内部 frozen validation400 选 E19 | 新 profile 保留双 view 独立可复放 RNG、encoder/decoder 无 latent-pool、每 view 三条 depth2/3 链、质量交集、BN 权重 `0.5/0.25/0.25`、无 heldout feedback；不得把它表述成 LHAT/adversarial search、原 AugMix 精确复现或把 LR 收益算成方法收益 |
 | `configs/train/methods/exp_augmix_guided_latent_simplex_v1.yaml` | `KEEP-MANUAL` | AugMix 难度引导 latent simplex 搜索的可审计、暂不可执行 profile | 完成 guidance 泄漏边界、攻击预算和标签安全契约前必须保持 `contracts.executable=false` |
 | `core/__init__.py` | `KEEP-MANUAL` | 通用监督训练、在线方法训练和 typed method graph 的唯一公共导出面 | 新核心包接管相同接口并完成训练调用迁移；禁止重新导出固定方法臂枚举 |
 | `core/corruption.py` | `KEEP-MANUAL` | 共享 GPU canonical 腐蚀内核；把两条链合并成 `2B`，固定在 500 Hz 调用五算子并返回 100 Hz raw-mV 波形及逐样本 provenance | 新实现保留线性 `100→500→100`、五算子各一次批量调用、depth2/3 组合掩码、无逐组合 CPU 分支和有限值诊断 |
-| `core/lhat.py` | `KEEP-MANUAL` | train-only latent standardizer、exact-label non-self hull 优化、YAML 驱动的普通/正负平衡 BCE 与 anchor-Bernoulli-KL 攻击目标、100 Hz canonical 可微 VAE 解码和攻击诊断；把 anchor/initial probe 合并为一次 `2B` decode/classifier forward | 新实现保留仅优化 batch-local hull 权重、不污染模型梯度、攻击目标真正生效及增益诊断、两模型共享100 Hz信息瓶颈、ECGFounder线性500 Hz攻击桥接、数值结果和紧凑 D2H 诊断 |
-| `core/augmix.py` | `KEEP-MANUAL` | 在同一模块复用共享腐蚀/VAE桥接实现两种批量生成：A5 的两条500 Hz腐蚀链+100 Hz hard chain，以及 latent candidate 的 `3B` 腐蚀、deterministic encode、逐样本 Dirichlet latent mix 和一次 decode | 新实现保留隔离 RNG、非原地输入、A5 chain3 无附加腐蚀、latent 三链 origin 对齐、canonical100输入输出、0.18215 latent scale 和可复算混合公式 |
+| `core/lhat.py` | `KEEP-MANUAL` | train-only latent standardizer、exact-label non-self M20 hull 优化、100 Hz canonical 可微解码与两模型攻击桥；攻击后一次批量解码收缩路径、端点残差修正并选择最高 BCE 的标签边界保护点 | 新实现保留只优化 batch-local hull 权重、不污染分类器/decoder 梯度、ε12/10步 raw 搜索、clean-correct margin 保护、finite/std/20mV gate、clean fallback、ASR/接受率/t 诊断和紧凑 D2H |
+| `core/augmix.py` | `KEEP-MANUAL` | 实现冻结 Stage-1 两链强视图；两条链按锁定 RNG 顺序独立生成后做逐样本 Dirichlet 与 Beta 混合，并继续承载审计中的 latent-threechain 生成函数 | 新实现保留 raw100 输入、500 Hz 算子域、canonical100输出、显式 generator、非原地语义、可复算权重和不把两条链合并成会改变 RNG 身份的 `2B` 调用 |
 | `core/latent_pool.py` | `KEEP-MANUAL` | 从 raw 100 Hz K500 建立 frozen VAE latent pool；schema v2 预计算 stable exact-label neighbor table，缓存 eligible hash tuple/set，并把邻居表 SHA256 纳入身份 | 新实现保留 encoder/cache/label/latent/eligibility/standardizer 身份、候选 distinct/non-self、与原 stable search 逐元素一致及不可用样本显式清单 |
 | `core/methods/__init__.py` | `KEEP-MANUAL` | typed method graph 的稳定公共导出面 | 新包保留 compiler/executor/contracts/runtime 的显式 API，不暴露动态 import |
 | `core/methods/contracts.py` | `KEEP-MANUAL` | 定义 canonical raw-mV waveform、latent、pair、candidate、bundle、objective 和 provenance 类型契约 | 新实现保留 `(B,1000,12)`/`(B,4,128)`、Super5、valid-mask、origin 对齐和有限值校验 |
-| `core/methods/registry.py` | `KEEP-MANUAL` | 严格加载方法 YAML，以显式 node 白名单编译 DAG、类型边、objective、资源需求、profile 身份及可选跨 profile `comparison_rng_identity`；包含无 latent-pool 的 encoder+decoder latent-threechain view | 新编译器保留 schema/环/类型/引用检查、节点端口及资源名/type/必需键的代码白名单、VAE资源需求、旧 profile 默认 RNG 身份并禁止 YAML callable、class 或 import path；未知资源类型必须 fail-closed |
+| `core/methods/registry.py` | `KEEP-MANUAL` | 严格加载方法 YAML，以显式 node 白名单编译 DAG、类型边、objective、资源需求和 profile 身份；注册 `vae_lhat_attack_then_contract_view` 且禁止 YAML 动态 import | 新编译器保留 schema/环/类型/引用检查、节点端口及资源名/type/必需键的代码白名单、VAE资源需求和未知资源 fail-closed |
 | `core/methods/executor.py` | `KEEP-MANUAL` | 按编译拓扑执行 typed nodes，并从 comparison identity、namespace、node、stream 及 execution identity 派生 Torch RNG stream | 新 executor 保留旧 profile 默认隔离、显式 matched profiles 公共随机数、不同 step 分流、资源闸门、audit-only 拒绝、RNG 诊断和 named output bundle |
-| `core/methods/runtime.py` | `KEEP-MANUAL` | 将 graph nodes 接到 corruption/LHAT/AugMix/latent-threechain；解析嵌套配置与 RNG seed 身份，按 node 记录质量拒绝，并以全部质量 view 的交集定义可训练记录 | 新 runtime 保留 A3c 500 Hz 算子域、A5 单次 hard-view 复用、新 latent 双 view 独立 RNG、坏波形 clean fallback、accepted-view/双view统计、最终统一模型域归一化和 provenance |
+| `core/methods/runtime.py` | `KEEP-MANUAL` | 将 typed graph 接到 canonical corruption、raw LHAT 和 attack-then-contract；只为候选充足且通过收缩/QC 的记录暴露 VAE view，其余 clean-only | 新 runtime 保留 K500 hash/标签绑定、exact-label pool、500 Hz 算子域、contract accepted mask、拒绝原因、raw/contract 诊断、显式 RNG provenance 和无 agent_workspace import |
 | `core/methods/nodes/__init__.py` | `KEEP-MANUAL` | 汇总全部代码所有的显式 node callable | 新节点集合保留静态导出且不得自动发现任意模块 |
 | `core/methods/nodes/selectors.py` | `KEEP-MANUAL` | clean source、严格配对和候选选择 node 适配器 | 新实现保留 origin/label 对齐与显式 runner adapter 边界 |
 | `core/methods/nodes/codecs.py` | `KEEP-MANUAL` | VAE encode/decode 的显式 node 适配器，不复制 ECGTwin 实现 | 新实现保留 caller-owned codec 和 typed 输入输出边界 |
@@ -127,7 +127,7 @@ native-rate 到 100 Hz、100 Hz 到 500 Hz，以及迁移脚本中的 PTB-XL
 | `core/methods/nodes/latent_ops.py` | `KEEP-MANUAL` | LHAT 与 paired latent bridge node 适配器 | 新实现保留 runner-owned 资源及暂未实现节点的 audit-only 隔离 |
 | `core/methods/nodes/mixers.py` | `KEEP-MANUAL` | AugMix/view mixing node 适配器 | 新实现保留显式 adapter 调用，不能在 registry 中隐藏训练 objective |
 | `core/methods/nodes/buffers.py` | `KEEP-MANUAL` | replay read/write node 适配器 | replay profile 可执行前必须定义 run-scoped 生命周期、容量、采样和证据身份 |
-| `core/online_trainer.py` | `KEEP-MANUAL` | 执行 typed method/objective/优化/计时；同时支持 fixed20 family balance 与 latent 双view clean/JSD，后者以三次 forward 的精确总动量等权更新 BN 并在坏 view 时仍用 clean fallback 完成计划 | 新实现保留 pre-zscore raw-mV、完整 selection hash/标签绑定、H2D复用、optimizer/view计数分离、accepted-view/交集质量指标、嵌套配置和全局 seed SHA、未知非空 BN policy fail-closed、epoch evaluator及 final-only 不消费训练 RNG |
+| `core/online_trainer.py` | `KEEP-MANUAL` | 在原 typed trainer 内执行两阶段主线：冻结分类头的两链 AugMix-SimCLR、source/stage2 logit anchor、五轮 rotating4、VAE 辅助直接相加及一次 outer update；保存 Stage-1 checkpoint、两阶段 TensorBoard 和资源身份 | 新实现保留 pre-zscore raw mV、K500 teacher cache、两个骨干 feature API、单步 family balance、辅助 BN/RNG snapshot-restore、optimizer/view计数、最终 checkpoint、无 heldout 选模和完整配置/seed闭包 |
 | `core/train_PN2021.py` | `KEEP-MANUAL` | 通过 `data_runtime` 建立 raw 100 Hz K500 或 train400 loader，并按 method requirements 分别路由 latent pool、runtime frozen encoder 和 decoder | 新适配层保留四逻辑中心、CPSC/Extra 合并、partition身份、resident强制workers=0/persistent=false、无pool VAE方法资源隔离及方法不进入DataLoader seed |
 
 ### A6. 通用监督训练入口
@@ -145,8 +145,8 @@ native-rate 到 100 Hz、100 Hz 到 500 Hz，以及迁移脚本中的 PTB-XL
 | `boot_scripts/__init__.py` | `KEEP-MANUAL` | PTB-XL 薄启动脚本包边界 | 新启动包完整接管两个模型入口且不承载训练业务逻辑 |
 | `boot_scripts/train_ptbxl_effnet.py` | `KEEP-MANUAL` | 从 PTBXL YAML 构建 EfficientNet1DV2、合并显式 CLI 覆盖并调用 `train_ptbxl`；支持无副作用 dry-run | 新入口保留 100 Hz 模型契约、配置束、随机种子和输出身份 |
 | `boot_scripts/train_ptbxl_ecgfounder.py` | `KEEP-MANUAL` | 从 PTBXL YAML 加载官方 ECGFounder backbone、full/head scope，合并显式 CLI 覆盖并调用 `train_ptbxl`；支持无副作用 dry-run | 新入口保留 500 Hz bottleneck、官方 checkpoint、训练范围、配置束、随机种子和输出身份 |
-| `boot_scripts/train_pn2021.py` | `KEEP-MANUAL` | 从 PN2021 外层协议、显式 method profile/source checkpoint/model/center 启动匹配 K500 训练；按 latent-pool/encoder/decoder requirements 精确加载 VAE 组件，支持无副作用 dry-run | 新入口保留源 checkpoint 强制输入、完整 pooled-selection rule、selection 时 scientific online-config 快照、同组 seed/full-FT/pos-weight、方法 profile 隔离、A0/A3c 零 VAE、A5 与无pool latent方法严格 VAE 加载和全部显式覆盖记录 |
-| `boot_scripts/tune_pn2021_direct.py` | `KEEP-MANUAL` | 保留稳定文件名的通用 train400 + frozen validation100 启动入口；Direct 保持原 action/seed 身份，其他 executable 方法按 pool/runtime-encoder/decoder requirements 精确加载一次 VAE 并复用同一适配层 | 新入口保留 full-FT、model/center 唯一输出、两模型独立超参、source SHA、dry-run不读权重、A5 train400-only pool、Direct历史身份和 pooled-selection pending 身份 |
+| `boot_scripts/train_pn2021.py` | `KEEP-MANUAL` | 从 PN2021 外层协议、显式 method profile/source checkpoint/model/center 启动匹配 K500 训练；按 latent-pool/encoder/decoder requirements 精确加载 VAE 组件，支持无副作用 dry-run | 新入口保留源 checkpoint 强制输入、完整 pooled-selection rule、selection 时 scientific online-config 快照、同组 seed/full-FT/pos-weight、方法 profile 隔离、A0/A3c 零 VAE、主线严格 VAE 加载和全部显式覆盖记录 |
+| `boot_scripts/tune_pn2021_direct.py` | `KEEP-MANUAL` | 保留稳定文件名的通用 train400 + frozen validation100 启动入口；Direct 保持原 action/seed 身份，其他 executable 方法按 pool/runtime-encoder/decoder requirements 精确加载一次 VAE 并复用同一适配层 | 新入口保留 full-FT、model/center 唯一输出、两模型独立超参、source SHA、dry-run不读权重、主线 train400-only pool、Direct历史身份和 pooled-selection pending 身份 |
 | `boot_scripts/select_pn2021_direct.py` | `KEEP-MANUAL` | 保留稳定文件名的通用只读 pooled-selection 入口；发现四中心逐epoch clean+20 prediction artifacts，Direct 保持原 action，其他方法使用通用 action且不加载波形、模型或GPU | 新入口保留四中心精确覆盖、clean拼400、每composition拼400、0.5/0.5 score、clean floor、方法身份不误标、输出不覆盖和无副作用dry-run |
 | `boot_scripts/refit_pn2021_direct.py` | `KEEP-MANUAL` | 消费已完成受管 family-balanced selection，在完整K500上按全局E* refit fixed20 Direct；严格校验selection/source/配置闭包/seed SHA并支持无副作用dry-run | 新入口保留protocol/method/四中心身份、完整selection rule、method及online/tuning配置SHA、E*与原scheduler horizon传播、full-FT/pos-weight不漂移、锁定source checkpoint、无fixed-cycle兼容参数和refit contract |
 
@@ -162,6 +162,8 @@ native-rate 到 100 Hz、100 Hz 到 500 Hz，以及迁移脚本中的 PTB-XL
 
 | 文件 | 状态 | 当前职责 | 删除或合并前必须满足 |
 |---|---|---|---|
+| `configs/active_scripts.yaml` | `KEEP-MANUAL` | 区分历史 trusted mainline 与当前前瞻主线，并登记白名单 launcher/config/trainer、CPU 验证状态和待完成的 GPU 重复 | 新索引必须保留 trusted/development 分层，禁止仅因代码迁移把开发候选升级为论文证据 |
+| `configs/active_evidence_registry.yaml` | `KEEP-MANUAL` | 记录精简主线的 K500-only 数据边界、冻结拓扑、开发选择审计、白名单实现路径和论文晋级条件 | 新注册表保留 heldout-tuned/single-seed 边界、无 outside-K500 model access、v7/drop-all-zero 契约及多随机重复要求 |
 | `configs/eval/PN2021.yaml` | `KEEP-MANUAL` | PN2021正式评估唯一配置；单进程顺序session复用clean/PN2021-C mmap和selection，覆盖四中心clean+20 views | 新配置保留v7映射、K500 ref-exclusion、view顺序、raw100输入、四种canonical metric view及session/loader所有权 |
 | `util/evaluation/__init__.py` | `KEEP-MANUAL` | 手工重构正式评估公共导出面 | 新包接管相同 metrics/PN2021 API 且调用方完成迁移 |
 | `util/evaluation/metrics.py` | `KEEP-MANUAL` | 直接从 raw logits 计算 Super5 AUROC 与 sklearn Average Precision；显式 strict/skip-undefined、per-class/macro、kept/drop、中心/view 等权聚合 | 新实现禁止 sigmoid 饱和改变排序，保留 AP 非梯形 PR-AUC 定义、classes-used/正负计数、metric view、record/hash-label、depth2/3/23 和 equal-weight 语义 |
@@ -181,7 +183,7 @@ native-rate 到 100 Hz、100 Hz 到 500 Hz，以及迁移脚本中的 PTB-XL
 | `configs/experiments/manual_refactor_ptbxl_ecgfounder_e10_probe.yaml` | `KEEP-MANUAL` | ECGFounder 锁定 source 配方仅延长到 10 epoch 的单变量敏感性实验 | 结论进入 source baseline 注册表或明确判定无需保留该敏感性证据 |
 | `configs/experiments/manual_refactor_pn2021_effnet_direct_ningbo.yaml` | `KEEP-MANUAL` | 统一 launcher 的 Ningbo A0 clean-K500 示例 | 新示例或注册表保留显式源 checkpoint/model/method-config/center |
 | `configs/experiments/manual_refactor_pn2021_effnet_a3c_ningbo.yaml` | `KEEP-MANUAL` | 统一 launcher 的 Ningbo A3c 在线 depth2/3 腐蚀示例 | 新示例或注册表保留显式源 checkpoint/model/method-config/center 和配置闭包 |
-| `configs/experiments/manual_refactor_pn2021_effnet_a5_ningbo.yaml` | `KEEP-MANUAL` | 统一 launcher 的 Ningbo A5 LHAT + 三链 AugMix 示例 | 新示例或注册表保留显式源 checkpoint/model/method-config/center、VAE 资源和配置闭包 |
+| `configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_ningbo.yaml` | `KEEP-MANUAL` | 统一 launcher 的 Ningbo 前瞻复现示例：两链 AugMix-SimCLR → rotating4 + contracted VAE-LHAT | 新示例或注册表保留显式源 checkpoint/model/method-config/center、VAE 资源、两阶段超参和配置闭包 |
 | `configs/experiments/manual_refactor_pn2021_eval_effnet.yaml` | `KEEP-MANUAL` | 统一 launcher 的固定 EfficientNet checkpoint 正式评估示例 | 新示例或注册表保留固定 checkpoint 和 eval YAML |
 | `configs/experiments/manual_refactor_pn2021_effnet_direct_tune_ningbo.yaml` | `KEEP-MANUAL` | EfficientNet Ningbo train400 + frozen clean/20-view validation100 受管入口 | 新入口保留模型、中心、family-balanced profile 和唯一输出身份 |
 | `configs/experiments/manual_refactor_pn2021_effnet_matched_raw_aux_e2_ningbo.yaml` | `KEEP-MANUAL` | EfficientNet Ningbo E2 raw auxiliary 实现/预算控制受管入口 | 新入口保留相同 PTB-XL source、H30 horizon、K400/K100、公共 RNG 身份、唯一外部输出目录和无副作用 dry-run |
@@ -247,21 +249,21 @@ native-rate 到 100 Hz、100 Hz 到 500 Hz，以及迁移脚本中的 PTB-XL
 | `util/tests/test_models.py` | `SUPPORT` | 验证两个模型的输入输出、冻结范围、统一factory、外部参考state键及 EfficientNet逐元素前向对齐 | 模型包迁移时同步迁移官方/历史兼容契约测试 |
 | `util/tests/test_model_input_adapter.py` | `SUPPORT` | 验证 canonical raw100 的 sanitize、EffNet identity、ECGFounder 设备内 linear 1000→5000、先升采样后 global z-score、非原地及严格输入契约 | 模型输入桥迁移时同步保留两模型数值参考和操作顺序回归测试 |
 | `util/tests/test_canonical_corruption.py` | `SUPPORT` | 验证在线 GPU 腐蚀内核固定 `100→500→100`、20种 depth2/3 掩码、两链批量调用结构、确定性、非原地输入和逐样本 finite provenance | 腐蚀内核迁移时同步保留域、组合、批量执行和设备驻留契约 |
-| `util/tests/test_vae_lhat_augmix.py` | `SUPPORT` | 验证真实 VAE、LHAT 几何/2B probe、A5 三链公式及 latent `3B encode→Dirichlet mix→decode`、确定性和白名单 import 闭包 | 在线训练核心迁移时同步迁移这些契约测试 |
+| `util/tests/test_vae_lhat_augmix.py` | `SUPPORT` | 验证真实 VAE、LHAT M候选几何/2B probe、attack-then-contract 标签边界保护与端点残差，以及 Stage-1 两链 Dirichlet/Beta 公式、确定性和白名单 import 闭包 | 在线训练核心迁移时同步迁移这些契约测试 |
 | `util/tests/test_random_seed.py` | `SUPPORT` | 验证全局 seed YAML 身份、namespace 隔离、Python/NumPy/Torch 复现和 process 初始化 | 随机基础设施迁移时同步迁移这些契约测试 |
 | `util/tests/test_config_bundle.py` | `SUPPORT` | 验证完整 configs 副本内的 seed/operator 引用、路径逃逸闸门和核心 YAML 加载 | 配置系统迁移时同步迁移这些契约测试 |
 | `util/tests/test_supervised_trainer.py` | `SUPPORT` | 验证配置束、调用方 DataLoader、参数更新、验证选模、raw prediction artifact、单中心缺类留证、scheduler horizon、测试落盘及 last-epoch 微调 | 通用监督训练入口迁移时同步迁移这些最小契约测试 |
 | `util/tests/test_evaluation_metrics.py` | `SUPPORT` | 验证 raw-logit 排序不被 sigmoid 饱和破坏、Average Precision 定义及 strict/skip-undefined | 指标层迁移时同步保留定义与极端 logits 回归样例 |
 | `util/tests/test_direct_baseline_selection.py` | `SUPPORT` | 验证clean pooled400、20个逐composition pooled400、robust均值、0.5/0.5 score、clean floor、严格五类、身份/grid漂移拒绝及exact tie | Direct baseline选模层迁移时同步保留全部泄漏、不可flatten和可比性闸门 |
-| `util/tests/test_pn2021_tuning.py` | `SUPPORT` | 验证train400、clean validation100、20个冻结PN2021-C view、packed bank 逐 view 等价、动态 executable method、可选 runtime encoder/decoder 与 A5 train400 latent pool、source registry及hash/label/order一致 | tuning适配层迁移时同步保留Direct身份、packed raw/logit/metric等价、资源精确路由、pool不消费训练shuffle及只读validation边界 |
+| `util/tests/test_pn2021_tuning.py` | `SUPPORT` | 验证train400、clean validation100、20个冻结PN2021-C view、packed bank 逐 view 等价、动态 executable method、可选 runtime encoder/decoder 与主线 train400 latent pool、source registry及hash/label/order一致 | tuning适配层迁移时同步保留Direct身份、packed raw/logit/metric等价、资源精确路由、pool不消费训练shuffle及只读validation边界 |
 | `util/tests/test_pn2021_direct_boot_scripts.py` | `SUPPORT` | 验证tune/select/refit零副作用dry-run、Direct稳定身份、latent VAE requirements/dry-run不读权重、family-balanced selection及E*/scheduler传播 | 启动层迁移时同步保留CLI、配置束和资源加载契约 |
 | `util/tests/test_train_ptbxl.py` | `SUPPORT` | 验证 PTB-XL 100/500 Hz 自动适配、官方三折 loader、参数下传和 loader 所有权 | PTB-XL 数据适配入口迁移时同步迁移这些最小契约测试 |
 | `util/tests/test_ptbxl_boot_scripts.py` | `SUPPORT` | 验证 EffNet/ECGFounder dry-run 的模型采样率、默认 full-FT profile 和显式 CLI 覆盖 | 两个 PTB-XL boot 入口迁移时同步迁移这些最小契约测试 |
 | `util/tests/test_tensorboard_logging.py` | `SUPPORT` | 验证 final-only probe、manifest 延迟 flush、PNG/NPY 保留、可关闭 event image、TensorBoard 标量和 disabled 零副作用 | 观察层迁移时同步迁移相同最小契约测试 |
 | `util/tests/test_augmentation_profile.py` | `SUPPORT` | 验证离线缓存与在线 AugMix 共用同一算子参数、seed/config SHA 及 copied config bundle | profile loader 迁移时同步保留共享单一来源契约 |
 | `util/tests/test_latent_pool.py` | `SUPPORT` | 验证 deterministic-mean latent、M20 eligibility、预计算 neighbor table 与 stable reference 逐元素一致、table SHA 稳定及 hash/index 访问 | latent pool 迁移时同步保留候选和身份契约 |
-| `util/tests/test_method_graph.py` | `SUPPORT` | 验证 A0/A3c/A5、可执行 latent-threechain 及其余 audit-only profiles 的静态编译、typed execution、默认隔离及显式跨 profile 配对 RNG 和动态实现键禁令 | 方法图迁移时同步保留白名单、类型、执行性、向后兼容及 matched comparison RNG 身份契约 |
-| `util/tests/test_online_trainer.py` | `SUPPORT` | 验证A0/A3c/A5/fixed20/latent-threechain 的单 optimizer-step、family/BN balance、双view质量交集、RNG seed闭包、计数及final-only checkpoint | 在线trainer迁移时同步保留typed profile、预算、A5/latent数值和last-checkpoint日志语义 |
+| `util/tests/test_method_graph.py` | `SUPPORT` | 验证 A0/A3c、主线 attack-contract、可执行 latent-threechain 及 audit-only profiles 的静态编译、typed execution、资源白名单、RNG 身份和动态实现键禁令 | 方法图迁移时同步保留白名单、类型、执行性、资源闭包及 matched comparison RNG 身份契约 |
+| `util/tests/test_online_trainer.py` | `SUPPORT` | 验证主线 Stage-1 两链 SimCLR 冻结头、五轮 rotating4 全覆盖、完整 Stage-1→Stage-2 CPU 闭环、单 optimizer-step、family/BN/RNG balance、计数及 final-only checkpoint | 在线trainer迁移时同步保留两阶段数值、预算、teacher/checkpoint身份和 last-checkpoint 日志语义 |
 | `util/tests/test_train_pn2021.py` | `SUPPORT` | 验证raw100 K500/train400、canonical resident参数、worker安全门、partition进入seed身份，以及 latent-pool/encoder/decoder requirements 的精确资源路由 | PN2021适配层迁移时同步保留数据、seed和方法资源边界 |
 | `util/tests/test_pn2021_evaluation.py` | `SUPPORT` | 验证clean+20 views共用canonical session、关闭所有权、ECGFounder linear500+z-score数值链、K500 identity及拒绝500 Hz cache | 正式评估层迁移时同步保留canonical bottleneck、共享adapter、metric view和证据契约 |
 | `util/tests/test_manual_run_experiment.py` | `SUPPORT` | 验证统一launcher dry-run、entrypoint/flag白名单、removed flag拒绝、配置闭包、family-balanced selection run record、文件索引和篡改检测 | launcher/run-record迁移时同步保留零副作用、方法身份和完整性契约 |
@@ -345,7 +347,7 @@ micromamba run -n ECGTwin python scripts/agent/audit_agent_workspace.py
 - [x] 实现 PTB-XL 官方折及 PN2021 四逻辑中心 K500/ref-excluded 的 ID-only 切分层，并将 CPSC 2018/Extra 合并为一个逻辑中心。
 - [x] 实现从受管 split/cache 到模型 batch 的统一运行时数据层，包括显式 corruption view、增强后全样本 z-score、worker-safe Dataset 和确定性 DataLoader。
 - [x] 建立独立 `models/` 包，完成 EfficientNet1DV2、ECGFounder、严格checkpoint身份和统一 `build_model` 接口，并通过真实checkpoint CPU smoke test。
-- [x] 独立重写 ECGTwin VAE encoder/decoder，并实现 repaired VAE-LHAT 在线攻击、两腐蚀链加一纯 VAE 链的三链 AugMix 及其受管训练 YAML。
+- [x] 独立重写 ECGTwin VAE encoder/decoder，并在同一白名单模块中实现 exact-label VAE-LHAT、攻击后标签边界收缩和 Stage-1 两链 AugMix-SimCLR 受管 YAML。
 - [x] 新增 `configs/train/PTBXL.yaml` 和 `core/supervised_trainer.py`；调用方通过统一 `data_runtime` 构建任意 PTB-XL/PN2021 DataLoader，再由通用训练器接受 model + DataLoader，支持验证集 macro-AUPRC 选模、最终测试与无验证集 last-epoch 微调。
 - [x] 新增 `core/train_PTBXL.py` 作为白名单 PTB-XL 数据适配层，并新增 EffNet/ECGFounder 两个 `boot_scripts/` 薄入口；模型采样率自动绑定 100/500 Hz，YAML 默认值和显式覆盖均可审计。
 - [x] 接入 run-scoped TensorBoard 观察层并移植 ECGTwin 作者 `ecg_plot` 绘图路径；监督 trainer 记录标量，在线训练接收 executor 提供的固定 hash raw-mV named views，event、PNG、NPY 和 manifest 均写入实验输出目录且不改变训练 RNG。
@@ -369,13 +371,16 @@ micromamba run -n ECGTwin python scripts/agent/audit_agent_workspace.py
 - [x] 新训练器/统一实验 launcher 只接受一个 experiment YAML 加
   `config_root`，启动前解析并保存依赖 YAML 闭包、SHA256、seed identity、
   Git 身份和精确命令；禁止重新引入另一套隐式默认配置搜索规则。
-- [x] 建立完整 K500 latent pool 和首版 A0/LHAT/A5 匹配在线训练层；
-  候选不足 M20 的 anchor 不丢弃、不重复填充，只贡献 clean loss并落盘清单。
-- [x] 将固定方法臂重构为受限 typed method graph：A0/A3c/A5 分别由独立
-  method profile 声明 view DAG、objective、资源和公平契约；trainer 只管理
-  外层 batch/优化/模型域适配，A5 同一 LHAT view 同时用于 direct BCE 与
-  AugMix chain3。四个未来 VAE/AugMix 组合 profile 可静态审计，但在节点与
-  预算契约完成前统一以 `contracts.executable=false` 拒绝运行。
+- [x] 建立完整 K500 latent pool 和 A0/LHAT/主线匹配在线训练层；候选不足
+  M20 的 anchor 不丢弃、不重复填充，只贡献 clean loss并落盘清单。
+- [x] 将主线重构为受限 typed method graph：Stage-1 在 trainer 内使用
+  K500 两链 AugMix-SimCLR，Stage-2 graph 只声明 clean、rotating4 corruption
+  与 attack-then-contract LHAT view；梯度累计后每个 base batch 只更新一次。
+  audit-only 组合 profile 在节点与预算契约完成前继续 fail-closed。
+- [x] 将 `agent_workspace` 中锁定的精简开发 recipe 迁入白名单运行面：
+  `augmix_simclr_lhat.yaml`、`PN2021.yaml`、统一 launcher 示例、Stage-1
+  checkpoint/TensorBoard、VAE contract 诊断和配置/seed/resource 身份均已接管；
+  仍标记为 prospective replication，未因代码迁移自动升级为论文最终证据。
 - [x] 在 `util/evaluation/` 建立固定 checkpoint 的四中心 clean/PN2021-C
   正式评估层，输出 kept/drop、per-class/macro、depth2/3/23、per-center和
   四中心等权指标及完整 split/cache/checkpoint 身份。

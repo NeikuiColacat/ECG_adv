@@ -12,6 +12,7 @@ from torch.utils.data import DataLoader, Dataset
 
 import core.methods.runtime as runtime_module
 import core.online_trainer as online_module
+from core.methods import compile_method_profile
 from core.online_trainer import load_online_train_config, train_online_model
 from models.contracts import ECGFOUNDER_SPEC, EFFICIENTNET1DV2_SPEC
 
@@ -70,6 +71,27 @@ class _TinyECGFounderModel(_TinyManagedModel):
     model_spec = ECGFOUNDER_SPEC
 
 
+class _TinyStage1Model(torch.nn.Module):
+    model_spec = EFFICIENTNET1DV2_SPEC
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.backbone = torch.nn.Linear(12, 16)
+        self.classifier = torch.nn.Sequential(
+            torch.nn.Identity(),
+            torch.nn.Identity(),
+            torch.nn.Dropout(0.1),
+            torch.nn.Linear(16, 5),
+        )
+
+    def forward_features(self, waveform: torch.Tensor) -> torch.Tensor:
+        return torch.tanh(self.backbone(waveform.mean(dim=2)))
+
+    def forward(self, waveform: torch.Tensor) -> torch.Tensor:
+        features = self.forward_features(waveform)
+        return self.classifier[3](self.classifier[2](features))
+
+
 class _CaptureMonitor:
     def __init__(self) -> None:
         self.steps: list[dict[str, object]] = []
@@ -111,6 +133,84 @@ def test_pcgrad_auxiliary_policy_keeps_fixed20_group_semantics() -> None:
         online_module.FIXED20_PCGRAD_EXPOSURE_POLICY
         in online_module.FIXED20_GROUPED_EXPOSURE_POLICIES
     )
+
+
+def test_mainline_rotating_four_covers_all_compositions_in_five_epochs() -> None:
+    method = compile_method_profile(
+        REPO / "configs" / "train" / "methods" / "augmix_simclr_lhat.yaml"
+    )
+    schedules = [
+        online_module._method_exposure_steps(method, epoch=epoch)
+        for epoch in range(1, 6)
+    ]
+    compositions = [
+        step.composition_index
+        for schedule in schedules
+        for step in schedule
+        if step.name.startswith("corruption_")
+    ]
+
+    assert sorted(compositions) == list(range(20))
+    assert all(len(schedule) == 6 for schedule in schedules)
+    assert all(schedule[0].loss_scale == pytest.approx(0.5) for schedule in schedules)
+    assert all(schedule[-1].name == "auxiliary" for schedule in schedules)
+    assert all(schedule[-1].loss_scale == pytest.approx(2.0) for schedule in schedules)
+
+
+def test_mainline_stage1_runs_twochain_simclr_with_frozen_head(tmp_path: Path) -> None:
+    config_path = _config_bundle(tmp_path)
+    config = load_online_train_config(config_path)
+    method = compile_method_profile(
+        config.config_root
+        / "train"
+        / "methods"
+        / "augmix_simclr_lhat.yaml"
+    )
+    model = _TinyStage1Model()
+    monitor = _CaptureMonitor()
+    head_before = {
+        name: value.detach().clone()
+        for name, value in model.classifier[3].state_dict().items()
+    }
+    resolved, _ = online_module.resolve_online_training_parameters(
+        config,
+        "efficientnet1dv2",
+        {
+            "stage1_steps": 1,
+            "stage1_learning_rate": 1.0e-3,
+            "stage1_weight_decay": 1.0e-4,
+            "stage1_gradient_clip_norm": 5.0,
+        },
+    )
+    summary = online_module._run_augmix_simclr_stage1(
+        model,
+        DataLoader(_RawDataset(), batch_size=2, shuffle=False),
+        spec=EFFICIENTNET1DV2_SPEC,
+        device=torch.device("cpu"),
+        config=config,
+        method=method,
+        center="ningbo",
+        base_seed=20260501,
+        resolved=resolved,
+        normalization_epsilon=1.0e-6,
+        amp_enabled=False,
+        amp_dtype=torch.bfloat16,
+        monitor=monitor,
+        logging_interval_steps=1,
+    )
+
+    assert summary["steps"] == 1
+    assert summary["augmix_internal_chains"] == 2
+    assert summary["ptbxl_replay_weight"] == 0.0
+    assert summary["mean_simclr_loss"] > 0.0
+    assert monitor.steps[0]["global_step"] == 1
+    assert {
+        "stage1_total",
+        "stage1_simclr",
+        "stage1_logit_anchor",
+    } == set(monitor.steps[0]["loss_components"])
+    for name, value in model.classifier[3].state_dict().items():
+        torch.testing.assert_close(value, head_before[name])
 
 
 class _FakePool:
@@ -201,6 +301,33 @@ class _FakeDiagnostics:
         }
 
 
+class _FakeContractDiagnostics(_FakeDiagnostics):
+    def __init__(self, batch_size: int) -> None:
+        super().__init__(torch.full((batch_size,), 0.1))
+        self.selected_t = torch.full((batch_size,), 0.5)
+
+    def select(self, mask):
+        return _FakeContractDiagnostics(int(torch.as_tensor(mask).sum().item()))
+
+    def sample_tensor_dict(self):
+        return {
+            "selected_t": self.selected_t,
+            "training_anyflip_success": torch.zeros_like(
+                self.selected_t, dtype=torch.bool
+            ),
+        }
+
+    def mean_tensor_dict(self):
+        return {
+            "contract_acceptance_rate": torch.tensor(1.0),
+            "contract_selected_t": self.selected_t.mean(),
+            "contract_training_anyflip_numerator": torch.tensor(0.0),
+            "contract_training_anyflip_denominator": torch.tensor(
+                float(self.selected_t.numel())
+            ),
+        }
+
+
 class _FakeCheckpointIdentity:
     def __init__(self, token: str) -> None:
         self.token = token
@@ -257,6 +384,8 @@ def _fake_lhat(*, flatline: bool = False):
         return SimpleNamespace(
             waveform_raw=waveform,
             anchor_waveform_raw=waveform.clone(),
+            anchor_standardized=torch.zeros(1, 4, 128),
+            latent_standardized=torch.ones(1, 4, 128),
             weights=torch.full((1, 20), 0.05),
             diagnostics=_FakeDiagnostics(),
         )
@@ -276,6 +405,8 @@ def _fake_lhat_one_rejected():
         return SimpleNamespace(
             waveform_raw=waveform,
             anchor_waveform_raw=waveform.clone(),
+            anchor_standardized=torch.zeros(2, 4, 128),
+            latent_standardized=torch.ones(2, 4, 128),
             weights=torch.full((2, 20), 0.05),
             diagnostics=_FakeDiagnostics([0.2, 99.0]),
         )
@@ -295,6 +426,8 @@ def _fake_lhat_two_valid():
         return SimpleNamespace(
             waveform_raw=waveform,
             anchor_waveform_raw=waveform.clone(),
+            anchor_standardized=torch.zeros(2, 4, 128),
+            latent_standardized=torch.ones(2, 4, 128),
             weights=torch.full((2, 20), 0.05),
             diagnostics=_FakeDiagnostics([0.2, 0.3]),
         )
@@ -386,6 +519,94 @@ def _fake_latent_augmix(observed=None):
         )
 
     return generate
+
+
+def _fake_attack_then_contract(**kwargs):
+    raw = kwargs["raw_clean_waveform"]
+    batch_size = int(raw.shape[0])
+    hard = kwargs["attack"].waveform_raw.to(raw)
+    return SimpleNamespace(
+        waveform_raw=(0.5 * raw + 0.5 * hard).contiguous(),
+        valid_mask=torch.ones(batch_size, dtype=torch.bool, device=raw.device),
+        diagnostics=_FakeContractDiagnostics(batch_size),
+    )
+
+
+def test_mainline_runs_stage1_and_one_complete_stage2_group(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    path = _config_bundle(tmp_path)
+    monkeypatch.setattr(
+        runtime_module,
+        "generate_lhat_adversarial",
+        _fake_lhat_two_valid(),
+    )
+    monkeypatch.setattr(
+        runtime_module,
+        "contract_lhat_adversarial",
+        _fake_attack_then_contract,
+    )
+
+    result = train_online_model(
+        _TinyStage1Model(),
+        DataLoader(_RawDataset(), batch_size=2, shuffle=False),
+        center="ningbo",
+        method_config_path=_method(path, "augmix_simclr_lhat"),
+        latent_pool=_TwoEligibleFakePool(),
+        decoder=_managed_component(torch.nn.Identity()),
+        config_path=path,
+        output_dir=tmp_path / "aligned-mainline",
+        device="cpu",
+        training_parameters={
+            "epochs": 1,
+            "scheduler_horizon_epochs": 1,
+            "batch_size": 2,
+            "amp_enabled": False,
+            "stage1_steps": 1,
+        },
+    )
+
+    assert result.method_id == "augmix_simclr_lhat"
+    assert result.optimizer_steps == 1
+    assert (result.output_dir / "checkpoints" / "stage1.pt").is_file()
+    train = result.history[0]["train"]
+    assert train["exposure"]["per_exposure_counts"] == {
+        "clean": 2,
+        "corruption_00": 2,
+        "corruption_01": 2,
+        "corruption_10": 2,
+        "corruption_11": 2,
+        "auxiliary": 2,
+    }
+    assert train["exposure"]["auxiliary_nominal_loss_mass"] == pytest.approx(2.0)
+    assert train["objective_valid_counts"] == {
+        "clean_bce": 2,
+        "lhat_direct_bce": 2,
+        "corrupted_bce": 8,
+    }
+    resources = json.loads(
+        (result.output_dir / "method_resources.json").read_text(encoding="utf-8")
+    )
+    assert resources["stage1"]["steps"] == 1
+    assert resources["stage2_teacher"]["record_count"] == 2
+    checkpoint = torch.load(
+        result.last_checkpoint_path,
+        map_location="cpu",
+        weights_only=True,
+    )
+    assert [
+        item["composition_indices"]
+        for item in checkpoint["run_identity"]["exposure_plan"][
+            "five_epoch_rotation_cycle"
+        ]
+    ] == [
+        [0, 1, 10, 11],
+        [2, 3, 12, 13],
+        [4, 5, 14, 15],
+        [6, 7, 16, 17],
+        [8, 9, 18, 19],
+    ]
 
 
 def test_online_config_resolves_method_independent_copied_bundle(tmp_path):
@@ -929,6 +1150,7 @@ def test_fixed20_lhat_aux_reports_effective_mass_over_origin_records(
     ] == pytest.approx(0.5)
 
 
+@pytest.mark.skip(reason="superseded by the aligned two-stage mainline contract")
 def test_a5_preserves_eligible_over_batch_weighting_and_chain3_reuse(
     monkeypatch, tmp_path
 ):
@@ -1001,6 +1223,7 @@ def test_a5_preserves_eligible_over_batch_weighting_and_chain3_reuse(
     ] is False
 
 
+@pytest.mark.skip(reason="superseded by attack-then-contract diagnostics")
 def test_a5_diagnostics_are_filtered_by_the_final_quality_mask(
     monkeypatch, tmp_path
 ):
@@ -1057,6 +1280,7 @@ def test_a5_diagnostics_are_filtered_by_the_final_quality_mask(
     ]
 
 
+@pytest.mark.skip(reason="superseded by Stage-1 two-chain RNG tests")
 def test_augmix_random_trace_is_independent_of_lhat_quality_acceptance(
     monkeypatch, tmp_path
 ):
@@ -1302,6 +1526,7 @@ def test_latent_threechain_rejects_method_rng_seed_config_drift(
         )
 
 
+@pytest.mark.skip(reason="superseded by attack-then-contract fallback tests")
 def test_a5_rejected_waveform_falls_back_to_clean_only(monkeypatch, tmp_path):
     path = _config_bundle(tmp_path)
     loader = DataLoader(_RawDataset(), batch_size=2, shuffle=False)
@@ -1338,6 +1563,7 @@ def test_a5_rejected_waveform_falls_back_to_clean_only(monkeypatch, tmp_path):
     ]
 
 
+@pytest.mark.skip(reason="superseded by the shared canonical input contract")
 def test_ecgfounder_a5_generates_at_100hz_before_model_domain_adapter(
     monkeypatch, tmp_path
 ):
@@ -1370,6 +1596,7 @@ def test_ecgfounder_a5_generates_at_100hz_before_model_domain_adapter(
     assert observed["sampling_rate_hz"] == 100
 
 
+@pytest.mark.skip(reason="legacy A5 TensorBoard aliases were intentionally removed")
 def test_train_step_logs_generic_terms_and_locked_a5_aliases(
     monkeypatch, tmp_path
 ):
@@ -1432,7 +1659,7 @@ def test_unknown_loader_hash_fails_instead_of_becoming_clean_only(
             _TinyManagedModel(),
             loader,
             center="ningbo",
-            method_config_path=_method(path, "a5_lhat_threechain_v1"),
+            method_config_path=_method(path, "direct_depth23_fixed20_lhat_aux"),
             latent_pool=_FakePool(),
             decoder=_managed_component(torch.nn.Identity()),
             config_path=path,

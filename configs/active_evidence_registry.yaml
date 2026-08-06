@@ -1,5 +1,5 @@
 schema_version: 1
-updated: 2026-08-05
+updated: 2026-08-06
 purpose: >
   Single tracked entry point for the current trusted ECG_adv_Gen experimental
   facts. New agents should start here after reading AGENTS.md instead of
@@ -114,8 +114,16 @@ active_development_mainline:
     machine_lock: agent_workspace/performance_summary_20260727/aligned_targetonly_augmix_lhat_lock_20260804.json
     technical_report: agent_workspace/performance_summary_20260727/aligned_targetonly_augmix_lhat_report_20260804.html
     aggregate_study: agent_workspace/vae_lhat_attack_then_contract_20260805/results.json
+  managed_implementation:
+    status: whitelist_runtime_migrated_cpu_verified
+    launcher: boot_scripts/run_experiment.py
+    experiment_config: configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_ningbo.yaml
+    online_config: configs/train/PN2021.yaml
+    method_config: configs/train/methods/augmix_simclr_lhat.yaml
+    trainer: core/online_trainer.py
+    runtime_imports_agent_workspace: false
+    gpu_replication_status: pending
   required_before_paper_promotion:
-    - migrate_recipe_to_package_owned_managed_launcher
     - freeze_recipe_without_heldout_feedback
     - run_at_least_three_independent_repeats_per_backbone
     - report_mean_standard_deviation_and_fixed_recipe_failures
