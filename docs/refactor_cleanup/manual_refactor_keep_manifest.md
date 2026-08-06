@@ -343,6 +343,7 @@ pytest -q util/tests/test_augmentations.py \
 | 日期 | 批次 | 删除路径 | 替代路径 | 验证结果 | 用户确认 |
 |---|---|---|---|---|---|
 | 2026-08-06 | 批次 1（已执行） | `ecg_adv_gen/data/synthetic_npz.py`；`ecg_adv_gen/training/effnet_super5.py`；`data_preprocess/prepare_ptbxl_for_ecgtwin.py`；`configs/experiments/pn2021c_effnet_paper_anchored_s5_depth23_composite.yaml` | `data_preprocess/load_cache.py` + `data_preprocess/data_runtime.py`；`core/supervised_trainer.py`；`models/vae.py` + `core/train_PN2021.py`；`configs/augmentation/operators.yaml` + `configs/eval/PN2021.yaml` | 删除后：四路径活动引用=0；白名单 Python issue=0；44 个实验 YAML 闭包 issue=0；5 个活动阶段 dry-run 通过；148 passed/16 skipped；`git diff --check` 通过 | 用户于 2026-08-06 明确回复“帮我删除” |
+| 2026-08-06 | 批次 2（干净 worktree 初始裁剪） | 仅在 `/home/linbinhao/ECG_manual_refactor_clean` 删除 A 区以外的 449 个 Git 跟踪项；精确路径由本批次提交相对父提交 `6a662c9` 的删除 diff 定义；排序后 NUL 分隔清单 SHA256 为 `f70452fed8bef77d4b171fa77086f1a727b1cb75746e058b0d1fd15a38079bac` | A0–A9 共 154 个 `KEEP-MANUAL` 文件；源 worktree `/home/linbinhao/ECG_manual_refactor` 保持历史现场 | 索引恰好 154/154，无额外或缺失路径；65 个 Python 文件本地 import issue=0；44 个实验 YAML、70 文件闭包 issue=0；73 passed/10 skipped；5 个活动阶段使用独立 `/home/linbinhao` dry-run 目标全部通过；`git diff --check` 通过 | 用户于 2026-08-06 明确回复“好的接受你的建议开始迁移” |
 
 `methods/augmix/ecg_ops.py` 与 `methods/augmix/severity.py` 暂不放进候选批次 1：
 白名单已经切断依赖，但旧 `ecg_adv_gen/` 与 `methods/` 树内部仍相互引用。
@@ -407,5 +408,7 @@ pytest -q util/tests/test_augmentations.py \
 - [x] 完成 ECGFounder latent-threechain 候选的 K500 内部调参、E19/T20 full-K500
   refit、四中心正式评估及 LR `3e-5` matched Direct 归因控制；配置、选择证据、
   权重 SHA、TensorBoard 与方法增益边界均写入现有白名单注册表和决策日志。
-- [ ] 生成第一批逐文件旧代码候选，但暂不删除。
-- [ ] 用户审阅候选清单后再执行破坏性清理。
+- [x] 在保留源 worktree 的前提下生成 A 区以外 449 个 Git 跟踪项的精确
+  候选集合，并记录排序清单 SHA256。
+- [x] 用户确认迁移后，仅在新干净 worktree 执行裁剪；源 worktree 的历史
+  文件、未跟踪实验和外部模型目标均未删除。
