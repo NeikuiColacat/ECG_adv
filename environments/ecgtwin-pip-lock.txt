@@ -1,4 +1,4 @@
-# Runtime dependency closure from the validated Micromamba ECGTwin environment.
+# Runtime dependency closure for the validated Miniforge ECGTwin environment.
 # PyTorch, torchvision and torchaudio are installed from the separately hashed
 # CUDA 11.8 wheel set after this file.
 absl-py==2.4.0
@@ -25,6 +25,7 @@ networkx==3.6.1
 numpy==1.26.4
 packaging==23.2
 pandas==2.1.4
+pyarrow==22.0.0
 Pillow==10.1.0
 pluggy==1.6.0
 protobuf==6.33.2
