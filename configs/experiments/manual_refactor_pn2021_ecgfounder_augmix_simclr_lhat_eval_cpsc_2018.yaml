@@ -1,0 +1,21 @@
+schema_version: 1
+
+experiment:
+  name: manual_refactor_pn2021_ecgfounder_augmix_simclr_lhat_eval_cpsc_2018
+  purpose: Evaluate the clean-worktree ECGFounder mainline reproduction on ref-excluded combined CPSC 2018 and Extra Clean and PN2021-C.
+
+entrypoint:
+  name: evaluate_pn2021
+  config: eval/PN2021.yaml
+  arguments:
+    - --model
+    - ecgfounder
+    - --checkpoint
+    - /home/linbinhao/ECG_adv_data/runs/manual_refactor_clean_repro_20260806_r2/ecgfounder/cpsc_2018/training/checkpoints/last.pt
+    - --center
+    - cpsc_2018
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor_clean_repro_20260806_r2/eval/ecgfounder/cpsc_2018
+  if_exists: error
+  delegate_output_subdir: evaluation

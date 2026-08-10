@@ -278,7 +278,7 @@ Direct-initialized training is a separate ablation and must be labeled as such.
 ## TensorBoard
 
 ```bash
-/home/linbinhao/micromamba/envs/ECGTwin/bin/tensorboard \
+/home/linbinhao/miniforge3/envs/ECGTwin/bin/tensorboard \
   --logdir /home/linbinhao/ECG_adv_data/runs/manual_refactor \
   --host 127.0.0.1 --port 9091
 ```

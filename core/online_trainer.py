@@ -3128,15 +3128,23 @@ def train_online_model(
                                 spec,
                                 epsilon=epsilon,
                             )
-                            with _preserve_batch_norm_buffers(
-                                model
-                            ), _preserve_torch_rng(resolved_device):
-                                student_logits = validate_model_output(
-                                    model(clean_input),
-                                    spec,
-                                    batch_size=batch_size,
-                                    check_finite=False,
-                                )
+                            # Keep the preservation contexts alive through
+                            # backward. BatchNorm saves its running buffers for
+                            # gradient computation, so restoring them before
+                            # backward increments their version counter and
+                            # invalidates the clean logit-anchor graph.
+                            auxiliary_state.enter_context(
+                                _preserve_batch_norm_buffers(model)
+                            )
+                            auxiliary_state.enter_context(
+                                _preserve_torch_rng(resolved_device)
+                            )
+                            student_logits = validate_model_output(
+                                model(clean_input),
+                                spec,
+                                batch_size=batch_size,
+                                check_finite=False,
+                            )
                             anchor_loss = _weighted_logit_anchor_loss(
                                 student_logits,
                                 teacher_logits,

@@ -1,8 +1,8 @@
 schema_version: 1
 
 experiment:
-  name: manual_refactor_pn2021_effnet_augmix_simclr_lhat_ningbo
-  purpose: Replicate the prospective two-stage AugMix-SimCLR plus contracted VAE-LHAT recipe on Ningbo K500.
+  name: manual_refactor_pn2021_effnet_augmix_simclr_lhat_georgia
+  purpose: Replicate the prospective two-stage AugMix-SimCLR plus contracted VAE-LHAT recipe on Georgia K500.
 
 entrypoint:
   name: train_pn2021
@@ -13,11 +13,11 @@ entrypoint:
     - --method-config
     - train/methods/augmix_simclr_lhat.yaml
     - --center
-    - ningbo
+    - georgia
     - --source-checkpoint
     - /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_ptbxl_effnet_source_v1/training/checkpoints/best.pt
 
 output:
-  run_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor_clean_repro_20260806_r2/effnet/ningbo
+  run_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor_clean_repro_20260806_r2/effnet/georgia
   if_exists: error
   delegate_output_subdir: training

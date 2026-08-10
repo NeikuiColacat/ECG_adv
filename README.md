@@ -35,7 +35,7 @@ surface.
 ```bash
 cd /home/linbinhao/ECG_manual_refactor_clean
 
-/home/linbinhao/micromamba/envs/ECGTwin/bin/python \
+/home/linbinhao/miniforge3/envs/ECGTwin/bin/python \
   boot_scripts/run_experiment.py \
   --config configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_ningbo.yaml \
   --dry-run
@@ -46,7 +46,7 @@ Before an actual GPU run:
 ```bash
 nvidia-smi
 CUDA_VISIBLE_DEVICES=<confirmed_free_gpu> \
-  /home/linbinhao/micromamba/envs/ECGTwin/bin/python \
+  /home/linbinhao/miniforge3/envs/ECGTwin/bin/python \
   boot_scripts/run_experiment.py \
   --config <tracked-experiment.yaml>
 ```
@@ -94,7 +94,7 @@ must not become a new runtime dependency.
 ## Necessary CPU Verification
 
 ```bash
-/home/linbinhao/micromamba/envs/ECGTwin/bin/python -m pytest -q \
+/home/linbinhao/miniforge3/envs/ECGTwin/bin/python -m pytest -q \
   util/tests/test_augmentations.py \
   util/tests/test_torch_augmentations.py \
   util/tests/test_data_contracts.py \

@@ -37,7 +37,7 @@ the repository's default configs.
 The only experiment launcher is:
 
 ```bash
-/home/linbinhao/micromamba/envs/ECGTwin/bin/python \
+/home/linbinhao/miniforge3/envs/ECGTwin/bin/python \
   boot_scripts/run_experiment.py \
   --config configs/experiments/<experiment>.yaml \
   --dry-run

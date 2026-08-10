@@ -49,7 +49,13 @@ YAML 或隐式回退入口。
 | `.codex/skills/reproducibility-check/SKILL.md` | `KEEP-MANUAL` | 审核配置闭包、Git/seed/checkpoint/命令/指标的可回放身份 | 新复现技能接管相同 run-record 和证据闭环 |
 | `.codex/skills/shared-gpu-server-discipline/SKILL.md` | `KEEP-MANUAL` | GPU、CPU、内存、IO、进程、端口和输出目录的共享服务器前置检查 | 新资源纪律入口完整接管共享服务器安全规则 |
 | `configs/README.md` | `KEEP-MANUAL` | configs-shaped 配置束、单一 launcher 和相对引用规则 | 新配置文档完整接管 bundle root、闭包、输出与覆盖规则 |
+| `environments/README.md` | `KEEP-MANUAL` | Miniforge ECGTwin 重建、验证、切换和旧环境退出契约 | 新环境文档接管 conda/pip 分层、轮子哈希、验证闸门和外部产物边界 |
+| `environments/cli-tools-miniforge.yml` | `KEEP-MANUAL` | 锁定纯 conda-forge 的 tmux 3.7b 与 Git 2.51.0 CLI 环境 | 3.6a 兼容阶段通过旧 server 查询；3.7b 通过隔离 tmux 配置和仓库 Git smoke test，最终切换需重启 server |
+| `environments/ecgtwin-miniforge.yml` | `KEEP-MANUAL` | 锁定纯 conda-forge Python 3.11.5 基础环境 | 新基础环境规范保持 Python、pip、setuptools、wheel 和 Git 兼容版本 |
+| `environments/ecgtwin-pip-lock.txt` | `KEEP-MANUAL` | 锁定 clean-room 主线所需的非 PyTorch pip 依赖闭包 | 新锁文件通过 pip check、CPU 契约和模型 checkpoint smoke test |
+| `environments/pytorch-cu118-wheel-manifest.sha256` | `KEEP-MANUAL` | 记录外部 PyTorch 2.1.1 CUDA 11.8 三轮子的内容哈希 | 新轮子清单保持版本组合、文件名和 SHA256 可验证 |
 | `docs/refactor_cleanup/manual_refactor_keep_manifest.md` | `KEEP-MANUAL` | 手工重构保护边界、退出候选与破坏性删除闸门 | 新清单逐文件接管全部 KEEP/TRANSITION/证据和用户确认记录 |
+| `docs/refactor_cleanup/pipeline_reproduction_log_20260806.md` | `KEEP-MANUAL` | 记录干净工作树全链路复现的目标、问题、修复、证据和最终判定 | 本轮复现结论已经迁入新的可追溯运行记录或交接文档 |
 
 仓库技能只保存公开、可复用的项目程序与必要参考。全局
 `/home/linbinhao/.codex/memories`、Codex 会话、个人配置、凭据和本机私有状态
@@ -203,6 +209,21 @@ native-rate 到 100 Hz，以及 100 Hz 到 500 Hz 均使用该策略。PN2021 �
 | `configs/experiments/manual_refactor_pn2021_effnet_direct_ningbo.yaml` | `KEEP-MANUAL` | 统一 launcher 的 Ningbo A0 clean-K500 示例 | 新示例或注册表保留显式源 checkpoint/model/method-config/center |
 | `configs/experiments/manual_refactor_pn2021_effnet_a3c_ningbo.yaml` | `KEEP-MANUAL` | 统一 launcher 的 Ningbo A3c 在线 depth2/3 腐蚀示例 | 新示例或注册表保留显式源 checkpoint/model/method-config/center 和配置闭包 |
 | `configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_ningbo.yaml` | `KEEP-MANUAL` | 统一 launcher 的 Ningbo 前瞻复现示例：两链 AugMix-SimCLR → rotating4 + contracted VAE-LHAT | 新示例或注册表保留显式源 checkpoint/model/method-config/center、VAE 资源、两阶段超参和配置闭包 |
+| `configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_chapman_shaoxing.yaml` | `KEEP-MANUAL` | EfficientNet Chapman-Shaoxing 前瞻主线复现 | 保留同一方法闭包、锁定 source checkpoint、中心身份和唯一输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_cpsc_2018.yaml` | `KEEP-MANUAL` | EfficientNet CPSC 2018+Extra 前瞻主线复现 | 同上，并保留合并逻辑中心身份 |
+| `configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_georgia.yaml` | `KEEP-MANUAL` | EfficientNet Georgia 前瞻主线复现 | 同上 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_augmix_simclr_lhat_ningbo.yaml` | `KEEP-MANUAL` | ECGFounder Ningbo 前瞻主线复现 | 保留同一方法闭包、锁定 source checkpoint、中心身份和骨干特定常规优化参数 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_augmix_simclr_lhat_chapman_shaoxing.yaml` | `KEEP-MANUAL` | ECGFounder Chapman-Shaoxing 前瞻主线复现 | 同上 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_augmix_simclr_lhat_cpsc_2018.yaml` | `KEEP-MANUAL` | ECGFounder CPSC 2018+Extra 前瞻主线复现 | 同上，并保留合并逻辑中心身份 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_augmix_simclr_lhat_georgia.yaml` | `KEEP-MANUAL` | ECGFounder Georgia 前瞻主线复现 | 同上 |
+| `configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_eval_ningbo.yaml` | `KEEP-MANUAL` | 绑定本次 EfficientNet Ningbo 主线 checkpoint 的 ref-excluded Clean/PN2021-C 评估 | 保留固定 checkpoint、单中心身份、drop-all-zero 和 20-view 评估闭包 |
+| `configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_eval_chapman_shaoxing.yaml` | `KEEP-MANUAL` | 绑定本次 EfficientNet Chapman-Shaoxing 主线 checkpoint 的评估 | 同上 |
+| `configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_eval_cpsc_2018.yaml` | `KEEP-MANUAL` | 绑定本次 EfficientNet CPSC 2018+Extra 主线 checkpoint 的评估 | 同上 |
+| `configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_eval_georgia.yaml` | `KEEP-MANUAL` | 绑定本次 EfficientNet Georgia 主线 checkpoint 的评估 | 同上 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_augmix_simclr_lhat_eval_ningbo.yaml` | `KEEP-MANUAL` | 绑定本次 ECGFounder Ningbo 主线 checkpoint 的 ref-excluded Clean/PN2021-C 评估 | 保留固定 checkpoint、单中心身份、drop-all-zero 和 20-view 评估闭包 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_augmix_simclr_lhat_eval_chapman_shaoxing.yaml` | `KEEP-MANUAL` | 绑定本次 ECGFounder Chapman-Shaoxing 主线 checkpoint 的评估 | 同上 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_augmix_simclr_lhat_eval_cpsc_2018.yaml` | `KEEP-MANUAL` | 绑定本次 ECGFounder CPSC 2018+Extra 主线 checkpoint 的评估 | 同上 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_augmix_simclr_lhat_eval_georgia.yaml` | `KEEP-MANUAL` | 绑定本次 ECGFounder Georgia 主线 checkpoint 的评估 | 同上 |
 | `configs/experiments/manual_refactor_pn2021_eval_effnet.yaml` | `KEEP-MANUAL` | 统一 launcher 的固定 EfficientNet checkpoint 正式评估示例 | 新示例或注册表保留固定 checkpoint 和 eval YAML |
 | `configs/experiments/manual_refactor_pn2021_effnet_direct_tune_ningbo.yaml` | `KEEP-MANUAL` | EfficientNet Ningbo train400 + frozen clean/20-view validation100 受管入口 | 新入口保留模型、中心、family-balanced profile 和唯一输出身份 |
 | `configs/experiments/manual_refactor_pn2021_effnet_matched_raw_aux_e2_ningbo.yaml` | `KEEP-MANUAL` | EfficientNet Ningbo E2 raw auxiliary 实现/预算控制受管入口 | 新入口保留相同 PTB-XL source、H30 horizon、K400/K100、公共 RNG 身份、唯一外部输出目录和无副作用 dry-run |
@@ -345,7 +366,7 @@ pytest -q util/tests/test_augmentations.py \
   util/tests/test_data_contracts.py \
   util/tests/test_labels_super5.py \
   util/tests/test_pn2021_corruptions.py
-/home/linbinhao/micromamba/envs/ECGTwin/bin/python \
+/home/linbinhao/miniforge3/envs/ECGTwin/bin/python \
   boot_scripts/run_experiment.py \
   --config configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_ningbo.yaml \
   --dry-run
@@ -362,6 +383,8 @@ pytest -q util/tests/test_augmentations.py \
 | 2026-08-06 | 批次 1（已执行） | `ecg_adv_gen/data/synthetic_npz.py`；`ecg_adv_gen/training/effnet_super5.py`；`data_preprocess/prepare_ptbxl_for_ecgtwin.py`；`configs/experiments/pn2021c_effnet_paper_anchored_s5_depth23_composite.yaml` | `data_preprocess/load_cache.py` + `data_preprocess/data_runtime.py`；`core/supervised_trainer.py`；`models/vae.py` + `core/train_PN2021.py`；`configs/augmentation/operators.yaml` + `configs/eval/PN2021.yaml` | 删除后：四路径活动引用=0；白名单 Python issue=0；44 个实验 YAML 闭包 issue=0；5 个活动阶段 dry-run 通过；148 passed/16 skipped；`git diff --check` 通过 | 用户于 2026-08-06 明确回复“帮我删除” |
 | 2026-08-06 | 批次 2（干净 worktree 初始裁剪） | 仅在 `/home/linbinhao/ECG_manual_refactor_clean` 删除 A 区以外的 449 个 Git 跟踪项；精确路径由本批次提交相对父提交 `6a662c9` 的删除 diff 定义；排序后 NUL 分隔清单 SHA256 为 `f70452fed8bef77d4b171fa77086f1a727b1cb75746e058b0d1fd15a38079bac` | A0–A9 共 154 个 `KEEP-MANUAL` 文件；源 worktree `/home/linbinhao/ECG_manual_refactor` 保持历史现场 | 索引恰好 154/154，无额外或缺失路径；65 个 Python 文件本地 import issue=0；44 个实验 YAML、70 文件闭包 issue=0；73 passed/10 skipped；5 个活动阶段使用独立 `/home/linbinhao` dry-run 目标全部通过；`git diff --check` 通过 | 用户于 2026-08-06 明确回复“好的接受你的建议开始迁移” |
 | 2026-08-06 | 批次 3（公开代理记忆迁移） | 从迁移边界提交恢复 `.codex/skills/` 13 个项目文件；修正当前 clean worktree 路径、已删除入口和主线优先级 | `AGENTS.md` + keep manifest + active scripts/evidence + 八个 repo-tracked skills；全局 memory/session 不迁移 | skill frontmatter、引用路径、白名单精确集合、最低 CPU 测试和 Git 产物检查通过 | 用户于 2026-08-06 明确要求相关 AGENTS 与 skill 项目记忆一并迁移 |
+| 2026-08-08 | 批次 4（ECGTwin Miniforge 环境迁移） | `/home/linbinhao/micromamba/envs/ECGTwin`；旧 Micromamba 根下的索引、压缩包和未使用 package cache | `/home/linbinhao/miniforge3/envs/ECGTwin`；保留 `/home/linbinhao/micromamba/envs/cli-tools`、Micromamba 本体和 shell 初始化 | 新旧三类 checkpoint smoke 摘要一致；GPU 2 smoke 通过；删除后 73 passed/10 skipped、`pip check`、受管 dry-run、9092 报告服务和 `cli-tools` Git 2.51.0 均通过；旧前缀不存在；Micromamba 根约 454 MiB | 用户于 2026-08-08 明确回复“好的接受，按第一种开始帮我执行” |
+| 2026-08-08 | 批次 5（CLI 与默认 tmux clean switch） | `/home/linbinhao/micromamba/envs/cli-tools`；旧默认 tmux 3.6a server；旧 Micromamba 未使用 cache | `/home/linbinhao/miniforge3/envs/cli-tools`，tmux 3.7b + Git 2.51.0；重建 session 0/1 | 3.7b 隔离配置、Vim copy-mode、Git 和 shell 通过；最终 server PID 2087767 使用 Miniforge；Mihomo 7890/9090 正常；FRP 登录及 remote_ssh proxy 成功；旧前缀进程=0 且环境已删除；9091/9092 独立报告 server 保留 | 用户于 2026-08-08 明确回复“备用 SSH 已开，不依赖当前 FRP，允许重启 tmux、Mihomo 和 FRP” |
 
 `methods/augmix/ecg_ops.py` 与 `methods/augmix/severity.py` 暂不放进候选批次 1：
 白名单已经切断依赖，但旧 `ecg_adv_gen/` 与 `methods/` 树内部仍相互引用。

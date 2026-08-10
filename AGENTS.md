@@ -39,7 +39,8 @@ Before GPU training, long inference, or a cache build:
 ```text
 repo root:    /home/linbinhao/ECG_manual_refactor_clean
 data root:    /home/linbinhao/ECG_adv_data
-python:       /home/linbinhao/micromamba/envs/ECGTwin/bin/python
+python:       /home/linbinhao/miniforge3/envs/ECGTwin/bin/python
+cli tools:    /home/linbinhao/miniforge3/envs/cli-tools/bin
 keep policy:  docs/refactor_cleanup/manual_refactor_keep_manifest.md
 launcher:     boot_scripts/run_experiment.py
 active index: configs/active_scripts.yaml
@@ -75,7 +76,7 @@ as the default build and review boundary.
 All retained experiments launch from tracked YAML through:
 
 ```bash
-/home/linbinhao/micromamba/envs/ECGTwin/bin/python \
+/home/linbinhao/miniforge3/envs/ECGTwin/bin/python \
   boot_scripts/run_experiment.py \
   --config configs/experiments/<experiment>.yaml \
   --dry-run
@@ -177,7 +178,7 @@ active evidence registry. Recover historical code from commit
 Use the project Python directly:
 
 ```bash
-/home/linbinhao/micromamba/envs/ECGTwin/bin/python -m pytest -q \
+/home/linbinhao/miniforge3/envs/ECGTwin/bin/python -m pytest -q \
   util/tests/test_augmentations.py \
   util/tests/test_torch_augmentations.py \
   util/tests/test_data_contracts.py \

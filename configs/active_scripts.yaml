@@ -86,23 +86,48 @@ latest_mainline:
       backbones: [efficientnet1dv2, ecgfounder]
       centers: [ningbo, chapman_shaoxing, cpsc_2018, georgia]
     tracked_mainline_examples:
-      status: partial_matrix
-      covered: efficientnet1dv2_ningbo
-      missing_before_prospective_replication:
-        - explicit_ecgfounder_mainline_experiment_yaml
-        - explicit_remaining_three_center_mainline_experiment_yamls
+      status: complete_single_seed_four_center_two_backbone_matrix
+      training_configs:
+        - configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_ningbo.yaml
+        - configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_chapman_shaoxing.yaml
+        - configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_cpsc_2018.yaml
+        - configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_georgia.yaml
+        - configs/experiments/manual_refactor_pn2021_ecgfounder_augmix_simclr_lhat_ningbo.yaml
+        - configs/experiments/manual_refactor_pn2021_ecgfounder_augmix_simclr_lhat_chapman_shaoxing.yaml
+        - configs/experiments/manual_refactor_pn2021_ecgfounder_augmix_simclr_lhat_cpsc_2018.yaml
+        - configs/experiments/manual_refactor_pn2021_ecgfounder_augmix_simclr_lhat_georgia.yaml
+      evaluation_configs:
+        - configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_eval_ningbo.yaml
+        - configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_eval_chapman_shaoxing.yaml
+        - configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_eval_cpsc_2018.yaml
+        - configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_eval_georgia.yaml
+        - configs/experiments/manual_refactor_pn2021_ecgfounder_augmix_simclr_lhat_eval_ningbo.yaml
+        - configs/experiments/manual_refactor_pn2021_ecgfounder_augmix_simclr_lhat_eval_chapman_shaoxing.yaml
+        - configs/experiments/manual_refactor_pn2021_ecgfounder_augmix_simclr_lhat_eval_cpsc_2018.yaml
+        - configs/experiments/manual_refactor_pn2021_ecgfounder_augmix_simclr_lhat_eval_georgia.yaml
+      missing_before_paper_promotion:
         - frozen_multiseed_replication_yamls
   verification:
     cpu_contract_tests:
-      - util/tests/test_manual_run_experiment.py
-      - util/tests/test_online_trainer.py
-      - util/tests/test_method_graph.py
-      - util/tests/test_vae_lhat_augmix.py
-      - util/tests/test_pn2021_evaluation.py
+      - util/tests/test_augmentations.py
+      - util/tests/test_torch_augmentations.py
+      - util/tests/test_data_contracts.py
+      - util/tests/test_labels_super5.py
+      - util/tests/test_pn2021_corruptions.py
+    cpu_contract_result:
+      status: passed
+      passed: 73
+      skipped: 10
+      date: "2026-08-06"
+    gpu_replication:
+      status: complete_single_seed_metric_level
+      run_root: /home/linbinhao/ECG_adv_data/runs/manual_refactor_clean_repro_20260806_r2
+      result_registry: configs/active_evidence_registry.yaml
+      issue_log: docs/refactor_cleanup/pipeline_reproduction_log_20260806.md
     dry_run:
       status: required_before_gpu
       command: >
-        /home/linbinhao/micromamba/envs/ECGTwin/bin/python
+        /home/linbinhao/miniforge3/envs/ECGTwin/bin/python
         boot_scripts/run_experiment.py
         --config configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_ningbo.yaml
         --dry-run

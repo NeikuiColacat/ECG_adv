@@ -9,7 +9,7 @@ Use this before any `git add`, commit, or push.
 
 ## Checks
 
-1. Run `micromamba run -n cli-tools git status --short --branch`.
+1. Run `/home/linbinhao/miniforge3/envs/cli-tools/bin/git status --short --branch`.
 2. Inspect staged and unstaged files.
 3. Do not stage external model link/payload changes under `model/*` unless the
    user explicitly asks.

@@ -695,7 +695,7 @@ comparison_controls:
 metric_field_order: [macro_auroc, macro_auprc]
 tensorboard:
   command: >-
-    /home/linbinhao/micromamba/envs/ECGTwin/bin/tensorboard
+    /home/linbinhao/miniforge3/envs/ECGTwin/bin/tensorboard
     --logdir /home/linbinhao/ECG_adv_data/runs/manual_refactor
     --host 127.0.0.1 --port 9091
   tuning_log_dirs:

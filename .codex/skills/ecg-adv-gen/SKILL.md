@@ -44,7 +44,7 @@ Hard boundaries:
 
 - Repo: `/home/linbinhao/ECG_manual_refactor_clean`
 - Data/output root: `/home/linbinhao/ECG_adv_data`
-- Python: `/home/linbinhao/micromamba/envs/ECGTwin/bin/python`
+- Python: `/home/linbinhao/miniforge3/envs/ECGTwin/bin/python`
 - Shared hardware: check live CPU, memory, disk, port, process, and GPU state
   before resource-heavy work.
 - Keep datasets, caches, checkpoints, generated signals, TensorBoard events,
@@ -179,8 +179,9 @@ Confirmed current choices:
 - PN2021: `/root/autodl-tmp/physionet2021/training/<center>/`
 - MIMIC: `/root/autodl-tmp/MIMIC/`
 - ECGTwin repo: `model/ECGTwin/`
-- Latest managed launcher: `scripts/run_experiment.py`
-- Latest package runners: `ecg_adv_gen/runner/`
+- Latest managed launcher: `boot_scripts/run_experiment.py`
+- Latest retained runtime roots: `boot_scripts/`, `core/`,
+  `data_preprocess/`, `models/`, and `util/`
 
 ## ECGTwin Facts
 
@@ -295,12 +296,16 @@ For multi-label samples, concatenate prompt fragments with `|`.
 - Current managed dry-run entry:
 
 ```bash
-micromamba run -n ECGTwin python scripts/run_experiment.py \
-  --config configs/experiments/pn2021_eval_v7_sjr_rgq_refexcluded.yaml \
-  --local-config configs/local/linbinhao_server.example.yaml \
-  --run-id smoke_pn2021_eval_v7_refexcluded \
+/home/linbinhao/miniforge3/envs/ECGTwin/bin/python \
+  boot_scripts/run_experiment.py \
+  --config configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_ningbo.yaml \
+  --run-dir /home/linbinhao/ECG_adv_data/runs/dryrun_new_unique_name \
   --dry-run
 ```
+
+Choose a `--run-dir` path that does not already exist. A dry-run validates the
+resolved plan without creating that directory or loading data, a model, or a
+GPU.
 
 ## Latent-Hull Online AT Rules
 
@@ -317,8 +322,8 @@ Current latest-mainline launch path:
 
 ```text
 configs/active_scripts.yaml:latest_mainline
-scripts/run_experiment.py
-ecg_adv_gen/runner/
+boot_scripts/run_experiment.py
+boot_scripts/, core/, data_preprocess/, models/, util/
 ```
 
 Default first-round settings:
@@ -412,13 +417,15 @@ High-priority missing PN2021-C when GPU is free:
 
 ## Implementation Guidance
 
-Keep original `model/ECGTwin/` intact. Current active business logic should live in:
+Keep original `model/ECGTwin/` intact. Historical managed business logic lived
+in the following legacy package roots; they are provenance only and must not be
+restored as current clean-room runtime dependencies:
 
 ```text
-ecg_adv_gen/runner/       # managed package runners
-ecg_adv_gen/config/       # YAML loading, typed adapters, launch audit
-ecg_adv_gen/evaluation/   # PN2021/PN2021-C metrics and reports
-ecg_adv_gen/labels/       # Super5 mapping metadata
+ecg_adv_gen/runner/       # historical managed package runners
+ecg_adv_gen/config/       # historical YAML loading and launch audit
+ecg_adv_gen/evaluation/   # historical PN2021/PN2021-C reports
+ecg_adv_gen/labels/       # historical Super5 mapping metadata
 ```
 
 Archived/historical no-IBE files should not be restored into the mainline without an explicit user request.

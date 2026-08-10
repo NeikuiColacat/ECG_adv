@@ -105,7 +105,7 @@ Working directory:
 EfficientNet1DV2:
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 /home/linbinhao/micromamba/envs/ECGTwin/bin/python -u \
+CUDA_VISIBLE_DEVICES=0 /home/linbinhao/miniforge3/envs/ECGTwin/bin/python -u \
   boot_scripts/run_experiment.py \
   --config configs/experiments/manual_refactor_ptbxl_effnet.yaml
 ```
@@ -113,7 +113,7 @@ CUDA_VISIBLE_DEVICES=0 /home/linbinhao/micromamba/envs/ECGTwin/bin/python -u \
 ECGFounder locked run:
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 /home/linbinhao/micromamba/envs/ECGTwin/bin/python -u \
+CUDA_VISIBLE_DEVICES=0 /home/linbinhao/miniforge3/envs/ECGTwin/bin/python -u \
   boot_scripts/run_experiment.py \
   --config configs/experiments/manual_refactor_ptbxl_ecgfounder.yaml
 ```
@@ -121,7 +121,7 @@ CUDA_VISIBLE_DEVICES=0 /home/linbinhao/micromamba/envs/ECGTwin/bin/python -u \
 ECGFounder 10-epoch sensitivity probe:
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 /home/linbinhao/micromamba/envs/ECGTwin/bin/python -u \
+CUDA_VISIBLE_DEVICES=0 /home/linbinhao/miniforge3/envs/ECGTwin/bin/python -u \
   boot_scripts/run_experiment.py \
   --config configs/experiments/manual_refactor_ptbxl_ecgfounder_e10_probe.yaml
 ```

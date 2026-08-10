@@ -1,0 +1,23 @@
+schema_version: 1
+
+experiment:
+  name: manual_refactor_pn2021_ecgfounder_augmix_simclr_lhat_ningbo
+  purpose: Replicate the prospective two-stage AugMix-SimCLR plus contracted VAE-LHAT recipe on Ningbo K500 with ECGFounder.
+
+entrypoint:
+  name: train_pn2021
+  config: train/PN2021.yaml
+  arguments:
+    - --model
+    - ecgfounder
+    - --method-config
+    - train/methods/augmix_simclr_lhat.yaml
+    - --center
+    - ningbo
+    - --source-checkpoint
+    - /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_ptbxl_ecgfounder_source_v1/training/checkpoints/best.pt
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor_clean_repro_20260806_r2/ecgfounder/ningbo
+  if_exists: error
+  delegate_output_subdir: training
