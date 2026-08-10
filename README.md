@@ -54,6 +54,10 @@ CUDA_VISIBLE_DEVICES=<confirmed_free_gpu> \
 Do not use `sudo`, change CUDA/drivers, overwrite an existing run, or write
 large artifacts into the repository.
 
+If the tracked output already exists, `--dry-run` remains read-only and reports
+`run_dir_collision: true` plus `would_fail_execution: true`. A real launch still
+fails closed; pass `--run-dir <new-external-directory>` to start a new run.
+
 ## Active Layout
 
 | Path | Responsibility |
@@ -94,13 +98,11 @@ must not become a new runtime dependency.
 ## Necessary CPU Verification
 
 ```bash
-/home/linbinhao/miniforge3/envs/ECGTwin/bin/python -m pytest -q \
-  util/tests/test_augmentations.py \
-  util/tests/test_torch_augmentations.py \
-  util/tests/test_data_contracts.py \
-  util/tests/test_labels_super5.py \
-  util/tests/test_pn2021_corruptions.py
+/home/linbinhao/miniforge3/envs/ECGTwin/bin/python -m pytest -q
 ```
+
+`pytest.ini` restricts discovery to the retained `util/tests/test_*.py` public
+contract suite; the keep-manifest inventory test rejects stale or ghost entries.
 
 Run outputs belong under `/home/linbinhao/ECG_adv_data/runs/`, not in Git.
 Every managed run records its resolved config closure, command, Git state,

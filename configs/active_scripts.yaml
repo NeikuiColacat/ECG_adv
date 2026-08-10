@@ -114,11 +114,17 @@ latest_mainline:
       - util/tests/test_data_contracts.py
       - util/tests/test_labels_super5.py
       - util/tests/test_pn2021_corruptions.py
+      - util/tests/test_data_runtime.py
+      - util/tests/test_method_graph.py
+      - util/tests/test_online_trainer.py
+      - util/tests/test_manual_run_experiment.py
+      - util/tests/test_evaluation_metrics.py
+      - util/tests/test_pn2021_evaluation.py
     cpu_contract_result:
       status: passed
-      passed: 73
+      passed: 126
       skipped: 10
-      date: "2026-08-06"
+      date: "2026-08-11"
     gpu_replication:
       status: complete_single_seed_metric_level
       run_root: /home/linbinhao/ECG_adv_data/runs/manual_refactor_clean_repro_20260806_r2

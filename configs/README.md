@@ -44,7 +44,10 @@ The only experiment launcher is:
 ```
 
 A dry-run resolves and hashes the closure, builds the exact delegated command,
-and reports output paths without loading data, a checkpoint, or a GPU.
+and reports output paths without loading data, a checkpoint, or a GPU. When the
+configured run directory already exists, dry-run reports
+`run_dir_collision: true` and `would_fail_execution: true` without modifying
+that directory. Non-dry execution continues to reject the collision.
 
 The experiment schema contains exactly:
 

@@ -35,6 +35,7 @@ YAML 或隐式回退入口。
 |---|---|---|---|
 | `AGENTS.md` | `KEEP-MANUAL` | 共享服务器安全、白名单依赖边界、主线数据/方法/证据契约和验证入口 | 新代理入口完整接管前 100 行安全规则、白名单原则和论文证据边界 |
 | `README.md` | `KEEP-MANUAL` | 人类可读的手工重构入口、目录导航、dry-run 和开发证据边界 | 新项目首页完整接管当前 launcher、数据契约和验证命令 |
+| `pytest.ini` | `KEEP-MANUAL` | 将公共 CPU 回归测试发现范围锁定在 `util/tests/test_*.py`，并严格拒绝未知配置和 marker | 新测试配置完整接管同一发现边界和严格模式 |
 | `.codex/skills/README.md` | `KEEP-MANUAL` | 说明随仓库迁移的公开项目技能及当前用户级安装方式 | 新技能索引完整接管同一公开/私有边界和安装入口 |
 | `.codex/skills/artifact-git-guard/SKILL.md` | `KEEP-MANUAL` | 提交与 push 前阻止权重、缓存、外部模型链接、秘密和运行产物进入 Git | 新 Git 防护流程覆盖相同风险并完成实际提交验证 |
 | `.codex/skills/data-prep-validator/SKILL.md` | `KEEP-MANUAL` | 审核 v7 Super5、100 Hz canonical、VAE 桥、K500 与 ref-exclusion 数据契约 | 新数据验证技能接管相同身份、布局和泄漏闸门 |
@@ -273,15 +274,23 @@ native-rate 到 100 Hz，以及 100 Hz 到 500 Hz 均使用该策略。PN2021 �
 | `util/tests/test_pn2021_corruptions.py` | `KEEP-MANUAL` | 直接验证白名单 profile、20 个 depth2/3 组合、确定性复合、修正后的 Baseline Shift 与 RLM 生存导联 | 新 PN2021-C 内核接管同一 profile、组合及随机身份 |
 | `util/tests/test_data_contracts.py` | `KEEP-MANUAL` | 直接验证白名单缓存、模型输入、100/500 Hz 线性插值、Super5/导联顺序及主线 YAML 闭包 | 新数据/模型边界接管相同布局、插值顺序和 config closure |
 | `util/tests/test_labels_super5.py` | `KEEP-MANUAL` | 直接验证白名单 PN2021 Super5 v7 映射、hash、NORM 抑制和 PTB-XL diagnostic class 转换 | 新标签层接管相同 mapping identity 和逐代码 golden policy |
+| `util/tests/test_data_runtime.py` | `KEEP-MANUAL` | 验证唯一 data-load 配置、augmentation→sanitize→z-score→layout 顺序、非有限值/shape fail-closed、selection 泄漏与 mmap prefetch 边界 | 新运行时数据层接管相同配置、数值顺序、泄漏和有界预取契约 |
+| `util/tests/test_method_graph.py` | `KEEP-MANUAL` | 验证保留方法图的 typed compile/resource closure、主线权重与 attack-contract、A0 执行、audit-only 禁止执行和动态 import 禁令 | 新方法组合层接管相同类型、资源、执行性与静态白名单契约 |
+| `util/tests/test_online_trainer.py` | `KEEP-MANUAL` | 验证在线配置/参数闭包、五轮 rotating4 全覆盖、单次数据读取的 exposure 展开、family-balanced BatchNorm 和非法 epoch fail-closed | 新 trainer 接管相同预算、调度、数据读取与 BatchNorm 权重契约 |
+| `util/tests/test_manual_run_experiment.py` | `KEEP-MANUAL` | 验证统一 launcher 配置闭包、dry-run 零副作用与既有目录 collision 报告、真实执行 fail-closed、run record/file index 和参数禁令 | 新 launcher 接管相同零副作用、输出防覆盖、白名单参数与完整性契约 |
+| `util/tests/test_evaluation_metrics.py` | `KEEP-MANUAL` | 验证 raw-logit AUROC/AP、undefined-class 口径、drop-all-zero 过滤和历史 four-center 字段仅作 generic center mean 读取 | 新指标层接管相同分数输入、宏平均分母、过滤和语义降级契约 |
+| `util/tests/test_pn2021_evaluation.py` | `KEEP-MANUAL` | 验证评测 dry-run 锁、profile/severity/operator-domain 三重 fail-closed、composition artifact、四中心 truthful aggregate、equal-view→equal-center 与 ECGFounder canonical100 链 | 新评测层接管相同 corruption 身份、中心聚合、ref-exclusion、CPSC 合并和模型输入契约 |
 
 ## B. 当前不属于手工主线的文件
 
-### B1. 非核心支持与待退出文件
+### B1. 已退出当前树的历史支持参考
 
-这些文件不属于 A 区的手工重构保护白名单。它们当前仍有验证、兼容或证据
-作用，因此只是允许后续退出，不是本次直接删除清单。
+以下路径来自清理前父提交 `6a662c9`，当前工作树中并不存在；表内 `SUPPORT`
+仅表示可按需从 Git 历史查阅的契约 oracle，不表示测试仍被 pytest 收集，也不
+构成恢复 legacy wrapper 的授权。需要恢复某项能力时，应针对 A 区 clean API
+重写最小测试，并把真实存在的测试移入 A9，而不是整批还原历史测试树。
 
-| 文件 | 状态 | 当前作用 | 何时可以删除或还原 |
+| 历史路径 | 状态 | 历史作用 | 若按 clean API 重写必须保留 |
 |---|---|---|---|
 | `methods/augmix/ecg_ops.py` | `LEGACY-BRIDGE` | 旧 PN2021-C 调用入口以及临时 profile 兼容 | 调用方全部迁移到 `util/augmentations/`，历史回放测试通过 |
 | `util/tests/test_pn2021_metadata.py` | `SUPPORT` | 验证独立 PN2021 表头解析语义及预处理入口不再导入旧数据层 | 表头解析器迁移时同步保留相同 golden contract 与 import 闭包检查 |
@@ -289,7 +298,6 @@ native-rate 到 100 Hz，以及 100 Hz 到 500 Hz 均使用该策略。PN2021 �
 | `util/tests/test_augmentations_cache.py` | `SUPPORT` | 验证 PN2021-C 白名单依赖、20组合、确定性随机流、双采样率及断点缓存契约 | 缓存入口迁移时同步迁移这些测试 |
 | `util/tests/test_load_cache.py` | `SUPPORT` | 验证三类缓存身份、自动 RAM/mmap 决策、中心/hash/view 访问和布局转换 | 统一数据访问层迁移时同步迁移这些契约测试 |
 | `util/tests/test_split_cache.py` | `SUPPORT` | 验证 PTB-XL 患者隔离、PN2021 确定性父 K500、独立 400/100、singleton train、CPSC 来源配额、互斥并集与 ref-exclusion | 切分层迁移时同步迁移这些契约测试 |
-| `util/tests/test_data_runtime.py` | `SUPPORT` | 验证split/cache、K500/400/100、CPSC合并、唯一data-load配置、resident/mmap数值/hash/sampler顺序、PN2021-C validation显式view及session所有权 | 运行时数据层迁移时同步迁移这些契约测试 |
 | `util/tests/test_models.py` | `SUPPORT` | 验证两个模型的输入输出、冻结范围、统一factory、外部参考state键及 EfficientNet逐元素前向对齐 | 模型包迁移时同步迁移官方/历史兼容契约测试 |
 | `util/tests/test_model_input_adapter.py` | `SUPPORT` | 验证 canonical raw100 的 sanitize、EffNet identity、ECGFounder 设备内 linear 1000→5000、先升采样后 global z-score、非原地及严格输入契约 | 模型输入桥迁移时同步保留两模型数值参考和操作顺序回归测试 |
 | `util/tests/test_canonical_corruption.py` | `SUPPORT` | 验证在线 GPU 腐蚀内核固定 `100→500→100`、20种 depth2/3 掩码、两链批量调用结构、确定性、非原地输入和逐样本 finite provenance | 腐蚀内核迁移时同步保留域、组合、批量执行和设备驻留契约 |
@@ -297,7 +305,6 @@ native-rate 到 100 Hz，以及 100 Hz 到 500 Hz 均使用该策略。PN2021 �
 | `util/tests/test_random_seed.py` | `SUPPORT` | 验证全局 seed YAML 身份、namespace 隔离、Python/NumPy/Torch 复现和 process 初始化 | 随机基础设施迁移时同步迁移这些契约测试 |
 | `util/tests/test_config_bundle.py` | `SUPPORT` | 验证完整 configs 副本内的 seed/operator 引用、路径逃逸闸门和核心 YAML 加载 | 配置系统迁移时同步迁移这些契约测试 |
 | `util/tests/test_supervised_trainer.py` | `SUPPORT` | 验证配置束、调用方 DataLoader、参数更新、验证选模、raw prediction artifact、单中心缺类留证、scheduler horizon、测试落盘及 last-epoch 微调 | 通用监督训练入口迁移时同步迁移这些最小契约测试 |
-| `util/tests/test_evaluation_metrics.py` | `SUPPORT` | 验证 raw-logit 排序不被 sigmoid 饱和破坏、Average Precision 定义及 strict/skip-undefined | 指标层迁移时同步保留定义与极端 logits 回归样例 |
 | `util/tests/test_direct_baseline_selection.py` | `SUPPORT` | 验证clean pooled400、20个逐composition pooled400、robust均值、0.5/0.5 score、clean floor、严格五类、身份/grid漂移拒绝及exact tie | Direct baseline选模层迁移时同步保留全部泄漏、不可flatten和可比性闸门 |
 | `util/tests/test_pn2021_tuning.py` | `SUPPORT` | 验证train400、clean validation100、20个冻结PN2021-C view、packed bank 逐 view 等价、动态 executable method、可选 runtime encoder/decoder 与主线 train400 latent pool、source registry及hash/label/order一致 | tuning适配层迁移时同步保留Direct身份、packed raw/logit/metric等价、资源精确路由、pool不消费训练shuffle及只读validation边界 |
 | `util/tests/test_pn2021_direct_boot_scripts.py` | `SUPPORT` | 验证tune/select/refit零副作用dry-run、Direct稳定身份、latent VAE requirements/dry-run不读权重、family-balanced selection及E*/scheduler传播 | 启动层迁移时同步保留CLI、配置束和资源加载契约 |
@@ -306,11 +313,7 @@ native-rate 到 100 Hz，以及 100 Hz 到 500 Hz 均使用该策略。PN2021 �
 | `util/tests/test_tensorboard_logging.py` | `SUPPORT` | 验证 final-only probe、manifest 延迟 flush、PNG/NPY 保留、可关闭 event image、TensorBoard 标量和 disabled 零副作用 | 观察层迁移时同步迁移相同最小契约测试 |
 | `util/tests/test_augmentation_profile.py` | `SUPPORT` | 验证离线缓存与在线 AugMix 共用同一算子参数、seed/config SHA 及 copied config bundle | profile loader 迁移时同步保留共享单一来源契约 |
 | `util/tests/test_latent_pool.py` | `SUPPORT` | 验证 deterministic-mean latent、M20 eligibility、预计算 neighbor table 与 stable reference 逐元素一致、table SHA 稳定及 hash/index 访问 | latent pool 迁移时同步保留候选和身份契约 |
-| `util/tests/test_method_graph.py` | `SUPPORT` | 验证 A0/A3c、主线 attack-contract、可执行 latent-threechain 及 audit-only profiles 的静态编译、typed execution、资源白名单、RNG 身份和动态实现键禁令 | 方法图迁移时同步保留白名单、类型、执行性、资源闭包及 matched comparison RNG 身份契约 |
-| `util/tests/test_online_trainer.py` | `SUPPORT` | 验证主线 Stage-1 两链 SimCLR 冻结头、五轮 rotating4 全覆盖、完整 Stage-1→Stage-2 CPU 闭环、单 optimizer-step、family/BN/RNG balance、计数及 final-only checkpoint | 在线trainer迁移时同步保留两阶段数值、预算、teacher/checkpoint身份和 last-checkpoint 日志语义 |
 | `util/tests/test_train_pn2021.py` | `SUPPORT` | 验证raw100 K500/train400、canonical resident参数、worker安全门、partition进入seed身份，以及 latent-pool/encoder/decoder requirements 的精确资源路由 | PN2021适配层迁移时同步保留数据、seed和方法资源边界 |
-| `util/tests/test_pn2021_evaluation.py` | `SUPPORT` | 验证clean+20 views共用canonical session、关闭所有权、ECGFounder linear500+z-score数值链、K500 identity及拒绝500 Hz cache | 正式评估层迁移时同步保留canonical bottleneck、共享adapter、metric view和证据契约 |
-| `util/tests/test_manual_run_experiment.py` | `SUPPORT` | 验证统一launcher dry-run、entrypoint/flag白名单、removed flag拒绝、配置闭包、family-balanced selection run record、文件索引和篡改检测 | launcher/run-record迁移时同步保留零副作用、方法身份和完整性契约 |
 
 ### B2. 本机运行支持
 

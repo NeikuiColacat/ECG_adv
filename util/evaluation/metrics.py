@@ -328,6 +328,29 @@ def mean_metric_views(
     }
 
 
+def resolve_evaluated_center_mean(
+    payload: Mapping[str, Any],
+) -> Mapping[str, Mapping[str, Any]]:
+    """Read the schema-v2 center mean or its schema-v1 compatibility alias.
+
+    Historical evaluation JSONs called every selected-center mean
+    ``four_center_mean``, including one-center runs.  The legacy field is
+    therefore accepted only as a generic evaluated-center mean; callers must
+    not infer that it represents four centers without separately validating
+    the result's center count/order.
+    """
+
+    current = payload.get("evaluated_center_mean")
+    if isinstance(current, Mapping):
+        return current
+    legacy = payload.get("four_center_mean")
+    if isinstance(legacy, Mapping):
+        return legacy
+    raise ValueError(
+        "center aggregate requires evaluated_center_mean or legacy four_center_mean"
+    )
+
+
 def _annotate_slice(
     views: Mapping[str, Mapping[str, Any]], evaluation_slice: str
 ) -> dict[str, dict[str, Any]]:
@@ -341,6 +364,7 @@ def aggregate_corruption_views(
     per_view: Sequence[Mapping[str, Any]],
     *,
     center_order: Sequence[str],
+    canonical_four_center_order: Sequence[str] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Aggregate depth2, depth3, and depth23 with equal view/center weight."""
 
@@ -365,9 +389,19 @@ def aggregate_corruption_views(
             center_metrics[center] = _annotate_slice(
                 mean_metric_views(members), slice_name
             )
-        four_center = _annotate_slice(
+        evaluated_center_mean = _annotate_slice(
             mean_metric_views([center_metrics[center] for center in centers]),
             slice_name,
+        )
+        canonical_centers = (
+            ()
+            if canonical_four_center_order is None
+            else tuple(str(value) for value in canonical_four_center_order)
+        )
+        is_exact_four_center = (
+            len(centers) == 4
+            and len(canonical_centers) == 4
+            and set(centers) == set(canonical_centers)
         )
         result[slice_name] = {
             "evaluation_slice": slice_name,
@@ -375,7 +409,12 @@ def aggregate_corruption_views(
             "view_count": len(entries),
             "composition_ids": [str(item["composition_id"]) for item in entries],
             "per_center": center_metrics,
-            "four_center_mean": four_center,
+            "center_count": len(centers),
+            "center_order": list(centers),
+            "evaluated_center_mean": evaluated_center_mean,
+            "four_center_mean": (
+                evaluated_center_mean if is_exact_four_center else None
+            ),
         }
     return result
 
@@ -389,4 +428,5 @@ __all__ = [
     "compute_classification_metrics",
     "compute_metric_views",
     "mean_metric_views",
+    "resolve_evaluated_center_mean",
 ]

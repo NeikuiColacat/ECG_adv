@@ -44,7 +44,7 @@ required_configs:
     sha256: 8b337606c43b6fec2959dd185477ce32f48b139f5fce5112ee26efe58eb4bbbc
   evaluation:
     path: eval/PN2021.yaml
-    sha256: 6d3e7df9f8223f1450c26e2fd8f76e716cafea8288ba12deb46589fe7bbdda03
+    sha256: 0159928d8825ae60908b93285cd075d59a0ee136716c40cdea72094d6b825daf
   corruption_cache:
     path: augmentation/cache.yaml
     sha256: e2181af9aa43e478d36884dd9689b2495b875ca358996a327fbae44a0066652e
@@ -69,11 +69,10 @@ required_modules:
     - util/augmentations/operators.py
     - util/augmentations/torch_operators.py
   contract_tests:
-    - util/tests/test_load_cache.py
-    - util/tests/test_split_cache.py
+    - util/tests/test_data_contracts.py
     - util/tests/test_data_runtime.py
-    - util/tests/test_random_seed.py
-    - util/tests/test_config_bundle.py
+    - util/tests/test_labels_super5.py
+    - util/tests/test_pn2021_evaluation.py
 
 protocol:
   split_id: pn2021_super5_k500_cpsc_combined_v1

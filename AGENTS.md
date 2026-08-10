@@ -178,13 +178,11 @@ active evidence registry. Recover historical code from commit
 Use the project Python directly:
 
 ```bash
-/home/linbinhao/miniforge3/envs/ECGTwin/bin/python -m pytest -q \
-  util/tests/test_augmentations.py \
-  util/tests/test_torch_augmentations.py \
-  util/tests/test_data_contracts.py \
-  util/tests/test_labels_super5.py \
-  util/tests/test_pn2021_corruptions.py
+/home/linbinhao/miniforge3/envs/ECGTwin/bin/python -m pytest -q
 ```
+
+`pytest.ini` limits discovery to the retained `util/tests/test_*.py` contract
+suite. Keep its inventory synchronized with A9 of the keep manifest.
 
 Before committing or pushing:
 

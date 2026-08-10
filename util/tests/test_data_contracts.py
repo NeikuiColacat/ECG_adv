@@ -47,6 +47,10 @@ def _manual_paths() -> set[Path]:
     }
 
 
+def _manifest_section(text: str, start: str, end: str) -> str:
+    return text.split(start, 1)[1].split(end, 1)[0]
+
+
 def test_data_and_model_constants_share_one_super5_contract() -> None:
     assert CLASS_ORDER == EXPECTED_CLASS_ORDER
     assert CLASS_ORDER == ("CD", "HYP", "MI", "NORM", "STTC")
@@ -204,3 +208,17 @@ def test_active_evidence_hashes_the_retained_lock_and_report() -> None:
     assert registry["historical_trusted_snapshot"]["replay"][
         "live_legacy_code_required"
     ] is False
+
+
+def test_manifest_test_inventory_matches_the_collected_clean_tree() -> None:
+    text = KEEP_MANIFEST.read_text(encoding="utf-8")
+    protected = _manifest_section(text, "### A9.", "## B.")
+    historical = _manifest_section(text, "### B1.", "### B2.")
+    pattern = r"`(util/tests/(?:__init__|test_[^`]+)\.py)`"
+    protected_paths = {REPO / value for value in re.findall(pattern, protected)}
+    historical_paths = {REPO / value for value in re.findall(pattern, historical)}
+    live_paths = set((REPO / "util" / "tests").glob("*.py"))
+
+    assert protected_paths == live_paths
+    assert not protected_paths.intersection(historical_paths)
+    assert all(not path.exists() for path in historical_paths)

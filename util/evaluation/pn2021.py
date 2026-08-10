@@ -57,6 +57,12 @@ DEFAULT_PN2021_EVAL_CONFIG = PROJECT_ROOT / "configs" / "eval" / "PN2021.yaml"
 PN2021_MAPPING_VERSION = "v7_super5_sjr_rgq_review_20260528"
 PN2021_MAPPING_HASH = "555ec85d5b51"
 LOGICAL_CENTERS = ("ningbo", "chapman_shaoxing", "cpsc_2018", "georgia")
+LOGICAL_CENTER_SOURCES = {
+    "ningbo": ("ningbo",),
+    "chapman_shaoxing": ("chapman_shaoxing",),
+    "cpsc_2018": ("cpsc_2018", "cpsc_2018_extra"),
+    "georgia": ("georgia",),
+}
 LEAD_ORDER = (
     "I",
     "II",
@@ -131,6 +137,16 @@ def _positive_int(value: Any, *, description: str, allow_zero: bool = False) -> 
 def _boolean(value: Any, *, description: str) -> bool:
     if not isinstance(value, bool):
         raise ValueError(f"{description} must be boolean")
+    return value
+
+
+def _locked_sha256(value: Any, *, description: str) -> str:
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise ValueError(f"{description} must be a lowercase SHA256 digest")
     return value
 
 
@@ -393,13 +409,14 @@ def load_pn2021_eval_config(
             "profile_name",
             "references",
             "protocol",
+            "artifact_locks",
             "runtime",
             "output",
         },
         description="PN2021 evaluation config",
     )
-    if payload["schema_version"] != 1:
-        raise ValueError("PN2021 evaluation schema_version must be 1")
+    if payload["schema_version"] != 2:
+        raise ValueError("PN2021 evaluation schema_version must be 2")
     if not isinstance(payload["profile_name"], str) or not payload["profile_name"]:
         raise ValueError("PN2021 evaluation profile_name must be non-empty")
     root = config_bundle_root(config_path, config_root=config_root)
@@ -479,6 +496,9 @@ def load_pn2021_eval_config(
     _exact_keys(
         corruption,
         expected={
+            "expected_profile",
+            "expected_severity",
+            "expected_domain_sampling_rate_hz",
             "expected_view_count",
             "depths",
             "combinations_per_depth",
@@ -486,6 +506,23 @@ def load_pn2021_eval_config(
         },
         description="protocol.corruption",
     )
+    if (
+        corruption["expected_profile"] != "pn2021c_paper_anchored_s5_v1"
+        or _positive_int(
+            corruption["expected_severity"],
+            description="corruption.expected_severity",
+        )
+        != 5
+        or _positive_int(
+            corruption["expected_domain_sampling_rate_hz"],
+            description="corruption.expected_domain_sampling_rate_hz",
+        )
+        != 500
+    ):
+        raise ValueError(
+            "PN2021-C evaluation requires the locked paper-anchored severity-5 "
+            "profile in the raw 500 Hz corruption domain"
+        )
     if _positive_int(
         corruption["expected_view_count"], description="corruption.expected_view_count"
     ) != 20:
@@ -502,6 +539,20 @@ def load_pn2021_eval_config(
     if corruption["aggregation"] != "equal_views_then_equal_centers":
         raise ValueError("unsupported corruption aggregation")
     _validate_input_pipeline(protocol)
+
+    artifact_locks = _mapping(payload["artifact_locks"], description="artifact_locks")
+    _exact_keys(
+        artifact_locks,
+        expected={
+            "clean_cache_manifest_sha256",
+            "split_manifest_sha256",
+            "corruption_cache_manifest_sha256",
+            "compositions_sha256",
+        },
+        description="artifact_locks",
+    )
+    for name, value in artifact_locks.items():
+        _locked_sha256(value, description=f"artifact_locks.{name}")
 
     runtime = _mapping(payload["runtime"], description="runtime")
     _exact_keys(
@@ -605,6 +656,33 @@ def load_corruption_views(
         config.corruption_cache_config_path,
         description="corruption cache config",
     )
+    cache_corruption = _mapping(
+        cache_config.get("corruption"), description="cache corruption"
+    )
+    expected_corruption = _mapping(
+        config.payload["protocol"]["corruption"],
+        description="protocol.corruption",
+    )
+    expected_semantics = {
+        "profile": str(expected_corruption["expected_profile"]),
+        "severity": int(expected_corruption["expected_severity"]),
+        "domain_sampling_rate_hz": int(
+            expected_corruption["expected_domain_sampling_rate_hz"]
+        ),
+    }
+    cache_semantics = {
+        "profile": cache_corruption.get("profile"),
+        "severity": cache_corruption.get("severity"),
+        "domain_sampling_rate_hz": cache_corruption.get(
+            "domain_sampling_rate_hz"
+        ),
+    }
+    if cache_semantics != expected_semantics:
+        raise ValueError(
+            "PN2021-C cache config corruption semantics differ from the locked "
+            f"evaluation protocol: expected={expected_semantics}, "
+            f"cache_config={cache_semantics}"
+        )
     output = _mapping(cache_config.get("output"), description="cache output")
     raw_root = Path(str(output.get("cache_dir", ""))).expanduser()
     if not raw_root.is_absolute():
@@ -612,6 +690,10 @@ def load_corruption_views(
     cache_root = raw_root.resolve()
     manifest_path = cache_root / "manifest.json"
     manifest = _json_mapping(manifest_path, description="PN2021-C manifest")
+    artifact_locks = config.payload["artifact_locks"]
+    manifest_sha256 = _sha256(manifest_path)
+    if manifest_sha256 != artifact_locks["corruption_cache_manifest_sha256"]:
+        raise ValueError("PN2021-C cache manifest differs from the locked artifact")
     if manifest.get("dataset") != "pn2021c" or manifest.get("schema_version") != 1:
         raise ValueError("corruption cache must be a schema_version=1 PN2021-C cache")
     if int(manifest.get("view_count", -1)) != 20:
@@ -629,6 +711,9 @@ def load_corruption_views(
         files.get("compositions"),
         description="PN2021-C compositions",
     )
+    compositions_sha256 = _sha256(compositions_path)
+    if compositions_sha256 != artifact_locks["compositions_sha256"]:
+        raise ValueError("PN2021-C compositions differ from the locked artifact")
     try:
         raw_views = json.loads(compositions_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
@@ -655,12 +740,23 @@ def load_corruption_views(
     ) != 10:
         raise ValueError("PN2021-C cache must contain 10 depth2 and 10 depth3 views")
     corruption = _mapping(manifest.get("corruption"), description="manifest.corruption")
+    manifest_semantics = {
+        "profile": corruption.get("profile"),
+        "severity": corruption.get("severity"),
+        "domain_sampling_rate_hz": corruption.get("domain_sampling_rate_hz"),
+    }
+    if manifest_semantics != expected_semantics:
+        raise ValueError(
+            "PN2021-C cache manifest corruption semantics differ from the locked "
+            f"evaluation protocol: expected={expected_semantics}, "
+            f"manifest={manifest_semantics}"
+        )
     identity = {
         "cache_dir": str(cache_root),
         "manifest_path": str(manifest_path),
-        "manifest_sha256": _sha256(manifest_path),
+        "manifest_sha256": manifest_sha256,
         "compositions_path": str(compositions_path),
-        "compositions_sha256": _sha256(compositions_path),
+        "compositions_sha256": compositions_sha256,
         "view_count": len(views),
         "profile": corruption.get("profile"),
         "severity": corruption.get("severity"),
@@ -668,6 +764,7 @@ def load_corruption_views(
         "mapping_version": source.get("mapping_version"),
         "mapping_hash": source.get("mapping_hash"),
         "class_order": list(source.get("class_order", ())),
+        "artifact_locks_verified": True,
     }
     return tuple(views), identity
 
@@ -773,7 +870,7 @@ def build_evaluation_plan(
     output = _resolved_output(config, output_dir)
     selected_centers = _resolve_evaluation_centers(config, logical_centers)
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "profile_name": config.profile_name,
         "config": config.describe(),
         "model": model_spec.describe(),
@@ -831,6 +928,16 @@ def _loader_identity(
     expected_dataset = "pn2021c" if corrupted else "pn2021"
     if cache.get("dataset") != expected_dataset:
         raise ValueError(f"evaluation loader requires cache dataset {expected_dataset}")
+    artifact_locks = config.payload["artifact_locks"]
+    expected_cache_manifest_sha256 = artifact_locks[
+        "corruption_cache_manifest_sha256"
+        if corrupted
+        else "clean_cache_manifest_sha256"
+    ]
+    if cache.get("manifest_sha256") != expected_cache_manifest_sha256:
+        raise ValueError(
+            f"evaluation {expected_dataset} cache manifest differs from the locked artifact"
+        )
     if int(cache.get("sampling_rate_hz", -1)) != CANONICAL_SAMPLING_RATE_HZ:
         raise ValueError("evaluation cache must use the canonical 100 Hz domain")
     if float(cache.get("duration_seconds", -1.0)) != 10.0:
@@ -856,14 +963,19 @@ def _loader_identity(
         raise ValueError("evaluation cache mapping identity mismatch")
     if selection.get("logical_center") != center:
         raise ValueError("evaluation selection logical center mismatch")
+    expected_sources = LOGICAL_CENTER_SOURCES[center]
+    if tuple(selection.get("source_centers", ())) != expected_sources:
+        raise ValueError(
+            "evaluation selection physical source centers mismatch: "
+            f"center={center}, expected={expected_sources}, "
+            f"actual={tuple(selection.get('source_centers', ()))}"
+        )
     if selection.get("partition") != "evaluation_all_zero_kept":
         raise ValueError("evaluation must start from the all-zero-kept partition")
     if selection.get("ref_excluded_evaluation") is not True:
         raise ValueError("evaluation selection is not K500-ref-excluded")
     if tuple(selection.get("class_order", ())) != CLASS_ORDER:
         raise ValueError("evaluation selection class order mismatch")
-    if {"ptb-xl", "ptbxl"}.intersection(selection.get("source_centers", ())):
-        raise ValueError("evaluation selection contains a forbidden PTB-XL shard")
     if (
         selection.get("mapping_version") != PN2021_MAPPING_VERSION
         or selection.get("mapping_hash") != PN2021_MAPPING_HASH
@@ -880,7 +992,11 @@ def _loader_identity(
 
     split_path = Path(str(selection.get("split_manifest_path", ""))).resolve()
     split = _json_mapping(split_path, description="PN2021 split manifest")
-    if selection.get("split_manifest_sha256") != _sha256(split_path):
+    split_manifest_sha256 = _sha256(split_path)
+    if (
+        selection.get("split_manifest_sha256") != split_manifest_sha256
+        or split_manifest_sha256 != artifact_locks["split_manifest_sha256"]
+    ):
         raise ValueError("evaluation split manifest SHA256 mismatch")
     if (
         split.get("schema_version") != 1
@@ -894,6 +1010,10 @@ def _loader_identity(
         or tuple(split.get("logical_center_order", ())) != LOGICAL_CENTERS
     ):
         raise ValueError("evaluation split identity is not the locked PN2021 split")
+    if selection.get("source_manifest_sha256") != artifact_locks[
+        "clean_cache_manifest_sha256"
+    ]:
+        raise ValueError("evaluation source cache manifest differs from the locked artifact")
     center_entry = _mapping(
         _mapping(split.get("logical_centers"), description="split.logical_centers").get(
             center
@@ -1107,6 +1227,26 @@ def _atomic_json(path: Path, payload: Mapping[str, Any]) -> None:
         raise
 
 
+def _center_aggregation_fields(
+    evaluated_center_mean: Mapping[str, Mapping[str, Any]],
+    *,
+    center_order: Sequence[str],
+) -> dict[str, Any]:
+    centers = tuple(str(value) for value in center_order)
+    is_exact_four_center = (
+        len(centers) == len(LOGICAL_CENTERS)
+        and set(centers) == set(LOGICAL_CENTERS)
+    )
+    return {
+        "center_count": len(centers),
+        "center_order": list(centers),
+        "evaluated_center_mean": evaluated_center_mean,
+        "four_center_mean": (
+            evaluated_center_mean if is_exact_four_center else None
+        ),
+    }
+
+
 def evaluate_pn2021(
     model: nn.Module,
     checkpoint_identity: CheckpointIdentity,
@@ -1283,17 +1423,20 @@ def evaluate_pn2021(
                         "clean and PN2021-C evaluation records/labels are not identical"
                     )
                 per_center[center] = {"metrics": metrics, "identity": identity}
-            four_center = mean_metric_views(
+            evaluated_center_mean = mean_metric_views(
                 [per_center[center]["metrics"] for center in selected_centers]
             )
-            for payload in four_center.values():
+            for payload in evaluated_center_mean.values():
                 payload["evaluation_slice"] = f"depth{view.depth}"
             corrupted_views.append(
                 {
                     **view.describe(),
                     "evaluation_slice": f"depth{view.depth}",
                     "per_center": per_center,
-                    "four_center_mean": four_center,
+                    **_center_aggregation_fields(
+                        evaluated_center_mean,
+                        center_order=selected_centers,
+                    ),
                 }
             )
     finally:
@@ -1303,17 +1446,18 @@ def evaluate_pn2021(
         finally:
             model.train(was_training)
 
-    clean_four_center = mean_metric_views(
+    clean_evaluated_center_mean = mean_metric_views(
         [clean_centers[center]["metrics"] for center in selected_centers]
     )
-    for payload in clean_four_center.values():
+    for payload in clean_evaluated_center_mean.values():
         payload["evaluation_slice"] = "clean"
     corruption_aggregates = aggregate_corruption_views(
         corrupted_views,
         center_order=selected_centers,
+        canonical_four_center_order=LOGICAL_CENTERS,
     )
     result = {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": "complete",
         "evaluation_profile": resolved_config.profile_name,
         "model": spec.describe(),
@@ -1331,12 +1475,22 @@ def evaluate_pn2021(
             "input_pipeline": _resolved_input_pipeline(resolved_config, spec),
             "canonical_views": list(CLEAN_VIEW_ALIASES + CORRUPTED_VIEW_ALIASES),
             "corruption_cache": corruption_identity,
+            "center_aggregation": {
+                "primary_field": "evaluated_center_mean",
+                "compatibility_field": "four_center_mean",
+                "compatibility_policy": (
+                    "legacy schema-v1 four_center_mean is read only as a generic "
+                    "evaluated-center mean unless four locked centers are verified"
+                ),
+            },
         },
         "clean": {
             "evaluation_slice": "clean",
             "per_center": clean_centers,
-            "four_center_mean": clean_four_center,
-            "evaluated_center_mean": clean_four_center,
+            **_center_aggregation_fields(
+                clean_evaluated_center_mean,
+                center_order=selected_centers,
+            ),
         },
         "corrupted": {
             "per_view": corrupted_views,

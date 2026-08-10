@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 profile_name: pn2021_super5_refexcluded_depth23_v2
 
 references:
@@ -26,6 +26,9 @@ protocol:
     corrupted_kept: pn2021c_all_zero_kept_corrupted_refexcluded
     corrupted_drop: pn2021c_drop_all_zero_corrupted_refexcluded
   corruption:
+    expected_profile: pn2021c_paper_anchored_s5_v1
+    expected_severity: 5
+    expected_domain_sampling_rate_hz: 500
     expected_view_count: 20
     depths: [2, 3]
     combinations_per_depth:
@@ -63,6 +66,12 @@ protocol:
     output:
       layout: channel_time
       dtype: float32
+
+artifact_locks:
+  clean_cache_manifest_sha256: fa06cf268147d451e2925c17311ba13f565962dcf28acee27cb991a915dbb31f
+  split_manifest_sha256: 58210d9b192bc18e9085f235453094814c9caed2cf9142998084ae7a004e9a42
+  corruption_cache_manifest_sha256: a7d976374d8f5b7de3748dd67dc8a779879316ee5249eb59ec6dd8899c852c02
+  compositions_sha256: 18ceee2be0f236898777b878affaf8d4f1cd7fbee880a3af89c0e84cb9427ce1
 
 runtime:
   device: auto

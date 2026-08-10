@@ -157,6 +157,7 @@ class ExperimentPlan:
     config_sources: tuple[tuple[Path, str], ...]
     run_dir: Path
     delegate_output_dir: Path
+    run_dir_preexisting: bool
 
     def delegate_argv(self) -> list[str]:
         return [
@@ -172,6 +173,7 @@ class ExperimentPlan:
         ]
 
     def describe(self) -> dict[str, Any]:
+        collision = self.run_dir_preexisting
         return {
             "mode": "dry_run",
             "schema_version": 1,
@@ -197,7 +199,10 @@ class ExperimentPlan:
             "run_dir": str(self.run_dir),
             "delegate_output_dir": str(self.delegate_output_dir),
             "delegate_argv": self.delegate_argv(),
-            "would_create_directory": True,
+            "run_dir_collision": collision,
+            "would_create_directory": not collision,
+            "would_fail_execution": collision,
+            "execution_blocker": "run_directory_exists" if collision else None,
             "loads_data": False,
             "loads_model_or_gpu": False,
         }
@@ -208,7 +213,15 @@ def load_experiment_plan(
     *,
     config_root: str | Path | None = None,
     run_dir: str | Path | None = None,
+    allow_existing_run_dir: bool = False,
 ) -> ExperimentPlan:
+    """Resolve one managed plan without loading data, models, or accelerators.
+
+    Existing output directories remain an execution error. The explicit
+    ``allow_existing_run_dir`` switch exists only so a read-only dry-run can
+    describe that collision; :func:`execute_experiment` checks it again.
+    """
+
     experiment_path = resolve_entry_config_path(config_path)
     if not experiment_path.is_file():
         raise FileNotFoundError(f"experiment config not found: {experiment_path}")
@@ -263,7 +276,8 @@ def load_experiment_plan(
     if not isinstance(selected_run_dir, (str, Path)) or not str(selected_run_dir):
         raise ValueError("output.run_dir must be a non-empty path")
     resolved_run_dir = ensure_output_outside_worktree(selected_run_dir)
-    if resolved_run_dir.exists():
+    run_dir_preexisting = resolved_run_dir.exists()
+    if run_dir_preexisting and not allow_existing_run_dir:
         raise FileExistsError(f"run directory already exists: {resolved_run_dir}")
     delegate_subdir = _safe_delegate_subdir(output.get("delegate_output_subdir"))
     delegate_output_dir = (resolved_run_dir / delegate_subdir).resolve()
@@ -289,6 +303,7 @@ def load_experiment_plan(
         config_sources=closure,
         run_dir=resolved_run_dir,
         delegate_output_dir=delegate_output_dir,
+        run_dir_preexisting=run_dir_preexisting,
     )
 
 
@@ -312,6 +327,8 @@ def execute_experiment(
     launcher_argv: Sequence[str],
     delegate_runner: Callable[[list[str], Path], int] = _run_delegate,
 ) -> int:
+    if plan.run_dir_preexisting or plan.run_dir.exists():
+        raise FileExistsError(f"run directory already exists: {plan.run_dir}")
     delegate_argv = plan.delegate_argv()
     recorder = RunRecorder.create(
         run_dir=plan.run_dir,
@@ -357,6 +374,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.config,
         config_root=args.config_root,
         run_dir=args.run_dir,
+        allow_existing_run_dir=args.dry_run,
     )
     if args.dry_run:
         print(json.dumps(plan.describe(), indent=2, ensure_ascii=False, sort_keys=True))

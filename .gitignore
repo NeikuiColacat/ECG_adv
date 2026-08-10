@@ -94,6 +94,11 @@ __pycache__/
 *.pyc
 *.pyo
 
+# Host-local Codex scratch and maintenance transactions.  Already tracked
+# evidence files remain tracked; new agent workspaces must be reviewed and
+# promoted explicitly instead of entering through `git add -A`.
+agent_workspace/
+
 # Documentation & personal notes
 ARCHITECTURE.md
 PROJECT_STRUCTURE.md

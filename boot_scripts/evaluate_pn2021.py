@@ -15,6 +15,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from models.checkpoints import load_model_checkpoint
 from models.factory import available_models, build_model, get_model_spec
+from util.evaluation.metrics import resolve_evaluated_center_mean
 from util.evaluation.pn2021 import (
     DEFAULT_PN2021_EVAL_CONFIG,
     LOGICAL_CENTERS,
@@ -70,23 +71,53 @@ def _summary(result: dict[str, object]) -> dict[str, object]:
     clean = result["clean"]
     corrupted = result["corrupted"]
     assert isinstance(clean, dict) and isinstance(corrupted, dict)
+    protocol = result.get("protocol", {})
+    assert isinstance(protocol, dict)
     aggregates = corrupted["aggregates"]
     assert isinstance(aggregates, dict)
+    depth2 = aggregates["depth2"]
+    depth3 = aggregates["depth3"]
+    depth23 = aggregates["depth23"]
+    assert isinstance(depth2, dict)
+    assert isinstance(depth3, dict)
+    assert isinstance(depth23, dict)
+    center_order = clean.get("center_order", protocol.get("logical_centers", []))
+    assert isinstance(center_order, list)
+    center_count = clean.get("center_count", len(center_order))
+
+    def verified_four_center_mean(payload: dict[str, object]) -> object:
+        payload_center_order = payload.get("center_order", center_order)
+        payload_center_count = payload.get("center_count", center_count)
+        if (
+            isinstance(payload_center_count, int)
+            and not isinstance(payload_center_count, bool)
+            and payload_center_count == len(LOGICAL_CENTERS)
+            and payload_center_order == list(LOGICAL_CENTERS)
+        ):
+            return payload.get("four_center_mean")
+        return None
+
     return {
         "status": result["status"],
         "evaluation_profile": result["evaluation_profile"],
         "model": result["model"],
         "checkpoint": result["checkpoint"],
-        "clean_four_center_mean": clean["four_center_mean"],
-        "pn2021c_depth2_four_center_mean": aggregates["depth2"][
-            "four_center_mean"
-        ],
-        "pn2021c_depth3_four_center_mean": aggregates["depth3"][
-            "four_center_mean"
-        ],
-        "pn2021c_depth23_four_center_mean": aggregates["depth23"][
-            "four_center_mean"
-        ],
+        "center_count": center_count,
+        "center_order": center_order,
+        "clean_evaluated_center_mean": resolve_evaluated_center_mean(clean),
+        "pn2021c_depth2_evaluated_center_mean": resolve_evaluated_center_mean(
+            depth2
+        ),
+        "pn2021c_depth3_evaluated_center_mean": resolve_evaluated_center_mean(
+            depth3
+        ),
+        "pn2021c_depth23_evaluated_center_mean": resolve_evaluated_center_mean(
+            depth23
+        ),
+        "clean_four_center_mean": verified_four_center_mean(clean),
+        "pn2021c_depth2_four_center_mean": verified_four_center_mean(depth2),
+        "pn2021c_depth3_four_center_mean": verified_four_center_mean(depth3),
+        "pn2021c_depth23_four_center_mean": verified_four_center_mean(depth23),
         "output": result["output"],
     }
 
