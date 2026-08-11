@@ -26,8 +26,12 @@ the repository's default configs.
 - Relative references may not escape the bundle.
 - Copy the whole `configs/` tree to explore a variant; then pass the copied
   experiment path and `--config-root <copied-configs>`.
-- `config_closure: snapshot_only` tells the recorder that nested historical
-  YAML-looking strings are evidence text, not executable dependencies.
+- Closure follows schema-owned references only: the top-level `references`
+  mapping, typed method resources, and the existing seed/operator config keys.
+  YAML-looking prose and checkpoint arguments are not dependencies.
+- `config_closure: snapshot_only` and
+  `config_closure: managed_run_snapshots_and_sha256` mark evidence registries
+  whose nested historical paths are snapshots, not live dependencies.
 - Python implementation names come from code-owned allowlists. YAML may not
   dynamically import a module.
 - Every accepted file in the transitive closure is hashed into the run record.
@@ -68,6 +72,9 @@ output:
 
 The launcher owns `--config`, `--config-root`, `--output-dir`, and
 `--dry-run`; these flags cannot be smuggled into `entrypoint.arguments`.
+Each code-owned entrypoint also declares its result filename and artifact type;
+an exit-zero delegate is marked failed if that exact JSON result is absent or
+does not match the action contract.
 
 ## Output and Local Paths
 

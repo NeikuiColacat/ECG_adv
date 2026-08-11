@@ -158,10 +158,15 @@ AUROC/AUPRC。
 - EfficientNet 四项均达到或超过历史开发锁。
 - ECGFounder 四项与历史锁的最大绝对偏差为 `0.1938 pp`；属于指标级近似
   复现，但不能写成逐位相等。
-- 两个骨干的 VAE-LHAT raw-search sample-anyflip ASR 分别为
-  `0.6094`、`0.6030`；回缩后的训练 view ASR 均为 `0`，无效解码率均为
-  `0`。这与 attack-then-contract 契约一致，不能把回缩后 ASR=0 误写成攻击
-  没有运行。
+- 2026-08-11 审计确认，旧 runtime 在持久化 LHAT 诊断前先应用了最终
+  acceptance mask。此前记录的 raw-search sample-anyflip ASR `0.6094`、
+  `0.6030` 和无效解码率 `0` 仅是 accepted subset 条件统计，不能作为全部
+  candidate 的攻击强度或解码有效性证据，现已在 evidence registry 中隔离。
+- 现有产物没有保存 rejected candidates 的 raw 诊断张量，因此 all-candidate
+  raw ASR 与 invalid-decode 字段保持 `null/unavailable`，只能由修复后的新运行
+  产生。candidate acceptance 计数以及 accepted training view 的回缩 ASR、
+  selected `t` 和 BCE gain 仍然有效；回缩 ASR=0 是 contract 约束，不能解释为
+  攻击没有运行。
 - 本次仍是锁定 recipe 的单 seed 开发复现，不构成三次独立重复或论文终局
   声明。
 

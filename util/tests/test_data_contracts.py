@@ -210,6 +210,56 @@ def test_active_evidence_hashes_the_retained_lock_and_report() -> None:
     ] is False
 
 
+def test_active_evidence_quarantines_accepted_subset_lhat_diagnostics() -> None:
+    registry = yaml.safe_load(
+        (CONFIG_ROOT / "active_evidence_registry.yaml").read_text(encoding="utf-8")
+    )
+    active = registry["active_development_mainline"]
+    integrity = active["diagnostic_integrity"]
+
+    assert registry["schema_version"] == 3
+    assert str(registry["updated"]) == "2026-08-11"
+    assert integrity["status"] == "legacy_accepted_subset_quarantined"
+    assert integrity["all_candidate_raw_diagnostics"] == {
+        "availability": "unavailable",
+        "backfill_from_existing_artifacts": False,
+        "required_evidence": "post_fix_run_with_all_candidate_diagnostics",
+    }
+
+    replication = active["prospective_replication_20260806"]
+    cases = (
+        (active["diagnostics"]["efficientnet1dv2"], 43769, 40156),
+        (active["diagnostics"]["ecgfounder"], 57090, 52892),
+        (replication["efficientnet1dv2"]["diagnostics"], 43769, 39905),
+        (replication["ecgfounder"]["diagnostics"], 57090, 52676),
+    )
+    legacy_unscoped = {
+        "raw_search_sample_anyflip_asr",
+        "decoded_invalid_rate_max",
+    }
+    for diagnostics, candidate_count, accepted_count in cases:
+        assert legacy_unscoped.isdisjoint(diagnostics)
+        candidate = diagnostics["candidate_eligible"]
+        accepted = diagnostics["accepted_training_view"]
+        all_candidate = diagnostics["all_candidate_raw_search"]
+        legacy = diagnostics["legacy_accepted_subset"]
+
+        assert candidate["sample_count"] == candidate_count
+        assert candidate["accepted_training_view_count"] == accepted_count
+        assert candidate["acceptance_rate"] == pytest.approx(
+            accepted_count / candidate_count
+        )
+        assert accepted["sample_count"] == accepted_count
+        assert accepted["contracted_sample_anyflip_asr"] == 0.0
+        assert all_candidate == {
+            "availability": "unavailable",
+            "sample_anyflip_asr": None,
+            "decoded_invalid_rate_max": None,
+        }
+        assert legacy["sample_count"] == accepted_count
+        assert legacy["use"] == "audit_only_not_all_candidate_mechanism_evidence"
+
+
 def test_manifest_test_inventory_matches_the_collected_clean_tree() -> None:
     text = KEEP_MANIFEST.read_text(encoding="utf-8")
     protected = _manifest_section(text, "### A9.", "## B.")

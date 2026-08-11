@@ -17,6 +17,9 @@ from core.methods import (
     execute_method,
     load_method_profile,
 )
+from core.methods.runtime import _scoped_lhat_diagnostics
+from core.lhat import AttackThenContractDiagnostics
+from core.online_trainer import _diagnostic_sample_summary
 
 
 REPO = Path(__file__).resolve().parents[2]
@@ -37,6 +40,35 @@ def _clean_view() -> WaveformView:
             operation="cpu_test_fixture",
         ),
     )
+
+
+class _AttackDiagnosticFixture:
+    def __init__(
+        self,
+        final_bce: torch.Tensor,
+        decoded_invalid: torch.Tensor,
+        sample_anyflip_eligible: torch.Tensor,
+        sample_anyflip_success: torch.Tensor,
+    ) -> None:
+        self.final_bce = final_bce
+        self.decoded_invalid = decoded_invalid
+        self.sample_anyflip_eligible = sample_anyflip_eligible
+        self.sample_anyflip_success = sample_anyflip_success
+
+    def sample_tensor_dict(self) -> dict[str, torch.Tensor]:
+        return {
+            "final_bce": self.final_bce,
+            "sample_anyflip_eligible": self.sample_anyflip_eligible.float(),
+            "sample_anyflip_success": self.sample_anyflip_success.float(),
+        }
+
+    def mean_tensor_dict(self) -> dict[str, torch.Tensor]:
+        return {
+            "final_bce": self.final_bce.mean(),
+            "decoded_invalid_rate": self.decoded_invalid.float().mean(),
+            "sample_anyflip_numerator": self.sample_anyflip_success.float().sum(),
+            "sample_anyflip_denominator": self.sample_anyflip_eligible.float().sum(),
+        }
 
 
 @pytest.mark.parametrize(
@@ -94,6 +126,69 @@ def test_mainline_profile_locks_the_attack_contract_and_family_balance() -> None
     assert compiled.contracts["attack_then_contract_version"] == (
         "preflip_maxloss_grid_v1"
     )
+
+
+def test_lhat_diagnostics_keep_candidate_and_training_scopes_distinct() -> None:
+    accepted = torch.tensor([True, False, True])
+    assert accepted.numel() == 3 and int(accepted.sum()) == 2
+    attack = _AttackDiagnosticFixture(
+        torch.tensor([1.0, 5.0, 9.0]),
+        torch.tensor([False, True, False]),
+        torch.tensor([True, True, True]),
+        # The rejected middle sample must remain in the raw numerator.
+        torch.tensor([False, True, True]),
+    )
+    contract = AttackThenContractDiagnostics(
+        accepted=accepted,
+        selected_t=torch.tensor([0.25, 0.0, 0.75]),
+        raw_clean_bce=torch.tensor([0.5, 0.6, 0.7]),
+        selected_bce=torch.tensor([1.0, 0.6, 1.4]),
+        bce_gain=torch.tensor([0.5, 0.0, 0.7]),
+        path_valid_count=torch.tensor([4, 0, 3]),
+        path_preserving_count=torch.tensor([2, 0, 1]),
+        clean_correct_class_count=torch.tensor([5, 4, 3]),
+        training_anyflip_success=torch.tensor([False, False, True]),
+    )
+
+    samples, means, weights = _scoped_lhat_diagnostics(
+        attack, contract, accepted, accepted_count=2
+    )
+
+    assert samples["raw_all_candidate_eligible/final_bce"].tolist() == [
+        1.0,
+        5.0,
+        9.0,
+    ]
+    assert means["raw_all_candidate_eligible/final_bce"] == pytest.approx(5.0)
+    assert means["raw_all_candidate_eligible/decoded_invalid_rate"] == pytest.approx(
+        1.0 / 3.0
+    )
+    assert means[
+        "contract_all_candidate_eligible/contract_acceptance_rate"
+    ] == pytest.approx(2.0 / 3.0)
+    assert samples["contract_all_candidate_eligible/accepted"].numel() == 3
+    assert samples["contract_training_accepted/selected_t"].tolist() == [0.25, 0.75]
+    assert (
+        "contract_training_accepted/contract_acceptance_rate" not in means
+    )
+    assert weights["raw_all_candidate_eligible/final_bce"] == 3
+    assert weights["contract_training_accepted/contract_selected_t"] == 2
+
+    distributions, scalars, rates = _diagnostic_sample_summary(
+        {f"lhat/{name}": [value] for name, value in samples.items()}
+    )
+    raw_rate = rates[
+        "lhat/raw_all_candidate_eligible/decoded_anchor_sample_anyflip_asr"
+    ]
+    assert raw_rate == {
+        "numerator": 2.0,
+        "denominator": 3.0,
+        "rate": pytest.approx(2.0 / 3.0),
+    }
+    accepted_key = "lhat/contract_training_accepted/training_anyflip_success"
+    assert distributions[accepted_key]["count"] == 2
+    assert scalars[f"{accepted_key}_count"] == 2.0
+    assert scalars[f"{accepted_key}_mean"] == pytest.approx(0.5)
 
 
 def test_a0_executes_without_dynamic_imports_as_a_typed_identity_graph() -> None:

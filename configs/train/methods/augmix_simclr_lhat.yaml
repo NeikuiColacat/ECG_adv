@@ -117,6 +117,9 @@ resources:
     path: augmentation/operators.yaml
     profile: pn2021c_paper_anchored_s5_v1
     severity: 5
+  augmix_config:
+    type: config_reference
+    path: train/augmix.yaml
   vae:
     type: config_reference
     path: train/vae.yaml

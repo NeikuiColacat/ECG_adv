@@ -107,6 +107,58 @@ def _quality_mask(
     return accepted, tuple(reasons)
 
 
+def _scoped_lhat_diagnostics(
+    attack_diagnostics: Any,
+    contract_diagnostics: Any | None,
+    accepted_mask: torch.Tensor,
+    accepted_count: int,
+) -> tuple[
+    dict[str, torch.Tensor],
+    dict[str, torch.Tensor],
+    dict[str, int],
+]:
+    """Separate candidate-wide attack evidence from accepted training evidence."""
+
+    samples: dict[str, torch.Tensor] = {}
+    means: dict[str, torch.Tensor] = {}
+    weights: dict[str, int] = {}
+    summed = {
+        "sample_anyflip_numerator",
+        "sample_anyflip_denominator",
+        "positive_hide_numerator",
+        "positive_hide_denominator",
+        "negative_add_numerator",
+        "negative_add_denominator",
+        "contract_training_anyflip_numerator",
+        "contract_training_anyflip_denominator",
+    }
+
+    def add(scope: str, diagnostics: Any, count: int, exclude: tuple[str, ...] = ()) -> None:
+        local_samples = diagnostics.sample_tensor_dict()
+        local_means = diagnostics.mean_tensor_dict()
+        for name in exclude:
+            local_samples.pop(name, None)
+            local_means.pop(name, None)
+        samples.update({f"{scope}/{name}": value for name, value in local_samples.items()})
+        means.update({f"{scope}/{name}": value for name, value in local_means.items()})
+        weights.update(
+            {f"{scope}/{name}": 1 if name in summed else count for name in local_means}
+        )
+
+    candidate_count = int(accepted_mask.numel())
+    add("raw_all_candidate_eligible", attack_diagnostics, candidate_count)
+    if contract_diagnostics is not None:
+        add("contract_all_candidate_eligible", contract_diagnostics, candidate_count)
+        if accepted_count:
+            add(
+                "contract_training_accepted",
+                contract_diagnostics.select(accepted_mask),
+                accepted_count,
+                ("accepted", "contract_acceptance_rate"),
+            )
+    return samples, means, weights
+
+
 @dataclass(frozen=True)
 class GeneratedMethodBatch:
     """Typed views plus record-level method accounting for one base batch."""
@@ -687,35 +739,16 @@ class MethodViewRuntime:
                     training_waveform.index_select(0, accepted_local_tensor),
                 )
                 full_valid[accepted_batch_tensor] = True
-                accepted_diagnostics = attack.diagnostics.select(accepted_local)
-                diagnostic_samples = accepted_diagnostics.sample_tensor_dict()
-                diagnostic_means = accepted_diagnostics.mean_tensor_dict()
-                if contract_result is not None:
-                    accepted_contract = contract_result.diagnostics.select(
-                        accepted_local
-                    )
-                    diagnostic_samples.update(
-                        accepted_contract.sample_tensor_dict()
-                    )
-                    diagnostic_means.update(
-                        accepted_contract.mean_tensor_dict()
-                    )
-                sum_names = {
-                    "sample_anyflip_numerator",
-                    "sample_anyflip_denominator",
-                    "positive_hide_numerator",
-                    "positive_hide_denominator",
-                    "negative_add_numerator",
-                    "negative_add_denominator",
-                    "contract_training_anyflip_numerator",
-                    "contract_training_anyflip_denominator",
-                }
-                local_diagnostic_weights = {
-                    name: 1 if name in sum_names else len(accepted_positions)
-                    for name in diagnostic_means
-                }
-                for name, value in diagnostic_means.items():
-                    context.record_diagnostic(name, value)
+            diagnostic_samples, diagnostic_means, local_diagnostic_weights = (
+                _scoped_lhat_diagnostics(
+                    attack.diagnostics,
+                    None if contract_result is None else contract_result.diagnostics,
+                    accepted_local,
+                    len(accepted_positions),
+                )
+            )
+            for name, value in diagnostic_means.items():
+                context.record_diagnostic(name, value)
             for local_index, reason in enumerate(reasons):
                 if reason != "accepted":
                     rejected.append(

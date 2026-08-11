@@ -1283,6 +1283,35 @@ def _batch_hashes(batch: Mapping[str, Any], batch_size: int) -> tuple[str, ...]:
     return values
 
 
+def _method_rng_identity(
+    *,
+    comparison_group: str,
+    replicate_id: int,
+    center: str,
+    model_name: str,
+    epoch: int,
+    batch_hash_sha256: str,
+    exposure_name: str,
+    composition_index: int | None,
+) -> tuple[str, ...]:
+    """Derive method RNG from semantic stream identity, not execution order."""
+
+    stream = (
+        f"composition_index={composition_index}"
+        if composition_index is not None
+        else f"exposure={exposure_name}"
+    )
+    return (
+        str(comparison_group),
+        str(replicate_id),
+        str(center),
+        str(model_name),
+        f"epoch={epoch}",
+        f"batch_hash_sha256={batch_hash_sha256}",
+        stream,
+    )
+
+
 def _loader_selection_hashes(train_dataloader: Any) -> tuple[str, ...] | None:
     """Return the immutable managed selection, when the loader exposes one."""
 
@@ -2776,8 +2805,8 @@ def train_online_model(
                 "center",
                 "model",
                 "epoch",
-                "view_execution_step",
                 "ordered_batch_hash_sha256",
+                "composition_index_or_exposure_stream",
             ],
             "persistent_generator_state_required": False,
         },
@@ -3022,15 +3051,15 @@ def train_online_model(
                         dtype=torch.int64,
                     )
                 )
-                rng_identity = (
-                    str(random_seed["comparison_group"]),
-                    str(random_seed["replicate_id"]),
-                    center,
-                    spec.name,
-                    f"epoch={epoch}",
-                    f"view_execution_step={next_execution_step}",
-                    f"exposure={exposure_name}",
-                    f"batch_hash_sha256={hash_digest}",
+                rng_identity = _method_rng_identity(
+                    comparison_group=str(random_seed["comparison_group"]),
+                    replicate_id=int(random_seed["replicate_id"]),
+                    center=center,
+                    model_name=spec.name,
+                    epoch=epoch,
+                    batch_hash_sha256=hash_digest,
+                    exposure_name=exposure_name,
+                    composition_index=composition_index,
                 )
                 trace_input_payload = json.dumps(
                     {

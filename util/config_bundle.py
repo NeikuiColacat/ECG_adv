@@ -19,6 +19,18 @@ CONFIG_SECTION_NAMES = {
     "local",
     "train",
 }
+SNAPSHOT_ONLY_CLOSURE_MODES = frozenset(
+    {"snapshot_only", "managed_run_snapshots_and_sha256"}
+)
+DECLARED_REFERENCE_KEY_PATHS = (
+    ("metadata", "random_seed_file"),
+    ("method", "random_seed_file"),
+    ("random_seed", "file"),
+    ("corruption", "operators_config"),
+    ("corruption", "random_seed_file"),
+    ("corruption_chains", "operator_config"),
+    ("label_mapping_file",),
+)
 
 
 def resolve_entry_config_path(path: str | Path) -> Path:
@@ -78,35 +90,62 @@ def resolve_config_reference(
     if not isinstance(raw, str) or not raw:
         raise ValueError(f"{description} must be a non-empty path")
     candidate = Path(raw).expanduser()
+    root = config_bundle_root(owner_config_path, config_root=config_root)
     if candidate.is_absolute():
-        resolved = candidate.resolve()
-    else:
-        root = config_bundle_root(owner_config_path, config_root=config_root)
-        resolved = (root / candidate).resolve()
-        try:
-            resolved.relative_to(root)
-        except ValueError:
-            raise ValueError(
-                f"{description} escapes config bundle {root}: {raw}"
-            ) from None
+        raise ValueError(
+            f"{description} must be relative to config bundle {root}: {raw}"
+        )
+    resolved = (root / candidate).resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError:
+        raise ValueError(
+            f"{description} escapes config bundle {root}: {raw}"
+        ) from None
     if must_exist and not resolved.is_file():
         raise FileNotFoundError(f"{description} not found: {resolved}")
     return resolved
 
 
-def _yaml_references(value: Any) -> list[str]:
+def _nested_value(payload: dict[str, Any], keys: tuple[str, ...]) -> Any:
+    value: Any = payload
+    for key in keys:
+        if not isinstance(value, dict):
+            return None
+        value = value.get(key)
+    return value
+
+
+def _declared_yaml_references(payload: dict[str, Any]) -> tuple[str, ...]:
+    """Return only schema-owned YAML references, never YAML-looking prose."""
+
+    if payload.get("config_closure") in SNAPSHOT_ONLY_CLOSURE_MODES:
+        return ()
     references: list[str] = []
-    if isinstance(value, dict):
-        if value.get("config_closure") == "snapshot_only":
-            return references
-        for child in value.values():
-            references.extend(_yaml_references(child))
-    elif isinstance(value, (list, tuple)):
-        for child in value:
-            references.extend(_yaml_references(child))
-    elif isinstance(value, str) and Path(value).suffix.lower() in {".yaml", ".yml"}:
-        references.append(value)
-    return references
+    declared = payload.get("references")
+    if isinstance(declared, dict):
+        for value in declared.values():
+            raw = value.get("path") if isinstance(value, dict) else value
+            if isinstance(raw, str):
+                references.append(raw)
+    resources = payload.get("resources")
+    if isinstance(resources, dict):
+        for resource in resources.values():
+            if not isinstance(resource, dict):
+                continue
+            if resource.get("type") == "config_reference":
+                raw = resource.get("path")
+                if isinstance(raw, str):
+                    references.append(raw)
+            if resource.get("type") == "isolated_torch_generator":
+                raw = resource.get("seed_config")
+                if isinstance(raw, str):
+                    references.append(raw)
+    for keys in DECLARED_REFERENCE_KEY_PATHS:
+        raw = _nested_value(payload, keys)
+        if isinstance(raw, str):
+            references.append(raw)
+    return tuple(dict.fromkeys(references))
 
 
 def resolve_yaml_config_closure(
@@ -131,7 +170,7 @@ def resolve_yaml_config_closure(
         payload = yaml.safe_load(path.read_text(encoding="utf-8"))
         if not isinstance(payload, dict):
             raise ValueError(f"config closure YAML must be a mapping: {path}")
-        for raw_reference in _yaml_references(payload):
+        for raw_reference in _declared_yaml_references(payload):
             referenced = resolve_config_reference(
                 raw_reference,
                 owner_config_path=path,

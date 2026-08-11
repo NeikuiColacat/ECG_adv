@@ -1,5 +1,5 @@
-schema_version: 2
-updated: 2026-08-06
+schema_version: 3
+updated: 2026-08-11
 purpose: >
   Separate the current prospective manual-refactor recipe from historical
   trusted evidence. A launch config is not evidence by itself.
@@ -17,6 +17,7 @@ evidence_policy:
     - report_mapping_hash_and_reference_exclusion_with_every_main_table
     - report_backbones_separately_before_cross_backbone_summary
     - retain_all_zero_kept_only_as_secondary_audit_view
+    - never_use_legacy_accepted_subset_lhat_raw_diagnostics_as_all_candidate_evidence
 
 data_contract:
   source_dataset: ptbxl_super5
@@ -122,21 +123,64 @@ active_development_mainline:
       full_method: [0.9144271304, 0.7152661313, 0.8924564865, 0.6775164888]
       full_minus_locked_direct_pp: [0.413595, 1.813045, 3.926709, 6.634015]
       vae_matched_increment_pp: [0.297313, 0.784213, 0.026149, 0.270849]
+  diagnostic_integrity:
+    status: legacy_accepted_subset_quarantined
+    cause: accepted_mask_applied_before_diagnostic_persistence
+    all_candidate_raw_diagnostics:
+      availability: unavailable
+      backfill_from_existing_artifacts: false
+      required_evidence: post_fix_run_with_all_candidate_diagnostics
+    legacy_values_valid_only_as: conditional_on_eventual_contract_and_quality_acceptance
+    unaffected_evidence:
+      - training_behavior
+      - checkpoints
+      - clean_and_pn2021c_metrics
+      - candidate_acceptance_counts
+    immutable_legacy_presentations:
+      - agent_workspace/performance_summary_20260727/aligned_targetonly_augmix_lhat_lock_20260804.json
+      - agent_workspace/performance_summary_20260727/aligned_targetonly_augmix_lhat_report_20260804.html
+    corrected_presentations:
+      - docs/refactor_cleanup/pipeline_reproduction_log_20260806.md
+    immutable_artifact_policy: retain_bytes_and_supersede_diagnostic_claims_in_registry
   diagnostics:
     efficientnet1dv2:
-      raw_search_sample_anyflip_asr: 0.6099240054
-      contracted_training_view_anyflip_asr: 0.0
-      acceptance_rate: 0.9174529918
-      selected_t_mean: 0.6177843909
-      contracted_bce_gain_mean: 0.0613324055
-      decoded_invalid_rate_max: 0.0
+      candidate_eligible:
+        sample_count: 43769
+        accepted_training_view_count: 40156
+        acceptance_rate: 0.9174529918
+      accepted_training_view:
+        sample_count: 40156
+        contracted_sample_anyflip_asr: 0.0
+        selected_t_mean: 0.6177843909
+        contracted_bce_gain_mean: 0.0613324055
+      all_candidate_raw_search:
+        availability: unavailable
+        sample_anyflip_asr: null
+        decoded_invalid_rate_max: null
+      legacy_accepted_subset:
+        sample_count: 40156
+        raw_search_sample_anyflip_asr: 0.6099240054
+        raw_decoded_invalid_rate_max: 0.0
+        use: audit_only_not_all_candidate_mechanism_evidence
     ecgfounder:
-      raw_search_sample_anyflip_asr: 0.6103550803
-      contracted_training_view_anyflip_asr: 0.0
-      acceptance_rate: 0.9264669820
-      selected_t_mean: 0.5906186191
-      contracted_bce_gain_mean: 0.0266305010
-      decoded_invalid_rate_max: 0.0
+      candidate_eligible:
+        sample_count: 57090
+        accepted_training_view_count: 52892
+        acceptance_rate: 0.9264669820
+      accepted_training_view:
+        sample_count: 52892
+        contracted_sample_anyflip_asr: 0.0
+        selected_t_mean: 0.5906186191
+        contracted_bce_gain_mean: 0.0266305010
+      all_candidate_raw_search:
+        availability: unavailable
+        sample_anyflip_asr: null
+        decoded_invalid_rate_max: null
+      legacy_accepted_subset:
+        sample_count: 52892
+        raw_search_sample_anyflip_asr: 0.6103550803
+        raw_decoded_invalid_rate_max: 0.0
+        use: audit_only_not_all_candidate_mechanism_evidence
   evidence:
     machine_lock:
       path: agent_workspace/performance_summary_20260727/aligned_targetonly_augmix_lhat_lock_20260804.json
@@ -191,12 +235,24 @@ active_development_mainline:
         cpsc_2018: [0.8794135522, 0.6614444395, 0.8582636606, 0.6218797973]
         georgia: [0.8077448244, 0.5633308784, 0.7991911367, 0.5468897587]
       diagnostics:
-        raw_search_sample_anyflip_asr: 0.6093945907
-        contracted_training_view_anyflip_asr: 0.0
-        candidate_eligible_acceptance_rate: 0.9117183395
-        contracted_bce_gain_mean: 0.0612304290
-        selected_t_mean: 0.6166207242
-        decoded_invalid_rate_max: 0.0
+        candidate_eligible:
+          sample_count: 43769
+          accepted_training_view_count: 39905
+          acceptance_rate: 0.9117183395
+        accepted_training_view:
+          sample_count: 39905
+          contracted_sample_anyflip_asr: 0.0
+          selected_t_mean: 0.6166207242
+          contracted_bce_gain_mean: 0.0612304290
+        all_candidate_raw_search:
+          availability: unavailable
+          sample_anyflip_asr: null
+          decoded_invalid_rate_max: null
+        legacy_accepted_subset:
+          sample_count: 39905
+          raw_search_sample_anyflip_asr: 0.6093945907
+          raw_decoded_invalid_rate_max: 0.0
+          use: audit_only_not_all_candidate_mechanism_evidence
       checkpoint_sha256_by_center:
         ningbo: 5a09bfb514704ca79a59d9ace31c16c965f3cb0f669869db4a4a64de45cf1049
         chapman_shaoxing: 9d049fea575de85ebd0e05b32d8f0a5bae40b1e0e06caa7604ed7390c0bf820e
@@ -216,12 +272,24 @@ active_development_mainline:
         cpsc_2018: [0.9219449476, 0.7287272048, 0.8937960555, 0.6745135833]
         georgia: [0.8538675773, 0.6343945509, 0.8309816963, 0.5977159570]
       diagnostics:
-        raw_search_sample_anyflip_asr: 0.6030093935
-        contracted_training_view_anyflip_asr: 0.0
-        candidate_eligible_acceptance_rate: 0.9226834822
-        contracted_bce_gain_mean: 0.0255567524
-        selected_t_mean: 0.5848726175
-        decoded_invalid_rate_max: 0.0
+        candidate_eligible:
+          sample_count: 57090
+          accepted_training_view_count: 52676
+          acceptance_rate: 0.9226834822
+        accepted_training_view:
+          sample_count: 52676
+          contracted_sample_anyflip_asr: 0.0
+          selected_t_mean: 0.5848726175
+          contracted_bce_gain_mean: 0.0255567524
+        all_candidate_raw_search:
+          availability: unavailable
+          sample_anyflip_asr: null
+          decoded_invalid_rate_max: null
+        legacy_accepted_subset:
+          sample_count: 52676
+          raw_search_sample_anyflip_asr: 0.6030093935
+          raw_decoded_invalid_rate_max: 0.0
+          use: audit_only_not_all_candidate_mechanism_evidence
       checkpoint_sha256_by_center:
         ningbo: b153619fc35b02786452bd41672cf4b31c90691b4a538b17cb84031cc30ee0ec
         chapman_shaoxing: b1ea4bcc93e9ec69c4d96959693a38468c7f9e5782a27c95802aa5eea155ba1d
@@ -243,7 +311,12 @@ active_development_mainline:
     - measured_corruption_scope_is_known_pn2021c_depth2_plus_depth3
     - backbone_optimizer_hyperparameters_are_not_identical
     - supervised_logit_anchor_weight_is_backbone_specific
-    - contracted_training_asr_is_zero_by_design_and_requires_joint_diagnostics
+    - accepted_training_view_asr_is_zero_by_contract_not_all_candidate_attack_strength
+    - pre_20260811_lhat_raw_diagnostics_are_conditioned_on_eventual_acceptance
+    - rejected_candidate_raw_diagnostic_tensors_were_not_persisted_and_cannot_be_backfilled
+    - all_candidate_raw_asr_and_invalid_decode_evidence_requires_a_post_fix_run
+    - retained_lock_and_report_contain_superseded_all_candidate_diagnostic_language
+    - performance_metrics_checkpoints_and_evaluation_hashes_are_unaffected_by_the_logging_bug
     - clean_gain_over_locked_direct_is_below_two_pp_on_both_backbones
   required_before_paper_promotion:
     - freeze_recipe_without_further_heldout_feedback

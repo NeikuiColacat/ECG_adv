@@ -21,6 +21,7 @@ from util.config_bundle import (  # noqa: E402
     config_bundle_root,
     resolve_config_reference,
     resolve_entry_config_path,
+    resolve_yaml_config_closure,
 )
 from util.run_record import (  # noqa: E402
     RunRecorder,
@@ -29,27 +30,41 @@ from util.run_record import (  # noqa: E402
 )
 
 
+@dataclass(frozen=True)
+class EntrypointSpec:
+    script: Path
+    expected_result_name: str
+    expected_result_type: str
+
+
+def _entrypoint(script: str, result: str, result_type: str) -> EntrypointSpec:
+    return EntrypointSpec(PROJECT_ROOT / "boot_scripts" / script, result, result_type)
+
+
 ENTRYPOINTS = {
-    "train_ptbxl_effnet": PROJECT_ROOT / "boot_scripts" / "train_ptbxl_effnet.py",
-    "train_ptbxl_ecgfounder": (
-        PROJECT_ROOT / "boot_scripts" / "train_ptbxl_ecgfounder.py"
+    "train_ptbxl_effnet": _entrypoint("train_ptbxl_effnet.py", "train_result.json", "train_result"),
+    "train_ptbxl_ecgfounder": _entrypoint(
+        "train_ptbxl_ecgfounder.py", "train_result.json", "train_result"
     ),
-    "train_pn2021": PROJECT_ROOT / "boot_scripts" / "train_pn2021.py",
-    "tune_pn2021_direct": (
-        PROJECT_ROOT / "boot_scripts" / "tune_pn2021_direct.py"
+    "train_pn2021": _entrypoint("train_pn2021.py", "train_result.json", "train_result"),
+    "tune_pn2021_direct": _entrypoint("tune_pn2021_direct.py", "train_result.json", "train_result"),
+    "select_pn2021_direct": _entrypoint(
+        "select_pn2021_direct.py",
+        "direct_baseline_selection.json",
+        "pooled_selection",
     ),
-    "select_pn2021_direct": (
-        PROJECT_ROOT / "boot_scripts" / "select_pn2021_direct.py"
+    "refit_pn2021_direct": _entrypoint(
+        "refit_pn2021_direct.py", "refit_contract.json", "refit_contract"
     ),
-    "refit_pn2021_direct": (
-        PROJECT_ROOT / "boot_scripts" / "refit_pn2021_direct.py"
+    "evaluate_pn2021": _entrypoint(
+        "evaluate_pn2021.py", "evaluation_result.json", "evaluation_result"
     ),
-    "evaluate_pn2021": PROJECT_ROOT / "boot_scripts" / "evaluate_pn2021.py",
 }
 LAUNCHER_OWNED_FLAGS = frozenset(
     {"--config", "--config-root", "--output-dir", "--dry-run"}
 )
 REMOVED_ENTRYPOINT_FLAGS = frozenset({"--fixed20-cycles"})
+CONFIG_REFERENCE_FLAGS = frozenset({"--method-config"})
 
 
 def _mapping(value: Any, description: str) -> dict[str, Any]:
@@ -63,61 +78,42 @@ def _yaml_mapping(path: Path, description: str) -> dict[str, Any]:
     return _mapping(payload, description)
 
 
-def _yaml_references(value: Any) -> list[str]:
-    references: list[str] = []
-    if isinstance(value, dict):
-        if value.get("config_closure") == "snapshot_only":
-            return references
-        for child in value.values():
-            references.extend(_yaml_references(child))
-    elif isinstance(value, (list, tuple)):
-        for child in value:
-            references.extend(_yaml_references(child))
-    elif isinstance(value, str) and Path(value).suffix.lower() in {".yaml", ".yml"}:
-        references.append(value)
-    return references
-
-
 def _config_closure(
     *,
     experiment_path: Path,
     entry_config_path: Path,
+    entry_arguments: Sequence[str],
     config_root: Path,
 ) -> tuple[tuple[Path, str], ...]:
-    ordered: list[tuple[Path, str]] = [
-        (experiment_path, "experiment_entry_config"),
-        (entry_config_path, "delegate_entry_config"),
-    ]
-    seen: set[Path] = set()
-    index = 0
-    while index < len(ordered):
-        path, _ = ordered[index]
-        index += 1
-        path = path.resolve()
-        if path in seen:
+    seeds = [experiment_path, entry_config_path]
+    for index, argument in enumerate(entry_arguments):
+        flag, separator, inline_value = argument.partition("=")
+        if flag not in CONFIG_REFERENCE_FLAGS:
             continue
-        seen.add(path)
-        payload = _yaml_mapping(path, f"referenced config {path}")
-        for raw_reference in _yaml_references(payload):
-            referenced = resolve_config_reference(
-                raw_reference,
-                owner_config_path=path,
+        raw = inline_value if separator else (
+            entry_arguments[index + 1] if index + 1 < len(entry_arguments) else None
+        )
+        seeds.append(
+            resolve_config_reference(
+                raw,
+                owner_config_path=experiment_path,
                 config_root=config_root,
-                description=f"YAML reference in {path.name}",
+                description=f"entrypoint argument {flag}",
                 must_exist=True,
             )
-            if referenced not in seen and all(
-                referenced != existing for existing, _ in ordered
-            ):
-                ordered.append((referenced, "referenced_config"))
-    deduplicated: list[tuple[Path, str]] = []
-    emitted: set[Path] = set()
-    for path, role in ordered:
-        resolved = path.resolve()
-        if resolved not in emitted:
-            emitted.add(resolved)
-            deduplicated.append((resolved, role))
-    return tuple(deduplicated)
+        )
+    paths = resolve_yaml_config_closure(seeds, config_root=config_root)
+    return tuple(
+        (
+            path,
+            "experiment_entry_config"
+            if path == experiment_path
+            else "delegate_entry_config"
+            if path == entry_config_path
+            else "referenced_config",
+        )
+        for path in paths
+    )
 
 
 def _validated_arguments(value: Any) -> tuple[str, ...]:
@@ -157,6 +153,8 @@ class ExperimentPlan:
     config_sources: tuple[tuple[Path, str], ...]
     run_dir: Path
     delegate_output_dir: Path
+    expected_result_relative_path: Path
+    expected_result_type: str
     run_dir_preexisting: bool
 
     def delegate_argv(self) -> list[str]:
@@ -198,6 +196,10 @@ class ExperimentPlan:
             ],
             "run_dir": str(self.run_dir),
             "delegate_output_dir": str(self.delegate_output_dir),
+            "expected_result": {
+                "path": self.expected_result_relative_path.as_posix(),
+                "type": self.expected_result_type,
+            },
             "delegate_argv": self.delegate_argv(),
             "run_dir_collision": collision,
             "would_create_directory": not collision,
@@ -257,7 +259,8 @@ def load_experiment_plan(
             f"unsupported manual entrypoint {entrypoint_name!r}; "
             f"expected one of {sorted(ENTRYPOINTS)}"
         )
-    entrypoint_path = ENTRYPOINTS[str(entrypoint_name)].resolve()
+    entrypoint_spec = ENTRYPOINTS[str(entrypoint_name)]
+    entrypoint_path = entrypoint_spec.script.resolve()
     if not entrypoint_path.is_file():
         raise FileNotFoundError(f"manual entrypoint not found: {entrypoint_path}")
 
@@ -289,6 +292,7 @@ def load_experiment_plan(
     closure = _config_closure(
         experiment_path=experiment_path,
         entry_config_path=entry_config_path,
+        entry_arguments=arguments,
         config_root=root,
     )
     return ExperimentPlan(
@@ -303,6 +307,9 @@ def load_experiment_plan(
         config_sources=closure,
         run_dir=resolved_run_dir,
         delegate_output_dir=delegate_output_dir,
+        expected_result_relative_path=delegate_subdir
+        / entrypoint_spec.expected_result_name,
+        expected_result_type=entrypoint_spec.expected_result_type,
         run_dir_preexisting=run_dir_preexisting,
     )
 
@@ -340,6 +347,8 @@ def execute_experiment(
         config_sources=plan.config_sources,
         exact_launcher_argv=launcher_argv,
         exact_delegate_argv=delegate_argv,
+        expected_result_relative_path=plan.expected_result_relative_path,
+        expected_result_type=plan.expected_result_type,
         cwd=PROJECT_ROOT,
     )
     log_path = recorder.run_dir / "logs" / "delegate.log"
@@ -352,8 +361,7 @@ def execute_experiment(
             error=f"{type(exc).__name__}: {exc}",
         )
         raise
-    recorder.finalize(exit_code=exit_code)
-    return exit_code
+    return recorder.finalize(exit_code=exit_code)
 
 
 def build_parser() -> argparse.ArgumentParser:
