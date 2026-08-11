@@ -105,33 +105,6 @@ selection:
   restore_best_at_end: true
   evaluate_test_at_end: true
 
-logging:
-  tensorboard:
-    enabled: true
-    subdir: tensorboard
-    max_queue: 10
-    flush_secs: 30
-    scalars:
-      epoch_metrics: true
-      batch_loss_interval_steps: 20
-    # Source-only PTB-XL training has no online LHAT/AugMix waveform. Online
-    # training profiles may enable this and pass fixed raw-mV probes explicitly.
-    ecg_figures:
-      enabled: false
-      interval_epochs: 5
-      max_samples: 4
-      fixed_hash_ids: []
-      views:
-        - clean
-        - lhat
-        - lhat_difference
-        - augmix
-        - augmix_difference
-      signal_domain: raw_mv
-      save_png: true
-      save_raw_arrays: true
-      raw_arrays_subdir: samples
-
 output:
   # Fallback used when train_model/train_ptbxl is called directly. The two
   # boot scripts use the model-specific output_dir values above.

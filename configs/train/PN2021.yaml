@@ -110,28 +110,6 @@ diagnostics:
     cuda_events: true
     scope: sampled_core_step_excludes_logging
 
-logging:
-  tensorboard:
-    enabled: true
-    subdir: tensorboard
-    max_queue: 10
-    flush_secs: 30
-    scalars:
-      epoch_metrics: true
-      batch_loss_interval_steps: 20
-    ecg_figures:
-      enabled: true
-      interval_epochs: 5
-      epoch_policy: final_only
-      max_samples: 1
-      fixed_hash_ids: []
-      views: ["*"]
-      signal_domain: raw_mv
-      save_png: true
-      tensorboard_image: false
-      save_raw_arrays: true
-      raw_arrays_subdir: samples
-
 output:
   root_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor/pn2021_k500_matched_lr3e5
   if_exists: error

@@ -1,5 +1,5 @@
 schema_version: 3
-updated: 2026-08-11
+updated: 2026-08-12
 purpose: >
   Separate the current prospective manual-refactor recipe from historical
   trusted evidence. A launch config is not evidence by itself.
@@ -191,6 +191,12 @@ active_development_mainline:
     direct_registry:
       path: configs/baselines/pn2021_direct_v1.yaml
       sha256: de95862a7719cc7074480f67ca51fff9b7b641a54b5a96f242d3d89f2fef63dc
+      sha256_scope: historical_run_snapshot
+      snapshot_git:
+        commit: 254c0c80318840430171317c0051497f62232a6e
+        path: configs/baselines/pn2021_direct_v1.yaml
+      current_sha256: 0793916ce428eab64d446278f1bc17162f489820009fbc3cf4f8f4c23ce5abb8
+      current_relation: observer_retirement_metadata_only
     random_seed:
       path: configs/random_seed.yaml
       sha256: 8b337606c43b6fec2959dd185477ce32f48b139f5fce5112ee26efe58eb4bbbc

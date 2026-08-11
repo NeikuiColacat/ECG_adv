@@ -67,7 +67,7 @@ fails closed; pass `--run-dir <new-external-directory>` to start a new run.
 | `models/` | Model contracts, input adaptation, factories, checkpoints, EfficientNet, ECGFounder, and VAE interfaces |
 | `core/` | Typed method graph, AugMix/VAE-LHAT execution, supervised training, and online adaptation |
 | `boot_scripts/` | Thin managed CLI entrypoints; no experiment business logic |
-| `util/` | Augmentations, metrics, evaluation, random identity, run records, TensorBoard, and visualization |
+| `util/` | Augmentations, metrics, evaluation, random identity, and run records |
 | `util/tests/` | CPU contract tests for the retained execution surface |
 | `.codex/skills/` | Repo-tracked, public project procedures for agents; no private session memory |
 | `docs/refactor_cleanup/manual_refactor_keep_manifest.md` | Authoritative keep/delete boundary |

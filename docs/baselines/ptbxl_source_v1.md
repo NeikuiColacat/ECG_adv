@@ -5,9 +5,11 @@
 - Status: `LOCKED`
 - Locked on: `2026-07-17`
 - Machine-readable source of truth: `configs/baselines/ptbxl_source_v1.yaml`
-- Registry SHA256: `27443d14e8184739c15c60e0ffe6f4c87f12642bb725bdca62341a33543e445f`
-- Training config: `configs/train/PTBXL.yaml`
-- Training config SHA256: `ff984500052e0e64e245c68b8c51a1080efd7bd375c70a44dbd49bf9a9cf9f4c`
+- Historical registry SHA256 at lock: `27443d14e8184739c15c60e0ffe6f4c87f12642bb725bdca62341a33543e445f`
+- Current registry SHA256: `e8f1461348e1be35076d175c6151f767e1fb90ed5e5bbebec430b9d8c55f9ea7`
+- Historical training config snapshot: `configs/train/PTBXL.yaml` at commit `254c0c80318840430171317c0051497f62232a6e`
+- Historical training config SHA256: `ff984500052e0e64e245c68b8c51a1080efd7bd375c70a44dbd49bf9a9cf9f4c`
+- Current observer-free replay config SHA256: `85638bbea2c12669dab45973b77223513f5292a11faf12b0c814fe1fe41679c8`
 - Seed config SHA256: `8b337606c43b6fec2959dd185477ce32f48b139f5fce5112ee26efe58eb4bbbc`
 - Class order: `CD,HYP,MI,NORM,STTC`
 - Selection rule: PTB-XL folds 1-8 train, fold 9 macro AUPRC selects
@@ -17,6 +19,10 @@ All later PTB-XL-to-PN2021 experiments must use the registered `best.pt` for
 their model family. `last.pt` and the ECGFounder 10-epoch probe checkpoint are
 not valid source baselines. Replacing either source baseline requires a new
 versioned registry and a new lock log; do not edit this v1 identity in place.
+The current replay config removes only the retired TensorBoard/waveform
+observer. The historical config bytes remain available from the locked Git
+object and each managed run's `configs/train/PTBXL.yaml` snapshot; neither the
+source checkpoint identity nor the scientific training payload was rewritten.
 
 ## Locked checkpoints
 

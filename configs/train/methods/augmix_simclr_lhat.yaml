@@ -179,7 +179,6 @@ contracts:
   quality_rejected_anchor_policy: clean_loss_only
   one_outer_optimizer_step_per_clean_batch: true
   batch_norm_running_stats_policy: family_loss_weighted_once_per_base_batch
-  tensorboard_probe_composition_indices: [0, 10, 19]
   attack_then_contract_version: preflip_maxloss_grid_v1
   complete_k500_base_record_exposure: true
   heldout_target_feedback_allowed: false

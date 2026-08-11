@@ -27,6 +27,9 @@ references:
   source_baseline_registry:
     path: baselines/ptbxl_source_v1.yaml
     sha256: 27443d14e8184739c15c60e0ffe6f4c87f12642bb725bdca62341a33543e445f
+    sha256_scope: historical_run_snapshot
+    current_sha256: e8f1461348e1be35076d175c6151f767e1fb90ed5e5bbebec430b9d8c55f9ea7
+    current_relation: observer_retirement_only_source_checkpoint_identity_unchanged
   random_seed_config:
     path: random_seed.yaml
     sha256: 8b337606c43b6fec2959dd185477ce32f48b139f5fce5112ee26efe58eb4bbbc
@@ -549,9 +552,12 @@ comparison_controls:
       amp_dtype: bfloat16
     refit_config:
       path: train/PN2021_fixed20.yaml
-      current_sha256: 3f482f9684d8a010a899243a9b3237bffbe3300f4c41430be2c4c590df715f86
+      historical_refit_sha256: 3f482f9684d8a010a899243a9b3237bffbe3300f4c41430be2c4c590df715f86
       selection_snapshot_sha256: 3f482f9684d8a010a899243a9b3237bffbe3300f4c41430be2c4c590df715f86
-      match_policy: exact_sha256
+      historical_match_policy: exact_sha256
+      pre_observer_retirement_live_sha256: c2b7531d49a170a0a53c6fe72f94a1b0b679619f9d2db1f3bff1e612b0a852da
+      live_current_sha256: a9755cd39b2c8fd24faaa149e077ff21baf445f820ce9468677742b246529d70
+      live_change_from_pre_observer_retirement: observer_block_removed_only
     selection:
       run_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_pn2021_ecgfounder_direct_lr3e5_control_selection
       artifact_path: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_pn2021_ecgfounder_direct_lr3e5_control_selection/training/direct_baseline_selection.json
@@ -628,9 +634,12 @@ comparison_controls:
       amp_dtype: bfloat16
     refit_config:
       path: train/PN2021.yaml
-      current_sha256: 66c41648b6374ae4082b04b6bf3f4e167134dd665b24ba93ba17c4dbcfd2b9ae
+      historical_refit_sha256: 66c41648b6374ae4082b04b6bf3f4e167134dd665b24ba93ba17c4dbcfd2b9ae
       selection_snapshot_sha256: 2deb6f0fd9f07924297cae58dbb2ce774b92643b3e1874f6948a3337a3f85e3a
-      match_policy: scientific_payload_except_profile_status_diagnostics_logging_output
+      historical_match_policy: scientific_payload_except_profile_status_diagnostics_logging_output
+      pre_observer_retirement_live_sha256: ce763ec1814c33656bc5460ec2436e9f5a777fe68173e1b1704cac2bf8785c4e
+      live_current_sha256: bfd649ffd21b49cfaaca955ec5471aeb09cbe3ddc6ff8e22c070d27fda8cf1d8
+      live_change_from_pre_observer_retirement: observer_block_removed_only
     selection:
       run_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_pn2021_ecgfounder_latent_threechain_residual_depth23_aug075_lr3e5_selection
       artifact_path: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_pn2021_ecgfounder_latent_threechain_residual_depth23_aug075_lr3e5_selection/training/latent_threechain_residual_depth23_aug075_lr3e5_selection.json

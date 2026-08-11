@@ -8,9 +8,6 @@ import sys
 from pathlib import Path
 from typing import Sequence
 
-from torch.utils.tensorboard import SummaryWriter
-
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -60,50 +57,6 @@ def _center_run_dirs(values: Sequence[str], centers: Sequence[str]) -> dict[str,
     return result
 
 
-def _write_selection_tensorboard(result: dict, output_dir: Path) -> Path:
-    """Publish the pooled curve without mislabeling a per-center last epoch."""
-
-    tensorboard_dir = output_dir / "tensorboard"
-    writer = SummaryWriter(log_dir=str(tensorboard_dir))
-    try:
-        for item in result["per_epoch"]:
-            epoch = int(item["epoch"])
-            writer.add_scalar(
-                "selection/clean_macro_auprc",
-                float(item["clean"]["macro_auprc"]),
-                epoch,
-            )
-            writer.add_scalar(
-                "selection/robust_macro_auprc",
-                float(item["robust"]["macro_auprc"]),
-                epoch,
-            )
-            writer.add_scalar("selection/score", float(item["score"]), epoch)
-            writer.add_scalar(
-                "selection/clean_floor", float(item["clean_floor"]), epoch
-            )
-            writer.add_scalar(
-                "selection/eligible", 1.0 if item["eligible"] else 0.0, epoch
-            )
-        selected_epoch = result.get("selected_epoch")
-        if selected_epoch is not None:
-            selected_epoch = int(selected_epoch)
-            writer.add_scalar(
-                "selection/global_selected_epoch", selected_epoch, selected_epoch
-            )
-        writer.add_text(
-            "selection/protocol",
-            "Four validation100 sets are pooled for clean and separately for "
-            "each of twenty frozen corruptions. Score is 0.5 clean + 0.5 "
-            "mean corruption AUPRC with a clean minus-1pp floor.",
-            0 if selected_epoch is None else selected_epoch,
-        )
-        writer.flush()
-    finally:
-        writer.close()
-    return tensorboard_dir
-
-
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     config = load_direct_selection_config(
@@ -148,9 +101,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         config_path=config.path,
         config_root=args.config_root,
         output_path=output_dir,
-    )
-    result["tensorboard_dir"] = str(
-        _write_selection_tensorboard(result, output_dir)
     )
     print(json.dumps(result, indent=2, ensure_ascii=False, sort_keys=True))
     status = str(result.get("status", ""))

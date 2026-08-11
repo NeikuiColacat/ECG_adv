@@ -55,10 +55,6 @@ from util.config_bundle import (
     resolve_entry_config_path,
 )
 from util.random_seed import make_torch_generator, seed_process
-from util.tensorboard_logging import (
-    build_tensorboard_monitor,
-    parse_tensorboard_logging_config,
-)
 
 if TYPE_CHECKING:
     from core.latent_pool import LatentPool
@@ -377,12 +373,6 @@ def _method_exposure_steps(
         raise ValueError("fixed20 method must expose every clean record exactly once")
     if method.contracts.get("corrupted_exposures_per_base_record") != 20:
         raise ValueError("fixed20 method must expose all twenty corruptions")
-    if tuple(method.contracts.get("tensorboard_probe_composition_indices", ())) != (
-        0,
-        10,
-        19,
-    ):
-        raise ValueError("fixed20 TensorBoard probes must be compositions 0, 10 and 19")
     names = {term.name for term in method.objective.terms}
     auxiliary_terms: tuple[str, ...] = ()
     if policy == FIXED20_EXPOSURE_POLICY:
@@ -886,7 +876,6 @@ def load_online_train_config(
         "data",
         "training",
         "diagnostics",
-        "logging",
         "output",
     }
     if set(root_payload) != expected_root_keys:
@@ -1136,9 +1125,6 @@ def load_online_train_config(
             "performance_timing.scope must disclose sampled-step or fixed20 "
             "base-group timing and logging exclusion"
         )
-    parse_tensorboard_logging_config(
-        _mapping(root_payload.get("logging"), "logging")
-    )
     output = _mapping(root_payload.get("output"), "output")
     if output.get("if_exists") != "error":
         raise ValueError("online training may not overwrite an existing run")
@@ -2159,8 +2145,6 @@ def _run_augmix_simclr_stage1(
     normalization_epsilon: float,
     amp_enabled: bool,
     amp_dtype: torch.dtype,
-    monitor: Any | None = None,
-    logging_interval_steps: int = 20,
 ) -> dict[str, Any]:
     """Run the frozen K500-only AugMix-SimCLR representation stage."""
 
@@ -2309,33 +2293,6 @@ def _run_augmix_simclr_stage1(
             losses += torch.stack(
                 (total.detach(), simclr.detach(), anchor.detach())
             ).to(dtype=torch.float64)
-            stage1_step = step + 1
-            if (
-                monitor is not None
-                and stage1_step % int(logging_interval_steps) == 0
-            ):
-                total_value, simclr_value, anchor_value = (
-                    torch.stack(
-                        (
-                            total.detach().float(),
-                            simclr.detach().float(),
-                            anchor.detach().float(),
-                        )
-                    )
-                    .cpu()
-                    .tolist()
-                )
-                monitor.log_train_step(
-                    loss=float(total_value),
-                    learning_rate=float(optimizer.param_groups[0]["lr"]),
-                    global_step=stage1_step,
-                    loss_components={
-                        "stage1_total": float(total_value),
-                        "stage1_simclr": float(simclr_value),
-                        "stage1_logit_anchor": float(anchor_value),
-                    },
-                    performance=None,
-                )
     finally:
         for parameter, requires_grad in head_states:
             parameter.requires_grad_(requires_grad)
@@ -2668,12 +2625,6 @@ def train_online_model(
     timing_config = config.payload["diagnostics"]["performance_timing"]
     timing_enabled = bool(timing_config["enabled"])
     timing_interval = int(timing_config["interval_steps"])
-    tensorboard_step_interval = int(
-        config.payload["logging"]["tensorboard"]["scalars"][
-            "batch_loss_interval_steps"
-        ]
-    )
-    monitor = build_tensorboard_monitor(config.payload["logging"], output)
     staged_method = method.profile_name == "augmix_simclr_lhat"
     stage1_summary: dict[str, Any] | None = None
     stage2_teacher_cache: dict[str, torch.Tensor] | None = None
@@ -2693,8 +2644,6 @@ def train_online_model(
             normalization_epsilon=epsilon,
             amp_enabled=amp_enabled,
             amp_dtype=amp_dtype,
-            monitor=monitor,
-            logging_interval_steps=tensorboard_step_interval,
         )
         stage1_checkpoint = checkpoint_dir / "stage1.pt"
         temporary_stage1 = stage1_checkpoint.with_name(
@@ -2820,7 +2769,6 @@ def train_online_model(
             }
         ),
         "training_partition": train_partition,
-        "logging": monitor.describe(),
         "epoch_evaluator": (
             None
             if epoch_evaluator is None
@@ -3279,114 +3227,25 @@ def train_online_model(
                         },
                     )
 
-                write_tensorboard_step = (
-                    view_execution_step % tensorboard_step_interval == 0
-                )
                 write_diagnostic_step = (
                     view_execution_step % diagnostics_interval == 0
                 )
                 raw_scalars: dict[str, float] = {}
                 weighted_scalars: dict[str, float] = {}
-                objective_total_scalar: float | None = None
                 observer_timer = (
                     timer
                     if fixed20_exposure and timer is not None and not group_end
                     else None
                 )
                 with _excluded_observer_work(observer_timer):
-                    if write_tensorboard_step or write_diagnostic_step:
-                        (
-                            objective_total_scalar,
-                            raw_scalars,
-                            weighted_scalars,
-                        ) = _objective_host_scalars(objective)
-                        objective_total_scalar *= family_loss_scale
+                    if write_diagnostic_step:
+                        _, raw_scalars, weighted_scalars = _objective_host_scalars(
+                            objective
+                        )
                         weighted_scalars = {
                             name: value * family_loss_scale
                             for name, value in weighted_scalars.items()
                         }
-                    if write_tensorboard_step:
-                        if objective_total_scalar is None:
-                            raise RuntimeError(
-                                "sampled objective scalar is unavailable"
-                            )
-                        step_components = {
-                            **raw_scalars,
-                            **{
-                                f"weighted_{name}": value
-                                for name, value in weighted_scalars.items()
-                            },
-                        }
-                        monitor.log_train_step(
-                            loss=objective_total_scalar,
-                            learning_rate=learning_rate,
-                            global_step=(
-                                int(resolved["stage1_steps"])
-                                + view_execution_step
-                                if staged_method
-                                else view_execution_step
-                            ),
-                            loss_components=step_components,
-                            performance=performance,
-                        )
-
-                    probe_logger = getattr(monitor, "log_ecg_views", None)
-                    probe_preflight = getattr(
-                        monitor, "should_log_ecg_views", None
-                    )
-                    fixed20_probe_indices = tuple(
-                        int(value)
-                        for value in method.contracts.get(
-                            "tensorboard_probe_composition_indices", ()
-                        )
-                    )
-                    probe_allowed = (
-                        not fixed20_exposure
-                        or exposure_name == "auxiliary"
-                        or composition_index == -1
-                        or composition_index in fixed20_probe_indices
-                    )
-                    probe_id = (
-                        "default"
-                        if not fixed20_exposure
-                        else (
-                            "auxiliary"
-                            if exposure_name == "auxiliary"
-                            else (
-                                "clean"
-                                if composition_index == -1
-                                else f"composition_{int(composition_index):02d}"
-                            )
-                        )
-                    )
-                    if callable(probe_logger) and probe_allowed:
-                        is_final_epoch = epoch == epochs
-                        for batch_position, hash_id in enumerate(hashes):
-                            if callable(probe_preflight) and not probe_preflight(
-                                hash_id=hash_id,
-                                epoch=epoch,
-                                probe_id=probe_id,
-                                is_final_epoch=is_final_epoch,
-                            ):
-                                continue
-                            probe_logger(
-                                hash_id=hash_id,
-                                epoch=epoch,
-                                sampling_rate_hz=100,
-                                raw_views=generated.probe_views(batch_position),
-                                probe_id=probe_id,
-                                is_final_epoch=is_final_epoch,
-                                metadata={
-                                    "center": center,
-                                    "model": spec.name,
-                                    "method_id": method.profile_name,
-                                    "method_profile_sha256": (
-                                        method.profile_sha256
-                                    ),
-                                    "exposure": exposure_name,
-                                    "composition_index": composition_index,
-                                },
-                            )
 
                 epoch_samples += batch_size
                 epoch_loss_sum += scaled_objective.detach() * batch_size
@@ -3802,8 +3661,6 @@ def train_online_model(
                     "epochs": history,
                 },
             )
-            monitor.log_epoch(epoch_record, is_selected=(epoch == epochs))
-
         if not last_checkpoint.is_file():
             raise RuntimeError("online training did not produce a final checkpoint")
         last_checkpoint_sha256 = sha256_file(last_checkpoint)
@@ -3831,7 +3688,6 @@ def train_online_model(
     finally:
         if batch_norm_plan is not None:
             batch_norm_plan.restore()
-        monitor.close()
 
 
 __all__ = [

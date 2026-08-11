@@ -129,7 +129,6 @@ contracts:
   objective_term_routing:
     clean_exposure: clean_bce
     corrupted_exposure: corrupted_bce
-  tensorboard_probe_composition_indices: [0, 10, 19]
   family_loss_weights:
     clean: 0.5
     corrupted_total: 0.5

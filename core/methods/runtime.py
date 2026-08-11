@@ -237,23 +237,6 @@ class GeneratedMethodBatch:
         assert isinstance(clean, WaveformView)
         return clean.batch_size
 
-    def probe_views(self, batch_position: int) -> dict[str, torch.Tensor]:
-        """Return only valid method views for one raw-mV visualization probe."""
-
-        if not 0 <= int(batch_position) < self.batch_size:
-            raise IndexError("probe batch_position is out of range")
-        result: dict[str, torch.Tensor] = {}
-        for output_name, value in self.bundle.values.items():
-            if not isinstance(value, WaveformView):
-                continue
-            if not bool(value.valid_mask[int(batch_position)].item()):
-                continue
-            name = output_name.removesuffix("_view")
-            result[name] = value.waveform[int(batch_position)]
-        if "clean" not in result:
-            raise RuntimeError("method batch has no valid clean probe view")
-        return result
-
 
 class MethodViewRuntime:
     """One compiled profile with resolved, code-owned node adapters."""

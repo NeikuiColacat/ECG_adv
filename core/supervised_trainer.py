@@ -39,10 +39,6 @@ from util.evaluation.metrics import (
     compute_classification_metrics,
 )
 from util.random_seed import seed_process
-from util.tensorboard_logging import (
-    build_tensorboard_monitor,
-    parse_tensorboard_logging_config,
-)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -120,7 +116,6 @@ class TrainingResult:
     model_identity: dict[str, Any]
     config_identity: dict[str, Any]
     seed_identity: dict[str, Any]
-    logging_identity: dict[str, Any]
     input_adapter_identity: dict[str, Any] | None = None
 
     def describe(self) -> dict[str, Any]:
@@ -159,7 +154,6 @@ class TrainingResult:
             "model": self.model_identity,
             "config": self.config_identity,
             "seed": self.seed_identity,
-            "logging": self.logging_identity,
             "selection": {
                 "policy": selection_policy,
                 "partition": partition,
@@ -244,9 +238,7 @@ def load_train_config(
     random_seed = _section(payload, "random_seed")
     training = _section(payload, "training")
     selection = _section(payload, "selection")
-    logging = _section(payload, "logging")
     output = _section(payload, "output")
-    parse_tensorboard_logging_config(logging)
     _parse_validation_prediction_config(payload)
 
     batch_keys = _section(training, "batch_keys")
@@ -459,7 +451,7 @@ def _run_epoch(
     optimizer: torch.optim.Optimizer | None = None,
     scaler: torch.cuda.amp.GradScaler | None = None,
     gradient_clip_norm: float = 1.0,
-    on_optimizer_step: Callable[[float], None] | None = None,
+    on_optimizer_step: Callable[[], None] | None = None,
     prediction_callback: (
         Callable[[np.ndarray, np.ndarray, tuple[str, ...], Mapping[str, Any]], None]
         | None
@@ -519,7 +511,7 @@ def _run_epoch(
                     torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clip_norm)
                     optimizer.step()
                 if on_optimizer_step is not None:
-                    on_optimizer_step(float(loss.detach()))
+                    on_optimizer_step()
             batch_size = int(inputs.shape[0])
             total_loss += float(loss.detach()) * batch_size
             total_samples += batch_size
@@ -1086,242 +1078,227 @@ def train_model(
         )
     input_key = str(training["batch_keys"]["input"])
     target_key = str(training["batch_keys"]["target"])
-    monitor = build_tensorboard_monitor(config.payload["logging"], output)
-    logging_identity = monitor.describe()
-    try:
-        model_identity = _describe_model(model, spec, trainable)
-        train_dataloader_description = _describe_dataloader(train_dataloader)
-        validation_dataloader_description = (
-            None
-            if validation_dataloader is None
-            else _describe_dataloader(validation_dataloader)
-        )
-        test_dataloader_description = (
-            None if test_dataloader is None else _describe_dataloader(test_dataloader)
-        )
-        validation_identity = (
-            _validation_identity_from_dataloader(validation_dataloader)
-            if validation_prediction_dir is not None
-            else None
-        )
-        comparison_identity = (
-            _comparison_identity(
-                model_identity=model_identity,
-                config=config,
-                resolved_training=resolved_training,
-                pos_weight=resolved_pos_weight,
-                train_dataloader_identity=_comparison_dataloader_identity(
-                    train_dataloader
-                ),
-                validation_dataloader_identity=_comparison_dataloader_identity(
-                    validation_dataloader
-                ),
-                input_adapter_identity=input_adapter_identity,
-            )
-            if validation_prediction_dir is not None
-            else None
-        )
-        run_identity = {
-            "config": config.describe(),
-            "seed": seed.describe(),
-            "model": model_identity,
-            "device": str(resolved_device),
-            "output_dir": str(output),
-            "logging": logging_identity,
-            "training_parameters": {
-                "resolved": resolved_training,
-                "explicit_overrides": supplied_training,
-            },
-            "pos_weight": (
-                None
-                if resolved_pos_weight is None
-                else resolved_pos_weight.cpu().tolist()
+    model_identity = _describe_model(model, spec, trainable)
+    train_dataloader_description = _describe_dataloader(train_dataloader)
+    validation_dataloader_description = (
+        None
+        if validation_dataloader is None
+        else _describe_dataloader(validation_dataloader)
+    )
+    test_dataloader_description = (
+        None if test_dataloader is None else _describe_dataloader(test_dataloader)
+    )
+    validation_identity = (
+        _validation_identity_from_dataloader(validation_dataloader)
+        if validation_prediction_dir is not None
+        else None
+    )
+    comparison_identity = (
+        _comparison_identity(
+            model_identity=model_identity,
+            config=config,
+            resolved_training=resolved_training,
+            pos_weight=resolved_pos_weight,
+            train_dataloader_identity=_comparison_dataloader_identity(
+                train_dataloader
             ),
-            "dataloaders": {
-                "train": train_dataloader_description,
-                "validation": validation_dataloader_description,
-                "test": test_dataloader_description,
-            },
-            "validation_predictions": {
-                **validation_prediction_config,
-                "output_dir": (
-                    None
-                    if validation_prediction_dir is None
-                    else str(validation_prediction_dir)
-                ),
-                "validation_identity": validation_identity,
-                "comparison_identity": comparison_identity,
-            },
-        }
-        if input_adapter_identity is not None:
-            run_identity["input_adapter"] = input_adapter_identity
-
-        history: list[dict[str, Any]] = []
-        selected_epoch = 0
-        selected_metric: float | None = None
-        best_score = math.inf if metric_name == "loss" else -math.inf
-        global_step = 0
-
-        def on_optimizer_step(loss_value: float) -> None:
-            nonlocal global_step
-            global_step += 1
-            monitor.log_train_step(
-                loss=loss_value,
-                learning_rate=float(optimizer.param_groups[0]["lr"]),
-                global_step=global_step,
-            )
-
-        for epoch in range(1, epochs + 1):
-            learning_rate = float(optimizer.param_groups[0]["lr"])
-            train_metrics = _run_epoch(
-                model,
-                train_dataloader,
-                device=resolved_device,
-                model_spec=spec,
-                input_key=input_key,
-                target_key=target_key,
-                class_names=class_names,
-                pos_weight=resolved_pos_weight,
-                amp_enabled=amp_enabled,
-                amp_dtype=amp_dtype,
-                optimizer=optimizer,
-                scaler=scaler,
-                gradient_clip_norm=resolved_training["gradient_clip_norm"],
-                on_optimizer_step=on_optimizer_step,
-                input_adapter=input_adapter,
-            )
-            validation_metrics = (
-                None
-                if validation_dataloader is None
-                else _run_epoch(
-                    model,
-                    validation_dataloader,
-                    device=resolved_device,
-                    model_spec=spec,
-                    input_key=input_key,
-                    target_key=target_key,
-                    class_names=class_names,
-                    pos_weight=resolved_pos_weight,
-                    amp_enabled=amp_enabled,
-                    amp_dtype=amp_dtype,
-                    undefined_class_policy=validation_prediction_config[
-                        "local_undefined_class_policy"
-                    ],
-                    prediction_callback=(
-                        None
-                        if validation_prediction_dir is None
-                        else lambda logits, targets, hash_ids, metrics, epoch=epoch: (
-                            _write_validation_prediction_artifact(
-                                validation_prediction_dir,
-                                epoch=epoch,
-                                logits=logits,
-                                targets=targets,
-                                hash_ids=hash_ids,
-                                validation_identity=validation_identity,
-                                comparison_identity=comparison_identity,
-                                metrics=metrics,
-                            )
-                        )
-                    ),
-                    input_adapter=input_adapter,
-                )
-            )
-            scheduler.step()
-            record = {
-                "epoch": epoch,
-                "learning_rate": learning_rate,
-                "train": train_metrics,
-                "validation": validation_metrics,
-            }
-            history.append(record)
-            checkpoint = {
-                "schema_version": 1,
-                "epoch": epoch,
-                "model_state_dict": model.state_dict(),
-                "optimizer_state_dict": optimizer.state_dict(),
-                "scheduler_state_dict": scheduler.state_dict(),
-                "metrics": record,
-                "run_identity": run_identity,
-            }
-            _save_checkpoint(last_path, checkpoint)
-            if metric_name == "last":
-                is_selected = True
-                current_metric = None
-            else:
-                assert validation_metrics is not None
-                current_metric = float(validation_metrics[metric_name])
-                if not math.isfinite(current_metric):
-                    raise FloatingPointError(
-                        f"validation {metric_name} is not finite"
-                    )
-                is_selected = (
-                    current_metric < best_score
-                    if metric_name == "loss"
-                    else current_metric > best_score
-                )
-            if is_selected:
-                selected_epoch = epoch
-                selected_metric = current_metric
-                if current_metric is not None:
-                    best_score = current_metric
-                if selected_path != last_path:
-                    _save_checkpoint(selected_path, checkpoint)
-            monitor.log_epoch(record, is_selected=is_selected)
-            _write_json(
-                history_path,
-                {
-                    "schema_version": 1,
-                    "selection_metric": metric_name,
-                    "selected_epoch": selected_epoch,
-                    "selected_metric": selected_metric,
-                    "optimizer_steps": global_step,
-                    "epochs": history,
-                },
-            )
-
-        if selected_epoch <= 0:
-            raise RuntimeError("no training checkpoint was selected")
-        if bool(selection["restore_best_at_end"]):
-            load_model_checkpoint(model, selected_path, map_location=resolved_device)
-        test_metrics = (
-            None
-            if test_dataloader is None
-            or not bool(selection["evaluate_test_at_end"])
-            else _run_epoch(
-                model,
-                test_dataloader,
-                device=resolved_device,
-                model_spec=spec,
-                input_key=input_key,
-                target_key=target_key,
-                class_names=class_names,
-                pos_weight=resolved_pos_weight,
-                amp_enabled=amp_enabled,
-                amp_dtype=amp_dtype,
-                input_adapter=input_adapter,
-            )
-        )
-        if test_metrics is not None:
-            monitor.log_test(test_metrics, global_step=selected_epoch)
-        result = TrainingResult(
-            model=model,
-            output_dir=output,
-            selected_epoch=selected_epoch,
-            selected_metric=selected_metric,
-            selected_checkpoint_path=selected_path,
-            last_checkpoint_path=last_path,
-            history=tuple(history),
-            test_metrics=test_metrics,
-            model_identity=run_identity["model"],
-            config_identity=config.describe(),
-            seed_identity=seed.describe(),
-            logging_identity=logging_identity,
+            validation_dataloader_identity=_comparison_dataloader_identity(
+                validation_dataloader
+            ),
             input_adapter_identity=input_adapter_identity,
         )
-        _write_json(result_path, result.describe())
-        return result
-    finally:
-        monitor.close()
+        if validation_prediction_dir is not None
+        else None
+    )
+    run_identity = {
+        "config": config.describe(),
+        "seed": seed.describe(),
+        "model": model_identity,
+        "device": str(resolved_device),
+        "output_dir": str(output),
+        "training_parameters": {
+            "resolved": resolved_training,
+            "explicit_overrides": supplied_training,
+        },
+        "pos_weight": (
+            None
+            if resolved_pos_weight is None
+            else resolved_pos_weight.cpu().tolist()
+        ),
+        "dataloaders": {
+            "train": train_dataloader_description,
+            "validation": validation_dataloader_description,
+            "test": test_dataloader_description,
+        },
+        "validation_predictions": {
+            **validation_prediction_config,
+            "output_dir": (
+                None
+                if validation_prediction_dir is None
+                else str(validation_prediction_dir)
+            ),
+            "validation_identity": validation_identity,
+            "comparison_identity": comparison_identity,
+        },
+    }
+    if input_adapter_identity is not None:
+        run_identity["input_adapter"] = input_adapter_identity
+
+    history: list[dict[str, Any]] = []
+    selected_epoch = 0
+    selected_metric: float | None = None
+    best_score = math.inf if metric_name == "loss" else -math.inf
+    global_step = 0
+
+    def on_optimizer_step() -> None:
+        nonlocal global_step
+        global_step += 1
+
+    for epoch in range(1, epochs + 1):
+        learning_rate = float(optimizer.param_groups[0]["lr"])
+        train_metrics = _run_epoch(
+            model,
+            train_dataloader,
+            device=resolved_device,
+            model_spec=spec,
+            input_key=input_key,
+            target_key=target_key,
+            class_names=class_names,
+            pos_weight=resolved_pos_weight,
+            amp_enabled=amp_enabled,
+            amp_dtype=amp_dtype,
+            optimizer=optimizer,
+            scaler=scaler,
+            gradient_clip_norm=resolved_training["gradient_clip_norm"],
+            on_optimizer_step=on_optimizer_step,
+            input_adapter=input_adapter,
+        )
+        validation_metrics = (
+            None
+            if validation_dataloader is None
+            else _run_epoch(
+                model,
+                validation_dataloader,
+                device=resolved_device,
+                model_spec=spec,
+                input_key=input_key,
+                target_key=target_key,
+                class_names=class_names,
+                pos_weight=resolved_pos_weight,
+                amp_enabled=amp_enabled,
+                amp_dtype=amp_dtype,
+                undefined_class_policy=validation_prediction_config[
+                    "local_undefined_class_policy"
+                ],
+                prediction_callback=(
+                    None
+                    if validation_prediction_dir is None
+                    else lambda logits, targets, hash_ids, metrics, epoch=epoch: (
+                        _write_validation_prediction_artifact(
+                            validation_prediction_dir,
+                            epoch=epoch,
+                            logits=logits,
+                            targets=targets,
+                            hash_ids=hash_ids,
+                            validation_identity=validation_identity,
+                            comparison_identity=comparison_identity,
+                            metrics=metrics,
+                        )
+                    )
+                ),
+                input_adapter=input_adapter,
+            )
+        )
+        scheduler.step()
+        record = {
+            "epoch": epoch,
+            "learning_rate": learning_rate,
+            "train": train_metrics,
+            "validation": validation_metrics,
+        }
+        history.append(record)
+        checkpoint = {
+            "schema_version": 1,
+            "epoch": epoch,
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "scheduler_state_dict": scheduler.state_dict(),
+            "metrics": record,
+            "run_identity": run_identity,
+        }
+        _save_checkpoint(last_path, checkpoint)
+        if metric_name == "last":
+            is_selected = True
+            current_metric = None
+        else:
+            assert validation_metrics is not None
+            current_metric = float(validation_metrics[metric_name])
+            if not math.isfinite(current_metric):
+                raise FloatingPointError(
+                    f"validation {metric_name} is not finite"
+                )
+            is_selected = (
+                current_metric < best_score
+                if metric_name == "loss"
+                else current_metric > best_score
+            )
+        if is_selected:
+            selected_epoch = epoch
+            selected_metric = current_metric
+            if current_metric is not None:
+                best_score = current_metric
+            if selected_path != last_path:
+                _save_checkpoint(selected_path, checkpoint)
+        _write_json(
+            history_path,
+            {
+                "schema_version": 1,
+                "selection_metric": metric_name,
+                "selected_epoch": selected_epoch,
+                "selected_metric": selected_metric,
+                "optimizer_steps": global_step,
+                "epochs": history,
+            },
+        )
+
+    if selected_epoch <= 0:
+        raise RuntimeError("no training checkpoint was selected")
+    if bool(selection["restore_best_at_end"]):
+        load_model_checkpoint(model, selected_path, map_location=resolved_device)
+    test_metrics = (
+        None
+        if test_dataloader is None
+        or not bool(selection["evaluate_test_at_end"])
+        else _run_epoch(
+            model,
+            test_dataloader,
+            device=resolved_device,
+            model_spec=spec,
+            input_key=input_key,
+            target_key=target_key,
+            class_names=class_names,
+            pos_weight=resolved_pos_weight,
+            amp_enabled=amp_enabled,
+            amp_dtype=amp_dtype,
+            input_adapter=input_adapter,
+        )
+    )
+    result = TrainingResult(
+        model=model,
+        output_dir=output,
+        selected_epoch=selected_epoch,
+        selected_metric=selected_metric,
+        selected_checkpoint_path=selected_path,
+        last_checkpoint_path=last_path,
+        history=tuple(history),
+        test_metrics=test_metrics,
+        model_identity=run_identity["model"],
+        config_identity=config.describe(),
+        seed_identity=seed.describe(),
+        input_adapter_identity=input_adapter_identity,
+    )
+    _write_json(result_path, result.describe())
+    return result
 
 
 __all__ = [

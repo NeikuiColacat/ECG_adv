@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import subprocess
 from pathlib import Path
 
 import numpy as np
@@ -203,7 +204,21 @@ def test_active_evidence_hashes_the_retained_lock_and_report() -> None:
         identity = evidence[key]
         path = (REPO / identity["path"]).resolve()
         assert path.is_file()
-        assert hashlib.sha256(path.read_bytes()).hexdigest() == identity["sha256"]
+        live_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+        if identity.get("sha256_scope") == "historical_run_snapshot":
+            assert live_sha256 == identity["current_sha256"]
+            snapshot = identity["snapshot_git"]
+            historical = subprocess.check_output(
+                [
+                    "git",
+                    "show",
+                    f"{snapshot['commit']}:{snapshot['path']}",
+                ],
+                cwd=REPO,
+            )
+            assert hashlib.sha256(historical).hexdigest() == identity["sha256"]
+        else:
+            assert live_sha256 == identity["sha256"]
     assert registry["active_development_mainline"]["paper_claim_allowed"] is False
     assert registry["historical_trusted_snapshot"]["replay"][
         "live_legacy_code_required"
@@ -218,7 +233,7 @@ def test_active_evidence_quarantines_accepted_subset_lhat_diagnostics() -> None:
     integrity = active["diagnostic_integrity"]
 
     assert registry["schema_version"] == 3
-    assert str(registry["updated"]) == "2026-08-11"
+    assert str(registry["updated"]) == "2026-08-12"
     assert integrity["status"] == "legacy_accepted_subset_quarantined"
     assert integrity["all_candidate_raw_diagnostics"] == {
         "availability": "unavailable",

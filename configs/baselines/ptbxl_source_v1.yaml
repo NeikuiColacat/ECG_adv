@@ -7,6 +7,14 @@ baseline:
   decision_log: docs/baselines/ptbxl_source_v1.md
   training_config: train/PTBXL.yaml
   training_config_sha256: ff984500052e0e64e245c68b8c51a1080efd7bd375c70a44dbd49bf9a9cf9f4c
+  training_config_identity_scope: historical_run_snapshot
+  training_config_snapshot_git:
+    commit: 254c0c80318840430171317c0051497f62232a6e
+    blob: f8b41d2072cd96e376728825894b1c2c86fbb92b
+  current_replay_config:
+    path: train/PTBXL.yaml
+    sha256: 85638bbea2c12669dab45973b77223513f5292a11faf12b0c814fe1fe41679c8
+    relation_to_historical: scientific_payload_equivalent_except_observer_retired
   random_seed_config: random_seed.yaml
   random_seed_config_sha256: 8b337606c43b6fec2959dd185477ce32f48b139f5fce5112ee26efe58eb4bbbc
   selection_rule: fold9_best_macro_auprc
