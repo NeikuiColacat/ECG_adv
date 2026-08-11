@@ -15,7 +15,6 @@ from boot_scripts.run_experiment import (
     main,
 )
 from util.run_record import verify_run_file_index
-from util.evaluation.direct_baseline_selection import locked_pooled_selection_rule
 
 
 REPO = Path(__file__).resolve().parents[2]
@@ -105,31 +104,18 @@ def _typed_train_result(*, heldout: bool = False) -> dict:
     }
 
 
-def _pooled_selection(*, status: str = "selected") -> dict:
-    selected = status == "selected"
-    value = 0.5 if selected else None
+def _evaluation_result() -> dict:
     return {
-        "schema_version": 1,
-        "artifact_type": "direct_k500_pooled_epoch_selection",
-        "status": status,
-        "selection_rule": locked_pooled_selection_rule(),
-        "comparison_identity": {
-            "protocol_id": "fixture_protocol",
-            "method_id": "direct_depth23_fixed20",
-            "model_family": "efficientnet1dv2",
-            "replicate_id": 0,
+        "schema_version": 2,
+        "status": "complete",
+        "checkpoint": {"path": "checkpoints/last.pt", "sha256": "0" * 64},
+        "clean": {"per_center": {"ningbo": {}}},
+        "corrupted": {"per_view": [{} for _ in range(20)], "aggregates": {}},
+        "protocol": {
+            "mapping_version": "v7_super5_sjr_rgq_review_20260528",
+            "mapping_hash": "555ec85d5b51",
+            "class_order": ["CD", "HYP", "MI", "NORM", "STTC"],
         },
-        "config": {"protocol_id": "fixture_protocol"},
-        "record_count": 400,
-        "composition_count": 20,
-        "centers": ["ningbo", "chapman_shaoxing", "cpsc_2018", "georgia"],
-        "class_order": ["CD", "HYP", "MI", "NORM", "STTC"],
-        "selected_epoch": 1 if selected else None,
-        "selected_score": value,
-        "selected_clean_macro_auprc": value,
-        "selected_clean_macro_auroc": value,
-        "selected_robust_macro_auprc": value,
-        "selected_robust_macro_auroc": value,
     }
 
 
@@ -183,7 +169,7 @@ def test_dry_run_resolves_the_config_closure_without_writes(
     assert payload["loads_model_or_gpu"] is False
     assert payload["expected_result"] == {
         "path": "training/train_result.json",
-        "type": "train_result",
+        "type": "supervised_train_result",
     }
     assert not run_dir.exists()
 
@@ -314,7 +300,9 @@ def test_typed_train_result_rejects_heldout_selection(tmp_path: Path) -> None:
     assert "heldout-free last checkpoint" in manifest["error"]
 
 
-@pytest.mark.parametrize("missing", ["center", "scientific_arm", "optimizer_steps"])
+@pytest.mark.parametrize(
+    "missing", ["method_id", "center", "scientific_arm", "optimizer_steps"]
+)
 def test_typed_train_result_requires_identity(tmp_path: Path, missing: str) -> None:
     _, plan = _action_plan(tmp_path, "train_pn2021")
     payload = _typed_train_result()
@@ -324,62 +312,38 @@ def test_typed_train_result_requires_identity(tmp_path: Path, missing: str) -> N
     assert manifest["delegate_result"] is None
 
 
-def test_bogus_pooled_selection_is_rejected(tmp_path: Path) -> None:
-    run_dir, plan = _action_plan(tmp_path, "select_pn2021_direct")
-    payload = _pooled_selection()
-    payload["selection_rule"] = {"heldout_evaluation_used": False}
-    exit_code, manifest = _record_payload(
-        plan, "direct_baseline_selection.json", payload
-    )
-    assert exit_code == 1
-    assert manifest["delegate_result"] is None
-    assert "pooled-selection identity" in manifest["error"]
-
-
-def test_failed_clean_floor_result_is_validated_and_recorded(tmp_path: Path) -> None:
-    run_dir, plan = _action_plan(tmp_path, "select_pn2021_direct")
-    exit_code, manifest = _record_payload(
-        plan,
-        "direct_baseline_selection.json",
-        _pooled_selection(status="failed_clean_floor"),
-        delegate_exit_code=3,
-    )
-    assert exit_code == 3
-    assert manifest["status"] == "failed"
-    assert manifest["delegate_exit_code"] == 3
-    assert manifest["delegate_result"]["selection"]["status"] == "failed_clean_floor"
-
-
 def test_bogus_evaluation_result_is_rejected(tmp_path: Path) -> None:
     run_dir, plan = _action_plan(
         tmp_path, "evaluate_pn2021", delegate_subdir="evaluation"
     )
 
-    payload = {"schema_version": 1, "status": "complete", "checkpoint": {},
-               "clean": {}, "corrupted": {}, "protocol": {}}
+    payload = _evaluation_result()
+    payload["schema_version"] = 1
     exit_code, manifest = _record_payload(plan, "evaluation_result.json", payload)
     assert exit_code == 1
     assert manifest["delegate_result"] is None
     assert "schema_version=2" in manifest["error"]
 
 
-def test_refit_requires_heldout_free_refit_contract(tmp_path: Path) -> None:
-    run_dir, plan = _action_plan(tmp_path, "refit_pn2021_direct")
-    assert plan.expected_result_relative_path.as_posix() == "training/refit_contract.json"
-    assert plan.expected_result_type == "refit_contract"
+def test_evaluation_result_requires_checkpoint_and_metric_bodies(tmp_path: Path) -> None:
+    _, valid_plan = _action_plan(
+        tmp_path / "valid", "evaluate_pn2021", delegate_subdir="evaluation"
+    )
+    exit_code, manifest = _record_payload(
+        valid_plan, "evaluation_result.json", _evaluation_result()
+    )
+    assert exit_code == 0 and manifest["status"] == "complete"
 
-    payload = {
-        "schema_version": 1,
-        "artifact_type": "pn2021_direct_refit_contract",
-        "model": {"name": "fixture"}, "center": "ningbo",
-        "method": {"id": "direct_depth23_fixed20"},
-        "selection": {"selected_epoch": 1, "heldout_evaluation_used": True},
-        "result": _typed_train_result(),
-    }
-    exit_code, manifest = _record_payload(plan, "refit_contract.json", payload)
+    _, invalid_plan = _action_plan(
+        tmp_path / "invalid", "evaluate_pn2021", delegate_subdir="evaluation"
+    )
+    payload = _evaluation_result()
+    payload.update(checkpoint=None, clean=None, corrupted="not-a-metric-body")
+    exit_code, manifest = _record_payload(
+        invalid_plan, "evaluation_result.json", payload
+    )
     assert exit_code == 1
     assert manifest["delegate_result"] is None
-    assert "heldout-free Direct refit contract" in manifest["error"]
 
 
 def test_internal_absolute_yaml_reference_is_rejected(tmp_path: Path) -> None:
@@ -399,7 +363,7 @@ def test_all_tracked_experiment_jobs_resolve_with_explicit_results(
     tmp_path: Path,
 ) -> None:
     experiment_paths = sorted((REPO / "configs" / "experiments").glob("*.yaml"))
-    assert len(experiment_paths) == 56
+    assert len(experiment_paths) == 38
     for experiment_path in experiment_paths:
         plan = load_experiment_plan(
             experiment_path,
@@ -407,10 +371,9 @@ def test_all_tracked_experiment_jobs_resolve_with_explicit_results(
         )
         assert plan.expected_result_relative_path.parts[0] in {"training", "evaluation"}
         assert plan.expected_result_type in {
-            "train_result",
+            "supervised_train_result",
+            "pn2021_train_result",
             "evaluation_result",
-            "pooled_selection",
-            "refit_contract",
         }
 
 
@@ -426,16 +389,11 @@ def test_mainline_closure_includes_stage1_augmix_config(tmp_path: Path) -> None:
     assert "train/augmix.yaml" in closure
 
 
-def test_launcher_rejects_owned_and_removed_delegate_flags(tmp_path: Path) -> None:
+def test_launcher_rejects_owned_delegate_flags(tmp_path: Path) -> None:
     experiment_path = _write_bundle(tmp_path, run_dir=tmp_path / "runs" / "new")
     payload = yaml.safe_load(experiment_path.read_text(encoding="utf-8"))
 
     payload["entrypoint"]["arguments"] = ["--output-dir", "/tmp/bypass"]
     experiment_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
     with pytest.raises(ValueError, match="launcher-owned"):
-        load_experiment_plan(experiment_path)
-
-    payload["entrypoint"]["arguments"] = ["--fixed20-cycles", "2"]
-    experiment_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
-    with pytest.raises(ValueError, match="removed protocol"):
         load_experiment_plan(experiment_path)

@@ -12,6 +12,7 @@ from typing import Any, Mapping, Sequence
 
 import torch
 import torch.nn as nn
+import yaml
 
 from core.latent_pool import LatentPool, build_latent_pool
 from core.methods import CompiledMethod, compile_method_profile
@@ -23,8 +24,8 @@ from core.online_trainer import (
     resolve_online_training_parameters,
     train_online_model,
 )
-from core.pn2021_tuning import validate_locked_source_checkpoint
 from data_preprocess.data_runtime import RuntimeDataLoader, get_dataloader
+from models.checkpoints import CheckpointIdentity
 from models.contracts import ECGFOUNDER_SPEC, EFFICIENTNET1DV2_SPEC
 from util.config_bundle import resolve_config_reference
 
@@ -75,6 +76,35 @@ def load_pn2021_method_profile(
             "method profile must belong to the selected config bundle"
         ) from None
     return compile_method_profile(method_path), online
+
+
+def _validate_locked_source_checkpoint(
+    owner: nn.Module,
+    spec: Any,
+    config: Any,
+) -> None:
+    registry_path = config.references.get("source_baseline_registry")
+    if not isinstance(registry_path, Path):
+        raise ValueError("config must resolve source_baseline_registry")
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    if not isinstance(registry, Mapping) or registry.get("schema_version") != 1:
+        raise ValueError("source baseline registry must be schema_version=1")
+    models = registry.get("models")
+    expected = models.get(spec.name) if isinstance(models, Mapping) else None
+    if not isinstance(expected, Mapping):
+        raise ValueError(f"source registry has no model {spec.name!r}")
+    attribute = (
+        "checkpoint_identity"
+        if spec == EFFICIENTNET1DV2_SPEC
+        else "task_checkpoint_identity"
+    )
+    identity = getattr(owner, attribute, None)
+    if not isinstance(identity, CheckpointIdentity):
+        raise ValueError(f"PN2021 model must carry strict {attribute}")
+    if identity.sha256 != expected.get("selected_checkpoint_sha256"):
+        raise ValueError("model source checkpoint SHA256 differs from locked registry")
+    if identity.path.resolve() != Path(expected["selected_checkpoint"]).resolve():
+        raise ValueError("model source checkpoint path differs from locked registry")
 
 
 def _resolve_loader_parameters(
@@ -302,7 +332,7 @@ def train_pn2021(
     spec = getattr(owner, "model_spec", None)
     if spec not in {EFFICIENTNET1DV2_SPEC, ECGFOUNDER_SPEC}:
         raise ValueError("model must expose a managed EfficientNet/ECGFounder spec")
-    validate_locked_source_checkpoint(model, config)
+    _validate_locked_source_checkpoint(owner, spec, config)
     requires_pool = bool(method.requirements.latent_pool)
     requires_runtime_encoder = bool(method.requirements.vae_encoder)
     requires_decoder = bool(method.requirements.vae_decoder)

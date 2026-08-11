@@ -19,7 +19,7 @@ import time
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Iterator, Mapping, Sequence, TYPE_CHECKING
+from typing import Any, Iterator, Mapping, Sequence, TYPE_CHECKING
 
 import torch
 import torch.nn as nn
@@ -926,17 +926,6 @@ def load_online_train_config(
         raise ValueError("online config uses the wrong PN2021 mapping version")
     if protocol.get("mapping_hash") != "555ec85d5b51":
         raise ValueError("online config uses the wrong PN2021 mapping hash")
-    tuning = protocol.get("tuning")
-    if tuning is not None:
-        tuning = _mapping(tuning, "protocol.tuning")
-        if tuning != {
-            "train_partition": "k500_tune_train",
-            "validation_partition": "k500_tune_validation",
-            "train_records_per_center": 400,
-            "validation_records_per_center": 100,
-        }:
-            raise ValueError("protocol.tuning must lock the managed 400/100 split")
-
     random_seed = _mapping(root_payload.get("random_seed"), "random_seed")
     for key in ("stream_namespace", "comparison_group"):
         if not isinstance(random_seed.get(key), str) or not random_seed[key]:
@@ -2334,17 +2323,12 @@ def train_online_model(
     device: str | torch.device | None = None,
     training_parameters: Mapping[str, Any] | None = None,
     pos_weight: torch.Tensor | Sequence[float] | None = None,
-    epoch_evaluator: Callable[
-        [nn.Module, int, torch.device, Mapping[str, Any]], Mapping[str, Any]
-    ]
-    | None = None,
 ) -> OnlineTrainingResult:
     """Train one file-backed typed method under its locked K500 budget.
 
     The ``matched_base`` budget performs one optimizer step per base batch.
     Fixed-20 expands the views used to form that objective but accumulates all
-    gradients before the one step. ``epoch_evaluator`` is a caller-owned,
-    read-only validation hook; it cannot select checkpoints or alter training.
+    gradients before the one step.
     """
 
     if not isinstance(model, nn.Module):
@@ -2413,17 +2397,9 @@ def train_online_model(
             "train_dataloader batch_size does not match the resolved online profile"
         )
     train_partition = _loader_selection_partition(train_dataloader)
-    if train_partition == "k500":
-        pass
-    elif train_partition == "k500_tune_train":
-        if config.payload["protocol"].get("tuning") is None:
-            raise ValueError(
-                "k500_tune_train requires a training config with protocol.tuning"
-            )
-    elif train_partition is not None:
+    if train_partition not in {None, "k500"}:
         raise ValueError(
-            "online training accepts only k500 or k500_tune_train, got "
-            f"{train_partition!r}"
+            f"online training accepts only k500, got {train_partition!r}"
         )
 
     requires_latent = bool(method.requirements.latent_pool)
@@ -2769,20 +2745,6 @@ def train_online_model(
             }
         ),
         "training_partition": train_partition,
-        "epoch_evaluator": (
-            None
-            if epoch_evaluator is None
-            else (
-                epoch_evaluator.describe()
-                if callable(getattr(epoch_evaluator, "describe", None))
-                else {
-                    "type": (
-                        f"{epoch_evaluator.__class__.__module__}."
-                        f"{epoch_evaluator.__class__.__qualname__}"
-                    )
-                }
-            )
-        ),
     }
 
     history: list[dict[str, Any]] = []
@@ -3399,18 +3361,6 @@ def train_online_model(
                         "complete bound K500 selection: "
                         f"missing={missing[:5]}, extra={extra[:5]}"
                     )
-            validation_metrics: dict[str, Any] | None = None
-            if epoch_evaluator is not None:
-                model.eval()
-                evaluated = epoch_evaluator(
-                    model,
-                    epoch,
-                    resolved_device,
-                    run_identity,
-                )
-                if not isinstance(evaluated, Mapping):
-                    raise TypeError("epoch_evaluator must return a mapping")
-                validation_metrics = dict(evaluated)
             scheduler.step()
             ineligible_unique = tuple(sorted(set(epoch_ineligible_hashes)))
             quality_rejected = [
@@ -3593,7 +3543,6 @@ def train_online_model(
                 "epoch": epoch,
                 "learning_rate": learning_rate,
                 "train": train_metrics,
-                "validation": validation_metrics,
                 "diagnostics": diagnostics_mean,
                 "diagnostic_distributions": diagnostic_distributions,
                 "diagnostic_rates": diagnostic_rates,

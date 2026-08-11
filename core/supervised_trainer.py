@@ -88,10 +88,6 @@ class SupervisedTrainConfig:
     def selection_metric(self) -> str:
         return str(self.payload["selection"]["metric"])
 
-    @property
-    def validation_predictions(self) -> dict[str, Any]:
-        return _parse_validation_prediction_config(self.payload)
-
     def describe(self) -> dict[str, Any]:
         return {
             "path": str(self.path),
@@ -131,10 +127,7 @@ class TrainingResult:
         )
         partition = selection_config.get("partition")
         metric = selection_config.get("metric")
-        if partition == "external_pooled_validation":
-            selection_policy = "external_pooled_validation_pending"
-            final_model_selected = False
-        elif metric == "last":
+        if metric == "last":
             selection_policy = "last"
             final_model_selected = True
         else:
@@ -170,54 +163,6 @@ class TrainingResult:
         return result
 
 
-def _parse_validation_prediction_config(
-    payload: Mapping[str, Any],
-) -> dict[str, Any]:
-    value = payload.get("validation_predictions")
-    if value is None:
-        return {
-            "enabled": False,
-            "subdir": "validation_predictions",
-            "hash_key": "hash_id",
-            "artifact_schema": "supervised_validation_predictions_v1",
-            "local_undefined_class_policy": "strict",
-        }
-    if not isinstance(value, dict):
-        raise ValueError("validation_predictions must be a mapping")
-    required = {"enabled", "subdir", "hash_key", "artifact_schema"}
-    allowed = required | {"local_undefined_class_policy"}
-    if not required.issubset(value) or not set(value).issubset(allowed):
-        raise ValueError(
-            "validation_predictions keys mismatch: "
-            f"missing={sorted(required - set(value))}, "
-            f"unexpected={sorted(set(value) - allowed)}"
-        )
-    if not isinstance(value["enabled"], bool):
-        raise ValueError("validation_predictions.enabled must be boolean")
-    subdir = Path(str(value["subdir"]))
-    if (
-        not str(value["subdir"])
-        or subdir.is_absolute()
-        or ".." in subdir.parts
-        or subdir == Path(".")
-    ):
-        raise ValueError("validation_predictions.subdir must be a safe relative path")
-    if value["hash_key"] != "hash_id":
-        raise ValueError("validation_predictions.hash_key must be hash_id")
-    if value["artifact_schema"] != "supervised_validation_predictions_v1":
-        raise ValueError(
-            "validation_predictions.artifact_schema must be "
-            "supervised_validation_predictions_v1"
-        )
-    local_policy = value.get("local_undefined_class_policy", "strict")
-    if local_policy not in {"strict", "skip_undefined"}:
-        raise ValueError(
-            "validation_predictions.local_undefined_class_policy must be "
-            "strict or skip_undefined"
-        )
-    return {**value, "local_undefined_class_policy": local_policy}
-
-
 def load_train_config(
     path: str | Path = DEFAULT_TRAIN_CONFIG,
     *,
@@ -239,7 +184,6 @@ def load_train_config(
     training = _section(payload, "training")
     selection = _section(payload, "selection")
     output = _section(payload, "output")
-    _parse_validation_prediction_config(payload)
 
     batch_keys = _section(training, "batch_keys")
     if set(batch_keys) != {"input", "target"} or not all(
@@ -452,22 +396,15 @@ def _run_epoch(
     scaler: torch.cuda.amp.GradScaler | None = None,
     gradient_clip_norm: float = 1.0,
     on_optimizer_step: Callable[[], None] | None = None,
-    prediction_callback: (
-        Callable[[np.ndarray, np.ndarray, tuple[str, ...], Mapping[str, Any]], None]
-        | None
-    ) = None,
     undefined_class_policy: UndefinedClassPolicy = "strict",
     input_adapter: Callable[[torch.Tensor], torch.Tensor] | None = None,
 ) -> dict[str, Any]:
     training = optimizer is not None
-    if training and prediction_callback is not None:
-        raise ValueError("prediction_callback is evaluation-only")
     model.train(training)
     total_loss = 0.0
     total_samples = 0
     collected_logits: list[np.ndarray] = []
     collected_targets: list[np.ndarray] = []
-    collected_hash_ids: list[str] = []
     grad_context = torch.enable_grad if training else torch.no_grad
     with grad_context():
         for batch in dataloader:
@@ -518,23 +455,6 @@ def _run_epoch(
             if not training:
                 collected_logits.append(logits.float().cpu().numpy())
                 collected_targets.append(targets.float().cpu().numpy())
-                if prediction_callback is not None:
-                    raw_hashes = batch.get("hash_id")
-                    if isinstance(raw_hashes, (str, bytes)):
-                        raise TypeError("validation hash_id must contain one string per record")
-                    try:
-                        batch_hashes = tuple(raw_hashes)
-                    except TypeError:
-                        raise TypeError(
-                            "validation hash_id must contain one string per record"
-                        ) from None
-                    if len(batch_hashes) != batch_size or any(
-                        not isinstance(value, (str, np.str_)) for value in batch_hashes
-                    ):
-                        raise ValueError(
-                            "validation hash_id must contain one string per record"
-                        )
-                    collected_hash_ids.extend(str(value) for value in batch_hashes)
     if total_samples == 0:
         raise ValueError("dataloader is empty")
     result: dict[str, Any] = {"loss": total_loss / total_samples}
@@ -548,13 +468,6 @@ def _run_epoch(
             undefined_class_policy=undefined_class_policy,
         )
         result.update(classification)
-        if prediction_callback is not None:
-            prediction_callback(
-                epoch_logits,
-                epoch_targets,
-                tuple(collected_hash_ids),
-                classification,
-            )
     return result
 
 
@@ -599,56 +512,6 @@ def _describe_dataloader(dataloader: Any) -> Any:
     }
 
 
-def _comparison_dataloader_identity(dataloader: Any) -> dict[str, Any]:
-    """Return the center-invariant loader settings used for matched tuning."""
-
-    description = _describe_dataloader(dataloader)
-    if not isinstance(description, Mapping):
-        raise TypeError("dataloader.describe() must return a mapping")
-    dataset = description.get("dataset")
-    selection = dataset.get("selection") if isinstance(dataset, Mapping) else None
-    runtime = description.get("runtime_config")
-    seed = description.get("seed")
-    return {
-        "loader_type": dataloader.__class__.__name__,
-        "record_count": (
-            selection.get("record_count")
-            if isinstance(selection, Mapping)
-            else description.get("sample_count")
-        ),
-        "selection_contract": (
-            {
-                key: selection.get(key)
-                for key in (
-                    "dataset",
-                    "partition",
-                    "record_count",
-                    "split_id",
-                    "split_manifest_sha256",
-                    "source_manifest_sha256",
-                    "class_order",
-                    "mapping_version",
-                    "mapping_hash",
-                )
-            }
-            if isinstance(selection, Mapping)
-            else None
-        ),
-        "batch_size": description.get("batch_size"),
-        "num_workers": description.get("num_workers"),
-        "drop_last": description.get("drop_last"),
-        "runtime_config_sha256": (
-            runtime.get("config_sha256") if isinstance(runtime, Mapping) else None
-        ),
-        "resolved_runtime_parameters": (
-            runtime.get("resolved") if isinstance(runtime, Mapping) else None
-        ),
-        "seed_config_sha256": (
-            seed.get("config_sha256") if isinstance(seed, Mapping) else None
-        ),
-    }
-
-
 def _describe_model(
     model: nn.Module,
     spec: ModelSpec | None,
@@ -673,201 +536,6 @@ def _describe_model(
         describe = getattr(identity, "describe", None)
         result[attribute] = describe() if callable(describe) else None
     return result
-
-
-def _sha256_lines(values: Sequence[str], *, sort: bool) -> str:
-    normalized = [str(value) for value in values]
-    if sort:
-        normalized.sort()
-    payload = "".join(f"{value}\n" for value in normalized).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
-
-
-def _hash_label_set_sha256(hash_ids: Sequence[str], targets: np.ndarray) -> str:
-    rows = sorted(
-        (str(hash_id), "".join(str(int(value)) for value in target))
-        for hash_id, target in zip(hash_ids, targets, strict=True)
-    )
-    payload = "".join(f"{hash_id}|{label}\n" for hash_id, label in rows).encode(
-        "utf-8"
-    )
-    return hashlib.sha256(payload).hexdigest()
-
-
-def _validation_identity_from_dataloader(dataloader: Any) -> dict[str, Any]:
-    description = _describe_dataloader(dataloader)
-    dataset = description.get("dataset") if isinstance(description, Mapping) else None
-    selection = dataset.get("selection") if isinstance(dataset, Mapping) else None
-    if not isinstance(selection, Mapping):
-        raise ValueError(
-            "validation prediction export requires dataloader.describe() to expose "
-            "dataset.selection"
-        )
-    required = {
-        "dataset",
-        "partition",
-        "logical_center",
-        "record_count",
-        "split_id",
-        "split_manifest_sha256",
-        "source_manifest_sha256",
-        "hash_id_set_sha256",
-        "class_order",
-        "mapping_version",
-        "mapping_hash",
-    }
-    missing = required - set(selection)
-    if missing:
-        raise ValueError(
-            "validation dataset selection identity is incomplete: "
-            f"missing={sorted(missing)}"
-        )
-    identity = dict(selection)
-    if tuple(identity["class_order"]) != CLASS_ORDER:
-        raise ValueError("validation selection class_order is not canonical Super5")
-    record_count = identity["record_count"]
-    if isinstance(record_count, bool) or not isinstance(record_count, int) or record_count <= 0:
-        raise ValueError("validation selection record_count must be positive")
-    digest = str(identity["hash_id_set_sha256"])
-    if len(digest) != 64:
-        raise ValueError("validation selection hash_id_set_sha256 is invalid")
-    return identity
-
-
-def _comparison_identity(
-    *,
-    model_identity: Mapping[str, Any],
-    config: SupervisedTrainConfig,
-    resolved_training: Mapping[str, Any],
-    pos_weight: torch.Tensor | None,
-    train_dataloader_identity: Mapping[str, Any],
-    validation_dataloader_identity: Mapping[str, Any],
-    input_adapter_identity: Mapping[str, Any] | None,
-) -> dict[str, Any]:
-    source_checkpoint = (
-        model_identity.get("task_checkpoint_identity")
-        or model_identity.get("checkpoint_identity")
-        or model_identity.get("pretrained_checkpoint_identity")
-    )
-    stable_model_identity = {
-        key: model_identity.get(key)
-        for key in (
-            "name",
-            "spec",
-            "total_parameter_count",
-            "trainable_parameter_count",
-        )
-    }
-    initialization_identity = (
-        {
-            "kind": "strict_source_checkpoint",
-            "checkpoint": source_checkpoint,
-        }
-        if source_checkpoint is not None
-        else {
-            "kind": "seeded_model_initialization",
-            "seed": model_identity.get("random_seed_identity"),
-        }
-    )
-    random_seed = config.payload["random_seed"]
-    result = {
-        "model_family": model_identity.get("name"),
-        "model_identity": stable_model_identity,
-        "source_checkpoint_identity": source_checkpoint,
-        "initialization_identity": initialization_identity,
-        "training_config_sha256": config.sha256,
-        "resolved_training_parameters": dict(resolved_training),
-        "train_dataloader_identity": dict(train_dataloader_identity),
-        "validation_dataloader_identity": dict(validation_dataloader_identity),
-        "pos_weight": None if pos_weight is None else pos_weight.cpu().tolist(),
-        "comparison_group": str(random_seed["comparison_group"]),
-        "replicate_id": int(random_seed["replicate_id"]),
-        "protocol_id": config.profile_name,
-    }
-    if input_adapter_identity is not None:
-        result["input_adapter"] = dict(input_adapter_identity)
-    return result
-
-
-def _write_validation_prediction_artifact(
-    output_dir: Path,
-    *,
-    epoch: int,
-    logits: np.ndarray,
-    targets: np.ndarray,
-    hash_ids: Sequence[str],
-    validation_identity: Mapping[str, Any],
-    comparison_identity: Mapping[str, Any],
-    metrics: Mapping[str, Any],
-) -> tuple[Path, Path]:
-    scores = np.asarray(logits, dtype=np.float32)
-    truth = np.asarray(targets)
-    hashes = tuple(str(value) for value in hash_ids)
-    if scores.ndim != 2 or scores.shape[1] != len(CLASS_ORDER):
-        raise ValueError("validation logits must have shape (N,5)")
-    if truth.shape != scores.shape or not np.isin(truth, (0, 1)).all():
-        raise ValueError("validation targets must be binary with shape (N,5)")
-    truth = truth.astype(np.uint8, copy=False)
-    if len(hashes) != scores.shape[0] or len(set(hashes)) != len(hashes):
-        raise ValueError("validation hash_ids must be unique and aligned")
-    expected_count = int(validation_identity["record_count"])
-    if scores.shape[0] != expected_count:
-        raise ValueError("validation prediction count differs from loader selection")
-    hash_set_sha256 = _sha256_lines(hashes, sort=True)
-    if hash_set_sha256 != str(validation_identity["hash_id_set_sha256"]):
-        raise ValueError("validation prediction hashes differ from loader selection")
-
-    arrays_path = output_dir / f"epoch_{int(epoch):04d}.npz"
-    sidecar_path = output_dir / f"epoch_{int(epoch):04d}.json"
-    if arrays_path.exists() or sidecar_path.exists():
-        raise FileExistsError(f"validation prediction artifact already exists for epoch {epoch}")
-    temporary = arrays_path.with_name(f".{arrays_path.name}.tmp")
-    with temporary.open("wb") as handle:
-        np.savez_compressed(
-            handle,
-            logits=scores,
-            targets=truth,
-            hash_ids=np.asarray(hashes, dtype=np.str_),
-        )
-    temporary.replace(arrays_path)
-    metric_summary = {
-        key: metrics[key]
-        for key in (
-            "metric_definition",
-            "undefined_class_policy",
-            "classes_used",
-            "n_classes_used",
-            "macro_auroc",
-            "macro_auprc",
-        )
-    }
-    _write_json(
-        sidecar_path,
-        {
-            "schema_version": 1,
-            "artifact_type": "supervised_validation_predictions",
-            "artifact_schema": "supervised_validation_predictions_v1",
-            "epoch": int(epoch),
-            "arrays_file": arrays_path.name,
-            "arrays_sha256": _sha256(arrays_path),
-            "class_order": list(CLASS_ORDER),
-            "record_count": int(scores.shape[0]),
-            "arrays": {
-                "logits": {"shape": list(scores.shape), "dtype": str(scores.dtype)},
-                "targets": {"shape": list(truth.shape), "dtype": str(truth.dtype)},
-                "hash_ids": {"shape": [len(hashes)], "dtype": "unicode"},
-            },
-            "validation_identity": dict(validation_identity),
-            "comparison_identity": dict(comparison_identity),
-            "prediction_identity": {
-                "ordered_hash_ids_sha256": _sha256_lines(hashes, sort=False),
-                "hash_id_set_sha256": hash_set_sha256,
-                "hash_label_set_sha256": _hash_label_set_sha256(hashes, truth),
-            },
-            "metrics": metric_summary,
-        },
-    )
-    return arrays_path, sidecar_path
 
 
 def _resolve_training_parameters(
@@ -986,14 +654,9 @@ def train_model(
     )
     selection = config.payload["selection"]
     output_config = config.payload["output"]
-    validation_prediction_config = config.validation_predictions
     metric_name = config.selection_metric
     if metric_name in {"macro_auprc", "loss"} and validation_dataloader is None:
         raise ValueError(f"selection.metric={metric_name} requires validation_dataloader")
-    if validation_prediction_config["enabled"] and validation_dataloader is None:
-        raise ValueError(
-            "validation prediction export requires validation_dataloader"
-        )
 
     requested_device = str(device) if device is not None else str(training["device"])
     if requested_device == "auto":
@@ -1020,13 +683,6 @@ def train_model(
     last_path = _output_member(checkpoints, output_config["last_checkpoint_file"])
     history_path = _output_member(output, output_config["history_file"])
     result_path = _output_member(output, output_config["result_file"])
-    validation_prediction_dir = (
-        _output_member(output, validation_prediction_config["subdir"])
-        if validation_prediction_config["enabled"]
-        else None
-    )
-    if validation_prediction_dir is not None:
-        validation_prediction_dir.mkdir(parents=True, exist_ok=False)
 
     spec = _model_spec(model)
     input_adapter_identity = _describe_input_adapter(input_adapter)
@@ -1088,28 +744,6 @@ def train_model(
     test_dataloader_description = (
         None if test_dataloader is None else _describe_dataloader(test_dataloader)
     )
-    validation_identity = (
-        _validation_identity_from_dataloader(validation_dataloader)
-        if validation_prediction_dir is not None
-        else None
-    )
-    comparison_identity = (
-        _comparison_identity(
-            model_identity=model_identity,
-            config=config,
-            resolved_training=resolved_training,
-            pos_weight=resolved_pos_weight,
-            train_dataloader_identity=_comparison_dataloader_identity(
-                train_dataloader
-            ),
-            validation_dataloader_identity=_comparison_dataloader_identity(
-                validation_dataloader
-            ),
-            input_adapter_identity=input_adapter_identity,
-        )
-        if validation_prediction_dir is not None
-        else None
-    )
     run_identity = {
         "config": config.describe(),
         "seed": seed.describe(),
@@ -1129,16 +763,6 @@ def train_model(
             "train": train_dataloader_description,
             "validation": validation_dataloader_description,
             "test": test_dataloader_description,
-        },
-        "validation_predictions": {
-            **validation_prediction_config,
-            "output_dir": (
-                None
-                if validation_prediction_dir is None
-                else str(validation_prediction_dir)
-            ),
-            "validation_identity": validation_identity,
-            "comparison_identity": comparison_identity,
         },
     }
     if input_adapter_identity is not None:
@@ -1187,25 +811,6 @@ def train_model(
                 pos_weight=resolved_pos_weight,
                 amp_enabled=amp_enabled,
                 amp_dtype=amp_dtype,
-                undefined_class_policy=validation_prediction_config[
-                    "local_undefined_class_policy"
-                ],
-                prediction_callback=(
-                    None
-                    if validation_prediction_dir is None
-                    else lambda logits, targets, hash_ids, metrics, epoch=epoch: (
-                        _write_validation_prediction_artifact(
-                            validation_prediction_dir,
-                            epoch=epoch,
-                            logits=logits,
-                            targets=targets,
-                            hash_ids=hash_ids,
-                            validation_identity=validation_identity,
-                            comparison_identity=comparison_identity,
-                            metrics=metrics,
-                        )
-                    )
-                ),
                 input_adapter=input_adapter,
             )
         )

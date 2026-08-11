@@ -1,7 +1,7 @@
 schema_version: 1
 
 experiment:
-  name: manual_refactor_pn2021_effnet_direct_ningbo_v1
+  name: manual_refactor_pn2021_effnet_a0_clean_ningbo_v2
   purpose: Run the matched A0 clean K500 EfficientNet method for Ningbo without VAE state.
 
 entrypoint:
@@ -18,6 +18,6 @@ entrypoint:
     - /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_ptbxl_effnet_source_v1/training/checkpoints/best.pt
 
 output:
-  run_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_pn2021_effnet_direct_ningbo_v1
+  run_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_pn2021_effnet_a0_clean_ningbo_v2
   if_exists: error
   delegate_output_subdir: training

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import os
 import platform
 import subprocess
@@ -19,20 +18,26 @@ from typing import Any, Iterable, Sequence
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 INDEX_EXCLUDED_FILES = frozenset({"run_manifest.json", "run_file_index.json"})
 RESULT_REQUIRED_KEYS = {
-    "train_result": frozenset({"config", "epochs_completed", "model"}),
+    "supervised_train_result": frozenset(
+        {"config", "epochs_completed", "model", "selected_checkpoint", "selected_epoch"}
+    ),
+    "pn2021_train_result": frozenset(
+        {
+            "center",
+            "config",
+            "epochs_completed",
+            "last_checkpoint",
+            "method_id",
+            "model",
+            "optimizer_steps",
+            "scientific_arm",
+            "selection",
+        }
+    ),
     "evaluation_result": frozenset(
         {"schema_version", "checkpoint", "clean", "corrupted", "protocol", "status"}
     ),
-    "pooled_selection": frozenset({"schema_version", "artifact_type", "selection_rule", "status"}),
-    "refit_contract": frozenset({"schema_version", "artifact_type", "selection", "result"}),
 }
-POOLED_VALUE_KEYS = (
-    "selected_score",
-    "selected_clean_macro_auprc",
-    "selected_clean_macro_auroc",
-    "selected_robust_macro_auprc",
-    "selected_robust_macro_auroc",
-)
 
 
 def utc_now() -> str:
@@ -305,156 +310,6 @@ def verify_run_file_index(run_dir: str | Path) -> list[str]:
     return errors
 
 
-def validate_managed_run_member(path: str | Path) -> dict[str, Any]:
-    """Validate one immutable member of a complete indexed managed run."""
-
-    member = Path(path).expanduser().resolve()
-    if not member.is_file() or member.is_symlink():
-        raise FileNotFoundError(f"managed run member not found: {member}")
-    run_dir = next(
-        (
-            parent
-            for parent in member.parents
-            if (parent / "run_manifest.json").is_file()
-            and (parent / "run_file_index.json").is_file()
-            and (parent / "run_card.json").is_file()
-        ),
-        None,
-    )
-    if run_dir is None:
-        raise ValueError("artifact must belong to a finalized managed run")
-    errors = verify_run_file_index(run_dir)
-    if errors:
-        raise ValueError("managed run integrity check failed: " + "; ".join(errors))
-    card = json.loads((run_dir / "run_card.json").read_text(encoding="utf-8"))
-    if card.get("status") != "complete" or int(card.get("exit_code", -1)) != 0:
-        raise ValueError("managed run is not complete with exit_code=0")
-    index = json.loads((run_dir / "run_file_index.json").read_text(encoding="utf-8"))
-    relative = member.relative_to(run_dir).as_posix()
-    matches = [
-        item
-        for item in index.get("files", ())
-        if isinstance(item, dict) and item.get("path") == relative
-    ]
-    if len(matches) != 1 or matches[0].get("sha256") != sha256_file(member):
-        raise ValueError("artifact SHA256 differs from its managed run index")
-    manifest = json.loads(
-        (run_dir / "run_manifest.json").read_text(encoding="utf-8")
-    )
-    return {
-        "run_dir": run_dir,
-        "relative_path": relative,
-        "manifest": manifest,
-        "member_sha256": matches[0]["sha256"],
-    }
-
-
-def validate_run_config_snapshots(
-    run_dir: str | Path,
-    sources: Sequence[str | Path],
-    *,
-    config_root: str | Path,
-) -> list[dict[str, Any]]:
-    """Match current YAML bytes to the immutable snapshots of a managed run."""
-
-    root = Path(run_dir).expanduser().resolve()
-    manifest = json.loads((root / "run_manifest.json").read_text(encoding="utf-8"))
-    snapshots = manifest.get("config_snapshots")
-    if not isinstance(snapshots, list):
-        raise ValueError("managed run manifest has no config_snapshots list")
-    by_destination: dict[str, list[dict[str, Any]]] = {}
-    for item in snapshots:
-        if isinstance(item, dict) and isinstance(item.get("snapshot_path"), str):
-            by_destination.setdefault(item["snapshot_path"], []).append(item)
-    evidence: list[dict[str, Any]] = []
-    config_root_path = Path(config_root).expanduser().resolve()
-    for raw_source in sources:
-        source = Path(raw_source).expanduser().resolve()
-        destination = _snapshot_destination(source, config_root=config_root_path)
-        matches = by_destination.get(destination.as_posix(), [])
-        if len(matches) != 1:
-            raise ValueError(
-                f"managed selection has no unique config snapshot for {source}"
-            )
-        expected = matches[0]
-        current_sha256 = sha256_file(source)
-        snapshot_path = (root / destination).resolve()
-        try:
-            snapshot_path.relative_to(root)
-        except ValueError:
-            raise ValueError("managed config snapshot escapes run directory") from None
-        if not snapshot_path.is_file() or snapshot_path.is_symlink():
-            raise ValueError(f"managed config snapshot is missing: {destination}")
-        snapshot_sha256 = sha256_file(snapshot_path)
-        if expected.get("sha256") != snapshot_sha256:
-            raise ValueError(f"managed config snapshot SHA256 mismatch: {destination}")
-        if current_sha256 != snapshot_sha256:
-            raise ValueError(
-                f"current config differs from pooled tuning snapshot: {source}"
-            )
-        evidence.append(
-            {
-                "path": str(source),
-                "snapshot_path": destination.as_posix(),
-                "sha256": current_sha256,
-            }
-        )
-    return evidence
-
-
-def resolve_run_config_snapshot_by_sha256(
-    run_dir: str | Path,
-    expected_sha256: str,
-) -> dict[str, Any]:
-    """Resolve one immutable YAML snapshot by its recorded content digest."""
-
-    root = Path(run_dir).expanduser().resolve()
-    if not isinstance(expected_sha256, str) or len(expected_sha256) != 64:
-        raise ValueError("expected config snapshot SHA256 must be a 64-character string")
-    manifest_path = root / "run_manifest.json"
-    try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        raise FileNotFoundError(
-            f"managed run manifest not found: {manifest_path}"
-        ) from None
-    snapshots = manifest.get("config_snapshots")
-    if not isinstance(snapshots, list):
-        raise ValueError("managed run manifest has no config_snapshots list")
-    matches = [
-        item
-        for item in snapshots
-        if isinstance(item, dict) and item.get("sha256") == expected_sha256
-    ]
-    if len(matches) != 1:
-        raise ValueError(
-            "managed run must contain exactly one config snapshot with the "
-            "selection online-training SHA256"
-        )
-    relative = Path(str(matches[0].get("snapshot_path", "")))
-    if (
-        not str(relative)
-        or relative.is_absolute()
-        or ".." in relative.parts
-        or relative.suffix.lower() not in {".yaml", ".yml"}
-    ):
-        raise ValueError("managed config snapshot path is unsafe or not YAML")
-    snapshot = (root / relative).resolve()
-    try:
-        snapshot.relative_to(root)
-    except ValueError:
-        raise ValueError("managed config snapshot escapes run directory") from None
-    if not snapshot.is_file() or snapshot.is_symlink():
-        raise ValueError(f"managed config snapshot is missing: {relative}")
-    if sha256_file(snapshot) != expected_sha256:
-        raise ValueError("managed config snapshot SHA256 mismatch")
-    return {
-        "path": snapshot,
-        "snapshot_path": relative.as_posix(),
-        "sha256": expected_sha256,
-    }
-
-
 def _pick(payload: dict[str, Any], keys: Sequence[str]) -> dict[str, Any]:
     return {key: payload.get(key) for key in keys}
 
@@ -465,14 +320,16 @@ def _require_result_keys(payload: dict[str, Any], result_type: str) -> None:
         raise ValueError(f"expected {result_type} keys are missing")
 
 
-def _train_result_summary(payload: dict[str, Any]) -> dict[str, Any]:
-    _require_result_keys(payload, "train_result")
-    epochs, method_id, selection = (
-        payload["epochs_completed"], payload.get("method_id"), payload.get("selection")
-    )
+def _train_result_summary(
+    payload: dict[str, Any], result_type: str
+) -> dict[str, Any]:
+    _require_result_keys(payload, result_type)
+    epochs = payload["epochs_completed"]
     if isinstance(epochs, bool) or not isinstance(epochs, int) or epochs <= 0:
         raise ValueError("train_result epochs_completed must be positive")
-    if method_id is not None:
+    selection = payload.get("selection")
+    if result_type == "pn2021_train_result":
+        method_id = payload["method_id"]
         optimizer_steps = payload.get("optimizer_steps")
         valid = (
             isinstance(method_id, str) and bool(method_id) and isinstance(selection, dict)
@@ -491,7 +348,7 @@ def _train_result_summary(payload: dict[str, Any]) -> dict[str, Any]:
         )
         if not valid:
             raise ValueError("typed train_result selection is not the heldout-free last checkpoint")
-    else:
+    elif result_type == "supervised_train_result":
         if "selection" in payload and (
             not isinstance(selection, dict)
             or selection.get("heldout_evaluation_used_for_selection") is not False
@@ -504,6 +361,8 @@ def _train_result_summary(payload: dict[str, Any]) -> dict[str, Any]:
             or not isinstance(payload.get("selected_checkpoint"), dict)
         ):
             raise ValueError("supervised train_result selection is incomplete")
+    else:
+        raise ValueError(f"unsupported train result type: {result_type}")
     selected = (
         _pick(
             selection,
@@ -526,102 +385,40 @@ def _train_result_summary(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _pooled_selection_summary(payload: dict[str, Any], exit_code: int) -> dict[str, Any]:
-    from util.evaluation.direct_baseline_selection import locked_pooled_selection_rule
-
-    _require_result_keys(payload, "pooled_selection")
-    comparison, config = payload.get("comparison_identity"), payload.get("config")
-    identity_ok = (
-        payload["schema_version"] == 1
-        and payload["artifact_type"] == "direct_k500_pooled_epoch_selection"
-        and payload["selection_rule"] == locked_pooled_selection_rule()
-        and isinstance(comparison, dict) and isinstance(config, dict)
-        and comparison.get("method_id") == "direct_depth23_fixed20"
-        and comparison.get("protocol_id") == config.get("protocol_id")
-        and payload.get("record_count") == 400 and payload.get("composition_count") == 20
-        and payload.get("centers") == ["ningbo", "chapman_shaoxing", "cpsc_2018", "georgia"]
-        and payload.get("class_order") == ["CD", "HYP", "MI", "NORM", "STTC"]
-    )
-    if not identity_ok:
-        raise ValueError("invalid Direct pooled-selection identity")
-    status, epoch = payload["status"], payload.get("selected_epoch")
-    numbers = [payload.get(key) for key in POOLED_VALUE_KEYS]
-    selected = (
-        status == "selected" and exit_code == 0
-        and isinstance(epoch, int) and not isinstance(epoch, bool) and epoch > 0
-        and all(
-            isinstance(value, (int, float))
-            and not isinstance(value, bool)
-            and math.isfinite(float(value))
-            for value in numbers
-        )
-    )
-    failed = (
-        status == "failed_clean_floor"
-        and exit_code == 3
-        and epoch is None
-        and all(value is None for value in numbers)
-    )
-    if not (selected or failed):
-        raise ValueError("pooled-selection status or selected values are inconsistent")
-    return {
-        "identity": _pick(comparison, ("protocol_id", "method_id", "model_family", "replicate_id")),
-        "selection": {
-            "status": status,
-            "selected_epoch": epoch,
-            **_pick(payload, POOLED_VALUE_KEYS),
-        },
-    }
-
-
-def _result_summary(payload: dict[str, Any], result_type: str, exit_code: int) -> dict[str, Any]:
-    if result_type == "train_result":
-        return _train_result_summary(payload)
-    if result_type == "pooled_selection":
-        return _pooled_selection_summary(payload, exit_code)
+def _result_summary(payload: dict[str, Any], result_type: str) -> dict[str, Any]:
+    if result_type in {"supervised_train_result", "pn2021_train_result"}:
+        return _train_result_summary(payload, result_type)
     _require_result_keys(payload, result_type)
-    if result_type == "evaluation_result":
-        protocol = payload["protocol"]
-        valid = (
-            payload["schema_version"] == 2 and payload["status"] == "complete"
-            and isinstance(protocol, dict)
-            and protocol.get("mapping_version") == "v7_super5_sjr_rgq_review_20260528"
-            and protocol.get("mapping_hash") == "555ec85d5b51"
-            and protocol.get("class_order") == ["CD", "HYP", "MI", "NORM", "STTC"]
-        )
-        if not valid:
-            raise ValueError("evaluation_result must be complete schema_version=2")
-        return {
-            "identity": _pick(payload, ("model", "checkpoint", "protocol")),
-            "selection": {"policy": "checkpoint_fixed_before_evaluation"},
-        }
-    selection, result = payload["selection"], payload["result"]
+    protocol, checkpoint = payload["protocol"], payload["checkpoint"]
+    clean, corrupted = payload["clean"], payload["corrupted"]
     valid = (
-        result_type == "refit_contract" and payload["schema_version"] == 1
-        and payload["artifact_type"] == "pn2021_direct_refit_contract"
-        and isinstance(selection, dict) and selection.get("heldout_evaluation_used") is False
-        and isinstance(result, dict) and bool(result.get("method_id"))
+        payload["schema_version"] == 2 and payload["status"] == "complete"
+        and isinstance(protocol, dict)
+        and protocol.get("mapping_version") == "v7_super5_sjr_rgq_review_20260528"
+        and protocol.get("mapping_hash") == "555ec85d5b51"
+        and protocol.get("class_order") == ["CD", "HYP", "MI", "NORM", "STTC"]
+        and isinstance(checkpoint, dict)
+        and isinstance(checkpoint.get("path"), str) and bool(checkpoint["path"])
+        and isinstance(checkpoint.get("sha256"), str)
+        and len(checkpoint["sha256"]) == 64
+        and isinstance(clean, dict) and isinstance(clean.get("per_center"), dict)
+        and bool(clean["per_center"])
+        and isinstance(corrupted, dict)
+        and isinstance(corrupted.get("per_view"), list)
+        and len(corrupted["per_view"]) == 20
+        and all(isinstance(view, dict) for view in corrupted["per_view"])
+        and isinstance(corrupted.get("aggregates"), dict)
     )
     if not valid:
-        raise ValueError("invalid heldout-free Direct refit contract")
-    nested = _train_result_summary(result)
+        raise ValueError("evaluation_result must be complete schema_version=2")
     return {
-        "identity": {**_pick(payload, ("model", "center", "method")), "result": nested["identity"]},
-        "selection": _pick(
-            selection,
-            (
-                "selected_epoch",
-                "selected_score",
-                "selected_clean_macro_auprc",
-                "selected_robust_macro_auprc",
-                "heldout_evaluation_used",
-            ),
-        ),
+        "identity": _pick(payload, ("model", "checkpoint", "protocol")),
+        "selection": {"policy": "checkpoint_fixed_before_evaluation"},
     }
 
 
 def _expected_result_evidence(
-    run_dir: Path, relative_path: Path, result_type: str, exit_code: int
+    run_dir: Path, relative_path: Path, result_type: str
 ) -> dict[str, Any]:
     result_path = run_dir / relative_path
     if result_path.is_symlink() or not result_path.is_file():
@@ -635,7 +432,7 @@ def _expected_result_evidence(
     return {
         "path": relative_path.as_posix(), "type": result_type,
         "sha256": sha256_file(result_path), "size_bytes": result_path.stat().st_size,
-        **_result_summary(payload, result_type, exit_code),
+        **_result_summary(payload, result_type),
     }
 
 
@@ -748,13 +545,10 @@ class RunRecorder:
         effective_error = error
         result_evidence = None
         expected = self.manifest["expected_result"]
-        validate_result = delegate_exit_code == 0 or (
-            expected["type"] == "pooled_selection" and delegate_exit_code == 3
-        )
-        if validate_result and effective_error is None:
+        if delegate_exit_code == 0 and effective_error is None:
             try:
                 result_evidence = _expected_result_evidence(
-                    self.run_dir, Path(expected["path"]), str(expected["type"]), delegate_exit_code
+                    self.run_dir, Path(expected["path"]), str(expected["type"])
                 )
             except ValueError as exc:
                 effective_error = str(exc)
@@ -798,11 +592,8 @@ __all__ = [
     "capture_environment",
     "capture_git_state",
     "ensure_output_outside_worktree",
-    "resolve_run_config_snapshot_by_sha256",
     "sha256_file",
     "snapshot_yaml_files",
     "utc_now",
-    "validate_managed_run_member",
-    "validate_run_config_snapshots",
     "verify_run_file_index",
 ]

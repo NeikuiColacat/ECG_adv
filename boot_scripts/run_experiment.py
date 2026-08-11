@@ -42,19 +42,14 @@ def _entrypoint(script: str, result: str, result_type: str) -> EntrypointSpec:
 
 
 ENTRYPOINTS = {
-    "train_ptbxl_effnet": _entrypoint("train_ptbxl_effnet.py", "train_result.json", "train_result"),
+    "train_ptbxl_effnet": _entrypoint(
+        "train_ptbxl_effnet.py", "train_result.json", "supervised_train_result"
+    ),
     "train_ptbxl_ecgfounder": _entrypoint(
-        "train_ptbxl_ecgfounder.py", "train_result.json", "train_result"
+        "train_ptbxl_ecgfounder.py", "train_result.json", "supervised_train_result"
     ),
-    "train_pn2021": _entrypoint("train_pn2021.py", "train_result.json", "train_result"),
-    "tune_pn2021_direct": _entrypoint("tune_pn2021_direct.py", "train_result.json", "train_result"),
-    "select_pn2021_direct": _entrypoint(
-        "select_pn2021_direct.py",
-        "direct_baseline_selection.json",
-        "pooled_selection",
-    ),
-    "refit_pn2021_direct": _entrypoint(
-        "refit_pn2021_direct.py", "refit_contract.json", "refit_contract"
+    "train_pn2021": _entrypoint(
+        "train_pn2021.py", "train_result.json", "pn2021_train_result"
     ),
     "evaluate_pn2021": _entrypoint(
         "evaluate_pn2021.py", "evaluation_result.json", "evaluation_result"
@@ -63,7 +58,6 @@ ENTRYPOINTS = {
 LAUNCHER_OWNED_FLAGS = frozenset(
     {"--config", "--config-root", "--output-dir", "--dry-run"}
 )
-REMOVED_ENTRYPOINT_FLAGS = frozenset({"--fixed20-cycles"})
 CONFIG_REFERENCE_FLAGS = frozenset({"--method-config"})
 
 
@@ -126,8 +120,6 @@ def _validated_arguments(value: Any) -> tuple[str, ...]:
         flag = argument.split("=", 1)[0]
         if flag in LAUNCHER_OWNED_FLAGS:
             raise ValueError(f"entrypoint argument is launcher-owned: {flag}")
-        if flag in REMOVED_ENTRYPOINT_FLAGS:
-            raise ValueError(f"entrypoint argument belongs to a removed protocol: {flag}")
     return arguments
 
 

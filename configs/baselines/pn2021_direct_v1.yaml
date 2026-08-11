@@ -48,9 +48,13 @@ references:
   training_config:
     path: train/PN2021_fixed20.yaml
     sha256: 3f482f9684d8a010a899243a9b3237bffbe3300f4c41430be2c4c590df715f86
+    sha256_scope: historical_run_snapshot
+    retained_live_path: false
   tuning_config:
     path: train/PN2021_direct_tune.yaml
     sha256: c9de1dc188781a259ae4976a15e36685a820e6c377b7e31d408db69b598d729f
+    sha256_scope: historical_run_snapshot
+    retained_live_path: false
   method_profile:
     path: train/methods/direct_depth23_fixed20.yaml
     sha256: d41e77219726f983ad90a0b9db98cd99668c354dc903e83ecbbe24e6b53b5c9f
@@ -551,13 +555,15 @@ comparison_controls:
       gradient_clip_norm: 1.0
       amp_dtype: bfloat16
     refit_config:
-      path: train/PN2021_fixed20.yaml
+      historical_path: train/PN2021_fixed20.yaml
+      retained_live_path: false
       historical_refit_sha256: 3f482f9684d8a010a899243a9b3237bffbe3300f4c41430be2c4c590df715f86
       selection_snapshot_sha256: 3f482f9684d8a010a899243a9b3237bffbe3300f4c41430be2c4c590df715f86
       historical_match_policy: exact_sha256
       pre_observer_retirement_live_sha256: c2b7531d49a170a0a53c6fe72f94a1b0b679619f9d2db1f3bff1e612b0a852da
-      live_current_sha256: a9755cd39b2c8fd24faaa149e077ff21baf445f820ce9468677742b246529d70
-      live_change_from_pre_observer_retirement: observer_block_removed_only
+      last_live_sha256_before_retirement: a9755cd39b2c8fd24faaa149e077ff21baf445f820ce9468677742b246529d70
+      retirement_reason: direct_tune_select_refit_surface_frozen_to_historical_ledger
+      retired_on: '2026-08-12'
     selection:
       run_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_pn2021_ecgfounder_direct_lr3e5_control_selection
       artifact_path: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_pn2021_ecgfounder_direct_lr3e5_control_selection/training/direct_baseline_selection.json
@@ -638,8 +644,9 @@ comparison_controls:
       selection_snapshot_sha256: 2deb6f0fd9f07924297cae58dbb2ce774b92643b3e1874f6948a3337a3f85e3a
       historical_match_policy: scientific_payload_except_profile_status_diagnostics_logging_output
       pre_observer_retirement_live_sha256: ce763ec1814c33656bc5460ec2436e9f5a777fe68173e1b1704cac2bf8785c4e
-      live_current_sha256: bfd649ffd21b49cfaaca955ec5471aeb09cbe3ddc6ff8e22c070d27fda8cf1d8
-      live_change_from_pre_observer_retirement: observer_block_removed_only
+      post_observer_pre_tuning_retirement_sha256: bfd649ffd21b49cfaaca955ec5471aeb09cbe3ddc6ff8e22c070d27fda8cf1d8
+      live_current_sha256: 2719f210531c49feaf898e6d0ae3c0796415613b66ef213bd7cffc0ec165c1d6
+      live_change_from_pre_observer_retirement: observer_block_and_protocol_tuning_surface_removed
     selection:
       run_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_pn2021_ecgfounder_latent_threechain_residual_depth23_aug075_lr3e5_selection
       artifact_path: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_pn2021_ecgfounder_latent_threechain_residual_depth23_aug075_lr3e5_selection/training/latent_threechain_residual_depth23_aug075_lr3e5_selection.json
@@ -701,6 +708,595 @@ comparison_controls:
       AUROC pp and +0.585 AUPRC pp at this single seed; this comparison does
       not isolate latent mixing from every other component in the bundle.
 
+historical_managed_run_lock:
+  schema_version: 1
+  locked_on: '2026-08-12'
+  lock_id: pn2021_direct_fixed20_historical_metric_lock_v1
+  status: verified_historical_metric_level
+  protocol:
+    adaptation_records_per_center: 500
+    baseline_id: pn2021_super5_direct_family_balanced_fixed20
+    class_order: [CD, HYP, MI, NORM, STTC]
+    corruption_compositions: 20
+    cpsc_2018_includes_extra: true
+    heldout_evaluation_used_for_selection: false
+    logical_centers: [ningbo, chapman_shaoxing, cpsc_2018, georgia]
+    mapping_hash: 555ec85d5b51
+    mapping_version: v7_super5_sjr_rgq_review_20260528
+    primary_metric_view: drop_all_zero
+    selection_records: 400
+    tuning_partition: 400_train_plus_100_validation_per_center
+    adaptation_population: one_logical_center_fixed_k500_only
+    outside_k500_model_access: false
+    training_k500_evidence: {run_embedded_hash: false, evidence_level: config_and_count}
+    evaluation_k500_exclusion_evidence:
+      run_embedded_hash: true
+      evidence_level: exact_set_identity
+      split_manifest_sha256: 58210d9b192bc18e9085f235453094814c9caed2cf9142998084ae7a004e9a42
+    refit_partition: all_k500_no_validation
+    evaluation_reference_ids_excluded: true
+    evaluation_aggregation: within_center_then_equal_four_center_mean
+    robust_selection_aggregation: mean_of_20_composition_metrics
+  claim_boundary:
+    bitwise_replay_claimed: false
+    paper_eligibility: single_seed_control_only
+    reason: all_26_runs_were_dirty_and_only_dirty_diff_hashes_not_patch_bytes_were_retained
+    replay_level: metric_level_not_bitwise
+    source_patch_available: false
+  historical_method:
+    profile_path: configs/train/methods/direct_depth23_fixed20.yaml
+    compiled_profile_identity_sha256: 336187af8edddaba54a07ae88a84561c5d6e87720a93d892ad115f648b71c2f3
+    future_recipe_identity_must_not_replace_historical_identity: true
+    method_id: direct_depth23_fixed20
+    profile_file_sha256: d41e77219726f983ad90a0b9db98cd99668c354dc903e83ecbbe24e6b53b5c9f
+  method_contract:
+    clean_views_per_record: 1
+    corrupted_views_per_record: 20
+    composition_order: all_depth2_then_all_depth3_canonical
+    loss: 0.5_clean_bce_plus_0.5_mean_twenty_corrupted_bce
+    optimizer_step_policy: one_step_after_all_21_weighted_backward_calls_per_base_batch
+    batch_norm_running_stats_policy: family_loss_weighted_once_per_base_batch
+    materialized_corruption_cache_used_for_training: false
+    online_torch_gpu_generation: true
+  execution_provenance:
+    git_commit: 153b5fe3142b175735d837e1e494370df6a448c5
+    dirty: true
+    source_patch_available: false
+    dirty_groups:
+      - id: effnet_tune_select
+        sha256: 75bbb705525c493eb8e620163aa56c70f5194bbfbb90bb59776811351feaa707
+        run_ids:
+          - efficientnet1dv2/select/all4
+          - efficientnet1dv2/tune/chapman_shaoxing
+          - efficientnet1dv2/tune/cpsc_2018
+          - efficientnet1dv2/tune/georgia
+          - efficientnet1dv2/tune/ningbo
+      - id: all_refits
+        sha256: 7ac177412cf9f76b3a34a89eb1193f53d444b013781c3d616cfb4a005c7706db
+        run_ids:
+          - ecgfounder/refit/chapman_shaoxing
+          - ecgfounder/refit/cpsc_2018
+          - ecgfounder/refit/georgia
+          - ecgfounder/refit/ningbo
+          - efficientnet1dv2/refit/chapman_shaoxing
+          - efficientnet1dv2/refit/cpsc_2018
+          - efficientnet1dv2/refit/georgia
+          - efficientnet1dv2/refit/ningbo
+      - id: all_evaluations
+        sha256: deb876d8c630a802ad4789b80e23a5a52b21831c0724363293e45440ceef0138
+        run_ids:
+          - ecgfounder/eval/chapman_shaoxing
+          - ecgfounder/eval/cpsc_2018
+          - ecgfounder/eval/georgia
+          - ecgfounder/eval/ningbo
+          - efficientnet1dv2/eval/chapman_shaoxing
+          - efficientnet1dv2/eval/cpsc_2018
+          - efficientnet1dv2/eval/georgia
+          - efficientnet1dv2/eval/ningbo
+      - id: ecgfounder_tune_select
+        sha256: e2571dab428183bda1196caf667a166533c59597ff06e42af6755c49446f4388
+        run_ids:
+          - ecgfounder/select/all4
+          - ecgfounder/tune/chapman_shaoxing
+          - ecgfounder/tune/cpsc_2018
+          - ecgfounder/tune/georgia
+          - ecgfounder/tune/ningbo
+  run_root: /home/linbinhao/ECG_adv_data/runs/manual_refactor
+  run_matrix:
+    eval: 8
+    refit: 8
+    select: 2
+    total: 26
+    tune: 8
+  managed_runs:
+    - identity: {id: efficientnet1dv2/tune/ningbo, kind: tune, model: efficientnet1dv2, center: ningbo, basename: managed_pn2021_effnet_direct_tune_ningbo_h30}
+      provenance: {dirty_group: effnet_tune_select, manifest_sha256: 2609a929a1088616c8768daa755f12d71c5181ec6ce43753c559a3e30cc74bd5}
+      index: {sha256: 7efbae3091d582573658725f65d03beb42587939672022dd463cc5b85a0fa6c8, file_count: 111, indexed_size_bytes: 89808406}
+      primary: {path: training/train_result.json, type: train_result, sha256: 61acfeb1e8d979bedd5dcc6a021717254c0b264dc54381042e9ee7aaedee6242}
+      config_snapshot_set: {count: 15, canonical_sha256: 675263ae563456fb0504a54852982e5f01ce10f388e12fda6d831fa12ebedc12}
+      entry_config: {path: configs/experiments/manual_refactor_pn2021_effnet_direct_tune_ningbo.yaml, sha256: a4fee6a60e4f1afeecd99a5ddada224652037639e4fa4fd566ce6bdba19574d3}
+      delegate_config: {path: configs/train/PN2021_direct_tune.yaml, sha256: c9de1dc188781a259ae4976a15e36685a820e6c377b7e31d408db69b598d729f}
+    - identity: {id: efficientnet1dv2/tune/chapman_shaoxing, kind: tune, model: efficientnet1dv2, center: chapman_shaoxing, basename: managed_pn2021_effnet_direct_tune_chapman_shaoxing_h30}
+      provenance: {dirty_group: effnet_tune_select, manifest_sha256: e25a9573cbfcb7448299210abf32881da55fbaa5f7a4eda8f8cc81c08d470d86}
+      index: {sha256: 1eaf934cccb5b51a954d176b1a15ceedc3416880ba95ceebaac23fa67f8aa28a, file_count: 111, indexed_size_bytes: 92756680}
+      primary: {path: training/train_result.json, type: train_result, sha256: 349b6e9df4a7d54fff10ec7b03eca550219563b1baa85f1485072dbd56678def}
+      config_snapshot_set: {count: 15, canonical_sha256: b9a92943ecd14b7363e5669d11f5d4ab6b4d47b51a13ee093bfd1b63d1aec9ab}
+      entry_config: {path: configs/experiments/manual_refactor_pn2021_effnet_direct_tune_chapman_shaoxing.yaml, sha256: 46650493873d09866498463921cd40fc66828c1a4706f3d2d5c5bdba9dbd9d2a}
+      delegate_config: {path: configs/train/PN2021_direct_tune.yaml, sha256: c9de1dc188781a259ae4976a15e36685a820e6c377b7e31d408db69b598d729f}
+    - identity: {id: efficientnet1dv2/tune/cpsc_2018, kind: tune, model: efficientnet1dv2, center: cpsc_2018, basename: managed_pn2021_effnet_direct_tune_cpsc_2018_h30}
+      provenance: {dirty_group: effnet_tune_select, manifest_sha256: 6598638b141c0887c955d47c2340301827b729c8448e16f24e2f072320d0254f}
+      index: {sha256: b9c181e8e3254617412da3e888a17f48c370c988274359f568a3b48948ab35e0, file_count: 111, indexed_size_bytes: 89507722}
+      primary: {path: training/train_result.json, type: train_result, sha256: a9ffd09dcc5cc7e75da5ed990b832da50dc2cf59d778326e9a6a510633746441}
+      config_snapshot_set: {count: 15, canonical_sha256: 30d19496d136a584c1c4089665f10a914219c2dd8206f056a64d1fa8881be1ed}
+      entry_config: {path: configs/experiments/manual_refactor_pn2021_effnet_direct_tune_cpsc_2018.yaml, sha256: 99faec7ab3dc012d9bafab8aa22c2a0b146396b3fd5fb8128c737d1ee144f250}
+      delegate_config: {path: configs/train/PN2021_direct_tune.yaml, sha256: c9de1dc188781a259ae4976a15e36685a820e6c377b7e31d408db69b598d729f}
+    - identity: {id: efficientnet1dv2/tune/georgia, kind: tune, model: efficientnet1dv2, center: georgia, basename: managed_pn2021_effnet_direct_tune_georgia_h30}
+      provenance: {dirty_group: effnet_tune_select, manifest_sha256: 7acfaebc882939530f179c426e7f0280890353fe95a7a231ee703ceea2e1fe95}
+      index: {sha256: 1b894e9571a4588003d90103c50646df8355f632c197c40e6dcac7b0e1d0e49e, file_count: 111, indexed_size_bytes: 88853123}
+      primary: {path: training/train_result.json, type: train_result, sha256: b45c42d07b15eb83cf0b03c289d311edab379503492ee35f6f0bdb516aa657bb}
+      config_snapshot_set: {count: 15, canonical_sha256: 2201e05d725f8eb8c3977b18afe2999406033f3a64cc5cb59ba30470c11a5447}
+      entry_config: {path: configs/experiments/manual_refactor_pn2021_effnet_direct_tune_georgia.yaml, sha256: 32b96faf0420733a62d6c13b71f19a084bfe0a11c2fda0e4e4e11529f000b015}
+      delegate_config: {path: configs/train/PN2021_direct_tune.yaml, sha256: c9de1dc188781a259ae4976a15e36685a820e6c377b7e31d408db69b598d729f}
+    - identity: {id: efficientnet1dv2/select/all4, kind: select, model: efficientnet1dv2, center: all4, basename: managed_pn2021_effnet_direct_selection_h30}
+      provenance: {dirty_group: effnet_tune_select, manifest_sha256: 2302bf8daf1f8e35732fcf534086ad4595660a58f8f11685e66c1cb3edf22cef}
+      index: {sha256: 37cf9898b5055bc987dfb17a8167171924b38462c13cda399950a4628955fa29, file_count: 22, indexed_size_bytes: 3662610}
+      primary: {path: training/direct_baseline_selection.json, type: direct_k500_pooled_epoch_selection, sha256: 8a5df25d7f3e656aa2d3e7758772c6440cda9903004ff166519036f440504afa}
+      config_snapshot_set: {count: 15, canonical_sha256: c419229584ce8ce25314c0964d838efad1b0b60018f310f905a0178a4393ee33}
+      entry_config: {path: configs/experiments/manual_refactor_pn2021_effnet_direct_select.yaml, sha256: e95aa3d4875f81d05d97ea8ee8965f450e868db0b9e0564f03f59603e30015aa}
+      delegate_config: {path: configs/train/PN2021_direct_tune.yaml, sha256: c9de1dc188781a259ae4976a15e36685a820e6c377b7e31d408db69b598d729f}
+    - identity: {id: efficientnet1dv2/refit/ningbo, kind: refit, model: efficientnet1dv2, center: ningbo, basename: managed_pn2021_effnet_fixed20_refit_ningbo}
+      provenance: {dirty_group: all_refits, manifest_sha256: 562608628347830d3c72285adcaf4f5fe5b6bbea7323da50332b770cf2bb6805}
+      index: {sha256: 9ef1e901331809d994724b8f420e312f2fd8827a07e75d33bd8d6d9fcf9888c6, file_count: 49, indexed_size_bytes: 87847624}
+      primary: {path: training/refit_contract.json, type: pn2021_direct_refit_contract, sha256: 7b94530b7acab5c8d2520859091c89988ebd301a83aa5e270413037c1bb8e563}
+      config_snapshot_set: {count: 12, canonical_sha256: 9620e6d92b60b114806e31be4568bfc3cda3d5ced782609df4ca242bdb770a8d}
+      entry_config: {path: configs/experiments/manual_refactor_pn2021_effnet_fixed20_refit_ningbo.yaml, sha256: 504746a2d0ebf076fe4ad9a25fcce61fc766fda2c021f4a7aa538f468a54a203}
+      delegate_config: {path: configs/train/PN2021_fixed20.yaml, sha256: 3f482f9684d8a010a899243a9b3237bffbe3300f4c41430be2c4c590df715f86}
+    - identity: {id: efficientnet1dv2/refit/chapman_shaoxing, kind: refit, model: efficientnet1dv2, center: chapman_shaoxing, basename: managed_pn2021_effnet_fixed20_refit_chapman_shaoxing}
+      provenance: {dirty_group: all_refits, manifest_sha256: 8230cc2e6221365f9784e731dc17c135bdffe40b61bd222aea3627515a087ccf}
+      index: {sha256: 91db128084637acd0a2fff5897c7f6268cce675c2fc9da82b1401c7fb21613a7, file_count: 49, indexed_size_bytes: 87763044}
+      primary: {path: training/refit_contract.json, type: pn2021_direct_refit_contract, sha256: 5113878f80e7dd68ba9733fdbd9042df124191a61f6635b58f4405fc603160eb}
+      config_snapshot_set: {count: 12, canonical_sha256: 22b95308a917273d183efcd00e8e8c9d861c8235c3807707ac64fb2310e95014}
+      entry_config: {path: configs/experiments/manual_refactor_pn2021_effnet_fixed20_refit_chapman_shaoxing.yaml, sha256: 5c32bf959cd4f7838d27eba4f8c0f40d523e2ad3d8e3fb5719ec1f36cbab8cde}
+      delegate_config: {path: configs/train/PN2021_fixed20.yaml, sha256: 3f482f9684d8a010a899243a9b3237bffbe3300f4c41430be2c4c590df715f86}
+    - identity: {id: efficientnet1dv2/refit/cpsc_2018, kind: refit, model: efficientnet1dv2, center: cpsc_2018, basename: managed_pn2021_effnet_fixed20_refit_cpsc_2018}
+      provenance: {dirty_group: all_refits, manifest_sha256: 33c7d925ba3bfcfbb4ee3f77291ed0c1c2dccf5b00f7df9ead9d5d63c291b47b}
+      index: {sha256: 6b9b3917917d50a46a4160eb7e90a921538bc08e9575716f30c0b3ab1e9bc183, file_count: 49, indexed_size_bytes: 86860533}
+      primary: {path: training/refit_contract.json, type: pn2021_direct_refit_contract, sha256: 59db057f2c925cc53dd2d58307636e037f2bec8ce58db052da43de27fb949cf9}
+      config_snapshot_set: {count: 12, canonical_sha256: 17c1f0c87afa959c96267130488c67d22fdc3345302063278a4009df5803e0e0}
+      entry_config: {path: configs/experiments/manual_refactor_pn2021_effnet_fixed20_refit_cpsc_2018.yaml, sha256: 56423fe4a56ab01e3ad3008e6fe866eb0d92fc58e64ff7128a0b91a64e89b6d9}
+      delegate_config: {path: configs/train/PN2021_fixed20.yaml, sha256: 3f482f9684d8a010a899243a9b3237bffbe3300f4c41430be2c4c590df715f86}
+    - identity: {id: efficientnet1dv2/refit/georgia, kind: refit, model: efficientnet1dv2, center: georgia, basename: managed_pn2021_effnet_fixed20_refit_georgia}
+      provenance: {dirty_group: all_refits, manifest_sha256: adf5a0a1e0972f15b665a6ea967115ee01bf0ed37643c3c60d4b30f451210205}
+      index: {sha256: a8292b053f4b4e85a6b7dc0f23f9a4f452df3a25b28664dce4de4b6ac81bbd02, file_count: 49, indexed_size_bytes: 87119290}
+      primary: {path: training/refit_contract.json, type: pn2021_direct_refit_contract, sha256: c2af7a804862ea6b1d3e6e7994585e9f4b4de1018e27fc63459f3969a1268f5b}
+      config_snapshot_set: {count: 12, canonical_sha256: 38863f1e1ab9bb7ae62c9304a03718f0184b7fff9b595e5cfe4cd5075fa85df4}
+      entry_config: {path: configs/experiments/manual_refactor_pn2021_effnet_fixed20_refit_georgia.yaml, sha256: 2cdf19cb78c48ff1df8b7f44ad97426207bd0710bb8d043f989f95c42a0dbe18}
+      delegate_config: {path: configs/train/PN2021_fixed20.yaml, sha256: 3f482f9684d8a010a899243a9b3237bffbe3300f4c41430be2c4c590df715f86}
+    - identity: {id: efficientnet1dv2/eval/ningbo, kind: eval, model: efficientnet1dv2, center: ningbo, basename: managed_pn2021_effnet_fixed20_eval_ningbo}
+      provenance: {dirty_group: all_evaluations, manifest_sha256: 8bf86eea92b6d2678a1cbbcdaa2fddfbefcf221b422ef1fa18e34dd160f65a45}
+      index: {sha256: 0c101eaa3229fd1ad3ada6cd945e56c42c3f7ab70b950958b5731760de2a70a5, file_count: 13, indexed_size_bytes: 543774}
+      primary: {path: evaluation/evaluation_result.json, type: evaluation_result, sha256: 0d0388381fc7a2344e7df703c77e98d5a612b51564ed9927227eaff6af78fb1c}
+      config_snapshot_set: {count: 7, canonical_sha256: 9e79fe2e52c8f0e1436e90006232b0f1aeded96fba258491c9a25283522ecd14}
+      entry_config: {path: configs/experiments/manual_refactor_pn2021_effnet_fixed20_eval_ningbo.yaml, sha256: 2030c266069151ef4761f1564f967ec9c9f95c0a814c5dcb43a7ce6a4f32c2ef}
+      delegate_config: {path: configs/eval/PN2021.yaml, sha256: 6d3e7df9f8223f1450c26e2fd8f76e716cafea8288ba12deb46589fe7bbdda03}
+    - identity: {id: efficientnet1dv2/eval/chapman_shaoxing, kind: eval, model: efficientnet1dv2, center: chapman_shaoxing, basename: managed_pn2021_effnet_fixed20_eval_chapman_shaoxing}
+      provenance: {dirty_group: all_evaluations, manifest_sha256: e00b4c56a825193d0fd47d17d3e018d6ad70ed9573b216b8123939ed9f857cff}
+      index: {sha256: 23f73ca792c0c77fc1429daf71f7e947635358f23ce089bc2654b576d4ee9c78, file_count: 13, indexed_size_bytes: 543885}
+      primary: {path: evaluation/evaluation_result.json, type: evaluation_result, sha256: 224a03eb7efca5be4bf80b351888d1b90e7f6aab492bcf6a5066c25224bc1a38}
+      config_snapshot_set: {count: 7, canonical_sha256: 87d2ebc01ef754ca0137ab9e3a3904b9f5380a6e2ea85e1ea48a6ee9db0b89dc}
+      entry_config: {path: configs/experiments/manual_refactor_pn2021_effnet_fixed20_eval_chapman_shaoxing.yaml, sha256: e56daf990dc2bf7b96053fd407fb71fa0806c421d6b460ae4f061fe391d14104}
+      delegate_config: {path: configs/eval/PN2021.yaml, sha256: 6d3e7df9f8223f1450c26e2fd8f76e716cafea8288ba12deb46589fe7bbdda03}
+    - identity: {id: efficientnet1dv2/eval/cpsc_2018, kind: eval, model: efficientnet1dv2, center: cpsc_2018, basename: managed_pn2021_effnet_fixed20_eval_cpsc_2018}
+      provenance: {dirty_group: all_evaluations, manifest_sha256: 37f1ebda629b683df8572222186c767b7b488fb75d0093e7164d6acfc922b431}
+      index: {sha256: 37705fe3de61346350f5016e8f8ec07634cedc3b4d579ba12895db98e923d0af, file_count: 13, indexed_size_bytes: 543986}
+      primary: {path: evaluation/evaluation_result.json, type: evaluation_result, sha256: 08658708b8474f811b5d704cbbcfb1640af5becb4ff0d53d37edfeb5099bfdb5}
+      config_snapshot_set: {count: 7, canonical_sha256: cd1f70ed4bd3ab95e8013e74958f4aa1d0b1f0d5f53dfb78d0d6c309f622ee6f}
+      entry_config: {path: configs/experiments/manual_refactor_pn2021_effnet_fixed20_eval_cpsc_2018.yaml, sha256: c4906632b565c3ff8631db502ec35fd4a96acfffdaf689797752ac836822a00c}
+      delegate_config: {path: configs/eval/PN2021.yaml, sha256: 6d3e7df9f8223f1450c26e2fd8f76e716cafea8288ba12deb46589fe7bbdda03}
+    - identity: {id: efficientnet1dv2/eval/georgia, kind: eval, model: efficientnet1dv2, center: georgia, basename: managed_pn2021_effnet_fixed20_eval_georgia}
+      provenance: {dirty_group: all_evaluations, manifest_sha256: 7bfd3a848d5031426de6b7402372eeaa9f4ad60727ddb0eb5d767a1d4192b890}
+      index: {sha256: 27e513a1565245c22c5eea4d1acbd59c6ca2fdf143e01c1357f2af522a1b230e, file_count: 13, indexed_size_bytes: 543035}
+      primary: {path: evaluation/evaluation_result.json, type: evaluation_result, sha256: 234fdd4d3e7e3dabfdff560d9878e6e2d557c8a93e622bfb1fcb439ad4c99b59}
+      config_snapshot_set: {count: 7, canonical_sha256: b95e90eec7780deb24563dc52051fdb7defa3bbc429e0dcfe78ffa12b1904f4e}
+      entry_config: {path: configs/experiments/manual_refactor_pn2021_effnet_fixed20_eval_georgia.yaml, sha256: b3cc8b79830c49ce18b8a50fbe176001b96ec40607cb89617072263100b40870}
+      delegate_config: {path: configs/eval/PN2021.yaml, sha256: 6d3e7df9f8223f1450c26e2fd8f76e716cafea8288ba12deb46589fe7bbdda03}
+    - identity: {id: ecgfounder/tune/ningbo, kind: tune, model: ecgfounder, center: ningbo, basename: managed_pn2021_ecgfounder_direct_tune_ningbo_h20}
+      provenance: {dirty_group: ecgfounder_tune_select, manifest_sha256: d6493715b0346d5b1c8def581e3523be7cce049335d28922e0c891c55a4b9dd6}
+      index: {sha256: 1cd73bbda1172ae1900f826321be43623629d16d69bf2bc65450949647cc0ffc, file_count: 91, indexed_size_bytes: 378951195}
+      primary: {path: training/train_result.json, type: train_result, sha256: b02a772b0486d952094489cb0c0d4aebea423f0c67e63daa8ec60d0d61274557}
+      config_snapshot_set: {count: 15, canonical_sha256: 2f7593b810971601eaaf2a2356f2e80bcd0db1dfe7a49c67ce6633daea8675d7}
+      entry_config: {path: configs/experiments/manual_refactor_pn2021_ecgfounder_direct_tune_ningbo.yaml, sha256: c4b119d1a866f8cccd4ba11af650e15eea39aa84fc7e00abbbc3489690e176cc}
+      delegate_config: {path: configs/train/PN2021_direct_tune.yaml, sha256: c9de1dc188781a259ae4976a15e36685a820e6c377b7e31d408db69b598d729f}
+    - identity: {id: ecgfounder/tune/chapman_shaoxing, kind: tune, model: ecgfounder, center: chapman_shaoxing, basename: managed_pn2021_ecgfounder_direct_tune_chapman_shaoxing_h20}
+      provenance: {dirty_group: ecgfounder_tune_select, manifest_sha256: 2e3fec75c9ace15571e9021d9004156006c46beb87be9a96012da766c532ede5}
+      index: {sha256: 03c87ba5604376b84c4a56effc3e3f1ff9b741cd4d6513c2ca9c68ce1970cbf8, file_count: 91, indexed_size_bytes: 381580762}
+      primary: {path: training/train_result.json, type: train_result, sha256: e908c6b98221e2d53569d0ce6138a374452cbccdfa6ba26c153a227c68a9babf}
+      config_snapshot_set: {count: 15, canonical_sha256: b3da079a74a6d54ad61b747d9f344a524a1ce1cf6543593ddf74936a6bcc8fff}
+      entry_config: {path: configs/experiments/manual_refactor_pn2021_ecgfounder_direct_tune_chapman_shaoxing.yaml, sha256: eda87cd3b40cad252bbb6b5085c85987c73f74777f15c35277d43feb2c4d8ea9}
+      delegate_config: {path: configs/train/PN2021_direct_tune.yaml, sha256: c9de1dc188781a259ae4976a15e36685a820e6c377b7e31d408db69b598d729f}
+    - identity: {id: ecgfounder/tune/cpsc_2018, kind: tune, model: ecgfounder, center: cpsc_2018, basename: managed_pn2021_ecgfounder_direct_tune_cpsc_2018_h20}
+      provenance: {dirty_group: ecgfounder_tune_select, manifest_sha256: 5432732a0a2c1b8ba4acdeed3c9406eb49538f213870a4cf7a8c68b7c3d4b678}
+      index: {sha256: 24ef436b246f87a631411877c1bddb4a2e00e618aa842e13a39dae1bbfb256d0, file_count: 91, indexed_size_bytes: 378343500}
+      primary: {path: training/train_result.json, type: train_result, sha256: 9ea56dd17b34b9b71ea4aff272e2fb0a588089367a277e27cb347f56e38cbd3d}
+      config_snapshot_set: {count: 15, canonical_sha256: 0fd61076261bfce9030141d32894552a92798c4dc098c6a9b68aa5ce139a915a}
+      entry_config: {path: configs/experiments/manual_refactor_pn2021_ecgfounder_direct_tune_cpsc_2018.yaml, sha256: cfee45df08670e416646d8dc884b37345aa3cf16e8a7e5e2df3f357c857400fb}
+      delegate_config: {path: configs/train/PN2021_direct_tune.yaml, sha256: c9de1dc188781a259ae4976a15e36685a820e6c377b7e31d408db69b598d729f}
+    - identity: {id: ecgfounder/tune/georgia, kind: tune, model: ecgfounder, center: georgia, basename: managed_pn2021_ecgfounder_direct_tune_georgia_h20}
+      provenance: {dirty_group: ecgfounder_tune_select, manifest_sha256: 1e0d63f3df1166e53f1adbcce01f3dc2fc646566a70936e8c5cd2f698f7819d9}
+      index: {sha256: 01b2d02b47fd19431f007db39528ba0666a76c769288745ce95cc2f773d47a61, file_count: 91, indexed_size_bytes: 379436459}
+      primary: {path: training/train_result.json, type: train_result, sha256: 209d6c10efb7e20c58da856dac67689e5bb514e4718140ae4b07adc3cd9011a0}
+      config_snapshot_set: {count: 15, canonical_sha256: ab733dff3c28acc9a18bc41c2e268d0df44ce8c8d3b33bb0fc4e6caf509fa709}
+      entry_config: {path: configs/experiments/manual_refactor_pn2021_ecgfounder_direct_tune_georgia.yaml, sha256: ab165e8b9795a7d4a810162369109661fdae8e007af4071b9a801b002ad007d8}
+      delegate_config: {path: configs/train/PN2021_direct_tune.yaml, sha256: c9de1dc188781a259ae4976a15e36685a820e6c377b7e31d408db69b598d729f}
+    - identity: {id: ecgfounder/select/all4, kind: select, model: ecgfounder, center: all4, basename: managed_pn2021_ecgfounder_direct_selection_h20}
+      provenance: {dirty_group: ecgfounder_tune_select, manifest_sha256: c98457d590af5385ecfb241d84b23427d8767b1e0bc9d71ab11063c09174e7f7}
+      index: {sha256: ec724843f6b5978d10fbfda1d8f6c776785824d78685ae62d5a9130696bd213f, file_count: 22, indexed_size_bytes: 2481640}
+      primary: {path: training/direct_baseline_selection.json, type: direct_k500_pooled_epoch_selection, sha256: 42e78a2d02f4152d916c1acdc8721aa8e435fd58af314362e31b2176a81b796c}
+      config_snapshot_set: {count: 15, canonical_sha256: 8293fb982f30ad881e9bdbe8fc781a5f9e415012dd5d8e68b708aecc16a02ce3}
+      entry_config: {path: configs/experiments/manual_refactor_pn2021_ecgfounder_direct_select.yaml, sha256: b32843f0b529b8e353052dee4e1219095775e3a60b92f6d306559de6d32a84df}
+      delegate_config: {path: configs/train/PN2021_direct_tune.yaml, sha256: c9de1dc188781a259ae4976a15e36685a820e6c377b7e31d408db69b598d729f}
+    - identity: {id: ecgfounder/refit/ningbo, kind: refit, model: ecgfounder, center: ningbo, basename: managed_pn2021_ecgfounder_fixed20_refit_ningbo}
+      provenance: {dirty_group: all_refits, manifest_sha256: 27aba193fa000914670ff86bbd8fc35b8b4f4ef2b8cb45488125d1579d2e317b}
+      index: {sha256: 18565bb3b0ab460662277a842b9ddc596f1b3a764209a23b8a03ea5a42fecb82, file_count: 49, indexed_size_bytes: 376394177}
+      primary: {path: training/refit_contract.json, type: pn2021_direct_refit_contract, sha256: e378b228ab1128eeac65cb34b7555c0834c188815599c9d19dc4824de369341c}
+      config_snapshot_set: {count: 12, canonical_sha256: 8acc0c3a3678d79a27120b8f15af0490bd9eeed412f61d0c5ddc920c4099d4fc}
+      entry_config: {path: configs/experiments/manual_refactor_pn2021_ecgfounder_fixed20_refit_ningbo.yaml, sha256: 534e2966b861b6f003067a03080e853b620ccb192a59a7c3dbefbf009a3113a3}
+      delegate_config: {path: configs/train/PN2021_fixed20.yaml, sha256: 3f482f9684d8a010a899243a9b3237bffbe3300f4c41430be2c4c590df715f86}
+    - identity: {id: ecgfounder/refit/chapman_shaoxing, kind: refit, model: ecgfounder, center: chapman_shaoxing, basename: managed_pn2021_ecgfounder_fixed20_refit_chapman_shaoxing}
+      provenance: {dirty_group: all_refits, manifest_sha256: 7b6e30586c66c34cc8ac934a994e6cb6d4f105ea127e7c31f81539271b824491}
+      index: {sha256: 496d8c71a7da289b5e5d84c076880a0f5d9b58ce9282b858dcb85d9e3321a581, file_count: 49, indexed_size_bytes: 379539842}
+      primary: {path: training/refit_contract.json, type: pn2021_direct_refit_contract, sha256: 0bd1fbce081b34b082c24865a2911e145509e89bc9d55ea12ce0bc026feefe40}
+      config_snapshot_set: {count: 12, canonical_sha256: b13142d3493feccbbc415190ebb66d5618608b36a4839ef1405938b4414efe93}
+      entry_config: {path: configs/experiments/manual_refactor_pn2021_ecgfounder_fixed20_refit_chapman_shaoxing.yaml, sha256: 3a069a1dbc63ba1e68b214c3c8e20c3891000bebd91e5f20d02620f2f3886ce9}
+      delegate_config: {path: configs/train/PN2021_fixed20.yaml, sha256: 3f482f9684d8a010a899243a9b3237bffbe3300f4c41430be2c4c590df715f86}
+    - identity: {id: ecgfounder/refit/cpsc_2018, kind: refit, model: ecgfounder, center: cpsc_2018, basename: managed_pn2021_ecgfounder_fixed20_refit_cpsc_2018}
+      provenance: {dirty_group: all_refits, manifest_sha256: c0cfc3d6fb7f67eaf848dfcf02c4d7f073530e11625c2eeb80c679e864fc8717}
+      index: {sha256: 042f642bc82ea5dc11a4cae6cbbf2d96939dc35e292b9f3facffa9c26b805886, file_count: 49, indexed_size_bytes: 378364470}
+      primary: {path: training/refit_contract.json, type: pn2021_direct_refit_contract, sha256: 6bc4722e37b6a6f94b243049c43c365b357d5400b3f5acf52f9035505f2402a9}
+      config_snapshot_set: {count: 12, canonical_sha256: 2eb0195cecedac84dac36c2c39f0fb9691809e02296e10e88a7016d74f7790ee}
+      entry_config: {path: configs/experiments/manual_refactor_pn2021_ecgfounder_fixed20_refit_cpsc_2018.yaml, sha256: 4c7ec78bf7ec97b0f7b87a0274611c3d258cfd9c0e2902ed3c7375739d043404}
+      delegate_config: {path: configs/train/PN2021_fixed20.yaml, sha256: 3f482f9684d8a010a899243a9b3237bffbe3300f4c41430be2c4c590df715f86}
+    - identity: {id: ecgfounder/refit/georgia, kind: refit, model: ecgfounder, center: georgia, basename: managed_pn2021_ecgfounder_fixed20_refit_georgia}
+      provenance: {dirty_group: all_refits, manifest_sha256: a976bda5b634576c18c1e4bb123cf1a10661d6b2b23fae5ce1bcc4fe8ee5acad}
+      index: {sha256: 06183e4a2836b705eb8d0034b5c30ec985345c261f305f1d9d412542351c7634, file_count: 49, indexed_size_bytes: 376841098}
+      primary: {path: training/refit_contract.json, type: pn2021_direct_refit_contract, sha256: 5a4b98de48e4b500e592bf30a984f60f338130dceec66a8ad7c802e11269f2d2}
+      config_snapshot_set: {count: 12, canonical_sha256: 0283639b69e1a947e67793d814ed6de920d907911b632416cba24ea782abdaa7}
+      entry_config: {path: configs/experiments/manual_refactor_pn2021_ecgfounder_fixed20_refit_georgia.yaml, sha256: 7ebfece9e547642d241ed48ce1ed9cae88c089448f50feed72e5181672a8c729}
+      delegate_config: {path: configs/train/PN2021_fixed20.yaml, sha256: 3f482f9684d8a010a899243a9b3237bffbe3300f4c41430be2c4c590df715f86}
+    - identity: {id: ecgfounder/eval/ningbo, kind: eval, model: ecgfounder, center: ningbo, basename: managed_pn2021_ecgfounder_fixed20_eval_ningbo}
+      provenance: {dirty_group: all_evaluations, manifest_sha256: 3bad73c81caa15488ddc61a0a8d767c2841c2f540fa9a5f39ce48bd1f0525536}
+      index: {sha256: 6f209418042295ac4dc30a6c8437bf09511ef5a0019c4e0c721c1fbc2816cacd, file_count: 13, indexed_size_bytes: 543804}
+      primary: {path: evaluation/evaluation_result.json, type: evaluation_result, sha256: 83461128df4948a0493d43947fb4233e90daaff3d3b6ae6f9c2481bf5ea59233}
+      config_snapshot_set: {count: 7, canonical_sha256: 4d805b49c4de96cdb4bc77d10201b06371d8d01e257e5a9b5d5e9f08371c4a18}
+      entry_config: {path: configs/experiments/manual_refactor_pn2021_ecgfounder_fixed20_eval_ningbo.yaml, sha256: fecc1942d4f31af0fa64ddd0f43b35100a27b416c15f0405d2a9c8f4f1180071}
+      delegate_config: {path: configs/eval/PN2021.yaml, sha256: 6d3e7df9f8223f1450c26e2fd8f76e716cafea8288ba12deb46589fe7bbdda03}
+    - identity: {id: ecgfounder/eval/chapman_shaoxing, kind: eval, model: ecgfounder, center: chapman_shaoxing, basename: managed_pn2021_ecgfounder_fixed20_eval_chapman_shaoxing}
+      provenance: {dirty_group: all_evaluations, manifest_sha256: 130605db8ea34bde245674ce952617f409d36b87848d5f11a6696689e6beb8ac}
+      index: {sha256: a268384ac80d781322de0280aaf7bafcd6cefb6d47310a7805b90797ed6228fe, file_count: 13, indexed_size_bytes: 543966}
+      primary: {path: evaluation/evaluation_result.json, type: evaluation_result, sha256: 5ace384a7a930fa9eef034c4f7f80e6e75e9a1ac893293db6cb11ed380fb0c7c}
+      config_snapshot_set: {count: 7, canonical_sha256: 389a5d53c2045f29f754c3cc60776180803f809521b64f7fcbc6e8008d9cd99f}
+      entry_config: {path: configs/experiments/manual_refactor_pn2021_ecgfounder_fixed20_eval_chapman_shaoxing.yaml, sha256: 52e0790d58288f97a1b95281d3d00f64127d35dd730558630306bc9011e2c7f9}
+      delegate_config: {path: configs/eval/PN2021.yaml, sha256: 6d3e7df9f8223f1450c26e2fd8f76e716cafea8288ba12deb46589fe7bbdda03}
+    - identity: {id: ecgfounder/eval/cpsc_2018, kind: eval, model: ecgfounder, center: cpsc_2018, basename: managed_pn2021_ecgfounder_fixed20_eval_cpsc_2018}
+      provenance: {dirty_group: all_evaluations, manifest_sha256: 724c89799ae2882e40441cd6abbda87ca48f696f63354c53ae9d315c6d275f7d}
+      index: {sha256: 7695266e2b313b146768f9ea316047e42ef4bf3dd3ab2540f96d605a14d1ec22, file_count: 13, indexed_size_bytes: 544157}
+      primary: {path: evaluation/evaluation_result.json, type: evaluation_result, sha256: f0707e5075f8170da2e62c7e4654b4a03d98f2e45881980b1be8b8dd95536b01}
+      config_snapshot_set: {count: 7, canonical_sha256: 8ca62b088e4dabb9e66cb66cde3e38970d4d95cb0eba7afe578bc8fa89da5204}
+      entry_config: {path: configs/experiments/manual_refactor_pn2021_ecgfounder_fixed20_eval_cpsc_2018.yaml, sha256: 02063a5508c49c98738200b1dc557a88d330c257b12b6e0ad64b86796eb68a79}
+      delegate_config: {path: configs/eval/PN2021.yaml, sha256: 6d3e7df9f8223f1450c26e2fd8f76e716cafea8288ba12deb46589fe7bbdda03}
+    - identity: {id: ecgfounder/eval/georgia, kind: eval, model: ecgfounder, center: georgia, basename: managed_pn2021_ecgfounder_fixed20_eval_georgia}
+      provenance: {dirty_group: all_evaluations, manifest_sha256: 61d322a3872d2f688fa7e10d7762201106ecef2cf35906a4c93bcafaa5766122}
+      index: {sha256: 15a07bff95bc32a0e518c961a4c80cc3d4b53ff5ebf2a56ce4fbbf2205491ffc, file_count: 13, indexed_size_bytes: 543102}
+      primary: {path: evaluation/evaluation_result.json, type: evaluation_result, sha256: db88e53ab6403283a7dc97425ff0ddac5053b4a314db0f5c96ad85d3e9b47514}
+      config_snapshot_set: {count: 7, canonical_sha256: 787da3c774d0f8da79f071a39c695ba0572cfb6ca4861b24ec425cd3deb73d42}
+      entry_config: {path: configs/experiments/manual_refactor_pn2021_ecgfounder_fixed20_eval_georgia.yaml, sha256: bc58e0a9605cf4a36185fc477d43e4c97bb45d5b273fbecaca86e0130eeaec88}
+      delegate_config: {path: configs/eval/PN2021.yaml, sha256: 6d3e7df9f8223f1450c26e2fd8f76e716cafea8288ba12deb46589fe7bbdda03}
+  historical_config_snapshot_catalog:
+    - path: configs/augmentation/cache.yaml
+      identity: {sha256: e2181af9aa43e478d36884dd9689b2495b875ca358996a327fbae44a0066652e, size_bytes: 1467, occurrence_count: 18, roles: [referenced_config]}
+    - path: configs/augmentation/operators.yaml
+      identity: {sha256: cfc4e243f569226a8f444a38d9dd4fbc00ccf7de724c47886dcc9319b9c790cc, size_bytes: 1901, occurrence_count: 26, roles: [referenced_config]}
+    - path: configs/baselines/pn2021_direct_v1.yaml
+      identity: {sha256: 519de1ad7b3c63475e2f5cb09460c243c9e97ba9d53bb0de21e980e3c226b158, size_bytes: 54299, occurrence_count: 10, roles: [referenced_config]}
+    - path: configs/baselines/ptbxl_source_v1.yaml
+      identity: {sha256: 27443d14e8184739c15c60e0ffe6f4c87f12642bb725bdca62341a33543e445f, size_bytes: 3782, occurrence_count: 18, roles: [referenced_config]}
+    - path: configs/data/data_load.yaml
+      identity: {sha256: 4873d56fe3e8e6077139e043019e70829db2d2f8ed4703c3b00ff0afc611c2b8, size_bytes: 1353, occurrence_count: 26, roles: [referenced_config]}
+    - path: configs/data/splits.yaml
+      identity: {sha256: d19eddb5b41854fcd6d8a554efb3454dec2c6994f407eaa7cb82ed805629daf9, size_bytes: 2108, occurrence_count: 26, roles: [referenced_config]}
+    - path: configs/eval/PN2021.yaml
+      identity: {sha256: 6d3e7df9f8223f1450c26e2fd8f76e716cafea8288ba12deb46589fe7bbdda03, size_bytes: 2310, occurrence_count: 8, roles: [delegate_entry_config]}
+    - path: configs/experiments/manual_refactor_pn2021_ecgfounder_direct_select.yaml
+      identity: {sha256: b32843f0b529b8e353052dee4e1219095775e3a60b92f6d306559de6d32a84df, size_bytes: 1077, occurrence_count: 1, roles: [experiment_entry_config]}
+    - path: configs/experiments/manual_refactor_pn2021_ecgfounder_direct_tune_chapman_shaoxing.yaml
+      identity: {sha256: eda87cd3b40cad252bbb6b5085c85987c73f74777f15c35277d43feb2c4d8ea9, size_bytes: 569, occurrence_count: 1, roles: [experiment_entry_config]}
+    - path: configs/experiments/manual_refactor_pn2021_ecgfounder_direct_tune_cpsc_2018.yaml
+      identity: {sha256: cfee45df08670e416646d8dc884b37345aa3cf16e8a7e5e2df3f357c857400fb, size_bytes: 550, occurrence_count: 1, roles: [experiment_entry_config]}
+    - path: configs/experiments/manual_refactor_pn2021_ecgfounder_direct_tune_georgia.yaml
+      identity: {sha256: ab165e8b9795a7d4a810162369109661fdae8e007af4071b9a801b002ad007d8, size_bytes: 533, occurrence_count: 1, roles: [experiment_entry_config]}
+    - path: configs/experiments/manual_refactor_pn2021_ecgfounder_direct_tune_ningbo.yaml
+      identity: {sha256: c4b119d1a866f8cccd4ba11af650e15eea39aa84fc7e00abbbc3489690e176cc, size_bytes: 529, occurrence_count: 1, roles: [experiment_entry_config]}
+    - path: configs/experiments/manual_refactor_pn2021_ecgfounder_fixed20_eval_chapman_shaoxing.yaml
+      identity: {sha256: 52e0790d58288f97a1b95281d3d00f64127d35dd730558630306bc9011e2c7f9, size_bytes: 754, occurrence_count: 1, roles: [experiment_entry_config]}
+    - path: configs/experiments/manual_refactor_pn2021_ecgfounder_fixed20_eval_cpsc_2018.yaml
+      identity: {sha256: 02063a5508c49c98738200b1dc557a88d330c257b12b6e0ad64b86796eb68a79, size_bytes: 730, occurrence_count: 1, roles: [experiment_entry_config]}
+    - path: configs/experiments/manual_refactor_pn2021_ecgfounder_fixed20_eval_georgia.yaml
+      identity: {sha256: bc58e0a9605cf4a36185fc477d43e4c97bb45d5b273fbecaca86e0130eeaec88, size_bytes: 709, occurrence_count: 1, roles: [experiment_entry_config]}
+    - path: configs/experiments/manual_refactor_pn2021_ecgfounder_fixed20_eval_ningbo.yaml
+      identity: {sha256: fecc1942d4f31af0fa64ddd0f43b35100a27b416c15f0405d2a9c8f4f1180071, size_bytes: 704, occurrence_count: 1, roles: [experiment_entry_config]}
+    - path: configs/experiments/manual_refactor_pn2021_ecgfounder_fixed20_refit_chapman_shaoxing.yaml
+      identity: {sha256: 3a069a1dbc63ba1e68b214c3c8e20c3891000bebd91e5f20d02620f2f3886ce9, size_bytes: 807, occurrence_count: 1, roles: [experiment_entry_config]}
+    - path: configs/experiments/manual_refactor_pn2021_ecgfounder_fixed20_refit_cpsc_2018.yaml
+      identity: {sha256: 4c7ec78bf7ec97b0f7b87a0274611c3d258cfd9c0e2902ed3c7375739d043404, size_bytes: 799, occurrence_count: 1, roles: [experiment_entry_config]}
+    - path: configs/experiments/manual_refactor_pn2021_ecgfounder_fixed20_refit_georgia.yaml
+      identity: {sha256: 7ebfece9e547642d241ed48ce1ed9cae88c089448f50feed72e5181672a8c729, size_bytes: 771, occurrence_count: 1, roles: [experiment_entry_config]}
+    - path: configs/experiments/manual_refactor_pn2021_ecgfounder_fixed20_refit_ningbo.yaml
+      identity: {sha256: 534e2966b861b6f003067a03080e853b620ccb192a59a7c3dbefbf009a3113a3, size_bytes: 767, occurrence_count: 1, roles: [experiment_entry_config]}
+    - path: configs/experiments/manual_refactor_pn2021_effnet_direct_select.yaml
+      identity: {sha256: e95aa3d4875f81d05d97ea8ee8965f450e868db0b9e0564f03f59603e30015aa, size_bytes: 1055, occurrence_count: 1, roles: [experiment_entry_config]}
+    - path: configs/experiments/manual_refactor_pn2021_effnet_direct_tune_chapman_shaoxing.yaml
+      identity: {sha256: 46650493873d09866498463921cd40fc66828c1a4706f3d2d5c5bdba9dbd9d2a, size_bytes: 569, occurrence_count: 1, roles: [experiment_entry_config]}
+    - path: configs/experiments/manual_refactor_pn2021_effnet_direct_tune_cpsc_2018.yaml
+      identity: {sha256: 99faec7ab3dc012d9bafab8aa22c2a0b146396b3fd5fb8128c737d1ee144f250, size_bytes: 550, occurrence_count: 1, roles: [experiment_entry_config]}
+    - path: configs/experiments/manual_refactor_pn2021_effnet_direct_tune_georgia.yaml
+      identity: {sha256: 32b96faf0420733a62d6c13b71f19a084bfe0a11c2fda0e4e4e11529f000b015, size_bytes: 533, occurrence_count: 1, roles: [experiment_entry_config]}
+    - path: configs/experiments/manual_refactor_pn2021_effnet_direct_tune_ningbo.yaml
+      identity: {sha256: a4fee6a60e4f1afeecd99a5ddada224652037639e4fa4fd566ce6bdba19574d3, size_bytes: 529, occurrence_count: 1, roles: [experiment_entry_config]}
+    - path: configs/experiments/manual_refactor_pn2021_effnet_fixed20_eval_chapman_shaoxing.yaml
+      identity: {sha256: e56daf990dc2bf7b96053fd407fb71fa0806c421d6b460ae4f061fe391d14104, size_bytes: 750, occurrence_count: 1, roles: [experiment_entry_config]}
+    - path: configs/experiments/manual_refactor_pn2021_effnet_fixed20_eval_cpsc_2018.yaml
+      identity: {sha256: c4906632b565c3ff8631db502ec35fd4a96acfffdaf689797752ac836822a00c, size_bytes: 726, occurrence_count: 1, roles: [experiment_entry_config]}
+    - path: configs/experiments/manual_refactor_pn2021_effnet_fixed20_eval_georgia.yaml
+      identity: {sha256: b3cc8b79830c49ce18b8a50fbe176001b96ec40607cb89617072263100b40870, size_bytes: 705, occurrence_count: 1, roles: [experiment_entry_config]}
+    - path: configs/experiments/manual_refactor_pn2021_effnet_fixed20_eval_ningbo.yaml
+      identity: {sha256: 2030c266069151ef4761f1564f967ec9c9f95c0a814c5dcb43a7ce6a4f32c2ef, size_bytes: 700, occurrence_count: 1, roles: [experiment_entry_config]}
+    - path: configs/experiments/manual_refactor_pn2021_effnet_fixed20_refit_chapman_shaoxing.yaml
+      identity: {sha256: 5c32bf959cd4f7838d27eba4f8c0f40d523e2ad3d8e3fb5719ec1f36cbab8cde, size_bytes: 803, occurrence_count: 1, roles: [experiment_entry_config]}
+    - path: configs/experiments/manual_refactor_pn2021_effnet_fixed20_refit_cpsc_2018.yaml
+      identity: {sha256: 56423fe4a56ab01e3ad3008e6fe866eb0d92fc58e64ff7128a0b91a64e89b6d9, size_bytes: 795, occurrence_count: 1, roles: [experiment_entry_config]}
+    - path: configs/experiments/manual_refactor_pn2021_effnet_fixed20_refit_georgia.yaml
+      identity: {sha256: 2cdf19cb78c48ff1df8b7f44ad97426207bd0710bb8d043f989f95c42a0dbe18, size_bytes: 767, occurrence_count: 1, roles: [experiment_entry_config]}
+    - path: configs/experiments/manual_refactor_pn2021_effnet_fixed20_refit_ningbo.yaml
+      identity: {sha256: 504746a2d0ebf076fe4ad9a25fcce61fc766fda2c021f4a7aa538f468a54a203, size_bytes: 763, occurrence_count: 1, roles: [experiment_entry_config]}
+    - path: configs/experiments/manual_refactor_ptbxl_ecgfounder.yaml
+      identity: {sha256: 3b45b8056f0c37bb45dd69f6356f0933d473cb33d34c6edcb261856653c71781, size_bytes: 573, occurrence_count: 18, roles: [referenced_config]}
+    - path: configs/experiments/manual_refactor_ptbxl_ecgfounder_e10_probe.yaml
+      identity: {sha256: 00bdf2c2742a40db22ecfd30eef1ed48284d1a3a437db4a83b1d328db22d0575, size_bytes: 635, occurrence_count: 18, roles: [referenced_config]}
+    - path: configs/experiments/manual_refactor_ptbxl_effnet.yaml
+      identity: {sha256: e024a96a6680bbf37116534951c95d5d8f9dcd89b8d3d51bb41cbf94ceff4e08, size_bytes: 551, occurrence_count: 18, roles: [referenced_config]}
+    - path: configs/random_seed.yaml
+      identity: {sha256: 8b337606c43b6fec2959dd185477ce32f48b139f5fce5112ee26efe58eb4bbbc, size_bytes: 40, occurrence_count: 26, roles: [referenced_config]}
+    - path: configs/train/PN2021_direct_tune.yaml
+      identity: {sha256: c9de1dc188781a259ae4976a15e36685a820e6c377b7e31d408db69b598d729f, size_bytes: 3796, occurrence_count: 10, roles: [delegate_entry_config]}
+    - path: configs/train/PN2021_fixed20.yaml
+      identity: {sha256: 3f482f9684d8a010a899243a9b3237bffbe3300f4c41430be2c4c590df715f86, size_bytes: 3607, occurrence_count: 13, roles: [delegate_entry_config, referenced_config]}
+    - path: configs/train/PN2021_fixed20.yaml
+      identity: {sha256: 5bab9e1e9508f22b810756b5c9e8ff4ab8c6e8c0976a21436442faa66d2dc95f, size_bytes: 3607, occurrence_count: 5, roles: [referenced_config]}
+    - path: configs/train/PTBXL.yaml
+      identity: {sha256: ff984500052e0e64e245c68b8c51a1080efd7bd375c70a44dbd49bf9a9cf9f4c, size_bytes: 4147, occurrence_count: 18, roles: [referenced_config]}
+    - path: configs/train/methods/direct_depth23_fixed20.yaml
+      identity: {sha256: d41e77219726f983ad90a0b9db98cd99668c354dc903e83ecbbe24e6b53b5c9f, size_bytes: 3583, occurrence_count: 18, roles: [referenced_config]}
+  artifact_paths:
+    selection: training/direct_baseline_selection.json
+    train_result: training/train_result.json
+    refit_contract: training/refit_contract.json
+    checkpoint: training/checkpoints/last.pt
+    evaluation_result: evaluation/evaluation_result.json
+  models:
+    efficientnet1dv2:
+      source_checkpoint:
+        path: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_ptbxl_effnet_source_v1/training/checkpoints/best.pt
+        sha256: fff9bd293677be54a606e28775c66d410d55b0ad7440a4e7fbde55357ec13e68
+      selection:
+        run_id: efficientnet1dv2/select/all4
+        artifact_sha256: 8a5df25d7f3e656aa2d3e7758772c6440cda9903004ff166519036f440504afa
+        epoch: 23
+        clean: {macro_auroc: 0.8922731926284697, macro_auprc: 0.7287076883752672, floor: 0.7181201919362863}
+        robust: {macro_auroc: 0.8304661431217351, macro_auprc: 0.6264591619823536}
+        score: 0.6775834251788104
+        clean_reference:
+          artifact_path: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_pn2021_effnet_direct_selection_v2/training/direct_baseline_selection.json
+          artifact_sha256: 0d8e015e4704fde09af9b54a1adeb3d70761f7445fe32f911219305145ed11d7
+          macro_auprc: 0.7281201919362863
+          model_family: efficientnet1dv2
+          registry_path: /home/linbinhao/ECG_manual_refactor/configs/baselines/pn2021_direct_v1.yaml
+          registry_sha256: 519de1ad7b3c63475e2f5cb09460c243c9e97ba9d53bb0de21e980e3c226b158
+        comparison_identity_sha256: c930d19312bb8200c2043ee811fefc0865a18c4d79d769ef8350a58c660232c9
+        frozen_corruption_identity_sha256: ab38a829f1a7b9748c4348b38a4c893fc766555bdbc36c7a99d87657c0c2ce11
+      selected_composition_metrics:
+        - {id: d2__powerline_noise__emg_noise, macro_auroc: 0.8784989993124149, macro_auprc: 0.7030831852848767}
+        - {id: d2__powerline_noise__baseline_wander, macro_auroc: 0.8465024329178938, macro_auprc: 0.6571902920532818}
+        - {id: d2__powerline_noise__baseline_shift, macro_auroc: 0.8711669585907392, macro_auprc: 0.6912650995662265}
+        - {id: d2__powerline_noise__random_leads_masking, macro_auroc: 0.8344232871405447, macro_auprc: 0.6342274206309896}
+        - {id: d2__emg_noise__baseline_wander, macro_auroc: 0.854250724055672, macro_auprc: 0.6511626940331052}
+        - {id: d2__emg_noise__baseline_shift, macro_auroc: 0.8761559724668491, macro_auprc: 0.685270202468978}
+        - {id: d2__emg_noise__random_leads_masking, macro_auroc: 0.8083522719013863, macro_auprc: 0.5992595566125948}
+        - {id: d2__baseline_wander__baseline_shift, macro_auroc: 0.8573084035740177, macro_auprc: 0.6587091731466426}
+        - {id: d2__baseline_wander__random_leads_masking, macro_auroc: 0.8105879847021413, macro_auprc: 0.597041208536722}
+        - {id: d2__baseline_shift__random_leads_masking, macro_auroc: 0.816674941473568, macro_auprc: 0.6113480826937172}
+        - {id: d3__powerline_noise__emg_noise__baseline_wander, macro_auroc: 0.8364734071211715, macro_auprc: 0.6516069234294681}
+        - {id: d3__powerline_noise__emg_noise__baseline_shift, macro_auroc: 0.8721144304124031, macro_auprc: 0.689446063570067}
+        - {id: d3__powerline_noise__emg_noise__random_leads_masking, macro_auroc: 0.7884777201425601, macro_auprc: 0.5744294528169658}
+        - {id: d3__powerline_noise__baseline_wander__baseline_shift, macro_auroc: 0.842412431129441, macro_auprc: 0.6619595508244592}
+        - {id: d3__powerline_noise__baseline_wander__random_leads_masking, macro_auroc: 0.8025539094924516, macro_auprc: 0.5595059678182857}
+        - {id: d3__powerline_noise__baseline_shift__random_leads_masking, macro_auroc: 0.8225314579799591, macro_auprc: 0.6082686841613654}
+        - {id: d3__emg_noise__baseline_wander__baseline_shift, macro_auroc: 0.8352277118914986, macro_auprc: 0.6359028577280468}
+        - {id: d3__emg_noise__baseline_wander__random_leads_masking, macro_auroc: 0.7693743306790628, macro_auprc: 0.527605572440996}
+        - {id: d3__emg_noise__baseline_shift__random_leads_masking, macro_auroc: 0.793218351926055, macro_auprc: 0.5592794881874779}
+        - {id: d3__baseline_wander__baseline_shift__random_leads_masking, macro_auroc: 0.7930171355248712, macro_auprc: 0.5726217636428074}
+      optimization:
+        training: {optimizer: adamw, learning_rate: 5.0e-05, weight_decay: 0.0001, batch_size: 128, trainable_scope: full}
+        parameter_counts: {trainable: 6413827, total: 6413827}
+        schedule: {scheduler: cosine_annealing, horizon_epochs: 30, tuning_optimizer_steps: 120, selected_refit_epoch: 23, refit_optimizer_steps: 92}
+        numerics: {gradient_clip_norm: 1.0, amp_dtype: bfloat16}
+      centers:
+        ningbo:
+          run_ids: {tuning: efficientnet1dv2/tune/ningbo, refit: efficientnet1dv2/refit/ningbo, evaluation: efficientnet1dv2/eval/ningbo}
+          refit_artifacts:
+            checkpoint_sha256: 81fd33ce07d3681db31444d9260f21f9fdf2281d588db2b27f5869efaeeaadca
+            train_result_sha256: fff58f0bd38190a670b4becb17b7c287110e049642bf0aca4cb4db4452988e1e
+            refit_contract_sha256: 7b94530b7acab5c8d2520859091c89988ebd301a83aa5e270413037c1bb8e563
+          evaluation_result_sha256: 0d0388381fc7a2344e7df703c77e98d5a612b51564ed9927227eaff6af78fb1c
+          metrics:
+            clean_drop: [0.9072875720298595, 0.6958927974771536]
+            clean_kept: [0.8816916843573732, 0.5031275119742264]
+            corrupted_drop: [0.8589007835926724, 0.6136550703112815]
+            corrupted_kept: [0.8368675910559139, 0.42766042743044225]
+        chapman_shaoxing:
+          run_ids: {tuning: efficientnet1dv2/tune/chapman_shaoxing, refit: efficientnet1dv2/refit/chapman_shaoxing, evaluation: efficientnet1dv2/eval/chapman_shaoxing}
+          refit_artifacts:
+            checkpoint_sha256: 456300b09bdecb69216e5a1c95a6f02e7498d4566f9667f644c57daa16150eb2
+            train_result_sha256: 30c4567e7147bd7d7bb4d290c56c6fa4a94a6f3c62e0908c62d8e17ec5e21ab7
+            refit_contract_sha256: 5113878f80e7dd68ba9733fdbd9042df124191a61f6635b58f4405fc603160eb
+          evaluation_result_sha256: 224a03eb7efca5be4bf80b351888d1b90e7f6aab492bcf6a5066c25224bc1a38
+          metrics:
+            clean_drop: [0.898400832865606, 0.6535075619202229]
+            clean_kept: [0.8730712793940407, 0.46124734660148003]
+            corrupted_drop: [0.8503329274158229, 0.5779881114820828]
+            corrupted_kept: [0.8320481469392693, 0.40437364051259567]
+        cpsc_2018:
+          run_ids: {tuning: efficientnet1dv2/tune/cpsc_2018, refit: efficientnet1dv2/refit/cpsc_2018, evaluation: efficientnet1dv2/eval/cpsc_2018}
+          refit_artifacts:
+            checkpoint_sha256: e9186ff9082a1ebcf3dd340e79abf3917c44023b9f341c7aa4d420e8a360801c
+            train_result_sha256: ac5ae67f4c9ee6674cdd41bda8c0caa5be33ace9badb0fcefa0525f3c2c0b2b4
+            refit_contract_sha256: 59db057f2c925cc53dd2d58307636e037f2bec8ce58db052da43de27fb949cf9
+          evaluation_result_sha256: 08658708b8474f811b5d704cbbcfb1640af5becb4ff0d53d37edfeb5099bfdb5
+          metrics:
+            clean_drop: [0.8922055251355179, 0.6688582366963896]
+            clean_kept: [0.8647300636126733, 0.5636808212487532]
+            corrupted_drop: [0.8310517393044282, 0.564292967446063]
+            corrupted_kept: [0.809076938775906, 0.47113013552664046]
+        georgia:
+          run_ids: {tuning: efficientnet1dv2/tune/georgia, refit: efficientnet1dv2/refit/georgia, evaluation: efficientnet1dv2/eval/georgia}
+          refit_artifacts:
+            checkpoint_sha256: 4dc79c1949232e0aacd5642139e9e13c3260bbb11af75a9a3ba7f3fd90b8acce
+            train_result_sha256: dc40c7c8a2ab4564c9033564e671174c91070ef5ece5a62b936da07a547b6bab
+            refit_contract_sha256: c2af7a804862ea6b1d3e6e7994585e9f4b4de1018e27fc63459f3969a1268f5b
+          evaluation_result_sha256: 234fdd4d3e7e3dabfdff560d9878e6e2d557c8a93e622bfb1fcb439ad4c99b59
+          metrics:
+            clean_drop: [0.7868378666475054, 0.5571439092802178]
+            clean_kept: [0.7805433652048397, 0.4934637964232098]
+            corrupted_drop: [0.7673913867583987, 0.5106357802075283]
+            corrupted_kept: [0.761765218446006, 0.4498628175942729]
+      four_center_mean:
+        clean_kept: [0.8500090981422317, 0.5053798690619173]
+        clean_drop: [0.8711829491696222, 0.6438506263434959]
+        corrupted_kept: [0.8099394738042738, 0.43825675526598784]
+        corrupted_drop: [0.8269192092678306, 0.5666429823617389]
+        clean_to_corrupted_drop_pp_kept: [4.006962433795791, 6.7123113795929505]
+    ecgfounder:
+      source_checkpoint:
+        path: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_ptbxl_ecgfounder_source_v1/training/checkpoints/best.pt
+        sha256: c23ec4361b097b74a4efed427488c4dd6a3753adfc75f7d1fc281e4df0989948
+      selection:
+        run_id: ecgfounder/select/all4
+        artifact_sha256: 42e78a2d02f4152d916c1acdc8721aa8e435fd58af314362e31b2176a81b796c
+        epoch: 20
+        clean: {macro_auroc: 0.9211486115764643, macro_auprc: 0.8202718169248033, floor: 0.792509237280925}
+        robust: {macro_auroc: 0.87746041135733, macro_auprc: 0.7243489279433682}
+        score: 0.7723103724340858
+        clean_reference:
+          artifact_path: /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_pn2021_ecgfounder_direct_selection_canonical100_e15_v2/training/direct_baseline_selection.json
+          artifact_sha256: bc78b00a90f2fd5b8e968822b089e7e0344dc8dcf7021c311fce61239fe4fbc0
+          macro_auprc: 0.802509237280925
+          model_family: ecgfounder
+          registry_path: /home/linbinhao/ECG_manual_refactor/configs/baselines/pn2021_direct_v1.yaml
+          registry_sha256: 519de1ad7b3c63475e2f5cb09460c243c9e97ba9d53bb0de21e980e3c226b158
+        comparison_identity_sha256: 4a3ab6a9f5dbe544bb3d1f4ceb87415987ee70484363dccee129755b39ac2b12
+        frozen_corruption_identity_sha256: ab38a829f1a7b9748c4348b38a4c893fc766555bdbc36c7a99d87657c0c2ce11
+      selected_composition_metrics:
+        - {id: d2__powerline_noise__emg_noise, macro_auroc: 0.895758549747003, macro_auprc: 0.7693599785234414}
+        - {id: d2__powerline_noise__baseline_wander, macro_auroc: 0.8941699897790695, macro_auprc: 0.7593449969808244}
+        - {id: d2__powerline_noise__baseline_shift, macro_auroc: 0.9049645850601189, macro_auprc: 0.7870403609478458}
+        - {id: d2__powerline_noise__random_leads_masking, macro_auroc: 0.8498524355936304, macro_auprc: 0.6404428095008556}
+        - {id: d2__emg_noise__baseline_wander, macro_auroc: 0.9010771335845995, macro_auprc: 0.7777203238404473}
+        - {id: d2__emg_noise__baseline_shift, macro_auroc: 0.9032688280342727, macro_auprc: 0.7852272246055646}
+        - {id: d2__emg_noise__random_leads_masking, macro_auroc: 0.8601803492977862, macro_auprc: 0.6837924867431584}
+        - {id: d2__baseline_wander__baseline_shift, macro_auroc: 0.9141372261410051, macro_auprc: 0.8079560179841682}
+        - {id: d2__baseline_wander__random_leads_masking, macro_auroc: 0.8574893391056898, macro_auprc: 0.6952663597481274}
+        - {id: d2__baseline_shift__random_leads_masking, macro_auroc: 0.8725344280955569, macro_auprc: 0.712365200957011}
+        - {id: d3__powerline_noise__emg_noise__baseline_wander, macro_auroc: 0.8897644352637938, macro_auprc: 0.7532732473033652}
+        - {id: d3__powerline_noise__emg_noise__baseline_shift, macro_auroc: 0.8970818743790272, macro_auprc: 0.7715085145284988}
+        - {id: d3__powerline_noise__emg_noise__random_leads_masking, macro_auroc: 0.8348597159564983, macro_auprc: 0.6470544739172275}
+        - {id: d3__powerline_noise__baseline_wander__baseline_shift, macro_auroc: 0.8944038198415457, macro_auprc: 0.7752608006614394}
+        - {id: d3__powerline_noise__baseline_wander__random_leads_masking, macro_auroc: 0.8432957071591248, macro_auprc: 0.6395298248926894}
+        - {id: d3__powerline_noise__baseline_shift__random_leads_masking, macro_auroc: 0.8638399572874412, macro_auprc: 0.6929821265122209}
+        - {id: d3__emg_noise__baseline_wander__baseline_shift, macro_auroc: 0.8974055493442531, macro_auprc: 0.7819846738626144}
+        - {id: d3__emg_noise__baseline_wander__random_leads_masking, macro_auroc: 0.8523358242721271, macro_auprc: 0.6469122373065936}
+        - {id: d3__emg_noise__baseline_shift__random_leads_masking, macro_auroc: 0.8507486242009842, macro_auprc: 0.6523872016975659}
+        - {id: d3__baseline_wander__baseline_shift__random_leads_masking, macro_auroc: 0.8720398550030737, macro_auprc: 0.7075696983537029}
+      optimization:
+        training: {optimizer: adamw, learning_rate: 2.0e-05, weight_decay: 0.0001, batch_size: 64, trainable_scope: full}
+        parameter_counts: {trainable: 30670389, total: 30670389}
+        schedule: {scheduler: cosine_annealing, horizon_epochs: 20, tuning_optimizer_steps: 140, selected_refit_epoch: 20, refit_optimizer_steps: 160}
+        numerics: {gradient_clip_norm: 1.0, amp_dtype: bfloat16}
+      centers:
+        ningbo:
+          run_ids: {tuning: ecgfounder/tune/ningbo, refit: ecgfounder/refit/ningbo, evaluation: ecgfounder/eval/ningbo}
+          refit_artifacts:
+            checkpoint_sha256: 691924dc86f060a20834e80bd1f5657496f86b79aaee9a68b406759ec423e1a1
+            train_result_sha256: be6054e3625cf1963828a5088c3cde8d3c6c9d4deb39585fd9721572fbde7ec0
+            refit_contract_sha256: e378b228ab1128eeac65cb34b7555c0834c188815599c9d19dc4824de369341c
+          evaluation_result_sha256: 83461128df4948a0493d43947fb4233e90daaff3d3b6ae6f9c2481bf5ea59233
+          metrics:
+            clean_drop: [0.9348348589244152, 0.7521197756001566]
+            clean_kept: [0.9109585995983895, 0.5957469274954739]
+            corrupted_drop: [0.8868727307543111, 0.6760649074926247]
+            corrupted_kept: [0.8598701442386438, 0.5150609856937469]
+        chapman_shaoxing:
+          run_ids: {tuning: ecgfounder/tune/chapman_shaoxing, refit: ecgfounder/refit/chapman_shaoxing, evaluation: ecgfounder/eval/chapman_shaoxing}
+          refit_artifacts:
+            checkpoint_sha256: 90892cbbe2bb885ee4d2e6eaa51a72ad31031700be81302782c842deaac2af90
+            train_result_sha256: 1b73d89b5f7b8ecc93467ee89ce89070202d7bf45d62646d0ce33b194c0f420e
+            refit_contract_sha256: 0bd1fbce081b34b082c24865a2911e145509e89bc9d55ea12ce0bc026feefe40
+          evaluation_result_sha256: 5ace384a7a930fa9eef034c4f7f80e6e75e9a1ac893293db6cb11ed380fb0c7c
+          metrics:
+            clean_drop: [0.935134061793384, 0.7140787299697164]
+            clean_kept: [0.914274966266144, 0.5825903421700317]
+            corrupted_drop: [0.8886773449561378, 0.6484977780073284]
+            corrupted_kept: [0.8627067406089062, 0.5096227229520991]
+        cpsc_2018:
+          run_ids: {tuning: ecgfounder/tune/cpsc_2018, refit: ecgfounder/refit/cpsc_2018, evaluation: ecgfounder/eval/cpsc_2018}
+          refit_artifacts:
+            checkpoint_sha256: 618d10993097e7112553ce33ee502ae14fc03536b4463f1d1868c9912d5068ba
+            train_result_sha256: 3a569fd0bc64d3189aceea19ac075f12c80344bcc57b06352dc9995967bb6709
+            refit_contract_sha256: 6bc4722e37b6a6f94b243049c43c365b357d5400b3f5acf52f9035505f2402a9
+          evaluation_result_sha256: f0707e5075f8170da2e62c7e4654b4a03d98f2e45881980b1be8b8dd95536b01
+          metrics:
+            clean_drop: [0.906884326883393, 0.6934771894571152]
+            clean_kept: [0.8807204944550382, 0.5874604022220066]
+            corrupted_drop: [0.8377988034665623, 0.5741263835739966]
+            corrupted_kept: [0.8114388130337092, 0.4779804808978037]
+        georgia:
+          run_ids: {tuning: ecgfounder/tune/georgia, refit: ecgfounder/refit/georgia, evaluation: ecgfounder/eval/georgia}
+          refit_artifacts:
+            checkpoint_sha256: 97c204f9bdb7bbcdda4bcfdc274d04cd4a1ed3ac9c53715140e5d1214bed9d4b
+            train_result_sha256: 3d6f32416be73beadc8d886cd7aae9e0d058bdda7d4d0fd27dfd78bfbacae184
+            refit_contract_sha256: 5a4b98de48e4b500e592bf30a984f60f338130dceec66a8ad7c802e11269f2d2
+          evaluation_result_sha256: db88e53ab6403283a7dc97425ff0ddac5053b4a314db0f5c96ad85d3e9b47514
+          metrics:
+            clean_drop: [0.864311473506039, 0.6288670229591358]
+            clean_kept: [0.8530065303791693, 0.5642341087145227]
+            corrupted_drop: [0.7994086983904423, 0.5460162716595913]
+            corrupted_kept: [0.7867861487131832, 0.483849257395765]
+      four_center_mean:
+        clean_kept: [0.8897401476746852, 0.5825079451505086]
+        clean_drop: [0.9102911802768078, 0.6971356794965309]
+        corrupted_kept: [0.8302004616486106, 0.4966283617348537]
+        corrupted_drop: [0.8531893943918634, 0.6111763351833852]
+        clean_to_corrupted_drop_pp_kept: [5.953968602607462, 8.587958341565493]
+  verification:
+    algorithm: sha256
+    config_snapshot_catalog_count: 42
+    config_snapshot_set_canonicalization: sort_by_snapshot_path_sha256_role_then_canonical_json
+    full_run_file_indexes_verified: true
+    indexed_file_count: 1348
+    indexed_size_bytes: 3750461884
+    managed_run_count: 26
+    selection_refit_checkpoint_evaluation_metric_chain_verified: true
+    source_checkpoint_bytes_verified: true
+    canonical_ledger_algorithm: sha256(canonical_json_utf8_sort_keys_compact_without_verification.canonical_ledger_sha256)
+    canonical_ledger_sha256: ab6999e48f8b684a61ea934de71ff646bdf8bbf305c11dd50a4a228f06e23288
 metric_field_order: [macro_auroc, macro_auprc]
 tensorboard:
   command: >-

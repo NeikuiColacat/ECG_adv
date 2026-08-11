@@ -229,13 +229,12 @@ difference after JSON parsing is `generated_at_utc`. Both identities are
 recorded in the machine-readable registry; future replays must use the managed
 selection.
 
-Replay is fail-closed against the managed selection snapshots. Direct refit
-uses the byte-identical `configs/train/PN2021_fixed20.yaml`; the latent arm uses
-`configs/train/PN2021.yaml` and may differ from its tuning snapshot only in the
-profile/status and operational diagnostics, logging and output sections. Seed
-namespace/determinism, data/normalization/quality gates, loader policy,
-`drop_last`, method resources, the complete pooled-selection rule and selected
-E*/scheduler contract must remain identical.
+The historical comparisons were fail-closed against their managed selection
+snapshots. Direct refit used the frozen `configs/train/PN2021_fixed20.yaml`
+snapshot; the latent arm used its recorded `configs/train/PN2021.yaml`
+snapshot. The live tune/select/refit implementation is now retired. Recovery
+is therefore evidence-only from the immutable managed-run or Git snapshots,
+not a claim that the current launcher can replay those runs.
 
 The full-K500 direct-invocation artifact directories are:
 
@@ -251,6 +250,35 @@ do not contain execution-time `run_manifest.json`, `run_card.json` or
 `run_file_index.json`. Their command/Git/environment metadata cannot be
 reconstructed honestly after the fact, so this limitation is recorded rather
 than backfilled with current state.
+
+## Historical managed-run evidence lock
+
+The 2026-08-12 audit freezes all 26 managed Direct runs: eight tune, two
+selection, eight refit, and eight evaluation runs. Their complete file indexes
+cover 1,348 files and 3,750,461,884 bytes. The registry records each run's
+manifest, index, primary artifact, canonical config-snapshot set, entry/delegate
+config, and one of four dirty-diff identities, plus a 42-entry global snapshot
+catalog. The semantic ledger digest is
+`ab6999e48f8b684a61ea934de71ff646bdf8bbf305c11dd50a4a228f06e23288`.
+
+All 26 runs used dirty commit `153b5fe...`; only dirty-diff hashes survive, not
+patch bytes. This is therefore `metric_level_not_bitwise`, single-seed control
+evidence. It does not claim bitwise replay or paper-final eligibility. The lock
+also preserves the historical method-file and compiled-profile identities so a
+future RecipeSpec cannot silently replace their provenance.
+
+The refit artifacts prove K500 configuration and 500-record exposure counts,
+but do not embed the training K500 set hash. Evaluation exclusion is stronger:
+its artifacts embed exact set identities tied to split manifest `58210d9b...`.
+
+Selection is internally recomputable from the clean reference and the mean of
+20 per-composition metrics. EfficientNet selected E23 under T30 (120 tune and
+92 refit optimizer steps); ECGFounder selected E20 under T20 (140 tune and 160
+refit steps). The eight retained fixed20 evaluation YAMLs are checkpoint-only
+evaluation surfaces, not adaptation replay recipes. `PN2021_fixed20.yaml` is
+historical-only (`retained_live_path: false`): its `5bab9e...` and `3f482f...`
+snapshots remain distinct, and deleting it intentionally leaves no current
+30-epoch config that may be presented as a replay of these runs.
 
 ## Frozen artifacts
 

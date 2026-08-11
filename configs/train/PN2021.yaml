@@ -19,11 +19,6 @@ protocol:
   mapping_version: v7_super5_sjr_rgq_review_20260528
   mapping_hash: 555ec85d5b51
   class_order: [CD, HYP, MI, NORM, STTC]
-  tuning:
-    train_partition: k500_tune_train
-    validation_partition: k500_tune_validation
-    train_records_per_center: 400
-    validation_records_per_center: 100
 
 random_seed:
   stream_namespace: aligned_targetonly_augmix_simclr_lhat

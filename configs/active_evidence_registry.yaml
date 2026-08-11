@@ -195,8 +195,8 @@ active_development_mainline:
       snapshot_git:
         commit: 254c0c80318840430171317c0051497f62232a6e
         path: configs/baselines/pn2021_direct_v1.yaml
-      current_sha256: 0793916ce428eab64d446278f1bc17162f489820009fbc3cf4f8f4c23ce5abb8
-      current_relation: observer_retirement_metadata_only
+      current_sha256: 19a01e49800157c8541c994e119ac9614499f7de0b19b900d5b64ce1e314fedf
+      current_relation: historical_direct_metric_ledger_live_tune_select_refit_retired
     random_seed:
       path: configs/random_seed.yaml
       sha256: 8b337606c43b6fec2959dd185477ce32f48b139f5fce5112ee26efe58eb4bbbc

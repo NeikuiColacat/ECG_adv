@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import subprocess
 from pathlib import Path
@@ -273,6 +274,199 @@ def test_active_evidence_quarantines_accepted_subset_lhat_diagnostics() -> None:
         }
         assert legacy["sample_count"] == accepted_count
         assert legacy["use"] == "audit_only_not_all_candidate_mechanism_evidence"
+
+
+def test_direct_historical_ledger_is_complete_and_immutable() -> None:
+    direct = yaml.safe_load(
+        (CONFIG_ROOT / "baselines" / "pn2021_direct_v1.yaml").read_text()
+    )
+    lock = direct["historical_managed_run_lock"]
+    centers = ("ningbo", "chapman_shaoxing", "cpsc_2018", "georgia")
+    models = ("efficientnet1dv2", "ecgfounder")
+    expected_ids = {
+        *(f"{model}/tune/{center}" for model in models for center in centers),
+        *(f"{model}/select/all4" for model in models),
+        *(f"{model}/refit/{center}" for model in models for center in centers),
+        *(f"{model}/eval/{center}" for model in models for center in centers),
+    }
+    runs = lock["managed_runs"]
+    run_ids = [run["identity"]["id"] for run in runs]
+
+    protocol = lock["protocol"]
+    assert (
+        protocol["adaptation_records_per_center"],
+        protocol["selection_records"],
+        protocol["tuning_partition"],
+        protocol["refit_partition"],
+    ) == (500, 400, "400_train_plus_100_validation_per_center", "all_k500_no_validation")
+    assert protocol["outside_k500_model_access"] is False
+    assert protocol["training_k500_evidence"] == {
+        "run_embedded_hash": False, "evidence_level": "config_and_count"
+    }
+    assert protocol["evaluation_k500_exclusion_evidence"] == {
+        "run_embedded_hash": True, "evidence_level": "exact_set_identity",
+        "split_manifest_sha256": "58210d9b192bc18e9085f235453094814c9caed2cf9142998084ae7a004e9a42",
+    }
+    assert protocol["evaluation_aggregation"] == "within_center_then_equal_four_center_mean"
+    assert lock["method_contract"]["loss"] == "0.5_clean_bce_plus_0.5_mean_twenty_corrupted_bce"
+    method = lock["historical_method"]
+    assert method["profile_path"] == "configs/train/methods/direct_depth23_fixed20.yaml"
+    assert method["profile_file_sha256"] == "d41e77219726f983ad90a0b9db98cd99668c354dc903e83ecbbe24e6b53b5c9f"
+    assert method["compiled_profile_identity_sha256"] == "336187af8edddaba54a07ae88a84561c5d6e87720a93d892ad115f648b71c2f3"
+    assert set(run_ids) == expected_ids and len(run_ids) == len(set(run_ids)) == 26
+    assert lock["run_matrix"] == {
+        "eval": 8, "refit": 8, "select": 2, "total": 26, "tune": 8
+    }
+    assert {
+        kind: sum(run["identity"]["kind"] == kind for run in runs)
+        for kind in ("tune", "select", "refit", "eval")
+    } == {"tune": 8, "select": 2, "refit": 8, "eval": 8}
+    groups = {
+        group["id"]: set(group["run_ids"])
+        for group in lock["execution_provenance"]["dirty_groups"]
+    }
+    assert set().union(*groups.values()) == expected_ids
+    assert sum(map(len, groups.values())) == 26
+    assert all(
+        run["identity"]["id"] in groups[run["provenance"]["dirty_group"]]
+        for run in runs
+    )
+    assert sum(run["index"]["file_count"] for run in runs) == 1348
+    assert sum(run["index"]["indexed_size_bytes"] for run in runs) == 3750461884
+
+    verification = lock["verification"]
+    assert verification["full_run_file_indexes_verified"] is True
+    assert verification["source_checkpoint_bytes_verified"] is True
+    catalog = lock["historical_config_snapshot_catalog"]
+    catalog_ids = {
+        (item["path"], item["identity"]["sha256"]) for item in catalog
+    }
+    assert len(catalog) == len(catalog_ids) == 42
+    assert {
+        (item["identity"]["sha256"], item["identity"]["occurrence_count"])
+        for item in catalog
+        if item["path"] == "configs/train/PN2021_fixed20.yaml"
+    } == {
+        ("5bab9e1e9508f22b810756b5c9e8ff4ab8c6e8c0976a21436442faa66d2dc95f", 5),
+        ("3f482f9684d8a010a899243a9b3237bffbe3300f4c41430be2c4c590df715f86", 13),
+    }
+    for run in runs:
+        for role in ("entry_config", "delegate_config"):
+            identity = run[role]
+            assert (identity["path"], identity["sha256"]) in catalog_ids
+
+    boundary = lock["claim_boundary"]
+    assert boundary["replay_level"] == "metric_level_not_bitwise"
+    assert boundary["bitwise_replay_claimed"] is False
+    assert lock["execution_provenance"]["dirty"] is True
+    assert lock["execution_provenance"]["source_patch_available"] is False
+    for name in ("training_config", "tuning_config"):
+        identity = direct["references"][name]
+        assert identity["sha256_scope"] == "historical_run_snapshot"
+        assert identity["retained_live_path"] is False
+
+    stored = verification["canonical_ledger_sha256"]
+    canonical = {**lock, "verification": {
+        key: value for key, value in verification.items()
+        if key != "canonical_ledger_sha256"
+    }}
+    computed = hashlib.sha256(json.dumps(
+        canonical, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode()).hexdigest()
+    assert stored == computed == "ab6999e48f8b684a61ea934de71ff646bdf8bbf305c11dd50a4a228f06e23288"
+    active = yaml.safe_load((CONFIG_ROOT / "active_evidence_registry.yaml").read_text())
+    identity = active["active_development_mainline"]["evidence"]["direct_registry"]
+    direct_path = CONFIG_ROOT / "baselines" / "pn2021_direct_v1.yaml"
+    assert identity["current_sha256"] == hashlib.sha256(direct_path.read_bytes()).hexdigest()
+    assert identity["current_relation"] == (
+        "historical_direct_metric_ledger_live_tune_select_refit_retired"
+    )
+
+
+def test_direct_historical_selection_and_eval_crosslinks_are_recomputable() -> None:
+    direct = yaml.safe_load(
+        (CONFIG_ROOT / "baselines" / "pn2021_direct_v1.yaml").read_text()
+    )
+    lock = direct["historical_managed_run_lock"]
+    runs = {run["identity"]["id"]: run for run in lock["managed_runs"]}
+    expected = {
+        "efficientnet1dv2": (5e-5, 128, 30, 120, 23, 92, 6413827,
+            "c930d19312bb8200c2043ee811fefc0865a18c4d79d769ef8350a58c660232c9"),
+        "ecgfounder": (2e-5, 64, 20, 140, 20, 160, 30670389,
+            "4a3ab6a9f5dbe544bb3d1f4ceb87415987ee70484363dccee129755b39ac2b12"),
+    }
+    for model, (lr, batch, horizon, tune_steps, epoch, refit_steps, params, identity) in expected.items():
+        frozen = lock["models"][model]
+        selection = frozen["selection"]
+        composition = frozen["selected_composition_metrics"]
+        optimization = frozen["optimization"]
+        assert len(composition) == len({item["id"] for item in composition}) == 20
+        assert np.mean([item["macro_auroc"] for item in composition]) == pytest.approx(
+            selection["robust"]["macro_auroc"]
+        )
+        assert np.mean([item["macro_auprc"] for item in composition]) == pytest.approx(
+            selection["robust"]["macro_auprc"]
+        )
+        assert selection["clean"]["floor"] == pytest.approx(
+            selection["clean_reference"]["macro_auprc"] - 0.01
+        )
+        assert selection["clean"]["macro_auprc"] >= selection["clean"]["floor"]
+        assert selection["score"] == pytest.approx(0.5 * (
+            selection["clean"]["macro_auprc"]
+            + selection["robust"]["macro_auprc"]
+        ))
+        assert selection["comparison_identity_sha256"] == identity
+        assert selection["frozen_corruption_identity_sha256"] == (
+            "ab38a829f1a7b9748c4348b38a4c893fc766555bdbc36c7a99d87657c0c2ce11"
+        )
+        assert len(selection["clean_reference"]["artifact_sha256"]) == 64
+        training, schedule = optimization["training"], optimization["schedule"]
+        assert isinstance(training["learning_rate"], float)
+        assert training == {
+            "optimizer": "adamw", "learning_rate": lr, "weight_decay": 1e-4,
+            "batch_size": batch, "trainable_scope": "full",
+        }
+        assert schedule == {
+            "scheduler": "cosine_annealing", "horizon_epochs": horizon,
+            "tuning_optimizer_steps": tune_steps, "selected_refit_epoch": epoch,
+            "refit_optimizer_steps": refit_steps,
+        }
+        assert optimization["numerics"] == {
+            "gradient_clip_norm": 1.0, "amp_dtype": "bfloat16"
+        }
+        assert optimization["parameter_counts"] == {
+            "trainable": params, "total": params
+        }
+        assert frozen["source_checkpoint"] == {
+            "path": direct["models"][model]["source_checkpoint"],
+            "sha256": direct["models"][model]["source_checkpoint_sha256"],
+        }
+
+        for center, chain in frozen["centers"].items():
+            refit = runs[chain["run_ids"]["refit"]]
+            evaluation = runs[chain["run_ids"]["evaluation"]]
+            artifacts = chain["refit_artifacts"]
+            assert refit["primary"]["sha256"] == artifacts["refit_contract_sha256"]
+            assert evaluation["primary"]["sha256"] == chain["evaluation_result_sha256"]
+            legacy = direct["models"][model]["centers"][center]
+            for key in ("checkpoint_sha256", "train_result_sha256", "refit_contract_sha256"):
+                assert artifacts[key] == legacy[key]
+            assert chain["evaluation_result_sha256"] == legacy["evaluation_result_sha256"]
+            assert chain["metrics"] == legacy["metrics"]
+            entry = CONFIG_ROOT.parent / evaluation["entry_config"]["path"]
+            config = yaml.safe_load(entry.read_text())
+            assert hashlib.sha256(entry.read_bytes()).hexdigest() == evaluation["entry_config"]["sha256"]
+            args = config["entrypoint"]["arguments"]
+            value = lambda flag: args[args.index(flag) + 1]
+            checkpoint = Path(lock["run_root"]) / refit["identity"]["basename"] / lock["artifact_paths"]["checkpoint"]
+            assert config["entrypoint"]["name"] == "evaluate_pn2021"
+            assert (value("--model"), value("--center"), value("--checkpoint")) == (model, center, str(checkpoint))
+            assert len(artifacts["checkpoint_sha256"]) == len(chain["evaluation_result_sha256"]) == 64
+
+        for view in ("clean_kept", "clean_drop", "corrupted_kept", "corrupted_drop"):
+            aggregate = np.mean([chain["metrics"][view] for chain in frozen["centers"].values()], axis=0)
+            np.testing.assert_allclose(aggregate, frozen["four_center_mean"][view])
+            assert frozen["four_center_mean"][view] == direct["models"][model]["four_center_mean"][view]
 
 
 def test_manifest_test_inventory_matches_the_collected_clean_tree() -> None:

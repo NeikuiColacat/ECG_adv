@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -15,11 +16,58 @@ from core.online_trainer import (
     load_online_train_config,
     resolve_online_training_parameters,
 )
+from core.train_PN2021 import _validate_locked_source_checkpoint
+from models.checkpoints import CheckpointIdentity
+from models.contracts import ECGFOUNDER_SPEC, EFFICIENTNET1DV2_SPEC
 from util.random_seed import load_random_seed_config
 
 
 REPO = Path(__file__).resolve().parents[2]
 MAINLINE_METHOD = REPO / "configs" / "train" / "methods" / "augmix_simclr_lhat.yaml"
+
+
+def test_source_checkpoint_lock_covers_both_backbones(tmp_path: Path) -> None:
+    cases = (
+        (
+            EFFICIENTNET1DV2_SPEC,
+            "checkpoint_identity",
+            "1" * 64,
+            tmp_path / "effnet.pt",
+        ),
+        (
+            ECGFOUNDER_SPEC,
+            "task_checkpoint_identity",
+            "2" * 64,
+            tmp_path / "founder.pt",
+        ),
+    )
+    registry = tmp_path / "source.yaml"
+    registry.write_text(
+        "schema_version: 1\nmodels:\n"
+        + "".join(
+            f"  {spec.name}:\n"
+            f"    selected_checkpoint: {path}\n"
+            f"    selected_checkpoint_sha256: '{sha256}'\n"
+            for spec, _, sha256, path in cases
+        ),
+        encoding="utf-8",
+    )
+    config = SimpleNamespace(references={"source_baseline_registry": registry})
+    for spec, attribute, sha256, path in cases:
+        identity = CheckpointIdentity(path, sha256, 1, (), ())
+        _validate_locked_source_checkpoint(
+            SimpleNamespace(**{attribute: identity}), spec, config
+        )
+        bad = CheckpointIdentity(path, "f" * 64, 1, (), ())
+        with pytest.raises(ValueError, match="SHA256"):
+            _validate_locked_source_checkpoint(
+                SimpleNamespace(**{attribute: bad}), spec, config
+            )
+        wrong_path = CheckpointIdentity(tmp_path / "wrong.pt", sha256, 1, (), ())
+        with pytest.raises(ValueError, match="path"):
+            _validate_locked_source_checkpoint(
+                SimpleNamespace(**{attribute: wrong_path}), spec, config
+            )
 
 
 def test_online_config_resolves_only_tracked_bundle_references() -> None:
