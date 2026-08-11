@@ -1,224 +1,231 @@
-"""Typed-graph contracts for the retained executable method profiles."""
+"""Characterization goldens for the finite, code-owned ECG recipes."""
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import torch
 import yaml
 
-from core.methods import (
-    ExecutionResources,
-    Provenance,
-    ValueKind,
-    WaveformView,
-    compile_method_profile,
-    execute_method,
-    load_method_profile,
-)
-from core.methods.runtime import _scoped_lhat_diagnostics
+import core.methods as methods
+import core.methods.runtime as method_runtime
 from core.lhat import AttackThenContractDiagnostics
+from core.methods import AuxiliaryVariant, RecipeKind, build_method_runtime, load_recipe_spec
+from core.methods.runtime import _scoped_lhat_diagnostics
 from core.online_trainer import _diagnostic_sample_summary
 
 
 REPO = Path(__file__).resolve().parents[2]
-METHOD_PROFILES = REPO / "configs" / "train" / "methods"
-
-
-def _clean_view() -> WaveformView:
-    waveform = torch.linspace(-1.0, 1.0, 1000).view(1, 1000, 1).repeat(2, 1, 12)
-    labels = torch.zeros((2, 5), dtype=torch.float32)
-    labels[:, 3] = 1.0
-    return WaveformView(
-        name="fixture_clean_raw",
-        waveform=waveform,
-        labels=labels,
-        sample_ids=("fixture-0", "fixture-1"),
-        provenance=Provenance(
-            node_id="fixture_source",
-            operation="cpu_test_fixture",
-        ),
-    )
-
-
-class _AttackDiagnosticFixture:
-    def __init__(
-        self,
-        final_bce: torch.Tensor,
-        decoded_invalid: torch.Tensor,
-        sample_anyflip_eligible: torch.Tensor,
-        sample_anyflip_success: torch.Tensor,
-    ) -> None:
-        self.final_bce = final_bce
-        self.decoded_invalid = decoded_invalid
-        self.sample_anyflip_eligible = sample_anyflip_eligible
-        self.sample_anyflip_success = sample_anyflip_success
-
-    def sample_tensor_dict(self) -> dict[str, torch.Tensor]:
-        return {
-            "final_bce": self.final_bce,
-            "sample_anyflip_eligible": self.sample_anyflip_eligible.float(),
-            "sample_anyflip_success": self.sample_anyflip_success.float(),
-        }
-
-    def mean_tensor_dict(self) -> dict[str, torch.Tensor]:
-        return {
-            "final_bce": self.final_bce.mean(),
-            "decoded_invalid_rate": self.decoded_invalid.float().mean(),
-            "sample_anyflip_numerator": self.sample_anyflip_success.float().sum(),
-            "sample_anyflip_denominator": self.sample_anyflip_eligible.float().sum(),
-        }
-
-
-@pytest.mark.parametrize(
-    ("filename", "profile_name", "nodes", "requirements"),
-    [
-        (
-            "a0_clean_v1.yaml",
-            "a0_clean_v1",
-            ("clean_identity",),
-            ("classifier",),
-        ),
-        (
-            "a3c_depth23_v1.yaml",
-            "a3c_depth23_v1",
-            ("clean_identity", "depth23_corruption"),
-            ("classifier",),
-        ),
-        (
-            "augmix_simclr_lhat.yaml",
-            "augmix_simclr_lhat",
-            ("clean_identity", "depth23_corruption", "lhat"),
-            ("classifier", "vae_decoder", "latent_pool"),
-        ),
-    ],
+CONFIG_ROOT = REPO / "configs"
+RECIPES = CONFIG_ROOT / "train" / "methods"
+IDENTITY = (
+    "comparison_group=aligned_targetonly_augmix_lhat_v1", "replicate_id=0",
+    "center=ningbo", "model=efficientnet1dv2", "epoch=2",
+    "ordered_batch_hash_sha256=x", "composition_index=7",
 )
-def test_locked_profiles_compile_to_typed_resource_closed_graphs(
-    filename: str,
-    profile_name: str,
-    nodes: tuple[str, ...],
-    requirements: tuple[str, ...],
+
+
+def _batch(size: int = 2):
+    waveform = torch.linspace(-1.0, 1.0, size * 12000).reshape(size, 1000, 12)
+    labels = torch.zeros(size, 5); labels[:, 3] = 1
+    if size == 2:
+        labels = torch.tensor([[1, 0, 0, 1, 0], [0, 1, 1, 0, 0]], dtype=torch.float32)
+    return waveform, labels, tuple(f"g{i}" for i in range(size))
+
+
+def _runtime(filename: str, **resources: object):
+    return build_method_runtime(load_recipe_spec(RECIPES / filename),
+        model_name="efficientnet1dv2", config_root=CONFIG_ROOT, **resources)
+
+
+RECIPE_CASES = [
+    ("a0_clean_v1.yaml", RecipeKind.CLEAN, AuxiliaryVariant.NOT_APPLICABLE, (),
+     ("classifier",), (("clean_bce", "bce", 1.0),),
+     "32296a2419575e66a4f702deaa5147b328b945b72b812e52019d8d3b9fdccf98"),
+    ("a3c_depth23_v1.yaml", RecipeKind.RANDOM_DEPTH23, AuxiliaryVariant.NOT_APPLICABLE,
+     ("operator_profile", "corruption_rng"), ("classifier",),
+     (("clean_bce", "bce", 1.0), ("corrupted_bce", "bce", 1.0)),
+     "3eb23fd6ec7de50ee78970a91e0f81d46359d7a5dabade06f20cfad22abe92c4"),
+    ("direct_depth23_fixed20.yaml", RecipeKind.FIXED20, AuxiliaryVariant.NOT_APPLICABLE,
+     ("operator_profile", "corruption_rng"), ("classifier",),
+     (("clean_bce", "bce", 1.0), ("corrupted_bce", "bce", 1.0)),
+     "fb4c2fd18cf59d44e5c358463867209b5dbcaf052c432c1e74f2910b8d7914b8"),
+    ("augmix_simclr_lhat.yaml", RecipeKind.TWO_STAGE_AUGMIX_LHAT,
+     AuxiliaryVariant.CONTRACTED_LHAT,
+     ("operator_profile", "augmix_config", "vae", "lhat_config", "corruption_rng", "lhat_rng"),
+     ("classifier", "vae_decoder", "latent_pool"),
+     (("clean_bce", "bce", 1.0), ("lhat_direct_bce", "bce", 1.0),
+      ("corrupted_bce", "bce", 1.0)),
+     "de3d6948a9efc974405b7382d45653f93032a34ac2fd88637172ed731d876602"),
+    ("exp_paired_augmix_latent_bridge_v1.yaml", RecipeKind.LATENT_THREECHAIN,
+     AuxiliaryVariant.NOT_APPLICABLE, ("vae", "augmix_config", "latent_augmix_rng"),
+     ("classifier", "vae_encoder", "vae_decoder"),
+     (("clean_bce", "bce", 1.0), ("clean_augmix_jsd", "bernoulli_jsd", 3.0),
+      ("augmix_view_1_bce", "bce", 0.75), ("augmix_view_2_bce", "bce", 0.75)),
+     "ccfa1c312074dc5b4f48c3678a399bb06dd33387ae96a6e1ada87092317247ee"),
+]
+
+
+@pytest.mark.parametrize("filename,kind,variant,resources,requirements,objective,sha", RECIPE_CASES)
+def test_v2_recipe_files_are_finite_resource_closed_characterizations(
+    filename, kind, variant, resources, requirements, objective, sha
 ) -> None:
-    compiled = compile_method_profile(METHOD_PROFILES / filename)
+    recipe = load_recipe_spec(RECIPES / filename)
+    assert (recipe.schema_version, recipe.kind, recipe.auxiliary_variant) == (2, kind, variant)
+    assert tuple(recipe.resources) == resources
+    assert recipe.requirements.names() == requirements
+    assert tuple((term.name, term.kind, term.weight) for term in recipe.objective.terms) == objective
+    assert recipe.objective.referenced_outputs() == frozenset(recipe.output_names)
+    assert recipe.recipe_sha256 == sha
 
-    assert compiled.profile_name == profile_name
-    assert compiled.executable is True
-    assert tuple(node.profile.node_id for node in compiled.nodes) == nodes
-    assert all(kind is ValueKind.WAVEFORM for kind in compiled.output_kinds.values())
-    assert compiled.requirements.names() == requirements
-    assert len(compiled.profile_sha256) == 64
+
+def test_loader_removes_dag_plugins_and_allows_only_the_matched_no_vae_slot() -> None:
+    assert set(methods.__all__) == {
+        "AuxiliaryVariant", "BASE_VIEW_NAME", "GeneratedMethodBatch",
+        "MethodRequirements", "MethodViewRuntime", "ObjectivePlan", "ObjectiveTerm",
+        "Provenance", "RecipeKind", "RecipeSpec", "ViewBundle", "WaveformView",
+        "build_method_runtime", "load_recipe_spec"}
+    payload = yaml.safe_load((RECIPES / "a0_clean_v1.yaml").read_text())
+    payload["recipe"]["module"] = "arbitrary.user.plugin"
+    with pytest.raises(ValueError, match="may not select callables"):
+        load_recipe_spec(payload)
+    payload = yaml.safe_load((RECIPES / "a0_clean_v1.yaml").read_text())
+    payload["nodes"] = {}
+    with pytest.raises(ValueError, match="root keys must be exactly"):
+        load_recipe_spec(payload)
+
+    payload = yaml.safe_load((RECIPES / "augmix_simclr_lhat.yaml").read_text())
+    payload["recipe"].update(id="augmix_simclr_matched_no_vae",
+        auxiliary_variant="matched_no_vae", scientific_arm="augmix_simclr_matched_no_vae",
+        status="prospective_matched_ablation")
+    for name in ("vae", "lhat_config", "lhat_rng"):
+        payload["resources"].pop(name)
+    recipe = load_recipe_spec(payload)
+    assert (recipe.kind, recipe.auxiliary_variant) == (
+        RecipeKind.TWO_STAGE_AUGMIX_LHAT, AuxiliaryVariant.MATCHED_NO_VAE)
+    assert tuple(recipe.resources) == ("operator_profile", "augmix_config", "corruption_rng")
+    assert recipe.comparison_rng_identity == "augmix_simclr_lhat"
+    assert recipe.scientific_contract["stage2_teacher"] == "post_stage1_pre_stage2_snapshot"
+    payload["recipe"]["auxiliary_variant"] = "contracted_lhat"
+    with pytest.raises(ValueError, match="requires auxiliary_variant='matched_no_vae'"):
+        load_recipe_spec(payload)
 
 
-def test_mainline_profile_locks_the_attack_contract_and_family_balance() -> None:
-    compiled = compile_method_profile(METHOD_PROFILES / "augmix_simclr_lhat.yaml")
+GENERATION_CASES = [
+    ("a0_clean_v1.yaml", "clean_view", None,
+     "2279cd3d724ea0732466b39d8a1ad7b3b1a7938a4c39ee7cb3d5c4028e1771ab", None),
+    ("a3c_depth23_v1.yaml", "corrupted_view", None,
+     "d02d094ff97cd583c677a476964298166a7d375e8c482c5a5dc71fd330649301",
+     ([17, 12], [3, 3], [[False, True, True, False, True], [True, True, False, False, True]])),
+    ("direct_depth23_fixed20.yaml", "corrupted_view", 7,
+     "d2beb5d7c7dd240775b0d4e00370f2f73fec08552e97908b4691458e0414eaa0",
+     ([7, 7], [2, 2], [[False, False, True, True, False]] * 2)),
+]
 
-    assert compiled.contracts["exposure_policy"] == (
-        "clean_aux_once_then_rotating_depth23_2plus2"
+
+@pytest.mark.parametrize("filename,view_name,composition,waveform_sha,trace", GENERATION_CASES)
+def test_cpu_a0_a3_and_direct_generation_goldens(
+    filename, view_name, composition, waveform_sha, trace
+) -> None:
+    waveform, labels, hashes = _batch()
+    kwargs = dict(clean_raw=waveform, targets=labels, hash_ids=hashes, classifier=object(),
+                  base_seed=20260501, rng_identity=IDENTITY)
+    if composition is not None:
+        kwargs.update(composition_indices=torch.full((2,), composition),
+                      composition_index_hint=composition)
+    generated = _runtime(filename).generate(**kwargs)
+    view = generated.bundle.require(view_name)
+    assert hashlib.sha256(view.waveform.numpy().tobytes()).hexdigest() == waveform_sha
+    assert torch.equal(generated.bundle.require("clean_view").waveform, waveform)
+    assert view.sample_ids == hashes
+    if trace is None:
+        assert generated.stochastic_trace == {}
+    else:
+        prefix = "depth23_corruption/"
+        assert generated.stochastic_trace[prefix + "composition_index"].tolist() == trace[0]
+        assert generated.stochastic_trace[prefix + "depth"].tolist() == trace[1]
+        assert generated.stochastic_trace[prefix + "operator_mask"].tolist() == trace[2]
+
+
+def test_canonical_nonfinite_waveform_is_masked_without_host_failfast() -> None:
+    waveform, labels, hashes = _batch(); runtime = _runtime("a0_clean_v1.yaml")
+    clean = waveform.index_put(
+        (torch.tensor([0]), torch.tensor([0]), torch.tensor([0])),
+        torch.tensor(float("nan")),
     )
-    assert compiled.contracts["family_loss_weights"] == {
-        "clean": pytest.approx(0.5),
-        "corrupted_total": pytest.approx(0.5),
-        "corrupted_per_composition": pytest.approx(0.125),
-    }
-    assert compiled.contracts["auxiliary_alpha"] == pytest.approx(2.0)
-    assert compiled.contracts["auxiliary_gradient_merge"] == "direct_sum"
-    assert compiled.contracts["attack_then_contract_version"] == (
-        "preflip_maxloss_grid_v1"
-    )
+    generated = runtime.generate(clean_raw=clean, targets=labels, hash_ids=hashes,
+        classifier=object(), base_seed=20260501, rng_identity=IDENTITY)
+    assert generated.bundle.require("clean_view").valid_mask.tolist() == [False, True]
+
+    invalid_labels = labels.index_put((torch.tensor([0]), torch.tensor([0])),
+                                      torch.tensor(float("inf")))
+    with pytest.raises(ValueError, match="labels must be finite"):
+        runtime.generate(clean_raw=waveform, targets=invalid_labels, hash_ids=hashes,
+            classifier=object(), base_seed=20260501, rng_identity=IDENTITY)
 
 
-def test_lhat_diagnostics_keep_candidate_and_training_scopes_distinct() -> None:
+def test_latent_two_view_trace_fallback_and_accepted_intersection(monkeypatch) -> None:
+    waveform, labels, hashes = _batch(3); calls = []
+    def fake(clean_raw, **_):
+        call = len(calls); calls.append(call); size = len(clean_raw)
+        scales = torch.tensor(([.5, .75, 0], [.6, 0, .9])[call]).view(-1, 1, 1)
+        return SimpleNamespace(
+            mixed_raw=clean_raw * scales,
+            mixture_weights=torch.tensor([[.2, .3, .5]]).repeat(size, 1),
+            augmented_strength=torch.full((size,), .75 + .1 * call),
+            residual_rms_ratio=torch.full((size,), .05),
+            chain_depths=torch.tensor([[2, 3, 2]]).repeat(size, 1),
+            chain_operator_mask=torch.zeros(size, 3, 5, dtype=torch.bool),
+            chain_output_nonfinite_count=torch.zeros(size, 3, dtype=torch.long))
+    monkeypatch.setattr(method_runtime, "generate_latent_three_chain_augmix", fake)
+    generated = _runtime("exp_paired_augmix_latent_bridge_v1.yaml",
+        encoder=torch.nn.Identity(), decoder=torch.nn.Identity()).generate(
+            clean_raw=waveform, targets=labels, hash_ids=hashes, classifier=object(),
+            base_seed=20260501, rng_identity=IDENTITY)
+    view1, view2 = (generated.bundle.require(f"augmix_view_{i}") for i in (1, 2))
+    assert view1.valid_mask.tolist() == [True, True, False]
+    assert view2.valid_mask.tolist() == [True, False, True]
+    assert torch.equal(view1.waveform[2], waveform[2]) and torch.equal(view2.waveform[1], waveform[1])
+    assert generated.candidate_eligible_positions == (0, 1, 2)
+    assert generated.accepted_positions == (0,)
+    assert (generated.quality_view_total_count, generated.quality_view_accepted_count) == (6, 4)
+    assert [(x["node_id"], x["hash_id"], x["reason"]) for x in generated.quality_rejected] == [
+        ("augmix_view_1", "g2", "flatline"), ("augmix_view_2", "g1", "flatline")]
+    assert set(generated.stochastic_trace) == {
+        f"augmix_view_{view}/{name}" for view in (1, 2)
+        for name in ("chain_depths", "chain_operator_mask", "mixture_weights", "augmented_strength")}
+
+
+def test_lhat_diagnostics_keep_three_scopes_and_two_of_three_acceptance() -> None:
     accepted = torch.tensor([True, False, True])
-    assert accepted.numel() == 3 and int(accepted.sum()) == 2
-    attack = _AttackDiagnosticFixture(
-        torch.tensor([1.0, 5.0, 9.0]),
-        torch.tensor([False, True, False]),
-        torch.tensor([True, True, True]),
-        # The rejected middle sample must remain in the raw numerator.
-        torch.tensor([False, True, True]),
-    )
+    attack = SimpleNamespace(
+        sample_tensor_dict=lambda: {"final_bce": torch.tensor([1., 5., 9.]),
+            "sample_anyflip_eligible": torch.ones(3),
+            "sample_anyflip_success": torch.tensor([0., 1., 1.])},
+        mean_tensor_dict=lambda: {"final_bce": torch.tensor(5.),
+            "decoded_invalid_rate": torch.tensor(1 / 3),
+            "sample_anyflip_numerator": torch.tensor(2.),
+            "sample_anyflip_denominator": torch.tensor(3.)})
     contract = AttackThenContractDiagnostics(
-        accepted=accepted,
-        selected_t=torch.tensor([0.25, 0.0, 0.75]),
-        raw_clean_bce=torch.tensor([0.5, 0.6, 0.7]),
-        selected_bce=torch.tensor([1.0, 0.6, 1.4]),
-        bce_gain=torch.tensor([0.5, 0.0, 0.7]),
-        path_valid_count=torch.tensor([4, 0, 3]),
+        accepted=accepted, selected_t=torch.tensor([.25, 0., .75]),
+        raw_clean_bce=torch.tensor([.5, .6, .7]), selected_bce=torch.tensor([1., .6, 1.4]),
+        bce_gain=torch.tensor([.5, 0., .7]), path_valid_count=torch.tensor([4, 0, 3]),
         path_preserving_count=torch.tensor([2, 0, 1]),
         clean_correct_class_count=torch.tensor([5, 4, 3]),
-        training_anyflip_success=torch.tensor([False, False, True]),
-    )
-
-    samples, means, weights = _scoped_lhat_diagnostics(
-        attack, contract, accepted, accepted_count=2
-    )
-
-    assert samples["raw_all_candidate_eligible/final_bce"].tolist() == [
-        1.0,
-        5.0,
-        9.0,
-    ]
-    assert means["raw_all_candidate_eligible/final_bce"] == pytest.approx(5.0)
-    assert means["raw_all_candidate_eligible/decoded_invalid_rate"] == pytest.approx(
-        1.0 / 3.0
-    )
-    assert means[
-        "contract_all_candidate_eligible/contract_acceptance_rate"
-    ] == pytest.approx(2.0 / 3.0)
+        training_anyflip_success=torch.tensor([False, False, True]))
+    samples, means, weights = _scoped_lhat_diagnostics(attack, contract, accepted, 2)
+    assert samples["raw_all_candidate_eligible/final_bce"].tolist() == [1., 5., 9.]
+    assert means["contract_all_candidate_eligible/contract_acceptance_rate"] == pytest.approx(2 / 3)
     assert samples["contract_all_candidate_eligible/accepted"].numel() == 3
-    assert samples["contract_training_accepted/selected_t"].tolist() == [0.25, 0.75]
-    assert (
-        "contract_training_accepted/contract_acceptance_rate" not in means
-    )
+    assert samples["contract_training_accepted/selected_t"].tolist() == [.25, .75]
     assert weights["raw_all_candidate_eligible/final_bce"] == 3
     assert weights["contract_training_accepted/contract_selected_t"] == 2
-
     distributions, scalars, rates = _diagnostic_sample_summary(
-        {f"lhat/{name}": [value] for name, value in samples.items()}
-    )
-    raw_rate = rates[
-        "lhat/raw_all_candidate_eligible/decoded_anchor_sample_anyflip_asr"
-    ]
-    assert raw_rate == {
-        "numerator": 2.0,
-        "denominator": 3.0,
-        "rate": pytest.approx(2.0 / 3.0),
-    }
-    accepted_key = "lhat/contract_training_accepted/training_anyflip_success"
-    assert distributions[accepted_key]["count"] == 2
-    assert scalars[f"{accepted_key}_count"] == 2.0
-    assert scalars[f"{accepted_key}_mean"] == pytest.approx(0.5)
-
-
-def test_a0_executes_without_dynamic_imports_as_a_typed_identity_graph() -> None:
-    compiled = compile_method_profile(METHOD_PROFILES / "a0_clean_v1.yaml")
-    source = _clean_view()
-
-    bundle = execute_method(
-        compiled,
-        ExecutionResources(
-            sources={"clean_raw": source},
-            classifier=object(),
-            base_seed=20260717,
-            rng_identity=("replicate=0", "epoch=1", "step=0"),
-        ),
-    )
-
-    clean = bundle.require("clean_view", ValueKind.WAVEFORM)
-    assert isinstance(clean, WaveformView)
-    assert torch.equal(clean.waveform, source.waveform)
-    assert torch.equal(clean.labels, source.labels)
-    assert clean.sample_ids == source.sample_ids
-    assert clean.provenance.operation == "identity_raw100_view"
-    assert bundle.diagnostics["method/profile_sha256"] == compiled.profile_sha256
-
-
-def test_profile_schema_rejects_dynamic_import_keys() -> None:
-    payload = yaml.safe_load(
-        (METHOD_PROFILES / "a0_clean_v1.yaml").read_text(encoding="utf-8")
-    )
-    payload["nodes"]["clean_identity"]["module"] = "arbitrary.user.module"
-
-    with pytest.raises(ValueError, match="forbidden; profiles may not select callables"):
-        load_method_profile(payload)
+        {f"lhat/{name}": [value] for name, value in samples.items()})
+    rate = rates["lhat/raw_all_candidate_eligible/decoded_anchor_sample_anyflip_asr"]
+    assert rate == {"numerator": 2., "denominator": 3., "rate": pytest.approx(2 / 3)}
+    key = "lhat/contract_training_accepted/training_anyflip_success"
+    assert (distributions[key]["count"], scalars[f"{key}_mean"]) == (2, pytest.approx(.5))

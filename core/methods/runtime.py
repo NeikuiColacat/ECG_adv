@@ -1,10 +1,4 @@
-"""Managed adapters from typed method nodes to the ECG implementations.
-
-The graph compiler owns topology and static contracts.  This module is the
-only bridge from those symbolic nodes to the existing corruption, LHAT and
-AugMix engines.  It returns canonical raw-mV 100 Hz views; model-domain
-resampling, normalization, objectives and optimizer steps remain trainer-owned.
-"""
+"""Finite-recipe bridge to the retained corruption, LHAT, and latent engines."""
 
 from __future__ import annotations
 
@@ -20,7 +14,6 @@ import torch.nn as nn
 from core.augmix import (
     AugMixConfig,
     generate_latent_three_chain_augmix,
-    generate_three_chain_augmix,
     load_augmix_config,
 )
 from core.corruption import generate_canonical_corruption
@@ -32,16 +25,15 @@ from core.lhat import (
 )
 from core.methods.contracts import (
     BASE_VIEW_NAME,
-    LatentView,
-    NodeContext,
     Provenance,
     ViewBundle,
-    ViewValue,
     WaveformView,
 )
-from core.methods.executor import ExecutionResources, execute_method
-from core.methods.registry import CompiledMethod
-from models.vae import decode_to_ptbxl_waveform, prepare_ecgtwin_encoder_input
+from core.methods.registry import (
+    AuxiliaryVariant,
+    RecipeKind,
+    RecipeSpec,
+)
 from util.augmentations.profile import AugmentationProfile, load_augmentation_profile
 from util.config_bundle import resolve_config_reference
 
@@ -52,6 +44,107 @@ def _sha256(path: Path) -> str:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def _derive_seed(
+    base_seed: int,
+    comparison_rng_identity: str,
+    namespace: str,
+    node_id: str,
+    stream: str,
+    execution_identity: tuple[str, ...],
+) -> int:
+    """Preserve the pre-RecipeSpec semantic seed payload byte-for-byte."""
+
+    payload = "|".join(
+        (
+            str(base_seed),
+            comparison_rng_identity,
+            namespace,
+            node_id,
+            stream,
+            *execution_identity,
+        )
+    ).encode("utf-8")
+    return int.from_bytes(hashlib.sha256(payload).digest()[:4], "little")
+
+
+class _RecipeContext:
+    """Narrow local context for one code-owned recipe operation."""
+
+    def __init__(
+        self,
+        *,
+        recipe: RecipeSpec,
+        node_id: str,
+        node_type: str,
+        rng_namespace: str,
+        resources: Mapping[str, Any],
+        diagnostics: dict[str, Any],
+        base_seed: int,
+        rng_identity: tuple[str, ...],
+    ) -> None:
+        self.node_id = node_id
+        self.node_type = node_type
+        self.rng_namespace = rng_namespace
+        self._recipe = recipe
+        self._resources = resources
+        self._diagnostics = diagnostics
+        self._base_seed = base_seed
+        self._rng_identity = rng_identity
+        self._generators: dict[tuple[str, str], torch.Generator] = {}
+
+    def resource(self, name: str) -> Any:
+        try:
+            value = self._resources[name]
+        except KeyError:
+            raise KeyError(f"unsupported execution resource: {name}") from None
+        if value is None:
+            raise ValueError(
+                f"recipe operation {self.node_id!r} requires {name!r}"
+            )
+        return value
+
+    def record_diagnostic(self, name: str, value: Any) -> None:
+        if not isinstance(name, str) or not name:
+            raise ValueError("diagnostic name must be non-empty")
+        key = f"{self.node_id}/{name}"
+        if key in self._diagnostics:
+            raise ValueError(f"diagnostic already recorded: {key}")
+        self._diagnostics[key] = value
+
+    def torch_generator(
+        self,
+        stream: str = "default",
+        *,
+        device: str | torch.device = "cpu",
+    ) -> torch.Generator:
+        if not isinstance(stream, str) or not stream:
+            raise ValueError("RNG stream must be non-empty")
+        resolved_device = torch.device(device)
+        key = (stream, str(resolved_device))
+        generator = self._generators.get(key)
+        if generator is None:
+            seed = _derive_seed(
+                self._base_seed,
+                self._recipe.comparison_rng_identity,
+                self.rng_namespace,
+                self.node_id,
+                stream,
+                self._rng_identity,
+            )
+            generator = torch.Generator(device=resolved_device)
+            generator.manual_seed(seed)
+            self._generators[key] = generator
+            self._diagnostics[
+                f"{self.node_id}/rng/{stream}/{resolved_device}"
+            ] = {
+                "seed": seed,
+                "namespace": self.rng_namespace,
+                "comparison_rng_identity": self._recipe.comparison_rng_identity,
+                "execution_identity": list(self._rng_identity),
+            }
+        return generator
 
 
 def _positions(mask: torch.Tensor) -> tuple[int, ...]:
@@ -176,60 +269,27 @@ class GeneratedMethodBatch:
 
     def __post_init__(self) -> None:
         weights = dict(self.diagnostic_weights)
-        if any(
-            not isinstance(name, str)
-            or not name
-            or isinstance(weight, bool)
-            or not isinstance(weight, int)
-            or weight <= 0
-            for name, weight in weights.items()
-        ):
-            raise ValueError(
-                "diagnostic_weights must map non-empty names to positive integers"
-            )
+        if any(weight <= 0 for weight in weights.values()):
+            raise ValueError("diagnostic weights must be positive")
         object.__setattr__(self, "diagnostic_weights", MappingProxyType(weights))
         samples = dict(self.diagnostic_samples)
-        if any(
-            not isinstance(name, str)
-            or not name
-            or not isinstance(value, torch.Tensor)
-            or value.ndim != 1
-            or value.requires_grad
-            for name, value in samples.items()
-        ):
-            raise ValueError(
-                "diagnostic_samples must map names to detached rank-1 tensors"
-            )
+        if any(value.ndim != 1 for value in samples.values()):
+            raise ValueError("diagnostic samples must be rank-1")
         object.__setattr__(
             self,
             "diagnostic_samples",
-            MappingProxyType(
-                {name: value.detach() for name, value in samples.items()}
-            ),
+            MappingProxyType({name: value.detach() for name, value in samples.items()}),
         )
         trace = dict(self.stochastic_trace)
-        if any(
-            not isinstance(name, str)
-            or not name
-            or not isinstance(value, torch.Tensor)
-            or value.ndim < 1
-            or value.requires_grad
-            for name, value in trace.items()
-        ):
-            raise ValueError(
-                "stochastic_trace must map names to detached non-scalar tensors"
-            )
+        if any(value.ndim < 1 for value in trace.values()):
+            raise ValueError("stochastic traces must be non-scalar")
         object.__setattr__(
             self,
             "stochastic_trace",
             MappingProxyType({name: value.detach() for name, value in trace.items()}),
         )
-        if self.quality_view_total_count < 0:
-            raise ValueError("quality_view_total_count must be non-negative")
         if not 0 <= self.quality_view_accepted_count <= self.quality_view_total_count:
-            raise ValueError(
-                "quality_view_accepted_count must be within the total view count"
-            )
+            raise ValueError("accepted view count must be within the total")
 
     @property
     def batch_size(self) -> int:
@@ -239,11 +299,11 @@ class GeneratedMethodBatch:
 
 
 class MethodViewRuntime:
-    """One compiled profile with resolved, code-owned node adapters."""
+    """One finite recipe with resolved configuration resources."""
 
     def __init__(
         self,
-        method: CompiledMethod,
+        recipe: RecipeSpec,
         *,
         model_name: str,
         config_root: Path,
@@ -253,15 +313,9 @@ class MethodViewRuntime:
         minimum_std_mV: float,
         maximum_abs_mV: float,
     ) -> None:
-        if not isinstance(method, CompiledMethod):
-            raise TypeError("method must be a CompiledMethod")
-        if not method.executable:
-            raise ValueError(
-                f"method profile {method.profile_name!r} is not executable"
-            )
-        if method.source_path is None:
-            raise ValueError("managed method runtime requires a file-backed profile")
-        self.method = method
+        if not isinstance(recipe, RecipeSpec):
+            raise TypeError("recipe must be a RecipeSpec")
+        self.recipe = recipe
         self.model_name = str(model_name)
         self.config_root = Path(config_root).expanduser().resolve()
         self.latent_pool = latent_pool
@@ -271,17 +325,20 @@ class MethodViewRuntime:
         self.maximum_abs_mV = float(maximum_abs_mV)
         if self.minimum_std_mV <= 0.0 or self.maximum_abs_mV <= 0.0:
             raise ValueError("method quality thresholds must be positive")
+        owner_path = recipe.source_path or (
+            self.config_root / "train" / "methods" / f"{recipe.recipe_id}.yaml"
+        )
 
         self._resource_paths: dict[str, Path] = {}
         self._rng_seed_paths: dict[str, Path] = {}
-        for name, raw_resource in method.resources.items():
+        for name, raw_resource in recipe.resources.items():
             if not isinstance(raw_resource, Mapping):
                 raise ValueError(f"method resource {name!r} must be a mapping")
             resource_type = raw_resource.get("type")
             if resource_type == "config_reference":
                 self._resource_paths[name] = resolve_config_reference(
                     raw_resource.get("path"),
-                    owner_config_path=method.source_path,
+                    owner_config_path=owner_path,
                     config_root=self.config_root,
                     description=f"method.resources.{name}",
                     must_exist=True,
@@ -289,19 +346,11 @@ class MethodViewRuntime:
             elif resource_type == "isolated_torch_generator":
                 self._rng_seed_paths[name] = resolve_config_reference(
                     raw_resource.get("seed_config"),
-                    owner_config_path=method.source_path,
+                    owner_config_path=owner_path,
                     config_root=self.config_root,
                     description=f"method.resources.{name}.seed_config",
                     must_exist=True,
                 )
-            elif resource_type in {
-                "caller_owned_classifier",
-                "none",
-                "runtime_frozen_decoder",
-                "runtime_frozen_encoder",
-                "runtime_train_only_exact_label_pool",
-            }:
-                pass
             else:
                 raise ValueError(
                     f"method resource {name!r} has unsupported type "
@@ -309,7 +358,7 @@ class MethodViewRuntime:
                 )
 
         self.operator_profile: AugmentationProfile | None = None
-        operator_resource = method.resources.get("operator_profile")
+        operator_resource = recipe.resources.get("operator_profile")
         if isinstance(operator_resource, Mapping):
             operator_path = self._resource_paths.get("operator_profile")
             if operator_path is None:
@@ -334,22 +383,22 @@ class MethodViewRuntime:
                 config_root=self.config_root,
             )
 
-        if method.requirements.latent_pool and latent_pool is None:
+        if recipe.requirements.latent_pool and latent_pool is None:
             raise ValueError("method requires a train-only latent_pool")
-        if method.requirements.vae_decoder and decoder is None:
+        if recipe.requirements.vae_decoder and decoder is None:
             raise ValueError("method requires a frozen VAE decoder")
-        if method.requirements.vae_encoder and encoder is None:
+        if recipe.requirements.vae_encoder and encoder is None:
             raise ValueError("method requires a frozen VAE encoder")
-        if not method.requirements.latent_pool and latent_pool is not None:
+        if not recipe.requirements.latent_pool and latent_pool is not None:
             raise ValueError("method without latent_pool requirement may not consume one")
-        if not method.requirements.vae_decoder and decoder is not None:
+        if not recipe.requirements.vae_decoder and decoder is not None:
             raise ValueError("method without VAE decoder requirement may not consume one")
-        if not method.requirements.vae_encoder and encoder is not None:
+        if not recipe.requirements.vae_encoder and encoder is not None:
             raise ValueError("method without VAE encoder requirement may not consume one")
 
     @property
     def requires_latent_pool(self) -> bool:
-        return bool(self.method.requirements.latent_pool)
+        return bool(self.recipe.requirements.latent_pool)
 
     @property
     def rng_seed_config_paths(self) -> Mapping[str, Path]:
@@ -357,7 +406,7 @@ class MethodViewRuntime:
 
     def describe(self) -> dict[str, Any]:
         return {
-            "method": self.method.describe(),
+            "recipe": self.recipe.describe(),
             "model_name": self.model_name,
             "resource_configs": {
                 name: {"path": str(path), "sha256": _sha256(path)}
@@ -398,12 +447,12 @@ class MethodViewRuntime:
 
     def _canonical_corruption(
         self,
-        context: NodeContext,
-        inputs: tuple[ViewValue, ...],
+        context: _RecipeContext,
+        inputs: tuple[WaveformView, ...],
         *,
         composition_indices: torch.Tensor | None = None,
         composition_index_hint: int | None = None,
-    ) -> ViewValue:
+    ) -> WaveformView:
         if len(inputs) != 1 or not isinstance(inputs[0], WaveformView):
             raise TypeError("canonical corruption requires one WaveformView")
         if self.operator_profile is None:
@@ -553,9 +602,9 @@ class MethodViewRuntime:
 
     def _lhat_attack(
         self,
-        context: NodeContext,
-        inputs: tuple[ViewValue, ...],
-    ) -> ViewValue:
+        context: _RecipeContext,
+        inputs: tuple[WaveformView, ...],
+    ) -> WaveformView:
         if len(inputs) != 1 or not isinstance(inputs[0], WaveformView):
             raise TypeError("LHAT requires one clean WaveformView")
         if self.latent_pool is None or self.decoder is None or self.lhat_config is None:
@@ -676,7 +725,11 @@ class MethodViewRuntime:
                 reasons = tuple(
                     reason
                     if bool(contract_acceptance[index])
-                    else "contract_rejected"
+                    else (
+                        "contract_rejected"
+                        if reason == "accepted"
+                        else f"contract_rejected+{reason}"
+                    )
                     for index, reason in enumerate(reasons)
                 )
             stochastic_trace = {
@@ -780,128 +833,11 @@ class MethodViewRuntime:
             },
         )
 
-    def _augmix(
-        self,
-        context: NodeContext,
-        inputs: tuple[ViewValue, ...],
-    ) -> ViewValue:
-        if (
-            len(inputs) != 2
-            or not isinstance(inputs[0], WaveformView)
-            or not isinstance(inputs[1], WaveformView)
-        ):
-            raise TypeError("three-chain AugMix requires clean and LHAT views")
-        if self.augmix_config is None:
-            raise RuntimeError("AugMix runtime has no resolved config")
-        clean, hard = inputs
-        if clean.sample_ids != hard.sample_ids or not torch.equal(
-            clean.labels, hard.labels
-        ):
-            raise RuntimeError("AugMix inputs must preserve origin and label alignment")
-        recorded_positions = hard.metadata.get("accepted_positions")
-        accepted_positions = (
-            tuple(int(position) for position in recorded_positions)
-            if isinstance(recorded_positions, (tuple, list))
-            else _positions(hard.valid_mask)
-        )
-        full_waveform = clean.waveform.clone()
-        diagnostics: dict[str, torch.Tensor] = {}
-        generator = context.torch_generator(
-            "chains_and_mixing", device=clean.waveform.device
-        )
-        # Draw chain1, chain2 and mixture parameters over the complete ordered
-        # base batch before applying the method-specific hard-view validity
-        # mask. This keeps common-random-number trajectories aligned even when
-        # two methods reject different LHAT endpoints.
-        result = generate_three_chain_augmix(
-            clean.waveform,
-            hard.waveform,
-            sampling_rate_hz=100,
-            config=self.augmix_config,
-            generator=generator,
-            # The trainer consumes raw canonical views and applies one shared
-            # model-domain z-score afterwards. Avoid an unused normalized copy.
-            include_normalized=False,
-        )
-        if accepted_positions:
-            indices = torch.as_tensor(
-                accepted_positions, device=clean.waveform.device, dtype=torch.long
-            )
-            full_waveform.index_copy_(
-                0,
-                indices,
-                result.mixed_raw.index_select(0, indices),
-            )
-            diagnostics = {
-                "chain1_depth": (
-                    result.chain1_depth.index_select(0, indices).float().mean().detach()
-                ),
-                "chain2_depth": (
-                    result.chain2_depth.index_select(0, indices).float().mean().detach()
-                ),
-                "vae_weight": (
-                    result.mixture_weights.index_select(0, indices)[:, 2]
-                    .mean()
-                    .detach()
-                ),
-                "strength": (
-                    result.augmented_strength.index_select(0, indices)
-                    .mean()
-                    .detach()
-                ),
-            }
-            for name, value in diagnostics.items():
-                context.record_diagnostic(name, value)
-        context.record_diagnostic("accepted_count", len(accepted_positions))
-        return WaveformView(
-            name=context.node_id,
-            waveform=full_waveform,
-            labels=clean.labels,
-            sample_ids=clean.sample_ids,
-            valid_mask=hard.valid_mask.clone(),
-            provenance=Provenance(
-                node_id=context.node_id,
-                operation=context.node_type,
-                parent_names=(clean.name, hard.name),
-                rng_namespace=context.rng_namespace,
-                parameters={
-                    "chain3_source": hard.name,
-                    "chain3_additional_corruption": False,
-                    "common_random_numbers_before_quality_mask": True,
-                    "operator_domain_sampling_rate_hz": 500,
-                },
-            ),
-            metadata={
-                "accepted_positions": accepted_positions,
-                "diagnostic_means": diagnostics,
-                "stochastic_trace": {
-                    "chain1_composition_index": (
-                        result.chain1_composition_index.detach().contiguous()
-                    ),
-                    "chain2_composition_index": (
-                        result.chain2_composition_index.detach().contiguous()
-                    ),
-                    "chain1_depth": result.chain1_depth.detach().contiguous(),
-                    "chain2_depth": result.chain2_depth.detach().contiguous(),
-                    "chain1_operator_mask": (
-                        result.chain1_operator_mask.detach().contiguous()
-                    ),
-                    "chain2_operator_mask": (
-                        result.chain2_operator_mask.detach().contiguous()
-                    ),
-                    "mixture_weights": result.mixture_weights.detach().contiguous(),
-                    "augmented_strength": (
-                        result.augmented_strength.detach().contiguous()
-                    ),
-                },
-            },
-        )
-
     def _latent_threechain_augmix(
         self,
-        context: NodeContext,
-        inputs: tuple[ViewValue, ...],
-    ) -> ViewValue:
+        context: _RecipeContext,
+        inputs: tuple[WaveformView, ...],
+    ) -> WaveformView:
         if len(inputs) != 1 or not isinstance(inputs[0], WaveformView):
             raise TypeError("latent three-chain AugMix requires one clean view")
         if self.encoder is None or self.decoder is None or self.augmix_config is None:
@@ -1021,105 +957,15 @@ class MethodViewRuntime:
                 "ineligible_hash_ids": (),
                 "quality_rejected": tuple(rejected),
                 "diagnostic_means": diagnostics,
-            },
-        )
-
-    def _dispatch_augmix(
-        self,
-        context: NodeContext,
-        inputs: tuple[ViewValue, ...],
-    ) -> ViewValue:
-        if context.node_type == "latent_threechain_augmix_view":
-            return self._latent_threechain_augmix(context, inputs)
-        return self._augmix(context, inputs)
-
-    def _vae_encode(
-        self,
-        context: NodeContext,
-        inputs: tuple[ViewValue, ...],
-    ) -> ViewValue:
-        if len(inputs) != 1 or not isinstance(inputs[0], WaveformView):
-            raise TypeError("VAE reconstruction encoder requires one clean waveform")
-        source = inputs[0]
-        encoder = context.resource("vae_encoder")
-        identity = getattr(encoder, "checkpoint_identity", None)
-        describe = getattr(identity, "describe", None)
-        payload = describe() if callable(describe) else None
-        if not isinstance(payload, Mapping) or len(str(payload.get("sha256", ""))) != 64:
-            raise ValueError("managed VAE encoder has no valid checkpoint identity")
-        with torch.no_grad():
-            encoder_input = prepare_ecgtwin_encoder_input(source.waveform)
-            latent, _, _ = encoder(encoder_input, sample=False)
-        return LatentView(
-            name=context.node_id,
-            latent=latent.detach().contiguous(),
-            labels=source.labels,
-            sample_ids=source.sample_ids,
-            valid_mask=source.valid_mask,
-            encoder_identity=str(payload["sha256"]),
-            provenance=Provenance(
-                node_id=context.node_id,
-                operation=context.node_type,
-                parent_names=(source.name,),
-                parameters={"posterior": "deterministic_mean"},
-            ),
-        )
-
-    def _vae_decode(
-        self,
-        context: NodeContext,
-        inputs: tuple[ViewValue, ...],
-    ) -> ViewValue:
-        if len(inputs) != 1 or not isinstance(inputs[0], LatentView):
-            raise TypeError("VAE reconstruction decoder requires one latent view")
-        source = inputs[0]
-        with torch.no_grad():
-            waveform = decode_to_ptbxl_waveform(
-                context.resource("vae_decoder"),
-                source.latent,
-                target_points=1000,
-            ).detach().contiguous()
-        accepted, reasons = _quality_mask(
-            waveform,
-            minimum_std_mV=self.minimum_std_mV,
-            maximum_abs_mV=self.maximum_abs_mV,
-        )
-        accepted_positions = _positions(accepted)
-        rejected = tuple(
-            {
-                "node_id": context.node_id,
-                "hash_id": source.sample_ids[index],
-                "reason": reason,
-            }
-            for index, reason in enumerate(reasons)
-            if reason != "accepted"
-        )
-        context.record_diagnostic("quality_accepted_count", len(accepted_positions))
-        context.record_diagnostic("quality_rejected_count", len(rejected))
-        return WaveformView(
-            name=context.node_id,
-            waveform=waveform,
-            labels=source.labels,
-            sample_ids=source.sample_ids,
-            valid_mask=source.valid_mask & accepted,
-            provenance=Provenance(
-                node_id=context.node_id,
-                operation=context.node_type,
-                parent_names=(source.name,),
-                parameters={
-                    "target_points": 1000,
-                    "lead_order": "ptbxl",
-                    "quality_rejection_policy": "clean_loss_only",
-                },
-            ),
-            metadata={
-                "candidate_eligible_positions": tuple(range(source.batch_size)),
-                "accepted_positions": accepted_positions,
-                "ineligible_hash_ids": (),
-                "quality_rejected": rejected,
-                "diagnostic_weights": {
-                    "quality_accepted_count": 1,
-                    "quality_rejected_count": 1,
+                "stochastic_trace": {
+                    "chain_depths": result.chain_depths.detach().contiguous(),
+                    "chain_operator_mask": (
+                        result.chain_operator_mask.detach().contiguous()
+                    ),
+                    "mixture_weights": result.mixture_weights.detach().contiguous(),
+                    "augmented_strength": (
+                        result.augmented_strength.detach().contiguous()
+                    ),
                 },
             },
         )
@@ -1139,48 +985,41 @@ class MethodViewRuntime:
     ) -> GeneratedMethodBatch:
         """Generate all declared raw views before any outer model forward.
 
-        ``composition_indices=None`` preserves the profile's ordinary random
+        ``composition_indices=None`` preserves the recipe's ordinary random
         composition sampling.  A device-local integer tensor in ``[0, 19]``
         forces one canonical depth-2/3 composition per record.  An all-``-1``
         tensor is the explicit clean-identity exposure used by the fixed-20
         direct fine-tuning schedule; mixing ``-1`` with corruptions is rejected.
         """
 
+        if (
+            isinstance(base_seed, bool)
+            or not isinstance(base_seed, int)
+            or not 0 <= base_seed < 2**32
+        ):
+            raise ValueError("base_seed must be a uint32 integer")
+        identity = tuple(rng_identity)
+        if any(not isinstance(value, str) or not value for value in identity):
+            raise ValueError("rng_identity must contain non-empty strings")
         clean = WaveformView(
-            name="clean_raw",
+            name="clean_identity",
             waveform=clean_raw,
             labels=targets,
             sample_ids=tuple(str(value) for value in hash_ids),
             provenance=Provenance(
-                node_id="batch_source",
-                operation="managed_k500_batch",
-                parameters={"normalization": "none", "domain": "raw_mV_100Hz"},
+                node_id="clean_identity",
+                operation="identity_raw100_view",
+                parent_names=("clean_raw",),
+                parameters={"source": "clean_raw"},
             ),
+            metadata={"source_view": "clean_raw"},
         )
-
-        def canonical_corruption_adapter(
-            context: NodeContext, inputs: tuple[ViewValue, ...]
-        ) -> ViewValue:
-            kwargs: dict[str, Any] = {
-                "composition_indices": composition_indices,
-            }
-            if composition_index_hint is not None:
-                kwargs["composition_index_hint"] = composition_index_hint
-            return self._canonical_corruption(context, inputs, **kwargs)
-
-        adapters = {
-            "canonical_corruption": canonical_corruption_adapter,
-            "lhat_attack": self._lhat_attack,
-            "augmix": self._dispatch_augmix,
-            "vae_encode": self._vae_encode,
-            "vae_decode": self._vae_decode,
-        }
         selected_terms = (
-            self.method.objective.terms
+            self.recipe.objective.terms
             if objective_term_names is None
             else tuple(
                 term
-                for term in self.method.objective.terms
+                for term in self.recipe.objective.terms
                 if term.name in set(objective_term_names)
             )
         )
@@ -1195,21 +1034,85 @@ class MethodViewRuntime:
         required_outputs = {BASE_VIEW_NAME}
         for term in selected_terms:
             required_outputs.update(term.views)
-        bundle = execute_method(
-            self.method,
-            ExecutionResources(
-                sources={"clean_raw": clean},
-                adapters=adapters,
-                classifier=classifier,
-                vae_encoder=self.encoder,
-                vae_decoder=self.decoder,
-                latent_pool=self.latent_pool,
-                base_seed=int(base_seed),
-                rng_identity=tuple(str(value) for value in rng_identity),
-            ),
-            required_outputs=tuple(
-                name for name in self.method.outputs if name in required_outputs
-            ),
+        diagnostics: dict[str, Any] = {
+            "recipe/id": self.recipe.recipe_id,
+            "recipe/sha256": self.recipe.recipe_sha256,
+            "recipe/rng_namespace": self.recipe.rng_namespace,
+            "recipe/comparison_rng_identity": self.recipe.comparison_rng_identity,
+        }
+        execution_resources = {
+            "classifier": classifier,
+            "vae_encoder": self.encoder,
+            "vae_decoder": self.decoder,
+            "latent_pool": self.latent_pool,
+        }
+
+        def context(
+            node_id: str, node_type: str, rng_resource: str
+        ) -> _RecipeContext:
+            try:
+                namespace = self.recipe.rng_namespaces[rng_resource]
+            except KeyError:
+                raise RuntimeError(
+                    f"recipe has no RNG namespace for {rng_resource!r}"
+                ) from None
+            return _RecipeContext(
+                recipe=self.recipe,
+                node_id=node_id,
+                node_type=node_type,
+                rng_namespace=namespace,
+                resources=execution_resources,
+                diagnostics=diagnostics,
+                base_seed=base_seed,
+                rng_identity=identity,
+            )
+
+        generated: dict[str, WaveformView] = {BASE_VIEW_NAME: clean}
+        if "corrupted_view" in required_outputs:
+            generated["corrupted_view"] = self._canonical_corruption(
+                context(
+                    "depth23_corruption",
+                    "canonical_depth23_corruption_view",
+                    "corruption_rng",
+                ),
+                (clean,),
+                composition_indices=composition_indices,
+                composition_index_hint=composition_index_hint,
+            )
+        if "lhat_view" in required_outputs:
+            if self.recipe.auxiliary_variant is not AuxiliaryVariant.CONTRACTED_LHAT:
+                raise RuntimeError("only the contracted-LHAT recipe can emit lhat_view")
+            generated["lhat_view"] = self._lhat_attack(
+                context(
+                    "lhat",
+                    "vae_lhat_attack_then_contract_view",
+                    "lhat_rng",
+                ),
+                (clean,),
+            )
+        if self.recipe.kind is RecipeKind.LATENT_THREECHAIN:
+            for name in ("augmix_view_1", "augmix_view_2"):
+                if name in required_outputs:
+                    generated[name] = self._latent_threechain_augmix(
+                        context(
+                            name,
+                            "latent_threechain_augmix_view",
+                            "latent_augmix_rng",
+                        ),
+                        (clean,),
+                    )
+        missing_outputs = sorted(required_outputs - set(generated))
+        if missing_outputs:
+            raise RuntimeError(
+                f"recipe dispatch did not produce required outputs: {missing_outputs}"
+            )
+        bundle = ViewBundle(
+            values={
+                name: generated[name]
+                for name in self.recipe.output_names
+                if name in required_outputs
+            },
+            diagnostics=diagnostics,
         )
         candidate_position_set: set[int] = set()
         accepted_position_sets: list[set[int]] = []
@@ -1341,7 +1244,7 @@ class MethodViewRuntime:
 
 
 def build_method_runtime(
-    method: CompiledMethod,
+    recipe: RecipeSpec,
     *,
     model_name: str,
     config_root: str | Path,
@@ -1352,7 +1255,7 @@ def build_method_runtime(
     maximum_abs_mV: float = 20.0,
 ) -> MethodViewRuntime:
     return MethodViewRuntime(
-        method,
+        recipe,
         model_name=model_name,
         config_root=Path(config_root),
         latent_pool=latent_pool,

@@ -38,11 +38,24 @@ launch_surface_policy:
     - no_agent_workspace_runtime_import
 
 latest_mainline:
-  method: targetonly_twochain_simclr_rotating4_attack_then_contract_lhat
+  method: augmix_simclr_lhat
   status: locked_prospective_replication_recipe
   evidence_level: heldout_tuned_single_seed_development
   paper_claim_allowed: false
   launcher: boot_scripts/run_experiment.py
+  current_implementation:
+    status: finite_recipe_cpu_verified
+    implementation_identity: finite_recipe_spec_v1
+    selector: configs/train/methods/augmix_simclr_lhat.yaml
+    schema_version: 2
+    selector_file_sha256: eab7f244dde52e2b60a95f1b922d446b97ff90f60762d4b9d744b0c8022036a1
+    recipe_id: augmix_simclr_lhat
+    kind: two_stage_augmix_lhat
+    auxiliary_variant: contracted_lhat
+    recipe_version: 1
+    recipe_spec_sha256: de3d6948a9efc974405b7382d45653f93032a34ac2fd88637172ed731d876602
+    gpu_replication_status: not_run_after_recipe_migration
+    prospective_run_root: /home/linbinhao/ECG_adv_data/runs/manual_refactor_paper_kernel_v2_recipe_v1_r1
   primary_metric_view: drop_all_zero
   mapping:
     version: v7_super5_sjr_rgq_review_20260528
@@ -85,13 +98,13 @@ latest_mainline:
       config: configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_ningbo.yaml
     - name: pn2021_effnet_evaluation
       role: ref_excluded_clean_and_pn2021c_evaluation_example
-      config: configs/experiments/manual_refactor_pn2021_eval_effnet.yaml
+      config: configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_eval_ningbo.yaml
   replay_scope:
     generic_runner_supports:
       backbones: [efficientnet1dv2, ecgfounder]
       centers: [ningbo, chapman_shaoxing, cpsc_2018, georgia]
     tracked_mainline_examples:
-      status: complete_single_seed_four_center_two_backbone_matrix
+      status: configured_recipe_v1_matrix_not_run
       training_configs:
         - configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_ningbo.yaml
         - configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_chapman_shaoxing.yaml
@@ -126,17 +139,15 @@ latest_mainline:
       - util/tests/test_evaluation_metrics.py
       - util/tests/test_pn2021_evaluation.py
     cpu_contract_result:
-      status: passed
-      passed: 140
-      skipped: 10
+      status: passed_153_skipped_10
       date: "2026-08-12"
     gpu_replication:
-      status: complete_single_seed_metric_level
-      run_root: /home/linbinhao/ECG_adv_data/runs/manual_refactor_clean_repro_20260806_r2
+      status: not_run_after_recipe_migration
+      planned_run_root: /home/linbinhao/ECG_adv_data/runs/manual_refactor_paper_kernel_v2_recipe_v1_r1
       result_registry: configs/active_evidence_registry.yaml
-      issue_log: docs/refactor_cleanup/pipeline_reproduction_log_20260806.md
+      historical_metric_evidence: configs/active_evidence_registry.yaml
     dry_run:
-      status: required_before_gpu
+      status: passed_38_of_38_tracked_experiments
       command: >
         /home/linbinhao/miniforge3/envs/ECGTwin/bin/python
         boot_scripts/run_experiment.py

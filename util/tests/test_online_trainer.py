@@ -1,4 +1,4 @@
-"""Fast contracts for the retained online-training control plane."""
+"""Fast characterization contracts for the finite online-training control plane."""
 
 from __future__ import annotations
 
@@ -8,205 +8,193 @@ from types import SimpleNamespace
 
 import pytest
 import torch
+import yaml
 
-import core.online_trainer as online_trainer
-from core.methods import compile_method_profile
-from core.methods.executor import _derive_seed
-from core.online_trainer import (
-    load_online_train_config,
-    resolve_online_training_parameters,
-)
+import core.online_trainer as trainer
+from core.methods import AuxiliaryVariant, RecipeKind, build_method_runtime, load_recipe_spec
+from core.methods.runtime import _derive_seed
 from core.train_PN2021 import _validate_locked_source_checkpoint
 from models.checkpoints import CheckpointIdentity
 from models.contracts import ECGFOUNDER_SPEC, EFFICIENTNET1DV2_SPEC
-from util.random_seed import load_random_seed_config
+from util.random_seed import derive_seed, load_random_seed_config
 
 
 REPO = Path(__file__).resolve().parents[2]
-MAINLINE_METHOD = REPO / "configs" / "train" / "methods" / "augmix_simclr_lhat.yaml"
+CONFIG_ROOT = REPO / "configs"
+RECIPES = CONFIG_ROOT / "train" / "methods"
+ONLINE_CONFIG = CONFIG_ROOT / "train" / "PN2021.yaml"
+
+
+def _recipe(filename: str):
+    return load_recipe_spec(RECIPES / filename)
+
+
+def _matched():
+    payload = yaml.safe_load((RECIPES / "augmix_simclr_lhat.yaml").read_text())
+    payload["recipe"].update(id="augmix_simclr_matched_no_vae",
+        auxiliary_variant="matched_no_vae", scientific_arm="augmix_simclr_matched_no_vae",
+        status="prospective_matched_ablation")
+    for name in ("vae", "lhat_config", "lhat_rng"):
+        payload["resources"].pop(name)
+    return load_recipe_spec(payload)
 
 
 def test_source_checkpoint_lock_covers_both_backbones(tmp_path: Path) -> None:
-    cases = (
-        (
-            EFFICIENTNET1DV2_SPEC,
-            "checkpoint_identity",
-            "1" * 64,
-            tmp_path / "effnet.pt",
-        ),
-        (
-            ECGFOUNDER_SPEC,
-            "task_checkpoint_identity",
-            "2" * 64,
-            tmp_path / "founder.pt",
-        ),
-    )
+    cases = ((EFFICIENTNET1DV2_SPEC, "checkpoint_identity", "1" * 64, tmp_path / "effnet.pt"),
+             (ECGFOUNDER_SPEC, "task_checkpoint_identity", "2" * 64, tmp_path / "founder.pt"))
     registry = tmp_path / "source.yaml"
-    registry.write_text(
-        "schema_version: 1\nmodels:\n"
-        + "".join(
-            f"  {spec.name}:\n"
-            f"    selected_checkpoint: {path}\n"
-            f"    selected_checkpoint_sha256: '{sha256}'\n"
-            for spec, _, sha256, path in cases
-        ),
-        encoding="utf-8",
-    )
+    registry.write_text("schema_version: 1\nmodels:\n" + "".join(
+        f"  {spec.name}:\n    selected_checkpoint: {path}\n"
+        f"    selected_checkpoint_sha256: '{sha}'\n" for spec, _, sha, path in cases))
     config = SimpleNamespace(references={"source_baseline_registry": registry})
-    for spec, attribute, sha256, path in cases:
-        identity = CheckpointIdentity(path, sha256, 1, (), ())
+    for spec, attribute, sha, path in cases:
         _validate_locked_source_checkpoint(
-            SimpleNamespace(**{attribute: identity}), spec, config
-        )
-        bad = CheckpointIdentity(path, "f" * 64, 1, (), ())
-        with pytest.raises(ValueError, match="SHA256"):
-            _validate_locked_source_checkpoint(
-                SimpleNamespace(**{attribute: bad}), spec, config
-            )
-        wrong_path = CheckpointIdentity(tmp_path / "wrong.pt", sha256, 1, (), ())
-        with pytest.raises(ValueError, match="path"):
-            _validate_locked_source_checkpoint(
-                SimpleNamespace(**{attribute: wrong_path}), spec, config
-            )
+            SimpleNamespace(**{attribute: CheckpointIdentity(path, sha, 1, (), ())}), spec, config)
+        for bad, message in ((CheckpointIdentity(path, "f" * 64, 1, (), ()), "SHA256"),
+                             (CheckpointIdentity(tmp_path / "wrong.pt", sha, 1, (), ()), "path")):
+            with pytest.raises(ValueError, match=message):
+                _validate_locked_source_checkpoint(SimpleNamespace(**{attribute: bad}), spec, config)
 
 
-def test_online_config_resolves_only_tracked_bundle_references() -> None:
-    config_path = REPO / "configs" / "train" / "PN2021.yaml"
-    config = load_online_train_config(config_path)
-    resolved, supplied = resolve_online_training_parameters(
-        config,
-        "efficientnet1dv2",
-    )
-
-    assert config.path == config_path.resolve()
-    assert config.config_root == (REPO / "configs").resolve()
-    assert set(config.references) == {
-        "split_config",
-        "data_load_config",
-        "random_seed_config",
-        "source_baseline_registry",
-    }
+def test_online_config_references_and_overrides_remain_closed() -> None:
+    config = trainer.load_online_train_config(ONLINE_CONFIG)
+    resolved, supplied = trainer.resolve_online_training_parameters(config, "efficientnet1dv2")
+    assert config.path == ONLINE_CONFIG.resolve()
+    assert set(config.references) == {"split_config", "data_load_config", "random_seed_config",
+                                      "source_baseline_registry"}
     assert all(path.is_file() for path in config.references.values())
-    assert resolved["epochs"] == 23
-    assert resolved["scheduler_horizon_epochs"] == 30
-    assert resolved["stage1_steps"] == 1024
-    assert supplied == {}
-
-
-def test_online_parameter_overrides_are_closed_and_budget_checked() -> None:
-    config = load_online_train_config(REPO / "configs" / "train" / "PN2021.yaml")
-
+    assert (resolved["epochs"], resolved["scheduler_horizon_epochs"],
+            resolved["stage1_steps"], supplied) == (23, 30, 1024, {})
     with pytest.raises(ValueError, match="unknown online training parameters"):
-        resolve_online_training_parameters(config, "efficientnet1dv2", {"typo": 1})
+        trainer.resolve_online_training_parameters(config, "efficientnet1dv2", {"typo": 1})
     with pytest.raises(ValueError, match="greater than or equal"):
-        resolve_online_training_parameters(
-            config,
-            "efficientnet1dv2",
-            {"epochs": 4, "scheduler_horizon_epochs": 3},
-        )
+        trainer.resolve_online_training_parameters(config, "efficientnet1dv2",
+            {"epochs": 4, "scheduler_horizon_epochs": 3})
 
 
-def test_mainline_rotating_four_covers_all_compositions_in_five_epochs() -> None:
-    method = compile_method_profile(MAINLINE_METHOD)
-    schedules = [
-        online_trainer._method_exposure_steps(method, epoch=epoch)
-        for epoch in range(1, 6)
-    ]
-    compositions = [
-        step.composition_index
-        for schedule in schedules
-        for step in schedule
-        if step.name.startswith("corruption_")
-    ]
+def test_finite_exposure_plans_lock_direct21_rotating6_and_matched5() -> None:
+    for filename in ("a0_clean_v1.yaml", "a3c_depth23_v1.yaml",
+                     "exp_paired_augmix_latent_bridge_v1.yaml"):
+        steps = trainer._method_exposure_steps(_recipe(filename))
+        assert [(step.name, step.loss_scale) for step in steps] == [("base", 1.0)]
+    direct = trainer._method_exposure_steps(_recipe("direct_depth23_fixed20.yaml"))
+    assert [step.composition_index for step in direct] == [-1, *range(20)]
+    assert [step.loss_scale for step in direct] == pytest.approx([.5, *([.025] * 20)])
 
+    mainline = _recipe("augmix_simclr_lhat.yaml")
+    schedules = [trainer._method_exposure_steps(mainline, epoch=e) for e in range(1, 6)]
+    compositions = [s.composition_index for plan in schedules for s in plan
+                    if s.name.startswith("corruption_")]
     assert sorted(compositions) == list(range(20))
-    assert all(len(schedule) == 6 for schedule in schedules)
-    assert all(schedule[0].name == "clean" for schedule in schedules)
-    assert all(schedule[0].loss_scale == pytest.approx(0.5) for schedule in schedules)
-    assert all(schedule[-1].name == "auxiliary" for schedule in schedules)
-    assert all(schedule[-1].loss_scale == pytest.approx(2.0) for schedule in schedules)
-
-
-def test_exposure_expansion_reuses_one_loaded_batch_and_tags_each_view() -> None:
-    method = compile_method_profile(MAINLINE_METHOD)
-    steps = online_trainer._method_exposure_steps(method, epoch=1)
-    waveform = torch.zeros((2, 1000, 12), dtype=torch.float32)
-    reads: list[str] = []
-
-    def loader():
-        reads.append("read")
-        yield {"waveform": waveform, "hash_id": ("a", "b")}
-
-    batches = list(online_trainer._iter_exposure_batches(loader(), steps))
-
-    assert reads == ["read"]
-    assert len(batches) == 6
-    assert all(batch["waveform"] is waveform for batch in batches)
-    assert [batch["__exposure_index"] for batch in batches] == list(range(6))
-    assert [batch["__composition_index"] for batch in batches[1:5]] == [0, 1, 10, 11]
-    assert batches[-1]["__objective_terms"] == ("lhat_direct_bce",)
-
-
-def test_direct_corruption_seed_uses_semantic_identity() -> None:
-    method = compile_method_profile(
-        REPO / "configs" / "train" / "methods" / "direct_depth23_fixed20.yaml"
-    )
-    schedule = online_trainer._method_exposure_steps(method)
-    exposure_index = next(
-        index
-        for index, step in enumerate(schedule)
-        if step.composition_index == 7
-    )
-    assert len(schedule) == 21
-    assert schedule[exposure_index].composition_index == 7
-    assert method.comparison_rng_identity == "direct_depth23_fixed20"
-
-    config = load_online_train_config(REPO / "configs" / "train" / "PN2021.yaml")
-    random_seed = config.payload["random_seed"]
-    batch_digest = hashlib.sha256(b"second-a\nsecond-b").hexdigest()
-    arguments = {
-        "comparison_group": random_seed["comparison_group"],
-        "replicate_id": random_seed["replicate_id"],
-        "center": "ningbo",
-        "model_name": "efficientnet1dv2",
-        "epoch": 2,
-        "batch_hash_sha256": batch_digest,
-        "exposure_name": "corruption_07",
-        "composition_index": 7,
-    }
-    identity = online_trainer._method_rng_identity(**arguments)
-    assert all("view_execution_step" not in value for value in identity)
-    node = next(
-        item for item in method.nodes if item.profile.node_id == "depth23_corruption"
-    )
-    assert node.profile.params["rng_namespace"] == "method_direct_depth23_fixed20"
-    assert _derive_seed(
-        load_random_seed_config(config.references["random_seed_config"]).base_seed,
-        method.comparison_rng_identity,
-        str(node.profile.params["rng_namespace"]),
-        node.profile.node_id,
-        "composition_and_operators",
-        identity,
-    ) == 1342437248
-
-
-def test_family_balanced_batch_norm_schedule_preserves_declared_weights() -> None:
-    weights = (0.5, 0.125, 0.125, 0.125, 0.125)
-    momenta = online_trainer._family_balanced_batch_norm_momenta(0.1, weights)
-
-    old_coefficient = 1.0
-    contributions: list[float] = []
-    for momentum in momenta:
-        contributions = [value * (1.0 - momentum) for value in contributions]
-        contributions.append(momentum)
-        old_coefficient *= 1.0 - momentum
-
-    assert old_coefficient == pytest.approx(0.9)
-    assert contributions == pytest.approx([0.1 * weight for weight in weights])
-
-
-def test_invalid_rotating_epoch_fails_before_any_training_side_effect() -> None:
-    method = compile_method_profile(MAINLINE_METHOD)
-
+    assert all(len(plan) == 6 and plan[-1].loss_scale == 2.0 for plan in schedules)
+    assert [s.loss_scale for s in schedules[0]] == pytest.approx([.5, .125, .125, .125, .125, 2.])
     with pytest.raises(ValueError, match="positive integer"):
-        online_trainer._method_exposure_steps(method, epoch=0)
+        trainer._method_exposure_steps(mainline, epoch=0)
+
+    matched = _matched(); matched_steps = trainer._method_exposure_steps(matched)
+    assert (matched.kind, matched.auxiliary_variant) == (
+        RecipeKind.TWO_STAGE_AUGMIX_LHAT, AuxiliaryVariant.MATCHED_NO_VAE)
+    assert [s.name for s in matched_steps] == [
+        "clean", "corruption_00", "corruption_01", "corruption_10", "corruption_11"]
+    assert matched.scientific_contract["stages"] == ("augmix_simclr", "supervised_adaptation")
+    assert matched.scientific_contract["stage2_teacher"] == "post_stage1_pre_stage2_snapshot"
+
+
+def test_six_exposures_reuse_one_batch_and_form_one_outer_step_group() -> None:
+    waveform = torch.zeros(2, 1000, 12); reads = []
+    def loader():
+        reads.append(1); yield {"waveform": waveform, "hash_id": ("a", "b")}
+    steps = trainer._method_exposure_steps(_recipe("augmix_simclr_lhat.yaml"))
+    batches = list(trainer._iter_exposure_batches(loader(), steps))
+    assert reads == [1] and len(batches) == 6
+    assert all(batch["waveform"] is waveform for batch in batches)
+    assert {batch["__exposure_group"] for batch in batches} == {1}
+    assert [batch["__composition_index"] for batch in batches[1:5]] == [0, 1, 10, 11]
+
+
+RNG_CASES = [
+    ("a3c_depth23_v1.yaml", "base", None, "corruption_rng", "depth23_corruption", "composition_and_operators", 4099549646),
+    ("direct_depth23_fixed20.yaml", "corruption_07", 7, "corruption_rng", "depth23_corruption", "composition_and_operators", 1342437248),
+    ("augmix_simclr_lhat.yaml", "corruption_07", 7, "corruption_rng", "depth23_corruption", "composition_and_operators", 100675112),
+    ("augmix_simclr_lhat.yaml", "auxiliary", None, "lhat_rng", "lhat", "candidate_selection", 1664578656),
+    ("exp_paired_augmix_latent_bridge_v1.yaml", "base", None, "latent_augmix_rng", "augmix_view_1", "depth_operators_and_latent_mixing", 692988747),
+    ("exp_paired_augmix_latent_bridge_v1.yaml", "base", None, "latent_augmix_rng", "augmix_view_2", "depth_operators_and_latent_mixing", 3858762464),
+]
+
+
+@pytest.mark.parametrize("filename,exposure,composition,rng_name,node,stream,expected", RNG_CASES)
+def test_method_rng_permanent_goldens(filename, exposure, composition, rng_name,
+                                      node, stream, expected) -> None:
+    config = trainer.load_online_train_config(ONLINE_CONFIG); random = config.payload["random_seed"]
+    identity = trainer._method_rng_identity(comparison_group=random["comparison_group"],
+        replicate_id=random["replicate_id"], center="ningbo", model_name="efficientnet1dv2",
+        epoch=2, batch_hash_sha256=hashlib.sha256(b"second-a\nsecond-b").hexdigest(),
+        exposure_name=exposure, composition_index=composition)
+    recipe = _recipe(filename)
+    base = load_random_seed_config(config.references["random_seed_config"]).base_seed
+    assert all("view_execution_step" not in value for value in identity)
+    assert _derive_seed(base, recipe.comparison_rng_identity, recipe.rng_namespaces[rng_name],
+                        node, stream, identity) == expected
+
+
+@pytest.mark.parametrize("name,weights", [
+    ("clean", None), ("direct", [.5, *([.025] * 20)]),
+    ("mainline", [.5, .125, .125, .125, .125, 0]),
+    ("latent", [.5, .25, .25]), ("matched", [.5, .125, .125, .125, .125])])
+def test_batch_norm_plan_preserves_family_weights(name, weights) -> None:
+    recipes = {"clean": lambda: _recipe("a0_clean_v1.yaml"),
+               "direct": lambda: _recipe("direct_depth23_fixed20.yaml"),
+               "mainline": lambda: _recipe("augmix_simclr_lhat.yaml"),
+               "latent": lambda: _recipe("exp_paired_augmix_latent_bridge_v1.yaml"),
+               "matched": _matched}
+    recipe = recipes[name](); steps = trainer._method_exposure_steps(recipe)
+    plan = trainer._build_batch_norm_momentum_plan(
+        torch.nn.BatchNorm1d(2, momentum=.1), recipe, exposure_steps=steps)
+    if weights is None:
+        assert plan is None; return
+    assert plan.exposure_weights == pytest.approx(weights)
+    contributions = []
+    for momentum in plan.schedules[0]:
+        contributions = [x * (1 - momentum) for x in contributions] + [momentum]
+    assert contributions == pytest.approx([.1 * weight for weight in weights])
+
+
+def test_stage1_uses_resolved_augmix_constants_and_hash_free_legacy_seed(monkeypatch) -> None:
+    recipe = _recipe("augmix_simclr_lhat.yaml")
+    runtime = build_method_runtime(recipe, model_name="efficientnet1dv2",
+        config_root=CONFIG_ROOT, latent_pool=object(), decoder=torch.nn.Identity())
+    augmix = runtime.augmix_config; assert augmix is not None
+    captured = []
+    def capture(device, namespace, *identity, config_path):
+        seed = derive_seed(namespace, *identity, config_path=config_path)
+        captured.append((seed, identity)); return torch.Generator(device=device).manual_seed(seed)
+    patches = {
+        "make_torch_generator": capture,
+        "_cache_k500_logits": lambda *a, **k: {},
+        "_feature_width": lambda *a, **k: 4,
+        "_head_parameters": lambda *a, **k: (),
+        "prepare_canonical_model_input": lambda raw, *a, **k: raw.mean((1, 2)).unsqueeze(1),
+        "generate_two_chain_augmix_strong_view": lambda raw, **k: SimpleNamespace(mixed_raw=raw * .5),
+        "_forward_logits_and_features": lambda model, x, spec: (model(x), model(x)),
+        "_teacher_logits_for_hashes": lambda cache, hashes, **k: torch.zeros(len(hashes), 4),
+        "_simclr_nt_xent": lambda clean, strong, **k: (clean - strong).square().mean(),
+        "_weighted_logit_anchor_loss": lambda logits, teacher, weights: logits.square().mean(),
+    }
+    for name, replacement in patches.items():
+        monkeypatch.setattr(trainer, name, replacement)
+    loader = [{"waveform": torch.full((2, 1000, 12), float(step + 1)),
+               "hash_id": (f"batch-{step}-a", f"batch-{step}-b")} for step in range(2)]
+    summary = trainer._run_augmix_simclr_stage1(torch.nn.Linear(1, 4), loader,
+        spec=SimpleNamespace(name="efficientnet1dv2"), device=torch.device("cpu"),
+        recipe=recipe, augmix_config=augmix, center="ningbo", base_seed=20260501,
+        resolved={"stage1_steps": 2, "stage1_learning_rate": 1e-3,
+                  "stage1_weight_decay": 0., "stage1_gradient_clip_norm": 1.},
+        normalization_epsilon=1e-6, amp_enabled=False, amp_dtype=torch.bfloat16)
+    assert [seed for seed, _ in captured] == [3967304348, 2995841993]
+    assert [identity for _, identity in captured] == [
+        ("augmix_simclr_lhat", "ningbo", "efficientnet1dv2", "base_seed=20260501", f"stage1_step={i}")
+        for i in range(2)]
+    assert (summary["simclr_temperature"], summary["augmix_internal_chains"],
+            summary["augmix_dirichlet_alpha"], summary["augmix_beta_alpha"],
+            summary["logit_anchor_weight"], summary["ptbxl_replay_weight"]) == (
+                .5, 2, .5, .5, 5., 0.)

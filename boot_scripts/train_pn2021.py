@@ -1,4 +1,4 @@
-"""Boot one matched PN2021 K500 typed-method run."""
+"""Boot one matched PN2021 K500 finite-recipe run."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -19,14 +19,14 @@ from core.online_trainer import (
     load_online_train_config,
     resolve_online_training_parameters,
 )
-from core.train_PN2021 import load_pn2021_method_profile, train_pn2021
+from core.train_PN2021 import load_pn2021_recipe_spec, train_pn2021
 from models import build_ecgtwin_vae, build_model, get_model_spec, load_vae_config
 from util.config_bundle import resolve_config_reference
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Train one manual PN2021 K500 typed method."
+        description="Train one manual PN2021 K500 finite recipe."
     )
     parser.add_argument("--config", type=Path, default=DEFAULT_ONLINE_CONFIG_PATH)
     parser.add_argument("--config-root", type=Path)
@@ -78,7 +78,7 @@ def _not_none(**values: Any) -> dict[str, Any]:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     config = load_online_train_config(args.config, config_root=args.config_root)
-    method, _ = load_pn2021_method_profile(
+    recipe, _ = load_pn2021_recipe_spec(
         args.method_config,
         config_path=config.path,
         config_root=config.config_root,
@@ -110,22 +110,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     vae_checkpoint = (
         None if args.vae_checkpoint is None else args.vae_checkpoint.expanduser().resolve()
     )
-    needs_pool = bool(method.requirements.latent_pool)
-    needs_runtime_encoder = bool(method.requirements.vae_encoder)
-    needs_decoder = bool(method.requirements.vae_decoder)
+    needs_pool = bool(recipe.requirements.latent_pool)
+    needs_runtime_encoder = bool(recipe.requirements.vae_encoder)
+    needs_decoder = bool(recipe.requirements.vae_decoder)
     needs_encoder_component = needs_pool or needs_runtime_encoder
     needs_vae = needs_encoder_component or needs_decoder
     if not needs_vae and vae_checkpoint is not None:
-        raise ValueError("method without latent resources rejects --vae-checkpoint")
+        raise ValueError("recipe without latent resources rejects --vae-checkpoint")
     resolved_vae_checkpoint = None
     vae_config_path = None
     if needs_vae:
-        vae_resource = method.resources.get("vae")
-        if not isinstance(vae_resource, dict):
-            raise ValueError("latent method must declare a VAE config resource")
+        vae_resource = recipe.resources.get("vae")
+        if not isinstance(vae_resource, Mapping):
+            raise ValueError("latent recipe must declare a VAE config resource")
         vae_config_path = resolve_config_reference(
             vae_resource.get("path"),
-            owner_config_path=method.source_path,
+            owner_config_path=recipe.source_path,
             config_root=config.config_root,
             description="method.resources.vae",
             must_exist=True,
@@ -138,7 +138,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     plan = {
         "action": "pn2021_k500_online_training",
         "model": get_model_spec(args.model).describe(),
-        "method": method.describe(),
+        "method": recipe.describe(),
         "center": args.center,
         "config": config.describe(),
         "source_checkpoint": str(source_checkpoint),
@@ -206,7 +206,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     result = train_pn2021(
         model,
         center=args.center,
-        method_config_path=method.source_path,
+        method_config_path=recipe.source_path,
         encoder=encoder,
         decoder=decoder,
         config_path=config.path,

@@ -1,13 +1,8 @@
-"""Typed-method online trainer for PN2021 K500.
+"""Finite-recipe online trainer for PN2021 K500.
 
-The trainer owns the outer optimization and exposure budget.  A restricted
-method graph may generate canonical raw-mV views, but cannot alter the loader,
-normalization, optimizer, scheduler, or checkpoint selection.  Standard
-``matched_base`` methods use exactly one optimizer step per base batch.  The
-fixed-20 Direct baseline evaluates one clean view plus all twenty canonical
-corruption views, accumulates ``0.5 * clean + 0.5 * mean(corruptions)``, and
-then performs that single step.  Every base record therefore contributes one
-family-balanced objective without materializing a training cache.
+The trainer owns the optimizer and exposure budget.  Every recipe takes one
+outer optimizer step per base batch; recipes only choose the locked views and
+losses accumulated into that step.
 """
 
 from __future__ import annotations
@@ -29,16 +24,18 @@ from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
 from core.augmix import (
+    AugMixConfig,
     generate_two_chain_augmix_strong_view,
-    load_augmix_config,
     multilabel_jsd,
 )
 from core.methods import (
+    AuxiliaryVariant,
     BASE_VIEW_NAME,
-    CompiledMethod,
+    RecipeKind,
+    RecipeSpec,
     WaveformView,
     build_method_runtime,
-    compile_method_profile,
+    load_recipe_spec,
 )
 from models.checkpoints import sha256_file
 from models.contracts import (
@@ -79,27 +76,6 @@ ONLINE_PARAMETER_NAMES = frozenset(
         "stage1_learning_rate",
         "stage1_weight_decay",
         "stage1_gradient_clip_norm",
-    }
-)
-FIXED20_EXPOSURE_POLICY = "clean_once_then_exhaustive_depth23"
-FIXED20_AUX_EXPOSURE_POLICY = (
-    "clean_once_then_exhaustive_depth23_then_auxiliary"
-)
-# Sandbox PCGrad attaches its auxiliary objective to the clean exposure while
-# preserving the canonical clean + 20-corruption optimizer group.  Its scoped
-# runtime adapter owns validation and exposure construction; the whitelist
-# trainer still needs to recognize that group as fixed20 for accumulation,
-# BatchNorm weighting, timing, and one-step-per-base-batch semantics.
-FIXED20_PCGRAD_EXPOSURE_POLICY = "clean_aux_once_then_exhaustive_depth23"
-ROTATING4_AUX_EXPOSURE_POLICY = (
-    "clean_aux_once_then_rotating_depth23_2plus2"
-)
-FIXED20_GROUPED_EXPOSURE_POLICIES = frozenset(
-    {
-        FIXED20_EXPOSURE_POLICY,
-        FIXED20_AUX_EXPOSURE_POLICY,
-        FIXED20_PCGRAD_EXPOSURE_POLICY,
-        ROTATING4_AUX_EXPOSURE_POLICY,
     }
 )
 FIXED20_COMPOSITION_ORDER = tuple(range(20))
@@ -186,61 +162,23 @@ def _family_balanced_batch_norm_momenta(
 
 def _build_batch_norm_momentum_plan(
     model: nn.Module,
-    method: CompiledMethod,
+    recipe: RecipeSpec,
     *,
-    fixed20_exposure: bool,
-    exposure_steps: Sequence[_ExposureStep] | None = None,
+    exposure_steps: Sequence[_ExposureStep],
 ) -> _BatchNormMomentumPlan | None:
-    policy = str(method.contracts.get("batch_norm_running_stats_policy", ""))
-    if fixed20_exposure:
-        if policy != FAMILY_BALANCED_BN_POLICY:
-            raise ValueError(
-                "fixed20 must declare family-loss-weighted BatchNorm running stats"
-            )
-        if exposure_steps is None:
-            family_weights = _mapping(
-                method.contracts.get("family_loss_weights"),
-                "fixed20 family_loss_weights",
-            )
-            exposure_weights = (
-                float(family_weights["clean"]),
-                *(
-                    float(family_weights["corrupted_per_composition"])
-                    for _ in FIXED20_COMPOSITION_ORDER
-                ),
-            )
-        else:
-            exposure_weights = tuple(
-                0.0
-                if step.name == "auxiliary"
-                and method.contracts.get("auxiliary_batch_norm_policy")
-                == "snapshot_restore"
-                else float(step.loss_scale)
-                for step in exposure_steps
-            )
-    elif policy == OBJECTIVE_VIEW_BALANCED_BN_POLICY:
-        ordered_views: list[str] = []
-        for term in method.objective.terms:
-            for name in term.views:
-                if name not in ordered_views:
-                    ordered_views.append(name)
-        weights = _mapping(
-            method.contracts.get("batch_norm_objective_view_weights"),
-            "batch_norm_objective_view_weights",
+    if recipe.kind in {RecipeKind.FIXED20, RecipeKind.TWO_STAGE_AUGMIX_LHAT}:
+        policy = FAMILY_BALANCED_BN_POLICY
+        exposure_weights = tuple(
+            0.0 if step.name == "auxiliary" else float(step.loss_scale)
+            for step in exposure_steps
         )
-        if set(weights) != set(ordered_views):
-            raise ValueError(
-                "BatchNorm objective-view weights must cover every objective view"
-            )
-        exposure_weights = tuple(float(weights[name]) for name in ordered_views)
-        if not math.isclose(
-            sum(exposure_weights), 1.0, rel_tol=0.0, abs_tol=1.0e-12
-        ):
-            raise ValueError("BatchNorm objective-view weights must sum to one")
-    elif policy:
-        raise ValueError(f"unsupported BatchNorm running-stats policy: {policy}")
-    else:
+    elif recipe.kind is RecipeKind.LATENT_THREECHAIN:
+        policy = OBJECTIVE_VIEW_BALANCED_BN_POLICY
+        exposure_weights = (0.5, 0.25, 0.25)
+    elif recipe.kind in {RecipeKind.CLEAN, RecipeKind.RANDOM_DEPTH23}:
         return None
+    else:  # pragma: no cover - RecipeKind is closed.
+        raise AssertionError(f"unsupported recipe kind: {recipe.kind}")
     named_modules = tuple(
         (name, module)
         for name, module in model.named_modules()
@@ -270,69 +208,34 @@ def _build_batch_norm_momentum_plan(
 
 
 def _method_exposure_steps(
-    method: CompiledMethod,
+    recipe: RecipeSpec,
     *,
     epoch: int = 1,
 ) -> tuple[_ExposureStep, ...]:
-    """Resolve the optimizer-exposure schedule declared by one method profile."""
+    """Resolve the code-owned exposure schedule for one finite recipe."""
 
-    policy = method.contracts.get("exposure_policy")
-    if policy is None:
+    if recipe.kind in {
+        RecipeKind.CLEAN,
+        RecipeKind.RANDOM_DEPTH23,
+        RecipeKind.LATENT_THREECHAIN,
+    }:
         return (_ExposureStep("base", None, None),)
-    if policy == ROTATING4_AUX_EXPOSURE_POLICY:
+    if recipe.kind is RecipeKind.FIXED20:
+        return (
+            _ExposureStep("clean", -1, ("clean_bce",), 0.5),
+            *tuple(
+                _ExposureStep(
+                    f"corruption_{index:02d}",
+                    index,
+                    ("corrupted_bce",),
+                    0.025,
+                )
+                for index in FIXED20_COMPOSITION_ORDER
+            ),
+        )
+    if recipe.kind is RecipeKind.TWO_STAGE_AUGMIX_LHAT:
         if isinstance(epoch, bool) or not isinstance(epoch, int) or epoch < 1:
             raise ValueError("rotating-four epoch must be a positive integer")
-        if (
-            method.contracts.get("rotating4_schedule")
-            != "epoch_modulo_five_covers_all_depth23_compositions"
-        ):
-            raise ValueError("rotating-four schedule contract is invalid")
-        if tuple(method.contracts.get("composition_indices", ())) != tuple(
-            range(20)
-        ):
-            raise ValueError("rotating-four requires canonical composition 0..19")
-        if method.contracts.get("clean_exposures_per_base_record") != 1:
-            raise ValueError("rotating-four requires one clean exposure")
-        if method.contracts.get("corrupted_exposures_per_base_record") != 4:
-            raise ValueError("rotating-four requires four corruption exposures")
-        if method.contracts.get("auxiliary_exposures_per_base_record") != 1:
-            raise ValueError("rotating-four requires one LHAT exposure")
-        if method.contracts.get("total_exposures_per_base_record") != 6:
-            raise ValueError("rotating-four must declare six total exposures")
-        if method.contracts.get("optimizer_step_policy") != (
-            "accumulate_base_plus_direct_lhat_once_per_base_batch"
-        ):
-            raise ValueError("rotating-four optimizer-step policy is invalid")
-        if method.contracts.get("auxiliary_objective_terms") != [
-            "lhat_direct_bce"
-        ]:
-            raise ValueError("rotating-four auxiliary must be LHAT BCE only")
-        if float(method.contracts.get("auxiliary_alpha", 0.0)) != 2.0:
-            raise ValueError("rotating-four locks VAE-LHAT auxiliary alpha to 2")
-        if method.contracts.get("auxiliary_gradient_merge") != "direct_sum":
-            raise ValueError("rotating-four auxiliary gradients must sum directly")
-        if (
-            method.contracts.get("auxiliary_batch_norm_policy")
-            != "snapshot_restore"
-            or method.contracts.get("auxiliary_rng_policy")
-            != "snapshot_restore_global_rng"
-        ):
-            raise ValueError(
-                "rotating-four auxiliary must restore BatchNorm and global RNG state"
-            )
-        family = _mapping(
-            method.contracts.get("family_loss_weights"),
-            "rotating-four family_loss_weights",
-        )
-        if family != {
-            "clean": 0.5,
-            "corrupted_total": 0.5,
-            "corrupted_per_composition": 0.125,
-        }:
-            raise ValueError("rotating-four family weights must be 0.5/0.5")
-        names = {term.name for term in method.objective.terms}
-        if names != {"clean_bce", "corrupted_bce", "lhat_direct_bce"}:
-            raise ValueError("rotating-four method objective terms drifted")
         slot = (epoch - 1) % 5
         compositions = (
             2 * slot,
@@ -340,7 +243,7 @@ def _method_exposure_steps(
             10 + 2 * slot,
             10 + 2 * slot + 1,
         )
-        steps = (
+        steps: tuple[_ExposureStep, ...] = (
             _ExposureStep("clean", -1, ("clean_bce",), 0.5),
             *tuple(
                 _ExposureStep(
@@ -351,158 +254,41 @@ def _method_exposure_steps(
                 )
                 for index in compositions
             ),
-            _ExposureStep(
-                "auxiliary",
-                None,
-                ("lhat_direct_bce",),
-                2.0,
-            ),
         )
-        return steps
-    if policy not in {FIXED20_EXPOSURE_POLICY, FIXED20_AUX_EXPOSURE_POLICY}:
-        raise ValueError(f"unsupported method exposure_policy: {policy!r}")
-    raw_order = method.contracts.get("composition_indices")
-    if not isinstance(raw_order, (list, tuple)):
-        raise ValueError("fixed20 method must declare contracts.composition_indices")
-    order = tuple(int(value) for value in raw_order)
-    if order != FIXED20_COMPOSITION_ORDER or set(order) != set(range(20)):
-        raise ValueError(
-            "fixed20 composition_indices must be the locked canonical 0..19 schedule"
-        )
-    if method.contracts.get("clean_exposures_per_base_record") != 1:
-        raise ValueError("fixed20 method must expose every clean record exactly once")
-    if method.contracts.get("corrupted_exposures_per_base_record") != 20:
-        raise ValueError("fixed20 method must expose all twenty corruptions")
-    names = {term.name for term in method.objective.terms}
-    auxiliary_terms: tuple[str, ...] = ()
-    if policy == FIXED20_EXPOSURE_POLICY:
-        if names != {"clean_bce", "corrupted_bce"}:
-            raise ValueError(
-                "fixed20 method objective must contain clean_bce and corrupted_bce"
-            )
-        expected_optimizer_policy = "accumulate_family_balanced_once_per_base_batch"
-    else:
-        raw_auxiliary_terms = method.contracts.get("auxiliary_objective_terms")
-        if not isinstance(raw_auxiliary_terms, (list, tuple)):
-            raise ValueError(
-                "fixed20 auxiliary method must declare auxiliary_objective_terms"
-            )
-        auxiliary_terms = tuple(str(value) for value in raw_auxiliary_terms)
-        if (
-            not auxiliary_terms
-            or len(set(auxiliary_terms)) != len(auxiliary_terms)
-            or any(not value for value in auxiliary_terms)
-        ):
-            raise ValueError("auxiliary_objective_terms must be non-empty and unique")
-        if names != {"clean_bce", "corrupted_bce", *auxiliary_terms}:
-            raise ValueError(
-                "fixed20 auxiliary objective must contain only base and declared "
-                "auxiliary terms"
-            )
-        term_weights = {
-            term.name: float(term.weight) for term in method.objective.terms
-        }
-        if not math.isclose(
-            sum(term_weights[name] for name in auxiliary_terms),
-            1.0,
-            rel_tol=0.0,
-            abs_tol=1.0e-12,
-        ):
-            raise ValueError("auxiliary objective term weights must sum to one")
-        if method.contracts.get("auxiliary_exposures_per_base_record") != 1:
-            raise ValueError("fixed20 auxiliary method must expose one auxiliary view")
-        if method.contracts.get("total_exposures_per_base_record") != 22:
-            raise ValueError("fixed20 auxiliary method must declare 22 total exposures")
-        expected_optimizer_policy = (
-            "accumulate_normalized_auxiliary_once_per_base_batch"
-        )
-    if method.contracts.get("optimizer_step_policy") != expected_optimizer_policy:
-        raise ValueError(
-            "fixed20 optimizer_step_policy does not match its exposure contract"
-        )
-    if (
-        method.contracts.get("batch_norm_running_stats_policy")
-        != FAMILY_BALANCED_BN_POLICY
-    ):
-        raise ValueError(
-            "fixed20 must weight BatchNorm running stats by the declared families"
-        )
-    family_weights = _mapping(
-        method.contracts.get("family_loss_weights"),
-        "fixed20 family_loss_weights",
-    )
-    if policy == FIXED20_EXPOSURE_POLICY:
-        expected_weights = {
+        if recipe.auxiliary_variant is AuxiliaryVariant.CONTRACTED_LHAT:
+            return (*steps, _ExposureStep("auxiliary", None, ("lhat_direct_bce",), 2.0))
+        if recipe.auxiliary_variant is AuxiliaryVariant.MATCHED_NO_VAE:
+            return steps
+        raise ValueError("two-stage recipe requires a finite auxiliary variant")
+    raise AssertionError(f"unsupported recipe kind: {recipe.kind}")
+
+
+def _recipe_family_loss_weights(recipe: RecipeSpec) -> dict[str, float] | None:
+    if recipe.kind is RecipeKind.FIXED20:
+        return {
             "clean": 0.5,
             "corrupted_total": 0.5,
             "corrupted_per_composition": 0.025,
         }
-        if family_weights != expected_weights:
-            raise ValueError(
-                "fixed20 family weights must be clean=0.5 and 20x corruption=0.025"
-            )
-        auxiliary_weight = None
-    else:
-        expected_keys = {
-            "clean",
-            "corrupted_total",
-            "corrupted_per_composition",
-            "auxiliary",
+    if recipe.kind is RecipeKind.TWO_STAGE_AUGMIX_LHAT:
+        return {
+            "clean": 0.5,
+            "corrupted_total": 0.5,
+            "corrupted_per_composition": 0.125,
         }
-        if set(family_weights) != expected_keys:
-            raise ValueError("fixed20 auxiliary family weights are incomplete")
-        clean_weight = float(family_weights["clean"])
-        corrupted_total = float(family_weights["corrupted_total"])
-        corrupted_per = float(family_weights["corrupted_per_composition"])
-        auxiliary_weight = float(family_weights["auxiliary"])
-        if not 0.0 < auxiliary_weight <= 0.5:
-            raise ValueError("fixed20 auxiliary weight must be in (0,0.5]")
-        expected_base_family = (1.0 - auxiliary_weight) / 2.0
-        if not (
-            math.isclose(clean_weight, expected_base_family, abs_tol=1.0e-12)
-            and math.isclose(
-                corrupted_total, expected_base_family, abs_tol=1.0e-12
-            )
-            and math.isclose(
-                corrupted_per,
-                corrupted_total / 20.0,
-                abs_tol=1.0e-12,
-            )
-        ):
-            raise ValueError(
-                "fixed20 auxiliary weights must preserve equal clean/corruption "
-                "base families and normalized total mass"
-            )
-    steps = (
-        _ExposureStep("clean", -1, ("clean_bce",), float(family_weights["clean"])),
-        *tuple(
-            _ExposureStep(
-                f"corruption_{index:02d}",
-                index,
-                ("corrupted_bce",),
-                float(family_weights["corrupted_per_composition"]),
-            )
-            for index in order
-        ),
-    )
-    if auxiliary_weight is not None:
-        steps = (
-            *steps,
-            _ExposureStep(
-                "auxiliary",
-                None,
-                auxiliary_terms,
-                auxiliary_weight,
-            ),
-        )
-    if not math.isclose(
-        sum(step.loss_scale for step in steps),
-        1.0,
-        rel_tol=0.0,
-        abs_tol=1.0e-12,
-    ):
-        raise ValueError("fixed20 exposure loss scales must sum to one")
-    return steps
+    return None
+
+
+def _recipe_identity(recipe: RecipeSpec) -> dict[str, Any]:
+    return {
+        "recipe_id": recipe.recipe_id,
+        "kind": recipe.kind.value,
+        "auxiliary_variant": recipe.auxiliary_variant.value,
+        "schema_version": recipe.schema_version,
+        "recipe_version": recipe.recipe_version,
+        "implementation_identity": recipe.implementation_identity,
+        "recipe_spec_sha256": recipe.recipe_sha256,
+    }
 
 
 def _iter_exposure_batches(
@@ -597,6 +383,7 @@ class OnlineTrainingResult:
     last_checkpoint_path: Path
     last_checkpoint_sha256: str
     history: tuple[dict[str, Any], ...]
+    recipe_identity: dict[str, Any]
     model_identity: dict[str, Any]
     config_identity: dict[str, Any]
     seed_identity: dict[str, Any]
@@ -612,6 +399,7 @@ class OnlineTrainingResult:
         return {
             "output_dir": str(self.output_dir),
             "method_id": self.method_id,
+            "recipe": self.recipe_identity,
             "scientific_arm": self.scientific_arm,
             "center": self.center,
             "epochs_completed": self.epochs_completed,
@@ -938,7 +726,6 @@ def load_online_train_config(
 
     fairness = _mapping(root_payload.get("fairness"), "fairness")
     common_fairness_keys = {
-        "method_profile_required",
         "matched_outer_optimizer_steps",
         "same_source_checkpoint_required",
         "one_optimizer_step_per_base_batch",
@@ -951,8 +738,6 @@ def load_online_train_config(
     )
     if set(fairness) != expected_fairness_keys:
         raise ValueError("fairness keys are incomplete or unexpected")
-    if fairness.get("method_profile_required") is not True:
-        raise ValueError("fairness.method_profile_required must be true")
     if fairness.get("same_source_checkpoint_required") is not True:
         raise ValueError("fairness.same_source_checkpoint_required must be true")
     if budget_policy != "matched_base":
@@ -1401,7 +1186,7 @@ class _ObjectiveBatch:
 
 def _compute_objective(
     *,
-    method: CompiledMethod,
+    recipe: RecipeSpec,
     bundle: Any,
     model: nn.Module,
     spec: ModelSpec,
@@ -1410,7 +1195,7 @@ def _compute_objective(
     objective_term_names: Sequence[str] | None = None,
     batch_norm_plan: _BatchNormMomentumPlan | None = None,
 ) -> _ObjectiveBatch:
-    """Compute profile-declared losses with one mean contribution per origin.
+    """Compute recipe losses with one mean contribution per origin.
 
     Each term is averaged over its valid records and then multiplied by E/B.
     Thus extra views cannot silently amplify records that lack that view, while
@@ -1432,13 +1217,13 @@ def _compute_objective(
     if selected_names is not None:
         if not selected_names or len(set(selected_names)) != len(selected_names):
             raise ValueError("objective_term_names must be non-empty and unique")
-        known_names = {term.name for term in method.objective.terms}
+        known_names = {term.name for term in recipe.objective.terms}
         unknown_names = sorted(set(selected_names) - known_names)
         if unknown_names:
             raise ValueError(f"unknown objective term names: {unknown_names}")
     selected_terms = tuple(
         term
-        for term in method.objective.terms
+        for term in recipe.objective.terms
         if selected_names is None or term.name in selected_names
     )
 
@@ -1448,7 +1233,7 @@ def _compute_objective(
             if name not in ordered_views:
                 ordered_views.append(name)
     if not ordered_views:
-        raise ValueError("method objective must contain at least one term")
+        raise ValueError("recipe objective must contain at least one term")
 
     views: dict[str, WaveformView] = {}
     positions: dict[str, torch.Tensor] = {}
@@ -1548,7 +1333,7 @@ def _compute_objective(
             else:
                 raw_loss = reference.sum() * 0.0
         else:
-            raise RuntimeError(f"unsupported compiled objective kind: {term.kind}")
+            raise RuntimeError(f"unsupported recipe objective kind: {term.kind}")
         contribution = float(term.weight) * (float(count) / batch_size) * raw_loss
         raw_terms[term.name] = raw_loss
         weighted_terms[term.name] = contribution
@@ -2126,8 +1911,8 @@ def _run_augmix_simclr_stage1(
     *,
     spec: ModelSpec,
     device: torch.device,
-    config: OnlineTrainConfig,
-    method: CompiledMethod,
+    recipe: RecipeSpec,
+    augmix_config: AugMixConfig,
     center: str,
     base_seed: int,
     resolved: Mapping[str, Any],
@@ -2137,32 +1922,9 @@ def _run_augmix_simclr_stage1(
 ) -> dict[str, Any]:
     """Run the frozen K500-only AugMix-SimCLR representation stage."""
 
-    if method.contracts.get("stage1_objective") != "simclr":
-        raise ValueError("managed Stage-1 objective must be SimCLR")
-    if method.contracts.get("stage1_view") != (
-        "clean_vs_one_twochain_augmix_strong_view"
-    ):
-        raise ValueError("managed Stage-1 must use the two-chain AugMix view")
-    if method.contracts.get("stage1_classifier_head_trainable") is not False:
-        raise ValueError("managed Stage-1 classifier head must be frozen")
-    if float(method.contracts.get("stage1_ptbxl_source_replay_weight", -1.0)) != 0.0:
-        raise ValueError("managed Stage-1 forbids PTB-XL replay")
-    if method.contracts.get(
-        "stage1_frozen_source_teacher_inference_on_k500"
-    ) is not True:
-        raise ValueError("Stage-1 logit anchor requires declared K500 inference")
-    if float(method.contracts.get("stage1_vicreg_weight", -1.0)) != 0.0:
-        raise ValueError("managed Stage-1 excludes VICReg")
-    if float(method.contracts.get("stage1_vae_lhat_tail_fraction", -1.0)) != 0.0:
-        raise ValueError("managed Stage-1 excludes VAE-LHAT")
-
-    augmix = load_augmix_config(
-        config.config_root / "train" / "augmix.yaml",
-        config_root=config.config_root,
-    )
-    temperature = float(method.contracts["stage1_simclr_temperature"])
-    if temperature != augmix.stage1_simclr_temperature:
-        raise ValueError("method and AugMix SimCLR temperatures differ")
+    if recipe.kind is not RecipeKind.TWO_STAGE_AUGMIX_LHAT:
+        raise ValueError("Stage-1 belongs only to the two-stage recipe")
+    temperature = augmix_config.stage1_simclr_temperature
     teacher_cache = _cache_k500_logits(
         model,
         train_dataloader,
@@ -2217,18 +1979,18 @@ def _run_augmix_simclr_stage1(
             raw = raw.to(device, dtype=torch.float32, non_blocking=True)
             generator = make_torch_generator(
                 device,
-                augmix.random_namespace,
-                method.comparison_rng_identity,
+                augmix_config.random_namespace,
+                recipe.comparison_rng_identity,
                 center,
                 spec.name,
                 f"base_seed={base_seed}",
                 f"stage1_step={step}",
-                config_path=augmix.random_seed_config_path,
+                config_path=augmix_config.random_seed_config_path,
             )
             strong = generate_two_chain_augmix_strong_view(
                 raw,
                 sampling_rate_hz=100,
-                config=augmix,
+                config=augmix_config,
                 generator=generator,
             ).mixed_raw
             clean_input = prepare_canonical_model_input(
@@ -2263,13 +2025,9 @@ def _run_augmix_simclr_stage1(
                 anchor = _weighted_logit_anchor_loss(
                     clean_logits,
                     teacher_logits,
-                    method.contracts[
-                        "stage1_pretrain_logit_anchor_class_weights"
-                    ],
+                    (1.0, 1.0, 1.0, 1.0, 1.0),
                 )
-                total = simclr + float(
-                    method.contracts["stage1_pretrain_logit_anchor_weight"]
-                ) * anchor
+                total = simclr + 5.0 * anchor
             if not bool(torch.isfinite(total).item()):
                 raise FloatingPointError("Stage-1 loss became NaN or Inf")
             total.backward()
@@ -2294,12 +2052,10 @@ def _run_augmix_simclr_stage1(
         "weight_decay": float(resolved["stage1_weight_decay"]),
         "gradient_clip_norm": float(resolved["stage1_gradient_clip_norm"]),
         "simclr_temperature": temperature,
-        "augmix_internal_chains": augmix.stage1_width,
-        "augmix_dirichlet_alpha": augmix.stage1_dirichlet_alpha,
-        "augmix_beta_alpha": augmix.stage1_beta_alpha,
-        "logit_anchor_weight": float(
-            method.contracts["stage1_pretrain_logit_anchor_weight"]
-        ),
+        "augmix_internal_chains": augmix_config.stage1_width,
+        "augmix_dirichlet_alpha": augmix_config.stage1_dirichlet_alpha,
+        "augmix_beta_alpha": augmix_config.stage1_beta_alpha,
+        "logit_anchor_weight": 5.0,
         "teacher_scope": "frozen_source_checkpoint_inference_on_bound_k500",
         "ptbxl_replay_weight": 0.0,
         "mean_total_loss": float(means[0]),
@@ -2324,7 +2080,7 @@ def train_online_model(
     training_parameters: Mapping[str, Any] | None = None,
     pos_weight: torch.Tensor | Sequence[float] | None = None,
 ) -> OnlineTrainingResult:
-    """Train one file-backed typed method under its locked K500 budget.
+    """Train one file-backed finite recipe under its locked K500 budget.
 
     The ``matched_base`` budget performs one optimizer step per base batch.
     Fixed-20 expands the views used to form that objective but accumulates all
@@ -2350,35 +2106,19 @@ def train_online_model(
         method_path.relative_to(config.config_root)
     except ValueError:
         raise ValueError(
-            "method profile must belong to the selected config bundle"
+            "recipe config must belong to the selected config bundle"
         ) from None
-    method = compile_method_profile(method_path)
-    if not method.executable:
-        raise ValueError(
-            f"method profile {method.profile_name!r} is audit-only and not executable"
-        )
-    clean_terms = [
-        term
-        for term in method.objective.terms
-        if term.kind == "bce"
-        and term.views == (BASE_VIEW_NAME,)
-        and float(term.weight) == 1.0
-    ]
-    if len(clean_terms) != 1:
-        raise ValueError(
-            "every executable method must declare one unit-weight clean_view BCE"
-        )
-    exposure_steps = _method_exposure_steps(method)
+    recipe = load_recipe_spec(method_path)
+    exposure_steps = _method_exposure_steps(recipe)
     objective_term_weights = {
-        term.name: float(term.weight) for term in method.objective.terms
+        term.name: float(term.weight) for term in recipe.objective.terms
     }
-    fixed20_exposure = (
-        method.contracts.get("exposure_policy")
-        in FIXED20_GROUPED_EXPOSURE_POLICIES
-    )
+    grouped_exposure = recipe.kind in {
+        RecipeKind.FIXED20,
+        RecipeKind.TWO_STAGE_AUGMIX_LHAT,
+    }
     auxiliary_exposure = (
-        method.contracts.get("exposure_policy")
-        in {FIXED20_AUX_EXPOSURE_POLICY, ROTATING4_AUX_EXPOSURE_POLICY}
+        recipe.auxiliary_variant is AuxiliaryVariant.CONTRACTED_LHAT
     )
     fairness = config.payload["fairness"]
     budget_policy = str(fairness.get("budget_policy", "matched_base"))
@@ -2402,20 +2142,20 @@ def train_online_model(
             f"online training accepts only k500, got {train_partition!r}"
         )
 
-    requires_latent = bool(method.requirements.latent_pool)
-    requires_encoder = bool(method.requirements.vae_encoder)
-    requires_decoder = bool(method.requirements.vae_decoder)
+    requires_latent = bool(recipe.requirements.latent_pool)
+    requires_encoder = bool(recipe.requirements.vae_encoder)
+    requires_decoder = bool(recipe.requirements.vae_decoder)
     if requires_latent != (latent_pool is not None):
         raise ValueError(
-            "latent_pool presence must exactly match the method profile requirement"
+            "latent_pool presence must exactly match the recipe requirement"
         )
     if requires_decoder != (decoder is not None):
         raise ValueError(
-            "VAE decoder presence must exactly match the method profile requirement"
+            "VAE decoder presence must exactly match the recipe requirement"
         )
     if requires_encoder != (encoder is not None):
         raise ValueError(
-            "VAE encoder presence must exactly match the method profile requirement"
+            "VAE encoder presence must exactly match the recipe requirement"
         )
 
     requested_device = str(device or config.payload["training"]["device"])
@@ -2432,7 +2172,7 @@ def train_online_model(
             config,
             center=center,
             model_name=spec.name,
-            method_id=method.profile_name,
+            method_id=recipe.recipe_id,
         )
         if output_dir is None
         else Path(output_dir).expanduser().resolve()
@@ -2475,9 +2215,8 @@ def train_online_model(
     model.to(resolved_device)
     batch_norm_plan = _build_batch_norm_momentum_plan(
         model,
-        method,
-        fixed20_exposure=fixed20_exposure,
-        exposure_steps=exposure_steps if fixed20_exposure else None,
+        recipe,
+        exposure_steps=exposure_steps,
     )
     if encoder is not None:
         encoder.to(resolved_device).eval()
@@ -2510,7 +2249,7 @@ def train_online_model(
 
     quality = config.payload["data"]["hard_sample_quality_gate"]
     runtime = build_method_runtime(
-        method,
+        recipe,
         model_name=spec.name,
         config_root=config.config_root,
         latent_pool=latent_pool,
@@ -2519,18 +2258,6 @@ def train_online_model(
         minimum_std_mV=float(quality["minimum_global_std_mV"]),
         maximum_abs_mV=float(quality["maximum_absolute_mV"]),
     )
-    runtime_generate_code = getattr(runtime.generate, "__code__", None)
-    runtime_supports_composition_hint = bool(
-        runtime_generate_code is not None
-        and "composition_index_hint"
-        in runtime_generate_code.co_varnames[
-            : runtime_generate_code.co_argcount
-            + runtime_generate_code.co_kwonlyargcount
-        ]
-    )
-    runtime_timer_setter = getattr(runtime, "set_performance_timer", None)
-    if runtime_timer_setter is not None and not callable(runtime_timer_setter):
-        raise TypeError("method runtime set_performance_timer must be callable")
     if (
         runtime.augmix_config is not None
         and runtime.augmix_config.random_seed_config_path
@@ -2551,12 +2278,8 @@ def train_online_model(
             + ", ".join(mismatched_method_rngs)
         )
     method_resource_identity = runtime.describe()
-    method_resource_identity["composition_index_hint_supported"] = (
-        runtime_supports_composition_hint
-    )
-    method_resource_identity["performance_timer_hook_supported"] = bool(
-        runtime_timer_setter is not None
-    )
+    method_resource_identity["composition_index_hint_supported"] = True
+    method_resource_identity["performance_timer_hook_supported"] = False
     method_resource_identity["latent_pool"] = pool_identity
     method_resource_identity["vae_encoder_checkpoint"] = encoder_identity
     method_resource_identity["vae_decoder_checkpoint"] = decoder_identity
@@ -2601,19 +2324,21 @@ def train_online_model(
     timing_config = config.payload["diagnostics"]["performance_timing"]
     timing_enabled = bool(timing_config["enabled"])
     timing_interval = int(timing_config["interval_steps"])
-    staged_method = method.profile_name == "augmix_simclr_lhat"
+    staged_method = recipe.kind is RecipeKind.TWO_STAGE_AUGMIX_LHAT
     stage1_summary: dict[str, Any] | None = None
     stage2_teacher_cache: dict[str, torch.Tensor] | None = None
     if staged_method:
         if int(resolved["stage1_steps"]) <= 0:
             raise ValueError("AugMix-SimCLR mainline requires Stage-1 steps")
+        if runtime.augmix_config is None:
+            raise RuntimeError("two-stage recipe lacks its resolved AugMix config")
         stage1_summary = _run_augmix_simclr_stage1(
             model,
             train_dataloader,
             spec=spec,
             device=resolved_device,
-            config=config,
-            method=method,
+            recipe=recipe,
+            augmix_config=runtime.augmix_config,
             center=center,
             base_seed=seed.base_seed,
             resolved=resolved,
@@ -2629,7 +2354,8 @@ def train_online_model(
             {
                 "schema_version": 1,
                 "stage": "augmix_simclr",
-                "method_id": method.profile_name,
+                "method_id": recipe.recipe_id,
+                "recipe": _recipe_identity(recipe),
                 "center": center,
                 "model_state_dict": model.state_dict(),
                 "summary": stage1_summary,
@@ -2641,10 +2367,6 @@ def train_online_model(
             "path": str(stage1_checkpoint),
             "sha256": sha256_file(stage1_checkpoint),
         }
-        if method.contracts.get("stage2_teacher") != (
-            "post_stage1_pre_stage2_snapshot"
-        ):
-            raise ValueError("Stage-2 teacher contract drifted")
         stage2_teacher_cache = _cache_k500_logits(
             model,
             train_dataloader,
@@ -2661,9 +2383,10 @@ def train_online_model(
     run_identity = {
         "config": config.describe(),
         "method": method_resource_identity,
+        "recipe": _recipe_identity(recipe),
         "seed": seed.describe(),
         "center": center,
-        "scientific_arm": method.scientific_arm,
+        "scientific_arm": recipe.scientific_arm,
         "model": _model_identity(model, spec),
         "vae_encoder_checkpoint": encoder_identity,
         "vae_decoder_checkpoint": decoder_identity,
@@ -2687,21 +2410,16 @@ def train_online_model(
                         "epoch_modulo_five_slot": epoch,
                         "composition_indices": [
                             step.composition_index
-                            for step in _method_exposure_steps(method, epoch=epoch)
+                            for step in _method_exposure_steps(recipe, epoch=epoch)
                             if step.name.startswith("corruption_")
                         ],
                     }
                     for epoch in range(1, 6)
                 ]
-                if method.contracts.get("exposure_policy")
-                == ROTATING4_AUX_EXPOSURE_POLICY
+                if recipe.kind is RecipeKind.TWO_STAGE_AUGMIX_LHAT
                 else None
             ),
-            "family_loss_weights": (
-                method.contracts.get("family_loss_weights")
-                if fixed20_exposure
-                else None
-            ),
+            "family_loss_weights": _recipe_family_loss_weights(recipe),
             "steps": [
                 {
                     "name": exposure.name,
@@ -2722,8 +2440,8 @@ def train_online_model(
         },
         "method_rng_derivation": {
             "base_seed": seed.base_seed,
-            "profile_namespace": method.rng_namespace,
-            "comparison_rng_identity": method.comparison_rng_identity,
+            "profile_namespace": recipe.rng_namespace,
+            "comparison_rng_identity": recipe.comparison_rng_identity,
             "execution_identity": [
                 "comparison_group",
                 "replicate_id",
@@ -2753,7 +2471,7 @@ def train_online_model(
     try:
         for epoch in range(1, epochs + 1):
             model.train()
-            epoch_exposure_steps = _method_exposure_steps(method, epoch=epoch)
+            epoch_exposure_steps = _method_exposure_steps(recipe, epoch=epoch)
             optimizer_steps_at_epoch_start = optimizer_steps
             epoch_base_batches = 0
             epoch_loss_sum = torch.zeros((), device=resolved_device)
@@ -2761,21 +2479,21 @@ def train_online_model(
             epoch_origin_samples = 0
             epoch_term_sums = {
                 term.name: torch.zeros((), device=resolved_device)
-                for term in method.objective.terms
+                for term in recipe.objective.terms
             }
             epoch_weighted_sums = {
                 term.name: torch.zeros((), device=resolved_device)
-                for term in method.objective.terms
+                for term in recipe.objective.terms
             }
             epoch_effective_loss_mass_sums = {
-                term.name: 0.0 for term in method.objective.terms
+                term.name: 0.0 for term in recipe.objective.terms
             }
             epoch_term_counts = {
-                term.name: 0 for term in method.objective.terms
+                term.name: 0 for term in recipe.objective.terms
             }
             epoch_view_count_sums = {
                 name: torch.zeros((), device=resolved_device, dtype=torch.int64)
-                for name in method.outputs
+                for name in recipe.output_names
             }
             epoch_candidate_eligible = 0
             epoch_quality_accepted = 0
@@ -2832,26 +2550,25 @@ def train_online_model(
                     else int(composition_index_raw)
                 )
                 exposure_index = int(batch.get("__exposure_index", 0))
-                group_start = not fixed20_exposure or exposure_name == "clean"
-                group_end = not fixed20_exposure or (
-                    exposure_name == "auxiliary"
-                    if auxiliary_exposure
-                    else composition_index == 19
+                group_start = not grouped_exposure or exposure_index == 0
+                group_end = (
+                    not grouped_exposure
+                    or exposure_index == len(epoch_exposure_steps) - 1
                 )
-                if fixed20_exposure and group_start:
+                if grouped_exposure and group_start:
                     if fixed20_group_finite is not None:
                         raise RuntimeError(
-                            "fixed20 finite-loss group started before the prior "
+                            "grouped finite-loss batch started before the prior "
                             "group ended"
                         )
                     fixed20_group_finite = torch.ones(
                         (), device=resolved_device, dtype=torch.bool
                     )
-                if fixed20_exposure:
+                if grouped_exposure:
                     if group_start:
                         if fixed20_group_timer is not None:
                             raise RuntimeError(
-                                "fixed20 timing group started before the prior group ended"
+                                "grouped timing batch started before the prior group ended"
                             )
                         sample_group = timing_enabled and (
                             (optimizer_steps + 1) % timing_interval == 0
@@ -2938,15 +2655,12 @@ def train_online_model(
                 if timer is not None:
                     timer.stop("h2d")
                     timer.start("augmentation")
-                if runtime_timer_setter is not None and group_start:
-                    runtime_timer_setter(timer)
-
                 if group_start:
                     optimizer.zero_grad(set_to_none=True)
                     epoch_origin_samples += batch_size
                     epoch_base_batches += 1
                 family_loss_scale = float(batch.get("__loss_scale", 1.0))
-                if batch_norm_plan is not None and fixed20_exposure:
+                if batch_norm_plan is not None and grouped_exposure:
                     batch_norm_plan.apply(exposure_index)
                 hash_digest = hashlib.sha256(
                     "\n".join(hashes).encode("utf-8")
@@ -2975,7 +2689,7 @@ def train_online_model(
                     {
                         "schema_version": 1,
                         "base_seed": seed.base_seed,
-                        "comparison_rng_identity": method.comparison_rng_identity,
+                        "comparison_rng_identity": recipe.comparison_rng_identity,
                         "rng_identity": list(rng_identity),
                         "composition_index": composition_index,
                         "exposure_loss_scale": family_loss_scale,
@@ -2989,21 +2703,9 @@ def train_online_model(
                     trace_input_payload,
                 )
                 stochastic_input_record_count += batch_size
-                generate_arguments: dict[str, Any] = {
-                    "clean_raw": raw,
-                    "targets": targets,
-                    "hash_ids": hashes,
-                    "classifier": model,
-                    "base_seed": seed.base_seed,
-                    "rng_identity": rng_identity,
-                    "composition_indices": composition_indices,
-                    "objective_term_names": objective_terms,
-                }
-                if runtime_supports_composition_hint:
-                    generate_arguments["composition_index_hint"] = composition_index
                 generation_phase = (
                     "method_generation"
-                    if not fixed20_exposure
+                    if not grouped_exposure
                     else (
                         "candidate_generation"
                         if group_start or exposure_name == "auxiliary"
@@ -3014,7 +2716,15 @@ def train_online_model(
                     timer.start(generation_phase)
                 try:
                     generated = runtime.generate(
-                        **generate_arguments,
+                        clean_raw=raw,
+                        targets=targets,
+                        hash_ids=hashes,
+                        classifier=model,
+                        base_seed=seed.base_seed,
+                        rng_identity=rng_identity,
+                        composition_indices=composition_indices,
+                        composition_index_hint=composition_index,
+                        objective_term_names=objective_terms,
                     )
                 finally:
                     if timer is not None:
@@ -3025,12 +2735,6 @@ def train_online_model(
 
                 with ExitStack() as auxiliary_state:
                     if staged_method and exposure_name == "auxiliary":
-                        if method.contracts.get(
-                            "auxiliary_batch_norm_policy"
-                        ) != "snapshot_restore":
-                            raise ValueError(
-                                "VAE-LHAT auxiliary must restore BatchNorm buffers"
-                            )
                         auxiliary_state.enter_context(
                             _preserve_batch_norm_buffers(model)
                         )
@@ -3041,7 +2745,7 @@ def train_online_model(
                         enabled=amp_enabled, dtype=amp_dtype
                     ):
                         objective = _compute_objective(
-                            method=method,
+                            recipe=recipe,
                             bundle=generated.bundle,
                             model=model,
                             spec=spec,
@@ -3049,7 +2753,7 @@ def train_online_model(
                             pos_weight=resolved_pos_weight,
                             objective_term_names=objective_terms,
                             batch_norm_plan=(
-                                None if fixed20_exposure else batch_norm_plan
+                                None if grouped_exposure else batch_norm_plan
                             ),
                         )
                         if staged_method and exposure_name == "clean":
@@ -3089,31 +2793,29 @@ def train_online_model(
                                 teacher_logits,
                                 (1.0, 1.0, 1.0, 1.0, 1.0),
                             )
-                            anchor_weights = _mapping(
-                                method.contracts.get(
-                                    "stage2_supervised_logit_anchor_weight_by_backbone"
-                                ),
-                                "stage2 logit-anchor weights",
-                            )
+                            anchor_weight = {
+                                EFFICIENTNET1DV2_SPEC.name: 2.0,
+                                ECGFOUNDER_SPEC.name: 0.5,
+                            }[spec.name]
                             objective = _ObjectiveBatch(
                                 total=objective.total
                                 + anchor_loss
-                                * float(anchor_weights[spec.name])
+                                * anchor_weight
                                 / family_loss_scale,
                                 raw_terms=objective.raw_terms,
                                 weighted_terms=objective.weighted_terms,
                                 valid_counts=objective.valid_counts,
                             )
                     objective_finite = torch.isfinite(objective.total)
-                    if fixed20_exposure:
+                    if grouped_exposure:
                         if fixed20_group_finite is None:
                             raise RuntimeError(
-                                "fixed20 finite-loss check lacks an active group"
+                                "grouped finite-loss check lacks an active batch"
                             )
                         fixed20_group_finite &= objective_finite.detach()
                         if group_end and not bool(fixed20_group_finite.item()):
                             raise FloatingPointError(
-                                "online fixed20 group loss became NaN or Inf"
+                                "online grouped loss became NaN or Inf"
                             )
                     elif not bool(objective_finite.item()):
                         raise FloatingPointError(
@@ -3146,21 +2848,19 @@ def train_online_model(
                     optimizer_steps += 1
                     if timer is not None:
                         timer.stop("optimizer")
-                    if runtime_timer_setter is not None:
-                        runtime_timer_setter(None)
 
                 view_execution_step += 1
-                finish_group_timer = fixed20_exposure and group_end
+                finish_group_timer = grouped_exposure and group_end
                 performance = None
                 if timer is not None and (
-                    not fixed20_exposure or finish_group_timer
+                    not grouped_exposure or finish_group_timer
                 ):
                     performance = timer.finish(
                         batch_size=batch_size,
                         grad_norm=grad_norm,
                         view_executions=(
                             fixed20_group_view_executions
-                            if fixed20_exposure
+                            if grouped_exposure
                             else 1
                         ),
                     )
@@ -3179,7 +2879,7 @@ def train_online_model(
                         {
                             "kind": (
                                 "performance_base_group"
-                                if fixed20_exposure
+                                if grouped_exposure
                                 else "performance_step"
                             ),
                             "epoch": epoch,
@@ -3196,7 +2896,7 @@ def train_online_model(
                 weighted_scalars: dict[str, float] = {}
                 observer_timer = (
                     timer
-                    if fixed20_exposure and timer is not None and not group_end
+                    if grouped_exposure and timer is not None and not group_end
                     else None
                 )
                 with _excluded_observer_work(observer_timer):
@@ -3312,7 +3012,7 @@ def train_online_model(
                                 "epoch": epoch,
                                 "view_execution_step": view_execution_step,
                                 "optimizer_step": optimizer_steps,
-                                "method_id": method.profile_name,
+                                "method_id": recipe.recipe_id,
                                 "exposure": exposure_name,
                                 "composition_index": composition_index,
                                 "candidate_eligible_count": len(
@@ -3455,25 +3155,13 @@ def train_online_model(
                 "optimizer_steps_per_base_batch": 1,
                 "optimizer_steps_this_epoch": epoch_base_batches,
                 "view_executions_per_base_batch": len(exposure_steps),
-                "family_loss_weights": (
-                    method.contracts.get("family_loss_weights")
-                    if fixed20_exposure
-                    else None
-                ),
+                "family_loss_weights": _recipe_family_loss_weights(recipe),
                 "per_exposure_counts": dict(epoch_exposure_counts),
                 "materialized_corruption_cache": False,
             }
             if auxiliary_exposure:
-                auxiliary_names = tuple(
-                    str(value)
-                    for value in method.contracts["auxiliary_objective_terms"]
-                )
-                nominal_auxiliary_mass = (
-                    float(method.contracts["auxiliary_alpha"])
-                    if method.contracts.get("exposure_policy")
-                    == ROTATING4_AUX_EXPOSURE_POLICY
-                    else float(method.contracts["family_loss_weights"]["auxiliary"])
-                )
+                auxiliary_names = ("lhat_direct_bce",)
+                nominal_auxiliary_mass = 2.0
                 effective_auxiliary_mass = sum(
                     effective_loss_masses[name] for name in auxiliary_names
                 )
@@ -3500,7 +3188,7 @@ def train_online_model(
                 "view_execution_sample_count": epoch_samples,
                 "exposure": exposure_metrics,
             }
-            if method.requirements.latent_pool or method.requirements.vae_encoder:
+            if recipe.requirements.latent_pool or recipe.requirements.vae_encoder:
                 train_metrics.update(
                     {
                         "eligible_count": epoch_quality_accepted,
@@ -3558,7 +3246,7 @@ def train_online_model(
                 {
                     "kind": "epoch",
                     "epoch": epoch,
-                    "method_id": method.profile_name,
+                    "method_id": recipe.recipe_id,
                     "objective_terms": raw_means,
                     "weighted_objective_terms": weighted_means,
                     "objective_effective_loss_mass": effective_loss_masses,
@@ -3583,8 +3271,9 @@ def train_online_model(
                 checkpoint = {
                     "schema_version": 2,
                     "epoch": epoch,
-                    "scientific_arm": method.scientific_arm,
-                    "method_id": method.profile_name,
+                    "scientific_arm": recipe.scientific_arm,
+                    "method_id": recipe.recipe_id,
+                    "recipe": _recipe_identity(recipe),
                     "center": center,
                     "optimizer_steps": optimizer_steps,
                     "selection": "last",
@@ -3605,7 +3294,8 @@ def train_online_model(
                 {
                     "schema_version": 2,
                     "selection": "last",
-                    "method_id": method.profile_name,
+                    "method_id": recipe.recipe_id,
+                    "recipe": _recipe_identity(recipe),
                     "optimizer_steps": optimizer_steps,
                     "epochs": history,
                 },
@@ -3616,18 +3306,19 @@ def train_online_model(
         result = OnlineTrainingResult(
             model=model,
             output_dir=output,
-            method_id=method.profile_name,
-            scientific_arm=method.scientific_arm,
+            method_id=recipe.recipe_id,
+            scientific_arm=recipe.scientific_arm,
             center=center,
             epochs_completed=len(history),
             optimizer_steps=optimizer_steps,
             last_checkpoint_path=last_checkpoint,
             last_checkpoint_sha256=last_checkpoint_sha256,
             history=tuple(history),
+            recipe_identity=_recipe_identity(recipe),
             model_identity=run_identity["model"],
             config_identity={
                 "training": config.describe(),
-                "method": method.describe(),
+                "method": recipe.describe(),
             },
             seed_identity=seed.describe(),
             latent_pool_identity=pool_identity,
@@ -3644,7 +3335,6 @@ __all__ = [
     "DEFAULT_METHOD_CONFIG_DIR",
     "DEFAULT_ONLINE_CONFIG_PATH",
     "FIXED20_COMPOSITION_ORDER",
-    "FIXED20_EXPOSURE_POLICY",
     "FAMILY_BALANCED_BN_POLICY",
     "ONLINE_PARAMETER_NAMES",
     "OnlineTrainConfig",

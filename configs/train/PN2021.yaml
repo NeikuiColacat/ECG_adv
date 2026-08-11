@@ -28,7 +28,6 @@ random_seed:
 
 fairness:
   budget_policy: matched_base
-  method_profile_required: true
   matched_outer_optimizer_steps: true
   same_source_checkpoint_required: true
   one_optimizer_step_per_base_batch: true

@@ -1,7 +1,7 @@
 schema_version: 1
 
 experiment:
-  name: manual_refactor_pn2021_ecgfounder_augmix_simclr_lhat_chapman_shaoxing
+  name: manual_refactor_pn2021_ecgfounder_augmix_simclr_lhat_chapman_shaoxing_paper_kernel_v2_recipe_v1_r1
   purpose: Replicate the prospective two-stage AugMix-SimCLR plus contracted VAE-LHAT recipe on Chapman-Shaoxing K500 with ECGFounder.
 
 entrypoint:
@@ -18,6 +18,6 @@ entrypoint:
     - /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_ptbxl_ecgfounder_source_v1/training/checkpoints/best.pt
 
 output:
-  run_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor_clean_repro_20260806_r2/ecgfounder/chapman_shaoxing
+  run_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor_paper_kernel_v2_recipe_v1_r1/ecgfounder/chapman_shaoxing
   if_exists: error
   delegate_output_subdir: training

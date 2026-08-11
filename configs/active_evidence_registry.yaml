@@ -210,20 +210,61 @@ active_development_mainline:
       legacy_paths_embedded_inside_machine_lock: historical_hash_only_provenance
       runtime_may_open_embedded_legacy_paths: false
   managed_implementation:
-    status: whitelist_runtime_migrated_gpu_reproduced
+    status: finite_recipe_cpu_verified
+    implementation_identity: finite_recipe_spec_v1
     launcher: boot_scripts/run_experiment.py
     canonical_experiment: configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_ningbo.yaml
     online_config: configs/train/PN2021.yaml
     method_config: configs/train/methods/augmix_simclr_lhat.yaml
     trainer: core/online_trainer.py
+    recipe_identity:
+      schema_version: 2
+      selector_file_sha256: eab7f244dde52e2b60a95f1b922d446b97ff90f60762d4b9d744b0c8022036a1
+      recipe_id: augmix_simclr_lhat
+      kind: two_stage_augmix_lhat
+      auxiliary_variant: contracted_lhat
+      recipe_version: 1
+      implementation_identity: finite_recipe_spec_v1
+      recipe_spec_sha256: de3d6948a9efc974405b7382d45653f93032a34ac2fd88637172ed731d876602
+      spec_hash_scope: schema_v2_declaration_plus_code_owned_scientific_contract
+      resolved_config_sha256:
+        augmentation/operators.yaml: cfc4e243f569226a8f444a38d9dd4fbc00ccf7de724c47886dcc9319b9c790cc
+        train/augmix.yaml: bc8ea2e2671134c4c6555e5acef0c2dd0bf98e6015f4d580b124778b58a00bc6
+        train/vae.yaml: 6eb7f814af775f58f769572f3e76e0f9905240d791970dc6d990b1648d7acec3
+        train/lhat.yaml: 2d1cf2550932f2d2b1cc6fa5893ab4226cb0010e6dbf16be0e8cc6f3ada3a824
+        random_seed.yaml: 8b337606c43b6fec2959dd185477ce32f48b139f5fce5112ee26efe58eb4bbbc
     runtime_imports_agent_workspace: false
-    gpu_replication_status: complete_single_seed_metric_level
+    gpu_replication_status: not_run_after_recipe_migration
+    prospective_run_root: /home/linbinhao/ECG_adv_data/runs/manual_refactor_paper_kernel_v2_recipe_v1_r1
   prospective_replication_20260806:
-    role: clean_worktree_refactor_verification
+    role: historical_metric_evidence_from_pre_recipe_runtime
     status: complete_metric_level_not_bitwise
+    implementation_identity: legacy_typed_method_graph_v1
     starting_git_sha: fce01866153deb760f38bd1aebf729a7f4ff958f
     run_root: /home/linbinhao/ECG_adv_data/runs/manual_refactor_clean_repro_20260806_r2
     issue_log: docs/refactor_cleanup/pipeline_reproduction_log_20260806.md
+    legacy_method_identity:
+      profile_path: configs/train/methods/augmix_simclr_lhat.yaml
+      profile_file_sha256: 75f11c4d27328ca7fc20b58f98d25435e50f46ee02e1d84b164b9a01b38e53db
+      compiled_profile_sha256: e0498714bd592e1659e96ca7dae4e3001e6c0836f76f2c908091e9abe0cf1f8c
+      sha_scope: historical_run_snapshot
+    historical_config_snapshots:
+      online_config_sha256: ce763ec1814c33656bc5460ec2436e9f5a777fe68173e1b1704cac2bf8785c4e
+      source_registry_sha256: 27443d14e8184739c15c60e0ffe6f4c87f12642bb725bdca62341a33543e445f
+    stage1_augmix_evidence:
+      run_scoped_config_snapshot_available: false
+      method_resource_identity_available: false
+      historical_method_resources_augmix: null
+      git_recoverable_config:
+        commit: fce01866153deb760f38bd1aebf729a7f4ff958f
+        path: configs/train/augmix.yaml
+        sha256: bc8ea2e2671134c4c6555e5acef0c2dd0bf98e6015f4d580b124778b58a00bc6
+        relation: repository_state_only_not_run_scoped_snapshot
+    relationship_to_current_recipe:
+      metric_evidence_retained: true
+      post_migration_runtime_replay_claimed: false
+      checkpoint_or_json_bitwise_reproduction_claimed: false
+      current_recipe_gpu_run_available: false
     metric_order: [clean_auroc, clean_auprc, pn2021c_auroc, pn2021c_auprc]
     protocol:
       metric_view: drop_all_zero
@@ -323,6 +364,9 @@ active_development_mainline:
     - all_candidate_raw_asr_and_invalid_decode_evidence_requires_a_post_fix_run
     - retained_lock_and_report_contain_superseded_all_candidate_diagnostic_language
     - performance_metrics_checkpoints_and_evaluation_hashes_are_unaffected_by_the_logging_bug
+    - r2_stage1_augmix_config_was_not_saved_in_the_run_scoped_config_snapshot
+    - r2_method_resources_did_not_record_the_stage1_augmix_resource_identity
+    - r2_is_legacy_typed_method_graph_metric_evidence_not_a_recipe_spec_replay
     - clean_gain_over_locked_direct_is_below_two_pp_on_both_backbones
   required_before_paper_promotion:
     - freeze_recipe_without_further_heldout_feedback

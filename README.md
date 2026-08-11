@@ -33,7 +33,7 @@ surface.
 5. Dry-run it through the single launcher before using data, models, or GPUs.
 
 ```bash
-cd /home/linbinhao/ECG_manual_refactor_clean
+cd /home/linbinhao/ECG_manual_refactor_paper_kernel_v2
 
 /home/linbinhao/miniforge3/envs/ECGTwin/bin/python \
   boot_scripts/run_experiment.py \
@@ -62,10 +62,10 @@ fails closed; pass `--run-dir <new-external-directory>` to start a new run.
 
 | Path | Responsibility |
 |---|---|
-| `configs/` | Data, training, method, evaluation, seed, baseline, and experiment contracts |
+| `configs/` | Data, training, finite-recipe, evaluation, seed, baseline, and experiment contracts |
 | `data_preprocess/` | PTB-XL/PN2021 preprocessing, cache loading, splitting, and runtime datasets |
 | `models/` | Model contracts, input adaptation, factories, checkpoints, EfficientNet, ECGFounder, and VAE interfaces |
-| `core/` | Typed method graph, AugMix/VAE-LHAT execution, supervised training, and online adaptation |
+| `core/` | Five finite RecipeSpec variants, AugMix/VAE-LHAT execution, supervised training, and online adaptation |
 | `boot_scripts/` | Thin managed CLI entrypoints; no experiment business logic |
 | `util/` | Augmentations, metrics, evaluation, random identity, and run records |
 | `util/tests/` | CPU contract tests for the retained execution surface |
@@ -106,7 +106,10 @@ contract suite; the keep-manifest inventory test rejects stale or ghost entries.
 
 Run outputs belong under `/home/linbinhao/ECG_adv_data/runs/`, not in Git.
 Every managed run records its resolved config closure, command, Git state,
-seeds, checkpoints, metrics, and file hashes through `util/run_record.py`.
+seeds, RecipeSpec identity, checkpoints, metrics, and file hashes through
+`util/run_record.py`. The PN2021 CLI keeps the explicit `--method-config`
+selector; that file now chooses one of five code-owned finite recipes rather
+than describing a dynamic graph.
 
 ## Evidence Boundary
 
@@ -115,6 +118,13 @@ search. Neither selected backbone candidate passed every original promotion
 gate. The locked numbers may guide prospective replication, but final thesis
 claims still require a frozen recipe, at least three independent repeats per
 backbone, registered run records, and mean/standard-deviation reporting.
+
+The 2026-08-06 `r2` run remains legacy typed-method-graph metric evidence. It
+is not a post-migration RecipeSpec replay: its run-scoped snapshots did not
+include the Stage-1 AugMix config/resource identity. The 16 current mainline
+train/eval configs therefore target a fresh
+`manual_refactor_paper_kernel_v2_recipe_v1_r1` output root, whose GPU status is
+`not_run_after_recipe_migration`.
 
 Historical `ecg_adv_gen` launchers and package modules are not active here.
 Recover them from commit

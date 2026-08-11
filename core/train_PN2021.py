@@ -1,4 +1,4 @@
-"""PN2021 K500 data adapter for the typed-method online trainer.
+"""PN2021 K500 data adapter for the finite-recipe online trainer.
 
 This module is the only training-side owner of PN2021 split/cache selection.
 It obtains raw 100 Hz K500 records exclusively through ``data_runtime`` and
@@ -15,7 +15,7 @@ import torch.nn as nn
 import yaml
 
 from core.latent_pool import LatentPool, build_latent_pool
-from core.methods import CompiledMethod, compile_method_profile
+from core.methods import RecipeSpec, load_recipe_spec
 from core.online_trainer import (
     ALLOWED_CENTERS,
     DEFAULT_ONLINE_CONFIG_PATH,
@@ -53,13 +53,13 @@ _OPTIONAL_DATALOADER_DEFAULTS = {
 }
 
 
-def load_pn2021_method_profile(
+def load_pn2021_recipe_spec(
     method_config_path: str | Path,
     *,
     config_path: str | Path = DEFAULT_ONLINE_CONFIG_PATH,
     config_root: str | Path | None = None,
-) -> tuple[CompiledMethod, Any]:
-    """Compile one method profile from the same portable config bundle."""
+) -> tuple[RecipeSpec, Any]:
+    """Load one finite recipe from the same portable config bundle."""
 
     online = load_online_train_config(config_path, config_root=config_root)
     method_path = resolve_config_reference(
@@ -73,9 +73,9 @@ def load_pn2021_method_profile(
         method_path.relative_to(online.config_root)
     except ValueError:
         raise ValueError(
-            "method profile must belong to the selected config bundle"
+            "recipe config must belong to the selected config bundle"
         ) from None
-    return compile_method_profile(method_path), online
+    return load_recipe_spec(method_path), online
 
 
 def _validate_locked_source_checkpoint(
@@ -272,19 +272,19 @@ def build_pn2021_latent_pool(
         dataloader_parameters=dataloader_parameters,
     )
     try:
-        method, config = load_pn2021_method_profile(
+        recipe, config = load_pn2021_recipe_spec(
             method_config_path,
             config_path=config_path,
             config_root=config_root,
         )
-        if not method.requirements.latent_pool:
-            raise ValueError("method does not require a latent pool")
-        resource = method.resources.get("lhat_config")
+        if not recipe.requirements.latent_pool:
+            raise ValueError("recipe does not require a latent pool")
+        resource = recipe.resources.get("lhat_config")
         if not isinstance(resource, Mapping):
-            raise ValueError("latent-pool method must declare lhat_config")
+            raise ValueError("latent-pool recipe must declare lhat_config")
         lhat = resolve_config_reference(
             resource.get("path"),
-            owner_config_path=method.source_path,
+            owner_config_path=recipe.source_path,
             config_root=config.config_root,
             description="method.resources.lhat_config",
             must_exist=True,
@@ -319,31 +319,29 @@ def train_pn2021(
     training_parameters: Mapping[str, Any] | None = None,
     dataloader_parameters: Mapping[str, Any] | None = None,
 ) -> OnlineTrainingResult:
-    """Train one typed K500 method through the managed data runtime."""
+    """Train one finite K500 recipe through the managed data runtime."""
 
-    method, config = load_pn2021_method_profile(
+    recipe, config = load_pn2021_recipe_spec(
         method_config_path,
         config_path=config_path,
         config_root=config_root,
     )
-    if not method.executable:
-        raise ValueError(f"method {method.profile_name!r} is not executable")
     owner = model.module if hasattr(model, "module") else model
     spec = getattr(owner, "model_spec", None)
     if spec not in {EFFICIENTNET1DV2_SPEC, ECGFOUNDER_SPEC}:
         raise ValueError("model must expose a managed EfficientNet/ECGFounder spec")
     _validate_locked_source_checkpoint(owner, spec, config)
-    requires_pool = bool(method.requirements.latent_pool)
-    requires_runtime_encoder = bool(method.requirements.vae_encoder)
-    requires_decoder = bool(method.requirements.vae_decoder)
+    requires_pool = bool(recipe.requirements.latent_pool)
+    requires_runtime_encoder = bool(recipe.requirements.vae_encoder)
+    requires_decoder = bool(recipe.requirements.vae_decoder)
     requires_encoder_component = requires_pool or requires_runtime_encoder
     if requires_encoder_component != (encoder is not None):
         raise ValueError(
-            "VAE encoder presence must match the method pool/runtime requirement"
+            "VAE encoder presence must match the recipe pool/runtime requirement"
         )
     if requires_decoder != (decoder is not None):
         raise ValueError(
-            "VAE decoder presence must exactly match the method requirement"
+            "VAE decoder presence must exactly match the recipe requirement"
         )
 
     pool = None
@@ -362,7 +360,7 @@ def train_pn2021(
                 encoder,
                 center=center,
                 model_name=spec.name,
-                method_config_path=method.source_path,
+                method_config_path=recipe.source_path,
                 config_path=config_path,
                 config_root=config_root,
                 device=resolved_device,
@@ -391,7 +389,7 @@ def train_pn2021(
             model,
             loader,
             center=center,
-            method_config_path=method.source_path,
+            method_config_path=recipe.source_path,
             latent_pool=pool,
             encoder=runtime_encoder,
             decoder=decoder,
@@ -415,6 +413,6 @@ __all__ = [
     "PN2021_DATALOADER_PARAMETER_NAMES",
     "build_pn2021_k500_dataloader",
     "build_pn2021_latent_pool",
-    "load_pn2021_method_profile",
+    "load_pn2021_recipe_spec",
     "train_pn2021",
 ]

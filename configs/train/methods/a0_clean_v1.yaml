@@ -1,66 +1,10 @@
-schema_version: 1
+schema_version: 2
 
-method:
+recipe:
   id: a0_clean_v1
-  profile_version: 1
-  api_version: 1
+  kind: clean
+  auxiliary_variant: not_applicable
   scientific_arm: A0
   status: locked_reference
-  description: Clean K500 supervised adaptation with no method-generated view.
 
-nodes:
-  clean_identity:
-    type: identity_raw100_view
-    implementation: builtin
-    implementation_version: 1
-    status: implemented
-    inputs:
-      waveform: clean_raw
-    outputs:
-      waveform: clean_view
-
-inputs:
-  clean_raw:
-    type: ecg_waveform
-    domain: raw_mV
-    layout: batch_time_lead
-    sampling_rate_hz: 100
-    points: 1000
-    leads: 12
-  targets:
-    type: multilabel_targets
-    class_order: [CD, HYP, MI, NORM, STTC]
-  hash_ids:
-    type: unique_record_ids
-
-outputs:
-  clean_view:
-    type: ecg_waveform
-    source: clean_identity.waveform
-    domain: raw_mV
-    sampling_rate_hz: 100
-    points: 1000
-
-objective:
-  terms:
-    - id: clean_bce
-      type: multilabel_bce_with_logits
-      view: clean_view
-      targets: targets
-      weight: 1.0
-
-resources:
-  model:
-    type: caller_owned_classifier
-  method_rng:
-    type: none
-
-contracts:
-  normalization_owner: online_trainer
-  optimizer_owner: online_trainer
-  scheduler_owner: online_trainer
-  checkpoint_selection_owner: online_trainer
-  generated_view_count: 0
-  one_outer_optimizer_step_per_clean_batch: true
-  complete_k500_base_record_exposure: true
-  heldout_target_feedback_allowed: false
+resources: {}
