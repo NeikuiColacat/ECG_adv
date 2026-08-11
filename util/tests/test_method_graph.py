@@ -214,22 +214,6 @@ def test_a0_executes_without_dynamic_imports_as_a_typed_identity_graph() -> None
     assert bundle.diagnostics["method/profile_sha256"] == compiled.profile_sha256
 
 
-@pytest.mark.parametrize(
-    "filename",
-    [
-        "exp_augmix_guided_latent_simplex_v1.yaml",
-        "exp_lhat_as_sixth_branch_v1.yaml",
-        "exp_lhat_replay_pool_v1.yaml",
-    ],
-)
-def test_audit_only_profiles_compile_for_review_but_cannot_execute(filename: str) -> None:
-    compiled = compile_method_profile(METHOD_PROFILES / filename)
-
-    assert compiled.executable is False
-    with pytest.raises(RuntimeError, match=r"audit-only: contracts\.executable=false"):
-        execute_method(compiled, ExecutionResources(sources={}))
-
-
 def test_profile_schema_rejects_dynamic_import_keys() -> None:
     payload = yaml.safe_load(
         (METHOD_PROFILES / "a0_clean_v1.yaml").read_text(encoding="utf-8")

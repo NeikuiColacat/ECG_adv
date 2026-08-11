@@ -399,7 +399,7 @@ def test_all_tracked_experiment_jobs_resolve_with_explicit_results(
     tmp_path: Path,
 ) -> None:
     experiment_paths = sorted((REPO / "configs" / "experiments").glob("*.yaml"))
-    assert len(experiment_paths) == 59
+    assert len(experiment_paths) == 56
     for experiment_path in experiment_paths:
         plan = load_experiment_plan(
             experiment_path,

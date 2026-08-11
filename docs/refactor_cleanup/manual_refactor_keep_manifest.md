@@ -1,6 +1,6 @@
 # 手动重构保留清单与旧代码清理闸门
 
-更新日期：2026-08-06
+更新日期：2026-08-11
 
 ## 目的
 
@@ -128,14 +128,8 @@ native-rate 到 100 Hz，以及 100 Hz 到 500 Hz 均使用该策略。PN2021 �
 | `configs/train/methods/a0_clean_v1.yaml` | `KEEP-MANUAL` | 锁定 clean K500 监督适配的 typed graph、objective 和零 VAE 资源契约 | 新 profile 保留 A0 身份、单 clean BCE、完整 base exposure 和一个 outer optimizer step |
 | `configs/train/methods/a3c_depth23_v1.yaml` | `KEEP-MANUAL` | 锁定在线 depth2/3 canonical 腐蚀基线的 typed graph、双 BCE 和 500 Hz 算子域 | 新 profile 保留 A3c 身份、每 origin 单一腐蚀 view、A0 相同 base budget 且不物化 20 倍数据集 |
 | `configs/train/methods/direct_depth23_fixed20.yaml` | `KEEP-MANUAL` | family-balanced Direct 基线：每条记录一次 clean、10个 depth2 和10个 depth3 canonical composition，所有损失累计后单次更新 | 新 profile 保留显式0..19顺序、`0.5 clean + 0.5 mean(corruption)`、500 Hz Torch 在线生成、每 base batch 一次 optimizer step 且不物化训练腐蚀缓存 |
-| `configs/train/methods/direct_depth23_fixed20_raw_aux.yaml` | `KEEP-MANUAL` | matched 22-exposure 原始 clean 辅助分支控制：`0.45 clean + 0.45 fixed20 + 0.10 raw auxiliary`，匹配额外 forward、BN 和优化器步预算 | 新 profile 保留与 Direct 公共 corruption RNG 身份/namespace、单次 outer step、raw auxiliary 独立 forward 及禁止 heldout feedback |
-| `configs/train/methods/direct_depth23_fixed20_vae_reconstruction_aux.yaml` | `KEEP-MANUAL` | matched 22-exposure VAE reconstruction-only 控制；使用 deterministic posterior mean 拆分 raw→reconstruction 位移 | 新 profile 保留同预算/同随机 fixed20、冻结 encoder/decoder、1000↔1024/导联桥、质量拒绝 clean-only 和无 latent-hull 搜索 |
-| `configs/train/methods/direct_depth23_fixed20_lhat_aux.yaml` | `KEEP-MANUAL` | matched 22-exposure LHAT hard-endpoint 候选；在相同 normalized auxiliary 路径中隔离 reconstruction→hard 位移 | 新 profile 保留 exact-label train-only pool、公共 fixed20 随机轨迹、0.10 auxiliary 总权重、accepted-mask 诊断、单次 outer step 和无 heldout feedback |
 | `configs/train/methods/augmix_simclr_lhat.yaml` | `KEEP-MANUAL` | 唯一主线方法身份：Stage-1 两链 AugMix-SimCLR + 等权 source-logit anchor；Stage-2 clean/四轮换腐蚀 family balance + contracted VAE-LHAT BCE | 新 profile 保留 K500-only、无 replay/VICReg/JSD/PCGrad、五轮覆盖20组合、一次 outer step、辅助权重2、BN/RNG snapshot-restore、坏波形 clean-only 和无 heldout feedback |
-| `configs/train/methods/exp_lhat_replay_pool_v1.yaml` | `KEEP-MANUAL` | LHAT replay-pool 组合方案的可审计、暂不可执行 profile | 实现 replay 生命周期、预算和 stale-view 契约前必须保持 `contracts.executable=false` |
-| `configs/train/methods/exp_lhat_as_sixth_branch_v1.yaml` | `KEEP-MANUAL` | 把 LHAT 作为第六分支的可审计、暂不可执行 profile | 完成六分支采样和公平 exposure 定义前必须保持 `contracts.executable=false` |
 | `configs/train/methods/exp_paired_augmix_latent_bridge_v1.yaml` | `KEEP-MANUAL` | 为保持白名单稳定文件名而原位覆盖为锁定的可执行 latent-threechain candidate：同一 clean 生成两个独立三腐蚀链 latent 混合 view，以 clean BCE + 每 view `0.75` BCE + `3×` Bernoulli JSD 训练；ECGFounder 由 K500 内部 frozen validation400 选 E19 | 新 profile 保留双 view 独立可复放 RNG、encoder/decoder 无 latent-pool、每 view 三条 depth2/3 链、质量交集、BN 权重 `0.5/0.25/0.25`、无 heldout feedback；不得把它表述成 LHAT/adversarial search、原 AugMix 精确复现或把 LR 收益算成方法收益 |
-| `configs/train/methods/exp_augmix_guided_latent_simplex_v1.yaml` | `KEEP-MANUAL` | AugMix 难度引导 latent simplex 搜索的可审计、暂不可执行 profile | 完成 guidance 泄漏边界、攻击预算和标签安全契约前必须保持 `contracts.executable=false` |
 | `core/__init__.py` | `KEEP-MANUAL` | 通用监督训练、在线方法训练和 typed method graph 的唯一公共导出面 | 新核心包接管相同接口并完成训练调用迁移；禁止重新导出固定方法臂枚举 |
 | `core/corruption.py` | `KEEP-MANUAL` | 共享 GPU canonical 腐蚀内核；把两条链合并成 `2B`，固定在 500 Hz 调用五算子并返回 100 Hz raw-mV 波形及逐样本 provenance | 新实现保留线性 `100→500→100`、五算子各一次批量调用、depth2/3 组合掩码、无逐组合 CPU 分支和有限值诊断 |
 | `core/lhat.py` | `KEEP-MANUAL` | train-only latent standardizer、exact-label non-self M20 hull 优化、100 Hz canonical 可微解码与两模型攻击桥；攻击后一次批量解码收缩路径、端点残差修正并选择最高 BCE 的标签边界保护点 | 新实现保留只优化 batch-local hull 权重、不污染分类器/decoder 梯度、ε12/10步 raw 搜索、clean-correct margin 保护、finite/std/20mV gate、clean fallback、ASR/接受率/t 诊断和紧凑 D2H |
@@ -144,15 +138,15 @@ native-rate 到 100 Hz，以及 100 Hz 到 500 Hz 均使用该策略。PN2021 �
 | `core/methods/__init__.py` | `KEEP-MANUAL` | typed method graph 的稳定公共导出面 | 新包保留 compiler/executor/contracts/runtime 的显式 API，不暴露动态 import |
 | `core/methods/contracts.py` | `KEEP-MANUAL` | 定义 canonical raw-mV waveform、latent、pair、candidate、bundle、objective 和 provenance 类型契约 | 新实现保留 `(B,1000,12)`/`(B,4,128)`、Super5、valid-mask、origin 对齐和有限值校验 |
 | `core/methods/registry.py` | `KEEP-MANUAL` | 严格加载方法 YAML，以显式 node 白名单编译 DAG、类型边、objective、资源需求和 profile 身份；注册 `vae_lhat_attack_then_contract_view` 且禁止 YAML 动态 import | 新编译器保留 schema/环/类型/引用检查、节点端口及资源名/type/必需键的代码白名单、VAE资源需求和未知资源 fail-closed |
-| `core/methods/executor.py` | `KEEP-MANUAL` | 按编译拓扑执行 typed nodes，并从 comparison identity、namespace、node、stream 及 execution identity 派生 Torch RNG stream | 新 executor 保留旧 profile 默认隔离、显式 matched profiles 公共随机数、不同 step 分流、资源闸门、audit-only 拒绝、RNG 诊断和 named output bundle |
-| `core/methods/runtime.py` | `KEEP-MANUAL` | 将 typed graph 接到 canonical corruption、raw LHAT 和 attack-then-contract；只为候选充足且通过收缩/QC 的记录暴露 VAE view，其余 clean-only | 新 runtime 保留 K500 hash/标签绑定、exact-label pool、500 Hz 算子域、contract accepted mask、拒绝原因、raw/contract 诊断、显式 RNG provenance 和无 agent_workspace import |
+| `core/methods/executor.py` | `KEEP-MANUAL` | 按编译拓扑执行 typed nodes，并从 comparison identity、namespace、node、stream 及 execution identity 派生 Torch RNG stream | 新 executor 保留 profile 默认隔离、显式 comparison identity、不同 step 分流、资源闸门、非可执行配置拒绝、RNG 诊断和 named output bundle |
+| `core/methods/runtime.py` | `KEEP-MANUAL` | 将 typed graph 接到 canonical corruption 和 attack-then-contract LHAT；只为候选充足且通过收缩/QC 的记录暴露 VAE view，其余 clean-only | 新 runtime 保留 K500 hash/标签绑定、exact-label pool、500 Hz 算子域、contract accepted mask、拒绝原因、raw/contract 诊断、显式 RNG provenance 和无 agent_workspace import |
 | `core/methods/nodes/__init__.py` | `KEEP-MANUAL` | 汇总全部代码所有的显式 node callable | 新节点集合保留静态导出且不得自动发现任意模块 |
 | `core/methods/nodes/selectors.py` | `KEEP-MANUAL` | clean source、严格配对和候选选择 node 适配器 | 新实现保留 origin/label 对齐与显式 runner adapter 边界 |
-| `core/methods/nodes/codecs.py` | `KEEP-MANUAL` | VAE encode/decode 的显式 node 适配器，不复制 ECGTwin 实现 | 新实现保留 caller-owned codec 和 typed 输入输出边界 |
+| `core/methods/nodes/codecs.py` | `KEEP-MANUAL` | 未注册的 VAE encode/decode 叶适配器；当前受管 profile 不引用 | 后续批次评估删除；不得为兼容已退役 E2 profile 重新注册 |
 | `core/methods/nodes/waveform_ops.py` | `KEEP-MANUAL` | canonical waveform corruption node 适配器 | 新实现必须继续委托单一共享腐蚀内核，不复制五算子公式 |
-| `core/methods/nodes/latent_ops.py` | `KEEP-MANUAL` | LHAT 与 paired latent bridge node 适配器 | 新实现保留 runner-owned 资源及暂未实现节点的 audit-only 隔离 |
+| `core/methods/nodes/latent_ops.py` | `KEEP-MANUAL` | LHAT 与 paired latent bridge node 适配器 | 新实现保留 runner-owned 资源和 typed 输入输出边界 |
 | `core/methods/nodes/mixers.py` | `KEEP-MANUAL` | AugMix/view mixing node 适配器 | 新实现保留显式 adapter 调用，不能在 registry 中隐藏训练 objective |
-| `core/methods/nodes/buffers.py` | `KEEP-MANUAL` | replay read/write node 适配器 | replay profile 可执行前必须定义 run-scoped 生命周期、容量、采样和证据身份 |
+| `core/methods/nodes/buffers.py` | `KEEP-MANUAL` | 未注册的 replay read/write 叶适配器；当前受管 profile 不引用 | 重新注册前必须先定义 run-scoped 生命周期、容量、采样和证据身份 |
 | `core/online_trainer.py` | `KEEP-MANUAL` | 在原 typed trainer 内执行两阶段主线：冻结分类头的两链 AugMix-SimCLR、source/stage2 logit anchor、五轮 rotating4、VAE 辅助直接相加及一次 outer update；保存 Stage-1 checkpoint、两阶段 TensorBoard 和资源身份 | 新实现保留 pre-zscore raw mV、K500 teacher cache、两个骨干 feature API、单步 family balance、辅助 BN/RNG snapshot-restore、optimizer/view计数、最终 checkpoint、无 heldout 选模和完整配置/seed闭包 |
 | `core/train_PN2021.py` | `KEEP-MANUAL` | 通过 `data_runtime` 建立 raw 100 Hz K500 或 train400 loader，并按 method requirements 分别路由 latent pool、runtime frozen encoder 和 decoder | 新适配层保留四逻辑中心、CPSC/Extra 合并、partition身份、resident强制workers=0/persistent=false、无pool VAE方法资源隔离及方法不进入DataLoader seed |
 
@@ -162,9 +156,6 @@ native-rate 到 100 Hz，以及 100 Hz 到 500 Hz 均使用该策略。PN2021 �
 |---|---|---|---|
 | `configs/train/PTBXL.yaml` | `KEEP-MANUAL` | 通用训练器的 PTB-XL source profile；记录 folds 1-8/9/10、AdamW、BCE、AMP、fold9 macro-AUPRC 选模、TensorBoard 观察配置，以及 EffNet/ECGFounder boot 默认值和独立输出目录 | 新配置保留相同数据身份、模型输入、选模边界、模型初始化、配置束引用和 run-scoped TensorBoard 路径 |
 | `configs/train/PN2021_direct_tune.yaml` | `KEEP-MANUAL` | family-balanced Direct 内部 train400/validation100、冻结 clean+20 views 的 packed-resident 执行、逐 epoch raw-logit 留证、四中心 pooled clean/robust AUPRC、clean -1pp floor、最早 tie 及 full-K500 refit 契约 | 新配置保留 source best.pt SHA、raw100→linear model-domain→zscore-after-resample、validation 禁止训练/latent pool、view-major clean+20 顺序、逐 composition pooled400 后求均值、0.5/0.5 score、400独立ECG预算和scheduler horizon |
-| `configs/train/PN2021_matched_raw_aux_tune.yaml` | `KEEP-MANUAL` | raw auxiliary 因果控制的 train400/frozen-validation100 配置；复用 Direct H30、packed validation、v7映射和 source registry | 新配置保留相同数据/优化器/随机身份、仅 method profile 与 normalized auxiliary 契约变化、无 heldout 选模及 refit 前置 pooled selection |
-| `configs/train/PN2021_matched_vae_reconstruction_aux_tune.yaml` | `KEEP-MANUAL` | VAE reconstruction-only 因果控制的 train400/frozen-validation100 配置 | 新配置保留 raw 控制相同预算、冻结 deterministic codec、packed validation、source SHA 和无 latent-hull 搜索 |
-| `configs/train/PN2021_matched_lhat_aux_tune.yaml` | `KEEP-MANUAL` | LHAT hard-endpoint 因果候选的 train400/frozen-validation100 配置 | 新配置保留前两臂相同 fixed20 随机轨迹/优化器预算、train-only exact-label latent pool、完整攻击诊断和 pooled selection 前禁止 refit |
 | `core/supervised_trainer.py` | `KEEP-MANUAL` | 接受调用方构建的 Torch model 与 DataLoader，完成多标签监督训练；统一 raw-logit AUROC/average-precision；支持 H2D 后的可选模型输入适配、逐 epoch raw prediction 留证、选模、严格 checkpoint 和 TensorBoard | 新训练器保留默认无适配路径的行为，以及 model/DataLoader/seed/config/checkpoint/override/logging/input-adapter 身份、单中心显式 undefined policy、单调 optimizer step，并通过 PTB-XL source、PN2021 pooled tuning 与 last-epoch 微调契约测试 |
 | `core/train_PTBXL.py` | `KEEP-MANUAL` | 根据任意模型 `ModelSpec` 自动选择 100/500 Hz，使用 `data_runtime` 建立 folds 1-8/9；仅在 YAML 显式最终测试时才构建 fold10 loader，再委托通用 trainer并关闭自有 loader | 新 PTB-XL 适配器保留 split/cache/采样率/归一化/loader 参数身份、未授权时不构造fold10，并继续只依赖白名单数据层和通用训练器 |
 | `core/pn2021_tuning.py` | `KEEP-MANUAL` | 通用 train400/frozen-validation100 适配层：动态校验 executable method/protocol，把 clean+20 个冻结 PN2021-C view 打包成 view-major resident bank，并按 requirements 路由可选 train400 latent pool、runtime encoder 与 decoder；统一校验 refit 的 full-FT、pos-weight、seed group/replicate/文件 SHA | 新适配器保留 Direct 默认身份不漂移、source SHA、full-FT、packed bank 的21-view/hash/label/order及 source-loader release、pool 方法另用独立 shuffle=false train400 loader、train400/validation100 哈希互斥、validation只读、禁止 replay/heldout feedback及完整缓存/composition/hash证据 |
@@ -193,7 +184,7 @@ native-rate 到 100 Hz，以及 100 Hz 到 500 Hz 均使用该策略。PN2021 �
 | `configs/eval/PN2021.yaml` | `KEEP-MANUAL` | PN2021正式评估唯一配置；单进程顺序session复用clean/PN2021-C mmap和selection，覆盖四中心clean+20 views | 新配置保留v7映射、K500 ref-exclusion、view顺序、raw100输入、四种canonical metric view及session/loader所有权 |
 | `util/evaluation/__init__.py` | `KEEP-MANUAL` | 手工重构正式评估公共导出面 | 新包接管相同 metrics/PN2021 API 且调用方完成迁移 |
 | `util/evaluation/metrics.py` | `KEEP-MANUAL` | 直接从 raw logits 计算 Super5 AUROC 与 sklearn Average Precision；显式 strict/skip-undefined、per-class/macro、kept/drop、中心/view 等权聚合 | 新实现禁止 sigmoid 饱和改变排序，保留 AP 非梯形 PR-AUC 定义、classes-used/正负计数、metric view、record/hash-label、depth2/3/23 和 equal-weight 语义 |
-| `util/evaluation/direct_baseline_selection.py` | `KEEP-MANUAL` | 保留四中心 pooled selector 的 Direct 历史路径；v2 launcher 只承诺稳定的 `direct_baseline_selection.json`，未运行的 matched E2 selector 属于待用户确认删除候选 | 新实现保留 Direct artifact type、strict五类、exact tie选最早、禁止flatten 8000 views、中断grid/身份漂移/不同预算混用、完整输入SHA和heldout未参与证据 |
+| `util/evaluation/direct_baseline_selection.py` | `KEEP-MANUAL` | 保留四中心 pooled selector 的 Direct 历史路径；v2 launcher 只承诺稳定的 `direct_baseline_selection.json` | 新实现保留 Direct artifact type、strict五类、exact tie选最早、禁止flatten 8000 views、中断grid/身份漂移/不同预算混用、完整输入SHA和heldout未参与证据 |
 | `util/evaluation/pn2021.py` | `KEEP-MANUAL` | 固定评估raw100 clean+20-view PN2021-C；统一复用一个sequential session，不保留旧worker/runtime profile回退 | 新实现保留checkpoint SHA、禁止PTB-XL shard、拒绝500 Hz cache、clean/corrupted同记录、显式view、record/hash-label顺序、loader/session关闭及完整输入链证据 |
 | `boot_scripts/evaluate_pn2021.py` | `KEEP-MANUAL` | 从评估 YAML 和显式 checkpoint 构建模型并调用 canonical100 v2 正式 PN2021 评估；支持只读 dry-run | 新入口保留严格 checkpoint 加载、模型spec、配置束、输入适配链、运行覆盖和无隐式选模 |
 | `util/run_record.py` | `KEEP-MANUAL` | 记录命令、配置闭包、Git/dirty SHA和环境；按 action 校验唯一 primary JSON（typed train、Direct pooled selection、refit contract、schema-v2 eval），把精简 identity/selection 与 SHA 写入 manifest/index，不再猜测或派生 `data_manifest.json`/`selection.json` | 新实现保留禁止 worktree 输出、原子 JSON、heldout-free last/Direct/refit/eval 契约、配置快照、完整索引及篡改检测 |
@@ -227,9 +218,6 @@ native-rate 到 100 Hz，以及 100 Hz 到 500 Hz 均使用该策略。PN2021 �
 | `configs/experiments/manual_refactor_pn2021_ecgfounder_augmix_simclr_lhat_eval_georgia.yaml` | `KEEP-MANUAL` | 绑定本次 ECGFounder Georgia 主线 checkpoint 的评估 | 同上 |
 | `configs/experiments/manual_refactor_pn2021_eval_effnet.yaml` | `KEEP-MANUAL` | 统一 launcher 的固定 EfficientNet checkpoint 正式评估示例 | 新示例或注册表保留固定 checkpoint 和 eval YAML |
 | `configs/experiments/manual_refactor_pn2021_effnet_direct_tune_ningbo.yaml` | `KEEP-MANUAL` | EfficientNet Ningbo train400 + frozen clean/20-view validation100 受管入口 | 新入口保留模型、中心、family-balanced profile 和唯一输出身份 |
-| `configs/experiments/manual_refactor_pn2021_effnet_matched_raw_aux_e2_ningbo.yaml` | `KEEP-MANUAL` | EfficientNet Ningbo E2 raw auxiliary 实现/预算控制受管入口 | 新入口保留相同 PTB-XL source、H30 horizon、K400/K100、公共 RNG 身份、唯一外部输出目录和无副作用 dry-run |
-| `configs/experiments/manual_refactor_pn2021_effnet_matched_vae_reconstruction_aux_e2_ningbo.yaml` | `KEEP-MANUAL` | EfficientNet Ningbo E2 deterministic VAE reconstruction-only 受管入口 | 同上，并保留冻结 encoder/decoder 资源闭包和 reconstruction-only 科学身份 |
-| `configs/experiments/manual_refactor_pn2021_effnet_matched_lhat_aux_e2_ningbo.yaml` | `KEEP-MANUAL` | EfficientNet Ningbo E2 LHAT hard-endpoint 受管入口 | 同上，并保留 train-only latent pool、LHAT配置闭包和 accepted-mask/trace 诊断身份 |
 | `configs/experiments/manual_refactor_pn2021_effnet_direct_tune_chapman_shaoxing.yaml` | `KEEP-MANUAL` | EfficientNet Chapman-Shaoxing family-balanced tuning 入口 | 同上 |
 | `configs/experiments/manual_refactor_pn2021_effnet_direct_tune_cpsc_2018.yaml` | `KEEP-MANUAL` | EfficientNet CPSC+Extra family-balanced tuning 入口 | 同上 |
 | `configs/experiments/manual_refactor_pn2021_effnet_direct_tune_georgia.yaml` | `KEEP-MANUAL` | EfficientNet Georgia family-balanced tuning 入口 | 同上 |
@@ -275,7 +263,7 @@ native-rate 到 100 Hz，以及 100 Hz 到 500 Hz 均使用该策略。PN2021 �
 | `util/tests/test_data_contracts.py` | `KEEP-MANUAL` | 直接验证白名单缓存、模型输入、100/500 Hz 线性插值、Super5/导联顺序及主线 YAML 闭包 | 新数据/模型边界接管相同布局、插值顺序和 config closure |
 | `util/tests/test_labels_super5.py` | `KEEP-MANUAL` | 直接验证白名单 PN2021 Super5 v7 映射、hash、NORM 抑制和 PTB-XL diagnostic class 转换 | 新标签层接管相同 mapping identity 和逐代码 golden policy |
 | `util/tests/test_data_runtime.py` | `KEEP-MANUAL` | 验证唯一 data-load 配置、augmentation→sanitize→z-score→layout 顺序、非有限值/shape fail-closed、selection 泄漏与 mmap prefetch 边界 | 新运行时数据层接管相同配置、数值顺序、泄漏和有界预取契约 |
-| `util/tests/test_method_graph.py` | `KEEP-MANUAL` | 验证保留方法图的 typed compile/resource closure、主线权重与 attack-contract、A0 执行、audit-only 禁止执行和动态 import 禁令 | 新方法组合层接管相同类型、资源、执行性与静态白名单契约 |
+| `util/tests/test_method_graph.py` | `KEEP-MANUAL` | 验证保留方法图的 typed compile/resource closure、主线权重与 attack-contract、A0 执行和动态 import 禁令 | 新方法组合层接管相同类型、资源、执行性与静态白名单契约 |
 | `util/tests/test_online_trainer.py` | `KEEP-MANUAL` | 验证在线配置/参数闭包、五轮 rotating4 全覆盖、单次数据读取的 exposure 展开、family-balanced BatchNorm 和非法 epoch fail-closed | 新 trainer 接管相同预算、调度、数据读取与 BatchNorm 权重契约 |
 | `util/tests/test_manual_run_experiment.py` | `KEEP-MANUAL` | 验证统一 launcher 配置闭包、dry-run 零副作用与既有目录 collision 报告、真实执行 fail-closed、run record/file index 和参数禁令 | 新 launcher 接管相同零副作用、输出防覆盖、白名单参数与完整性契约 |
 | `util/tests/test_evaluation_metrics.py` | `KEEP-MANUAL` | 验证 raw-logit AUROC/AP、undefined-class 口径、drop-all-zero 过滤和历史 four-center 字段仅作 generic center mean 读取 | 新指标层接管相同分数输入、宏平均分母、过滤和语义降级契约 |
@@ -388,6 +376,7 @@ pytest -q util/tests/test_augmentations.py \
 | 2026-08-06 | 批次 3（公开代理记忆迁移） | 从迁移边界提交恢复 `.codex/skills/` 13 个项目文件；修正当前 clean worktree 路径、已删除入口和主线优先级 | `AGENTS.md` + keep manifest + active scripts/evidence + 八个 repo-tracked skills；全局 memory/session 不迁移 | skill frontmatter、引用路径、白名单精确集合、最低 CPU 测试和 Git 产物检查通过 | 用户于 2026-08-06 明确要求相关 AGENTS 与 skill 项目记忆一并迁移 |
 | 2026-08-08 | 批次 4（ECGTwin Miniforge 环境迁移） | `/home/linbinhao/micromamba/envs/ECGTwin`；旧 Micromamba 根下的索引、压缩包和未使用 package cache | `/home/linbinhao/miniforge3/envs/ECGTwin`；保留 `/home/linbinhao/micromamba/envs/cli-tools`、Micromamba 本体和 shell 初始化 | 新旧三类 checkpoint smoke 摘要一致；GPU 2 smoke 通过；删除后 73 passed/10 skipped、`pip check`、受管 dry-run、9092 报告服务和 `cli-tools` Git 2.51.0 均通过；旧前缀不存在；Micromamba 根约 454 MiB | 用户于 2026-08-08 明确回复“好的接受，按第一种开始帮我执行” |
 | 2026-08-08 | 批次 5（CLI 与默认 tmux clean switch） | `/home/linbinhao/micromamba/envs/cli-tools`；旧默认 tmux 3.6a server；旧 Micromamba 未使用 cache | `/home/linbinhao/miniforge3/envs/cli-tools`，tmux 3.7b + Git 2.51.0；重建 session 0/1 | 3.7b 隔离配置、Vim copy-mode、Git 和 shell 通过；最终 server PID 2087767 使用 Miniforge；Mihomo 7890/9090 正常；FRP 登录及 remote_ssh proxy 成功；旧前缀进程=0 且环境已删除；9091/9092 独立报告 server 保留 | 用户于 2026-08-08 明确回复“备用 SSH 已开，不依赖当前 FRP，允许重启 tmux、Mihomo 和 FRP” |
+| 2026-08-11 | 批次 6（paper-kernel v2 Batch A） | 3 个 audit-only method profile 与 3 套未运行 matched E2 experiment/train/method 配置链，共 12 个 YAML、914 LOC；排序后 NUL 分隔路径集合 SHA256 为 `e4c5ed1c81baecf9e54573e2b0869ae14877093c5f7a8cffe3bb86a812c1f427` | 保留 A0、A3c、Direct fixed20、latent-threechain 与当前 AugMix-SimCLR + attack-then-contract LHAT 主线；历史由冻结 tag `manual-clean-development-pre-kernel-v2-20260811` 恢复 | active/evidence 引用=0、外部 snapshot=0；56 个 experiment YAML dry-run 通过；138 passed/10 skipped；删除路径引用=0；`git diff --check` 通过 | 用户于 2026-08-11 明确回复“确认删除” |
 
 `methods/augmix/ecg_ops.py` 与 `methods/augmix/severity.py` 暂不放进候选批次 1：
 白名单已经切断依赖，但旧 `ecg_adv_gen/` 与 `methods/` 树内部仍相互引用。
@@ -434,7 +423,7 @@ pytest -q util/tests/test_augmentations.py \
 - [x] 将主线重构为受限 typed method graph：Stage-1 在 trainer 内使用
   K500 两链 AugMix-SimCLR，Stage-2 graph 只声明 clean、rotating4 corruption
   与 attack-then-contract LHAT view；梯度累计后每个 base batch 只更新一次。
-  audit-only 组合 profile 在节点与预算契约完成前继续 fail-closed。
+  未完成的候选组合不再以 audit-only YAML 留在受管运行面。
 - [x] 将 `agent_workspace` 中锁定的精简开发 recipe 迁入白名单运行面：
   `augmix_simclr_lhat.yaml`、`PN2021.yaml`、统一 launcher 示例、Stage-1
   checkpoint/TensorBoard、VAE contract 诊断和配置/seed/resource 身份均已接管；

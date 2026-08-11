@@ -32,10 +32,7 @@ from core.methods.nodes import (
     clean_source,
     lhat_attack,
     paired_latent_bridge,
-    replay_write,
     strict_pair,
-    vae_decode,
-    vae_encode,
 )
 
 
@@ -71,12 +68,9 @@ _RESOURCE_SCHEMAS_BY_NAME: Mapping[str, tuple[str, frozenset[str]]] = {
         )
         for name in (
             "augmix_rng",
-            "branch_rng",
             "corruption_rng",
             "latent_augmix_rng",
             "lhat_rng",
-            "replay_rng",
-            "simplex_rng",
         )
     },
 }
@@ -217,9 +211,8 @@ class NodeRegistry:
             ) from None
 
 
-# These names match the tracked profile schema exactly.  Experimental node
-# types are whitelisted for static compilation/audit, but their profiles carry
-# contracts.executable=false and are rejected by the executor.
+# These code-owned names match the retained tracked profiles.  YAML cannot
+# select arbitrary callables.
 DEFAULT_REGISTRY = NodeRegistry(
     (
         NodeDefinition(
@@ -232,17 +225,6 @@ DEFAULT_REGISTRY = NodeRegistry(
             input_kinds=(ValueKind.WAVEFORM,),
             output_kind=ValueKind.WAVEFORM,
             execute=canonical_corruption,
-        ),
-        NodeDefinition(
-            type_name="vae_lhat_hard_view",
-            input_kinds=(ValueKind.WAVEFORM,),
-            output_kind=ValueKind.WAVEFORM,
-            execute=lhat_attack,
-            requirements=MethodRequirements(
-                classifier=True,
-                vae_decoder=True,
-                latent_pool=True,
-            ),
         ),
         NodeDefinition(
             type_name="vae_lhat_attack_then_contract_view",
@@ -286,60 +268,12 @@ DEFAULT_REGISTRY = NodeRegistry(
             output_kind=ValueKind.WAVEFORM,
             execute=augmix,
         ),
-        NodeDefinition(
-            type_name="five_corruptions_plus_lhat_branch_selector",
-            input_kinds=(ValueKind.WAVEFORM, ValueKind.WAVEFORM),
-            output_kind=ValueKind.WAVEFORM,
-            execute=canonical_corruption,
-        ),
-        NodeDefinition(
-            type_name="run_scoped_lhat_replay_pool",
-            input_kinds=(ValueKind.WAVEFORM,),
-            output_kind=ValueKind.WAVEFORM,
-            execute=replay_write,
-            requirements=MethodRequirements(replay_buffer=True),
-        ),
-        NodeDefinition(
-            type_name="canonical_augmix_guidance_probe",
-            input_kinds=(ValueKind.WAVEFORM,),
-            output_kind=ValueKind.WAVEFORM,
-            execute=augmix,
-            requirements=MethodRequirements(classifier=True),
-        ),
-        NodeDefinition(
-            type_name="augmix_guided_latent_simplex_search",
-            variadic_input_kind=ValueKind.WAVEFORM,
-            minimum_inputs=1,
-            maximum_inputs=2,
-            output_kind=ValueKind.WAVEFORM,
-            execute=lhat_attack,
-            requirements=MethodRequirements(
-                classifier=True,
-                vae_decoder=True,
-                latent_pool=True,
-            ),
-        ),
-        # Code-owned primitives retained for future profiles using the same
-        # root schema; none permit a YAML-selected implementation path.
+        # Additional code-owned primitive retained in this migration batch.
         NodeDefinition(
             type_name="strict_paired_waveform_view",
             input_kinds=(ValueKind.WAVEFORM, ValueKind.WAVEFORM),
             output_kind=ValueKind.PAIRED,
             execute=strict_pair,
-        ),
-        NodeDefinition(
-            type_name="ecgtwin_vae_encode_view",
-            input_kinds=(ValueKind.WAVEFORM,),
-            output_kind=ValueKind.LATENT,
-            execute=vae_encode,
-            requirements=MethodRequirements(vae_encoder=True),
-        ),
-        NodeDefinition(
-            type_name="ecgtwin_vae_decode_view",
-            input_kinds=(ValueKind.LATENT,),
-            output_kind=ValueKind.WAVEFORM,
-            execute=vae_decode,
-            requirements=MethodRequirements(vae_decoder=True),
         ),
     )
 )
@@ -564,13 +498,6 @@ _NODE_RESOURCE_BINDINGS: Mapping[str, Mapping[str, str]] = MappingProxyType(
             "rng": "corruption_rng",
             "operator_profile": "operator_profile",
         },
-        "vae_lhat_hard_view": {
-            "latent_pool": "latent_pool",
-            "decoder": "vae_decoder",
-            "classifier": "model",
-            "rng": "lhat_rng",
-            "config": "lhat_config",
-        },
         "vae_lhat_attack_then_contract_view": {
             "latent_pool": "latent_pool",
             "decoder": "vae_decoder",
@@ -587,12 +514,6 @@ _NODE_RESOURCE_BINDINGS: Mapping[str, Mapping[str, str]] = MappingProxyType(
             "decoder": "vae_decoder",
             "rng": "latent_augmix_rng",
             "config": "augmix_config",
-        },
-        "ecgtwin_vae_encode_view": {
-            "encoder": "vae_encoder",
-        },
-        "ecgtwin_vae_decode_view": {
-            "decoder": "vae_decoder",
         },
     }
 )

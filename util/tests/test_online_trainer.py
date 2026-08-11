@@ -99,30 +99,19 @@ def test_exposure_expansion_reuses_one_loaded_batch_and_tags_each_view() -> None
     assert batches[-1]["__objective_terms"] == ("lhat_direct_bce",)
 
 
-def test_second_batch_corruption_seed_is_matched_across_auxiliary_arms() -> None:
-    methods = tuple(
-        compile_method_profile(REPO / "configs" / "train" / "methods" / name)
-        for name in (
-            "direct_depth23_fixed20.yaml",
-            "direct_depth23_fixed20_lhat_aux.yaml",
-            "direct_depth23_fixed20_raw_aux.yaml",
-            "direct_depth23_fixed20_vae_reconstruction_aux.yaml",
-        )
+def test_direct_corruption_seed_uses_semantic_identity() -> None:
+    method = compile_method_profile(
+        REPO / "configs" / "train" / "methods" / "direct_depth23_fixed20.yaml"
     )
-    schedules = tuple(online_trainer._method_exposure_steps(method) for method in methods)
+    schedule = online_trainer._method_exposure_steps(method)
     exposure_index = next(
         index
-        for index, step in enumerate(schedules[0])
+        for index, step in enumerate(schedule)
         if step.composition_index == 7
     )
-    assert all(schedule[exposure_index].composition_index == 7 for schedule in schedules)
-    assert [len(schedule) for schedule in schedules] == [21, 22, 22, 22]
-    assert {
-        len(schedule) + exposure_index + 1 for schedule in schedules
-    } == {30, 31}
-    assert {method.comparison_rng_identity for method in methods} == {
-        "direct_depth23_fixed20"
-    }
+    assert len(schedule) == 21
+    assert schedule[exposure_index].composition_index == 7
+    assert method.comparison_rng_identity == "direct_depth23_fixed20"
 
     config = load_online_train_config(REPO / "configs" / "train" / "PN2021.yaml")
     random_seed = config.payload["random_seed"]
@@ -137,30 +126,20 @@ def test_second_batch_corruption_seed_is_matched_across_auxiliary_arms() -> None
         "exposure_name": "corruption_07",
         "composition_index": 7,
     }
-    identities = tuple(
-        online_trainer._method_rng_identity(**arguments) for _ in methods
+    identity = online_trainer._method_rng_identity(**arguments)
+    assert all("view_execution_step" not in value for value in identity)
+    node = next(
+        item for item in method.nodes if item.profile.node_id == "depth23_corruption"
     )
-    assert identities.count(identities[0]) == 4
-    assert all("view_execution_step" not in value for value in identities[0])
-
-    def corruption_seed(method, identity) -> int:
-        node = next(
-            item for item in method.nodes if item.profile.node_id == "depth23_corruption"
-        )
-        assert node.profile.params["rng_namespace"] == "method_direct_depth23_fixed20"
-        return _derive_seed(
-            load_random_seed_config(config.references["random_seed_config"]).base_seed,
-            method.comparison_rng_identity,
-            str(node.profile.params["rng_namespace"]),
-            node.profile.node_id,
-            "composition_and_operators",
-            identity,
-        )
-
-    assert [
-        corruption_seed(method, identity)
-        for method, identity in zip(methods, identities, strict=True)
-    ] == [1342437248] * 4
+    assert node.profile.params["rng_namespace"] == "method_direct_depth23_fixed20"
+    assert _derive_seed(
+        load_random_seed_config(config.references["random_seed_config"]).base_seed,
+        method.comparison_rng_identity,
+        str(node.profile.params["rng_namespace"]),
+        node.profile.node_id,
+        "composition_and_operators",
+        identity,
+    ) == 1342437248
 
 
 def test_family_balanced_batch_norm_schedule_preserves_declared_weights() -> None:
