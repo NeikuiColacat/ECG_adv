@@ -890,9 +890,7 @@ def generate_lhat_adversarial(
 
     def decoded_from_standardized(value: torch.Tensor) -> torch.Tensor:
         latent = standardizer.inverse_transform(value)
-        return decode_to_ptbxl_waveform(
-            decoder, latent, target_points=resolved.canonical_domain.points
-        )
+        return decode_to_ptbxl_waveform(decoder, latent)
 
     def logits_from_standardized(value: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         raw_canonical = decoded_from_standardized(value)
@@ -1160,7 +1158,6 @@ def contract_lhat_adversarial(
                 standardizer.inverse_transform(
                     path_standardized.flatten(0, 1)
                 ),
-                target_points=resolved.canonical_domain.points,
             ).reshape(
                 batch,
                 path_count,

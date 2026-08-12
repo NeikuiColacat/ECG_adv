@@ -203,12 +203,7 @@ class VAEEncoder(nn.Sequential):
         )
 
     def forward(
-        self,
-        value: torch.Tensor,
-        noise: torch.Tensor | None = None,
-        *,
-        sample: bool = False,
-        generator: torch.Generator | None = None,
+        self, value: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         if not isinstance(value, torch.Tensor) or value.ndim != 3:
             raise TypeError("VAE encoder input must be a rank-3 torch.Tensor")
@@ -225,28 +220,7 @@ class VAEEncoder(nn.Sequential):
             encoded = module(encoded)
         mean, log_variance = torch.chunk(encoded, 2, dim=1)
         log_variance = torch.clamp(log_variance, -30.0, 20.0)
-        if noise is not None and not sample:
-            raise ValueError("noise may only be supplied when sample=True")
-        if sample:
-            stdev = torch.exp(0.5 * log_variance)
-            if noise is None:
-                if generator is None:
-                    raise ValueError(
-                        "sample=True requires explicit noise or a generator "
-                        "from util.random_seed"
-                    )
-                noise = torch.randn(
-                    stdev.shape,
-                    device=stdev.device,
-                    dtype=stdev.dtype,
-                    generator=generator,
-                )
-            if noise.shape != stdev.shape:
-                raise ValueError("VAE encoder noise shape must match latent shape")
-            latent = mean + stdev * noise
-        else:
-            latent = mean
-        return latent * LATENT_SCALE, mean, log_variance
+        return mean * LATENT_SCALE, mean, log_variance
 
 
 class VAEDecoder(nn.Sequential):
@@ -329,10 +303,8 @@ def prepare_ecgtwin_encoder_input(raw_ptbxl_btc: torch.Tensor) -> torch.Tensor:
 def decode_to_ptbxl_waveform(
     decoder: nn.Module,
     latent: torch.Tensor,
-    *,
-    target_points: int,
 ) -> torch.Tensor:
-    """Decode a scaled latent to raw PTB-XL-order 100 or 500 Hz waveform."""
+    """Decode a scaled latent to canonical raw PTB-XL-order 100 Hz waveform."""
 
     decoded = decoder(latent)
     if decoded.ndim != 3 or tuple(decoded.shape[1:]) != (1024, 12):
@@ -343,16 +315,10 @@ def decode_to_ptbxl_waveform(
         ECGTWIN_TO_PTBXL_INDICES, device=decoded.device, dtype=torch.long
     )
     canonical_bct = decoded.index_select(2, indices).transpose(1, 2)
-    bottleneck = F.interpolate(
+    canonical = F.interpolate(
         canonical_bct, size=1000, mode="linear", align_corners=True
     )
-    if int(target_points) == 5000:
-        bottleneck = F.interpolate(
-            bottleneck, size=5000, mode="linear", align_corners=True
-        )
-    elif int(target_points) != 1000:
-        raise ValueError("target_points must be 1000 or 5000")
-    return bottleneck.transpose(1, 2).contiguous()
+    return canonical.transpose(1, 2).contiguous()
 
 
 def _component_identity(

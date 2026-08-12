@@ -235,7 +235,7 @@ def _encode_mean(
 ) -> torch.Tensor:
     bridged = prepare_ecgtwin_encoder_input(waveform.to(device=device))
     with torch.inference_mode():
-        result = encoder(bridged, sample=False)
+        result = encoder(bridged)
     if not isinstance(result, tuple) or len(result) != 3:
         raise TypeError("VAE encoder must return (scaled_latent, mean, log_variance)")
     latent, mean, log_variance = result

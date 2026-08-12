@@ -18,6 +18,7 @@ import boot_scripts.train_pn2021 as train_boot
 import core.online_trainer as trainer
 import core.train_PN2021 as train_adapter
 import data_preprocess.data_runtime as data_runtime
+import models.vae as vae
 from core.methods import AuxiliaryVariant, RecipeKind, build_method_runtime, load_recipe_spec
 from core.methods.runtime import _derive_seed
 from core.train_PN2021 import _validate_locked_source_checkpoint
@@ -474,6 +475,8 @@ def test_pn2021_boot_and_adapter_reject_retired_override_surfaces() -> None:
     }
     assert not hasattr(train_adapter, "PN2021_DATALOADER_PARAMETER_NAMES")
     assert not hasattr(train_adapter, "build_pn2021_k500_dataloader")
+    assert tuple(inspect.signature(vae.VAEEncoder.forward).parameters) == ("self", "value")
+    assert tuple(inspect.signature(vae.decode_to_ptbxl_waveform).parameters) == ("decoder", "latent")
 
 
 def test_finite_exposure_plans_lock_direct21_rotating6_and_matched5() -> None:
