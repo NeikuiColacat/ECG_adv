@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import re
@@ -13,6 +14,7 @@ import pytest
 import torch
 import yaml
 
+from data_preprocess import preprocess_primitives as primitives
 from data_preprocess.load_cache import EXPECTED_CLASS_ORDER, EXPECTED_LEADS
 from models.contracts import (
     CLASS_ORDER,
@@ -173,6 +175,59 @@ def test_pn2021_preprocess_uses_aligned_corner_linear_interpolation() -> None:
     np.testing.assert_allclose(short[:, 0], [0.0, 3.0, 0.0, 0.0])
     assert short_details["valid_target_samples"] == 2
     assert short_details["was_padded"] is True
+
+
+def test_cache_builders_share_exact_waveform_primitives(tmp_path: Path) -> None:
+    shared_names = set(
+        "WaveformQualityError _load_config _load_yaml_mapping "
+        "_repair_nonfinite_per_lead _validate_nonfinite_policy _resolve_path "
+        "_normalise_lead_name _reorder_leads _read_wfdb _record_hash "
+        "_fixed_unicode_array _linear_interpolate_time_batch".split()
+    )
+    for name in ("PTBXL_preprocess.py", "PN2021_preprocess.py"):
+        tree = ast.parse((REPO / "data_preprocess" / name).read_text())
+        definitions = {
+            node.name
+            for node in tree.body
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef))
+        }
+        assert shared_names.isdisjoint(definitions)
+
+    signal = np.arange(8, dtype=np.float32).reshape(4, 2)
+    signal[0, 0], signal[2, 1] = np.inf, np.nan
+    repaired, quality = primitives._repair_nonfinite_per_lead(
+        signal, max_record_fraction=0.3, max_lead_fraction=0.3
+    )
+    np.testing.assert_array_equal(repaired, [[2, 1], [2, 3], [4, 5], [6, 7]])
+    assert quality["repaired_nonfinite_count"] == 2
+    assert quality["repair_method"] == "linear_per_lead_nearest_edge"
+    rejected = np.column_stack((np.arange(4), np.full(4, np.nan)))
+    with pytest.raises(primitives.WaveformQualityError) as captured:
+        primitives._repair_nonfinite_per_lead(
+            rejected, max_record_fraction=1.0, max_lead_fraction=1.0
+        )
+    assert captured.value.reason == "all_nonfinite_lead"
+    assert captured.value.details["nonfinite_count_by_lead"] == [0, 4]
+    resized = primitives._linear_interpolate_time_batch(
+        np.arange(6, dtype=np.float32).reshape(1, 3, 2), 5
+    )
+    np.testing.assert_array_equal(
+        resized,
+        np.array([[[0, 1], [1, 2], [2, 3], [3, 4], [4, 5]]], dtype=np.float32),
+    )
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("- not\n- a\n- mapping\n", encoding="utf-8")
+    for dataset in ("PTB-XL", "PN2021"):
+        mapping_error = (
+            rf"^{dataset} config must be a YAML mapping: "
+            rf"{re.escape(str(config_path))}$"
+        )
+        with pytest.raises(ValueError, match=mapping_error):
+            primitives._load_yaml_mapping(dataset, config_path)
+        with pytest.raises(
+            ValueError, match=rf"^{dataset} config must define nonfinite_policy$"
+        ):
+            primitives._validate_nonfinite_policy(dataset, {})
 
 
 def test_data_yaml_records_the_same_interpolation_and_layout_contract() -> None:

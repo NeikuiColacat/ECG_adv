@@ -90,6 +90,7 @@ required_modules:
     - util/config_bundle.py
     - util/random_seed.py
   cache_builders:
+    - data_preprocess/preprocess_primitives.py
     - data_preprocess/PTBXL_preprocess.py
     - data_preprocess/pn2021_metadata.py
     - data_preprocess/PN2021_preprocess.py

@@ -11,10 +11,10 @@ import yaml
 
 from data_preprocess.PN2021_preprocess import (
     EXPECTED_CLASS_ORDER,
-    _load_config,
     _load_super5_mapping,
     _snomed_list_to_super5,
 )
+from data_preprocess.preprocess_primitives import _load_yaml_mapping
 from data_preprocess.PTBXL_preprocess import (
     CLASS_ORDER,
     _build_labels,
@@ -30,7 +30,7 @@ MAPPING_HASH = "555ec85d5b51"
 
 
 def _mapping() -> dict:
-    config = _load_config(PN2021_CONFIG)
+    config = _load_yaml_mapping("PN2021", PN2021_CONFIG)
     return _load_super5_mapping(PN2021_CONFIG, config)
 
 

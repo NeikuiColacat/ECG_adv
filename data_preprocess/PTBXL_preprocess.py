@@ -4,213 +4,27 @@ from __future__ import annotations
 
 import ast
 import argparse
-import hashlib
 import json
 import os
 import shutil
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
-import yaml
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from data_preprocess import preprocess_primitives as primitives  # noqa: E402
+
+
 DEFAULT_CONFIG = PROJECT_ROOT / "configs" / "data" / "PTBXL.yaml"
 CLASS_ORDER = ("CD", "HYP", "MI", "NORM", "STTC")
-DATA_ROOT_TOKEN = "${data_root}"
-
-
-class WaveformQualityError(ValueError):
-    """A record-level waveform rejection with machine-readable QC details."""
-
-    def __init__(self, reason: str, details: dict[str, Any]) -> None:
-        super().__init__(reason)
-        self.reason = reason
-        self.details = details
-
-
-def _repair_nonfinite_per_lead(
-    signal_tc: np.ndarray,
-    *,
-    max_record_fraction: float,
-    max_lead_fraction: float,
-) -> tuple[np.ndarray, dict[str, Any]]:
-    """Repair sparse NaN/Inf values using within-lead linear interpolation.
-
-    ``numpy.interp`` uses the nearest valid value outside the valid index range,
-    which gives the intended edge-fill behavior without inventing cross-lead
-    information. Records with an all-invalid lead or excessive corruption are
-    rejected before interpolation.
-    """
-
-    repaired = np.asarray(signal_tc, dtype=np.float64).copy()
-    if repaired.ndim != 2 or repaired.shape[0] == 0 or repaired.shape[1] == 0:
-        raise WaveformQualityError(
-            "invalid_waveform_shape",
-            {"shape": list(repaired.shape)},
-        )
-
-    invalid = ~np.isfinite(repaired)
-    invalid_count = int(invalid.sum())
-    total_values = int(repaired.size)
-    record_fraction = invalid_count / total_values
-    per_lead_counts = invalid.sum(axis=0).astype(int)
-    per_lead_fractions = per_lead_counts / repaired.shape[0]
-    details: dict[str, Any] = {
-        "nonfinite_count": invalid_count,
-        "nonfinite_fraction": record_fraction,
-        "nonfinite_count_by_lead": per_lead_counts.tolist(),
-        "nonfinite_fraction_by_lead": per_lead_fractions.tolist(),
-        "repaired_nonfinite_count": 0,
-        "repair_method": "none",
-    }
-    if invalid_count == 0:
-        return repaired, details
-    if record_fraction > max_record_fraction:
-        raise WaveformQualityError("record_nonfinite_fraction_exceeded", details)
-
-    sample_indices = np.arange(repaired.shape[0])
-    for lead_index in range(repaired.shape[1]):
-        invalid_lead = invalid[:, lead_index]
-        if not invalid_lead.any():
-            continue
-        valid_lead = ~invalid_lead
-        if not valid_lead.any():
-            raise WaveformQualityError("all_nonfinite_lead", details)
-        if per_lead_fractions[lead_index] > max_lead_fraction:
-            raise WaveformQualityError("lead_nonfinite_fraction_exceeded", details)
-        repaired[invalid_lead, lead_index] = np.interp(
-            sample_indices[invalid_lead],
-            sample_indices[valid_lead],
-            repaired[valid_lead, lead_index],
-        )
-
-    if not np.isfinite(repaired).all():
-        raise WaveformQualityError("nonfinite_remains_after_repair", details)
-    details["repaired_nonfinite_count"] = invalid_count
-    details["repair_method"] = "linear_per_lead_nearest_edge"
-    return repaired, details
-
-
-def _validate_nonfinite_policy(config: dict[str, Any]) -> dict[str, Any]:
-    policy = config.get("nonfinite_policy")
-    if not isinstance(policy, dict):
-        raise ValueError("PTB-XL config must define nonfinite_policy")
-    if str(policy.get("repair_method")) != "linear_per_lead_nearest_edge":
-        raise ValueError(
-            "PTB-XL nonfinite repair_method must be "
-            "'linear_per_lead_nearest_edge'"
-        )
-    max_record_fraction = float(policy["max_record_fraction"])
-    max_lead_fraction = float(policy["max_lead_fraction"])
-    for name, value in (
-        ("max_record_fraction", max_record_fraction),
-        ("max_lead_fraction", max_lead_fraction),
-    ):
-        if not 0.0 <= value <= 1.0:
-            raise ValueError(f"PTB-XL {name} must be in [0, 1], got {value}")
-    return {
-        "repair_method": "linear_per_lead_nearest_edge",
-        "max_record_fraction": max_record_fraction,
-        "max_lead_fraction": max_lead_fraction,
-        "reject_all_nonfinite_lead": True,
-    }
-
-
-def _load_config(config_path: str | Path) -> dict[str, Any]:
-    path = Path(config_path)
-    payload = yaml.safe_load(path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
-        raise ValueError(f"PTB-XL config must be a YAML mapping: {path}")
-    return payload
-
-
-def _resolve_path(value: str, data_root: str | Path | None) -> Path:
-    text = str(value)
-    if DATA_ROOT_TOKEN in text:
-        if data_root is None:
-            raise ValueError(
-                f"Path {text!r} requires data_root in the YAML config"
-            )
-        text = text.replace(DATA_ROOT_TOKEN, str(Path(data_root).expanduser()))
-    return Path(text).expanduser().resolve()
-
-
-def _normalise_lead_name(name: str) -> str:
-    compact = str(name).strip().replace(" ", "").upper()
-    aliases = {"AVR": "aVR", "AVL": "aVL", "AVF": "aVF"}
-    return aliases.get(compact, compact)
-
-
-def _reorder_leads(
-    signal_tc: np.ndarray,
-    source_leads: list[str],
-    target_leads: list[str],
-) -> np.ndarray:
-    normalised_source = [_normalise_lead_name(name) for name in source_leads]
-    normalised_target = [_normalise_lead_name(name) for name in target_leads]
-    if len(set(normalised_source)) != len(normalised_source):
-        raise ValueError(f"Duplicate source leads: {source_leads}")
-    try:
-        indices = [normalised_source.index(name) for name in normalised_target]
-    except ValueError as exc:
-        raise ValueError(
-            f"Cannot map source leads {source_leads} to target leads {target_leads}"
-        ) from exc
-    return np.asarray(signal_tc)[:, indices]
-
-
-def _read_wfdb(record_path: Path) -> tuple[np.ndarray, float, list[str]]:
-    import wfdb
-
-    signal_tc, fields = wfdb.rdsamp(str(record_path))
-    return (
-        np.asarray(signal_tc),
-        float(fields["fs"]),
-        [str(name) for name in fields["sig_name"]],
-    )
-
-
-def _record_hash(dataset: str, dataset_version: str, record_key: str) -> str:
-    identity = f"{dataset}\0{dataset_version}\0{record_key}"
-    return hashlib.sha256(identity.encode("utf-8")).hexdigest()
-
-
-def _fixed_unicode_array(values: list[str]) -> np.ndarray:
-    width = max((len(value) for value in values), default=1)
-    return np.asarray(values, dtype=f"<U{width}")
-
-
-def _linear_interpolate_time_batch(
-    signals_ntc: np.ndarray,
-    target_num_samples: int,
-) -> np.ndarray:
-    """Resize a batch with the current ECGFounder aligned-corner interpolation."""
-
-    signals_ntc = np.asarray(signals_ntc)
-    if signals_ntc.ndim != 3 or signals_ntc.shape[1] < 2:
-        raise ValueError(
-            "Expected batched time-channel signals with at least two time points, "
-            f"got {signals_ntc.shape}"
-        )
-    if target_num_samples < 2:
-        raise ValueError(f"target_num_samples must be at least 2, got {target_num_samples}")
-    import torch
-    import torch.nn.functional as F
-
-    source_array = np.array(signals_ntc, copy=True, order="C")
-    source = torch.from_numpy(source_array).permute(0, 2, 1)
-    with torch.no_grad():
-        derived = F.interpolate(
-            source,
-            size=int(target_num_samples),
-            mode="linear",
-            align_corners=True,
-        )
-    return derived.permute(0, 2, 1).contiguous().numpy()
 
 
 def _load_super5_map(scp_statements_path: Path) -> dict[str, int]:
@@ -293,7 +107,7 @@ def build_ptbxl_npy_cache(
     Existing cache directories are never overwritten.
     """
 
-    config = _load_config(config_path)
+    config = primitives._load_yaml_mapping("PTB-XL", config_path)
     (
         sampling_rate,
         duration_seconds,
@@ -304,12 +118,12 @@ def build_ptbxl_npy_cache(
         lead_order,
         cache_dtype,
     ) = _validate_cache_contract(config)
-    nonfinite_policy = _validate_nonfinite_policy(config)
+    nonfinite_policy = primitives._validate_nonfinite_policy("PTB-XL", config)
     dataset = str(config["dataset"])
     dataset_version = str(config["dataset_version"])
     data_root = config.get("data_root")
-    source_root = _resolve_path(str(config["root"]), data_root)
-    cache_dir = _resolve_path(str(config["cache_dir"]), data_root)
+    source_root = primitives._resolve_path(str(config["root"]), data_root)
+    cache_dir = primitives._resolve_path(str(config["cache_dir"]), data_root)
     metadata_path = source_root / str(config["metadata_file"])
     scp_statements_path = source_root / str(config["scp_statements_file"])
 
@@ -335,7 +149,7 @@ def build_ptbxl_npy_cache(
         for record_id, source_record in zip(record_ids, source_records)
     ]
     hash_ids = [
-        _record_hash(dataset, dataset_version, record_key)
+        primitives._record_hash(dataset, dataset_version, record_key)
         for record_key in record_keys
     ]
     if len(set(hash_ids)) != len(hash_ids):
@@ -364,17 +178,19 @@ def build_ptbxl_npy_cache(
         failed_rows: list[dict[str, Any]] = []
         for index, source_record in enumerate(source_records):
             try:
-                signal_tc, source_fs, source_leads = _read_wfdb(
+                signal_tc, source_fs, source_leads = primitives._read_wfdb(
                     source_root / source_record
                 )
                 if int(round(source_fs)) != sampling_rate:
                     raise ValueError(
                         f"Unexpected sampling rate: {source_fs} Hz"
                     )
-                signal_tc = _reorder_leads(signal_tc, source_leads, lead_order)
+                signal_tc = primitives._reorder_leads(
+                    signal_tc, source_leads, lead_order
+                )
                 if signal_tc.shape != (num_samples, len(lead_order)):
                     raise ValueError(f"Unexpected waveform shape: {signal_tc.shape}")
-                signal_tc, quality = _repair_nonfinite_per_lead(
+                signal_tc, quality = primitives._repair_nonfinite_per_lead(
                     signal_tc,
                     max_record_fraction=nonfinite_policy[
                         "max_record_fraction"
@@ -384,11 +200,16 @@ def build_ptbxl_npy_cache(
                 with np.errstate(over="ignore", invalid="ignore"):
                     cache_signal = signal_tc.astype(cache_dtype, copy=False)
                 if not np.isfinite(cache_signal).all():
-                    raise WaveformQualityError(
+                    raise primitives.WaveformQualityError(
                         "nonfinite_after_cache_dtype_cast",
                         quality,
                     )
-            except (WaveformQualityError, ValueError, OSError, EOFError) as exc:
+            except (
+                primitives.WaveformQualityError,
+                ValueError,
+                OSError,
+                EOFError,
+            ) as exc:
                 failure = {
                     "source_index": index,
                     "record_id": record_ids[index],
@@ -454,7 +275,7 @@ def build_ptbxl_npy_cache(
         )
         for start in range(0, record_count, derived_batch_size):
             end = min(start + derived_batch_size, record_count)
-            derived_batch = _linear_interpolate_time_batch(
+            derived_batch = primitives._linear_interpolate_time_batch(
                 signals[start:end],
                 derived_num_samples,
             ).astype(cache_dtype, copy=False)
@@ -478,7 +299,7 @@ def build_ptbxl_npy_cache(
         np.save(staging_dir / "labels_super5.npy", labels, allow_pickle=False)
         np.save(
             staging_dir / "record_ids.npy",
-            _fixed_unicode_array(record_ids),
+            primitives._fixed_unicode_array(record_ids),
             allow_pickle=False,
         )
         np.save(
