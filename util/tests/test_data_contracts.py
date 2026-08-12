@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import inspect
 import json
 import re
 import subprocess
@@ -33,6 +34,8 @@ from models.input_adapter import (
     INTERPOLATION_MODE,
     prepare_canonical_model_input,
 )
+import models.efficientnet1d as efficientnet1d
+from models.factory import build_model
 from util.config_bundle import resolve_yaml_config_closure
 from util import pn2021_artifact_contract as artifact_contract
 
@@ -78,6 +81,20 @@ def test_data_and_model_constants_share_one_super5_contract() -> None:
     assert EFFICIENTNET1DV2_SPEC.sampling_rate_hz == 100
     assert ECGFOUNDER_SPEC.input_shape == (12, 5000)
     assert ECGFOUNDER_SPEC.sampling_rate_hz == 500
+    assert tuple(inspect.signature(efficientnet1d.EfficientNet1DV2).parameters) == ()
+    assert efficientnet1d.__all__ == [
+        "EfficientNet1DV2", "build_efficientnet1dv2"]
+    assert {"get_backbone_config", "get_activation"}.isdisjoint(vars(efficientnet1d))
+    with pytest.raises(TypeError):
+        build_model("efficientnet1dv2", variant="s_v2")
+    model = efficientnet1d.EfficientNet1DV2()
+    assert len(model.state_dict()) == 571
+    assert sum(parameter.numel() for parameter in model.parameters()) == 6_413_827
+    assert len(list(model.named_modules(remove_duplicate=False))) == 687
+    assert sum(isinstance(block, efficientnet1d.FusedMBConv1d)
+               for block in model.features) == 16
+    assert sum(isinstance(block, efficientnet1d.MBConv1d)
+               for block in model.features) == 18
 
 
 def test_canonical_input_adapter_preserves_the_locked_operation_order() -> None:

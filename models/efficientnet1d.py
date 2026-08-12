@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import math
 from pathlib import Path
-from typing import Sequence
 
 import torch
 import torch.nn as nn
@@ -13,76 +11,10 @@ from models.checkpoints import CheckpointIdentity, load_model_checkpoint
 from models.contracts import EFFICIENTNET1DV2_SPEC, validate_model_input
 
 
-def get_backbone_config(variant: str) -> dict[str, float]:
-    configs = {
-        "b0_v1": (1.0, 1.0),
-        "b1_v1": (1.0, 1.1),
-        "b2_v1": (1.1, 1.2),
-        "b3_v1": (1.2, 1.4),
-        "b4_v1": (1.4, 1.8),
-        "b5_v1": (1.6, 2.2),
-        "b6_v1": (1.8, 2.6),
-        "b7_v1": (2.0, 3.1),
-        "b0_v2": (1.0, 1.0),
-        "b1_v2": (1.0, 1.1),
-        "b2_v2": (1.1, 1.2),
-        "b3_v2": (1.2, 1.4),
-        "b4_v2": (1.4, 1.8),
-        "b5_v2": (1.6, 2.2),
-        "b6_v2": (1.8, 2.6),
-        "b7_v2": (2.0, 3.1),
-        "s_v2": (1.0, 2.0),
-        "m_v2": (1.1, 2.1),
-        "l_v2": (1.2, 2.2),
-    }
-    try:
-        width, depth = configs[str(variant)]
-    except KeyError:
-        raise ValueError(f"unsupported EfficientNet1DV2 variant: {variant!r}") from None
-    return {"width_coefficient": width, "depth_coefficient": depth}
-
-
-def get_activation(name: str = "relu") -> nn.Module:
-    activations: dict[str, nn.Module] = {
-        "relu": nn.ReLU(),
-        "swish": nn.SiLU(),
-        "mish": nn.Mish(),
-        "selu": nn.SELU(),
-        "gelu": nn.GELU(),
-        "leaky_relu": nn.LeakyReLU(0.01),
-    }
-    try:
-        return activations[str(name)]
-    except KeyError:
-        raise ValueError(f"unsupported activation: {name!r}") from None
-
-
-def _find_optimal_num_groups(num_channels: int) -> int:
-    target = int(num_channels) // 2
-    divisors = [
-        value
-        for value in range(1, int(num_channels) + 1)
-        if int(num_channels) % value == 0
-    ]
-    return min(divisors, key=lambda value: (abs(value - target), -value))
-
-
 class CustomNorm(nn.Module):
-    def __init__(self, num_features: int, norm_type: str = "batch") -> None:
+    def __init__(self, num_features: int) -> None:
         super().__init__()
-        if norm_type == "batch":
-            self.norm = nn.BatchNorm1d(num_features)
-        elif norm_type == "group":
-            self.norm = nn.GroupNorm(
-                num_groups=_find_optimal_num_groups(num_features),
-                num_channels=num_features,
-            )
-        elif norm_type == "layer":
-            self.norm = nn.LayerNorm(normalized_shape=[num_features])
-        elif norm_type == "instance":
-            self.norm = nn.InstanceNorm1d(num_features)
-        else:
-            raise ValueError(f"unsupported norm_type: {norm_type!r}")
+        self.norm = nn.BatchNorm1d(num_features)
 
     def forward(self, value: torch.Tensor) -> torch.Tensor:
         return self.norm(value)
@@ -132,16 +64,11 @@ class FusedMBConv1d(nn.Module):
         out_channels: int,
         kernel_size: int,
         stride: int,
-        activation: str = "relu",
-        use_se: bool = False,
-        se_ratio: int = 4,
-        dropout_rate: float = 0.0,
-        stochastic_depth_prob: float = 0.0,
-        norm_type: str = "batch",
+        stochastic_depth_prob: float,
     ) -> None:
         super().__init__()
         self.use_residual = in_channels == out_channels and stride == 1
-        activation_func = get_activation(activation)
+        activation_func = nn.LeakyReLU(0.01)
         self.fused_conv = nn.Sequential(
             nn.Conv1d(
                 in_channels,
@@ -151,7 +78,7 @@ class FusedMBConv1d(nn.Module):
                 padding=kernel_size // 2,
                 bias=False,
             ),
-            CustomNorm(out_channels, norm_type),
+            CustomNorm(out_channels),
             activation_func,
         )
         self.stochastic_depth = (
@@ -159,18 +86,12 @@ class FusedMBConv1d(nn.Module):
             if self.use_residual
             else nn.Identity()
         )
-        self.se = (
-            SEBlock(
-                out_channels,
-                max(1, int(out_channels // se_ratio)),
-                activation_func,
-            )
-            if use_se
-            else nn.Identity()
+        self.se = SEBlock(
+            out_channels,
+            max(1, int(out_channels // 4)),
+            activation_func,
         )
-        self.dropout = (
-            nn.Dropout(p=dropout_rate) if dropout_rate > 0 else nn.Identity()
-        )
+        self.dropout = nn.Identity()
 
     def forward(self, value: torch.Tensor) -> torch.Tensor:
         identity = value if self.use_residual else None
@@ -189,26 +110,16 @@ class MBConv1d(nn.Module):
         out_channels: int,
         kernel_size: int,
         stride: int,
-        expansion: int = 1,
-        activation: str = "relu",
-        use_se: bool = False,
-        se_ratio: int = 4,
-        dropout_rate: float = 0.0,
-        stochastic_depth_prob: float = 0.0,
-        norm_type: str = "batch",
+        stochastic_depth_prob: float,
     ) -> None:
         super().__init__()
         self.use_residual = in_channels == out_channels and stride == 1
-        activation_func = get_activation(activation)
-        mid_channels = in_channels * expansion
-        self.expand_conv = (
-            nn.Sequential(
-                nn.Conv1d(in_channels, mid_channels, 1, bias=False),
-                CustomNorm(mid_channels, norm_type),
-                activation_func,
-            )
-            if expansion > 1
-            else nn.Identity()
+        activation_func = nn.LeakyReLU(0.01)
+        mid_channels = in_channels * 6
+        self.expand_conv = nn.Sequential(
+            nn.Conv1d(in_channels, mid_channels, 1, bias=False),
+            CustomNorm(mid_channels),
+            activation_func,
         )
         self.depthwise_conv = nn.Sequential(
             nn.Conv1d(
@@ -220,25 +131,19 @@ class MBConv1d(nn.Module):
                 groups=mid_channels,
                 bias=False,
             ),
-            CustomNorm(mid_channels, norm_type),
+            CustomNorm(mid_channels),
             activation_func,
         )
-        self.se = (
-            SEBlock(
-                mid_channels,
-                max(1, int(mid_channels // se_ratio)),
-                activation_func,
-            )
-            if use_se
-            else nn.Identity()
+        self.se = SEBlock(
+            mid_channels,
+            max(1, int(mid_channels // 4)),
+            activation_func,
         )
         self.project_conv = nn.Sequential(
             nn.Conv1d(mid_channels, out_channels, 1, bias=False),
-            CustomNorm(out_channels, norm_type),
+            CustomNorm(out_channels),
         )
-        self.dropout = (
-            nn.Dropout(p=dropout_rate) if dropout_rate > 0 else nn.Identity()
-        )
+        self.dropout = nn.Identity()
         self.stochastic_depth = (
             StochasticDepth(stochastic_depth_prob)
             if self.use_residual
@@ -262,120 +167,57 @@ class EfficientNet1DV2(nn.Module):
 
     model_spec = EFFICIENTNET1DV2_SPEC
 
-    def __init__(
-        self,
-        variant: str = "s_v2",
-        input_channels: int = 12,
-        num_classes: int = 5,
-        activation: str = "leaky_relu",
-        se_ratio: Sequence[int] = (4, 4, 4, 4, 4, 4, 4),
-        base_depths: Sequence[int] = (1, 1, 2, 2, 3, 4, 5),
-        base_channels: Sequence[int] = (12, 12, 24, 32, 64, 80, 128, 640),
-        expansion_factors: Sequence[int] = (1, 6, 6, 6, 6, 6, 6),
-        stochastic_depth_prob: float = 0.304,
-        dropout_rate: float = 0.0,
-        use_se: bool = True,
-        kernel_sizes: Sequence[int] = (3, 3, 5, 3, 5, 3, 3, 3),
-        strides: Sequence[int] = (1, 1, 2, 2, 2, 2, 2, 2),
-        norm_type: str = "batch",
-    ) -> None:
+    def __init__(self) -> None:
         super().__init__()
-        if int(input_channels) != self.model_spec.input_channels:
-            raise ValueError("EfficientNet1DV2 requires exactly 12 input channels")
-        if int(num_classes) != self.model_spec.num_classes:
-            raise ValueError("EfficientNet1DV2 manual mainline requires five classes")
-        config = get_backbone_config(variant)
-        width = config["width_coefficient"]
-        depth = config["depth_coefficient"]
-        channels = [max(1, int(value * width)) for value in base_channels]
-        depths = [max(1, math.ceil(value * depth)) for value in base_depths]
         self.initial_conv = nn.Sequential(
             nn.Conv1d(
-                input_channels,
-                channels[0],
-                kernel_size=kernel_sizes[0],
-                stride=strides[0],
-                padding=kernel_sizes[0] // 2,
+                12, 12, kernel_size=3, stride=1, padding=1,
                 bias=False,
             ),
-            CustomNorm(channels[0], norm_type),
-            get_activation(activation),
+            CustomNorm(12),
+            nn.LeakyReLU(0.01),
         )
-        self.features = self._make_layers(
-            channels,
-            depths,
-            kernel_sizes,
-            strides,
-            expansion_factors,
-            se_ratio,
-            activation,
-            stochastic_depth_prob,
-            dropout_rate,
-            use_se,
-            norm_type,
-            variant,
-        )
+        self.features = self._make_layers()
         self.classifier = nn.Sequential(
             nn.AdaptiveAvgPool1d(1),
             nn.Flatten(),
-            nn.Dropout(dropout_rate),
-            nn.Linear(channels[-1], num_classes),
+            nn.Dropout(0.0),
+            nn.Linear(640, 5),
         )
-        self.final_conv = nn.Conv1d(
-            channels[-2], channels[-1], kernel_size=1, stride=1, padding=0
-        )
-        self.final_norm = CustomNorm(channels[-1], norm_type)
+        self.final_conv = nn.Conv1d(128, 640, kernel_size=1, stride=1, padding=0)
+        self.final_norm = CustomNorm(640)
         self.checkpoint_identity: CheckpointIdentity | None = None
 
     @staticmethod
-    def _make_layers(
-        channels: Sequence[int],
-        depths: Sequence[int],
-        kernel_sizes: Sequence[int],
-        strides: Sequence[int],
-        expansion_factors: Sequence[int],
-        se_ratio: Sequence[int],
-        activation: str,
-        stochastic_depth_prob: float,
-        dropout_rate: float,
-        use_se: bool,
-        norm_type: str,
-        variant: str,
-    ) -> nn.Sequential:
+    def _make_layers() -> nn.Sequential:
         layers: list[nn.Module] = []
-        in_channels = channels[0]
+        in_channels = 12
         for index, (out_channels, num_blocks) in enumerate(
-            zip(channels[1::], depths[1::])
+            zip(
+                (12, 24, 32, 64, 80, 128),
+                (2, 4, 4, 6, 8, 10),
+                strict=True,
+            )
         ):
-            stride = strides[index]
+            kernel_size = (3, 3, 5, 3, 5, 3)[index]
+            stride = (1, 1, 2, 2, 2, 2)[index]
             for block_index in range(num_blocks):
                 block_stride = stride if block_index == 0 else 1
-                if "v2" in variant and index <= 3:
+                if index <= 3:
                     block: nn.Module = FusedMBConv1d(
                         in_channels,
                         out_channels,
-                        kernel_sizes[index],
+                        kernel_size,
                         block_stride,
-                        activation,
-                        use_se,
-                        se_ratio[index],
-                        dropout_rate,
-                        stochastic_depth_prob,
-                        norm_type,
+                        0.304,
                     )
                 else:
                     block = MBConv1d(
                         in_channels,
                         out_channels,
-                        kernel_sizes[index],
+                        kernel_size,
                         block_stride,
-                        expansion_factors[index],
-                        activation,
-                        use_se,
-                        se_ratio[index],
-                        dropout_rate,
-                        stochastic_depth_prob,
-                        norm_type,
+                        0.304,
                     )
                 layers.append(block)
                 in_channels = out_channels
@@ -418,13 +260,6 @@ def build_efficientnet1dv2(
 
 
 __all__ = [
-    "CustomNorm",
     "EfficientNet1DV2",
-    "FusedMBConv1d",
-    "MBConv1d",
-    "SEBlock",
-    "StochasticDepth",
     "build_efficientnet1dv2",
-    "get_activation",
-    "get_backbone_config",
 ]
