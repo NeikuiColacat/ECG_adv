@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 profile_name: pn2021_k500_data_interface_handoff
 
 # This file is a portable handoff contract, not a second split generator.
@@ -11,15 +11,26 @@ interface:
     ptbxl_source:
       class: PTBXLLoaderPlan
       openings: [open_train, open_validation, open_test]
+      shuffle_by_opening:
+        open_train: true
+        open_validation: false
+        open_test: false
     pn2021_k500:
       class: PN2021K500LoaderPlan
       openings: [open_ordered, open_training]
+      shuffle_by_opening:
+        open_ordered: false
+        open_training: true
       partition: k500
       exact_record_count: 500
       drop_last: false
     pn2021_evaluation:
       class: PN2021EvaluationLoaderPlan
       openings: [open_clean, open_corrupted, open_session]
+      shuffle_by_opening:
+        open_clean: false
+        open_corrupted: false
+        open_session: false
       session_class: SequentialEvaluationDataSession
       ref_excluded_only: true
   dynamic_generic_loader_public: false
@@ -35,7 +46,6 @@ interface:
     sanitize: false
     global_zscore: false
     output_layout: time_channel
-    shuffle: false
   canonical_raw_output:
     signal_shape: [1000, 12]
     signal_dtype: float32
@@ -76,7 +86,6 @@ required_modules:
   runtime:
     - data_preprocess/data_ledger.py
     - data_preprocess/load_cache.py
-    - data_preprocess/split_cache.py
     - data_preprocess/data_runtime.py
     - util/config_bundle.py
     - util/random_seed.py
@@ -89,6 +98,8 @@ required_modules:
     - util/augmentations/profile.py
     - util/augmentations/operators.py
     - util/augmentations/torch_operators.py
+  split_builders:
+    - data_preprocess/split_cache.py
   contract_tests:
     - util/tests/test_data_contracts.py
     - util/tests/test_data_runtime.py

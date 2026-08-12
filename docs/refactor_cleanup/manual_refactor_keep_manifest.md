@@ -378,7 +378,7 @@ pytest -q util/tests/test_augmentations.py \
 - [x] 实现从受管 split/cache 到 raw100 model-adapter boundary 的统一运行时数据层；以三种有限 LoaderPlan 接管 PTB-XL/K500/evaluation，保留显式 corruption view、worker-safe Dataset、确定性 DataLoader 和明确 loader/session ownership。
 - [x] 建立独立 `models/` 包，完成 EfficientNet1DV2、ECGFounder、严格checkpoint身份和统一 `build_model` 接口，并通过真实checkpoint CPU smoke test。
 - [x] 独立重写 ECGTwin VAE encoder/decoder，并在同一白名单模块中实现 exact-label VAE-LHAT、攻击后标签边界收缩和 Stage-1 两链 AugMix-SimCLR 受管 YAML。
-- [x] 新增 `configs/train/PTBXL.yaml` 和 `core/supervised_trainer.py`；调用方通过统一 `data_runtime` 构建任意 PTB-XL/PN2021 DataLoader，再由通用训练器接受 model + DataLoader，支持验证集 macro-AUPRC 选模、最终测试与无验证集 last-epoch 微调。
+- [x] 新增 `configs/train/PTBXL.yaml` 和 `core/supervised_trainer.py`；调用方仅通过三种 finite LoaderPlan 打开受管 PTB-XL/PN2021 DataLoader，再由通用训练器接受 model + DataLoader，支持验证集 macro-AUPRC 选模、最终测试与无验证集 last-epoch 微调。
 - [x] 新增 `core/train_PTBXL.py` 作为白名单 PTB-XL 数据适配层，并新增 EffNet/ECGFounder 两个 `boot_scripts/` 薄入口；两骨干统一读取 raw physical-mV 100 Hz BTC，EffNet 保持1000点，ECGFounder在输入设备上 `linear 1000→5000 align_corners=True` 后全局 z-score，boot CLI 收敛为有限 launcher-owned 面。
 - [x] run-scoped TensorBoard/`ecg_plot` 观察层曾用于开发审计，已在 paper-kernel v2 CP1 退役；仓库外历史 event/PNG/NPY/manifest 原样保留，当前运行面只写 checkpoint 与 JSON history/diagnostics/result。
 - [x] 当前主线不保留旧 ECGTwin VAE/Nomic 预处理入口；该 `TRANSITION`

@@ -225,6 +225,42 @@ def test_tracked_data_content_ledger_identity_is_consistent() -> None:
     ] == expected_sha
 
 
+def test_k500_handoff_locks_finite_loader_openings() -> None:
+    handoff = yaml.safe_load(
+        (CONFIG_ROOT / "data" / "k500_handoff.yaml").read_text(encoding="utf-8")
+    )
+    plans = handoff["interface"]["public_loader_plans"]
+    expected_openings = {
+        "ptbxl_source": ["open_train", "open_validation", "open_test"],
+        "pn2021_k500": ["open_ordered", "open_training"],
+        "pn2021_evaluation": ["open_clean", "open_corrupted", "open_session"],
+    }
+    expected_shuffle = {
+        "ptbxl_source": [True, False, False],
+        "pn2021_k500": [False, True],
+        "pn2021_evaluation": [False, False, False],
+    }
+    assert handoff["schema_version"] == 2
+    assert handoff["profile_name"] == "pn2021_k500_data_interface_handoff"
+    assert list(plans) == list(expected_openings)
+    for name, openings in expected_openings.items():
+        assert plans[name]["openings"] == openings
+        assert list(plans[name]["shuffle_by_opening"]) == openings
+        assert list(plans[name]["shuffle_by_opening"].values()) == expected_shuffle[name]
+    assert "shuffle" not in handoff["interface"]["canonical_raw_request"]
+
+    for identity in handoff["required_configs"].values():
+        path = CONFIG_ROOT / identity["path"]
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == identity["sha256"]
+
+    modules = handoff["required_modules"]
+    assert set(modules["runtime"]).isdisjoint(modules["cache_builders"])
+    assert [
+        group for group, paths in modules.items()
+        if "data_preprocess/split_cache.py" in paths
+    ] == ["split_builders"]
+
+
 def test_active_index_exposes_only_the_manual_launcher_and_whitelist_configs() -> None:
     path = CONFIG_ROOT / "active_scripts.yaml"
     text = path.read_text(encoding="utf-8")
