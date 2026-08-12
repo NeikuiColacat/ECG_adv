@@ -16,7 +16,11 @@ import core.train_PN2021 as train_adapter
 from core.methods import AuxiliaryVariant, RecipeKind, build_method_runtime, load_recipe_spec
 from core.methods.runtime import _derive_seed
 from core.train_PN2021 import _validate_locked_source_checkpoint
-from models.checkpoints import CheckpointIdentity
+from models.checkpoints import (
+    CheckpointIdentity,
+    load_model_checkpoint,
+    validate_training_lineage,
+)
 from models.contracts import ECGFOUNDER_SPEC, EFFICIENTNET1DV2_SPEC
 from util.random_seed import derive_seed, load_random_seed_config
 
@@ -39,6 +43,28 @@ def _matched():
     for name in ("vae", "lhat_config", "lhat_rng"):
         payload["resources"].pop(name)
     return load_recipe_spec(payload)
+
+
+def _lineage(tmp_path: Path) -> dict:
+    recipe = _recipe("a0_clean_v1.yaml")
+    config = trainer.load_online_train_config(ONLINE_CONFIG)
+    adaptation = {
+        "dataset": "pn2021", "partition": "k500", "logical_center": "ningbo",
+        "source_centers": ["ningbo"], "record_count": 500, "split_id": "k500",
+        "hash_id_set_sha256": "1" * 64, "split_manifest_sha256": "2" * 64,
+        "source_manifest_sha256": "3" * 64,
+        "mapping_version": "v7_super5_sjr_rgq_review_20260528",
+        "mapping_hash": "555ec85d5b51", "class_order": list(EFFICIENTNET1DV2_SPEC.class_order),
+    }
+    loader = SimpleNamespace(dataset=SimpleNamespace(
+        selection=SimpleNamespace(describe=lambda: adaptation)))
+    model = {"spec": EFFICIENTNET1DV2_SPEC.describe(),
+             "checkpoint_identity": {"path": str(tmp_path / "moved.pt"), "sha256": "4" * 64}}
+    seed = {"base_seed": 7, "effective_seed": 9, "namespace": "online",
+            "config_sha256": "5" * 64}
+    return trainer._training_lineage(model_identity=model, spec=EFFICIENTNET1DV2_SPEC,
+        center="ningbo", recipe=recipe, config=config, seed_identity=seed,
+        train_dataloader=loader)
 
 
 def test_non_dry_handoffs_keep_bundle_relative_recipe(monkeypatch, tmp_path: Path, capsys) -> None:
@@ -98,6 +124,73 @@ def test_source_checkpoint_lock_covers_both_backbones(tmp_path: Path) -> None:
                              (CheckpointIdentity(tmp_path / "wrong.pt", sha, 1, (), ()), "path")):
             with pytest.raises(ValueError, match=message):
                 _validate_locked_source_checkpoint(SimpleNamespace(**{attribute: bad}), spec, config)
+
+
+def test_training_lineage_is_exact_and_binds_managed_selection(tmp_path: Path) -> None:
+    lineage = _lineage(tmp_path)
+    assert lineage["model"] == {
+        "name": "efficientnet1dv2", "spec": EFFICIENTNET1DV2_SPEC.describe()}
+    assert lineage["source_checkpoint"] == {"sha256": "4" * 64}
+    assert validate_training_lineage(lineage) == lineage
+    for field, value in (("unexpected", True), ("center", "georgia"),
+                         ("schema_version", True)):
+        drifted = {**lineage, field: value}
+        with pytest.raises(ValueError):
+            validate_training_lineage(drifted)
+    for section, field, value in (
+        ("seed", "base_seed", None), ("seed", "effective_seed", True),
+        ("seed", "namespace", 7), ("comparison", "group", None),
+        ("comparison", "replicate_id", "0"), ("method", "schema_version", "2"),
+        ("method", "recipe_version", False),
+    ):
+        drifted = {**lineage, section: {**lineage[section], field: value}}
+        with pytest.raises(ValueError):
+            validate_training_lineage(drifted)
+
+
+def test_checkpoint_loader_exposes_schema3_and_finite_schema2(tmp_path: Path) -> None:
+    lineage = _lineage(tmp_path); method = lineage["method"]
+    model = torch.nn.Linear(2, 1); state = model.state_dict()
+    run = {"center": "ningbo", "scientific_arm": method["scientific_arm"],
+           "model": {"spec": EFFICIENTNET1DV2_SPEC.describe(),
+                     "checkpoint_identity": {"sha256": "4" * 64}},
+           "recipe": {"recipe_id": method["recipe_id"],
+                      "recipe_spec_sha256": method["recipe_spec_sha256"]},
+           "seed": lineage["seed"], "config": {"sha256": lineage["training_config_sha256"]}}
+    payload = {"schema_version": 3, "lineage": lineage, "center": "ningbo",
+               "method_id": method["recipe_id"], "scientific_arm": method["scientific_arm"],
+               "selection": "last", "run_identity": run, "model_state_dict": state}
+    path = tmp_path / "schema3.pt"; torch.save(payload, path)
+    identity = load_model_checkpoint(torch.nn.Linear(2, 1), path)
+    assert (identity.checkpoint_schema_version, identity.lineage,
+            identity.legacy_training_identity) == (3, lineage, None)
+    for run_drift in (
+        {**run, "seed": {**run["seed"], "effective_seed": 10}},
+        {**run, "config": {"sha256": "0" * 64}},
+        {**run, "model": {**run["model"], "checkpoint_identity": {"sha256": "0" * 64}}},
+    ):
+        torch.save({**payload, "run_identity": run_drift}, path)
+        with pytest.raises(ValueError, match="run_identity"):
+            load_model_checkpoint(torch.nn.Linear(2, 1), path)
+    payload["center"] = "georgia"; torch.save(payload, path)
+    with pytest.raises(ValueError, match="root identity"):
+        load_model_checkpoint(torch.nn.Linear(2, 1), path)
+
+    legacy = {"schema_version": 2, "center": "ningbo", "method_id": "a0_clean_v1",
+              "scientific_arm": "clean", "selection": "last", "model_state_dict": state,
+              "run_identity": {"center": "ningbo", "scientific_arm": "clean",
+                  "model": {"spec": EFFICIENTNET1DV2_SPEC.describe()},
+                  "method": {"model_name": "efficientnet1dv2",
+                             "method": {"profile_name": "a0_clean_v1",
+                                        "scientific_arm": "clean"}}}}
+    torch.save(legacy, path); identity = load_model_checkpoint(torch.nn.Linear(2, 1), path)
+    assert identity.legacy_training_identity == {"model": "efficientnet1dv2",
+        "center": "ningbo", "method_id": "a0_clean_v1", "scientific_arm": "clean",
+        "selection": "last"}
+    raw = tmp_path / "raw.pt"; torch.save(state, raw)
+    identity = load_model_checkpoint(torch.nn.Linear(2, 1), raw)
+    assert identity.checkpoint_schema_version is None and identity.lineage is None
+    assert identity.legacy_training_identity is None
 
 
 def test_online_config_references_and_overrides_remain_closed() -> None:

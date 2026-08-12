@@ -37,7 +37,7 @@ from core.methods import (
     build_method_runtime,
     load_recipe_spec,
 )
-from models.checkpoints import sha256_file
+from models.checkpoints import sha256_file, validate_training_lineage
 from models.contracts import (
     CLASS_ORDER,
     ECGFOUNDER_SPEC,
@@ -388,6 +388,7 @@ class OnlineTrainingResult:
     config_identity: dict[str, Any]
     seed_identity: dict[str, Any]
     latent_pool_identity: dict[str, Any] | None
+    lineage: dict[str, Any]
 
     def describe(self) -> dict[str, Any]:
         if len(self.last_checkpoint_sha256) != 64:
@@ -397,6 +398,9 @@ class OnlineTrainingResult:
             "sha256": self.last_checkpoint_sha256,
         }
         return {
+            "schema_version": 1,
+            "artifact_type": "pn2021_train_result",
+            "lineage": self.lineage,
             "output_dir": str(self.output_dir),
             "method_id": self.method_id,
             "recipe": self.recipe_identity,
@@ -1091,6 +1095,83 @@ def _loader_selection_partition(train_dataloader: Any) -> str | None:
     selection = getattr(dataset, "selection", None)
     raw = getattr(selection, "partition", None)
     return None if raw is None else str(raw)
+
+
+def _training_lineage(
+    *,
+    model_identity: Mapping[str, Any],
+    spec: ModelSpec,
+    center: str,
+    recipe: RecipeSpec,
+    config: OnlineTrainConfig,
+    seed_identity: Mapping[str, Any],
+    train_dataloader: Any,
+) -> dict[str, Any]:
+    selection = getattr(getattr(train_dataloader, "dataset", None), "selection", None)
+    describe = getattr(selection, "describe", None)
+    if not callable(describe):
+        raise ValueError("managed online dataloader must expose its selection identity")
+    adaptation = describe()
+    if not isinstance(adaptation, Mapping):
+        raise ValueError("managed selection identity must be a mapping")
+    source_key = (
+        "checkpoint_identity"
+        if spec.name == EFFICIENTNET1DV2_SPEC.name
+        else "task_checkpoint_identity"
+    )
+    source = model_identity.get(source_key)
+    if not isinstance(source, Mapping):
+        raise ValueError("online model must expose its source checkpoint identity")
+    random_seed = config.payload["random_seed"]
+    return validate_training_lineage(
+        {
+            "schema_version": 1,
+            "scope": "pn2021_k500_center_adaptation",
+            "model": {"name": spec.name, "spec": spec.describe()},
+            "center": center,
+            "method": {
+                "recipe_id": recipe.recipe_id,
+                "scientific_arm": recipe.scientific_arm,
+                "recipe_spec_sha256": recipe.recipe_sha256,
+                "implementation_identity": recipe.implementation_identity,
+                "recipe_version": recipe.recipe_version,
+                "kind": recipe.kind.value,
+                "auxiliary_variant": recipe.auxiliary_variant.value,
+                "schema_version": recipe.schema_version,
+            },
+            "comparison": {
+                "group": random_seed["comparison_group"],
+                "replicate_id": random_seed["replicate_id"],
+            },
+            "seed": {
+                key: seed_identity[key]
+                for key in ("base_seed", "effective_seed", "namespace", "config_sha256")
+            },
+            "source_checkpoint": {"sha256": source["sha256"]},
+            "training_config_sha256": config.sha256,
+            "adaptation_data": {
+                key: adaptation[key]
+                for key in (
+                    "dataset",
+                    "partition",
+                    "logical_center",
+                    "source_centers",
+                    "record_count",
+                    "split_id",
+                    "hash_id_set_sha256",
+                    "split_manifest_sha256",
+                    "source_manifest_sha256",
+                    "mapping_version",
+                    "mapping_hash",
+                    "class_order",
+                )
+            },
+            "selection": {
+                "policy": "last",
+                "heldout_evaluation_used_for_selection": False,
+            },
+        }
+    )
 
 
 def _preflight_loader_pool_hashes(train_dataloader: Any, latent_pool: Any) -> None:
@@ -2403,6 +2484,16 @@ def train_online_model(
             "record_count": len(stage2_teacher_cache),
         }
         _write_json(method_resources_path, method_resource_identity)
+    model_identity = _model_identity(model, spec)
+    lineage = _training_lineage(
+        model_identity=model_identity,
+        spec=spec,
+        center=center,
+        recipe=recipe,
+        config=config,
+        seed_identity=seed.describe(),
+        train_dataloader=train_dataloader,
+    )
     run_identity = {
         "config": config.describe(),
         "method": method_resource_identity,
@@ -2410,7 +2501,7 @@ def train_online_model(
         "seed": seed.describe(),
         "center": center,
         "scientific_arm": recipe.scientific_arm,
-        "model": _model_identity(model, spec),
+        "model": model_identity,
         "vae_encoder_checkpoint": encoder_identity,
         "vae_decoder_checkpoint": decoder_identity,
         "training_parameters": {
@@ -3297,7 +3388,8 @@ def train_online_model(
             )
             if checkpoint_write_policy == "every_epoch" or epoch == epochs:
                 checkpoint = {
-                    "schema_version": 2,
+                    "schema_version": 3,
+                    "lineage": lineage,
                     "epoch": epoch,
                     "scientific_arm": recipe.scientific_arm,
                     "method_id": recipe.recipe_id,
@@ -3320,7 +3412,8 @@ def train_online_model(
             _write_json(
                 history_path,
                 {
-                    "schema_version": 2,
+                    "schema_version": 3,
+                    "lineage": lineage,
                     "selection": "last",
                     "method_id": recipe.recipe_id,
                     "recipe": _recipe_identity(recipe),
@@ -3350,6 +3443,7 @@ def train_online_model(
             },
             seed_identity=seed.describe(),
             latent_pool_identity=pool_identity,
+            lineage=lineage,
         )
         _write_json(result_path, result.describe())
         return result
