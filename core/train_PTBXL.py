@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping
 
 import torch
 import torch.nn as nn
@@ -34,19 +34,28 @@ from models.factory import build_model, get_model_spec
 from util.config_bundle import resolve_config_reference
 
 
-def _model_spec(model: nn.Module) -> ModelSpec | None:
-    spec = getattr(model, "model_spec", None)
-    if spec is None and hasattr(model, "module"):
-        spec = getattr(model.module, "model_spec", None)
-    if spec is not None and not isinstance(spec, ModelSpec):
-        raise TypeError("model.model_spec must be a models.contracts.ModelSpec")
-    return spec
-
-
-def _managed_model_spec(model: nn.Module) -> ModelSpec:
-    spec = _model_spec(model)
-    if spec is None:
-        raise ValueError("managed PTB-XL models must expose a ModelSpec")
+def _managed_model_spec(value: nn.Module | ModelSpec | str) -> ModelSpec:
+    from_model = isinstance(value, nn.Module)
+    if from_model:
+        spec = getattr(value, "model_spec", None)
+        if spec is None and hasattr(value, "module"):
+            spec = getattr(value.module, "model_spec", None)
+        if spec is None:
+            raise ValueError("managed PTB-XL models must expose a ModelSpec")
+    elif isinstance(value, str):
+        try:
+            spec = {
+                EFFICIENTNET1DV2_SPEC.name: EFFICIENTNET1DV2_SPEC,
+                ECGFOUNDER_SPEC.name: ECGFOUNDER_SPEC,
+            }[value]
+        except KeyError:
+            raise ValueError("unsupported managed PTB-XL model name") from None
+    else:
+        spec = value
+    if not isinstance(spec, ModelSpec):
+        if from_model:
+            raise TypeError("model.model_spec must be a models.contracts.ModelSpec")
+        raise TypeError("model_spec must be a ModelSpec or managed model name")
     if spec not in {EFFICIENTNET1DV2_SPEC, ECGFOUNDER_SPEC}:
         raise ValueError("unsupported managed PTB-XL ModelSpec")
     return spec
@@ -67,23 +76,6 @@ class _CanonicalInputAdapter:
             "source_layout": "time_channel",
             "model": self.spec.describe(),
         }
-
-
-def _plan_model_spec(value: ModelSpec | str) -> ModelSpec:
-    if isinstance(value, str):
-        matches = {
-            EFFICIENTNET1DV2_SPEC.name: EFFICIENTNET1DV2_SPEC,
-            ECGFOUNDER_SPEC.name: ECGFOUNDER_SPEC,
-        }
-        try:
-            return matches[value]
-        except KeyError:
-            raise ValueError("unsupported managed PTB-XL model name") from None
-    if not isinstance(value, ModelSpec):
-        raise TypeError("model_spec must be a ModelSpec or managed model name")
-    if value not in {EFFICIENTNET1DV2_SPEC, ECGFOUNDER_SPEC}:
-        raise ValueError("unsupported managed PTB-XL ModelSpec")
-    return value
 
 
 def _loader_profile(config: Any, spec: ModelSpec) -> dict[str, Any]:
@@ -162,7 +154,7 @@ def build_ptbxl_loader_plan(
     config = load_train_config(config_path, config_root=config_root)
     if config.payload["data"].get("dataset") != "ptbxl":
         raise ValueError("training config data.dataset must be ptbxl")
-    return _build_loader_plan(config, _plan_model_spec(model_spec))
+    return _build_loader_plan(config, _managed_model_spec(model_spec))
 
 
 def run_ptbxl_boot(model_name: str, args: Any) -> int:
@@ -236,23 +228,11 @@ class PTBXLDataLoaders:
     test: RuntimeDataLoader | None
     plan: PTBXLLoaderPlan
 
-    @property
-    def sampling_rate_hz(self) -> int:
-        return CANONICAL_SAMPLING_RATE_HZ
-
     def close(self) -> None:
         self.train.close()
         self.validation.close()
         if self.test is not None:
             self.test.close()
-
-    def describe(self) -> dict[str, Any]:
-        return {
-            "loader_plan": self.plan.describe(),
-            "train": self.train.describe(),
-            "validation": self.validation.describe(),
-            "test": None if self.test is None else self.test.describe(),
-        }
 
 
 def build_ptbxl_dataloaders(
@@ -298,9 +278,6 @@ def train_ptbxl(
     config_path: str | Path = DEFAULT_TRAIN_CONFIG,
     config_root: str | Path | None = None,
     output_dir: str | Path | None = None,
-    device: str | torch.device | None = None,
-    pos_weight: torch.Tensor | Sequence[float] | None = None,
-    class_names: Sequence[str] | None = None,
     training_parameters: Mapping[str, Any] | None = None,
 ) -> TrainingResult:
     """Train any compatible Torch model on official PTB-XL Super5 splits."""
@@ -321,9 +298,6 @@ def train_ptbxl(
             config_path=config.path,
             config_root=config.config_root,
             output_dir=output_dir,
-            device=device,
-            pos_weight=pos_weight,
-            class_names=class_names,
             training_parameters=training_parameters,
             input_adapter=_CanonicalInputAdapter(spec),
         )
@@ -332,8 +306,6 @@ def train_ptbxl(
 
 
 __all__ = [
-    "PTBXLDataLoaders",
-    "build_ptbxl_dataloaders",
     "build_ptbxl_loader_plan",
     "run_ptbxl_boot",
     "train_ptbxl",

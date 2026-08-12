@@ -11,6 +11,7 @@ import torch
 import boot_scripts.train_ptbxl_ecgfounder as founder_boot
 import boot_scripts.train_ptbxl_effnet as effnet_boot
 import core.train_PTBXL as ptbxl_module
+import core.supervised_trainer as supervised_module
 import data_preprocess.data_runtime as data_runtime
 import models
 import models.factory as model_factory
@@ -101,7 +102,8 @@ def test_ptbxl_plan_is_fully_derived_from_model_and_yaml(
     plan = _Plan.instances[0]
     try:
         assert loaders.plan is plan
-        assert loaders.sampling_rate_hz == 100
+        assert not hasattr(loaders, "sampling_rate_hz")
+        assert not hasattr(loaders, "describe")
         assert plan.train_partition == "train"
         assert plan.validation_partition == "validation"
         assert plan.test_partition == "test"
@@ -326,6 +328,7 @@ def test_train_ptbxl_delegates_to_trainer_and_closes_owned_plan(
     assert captured["validation_dataloader"] is bundle.validation
     assert captured["test_dataloader"] is bundle.test
     assert captured["training_parameters"] == {"epochs": 3}
+    assert {"device", "pos_weight", "class_names"}.isdisjoint(captured)
     adapter = captured["input_adapter"]
     assert adapter.describe()["source_sampling_rate_hz"] == 100
     assert adapter.describe()["source_layout"] == "time_channel"
@@ -387,6 +390,12 @@ def test_ptbxl_boot_cli_is_the_launcher_owned_finite_surface() -> None:
     assert models.__all__ == ["available_models", "build_model", "get_model_spec",
                               "build_ecgtwin_vae", "load_vae_config"]
     assert model_factory.available_models() == ("ecgfounder", "efficientnet1dv2")
+    assert supervised_module.__all__ == [
+        "DEFAULT_TRAIN_CONFIG", "load_train_config", "train_model"
+    ]
+    assert ptbxl_module.__all__ == [
+        "build_ptbxl_loader_plan", "run_ptbxl_boot", "train_ptbxl"
+    ]
     assert not any(hasattr(model_factory, name) for name in
                    ("MODEL_ALIASES", "MODEL_BUILDERS", "MODEL_SPECS", "normalize_model_name"))
     with pytest.raises(ValueError, match="unknown model"):
@@ -520,6 +529,7 @@ def test_ptbxl_boot_execution_passes_only_yaml_training_profile(
     assert "dataloader_parameters" not in captured
     assert "device" not in captured
     assert "pos_weight" not in captured
+    assert "class_names" not in captured
 
 
 @pytest.mark.parametrize(

@@ -7,7 +7,6 @@ together with a model to :func:`train_model`.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 from dataclasses import dataclass
@@ -34,10 +33,7 @@ from util.config_bundle import (
     resolve_config_reference,
     resolve_entry_config_path,
 )
-from util.evaluation.metrics import (
-    UndefinedClassPolicy,
-    compute_classification_metrics,
-)
+from util.evaluation.metrics import compute_classification_metrics
 from util.random_seed import seed_process
 
 
@@ -55,14 +51,6 @@ TRAINING_PARAMETER_NAMES = frozenset(
         "amp_dtype",
     }
 )
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def _section(payload: Mapping[str, Any], key: str) -> dict[str, Any]:
@@ -94,7 +82,7 @@ class SupervisedTrainConfig:
             "sha256": self.sha256,
             "config_root": str(self.config_root),
             "random_seed_config": str(self.random_seed_config_path),
-            "random_seed_config_sha256": _sha256(self.random_seed_config_path),
+            "random_seed_config_sha256": sha256_file(self.random_seed_config_path),
             "resolved": self.payload,
         }
 
@@ -127,12 +115,7 @@ class TrainingResult:
         )
         partition = selection_config.get("partition")
         metric = selection_config.get("metric")
-        if metric == "last":
-            selection_policy = "last"
-            final_model_selected = True
-        else:
-            selection_policy = "validation_metric"
-            final_model_selected = True
+        selection_policy = "last" if metric == "last" else "validation_metric"
         result = {
             "output_dir": str(self.output_dir),
             "selected_epoch": self.selected_epoch,
@@ -154,7 +137,7 @@ class TrainingResult:
                 "selected_epoch": self.selected_epoch,
                 "selected_metric": self.selected_metric,
                 "selected_checkpoint": selected_checkpoint,
-                "final_model_selected": final_model_selected,
+                "final_model_selected": True,
                 "heldout_evaluation_used_for_selection": False,
             },
         }
@@ -237,7 +220,7 @@ def load_train_config(
     root = config_bundle_root(config_path, config_root=config_root)
     return SupervisedTrainConfig(
         path=config_path,
-        sha256=_sha256(config_path),
+        sha256=sha256_file(config_path),
         config_root=root,
         random_seed_config_path=resolve_config_reference(
             references["random_seed_config"],
@@ -358,15 +341,12 @@ def _model_logits(
 def _classification_metrics(
     logits: np.ndarray,
     targets: np.ndarray,
-    class_names: Sequence[str],
-    *,
-    undefined_class_policy: UndefinedClassPolicy = "strict",
 ) -> dict[str, Any]:
     metrics = compute_classification_metrics(
         logits,
         targets,
-        class_order=class_names,
-        undefined_class_policy=undefined_class_policy,
+        class_order=CLASS_ORDER,
+        undefined_class_policy="strict",
     )
     per_class = metrics["per_class"]
     return {
@@ -388,7 +368,6 @@ def _run_epoch(
     model_spec: ModelSpec | None,
     input_key: str,
     target_key: str,
-    class_names: Sequence[str],
     pos_weight: torch.Tensor | None,
     amp_enabled: bool,
     amp_dtype: torch.dtype,
@@ -396,7 +375,6 @@ def _run_epoch(
     scaler: torch.cuda.amp.GradScaler | None = None,
     gradient_clip_norm: float = 1.0,
     on_optimizer_step: Callable[[], None] | None = None,
-    undefined_class_policy: UndefinedClassPolicy = "strict",
     input_adapter: Callable[[torch.Tensor], torch.Tensor] | None = None,
 ) -> dict[str, Any]:
     training = optimizer is not None
@@ -461,12 +439,7 @@ def _run_epoch(
     if not training:
         epoch_logits = np.concatenate(collected_logits, axis=0)
         epoch_targets = np.concatenate(collected_targets, axis=0)
-        classification = _classification_metrics(
-            epoch_logits,
-            epoch_targets,
-            class_names,
-            undefined_class_policy=undefined_class_policy,
-        )
+        classification = _classification_metrics(epoch_logits, epoch_targets)
         result.update(classification)
     return result
 
@@ -787,7 +760,6 @@ def train_model(
             model_spec=spec,
             input_key=input_key,
             target_key=target_key,
-            class_names=class_names,
             pos_weight=resolved_pos_weight,
             amp_enabled=amp_enabled,
             amp_dtype=amp_dtype,
@@ -807,7 +779,6 @@ def train_model(
                 model_spec=spec,
                 input_key=input_key,
                 target_key=target_key,
-                class_names=class_names,
                 pos_weight=resolved_pos_weight,
                 amp_enabled=amp_enabled,
                 amp_dtype=amp_dtype,
@@ -881,7 +852,6 @@ def train_model(
             model_spec=spec,
             input_key=input_key,
             target_key=target_key,
-            class_names=class_names,
             pos_weight=resolved_pos_weight,
             amp_enabled=amp_enabled,
             amp_dtype=amp_dtype,
@@ -908,10 +878,6 @@ def train_model(
 
 __all__ = [
     "DEFAULT_TRAIN_CONFIG",
-    "TRAINING_PARAMETER_NAMES",
-    "SupervisedTrainConfig",
-    "TrainingResult",
     "load_train_config",
-    "seed_training_process",
     "train_model",
 ]

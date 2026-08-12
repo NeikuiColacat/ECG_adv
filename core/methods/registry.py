@@ -335,10 +335,6 @@ class RecipeSpec:
         return RECIPE_IMPLEMENTATION_IDENTITY
 
     @property
-    def executable(self) -> bool:
-        return True
-
-    @property
     def rng_namespace(self) -> str:
         namespaces = tuple(dict.fromkeys(self.rng_namespaces.values()))
         return namespaces[0] if len(namespaces) == 1 else self.profile_name

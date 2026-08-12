@@ -69,6 +69,7 @@ def test_v2_recipe_files_are_finite_resource_closed_characterizations(
 ) -> None:
     recipe = load_recipe_spec(RECIPES / filename)
     assert (recipe.schema_version, recipe.kind, recipe.auxiliary_variant) == (2, kind, variant)
+    assert not hasattr(recipe, "executable")
     assert tuple(recipe.resources) == resources
     assert recipe.requirements.names() == requirements
     assert tuple((term.name, term.kind, term.weight) for term in recipe.objective.terms) == objective
