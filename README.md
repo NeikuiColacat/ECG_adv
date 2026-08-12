@@ -111,6 +111,24 @@ seeds, RecipeSpec identity, checkpoints, metrics, and file hashes through
 selector; that file now chooses one of five code-owned finite recipes rather
 than describing a dynamic graph.
 
+Prospective PN2021 adaptation emits a schema-v1 `pn2021_train_result`; its
+selected final checkpoint is schema v3, and both carry the same immutable
+training lineage. Formal evaluation emits a schema-v3
+`pn2021_evaluation_result` whose `subject` selects exactly one of three modes:
+
+- `prospective_train_result`: one target center, with `--train-result` and the
+  matching tracked `--method-config`;
+- `legacy_center_adapted`: one target center, with an explicit schema-v2 A0 or
+  Direct checkpoint;
+- `source_registry`: the canonical four centers, with a locked PTB-XL source
+  registry.
+
+`--train-result` is an output artifact reference, not a YAML configuration
+dependency, so it is intentionally excluded from the copied config closure.
+The evaluation subject still locks that artifact by resolved path and SHA256;
+the method selector and source registry remain ordinary hashed config-closure
+members.
+
 ## Evidence Boundary
 
 The current simplified recipe was chosen after a 94-candidate development

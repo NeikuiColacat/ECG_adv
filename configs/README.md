@@ -29,6 +29,10 @@ the repository's default configs.
 - Closure follows schema-owned references only: the top-level `references`
   mapping, finite-recipe resources, and the existing seed/operator config keys.
   YAML-looking prose and checkpoint arguments are not dependencies.
+- `--method-config` and `--source-registry` are tracked configuration
+  references and enter the YAML closure. `--train-result` is a produced JSON
+  artifact rather than configuration, so it does not; the schema-v3 evaluation
+  subject instead records and verifies its resolved path and SHA256.
 - `config_closure: snapshot_only` and
   `config_closure: managed_run_snapshots_and_sha256` mark evidence registries
   whose nested historical paths are snapshots, not live dependencies.
@@ -87,6 +91,19 @@ PN2021 experiment YAML continues to pass a tracked selector via
 `--method-config`. The flag name is retained for launch compatibility; its
 schema-v2 payload is a finite RecipeSpec declaration, not an extensible method
 profile or Python import surface.
+
+PN2021 result identities form a closed chain: schema-v1
+`pn2021_train_result` and its schema-v3 final checkpoint carry identical
+training lineage, while schema-v3 `pn2021_evaluation_result` binds its evaluated
+subject. The evaluation entrypoint accepts exactly one mode:
+
+- prospective: `--train-result` plus `--method-config`, exactly one center;
+- finite legacy A0/Direct: explicit `--checkpoint`, exactly one center;
+- source/global: `--source-registry`, the canonical four-center order.
+
+These modes are mutually exclusive; source checkpoints cannot masquerade as
+adapted checkpoints, and a center-adapted checkpoint cannot be silently reused
+for a different target center.
 
 ## Output and Local Paths
 

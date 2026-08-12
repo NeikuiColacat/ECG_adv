@@ -58,7 +58,7 @@ ENTRYPOINTS = {
 LAUNCHER_OWNED_FLAGS = frozenset(
     {"--config", "--config-root", "--output-dir", "--dry-run"}
 )
-CONFIG_REFERENCE_FLAGS = frozenset({"--method-config"})
+CONFIG_REFERENCE_FLAGS = frozenset({"--method-config", "--source-registry"})
 
 
 def _mapping(value: Any, description: str) -> dict[str, Any]:

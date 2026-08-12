@@ -54,6 +54,31 @@ latest_mainline:
     auxiliary_variant: contracted_lhat
     recipe_version: 1
     recipe_spec_sha256: de3d6948a9efc974405b7382d45653f93032a34ac2fd88637172ed731d876602
+    artifact_lineage:
+      train_result:
+        schema_version: 1
+        artifact_type: pn2021_train_result
+      final_checkpoint:
+        schema_version: 3
+      evaluation_result:
+        schema_version: 3
+        artifact_type: pn2021_evaluation_result
+      invariant: train_result_and_final_checkpoint_share_exact_lineage
+      evaluation_subject_modes:
+        prospective_train_result:
+          centers: exactly_one_target_center
+          arguments: [--train-result, --method-config]
+        legacy_center_adapted:
+          centers: exactly_one_target_center
+          accepted_methods: [a0_clean, direct_depth23_fixed20]
+          arguments: [--checkpoint]
+        source_registry:
+          centers: canonical_four_in_declared_order
+          arguments: [--source-registry]
+      config_closure:
+        included_reference_flags: [--method-config, --source-registry]
+        excluded_artifact_flags: [--train-result]
+        train_result_subject_lock: resolved_path_and_sha256
     gpu_replication_status: diagnostic_smoke_passed_not_full_replication
     prospective_run_root: /home/linbinhao/ECG_adv_data/runs/manual_refactor_paper_kernel_v2_recipe_v1_r1
   primary_metric_view: drop_all_zero
@@ -139,8 +164,12 @@ latest_mainline:
       - util/tests/test_evaluation_metrics.py
       - util/tests/test_pn2021_evaluation.py
     cpu_contract_result:
-      status: passed_155_skipped_10
+      status: passed_189_skipped_10
       date: "2026-08-12"
+    cp4_lineage_contract_result:
+      status: pending_parent_final_verification
+      pytest: pending
+      tracked_physical_loc: pending
     gpu_replication:
       status: diagnostic_smoke_passed_not_performance_evidence
       planned_run_root: /home/linbinhao/ECG_adv_data/runs/manual_refactor_paper_kernel_v2_recipe_v1_r1
@@ -198,6 +227,16 @@ historical_mainline:
 
 run_record_contract:
   recorder: util/run_record.py
+  artifact_schemas:
+    pn2021_train_result: 1
+    pn2021_final_checkpoint: 3
+    pn2021_evaluation_result: 3
+  evaluation_subject_modes:
+    - prospective_train_result
+    - legacy_center_adapted
+    - source_registry
+  train_result_config_closure_member: false
+  train_result_subject_identity: resolved_path_and_sha256
   result_types:
     - supervised_train_result
     - pn2021_train_result

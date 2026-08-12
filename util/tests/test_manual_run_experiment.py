@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -14,10 +15,13 @@ from boot_scripts.run_experiment import (
     load_experiment_plan,
     main,
 )
+from models.contracts import EFFICIENTNET1DV2_SPEC
 from util.run_record import verify_run_file_index
 
 
 REPO = Path(__file__).resolve().parents[2]
+FIXTURE_CHECKPOINT = b"fixture checkpoint\n"
+FIXTURE_CHECKPOINT_SHA256 = hashlib.sha256(FIXTURE_CHECKPOINT).hexdigest()
 
 
 def _write_bundle(tmp_path: Path, *, run_dir: Path) -> Path:
@@ -84,17 +88,62 @@ def _action_plan(
     return run_dir, load_experiment_plan(experiment_path)
 
 
-def _typed_train_result(*, heldout: bool = False) -> dict:
-    checkpoint = {"path": "checkpoints/last.pt", "sha256": "0" * 64}
+def _training_lineage() -> dict:
+    model = EFFICIENTNET1DV2_SPEC.describe()
     return {
-        "config": {},
+        "schema_version": 1, "scope": "pn2021_k500_center_adaptation",
+        "model": {"name": EFFICIENTNET1DV2_SPEC.name, "spec": model}, "center": "ningbo",
+        "method": {"recipe_id": "fixture", "scientific_arm": "fixture",
+                   "recipe_spec_sha256": "0" * 64, "implementation_identity": "fixture",
+                   "recipe_version": 1, "kind": "fixture", "auxiliary_variant": "fixture",
+                   "schema_version": 1},
+        "comparison": {"group": "fixture", "replicate_id": 0},
+        "seed": {"base_seed": 0, "effective_seed": 0, "namespace": "fixture",
+                 "config_sha256": "0" * 64},
+        "source_checkpoint": {"sha256": "f" * 64},
+        "training_config_sha256": "0" * 64,
+        "adaptation_data": {"dataset": "pn2021", "partition": "k500",
+            "logical_center": "ningbo", "source_centers": ["ningbo"], "record_count": 500,
+            "split_id": "fixture", "hash_id_set_sha256": "0" * 64,
+            "split_manifest_sha256": "0" * 64, "source_manifest_sha256": "0" * 64,
+            "mapping_version": "v7_super5_sjr_rgq_review_20260528",
+            "mapping_hash": "555ec85d5b51", "class_order": ["CD", "HYP", "MI", "NORM", "STTC"]},
+        "selection": {"policy": "last", "heldout_evaluation_used_for_selection": False},
+    }
+
+
+def _legacy_protocol() -> dict:
+    return {
+        "partition": "k500", "use_all_k500": True, "validation_split": False,
+        "checkpoint_selection": "last", "heldout_ref_exclusion_required": True,
+        "merge_cpsc_2018_extra_into_cpsc_2018": True,
+        "centers": ["ningbo", "chapman_shaoxing", "cpsc_2018", "georgia"],
+        "class_order": ["CD", "HYP", "MI", "NORM", "STTC"],
+        "mapping_version": "v7_super5_sjr_rgq_review_20260528",
+        "mapping_hash": "555ec85d5b51",
+    }
+
+
+def _typed_train_result(*, heldout: bool = False) -> dict:
+    checkpoint = {
+        "path": "checkpoints/last.pt",
+        "sha256": FIXTURE_CHECKPOINT_SHA256,
+    }
+    return {
+        "schema_version": 1,
+        "artifact_type": "pn2021_train_result",
+        "lineage": _training_lineage(),
+        "config": {"training": {"sha256": "0" * 64,
+                                  "resolved": {"protocol": _legacy_protocol()}}},
         "epochs_completed": 1,
-        "model": {"name": "fixture"},
+        "model": {"spec": EFFICIENTNET1DV2_SPEC.describe()},
         "center": "ningbo",
-        "method_id": "fixture_method",
+        "method_id": "fixture",
         "scientific_arm": "fixture",
         "optimizer_steps": 1,
         "last_checkpoint": checkpoint,
+        "seed": {"base_seed": 0, "effective_seed": 0, "namespace": "fixture",
+                 "config_sha256": "0" * 64},
         "selection": {
             "policy": "last",
             "selected_epoch": 1,
@@ -104,17 +153,38 @@ def _typed_train_result(*, heldout: bool = False) -> dict:
     }
 
 
+def _metric_body() -> dict:
+    return {"metrics": {"drop_all_zero": {"macro_auroc": 0.5}},
+            "identity": {"record_count": 1}}
+
+
 def _evaluation_result() -> dict:
+    model = EFFICIENTNET1DV2_SPEC.describe()
+    lineage = _training_lineage()
     return {
-        "schema_version": 2,
+        "schema_version": 3,
+        "artifact_type": "pn2021_evaluation_result",
         "status": "complete",
-        "checkpoint": {"path": "checkpoints/last.pt", "sha256": "0" * 64},
-        "clean": {"per_center": {"ningbo": {}}},
-        "corrupted": {"per_view": [{} for _ in range(20)], "aggregates": {}},
+        "model": model,
+        "checkpoint": {"path": "checkpoints/last.pt", "sha256": FIXTURE_CHECKPOINT_SHA256},
+        "subject": {
+            "mode": "prospective_train_result",
+            "train_result": {"path": "train_result.json", "sha256": "pending"},
+            "lineage": lineage,
+        },
+        "clean": {"per_center": {"ningbo": _metric_body()}},
+        "corrupted": {
+            "per_view": [{"view_index": index, "per_center": {"ningbo": _metric_body()}}
+                         for index in range(20)],
+            "aggregates": {key: {"view_count": count, "center_order": ["ningbo"],
+                                 "evaluated_center_mean": {"drop_all_zero": {}}}
+                           for key, count in (("depth2", 10), ("depth3", 10), ("depth23", 20))},
+        },
         "protocol": {
             "mapping_version": "v7_super5_sjr_rgq_review_20260528",
             "mapping_hash": "555ec85d5b51",
             "class_order": ["CD", "HYP", "MI", "NORM", "STTC"],
+            "logical_centers": ["ningbo"],
         },
     }
 
@@ -129,6 +199,51 @@ def _record_payload(
     def delegate(argv: list[str], log_path: Path) -> int:
         output_dir = Path(argv[argv.index("--output-dir") + 1])
         output_dir.mkdir(parents=True)
+        checkpoint = payload.get("last_checkpoint")
+        if isinstance(checkpoint, dict) and isinstance(checkpoint.get("path"), str):
+            raw_checkpoint = Path(checkpoint["path"])
+            checkpoint_path = (
+                raw_checkpoint
+                if raw_checkpoint.is_absolute()
+                else output_dir / raw_checkpoint
+            )
+            checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+            checkpoint_path.write_bytes(FIXTURE_CHECKPOINT)
+        subject = payload.get("subject")
+        train_result = subject.get("train_result") if isinstance(subject, dict) else None
+        if isinstance(train_result, dict):
+            artifact = Path(train_result["path"])
+            if not artifact.is_absolute():
+                artifact = output_dir / Path(relative_name).parent / artifact
+                artifact.parent.mkdir(parents=True, exist_ok=True)
+                referenced = _typed_train_result()
+                if isinstance(payload.get("checkpoint"), dict):
+                    referenced["last_checkpoint"] = dict(payload["checkpoint"])
+                    referenced["selection"]["selected_checkpoint"] = dict(payload["checkpoint"])
+                referenced["lineage"] = payload["subject"]["lineage"]
+                encoded = (json.dumps(referenced, sort_keys=True) + "\n").encode()
+                artifact.write_bytes(encoded)
+                train_result["sha256"] = hashlib.sha256(encoded).hexdigest()
+        lineage = subject.get("lineage") if isinstance(subject, dict) else None
+        registry = lineage.get("registry") if isinstance(lineage, dict) else None
+        if isinstance(registry, dict):
+            artifact = output_dir / Path(relative_name).parent / registry["path"]
+            artifact.parent.mkdir(parents=True, exist_ok=True)
+            encoded = yaml.safe_dump({"schema_version": 1, "models": {
+                payload["model"]["name"]: {
+                    "selected_checkpoint_sha256": payload["checkpoint"]["sha256"]
+                }
+            }}).encode()
+            artifact.write_bytes(encoded)
+            registry["sha256"] = hashlib.sha256(encoded).hexdigest()
+        evaluation_checkpoint = payload.get("checkpoint")
+        if isinstance(evaluation_checkpoint, dict) and isinstance(evaluation_checkpoint.get("path"), str):
+            artifact = Path(evaluation_checkpoint["path"])
+            if not artifact.is_absolute():
+                artifact = output_dir / Path(relative_name).parent / artifact
+                artifact.parent.mkdir(parents=True, exist_ok=True)
+                artifact.write_bytes(FIXTURE_CHECKPOINT)
+                evaluation_checkpoint["sha256"] = FIXTURE_CHECKPOINT_SHA256
         (output_dir / relative_name).write_text(json.dumps(payload), encoding="utf-8")
         log_path.write_text("fixture delegate\n", encoding="utf-8")
         return delegate_exit_code
@@ -300,8 +415,48 @@ def test_typed_train_result_rejects_heldout_selection(tmp_path: Path) -> None:
     assert "heldout-free last checkpoint" in manifest["error"]
 
 
+def test_typed_train_result_records_lineage_and_verifies_checkpoint(
+    tmp_path: Path,
+) -> None:
+    _, plan = _action_plan(tmp_path, "train_pn2021")
+    payload = _typed_train_result()
+    exit_code, manifest = _record_payload(plan, "train_result.json", payload)
+
+    assert exit_code == 0
+    assert manifest["delegate_result"]["identity"]["lineage"] == payload["lineage"]
+
+
 @pytest.mark.parametrize(
-    "missing", ["method_id", "center", "scientific_arm", "optimizer_steps"]
+    ("checkpoint_path", "checkpoint_sha256", "message"),
+    (
+        ("../outside.pt", FIXTURE_CHECKPOINT_SHA256, "output directory"),
+        ("checkpoints/last.pt", "f" * 64, "SHA256 does not match"),
+    ),
+)
+def test_typed_train_result_verifies_checkpoint_artifact(
+    tmp_path: Path, checkpoint_path: str, checkpoint_sha256: str, message: str
+) -> None:
+    _, plan = _action_plan(tmp_path, "train_pn2021")
+    payload = _typed_train_result()
+    checkpoint = {"path": checkpoint_path, "sha256": checkpoint_sha256}
+    payload["last_checkpoint"] = checkpoint
+    payload["selection"]["selected_checkpoint"] = checkpoint
+    exit_code, manifest = _record_payload(plan, "train_result.json", payload)
+    assert exit_code == 1
+    assert message in manifest["error"]
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [
+        "schema_version",
+        "artifact_type",
+        "lineage",
+        "method_id",
+        "center",
+        "scientific_arm",
+        "optimizer_steps",
+    ],
 )
 def test_typed_train_result_requires_identity(tmp_path: Path, missing: str) -> None:
     _, plan = _action_plan(tmp_path, "train_pn2021")
@@ -310,6 +465,14 @@ def test_typed_train_result_requires_identity(tmp_path: Path, missing: str) -> N
     exit_code, manifest = _record_payload(plan, "train_result.json", payload)
     assert exit_code == 1
     assert manifest["delegate_result"] is None
+
+
+def test_typed_train_result_rejects_invalid_canonical_lineage(tmp_path: Path) -> None:
+    _, plan = _action_plan(tmp_path, "train_pn2021")
+    payload = _typed_train_result()
+    payload["lineage"]["seed"] = None
+    exit_code, manifest = _record_payload(plan, "train_result.json", payload)
+    assert exit_code == 1 and manifest["delegate_result"] is None
 
 
 def test_bogus_evaluation_result_is_rejected(tmp_path: Path) -> None:
@@ -322,7 +485,7 @@ def test_bogus_evaluation_result_is_rejected(tmp_path: Path) -> None:
     exit_code, manifest = _record_payload(plan, "evaluation_result.json", payload)
     assert exit_code == 1
     assert manifest["delegate_result"] is None
-    assert "schema_version=2" in manifest["error"]
+    assert "schema_version=3" in manifest["error"]
 
 
 def test_evaluation_result_requires_checkpoint_and_metric_bodies(tmp_path: Path) -> None:
@@ -334,6 +497,47 @@ def test_evaluation_result_requires_checkpoint_and_metric_bodies(tmp_path: Path)
     )
     assert exit_code == 0 and manifest["status"] == "complete"
 
+    _, legacy_plan = _action_plan(
+        tmp_path / "legacy", "evaluate_pn2021", delegate_subdir="evaluation"
+    )
+    legacy = _evaluation_result()
+    legacy["subject"]["mode"] = "legacy_center_adapted"
+    legacy["subject"]["lineage"].update(
+        adaptation_data={"mapping_version": "v7_super5_sjr_rgq_review_20260528",
+                         "mapping_hash": "555ec85d5b51"},
+        checkpoint={"sha256": FIXTURE_CHECKPOINT_SHA256},
+    )
+    exit_code, _ = _record_payload(legacy_plan, "evaluation_result.json", legacy)
+    assert exit_code == 0
+
+    _, source_plan = _action_plan(
+        tmp_path / "source", "evaluate_pn2021", delegate_subdir="evaluation"
+    )
+    source = _evaluation_result()
+    source["subject"] = {
+        "mode": "source_registry",
+        "train_result": None,
+        "lineage": {
+            "model": {"name": EFFICIENTNET1DV2_SPEC.name,
+                      "spec": EFFICIENTNET1DV2_SPEC.describe()},
+            "source_checkpoint": {"sha256": FIXTURE_CHECKPOINT_SHA256},
+            "registry": {"path": "source_registry.yaml", "sha256": "pending"},
+            "selection": {"policy": "fold9_best_macro_auprc",
+                          "heldout_evaluation_used_for_selection": False},
+        },
+    }
+    source_centers = [
+        "ningbo", "chapman_shaoxing", "cpsc_2018", "georgia"
+    ]
+    source["protocol"]["logical_centers"] = source_centers
+    source["clean"]["per_center"] = {center: _metric_body() for center in source_centers}
+    for view in source["corrupted"]["per_view"]:
+        view["per_center"] = {center: _metric_body() for center in source_centers}
+    for aggregate in source["corrupted"]["aggregates"].values():
+        aggregate["center_order"] = source_centers
+    exit_code, _ = _record_payload(source_plan, "evaluation_result.json", source)
+    assert exit_code == 0
+
     _, invalid_plan = _action_plan(
         tmp_path / "invalid", "evaluate_pn2021", delegate_subdir="evaluation"
     )
@@ -344,6 +548,127 @@ def test_evaluation_result_requires_checkpoint_and_metric_bodies(tmp_path: Path)
     )
     assert exit_code == 1
     assert manifest["delegate_result"] is None
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    (
+        ("model", {"name": "wrong"}, "model differs"),
+        ("centers", ["georgia"], "centers differ"),
+        ("subject", {"mode": "unknown", "train_result": None, "lineage": None}, "subject contract"),
+    ),
+)
+def test_evaluation_result_rejects_subject_mismatch(
+    tmp_path: Path, field: str, value: object, message: str
+) -> None:
+    _, plan = _action_plan(
+        tmp_path, "evaluate_pn2021", delegate_subdir="evaluation"
+    )
+    payload = _evaluation_result()
+    if field == "centers":
+        payload["protocol"]["logical_centers"] = value
+    elif field == "subject":
+        payload["subject"] = value
+    else:
+        payload[field] = value
+    exit_code, manifest = _record_payload(plan, "evaluation_result.json", payload)
+    assert exit_code == 1
+    assert message in manifest["error"]
+
+
+@pytest.mark.parametrize(
+    "attack", ["missing_train_result", "unbound_train_result", "invalid_lineage",
+               "wrong_clean_center", "empty_view_bodies", "empty_aggregates", "checkpoint_sha"]
+)
+def test_evaluation_result_rejects_unbound_or_incomplete_evidence(
+    tmp_path: Path, attack: str
+) -> None:
+    _, plan = _action_plan(tmp_path / attack, "evaluate_pn2021", delegate_subdir="evaluation")
+    payload = _evaluation_result()
+    if attack in {"missing_train_result", "unbound_train_result"}:
+        artifact = tmp_path / f"{attack}.json"
+        if attack == "unbound_train_result":
+            artifact.write_text("{}\n", encoding="utf-8")
+        payload["subject"]["train_result"] = {
+            "path": str(artifact), "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest()
+            if artifact.exists() else "0" * 64,
+        }
+    elif attack == "invalid_lineage":
+        payload["subject"]["lineage"]["seed"] = None
+    elif attack == "wrong_clean_center":
+        payload["clean"]["per_center"] = {"not_ningbo": _metric_body()}
+    elif attack == "empty_view_bodies":
+        payload["corrupted"]["per_view"][0]["per_center"]["ningbo"] = {}
+    elif attack == "empty_aggregates":
+        payload["corrupted"]["aggregates"] = {}
+    else:
+        artifact = tmp_path / "wrong.pt"
+        artifact.write_bytes(b"wrong checkpoint")
+        payload["checkpoint"] = {"path": str(artifact), "sha256": "0" * 64}
+    exit_code, manifest = _record_payload(plan, "evaluation_result.json", payload)
+    assert exit_code == 1 and manifest["delegate_result"] is None
+
+
+@pytest.mark.parametrize("mode", ["legacy_center_adapted", "source_registry"])
+def test_evaluation_result_rejects_mode_specific_checkpoint_mismatch(
+    tmp_path: Path, mode: str
+) -> None:
+    _, plan = _action_plan(
+        tmp_path / mode, "evaluate_pn2021", delegate_subdir="evaluation"
+    )
+    payload = _evaluation_result()
+    payload["subject"]["mode"] = mode
+    if mode == "legacy_center_adapted":
+        payload["subject"]["lineage"]["checkpoint"] = {"sha256": "f" * 64}
+    else:
+        payload["subject"]["train_result"] = None
+        payload["subject"]["lineage"] = {
+            "model": {"name": EFFICIENTNET1DV2_SPEC.name,
+                      "spec": EFFICIENTNET1DV2_SPEC.describe()},
+            "checkpoint": {"sha256": FIXTURE_CHECKPOINT_SHA256},
+            "source_checkpoint": {"sha256": "f" * 64},
+            "registry": {"path": "source_registry.yaml", "sha256": "pending"},
+            "selection": {"policy": "fold9_best_macro_auprc",
+                          "heldout_evaluation_used_for_selection": False},
+        }
+        source_centers = [
+            "ningbo", "chapman_shaoxing", "cpsc_2018", "georgia"
+        ]
+        payload["protocol"]["logical_centers"] = source_centers
+        payload["clean"]["per_center"] = {center: _metric_body() for center in source_centers}
+        for view in payload["corrupted"]["per_view"]:
+            view["per_center"] = {center: _metric_body() for center in source_centers}
+        for aggregate in payload["corrupted"]["aggregates"].values():
+            aggregate["center_order"] = source_centers
+    exit_code, manifest = _record_payload(plan, "evaluation_result.json", payload)
+    assert exit_code == 1
+    assert "checkpoint differs" in manifest["error"]
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    (("class_order", ["NORM", "CD", "HYP", "MI", "STTC"]),
+     ("heldout_ref_exclusion_required", False)),
+)
+def test_legacy_evaluation_rejects_unlocked_training_protocol(
+    tmp_path: Path, key: str, value: object
+) -> None:
+    _, plan = _action_plan(tmp_path, "evaluate_pn2021", delegate_subdir="evaluation")
+    payload = _evaluation_result()
+    payload["subject"]["mode"] = "legacy_center_adapted"
+    payload["subject"]["lineage"].update(checkpoint={"sha256": FIXTURE_CHECKPOINT_SHA256})
+    referenced = _typed_train_result()
+    for field in ("schema_version", "artifact_type", "lineage", "seed"):
+        referenced.pop(field)
+    referenced["config"]["training"]["resolved"]["protocol"][key] = value
+    artifact = tmp_path / "legacy_train_result.json"
+    artifact.write_text(json.dumps(referenced), encoding="utf-8")
+    payload["subject"]["train_result"] = {
+        "path": str(artifact), "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest()
+    }
+    exit_code, manifest = _record_payload(plan, "evaluation_result.json", payload)
+    assert exit_code == 1
+    assert "locked K500 protocol" in manifest["error"]
 
 
 def test_internal_absolute_yaml_reference_is_rejected(tmp_path: Path) -> None:
@@ -387,6 +712,27 @@ def test_mainline_closure_includes_stage1_augmix_config(tmp_path: Path) -> None:
     plan = load_experiment_plan(experiment_path, run_dir=tmp_path / "mainline")
     closure = {path.relative_to(plan.config_root).as_posix() for path, _ in plan.config_sources}
     assert "train/augmix.yaml" in closure
+
+
+def test_launcher_snapshots_source_registry_but_not_train_result(tmp_path: Path) -> None:
+    experiment_path = _write_bundle(tmp_path, run_dir=tmp_path / "runs" / "new")
+    registry = tmp_path / "configs" / "baselines" / "source.yaml"
+    registry.parent.mkdir(parents=True)
+    registry.write_text("schema_version: 1\n", encoding="utf-8")
+    payload = yaml.safe_load(experiment_path.read_text(encoding="utf-8"))
+    payload["entrypoint"]["name"] = "evaluate_pn2021"
+    payload["entrypoint"]["arguments"] = [
+        "--source-registry",
+        "baselines/source.yaml",
+        "--train-result",
+        str(tmp_path / "external" / "train_result.json"),
+    ]
+    experiment_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+
+    plan = load_experiment_plan(experiment_path)
+    closure = {path.relative_to(plan.config_root).as_posix() for path, _ in plan.config_sources}
+    assert "baselines/source.yaml" in closure
+    assert all(path.suffix in {".yaml", ".yml"} for path, _ in plan.config_sources)
 
 
 def test_launcher_rejects_owned_delegate_flags(tmp_path: Path) -> None:
