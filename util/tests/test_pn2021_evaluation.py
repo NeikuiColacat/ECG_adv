@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import itertools
 import json
 import subprocess
 import sys
+from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
 
@@ -42,6 +44,7 @@ from util.evaluation.pn2021 import (
     LOGICAL_CENTERS,
     PN2021_MAPPING_HASH,
     PN2021_MAPPING_VERSION,
+    _validate_input_pipeline,
     evaluate_pn2021,
     load_corruption_views,
     load_pn2021_eval_config,
@@ -1280,6 +1283,22 @@ def test_default_eval_config_uses_canonical_profile_and_artifact_locks() -> None
     assert corruption["expected_profile"] == EXPECTED_PROFILE
     assert corruption["expected_severity"] == 5
     assert corruption["expected_domain_sampling_rate_hz"] == 500
+    pipeline = config.payload["protocol"]["input_pipeline"]
+    mutations = (
+        (("unexpected",), True),
+        (("canonical_domain", "points"), 999),
+        (("model_domains", "ecgfounder", "align_corners"), 1),
+        (("normalization", "variance_correction"), False),
+        (("normalization", "epsilon"), Decimal.from_float(1e-6)),
+    )
+    for keys, value in mutations:
+        mutated = copy.deepcopy(pipeline)
+        owner = mutated
+        for key in keys[:-1]:
+            owner = owner[key]
+        owner[keys[-1]] = value
+        with pytest.raises(ValueError):
+            _validate_input_pipeline({"input_pipeline": mutated})
 
 
 def _write_matrix_members(tmp_path: Path) -> list[Path]:

@@ -67,6 +67,32 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_PN2021_EVAL_CONFIG = PROJECT_ROOT / "configs" / "eval" / "PN2021.yaml"
 PN2021_MAPPING_VERSION = MAPPING_VERSION
 PN2021_MAPPING_HASH = MAPPING_HASH
+_LOCKED_INPUT_PIPELINE = {
+    "canonical_domain": {
+        "sampling_rate_hz": CANONICAL_SAMPLING_RATE_HZ, "duration_seconds": 10.0,
+        "points": CANONICAL_POINTS, "channels": CANONICAL_CHANNELS,
+        "layout": "time_channel", "physical_unit": "mV", "normalization": "none",
+    },
+    "sanitization": {"stage": "before_model_domain_adaptation",
+                     "nonfinite_replacement": "zero"},
+    "model_domains": {
+        EFFICIENTNET1DV2_SPEC.name: {
+            "sampling_rate_hz": EFFICIENTNET1DV2_SPEC.sampling_rate_hz,
+            "points": EFFICIENTNET1DV2_SPEC.input_points, "adaptation": "identity",
+        },
+        ECGFOUNDER_SPEC.name: {
+            "sampling_rate_hz": ECGFOUNDER_SPEC.sampling_rate_hz,
+            "points": ECGFOUNDER_TARGET_POINTS, "adaptation": "interpolate",
+            "mode": INTERPOLATION_MODE,
+            "align_corners": INTERPOLATION_ALIGN_CORNERS,
+        },
+    },
+    "normalization": {
+        "stage": "after_model_domain_adaptation", "method": "per_sample_global_zscore",
+        "epsilon": 1e-6, "variance_correction": 0,
+    },
+    "output": {"layout": "channel_time", "dtype": "float32"},
+}
 
 
 def _yaml_mapping(path: Path, *, description: str) -> dict[str, Any]:
@@ -124,131 +150,15 @@ def _validate_input_pipeline(protocol: Mapping[str, Any]) -> None:
     pipeline = _mapping(
         protocol["input_pipeline"], description="protocol.input_pipeline"
     )
-    _exact_keys(
-        pipeline,
-        expected={
-            "canonical_domain",
-            "sanitization",
-            "model_domains",
-            "normalization",
-            "output",
-        },
-        description="protocol.input_pipeline",
-    )
-
-    canonical = _mapping(
-        pipeline["canonical_domain"],
-        description="protocol.input_pipeline.canonical_domain",
-    )
-    _exact_keys(
-        canonical,
-        expected={
-            "sampling_rate_hz",
-            "duration_seconds",
-            "points",
-            "channels",
-            "layout",
-            "physical_unit",
-            "normalization",
-        },
-        description="protocol.input_pipeline.canonical_domain",
-    )
-    if canonical != {
-        "sampling_rate_hz": CANONICAL_SAMPLING_RATE_HZ,
-        "duration_seconds": 10.0,
-        "points": CANONICAL_POINTS,
-        "channels": CANONICAL_CHANNELS,
-        "layout": "time_channel",
-        "physical_unit": "mV",
-        "normalization": "none",
-    }:
-        raise ValueError(
-            "protocol.input_pipeline.canonical_domain must be the locked raw "
-            "100 Hz (1000,12) mV cache contract"
-        )
-
-    sanitization = _mapping(
-        pipeline["sanitization"],
-        description="protocol.input_pipeline.sanitization",
-    )
-    _exact_keys(
-        sanitization,
-        expected={"stage", "nonfinite_replacement"},
-        description="protocol.input_pipeline.sanitization",
-    )
-    if sanitization != {
-        "stage": "before_model_domain_adaptation",
-        "nonfinite_replacement": "zero",
-    }:
-        raise ValueError("unsupported protocol.input_pipeline.sanitization")
-
-    model_domains = _mapping(
-        pipeline["model_domains"],
-        description="protocol.input_pipeline.model_domains",
-    )
-    _exact_keys(
-        model_domains,
-        expected={EFFICIENTNET1DV2_SPEC.name, ECGFOUNDER_SPEC.name},
-        description="protocol.input_pipeline.model_domains",
-    )
-    efficientnet = _mapping(
-        model_domains[EFFICIENTNET1DV2_SPEC.name],
-        description=(
-            "protocol.input_pipeline.model_domains.efficientnet1dv2"
-        ),
-    )
-    _exact_keys(
-        efficientnet,
-        expected={"sampling_rate_hz", "points", "adaptation"},
-        description=(
-            "protocol.input_pipeline.model_domains.efficientnet1dv2"
-        ),
-    )
-    if efficientnet != {
-        "sampling_rate_hz": EFFICIENTNET1DV2_SPEC.sampling_rate_hz,
-        "points": EFFICIENTNET1DV2_SPEC.input_points,
-        "adaptation": "identity",
-    }:
-        raise ValueError("unsupported EfficientNet model-domain input contract")
-
-    ecgfounder = _mapping(
-        model_domains[ECGFOUNDER_SPEC.name],
-        description="protocol.input_pipeline.model_domains.ecgfounder",
-    )
-    _exact_keys(
-        ecgfounder,
-        expected={
-            "sampling_rate_hz",
-            "points",
-            "adaptation",
-            "mode",
-            "align_corners",
-        },
-        description="protocol.input_pipeline.model_domains.ecgfounder",
-    )
-    if ecgfounder != {
-        "sampling_rate_hz": ECGFOUNDER_SPEC.sampling_rate_hz,
-        "points": ECGFOUNDER_TARGET_POINTS,
-        "adaptation": "interpolate",
-        "mode": INTERPOLATION_MODE,
-        "align_corners": INTERPOLATION_ALIGN_CORNERS,
-    } or not isinstance(ecgfounder["align_corners"], bool):
+    if pipeline != _LOCKED_INPUT_PIPELINE:
+        raise ValueError("unsupported protocol.input_pipeline")
+    ecgfounder = pipeline["model_domains"][ECGFOUNDER_SPEC.name]
+    if not isinstance(ecgfounder["align_corners"], bool):
         raise ValueError("unsupported ECGFounder model-domain input contract")
-
-    normalization = _mapping(
-        pipeline["normalization"],
-        description="protocol.input_pipeline.normalization",
-    )
-    _exact_keys(
-        normalization,
-        expected={"stage", "method", "epsilon", "variance_correction"},
-        description="protocol.input_pipeline.normalization",
-    )
+    normalization = pipeline["normalization"]
     epsilon = normalization["epsilon"]
     if (
-        normalization["stage"] != "after_model_domain_adaptation"
-        or normalization["method"] != "per_sample_global_zscore"
-        or isinstance(epsilon, bool)
+        isinstance(epsilon, bool)
         or not isinstance(epsilon, (int, float))
         or not np.isfinite(float(epsilon))
         or float(epsilon) != 1e-6
@@ -257,17 +167,6 @@ def _validate_input_pipeline(protocol: Mapping[str, Any]) -> None:
         or normalization["variance_correction"] != 0
     ):
         raise ValueError("unsupported protocol.input_pipeline.normalization")
-
-    output = _mapping(
-        pipeline["output"], description="protocol.input_pipeline.output"
-    )
-    _exact_keys(
-        output,
-        expected={"layout", "dtype"},
-        description="protocol.input_pipeline.output",
-    )
-    if output != {"layout": "channel_time", "dtype": "float32"}:
-        raise ValueError("unsupported protocol.input_pipeline.output")
 
 
 def _resolved_input_pipeline(
