@@ -163,7 +163,7 @@ native-rate 到 100 Hz，以及 100 Hz 到 500 Hz 均使用该策略。PN2021 �
 
 | 文件 | 状态 | 当前职责 | 删除或合并前必须满足 |
 |---|---|---|---|
-| `configs/active_scripts.yaml` | `KEEP-MANUAL` | 区分当前 finite RecipeSpec CPU-verified 运行面与 r2 legacy typed-graph metric evidence，并登记新输出根、CPU 验证和待完成 GPU recipe 重复 | 新索引必须保留 trusted/development/legacy-runtime 分层，禁止仅因代码迁移把 r2 冒充新 RecipeSpec replay 或升级为论文证据 |
+| `configs/active_scripts.yaml` | `KEEP-MANUAL` | 区分当前 finite RecipeSpec CPU/CUDA-diagnostic-verified 运行面与 r2 legacy typed-graph metric evidence，并登记新输出根、CPU 验证、诊断 smoke 及仍待完成的正式 GPU 重复 | 新索引必须保留 trusted/development/legacy-runtime 分层，禁止把单中心单轮 smoke 或 r2 冒充完整 RecipeSpec replay、性能证据或论文证据 |
 | `configs/active_evidence_registry.yaml` | `KEEP-MANUAL` | 记录精简主线的 K500-only 数据边界、有限 recipe/spec SHA、开发选择审计、r2 legacy 身份缺口和论文晋级条件 | 新注册表保留 heldout-tuned/single-seed、无 outside-K500 model access、v7/drop-all-zero、旧 file/compiled SHA、Stage-1 AugMix snapshot 缺口及多随机重复要求 |
 | `configs/eval/PN2021.yaml` | `KEEP-MANUAL` | PN2021正式评估唯一配置；单进程顺序session复用clean/PN2021-C mmap和selection，覆盖四中心clean+20 views | 新配置保留v7映射、K500 ref-exclusion、view顺序、raw100输入、四种canonical metric view及session/loader所有权 |
 | `util/evaluation/__init__.py` | `KEEP-MANUAL` | 手工重构正式评估公共导出面，仅导出 metrics 与 PN2021 固定 checkpoint 评估 API | 新包接管相同 metrics/PN2021 API 且调用方完成迁移 |

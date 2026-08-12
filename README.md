@@ -123,8 +123,12 @@ The 2026-08-06 `r2` run remains legacy typed-method-graph metric evidence. It
 is not a post-migration RecipeSpec replay: its run-scoped snapshots did not
 include the Stage-1 AugMix config/resource identity. The 16 current mainline
 train/eval configs therefore target a fresh
-`manual_refactor_paper_kernel_v2_recipe_v1_r1` output root, whose GPU status is
-`not_run_after_recipe_migration`.
+`manual_refactor_paper_kernel_v2_recipe_v1_r1` output root, which has not yet
+been used for a full replication. A separate one-epoch Ningbo diagnostic smoke
+at commit `dfd00ec` completed Direct EfficientNet and both mainline backbones;
+it verifies the managed CUDA seams only and is not performance or paper
+evidence. Its locked artifact identity and limitations are recorded in
+`configs/active_scripts.yaml`.
 
 Historical `ecg_adv_gen` launchers and package modules are not active here.
 Recover them from commit

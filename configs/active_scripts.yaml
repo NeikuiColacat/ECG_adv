@@ -44,7 +44,7 @@ latest_mainline:
   paper_claim_allowed: false
   launcher: boot_scripts/run_experiment.py
   current_implementation:
-    status: finite_recipe_cpu_verified
+    status: finite_recipe_cpu_and_diagnostic_cuda_smoke_verified
     implementation_identity: finite_recipe_spec_v1
     selector: configs/train/methods/augmix_simclr_lhat.yaml
     schema_version: 2
@@ -54,7 +54,7 @@ latest_mainline:
     auxiliary_variant: contracted_lhat
     recipe_version: 1
     recipe_spec_sha256: de3d6948a9efc974405b7382d45653f93032a34ac2fd88637172ed731d876602
-    gpu_replication_status: not_run_after_recipe_migration
+    gpu_replication_status: diagnostic_smoke_passed_not_full_replication
     prospective_run_root: /home/linbinhao/ECG_adv_data/runs/manual_refactor_paper_kernel_v2_recipe_v1_r1
   primary_metric_view: drop_all_zero
   mapping:
@@ -142,10 +142,43 @@ latest_mainline:
       status: passed_155_skipped_10
       date: "2026-08-12"
     gpu_replication:
-      status: not_run_after_recipe_migration
+      status: diagnostic_smoke_passed_not_performance_evidence
       planned_run_root: /home/linbinhao/ECG_adv_data/runs/manual_refactor_paper_kernel_v2_recipe_v1_r1
       result_registry: configs/active_evidence_registry.yaml
       historical_metric_evidence: configs/active_evidence_registry.yaml
+      diagnostic_smoke:
+        source_git_sha: dfd00ec6a129b82cc335858404f2fc14abb02971
+        artifact_root: /home/linbinhao/ECG_adv_data/runs/cp4_recipe_gpu_smoke_20260812_dfd00ec_r2
+        summary_file: cp4_smoke_summary.json
+        summary_sha256: 0dc80d1e407fa797329d080e7b94d7aadfda13441cb8dce087c8fee0c91bbe65
+        claim_boundary: migration_smoke_only_not_performance_evidence
+        managed_job_file_index_sha256:
+          direct_effnet: 5ce61af6375d29d11ac78ae0f296b45b3768bef8faa3678e6fe8176d2e143578
+          mainline_effnet: f51ec30a729e76a9149b79448ab9617ae3c6b93f89bb46fc23fed5831a29f4fe
+          mainline_ecgfounder: 7420011fb1c2a199eacd45efd94415b897038830b7f5e78f7a2be36957163070
+        common_contract:
+          center: ningbo
+          repeats: 1
+          epochs: 1
+          adaptation_records: 500
+          outer_optimizer_steps_per_job: 20
+        independent_review:
+          file_indexes_verified: true
+          checkpoint_and_config_identities_verified: true
+          lhat_three_scopes_verified: true
+        limitations:
+          - no_formal_evaluation
+          - no_cross_center_matrix
+          - no_independent_repeats
+          - data_cache_payload_bytes_not_content_locked
+          - environment_not_bitwise_locked
+      failed_preflight_provenance:
+        source_git_sha: 68c120fa7f92b09422013c23d6573256df254f1e
+        artifact_root: /home/linbinhao/ECG_adv_data/runs/cp4_recipe_gpu_smoke_20260812_68c120f_r1
+        status: failed_before_data_or_training
+        reason: bundle_relative_recipe_path_was_reparsed_as_absolute
+        run_file_index_sha256: 48b940bb957ab164b9aba71b7caec690b4bb8890e9f5ae54359d2c28968120f1
+        fixed_by_commit: d5d3bd4
     dry_run:
       status: passed_38_of_38_tracked_experiments
       command: >
