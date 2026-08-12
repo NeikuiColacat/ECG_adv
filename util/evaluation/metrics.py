@@ -398,11 +398,7 @@ def aggregate_corruption_views(
             if canonical_four_center_order is None
             else tuple(str(value) for value in canonical_four_center_order)
         )
-        is_exact_four_center = (
-            len(centers) == 4
-            and len(canonical_centers) == 4
-            and set(centers) == set(canonical_centers)
-        )
+        is_exact_four_center = centers == canonical_centers and len(centers) == 4
         result[slice_name] = {
             "evaluation_slice": slice_name,
             "aggregation": "equal_views_then_equal_centers",

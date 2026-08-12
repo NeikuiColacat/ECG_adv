@@ -849,6 +849,7 @@ def build_evaluation_plan(
     amp_enabled: bool | None = None,
     amp_dtype: str | None = None,
     logical_centers: Sequence[str] | None = None,
+    subject_identity: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return a read-only, no-loader evaluation plan suitable for CLI dry-run."""
 
@@ -870,11 +871,15 @@ def build_evaluation_plan(
     output = _resolved_output(config, output_dir)
     selected_centers = _resolve_evaluation_centers(config, logical_centers)
     return {
-        "schema_version": 2,
+        "schema_version": 3,
+        "artifact_type": "pn2021_evaluation_result",
         "profile_name": config.profile_name,
         "config": config.describe(),
         "model": model_spec.describe(),
         "checkpoint": {"path": str(checkpoint), "sha256": sha256_file(checkpoint)},
+        "subject": _resolved_subject_identity(
+            subject_identity, model_spec=model_spec, centers=selected_centers
+        ),
         "output_dir": str(output),
         "runtime": runtime,
         "protocol": {
@@ -1233,10 +1238,7 @@ def _center_aggregation_fields(
     center_order: Sequence[str],
 ) -> dict[str, Any]:
     centers = tuple(str(value) for value in center_order)
-    is_exact_four_center = (
-        len(centers) == len(LOGICAL_CENTERS)
-        and set(centers) == set(LOGICAL_CENTERS)
-    )
+    is_exact_four_center = centers == LOGICAL_CENTERS
     return {
         "center_count": len(centers),
         "center_order": list(centers),
@@ -1245,6 +1247,48 @@ def _center_aggregation_fields(
             evaluated_center_mean if is_exact_four_center else None
         ),
     }
+
+
+def _resolved_subject_identity(
+    value: Mapping[str, Any] | None,
+    *,
+    model_spec: ModelSpec,
+    centers: Sequence[str],
+) -> dict[str, Any] | None:
+    """Bind a managed subject to the model and exact evaluation-center order."""
+
+    if value is None:  # Direct library calls remain usable for unit diagnostics.
+        return None
+    subject = _mapping(value, description="evaluation subject")
+    _exact_keys(
+        subject,
+        expected={"mode", "train_result", "lineage"},
+        description="evaluation subject",
+    )
+    mode = subject["mode"]
+    if mode not in {
+        "prospective_train_result", "legacy_center_adapted", "source_registry"
+    }:
+        raise ValueError("unsupported evaluation subject mode")
+    lineage = _mapping(subject["lineage"], description="evaluation subject.lineage")
+    if lineage.get("model") != {"name": model_spec.name, "spec": model_spec.describe()}:
+        raise ValueError("evaluation subject model differs from evaluated model")
+    selected = tuple(str(center) for center in centers)
+    if mode == "source_registry":
+        if subject["train_result"] is not None or selected != LOGICAL_CENTERS:
+            raise ValueError("source registry subject requires the canonical four centers")
+    else:
+        reference = _mapping(
+            subject["train_result"], description="evaluation subject.train_result"
+        )
+        _exact_keys(
+            reference,
+            expected={"path", "sha256"},
+            description="evaluation subject.train_result",
+        )
+        if selected != (lineage.get("center"),):
+            raise ValueError("adapted evaluation subject requires its single target center")
+    return dict(subject)
 
 
 def evaluate_pn2021(
@@ -1263,6 +1307,7 @@ def evaluate_pn2021(
     amp_enabled: bool | None = None,
     amp_dtype: str | None = None,
     logical_centers: Sequence[str] | None = None,
+    subject_identity: Mapping[str, Any] | None = None,
     dataloader_factory: Callable[..., Any] | None = None,
 ) -> dict[str, Any]:
     """Evaluate one strict task checkpoint on clean and 20 PN2021-C views."""
@@ -1297,6 +1342,9 @@ def evaluate_pn2021(
     )
     selected_centers = _resolve_evaluation_centers(
         resolved_config, logical_centers
+    )
+    subject = _resolved_subject_identity(
+        subject_identity, model_spec=spec, centers=selected_centers
     )
     resolved_device = torch.device(runtime["device"])
     torch_amp_dtype = (
@@ -1457,11 +1505,13 @@ def evaluate_pn2021(
         canonical_four_center_order=LOGICAL_CENTERS,
     )
     result = {
-        "schema_version": 2,
+        "schema_version": 3,
+        "artifact_type": "pn2021_evaluation_result",
         "status": "complete",
         "evaluation_profile": resolved_config.profile_name,
         "model": spec.describe(),
         "checkpoint": checkpoint_identity.describe(),
+        "subject": subject,
         "config": resolved_config.describe(),
         "seed": seed.describe(),
         "runtime": runtime,

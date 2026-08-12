@@ -10,10 +10,12 @@ entrypoint:
   arguments:
     - --model
     - efficientnet1dv2
-    - --checkpoint
-    - /home/linbinhao/ECG_adv_data/runs/manual_refactor_paper_kernel_v2_recipe_v1_r1/effnet/cpsc_2018/training/checkpoints/last.pt
+    - --train-result
+    - /home/linbinhao/ECG_adv_data/runs/manual_refactor_paper_kernel_v2_recipe_v1_r1/effnet/cpsc_2018/training/train_result.json
     - --center
     - cpsc_2018
+    - --method-config
+    - train/methods/augmix_simclr_lhat.yaml
 
 output:
   run_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor_paper_kernel_v2_recipe_v1_r1/eval/effnet/cpsc_2018

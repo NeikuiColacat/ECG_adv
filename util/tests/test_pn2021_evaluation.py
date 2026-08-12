@@ -12,7 +12,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 import yaml
 
-from boot_scripts.evaluate_pn2021 import _summary, main as evaluate_main
+from boot_scripts.evaluate_pn2021 import (
+    _summary,
+    _validate_loaded_subject,
+    main as evaluate_main,
+)
+from core.methods import load_recipe_spec
 from models.checkpoints import CheckpointIdentity
 from models.contracts import (
     CLASS_ORDER,
@@ -290,8 +295,39 @@ def _write_fixture(tmp_path: Path) -> dict[str, object]:
     }
     config_path = config_root / "eval" / "PN2021.yaml"
     _write_yaml(config_path, evaluation_config)
-    checkpoint_path = tmp_path / "checkpoint.pt"
+    checkpoint_path = tmp_path / "training" / "checkpoints" / "last.pt"
+    checkpoint_path.parent.mkdir(parents=True)
     checkpoint_path.write_bytes(b"tiny checkpoint identity")
+    checkpoint = {"path": str(checkpoint_path), "sha256": _sha256(checkpoint_path)}
+    (checkpoint_path.parent.parent / "train_result.json").write_text(
+        json.dumps(
+            {
+                "model": {"spec": EFFICIENTNET1DV2_SPEC.describe()},
+                "center": "ningbo",
+                "method_id": "a0_clean_v1",
+                "scientific_arm": "A0",
+                "config": {
+                    "method": {"profile_name": "a0_clean_v1", "scientific_arm": "A0"},
+                    "training": {"resolved": {"protocol": {
+                        "partition": "k500", "use_all_k500": True,
+                        "validation_split": False, "checkpoint_selection": "last",
+                        "heldout_ref_exclusion_required": True,
+                        "merge_cpsc_2018_extra_into_cpsc_2018": True,
+                        "centers": list(LOGICAL_CENTERS),
+                        "class_order": list(CLASS_ORDER),
+                        "mapping_version": PN2021_MAPPING_VERSION,
+                        "mapping_hash": PN2021_MAPPING_HASH,
+                    }}},
+                },
+                "last_checkpoint": checkpoint,
+                "selection": {
+                    "policy": "last", "selected_checkpoint": checkpoint,
+                    "heldout_evaluation_used_for_selection": False,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     return {
         "config_path": config_path,
         "config_root": config_root,
@@ -389,6 +425,70 @@ def _checkpoint_identity(fixture: dict[str, object]) -> CheckpointIdentity:
         missing_keys=(),
         unexpected_keys=(),
     )
+
+
+def _write_prospective_result(fixture: dict[str, object]) -> tuple[Path, str]:
+    root = Path(fixture["config_root"])
+    relative_method = "train/methods/augmix_simclr_lhat.yaml"
+    method_path = root / relative_method
+    method_path.parent.mkdir(parents=True)
+    method_path.write_text(
+        (Path(__file__).parents[2] / "configs" / relative_method).read_text(),
+        encoding="utf-8",
+    )
+    recipe = load_recipe_spec(method_path)
+    training = Path(fixture["checkpoint_path"]).parents[2] / "prospective" / "training"
+    checkpoint_path = training / "checkpoints" / "last.pt"
+    checkpoint_path.parent.mkdir(parents=True)
+    checkpoint_path.write_bytes(b"prospective checkpoint\n")
+    checkpoint = {"path": str(checkpoint_path), "sha256": _sha256(checkpoint_path)}
+    group, namespace, base_seed = "fixture", "fixture_seed", 20260501
+    seed_payload = f"{base_seed}|{namespace}|{group}|0|ningbo|efficientnet1dv2"
+    lineage = {
+        "schema_version": 1,
+        "scope": "pn2021_k500_center_adaptation",
+        "model": {"name": "efficientnet1dv2", "spec": EFFICIENTNET1DV2_SPEC.describe()},
+        "center": "ningbo",
+        "method": {
+            "recipe_id": recipe.recipe_id, "scientific_arm": recipe.scientific_arm,
+            "recipe_spec_sha256": recipe.recipe_sha256,
+            "implementation_identity": recipe.implementation_identity,
+            "recipe_version": recipe.recipe_version, "kind": recipe.kind.value,
+            "auxiliary_variant": recipe.auxiliary_variant.value,
+            "schema_version": recipe.schema_version,
+        },
+        "comparison": {"group": group, "replicate_id": 0},
+        "seed": {
+            "base_seed": base_seed,
+            "effective_seed": int.from_bytes(hashlib.sha256(seed_payload.encode()).digest()[:4], "little"),
+            "namespace": namespace, "config_sha256": "1" * 64,
+        },
+        "source_checkpoint": {"sha256": "2" * 64},
+        "training_config_sha256": "3" * 64,
+        "adaptation_data": {
+            "dataset": "pn2021", "partition": "k500", "logical_center": "ningbo",
+            "source_centers": ["ningbo"], "record_count": 500, "split_id": "fixture",
+            "hash_id_set_sha256": "4" * 64, "split_manifest_sha256": "5" * 64,
+            "source_manifest_sha256": "6" * 64,
+            "mapping_version": PN2021_MAPPING_VERSION, "mapping_hash": PN2021_MAPPING_HASH,
+            "class_order": list(CLASS_ORDER),
+        },
+        "selection": {"policy": "last", "heldout_evaluation_used_for_selection": False},
+    }
+    result = {
+        "schema_version": 1, "artifact_type": "pn2021_train_result",
+        "lineage": lineage, "model": {"spec": EFFICIENTNET1DV2_SPEC.describe()},
+        "center": "ningbo", "method_id": recipe.recipe_id,
+        "scientific_arm": recipe.scientific_arm,
+        "config": {"training": {"sha256": "3" * 64}},
+        "seed": lineage["seed"],
+        "last_checkpoint": checkpoint,
+        "selection": {"policy": "last", "selected_checkpoint": checkpoint,
+                      "heldout_evaluation_used_for_selection": False},
+    }
+    result_path = training / "train_result.json"
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+    return result_path, relative_method
 
 
 def _loader_factory(
@@ -512,6 +612,8 @@ def test_pn2021_evaluation_dry_run_validates_locks_without_creating_output(
             "efficientnet1dv2",
             "--checkpoint",
             str(fixture["checkpoint_path"]),
+            "--center",
+            "ningbo",
             "--config",
             str(fixture["config_path"]),
             "--config-root",
@@ -522,10 +624,132 @@ def test_pn2021_evaluation_dry_run_validates_locks_without_creating_output(
         ]
     ) == 0
     plan = json.loads(capsys.readouterr().out)
-    assert plan["schema_version"] == 2
+    assert plan["schema_version"] == 3
+    assert plan["artifact_type"] == "pn2021_evaluation_result"
+    assert plan["subject"]["mode"] == "legacy_center_adapted"
     assert plan["protocol"]["corruption_cache"]["artifact_locks_verified"] is True
     assert len(plan["protocol"]["corruption_views"]) == 20
     assert not Path(fixture["output_dir"]).exists()
+
+
+def test_dry_run_rejects_wrong_legacy_center_without_loading_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _write_fixture(tmp_path)
+    monkeypatch.setattr(
+        "boot_scripts.evaluate_pn2021.load_model_checkpoint",
+        lambda *args, **kwargs: pytest.fail("dry-run loaded the checkpoint"),
+    )
+    with pytest.raises(ValueError, match="model or center differs"):
+        evaluate_main([
+            "--model", "efficientnet1dv2", "--checkpoint",
+            str(fixture["checkpoint_path"]), "--center", "georgia", "--config",
+            str(fixture["config_path"]), "--config-root", str(fixture["config_root"]),
+            "--device", "cpu", "--dry-run",
+        ])
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid"),
+    [
+        ("centers", list(reversed(LOGICAL_CENTERS))),
+        ("checkpoint_selection", "best"),
+        ("class_order", list(reversed(CLASS_ORDER))),
+        ("heldout_ref_exclusion_required", False),
+        ("merge_cpsc_2018_extra_into_cpsc_2018", False),
+        ("validation_split", True),
+    ],
+)
+def test_legacy_dry_run_rejects_protocol_identity_drift(
+    tmp_path: Path, field: str, invalid: object
+) -> None:
+    fixture = _write_fixture(tmp_path)
+    result_path = Path(fixture["checkpoint_path"]).parent.parent / "train_result.json"
+    payload = json.loads(result_path.read_text(encoding="utf-8"))
+    payload["config"]["training"]["resolved"]["protocol"][field] = invalid
+    result_path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="locked K500 protocol"):
+        evaluate_main([
+            "--model", "efficientnet1dv2", "--checkpoint",
+            str(fixture["checkpoint_path"]), "--center", "ningbo", "--config",
+            str(fixture["config_path"]), "--config-root", str(fixture["config_root"]),
+            "--device", "cpu", "--dry-run",
+        ])
+
+
+def test_prospective_dry_run_binds_center_recipe_and_lineage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    fixture = _write_fixture(tmp_path)
+    train_result, method = _write_prospective_result(fixture)
+    monkeypatch.setattr(
+        "boot_scripts.evaluate_pn2021.load_model_checkpoint",
+        lambda *args, **kwargs: pytest.fail("dry-run loaded the checkpoint"),
+    )
+    base = [
+        "--model", "efficientnet1dv2", "--train-result", str(train_result),
+        "--center", "ningbo", "--method-config", method, "--config",
+        str(fixture["config_path"]), "--config-root", str(fixture["config_root"]),
+        "--device", "cpu", "--dry-run",
+    ]
+    assert evaluate_main(base) == 0
+    assert json.loads(capsys.readouterr().out)["subject"]["mode"] == (
+        "prospective_train_result"
+    )
+    wrong_center = list(base)
+    wrong_center[wrong_center.index("ningbo")] = "georgia"
+    with pytest.raises(ValueError, match="differs from --center"):
+        evaluate_main(wrong_center)
+
+    a0 = Path(fixture["config_root"]) / "train/methods/a0_clean_v1.yaml"
+    a0.write_text(
+        (Path(__file__).parents[2] / "configs/train/methods/a0_clean_v1.yaml").read_text(),
+        encoding="utf-8",
+    )
+    wrong_recipe = list(base)
+    wrong_recipe[wrong_recipe.index(method)] = "train/methods/a0_clean_v1.yaml"
+    with pytest.raises(ValueError, match="method lineage differs"):
+        evaluate_main(wrong_recipe)
+
+    payload = json.loads(train_result.read_text(encoding="utf-8"))
+    payload["seed"]["effective_seed"] += 1
+    train_result.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="seed identity differs"):
+        evaluate_main(base)
+
+    payload["seed"] = payload["lineage"]["seed"]
+    payload["lineage"]["selection"]["policy"] = "best"
+    train_result.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="selection"):
+        evaluate_main(base)
+
+
+def test_schema3_checkpoint_cannot_bypass_legacy_subject() -> None:
+    subject = {
+        "mode": "legacy_center_adapted",
+        "lineage": {
+            "model": {"name": "efficientnet1dv2"}, "center": "ningbo",
+            "method": {"recipe_id": "a0_clean_v1", "scientific_arm": "A0"},
+        },
+    }
+    checkpoint = CheckpointIdentity(
+        Path("fixture.pt"), "0" * 64, 1, (), (), checkpoint_schema_version=3,
+        lineage={"scope": "prospective"},
+    )
+    with pytest.raises(ValueError, match="schema-2"):
+        _validate_loaded_subject(subject, checkpoint, expected_sha256="0" * 64)
+
+
+def test_loaded_checkpoint_sha_must_match_the_resolved_subject() -> None:
+    checkpoint = CheckpointIdentity(
+        Path("fixture.pt"), "1" * 64, 1, (), (), checkpoint_schema_version=1,
+    )
+    subject = {
+        "mode": "source_registry", "train_result": None,
+        "lineage": {"scope": "ptbxl_source_global"},
+    }
+    with pytest.raises(ValueError, match="SHA256 differs"):
+        _validate_loaded_subject(subject, checkpoint, expected_sha256="0" * 64)
 
 
 @pytest.mark.parametrize(
@@ -651,7 +875,9 @@ def test_pn2021_evaluation_runs_four_centers_with_truthful_aggregates(
         config=config,
     )
 
-    assert result["schema_version"] == 2
+    assert result["schema_version"] == 3
+    assert result["artifact_type"] == "pn2021_evaluation_result"
+    assert result["subject"] is None
     assert len(sessions) == 1 and sessions[0].closed
     assert sessions[0].close_calls == 1
     assert len(sessions[0].requests) == 4 + 20 * 4

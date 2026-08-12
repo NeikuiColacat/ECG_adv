@@ -10,10 +10,12 @@ entrypoint:
   arguments:
     - --model
     - ecgfounder
-    - --checkpoint
-    - /home/linbinhao/ECG_adv_data/runs/manual_refactor_paper_kernel_v2_recipe_v1_r1/ecgfounder/georgia/training/checkpoints/last.pt
+    - --train-result
+    - /home/linbinhao/ECG_adv_data/runs/manual_refactor_paper_kernel_v2_recipe_v1_r1/ecgfounder/georgia/training/train_result.json
     - --center
     - georgia
+    - --method-config
+    - train/methods/augmix_simclr_lhat.yaml
 
 output:
   run_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor_paper_kernel_v2_recipe_v1_r1/eval/ecgfounder/georgia
