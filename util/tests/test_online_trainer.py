@@ -239,6 +239,8 @@ def test_online_config_references_and_overrides_remain_closed() -> None:
     assert set(config.references) == {"split_config", "data_load_config", "random_seed_config",
                                       "source_baseline_registry"}
     assert all(path.is_file() for path in config.references.values())
+    assert "diagnostics" not in config.payload
+    assert "diagnostics_file" not in config.payload["output"]
     assert (resolved["epochs"], resolved["scheduler_horizon_epochs"],
             resolved["stage1_steps"], supplied) == (23, 30, 1024, {})
     with pytest.raises(ValueError, match="unknown online training parameters"):

@@ -1,5 +1,5 @@
 schema_version: 2
-updated: 2026-08-12
+updated: 2026-08-13
 purpose: >
   Declare the executable surface of the clean-room manual refactor. Paths not
   owned by the keep manifest are not active runtime dependencies.
@@ -350,6 +350,5 @@ run_record_contract:
     - logs
     - checkpoints
     - eval
-    - diagnostics
     - reports
     - artifacts

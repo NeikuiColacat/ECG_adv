@@ -95,15 +95,6 @@ training:
       stage1_weight_decay: 1.0e-4
       stage1_gradient_clip_norm: 5.0
 
-diagnostics:
-  diagnostics_every_steps: 20
-  persist_epoch_ineligible_hashes: true
-  performance_timing:
-    enabled: true
-    interval_steps: 20
-    cuda_events: true
-    scope: sampled_core_step_excludes_logging
-
 output:
   root_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor/pn2021_k500_matched_lr3e5
   if_exists: error
@@ -111,6 +102,5 @@ output:
   checkpoints_dir: checkpoints
   last_checkpoint_file: last.pt
   history_file: training_history.json
-  diagnostics_file: diagnostics.jsonl
   result_file: train_result.json
   method_resources_file: method_resources.json

@@ -10,7 +10,6 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-import time
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -424,228 +423,6 @@ class OnlineTrainingResult:
         }
 
 
-class _SampledStepTimer:
-    """Measure one step or one fixed20 group with a single final sync."""
-
-    _CORE_PHASES = (
-        "h2d",
-        "augmentation",
-        "forward_backward",
-        "optimizer",
-    )
-    _DETAIL_PHASES = (
-        "method_generation",
-        "candidate_generation",
-        "fixed20_generation",
-        "raw_chain3_generation",
-        "lhat_search",
-        "augmix",
-        "gradient_combine",
-    )
-    _PHASES = _CORE_PHASES + _DETAIL_PHASES
-
-    def __init__(
-        self,
-        *,
-        device: torch.device,
-        data_wait_ms: float,
-        cuda_events: bool,
-    ) -> None:
-        self.device = device
-        self.data_wait_ms = max(0.0, float(data_wait_ms))
-        self.use_cuda_events = device.type == "cuda" and bool(cuda_events)
-        self._wall_started = time.perf_counter() - self.data_wait_ms / 1000.0
-        self._excluded_host_started: float | None = None
-        self._excluded_host_ms = 0.0
-        self._cpu_started: dict[str, float] = {}
-        self._cpu_elapsed: dict[str, float] = {}
-        self._cuda_events: dict[
-            str, list[tuple[torch.cuda.Event, torch.cuda.Event]]
-        ] = {}
-
-    def add_data_wait(self, milliseconds: float) -> None:
-        self.data_wait_ms += max(0.0, float(milliseconds))
-
-    def start_excluded_host(self) -> None:
-        """Start host-only observer work excluded from training throughput.
-
-        CUDA phase events remain the source of truth for device work.  This
-        interval is only for optional logging/visualization which can otherwise
-        make a sampled fixed20 group look compute-bound on the host.
-        """
-
-        if self._excluded_host_started is not None:
-            raise RuntimeError("excluded host timing is already active")
-        self._excluded_host_started = time.perf_counter()
-
-    def stop_excluded_host(self) -> None:
-        if self._excluded_host_started is None:
-            raise RuntimeError("excluded host timing was not started")
-        self._excluded_host_ms += max(
-            0.0,
-            (time.perf_counter() - self._excluded_host_started) * 1000.0,
-        )
-        self._excluded_host_started = None
-
-    def start(self, phase: str) -> None:
-        if phase not in self._PHASES:
-            raise ValueError(f"unsupported timing phase: {phase}")
-        if phase in self._cpu_started:
-            raise RuntimeError(f"timing phase {phase!r} is already active")
-        if self.use_cuda_events:
-            start = torch.cuda.Event(enable_timing=True)
-            end = torch.cuda.Event(enable_timing=True)
-            start.record()
-            self._cuda_events.setdefault(phase, []).append((start, end))
-        else:
-            self._cpu_started[phase] = time.perf_counter()
-
-    def stop(self, phase: str) -> None:
-        if phase not in self._PHASES:
-            raise ValueError(f"unsupported timing phase: {phase}")
-        if self.use_cuda_events:
-            if phase not in self._cuda_events or not self._cuda_events[phase]:
-                raise RuntimeError(f"timing phase {phase!r} was not started")
-            self._cuda_events[phase][-1][1].record()
-        else:
-            if phase not in self._cpu_started:
-                raise RuntimeError(f"timing phase {phase!r} was not started")
-            started = self._cpu_started.pop(phase)
-            self._cpu_elapsed[phase] = self._cpu_elapsed.get(phase, 0.0) + max(
-                0.0,
-                (time.perf_counter() - started) * 1000.0,
-            )
-
-    def finish(
-        self,
-        *,
-        batch_size: int,
-        grad_norm: float | torch.Tensor,
-        view_executions: int = 1,
-    ) -> dict[str, float]:
-        if view_executions <= 0:
-            raise ValueError("view_executions must be positive")
-        if self._excluded_host_started is not None:
-            raise RuntimeError("cannot finish timing with active excluded host work")
-        if self._cpu_started:
-            raise RuntimeError(
-                "cannot finish timing with active CPU phases: "
-                + ", ".join(sorted(self._cpu_started))
-            )
-        if self.use_cuda_events:
-            # All phases use the current training stream. Synchronizing the last
-            # event once makes every earlier event elapsed-time query valid.
-            last_event = next(
-                (
-                    self._cuda_events[phase][-1][1]
-                    for phase in reversed(self._CORE_PHASES)
-                    if self._cuda_events.get(phase)
-                ),
-                None,
-            )
-            if last_event is None:
-                raise RuntimeError("sampled CUDA timing recorded no core phase")
-            last_event.synchronize()
-            elapsed = {
-                phase: sum(
-                    max(0.0, float(start.elapsed_time(end)))
-                    for start, end in pairs
-                )
-                for phase, pairs in self._cuda_events.items()
-            }
-        else:
-            elapsed = dict(self._cpu_elapsed)
-        observed_wall_ms = max(
-            0.0, (time.perf_counter() - self._wall_started) * 1000.0
-        )
-        grad_norm_value = (
-            float(grad_norm.detach().cpu())
-            if isinstance(grad_norm, torch.Tensor)
-            else float(grad_norm)
-        )
-        phase_total_ms = sum(
-            (
-                self.data_wait_ms,
-                elapsed.get("h2d", 0.0),
-                elapsed.get("augmentation", 0.0),
-                elapsed.get("forward_backward", 0.0),
-                elapsed.get("optimizer", 0.0),
-            )
-        )
-        wall_ms = max(
-            phase_total_ms,
-            observed_wall_ms - self._excluded_host_ms,
-        )
-        values = {
-            "data_wait_ms": self.data_wait_ms / view_executions,
-            "h2d_ms": elapsed.get("h2d", 0.0) / view_executions,
-            "augmentation_ms": elapsed.get("augmentation", 0.0)
-            / view_executions,
-            "forward_backward_ms": elapsed.get("forward_backward", 0.0)
-            / view_executions,
-            "optimizer_ms": elapsed.get("optimizer", 0.0) / view_executions,
-        }
-        values.update(
-            {
-                f"{phase}_ms": elapsed.get(phase, 0.0)
-                for phase in self._DETAIL_PHASES
-                if phase in elapsed
-            }
-        )
-        values["step_ms"] = max(
-            1.0e-9,
-            sum(values[name] for name in (
-                "data_wait_ms",
-                "h2d_ms",
-                "augmentation_ms",
-                "forward_backward_ms",
-                "optimizer_ms",
-            )),
-        )
-        values["samples_per_sec"] = float(batch_size) * 1000.0 / values["step_ms"]
-        values["grad_norm"] = max(0.0, grad_norm_value)
-        if view_executions > 1:
-            values.update(
-                {
-                    "base_group_data_wait_ms": self.data_wait_ms,
-                    "base_group_h2d_ms": elapsed.get("h2d", 0.0),
-                    "base_group_augmentation_ms": elapsed.get(
-                        "augmentation", 0.0
-                    ),
-                    "base_group_forward_backward_ms": elapsed.get(
-                        "forward_backward", 0.0
-                    ),
-                    "base_group_optimizer_ms": elapsed.get("optimizer", 0.0),
-                    "base_group_gpu_plus_data_ms": phase_total_ms,
-                    "base_group_wall_ms": wall_ms,
-                    "base_group_observed_wall_ms": observed_wall_ms,
-                    "base_group_excluded_logging_ms": self._excluded_host_ms,
-                    "base_group_host_gap_ms": max(0.0, wall_ms - phase_total_ms),
-                    "base_records_per_sec": float(batch_size)
-                    * 1000.0
-                    / max(1.0e-9, wall_ms),
-                    "view_executions": float(view_executions),
-                }
-            )
-        return values
-
-
-@contextmanager
-def _excluded_observer_work(
-    timer: _SampledStepTimer | None,
-) -> Iterator[None]:
-    """Exclude optional host logging from an open fixed20 group timer."""
-
-    if timer is None:
-        yield
-        return
-    timer.start_excluded_host()
-    try:
-        yield
-    finally:
-        timer.stop_excluded_host()
-
-
 def load_online_train_config(
     path: str | Path = DEFAULT_ONLINE_CONFIG_PATH,
     *,
@@ -668,7 +445,6 @@ def load_online_train_config(
         "fairness",
         "data",
         "training",
-        "diagnostics",
         "output",
     }
     if set(root_payload) != expected_root_keys:
@@ -865,45 +641,6 @@ def load_online_train_config(
         raise ValueError("training.amp must define enabled and a supported dtype")
     _positive_number(training.get("gradient_clip_norm"), "gradient_clip_norm")
 
-    diagnostics = _mapping(root_payload.get("diagnostics"), "diagnostics")
-    diagnostics_interval = diagnostics.get("diagnostics_every_steps")
-    if (
-        isinstance(diagnostics_interval, bool)
-        or not isinstance(diagnostics_interval, int)
-        or diagnostics_interval <= 0
-    ):
-        raise ValueError("diagnostics_every_steps must be a positive integer")
-    if not isinstance(diagnostics.get("persist_epoch_ineligible_hashes"), bool):
-        raise ValueError("persist_epoch_ineligible_hashes must be boolean")
-    performance_timing = _mapping(
-        diagnostics.get("performance_timing"), "diagnostics.performance_timing"
-    )
-    if set(performance_timing) != {
-        "enabled",
-        "interval_steps",
-        "cuda_events",
-        "scope",
-    }:
-        raise ValueError("performance_timing keys are incomplete or unexpected")
-    if not isinstance(performance_timing.get("enabled"), bool):
-        raise ValueError("performance_timing.enabled must be boolean")
-    timing_interval = performance_timing.get("interval_steps")
-    if (
-        isinstance(timing_interval, bool)
-        or not isinstance(timing_interval, int)
-        or timing_interval <= 0
-    ):
-        raise ValueError("performance_timing.interval_steps must be positive")
-    if performance_timing.get("cuda_events") is not True:
-        raise ValueError("sampled CUDA timing must use cuda_events=true")
-    if performance_timing.get("scope") not in {
-        "sampled_core_step_excludes_logging",
-        "fixed20_base_group_excludes_logging_otherwise_sampled_step",
-    }:
-        raise ValueError(
-            "performance_timing.scope must disclose sampled-step or fixed20 "
-            "base-group timing and logging exclusion"
-        )
     output = _mapping(root_payload.get("output"), "output")
     if output.get("if_exists") != "error":
         raise ValueError("online training may not overwrite an existing run")
@@ -1230,11 +967,6 @@ def _write_json(path: Path, payload: Any) -> None:
     temporary.replace(path)
 
 
-def _append_jsonl(path: Path, payload: Mapping[str, Any]) -> None:
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(dict(payload), ensure_ascii=False, sort_keys=True) + "\n")
-
-
 def _output_member(root: Path, raw: Any) -> Path:
     if not isinstance(raw, str) or not raw:
         raise ValueError("output member names must be non-empty strings")
@@ -1452,51 +1184,14 @@ def _compute_objective(
     )
 
 
-def _objective_host_scalars(
-    objective: _ObjectiveBatch,
-) -> tuple[float, dict[str, float], dict[str, float]]:
-    """Transfer one sampled objective record to the host in one synchronization."""
-
-    raw_names = tuple(objective.raw_terms)
-    weighted_names = tuple(objective.weighted_terms)
-    tensors = (
-        objective.total,
-        *(objective.raw_terms[name] for name in raw_names),
-        *(objective.weighted_terms[name] for name in weighted_names),
-    )
-    values = (
-        torch.stack(
-            tuple(
-                value.detach().to(dtype=torch.float32).reshape(())
-                for value in tensors
-            )
-        )
-        .cpu()
-        .tolist()
-    )
-    raw_offset = 1
-    weighted_offset = raw_offset + len(raw_names)
-    return (
-        float(values[0]),
-        {
-            name: float(values[raw_offset + index])
-            for index, name in enumerate(raw_names)
-        },
-        {
-            name: float(values[weighted_offset + index])
-            for index, name in enumerate(weighted_names)
-        },
-    )
-
-
 def _materialize_finite_scalar_mapping(
     values: Mapping[str, float | int | torch.Tensor],
 ) -> dict[str, float]:
     """Transfer detached device scalars in one synchronization.
 
     Method runtimes may keep diagnostic reductions on-device throughout the
-    fixed20 hot path.  Host conversion is deferred to a sampled logging boundary
-    or epoch end instead of forcing several CUDA synchronizations per view.
+    fixed20 hot path. Host conversion is deferred to epoch end instead of
+    forcing several CUDA synchronizations per view.
     """
 
     resolved: dict[str, float] = {}
@@ -2301,7 +1996,6 @@ def train_online_model(
         checkpoint_dir, output_config["last_checkpoint_file"]
     )
     history_path = _output_member(output, output_config["history_file"])
-    diagnostics_path = _output_member(output, output_config["diagnostics_file"])
     result_path = _output_member(output, output_config["result_file"])
     method_resources_path = _output_member(
         output, output_config["method_resources_file"]
@@ -2384,7 +2078,6 @@ def train_online_model(
         )
     method_resource_identity = runtime.describe()
     method_resource_identity["composition_index_hint_supported"] = True
-    method_resource_identity["performance_timer_hook_supported"] = False
     method_resource_identity["latent_pool"] = pool_identity
     method_resource_identity["vae_encoder_checkpoint"] = encoder_identity
     method_resource_identity["vae_decoder_checkpoint"] = decoder_identity
@@ -2423,12 +2116,6 @@ def train_online_model(
         raise ValueError("pos_weight must contain five Super5 values")
 
     epsilon = float(config.payload["data"]["normalization_epsilon"])
-    diagnostics_interval = int(
-        config.payload["diagnostics"]["diagnostics_every_steps"]
-    )
-    timing_config = config.payload["diagnostics"]["performance_timing"]
-    timing_enabled = bool(timing_config["enabled"])
-    timing_interval = int(timing_config["interval_steps"])
     staged_method = recipe.kind is RecipeKind.TWO_STAGE_AUGMIX_LHAT
     stage1_summary: dict[str, Any] | None = None
     stage2_teacher_cache: dict[str, torch.Tensor] | None = None
@@ -2581,7 +2268,6 @@ def train_online_model(
     }
 
     history: list[dict[str, Any]] = []
-    view_execution_step = 0
     optimizer_steps = 0
     try:
         for epoch in range(1, epochs + 1):
@@ -2622,8 +2308,6 @@ def train_online_model(
             stochastic_trace_chunks: dict[str, list[torch.Tensor]] = {}
             stochastic_input_digest = hashlib.sha256()
             stochastic_input_record_count = 0
-            performance_sums: dict[str, float] = {}
-            timed_step_count = 0
             epoch_seen_hashes: dict[str, set[str]] = {
                 exposure.name: set() for exposure in epoch_exposure_steps
             }
@@ -2631,22 +2315,14 @@ def train_online_model(
                 exposure.name: 0 for exposure in epoch_exposure_steps
             }
             learning_rate = float(optimizer.param_groups[0]["lr"])
-            previous_step_end = time.perf_counter()
             cached_exposure_group: int | None = None
             cached_raw: torch.Tensor | None = None
             cached_targets: torch.Tensor | None = None
-            fixed20_group_timer: _SampledStepTimer | None = None
             fixed20_group_finite: torch.Tensor | None = None
-            fixed20_group_view_executions = 0
 
             for batch in _iter_exposure_batches(
                 train_dataloader, epoch_exposure_steps
             ):
-                batch_received = time.perf_counter()
-                data_wait_ms = max(
-                    0.0, (batch_received - previous_step_end) * 1000.0
-                )
-                next_execution_step = view_execution_step + 1
                 if not isinstance(batch, Mapping):
                     raise TypeError("online dataloader batches must be mappings")
                 exposure_name = str(batch.get("__exposure_name", "base"))
@@ -2678,41 +2354,6 @@ def train_online_model(
                         )
                     fixed20_group_finite = torch.ones(
                         (), device=resolved_device, dtype=torch.bool
-                    )
-                if grouped_exposure:
-                    if group_start:
-                        if fixed20_group_timer is not None:
-                            raise RuntimeError(
-                                "grouped timing batch started before the prior group ended"
-                            )
-                        sample_group = timing_enabled and (
-                            (optimizer_steps + 1) % timing_interval == 0
-                        )
-                        fixed20_group_timer = (
-                            _SampledStepTimer(
-                                device=resolved_device,
-                                data_wait_ms=data_wait_ms,
-                                cuda_events=bool(timing_config["cuda_events"]),
-                            )
-                            if sample_group
-                            else None
-                        )
-                        fixed20_group_view_executions = 0
-                    elif fixed20_group_timer is not None:
-                        fixed20_group_timer.add_data_wait(data_wait_ms)
-                    timer = fixed20_group_timer
-                    if timer is not None:
-                        fixed20_group_view_executions += 1
-                else:
-                    timer = (
-                        _SampledStepTimer(
-                            device=resolved_device,
-                            data_wait_ms=data_wait_ms,
-                            cuda_events=bool(timing_config["cuda_events"]),
-                        )
-                        if timing_enabled
-                        and next_execution_step % timing_interval == 0
-                        else None
                     )
                 objective_terms_raw = batch.get("__objective_terms")
                 objective_terms = (
@@ -2746,8 +2387,6 @@ def train_online_model(
                 exposure_seen.update(hashes)
                 epoch_exposure_counts[exposure_name] += batch_size
 
-                if timer is not None:
-                    timer.start("h2d")
                 if (
                     exposure_group is not None
                     and cached_exposure_group == exposure_group
@@ -2767,9 +2406,6 @@ def train_online_model(
                         cached_exposure_group = exposure_group
                         cached_raw = raw
                         cached_targets = targets
-                if timer is not None:
-                    timer.stop("h2d")
-                    timer.start("augmentation")
                 if group_start:
                     optimizer.zero_grad(set_to_none=True)
                     epoch_origin_samples += batch_size
@@ -2818,35 +2454,17 @@ def train_online_model(
                     trace_input_payload,
                 )
                 stochastic_input_record_count += batch_size
-                generation_phase = (
-                    "method_generation"
-                    if not grouped_exposure
-                    else (
-                        "candidate_generation"
-                        if group_start or exposure_name == "auxiliary"
-                        else "fixed20_generation"
-                    )
+                generated = runtime.generate(
+                    clean_raw=raw,
+                    targets=targets,
+                    hash_ids=hashes,
+                    classifier=model,
+                    base_seed=seed.base_seed,
+                    rng_identity=rng_identity,
+                    composition_indices=composition_indices,
+                    composition_index_hint=composition_index,
+                    objective_term_names=objective_terms,
                 )
-                if timer is not None:
-                    timer.start(generation_phase)
-                try:
-                    generated = runtime.generate(
-                        clean_raw=raw,
-                        targets=targets,
-                        hash_ids=hashes,
-                        classifier=model,
-                        base_seed=seed.base_seed,
-                        rng_identity=rng_identity,
-                        composition_indices=composition_indices,
-                        composition_index_hint=composition_index,
-                        objective_term_names=objective_terms,
-                    )
-                finally:
-                    if timer is not None:
-                        timer.stop(generation_phase)
-                if timer is not None:
-                    timer.stop("augmentation")
-                    timer.start("forward_backward")
 
                 with ExitStack() as auxiliary_state:
                     if staged_method and exposure_name == "auxiliary":
@@ -2946,88 +2564,22 @@ def train_online_model(
                             and objective.valid_counts == {"lhat_direct_bce": 0}
                         ),
                     )
-                if timer is not None:
-                    timer.stop("forward_backward")
-
-                grad_norm = torch.zeros((), device=resolved_device)
                 if group_end:
-                    if timer is not None:
-                        timer.start("optimizer")
                     if scaler.is_enabled():
                         scaler.unscale_(optimizer)
-                        grad_norm = torch.nn.utils.clip_grad_norm_(
+                        torch.nn.utils.clip_grad_norm_(
                             trainable, float(resolved["gradient_clip_norm"])
                         )
                         scaler.step(optimizer)
                         scaler.update()
                     else:
-                        grad_norm = torch.nn.utils.clip_grad_norm_(
+                        torch.nn.utils.clip_grad_norm_(
                             trainable, float(resolved["gradient_clip_norm"])
                         )
                         optimizer.step()
                     optimizer_steps += 1
-                    if timer is not None:
-                        timer.stop("optimizer")
-
-                view_execution_step += 1
-                finish_group_timer = grouped_exposure and group_end
-                performance = None
-                if timer is not None and (
-                    not grouped_exposure or finish_group_timer
-                ):
-                    performance = timer.finish(
-                        batch_size=batch_size,
-                        grad_norm=grad_norm,
-                        view_executions=(
-                            fixed20_group_view_executions
-                            if grouped_exposure
-                            else 1
-                        ),
-                    )
-                if finish_group_timer:
-                    fixed20_group_timer = None
+                if grouped_exposure and group_end:
                     fixed20_group_finite = None
-                    fixed20_group_view_executions = 0
-                if performance is not None:
-                    timed_step_count += 1
-                    for name, value in performance.items():
-                        performance_sums[name] = (
-                            performance_sums.get(name, 0.0) + float(value)
-                        )
-                    _append_jsonl(
-                        diagnostics_path,
-                        {
-                            "kind": (
-                                "performance_base_group"
-                                if grouped_exposure
-                                else "performance_step"
-                            ),
-                            "epoch": epoch,
-                            "view_execution_step": view_execution_step,
-                            "optimizer_step": optimizer_steps,
-                            "metrics": performance,
-                        },
-                    )
-
-                write_diagnostic_step = (
-                    view_execution_step % diagnostics_interval == 0
-                )
-                raw_scalars: dict[str, float] = {}
-                weighted_scalars: dict[str, float] = {}
-                observer_timer = (
-                    timer
-                    if grouped_exposure and timer is not None and not group_end
-                    else None
-                )
-                with _excluded_observer_work(observer_timer):
-                    if write_diagnostic_step:
-                        _, raw_scalars, weighted_scalars = _objective_host_scalars(
-                            objective
-                        )
-                        weighted_scalars = {
-                            name: value * family_loss_scale
-                            for name, value in weighted_scalars.items()
-                        }
 
                 epoch_samples += batch_size
                 epoch_loss_sum += scaled_objective.detach() * batch_size
@@ -3066,9 +2618,6 @@ def train_online_model(
                         values.detach()
                     )
 
-                step_diagnostic_values: dict[
-                    str, float | int | torch.Tensor
-                ] = {}
                 for name, value in generated.bundle.diagnostics.items():
                     if isinstance(value, bool):
                         continue
@@ -3117,51 +2666,9 @@ def train_online_model(
                     diagnostic_weights[name] = (
                         diagnostic_weights.get(name, 0) + weight
                     )
-                    step_diagnostic_values[name] = scalar_value
-                with _excluded_observer_work(observer_timer):
-                    step_diagnostics = (
-                        _materialize_finite_scalar_mapping(step_diagnostic_values)
-                        if write_diagnostic_step
-                        else {}
-                    )
-                    if write_diagnostic_step:
-                        _append_jsonl(
-                            diagnostics_path,
-                            {
-                                "kind": "step",
-                                "epoch": epoch,
-                                "view_execution_step": view_execution_step,
-                                "optimizer_step": optimizer_steps,
-                                "method_id": recipe.recipe_id,
-                                "exposure": exposure_name,
-                                "composition_index": composition_index,
-                                "candidate_eligible_count": len(
-                                    generated.candidate_eligible_positions
-                                ),
-                                "quality_accepted_count": len(
-                                    generated.accepted_positions
-                                ),
-                                "quality_view_total_count": (
-                                    generated.quality_view_total_count
-                                ),
-                                "quality_view_accepted_count": (
-                                    generated.quality_view_accepted_count
-                                ),
-                                "quality_rejected_count": len(
-                                    generated.quality_rejected
-                                ),
-                                "ineligible_count": len(
-                                    generated.ineligible_hash_ids
-                                ),
-                                "objective_raw": raw_scalars,
-                                "objective_weighted": weighted_scalars,
-                                "metrics": step_diagnostics,
-                            },
-                        )
-                previous_step_end = time.perf_counter()
 
-            if fixed20_group_timer is not None or fixed20_group_finite is not None:
-                raise RuntimeError("fixed20 timing/finite group did not terminate")
+            if fixed20_group_finite is not None:
+                raise RuntimeError("fixed20 finite-loss group did not terminate")
             if epoch_samples == 0 or epoch_origin_samples == 0:
                 raise ValueError("online train dataloader is empty")
             if optimizer_steps - optimizer_steps_at_epoch_start != epoch_base_batches:
@@ -3245,11 +2752,6 @@ def train_online_model(
                 input_record_count=stochastic_input_record_count,
                 chunks=stochastic_trace_chunks,
             )
-            performance_mean = {
-                name: value / timed_step_count
-                for name, value in performance_sums.items()
-            }
-            performance_mean["timed_step_count"] = timed_step_count
             clean_exposure_count = int(
                 epoch_exposure_counts.get(
                     "clean", epoch_exposure_counts.get("base", 0)
@@ -3355,38 +2857,11 @@ def train_online_model(
                 "diagnostic_distributions": diagnostic_distributions,
                 "diagnostic_rates": diagnostic_rates,
                 "stochastic_trace": stochastic_trace,
-                "performance": performance_mean,
                 "exposure": exposure_metrics,
                 "ineligible_hash_ids": list(ineligible_unique),
                 "quality_rejected": quality_rejected,
             }
             history.append(epoch_record)
-            _append_jsonl(
-                diagnostics_path,
-                {
-                    "kind": "epoch",
-                    "epoch": epoch,
-                    "method_id": recipe.recipe_id,
-                    "objective_terms": raw_means,
-                    "weighted_objective_terms": weighted_means,
-                    "objective_effective_loss_mass": effective_loss_masses,
-                    "view_valid_counts": epoch_view_counts,
-                    "candidate_eligible_count": epoch_candidate_eligible,
-                    "quality_accepted_count": epoch_quality_accepted,
-                    "quality_view_total_count": epoch_quality_view_total,
-                    "quality_view_accepted_count": epoch_quality_view_accepted,
-                    "quality_rejected_count": len(quality_rejected),
-                    "ineligible_count": len(ineligible_unique),
-                    "ineligible_hash_ids": list(ineligible_unique),
-                    "quality_rejected": quality_rejected,
-                    "metrics": diagnostics_mean,
-                    "diagnostic_distributions": diagnostic_distributions,
-                    "diagnostic_rates": diagnostic_rates,
-                    "stochastic_trace": stochastic_trace,
-                    "performance": performance_mean,
-                    "exposure": exposure_metrics,
-                },
-            )
             if checkpoint_write_policy == "every_epoch" or epoch == epochs:
                 checkpoint = {
                     "schema_version": 3,
