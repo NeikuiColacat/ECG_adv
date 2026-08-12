@@ -41,9 +41,8 @@ PN2021_MAPPING_HASH = "555ec85d5b51"
 
 StorageMode = Literal["mmap"]
 ValueValidation = Literal["none", "sample", "full"]
-SignalLayout = Literal["time_channel", "channel_time"]
 ViewSelector = int | str | None
-RecordSelector = int | slice | Sequence[int] | np.ndarray
+RecordSelector = slice | Sequence[int] | np.ndarray
 
 
 @dataclass(frozen=True)
@@ -81,20 +80,6 @@ class CacheManifest:
     @property
     def is_corruption(self) -> bool:
         return self.dataset == "pn2021c"
-
-
-@dataclass(frozen=True)
-class ECGRecord:
-    """One accessed ECG together with its immutable cache identity fields."""
-
-    signal: np.ndarray
-    label: np.ndarray
-    index: int
-    record_id: str
-    hash_id: str
-    metadata: dict[str, Any]
-    view_index: int | None
-    composition_id: str | None
 
 
 @dataclass(frozen=True)
@@ -387,7 +372,7 @@ def _close_memmap(array: np.ndarray | None) -> None:
 
 
 class ECGCache:
-    """Read-only cache handle with record, center and corruption-view access."""
+    """Read-only cache handle with batch, center and corruption-view access."""
 
     storage_mode: Literal["mmap"] = "mmap"
 
@@ -529,28 +514,14 @@ class ECGCache:
         item = self.compositions[view_index]
         return view_index, str(item["composition_id"])
 
-    def _normalize_index(self, index: int) -> int:
-        if isinstance(index, bool) or not isinstance(index, (int, np.integer)):
-            raise TypeError("record index must be an integer")
-        resolved = int(index)
-        if resolved < 0:
-            resolved += len(self)
-        if not 0 <= resolved < len(self):
-            raise IndexError(f"record index {index} is outside [0, {len(self)})")
-        return resolved
-
     def _normalize_indices(
         self, indices: RecordSelector
-    ) -> tuple[int | slice | np.ndarray, np.ndarray]:
+    ) -> tuple[slice | np.ndarray, np.ndarray]:
         if isinstance(indices, slice):
             resolved = np.arange(len(self), dtype=np.int64)[indices]
             if resolved.size == 0:
                 raise ValueError("record batch cannot be empty")
             return indices, resolved
-        if isinstance(indices, (int, np.integer)) and not isinstance(indices, bool):
-            resolved_index = self._normalize_index(int(indices))
-            resolved = np.asarray([resolved_index], dtype=np.int64)
-            return resolved, resolved
         array = np.asarray(indices)
         if array.ndim != 1:
             raise ValueError("record indices must be one-dimensional")
@@ -569,68 +540,13 @@ class ECGCache:
             raise ValueError("record batch cannot be empty")
         return resolved, resolved
 
-    @staticmethod
-    def _format_signals(
-        signals: np.ndarray,
-        *,
-        layout: SignalLayout,
-        copy: bool,
-    ) -> np.ndarray:
-        if layout not in {"time_channel", "channel_time"}:
-            raise ValueError("layout must be 'time_channel' or 'channel_time'")
-        output = np.asarray(signals)
-        if layout == "channel_time":
-            output = np.swapaxes(output, -1, -2)
-        if copy:
-            output = np.array(output, dtype=np.float32, order="C", copy=True)
-        elif layout == "channel_time":
-            output = np.ascontiguousarray(output, dtype=np.float32)
-        return output
-
-    def get_record(
-        self,
-        index: int,
-        *,
-        view: ViewSelector = None,
-        layout: SignalLayout = "time_channel",
-        copy: bool = True,
-        check_finite: bool = True,
-    ) -> ECGRecord:
-        """Access one record without applying model-side normalization."""
-
-        resolved_index = self._normalize_index(index)
-        view_index, composition_id = self._resolve_view(view)
-        signal = (
-            self.signals[resolved_index]
-            if view_index is None
-            else self.signals[view_index, resolved_index]
-        )
-        signal = self._format_signals(signal, layout=layout, copy=copy)
-        if check_finite and not np.isfinite(signal).all():
-            raise ValueError(
-                f"non-finite waveform at record={resolved_index}, view={view_index}"
-            )
-        return ECGRecord(
-            signal=signal,
-            label=np.asarray(self.labels[resolved_index], dtype=np.uint8).copy(),
-            index=resolved_index,
-            record_id=str(self.record_ids[resolved_index]),
-            hash_id=str(self.hash_ids[resolved_index]),
-            metadata=self.records.iloc[resolved_index].to_dict(),
-            view_index=view_index,
-            composition_id=composition_id,
-        )
-
     def get_batch(
         self,
         indices: RecordSelector,
         *,
         view: ViewSelector = None,
-        layout: SignalLayout = "time_channel",
-        copy: bool = True,
-        check_finite: bool = True,
     ) -> ECGBatch:
-        """Access a record batch in classifier-friendly NTC or NCT layout."""
+        """Access an owned, finite batch in canonical time-channel layout."""
 
         selector, resolved_indices = self._normalize_indices(indices)
         view_index, composition_id = self._resolve_view(view)
@@ -639,19 +555,15 @@ class ECGCache:
             if view_index is None
             else self.signals[view_index, selector]
         )
-        signals = self._format_signals(signals, layout=layout, copy=copy)
-        if check_finite and not np.isfinite(signals).all():
+        signals = np.array(signals, dtype=np.float32, order="C", copy=True)
+        if not np.isfinite(signals).all():
             raise ValueError(
                 "non-finite waveform in requested batch: "
                 f"records={resolved_indices.tolist()}, view={view_index}"
             )
-        labels = np.asarray(self.labels[selector], dtype=np.uint8)
-        record_ids = np.asarray(self.record_ids[selector]).astype(str, copy=False)
-        hash_ids = np.asarray(self.hash_ids[selector]).astype(str, copy=False)
-        if copy:
-            labels = labels.copy()
-            record_ids = record_ids.copy()
-            hash_ids = hash_ids.copy()
+        labels = np.asarray(self.labels[selector], dtype=np.uint8).copy()
+        record_ids = np.asarray(self.record_ids[selector]).astype(str, copy=True)
+        hash_ids = np.asarray(self.hash_ids[selector]).astype(str, copy=True)
         return ECGBatch(
             signals=signals,
             labels=labels,
@@ -879,7 +791,6 @@ __all__ = [
     "CacheManifest",
     "ECGBatch",
     "ECGCache",
-    "ECGRecord",
     "load_cache",
     "load_cache_manifest",
 ]

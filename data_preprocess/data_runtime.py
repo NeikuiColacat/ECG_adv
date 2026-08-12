@@ -754,7 +754,6 @@ class RuntimeECGDataset(Dataset[dict[str, Any]]):
         view: ViewSelector = None,
         validate_values: ValueValidation = "sample",
         access_order: MMapAccessOrder = "split",
-        batch_read: bool = True,
         mmap_prefetch: MMapPrefetchConfig | None = None,
         shared_cache: ECGCache | None = None,
         shared_selection: ECGSelection | None = None,
@@ -771,14 +770,11 @@ class RuntimeECGDataset(Dataset[dict[str, Any]]):
         self.validate_values = validate_values
         if access_order not in {"split", "cache_index"}:
             raise ValueError("access_order must be split or cache_index")
-        if not isinstance(batch_read, bool):
-            raise ValueError("batch_read must be boolean")
         if mmap_prefetch is not None and not isinstance(
             mmap_prefetch, MMapPrefetchConfig
         ):
             raise TypeError("mmap_prefetch must be an MMapPrefetchConfig")
         self.access_order = access_order
-        self.batch_read = batch_read
         self.mmap_prefetch = mmap_prefetch or MMapPrefetchConfig()
         self._prefetcher: MMapPrefetcher | None = None
         self._prefetcher_pid: int | None = None
@@ -841,13 +837,7 @@ class RuntimeECGDataset(Dataset[dict[str, Any]]):
             if not self._cache.is_corruption and self.view is not None:
                 raise ValueError("clean RuntimeECGDataset does not accept a view")
             if self._cache.is_corruption:
-                first_record = self._cache.get_record(
-                    int(self.selection.indices[0]),
-                    view=self.view,
-                    copy=False,
-                    check_finite=False,
-                )
-                self._resolved_view_index = first_record.view_index
+                self._resolved_view_index, _ = self._cache._resolve_view(self.view)
         except Exception:
             self.close()
             raise
@@ -895,7 +885,6 @@ class RuntimeECGDataset(Dataset[dict[str, Any]]):
             self._prefetcher is None
             and self.mmap_prefetch.enabled
             and self.access_order == "cache_index"
-            and self.batch_read
             and cache.storage_mode == "mmap"
         ):
             self._prefetcher = MMapPrefetcher(
@@ -909,45 +898,7 @@ class RuntimeECGDataset(Dataset[dict[str, Any]]):
     def __getitem__(self, position: int) -> dict[str, Any]:
         if isinstance(position, bool) or not isinstance(position, (int, np.integer)):
             raise TypeError("dataset position must be an integer")
-        position = int(position)
-        if position < 0:
-            position += len(self)
-        if not 0 <= position < len(self):
-            raise IndexError(f"dataset position {position} is outside [0, {len(self)})")
-        cache = self._get_cache()
-        cache_index = int(self.selection.indices[position])
-        record = cache.get_record(
-            cache_index,
-            view=self.view,
-            layout="time_channel",
-            copy=True,
-            check_finite=True,
-        )
-        expected_hash = str(self.selection.hash_ids[position])
-        expected_record = str(self.selection.record_ids[position])
-        if record.hash_id != expected_hash or record.record_id != expected_record:
-            raise RuntimeError("cache identity changed after dataset initialization")
-        waveform = torch.as_tensor(record.signal, dtype=torch.float32)
-        center = str(record.metadata.get("center", ""))
-        return {
-            "waveform": waveform,
-            "label": torch.as_tensor(record.label, dtype=torch.float32),
-            "selection_index": torch.tensor(position, dtype=torch.int64),
-            "cache_index": torch.tensor(cache_index, dtype=torch.int64),
-            "record_id": record.record_id,
-            "hash_id": record.hash_id,
-            "dataset": cache.dataset,
-            "logical_center": self.selection.logical_center or "",
-            "source_center": center,
-            "sampling_rate_hz": torch.tensor(
-                cache.sampling_rate_hz, dtype=torch.int64
-            ),
-            "view_index": torch.tensor(
-                -1 if record.view_index is None else record.view_index,
-                dtype=torch.int64,
-            ),
-            "composition_id": record.composition_id or "",
-        }
+        return self.__getitems__([position])[0]
 
     def __getitems__(self, positions: Sequence[int]) -> list[dict[str, Any]]:
         """Fetch one DataLoader batch with a single validated mmap operation.
@@ -973,8 +924,6 @@ class RuntimeECGDataset(Dataset[dict[str, Any]]):
             normalized_positions.append(position)
         if not normalized_positions:
             return []
-        if not self.batch_read:
-            return [self[position] for position in normalized_positions]
         cache = self._get_cache()
         selection_positions = np.asarray(normalized_positions, dtype=np.int64)
         cache_indices = np.asarray(
@@ -993,9 +942,6 @@ class RuntimeECGDataset(Dataset[dict[str, Any]]):
             dense_batch = cache.get_batch(
                 slice(dense_start, dense_stop),
                 view=self.view,
-                layout="time_channel",
-                copy=True,
-                check_finite=True,
             )
             offsets = cache_indices - dense_start
             signals = dense_batch.signals[offsets]
@@ -1009,9 +955,6 @@ class RuntimeECGDataset(Dataset[dict[str, Any]]):
             sparse_batch = cache.get_batch(
                 cache_indices,
                 view=self.view,
-                layout="time_channel",
-                copy=True,
-                check_finite=True,
             )
             signals = sparse_batch.signals
             labels_array = sparse_batch.labels
@@ -1069,7 +1012,7 @@ class RuntimeECGDataset(Dataset[dict[str, Any]]):
             "view": self.view,
             "mmap": {
                 "access_order": self.access_order,
-                "batch_read": self.batch_read,
+                "batch_read": True,
                 "prefetch": self.mmap_prefetch.describe(),
             },
         }
@@ -1142,9 +1085,6 @@ class SelectionResidentECGDataset(Dataset[dict[str, Any]]):
         batch = cache.get_batch(
             cache_indices,
             view=source.view,
-            layout="time_channel",
-            copy=True,
-            check_finite=True,
         )
         expected_hashes = source.selection.hash_ids.astype(str)
         expected_records = source.selection.record_ids.astype(str)
@@ -1196,7 +1136,6 @@ class SelectionResidentECGDataset(Dataset[dict[str, Any]]):
         )
         self._cache_description = cache.describe()
         self._access_order = source.access_order
-        self._batch_read = source.batch_read
         self._pin_memory = pin_memory
         self._closed = False
 
@@ -1257,7 +1196,7 @@ class SelectionResidentECGDataset(Dataset[dict[str, Any]]):
             "composition_id": self._composition_id,
             "mmap": {
                 "access_order": self._access_order,
-                "batch_read": self._batch_read,
+                "batch_read": True,
                 "prefetch": MMapPrefetchConfig(enabled=False).describe(),
             },
             "residency": {
@@ -1305,7 +1244,6 @@ class _RuntimeDefaults:
     path: Path
     sha256: str
     mmap_access_order: MMapAccessOrder
-    mmap_batch_read: bool
     mmap_prefetch: MMapPrefetchConfig
 
     def describe(self) -> dict[str, Any]:
@@ -1314,7 +1252,7 @@ class _RuntimeDefaults:
             "config_sha256": self.sha256,
             "mmap": {
                 "access_order": self.mmap_access_order,
-                "batch_read": self.mmap_batch_read,
+                "batch_read": True,
                 "prefetch": self.mmap_prefetch.describe(),
             },
         }
@@ -1342,8 +1280,8 @@ def _load_runtime_defaults(path: str | Path) -> _RuntimeDefaults:
     if mmap_access_order not in {"split", "cache_index"}:
         raise ValueError("mmap.access_order must be split or cache_index")
     batch_read = mmap_config["batch_read"]
-    if not isinstance(batch_read, bool):
-        raise ValueError("mmap.batch_read must be boolean")
+    if batch_read is not True:
+        raise ValueError("mmap.batch_read must be true")
     prefetch = MMapPrefetchConfig(
         enabled=mmap_prefetch["enabled"],
         advice=cast(MMapAdvice, str(mmap_prefetch["advice"])),
@@ -1354,7 +1292,6 @@ def _load_runtime_defaults(path: str | Path) -> _RuntimeDefaults:
         path=config_path,
         sha256=_sha256_file(config_path),
         mmap_access_order=cast(MMapAccessOrder, mmap_access_order),
-        mmap_batch_read=batch_read,
         mmap_prefetch=prefetch,
     )
 
@@ -2182,7 +2119,6 @@ def _build_runtime_loader(request: _LoaderRequest) -> RuntimeDataLoader:
         view=request.view,
         validate_values=request.validate_values,
         access_order=access_order,
-        batch_read=defaults.mmap_batch_read,
         mmap_prefetch=prefetch,
         shared_cache=shared_cache,
         shared_selection=shared_selection,
@@ -2226,7 +2162,7 @@ def _build_runtime_loader(request: _LoaderRequest) -> RuntimeDataLoader:
                 },
                 "mmap": {
                     "access_order": access_order,
-                    "batch_read": defaults.mmap_batch_read,
+                    "batch_read": True,
                     "prefetch": prefetch.describe(),
                 },
                 "prepare_for_model": False,

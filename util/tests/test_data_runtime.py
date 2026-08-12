@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 from dataclasses import replace
 from pathlib import Path
@@ -15,7 +16,7 @@ import pytest
 import torch
 import yaml
 
-from data_preprocess import data_ledger, data_runtime
+from data_preprocess import data_ledger, data_runtime, load_cache as load_cache_module
 from data_preprocess.data_runtime import (
     ECGSelection,
     MMapPrefetchConfig,
@@ -299,17 +300,25 @@ def test_finite_plan_describe_exposes_validated_runtime_policy(
     } <= description.keys()
 
 
-def test_canonical_data_load_config_is_the_single_runtime_profile() -> None:
+def test_canonical_data_load_config_is_the_single_runtime_profile(
+    tmp_path: Path,
+) -> None:
     config_path = REPO / "configs" / "data" / "data_load.yaml"
     config = _load_runtime_defaults(config_path)
 
     assert config.path == config_path.resolve()
     assert config.mmap_access_order == "cache_index"
-    assert config.mmap_batch_read is True
+    assert config.describe()["mmap"]["batch_read"] is True
     assert config.mmap_prefetch.enabled is True
     assert config.mmap_prefetch.advice == "sequential_willneed"
     assert config.mmap_prefetch.window_mib == 1024
     assert config.mmap_prefetch.ahead_batches == 2
+    payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    payload["mmap"]["batch_read"] = False
+    invalid_path = tmp_path / "data_load.yaml"
+    invalid_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="mmap.batch_read must be true"):
+        _load_runtime_defaults(invalid_path)
 
 
 def test_public_runtime_surface_is_only_the_five_finite_entrypoints() -> None:
@@ -324,6 +333,19 @@ def test_public_runtime_surface_is_only_the_five_finite_entrypoints() -> None:
         not hasattr(data_runtime.SelectionResidentECGDataset, name)
         for name in ("waveforms", "labels", "is_pinned")
     )
+    assert load_cache_module.__all__ == [
+        "EXPECTED_CLASS_ORDER", "EXPECTED_LEADS", "PN2021_MAPPING_HASH",
+        "PN2021_MAPPING_VERSION", "CacheManifest", "ECGBatch", "ECGCache",
+        "load_cache", "load_cache_manifest",
+    ]
+    assert {"ECGRecord", "SignalLayout"}.isdisjoint(vars(load_cache_module))
+    assert {"get_record", "_normalize_index", "_format_signals"}.isdisjoint(
+        vars(ECGCache)
+    )
+    assert tuple(inspect.signature(ECGCache.get_batch).parameters) == (
+        "self", "indices", "view",
+    )
+    assert "batch_read" not in inspect.signature(RuntimeECGDataset).parameters
 
 
 @pytest.mark.parametrize("mode", ("auto", "ram"))
