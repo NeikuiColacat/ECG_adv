@@ -15,7 +15,7 @@ import torch.nn as nn
 import yaml
 
 from core.latent_pool import LatentPool, build_latent_pool
-from core.methods import RecipeSpec, load_recipe_spec
+from core.methods.registry import RecipeSpec, load_recipe_spec
 from core.online_trainer import (
     ALLOWED_CENTERS,
     DEFAULT_ONLINE_CONFIG_PATH,

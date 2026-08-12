@@ -19,8 +19,8 @@ import core.online_trainer as trainer
 import core.train_PN2021 as train_adapter
 import data_preprocess.data_runtime as data_runtime
 import models.vae as vae
-from core.methods import AuxiliaryVariant, RecipeKind, build_method_runtime, load_recipe_spec
-from core.methods.runtime import _derive_seed
+from core.methods.registry import AuxiliaryVariant, RecipeKind, load_recipe_spec
+from core.methods.runtime import build_method_runtime, _derive_seed
 from core.train_PN2021 import _validate_locked_source_checkpoint
 from models.checkpoints import (
     CheckpointIdentity,

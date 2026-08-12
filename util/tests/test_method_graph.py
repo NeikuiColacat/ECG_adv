@@ -10,10 +10,11 @@ import pytest
 import torch
 import yaml
 
+import core
 import core.methods as methods
 from core.lhat import AttackThenContractDiagnostics
-from core.methods import AuxiliaryVariant, RecipeKind, build_method_runtime, load_recipe_spec
-from core.methods.runtime import _scoped_lhat_diagnostics
+from core.methods.registry import AuxiliaryVariant, RecipeKind, load_recipe_spec
+from core.methods.runtime import build_method_runtime, _scoped_lhat_diagnostics
 from core.online_trainer import _diagnostic_sample_summary
 
 
@@ -76,11 +77,10 @@ def test_v2_recipe_files_are_finite_resource_closed_characterizations(
 
 
 def test_loader_removes_dag_plugins_and_allows_only_the_matched_no_vae_slot() -> None:
-    assert set(methods.__all__) == {
-        "AuxiliaryVariant", "BASE_VIEW_NAME", "GeneratedMethodBatch",
-        "MethodRequirements", "MethodViewRuntime", "ObjectivePlan", "ObjectiveTerm",
-        "Provenance", "RecipeKind", "RecipeSpec", "ViewBundle", "WaveformView",
-        "build_method_runtime", "load_recipe_spec"}
+    assert core.__all__ == []
+    assert methods.__all__ == []
+    assert not hasattr(core, "train_online_model")
+    assert not hasattr(methods, "load_recipe_spec")
     payload = yaml.safe_load((RECIPES / "a0_clean_v1.yaml").read_text())
     payload["recipe"]["module"] = "arbitrary.user.plugin"
     with pytest.raises(ValueError, match="may not select callables"):

@@ -23,7 +23,7 @@ from boot_scripts.evaluate_pn2021 import (
     main as evaluate_main,
 )
 from boot_scripts.aggregate_pn2021 import main as aggregate_main
-from core.methods import load_recipe_spec
+from core.methods.registry import load_recipe_spec
 from models.checkpoints import CheckpointIdentity
 from models.contracts import (
     CLASS_ORDER,

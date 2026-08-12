@@ -26,15 +26,14 @@ from core.augmix import (
     AugMixConfig,
     generate_two_chain_augmix_strong_view,
 )
-from core.methods import (
+from core.methods.contracts import BASE_VIEW_NAME, WaveformView
+from core.methods.registry import (
     AuxiliaryVariant,
-    BASE_VIEW_NAME,
     RecipeKind,
     RecipeSpec,
-    WaveformView,
-    build_method_runtime,
     load_recipe_spec,
 )
+from core.methods.runtime import build_method_runtime
 from models.checkpoints import sha256_file
 from models.contracts import (
     CLASS_ORDER,
