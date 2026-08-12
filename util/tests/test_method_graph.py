@@ -11,7 +11,10 @@ import torch
 import yaml
 
 import core
+import core.latent_pool as latent_pool
+import core.lhat as lhat
 import core.methods as methods
+import core.methods.runtime as method_runtime
 from core.lhat import AttackThenContractDiagnostics
 from core.methods.registry import AuxiliaryVariant, RecipeKind, load_recipe_spec
 from core.methods.runtime import build_method_runtime, _scoped_lhat_diagnostics
@@ -82,6 +85,21 @@ def test_loader_removes_dag_plugins_and_allows_only_the_matched_no_vae_slot() ->
     assert methods.__all__ == []
     assert not hasattr(core, "train_online_model")
     assert not hasattr(methods, "load_recipe_spec")
+    assert "mean_dict" not in vars(lhat.LHATDiagnostics)
+    assert {"make_lhat_generator", "select_exact_label_candidates"}.isdisjoint(vars(lhat))
+    pool_fields = latent_pool.LatentPool.__dataclass_fields__
+    assert {"selection_indices", "cache_indices", "identity"} <= pool_fields.keys()
+    assert {"_selection_to_pool", "_cache_to_pool", "_ineligible_hash_ids"}.isdisjoint(
+        pool_fields
+    )
+    assert {
+        "eligible_mask", "ineligible_hash_ids", "indices_for_selection_indices",
+        "indices_for_cache_indices", "get_attack_batch_by_selection_indices",
+        "get_attack_batch_by_cache_indices",
+    }.isdisjoint(vars(latent_pool.LatentPool))
+    assert "_positions" not in vars(method_runtime)
+    assert "batch_size" not in vars(method_runtime.GeneratedMethodBatch)
+    assert "requires_latent_pool" not in vars(method_runtime.MethodViewRuntime)
     payload = yaml.safe_load((RECIPES / "a0_clean_v1.yaml").read_text())
     payload["recipe"]["module"] = "arbitrary.user.plugin"
     with pytest.raises(ValueError, match="may not select callables"):

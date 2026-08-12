@@ -143,17 +143,6 @@ class _RecipeContext:
         return generator
 
 
-def _positions(mask: torch.Tensor) -> tuple[int, ...]:
-    return tuple(
-        int(value)
-        for value in torch.nonzero(mask, as_tuple=False)
-        .flatten()
-        .detach()
-        .cpu()
-        .tolist()
-    )
-
-
 def _quality_mask(
     waveform_raw: torch.Tensor,
     *,
@@ -287,13 +276,6 @@ class GeneratedMethodBatch:
         if not 0 <= self.quality_view_accepted_count <= self.quality_view_total_count:
             raise ValueError("accepted view count must be within the total")
 
-    @property
-    def batch_size(self) -> int:
-        clean = self.bundle.require(BASE_VIEW_NAME)
-        assert isinstance(clean, WaveformView)
-        return clean.batch_size
-
-
 class MethodViewRuntime:
     """One finite recipe with resolved configuration resources."""
 
@@ -385,10 +367,6 @@ class MethodViewRuntime:
             raise ValueError("method without latent_pool requirement may not consume one")
         if not recipe.requirements.vae_decoder and decoder is not None:
             raise ValueError("method without VAE decoder requirement may not consume one")
-
-    @property
-    def requires_latent_pool(self) -> bool:
-        return bool(self.recipe.requirements.latent_pool)
 
     @property
     def rng_seed_config_paths(self) -> Mapping[str, Path]:

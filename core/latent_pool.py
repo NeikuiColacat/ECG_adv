@@ -274,8 +274,8 @@ def _exact_neighbor_table(
 ) -> torch.Tensor:
     """Precompute the exact stable neighbor order once for the immutable pool.
 
-    The calculation deliberately mirrors ``select_exact_label_candidates``:
-    exact multi-hot labels, non-self candidates, flattened L2 distance and a
+    The table uses the frozen exact-label ordering contract: exact multi-hot
+    labels, non-self candidates, flattened L2 distance and a
     stable argsort.  Padding is ``-1`` and is never exposed for an eligible
     request.  Keeping this work at pool construction removes one full-pool
     distance scan and sort per anchor from every online LHAT batch without
@@ -381,14 +381,7 @@ class LatentPool:
     standardizer: LatentStandardizer
     identity: LatentPoolIdentity
     _hash_to_pool: dict[str, int] = field(init=False, repr=False, compare=False)
-    _selection_to_pool: dict[int, int] = field(
-        init=False, repr=False, compare=False
-    )
-    _cache_to_pool: dict[int, int] = field(init=False, repr=False, compare=False)
     _eligible_hash_ids: tuple[str, ...] = field(
-        init=False, repr=False, compare=False
-    )
-    _ineligible_hash_ids: tuple[str, ...] = field(
         init=False, repr=False, compare=False
     )
     _eligible_hash_id_set: frozenset[str] = field(
@@ -401,22 +394,6 @@ class LatentPool:
             "_hash_to_pool",
             {value: index for index, value in enumerate(self.hash_ids)},
         )
-        object.__setattr__(
-            self,
-            "_selection_to_pool",
-            {
-                int(value): index
-                for index, value in enumerate(self.selection_indices.tolist())
-            },
-        )
-        object.__setattr__(
-            self,
-            "_cache_to_pool",
-            {
-                int(value): index
-                for index, value in enumerate(self.cache_indices.tolist())
-            },
-        )
         eligibility = (
             self.candidate_counts >= self.identity.num_candidates
         ).detach().to(device="cpu").tolist()
@@ -425,13 +402,7 @@ class LatentPool:
             for value, is_eligible in zip(self.hash_ids, eligibility, strict=True)
             if is_eligible
         )
-        ineligible_hash_ids = tuple(
-            value
-            for value, is_eligible in zip(self.hash_ids, eligibility, strict=True)
-            if not is_eligible
-        )
         object.__setattr__(self, "_eligible_hash_ids", eligible_hash_ids)
-        object.__setattr__(self, "_ineligible_hash_ids", ineligible_hash_ids)
         object.__setattr__(
             self, "_eligible_hash_id_set", frozenset(eligible_hash_ids)
         )
@@ -440,16 +411,8 @@ class LatentPool:
         return len(self.hash_ids)
 
     @property
-    def eligible_mask(self) -> torch.Tensor:
-        return self.candidate_counts >= self.identity.num_candidates
-
-    @property
     def eligible_hash_ids(self) -> tuple[str, ...]:
         return self._eligible_hash_ids
-
-    @property
-    def ineligible_hash_ids(self) -> tuple[str, ...]:
-        return self._ineligible_hash_ids
 
     @property
     def eligible_hash_id_set(self) -> frozenset[str]:
@@ -534,46 +497,6 @@ class LatentPool:
             raise TypeError("hash_id values must be strings")
         return self._indices_from_mapping(
             values, self._hash_to_pool, name="hash_id"
-        )
-
-    def indices_for_selection_indices(
-        self, selection_indices: Sequence[int] | torch.Tensor
-    ) -> torch.Tensor:
-        values = _batch_tensor(selection_indices, name="selection_indices")
-        if values.ndim == 0:
-            values = values.unsqueeze(0)
-        if (
-            values.ndim != 1
-            or values.dtype == torch.bool
-            or values.is_floating_point()
-        ):
-            raise TypeError(
-                "selection_index values must be a one-dimensional integer sequence"
-            )
-        return self._indices_from_mapping(
-            tuple(int(value) for value in values.detach().to(device="cpu").tolist()),
-            self._selection_to_pool,
-            name="selection_index",
-        )
-
-    def indices_for_cache_indices(
-        self, cache_indices: Sequence[int] | torch.Tensor
-    ) -> torch.Tensor:
-        values = _batch_tensor(cache_indices, name="cache_indices")
-        if values.ndim == 0:
-            values = values.unsqueeze(0)
-        if (
-            values.ndim != 1
-            or values.dtype == torch.bool
-            or values.is_floating_point()
-        ):
-            raise TypeError(
-                "cache_index values must be a one-dimensional integer sequence"
-            )
-        return self._indices_from_mapping(
-            tuple(int(value) for value in values.detach().to(device="cpu").tolist()),
-            self._cache_to_pool,
-            name="cache_index",
         )
 
     def get_attack_batch_by_pool_indices(
@@ -675,37 +598,6 @@ class LatentPool:
             local_pool_size=local_pool_size,
             generator=generator,
         )
-
-    def get_attack_batch_by_selection_indices(
-        self,
-        selection_indices: Sequence[int] | torch.Tensor,
-        *,
-        mode: str,
-        local_pool_size: int,
-        generator: torch.Generator,
-    ) -> LatentAttackBatch:
-        return self.get_attack_batch_by_pool_indices(
-            self.indices_for_selection_indices(selection_indices),
-            mode=mode,
-            local_pool_size=local_pool_size,
-            generator=generator,
-        )
-
-    def get_attack_batch_by_cache_indices(
-        self,
-        cache_indices: Sequence[int] | torch.Tensor,
-        *,
-        mode: str,
-        local_pool_size: int,
-        generator: torch.Generator,
-    ) -> LatentAttackBatch:
-        return self.get_attack_batch_by_pool_indices(
-            self.indices_for_cache_indices(cache_indices),
-            mode=mode,
-            local_pool_size=local_pool_size,
-            generator=generator,
-        )
-
 
 def _build_identity(
     *,

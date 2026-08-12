@@ -320,6 +320,10 @@ def test_public_runtime_surface_is_only_the_five_finite_entrypoints() -> None:
         "RuntimeDataLoader",
         "SequentialEvaluationDataSession",
     ]
+    assert all(
+        not hasattr(data_runtime.SelectionResidentECGDataset, name)
+        for name in ("waveforms", "labels", "is_pinned")
+    )
 
 
 @pytest.mark.parametrize("mode", ("auto", "ram"))

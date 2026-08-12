@@ -1203,22 +1203,6 @@ class SelectionResidentECGDataset(Dataset[dict[str, Any]]):
     def __len__(self) -> int:
         return len(self.selection)
 
-    @property
-    def waveforms(self) -> torch.Tensor:
-        """The immutable selection-sized contiguous CPU tensor."""
-
-        self._require_open()
-        return self._waveforms
-
-    @property
-    def labels(self) -> torch.Tensor:
-        self._require_open()
-        return self._labels
-
-    @property
-    def is_pinned(self) -> bool:
-        return bool(self._pin_memory)
-
     def _require_open(self) -> None:
         if self._closed:
             raise RuntimeError("selection-resident dataset is closed")

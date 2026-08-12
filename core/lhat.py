@@ -19,7 +19,7 @@ import yaml
 
 from models.vae import decode_to_ptbxl_waveform
 from util.config_bundle import resolve_config_reference, resolve_entry_config_path
-from util.random_seed import load_random_seed_config, make_torch_generator
+from util.random_seed import load_random_seed_config
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -278,14 +278,6 @@ class LHATDiagnostics:
             }
         )
         return result
-
-    def mean_dict(self) -> dict[str, float]:
-        tensors = self.mean_tensor_dict()
-        names = tuple(tensors)
-        values = torch.stack(
-            [tensors[name].float() for name in names]
-        ).detach().cpu().tolist()
-        return dict(zip(names, (float(value) for value in values), strict=True))
 
 
 @dataclass(frozen=True)
@@ -577,94 +569,6 @@ def load_lhat_config(
     ):
         raise ValueError("attack_then_contract does not match the frozen contract")
     return config
-
-
-def make_lhat_generator(
-    device: str | torch.device,
-    *identity: Any,
-    config: LHATConfig | None = None,
-) -> torch.Generator:
-    """Create the isolated candidate-sampling RNG declared by LHAT YAML."""
-
-    resolved = load_lhat_config() if config is None else config
-    return make_torch_generator(
-        device,
-        resolved.random_namespace,
-        *identity,
-        config_path=resolved.random_seed_config_path,
-    )
-
-
-def _validate_generator(generator: torch.Generator, device: torch.device) -> None:
-    if not isinstance(generator, torch.Generator):
-        raise TypeError("generator must be a torch.Generator")
-    generator_device = torch.device(generator.device)
-    if generator_device.type != device.type:
-        raise ValueError("generator device must match latent device")
-    if device.type == "cuda":
-        current_index = torch.cuda.current_device()
-        latent_index = current_index if device.index is None else device.index
-        generator_index = (
-            current_index
-            if generator_device.index is None
-            else generator_device.index
-        )
-        if generator_index != latent_index:
-            raise ValueError("generator CUDA index must match latent CUDA index")
-
-
-def select_exact_label_candidates(
-    standardized_latents: torch.Tensor,
-    labels: torch.Tensor,
-    *,
-    anchor_indices: torch.Tensor,
-    num_candidates: int,
-    mode: str,
-    local_pool_size: int,
-    generator: torch.Generator,
-) -> torch.Tensor:
-    """Select distinct exact-label, non-self candidates from a train-only pool."""
-
-    if standardized_latents.ndim < 2 or labels.ndim != 2:
-        raise ValueError("latent pool and labels must have batch axes")
-    if standardized_latents.shape[0] != labels.shape[0]:
-        raise ValueError("latent pool and labels must have equal record counts")
-    if anchor_indices.ndim != 1:
-        raise ValueError("anchor_indices must be one-dimensional")
-    if mode not in {"nearest", "local_random"}:
-        raise ValueError("mode must be nearest or local_random")
-    if int(num_candidates) < 1 or int(local_pool_size) < int(num_candidates):
-        raise ValueError("candidate counts are invalid")
-    if not bool(torch.isfinite(standardized_latents).all()):
-        raise ValueError("standardized latent pool contains NaN or Inf")
-    _validate_generator(generator, standardized_latents.device)
-    labels_bool = labels > 0.5
-    outputs: list[torch.Tensor] = []
-    for raw_anchor in anchor_indices.tolist():
-        anchor = int(raw_anchor)
-        if not 0 <= anchor < standardized_latents.shape[0]:
-            raise IndexError(f"anchor index out of range: {anchor}")
-        eligible = torch.all(labels_bool == labels_bool[anchor], dim=1)
-        eligible[anchor] = False
-        pool = torch.nonzero(eligible, as_tuple=False).flatten()
-        if pool.numel() < int(num_candidates):
-            raise ValueError(
-                f"anchor {anchor} has {pool.numel()} distinct non-self candidates; "
-                f"requires {num_candidates}"
-            )
-        delta = standardized_latents[pool] - standardized_latents[anchor]
-        distance = delta.flatten(1).norm(p=2, dim=1)
-        ordered = pool[torch.argsort(distance, stable=True)]
-        local = ordered[: min(int(local_pool_size), int(ordered.numel()))]
-        if mode == "nearest":
-            selected = local[: int(num_candidates)]
-        else:
-            order = torch.randperm(
-                local.numel(), device=local.device, generator=generator
-            )
-            selected = local[order[: int(num_candidates)]]
-        outputs.append(selected)
-    return torch.stack(outputs, dim=0)
 
 
 def _projected_hull(
@@ -1285,6 +1189,4 @@ __all__ = [
     "contract_lhat_adversarial",
     "generate_lhat_adversarial",
     "load_lhat_config",
-    "make_lhat_generator",
-    "select_exact_label_candidates",
 ]
