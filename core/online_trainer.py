@@ -57,7 +57,6 @@ if TYPE_CHECKING:
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ONLINE_CONFIG_PATH = PROJECT_ROOT / "configs" / "train" / "PN2021.yaml"
-DEFAULT_METHOD_CONFIG_DIR = PROJECT_ROOT / "configs" / "train" / "methods"
 ALLOWED_CENTERS = ("ningbo", "chapman_shaoxing", "cpsc_2018", "georgia")
 ONLINE_PARAMETER_NAMES = frozenset(
     {
@@ -347,10 +346,6 @@ class OnlineTrainConfig:
     references: dict[str, Path]
     payload: dict[str, Any]
 
-    @property
-    def profile_name(self) -> str:
-        return str(self.payload["profile_name"])
-
     def describe(self) -> dict[str, Any]:
         return {
             "path": str(self.path),
@@ -366,7 +361,6 @@ class OnlineTrainConfig:
 
 @dataclass(frozen=True)
 class OnlineTrainingResult:
-    model: nn.Module
     output_dir: Path
     method_id: str
     scientific_arm: str
@@ -375,7 +369,6 @@ class OnlineTrainingResult:
     optimizer_steps: int
     last_checkpoint_path: Path
     last_checkpoint_sha256: str
-    history: tuple[dict[str, Any], ...]
     recipe_identity: dict[str, Any]
     model_identity: dict[str, Any]
     config_identity: dict[str, Any]
@@ -2859,7 +2852,6 @@ def train_online_model(
             raise RuntimeError("online training did not produce a final checkpoint")
         last_checkpoint_sha256 = sha256_file(last_checkpoint)
         result = OnlineTrainingResult(
-            model=model,
             output_dir=output,
             method_id=recipe.recipe_id,
             scientific_arm=recipe.scientific_arm,
@@ -2868,7 +2860,6 @@ def train_online_model(
             optimizer_steps=optimizer_steps,
             last_checkpoint_path=last_checkpoint,
             last_checkpoint_sha256=last_checkpoint_sha256,
-            history=tuple(history),
             recipe_identity=_recipe_identity(recipe),
             model_identity=run_identity["model"],
             config_identity={
@@ -2888,7 +2879,6 @@ def train_online_model(
 
 __all__ = [
     "ALLOWED_CENTERS",
-    "DEFAULT_METHOD_CONFIG_DIR",
     "DEFAULT_ONLINE_CONFIG_PATH",
     "FIXED20_COMPOSITION_ORDER",
     "FAMILY_BALANCED_BN_POLICY",

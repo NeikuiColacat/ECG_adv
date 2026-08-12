@@ -18,6 +18,7 @@ import core.latent_pool as latent_pool
 import core.lhat as lhat
 import core.methods as methods
 import core.methods.runtime as method_runtime
+import core.online_trainer as online_trainer
 from core.lhat import AttackThenContractDiagnostics
 from core.methods.registry import AuxiliaryVariant, RecipeKind, load_recipe_spec
 from core.methods.runtime import build_method_runtime, _scoped_lhat_diagnostics
@@ -107,6 +108,13 @@ def test_loader_removes_dag_plugins_and_allows_only_the_matched_no_vae_slot() ->
     assert tuple(corruption.CorruptionDiagnostics.__dataclass_fields__) == (
         "composition_index", "depth", "operator_mask", "output_nonfinite_count")
     assert "return_reasons" not in inspect.signature(method_runtime._quality_mask).parameters
+    assert "DEFAULT_METHOD_CONFIG_DIR" not in vars(online_trainer)
+    assert "profile_name" not in vars(online_trainer.OnlineTrainConfig)
+    assert {"model", "history"}.isdisjoint(
+        online_trainer.OnlineTrainingResult.__dataclass_fields__)
+    assert tuple(latent_pool.LatentAttackBatch.__dataclass_fields__) == (
+        "labels", "anchor_standardized", "candidate_pool_indices", "candidates_standardized")
+    assert "LatentAttackBatch" not in latent_pool.__all__
     payload = yaml.safe_load((RECIPES / "a0_clean_v1.yaml").read_text())
     payload["recipe"]["module"] = "arbitrary.user.plugin"
     with pytest.raises(ValueError, match="may not select callables"):

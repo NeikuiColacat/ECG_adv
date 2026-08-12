@@ -355,14 +355,9 @@ class LatentPoolIdentity:
 class LatentAttackBatch:
     """Aligned standardized anchors and exact-label non-self candidates."""
 
-    anchor_pool_indices: torch.Tensor
-    selection_indices: torch.Tensor
-    cache_indices: torch.Tensor
-    hash_ids: tuple[str, ...]
     labels: torch.Tensor
     anchor_standardized: torch.Tensor
     candidate_pool_indices: torch.Tensor
-    candidate_hash_ids: tuple[tuple[str, ...], ...]
     candidates_standardized: torch.Tensor
 
 
@@ -567,20 +562,10 @@ class LatentPool:
                     local[order[: self.identity.num_candidates]]
                 )
             candidate_indices = torch.stack(selected_rows, dim=0)
-        anchor_list = anchors.detach().to(device="cpu").tolist()
-        candidate_list = candidate_indices.detach().to(device="cpu").tolist()
         return LatentAttackBatch(
-            anchor_pool_indices=anchors,
-            selection_indices=self.selection_indices.index_select(0, anchors),
-            cache_indices=self.cache_indices.index_select(0, anchors),
-            hash_ids=tuple(self.hash_ids[index] for index in anchor_list),
             labels=self.labels.index_select(0, anchors),
             anchor_standardized=self.standardized_latents.index_select(0, anchors),
             candidate_pool_indices=candidate_indices,
-            candidate_hash_ids=tuple(
-                tuple(self.hash_ids[index] for index in row)
-                for row in candidate_list
-            ),
             candidates_standardized=self.standardized_latents[candidate_indices],
         )
 
@@ -807,7 +792,6 @@ def build_latent_pool(
 __all__ = [
     "LATENT_POOL_SCHEMA_VERSION",
     "MAIN_NUM_CANDIDATES",
-    "LatentAttackBatch",
     "LatentPool",
     "LatentPoolIdentity",
     "build_latent_pool",
