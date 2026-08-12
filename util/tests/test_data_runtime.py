@@ -4,23 +4,36 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import numpy as np
+import pandas as pd
 import pytest
 import torch
 import yaml
 
-from data_preprocess import data_ledger
+from data_preprocess import data_ledger, data_runtime
 from data_preprocess.data_runtime import (
     ECGSelection,
     MMapPrefetchConfig,
+    RuntimeECGDataset,
+    SelectionResidentECGDataset,
+    SequentialEvaluationDataSession,
     assert_disjoint_selections,
+    build_dataloader,
     load_data_load_config,
     per_sample_global_zscore,
     prepare_model_input,
 )
-from data_preprocess.load_cache import EXPECTED_CLASS_ORDER
+from data_preprocess.load_cache import (
+    EXPECTED_CLASS_ORDER,
+    PN2021_MAPPING_HASH,
+    PN2021_MAPPING_VERSION,
+    ECGCache,
+)
 
 
 REPO = Path(__file__).resolve().parents[2]
@@ -57,6 +70,140 @@ def _selection(partition: str, hash_ids: tuple[str, ...]) -> ECGSelection:
         mapping_version="v7_super5_sjr_rgq_review_20260528",
         mapping_hash="555ec85d5b51",
     )
+
+
+def _hash_id_set(values: np.ndarray) -> str:
+    payload = "".join(f"{value}\n" for value in sorted(values.astype(str))).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _tiny_mmap_cache(
+    tmp_path: Path,
+    name: str,
+    *,
+    dataset: str = "pn2021",
+    record_count: int = 40,
+    points: int = 8,
+    source_manifest_sha256: str = "1" * 64,
+) -> ECGCache:
+    cache_dir = (tmp_path / name).resolve()
+    cache_dir.mkdir()
+    view_count = 2 if dataset == "pn2021c" else 1
+    signal_shape = (
+        (view_count, record_count, points, 2)
+        if dataset == "pn2021c"
+        else (record_count, points, 2)
+    )
+    signals_path = cache_dir / "signals.npy"
+    writable = np.lib.format.open_memmap(
+        signals_path, mode="w+", dtype=np.float32, shape=signal_shape
+    )
+    writable[...] = np.arange(np.prod(signal_shape), dtype=np.float32).reshape(
+        signal_shape
+    )
+    writable.flush()
+    del writable
+
+    labels = np.zeros((record_count, 5), dtype=np.uint8)
+    labels[np.arange(record_count), np.arange(record_count) % 5] = 1
+    record_ids = np.asarray([f"record-{index:03d}" for index in range(record_count)])
+    hash_ids = np.asarray(
+        [hashlib.sha256(f"pn2021:{index}".encode()).hexdigest() for index in range(record_count)]
+    )
+    is_corruption = dataset == "pn2021c"
+    raw_manifest = (
+        {"source": {
+            "manifest_sha256": source_manifest_sha256,
+            "mapping_version": PN2021_MAPPING_VERSION,
+            "mapping_hash": PN2021_MAPPING_HASH,
+        }}
+        if is_corruption
+        else {}
+    )
+    identity = SimpleNamespace(
+        cache_dir=cache_dir, manifest_sha256=("2" * 64 if is_corruption else source_manifest_sha256),
+        raw_manifest=raw_manifest, is_corruption=is_corruption, dataset=dataset,
+        cache_version="tiny-characterization-v1", record_count=record_count,
+        view_count=view_count, sampling_rate_hz=100, duration_seconds=10.0,
+        signal_shape=signal_shape, lead_order=("I", "II"), physical_unit="mV",
+        normalization="none", class_order=EXPECTED_CLASS_ORDER,
+        mapping_version=PN2021_MAPPING_VERSION, mapping_hash=PN2021_MAPPING_HASH,
+        signals_path=signals_path,
+    )
+    compositions = tuple(
+        {"view_index": index, "depth": 2, "composition_id": name}
+        for index, name in enumerate(
+            ("d2__powerline_noise__emg_noise", "d2__baseline_wander__baseline_shift")
+        )
+    ) if is_corruption else ()
+    records = pd.DataFrame({
+        "cache_index": np.arange(record_count), "record_id": record_ids,
+        "hash_id": hash_ids, "center": ["ningbo"] * record_count,
+    })
+    return ECGCache(
+        identity=identity,
+        signals=np.load(signals_path, mmap_mode="r", allow_pickle=False),
+        labels=labels,
+        record_ids=record_ids,
+        hash_ids=hash_ids,
+        records=records,
+        compositions=compositions,
+        storage_mode="mmap",
+        estimated_resident_bytes=signals_path.stat().st_size,
+        available_memory_at_open_bytes=10**9,
+    )
+
+
+def _tiny_selection(
+    cache: ECGCache,
+    indices: list[int],
+    *,
+    partition: str = "k500",
+) -> ECGSelection:
+    selected = np.asarray(indices, dtype=np.int64)
+    hashes = np.asarray(cache.hash_ids[selected]).astype(str)
+    source_sha = (
+        str(cache.identity.raw_manifest["source"]["manifest_sha256"])
+        if cache.is_corruption
+        else cache.identity.manifest_sha256
+    )
+    return replace(
+        _selection(partition, tuple(hashes)),
+        cache_dataset=cache.dataset,
+        indices=selected,
+        record_ids=np.asarray(cache.record_ids[selected]).astype(str),
+        source_manifest_sha256=source_sha,
+        hash_id_set_sha256=_hash_id_set(hashes),
+    )
+
+
+def _runtime_dataset(
+    monkeypatch: pytest.MonkeyPatch,
+    cache: ECGCache,
+    selection: ECGSelection,
+) -> RuntimeECGDataset:
+    monkeypatch.setattr(data_runtime, "load_cache", lambda *args, **kwargs: cache)
+    monkeypatch.setattr(data_runtime, "load_selection", lambda *args, **kwargs: selection)
+    return RuntimeECGDataset(
+        cache_dir=cache.identity.cache_dir,
+        split_dir=cache.identity.cache_dir / "splits",
+        partition=selection.partition,
+        logical_center=selection.logical_center,
+        cache_mode="mmap",
+        validate_values="none",
+        access_order="split",
+    )
+
+
+def _assert_runtime_items_equal(
+    actual: list[dict[str, Any]], expected: list[dict[str, Any]]
+) -> None:
+    for actual_item, expected_item in zip(actual, expected, strict=True):
+        for key in actual_item:
+            if isinstance(actual_item[key], torch.Tensor):
+                torch.testing.assert_close(actual_item[key], expected_item[key])
+            else:
+                assert actual_item[key] == expected_item[key]
 
 
 def test_canonical_data_load_config_is_the_single_runtime_profile() -> None:
@@ -171,6 +318,217 @@ def test_mmap_prefetch_config_rejects_unbounded_or_unknown_policy() -> None:
         MMapPrefetchConfig(window_mib=0)
     with pytest.raises(ValueError, match="none or sequential_willneed"):
         MMapPrefetchConfig(advice="aggressive")  # type: ignore[arg-type]
+
+
+def test_runtime_dataset_batched_dense_and_sparse_reads_match_scalar_mmap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cache = _tiny_mmap_cache(tmp_path, "batched-cache")
+    selection = _tiny_selection(cache, [1, 2, 4, 25, 39])
+    batch_selectors: list[object] = []
+    original_get_batch = cache.get_batch
+
+    def record_batch(selector: object, **kwargs: Any):
+        batch_selectors.append(selector)
+        return original_get_batch(selector, **kwargs)
+
+    monkeypatch.setattr(cache, "get_batch", record_batch)
+    dataset = _runtime_dataset(monkeypatch, cache, selection)
+    try:
+        dense_positions = [0, 1, 2]
+        sparse_positions = [0, 3, 4]
+        dense = dataset.__getitems__(dense_positions)
+        sparse = dataset.__getitems__(sparse_positions)
+        _assert_runtime_items_equal(
+            dense, [dataset[position] for position in dense_positions]
+        )
+        _assert_runtime_items_equal(
+            sparse, [dataset[position] for position in sparse_positions]
+        )
+
+        assert isinstance(batch_selectors[0], slice)
+        assert batch_selectors[0] == slice(1, 5)
+        np.testing.assert_array_equal(
+            batch_selectors[1], np.asarray([1, 25, 39], dtype=np.int64)
+        )
+        assert [int(item["cache_index"]) for item in dense] == [1, 2, 4]
+        assert [int(item["cache_index"]) for item in sparse] == [1, 25, 39]
+    finally:
+        dataset.close()
+
+
+def _collect_loader_identity(loader: Any) -> dict[str, Any]:
+    result: dict[str, list[Any]] = {
+        "hash_ids": [],
+        "record_ids": [],
+        "cache_indices": [],
+        "waveforms": [],
+        "labels": [],
+    }
+    for batch in loader:
+        result["hash_ids"].extend(str(value) for value in batch["hash_id"])
+        result["record_ids"].extend(str(value) for value in batch["record_id"])
+        result["cache_indices"].extend(
+            int(value) for value in batch["cache_index"].tolist()
+        )
+        result["waveforms"].append(batch["waveform"].clone())
+        result["labels"].append(batch["label"].clone())
+    result["waveforms"] = torch.cat(result["waveforms"])
+    result["labels"] = torch.cat(result["labels"])
+    return result
+
+
+def test_selection_resident_matches_seeded_mmap_and_closes_source_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    split_indices = [8, 2, 11, 0, 5, 7, 3, 10]
+    source_cache = _tiny_mmap_cache(tmp_path, "resident-gather-source", record_count=12)
+    source_selection = _tiny_selection(source_cache, split_indices)
+    source = _runtime_dataset(monkeypatch, source_cache, source_selection)
+    source_mapping = source_cache.signals._mmap
+    resident = SelectionResidentECGDataset(source)
+    source.close()
+    assert source_cache._closed is True
+    assert source_mapping.closed is True
+
+    mmap_cache = _tiny_mmap_cache(tmp_path, "comparison-mmap", record_count=12)
+    mmap_selection = _tiny_selection(mmap_cache, split_indices)
+    mmap_dataset = _runtime_dataset(monkeypatch, mmap_cache, mmap_selection)
+    seed_config = tmp_path / "seed.yaml"
+    seed_config.write_text(
+        "schema_version: 1\nrandom_seed: 424242\n", encoding="utf-8"
+    )
+    namespace = "characterization_seeded_hash_order_v1"
+    resident_loader, resident_seed = build_dataloader(
+        resident,
+        batch_size=3,
+        shuffle=True,
+        num_workers=0,
+        seed_namespace=namespace,
+        seed_config_path=seed_config,
+    )
+    mmap_loader, mmap_seed = build_dataloader(
+        mmap_dataset,
+        batch_size=3,
+        shuffle=True,
+        num_workers=0,
+        seed_namespace=namespace,
+        seed_config_path=seed_config,
+    )
+    try:
+        resident_result = _collect_loader_identity(resident_loader)
+        mmap_result = _collect_loader_identity(mmap_loader)
+        assert resident_seed == mmap_seed
+        assert resident_seed.base_seed == 424242
+        assert resident_seed.effective_seed == 211764339
+        assert resident_seed.config_sha256 == (
+            "9121cc2ee7c1c247a579f40f54740cf535ce09f01389a9d7755df688ce678244"
+        )
+        assert resident_result["cache_indices"] == [10, 5, 3, 11, 2, 0, 7, 8]
+        ordered_hash_digest = hashlib.sha256(
+            "".join(f"{value}\n" for value in resident_result["hash_ids"]).encode()
+        ).hexdigest()
+        assert ordered_hash_digest == (
+            "517669fbcaf52745b065b9f04e39b4e4ac630ca6880653610baddb78e687a894"
+        )
+        for key in resident_result:
+            if isinstance(resident_result[key], torch.Tensor):
+                torch.testing.assert_close(resident_result[key], mmap_result[key])
+            else:
+                assert resident_result[key] == mmap_result[key]
+    finally:
+        resident_loader.close()
+        mmap_loader.close()
+
+
+def test_sequential_evaluation_session_reuses_two_mmaps_and_selections(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clean_cache = _tiny_mmap_cache(tmp_path, "clean-eval", record_count=8)
+    corrupted_cache = _tiny_mmap_cache(
+        tmp_path,
+        "corrupted-eval",
+        dataset="pn2021c",
+        record_count=8,
+        source_manifest_sha256=clean_cache.identity.manifest_sha256,
+    )
+    clean_selection = _tiny_selection(
+        clean_cache, [0, 2, 5], partition="evaluation_all_zero_kept"
+    )
+    corrupted_selection = _tiny_selection(
+        corrupted_cache, [0, 2, 5], partition="evaluation_all_zero_kept"
+    )
+    caches = {cache.identity.cache_dir: cache for cache in (clean_cache, corrupted_cache)}
+    selections = {"pn2021": clean_selection, "pn2021c": corrupted_selection}
+    cache_open_calls: list[Path] = []
+
+    def open_cache(cache_dir: str | Path, **kwargs: Any) -> ECGCache:
+        del kwargs
+        path = Path(cache_dir).resolve()
+        cache_open_calls.append(path)
+        return caches[path]
+
+    monkeypatch.setattr(data_runtime, "load_cache", open_cache)
+    selection_calls: list[str] = []
+
+    def open_selection(cache: ECGCache, *args: Any, **kwargs: Any) -> ECGSelection:
+        del args, kwargs
+        selection_calls.append(cache.dataset)
+        return selections[cache.dataset]
+
+    monkeypatch.setattr(data_runtime, "load_selection", open_selection)
+    mappings = [cache.signals._mmap for cache in caches.values()]
+    session = SequentialEvaluationDataSession()
+    acquire = {
+        "split_dir": tmp_path / "splits",
+        "partition": "evaluation_all_zero_kept",
+        "logical_center": "ningbo",
+        "sampling_rate_hz": 100,
+        "validate_values": "none",
+    }
+    try:
+        clean_pair = session._acquire(
+            cache_dir=clean_cache.identity.cache_dir,
+            **acquire,
+        )
+        corrupted_pairs = [
+            session._acquire(
+                cache_dir=corrupted_cache.identity.cache_dir,
+                **acquire,
+            )
+            for _view in corrupted_cache.compositions
+        ]
+        assert clean_pair == (clean_cache, clean_selection)
+        assert corrupted_pairs[0][0] is corrupted_pairs[1][0]
+        assert corrupted_pairs[0][1] is corrupted_pairs[1][1]
+        views = [item["composition_id"] for item in corrupted_cache.compositions]
+        assert not np.array_equal(
+            corrupted_cache.get_record(0, view=views[0]).signal,
+            corrupted_cache.get_record(0, view=views[1]).signal,
+        )
+        for cache, selection, view in (
+            (clean_cache, clean_selection, None),
+            *((corrupted_cache, corrupted_selection, view) for view in views),
+        ):
+            dataset = RuntimeECGDataset(
+                cache_dir=cache.identity.cache_dir, split_dir=tmp_path / "splits",
+                partition=selection.partition, logical_center="ningbo", cache_mode="mmap",
+                view=view, validate_values="none", shared_cache=cache,
+                shared_selection=selection,
+            )
+            loader, _ = build_dataloader(dataset, batch_size=2, shuffle=False)
+            next(iter(loader))
+            loader.close()
+            assert cache._closed is False
+        assert cache_open_calls == list(caches)
+        assert selection_calls == ["pn2021", "pn2021c"]
+        assert (session.describe()["cache_open_count"], session.describe()["selection_count"]) == (2, 2)
+    finally:
+        session.close()
+    assert session.describe()["closed"] is True
+    assert session.describe()["cache_open_count"] == 0
+    assert all(cache._closed for cache in caches.values())
+    assert all(mapping.closed for mapping in mappings)
 
 
 def _ledger_roots(base: Path, payload: bytes = b"same-bytes") -> dict[str, Path]:
