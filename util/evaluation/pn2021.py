@@ -20,7 +20,8 @@ import yaml
 from data_preprocess.data_runtime import (
     PN2021EvaluationLoaderPlan,
 )
-from models.checkpoints import CheckpointIdentity, sha256_file
+from data_preprocess.load_cache import EXPECTED_LEADS
+from models.checkpoints import CheckpointIdentity
 from models.contracts import (
     CLASS_ORDER,
     ECGFOUNDER_SPEC,
@@ -50,54 +51,22 @@ from util.evaluation.metrics import (
     mean_metric_views,
     validate_evaluation_aggregates,
 )
+from util.pn2021_artifact_contract import (
+    CENTER_SOURCES,
+    LOGICAL_CENTERS,
+    MAPPING_HASH,
+    MAPPING_VERSION,
+    build_artifact_reference,
+    load_json_mapping,
+    sha256_file,
+)
 from util.random_seed import seed_process
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_PN2021_EVAL_CONFIG = PROJECT_ROOT / "configs" / "eval" / "PN2021.yaml"
-PN2021_MAPPING_VERSION = "v7_super5_sjr_rgq_review_20260528"
-PN2021_MAPPING_HASH = "555ec85d5b51"
-LOGICAL_CENTERS = ("ningbo", "chapman_shaoxing", "cpsc_2018", "georgia")
-LOGICAL_CENTER_SOURCES = {
-    "ningbo": ("ningbo",),
-    "chapman_shaoxing": ("chapman_shaoxing",),
-    "cpsc_2018": ("cpsc_2018", "cpsc_2018_extra"),
-    "georgia": ("georgia",),
-}
-LEAD_ORDER = (
-    "I",
-    "II",
-    "III",
-    "aVR",
-    "aVL",
-    "aVF",
-    "V1",
-    "V2",
-    "V3",
-    "V4",
-    "V5",
-    "V6",
-)
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
-def _json_mapping(path: Path, *, description: str) -> dict[str, Any]:
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        raise FileNotFoundError(f"{description} not found: {path}") from None
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"invalid {description} JSON at {path}: {exc}") from exc
-    if not isinstance(payload, dict):
-        raise ValueError(f"{description} must be a JSON mapping")
-    return payload
+PN2021_MAPPING_VERSION = MAPPING_VERSION
+PN2021_MAPPING_HASH = MAPPING_HASH
 
 
 def _yaml_mapping(path: Path, *, description: str) -> dict[str, Any]:
@@ -372,7 +341,7 @@ class PN2021EvalConfig:
             "sha256": self.sha256,
             "config_root": str(self.config_root),
             "references": {
-                name: {"path": str(path), "sha256": _sha256(path)}
+                name: build_artifact_reference(path)
                 for name, path in references.items()
             },
             "resolved": self.payload,
@@ -620,7 +589,7 @@ def load_pn2021_eval_config(
 
     return PN2021EvalConfig(
         path=config_path,
-        sha256=_sha256(config_path),
+        sha256=sha256_file(config_path),
         config_root=root,
         split_config_path=reference("split_config"),
         data_load_config_path=reference("data_load_config"),
@@ -688,9 +657,9 @@ def load_corruption_views(
         raw_root = config.config_root / raw_root
     cache_root = raw_root.resolve()
     manifest_path = cache_root / "manifest.json"
-    manifest = _json_mapping(manifest_path, description="PN2021-C manifest")
+    manifest = load_json_mapping(manifest_path, name="PN2021-C manifest")
     artifact_locks = config.payload["artifact_locks"]
-    manifest_sha256 = _sha256(manifest_path)
+    manifest_sha256 = sha256_file(manifest_path)
     if manifest_sha256 != artifact_locks["corruption_cache_manifest_sha256"]:
         raise ValueError("PN2021-C cache manifest differs from the locked artifact")
     if manifest.get("dataset") != "pn2021c" or manifest.get("schema_version") != 1:
@@ -710,7 +679,7 @@ def load_corruption_views(
         files.get("compositions"),
         description="PN2021-C compositions",
     )
-    compositions_sha256 = _sha256(compositions_path)
+    compositions_sha256 = sha256_file(compositions_path)
     if compositions_sha256 != artifact_locks["compositions_sha256"]:
         raise ValueError("PN2021-C compositions differ from the locked artifact")
     try:
@@ -831,7 +800,7 @@ def build_evaluation_plan(
         "profile_name": config.profile_name,
         "config": config.describe(),
         "model": model_spec.describe(),
-        "checkpoint": {"path": str(checkpoint), "sha256": sha256_file(checkpoint)},
+        "checkpoint": build_artifact_reference(checkpoint),
         "subject": _resolved_subject_identity(
             subject_identity, model_spec=model_spec, centers=selected_centers
         ),
@@ -902,7 +871,7 @@ def _loader_identity(
         raise ValueError("evaluation cache must use the canonical 100 Hz domain")
     if float(cache.get("duration_seconds", -1.0)) != 10.0:
         raise ValueError("evaluation cache must contain ten-second ECGs")
-    if tuple(cache.get("lead_order", ())) != LEAD_ORDER:
+    if tuple(cache.get("lead_order", ())) != EXPECTED_LEADS:
         raise ValueError("evaluation cache lead order mismatch")
     signal_shape = tuple(int(value) for value in cache.get("signal_shape", ()))
     if signal_shape[-2:] != (CANONICAL_POINTS, CANONICAL_CHANNELS):
@@ -923,7 +892,7 @@ def _loader_identity(
         raise ValueError("evaluation cache mapping identity mismatch")
     if selection.get("logical_center") != center:
         raise ValueError("evaluation selection logical center mismatch")
-    expected_sources = LOGICAL_CENTER_SOURCES[center]
+    expected_sources = tuple(CENTER_SOURCES[center])
     if tuple(selection.get("source_centers", ())) != expected_sources:
         raise ValueError(
             "evaluation selection physical source centers mismatch: "
@@ -951,8 +920,8 @@ def _loader_identity(
         raise ValueError("clean PN2021 loader unexpectedly declares a corruption view")
 
     split_path = Path(str(selection.get("split_manifest_path", ""))).resolve()
-    split = _json_mapping(split_path, description="PN2021 split manifest")
-    split_manifest_sha256 = _sha256(split_path)
+    split = load_json_mapping(split_path, name="PN2021 split manifest")
+    split_manifest_sha256 = sha256_file(split_path)
     if (
         selection.get("split_manifest_sha256") != split_manifest_sha256
         or split_manifest_sha256 != artifact_locks["split_manifest_sha256"]

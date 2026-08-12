@@ -79,14 +79,23 @@ def _positive(value: Any, name: str) -> int:
     return value
 
 
-def _json(path: Path, name: str) -> dict[str, Any]:
+def load_json_mapping(path: str | Path, *, name: str) -> dict[str, Any]:
+    """Load one JSON object with a caller-owned artifact description."""
+
+    resolved = Path(path)
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        value = json.loads(resolved.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        raise FileNotFoundError(f"{name} not found: {path}") from None
+        raise FileNotFoundError(f"{name} not found: {resolved}") from None
     except json.JSONDecodeError as exc:
-        raise ValueError(f"invalid {name} JSON: {path}") from exc
+        raise ValueError(f"invalid {name} JSON: {resolved}") from exc
     return dict(_mapping(value, None, name))
+
+
+def build_artifact_reference(path: str | Path) -> dict[str, str]:
+    """Build the canonical path/SHA reference without rewriting its path text."""
+
+    return {"path": str(path), "sha256": sha256_file(path)}
 
 
 def resolve_artifact_reference(value: Any, *, owner: Path, name: str) -> tuple[Path, str]:
@@ -349,7 +358,7 @@ def validate_pn2021_evaluation_result(
         if centers != [lineage["center"]] or result.get("model") != lineage["model"]["spec"]:
             raise ValueError("evaluation model or center differs from prospective lineage")
         train_path, _ = resolve_artifact_reference(subject["train_result"], owner=result_path, name="evaluation train_result")
-        train_payload = _json(train_path, "train_result")
+        train_payload = load_json_mapping(train_path, name="train_result")
         train_context = validate_pn2021_train_result(train_payload, result_path=train_path, verify_checkpoint=verify_checkpoint)
         if train_context["lineage"] != lineage or train_context["checkpoint_sha256"] != checkpoint_sha:
             raise ValueError("evaluation differs from its prospective train_result")
@@ -402,7 +411,7 @@ def validate_pn2021_evaluation_result(
                 or dict(legacy_checkpoint) != expected_checkpoint):
             raise ValueError("legacy evaluation checkpoint identity is invalid")
         train_path, _ = resolve_artifact_reference(subject["train_result"], owner=result_path, name="legacy train_result")
-        train_payload = _json(train_path, "legacy train_result")
+        train_payload = load_json_mapping(train_path, name="legacy train_result")
         if any(key in train_payload for key in ("schema_version", "artifact_type", "lineage")):
             raise ValueError("schema-1 train_result cannot use legacy evaluation mode")
         last = _mapping(train_payload.get("last_checkpoint"), {"path", "sha256"}, "legacy last_checkpoint")
@@ -492,7 +501,8 @@ def validate_pn2021_evaluation_result(
 
 
 __all__ = ["CANONICAL_CORRUPTION_VIEWS", "CLASS_ORDER", "LOGICAL_CENTERS", "MAPPING_HASH", "MAPPING_VERSION",
-           "MODEL_SPECS", "resolve_artifact_reference", "sha256_file",
+           "MODEL_SPECS", "build_artifact_reference", "load_json_mapping",
+           "resolve_artifact_reference", "sha256_file",
            "validate_checkpoint_root", "validate_expected_cohort",
            "validate_pn2021_evaluation_result", "validate_pn2021_train_result",
            "validate_training_lineage"]

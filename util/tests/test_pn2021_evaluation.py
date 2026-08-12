@@ -15,6 +15,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import yaml
 
+import util.run_record as run_record
 from data_preprocess import data_runtime
 from boot_scripts.evaluate_pn2021 import (
     _summary,
@@ -46,7 +47,12 @@ from util.evaluation.pn2021 import (
     load_pn2021_eval_config,
 )
 from util.run_record import _result_summary
-from util.pn2021_artifact_contract import validate_pn2021_evaluation_result
+from util.pn2021_artifact_contract import (
+    build_artifact_reference,
+    load_json_mapping,
+    sha256_file as artifact_sha256_file,
+    validate_pn2021_evaluation_result,
+)
 
 
 LEAD_ORDER = [
@@ -1603,7 +1609,18 @@ def test_run_recorder_rejects_tampered_evaluation_evidence(
         _result_summary(payload, "evaluation_result", result_path=target)
 
 
-def test_matrix_import_stays_outside_model_and_gpu_modules() -> None:
+def test_matrix_import_stays_outside_model_and_gpu_modules(tmp_path: Path) -> None:
+    artifact = tmp_path / "artifact.json"
+    artifact.write_text('{"status": "complete"}\n', encoding="utf-8")
+    assert load_json_mapping(artifact, name="fixture artifact") == {
+        "status": "complete"
+    }
+    assert build_artifact_reference(artifact) == {
+        "path": str(artifact),
+        "sha256": artifact_sha256_file(artifact),
+    }
+    assert run_record.sha256_file is artifact_sha256_file
+    assert not hasattr(run_record, "snapshot_yaml_files")
     script = (
         "import sys; import util.evaluation.matrix; "
         "blocked=('torch','util.evaluation.pn2021','models.checkpoints'); "

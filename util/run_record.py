@@ -13,9 +13,11 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Sequence
 
 import yaml
+
+from util.pn2021_artifact_contract import resolve_artifact_reference, sha256_file
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -51,15 +53,6 @@ RESULT_REQUIRED_KEYS = {
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-def sha256_file(path: str | Path) -> str:
-    resolved = Path(path)
-    digest = hashlib.sha256()
-    with resolved.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
@@ -233,16 +226,6 @@ def _write_yaml_snapshots(
     return [metadata for _, _, metadata in prepared]
 
 
-def snapshot_yaml_files(
-    run_dir: Path,
-    sources: Sequence[tuple[Path, str]],
-    *,
-    config_root: Path,
-) -> list[dict[str, Any]]:
-    snapshots = _prepare_yaml_snapshots(sources, config_root=config_root)
-    return _write_yaml_snapshots(run_dir, snapshots)
-
-
 def _artifact_role(relative: Path) -> str:
     value = relative.as_posix()
     if relative == DATA_LEDGER_SNAPSHOT:
@@ -352,29 +335,6 @@ def _require(condition: Any, message: str) -> None:
         raise ValueError(message)
 
 
-def _verified_artifact(value: Any, description: str, *, parent: Path,
-                       contained: bool = False) -> Path:
-    _require(isinstance(value, dict) and set(value) == {"path", "sha256"},
-             f"{description} must contain exactly path and sha256")
-    path, digest = value["path"], value["sha256"]
-    _require(isinstance(path, str) and bool(path) and isinstance(digest, str)
-             and len(digest) == 64 and not set(digest) - set("0123456789abcdef"),
-             f"{description} has an invalid path or SHA256")
-    unresolved = Path(path).expanduser()
-    candidate = unresolved if unresolved.is_absolute() else parent / unresolved
-    resolved = candidate.resolve()
-    if contained:
-        try:
-            resolved.relative_to(parent.resolve())
-        except ValueError:
-            raise ValueError(f"{description} must stay inside its output directory") from None
-    _require(not candidate.is_symlink() and resolved.is_file(),
-             f"{description} file is missing or is a symlink")
-    _require(sha256_file(resolved) == digest,
-             f"{description} SHA256 does not match the file")
-    return resolved
-
-
 def _train_result_summary(payload: dict[str, Any], result_type: str, *, result_path: Path) -> dict[str, Any]:
     _require_result_keys(payload, result_type)
     if result_type == "pn2021_train_result":
@@ -438,11 +398,13 @@ def _matrix_result_summary(payload: dict[str, Any], result_path: Path) -> dict[s
     paths: list[Path] = []
     for member in members:
         _require(isinstance(member, dict), "matrix_result member must be a mapping")
-        paths.append(_verified_artifact(
-            member.get("evaluation_result"), "matrix member evaluation_result",
-            parent=result_path.parent,
-        ))
-    config_path = _verified_artifact(payload.get("config"), "matrix_result config", parent=result_path.parent)
+        paths.append(resolve_artifact_reference(
+            member.get("evaluation_result"), owner=result_path,
+            name="matrix member evaluation_result",
+        )[0])
+    config_path = resolve_artifact_reference(
+        payload.get("config"), owner=result_path, name="matrix_result config"
+    )[0]
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     profiles = config.get("profiles") if isinstance(config, dict) else None
     matches = [item for item in profiles.values() if isinstance(item, dict)
@@ -751,7 +713,6 @@ __all__ = [
     "capture_git_state",
     "ensure_output_outside_worktree",
     "sha256_file",
-    "snapshot_yaml_files",
     "utc_now",
     "verify_run_file_index",
 ]

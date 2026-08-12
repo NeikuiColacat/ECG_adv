@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -10,21 +9,14 @@ from typing import Any
 from util.evaluation.metrics import aggregate_corruption_views, mean_metric_views
 from util.pn2021_artifact_contract import (
     LOGICAL_CENTERS,
-    sha256_file,
+    build_artifact_reference,
+    load_json_mapping,
     validate_pn2021_evaluation_result,
 )
 
 
 def _load(path: Path) -> dict[str, Any]:
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        raise FileNotFoundError(f"evaluation result not found: {path}") from None
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"invalid evaluation result JSON: {path}") from exc
-    if not isinstance(value, dict):
-        raise ValueError("evaluation result must be a mapping")
-    return value
+    return load_json_mapping(path, name="evaluation result")
 
 
 def _member(path: Path, center: str, expected: Mapping[str, Any] | None) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -39,7 +31,7 @@ def _member(path: Path, center: str, expected: Mapping[str, Any] | None) -> tupl
     return result, {
         "summary": {
             "center": center,
-            "evaluation_result": {"path": str(path), "sha256": sha256_file(path)},
+            "evaluation_result": build_artifact_reference(path),
             "train_result": dict(result["subject"]["train_result"]),
             "checkpoint": {
                 "path": str(context["checkpoint_path"]),
