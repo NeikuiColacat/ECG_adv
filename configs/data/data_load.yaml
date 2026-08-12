@@ -1,5 +1,9 @@
 schema_version: 1
 
+content_ledger:
+  path: data/data_content_ledger_v1.jsonl
+  sha256: d3bf1f18046a695b9c6089f2866cdb854042c3b528434018ecab8f56d36af665
+
 # Shared data-runtime defaults. Explicit get_dataloader(...) arguments override
 # these values, so experiment YAML adapters can still lock model-specific
 # batch sizes without changing this file.

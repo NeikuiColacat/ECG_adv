@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from data_preprocess import data_ledger
 from boot_scripts.run_experiment import (
     ExperimentPlan,
     execute_experiment,
@@ -31,6 +32,39 @@ def _write_bundle(tmp_path: Path, *, run_dir: Path) -> Path:
     seed_path = config_root / "random_seed.yaml"
     experiment_path.parent.mkdir(parents=True)
     entry_config_path.parent.mkdir(parents=True)
+    (config_root / "data").mkdir()
+    (config_root / "augmentation").mkdir()
+    roots = {}
+    for name in data_ledger.ROOT_NAMES:
+        root = tmp_path / "data_roots" / name
+        root.mkdir(parents=True)
+        (root / "member.bin").write_bytes(name.encode())
+        roots[name] = root
+    (config_root / "data" / "splits.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "ptbxl": {"cache_dir": str(roots["ptbxl_cache"])},
+                "pn2021": {"cache_dir": str(roots["pn2021_cache"])},
+                "output": {"root_dir": str(roots["split_artifacts"])},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (config_root / "augmentation" / "cache.yaml").write_text(
+        yaml.safe_dump({"output": {"cache_dir": str(roots["pn2021c_cache"])}}),
+        encoding="utf-8",
+    )
+    ledger_path = config_root / "data" / "content_ledger.jsonl"
+    ledger = data_ledger.generate_ledger(roots, ledger_path)
+    (config_root / "data" / "data_load.yaml").write_text(
+        yaml.safe_dump(
+            {"schema_version": 1, "content_ledger": {
+                "path": "data/content_ledger.jsonl",
+                "sha256": ledger["ledger_sha256"],
+            }}
+        ),
+        encoding="utf-8",
+    )
     seed_path.write_text(
         "schema_version: 1\nrandom_seed: 20260501\n",
         encoding="utf-8",
@@ -39,7 +73,12 @@ def _write_bundle(tmp_path: Path, *, run_dir: Path) -> Path:
         yaml.safe_dump(
             {
                 "schema_version": 1,
-                "references": {"random_seed_config": "random_seed.yaml"},
+                "references": {
+                    "random_seed_config": "random_seed.yaml",
+                    "split_config": "data/splits.yaml",
+                    "data_load_config": "data/data_load.yaml",
+                    "corruption_cache_config": "augmentation/cache.yaml",
+                },
                 "notes": {"historical_example": "not-a-runtime-config.yaml"},
             },
             sort_keys=False,
@@ -178,9 +217,15 @@ def _record_payload(
 def test_dry_run_resolves_the_config_closure_without_writes(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     run_dir = tmp_path / "runs" / "new"
     experiment_path = _write_bundle(tmp_path, run_dir=run_dir)
+    data_load = tmp_path / "configs" / "data" / "data_load.yaml"
+    ledger_path = tmp_path / "configs" / "data" / "content_ledger.jsonl"
+    ledger_path.unlink()
+    monkeypatch.setattr(data_ledger, "load_roots", lambda *args, **kwargs: 1 / 0)
+    monkeypatch.setattr(data_ledger, "verify_ledger", lambda *args, **kwargs: 1 / 0)
 
     assert main(["--config", str(experiment_path), "--dry-run"]) == 0
     payload = json.loads(capsys.readouterr().out)
@@ -191,6 +236,21 @@ def test_dry_run_resolves_the_config_closure_without_writes(
         "fixture.yaml",
         "PTBXL.yaml",
         "random_seed.yaml",
+        "splits.yaml",
+        "data_load.yaml",
+        "cache.yaml",
+    }
+    assert payload["data_content"] == {
+        "path": str(ledger_path),
+        "config_relative_path": "data/content_ledger.jsonl",
+        "expected_sha256": yaml.safe_load(data_load.read_text())["content_ledger"]["sha256"],
+        "required_roots": ["ptbxl_cache", "split_artifacts"],
+        "verification_mode": "deferred_quick_inventory_size",
+        "reads_ledger": False,
+        "stats_data": False,
+        "config_closure_sha256": {
+            item["path"]: item["sha256"] for item in payload["config_closure"]
+        },
     }
     assert payload["run_dir_collision"] is False
     assert payload["would_create_directory"] is True
@@ -288,13 +348,110 @@ def test_successful_execution_records_the_exact_delegate_and_file_index(
 
     assert len(calls) == 1
     assert calls[0][1] == str((REPO / "boot_scripts" / "train_ptbxl_effnet.py").resolve())
+    assert calls[0][calls[0].index("--config") + 1] == str(
+        run_dir / "configs" / "train" / "PTBXL.yaml"
+    )
+    assert calls[0][calls[0].index("--config-root") + 1] == str(
+        run_dir / "configs"
+    )
     manifest = json.loads((run_dir / "run_manifest.json").read_text(encoding="utf-8"))
     assert manifest["status"] == "complete"
     assert manifest["exact_launcher_argv"] == launcher_argv
     assert manifest["exact_delegate_argv"] == calls[0]
     assert manifest["delegate_result"]["path"] == "training/train_result.json"
     assert set(manifest["delegate_result"]) >= {"identity", "selection", "sha256"}
+    data_content = manifest["data_content"]
+    snapshot = run_dir / data_content["ledger_snapshot"]
+    config_snapshot = run_dir / data_content["config_ledger_snapshot"]
+    assert snapshot.read_bytes() == plan.data_ledger.path.read_bytes()
+    assert config_snapshot.read_bytes() == snapshot.read_bytes()
+    assert data_content["expected_ledger_sha256"] == data_content["verified_ledger_sha256"]
+    assert data_content["required_roots"] == ["ptbxl_cache", "split_artifacts"]
+    assert data_content["execution_verification"]["mode"] == "quick_exact_inventory_and_size"
+    file_index = json.loads((run_dir / "run_file_index.json").read_text())
+    assert any(item["path"] == "manifests/data_content_ledger.jsonl"
+               and item["role"] == "data_content_ledger_snapshot"
+               for item in file_index["files"])
     assert verify_run_file_index(run_dir) == []
+
+
+@pytest.mark.parametrize(
+    ("relative", "delete"),
+    (
+        ("manifests/data_content_ledger.jsonl", False),
+        ("manifests/data_content_ledger.jsonl", True),
+        ("configs/data/content_ledger.jsonl", False),
+        ("configs/data/content_ledger.jsonl", True),
+    ),
+)
+def test_delegate_cannot_tamper_with_the_data_ledger_snapshot(
+    tmp_path: Path, relative: str, delete: bool
+) -> None:
+    case = ("delete" if delete else "rewrite") + "_" + Path(relative).parent.name
+    run_dir = tmp_path / "runs" / case
+    plan = load_experiment_plan(_write_bundle(tmp_path / case, run_dir=run_dir))
+
+    def delegate(argv: list[str], log_path: Path) -> int:
+        output_dir = Path(argv[argv.index("--output-dir") + 1])
+        output_dir.mkdir(parents=True)
+        (output_dir / "train_result.json").write_text(
+            json.dumps({"config": {}, "epochs_completed": 1,
+                        "model": {"name": "fixture"}, "selected_epoch": 1,
+                        "selected_checkpoint": {"path": "checkpoints/best.pt"}})
+        )
+        snapshot = run_dir / relative
+        snapshot.unlink() if delete else snapshot.write_bytes(b"tampered\n")
+        log_path.write_text("tampered ledger snapshot\n")
+        return 0
+
+    assert execute_experiment(
+        plan, launcher_argv=["python", "boot_scripts/run_experiment.py"],
+        delegate_runner=delegate,
+    ) == 1
+    manifest = json.loads((run_dir / "run_manifest.json").read_text())
+    assert manifest["status"] == "failed"
+    assert "data content ledger snapshot" in manifest["error"]
+
+
+def test_data_verification_failure_precedes_run_directory_and_delegate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir = tmp_path / "runs" / "blocked"
+    plan = load_experiment_plan(_write_bundle(tmp_path, run_dir=run_dir))
+    calls = []
+
+    def fail(*args: object, **kwargs: object) -> dict:
+        assert not run_dir.exists()
+        raise ValueError("fixture ledger drift")
+
+    monkeypatch.setattr(data_ledger, "verify_ledger", fail)
+    with pytest.raises(ValueError, match="ledger drift"):
+        execute_experiment(
+            plan,
+            launcher_argv=["python", "boot_scripts/run_experiment.py"],
+            delegate_runner=lambda argv, log: calls.append((argv, log)) or 0,
+        )
+    assert calls == []
+    assert not run_dir.exists()
+
+
+@pytest.mark.parametrize(
+    "relative", ("data/data_load.yaml", "data/splits.yaml", "train/PTBXL.yaml")
+)
+def test_data_config_closure_drift_is_rejected_before_run_directory(
+    tmp_path: Path, relative: str
+) -> None:
+    run_dir = tmp_path / "runs" / Path(relative).stem
+    plan = load_experiment_plan(_write_bundle(tmp_path, run_dir=run_dir))
+    source = tmp_path / "configs" / relative
+    source.write_text(source.read_text() + "\n# drift after plan resolution\n")
+
+    with pytest.raises(ValueError, match="config closure changed"):
+        execute_experiment(
+            plan, launcher_argv=["python", "boot_scripts/run_experiment.py"],
+            delegate_runner=lambda argv, log: 0,
+        )
+    assert not run_dir.exists()
 
 
 def test_exit_zero_without_declared_result_is_a_failed_run(tmp_path: Path) -> None:
@@ -395,6 +552,58 @@ def test_matrix_result_is_registered(tmp_path: Path) -> None:
     _, plan = _action_plan(tmp_path, "aggregate_pn2021", delegate_subdir="evaluation")
     assert plan.expected_result_relative_path == Path("evaluation/matrix_result.json")
     assert plan.expected_result_type == "pn2021_matrix_result"
+    assert plan.data_ledger is None
+
+
+@pytest.mark.parametrize(
+    ("entrypoint", "required_roots"),
+    (
+        ("train_ptbxl_effnet", ("ptbxl_cache", "split_artifacts")),
+        ("train_ptbxl_ecgfounder", ("ptbxl_cache", "split_artifacts")),
+        ("train_pn2021", ("pn2021_cache", "split_artifacts")),
+        (
+            "evaluate_pn2021",
+            ("pn2021_cache", "pn2021c_cache", "split_artifacts"),
+        ),
+    ),
+)
+def test_entrypoints_own_their_exact_data_roots(
+    tmp_path: Path, entrypoint: str, required_roots: tuple[str, ...]
+) -> None:
+    _, plan = _action_plan(tmp_path, entrypoint)
+    assert plan.data_ledger is not None
+    assert plan.data_ledger.required_roots == required_roots
+    assert plan.data_ledger.path == (
+        tmp_path / "configs" / "data" / "content_ledger.jsonl"
+    ).resolve()
+    closure_paths = {path for path, _ in plan.data_ledger.closure_sha256}
+    if entrypoint == "evaluate_pn2021":
+        assert tmp_path / "configs" / "augmentation" / "cache.yaml" in closure_paths
+
+
+def test_aggregate_bypasses_data_verification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir, plan = _action_plan(
+        tmp_path, "aggregate_pn2021", delegate_subdir="evaluation"
+    )
+    monkeypatch.setattr(data_ledger, "load_roots", lambda *args, **kwargs: 1 / 0)
+    monkeypatch.setattr(data_ledger, "verify_ledger", lambda *args, **kwargs: 1 / 0)
+    calls = []
+
+    def failed_delegate(argv: list[str], log_path: Path) -> int:
+        calls.append(argv)
+        log_path.write_text("expected fixture failure\n", encoding="utf-8")
+        return 2
+
+    assert execute_experiment(
+        plan,
+        launcher_argv=["python", "boot_scripts/run_experiment.py"],
+        delegate_runner=failed_delegate,
+    ) == 2
+    assert len(calls) == 1
+    manifest = json.loads((run_dir / "run_manifest.json").read_text())
+    assert manifest["data_content"] is None
 
 
 def test_internal_absolute_yaml_reference_is_rejected(tmp_path: Path) -> None:

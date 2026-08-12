@@ -38,6 +38,41 @@ data_contract:
     depths: [2, 3]
     view_count: 20
     domain: raw_mV_before_per_sample_global_zscore
+  prospective_managed_content_ledger:
+    path: configs/data/data_content_ledger_v1.jsonl
+    sha256: d3bf1f18046a695b9c6089f2866cdb854042c3b528434018ecab8f56d36af665
+    schema_version: 1
+    algorithm: sha256
+    root_order: [ptbxl_cache, pn2021_cache, pn2021c_cache, split_artifacts]
+    member_count: 121
+    total_size_bytes: 404751718887
+    roots:
+      ptbxl_cache: {member_count: 8, total_size_bytes: 6287849438}
+      pn2021_cache: {member_count: 8, total_size_bytes: 19152506828}
+      pn2021c_cache: {member_count: 12, total_size_bytes: 379178277220}
+      split_artifacts: {member_count: 93, total_size_bytes: 133085401}
+    generation:
+      source_git_sha: 67227549fbff5d81879096a9842b195b5ce3b4fb
+      mode: full_content
+      pass: 1
+    independent_verification:
+      status: passed
+      date: "2026-08-12"
+      mode: full_content
+      pass: 2
+    runtime:
+      descriptor_config: configs/data/data_load.yaml
+      descriptor_config_sha256: 8168615e89f0a07919ffcb0bb17f7bf540f4332c21c87567c00712518832e228
+      execution_verification: quick_exact_inventory_and_size
+      run_snapshot: manifests/data_content_ledger.jsonl
+    applies_to: managed_executions_after_integration_commit
+    historical_metric_artifacts_bound: false
+    scope: derived_cache_and_split_artifact_bytes_only
+    limitations:
+      - raw_wfdb_inputs_not_sealed
+      - preprocessing_correctness_not_proven_by_byte_identity
+      - no_filesystem_snapshot_isolation_quiescent_roots_required
+      - runtime_quick_verification_does_not_rehash_payload_bytes
 
 active_development_mainline:
   lock_id: aligned_targetonly_augmix_lhat_simplified_20260805

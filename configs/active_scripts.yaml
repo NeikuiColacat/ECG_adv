@@ -183,15 +183,26 @@ latest_mainline:
       - util/tests/test_evaluation_metrics.py
       - util/tests/test_pn2021_evaluation.py
     cpu_contract_result:
-      status: passed_206_skipped_10
+      status: passed_225_skipped_10
       date: "2026-08-12"
     data_ledger_tool_contract:
       path: data_preprocess/data_ledger.py
-      status: temporary_fixture_contract_passed_live_cache_ledger_pending
-      tracked_content_ledger: absent
-      full_live_cache_hash: not_run
-      launcher_enforcement: not_implemented
-      run_record_snapshot: not_implemented
+      status: full_content_seal_generated_verified_and_managed
+      tracked_content_ledger:
+        path: configs/data/data_content_ledger_v1.jsonl
+        sha256: d3bf1f18046a695b9c6089f2866cdb854042c3b528434018ecab8f56d36af665
+        schema_version: 1
+        member_count: 121
+        total_size_bytes: 404751718887
+      generation:
+        mode: full_content
+        source_git_sha: 67227549fbff5d81879096a9842b195b5ce3b4fb
+        independent_second_full_verification: passed
+      launcher_enforcement:
+        before_run_directory: quick_exact_inventory_and_size
+        dry_run_reads_ledger_or_stats_data: false
+        aggregate_pn2021: artifact_only_no_data_verification
+      run_record_snapshot: manifests/data_content_ledger.jsonl
     cp4_lineage_contract_result:
       status: passed_with_portable_artifact_contract_independent_review
       pytest: passed_199_skipped_10

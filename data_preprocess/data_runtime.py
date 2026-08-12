@@ -1492,11 +1492,21 @@ class DataLoaderSeedIdentity:
 
 
 @dataclass(frozen=True)
+class DataContentLedgerConfig:
+    path: Path
+    sha256: str
+
+    def describe(self) -> dict[str, str]:
+        return {"path": str(self.path), "sha256": self.sha256}
+
+
+@dataclass(frozen=True)
 class DataLoadConfig:
     """Strictly validated defaults loaded from ``configs/data/data_load.yaml``."""
 
     path: Path
     sha256: str
+    content_ledger: DataContentLedgerConfig
     batch_size: int
     num_workers: int
     pin_memory: bool
@@ -1521,6 +1531,7 @@ class DataLoadConfig:
         return {
             "config_path": str(self.path),
             "config_sha256": self.sha256,
+            "content_ledger": self.content_ledger.describe(),
             "defaults": {
                 "batch_size": self.batch_size,
                 "num_workers": self.num_workers,
@@ -1595,6 +1606,7 @@ def load_data_load_config(
         raise ValueError("data-load config must be a YAML mapping")
     required_root_keys = {
         "schema_version",
+        "content_ledger",
         "dataloader",
         "model_input",
         "mmap",
@@ -1614,6 +1626,26 @@ def load_data_load_config(
     dataloader = _require_mapping(
         payload["dataloader"], description="data-load config.dataloader"
     )
+    content_ledger = _require_mapping(
+        payload["content_ledger"], description="data-load config.content_ledger"
+    )
+    _require_exact_keys(
+        content_ledger,
+        expected={"path", "sha256"},
+        description="data-load config.content_ledger",
+    )
+    ledger_path = resolve_config_reference(
+        content_ledger["path"],
+        owner_config_path=config_path,
+        description="data-load config.content_ledger.path",
+    )
+    ledger_sha256 = content_ledger["sha256"]
+    if (
+        not isinstance(ledger_sha256, str)
+        or len(ledger_sha256) != 64
+        or set(ledger_sha256).difference("0123456789abcdef")
+    ):
+        raise ValueError("data-load config.content_ledger.sha256 is invalid")
     model_input = _require_mapping(
         payload["model_input"], description="data-load config.model_input"
     )
@@ -1784,6 +1816,7 @@ def load_data_load_config(
     return DataLoadConfig(
         path=config_path,
         sha256=_sha256_file(config_path),
+        content_ledger=DataContentLedgerConfig(ledger_path, ledger_sha256),
         batch_size=batch_size,
         num_workers=num_workers,
         pin_memory=pin_memory,
@@ -2580,6 +2613,7 @@ __all__ = [
     "DEFAULT_CORRUPTION_CACHE_CONFIG",
     "DEFAULT_DATA_LOAD_CONFIG",
     "DEFAULT_SPLIT_CONFIG",
+    "DataContentLedgerConfig",
     "DataLoadConfig",
     "DataLoaderSeedIdentity",
     "ECGModelTransform",

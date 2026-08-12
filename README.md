@@ -63,7 +63,7 @@ fails closed; pass `--run-dir <new-external-directory>` to start a new run.
 | Path | Responsibility |
 |---|---|
 | `configs/` | Data, training, finite-recipe, evaluation, seed, baseline, and experiment contracts |
-| `data_preprocess/` | PTB-XL/PN2021 preprocessing, cache loading, splitting, and runtime datasets |
+| `data_preprocess/` | PTB-XL/PN2021 preprocessing, cache loading, splitting, runtime datasets, and content-ledger verification |
 | `models/` | Model contracts, input adaptation, factories, checkpoints, EfficientNet, ECGFounder, and VAE interfaces |
 | `core/` | Five finite RecipeSpec variants, AugMix/VAE-LHAT execution, supervised training, and online adaptation |
 | `boot_scripts/` | Thin managed CLI entrypoints; no experiment business logic |
@@ -75,6 +75,13 @@ fails closed; pass `--run-dir <new-external-directory>` to start a new run.
 
 Anything outside the keep manifest is legacy, temporary, or pending review. It
 must not become a new runtime dependency.
+
+Managed data-consuming runs are bound to a tracked 121-member derived-cache
+and split ledger. Execution performs an inventory-and-size gate before creating
+the run directory, snapshots the YAML closure and ledger, and launches from
+that immutable bundle. Two offline full-content passes established the seal;
+it does not cover raw WFDB inputs or prove preprocessing correctness, and the
+runtime quick gate does not rehash all 405 GB.
 
 ## Locked Contracts
 

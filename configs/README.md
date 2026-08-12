@@ -8,7 +8,7 @@ the repository's default configs.
 
 | Directory | Contents |
 |---|---|
-| `data/` | Dataset locations, cache identities, splits, loader/runtime policy |
+| `data/` | Dataset locations, cache identities, splits, loader/runtime policy, and the derived-byte ledger |
 | `augmentation/` | Five-operator profile and offline PN2021-C cache contract |
 | `train/` | Trainer, VAE/LHAT/AugMix, and five finite recipe selectors |
 | `eval/` | Canonical PN2021 Clean/PN2021-C evaluation and diagonal-matrix aggregation contracts |
@@ -51,6 +51,13 @@ the repository's default configs.
   `auxiliary_variant`, `scientific_arm`, and `status`; schema version 2 rejects
   every extra key.
 - Every accepted file in the transitive closure is hashed into the run record.
+
+The compact data ledger is a JSONL sidecar, not a YAML closure member. Its SHA
+is declared by `data/data_load.yaml`. A real data-consuming launch validates
+the required roots' exact inventory and sizes before creating the run directory,
+then places the same bytes under run-scoped `configs/data/` and `manifests/`.
+The delegate consumes this immutable snapshot. Dry-run does not read the ledger
+or stat cache roots; `aggregate_pn2021` is artifact-only and bypasses the gate.
 
 ## Launcher
 

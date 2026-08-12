@@ -175,6 +175,56 @@ def test_current_managed_config_closure_stays_inside_the_keep_manifest() -> None
     assert set(closure) <= manual_paths
 
 
+def test_tracked_data_content_ledger_identity_is_consistent() -> None:
+    ledger_path = CONFIG_ROOT / "data" / "data_content_ledger_v1.jsonl"
+    raw = ledger_path.read_bytes()
+    rows = [json.loads(line) for line in raw.splitlines()]
+    header, members = rows[0], rows[1:]
+    digest = hashlib.sha256(raw).hexdigest()
+    expected_sha = "d3bf1f18046a695b9c6089f2866cdb854042c3b528434018ecab8f56d36af665"
+    expected_roots = {
+        "ptbxl_cache": (8, 6287849438),
+        "pn2021_cache": (8, 19152506828),
+        "pn2021c_cache": (12, 379178277220),
+        "split_artifacts": (93, 133085401),
+    }
+    assert raw.endswith(b"\n") and b"\r" not in raw
+    assert digest == expected_sha
+    assert header == {
+        "algorithm": "sha256", "artifact": "ecg_data_content_ledger",
+        "member_count": 121, "roots": list(expected_roots),
+        "schema_version": 1, "total_size_bytes": 404751718887,
+    }
+    assert len(members) == 121
+    assert [(item["root"], item["path"]) for item in members] == sorted(
+        (item["root"], item["path"]) for item in members
+    )
+    for root, (count, size) in expected_roots.items():
+        selected = [item for item in members if item["root"] == root]
+        assert (len(selected), sum(item["size_bytes"] for item in selected)) == (
+            count, size
+        )
+
+    data_load = yaml.safe_load((CONFIG_ROOT / "data" / "data_load.yaml").read_text())
+    handoff = yaml.safe_load((CONFIG_ROOT / "data" / "k500_handoff.yaml").read_text())
+    scripts = yaml.safe_load((CONFIG_ROOT / "active_scripts.yaml").read_text())
+    evidence = yaml.safe_load((CONFIG_ROOT / "active_evidence_registry.yaml").read_text())
+    descriptor = data_load["content_ledger"]
+    assert descriptor == {
+        "path": "data/data_content_ledger_v1.jsonl", "sha256": expected_sha
+    }
+    assert handoff["required_configs"]["data_load"]["sha256"] == hashlib.sha256(
+        (CONFIG_ROOT / "data" / "data_load.yaml").read_bytes()
+    ).hexdigest()
+    assert handoff["required_artifacts"]["data_content_ledger"]["sha256"] == expected_sha
+    assert scripts["latest_mainline"]["verification"]["data_ledger_tool_contract"][
+        "tracked_content_ledger"
+    ]["sha256"] == expected_sha
+    assert evidence["data_contract"]["prospective_managed_content_ledger"][
+        "sha256"
+    ] == expected_sha
+
+
 def test_active_index_exposes_only_the_manual_launcher_and_whitelist_configs() -> None:
     path = CONFIG_ROOT / "active_scripts.yaml"
     text = path.read_text(encoding="utf-8")

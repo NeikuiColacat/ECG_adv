@@ -26,6 +26,17 @@ from data_preprocess.load_cache import EXPECTED_CLASS_ORDER
 REPO = Path(__file__).resolve().parents[2]
 
 
+def _data_load_fixture(tmp_path: Path, descriptor: dict[str, object]) -> Path:
+    payload = yaml.safe_load(
+        (REPO / "configs" / "data" / "data_load.yaml").read_text(encoding="utf-8")
+    )
+    payload["content_ledger"] = descriptor
+    path = tmp_path / "configs" / "data" / "data_load.yaml"
+    path.parent.mkdir(parents=True)
+    path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+    return path
+
+
 def _selection(partition: str, hash_ids: tuple[str, ...]) -> ECGSelection:
     count = len(hash_ids)
     return ECGSelection(
@@ -60,6 +71,37 @@ def test_canonical_data_load_config_is_the_single_runtime_profile() -> None:
     assert config.selection_resident is False
     assert config.prepare_for_model is True
     assert config.output_layout == "channel_time"
+
+
+def test_data_load_config_resolves_ledger_without_opening_it(tmp_path: Path) -> None:
+    path = _data_load_fixture(
+        tmp_path,
+        {"path": "data/missing-ledger.jsonl", "sha256": "a" * 64},
+    )
+
+    config = load_data_load_config(path)
+
+    assert config.content_ledger.path == (
+        tmp_path / "configs" / "data" / "missing-ledger.jsonl"
+    ).resolve()
+    assert config.content_ledger.sha256 == "a" * 64
+    assert not config.content_ledger.path.exists()
+
+
+@pytest.mark.parametrize(
+    ("descriptor", "message"),
+    (
+        ({"path": "../escape.jsonl", "sha256": "a" * 64}, "escapes config bundle"),
+        ({"path": "/tmp/absolute.jsonl", "sha256": "a" * 64}, "must be relative"),
+        ({"path": "data/x.jsonl", "sha256": "A" * 64}, "sha256 is invalid"),
+        ({"path": "data/x.jsonl", "sha256": "a" * 64, "extra": 1}, "keys mismatch"),
+    ),
+)
+def test_data_load_config_rejects_unsafe_ledger_descriptor(
+    tmp_path: Path, descriptor: dict[str, object], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        load_data_load_config(_data_load_fixture(tmp_path, descriptor))
 
 
 def test_runtime_transform_applies_augmentation_then_sanitize_zscore_and_layout() -> None:

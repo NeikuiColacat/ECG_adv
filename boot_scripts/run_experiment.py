@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import subprocess
 import sys
@@ -25,6 +26,7 @@ from util.config_bundle import (  # noqa: E402
 )
 from util.run_record import (  # noqa: E402
     RunRecorder,
+    VerifiedDataContent,
     ensure_output_outside_worktree,
     sha256_file,
 )
@@ -57,6 +59,13 @@ ENTRYPOINTS = {
     "aggregate_pn2021": _entrypoint(
         "aggregate_pn2021.py", "matrix_result.json", "pn2021_matrix_result"
     ),
+}
+ENTRYPOINT_DATA_ROOTS = {
+    "train_ptbxl_effnet": ("ptbxl_cache", "split_artifacts"),
+    "train_ptbxl_ecgfounder": ("ptbxl_cache", "split_artifacts"),
+    "train_pn2021": ("pn2021_cache", "split_artifacts"),
+    "evaluate_pn2021": ("pn2021_cache", "pn2021c_cache", "split_artifacts"),
+    "aggregate_pn2021": (),
 }
 LAUNCHER_OWNED_FLAGS = frozenset(
     {"--config", "--config-root", "--output-dir", "--dry-run"}
@@ -136,6 +145,77 @@ def _safe_delegate_subdir(value: Any) -> Path:
 
 
 @dataclass(frozen=True)
+class DataLedgerPlan:
+    path: Path
+    config_relative_path: Path
+    expected_sha256: str
+    required_roots: tuple[str, ...]
+    closure_sha256: tuple[tuple[Path, str], ...]
+
+    def describe(self) -> dict[str, Any]:
+        return {
+            "path": str(self.path), "expected_sha256": self.expected_sha256,
+            "config_relative_path": self.config_relative_path.as_posix(),
+            "required_roots": list(self.required_roots),
+            "verification_mode": "deferred_quick_inventory_size",
+            "reads_ledger": False, "stats_data": False,
+            "config_closure_sha256": {
+                str(path): digest for path, digest in self.closure_sha256
+            },
+        }
+
+
+def _closure_member(
+    sources: Sequence[tuple[Path, str]], config_root: Path, relative: str
+) -> Path:
+    expected = (config_root / relative).resolve()
+    if expected not in {path for path, _ in sources}:
+        raise ValueError(f"managed data entrypoint requires {relative} in YAML closure")
+    return expected
+
+
+def _data_ledger_plan(
+    entrypoint_name: str,
+    sources: Sequence[tuple[Path, str]],
+    config_root: Path,
+) -> DataLedgerPlan | None:
+    required_roots = ENTRYPOINT_DATA_ROOTS[entrypoint_name]
+    if not required_roots:
+        return None
+    data_load = _closure_member(sources, config_root, "data/data_load.yaml")
+    splits = _closure_member(sources, config_root, "data/splits.yaml")
+    if "pn2021c_cache" in required_roots:
+        _closure_member(sources, config_root, "augmentation/cache.yaml")
+    descriptor = _mapping(_yaml_mapping(data_load, "data-load config").get(
+        "content_ledger"), "data-load config.content_ledger")
+    if set(descriptor) != {"path", "sha256"}:
+        raise ValueError("content_ledger must contain exactly path and sha256")
+    digest = descriptor.get("sha256")
+    if (
+        not isinstance(digest, str)
+        or len(digest) != 64
+        or set(digest).difference("0123456789abcdef")
+    ):
+        raise ValueError("content_ledger.sha256 is invalid")
+    ledger_path = resolve_config_reference(
+            descriptor.get("path"), owner_config_path=data_load,
+            config_root=config_root, description="content_ledger.path"
+        )
+    return DataLedgerPlan(
+        path=ledger_path,
+        config_relative_path=ledger_path.relative_to(config_root),
+        expected_sha256=digest,
+        required_roots=required_roots,
+        closure_sha256=tuple((path, sha256_file(path)) for path, _ in sources),
+    )
+
+
+def _verify_data_config_closure(plan: DataLedgerPlan) -> None:
+    if any(sha256_file(path) != digest for path, digest in plan.closure_sha256):
+        raise ValueError("data experiment config closure changed after plan resolution")
+
+
+@dataclass(frozen=True)
 class ExperimentPlan:
     experiment_path: Path
     config_root: Path
@@ -150,16 +230,21 @@ class ExperimentPlan:
     delegate_output_dir: Path
     expected_result_relative_path: Path
     expected_result_type: str
+    data_ledger: DataLedgerPlan | None
     run_dir_preexisting: bool
 
     def delegate_argv(self) -> list[str]:
+        snapshot_root = self.run_dir / "configs"
+        snapshot_entry_config = snapshot_root / self.entry_config_path.relative_to(
+            self.config_root
+        )
         return [
             sys.executable,
             str(self.entrypoint_path),
             "--config",
-            str(self.entry_config_path),
+            str(snapshot_entry_config),
             "--config-root",
-            str(self.config_root),
+            str(snapshot_root),
             "--output-dir",
             str(self.delegate_output_dir),
             *self.entry_arguments,
@@ -195,6 +280,9 @@ class ExperimentPlan:
                 "path": self.expected_result_relative_path.as_posix(),
                 "type": self.expected_result_type,
             },
+            "data_content": (
+                None if self.data_ledger is None else self.data_ledger.describe()
+            ),
             "delegate_argv": self.delegate_argv(),
             "run_dir_collision": collision,
             "would_create_directory": not collision,
@@ -290,6 +378,7 @@ def load_experiment_plan(
         entry_arguments=arguments,
         config_root=root,
     )
+    data_ledger = _data_ledger_plan(str(entrypoint_name), closure, root)
     return ExperimentPlan(
         experiment_path=experiment_path,
         config_root=root,
@@ -305,6 +394,7 @@ def load_experiment_plan(
         expected_result_relative_path=delegate_subdir
         / entrypoint_spec.expected_result_name,
         expected_result_type=entrypoint_spec.expected_result_type,
+        data_ledger=data_ledger,
         run_dir_preexisting=run_dir_preexisting,
     )
 
@@ -331,6 +421,29 @@ def execute_experiment(
 ) -> int:
     if plan.run_dir_preexisting or plan.run_dir.exists():
         raise FileExistsError(f"run directory already exists: {plan.run_dir}")
+    verified_data: VerifiedDataContent | None = None
+    ledger = plan.data_ledger
+    if ledger is not None:
+        from data_preprocess.data_ledger import load_roots, verify_ledger
+
+        _verify_data_config_closure(ledger)
+        ledger_bytes = ledger.path.read_bytes()
+        if hashlib.sha256(ledger_bytes).hexdigest() != ledger.expected_sha256:
+            raise ValueError("data ledger SHA256 differs from the execution plan")
+        roots = load_roots(
+            plan.config_root / "data/splits.yaml",
+            plan.config_root / "augmentation/cache.yaml",
+            ledger.required_roots,
+        )
+        verification = verify_ledger(
+            ledger.path, roots, ledger.required_roots,
+            expected_sha256=ledger.expected_sha256, full=False,
+        )
+        _verify_data_config_closure(ledger)
+        verified_data = VerifiedDataContent(
+            ledger_bytes, ledger.expected_sha256, ledger.required_roots,
+            ledger.config_relative_path, ledger.closure_sha256, verification,
+        )
     delegate_argv = plan.delegate_argv()
     recorder = RunRecorder.create(
         run_dir=plan.run_dir,
@@ -344,6 +457,7 @@ def execute_experiment(
         exact_delegate_argv=delegate_argv,
         expected_result_relative_path=plan.expected_result_relative_path,
         expected_result_type=plan.expected_result_type,
+        data_content=verified_data,
         cwd=PROJECT_ROOT,
     )
     log_path = recorder.run_dir / "logs" / "delegate.log"

@@ -8,6 +8,11 @@ interface:
   module: data_preprocess.data_runtime
   loader: get_dataloader
   evaluation_session: SequentialEvaluationDataSession
+  data_content_verifier:
+    module: data_preprocess.data_ledger
+    callable: verify_ledger
+    managed_execution_mode: quick_exact_inventory_and_size
+    offline_seal_mode: full_content
   selection_identity: ECGSelection.describe
   canonical_raw_request:
     sampling_rate_hz: 100
@@ -38,7 +43,7 @@ required_configs:
     sha256: d19eddb5b41854fcd6d8a554efb3454dec2c6994f407eaa7cb82ed805629daf9
   data_load:
     path: data/data_load.yaml
-    sha256: 4873d56fe3e8e6077139e043019e70829db2d2f8ed4703c3b00ff0afc611c2b8
+    sha256: 8168615e89f0a07919ffcb0bb17f7bf540f4332c21c87567c00712518832e228
   random_seed:
     path: random_seed.yaml
     sha256: 8b337606c43b6fec2959dd185477ce32f48b139f5fce5112ee26efe58eb4bbbc
@@ -54,6 +59,7 @@ required_configs:
 
 required_modules:
   runtime:
+    - data_preprocess/data_ledger.py
     - data_preprocess/load_cache.py
     - data_preprocess/split_cache.py
     - data_preprocess/data_runtime.py
@@ -73,6 +79,15 @@ required_modules:
     - util/tests/test_data_runtime.py
     - util/tests/test_labels_super5.py
     - util/tests/test_pn2021_evaluation.py
+
+required_artifacts:
+  data_content_ledger:
+    path: data/data_content_ledger_v1.jsonl
+    sha256: d3bf1f18046a695b9c6089f2866cdb854042c3b528434018ecab8f56d36af665
+    schema_version: 1
+    algorithm: sha256
+    member_count: 121
+    total_size_bytes: 404751718887
 
 protocol:
   split_id: pn2021_super5_k500_cpsc_combined_v1

@@ -27,7 +27,8 @@ never duplicated waveforms.
 `data_load.yaml` defines the shared runtime defaults consumed by
 `data_preprocess/data_runtime.py`: batch size, worker/pinned-memory settings,
 mmap policy, deterministic shuffle partitions, and the model-input transform.
-Explicit `get_dataloader(...)` arguments take precedence over these defaults.
+It also binds the tracked `data_content_ledger_v1.jsonl` by SHA256. Explicit
+`get_dataloader(...)` arguments take precedence over the runtime defaults.
 
 ## Data content ledger tool status
 
@@ -37,10 +38,18 @@ verification checks the exact member inventory and byte sizes; full
 verification additionally streams every member through SHA256 and rejects
 metadata-detectable changes during the scan. This is not filesystem snapshot
 isolation: full sealing requires quiescent, read-only roots and an independent
-second full verification pass. The tool has currently been validated only with
-temporary small fixtures. The live cache ledger has not yet been generated or
-enforced by the launcher/run recorder, so cache payload bytes remain
-content-unlocked.
+second full verification pass. The live seal was generated once and
+independently full-verified a second time over 121 files / 404,751,718,887
+bytes; both passes produced SHA256
+`d3bf1f18046a695b9c6089f2866cdb854042c3b528434018ecab8f56d36af665`.
+Managed execution checks exact inventory and sizes before creating the run
+directory, snapshots the same ledger bytes under `configs/` and `manifests/`,
+and launches the delegate from the immutable config snapshot. Dry-run only
+reports the expected SHA and required roots; aggregate-only jobs bypass the
+data gate.
+
+The seal covers derived cache/split bytes, not raw WFDB inputs or preprocessing
+correctness. Runtime quick verification intentionally does not rehash 405 GB.
 
 ## K500 comparison handoff
 

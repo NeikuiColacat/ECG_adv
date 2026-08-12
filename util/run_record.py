@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import platform
+import stat
 import subprocess
 import sys
 import time
@@ -19,6 +20,7 @@ import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 INDEX_EXCLUDED_FILES = frozenset({"run_manifest.json", "run_file_index.json"})
+DATA_LEDGER_SNAPSHOT = Path("manifests/data_content_ledger.jsonl")
 RESULT_REQUIRED_KEYS = {
     "supervised_train_result": frozenset(
         {"config", "epochs_completed", "model", "selected_checkpoint", "selected_epoch"}
@@ -193,13 +195,12 @@ def _snapshot_destination(
     return Path("configs") / relative
 
 
-def snapshot_yaml_files(
-    run_dir: Path,
+def _prepare_yaml_snapshots(
     sources: Sequence[tuple[Path, str]],
     *,
     config_root: Path,
-) -> list[dict[str, Any]]:
-    snapshots: list[dict[str, Any]] = []
+) -> list[tuple[Path, bytes, dict[str, Any]]]:
+    prepared: list[tuple[Path, bytes, dict[str, Any]]] = []
     seen: set[Path] = set()
     for raw_source, role in sources:
         source = raw_source.resolve()
@@ -209,24 +210,43 @@ def snapshot_yaml_files(
         if not source.is_file() or source.suffix.lower() not in {".yaml", ".yml"}:
             raise ValueError(f"config snapshot source must be a YAML file: {source}")
         relative = _snapshot_destination(source, config_root=config_root)
-        destination = run_dir / relative
-        destination.parent.mkdir(parents=True, exist_ok=True)
         payload = source.read_bytes()
-        destination.write_bytes(payload)
-        snapshots.append(
-            {
+        prepared.append(
+            (relative, payload, {
                 "role": str(role),
                 "source_path": str(source),
                 "snapshot_path": relative.as_posix(),
                 "sha256": hashlib.sha256(payload).hexdigest(),
                 "size_bytes": len(payload),
-            }
+            })
         )
-    return snapshots
+    return prepared
+
+
+def _write_yaml_snapshots(
+    run_dir: Path, prepared: Sequence[tuple[Path, bytes, dict[str, Any]]]
+) -> list[dict[str, Any]]:
+    for relative, payload, _ in prepared:
+        destination = run_dir / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(payload)
+    return [metadata for _, _, metadata in prepared]
+
+
+def snapshot_yaml_files(
+    run_dir: Path,
+    sources: Sequence[tuple[Path, str]],
+    *,
+    config_root: Path,
+) -> list[dict[str, Any]]:
+    snapshots = _prepare_yaml_snapshots(sources, config_root=config_root)
+    return _write_yaml_snapshots(run_dir, snapshots)
 
 
 def _artifact_role(relative: Path) -> str:
     value = relative.as_posix()
+    if relative == DATA_LEDGER_SNAPSHOT:
+        return "data_content_ledger_snapshot"
     if value.startswith("configs/"):
         return "config_snapshot"
     if value.startswith("logs/"):
@@ -479,6 +499,74 @@ def _expected_result_evidence(
     }
 
 
+@dataclass(frozen=True)
+class VerifiedDataContent:
+    ledger_bytes: bytes = field(repr=False)
+    expected_sha256: str
+    required_roots: tuple[str, ...]
+    config_relative_path: Path
+    closure_sha256: tuple[tuple[Path, str], ...]
+    verification: dict[str, Any]
+
+
+def _validated_data_content(value: VerifiedDataContent) -> dict[str, Any]:
+    digest = hashlib.sha256(value.ledger_bytes).hexdigest()
+    verification = value.verification
+    roots = verification.get("roots")
+    if (
+        digest != value.expected_sha256
+        or digest != verification.get("ledger_sha256")
+        or verification.get("verification_mode") != "inventory_only"
+        or not isinstance(roots, dict)
+        or tuple(roots) != value.required_roots
+    ):
+        raise ValueError("verified data content differs from the execution plan")
+    try:
+        header = json.loads(value.ledger_bytes.splitlines()[0])
+    except (IndexError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("verified data ledger bytes lack a valid header") from exc
+    if not isinstance(header, dict) or not all(
+        type(header.get(key)) is int and header[key] >= 0
+        for key in ("member_count", "total_size_bytes")
+    ):
+        raise ValueError("verified data ledger header seal is invalid")
+    config_snapshot = Path("configs") / value.config_relative_path
+    if value.config_relative_path.is_absolute() or ".." in value.config_relative_path.parts:
+        raise ValueError("data ledger config-relative path is unsafe")
+    return {
+        "expected_ledger_sha256": value.expected_sha256,
+        "verified_ledger_sha256": digest,
+        "ledger_snapshot": DATA_LEDGER_SNAPSHOT.as_posix(),
+        "config_ledger_snapshot": config_snapshot.as_posix(),
+        "required_roots": list(value.required_roots),
+        "config_closure_sha256": {
+            str(path.resolve()): digest for path, digest in value.closure_sha256
+        },
+        "full_ledger_member_seal": {key: header[key] for key in
+                                    ("member_count", "total_size_bytes")},
+        "execution_verification": {
+            "mode": "quick_exact_inventory_and_size",
+            **{key: verification.get(key) for key in
+               ("member_count", "total_size_bytes")}, "roots": roots,
+        },
+    }
+
+
+def _validate_data_content_snapshot(run_dir: Path, record: Any) -> None:
+    if record is None:
+        return
+    for relative in (record.get("ledger_snapshot"), record.get("config_ledger_snapshot")):
+        snapshot = run_dir / str(relative)
+        try:
+            metadata = snapshot.lstat()
+        except OSError as exc:
+            raise ValueError("data content ledger snapshot is missing") from exc
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+            raise ValueError("data content ledger snapshot must be a regular file")
+        if sha256_file(snapshot) != record.get("expected_ledger_sha256"):
+            raise ValueError("data content ledger snapshot SHA-256 mismatch")
+
+
 @dataclass
 class RunRecorder:
     run_dir: Path
@@ -501,6 +589,7 @@ class RunRecorder:
         exact_delegate_argv: Sequence[str],
         expected_result_relative_path: str | Path,
         expected_result_type: str,
+        data_content: VerifiedDataContent | None = None,
         cwd: str | Path = PROJECT_ROOT,
     ) -> "RunRecorder":
         output = ensure_output_outside_worktree(run_dir)
@@ -515,11 +604,32 @@ class RunRecorder:
             raise ValueError("expected result must be a safe run-relative path")
         if expected_result_type not in RESULT_REQUIRED_KEYS:
             raise ValueError(f"unsupported expected result type: {expected_result_type}")
-        output.mkdir(parents=True, exist_ok=False)
-        started = utc_now()
-        snapshots = snapshot_yaml_files(
-            output, config_sources, config_root=config_root.resolve()
+        data_content_record = (None if data_content is None
+                               else _validated_data_content(data_content))
+        prepared_snapshots = _prepare_yaml_snapshots(
+            config_sources, config_root=config_root.resolve()
         )
+        if data_content is not None:
+            actual = {
+                item["source_path"]: item["sha256"]
+                for _, _, item in prepared_snapshots
+            }
+            expected_data_configs = {
+                str(path.resolve()): digest for path, digest in data_content.closure_sha256
+            }
+            if any(actual.get(path) != digest
+                   for path, digest in expected_data_configs.items()):
+                raise ValueError("data ledger root configuration changed before snapshot")
+        output.mkdir(parents=True, exist_ok=False)
+        if data_content is not None:
+            snapshot = output / DATA_LEDGER_SNAPSHOT
+            snapshot.parent.mkdir(parents=True, exist_ok=True)
+            snapshot.write_bytes(data_content.ledger_bytes)
+            config_snapshot = output / "configs" / data_content.config_relative_path
+            config_snapshot.parent.mkdir(parents=True, exist_ok=True)
+            config_snapshot.write_bytes(data_content.ledger_bytes)
+        snapshots = _write_yaml_snapshots(output, prepared_snapshots)
+        started = utc_now()
         manifest: dict[str, Any] = {
             "schema_version": 1,
             "status": "running",
@@ -540,6 +650,7 @@ class RunRecorder:
             },
             "config_root": str(config_root.resolve()),
             "config_snapshots": snapshots,
+            "data_content": data_content_record,
             "expected_result": {
                 "path": expected_result.as_posix(),
                 "type": expected_result_type,
@@ -590,6 +701,9 @@ class RunRecorder:
         expected = self.manifest["expected_result"]
         if delegate_exit_code == 0 and effective_error is None:
             try:
+                _validate_data_content_snapshot(
+                    self.run_dir, self.manifest.get("data_content")
+                )
                 result_evidence = _expected_result_evidence(
                     self.run_dir, Path(expected["path"]), str(expected["type"])
                 )
@@ -631,6 +745,7 @@ class RunRecorder:
 __all__ = [
     "PROJECT_ROOT",
     "RunRecorder",
+    "VerifiedDataContent",
     "build_run_file_index",
     "capture_environment",
     "capture_git_state",
