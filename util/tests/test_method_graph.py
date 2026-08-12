@@ -11,7 +11,6 @@ import torch
 import yaml
 
 import core.methods as methods
-import core.methods.runtime as method_runtime
 from core.lhat import AttackThenContractDiagnostics
 from core.methods import AuxiliaryVariant, RecipeKind, build_method_runtime, load_recipe_spec
 from core.methods.runtime import _scoped_lhat_diagnostics
@@ -60,12 +59,6 @@ RECIPE_CASES = [
      (("clean_bce", "bce", 1.0), ("lhat_direct_bce", "bce", 1.0),
       ("corrupted_bce", "bce", 1.0)),
      "de3d6948a9efc974405b7382d45653f93032a34ac2fd88637172ed731d876602"),
-    ("exp_paired_augmix_latent_bridge_v1.yaml", RecipeKind.LATENT_THREECHAIN,
-     AuxiliaryVariant.NOT_APPLICABLE, ("vae", "augmix_config", "latent_augmix_rng"),
-     ("classifier", "vae_encoder", "vae_decoder"),
-     (("clean_bce", "bce", 1.0), ("clean_augmix_jsd", "bernoulli_jsd", 3.0),
-      ("augmix_view_1_bce", "bce", 0.75), ("augmix_view_2_bce", "bce", 0.75)),
-     "ccfa1c312074dc5b4f48c3678a399bb06dd33387ae96a6e1ada87092317247ee"),
 ]
 
 
@@ -112,6 +105,16 @@ def test_loader_removes_dag_plugins_and_allows_only_the_matched_no_vae_slot() ->
     payload["recipe"]["auxiliary_variant"] = "contracted_lhat"
     with pytest.raises(ValueError, match="requires auxiliary_variant='matched_no_vae'"):
         load_recipe_spec(payload)
+    assert not (RECIPES / "exp_paired_augmix_latent_bridge_v1.yaml").exists()
+    retired = yaml.safe_load((RECIPES / "a0_clean_v1.yaml").read_text())
+    retired["recipe"].update(
+        id="latent_threechain_augmix_residual_depth23_aug075",
+        kind="latent_threechain",
+        scientific_arm="latent_augmix",
+        status="project_defined_candidate",
+    )
+    with pytest.raises(ValueError, match="unknown recipe.id"):
+        load_recipe_spec(retired)
 
 
 GENERATION_CASES = [
@@ -165,38 +168,6 @@ def test_canonical_nonfinite_waveform_is_masked_without_host_failfast() -> None:
     with pytest.raises(ValueError, match="labels must be finite"):
         runtime.generate(clean_raw=waveform, targets=invalid_labels, hash_ids=hashes,
             classifier=object(), base_seed=20260501, rng_identity=IDENTITY)
-
-
-def test_latent_two_view_trace_fallback_and_accepted_intersection(monkeypatch) -> None:
-    waveform, labels, hashes = _batch(3); calls = []
-    def fake(clean_raw, **_):
-        call = len(calls); calls.append(call); size = len(clean_raw)
-        scales = torch.tensor(([.5, .75, 0], [.6, 0, .9])[call]).view(-1, 1, 1)
-        return SimpleNamespace(
-            mixed_raw=clean_raw * scales,
-            mixture_weights=torch.tensor([[.2, .3, .5]]).repeat(size, 1),
-            augmented_strength=torch.full((size,), .75 + .1 * call),
-            residual_rms_ratio=torch.full((size,), .05),
-            chain_depths=torch.tensor([[2, 3, 2]]).repeat(size, 1),
-            chain_operator_mask=torch.zeros(size, 3, 5, dtype=torch.bool),
-            chain_output_nonfinite_count=torch.zeros(size, 3, dtype=torch.long))
-    monkeypatch.setattr(method_runtime, "generate_latent_three_chain_augmix", fake)
-    generated = _runtime("exp_paired_augmix_latent_bridge_v1.yaml",
-        encoder=torch.nn.Identity(), decoder=torch.nn.Identity()).generate(
-            clean_raw=waveform, targets=labels, hash_ids=hashes, classifier=object(),
-            base_seed=20260501, rng_identity=IDENTITY)
-    view1, view2 = (generated.bundle.require(f"augmix_view_{i}") for i in (1, 2))
-    assert view1.valid_mask.tolist() == [True, True, False]
-    assert view2.valid_mask.tolist() == [True, False, True]
-    assert torch.equal(view1.waveform[2], waveform[2]) and torch.equal(view2.waveform[1], waveform[1])
-    assert generated.candidate_eligible_positions == (0, 1, 2)
-    assert generated.accepted_positions == (0,)
-    assert (generated.quality_view_total_count, generated.quality_view_accepted_count) == (6, 4)
-    assert [(x["node_id"], x["hash_id"], x["reason"]) for x in generated.quality_rejected] == [
-        ("augmix_view_1", "g2", "flatline"), ("augmix_view_2", "g1", "flatline")]
-    assert set(generated.stochastic_trace) == {
-        f"augmix_view_{view}/{name}" for view in (1, 2)
-        for name in ("chain_depths", "chain_operator_mask", "mixture_weights", "augmented_strength")}
 
 
 def test_lhat_diagnostics_keep_three_scopes_and_two_of_three_acceptance() -> None:

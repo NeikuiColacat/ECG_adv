@@ -293,7 +293,7 @@ active_development_mainline:
       spec_hash_scope: schema_v2_declaration_plus_code_owned_scientific_contract
       resolved_config_sha256:
         augmentation/operators.yaml: cfc4e243f569226a8f444a38d9dd4fbc00ccf7de724c47886dcc9319b9c790cc
-        train/augmix.yaml: bc8ea2e2671134c4c6555e5acef0c2dd0bf98e6015f4d580b124778b58a00bc6
+        train/augmix.yaml: 51e7ebb6d7bc9eeded20f585d7836a2967e1306c2173cfc7c7c2fd603549b00f
         train/vae.yaml: 6eb7f814af775f58f769572f3e76e0f9905240d791970dc6d990b1648d7acec3
         train/lhat.yaml: 2d1cf2550932f2d2b1cc6fa5893ab4226cb0010e6dbf16be0e8cc6f3ada3a824
         random_seed.yaml: 8b337606c43b6fec2959dd185477ce32f48b139f5fce5112ee26efe58eb4bbbc

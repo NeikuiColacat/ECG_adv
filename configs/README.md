@@ -10,7 +10,7 @@ the repository's default configs.
 |---|---|
 | `data/` | Dataset locations, cache identities, splits, loader/runtime policy, and the derived-byte ledger |
 | `augmentation/` | Five-operator profile and offline PN2021-C cache contract |
-| `train/` | Trainer, VAE/LHAT/AugMix, and five finite recipe selectors |
+| `train/` | Trainer, VAE/LHAT/AugMix, four finite recipe selectors, and one code-owned matched no-VAE slot |
 | `eval/` | Canonical PN2021 Clean/PN2021-C evaluation and diagonal-matrix aggregation contracts |
 | `baselines/` | Locked PTB-XL source and Direct+fixed20 evidence registries |
 | `experiments/` | Thin executable entry YAMLs |

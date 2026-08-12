@@ -44,7 +44,6 @@ class RecipeKind(str, Enum):
     RANDOM_DEPTH23 = "random_depth23"
     FIXED20 = "fixed20"
     TWO_STAGE_AUGMIX_LHAT = "two_stage_augmix_lhat"
-    LATENT_THREECHAIN = "latent_threechain"
 
 
 class AuxiliaryVariant(str, Enum):
@@ -68,7 +67,6 @@ _RESOURCE_SCHEMAS: Mapping[str, tuple[str, frozenset[str]]] = {
         )
         for name in (
             "corruption_rng",
-            "latent_augmix_rng",
             "lhat_rng",
         )
     },
@@ -106,21 +104,6 @@ _LHAT_OBJECTIVE = ObjectivePlan(
         _bce("corrupted_bce", "corrupted_view"),
     )
 )
-_LATENT_OBJECTIVE = ObjectivePlan(
-    (
-        _bce("clean_bce", "clean_view"),
-        ObjectiveTerm(
-            name="clean_augmix_jsd",
-            kind="bernoulli_jsd",
-            views=("clean_view", "augmix_view_1", "augmix_view_2"),
-            weight=3.0,
-        ),
-        _bce("augmix_view_1_bce", "augmix_view_1", 0.75),
-        _bce("augmix_view_2_bce", "augmix_view_2", 0.75),
-    )
-)
-
-
 _MODEL_ONLY = frozenset()
 _CORRUPTION_RESOURCES = frozenset({"operator_profile", "corruption_rng"})
 _MAINLINE_RESOURCES = frozenset(
@@ -136,11 +119,6 @@ _MAINLINE_RESOURCES = frozenset(
 _NO_VAE_RESOURCES = frozenset(
     {"operator_profile", "augmix_config", "corruption_rng"}
 )
-_LATENT_RESOURCES = frozenset(
-    {"vae", "augmix_config", "latent_augmix_rng"}
-)
-
-
 _DEFINITIONS: Mapping[str, _RecipeDefinition] = MappingProxyType(
     {
         "a0_clean_v1": _RecipeDefinition(
@@ -186,17 +164,6 @@ _DEFINITIONS: Mapping[str, _RecipeDefinition] = MappingProxyType(
             ("clean_view", "lhat_view", "corrupted_view"),
             MethodRequirements(classifier=True, vae_decoder=True, latent_pool=True),
             _LHAT_OBJECTIVE,
-        ),
-        "latent_threechain_augmix_residual_depth23_aug075": _RecipeDefinition(
-            RecipeKind.LATENT_THREECHAIN,
-            AuxiliaryVariant.NOT_APPLICABLE,
-            "latent_augmix",
-            "project_defined_candidate",
-            _LATENT_RESOURCES,
-            "latent_threechain_augmix_residual_depth23_aug075",
-            ("clean_view", "augmix_view_1", "augmix_view_2"),
-            MethodRequirements(classifier=True, vae_encoder=True, vae_decoder=True),
-            _LATENT_OBJECTIVE,
         ),
         # Deliberately the only non-file-backed future variant.  Keeping the
         # paired identity here permits a matched no-VAE ablation without
@@ -316,36 +283,7 @@ def _execution_contract(
                 "batch_norm_policy": "family_loss_weighted_once_per_base_batch",
             }
         )
-    return MappingProxyType(
-        {
-            **common,
-            "stages": ["supervised_adaptation"],
-            "exposure_policy": "dual_latent_threechain_views",
-            "latent_behavior": {
-                "width": 3,
-                "depths": [2, 3],
-                "operator_sampling": "random_subset_without_replacement",
-                "operator_order": "canonical_order",
-                "posterior": "deterministic_mean",
-                "mixing": "dirichlet_alpha_1",
-                "reconstruction_residual_bypass": "weighted_chain_residuals",
-                "post_decode_clean_beta_mix": False,
-            },
-            "objective_weights": {
-                "clean_bce": 1.0,
-                "augmix_view_1_bce": 0.75,
-                "augmix_view_2_bce": 0.75,
-                "clean_augmix_jsd": 3.0,
-            },
-            "generated_view_count": 2,
-            "batch_norm_policy": "objective_view_weighted_once_per_base_batch",
-            "batch_norm_view_weights": {
-                "clean_view": 0.5,
-                "augmix_view_1": 0.25,
-                "augmix_view_2": 0.25,
-            },
-        }
-    )
+    raise AssertionError(f"unsupported recipe kind: {kind}")
 
 
 @dataclass(frozen=True)

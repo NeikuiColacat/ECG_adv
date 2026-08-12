@@ -60,10 +60,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise AssertionError("PN2021 training parameters must be YAML-owned")
     source_checkpoint = args.source_checkpoint.expanduser().resolve()
     needs_pool = bool(recipe.requirements.latent_pool)
-    needs_runtime_encoder = bool(recipe.requirements.vae_encoder)
     needs_decoder = bool(recipe.requirements.vae_decoder)
-    needs_encoder_component = needs_pool or needs_runtime_encoder
-    needs_vae = needs_encoder_component or needs_decoder
+    needs_vae = needs_pool or needs_decoder
     resolved_vae_checkpoint = None
     vae_config_path = None
     if needs_vae:
@@ -100,7 +98,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
         "vae_requirements": {
             "latent_pool": needs_pool,
-            "runtime_encoder": needs_runtime_encoder,
             "decoder": needs_decoder,
         },
         "output_dir": None if output_dir is None else str(output_dir),
@@ -151,7 +148,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             checkpoint_path=resolved_vae_checkpoint,
             map_location="cpu",
         )
-        encoder = loaded_encoder if needs_encoder_component else None
+        encoder = loaded_encoder if needs_pool else None
         decoder = loaded_decoder if needs_decoder else None
     result = train_pn2021(
         model,

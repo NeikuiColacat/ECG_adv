@@ -477,8 +477,7 @@ def test_pn2021_boot_and_adapter_reject_retired_override_surfaces() -> None:
 
 
 def test_finite_exposure_plans_lock_direct21_rotating6_and_matched5() -> None:
-    for filename in ("a0_clean_v1.yaml", "a3c_depth23_v1.yaml",
-                     "exp_paired_augmix_latent_bridge_v1.yaml"):
+    for filename in ("a0_clean_v1.yaml", "a3c_depth23_v1.yaml"):
         steps = trainer._method_exposure_steps(_recipe(filename))
         assert [(step.name, step.loss_scale) for step in steps] == [("base", 1.0)]
     direct = trainer._method_exposure_steps(_recipe("direct_depth23_fixed20.yaml"))
@@ -545,8 +544,6 @@ RNG_CASES = [
     ("direct_depth23_fixed20.yaml", "corruption_07", 7, "corruption_rng", "depth23_corruption", "composition_and_operators", 1342437248),
     ("augmix_simclr_lhat.yaml", "corruption_07", 7, "corruption_rng", "depth23_corruption", "composition_and_operators", 100675112),
     ("augmix_simclr_lhat.yaml", "auxiliary", None, "lhat_rng", "lhat", "candidate_selection", 1664578656),
-    ("exp_paired_augmix_latent_bridge_v1.yaml", "base", None, "latent_augmix_rng", "augmix_view_1", "depth_operators_and_latent_mixing", 692988747),
-    ("exp_paired_augmix_latent_bridge_v1.yaml", "base", None, "latent_augmix_rng", "augmix_view_2", "depth_operators_and_latent_mixing", 3858762464),
 ]
 
 
@@ -568,12 +565,11 @@ def test_method_rng_permanent_goldens(filename, exposure, composition, rng_name,
 @pytest.mark.parametrize("name,weights", [
     ("clean", None), ("direct", [.5, *([.025] * 20)]),
     ("mainline", [.5, .125, .125, .125, .125, 0]),
-    ("latent", [.5, .25, .25]), ("matched", [.5, .125, .125, .125, .125])])
+    ("matched", [.5, .125, .125, .125, .125])])
 def test_batch_norm_plan_preserves_family_weights(name, weights) -> None:
     recipes = {"clean": lambda: _recipe("a0_clean_v1.yaml"),
                "direct": lambda: _recipe("direct_depth23_fixed20.yaml"),
                "mainline": lambda: _recipe("augmix_simclr_lhat.yaml"),
-               "latent": lambda: _recipe("exp_paired_augmix_latent_bridge_v1.yaml"),
                "matched": _matched}
     recipe = recipes[name](); steps = trainer._method_exposure_steps(recipe)
     plan = trainer._build_batch_norm_momentum_plan(

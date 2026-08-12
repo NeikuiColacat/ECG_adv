@@ -210,12 +210,10 @@ def train_pn2021(
         raise ValueError("model must expose a managed EfficientNet/ECGFounder spec")
     _validate_locked_source_checkpoint(owner, spec, config)
     requires_pool = bool(recipe.requirements.latent_pool)
-    requires_runtime_encoder = bool(recipe.requirements.vae_encoder)
     requires_decoder = bool(recipe.requirements.vae_decoder)
-    requires_encoder_component = requires_pool or requires_runtime_encoder
-    if requires_encoder_component != (encoder is not None):
+    if requires_pool != (encoder is not None):
         raise ValueError(
-            "VAE encoder presence must match the recipe pool/runtime requirement"
+            "VAE encoder presence must exactly match the latent-pool requirement"
         )
     if requires_decoder != (decoder is not None):
         raise ValueError(
@@ -230,7 +228,6 @@ def train_pn2021(
     )
 
     pool = None
-    runtime_encoder = encoder if requires_runtime_encoder else None
     if requires_pool:
         assert encoder is not None
         requested_device = str(config.payload["training"]["device"])
@@ -250,11 +247,7 @@ def train_pn2021(
                 device=resolved_device,
             )
         finally:
-            if not requires_runtime_encoder:
-                # Pool-only methods release the encoder before the classifier
-                # loop. Methods that explicitly require it keep the same
-                # managed component for online waveform-to-latent generation.
-                encoder.to("cpu")
+            encoder.to("cpu")
 
     loader: RuntimeDataLoader | None = None
     try:
@@ -265,7 +258,6 @@ def train_pn2021(
             center=center,
             method_config_path=method_config_path,
             latent_pool=pool,
-            encoder=runtime_encoder,
             decoder=decoder,
             config_path=config_path,
             config_root=config_root,

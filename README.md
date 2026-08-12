@@ -124,8 +124,8 @@ Run outputs belong under `/home/linbinhao/ECG_adv_data/runs/`, not in Git.
 Every managed run records its resolved config closure, command, Git state,
 seeds, RecipeSpec identity, checkpoints, metrics, and file hashes through
 `util/run_record.py`. The PN2021 CLI keeps the explicit `--method-config`
-selector; that file now chooses one of five code-owned finite recipes rather
-than describing a dynamic graph.
+selector; four tracked files choose finite recipes, while matched no-VAE is the
+only code-owned non-file slot. Neither surface describes a dynamic graph.
 
 Prospective PN2021 adaptation emits a schema-v1 `pn2021_train_result`; its
 selected final checkpoint is schema v3, and both carry the same immutable

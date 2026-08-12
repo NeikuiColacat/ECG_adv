@@ -171,14 +171,13 @@ class ViewBundle:
 @dataclass(frozen=True)
 class MethodRequirements:
     classifier: bool = False
-    vae_encoder: bool = False
     vae_decoder: bool = False
     latent_pool: bool = False
 
     def names(self) -> tuple[str, ...]:
         return tuple(
             name
-            for name in ("classifier", "vae_encoder", "vae_decoder", "latent_pool")
+            for name in ("classifier", "vae_decoder", "latent_pool")
             if bool(getattr(self, name))
         )
 
@@ -193,12 +192,12 @@ class ObjectiveTerm:
 
     def __post_init__(self) -> None:
         _name(self.name, "objective term name")
-        if self.kind not in {"bce", "bernoulli_jsd"}:
-            raise ValueError("objective kind must be bce or bernoulli_jsd")
+        if self.kind != "bce":
+            raise ValueError("objective kind must be bce")
         if not self.views or any(not isinstance(value, str) or not value for value in self.views):
             raise ValueError("objective views must be non-empty named outputs")
-        if len(self.views) < (1 if self.kind == "bce" else 2):
-            raise ValueError(f"{self.kind} has too few views")
+        if len(self.views) != 1:
+            raise ValueError("bce objective must reference exactly one view")
         if (
             isinstance(self.weight, bool)
             or not isinstance(self.weight, (int, float))

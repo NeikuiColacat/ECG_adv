@@ -1,12 +1,8 @@
 """Core training and online-adaptation mechanisms for the ECG rebuild."""
 
 from core.augmix import (
-    AugMixBatch,
     AugMixConfig,
-    generate_three_chain_augmix,
     load_augmix_config,
-    make_augmix_generator,
-    multilabel_jsd,
 )
 from core.corruption import (
     CORRUPTION_DOMAIN_SAMPLING_RATE_HZ,
@@ -76,7 +72,6 @@ from core.train_PTBXL import (
 
 
 __all__ = [
-    "AugMixBatch",
     "AugMixConfig",
     "ALLOWED_CENTERS",
     "AuxiliaryVariant",
@@ -108,7 +103,6 @@ __all__ = [
     "WaveformView",
     "generate_lhat_adversarial",
     "generate_canonical_corruption",
-    "generate_three_chain_augmix",
     "build_latent_pool",
     "build_method_runtime",
     "build_pn2021_k500_loader_plan",
@@ -121,9 +115,7 @@ __all__ = [
     "load_lhat_config",
     "load_online_train_config",
     "load_train_config",
-    "make_augmix_generator",
     "make_lhat_generator",
-    "multilabel_jsd",
     "resolve_online_training_parameters",
     "seed_training_process",
     "select_exact_label_candidates",

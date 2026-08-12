@@ -25,7 +25,6 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from core.augmix import (
     AugMixConfig,
     generate_two_chain_augmix_strong_view,
-    multilabel_jsd,
 )
 from core.methods import (
     AuxiliaryVariant,
@@ -80,7 +79,6 @@ ONLINE_PARAMETER_NAMES = frozenset(
 )
 FIXED20_COMPOSITION_ORDER = tuple(range(20))
 FAMILY_BALANCED_BN_POLICY = "family_loss_weighted_once_per_base_batch"
-OBJECTIVE_VIEW_BALANCED_BN_POLICY = "objective_view_weighted_once_per_base_batch"
 
 
 @dataclass(frozen=True)
@@ -172,9 +170,6 @@ def _build_batch_norm_momentum_plan(
             0.0 if step.name == "auxiliary" else float(step.loss_scale)
             for step in exposure_steps
         )
-    elif recipe.kind is RecipeKind.LATENT_THREECHAIN:
-        policy = OBJECTIVE_VIEW_BALANCED_BN_POLICY
-        exposure_weights = (0.5, 0.25, 0.25)
     elif recipe.kind in {RecipeKind.CLEAN, RecipeKind.RANDOM_DEPTH23}:
         return None
     else:  # pragma: no cover - RecipeKind is closed.
@@ -217,7 +212,6 @@ def _method_exposure_steps(
     if recipe.kind in {
         RecipeKind.CLEAN,
         RecipeKind.RANDOM_DEPTH23,
-        RecipeKind.LATENT_THREECHAIN,
     }:
         return (_ExposureStep("base", None, None),)
     if recipe.kind is RecipeKind.FIXED20:
@@ -1148,27 +1142,6 @@ def _compute_objective(
                 )
             else:
                 raw_loss = reference.sum() * 0.0
-        elif term.kind == "bernoulli_jsd":
-            common = torch.ones(
-                batch_size,
-                device=clean.waveform.device,
-                dtype=torch.bool,
-            )
-            for name in term.views:
-                common &= views[name].valid_mask
-            common_positions = torch.nonzero(common, as_tuple=False).flatten()
-            count = int(common_positions.numel())
-            if count:
-                aligned_logits = tuple(
-                    logits[name].index_select(
-                        0,
-                        full_to_local[name].index_select(0, common_positions),
-                    )
-                    for name in term.views
-                )
-                raw_loss = multilabel_jsd(aligned_logits)
-            else:
-                raw_loss = reference.sum() * 0.0
         else:
             raise RuntimeError(f"unsupported recipe objective kind: {term.kind}")
         contribution = float(term.weight) * (float(count) / batch_size) * raw_loss
@@ -1871,7 +1844,6 @@ def train_online_model(
     center: str,
     method_config_path: str | Path,
     latent_pool: "LatentPool | None" = None,
-    encoder: nn.Module | None = None,
     decoder: nn.Module | None = None,
     config_path: str | Path = DEFAULT_ONLINE_CONFIG_PATH,
     config_root: str | Path | None = None,
@@ -1943,7 +1915,6 @@ def train_online_model(
         )
 
     requires_latent = bool(recipe.requirements.latent_pool)
-    requires_encoder = bool(recipe.requirements.vae_encoder)
     requires_decoder = bool(recipe.requirements.vae_decoder)
     if requires_latent != (latent_pool is not None):
         raise ValueError(
@@ -1952,10 +1923,6 @@ def train_online_model(
     if requires_decoder != (decoder is not None):
         raise ValueError(
             "VAE decoder presence must exactly match the recipe requirement"
-        )
-    if requires_encoder != (encoder is not None):
-        raise ValueError(
-            "VAE encoder presence must exactly match the recipe requirement"
         )
 
     requested_device = str(device or config.payload["training"]["device"])
@@ -2017,10 +1984,6 @@ def train_online_model(
         recipe,
         exposure_steps=exposure_steps,
     )
-    if encoder is not None:
-        encoder.to(resolved_device).eval()
-        for parameter in encoder.parameters():
-            parameter.requires_grad_(False)
     if decoder is not None:
         decoder.to(resolved_device).eval()
         for parameter in decoder.parameters():
@@ -2043,7 +2006,6 @@ def train_online_model(
         )
     )
     pool_identity = _pool_identity(latent_pool)
-    encoder_identity = _module_checkpoint_identity(encoder)
     decoder_identity = _module_checkpoint_identity(decoder)
 
     quality = config.payload["data"]["hard_sample_quality_gate"]
@@ -2052,7 +2014,6 @@ def train_online_model(
         model_name=spec.name,
         config_root=config.config_root,
         latent_pool=latent_pool,
-        encoder=encoder,
         decoder=decoder,
         minimum_std_mV=float(quality["minimum_global_std_mV"]),
         maximum_abs_mV=float(quality["maximum_absolute_mV"]),
@@ -2079,7 +2040,6 @@ def train_online_model(
     method_resource_identity = runtime.describe()
     method_resource_identity["composition_index_hint_supported"] = True
     method_resource_identity["latent_pool"] = pool_identity
-    method_resource_identity["vae_encoder_checkpoint"] = encoder_identity
     method_resource_identity["vae_decoder_checkpoint"] = decoder_identity
     _write_json(method_resources_path, method_resource_identity)
 
@@ -2190,7 +2150,6 @@ def train_online_model(
         "center": center,
         "scientific_arm": recipe.scientific_arm,
         "model": model_identity,
-        "vae_encoder_checkpoint": encoder_identity,
         "vae_decoder_checkpoint": decoder_identity,
         "training_parameters": {
             "resolved": resolved,
@@ -2810,7 +2769,7 @@ def train_online_model(
                 "view_execution_sample_count": epoch_samples,
                 "exposure": exposure_metrics,
             }
-            if recipe.requirements.latent_pool or recipe.requirements.vae_encoder:
+            if recipe.requirements.latent_pool:
                 train_metrics.update(
                     {
                         "eligible_count": epoch_quality_accepted,

@@ -11,11 +11,7 @@ from typing import Any, Mapping, Sequence
 import torch
 import torch.nn as nn
 
-from core.augmix import (
-    AugMixConfig,
-    generate_latent_three_chain_augmix,
-    load_augmix_config,
-)
+from core.augmix import AugMixConfig, load_augmix_config
 from core.corruption import generate_canonical_corruption
 from core.lhat import (
     LHATConfig,
@@ -308,7 +304,6 @@ class MethodViewRuntime:
         model_name: str,
         config_root: Path,
         latent_pool: Any | None,
-        encoder: nn.Module | None,
         decoder: nn.Module | None,
         minimum_std_mV: float,
         maximum_abs_mV: float,
@@ -319,7 +314,6 @@ class MethodViewRuntime:
         self.model_name = str(model_name)
         self.config_root = Path(config_root).expanduser().resolve()
         self.latent_pool = latent_pool
-        self.encoder = encoder
         self.decoder = decoder
         self.minimum_std_mV = float(minimum_std_mV)
         self.maximum_abs_mV = float(maximum_abs_mV)
@@ -387,14 +381,10 @@ class MethodViewRuntime:
             raise ValueError("method requires a train-only latent_pool")
         if recipe.requirements.vae_decoder and decoder is None:
             raise ValueError("method requires a frozen VAE decoder")
-        if recipe.requirements.vae_encoder and encoder is None:
-            raise ValueError("method requires a frozen VAE encoder")
         if not recipe.requirements.latent_pool and latent_pool is not None:
             raise ValueError("method without latent_pool requirement may not consume one")
         if not recipe.requirements.vae_decoder and decoder is not None:
             raise ValueError("method without VAE decoder requirement may not consume one")
-        if not recipe.requirements.vae_encoder and encoder is not None:
-            raise ValueError("method without VAE encoder requirement may not consume one")
 
     @property
     def requires_latent_pool(self) -> bool:
@@ -833,143 +823,6 @@ class MethodViewRuntime:
             },
         )
 
-    def _latent_threechain_augmix(
-        self,
-        context: _RecipeContext,
-        inputs: tuple[WaveformView, ...],
-    ) -> WaveformView:
-        if len(inputs) != 1 or not isinstance(inputs[0], WaveformView):
-            raise TypeError("latent three-chain AugMix requires one clean view")
-        if self.encoder is None or self.decoder is None or self.augmix_config is None:
-            raise RuntimeError("latent three-chain AugMix resources are incomplete")
-        source = inputs[0]
-        generator = context.torch_generator(
-            "depth_operators_and_latent_mixing",
-            device=source.waveform.device,
-        )
-        result = generate_latent_three_chain_augmix(
-            source.waveform,
-            encoder=context.resource("vae_encoder"),
-            decoder=context.resource("vae_decoder"),
-            sampling_rate_hz=100,
-            config=self.augmix_config,
-            generator=generator,
-        )
-        accepted, reasons = _quality_mask(
-            result.mixed_raw,
-            minimum_std_mV=self.minimum_std_mV,
-            maximum_abs_mV=self.maximum_abs_mV,
-        )
-        repaired = result.chain_output_nonfinite_count.sum(dim=1) > 0
-        accepted &= ~repaired
-        accepted_positions = _positions(accepted)
-        full_waveform = source.waveform.clone()
-        if accepted_positions:
-            positions = torch.as_tensor(
-                accepted_positions,
-                device=source.waveform.device,
-                dtype=torch.long,
-            )
-            full_waveform.index_copy_(
-                0,
-                positions,
-                result.mixed_raw.index_select(0, positions),
-            )
-        repaired_cpu = repaired.detach().cpu().tolist()
-        rejected: list[dict[str, str]] = []
-        for index, quality_reason in enumerate(reasons):
-            failures: list[str] = []
-            if bool(repaired_cpu[index]):
-                failures.append("chain_nonfinite_repaired")
-            if quality_reason != "accepted":
-                failures.append(quality_reason)
-            if failures:
-                rejected.append(
-                    {
-                        "node_id": context.node_id,
-                        "hash_id": source.sample_ids[index],
-                        "reason": "+".join(failures),
-                    }
-                )
-        diagnostic_values = torch.stack(
-            (
-                result.chain_depths.float().mean(),
-                result.mixture_weights[:, 0].mean(),
-                result.mixture_weights[:, 1].mean(),
-                result.mixture_weights[:, 2].mean(),
-                result.augmented_strength.mean(),
-                result.residual_rms_ratio.mean(),
-                result.chain_output_nonfinite_count.float().sum(),
-            )
-        ).detach().cpu().tolist()
-        diagnostics = dict(
-            zip(
-                (
-                    "mean_chain_depth",
-                    "latent_weight_0",
-                    "latent_weight_1",
-                    "latent_weight_2",
-                    "augmented_strength",
-                    "residual_rms_ratio",
-                    "repaired_nonfinite_count",
-                ),
-                (float(value) for value in diagnostic_values),
-                strict=True,
-            )
-        )
-        for name, value in diagnostics.items():
-            context.record_diagnostic(name, value)
-        context.record_diagnostic("quality_accepted_count", len(accepted_positions))
-        context.record_diagnostic("quality_rejected_count", len(rejected))
-        return WaveformView(
-            name=context.node_id,
-            waveform=full_waveform,
-            labels=source.labels,
-            sample_ids=source.sample_ids,
-            valid_mask=source.valid_mask & accepted,
-            provenance=Provenance(
-                node_id=context.node_id,
-                operation=context.node_type,
-                parent_names=(source.name,),
-                rng_namespace=context.rng_namespace,
-                parameters={
-                    "width": self.augmix_config.latent_threechain_width,
-                    "depths": list(self.augmix_config.latent_threechain_depths),
-                    "dirichlet_alpha": (
-                        self.augmix_config.latent_threechain_dirichlet_alpha
-                    ),
-                    "operator_sampling": "random_subset_without_replacement",
-                    "operator_application_order": "canonical_order",
-                    "posterior_sample": False,
-                    "reconstruction_residual_bypass": (
-                        self.augmix_config.latent_threechain_reconstruction_residual_bypass
-                    ),
-                    "post_decode_clean_beta_mix": (
-                        self.augmix_config.latent_threechain_post_decode_clean_beta_mix
-                    ),
-                    "beta_alpha": self.augmix_config.beta_alpha,
-                    "operator_domain_sampling_rate_hz": 500,
-                },
-            ),
-            metadata={
-                "candidate_eligible_positions": tuple(range(source.batch_size)),
-                "accepted_positions": accepted_positions,
-                "ineligible_hash_ids": (),
-                "quality_rejected": tuple(rejected),
-                "diagnostic_means": diagnostics,
-                "stochastic_trace": {
-                    "chain_depths": result.chain_depths.detach().contiguous(),
-                    "chain_operator_mask": (
-                        result.chain_operator_mask.detach().contiguous()
-                    ),
-                    "mixture_weights": result.mixture_weights.detach().contiguous(),
-                    "augmented_strength": (
-                        result.augmented_strength.detach().contiguous()
-                    ),
-                },
-            },
-        )
-
     def generate(
         self,
         *,
@@ -1042,7 +895,6 @@ class MethodViewRuntime:
         }
         execution_resources = {
             "classifier": classifier,
-            "vae_encoder": self.encoder,
             "vae_decoder": self.decoder,
             "latent_pool": self.latent_pool,
         }
@@ -1090,17 +942,6 @@ class MethodViewRuntime:
                 ),
                 (clean,),
             )
-        if self.recipe.kind is RecipeKind.LATENT_THREECHAIN:
-            for name in ("augmix_view_1", "augmix_view_2"):
-                if name in required_outputs:
-                    generated[name] = self._latent_threechain_augmix(
-                        context(
-                            name,
-                            "latent_threechain_augmix_view",
-                            "latent_augmix_rng",
-                        ),
-                        (clean,),
-                    )
         missing_outputs = sorted(required_outputs - set(generated))
         if missing_outputs:
             raise RuntimeError(
@@ -1249,7 +1090,6 @@ def build_method_runtime(
     model_name: str,
     config_root: str | Path,
     latent_pool: Any | None = None,
-    encoder: nn.Module | None = None,
     decoder: nn.Module | None = None,
     minimum_std_mV: float = 1.0e-4,
     maximum_abs_mV: float = 20.0,
@@ -1259,7 +1099,6 @@ def build_method_runtime(
         model_name=model_name,
         config_root=Path(config_root),
         latent_pool=latent_pool,
-        encoder=encoder,
         decoder=decoder,
         minimum_std_mV=minimum_std_mV,
         maximum_abs_mV=maximum_abs_mV,
