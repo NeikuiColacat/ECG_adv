@@ -6,6 +6,7 @@ and metrics remain in :mod:`core.supervised_trainer`.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -29,6 +30,7 @@ from models.input_adapter import (
     CANONICAL_SAMPLING_RATE_HZ,
     prepare_canonical_model_input,
 )
+from models.factory import build_model, get_model_spec
 from util.config_bundle import resolve_config_reference
 
 
@@ -163,6 +165,70 @@ def build_ptbxl_loader_plan(
     return _build_loader_plan(config, _plan_model_spec(model_spec))
 
 
+def run_ptbxl_boot(model_name: str, args: Any) -> int:
+    """Resolve, print, or execute one of the two finite PTB-XL boot profiles."""
+
+    config = load_train_config(args.config, config_root=args.config_root)
+    profiles = config.payload.get("boot_models")
+    profile = profiles.get(model_name) if isinstance(profiles, Mapping) else None
+    if not isinstance(profile, Mapping):
+        raise ValueError(f"training config boot_models.{model_name} is required")
+    profile = dict(profile)
+    training_parameters = dict(profile.get("training_parameters") or {})
+    if getattr(args, "epochs", None) is not None:
+        if model_name != ECGFOUNDER_SPEC.name or args.epochs != 10:
+            raise ValueError("only ECGFounder --epochs 10 is supported")
+        training_parameters["epochs"] = 10
+    spec = get_model_spec(model_name)
+    output_dir = args.output_dir or profile.get("output_dir")
+    plan = {
+        "model": spec.describe(),
+        "config": config.describe(),
+        "output_dir": None if output_dir is None else str(Path(output_dir).resolve()),
+        "device": config.payload["training"]["device"],
+        "training_parameters": training_parameters,
+        "loader_plan": build_ptbxl_loader_plan(
+            spec, config_path=config.path, config_root=config.config_root
+        ).describe(),
+        "pos_weight": None,
+    }
+    if model_name == EFFICIENTNET1DV2_SPEC.name:
+        fields = (("checkpoint_path", None),)
+    elif model_name == ECGFOUNDER_SPEC.name:
+        fields = (("pretrained_checkpoint_path", None), ("task_checkpoint_path", None),
+                  ("trainable_scope", "full"))
+    else:
+        raise ValueError("unsupported managed PTB-XL model name")
+    model_kwargs = {name: profile.get(name, default) for name, default in fields}
+    plan.update(
+        {
+            name: (None if value is None else str(Path(value).resolve()))
+            if name.endswith("_path") else value
+            for name, value in model_kwargs.items()
+        }
+    )
+    if args.dry_run:
+        print(json.dumps(plan, indent=2, ensure_ascii=False, sort_keys=True))
+        return 0
+    model = build_model(
+        model_name,
+        config_root=config.config_root,
+        seed_namespace="ptbxl_model_initialization",
+        seed_identity=(config.profile_name,),
+        map_location="cpu",
+        **model_kwargs,
+    )
+    result = train_ptbxl(
+        model,
+        config_path=config.path,
+        config_root=config.config_root,
+        output_dir=output_dir,
+        training_parameters=training_parameters,
+    )
+    print(json.dumps(result.describe(), indent=2, ensure_ascii=False, sort_keys=True))
+    return 0
+
+
 @dataclass(frozen=True)
 class PTBXLDataLoaders:
     train: RuntimeDataLoader
@@ -269,5 +335,6 @@ __all__ = [
     "PTBXLDataLoaders",
     "build_ptbxl_dataloaders",
     "build_ptbxl_loader_plan",
+    "run_ptbxl_boot",
     "train_ptbxl",
 ]

@@ -12,6 +12,8 @@ import boot_scripts.train_ptbxl_ecgfounder as founder_boot
 import boot_scripts.train_ptbxl_effnet as effnet_boot
 import core.train_PTBXL as ptbxl_module
 import data_preprocess.data_runtime as data_runtime
+import models
+import models.factory as model_factory
 from core.supervised_trainer import load_train_config
 from core.train_PTBXL import (
     PTBXLDataLoaders,
@@ -382,6 +384,13 @@ def test_ptbxl_boot_cli_is_the_launcher_owned_finite_surface() -> None:
     common = {"--config", "--config-root", "--output-dir", "--dry-run"}
     assert _option_strings(effnet_boot.build_parser()) == common
     assert _option_strings(founder_boot.build_parser()) == common | {"--epochs"}
+    assert models.__all__ == ["available_models", "build_model", "get_model_spec",
+                              "build_ecgtwin_vae", "load_vae_config"]
+    assert model_factory.available_models() == ("ecgfounder", "efficientnet1dv2")
+    assert not any(hasattr(model_factory, name) for name in
+                   ("MODEL_ALIASES", "MODEL_BUILDERS", "MODEL_SPECS", "normalize_model_name"))
+    with pytest.raises(ValueError, match="unknown model"):
+        model_factory.get_model_spec("effnet")
 
 
 def test_ptbxl_boot_dry_runs_preserve_model_profiles(capsys) -> None:
@@ -434,12 +443,13 @@ def test_ptbxl_boot_dry_run_rejects_malicious_runtime_yaml_before_side_effects(
         target = target[key]
     target[resolved_path[-1]] = value
     poisoned = replace(config, payload=payload)
-    monkeypatch.setattr(boot, "load_train_config", lambda *args, **kwargs: poisoned)
     monkeypatch.setattr(
         ptbxl_module, "load_train_config", lambda *args, **kwargs: poisoned
     )
     monkeypatch.setattr(
-        boot, "build_model", lambda *args, **kwargs: pytest.fail("model was built")
+        ptbxl_module,
+        "build_model",
+        lambda *args, **kwargs: pytest.fail("model was built"),
     )
     monkeypatch.setattr(
         torch.cuda,
@@ -464,9 +474,6 @@ def test_ptbxl_boot_dry_run_rejects_nonboolean_test_policy(
     payload = copy.deepcopy(config.payload)
     payload["selection"]["evaluate_test_at_end"] = value
     poisoned = replace(config, payload=payload)
-    monkeypatch.setattr(
-        effnet_boot, "load_train_config", lambda *args, **kwargs: poisoned
-    )
     monkeypatch.setattr(
         ptbxl_module, "load_train_config", lambda *args, **kwargs: poisoned
     )
@@ -495,7 +502,7 @@ def test_ptbxl_boot_execution_passes_only_yaml_training_profile(
 ) -> None:
     model = _Model(spec)
     captured: dict[str, object] = {}
-    monkeypatch.setattr(boot, "build_model", lambda *args, **kwargs: model)
+    monkeypatch.setattr(ptbxl_module, "build_model", lambda *args, **kwargs: model)
 
     class _Result:
         def describe(self) -> dict[str, object]:
@@ -506,7 +513,7 @@ def test_ptbxl_boot_execution_passes_only_yaml_training_profile(
         captured.update(kwargs)
         return _Result()
 
-    monkeypatch.setattr(boot, "train_ptbxl", fake_train_ptbxl)
+    monkeypatch.setattr(ptbxl_module, "train_ptbxl", fake_train_ptbxl)
     assert boot.main(arguments) == 0
     assert captured["model"] is model
     assert captured["training_parameters"]["epochs"] == expected_epochs
