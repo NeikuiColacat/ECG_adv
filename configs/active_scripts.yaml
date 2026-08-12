@@ -139,7 +139,7 @@ latest_mainline:
       - util/tests/test_evaluation_metrics.py
       - util/tests/test_pn2021_evaluation.py
     cpu_contract_result:
-      status: passed_153_skipped_10
+      status: passed_154_skipped_10
       date: "2026-08-12"
     gpu_replication:
       status: not_run_after_recipe_migration

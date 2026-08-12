@@ -206,7 +206,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     result = train_pn2021(
         model,
         center=args.center,
-        method_config_path=recipe.source_path,
+        method_config_path=args.method_config,
         encoder=encoder,
         decoder=decoder,
         config_path=config.path,

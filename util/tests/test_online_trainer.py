@@ -10,7 +10,9 @@ import pytest
 import torch
 import yaml
 
+import boot_scripts.train_pn2021 as train_boot
 import core.online_trainer as trainer
+import core.train_PN2021 as train_adapter
 from core.methods import AuxiliaryVariant, RecipeKind, build_method_runtime, load_recipe_spec
 from core.methods.runtime import _derive_seed
 from core.train_PN2021 import _validate_locked_source_checkpoint
@@ -37,6 +39,48 @@ def _matched():
     for name in ("vae", "lhat_config", "lhat_rng"):
         payload["resources"].pop(name)
     return load_recipe_spec(payload)
+
+
+def test_non_dry_handoffs_keep_bundle_relative_recipe(monkeypatch, tmp_path: Path, capsys) -> None:
+    checkpoint = tmp_path / "source.pt"
+    checkpoint.write_bytes(b"characterization-only checkpoint stub")
+    boot_method = Path("train/methods/a0_clean_v1.yaml")
+    seen = {}
+
+    monkeypatch.setattr(train_boot, "build_model", lambda *a, **k: torch.nn.Identity())
+    def capture_boot(*args, **kwargs):
+        seen["boot"] = kwargs["method_config_path"]
+        return SimpleNamespace(describe=lambda: {"status": "mocked"})
+    monkeypatch.setattr(train_boot, "train_pn2021", capture_boot)
+    assert train_boot.main(
+        ["--config", str(ONLINE_CONFIG), "--config-root", str(CONFIG_ROOT),
+         "--model", "efficientnet1dv2", "--method-config", str(boot_method),
+         "--center", "ningbo", "--source-checkpoint", str(checkpoint)]
+    ) == 0
+    assert seen["boot"] == boot_method and not seen["boot"].is_absolute()
+    assert '"status": "mocked"' in capsys.readouterr().out
+
+    adapter_method = Path("train/methods/augmix_simclr_lhat.yaml")
+    model = torch.nn.Identity()
+    model.model_spec = EFFICIENTNET1DV2_SPEC
+    result = object()
+    def capture(key, value):
+        def call(*args, **kwargs):
+            seen[key] = kwargs["method_config_path"]
+            return value
+        return call
+    monkeypatch.setattr(train_adapter, "_validate_locked_source_checkpoint", lambda *a, **k: None)
+    monkeypatch.setattr(train_adapter, "build_pn2021_latent_pool", capture("pool", object()))
+    monkeypatch.setattr(train_adapter, "build_pn2021_k500_dataloader",
+                        lambda *a, **k: SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr(train_adapter, "train_online_model", capture("trainer", result))
+
+    assert train_adapter.train_pn2021(
+        model, center="ningbo", method_config_path=adapter_method,
+        encoder=torch.nn.Identity(), decoder=torch.nn.Identity(),
+        config_path=ONLINE_CONFIG, config_root=CONFIG_ROOT, device="cpu",
+    ) is result
+    assert seen == {"boot": boot_method, "pool": adapter_method, "trainer": adapter_method}
 
 
 def test_source_checkpoint_lock_covers_both_backbones(tmp_path: Path) -> None:
