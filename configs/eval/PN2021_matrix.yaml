@@ -1,0 +1,15 @@
+schema_version: 1
+profile_name: pn2021_prospective_diagonal_matrix_v1
+
+protocol:
+  logical_centers:
+    - ningbo
+    - chapman_shaoxing
+    - cpsc_2018
+    - georgia
+  aggregation: equal_views_then_equal_centers
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor/pn2021_diagonal_matrix_v1
+  if_exists: error
+  result_file: matrix_result.json

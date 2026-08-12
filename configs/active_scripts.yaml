@@ -18,6 +18,7 @@ launch_surface_policy:
     - train_ptbxl_ecgfounder
     - train_pn2021
     - evaluate_pn2021
+    - aggregate_pn2021
   config_root: configs
   tracked_yaml_required: true
   run_scoped_output_required: true
@@ -63,6 +64,9 @@ latest_mainline:
       evaluation_result:
         schema_version: 3
         artifact_type: pn2021_evaluation_result
+      diagonal_matrix_result:
+        schema_version: 1
+        artifact_type: pn2021_diagonal_four_center_evaluation
       invariant: train_result_and_final_checkpoint_share_exact_lineage
       evaluation_subject_modes:
         prospective_train_result:
@@ -124,6 +128,12 @@ latest_mainline:
     - name: pn2021_effnet_evaluation
       role: ref_excluded_clean_and_pn2021c_evaluation_example
       config: configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_eval_ningbo.yaml
+    - name: pn2021_effnet_diagonal_matrix
+      role: prospective_four_center_evaluation_aggregation
+      config: configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_matrix.yaml
+    - name: pn2021_ecgfounder_diagonal_matrix
+      role: prospective_four_center_evaluation_aggregation
+      config: configs/experiments/manual_refactor_pn2021_ecgfounder_augmix_simclr_lhat_matrix.yaml
   replay_scope:
     generic_runner_supports:
       backbones: [efficientnet1dv2, ecgfounder]
@@ -148,6 +158,9 @@ latest_mainline:
         - configs/experiments/manual_refactor_pn2021_ecgfounder_augmix_simclr_lhat_eval_chapman_shaoxing.yaml
         - configs/experiments/manual_refactor_pn2021_ecgfounder_augmix_simclr_lhat_eval_cpsc_2018.yaml
         - configs/experiments/manual_refactor_pn2021_ecgfounder_augmix_simclr_lhat_eval_georgia.yaml
+      matrix_configs:
+        - configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_matrix.yaml
+        - configs/experiments/manual_refactor_pn2021_ecgfounder_augmix_simclr_lhat_matrix.yaml
       missing_before_paper_promotion:
         - frozen_multiseed_replication_yamls
   verification:
@@ -164,12 +177,12 @@ latest_mainline:
       - util/tests/test_evaluation_metrics.py
       - util/tests/test_pn2021_evaluation.py
     cpu_contract_result:
-      status: passed_189_skipped_10
+      status: passed_203_skipped_10
       date: "2026-08-12"
     cp4_lineage_contract_result:
-      status: pending_parent_final_verification
-      pytest: pending
-      tracked_physical_loc: pending
+      status: passed_with_diagonal_matrix_independent_review
+      pytest: passed_203_skipped_10
+      tracked_physical_loc: 40215
     gpu_replication:
       status: diagnostic_smoke_passed_not_performance_evidence
       planned_run_root: /home/linbinhao/ECG_adv_data/runs/manual_refactor_paper_kernel_v2_recipe_v1_r1
@@ -231,6 +244,7 @@ run_record_contract:
     pn2021_train_result: 1
     pn2021_final_checkpoint: 3
     pn2021_evaluation_result: 3
+    pn2021_diagonal_four_center_evaluation: 1
   evaluation_subject_modes:
     - prospective_train_result
     - legacy_center_adapted
@@ -241,6 +255,7 @@ run_record_contract:
     - supervised_train_result
     - pn2021_train_result
     - evaluation_result
+    - pn2021_matrix_result
   required_files:
     - run_card.json
     - run_file_index.json

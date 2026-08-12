@@ -17,6 +17,7 @@ from boot_scripts.evaluate_pn2021 import (
     _validate_loaded_subject,
     main as evaluate_main,
 )
+from boot_scripts.aggregate_pn2021 import main as aggregate_main
 from core.methods import load_recipe_spec
 from models.checkpoints import CheckpointIdentity
 from models.contracts import (
@@ -30,6 +31,7 @@ from util.evaluation.metrics import (
     METRIC_DEFINITION,
     aggregate_corruption_views,
 )
+from util.evaluation.matrix import aggregate_pn2021_matrix
 from util.evaluation.pn2021 import (
     DEFAULT_PN2021_EVAL_CONFIG,
     LOGICAL_CENTERS,
@@ -39,6 +41,7 @@ from util.evaluation.pn2021 import (
     load_corruption_views,
     load_pn2021_eval_config,
 )
+from util.run_record import _result_summary
 
 
 LEAD_ORDER = [
@@ -174,7 +177,9 @@ def _write_fixture(tmp_path: Path) -> dict[str, object]:
         }
         split_centers[center] = {
             "k500_count": 500,
-            "k500_hash_id_set_sha256": f"k500_{center}",
+            "k500_hash_id_set_sha256": hashlib.sha256(
+                f"k500_{center}".encode()
+            ).hexdigest(),
             "evaluation_all_zero_kept_count": len(hashes),
             "evaluation_all_zero_kept_hash_id_set_sha256": _hash_set(hashes),
             "evaluation_drop_all_zero_count": len(nonzero_hashes),
@@ -1183,3 +1188,169 @@ def test_default_eval_config_uses_canonical_profile_and_artifact_locks() -> None
     assert corruption["expected_profile"] == EXPECTED_PROFILE
     assert corruption["expected_severity"] == 5
     assert corruption["expected_domain_sampling_rate_hz"] == 500
+
+
+def _write_matrix_members(tmp_path: Path) -> list[Path]:
+    fixture = _write_fixture(tmp_path)
+    config = load_pn2021_eval_config(
+        fixture["config_path"], config_root=fixture["config_root"]
+    )
+    factory, _ = _loader_factory(fixture)
+    method = {
+        "recipe_id": "fixture_recipe",
+        "scientific_arm": "fixture_arm",
+        "recipe_spec_sha256": "1" * 64,
+        "implementation_identity": "fixture",
+        "recipe_version": 1,
+        "kind": "augmix_simclr_lhat",
+        "auxiliary_variant": "vae_lhat",
+        "schema_version": 1,
+    }
+    results: list[Path] = []
+    for index, center in enumerate(LOGICAL_CENTERS):
+        root = tmp_path / "matrix" / center
+        checkpoint_path = root / "training" / "checkpoints" / "last.pt"
+        checkpoint_path.parent.mkdir(parents=True)
+        checkpoint_path.write_bytes(f"checkpoint {center}\n".encode())
+        checkpoint = {
+            "path": str(checkpoint_path),
+            "sha256": _sha256(checkpoint_path),
+        }
+        lineage = {
+            "schema_version": 1,
+            "scope": "pn2021_k500_center_adaptation",
+            "model": {
+                "name": "efficientnet1dv2",
+                "spec": EFFICIENTNET1DV2_SPEC.describe(),
+            },
+            "center": center,
+            "method": method,
+            "comparison": {"group": "fixture", "replicate_id": 0},
+            "seed": {
+                "base_seed": 7,
+                "effective_seed": index,
+                "namespace": "fixture",
+                "config_sha256": "2" * 64,
+            },
+            "source_checkpoint": {"sha256": "3" * 64},
+            "training_config_sha256": "4" * 64,
+            "adaptation_data": {
+                "dataset": "pn2021",
+                "partition": "k500",
+                "logical_center": center,
+                "source_centers": (
+                    ["cpsc_2018", "cpsc_2018_extra"]
+                    if center == "cpsc_2018"
+                    else [center]
+                ),
+                "record_count": 500,
+                "split_id": "fixture",
+                "hash_id_set_sha256": hashlib.sha256(
+                    f"k500_{center}".encode()
+                ).hexdigest(),
+                "split_manifest_sha256": "8" * 64,
+                "source_manifest_sha256": "9" * 64,
+                "mapping_version": PN2021_MAPPING_VERSION,
+                "mapping_hash": PN2021_MAPPING_HASH,
+                "class_order": list(CLASS_ORDER),
+            },
+            "selection": {
+                "policy": "last",
+                "heldout_evaluation_used_for_selection": False,
+            },
+        }
+        train = {
+            "schema_version": 1,
+            "artifact_type": "pn2021_train_result",
+            "lineage": lineage,
+            "center": center,
+            "method_id": method["recipe_id"],
+            "scientific_arm": method["scientific_arm"],
+            "model": {"spec": EFFICIENTNET1DV2_SPEC.describe()},
+            "config": {"training": {"sha256": lineage["training_config_sha256"]}},
+            "seed": lineage["seed"],
+            "epochs_completed": 1,
+            "optimizer_steps": 1,
+            "last_checkpoint": checkpoint,
+            "selection": {
+                "policy": "last",
+                "selected_epoch": 1,
+                "selected_checkpoint": checkpoint,
+                "heldout_evaluation_used_for_selection": False,
+            },
+        }
+        train_path = root / "training" / "train_result.json"
+        train_path.write_text(json.dumps(train), encoding="utf-8")
+        subject = {
+            "mode": "prospective_train_result",
+            "train_result": {"path": str(train_path), "sha256": _sha256(train_path)},
+            "lineage": lineage,
+        }
+        identity = CheckpointIdentity(
+            checkpoint_path,
+            checkpoint["sha256"],
+            1,
+            (),
+            (),
+            checkpoint_schema_version=3,
+            lineage=lineage,
+        )
+        result = evaluate_pn2021(
+            _TinyModel(), identity, config=config, output_dir=root / "evaluation",
+            logical_centers=[center], subject_identity=subject,
+            dataloader_factory=factory,
+        )
+        results.append(Path(result["output"]["result_file"]))
+    return results
+
+
+def test_matrix_recomputes_canonical_diagonal_from_members(tmp_path: Path) -> None:
+    paths = _write_matrix_members(tmp_path)
+    matrix = aggregate_pn2021_matrix(paths, profile_name="fixture_matrix")
+
+    assert matrix["centers"] == list(LOGICAL_CENTERS)
+    assert matrix["artifact_type"] == "pn2021_diagonal_four_center_evaluation"
+    assert matrix["clean"]["four_center_mean"] == matrix["clean"]["evaluated_center_mean"]
+    assert [item["center"] for item in matrix["members"]] == list(LOGICAL_CENTERS)
+    assert {key: value["view_count"] for key, value in matrix["corrupted"]["aggregates"].items()} == {
+        "depth2": 10, "depth3": 10, "depth23": 20,
+    }
+
+
+def test_matrix_cli_output_passes_the_run_recorder_seal(tmp_path: Path) -> None:
+    paths = _write_matrix_members(tmp_path)
+    output = tmp_path / "managed_matrix" / "evaluation"
+    arguments = [
+        "--config", str(Path(__file__).resolve().parents[2] / "configs/eval/PN2021_matrix.yaml"),
+        "--output-dir", str(output),
+    ]
+    for path in paths:
+        arguments.extend(("--result", str(path)))
+    assert aggregate_main(arguments) == 0
+    result_path = output / "matrix_result.json"
+    payload = json.loads(result_path.read_text(encoding="utf-8"))
+    summary = _result_summary(
+        payload, "pn2021_matrix_result", result_path=result_path
+    )
+    assert summary["identity"]["centers"] == list(LOGICAL_CENTERS)
+
+
+@pytest.mark.parametrize("attack", ["mode", "center", "k500", "record_identity", "cohort"])
+def test_matrix_rejects_cross_member_identity_drift(tmp_path: Path, attack: str) -> None:
+    paths = _write_matrix_members(tmp_path)
+    target = paths[1]
+    payload = json.loads(target.read_text(encoding="utf-8"))
+    if attack == "mode":
+        payload["subject"]["mode"] = "legacy_center_adapted"
+    elif attack == "center":
+        payload["protocol"]["logical_centers"] = ["ningbo"]
+    elif attack == "k500":
+        payload["clean"]["per_center"]["chapman_shaoxing"]["identity"]["reference_exclusion"]["k500_hash_id_set_sha256"] = "drift"
+    elif attack == "record_identity":
+        payload["corrupted"]["per_view"][0]["per_center"]["chapman_shaoxing"]["identity"]["hash_label_set_sha256"] = "drift"
+    else:
+        payload["subject"]["lineage"]["comparison"]["replicate_id"] = 1
+    target.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        aggregate_pn2021_matrix(paths, profile_name="fixture_matrix")

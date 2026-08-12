@@ -1,0 +1,23 @@
+schema_version: 1
+
+experiment:
+  name: manual_refactor_pn2021_effnet_augmix_simclr_lhat_matrix_paper_kernel_v2_recipe_v1_r1
+  purpose: Aggregate the prospective EfficientNet diagonal four-center evaluation matrix without loading data or models.
+
+entrypoint:
+  name: aggregate_pn2021
+  config: eval/PN2021_matrix.yaml
+  arguments:
+    - --result
+    - /home/linbinhao/ECG_adv_data/runs/manual_refactor_paper_kernel_v2_recipe_v1_r1/eval/effnet/ningbo/evaluation/evaluation_result.json
+    - --result
+    - /home/linbinhao/ECG_adv_data/runs/manual_refactor_paper_kernel_v2_recipe_v1_r1/eval/effnet/chapman_shaoxing/evaluation/evaluation_result.json
+    - --result
+    - /home/linbinhao/ECG_adv_data/runs/manual_refactor_paper_kernel_v2_recipe_v1_r1/eval/effnet/cpsc_2018/evaluation/evaluation_result.json
+    - --result
+    - /home/linbinhao/ECG_adv_data/runs/manual_refactor_paper_kernel_v2_recipe_v1_r1/eval/effnet/georgia/evaluation/evaluation_result.json
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/manual_refactor_paper_kernel_v2_recipe_v1_r1/matrix/effnet
+  if_exists: error
+  delegate_output_subdir: evaluation

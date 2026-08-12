@@ -189,6 +189,66 @@ def _evaluation_result() -> dict:
     }
 
 
+def _matrix_result(tmp_path: Path) -> dict:
+    centers = ["ningbo", "chapman_shaoxing", "cpsc_2018", "georgia"]
+    mean = {"drop_all_zero": {"macro_auroc": 0.5}}
+    config = tmp_path / "matrix.yaml"; config.write_text("schema_version: 1\n", encoding="utf-8")
+    members = []
+    for center in centers:
+        artifact = tmp_path / f"{center}_evaluation_result.json"
+        artifact.write_text(json.dumps({"schema_version": 3, "artifact_type":
+            "pn2021_evaluation_result", "status": "complete"}), encoding="utf-8")
+        members.append({
+            "center": center,
+            "evaluation_result": {"path": str(artifact),
+                                  "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest()},
+            "train_result": {"path": f"{center}_train_result.json", "sha256": "0" * 64},
+            "checkpoint": {"sha256": "0" * 64},
+            "adaptation_data": {"split_id": center},
+        })
+    return {
+        "schema_version": 1,
+        "artifact_type": "pn2021_diagonal_four_center_evaluation",
+        "status": "complete",
+        "profile_name": "fixture_matrix",
+        "config": {"path": str(config), "sha256": hashlib.sha256(config.read_bytes()).hexdigest()},
+        "model": EFFICIENTNET1DV2_SPEC.describe(),
+        "cohort": {
+            "model": EFFICIENTNET1DV2_SPEC.describe(),
+            "method": {"recipe_id": "fixture"},
+            "comparison": {"group": "fixture", "replicate_id": 0},
+            "source_checkpoint": {"sha256": "0" * 64}, "selection": {"policy": "last"},
+            "seed": {"base_seed": 0}, "evaluation": {"config_sha256": "0" * 64},
+        },
+        "centers": centers,
+        "members": members,
+        "clean": {"per_center": {center: _metric_body() for center in centers},
+                  "center_count": 4, "center_order": centers,
+                  "evaluated_center_mean": mean, "four_center_mean": mean},
+        "corrupted": {"per_view": [
+            {"view_index": index, "per_center": {center: _metric_body() for center in centers},
+             "center_count": 4, "center_order": centers,
+             "evaluated_center_mean": mean, "four_center_mean": mean}
+            for index in range(20)
+        ], "aggregates": {
+            key: {"view_count": count, "center_count": 4, "center_order": centers,
+                  "evaluated_center_mean": mean, "four_center_mean": mean}
+            for key, count in (("depth2", 10), ("depth3", 10), ("depth23", 20))
+        }},
+        "aggregation": {"policy": "equal_views_then_equal_centers",
+            "checkpoint_policy": "one_adapted_checkpoint_per_corresponding_center",
+            "off_diagonal": "not_evaluated",
+        },
+    }
+
+
+def _stub_matrix_recompute(monkeypatch: pytest.MonkeyPatch, payload: dict) -> None:
+    expected = json.loads(json.dumps({key: value for key, value in payload.items()
+                                     if key not in {"config", "output"}}))
+    monkeypatch.setattr("util.evaluation.matrix.aggregate_pn2021_matrix",
+                        lambda paths, *, profile_name: expected)
+
+
 def _record_payload(
     plan: ExperimentPlan,
     relative_name: str,
@@ -244,6 +304,9 @@ def _record_payload(
                 artifact.parent.mkdir(parents=True, exist_ok=True)
                 artifact.write_bytes(FIXTURE_CHECKPOINT)
                 evaluation_checkpoint["sha256"] = FIXTURE_CHECKPOINT_SHA256
+        if payload.get("artifact_type") == "pn2021_diagonal_four_center_evaluation":
+            result_path = output_dir / relative_name
+            payload["output"] = {"directory": str(output_dir), "result_file": str(result_path)}
         (output_dir / relative_name).write_text(json.dumps(payload), encoding="utf-8")
         log_path.write_text("fixture delegate\n", encoding="utf-8")
         return delegate_exit_code
@@ -645,6 +708,39 @@ def test_evaluation_result_rejects_mode_specific_checkpoint_mismatch(
     assert "checkpoint differs" in manifest["error"]
 
 
+def test_matrix_result_is_registered_and_sealed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _, plan = _action_plan(tmp_path, "aggregate_pn2021", delegate_subdir="evaluation")
+    assert plan.expected_result_relative_path == Path("evaluation/matrix_result.json")
+    assert plan.expected_result_type == "pn2021_matrix_result"
+    payload = _matrix_result(tmp_path)
+    _stub_matrix_recompute(monkeypatch, payload)
+    exit_code, manifest = _record_payload(plan, "matrix_result.json", payload)
+    assert exit_code == 0
+    assert manifest["delegate_result"]["identity"]["centers"] == payload["centers"]
+
+
+@pytest.mark.parametrize("attack", ["artifact", "order", "model", "cohort", "member_sha", "aggregates"])
+def test_matrix_result_rejects_invalid_contract(
+    tmp_path: Path, attack: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    _, plan = _action_plan(tmp_path / attack, "aggregate_pn2021", delegate_subdir="evaluation")
+    payload = _matrix_result(tmp_path / attack)
+    _stub_matrix_recompute(monkeypatch, payload)
+    if attack == "artifact":
+        payload["artifact_type"] = "pn2021_evaluation_result"
+    elif attack == "order":
+        payload["centers"] = list(reversed(payload["centers"]))
+    elif attack == "model":
+        payload["model"]["name"] = "unknown"
+    elif attack == "cohort":
+        payload["cohort"] = {}
+    elif attack == "member_sha":
+        payload["members"][0]["evaluation_result"]["sha256"] = "f" * 64
+    else:
+        payload["corrupted"]["aggregates"] = {}
+    exit_code, manifest = _record_payload(plan, "matrix_result.json", payload)
+    assert exit_code == 1 and manifest["delegate_result"] is None
+
+
 @pytest.mark.parametrize(
     ("key", "value"),
     (("class_order", ["NORM", "CD", "HYP", "MI", "STTC"]),
@@ -688,7 +784,7 @@ def test_all_tracked_experiment_jobs_resolve_with_explicit_results(
     tmp_path: Path,
 ) -> None:
     experiment_paths = sorted((REPO / "configs" / "experiments").glob("*.yaml"))
-    assert len(experiment_paths) == 38
+    assert len(experiment_paths) == 40
     for experiment_path in experiment_paths:
         plan = load_experiment_plan(
             experiment_path,
@@ -699,6 +795,7 @@ def test_all_tracked_experiment_jobs_resolve_with_explicit_results(
             "supervised_train_result",
             "pn2021_train_result",
             "evaluation_result",
+            "pn2021_matrix_result",
         }
 
 

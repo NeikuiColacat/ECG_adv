@@ -11,7 +11,7 @@ the repository's default configs.
 | `data/` | Dataset locations, cache identities, splits, loader/runtime policy |
 | `augmentation/` | Five-operator profile and offline PN2021-C cache contract |
 | `train/` | Trainer, VAE/LHAT/AugMix, and five finite recipe selectors |
-| `eval/` | Canonical PN2021 Clean/PN2021-C evaluation contract |
+| `eval/` | Canonical PN2021 Clean/PN2021-C evaluation and diagonal-matrix aggregation contracts |
 | `baselines/` | Locked PTB-XL source and Direct+fixed20 evidence registries |
 | `experiments/` | Thin executable entry YAMLs |
 | `active_scripts.yaml` | Current launcher and executable mainline index |
@@ -33,6 +33,9 @@ the repository's default configs.
   references and enter the YAML closure. `--train-result` is a produced JSON
   artifact rather than configuration, so it does not; the schema-v3 evaluation
   subject instead records and verifies its resolved path and SHA256.
+- `aggregate_pn2021` accepts exactly four external `--result` JSON artifacts.
+  Those produced artifacts are identity-checked inputs, not YAML dependencies,
+  so only the experiment and minimal matrix config enter its closure.
 - `config_closure: snapshot_only` and
   `config_closure: managed_run_snapshots_and_sha256` mark evidence registries
   whose nested historical paths are snapshots, not live dependencies.
@@ -104,6 +107,12 @@ subject. The evaluation entrypoint accepts exactly one mode:
 These modes are mutually exclusive; source checkpoints cannot masquerade as
 adapted checkpoints, and a center-adapted checkpoint cannot be silently reused
 for a different target center.
+
+The `aggregate_pn2021` entrypoint performs no inference. It accepts the four
+prospective single-center results in canonical center order, recomputes the
+diagonal matrix from member `clean.per_center` and corrupted `per_view`
+metrics, then writes a schema-v1 `pn2021_diagonal_four_center_evaluation`.
+Member-provided aggregate fields are never treated as source evidence.
 
 ## Output and Local Paths
 

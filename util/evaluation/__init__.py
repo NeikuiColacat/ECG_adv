@@ -10,6 +10,7 @@ from util.evaluation.metrics import (
     compute_metric_views,
     mean_metric_views,
 )
+from util.evaluation.matrix import aggregate_pn2021_matrix
 from util.evaluation.pn2021 import (
     DEFAULT_PN2021_EVAL_CONFIG,
     CorruptionView,
@@ -29,6 +30,7 @@ __all__ = [
     "CorruptionView",
     "PN2021EvalConfig",
     "aggregate_corruption_views",
+    "aggregate_pn2021_matrix",
     "build_evaluation_plan",
     "compute_classification_metrics",
     "compute_metric_views",

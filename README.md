@@ -129,6 +129,14 @@ The evaluation subject still locks that artifact by resolved path and SHA256;
 the method selector and source registry remain ordinary hashed config-closure
 members.
 
+After all four prospective center evaluations exist, the tracked EfficientNet
+or ECGFounder matrix experiment aggregates their diagonal only. This is a
+CPU/JSON step: it loads no ECG data, checkpoint, model, or GPU, rejects lineage
+or center drift, and recomputes equal-view then equal-center metrics instead of
+trusting member aggregate fields. Its schema-v1
+`pn2021_diagonal_four_center_evaluation` remains prospective evidence until the
+underlying registered repetitions satisfy the paper-promotion gate.
+
 ## Evidence Boundary
 
 The current simplified recipe was chosen after a 94-candidate development

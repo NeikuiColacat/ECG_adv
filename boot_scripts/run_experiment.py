@@ -54,6 +54,9 @@ ENTRYPOINTS = {
     "evaluate_pn2021": _entrypoint(
         "evaluate_pn2021.py", "evaluation_result.json", "evaluation_result"
     ),
+    "aggregate_pn2021": _entrypoint(
+        "aggregate_pn2021.py", "matrix_result.json", "pn2021_matrix_result"
+    ),
 }
 LAUNCHER_OWNED_FLAGS = frozenset(
     {"--config", "--config-root", "--output-dir", "--dry-run"}

@@ -41,6 +41,9 @@ RESULT_REQUIRED_KEYS = {
     ),
     "evaluation_result": frozenset({"artifact_type", "checkpoint", "clean", "corrupted",
                                     "model", "protocol", "schema_version", "status", "subject"}),
+    "pn2021_matrix_result": frozenset({"aggregation", "artifact_type", "centers", "clean",
+                                       "cohort", "corrupted", "members", "model",
+                                       "schema_version", "status"}),
 }
 EVALUATION_SUBJECT_MODES = {"prospective_train_result", "legacy_center_adapted", "source_registry"}
 
@@ -439,9 +442,37 @@ def _train_result_summary(payload: dict[str, Any], result_type: str, *, result_p
     }
 
 
+def _matrix_result_summary(payload: dict[str, Any], result_path: Path) -> dict[str, Any]:
+    from util.evaluation.matrix import aggregate_pn2021_matrix
+
+    _require_result_keys(payload, "pn2021_matrix_result")
+    members = payload["members"]
+    _require(isinstance(members, list) and len(members) == 4,
+             "matrix_result must contain four members")
+    paths: list[Path] = []
+    for member in members:
+        _require(isinstance(member, dict), "matrix_result member must be a mapping")
+        paths.append(_verified_artifact(
+            member.get("evaluation_result"), "matrix member evaluation_result",
+            parent=result_path.parent,
+        ))
+    expected = aggregate_pn2021_matrix(paths, profile_name=payload.get("profile_name"))
+    _verified_artifact(payload.get("config"), "matrix_result config", parent=result_path.parent)
+    _require({key: value for key, value in payload.items()
+              if key not in {"config", "output"}} == expected,
+             "matrix_result differs from recomputed member evidence")
+    _require(payload.get("output") == {"directory": str(result_path.parent),
+                                       "result_file": str(result_path)},
+             "matrix_result output identity is invalid")
+    return {"identity": _pick(payload, ("model", "cohort", "centers", "members")),
+            "selection": payload["aggregation"]}
+
+
 def _result_summary(payload: dict[str, Any], result_type: str, *, result_path: Path) -> dict[str, Any]:
     if result_type in {"supervised_train_result", "pn2021_train_result"}:
         return _train_result_summary(payload, result_type, result_path=result_path)
+    if result_type == "pn2021_matrix_result":
+        return _matrix_result_summary(payload, result_path)
     _require_result_keys(payload, result_type)
     _require(payload.get("schema_version") == 3
              and payload.get("artifact_type") == "pn2021_evaluation_result"
