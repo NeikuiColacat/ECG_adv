@@ -43,20 +43,7 @@ class AugMixConfig:
 class TwoChainAugMixBatch:
     """One Stage-1 strong view built from two independent corruption chains."""
 
-    chain1_raw: torch.Tensor
-    chain2_raw: torch.Tensor
     mixed_raw: torch.Tensor
-    mixture_weights: torch.Tensor
-    augmented_strength: torch.Tensor
-    chain1_composition_index: torch.Tensor
-    chain2_composition_index: torch.Tensor
-    chain1_depth: torch.Tensor
-    chain2_depth: torch.Tensor
-    chain1_operator_mask: torch.Tensor
-    chain2_operator_mask: torch.Tensor
-    chain1_output_nonfinite_count: torch.Tensor
-    chain2_output_nonfinite_count: torch.Tensor
-    operator_domain_sampling_rate_hz: int
 
 
 def _mapping(value: Any, description: str) -> dict[str, Any]:
@@ -344,26 +331,7 @@ def generate_two_chain_augmix_strong_view(
         + strength * mixture
     )
     return TwoChainAugMixBatch(
-        chain1_raw=first.waveform_raw_100hz,
-        chain2_raw=second.waveform_raw_100hz,
         mixed_raw=mixed.contiguous(),
-        mixture_weights=weights,
-        augmented_strength=augmented_strength,
-        chain1_composition_index=first.diagnostics.composition_index,
-        chain2_composition_index=second.diagnostics.composition_index,
-        chain1_depth=first.diagnostics.depth,
-        chain2_depth=second.diagnostics.depth,
-        chain1_operator_mask=first.diagnostics.operator_mask,
-        chain2_operator_mask=second.diagnostics.operator_mask,
-        chain1_output_nonfinite_count=(
-            first.diagnostics.output_nonfinite_count
-        ),
-        chain2_output_nonfinite_count=(
-            second.diagnostics.output_nonfinite_count
-        ),
-        operator_domain_sampling_rate_hz=(
-            first.diagnostics.operator_domain_sampling_rate_hz
-        ),
     )
 
 

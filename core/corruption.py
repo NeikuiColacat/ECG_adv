@@ -46,18 +46,12 @@ _DEPTHS = tuple(len(composition) for composition in COMPOSITIONS)
 
 @dataclass(frozen=True)
 class CorruptionDiagnostics:
-    """Device-resident per-sample provenance plus fixed domain identity."""
+    """Device-resident per-sample corruption provenance."""
 
     composition_index: torch.Tensor
     depth: torch.Tensor
     operator_mask: torch.Tensor
     output_nonfinite_count: torch.Tensor
-    input_sampling_rate_hz: int = INPUT_SAMPLING_RATE_HZ
-    operator_domain_sampling_rate_hz: int = CORRUPTION_DOMAIN_SAMPLING_RATE_HZ
-    output_sampling_rate_hz: int = OUTPUT_SAMPLING_RATE_HZ
-    interpolation_mode: str = INTERPOLATION_MODE
-    align_corners: bool = INTERPOLATION_ALIGN_CORNERS
-    operator_call_count: int = len(CANONICAL_OPERATORS)
 
 
 @dataclass(frozen=True)

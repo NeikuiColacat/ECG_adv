@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -11,6 +12,8 @@ import torch
 import yaml
 
 import core
+import core.augmix as augmix
+import core.corruption as corruption
 import core.latent_pool as latent_pool
 import core.lhat as lhat
 import core.methods as methods
@@ -100,6 +103,10 @@ def test_loader_removes_dag_plugins_and_allows_only_the_matched_no_vae_slot() ->
     assert "_positions" not in vars(method_runtime)
     assert "batch_size" not in vars(method_runtime.GeneratedMethodBatch)
     assert "requires_latent_pool" not in vars(method_runtime.MethodViewRuntime)
+    assert tuple(augmix.TwoChainAugMixBatch.__dataclass_fields__) == ("mixed_raw",)
+    assert tuple(corruption.CorruptionDiagnostics.__dataclass_fields__) == (
+        "composition_index", "depth", "operator_mask", "output_nonfinite_count")
+    assert "return_reasons" not in inspect.signature(method_runtime._quality_mask).parameters
     payload = yaml.safe_load((RECIPES / "a0_clean_v1.yaml").read_text())
     payload["recipe"]["module"] = "arbitrary.user.plugin"
     with pytest.raises(ValueError, match="may not select callables"):

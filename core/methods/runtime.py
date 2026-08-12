@@ -148,7 +148,6 @@ def _quality_mask(
     *,
     minimum_std_mV: float,
     maximum_abs_mV: float,
-    return_reasons: bool = True,
 ) -> tuple[torch.Tensor, tuple[str, ...]]:
     flat = waveform_raw.flatten(1)
     finite = torch.isfinite(flat).all(dim=1)
@@ -158,8 +157,6 @@ def _quality_mask(
     accepted = finite & (standard_deviation >= float(minimum_std_mV)) & (
         maximum_absolute <= float(maximum_abs_mV)
     )
-    if not return_reasons:
-        return accepted, ()
     summary = torch.stack(
         (
             finite.float(),
