@@ -37,7 +37,7 @@ Before GPU training, long inference, or a cache build:
 ## Current Host
 
 ```text
-repo root:    /home/linbinhao/ECG_manual_refactor_clean
+repo root:    /home/linbinhao/ECG_manual_refactor_paper_kernel_v2
 data root:    /home/linbinhao/ECG_adv_data
 python:       /home/linbinhao/miniforge3/envs/ECGTwin/bin/python
 cli tools:    /home/linbinhao/miniforge3/envs/cli-tools/bin

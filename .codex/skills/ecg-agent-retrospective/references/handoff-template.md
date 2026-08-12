@@ -9,7 +9,7 @@ fresh agent can continue without reopening the old chat.
 
 Date: YYYY-MM-DD
 Author: Codex
-Repo: /home/linbinhao/ECG_manual_refactor_clean
+Repo: /home/linbinhao/ECG_manual_refactor_paper_kernel_v2
 
 ## Executive Summary
 2-4 sentences with the goal and current state.

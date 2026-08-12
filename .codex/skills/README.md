@@ -21,7 +21,7 @@ Codex can discover these skills from the repository. To refresh the current
 user-level runtime copies explicitly:
 
 ```bash
-REPO_ROOT=/home/linbinhao/ECG_manual_refactor_clean
+REPO_ROOT=/home/linbinhao/ECG_manual_refactor_paper_kernel_v2
 RUNTIME_SKILLS=/home/linbinhao/.codex/skills
 mkdir -p "${RUNTIME_SKILLS}"
 for skill in \

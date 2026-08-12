@@ -16,7 +16,7 @@ As of 2026-08-06, prefer this block over all historical notes below when they
 conflict.
 
 ```text
-repo root: /home/linbinhao/ECG_manual_refactor_clean
+repo root: /home/linbinhao/ECG_manual_refactor_paper_kernel_v2
 launcher: boot_scripts/run_experiment.py + configs/experiments/*.yaml
 active index: configs/active_scripts.yaml:latest_mainline
 method: target-only two-chain AugMix-SimCLR -> rotating depth2/3 -> contracted VAE-LHAT
@@ -42,7 +42,7 @@ Hard boundaries:
 
 ## Environment
 
-- Repo: `/home/linbinhao/ECG_manual_refactor_clean`
+- Repo: `/home/linbinhao/ECG_manual_refactor_paper_kernel_v2`
 - Data/output root: `/home/linbinhao/ECG_adv_data`
 - Python: `/home/linbinhao/miniforge3/envs/ECGTwin/bin/python`
 - Shared hardware: check live CPU, memory, disk, port, process, and GPU state
