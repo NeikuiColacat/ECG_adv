@@ -31,6 +31,9 @@ from data_preprocess.load_cache import (
     PN2021_MAPPING_HASH,
     PN2021_MAPPING_VERSION,
     ECGCache,
+    _close_memmap,
+    _open_npy,
+    load_cache,
 )
 
 
@@ -167,9 +170,6 @@ def _tiny_mmap_cache(
         hash_ids=hash_ids,
         records=records,
         compositions=compositions,
-        storage_mode="mmap",
-        estimated_resident_bytes=signals_path.stat().st_size,
-        available_memory_at_open_bytes=10**9,
     )
 
 
@@ -320,6 +320,40 @@ def test_public_runtime_surface_is_only_the_five_finite_entrypoints() -> None:
         "RuntimeDataLoader",
         "SequentialEvaluationDataSession",
     ]
+
+
+@pytest.mark.parametrize("mode", ("auto", "ram"))
+def test_cache_rejects_non_mmap_mode_before_manifest_access(
+    tmp_path: Path, mode: str
+) -> None:
+    missing = tmp_path / "missing-cache"
+    with pytest.raises(ValueError, match="cache mode must be mmap"):
+        load_cache(missing, mode=mode)  # type: ignore[arg-type]
+
+
+def test_npy_cache_arrays_are_always_readonly_memmaps(tmp_path: Path) -> None:
+    path = tmp_path / "tiny.npy"
+    np.save(path, np.arange(8, dtype=np.float32), allow_pickle=False)
+    array = _open_npy(path)
+    try:
+        assert isinstance(array, np.memmap)
+        assert array.flags.writeable is False
+    finally:
+        _close_memmap(array)
+
+
+def test_runtime_dataset_rejects_non_mmap_before_shared_cache_bypass(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="runtime cache_mode must be mmap"):
+        RuntimeECGDataset(
+            cache_dir=tmp_path,
+            split_dir=tmp_path,
+            partition="k500",
+            cache_mode="ram",  # type: ignore[arg-type]
+            shared_cache=object(),  # type: ignore[arg-type]
+            shared_selection=object(),  # type: ignore[arg-type]
+        )
 
 
 def test_runtime_defaults_treat_ledger_descriptor_as_opaque(tmp_path: Path) -> None:

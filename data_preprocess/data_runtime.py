@@ -750,7 +750,7 @@ class RuntimeECGDataset(Dataset[dict[str, Any]]):
         partition: str,
         logical_center: str | None = None,
         sampling_rate_hz: int = 100,
-        cache_mode: StorageMode = "auto",
+        cache_mode: StorageMode = "mmap",
         view: ViewSelector = None,
         validate_values: ValueValidation = "sample",
         access_order: MMapAccessOrder = "split",
@@ -764,6 +764,8 @@ class RuntimeECGDataset(Dataset[dict[str, Any]]):
         self.partition = str(partition)
         self.logical_center = logical_center
         self.sampling_rate_hz = int(sampling_rate_hz)
+        if type(cache_mode) is not str or cache_mode != "mmap":
+            raise ValueError("runtime cache_mode must be mmap")
         self.requested_cache_mode = cache_mode
         self.view = view
         self.validate_values = validate_values
@@ -1624,7 +1626,7 @@ def _runtime_policy(owner: Any, *batch_fields: str) -> dict[str, Any]:
         raise ValueError("num_workers must be non-negative")
     if type(owner.cache_mode) is not str or type(owner.validate_values) is not str:
         raise TypeError("runtime enum fields must be strings")
-    if owner.cache_mode not in {"auto", "ram", "mmap"} or owner.validate_values not in {"none", "sample", "full"}:
+    if owner.cache_mode != "mmap" or owner.validate_values not in {"none", "sample", "full"}:
         raise ValueError("unsupported runtime enum")
     resident = getattr(owner, "selection_resident", False)
     if owner.num_workers > 0 and owner.cache_mode != "mmap":

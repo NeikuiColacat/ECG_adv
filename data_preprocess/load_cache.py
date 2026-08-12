@@ -5,17 +5,14 @@ PN2021-C caches. It validates the persisted manifest before exposing arrays and
 never performs filtering, resampling, augmentation or normalization. Signals
 therefore remain raw physical-mV waveforms until the model input pipeline.
 
-The default ``mode="auto"`` loads arrays into RAM only when their
-estimated resident size still leaves the configured host-memory safety reserve;
-otherwise it opens read-only NumPy memmaps. One cache handle represents one
-sampling rate, so callers explicitly choose 100 or 500 Hz.
+Arrays are always opened as read-only NumPy memmaps. One cache handle represents
+one sampling rate, so callers explicitly choose 100 or 500 Hz.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Sequence
@@ -42,8 +39,7 @@ EXPECTED_CLASS_ORDER = ("CD", "HYP", "MI", "NORM", "STTC")
 PN2021_MAPPING_VERSION = "v7_super5_sjr_rgq_review_20260528"
 PN2021_MAPPING_HASH = "555ec85d5b51"
 
-DEFAULT_MINIMUM_FREE_RAM_BYTES = 80 * 1024**3
-StorageMode = Literal["auto", "ram", "mmap"]
+StorageMode = Literal["mmap"]
 ValueValidation = Literal["none", "sample", "full"]
 SignalLayout = Literal["time_channel", "channel_time"]
 ViewSelector = int | str | None
@@ -379,69 +375,8 @@ def load_cache_manifest(
     )
 
 
-def _available_memory_bytes() -> int:
-    """Return the kernel's current MemAvailable estimate in bytes."""
-
-    meminfo = Path("/proc/meminfo")
-    if meminfo.is_file():
-        for line in meminfo.read_text(encoding="utf-8").splitlines():
-            if line.startswith("MemAvailable:"):
-                return int(line.split()[1]) * 1024
-    page_size = int(os.sysconf("SC_PAGE_SIZE"))
-    available_pages = int(os.sysconf("SC_AVPHYS_PAGES"))
-    return page_size * available_pages
-
-
-def _estimated_resident_bytes(identity: CacheManifest) -> int:
-    paths = {
-        identity.signals_path,
-        identity.labels_path,
-        identity.record_ids_path,
-        identity.hash_ids_path,
-        identity.metadata_path,
-    }
-    return sum(path.stat().st_size for path in paths)
-
-
-def _select_storage_mode(
-    identity: CacheManifest,
-    *,
-    requested_mode: StorageMode,
-    minimum_free_ram_bytes: int,
-) -> tuple[Literal["ram", "mmap"], int, int]:
-    if requested_mode not in {"auto", "ram", "mmap"}:
-        raise ValueError("storage_mode must be 'auto', 'ram' or 'mmap'")
-    if isinstance(minimum_free_ram_bytes, bool) or minimum_free_ram_bytes < 0:
-        raise ValueError("minimum_free_ram_bytes must be a non-negative integer")
-    estimated_bytes = _estimated_resident_bytes(identity)
-    available_bytes = _available_memory_bytes()
-    safe_for_ram = (
-        available_bytes - estimated_bytes >= int(minimum_free_ram_bytes)
-    )
-    if requested_mode == "mmap":
-        selected: Literal["ram", "mmap"] = "mmap"
-    elif requested_mode == "ram":
-        if not safe_for_ram:
-            raise MemoryError(
-                "RAM safety reserve would be violated: "
-                f"available={available_bytes}, estimated_load={estimated_bytes}, "
-                f"required_reserve={minimum_free_ram_bytes}"
-            )
-        selected = "ram"
-    else:
-        selected = "ram" if safe_for_ram else "mmap"
-    return selected, estimated_bytes, available_bytes
-
-
-def _open_npy(path: Path, *, storage_mode: Literal["ram", "mmap"]) -> np.ndarray:
-    array = np.load(
-        path,
-        mmap_mode="r" if storage_mode == "mmap" else None,
-        allow_pickle=False,
-    )
-    if storage_mode == "ram":
-        array.flags.writeable = False
-    return array
+def _open_npy(path: Path) -> np.ndarray:
+    return np.load(path, mmap_mode="r", allow_pickle=False)
 
 
 def _close_memmap(array: np.ndarray | None) -> None:
@@ -454,6 +389,8 @@ def _close_memmap(array: np.ndarray | None) -> None:
 class ECGCache:
     """Read-only cache handle with record, center and corruption-view access."""
 
+    storage_mode: Literal["mmap"] = "mmap"
+
     def __init__(
         self,
         *,
@@ -464,9 +401,6 @@ class ECGCache:
         hash_ids: np.ndarray,
         records: pd.DataFrame,
         compositions: tuple[dict[str, Any], ...],
-        storage_mode: Literal["ram", "mmap"],
-        estimated_resident_bytes: int,
-        available_memory_at_open_bytes: int,
     ) -> None:
         self.identity = identity
         self.signals = signals
@@ -475,9 +409,6 @@ class ECGCache:
         self.hash_ids = hash_ids
         self.records = records
         self.compositions = compositions
-        self.storage_mode = storage_mode
-        self.estimated_resident_bytes = int(estimated_resident_bytes)
-        self.available_memory_at_open_bytes = int(available_memory_at_open_bytes)
         self._hash_to_index = {
             str(value): index for index, value in enumerate(hash_ids.astype(str))
         }
@@ -532,18 +463,8 @@ class ECGCache:
             "physical_unit": self.identity.physical_unit,
             "normalization": self.identity.normalization,
             "storage_mode": self.storage_mode,
-            "estimated_resident_bytes": self.estimated_resident_bytes,
-            "available_memory_at_open_bytes": self.available_memory_at_open_bytes,
             "centers": list(self.available_centers),
         }
-
-    def index_for_hash(self, hash_id: str) -> int:
-        """Resolve one unique source-record hash to its cache index."""
-
-        try:
-            return self._hash_to_index[str(hash_id)]
-        except KeyError:
-            raise KeyError(f"hash_id is not present in this cache: {hash_id}") from None
 
     def indices_for_hashes(
         self,
@@ -582,31 +503,6 @@ class ECGCache:
                 f"missing hash_id values: count={len(missing)}, preview={preview}"
             )
         return resolved
-
-    def indices_for_center(self, center: str) -> np.ndarray:
-        """Return cache indices for one PN2021 center in persisted order."""
-
-        if "center" not in self.records.columns:
-            raise ValueError(f"dataset {self.dataset!r} has no center metadata")
-        mask = self.records["center"].astype(str).to_numpy() == str(center)
-        if not mask.any():
-            raise KeyError(
-                f"unknown center {center!r}; available={self.available_centers}"
-            )
-        return np.flatnonzero(mask).astype(np.int64, copy=False)
-
-    def list_views(self, *, depth: int | None = None) -> tuple[dict[str, Any], ...]:
-        """List PN2021-C composition metadata, optionally for one depth."""
-
-        if not self.is_corruption:
-            return ()
-        if depth is not None and int(depth) not in {2, 3}:
-            raise ValueError("PN2021-C depth must be 2 or 3")
-        return tuple(
-            dict(item)
-            for item in self.compositions
-            if depth is None or int(item["depth"]) == int(depth)
-        )
 
     def _resolve_view(self, view: ViewSelector) -> tuple[int | None, str | None]:
         if not self.is_corruption:
@@ -924,37 +820,27 @@ def load_cache(
     cache_dir: str | Path,
     *,
     sampling_rate_hz: int = 100,
-    mode: StorageMode = "auto",
-    minimum_free_ram_bytes: int = DEFAULT_MINIMUM_FREE_RAM_BYTES,
+    mode: StorageMode = "mmap",
     validate_values: ValueValidation = "sample",
 ) -> ECGCache:
-    """Open a validated ECG cache with automatic RAM-or-mmap selection.
+    """Open a validated ECG cache as read-only memory maps."""
 
-    ``auto`` chooses RAM only if loading all arrays and metadata would still
-    leave ``minimum_free_ram_bytes`` according to the kernel's live
-    ``MemAvailable`` estimate. ``ram`` applies the same safety gate and raises
-    instead of silently falling back; ``mmap`` always opens read-only memmaps.
-    """
-
+    if type(mode) is not str or mode != "mmap":
+        raise ValueError("cache mode must be mmap")
     if validate_values not in {"none", "sample", "full"}:
         raise ValueError("validate_values must be 'none', 'sample' or 'full'")
     identity = load_cache_manifest(
         cache_dir, sampling_rate_hz=sampling_rate_hz
-    )
-    selected_mode, estimated_bytes, available_bytes = _select_storage_mode(
-        identity,
-        requested_mode=mode,
-        minimum_free_ram_bytes=int(minimum_free_ram_bytes),
     )
     signals: np.ndarray | None = None
     labels: np.ndarray | None = None
     record_ids: np.ndarray | None = None
     hash_ids: np.ndarray | None = None
     try:
-        signals = _open_npy(identity.signals_path, storage_mode=selected_mode)
-        labels = _open_npy(identity.labels_path, storage_mode=selected_mode)
-        record_ids = _open_npy(identity.record_ids_path, storage_mode=selected_mode)
-        hash_ids = _open_npy(identity.hash_ids_path, storage_mode=selected_mode)
+        signals = _open_npy(identity.signals_path)
+        labels = _open_npy(identity.labels_path)
+        record_ids = _open_npy(identity.record_ids_path)
+        hash_ids = _open_npy(identity.hash_ids_path)
         records = pd.read_parquet(identity.metadata_path)
         _validate_opened_arrays(
             identity=identity,
@@ -973,9 +859,6 @@ def load_cache(
             hash_ids=hash_ids,
             records=records,
             compositions=compositions,
-            storage_mode=selected_mode,
-            estimated_resident_bytes=estimated_bytes,
-            available_memory_at_open_bytes=available_bytes,
         )
         if validate_values == "sample":
             cache.validate_waveforms(full=False)
@@ -989,7 +872,6 @@ def load_cache(
 
 
 __all__ = [
-    "DEFAULT_MINIMUM_FREE_RAM_BYTES",
     "EXPECTED_CLASS_ORDER",
     "EXPECTED_LEADS",
     "PN2021_MAPPING_HASH",

@@ -177,36 +177,13 @@ def load_operators_profile(
         expected_seed_config_path=expected_seed_config_path,
         config_root=config_root,
     )
-
-
-def load_operators_config(
-    path: str | Path,
-    *,
-    owner_config_path: str | Path = DEFAULT_CONFIG,
-    config_root: str | Path | None = None,
-) -> dict[str, Any]:
-    """Return a validated document copy for compatibility and snapshots."""
-
-    return load_operators_profile(
-        path,
-        owner_config_path=owner_config_path,
-        config_root=config_root,
-    ).snapshot()
-
-
 def build_compositions(
     config: dict[str, Any],
-    operator_config: AugmentationProfile | dict[str, Any],
+    operator_config: AugmentationProfile,
 ) -> list[dict[str, Any]]:
     """Expand five operators into all 10 pairs and all 10 triples."""
 
-    if isinstance(operator_config, AugmentationProfile):
-        canonical = list(operator_config.canonical_order)
-    else:
-        canonical = [
-            str(value)
-            for value in operator_config["metadata"]["composite"]["canonical_order"]
-        ]
+    canonical = list(operator_config.canonical_order)
     corruption = config["corruption"]
     declared_counts = {
         int(depth): int(count)
@@ -238,29 +215,13 @@ def _severity_params(
     *,
     operator_name: str,
     config: dict[str, Any],
-    operator_config: AugmentationProfile | dict[str, Any],
+    operator_config: AugmentationProfile,
 ) -> dict[str, Any]:
-    if isinstance(operator_config, AugmentationProfile):
-        if str(config["corruption"]["profile"]) != operator_config.profile_name:
-            raise ValueError("cache profile does not match the loaded operator profile")
-        if int(config["corruption"]["severity"]) != operator_config.severity:
-            raise ValueError("cache severity does not match the loaded operator profile")
-        return operator_config.parameters_for(operator_name)
-
-    profile_name = str(config["corruption"]["profile"])
-    severity = int(config["corruption"]["severity"])
-    try:
-        severities = operator_config["profiles"][profile_name][operator_name]
-    except KeyError as exc:
-        raise ValueError(
-            f"missing operator {operator_name!r} in profile {profile_name!r}"
-        ) from exc
-    params = severities.get(severity, severities.get(str(severity)))
-    if not isinstance(params, dict):
-        raise ValueError(
-            f"missing severity {severity} for {profile_name}.{operator_name}"
-        )
-    return dict(params)
+    if str(config["corruption"]["profile"]) != operator_config.profile_name:
+        raise ValueError("cache profile does not match the loaded operator profile")
+    if int(config["corruption"]["severity"]) != operator_config.severity:
+        raise ValueError("cache severity does not match the loaded operator profile")
+    return operator_config.parameters_for(operator_name)
 
 
 def apply_composition(
@@ -269,7 +230,7 @@ def apply_composition(
     source_hash: str,
     composition: dict[str, Any],
     config: dict[str, Any],
-    operator_config: AugmentationProfile | dict[str, Any],
+    operator_config: AugmentationProfile,
     seed_config_path: str | Path = DEFAULT_RANDOM_SEED_CONFIG_PATH,
 ) -> np.ndarray:
     """Apply one deterministic composition to one raw-mV 500 Hz ECG."""

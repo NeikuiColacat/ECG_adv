@@ -561,8 +561,6 @@ def load_pn2021_eval_config(
     if configured_workers != 0 or configured_persistent:
         raise ValueError("PN2021 evaluation requires single-process workers=0")
     _positive_int(runtime["prefetch_factor"], description="runtime.prefetch_factor")
-    if runtime["cache_mode"] not in {"auto", "ram", "mmap"}:
-        raise ValueError("runtime.cache_mode must be auto, ram or mmap")
     if runtime["cache_mode"] != "mmap":
         raise ValueError("PN2021 evaluation requires runtime.cache_mode=mmap")
     if runtime["validate_values"] not in {"none", "sample", "full"}:
