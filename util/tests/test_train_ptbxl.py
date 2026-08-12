@@ -113,7 +113,6 @@ def test_ptbxl_plan_is_fully_derived_from_model_and_yaml(
         assert plan.cache_mode == "mmap"
         assert plan.validate_values == "sample"
         assert plan.drop_last is False
-        assert plan.config_root == REPO / "configs"
         assert plan.split_config_path == REPO / "configs" / "data" / "splits.yaml"
         assert plan.data_load_config_path == REPO / "configs" / "data" / "data_load.yaml"
         assert plan.seed_config_path == REPO / "configs" / "random_seed.yaml"
@@ -181,7 +180,6 @@ def test_runtime_ptbxl_plan_opens_raw100_btc_with_locked_split_semantics(
         cache_mode="mmap",
         validate_values="sample",
         drop_last=False,
-        config_root=config.config_root,
         split_config_path=config.config_root / "data" / "splits.yaml",
         data_load_config_path=config.config_root / "data" / "data_load.yaml",
         seed_config_path=config.random_seed_config_path,
@@ -243,7 +241,6 @@ def test_runtime_ptbxl_plan_rejects_swapped_official_partitions(
             cache_mode="mmap",
             validate_values="sample",
             drop_last=False,
-            config_root=config.config_root,
             split_config_path=config.config_root / "data" / "splits.yaml",
             data_load_config_path=config.config_root / "data" / "data_load.yaml",
             seed_config_path=config.random_seed_config_path,
@@ -266,7 +263,6 @@ def test_runtime_ptbxl_plan_rejects_training_drop_last() -> None:
             cache_mode="mmap",
             validate_values="sample",
             drop_last=True,
-            config_root=config.config_root,
             split_config_path=config.config_root / "data" / "splits.yaml",
             data_load_config_path=config.config_root / "data" / "data_load.yaml",
             seed_config_path=config.random_seed_config_path,

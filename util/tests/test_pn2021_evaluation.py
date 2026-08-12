@@ -425,7 +425,6 @@ class _TinySequentialEvaluationSession:
             sanitize=False,
             global_zscore=False,
             output_layout="time_channel",
-            config_root=self.plan.config_root,
             split_config_path=self.plan.split_config_path,
             data_load_config_path=self.plan.data_load_config_path,
             corruption_cache_config_path=self.plan.corruption_cache_config_path,

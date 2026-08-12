@@ -20,7 +20,7 @@ import json
 import os
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Callable, Literal, Mapping, Sequence, cast
+from typing import Any, Literal, Mapping, Sequence, cast
 
 import numpy as np
 import torch
@@ -47,12 +47,6 @@ from util.random_seed import (
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_SPLIT_CONFIG = PROJECT_ROOT / "configs" / "data" / "splits.yaml"
-DEFAULT_DATA_LOAD_CONFIG = PROJECT_ROOT / "configs" / "data" / "data_load.yaml"
-DEFAULT_CORRUPTION_CACHE_CONFIG = (
-    PROJECT_ROOT / "configs" / "augmentation" / "cache.yaml"
-)
-RuntimeLayout = Literal["time_channel", "channel_time"]
 RuntimeDatasetName = Literal["ptbxl", "pn2021", "pn2021c"]
 MMapAccessOrder = Literal["split", "cache_index"]
 MMapAdvice = Literal["none", "sequential_willneed"]
@@ -588,136 +582,6 @@ def load_selection(
     )
 
 
-def assert_disjoint_selections(*selections: ECGSelection) -> None:
-    """Raise if any two selections share a source ECG hash ID."""
-
-    if len(selections) < 2:
-        raise ValueError("at least two selections are required")
-    for left_index, left in enumerate(selections[:-1]):
-        left_hashes = set(left.hash_ids.tolist())
-        for right in selections[left_index + 1 :]:
-            overlap = left_hashes.intersection(right.hash_ids.tolist())
-            if overlap:
-                preview = sorted(overlap)[:5]
-                raise ValueError(
-                    f"selection leakage between {left.partition!r} and "
-                    f"{right.partition!r}: count={len(overlap)}, preview={preview}"
-                )
-
-
-def sanitize_nonfinite(signal: torch.Tensor) -> torch.Tensor:
-    """Replace NaN and +/-Inf after augmentation without mutating the input."""
-
-    if not torch.is_floating_point(signal):
-        signal = signal.to(dtype=torch.float32)
-    return torch.nan_to_num(signal, nan=0.0, posinf=0.0, neginf=0.0)
-
-
-def per_sample_global_zscore(
-    signal: torch.Tensor,
-    *,
-    epsilon: float = 1e-6,
-) -> torch.Tensor:
-    """Z-score each ECG over all time points and leads together.
-
-    The final two dimensions are treated as the waveform dimensions, so both
-    ``(..., time, lead)`` and ``(..., lead, time)`` layouts are supported.
-    Flat samples become zeros rather than NaN.
-    """
-
-    if signal.ndim < 2:
-        raise ValueError("ECG tensor must have at least two dimensions")
-    if epsilon <= 0:
-        raise ValueError("epsilon must be positive")
-    value = signal if torch.is_floating_point(signal) else signal.float()
-    mean = value.mean(dim=(-2, -1), keepdim=True)
-    std = value.std(dim=(-2, -1), correction=0, keepdim=True)
-    return (value - mean) / std.clamp_min(float(epsilon))
-
-
-def convert_layout(
-    signal: torch.Tensor,
-    *,
-    source_layout: RuntimeLayout = "time_channel",
-    output_layout: RuntimeLayout = "time_channel",
-) -> torch.Tensor:
-    """Convert the final two waveform axes without changing leading axes."""
-
-    valid = {"time_channel", "channel_time"}
-    if source_layout not in valid or output_layout not in valid:
-        raise ValueError(f"layout must be one of {sorted(valid)}")
-    if signal.ndim < 2:
-        raise ValueError("ECG tensor must have at least two dimensions")
-    if source_layout == output_layout:
-        return signal.contiguous()
-    return signal.transpose(-1, -2).contiguous()
-
-
-def prepare_model_input(
-    signal: np.ndarray | torch.Tensor,
-    *,
-    augmentation: Callable[[torch.Tensor], np.ndarray | torch.Tensor] | None = None,
-    sanitize: bool = True,
-    global_zscore: bool = True,
-    epsilon: float = 1e-6,
-    source_layout: RuntimeLayout = "time_channel",
-    output_layout: RuntimeLayout = "channel_time",
-) -> torch.Tensor:
-    """Create one model tensor using the fixed runtime preprocessing order."""
-
-    if isinstance(signal, torch.Tensor):
-        value = signal.detach().clone().to(dtype=torch.float32)
-    else:
-        value = torch.as_tensor(np.array(signal, copy=True), dtype=torch.float32)
-    original_shape = tuple(value.shape)
-    if value.ndim < 2:
-        raise ValueError("ECG waveform must have at least two dimensions")
-    if augmentation is not None:
-        augmented = augmentation(value)
-        if isinstance(augmented, torch.Tensor):
-            value = augmented.to(device=value.device, dtype=torch.float32)
-        else:
-            value = torch.as_tensor(augmented, device=value.device, dtype=torch.float32)
-        if tuple(value.shape) != original_shape:
-            raise ValueError(
-                f"augmentation changed ECG shape from {original_shape} to {tuple(value.shape)}"
-            )
-    if sanitize:
-        value = sanitize_nonfinite(value)
-    elif not torch.isfinite(value).all():
-        raise ValueError("non-finite values remain after runtime augmentation")
-    if global_zscore:
-        value = per_sample_global_zscore(value, epsilon=epsilon)
-    if not torch.isfinite(value).all():
-        raise ValueError("runtime transform produced a non-finite model input")
-    return convert_layout(
-        value, source_layout=source_layout, output_layout=output_layout
-    )
-
-
-@dataclass
-class ECGModelTransform:
-    """Pickle-friendly callable implementing the standard model-side transform."""
-
-    augmentation: Callable[[torch.Tensor], np.ndarray | torch.Tensor] | None = None
-    sanitize: bool = True
-    global_zscore: bool = True
-    epsilon: float = 1e-6
-    source_layout: RuntimeLayout = "time_channel"
-    output_layout: RuntimeLayout = "channel_time"
-
-    def __call__(self, signal: np.ndarray | torch.Tensor) -> torch.Tensor:
-        return prepare_model_input(
-            signal,
-            augmentation=self.augmentation,
-            sanitize=self.sanitize,
-            global_zscore=self.global_zscore,
-            epsilon=self.epsilon,
-            source_layout=self.source_layout,
-            output_layout=self.output_layout,
-        )
-
-
 @dataclass(frozen=True)
 class MMapPrefetchConfig:
     """Bounded Linux page-cache hints for ordered mmap evaluation reads."""
@@ -888,7 +752,6 @@ class RuntimeECGDataset(Dataset[dict[str, Any]]):
         sampling_rate_hz: int = 100,
         cache_mode: StorageMode = "auto",
         view: ViewSelector = None,
-        transform: Callable[[np.ndarray | torch.Tensor], torch.Tensor] | None = None,
         validate_values: ValueValidation = "sample",
         access_order: MMapAccessOrder = "split",
         batch_read: bool = True,
@@ -903,7 +766,6 @@ class RuntimeECGDataset(Dataset[dict[str, Any]]):
         self.sampling_rate_hz = int(sampling_rate_hz)
         self.requested_cache_mode = cache_mode
         self.view = view
-        self.transform = transform
         self.validate_values = validate_values
         if access_order not in {"split", "cache_index"}:
             raise ValueError("access_order must be split or cache_index")
@@ -1063,13 +925,7 @@ class RuntimeECGDataset(Dataset[dict[str, Any]]):
         expected_record = str(self.selection.record_ids[position])
         if record.hash_id != expected_hash or record.record_id != expected_record:
             raise RuntimeError("cache identity changed after dataset initialization")
-        waveform = (
-            torch.as_tensor(record.signal, dtype=torch.float32)
-            if self.transform is None
-            else self.transform(record.signal)
-        )
-        if not isinstance(waveform, torch.Tensor):
-            raise TypeError("runtime transform must return a torch.Tensor")
+        waveform = torch.as_tensor(record.signal, dtype=torch.float32)
         center = str(record.metadata.get("center", ""))
         return {
             "waveform": waveform,
@@ -1095,9 +951,8 @@ class RuntimeECGDataset(Dataset[dict[str, Any]]):
         """Fetch one DataLoader batch with a single validated mmap operation.
 
         PyTorch calls this optional map-style Dataset hook when automatic
-        batching is enabled.  Runtime augmentation keeps the scalar path so its
-        random-call semantics do not change; clean model transforms are safe to
-        apply over the leading batch dimension and are therefore vectorized.
+        batching is enabled. The runtime always returns raw canonical BTC;
+        model-facing conversion belongs to the code-owned input adapter.
         """
 
         normalized_positions: list[int] = []
@@ -1118,15 +973,6 @@ class RuntimeECGDataset(Dataset[dict[str, Any]]):
             return []
         if not self.batch_read:
             return [self[position] for position in normalized_positions]
-        if self.transform is not None and not isinstance(
-            self.transform, ECGModelTransform
-        ):
-            return [self[position] for position in normalized_positions]
-        if isinstance(self.transform, ECGModelTransform) and (
-            self.transform.augmentation is not None
-        ):
-            return [self[position] for position in normalized_positions]
-
         cache = self._get_cache()
         selection_positions = np.asarray(normalized_positions, dtype=np.int64)
         cache_indices = np.asarray(
@@ -1181,17 +1027,7 @@ class RuntimeECGDataset(Dataset[dict[str, Any]]):
         prefetcher = self._get_prefetcher(cache)
         if prefetcher is not None:
             prefetcher.prefetch_after(cache_indices)
-        waveforms = (
-            torch.as_tensor(signals, dtype=torch.float32)
-            if self.transform is None
-            else self.transform(signals)
-        )
-        if not isinstance(waveforms, torch.Tensor):
-            raise TypeError("runtime transform must return a torch.Tensor")
-        if waveforms.ndim < 3 or int(waveforms.shape[0]) != len(
-            normalized_positions
-        ):
-            raise ValueError("batched runtime transform changed the leading batch axis")
+        waveforms = torch.as_tensor(signals, dtype=torch.float32)
         labels = torch.as_tensor(labels_array, dtype=torch.float32)
         centers = (
             cache.records.iloc[resolved_indices]["center"].astype(str).to_numpy()
@@ -1234,9 +1070,6 @@ class RuntimeECGDataset(Dataset[dict[str, Any]]):
                 "batch_read": self.batch_read,
                 "prefetch": self.mmap_prefetch.describe(),
             },
-            "transform": None
-            if self.transform is None
-            else self.transform.__class__.__name__,
         }
 
     def close(self) -> None:
@@ -1298,10 +1131,6 @@ class SelectionResidentECGDataset(Dataset[dict[str, Any]]):
                 "selection residency supports clean PN2021 K500 splits or one "
                 "explicit PN2021-C k500_tune_validation view"
             )
-        if source.transform is not None:
-            raise ValueError(
-                "selection residency stores canonical raw data and rejects transforms"
-            )
         if cache.storage_mode != "mmap":
             raise ValueError("selection residency requires a mmap source cache")
         if not isinstance(pin_memory, bool):
@@ -1348,7 +1177,6 @@ class SelectionResidentECGDataset(Dataset[dict[str, Any]]):
 
         self.selection = source.selection
         self.sampling_rate_hz = source.sampling_rate_hz
-        self.transform = source.transform
         self.cache_mode = "selection_ram"
         self.view = source.view
         self._dataset_name = cache.dataset
@@ -1405,13 +1233,8 @@ class SelectionResidentECGDataset(Dataset[dict[str, Any]]):
 
     def _item(self, position: int) -> dict[str, Any]:
         self._require_open()
-        waveform = self._waveforms[position]
-        if self.transform is not None:
-            waveform = self.transform(waveform)
-        if not isinstance(waveform, torch.Tensor):
-            raise TypeError("runtime transform must return a torch.Tensor")
         return {
-            "waveform": waveform,
+            "waveform": self._waveforms[position],
             "label": self._labels[position],
             "selection_index": torch.tensor(position, dtype=torch.int64),
             "cache_index": torch.tensor(
@@ -1460,9 +1283,6 @@ class SelectionResidentECGDataset(Dataset[dict[str, Any]]):
                 "pinned": self._pin_memory,
                 "source_cache_closed_after_gather": True,
             },
-            "transform": None
-            if self.transform is None
-            else self.transform.__class__.__name__,
         }
 
     def close(self) -> None:
@@ -1514,9 +1334,7 @@ class _RuntimeDefaults:
         }
 
 
-def _load_runtime_defaults(
-    path: str | Path = DEFAULT_DATA_LOAD_CONFIG,
-) -> _RuntimeDefaults:
+def _load_runtime_defaults(path: str | Path) -> _RuntimeDefaults:
     """Read only mmap policy; launcher owns the ledger and config closure."""
 
     config_path = resolve_entry_config_path(path)
@@ -1741,7 +1559,7 @@ def _resolve_runtime_locations(
     *,
     dataset: RuntimeDatasetName,
     split_config_path: str | Path,
-    corruption_cache_config_path: str | Path,
+    corruption_cache_config_path: str | Path | None,
 ) -> tuple[Path, Path]:
     config_path = resolve_entry_config_path(split_config_path)
     try:
@@ -1781,6 +1599,8 @@ def _resolve_runtime_locations(
         _resolve_project_path(root_dir) / output_subdir
     )
     if dataset == "pn2021c":
+        if corruption_cache_config_path is None:
+            raise ValueError("PN2021-C runtime locations require a corruption config")
         resolved_cache_dir = _read_corruption_cache_dir(
             corruption_cache_config_path
         )
@@ -1835,7 +1655,6 @@ class PTBXLLoaderPlan:
     cache_mode: StorageMode
     validate_values: ValueValidation
     drop_last: bool
-    config_root: str | Path
     split_config_path: str | Path
     data_load_config_path: str | Path
     seed_config_path: str | Path
@@ -1902,7 +1721,6 @@ class PTBXLLoaderPlan:
             "validation_partition": self.validation_partition,
             "test_partition": self.test_partition,
             **_runtime_policy(self, "train_batch_size", "eval_batch_size"),
-            "config_root": str(self.config_root),
             "split_config_path": str(self.split_config_path),
             "data_load_config_path": str(self.data_load_config_path),
             "seed_config_path": str(self.seed_config_path),
@@ -1925,7 +1743,6 @@ class PN2021K500LoaderPlan:
     selection_resident_pin_memory: bool
     drop_last: bool
     seed_namespace: str
-    config_root: str | Path
     split_config_path: str | Path
     data_load_config_path: str | Path
     seed_config_path: str | Path
@@ -1967,10 +1784,7 @@ class PN2021K500LoaderPlan:
                 )
             if loader.drop_last:
                 raise ValueError("PN2021 K500 loader must use drop_last=false")
-            if (
-                getattr(dataset, "sampling_rate_hz", None) != 100
-                or getattr(dataset, "transform", None) is not None
-            ):
+            if getattr(dataset, "sampling_rate_hz", None) != 100:
                 raise ValueError(
                     "PN2021 K500 loader must expose unnormalized raw 100 Hz BTC"
                 )
@@ -2028,7 +1842,6 @@ class PN2021K500LoaderPlan:
             "normalization": "none",
             "seed_namespace": self.seed_namespace,
             **_runtime_policy(self, "batch_size"),
-            "config_root": str(self.config_root),
             "split_config_path": str(self.split_config_path),
             "data_load_config_path": str(self.data_load_config_path),
             "seed_config_path": str(self.seed_config_path),
@@ -2048,7 +1861,6 @@ class PN2021EvaluationLoaderPlan:
     prefetch_factor: int
     cache_mode: StorageMode
     validate_values: ValueValidation
-    config_root: str | Path
     split_config_path: str | Path
     data_load_config_path: str | Path
     corruption_cache_config_path: str | Path
@@ -2084,7 +1896,6 @@ class PN2021EvaluationLoaderPlan:
             **_runtime_policy(self, "batch_size"),
             "drop_last": False,
             "selection_resident": False,
-            "config_root": str(self.config_root),
             "split_config_path": str(self.split_config_path),
             "data_load_config_path": str(self.data_load_config_path),
             "corruption_cache_config_path": str(
@@ -2352,9 +2163,7 @@ def _build_runtime_loader(request: _LoaderRequest) -> RuntimeDataLoader:
     cache_dir, split_dir = _resolve_runtime_locations(
         dataset=request.dataset,
         split_config_path=request.split_config_path,
-        corruption_cache_config_path=(
-            request.corruption_cache_config_path or DEFAULT_CORRUPTION_CACHE_CONFIG
-        ),
+        corruption_cache_config_path=request.corruption_cache_config_path,
     )
     access_order: MMapAccessOrder = (
         "split" if request.shuffle else defaults.mmap_access_order
@@ -2385,7 +2194,6 @@ def _build_runtime_loader(request: _LoaderRequest) -> RuntimeDataLoader:
         sampling_rate_hz=100,
         cache_mode=request.cache_mode,
         view=request.view,
-        transform=None,
         validate_values=request.validate_values,
         access_order=access_order,
         batch_read=defaults.mmap_batch_read,
@@ -2448,31 +2256,9 @@ def _build_runtime_loader(request: _LoaderRequest) -> RuntimeDataLoader:
 
 
 __all__ = [
-    "CANONICAL_EVALUATION_PARTITIONS",
-    "DEFAULT_CORRUPTION_CACHE_CONFIG",
-    "DEFAULT_DATA_LOAD_CONFIG",
-    "DEFAULT_SPLIT_CONFIG",
-    "DataLoaderSeedIdentity",
-    "ECGModelTransform",
-    "ECGSelection",
-    "MMapAccessOrder",
-    "MMapAdvice",
-    "MMapPrefetchConfig",
-    "MMapPrefetcher",
-    "PN2021_K500_PARTITIONS",
     "PN2021EvaluationLoaderPlan",
     "PN2021K500LoaderPlan",
-    "PN2021_PARTITIONS",
-    "PTBXL_PARTITIONS",
     "PTBXLLoaderPlan",
-    "RuntimeECGDataset",
     "RuntimeDataLoader",
-    "SelectionResidentECGDataset",
     "SequentialEvaluationDataSession",
-    "assert_disjoint_selections",
-    "convert_layout",
-    "load_selection",
-    "per_sample_global_zscore",
-    "prepare_model_input",
-    "sanitize_nonfinite",
 ]

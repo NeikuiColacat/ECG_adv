@@ -280,7 +280,6 @@ def test_pn2021_loader_plan_is_entirely_yaml_owned() -> None:
             "aligned_targetonly_augmix_lhat_simplified_20260805:"
             f"0:ningbo:{model_name}"
         )
-        assert plan.config_root == CONFIG_ROOT
         assert plan.split_config_path == CONFIG_ROOT / "data" / "splits.yaml"
         assert plan.data_load_config_path == CONFIG_ROOT / "data" / "data_load.yaml"
         assert plan.seed_config_path == CONFIG_ROOT / "random_seed.yaml"

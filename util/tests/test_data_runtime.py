@@ -25,9 +25,6 @@ from data_preprocess.data_runtime import (
     SequentialEvaluationDataSession,
     _build_torch_loader,
     _load_runtime_defaults,
-    assert_disjoint_selections,
-    per_sample_global_zscore,
-    prepare_model_input,
 )
 from data_preprocess.load_cache import (
     EXPECTED_CLASS_ORDER,
@@ -248,7 +245,7 @@ def _runtime_surface(kind: str, tmp_path: Path, **override: Any) -> Any:
         "seed_namespace": "strict-types", "dataset": "ptbxl",
         "partition": "train", "logical_center": None, "view": None,
         "shuffle": False, "evaluation_session": None,
-        "config_root": tmp_path, "split_config_path": tmp_path / "splits.yaml",
+        "split_config_path": tmp_path / "splits.yaml",
         "data_load_config_path": tmp_path / "data_load.yaml",
         "corruption_cache_config_path": tmp_path / "corruption.yaml",
         "seed_config_path": tmp_path / "random_seed.yaml",
@@ -315,6 +312,16 @@ def test_canonical_data_load_config_is_the_single_runtime_profile() -> None:
     assert config.mmap_prefetch.ahead_batches == 2
 
 
+def test_public_runtime_surface_is_only_the_five_finite_entrypoints() -> None:
+    assert data_runtime.__all__ == [
+        "PN2021EvaluationLoaderPlan",
+        "PN2021K500LoaderPlan",
+        "PTBXLLoaderPlan",
+        "RuntimeDataLoader",
+        "SequentialEvaluationDataSession",
+    ]
+
+
 def test_runtime_defaults_treat_ledger_descriptor_as_opaque(tmp_path: Path) -> None:
     path = _data_load_fixture(
         tmp_path,
@@ -325,68 +332,6 @@ def test_runtime_defaults_treat_ledger_descriptor_as_opaque(tmp_path: Path) -> N
 
     assert config.path == path.resolve()
     assert not (tmp_path / "configs" / "data" / "missing-ledger.jsonl").exists()
-
-
-def test_runtime_transform_applies_augmentation_then_sanitize_zscore_and_layout() -> None:
-    source = torch.tensor(
-        [[1.0, float("nan")], [3.0, 4.0], [5.0, 6.0], [7.0, 8.0]],
-        dtype=torch.float32,
-    )
-    original = source.clone()
-    saw_nonfinite: list[bool] = []
-
-    def augmentation(value: torch.Tensor) -> torch.Tensor:
-        saw_nonfinite.append(not bool(torch.isfinite(value).all()))
-        return value + 1.0
-
-    transformed = prepare_model_input(source, augmentation=augmentation)
-
-    assert saw_nonfinite == [True]
-    assert transformed.shape == (2, 4)
-    assert transformed.is_contiguous()
-    assert bool(torch.isfinite(transformed).all())
-    torch.testing.assert_close(
-        transformed.mean(),
-        torch.tensor(0.0),
-        atol=1.0e-6,
-        rtol=0.0,
-    )
-    torch.testing.assert_close(
-        transformed.std(correction=0),
-        torch.tensor(1.0),
-        atol=1.0e-6,
-        rtol=0.0,
-    )
-    torch.testing.assert_close(source, original, equal_nan=True)
-
-
-def test_runtime_transform_rejects_shape_drift_and_unsanitized_nonfinite() -> None:
-    source = torch.ones((8, 12), dtype=torch.float32)
-
-    with pytest.raises(ValueError, match="augmentation changed ECG shape"):
-        prepare_model_input(source, augmentation=lambda value: value[:-1])
-
-    source[0, 0] = float("inf")
-    with pytest.raises(ValueError, match="non-finite values remain"):
-        prepare_model_input(source, sanitize=False)
-
-
-def test_flat_samples_zscore_to_finite_zeros() -> None:
-    flat = torch.full((2, 1000, 12), 3.0)
-    normalized = per_sample_global_zscore(flat)
-
-    assert bool(torch.isfinite(normalized).all())
-    assert torch.count_nonzero(normalized).item() == 0
-
-
-def test_selection_overlap_is_a_fail_closed_leakage_error() -> None:
-    train = _selection("k500_tune_train", ("a", "b"))
-    validation = _selection("k500_tune_validation", ("c", "d"))
-    assert_disjoint_selections(train, validation)
-
-    leaked = _selection("evaluation_drop_all_zero", ("d", "e"))
-    with pytest.raises(ValueError, match="selection leakage"):
-        assert_disjoint_selections(validation, leaked)
 
 
 def test_mmap_prefetch_config_rejects_unbounded_or_unknown_policy() -> None:
@@ -525,7 +470,6 @@ def test_k500_plan_opens_only_verified_ordered_and_training_views(
 
     class Dataset:
         sampling_rate_hz = 100
-        transform = None
 
         def __init__(self, order: str) -> None:
             self.selection = selection
@@ -562,7 +506,6 @@ def test_k500_plan_opens_only_verified_ordered_and_training_views(
         selection_resident_pin_memory=False,
         drop_last=False,
         seed_namespace="locked-k500",
-        config_root=tmp_path,
         split_config_path=tmp_path / "splits.yaml",
         data_load_config_path=tmp_path / "data_load.yaml",
         seed_config_path=tmp_path / "random_seed.yaml",
@@ -585,7 +528,6 @@ def test_k500_plan_closes_loader_on_early_identity_mismatch(
     dataset = SimpleNamespace(
         selection=selection,
         sampling_rate_hz=100,
-        transform=None,
         describe=lambda: {"mmap": {"access_order": "cache_index"}},
     )
     loader = SimpleNamespace(dataset=dataset, drop_last=False, closed=False)
@@ -602,7 +544,7 @@ def test_k500_plan_closes_loader_on_early_identity_mismatch(
         persistent_workers=False, prefetch_factor=2, cache_mode="mmap",
         validate_values="sample", selection_resident=True,
         selection_resident_pin_memory=False, drop_last=False,
-        seed_namespace="locked-k500", config_root=tmp_path,
+        seed_namespace="locked-k500",
         split_config_path=tmp_path / "splits.yaml",
         data_load_config_path=tmp_path / "data_load.yaml",
         seed_config_path=tmp_path / "random_seed.yaml",
@@ -643,7 +585,6 @@ def test_k500_plan_opens_iterates_and_closes_real_runtime_loader(
         selection_resident_pin_memory=False,
         drop_last=False,
         seed_namespace="real-plan-open",
-        config_root=tmp_path,
         split_config_path=split_config,
         data_load_config_path=REPO / "configs" / "data" / "data_load.yaml",
         seed_config_path=seed_config,

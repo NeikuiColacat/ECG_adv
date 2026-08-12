@@ -125,7 +125,6 @@ def build_pn2021_k500_loader_plan(
         selection_resident_pin_memory=training["selection_resident_pin_memory"],
         drop_last=training["drop_last"],
         seed_namespace=seed_namespace,
-        config_root=config.config_root,
         split_config_path=config.references["split_config"],
         data_load_config_path=config.references["data_load_config"],
         seed_config_path=config.references["random_seed_config"],

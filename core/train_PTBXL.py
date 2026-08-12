@@ -143,7 +143,6 @@ def _build_loader_plan(config: Any, spec: ModelSpec) -> PTBXLLoaderPlan:
         cache_mode=training["cache_mode"],
         validate_values=training["validate_values"],
         drop_last=False,
-        config_root=config.config_root,
         split_config_path=split_config_path,
         data_load_config_path=data_load_config_path,
         seed_config_path=config.random_seed_config_path,

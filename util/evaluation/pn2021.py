@@ -1311,7 +1311,6 @@ def evaluate_pn2021(
         prefetch_factor=runtime["prefetch_factor"],
         cache_mode=runtime["cache_mode"],
         validate_values=runtime["validate_values"],
-        config_root=resolved_config.config_root,
         split_config_path=resolved_config.split_config_path,
         data_load_config_path=resolved_config.data_load_config_path,
         corruption_cache_config_path=resolved_config.corruption_cache_config_path,

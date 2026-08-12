@@ -106,6 +106,34 @@ def test_canonical_input_adapter_preserves_the_locked_operation_order() -> None:
     )
 
 
+def test_canonical_input_adapter_repairs_nonfinite_without_mutating_raw() -> None:
+    raw = torch.arange(
+        CANONICAL_POINTS * CANONICAL_CHANNELS,
+        dtype=torch.float32,
+    ).reshape(1, CANONICAL_POINTS, CANONICAL_CHANNELS)
+    raw[0, 0, :3] = torch.tensor([float("nan"), float("inf"), float("-inf")])
+    original = raw.clone()
+
+    adapted = prepare_canonical_model_input(raw, EFFICIENTNET1DV2_SPEC)
+
+    assert bool(torch.isfinite(adapted).all())
+    torch.testing.assert_close(raw, original, equal_nan=True)
+
+
+@pytest.mark.parametrize("spec", (EFFICIENTNET1DV2_SPEC, ECGFOUNDER_SPEC))
+def test_canonical_input_adapter_maps_flat_samples_to_finite_zeros(spec) -> None:
+    raw = torch.full(
+        (2, CANONICAL_POINTS, CANONICAL_CHANNELS),
+        3.0,
+        dtype=torch.float32,
+    )
+
+    adapted = prepare_canonical_model_input(raw, spec)
+
+    assert bool(torch.isfinite(adapted).all())
+    assert torch.count_nonzero(adapted).item() == 0
+
+
 def test_model_contract_rejects_layout_and_output_drift() -> None:
     with pytest.raises(ValueError, match="input shape"):
         validate_model_input(torch.zeros(2, 1000, 12), EFFICIENTNET1DV2_SPEC)
