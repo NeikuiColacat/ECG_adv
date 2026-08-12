@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections import Counter
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 import yaml
 
+import boot_scripts.run_experiment as launcher
 from data_preprocess import data_ledger
 from boot_scripts.run_experiment import (
     ExperimentPlan,
@@ -96,7 +99,7 @@ def _write_bundle(tmp_path: Path, *, run_dir: Path) -> Path:
                 "entrypoint": {
                     "name": "train_ptbxl_effnet",
                     "config": "train/PTBXL.yaml",
-                    "arguments": ["--epochs", "1", "--num-workers", "0"],
+                    "arguments": [],
                 },
                 "output": {
                     "run_dir": str(run_dir),
@@ -111,6 +114,33 @@ def _write_bundle(tmp_path: Path, *, run_dir: Path) -> Path:
     return experiment_path
 
 
+def _fixture_arguments(entrypoint_name: str) -> list[str]:
+    if entrypoint_name in {"train_ptbxl_effnet", "train_ptbxl_ecgfounder"}:
+        return []
+    if entrypoint_name == "train_pn2021":
+        return [
+            "--model", "efficientnet1dv2",
+            "--method-config", "train/PTBXL.yaml",
+            "--center", "ningbo",
+            "--source-checkpoint", "/external/source.pt",
+        ]
+    if entrypoint_name == "evaluate_pn2021":
+        return [
+            "--model", "efficientnet1dv2",
+            "--checkpoint", "/external/checkpoint.pt",
+            "--center", "ningbo",
+        ]
+    if entrypoint_name == "aggregate_pn2021":
+        return [
+            "--model", "efficientnet1dv2",
+            "--result", "/external/ningbo.json",
+            "--result", "/external/chapman_shaoxing.json",
+            "--result", "/external/cpsc_2018.json",
+            "--result", "/external/georgia.json",
+        ]
+    raise AssertionError(f"missing fixture arguments for {entrypoint_name}")
+
+
 def _action_plan(
     tmp_path: Path,
     entrypoint_name: str,
@@ -121,7 +151,7 @@ def _action_plan(
     experiment_path = _write_bundle(tmp_path, run_dir=run_dir)
     payload = yaml.safe_load(experiment_path.read_text(encoding="utf-8"))
     payload["entrypoint"]["name"] = entrypoint_name
-    payload["entrypoint"]["arguments"] = []
+    payload["entrypoint"]["arguments"] = _fixture_arguments(entrypoint_name)
     payload["output"]["delegate_output_subdir"] = delegate_subdir
     experiment_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
     return run_dir, load_experiment_plan(experiment_path)
@@ -624,11 +654,13 @@ def test_all_tracked_experiment_jobs_resolve_with_explicit_results(
 ) -> None:
     experiment_paths = sorted((REPO / "configs" / "experiments").glob("*.yaml"))
     assert len(experiment_paths) == 40
+    signatures: Counter[tuple[str, tuple[str, ...]]] = Counter()
     for experiment_path in experiment_paths:
         plan = load_experiment_plan(
             experiment_path,
             run_dir=tmp_path / experiment_path.stem,
         )
+        signatures[(plan.entrypoint_name, plan.entry_arguments[::2])] += 1
         assert plan.expected_result_relative_path.parts[0] in {"training", "evaluation"}
         assert plan.expected_result_type in {
             "supervised_train_result",
@@ -636,6 +668,30 @@ def test_all_tracked_experiment_jobs_resolve_with_explicit_results(
             "evaluation_result",
             "pn2021_matrix_result",
         }
+    assert signatures == Counter(
+        {
+            ("train_ptbxl_effnet", ()): 1,
+            ("train_ptbxl_ecgfounder", ()): 1,
+            ("train_ptbxl_ecgfounder", ("--epochs",)): 1,
+            (
+                "train_pn2021",
+                ("--model", "--method-config", "--center", "--source-checkpoint"),
+            ): 10,
+            (
+                "evaluate_pn2021",
+                ("--model", "--train-result", "--center", "--method-config"),
+            ): 8,
+            (
+                "evaluate_pn2021",
+                ("--model", "--checkpoint", "--center"),
+            ): 16,
+            ("evaluate_pn2021", ("--model", "--source-registry")): 1,
+            (
+                "aggregate_pn2021",
+                ("--model", "--result", "--result", "--result", "--result"),
+            ): 2,
+        }
+    )
 
 
 def test_mainline_closure_includes_stage1_augmix_config(tmp_path: Path) -> None:
@@ -658,10 +714,10 @@ def test_launcher_snapshots_source_registry_but_not_train_result(tmp_path: Path)
     payload = yaml.safe_load(experiment_path.read_text(encoding="utf-8"))
     payload["entrypoint"]["name"] = "evaluate_pn2021"
     payload["entrypoint"]["arguments"] = [
+        "--model",
+        "efficientnet1dv2",
         "--source-registry",
         "baselines/source.yaml",
-        "--train-result",
-        str(tmp_path / "external" / "train_result.json"),
     ]
     experiment_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
 
@@ -670,12 +726,177 @@ def test_launcher_snapshots_source_registry_but_not_train_result(tmp_path: Path)
     assert "baselines/source.yaml" in closure
     assert all(path.suffix in {".yaml", ".yml"} for path, _ in plan.config_sources)
 
+    method = tmp_path / "configs" / "train" / "method.yaml"
+    method.write_text("schema_version: 1\n", encoding="utf-8")
+    train_result = tmp_path / "external" / "train_result.json"
+    payload["entrypoint"]["arguments"] = [
+        "--model", "efficientnet1dv2",
+        "--train-result", str(train_result),
+        "--center", "ningbo",
+        "--method-config", "train/method.yaml",
+    ]
+    experiment_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+    prospective = load_experiment_plan(experiment_path)
+    prospective_closure = {
+        path.relative_to(prospective.config_root).as_posix()
+        for path, _ in prospective.config_sources
+    }
+    assert "train/method.yaml" in prospective_closure
+    assert train_result.resolve() not in {path for path, _ in prospective.config_sources}
 
-def test_launcher_rejects_owned_delegate_flags(tmp_path: Path) -> None:
+
+PN_ARGS = (
+    "--model", "efficientnet1dv2", "--method-config", "train/PTBXL.yaml",
+    "--center", "ningbo", "--source-checkpoint", "/source.pt",
+)
+AGGREGATE_ARGS = (
+    "--model", "efficientnet1dv2", "--result", "/a.json", "--result", "/b.json",
+    "--result", "/c.json", "--result", "/d.json",
+)
+
+
+@pytest.mark.parametrize(
+    ("entrypoint_name", "arguments"),
+    (
+        ("train_ptbxl_effnet", ("--num-workers", "0")),
+        ("train_ptbxl_ecgfounder", ("--epochs", "9")),
+        ("train_pn2021", ("--model=efficientnet1dv2", *PN_ARGS[2:])),
+        ("train_pn2021", (*PN_ARGS[:2], *PN_ARGS[4:6], *PN_ARGS[2:4], *PN_ARGS[6:])),
+        ("train_pn2021", (*PN_ARGS[:2], *PN_ARGS[:2], *PN_ARGS[4:])),
+        ("train_pn2021", PN_ARGS[:-2]),
+        ("train_pn2021", (PN_ARGS[0], "resnet", *PN_ARGS[2:])),
+        ("train_pn2021", (*PN_ARGS[:5], "boston", *PN_ARGS[6:])),
+        ("train_pn2021", (*PN_ARGS[:-1], "")),
+        ("train_pn2021", (*PN_ARGS[:-1], "  --override")),
+        ("evaluate_pn2021", ("--model", "efficientnet1dv2", "--checkpoint",
+                             "/model.pt", "--center", "ningbo", "--source-registry",
+                             "baselines/source.yaml")),
+        ("aggregate_pn2021", (*AGGREGATE_ARGS[:-1], "/c.json")),
+        ("train_ptbxl_effnet", ("--output-dir", "/tmp/bypass")),
+        ("train_ptbxl_effnet", ("--unknown\x00flag", "value")),
+    ),
+    ids=(
+        "runtime-override", "wrong-fixed-epoch", "inline", "reordered",
+        "duplicate", "missing", "invalid-model", "invalid-center",
+        "empty-value", "dash-value", "mixed-eval-modes",
+        "duplicate-aggregate-result", "launcher-override", "nul",
+    ),
+)
+def test_argument_schema_rejects_invalid_managed_arguments(
+    entrypoint_name: str, arguments: tuple[str, ...]
+) -> None:
+    with pytest.raises(ValueError):
+        launcher._validate_argument_schema(entrypoint_name, arguments)
+
+
+def test_runtime_override_is_rejected_before_config_or_ledger_io(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     experiment_path = _write_bundle(tmp_path, run_dir=tmp_path / "runs" / "new")
     payload = yaml.safe_load(experiment_path.read_text(encoding="utf-8"))
-
-    payload["entrypoint"]["arguments"] = ["--output-dir", "/tmp/bypass"]
+    payload["entrypoint"]["arguments"] = ["--num-workers", "0"]
     experiment_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
-    with pytest.raises(ValueError, match="launcher-owned"):
+    monkeypatch.setattr(
+        launcher,
+        "config_bundle_root",
+        lambda *args, **kwargs: pytest.fail("schema gate must precede closure I/O"),
+    )
+
+    with pytest.raises(ValueError, match="invalid argument schema"):
         load_experiment_plan(experiment_path)
+    assert not (tmp_path / "runs" / "new").exists()
+
+
+def test_execute_revalidates_replaced_plan_before_ledger_or_run_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir, plan = _action_plan(tmp_path, "train_pn2021")
+    injected = replace(
+        plan,
+        entry_arguments=(*plan.entry_arguments, "--num-workers", "0"),
+    )
+    monkeypatch.setattr(
+        data_ledger,
+        "load_roots",
+        lambda *args, **kwargs: pytest.fail("schema gate must precede ledger I/O"),
+    )
+    calls: list[list[str]] = []
+
+    with pytest.raises(ValueError, match="invalid argument schema"):
+        execute_experiment(
+            injected,
+            launcher_argv=["python", "boot_scripts/run_experiment.py"],
+            delegate_runner=lambda argv, log: calls.append(argv) or 0,
+        )
+    assert calls == []
+    assert not run_dir.exists()
+
+
+def test_execute_rejects_valid_shape_retarget_before_ledger_or_run_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir, plan = _action_plan(tmp_path, "train_pn2021")
+    retargeted = replace(
+        plan,
+        entry_arguments=(
+            "--model", "ecgfounder", "--method-config", "train/PTBXL.yaml",
+            "--center", "georgia", "--source-checkpoint", "/other/source.pt",
+        ),
+    )
+    monkeypatch.setattr(
+        data_ledger,
+        "load_roots",
+        lambda *args, **kwargs: pytest.fail("binding gate must precede ledger I/O"),
+    )
+    calls: list[list[str]] = []
+
+    with pytest.raises(ValueError, match="differ from the experiment config"):
+        execute_experiment(
+            retargeted,
+            launcher_argv=["python", "boot_scripts/run_experiment.py"],
+            delegate_runner=lambda argv, log: calls.append(argv) or 0,
+        )
+    assert calls == []
+    assert not run_dir.exists()
+
+
+def test_execute_rejects_mutable_arguments_before_ledger_mutation_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir, plan = _action_plan(tmp_path, "train_pn2021")
+    mutable_arguments = list(plan.entry_arguments)
+    reconstructed = replace(plan, entry_arguments=mutable_arguments)
+    verification_calls = []
+
+    def mutate_after_verification(*args: object, **kwargs: object) -> dict:
+        verification_calls.append((args, kwargs))
+        mutable_arguments.extend(("--output-dir", "/tmp/retarget"))
+        return {}
+
+    monkeypatch.setattr(data_ledger, "verify_ledger", mutate_after_verification)
+    with pytest.raises(ValueError, match="immutable tuple"):
+        execute_experiment(
+            reconstructed,
+            launcher_argv=["python", "boot_scripts/run_experiment.py"],
+            delegate_runner=lambda argv, log: pytest.fail("delegate must not run"),
+        )
+    assert verification_calls == []
+    assert tuple(mutable_arguments) == plan.entry_arguments
+    assert not run_dir.exists()
+
+
+def test_execute_rejects_argument_drift_in_source_yaml_before_run_directory(
+    tmp_path: Path
+) -> None:
+    run_dir, plan = _action_plan(tmp_path, "train_ptbxl_ecgfounder")
+    payload = yaml.safe_load(plan.experiment_path.read_text(encoding="utf-8"))
+    payload["entrypoint"]["arguments"] = ["--epochs", "10"]
+    plan.experiment_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="differ from the experiment config"):
+        execute_experiment(
+            plan,
+            launcher_argv=["python", "boot_scripts/run_experiment.py"],
+            delegate_runner=lambda argv, log: pytest.fail("delegate must not run"),
+        )
+    assert not run_dir.exists()

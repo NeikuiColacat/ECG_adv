@@ -71,6 +71,23 @@ LAUNCHER_OWNED_FLAGS = frozenset(
     {"--config", "--config-root", "--output-dir", "--dry-run"}
 )
 CONFIG_REFERENCE_FLAGS = frozenset({"--method-config", "--source-registry"})
+MODELS = frozenset({"efficientnet1dv2", "ecgfounder"})
+CENTERS = frozenset({"ningbo", "chapman_shaoxing", "cpsc_2018", "georgia"})
+ARGUMENT_SCHEMAS = {
+    "train_ptbxl_effnet": ((),),
+    "train_ptbxl_ecgfounder": ((), ("--epochs",)),
+    "train_pn2021": (
+        ("--model", "--method-config", "--center", "--source-checkpoint"),
+    ),
+    "evaluate_pn2021": (
+        ("--model", "--train-result", "--center", "--method-config"),
+        ("--model", "--checkpoint", "--center"),
+        ("--model", "--source-registry"),
+    ),
+    "aggregate_pn2021": (
+        ("--model", "--result", "--result", "--result", "--result"),
+    ),
+}
 
 
 def _mapping(value: Any, description: str) -> dict[str, Any]:
@@ -122,7 +139,7 @@ def _config_closure(
     )
 
 
-def _validated_arguments(value: Any) -> tuple[str, ...]:
+def _validated_arguments(entrypoint_name: str, value: Any) -> tuple[str, ...]:
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
         raise ValueError("entrypoint.arguments must be a list of strings")
     arguments = tuple(value)
@@ -132,7 +149,42 @@ def _validated_arguments(value: Any) -> tuple[str, ...]:
         flag = argument.split("=", 1)[0]
         if flag in LAUNCHER_OWNED_FLAGS:
             raise ValueError(f"entrypoint argument is launcher-owned: {flag}")
+    _validate_argument_schema(entrypoint_name, arguments)
     return arguments
+
+
+def _validate_argument_schema(
+    entrypoint_name: str, arguments: Sequence[str]
+) -> None:
+    schemas = ARGUMENT_SCHEMAS.get(entrypoint_name)
+    if schemas is None:
+        raise ValueError(f"unsupported manual entrypoint {entrypoint_name!r}")
+    if not isinstance(arguments, (list, tuple)) or not all(
+        isinstance(argument, str) for argument in arguments
+    ):
+        raise ValueError("entrypoint.arguments must contain only strings")
+    if any("\x00" in argument for argument in arguments):
+        raise ValueError("entrypoint.arguments may not contain NUL bytes")
+    if len(arguments) % 2:
+        raise ValueError(f"invalid argument schema for {entrypoint_name}")
+    flags = tuple(arguments[::2])
+    values = tuple(arguments[1::2])
+    if flags not in schemas:
+        raise ValueError(f"invalid argument schema for {entrypoint_name}")
+    if any(not value.strip() or value.lstrip().startswith("-") for value in values):
+        raise ValueError("entrypoint argument values must be non-empty and not flags")
+    keyed = dict(zip(flags, values, strict=True))
+    if "--model" in keyed and keyed["--model"] not in MODELS:
+        raise ValueError(f"unsupported model {keyed['--model']!r}")
+    if "--center" in keyed and keyed["--center"] not in CENTERS:
+        raise ValueError(f"unsupported center {keyed['--center']!r}")
+    if entrypoint_name == "train_ptbxl_ecgfounder" and arguments:
+        if values != ("10",):
+            raise ValueError("train_ptbxl_ecgfounder only permits --epochs 10")
+    if entrypoint_name == "aggregate_pn2021":
+        results = values[1:]
+        if len(set(results)) != 4:
+            raise ValueError("aggregate_pn2021 requires four unique results")
 
 
 def _safe_delegate_subdir(value: Any) -> Path:
@@ -293,6 +345,24 @@ class ExperimentPlan:
         }
 
 
+def _verify_entrypoint_binding(plan: ExperimentPlan) -> None:
+    payload = _yaml_mapping(plan.experiment_path, "experiment config")
+    source = _mapping(payload.get("entrypoint"), "entrypoint")
+    if set(source) != {"name", "config", "arguments"}:
+        raise ValueError("entrypoint must contain exactly name, config and arguments")
+    source_name = source.get("name")
+    if source_name not in ENTRYPOINTS:
+        raise ValueError(f"unsupported manual entrypoint {source_name!r}")
+    source_arguments = _validated_arguments(
+        str(source_name), source.get("arguments")
+    )
+    if (
+        source_name != plan.entrypoint_name
+        or source_arguments != tuple(plan.entry_arguments)
+    ):
+        raise ValueError("execution plan arguments differ from the experiment config")
+
+
 def load_experiment_plan(
     config_path: str | Path,
     *,
@@ -347,6 +417,9 @@ def load_experiment_plan(
     if not entrypoint_path.is_file():
         raise FileNotFoundError(f"manual entrypoint not found: {entrypoint_path}")
 
+    arguments = _validated_arguments(
+        str(entrypoint_name), entrypoint.get("arguments")
+    )
     root = config_bundle_root(experiment_path, config_root=config_root)
     entry_config_path = resolve_config_reference(
         entrypoint.get("config"),
@@ -355,7 +428,6 @@ def load_experiment_plan(
         description="entrypoint.config",
         must_exist=True,
     )
-    arguments = _validated_arguments(entrypoint.get("arguments"))
     if output.get("if_exists") != "error":
         raise ValueError("output.if_exists must be 'error'")
     selected_run_dir = output.get("run_dir") if run_dir is None else run_dir
@@ -419,6 +491,10 @@ def execute_experiment(
     launcher_argv: Sequence[str],
     delegate_runner: Callable[[list[str], Path], int] = _run_delegate,
 ) -> int:
+    if type(plan.entry_arguments) is not tuple:
+        raise ValueError("execution plan arguments must be an immutable tuple")
+    _validate_argument_schema(plan.entrypoint_name, plan.entry_arguments)
+    _verify_entrypoint_binding(plan)
     if plan.run_dir_preexisting or plan.run_dir.exists():
         raise FileExistsError(f"run directory already exists: {plan.run_dir}")
     verified_data: VerifiedDataContent | None = None
