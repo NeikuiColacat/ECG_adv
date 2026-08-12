@@ -10,7 +10,13 @@ import numpy as np
 from sklearn import __version__ as SKLEARN_VERSION
 from sklearn.metrics import average_precision_score, roc_auc_score
 
-from models.contracts import CLASS_ORDER
+from util.pn2021_artifact_contract import (
+    CLASS_ORDER as _CLASS_ORDER,
+    LOGICAL_CENTERS,
+)
+
+
+CLASS_ORDER = tuple(_CLASS_ORDER)
 
 
 CLEAN_VIEW_ALIASES = (
@@ -415,6 +421,50 @@ def aggregate_corruption_views(
     return result
 
 
+def validate_evaluation_aggregates(result: Mapping[str, Any]) -> None:
+    """Recompute every derived center/view/depth aggregate in an evaluation."""
+
+    protocol = result.get("protocol")
+    clean, corrupted = result.get("clean"), result.get("corrupted")
+    if not all(isinstance(item, Mapping) for item in (protocol, clean, corrupted)):
+        raise ValueError("evaluation aggregate inputs must be mappings")
+    centers = protocol.get("logical_centers")
+    if not isinstance(centers, list) or not centers:
+        raise ValueError("evaluation centers are missing")
+    clean_per_center = clean.get("per_center")
+    views = corrupted.get("per_view")
+    if not isinstance(clean_per_center, Mapping) or not isinstance(views, list):
+        raise ValueError("evaluation center metrics or corruption views are missing")
+    clean_mean = mean_metric_views([clean_per_center[center]["metrics"] for center in centers])
+    for value in clean_mean.values():
+        value["evaluation_slice"] = "clean"
+    exact_four = centers == list(LOGICAL_CENTERS)
+    expected_clean = {
+        "evaluation_slice": "clean", "per_center": clean_per_center,
+        "center_count": len(centers), "center_order": centers,
+        "evaluated_center_mean": clean_mean,
+        "four_center_mean": clean_mean if exact_four else None,
+    }
+    if dict(clean) != expected_clean:
+        raise ValueError("clean aggregate differs from recomputed center metrics")
+    for view in views:
+        mean = mean_metric_views([view["per_center"][center]["metrics"] for center in centers])
+        for value in mean.values():
+            value["evaluation_slice"] = f"depth{view['depth']}"
+        expected = {key: view[key] for key in ("view_index", "depth", "operators", "composition_id")}
+        expected.update(evaluation_slice=f"depth{view['depth']}", per_center=view["per_center"],
+                        center_count=len(centers), center_order=centers,
+                        evaluated_center_mean=mean,
+                        four_center_mean=mean if exact_four else None)
+        if dict(view) != expected:
+            raise ValueError("corruption view aggregate differs from recomputed center metrics")
+    expected_depths = aggregate_corruption_views(
+        views, center_order=centers, canonical_four_center_order=LOGICAL_CENTERS
+    )
+    if corrupted.get("aggregates") != expected_depths or set(corrupted) != {"per_view", "aggregates"}:
+        raise ValueError("corruption depth aggregates differ from recomputed views")
+
+
 __all__ = [
     "CLEAN_VIEW_ALIASES",
     "CORRUPTED_VIEW_ALIASES",
@@ -425,4 +475,5 @@ __all__ = [
     "compute_metric_views",
     "mean_metric_views",
     "resolve_evaluated_center_mean",
+    "validate_evaluation_aggregates",
 ]

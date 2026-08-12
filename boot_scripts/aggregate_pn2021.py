@@ -22,19 +22,23 @@ from util.config_bundle import resolve_entry_config_path  # noqa: E402
 from util.evaluation.matrix import aggregate_pn2021_matrix  # noqa: E402
 
 
-def _config(path: Path, config_root: Path | None) -> tuple[Path, dict[str, Any]]:
+def _config(path: Path, config_root: Path | None, model: str) -> tuple[Path, dict[str, Any], dict[str, Any]]:
     resolved = resolve_entry_config_path(
         config_root / path if config_root is not None and not path.is_absolute() else path
     )
     payload = yaml.safe_load(resolved.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict) or payload.get("schema_version") != 1:
-        raise ValueError("matrix config must be a schema-1 YAML mapping")
+    if not isinstance(payload, dict) or payload.get("schema_version") != 2:
+        raise ValueError("matrix config must be a schema-2 YAML mapping")
     if payload.get("protocol") != {"logical_centers": ["ningbo", "chapman_shaoxing", "cpsc_2018", "georgia"], "aggregation": "equal_views_then_equal_centers"}:
         raise ValueError("matrix config protocol differs from the locked four-center contract")
     output = payload.get("output")
     if not isinstance(output, dict) or output.get("result_file") != "matrix_result.json" or output.get("if_exists") != "error":
         raise ValueError("matrix config output contract is invalid")
-    return resolved, payload
+    profiles = payload.get("profiles")
+    profile = profiles.get(model) if isinstance(profiles, dict) else None
+    if not isinstance(profile, dict) or set(profile) != {"profile_name", "expected_cohort"}:
+        raise ValueError(f"matrix config has no exact cohort for {model}")
+    return resolved, payload, profile
 
 
 def _write(path: Path, payload: dict[str, Any]) -> None:
@@ -53,12 +57,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--config-root", type=Path)
+    parser.add_argument("--model", choices=("efficientnet1dv2", "ecgfounder"), required=True)
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--result", type=Path, action="append", required=True)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
-    config_path, config = _config(args.config, args.config_root)
-    payload = aggregate_pn2021_matrix(args.result, profile_name=str(config["profile_name"]))
+    config_path, config, profile = _config(args.config, args.config_root, args.model)
+    payload = aggregate_pn2021_matrix(
+        args.result, profile_name=str(profile["profile_name"]),
+        expected_cohort=profile["expected_cohort"],
+    )
     output = (args.output_dir or Path(config["output"]["run_dir"])).expanduser().resolve()
     result_path = output / "matrix_result.json"
     payload["config"] = {

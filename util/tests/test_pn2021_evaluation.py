@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import itertools
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -42,6 +44,7 @@ from util.evaluation.pn2021 import (
     load_pn2021_eval_config,
 )
 from util.run_record import _result_summary
+from util.pn2021_artifact_contract import validate_pn2021_evaluation_result
 
 
 LEAD_ORDER = [
@@ -487,8 +490,11 @@ def _write_prospective_result(fixture: dict[str, object]) -> tuple[Path, str]:
         "scientific_arm": recipe.scientific_arm,
         "config": {"training": {"sha256": "3" * 64}},
         "seed": lineage["seed"],
+        "epochs_completed": 1,
+        "optimizer_steps": 1,
         "last_checkpoint": checkpoint,
-        "selection": {"policy": "last", "selected_checkpoint": checkpoint,
+        "selection": {"policy": "last", "selected_epoch": 1,
+                      "selected_checkpoint": checkpoint,
                       "heldout_evaluation_used_for_selection": False},
     }
     result_path = training / "train_result.json"
@@ -682,6 +688,38 @@ def test_legacy_dry_run_rejects_protocol_identity_drift(
         ])
 
 
+def test_legacy_shared_contract_rejects_lineage_and_protocol_drift(
+    tmp_path: Path, capsys,
+) -> None:
+    fixture = _write_fixture(tmp_path)
+    argv = [
+        "--model", "efficientnet1dv2", "--checkpoint",
+        str(fixture["checkpoint_path"]), "--center", "ningbo", "--config",
+        str(fixture["config_path"]), "--config-root", str(fixture["config_root"]),
+        "--device", "cpu", "--dry-run",
+    ]
+    assert evaluate_main(argv) == 0
+    result = json.loads(capsys.readouterr().out)
+    result_path = tmp_path / "legacy_evaluation_result.json"
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+    train_path = Path(result["subject"]["train_result"]["path"])
+    original = train_path.read_bytes()
+    try:
+        result["subject"]["lineage"]["adaptation_data"]["partition"] = "full"
+        with pytest.raises(ValueError):
+            _result_summary(result, "evaluation_result", result_path=result_path)
+
+        result["subject"]["lineage"]["adaptation_data"]["partition"] = "k500"
+        train = json.loads(original)
+        train["config"]["training"]["resolved"]["protocol"]["validation_split"] = True
+        train_path.write_text(json.dumps(train), encoding="utf-8")
+        result["subject"]["train_result"]["sha256"] = _sha256(train_path)
+        with pytest.raises(ValueError):
+            _result_summary(result, "evaluation_result", result_path=result_path)
+    finally:
+        train_path.write_bytes(original)
+
+
 def test_prospective_dry_run_binds_center_recipe_and_lineage(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:
@@ -719,7 +757,7 @@ def test_prospective_dry_run_binds_center_recipe_and_lineage(
     payload = json.loads(train_result.read_text(encoding="utf-8"))
     payload["seed"]["effective_seed"] += 1
     train_result.write_text(json.dumps(payload), encoding="utf-8")
-    with pytest.raises(ValueError, match="seed identity differs"):
+    with pytest.raises(ValueError, match="identity differs"):
         evaluate_main(base)
 
     payload["seed"] = payload["lineage"]["seed"]
@@ -874,15 +912,52 @@ def test_pn2021_evaluation_runs_four_centers_with_truthful_aggregates(
     monkeypatch.setattr(
         "util.evaluation.pn2021.SequentialEvaluationDataSession", session_factory
     )
+    checkpoint = _checkpoint_identity(fixture)
+    checkpoint = CheckpointIdentity(
+        checkpoint.path, checkpoint.sha256, checkpoint.state_key_count,
+        checkpoint.missing_keys, checkpoint.unexpected_keys,
+        checkpoint_schema_version=1,
+    )
+    registry = tmp_path / "source_registry.yaml"
+    registry_payload = {
+        "schema_version": 1,
+        "baseline": {
+            "class_order": list(CLASS_ORDER),
+            "selection_rule": "fold9_best_macro_auprc",
+        },
+        "models": {"efficientnet1dv2": {
+            "selected_checkpoint": str(checkpoint.path),
+            "selected_checkpoint_sha256": checkpoint.sha256,
+        }},
+        "downstream_policy": {
+            "checkpoint_field": "selected_checkpoint",
+            "require_sha256_match": True,
+            "prohibit_last_checkpoint": True,
+        },
+    }
+    _write_yaml(registry, registry_payload)
+    subject = {
+        "mode": "source_registry", "train_result": None,
+        "lineage": {
+            "scope": "ptbxl_source_global",
+            "model": {"name": "efficientnet1dv2",
+                      "spec": EFFICIENTNET1DV2_SPEC.describe()},
+            "source_checkpoint": {"sha256": checkpoint.sha256},
+            "registry": {"path": str(registry), "sha256": _sha256(registry)},
+            "selection": {"policy": "fold9_best_macro_auprc",
+                          "heldout_evaluation_used_for_selection": False},
+        },
+    }
     result = evaluate_pn2021(
         _TinyModel(),
-        _checkpoint_identity(fixture),
+        checkpoint,
         config=config,
+        subject_identity=subject,
     )
 
     assert result["schema_version"] == 3
     assert result["artifact_type"] == "pn2021_evaluation_result"
-    assert result["subject"] is None
+    assert result["subject"]["mode"] == "source_registry"
     assert len(sessions) == 1 and sessions[0].closed
     assert sessions[0].close_calls == 1
     assert len(sessions[0].requests) == 4 + 20 * 4
@@ -908,6 +983,34 @@ def test_pn2021_evaluation_runs_four_centers_with_truthful_aggregates(
         assert payload["macro_auroc"] == 1.0
         assert payload["macro_auprc"] == 1.0
         assert payload["evaluation_slice"] == "depth23"
+
+    result_path = Path(result["output"]["result_file"])
+    assert _result_summary(result, "evaluation_result", result_path=result_path)
+    for field, value in (
+        ("scope", "malicious_scope"),
+        ("heldout_evaluation_used_for_selection", True),
+        ("policy", None),
+    ):
+        attacked = json.loads(json.dumps(result))
+        target = (attacked["subject"]["lineage"] if field == "scope" else
+                  attacked["subject"]["lineage"]["selection"])
+        target[field] = value
+        with pytest.raises(ValueError):
+            _result_summary(attacked, "evaluation_result", result_path=result_path)
+
+    minimal_registry = {"schema_version": 1, "models": registry_payload["models"]}
+    _write_yaml(registry, minimal_registry)
+    attacked = json.loads(json.dumps(result))
+    attacked["subject"]["lineage"]["registry"]["sha256"] = _sha256(registry)
+    with pytest.raises(ValueError):
+        _result_summary(attacked, "evaluation_result", result_path=result_path)
+
+    registry_payload["baseline"].pop("selection_rule")
+    _write_yaml(registry, registry_payload)
+    attacked = json.loads(json.dumps(result))
+    attacked["subject"]["lineage"]["registry"]["sha256"] = _sha256(registry)
+    with pytest.raises(ValueError):
+        _result_summary(attacked, "evaluation_result", result_path=result_path)
 
 
 def test_single_center_result_never_claims_a_four_center_mean(tmp_path: Path) -> None:
@@ -1304,8 +1407,65 @@ def _write_matrix_members(tmp_path: Path) -> list[Path]:
     return results
 
 
-def test_matrix_recomputes_canonical_diagonal_from_members(tmp_path: Path) -> None:
-    paths = _write_matrix_members(tmp_path)
+@pytest.fixture(scope="module")
+def matrix_members(tmp_path_factory: pytest.TempPathFactory) -> list[Path]:
+    return _write_matrix_members(tmp_path_factory.mktemp("matrix_members"))
+
+
+def _copied_member(
+    tmp_path: Path, matrix_members: list[Path], index: int = 1,
+) -> tuple[list[Path], Path, dict]:
+    paths = list(matrix_members)
+    target = tmp_path / paths[index].name
+    target.write_bytes(paths[index].read_bytes())
+    paths[index] = target
+    return paths, target, json.loads(target.read_text(encoding="utf-8"))
+
+
+def _expected_matrix_cohort(paths: list[Path]) -> dict:
+    contexts = [validate_pn2021_evaluation_result(
+        json.loads(path.read_text(encoding="utf-8")), result_path=path,
+        prospective_only=True,
+    ) for path in paths]
+    cohort = contexts[0]["cohort"]
+    return {
+        **{key: cohort[key] for key in (
+            "model_name", "method", "comparison", "source_checkpoint",
+            "selection", "seed", "adaptation",
+        )},
+        "center_adaptation": {
+            context["lineage"]["center"]: {
+                key: context["lineage"]["adaptation_data"][key]
+                for key in ("source_centers", "hash_id_set_sha256", "split_manifest_sha256")
+            }
+            for context in contexts
+        },
+        "training_config_sha256": cohort["training"]["config_sha256"],
+        "evaluation_config_sha256": cohort["evaluation"]["config_sha256"],
+        "artifact_locks": cohort["evaluation"]["artifact_locks"],
+    }
+
+
+def _write_matrix_config(tmp_path: Path, paths: list[Path]) -> Path:
+    config = tmp_path / "matrix.yaml"
+    _write_yaml(config, {
+        "schema_version": 2,
+        "protocol": {"logical_centers": list(LOGICAL_CENTERS),
+                     "aggregation": "equal_views_then_equal_centers"},
+        "profiles": {"efficientnet1dv2": {
+            "profile_name": "fixture_matrix",
+            "expected_cohort": _expected_matrix_cohort(paths),
+        }},
+        "output": {"run_dir": str(tmp_path / "unused"), "if_exists": "error",
+                   "result_file": "matrix_result.json"},
+    })
+    return config
+
+
+def test_matrix_recomputes_canonical_diagonal_from_members(
+    matrix_members: list[Path],
+) -> None:
+    paths = matrix_members
     matrix = aggregate_pn2021_matrix(paths, profile_name="fixture_matrix")
 
     assert matrix["centers"] == list(LOGICAL_CENTERS)
@@ -1317,11 +1477,14 @@ def test_matrix_recomputes_canonical_diagonal_from_members(tmp_path: Path) -> No
     }
 
 
-def test_matrix_cli_output_passes_the_run_recorder_seal(tmp_path: Path) -> None:
-    paths = _write_matrix_members(tmp_path)
+def test_matrix_cli_output_passes_the_run_recorder_seal(
+    tmp_path: Path, matrix_members: list[Path],
+) -> None:
+    paths = matrix_members
     output = tmp_path / "managed_matrix" / "evaluation"
     arguments = [
-        "--config", str(Path(__file__).resolve().parents[2] / "configs/eval/PN2021_matrix.yaml"),
+        "--config", str(_write_matrix_config(tmp_path, paths)),
+        "--model", "efficientnet1dv2",
         "--output-dir", str(output),
     ]
     for path in paths:
@@ -1336,10 +1499,10 @@ def test_matrix_cli_output_passes_the_run_recorder_seal(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("attack", ["mode", "center", "k500", "record_identity", "cohort"])
-def test_matrix_rejects_cross_member_identity_drift(tmp_path: Path, attack: str) -> None:
-    paths = _write_matrix_members(tmp_path)
-    target = paths[1]
-    payload = json.loads(target.read_text(encoding="utf-8"))
+def test_matrix_rejects_cross_member_identity_drift(
+    tmp_path: Path, matrix_members: list[Path], attack: str,
+) -> None:
+    paths, target, payload = _copied_member(tmp_path, matrix_members)
     if attack == "mode":
         payload["subject"]["mode"] = "legacy_center_adapted"
     elif attack == "center":
@@ -1354,3 +1517,115 @@ def test_matrix_rejects_cross_member_identity_drift(tmp_path: Path, attack: str)
 
     with pytest.raises(ValueError):
         aggregate_pn2021_matrix(paths, profile_name="fixture_matrix")
+
+
+def test_schema1_prospective_result_cannot_masquerade_as_legacy(
+    tmp_path: Path, matrix_members: list[Path],
+) -> None:
+    _, target, payload = _copied_member(tmp_path, matrix_members)
+    lineage = payload["subject"]["lineage"]
+    payload["subject"]["mode"] = "legacy_center_adapted"
+    payload["subject"]["lineage"] = {
+        "scope": "legacy_pn2021_k500_center_adaptation",
+        "model": lineage["model"], "center": lineage["center"],
+        "method": {"recipe_id": "a0_clean_v1", "scientific_arm": "A0"},
+        "adaptation_data": {"partition": "k500",
+                            "mapping_version": PN2021_MAPPING_VERSION,
+                            "mapping_hash": PN2021_MAPPING_HASH},
+        "selection": {"policy": "last",
+                      "heldout_evaluation_used_for_selection": False},
+        "checkpoint": {"sha256": payload["checkpoint"]["sha256"]},
+    }
+    payload["checkpoint"]["checkpoint_schema_version"] = 2
+    payload["checkpoint"]["legacy_training_identity"] = {
+        "model": "efficientnet1dv2", "center": lineage["center"],
+        "method_id": "a0_clean_v1", "scientific_arm": "A0",
+        "selection": "last",
+    }
+    target.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="schema-1.*legacy"):
+        _result_summary(payload, "evaluation_result", result_path=target)
+
+
+def test_matrix_rehashes_adapted_checkpoint_bytes(
+    matrix_members: list[Path],
+) -> None:
+    payload = json.loads(matrix_members[0].read_text(encoding="utf-8"))
+    checkpoint = Path(payload["checkpoint"]["path"])
+    original = checkpoint.read_bytes()
+    try:
+        checkpoint.write_bytes(original + b"tampered")
+        with pytest.raises(ValueError, match="SHA256"):
+            aggregate_pn2021_matrix(matrix_members, profile_name="fixture_matrix")
+    finally:
+        checkpoint.write_bytes(original)
+
+
+@pytest.mark.parametrize("attack", ["model", "recipe", "replicate", "eval_config"])
+def test_matrix_rejects_coherent_cohort_outside_config_lock(
+    matrix_members: list[Path], attack: str,
+) -> None:
+    expected = _expected_matrix_cohort(matrix_members)
+    if attack == "model":
+        expected["model_name"] = "ecgfounder"
+    elif attack == "recipe":
+        expected["method"]["recipe_id"] = "coherent_wrong_recipe"
+    elif attack == "replicate":
+        expected["comparison"]["replicate_id"] = 1
+    else:
+        expected["evaluation_config_sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="config-owned expected cohort"):
+        aggregate_pn2021_matrix(
+            matrix_members, profile_name="fixture_matrix", expected_cohort=expected,
+        )
+
+
+@pytest.mark.parametrize(
+    "attack",
+    ["checkpoint_lineage", "depth", "operators", "composition", "k500",
+     "ref_count", "record_hash", "label_hash", "clean_mean", "aggregate"],
+)
+def test_run_recorder_rejects_tampered_evaluation_evidence(
+    tmp_path: Path, matrix_members: list[Path], attack: str,
+) -> None:
+    _, target, payload = _copied_member(tmp_path, matrix_members)
+    center = "chapman_shaoxing"
+    view = payload["corrupted"]["per_view"][0]
+    identity = view["per_center"][center]["identity"]
+    if attack == "checkpoint_lineage":
+        payload["checkpoint"].pop("lineage")
+    elif attack == "depth":
+        view["depth"] = 9
+    elif attack == "operators":
+        view["operators"] = []
+    elif attack == "composition":
+        payload["corrupted"]["per_view"][1]["composition_id"] = view["composition_id"]
+    elif attack == "k500":
+        identity["reference_exclusion"]["k500_hash_id_set_sha256"] = "0" * 64
+    elif attack == "ref_count":
+        identity["reference_exclusion"]["excluded_reference_count"] = 499
+    elif attack == "record_hash":
+        identity["hash_id_set_sha256"] = "0" * 64
+    elif attack == "label_hash":
+        identity["hash_label_set_sha256"] = "0" * 64
+    elif attack == "clean_mean":
+        next(iter(payload["clean"]["evaluated_center_mean"].values()))["macro_auroc"] = 0.123
+    else:
+        aggregate = payload["corrupted"]["aggregates"]["depth23"]
+        next(iter(aggregate["evaluated_center_mean"].values()))["macro_auroc"] = 0.123
+    target.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        _result_summary(payload, "evaluation_result", result_path=target)
+
+
+def test_matrix_import_stays_outside_model_and_gpu_modules() -> None:
+    script = (
+        "import sys; import util.evaluation.matrix; "
+        "blocked=('torch','util.evaluation.pn2021','models.checkpoints'); "
+        "assert not [name for name in blocked if name in sys.modules]"
+    )
+    subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=Path(__file__).resolve().parents[2], check=True,
+    )

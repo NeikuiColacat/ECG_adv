@@ -20,7 +20,6 @@ from models.checkpoints import (
     CheckpointIdentity,
     load_model_checkpoint,
     sha256_file,
-    validate_training_lineage,
 )
 from models.contracts import CLASS_ORDER, ModelSpec
 from models.factory import available_models, build_model, get_model_spec
@@ -36,6 +35,7 @@ from util.evaluation.pn2021 import (
     evaluate_pn2021,
     load_pn2021_eval_config,
 )
+from util.pn2021_artifact_contract import validate_pn2021_train_result
 
 
 LEGACY_METHODS = {
@@ -118,12 +118,8 @@ def _resolve_prospective_subject(
     )
     recipe = load_recipe_spec(method_path)
     train_result_path, payload = _json_artifact(args.train_result, "train_result")
-    if (
-        payload.get("schema_version") != 1
-        or payload.get("artifact_type") != "pn2021_train_result"
-    ):
-        raise ValueError("prospective evaluation requires schema-1 PN2021 train_result")
-    lineage = validate_training_lineage(payload.get("lineage"))
+    train = validate_pn2021_train_result(payload, result_path=train_result_path)
+    lineage = train["lineage"]
     center = args.center[0]
     if (
         lineage["model"] != {"name": spec.name, "spec": spec.describe()}
@@ -140,28 +136,7 @@ def _resolve_prospective_subject(
         or payload.get("scientific_arm") != recipe.scientific_arm
     ):
         raise ValueError("train_result root method identity differs from lineage")
-    training = _mapping(
-        _mapping(payload.get("config"), "train_result.config").get("training"),
-        "train_result.config.training",
-    )
-    if training.get("sha256") != lineage["training_config_sha256"]:
-        raise ValueError("train_result training config differs from lineage")
-    seed = _mapping(payload.get("seed"), "train_result.seed")
-    if {key: seed.get(key) for key in lineage["seed"]} != lineage["seed"]:
-        raise ValueError("train_result seed identity differs from lineage")
-    selection = _mapping(payload.get("selection"), "train_result.selection")
-    last = _mapping(payload.get("last_checkpoint"), "train_result.last_checkpoint")
-    if (
-        selection.get("policy") != "last"
-        or selection.get("heldout_evaluation_used_for_selection") is not False
-        or selection.get("selected_checkpoint") != last
-    ):
-        raise ValueError("train_result must select its heldout-free last checkpoint")
-    checkpoint_path, _ = _validated_checkpoint_reference(
-        last, description="train_result.last_checkpoint"
-    )
-    if checkpoint_path.parent.parent != train_result_path.parent:
-        raise ValueError("train_result checkpoint must belong to the same training output")
+    checkpoint_path = train["checkpoint_path"]
     identity = {
         "mode": "prospective_train_result",
         "train_result": {

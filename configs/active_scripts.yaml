@@ -68,6 +68,12 @@ latest_mainline:
         schema_version: 1
         artifact_type: pn2021_diagonal_four_center_evaluation
       invariant: train_result_and_final_checkpoint_share_exact_lineage
+      portable_contract:
+        path: util/pn2021_artifact_contract.py
+        torch_import: false
+        checkpoint_verification: stream_sha256_without_deserialization
+        derived_metric_policy: recompute_and_exact_compare
+        matrix_cohort_policy: config_owned_exact_identity
       evaluation_subject_modes:
         prospective_train_result:
           centers: exactly_one_target_center
@@ -81,8 +87,8 @@ latest_mainline:
           arguments: [--source-registry]
       config_closure:
         included_reference_flags: [--method-config, --source-registry]
-        excluded_artifact_flags: [--train-result]
-        train_result_subject_lock: resolved_path_and_sha256
+        excluded_artifact_flags: [--train-result, --result]
+        artifact_subject_lock: resolved_path_and_sha256
     gpu_replication_status: diagnostic_smoke_passed_not_full_replication
     prospective_run_root: /home/linbinhao/ECG_adv_data/runs/manual_refactor_paper_kernel_v2_recipe_v1_r1
   primary_metric_view: drop_all_zero
@@ -177,12 +183,12 @@ latest_mainline:
       - util/tests/test_evaluation_metrics.py
       - util/tests/test_pn2021_evaluation.py
     cpu_contract_result:
-      status: passed_203_skipped_10
+      status: passed_199_skipped_10
       date: "2026-08-12"
     cp4_lineage_contract_result:
-      status: passed_with_diagonal_matrix_independent_review
-      pytest: passed_203_skipped_10
-      tracked_physical_loc: 40215
+      status: passed_with_portable_artifact_contract_independent_review
+      pytest: passed_199_skipped_10
+      tracked_physical_loc: 40287
     gpu_replication:
       status: diagnostic_smoke_passed_not_performance_evidence
       planned_run_root: /home/linbinhao/ECG_adv_data/runs/manual_refactor_paper_kernel_v2_recipe_v1_r1
@@ -222,7 +228,7 @@ latest_mainline:
         run_file_index_sha256: 48b940bb957ab164b9aba71b7caec690b4bb8890e9f5ae54359d2c28968120f1
         fixed_by_commit: d5d3bd4
     dry_run:
-      status: passed_38_of_38_tracked_experiments
+      status: passed_40_of_40_tracked_experiments
       command: >
         /home/linbinhao/miniforge3/envs/ECGTwin/bin/python
         boot_scripts/run_experiment.py

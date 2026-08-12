@@ -45,7 +45,6 @@ RESULT_REQUIRED_KEYS = {
                                        "cohort", "corrupted", "members", "model",
                                        "schema_version", "status"}),
 }
-EVALUATION_SUBJECT_MODES = {"prospective_train_result", "legacy_center_adapted", "source_registry"}
 
 
 def utc_now() -> str:
@@ -333,11 +332,6 @@ def _require(condition: Any, message: str) -> None:
         raise ValueError(message)
 
 
-def _canonical_training_lineage(value: Any) -> dict[str, Any]:
-    from models.checkpoints import validate_training_lineage
-    return validate_training_lineage(value)
-
-
 def _verified_artifact(value: Any, description: str, *, parent: Path,
                        contained: bool = False) -> Path:
     _require(isinstance(value, dict) and set(value) == {"path", "sha256"},
@@ -361,51 +355,23 @@ def _verified_artifact(value: Any, description: str, *, parent: Path,
     return resolved
 
 
-def _verified_json_artifact(value: Any, description: str, *, parent: Path) -> tuple[Path, dict[str, Any]]:
-    path = _verified_artifact(value, description, parent=parent)
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    _require(isinstance(payload, dict), f"{description} must contain a JSON mapping")
-    return path, payload
-
-
 def _train_result_summary(payload: dict[str, Any], result_type: str, *, result_path: Path) -> dict[str, Any]:
     _require_result_keys(payload, result_type)
+    if result_type == "pn2021_train_result":
+        from util.pn2021_artifact_contract import validate_pn2021_train_result
+        validate_pn2021_train_result(payload, result_path=result_path)
+        selection = payload["selection"]
+        return {
+            "identity": _pick(payload, ("model", "center", "method_id", "scientific_arm",
+                                        "epochs_completed", "lineage")),
+            "selection": _pick(selection, ("policy", "selected_epoch", "selected_checkpoint",
+                                            "heldout_evaluation_used_for_selection")),
+        }
     epochs = payload["epochs_completed"]
     if isinstance(epochs, bool) or not isinstance(epochs, int) or epochs <= 0:
         raise ValueError("train_result epochs_completed must be positive")
     selection = payload.get("selection")
-    if result_type == "pn2021_train_result":
-        lineage = _canonical_training_lineage(payload.get("lineage"))
-        method_id = payload["method_id"]
-        optimizer_steps = payload.get("optimizer_steps")
-        model, config, seed = (payload.get(key) for key in ("model", "config", "seed"))
-        training = config.get("training") if isinstance(config, dict) else None
-        valid = (
-            payload.get("schema_version") == 1
-            and payload.get("artifact_type") == "pn2021_train_result"
-            and payload.get("center") == lineage["center"]
-            and method_id == lineage["method"]["recipe_id"]
-            and payload.get("scientific_arm") == lineage["method"]["scientific_arm"]
-            and isinstance(model, dict) and model.get("spec") == lineage["model"]["spec"]
-            and isinstance(training, dict) and training.get("sha256") == lineage["training_config_sha256"]
-            and isinstance(seed, dict) and all(seed.get(key) == lineage["seed"][key]
-                                               for key in lineage["seed"])
-            and isinstance(selection, dict)
-            and isinstance(optimizer_steps, int)
-            and not isinstance(optimizer_steps, bool)
-            and optimizer_steps > 0
-            and selection.get("policy") == "last"
-            and selection.get("selected_epoch") == epochs
-            and isinstance(payload.get("last_checkpoint"), dict)
-            and selection.get("selected_checkpoint") == payload["last_checkpoint"]
-            and selection.get("heldout_evaluation_used_for_selection")
-            == lineage["selection"]["heldout_evaluation_used_for_selection"]
-        )
-        _require(valid, "pn2021 train_result must be schema_version=1 with artifact_type, "
-                 "lineage and the heldout-free last checkpoint")
-        _verified_artifact(payload["last_checkpoint"], "train_result last_checkpoint",
-                           parent=result_path.parent, contained=True)
-    elif result_type == "supervised_train_result":
+    if result_type == "supervised_train_result":
         if "selection" in payload and (
             not isinstance(selection, dict)
             or selection.get("heldout_evaluation_used_for_selection") is not False
@@ -456,8 +422,16 @@ def _matrix_result_summary(payload: dict[str, Any], result_path: Path) -> dict[s
             member.get("evaluation_result"), "matrix member evaluation_result",
             parent=result_path.parent,
         ))
-    expected = aggregate_pn2021_matrix(paths, profile_name=payload.get("profile_name"))
-    _verified_artifact(payload.get("config"), "matrix_result config", parent=result_path.parent)
+    config_path = _verified_artifact(payload.get("config"), "matrix_result config", parent=result_path.parent)
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    profiles = config.get("profiles") if isinstance(config, dict) else None
+    matches = [item for item in profiles.values() if isinstance(item, dict)
+               and item.get("profile_name") == payload.get("profile_name")] if isinstance(profiles, dict) else []
+    _require(len(matches) == 1, "matrix_result config does not own its profile")
+    expected = aggregate_pn2021_matrix(
+        paths, profile_name=payload.get("profile_name"),
+        expected_cohort=matches[0].get("expected_cohort"),
+    )
     _require({key: value for key, value in payload.items()
               if key not in {"config", "output"}} == expected,
              "matrix_result differs from recomputed member evidence")
@@ -473,142 +447,13 @@ def _result_summary(payload: dict[str, Any], result_type: str, *, result_path: P
         return _train_result_summary(payload, result_type, result_path=result_path)
     if result_type == "pn2021_matrix_result":
         return _matrix_result_summary(payload, result_path)
+    from util.pn2021_artifact_contract import validate_pn2021_evaluation_result
+
     _require_result_keys(payload, result_type)
-    _require(payload.get("schema_version") == 3
-             and payload.get("artifact_type") == "pn2021_evaluation_result"
-             and payload.get("status") == "complete",
-             "evaluation_result must be complete schema_version=3")
-    protocol, checkpoint = payload["protocol"], payload["checkpoint"]
-    clean, corrupted = payload["clean"], payload["corrupted"]
-    model, subject = payload["model"], payload["subject"]
-    _require(isinstance(protocol, dict), "evaluation_result protocol must be a mapping")
-    checkpoint_reference = (
-        _pick(checkpoint, ("path", "sha256")) if isinstance(checkpoint, dict) else checkpoint
+    validate_pn2021_evaluation_result(
+        payload, result_path=result_path,
+        registry_loader=lambda path: yaml.safe_load(path.read_text(encoding="utf-8")),
     )
-    _verified_artifact(checkpoint_reference, "evaluation_result checkpoint",
-                       parent=result_path.parent)
-    _require(isinstance(subject, dict)
-             and set(subject) == {"mode", "train_result", "lineage"}
-             and subject.get("mode") in EVALUATION_SUBJECT_MODES,
-             "evaluation_result subject contract is invalid")
-    mode, train_result, lineage = (subject[key] for key in ("mode", "train_result", "lineage"))
-    if mode == "source_registry":
-        _require(train_result is None, "source evaluation subject must not carry train_result")
-    else:
-        referenced_path, referenced_result = _verified_json_artifact(
-            train_result, "evaluation subject train_result", parent=result_path.parent
-        )
-    prospective = mode == "prospective_train_result"
-    _require(isinstance(lineage, dict), "evaluation subject must carry lineage")
-    if prospective:
-        lineage = _canonical_training_lineage(lineage)
-        _train_result_summary(
-            referenced_result, "pn2021_train_result", result_path=referenced_path
-        )
-        _require(referenced_result.get("schema_version") == 1
-                 and referenced_result.get("artifact_type") == "pn2021_train_result"
-                 and referenced_result.get("lineage") == lineage,
-                 "evaluation subject differs from prospective train_result")
-    logical_centers = protocol.get("logical_centers")
-    lineage_model = lineage.get("model")
-    _require(isinstance(lineage_model, dict) and isinstance(model, dict)
-             and lineage_model == {"name": model.get("name"), "spec": model},
-             "evaluation_result model differs from subject lineage")
-    center = lineage.get("center")
-    _require(center is None or logical_centers == [center],
-             "evaluation_result centers differ from subject lineage")
-    lineage_data = lineage.get("adaptation_data")
-    _require(not isinstance(lineage_data, dict) or not any(
-        key in lineage_data and protocol.get(key) != lineage_data[key]
-        for key in ("mapping_version", "mapping_hash", "class_order")),
-        "evaluation_result protocol differs from subject lineage")
-    checkpoint_key = {"source_registry": "source_checkpoint",
-                      "legacy_center_adapted": "checkpoint"}.get(mode)
-    if checkpoint_key:
-        lineage_checkpoint = lineage.get(checkpoint_key)
-        _require(isinstance(lineage_checkpoint, dict)
-                 and set(lineage_checkpoint) == {"sha256"}
-                 and checkpoint.get("sha256") == lineage_checkpoint.get("sha256"),
-                 "evaluation_result checkpoint differs from subject lineage")
-    if mode != "source_registry":
-        referenced_last = referenced_result.get("last_checkpoint")
-        _require(isinstance(referenced_last, dict)
-                 and referenced_last.get("sha256") == checkpoint["sha256"],
-                 "evaluation checkpoint differs from subject train_result")
-        _require(mode != "legacy_center_adapted" or not (
-            referenced_result.get("center") != center
-            or referenced_result.get("method_id") != lineage.get("method", {}).get("recipe_id")
-            or referenced_result.get("scientific_arm") != lineage.get("method", {}).get("scientific_arm")
-            or referenced_result.get("model", {}).get("spec") != lineage_model.get("spec")
-            or referenced_result.get("selection", {}).get("policy") != "last"
-            or referenced_result.get("selection", {}).get("selected_checkpoint") != referenced_last
-            or referenced_result.get("selection", {}).get("heldout_evaluation_used_for_selection") is not False
-        ), "legacy subject differs from train_result identity")
-        if mode == "legacy_center_adapted":
-            config = referenced_result.get("config")
-            training = config.get("training") if isinstance(config, dict) else None
-            resolved = training.get("resolved") if isinstance(training, dict) else None
-            legacy_protocol = resolved.get("protocol") if isinstance(resolved, dict) else None
-            locked = {"partition": "k500", "use_all_k500": True, "validation_split": False,
-                      "checkpoint_selection": "last", "heldout_ref_exclusion_required": True,
-                      "merge_cpsc_2018_extra_into_cpsc_2018": True,
-                      "centers": ["ningbo", "chapman_shaoxing", "cpsc_2018", "georgia"],
-                      "class_order": ["CD", "HYP", "MI", "NORM", "STTC"],
-                      "mapping_version": "v7_super5_sjr_rgq_review_20260528",
-                      "mapping_hash": "555ec85d5b51"}
-            _require(isinstance(legacy_protocol, dict)
-                     and all(legacy_protocol.get(key) == value for key, value in locked.items()),
-                     "legacy train_result is not the locked K500 protocol")
-    else:
-        registry_path = _verified_artifact(
-            lineage.get("registry"), "source lineage registry", parent=result_path.parent
-        )
-        try:
-            registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
-        except (OSError, yaml.YAMLError) as exc:
-            raise ValueError("source lineage registry is not valid YAML") from exc
-        models = registry.get("models") if isinstance(registry, dict) else None
-        registry_model = models.get(model["name"], {}) if isinstance(models, dict) else {}
-        _require(isinstance(registry, dict) and registry.get("schema_version") == 1
-                 and isinstance(registry_model, dict)
-                 and registry_model.get("selected_checkpoint_sha256") == checkpoint["sha256"],
-                 "source registry differs from evaluation checkpoint")
-        source_selection = lineage.get("selection")
-        _require(isinstance(source_selection, dict) and bool(source_selection.get("policy"))
-                 and source_selection.get("heldout_evaluation_used_for_selection") is False,
-                 "source lineage selection is invalid")
-    _require(not prospective or isinstance(logical_centers, list) and len(logical_centers) == 1,
-             "prospective evaluation must contain exactly one center")
-    canonical_centers = ["ningbo", "chapman_shaoxing", "cpsc_2018", "georgia"]
-    _require(mode != "source_registry" or logical_centers == canonical_centers,
-             "source evaluation must contain the canonical four centers")
-    views = corrupted.get("per_view") if isinstance(corrupted, dict) else None
-    aggregates = corrupted.get("aggregates") if isinstance(corrupted, dict) else None
-    def complete_centers(value: Any) -> bool:
-        return (isinstance(value, dict) and list(value) == logical_centers
-                and all(isinstance(item, dict)
-                        and isinstance(item.get("metrics"), dict) and item["metrics"]
-                        and isinstance(item.get("identity"), dict) and item["identity"]
-                        for item in value.values()))
-    expected_aggregates = {"depth2": 10, "depth3": 10, "depth23": 20}
-    valid = (
-        protocol.get("mapping_version") == "v7_super5_sjr_rgq_review_20260528"
-        and protocol.get("mapping_hash") == "555ec85d5b51"
-        and protocol.get("class_order") == ["CD", "HYP", "MI", "NORM", "STTC"]
-        and isinstance(logical_centers, list) and bool(logical_centers)
-        and isinstance(clean, dict) and complete_centers(clean.get("per_center"))
-        and isinstance(views, list) and len(views) == 20
-        and all(isinstance(view, dict) and complete_centers(view.get("per_center")) for view in views)
-        and {view.get("view_index") for view in views} == set(range(20))
-        and isinstance(aggregates, dict) and set(aggregates) == set(expected_aggregates)
-        and all(isinstance(aggregates[key], dict)
-                and aggregates[key].get("view_count") == count
-                and aggregates[key].get("center_order") == logical_centers
-                and isinstance(aggregates[key].get("evaluated_center_mean"), dict)
-                and bool(aggregates[key]["evaluated_center_mean"])
-                for key, count in expected_aggregates.items())
-    )
-    _require(valid, "evaluation_result must be complete schema_version=3")
     return {
         "identity": _pick(payload, ("model", "checkpoint", "protocol", "subject")),
         "selection": {"policy": "checkpoint_fixed_before_evaluation"},

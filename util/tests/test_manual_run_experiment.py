@@ -112,18 +112,6 @@ def _training_lineage() -> dict:
     }
 
 
-def _legacy_protocol() -> dict:
-    return {
-        "partition": "k500", "use_all_k500": True, "validation_split": False,
-        "checkpoint_selection": "last", "heldout_ref_exclusion_required": True,
-        "merge_cpsc_2018_extra_into_cpsc_2018": True,
-        "centers": ["ningbo", "chapman_shaoxing", "cpsc_2018", "georgia"],
-        "class_order": ["CD", "HYP", "MI", "NORM", "STTC"],
-        "mapping_version": "v7_super5_sjr_rgq_review_20260528",
-        "mapping_hash": "555ec85d5b51",
-    }
-
-
 def _typed_train_result(*, heldout: bool = False) -> dict:
     checkpoint = {
         "path": "checkpoints/last.pt",
@@ -133,8 +121,7 @@ def _typed_train_result(*, heldout: bool = False) -> dict:
         "schema_version": 1,
         "artifact_type": "pn2021_train_result",
         "lineage": _training_lineage(),
-        "config": {"training": {"sha256": "0" * 64,
-                                  "resolved": {"protocol": _legacy_protocol()}}},
+        "config": {"training": {"sha256": "0" * 64}},
         "epochs_completed": 1,
         "model": {"spec": EFFICIENTNET1DV2_SPEC.describe()},
         "center": "ningbo",
@@ -151,102 +138,6 @@ def _typed_train_result(*, heldout: bool = False) -> dict:
             "heldout_evaluation_used_for_selection": heldout,
         },
     }
-
-
-def _metric_body() -> dict:
-    return {"metrics": {"drop_all_zero": {"macro_auroc": 0.5}},
-            "identity": {"record_count": 1}}
-
-
-def _evaluation_result() -> dict:
-    model = EFFICIENTNET1DV2_SPEC.describe()
-    lineage = _training_lineage()
-    return {
-        "schema_version": 3,
-        "artifact_type": "pn2021_evaluation_result",
-        "status": "complete",
-        "model": model,
-        "checkpoint": {"path": "checkpoints/last.pt", "sha256": FIXTURE_CHECKPOINT_SHA256},
-        "subject": {
-            "mode": "prospective_train_result",
-            "train_result": {"path": "train_result.json", "sha256": "pending"},
-            "lineage": lineage,
-        },
-        "clean": {"per_center": {"ningbo": _metric_body()}},
-        "corrupted": {
-            "per_view": [{"view_index": index, "per_center": {"ningbo": _metric_body()}}
-                         for index in range(20)],
-            "aggregates": {key: {"view_count": count, "center_order": ["ningbo"],
-                                 "evaluated_center_mean": {"drop_all_zero": {}}}
-                           for key, count in (("depth2", 10), ("depth3", 10), ("depth23", 20))},
-        },
-        "protocol": {
-            "mapping_version": "v7_super5_sjr_rgq_review_20260528",
-            "mapping_hash": "555ec85d5b51",
-            "class_order": ["CD", "HYP", "MI", "NORM", "STTC"],
-            "logical_centers": ["ningbo"],
-        },
-    }
-
-
-def _matrix_result(tmp_path: Path) -> dict:
-    centers = ["ningbo", "chapman_shaoxing", "cpsc_2018", "georgia"]
-    mean = {"drop_all_zero": {"macro_auroc": 0.5}}
-    config = tmp_path / "matrix.yaml"; config.write_text("schema_version: 1\n", encoding="utf-8")
-    members = []
-    for center in centers:
-        artifact = tmp_path / f"{center}_evaluation_result.json"
-        artifact.write_text(json.dumps({"schema_version": 3, "artifact_type":
-            "pn2021_evaluation_result", "status": "complete"}), encoding="utf-8")
-        members.append({
-            "center": center,
-            "evaluation_result": {"path": str(artifact),
-                                  "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest()},
-            "train_result": {"path": f"{center}_train_result.json", "sha256": "0" * 64},
-            "checkpoint": {"sha256": "0" * 64},
-            "adaptation_data": {"split_id": center},
-        })
-    return {
-        "schema_version": 1,
-        "artifact_type": "pn2021_diagonal_four_center_evaluation",
-        "status": "complete",
-        "profile_name": "fixture_matrix",
-        "config": {"path": str(config), "sha256": hashlib.sha256(config.read_bytes()).hexdigest()},
-        "model": EFFICIENTNET1DV2_SPEC.describe(),
-        "cohort": {
-            "model": EFFICIENTNET1DV2_SPEC.describe(),
-            "method": {"recipe_id": "fixture"},
-            "comparison": {"group": "fixture", "replicate_id": 0},
-            "source_checkpoint": {"sha256": "0" * 64}, "selection": {"policy": "last"},
-            "seed": {"base_seed": 0}, "evaluation": {"config_sha256": "0" * 64},
-        },
-        "centers": centers,
-        "members": members,
-        "clean": {"per_center": {center: _metric_body() for center in centers},
-                  "center_count": 4, "center_order": centers,
-                  "evaluated_center_mean": mean, "four_center_mean": mean},
-        "corrupted": {"per_view": [
-            {"view_index": index, "per_center": {center: _metric_body() for center in centers},
-             "center_count": 4, "center_order": centers,
-             "evaluated_center_mean": mean, "four_center_mean": mean}
-            for index in range(20)
-        ], "aggregates": {
-            key: {"view_count": count, "center_count": 4, "center_order": centers,
-                  "evaluated_center_mean": mean, "four_center_mean": mean}
-            for key, count in (("depth2", 10), ("depth3", 10), ("depth23", 20))
-        }},
-        "aggregation": {"policy": "equal_views_then_equal_centers",
-            "checkpoint_policy": "one_adapted_checkpoint_per_corresponding_center",
-            "off_diagonal": "not_evaluated",
-        },
-    }
-
-
-def _stub_matrix_recompute(monkeypatch: pytest.MonkeyPatch, payload: dict) -> None:
-    expected = json.loads(json.dumps({key: value for key, value in payload.items()
-                                     if key not in {"config", "output"}}))
-    monkeypatch.setattr("util.evaluation.matrix.aggregate_pn2021_matrix",
-                        lambda paths, *, profile_name: expected)
 
 
 def _record_payload(
@@ -269,44 +160,6 @@ def _record_payload(
             )
             checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
             checkpoint_path.write_bytes(FIXTURE_CHECKPOINT)
-        subject = payload.get("subject")
-        train_result = subject.get("train_result") if isinstance(subject, dict) else None
-        if isinstance(train_result, dict):
-            artifact = Path(train_result["path"])
-            if not artifact.is_absolute():
-                artifact = output_dir / Path(relative_name).parent / artifact
-                artifact.parent.mkdir(parents=True, exist_ok=True)
-                referenced = _typed_train_result()
-                if isinstance(payload.get("checkpoint"), dict):
-                    referenced["last_checkpoint"] = dict(payload["checkpoint"])
-                    referenced["selection"]["selected_checkpoint"] = dict(payload["checkpoint"])
-                referenced["lineage"] = payload["subject"]["lineage"]
-                encoded = (json.dumps(referenced, sort_keys=True) + "\n").encode()
-                artifact.write_bytes(encoded)
-                train_result["sha256"] = hashlib.sha256(encoded).hexdigest()
-        lineage = subject.get("lineage") if isinstance(subject, dict) else None
-        registry = lineage.get("registry") if isinstance(lineage, dict) else None
-        if isinstance(registry, dict):
-            artifact = output_dir / Path(relative_name).parent / registry["path"]
-            artifact.parent.mkdir(parents=True, exist_ok=True)
-            encoded = yaml.safe_dump({"schema_version": 1, "models": {
-                payload["model"]["name"]: {
-                    "selected_checkpoint_sha256": payload["checkpoint"]["sha256"]
-                }
-            }}).encode()
-            artifact.write_bytes(encoded)
-            registry["sha256"] = hashlib.sha256(encoded).hexdigest()
-        evaluation_checkpoint = payload.get("checkpoint")
-        if isinstance(evaluation_checkpoint, dict) and isinstance(evaluation_checkpoint.get("path"), str):
-            artifact = Path(evaluation_checkpoint["path"])
-            if not artifact.is_absolute():
-                artifact = output_dir / Path(relative_name).parent / artifact
-                artifact.parent.mkdir(parents=True, exist_ok=True)
-                artifact.write_bytes(FIXTURE_CHECKPOINT)
-                evaluation_checkpoint["sha256"] = FIXTURE_CHECKPOINT_SHA256
-        if payload.get("artifact_type") == "pn2021_diagonal_four_center_evaluation":
-            result_path = output_dir / relative_name
-            payload["output"] = {"directory": str(output_dir), "result_file": str(result_path)}
         (output_dir / relative_name).write_text(json.dumps(payload), encoding="utf-8")
         log_path.write_text("fixture delegate\n", encoding="utf-8")
         return delegate_exit_code
@@ -475,7 +328,7 @@ def test_typed_train_result_rejects_heldout_selection(tmp_path: Path) -> None:
     )
     assert exit_code == 1 and manifest["status"] == "failed"
     assert manifest["delegate_result"] is None
-    assert "heldout-free last checkpoint" in manifest["error"]
+    assert "identity differs" in manifest["error"]
 
 
 def test_typed_train_result_records_lineage_and_verifies_checkpoint(
@@ -492,8 +345,8 @@ def test_typed_train_result_records_lineage_and_verifies_checkpoint(
 @pytest.mark.parametrize(
     ("checkpoint_path", "checkpoint_sha256", "message"),
     (
-        ("../outside.pt", FIXTURE_CHECKPOINT_SHA256, "output directory"),
-        ("checkpoints/last.pt", "f" * 64, "SHA256 does not match"),
+        ("../outside.pt", FIXTURE_CHECKPOINT_SHA256, "same training output"),
+        ("checkpoints/last.pt", "f" * 64, "SHA256 mismatch"),
     ),
 )
 def test_typed_train_result_verifies_checkpoint_artifact(
@@ -538,233 +391,10 @@ def test_typed_train_result_rejects_invalid_canonical_lineage(tmp_path: Path) ->
     assert exit_code == 1 and manifest["delegate_result"] is None
 
 
-def test_bogus_evaluation_result_is_rejected(tmp_path: Path) -> None:
-    run_dir, plan = _action_plan(
-        tmp_path, "evaluate_pn2021", delegate_subdir="evaluation"
-    )
-
-    payload = _evaluation_result()
-    payload["schema_version"] = 1
-    exit_code, manifest = _record_payload(plan, "evaluation_result.json", payload)
-    assert exit_code == 1
-    assert manifest["delegate_result"] is None
-    assert "schema_version=3" in manifest["error"]
-
-
-def test_evaluation_result_requires_checkpoint_and_metric_bodies(tmp_path: Path) -> None:
-    _, valid_plan = _action_plan(
-        tmp_path / "valid", "evaluate_pn2021", delegate_subdir="evaluation"
-    )
-    exit_code, manifest = _record_payload(
-        valid_plan, "evaluation_result.json", _evaluation_result()
-    )
-    assert exit_code == 0 and manifest["status"] == "complete"
-
-    _, legacy_plan = _action_plan(
-        tmp_path / "legacy", "evaluate_pn2021", delegate_subdir="evaluation"
-    )
-    legacy = _evaluation_result()
-    legacy["subject"]["mode"] = "legacy_center_adapted"
-    legacy["subject"]["lineage"].update(
-        adaptation_data={"mapping_version": "v7_super5_sjr_rgq_review_20260528",
-                         "mapping_hash": "555ec85d5b51"},
-        checkpoint={"sha256": FIXTURE_CHECKPOINT_SHA256},
-    )
-    exit_code, _ = _record_payload(legacy_plan, "evaluation_result.json", legacy)
-    assert exit_code == 0
-
-    _, source_plan = _action_plan(
-        tmp_path / "source", "evaluate_pn2021", delegate_subdir="evaluation"
-    )
-    source = _evaluation_result()
-    source["subject"] = {
-        "mode": "source_registry",
-        "train_result": None,
-        "lineage": {
-            "model": {"name": EFFICIENTNET1DV2_SPEC.name,
-                      "spec": EFFICIENTNET1DV2_SPEC.describe()},
-            "source_checkpoint": {"sha256": FIXTURE_CHECKPOINT_SHA256},
-            "registry": {"path": "source_registry.yaml", "sha256": "pending"},
-            "selection": {"policy": "fold9_best_macro_auprc",
-                          "heldout_evaluation_used_for_selection": False},
-        },
-    }
-    source_centers = [
-        "ningbo", "chapman_shaoxing", "cpsc_2018", "georgia"
-    ]
-    source["protocol"]["logical_centers"] = source_centers
-    source["clean"]["per_center"] = {center: _metric_body() for center in source_centers}
-    for view in source["corrupted"]["per_view"]:
-        view["per_center"] = {center: _metric_body() for center in source_centers}
-    for aggregate in source["corrupted"]["aggregates"].values():
-        aggregate["center_order"] = source_centers
-    exit_code, _ = _record_payload(source_plan, "evaluation_result.json", source)
-    assert exit_code == 0
-
-    _, invalid_plan = _action_plan(
-        tmp_path / "invalid", "evaluate_pn2021", delegate_subdir="evaluation"
-    )
-    payload = _evaluation_result()
-    payload.update(checkpoint=None, clean=None, corrupted="not-a-metric-body")
-    exit_code, manifest = _record_payload(
-        invalid_plan, "evaluation_result.json", payload
-    )
-    assert exit_code == 1
-    assert manifest["delegate_result"] is None
-
-
-@pytest.mark.parametrize(
-    ("field", "value", "message"),
-    (
-        ("model", {"name": "wrong"}, "model differs"),
-        ("centers", ["georgia"], "centers differ"),
-        ("subject", {"mode": "unknown", "train_result": None, "lineage": None}, "subject contract"),
-    ),
-)
-def test_evaluation_result_rejects_subject_mismatch(
-    tmp_path: Path, field: str, value: object, message: str
-) -> None:
-    _, plan = _action_plan(
-        tmp_path, "evaluate_pn2021", delegate_subdir="evaluation"
-    )
-    payload = _evaluation_result()
-    if field == "centers":
-        payload["protocol"]["logical_centers"] = value
-    elif field == "subject":
-        payload["subject"] = value
-    else:
-        payload[field] = value
-    exit_code, manifest = _record_payload(plan, "evaluation_result.json", payload)
-    assert exit_code == 1
-    assert message in manifest["error"]
-
-
-@pytest.mark.parametrize(
-    "attack", ["missing_train_result", "unbound_train_result", "invalid_lineage",
-               "wrong_clean_center", "empty_view_bodies", "empty_aggregates", "checkpoint_sha"]
-)
-def test_evaluation_result_rejects_unbound_or_incomplete_evidence(
-    tmp_path: Path, attack: str
-) -> None:
-    _, plan = _action_plan(tmp_path / attack, "evaluate_pn2021", delegate_subdir="evaluation")
-    payload = _evaluation_result()
-    if attack in {"missing_train_result", "unbound_train_result"}:
-        artifact = tmp_path / f"{attack}.json"
-        if attack == "unbound_train_result":
-            artifact.write_text("{}\n", encoding="utf-8")
-        payload["subject"]["train_result"] = {
-            "path": str(artifact), "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest()
-            if artifact.exists() else "0" * 64,
-        }
-    elif attack == "invalid_lineage":
-        payload["subject"]["lineage"]["seed"] = None
-    elif attack == "wrong_clean_center":
-        payload["clean"]["per_center"] = {"not_ningbo": _metric_body()}
-    elif attack == "empty_view_bodies":
-        payload["corrupted"]["per_view"][0]["per_center"]["ningbo"] = {}
-    elif attack == "empty_aggregates":
-        payload["corrupted"]["aggregates"] = {}
-    else:
-        artifact = tmp_path / "wrong.pt"
-        artifact.write_bytes(b"wrong checkpoint")
-        payload["checkpoint"] = {"path": str(artifact), "sha256": "0" * 64}
-    exit_code, manifest = _record_payload(plan, "evaluation_result.json", payload)
-    assert exit_code == 1 and manifest["delegate_result"] is None
-
-
-@pytest.mark.parametrize("mode", ["legacy_center_adapted", "source_registry"])
-def test_evaluation_result_rejects_mode_specific_checkpoint_mismatch(
-    tmp_path: Path, mode: str
-) -> None:
-    _, plan = _action_plan(
-        tmp_path / mode, "evaluate_pn2021", delegate_subdir="evaluation"
-    )
-    payload = _evaluation_result()
-    payload["subject"]["mode"] = mode
-    if mode == "legacy_center_adapted":
-        payload["subject"]["lineage"]["checkpoint"] = {"sha256": "f" * 64}
-    else:
-        payload["subject"]["train_result"] = None
-        payload["subject"]["lineage"] = {
-            "model": {"name": EFFICIENTNET1DV2_SPEC.name,
-                      "spec": EFFICIENTNET1DV2_SPEC.describe()},
-            "checkpoint": {"sha256": FIXTURE_CHECKPOINT_SHA256},
-            "source_checkpoint": {"sha256": "f" * 64},
-            "registry": {"path": "source_registry.yaml", "sha256": "pending"},
-            "selection": {"policy": "fold9_best_macro_auprc",
-                          "heldout_evaluation_used_for_selection": False},
-        }
-        source_centers = [
-            "ningbo", "chapman_shaoxing", "cpsc_2018", "georgia"
-        ]
-        payload["protocol"]["logical_centers"] = source_centers
-        payload["clean"]["per_center"] = {center: _metric_body() for center in source_centers}
-        for view in payload["corrupted"]["per_view"]:
-            view["per_center"] = {center: _metric_body() for center in source_centers}
-        for aggregate in payload["corrupted"]["aggregates"].values():
-            aggregate["center_order"] = source_centers
-    exit_code, manifest = _record_payload(plan, "evaluation_result.json", payload)
-    assert exit_code == 1
-    assert "checkpoint differs" in manifest["error"]
-
-
-def test_matrix_result_is_registered_and_sealed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_matrix_result_is_registered(tmp_path: Path) -> None:
     _, plan = _action_plan(tmp_path, "aggregate_pn2021", delegate_subdir="evaluation")
     assert plan.expected_result_relative_path == Path("evaluation/matrix_result.json")
     assert plan.expected_result_type == "pn2021_matrix_result"
-    payload = _matrix_result(tmp_path)
-    _stub_matrix_recompute(monkeypatch, payload)
-    exit_code, manifest = _record_payload(plan, "matrix_result.json", payload)
-    assert exit_code == 0
-    assert manifest["delegate_result"]["identity"]["centers"] == payload["centers"]
-
-
-@pytest.mark.parametrize("attack", ["artifact", "order", "model", "cohort", "member_sha", "aggregates"])
-def test_matrix_result_rejects_invalid_contract(
-    tmp_path: Path, attack: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    _, plan = _action_plan(tmp_path / attack, "aggregate_pn2021", delegate_subdir="evaluation")
-    payload = _matrix_result(tmp_path / attack)
-    _stub_matrix_recompute(monkeypatch, payload)
-    if attack == "artifact":
-        payload["artifact_type"] = "pn2021_evaluation_result"
-    elif attack == "order":
-        payload["centers"] = list(reversed(payload["centers"]))
-    elif attack == "model":
-        payload["model"]["name"] = "unknown"
-    elif attack == "cohort":
-        payload["cohort"] = {}
-    elif attack == "member_sha":
-        payload["members"][0]["evaluation_result"]["sha256"] = "f" * 64
-    else:
-        payload["corrupted"]["aggregates"] = {}
-    exit_code, manifest = _record_payload(plan, "matrix_result.json", payload)
-    assert exit_code == 1 and manifest["delegate_result"] is None
-
-
-@pytest.mark.parametrize(
-    ("key", "value"),
-    (("class_order", ["NORM", "CD", "HYP", "MI", "STTC"]),
-     ("heldout_ref_exclusion_required", False)),
-)
-def test_legacy_evaluation_rejects_unlocked_training_protocol(
-    tmp_path: Path, key: str, value: object
-) -> None:
-    _, plan = _action_plan(tmp_path, "evaluate_pn2021", delegate_subdir="evaluation")
-    payload = _evaluation_result()
-    payload["subject"]["mode"] = "legacy_center_adapted"
-    payload["subject"]["lineage"].update(checkpoint={"sha256": FIXTURE_CHECKPOINT_SHA256})
-    referenced = _typed_train_result()
-    for field in ("schema_version", "artifact_type", "lineage", "seed"):
-        referenced.pop(field)
-    referenced["config"]["training"]["resolved"]["protocol"][key] = value
-    artifact = tmp_path / "legacy_train_result.json"
-    artifact.write_text(json.dumps(referenced), encoding="utf-8")
-    payload["subject"]["train_result"] = {
-        "path": str(artifact), "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest()
-    }
-    exit_code, manifest = _record_payload(plan, "evaluation_result.json", payload)
-    assert exit_code == 1
-    assert "locked K500 protocol" in manifest["error"]
 
 
 def test_internal_absolute_yaml_reference_is_rejected(tmp_path: Path) -> None:

@@ -6,8 +6,10 @@ from dataclasses import dataclass
 
 import torch
 
+from util.pn2021_artifact_contract import CLASS_ORDER as _PORTABLE_CLASS_ORDER
 
-CLASS_ORDER = ("CD", "HYP", "MI", "NORM", "STTC")
+
+CLASS_ORDER = tuple(_PORTABLE_CLASS_ORDER)
 
 
 @dataclass(frozen=True)

@@ -48,6 +48,7 @@ from util.evaluation.metrics import (
     aggregate_corruption_views,
     compute_metric_views,
     mean_metric_views,
+    validate_evaluation_aggregates,
 )
 from util.random_seed import seed_process
 
@@ -1548,6 +1549,7 @@ def evaluate_pn2021(
         },
         "output": {"directory": str(output), "result_file": str(result_path)},
     }
+    validate_evaluation_aggregates(result)
     _atomic_json(result_path, result)
     return result
 

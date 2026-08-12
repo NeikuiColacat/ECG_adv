@@ -19,9 +19,12 @@ from core.train_PN2021 import _validate_locked_source_checkpoint
 from models.checkpoints import (
     CheckpointIdentity,
     load_model_checkpoint,
-    validate_training_lineage,
 )
 from models.contracts import ECGFOUNDER_SPEC, EFFICIENTNET1DV2_SPEC
+from util.pn2021_artifact_contract import (
+    resolve_artifact_reference,
+    validate_training_lineage,
+)
 from util.random_seed import derive_seed, load_random_seed_config
 
 
@@ -141,11 +144,18 @@ def test_training_lineage_is_exact_and_binds_managed_selection(tmp_path: Path) -
         ("seed", "base_seed", None), ("seed", "effective_seed", True),
         ("seed", "namespace", 7), ("comparison", "group", None),
         ("comparison", "replicate_id", "0"), ("method", "schema_version", "2"),
-        ("method", "recipe_version", False),
+        ("method", "recipe_version", False), ("adaptation_data", "split_id", 7),
+        ("adaptation_data", "record_count", 499),
+        ("adaptation_data", "source_centers", ["ningbo", "georgia"]),
     ):
         drifted = {**lineage, section: {**lineage[section], field: value}}
         with pytest.raises(ValueError):
             validate_training_lineage(drifted)
+
+    with pytest.raises(ValueError):
+        resolve_artifact_reference(
+            {"path": 7, "sha256": "0" * 64}, owner=tmp_path / "owner.json", name="fixture"
+        )
 
 
 def test_checkpoint_loader_exposes_schema3_and_finite_schema2(tmp_path: Path) -> None:
@@ -173,7 +183,7 @@ def test_checkpoint_loader_exposes_schema3_and_finite_schema2(tmp_path: Path) ->
         with pytest.raises(ValueError, match="run_identity"):
             load_model_checkpoint(torch.nn.Linear(2, 1), path)
     payload["center"] = "georgia"; torch.save(payload, path)
-    with pytest.raises(ValueError, match="root identity"):
+    with pytest.raises(ValueError, match="root.*lineage"):
         load_model_checkpoint(torch.nn.Linear(2, 1), path)
 
     legacy = {"schema_version": 2, "center": "ningbo", "method_id": "a0_clean_v1",

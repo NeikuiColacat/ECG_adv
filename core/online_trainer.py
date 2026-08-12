@@ -37,7 +37,7 @@ from core.methods import (
     build_method_runtime,
     load_recipe_spec,
 )
-from models.checkpoints import sha256_file, validate_training_lineage
+from models.checkpoints import sha256_file
 from models.contracts import (
     CLASS_ORDER,
     ECGFOUNDER_SPEC,
@@ -52,6 +52,7 @@ from util.config_bundle import (
     resolve_entry_config_path,
 )
 from util.random_seed import make_torch_generator, seed_process
+from util.pn2021_artifact_contract import validate_training_lineage
 
 if TYPE_CHECKING:
     from core.latent_pool import LatentPool

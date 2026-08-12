@@ -35,7 +35,9 @@ the repository's default configs.
   subject instead records and verifies its resolved path and SHA256.
 - `aggregate_pn2021` accepts exactly four external `--result` JSON artifacts.
   Those produced artifacts are identity-checked inputs, not YAML dependencies,
-  so only the experiment and minimal matrix config enter its closure.
+  so only the experiment and matrix contract enter its closure. The matrix
+  profile owns the exact backbone, recipe, replicate, source, seed, common data
+  identity, per-center K500 identities, evaluation locks, and config hashes.
 - `config_closure: snapshot_only` and
   `config_closure: managed_run_snapshots_and_sha256` mark evidence registries
   whose nested historical paths are snapshots, not live dependencies.
@@ -112,7 +114,9 @@ The `aggregate_pn2021` entrypoint performs no inference. It accepts the four
 prospective single-center results in canonical center order, recomputes the
 diagonal matrix from member `clean.per_center` and corrupted `per_view`
 metrics, then writes a schema-v1 `pn2021_diagonal_four_center_evaluation`.
-Member-provided aggregate fields are never treated as source evidence.
+Member-provided aggregate fields are validated by recomputation rather than
+treated as source evidence. The reducer does not deserialize checkpoints, but
+it streams their bytes to revalidate the recorded SHA256 before aggregation.
 
 ## Output and Local Paths
 

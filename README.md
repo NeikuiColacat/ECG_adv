@@ -131,9 +131,10 @@ members.
 
 After all four prospective center evaluations exist, the tracked EfficientNet
 or ECGFounder matrix experiment aggregates their diagonal only. This is a
-CPU/JSON step: it loads no ECG data, checkpoint, model, or GPU, rejects lineage
-or center drift, and recomputes equal-view then equal-center metrics instead of
-trusting member aggregate fields. Its schema-v1
+CPU/JSON step: it reads no ECG data and never deserializes a checkpoint or
+constructs a model/GPU runtime. It does stream checkpoint bytes to verify their
+SHA256, rejects lineage/cohort/center drift, and recomputes equal-view then
+equal-center metrics instead of trusting member aggregate fields. Its schema-v1
 `pn2021_diagonal_four_center_evaluation` remains prospective evidence until the
 underlying registered repetitions satisfy the paper-promotion gate.
 
