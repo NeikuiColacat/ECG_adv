@@ -61,35 +61,6 @@ def _sample_ids(values: Sequence[str], batch_size: int) -> tuple[str, ...]:
 
 
 @dataclass(frozen=True)
-class Provenance:
-    """Batch lineage for one finite-recipe view."""
-
-    node_id: str
-    operation: str
-    parent_names: tuple[str, ...] = ()
-    rng_namespace: str | None = None
-    parameters: Mapping[str, Any] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        _name(self.node_id, "provenance.node_id")
-        _name(self.operation, "provenance.operation")
-        if any(not isinstance(value, str) or not value for value in self.parent_names):
-            raise ValueError("provenance.parent_names must contain non-empty strings")
-        if self.rng_namespace is not None:
-            _name(self.rng_namespace, "provenance.rng_namespace")
-        object.__setattr__(self, "parameters", _frozen_mapping(self.parameters))
-
-    def describe(self) -> dict[str, Any]:
-        return {
-            "node_id": self.node_id,
-            "operation": self.operation,
-            "parent_names": list(self.parent_names),
-            "rng_namespace": self.rng_namespace,
-            "parameters": dict(self.parameters),
-        }
-
-
-@dataclass(frozen=True)
 class WaveformView:
     """Finite canonical raw-mV ECG batch with shape ``(B,1000,12)``."""
 
@@ -97,7 +68,6 @@ class WaveformView:
     waveform: torch.Tensor
     labels: torch.Tensor
     sample_ids: tuple[str, ...]
-    provenance: Provenance
     valid_mask: torch.Tensor | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
     sampling_rate_hz: int = CANONICAL_SAMPLING_RATE_HZ
@@ -243,7 +213,6 @@ __all__ = [
     "MethodRequirements",
     "ObjectivePlan",
     "ObjectiveTerm",
-    "Provenance",
     "SUPER5_CLASSES",
     "ViewBundle",
     "WaveformView",

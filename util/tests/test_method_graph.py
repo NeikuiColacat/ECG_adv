@@ -17,6 +17,7 @@ import core.corruption as corruption
 import core.latent_pool as latent_pool
 import core.lhat as lhat
 import core.methods as methods
+import core.methods.contracts as method_contracts
 import core.methods.runtime as method_runtime
 import core.online_trainer as online_trainer
 from core.lhat import AttackThenContractDiagnostics
@@ -108,6 +109,14 @@ def test_loader_removes_dag_plugins_and_allows_only_the_matched_no_vae_slot() ->
     assert tuple(corruption.CorruptionDiagnostics.__dataclass_fields__) == (
         "composition_index", "depth", "operator_mask", "output_nonfinite_count")
     assert "return_reasons" not in inspect.signature(method_runtime._quality_mask).parameters
+    assert "Provenance" not in set(vars(method_contracts)) | set(method_contracts.__all__)
+    assert tuple(method_contracts.WaveformView.__dataclass_fields__) == (
+        "name", "waveform", "labels", "sample_ids", "valid_mask", "metadata",
+        "sampling_rate_hz", "units", "layout")
+    runtime_source = inspect.getsource(method_runtime.MethodViewRuntime)
+    assert all(value not in runtime_source for value in (
+        '"corruption_diagnostics"', '"exposure_kind"', '"diagnostic_means"',
+        '"anchor_waveform_raw"', '"source_view"', "full_anchor_reconstruction"))
     assert "DEFAULT_METHOD_CONFIG_DIR" not in vars(online_trainer)
     assert "profile_name" not in vars(online_trainer.OnlineTrainConfig)
     assert {"model", "history"}.isdisjoint(
@@ -177,11 +186,13 @@ def test_cpu_a0_a3_and_direct_generation_goldens(
     view = generated.bundle.require(view_name)
     assert hashlib.sha256(view.waveform.numpy().tobytes()).hexdigest() == waveform_sha
     assert torch.equal(generated.bundle.require("clean_view").waveform, waveform)
+    assert generated.bundle.require("clean_view").metadata == {}
     assert view.sample_ids == hashes
     if trace is None:
         assert generated.stochastic_trace == {}
     else:
         prefix = "depth23_corruption/"
+        assert tuple(view.metadata) == ("diagnostic_weight", "stochastic_trace")
         assert generated.stochastic_trace[prefix + "composition_index"].tolist() == trace[0]
         assert generated.stochastic_trace[prefix + "depth"].tolist() == trace[1]
         assert generated.stochastic_trace[prefix + "operator_mask"].tolist() == trace[2]

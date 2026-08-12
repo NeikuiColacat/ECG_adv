@@ -21,7 +21,6 @@ from core.lhat import (
 )
 from core.methods.contracts import (
     BASE_VIEW_NAME,
-    Provenance,
     ViewBundle,
     WaveformView,
 )
@@ -477,23 +476,7 @@ class MethodViewRuntime:
                     labels=source.labels,
                     sample_ids=source.sample_ids,
                     valid_mask=source.valid_mask,
-                    provenance=Provenance(
-                        node_id=context.node_id,
-                        operation=context.node_type,
-                        parent_names=(source.name,),
-                        rng_namespace=context.rng_namespace,
-                        parameters={
-                            "operator_profile": self.operator_profile.profile_name,
-                            "severity": self.operator_profile.severity,
-                            "operator_domain_sampling_rate_hz": 500,
-                            "composition_selection": "clean_identity_sentinel",
-                            "composition_index": -1,
-                        },
-                    ),
                     metadata={
-                        "corruption_diagnostics": None,
-                        "composition_indices": composition_indices.contiguous(),
-                        "exposure_kind": "clean_identity",
                         "diagnostic_weight": source.batch_size,
                         "stochastic_trace": {
                             "composition_index": composition_indices.detach().contiguous(),
@@ -536,22 +519,7 @@ class MethodViewRuntime:
             labels=source.labels,
             sample_ids=source.sample_ids,
             valid_mask=valid,
-            provenance=Provenance(
-                node_id=context.node_id,
-                operation=context.node_type,
-                parent_names=(source.name,),
-                rng_namespace=context.rng_namespace,
-                parameters={
-                    "operator_profile": self.operator_profile.profile_name,
-                    "severity": self.operator_profile.severity,
-                    "operator_domain_sampling_rate_hz": 500,
-                    "composition_selection": (
-                        "random" if composition_indices is None else "forced"
-                    ),
-                },
-            ),
             metadata={
-                "corruption_diagnostics": result.diagnostics,
                 "diagnostic_weight": source.batch_size,
                 "stochastic_trace": {
                     "composition_index": (
@@ -604,7 +572,6 @@ class MethodViewRuntime:
             if hash_id not in eligible_universe
         )
         full_waveform = source.waveform.clone()
-        full_anchor_reconstruction = source.waveform.clone()
         full_valid = torch.zeros(
             source.batch_size, device=source.waveform.device, dtype=torch.bool
         )
@@ -672,11 +639,6 @@ class MethodViewRuntime:
                     config=self.lhat_config,
                 )
                 training_waveform = contract_result.waveform_raw
-            full_anchor_reconstruction.index_copy_(
-                0,
-                candidate_index,
-                attack.anchor_waveform_raw,
-            )
             accepted_local, reasons = _quality_mask(
                 training_waveform,
                 minimum_std_mV=self.minimum_std_mV,
@@ -773,28 +735,14 @@ class MethodViewRuntime:
             labels=source.labels,
             sample_ids=source.sample_ids,
             valid_mask=full_valid,
-            provenance=Provenance(
-                node_id=context.node_id,
-                operation=context.node_type,
-                parent_names=(source.name,),
-                rng_namespace=context.rng_namespace,
-                parameters={
-                    "candidate_mode": self.lhat_config.candidate_mode,
-                    "num_candidates": self.lhat_config.num_candidates,
-                    "attack_then_contract": attack_then_contract,
-                    "quality_rejection_policy": "clean_loss_only",
-                },
-            ),
             metadata={
                 "candidate_eligible_positions": candidate_positions,
                 "accepted_positions": accepted_positions,
                 "ineligible_hash_ids": ineligible,
                 "quality_rejected": tuple(rejected),
-                "diagnostic_means": diagnostic_means,
                 "diagnostic_samples": diagnostic_samples,
                 "diagnostic_weights": local_diagnostic_weights,
                 "stochastic_trace": stochastic_trace,
-                "anchor_waveform_raw": full_anchor_reconstruction.detach().contiguous(),
             },
         )
 
@@ -834,13 +782,6 @@ class MethodViewRuntime:
             waveform=clean_raw,
             labels=targets,
             sample_ids=tuple(str(value) for value in hash_ids),
-            provenance=Provenance(
-                node_id="clean_identity",
-                operation="identity_raw100_view",
-                parent_names=("clean_raw",),
-                parameters={"source": "clean_raw"},
-            ),
-            metadata={"source_view": "clean_raw"},
         )
         selected_terms = (
             self.recipe.objective.terms
@@ -965,9 +906,9 @@ class MethodViewRuntime:
                 )
                 for item in metadata["quality_rejected"]:
                     rejection = dict(item)
-                    rejection.setdefault("node_id", value.provenance.node_id)
+                    rejection.setdefault("node_id", value.name)
                     rejected_values.append(rejection)
-            prefix = f"{value.provenance.node_id}/"
+            prefix = f"{value.name}/"
             metadata_samples = metadata.get("diagnostic_samples")
             if isinstance(metadata_samples, Mapping):
                 for local_name, sample_values in metadata_samples.items():
