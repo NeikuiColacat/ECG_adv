@@ -156,6 +156,30 @@ def test_six_exposures_reuse_one_batch_and_form_one_outer_step_group() -> None:
     assert [batch["__composition_index"] for batch in batches[1:5]] == [0, 1, 10, 11]
 
 
+def test_empty_lhat_auxiliary_is_an_empty_gradient_sum() -> None:
+    parameter = torch.nn.Parameter(torch.tensor(2.0))
+    optimizer = torch.optim.SGD((parameter,), lr=.1)
+    scaler = torch.cuda.amp.GradScaler(enabled=False)
+    (parameter.square()).backward()
+    accumulated = parameter.grad.clone()
+    empty = trainer._ObjectiveBatch(
+        total=torch.tensor(0.0), raw_terms={}, weighted_terms={},
+        valid_counts={"lhat_direct_bce": 0})
+    returned = trainer._backward_objective(
+        empty, loss_scale=2.0, scaler=scaler, empty_lhat_auxiliary=True)
+    assert returned.item() == 0.0 and torch.equal(parameter.grad, accumulated)
+    optimizer.step()
+    assert parameter.item() == pytest.approx(1.6)
+
+    detached = trainer._ObjectiveBatch(
+        total=torch.tensor(1.0), raw_terms={}, weighted_terms={},
+        valid_counts={"lhat_direct_bce": 1})
+    with pytest.raises(RuntimeError, match="detached"):
+        trainer._backward_objective(
+            detached, loss_scale=2.0, scaler=scaler,
+            empty_lhat_auxiliary=False)
+
+
 RNG_CASES = [
     ("a3c_depth23_v1.yaml", "base", None, "corruption_rng", "depth23_corruption", "composition_and_operators", 4099549646),
     ("direct_depth23_fixed20.yaml", "corruption_07", 7, "corruption_rng", "depth23_corruption", "composition_and_operators", 1342437248),

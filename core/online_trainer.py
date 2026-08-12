@@ -1184,6 +1184,29 @@ class _ObjectiveBatch:
     valid_counts: dict[str, int]
 
 
+def _backward_objective(
+    objective: _ObjectiveBatch,
+    *,
+    loss_scale: float,
+    scaler: Any,
+    empty_lhat_auxiliary: bool,
+) -> torch.Tensor:
+    """Backpropagate one exposure, treating an empty LHAT view as an empty sum."""
+
+    scaled = objective.total * loss_scale
+    if empty_lhat_auxiliary:
+        if objective.valid_counts != {"lhat_direct_bce": 0}:
+            raise RuntimeError("empty LHAT auxiliary has an inconsistent objective")
+        return scaled
+    if not scaled.requires_grad:
+        raise RuntimeError("non-empty online objective is detached from the model")
+    if scaler.is_enabled():
+        scaler.scale(scaled).backward()
+    else:
+        scaled.backward()
+    return scaled
+
+
 def _compute_objective(
     *,
     recipe: RecipeSpec,
@@ -2821,11 +2844,16 @@ def train_online_model(
                         raise FloatingPointError(
                             "online training loss became NaN or Inf"
                         )
-                    scaled_objective = objective.total * family_loss_scale
-                    if scaler.is_enabled():
-                        scaler.scale(scaled_objective).backward()
-                    else:
-                        scaled_objective.backward()
+                    scaled_objective = _backward_objective(
+                        objective,
+                        loss_scale=family_loss_scale,
+                        scaler=scaler,
+                        empty_lhat_auxiliary=(
+                            staged_method
+                            and exposure_name == "auxiliary"
+                            and objective.valid_counts == {"lhat_direct_bce": 0}
+                        ),
+                    )
                 if timer is not None:
                     timer.stop("forward_backward")
 
