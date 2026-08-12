@@ -36,6 +36,7 @@ from util.config_bundle import (  # noqa: E402
     resolve_config_reference,
     resolve_entry_config_path,
 )
+from util import pn2021_artifact_contract as _artifact_contract  # noqa: E402
 from util.random_seed import (  # noqa: E402
     derive_seed,
     load_random_seed_config,
@@ -53,21 +54,6 @@ EXPECTED_QUALITY_STATUSES = ("clean", "repaired")
 TUNING_TRAIN_PARTITION = "k500_tune_train"
 TUNING_VALIDATION_PARTITION = "k500_tune_validation"
 TUNING_SPLIT_POLICY = "deterministic_multilabel_source_stratified"
-
-
-def _resolve_project_path(value: str | Path) -> Path:
-    path = Path(value).expanduser()
-    if not path.is_absolute():
-        path = PROJECT_ROOT / path
-    return path.resolve()
-
-
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def _hash_id_set_sha256(values: Iterable[str]) -> str:
@@ -307,7 +293,7 @@ def _artifact(path: Path) -> dict[str, Any]:
     array = np.load(path, mmap_mode="r", allow_pickle=False)
     result = {
         "file": path.name,
-        "sha256": _sha256_file(path),
+        "sha256": _artifact_contract.sha256_file(path),
         "shape": list(array.shape),
         "dtype": str(array.dtype),
     }
@@ -374,7 +360,7 @@ def _build_ptbxl_split(
     config: dict[str, Any],
     output_dir: Path,
 ) -> dict[str, Any]:
-    cache_dir = _resolve_project_path(config["cache_dir"])
+    cache_dir = resolve_entry_config_path(config["cache_dir"])
     with load_cache(
         cache_dir,
         sampling_rate_hz=int(config["sampling_rate_hz"]),
@@ -479,7 +465,7 @@ def _build_ptbxl_split(
         return {
             "split_id": manifest["split_id"],
             "manifest": str(manifest_path.relative_to(output_dir.parent)),
-            "manifest_sha256": _sha256_file(manifest_path),
+            "manifest_sha256": _artifact_contract.sha256_file(manifest_path),
             "source_manifest_sha256": cache.identity.manifest_sha256,
             "split_hashes": {
                 name: split_manifest[name]["hash_id_set_sha256"]
@@ -805,7 +791,7 @@ def _build_pn2021_split(
     base_seed: int,
     seed_namespace: str,
 ) -> dict[str, Any]:
-    cache_dir = _resolve_project_path(config["cache_dir"])
+    cache_dir = resolve_entry_config_path(config["cache_dir"])
     with load_cache(
         cache_dir,
         sampling_rate_hz=int(config["sampling_rate_hz"]),
@@ -997,7 +983,7 @@ def _build_pn2021_split(
                 json.dumps(center_manifest, ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8",
             )
-            center_manifest["manifest_sha256"] = _sha256_file(
+            center_manifest["manifest_sha256"] = _artifact_contract.sha256_file(
                 center_dir / "split_manifest.json"
             )
             center_manifests[logical_name] = center_manifest
@@ -1043,7 +1029,7 @@ def _build_pn2021_split(
         return {
             "split_id": manifest["split_id"],
             "manifest": str(manifest_path.relative_to(output_dir.parent)),
-            "manifest_sha256": _sha256_file(manifest_path),
+            "manifest_sha256": _artifact_contract.sha256_file(manifest_path),
             "source_manifest_sha256": cache.identity.manifest_sha256,
             "k500_hashes": {
                 name: entry["k500_hash_id_set_sha256"]
@@ -1075,7 +1061,7 @@ def build_cache_splits(config_path: str | Path = DEFAULT_CONFIG) -> Path:
     )
     base_seed = load_random_seed_config(seed_path).base_seed
     seed_namespace = str(config["random_seed"]["namespace"])
-    output_root = _resolve_project_path(config["output"]["root_dir"])
+    output_root = resolve_entry_config_path(config["output"]["root_dir"])
     if output_root.exists():
         raise FileExistsError(f"refusing to overwrite split root: {output_root}")
     staging_root = output_root.with_name(f".{output_root.name}.building")
@@ -1110,12 +1096,12 @@ def build_cache_splits(config_path: str | Path = DEFAULT_CONFIG) -> Path:
             "config": {
                 "source_path": str(resolved_config_path),
                 "snapshot_file": config_snapshot.name,
-                "sha256": _sha256_file(config_snapshot),
+                "sha256": _artifact_contract.sha256_file(config_snapshot),
             },
             "random_seed": {
                 "source_path": str(seed_path),
                 "snapshot_file": seed_snapshot.name,
-                "sha256": _sha256_file(seed_snapshot),
+                "sha256": _artifact_contract.sha256_file(seed_snapshot),
                 "base_seed": int(base_seed),
                 "namespace": seed_namespace,
                 "derivation": "sha256_first_uint32_little_endian",
@@ -1153,6 +1139,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-
-__all__ = ["DEFAULT_CONFIG", "build_cache_splits", "load_split_config"]

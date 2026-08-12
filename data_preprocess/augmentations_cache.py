@@ -27,6 +27,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from data_preprocess.load_cache import (  # noqa: E402
+    EXPECTED_CLASS_ORDER,
+    EXPECTED_LEADS,
+)
 from util.augmentations.operators import (  # noqa: E402
     UPSTREAM_COMMIT,
     baseline_shift,
@@ -43,6 +47,7 @@ from util.config_bundle import (  # noqa: E402
     resolve_config_reference,
     resolve_entry_config_path,
 )
+from util import pn2021_artifact_contract as _artifact_contract  # noqa: E402
 from util.random_seed import (  # noqa: E402
     DEFAULT_RANDOM_SEED_CONFIG_PATH,
     make_numpy_rng,
@@ -51,21 +56,6 @@ from util.random_seed import (  # noqa: E402
 
 
 DEFAULT_CONFIG = PROJECT_ROOT / "configs" / "augmentation" / "cache.yaml"
-EXPECTED_LEADS = [
-    "I",
-    "II",
-    "III",
-    "aVR",
-    "aVL",
-    "aVF",
-    "V1",
-    "V2",
-    "V3",
-    "V4",
-    "V5",
-    "V6",
-]
-EXPECTED_CLASS_ORDER = ["CD", "HYP", "MI", "NORM", "STTC"]
 OPERATOR_FUNCTIONS: dict[str, Callable[..., np.ndarray]] = {
     "powerline_noise": powerline_noise,
     "emg_noise": emg_noise,
@@ -78,13 +68,6 @@ OPERATORS_WITH_FREQ = {
     "baseline_wander",
     "baseline_shift",
 }
-
-
-def _resolve_project_path(value: str | Path) -> Path:
-    path = Path(value).expanduser()
-    if not path.is_absolute():
-        path = PROJECT_ROOT / path
-    return path.resolve()
 
 
 def _read_yaml_mapping(path: str | Path, *, description: str) -> dict[str, Any]:
@@ -317,14 +300,6 @@ def linear_interpolate_time_batch(
     return np.ascontiguousarray(output, dtype=np.float32)
 
 
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
 def _stable_payload_hash(payload: dict[str, Any]) -> str:
     encoded = json.dumps(
         payload,
@@ -348,7 +323,7 @@ def _load_source_contract(
     config: dict[str, Any],
 ) -> tuple[Path, dict[str, Any], str]:
     source = config["source"]
-    source_dir = _resolve_project_path(source["cache_dir"])
+    source_dir = resolve_entry_config_path(source["cache_dir"])
     manifest_path = source_dir / str(source["manifest_file"])
     if not source_dir.is_dir() or not manifest_path.is_file():
         raise FileNotFoundError(
@@ -364,7 +339,7 @@ def _load_source_contract(
         raise ValueError(f"unexpected source 100 Hz shape: {waveform.get('shape')}")
     if waveform.get("sampling_rate_hz") != 100:
         raise ValueError("source base waveform must be 100 Hz")
-    if waveform.get("lead_order") != EXPECTED_LEADS:
+    if waveform.get("lead_order") != list(EXPECTED_LEADS):
         raise ValueError("source lead order does not match PTB-XL order")
     if waveform.get("physical_unit") != "mV" or waveform.get("normalization") != "none":
         raise ValueError("source waveform must be unnormalized physical-mV data")
@@ -372,13 +347,13 @@ def _load_source_contract(
         raise ValueError(f"unexpected source 500 Hz shape: {derived.get('shape')}")
     if derived.get("sampling_rate_hz") != 500 or derived.get("source_file") != waveform.get("file"):
         raise ValueError("500 Hz source must be derived from the canonical 100 Hz cache")
-    if labels.get("class_order") != EXPECTED_CLASS_ORDER:
+    if labels.get("class_order") != list(EXPECTED_CLASS_ORDER):
         raise ValueError("source Super5 class order mismatch")
     if labels.get("mapping_version") != source["required_mapping_version"]:
         raise ValueError("source Super5 mapping version mismatch")
     if labels.get("mapping_hash") != source["required_mapping_hash"]:
         raise ValueError("source Super5 mapping hash mismatch")
-    return source_dir, manifest, _sha256_file(manifest_path)
+    return source_dir, manifest, _artifact_contract.sha256_file(manifest_path)
 
 
 def _select_source_records(
@@ -596,7 +571,7 @@ def describe_cache_plan(
         "cache_version": config["cache_version"],
         "source_cache_dir": str(source_dir),
         "source_manifest_sha256": source_manifest_sha256,
-        "output_cache_dir": str(_resolve_project_path(config["output"]["cache_dir"])),
+        "output_cache_dir": str(resolve_entry_config_path(config["output"]["cache_dir"])),
         "centers": list(config["source"]["centers"]),
         "center_counts": {
             str(center): int(count)
@@ -649,13 +624,13 @@ def build_augmentations_cache(
     )
 
     config_identity = {
-        "config_sha256": _sha256_file(config_path),
+        "config_sha256": _artifact_contract.sha256_file(config_path),
         "operators_sha256": operator_profile.config_sha256,
         "random_seed_sha256": declared_seed.sha256,
         "source_manifest_sha256": source_manifest_sha256,
     }
     config_identity["config_identity_hash"] = _stable_payload_hash(config_identity)
-    output_dir = _resolve_project_path(config["output"]["cache_dir"])
+    output_dir = resolve_entry_config_path(config["output"]["cache_dir"])
     staging_dir, output_100, output_500, state = _prepare_staging(
         output_dir=output_dir,
         config_identity=config_identity,
@@ -786,8 +761,8 @@ def build_augmentations_cache(
             "source_waveform_500hz_file": str(config["source"]["waveform_500hz_file"]),
             "mapping_version": source_manifest["labels"]["mapping_version"],
             "mapping_hash": source_manifest["labels"]["mapping_hash"],
-            "class_order": EXPECTED_CLASS_ORDER,
-            "lead_order": EXPECTED_LEADS,
+            "class_order": list(EXPECTED_CLASS_ORDER),
+            "lead_order": list(EXPECTED_LEADS),
             "physical_unit": "mV",
             "normalization": "none",
         },

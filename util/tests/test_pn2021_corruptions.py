@@ -6,14 +6,17 @@ from pathlib import Path
 
 import numpy as np
 
+import data_preprocess.augmentations_cache as cache_builder
 from data_preprocess.augmentations_cache import (
     apply_composition,
     build_compositions,
     load_cache_config,
     load_operators_profile,
 )
+from data_preprocess.load_cache import EXPECTED_CLASS_ORDER, EXPECTED_LEADS
 from util.augmentations.operators import baseline_shift, random_leads_masking
 from util.augmentations.profile import CANONICAL_OPERATOR_ORDER
+from util import pn2021_artifact_contract as artifact_contract
 from util.random_seed import derive_seed
 
 
@@ -38,6 +41,12 @@ def _contracts():
 def test_locked_profile_and_cache_share_one_pn2021c_contract() -> None:
     cache, profile = _contracts()
 
+    assert cache_builder.EXPECTED_LEADS is EXPECTED_LEADS
+    assert cache_builder.EXPECTED_CLASS_ORDER is EXPECTED_CLASS_ORDER
+    assert cache_builder._artifact_contract is artifact_contract
+    assert {"_resolve_project_path", "_sha256_file", "sha256_file"}.isdisjoint(
+        vars(cache_builder)
+    )
     assert profile.canonical_order == CANONICAL_OPERATOR_ORDER
     assert profile.profile_name == "pn2021c_paper_anchored_s5_v1"
     assert profile.severity == 5

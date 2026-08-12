@@ -15,6 +15,7 @@ import torch
 import yaml
 
 from data_preprocess import preprocess_primitives as primitives
+from data_preprocess import split_cache
 from data_preprocess.load_cache import EXPECTED_CLASS_ORDER, EXPECTED_LEADS
 from models.contracts import (
     CLASS_ORDER,
@@ -33,6 +34,7 @@ from models.input_adapter import (
     prepare_canonical_model_input,
 )
 from util.config_bundle import resolve_yaml_config_closure
+from util import pn2021_artifact_contract as artifact_contract
 
 
 REPO = Path(__file__).resolve().parents[2]
@@ -380,6 +382,10 @@ def test_k500_handoff_locks_finite_loader_openings() -> None:
         assert hashlib.sha256(path.read_bytes()).hexdigest() == identity["sha256"]
 
     modules = handoff["required_modules"]
+    assert split_cache._artifact_contract is artifact_contract
+    assert {
+        "_resolve_project_path", "_sha256_file", "sha256_file", "__all__",
+    }.isdisjoint(vars(split_cache))
     assert set(modules["runtime"]).isdisjoint(modules["cache_builders"])
     assert [
         group for group, paths in modules.items()
