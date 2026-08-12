@@ -165,13 +165,14 @@ backbone, registered run records, and mean/standard-deviation reporting.
 The 2026-08-06 `r2` run remains legacy typed-method-graph metric evidence. It
 is not a post-migration RecipeSpec replay: its run-scoped snapshots did not
 include the Stage-1 AugMix config/resource identity. The 16 current mainline
-train/eval configs therefore target a fresh
-`manual_refactor_paper_kernel_v2_recipe_v1_r1` output root, which has not yet
-been used for a full replication. A separate one-epoch Ningbo diagnostic smoke
-at commit `dfd00ec` completed Direct EfficientNet and both mainline backbones;
-it verifies the managed CUDA seams only and is not performance or paper
-evidence. Its locked artifact identity and limitations are recorded in
-`configs/active_scripts.yaml`.
+train/eval configs therefore still target a fresh full-budget
+`manual_refactor_paper_kernel_v2_recipe_v1_r1` replication root. One-epoch
+Ningbo diagnostic smokes at commits `dfd00ec` and `929c05e` completed Direct
+EfficientNet and both mainline backbones; the latter independently verifies the
+finite raw-100-Hz loader, content-ledger snapshots, RecipeSpec resources, and
+three LHAT diagnostic scopes. These runs verify managed CUDA seams only and
+are not performance, full-replication, or paper evidence. Their locked artifact
+identities and limitations are recorded in `configs/active_scripts.yaml`.
 
 The registered PTB-XL source checkpoints and fold metrics remain frozen
 historical evidence. The live PTB-XL training config now describes the finite

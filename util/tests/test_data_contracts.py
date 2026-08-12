@@ -253,6 +253,49 @@ def test_tracked_data_content_ledger_identity_is_consistent() -> None:
     ] == expected_sha
 
 
+def test_post_cp4_cuda_smoke_is_registered_as_diagnostic_only() -> None:
+    scripts = yaml.safe_load((CONFIG_ROOT / "active_scripts.yaml").read_text())
+    evidence = yaml.safe_load(
+        (CONFIG_ROOT / "active_evidence_registry.yaml").read_text()
+    )
+    smoke = scripts["latest_mainline"]["verification"]["gpu_replication"][
+        "post_cp4_diagnostic_smoke"
+    ]
+
+    assert smoke["source_git_sha"] == (
+        "929c05eb9c9b21af892a93913aa8ebd1981758f5"
+    )
+    assert smoke["summary_sha256"] == (
+        "54a98d2793a0547a07393e01c4316fb463bcabb2a096ba2aca38d87751bcd561"
+    )
+    assert smoke["claim_boundary"] == "migration_smoke_only_not_performance_evidence"
+    assert smoke["common_contract"] == {
+        "center": "ningbo",
+        "repeats": 1,
+        "epochs": 1,
+        "mainline_stage1_steps": 2,
+        "stage2_outer_optimizer_steps_per_job": 20,
+        "adaptation_records": 500,
+    }
+    assert smoke["data_content"]["ledger_sha256"] == (
+        "d3bf1f18046a695b9c6089f2866cdb854042c3b528434018ecab8f56d36af665"
+    )
+    assert smoke["managed_job_file_index_sha256"] == {
+        "direct_effnet": "7d5f90f4bdfa8bc2392c234aab54fea0485262faaf23f882b9c740a35bd4a322",
+        "mainline_effnet": "00957d123284f0c62fe064338fbbfb9914d52c4e1727b80370dda5af91509a02",
+        "mainline_ecgfounder": "4467486d327344b657ca260b447d46207a24e9c579bacb36cdd9bb21c2b63fbb",
+    }
+    assert smoke["final_checkpoint_sha256"] == {
+        "direct_effnet": "d566ed238eec69cddf7874089b70bae30fad411f9940737b7414cb7beb66cd46",
+        "mainline_effnet": "9c3f3361e1f9b4c0eefc406855779b7ae11aa2cafb20ae88a0b191475be1aee6",
+        "mainline_ecgfounder": "d633a79b4e24937f71ed260f8fb36e6b2b39cce2632c7f0bc0b52ce3332c9a64",
+    }
+    assert "throughput_not_comparable" in smoke["limitations"]
+    assert evidence["active_development_mainline"]["managed_implementation"][
+        "gpu_replication_status"
+    ] == "diagnostic_smoke_passed_not_full_replication"
+
+
 def test_k500_handoff_locks_finite_loader_openings() -> None:
     handoff = yaml.safe_load(
         (CONFIG_ROOT / "data" / "k500_handoff.yaml").read_text(encoding="utf-8")

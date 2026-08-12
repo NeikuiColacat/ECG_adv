@@ -262,6 +262,42 @@ latest_mainline:
           - no_independent_repeats
           - data_cache_payload_bytes_not_content_locked
           - environment_not_bitwise_locked
+      post_cp4_diagnostic_smoke:
+        source_git_sha: 929c05eb9c9b21af892a93913aa8ebd1981758f5
+        artifact_root: /home/linbinhao/ECG_adv_data/runs/cp4_recipe_gpu_smoke_20260812_929c05e_r1
+        summary_file: cp4_smoke_summary.json
+        summary_sha256: 54a98d2793a0547a07393e01c4316fb463bcabb2a096ba2aca38d87751bcd561
+        claim_boundary: migration_smoke_only_not_performance_evidence
+        managed_job_file_index_sha256:
+          direct_effnet: 7d5f90f4bdfa8bc2392c234aab54fea0485262faaf23f882b9c740a35bd4a322
+          mainline_effnet: 00957d123284f0c62fe064338fbbfb9914d52c4e1727b80370dda5af91509a02
+          mainline_ecgfounder: 4467486d327344b657ca260b447d46207a24e9c579bacb36cdd9bb21c2b63fbb
+        final_checkpoint_sha256:
+          direct_effnet: d566ed238eec69cddf7874089b70bae30fad411f9940737b7414cb7beb66cd46
+          mainline_effnet: 9c3f3361e1f9b4c0eefc406855779b7ae11aa2cafb20ae88a0b191475be1aee6
+          mainline_ecgfounder: d633a79b4e24937f71ed260f8fb36e6b2b39cce2632c7f0bc0b52ce3332c9a64
+        data_content:
+          ledger_sha256: d3bf1f18046a695b9c6089f2866cdb854042c3b528434018ecab8f56d36af665
+          execution_verification: quick_exact_inventory_and_size
+          required_roots: [pn2021_cache, split_artifacts]
+        common_contract:
+          center: ningbo
+          repeats: 1
+          epochs: 1
+          mainline_stage1_steps: 2
+          stage2_outer_optimizer_steps_per_job: 20
+          adaptation_records: 500
+        independent_review:
+          artifact_file_indexes_and_hashes_verified: true
+          checkpoint_config_and_ledger_identities_verified: true
+          scientific_counts_and_lhat_three_scopes_verified: true
+        limitations:
+          - no_formal_evaluation
+          - no_cross_center_matrix
+          - no_independent_repeats
+          - reduced_stage1_and_stage2_training_budget
+          - throughput_not_comparable
+          - environment_not_bitwise_locked
       failed_preflight_provenance:
         source_git_sha: 68c120fa7f92b09422013c23d6573256df254f1e
         artifact_root: /home/linbinhao/ECG_adv_data/runs/cp4_recipe_gpu_smoke_20260812_68c120f_r1

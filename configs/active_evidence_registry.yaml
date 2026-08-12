@@ -39,7 +39,7 @@ data_contract:
     view_count: 20
     domain: raw_mV_before_per_sample_global_zscore
   prospective_managed_runtime:
-    status: implemented_cpu_contract_verified_not_rerun
+    status: implemented_cpu_and_diagnostic_cuda_smoke_verified_not_full_replication
     ptbxl_training_config:
       path: configs/train/PTBXL.yaml
       sha256: 27852a7dfcdb65fdec348b524083beaa2c91d4942965b7c57ccc1d5b255329cf
@@ -274,7 +274,7 @@ active_development_mainline:
       legacy_paths_embedded_inside_machine_lock: historical_hash_only_provenance
       runtime_may_open_embedded_legacy_paths: false
   managed_implementation:
-    status: finite_recipe_cpu_verified
+    status: finite_recipe_cpu_and_diagnostic_cuda_smoke_verified
     implementation_identity: finite_recipe_spec_v1
     launcher: boot_scripts/run_experiment.py
     canonical_experiment: configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_ningbo.yaml
@@ -298,7 +298,7 @@ active_development_mainline:
         train/lhat.yaml: 2d1cf2550932f2d2b1cc6fa5893ab4226cb0010e6dbf16be0e8cc6f3ada3a824
         random_seed.yaml: 8b337606c43b6fec2959dd185477ce32f48b139f5fce5112ee26efe58eb4bbbc
     runtime_imports_agent_workspace: false
-    gpu_replication_status: not_run_after_recipe_migration
+    gpu_replication_status: diagnostic_smoke_passed_not_full_replication
     prospective_run_root: /home/linbinhao/ECG_adv_data/runs/manual_refactor_paper_kernel_v2_recipe_v1_r1
   prospective_replication_20260806:
     role: historical_metric_evidence_from_pre_recipe_runtime
@@ -328,7 +328,8 @@ active_development_mainline:
       metric_evidence_retained: true
       post_migration_runtime_replay_claimed: false
       checkpoint_or_json_bitwise_reproduction_claimed: false
-      current_recipe_gpu_run_available: false
+      current_recipe_diagnostic_gpu_smoke_available: true
+      current_recipe_full_budget_gpu_run_available: false
     metric_order: [clean_auroc, clean_auprc, pn2021c_auroc, pn2021c_auprc]
     protocol:
       metric_view: drop_all_zero
