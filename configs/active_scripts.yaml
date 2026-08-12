@@ -183,8 +183,15 @@ latest_mainline:
       - util/tests/test_evaluation_metrics.py
       - util/tests/test_pn2021_evaluation.py
     cpu_contract_result:
-      status: passed_199_skipped_10
+      status: passed_206_skipped_10
       date: "2026-08-12"
+    data_ledger_tool_contract:
+      path: data_preprocess/data_ledger.py
+      status: temporary_fixture_contract_passed_live_cache_ledger_pending
+      tracked_content_ledger: absent
+      full_live_cache_hash: not_run
+      launcher_enforcement: not_implemented
+      run_record_snapshot: not_implemented
     cp4_lineage_contract_result:
       status: passed_with_portable_artifact_contract_independent_review
       pytest: passed_199_skipped_10

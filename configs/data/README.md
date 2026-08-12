@@ -29,6 +29,19 @@ never duplicated waveforms.
 mmap policy, deterministic shuffle partitions, and the model-input transform.
 Explicit `get_dataloader(...)` arguments take precedence over these defaults.
 
+## Data content ledger tool status
+
+`data_preprocess/data_ledger.py` deterministically generates and verifies a
+relocatable JSONL content ledger for the four active cache/split roots. Quick
+verification checks the exact member inventory and byte sizes; full
+verification additionally streams every member through SHA256 and rejects
+metadata-detectable changes during the scan. This is not filesystem snapshot
+isolation: full sealing requires quiescent, read-only roots and an independent
+second full verification pass. The tool has currently been validated only with
+temporary small fixtures. The live cache ledger has not yet been generated or
+enforced by the launcher/run recorder, so cache payload bytes remain
+content-unlocked.
+
 ## K500 comparison handoff
 
 `k500_handoff.yaml` is the machine-readable contract for giving another method
