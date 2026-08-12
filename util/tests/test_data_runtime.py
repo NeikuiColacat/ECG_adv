@@ -658,53 +658,47 @@ def test_sequential_evaluation_session_reuses_two_mmaps_and_selections(
 
     monkeypatch.setattr(data_runtime, "load_selection", open_selection)
     mappings = [cache.signals._mmap for cache in caches.values()]
-    session = SequentialEvaluationDataSession()
-    acquire = {
-        "split_dir": tmp_path / "splits",
-        "partition": "evaluation_all_zero_kept",
-        "logical_center": "ningbo",
-        "sampling_rate_hz": 100,
-        "validate_values": "none",
-    }
-    try:
-        clean_pair = session._acquire(
-            cache_dir=clean_cache.identity.cache_dir,
-            **acquire,
-        )
-        corrupted_pairs = [
-            session._acquire(
-                cache_dir=corrupted_cache.identity.cache_dir,
-                **acquire,
-            )
-            for _view in corrupted_cache.compositions
-        ]
-        assert clean_pair == (clean_cache, clean_selection)
-        assert corrupted_pairs[0][0] is corrupted_pairs[1][0]
-        assert corrupted_pairs[0][1] is corrupted_pairs[1][1]
-        views = [item["composition_id"] for item in corrupted_cache.compositions]
-        assert not np.array_equal(
-            corrupted_cache.get_record(0, view=views[0]).signal,
-            corrupted_cache.get_record(0, view=views[1]).signal,
-        )
-        for cache, selection, view in (
-            (clean_cache, clean_selection, None),
-            *((corrupted_cache, corrupted_selection, view) for view in views),
-        ):
-            dataset = RuntimeECGDataset(
-                cache_dir=cache.identity.cache_dir, split_dir=tmp_path / "splits",
-                partition=selection.partition, logical_center="ningbo", cache_mode="mmap",
-                view=view, validate_values="none", shared_cache=cache,
-                shared_selection=selection,
-            )
-            loader, _ = _build_torch_loader(dataset, batch_size=2, shuffle=False)
-            next(iter(loader))
-            loader.close()
-            assert cache._closed is False
+    split_config = _split_location_fixture(
+        tmp_path, cache_dir=clean_cache.identity.cache_dir
+    )
+    corruption_config = tmp_path / "corruption.yaml"
+    corruption_config.write_text(
+        yaml.safe_dump({
+            "schema_version": 1, "dataset": "pn2021c",
+            "output": {"cache_dir": str(corrupted_cache.identity.cache_dir)},
+        }),
+        encoding="utf-8",
+    )
+    seed_config = tmp_path / "seed.yaml"
+    seed_config.write_text(
+        "schema_version: 1\nrandom_seed: 424242\n", encoding="utf-8"
+    )
+    plan = data_runtime.PN2021EvaluationLoaderPlan(
+        clean_partition="pn2021_all_zero_kept_refexcluded",
+        corrupted_partition="pn2021c_all_zero_kept_corrupted_refexcluded",
+        batch_size=2, num_workers=0, pin_memory=False,
+        persistent_workers=False, prefetch_factor=2, cache_mode="mmap",
+        validate_values="none", split_config_path=split_config,
+        data_load_config_path=REPO / "configs" / "data" / "data_load.yaml",
+        corruption_cache_config_path=corruption_config,
+        seed_config_path=seed_config,
+    )
+    views = [item["composition_id"] for item in corrupted_cache.compositions]
+    with plan.open_session() as session:
+        opened = [session.open_clean("ningbo")]
+        opened.extend(session.open_corrupted("ningbo", view) for view in views)
+        try:
+            batches = [next(iter(loader)) for loader in opened]
+        finally:
+            for loader in opened:
+                loader.close()
+        assert tuple(batches[0]["waveform"].shape) == (2, 8, 2)
+        assert batches[0]["cache_index"].tolist() == [0, 2]
+        assert not torch.equal(batches[1]["waveform"], batches[2]["waveform"])
         assert cache_open_calls == list(caches)
         assert selection_calls == ["pn2021", "pn2021c"]
         assert (session.describe()["cache_open_count"], session.describe()["selection_count"]) == (2, 2)
-    finally:
-        session.close()
+        assert all(cache._closed is False for cache in caches.values())
     assert session.describe()["closed"] is True
     assert session.describe()["cache_open_count"] == 0
     assert all(cache._closed for cache in caches.values())

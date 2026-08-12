@@ -15,6 +15,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import yaml
 
+from data_preprocess import data_runtime
 from boot_scripts.evaluate_pn2021 import (
     _summary,
     _validate_loaded_subject,
@@ -391,77 +392,6 @@ class _TinyLoader:
         self.closed = True
 
 
-class _TinySequentialEvaluationSession:
-    def __init__(self, factory, plan) -> None:
-        self.factory = factory
-        self.plan = plan
-        self.requests: list[dict[str, object]] = []
-        self.closed = False
-        self.close_calls = 0
-
-    def _open(self, dataset: str, center: str, view) -> _TinyLoader:
-        if self.closed:
-            raise RuntimeError("session is closed")
-        self.requests.append(
-            {"dataset": dataset, "logical_center": center, "view": view}
-        )
-        return self.factory(
-            dataset=dataset,
-            partition=(self.plan.clean_partition if dataset == "pn2021"
-                       else self.plan.corrupted_partition),
-            logical_center=center,
-            view=view,
-            sampling_rate_hz=100,
-            batch_size=self.plan.batch_size,
-            shuffle=False,
-            num_workers=0,
-            drop_last=False,
-            pin_memory=self.plan.pin_memory,
-            persistent_workers=False,
-            prefetch_factor=self.plan.prefetch_factor,
-            cache_mode="mmap",
-            validate_values=self.plan.validate_values,
-            prepare_for_model=False,
-            sanitize=False,
-            global_zscore=False,
-            output_layout="time_channel",
-            split_config_path=self.plan.split_config_path,
-            data_load_config_path=self.plan.data_load_config_path,
-            corruption_cache_config_path=self.plan.corruption_cache_config_path,
-            seed_config_path=self.plan.seed_config_path,
-        )
-
-    def open_clean(self, center: str) -> _TinyLoader:
-        return self._open("pn2021", center, None)
-
-    def open_corrupted(self, center: str, view: str) -> _TinyLoader:
-        return self._open("pn2021c", center, view)
-
-    def close(self) -> None:
-        self.close_calls += 1
-        self.closed = True
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback) -> None:
-        self.close()
-
-
-def _fake_loader_plan(factory, sessions: list | None = None):
-    class Plan:
-        def __init__(self, **kwargs) -> None:
-            self.__dict__.update(kwargs)
-
-        def open_session(self) -> _TinySequentialEvaluationSession:
-            session = _TinySequentialEvaluationSession(factory, self)
-            if sessions is not None:
-                sessions.append(session)
-            return session
-
-    return Plan
-
-
 def _raw_waveforms(labels: np.ndarray, *, points: int = 1000) -> np.ndarray:
     trend = np.linspace(-0.25, 0.25, points, dtype=np.float32)
     waveform = np.full((len(labels), points, 12), -4.0, dtype=np.float32)
@@ -557,6 +487,7 @@ def _loader_factory(
     cache_points: int = 1000,
     ref_excluded: bool = True,
     source_centers_override: dict[str, list[str]] | None = None,
+    sessions: list[data_runtime.SequentialEvaluationDataSession] | None = None,
 ):
     split_path = Path(fixture["split_manifest_path"])
     split_sha = _sha256(split_path)
@@ -564,21 +495,21 @@ def _loader_factory(
     assert isinstance(records_by_center, dict)
     opened_loaders: list[_TinyLoader] = []
 
-    def factory(
-        *,
-        dataset: str,
-        partition: str,
-        logical_center: str,
-        view,
-        **kwargs,
-    ):
-        assert kwargs["sampling_rate_hz"] == 100
-        assert kwargs["prepare_for_model"] is False
-        assert kwargs["sanitize"] is False
-        assert kwargs["global_zscore"] is False
-        assert kwargs["output_layout"] == "time_channel"
-        assert kwargs["shuffle"] is False
-        assert kwargs["drop_last"] is False
+    def factory(request: data_runtime._LoaderRequest):
+        dataset = request.dataset
+        partition = request.partition
+        logical_center = request.logical_center
+        view = request.view
+        assert logical_center is not None
+        assert request.shuffle is False
+        assert request.drop_last is False
+        assert request.num_workers == 0
+        assert request.persistent_workers is False
+        assert request.cache_mode == "mmap"
+        assert request.selection_resident is False
+        assert request.evaluation_session is not None
+        if sessions is not None and request.evaluation_session not in sessions:
+            sessions.append(request.evaluation_session)
         assert partition == (
             CORRUPTED_VIEW_ALIASES[0]
             if dataset == "pn2021c"
@@ -928,10 +859,7 @@ def test_loader_artifact_locks_reject_clean_or_split_drift(
         fixture["config_path"], config_root=fixture["config_root"]
     )
     factory, opened_loaders = _loader_factory(fixture)
-    monkeypatch.setattr(
-        "util.evaluation.pn2021.PN2021EvaluationLoaderPlan",
-        _fake_loader_plan(factory),
-    )
+    monkeypatch.setattr(data_runtime, "_build_runtime_loader", factory)
 
     with pytest.raises(ValueError, match=message):
         evaluate_pn2021(
@@ -951,13 +879,11 @@ def test_pn2021_evaluation_runs_four_centers_with_truthful_aggregates(
     config = load_pn2021_eval_config(
         fixture["config_path"], config_root=fixture["config_root"]
     )
-    factory, opened_loaders = _loader_factory(fixture)
-    sessions: list[_TinySequentialEvaluationSession] = []
-
-    monkeypatch.setattr(
-        "util.evaluation.pn2021.PN2021EvaluationLoaderPlan",
-        _fake_loader_plan(factory, sessions),
+    sessions: list[data_runtime.SequentialEvaluationDataSession] = []
+    factory, opened_loaders = _loader_factory(
+        fixture, sessions=sessions
     )
+    monkeypatch.setattr(data_runtime, "_build_runtime_loader", factory)
     checkpoint = _checkpoint_identity(fixture)
     checkpoint = CheckpointIdentity(
         checkpoint.path, checkpoint.sha256, checkpoint.state_key_count,
@@ -1004,9 +930,10 @@ def test_pn2021_evaluation_runs_four_centers_with_truthful_aggregates(
     assert result["schema_version"] == 3
     assert result["artifact_type"] == "pn2021_evaluation_result"
     assert result["subject"]["mode"] == "source_registry"
-    assert len(sessions) == 1 and sessions[0].closed
-    assert sessions[0].close_calls == 1
-    assert len(sessions[0].requests) == 4 + 20 * 4
+    assert len(sessions) == 1
+    assert sessions[0].describe() == {
+        "closed": True, "cache_open_count": 0, "selection_count": 0, "caches": []
+    }
     assert len(opened_loaders) == 4 + 20 * 4
     assert all(loader.closed for loader in opened_loaders)
     clean = result["clean"]
@@ -1067,10 +994,7 @@ def test_single_center_result_never_claims_a_four_center_mean(
         fixture["config_path"], config_root=fixture["config_root"]
     )
     factory, opened_loaders = _loader_factory(fixture)
-    monkeypatch.setattr(
-        "util.evaluation.pn2021.PN2021EvaluationLoaderPlan",
-        _fake_loader_plan(factory),
-    )
+    monkeypatch.setattr(data_runtime, "_build_runtime_loader", factory)
     result = evaluate_pn2021(
         _TinyModel(),
         _checkpoint_identity(fixture),
@@ -1241,10 +1165,7 @@ def test_evaluation_rejects_non_ref_excluded_selection(
         fixture["config_path"], config_root=fixture["config_root"]
     )
     factory, opened_loaders = _loader_factory(fixture, ref_excluded=False)
-    monkeypatch.setattr(
-        "util.evaluation.pn2021.PN2021EvaluationLoaderPlan",
-        _fake_loader_plan(factory),
-    )
+    monkeypatch.setattr(data_runtime, "_build_runtime_loader", factory)
 
     with pytest.raises(ValueError, match="not K500-ref-excluded"):
         evaluate_pn2021(
@@ -1267,10 +1188,7 @@ def test_evaluation_requires_cpsc_main_and_extra_sources(
         fixture,
         source_centers_override={"cpsc_2018": ["cpsc_2018"]},
     )
-    monkeypatch.setattr(
-        "util.evaluation.pn2021.PN2021EvaluationLoaderPlan",
-        _fake_loader_plan(factory),
-    )
+    monkeypatch.setattr(data_runtime, "_build_runtime_loader", factory)
 
     with pytest.raises(ValueError, match="physical source centers mismatch"):
         evaluate_pn2021(
@@ -1290,10 +1208,7 @@ def test_ecgfounder_uses_canonical100_adapter_for_all_views(
         fixture["config_path"], config_root=fixture["config_root"]
     )
     factory, opened_loaders = _loader_factory(fixture)
-    monkeypatch.setattr(
-        "util.evaluation.pn2021.PN2021EvaluationLoaderPlan",
-        _fake_loader_plan(factory),
-    )
+    monkeypatch.setattr(data_runtime, "_build_runtime_loader", factory)
     model = _TinyECGFounderModel()
     result = evaluate_pn2021(
         model,
@@ -1337,10 +1252,7 @@ def test_ecgfounder_evaluation_rejects_500hz_cache(
         cache_sampling_rate_hz=500,
         cache_points=5000,
     )
-    monkeypatch.setattr(
-        "util.evaluation.pn2021.PN2021EvaluationLoaderPlan",
-        _fake_loader_plan(factory),
-    )
+    monkeypatch.setattr(data_runtime, "_build_runtime_loader", factory)
 
     with pytest.raises(ValueError, match="canonical 100 Hz"):
         evaluate_pn2021(
@@ -1469,10 +1381,7 @@ def _write_matrix_members(tmp_path: Path) -> list[Path]:
             checkpoint_schema_version=3,
             lineage=lineage,
         )
-        with patch(
-            "util.evaluation.pn2021.PN2021EvaluationLoaderPlan",
-            _fake_loader_plan(factory),
-        ):
+        with patch.object(data_runtime, "_build_runtime_loader", factory):
             result = evaluate_pn2021(
                 _TinyModel(), identity, config=config,
                 output_dir=root / "evaluation", logical_centers=[center],
