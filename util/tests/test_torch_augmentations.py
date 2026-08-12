@@ -11,17 +11,17 @@ import numpy as np
 import pytest
 import torch
 
-from util.augmentations import (
+from util.augmentations.operators import (
     baseline_shift,
     baseline_wander,
     emg_noise,
     powerline_noise,
     random_leads_masking,
-    torch_baseline_shift,
-    torch_baseline_wander,
-    torch_emg_noise,
-    torch_powerline_noise,
-    torch_random_leads_masking,
+)
+from util.augmentations.torch_operators import (
+    baseline_shift as torch_baseline_shift, baseline_wander as torch_baseline_wander,
+    emg_noise as torch_emg_noise, powerline_noise as torch_powerline_noise,
+    random_leads_masking as torch_random_leads_masking,
 )
 from util.random_seed import (
     derive_seed,

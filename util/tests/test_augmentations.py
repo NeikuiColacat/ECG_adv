@@ -1,18 +1,22 @@
 """Golden-contract tests for the pinned fairseq-signals ECG operators."""
 
 import random
+import subprocess
+import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
 
-from util.augmentations import (
+from util.augmentations.operators import (
+    UPSTREAM_COMMIT,
+    UPSTREAM_SOURCE_URL,
     baseline_shift,
     baseline_wander,
     emg_noise,
     powerline_noise,
     random_leads_masking,
 )
-from util.augmentations.operators import UPSTREAM_COMMIT, UPSTREAM_SOURCE_URL
 
 
 def _signal(dtype=np.float32):
@@ -89,6 +93,12 @@ def test_matches_pinned_fairseq_signals_golden_contract(
 def test_reference_revision_is_explicitly_pinned():
     assert UPSTREAM_COMMIT == "f8f0ff1c788a82c2059cb452cd5462898867489e"
     assert UPSTREAM_COMMIT in UPSTREAM_SOURCE_URL
+    subprocess.check_call(
+        (sys.executable, "-c", "import sys; import util.augmentations as a; "
+         "assert a.__all__ == [] and not [n for n in vars(a) if not n.startswith('_')]; "
+         "assert not {'torch', 'numpy', 'yaml'} & sys.modules.keys()"),
+        cwd=Path(__file__).resolve().parents[2],
+    )
 
 
 @pytest.mark.parametrize(
