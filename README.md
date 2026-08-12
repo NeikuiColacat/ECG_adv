@@ -83,6 +83,13 @@ that immutable bundle. Two offline full-content passes established the seal;
 it does not cover raw WFDB inputs or prove preprocessing correctness, and the
 runtime quick gate does not rehash all 405 GB.
 
+Managed code does not expose a free-form DataLoader argument surface. PTB-XL
+source training, PN2021 K500 adaptation, and PN2021/PN2021-C evaluation use
+`PTBXLLoaderPlan`, `PN2021K500LoaderPlan`, and
+`PN2021EvaluationLoaderPlan`, respectively. These finite plans own the allowed
+partitions, shuffle/drop policy, canonical raw waveform request, and loader
+lifetime.
+
 ## Locked Contracts
 
 - Class order: `CD, HYP, MI, NORM, STTC`.
@@ -96,9 +103,11 @@ runtime quick gate does not rehash all 405 GB.
   `drop_all_zero`.
 - Canonical waveform: raw physical mV, 100 Hz, 1000 points, 12 leads,
   time-channel layout.
-- EfficientNet input: 100 Hz, then per-sample global z-score.
-- ECGFounder input: linear 100 Hz to 500 Hz adaptation, then per-sample global
-  z-score.
+- EfficientNet input: canonical 100 Hz is converted from time-channel to
+  channel-time, then per-sample global z-score is applied.
+- ECGFounder input: on the input device, linear `1000 -> 5000` interpolation
+  with `align_corners=True` is applied before per-sample global z-score and
+  time-channel to channel-time conversion.
 - PN2021-C: locked five-operator profile, 500 Hz operator domain, all ten
   depth-2 and ten depth-3 compositions.
 
@@ -163,6 +172,12 @@ at commit `dfd00ec` completed Direct EfficientNet and both mainline backbones;
 it verifies the managed CUDA seams only and is not performance or paper
 evidence. Its locked artifact identity and limitations are recorded in
 `configs/active_scripts.yaml`.
+
+The registered PTB-XL source checkpoints and fold metrics remain frozen
+historical evidence. The live PTB-XL training config now describes the finite
+raw-100-Hz loader/adapter path for a prospective replay; that runtime migration
+has not rerun the source baselines and does not establish bitwise reproduction
+of the registered checkpoint bytes.
 
 Historical `ecg_adv_gen` launchers and package modules are not active here.
 Recover them from commit

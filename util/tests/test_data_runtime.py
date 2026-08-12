@@ -19,12 +19,13 @@ from data_preprocess import data_ledger, data_runtime
 from data_preprocess.data_runtime import (
     ECGSelection,
     MMapPrefetchConfig,
+    PN2021K500LoaderPlan,
     RuntimeECGDataset,
     SelectionResidentECGDataset,
     SequentialEvaluationDataSession,
+    _build_torch_loader,
+    _load_runtime_defaults,
     assert_disjoint_selections,
-    build_dataloader,
-    load_data_load_config,
     per_sample_global_zscore,
     prepare_model_input,
 )
@@ -47,6 +48,27 @@ def _data_load_fixture(tmp_path: Path, descriptor: dict[str, object]) -> Path:
     path = tmp_path / "configs" / "data" / "data_load.yaml"
     path.parent.mkdir(parents=True)
     path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+    return path
+
+
+def _split_location_fixture(
+    tmp_path: Path, *, cache_dir: Path, sampling_rate_hz: object = 100
+) -> Path:
+    path = tmp_path / "splits.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": 1,
+                "output": {"root_dir": str(tmp_path / "split-artifacts")},
+                "pn2021": {
+                    "cache_dir": str(cache_dir),
+                    "sampling_rate_hz": sampling_rate_hz,
+                    "output_subdir": "pn2021",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     return path
 
 
@@ -206,49 +228,103 @@ def _assert_runtime_items_equal(
                 assert actual_item[key] == expected_item[key]
 
 
-def test_canonical_data_load_config_is_the_single_runtime_profile() -> None:
-    config_path = REPO / "configs" / "data" / "data_load.yaml"
-    config = load_data_load_config(config_path)
-
-    assert config.path == config_path.resolve()
-    assert config.cache_mode == "mmap"
-    assert config.mmap_access_order == "cache_index"
-    assert config.mmap_batch_read is True
-    assert config.mmap_prefetch.enabled is True
-    assert config.selection_resident is False
-    assert config.prepare_for_model is True
-    assert config.output_layout == "channel_time"
-
-
-def test_data_load_config_resolves_ledger_without_opening_it(tmp_path: Path) -> None:
-    path = _data_load_fixture(
-        tmp_path,
-        {"path": "data/missing-ledger.jsonl", "sha256": "a" * 64},
-    )
-
-    config = load_data_load_config(path)
-
-    assert config.content_ledger.path == (
-        tmp_path / "configs" / "data" / "missing-ledger.jsonl"
-    ).resolve()
-    assert config.content_ledger.sha256 == "a" * 64
-    assert not config.content_ledger.path.exists()
+def _runtime_surface(kind: str, tmp_path: Path, **override: Any) -> Any:
+    constructors: dict[str, Any] = {
+        "ptbxl": data_runtime.PTBXLLoaderPlan,
+        "k500": data_runtime.PN2021K500LoaderPlan,
+        "evaluation": data_runtime.PN2021EvaluationLoaderPlan,
+        "request": data_runtime._LoaderRequest,
+    }
+    values = {
+        "train_partition": "train", "validation_partition": "validation",
+        "test_partition": "test", "center": "ningbo",
+        "clean_partition": "pn2021_all_zero_kept_refexcluded",
+        "corrupted_partition": "pn2021c_all_zero_kept_corrupted_refexcluded",
+        "train_batch_size": 32, "eval_batch_size": 64, "batch_size": 32,
+        "num_workers": 0, "pin_memory": False, "persistent_workers": False,
+        "prefetch_factor": 2, "cache_mode": "mmap",
+        "validate_values": "sample", "drop_last": False,
+        "selection_resident": False, "selection_resident_pin_memory": False,
+        "seed_namespace": "strict-types", "dataset": "ptbxl",
+        "partition": "train", "logical_center": None, "view": None,
+        "shuffle": False, "evaluation_session": None,
+        "config_root": tmp_path, "split_config_path": tmp_path / "splits.yaml",
+        "data_load_config_path": tmp_path / "data_load.yaml",
+        "corruption_cache_config_path": tmp_path / "corruption.yaml",
+        "seed_config_path": tmp_path / "random_seed.yaml",
+    }
+    constructor = constructors[kind]
+    values.update(override)
+    return constructor(**{name: values[name] for name in constructor.__dataclass_fields__})
 
 
 @pytest.mark.parametrize(
-    ("descriptor", "message"),
-    (
-        ({"path": "../escape.jsonl", "sha256": "a" * 64}, "escapes config bundle"),
-        ({"path": "/tmp/absolute.jsonl", "sha256": "a" * 64}, "must be relative"),
-        ({"path": "data/x.jsonl", "sha256": "A" * 64}, "sha256 is invalid"),
-        ({"path": "data/x.jsonl", "sha256": "a" * 64, "extra": 1}, "keys mismatch"),
-    ),
+    ("category", "invalid"),
+    (("batch", True), ("workers", 0.0), ("boolean", "false"), ("enum", 1)),
 )
-def test_data_load_config_rejects_unsafe_ledger_descriptor(
-    tmp_path: Path, descriptor: dict[str, object], message: str
+@pytest.mark.parametrize("kind", ("ptbxl", "k500", "evaluation", "request"))
+def test_finite_runtime_surfaces_reject_coercible_types(
+    kind: str, category: str, invalid: Any, tmp_path: Path
 ) -> None:
-    with pytest.raises(ValueError, match=message):
-        load_data_load_config(_data_load_fixture(tmp_path, descriptor))
+    field = {"batch": "train_batch_size" if kind == "ptbxl" else "batch_size",
+             "workers": "num_workers", "boolean": "pin_memory",
+             "enum": "cache_mode"}[category]
+    with pytest.raises(TypeError):
+        _runtime_surface(kind, tmp_path, **{field: invalid})
+
+
+def test_evaluation_plan_rejects_mismatched_all_zero_views(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="same view"):
+        _runtime_surface(
+            "evaluation",
+            tmp_path,
+            corrupted_partition="pn2021c_drop_all_zero_corrupted_refexcluded",
+        )
+
+
+@pytest.mark.parametrize("kind", ("ptbxl", "k500", "evaluation"))
+def test_finite_plan_describe_exposes_validated_runtime_policy(
+    kind: str, tmp_path: Path
+) -> None:
+    description = _runtime_surface(kind, tmp_path).describe()
+    assert {
+        "batch_size" if kind != "ptbxl" else "train_batch_size",
+        "num_workers",
+        "pin_memory",
+        "persistent_workers",
+        "prefetch_factor",
+        "cache_mode",
+        "validate_values",
+        "drop_last",
+        "split_config_path",
+        "data_load_config_path",
+        "seed_config_path",
+    } <= description.keys()
+
+
+def test_canonical_data_load_config_is_the_single_runtime_profile() -> None:
+    config_path = REPO / "configs" / "data" / "data_load.yaml"
+    config = _load_runtime_defaults(config_path)
+
+    assert config.path == config_path.resolve()
+    assert config.mmap_access_order == "cache_index"
+    assert config.mmap_batch_read is True
+    assert config.mmap_prefetch.enabled is True
+    assert config.mmap_prefetch.advice == "sequential_willneed"
+    assert config.mmap_prefetch.window_mib == 1024
+    assert config.mmap_prefetch.ahead_batches == 2
+
+
+def test_runtime_defaults_treat_ledger_descriptor_as_opaque(tmp_path: Path) -> None:
+    path = _data_load_fixture(
+        tmp_path,
+        {"not": "a runtime-owned field"},
+    )
+
+    config = _load_runtime_defaults(path)
+
+    assert config.path == path.resolve()
+    assert not (tmp_path / "configs" / "data" / "missing-ledger.jsonl").exists()
 
 
 def test_runtime_transform_applies_augmentation_then_sanitize_zscore_and_layout() -> None:
@@ -399,7 +475,7 @@ def test_selection_resident_matches_seeded_mmap_and_closes_source_cache(
         "schema_version: 1\nrandom_seed: 424242\n", encoding="utf-8"
     )
     namespace = "characterization_seeded_hash_order_v1"
-    resident_loader, resident_seed = build_dataloader(
+    resident_loader, resident_seed = _build_torch_loader(
         resident,
         batch_size=3,
         shuffle=True,
@@ -407,7 +483,7 @@ def test_selection_resident_matches_seeded_mmap_and_closes_source_cache(
         seed_namespace=namespace,
         seed_config_path=seed_config,
     )
-    mmap_loader, mmap_seed = build_dataloader(
+    mmap_loader, mmap_seed = _build_torch_loader(
         mmap_dataset,
         batch_size=3,
         shuffle=True,
@@ -439,6 +515,169 @@ def test_selection_resident_matches_seeded_mmap_and_closes_source_cache(
     finally:
         resident_loader.close()
         mmap_loader.close()
+
+
+def test_k500_plan_opens_only_verified_ordered_and_training_views(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    selection = _selection("k500", tuple(f"hash-{index}" for index in range(500)))
+    calls: list[data_runtime._LoaderRequest] = []
+
+    class Dataset:
+        sampling_rate_hz = 100
+        transform = None
+
+        def __init__(self, order: str) -> None:
+            self.selection = selection
+            self.order = order
+
+        def describe(self) -> dict[str, Any]:
+            return {"mmap": {"access_order": self.order}}
+
+    class Loader:
+        drop_last = False
+
+        def __init__(self, order: str) -> None:
+            self.dataset = Dataset(order)
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    def open_loader(request: data_runtime._LoaderRequest) -> Loader:
+        calls.append(request)
+        return Loader("split" if request.shuffle else "cache_index")
+
+    monkeypatch.setattr(data_runtime, "_build_runtime_loader", open_loader)
+    plan = PN2021K500LoaderPlan(
+        center="ningbo",
+        batch_size=64,
+        num_workers=0,
+        pin_memory=False,
+        persistent_workers=False,
+        prefetch_factor=2,
+        cache_mode="mmap",
+        validate_values="sample",
+        selection_resident=True,
+        selection_resident_pin_memory=False,
+        drop_last=False,
+        seed_namespace="locked-k500",
+        config_root=tmp_path,
+        split_config_path=tmp_path / "splits.yaml",
+        data_load_config_path=tmp_path / "data_load.yaml",
+        seed_config_path=tmp_path / "random_seed.yaml",
+    )
+
+    plan.open_ordered()
+    plan.open_training()
+
+    assert [call.shuffle for call in calls] == [False, True]
+    assert all(call.drop_last is False for call in calls)
+    assert all(call.dataset == "pn2021" for call in calls)
+    assert all(call.partition == "k500" for call in calls)
+    assert all(call.view is None for call in calls)
+
+
+def test_k500_plan_closes_loader_on_early_identity_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    selection = _selection("k500", tuple(f"hash-{index}" for index in range(499)))
+    dataset = SimpleNamespace(
+        selection=selection,
+        sampling_rate_hz=100,
+        transform=None,
+        describe=lambda: {"mmap": {"access_order": "cache_index"}},
+    )
+    loader = SimpleNamespace(dataset=dataset, drop_last=False, closed=False)
+
+    def close() -> None:
+        loader.closed = True
+
+    loader.close = close
+    monkeypatch.setattr(
+        data_runtime, "_build_runtime_loader", lambda request: loader
+    )
+    plan = PN2021K500LoaderPlan(
+        center="ningbo", batch_size=64, num_workers=0, pin_memory=False,
+        persistent_workers=False, prefetch_factor=2, cache_mode="mmap",
+        validate_values="sample", selection_resident=True,
+        selection_resident_pin_memory=False, drop_last=False,
+        seed_namespace="locked-k500", config_root=tmp_path,
+        split_config_path=tmp_path / "splits.yaml",
+        data_load_config_path=tmp_path / "data_load.yaml",
+        seed_config_path=tmp_path / "random_seed.yaml",
+    )
+
+    with pytest.raises(ValueError, match="records=500"):
+        plan.open_ordered()
+    assert loader.closed is True
+
+
+def test_k500_plan_opens_iterates_and_closes_real_runtime_loader(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert not hasattr(data_runtime, "load_split_config")
+    cache = _tiny_mmap_cache(tmp_path, "real-plan-open", record_count=500)
+    selection = _tiny_selection(cache, list(range(500)))
+    monkeypatch.setattr(data_runtime, "load_cache", lambda *args, **kwargs: cache)
+    monkeypatch.setattr(
+        data_runtime, "load_selection", lambda *args, **kwargs: selection
+    )
+    split_config = _split_location_fixture(
+        tmp_path, cache_dir=cache.identity.cache_dir
+    )
+    seed_config = tmp_path / "random_seed.yaml"
+    seed_config.write_text(
+        "schema_version: 1\nrandom_seed: 424242\n", encoding="utf-8"
+    )
+    plan = PN2021K500LoaderPlan(
+        center="ningbo",
+        batch_size=32,
+        num_workers=0,
+        pin_memory=False,
+        persistent_workers=False,
+        prefetch_factor=2,
+        cache_mode="mmap",
+        validate_values="none",
+        selection_resident=True,
+        selection_resident_pin_memory=False,
+        drop_last=False,
+        seed_namespace="real-plan-open",
+        config_root=tmp_path,
+        split_config_path=split_config,
+        data_load_config_path=REPO / "configs" / "data" / "data_load.yaml",
+        seed_config_path=seed_config,
+    )
+
+    loader = plan.open_ordered()
+    try:
+        assert isinstance(loader.dataset, SelectionResidentECGDataset)
+        assert cache._closed is True
+        batch = next(iter(loader))
+        assert tuple(batch["waveform"].shape) == (32, 8, 2)
+        assert batch["cache_index"].tolist() == list(range(32))
+        assert loader.runtime_seed_identity.namespace == "real-plan-open"
+    finally:
+        loader.close()
+    assert cache._closed is True
+
+
+@pytest.mark.parametrize("sampling_rate_hz", (500, True, None))
+def test_runtime_location_parser_rejects_noncanonical_sampling_rate(
+    tmp_path: Path, sampling_rate_hz: object
+) -> None:
+    split_config = _split_location_fixture(
+        tmp_path,
+        cache_dir=tmp_path / "cache",
+        sampling_rate_hz=sampling_rate_hz,
+    )
+
+    with pytest.raises(ValueError, match="sampling_rate_hz must be 100"):
+        data_runtime._resolve_runtime_locations(
+            dataset="pn2021",
+            split_config_path=split_config,
+            corruption_cache_config_path=tmp_path / "unused.yaml",
+        )
 
 
 def test_sequential_evaluation_session_reuses_two_mmaps_and_selections(
@@ -516,7 +755,7 @@ def test_sequential_evaluation_session_reuses_two_mmaps_and_selections(
                 view=view, validate_values="none", shared_cache=cache,
                 shared_selection=selection,
             )
-            loader, _ = build_dataloader(dataset, batch_size=2, shuffle=False)
+            loader, _ = _build_torch_loader(dataset, batch_size=2, shuffle=False)
             next(iter(loader))
             loader.close()
             assert cache._closed is False
@@ -529,6 +768,31 @@ def test_sequential_evaluation_session_reuses_two_mmaps_and_selections(
     assert session.describe()["cache_open_count"] == 0
     assert all(cache._closed for cache in caches.values())
     assert all(mapping.closed for mapping in mappings)
+
+
+def test_evaluation_session_close_is_best_effort_and_idempotent() -> None:
+    calls: list[str] = []
+
+    def fail() -> None:
+        calls.append("first")
+        raise RuntimeError("first close failed")
+
+    def succeed() -> None:
+        calls.append("second")
+
+    session = SequentialEvaluationDataSession()
+    session._caches = {
+        (Path("first"), 100): SimpleNamespace(close=fail),
+        (Path("second"), 100): SimpleNamespace(close=succeed),
+    }
+    with pytest.raises(RuntimeError, match="first close failed"):
+        session.close()
+    assert calls == ["first", "second"]
+    assert session.describe() == {
+        "closed": True, "cache_open_count": 0, "selection_count": 0, "caches": []
+    }
+    session.close()
+    assert calls == ["first", "second"]
 
 
 def _ledger_roots(base: Path, payload: bytes = b"same-bytes") -> dict[str, Path]:

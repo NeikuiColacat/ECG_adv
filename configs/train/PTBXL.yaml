@@ -24,16 +24,30 @@ data:
   train_partition: train
   validation_partition: validation
   test_partition: test
-  sampling_rate_hz: from_model_spec
+  sampling_rate_hz: 100
   duration_seconds: 10
+  signal_shape: [1000, 12]
+  physical_unit: mV
   lead_order: [I, II, III, aVR, aVL, aVF, V1, V2, V3, V4, V5, V6]
   class_order: [CD, HYP, MI, NORM, STTC]
-  input_layout: channel_time
-  normalization: per_sample_global_zscore
+  input_layout: time_channel
+  normalization: none
+  model_input_adapter:
+    implementation: code_owned_prepare_canonical_model_input
+    efficientnet1dv2:
+      interpolation: none
+      output_shape: [12, 1000]
+      normalization: per_sample_global_zscore
+    ecgfounder:
+      interpolation: linear_1000_to_5000_on_input_device
+      align_corners: true
+      output_shape: [12, 5000]
+      normalization: per_sample_global_zscore_after_interpolation
 
 # Thin boot scripts consume these model-specific defaults, then pass the
-# resolved values into the same train_ptbxl(...) adapter. CLI values override
-# only the named field and are recorded by the trainer.
+# resolved values into the same finite PTBXLLoaderPlan/train_ptbxl adapter.
+# Runtime data/model/checkpoint overrides are intentionally absent; the only
+# constrained sensitivity override is ECGFounder --epochs=10.
 # These defaults were selected on PTB-XL fold 9 without constructing or
 # evaluating the fold-10 test loader. Training must still restore the
 # fold-9-best macro-AUPRC checkpoint rather than hard-coding an epoch number.

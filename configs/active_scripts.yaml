@@ -89,6 +89,28 @@ latest_mainline:
         included_reference_flags: [--method-config, --source-registry]
         excluded_artifact_flags: [--train-result, --result]
         artifact_subject_lock: resolved_path_and_sha256
+    finite_loader_surface:
+      status: implemented_cpu_contract_verified
+      internal_builder: data_preprocess.data_runtime._build_runtime_loader
+      data_load_descriptor:
+        path: configs/data/data_load.yaml
+        sha256: f9beb4312e6fb997658583eaa4afe56b63c22dbd5f4e808776fa9d3dc3f8f81b
+      public_plans:
+        ptbxl_source: PTBXLLoaderPlan
+        pn2021_k500: PN2021K500LoaderPlan
+        pn2021_evaluation: PN2021EvaluationLoaderPlan
+      generic_public_loader: false
+      outer_launcher_dry_run_scope: yaml_closure_arguments_and_command_only
+      delegate_preflight: finite_plan_validated_before_model_data_or_gpu
+      shared_waveform_contract:
+        sampling_rate_hz: 100
+        signal_shape: [1000, 12]
+        layout: time_channel
+        unit: mV
+        normalization: none
+      model_input_contract:
+        efficientnet1dv2: canonical100_then_global_zscore_then_bct
+        ecgfounder: device_linear1000_to_5000_align_corners_true_then_global_zscore_then_bct
     gpu_replication_status: diagnostic_smoke_passed_not_full_replication
     prospective_run_root: /home/linbinhao/ECG_adv_data/runs/manual_refactor_paper_kernel_v2_recipe_v1_r1
   primary_metric_view: drop_all_zero
@@ -177,13 +199,15 @@ latest_mainline:
       - util/tests/test_labels_super5.py
       - util/tests/test_pn2021_corruptions.py
       - util/tests/test_data_runtime.py
+      - util/tests/test_train_ptbxl.py
       - util/tests/test_method_graph.py
       - util/tests/test_online_trainer.py
       - util/tests/test_manual_run_experiment.py
       - util/tests/test_evaluation_metrics.py
       - util/tests/test_pn2021_evaluation.py
     cpu_contract_result:
-      status: passed_225_skipped_10
+      status: passed_320_skipped_10
+      previous_result: passed_225_skipped_10
       date: "2026-08-12"
     data_ledger_tool_contract:
       path: data_preprocess/data_ledger.py

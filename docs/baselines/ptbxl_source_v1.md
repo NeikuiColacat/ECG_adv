@@ -9,7 +9,8 @@
 - Current registry SHA256: `e8f1461348e1be35076d175c6151f767e1fb90ed5e5bbebec430b9d8c55f9ea7`
 - Historical training config snapshot: `configs/train/PTBXL.yaml` at commit `254c0c80318840430171317c0051497f62232a6e`
 - Historical training config SHA256: `ff984500052e0e64e245c68b8c51a1080efd7bd375c70a44dbd49bf9a9cf9f4c`
-- Current observer-free replay config SHA256: `85638bbea2c12669dab45973b77223513f5292a11faf12b0c814fe1fe41679c8`
+- CP1 observer-free intermediate config SHA256: `85638bbea2c12669dab45973b77223513f5292a11faf12b0c814fe1fe41679c8`
+- Current prospective finite-loader config SHA256: `27852a7dfcdb65fdec348b524083beaa2c91d4942965b7c57ccc1d5b255329cf`
 - Seed config SHA256: `8b337606c43b6fec2959dd185477ce32f48b139f5fce5112ee26efe58eb4bbbc`
 - Class order: `CD,HYP,MI,NORM,STTC`
 - Selection rule: PTB-XL folds 1-8 train, fold 9 macro AUPRC selects
@@ -19,10 +20,13 @@ All later PTB-XL-to-PN2021 experiments must use the registered `best.pt` for
 their model family. `last.pt` and the ECGFounder 10-epoch probe checkpoint are
 not valid source baselines. Replacing either source baseline requires a new
 versioned registry and a new lock log; do not edit this v1 identity in place.
-The current replay config removes only the retired TensorBoard/waveform
-observer. The historical config bytes remain available from the locked Git
-object and each managed run's `configs/train/PTBXL.yaml` snapshot; neither the
-source checkpoint identity nor the scientific training payload was rewritten.
+The CP1 intermediate config removed only the retired TensorBoard/waveform
+observer. The current live config subsequently moved both backbones to one
+finite raw-100-Hz loader plan plus a code-owned model input adapter. That
+prospective runtime has not rerun these source baselines and is not evidence of
+bitwise or metric replay. Historical config bytes remain available from the
+locked Git object and each managed run's `configs/train/PTBXL.yaml` snapshot;
+the registered checkpoint and metric identities were not rewritten.
 
 ## Locked checkpoints
 
@@ -100,7 +104,11 @@ The probe-selected fold-10 AUROC/AUPRC was `0.926682 / 0.820357`, below the
 locked 5-epoch run's `0.929407 / 0.824164`. The probe is retained as negative
 sensitivity evidence and must not replace the locked ECGFounder checkpoint.
 
-## Replay commands
+## Prospective rerun commands
+
+The commands below now use the live finite-loader implementation. They are not
+commands for bitwise reproduction of the locked historical runs; any results
+must use new run directories and be registered as a new prospective replay.
 
 Working directory:
 

@@ -62,16 +62,15 @@ from core.supervised_trainer import (
     train_model,
 )
 from core.train_PN2021 import (
-    PN2021_DATALOADER_PARAMETER_NAMES,
-    build_pn2021_k500_dataloader,
+    build_pn2021_k500_loader_plan,
     build_pn2021_latent_pool,
     load_pn2021_recipe_spec,
     train_pn2021,
 )
 from core.train_PTBXL import (
-    PTBXL_DATALOADER_PARAMETER_NAMES,
     PTBXLDataLoaders,
     build_ptbxl_dataloaders,
+    build_ptbxl_loader_plan,
     train_ptbxl,
 )
 
@@ -102,8 +101,6 @@ __all__ = [
     "ObjectivePlan",
     "RecipeKind",
     "RecipeSpec",
-    "PN2021_DATALOADER_PARAMETER_NAMES",
-    "PTBXL_DATALOADER_PARAMETER_NAMES",
     "PTBXLDataLoaders",
     "SupervisedTrainConfig",
     "TrainingResult",
@@ -114,9 +111,10 @@ __all__ = [
     "generate_three_chain_augmix",
     "build_latent_pool",
     "build_method_runtime",
-    "build_pn2021_k500_dataloader",
+    "build_pn2021_k500_loader_plan",
     "build_pn2021_latent_pool",
     "build_ptbxl_dataloaders",
+    "build_ptbxl_loader_plan",
     "load_augmix_config",
     "load_recipe_spec",
     "load_pn2021_recipe_spec",

@@ -24,11 +24,11 @@ uses four logical K500 centers; logical `cpsc_2018` combines the physical
 the split manifests. Split artifacts contain indices, record IDs and hash IDs,
 never duplicated waveforms.
 
-`data_load.yaml` defines the shared runtime defaults consumed by
-`data_preprocess/data_runtime.py`: batch size, worker/pinned-memory settings,
-mmap policy, deterministic shuffle partitions, and the model-input transform.
-It also binds the tracked `data_content_ledger_v1.jsonl` by SHA256. Explicit
-`get_dataloader(...)` arguments take precedence over the runtime defaults.
+`data_load.yaml` binds the tracked `data_content_ledger_v1.jsonl` by SHA256 and
+defines only the shared mmap engine policy consumed by
+`data_preprocess/data_runtime.py`. Batch, worker, residency, validation and
+model-input policy live in the three finite loader plans and their tracked
+train/evaluation profiles; they are not generic defaults.
 
 ## Data content ledger tool status
 
@@ -77,32 +77,30 @@ The minimum tracked config bundle is:
 - `augmentation/cache.yaml`
 - `augmentation/operators.yaml`
 
-The public data entry point is `data_preprocess.data_runtime.get_dataloader`.
-For a method-owned preprocessing pipeline, request canonical raw mV data:
+The public data surface consists of three finite plans:
 
-```python
-from data_preprocess.data_runtime import get_dataloader
+- `PTBXLLoaderPlan.open_train/open_validation/open_test` owns the official
+  folds, training-only shuffle, and complete fold-10 holdback policy.
+- `PN2021K500LoaderPlan.open_ordered/open_training` accepts exactly one of the
+  four logical centers, verifies the exact 500-record selection, and forbids
+  `drop_last`.
+- `PN2021EvaluationLoaderPlan.open_clean/open_corrupted/open_session` accepts
+  only canonical ref-excluded clean/corrupted aliases and sequential views.
 
-loader = get_dataloader(
-    dataset="pn2021",
-    partition="k500",
-    logical_center="ningbo",
-    cache_dir="/path/to/read_only/pn2021_cache",
-    split_dir="/path/to/read_only/pn2021_super5_k500_cpsc_combined_v1",
-    sampling_rate_hz=100,
-    prepare_for_model=False,
-    sanitize=False,
-    global_zscore=False,
-    output_layout="time_channel",
-    shuffle=False,
-)
-identity = loader.dataset.selection.describe()
-```
+The managed train/evaluation adapters derive these plan objects from the
+tracked YAML closure. There is no public free-form loader entrypoint and YAML
+cannot choose a runtime callable.
 
 The returned signal is float32 raw mV with shape `(1000, 12)` and the label
 order is `CD,HYP,MI,NORM,STTC`. Only K500-derived partitions may be used for
 target-center adaptation or tuning. Ref-excluded evaluation partitions are
 read-only and cannot be used for model adaptation or checkpoint selection.
+
+Both PTB-XL source backbones receive this same canonical raw 100 Hz
+time-channel batch. EfficientNet keeps the 1000-point grid; ECGFounder applies
+device-local linear `1000 -> 5000` interpolation with `align_corners=True`.
+Per-sample global z-score is applied after any interpolation, then the batch is
+converted to channel-time for the model.
 
 Runtime caches, split arrays, local paths and model handles remain outside Git.
 Only the portable contract and SHA256 identities are tracked here.

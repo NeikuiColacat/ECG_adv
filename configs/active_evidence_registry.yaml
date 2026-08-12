@@ -38,6 +38,35 @@ data_contract:
     depths: [2, 3]
     view_count: 20
     domain: raw_mV_before_per_sample_global_zscore
+  prospective_managed_runtime:
+    status: implemented_cpu_contract_verified_not_rerun
+    ptbxl_training_config:
+      path: configs/train/PTBXL.yaml
+      sha256: 27852a7dfcdb65fdec348b524083beaa2c91d4942965b7c57ccc1d5b255329cf
+      scope: live_prospective_finite_loader_contract
+    finite_loader_plans:
+      ptbxl_source: PTBXLLoaderPlan
+      pn2021_k500: PN2021K500LoaderPlan
+      pn2021_evaluation: PN2021EvaluationLoaderPlan
+      generic_public_loader: false
+      outer_launcher_dry_run_scope: yaml_closure_arguments_and_command_only
+      delegate_preflight: finite_plan_validated_before_model_data_or_gpu
+    canonical_loader_output:
+      signal_shape: [1000, 12]
+      sampling_rate_hz: 100
+      layout: time_channel
+      physical_unit: mV
+      normalization: none
+    model_input_adapters:
+      efficientnet1dv2: canonical100_then_global_zscore_then_bct
+      ecgfounder: device_linear1000_to_5000_align_corners_true_then_global_zscore_then_bct
+    historical_source_evidence_boundary:
+      registry: configs/baselines/ptbxl_source_v1.yaml
+      registry_current_sha256: e8f1461348e1be35076d175c6151f767e1fb90ed5e5bbebec430b9d8c55f9ea7
+      locked_checkpoint_and_metric_identities_rewritten: false
+      live_config_rerun_completed: false
+      bitwise_replay_claimed: false
+      direct_registry_rewritten: false
   prospective_managed_content_ledger:
     path: configs/data/data_content_ledger_v1.jsonl
     sha256: d3bf1f18046a695b9c6089f2866cdb854042c3b528434018ecab8f56d36af665
@@ -62,7 +91,7 @@ data_contract:
       pass: 2
     runtime:
       descriptor_config: configs/data/data_load.yaml
-      descriptor_config_sha256: 8168615e89f0a07919ffcb0bb17f7bf540f4332c21c87567c00712518832e228
+      descriptor_config_sha256: f9beb4312e6fb997658583eaa4afe56b63c22dbd5f4e808776fa9d3dc3f8f81b
       execution_verification: quick_exact_inventory_and_size
       run_snapshot: manifests/data_content_ledger.jsonl
     applies_to: managed_executions_after_integration_commit

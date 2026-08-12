@@ -14,7 +14,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.supervised_trainer import DEFAULT_TRAIN_CONFIG, load_train_config
-from core.train_PTBXL import train_ptbxl
+from core.train_PTBXL import build_ptbxl_loader_plan, train_ptbxl
 from models import build_model, get_model_spec
 
 
@@ -28,41 +28,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", type=Path, default=DEFAULT_TRAIN_CONFIG)
     parser.add_argument("--config-root", type=Path)
     parser.add_argument("--output-dir", type=Path)
-    parser.add_argument("--pretrained-checkpoint", type=Path)
-    parser.add_argument("--task-checkpoint", type=Path)
-    parser.add_argument("--trainable-scope", choices=("full", "head"))
-    parser.add_argument("--device")
-    parser.add_argument("--epochs", type=int)
-    parser.add_argument("--learning-rate", type=float)
-    parser.add_argument("--weight-decay", type=float)
-    parser.add_argument("--minimum-learning-rate-ratio", type=float)
-    parser.add_argument("--gradient-clip-norm", type=float)
-    parser.add_argument(
-        "--amp", dest="amp_enabled", action=argparse.BooleanOptionalAction
-    )
-    parser.add_argument("--amp-dtype", choices=("bfloat16", "float16"))
-    parser.add_argument("--train-batch-size", type=int)
-    parser.add_argument("--eval-batch-size", type=int)
-    parser.add_argument("--num-workers", type=int)
-    parser.add_argument(
-        "--pin-memory", action=argparse.BooleanOptionalAction, default=None
-    )
-    parser.add_argument(
-        "--persistent-workers",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-    )
-    parser.add_argument("--prefetch-factor", type=int)
-    parser.add_argument("--cache-mode", choices=("auto", "ram", "mmap"))
-    parser.add_argument("--validate-values", choices=("none", "sample", "full"))
-    parser.add_argument("--drop-last", action=argparse.BooleanOptionalAction, default=None)
-    parser.add_argument("--pos-weight", nargs=5, type=float)
+    parser.add_argument("--epochs", type=int, choices=(10,))
     parser.add_argument("--dry-run", action="store_true")
     return parser
-
-
-def _not_none(**values: Any) -> dict[str, Any]:
-    return {key: value for key, value in values.items() if value is not None}
 
 
 def _profile(config: Any) -> dict[str, Any]:
@@ -77,37 +45,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     config = load_train_config(args.config, config_root=args.config_root)
     profile = _profile(config)
     training_parameters = dict(profile.get("training_parameters") or {})
-    training_parameters.update(
-        _not_none(
-            epochs=args.epochs,
-            learning_rate=args.learning_rate,
-            weight_decay=args.weight_decay,
-            minimum_learning_rate_ratio=args.minimum_learning_rate_ratio,
-            gradient_clip_norm=args.gradient_clip_norm,
-            amp_enabled=args.amp_enabled,
-            amp_dtype=args.amp_dtype,
-        )
-    )
-    dataloader_parameters = dict(profile.get("dataloader_parameters") or {})
-    dataloader_parameters.update(
-        _not_none(
-            train_batch_size=args.train_batch_size,
-            eval_batch_size=args.eval_batch_size,
-            num_workers=args.num_workers,
-            pin_memory=args.pin_memory,
-            persistent_workers=args.persistent_workers,
-            prefetch_factor=args.prefetch_factor,
-            cache_mode=args.cache_mode,
-            validate_values=args.validate_values,
-            drop_last=args.drop_last,
-        )
-    )
-    pretrained = args.pretrained_checkpoint or profile.get(
-        "pretrained_checkpoint_path"
-    )
-    task_checkpoint = args.task_checkpoint or profile.get("task_checkpoint_path")
-    trainable_scope = args.trainable_scope or profile.get("trainable_scope", "full")
+    if args.epochs is not None:
+        training_parameters["epochs"] = 10
+    pretrained = profile.get("pretrained_checkpoint_path")
+    task_checkpoint = profile.get("task_checkpoint_path")
+    trainable_scope = profile.get("trainable_scope", "full")
     output_dir = args.output_dir or profile.get("output_dir")
+    loader_plan = build_ptbxl_loader_plan(
+        get_model_spec(MODEL_NAME),
+        config_path=config.path,
+        config_root=config.config_root,
+    )
     plan = {
         "model": get_model_spec(MODEL_NAME).describe(),
         "config": config.describe(),
@@ -119,10 +67,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
         "trainable_scope": trainable_scope,
         "output_dir": None if output_dir is None else str(Path(output_dir).resolve()),
-        "device": args.device or config.payload["training"]["device"],
+        "device": config.payload["training"]["device"],
         "training_parameters": training_parameters,
-        "dataloader_parameters": dataloader_parameters,
-        "pos_weight": args.pos_weight,
+        "loader_plan": loader_plan.describe(),
+        "pos_weight": None,
     }
     if args.dry_run:
         print(json.dumps(plan, indent=2, ensure_ascii=False, sort_keys=True))
@@ -143,10 +91,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         config_path=config.path,
         config_root=config.config_root,
         output_dir=output_dir,
-        device=args.device,
-        pos_weight=args.pos_weight,
         training_parameters=training_parameters,
-        dataloader_parameters=dataloader_parameters,
     )
     print(json.dumps(result.describe(), indent=2, ensure_ascii=False, sort_keys=True))
     return 0

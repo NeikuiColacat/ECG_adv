@@ -5,12 +5,11 @@ This module intentionally owns only the data-runtime layer:
 1. verify an immutable split against the cache that produced it;
 2. resolve stable hash IDs to cache-local integer indices;
 3. expose a worker-safe PyTorch ``Dataset``;
-4. apply model-side transforms in the fixed order
-   raw mV -> optional augmentation -> non-finite sanitization -> global z-score;
+4. expose raw canonical 100 Hz BTC batches to the model-side input adapter;
 5. build a deterministically seeded ``DataLoader``.
 
 It does not resample waveforms, create splits, compute metrics, or import legacy
-training code. Callers choose the already-built 100 Hz or 500 Hz cache view.
+training code. Finite plans always open the already-built raw 100 Hz cache;
 PN2021-C callers must also choose one explicit corruption composition.
 """
 
@@ -38,11 +37,7 @@ from data_preprocess.load_cache import (
     ViewSelector,
     load_cache,
 )
-from data_preprocess.split_cache import load_split_config
-from util.config_bundle import (
-    resolve_config_reference,
-    resolve_entry_config_path,
-)
+from util.config_bundle import resolve_entry_config_path
 from util.random_seed import (
     DEFAULT_RANDOM_SEED_CONFIG_PATH,
     derive_seed,
@@ -72,6 +67,12 @@ PN2021_PARTITIONS = (
     "evaluation_all_zero_kept",
     "evaluation_drop_all_zero",
 )
+PN2021_CENTER_SOURCES = {
+    "ningbo": ("ningbo",),
+    "chapman_shaoxing": ("chapman_shaoxing",),
+    "cpsc_2018": ("cpsc_2018", "cpsc_2018_extra"),
+    "georgia": ("georgia",),
+}
 CANONICAL_EVALUATION_PARTITIONS = {
     "pn2021_all_zero_kept_refexcluded": (
         "pn2021",
@@ -1492,110 +1493,31 @@ class DataLoaderSeedIdentity:
 
 
 @dataclass(frozen=True)
-class DataContentLedgerConfig:
-    path: Path
-    sha256: str
-
-    def describe(self) -> dict[str, str]:
-        return {"path": str(self.path), "sha256": self.sha256}
-
-
-@dataclass(frozen=True)
-class DataLoadConfig:
-    """Strictly validated defaults loaded from ``configs/data/data_load.yaml``."""
+class _RuntimeDefaults:
+    """Only the mmap policy still owned by the runtime layer."""
 
     path: Path
     sha256: str
-    content_ledger: DataContentLedgerConfig
-    batch_size: int
-    num_workers: int
-    pin_memory: bool
-    persistent_workers: bool
-    prefetch_factor: int
-    drop_last: bool
-    cache_mode: StorageMode
-    validate_values: ValueValidation
-    shuffle_partitions: tuple[str, ...]
     mmap_access_order: MMapAccessOrder
     mmap_batch_read: bool
     mmap_prefetch: MMapPrefetchConfig
-    selection_resident: bool
-    selection_resident_pin_memory: bool
-    prepare_for_model: bool
-    sanitize: bool
-    global_zscore: bool
-    output_layout: RuntimeLayout
-    epsilon: float
 
     def describe(self) -> dict[str, Any]:
         return {
             "config_path": str(self.path),
             "config_sha256": self.sha256,
-            "content_ledger": self.content_ledger.describe(),
-            "defaults": {
-                "batch_size": self.batch_size,
-                "num_workers": self.num_workers,
-                "pin_memory": self.pin_memory,
-                "persistent_workers": self.persistent_workers,
-                "prefetch_factor": self.prefetch_factor,
-                "drop_last": self.drop_last,
-                "cache_mode": self.cache_mode,
-                "validate_values": self.validate_values,
-                "shuffle_partitions": list(self.shuffle_partitions),
-                "mmap": {
-                    "access_order": self.mmap_access_order,
-                    "batch_read": self.mmap_batch_read,
-                    "prefetch": self.mmap_prefetch.describe(),
-                },
-                "selection_residency": {
-                    "enabled": self.selection_resident,
-                    "pin_memory": self.selection_resident_pin_memory,
-                },
-                "prepare_for_model": self.prepare_for_model,
-                "sanitize": self.sanitize,
-                "global_zscore": self.global_zscore,
-                "output_layout": self.output_layout,
-                "epsilon": self.epsilon,
+            "mmap": {
+                "access_order": self.mmap_access_order,
+                "batch_read": self.mmap_batch_read,
+                "prefetch": self.mmap_prefetch.describe(),
             },
         }
 
 
-def _require_exact_keys(
-    value: Mapping[str, Any],
-    *,
-    expected: set[str],
-    description: str,
-) -> None:
-    actual = set(value)
-    if actual != expected:
-        raise ValueError(
-            f"{description} keys mismatch: missing={sorted(expected - actual)}, "
-            f"unexpected={sorted(actual - expected)}"
-        )
-
-
-def _require_bool(value: Any, *, description: str) -> bool:
-    if not isinstance(value, bool):
-        raise ValueError(f"{description} must be boolean")
-    return value
-
-
-def _require_positive_int(value: Any, *, description: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-        raise ValueError(f"{description} must be a positive integer")
-    return int(value)
-
-
-def _require_nonnegative_int(value: Any, *, description: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise ValueError(f"{description} must be a non-negative integer")
-    return int(value)
-
-
-def load_data_load_config(
+def _load_runtime_defaults(
     path: str | Path = DEFAULT_DATA_LOAD_CONFIG,
-) -> DataLoadConfig:
-    """Load and strictly validate the shared DataLoader/runtime defaults."""
+) -> _RuntimeDefaults:
+    """Read only mmap policy; launcher owns the ledger and config closure."""
 
     config_path = resolve_entry_config_path(path)
     try:
@@ -1604,238 +1526,32 @@ def load_data_load_config(
         raise FileNotFoundError(f"data-load config not found: {config_path}") from None
     if not isinstance(payload, dict):
         raise ValueError("data-load config must be a YAML mapping")
-    required_root_keys = {
-        "schema_version",
-        "content_ledger",
-        "dataloader",
-        "model_input",
-        "mmap",
-    }
-    optional_root_keys = {"selection_residency"}
-    actual_root_keys = set(payload)
-    missing_root_keys = required_root_keys - actual_root_keys
-    unexpected_root_keys = actual_root_keys - required_root_keys - optional_root_keys
-    if missing_root_keys or unexpected_root_keys:
-        raise ValueError(
-            "data-load config keys mismatch: "
-            f"missing={sorted(missing_root_keys)}, "
-            f"unexpected={sorted(unexpected_root_keys)}"
-        )
     if payload["schema_version"] != 1:
         raise ValueError("data-load config schema_version must be 1")
-    dataloader = _require_mapping(
-        payload["dataloader"], description="data-load config.dataloader"
-    )
-    content_ledger = _require_mapping(
-        payload["content_ledger"], description="data-load config.content_ledger"
-    )
-    _require_exact_keys(
-        content_ledger,
-        expected={"path", "sha256"},
-        description="data-load config.content_ledger",
-    )
-    ledger_path = resolve_config_reference(
-        content_ledger["path"],
-        owner_config_path=config_path,
-        description="data-load config.content_ledger.path",
-    )
-    ledger_sha256 = content_ledger["sha256"]
-    if (
-        not isinstance(ledger_sha256, str)
-        or len(ledger_sha256) != 64
-        or set(ledger_sha256).difference("0123456789abcdef")
-    ):
-        raise ValueError("data-load config.content_ledger.sha256 is invalid")
-    model_input = _require_mapping(
-        payload["model_input"], description="data-load config.model_input"
-    )
     mmap_config = _require_mapping(
-        payload["mmap"], description="data-load config.mmap"
-    )
-    selection_residency = _require_mapping(
-        payload.get(
-            "selection_residency",
-            {"enabled": False, "pin_memory": False},
-        ),
-        description="data-load config.selection_residency",
-    )
-    _require_exact_keys(
-        dataloader,
-        expected={
-            "batch_size",
-            "num_workers",
-            "pin_memory",
-            "persistent_workers",
-            "prefetch_factor",
-            "drop_last",
-            "cache_mode",
-            "validate_values",
-            "shuffle_partitions",
-        },
-        description="data-load config.dataloader",
-    )
-    _require_exact_keys(
-        model_input,
-        expected={
-            "prepare_for_model",
-            "sanitize",
-            "global_zscore",
-            "output_layout",
-            "epsilon",
-        },
-        description="data-load config.model_input",
-    )
-    _require_exact_keys(
-        mmap_config,
-        expected={"access_order", "batch_read", "prefetch"},
-        description="data-load config.mmap",
+        payload.get("mmap"), description="data-load config.mmap"
     )
     mmap_prefetch = _require_mapping(
         mmap_config["prefetch"], description="data-load config.mmap.prefetch"
     )
-    _require_exact_keys(
-        mmap_prefetch,
-        expected={"enabled", "advice", "window_mib", "ahead_batches"},
-        description="data-load config.mmap.prefetch",
-    )
-    _require_exact_keys(
-        selection_residency,
-        expected={"enabled", "pin_memory"},
-        description="data-load config.selection_residency",
-    )
-    batch_size = _require_positive_int(
-        dataloader["batch_size"], description="dataloader.batch_size"
-    )
-    num_workers = _require_nonnegative_int(
-        dataloader["num_workers"], description="dataloader.num_workers"
-    )
-    pin_memory = _require_bool(
-        dataloader["pin_memory"], description="dataloader.pin_memory"
-    )
-    persistent_workers = _require_bool(
-        dataloader["persistent_workers"],
-        description="dataloader.persistent_workers",
-    )
-    prefetch_factor = _require_positive_int(
-        dataloader["prefetch_factor"], description="dataloader.prefetch_factor"
-    )
-    drop_last = _require_bool(
-        dataloader["drop_last"], description="dataloader.drop_last"
-    )
-    cache_mode = str(dataloader["cache_mode"])
-    if cache_mode not in {"auto", "ram", "mmap"}:
-        raise ValueError("dataloader.cache_mode must be auto, ram or mmap")
-    validate_values = str(dataloader["validate_values"])
-    if validate_values not in {"none", "sample", "full"}:
-        raise ValueError(
-            "dataloader.validate_values must be none, sample or full"
-        )
-    raw_shuffle = dataloader["shuffle_partitions"]
-    if not isinstance(raw_shuffle, list) or any(
-        not isinstance(value, str) for value in raw_shuffle
-    ):
-        raise ValueError("dataloader.shuffle_partitions must be a string list")
-    shuffle_partitions = tuple(raw_shuffle)
-    if len(set(shuffle_partitions)) != len(shuffle_partitions):
-        raise ValueError("dataloader.shuffle_partitions contains duplicates")
-    allowed_shuffle = {"train", "k500"}
-    unexpected_shuffle = set(shuffle_partitions) - allowed_shuffle
-    if unexpected_shuffle:
-        raise ValueError(
-            "only train and k500 may be shuffled by shared defaults; "
-            f"got {sorted(unexpected_shuffle)}"
-        )
     mmap_access_order = str(mmap_config["access_order"])
     if mmap_access_order not in {"split", "cache_index"}:
         raise ValueError("mmap.access_order must be split or cache_index")
-    mmap_batch_read = _require_bool(
-        mmap_config["batch_read"], description="mmap.batch_read"
+    batch_read = mmap_config["batch_read"]
+    if not isinstance(batch_read, bool):
+        raise ValueError("mmap.batch_read must be boolean")
+    prefetch = MMapPrefetchConfig(
+        enabled=mmap_prefetch["enabled"],
+        advice=cast(MMapAdvice, str(mmap_prefetch["advice"])),
+        window_mib=mmap_prefetch["window_mib"],
+        ahead_batches=mmap_prefetch["ahead_batches"],
     )
-    mmap_prefetch_enabled = _require_bool(
-        mmap_prefetch["enabled"], description="mmap.prefetch.enabled"
-    )
-    mmap_prefetch_advice = str(mmap_prefetch["advice"])
-    if mmap_prefetch_advice not in {"none", "sequential_willneed"}:
-        raise ValueError(
-            "mmap.prefetch.advice must be none or sequential_willneed"
-        )
-    mmap_prefetch_config = MMapPrefetchConfig(
-        enabled=mmap_prefetch_enabled,
-        advice=cast(MMapAdvice, mmap_prefetch_advice),
-        window_mib=_require_positive_int(
-            mmap_prefetch["window_mib"], description="mmap.prefetch.window_mib"
-        ),
-        ahead_batches=_require_positive_int(
-            mmap_prefetch["ahead_batches"],
-            description="mmap.prefetch.ahead_batches",
-        ),
-    )
-    selection_resident = _require_bool(
-        selection_residency["enabled"],
-        description="selection_residency.enabled",
-    )
-    selection_resident_pin_memory = _require_bool(
-        selection_residency["pin_memory"],
-        description="selection_residency.pin_memory",
-    )
-    if selection_resident_pin_memory and not selection_resident:
-        raise ValueError(
-            "selection_residency.pin_memory requires selection residency enabled"
-        )
-    prepare_for_model = _require_bool(
-        model_input["prepare_for_model"],
-        description="model_input.prepare_for_model",
-    )
-    sanitize = _require_bool(
-        model_input["sanitize"], description="model_input.sanitize"
-    )
-    global_zscore = _require_bool(
-        model_input["global_zscore"], description="model_input.global_zscore"
-    )
-    output_layout = str(model_input["output_layout"])
-    if output_layout not in {"time_channel", "channel_time"}:
-        raise ValueError(
-            "model_input.output_layout must be time_channel or channel_time"
-        )
-    epsilon_value = model_input["epsilon"]
-    if isinstance(epsilon_value, bool) or not isinstance(
-        epsilon_value, (int, float)
-    ):
-        raise ValueError("model_input.epsilon must be numeric")
-    epsilon = float(epsilon_value)
-    if not np.isfinite(epsilon) or epsilon <= 0:
-        raise ValueError("model_input.epsilon must be finite and positive")
-    if num_workers == 0 and persistent_workers:
-        raise ValueError(
-            "dataloader.persistent_workers must be false when num_workers is 0"
-        )
-    if num_workers > 0 and cache_mode != "mmap":
-        raise ValueError(
-            "multi-worker YAML defaults require dataloader.cache_mode=mmap"
-        )
-    return DataLoadConfig(
+    return _RuntimeDefaults(
         path=config_path,
         sha256=_sha256_file(config_path),
-        content_ledger=DataContentLedgerConfig(ledger_path, ledger_sha256),
-        batch_size=batch_size,
-        num_workers=num_workers,
-        pin_memory=pin_memory,
-        persistent_workers=persistent_workers,
-        prefetch_factor=prefetch_factor,
-        drop_last=drop_last,
-        cache_mode=cast(StorageMode, cache_mode),
-        validate_values=cast(ValueValidation, validate_values),
-        shuffle_partitions=shuffle_partitions,
         mmap_access_order=cast(MMapAccessOrder, mmap_access_order),
-        mmap_batch_read=mmap_batch_read,
-        mmap_prefetch=mmap_prefetch_config,
-        selection_resident=selection_resident,
-        selection_resident_pin_memory=selection_resident_pin_memory,
-        prepare_for_model=prepare_for_model,
-        sanitize=sanitize,
-        global_zscore=global_zscore,
-        output_layout=cast(RuntimeLayout, output_layout),
-        epsilon=epsilon,
+        mmap_batch_read=batch_read,
+        mmap_prefetch=prefetch,
     )
 
 
@@ -1888,7 +1604,7 @@ class RuntimeDataLoader(DataLoader[dict[str, Any]]):
         self.close()
 
 
-def build_dataloader(
+def _build_torch_loader(
     dataset: RuntimeECGDataset | SelectionResidentECGDataset,
     *,
     batch_size: int,
@@ -2024,66 +1740,427 @@ def _read_corruption_cache_dir(config_path: str | Path) -> Path:
 def _resolve_runtime_locations(
     *,
     dataset: RuntimeDatasetName,
-    cache_dir: str | Path | None,
-    split_dir: str | Path | None,
     split_config_path: str | Path,
     corruption_cache_config_path: str | Path,
 ) -> tuple[Path, Path]:
-    split_config: dict[str, Any] | None = None
-    if split_dir is None or (cache_dir is None and dataset != "pn2021c"):
-        split_config = load_split_config(split_config_path)
-    if split_dir is None:
-        assert split_config is not None
-        split_root = _resolve_project_path(split_config["output"]["root_dir"])
-        split_key = "ptbxl" if dataset == "ptbxl" else "pn2021"
-        resolved_split_dir = split_root / str(
-            split_config[split_key]["output_subdir"]
+    config_path = resolve_entry_config_path(split_config_path)
+    try:
+        split_config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            f"split location config not found: {config_path}"
+        ) from None
+    if not isinstance(split_config, dict):
+        raise ValueError("split location config must be a YAML mapping")
+    if split_config.get("schema_version") != 1:
+        raise ValueError("split location config schema_version must be 1")
+    output = _require_mapping(
+        split_config.get("output"), description="split location config.output"
+    )
+    split_key = "ptbxl" if dataset == "ptbxl" else "pn2021"
+    source = _require_mapping(
+        split_config.get(split_key),
+        description=f"split location config.{split_key}",
+    )
+    root_dir = output.get("root_dir")
+    cache_dir = source.get("cache_dir")
+    output_subdir = source.get("output_subdir")
+    for name, value in (
+        ("output.root_dir", root_dir),
+        (f"{split_key}.cache_dir", cache_dir),
+        (f"{split_key}.output_subdir", output_subdir),
+    ):
+        if not isinstance(value, str) or not value:
+            raise ValueError(f"split location config.{name} is required")
+    sampling_rate = source.get("sampling_rate_hz")
+    if isinstance(sampling_rate, bool) or sampling_rate != 100:
+        raise ValueError(
+            f"split location config.{split_key}.sampling_rate_hz must be 100"
         )
-    else:
-        resolved_split_dir = _resolve_project_path(split_dir)
-
-    if cache_dir is not None:
-        resolved_cache_dir = _resolve_project_path(cache_dir)
-    elif dataset == "pn2021c":
+    resolved_split_dir = (
+        _resolve_project_path(root_dir) / output_subdir
+    )
+    if dataset == "pn2021c":
         resolved_cache_dir = _read_corruption_cache_dir(
             corruption_cache_config_path
         )
     else:
-        assert split_config is not None
-        resolved_cache_dir = _resolve_project_path(
-            split_config[dataset]["cache_dir"]
-        )
+        resolved_cache_dir = _resolve_project_path(cache_dir)
     return resolved_cache_dir, resolved_split_dir.resolve()
 
 
-def _resolve_runtime_seed_config(
-    seed_config_path: str | Path | None,
-    *,
-    split_config_path: str | Path,
-) -> Path:
-    if seed_config_path is not None:
-        return resolve_entry_config_path(seed_config_path)
-    owner = resolve_entry_config_path(split_config_path)
-    split_config = load_split_config(owner)
-    return resolve_config_reference(
-        split_config["random_seed"]["file"],
-        owner_config_path=owner,
-        description="random_seed.file",
-        must_exist=True,
-    )
+def _runtime_policy(owner: Any, *batch_fields: str) -> dict[str, Any]:
+    ints = (*batch_fields, "prefetch_factor", "num_workers")
+    bools = tuple(n for n in ("pin_memory", "persistent_workers", "drop_last",
+        "shuffle", "selection_resident", "selection_resident_pin_memory")
+        if hasattr(owner, n))
+    if any(type(getattr(owner, n)) is not int for n in ints):
+        raise TypeError("runtime integer fields must be exact integers")
+    if any(type(getattr(owner, n)) is not bool for n in bools):
+        raise TypeError("runtime boolean fields must be exact booleans")
+    if any(getattr(owner, n) <= 0 for n in (*batch_fields, "prefetch_factor")):
+        raise ValueError("batch and prefetch sizes must be positive")
+    if owner.num_workers < 0:
+        raise ValueError("num_workers must be non-negative")
+    if type(owner.cache_mode) is not str or type(owner.validate_values) is not str:
+        raise TypeError("runtime enum fields must be strings")
+    if owner.cache_mode not in {"auto", "ram", "mmap"} or owner.validate_values not in {"none", "sample", "full"}:
+        raise ValueError("unsupported runtime enum")
+    resident = getattr(owner, "selection_resident", False)
+    if owner.num_workers > 0 and owner.cache_mode != "mmap":
+        raise ValueError("multi-worker runtime policy requires mmap")
+    if owner.persistent_workers and owner.num_workers == 0:
+        raise ValueError("persistent workers require num_workers > 0")
+    if resident and (owner.cache_mode != "mmap" or owner.num_workers != 0):
+        raise ValueError("selection residency requires single-process mmap")
+    if getattr(owner, "selection_resident_pin_memory", False) and not resident:
+        raise ValueError("resident pinning requires selection residency")
+    names = (*batch_fields, "num_workers", *bools, "prefetch_factor", "cache_mode", "validate_values")
+    return {n: getattr(owner, n) for n in names}
+
+
+@dataclass(frozen=True)
+class PTBXLLoaderPlan:
+    """Finite raw canonical-100-Hz loader plan for PTB-XL training."""
+
+    train_partition: str
+    validation_partition: str
+    test_partition: str | None
+    train_batch_size: int
+    eval_batch_size: int
+    num_workers: int
+    pin_memory: bool
+    persistent_workers: bool
+    prefetch_factor: int
+    cache_mode: StorageMode
+    validate_values: ValueValidation
+    drop_last: bool
+    config_root: str | Path
+    split_config_path: str | Path
+    data_load_config_path: str | Path
+    seed_config_path: str | Path
+
+    def __post_init__(self) -> None:
+        if self.train_partition != "train":
+            raise ValueError("PTB-XL train_partition must be train")
+        if self.validation_partition != "validation":
+            raise ValueError("PTB-XL validation_partition must be validation")
+        if self.test_partition not in {None, "test"}:
+            raise ValueError("PTB-XL test_partition must be test or disabled")
+        _runtime_policy(self, "train_batch_size", "eval_batch_size")
+        if self.drop_last:
+            raise ValueError("PTB-XL official folds require drop_last=false")
+
+    def _open(self, partition: str, *, training: bool) -> RuntimeDataLoader:
+        return _build_runtime_loader(
+            _LoaderRequest(
+                dataset="ptbxl",
+                partition=partition,
+                logical_center=None,
+                view=None,
+                batch_size=(
+                    self.train_batch_size if training else self.eval_batch_size
+                ),
+                shuffle=training,
+                num_workers=self.num_workers,
+                drop_last=False,
+                pin_memory=self.pin_memory,
+                persistent_workers=self.persistent_workers,
+                prefetch_factor=self.prefetch_factor,
+                cache_mode=self.cache_mode,
+                validate_values=self.validate_values,
+                selection_resident=False,
+                selection_resident_pin_memory=False,
+                seed_namespace=(
+                    f"ptbxl:{partition}:global:100hz:clean"
+                ),
+                split_config_path=self.split_config_path,
+                data_load_config_path=self.data_load_config_path,
+                corruption_cache_config_path=None,
+                seed_config_path=self.seed_config_path,
+            )
+        )
+
+    def open_train(self) -> RuntimeDataLoader:
+        return self._open(self.train_partition, training=True)
+
+    def open_validation(self) -> RuntimeDataLoader:
+        return self._open(self.validation_partition, training=False)
+
+    def open_test(self) -> RuntimeDataLoader:
+        if self.test_partition is None:
+            raise ValueError("PTB-XL test partition is disabled")
+        return self._open(self.test_partition, training=False)
+
+    def describe(self) -> dict[str, Any]:
+        return {
+            "dataset": "ptbxl",
+            "sampling_rate_hz": 100,
+            "layout": "time_channel",
+            "normalization": "none",
+            "train_partition": self.train_partition,
+            "validation_partition": self.validation_partition,
+            "test_partition": self.test_partition,
+            **_runtime_policy(self, "train_batch_size", "eval_batch_size"),
+            "config_root": str(self.config_root),
+            "split_config_path": str(self.split_config_path),
+            "data_load_config_path": str(self.data_load_config_path),
+            "seed_config_path": str(self.seed_config_path),
+        }
+
+
+@dataclass(frozen=True)
+class PN2021K500LoaderPlan:
+    """Finite raw canonical K500 plan with ordered and shuffled openings."""
+
+    center: str
+    batch_size: int
+    num_workers: int
+    pin_memory: bool
+    persistent_workers: bool
+    prefetch_factor: int
+    cache_mode: StorageMode
+    validate_values: ValueValidation
+    selection_resident: bool
+    selection_resident_pin_memory: bool
+    drop_last: bool
+    seed_namespace: str
+    config_root: str | Path
+    split_config_path: str | Path
+    data_load_config_path: str | Path
+    seed_config_path: str | Path
+
+    def __post_init__(self) -> None:
+        if self.center not in PN2021_CENTER_SOURCES:
+            raise ValueError(
+                f"PN2021 K500 center must be one of {tuple(PN2021_CENTER_SOURCES)}"
+            )
+        _runtime_policy(self, "batch_size")
+        if type(self.seed_namespace) is not str:
+            raise TypeError("PN2021 K500 seed_namespace must be a string")
+        if not self.seed_namespace:
+            raise ValueError("PN2021 K500 seed_namespace must be non-empty")
+        if self.drop_last:
+            raise ValueError("PN2021 K500 loaders must preserve all 500 records")
+
+    def _verify_opened(
+        self, loader: RuntimeDataLoader, *, training: bool
+    ) -> RuntimeDataLoader:
+        selection = getattr(loader.dataset, "selection", None)
+        dataset = loader.dataset
+        expected_sources = PN2021_CENTER_SOURCES[self.center]
+        try:
+            if not isinstance(selection, ECGSelection):
+                raise RuntimeError("PN2021 K500 loader has no verified selection")
+            if (
+                selection.dataset != "pn2021"
+                or selection.cache_dataset != "pn2021"
+                or selection.partition != "k500"
+                or selection.logical_center != self.center
+                or selection.source_centers != expected_sources
+                or len(selection) != 500
+            ):
+                raise ValueError(
+                    "PN2021 K500 loader identity mismatch: "
+                    f"expected center={self.center}, sources={expected_sources}, "
+                    "partition=k500, records=500"
+                )
+            if loader.drop_last:
+                raise ValueError("PN2021 K500 loader must use drop_last=false")
+            if (
+                getattr(dataset, "sampling_rate_hz", None) != 100
+                or getattr(dataset, "transform", None) is not None
+            ):
+                raise ValueError(
+                    "PN2021 K500 loader must expose unnormalized raw 100 Hz BTC"
+                )
+            expected_order = "split" if training else "cache_index"
+            description = dataset.describe()
+            if description.get("mmap", {}).get("access_order") != expected_order:
+                raise ValueError(
+                    f"PN2021 K500 access order must be {expected_order}"
+                )
+            return loader
+        except Exception:
+            loader.close()
+            raise
+
+    def _open(self, *, training: bool) -> RuntimeDataLoader:
+        loader = _build_runtime_loader(
+            _LoaderRequest(
+                dataset="pn2021",
+                partition="k500",
+                logical_center=self.center,
+                view=None,
+                batch_size=self.batch_size,
+                shuffle=training,
+                num_workers=self.num_workers,
+                drop_last=False,
+                pin_memory=self.pin_memory,
+                persistent_workers=self.persistent_workers,
+                prefetch_factor=self.prefetch_factor,
+                cache_mode=self.cache_mode,
+                validate_values=self.validate_values,
+                selection_resident=self.selection_resident,
+                selection_resident_pin_memory=self.selection_resident_pin_memory,
+                seed_namespace=self.seed_namespace,
+                split_config_path=self.split_config_path,
+                data_load_config_path=self.data_load_config_path,
+                corruption_cache_config_path=None,
+                seed_config_path=self.seed_config_path,
+            )
+        )
+        return self._verify_opened(loader, training=training)
+
+    def open_ordered(self) -> RuntimeDataLoader:
+        return self._open(training=False)
+
+    def open_training(self) -> RuntimeDataLoader:
+        return self._open(training=True)
+
+    def describe(self) -> dict[str, Any]:
+        return {
+            "dataset": "pn2021",
+            "partition": "k500",
+            "logical_center": self.center,
+            "sampling_rate_hz": 100,
+            "layout": "time_channel",
+            "normalization": "none",
+            "seed_namespace": self.seed_namespace,
+            **_runtime_policy(self, "batch_size"),
+            "config_root": str(self.config_root),
+            "split_config_path": str(self.split_config_path),
+            "data_load_config_path": str(self.data_load_config_path),
+            "seed_config_path": str(self.seed_config_path),
+        }
+
+
+@dataclass(frozen=True)
+class PN2021EvaluationLoaderPlan:
+    """Finite raw-100-Hz loader surface for PN2021/PN2021-C evaluation."""
+
+    clean_partition: str
+    corrupted_partition: str
+    batch_size: int
+    num_workers: int
+    pin_memory: bool
+    persistent_workers: bool
+    prefetch_factor: int
+    cache_mode: StorageMode
+    validate_values: ValueValidation
+    config_root: str | Path
+    split_config_path: str | Path
+    data_load_config_path: str | Path
+    corruption_cache_config_path: str | Path
+    seed_config_path: str | Path
+
+    def __post_init__(self) -> None:
+        if CANONICAL_EVALUATION_PARTITIONS.get(self.clean_partition, (None,))[0] != "pn2021":
+            raise ValueError("clean_partition must be a canonical PN2021 evaluation alias")
+        if CANONICAL_EVALUATION_PARTITIONS.get(self.corrupted_partition, (None,))[0] != "pn2021c":
+            raise ValueError(
+                "corrupted_partition must be a canonical PN2021-C evaluation alias"
+            )
+        clean_view = CANONICAL_EVALUATION_PARTITIONS[self.clean_partition][1]
+        corrupted_view = CANONICAL_EVALUATION_PARTITIONS[
+            self.corrupted_partition
+        ][1]
+        if clean_view != corrupted_view:
+            raise ValueError("clean and corrupted partitions must use the same view")
+        _runtime_policy(self, "batch_size")
+        if self.num_workers != 0 or self.persistent_workers:
+            raise ValueError("PN2021 evaluation loaders require workers=0")
+        if self.cache_mode != "mmap":
+            raise ValueError("PN2021 evaluation loaders require mmap caches")
+
+    def describe(self) -> dict[str, Any]:
+        return {
+            "dataset": "pn2021/pn2021c",
+            "sampling_rate_hz": 100,
+            "layout": "time_channel",
+            "normalization": "none",
+            "clean_partition": self.clean_partition,
+            "corrupted_partition": self.corrupted_partition,
+            **_runtime_policy(self, "batch_size"),
+            "drop_last": False,
+            "selection_resident": False,
+            "config_root": str(self.config_root),
+            "split_config_path": str(self.split_config_path),
+            "data_load_config_path": str(self.data_load_config_path),
+            "corruption_cache_config_path": str(
+                self.corruption_cache_config_path
+            ),
+            "seed_config_path": str(self.seed_config_path),
+        }
+
+    def _open(
+        self,
+        dataset: Literal["pn2021", "pn2021c"],
+        center: str,
+        view: ViewSelector,
+        *,
+        session: SequentialEvaluationDataSession | None = None,
+    ) -> RuntimeDataLoader:
+        partition = (
+            self.clean_partition if dataset == "pn2021" else self.corrupted_partition
+        )
+        resolved_partition = _normalize_runtime_partition(dataset, partition)
+        return _build_runtime_loader(
+            _LoaderRequest(
+                dataset=dataset,
+                partition=partition,
+                logical_center=center,
+                view=view,
+                batch_size=self.batch_size,
+                shuffle=False,
+                num_workers=0,
+                drop_last=False,
+                pin_memory=self.pin_memory,
+                persistent_workers=False,
+                prefetch_factor=self.prefetch_factor,
+                cache_mode="mmap",
+                validate_values=self.validate_values,
+                selection_resident=False,
+                selection_resident_pin_memory=False,
+                seed_namespace=":".join(
+                    (
+                        dataset,
+                        resolved_partition,
+                        center,
+                        "100hz",
+                        "clean" if view is None else str(view),
+                    )
+                ),
+                split_config_path=self.split_config_path,
+                data_load_config_path=self.data_load_config_path,
+                corruption_cache_config_path=self.corruption_cache_config_path,
+                seed_config_path=self.seed_config_path,
+                evaluation_session=session,
+            )
+        )
+
+    def open_clean(self, center: str) -> RuntimeDataLoader:
+        return self._open("pn2021", center, None)
+
+    def open_corrupted(self, center: str, view: ViewSelector) -> RuntimeDataLoader:
+        if view is None:
+            raise ValueError("corrupted evaluation requires one explicit view")
+        return self._open("pn2021c", center, view)
+
+    def open_session(self) -> SequentialEvaluationDataSession:
+        return SequentialEvaluationDataSession(self)
 
 
 class SequentialEvaluationDataSession:
     """Reuse validated mmap caches and split selections across eval views.
 
-    ``get_dataloader`` has the same keyword interface as the module-level
-    function and is intended to be passed directly as an evaluation loader
-    factory. Loaders are strictly single-process and sequential. Closing one
-    loader releases only its lightweight dataset wrapper; the session owns and
-    closes the shared mmap handles on context exit.
+    Loaders are strictly single-process and sequential. Closing one loader
+    releases only its lightweight dataset wrapper; the session owns and closes
+    the shared mmap handles on context exit.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, plan: PN2021EvaluationLoaderPlan | None = None) -> None:
+        self._plan = plan
         self._caches: dict[tuple[Path, int], ECGCache] = {}
         self._validation_levels: dict[tuple[Path, int], ValueValidation] = {}
         self._selections: dict[
@@ -2142,13 +2219,21 @@ class SequentialEvaluationDataSession:
             self._selections[selection_key] = selection
         return cache, selection
 
-    def get_dataloader(self, **kwargs: Any) -> RuntimeDataLoader:
-        """Build one sequential loader while retaining shared session state."""
-
+    def _finite_plan(self) -> PN2021EvaluationLoaderPlan:
         self._require_open()
-        if "evaluation_session" in kwargs:
-            raise ValueError("evaluation_session is owned by this factory")
-        return get_dataloader(evaluation_session=self, **kwargs)
+        if self._plan is None:
+            raise RuntimeError("evaluation session has no finite PN2021 loader plan")
+        return self._plan
+
+    def open_clean(self, center: str) -> RuntimeDataLoader:
+        return self._finite_plan()._open("pn2021", center, None, session=self)
+
+    def open_corrupted(
+        self, center: str, view: ViewSelector
+    ) -> RuntimeDataLoader:
+        if view is None:
+            raise ValueError("corrupted evaluation requires one explicit view")
+        return self._finite_plan()._open("pn2021c", center, view, session=self)
 
     def describe(self) -> dict[str, Any]:
         return {
@@ -2167,12 +2252,21 @@ class SequentialEvaluationDataSession:
     def close(self) -> None:
         if self._closed:
             return
-        for cache in self._caches.values():
-            cache.close()
-        self._caches.clear()
-        self._validation_levels.clear()
-        self._selections.clear()
-        self._closed = True
+        first_error: Exception | None = None
+        try:
+            for cache in tuple(self._caches.values()):
+                try:
+                    cache.close()
+                except Exception as error:
+                    if first_error is None:
+                        first_error = error
+        finally:
+            self._caches.clear()
+            self._validation_levels.clear()
+            self._selections.clear()
+            self._closed = True
+        if first_error is not None:
+            raise first_error
 
     def __enter__(self) -> SequentialEvaluationDataSession:
         self._require_open()
@@ -2182,426 +2276,171 @@ class SequentialEvaluationDataSession:
         self.close()
 
 
-def get_dataloader(
-    *,
-    dataset: RuntimeDatasetName,
-    partition: str,
-    batch_size: int | None = None,
-    logical_center: str | None = None,
-    sampling_rate_hz: int = 100,
-    view: ViewSelector = None,
-    shuffle: bool | None = None,
-    num_workers: int | None = None,
-    drop_last: bool | None = None,
-    pin_memory: bool | None = None,
-    persistent_workers: bool | None = None,
-    prefetch_factor: int | None = None,
-    cache_mode: StorageMode | None = None,
-    validate_values: ValueValidation | None = None,
-    selection_resident: bool | None = None,
-    selection_resident_pin_memory: bool | None = None,
-    mmap_access_order: MMapAccessOrder | None = None,
-    mmap_batch_read: bool | None = None,
-    mmap_prefetch_enabled: bool | None = None,
-    mmap_prefetch_advice: MMapAdvice | None = None,
-    mmap_prefetch_window_mib: int | None = None,
-    mmap_prefetch_ahead_batches: int | None = None,
-    prepare_for_model: bool | None = None,
-    augmentation: Callable[[torch.Tensor], np.ndarray | torch.Tensor] | None = None,
-    sanitize: bool | None = None,
-    global_zscore: bool | None = None,
-    output_layout: RuntimeLayout | None = None,
-    epsilon: float | None = None,
-    seed_namespace: str | None = None,
-    seed_config_path: str | Path | None = None,
-    config_root: str | Path | None = None,
-    split_config_path: str | Path | None = None,
-    data_load_config_path: str | Path | None = None,
-    corruption_cache_config_path: str | Path | None = None,
-    cache_dir: str | Path | None = None,
-    split_dir: str | Path | None = None,
-    evaluation_session: SequentialEvaluationDataSession | None = None,
-) -> RuntimeDataLoader:
-    """Return one ready-to-iterate loader for any managed ECG split.
+@dataclass(frozen=True)
+class _LoaderRequest:
+    dataset: RuntimeDatasetName
+    partition: str
+    logical_center: str | None
+    view: ViewSelector
+    batch_size: int
+    shuffle: bool
+    num_workers: int
+    drop_last: bool
+    pin_memory: bool
+    persistent_workers: bool
+    prefetch_factor: int
+    cache_mode: StorageMode
+    validate_values: ValueValidation
+    selection_resident: bool
+    selection_resident_pin_memory: bool
+    seed_namespace: str
+    split_config_path: str | Path
+    data_load_config_path: str | Path
+    corruption_cache_config_path: str | Path | None
+    seed_config_path: str | Path
+    evaluation_session: SequentialEvaluationDataSession | None = None
 
-    Supported requests are:
-
-    - ``dataset="ptbxl"`` with ``train``, ``validation`` or ``test``;
-    - ``dataset="pn2021"`` with the full ``k500``, either managed K500 tuning
-      partition, or either ref-excluded evaluation;
-    - ``dataset="pn2021c"`` with frozen ``k500_tune_validation`` or corrupted
-      ref-excluded evaluation and an explicit ``view``.
-
-    Omitted runtime arguments are loaded from ``config_root`` (the repository
-    ``configs/`` by default); explicit config paths take precedence. Canonical
-    evaluation aliases from the project protocol are accepted. Model-ready
-    batches use augmentation -> sanitization -> per-sample global z-score. Set
-    ``prepare_for_model=False`` only when the caller explicitly needs untouched
-    raw-mV time-channel data.
-    """
-
-    selected_config_root = (
-        PROJECT_ROOT / "configs"
-        if config_root is None
-        else Path(config_root).expanduser().resolve()
-    )
-    resolved_split_config_path = (
-        selected_config_root / "data" / "splits.yaml"
-        if split_config_path is None
-        else resolve_entry_config_path(split_config_path)
-    )
-    resolved_data_load_config_path = (
-        selected_config_root / "data" / "data_load.yaml"
-        if data_load_config_path is None
-        else resolve_entry_config_path(data_load_config_path)
-    )
-    resolved_corruption_cache_config_path = (
-        selected_config_root / "augmentation" / "cache.yaml"
-        if corruption_cache_config_path is None
-        else resolve_entry_config_path(corruption_cache_config_path)
-    )
-    if dataset not in {"ptbxl", "pn2021", "pn2021c"}:
-        raise ValueError("dataset must be 'ptbxl', 'pn2021' or 'pn2021c'")
-    resolved_partition = _normalize_runtime_partition(dataset, partition)
-    data_load_config = load_data_load_config(resolved_data_load_config_path)
-    resolved_batch_size = _require_positive_int(
-        data_load_config.batch_size if batch_size is None else batch_size,
-        description="resolved batch_size",
-    )
-    resolved_num_workers = _require_nonnegative_int(
-        data_load_config.num_workers if num_workers is None else num_workers,
-        description="resolved num_workers",
-    )
-    resolved_pin_memory = _require_bool(
-        data_load_config.pin_memory if pin_memory is None else pin_memory,
-        description="resolved pin_memory",
-    )
-    resolved_drop_last = _require_bool(
-        data_load_config.drop_last if drop_last is None else drop_last,
-        description="resolved drop_last",
-    )
-    if persistent_workers is None:
-        resolved_persistent_workers = (
-            data_load_config.persistent_workers
-            if resolved_num_workers > 0
-            else False
-        )
-    else:
-        resolved_persistent_workers = _require_bool(
-            persistent_workers, description="resolved persistent_workers"
-        )
-    resolved_prefetch_factor = _require_positive_int(
-        data_load_config.prefetch_factor
-        if prefetch_factor is None
-        else prefetch_factor,
-        description="resolved prefetch_factor",
-    )
-    resolved_cache_mode = (
-        data_load_config.cache_mode if cache_mode is None else cache_mode
-    )
-    if resolved_cache_mode not in {"auto", "ram", "mmap"}:
-        raise ValueError("resolved cache_mode must be auto, ram or mmap")
-    resolved_validate_values = (
-        data_load_config.validate_values
-        if validate_values is None
-        else validate_values
-    )
-    if resolved_validate_values not in {"none", "sample", "full"}:
-        raise ValueError(
-            "resolved validate_values must be none, sample or full"
-        )
-    resolved_selection_resident = _require_bool(
-        data_load_config.selection_resident
-        if selection_resident is None
-        else selection_resident,
-        description="resolved selection_resident",
-    )
-    resolved_selection_resident_pin_memory = _require_bool(
-        data_load_config.selection_resident_pin_memory
-        if selection_resident_pin_memory is None
-        else selection_resident_pin_memory,
-        description="resolved selection_resident_pin_memory",
-    )
-    if resolved_selection_resident_pin_memory and not resolved_selection_resident:
-        raise ValueError(
-            "selection_resident_pin_memory requires selection_resident=true"
-        )
-    if shuffle is None:
-        resolved_shuffle = (
-            resolved_partition in data_load_config.shuffle_partitions
-            or (
-                resolved_partition == "k500_tune_train"
-                and "k500" in data_load_config.shuffle_partitions
-            )
-        )
-    else:
-        resolved_shuffle = _require_bool(shuffle, description="resolved shuffle")
-    requested_mmap_access_order = (
-        data_load_config.mmap_access_order
-        if mmap_access_order is None
-        else mmap_access_order
-    )
-    if requested_mmap_access_order not in {"split", "cache_index"}:
-        raise ValueError("resolved mmap_access_order must be split or cache_index")
-    resolved_mmap_batch_read = _require_bool(
-        data_load_config.mmap_batch_read
-        if mmap_batch_read is None
-        else mmap_batch_read,
-        description="resolved mmap_batch_read",
-    )
-    requested_prefetch_enabled = _require_bool(
-        data_load_config.mmap_prefetch.enabled
-        if mmap_prefetch_enabled is None
-        else mmap_prefetch_enabled,
-        description="resolved mmap_prefetch_enabled",
-    )
-    resolved_prefetch_advice = (
-        data_load_config.mmap_prefetch.advice
-        if mmap_prefetch_advice is None
-        else mmap_prefetch_advice
-    )
-    if resolved_prefetch_advice not in {"none", "sequential_willneed"}:
-        raise ValueError(
-            "resolved mmap_prefetch_advice must be none or sequential_willneed"
-        )
-    resolved_prefetch_window_mib = _require_positive_int(
-        data_load_config.mmap_prefetch.window_mib
-        if mmap_prefetch_window_mib is None
-        else mmap_prefetch_window_mib,
-        description="resolved mmap_prefetch_window_mib",
-    )
-    resolved_prefetch_ahead_batches = _require_positive_int(
-        data_load_config.mmap_prefetch.ahead_batches
-        if mmap_prefetch_ahead_batches is None
-        else mmap_prefetch_ahead_batches,
-        description="resolved mmap_prefetch_ahead_batches",
-    )
-    # Sorting a shuffled split would change its seeded training semantics. Keep
-    # training/K500 shuffle in persisted split order and reserve page-cache
-    # look-ahead for deterministic evaluation traversal.
-    resolved_mmap_access_order: MMapAccessOrder = (
-        "split" if resolved_shuffle else requested_mmap_access_order
-    )
-    resolved_mmap_prefetch = MMapPrefetchConfig(
-        enabled=(
-            requested_prefetch_enabled
-            and not resolved_shuffle
-            and resolved_cache_mode == "mmap"
-        ),
-        advice=cast(MMapAdvice, resolved_prefetch_advice),
-        window_mib=resolved_prefetch_window_mib,
-        ahead_batches=resolved_prefetch_ahead_batches,
-    )
-    resolved_prepare_for_model = _require_bool(
-        data_load_config.prepare_for_model
-        if prepare_for_model is None
-        else prepare_for_model,
-        description="resolved prepare_for_model",
-    )
-    resolved_sanitize = _require_bool(
-        data_load_config.sanitize if sanitize is None else sanitize,
-        description="resolved sanitize",
-    )
-    resolved_global_zscore = _require_bool(
-        data_load_config.global_zscore
-        if global_zscore is None
-        else global_zscore,
-        description="resolved global_zscore",
-    )
-    resolved_output_layout = (
-        data_load_config.output_layout
-        if output_layout is None
-        else output_layout
-    )
-    if resolved_output_layout not in {"time_channel", "channel_time"}:
-        raise ValueError(
-            "resolved output_layout must be time_channel or channel_time"
-        )
-    raw_epsilon = data_load_config.epsilon if epsilon is None else epsilon
-    if isinstance(raw_epsilon, bool) or not isinstance(
-        raw_epsilon, (int, float)
-    ):
-        raise ValueError("resolved epsilon must be numeric")
-    resolved_epsilon = float(raw_epsilon)
-    if not np.isfinite(resolved_epsilon) or resolved_epsilon <= 0:
-        raise ValueError("resolved epsilon must be finite and positive")
-    if dataset == "ptbxl":
-        if logical_center is not None:
-            raise ValueError("PTB-XL loader does not accept logical_center")
-        if view is not None:
-            raise ValueError("PTB-XL loader does not accept corruption view")
-    else:
-        if not logical_center:
-            raise ValueError(f"{dataset} loader requires logical_center")
-        if dataset == "pn2021" and view is not None:
-            raise ValueError("clean PN2021 loader does not accept corruption view")
-        if dataset == "pn2021c" and view is None:
-            raise ValueError("PN2021-C loader requires an explicit corruption view")
-    if not resolved_prepare_for_model and augmentation is not None:
-        raise ValueError("augmentation requires prepare_for_model=True")
-    if resolved_num_workers > 0 and resolved_cache_mode != "mmap":
-        raise ValueError(
-            "num_workers > 0 requires cache_mode='mmap' to avoid one full "
-            "cache copy per worker"
-        )
-    if resolved_selection_resident:
-        clean_k500_residency = (
-            dataset == "pn2021"
-            and resolved_partition in PN2021_K500_PARTITIONS
-            and view is None
-        )
-        frozen_corruption_validation_residency = (
-            dataset == "pn2021c"
-            and resolved_partition == "k500_tune_validation"
-            and view is not None
-        )
-        if not (
-            clean_k500_residency or frozen_corruption_validation_residency
+    def __post_init__(self) -> None:
+        if type(self.dataset) is not str:
+            raise TypeError("dataset must be a string")
+        if self.dataset not in {"ptbxl", "pn2021", "pn2021c"}:
+            raise ValueError("unsupported dataset")
+        if self.view is not None and (
+            isinstance(self.view, bool) or type(self.view) not in {int, str}
+        ):
+            raise TypeError("view must be an integer, string, or None")
+        _runtime_policy(self, "batch_size")
+        if self.selection_resident and (
+            self.dataset != "pn2021"
+            or self.partition != "k500"
+            or self.cache_mode != "mmap"
+            or self.num_workers != 0
         ):
             raise ValueError(
-                "selection residency supports clean PN2021 K500 splits or one "
-                "explicit PN2021-C k500_tune_validation view"
+                "selection residency requires single-process PN2021 K500 mmap"
             )
-        if resolved_num_workers != 0:
-            raise ValueError("selection residency requires num_workers=0")
-        if resolved_persistent_workers:
-            raise ValueError("selection residency requires persistent_workers=false")
-        if resolved_cache_mode != "mmap":
-            raise ValueError("selection residency requires a mmap source cache")
-        if resolved_prepare_for_model:
-            raise ValueError(
-                "selection residency requires prepare_for_model=false raw K500 data"
-            )
-    if evaluation_session is not None:
-        if not isinstance(evaluation_session, SequentialEvaluationDataSession):
-            raise TypeError(
-                "evaluation_session must be a SequentialEvaluationDataSession"
-            )
-        if resolved_shuffle:
-            raise ValueError("sequential evaluation sessions require shuffle=false")
-        if resolved_num_workers != 0:
-            raise ValueError("sequential evaluation sessions require num_workers=0")
-        if resolved_persistent_workers:
-            raise ValueError(
-                "sequential evaluation sessions require persistent_workers=false"
-            )
-        if resolved_cache_mode != "mmap":
-            raise ValueError("sequential evaluation sessions require cache_mode=mmap")
-        if resolved_selection_resident:
-            raise ValueError(
-                "sequential evaluation sessions reject selection residency"
-            )
+        if self.selection_resident_pin_memory and not self.selection_resident:
+            raise ValueError("resident pinning requires selection residency")
+        if type(self.seed_namespace) is not str:
+            raise TypeError("runtime seed namespace must be a string")
+        if not self.seed_namespace:
+            raise ValueError("runtime seed namespace must be non-empty")
+        if self.dataset == "ptbxl" and self.logical_center is not None:
+            raise ValueError("PTB-XL runtime requests cannot select a center")
+        if self.dataset != "ptbxl" and self.logical_center not in PN2021_CENTER_SOURCES:
+            raise ValueError("PN2021 runtime requests require a logical center")
+        if self.dataset == "pn2021c" and self.view is None:
+            raise ValueError("PN2021-C runtime requests require a corruption view")
+        if self.dataset != "pn2021c" and self.view is not None:
+            raise ValueError("clean runtime requests cannot select a corruption view")
+        if self.evaluation_session is not None and (
+            self.num_workers != 0
+            or self.shuffle
+            or self.cache_mode != "mmap"
+            or self.selection_resident
+        ):
+            raise ValueError("evaluation sessions require sequential mmap requests")
 
-    resolved_cache_dir, resolved_split_dir = _resolve_runtime_locations(
-        dataset=dataset,
+
+def _build_runtime_loader(request: _LoaderRequest) -> RuntimeDataLoader:
+    """Open one finite raw-100-Hz request produced by a managed plan."""
+
+    partition = _normalize_runtime_partition(request.dataset, request.partition)
+    defaults = _load_runtime_defaults(request.data_load_config_path)
+    if request.dataset == "pn2021c" and request.corruption_cache_config_path is None:
+        raise ValueError("PN2021-C request requires corruption cache config")
+    cache_dir, split_dir = _resolve_runtime_locations(
+        dataset=request.dataset,
+        split_config_path=request.split_config_path,
+        corruption_cache_config_path=(
+            request.corruption_cache_config_path or DEFAULT_CORRUPTION_CACHE_CONFIG
+        ),
+    )
+    access_order: MMapAccessOrder = (
+        "split" if request.shuffle else defaults.mmap_access_order
+    )
+    prefetch = replace(
+        defaults.mmap_prefetch,
+        enabled=(
+            defaults.mmap_prefetch.enabled
+            and not request.shuffle
+            and request.cache_mode == "mmap"
+        ),
+    )
+    shared_cache = shared_selection = None
+    if request.evaluation_session is not None:
+        shared_cache, shared_selection = request.evaluation_session._acquire(
+            cache_dir=cache_dir,
+            split_dir=split_dir,
+            partition=partition,
+            logical_center=request.logical_center,
+            sampling_rate_hz=100,
+            validate_values=request.validate_values,
+        )
+    dataset = RuntimeECGDataset(
         cache_dir=cache_dir,
         split_dir=split_dir,
-        split_config_path=resolved_split_config_path,
-        corruption_cache_config_path=resolved_corruption_cache_config_path,
-    )
-    transform: ECGModelTransform | None
-    if resolved_prepare_for_model:
-        transform = ECGModelTransform(
-            augmentation=augmentation,
-            sanitize=resolved_sanitize,
-            global_zscore=resolved_global_zscore,
-            epsilon=float(resolved_epsilon),
-            source_layout="time_channel",
-            output_layout=resolved_output_layout,
-        )
-    else:
-        transform = None
-    shared_cache: ECGCache | None = None
-    shared_selection: ECGSelection | None = None
-    if evaluation_session is not None:
-        shared_cache, shared_selection = evaluation_session._acquire(
-            cache_dir=resolved_cache_dir,
-            split_dir=resolved_split_dir,
-            partition=resolved_partition,
-            logical_center=logical_center,
-            sampling_rate_hz=sampling_rate_hz,
-            validate_values=cast(ValueValidation, resolved_validate_values),
-        )
-    runtime_dataset = RuntimeECGDataset(
-        cache_dir=resolved_cache_dir,
-        split_dir=resolved_split_dir,
-        partition=resolved_partition,
-        logical_center=logical_center,
-        sampling_rate_hz=sampling_rate_hz,
-        cache_mode=resolved_cache_mode,
-        view=view,
-        transform=transform,
-        validate_values=resolved_validate_values,
-        access_order=resolved_mmap_access_order,
-        batch_read=resolved_mmap_batch_read,
-        mmap_prefetch=resolved_mmap_prefetch,
+        partition=partition,
+        logical_center=request.logical_center,
+        sampling_rate_hz=100,
+        cache_mode=request.cache_mode,
+        view=request.view,
+        transform=None,
+        validate_values=request.validate_values,
+        access_order=access_order,
+        batch_read=defaults.mmap_batch_read,
+        mmap_prefetch=prefetch,
         shared_cache=shared_cache,
         shared_selection=shared_selection,
     )
-    runtime_data: RuntimeECGDataset | SelectionResidentECGDataset
-    if resolved_selection_resident:
+    runtime_data: RuntimeECGDataset | SelectionResidentECGDataset = dataset
+    if request.selection_resident:
         try:
             runtime_data = SelectionResidentECGDataset(
-                runtime_dataset,
-                pin_memory=resolved_selection_resident_pin_memory,
+                dataset, pin_memory=request.selection_resident_pin_memory
             )
         finally:
-            runtime_dataset.close()
-    else:
-        runtime_data = runtime_dataset
-    effective_namespace = seed_namespace or ":".join(
-        (
-            dataset,
-            resolved_partition,
-            logical_center or "global",
-            f"{int(sampling_rate_hz)}hz",
-            "clean" if view is None else str(view),
-        )
-    )
-    resolved_seed_config_path = _resolve_runtime_seed_config(
-        seed_config_path,
-        split_config_path=resolved_split_config_path,
-    )
+            dataset.close()
     try:
-        loader, _ = build_dataloader(
+        loader, _ = _build_torch_loader(
             runtime_data,
-            batch_size=resolved_batch_size,
-            shuffle=resolved_shuffle,
-            num_workers=resolved_num_workers,
-            drop_last=resolved_drop_last,
-            pin_memory=resolved_pin_memory,
-            persistent_workers=resolved_persistent_workers,
-            prefetch_factor=resolved_prefetch_factor,
-            seed_namespace=effective_namespace,
-            seed_config_path=resolved_seed_config_path,
+            batch_size=request.batch_size,
+            shuffle=request.shuffle,
+            num_workers=request.num_workers,
+            drop_last=request.drop_last,
+            pin_memory=request.pin_memory,
+            persistent_workers=request.persistent_workers,
+            prefetch_factor=request.prefetch_factor,
+            seed_namespace=request.seed_namespace,
+            seed_config_path=request.seed_config_path,
         )
-        config_identity = data_load_config.describe()
-        config_identity["resolved"] = {
-            "batch_size": int(resolved_batch_size),
-            "num_workers": int(resolved_num_workers),
-            "pin_memory": resolved_pin_memory,
-            "persistent_workers": resolved_persistent_workers,
-            "prefetch_factor": int(resolved_prefetch_factor),
-            "drop_last": resolved_drop_last,
-            "shuffle": resolved_shuffle,
-            "cache_mode": resolved_cache_mode,
-            "validate_values": resolved_validate_values,
-            "selection_residency": {
-                "enabled": resolved_selection_resident,
-                "pin_memory": resolved_selection_resident_pin_memory,
+        loader.runtime_config_identity = {
+            **defaults.describe(),
+            "resolved": {
+                "batch_size": request.batch_size,
+                "num_workers": request.num_workers,
+                "pin_memory": request.pin_memory,
+                "persistent_workers": request.persistent_workers,
+                "prefetch_factor": request.prefetch_factor,
+                "drop_last": request.drop_last,
+                "shuffle": request.shuffle,
+                "cache_mode": request.cache_mode,
+                "validate_values": request.validate_values,
+                "selection_residency": {
+                    "enabled": request.selection_resident,
+                    "pin_memory": request.selection_resident_pin_memory,
+                },
+                "mmap": {
+                    "access_order": access_order,
+                    "batch_read": defaults.mmap_batch_read,
+                    "prefetch": prefetch.describe(),
+                },
+                "prepare_for_model": False,
+                "sanitize": False,
+                "global_zscore": False,
+                "output_layout": "time_channel",
             },
-            "mmap": {
-                "access_order": resolved_mmap_access_order,
-                "batch_read": resolved_mmap_batch_read,
-                "prefetch": resolved_mmap_prefetch.describe(),
-            },
-            "prepare_for_model": resolved_prepare_for_model,
-            "sanitize": resolved_sanitize,
-            "global_zscore": resolved_global_zscore,
-            "output_layout": resolved_output_layout,
-            "epsilon": float(resolved_epsilon),
         }
-        loader.runtime_config_identity = config_identity
         return loader
     except Exception:
         runtime_data.close()
@@ -2613,8 +2452,6 @@ __all__ = [
     "DEFAULT_CORRUPTION_CACHE_CONFIG",
     "DEFAULT_DATA_LOAD_CONFIG",
     "DEFAULT_SPLIT_CONFIG",
-    "DataContentLedgerConfig",
-    "DataLoadConfig",
     "DataLoaderSeedIdentity",
     "ECGModelTransform",
     "ECGSelection",
@@ -2623,17 +2460,17 @@ __all__ = [
     "MMapPrefetchConfig",
     "MMapPrefetcher",
     "PN2021_K500_PARTITIONS",
+    "PN2021EvaluationLoaderPlan",
+    "PN2021K500LoaderPlan",
     "PN2021_PARTITIONS",
     "PTBXL_PARTITIONS",
+    "PTBXLLoaderPlan",
     "RuntimeECGDataset",
     "RuntimeDataLoader",
     "SelectionResidentECGDataset",
     "SequentialEvaluationDataSession",
     "assert_disjoint_selections",
-    "build_dataloader",
     "convert_layout",
-    "get_dataloader",
-    "load_data_load_config",
     "load_selection",
     "per_sample_global_zscore",
     "prepare_model_input",

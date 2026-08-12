@@ -1,8 +1,8 @@
 """Generic YAML-managed supervised trainer for Torch ECG classifiers.
 
 Dataset selection and preprocessing deliberately stay outside this module.
-Callers build loaders with ``data_runtime.get_dataloader`` (or another
-compatible loader) and pass them together with a model to :func:`train_model`.
+Callers build loaders through a finite dataset-specific plan and pass them
+together with a model to :func:`train_model`.
 """
 
 from __future__ import annotations

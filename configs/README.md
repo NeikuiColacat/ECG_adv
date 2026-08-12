@@ -59,6 +59,14 @@ then places the same bytes under run-scoped `configs/data/` and `manifests/`.
 The delegate consumes this immutable snapshot. Dry-run does not read the ledger
 or stat cache roots; `aggregate_pn2021` is artifact-only and bypasses the gate.
 
+Runtime loading is likewise finite rather than YAML-extensible. The managed
+adapters construct only `PTBXLLoaderPlan`, `PN2021K500LoaderPlan`, or
+`PN2021EvaluationLoaderPlan`; the low-level builder is private. All three plans
+request raw physical-mV `(B,1000,12)` data at 100 Hz. Model adaptation remains
+code-owned: EfficientNet keeps the 1000-point grid, while ECGFounder performs
+device-local linear `1000 -> 5000` interpolation with `align_corners=True`;
+per-sample global z-score follows interpolation.
+
 ## Launcher
 
 The only experiment launcher is:

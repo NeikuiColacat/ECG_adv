@@ -19,7 +19,11 @@ from core.online_trainer import (
     load_online_train_config,
     resolve_online_training_parameters,
 )
-from core.train_PN2021 import load_pn2021_recipe_spec, train_pn2021
+from core.train_PN2021 import (
+    build_pn2021_k500_loader_plan,
+    load_pn2021_recipe_spec,
+    train_pn2021,
+)
 from models import build_ecgtwin_vae, build_model, get_model_spec, load_vae_config
 from util.config_bundle import resolve_config_reference
 
@@ -36,43 +40,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--method-config", type=Path, required=True)
     parser.add_argument("--center", required=True, choices=ALLOWED_CENTERS)
     parser.add_argument("--source-checkpoint", type=Path, required=True)
-    parser.add_argument("--vae-checkpoint", type=Path)
     parser.add_argument("--output-dir", type=Path)
-    parser.add_argument("--device")
-    parser.add_argument("--trainable-scope", choices=("full", "head"), default="full")
-    parser.add_argument("--epochs", type=int)
-    parser.add_argument("--scheduler-horizon-epochs", type=int)
-    parser.add_argument("--batch-size", type=int)
-    parser.add_argument("--learning-rate", type=float)
-    parser.add_argument("--weight-decay", type=float)
-    parser.add_argument("--minimum-learning-rate-ratio", type=float)
-    parser.add_argument("--gradient-clip-norm", type=float)
-    parser.add_argument(
-        "--amp", dest="amp_enabled", action=argparse.BooleanOptionalAction
-    )
-    parser.add_argument("--amp-dtype", choices=("bfloat16", "float16"))
-    parser.add_argument("--num-workers", type=int)
-    parser.add_argument(
-        "--pin-memory", action=argparse.BooleanOptionalAction, default=None
-    )
-    parser.add_argument(
-        "--persistent-workers",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-    )
-    parser.add_argument("--prefetch-factor", type=int)
-    parser.add_argument("--cache-mode", choices=("auto", "ram", "mmap"))
-    parser.add_argument("--validate-values", choices=("none", "sample", "full"))
-    parser.add_argument(
-        "--drop-last", action=argparse.BooleanOptionalAction, default=None
-    )
-    parser.add_argument("--pos-weight", nargs=5, type=float)
     parser.add_argument("--dry-run", action="store_true")
     return parser
-
-
-def _not_none(**values: Any) -> dict[str, Any]:
-    return {key: value for key, value in values.items() if value is not None}
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -83,40 +53,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         config_path=config.path,
         config_root=config.config_root,
     )
-    training_parameters = _not_none(
-        epochs=args.epochs,
-        scheduler_horizon_epochs=args.scheduler_horizon_epochs,
-        batch_size=args.batch_size,
-        learning_rate=args.learning_rate,
-        weight_decay=args.weight_decay,
-        minimum_learning_rate_ratio=args.minimum_learning_rate_ratio,
-        gradient_clip_norm=args.gradient_clip_norm,
-        amp_enabled=args.amp_enabled,
-        amp_dtype=args.amp_dtype,
-    )
     resolved_training, supplied_training = resolve_online_training_parameters(
-        config, args.model, training_parameters
+        config, args.model
     )
-    dataloader_parameters = _not_none(
-        num_workers=args.num_workers,
-        pin_memory=args.pin_memory,
-        persistent_workers=args.persistent_workers,
-        prefetch_factor=args.prefetch_factor,
-        cache_mode=args.cache_mode,
-        validate_values=args.validate_values,
-        drop_last=args.drop_last,
-    )
+    if supplied_training:
+        raise AssertionError("PN2021 training parameters must be YAML-owned")
     source_checkpoint = args.source_checkpoint.expanduser().resolve()
-    vae_checkpoint = (
-        None if args.vae_checkpoint is None else args.vae_checkpoint.expanduser().resolve()
-    )
     needs_pool = bool(recipe.requirements.latent_pool)
     needs_runtime_encoder = bool(recipe.requirements.vae_encoder)
     needs_decoder = bool(recipe.requirements.vae_decoder)
     needs_encoder_component = needs_pool or needs_runtime_encoder
     needs_vae = needs_encoder_component or needs_decoder
-    if not needs_vae and vae_checkpoint is not None:
-        raise ValueError("recipe without latent resources rejects --vae-checkpoint")
     resolved_vae_checkpoint = None
     vae_config_path = None
     if needs_vae:
@@ -131,9 +78,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             must_exist=True,
         )
         vae_config = load_vae_config(vae_config_path)
-        resolved_vae_checkpoint = vae_checkpoint or vae_config.checkpoint_path
+        resolved_vae_checkpoint = vae_config.checkpoint_path
     output_dir = (
         None if args.output_dir is None else args.output_dir.expanduser().resolve()
+    )
+    loader_plan = build_pn2021_k500_loader_plan(
+        center=args.center,
+        model_name=args.model,
+        config_path=config.path,
+        config_root=config.config_root,
     )
     plan = {
         "action": "pn2021_k500_online_training",
@@ -151,14 +104,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             "decoder": needs_decoder,
         },
         "output_dir": None if output_dir is None else str(output_dir),
-        "device": args.device or config.payload["training"]["device"],
+        "device": config.payload["training"]["device"],
         "training_parameters": {
             "resolved": resolved_training,
-            "explicit_overrides": supplied_training,
+            "source": "tracked_yaml",
         },
-        "dataloader_parameters": dataloader_parameters,
-        "trainable_scope": args.trainable_scope,
-        "pos_weight": args.pos_weight,
+        "loader_plan": loader_plan.describe(),
         "dry_run_side_effects": "none",
     }
     if args.dry_run:
@@ -177,7 +128,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         model_kwargs = {
             "task_checkpoint_path": source_checkpoint,
-            "trainable_scope": args.trainable_scope,
             "map_location": "cpu",
         }
     model = build_model(
@@ -212,10 +162,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         config_path=config.path,
         config_root=config.config_root,
         output_dir=output_dir,
-        device=args.device,
-        pos_weight=args.pos_weight,
-        training_parameters=training_parameters,
-        dataloader_parameters=dataloader_parameters,
     )
     print(json.dumps(result.describe(), indent=2, ensure_ascii=False, sort_keys=True))
     return 0

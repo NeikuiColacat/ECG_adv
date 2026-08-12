@@ -6,7 +6,8 @@ import hashlib
 import json
 import os
 import tempfile
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -17,8 +18,7 @@ import torch.nn as nn
 import yaml
 
 from data_preprocess.data_runtime import (
-    SequentialEvaluationDataSession,
-    get_dataloader,
+    PN2021EvaluationLoaderPlan,
 )
 from models.checkpoints import CheckpointIdentity, sha256_file
 from models.contracts import (
@@ -589,10 +589,8 @@ def load_pn2021_eval_config(
     configured_persistent = _boolean(
         runtime["persistent_workers"], description="runtime.persistent_workers"
     )
-    if configured_workers == 0 and configured_persistent:
-        raise ValueError(
-            "runtime.persistent_workers requires runtime.num_workers > 0"
-        )
+    if configured_workers != 0 or configured_persistent:
+        raise ValueError("PN2021 evaluation requires single-process workers=0")
     _positive_int(runtime["prefetch_factor"], description="runtime.prefetch_factor")
     if runtime["cache_mode"] not in {"auto", "ram", "mmap"}:
         raise ValueError("runtime.cache_mode must be auto, ram or mmap")
@@ -785,32 +783,9 @@ def _resolved_output(config: PN2021EvalConfig, output_dir: str | Path | None) ->
 def _runtime_values(
     config: PN2021EvalConfig,
     spec: ModelSpec,
-    *,
-    device: str | torch.device | None,
-    batch_size: int | None,
-    num_workers: int | None,
-    pin_memory: bool | None,
-    persistent_workers: bool | None,
-    amp_enabled: bool | None,
-    amp_dtype: str | None,
 ) -> dict[str, Any]:
     source = config.payload["runtime"]
-    resolved_workers = int(source["num_workers"] if num_workers is None else num_workers)
-    if resolved_workers < 0:
-        raise ValueError("num_workers must be nonnegative")
-    resolved_persistent = (
-        bool(source["persistent_workers"])
-        if persistent_workers is None
-        else bool(persistent_workers)
-    )
-    if resolved_workers == 0 and resolved_persistent:
-        raise ValueError("persistent_workers requires num_workers > 0")
-    resolved_batch = int(
-        source["batch_size_by_model"][spec.name] if batch_size is None else batch_size
-    )
-    if resolved_batch <= 0:
-        raise ValueError("batch_size must be positive")
-    requested_device = str(source["device"] if device is None else device)
+    requested_device = str(source["device"])
     if requested_device == "auto":
         requested_device = "cuda" if torch.cuda.is_available() else "cpu"
     resolved_device = torch.device(requested_device)
@@ -818,21 +793,17 @@ def _runtime_values(
         raise RuntimeError("CUDA was requested but is unavailable")
     if resolved_device.type not in {"cpu", "cuda"}:
         raise ValueError("evaluation device must be CPU or CUDA")
-    resolved_amp_dtype = str(source["amp"]["dtype"] if amp_dtype is None else amp_dtype)
-    if resolved_amp_dtype not in {"bfloat16", "float16"}:
-        raise ValueError("amp_dtype must be bfloat16 or float16")
-    resolved_amp = bool(source["amp"]["enabled"] if amp_enabled is None else amp_enabled)
     return {
         "device": str(resolved_device),
-        "batch_size": resolved_batch,
-        "num_workers": resolved_workers,
-        "pin_memory": bool(source["pin_memory"] if pin_memory is None else pin_memory),
-        "persistent_workers": resolved_persistent,
+        "batch_size": int(source["batch_size_by_model"][spec.name]),
+        "num_workers": int(source["num_workers"]),
+        "pin_memory": bool(source["pin_memory"]),
+        "persistent_workers": bool(source["persistent_workers"]),
         "prefetch_factor": int(source["prefetch_factor"]),
         "cache_mode": str(source["cache_mode"]),
         "validate_values": str(source["validate_values"]),
-        "amp_enabled": resolved_amp,
-        "amp_dtype": resolved_amp_dtype,
+        "amp_enabled": bool(source["amp"]["enabled"]),
+        "amp_dtype": str(source["amp"]["dtype"]),
     }
 
 
@@ -842,13 +813,6 @@ def build_evaluation_plan(
     checkpoint_path: str | Path,
     config: PN2021EvalConfig,
     output_dir: str | Path | None = None,
-    device: str | torch.device | None = None,
-    batch_size: int | None = None,
-    num_workers: int | None = None,
-    pin_memory: bool | None = None,
-    persistent_workers: bool | None = None,
-    amp_enabled: bool | None = None,
-    amp_dtype: str | None = None,
     logical_centers: Sequence[str] | None = None,
     subject_identity: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -858,17 +822,7 @@ def build_evaluation_plan(
     if not checkpoint.is_file():
         raise FileNotFoundError(f"checkpoint not found: {checkpoint}")
     views, corruption_identity = load_corruption_views(config)
-    runtime = _runtime_values(
-        config,
-        model_spec,
-        device=device,
-        batch_size=batch_size,
-        num_workers=num_workers,
-        pin_memory=pin_memory,
-        persistent_workers=persistent_workers,
-        amp_enabled=amp_enabled,
-        amp_dtype=amp_dtype,
-    )
+    runtime = _runtime_values(config, model_spec)
     output = _resolved_output(config, output_dir)
     selected_centers = _resolve_evaluation_centers(config, logical_centers)
     return {
@@ -1300,16 +1254,8 @@ def evaluate_pn2021(
     config_path: str | Path = DEFAULT_PN2021_EVAL_CONFIG,
     config_root: str | Path | None = None,
     output_dir: str | Path | None = None,
-    device: str | torch.device | None = None,
-    batch_size: int | None = None,
-    num_workers: int | None = None,
-    pin_memory: bool | None = None,
-    persistent_workers: bool | None = None,
-    amp_enabled: bool | None = None,
-    amp_dtype: str | None = None,
     logical_centers: Sequence[str] | None = None,
     subject_identity: Mapping[str, Any] | None = None,
-    dataloader_factory: Callable[..., Any] | None = None,
 ) -> dict[str, Any]:
     """Evaluate one strict task checkpoint on clean and 20 PN2021-C views."""
 
@@ -1330,17 +1276,7 @@ def evaluate_pn2021(
     if not isinstance(spec, ModelSpec):
         raise ValueError("evaluation model must expose a canonical ModelSpec")
     views, corruption_identity = load_corruption_views(resolved_config)
-    runtime = _runtime_values(
-        resolved_config,
-        spec,
-        device=device,
-        batch_size=batch_size,
-        num_workers=num_workers,
-        pin_memory=pin_memory,
-        persistent_workers=persistent_workers,
-        amp_enabled=amp_enabled,
-        amp_dtype=amp_dtype,
-    )
+    runtime = _runtime_values(resolved_config, spec)
     selected_centers = _resolve_evaluation_centers(
         resolved_config, logical_centers
     )
@@ -1363,52 +1299,34 @@ def evaluate_pn2021(
         checkpoint_identity.sha256,
         config_path=resolved_config.random_seed_config_path,
     )
-    common_loader = {
-        "sampling_rate_hz": CANONICAL_SAMPLING_RATE_HZ,
-        "batch_size": runtime["batch_size"],
-        "shuffle": False,
-        "num_workers": runtime["num_workers"],
-        "drop_last": False,
-        "pin_memory": runtime["pin_memory"],
-        "persistent_workers": runtime["persistent_workers"],
-        "prefetch_factor": runtime["prefetch_factor"],
-        "cache_mode": runtime["cache_mode"],
-        "validate_values": runtime["validate_values"],
-        "prepare_for_model": False,
-        "sanitize": False,
-        "global_zscore": False,
-        "output_layout": "time_channel",
-        "config_root": resolved_config.config_root,
-        "split_config_path": resolved_config.split_config_path,
-        "data_load_config_path": resolved_config.data_load_config_path,
-        "corruption_cache_config_path": resolved_config.corruption_cache_config_path,
-        "seed_config_path": resolved_config.random_seed_config_path,
-    }
+    loader_plan = PN2021EvaluationLoaderPlan(
+        clean_partition=resolved_config.payload["protocol"]["partitions"]["clean"],
+        corrupted_partition=resolved_config.payload["protocol"]["partitions"][
+            "corrupted"
+        ],
+        batch_size=runtime["batch_size"],
+        num_workers=runtime["num_workers"],
+        pin_memory=runtime["pin_memory"],
+        persistent_workers=runtime["persistent_workers"],
+        prefetch_factor=runtime["prefetch_factor"],
+        cache_mode=runtime["cache_mode"],
+        validate_values=runtime["validate_values"],
+        config_root=resolved_config.config_root,
+        split_config_path=resolved_config.split_config_path,
+        data_load_config_path=resolved_config.data_load_config_path,
+        corruption_cache_config_path=resolved_config.corruption_cache_config_path,
+        seed_config_path=resolved_config.random_seed_config_path,
+    )
     was_training = model.training
     model.to(resolved_device)
     model.eval()
-    data_session: SequentialEvaluationDataSession | None = None
-    if dataloader_factory is not None:
-        factory = dataloader_factory
-    elif runtime["num_workers"] == 0:
-        data_session = SequentialEvaluationDataSession()
-        factory = data_session.get_dataloader
-    else:
-        # Locked v1 evaluation configs used worker processes.  Preserve that
-        # path for exact replay; only the runtime-v2 single-process profile can
-        # safely share one validated mmap across all sequential views.
-        factory = get_dataloader
     clean_centers: dict[str, Any] = {}
     clean_record_identity: dict[str, dict[str, str]] = {}
-    try:
+    with ExitStack() as stack:
+        stack.callback(model.train, was_training)
+        data_session = stack.enter_context(loader_plan.open_session())
         for center in selected_centers:
-            loader = factory(
-                dataset="pn2021",
-                partition=resolved_config.payload["protocol"]["partitions"]["clean"],
-                logical_center=center,
-                view=None,
-                **common_loader,
-            )
+            loader = data_session.open_clean(center)
             try:
                 metrics, identity = _evaluate_loader(
                     model,
@@ -1436,15 +1354,7 @@ def evaluate_pn2021(
         for view in views:
             per_center: dict[str, Any] = {}
             for center in selected_centers:
-                loader = factory(
-                    dataset="pn2021c",
-                    partition=resolved_config.payload["protocol"]["partitions"][
-                        "corrupted"
-                    ],
-                    logical_center=center,
-                    view=view.composition_id,
-                    **common_loader,
-                )
+                loader = data_session.open_corrupted(center, view.composition_id)
                 try:
                     metrics, identity = _evaluate_loader(
                         model,
@@ -1488,13 +1398,6 @@ def evaluate_pn2021(
                     ),
                 }
             )
-    finally:
-        try:
-            if data_session is not None:
-                data_session.close()
-        finally:
-            model.train(was_training)
-
     clean_evaluated_center_mean = mean_metric_views(
         [clean_centers[center]["metrics"] for center in selected_centers]
     )

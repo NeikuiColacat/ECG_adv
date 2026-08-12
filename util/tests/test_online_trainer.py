@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
+import inspect
+import json
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -13,6 +17,7 @@ import yaml
 import boot_scripts.train_pn2021 as train_boot
 import core.online_trainer as trainer
 import core.train_PN2021 as train_adapter
+import data_preprocess.data_runtime as data_runtime
 from core.methods import AuxiliaryVariant, RecipeKind, build_method_runtime, load_recipe_spec
 from core.methods.runtime import _derive_seed
 from core.train_PN2021 import _validate_locked_source_checkpoint
@@ -93,23 +98,47 @@ def test_non_dry_handoffs_keep_bundle_relative_recipe(monkeypatch, tmp_path: Pat
     model = torch.nn.Identity()
     model.model_spec = EFFICIENTNET1DV2_SPEC
     result = object()
+    loader = SimpleNamespace(close=lambda: seen.setdefault("loader_closed", True))
+    loader_plan = SimpleNamespace(center="ningbo", open_training=lambda: loader)
     def capture(key, value):
         def call(*args, **kwargs):
             seen[key] = kwargs["method_config_path"]
             return value
         return call
     monkeypatch.setattr(train_adapter, "_validate_locked_source_checkpoint", lambda *a, **k: None)
-    monkeypatch.setattr(train_adapter, "build_pn2021_latent_pool", capture("pool", object()))
-    monkeypatch.setattr(train_adapter, "build_pn2021_k500_dataloader",
-                        lambda *a, **k: SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr(
+        train_adapter,
+        "build_pn2021_k500_loader_plan",
+        lambda **kwargs: loader_plan,
+    )
+    monkeypatch.setattr(train_adapter.torch.cuda, "is_available", lambda: True)
+
+    def capture_pool(*args, **kwargs):
+        seen["pool"] = kwargs["method_config_path"]
+        assert kwargs["loader_plan"] is loader_plan
+        return object()
+
+    monkeypatch.setattr(train_adapter, "build_pn2021_latent_pool", capture_pool)
     monkeypatch.setattr(train_adapter, "train_online_model", capture("trainer", result))
+
+    class Component:
+        def to(self, *args, **kwargs):
+            return self
+
+        def eval(self):
+            return self
 
     assert train_adapter.train_pn2021(
         model, center="ningbo", method_config_path=adapter_method,
-        encoder=torch.nn.Identity(), decoder=torch.nn.Identity(),
-        config_path=ONLINE_CONFIG, config_root=CONFIG_ROOT, device="cpu",
+        encoder=Component(), decoder=Component(),
+        config_path=ONLINE_CONFIG, config_root=CONFIG_ROOT,
     ) is result
-    assert seen == {"boot": boot_method, "pool": adapter_method, "trainer": adapter_method}
+    assert seen == {
+        "boot": boot_method,
+        "pool": adapter_method,
+        "trainer": adapter_method,
+        "loader_closed": True,
+    }
 
 
 def test_source_checkpoint_lock_covers_both_backbones(tmp_path: Path) -> None:
@@ -217,6 +246,233 @@ def test_online_config_references_and_overrides_remain_closed() -> None:
     with pytest.raises(ValueError, match="greater than or equal"):
         trainer.resolve_online_training_parameters(config, "efficientnet1dv2",
             {"epochs": 4, "scheduler_horizon_epochs": 3})
+
+
+def test_pn2021_loader_plan_is_entirely_yaml_owned() -> None:
+    expected = {
+        "efficientnet1dv2": 128,
+        "ecgfounder": 64,
+    }
+    for model_name, batch_size in expected.items():
+        plan = train_adapter.build_pn2021_k500_loader_plan(
+            center="ningbo",
+            model_name=model_name,
+            config_path=ONLINE_CONFIG,
+            config_root=CONFIG_ROOT,
+        )
+        assert plan.center == "ningbo"
+        assert plan.batch_size == batch_size
+        assert (
+            plan.num_workers,
+            plan.pin_memory,
+            plan.persistent_workers,
+            plan.prefetch_factor,
+            plan.cache_mode,
+            plan.validate_values,
+        ) == (0, True, False, 2, "mmap", "sample")
+        assert (
+            plan.selection_resident,
+            plan.selection_resident_pin_memory,
+            plan.drop_last,
+        ) == (True, False, False)
+        assert plan.seed_namespace == (
+            "pn2021_k500_matched:"
+            "aligned_targetonly_augmix_lhat_simplified_20260805:"
+            f"0:ningbo:{model_name}"
+        )
+        assert plan.config_root == CONFIG_ROOT
+        assert plan.split_config_path == CONFIG_ROOT / "data" / "splits.yaml"
+        assert plan.data_load_config_path == CONFIG_ROOT / "data" / "data_load.yaml"
+        assert plan.seed_config_path == CONFIG_ROOT / "random_seed.yaml"
+
+
+def test_pn2021_boot_dry_run_includes_loader_plan_without_side_effects(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        train_boot,
+        "build_model",
+        lambda *args, **kwargs: pytest.fail("model was built"),
+    )
+    monkeypatch.setattr(
+        torch.cuda,
+        "is_available",
+        lambda: pytest.fail("GPU availability was queried"),
+    )
+    monkeypatch.setattr(
+        data_runtime,
+        "_build_runtime_loader",
+        lambda *args, **kwargs: pytest.fail("data was opened"),
+    )
+    assert train_boot.main(
+        [
+            "--config", str(ONLINE_CONFIG),
+            "--config-root", str(CONFIG_ROOT),
+            "--model", "efficientnet1dv2",
+            "--method-config", "train/methods/a0_clean_v1.yaml",
+            "--center", "ningbo",
+            "--source-checkpoint", "/does/not/need/to/exist.pt",
+            "--dry-run",
+        ]
+    ) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["loader_plan"]["dataset"] == "pn2021"
+    assert payload["loader_plan"]["partition"] == "k500"
+    assert payload["loader_plan"]["logical_center"] == "ningbo"
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    (
+        (("training", "num_workers"), "0"),
+        (("training", "num_workers"), 0.5),
+        (("training", "pin_memory"), "false"),
+        (("training", "persistent_workers"), 1),
+        (("training", "selection_resident"), "true"),
+        (("training", "cache_mode"), "ram"),
+        (("training", "model_profiles", "efficientnet1dv2", "batch_size"), True),
+    ),
+)
+def test_pn2021_boot_dry_run_rejects_malicious_runtime_yaml_before_side_effects(
+    monkeypatch: pytest.MonkeyPatch, path: tuple[str, ...], value: object
+) -> None:
+    config = trainer.load_online_train_config(ONLINE_CONFIG)
+    payload = copy.deepcopy(config.payload)
+    target = payload
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = value
+    poisoned = replace(config, payload=payload)
+    monkeypatch.setattr(
+        train_boot, "load_online_train_config", lambda *args, **kwargs: poisoned
+    )
+    monkeypatch.setattr(
+        train_adapter, "load_online_train_config", lambda *args, **kwargs: poisoned
+    )
+    monkeypatch.setattr(
+        train_boot,
+        "build_model",
+        lambda *args, **kwargs: pytest.fail("model was built"),
+    )
+    monkeypatch.setattr(
+        torch.cuda,
+        "is_available",
+        lambda: pytest.fail("GPU availability was queried"),
+    )
+    monkeypatch.setattr(
+        data_runtime,
+        "_build_runtime_loader",
+        lambda *args, **kwargs: pytest.fail("data was opened"),
+    )
+    with pytest.raises((TypeError, ValueError)):
+        train_boot.main(
+            [
+                "--config", str(ONLINE_CONFIG),
+                "--config-root", str(CONFIG_ROOT),
+                "--model", "efficientnet1dv2",
+                "--method-config", "train/methods/a0_clean_v1.yaml",
+                "--center", "ningbo",
+                "--source-checkpoint", "/does/not/need/to/exist.pt",
+                "--dry-run",
+            ]
+        )
+
+
+def test_pn2021_latent_pool_uses_ordered_plan_view_and_closes_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    class Loader:
+        def close(self) -> None:
+            calls.append("close")
+
+    class Plan:
+        center = "ningbo"
+
+        def open_ordered(self):
+            calls.append("ordered")
+            return Loader()
+
+        def open_training(self):
+            raise AssertionError("latent pool must not open the shuffled view")
+
+    expected = object()
+
+    def capture_pool(encoder, loader, **kwargs):
+        del encoder
+        calls.append("build")
+        assert isinstance(loader, Loader)
+        assert kwargs["encoder_identity"] == "a" * 64
+        return expected
+
+    monkeypatch.setattr(train_adapter, "build_latent_pool", capture_pool)
+    encoder = torch.nn.Identity()
+    encoder.checkpoint_identity = SimpleNamespace(sha256="a" * 64)
+    assert train_adapter.build_pn2021_latent_pool(
+        encoder,
+        loader_plan=Plan(),
+        method_config_path=Path("train/methods/augmix_simclr_lhat.yaml"),
+        config_path=ONLINE_CONFIG,
+        config_root=CONFIG_ROOT,
+        device="cpu",
+    ) is expected
+    assert calls == ["ordered", "build", "close"]
+
+
+def test_pn2021_boot_and_adapter_reject_retired_override_surfaces() -> None:
+    option_strings = {
+        option
+        for action in train_boot.build_parser()._actions
+        for option in action.option_strings
+    }
+    assert option_strings == {
+        "-h",
+        "--help",
+        "--config",
+        "--config-root",
+        "--model",
+        "--method-config",
+        "--center",
+        "--source-checkpoint",
+        "--output-dir",
+        "--dry-run",
+    }
+    retired = {
+        "--vae-checkpoint",
+        "--device",
+        "--trainable-scope",
+        "--epochs",
+        "--scheduler-horizon-epochs",
+        "--batch-size",
+        "--learning-rate",
+        "--weight-decay",
+        "--minimum-learning-rate-ratio",
+        "--gradient-clip-norm",
+        "--amp",
+        "--amp-dtype",
+        "--num-workers",
+        "--pin-memory",
+        "--persistent-workers",
+        "--prefetch-factor",
+        "--cache-mode",
+        "--validate-values",
+        "--drop-last",
+        "--pos-weight",
+    }
+    assert option_strings.isdisjoint(retired)
+    assert set(inspect.signature(train_adapter.train_pn2021).parameters) == {
+        "model",
+        "center",
+        "method_config_path",
+        "encoder",
+        "decoder",
+        "config_path",
+        "config_root",
+        "output_dir",
+    }
+    assert not hasattr(train_adapter, "PN2021_DATALOADER_PARAMETER_NAMES")
+    assert not hasattr(train_adapter, "build_pn2021_k500_dataloader")
 
 
 def test_finite_exposure_plans_lock_direct21_rotating6_and_matched5() -> None:

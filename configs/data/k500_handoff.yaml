@@ -3,11 +3,26 @@ profile_name: pn2021_k500_data_interface_handoff
 
 # This file is a portable handoff contract, not a second split generator.
 # Runtime data, caches and ID arrays stay outside Git and are supplied through
-# get_dataloader(..., cache_dir=..., split_dir=...).
+# the tracked split/cache configs consumed by finite loader plans.
 interface:
   module: data_preprocess.data_runtime
-  loader: get_dataloader
-  evaluation_session: SequentialEvaluationDataSession
+  internal_builder: _build_runtime_loader
+  public_loader_plans:
+    ptbxl_source:
+      class: PTBXLLoaderPlan
+      openings: [open_train, open_validation, open_test]
+    pn2021_k500:
+      class: PN2021K500LoaderPlan
+      openings: [open_ordered, open_training]
+      partition: k500
+      exact_record_count: 500
+      drop_last: false
+    pn2021_evaluation:
+      class: PN2021EvaluationLoaderPlan
+      openings: [open_clean, open_corrupted, open_session]
+      session_class: SequentialEvaluationDataSession
+      ref_excluded_only: true
+  dynamic_generic_loader_public: false
   data_content_verifier:
     module: data_preprocess.data_ledger
     callable: verify_ledger
@@ -43,7 +58,7 @@ required_configs:
     sha256: d19eddb5b41854fcd6d8a554efb3454dec2c6994f407eaa7cb82ed805629daf9
   data_load:
     path: data/data_load.yaml
-    sha256: 8168615e89f0a07919ffcb0bb17f7bf540f4332c21c87567c00712518832e228
+    sha256: f9beb4312e6fb997658583eaa4afe56b63c22dbd5f4e808776fa9d3dc3f8f81b
   random_seed:
     path: random_seed.yaml
     sha256: 8b337606c43b6fec2959dd185477ce32f48b139f5fce5112ee26efe58eb4bbbc
@@ -77,6 +92,7 @@ required_modules:
   contract_tests:
     - util/tests/test_data_contracts.py
     - util/tests/test_data_runtime.py
+    - util/tests/test_train_ptbxl.py
     - util/tests/test_labels_super5.py
     - util/tests/test_pn2021_evaluation.py
 

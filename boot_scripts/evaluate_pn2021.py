@@ -350,19 +350,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", type=Path, default=DEFAULT_PN2021_EVAL_CONFIG)
     parser.add_argument("--config-root", type=Path)
     parser.add_argument("--output-dir", type=Path)
-    parser.add_argument("--device", choices=("auto", "cpu", "cuda"))
-    parser.add_argument("--batch-size", type=int)
-    parser.add_argument("--num-workers", type=int)
-    parser.add_argument(
-        "--pin-memory", action=argparse.BooleanOptionalAction, default=None
-    )
-    parser.add_argument(
-        "--persistent-workers", action=argparse.BooleanOptionalAction, default=None
-    )
-    parser.add_argument(
-        "--amp", dest="amp_enabled", action=argparse.BooleanOptionalAction, default=None
-    )
-    parser.add_argument("--amp-dtype", choices=("bfloat16", "float16"))
     parser.add_argument("--center", action="append", choices=LOGICAL_CENTERS)
     parser.add_argument("--dry-run", action="store_true")
     return parser
@@ -425,13 +412,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         checkpoint_path=checkpoint_path,
         config=config,
         output_dir=args.output_dir,
-        device=args.device,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        pin_memory=args.pin_memory,
-        persistent_workers=args.persistent_workers,
-        amp_enabled=args.amp_enabled,
-        amp_dtype=args.amp_dtype,
         logical_centers=logical_centers,
         subject_identity=subject,
     )
@@ -459,13 +439,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         checkpoint_identity,
         config=config,
         output_dir=args.output_dir,
-        device=args.device,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        pin_memory=args.pin_memory,
-        persistent_workers=args.persistent_workers,
-        amp_enabled=args.amp_enabled,
-        amp_dtype=args.amp_dtype,
         logical_centers=logical_centers,
         subject_identity=subject,
     )
