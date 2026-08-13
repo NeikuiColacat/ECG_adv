@@ -17,8 +17,6 @@ import models
 import models.factory as model_factory
 from core.supervised_trainer import load_train_config
 from core.train_PTBXL import (
-    PTBXLDataLoaders,
-    build_ptbxl_dataloaders,
     build_ptbxl_loader_plan,
     train_ptbxl,
 )
@@ -97,32 +95,27 @@ def test_ptbxl_plan_is_fully_derived_from_model_and_yaml(
     eval_batch: int,
 ) -> None:
     monkeypatch.setattr(ptbxl_module, "PTBXLLoaderPlan", _Plan)
+    monkeypatch.setattr(ptbxl_module, "train_model", lambda *args, **kwargs: object())
 
-    loaders = build_ptbxl_dataloaders(_Model(spec), config_path=CONFIG)
+    train_ptbxl(_Model(spec), config_path=CONFIG)
     plan = _Plan.instances[0]
-    try:
-        assert loaders.plan is plan
-        assert not hasattr(loaders, "sampling_rate_hz")
-        assert not hasattr(loaders, "describe")
-        assert plan.train_partition == "train"
-        assert plan.validation_partition == "validation"
-        assert plan.test_partition == "test"
-        assert not hasattr(plan, "sampling_rate_hz")
-        assert plan.train_batch_size == train_batch
-        assert plan.eval_batch_size == eval_batch
-        assert plan.num_workers == 4
-        assert plan.pin_memory is True
-        assert plan.persistent_workers is True
-        assert plan.prefetch_factor == 2
-        assert plan.cache_mode == "mmap"
-        assert plan.validate_values == "sample"
-        assert plan.drop_last is False
-        assert plan.split_config_path == REPO / "configs" / "data" / "splits.yaml"
-        assert plan.data_load_config_path == REPO / "configs" / "data" / "data_load.yaml"
-        assert plan.seed_config_path == REPO / "configs" / "random_seed.yaml"
-        assert plan.opened == ["train", "validation", "test"]
-    finally:
-        loaders.close()
+    assert plan.train_partition == "train"
+    assert plan.validation_partition == "validation"
+    assert plan.test_partition == "test"
+    assert not hasattr(plan, "sampling_rate_hz")
+    assert plan.train_batch_size == train_batch
+    assert plan.eval_batch_size == eval_batch
+    assert plan.num_workers == 4
+    assert plan.pin_memory is True
+    assert plan.persistent_workers is True
+    assert plan.prefetch_factor == 2
+    assert plan.cache_mode == "mmap"
+    assert plan.validate_values == "sample"
+    assert plan.drop_last is False
+    assert plan.split_config_path == REPO / "configs" / "data" / "splits.yaml"
+    assert plan.data_load_config_path == REPO / "configs" / "data" / "data_load.yaml"
+    assert plan.seed_config_path == REPO / "configs" / "random_seed.yaml"
+    assert plan.opened == ["train", "validation", "test"]
     assert all(loader.closed for loader in plan.loaders)
 
 
@@ -145,15 +138,19 @@ def test_ptbxl_plan_does_not_open_fold10_when_yaml_disables_final_test(
     config = replace(config, payload=payload)
     monkeypatch.setattr(ptbxl_module, "load_train_config", lambda *args, **kwargs: config)
     monkeypatch.setattr(ptbxl_module, "PTBXLLoaderPlan", _Plan)
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        ptbxl_module,
+        "train_model",
+        lambda *args, **kwargs: captured.update(kwargs) or object(),
+    )
 
-    loaders = build_ptbxl_dataloaders(_Model(EFFICIENTNET1DV2_SPEC))
+    train_ptbxl(_Model(EFFICIENTNET1DV2_SPEC))
     plan = _Plan.instances[0]
-    try:
-        assert plan.test_partition is None
-        assert plan.opened == ["train", "validation"]
-        assert loaders.test is None
-    finally:
-        loaders.close()
+    assert plan.test_partition is None
+    assert plan.opened == ["train", "validation"]
+    assert captured["test_dataloader"] is None
+    assert all(loader.closed for loader in plan.loaders)
 
 
 def test_runtime_ptbxl_plan_opens_raw100_btc_with_locked_split_semantics(
@@ -285,27 +282,16 @@ def test_ptbxl_yaml_loader_profile_rejects_runtime_override_keys(
     monkeypatch.setattr(ptbxl_module, "load_train_config", lambda *args, **kwargs: config)
 
     with pytest.raises(ValueError, match="keys mismatch"):
-        build_ptbxl_dataloaders(_Model(EFFICIENTNET1DV2_SPEC))
+        train_ptbxl(_Model(EFFICIENTNET1DV2_SPEC))
     assert _Plan.instances == []
 
 
 def test_train_ptbxl_delegates_to_trainer_and_closes_owned_plan(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    plan = _Plan(test_partition="test")
-    bundle = PTBXLDataLoaders(
-        train=plan._open("train"),
-        validation=plan._open("validation"),
-        test=plan._open("test"),
-        plan=plan,
-    )
     sentinel = object()
     captured: dict[str, object] = {}
-    monkeypatch.setattr(
-        ptbxl_module,
-        "build_ptbxl_dataloaders",
-        lambda *args, **kwargs: bundle,
-    )
+    monkeypatch.setattr(ptbxl_module, "PTBXLLoaderPlan", _Plan)
 
     def fake_train_model(model, train_dataloader, **kwargs):
         captured.update(kwargs)
@@ -322,11 +308,12 @@ def test_train_ptbxl_delegates_to_trainer_and_closes_owned_plan(
         training_parameters={"epochs": 3},
     )
 
+    plan = _Plan.instances[0]
     assert result is sentinel
     assert captured["model"] is model
-    assert captured["train"] is bundle.train
-    assert captured["validation_dataloader"] is bundle.validation
-    assert captured["test_dataloader"] is bundle.test
+    assert captured["train"] is plan.loaders[0]
+    assert captured["validation_dataloader"] is plan.loaders[1]
+    assert captured["test_dataloader"] is plan.loaders[2]
     assert captured["training_parameters"] == {"epochs": 3}
     assert {"device", "pos_weight", "class_names"}.isdisjoint(captured)
     adapter = captured["input_adapter"]
@@ -337,23 +324,37 @@ def test_train_ptbxl_delegates_to_trainer_and_closes_owned_plan(
     assert tuple(adapted.shape) == (2, 12, 1000)
     assert all(loader.closed for loader in plan.loaders)
 
+    for failure, opened in (
+        ("test", ["train", "validation"]),
+        ("trainer", ["train", "validation", "test"]),
+    ):
+        _Plan.instances.clear()
+
+        class _FailingPlan(_Plan):
+            def _open(self, partition: str) -> _Loader:
+                if partition == failure:
+                    raise RuntimeError(failure)
+                return super()._open(partition)
+
+        def fail_trainer(*args, **kwargs):
+            if failure == "trainer":
+                raise RuntimeError(failure)
+            return object()
+
+        monkeypatch.setattr(ptbxl_module, "PTBXLLoaderPlan", _FailingPlan)
+        monkeypatch.setattr(ptbxl_module, "train_model", fail_trainer)
+        with pytest.raises(RuntimeError, match=failure):
+            train_ptbxl(_Model(EFFICIENTNET1DV2_SPEC), config_path=CONFIG)
+        failed_plan = _Plan.instances[0]
+        assert failed_plan.opened == opened
+        assert all(loader.closed for loader in failed_plan.loaders)
+
 
 def test_ptbxl_founder_adapter_upsamples_raw100_on_the_input_device(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    plan = _Plan(test_partition=None)
-    bundle = PTBXLDataLoaders(
-        train=plan._open("train"),
-        validation=plan._open("validation"),
-        test=None,
-        plan=plan,
-    )
     captured: dict[str, object] = {}
-    monkeypatch.setattr(
-        ptbxl_module,
-        "build_ptbxl_dataloaders",
-        lambda *args, **kwargs: bundle,
-    )
+    monkeypatch.setattr(ptbxl_module, "PTBXLLoaderPlan", _Plan)
 
     def fake_train_model(model, train_dataloader, **kwargs):
         captured.update(kwargs)
@@ -396,6 +397,8 @@ def test_ptbxl_boot_cli_is_the_launcher_owned_finite_surface() -> None:
     assert ptbxl_module.__all__ == [
         "build_ptbxl_loader_plan", "run_ptbxl_boot", "train_ptbxl"
     ]
+    assert not hasattr(ptbxl_module, "PTBXLDataLoaders")
+    assert not hasattr(ptbxl_module, "build_ptbxl_dataloaders")
     assert not any(hasattr(model_factory, name) for name in
                    ("MODEL_ALIASES", "MODEL_BUILDERS", "MODEL_SPECS", "normalize_model_name"))
     with pytest.raises(ValueError, match="unknown model"):

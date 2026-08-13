@@ -221,35 +221,26 @@ def run_ptbxl_boot(model_name: str, args: Any) -> int:
     return 0
 
 
-@dataclass(frozen=True)
-class PTBXLDataLoaders:
-    train: RuntimeDataLoader
-    validation: RuntimeDataLoader
-    test: RuntimeDataLoader | None
-    plan: PTBXLLoaderPlan
-
-    def close(self) -> None:
-        self.train.close()
-        self.validation.close()
-        if self.test is not None:
-            self.test.close()
-
-
-def build_ptbxl_dataloaders(
+def train_ptbxl(
     model: nn.Module,
     *,
     config_path: str | Path = DEFAULT_TRAIN_CONFIG,
     config_root: str | Path | None = None,
-) -> PTBXLDataLoaders:
-    """Build raw canonical-100 Hz loaders for official folds 1-8/9/10."""
+    output_dir: str | Path | None = None,
+    training_parameters: Mapping[str, Any] | None = None,
+) -> TrainingResult:
+    """Train any compatible Torch model on official PTB-XL Super5 splits."""
 
+    config = load_train_config(config_path, config_root=config_root)
+    spec = _managed_model_spec(model)
     if not isinstance(model, nn.Module):
         raise TypeError("model must be a torch.nn.Module")
-    config = load_train_config(config_path, config_root=config_root)
-    data = config.payload["data"]
-    if data.get("dataset") != "ptbxl":
+    loader_config = load_train_config(
+        config.path, config_root=config.config_root
+    )
+    if loader_config.payload["data"].get("dataset") != "ptbxl":
         raise ValueError("training config data.dataset must be ptbxl")
-    plan = _build_loader_plan(config, _managed_model_spec(model))
+    plan = _build_loader_plan(loader_config, _managed_model_spec(model))
     opened: list[RuntimeDataLoader] = []
     try:
         train = plan.open_train()
@@ -264,37 +255,12 @@ def build_ptbxl_dataloaders(
         for loader in opened:
             loader.close()
         raise
-    return PTBXLDataLoaders(
-        train=train,
-        validation=validation,
-        test=test,
-        plan=plan,
-    )
-
-
-def train_ptbxl(
-    model: nn.Module,
-    *,
-    config_path: str | Path = DEFAULT_TRAIN_CONFIG,
-    config_root: str | Path | None = None,
-    output_dir: str | Path | None = None,
-    training_parameters: Mapping[str, Any] | None = None,
-) -> TrainingResult:
-    """Train any compatible Torch model on official PTB-XL Super5 splits."""
-
-    config = load_train_config(config_path, config_root=config_root)
-    spec = _managed_model_spec(model)
-    loaders = build_ptbxl_dataloaders(
-        model,
-        config_path=config.path,
-        config_root=config.config_root,
-    )
     try:
         return train_model(
             model,
-            loaders.train,
-            validation_dataloader=loaders.validation,
-            test_dataloader=loaders.test,
+            train,
+            validation_dataloader=validation,
+            test_dataloader=test,
             config_path=config.path,
             config_root=config.config_root,
             output_dir=output_dir,
@@ -302,7 +268,8 @@ def train_ptbxl(
             input_adapter=_CanonicalInputAdapter(spec),
         )
     finally:
-        loaders.close()
+        for loader in opened:
+            loader.close()
 
 
 __all__ = [
