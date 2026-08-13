@@ -475,6 +475,22 @@ def test_pn2021_boot_and_adapter_reject_retired_override_surfaces() -> None:
     }
     assert not hasattr(train_adapter, "PN2021_DATALOADER_PARAMETER_NAMES")
     assert not hasattr(train_adapter, "build_pn2021_k500_dataloader")
+    assert vae.__all__ == [
+        "build_ecgtwin_vae", "decode_to_ptbxl_waveform", "load_vae_config",
+        "prepare_ecgtwin_encoder_input"]
+    assert tuple(vae.VAEConfig.__dataclass_fields__) == (
+        "checkpoint_path", "expected_encoder_state_keys", "expected_decoder_state_keys")
+    assert tuple(inspect.signature(vae.SelfAttention).parameters) == ()
+    assert tuple(inspect.signature(vae.VAEAttentionBlock).parameters) == ()
+    builder_source = inspect.getsource(vae.build_ecgtwin_vae)
+    assert all(f"{name}.vae_config" not in builder_source for name in ("encoder", "decoder"))
+    with torch.device("meta"):
+        encoder, decoder = vae.VAEEncoder(), vae.VAEDecoder()
+    assert (len(encoder.state_dict()), len(decoder.state_dict())) == (104, 136)
+    assert tuple(sum(parameter.numel() for parameter in module.parameters())
+                 for module in (encoder, decoder)) == (12_218_448, 17_333_664)
+    assert tuple(sum(1 for _ in module.named_modules())
+                 for module in (encoder, decoder)) == (74, 101)
     assert tuple(inspect.signature(vae.VAEEncoder.forward).parameters) == ("self", "value")
     assert tuple(inspect.signature(vae.decode_to_ptbxl_waveform).parameters) == ("decoder", "latent")
 

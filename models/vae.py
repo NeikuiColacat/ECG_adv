@@ -35,24 +35,8 @@ ECGTWIN_TO_PTBXL_INDICES = (0, 1, 2, 3, 5, 4, 6, 7, 8, 9, 10, 11)
 @dataclass(frozen=True)
 class VAEConfig:
     checkpoint_path: Path
-    input_points: int
-    input_channels: int
-    latent_channels: int
-    latent_points: int
-    latent_scale: float
-    freeze: bool
-    eval_mode: bool
-    strict: bool
     expected_encoder_state_keys: int
     expected_decoder_state_keys: int
-
-    @property
-    def input_shape(self) -> tuple[int, int]:
-        return self.input_points, self.input_channels
-
-    @property
-    def latent_shape(self) -> tuple[int, int]:
-        return self.latent_channels, self.latent_points
 
 
 def _resolve_project_path(raw: Any, *, description: str) -> Path:
@@ -86,64 +70,57 @@ def load_vae_config(path: str | Path = DEFAULT_VAE_CONFIG_PATH) -> VAEConfig:
     expected_top = tuple(contract.get("expected_top_level_keys", ()))
     if expected_top != ("encoder", "decoder"):
         raise ValueError("VAE checkpoint top-level keys must be encoder, decoder")
-    config = VAEConfig(
-        checkpoint_path=_resolve_project_path(
-            model.get("checkpoint_path"), description="model.checkpoint_path"
-        ),
-        input_points=int(model.get("input_points", 0)),
-        input_channels=int(model.get("input_channels", 0)),
-        latent_channels=latent_shape[0],
-        latent_points=latent_shape[1],
-        latent_scale=float(model["latent_scale"]),
-        freeze=bool(model.get("freeze", True)),
-        eval_mode=bool(model.get("eval_mode", True)),
-        strict=bool(contract.get("strict", True)),
-        expected_encoder_state_keys=int(
-            contract.get("expected_encoder_state_keys", 0)
-        ),
-        expected_decoder_state_keys=int(
-            contract.get("expected_decoder_state_keys", 0)
-        ),
+    checkpoint_path = _resolve_project_path(
+        model.get("checkpoint_path"), description="model.checkpoint_path"
     )
-    if config.input_shape != (1024, 12):
+    input_shape = (
+        int(model.get("input_points", 0)),
+        int(model.get("input_channels", 0)),
+    )
+    freeze = bool(model.get("freeze", True))
+    eval_mode = bool(model.get("eval_mode", True))
+    strict = bool(contract.get("strict", True))
+    expected_encoder_state_keys = int(contract.get("expected_encoder_state_keys", 0))
+    expected_decoder_state_keys = int(contract.get("expected_decoder_state_keys", 0))
+    if input_shape != (1024, 12):
         raise ValueError("ECGTwin VAE input shape must be (1024, 12)")
-    if not config.freeze or not config.eval_mode or not config.strict:
+    if not freeze or not eval_mode or not strict:
         raise ValueError("online AT requires a frozen eval-mode VAE with strict loading")
-    return config
+    return VAEConfig(
+        checkpoint_path=checkpoint_path,
+        expected_encoder_state_keys=expected_encoder_state_keys,
+        expected_decoder_state_keys=expected_decoder_state_keys,
+    )
 
 
 class SelfAttention(nn.Module):
     """Single-head self-attention with ECGTwin-compatible state names."""
 
-    def __init__(self, n_heads: int, d_embed: int) -> None:
+    def __init__(self) -> None:
         super().__init__()
-        if d_embed % n_heads:
-            raise ValueError("d_embed must be divisible by n_heads")
-        self.in_proj = nn.Linear(d_embed, 3 * d_embed)
-        self.out_proj = nn.Linear(d_embed, d_embed)
-        self.n_heads = int(n_heads)
-        self.d_head = d_embed // n_heads
+        self.in_proj = nn.Linear(512, 1536)
+        self.out_proj = nn.Linear(512, 512)
 
     def forward(self, value: torch.Tensor) -> torch.Tensor:
         batch, length, embed = value.shape
-        shape = (batch, length, self.n_heads, self.d_head)
+        shape = (batch, length, 1, 512)
         query, key, val = self.in_proj(value).chunk(3, dim=-1)
         query = query.view(shape).transpose(1, 2)
         key = key.view(shape).transpose(1, 2)
         val = val.view(shape).transpose(1, 2)
-        weight = (query @ key.transpose(-1, -2)) / math.sqrt(self.d_head)
+        weight = (query @ key.transpose(-1, -2)) / math.sqrt(512)
         output = torch.softmax(weight, dim=-1) @ val
         output = output.transpose(1, 2).reshape(batch, length, embed)
         return self.out_proj(output)
 
 
 class VAEAttentionBlock(nn.Module):
-    def __init__(self, channels: int) -> None:
+    def __init__(self) -> None:
         super().__init__()
         # Kept for exact checkpoint compatibility.  The reference forward does
         # not apply this GroupNorm, so this rewrite intentionally does not either.
-        self.groupnorm = nn.GroupNorm(32, channels)
-        self.attention = SelfAttention(1, channels)
+        self.groupnorm = nn.GroupNorm(32, 512)
+        self.attention = SelfAttention()
 
     def forward(self, value: torch.Tensor) -> torch.Tensor:
         residual = value
@@ -189,7 +166,7 @@ class VAEEncoder(nn.Sequential):
             VAEResidualBlock(512, 512),
             VAEResidualBlock(512, 512),
             VAEResidualBlock(512, 512),
-            VAEAttentionBlock(512),
+            VAEAttentionBlock(),
             VAEResidualBlock(512, 512),
             nn.GroupNorm(32, 512),
             nn.SiLU(),
@@ -226,7 +203,7 @@ class VAEDecoder(nn.Sequential):
             nn.Conv1d(4, 4, kernel_size=1),
             nn.Conv1d(4, 512, kernel_size=3, padding=1),
             VAEResidualBlock(512, 512),
-            VAEAttentionBlock(512),
+            VAEAttentionBlock(),
             VAEResidualBlock(512, 512),
             VAEResidualBlock(512, 512),
             VAEResidualBlock(512, 512),
@@ -317,17 +294,9 @@ def decode_to_ptbxl_waveform(
 
 
 def _component_identity(
-    path: Path,
-    sha256: str,
-    state: Mapping[str, torch.Tensor],
+    path: Path, sha256: str, state: Mapping[str, torch.Tensor]
 ) -> CheckpointIdentity:
-    return CheckpointIdentity(
-        path=path,
-        sha256=sha256,
-        state_key_count=len(state),
-        missing_keys=(),
-        unexpected_keys=(),
-    )
+    return CheckpointIdentity(path, sha256, len(state), (), ())
 
 
 def build_ecgtwin_vae(
@@ -354,8 +323,8 @@ def build_ecgtwin_vae(
 
     encoder = VAEEncoder()
     decoder = VAEDecoder()
-    encoder.load_state_dict(encoder_state, strict=config.strict)
-    decoder.load_state_dict(decoder_state, strict=config.strict)
+    encoder.load_state_dict(encoder_state, strict=True)
+    decoder.load_state_dict(decoder_state, strict=True)
     digest = sha256_file(resolved)
     encoder.checkpoint_identity = _component_identity(
         resolved, digest, encoder_state
@@ -363,24 +332,14 @@ def build_ecgtwin_vae(
     decoder.checkpoint_identity = _component_identity(
         resolved, digest, decoder_state
     )
-    encoder.vae_config = config
-    decoder.vae_config = config
-    if config.freeze:
-        encoder.requires_grad_(False)
-        decoder.requires_grad_(False)
-    if config.eval_mode:
-        encoder.eval()
-        decoder.eval()
+    encoder.requires_grad_(False)
+    decoder.requires_grad_(False)
+    encoder.eval()
+    decoder.eval()
     return encoder, decoder
 
 
 __all__ = [
-    "DEFAULT_VAE_CONFIG_PATH",
-    "ECGTWIN_TO_PTBXL_INDICES",
-    "LATENT_SCALE",
-    "VAEConfig",
-    "VAEDecoder",
-    "VAEEncoder",
     "build_ecgtwin_vae",
     "decode_to_ptbxl_waveform",
     "load_vae_config",
