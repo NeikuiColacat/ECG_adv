@@ -444,6 +444,36 @@ def test_active_index_exposes_only_the_manual_launcher_and_whitelist_configs() -
         assert config in manual_paths
 
 
+def test_matched_base_matrix_locks_match_runtime_split_lineage() -> None:
+    scripts = yaml.safe_load(
+        (CONFIG_ROOT / "active_scripts.yaml").read_text(encoding="utf-8")
+    )
+    handoff = yaml.safe_load(
+        (CONFIG_ROOT / "data" / "k500_handoff.yaml").read_text(encoding="utf-8")
+    )
+    experiment = scripts["prospective_matched_base_a0_a1"]
+    assert experiment["contract"]["compute_matched"] is False
+    assert experiment["paper_claim_allowed"] is False
+
+    parent_split_sha = handoff["split_artifacts"]["parent_manifest"]["sha256"]
+    expected_centers = handoff["split_artifacts"]["logical_centers"]
+    for identity in experiment["matrix_cohort_configs"].values():
+        path = (REPO / identity["path"]).resolve()
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == identity["sha256"]
+        config = yaml.safe_load(path.read_text(encoding="utf-8"))
+        center_locks = config["profiles"]["efficientnet1dv2"][
+            "expected_cohort"
+        ]["center_adaptation"]
+        assert set(center_locks) == set(expected_centers)
+        for center, lock in center_locks.items():
+            expected = expected_centers[center]
+            assert lock == {
+                "source_centers": expected["source_centers"],
+                "hash_id_set_sha256": expected["k500"]["hash_id_set_sha256"],
+                "split_manifest_sha256": parent_split_sha,
+            }
+
+
 def test_active_evidence_hashes_the_retained_lock_and_report() -> None:
     registry = yaml.safe_load(
         (CONFIG_ROOT / "active_evidence_registry.yaml").read_text(encoding="utf-8")

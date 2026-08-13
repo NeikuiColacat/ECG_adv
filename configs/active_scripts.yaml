@@ -313,14 +313,15 @@ latest_mainline:
         --config configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_ningbo.yaml
         --dry-run
 
-+prospective_matched_base_a0_a1:
-  status: configured_single_seed_execution_pending
-  evidence_level: prospective_unrun
+prospective_matched_base_a0_a1:
+  status: completed_single_seed_development_matrix_clean_reaggregation_pending
+  evidence_level: prospective_single_seed_development
   paper_claim_allowed: false
   isolation:
     worktree: /home/linbinhao/ECG_manual_refactor_corruption_ft_test
     branch: experiment/matched-base-a0-a1-e25-20260814
     base_git_sha: e6fb4b4bfd376c57b54df95a57a20d2d1549b219
+    execution_git_sha: 69bdcd6a7121f443837edbd7aa8b91ff4ed49d0e
   contract:
     training_config:
       path: configs/train/PN2021_matched_base_a0_a1.yaml
@@ -328,6 +329,7 @@ latest_mainline:
     comparison_group: matched_base_a0_a1_e25_e30_20260814
     replicate_id: 0
     budget: matched_base_and_outer_optimizer_steps
+    compute_matched: false
     validation_split: false
     checkpoint_selection: last
     source_replay: false
@@ -388,12 +390,28 @@ latest_mainline:
     - configs/experiments/manual_refactor_pn2021_effnet_a1_rot4_e25_matrix.yaml
     - configs/experiments/manual_refactor_pn2021_ecgfounder_a1_rot4_e30_matrix.yaml
   matrix_cohort_configs:
-    A0: {path: configs/eval/PN2021_matrix_a0_e25_e30.yaml, sha256: 682eee58fc83d0b8937eab29bec3cb1faca88838ce24f26f873880f370f55aaf}
-    A1: {path: configs/eval/PN2021_matrix_a1_rot4_e25_e30.yaml, sha256: a709f90aa4bfde63ef2cdaacbe027783cd89bba26c3f071a69359f16291e8ff6}
+    A0: {path: configs/eval/PN2021_matrix_a0_e25_e30.yaml, sha256: c5d31d5122b80f5f5e459431dfdcdf3961dba12f937e0bd010806b50d14f2e80}
+    A1: {path: configs/eval/PN2021_matrix_a1_rot4_e25_e30.yaml, sha256: a328ab7ce27c5b255bb16c8d7974a1b6de720cffddbb02874ece6221a4df93af}
+  execution:
+    training_runs: {complete: 16, total: 16}
+    evaluation_runs: {complete: 16, total: 16}
+    matrix_runs: {complete: 0, total: 4, status: clean_reaggregation_pending}
+    matrix_root: /home/linbinhao/ECG_adv_data/runs/matched_base_a0_a1_r0_20260814/matrix_final
+    initial_matrix_attempt:
+      root: /home/linbinhao/ECG_adv_data/runs/matched_base_a0_a1_r0_20260814/matrix
+      status: rejected_before_aggregation
+      reason: center_adaptation_split_manifest_field_used_child_sha_instead_of_runtime_parent_sha
+    matrix_results:
+      status: pending_clean_reaggregation
+    claim_boundary: single_seed_development_not_paper_final_not_compute_matched
   verification:
     focused_contract_tests: passed_40
     tracked_experiment_dry_run: passed_76_of_76_no_side_effects
-    full_pytest: passed_306_skipped_5
+    full_pytest: passed_307_skipped_5
+    training_artifacts_and_checkpoint_hashes: passed_16_of_16
+    evaluation_status: passed_16_of_16
+    a1_five_epoch_rotation_and_finite_values: passed_8_of_8
+    matrix_exact_cohort_validation: retry1_passed_4_of_4_clean_reaggregation_pending
 
 
 historical_mainline:

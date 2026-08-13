@@ -20,6 +20,6 @@ entrypoint:
     - /home/linbinhao/ECG_adv_data/runs/matched_base_a0_a1_r0_20260814/eval/effnet_e25/a1_rot4/georgia/evaluation/evaluation_result.json
 
 output:
-  run_dir: /home/linbinhao/ECG_adv_data/runs/matched_base_a0_a1_r0_20260814/matrix/effnet_e25/a1_rot4
+  run_dir: /home/linbinhao/ECG_adv_data/runs/matched_base_a0_a1_r0_20260814/matrix_final/effnet_e25/a1_rot4
   if_exists: error
   delegate_output_subdir: evaluation
