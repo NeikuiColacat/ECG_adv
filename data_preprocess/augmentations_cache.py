@@ -537,49 +537,6 @@ def _load_cache_operator_profile(
     )
 
 
-def describe_cache_plan(
-    config_path: str | Path = DEFAULT_CONFIG,
-) -> dict[str, Any]:
-    """Resolve record counts, shapes and disk bytes without creating output."""
-
-    config_path = resolve_entry_config_path(config_path)
-    config = load_cache_config(config_path)
-    operator_profile = _load_cache_operator_profile(
-        config_path=config_path,
-        config=config,
-    )
-    compositions = build_compositions(config, operator_profile)
-    source_dir, source_manifest, source_manifest_sha256 = _load_source_contract(config)
-    selected_records, _ = _select_source_records(
-        source_dir=source_dir,
-        config=config,
-        source_record_count=int(source_manifest["record_count"]),
-    )
-    shape_100 = (len(compositions), len(selected_records), 1000, 12)
-    shape_500 = (len(compositions), len(selected_records), 5000, 12)
-    bytes_100 = math.prod(shape_100) * np.dtype("float32").itemsize
-    bytes_500 = math.prod(shape_500) * np.dtype("float32").itemsize
-    return {
-        "dataset": config["dataset"],
-        "cache_version": config["cache_version"],
-        "source_cache_dir": str(source_dir),
-        "source_manifest_sha256": source_manifest_sha256,
-        "output_cache_dir": str(resolve_entry_config_path(config["output"]["cache_dir"])),
-        "centers": list(config["source"]["centers"]),
-        "center_counts": {
-            str(center): int(count)
-            for center, count in selected_records["center"].value_counts().sort_index().items()
-        },
-        "record_count": len(selected_records),
-        "view_count": len(compositions),
-        "shape_100hz": list(shape_100),
-        "shape_500hz": list(shape_500),
-        "estimated_bytes_100hz": bytes_100,
-        "estimated_bytes_500hz": bytes_500,
-        "estimated_bytes_total": bytes_100 + bytes_500,
-    }
-
-
 def build_augmentations_cache(
     config_path: str | Path = DEFAULT_CONFIG,
 ) -> Path:
@@ -846,16 +803,8 @@ def main() -> None:
         default=str(DEFAULT_CONFIG),
         help="tracked PN2021-C cache YAML",
     )
-    parser.add_argument(
-        "--plan-only",
-        action="store_true",
-        help="resolve identities, shapes and disk estimate without writing a cache",
-    )
     args = parser.parse_args()
-    if args.plan_only:
-        print(json.dumps(describe_cache_plan(args.config), ensure_ascii=False, indent=2))
-    else:
-        build_augmentations_cache(args.config)
+    build_augmentations_cache(args.config)
 
 
 if __name__ == "__main__":

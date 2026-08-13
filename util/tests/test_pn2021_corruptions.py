@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 import data_preprocess.augmentations_cache as cache_builder
 from data_preprocess.augmentations_cache import (
@@ -39,7 +40,7 @@ def _contracts():
     return cache, profile
 
 
-def test_locked_profile_and_cache_share_one_pn2021c_contract() -> None:
+def test_locked_profile_and_cache_share_one_pn2021c_contract(monkeypatch) -> None:
     cache, profile = _contracts()
 
     assert cache_builder.EXPECTED_LEADS is EXPECTED_LEADS
@@ -62,6 +63,16 @@ def test_locked_profile_and_cache_share_one_pn2021c_contract() -> None:
     assert profile.parameters_for("random_leads_masking")[
         "ensure_at_least_one_lead"
     ] is True
+    calls = []
+    monkeypatch.setattr(cache_builder, "build_augmentations_cache", calls.append)
+    monkeypatch.setattr("sys.argv", ["augmentations_cache.py", "--config", "cache.yaml"])
+    cache_builder.main()
+    assert calls == ["cache.yaml"]
+    assert not hasattr(cache_builder, "describe_cache_plan")
+    monkeypatch.setattr("sys.argv", ["augmentations_cache.py", "--plan-only"])
+    with pytest.raises(SystemExit, match="2"):
+        cache_builder.main()
+    assert calls == ["cache.yaml"]
 
 
 def test_depth2_plus_depth3_expands_to_the_locked_twenty_views() -> None:
