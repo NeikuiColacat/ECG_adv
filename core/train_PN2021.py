@@ -14,7 +14,7 @@ import torch
 import torch.nn as nn
 import yaml
 
-from core.latent_pool import LatentPool, build_latent_pool
+from core.latent_pool import build_latent_pool
 from core.methods.registry import RecipeSpec, load_recipe_spec
 from core.online_trainer import (
     ALLOWED_CENTERS,
@@ -131,61 +131,6 @@ def build_pn2021_k500_loader_plan(
     )
 
 
-def _encoder_sha256(encoder: nn.Module) -> str:
-    identity = getattr(encoder, "checkpoint_identity", None)
-    value = getattr(identity, "sha256", None)
-    if not isinstance(value, str) or len(value) != 64:
-        raise ValueError(
-            "VAE encoder must carry its strict checkpoint SHA256 identity"
-        )
-    return value
-
-
-def build_pn2021_latent_pool(
-    encoder: nn.Module,
-    *,
-    loader_plan: PN2021K500LoaderPlan,
-    method_config_path: str | Path,
-    config_path: str | Path = DEFAULT_ONLINE_CONFIG_PATH,
-    config_root: str | Path | None = None,
-    device: str | torch.device | None = None,
-) -> LatentPool:
-    """Encode complete clean K500 in deterministic cache-index order."""
-
-    recipe, config = load_pn2021_recipe_spec(
-        method_config_path,
-        config_path=config_path,
-        config_root=config_root,
-    )
-    if not recipe.requires_vae:
-        raise ValueError("recipe does not require a latent pool")
-    resource = recipe.resources.get("lhat_config")
-    if not isinstance(resource, Mapping):
-        raise ValueError("latent-pool recipe must declare lhat_config")
-    lhat = resolve_config_reference(
-        resource.get("path"),
-        owner_config_path=recipe.source_path,
-        config_root=config.config_root,
-        description="method.resources.lhat_config",
-        must_exist=True,
-    )
-    from core.lhat import load_lhat_config
-
-    lhat_config = load_lhat_config(lhat, config_root=config.config_root)
-    loader = loader_plan.open_ordered()
-    try:
-        return build_latent_pool(
-            encoder,
-            loader,
-            encoder_identity=_encoder_sha256(encoder),
-            device=device,
-            num_candidates=lhat_config.num_candidates,
-            standardizer_epsilon=lhat_config.standardizer_epsilon,
-        )
-    finally:
-        loader.close()
-
-
 def train_pn2021(
     model: nn.Module,
     *,
@@ -237,14 +182,37 @@ def train_pn2021(
             raise RuntimeError("CUDA was requested but is unavailable")
         encoder.to(resolved_device).eval()
         try:
-            pool = build_pn2021_latent_pool(
-                encoder,
-                loader_plan=loader_plan,
-                method_config_path=method_config_path,
-                config_path=config_path,
-                config_root=config_root,
-                device=resolved_device,
+            resource = recipe.resources.get("lhat_config")
+            if not isinstance(resource, Mapping):
+                raise ValueError("latent-pool recipe must declare lhat_config")
+            lhat = resolve_config_reference(
+                resource.get("path"),
+                owner_config_path=recipe.source_path,
+                config_root=config.config_root,
+                description="method.resources.lhat_config",
+                must_exist=True,
             )
+            from core.lhat import load_lhat_config
+
+            lhat_config = load_lhat_config(lhat, config_root=config.config_root)
+            ordered_loader = loader_plan.open_ordered()
+            try:
+                identity = getattr(encoder, "checkpoint_identity", None)
+                encoder_sha256 = getattr(identity, "sha256", None)
+                if not isinstance(encoder_sha256, str) or len(encoder_sha256) != 64:
+                    raise ValueError(
+                        "VAE encoder must carry its strict checkpoint SHA256 identity"
+                    )
+                pool = build_latent_pool(
+                    encoder,
+                    ordered_loader,
+                    encoder_identity=encoder_sha256,
+                    device=resolved_device,
+                    num_candidates=lhat_config.num_candidates,
+                    standardizer_epsilon=lhat_config.standardizer_epsilon,
+                )
+            finally:
+                ordered_loader.close()
         finally:
             encoder.to("cpu")
 

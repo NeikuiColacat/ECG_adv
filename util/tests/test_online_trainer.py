@@ -99,11 +99,34 @@ def test_non_dry_handoffs_keep_bundle_relative_recipe(monkeypatch, tmp_path: Pat
     model = torch.nn.Identity()
     model.model_spec = EFFICIENTNET1DV2_SPEC
     result = object()
-    loader = SimpleNamespace(close=lambda: seen.setdefault("loader_closed", True))
-    loader_plan = SimpleNamespace(center="ningbo", open_training=lambda: loader)
+    events = []
+
+    class Loader:
+        def __init__(self, name):
+            self.name = name
+
+        def close(self):
+            events.append(f"{self.name}.close")
+
+    ordered_loader, training_loader = Loader("ordered"), Loader("training")
+
+    class Plan:
+        center = "ningbo"
+
+        def open_ordered(self):
+            events.append("ordered.open")
+            return ordered_loader
+
+        def open_training(self):
+            events.append("training.open")
+            return training_loader
+
+    loader_plan = Plan()
+
     def capture(key, value):
         def call(*args, **kwargs):
-            seen[key] = kwargs["method_config_path"]
+            seen.setdefault(key, []).append(kwargs["method_config_path"])
+            events.append(key)
             return value
         return call
     monkeypatch.setattr(train_adapter, "_validate_locked_source_checkpoint", lambda *a, **k: None)
@@ -114,31 +137,55 @@ def test_non_dry_handoffs_keep_bundle_relative_recipe(monkeypatch, tmp_path: Pat
     )
     monkeypatch.setattr(train_adapter.torch.cuda, "is_available", lambda: True)
 
-    def capture_pool(*args, **kwargs):
-        seen["pool"] = kwargs["method_config_path"]
-        assert kwargs["loader_plan"] is loader_plan
+    def capture_pool(encoder, loader, **kwargs):
+        del encoder
+        events.append("pool")
+        assert loader is ordered_loader
+        assert kwargs == {
+            "encoder_identity": "a" * 64,
+            "device": torch.device("cuda"),
+            "num_candidates": 20,
+            "standardizer_epsilon": 1e-6,
+        }
         return object()
 
-    monkeypatch.setattr(train_adapter, "build_pn2021_latent_pool", capture_pool)
+    monkeypatch.setattr(train_adapter, "build_latent_pool", capture_pool)
     monkeypatch.setattr(train_adapter, "train_online_model", capture("trainer", result))
 
     class Component:
+        def __init__(self, name):
+            self.name = name
+
         def to(self, *args, **kwargs):
+            events.append(f"{self.name}.to:{args[0]}")
             return self
 
         def eval(self):
+            events.append(f"{self.name}.eval")
             return self
 
+    encoder, decoder = Component("encoder"), Component("decoder")
+    encoder.checkpoint_identity = SimpleNamespace(sha256="a" * 64)
     assert train_adapter.train_pn2021(
         model, center="ningbo", method_config_path=adapter_method,
-        encoder=Component(), decoder=Component(),
+        encoder=encoder, decoder=decoder,
         config_path=ONLINE_CONFIG, config_root=CONFIG_ROOT,
     ) is result
+    assert events == [
+        "encoder.to:cuda", "encoder.eval", "ordered.open", "pool",
+        "ordered.close", "encoder.to:cpu", "training.open", "trainer",
+        "training.close", "encoder.to:cpu", "decoder.to:cpu",
+    ]
+
+    events.clear()
+    assert train_adapter.train_pn2021(
+        model, center="ningbo", method_config_path=boot_method,
+        config_path=ONLINE_CONFIG, config_root=CONFIG_ROOT,
+    ) is result
+    assert events == ["training.open", "trainer", "training.close"]
     assert seen == {
         "boot": boot_method,
-        "pool": adapter_method,
-        "trainer": adapter_method,
-        "loader_closed": True,
+        "trainer": [adapter_method, boot_method],
     }
 
 
@@ -380,48 +427,6 @@ def test_pn2021_boot_dry_run_rejects_malicious_runtime_yaml_before_side_effects(
         )
 
 
-def test_pn2021_latent_pool_uses_ordered_plan_view_and_closes_it(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[str] = []
-
-    class Loader:
-        def close(self) -> None:
-            calls.append("close")
-
-    class Plan:
-        center = "ningbo"
-
-        def open_ordered(self):
-            calls.append("ordered")
-            return Loader()
-
-        def open_training(self):
-            raise AssertionError("latent pool must not open the shuffled view")
-
-    expected = object()
-
-    def capture_pool(encoder, loader, **kwargs):
-        del encoder
-        calls.append("build")
-        assert isinstance(loader, Loader)
-        assert kwargs["encoder_identity"] == "a" * 64
-        return expected
-
-    monkeypatch.setattr(train_adapter, "build_latent_pool", capture_pool)
-    encoder = torch.nn.Identity()
-    encoder.checkpoint_identity = SimpleNamespace(sha256="a" * 64)
-    assert train_adapter.build_pn2021_latent_pool(
-        encoder,
-        loader_plan=Plan(),
-        method_config_path=Path("train/methods/augmix_simclr_lhat.yaml"),
-        config_path=ONLINE_CONFIG,
-        config_root=CONFIG_ROOT,
-        device="cpu",
-    ) is expected
-    assert calls == ["ordered", "build", "close"]
-
-
 def test_pn2021_boot_and_adapter_reject_retired_override_surfaces() -> None:
     option_strings = {
         option
@@ -475,6 +480,8 @@ def test_pn2021_boot_and_adapter_reject_retired_override_surfaces() -> None:
     }
     assert not hasattr(train_adapter, "PN2021_DATALOADER_PARAMETER_NAMES")
     assert not hasattr(train_adapter, "build_pn2021_k500_dataloader")
+    assert not hasattr(train_adapter, "build_pn2021_latent_pool")
+    assert not hasattr(train_adapter, "_encoder_sha256")
     assert vae.__all__ == [
         "build_ecgtwin_vae", "decode_to_ptbxl_waveform", "load_vae_config",
         "prepare_ecgtwin_encoder_input"]
