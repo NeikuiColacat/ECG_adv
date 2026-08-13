@@ -314,7 +314,7 @@ latest_mainline:
         --dry-run
 
 prospective_matched_base_a0_a1:
-  status: completed_single_seed_development_matrix_clean_reaggregation_pending
+  status: completed_single_seed_development
   evidence_level: prospective_single_seed_development
   paper_claim_allowed: false
   isolation:
@@ -322,6 +322,7 @@ prospective_matched_base_a0_a1:
     branch: experiment/matched-base-a0-a1-e25-20260814
     base_git_sha: e6fb4b4bfd376c57b54df95a57a20d2d1549b219
     execution_git_sha: 69bdcd6a7121f443837edbd7aa8b91ff4ed49d0e
+    matrix_execution_git_sha: 7becc63172103dc7265c46722bcf4ffec7fdb4fe
   contract:
     training_config:
       path: configs/train/PN2021_matched_base_a0_a1.yaml
@@ -395,14 +396,32 @@ prospective_matched_base_a0_a1:
   execution:
     training_runs: {complete: 16, total: 16}
     evaluation_runs: {complete: 16, total: 16}
-    matrix_runs: {complete: 0, total: 4, status: clean_reaggregation_pending}
+    matrix_runs: {complete: 4, total: 4, status: complete}
     matrix_root: /home/linbinhao/ECG_adv_data/runs/matched_base_a0_a1_r0_20260814/matrix_final
     initial_matrix_attempt:
       root: /home/linbinhao/ECG_adv_data/runs/matched_base_a0_a1_r0_20260814/matrix
       status: rejected_before_aggregation
       reason: center_adaptation_split_manifest_field_used_child_sha_instead_of_runtime_parent_sha
     matrix_results:
-      status: pending_clean_reaggregation
+      efficientnet1dv2_A0: {path: effnet_e25/a0/evaluation/matrix_result.json, sha256: 6d1887e32a2656fdb7f70f5af7a32c7c63fe93878876ebfe22c41a1a8b060b46}
+      efficientnet1dv2_A1: {path: effnet_e25/a1_rot4/evaluation/matrix_result.json, sha256: 7839d90781f7d9cbbbde37a9994c38ee5c8fbaada0ae5bf4db044fe309244a21}
+      ecgfounder_A0: {path: ecgfounder_e30/a0/evaluation/matrix_result.json, sha256: e807df82b6efe1a6b45d258d75dd176b7f38db7167686fd3cba178acd30fefbb}
+      ecgfounder_A1: {path: ecgfounder_e30/a1_rot4/evaluation/matrix_result.json, sha256: 8abafc5290b8a39fb0577977416927cf4e0acfca5d8b96a565234653fa095f5a}
+    primary_drop_all_zero_four_center_mean:
+      efficientnet1dv2:
+        clean:
+          A0: {macro_auroc: 0.8707702760319564, macro_average_precision: 0.642623408865758}
+          A1: {macro_auroc: 0.871017733693753, macro_average_precision: 0.6432495843086106}
+        depth23:
+          A0: {macro_auroc: 0.8082968678308682, macro_average_precision: 0.5403782735173408}
+          A1: {macro_auroc: 0.8266166145970475, macro_average_precision: 0.566003202538496}
+      ecgfounder:
+        clean:
+          A0: {macro_auroc: 0.9154480819163987, macro_average_precision: 0.7116015906160817}
+          A1: {macro_auroc: 0.9174536344911451, macro_average_precision: 0.7161126644237712}
+        depth23:
+          A0: {macro_auroc: 0.8338886080029723, macro_average_precision: 0.5851804279109163}
+          A1: {macro_auroc: 0.8658467335850648, macro_average_precision: 0.6390355226642472}
     claim_boundary: single_seed_development_not_paper_final_not_compute_matched
   verification:
     focused_contract_tests: passed_40
@@ -411,7 +430,7 @@ prospective_matched_base_a0_a1:
     training_artifacts_and_checkpoint_hashes: passed_16_of_16
     evaluation_status: passed_16_of_16
     a1_five_epoch_rotation_and_finite_values: passed_8_of_8
-    matrix_exact_cohort_validation: retry1_passed_4_of_4_clean_reaggregation_pending
+    matrix_exact_cohort_validation: passed_4_of_4_from_clean_git
 
 
 historical_mainline:
