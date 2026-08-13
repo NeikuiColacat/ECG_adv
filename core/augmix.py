@@ -330,9 +330,6 @@ def generate_two_chain_augmix_strong_view(
 
 __all__ = [
     "AugMixConfig",
-    "TwoChainAugMixBatch",
-    "CANONICAL_OPERATORS",
-    "DEFAULT_AUGMIX_CONFIG_PATH",
     "generate_two_chain_augmix_strong_view",
     "load_augmix_config",
 ]

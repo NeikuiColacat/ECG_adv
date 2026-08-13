@@ -1014,7 +1014,5 @@ def build_method_runtime(
 
 
 __all__ = [
-    "GeneratedMethodBatch",
-    "MethodViewRuntime",
     "build_method_runtime",
 ]

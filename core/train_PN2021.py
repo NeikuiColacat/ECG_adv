@@ -273,7 +273,6 @@ def train_pn2021(
 
 __all__ = [
     "build_pn2021_k500_loader_plan",
-    "build_pn2021_latent_pool",
     "load_pn2021_recipe_spec",
     "train_pn2021",
 ]

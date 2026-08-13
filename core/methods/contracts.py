@@ -140,11 +140,6 @@ class ViewBundle:
 
 __all__ = [
     "BASE_VIEW_NAME",
-    "CANONICAL_CHANNELS",
-    "CANONICAL_POINTS",
-    "CANONICAL_SAMPLING_RATE_HZ",
-    "EXPECTED_LATENT_SHAPE",
-    "SUPER5_CLASSES",
     "ViewBundle",
     "WaveformView",
 ]

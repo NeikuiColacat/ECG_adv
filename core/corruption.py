@@ -225,13 +225,6 @@ def generate_canonical_corruption(
 
 __all__ = [
     "CANONICAL_OPERATORS",
-    "COMPOSITIONS",
-    "CORRUPTION_DOMAIN_SAMPLING_RATE_HZ",
-    "CorruptionBatch",
-    "CorruptionDiagnostics",
     "INPUT_SAMPLING_RATE_HZ",
-    "INTERPOLATION_ALIGN_CORNERS",
-    "INTERPOLATION_MODE",
-    "OUTPUT_SAMPLING_RATE_HZ",
     "generate_canonical_corruption",
 ]

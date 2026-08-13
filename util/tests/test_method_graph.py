@@ -22,6 +22,7 @@ import core.methods.contracts as method_contracts
 import core.methods.runtime as method_runtime
 import core.methods.registry as method_registry
 import core.online_trainer as online_trainer
+import core.train_PN2021 as train_adapter
 from core.lhat import AttackThenContractDiagnostics
 from core.methods.registry import AuxiliaryVariant, RecipeKind, load_recipe_spec
 from core.methods.runtime import build_method_runtime, _scoped_lhat_diagnostics
@@ -95,6 +96,24 @@ def test_v2_recipe_files_are_finite_resource_closed_characterizations(
 def test_loader_removes_dag_plugins_and_allows_only_the_matched_no_vae_slot() -> None:
     assert core.__all__ == []
     assert methods.__all__ == []
+    assert tuple(tuple(module.__all__) for module in (
+        augmix, corruption, lhat, latent_pool, method_contracts, method_registry,
+        method_runtime, online_trainer, train_adapter,
+    )) == (
+        ("AugMixConfig", "generate_two_chain_augmix_strong_view", "load_augmix_config"),
+        ("CANONICAL_OPERATORS", "INPUT_SAMPLING_RATE_HZ",
+         "generate_canonical_corruption"),
+        ("LHATConfig", "LatentStandardizer", "contract_lhat_adversarial",
+         "generate_lhat_adversarial", "load_lhat_config"),
+        ("LatentPool", "build_latent_pool"),
+        ("BASE_VIEW_NAME", "ViewBundle", "WaveformView"),
+        ("AuxiliaryVariant", "RecipeKind", "load_recipe_spec"),
+        ("build_method_runtime",),
+        ("ALLOWED_CENTERS", "DEFAULT_ONLINE_CONFIG_PATH", "OnlineTrainingResult",
+         "load_online_train_config", "resolve_online_training_parameters",
+         "train_online_model"),
+        ("build_pn2021_k500_loader_plan", "load_pn2021_recipe_spec", "train_pn2021"),
+    )
     assert not hasattr(core, "train_online_model")
     assert not hasattr(methods, "load_recipe_spec")
     assert "mean_dict" not in vars(lhat.LHATDiagnostics)

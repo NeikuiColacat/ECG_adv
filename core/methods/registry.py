@@ -538,9 +538,6 @@ def load_recipe_spec(source: str | Path | Mapping[str, Any]) -> RecipeSpec:
 
 __all__ = [
     "AuxiliaryVariant",
-    "RECIPE_IMPLEMENTATION_IDENTITY",
-    "RECIPE_SCHEMA_VERSION",
-    "RECIPE_VERSION",
     "RecipeKind",
     "load_recipe_spec",
 ]

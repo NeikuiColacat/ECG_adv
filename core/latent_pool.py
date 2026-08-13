@@ -790,9 +790,6 @@ def build_latent_pool(
 
 
 __all__ = [
-    "LATENT_POOL_SCHEMA_VERSION",
-    "MAIN_NUM_CANDIDATES",
     "LatentPool",
-    "LatentPoolIdentity",
     "build_latent_pool",
 ]

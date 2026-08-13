@@ -2856,10 +2856,6 @@ def train_online_model(
 __all__ = [
     "ALLOWED_CENTERS",
     "DEFAULT_ONLINE_CONFIG_PATH",
-    "FIXED20_COMPOSITION_ORDER",
-    "FAMILY_BALANCED_BN_POLICY",
-    "ONLINE_PARAMETER_NAMES",
-    "OnlineTrainConfig",
     "OnlineTrainingResult",
     "load_online_train_config",
     "resolve_online_training_parameters",
