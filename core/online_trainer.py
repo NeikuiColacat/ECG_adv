@@ -284,29 +284,6 @@ def _recipe_identity(recipe: RecipeSpec) -> dict[str, Any]:
     }
 
 
-def _iter_exposure_batches(
-    train_dataloader: Any,
-    exposure_steps: Sequence[_ExposureStep],
-):
-    """Expand one loaded base batch without reading it from storage again."""
-
-    group = 0
-    for raw_batch in train_dataloader:
-        if len(exposure_steps) == 1 and exposure_steps[0].name == "base":
-            yield raw_batch
-            continue
-        group += 1
-        for exposure_index, exposure in enumerate(exposure_steps):
-            batch = dict(raw_batch)
-            batch["__exposure_name"] = exposure.name
-            batch["__exposure_group"] = group
-            batch["__exposure_index"] = exposure_index
-            batch["__composition_index"] = exposure.composition_index
-            batch["__objective_terms"] = exposure.objective_terms
-            batch["__loss_scale"] = exposure.loss_scale
-            yield batch
-
-
 def _positive_number(value: Any, description: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{description} must be numeric")
@@ -2242,32 +2219,22 @@ def train_online_model(
                 exposure.name: 0 for exposure in epoch_exposure_steps
             }
             learning_rate = float(optimizer.param_groups[0]["lr"])
-            cached_exposure_group: int | None = None
             cached_raw: torch.Tensor | None = None
             cached_targets: torch.Tensor | None = None
             fixed20_group_finite: torch.Tensor | None = None
 
-            for batch in _iter_exposure_batches(
-                train_dataloader, epoch_exposure_steps
-            ):
+            exposure_batches = (
+                (batch, exposure_index, exposure)
+                for batch in train_dataloader
+                for exposure_index, exposure in enumerate(epoch_exposure_steps)
+            )
+            for batch, exposure_index, exposure in exposure_batches:
                 if not isinstance(batch, Mapping):
                     raise TypeError("online dataloader batches must be mappings")
-                exposure_name = str(batch.get("__exposure_name", "base"))
+                exposure_name = exposure.name
                 if exposure_name not in epoch_seen_hashes:
                     raise RuntimeError(f"unknown online exposure: {exposure_name!r}")
-                exposure_group_raw = batch.get("__exposure_group")
-                exposure_group = (
-                    None
-                    if exposure_group_raw is None
-                    else int(exposure_group_raw)
-                )
-                composition_index_raw = batch.get("__composition_index")
-                composition_index = (
-                    None
-                    if composition_index_raw is None
-                    else int(composition_index_raw)
-                )
-                exposure_index = int(batch.get("__exposure_index", 0))
+                composition_index = exposure.composition_index
                 group_start = not grouped_exposure or exposure_index == 0
                 group_end = (
                     not grouped_exposure
@@ -2282,12 +2249,7 @@ def train_online_model(
                     fixed20_group_finite = torch.ones(
                         (), device=resolved_device, dtype=torch.bool
                     )
-                objective_terms_raw = batch.get("__objective_terms")
-                objective_terms = (
-                    None
-                    if objective_terms_raw is None
-                    else tuple(str(value) for value in objective_terms_raw)
-                )
+                objective_terms = exposure.objective_terms
                 raw = batch.get("waveform")
                 targets = batch.get("label")
                 if not isinstance(raw, torch.Tensor) or not isinstance(
@@ -2315,9 +2277,7 @@ def train_online_model(
                 epoch_exposure_counts[exposure_name] += batch_size
 
                 if (
-                    exposure_group is not None
-                    and cached_exposure_group == exposure_group
-                    and cached_raw is not None
+                    not group_start and cached_raw is not None
                     and cached_targets is not None
                 ):
                     raw = cached_raw
@@ -2329,15 +2289,14 @@ def train_online_model(
                     targets = targets.to(
                         resolved_device, dtype=torch.float32, non_blocking=True
                     )
-                    if exposure_group is not None:
-                        cached_exposure_group = exposure_group
+                    if grouped_exposure:
                         cached_raw = raw
                         cached_targets = targets
                 if group_start:
                     optimizer.zero_grad(set_to_none=True)
                     epoch_origin_samples += batch_size
                     epoch_base_batches += 1
-                family_loss_scale = float(batch.get("__loss_scale", 1.0))
+                family_loss_scale = exposure.loss_scale
                 if batch_norm_plan is not None and grouped_exposure:
                     batch_norm_plan.apply(exposure_index)
                 hash_digest = hashlib.sha256(

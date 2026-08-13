@@ -482,6 +482,11 @@ def test_pn2021_boot_and_adapter_reject_retired_override_surfaces() -> None:
     assert not hasattr(train_adapter, "build_pn2021_k500_dataloader")
     assert not hasattr(train_adapter, "build_pn2021_latent_pool")
     assert not hasattr(train_adapter, "_encoder_sha256")
+    assert not hasattr(trainer, "_iter_exposure_batches")
+    assert {
+        "__exposure_name", "__exposure_group", "__exposure_index",
+        "__composition_index", "__objective_terms", "__loss_scale",
+    }.isdisjoint(inspect.getsource(trainer.train_online_model))
     assert vae.__all__ == [
         "build_ecgtwin_vae", "decode_to_ptbxl_waveform", "load_vae_config",
         "prepare_ecgtwin_encoder_input"]
@@ -527,18 +532,6 @@ def test_finite_exposure_plans_lock_direct21_rotating6_and_matched5() -> None:
         "clean", "corruption_00", "corruption_01", "corruption_10", "corruption_11"]
     assert matched.scientific_contract["stages"] == ("augmix_simclr", "supervised_adaptation")
     assert matched.scientific_contract["stage2_teacher"] == "post_stage1_pre_stage2_snapshot"
-
-
-def test_six_exposures_reuse_one_batch_and_form_one_outer_step_group() -> None:
-    waveform = torch.zeros(2, 1000, 12); reads = []
-    def loader():
-        reads.append(1); yield {"waveform": waveform, "hash_id": ("a", "b")}
-    steps = trainer._method_exposure_steps(_recipe("augmix_simclr_lhat.yaml"))
-    batches = list(trainer._iter_exposure_batches(loader(), steps))
-    assert reads == [1] and len(batches) == 6
-    assert all(batch["waveform"] is waveform for batch in batches)
-    assert {batch["__exposure_group"] for batch in batches} == {1}
-    assert [batch["__composition_index"] for batch in batches[1:5]] == [0, 1, 10, 11]
 
 
 def test_empty_lhat_auxiliary_is_an_empty_gradient_sum() -> None:
