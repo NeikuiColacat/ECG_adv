@@ -59,9 +59,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if supplied_training:
         raise AssertionError("PN2021 training parameters must be YAML-owned")
     source_checkpoint = args.source_checkpoint.expanduser().resolve()
-    needs_pool = bool(recipe.requirements.latent_pool)
-    needs_decoder = bool(recipe.requirements.vae_decoder)
-    needs_vae = needs_pool or needs_decoder
+    needs_pool = needs_decoder = needs_vae = recipe.requires_vae
     resolved_vae_checkpoint = None
     vae_config_path = None
     if needs_vae:

@@ -348,13 +348,13 @@ class MethodViewRuntime:
                 config_root=self.config_root,
             )
 
-        if recipe.requirements.latent_pool and latent_pool is None:
+        if recipe.requires_vae and latent_pool is None:
             raise ValueError("method requires a train-only latent_pool")
-        if recipe.requirements.vae_decoder and decoder is None:
+        if recipe.requires_vae and decoder is None:
             raise ValueError("method requires a frozen VAE decoder")
-        if not recipe.requirements.latent_pool and latent_pool is not None:
+        if not recipe.requires_vae and latent_pool is not None:
             raise ValueError("method without latent_pool requirement may not consume one")
-        if not recipe.requirements.vae_decoder and decoder is not None:
+        if not recipe.requires_vae and decoder is not None:
             raise ValueError("method without VAE decoder requirement may not consume one")
 
     @property
@@ -777,25 +777,24 @@ class MethodViewRuntime:
             sample_ids=tuple(str(value) for value in hash_ids),
         )
         selected_terms = (
-            self.recipe.objective.terms
+            self.recipe.objective_terms
             if objective_term_names is None
             else tuple(
                 term
-                for term in self.recipe.objective.terms
-                if term.name in set(objective_term_names)
+                for term in self.recipe.objective_terms
+                if term[0] in set(objective_term_names)
             )
         )
         if objective_term_names is not None:
             requested_names = tuple(str(value) for value in objective_term_names)
             if not requested_names or len(set(requested_names)) != len(requested_names):
                 raise ValueError("objective_term_names must be non-empty and unique")
-            resolved_names = {term.name for term in selected_terms}
+            resolved_names = {name for name, _ in selected_terms}
             unknown_names = sorted(set(requested_names) - resolved_names)
             if unknown_names:
                 raise ValueError(f"unknown objective term names: {unknown_names}")
         required_outputs = {BASE_VIEW_NAME}
-        for term in selected_terms:
-            required_outputs.update(term.views)
+        required_outputs.update(view for _, view in selected_terms)
         diagnostics: dict[str, Any] = {
             "recipe/id": self.recipe.recipe_id,
             "recipe/sha256": self.recipe.recipe_sha256,

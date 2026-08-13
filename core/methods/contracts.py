@@ -138,81 +138,12 @@ class ViewBundle:
             raise KeyError(f"named output is unavailable: {name}") from None
 
 
-@dataclass(frozen=True)
-class MethodRequirements:
-    classifier: bool = False
-    vae_decoder: bool = False
-    latent_pool: bool = False
-
-    def names(self) -> tuple[str, ...]:
-        return tuple(
-            name
-            for name in ("classifier", "vae_decoder", "latent_pool")
-            if bool(getattr(self, name))
-        )
-
-
-@dataclass(frozen=True)
-class ObjectiveTerm:
-    name: str
-    kind: str
-    views: tuple[str, ...]
-    weight: float
-    mask_policy: str = "valid_intersection"
-
-    def __post_init__(self) -> None:
-        _name(self.name, "objective term name")
-        if self.kind != "bce":
-            raise ValueError("objective kind must be bce")
-        if not self.views or any(not isinstance(value, str) or not value for value in self.views):
-            raise ValueError("objective views must be non-empty named outputs")
-        if len(self.views) != 1:
-            raise ValueError("bce objective must reference exactly one view")
-        if (
-            isinstance(self.weight, bool)
-            or not isinstance(self.weight, (int, float))
-            or not torch.isfinite(torch.tensor(float(self.weight)))
-            or self.weight < 0
-        ):
-            raise ValueError("objective weight must be finite and non-negative")
-        if self.mask_policy not in {"all", "valid_intersection"}:
-            raise ValueError("unsupported objective mask_policy")
-
-    def describe(self) -> dict[str, Any]:
-        return {
-            "name": self.name,
-            "kind": self.kind,
-            "views": list(self.views),
-            "weight": float(self.weight),
-            "mask_policy": self.mask_policy,
-        }
-
-
-@dataclass(frozen=True)
-class ObjectivePlan:
-    terms: tuple[ObjectiveTerm, ...]
-
-    def __post_init__(self) -> None:
-        names = tuple(term.name for term in self.terms)
-        if not names or len(names) != len(set(names)):
-            raise ValueError("objective term names must be non-empty and unique")
-
-    def referenced_outputs(self) -> frozenset[str]:
-        return frozenset(view for term in self.terms for view in term.views)
-
-    def describe(self) -> list[dict[str, Any]]:
-        return [term.describe() for term in self.terms]
-
-
 __all__ = [
     "BASE_VIEW_NAME",
     "CANONICAL_CHANNELS",
     "CANONICAL_POINTS",
     "CANONICAL_SAMPLING_RATE_HZ",
     "EXPECTED_LATENT_SHAPE",
-    "MethodRequirements",
-    "ObjectivePlan",
-    "ObjectiveTerm",
     "SUPER5_CLASSES",
     "ViewBundle",
     "WaveformView",

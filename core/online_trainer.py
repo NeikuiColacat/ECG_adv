@@ -1027,21 +1027,17 @@ def _compute_objective(
     if selected_names is not None:
         if not selected_names or len(set(selected_names)) != len(selected_names):
             raise ValueError("objective_term_names must be non-empty and unique")
-        known_names = {term.name for term in recipe.objective.terms}
+        known_names = {name for name, _ in recipe.objective_terms}
         unknown_names = sorted(set(selected_names) - known_names)
         if unknown_names:
             raise ValueError(f"unknown objective term names: {unknown_names}")
     selected_terms = tuple(
         term
-        for term in recipe.objective.terms
-        if selected_names is None or term.name in selected_names
+        for term in recipe.objective_terms
+        if selected_names is None or term[0] in selected_names
     )
 
-    ordered_views: list[str] = []
-    for term in selected_terms:
-        for name in term.views:
-            if name not in ordered_views:
-                ordered_views.append(name)
+    ordered_views = list(dict.fromkeys(view for _, view in selected_terms))
     if not ordered_views:
         raise ValueError("recipe objective must contain at least one term")
 
@@ -1106,27 +1102,23 @@ def _compute_objective(
     raw_terms: dict[str, torch.Tensor] = {}
     weighted_terms: dict[str, torch.Tensor] = {}
     valid_counts: dict[str, int] = {}
-    for term in selected_terms:
-        if term.kind == "bce":
-            name = term.views[0]
-            count = int(positions[name].numel())
-            if count:
-                targets = views[name].labels.index_select(0, positions[name])
-                selected_logits = logits[name].index_select(
-                    0,
-                    full_to_local[name].index_select(0, positions[name]),
-                )
-                raw_loss = F.binary_cross_entropy_with_logits(
-                    selected_logits, targets, pos_weight=pos_weight
-                )
-            else:
-                raw_loss = reference.sum() * 0.0
+    for term_name, view_name in selected_terms:
+        count = int(positions[view_name].numel())
+        if count:
+            targets = views[view_name].labels.index_select(0, positions[view_name])
+            selected_logits = logits[view_name].index_select(
+                0,
+                full_to_local[view_name].index_select(0, positions[view_name]),
+            )
+            raw_loss = F.binary_cross_entropy_with_logits(
+                selected_logits, targets, pos_weight=pos_weight
+            )
         else:
-            raise RuntimeError(f"unsupported recipe objective kind: {term.kind}")
-        contribution = float(term.weight) * (float(count) / batch_size) * raw_loss
-        raw_terms[term.name] = raw_loss
-        weighted_terms[term.name] = contribution
-        valid_counts[term.name] = count
+            raw_loss = reference.sum() * 0.0
+        contribution = (float(count) / batch_size) * raw_loss
+        raw_terms[term_name] = raw_loss
+        weighted_terms[term_name] = contribution
+        valid_counts[term_name] = count
         total = total + contribution
     return _ObjectiveBatch(
         total=total,
@@ -1861,9 +1853,7 @@ def train_online_model(
         ) from None
     recipe = load_recipe_spec(method_path)
     exposure_steps = _method_exposure_steps(recipe)
-    objective_term_weights = {
-        term.name: float(term.weight) for term in recipe.objective.terms
-    }
+    objective_term_weights = {name: 1.0 for name, _ in recipe.objective_terms}
     grouped_exposure = recipe.kind in {
         RecipeKind.FIXED20,
         RecipeKind.TWO_STAGE_AUGMIX_LHAT,
@@ -1893,8 +1883,7 @@ def train_online_model(
             f"online training accepts only k500, got {train_partition!r}"
         )
 
-    requires_latent = bool(recipe.requirements.latent_pool)
-    requires_decoder = bool(recipe.requirements.vae_decoder)
+    requires_latent = requires_decoder = recipe.requires_vae
     if requires_latent != (latent_pool is not None):
         raise ValueError(
             "latent_pool presence must exactly match the recipe requirement"
@@ -2217,18 +2206,18 @@ def train_online_model(
             epoch_samples = 0
             epoch_origin_samples = 0
             epoch_term_sums = {
-                term.name: torch.zeros((), device=resolved_device)
-                for term in recipe.objective.terms
+                name: torch.zeros((), device=resolved_device)
+                for name, _ in recipe.objective_terms
             }
             epoch_weighted_sums = {
-                term.name: torch.zeros((), device=resolved_device)
-                for term in recipe.objective.terms
+                name: torch.zeros((), device=resolved_device)
+                for name, _ in recipe.objective_terms
             }
             epoch_effective_loss_mass_sums = {
-                term.name: 0.0 for term in recipe.objective.terms
+                name: 0.0 for name, _ in recipe.objective_terms
             }
             epoch_term_counts = {
-                term.name: 0 for term in recipe.objective.terms
+                name: 0 for name, _ in recipe.objective_terms
             }
             epoch_view_count_sums = {
                 name: torch.zeros((), device=resolved_device, dtype=torch.int64)
@@ -2748,7 +2737,7 @@ def train_online_model(
                 "view_execution_sample_count": epoch_samples,
                 "exposure": exposure_metrics,
             }
-            if recipe.requirements.latent_pool:
+            if recipe.requires_vae:
                 train_metrics.update(
                     {
                         "eligible_count": epoch_quality_accepted,

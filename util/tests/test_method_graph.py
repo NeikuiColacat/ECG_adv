@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -19,6 +20,7 @@ import core.lhat as lhat
 import core.methods as methods
 import core.methods.contracts as method_contracts
 import core.methods.runtime as method_runtime
+import core.methods.registry as method_registry
 import core.online_trainer as online_trainer
 from core.lhat import AttackThenContractDiagnostics
 from core.methods.registry import AuxiliaryVariant, RecipeKind, load_recipe_spec
@@ -79,9 +81,14 @@ def test_v2_recipe_files_are_finite_resource_closed_characterizations(
     assert (recipe.schema_version, recipe.kind, recipe.auxiliary_variant) == (2, kind, variant)
     assert not hasattr(recipe, "executable")
     assert tuple(recipe.resources) == resources
-    assert recipe.requirements.names() == requirements
-    assert tuple((term.name, term.kind, term.weight) for term in recipe.objective.terms) == objective
-    assert recipe.objective.referenced_outputs() == frozenset(recipe.output_names)
+    assert tuple(recipe.describe()["requirements"]) == requirements
+    assert tuple(
+        (term["name"], term["kind"], term["weight"])
+        for term in recipe.describe()["objective_terms"]
+    ) == objective
+    assert tuple(view for _, view in recipe.objective_terms) == recipe.output_names
+    assert recipe.requires_vae == ("lhat_view" in recipe.output_names)
+    assert not hasattr(recipe, "objective") and not hasattr(recipe, "requirements")
     assert recipe.recipe_sha256 == sha
 
 
@@ -110,6 +117,14 @@ def test_loader_removes_dag_plugins_and_allows_only_the_matched_no_vae_slot() ->
         "composition_index", "depth", "operator_mask", "output_nonfinite_count")
     assert "return_reasons" not in inspect.signature(method_runtime._quality_mask).parameters
     assert "Provenance" not in set(vars(method_contracts)) | set(method_contracts.__all__)
+    assert {"MethodRequirements", "ObjectivePlan", "ObjectiveTerm"}.isdisjoint(
+        set(vars(method_contracts)) | set(method_contracts.__all__)
+    )
+    assert "RecipeSpec" not in method_registry.__all__
+    assert tuple(method_registry.RecipeSpec.__dataclass_fields__) == (
+        "profile_name", "resources", "rng_namespaces", "recipe_sha256",
+        "source_path", "scientific_contract", "_definition",
+    )
     assert tuple(method_contracts.WaveformView.__dataclass_fields__) == (
         "name", "waveform", "labels", "sample_ids", "valid_mask", "metadata",
         "sampling_rate_hz", "units", "layout")
@@ -144,7 +159,19 @@ def test_loader_removes_dag_plugins_and_allows_only_the_matched_no_vae_slot() ->
         RecipeKind.TWO_STAGE_AUGMIX_LHAT, AuxiliaryVariant.MATCHED_NO_VAE)
     assert tuple(recipe.resources) == ("operator_profile", "augmix_config", "corruption_rng")
     assert recipe.comparison_rng_identity == "augmix_simclr_lhat"
+    assert recipe.recipe_sha256 == (
+        "c831f5a20a517b1ac72e432f506ea1fa47ad3a686226f13dc9eda690748272dc"
+    )
+    assert recipe.objective_terms == (
+        ("clean_bce", "clean_view"),
+        ("corrupted_bce", "corrupted_view"),
+    )
+    assert not recipe.requires_vae
     assert recipe.scientific_contract["stage2_teacher"] == "post_stage1_pre_stage2_snapshot"
+    with pytest.raises(TypeError, match="loader-owned"):
+        method_registry.RecipeSpec()
+    with pytest.raises(TypeError, match="loader-owned"):
+        replace(recipe, profile_name="a0_clean_v1")
     payload["recipe"]["auxiliary_variant"] = "contracted_lhat"
     with pytest.raises(ValueError, match="requires auxiliary_variant='matched_no_vae'"):
         load_recipe_spec(payload)
@@ -196,6 +223,19 @@ def test_cpu_a0_a3_and_direct_generation_goldens(
         assert generated.stochastic_trace[prefix + "composition_index"].tolist() == trace[0]
         assert generated.stochastic_trace[prefix + "depth"].tolist() == trace[1]
         assert generated.stochastic_trace[prefix + "operator_mask"].tolist() == trace[2]
+
+    if filename == "a3c_depth23_v1.yaml":
+        runtime = _runtime(filename)
+        clean_only = runtime.generate(
+            **kwargs, objective_term_names=("clean_bce",)
+        )
+        reversed_terms = runtime.generate(
+            **kwargs, objective_term_names=("corrupted_bce", "clean_bce")
+        )
+        assert tuple(clean_only.bundle.values) == ("clean_view",)
+        assert tuple(reversed_terms.bundle.values) == (
+            "clean_view", "corrupted_view"
+        )
 
 
 def test_canonical_nonfinite_waveform_is_masked_without_host_failfast() -> None:

@@ -12,7 +12,6 @@ from typing import Any, Mapping
 
 import yaml
 
-from core.methods.contracts import MethodRequirements, ObjectivePlan, ObjectiveTerm
 from util.config_bundle import require_mapping as _mapping
 
 
@@ -83,28 +82,40 @@ class _RecipeDefinition:
     resource_names: frozenset[str]
     comparison_rng_identity: str
     output_names: tuple[str, ...]
-    requirements: MethodRequirements
-    objective: ObjectivePlan
 
 
-def _bce(name: str, view: str, weight: float = 1.0) -> ObjectiveTerm:
-    return ObjectiveTerm(name=name, kind="bce", views=(view,), weight=weight)
-
-
-_CLEAN_OBJECTIVE = ObjectivePlan((_bce("clean_bce", "clean_view"),))
-_CORRUPTION_OBJECTIVE = ObjectivePlan(
-    (
-        _bce("clean_bce", "clean_view"),
-        _bce("corrupted_bce", "corrupted_view"),
-    )
+_OBJECTIVE_NAME_BY_VIEW = MappingProxyType(
+    {
+        "clean_view": "clean_bce",
+        "lhat_view": "lhat_direct_bce",
+        "corrupted_view": "corrupted_bce",
+    }
 )
-_LHAT_OBJECTIVE = ObjectivePlan(
-    (
-        _bce("clean_bce", "clean_view"),
-        _bce("lhat_direct_bce", "lhat_view"),
-        _bce("corrupted_bce", "corrupted_view"),
+
+
+def _objective_terms(output_names: tuple[str, ...]) -> tuple[tuple[str, str], ...]:
+    return tuple((_OBJECTIVE_NAME_BY_VIEW[view], view) for view in output_names)
+
+
+def _objective_descriptions(output_names: tuple[str, ...]) -> list[dict[str, Any]]:
+    return [
+        {
+            "name": name,
+            "kind": "bce",
+            "views": [view],
+            "weight": 1.0,
+            "mask_policy": "valid_intersection",
+        }
+        for name, view in _objective_terms(output_names)
+    ]
+
+
+def _requirement_names(output_names: tuple[str, ...]) -> tuple[str, ...]:
+    return (
+        ("classifier", "vae_decoder", "latent_pool")
+        if "lhat_view" in output_names
+        else ("classifier",)
     )
-)
 _MODEL_ONLY = frozenset()
 _CORRUPTION_RESOURCES = frozenset({"operator_profile", "corruption_rng"})
 _MAINLINE_RESOURCES = frozenset(
@@ -130,8 +141,6 @@ _DEFINITIONS: Mapping[str, _RecipeDefinition] = MappingProxyType(
             _MODEL_ONLY,
             "a0_clean_v1",
             ("clean_view",),
-            MethodRequirements(classifier=True),
-            _CLEAN_OBJECTIVE,
         ),
         "a3c_depth23_v1": _RecipeDefinition(
             RecipeKind.RANDOM_DEPTH23,
@@ -141,8 +150,6 @@ _DEFINITIONS: Mapping[str, _RecipeDefinition] = MappingProxyType(
             _CORRUPTION_RESOURCES,
             "a3c_depth23_v1",
             ("clean_view", "corrupted_view"),
-            MethodRequirements(classifier=True),
-            _CORRUPTION_OBJECTIVE,
         ),
         "direct_depth23_fixed20": _RecipeDefinition(
             RecipeKind.FIXED20,
@@ -152,8 +159,6 @@ _DEFINITIONS: Mapping[str, _RecipeDefinition] = MappingProxyType(
             _CORRUPTION_RESOURCES,
             "direct_depth23_fixed20",
             ("clean_view", "corrupted_view"),
-            MethodRequirements(classifier=True),
-            _CORRUPTION_OBJECTIVE,
         ),
         "augmix_simclr_lhat": _RecipeDefinition(
             RecipeKind.TWO_STAGE_AUGMIX_LHAT,
@@ -163,8 +168,6 @@ _DEFINITIONS: Mapping[str, _RecipeDefinition] = MappingProxyType(
             _MAINLINE_RESOURCES,
             "augmix_simclr_lhat",
             ("clean_view", "lhat_view", "corrupted_view"),
-            MethodRequirements(classifier=True, vae_decoder=True, latent_pool=True),
-            _LHAT_OBJECTIVE,
         ),
         # Deliberately the only non-file-backed future variant.  Keeping the
         # paired identity here permits a matched no-VAE ablation without
@@ -177,8 +180,6 @@ _DEFINITIONS: Mapping[str, _RecipeDefinition] = MappingProxyType(
             _NO_VAE_RESOURCES,
             "augmix_simclr_lhat",
             ("clean_view", "corrupted_view"),
-            MethodRequirements(classifier=True),
-            _CORRUPTION_OBJECTIVE,
         ),
     }
 )
@@ -287,26 +288,24 @@ def _execution_contract(
     raise AssertionError(f"unsupported recipe kind: {kind}")
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class RecipeSpec:
-    """One resolved member of the finite recipe family."""
+    """One loader-owned member of the finite recipe family."""
 
     profile_name: str
-    kind: RecipeKind
-    auxiliary_variant: AuxiliaryVariant
-    scientific_arm: str
-    status: str
-    objective: ObjectivePlan
-    requirements: MethodRequirements
     resources: Mapping[str, Mapping[str, Any]]
-    comparison_rng_identity: str
     rng_namespaces: Mapping[str, str]
-    output_names: tuple[str, ...]
     recipe_sha256: str
-    source_path: Path | None = None
-    scientific_contract: Mapping[str, Any] = field(default_factory=dict)
+    source_path: Path | None
+    scientific_contract: Mapping[str, Any]
+    _definition: _RecipeDefinition = field(repr=False)
+
+    def __init__(self, *_: Any, **__: Any) -> None:
+        raise TypeError("RecipeSpec is loader-owned; use load_recipe_spec")
 
     def __post_init__(self) -> None:
+        if _DEFINITIONS.get(self.profile_name) is not self._definition:
+            raise ValueError("recipe definition must match its code-owned profile")
         object.__setattr__(
             self,
             "resources",
@@ -322,6 +321,38 @@ class RecipeSpec:
     @property
     def recipe_id(self) -> str:
         return self.profile_name
+
+    @property
+    def kind(self) -> RecipeKind:
+        return self._definition.kind
+
+    @property
+    def auxiliary_variant(self) -> AuxiliaryVariant:
+        return self._definition.auxiliary_variant
+
+    @property
+    def scientific_arm(self) -> str:
+        return self._definition.scientific_arm
+
+    @property
+    def status(self) -> str:
+        return self._definition.status
+
+    @property
+    def comparison_rng_identity(self) -> str:
+        return self._definition.comparison_rng_identity
+
+    @property
+    def output_names(self) -> tuple[str, ...]:
+        return self._definition.output_names
+
+    @property
+    def objective_terms(self) -> tuple[tuple[str, str], ...]:
+        return _objective_terms(self.output_names)
+
+    @property
+    def requires_vae(self) -> bool:
+        return "lhat_view" in self.output_names
 
     @property
     def schema_version(self) -> int:
@@ -357,8 +388,8 @@ class RecipeSpec:
             "rng_namespace": self.rng_namespace,
             "rng_namespaces": dict(self.rng_namespaces),
             "outputs": list(self.output_names),
-            "requirements": list(self.requirements.names()),
-            "objective_terms": self.objective.describe(),
+            "requirements": list(_requirement_names(self.output_names)),
+            "objective_terms": _objective_descriptions(self.output_names),
             "resources": _plain(self.resources),
             "scientific_contract": _plain(self.scientific_contract),
         }
@@ -477,8 +508,8 @@ def load_recipe_spec(source: str | Path | Mapping[str, Any]) -> RecipeSpec:
         "declaration": root,
         "comparison_rng_identity": definition.comparison_rng_identity,
         "outputs": list(definition.output_names),
-        "requirements": list(definition.requirements.names()),
-        "objective_terms": definition.objective.describe(),
+        "requirements": list(_requirement_names(definition.output_names)),
+        "objective_terms": _objective_descriptions(definition.output_names),
         "scientific_contract": _plain(scientific_contract),
     }
     try:
@@ -490,22 +521,19 @@ def load_recipe_spec(source: str | Path | Mapping[str, Any]) -> RecipeSpec:
         ).encode("utf-8")
     except (TypeError, ValueError) as exc:
         raise ValueError(f"recipe must be JSON-serializable: {exc}") from exc
-    return RecipeSpec(
-        profile_name=recipe_id,
-        kind=definition.kind,
-        auxiliary_variant=definition.auxiliary_variant,
-        scientific_arm=definition.scientific_arm,
-        status=definition.status,
-        objective=definition.objective,
-        requirements=definition.requirements,
-        resources=resources,
-        comparison_rng_identity=definition.comparison_rng_identity,
-        rng_namespaces=rng_namespaces,
-        output_names=definition.output_names,
-        recipe_sha256=hashlib.sha256(identity).hexdigest(),
-        source_path=source_path,
-        scientific_contract=scientific_contract,
-    )
+    spec = object.__new__(RecipeSpec)
+    for name, value in {
+        "profile_name": recipe_id,
+        "resources": resources,
+        "rng_namespaces": rng_namespaces,
+        "recipe_sha256": hashlib.sha256(identity).hexdigest(),
+        "source_path": source_path,
+        "scientific_contract": scientific_contract,
+        "_definition": definition,
+    }.items():
+        object.__setattr__(spec, name, value)
+    spec.__post_init__()
+    return spec
 
 
 __all__ = [
@@ -514,6 +542,5 @@ __all__ = [
     "RECIPE_SCHEMA_VERSION",
     "RECIPE_VERSION",
     "RecipeKind",
-    "RecipeSpec",
     "load_recipe_spec",
 ]

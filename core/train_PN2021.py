@@ -157,7 +157,7 @@ def build_pn2021_latent_pool(
         config_path=config_path,
         config_root=config_root,
     )
-    if not recipe.requirements.latent_pool:
+    if not recipe.requires_vae:
         raise ValueError("recipe does not require a latent pool")
     resource = recipe.resources.get("lhat_config")
     if not isinstance(resource, Mapping):
@@ -209,8 +209,7 @@ def train_pn2021(
     if spec not in {EFFICIENTNET1DV2_SPEC, ECGFOUNDER_SPEC}:
         raise ValueError("model must expose a managed EfficientNet/ECGFounder spec")
     _validate_locked_source_checkpoint(owner, spec, config)
-    requires_pool = bool(recipe.requirements.latent_pool)
-    requires_decoder = bool(recipe.requirements.vae_decoder)
+    requires_pool = requires_decoder = recipe.requires_vae
     if requires_pool != (encoder is not None):
         raise ValueError(
             "VAE encoder presence must exactly match the latent-pool requirement"
