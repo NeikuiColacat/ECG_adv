@@ -207,30 +207,6 @@ class GeneratedMethodBatch:
     ineligible_hash_ids: tuple[str, ...]
     quality_rejected: tuple[dict[str, str], ...]
 
-    def __post_init__(self) -> None:
-        weights = dict(self.diagnostic_weights)
-        if any(weight <= 0 for weight in weights.values()):
-            raise ValueError("diagnostic weights must be positive")
-        object.__setattr__(self, "diagnostic_weights", MappingProxyType(weights))
-        samples = dict(self.diagnostic_samples)
-        if any(value.ndim != 1 for value in samples.values()):
-            raise ValueError("diagnostic samples must be rank-1")
-        object.__setattr__(
-            self,
-            "diagnostic_samples",
-            MappingProxyType({name: value.detach() for name, value in samples.items()}),
-        )
-        trace = dict(self.stochastic_trace)
-        if any(value.ndim < 1 for value in trace.values()):
-            raise ValueError("stochastic traces must be non-scalar")
-        object.__setattr__(
-            self,
-            "stochastic_trace",
-            MappingProxyType({name: value.detach() for name, value in trace.items()}),
-        )
-        if not 0 <= self.quality_view_accepted_count <= self.quality_view_total_count:
-            raise ValueError("accepted view count must be within the total")
-
 class MethodViewRuntime:
     """One finite recipe with resolved configuration resources."""
 
@@ -830,8 +806,8 @@ class MethodViewRuntime:
         ineligible_values: list[str] = []
         rejected_values: list[dict[str, str]] = []
         diagnostic_weights: dict[str, int] = {}
-        diagnostic_sample_chunks: dict[str, list[torch.Tensor]] = {}
-        stochastic_trace_chunks: dict[str, list[torch.Tensor]] = {}
+        diagnostic_samples: dict[str, torch.Tensor] = {}
+        stochastic_trace: dict[str, torch.Tensor] = {}
         accounting_keys = {
             "candidate_eligible_positions",
             "accepted_positions",
@@ -864,23 +840,15 @@ class MethodViewRuntime:
             metadata_samples = metadata.get("diagnostic_samples")
             if isinstance(metadata_samples, Mapping):
                 for local_name, sample_values in metadata_samples.items():
-                    if not isinstance(local_name, str) or not isinstance(
-                        sample_values, torch.Tensor
-                    ):
-                        raise TypeError("runtime diagnostic_samples metadata drifted")
-                    diagnostic_sample_chunks.setdefault(
-                        f"{prefix}{local_name}", []
-                    ).append(sample_values)
+                    diagnostic_samples[f"{prefix}{local_name}"] = (
+                        sample_values.detach().clone()
+                    )
             metadata_trace = metadata.get("stochastic_trace")
             if isinstance(metadata_trace, Mapping):
                 for local_name, trace_values in metadata_trace.items():
-                    if not isinstance(local_name, str) or not isinstance(
-                        trace_values, torch.Tensor
-                    ):
-                        raise TypeError("runtime stochastic_trace metadata drifted")
-                    stochastic_trace_chunks.setdefault(
-                        f"{prefix}{local_name}", []
-                    ).append(trace_values)
+                    stochastic_trace[f"{prefix}{local_name}"] = (
+                        trace_values.detach().clone()
+                    )
             node_diagnostics = tuple(
                 name for name in bundle.diagnostics if name.startswith(prefix)
             )
@@ -934,15 +902,9 @@ class MethodViewRuntime:
         )
         return GeneratedMethodBatch(
             bundle=bundle,
-            diagnostic_weights=diagnostic_weights,
-            diagnostic_samples={
-                name: torch.cat(chunks, dim=0).detach()
-                for name, chunks in diagnostic_sample_chunks.items()
-            },
-            stochastic_trace={
-                name: torch.cat(chunks, dim=0).detach()
-                for name, chunks in stochastic_trace_chunks.items()
-            },
+            diagnostic_weights=MappingProxyType(diagnostic_weights),
+            diagnostic_samples=MappingProxyType(diagnostic_samples),
+            stochastic_trace=MappingProxyType(stochastic_trace),
             candidate_eligible_positions=candidate_positions,
             accepted_positions=accepted_positions,
             quality_view_total_count=quality_view_total_count,

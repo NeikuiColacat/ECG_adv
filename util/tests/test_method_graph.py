@@ -129,7 +129,9 @@ def test_loader_removes_dag_plugins_and_allows_only_the_matched_no_vae_slot() ->
         "get_attack_batch_by_cache_indices",
     }.isdisjoint(vars(latent_pool.LatentPool))
     assert {"_positions", "_RecipeContext"}.isdisjoint(vars(method_runtime))
-    assert "batch_size" not in vars(method_runtime.GeneratedMethodBatch)
+    assert {"batch_size", "__post_init__"}.isdisjoint(
+        vars(method_runtime.GeneratedMethodBatch)
+    )
     assert "requires_latent_pool" not in vars(method_runtime.MethodViewRuntime)
     assert tuple(augmix.TwoChainAugMixBatch.__dataclass_fields__) == ("mixed_raw",)
     assert tuple(corruption.CorruptionDiagnostics.__dataclass_fields__) == (
