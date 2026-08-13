@@ -57,82 +57,48 @@ def _derive_seed(
     return int.from_bytes(hashlib.sha256(payload).digest()[:4], "little")
 
 
-class _RecipeContext:
-    """Narrow local context for one code-owned recipe operation."""
+def _record_diagnostic(
+    diagnostics: dict[str, Any], node_id: str, name: str, value: Any
+) -> None:
+    if not isinstance(name, str) or not name:
+        raise ValueError("diagnostic name must be non-empty")
+    key = f"{node_id}/{name}"
+    if key in diagnostics:
+        raise ValueError(f"diagnostic already recorded: {key}")
+    diagnostics[key] = value
 
-    def __init__(
-        self,
-        *,
-        recipe: RecipeSpec,
-        node_id: str,
-        node_type: str,
-        rng_namespace: str,
-        resources: Mapping[str, Any],
-        diagnostics: dict[str, Any],
-        base_seed: int,
-        rng_identity: tuple[str, ...],
-    ) -> None:
-        self.node_id = node_id
-        self.node_type = node_type
-        self.rng_namespace = rng_namespace
-        self._recipe = recipe
-        self._resources = resources
-        self._diagnostics = diagnostics
-        self._base_seed = base_seed
-        self._rng_identity = rng_identity
-        self._generators: dict[tuple[str, str], torch.Generator] = {}
 
-    def resource(self, name: str) -> Any:
-        try:
-            value = self._resources[name]
-        except KeyError:
-            raise KeyError(f"unsupported execution resource: {name}") from None
-        if value is None:
-            raise ValueError(
-                f"recipe operation {self.node_id!r} requires {name!r}"
-            )
-        return value
-
-    def record_diagnostic(self, name: str, value: Any) -> None:
-        if not isinstance(name, str) or not name:
-            raise ValueError("diagnostic name must be non-empty")
-        key = f"{self.node_id}/{name}"
-        if key in self._diagnostics:
-            raise ValueError(f"diagnostic already recorded: {key}")
-        self._diagnostics[key] = value
-
-    def torch_generator(
-        self,
-        stream: str = "default",
-        *,
-        device: str | torch.device = "cpu",
-    ) -> torch.Generator:
-        if not isinstance(stream, str) or not stream:
-            raise ValueError("RNG stream must be non-empty")
-        resolved_device = torch.device(device)
-        key = (stream, str(resolved_device))
-        generator = self._generators.get(key)
-        if generator is None:
-            seed = _derive_seed(
-                self._base_seed,
-                self._recipe.comparison_rng_identity,
-                self.rng_namespace,
-                self.node_id,
-                stream,
-                self._rng_identity,
-            )
-            generator = torch.Generator(device=resolved_device)
-            generator.manual_seed(seed)
-            self._generators[key] = generator
-            self._diagnostics[
-                f"{self.node_id}/rng/{stream}/{resolved_device}"
-            ] = {
-                "seed": seed,
-                "namespace": self.rng_namespace,
-                "comparison_rng_identity": self._recipe.comparison_rng_identity,
-                "execution_identity": list(self._rng_identity),
-            }
-        return generator
+def _torch_generator(
+    *,
+    recipe: RecipeSpec,
+    rng_namespace: str,
+    node_id: str,
+    stream: str,
+    base_seed: int,
+    rng_identity: tuple[str, ...],
+    device: str | torch.device,
+    diagnostics: dict[str, Any],
+) -> torch.Generator:
+    if not isinstance(stream, str) or not stream:
+        raise ValueError("RNG stream must be non-empty")
+    resolved_device = torch.device(device)
+    seed = _derive_seed(
+        base_seed,
+        recipe.comparison_rng_identity,
+        rng_namespace,
+        node_id,
+        stream,
+        rng_identity,
+    )
+    generator = torch.Generator(device=resolved_device)
+    generator.manual_seed(seed)
+    diagnostics[f"{node_id}/rng/{stream}/{resolved_device}"] = {
+        "seed": seed,
+        "namespace": rng_namespace,
+        "comparison_rng_identity": recipe.comparison_rng_identity,
+        "execution_identity": list(rng_identity),
+    }
+    return generator
 
 
 def _quality_mask(
@@ -404,9 +370,12 @@ class MethodViewRuntime:
 
     def _canonical_corruption(
         self,
-        context: _RecipeContext,
         inputs: tuple[WaveformView, ...],
         *,
+        diagnostics: dict[str, Any],
+        rng_namespace: str,
+        base_seed: int,
+        rng_identity: tuple[str, ...],
         composition_indices: torch.Tensor | None = None,
         composition_index_hint: int | None = None,
     ) -> WaveformView:
@@ -457,14 +426,14 @@ class MethodViewRuntime:
                 all_identity = bool(identity_state[0])
                 any_identity = bool(identity_state[1])
             if all_identity:
-                context.record_diagnostic(
+                _record_diagnostic(diagnostics, "depth23_corruption",
                     "mean_depth", source.waveform.new_zeros(())
                 )
-                context.record_diagnostic(
+                _record_diagnostic(diagnostics, "depth23_corruption",
                     "repaired_nonfinite_count", source.waveform.new_zeros(())
                 )
                 return WaveformView(
-                    name=context.node_id,
+                    name="depth23_corruption",
                     waveform=source.waveform,
                     labels=source.labels,
                     sample_ids=source.sample_ids,
@@ -481,8 +450,15 @@ class MethodViewRuntime:
                     "composition_indices may be all -1 for an identity exposure, "
                     "or all values must be in [0, 19]"
                 )
-        generator = context.torch_generator(
-            "composition_and_operators", device=source.waveform.device
+        generator = _torch_generator(
+            recipe=self.recipe,
+            rng_namespace=rng_namespace,
+            node_id="depth23_corruption",
+            stream="composition_and_operators",
+            base_seed=base_seed,
+            rng_identity=rng_identity,
+            device=source.waveform.device,
+            diagnostics=diagnostics,
         )
         parameters = {
             name: self.operator_profile.parameters_for(name)
@@ -499,15 +475,15 @@ class MethodViewRuntime:
             _input_prevalidated=True,
         )
         valid = source.valid_mask & (result.diagnostics.output_nonfinite_count == 0)
-        context.record_diagnostic(
+        _record_diagnostic(diagnostics, "depth23_corruption",
             "mean_depth", result.diagnostics.depth.float().mean().detach()
         )
-        context.record_diagnostic(
+        _record_diagnostic(diagnostics, "depth23_corruption",
             "repaired_nonfinite_count",
             result.diagnostics.output_nonfinite_count.float().sum().detach(),
         )
         return WaveformView(
-            name=context.node_id,
+            name="depth23_corruption",
             waveform=result.waveform_raw_100hz,
             labels=source.labels,
             sample_ids=source.sample_ids,
@@ -528,19 +504,22 @@ class MethodViewRuntime:
 
     def _lhat_attack(
         self,
-        context: _RecipeContext,
         inputs: tuple[WaveformView, ...],
+        *,
+        classifier: nn.Module,
+        diagnostics: dict[str, Any],
+        rng_namespace: str,
+        base_seed: int,
+        rng_identity: tuple[str, ...],
     ) -> WaveformView:
         if len(inputs) != 1 or not isinstance(inputs[0], WaveformView):
             raise TypeError("LHAT requires one clean WaveformView")
         if self.latent_pool is None or self.decoder is None or self.lhat_config is None:
             raise RuntimeError("LHAT runtime resources are incomplete")
         source = inputs[0]
-        attack_then_contract = (
-            context.node_type == "vae_lhat_attack_then_contract_view"
-        )
-        classifier = context.resource("classifier")
-        pool = context.resource("latent_pool")
+        if classifier is None:
+            raise ValueError("recipe operation 'lhat' requires 'classifier'")
+        pool = self.latent_pool
         try:
             all_indices = pool.indices_for_hashes(source.sample_ids)
         except (KeyError, TypeError, ValueError) as exc:
@@ -580,8 +559,15 @@ class MethodViewRuntime:
                 candidate_positions, device=source.waveform.device, dtype=torch.long
             )
             candidate_hashes = tuple(source.sample_ids[index] for index in candidate_positions)
-            generator = context.torch_generator(
-                "candidate_selection", device=source.waveform.device
+            generator = _torch_generator(
+                recipe=self.recipe,
+                rng_namespace=rng_namespace,
+                node_id="lhat",
+                stream="candidate_selection",
+                base_seed=base_seed,
+                rng_identity=rng_identity,
+                device=source.waveform.device,
+                diagnostics=diagnostics,
             )
             attack_batch = pool.get_attack_batch_by_hashes(
                 candidate_hashes,
@@ -599,7 +585,7 @@ class MethodViewRuntime:
                 raise RuntimeError("latent-pool label binding changed")
             attack = generate_lhat_adversarial(
                 classifier=classifier,
-                decoder=context.resource("vae_decoder"),
+                decoder=self.decoder,
                 anchor_standardized=attack_batch.anchor_standardized.to(
                     source.waveform.device, dtype=torch.float32
                 ),
@@ -614,44 +600,38 @@ class MethodViewRuntime:
                 model_name=self.model_name,
                 config=self.lhat_config,
             )
-            training_waveform = attack.waveform_raw
-            contract_result = None
-            if attack_then_contract:
-                contract_result = contract_lhat_adversarial(
-                    classifier=classifier,
-                    decoder=context.resource("vae_decoder"),
-                    attack=attack,
-                    raw_clean_waveform=source.waveform.index_select(
-                        0, candidate_index
-                    ),
-                    targets=candidate_targets,
-                    standardizer=pool.standardizer,
-                    model_name=self.model_name,
-                    minimum_std_mV=self.minimum_std_mV,
-                    maximum_abs_mV=self.maximum_abs_mV,
-                    config=self.lhat_config,
-                )
-                training_waveform = contract_result.waveform_raw
+            contract_result = contract_lhat_adversarial(
+                classifier=classifier,
+                decoder=self.decoder,
+                attack=attack,
+                raw_clean_waveform=source.waveform.index_select(
+                    0, candidate_index
+                ),
+                targets=candidate_targets,
+                standardizer=pool.standardizer,
+                model_name=self.model_name,
+                minimum_std_mV=self.minimum_std_mV,
+                maximum_abs_mV=self.maximum_abs_mV,
+                config=self.lhat_config,
+            )
+            training_waveform = contract_result.waveform_raw
             accepted_local, reasons = _quality_mask(
                 training_waveform,
                 minimum_std_mV=self.minimum_std_mV,
                 maximum_abs_mV=self.maximum_abs_mV,
             )
-            if contract_result is not None:
-                accepted_local &= contract_result.valid_mask
-                contract_acceptance = (
-                    contract_result.valid_mask.detach().cpu().tolist()
+            accepted_local &= contract_result.valid_mask
+            contract_acceptance = contract_result.valid_mask.detach().cpu().tolist()
+            reasons = tuple(
+                reason
+                if bool(contract_acceptance[index])
+                else (
+                    "contract_rejected"
+                    if reason == "accepted"
+                    else f"contract_rejected+{reason}"
                 )
-                reasons = tuple(
-                    reason
-                    if bool(contract_acceptance[index])
-                    else (
-                        "contract_rejected"
-                        if reason == "accepted"
-                        else f"contract_rejected+{reason}"
-                    )
-                    for index, reason in enumerate(reasons)
-                )
+                for index, reason in enumerate(reasons)
+            )
             stochastic_trace = {
                 "candidate_batch_positions": candidate_index.detach().contiguous(),
                 "candidate_pool_indices": (
@@ -660,17 +640,16 @@ class MethodViewRuntime:
                 "final_hull_weights": attack.weights.detach().contiguous(),
                 "quality_accepted_mask": accepted_local.detach().contiguous(),
             }
-            if contract_result is not None:
-                stochastic_trace.update(
-                    {
-                        "contract_accepted_mask": (
-                            contract_result.valid_mask.detach().contiguous()
-                        ),
-                        "contract_selected_t": (
-                            contract_result.diagnostics.selected_t.detach().contiguous()
-                        ),
-                    }
-                )
+            stochastic_trace.update(
+                {
+                    "contract_accepted_mask": (
+                        contract_result.valid_mask.detach().contiguous()
+                    ),
+                    "contract_selected_t": (
+                        contract_result.diagnostics.selected_t.detach().contiguous()
+                    ),
+                }
+            )
             # ``_quality_mask`` already materialized one compact per-record
             # summary to construct the audit reasons. Reuse that host result
             # instead of synchronizing the accepted mask a second time.
@@ -698,22 +677,22 @@ class MethodViewRuntime:
             diagnostic_samples, diagnostic_means, local_diagnostic_weights = (
                 _scoped_lhat_diagnostics(
                     attack.diagnostics,
-                    None if contract_result is None else contract_result.diagnostics,
+                    contract_result.diagnostics,
                     accepted_local,
                     len(accepted_positions),
                 )
             )
             for name, value in diagnostic_means.items():
-                context.record_diagnostic(name, value)
+                _record_diagnostic(diagnostics, "lhat", name, value)
             for local_index, reason in enumerate(reasons):
                 if reason != "accepted":
                     rejected.append(
                         {"hash_id": candidate_hashes[local_index], "reason": reason}
                     )
-        context.record_diagnostic("candidate_eligible_count", len(candidate_positions))
-        context.record_diagnostic("quality_accepted_count", len(accepted_positions))
-        context.record_diagnostic("ineligible_count", len(ineligible))
-        context.record_diagnostic("quality_rejected_count", len(rejected))
+        _record_diagnostic(diagnostics, "lhat", "candidate_eligible_count", len(candidate_positions))
+        _record_diagnostic(diagnostics, "lhat", "quality_accepted_count", len(accepted_positions))
+        _record_diagnostic(diagnostics, "lhat", "ineligible_count", len(ineligible))
+        _record_diagnostic(diagnostics, "lhat", "quality_rejected_count", len(rejected))
         local_diagnostic_weights.update(
             {
                 "candidate_eligible_count": 1,
@@ -723,7 +702,7 @@ class MethodViewRuntime:
             }
         )
         return WaveformView(
-            name=context.node_id,
+            name="lhat",
             waveform=full_waveform,
             labels=source.labels,
             sample_ids=source.sample_ids,
@@ -801,41 +780,22 @@ class MethodViewRuntime:
             "recipe/rng_namespace": self.recipe.rng_namespace,
             "recipe/comparison_rng_identity": self.recipe.comparison_rng_identity,
         }
-        execution_resources = {
-            "classifier": classifier,
-            "vae_decoder": self.decoder,
-            "latent_pool": self.latent_pool,
-        }
-
-        def context(
-            node_id: str, node_type: str, rng_resource: str
-        ) -> _RecipeContext:
+        def rng_namespace(resource: str) -> str:
             try:
-                namespace = self.recipe.rng_namespaces[rng_resource]
+                return self.recipe.rng_namespaces[resource]
             except KeyError:
                 raise RuntimeError(
-                    f"recipe has no RNG namespace for {rng_resource!r}"
+                    f"recipe has no RNG namespace for {resource!r}"
                 ) from None
-            return _RecipeContext(
-                recipe=self.recipe,
-                node_id=node_id,
-                node_type=node_type,
-                rng_namespace=namespace,
-                resources=execution_resources,
-                diagnostics=diagnostics,
-                base_seed=base_seed,
-                rng_identity=identity,
-            )
 
         generated: dict[str, WaveformView] = {BASE_VIEW_NAME: clean}
         if "corrupted_view" in required_outputs:
             generated["corrupted_view"] = self._canonical_corruption(
-                context(
-                    "depth23_corruption",
-                    "canonical_depth23_corruption_view",
-                    "corruption_rng",
-                ),
                 (clean,),
+                diagnostics=diagnostics,
+                rng_namespace=rng_namespace("corruption_rng"),
+                base_seed=base_seed,
+                rng_identity=identity,
                 composition_indices=composition_indices,
                 composition_index_hint=composition_index_hint,
             )
@@ -843,12 +803,12 @@ class MethodViewRuntime:
             if self.recipe.auxiliary_variant is not AuxiliaryVariant.CONTRACTED_LHAT:
                 raise RuntimeError("only the contracted-LHAT recipe can emit lhat_view")
             generated["lhat_view"] = self._lhat_attack(
-                context(
-                    "lhat",
-                    "vae_lhat_attack_then_contract_view",
-                    "lhat_rng",
-                ),
                 (clean,),
+                classifier=classifier,
+                diagnostics=diagnostics,
+                rng_namespace=rng_namespace("lhat_rng"),
+                base_seed=base_seed,
+                rng_identity=identity,
             )
         missing_outputs = sorted(required_outputs - set(generated))
         if missing_outputs:

@@ -128,7 +128,7 @@ def test_loader_removes_dag_plugins_and_allows_only_the_matched_no_vae_slot() ->
         "indices_for_cache_indices", "get_attack_batch_by_selection_indices",
         "get_attack_batch_by_cache_indices",
     }.isdisjoint(vars(latent_pool.LatentPool))
-    assert "_positions" not in vars(method_runtime)
+    assert {"_positions", "_RecipeContext"}.isdisjoint(vars(method_runtime))
     assert "batch_size" not in vars(method_runtime.GeneratedMethodBatch)
     assert "requires_latent_pool" not in vars(method_runtime.MethodViewRuntime)
     assert tuple(augmix.TwoChainAugMixBatch.__dataclass_fields__) == ("mixed_raw",)
@@ -150,7 +150,9 @@ def test_loader_removes_dag_plugins_and_allows_only_the_matched_no_vae_slot() ->
     runtime_source = inspect.getsource(method_runtime.MethodViewRuntime)
     assert all(value not in runtime_source for value in (
         '"corruption_diagnostics"', '"exposure_kind"', '"diagnostic_means"',
-        '"anchor_waveform_raw"', '"source_view"', "full_anchor_reconstruction"))
+        '"anchor_waveform_raw"', '"source_view"', "full_anchor_reconstruction",
+        "node_type", "attack_then_contract", "context.resource", "_generators"))
+    assert runtime_source.count("_torch_generator(") == 2
     assert "DEFAULT_METHOD_CONFIG_DIR" not in vars(online_trainer)
     assert "profile_name" not in vars(online_trainer.OnlineTrainConfig)
     assert {"model", "history"}.isdisjoint(
@@ -242,7 +244,6 @@ def test_cpu_a0_a3_and_direct_generation_goldens(
         assert generated.stochastic_trace[prefix + "composition_index"].tolist() == trace[0]
         assert generated.stochastic_trace[prefix + "depth"].tolist() == trace[1]
         assert generated.stochastic_trace[prefix + "operator_mask"].tolist() == trace[2]
-
     if filename == "a3c_depth23_v1.yaml":
         runtime = _runtime(filename)
         clean_only = runtime.generate(
