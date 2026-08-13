@@ -1,0 +1,23 @@
+schema_version: 1
+
+experiment:
+  name: manual_refactor_pn2021_ecgfounder_a1_rot4_e30_eval_cpsc_2018_matched_base_r0
+  purpose: Evaluate the matched-base/update ECGFounder E30 A1 supervised rotating-4 corruption run on ref-excluded combined CPSC 2018 and Extra Clean and PN2021-C.
+
+entrypoint:
+  name: evaluate_pn2021
+  config: eval/PN2021.yaml
+  arguments:
+    - --model
+    - ecgfounder
+    - --train-result
+    - /home/linbinhao/ECG_adv_data/runs/matched_base_a0_a1_r0_20260814/ecgfounder_e30/a1_rot4/cpsc_2018/training/train_result.json
+    - --center
+    - cpsc_2018
+    - --method-config
+    - train/methods/a1_corrupt_ft_rot4_v1.yaml
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/matched_base_a0_a1_r0_20260814/eval/ecgfounder_e30/a1_rot4/cpsc_2018
+  if_exists: error
+  delegate_output_subdir: evaluation

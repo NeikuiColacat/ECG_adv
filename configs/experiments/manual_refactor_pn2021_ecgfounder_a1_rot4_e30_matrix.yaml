@@ -1,0 +1,25 @@
+schema_version: 1
+
+experiment:
+  name: manual_refactor_pn2021_ecgfounder_a1_rot4_e30_matrix_matched_base_r0
+  purpose: Aggregate the matched-base/update ecgfounder E30 a1_rot4 diagonal four-center evaluation matrix without loading data or models.
+
+entrypoint:
+  name: aggregate_pn2021
+  config: eval/PN2021_matrix_a1_rot4_e25_e30.yaml
+  arguments:
+    - --model
+    - ecgfounder
+    - --result
+    - /home/linbinhao/ECG_adv_data/runs/matched_base_a0_a1_r0_20260814/eval/ecgfounder_e30/a1_rot4/ningbo/evaluation/evaluation_result.json
+    - --result
+    - /home/linbinhao/ECG_adv_data/runs/matched_base_a0_a1_r0_20260814/eval/ecgfounder_e30/a1_rot4/chapman_shaoxing/evaluation/evaluation_result.json
+    - --result
+    - /home/linbinhao/ECG_adv_data/runs/matched_base_a0_a1_r0_20260814/eval/ecgfounder_e30/a1_rot4/cpsc_2018/evaluation/evaluation_result.json
+    - --result
+    - /home/linbinhao/ECG_adv_data/runs/matched_base_a0_a1_r0_20260814/eval/ecgfounder_e30/a1_rot4/georgia/evaluation/evaluation_result.json
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/matched_base_a0_a1_r0_20260814/matrix/ecgfounder_e30/a1_rot4
+  if_exists: error
+  delegate_output_subdir: evaluation

@@ -163,7 +163,11 @@ def _build_batch_norm_momentum_plan(
     *,
     exposure_steps: Sequence[_ExposureStep],
 ) -> _BatchNormMomentumPlan | None:
-    if recipe.kind in {RecipeKind.FIXED20, RecipeKind.TWO_STAGE_AUGMIX_LHAT}:
+    if recipe.kind in {
+        RecipeKind.SUPERVISED_ROTATING_DEPTH23,
+        RecipeKind.FIXED20,
+        RecipeKind.TWO_STAGE_AUGMIX_LHAT,
+    }:
         policy = FAMILY_BALANCED_BN_POLICY
         exposure_weights = tuple(
             0.0 if step.name == "auxiliary" else float(step.loss_scale)
@@ -226,7 +230,10 @@ def _method_exposure_steps(
                 for index in FIXED20_COMPOSITION_ORDER
             ),
         )
-    if recipe.kind is RecipeKind.TWO_STAGE_AUGMIX_LHAT:
+    if recipe.kind in {
+        RecipeKind.SUPERVISED_ROTATING_DEPTH23,
+        RecipeKind.TWO_STAGE_AUGMIX_LHAT,
+    }:
         if isinstance(epoch, bool) or not isinstance(epoch, int) or epoch < 1:
             raise ValueError("rotating-four epoch must be a positive integer")
         slot = (epoch - 1) % 5
@@ -248,6 +255,8 @@ def _method_exposure_steps(
                 for index in compositions
             ),
         )
+        if recipe.kind is RecipeKind.SUPERVISED_ROTATING_DEPTH23:
+            return steps
         if recipe.auxiliary_variant is AuxiliaryVariant.CONTRACTED_LHAT:
             return (*steps, _ExposureStep("auxiliary", None, ("lhat_direct_bce",), 2.0))
         if recipe.auxiliary_variant is AuxiliaryVariant.MATCHED_NO_VAE:
@@ -263,7 +272,10 @@ def _recipe_family_loss_weights(recipe: RecipeSpec) -> dict[str, float] | None:
             "corrupted_total": 0.5,
             "corrupted_per_composition": 0.025,
         }
-    if recipe.kind is RecipeKind.TWO_STAGE_AUGMIX_LHAT:
+    if recipe.kind in {
+        RecipeKind.SUPERVISED_ROTATING_DEPTH23,
+        RecipeKind.TWO_STAGE_AUGMIX_LHAT,
+    }:
         return {
             "clean": 0.5,
             "corrupted_total": 0.5,
@@ -1803,8 +1815,8 @@ def train_online_model(
     """Train one file-backed finite recipe under its locked K500 budget.
 
     The ``matched_base`` budget performs one optimizer step per base batch.
-    Fixed-20 expands the views used to form that objective but accumulates all
-    gradients before the one step.
+    Grouped recipes expand the views used to form that objective but accumulate
+    all gradients before the one step.
     """
 
     if not isinstance(model, nn.Module):
@@ -1832,6 +1844,7 @@ def train_online_model(
     exposure_steps = _method_exposure_steps(recipe)
     objective_term_weights = {name: 1.0 for name, _ in recipe.objective_terms}
     grouped_exposure = recipe.kind in {
+        RecipeKind.SUPERVISED_ROTATING_DEPTH23,
         RecipeKind.FIXED20,
         RecipeKind.TWO_STAGE_AUGMIX_LHAT,
     }
@@ -2122,7 +2135,10 @@ def train_online_model(
                     }
                     for epoch in range(1, 6)
                 ]
-                if recipe.kind is RecipeKind.TWO_STAGE_AUGMIX_LHAT
+                if recipe.kind in {
+                    RecipeKind.SUPERVISED_ROTATING_DEPTH23,
+                    RecipeKind.TWO_STAGE_AUGMIX_LHAT,
+                }
                 else None
             ),
             "family_loss_weights": _recipe_family_loss_weights(recipe),
@@ -2221,7 +2237,7 @@ def train_online_model(
             learning_rate = float(optimizer.param_groups[0]["lr"])
             cached_raw: torch.Tensor | None = None
             cached_targets: torch.Tensor | None = None
-            fixed20_group_finite: torch.Tensor | None = None
+            grouped_loss_finite: torch.Tensor | None = None
 
             exposure_batches = (
                 (batch, exposure_index, exposure)
@@ -2241,12 +2257,12 @@ def train_online_model(
                     or exposure_index == len(epoch_exposure_steps) - 1
                 )
                 if grouped_exposure and group_start:
-                    if fixed20_group_finite is not None:
+                    if grouped_loss_finite is not None:
                         raise RuntimeError(
                             "grouped finite-loss batch started before the prior "
                             "group ended"
                         )
-                    fixed20_group_finite = torch.ones(
+                    grouped_loss_finite = torch.ones(
                         (), device=resolved_device, dtype=torch.bool
                     )
                 objective_terms = exposure.objective_terms
@@ -2427,12 +2443,12 @@ def train_online_model(
                             )
                     objective_finite = torch.isfinite(objective.total)
                     if grouped_exposure:
-                        if fixed20_group_finite is None:
+                        if grouped_loss_finite is None:
                             raise RuntimeError(
                                 "grouped finite-loss check lacks an active batch"
                             )
-                        fixed20_group_finite &= objective_finite.detach()
-                        if group_end and not bool(fixed20_group_finite.item()):
+                        grouped_loss_finite &= objective_finite.detach()
+                        if group_end and not bool(grouped_loss_finite.item()):
                             raise FloatingPointError(
                                 "online grouped loss became NaN or Inf"
                             )
@@ -2465,7 +2481,7 @@ def train_online_model(
                         optimizer.step()
                     optimizer_steps += 1
                 if grouped_exposure and group_end:
-                    fixed20_group_finite = None
+                    grouped_loss_finite = None
 
                 epoch_samples += batch_size
                 epoch_loss_sum += scaled_objective.detach() * batch_size
@@ -2553,8 +2569,8 @@ def train_online_model(
                         diagnostic_weights.get(name, 0) + weight
                     )
 
-            if fixed20_group_finite is not None:
-                raise RuntimeError("fixed20 finite-loss group did not terminate")
+            if grouped_loss_finite is not None:
+                raise RuntimeError("grouped finite-loss batch did not terminate")
             if epoch_samples == 0 or epoch_origin_samples == 0:
                 raise ValueError("online train dataloader is empty")
             if optimizer_steps - optimizer_steps_at_epoch_start != epoch_base_batches:

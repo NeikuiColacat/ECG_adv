@@ -1,0 +1,19 @@
+schema_version: 2
+
+recipe:
+  id: a1_corrupt_ft_rot4_v1
+  kind: supervised_rotating_depth23
+  auxiliary_variant: not_applicable
+  scientific_arm: A1
+  status: prospective_matched_baseline
+
+resources:
+  operator_profile:
+    type: config_reference
+    path: augmentation/operators.yaml
+    profile: pn2021c_paper_anchored_s5_v1
+    severity: 5
+  corruption_rng:
+    type: isolated_torch_generator
+    seed_config: random_seed.yaml
+    namespace: aligned_targetonly_rotating4_corruption_v1

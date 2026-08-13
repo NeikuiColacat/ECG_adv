@@ -42,6 +42,7 @@ def _plain(value: Any) -> Any:
 class RecipeKind(str, Enum):
     CLEAN = "clean"
     RANDOM_DEPTH23 = "random_depth23"
+    SUPERVISED_ROTATING_DEPTH23 = "supervised_rotating_depth23"
     FIXED20 = "fixed20"
     TWO_STAGE_AUGMIX_LHAT = "two_stage_augmix_lhat"
 
@@ -151,6 +152,15 @@ _DEFINITIONS: Mapping[str, _RecipeDefinition] = MappingProxyType(
             "a3c_depth23_v1",
             ("clean_view", "corrupted_view"),
         ),
+        "a1_corrupt_ft_rot4_v1": _RecipeDefinition(
+            RecipeKind.SUPERVISED_ROTATING_DEPTH23,
+            AuxiliaryVariant.NOT_APPLICABLE,
+            "A1",
+            "prospective_matched_baseline",
+            _CORRUPTION_RESOURCES,
+            "augmix_simclr_lhat",
+            ("clean_view", "corrupted_view"),
+        ),
         "direct_depth23_fixed20": _RecipeDefinition(
             RecipeKind.FIXED20,
             AuxiliaryVariant.NOT_APPLICABLE,
@@ -213,6 +223,25 @@ def _execution_contract(
                 "objective_weights": {"clean_bce": 1.0, "corrupted_bce": 1.0},
                 "generated_view_count": 1,
                 "batch_norm_policy": "ordinary_objective_view_order",
+            }
+        )
+    if kind is RecipeKind.SUPERVISED_ROTATING_DEPTH23:
+        return MappingProxyType(
+            {
+                **common,
+                "stages": ["supervised_adaptation"],
+                "exposure_policy": "clean_once_then_rotating_depth23_2plus2",
+                "corruption_depths": [2, 3],
+                "rotating4_schedule": (
+                    "epoch_modulo_five_covers_all_depth23_compositions"
+                ),
+                "family_loss_weights": {
+                    "clean": 0.5,
+                    "corrupted_total": 0.5,
+                    "corrupted_per_composition": 0.125,
+                },
+                "generated_view_count": 4,
+                "batch_norm_policy": "family_loss_weighted_once_per_base_batch",
             }
         )
     if kind is RecipeKind.FIXED20:

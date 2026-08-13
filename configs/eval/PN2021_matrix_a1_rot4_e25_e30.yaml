@@ -1,0 +1,85 @@
+schema_version: 2
+
+protocol:
+  logical_centers: [ningbo, chapman_shaoxing, cpsc_2018, georgia]
+  aggregation: equal_views_then_equal_centers
+
+profiles:
+  efficientnet1dv2:
+    profile_name: pn2021_matched_base_a1_rot4_e25_e30_r0_effnet
+    expected_cohort:
+      model_name: efficientnet1dv2
+      method: &method
+        recipe_id: a1_corrupt_ft_rot4_v1
+        scientific_arm: A1
+        recipe_spec_sha256: de0224de08ebf4658828f6ed0fa5ebd414d608fb7ab3430abaddfae8d33de44f
+        implementation_identity: finite_recipe_spec_v1
+        recipe_version: 1
+        kind: supervised_rotating_depth23
+        auxiliary_variant: not_applicable
+        schema_version: 2
+      comparison: &comparison
+        group: matched_base_a0_a1_e25_e30_20260814
+        replicate_id: 0
+      source_checkpoint:
+        sha256: fff9bd293677be54a606e28775c66d410d55b0ad7440a4e7fbde55357ec13e68
+      selection: &selection
+        policy: last
+        heldout_evaluation_used_for_selection: false
+      seed: &seed
+        base_seed: 20260501
+        namespace: matched_base_a0_a1_e25_e30_v1
+        config_sha256: 8b337606c43b6fec2959dd185477ce32f48b139f5fce5112ee26efe58eb4bbbc
+      adaptation: &adaptation
+        dataset: pn2021
+        partition: k500
+        record_count: 500
+        split_id: pn2021_super5_k500_cpsc_combined_v1
+        source_manifest_sha256: fa06cf268147d451e2925c17311ba13f565962dcf28acee27cb991a915dbb31f
+        mapping_version: v7_super5_sjr_rgq_review_20260528
+        mapping_hash: 555ec85d5b51
+        class_order: [CD, HYP, MI, NORM, STTC]
+      center_adaptation: &center_adaptation
+        ningbo:
+          source_centers: [ningbo]
+          hash_id_set_sha256: 96b4e0f20d798e4f89564af7bc1565906c30e28e7a4a019ec9840c6be36adc53
+          split_manifest_sha256: a7b855502ba1f716fd36dff953561687d83c1031032bfdd318dc53a54acd02d5
+        chapman_shaoxing:
+          source_centers: [chapman_shaoxing]
+          hash_id_set_sha256: 75d0beaf155ac51809cc056cb29f751f5d56fba4d08099bdd928045e011426f4
+          split_manifest_sha256: 4c758059aef347ecf986446570fd54150cc6391c1f9a47a87efbd790ee263621
+        cpsc_2018:
+          source_centers: [cpsc_2018, cpsc_2018_extra]
+          hash_id_set_sha256: a0973c7015295deca44d4ea195564883e4c784dae1cdbc37a4c2bbb450551729
+          split_manifest_sha256: 806a339ceefbc9cb346814bd69871df9fa9c58cb19d6a8982140c1d5b8fe5fe8
+        georgia:
+          source_centers: [georgia]
+          hash_id_set_sha256: 9d407e4d4b2bc1f23667ffb574e54ddf99cf2e72ecc207df17c5bfe589f4c3c0
+          split_manifest_sha256: d346f63a8bc01f29a088cf482cb479f3045c97ac6d781659555a333cf1a77eb4
+      training_config_sha256: &train_config ee0e2a31ae7f4dac52db0b755c0b038de27f59e57883dd680afcf94cbeba5538
+      evaluation_config_sha256: &eval_config 0159928d8825ae60908b93285cd075d59a0ee136716c40cdea72094d6b825daf
+      artifact_locks: &artifact_locks
+        clean_cache_manifest_sha256: fa06cf268147d451e2925c17311ba13f565962dcf28acee27cb991a915dbb31f
+        split_manifest_sha256: 58210d9b192bc18e9085f235453094814c9caed2cf9142998084ae7a004e9a42
+        corruption_cache_manifest_sha256: a7d976374d8f5b7de3748dd67dc8a779879316ee5249eb59ec6dd8899c852c02
+        compositions_sha256: 18ceee2be0f236898777b878affaf8d4f1cd7fbee880a3af89c0e84cb9427ce1
+  ecgfounder:
+    profile_name: pn2021_matched_base_a1_rot4_e25_e30_r0_ecgfounder
+    expected_cohort:
+      model_name: ecgfounder
+      method: *method
+      comparison: *comparison
+      source_checkpoint:
+        sha256: c23ec4361b097b74a4efed427488c4dd6a3753adfc75f7d1fc281e4df0989948
+      selection: *selection
+      seed: *seed
+      adaptation: *adaptation
+      center_adaptation: *center_adaptation
+      training_config_sha256: *train_config
+      evaluation_config_sha256: *eval_config
+      artifact_locks: *artifact_locks
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/matched_base_a0_a1_r0_20260814/matrix/a1_rot4_e25_e30
+  if_exists: error
+  result_file: matrix_result.json

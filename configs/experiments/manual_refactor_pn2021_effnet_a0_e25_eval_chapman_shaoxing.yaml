@@ -1,0 +1,23 @@
+schema_version: 1
+
+experiment:
+  name: manual_refactor_pn2021_effnet_a0_e25_eval_chapman_shaoxing_matched_base_r0
+  purpose: Evaluate the matched-base/update EfficientNet1DV2 E25 A0 clean-only run on ref-excluded Chapman-Shaoxing Clean and PN2021-C.
+
+entrypoint:
+  name: evaluate_pn2021
+  config: eval/PN2021.yaml
+  arguments:
+    - --model
+    - efficientnet1dv2
+    - --train-result
+    - /home/linbinhao/ECG_adv_data/runs/matched_base_a0_a1_r0_20260814/effnet_e25/a0/chapman_shaoxing/training/train_result.json
+    - --center
+    - chapman_shaoxing
+    - --method-config
+    - train/methods/a0_clean_v1.yaml
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/matched_base_a0_a1_r0_20260814/eval/effnet_e25/a0/chapman_shaoxing
+  if_exists: error
+  delegate_output_subdir: evaluation

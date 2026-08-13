@@ -38,10 +38,31 @@ REPO = Path(__file__).resolve().parents[2]
 CONFIG_ROOT = REPO / "configs"
 RECIPES = CONFIG_ROOT / "train" / "methods"
 ONLINE_CONFIG = CONFIG_ROOT / "train" / "PN2021.yaml"
+MATCHED_A0_A1_CONFIG = CONFIG_ROOT / "train" / "PN2021_matched_base_a0_a1.yaml"
 
 
 def _recipe(filename: str):
     return load_recipe_spec(RECIPES / filename)
+
+
+def test_matched_a0_a1_profile_locks_effnet_e25_and_founder_e30() -> None:
+    config = trainer.load_online_train_config(MATCHED_A0_A1_CONFIG)
+    effnet, effnet_overrides = trainer.resolve_online_training_parameters(
+        config, "efficientnet1dv2"
+    )
+    founder, founder_overrides = trainer.resolve_online_training_parameters(
+        config, "ecgfounder"
+    )
+    assert effnet_overrides == founder_overrides == {}
+    assert (effnet["epochs"], effnet["scheduler_horizon_epochs"], effnet["batch_size"]) == (
+        25, 30, 128
+    )
+    assert (founder["epochs"], founder["scheduler_horizon_epochs"], founder["batch_size"]) == (
+        30, 30, 64
+    )
+    assert effnet["stage1_steps"] == founder["stage1_steps"] == 0
+    assert config.payload["protocol"]["validation_split"] is False
+    assert config.payload["protocol"]["checkpoint_selection"] == "last"
 
 
 def _matched():
@@ -507,13 +528,31 @@ def test_pn2021_boot_and_adapter_reject_retired_override_surfaces() -> None:
     assert tuple(inspect.signature(vae.decode_to_ptbxl_waveform).parameters) == ("decoder", "latent")
 
 
-def test_finite_exposure_plans_lock_direct21_rotating6_and_matched5() -> None:
+def test_finite_exposure_plans_lock_direct21_a1_rotating5_mainline6() -> None:
     for filename in ("a0_clean_v1.yaml", "a3c_depth23_v1.yaml"):
         steps = trainer._method_exposure_steps(_recipe(filename))
         assert [(step.name, step.loss_scale) for step in steps] == [("base", 1.0)]
     direct = trainer._method_exposure_steps(_recipe("direct_depth23_fixed20.yaml"))
     assert [step.composition_index for step in direct] == [-1, *range(20)]
     assert [step.loss_scale for step in direct] == pytest.approx([.5, *([.025] * 20)])
+
+    a1 = _recipe("a1_corrupt_ft_rot4_v1.yaml")
+    a1_schedules = [trainer._method_exposure_steps(a1, epoch=e) for e in range(1, 6)]
+    a1_compositions = [
+        step.composition_index
+        for plan in a1_schedules
+        for step in plan
+        if step.name.startswith("corruption_")
+    ]
+    assert sorted(a1_compositions) == list(range(20))
+    assert all(len(plan) == 5 for plan in a1_schedules)
+    assert [step.loss_scale for step in a1_schedules[0]] == pytest.approx(
+        [.5, .125, .125, .125, .125]
+    )
+    assert a1.scientific_contract["stages"] == ("supervised_adaptation",)
+    assert "stage2_teacher" not in a1.scientific_contract
+    with pytest.raises(ValueError, match="positive integer"):
+        trainer._method_exposure_steps(a1, epoch=0)
 
     mainline = _recipe("augmix_simclr_lhat.yaml")
     schedules = [trainer._method_exposure_steps(mainline, epoch=e) for e in range(1, 6)]
@@ -583,11 +622,13 @@ def test_method_rng_permanent_goldens(filename, exposure, composition, rng_name,
 
 @pytest.mark.parametrize("name,weights", [
     ("clean", None), ("direct", [.5, *([.025] * 20)]),
+    ("a1", [.5, .125, .125, .125, .125]),
     ("mainline", [.5, .125, .125, .125, .125, 0]),
     ("matched", [.5, .125, .125, .125, .125])])
 def test_batch_norm_plan_preserves_family_weights(name, weights) -> None:
     recipes = {"clean": lambda: _recipe("a0_clean_v1.yaml"),
                "direct": lambda: _recipe("direct_depth23_fixed20.yaml"),
+               "a1": lambda: _recipe("a1_corrupt_ft_rot4_v1.yaml"),
                "mainline": lambda: _recipe("augmix_simclr_lhat.yaml"),
                "matched": _matched}
     recipe = recipes[name](); steps = trainer._method_exposure_steps(recipe)

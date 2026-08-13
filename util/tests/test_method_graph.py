@@ -60,6 +60,11 @@ RECIPE_CASES = [
      ("operator_profile", "corruption_rng"), ("classifier",),
      (("clean_bce", "bce", 1.0), ("corrupted_bce", "bce", 1.0)),
      "3eb23fd6ec7de50ee78970a91e0f81d46359d7a5dabade06f20cfad22abe92c4"),
+    ("a1_corrupt_ft_rot4_v1.yaml", RecipeKind.SUPERVISED_ROTATING_DEPTH23,
+     AuxiliaryVariant.NOT_APPLICABLE,
+     ("operator_profile", "corruption_rng"), ("classifier",),
+     (("clean_bce", "bce", 1.0), ("corrupted_bce", "bce", 1.0)),
+     "de0224de08ebf4658828f6ed0fa5ebd414d608fb7ab3430abaddfae8d33de44f"),
     ("direct_depth23_fixed20.yaml", RecipeKind.FIXED20, AuxiliaryVariant.NOT_APPLICABLE,
      ("operator_profile", "corruption_rng"), ("classifier",),
      (("clean_bce", "bce", 1.0), ("corrupted_bce", "bce", 1.0)),
@@ -219,11 +224,14 @@ GENERATION_CASES = [
     ("direct_depth23_fixed20.yaml", "corrupted_view", 7,
      "d2beb5d7c7dd240775b0d4e00370f2f73fec08552e97908b4691458e0414eaa0",
      ([7, 7], [2, 2], [[False, False, True, True, False]] * 2)),
+    ("a1_corrupt_ft_rot4_v1.yaml", "corrupted_view", 7,
+     "5edea709f09b66cf2f4da67f745f4c8ac5c115079ec8f45596c5d423f6f8a470",
+     ([7, 7], [2, 2], [[False, False, True, True, False]] * 2)),
 ]
 
 
 @pytest.mark.parametrize("filename,view_name,composition,waveform_sha,trace", GENERATION_CASES)
-def test_cpu_a0_a3_and_direct_generation_goldens(
+def test_cpu_finite_recipe_generation_goldens(
     filename, view_name, composition, waveform_sha, trace
 ) -> None:
     waveform, labels, hashes = _batch()

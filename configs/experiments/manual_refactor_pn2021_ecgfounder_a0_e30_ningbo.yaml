@@ -1,0 +1,23 @@
+schema_version: 1
+
+experiment:
+  name: manual_refactor_pn2021_ecgfounder_a0_e30_ningbo_matched_base_r0
+  purpose: Run the matched-base/update ECGFounder E30 A0 clean-only baseline on Ningbo K500.
+
+entrypoint:
+  name: train_pn2021
+  config: train/PN2021_matched_base_a0_a1.yaml
+  arguments:
+    - --model
+    - ecgfounder
+    - --method-config
+    - train/methods/a0_clean_v1.yaml
+    - --center
+    - ningbo
+    - --source-checkpoint
+    - /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_ptbxl_ecgfounder_source_v1/training/checkpoints/best.pt
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/matched_base_a0_a1_r0_20260814/ecgfounder_e30/a0/ningbo
+  if_exists: error
+  delegate_output_subdir: training

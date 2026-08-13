@@ -653,7 +653,7 @@ def test_all_tracked_experiment_jobs_resolve_with_explicit_results(
     tmp_path: Path,
 ) -> None:
     experiment_paths = sorted((REPO / "configs" / "experiments").glob("*.yaml"))
-    assert len(experiment_paths) == 40
+    assert len(experiment_paths) == 76
     signatures: Counter[tuple[str, tuple[str, ...]]] = Counter()
     for experiment_path in experiment_paths:
         plan = load_experiment_plan(
@@ -676,11 +676,11 @@ def test_all_tracked_experiment_jobs_resolve_with_explicit_results(
             (
                 "train_pn2021",
                 ("--model", "--method-config", "--center", "--source-checkpoint"),
-            ): 10,
+                ): 26,
             (
                 "evaluate_pn2021",
                 ("--model", "--train-result", "--center", "--method-config"),
-            ): 8,
+                ): 24,
             (
                 "evaluate_pn2021",
                 ("--model", "--checkpoint", "--center"),
@@ -689,7 +689,7 @@ def test_all_tracked_experiment_jobs_resolve_with_explicit_results(
             (
                 "aggregate_pn2021",
                 ("--model", "--result", "--result", "--result", "--result"),
-            ): 2,
+                ): 6,
         }
     )
 
