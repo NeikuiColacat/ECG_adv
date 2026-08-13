@@ -1,28 +1,17 @@
-"""Parity and device-contract tests for Torch ECG augmentations."""
+"""Goldens for the live batched Torch ECG corruption kernels."""
 
 from __future__ import annotations
 
-import inspect
+import hashlib
 import os
-import random
-from collections.abc import Sequence
 
 import numpy as np
 import pytest
 import torch
+import torch.nn.functional as F
 
-from util.augmentations.operators import (
-    baseline_shift,
-    baseline_wander,
-    emg_noise,
-    powerline_noise,
-    random_leads_masking,
-)
-from util.augmentations.torch_operators import (
-    baseline_shift as torch_baseline_shift, baseline_wander as torch_baseline_wander,
-    emg_noise as torch_emg_noise, powerline_noise as torch_powerline_noise,
-    random_leads_masking as torch_random_leads_masking,
-)
+from core.augmix import generate_two_chain_augmix_strong_view, load_augmix_config
+from util.augmentations import torch_operators
 from util.random_seed import (
     derive_seed,
     load_random_seed_config,
@@ -32,16 +21,67 @@ from util.random_seed import (
 )
 
 
-CPU_TORCH_PAIRS = (
-    (powerline_noise, torch_powerline_noise),
-    (emg_noise, torch_emg_noise),
-    (baseline_wander, torch_baseline_wander),
-    (baseline_shift, torch_baseline_shift),
-    (random_leads_masking, torch_random_leads_masking),
+RETIRED_WRAPPERS = {
+    "powerline_noise",
+    "emg_noise",
+    "baseline_wander",
+    "baseline_shift",
+    "random_leads_masking",
+}
+KERNEL_GOLDENS = (
+    (
+        "powerline_noise",
+        990,
+        "22077a779450798bef7d1ac04fc4e70d3ab2718ad2e3eb205e165066cd3ad784",
+        "c95ba75ebc9f1902da424d8f2cec7f1605b33e33cee31c9e2721617872b09ec0",
+    ),
+    (
+        "emg_noise",
+        991,
+        "01217632a8d7e758d6e3a04f7568b665c362c10e39a650181fc552cc98495531",
+        "71c6cd8714899663428de0d6df4e554bc5f9940f19caa21fd66e848c9bd42f59",
+    ),
+    (
+        "baseline_wander",
+        992,
+        "d9bf6bbabb4dfce7aee0a7900b29c0bf913be5dda150d5b4e7914a9248eb8366",
+        "368ab6c7b80df3d69d4747e3679c81e5ee2142efa22b51398376db0fe98f36a8",
+    ),
+    (
+        "baseline_shift",
+        993,
+        "9eba66b379b340a44071deb833be0d0d4342a28f599f2cfc252a95eb88bb7abc",
+        "9003c2af028892b54ab8148e83ead24a35b353f6e8b95d7c4512e1f30409e6ca",
+    ),
+    (
+        "random_leads_masking",
+        994,
+        "e3ec6c83ef3fb95580685b051017018b7bc180aac13cda4b61ad4b506c5e4822",
+        "5a4c2ffdd498baae6a8369ee18f59499912928def6b6ff673e43b35aeea60ca1",
+    ),
 )
 
 
-def test_project_random_seed_is_loaded_and_factories_are_reproducible():
+def _sha256_tensor(value: torch.Tensor) -> str:
+    return hashlib.sha256(value.detach().cpu().contiguous().numpy().tobytes()).hexdigest()
+
+
+def _raw_batch() -> torch.Tensor:
+    return torch.linspace(-1.0, 1.0, 2 * 1000 * 12, dtype=torch.float32).reshape(
+        2, 1000, 12
+    )
+
+
+def _operator_batch() -> torch.Tensor:
+    return F.interpolate(
+        _raw_batch().transpose(1, 2),
+        size=5000,
+        mode="linear",
+        align_corners=True,
+    ).transpose(1, 2).contiguous()
+
+
+def test_project_random_seed_is_loaded_and_factories_are_reproducible() -> None:
     assert load_random_seed_config().base_seed == 20260501
     assert derive_seed("record", "operator") == derive_seed("record", "operator")
     assert np.array_equal(
@@ -58,332 +98,90 @@ def test_project_random_seed_is_loaded_and_factories_are_reproducible():
     assert torch.equal(first, second)
 
 
-def _signal(dtype=np.float32, time_size: int = 1000) -> np.ndarray:
-    time = np.linspace(0.0, 10.0, time_size, endpoint=False, dtype=dtype)
-    return np.stack(
-        [np.sin(2.0 * np.pi * (1.0 + lead / 20.0) * time) for lead in range(12)],
-        axis=1,
-    ).astype(dtype)
-
-
-def _shape(size: int | Sequence[int] | None) -> tuple[int, ...]:
-    if size is None:
-        return ()
-    if isinstance(size, int):
-        return (size,)
-    return tuple(size)
-
-
-class TorchBackedNumpyRNG:
-    """NumPy-style adapter around a CPU ``torch.Generator`` for parity tests."""
-
-    def __init__(self, seed: int) -> None:
-        self.generator = torch.Generator(device="cpu").manual_seed(seed)
-
-    @staticmethod
-    def _return(value: torch.Tensor, size: object) -> float | np.ndarray:
-        array = value.numpy()
-        return float(array.item()) if size is None else array
-
-    def uniform(
-        self,
-        low: float = 0.0,
-        high: float = 1.0,
-        size: int | Sequence[int] | None = None,
-    ) -> float | np.ndarray:
-        value = torch.rand(
-            _shape(size),
-            dtype=torch.float32,
-            generator=self.generator,
-        )
-        value = value * (float(high) - float(low)) + float(low)
-        return self._return(value, size)
-
-    def normal(
-        self,
-        mean: float = 0.0,
-        std: float = 1.0,
-        size: int | Sequence[int] | None = None,
-    ) -> float | np.ndarray:
-        value = torch.randn(
-            _shape(size),
-            dtype=torch.float32,
-            generator=self.generator,
-        )
-        value = value * float(std) + float(mean)
-        return self._return(value, size)
-
-    def choice(
-        self,
-        values: Sequence[int] | np.ndarray,
-        size: int | Sequence[int] | None = None,
-    ) -> int | np.ndarray:
-        candidates = np.asarray(values)
-        indices = torch.randint(
-            0,
-            len(candidates),
-            _shape(size),
-            generator=self.generator,
-        ).numpy()
-        selected = candidates[indices]
-        return selected.item() if size is None else selected
-
-
-@pytest.mark.parametrize(("cpu_function", "torch_function"), CPU_TORCH_PAIRS)
-def test_torch_parameter_interface_matches_cpu(cpu_function, torch_function):
-    cpu_parameters = inspect.signature(cpu_function).parameters
-    torch_parameters = inspect.signature(torch_function).parameters
-
-    assert tuple(torch_parameters) == tuple(cpu_parameters)
-    for name, cpu_parameter in cpu_parameters.items():
-        torch_parameter = torch_parameters[name]
-        assert torch_parameter.kind == cpu_parameter.kind
-        assert torch_parameter.default == cpu_parameter.default
-
-
-@pytest.mark.parametrize(
-    ("cpu_function", "torch_function", "kwargs", "atol"),
-    [
-        (
-            powerline_noise,
-            torch_powerline_noise,
-            {"max_amplitude": 0.3, "freq": 100, "dependency": True},
-            2e-4,
-        ),
-        (
-            emg_noise,
-            torch_emg_noise,
-            {"max_amplitude": 0.2, "dependency": True},
-            2e-5,
-        ),
-        (
-            baseline_wander,
-            torch_baseline_wander,
-            {
-                "max_amplitude": 0.4,
-                "max_freq": 0.2,
-                "min_freq": 0.01,
-                "k": 3,
-                "freq": 100,
-                "dependency": True,
-            },
-            2e-5,
-        ),
-        (
-            baseline_shift,
-            torch_baseline_shift,
-            {
-                "max_amplitude": 0.4,
-                "shift_ratio": 0.3,
-                "num_segment": 2,
-                "freq": 100,
-                "dependency": False,
-            },
-            2e-6,
-        ),
-        (
-            baseline_shift,
-            torch_baseline_shift,
-            {
-                "max_amplitude": 0.4,
-                "shift_ratio": 0.3,
-                "num_segment": 2,
-                "freq": 100,
-                "dependency": False,
-                "amplitude_mode": "signed_shared_uniform",
-            },
-            2e-6,
-        ),
-        (
-            random_leads_masking,
-            torch_random_leads_masking,
-            {"mask_leads_prob": 0.4},
-            0.0,
-        ),
-        (
-            random_leads_masking,
-            torch_random_leads_masking,
-            {"mask_leads_prob": 1.0, "ensure_at_least_one_lead": True},
-            0.0,
-        ),
-    ],
-)
-def test_torch_cpu_equation_parity(
-    cpu_function,
-    torch_function,
-    kwargs,
-    atol,
-):
-    signal = _signal()
-    seed = 20260716
-    expected = cpu_function(
-        signal,
-        p=1.0,
-        rng=TorchBackedNumpyRNG(seed),
-        **kwargs,
-    )
-    actual = torch_function(
-        torch.from_numpy(signal),
-        p=1.0,
-        rng=torch.Generator(device="cpu").manual_seed(seed),
-        **kwargs,
+def test_torch_operator_owner_exposes_only_the_live_batch_hook() -> None:
+    assert torch_operators.__all__ == []
+    assert callable(torch_operators.apply_operator_batch_prevalidated)
+    assert RETIRED_WRAPPERS.isdisjoint(vars(torch_operators))
+    assert {"_validate_ecg", "_adjust_channel_dependency", "_output_tc"}.isdisjoint(
+        vars(torch_operators)
     )
 
-    np.testing.assert_allclose(actual.numpy(), expected, rtol=0.0, atol=atol)
 
-
-def test_torch_conditional_masking_matches_cpu():
-    signal = np.ones((1000, 12), dtype=np.float32)
-    seed = 29
-    kwargs = {
-        "mask_leads_selection": "conditional",
-        "mask_leads_condition": (2, 3),
-    }
-    expected = random_leads_masking(
-        signal,
-        rng=TorchBackedNumpyRNG(seed),
-        python_rng=random.Random(seed),
-        **kwargs,
-    )
-    actual = torch_random_leads_masking(
-        torch.from_numpy(signal),
-        rng=torch.Generator(device="cpu").manual_seed(seed),
-        python_rng=random.Random(seed),
-        **kwargs,
-    )
-    assert np.array_equal(actual.numpy(), expected)
-
-
-@pytest.mark.parametrize(
-    ("function", "kwargs"),
-    [
-        (torch_powerline_noise, {"freq": 100}),
-        (torch_emg_noise, {}),
-        (torch_baseline_wander, {"freq": 100}),
-        (torch_baseline_shift, {"freq": 100}),
-        (torch_random_leads_masking, {}),
-    ],
-)
-def test_torch_contract_reproducibility_and_no_in_place_change(function, kwargs):
-    signal = torch.from_numpy(_signal(np.float64))
+@pytest.mark.parametrize("operator,seed,output_sha,rng_sha", KERNEL_GOLDENS)
+def test_live_cpu_batch_kernels_match_output_and_rng_goldens(
+    operator: str,
+    seed: int,
+    output_sha: str,
+    rng_sha: str,
+) -> None:
+    signal = _operator_batch()
     original = signal.clone()
-    first = function(
+    config = load_augmix_config()
+    generator = torch.Generator(device="cpu").manual_seed(seed)
+    output = torch_operators.apply_operator_batch_prevalidated(
+        operator,
         signal,
-        rng=torch.Generator(device="cpu").manual_seed(7),
-        **kwargs,
+        params=config.operator_profile_config.parameters_for(operator),
+        sampling_rate_hz=500,
+        rng=generator,
     )
-    second = function(
-        signal,
-        rng=torch.Generator(device="cpu").manual_seed(7),
-        **kwargs,
-    )
-
-    assert first.shape == signal.shape
-    assert first.dtype == torch.float32
-    assert first.device == signal.device
-    assert first.is_contiguous()
-    assert torch.isfinite(first).all()
+    assert output.shape == signal.shape
+    assert output.dtype == torch.float32
+    assert output.device == signal.device
+    assert output.is_contiguous()
+    assert torch.isfinite(output).all()
+    assert output.data_ptr() != signal.data_ptr()
     assert torch.equal(signal, original)
-    assert first.data_ptr() != signal.data_ptr()
-    assert torch.equal(first, second)
+    assert _sha256_tensor(output) == output_sha
+    assert _sha256_tensor(generator.get_state()) == rng_sha
 
 
-def test_torch_random_mask_can_keep_one_lead():
-    signal = torch.ones((1000, 12), dtype=torch.float32)
-    output = torch_random_leads_masking(
+def test_live_batch_hook_rejects_unknown_operator() -> None:
+    with pytest.raises(ValueError, match="unknown Torch ECG operator: 'unknown'"):
+        torch_operators.apply_operator_batch_prevalidated(
+            "unknown",
+            _operator_batch(),
+            params={},
+            sampling_rate_hz=500,
+            rng=torch.Generator(device="cpu").manual_seed(1),
+        )
+
+
+@pytest.mark.parametrize("operator,seed,output_sha,rng_sha", KERNEL_GOLDENS)
+def test_live_batch_probability_zero_returns_a_float32_copy(
+    operator: str,
+    seed: int,
+    output_sha: str,
+    rng_sha: str,
+) -> None:
+    del output_sha, rng_sha
+    signal = _operator_batch().to(dtype=torch.float64)
+    params = load_augmix_config().operator_profile_config.parameters_for(operator)
+    params["p"] = 0.0
+    output = torch_operators.apply_operator_batch_prevalidated(
+        operator,
         signal,
-        mask_leads_prob=1.0,
-        ensure_at_least_one_lead=True,
-        rng=torch.Generator(device="cpu").manual_seed(3),
+        params=params,
+        sampling_rate_hz=500,
+        rng=torch.Generator(device="cpu").manual_seed(seed),
     )
-    surviving_leads = torch.any(output != 0.0, dim=0)
-    assert int(surviving_leads.sum().item()) == 1
-
-
-def test_torch_wrong_layout_is_rejected():
-    channel_first = torch.zeros((12, 1000), dtype=torch.float32)
-    with pytest.raises(ValueError, match=r"shape \(time, 12\)"):
-        torch_emg_noise(channel_first)
-
-
-@pytest.mark.parametrize(
-    ("function", "kwargs"),
-    [
-        (torch_powerline_noise, {"freq": 500}),
-        (torch_emg_noise, {}),
-        (torch_baseline_wander, {"freq": 500}),
-        (
-            torch_baseline_shift,
-            {"freq": 500, "amplitude_mode": "signed_shared_uniform"},
-        ),
-        (
-            torch_random_leads_masking,
-            {"mask_leads_prob": 0.5, "ensure_at_least_one_lead": True},
-        ),
-    ],
-)
-def test_torch_batch_contract_is_reproducible_and_non_inplace(function, kwargs):
-    single = torch.from_numpy(_signal(time_size=500))
-    signal = single.unsqueeze(0).repeat(8, 1, 1)
-    original = signal.clone()
-
-    first = function(
-        signal,
-        rng=torch.Generator(device="cpu").manual_seed(20260716),
-        **kwargs,
-    )
-    second = function(
-        signal,
-        rng=torch.Generator(device="cpu").manual_seed(20260716),
-        **kwargs,
-    )
-
-    assert first.shape == (8, 500, 12)
-    assert first.dtype == torch.float32
-    assert first.device == signal.device
-    assert first.is_contiguous()
-    assert torch.isfinite(first).all()
-    assert torch.equal(first, second)
-    assert torch.equal(signal, original)
-    assert first.data_ptr() != signal.data_ptr()
-    assert not torch.equal(first[0], first[1])
-
-
-@pytest.mark.parametrize(
-    ("function", "kwargs"),
-    [
-        (torch_powerline_noise, {"freq": 500}),
-        (torch_emg_noise, {}),
-        (torch_baseline_wander, {"freq": 500}),
-        (torch_baseline_shift, {"freq": 500}),
-        (torch_random_leads_masking, {}),
-    ],
-)
-def test_torch_batch_probability_zero_returns_float32_copy(function, kwargs):
-    signal = torch.from_numpy(_signal(np.float64, time_size=128)).repeat(4, 1, 1)
-
-    output = function(
-        signal,
-        p=0.0,
-        rng=torch.Generator(device="cpu").manual_seed(9),
-        **kwargs,
-    )
-
     assert output.dtype == torch.float32
     assert output.is_contiguous()
     assert output.data_ptr() != signal.data_ptr()
     torch.testing.assert_close(output, signal.float(), rtol=0.0, atol=0.0)
 
 
-def test_torch_batch_dependency_reconstructs_limb_leads_per_sample():
-    signal = torch.from_numpy(_signal(time_size=256)).repeat(4, 1, 1)
-
-    output = torch_emg_noise(
+def test_live_batch_dependency_reconstructs_limb_leads() -> None:
+    signal = _operator_batch()
+    params = load_augmix_config().operator_profile_config.parameters_for("emg_noise")
+    params["dependency"] = True
+    output = torch_operators.apply_operator_batch_prevalidated(
+        "emg_noise",
         signal,
-        dependency=True,
+        params=params,
+        sampling_rate_hz=500,
         rng=torch.Generator(device="cpu").manual_seed(77),
     )
-
     torch.testing.assert_close(output[:, :, 2], output[:, :, 1] - output[:, :, 0])
     torch.testing.assert_close(
         output[:, :, 3], -(output[:, :, 1] + output[:, :, 0]) / 2.0
@@ -396,25 +194,38 @@ def test_torch_batch_dependency_reconstructs_limb_leads_per_sample():
     )
 
 
-def test_torch_batch_conditional_masking_has_requested_survivor_counts():
-    signal = torch.ones((16, 100, 12), dtype=torch.float32)
-
-    output = torch_random_leads_masking(
+def test_live_batch_conditional_masking_has_requested_survivor_counts() -> None:
+    signal = torch.ones((16, 5000, 12), dtype=torch.float32)
+    params = load_augmix_config().operator_profile_config.parameters_for(
+        "random_leads_masking"
+    )
+    params.update(mask_leads_selection="conditional", mask_leads_condition=(2, 3))
+    output = torch_operators.apply_operator_batch_prevalidated(
+        "random_leads_masking",
         signal,
-        mask_leads_selection="conditional",
-        mask_leads_condition=(2, 3),
+        params=params,
+        sampling_rate_hz=500,
         rng=torch.Generator(device="cpu").manual_seed(91),
     )
-
     survivors = torch.any(output != 0.0, dim=1)
     assert torch.all(survivors[:, :6].sum(dim=1) == 4)
     assert torch.all(survivors[:, 6:].sum(dim=1) == 3)
 
 
-def test_torch_wrong_batch_layout_is_rejected():
-    channel_first_batch = torch.zeros((4, 12, 1000), dtype=torch.float32)
-    with pytest.raises(ValueError, match=r"\(batch, time, 12\)"):
-        torch_emg_noise(channel_first_batch)
+def test_stage1_two_chain_output_and_rng_identity_are_locked() -> None:
+    generator = torch.Generator(device="cpu").manual_seed(20260813)
+    output = generate_two_chain_augmix_strong_view(
+        _raw_batch(),
+        sampling_rate_hz=100,
+        config=load_augmix_config(),
+        generator=generator,
+    )
+    assert _sha256_tensor(output.mixed_raw) == (
+        "170fd30f7d43b6be2494fbcafd0fc0a2b6963f8369c27630d4bac570697967cb"
+    )
+    assert _sha256_tensor(generator.get_state()) == (
+        "5157c481374a20f9dff27809fb939452417caa7e819eb42f5d93351e21d7b82a"
+    )
 
 
 RUN_CUDA_TESTS = os.environ.get("ECG_RUN_CUDA_AUG_TESTS") == "1"
@@ -424,75 +235,25 @@ RUN_CUDA_TESTS = os.environ.get("ECG_RUN_CUDA_AUG_TESTS") == "1"
     not RUN_CUDA_TESTS or not torch.cuda.is_available(),
     reason="set ECG_RUN_CUDA_AUG_TESTS=1 after selecting a free shared-server GPU",
 )
-@pytest.mark.parametrize(
-    ("function", "kwargs"),
-    [
-        (torch_powerline_noise, {"freq": 100}),
-        (torch_emg_noise, {}),
-        (torch_baseline_wander, {"freq": 100}),
-        (torch_baseline_shift, {"freq": 100}),
-        (
-            torch_random_leads_masking,
-            {"mask_leads_prob": 1.0, "ensure_at_least_one_lead": True},
-        ),
-    ],
-)
-def test_torch_operator_runs_reproducibly_on_selected_cuda(function, kwargs):
+@pytest.mark.parametrize("operator,seed,output_sha,rng_sha", KERNEL_GOLDENS)
+def test_live_batch_kernel_runs_on_selected_cuda(
+    operator: str,
+    seed: int,
+    output_sha: str,
+    rng_sha: str,
+) -> None:
+    del output_sha, rng_sha
     device = torch.device("cuda:0")
-    signal = torch.from_numpy(_signal()).to(device)
-    original = signal.clone()
-    first = function(
+    signal = _operator_batch().to(device)
+    generator = torch.Generator(device=device).manual_seed(seed)
+    config = load_augmix_config()
+    output = torch_operators.apply_operator_batch_prevalidated(
+        operator,
         signal,
-        rng=torch.Generator(device=device).manual_seed(11),
-        **kwargs,
+        params=config.operator_profile_config.parameters_for(operator),
+        sampling_rate_hz=500,
+        rng=generator,
     )
-    second = function(
-        signal,
-        rng=torch.Generator(device=device).manual_seed(11),
-        **kwargs,
-    )
-
-    assert first.device == device
-    assert first.dtype == torch.float32
-    assert first.shape == signal.shape
-    assert first.is_contiguous()
-    assert torch.isfinite(first).all()
-    assert torch.equal(first, second)
-    assert torch.equal(signal, original)
-    assert first.data_ptr() != signal.data_ptr()
-
-
-@pytest.mark.skipif(
-    not RUN_CUDA_TESTS or not torch.cuda.is_available(),
-    reason="set ECG_RUN_CUDA_AUG_TESTS=1 after selecting a free shared-server GPU",
-)
-@pytest.mark.parametrize(
-    ("function", "kwargs"),
-    [
-        (torch_powerline_noise, {"freq": 500}),
-        (torch_emg_noise, {}),
-        (torch_baseline_wander, {"freq": 500}),
-        (
-            torch_baseline_shift,
-            {"freq": 500, "amplitude_mode": "signed_shared_uniform"},
-        ),
-        (
-            torch_random_leads_masking,
-            {"mask_leads_prob": 0.5, "ensure_at_least_one_lead": True},
-        ),
-    ],
-)
-def test_torch_batch_operator_runs_on_selected_cuda(function, kwargs):
-    device = torch.device("cuda:0")
-    signal = torch.from_numpy(_signal(time_size=500)).to(device)
-    signal = signal.unsqueeze(0).repeat(32, 1, 1)
-
-    output = function(
-        signal,
-        rng=torch.Generator(device=device).manual_seed(37),
-        **kwargs,
-    )
-
     assert output.shape == signal.shape
     assert output.device == device
     assert output.dtype == torch.float32
