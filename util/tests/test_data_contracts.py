@@ -35,6 +35,7 @@ from models.input_adapter import (
     prepare_canonical_model_input,
 )
 import models.efficientnet1d as efficientnet1d
+import models.ecgfounder as ecgfounder
 from models.factory import build_model
 from util import config_bundle
 from util.config_bundle import resolve_yaml_config_closure
@@ -99,6 +100,15 @@ def test_data_and_model_constants_share_one_super5_contract() -> None:
                for block in model.features) == 16
     assert sum(isinstance(block, efficientnet1d.MBConv1d)
                for block in model.features) == 18
+    assert tuple(inspect.signature(ecgfounder.ECGFounderNet1D).parameters) == ()
+    assert ecgfounder.__all__ == ["ECGFounderNet1D", "build_ecgfounder"]
+    with pytest.raises(TypeError):
+        build_model("ecgfounder", base_filters=64)
+    founder = ecgfounder.ECGFounderNet1D()
+    assert len(founder.state_dict()) == 509
+    assert sum(parameter.numel() for parameter in founder.parameters()) == 30_670_389
+    assert len(list(founder.named_modules(remove_duplicate=False))) == 415
+    assert [len(stage.block_list) for stage in founder.stage_list] == [2, 2, 2, 3, 3, 4, 4]
 
 
 def test_canonical_input_adapter_preserves_the_locked_operation_order() -> None:

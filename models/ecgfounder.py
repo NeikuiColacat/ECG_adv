@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Sequence
 
 import torch
 import torch.nn as nn
@@ -83,49 +82,35 @@ class BasicBlock(nn.Module):
         self,
         in_channels: int,
         out_channels: int,
-        ratio: float,
-        kernel_size: int,
         stride: int,
-        groups: int,
-        downsample: bool,
         is_first_block: bool = False,
-        use_bn: bool = True,
-        use_do: bool = True,
     ) -> None:
         super().__init__()
         self.in_channels = int(in_channels)
         self.out_channels = int(out_channels)
-        self.ratio = float(ratio)
-        self.kernel_size = int(kernel_size)
-        self.groups = int(groups)
-        self.downsample = bool(downsample)
-        self.stride = int(stride) if self.downsample else 1
         self.is_first_block = bool(is_first_block)
-        self.use_bn = bool(use_bn)
-        self.use_do = bool(use_do)
-        self.middle_channels = int(self.out_channels * self.ratio)
 
         self.bn1 = nn.BatchNorm1d(self.in_channels)
         self.activation1 = Swish()
         self.do1 = nn.Dropout(p=0.5)
         self.conv1 = MyConv1dPadSame(
-            self.in_channels, self.middle_channels, kernel_size=1, stride=1
+            self.in_channels, self.out_channels, kernel_size=1, stride=1
         )
-        self.bn2 = nn.BatchNorm1d(self.middle_channels)
+        self.bn2 = nn.BatchNorm1d(self.out_channels)
         self.activation2 = Swish()
         self.do2 = nn.Dropout(p=0.5)
         self.conv2 = MyConv1dPadSame(
-            self.middle_channels,
-            self.middle_channels,
-            kernel_size=self.kernel_size,
-            stride=self.stride,
-            groups=self.groups,
+            self.out_channels,
+            self.out_channels,
+            kernel_size=16,
+            stride=stride,
+            groups=self.out_channels // 16,
         )
-        self.bn3 = nn.BatchNorm1d(self.middle_channels)
+        self.bn3 = nn.BatchNorm1d(self.out_channels)
         self.activation3 = Swish()
         self.do3 = nn.Dropout(p=0.5)
         self.conv3 = MyConv1dPadSame(
-            self.middle_channels,
+            self.out_channels,
             self.out_channels,
             kernel_size=1,
             stride=1,
@@ -134,30 +119,18 @@ class BasicBlock(nn.Module):
         self.se_fc1 = nn.Linear(self.out_channels, self.out_channels // reduction)
         self.se_fc2 = nn.Linear(self.out_channels // reduction, self.out_channels)
         self.se_activation = Swish()
-        if self.downsample:
-            self.max_pool = MyMaxPool1dPadSame(kernel_size=self.stride)
+        if stride > 1:
+            self.max_pool = MyMaxPool1dPadSame(kernel_size=stride)
 
     def forward(self, value: torch.Tensor) -> torch.Tensor:
         identity = value
         output = value
         if not self.is_first_block:
-            if self.use_bn:
-                output = self.bn1(output)
             output = self.activation1(output)
-            if self.use_do:
-                output = self.do1(output)
         output = self.conv1(output)
-        if self.use_bn:
-            output = self.bn2(output)
         output = self.activation2(output)
-        if self.use_do:
-            output = self.do2(output)
         output = self.conv2(output)
-        if self.use_bn:
-            output = self.bn3(output)
         output = self.activation3(output)
-        if self.use_do:
-            output = self.do3(output)
         output = self.conv3(output)
 
         squeeze = output.mean(-1)
@@ -166,7 +139,7 @@ class BasicBlock(nn.Module):
         squeeze = self.se_fc2(squeeze)
         squeeze = torch.sigmoid(squeeze)
         output = torch.einsum("abc,ab->abc", output, squeeze)
-        if self.downsample:
+        if hasattr(self, "max_pool"):
             identity = self.max_pool(identity)
         if self.out_channels != self.in_channels:
             identity = identity.transpose(-1, -2)
@@ -182,44 +155,18 @@ class BasicStage(nn.Module):
         self,
         in_channels: int,
         out_channels: int,
-        ratio: float,
-        kernel_size: int,
-        stride: int,
-        groups: int,
         i_stage: int,
         m_blocks: int,
-        use_bn: bool = True,
-        use_do: bool = True,
     ) -> None:
         super().__init__()
-        self.in_channels = int(in_channels)
-        self.out_channels = int(out_channels)
-        self.ratio = float(ratio)
-        self.kernel_size = int(kernel_size)
-        self.groups = int(groups)
-        self.i_stage = int(i_stage)
-        self.m_blocks = int(m_blocks)
-        self.use_bn = bool(use_bn)
-        self.use_do = bool(use_do)
         self.block_list = nn.ModuleList()
-        for block_index in range(self.m_blocks):
-            is_first = self.i_stage == 0 and block_index == 0
-            downsample = block_index == 0
-            block_in_channels = (
-                self.in_channels if block_index == 0 else self.out_channels
-            )
+        for block_index in range(m_blocks):
             self.block_list.append(
                 BasicBlock(
-                    in_channels=block_in_channels,
-                    out_channels=self.out_channels,
-                    ratio=self.ratio,
-                    kernel_size=self.kernel_size,
-                    stride=stride if downsample else 1,
-                    groups=self.groups,
-                    downsample=downsample,
-                    is_first_block=is_first,
-                    use_bn=self.use_bn,
-                    use_do=self.use_do,
+                    in_channels=in_channels if block_index == 0 else out_channels,
+                    out_channels=out_channels,
+                    stride=2 if block_index == 0 else 1,
+                    is_first_block=i_stage == 0 and block_index == 0,
                 )
             )
 
@@ -234,79 +181,40 @@ class ECGFounderNet1D(nn.Module):
 
     model_spec = ECGFOUNDER_SPEC
 
-    def __init__(
-        self,
-        in_channels: int = 12,
-        base_filters: int = 64,
-        ratio: float = 1,
-        filter_list: Sequence[int] = (64, 160, 160, 400, 400, 1024, 1024),
-        m_blocks_list: Sequence[int] = (2, 2, 2, 3, 3, 4, 4),
-        kernel_size: int = 16,
-        stride: int = 2,
-        groups_width: int = 16,
-        n_classes: int = 5,
-        use_bn: bool = False,
-        use_do: bool = False,
-    ) -> None:
+    def __init__(self) -> None:
         super().__init__()
-        if int(in_channels) != self.model_spec.input_channels:
-            raise ValueError("ECGFounder requires exactly 12 input channels")
-        if int(n_classes) != self.model_spec.num_classes:
-            raise ValueError("ECGFounder manual mainline requires five classes")
-        if len(filter_list) != len(m_blocks_list):
-            raise ValueError("filter_list and m_blocks_list lengths must match")
-        self.in_channels = int(in_channels)
-        self.base_filters = int(base_filters)
-        self.ratio = float(ratio)
-        self.filter_list = tuple(int(value) for value in filter_list)
-        self.m_blocks_list = tuple(int(value) for value in m_blocks_list)
-        self.kernel_size = int(kernel_size)
-        self.stride = int(stride)
-        self.groups_width = int(groups_width)
-        self.n_stages = len(self.filter_list)
-        self.n_classes = int(n_classes)
-        self.use_bn = bool(use_bn)
-        self.use_do = bool(use_do)
-
         self.first_conv = MyConv1dPadSame(
-            in_channels=self.in_channels,
-            out_channels=self.base_filters,
-            kernel_size=self.kernel_size,
+            in_channels=12,
+            out_channels=64,
+            kernel_size=16,
             stride=2,
         )
-        self.first_bn = nn.BatchNorm1d(self.base_filters)
+        self.first_bn = nn.BatchNorm1d(64)
         self.first_activation = Swish()
         self.stage_list = nn.ModuleList()
-        stage_in_channels = self.base_filters
+        stage_in_channels = 64
         for stage_index, (out_channels, block_count) in enumerate(
-            zip(self.filter_list, self.m_blocks_list)
+            zip(
+                (64, 160, 160, 400, 400, 1024, 1024),
+                (2, 2, 2, 3, 3, 4, 4),
+            )
         ):
-            if out_channels % self.groups_width:
-                raise ValueError("each ECGFounder stage width must divide groups_width")
             self.stage_list.append(
                 BasicStage(
                     in_channels=stage_in_channels,
                     out_channels=out_channels,
-                    ratio=self.ratio,
-                    kernel_size=self.kernel_size,
-                    stride=self.stride,
-                    groups=out_channels // self.groups_width,
                     i_stage=stage_index,
                     m_blocks=block_count,
-                    use_bn=self.use_bn,
-                    use_do=self.use_do,
                 )
             )
             stage_in_channels = out_channels
-        self.dense = nn.Linear(stage_in_channels, self.n_classes)
+        self.dense = nn.Linear(stage_in_channels, 5)
         self.pretrained_checkpoint_identity: CheckpointIdentity | None = None
         self.task_checkpoint_identity: CheckpointIdentity | None = None
 
     def forward_features(self, value: torch.Tensor) -> torch.Tensor:
         validate_model_input(value, self.model_spec, check_finite=False)
         value = self.first_conv(value)
-        if self.use_bn:
-            value = self.first_bn(value)
         value = self.first_activation(value)
         for stage in self.stage_list:
             value = stage(value)
@@ -384,11 +292,6 @@ def build_ecgfounder(
 
 
 __all__ = [
-    "BasicBlock",
-    "BasicStage",
     "ECGFounderNet1D",
-    "MyConv1dPadSame",
-    "MyMaxPool1dPadSame",
-    "Swish",
     "build_ecgfounder",
 ]
