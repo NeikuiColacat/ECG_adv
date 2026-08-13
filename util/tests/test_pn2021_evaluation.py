@@ -18,6 +18,7 @@ import torch.nn.functional as F
 import yaml
 
 import util.run_record as run_record
+import models.checkpoints as checkpoints
 from data_preprocess import data_runtime
 from boot_scripts.evaluate_pn2021 import (
     _summary,
@@ -1639,6 +1640,8 @@ def test_matrix_import_stays_outside_model_and_gpu_modules(tmp_path: Path) -> No
         "sha256": artifact_sha256_file(artifact),
     }
     assert run_record.sha256_file is artifact_sha256_file
+    assert checkpoints._artifact_sha256_file is artifact_sha256_file
+    assert checkpoints.sha256_file(artifact) == artifact_sha256_file(artifact)
     assert not hasattr(run_record, "snapshot_yaml_files")
     script = (
         "import sys; import util.evaluation.matrix; "

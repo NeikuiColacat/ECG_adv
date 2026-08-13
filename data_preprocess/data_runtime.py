@@ -37,7 +37,8 @@ from data_preprocess.load_cache import (
     ViewSelector,
     load_cache,
 )
-from util.config_bundle import resolve_entry_config_path
+from util.config_bundle import require_mapping as _require_mapping, resolve_entry_config_path
+from util.pn2021_artifact_contract import sha256_file as _sha256_file
 from util.random_seed import (
     DEFAULT_RANDOM_SEED_CONFIG_PATH,
     derive_seed,
@@ -87,14 +88,6 @@ CANONICAL_EVALUATION_PARTITIONS = {
 }
 
 
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
 def _hash_id_set_sha256(values: Sequence[str] | np.ndarray) -> str:
     ordered = sorted(str(value) for value in values)
     payload = "".join(f"{value}\n" for value in ordered).encode("utf-8")
@@ -111,12 +104,6 @@ def _read_json_mapping(path: Path, *, description: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError(f"{description} must be a JSON mapping: {path}")
     return payload
-
-
-def _require_mapping(value: Any, *, description: str) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        raise ValueError(f"{description} must be a mapping")
-    return value
 
 
 def _resolve_artifact(base_dir: Path, descriptor: Any, *, description: str) -> Path:

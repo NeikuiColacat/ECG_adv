@@ -40,6 +40,7 @@ from models.input_adapter import (
 )
 from util.config_bundle import (
     config_bundle_root,
+    require_mapping as _mapping,
     resolve_config_reference,
     resolve_entry_config_path,
 )
@@ -103,12 +104,6 @@ def _yaml_mapping(path: Path, *, description: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError(f"{description} must be a YAML mapping")
     return payload
-
-
-def _mapping(value: Any, *, description: str) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        raise ValueError(f"{description} must be a mapping")
-    return value
 
 
 def _exact_keys(

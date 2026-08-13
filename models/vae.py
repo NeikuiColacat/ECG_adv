@@ -23,6 +23,7 @@ from models.checkpoints import (
     load_checkpoint_payload,
     sha256_file,
 )
+from util.config_bundle import require_mapping as _mapping
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -52,12 +53,6 @@ class VAEConfig:
     @property
     def latent_shape(self) -> tuple[int, int]:
         return self.latent_channels, self.latent_points
-
-
-def _mapping(value: Any, description: str) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        raise ValueError(f"{description} must be a mapping")
-    return value
 
 
 def _resolve_project_path(raw: Any, *, description: str) -> Path:

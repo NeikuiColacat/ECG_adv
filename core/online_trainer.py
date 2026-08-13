@@ -45,11 +45,12 @@ from models.contracts import (
 from models.input_adapter import prepare_canonical_model_input
 from util.config_bundle import (
     config_bundle_root,
+    require_mapping as _mapping,
     resolve_config_reference,
     resolve_entry_config_path,
 )
 from util.random_seed import make_torch_generator, seed_process
-from util.pn2021_artifact_contract import validate_training_lineage
+from util.pn2021_artifact_contract import sha256_file as _sha256, validate_training_lineage
 
 if TYPE_CHECKING:
     from core.latent_pool import LatentPool
@@ -304,20 +305,6 @@ def _iter_exposure_batches(
             batch["__objective_terms"] = exposure.objective_terms
             batch["__loss_scale"] = exposure.loss_scale
             yield batch
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
-def _mapping(value: Any, description: str) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        raise ValueError(f"{description} must be a mapping")
-    return value
 
 
 def _positive_number(value: Any, description: str) -> float:

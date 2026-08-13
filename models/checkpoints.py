@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import pickle
 from copy import deepcopy
 from dataclasses import dataclass
@@ -14,6 +13,7 @@ import torch.nn as nn
 
 from models.contracts import ECGFOUNDER_SPEC, EFFICIENTNET1DV2_SPEC
 from util.pn2021_artifact_contract import (
+    sha256_file as _artifact_sha256_file,
     validate_checkpoint_root,
     validate_training_lineage,
 )
@@ -83,12 +83,7 @@ class CheckpointIdentity:
 
 
 def sha256_file(path: str | Path) -> str:
-    resolved = Path(path).expanduser().resolve()
-    digest = hashlib.sha256()
-    with resolved.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
+    return _artifact_sha256_file(Path(path).expanduser().resolve())
 
 
 def load_checkpoint_payload(

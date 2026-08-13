@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import torch
 import yaml
@@ -15,7 +14,7 @@ from core.corruption import (
     INPUT_SAMPLING_RATE_HZ,
     generate_canonical_corruption,
 )
-from util.config_bundle import resolve_config_reference, resolve_entry_config_path
+from util.config_bundle import require_mapping as _mapping, resolve_config_reference, resolve_entry_config_path
 from util.augmentations.profile import (
     AugmentationProfile,
     load_augmentation_profile,
@@ -44,12 +43,6 @@ class TwoChainAugMixBatch:
     """One Stage-1 strong view built from two independent corruption chains."""
 
     mixed_raw: torch.Tensor
-
-
-def _mapping(value: Any, description: str) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        raise ValueError(f"{description} must be a mapping")
-    return value
 
 
 def load_augmix_config(

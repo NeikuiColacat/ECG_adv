@@ -44,6 +44,7 @@ from util.augmentations.profile import (  # noqa: E402
     load_augmentation_profile,
 )
 from util.config_bundle import (  # noqa: E402
+    load_yaml_mapping as _read_yaml_mapping,
     resolve_config_reference,
     resolve_entry_config_path,
 )
@@ -68,14 +69,6 @@ OPERATORS_WITH_FREQ = {
     "baseline_wander",
     "baseline_shift",
 }
-
-
-def _read_yaml_mapping(path: str | Path, *, description: str) -> dict[str, Any]:
-    resolved = resolve_entry_config_path(path)
-    payload = yaml.safe_load(resolved.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
-        raise ValueError(f"{description} must be a YAML mapping: {resolved}")
-    return payload
 
 
 def load_cache_config(path: str | Path = DEFAULT_CONFIG) -> dict[str, Any]:

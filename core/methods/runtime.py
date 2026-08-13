@@ -31,14 +31,7 @@ from core.methods.registry import (
 )
 from util.augmentations.profile import AugmentationProfile, load_augmentation_profile
 from util.config_bundle import resolve_config_reference
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
+from util.pn2021_artifact_contract import sha256_file as _sha256
 
 
 def _derive_seed(

@@ -18,7 +18,7 @@ import torch.nn.functional as F
 import yaml
 
 from models.vae import decode_to_ptbxl_waveform
-from util.config_bundle import resolve_config_reference, resolve_entry_config_path
+from util.config_bundle import require_mapping as _mapping, resolve_config_reference, resolve_entry_config_path
 from util.random_seed import load_random_seed_config
 
 
@@ -368,12 +368,6 @@ class AttackThenContractResult:
     waveform_raw: torch.Tensor
     valid_mask: torch.Tensor
     diagnostics: AttackThenContractDiagnostics
-
-
-def _mapping(value: Any, description: str) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        raise ValueError(f"{description} must be a mapping")
-    return value
 
 
 def load_lhat_config(

@@ -11,7 +11,6 @@ one sampling rate, so callers explicitly choose 100 or 500 Hz.
 
 from __future__ import annotations
 
-import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +18,9 @@ from typing import Any, Literal, Sequence
 
 import numpy as np
 import pandas as pd
+
+from util.config_bundle import require_mapping as _require_mapping
+from util.pn2021_artifact_contract import sha256_file as _sha256_file
 
 
 EXPECTED_LEADS = (
@@ -95,14 +97,6 @@ class ECGBatch:
     composition_id: str | None
 
 
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
 def _read_json_mapping(path: Path, *, description: str) -> dict[str, Any]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -129,12 +123,6 @@ def _resolve_member(cache_dir: Path, value: Any, *, description: str) -> Path:
     if not resolved.is_file():
         raise FileNotFoundError(f"{description} not found: {resolved}")
     return resolved
-
-
-def _require_mapping(value: Any, *, description: str) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        raise ValueError(f"{description} must be a mapping")
-    return value
 
 
 def _validate_common_waveform_contract(

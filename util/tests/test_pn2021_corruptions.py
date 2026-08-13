@@ -16,6 +16,7 @@ from data_preprocess.augmentations_cache import (
 from data_preprocess.load_cache import EXPECTED_CLASS_ORDER, EXPECTED_LEADS
 from util.augmentations.operators import baseline_shift, random_leads_masking
 from util.augmentations.profile import CANONICAL_OPERATOR_ORDER
+from util import config_bundle
 from util import pn2021_artifact_contract as artifact_contract
 from util.random_seed import derive_seed
 
@@ -44,6 +45,7 @@ def test_locked_profile_and_cache_share_one_pn2021c_contract() -> None:
     assert cache_builder.EXPECTED_LEADS is EXPECTED_LEADS
     assert cache_builder.EXPECTED_CLASS_ORDER is EXPECTED_CLASS_ORDER
     assert cache_builder._artifact_contract is artifact_contract
+    assert cache_builder._read_yaml_mapping is config_bundle.load_yaml_mapping
     assert {"_resolve_project_path", "_sha256_file", "sha256_file"}.isdisjoint(
         vars(cache_builder)
     )

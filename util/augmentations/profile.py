@@ -8,7 +8,6 @@ bundle and records hashes for both files without mutating any RNG state.
 from __future__ import annotations
 
 import copy
-import hashlib
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -17,7 +16,8 @@ from typing import Any, Mapping
 
 import yaml
 
-from util.config_bundle import resolve_config_reference, resolve_entry_config_path
+from util.config_bundle import require_mapping as _mapping, resolve_config_reference, resolve_entry_config_path
+from util.pn2021_artifact_contract import sha256_file as _sha256_file
 from util.random_seed import RandomSeedConfig, load_random_seed_config
 
 
@@ -32,20 +32,6 @@ CANONICAL_OPERATOR_ORDER = (
     "baseline_shift",
     "random_leads_masking",
 )
-
-
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
-def _mapping(value: Any, description: str) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        raise ValueError(f"{description} must be a mapping")
-    return value
 
 
 def _positive_integer(value: Any, description: str) -> int:

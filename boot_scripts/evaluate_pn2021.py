@@ -23,7 +23,7 @@ from models.checkpoints import (
 )
 from models.contracts import CLASS_ORDER, ModelSpec
 from models.factory import available_models, build_model, get_model_spec
-from util.config_bundle import resolve_config_reference
+from util.config_bundle import require_mapping as _mapping, resolve_config_reference
 from util.evaluation.metrics import resolve_evaluated_center_mean
 from util.evaluation.pn2021 import (
     DEFAULT_PN2021_EVAL_CONFIG,
@@ -45,12 +45,6 @@ LEGACY_METHODS = {
 
 
 EvaluationSubject = tuple[Path, tuple[str, ...], dict[str, Any]]
-
-
-def _mapping(value: Any, description: str) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        raise ValueError(f"{description} must be a mapping")
-    return value
 
 
 def _artifact_path(value: str | Path | None, description: str) -> Path:

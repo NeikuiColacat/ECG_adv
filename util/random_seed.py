@@ -16,18 +16,12 @@ from typing import Any
 import numpy as np
 import yaml
 
+from util.pn2021_artifact_contract import sha256_file as _sha256_file
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_RANDOM_SEED_CONFIG_PATH = PROJECT_ROOT / "configs" / "random_seed.yaml"
 SEED_DERIVATION = "sha256_first_uint32_little_endian"
-
-
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def _validated_seed(value: Any, *, description: str) -> int:

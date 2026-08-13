@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 import numpy as np
-import yaml
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -33,6 +32,8 @@ from data_preprocess.load_cache import (  # noqa: E402
     load_cache,
 )
 from util.config_bundle import (  # noqa: E402
+    load_yaml_mapping as _read_yaml_mapping,
+    require_mapping as _require_mapping,
     resolve_config_reference,
     resolve_entry_config_path,
 )
@@ -60,20 +61,6 @@ def _hash_id_set_sha256(values: Iterable[str]) -> str:
     ordered = sorted(str(value) for value in values)
     payload = "".join(f"{value}\n" for value in ordered).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
-
-
-def _read_yaml_mapping(path: str | Path, *, description: str) -> dict[str, Any]:
-    resolved = resolve_entry_config_path(path)
-    payload = yaml.safe_load(resolved.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
-        raise ValueError(f"{description} must be a YAML mapping: {resolved}")
-    return payload
-
-
-def _require_mapping(value: Any, *, description: str) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        raise ValueError(f"{description} must be a mapping")
-    return value
 
 
 def _validate_quality_statuses(value: Any, *, description: str) -> list[str]:

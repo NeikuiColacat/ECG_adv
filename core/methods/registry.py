@@ -13,6 +13,7 @@ from typing import Any, Mapping
 import yaml
 
 from core.methods.contracts import MethodRequirements, ObjectivePlan, ObjectiveTerm
+from util.config_bundle import require_mapping as _mapping
 
 
 RECIPE_SCHEMA_VERSION = 2
@@ -361,12 +362,6 @@ class RecipeSpec:
             "resources": _plain(self.resources),
             "scientific_contract": _plain(self.scientific_contract),
         }
-
-
-def _mapping(value: Any, description: str) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        raise ValueError(f"{description} must be a mapping")
-    return value
 
 
 def _name(value: Any, description: str) -> str:

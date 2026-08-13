@@ -42,6 +42,20 @@ def resolve_entry_config_path(path: str | Path) -> Path:
     return candidate.resolve()
 
 
+def require_mapping(value: Any, description: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError(f"{description} must be a mapping")
+    return value
+
+
+def load_yaml_mapping(path: str | Path, *, description: str) -> dict[str, Any]:
+    resolved = resolve_entry_config_path(path)
+    payload = yaml.safe_load(resolved.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"{description} must be a YAML mapping: {resolved}")
+    return payload
+
+
 def config_bundle_root(
     owner_config_path: str | Path,
     *,
@@ -187,6 +201,8 @@ __all__ = [
     "CONFIG_SECTION_NAMES",
     "DEFAULT_CONFIG_ROOT",
     "config_bundle_root",
+    "load_yaml_mapping",
+    "require_mapping",
     "resolve_config_reference",
     "resolve_entry_config_path",
     "resolve_yaml_config_closure",

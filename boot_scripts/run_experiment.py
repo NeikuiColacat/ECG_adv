@@ -20,6 +20,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from util.config_bundle import (  # noqa: E402
     config_bundle_root,
+    require_mapping as _mapping,
     resolve_config_reference,
     resolve_entry_config_path,
     resolve_yaml_config_closure,
@@ -88,12 +89,6 @@ ARGUMENT_SCHEMAS = {
         ("--model", "--result", "--result", "--result", "--result"),
     ),
 }
-
-
-def _mapping(value: Any, description: str) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        raise ValueError(f"{description} must be a mapping")
-    return value
 
 
 def _yaml_mapping(path: Path, description: str) -> dict[str, Any]:

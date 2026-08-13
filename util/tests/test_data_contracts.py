@@ -36,6 +36,7 @@ from models.input_adapter import (
 )
 import models.efficientnet1d as efficientnet1d
 from models.factory import build_model
+from util import config_bundle
 from util.config_bundle import resolve_yaml_config_closure
 from util import pn2021_artifact_contract as artifact_contract
 
@@ -77,6 +78,9 @@ def test_data_and_model_constants_share_one_super5_contract() -> None:
         "V5",
         "V6",
     )
+    assert {"require_mapping", "load_yaml_mapping"}.issubset(config_bundle.__all__)
+    assert split_cache._require_mapping is config_bundle.require_mapping
+    assert split_cache._read_yaml_mapping is config_bundle.load_yaml_mapping
     assert EFFICIENTNET1DV2_SPEC.input_shape == (12, 1000)
     assert EFFICIENTNET1DV2_SPEC.sampling_rate_hz == 100
     assert ECGFOUNDER_SPEC.input_shape == (12, 5000)
