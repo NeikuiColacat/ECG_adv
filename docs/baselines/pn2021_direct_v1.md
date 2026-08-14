@@ -53,6 +53,11 @@ Clean-to-PN2021-C degradation on the primary all-zero-kept view:
 
 ## Current effective EfficientNet method
 
+> Historical development evidence note (2026-08-14): this section preserves
+> the selected E23/T30 development result and its metrics. The executable
+> prospective mainline now uses E25/T30 so all five rotating4 slots receive five
+> complete exposures; no E25 performance result exists yet.
+
 Status: `LOCKED_CURRENT_DEVELOPMENT_SINGLE_SEED` on 2026-07-30.
 
 The current completed winner is L37:

@@ -381,7 +381,7 @@ def test_post_cp4_cuda_smoke_is_registered_as_diagnostic_only() -> None:
     assert "throughput_not_comparable" in smoke["limitations"]
     assert evidence["active_development_mainline"]["managed_implementation"][
         "gpu_replication_status"
-    ] == "diagnostic_smoke_passed_not_full_replication"
+    ] == "ancestor_diagnostic_smoke_only_current_head_pending"
 
 
 def test_k500_handoff_locks_finite_loader_openings() -> None:
@@ -513,7 +513,7 @@ def test_active_evidence_quarantines_accepted_subset_lhat_diagnostics() -> None:
     integrity = active["diagnostic_integrity"]
 
     assert registry["schema_version"] == 3
-    assert str(registry["updated"]) == "2026-08-12"
+    assert str(registry["updated"]) == "2026-08-14"
     assert integrity["status"] == "legacy_accepted_subset_quarantined"
     assert integrity["all_candidate_raw_diagnostics"] == {
         "availability": "unavailable",

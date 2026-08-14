@@ -1,5 +1,5 @@
 schema_version: 3
-updated: 2026-08-12
+updated: 2026-08-14
 purpose: >
   Separate the current prospective manual-refactor recipe from historical
   trusted evidence. A launch config is not evidence by itself.
@@ -105,9 +105,25 @@ data_contract:
 
 active_development_mainline:
   lock_id: aligned_targetonly_augmix_lhat_simplified_20260805
-  status: locked_prospective_replication_recipe
+  status: e23_development_evidence_superseded_by_e25_prospective_recipe
   paper_use: development_only
   paper_claim_allowed: false
+  prospective_replacement:
+    lock_id: aligned_targetonly_augmix_lhat_effnet_e25_20260814
+    status: locked_config_unrun
+    training_config: configs/train/PN2021.yaml
+    training_config_sha256: 80a831861b7a72c658e66e4df92b2640c12ec4766c9880a65d7eeb0d4d952e76
+    efficientnet1dv2:
+      stage1_steps: 1024
+      stage2_epochs: 25
+      scheduler_horizon_epochs: 30
+      stage2_outer_optimizer_steps: 100
+      rotation_balance: five_complete_cycles
+    primary_finetuning_baselines: [A0, A1]
+    baseline_evidence: prospective_single_seed_development_not_paper_final
+    vae_config_sha256: 2d157d89a13c4a2e1b5ee75236a034b2f3350e2d88e9e5b1187ab1cf0527f74a
+    vae_checkpoint_sha256: c2b4ef8060e412bd503f46b66dd44fc460e67a89de0ae1809dcc771358b3fa93
+    result_evidence: unavailable_until_new_e25_execution
   selection:
     decision: user_directed_simplification_override_after_development_search
     candidate_count: 94
@@ -274,11 +290,12 @@ active_development_mainline:
       legacy_paths_embedded_inside_machine_lock: historical_hash_only_provenance
       runtime_may_open_embedded_legacy_paths: false
   managed_implementation:
-    status: finite_recipe_cpu_and_diagnostic_cuda_smoke_verified
+    status: current_head_cpu_contract_verified_cuda_smoke_pending
     implementation_identity: finite_recipe_spec_v1
     launcher: boot_scripts/run_experiment.py
     canonical_experiment: configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_ningbo.yaml
     online_config: configs/train/PN2021.yaml
+    online_config_sha256: 80a831861b7a72c658e66e4df92b2640c12ec4766c9880a65d7eeb0d4d952e76
     method_config: configs/train/methods/augmix_simclr_lhat.yaml
     trainer: core/online_trainer.py
     recipe_identity:
@@ -294,11 +311,11 @@ active_development_mainline:
       resolved_config_sha256:
         augmentation/operators.yaml: cfc4e243f569226a8f444a38d9dd4fbc00ccf7de724c47886dcc9319b9c790cc
         train/augmix.yaml: 51e7ebb6d7bc9eeded20f585d7836a2967e1306c2173cfc7c7c2fd603549b00f
-        train/vae.yaml: 6eb7f814af775f58f769572f3e76e0f9905240d791970dc6d990b1648d7acec3
+        train/vae.yaml: 2d157d89a13c4a2e1b5ee75236a034b2f3350e2d88e9e5b1187ab1cf0527f74a
         train/lhat.yaml: 2d1cf2550932f2d2b1cc6fa5893ab4226cb0010e6dbf16be0e8cc6f3ada3a824
         random_seed.yaml: 8b337606c43b6fec2959dd185477ce32f48b139f5fce5112ee26efe58eb4bbbc
     runtime_imports_agent_workspace: false
-    gpu_replication_status: diagnostic_smoke_passed_not_full_replication
+    gpu_replication_status: ancestor_diagnostic_smoke_only_current_head_pending
     prospective_run_root: /home/linbinhao/ECG_adv_data/runs/manual_refactor_paper_kernel_v2_recipe_v1_r1
   prospective_replication_20260806:
     role: historical_metric_evidence_from_pre_recipe_runtime
@@ -328,7 +345,8 @@ active_development_mainline:
       metric_evidence_retained: true
       post_migration_runtime_replay_claimed: false
       checkpoint_or_json_bitwise_reproduction_claimed: false
-      current_recipe_diagnostic_gpu_smoke_available: true
+      current_recipe_diagnostic_gpu_smoke_available: false
+      ancestor_recipe_diagnostic_gpu_smoke_available: true
       current_recipe_full_budget_gpu_run_available: false
     metric_order: [clean_auroc, clean_auprc, pn2021c_auroc, pn2021c_auprc]
     protocol:

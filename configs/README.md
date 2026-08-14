@@ -114,8 +114,11 @@ profile or Python import surface.
 
 PN2021 result identities form a closed chain: schema-v1
 `pn2021_train_result` and its schema-v3 final checkpoint carry identical
-training lineage, while schema-v3 `pn2021_evaluation_result` binds its evaluated
-subject. The evaluation entrypoint accepts exactly one mode:
+schema-v2 training lineage, including the shared VAE config/encoder/decoder
+SHA256 identities for the contracted-LHAT recipe. Schema-v3
+`pn2021_evaluation_result` binds its evaluated subject, and matrix configs lock
+the expected epoch and outer-optimizer-step budget. The evaluation entrypoint
+accepts exactly one mode:
 
 - prospective: `--train-result` plus `--method-config`, exactly one center;
 - finite legacy A0/Direct: explicit `--checkpoint`, exactly one center;

@@ -40,12 +40,12 @@ launch_surface_policy:
 
 latest_mainline:
   method: augmix_simclr_lhat
-  status: locked_prospective_replication_recipe
-  evidence_level: heldout_tuned_single_seed_development
+  status: locked_prospective_effnet_e25_replication_recipe
+  evidence_level: prospective_unrun_e25_with_historical_e23_development_support
   paper_claim_allowed: false
   launcher: boot_scripts/run_experiment.py
   current_implementation:
-    status: finite_recipe_cpu_and_diagnostic_cuda_smoke_verified
+    status: current_head_cpu_contract_verified_cuda_smoke_pending
     implementation_identity: finite_recipe_spec_v1
     selector: configs/train/methods/augmix_simclr_lhat.yaml
     schema_version: 2
@@ -56,6 +56,9 @@ latest_mainline:
     recipe_version: 1
     recipe_spec_sha256: de3d6948a9efc974405b7382d45653f93032a34ac2fd88637172ed731d876602
     artifact_lineage:
+      training_lineage:
+        schema_version: 2
+        shared_method_resources: [vae_config_sha256, vae_encoder_checkpoint_sha256, vae_decoder_checkpoint_sha256]
       train_result:
         schema_version: 1
         artifact_type: pn2021_train_result
@@ -74,6 +77,7 @@ latest_mainline:
         checkpoint_verification: stream_sha256_without_deserialization
         derived_metric_policy: recompute_and_exact_compare
         matrix_cohort_policy: config_owned_exact_identity
+        expected_budget_policy: exact_epochs_and_outer_optimizer_steps
       evaluation_subject_modes:
         prospective_train_result:
           centers: exactly_one_target_center
@@ -111,7 +115,23 @@ latest_mainline:
       model_input_contract:
         efficientnet1dv2: canonical100_then_global_zscore_then_bct
         ecgfounder: device_linear1000_to_5000_align_corners_true_then_global_zscore_then_bct
-    gpu_replication_status: diagnostic_smoke_passed_not_full_replication
+    training_profiles:
+      efficientnet1dv2:
+        stage1_steps: 1024
+        stage2_epochs: 25
+        scheduler_horizon_epochs: 30
+        stage2_outer_optimizer_steps: 100
+        rotation_balance: five_complete_cycles_all_twenty_compositions_five_times
+      ecgfounder:
+        stage1_steps: 256
+        stage2_epochs: 30
+        scheduler_horizon_epochs: 30
+        stage2_outer_optimizer_steps: 240
+    locked_vae:
+      config: configs/train/vae.yaml
+      config_sha256: 2d157d89a13c4a2e1b5ee75236a034b2f3350e2d88e9e5b1187ab1cf0527f74a
+      checkpoint_sha256: c2b4ef8060e412bd503f46b66dd44fc460e67a89de0ae1809dcc771358b3fa93
+    gpu_replication_status: ancestor_diagnostic_smoke_only_current_head_pending
     prospective_run_root: /home/linbinhao/ECG_adv_data/runs/manual_refactor_paper_kernel_v2_recipe_v1_r1
   primary_metric_view: drop_all_zero
   mapping:
@@ -206,9 +226,9 @@ latest_mainline:
       - util/tests/test_evaluation_metrics.py
       - util/tests/test_pn2021_evaluation.py
     cpu_contract_result:
-      status: passed_320_skipped_10
-      previous_result: passed_225_skipped_10
-      date: "2026-08-12"
+      status: passed_312_skipped_5
+      previous_result: passed_320_skipped_10
+      date: "2026-08-14"
     data_ledger_tool_contract:
       path: data_preprocess/data_ledger.py
       status: full_content_seal_generated_verified_and_managed
@@ -323,6 +343,11 @@ prospective_matched_base_a0_a1:
     base_git_sha: e6fb4b4bfd376c57b54df95a57a20d2d1549b219
     execution_git_sha: 69bdcd6a7121f443837edbd7aa8b91ff4ed49d0e
     matrix_execution_git_sha: 7becc63172103dc7265c46722bcf4ffec7fdb4fe
+  promotion:
+    status: integrated_into_latest_mainline_history
+    source_commits: [69bdcd6, 7becc63, 2f791d6]
+    paper_role: primary_matched_finetuning_baselines
+    retained_secondary_controls: [A3c, DirectDepth23Fixed20FamilyBalanced]
   contract:
     training_config:
       path: configs/train/PN2021_matched_base_a0_a1.yaml
@@ -391,8 +416,8 @@ prospective_matched_base_a0_a1:
     - configs/experiments/manual_refactor_pn2021_effnet_a1_rot4_e25_matrix.yaml
     - configs/experiments/manual_refactor_pn2021_ecgfounder_a1_rot4_e30_matrix.yaml
   matrix_cohort_configs:
-    A0: {path: configs/eval/PN2021_matrix_a0_e25_e30.yaml, sha256: c5d31d5122b80f5f5e459431dfdcdf3961dba12f937e0bd010806b50d14f2e80}
-    A1: {path: configs/eval/PN2021_matrix_a1_rot4_e25_e30.yaml, sha256: a328ab7ce27c5b255bb16c8d7974a1b6de720cffddbb02874ece6221a4df93af}
+    A0: {path: configs/eval/PN2021_matrix_a0_e25_e30.yaml, sha256: a1e09b860944c0902266f5f54e773ce86ad4e801178143ef8968e25897084f35}
+    A1: {path: configs/eval/PN2021_matrix_a1_rot4_e25_e30.yaml, sha256: a025a691a738cdee4b55dade9f318c4517f05e534c002c00f37048dfeab01990}
   execution:
     training_runs: {complete: 16, total: 16}
     evaluation_runs: {complete: 16, total: 16}

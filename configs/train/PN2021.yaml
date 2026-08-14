@@ -1,5 +1,5 @@
 schema_version: 1
-profile_name: aligned_targetonly_augmix_simclr_lhat
+profile_name: aligned_targetonly_augmix_simclr_lhat_e25_e30
 
 references:
   split_config: data/splits.yaml
@@ -73,7 +73,7 @@ training:
     dtype: bfloat16
   model_profiles:
     efficientnet1dv2:
-      epochs: 23
+      epochs: 25
       scheduler_horizon_epochs: 30
       batch_size: 128
       learning_rate: 5.0e-5

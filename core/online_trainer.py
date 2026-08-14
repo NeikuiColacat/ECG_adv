@@ -350,6 +350,8 @@ class OnlineTrainingResult:
     config_identity: dict[str, Any]
     seed_identity: dict[str, Any]
     latent_pool_identity: dict[str, Any] | None
+    method_resources_path: Path
+    method_resources_sha256: str
     lineage: dict[str, Any]
 
     def describe(self) -> dict[str, Any]:
@@ -382,6 +384,10 @@ class OnlineTrainingResult:
             "config": self.config_identity,
             "seed": self.seed_identity,
             "latent_pool": self.latent_pool_identity,
+            "method_resources": {
+                "path": str(self.method_resources_path),
+                "sha256": self.method_resources_sha256,
+            },
         }
 
 
@@ -797,6 +803,45 @@ def _loader_selection_partition(train_dataloader: Any) -> str | None:
     return None if raw is None else str(raw)
 
 
+def _portable_method_resources(
+    recipe: RecipeSpec,
+    method_resources: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Extract shared method resources that must match across matrix members."""
+
+    if recipe.auxiliary_variant is not AuxiliaryVariant.CONTRACTED_LHAT:
+        if method_resources.get("vae_decoder_checkpoint") is not None:
+            raise ValueError("a non-VAE recipe cannot carry a VAE decoder identity")
+        return {"vae": None}
+    resource_configs = _mapping(
+        method_resources.get("resource_configs"), "method_resources.resource_configs"
+    )
+    vae_config = _mapping(
+        resource_configs.get("vae"), "method_resources.resource_configs.vae"
+    )
+    pool = _mapping(method_resources.get("latent_pool"), "method_resources.latent_pool")
+    pool_identity = _mapping(pool.get("identity"), "method_resources.latent_pool.identity")
+    decoder = _mapping(
+        method_resources.get("vae_decoder_checkpoint"),
+        "method_resources.vae_decoder_checkpoint",
+    )
+    result = {
+        "vae": {
+            "config_sha256": vae_config.get("sha256"),
+            "encoder_checkpoint_sha256": pool_identity.get("encoder_identity"),
+            "decoder_checkpoint_sha256": decoder.get("sha256"),
+        }
+    }
+    for value in result["vae"].values():
+        if (
+            not isinstance(value, str)
+            or len(value) != 64
+            or set(value) - set("0123456789abcdef")
+        ):
+            raise ValueError("portable VAE resource identity must contain SHA256 digests")
+    return result
+
+
 def _training_lineage(
     *,
     model_identity: Mapping[str, Any],
@@ -806,6 +851,7 @@ def _training_lineage(
     config: OnlineTrainConfig,
     seed_identity: Mapping[str, Any],
     train_dataloader: Any,
+    method_resources: Mapping[str, Any],
 ) -> dict[str, Any]:
     selection = getattr(getattr(train_dataloader, "dataset", None), "selection", None)
     describe = getattr(selection, "describe", None)
@@ -825,7 +871,7 @@ def _training_lineage(
     random_seed = config.payload["random_seed"]
     return validate_training_lineage(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "scope": "pn2021_k500_center_adaptation",
             "model": {"name": spec.name, "spec": spec.describe()},
             "center": center,
@@ -848,6 +894,9 @@ def _training_lineage(
                 for key in ("base_seed", "effective_seed", "namespace", "config_sha256")
             },
             "source_checkpoint": {"sha256": source["sha256"]},
+            "method_resources": _portable_method_resources(
+                recipe, method_resources
+            ),
             "training_config_sha256": config.sha256,
             "adaptation_data": {
                 key: adaptation[key]
@@ -2099,6 +2148,7 @@ def train_online_model(
         config=config,
         seed_identity=seed.describe(),
         train_dataloader=train_dataloader,
+        method_resources=method_resource_identity,
     )
     run_identity = {
         "config": config.describe(),
@@ -2819,6 +2869,8 @@ def train_online_model(
             },
             seed_identity=seed.describe(),
             latent_pool_identity=pool_identity,
+            method_resources_path=method_resources_path,
+            method_resources_sha256=sha256_file(method_resources_path),
             lineage=lineage,
         )
         _write_json(result_path, result.describe())

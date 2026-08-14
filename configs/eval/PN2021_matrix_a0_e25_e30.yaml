@@ -23,6 +23,8 @@ profiles:
         replicate_id: 0
       source_checkpoint:
         sha256: fff9bd293677be54a606e28775c66d410d55b0ad7440a4e7fbde55357ec13e68
+      method_resources: &method_resources
+        vae: null
       selection: &selection
         policy: last
         heldout_evaluation_used_for_selection: false
@@ -59,6 +61,8 @@ profiles:
           hash_id_set_sha256: 9d407e4d4b2bc1f23667ffb574e54ddf99cf2e72ecc207df17c5bfe589f4c3c0
           split_manifest_sha256: 58210d9b192bc18e9085f235453094814c9caed2cf9142998084ae7a004e9a42
       training_config_sha256: &train_config ee0e2a31ae7f4dac52db0b755c0b038de27f59e57883dd680afcf94cbeba5538
+      epochs_completed: 25
+      optimizer_steps: 100
       evaluation_config_sha256: &eval_config 0159928d8825ae60908b93285cd075d59a0ee136716c40cdea72094d6b825daf
       artifact_locks: &artifact_locks
         clean_cache_manifest_sha256: fa06cf268147d451e2925c17311ba13f565962dcf28acee27cb991a915dbb31f
@@ -73,11 +77,14 @@ profiles:
       comparison: *comparison
       source_checkpoint:
         sha256: c23ec4361b097b74a4efed427488c4dd6a3753adfc75f7d1fc281e4df0989948
+      method_resources: *method_resources
       selection: *selection
       seed: *seed
       adaptation: *adaptation
       center_adaptation: *center_adaptation
       training_config_sha256: *train_config
+      epochs_completed: 30
+      optimizer_steps: 240
       evaluation_config_sha256: *eval_config
       artifact_locks: *artifact_locks
 

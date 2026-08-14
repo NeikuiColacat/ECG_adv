@@ -18,6 +18,7 @@ model:
   eval_mode: true
 
 checkpoint_contract:
+  checkpoint_sha256: c2b4ef8060e412bd503f46b66dd44fc460e67a89de0ae1809dcc771358b3fa93
   expected_top_level_keys: [encoder, decoder]
   expected_encoder_state_keys: 104
   expected_decoder_state_keys: 136

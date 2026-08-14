@@ -48,7 +48,8 @@ CANONICAL_CORRUPTION_VIEWS = tuple(
         ((depth, item) for depth in (2, 3) for item in itertools.combinations(_OPERATORS, depth))
     )
 )
-_LINEAGE_KEYS = frozenset("schema_version scope model center method comparison seed source_checkpoint training_config_sha256 adaptation_data selection".split())
+_LINEAGE_KEYS_V1 = frozenset("schema_version scope model center method comparison seed source_checkpoint training_config_sha256 adaptation_data selection".split())
+_LINEAGE_KEYS_V2 = _LINEAGE_KEYS_V1 | {"method_resources"}
 _METHOD_KEYS = frozenset("recipe_id scientific_arm recipe_spec_sha256 implementation_identity recipe_version kind auxiliary_variant schema_version".split())
 _ADAPTATION_KEYS = frozenset("dataset partition logical_center source_centers record_count split_id hash_id_set_sha256 split_manifest_sha256 source_manifest_sha256 mapping_version mapping_hash class_order".split())
 
@@ -118,7 +119,10 @@ def resolve_artifact_reference(value: Any, *, owner: Path, name: str) -> tuple[P
 def validate_training_lineage(value: Any) -> dict[str, Any]:
     """Validate and copy one portable prospective K500 lineage."""
 
-    lineage = _mapping(value, _LINEAGE_KEYS, "training lineage")
+    candidate = _mapping(value, None, "training lineage")
+    schema_version = candidate.get("schema_version")
+    keys = _LINEAGE_KEYS_V2 if schema_version == 2 else _LINEAGE_KEYS_V1
+    lineage = _mapping(candidate, keys, "training lineage")
     model = _mapping(lineage["model"], {"name", "spec"}, "lineage.model")
     method = _mapping(lineage["method"], _METHOD_KEYS, "lineage.method")
     comparison = _mapping(lineage["comparison"], {"group", "replicate_id"}, "lineage.comparison")
@@ -127,7 +131,7 @@ def validate_training_lineage(value: Any) -> dict[str, Any]:
     adaptation = _mapping(lineage["adaptation_data"], _ADAPTATION_KEYS, "lineage.adaptation_data")
     selection = _mapping(lineage["selection"], {"policy", "heldout_evaluation_used_for_selection"}, "lineage.selection")
     model_name, center = model["name"], lineage["center"]
-    if (type(lineage["schema_version"]) is not int or lineage["schema_version"] != 1
+    if (type(schema_version) is not int or schema_version not in {1, 2}
             or lineage["scope"] != "pn2021_k500_center_adaptation"
             or not isinstance(model_name, str) or model.get("spec") != MODEL_SPECS.get(model_name)
             or not isinstance(center, str) or center not in CENTER_SOURCES):
@@ -156,11 +160,60 @@ def validate_training_lineage(value: Any) -> dict[str, Any]:
     if (selection["policy"] != "last"
             or selection["heldout_evaluation_used_for_selection"] is not False):
         raise ValueError("lineage selection must be heldout-free last")
+    resource_digests: tuple[Any, ...] = ()
+    if schema_version == 2:
+        resources = _mapping(
+            lineage["method_resources"], {"vae"}, "lineage.method_resources"
+        )
+        vae = resources["vae"]
+        if method["auxiliary_variant"] == "contracted_lhat":
+            vae_identity = _mapping(
+                vae,
+                {
+                    "config_sha256",
+                    "encoder_checkpoint_sha256",
+                    "decoder_checkpoint_sha256",
+                },
+                "lineage.method_resources.vae",
+            )
+            resource_digests = tuple(vae_identity.values())
+        elif vae is not None:
+            raise ValueError("non-VAE lineage must declare a null VAE identity")
     for digest in (method["recipe_spec_sha256"], seed["config_sha256"], source["sha256"],
                    lineage["training_config_sha256"], adaptation["hash_id_set_sha256"],
-                   adaptation["split_manifest_sha256"], adaptation["source_manifest_sha256"]):
+                   adaptation["split_manifest_sha256"], adaptation["source_manifest_sha256"],
+                   *resource_digests):
         _sha(digest, "lineage digest")
     return deepcopy(dict(lineage))
+
+
+def _runtime_method_resources_identity(
+    value: Any, method: Mapping[str, Any]
+) -> dict[str, Any]:
+    resources = _mapping(value, None, "runtime method resources")
+    if method["auxiliary_variant"] != "contracted_lhat":
+        if resources.get("vae_decoder_checkpoint") is not None:
+            raise ValueError("non-VAE runtime cannot carry a VAE decoder identity")
+        return {"vae": None}
+    configs = _mapping(
+        resources.get("resource_configs"), None, "runtime method resource configs"
+    )
+    vae_config = _mapping(configs.get("vae"), None, "runtime VAE config identity")
+    pool = _mapping(resources.get("latent_pool"), None, "runtime latent pool")
+    pool_identity = _mapping(pool.get("identity"), None, "runtime latent pool identity")
+    decoder = _mapping(
+        resources.get("vae_decoder_checkpoint"), None, "runtime VAE decoder identity"
+    )
+    result = {
+        "vae": {
+            "config_sha256": vae_config.get("sha256"),
+            "encoder_checkpoint_sha256": pool_identity.get("encoder_identity"),
+            "decoder_checkpoint_sha256": decoder.get("sha256"),
+        }
+    }
+    for digest in result["vae"].values():
+        _sha(digest, "runtime VAE resource digest")
+    return result
 
 
 def validate_checkpoint_root(payload: Any, *, schema_version: int | None = None) -> dict[str, Any] | None:
@@ -191,6 +244,10 @@ def validate_checkpoint_root(payload: Any, *, schema_version: int | None = None)
             or run_config.get("sha256") != lineage["training_config_sha256"]
             or run_source.get("sha256") != lineage["source_checkpoint"]["sha256"]):
         raise ValueError("checkpoint root or run_identity differs from its lineage")
+    if lineage["schema_version"] == 2 and _runtime_method_resources_identity(
+        run.get("method"), method
+    ) != lineage["method_resources"]:
+        raise ValueError("checkpoint method resources differ from its lineage")
     return lineage
 
 
@@ -219,11 +276,30 @@ def validate_pn2021_train_result(payload: Any, *, result_path: Path,
             or model.get("spec") != lineage["model"]["spec"]
             or training.get("sha256") != lineage["training_config_sha256"]):
         raise ValueError("train_result identity differs from its lineage")
+    method_resources_path = None
+    if lineage["schema_version"] == 2:
+        resources_ref = _mapping(
+            result.get("method_resources"), {"path", "sha256"},
+            "train_result.method_resources",
+        )
+        method_resources_path, _ = resolve_artifact_reference(
+            resources_ref, owner=result_path, name="train_result.method_resources"
+        )
+        if method_resources_path.parent != result_path.parent.resolve():
+            raise ValueError("train_result method resources must belong to its output directory")
+        runtime_resources = load_json_mapping(
+            method_resources_path, name="train_result method resources"
+        )
+        if _runtime_method_resources_identity(
+            runtime_resources, lineage["method"]
+        ) != lineage["method_resources"]:
+            raise ValueError("train_result method resources differ from lineage")
     checkpoint_path, checkpoint_sha = (resolve_artifact_reference(last, owner=result_path, name="train_result.last_checkpoint")
                                        if verify_checkpoint else (Path(str(last["path"])).expanduser().resolve(), _sha(last["sha256"], "checkpoint SHA256")))
     if checkpoint_path.parent.parent != result_path.parent.resolve():
         raise ValueError("train_result checkpoint must belong to the same training output directory")
     return {"lineage": lineage, "checkpoint_path": checkpoint_path, "checkpoint_sha256": checkpoint_sha,
+            "method_resources_path": method_resources_path,
             "epochs_completed": epochs, "optimizer_steps": steps}
 
 
@@ -290,9 +366,13 @@ def _prospective_cohort(result: Mapping[str, Any], lineage: Mapping[str, Any],
     config = _mapping(result.get("config"), None, "evaluation config")
     resolved = _mapping(config.get("resolved"), None, "evaluation config.resolved")
     seed, adaptation = lineage["seed"], lineage["adaptation_data"]
+    method_resources = lineage.get("method_resources")
+    if method_resources is None and lineage["method"]["auxiliary_variant"] != "contracted_lhat":
+        method_resources = {"vae": None}
     return {
         "model_name": lineage["model"]["name"], "method": lineage["method"],
         "comparison": lineage["comparison"], "source_checkpoint": lineage["source_checkpoint"],
+        "method_resources": method_resources,
         "selection": lineage["selection"],
         "seed": {key: seed[key] for key in ("base_seed", "namespace", "config_sha256")},
         "adaptation": {key: adaptation[key] for key in ("dataset", "partition", "record_count", "split_id",
@@ -304,13 +384,16 @@ def _prospective_cohort(result: Mapping[str, Any], lineage: Mapping[str, Any],
 
 
 def validate_expected_cohort(cohort: Mapping[str, Any], expected: Mapping[str, Any]) -> None:
-    """Match immutable, config-owned cohort fields; epochs/steps stay equality gates."""
+    """Match immutable, config-owned cohort fields and the declared run budget."""
 
-    keys = {"model_name", "method", "comparison", "source_checkpoint", "selection", "seed", "adaptation",
-            "center_adaptation", "training_config_sha256", "evaluation_config_sha256", "artifact_locks"}
+    keys = {"model_name", "method", "comparison", "source_checkpoint", "method_resources",
+            "selection", "seed", "adaptation", "center_adaptation", "training_config_sha256",
+            "epochs_completed", "optimizer_steps", "evaluation_config_sha256", "artifact_locks"}
     locked = _mapping(expected, keys, "expected_cohort")
-    observed = {key: cohort[key] for key in ("model_name", "method", "comparison", "source_checkpoint", "selection", "seed", "adaptation")}
+    observed = {key: cohort[key] for key in ("model_name", "method", "comparison", "source_checkpoint", "method_resources", "selection", "seed", "adaptation")}
     observed.update(training_config_sha256=cohort["training"]["config_sha256"],
+                    epochs_completed=cohort["training"]["epochs_completed"],
+                    optimizer_steps=cohort["training"]["optimizer_steps"],
                     evaluation_config_sha256=cohort["evaluation"]["config_sha256"],
                     artifact_locks=cohort["evaluation"]["artifact_locks"])
     if observed != {key: locked[key] for key in observed}:

@@ -29,6 +29,7 @@ from models.checkpoints import (
 from models.contracts import ECGFOUNDER_SPEC, EFFICIENTNET1DV2_SPEC
 from util.pn2021_artifact_contract import (
     resolve_artifact_reference,
+    validate_pn2021_train_result,
     validate_training_lineage,
 )
 from util.random_seed import derive_seed, load_random_seed_config
@@ -94,7 +95,7 @@ def _lineage(tmp_path: Path) -> dict:
             "config_sha256": "5" * 64}
     return trainer._training_lineage(model_identity=model, spec=EFFICIENTNET1DV2_SPEC,
         center="ningbo", recipe=recipe, config=config, seed_identity=seed,
-        train_dataloader=loader)
+        train_dataloader=loader, method_resources={"vae_decoder_checkpoint": None})
 
 
 def test_non_dry_handoffs_keep_bundle_relative_recipe(monkeypatch, tmp_path: Path, capsys) -> None:
@@ -232,6 +233,8 @@ def test_training_lineage_is_exact_and_binds_managed_selection(tmp_path: Path) -
     assert lineage["model"] == {
         "name": "efficientnet1dv2", "spec": EFFICIENTNET1DV2_SPEC.describe()}
     assert lineage["source_checkpoint"] == {"sha256": "4" * 64}
+    assert lineage["schema_version"] == 2
+    assert lineage["method_resources"] == {"vae": None}
     assert validate_training_lineage(lineage) == lineage
     for field, value in (("unexpected", True), ("center", "georgia"),
                          ("schema_version", True)):
@@ -256,6 +259,80 @@ def test_training_lineage_is_exact_and_binds_managed_selection(tmp_path: Path) -
         )
 
 
+def test_portable_method_resources_bind_shared_vae_identity() -> None:
+    recipe = _recipe("augmix_simclr_lhat.yaml")
+    resources = {
+        "resource_configs": {"vae": {"sha256": "1" * 64}},
+        "latent_pool": {"identity": {"encoder_identity": "2" * 64}},
+        "vae_decoder_checkpoint": {"sha256": "3" * 64},
+    }
+    assert trainer._portable_method_resources(recipe, resources) == {
+        "vae": {
+            "config_sha256": "1" * 64,
+            "encoder_checkpoint_sha256": "2" * 64,
+            "decoder_checkpoint_sha256": "3" * 64,
+        }
+    }
+    with pytest.raises(ValueError, match="SHA256"):
+        trainer._portable_method_resources(
+            recipe,
+            {
+                **resources,
+                "vae_decoder_checkpoint": {"sha256": "drift"},
+            },
+        )
+    assert trainer._portable_method_resources(
+        _recipe("a0_clean_v1.yaml"), {"vae_decoder_checkpoint": None}
+    ) == {"vae": None}
+
+
+def test_schema2_train_result_binds_method_resource_bytes(tmp_path: Path) -> None:
+    training = tmp_path / "training"
+    checkpoint_path = training / "checkpoints" / "last.pt"
+    checkpoint_path.parent.mkdir(parents=True)
+    checkpoint_path.write_bytes(b"portable checkpoint fixture")
+    resources_path = training / "method_resources.json"
+    resources_path.write_text(
+        json.dumps({"vae_decoder_checkpoint": None}), encoding="utf-8"
+    )
+    lineage = _lineage(tmp_path)
+    checkpoint = {
+        "path": str(checkpoint_path),
+        "sha256": hashlib.sha256(checkpoint_path.read_bytes()).hexdigest(),
+    }
+    result = {
+        "schema_version": 1,
+        "artifact_type": "pn2021_train_result",
+        "lineage": lineage,
+        "center": "ningbo",
+        "method_id": lineage["method"]["recipe_id"],
+        "scientific_arm": lineage["method"]["scientific_arm"],
+        "model": {"spec": EFFICIENTNET1DV2_SPEC.describe()},
+        "config": {"training": {"sha256": lineage["training_config_sha256"]}},
+        "seed": lineage["seed"],
+        "epochs_completed": 25,
+        "optimizer_steps": 100,
+        "last_checkpoint": checkpoint,
+        "method_resources": {
+            "path": str(resources_path),
+            "sha256": hashlib.sha256(resources_path.read_bytes()).hexdigest(),
+        },
+        "selection": {
+            "policy": "last",
+            "selected_epoch": 25,
+            "selected_checkpoint": checkpoint,
+            "heldout_evaluation_used_for_selection": False,
+        },
+    }
+    result_path = training / "train_result.json"
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+    context = validate_pn2021_train_result(result, result_path=result_path)
+    assert context["method_resources_path"] == resources_path
+    resources_path.write_text("{}", encoding="utf-8")
+    with pytest.raises(ValueError, match="SHA256"):
+        validate_pn2021_train_result(result, result_path=result_path)
+
+
 def test_checkpoint_loader_exposes_schema3_and_finite_schema2(tmp_path: Path) -> None:
     lineage = _lineage(tmp_path); method = lineage["method"]
     model = torch.nn.Linear(2, 1); state = model.state_dict()
@@ -264,6 +341,7 @@ def test_checkpoint_loader_exposes_schema3_and_finite_schema2(tmp_path: Path) ->
                      "checkpoint_identity": {"sha256": "4" * 64}},
            "recipe": {"recipe_id": method["recipe_id"],
                       "recipe_spec_sha256": method["recipe_spec_sha256"]},
+           "method": {"vae_decoder_checkpoint": None},
            "seed": lineage["seed"], "config": {"sha256": lineage["training_config_sha256"]}}
     payload = {"schema_version": 3, "lineage": lineage, "center": "ningbo",
                "method_id": method["recipe_id"], "scientific_arm": method["scientific_arm"],
@@ -311,7 +389,7 @@ def test_online_config_references_and_overrides_remain_closed() -> None:
     assert "diagnostics" not in config.payload
     assert "diagnostics_file" not in config.payload["output"]
     assert (resolved["epochs"], resolved["scheduler_horizon_epochs"],
-            resolved["stage1_steps"], supplied) == (23, 30, 1024, {})
+            resolved["stage1_steps"], supplied) == (25, 30, 1024, {})
     with pytest.raises(ValueError, match="unknown online training parameters"):
         trainer.resolve_online_training_parameters(config, "efficientnet1dv2", {"typo": 1})
     with pytest.raises(ValueError, match="greater than or equal"):
@@ -512,7 +590,12 @@ def test_pn2021_boot_and_adapter_reject_retired_override_surfaces() -> None:
         "build_ecgtwin_vae", "decode_to_ptbxl_waveform", "load_vae_config",
         "prepare_ecgtwin_encoder_input"]
     assert tuple(vae.VAEConfig.__dataclass_fields__) == (
-        "checkpoint_path", "expected_encoder_state_keys", "expected_decoder_state_keys")
+        "checkpoint_path", "checkpoint_sha256", "expected_encoder_state_keys",
+        "expected_decoder_state_keys")
+    vae_config = vae.load_vae_config()
+    assert vae_config.checkpoint_sha256 == (
+        "c2b4ef8060e412bd503f46b66dd44fc460e67a89de0ae1809dcc771358b3fa93"
+    )
     assert tuple(inspect.signature(vae.SelfAttention).parameters) == ()
     assert tuple(inspect.signature(vae.VAEAttentionBlock).parameters) == ()
     builder_source = inspect.getsource(vae.build_ecgtwin_vae)

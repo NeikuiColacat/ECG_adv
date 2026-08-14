@@ -35,6 +35,7 @@ ECGTWIN_TO_PTBXL_INDICES = (0, 1, 2, 3, 5, 4, 6, 7, 8, 9, 10, 11)
 @dataclass(frozen=True)
 class VAEConfig:
     checkpoint_path: Path
+    checkpoint_sha256: str
     expected_encoder_state_keys: int
     expected_decoder_state_keys: int
 
@@ -73,6 +74,13 @@ def load_vae_config(path: str | Path = DEFAULT_VAE_CONFIG_PATH) -> VAEConfig:
     checkpoint_path = _resolve_project_path(
         model.get("checkpoint_path"), description="model.checkpoint_path"
     )
+    checkpoint_sha256 = contract.get("checkpoint_sha256")
+    if (
+        not isinstance(checkpoint_sha256, str)
+        or len(checkpoint_sha256) != 64
+        or set(checkpoint_sha256) - set("0123456789abcdef")
+    ):
+        raise ValueError("VAE checkpoint_contract.checkpoint_sha256 must be SHA256")
     input_shape = (
         int(model.get("input_points", 0)),
         int(model.get("input_channels", 0)),
@@ -88,6 +96,7 @@ def load_vae_config(path: str | Path = DEFAULT_VAE_CONFIG_PATH) -> VAEConfig:
         raise ValueError("online AT requires a frozen eval-mode VAE with strict loading")
     return VAEConfig(
         checkpoint_path=checkpoint_path,
+        checkpoint_sha256=checkpoint_sha256,
         expected_encoder_state_keys=expected_encoder_state_keys,
         expected_decoder_state_keys=expected_decoder_state_keys,
     )
@@ -309,6 +318,9 @@ def build_ecgtwin_vae(
 
     config = load_vae_config(config_path)
     path = config.checkpoint_path if checkpoint_path is None else Path(checkpoint_path)
+    digest = sha256_file(path)
+    if digest != config.checkpoint_sha256:
+        raise ValueError("ECGTwin VAE checkpoint SHA256 differs from the locked config")
     resolved, payload = load_checkpoint_payload(path, map_location=map_location)
     if not isinstance(payload, Mapping):
         raise ValueError("ECGTwin VAE checkpoint must be a mapping")
@@ -325,7 +337,6 @@ def build_ecgtwin_vae(
     decoder = VAEDecoder()
     encoder.load_state_dict(encoder_state, strict=True)
     decoder.load_state_dict(decoder_state, strict=True)
-    digest = sha256_file(resolved)
     encoder.checkpoint_identity = _component_identity(
         resolved, digest, encoder_state
     )

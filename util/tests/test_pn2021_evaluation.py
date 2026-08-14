@@ -1441,7 +1441,7 @@ def _expected_matrix_cohort(paths: list[Path]) -> dict:
     return {
         **{key: cohort[key] for key in (
             "model_name", "method", "comparison", "source_checkpoint",
-            "selection", "seed", "adaptation",
+            "method_resources", "selection", "seed", "adaptation",
         )},
         "center_adaptation": {
             context["lineage"]["center"]: {
@@ -1451,6 +1451,8 @@ def _expected_matrix_cohort(paths: list[Path]) -> dict:
             for context in contexts
         },
         "training_config_sha256": cohort["training"]["config_sha256"],
+        "epochs_completed": cohort["training"]["epochs_completed"],
+        "optimizer_steps": cohort["training"]["optimizer_steps"],
         "evaluation_config_sha256": cohort["evaluation"]["config_sha256"],
         "artifact_locks": cohort["evaluation"]["artifact_locks"],
     }
@@ -1571,7 +1573,10 @@ def test_matrix_rehashes_adapted_checkpoint_bytes(
         checkpoint.write_bytes(original)
 
 
-@pytest.mark.parametrize("attack", ["model", "recipe", "replicate", "eval_config"])
+@pytest.mark.parametrize(
+    "attack",
+    ["model", "recipe", "replicate", "resources", "epochs", "steps", "eval_config"],
+)
 def test_matrix_rejects_coherent_cohort_outside_config_lock(
     matrix_members: list[Path], attack: str,
 ) -> None:
@@ -1582,6 +1587,12 @@ def test_matrix_rejects_coherent_cohort_outside_config_lock(
         expected["method"]["recipe_id"] = "coherent_wrong_recipe"
     elif attack == "replicate":
         expected["comparison"]["replicate_id"] = 1
+    elif attack == "resources":
+        expected["method_resources"] = {"vae": {"config_sha256": "0" * 64}}
+    elif attack == "epochs":
+        expected["epochs_completed"] += 1
+    elif attack == "steps":
+        expected["optimizer_steps"] += 1
     else:
         expected["evaluation_config_sha256"] = "0" * 64
     with pytest.raises(ValueError, match="config-owned expected cohort"):
