@@ -1,5 +1,5 @@
 schema_version: 2
-updated: 2026-08-14
+updated: 2026-08-15
 purpose: >
   Declare the executable surface of the clean-room manual refactor. Paths not
   owned by the keep manifest are not active runtime dependencies.
@@ -40,21 +40,21 @@ launch_surface_policy:
 
 latest_mainline:
   method: augmix_simclr_lhat
-  status: locked_prospective_effnet_e25_replication_recipe
-  evidence_level: prospective_unrun_e25_with_historical_e23_development_support
+  status: locked_minimal_final_development_recipe
+  evidence_level: single_seed_four_center_development_evidence_pending_exact_identity_rerun
   paper_claim_allowed: false
   launcher: boot_scripts/run_experiment.py
   current_implementation:
-    status: current_head_cpu_contract_verified_cuda_smoke_pending
+    status: locked_minimal_code_pending_exact_identity_gpu_execution
     implementation_identity: finite_recipe_spec_v1
     selector: configs/train/methods/augmix_simclr_lhat.yaml
     schema_version: 2
-    selector_file_sha256: eab7f244dde52e2b60a95f1b922d446b97ff90f60762d4b9d744b0c8022036a1
+    selector_file_sha256: f08d8555b1591021c85c19219d5284f2a0321bf0d5829955fac8b796e73b35d6
     recipe_id: augmix_simclr_lhat
     kind: two_stage_augmix_lhat
     auxiliary_variant: contracted_lhat
     recipe_version: 1
-    recipe_spec_sha256: de3d6948a9efc974405b7382d45653f93032a34ac2fd88637172ed731d876602
+    recipe_spec_sha256: 6245e89f572b49bd24f5d688bda7d3f8b16fa4972051353afa311d007cd9f675
     artifact_lineage:
       training_lineage:
         schema_version: 2
@@ -131,7 +131,7 @@ latest_mainline:
       config: configs/train/vae.yaml
       config_sha256: 2d157d89a13c4a2e1b5ee75236a034b2f3350e2d88e9e5b1187ab1cf0527f74a
       checkpoint_sha256: c2b4ef8060e412bd503f46b66dd44fc460e67a89de0ae1809dcc771358b3fa93
-    gpu_replication_status: ancestor_diagnostic_smoke_only_current_head_pending
+    gpu_replication_status: scientific_equivalent_precursor_complete_exact_locked_identity_pending
     prospective_run_root: /home/linbinhao/ECG_adv_data/runs/manual_refactor_paper_kernel_v2_recipe_v1_r1
   primary_metric_view: drop_all_zero
   mapping:

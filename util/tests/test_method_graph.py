@@ -75,7 +75,7 @@ RECIPE_CASES = [
      ("classifier", "vae_decoder", "latent_pool"),
      (("clean_bce", "bce", 1.0), ("lhat_direct_bce", "bce", 1.0),
       ("corrupted_bce", "bce", 1.0)),
-     "de3d6948a9efc974405b7382d45653f93032a34ac2fd88637172ed731d876602"),
+     "6245e89f572b49bd24f5d688bda7d3f8b16fa4972051353afa311d007cd9f675"),
 ]
 
 
@@ -96,6 +96,29 @@ def test_v2_recipe_files_are_finite_resource_closed_characterizations(
     assert recipe.requires_vae == ("lhat_view" in recipe.output_names)
     assert not hasattr(recipe, "objective") and not hasattr(recipe, "requirements")
     assert recipe.recipe_sha256 == sha
+
+
+def test_locked_mainline_is_the_minimal_contracted_lhat_recipe() -> None:
+    recipe = load_recipe_spec(RECIPES / "augmix_simclr_lhat.yaml")
+    contract = recipe.scientific_contract
+    assert contract["stage1"]["pretrain_logit_anchor_weight"] == 5.0
+    assert contract["stage2_teacher"] == "disabled"
+    assert contract["stage2_supervised_logit_anchor_weight_by_backbone"] == {
+        "efficientnet1dv2": 0.0,
+        "ecgfounder": 0.0,
+    }
+    config = lhat.load_lhat_config(CONFIG_ROOT / "train" / "lhat.yaml")
+    assert (config.num_candidates, config.hull_lambda, config.pgd_epsilon) == (
+        20,
+        1.0,
+        12.0,
+    )
+    assert (config.steps, config.learning_rate) == (1, 0.25)
+    assert config.attack_objective == "maximize_multilabel_bce_with_logits"
+    assert config.attack_then_contract.enabled is True
+    assert config.attack_then_contract.endpoint_residual_correction == (
+        "linear_clean_hard_endpoint"
+    )
 
 
 def test_loader_removes_dag_plugins_and_allows_only_the_matched_no_vae_slot() -> None:
@@ -188,14 +211,17 @@ def test_loader_removes_dag_plugins_and_allows_only_the_matched_no_vae_slot() ->
     assert tuple(recipe.resources) == ("operator_profile", "augmix_config", "corruption_rng")
     assert recipe.comparison_rng_identity == "augmix_simclr_lhat"
     assert recipe.recipe_sha256 == (
-        "c831f5a20a517b1ac72e432f506ea1fa47ad3a686226f13dc9eda690748272dc"
+        "b2b140ef2e4d440769b14f35b02ca61ba3951502fd7699a276a821ee202ae0f0"
     )
     assert recipe.objective_terms == (
         ("clean_bce", "clean_view"),
         ("corrupted_bce", "corrupted_view"),
     )
     assert not recipe.requires_vae
-    assert recipe.scientific_contract["stage2_teacher"] == "post_stage1_pre_stage2_snapshot"
+    assert recipe.scientific_contract["stage2_teacher"] == "disabled"
+    assert recipe.scientific_contract[
+        "stage2_supervised_logit_anchor_weight_by_backbone"
+    ] == {"efficientnet1dv2": 0.0, "ecgfounder": 0.0}
     with pytest.raises(TypeError, match="loader-owned"):
         method_registry.RecipeSpec()
     with pytest.raises(TypeError, match="loader-owned"):

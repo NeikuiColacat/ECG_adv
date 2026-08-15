@@ -653,7 +653,10 @@ def test_finite_exposure_plans_lock_direct21_a1_rotating5_mainline6() -> None:
     assert [s.name for s in matched_steps] == [
         "clean", "corruption_00", "corruption_01", "corruption_10", "corruption_11"]
     assert matched.scientific_contract["stages"] == ("augmix_simclr", "supervised_adaptation")
-    assert matched.scientific_contract["stage2_teacher"] == "post_stage1_pre_stage2_snapshot"
+    assert matched.scientific_contract["stage2_teacher"] == "disabled"
+    assert matched.scientific_contract[
+        "stage2_supervised_logit_anchor_weight_by_backbone"
+    ] == {"efficientnet1dv2": 0.0, "ecgfounder": 0.0}
 
 
 def test_empty_lhat_auxiliary_is_an_empty_gradient_sum() -> None:

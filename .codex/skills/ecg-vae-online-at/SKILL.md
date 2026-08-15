@@ -25,12 +25,14 @@ Do not turn the project into a generic adversarial-robustness benchmark. The
 goal is better external-center AUROC/AUPRC from realistic VAE latent
 augmentation.
 
-Current locked geometry is `M=20`, hull lambda `0.6`, standardized L2 epsilon
-`12`, ten attack steps, and contraction coefficients
-`[0.25, 0.5, 0.75, 1.0]`. Do not substitute older include-anchor,
-compatible-label, low-lambda, or selector recipes without declaring an
-ablation. Historical evidence below is diagnostic provenance, not a current
-launch recipe.
+Current locked geometry is nearest exact-positive-set non-self `M=20`, hull
+lambda `1.0`, standardized L2 epsilon `12`, one attack step, and contraction
+coefficients `[0.25, 0.5, 0.75, 1.0]` with linear clean/hard endpoint residual
+correction. Stage 1 retains the frozen PTB-XL source-logit anchor; Stage 2 has
+no teacher-anchor path. Do not substitute older include-anchor,
+compatible-label, low-lambda, multi-step, or raw-uncontracted recipes without
+declaring an ablation. Historical evidence below is diagnostic provenance, not
+a current launch recipe.
 
 ## Integrity Rules
 

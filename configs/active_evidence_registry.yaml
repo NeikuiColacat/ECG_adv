@@ -1,5 +1,5 @@
 schema_version: 3
-updated: 2026-08-14
+updated: 2026-08-15
 purpose: >
   Separate the current prospective manual-refactor recipe from historical
   trusted evidence. A launch config is not evidence by itself.
@@ -104,15 +104,18 @@ data_contract:
       - runtime_quick_verification_does_not_rehash_payload_bytes
 
 active_development_mainline:
-  lock_id: aligned_targetonly_augmix_lhat_simplified_20260805
-  status: e23_development_evidence_superseded_by_e25_prospective_recipe
+  lock_id: aligned_targetonly_augmix_lhat_minimal_final_20260815
+  status: locked_single_seed_development_recipe_pending_independent_repeats
   paper_use: development_only
   paper_claim_allowed: false
-  prospective_replacement:
-    lock_id: aligned_targetonly_augmix_lhat_effnet_e25_20260814
-    status: locked_config_unrun
+  final_lock:
+    status: code_and_config_locked_exact_identity_execution_pending
     training_config: configs/train/PN2021.yaml
-    training_config_sha256: 80a831861b7a72c658e66e4df92b2640c12ec4766c9880a65d7eeb0d4d952e76
+    training_config_sha256: 2e00752b89c11a1879b2f47727ded979824f782c4d588f04c9d02cd67a3f9166
+    method_config: configs/train/methods/augmix_simclr_lhat.yaml
+    method_config_sha256: f08d8555b1591021c85c19219d5284f2a0321bf0d5829955fac8b796e73b35d6
+    lhat_config: configs/train/lhat.yaml
+    lhat_config_sha256: f68dcbb4b5997c99d3667aa3deecfd6ea332310f587bc1d3f3a4ba93bcf9d308
     efficientnet1dv2:
       stage1_steps: 1024
       stage2_epochs: 25
@@ -123,12 +126,18 @@ active_development_mainline:
     baseline_evidence: prospective_single_seed_development_not_paper_final
     vae_config_sha256: 2d157d89a13c4a2e1b5ee75236a034b2f3350e2d88e9e5b1187ab1cf0527f74a
     vae_checkpoint_sha256: c2b4ef8060e412bd503f46b66dd44fc460e67a89de0ae1809dcc771358b3fa93
-    result_evidence: unavailable_until_new_e25_execution
+    result_evidence: scientific_equivalent_precursor_available_exact_locked_identity_pending
   selection:
     decision: user_directed_simplification_override_after_development_search
-    candidate_count: 94
-    efficientnet1dv2_candidate_count: 52
-    ecgfounder_candidate_count: 42
+    historical_candidate_count_before_final_minimal_sweep: 94
+    historical_efficientnet1dv2_candidate_count: 52
+    historical_ecgfounder_candidate_count: 42
+    final_minimal_sweep_arms:
+      - min_ref
+      - no_source_anchor
+      - no_endpoint_residual
+      - raw_lhat_with_source_anchor
+      - raw_lhat_without_source_anchor
     original_preregistered_gate_pass_count: 0
     independent_test_evidence: false
     feedback_scope: four_center_ref_excluded_clean_and_pn2021c_development_scores
@@ -150,34 +159,35 @@ active_development_mainline:
       clean_family_weight: 0.5
       corrupted_family_weight: 0.5
       corruption_schedule: rotating_two_depth2_plus_two_depth3
-      supervised_logit_anchor_teacher: frozen_post_stage1_pre_stage2_snapshot
+      supervised_logit_anchor_teacher: disabled
       auxiliary_gradient_merge: direct_sum
     vae_lhat:
       neighbor_policy: exact_positive_set_nonself
       num_candidates: 20
-      hull_lambda: 0.6
+      hull_lambda: 1.0
       pgd_epsilon_l2_standardized: 12.0
-      steps: 10
+      steps: 1
       learning_rate: 0.25
       attack_objective: maximize_multilabel_bce_with_logits
       contract_version: preflip_maxloss_grid_v1
       t_values: [0.25, 0.5, 0.75, 1.0]
       margin_retention: 0.5
       selection: maximum_bce_without_new_clean_correct_flip
+      endpoint_residual_correction: linear_clean_hard_endpoint
       auxiliary_alpha: 2.0
     backbone_optimization:
       efficientnet1dv2:
         stage1_steps: 1024
-        stage2_epochs: 23
+        stage2_epochs: 25
         stage2_learning_rate: 0.00005
         batch_size: 128
-        supervised_logit_anchor_weight: 2.0
+        supervised_logit_anchor_weight: 0.0
       ecgfounder:
         stage1_steps: 256
         stage2_epochs: 30
         stage2_learning_rate: 0.00003
         batch_size: 64
-        supervised_logit_anchor_weight: 0.5
+        supervised_logit_anchor_weight: 0.0
     excluded:
       - stage1_vae_lhat_tail
       - anchor_kl_attack_objective
@@ -187,7 +197,9 @@ active_development_mainline:
       - pcgrad
       - multistart
       - residual_head
-  development_metrics:
+      - stage2_teacher_anchor
+      - multi_step_lhat_attack
+  superseded_development_metrics_20260805:
     metric_order: [clean_auroc, clean_auprc, pn2021c_auroc, pn2021c_auprc]
     efficientnet1dv2:
       source_only: [0.8545268941, 0.6090569820, 0.7930014653, 0.5152507843]
@@ -203,6 +215,56 @@ active_development_mainline:
       full_method: [0.9144271304, 0.7152661313, 0.8924564865, 0.6775164888]
       full_minus_locked_direct_pp: [0.413595, 1.813045, 3.926709, 6.634015]
       vae_matched_increment_pp: [0.297313, 0.784213, 0.026149, 0.270849]
+  final_minimal_development_metrics_20260815:
+    role: scientific_equivalent_precursor_evidence_not_exact_locked_recipe_identity
+    run_root: /home/linbinhao/ECG_adv_data/runs/lhat_extreme_min_fourcenter_r0_20260815
+    method_id: augmix_simclr_lhat_min_ref
+    method_recipe_spec_sha256: ec3e28b84e309c6b71388be344dea8b8f9f86263da1a51451548e478ed02c4b0
+    equivalence:
+      same_stage1_source_anchor: true
+      same_stage2_teacher_weight_zero: true
+      precursor_retained_zero_weight_teacher_compute: true
+      locked_runtime_removes_zero_weight_teacher_compute: true
+      same_lhat_config_values: true
+      exact_identity_rerun_required: true
+    metric_order: [clean_auroc, clean_auprc, pn2021c_depth23_auroc, pn2021c_depth23_auprc]
+    efficientnet1dv2:
+      four_center_mean: [0.8712262358, 0.6515956839, 0.8599257260, 0.6263499294]
+      matrix_result_sha256: 0ccc532f95162dc05073aa389bb463c8bb7dcc304cac503b769df7f3e9d859e5
+    ecgfounder:
+      four_center_mean: [0.9146596043, 0.7172602581, 0.8902053346, 0.6770730592]
+      matrix_result_sha256: 45d1654621ba9186bb54dddfc3f09f6aac039b5009f6cee86023378e6820b1c0
+    limitations:
+      - single_seed_development_evidence
+      - recipe_selected_after_four_center_feedback
+      - not_a_final_paper_claim
+  final_minimal_lhat_diagnostics_20260815:
+    scope: all_candidate_training_diagnostics_aggregated_across_four_centers_and_all_epochs
+    efficientnet1dv2:
+      raw_search_sample_anyflip_asr: 0.4296993735
+      contract_acceptance_rate: 0.9402837625
+      contracted_training_anyflip_asr: 0.0
+      accepted_selected_t_mean: 0.5797715384
+      accepted_bce_gain_mean: 0.0306018271
+      decoded_invalid_rate: 0.0
+      training_history_sha256_by_center:
+        ningbo: 3930cc39968bc16e4642069946fc4e792c80af31868d0b9f35ce36bcca33d8ee
+        chapman_shaoxing: 741f3341d8c91e2d67b692cf6fa55d1a2b91bde4041d0959750edc9cebd04bf5
+        cpsc_2018: 69a56763d4c50bf4e05df28f48518041618d5ae1ad65cbf345b189abac5811df
+        georgia: 5070fceb2aa4224591b1e1b39a5bcd406318c85a860f7823d66271afedd2c1c5
+    ecgfounder:
+      raw_search_sample_anyflip_asr: 0.4044907168
+      contract_acceptance_rate: 0.9520231214
+      contracted_training_anyflip_asr: 0.0
+      accepted_selected_t_mean: 0.5696951298
+      accepted_bce_gain_mean: 0.0128132429
+      decoded_invalid_rate: 0.0
+      training_history_sha256_by_center:
+        ningbo: 8ff0fd624a8bd6269586776e36a9e2b960b8739ecdbffed4e4b4f0a5b146df6a
+        chapman_shaoxing: 737a4459d6820297bacbb32ac6a95929f3045830830b447ce74073f124e19187
+        cpsc_2018: d6accb44ec6ed9711e508778e5febcc5d6624a5a6fae11f705439c9497fddf20
+        georgia: 1dcf6de7cb17d48679d2a14633475ef49a6149e5a6c6bd8ad1b0eaa00bf44dfe
+    evidence_status: corrected_all_candidate_scope_available
   diagnostic_integrity:
     status: legacy_accepted_subset_quarantined
     cause: accepted_mask_applied_before_diagnostic_persistence
@@ -290,32 +352,32 @@ active_development_mainline:
       legacy_paths_embedded_inside_machine_lock: historical_hash_only_provenance
       runtime_may_open_embedded_legacy_paths: false
   managed_implementation:
-    status: current_head_cpu_contract_verified_cuda_smoke_pending
+    status: locked_minimal_code_pending_exact_identity_gpu_execution
     implementation_identity: finite_recipe_spec_v1
     launcher: boot_scripts/run_experiment.py
     canonical_experiment: configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_ningbo.yaml
     online_config: configs/train/PN2021.yaml
-    online_config_sha256: 80a831861b7a72c658e66e4df92b2640c12ec4766c9880a65d7eeb0d4d952e76
+    online_config_sha256: 2e00752b89c11a1879b2f47727ded979824f782c4d588f04c9d02cd67a3f9166
     method_config: configs/train/methods/augmix_simclr_lhat.yaml
     trainer: core/online_trainer.py
     recipe_identity:
       schema_version: 2
-      selector_file_sha256: eab7f244dde52e2b60a95f1b922d446b97ff90f60762d4b9d744b0c8022036a1
+      selector_file_sha256: f08d8555b1591021c85c19219d5284f2a0321bf0d5829955fac8b796e73b35d6
       recipe_id: augmix_simclr_lhat
       kind: two_stage_augmix_lhat
       auxiliary_variant: contracted_lhat
       recipe_version: 1
       implementation_identity: finite_recipe_spec_v1
-      recipe_spec_sha256: de3d6948a9efc974405b7382d45653f93032a34ac2fd88637172ed731d876602
+      recipe_spec_sha256: 6245e89f572b49bd24f5d688bda7d3f8b16fa4972051353afa311d007cd9f675
       spec_hash_scope: schema_v2_declaration_plus_code_owned_scientific_contract
       resolved_config_sha256:
         augmentation/operators.yaml: cfc4e243f569226a8f444a38d9dd4fbc00ccf7de724c47886dcc9319b9c790cc
         train/augmix.yaml: 51e7ebb6d7bc9eeded20f585d7836a2967e1306c2173cfc7c7c2fd603549b00f
         train/vae.yaml: 2d157d89a13c4a2e1b5ee75236a034b2f3350e2d88e9e5b1187ab1cf0527f74a
-        train/lhat.yaml: 2d1cf2550932f2d2b1cc6fa5893ab4226cb0010e6dbf16be0e8cc6f3ada3a824
+        train/lhat.yaml: f68dcbb4b5997c99d3667aa3deecfd6ea332310f587bc1d3f3a4ba93bcf9d308
         random_seed.yaml: 8b337606c43b6fec2959dd185477ce32f48b139f5fce5112ee26efe58eb4bbbc
     runtime_imports_agent_workspace: false
-    gpu_replication_status: ancestor_diagnostic_smoke_only_current_head_pending
+    gpu_replication_status: scientific_equivalent_precursor_complete_exact_locked_identity_pending
     prospective_run_root: /home/linbinhao/ECG_adv_data/runs/manual_refactor_paper_kernel_v2_recipe_v1_r1
   prospective_replication_20260806:
     role: historical_metric_evidence_from_pre_recipe_runtime

@@ -12,7 +12,7 @@ profiles:
       method: &method
         recipe_id: augmix_simclr_lhat
         scientific_arm: augmix_simclr_lhat
-        recipe_spec_sha256: de3d6948a9efc974405b7382d45653f93032a34ac2fd88637172ed731d876602
+        recipe_spec_sha256: 6245e89f572b49bd24f5d688bda7d3f8b16fa4972051353afa311d007cd9f675
         implementation_identity: finite_recipe_spec_v1
         recipe_version: 1
         kind: two_stage_augmix_lhat
@@ -61,7 +61,7 @@ profiles:
           source_centers: [georgia]
           hash_id_set_sha256: 9d407e4d4b2bc1f23667ffb574e54ddf99cf2e72ecc207df17c5bfe589f4c3c0
           split_manifest_sha256: d346f63a8bc01f29a088cf482cb479f3045c97ac6d781659555a333cf1a77eb4
-      training_config_sha256: &train_config 80a831861b7a72c658e66e4df92b2640c12ec4766c9880a65d7eeb0d4d952e76
+      training_config_sha256: &train_config 2e00752b89c11a1879b2f47727ded979824f782c4d588f04c9d02cd67a3f9166
       epochs_completed: 25
       optimizer_steps: 100
       evaluation_config_sha256: &eval_config 0159928d8825ae60908b93285cd075d59a0ee136716c40cdea72094d6b825daf

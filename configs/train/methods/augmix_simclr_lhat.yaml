@@ -5,7 +5,7 @@ recipe:
   kind: two_stage_augmix_lhat
   auxiliary_variant: contracted_lhat
   scientific_arm: augmix_simclr_lhat
-  status: locked_prospective_replication_recipe
+  status: locked_minimal_final_development_recipe
 
 resources:
   operator_profile:

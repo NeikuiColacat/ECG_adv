@@ -25,8 +25,8 @@ candidates:
 hull_attack:
   weight_mode: optimized_softmax
   init_logit_gap: 0.0
-  hull_lambda: 0.60
-  steps: 10
+  hull_lambda: 1.0
+  steps: 1
   learning_rate: 0.25
   pgd_epsilon_l2_standardized: 12.0
   objective: maximize_multilabel_bce_with_logits

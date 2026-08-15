@@ -174,7 +174,7 @@ _DEFINITIONS: Mapping[str, _RecipeDefinition] = MappingProxyType(
             RecipeKind.TWO_STAGE_AUGMIX_LHAT,
             AuxiliaryVariant.CONTRACTED_LHAT,
             "augmix_simclr_lhat",
-            "locked_prospective_replication_recipe",
+            "locked_minimal_final_development_recipe",
             _MAINLINE_RESOURCES,
             "augmix_simclr_lhat",
             ("clean_view", "lhat_view", "corrupted_view"),
@@ -277,10 +277,10 @@ def _execution_contract(
                     "vicreg_weight": 0.0,
                     "vae_lhat_tail_fraction": 0.0,
                 },
-                "stage2_teacher": "post_stage1_pre_stage2_snapshot",
+                "stage2_teacher": "disabled",
                 "stage2_supervised_logit_anchor_weight_by_backbone": {
-                    "efficientnet1dv2": 2.0,
-                    "ecgfounder": 0.5,
+                    "efficientnet1dv2": 0.0,
+                    "ecgfounder": 0.0,
                 },
                 "exposure_policy": (
                     "clean_aux_once_then_rotating_depth23_2plus2"

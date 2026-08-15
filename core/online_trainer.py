@@ -2085,8 +2085,17 @@ def train_online_model(
     epsilon = float(config.payload["data"]["normalization_epsilon"])
     staged_method = recipe.kind is RecipeKind.TWO_STAGE_AUGMIX_LHAT
     stage1_summary: dict[str, Any] | None = None
-    stage2_teacher_cache: dict[str, torch.Tensor] | None = None
     if staged_method:
+        if (
+            recipe.scientific_contract.get("stage2_teacher") != "disabled"
+            or recipe.scientific_contract.get(
+                "stage2_supervised_logit_anchor_weight_by_backbone"
+            )
+            != {"efficientnet1dv2": 0.0, "ecgfounder": 0.0}
+        ):
+            raise RuntimeError(
+                "the locked two-stage recipe requires the Stage-2 teacher to be disabled"
+            )
         if int(resolved["stage1_steps"]) <= 0:
             raise ValueError("AugMix-SimCLR mainline requires Stage-1 steps")
         if runtime.augmix_config is None:
@@ -2126,17 +2135,11 @@ def train_online_model(
             "path": str(stage1_checkpoint),
             "sha256": sha256_file(stage1_checkpoint),
         }
-        stage2_teacher_cache = _cache_k500_logits(
-            model,
-            train_dataloader,
-            spec=spec,
-            device=resolved_device,
-            normalization_epsilon=epsilon,
-        )
         method_resource_identity["stage1"] = stage1_summary
         method_resource_identity["stage2_teacher"] = {
-            "scope": "frozen_post_stage1_pre_stage2_logits_on_bound_k500",
-            "record_count": len(stage2_teacher_cache),
+            "scope": "disabled",
+            "record_count": 0,
+            "anchor_weight": 0.0,
         }
         _write_json(method_resources_path, method_resource_identity)
     model_identity = _model_identity(model, spec)
@@ -2441,56 +2444,6 @@ def train_online_model(
                                 None if grouped_exposure else batch_norm_plan
                             ),
                         )
-                        if staged_method and exposure_name == "clean":
-                            if stage2_teacher_cache is None:
-                                raise RuntimeError(
-                                    "Stage-2 teacher cache is unavailable"
-                                )
-                            teacher_logits = _teacher_logits_for_hashes(
-                                stage2_teacher_cache,
-                                hashes,
-                                device=resolved_device,
-                            )
-                            clean_input = prepare_canonical_model_input(
-                                raw,
-                                spec,
-                                epsilon=epsilon,
-                            )
-                            # Keep the preservation contexts alive through
-                            # backward. BatchNorm saves its running buffers for
-                            # gradient computation, so restoring them before
-                            # backward increments their version counter and
-                            # invalidates the clean logit-anchor graph.
-                            auxiliary_state.enter_context(
-                                _preserve_batch_norm_buffers(model)
-                            )
-                            auxiliary_state.enter_context(
-                                _preserve_torch_rng(resolved_device)
-                            )
-                            student_logits = validate_model_output(
-                                model(clean_input),
-                                spec,
-                                batch_size=batch_size,
-                                check_finite=False,
-                            )
-                            anchor_loss = _weighted_logit_anchor_loss(
-                                student_logits,
-                                teacher_logits,
-                                (1.0, 1.0, 1.0, 1.0, 1.0),
-                            )
-                            anchor_weight = {
-                                EFFICIENTNET1DV2_SPEC.name: 2.0,
-                                ECGFOUNDER_SPEC.name: 0.5,
-                            }[spec.name]
-                            objective = _ObjectiveBatch(
-                                total=objective.total
-                                + anchor_loss
-                                * anchor_weight
-                                / family_loss_scale,
-                                raw_terms=objective.raw_terms,
-                                weighted_terms=objective.weighted_terms,
-                                valid_counts=objective.valid_counts,
-                            )
                     objective_finite = torch.isfinite(objective.total)
                     if grouped_exposure:
                         if grouped_loss_finite is None:

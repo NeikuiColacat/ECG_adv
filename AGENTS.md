@@ -143,9 +143,11 @@ Method contract:
 - No Stage-1 VAE tail, VICReg, PTB-XL replay, or residual head.
 - Stage 2 weights clean and corruption families `0.5 / 0.5`.
 - The corruption schedule rotates two depth-2 and two depth-3 views.
-- The logit-anchor teacher is a frozen post-Stage-1/pre-Stage-2 snapshot.
-- VAE-LHAT uses exact-label non-self neighbors, `M=20`, hull lambda `0.6`,
-  standardized L2 epsilon `12`, ten steps, and attack-then-contract selection.
+- The Stage-1 frozen PTB-XL source logit anchor is retained; the Stage-2
+  post-Stage-1 logit-anchor teacher is disabled.
+- VAE-LHAT uses nearest exact-label non-self neighbors, `M=20`, hull lambda
+  `1.0`, standardized L2 epsilon `12`, one attack step, and attack-then-contract
+  selection with linear clean/hard endpoint residual correction.
 - Base and VAE auxiliary gradients are added directly; PCGrad is excluded.
 - The current recipe is heldout-tuned, single-seed development evidence, not a
   final paper claim.
