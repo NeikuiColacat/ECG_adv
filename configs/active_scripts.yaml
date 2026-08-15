@@ -41,11 +41,11 @@ launch_surface_policy:
 latest_mainline:
   method: augmix_simclr_lhat
   status: locked_minimal_final_development_recipe
-  evidence_level: single_seed_four_center_development_evidence_pending_exact_identity_rerun
+  evidence_level: exact_locked_identity_single_seed_four_center_development_evidence
   paper_claim_allowed: false
   launcher: boot_scripts/run_experiment.py
   current_implementation:
-    status: locked_minimal_code_pending_exact_identity_gpu_execution
+    status: exact_locked_identity_single_seed_four_center_execution_complete
     implementation_identity: finite_recipe_spec_v1
     selector: configs/train/methods/augmix_simclr_lhat.yaml
     schema_version: 2
@@ -55,6 +55,8 @@ latest_mainline:
     auxiliary_variant: contracted_lhat
     recipe_version: 1
     recipe_spec_sha256: 6245e89f572b49bd24f5d688bda7d3f8b16fa4972051353afa311d007cd9f675
+    matrix_config: configs/eval/PN2021_matrix.yaml
+    matrix_config_sha256: bc9872810010a0dc633424776d2ae11bfa330cf738e9377deeb61a50346856d6
     artifact_lineage:
       training_lineage:
         schema_version: 2
@@ -131,8 +133,8 @@ latest_mainline:
       config: configs/train/vae.yaml
       config_sha256: 2d157d89a13c4a2e1b5ee75236a034b2f3350e2d88e9e5b1187ab1cf0527f74a
       checkpoint_sha256: c2b4ef8060e412bd503f46b66dd44fc460e67a89de0ae1809dcc771358b3fa93
-    gpu_replication_status: scientific_equivalent_precursor_complete_exact_locked_identity_pending
-    prospective_run_root: /home/linbinhao/ECG_adv_data/runs/manual_refactor_paper_kernel_v2_recipe_v1_r1
+    gpu_replication_status: exact_locked_identity_single_seed_four_center_complete
+    exact_run_root: /home/linbinhao/ECG_adv_data/runs/manual_refactor_paper_kernel_v2_recipe_v1_r1
   primary_metric_view: drop_all_zero
   mapping:
     version: v7_super5_sjr_rgq_review_20260528
@@ -187,7 +189,7 @@ latest_mainline:
       backbones: [efficientnet1dv2, ecgfounder]
       centers: [ningbo, chapman_shaoxing, cpsc_2018, georgia]
     tracked_mainline_examples:
-      status: configured_recipe_v1_matrix_not_run
+      status: exact_locked_identity_single_seed_matrix_complete_20260815
       training_configs:
         - configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_ningbo.yaml
         - configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_chapman_shaoxing.yaml

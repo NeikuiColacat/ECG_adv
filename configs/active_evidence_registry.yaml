@@ -39,7 +39,7 @@ data_contract:
     view_count: 20
     domain: raw_mV_before_per_sample_global_zscore
   prospective_managed_runtime:
-    status: implemented_cpu_and_diagnostic_cuda_smoke_verified_not_full_replication
+    status: implemented_and_exact_single_seed_four_center_gpu_replication_verified
     ptbxl_training_config:
       path: configs/train/PTBXL.yaml
       sha256: 27852a7dfcdb65fdec348b524083beaa2c91d4942965b7c57ccc1d5b255329cf
@@ -109,13 +109,15 @@ active_development_mainline:
   paper_use: development_only
   paper_claim_allowed: false
   final_lock:
-    status: code_and_config_locked_exact_identity_execution_pending
+    status: executed_exact_identity_single_seed_development
     training_config: configs/train/PN2021.yaml
     training_config_sha256: 2e00752b89c11a1879b2f47727ded979824f782c4d588f04c9d02cd67a3f9166
     method_config: configs/train/methods/augmix_simclr_lhat.yaml
     method_config_sha256: f08d8555b1591021c85c19219d5284f2a0321bf0d5829955fac8b796e73b35d6
     lhat_config: configs/train/lhat.yaml
     lhat_config_sha256: f68dcbb4b5997c99d3667aa3deecfd6ea332310f587bc1d3f3a4ba93bcf9d308
+    matrix_config: configs/eval/PN2021_matrix.yaml
+    matrix_config_sha256: bc9872810010a0dc633424776d2ae11bfa330cf738e9377deeb61a50346856d6
     efficientnet1dv2:
       stage1_steps: 1024
       stage2_epochs: 25
@@ -126,7 +128,7 @@ active_development_mainline:
     baseline_evidence: prospective_single_seed_development_not_paper_final
     vae_config_sha256: 2d157d89a13c4a2e1b5ee75236a034b2f3350e2d88e9e5b1187ab1cf0527f74a
     vae_checkpoint_sha256: c2b4ef8060e412bd503f46b66dd44fc460e67a89de0ae1809dcc771358b3fa93
-    result_evidence: scientific_equivalent_precursor_available_exact_locked_identity_pending
+    result_evidence: exact_locked_identity_clean_pn2021c_and_lhat_diagnostics_available
   selection:
     decision: user_directed_simplification_override_after_development_search
     historical_candidate_count_before_final_minimal_sweep: 94
@@ -215,7 +217,7 @@ active_development_mainline:
       full_method: [0.9144271304, 0.7152661313, 0.8924564865, 0.6775164888]
       full_minus_locked_direct_pp: [0.413595, 1.813045, 3.926709, 6.634015]
       vae_matched_increment_pp: [0.297313, 0.784213, 0.026149, 0.270849]
-  final_minimal_development_metrics_20260815:
+  scientific_equivalent_precursor_metrics_20260815:
     role: scientific_equivalent_precursor_evidence_not_exact_locked_recipe_identity
     run_root: /home/linbinhao/ECG_adv_data/runs/lhat_extreme_min_fourcenter_r0_20260815
     method_id: augmix_simclr_lhat_min_ref
@@ -238,7 +240,48 @@ active_development_mainline:
       - single_seed_development_evidence
       - recipe_selected_after_four_center_feedback
       - not_a_final_paper_claim
-  final_minimal_lhat_diagnostics_20260815:
+  exact_locked_identity_evidence_20260815:
+    role: current_locked_recipe_single_seed_development_evidence
+    run_root: /home/linbinhao/ECG_adv_data/runs/manual_refactor_paper_kernel_v2_recipe_v1_r1
+    execution:
+      training_and_evaluation_git_sha: 672ac71a4086f41a4692c30803401bcb05b3b19b
+      matrix_aggregation_git_sha: 879aa10b570d210a755d8464e26a01fe5728dd2c
+      git_dirty: false
+      matrix_config_sha256: bc9872810010a0dc633424776d2ae11bfa330cf738e9377deeb61a50346856d6
+    method_id: augmix_simclr_lhat
+    method_recipe_spec_sha256: 6245e89f572b49bd24f5d688bda7d3f8b16fa4972051353afa311d007cd9f675
+    metric_order: [clean_auroc, clean_auprc, pn2021c_depth23_auroc, pn2021c_depth23_auprc]
+    efficientnet1dv2:
+      four_center_mean: [0.8713461330, 0.6512530687, 0.8598346954, 0.6260167605]
+      matrix_result_sha256: a144aa85cd9a70324c718cbaafeeed98f4d7ea4e6c1c10797abf0358b8bb93e1
+      members:
+        ningbo: {train_result_sha256: 712f81b99ae648238056e33c8e5a3ea3bd4b37b7ace92559d5e847212cdc8585, evaluation_result_sha256: faca96275d31eaf9abc25f8223774c461428f07641cb54f45ddafd2fff7c6cb8, checkpoint_sha256: 7d710e649a2bac1aba4f421c43de9d2d7e86c7ec0cde99496febcec997164f6c}
+        chapman_shaoxing: {train_result_sha256: effa35e5bf05fa2658ad6d5d67b698cf29da5a2b69d64c80d9ca971bbf4824c2, evaluation_result_sha256: a10c4cfceb7a2477fdafb3ff5e6b4bec228e1f394d3694b8f6f1147e750acf0c, checkpoint_sha256: b8f53a9a4b0eff4d2dd3cb746667383e23d5a585e1c89733dc0808e0ec7dff7d}
+        cpsc_2018: {train_result_sha256: c39e58032daac408d61a6a5207fab409c477617316ed61c8b441da82331a3dab, evaluation_result_sha256: 3225189da7fb311ad5741d4379ddea3a9a80c1a4a6fbd59ba617a516a7821380, checkpoint_sha256: 6109bdb17794766bc1f55009c927285ea4e3ee2d637df0d8e62d8ae20a351ee8}
+        georgia: {train_result_sha256: 1ecfe8227cc5ff7faa77c7310cc0c61bf0f01643e17c44edd3e57f15650a4697, evaluation_result_sha256: f58fd3b2f5884892d09822ee1c1e219503e58448ea7caeebb543e3223cf6e977, checkpoint_sha256: 611009bc1f85e104d1df3f489b039a9a250b7017cf720c8d7e8f7ae5dec0af8e}
+    ecgfounder:
+      four_center_mean: [0.9152874633, 0.7170996415, 0.8907505330, 0.6758988580]
+      matrix_result_sha256: 4a8fc239dcb0455a891c18c2c70b13a9cecd84c4945d18b378795e4f7f97bf05
+      members:
+        ningbo: {train_result_sha256: a66700759d036e8ef96db6d295bb2b69452e24dfcaa45ba75b74e76eaf799dbc, evaluation_result_sha256: c9ea896559fc48b350e81ec56c43f7a98cf73cd44987a5f1db6d1a3eea7972a3, checkpoint_sha256: 81c5805a535931e898af66d88aefafb1117b34ea7eeda5c062248a7ea35dcf04}
+        chapman_shaoxing: {train_result_sha256: 9d6b66cb6fdf89ec9f0af822c3f9dc62f1069f210bee749a14d4f6ecad3c5718, evaluation_result_sha256: 104992e0e32f5927becc931b5d8789568ecb165c1c10f20c4b87b2b636f93618, checkpoint_sha256: 4230b2781c7c854df9ba2b68c851e7378fd5bf963190e06b826e6b53fd0d076b}
+        cpsc_2018: {train_result_sha256: a204f34281b16a8fbe06a954f447245d884b227d54544892d75a512935c062f4, evaluation_result_sha256: e65bd5475e7a9c014d346348c3b2a1ed9b67d51403b7619db750fe08a649d36c, checkpoint_sha256: c937d0301abd192d2384dc9b05373d23f418eab8ce385d5740f255159553d808}
+        georgia: {train_result_sha256: 61d84f3a88176caef5f6f565218083e6e5c343b096c16801fdb586f3adcff7e5, evaluation_result_sha256: 1c18f66bf6fa2a94ac895d2ef75906507a9f30297306216a4ae85f5d1df1cc9a, checkpoint_sha256: 3650c06cbcc71ab04c53cfe3ae165dc573a8d36ae41bcdf8ebecc33b78c8799c}
+    secondary_four_center_means:
+      efficientnet1dv2:
+        clean_all_zero_kept: [0.8476459399, 0.5206044923]
+        pn2021c_depth2_drop_all_zero: [0.8626468000, 0.6311288613]
+        pn2021c_depth3_drop_all_zero: [0.8570225908, 0.6209046597]
+      ecgfounder:
+        clean_all_zero_kept: [0.8928389357, 0.6084067226]
+        pn2021c_depth2_drop_all_zero: [0.8949586461, 0.6835465068]
+        pn2021c_depth3_drop_all_zero: [0.8865424198, 0.6682512091]
+    limitations:
+      - single_seed_development_evidence
+      - recipe_selected_after_four_center_feedback
+      - independent_repeats_pending
+      - not_a_final_paper_claim
+  scientific_equivalent_precursor_lhat_diagnostics_20260815:
     scope: all_candidate_training_diagnostics_aggregated_across_four_centers_and_all_epochs
     efficientnet1dv2:
       raw_search_sample_anyflip_asr: 0.4296993735
@@ -265,6 +308,37 @@ active_development_mainline:
         cpsc_2018: d6accb44ec6ed9711e508778e5febcc5d6624a5a6fae11f705439c9497fddf20
         georgia: 1dcf6de7cb17d48679d2a14633475ef49a6149e5a6c6bd8ad1b0eaa00bf44dfe
     evidence_status: corrected_all_candidate_scope_available
+  exact_locked_identity_lhat_diagnostics_20260815:
+    scope: all_candidate_training_diagnostics_aggregated_across_four_centers_and_all_epochs
+    efficientnet1dv2:
+      raw_search_sample_anyflip: {numerator: 11585, denominator: 26939, asr: 0.4300456587}
+      contract_acceptance: {numerator: 44731, denominator: 47575, rate: 0.9402207042}
+      contracted_training_anyflip: {numerator: 0, denominator: 47575, asr: 0.0}
+      accepted_selected_t_mean: 0.5788602982
+      accepted_bce_gain_mean: 0.0304539274
+      raw_attack_objective_gain_mean: 0.0460484648
+      raw_atk_anchor_l2_mean: 12.0
+      decoded_invalid: {numerator: 0, denominator: 47575, rate: 0.0}
+      training_history_sha256_by_center:
+        ningbo: 849598925f14e9d674ad9ea76bf4592b964e09fb968c9519829fb6aa9868c796
+        chapman_shaoxing: ca690539ad33a67928446af449618350ef198d618f1b0f9e12742e64b4e2923f
+        cpsc_2018: 6cebc58e69c426450d9c61f4c27a2763de348a8f4730c4e397145dacadec815f
+        georgia: c732440074fb512322a9a9a5a121de4ef46d1d158a7bca0cd3436a223d0424ab
+    ecgfounder:
+      raw_search_sample_anyflip: {numerator: 14668, denominator: 36955, asr: 0.3969151671}
+      contract_acceptance: {numerator: 54371, denominator: 57090, rate: 0.9523734454}
+      contracted_training_anyflip: {numerator: 0, denominator: 57090, asr: 0.0}
+      accepted_selected_t_mean: 0.5723225617
+      accepted_bce_gain_mean: 0.0135733424
+      raw_attack_objective_gain_mean: 0.0424202809
+      raw_atk_anchor_l2_mean: 12.0
+      decoded_invalid: {numerator: 0, denominator: 57090, rate: 0.0}
+      training_history_sha256_by_center:
+        ningbo: b7ef19b0aa7a712604067da1aabc383cee80016b1e1cd67bffff2efbb07753e4
+        chapman_shaoxing: 4965be4f1450cedf3bc564583f4395ed333524f1f406666bfb57bbbff57bd783
+        cpsc_2018: 3756594fec00dc4e73357c1e311ec92e62136973b9ecb3e445e8467f43e87550
+        georgia: 5f7372b2c305a6a3e196cf721f86a2959b3acc377f1903cb5845d361183789d2
+    evidence_status: exact_locked_identity_corrected_all_candidate_scope_available
   diagnostic_integrity:
     status: legacy_accepted_subset_quarantined
     cause: accepted_mask_applied_before_diagnostic_persistence
@@ -352,7 +426,7 @@ active_development_mainline:
       legacy_paths_embedded_inside_machine_lock: historical_hash_only_provenance
       runtime_may_open_embedded_legacy_paths: false
   managed_implementation:
-    status: locked_minimal_code_pending_exact_identity_gpu_execution
+    status: exact_locked_identity_single_seed_four_center_execution_complete
     implementation_identity: finite_recipe_spec_v1
     launcher: boot_scripts/run_experiment.py
     canonical_experiment: configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_ningbo.yaml
@@ -377,8 +451,8 @@ active_development_mainline:
         train/lhat.yaml: f68dcbb4b5997c99d3667aa3deecfd6ea332310f587bc1d3f3a4ba93bcf9d308
         random_seed.yaml: 8b337606c43b6fec2959dd185477ce32f48b139f5fce5112ee26efe58eb4bbbc
     runtime_imports_agent_workspace: false
-    gpu_replication_status: scientific_equivalent_precursor_complete_exact_locked_identity_pending
-    prospective_run_root: /home/linbinhao/ECG_adv_data/runs/manual_refactor_paper_kernel_v2_recipe_v1_r1
+    gpu_replication_status: exact_locked_identity_single_seed_four_center_complete
+    exact_run_root: /home/linbinhao/ECG_adv_data/runs/manual_refactor_paper_kernel_v2_recipe_v1_r1
   prospective_replication_20260806:
     role: historical_metric_evidence_from_pre_recipe_runtime
     status: complete_metric_level_not_bitwise

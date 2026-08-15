@@ -381,7 +381,7 @@ def test_post_cp4_cuda_smoke_is_registered_as_diagnostic_only() -> None:
     assert "throughput_not_comparable" in smoke["limitations"]
     assert evidence["active_development_mainline"]["managed_implementation"][
         "gpu_replication_status"
-    ] == "scientific_equivalent_precursor_complete_exact_locked_identity_pending"
+    ] == "exact_locked_identity_single_seed_four_center_complete"
 
 
 def test_k500_handoff_locks_finite_loader_openings() -> None:
