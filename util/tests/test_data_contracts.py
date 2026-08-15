@@ -457,9 +457,12 @@ def test_matched_base_matrix_locks_match_runtime_split_lineage() -> None:
 
     parent_split_sha = handoff["split_artifacts"]["parent_manifest"]["sha256"]
     expected_centers = handoff["split_artifacts"]["logical_centers"]
+    matrix_paths = [CONFIG_ROOT / "eval" / "PN2021_matrix.yaml"]
     for identity in experiment["matrix_cohort_configs"].values():
         path = (REPO / identity["path"]).resolve()
         assert hashlib.sha256(path.read_bytes()).hexdigest() == identity["sha256"]
+        matrix_paths.append(path)
+    for path in matrix_paths:
         config = yaml.safe_load(path.read_text(encoding="utf-8"))
         center_locks = config["profiles"]["efficientnet1dv2"][
             "expected_cohort"

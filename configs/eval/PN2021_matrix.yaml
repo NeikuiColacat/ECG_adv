@@ -45,22 +45,24 @@ profiles:
         mapping_hash: 555ec85d5b51
         class_order: [CD, HYP, MI, NORM, STTC]
       center_adaptation: &center_adaptation
+        # ECGSelection lineage records the verified parent split manifest; the
+        # center-specific membership is independently locked by hash_id_set.
         ningbo:
           source_centers: [ningbo]
           hash_id_set_sha256: 96b4e0f20d798e4f89564af7bc1565906c30e28e7a4a019ec9840c6be36adc53
-          split_manifest_sha256: a7b855502ba1f716fd36dff953561687d83c1031032bfdd318dc53a54acd02d5
+          split_manifest_sha256: 58210d9b192bc18e9085f235453094814c9caed2cf9142998084ae7a004e9a42
         chapman_shaoxing:
           source_centers: [chapman_shaoxing]
           hash_id_set_sha256: 75d0beaf155ac51809cc056cb29f751f5d56fba4d08099bdd928045e011426f4
-          split_manifest_sha256: 4c758059aef347ecf986446570fd54150cc6391c1f9a47a87efbd790ee263621
+          split_manifest_sha256: 58210d9b192bc18e9085f235453094814c9caed2cf9142998084ae7a004e9a42
         cpsc_2018:
           source_centers: [cpsc_2018, cpsc_2018_extra]
           hash_id_set_sha256: a0973c7015295deca44d4ea195564883e4c784dae1cdbc37a4c2bbb450551729
-          split_manifest_sha256: 806a339ceefbc9cb346814bd69871df9fa9c58cb19d6a8982140c1d5b8fe5fe8
+          split_manifest_sha256: 58210d9b192bc18e9085f235453094814c9caed2cf9142998084ae7a004e9a42
         georgia:
           source_centers: [georgia]
           hash_id_set_sha256: 9d407e4d4b2bc1f23667ffb574e54ddf99cf2e72ecc207df17c5bfe589f4c3c0
-          split_manifest_sha256: d346f63a8bc01f29a088cf482cb479f3045c97ac6d781659555a333cf1a77eb4
+          split_manifest_sha256: 58210d9b192bc18e9085f235453094814c9caed2cf9142998084ae7a004e9a42
       training_config_sha256: &train_config 2e00752b89c11a1879b2f47727ded979824f782c4d588f04c9d02cd67a3f9166
       epochs_completed: 25
       optimizer_steps: 100
