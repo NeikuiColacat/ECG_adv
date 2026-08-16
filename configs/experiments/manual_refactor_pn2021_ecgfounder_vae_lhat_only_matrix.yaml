@@ -1,0 +1,25 @@
+schema_version: 1
+
+experiment:
+  name: manual_refactor_pn2021_ecgfounder_vae_lhat_only_matrix_r0
+  purpose: Aggregate the matched VAE-LHAT-only four-center diagonal evaluation without loading data or models.
+
+entrypoint:
+  name: aggregate_pn2021
+  config: eval/PN2021_matrix_vae_lhat_only_r0.yaml
+  arguments:
+    - --model
+    - ecgfounder
+    - --result
+    - /home/linbinhao/ECG_adv_data/runs/paper_component_ablation_r0_20260816/vae_lhat_only/eval/ecgfounder/ningbo/evaluation/evaluation_result.json
+    - --result
+    - /home/linbinhao/ECG_adv_data/runs/paper_component_ablation_r0_20260816/vae_lhat_only/eval/ecgfounder/chapman_shaoxing/evaluation/evaluation_result.json
+    - --result
+    - /home/linbinhao/ECG_adv_data/runs/paper_component_ablation_r0_20260816/vae_lhat_only/eval/ecgfounder/cpsc_2018/evaluation/evaluation_result.json
+    - --result
+    - /home/linbinhao/ECG_adv_data/runs/paper_component_ablation_r0_20260816/vae_lhat_only/eval/ecgfounder/georgia/evaluation/evaluation_result.json
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/paper_component_ablation_r0_20260816/vae_lhat_only/matrix/ecgfounder
+  if_exists: error
+  delegate_output_subdir: evaluation

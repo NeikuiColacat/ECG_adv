@@ -1,0 +1,95 @@
+schema_version: 2
+
+protocol:
+  logical_centers: [ningbo, chapman_shaoxing, cpsc_2018, georgia]
+  aggregation: equal_views_then_equal_centers
+
+profiles:
+  efficientnet1dv2:
+    profile_name: pn2021_component_ablation_vae_lhat_only_r0_effnet
+    expected_cohort:
+      model_name: efficientnet1dv2
+      method: &method
+        recipe_id: vae_lhat_only
+        scientific_arm: vae_lhat_only
+        recipe_spec_sha256: 2231090a62a1140adf1ff691f5f399b77aa93d0ed681c60df3e2126ac49e3b13
+        implementation_identity: finite_recipe_spec_v1
+        recipe_version: 1
+        kind: supervised_rotating_depth23_lhat
+        auxiliary_variant: contracted_lhat
+        schema_version: 2
+      comparison: &comparison
+        group: aligned_targetonly_augmix_lhat_simplified_20260805
+        replicate_id: 0
+      source_checkpoint:
+        sha256: fff9bd293677be54a606e28775c66d410d55b0ad7440a4e7fbde55357ec13e68
+      method_resources: &method_resources
+        vae:
+          config_sha256: 2d157d89a13c4a2e1b5ee75236a034b2f3350e2d88e9e5b1187ab1cf0527f74a
+          encoder_checkpoint_sha256: c2b4ef8060e412bd503f46b66dd44fc460e67a89de0ae1809dcc771358b3fa93
+          decoder_checkpoint_sha256: c2b4ef8060e412bd503f46b66dd44fc460e67a89de0ae1809dcc771358b3fa93
+      selection: &selection
+        policy: last
+        heldout_evaluation_used_for_selection: false
+      seed: &seed
+        base_seed: 20260501
+        namespace: aligned_targetonly_augmix_simclr_lhat
+        config_sha256: 8b337606c43b6fec2959dd185477ce32f48b139f5fce5112ee26efe58eb4bbbc
+      adaptation: &adaptation
+        dataset: pn2021
+        partition: k500
+        record_count: 500
+        split_id: pn2021_super5_k500_cpsc_combined_v1
+        source_manifest_sha256: fa06cf268147d451e2925c17311ba13f565962dcf28acee27cb991a915dbb31f
+        mapping_version: v7_super5_sjr_rgq_review_20260528
+        mapping_hash: 555ec85d5b51
+        class_order: [CD, HYP, MI, NORM, STTC]
+      center_adaptation: &center_adaptation
+        ningbo:
+          source_centers: [ningbo]
+          hash_id_set_sha256: 96b4e0f20d798e4f89564af7bc1565906c30e28e7a4a019ec9840c6be36adc53
+          split_manifest_sha256: 58210d9b192bc18e9085f235453094814c9caed2cf9142998084ae7a004e9a42
+        chapman_shaoxing:
+          source_centers: [chapman_shaoxing]
+          hash_id_set_sha256: 75d0beaf155ac51809cc056cb29f751f5d56fba4d08099bdd928045e011426f4
+          split_manifest_sha256: 58210d9b192bc18e9085f235453094814c9caed2cf9142998084ae7a004e9a42
+        cpsc_2018:
+          source_centers: [cpsc_2018, cpsc_2018_extra]
+          hash_id_set_sha256: a0973c7015295deca44d4ea195564883e4c784dae1cdbc37a4c2bbb450551729
+          split_manifest_sha256: 58210d9b192bc18e9085f235453094814c9caed2cf9142998084ae7a004e9a42
+        georgia:
+          source_centers: [georgia]
+          hash_id_set_sha256: 9d407e4d4b2bc1f23667ffb574e54ddf99cf2e72ecc207df17c5bfe589f4c3c0
+          split_manifest_sha256: 58210d9b192bc18e9085f235453094814c9caed2cf9142998084ae7a004e9a42
+      training_config_sha256: &train_config 2e00752b89c11a1879b2f47727ded979824f782c4d588f04c9d02cd67a3f9166
+      epochs_completed: 25
+      optimizer_steps: 100
+      evaluation_config_sha256: &eval_config 0159928d8825ae60908b93285cd075d59a0ee136716c40cdea72094d6b825daf
+      artifact_locks: &artifact_locks
+        clean_cache_manifest_sha256: fa06cf268147d451e2925c17311ba13f565962dcf28acee27cb991a915dbb31f
+        split_manifest_sha256: 58210d9b192bc18e9085f235453094814c9caed2cf9142998084ae7a004e9a42
+        corruption_cache_manifest_sha256: a7d976374d8f5b7de3748dd67dc8a779879316ee5249eb59ec6dd8899c852c02
+        compositions_sha256: 18ceee2be0f236898777b878affaf8d4f1cd7fbee880a3af89c0e84cb9427ce1
+  ecgfounder:
+    profile_name: pn2021_component_ablation_vae_lhat_only_r0_ecgfounder
+    expected_cohort:
+      model_name: ecgfounder
+      method: *method
+      comparison: *comparison
+      source_checkpoint:
+        sha256: c23ec4361b097b74a4efed427488c4dd6a3753adfc75f7d1fc281e4df0989948
+      method_resources: *method_resources
+      selection: *selection
+      seed: *seed
+      adaptation: *adaptation
+      center_adaptation: *center_adaptation
+      training_config_sha256: *train_config
+      epochs_completed: 30
+      optimizer_steps: 240
+      evaluation_config_sha256: *eval_config
+      artifact_locks: *artifact_locks
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/paper_component_ablation_r0_20260816/vae_lhat_only/matrix/default
+  if_exists: error
+  result_file: matrix_result.json

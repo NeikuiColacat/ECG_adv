@@ -76,6 +76,19 @@ RECIPE_CASES = [
      (("clean_bce", "bce", 1.0), ("lhat_direct_bce", "bce", 1.0),
       ("corrupted_bce", "bce", 1.0)),
      "6245e89f572b49bd24f5d688bda7d3f8b16fa4972051353afa311d007cd9f675"),
+    ("augmix_simclr_matched_no_vae.yaml", RecipeKind.TWO_STAGE_AUGMIX_LHAT,
+     AuxiliaryVariant.MATCHED_NO_VAE,
+     ("operator_profile", "augmix_config", "corruption_rng"),
+     ("classifier",),
+     (("clean_bce", "bce", 1.0), ("corrupted_bce", "bce", 1.0)),
+     "b2b140ef2e4d440769b14f35b02ca61ba3951502fd7699a276a821ee202ae0f0"),
+    ("vae_lhat_only.yaml", RecipeKind.SUPERVISED_ROTATING_DEPTH23_LHAT,
+     AuxiliaryVariant.CONTRACTED_LHAT,
+     ("operator_profile", "vae", "lhat_config", "corruption_rng", "lhat_rng"),
+     ("classifier", "vae_decoder", "latent_pool"),
+     (("clean_bce", "bce", 1.0), ("lhat_direct_bce", "bce", 1.0),
+      ("corrupted_bce", "bce", 1.0)),
+     "2231090a62a1140adf1ff691f5f399b77aa93d0ed681c60df3e2126ac49e3b13"),
 ]
 
 
@@ -121,7 +134,7 @@ def test_locked_mainline_is_the_minimal_contracted_lhat_recipe() -> None:
     )
 
 
-def test_loader_removes_dag_plugins_and_allows_only_the_matched_no_vae_slot() -> None:
+def test_loader_removes_dag_plugins_and_locks_component_ablation_slots() -> None:
     assert core.__all__ == []
     assert methods.__all__ == []
     assert tuple(tuple(module.__all__) for module in (
@@ -199,13 +212,7 @@ def test_loader_removes_dag_plugins_and_allows_only_the_matched_no_vae_slot() ->
     with pytest.raises(ValueError, match="root keys must be exactly"):
         load_recipe_spec(payload)
 
-    payload = yaml.safe_load((RECIPES / "augmix_simclr_lhat.yaml").read_text())
-    payload["recipe"].update(id="augmix_simclr_matched_no_vae",
-        auxiliary_variant="matched_no_vae", scientific_arm="augmix_simclr_matched_no_vae",
-        status="prospective_matched_ablation")
-    for name in ("vae", "lhat_config", "lhat_rng"):
-        payload["resources"].pop(name)
-    recipe = load_recipe_spec(payload)
+    recipe = load_recipe_spec(RECIPES / "augmix_simclr_matched_no_vae.yaml")
     assert (recipe.kind, recipe.auxiliary_variant) == (
         RecipeKind.TWO_STAGE_AUGMIX_LHAT, AuxiliaryVariant.MATCHED_NO_VAE)
     assert tuple(recipe.resources) == ("operator_profile", "augmix_config", "corruption_rng")
@@ -222,10 +229,22 @@ def test_loader_removes_dag_plugins_and_allows_only_the_matched_no_vae_slot() ->
     assert recipe.scientific_contract[
         "stage2_supervised_logit_anchor_weight_by_backbone"
     ] == {"efficientnet1dv2": 0.0, "ecgfounder": 0.0}
+    vae_only = load_recipe_spec(RECIPES / "vae_lhat_only.yaml")
+    assert (vae_only.kind, vae_only.auxiliary_variant) == (
+        RecipeKind.SUPERVISED_ROTATING_DEPTH23_LHAT,
+        AuxiliaryVariant.CONTRACTED_LHAT,
+    )
+    assert vae_only.scientific_contract["stages"] == ("supervised_adaptation",)
+    assert vae_only.scientific_contract["stage2_teacher"] == "disabled"
+    assert "stage1" not in vae_only.scientific_contract
+    assert vae_only.comparison_rng_identity == "augmix_simclr_lhat"
     with pytest.raises(TypeError, match="loader-owned"):
         method_registry.RecipeSpec()
     with pytest.raises(TypeError, match="loader-owned"):
         replace(recipe, profile_name="a0_clean_v1")
+    payload = yaml.safe_load(
+        (RECIPES / "augmix_simclr_matched_no_vae.yaml").read_text()
+    )
     payload["recipe"]["auxiliary_variant"] = "contracted_lhat"
     with pytest.raises(ValueError, match="requires auxiliary_variant='matched_no_vae'"):
         load_recipe_spec(payload)

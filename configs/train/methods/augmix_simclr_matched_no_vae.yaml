@@ -1,0 +1,22 @@
+schema_version: 2
+
+recipe:
+  id: augmix_simclr_matched_no_vae
+  kind: two_stage_augmix_lhat
+  auxiliary_variant: matched_no_vae
+  scientific_arm: augmix_simclr_matched_no_vae
+  status: prospective_matched_ablation
+
+resources:
+  operator_profile:
+    type: config_reference
+    path: augmentation/operators.yaml
+    profile: pn2021c_paper_anchored_s5_v1
+    severity: 5
+  augmix_config:
+    type: config_reference
+    path: train/augmix.yaml
+  corruption_rng:
+    type: isolated_torch_generator
+    seed_config: random_seed.yaml
+    namespace: aligned_targetonly_rotating4_corruption_v1

@@ -1,0 +1,23 @@
+schema_version: 1
+
+experiment:
+  name: manual_refactor_pn2021_effnet_vae_lhat_only_eval_cpsc_2018_r0
+  purpose: Evaluate the matched VAE-LHAT-only ablation on ref-excluded cpsc_2018 Clean and PN2021-C.
+
+entrypoint:
+  name: evaluate_pn2021
+  config: eval/PN2021.yaml
+  arguments:
+    - --model
+    - efficientnet1dv2
+    - --train-result
+    - /home/linbinhao/ECG_adv_data/runs/paper_component_ablation_r0_20260816/vae_lhat_only/effnet/cpsc_2018/training/train_result.json
+    - --center
+    - cpsc_2018
+    - --method-config
+    - train/methods/vae_lhat_only.yaml
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/paper_component_ablation_r0_20260816/vae_lhat_only/eval/effnet/cpsc_2018
+  if_exists: error
+  delegate_output_subdir: evaluation

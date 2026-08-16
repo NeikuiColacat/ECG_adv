@@ -1,0 +1,23 @@
+schema_version: 1
+
+experiment:
+  name: manual_refactor_pn2021_effnet_augmix_only_cpsc_2018_r0
+  purpose: Run the matched single-seed AugMix-only component ablation on cpsc_2018 K500 with efficientnet1dv2.
+
+entrypoint:
+  name: train_pn2021
+  config: train/PN2021.yaml
+  arguments:
+    - --model
+    - efficientnet1dv2
+    - --method-config
+    - train/methods/augmix_simclr_matched_no_vae.yaml
+    - --center
+    - cpsc_2018
+    - --source-checkpoint
+    - /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_ptbxl_effnet_source_v1/training/checkpoints/best.pt
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/paper_component_ablation_r0_20260816/augmix_only/effnet/cpsc_2018
+  if_exists: error
+  delegate_output_subdir: training

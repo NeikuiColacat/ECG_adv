@@ -165,6 +165,7 @@ def _build_batch_norm_momentum_plan(
 ) -> _BatchNormMomentumPlan | None:
     if recipe.kind in {
         RecipeKind.SUPERVISED_ROTATING_DEPTH23,
+        RecipeKind.SUPERVISED_ROTATING_DEPTH23_LHAT,
         RecipeKind.FIXED20,
         RecipeKind.TWO_STAGE_AUGMIX_LHAT,
     }:
@@ -232,6 +233,7 @@ def _method_exposure_steps(
         )
     if recipe.kind in {
         RecipeKind.SUPERVISED_ROTATING_DEPTH23,
+        RecipeKind.SUPERVISED_ROTATING_DEPTH23_LHAT,
         RecipeKind.TWO_STAGE_AUGMIX_LHAT,
     }:
         if isinstance(epoch, bool) or not isinstance(epoch, int) or epoch < 1:
@@ -274,6 +276,7 @@ def _recipe_family_loss_weights(recipe: RecipeSpec) -> dict[str, float] | None:
         }
     if recipe.kind in {
         RecipeKind.SUPERVISED_ROTATING_DEPTH23,
+        RecipeKind.SUPERVISED_ROTATING_DEPTH23_LHAT,
         RecipeKind.TWO_STAGE_AUGMIX_LHAT,
     }:
         return {
@@ -1894,6 +1897,7 @@ def train_online_model(
     objective_term_weights = {name: 1.0 for name, _ in recipe.objective_terms}
     grouped_exposure = recipe.kind in {
         RecipeKind.SUPERVISED_ROTATING_DEPTH23,
+        RecipeKind.SUPERVISED_ROTATING_DEPTH23_LHAT,
         RecipeKind.FIXED20,
         RecipeKind.TWO_STAGE_AUGMIX_LHAT,
     }
@@ -2085,7 +2089,7 @@ def train_online_model(
     epsilon = float(config.payload["data"]["normalization_epsilon"])
     staged_method = recipe.kind is RecipeKind.TWO_STAGE_AUGMIX_LHAT
     stage1_summary: dict[str, Any] | None = None
-    if staged_method:
+    if staged_method or auxiliary_exposure:
         if (
             recipe.scientific_contract.get("stage2_teacher") != "disabled"
             or recipe.scientific_contract.get(
@@ -2094,8 +2098,15 @@ def train_online_model(
             != {"efficientnet1dv2": 0.0, "ecgfounder": 0.0}
         ):
             raise RuntimeError(
-                "the locked two-stage recipe requires the Stage-2 teacher to be disabled"
+                "the locked component recipes require the Stage-2 teacher to be disabled"
             )
+        method_resource_identity["stage2_teacher"] = {
+            "scope": "disabled",
+            "record_count": 0,
+            "anchor_weight": 0.0,
+        }
+        _write_json(method_resources_path, method_resource_identity)
+    if staged_method:
         if int(resolved["stage1_steps"]) <= 0:
             raise ValueError("AugMix-SimCLR mainline requires Stage-1 steps")
         if runtime.augmix_config is None:
@@ -2136,11 +2147,6 @@ def train_online_model(
             "sha256": sha256_file(stage1_checkpoint),
         }
         method_resource_identity["stage1"] = stage1_summary
-        method_resource_identity["stage2_teacher"] = {
-            "scope": "disabled",
-            "record_count": 0,
-            "anchor_weight": 0.0,
-        }
         _write_json(method_resources_path, method_resource_identity)
     model_identity = _model_identity(model, spec)
     lineage = _training_lineage(
@@ -2190,6 +2196,7 @@ def train_online_model(
                 ]
                 if recipe.kind in {
                     RecipeKind.SUPERVISED_ROTATING_DEPTH23,
+                    RecipeKind.SUPERVISED_ROTATING_DEPTH23_LHAT,
                     RecipeKind.TWO_STAGE_AUGMIX_LHAT,
                 }
                 else None
@@ -2422,7 +2429,7 @@ def train_online_model(
                 )
 
                 with ExitStack() as auxiliary_state:
-                    if staged_method and exposure_name == "auxiliary":
+                    if auxiliary_exposure and exposure_name == "auxiliary":
                         auxiliary_state.enter_context(
                             _preserve_batch_norm_buffers(model)
                         )
@@ -2464,7 +2471,7 @@ def train_online_model(
                         loss_scale=family_loss_scale,
                         scaler=scaler,
                         empty_lhat_auxiliary=(
-                            staged_method
+                            auxiliary_exposure
                             and exposure_name == "auxiliary"
                             and objective.valid_counts == {"lhat_direct_bce": 0}
                         ),

@@ -1,0 +1,23 @@
+schema_version: 1
+
+experiment:
+  name: manual_refactor_pn2021_ecgfounder_vae_lhat_only_eval_chapman_shaoxing_r0
+  purpose: Evaluate the matched VAE-LHAT-only ablation on ref-excluded chapman_shaoxing Clean and PN2021-C.
+
+entrypoint:
+  name: evaluate_pn2021
+  config: eval/PN2021.yaml
+  arguments:
+    - --model
+    - ecgfounder
+    - --train-result
+    - /home/linbinhao/ECG_adv_data/runs/paper_component_ablation_r0_20260816/vae_lhat_only/ecgfounder/chapman_shaoxing/training/train_result.json
+    - --center
+    - chapman_shaoxing
+    - --method-config
+    - train/methods/vae_lhat_only.yaml
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/paper_component_ablation_r0_20260816/vae_lhat_only/eval/ecgfounder/chapman_shaoxing
+  if_exists: error
+  delegate_output_subdir: evaluation

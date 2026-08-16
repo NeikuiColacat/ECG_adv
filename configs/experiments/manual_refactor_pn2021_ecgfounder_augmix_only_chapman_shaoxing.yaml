@@ -1,0 +1,23 @@
+schema_version: 1
+
+experiment:
+  name: manual_refactor_pn2021_ecgfounder_augmix_only_chapman_shaoxing_r0
+  purpose: Run the matched single-seed AugMix-only component ablation on chapman_shaoxing K500 with ecgfounder.
+
+entrypoint:
+  name: train_pn2021
+  config: train/PN2021.yaml
+  arguments:
+    - --model
+    - ecgfounder
+    - --method-config
+    - train/methods/augmix_simclr_matched_no_vae.yaml
+    - --center
+    - chapman_shaoxing
+    - --source-checkpoint
+    - /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_ptbxl_ecgfounder_source_v1/training/checkpoints/best.pt
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/paper_component_ablation_r0_20260816/augmix_only/ecgfounder/chapman_shaoxing
+  if_exists: error
+  delegate_output_subdir: training

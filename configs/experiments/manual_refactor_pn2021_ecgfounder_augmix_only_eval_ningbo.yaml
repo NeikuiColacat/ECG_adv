@@ -1,0 +1,23 @@
+schema_version: 1
+
+experiment:
+  name: manual_refactor_pn2021_ecgfounder_augmix_only_eval_ningbo_r0
+  purpose: Evaluate the matched AugMix-only ablation on ref-excluded ningbo Clean and PN2021-C.
+
+entrypoint:
+  name: evaluate_pn2021
+  config: eval/PN2021.yaml
+  arguments:
+    - --model
+    - ecgfounder
+    - --train-result
+    - /home/linbinhao/ECG_adv_data/runs/paper_component_ablation_r0_20260816/augmix_only/ecgfounder/ningbo/training/train_result.json
+    - --center
+    - ningbo
+    - --method-config
+    - train/methods/augmix_simclr_matched_no_vae.yaml
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/paper_component_ablation_r0_20260816/augmix_only/eval/ecgfounder/ningbo
+  if_exists: error
+  delegate_output_subdir: evaluation

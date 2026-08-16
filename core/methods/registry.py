@@ -43,6 +43,7 @@ class RecipeKind(str, Enum):
     CLEAN = "clean"
     RANDOM_DEPTH23 = "random_depth23"
     SUPERVISED_ROTATING_DEPTH23 = "supervised_rotating_depth23"
+    SUPERVISED_ROTATING_DEPTH23_LHAT = "supervised_rotating_depth23_lhat"
     FIXED20 = "fixed20"
     TWO_STAGE_AUGMIX_LHAT = "two_stage_augmix_lhat"
 
@@ -132,6 +133,9 @@ _MAINLINE_RESOURCES = frozenset(
 _NO_VAE_RESOURCES = frozenset(
     {"operator_profile", "augmix_config", "corruption_rng"}
 )
+_VAE_ONLY_RESOURCES = frozenset(
+    {"operator_profile", "vae", "lhat_config", "corruption_rng", "lhat_rng"}
+)
 _DEFINITIONS: Mapping[str, _RecipeDefinition] = MappingProxyType(
     {
         "a0_clean_v1": _RecipeDefinition(
@@ -179,9 +183,6 @@ _DEFINITIONS: Mapping[str, _RecipeDefinition] = MappingProxyType(
             "augmix_simclr_lhat",
             ("clean_view", "lhat_view", "corrupted_view"),
         ),
-        # Deliberately the only non-file-backed future variant.  Keeping the
-        # paired identity here permits a matched no-VAE ablation without
-        # opening a general kind/variant cross product.
         "augmix_simclr_matched_no_vae": _RecipeDefinition(
             RecipeKind.TWO_STAGE_AUGMIX_LHAT,
             AuxiliaryVariant.MATCHED_NO_VAE,
@@ -190,6 +191,15 @@ _DEFINITIONS: Mapping[str, _RecipeDefinition] = MappingProxyType(
             _NO_VAE_RESOURCES,
             "augmix_simclr_lhat",
             ("clean_view", "corrupted_view"),
+        ),
+        "vae_lhat_only": _RecipeDefinition(
+            RecipeKind.SUPERVISED_ROTATING_DEPTH23_LHAT,
+            AuxiliaryVariant.CONTRACTED_LHAT,
+            "vae_lhat_only",
+            "prospective_matched_ablation",
+            _VAE_ONLY_RESOURCES,
+            "augmix_simclr_lhat",
+            ("clean_view", "lhat_view", "corrupted_view"),
         ),
     }
 )
@@ -241,6 +251,43 @@ def _execution_contract(
                     "corrupted_per_composition": 0.125,
                 },
                 "generated_view_count": 4,
+                "batch_norm_policy": "family_loss_weighted_once_per_base_batch",
+            }
+        )
+    if kind is RecipeKind.SUPERVISED_ROTATING_DEPTH23_LHAT:
+        return MappingProxyType(
+            {
+                **common,
+                "stages": ["supervised_adaptation"],
+                "stage2_teacher": "disabled",
+                "stage2_supervised_logit_anchor_weight_by_backbone": {
+                    "efficientnet1dv2": 0.0,
+                    "ecgfounder": 0.0,
+                },
+                "exposure_policy": "clean_aux_once_then_rotating_depth23_2plus2",
+                "corruption_depths": [2, 3],
+                "rotating4_schedule": (
+                    "epoch_modulo_five_covers_all_depth23_compositions"
+                ),
+                "family_loss_weights": {
+                    "clean": 0.5,
+                    "corrupted_total": 0.5,
+                    "corrupted_per_composition": 0.125,
+                },
+                "auxiliary": {
+                    "objective_terms": ["lhat_direct_bce"],
+                    "alpha": 2.0,
+                    "gradient_merge": "direct_sum",
+                    "batch_norm_policy": "snapshot_restore",
+                    "global_rng_policy": "snapshot_restore",
+                    "attack_then_contract_version": "preflip_maxloss_grid_v1",
+                    "diagnostic_scopes": [
+                        "raw_all_candidate_eligible",
+                        "contract_all_candidate_eligible",
+                        "contract_training_accepted",
+                    ],
+                },
+                "generated_view_count": 5,
                 "batch_norm_policy": "family_loss_weighted_once_per_base_batch",
             }
         )

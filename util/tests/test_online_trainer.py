@@ -67,13 +67,7 @@ def test_matched_a0_a1_profile_locks_effnet_e25_and_founder_e30() -> None:
 
 
 def _matched():
-    payload = yaml.safe_load((RECIPES / "augmix_simclr_lhat.yaml").read_text())
-    payload["recipe"].update(id="augmix_simclr_matched_no_vae",
-        auxiliary_variant="matched_no_vae", scientific_arm="augmix_simclr_matched_no_vae",
-        status="prospective_matched_ablation")
-    for name in ("vae", "lhat_config", "lhat_rng"):
-        payload["resources"].pop(name)
-    return load_recipe_spec(payload)
+    return _recipe("augmix_simclr_matched_no_vae.yaml")
 
 
 def _lineage(tmp_path: Path) -> dict:
@@ -658,6 +652,16 @@ def test_finite_exposure_plans_lock_direct21_a1_rotating5_mainline6() -> None:
         "stage2_supervised_logit_anchor_weight_by_backbone"
     ] == {"efficientnet1dv2": 0.0, "ecgfounder": 0.0}
 
+    vae_only = _recipe("vae_lhat_only.yaml")
+    vae_only_steps = trainer._method_exposure_steps(vae_only)
+    assert vae_only.kind is RecipeKind.SUPERVISED_ROTATING_DEPTH23_LHAT
+    assert [s.loss_scale for s in vae_only_steps] == pytest.approx(
+        [.5, .125, .125, .125, .125, 2.]
+    )
+    assert vae_only.scientific_contract["stages"] == ("supervised_adaptation",)
+    assert "stage1" not in vae_only.scientific_contract
+    assert vae_only.scientific_contract["stage2_teacher"] == "disabled"
+
 
 def test_empty_lhat_auxiliary_is_an_empty_gradient_sum() -> None:
     parameter = torch.nn.Parameter(torch.tensor(2.0))
@@ -688,6 +692,8 @@ RNG_CASES = [
     ("direct_depth23_fixed20.yaml", "corruption_07", 7, "corruption_rng", "depth23_corruption", "composition_and_operators", 1342437248),
     ("augmix_simclr_lhat.yaml", "corruption_07", 7, "corruption_rng", "depth23_corruption", "composition_and_operators", 100675112),
     ("augmix_simclr_lhat.yaml", "auxiliary", None, "lhat_rng", "lhat", "candidate_selection", 1664578656),
+    ("augmix_simclr_matched_no_vae.yaml", "corruption_07", 7, "corruption_rng", "depth23_corruption", "composition_and_operators", 100675112),
+    ("vae_lhat_only.yaml", "auxiliary", None, "lhat_rng", "lhat", "candidate_selection", 1664578656),
 ]
 
 
@@ -710,13 +716,15 @@ def test_method_rng_permanent_goldens(filename, exposure, composition, rng_name,
     ("clean", None), ("direct", [.5, *([.025] * 20)]),
     ("a1", [.5, .125, .125, .125, .125]),
     ("mainline", [.5, .125, .125, .125, .125, 0]),
-    ("matched", [.5, .125, .125, .125, .125])])
+    ("matched", [.5, .125, .125, .125, .125]),
+    ("vae_only", [.5, .125, .125, .125, .125, 0])])
 def test_batch_norm_plan_preserves_family_weights(name, weights) -> None:
     recipes = {"clean": lambda: _recipe("a0_clean_v1.yaml"),
                "direct": lambda: _recipe("direct_depth23_fixed20.yaml"),
                "a1": lambda: _recipe("a1_corrupt_ft_rot4_v1.yaml"),
                "mainline": lambda: _recipe("augmix_simclr_lhat.yaml"),
-               "matched": _matched}
+               "matched": _matched,
+               "vae_only": lambda: _recipe("vae_lhat_only.yaml")}
     recipe = recipes[name](); steps = trainer._method_exposure_steps(recipe)
     plan = trainer._build_batch_norm_momentum_plan(
         torch.nn.BatchNorm1d(2, momentum=.1), recipe, exposure_steps=steps)

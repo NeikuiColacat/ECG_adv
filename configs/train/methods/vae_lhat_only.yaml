@@ -1,0 +1,29 @@
+schema_version: 2
+
+recipe:
+  id: vae_lhat_only
+  kind: supervised_rotating_depth23_lhat
+  auxiliary_variant: contracted_lhat
+  scientific_arm: vae_lhat_only
+  status: prospective_matched_ablation
+
+resources:
+  operator_profile:
+    type: config_reference
+    path: augmentation/operators.yaml
+    profile: pn2021c_paper_anchored_s5_v1
+    severity: 5
+  vae:
+    type: config_reference
+    path: train/vae.yaml
+  lhat_config:
+    type: config_reference
+    path: train/lhat.yaml
+  corruption_rng:
+    type: isolated_torch_generator
+    seed_config: random_seed.yaml
+    namespace: aligned_targetonly_rotating4_corruption_v1
+  lhat_rng:
+    type: isolated_torch_generator
+    seed_config: random_seed.yaml
+    namespace: ecg_manual_refactor_lhat_v1
