@@ -1,5 +1,5 @@
 schema_version: 2
-updated: 2026-08-15
+updated: 2026-08-16
 purpose: >
   Declare the executable surface of the clean-room manual refactor. Paths not
   owned by the keep manifest are not active runtime dependencies.
@@ -328,7 +328,7 @@ latest_mainline:
         run_file_index_sha256: 48b940bb957ab164b9aba71b7caec690b4bb8890e9f5ae54359d2c28968120f1
         fixed_by_commit: d5d3bd4
     dry_run:
-      status: passed_76_of_76_tracked_experiments
+      status: passed_112_of_112_tracked_experiments
       command: >
         /home/linbinhao/miniforge3/envs/ECGTwin/bin/python
         boot_scripts/run_experiment.py
@@ -458,6 +458,107 @@ prospective_matched_base_a0_a1:
     evaluation_status: passed_16_of_16
     a1_five_epoch_rotation_and_finite_values: passed_8_of_8
     matrix_exact_cohort_validation: passed_4_of_4_from_clean_git
+
+prospective_component_ablation_2x2_r0:
+  status: completed_single_seed_four_center_development
+  evidence_level: exact_recipe_identity_single_seed_development
+  paper_claim_allowed: false
+  execution_git_sha: 54caaaaeb23ac7eaec400376f69ca2082af2a235
+  run_root: /home/linbinhao/ECG_adv_data/runs/paper_component_ablation_r0_20260816
+  output_isolation:
+    worktree_written: false
+    existing_run_overwritten: false
+    interrupted_runs_deleted: false
+    interrupted_run_audit_root: /home/linbinhao/ECG_adv_data/runs/paper_component_ablation_r0_20260816_interrupted_gpu_collision_20260816_1538
+    reason: another_user_started_jobs_on_gpu3_and_gpu4_after_preflight
+  contract:
+    training_config: configs/train/PN2021.yaml
+    training_config_sha256: 2e00752b89c11a1879b2f47727ded979824f782c4d588f04c9d02cd67a3f9166
+    comparison_group: aligned_targetonly_augmix_lhat_simplified_20260805
+    replicate_id: 0
+    checkpoint_selection: last
+    stage2_teacher: disabled
+    stage2_family_weights: {clean: 0.5, corrupted_total: 0.5}
+    stage2_rotation: two_depth2_plus_two_depth3_five_epoch_cycle
+    arms:
+      A1_reference:
+        source: prospective_matched_base_a0_a1
+        rerun_in_this_execution: false
+        stage1_augmix_simclr: false
+        contracted_vae_lhat: false
+        exact_rng_paired_to_new_three_arms: false
+      augmix_only:
+        selector: configs/train/methods/augmix_simclr_matched_no_vae.yaml
+        selector_file_sha256: a147bbf54a94d629c7654aee5cba3e960e770be6e37ac15f8e73865a4209325c
+        recipe_spec_sha256: b2b140ef2e4d440769b14f35b02ca61ba3951502fd7699a276a821ee202ae0f0
+        stage1_augmix_simclr: true
+        stage1_source_logit_anchor_weight: 5.0
+        contracted_vae_lhat: false
+      vae_lhat_only:
+        selector: configs/train/methods/vae_lhat_only.yaml
+        selector_file_sha256: ec5f4b79fa27ce1e661db99b912cc649462e5c3377b5eafaf70e255196c910e1
+        recipe_spec_sha256: 2231090a62a1140adf1ff691f5f399b77aa93d0ed681c60df3e2126ac49e3b13
+        stage1_augmix_simclr: false
+        stage1_source_logit_anchor_weight: 0.0
+        contracted_vae_lhat: true
+      full_reference:
+        source: latest_mainline
+        rerun_in_this_execution: false
+        stage1_augmix_simclr: true
+        stage1_source_logit_anchor_weight: 5.0
+        contracted_vae_lhat: true
+    exact_rng_pairing:
+      among_new_arms_and_full_reference: true
+      A1_reference_uses_prior_matched_base_namespace: true
+    compute_matched: false
+  experiment_configs:
+    training:
+      - configs/experiments/manual_refactor_pn2021_effnet_augmix_only_ningbo.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_augmix_only_chapman_shaoxing.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_augmix_only_cpsc_2018.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_augmix_only_georgia.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_augmix_only_ningbo.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_augmix_only_chapman_shaoxing.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_augmix_only_cpsc_2018.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_augmix_only_georgia.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_vae_lhat_only_ningbo.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_vae_lhat_only_chapman_shaoxing.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_vae_lhat_only_cpsc_2018.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_vae_lhat_only_georgia.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_vae_lhat_only_ningbo.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_vae_lhat_only_chapman_shaoxing.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_vae_lhat_only_cpsc_2018.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_vae_lhat_only_georgia.yaml
+    evaluation_count: 16
+    matrix:
+      - configs/experiments/manual_refactor_pn2021_effnet_augmix_only_matrix.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_augmix_only_matrix.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_vae_lhat_only_matrix.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_vae_lhat_only_matrix.yaml
+  matrix_cohort_configs:
+    augmix_only: {path: configs/eval/PN2021_matrix_augmix_only_r0.yaml, sha256: af25e070aba1418790ed331f5fb77447d3dc5910df9f1b029aaba40fa10810ef}
+    vae_lhat_only: {path: configs/eval/PN2021_matrix_vae_lhat_only_r0.yaml, sha256: f7ed3af9723a58d67eb93ab8421fa3572f8753ce746c907236d5868bf507f299}
+  execution:
+    training_runs: {complete: 16, total: 16}
+    evaluation_runs: {complete: 16, total: 16}
+    matrix_runs: {complete: 4, total: 4}
+    run_manifests: {complete: 36, total: 36, source_git_sha: 54caaaaeb23ac7eaec400376f69ca2082af2a235}
+    finite_numeric_artifacts: true
+    budget_validation: passed_16_of_16
+    component_switch_validation: passed_16_of_16
+    artifact_validation: passed_train16_eval16_matrix4
+  metrics: configs/active_evidence_registry.yaml#matched_component_ablation_2x2_r0_20260816
+  verification:
+    tracked_new_experiment_dry_run: passed_36_of_36_no_side_effects
+    focused_contract_tests: passed_123
+    full_pytest: passed_319_skipped_5
+    artifact_schema_and_finite_value_audit: passed_train16_eval16_matrix4
+    exact_budget_and_component_switch_audit: passed_16_of_16
+  claim_boundary:
+    - single_seed_development_not_paper_final
+    - A1_reference_not_rerun_under_exact_new_rng_namespace
+    - component_arms_not_compute_matched
+    - heldout_feedback_already_used_to_select_full_recipe
 
 
 historical_mainline:

@@ -44,7 +44,7 @@ YAML 或隐式回退入口。
 | `.codex/skills/ecg-agent-retrospective/references/handoff-template.md` | `KEEP-MANUAL` | 当前 clean worktree 的紧凑交接模板 | 新模板保留目标、状态、证据、未完成项和下一命令字段 |
 | `.codex/skills/ecg-agent-retrospective/references/session-hygiene.md` | `KEEP-MANUAL` | 项目会话卫生与禁止自动删除/归档边界 | 新规则接管相同人工确认和隐私边界 |
 | `.codex/skills/ecg-agent-retrospective/references/update-rules.md` | `KEEP-MANUAL` | 判断经验应进入 AGENTS、技能还是证据文件的最小规则 | 新规则保留可复用性、证据和上下文成本闸门 |
-| `.codex/skills/ecg-vae-online-at/SKILL.md` | `KEEP-MANUAL` | VAE-LHAT 攻击、回缩、诊断、ASR 和论文安全选择的专项流程；当前 YAML 优先于历史设置 | 新专项技能接管当前 M20/λ0.6/ε12/10步契约和历史降级规则 |
+| `.codex/skills/ecg-vae-online-at/SKILL.md` | `KEEP-MANUAL` | VAE-LHAT 攻击、回缩、诊断、ASR 和论文安全选择的专项流程；当前 YAML 优先于历史设置 | 新专项技能接管当前 M20/λ1.0/ε12/1步契约和历史降级规则 |
 | `.codex/skills/ecg-vae-online-at/references/literature_and_repos.md` | `KEEP-MANUAL` | VAE latent adversarial training、AugMix 及相关实现的文献与仓库线索 | 新参考文件保留来源区分和可追溯链接 |
 | `.codex/skills/model-eval/SKILL.md` | `KEEP-MANUAL` | 统一两骨干 PN2021/PN2021-C、drop-all-zero、逐中心/逐类和 matched baseline 评估口径 | 新评估技能接管全部 metric identity 与 ref-exclusion 闸门 |
 | `.codex/skills/reproducibility-check/SKILL.md` | `KEEP-MANUAL` | 审核配置闭包、Git/seed/checkpoint/命令/指标的可回放身份 | 新复现技能接管相同 run-record 和证据闭环 |
@@ -124,7 +124,7 @@ native-rate 到 100 Hz，以及 100 Hz 到 500 Hz 均使用该策略。PN2021 �
 | 文件 | 状态 | 当前职责 | 删除或合并前必须满足 |
 |---|---|---|---|
 | `configs/train/vae.yaml` | `KEEP-MANUAL` | ECGTwin VAE checkpoint、输入/latent、冻结方式和分类器桥接契约 | 新配置保留 checkpoint 双组件、raw mV、1024点、lead reorder、latent scale 和严格键数量 |
-| `configs/train/lhat.yaml` | `KEEP-MANUAL` | M20 exact-label/non-self latent hull、标准化、λ0.6、ε12、10步 BCE 困难搜索，以及 `[0.25,0.5,0.75,1]` 预翻转最大损失收缩网格和端点残差修正 | 新配置保留 train-only standardizer、`include_anchor=false`、100 Hz 信息瓶颈、clean-correct margin 50% 保留、无 heldout feedback 和 raw/contract 双层诊断 |
+| `configs/train/lhat.yaml` | `KEEP-MANUAL` | M20 nearest exact-label/non-self latent hull、标准化、λ1.0、ε12、1步 BCE 困难搜索，以及 `[0.25,0.5,0.75,1]` 预翻转最大损失收缩网格和端点残差修正 | 新配置保留 train-only standardizer、`include_anchor=false`、100 Hz 信息瓶颈、clean-correct margin 50% 保留、无 heldout feedback 和 raw/contract 双层诊断 |
 | `configs/train/augmix.yaml` | `KEEP-MANUAL` | 仅配置 Stage-1 两条独立 depth2/3 腐蚀链：在 500 Hz 算子域执行并回到 canonical100，以 Dirichlet(0.5,0.5) 混链、Beta(0.5,0.5) 混 clean | 新配置保留顺序隔离 RNG、pre-zscore raw mV、两链公式/温度0.5、非原地输入和配置束内单一算子来源 |
 | `configs/train/PN2021.yaml` | `KEEP-MANUAL` | 主线及既有有限选择器共用的 PN2021 训练控制：EffNet Stage-1 1024步 + E25/T30，ECGFounder Stage-1 256步 + E30/T30；EffNet 的五轮 rotating4 周期在 25 轮内完整重复五次；统一完整 K500、resident loader、最后 checkpoint、epoch history 和无 heldout 选模 | 新配置保留同源 checkpoint、完整 K500、两阶段超参、matched-base 单步预算、ref-exclusion、v7 映射、drop-all-zero 主口径和100 Hz bottleneck；不重复 recipe 身份或科学常量 |
 | `configs/train/PN2021_matched_base_a0_a1.yaml` | `KEEP-MANUAL` | A0/A1 单变量对照的专用完整 K500 控制：EffNet E25/T30、ECGFounder E30/T30，两个骨干均无 Stage-1 参数并固定 last checkpoint | 新配置保留 A0/A1 共用 comparison group、同源 checkpoint、相同 base/update、无 validation/heldout 选模和 YAML-owned 超参；不得用于含 Stage-1 的主线运行 |
@@ -137,7 +137,7 @@ native-rate 到 100 Hz，以及 100 Hz 到 500 Hz 均使用该策略。PN2021 �
 | `configs/train/methods/vae_lhat_only.yaml` | `KEEP-MANUAL` | schema-v2 VAE-LHAT-only 组件消融；从 source checkpoint 直接执行 rotating4+contracted LHAT，不执行 Stage-1 | 新 selector 保留主线同一 VAE/LHAT、辅助权重2、Stage-2 teacher=0、预算、RNG 与诊断合同 |
 | `core/__init__.py` | `KEEP-MANUAL` | 仅作为显式空 package boundary；所有生产消费者直接从 owner module 导入 | 新核心包保留空 `__all__`，不恢复训练、方法、数据或配置的 eager re-export |
 | `core/corruption.py` | `KEEP-MANUAL` | 共享 GPU canonical 腐蚀内核；把两条链合并成 `2B`，固定在 500 Hz 调用五算子并返回 100 Hz raw-mV 波形及逐样本 provenance | 新实现保留线性 `100→500→100`、五算子各一次批量调用、depth2/3 组合掩码、无逐组合 CPU 分支和有限值诊断 |
-| `core/lhat.py` | `KEEP-MANUAL` | train-only latent standardizer、exact-label non-self M20 hull 优化、固定 100 Hz canonical 可微解码后再走两模型攻击桥；攻击后一次批量解码收缩路径、端点残差修正并选择最高 BCE 的标签边界保护点 | 新实现保留只优化 batch-local hull 权重、不污染分类器/decoder 梯度、ε12/10步 raw 搜索、clean-correct margin 保护、finite/std/20mV gate、clean fallback、ASR/接受率/t 诊断和紧凑 D2H；不得把 backbone 目标长度重新下沉到 VAE decoder helper |
+| `core/lhat.py` | `KEEP-MANUAL` | train-only latent standardizer、nearest exact-label non-self M20 hull 优化、固定 100 Hz canonical 可微解码后再走两模型攻击桥；攻击后一次批量解码收缩路径、端点残差修正并选择最高 BCE 的标签边界保护点 | 新实现保留只优化 batch-local hull 权重、不污染分类器/decoder 梯度、λ1.0/ε12/1步 raw 搜索、clean-correct margin 保护、finite/std/20mV gate、clean fallback、ASR/接受率/t 诊断和紧凑 D2H；不得把 backbone 目标长度重新下沉到 VAE decoder helper |
 | `core/augmix.py` | `KEEP-MANUAL` | 仅实现冻结 Stage-1 两链强视图；两条链按锁定 RNG 顺序独立生成后做逐样本 Dirichlet 与 Beta 混合 | 新实现保留 raw100 输入、500 Hz 算子域、canonical100输出、显式 generator、非原地语义、可复算权重和不把两条链合并成会改变 RNG 身份的 `2B` 调用 |
 | `core/latent_pool.py` | `KEEP-MANUAL` | 从 raw 100 Hz K500 经 compact deterministic encoder tuple 建立 frozen VAE posterior-mean latent pool；schema v2 预计算 stable exact-label neighbor table，缓存 eligible hash tuple/set，并把邻居表 SHA256 纳入身份 | 新实现保留 encoder/cache/label/latent/eligibility/standardizer 身份、`(scaled_mean, mean, logvar)` shape/finite 校验、候选 distinct/non-self、与原 stable search 逐元素一致及不可用样本显式清单 |
 | `core/methods/__init__.py` | `KEEP-MANUAL` | 仅作为显式空 recipe package boundary；contracts、registry 与 runtime 各自拥有其 API | 新包保留空 `__all__`与 owner-module direct import，不恢复 barrel re-export、DAG、动态 import 或插件式组合 |

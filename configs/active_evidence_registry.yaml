@@ -1,5 +1,5 @@
 schema_version: 3
-updated: 2026-08-15
+updated: 2026-08-16
 purpose: >
   Separate the current prospective manual-refactor recipe from historical
   trusted evidence. A launch config is not evidence by itself.
@@ -593,6 +593,194 @@ active_development_mainline:
     - report_mean_standard_deviation_and_per_center_deltas
     - register_run_records_and_checkpoint_hashes
     - preserve_same_budget_direct_and_no_vae_ablations
+
+matched_component_ablation_2x2_r0_20260816:
+  status: complete_exact_recipe_identity_single_seed_development
+  paper_use: development_component_evidence_only
+  paper_claim_allowed: false
+  execution_git_sha: 54caaaaeb23ac7eaec400376f69ca2082af2a235
+  run_root: /home/linbinhao/ECG_adv_data/runs/paper_component_ablation_r0_20260816
+  protocol:
+    metric_view: drop_all_zero
+    metric_order: [clean_auroc, clean_auprc, pn2021c_depth23_auroc, pn2021c_depth23_auprc]
+    aggregation: equal_views_then_equal_centers
+    centers: [ningbo, chapman_shaoxing, cpsc_2018, georgia]
+    reference_exclusion_per_center: 500
+    mapping_version: v7_super5_sjr_rgq_review_20260528
+    mapping_hash: 555ec85d5b51
+    replicate_id: 0
+    training_config_sha256: 2e00752b89c11a1879b2f47727ded979824f782c4d588f04c9d02cd67a3f9166
+    evaluation_config_sha256: 0159928d8825ae60908b93285cd075d59a0ee136716c40cdea72094d6b825daf
+    checkpoint_selection: last
+    heldout_evaluation_used_for_selection: false
+  component_grid:
+    A1_reference:
+      stage1_augmix_simclr: false
+      stage1_source_logit_anchor: false
+      contracted_vae_lhat: false
+      evidence: configs/active_scripts.yaml#prospective_matched_base_a0_a1
+      rerun_in_this_execution: false
+      exact_rng_paired_to_new_three_arms: false
+    augmix_only:
+      stage1_augmix_simclr: true
+      stage1_source_logit_anchor_weight: 5.0
+      stage2_teacher_weight: 0.0
+      contracted_vae_lhat: false
+      method_config: configs/train/methods/augmix_simclr_matched_no_vae.yaml
+      method_config_sha256: a147bbf54a94d629c7654aee5cba3e960e770be6e37ac15f8e73865a4209325c
+      recipe_spec_sha256: b2b140ef2e4d440769b14f35b02ca61ba3951502fd7699a276a821ee202ae0f0
+    vae_lhat_only:
+      stage1_augmix_simclr: false
+      stage1_source_logit_anchor_weight: 0.0
+      stage2_teacher_weight: 0.0
+      contracted_vae_lhat: true
+      method_config: configs/train/methods/vae_lhat_only.yaml
+      method_config_sha256: ec5f4b79fa27ce1e661db99b912cc649462e5c3377b5eafaf70e255196c910e1
+      recipe_spec_sha256: 2231090a62a1140adf1ff691f5f399b77aa93d0ed681c60df3e2126ac49e3b13
+    full_reference:
+      stage1_augmix_simclr: true
+      stage1_source_logit_anchor_weight: 5.0
+      stage2_teacher_weight: 0.0
+      contracted_vae_lhat: true
+      evidence: active_development_mainline.exact_locked_identity_metrics_20260815
+      rerun_in_this_execution: false
+    exact_rng_pairing:
+      new_two_arms_and_full_reference: true
+      A1_reference_uses_prior_matched_base_namespace: true
+    compute_matched: false
+  execution:
+    training_runs: {complete: 16, total: 16}
+    evaluation_runs: {complete: 16, total: 16}
+    matrix_runs: {complete: 4, total: 4}
+    run_manifests: {complete: 36, total: 36, source_git_sha: 54caaaaeb23ac7eaec400376f69ca2082af2a235}
+    finite_numeric_artifacts: true
+    exact_budget:
+      efficientnet1dv2: {epochs: 25, optimizer_steps: 100}
+      ecgfounder: {epochs: 30, optimizer_steps: 240}
+    component_switch_audit:
+      augmix_only: {stage1_present: true, vae_decoder_present: false, stage2_teacher_weight: 0.0}
+      vae_lhat_only: {stage1_present: false, vae_decoder_present: true, stage2_teacher_weight: 0.0}
+  primary_drop_all_zero_four_center_mean:
+    efficientnet1dv2:
+      A1_reference: [0.8710177337, 0.6432495843, 0.8266166146, 0.5660032025]
+      augmix_only: [0.8723087474, 0.6525717093, 0.8606014269, 0.6273372440]
+      vae_lhat_only: [0.8690352086, 0.6396982913, 0.8209201360, 0.5591169224]
+      full_reference: [0.8713461330, 0.6512530687, 0.8598346954, 0.6260167605]
+      augmix_only_delta_vs_A1_pp: [0.1291013661, 0.9322124960, 3.3984812277, 6.1334041484]
+      vae_lhat_only_delta_vs_A1_pp: [-0.1982525062, -0.3551293024, -0.5696478552, -0.6886280183]
+      full_delta_vs_A1_pp: [0.0328399281, 0.8003484383, 3.3218080795, 6.0013557967]
+      vae_increment_on_augmix_only_pp: [-0.0962614380, -0.1318640577, -0.0766731482, -0.1320483517]
+    ecgfounder:
+      A1_reference: [0.9174536345, 0.7161126644, 0.8658467336, 0.6390355227]
+      augmix_only: [0.9158712894, 0.7150427941, 0.8930256437, 0.6779708171]
+      vae_lhat_only: [0.9153421383, 0.7166606638, 0.8571251865, 0.6268560715]
+      full_reference: [0.9152874633, 0.7170996415, 0.8907505330, 0.6758988580]
+      augmix_only_delta_vs_A1_pp: [-0.1582345064, -0.1069870330, 2.7178910099, 3.8935294474]
+      vae_lhat_only_delta_vs_A1_pp: [-0.2111496193, 0.0547999329, -0.8721547095, -1.2179451119]
+      full_delta_vs_A1_pp: [-0.2166171226, 0.0986977042, 2.4903799365, 3.6863335306]
+      vae_increment_on_augmix_only_pp: [-0.0583826163, 0.2056847372, -0.2275110734, -0.2071959168]
+  new_arm_per_center:
+    efficientnet1dv2:
+      augmix_only:
+        ningbo: [0.9034020670, 0.7032157234, 0.8892755325, 0.6777442814]
+        chapman_shaoxing: [0.9027549850, 0.6698584611, 0.8936472200, 0.6509964340]
+        cpsc_2018: [0.8855960720, 0.6697147015, 0.8643423544, 0.6292959458]
+        georgia: [0.7974818655, 0.5674979511, 0.7951406007, 0.5513123148]
+      vae_lhat_only:
+        ningbo: [0.9060307364, 0.6955650326, 0.8543022223, 0.6087559198]
+        chapman_shaoxing: [0.8951905107, 0.6506546379, 0.8443355032, 0.5721087229]
+        cpsc_2018: [0.8880625912, 0.6588990933, 0.8241530987, 0.5520213379]
+        georgia: [0.7868569962, 0.5536744014, 0.7608897200, 0.5035817088]
+    ecgfounder:
+      augmix_only:
+        ningbo: [0.9410386913, 0.7624911164, 0.9196396333, 0.7299965882]
+        chapman_shaoxing: [0.9407847191, 0.7393438703, 0.9238869863, 0.7111593971]
+        cpsc_2018: [0.9218359898, 0.7250810944, 0.8914891980, 0.6678242581]
+        georgia: [0.8598257575, 0.6332550953, 0.8370867572, 0.6029030252]
+      vae_lhat_only:
+        ningbo: [0.9399922362, 0.7688646894, 0.8877530811, 0.6843286885]
+        chapman_shaoxing: [0.9393050099, 0.7382173338, 0.8916769352, 0.6660528768]
+        cpsc_2018: [0.9150446117, 0.7125458823, 0.8447721805, 0.5957877901]
+        georgia: [0.8670266954, 0.6470147496, 0.8042985491, 0.5612549308]
+  secondary_four_center_means:
+    efficientnet1dv2:
+      augmix_only:
+        clean_all_zero_kept: [0.8504136512, 0.5234224938]
+        pn2021c_depth2_drop_all_zero: [0.8634530482, 0.6325428666]
+        pn2021c_depth3_drop_all_zero: [0.8577498056, 0.6221316215]
+      vae_lhat_only:
+        clean_all_zero_kept: [0.8461036005, 0.5004056613]
+        pn2021c_depth2_drop_all_zero: [0.8314621285, 0.5744092856]
+        pn2021c_depth3_drop_all_zero: [0.8103781436, 0.5438245591]
+    ecgfounder:
+      augmix_only:
+        clean_all_zero_kept: [0.8957068462, 0.6108764224]
+        pn2021c_depth2_drop_all_zero: [0.8967255871, 0.6850511597]
+        pn2021c_depth3_drop_all_zero: [0.8893257002, 0.6708904746]
+      vae_lhat_only:
+        clean_all_zero_kept: [0.8918841787, 0.6043569453]
+        pn2021c_depth2_drop_all_zero: [0.8673905922, 0.6414110172]
+        pn2021c_depth3_drop_all_zero: [0.8468597808, 0.6123011259]
+  vae_lhat_only_diagnostics:
+    scope: all_candidate_training_diagnostics_aggregated_across_four_centers_and_all_epochs
+    efficientnet1dv2:
+      candidate_eligible_count: 47575
+      contract_acceptance: {numerator: 43338, denominator: 47575, rate: 0.9109406201}
+      raw_search_sample_anyflip: {numerator: 11200, denominator: 23066, asr: 0.4855631666}
+      raw_attack_objective_gain_mean: 0.0722718763
+      raw_adversarial_delta_mean: 0.2379308790
+      decoded_invalid_rate_max: 0.0
+      contracted_training_anyflip: {numerator: 0, denominator: 43338, asr: 0.0}
+      accepted_selected_t_mean: 0.5632989524
+      accepted_bce_gain_mean: 0.0740385206
+      training_history_sha256_by_center:
+        ningbo: 026d981fa113fa20bc91b93797e8ebcfafe17c64cb75473dc446fce1f1c7f472
+        chapman_shaoxing: 33a7fd6931b78a7dc77ae8e20a8b413ac791afe93b7b957370c7804bfcf43517
+        cpsc_2018: a07623c5ff04c190e9bd265e1a2b9c3a604470029ff4afcaf58d1ca501f8b92c
+        georgia: beedc803c1a0b45ffcfb6b73509ff28d09ff3d2efe796a2154aab270545b1037
+    ecgfounder:
+      candidate_eligible_count: 57090
+      contract_acceptance: {numerator: 53456, denominator: 57090, rate: 0.9363461202}
+      raw_search_sample_anyflip: {numerator: 13790, denominator: 31327, asr: 0.4401953586}
+      raw_attack_objective_gain_mean: 0.0566179001
+      raw_adversarial_delta_mean: 0.0920354322
+      decoded_invalid_rate_max: 0.0
+      contracted_training_anyflip: {numerator: 0, denominator: 53456, asr: 0.0}
+      accepted_selected_t_mean: 0.5393407662
+      accepted_bce_gain_mean: 0.0107164679
+      training_history_sha256_by_center:
+        ningbo: 0e5aab3a764b2df115eb612961174131ce376b77b5a67526518738fb35a478ca
+        chapman_shaoxing: b8441ae204b60f4dbc9d8a47f622af664df692795800b2c67676af3a3431dd02
+        cpsc_2018: 43dbc9398edd2762d36f17d8e044de4ca70e31eb670c5209b10e0871b8fe49b2
+        georgia: 34b8c14619b390216ec1c7d458bf1b9c1f55085b2beacccc976ca540c1019356
+  matrix_artifacts:
+    augmix_only:
+      cohort_config: {path: configs/eval/PN2021_matrix_augmix_only_r0.yaml, sha256: af25e070aba1418790ed331f5fb77447d3dc5910df9f1b029aaba40fa10810ef}
+      efficientnet1dv2: {path: augmix_only/matrix/effnet/evaluation/matrix_result.json, sha256: 19c79b4fb4593a860d9646a7ada6c85698c4a59e4c601b6c7e29de39dab73b36}
+      ecgfounder: {path: augmix_only/matrix/ecgfounder/evaluation/matrix_result.json, sha256: d1ab19ebcc96d2d07397835341f573d9950c420adc0eca5419d7a6db514bf6e7}
+    vae_lhat_only:
+      cohort_config: {path: configs/eval/PN2021_matrix_vae_lhat_only_r0.yaml, sha256: f7ed3af9723a58d67eb93ab8421fa3572f8753ce746c907236d5868bf507f299}
+      efficientnet1dv2: {path: vae_lhat_only/matrix/effnet/evaluation/matrix_result.json, sha256: 736978de632efa76444f8762c2ae25cf5ac2310e398b4d91cb77498f5998952a}
+      ecgfounder: {path: vae_lhat_only/matrix/ecgfounder/evaluation/matrix_result.json, sha256: 1b532b24a32bd157702f93a1af07a247cac588e80253076834014c0d17871e80}
+  evidence_readout:
+    augmix_stage_positive_depth23_on_both_backbones: true
+    vae_lhat_only_positive_depth23_vs_A1_on_either_backbone: false
+    full_outperforms_augmix_only_depth23_on_either_backbone: false
+    only_positive_full_vs_augmix_primary_delta:
+      model: ecgfounder
+      metric: clean_auprc
+      delta_pp: 0.2056847372
+    recommendation_from_this_single_seed:
+      performance_minimal_method: augmix_only
+      retain_vae_lhat_as_positive_performance_component: unsupported
+      retain_vae_lhat_only_if_adversarial_mechanism_is_a_required_claim: true
+  limitations:
+    - single_seed_development_evidence
+    - A1_reference_not_rerun_under_exact_new_rng_namespace
+    - component_arms_not_compute_matched
+    - full_recipe_selected_after_prior_four_center_feedback
+    - independent_repeats_pending
+    - not_a_final_paper_claim
 
 historical_trusted_snapshot:
   status: provenance_only_not_live_runtime

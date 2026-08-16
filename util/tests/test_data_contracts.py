@@ -516,7 +516,7 @@ def test_active_evidence_quarantines_accepted_subset_lhat_diagnostics() -> None:
     integrity = active["diagnostic_integrity"]
 
     assert registry["schema_version"] == 3
-    assert str(registry["updated"]) == "2026-08-15"
+    assert str(registry["updated"]) == "2026-08-16"
     assert integrity["status"] == "legacy_accepted_subset_quarantined"
     assert integrity["all_candidate_raw_diagnostics"] == {
         "availability": "unavailable",
@@ -556,6 +556,91 @@ def test_active_evidence_quarantines_accepted_subset_lhat_diagnostics() -> None:
         }
         assert legacy["sample_count"] == accepted_count
         assert legacy["use"] == "audit_only_not_all_candidate_mechanism_evidence"
+
+
+def test_component_ablation_evidence_locks_metrics_switches_and_artifacts() -> None:
+    scripts = yaml.safe_load(
+        (CONFIG_ROOT / "active_scripts.yaml").read_text(encoding="utf-8")
+    )["prospective_component_ablation_2x2_r0"]
+    registry = yaml.safe_load(
+        (CONFIG_ROOT / "active_evidence_registry.yaml").read_text(encoding="utf-8")
+    )["matched_component_ablation_2x2_r0_20260816"]
+
+    assert scripts["execution"] == {
+        "training_runs": {"complete": 16, "total": 16},
+        "evaluation_runs": {"complete": 16, "total": 16},
+        "matrix_runs": {"complete": 4, "total": 4},
+        "run_manifests": {
+            "complete": 36,
+            "total": 36,
+            "source_git_sha": "54caaaaeb23ac7eaec400376f69ca2082af2a235",
+        },
+        "finite_numeric_artifacts": True,
+        "budget_validation": "passed_16_of_16",
+        "component_switch_validation": "passed_16_of_16",
+        "artifact_validation": "passed_train16_eval16_matrix4",
+    }
+    assert len(scripts["experiment_configs"]["training"]) == 16
+    assert len(scripts["experiment_configs"]["matrix"]) == 4
+    assert all(
+        (REPO / path).is_file()
+        for path in (
+            *scripts["experiment_configs"]["training"],
+            *scripts["experiment_configs"]["matrix"],
+        )
+    )
+
+    grid = registry["component_grid"]
+    assert grid["augmix_only"]["stage1_augmix_simclr"] is True
+    assert grid["augmix_only"]["contracted_vae_lhat"] is False
+    assert grid["vae_lhat_only"]["stage1_augmix_simclr"] is False
+    assert grid["vae_lhat_only"]["contracted_vae_lhat"] is True
+    assert grid["augmix_only"]["stage2_teacher_weight"] == 0.0
+    assert grid["vae_lhat_only"]["stage2_teacher_weight"] == 0.0
+    assert grid["A1_reference"]["rerun_in_this_execution"] is False
+    assert grid["A1_reference"]["exact_rng_paired_to_new_three_arms"] is False
+
+    for arm in ("augmix_only", "vae_lhat_only"):
+        method = grid[arm]
+        method_path = REPO / method["method_config"]
+        assert hashlib.sha256(method_path.read_bytes()).hexdigest() == method[
+            "method_config_sha256"
+        ]
+        cohort = registry["matrix_artifacts"][arm]["cohort_config"]
+        cohort_path = REPO / cohort["path"]
+        assert hashlib.sha256(cohort_path.read_bytes()).hexdigest() == cohort["sha256"]
+
+    metrics = registry["primary_drop_all_zero_four_center_mean"]
+    assert metrics["efficientnet1dv2"]["augmix_only"] == pytest.approx(
+        [0.8723087474, 0.6525717093, 0.8606014269, 0.6273372440]
+    )
+    assert metrics["efficientnet1dv2"]["vae_lhat_only"] == pytest.approx(
+        [0.8690352086, 0.6396982913, 0.8209201360, 0.5591169224]
+    )
+    assert metrics["ecgfounder"]["augmix_only"] == pytest.approx(
+        [0.9158712894, 0.7150427941, 0.8930256437, 0.6779708171]
+    )
+    assert metrics["ecgfounder"]["vae_lhat_only"] == pytest.approx(
+        [0.9153421383, 0.7166606638, 0.8571251865, 0.6268560715]
+    )
+    for model in ("efficientnet1dv2", "ecgfounder"):
+        assert metrics[model]["vae_increment_on_augmix_only_pp"][2] < 0.0
+        assert metrics[model]["vae_increment_on_augmix_only_pp"][3] < 0.0
+
+    diagnostics = registry["vae_lhat_only_diagnostics"]
+    for model in ("efficientnet1dv2", "ecgfounder"):
+        attack = diagnostics[model]
+        assert attack["raw_search_sample_anyflip"]["asr"] > 0.4
+        assert attack["decoded_invalid_rate_max"] == 0.0
+        assert attack["contracted_training_anyflip"]["asr"] == 0.0
+        assert attack["contract_acceptance"]["rate"] == pytest.approx(
+            attack["contract_acceptance"]["numerator"]
+            / attack["contract_acceptance"]["denominator"]
+        )
+    readout = registry["evidence_readout"]
+    assert readout["augmix_stage_positive_depth23_on_both_backbones"] is True
+    assert readout["vae_lhat_only_positive_depth23_vs_A1_on_either_backbone"] is False
+    assert readout["full_outperforms_augmix_only_depth23_on_either_backbone"] is False
 
 
 def test_direct_historical_ledger_is_complete_and_immutable() -> None:
