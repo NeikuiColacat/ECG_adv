@@ -4,7 +4,7 @@ One repository, three research directions, shared data and implementation.
 Start with [the direction guide](docs/directions.md); its small
 [configuration catalog](configs/directions.yaml) points to existing experiments.
 
-| Direction | Main method | Proposed long-lived branch |
+| Direction | Main method | Long-lived branch |
 |---|---|---|
 | ECG LLM | PULSE / ECG-R1 image evaluation and PULSE fine-tuning | `direction/ecg-llm` |
 | Traditional + SimCLR | ECGFounder / EfficientNet, locked two-stage AugMix + SimCLR + LHAT | `direction/traditional-simclr` |
@@ -14,6 +14,8 @@ The JSD direction uses the existing R18 recipe. The September 11 two-stage
 Founder JSD/width experiment remains an auxiliary comparison, not its default.
 These are development recipes, not paper-final claims. Different stage/step
 budgets do not establish a matched causal estimate of SimCLR's benefit.
+The SimCLR branch is prepared; switching the old `clean` checkout and retiring
+old worktrees still require the approval recorded in the consolidation record.
 
 ## Run one experiment
 

@@ -73,6 +73,12 @@ existing PyTorch TypedStorage warning. Evidence: `validation/final_cpu.xml`
 below the external validation root. Independent reviews covered recipe AST
 equivalence, queue reservation lifecycle, mapping closure, direction links,
 and Git artifact safety. All 74 recipe descriptions and hashes are unchanged.
+The JSD checkout independently passed the same **558 tests, 14 skipped** in
+90.81 seconds (`validation/jsd_checkout_cpu.xml`). Representative LLM, SimCLR
+and JSD dry-runs resolved their local bundles without loading data/model/GPU.
+All three correctly reported existing historical output directories as a
+collision; new execution still requires a fresh run directory. Their outputs
+are saved in `validation/direction_dry_runs.json`.
 CPU-only checks do not establish GPU or author-model equivalence. No full
 benchmark was launched for this code and navigation consolidation.
 
@@ -85,6 +91,36 @@ Ningbo). This is not proof of deletion. Locate cold archives by their recorded
 hashes before claiming checkpoint recovery; a newly retrained model must never
 be labelled with an old checkpoint hash. Source PTB-XL checkpoints were present
 during the planning audit.
+
+## Source checkpoint and checkout status
+
+Local source commit: `e8b92427663f7b2e07e3419af2709393b875aafd`.
+It captures the previously uncommitted retained baseline plus this turn's
+reviewed integration; its 1,200 changed files are not 1,200 newly implemented
+files. The reviewed index contained 1,395 source/evidence files, 4,053,115 bytes.
+Nothing was pushed. Data, private drafts, local model handles, intermediate
+artifacts, and the two unchanged tracked historical evidence files were not
+newly staged. The original index state remains recoverable from the snapshot.
+
+| Direction | Branch | Checkout state |
+|---|---|---|
+| LLM | `direction/ecg-llm` | Checked out in `paper_kernel_v2`; clean source index |
+| JSD | `direction/traditional-jsd` | Checked out in `jsd_width_20260911`; same source tree |
+| SimCLR | `direction/traditional-simclr` | Branch prepared; old `clean` checkout not switched yet |
+
+JSD synchronization changed 17 files and added four, with no deletions.
+Its old files were checked against the initial snapshot; its resulting index
+and worktree were proven equal to the committed source before a normal Git
+switch. No reset, force checkout or force staging was used. Direction branches
+share code; a branch's focus does not silently switch the experiment recipe.
+
+The full initial staged whitespace check reported 19 historical YAMLs: three
+trailing spaces and 16 EOF blank lines. All 19 were byte-identical across
+initial snapshot, actual archive member, staged blob, and working file.
+They remain unchanged to preserve frozen configuration hashes. A second check
+excluding exactly those 19 literal paths passed for all other 1,181 changed
+files; no Git setting or attribute weakened the check. Later code/doc diffs
+must pass the ordinary check.
 
 ## Retirement candidates — NOT approved for removal
 
@@ -119,13 +155,85 @@ Unchanged historical references keep their original source identity; live
 consumers must migrate before an old path is retired. Data roots and report
 services are outside this removal scope.
 
+## Live retirement gates
+
+Read-only audit: `retirement_readonly_audit_20260912_v2.json` under the
+external validation root. On 2026-09-12, all 16 candidate HEADs,
+indexes, patches and 5,114 files/links matched the initial snapshot.
+Three retained local model links do not point into the candidate trees.
+
+Fifteen candidates had no observed current-user process references. The
+competitor worktree `workspaces/ecg_locked_backbone_port_20260828` still had
+nine bash working directories: PIDs 439337, 552921, 634103, 637030, 637041,
+775881, 775884, 4138030, 4174925. Those terminals must first move elsewhere;
+do not terminate them automatically. The audit covered 63 owned processes and
+664 file-descriptor links; some surfaces of sd-pam, a zombie bash, and sshd
+were unreadable. Recheck live state before any approved retirement.
+
+Updating the old `ECG_manual_refactor_clean` checkout from `a1892b2` to the
+consolidated source would remove the following **47 previously tracked files**.
+All are backed up and absent from the new source tree. This checkout is held
+at its old commit until the user approves this exact removal batch; the
+prepared SimCLR branch already contains the validated new source.
+
+```text
+boot_scripts/refit_pn2021_direct.py
+boot_scripts/select_pn2021_direct.py
+boot_scripts/tune_pn2021_direct.py
+configs/experiments/manual_refactor_pn2021_ecgfounder_direct_select.yaml
+configs/experiments/manual_refactor_pn2021_ecgfounder_direct_tune_chapman_shaoxing.yaml
+configs/experiments/manual_refactor_pn2021_ecgfounder_direct_tune_cpsc_2018.yaml
+configs/experiments/manual_refactor_pn2021_ecgfounder_direct_tune_georgia.yaml
+configs/experiments/manual_refactor_pn2021_ecgfounder_direct_tune_ningbo.yaml
+configs/experiments/manual_refactor_pn2021_ecgfounder_fixed20_refit_chapman_shaoxing.yaml
+configs/experiments/manual_refactor_pn2021_ecgfounder_fixed20_refit_cpsc_2018.yaml
+configs/experiments/manual_refactor_pn2021_ecgfounder_fixed20_refit_georgia.yaml
+configs/experiments/manual_refactor_pn2021_ecgfounder_fixed20_refit_ningbo.yaml
+configs/experiments/manual_refactor_pn2021_effnet_direct_select.yaml
+configs/experiments/manual_refactor_pn2021_effnet_direct_tune_chapman_shaoxing.yaml
+configs/experiments/manual_refactor_pn2021_effnet_direct_tune_cpsc_2018.yaml
+configs/experiments/manual_refactor_pn2021_effnet_direct_tune_georgia.yaml
+configs/experiments/manual_refactor_pn2021_effnet_direct_tune_ningbo.yaml
+configs/experiments/manual_refactor_pn2021_effnet_fixed20_refit_chapman_shaoxing.yaml
+configs/experiments/manual_refactor_pn2021_effnet_fixed20_refit_cpsc_2018.yaml
+configs/experiments/manual_refactor_pn2021_effnet_fixed20_refit_georgia.yaml
+configs/experiments/manual_refactor_pn2021_effnet_fixed20_refit_ningbo.yaml
+configs/experiments/manual_refactor_pn2021_effnet_matched_lhat_aux_e2_ningbo.yaml
+configs/experiments/manual_refactor_pn2021_effnet_matched_raw_aux_e2_ningbo.yaml
+configs/experiments/manual_refactor_pn2021_effnet_matched_vae_reconstruction_aux_e2_ningbo.yaml
+configs/train/PN2021_direct_tune.yaml
+configs/train/PN2021_matched_lhat_aux_tune.yaml
+configs/train/PN2021_matched_raw_aux_tune.yaml
+configs/train/PN2021_matched_vae_reconstruction_aux_tune.yaml
+configs/train/methods/direct_depth23_fixed20_lhat_aux.yaml
+configs/train/methods/direct_depth23_fixed20_raw_aux.yaml
+configs/train/methods/direct_depth23_fixed20_vae_reconstruction_aux.yaml
+configs/train/methods/exp_augmix_guided_latent_simplex_v1.yaml
+configs/train/methods/exp_lhat_as_sixth_branch_v1.yaml
+configs/train/methods/exp_lhat_replay_pool_v1.yaml
+configs/train/methods/exp_paired_augmix_latent_bridge_v1.yaml
+core/methods/executor.py
+core/methods/nodes/__init__.py
+core/methods/nodes/buffers.py
+core/methods/nodes/codecs.py
+core/methods/nodes/latent_ops.py
+core/methods/nodes/mixers.py
+core/methods/nodes/selectors.py
+core/methods/nodes/waveform_ops.py
+core/pn2021_tuning.py
+util/evaluation/direct_baseline_selection.py
+util/tensorboard_logging.py
+util/visualize_ecg.py
+```
+
 ## Acceptance
 
 - [x] User confirmed all three directions and single-stage JSD parameters.
 - [x] Verified recoverable pre-change snapshot and CPU baseline.
 - [x] Integrated unique width implementation and added focused fixes/tests.
 - [x] Full combined regression and independent code review.
-- [ ] Reviewed local source commit and three direction branches checked out.
+- [x] Reviewed local source commit and three direction branches created.
+- [ ] All three direction branches checked out (SimCLR awaits removal approval).
 - [ ] Final retirement audit and user approval of the exact old-tree batch.
 - [ ] Exactly three registered worktrees; old refs/artifacts still recoverable.
 
