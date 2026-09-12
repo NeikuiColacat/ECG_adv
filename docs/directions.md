@@ -3,7 +3,9 @@
 这是一份导航，不是新的实验配置或执行授权。机器可读目录见
 [configs/directions.yaml](../configs/directions.yaml)。目录只列现有代表入口；
 Ningbo 示例不等于全四中心快捷启动，完整网格仍以注册表为准。
-不移动、删除旧 worktree／配置／归档，不改 canonical 路径、配方或历史结果身份。
+本导航不授权移动或删除 worktree／配置／归档，不改 canonical 路径、配方或历史结果身份。
+已单独获批完成三树整理，目录与恢复记录见
+[整理记录](refactor_cleanup/three_direction_consolidation.md)。
 
 | 方向 | 当前工作主方法 | 主要对照 |
 |---|---|---|

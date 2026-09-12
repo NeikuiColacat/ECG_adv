@@ -122,12 +122,13 @@ excluding exactly those 19 literal paths passed for all other 1,181 changed
 files; no Git setting or attribute weakened the check. Later code/doc diffs
 must pass the ordinary check.
 
-## Retirement candidates — approved batch completed, occupied tree excluded
+## Retirement candidates — completed in two separately authorized batches
 
 The user explicitly replied “同意清理” to the 47-file and 15-idle-worktree
 batch on 2026-09-12. The first 15 directories below were removed by ordinary
-`git worktree remove`, without force; the final occupied directory is excluded
-from that approval and remains registered. Prefixes are relative to
+`git worktree remove`, without force; the final occupied directory was excluded
+from that first approval and retired only after the later authorization below.
+Prefixes are relative to
 `/home/linbinhao/`. Their commits remain in Git refs and the recovery bundle;
 local unique files remain in the verified snapshot.
 
@@ -168,8 +169,8 @@ Three retained local model links do not point into the candidate trees.
 Fifteen candidates had no observed current-user process references. The
 competitor worktree `workspaces/ecg_locked_backbone_port_20260828` still had
 nine bash working directories: PIDs 439337, 552921, 634103, 637030, 637041,
-775881, 775884, 4138030, 4174925. Those terminals must first move elsewhere;
-do not terminate them automatically. The audit covered 63 owned processes and
+775881, 775884, 4138030, 4174925. At this first gate those terminals required
+release; termination had not been authorized. The audit covered 63 owned processes and
 664 file-descriptor links; some surfaces of sd-pam, a zombie bash, and sshd
 were unreadable. Recheck live state before any approved retirement.
 
@@ -229,7 +230,7 @@ util/tensorboard_logging.py
 util/visualize_ecg.py
 ```
 
-## Approved execution and remaining gate
+## First approved execution — final tree still protected at this point
 
 Transaction artifacts under the external validation root:
 `approved_cleanup_20260912_v1/{plan.json,journal.jsonl,result.json}`.
@@ -252,11 +253,54 @@ fresh non-created output paths; none loaded data, a model or a GPU
 (`post_cleanup_dry_runs.json`). `git fsck --connectivity-only --no-dangling`
 passed and `git worktree prune --dry-run --verbose` found no stale records.
 
-Current layout: **three active direction worktrees plus one occupied
-historical worktree**, four registered worktrees total. The remaining
-`workspaces/ecg_locked_backbone_port_20260828` must not be removed until its
-terminals move away, its state is rechecked, and that final retirement is
-explicitly authorized. This batch does not establish the final three-tree goal.
+The first batch left **three active direction worktrees plus one occupied
+historical worktree**. It did not establish the final three-tree goal or
+authorize removal of `workspaces/ecg_locked_backbone_port_20260828`.
+
+## Final authorized retirement — exactly three worktrees
+
+The user then explicitly requested closing the identified tmux windows and
+continuing the consolidation goal. The final transaction lives under
+`final_cleanup_20260912_v1/` in the external validation root.
+
+- Revalidated all 280 old-tree files/links against the original SHA-verified
+  snapshot; saved a new immutable per-file/pane plan with SHA256
+  `fb306af993c83d42163c30c2743b2addaa218f5487b725eb3964bb2818e5c14c`.
+- Closed only `cmp_locked_r0` panes `%39,%40,%41,%42,%44,%47,%49,%50,%51`:
+  eight idle bash windows (nine shell processes including one nested shell)
+  and one already-dead window. No training or Codex child was present.
+  The other 17 panes, including Codex and report services, were preserved.
+  Scrollback is private external recovery material, never staged in Git.
+- Preserved six modified source files and nine untracked YAMLs byte-for-byte
+  in archive-only commit `0aba16bfb60c9f9efc543ee0350c1b292eeef2c6`, branch
+  `archive/locked-competitor-local-20260912`. The original competitor branch
+  remains at `db26ed5ad80949b38dcc005e79f1ff3d2e95d9fe`. Three focused CPU
+  tests passed in 7.15 seconds; these drafts are not promoted into the active
+  directions or revalidated as scientific results.
+- Moved only the absolute `model/ECGTwin` symlink into
+  `final_cleanup_20260912_v1/local_handles/ECGTwin`. Its external payload was
+  untouched. The original link also remains recorded in the initial snapshot.
+- After another source/process check and verified all-refs bundle, ordinary
+  `git worktree remove` removed the now-clean final old checkout (279 source
+  files after moving the link). No force, reset, broad clean or system change.
+- Verified exactly the three directories in the scope table remain registered;
+  all preexisting refs and all three active checkout contents were preserved.
+  `result.json`, `pane_journal.jsonl`, `panes_closed.json`, and
+  `before_final_remove.bundle` retain the audit and recovery evidence.
+
+To recover the final drafts, create a separate clone from the verified bundle
+and select the archive commit, or extract chosen original files from the
+initial tar snapshot. Do not overwrite the live common Git metadata. The
+historical missing-checkpoint caveat above still applies; this cleanup did not
+reconstruct missing weights, change recipes, or launch training.
+
+Final post-retirement CPU suite: **558 passed, 14 skipped**, 95.44 seconds,
+with the same TypedStorage warning (`final_cleanup_20260912_v1/final_cpu.xml`).
+Three checkout-local launcher dry-runs passed with fresh non-created output
+paths and no data/model/GPU loading (`final_dry_runs.json`). The final local
+source commit, equal checkout heads, Git connectivity, all-ref bundle and
+bare-clone readback of all 15 archived drafts are recorded in `handoff.json`.
+No commits were pushed; no GPU parity or new performance claim is implied.
 
 ## Acceptance
 
@@ -267,7 +311,7 @@ explicitly authorized. This batch does not establish the final three-tree goal.
 - [x] Reviewed local source commit and three direction branches created.
 - [x] All three direction branches checked out.
 - [x] User-approved 47-file and 15-worktree cleanup executed and verified.
-- [ ] Remaining occupied worktree released, re-audited and separately approved.
-- [ ] Exactly three registered worktrees; old refs/artifacts still recoverable.
+- [x] Remaining occupied worktree released, re-audited and separately approved.
+- [x] Exactly three registered worktrees; old source refs and local drafts recoverable.
 
 No further worktree removal is authorized by this document alone.

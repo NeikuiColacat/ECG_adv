@@ -14,9 +14,9 @@ The JSD direction uses the existing R18 recipe. The September 11 two-stage
 Founder JSD/width experiment remains an auxiliary comparison, not its default.
 These are development recipes, not paper-final claims. Different stage/step
 budgets do not establish a matched causal estimate of SimCLR's benefit.
-All three direction branches are checked out. Fifteen historical worktrees
-were retired with approval; one additional old checkout remains because
-terminals still use it. See the consolidation record for recovery and status.
+Exactly three worktrees remain, one per direction. All 16 historical worktrees
+were retired with approval after preserving their source and local drafts.
+See the consolidation record for the verified recovery paths and status.
 
 ## Run one experiment
 

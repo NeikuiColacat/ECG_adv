@@ -42,6 +42,12 @@ YAML 或隐式回退入口。
 备份、历史 Git refs、模型链接与被9个终端使用的旧 worktree 保留；本次授权
 不包含该占用树或其他文件。执行清单、恢复位置与验证见三方向整理记录。
 
+2026-09-12 最后批次：用户随后要求关闭已核实的旧实验 tmux 窗口并继续 goal。
+仅关闭 `cmp_locked_r0` 的9个窗口（8个空闲 shell 窗口、1个已退出窗口），保留
+其他17个窗口。最后一个旧树重新核验280个文件／链接，15份未提交源码／配置
+提交到独立 archive 分支，模型符号链接另行保全后，使用非 force 的 Git 操作
+退役。现在恰好3个 worktree；此记录不扩展为其他文件或进程的清理授权。
+
 2026-09-11 双路 JSD 扩展（用户授权，开发证据）：`core/consistency.py`、
 `core/pulse_visual.py`、`util/tests/test_dual_jsd.py` 为 KEEP-MANUAL。
 `util/evaluation/pulse_visual_subset.py` 和四中心 `pulse_visual_eval_*` 的 eval/experiment
