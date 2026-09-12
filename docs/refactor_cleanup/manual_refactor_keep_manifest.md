@@ -37,6 +37,11 @@ YAML 或隐式回退入口。
 双阶段 JSD12 width 扩展保留为附属实验。共享实现按 Git 提交整合，禁止跨树导入。
 该批次已完成19树私有恢复快照；旧树退役仍必须经过 D 节用户确认闸门。
 
+2026-09-12 后续用户明确回复“同意清理”：按已审清单完成15个闲置 worktree
+退役及 clean checkout 的47个旧文件退出，三个方向已检出同一共享代码基线。
+备份、历史 Git refs、模型链接与被9个终端使用的旧 worktree 保留；本次授权
+不包含该占用树或其他文件。执行清单、恢复位置与验证见三方向整理记录。
+
 2026-09-11 双路 JSD 扩展（用户授权，开发证据）：`core/consistency.py`、
 `core/pulse_visual.py`、`util/tests/test_dual_jsd.py` 为 KEEP-MANUAL。
 `util/evaluation/pulse_visual_subset.py` 和四中心 `pulse_visual_eval_*` 的 eval/experiment

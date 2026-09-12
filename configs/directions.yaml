@@ -5,7 +5,7 @@ scope: representative_existing_entrypoints_not_a_new_config_generator
 notes:
   - Paths are repo-relative; index fragments name existing YAML keys.
   - Ningbo entries are examples, not shortcuts for the full four-center grid.
-  - Keep canonical config paths, recipe identities, old worktrees, and frozen results unchanged.
+  - Keep canonical config paths, recipe identities, and frozen results unchanged; worktree retirement requires separate approval.
   - Historical checkpoint metadata does not guarantee weights remain at the recorded path.
 
 directions:

@@ -106,7 +106,7 @@ newly staged. The original index state remains recoverable from the snapshot.
 |---|---|---|
 | LLM | `direction/ecg-llm` | Checked out in `paper_kernel_v2`; clean source index |
 | JSD | `direction/traditional-jsd` | Checked out in `jsd_width_20260911`; same source tree |
-| SimCLR | `direction/traditional-simclr` | Branch prepared; old `clean` checkout not switched yet |
+| SimCLR | `direction/traditional-simclr` | Checked out in `clean` after explicit cleanup approval; same source tree |
 
 JSD synchronization changed 17 files and added four, with no deletions.
 Its old files were checked against the initial snapshot; its resulting index
@@ -122,11 +122,14 @@ excluding exactly those 19 literal paths passed for all other 1,181 changed
 files; no Git setting or attribute weakened the check. Later code/doc diffs
 must pass the ordinary check.
 
-## Retirement candidates — NOT approved for removal
+## Retirement candidates — approved batch completed, occupied tree excluded
 
-The following 16 registered worktrees are historical candidates. Prefixes
-below are relative to `/home/linbinhao/`. Their commits remain in Git refs and
-the recovery bundle, and local unique files remain in the snapshot.
+The user explicitly replied “同意清理” to the 47-file and 15-idle-worktree
+batch on 2026-09-12. The first 15 directories below were removed by ordinary
+`git worktree remove`, without force; the final occupied directory is excluded
+from that approval and remains registered. Prefixes are relative to
+`/home/linbinhao/`. Their commits remain in Git refs and the recovery bundle;
+local unique files remain in the verified snapshot.
 
 | Exact directory | Retained purpose |
 |---|---|
@@ -155,7 +158,7 @@ Unchanged historical references keep their original source identity; live
 consumers must migrate before an old path is retired. Data roots and report
 services are outside this removal scope.
 
-## Live retirement gates
+## Pre-retirement audit and approved clean-file batch
 
 Read-only audit: `retirement_readonly_audit_20260912_v2.json` under the
 external validation root. On 2026-09-12, all 16 candidate HEADs,
@@ -170,11 +173,11 @@ do not terminate them automatically. The audit covered 63 owned processes and
 664 file-descriptor links; some surfaces of sd-pam, a zombie bash, and sshd
 were unreadable. Recheck live state before any approved retirement.
 
-Updating the old `ECG_manual_refactor_clean` checkout from `a1892b2` to the
-consolidated source would remove the following **47 previously tracked files**.
-All are backed up and absent from the new source tree. This checkout is held
-at its old commit until the user approves this exact removal batch; the
-prepared SimCLR branch already contains the validated new source.
+The approved switch of `ECG_manual_refactor_clean` from `a1892b2` to
+`direction/traditional-simclr` at `0e8d305` removed the following **47 previously
+tracked files**. All are backed up and verified absent after the switch.
+This was a normal Git checkout of the already validated source, not a force
+checkout, fresh code deletion, experiment rerun, or change to historical refs.
 
 ```text
 boot_scripts/refit_pn2021_direct.py
@@ -226,6 +229,35 @@ util/tensorboard_logging.py
 util/visualize_ecg.py
 ```
 
+## Approved execution and remaining gate
+
+Transaction artifacts under the external validation root:
+`approved_cleanup_20260912_v1/{plan.json,journal.jsonl,result.json}`.
+The immutable per-file plan SHA256 is
+`6602b90134c782503521c959f559b629afe5f228a3159d2ac473b58309e3ae48`.
+
+Before each action, the transaction revalidated the exact target, archive
+hash, file identities/content/ownership and current-user process references.
+The 15 retired trees contained 4,834 backed-up files/links, excluding the
+explicitly disposable cache categories. Their directory entries and Git
+worktree registrations are gone. All Git refs were unchanged, protected
+source and the occupied tree matched the pre-action inventory, and all three
+local model links retained their targets. No process was stopped; data,
+weights, report services and recovery archives were outside the deletion scope.
+
+Post-cleanup full CPU regression from the SimCLR checkout: **558 passed,
+14 skipped**, 95.24 seconds, with the existing TypedStorage warning only
+(`post_cleanup_cpu.xml`). All three checkout-local dry-runs passed using
+fresh non-created output paths; none loaded data, a model or a GPU
+(`post_cleanup_dry_runs.json`). `git fsck --connectivity-only --no-dangling`
+passed and `git worktree prune --dry-run --verbose` found no stale records.
+
+Current layout: **three active direction worktrees plus one occupied
+historical worktree**, four registered worktrees total. The remaining
+`workspaces/ecg_locked_backbone_port_20260828` must not be removed until its
+terminals move away, its state is rechecked, and that final retirement is
+explicitly authorized. This batch does not establish the final three-tree goal.
+
 ## Acceptance
 
 - [x] User confirmed all three directions and single-stage JSD parameters.
@@ -233,8 +265,9 @@ util/visualize_ecg.py
 - [x] Integrated unique width implementation and added focused fixes/tests.
 - [x] Full combined regression and independent code review.
 - [x] Reviewed local source commit and three direction branches created.
-- [ ] All three direction branches checked out (SimCLR awaits removal approval).
-- [ ] Final retirement audit and user approval of the exact old-tree batch.
+- [x] All three direction branches checked out.
+- [x] User-approved 47-file and 15-worktree cleanup executed and verified.
+- [ ] Remaining occupied worktree released, re-audited and separately approved.
 - [ ] Exactly three registered worktrees; old refs/artifacts still recoverable.
 
-No worktree removal is authorized by this document alone.
+No further worktree removal is authorized by this document alone.
