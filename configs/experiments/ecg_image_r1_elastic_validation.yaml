@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: ecg_image_r1_elastic_validation
+  purpose: Frozen image-only R1 scheduling and GPU admission validation on the 32 reserved smoke records; no accuracy-based tuning.
+entrypoint:
+  name: evaluate_ecg_image
+  config: eval/ecg_image_r1_elastic_validation.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/ecg_r1_full_elastic_20260907/validation
+  if_exists: error
+  delegate_output_subdir: evaluation

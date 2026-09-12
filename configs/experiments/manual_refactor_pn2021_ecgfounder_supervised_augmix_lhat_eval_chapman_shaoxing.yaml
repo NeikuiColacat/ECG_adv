@@ -1,0 +1,23 @@
+schema_version: 1
+
+experiment:
+  name: manual_refactor_pn2021_ecgfounder_supervised_augmix_lhat_eval_chapman_shaoxing_r0
+  purpose: Evaluate the matched supervised-AugMix plus contracted VAE-LHAT ablation on ref-excluded chapman_shaoxing Clean and PN2021-C.
+
+entrypoint:
+  name: evaluate_pn2021
+  config: eval/PN2021.yaml
+  arguments:
+    - --model
+    - ecgfounder
+    - --train-result
+    - /home/linbinhao/ECG_adv_data/runs/no_contrastive_supervised_augmix_2x2_r0_20260831/lhat/ecgfounder/chapman_shaoxing/training/train_result.json
+    - --center
+    - chapman_shaoxing
+    - --method-config
+    - train/methods/augmix_supervised_lhat.yaml
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/no_contrastive_supervised_augmix_2x2_r0_20260831/lhat/eval/ecgfounder/chapman_shaoxing
+  if_exists: error
+  delegate_output_subdir: evaluation

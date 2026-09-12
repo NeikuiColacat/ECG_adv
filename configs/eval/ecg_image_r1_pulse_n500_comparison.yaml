@@ -1,0 +1,52 @@
+schema_version: 1
+models:
+  - name: ECG-R1-8B-RL-image-only-BF16
+    results:
+      - /home/linbinhao/ECG_adv_data/runs/ecg_image_llm_10h_20260907/r1_n500_r0/evaluation/evaluation_result.json
+      - /home/linbinhao/ECG_adv_data/runs/ecg_image_llm_10h_20260907/r1_n500_r1/evaluation/evaluation_result.json
+      - /home/linbinhao/ECG_adv_data/runs/ecg_image_llm_10h_20260907/r1_n500_r2/evaluation/evaluation_result.json
+      - /home/linbinhao/ECG_adv_data/runs/ecg_image_llm_10h_20260907/r1_n500_r3/evaluation/evaluation_result.json
+baseline_run: /home/linbinhao/ECG_adv_data/runs/pulse_pn2021c_native500_gpu_renderer_s5_depth23_full_r0_20260905_v3_4gpu_handoff
+bootstrap:
+  repeats: 1000
+  seed: 20260907
+report:
+  renderer: data_analytics_portable_v1
+diagnostics:
+  - name: Llama FP16 batch1
+    run_dir: /home/linbinhao/ECG_adv_data/runs/ecg_image_llm_10h_20260907/llama_smoke
+  - name: Llama NF4 original prompt 64 tokens
+    run_dir: /home/linbinhao/ECG_adv_data/runs/ecg_image_llm_10h_20260907/llama_nf4_smoke
+  - name: Llama NF4 strict prompt 64 tokens
+    run_dir: /home/linbinhao/ECG_adv_data/runs/ecg_image_llm_10h_20260907/llama_nf4_strict_smoke
+  - name: Llama NF4 complete report 256 tokens
+    run_dir: /home/linbinhao/ECG_adv_data/runs/ecg_image_llm_10h_20260907/llama_nf4_report_completion_smoke
+  - name: Llama FP16 two GPUs original prompt 256 tokens
+    run_dir: /home/linbinhao/ECG_adv_data/runs/ecg_image_llm_10h_20260907/llama_fp16_2gpu_smoke
+  - name: Llama FP16 two GPUs strict prompt 64 tokens
+    run_dir: /home/linbinhao/ECG_adv_data/runs/ecg_image_llm_10h_20260907/llama_fp16_2gpu_strict_smoke
+  - name: R1 BF16 batch1
+    run_dir: /home/linbinhao/ECG_adv_data/runs/ecg_image_llm_10h_20260907/r1_smoke
+  - name: R1 BF16 batch2
+    run_dir: /home/linbinhao/ECG_adv_data/runs/ecg_image_llm_10h_20260907/r1_b2_smoke
+  - name: R1 BF16 batch4
+    run_dir: /home/linbinhao/ECG_adv_data/runs/ecg_image_llm_10h_20260907/r1_b4_smoke
+  - name: R1 BF16 batch8
+    run_dir: /home/linbinhao/ECG_adv_data/runs/ecg_image_llm_10h_20260907/r1_b8_smoke
+limitations:
+  - 本轮为固定推理的开发性子集评测，不是全量 PN2021 测试或最终论文证据；未训练、未按正式成绩选择提示词或样本量。
+  - 每中心500条无标签哈希抽样，保留自然多标签分布；四中心成绩差异可能受病例组成与类支持数影响，不是控制病例组成后的纯中心效应。
+  - R1 使用不量化 BF16 image-only 路径，省略未调用的 waveform tower/projector；不是作者联合波形加图片的完整模型配置成绩。
+  - R1 活动图像和文本权重完整加载；官方 image-only 前向的微型数值一致性测试不是全量 checkpoint 的任务准确度证明。
+  - 所有模型共享 PULSE 风格 GPU 页面，新模型各用官方图像处理器；此统一视觉协议未必是每个模型训练时最优的图片版式。
+  - Llama FP16 batch1 显存不足，NF4 原始和严格提示均主要输出无 Super5 代码的 ECG 报告；256-token 检查仍无代码。记录为当前直接标签任务未通过接入，不计成分类准确率为零。
+  - 双卡不量化 FP16 复核已解决单卡 OOM，但原提示256-token的16次输出均自然结束且无Super5代码，严格提示64-token的32次输出也均无代码且到达上限；格式问题并非仅出现在NF4，不能据此宣称模型在其他任务或适配方式下无效。
+  - 本轮没有增加报告转标签的第二模型或规则映射；Llama 的完整报告生成能力及其他适配方式尚未作准确度评估。
+  - PULSE 历史推理最多32新token，R1为64；两者均greedy，但不是相同token预算或聊天模板的复现，吞吐不作严格横向排名。
+  - PULSE 历史解析先转大写，R1 冻结解析取大写代码并移除思考段；主表保留各自原始预测，另逐条审计统一解析器是否会改变标签，绝不悄悄改写历史结果。
+  - PN2021 中各来源是否与模型预训练完全无重叠尚未独立证明，因此不宣称严格 OOD；也不把不同任务或渲染协议下的作者域内数值与本表相减。
+  - 固定 severity5、20个 depth2/depth3 条件及一次腐蚀种子；native500 Torch 在线算子与旧 NumPy cached100 路径不保证逐位相同，本表只与匹配的 PULSE native500 GPU 协议比较。
+  - 百分位区间按中心分层、按记录而非患者聚类；逐中心区间为未做多重比较校正的探索性区间。它们不覆盖新中心、重复训练或腐蚀参数选择不确定性。
+  - PULSE 历史记录没有波形字节 SHA256；当前已核对身份、窗口、标签、预处理和 renderer 哈希，并验证跨环境代表性输入，未独立证明历史 raw WFDB 逐字节不变。
+  - 解析失败保留为空预测并计入整体结果；正常与异常同报不自动修正，格式及截断另列。没有连续类别评分协议，不报告 AUROC/AUPRC。
+  - HTML 使用规范 portable renderer；当前主机无 Chromium，验证范围为结构与数据绑定，未声称已完成浏览器交互与各尺寸视觉验收。

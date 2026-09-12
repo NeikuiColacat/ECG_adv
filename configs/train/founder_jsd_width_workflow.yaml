@@ -1,0 +1,54 @@
+{
+  "schema_version": 4,
+  "run_root": "/home/linbinhao/ECG_adv_data/runs/founder_jsd_width_20260911",
+  "references": {
+    "founder_jsd_w1_ningbo": "experiments/founder_jsd_w1_ningbo.yaml",
+    "founder_jsd_w1_ningbo_eval": "experiments/founder_jsd_w1_ningbo_eval.yaml",
+    "founder_jsd_w3_ningbo": "experiments/founder_jsd_w3_ningbo.yaml",
+    "founder_jsd_w3_ningbo_eval": "experiments/founder_jsd_w3_ningbo_eval.yaml",
+    "founder_jsd_w1_chapman_shaoxing": "experiments/founder_jsd_w1_chapman_shaoxing.yaml",
+    "founder_jsd_w1_chapman_shaoxing_eval": "experiments/founder_jsd_w1_chapman_shaoxing_eval.yaml",
+    "founder_jsd_w3_chapman_shaoxing": "experiments/founder_jsd_w3_chapman_shaoxing.yaml",
+    "founder_jsd_w3_chapman_shaoxing_eval": "experiments/founder_jsd_w3_chapman_shaoxing_eval.yaml",
+    "founder_jsd_w1_cpsc_2018": "experiments/founder_jsd_w1_cpsc_2018.yaml",
+    "founder_jsd_w1_cpsc_2018_eval": "experiments/founder_jsd_w1_cpsc_2018_eval.yaml",
+    "founder_jsd_w3_cpsc_2018": "experiments/founder_jsd_w3_cpsc_2018.yaml",
+    "founder_jsd_w3_cpsc_2018_eval": "experiments/founder_jsd_w3_cpsc_2018_eval.yaml",
+    "founder_jsd_w1_georgia": "experiments/founder_jsd_w1_georgia.yaml",
+    "founder_jsd_w1_georgia_eval": "experiments/founder_jsd_w1_georgia_eval.yaml",
+    "founder_jsd_w3_georgia": "experiments/founder_jsd_w3_georgia.yaml",
+    "founder_jsd_w3_georgia_eval": "experiments/founder_jsd_w3_georgia_eval.yaml",
+    "width2_method": "train/methods/augmix_clean_bce_jsd_lhat.yaml"
+  },
+  "predecessor": {
+    "run_dir": "/home/linbinhao/ECG_adv_data/runs/dual_jsd_20260911/dual_jsd_workflow_handoff",
+    "launcher_pid": 486325,
+    "delegate_pid": 486378
+  },
+  "width2_baselines": {
+    "ningbo": {
+      "result": "/home/linbinhao/ECG_adv_data/runs/dual_jsd_20260911/founder_objective_jsd_ningbo_eval/evaluation/evaluation_result.json",
+      "sha256": "26edcb25a71a8d3badb424c4df66ce6c4f87e49e3b8391a412d850892005f163"
+    },
+    "chapman_shaoxing": {
+      "result": "/home/linbinhao/ECG_adv_data/runs/dual_jsd_20260911/founder_objective_jsd_chapman_shaoxing_eval/evaluation/evaluation_result.json",
+      "sha256": "1dc72196495414376cb8928baec11303e3578e6fcae136462c6217b1444f0290"
+    },
+    "cpsc_2018": {
+      "result": "/home/linbinhao/ECG_adv_data/runs/dual_jsd_20260911/founder_objective_jsd_cpsc_2018_eval/evaluation/evaluation_result.json",
+      "sha256": "2df8b994a552e786af6bc22967520e67ab8e8311e09cf806ec17b046195377d6"
+    },
+    "georgia": {
+      "result": "/home/linbinhao/ECG_adv_data/runs/dual_jsd_20260911/founder_objective_jsd_georgia_eval/evaluation/evaluation_result.json",
+      "sha256": "90f05239cd712dc97607eeb517af79f7b73178640662357e99037643d13a13a5"
+    }
+  },
+  "runtime": {
+    "max_workers": 4,
+    "poll_seconds": 30,
+    "idle_seconds": 30,
+    "min_available_ram_gib": 64,
+    "max_load_fraction": 0.8,
+    "min_disk_free_gib": 40
+  }
+}

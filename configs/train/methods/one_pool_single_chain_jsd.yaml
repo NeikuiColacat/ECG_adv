@@ -1,0 +1,17 @@
+schema_version: 2
+
+recipe:
+  id: one_pool_single_chain_jsd
+  kind: one_stage_supervised_augmix
+  auxiliary_variant: not_applicable
+  scientific_arm: one_pool_single_chain_jsd
+  status: prospective_one_pool_chain_ablation
+
+resources:
+  augmix_config:
+    type: config_reference
+    path: train/augmix_single_chain_no_mix.yaml
+  corruption_rng:
+    type: isolated_torch_generator
+    seed_config: random_seed.yaml
+    namespace: one_pool_augmix_lhat_r2

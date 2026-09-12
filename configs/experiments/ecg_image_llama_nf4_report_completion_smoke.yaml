@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: ecg_image_llama_nf4_report_completion_smoke
+  purpose: Bounded report-completion diagnostic to separate 64-token truncation from unsupported direct-code output; no accuracy scoring.
+entrypoint:
+  name: evaluate_ecg_image
+  config: eval/ecg_image_llama_nf4_report_completion_smoke.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/ecg_image_llm_10h_20260907/llama_nf4_report_completion_smoke
+  if_exists: error
+  delegate_output_subdir: evaluation

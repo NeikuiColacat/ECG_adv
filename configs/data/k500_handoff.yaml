@@ -56,10 +56,10 @@ interface:
 required_configs:
   ptbxl_dataset:
     path: data/PTBXL.yaml
-    sha256: 26c87a402ed59a22ce7bac58a90d9f3ff5ad392c3d75c27efb5fb1562a0b4324
+    sha256: 17e67c6b2debf10e665b5d51c26435ed654112250495f2d7ffb3c6b4249c0832
   pn2021_dataset:
     path: data/PN2021.yaml
-    sha256: e1a0fb067b2cc6cee878be9224280e8de9277d2bbff984dc718a28908b43c5b6
+    sha256: 0e3c677f3b9848893baf91cba3f5f8c88d1bb0e0f4fced809a111e298eb912cd
   pn2021_mapping:
     path: data/PN2021_super5_v7.yaml
     sha256: 570483989f5870314be8e40eae9875dd688a8caaeda58580738d7ab9af8a10ea
@@ -68,7 +68,7 @@ required_configs:
     sha256: d19eddb5b41854fcd6d8a554efb3454dec2c6994f407eaa7cb82ed805629daf9
   data_load:
     path: data/data_load.yaml
-    sha256: f9beb4312e6fb997658583eaa4afe56b63c22dbd5f4e808776fa9d3dc3f8f81b
+    sha256: f960855f13d3762fe9a344b41f00927a386eb31911cd2467a3c3b78d76bcd214
   random_seed:
     path: random_seed.yaml
     sha256: 8b337606c43b6fec2959dd185477ce32f48b139f5fce5112ee26efe58eb4bbbc
@@ -77,7 +77,7 @@ required_configs:
     sha256: 0159928d8825ae60908b93285cd075d59a0ee136716c40cdea72094d6b825daf
   corruption_cache:
     path: augmentation/cache.yaml
-    sha256: e2181af9aa43e478d36884dd9689b2495b875ca358996a327fbae44a0066652e
+    sha256: 9fab33229d8b6510fe200c4195ea44a8c08d8dfd79f084feda7130f9be38a96f
   corruption_operators:
     path: augmentation/operators.yaml
     sha256: cfc4e243f569226a8f444a38d9dd4fbc00ccf7de724c47886dcc9319b9c790cc
@@ -111,11 +111,11 @@ required_modules:
 required_artifacts:
   data_content_ledger:
     path: data/data_content_ledger_v1.jsonl
-    sha256: d3bf1f18046a695b9c6089f2866cdb854042c3b528434018ecab8f56d36af665
+    sha256: 5991ac2123e9fe8774df7cb4a311fd0f4332554e51a77ea2a29ac2ce05ad5f13
     schema_version: 1
     algorithm: sha256
-    member_count: 121
-    total_size_bytes: 404751718887
+    member_count: 118
+    total_size_bytes: 67620838503
 
 protocol:
   split_id: pn2021_super5_k500_cpsc_combined_v1

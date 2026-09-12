@@ -1,0 +1,23 @@
+schema_version: 1
+
+experiment:
+  name: manual_refactor_pn2021_ecgfounder_one_stage_joint_eval_georgia_r0
+  purpose: Evaluate the joint one-stage arm on ref-excluded georgia Clean and PN2021-C.
+
+entrypoint:
+  name: evaluate_pn2021
+  config: eval/PN2021.yaml
+  arguments:
+    - --model
+    - ecgfounder
+    - --train-result
+    - /home/linbinhao/ECG_adv_data/runs/one_stage_augmix_lhat_r0_20260901/joint/ecgfounder/georgia/training/train_result.json
+    - --center
+    - georgia
+    - --method-config
+    - train/methods/one_stage_augmix_vae_lhat_mild.yaml
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/one_stage_augmix_lhat_r0_20260901/joint/eval/ecgfounder/georgia
+  if_exists: error
+  delegate_output_subdir: evaluation

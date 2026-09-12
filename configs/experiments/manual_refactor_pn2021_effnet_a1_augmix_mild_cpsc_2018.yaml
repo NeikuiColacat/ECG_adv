@@ -1,0 +1,23 @@
+schema_version: 1
+
+experiment:
+  name: manual_refactor_pn2021_effnet_a1_augmix_mild_cpsc_2018_r0
+  purpose: Validate strong two-chain AugMix on the frozen A1 auxiliary recipe for efficientnet1dv2/cpsc_2018.
+
+entrypoint:
+  name: train_pn2021
+  config: train/PN2021_a1_aux_screen_r0.yaml
+  arguments:
+    - --model
+    - efficientnet1dv2
+    - --method-config
+    - train/methods/a1_rot4_augmix_mild.yaml
+    - --center
+    - cpsc_2018
+    - --source-checkpoint
+    - /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_ptbxl_effnet_source_v1/training/checkpoints/best.pt
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/a1_aux_screen_r0_20260901/augmix/effnet/cpsc_2018
+  if_exists: error
+  delegate_output_subdir: training

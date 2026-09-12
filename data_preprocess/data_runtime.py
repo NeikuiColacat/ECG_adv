@@ -16,7 +16,6 @@ PN2021-C callers must also choose one explicit corruption composition.
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -35,6 +34,7 @@ from data_preprocess.load_cache import (
     StorageMode,
     ValueValidation,
     ViewSelector,
+    _read_json_mapping,
     load_cache,
 )
 from util.config_bundle import require_mapping as _require_mapping, resolve_entry_config_path
@@ -92,18 +92,6 @@ def _hash_id_set_sha256(values: Sequence[str] | np.ndarray) -> str:
     ordered = sorted(str(value) for value in values)
     payload = "".join(f"{value}\n" for value in ordered).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
-
-
-def _read_json_mapping(path: Path, *, description: str) -> dict[str, Any]:
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        raise FileNotFoundError(f"{description} not found: {path}") from None
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"invalid {description} JSON at {path}: {exc}") from exc
-    if not isinstance(payload, dict):
-        raise ValueError(f"{description} must be a JSON mapping: {path}")
-    return payload
 
 
 def _resolve_artifact(base_dir: Path, descriptor: Any, *, description: str) -> Path:

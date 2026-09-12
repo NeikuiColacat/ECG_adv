@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: ecg_image_r1_pulse_n500_comparison
+  purpose: CPU-only paired analysis of all four frozen R1 shards versus exactly matched PULSE records; explicit Llama admission diagnostics.
+entrypoint:
+  name: report_ecg_image
+  config: eval/ecg_image_r1_pulse_n500_comparison.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/ecg_image_llm_10h_20260907/comparison_n500
+  if_exists: error
+  delegate_output_subdir: evaluation

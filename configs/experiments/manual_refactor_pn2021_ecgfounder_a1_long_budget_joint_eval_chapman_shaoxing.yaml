@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: manual_refactor_pn2021_ecgfounder_a1_long_budget_joint_eval_chapman_shaoxing_r13_retry1
+  purpose: Evaluate the frozen long-budget Joint recipe on ref-excluded chapman_shaoxing.
+entrypoint:
+  name: evaluate_pn2021
+  config: eval/PN2021.yaml
+  arguments: [--model, ecgfounder, --train-result, /home/linbinhao/ECG_adv_data/runs/a1_joint_long_budget_r13_retry1_20260902/joint/ecgfounder/chapman_shaoxing/training/train_result.json, --center, chapman_shaoxing, --method-config, train/methods/a1_rot4_two_chain_robust_c125_r500_a375_endpointmean_jsd1p5_vae_lhat.yaml]
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/a1_joint_long_budget_r13_retry1_20260902/joint/eval/ecgfounder/chapman_shaoxing
+  if_exists: error
+  delegate_output_subdir: evaluation

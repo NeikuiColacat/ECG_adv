@@ -1,0 +1,23 @@
+schema_version: 1
+
+experiment:
+  name: manual_refactor_pn2021_ecgfounder_a1_pool_single_strong_eval_georgia_r3
+  purpose: Evaluate strong one-chain AugMix-JSD on ref-excluded Georgia Clean and PN2021-C.
+
+entrypoint:
+  name: evaluate_pn2021
+  config: eval/PN2021.yaml
+  arguments:
+    - --model
+    - ecgfounder
+    - --train-result
+    - /home/linbinhao/ECG_adv_data/runs/a1_pool_augmix_lhat_r3_20260901/single_strong/ecgfounder/georgia/training/train_result.json
+    - --center
+    - georgia
+    - --method-config
+    - train/methods/a1_rot4_single_chain_jsd_strong.yaml
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/a1_pool_augmix_lhat_r3_20260901/single_strong/eval/ecgfounder/georgia
+  if_exists: error
+  delegate_output_subdir: evaluation

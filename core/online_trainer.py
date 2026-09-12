@@ -31,6 +31,7 @@ from core.methods.registry import (
     AuxiliaryVariant,
     RecipeKind,
     RecipeSpec,
+    Stage1Objective,
     load_recipe_spec,
 )
 from core.methods.runtime import build_method_runtime
@@ -86,6 +87,19 @@ class _ExposureStep:
     composition_index: int | None
     objective_terms: tuple[str, ...] | None
     loss_scale: float = 1.0
+
+
+def _is_auxiliary_exposure(step: _ExposureStep) -> bool:
+    return step.name == "auxiliary" or step.name.startswith("auxiliary_")
+
+
+def _lhat_replaces_clean_loss(recipe: RecipeSpec) -> bool:
+    contract = recipe.scientific_contract.get("lhat_auxiliary")
+    return bool(
+        isinstance(contract, Mapping)
+        and contract.get("loss_integration")
+        == "replace_clean_with_lhat_or_clean_fallback"
+    )
 
 
 @dataclass
@@ -166,13 +180,44 @@ def _build_batch_norm_momentum_plan(
     if recipe.kind in {
         RecipeKind.SUPERVISED_ROTATING_DEPTH23,
         RecipeKind.SUPERVISED_ROTATING_DEPTH23_LHAT,
+        RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+        RecipeKind.SUPERVISED_ROTATING_DEPTH23_HARDGAIN_AUX,
         RecipeKind.FIXED20,
         RecipeKind.TWO_STAGE_AUGMIX_LHAT,
+        RecipeKind.ONE_STAGE_SUPERVISED_AUGMIX,
+        RecipeKind.ONE_STAGE_VAE_LHAT,
+        RecipeKind.ONE_STAGE_AUGMIX_LHAT,
     }:
         policy = FAMILY_BALANCED_BN_POLICY
-        exposure_weights = tuple(
-            0.0 if step.name == "auxiliary" else float(step.loss_scale)
+        raw_exposure_weights = tuple(
+            0.0 if _is_auxiliary_exposure(step) else float(step.loss_scale)
             for step in exposure_steps
+        )
+        if _lhat_replaces_clean_loss(recipe):
+            clean_indices = [
+                index
+                for index, step in enumerate(exposure_steps)
+                if step.name == "clean"
+            ]
+            lhat_indices = [
+                index
+                for index, step in enumerate(exposure_steps)
+                if step.objective_terms == ("lhat_direct_bce",)
+            ]
+            if len(clean_indices) != 1 or len(lhat_indices) != 1:
+                raise ValueError(
+                    "clean-replacement LHAT requires one clean and one LHAT exposure"
+                )
+            weights = list(raw_exposure_weights)
+            weights[clean_indices[0]] += float(
+                exposure_steps[lhat_indices[0]].loss_scale
+            )
+            raw_exposure_weights = tuple(weights)
+        base_weight_total = sum(raw_exposure_weights)
+        if base_weight_total <= 0.0:
+            raise ValueError("BatchNorm plan requires positive base-family weight")
+        exposure_weights = tuple(
+            value / base_weight_total for value in raw_exposure_weights
         )
     elif recipe.kind in {RecipeKind.CLEAN, RecipeKind.RANDOM_DEPTH23}:
         return None
@@ -210,6 +255,7 @@ def _method_exposure_steps(
     recipe: RecipeSpec,
     *,
     epoch: int = 1,
+    total_epochs: int | None = None,
 ) -> tuple[_ExposureStep, ...]:
     """Resolve the code-owned exposure schedule for one finite recipe."""
 
@@ -231,9 +277,53 @@ def _method_exposure_steps(
                 for index in FIXED20_COMPOSITION_ORDER
             ),
         )
+    if recipe.kind is RecipeKind.ONE_STAGE_SUPERVISED_AUGMIX:
+        augmix_objective = recipe.scientific_contract.get("augmix_objective")
+        augmix_terms = (
+            tuple(str(value) for value in augmix_objective["objective_terms"])
+            if isinstance(augmix_objective, Mapping)
+            else ("augmix_bce",)
+        )
+        return (
+            _ExposureStep("clean", None, ("clean_bce",), 0.5),
+            _ExposureStep("augmix", None, augmix_terms, 0.5),
+        )
+    if recipe.kind in {
+        RecipeKind.ONE_STAGE_VAE_LHAT,
+        RecipeKind.ONE_STAGE_AUGMIX_LHAT,
+    }:
+        auxiliary = recipe.scientific_contract["auxiliary"]
+        alpha_max = float(auxiliary["alpha_max"])
+        warmup_epochs = int(auxiliary["linear_warmup_epochs"])
+        alpha = alpha_max * min(float(epoch) / float(warmup_epochs), 1.0)
+        base_steps = (
+            (
+                _ExposureStep("clean", None, ("clean_bce",), 0.5),
+                _ExposureStep(
+                    "augmix",
+                    None,
+                    tuple(
+                        str(value)
+                        for value in recipe.scientific_contract.get(
+                            "augmix_objective",
+                            {"objective_terms": ("augmix_bce",)},
+                        )["objective_terms"]
+                    ),
+                    0.5,
+                ),
+            )
+            if recipe.kind is RecipeKind.ONE_STAGE_AUGMIX_LHAT
+            else (_ExposureStep("clean", None, ("clean_bce",), 1.0),)
+        )
+        return (
+            *base_steps,
+            _ExposureStep("auxiliary", None, ("lhat_direct_bce",), alpha),
+        )
     if recipe.kind in {
         RecipeKind.SUPERVISED_ROTATING_DEPTH23,
         RecipeKind.SUPERVISED_ROTATING_DEPTH23_LHAT,
+        RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+        RecipeKind.SUPERVISED_ROTATING_DEPTH23_HARDGAIN_AUX,
         RecipeKind.TWO_STAGE_AUGMIX_LHAT,
     }:
         if isinstance(epoch, bool) or not isinstance(epoch, int) or epoch < 1:
@@ -245,20 +335,102 @@ def _method_exposure_steps(
             10 + 2 * slot,
             10 + 2 * slot + 1,
         )
+        family_weights = recipe.scientific_contract["family_loss_weights"]
+        clean_weight = float(family_weights["clean"])
+        corrupted_per_composition = float(
+            family_weights["corrupted_per_composition"]
+        )
         steps: tuple[_ExposureStep, ...] = (
-            _ExposureStep("clean", -1, ("clean_bce",), 0.5),
+            _ExposureStep("clean", -1, ("clean_bce",), clean_weight),
             *tuple(
                 _ExposureStep(
                     f"corruption_{index:02d}",
                     index,
                     ("corrupted_bce",),
-                    0.125,
+                    corrupted_per_composition,
                 )
                 for index in compositions
             ),
         )
         if recipe.kind is RecipeKind.SUPERVISED_ROTATING_DEPTH23:
             return steps
+        if recipe.kind in {
+            RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+            RecipeKind.SUPERVISED_ROTATING_DEPTH23_HARDGAIN_AUX,
+        }:
+            auxiliaries: list[_ExposureStep] = []
+            augmix_contract = recipe.scientific_contract.get("augmix_auxiliary")
+            if "augmix_view" in recipe.output_names:
+                if not isinstance(augmix_contract, Mapping):
+                    raise ValueError("mild AugMix recipe lacks its contract")
+                auxiliaries.append(
+                    _ExposureStep(
+                        "auxiliary_augmix",
+                        None,
+                        tuple(
+                            str(value)
+                            for value in augmix_contract["objective_terms"]
+                        ),
+                        float(augmix_contract["weight"]),
+                    )
+                )
+            lhat_contract = recipe.scientific_contract.get("lhat_auxiliary")
+            if "lhat_view" in recipe.output_names:
+                if not isinstance(lhat_contract, Mapping):
+                    raise ValueError("mild LHAT recipe lacks its contract")
+                alpha_max = float(lhat_contract["alpha_max"])
+                warmup_epochs = int(lhat_contract["linear_warmup_epochs"])
+                alpha = alpha_max * min(
+                    float(epoch) / float(warmup_epochs), 1.0
+                )
+                schedule = str(
+                    lhat_contract.get(
+                        "after_warmup_schedule", "constant_after_warmup"
+                    )
+                )
+                if schedule == "cosine_decay_to_zero":
+                    if epoch > warmup_epochs:
+                        if total_epochs is None:
+                            raise ValueError(
+                                "cosine-decayed LHAT requires total_epochs"
+                            )
+                        if total_epochs <= warmup_epochs:
+                            raise ValueError(
+                                "cosine-decayed LHAT requires total_epochs above warmup"
+                            )
+                        progress = min(
+                            float(epoch - warmup_epochs)
+                            / float(total_epochs - warmup_epochs),
+                            1.0,
+                        )
+                        alpha = alpha_max * 0.5 * (
+                            1.0 + math.cos(math.pi * progress)
+                        )
+                elif schedule != "constant_after_warmup":
+                    raise ValueError(f"unsupported LHAT alpha schedule: {schedule}")
+                if _lhat_replaces_clean_loss(recipe):
+                    if alpha > clean_weight:
+                        raise ValueError(
+                            "LHAT clean-replacement mass exceeds clean loss mass"
+                        )
+                    steps = (
+                        _ExposureStep(
+                            "clean",
+                            -1,
+                            ("clean_bce",),
+                            clean_weight - alpha,
+                        ),
+                        *steps[1:],
+                    )
+                auxiliaries.append(
+                    _ExposureStep(
+                        "auxiliary_lhat",
+                        None,
+                        ("lhat_direct_bce",),
+                        alpha,
+                    )
+                )
+            return (*steps, *auxiliaries)
         if recipe.auxiliary_variant is AuxiliaryVariant.CONTRACTED_LHAT:
             return (*steps, _ExposureStep("auxiliary", None, ("lhat_direct_bce",), 2.0))
         if recipe.auxiliary_variant is AuxiliaryVariant.MATCHED_NO_VAE:
@@ -277,13 +449,40 @@ def _recipe_family_loss_weights(recipe: RecipeSpec) -> dict[str, float] | None:
     if recipe.kind in {
         RecipeKind.SUPERVISED_ROTATING_DEPTH23,
         RecipeKind.SUPERVISED_ROTATING_DEPTH23_LHAT,
+        RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+        RecipeKind.SUPERVISED_ROTATING_DEPTH23_HARDGAIN_AUX,
         RecipeKind.TWO_STAGE_AUGMIX_LHAT,
     }:
-        return {
-            "clean": 0.5,
-            "corrupted_total": 0.5,
-            "corrupted_per_composition": 0.125,
-        }
+        weights = dict(recipe.scientific_contract["family_loss_weights"])
+        if recipe.kind in {
+            RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+            RecipeKind.SUPERVISED_ROTATING_DEPTH23_HARDGAIN_AUX,
+        }:
+            if "augmix_view" in recipe.output_names:
+                augmix_contract = recipe.scientific_contract.get(
+                    "augmix_auxiliary"
+                )
+                if not isinstance(augmix_contract, Mapping):
+                    raise ValueError("AugMix recipe lacks its auxiliary contract")
+                weights["augmix_auxiliary"] = float(augmix_contract["weight"])
+            if "lhat_view" in recipe.output_names:
+                lhat_contract = recipe.scientific_contract["lhat_auxiliary"]
+                lhat_mass = float(lhat_contract["alpha_max"])
+                if _lhat_replaces_clean_loss(recipe):
+                    weights["clean_before_lhat_replacement"] = float(
+                        weights["clean"]
+                    )
+                    weights["clean"] = float(weights["clean"]) - lhat_mass
+                    weights["lhat_clean_replacement_max"] = lhat_mass
+                else:
+                    weights["lhat_auxiliary_max"] = lhat_mass
+        return weights
+    if recipe.kind is RecipeKind.ONE_STAGE_SUPERVISED_AUGMIX:
+        return {"clean": 0.5, "augmix": 0.5}
+    if recipe.kind is RecipeKind.ONE_STAGE_VAE_LHAT:
+        return {"clean": 1.0}
+    if recipe.kind is RecipeKind.ONE_STAGE_AUGMIX_LHAT:
+        return {"clean": 0.5, "augmix": 0.5}
     return None
 
 
@@ -812,7 +1011,7 @@ def _portable_method_resources(
 ) -> dict[str, Any]:
     """Extract shared method resources that must match across matrix members."""
 
-    if recipe.auxiliary_variant is not AuxiliaryVariant.CONTRACTED_LHAT:
+    if not recipe.requires_vae:
         if method_resources.get("vae_decoder_checkpoint") is not None:
             raise ValueError("a non-VAE recipe cannot carry a VAE decoder identity")
         return {"vae": None}
@@ -1079,6 +1278,57 @@ def _compute_objective(
     )
 
     ordered_views = list(dict.fromkeys(view for _, view in selected_terms))
+    lhat_clean_replacement_selected = (
+        _lhat_replaces_clean_loss(recipe)
+        and any(name == "lhat_direct_bce" for name, _ in selected_terms)
+    )
+    if lhat_clean_replacement_selected:
+        ordered_views = list(dict.fromkeys([BASE_VIEW_NAME, *ordered_views]))
+    augmix_contract = recipe.scientific_contract.get("augmix_auxiliary")
+    if not isinstance(augmix_contract, Mapping):
+        augmix_contract = recipe.scientific_contract.get("augmix_objective")
+    augmix_jsd_weight = (
+        float(augmix_contract.get("bernoulli_jsd_weight", 0.0))
+        if isinstance(augmix_contract, Mapping)
+        else 0.0
+    )
+    augmix_supervised_view_policy = (
+        str(augmix_contract.get("supervised_view_policy", "mixed_only"))
+        if isinstance(augmix_contract, Mapping)
+        else "mixed_only"
+    )
+    if augmix_supervised_view_policy not in {
+        "mixed_only",
+        "mixed_plus_chains_mean",
+        "mixed_plus_chains_half",
+        "per_sample_max_mixed_and_chains",
+        "chains_mean",
+    }:
+        raise ValueError(
+            "unsupported AugMix supervised-view policy: "
+            f"{augmix_supervised_view_policy!r}"
+        )
+    augmix_consistency_selected = (
+        (
+            augmix_jsd_weight > 0.0
+            or augmix_supervised_view_policy != "mixed_only"
+        )
+        and any(name == "augmix_bce" for name, _ in selected_terms)
+    )
+    if augmix_consistency_selected:
+        ordered_views = list(
+            dict.fromkeys(
+                [
+                    BASE_VIEW_NAME,
+                    *ordered_views,
+                    *(
+                        name
+                        for name in recipe.output_names
+                        if name.startswith("augmix_chain")
+                    ),
+                ]
+            )
+        )
     if not ordered_views:
         raise ValueError("recipe objective must contain at least one term")
 
@@ -1145,7 +1395,184 @@ def _compute_objective(
     valid_counts: dict[str, int] = {}
     for term_name, view_name in selected_terms:
         count = int(positions[view_name].numel())
-        if count:
+        if term_name.endswith("_context"):
+            raw_loss = reference.sum() * 0.0
+            contribution = raw_loss
+        elif term_name == "augmix_bce" and augmix_consistency_selected:
+            consistency_names = [
+                name
+                for name in recipe.output_names
+                if name.startswith("augmix_chain")
+            ]
+            if not consistency_names:
+                consistency_names = ["augmix_view"]
+            required_names = ["augmix_view", BASE_VIEW_NAME, *consistency_names]
+            common = torch.ones(
+                batch_size,
+                dtype=torch.bool,
+                device=clean.waveform.device,
+            )
+            for required_name in required_names:
+                common &= views[required_name].valid_mask
+            common_positions = torch.nonzero(common, as_tuple=False).flatten()
+            count = int(common_positions.numel())
+            if count:
+                targets = clean.labels.index_select(0, common_positions)
+                mixed_logits = logits["augmix_view"].index_select(
+                    0,
+                    full_to_local["augmix_view"].index_select(
+                        0, common_positions
+                    ),
+                )
+                supervised_logits = [mixed_logits]
+                if augmix_supervised_view_policy in {
+                    "mixed_plus_chains_mean",
+                    "mixed_plus_chains_half",
+                }:
+                    supervised_logits.extend(
+                        logits[name].index_select(
+                            0,
+                            full_to_local[name].index_select(
+                                0, common_positions
+                            ),
+                        )
+                        for name in consistency_names
+                    )
+                elif augmix_supervised_view_policy == "chains_mean":
+                    supervised_logits = [
+                        logits[name].index_select(
+                            0,
+                            full_to_local[name].index_select(
+                                0, common_positions
+                            ),
+                        )
+                        for name in consistency_names
+                    ]
+                if augmix_supervised_view_policy == "mixed_plus_chains_half":
+                    mixed_loss = F.binary_cross_entropy_with_logits(
+                        mixed_logits,
+                        targets,
+                        pos_weight=pos_weight,
+                    )
+                    chain_loss = torch.stack(
+                        [
+                            F.binary_cross_entropy_with_logits(
+                                value,
+                                targets,
+                                pos_weight=pos_weight,
+                            )
+                            for value in supervised_logits[1:]
+                        ]
+                    ).mean()
+                    supervised = 0.5 * (mixed_loss + chain_loss)
+                elif (
+                    augmix_supervised_view_policy
+                    == "per_sample_max_mixed_and_chains"
+                ):
+                    per_view_per_sample = torch.stack(
+                        [
+                            F.binary_cross_entropy_with_logits(
+                                value,
+                                targets,
+                                pos_weight=pos_weight,
+                                reduction="none",
+                            ).mean(dim=1)
+                            for value in [
+                                mixed_logits,
+                                *(
+                                    logits[name].index_select(
+                                        0,
+                                        full_to_local[name].index_select(
+                                            0, common_positions
+                                        ),
+                                    )
+                                    for name in consistency_names
+                                ),
+                            ]
+                        ],
+                        dim=0,
+                    )
+                    supervised = per_view_per_sample.max(dim=0).values.mean()
+                else:
+                    supervised = torch.stack(
+                        [
+                            F.binary_cross_entropy_with_logits(
+                                value,
+                                targets,
+                                pos_weight=pos_weight,
+                            )
+                            for value in supervised_logits
+                        ]
+                    ).mean()
+                consistency_logits = [
+                    logits[name].index_select(
+                        0,
+                        full_to_local[name].index_select(0, common_positions),
+                    )
+                    for name in [BASE_VIEW_NAME, *consistency_names]
+                ]
+                probabilities = torch.stack(
+                    [torch.sigmoid(value.float()) for value in consistency_logits],
+                    dim=0,
+                ).clamp(1.0e-6, 1.0 - 1.0e-6)
+                mean_probability = probabilities.mean(dim=0).clamp(
+                    1.0e-6, 1.0 - 1.0e-6
+                )
+                divergence = (
+                    probabilities
+                    * (probabilities.log() - mean_probability.log())
+                    + (1.0 - probabilities)
+                    * (
+                        (1.0 - probabilities).log()
+                        - (1.0 - mean_probability).log()
+                    )
+                ).mean()
+                raw_loss = supervised + augmix_jsd_weight * divergence
+            else:
+                raw_loss = reference.sum() * 0.0
+            contribution = (float(count) / batch_size) * raw_loss
+        elif term_name == "lhat_direct_bce" and lhat_clean_replacement_selected:
+            accepted_positions = positions[view_name]
+            fallback_positions = torch.nonzero(
+                ~views[view_name].valid_mask, as_tuple=False
+            ).flatten()
+            loss_sum = reference.sum() * 0.0
+            if accepted_positions.numel():
+                accepted_targets = clean.labels.index_select(
+                    0, accepted_positions
+                )
+                accepted_logits = logits[view_name].index_select(
+                    0,
+                    full_to_local[view_name].index_select(
+                        0, accepted_positions
+                    ),
+                )
+                loss_sum = loss_sum + F.binary_cross_entropy_with_logits(
+                    accepted_logits,
+                    accepted_targets,
+                    pos_weight=pos_weight,
+                    reduction="sum",
+                )
+            if fallback_positions.numel():
+                fallback_targets = clean.labels.index_select(
+                    0, fallback_positions
+                )
+                fallback_logits = logits[BASE_VIEW_NAME].index_select(
+                    0,
+                    full_to_local[BASE_VIEW_NAME].index_select(
+                        0, fallback_positions
+                    ),
+                )
+                loss_sum = loss_sum + F.binary_cross_entropy_with_logits(
+                    fallback_logits,
+                    fallback_targets,
+                    pos_weight=pos_weight,
+                    reduction="sum",
+                )
+            raw_loss = loss_sum / float(batch_size * clean.labels.shape[1])
+            contribution = raw_loss
+            count = batch_size
+        elif count:
             targets = views[view_name].labels.index_select(0, positions[view_name])
             selected_logits = logits[view_name].index_select(
                 0,
@@ -1154,9 +1581,10 @@ def _compute_objective(
             raw_loss = F.binary_cross_entropy_with_logits(
                 selected_logits, targets, pos_weight=pos_weight
             )
+            contribution = (float(count) / batch_size) * raw_loss
         else:
             raw_loss = reference.sum() * 0.0
-        contribution = (float(count) / batch_size) * raw_loss
+            contribution = raw_loss
         raw_terms[term_name] = raw_loss
         weighted_terms[term_name] = contribution
         valid_counts[term_name] = count
@@ -1290,15 +1718,17 @@ def _diagnostic_sample_summary(
                 quantiles[1],
             )
         )
-    host_values = torch.stack(stat_tensors).detach().cpu().tolist()
+    host_rows = (
+        torch.stack(stat_tensors)
+        .reshape(len(stat_names), 5)
+        .detach()
+        .cpu()
+        .tolist()
+    )
     distributions: dict[str, dict[str, float | int]] = {}
     flat: dict[str, float] = {}
-    offset = 0
-    for name in stat_names:
-        finite_count, total, mean, median, p90 = (
-            float(value) for value in host_values[offset : offset + 5]
-        )
-        offset += 5
+    for name, row in zip(stat_names, host_rows, strict=True):
+        finite_count, total, mean, median, p90 = map(float, row)
         count = counts[name]
         if int(finite_count) != count or not all(
             math.isfinite(value) for value in (total, mean, median, p90)
@@ -1331,16 +1761,8 @@ def _diagnostic_sample_summary(
         for numerator_name in tuple(distributions):
             if numerator_name.rsplit("/", 1)[-1] != numerator_suffix:
                 continue
-            prefix = (
-                numerator_name.rsplit("/", 1)[0]
-                if "/" in numerator_name
-                else ""
-            )
-            denominator_name = (
-                f"{prefix}/{denominator_suffix}"
-                if prefix
-                else denominator_suffix
-            )
+            prefix = numerator_name.removesuffix(numerator_suffix)
+            denominator_name = f"{prefix}{denominator_suffix}"
             if denominator_name not in distributions:
                 raise ValueError(
                     f"diagnostic rate {rate_suffix!r} lacks {denominator_name!r}"
@@ -1352,22 +1774,14 @@ def _diagnostic_sample_summary(
                     f"diagnostic rate {rate_suffix!r} has invalid counts"
                 )
             rate = numerator / denominator if denominator > 0.0 else None
-            rate_name = f"{prefix}/{rate_suffix}" if prefix else rate_suffix
+            rate_name = f"{prefix}{rate_suffix}"
             rates[rate_name] = {
                 "numerator": numerator,
                 "denominator": denominator,
                 "rate": rate,
             }
-            aggregate_numerator_name = (
-                f"{prefix}/{aggregate_numerator_suffix}"
-                if prefix
-                else aggregate_numerator_suffix
-            )
-            aggregate_denominator_name = (
-                f"{prefix}/{aggregate_denominator_suffix}"
-                if prefix
-                else aggregate_denominator_suffix
-            )
+            aggregate_numerator_name = f"{prefix}{aggregate_numerator_suffix}"
+            aggregate_denominator_name = f"{prefix}{aggregate_denominator_suffix}"
             flat[aggregate_numerator_name] = numerator
             flat[aggregate_denominator_name] = denominator
             if rate is not None:
@@ -1690,7 +2104,7 @@ def _preserve_torch_rng(device: torch.device) -> Iterator[None]:
             torch.cuda.set_rng_state(cuda_state, device)
 
 
-def _run_augmix_simclr_stage1(
+def _run_augmix_stage1(
     model: nn.Module,
     train_dataloader: Any,
     *,
@@ -1701,14 +2115,27 @@ def _run_augmix_simclr_stage1(
     center: str,
     base_seed: int,
     resolved: Mapping[str, Any],
+    pos_weight: torch.Tensor | None,
     normalization_epsilon: float,
     amp_enabled: bool,
     amp_dtype: torch.dtype,
 ) -> dict[str, Any]:
-    """Run the frozen K500-only AugMix-SimCLR representation stage."""
+    """Run the frozen-head K500-only two-chain AugMix stage."""
 
     if recipe.kind is not RecipeKind.TWO_STAGE_AUGMIX_LHAT:
         raise ValueError("Stage-1 belongs only to the two-stage recipe")
+    if recipe.stage1_objective not in {
+        Stage1Objective.SIMCLR,
+        Stage1Objective.SUPERVISED_AUGMIX,
+        Stage1Objective.CLEAN_BCE,
+        Stage1Objective.CLEAN_BCE_JSD,
+    }:
+        raise ValueError("two-stage recipe lacks a supported Stage-1 objective")
+    supervised_augmix = (
+        recipe.stage1_objective is Stage1Objective.SUPERVISED_AUGMIX
+    )
+    clean_objective = recipe.stage1_objective in {Stage1Objective.CLEAN_BCE, Stage1Objective.CLEAN_BCE_JSD}
+    uses_labels = supervised_augmix or clean_objective
     temperature = augmix_config.stage1_simclr_temperature
     teacher_cache = _cache_k500_logits(
         model,
@@ -1735,8 +2162,11 @@ def _run_augmix_simclr_stage1(
     if not trainable:
         raise ValueError("Stage-1 has no trainable backbone parameters")
     stage1_steps = int(resolved["stage1_steps"])
+    optimizer_parameters = (
+        trainable if uses_labels else [*trainable, *projector.parameters()]
+    )
     optimizer = AdamW(
-        [*trainable, *projector.parameters()],
+        optimizer_parameters,
         lr=float(resolved["stage1_learning_rate"]),
         weight_decay=float(resolved["stage1_weight_decay"]),
     )
@@ -1745,7 +2175,7 @@ def _run_augmix_simclr_stage1(
         T_max=stage1_steps,
         eta_min=float(resolved["stage1_learning_rate"]) * 0.01,
     )
-    losses = torch.zeros(3, device=device, dtype=torch.float64)
+    losses = torch.zeros(4, device=device, dtype=torch.float64)
     iterator = iter(train_dataloader)
     model.train()
     try:
@@ -1760,8 +2190,21 @@ def _run_augmix_simclr_stage1(
             raw = batch.get("waveform")
             if not isinstance(raw, torch.Tensor):
                 raise TypeError("Stage-1 waveform must be a tensor")
+            targets = batch.get("label")
+            if uses_labels and not isinstance(targets, torch.Tensor):
+                raise TypeError(
+                    "supervised AugMix Stage-1 labels must be tensors"
+                )
+            if uses_labels and targets.shape != (int(raw.shape[0]), 5):
+                raise ValueError(
+                    "supervised AugMix Stage-1 labels must have shape (B,5)"
+                )
             hashes = _batch_hashes(batch, int(raw.shape[0]))
             raw = raw.to(device, dtype=torch.float32, non_blocking=True)
+            if uses_labels:
+                targets = targets.to(
+                    device, dtype=torch.float32, non_blocking=True
+                )
             generator = make_torch_generator(
                 device,
                 augmix_config.random_namespace,
@@ -1788,6 +2231,16 @@ def _run_augmix_simclr_stage1(
                 spec,
                 epsilon=normalization_epsilon,
             )
+            if clean_objective:
+                second_generator = make_torch_generator(device,
+                    augmix_config.random_namespace, recipe.comparison_rng_identity,
+                    center, spec.name, f"base_seed={base_seed}",
+                    f"stage1_step={step}", "jsd_second_view",
+                    config_path=augmix_config.random_seed_config_path)
+                second = generate_two_chain_augmix_strong_view(raw, sampling_rate_hz=100,
+                    config=augmix_config, generator=second_generator).mixed_raw
+                second_input = prepare_canonical_model_input(second, spec,
+                    epsilon=normalization_epsilon)
             teacher_logits = _teacher_logits_for_hashes(
                 teacher_cache, hashes, device=device
             )
@@ -1799,44 +2252,71 @@ def _run_augmix_simclr_stage1(
                 clean_logits, clean_features = _forward_logits_and_features(
                     model, clean_input, spec
                 )
-                _, strong_features = _forward_logits_and_features(
+                strong_logits, strong_features = _forward_logits_and_features(
                     model, strong_input, spec
-                )
-                simclr = _simclr_nt_xent(
-                    projector(clean_features),
-                    projector(strong_features),
-                    temperature=temperature,
                 )
                 anchor = _weighted_logit_anchor_loss(
                     clean_logits,
                     teacher_logits,
                     (1.0, 1.0, 1.0, 1.0, 1.0),
                 )
-                total = simclr + 5.0 * anchor
+                if clean_objective:
+                    from core.consistency import bernoulli_jsd
+                    second_logits = model(second_input)
+                    clean_bce = F.binary_cross_entropy_with_logits(clean_logits, targets, pos_weight=pos_weight)
+                    jsd = bernoulli_jsd([clean_logits, strong_logits, second_logits])
+                    weight = 12.0 if recipe.stage1_objective is Stage1Objective.CLEAN_BCE_JSD else 0.0
+                    total = clean_bce + weight * jsd + 5.0 * anchor
+                    primary_losses = (clean_bce, jsd)
+                elif supervised_augmix:
+                    clean_bce = F.binary_cross_entropy_with_logits(
+                        clean_logits,
+                        targets,
+                        pos_weight=pos_weight,
+                    )
+                    strong_bce = F.binary_cross_entropy_with_logits(
+                        strong_logits,
+                        targets,
+                        pos_weight=pos_weight,
+                    )
+                    total = 0.5 * clean_bce + 0.5 * strong_bce + 5.0 * anchor
+                    primary_losses = (clean_bce, strong_bce)
+                else:
+                    simclr = _simclr_nt_xent(
+                        projector(clean_features),
+                        projector(strong_features),
+                        temperature=temperature,
+                    )
+                    total = simclr + 5.0 * anchor
+                    primary_losses = (simclr, torch.zeros_like(simclr))
             if not bool(torch.isfinite(total).item()):
                 raise FloatingPointError("Stage-1 loss became NaN or Inf")
             total.backward()
             torch.nn.utils.clip_grad_norm_(
-                [*trainable, *projector.parameters()],
+                optimizer_parameters,
                 float(resolved["stage1_gradient_clip_norm"]),
             )
             optimizer.step()
             scheduler.step()
             losses += torch.stack(
-                (total.detach(), simclr.detach(), anchor.detach())
+                (
+                    total.detach(),
+                    primary_losses[0].detach(),
+                    primary_losses[1].detach(),
+                    anchor.detach(),
+                )
             ).to(dtype=torch.float64)
     finally:
         for parameter, requires_grad in head_states:
             parameter.requires_grad_(requires_grad)
     means = (losses / float(stage1_steps)).detach().cpu().tolist()
-    return {
+    common_summary = {
         "schema_version": 1,
         "steps": stage1_steps,
         "optimizer": "adamw",
         "learning_rate": float(resolved["stage1_learning_rate"]),
         "weight_decay": float(resolved["stage1_weight_decay"]),
         "gradient_clip_norm": float(resolved["stage1_gradient_clip_norm"]),
-        "simclr_temperature": temperature,
         "augmix_internal_chains": augmix_config.stage1_width,
         "augmix_dirichlet_alpha": augmix_config.stage1_dirichlet_alpha,
         "augmix_beta_alpha": augmix_config.stage1_beta_alpha,
@@ -1844,8 +2324,29 @@ def _run_augmix_simclr_stage1(
         "teacher_scope": "frozen_source_checkpoint_inference_on_bound_k500",
         "ptbxl_replay_weight": 0.0,
         "mean_total_loss": float(means[0]),
+        "mean_logit_anchor_loss": float(means[3]),
+    }
+    if clean_objective:
+        return {**common_summary, "objective": recipe.stage1_objective.value,
+            "clean_bce_weight": 1.0, "jsd_weight": 12.0 if recipe.stage1_objective is Stage1Objective.CLEAN_BCE_JSD else 0.0,
+            "mean_clean_bce": float(means[1]), "mean_bernoulli_jsd": float(means[2]),
+            "classifier_head_trainable": False, "projector_used": False,
+            "model_views_per_record": 3}
+    if supervised_augmix:
+        return {
+            **common_summary,
+            "objective": "supervised_augmix_bce",
+            "clean_bce_weight": 0.5,
+            "strong_bce_weight": 0.5,
+            "classifier_head_trainable": False,
+            "projector_used": False,
+            "mean_clean_bce": float(means[1]),
+            "mean_strong_bce": float(means[2]),
+        }
+    return {
+        **common_summary,
+        "simclr_temperature": temperature,
         "mean_simclr_loss": float(means[1]),
-        "mean_logit_anchor_loss": float(means[2]),
     }
 
 
@@ -1898,12 +2399,14 @@ def train_online_model(
     grouped_exposure = recipe.kind in {
         RecipeKind.SUPERVISED_ROTATING_DEPTH23,
         RecipeKind.SUPERVISED_ROTATING_DEPTH23_LHAT,
+        RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+        RecipeKind.SUPERVISED_ROTATING_DEPTH23_HARDGAIN_AUX,
         RecipeKind.FIXED20,
         RecipeKind.TWO_STAGE_AUGMIX_LHAT,
+        RecipeKind.ONE_STAGE_SUPERVISED_AUGMIX,
+        RecipeKind.ONE_STAGE_VAE_LHAT,
+        RecipeKind.ONE_STAGE_AUGMIX_LHAT,
     }
-    auxiliary_exposure = (
-        recipe.auxiliary_variant is AuxiliaryVariant.CONTRACTED_LHAT
-    )
     fairness = config.payload["fairness"]
     budget_policy = str(fairness.get("budget_policy", "matched_base"))
     if budget_policy != "matched_base":
@@ -2089,7 +2592,7 @@ def train_online_model(
     epsilon = float(config.payload["data"]["normalization_epsilon"])
     staged_method = recipe.kind is RecipeKind.TWO_STAGE_AUGMIX_LHAT
     stage1_summary: dict[str, Any] | None = None
-    if staged_method or auxiliary_exposure:
+    if staged_method or recipe.requires_vae:
         if (
             recipe.scientific_contract.get("stage2_teacher") != "disabled"
             or recipe.scientific_contract.get(
@@ -2108,10 +2611,10 @@ def train_online_model(
         _write_json(method_resources_path, method_resource_identity)
     if staged_method:
         if int(resolved["stage1_steps"]) <= 0:
-            raise ValueError("AugMix-SimCLR mainline requires Stage-1 steps")
+            raise ValueError("two-stage AugMix recipe requires Stage-1 steps")
         if runtime.augmix_config is None:
             raise RuntimeError("two-stage recipe lacks its resolved AugMix config")
-        stage1_summary = _run_augmix_simclr_stage1(
+        stage1_summary = _run_augmix_stage1(
             model,
             train_dataloader,
             spec=spec,
@@ -2121,6 +2624,7 @@ def train_online_model(
             center=center,
             base_seed=seed.base_seed,
             resolved=resolved,
+            pos_weight=resolved_pos_weight,
             normalization_epsilon=epsilon,
             amp_enabled=amp_enabled,
             amp_dtype=amp_dtype,
@@ -2132,7 +2636,7 @@ def train_online_model(
         torch.save(
             {
                 "schema_version": 1,
-                "stage": "augmix_simclr",
+                "stage": recipe.scientific_contract["stages"][0],
                 "method_id": recipe.recipe_id,
                 "recipe": _recipe_identity(recipe),
                 "center": center,
@@ -2182,7 +2686,7 @@ def train_online_model(
             "budget_policy": budget_policy,
             "optimizer_steps_per_base_batch": 1,
             "view_executions_per_base_batch": len(exposure_steps),
-            "five_epoch_rotation_cycle": (
+                "five_epoch_rotation_cycle": (
                 [
                     {
                         "epoch_modulo_five_slot": epoch,
@@ -2197,6 +2701,8 @@ def train_online_model(
                 if recipe.kind in {
                     RecipeKind.SUPERVISED_ROTATING_DEPTH23,
                     RecipeKind.SUPERVISED_ROTATING_DEPTH23_LHAT,
+                    RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+                    RecipeKind.SUPERVISED_ROTATING_DEPTH23_HARDGAIN_AUX,
                     RecipeKind.TWO_STAGE_AUGMIX_LHAT,
                 }
                 else None
@@ -2252,7 +2758,9 @@ def train_online_model(
     try:
         for epoch in range(1, epochs + 1):
             model.train()
-            epoch_exposure_steps = _method_exposure_steps(recipe, epoch=epoch)
+            epoch_exposure_steps = _method_exposure_steps(
+                recipe, epoch=epoch, total_epochs=epochs
+            )
             optimizer_steps_at_epoch_start = optimizer_steps
             epoch_base_batches = 0
             epoch_loss_sum = torch.zeros((), device=resolved_device)
@@ -2429,7 +2937,7 @@ def train_online_model(
                 )
 
                 with ExitStack() as auxiliary_state:
-                    if auxiliary_exposure and exposure_name == "auxiliary":
+                    if _is_auxiliary_exposure(exposure):
                         auxiliary_state.enter_context(
                             _preserve_batch_norm_buffers(model)
                         )
@@ -2471,8 +2979,7 @@ def train_online_model(
                         loss_scale=family_loss_scale,
                         scaler=scaler,
                         empty_lhat_auxiliary=(
-                            auxiliary_exposure
-                            and exposure_name == "auxiliary"
+                            "lhat_direct_bce" in (objective_terms or ())
                             and objective.valid_counts == {"lhat_direct_bce": 0}
                         ),
                     )
@@ -2508,8 +3015,7 @@ def train_online_model(
                         family_loss_scale * objective_term_weights[name] * count
                     )
                 for name, value in generated.bundle.values.items():
-                    if isinstance(value, WaveformView):
-                        epoch_view_count_sums[name] += value.valid_mask.sum()
+                    epoch_view_count_sums[name] += value.valid_mask.sum()
                 epoch_candidate_eligible += len(
                     generated.candidate_eligible_positions
                 )
@@ -2676,6 +3182,10 @@ def train_online_model(
                     if name.startswith("corruption_")
                 )
             )
+            augmix_exposure_count = int(
+                epoch_exposure_counts.get("augmix", 0)
+                + epoch_exposure_counts.get("auxiliary_augmix", 0)
+            )
             exposure_metrics = {
                 "budget_policy": budget_policy,
                 "base_record_count": (
@@ -2685,6 +3195,7 @@ def train_online_model(
                 ),
                 "clean_count": clean_exposure_count,
                 "corrupted_count": corrupted_exposure_count,
+                "augmix_count": augmix_exposure_count,
                 "total_count": int(sum(epoch_exposure_counts.values())),
                 "optimizer_steps_per_base_batch": 1,
                 "optimizer_steps_this_epoch": epoch_base_batches,
@@ -2693,9 +3204,13 @@ def train_online_model(
                 "per_exposure_counts": dict(epoch_exposure_counts),
                 "materialized_corruption_cache": False,
             }
-            if auxiliary_exposure:
+            if recipe.requires_vae:
                 auxiliary_names = ("lhat_direct_bce",)
-                nominal_auxiliary_mass = 2.0
+                nominal_auxiliary_mass = sum(
+                    float(step.loss_scale)
+                    for step in epoch_exposure_steps
+                    if step.objective_terms == auxiliary_names
+                )
                 effective_auxiliary_mass = sum(
                     effective_loss_masses[name] for name in auxiliary_names
                 )
@@ -2706,6 +3221,8 @@ def train_online_model(
                         "auxiliary_effective_loss_mass": effective_auxiliary_mass,
                         "auxiliary_effective_fraction_of_nominal": (
                             effective_auxiliary_mass / nominal_auxiliary_mass
+                            if nominal_auxiliary_mass > 0.0
+                            else 0.0
                         ),
                     }
                 )

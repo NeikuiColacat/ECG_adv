@@ -8,6 +8,8 @@ import numpy as np
 import pytest
 
 import data_preprocess.augmentations_cache as cache_builder
+from data_preprocess import load_cache as cache_access
+from data_preprocess import preprocess_primitives as primitives
 from data_preprocess.augmentations_cache import (
     apply_composition,
     build_compositions,
@@ -47,14 +49,25 @@ def test_locked_profile_and_cache_share_one_pn2021c_contract(monkeypatch) -> Non
     assert cache_builder.EXPECTED_CLASS_ORDER is EXPECTED_CLASS_ORDER
     assert cache_builder._artifact_contract is artifact_contract
     assert cache_builder._read_yaml_mapping is config_bundle.load_yaml_mapping
-    assert {"_resolve_project_path", "_sha256_file", "sha256_file"}.isdisjoint(
-        vars(cache_builder)
-    )
+    assert cache_builder._load_cache is cache_access.load_cache
+    assert cache_builder.primitives is primitives
+    assert {
+        "_load_source_contract",
+        "_select_source_records",
+        "_validate_source_arrays",
+        "linear_interpolate_time_batch",
+        "_resolve_project_path",
+        "_sha256_file",
+        "sha256_file",
+    }.isdisjoint(vars(cache_builder))
     assert profile.canonical_order == CANONICAL_OPERATOR_ORDER
     assert profile.profile_name == "pn2021c_paper_anchored_s5_v1"
     assert profile.severity == 5
+    assert cache["storage_policy"] == "canonical_100hz_only"
     assert cache["corruption"]["domain_sampling_rate_hz"] == 500
-    assert cache["corruption"]["output_sampling_rates_hz"] == [100, 500]
+    assert cache["corruption"]["output_sampling_rates_hz"] == [100]
+    assert "waveform_500hz_file" not in cache["source"]
+    assert "waveform_500hz_file" not in cache["output"]
     assert cache["corruption"]["normalization"] == "none"
     assert profile.parameters_for("powerline_noise")["max_amplitude"] == 0.5
     assert profile.parameters_for("baseline_shift")["amplitude_mode"] == (
@@ -89,6 +102,30 @@ def test_depth2_plus_depth3_expands_to_the_locked_twenty_views() -> None:
             CANONICAL_OPERATOR_ORDER.index(name) for name in item["operators"]
         ]
         assert operator_indices == sorted(operator_indices)
+
+
+def test_cache_staging_persists_only_the_canonical_100hz_waveform(
+    tmp_path: Path,
+) -> None:
+    cache, _ = _contracts()
+    output_dir = tmp_path / "pn2021c_100hz"
+    config = {
+        **cache,
+        "output": {**cache["output"], "cache_dir": str(output_dir)},
+    }
+
+    staging, signals_100, state = cache_builder._prepare_staging(
+        output_dir=output_dir,
+        config_identity={"config_identity_hash": "test"},
+        config=config,
+        compositions=[{"view_index": 0}],
+        record_count=2,
+    )
+
+    assert signals_100.shape == (1, 2, 1000, 12)
+    assert state["shape_100hz"] == [1, 2, 1000, 12]
+    assert "shape_500hz" not in state
+    assert not (staging / "signals_500hz.npy").exists()
 
 
 def test_composite_view_is_reproducible_from_record_and_composition_identity() -> None:

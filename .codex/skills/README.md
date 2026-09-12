@@ -9,6 +9,7 @@ Active skills:
 ```text
 .codex/skills/ecg-adv-gen/SKILL.md
 .codex/skills/ecg-vae-online-at/SKILL.md
+.codex/skills/ecg-code-simplifier/SKILL.md
 .codex/skills/shared-gpu-server-discipline/SKILL.md
 .codex/skills/data-prep-validator/SKILL.md
 .codex/skills/reproducibility-check/SKILL.md
@@ -17,28 +18,11 @@ Active skills:
 .codex/skills/ecg-agent-retrospective/SKILL.md
 ```
 
-Codex can discover these skills from the repository. To refresh the current
-user-level runtime copies explicitly:
+This project-local directory is authoritative for this repository. Do not
+automatically copy these Skills into `/home/linbinhao/.codex/skills`: that scope
+is shared by other repositories, and identically named Skills are discovered as
+separate candidates rather than merged into one definition.
 
-```bash
-REPO_ROOT=/home/linbinhao/ECG_manual_refactor_paper_kernel_v2
-RUNTIME_SKILLS=/home/linbinhao/.codex/skills
-mkdir -p "${RUNTIME_SKILLS}"
-for skill in \
-  ecg-adv-gen \
-  ecg-vae-online-at \
-  shared-gpu-server-discipline \
-  data-prep-validator \
-  reproducibility-check \
-  artifact-git-guard \
-  model-eval \
-  ecg-agent-retrospective
-do
-  mkdir -p "${RUNTIME_SKILLS}/${skill}"
-  cp -r "${REPO_ROOT}/.codex/skills/${skill}/." \
-    "${RUNTIME_SKILLS}/${skill}/"
-done
-```
-
-The runtime Codex skill directory is outside git, so keep this repo copy updated
-whenever durable project memory changes.
+Keep cross-repository Skills globally named and maintained separately. If a
+project-local Skill change is not visible in an existing Codex session, restart
+the session instead of overwriting a user-level Skill.

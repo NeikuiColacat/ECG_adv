@@ -21,10 +21,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from data_preprocess.pn2021_metadata import (  # noqa: E402
-    parse_header_snomeds,
-    parse_pn2021_header_metadata,
-)
+from data_preprocess.pn2021_metadata import parse_pn2021_header  # noqa: E402
 from data_preprocess import preprocess_primitives as primitives  # noqa: E402
 
 
@@ -233,9 +230,6 @@ def _validate_cache_contract(
     int,
     int,
     str,
-    int,
-    int,
-    int,
     list[str],
     np.dtype,
     list[str],
@@ -258,21 +252,6 @@ def _validate_cache_contract(
         raise ValueError(
             "PN2021 target_interpolation must be 'linear_align_corners'"
         )
-    derived_sampling_rate = int(config["derived_sampling_rate_hz"])
-    derived_num_samples = int(config["derived_num_samples"])
-    if derived_sampling_rate * duration_seconds != derived_num_samples:
-        raise ValueError(
-            "PN2021 derived sampling contract is inconsistent: "
-            f"{derived_sampling_rate} Hz * {duration_seconds} s "
-            f"!= {derived_num_samples} samples"
-        )
-    if str(config["derived_interpolation"]) != "linear_align_corners":
-        raise ValueError(
-            "PN2021 derived_interpolation must be 'linear_align_corners'"
-        )
-    derived_batch_size = int(config["derived_batch_size"])
-    if derived_batch_size <= 0:
-        raise ValueError("PN2021 derived_batch_size must be positive")
     lead_order = [str(name) for name in config["lead_order"]]
     if len(lead_order) != 12 or len(set(lead_order)) != 12:
         raise ValueError(f"PN2021 lead_order must contain 12 unique leads: {lead_order}")
@@ -291,9 +270,6 @@ def _validate_cache_contract(
         duration_seconds,
         target_num_samples,
         window_policy,
-        derived_sampling_rate,
-        derived_num_samples,
-        derived_batch_size,
         lead_order,
         dtype,
         centers,
@@ -311,8 +287,7 @@ def _scan_records(waveform_root: Path, centers: list[str]) -> list[dict[str, Any
             record_path = header_path.with_suffix("")
             source_record = record_path.relative_to(waveform_root).as_posix()
             record_id = record_path.name
-            snomed_codes = parse_header_snomeds(header_path)
-            demographics = parse_pn2021_header_metadata(header_path)
+            snomed_codes, demographics = parse_pn2021_header(header_path)
             records.append(
                 {
                     "center": center,
@@ -347,9 +322,6 @@ def build_pn2021_npy_cache(
         duration_seconds,
         target_num_samples,
         window_policy,
-        derived_sampling_rate,
-        derived_num_samples,
-        derived_batch_size,
         lead_order,
         cache_dtype,
         centers,
@@ -523,7 +495,7 @@ def build_pn2021_npy_cache(
                 dtype=cache_dtype,
                 shape=(record_count, target_num_samples, len(lead_order)),
             )
-            compact_batch_size = max(derived_batch_size, 1)
+            compact_batch_size = 64
             for start in range(0, record_count, compact_batch_size):
                 end = min(start + compact_batch_size, record_count)
                 compact_signals[start:end] = build_signals[start:end]
@@ -531,31 +503,6 @@ def build_pn2021_npy_cache(
             del compact_signals
             del build_signals
             build_signal_path.unlink()
-
-        signals = np.load(final_signal_path, mmap_mode="r")
-
-        signals_500hz = np.lib.format.open_memmap(
-            staging_dir / "signals_500hz.npy",
-            mode="w+",
-            dtype=cache_dtype,
-            shape=(record_count, derived_num_samples, len(lead_order)),
-        )
-        for start in range(0, record_count, derived_batch_size):
-            end = min(start + derived_batch_size, record_count)
-            derived_batch = primitives._linear_interpolate_time_batch(
-                signals[start:end],
-                derived_num_samples,
-            ).astype(cache_dtype, copy=False)
-            if not np.isfinite(derived_batch).all():
-                raise ValueError(
-                    f"Non-finite PN2021 500 Hz values in cache rows {start}:{end}"
-                )
-            signals_500hz[start:end] = derived_batch
-            if end == record_count or end % (derived_batch_size * 20) == 0:
-                print(f"[PN2021 500 Hz] {end}/{record_count} records")
-        signals_500hz.flush()
-        del signals_500hz
-        del signals
 
         kept_array = np.asarray(kept_indices, dtype=np.int64)
         labels = labels[kept_array]
@@ -613,30 +560,6 @@ def build_pn2021_npy_cache(
                 "filtering": "none",
                 "normalization": "none",
             },
-            "derived_waveforms": {
-                "500hz_linear": {
-                    "file": "signals_500hz.npy",
-                    "source_file": "signals.npy",
-                    "shape": [
-                        record_count,
-                        derived_num_samples,
-                        len(lead_order),
-                    ],
-                    "dtype": cache_dtype.name,
-                    "sampling_rate_hz": derived_sampling_rate,
-                    "duration_seconds": duration_seconds,
-                    "layout": "time_channel",
-                    "lead_order": lead_order,
-                    "physical_unit": "mV",
-                    "interpolation": "linear",
-                    "align_corners": True,
-                    "implementation": "torch.nn.functional.interpolate",
-                    "source_sampling_rate_hz": target_fs,
-                    "information_note": "100hz_grid_adapter_no_high_frequency_recovery",
-                    "filtering": "none",
-                    "normalization": "none",
-                }
-            },
             "record_hash": {
                 "file": "hash_ids.npy",
                 "algorithm": "sha256",
@@ -665,7 +588,6 @@ def build_pn2021_npy_cache(
             "files": {
                 "record_ids": "record_ids.npy",
                 "metadata": "records.parquet",
-                "signals_500hz": "signals_500hz.npy",
                 "failed_records": "failed_records.jsonl",
             },
         }

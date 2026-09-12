@@ -1,0 +1,23 @@
+schema_version: 1
+
+experiment:
+  name: manual_refactor_pn2021_effnet_a1_pool_two_complementary_eval_georgia_r3
+  purpose: Evaluate complementary two-chain AugMix-JSD on ref-excluded Georgia Clean and PN2021-C.
+
+entrypoint:
+  name: evaluate_pn2021
+  config: eval/PN2021.yaml
+  arguments:
+    - --model
+    - efficientnet1dv2
+    - --train-result
+    - /home/linbinhao/ECG_adv_data/runs/a1_pool_augmix_lhat_r3_20260901/two_complementary/effnet/georgia/training/train_result.json
+    - --center
+    - georgia
+    - --method-config
+    - train/methods/a1_rot4_augmix_jsd_complementary_strong.yaml
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/a1_pool_augmix_lhat_r3_20260901/two_complementary/eval/effnet/georgia
+  if_exists: error
+  delegate_output_subdir: evaluation

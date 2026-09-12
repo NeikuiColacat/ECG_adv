@@ -1,0 +1,32 @@
+schema_version: 1
+
+method:
+  name: two_chain_augmix_complementary_no_clean_mix
+  random_seed_file: random_seed.yaml
+  random_namespace: ecg_manual_refactor_augmix_v2_canonical500_batched
+  corruption_timing: before_per_sample_global_zscore
+
+corruption_chains:
+  operator_config: augmentation/operators.yaml
+  profile: pn2021c_paper_anchored_s5_v1
+  profile_status: project_defined_paper_anchored_not_official_preset
+  severity: 5
+  depths: [2, 3]
+  sampling: complementary_depth2_depth3_operator_partition
+  replacement_within_chain: false
+  canonical_operator_order:
+    - powerline_noise
+    - emg_noise
+    - baseline_wander
+    - baseline_shift
+    - random_leads_masking
+  independent_chains: false
+
+stage1_twochain:
+  width: 2
+  view: one_strong_view
+  chain_sampling: complementary_depth2_depth3_locked_rng
+  dirichlet_alpha: 0.5
+  clean_mix: none
+  beta_alpha: 0.0
+  simclr_temperature: 0.5

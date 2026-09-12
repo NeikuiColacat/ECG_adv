@@ -1,0 +1,42 @@
+schema_version: 2
+stage: evaluate
+references:
+  evaluation_config: eval/PN2021.yaml
+  operators_config: augmentation/operators.yaml
+  data_load_config: data/data_load.yaml
+  split_config: data/splits.yaml
+baseline:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/pulse_pn2021c_native500_gpu_renderer_s5_depth23_full_r0_20260905_v3_4gpu_handoff
+  protocol_sha256: 75da63670290a3ddd5f9d0c3753710758940d633b7472d4564cd32447f0b24ea
+cohort:
+  mode: full_pulse
+model:
+  backend: ecg_r1_image
+  repo_id: PKUDigitalHealth/ECG-R1-8B-RL
+  revision: f9257759e2e3d6b1864c2e1af4dfaa8e96eb84ea
+  directory: /home/linbinhao/ECG_adv_data/models/ECG-R1-8B-RL_f925775
+  precision: bfloat16
+  image_processing: cpu_uint8_equivalent_cuda_v1
+  prompt_variant: pulse_exact
+runtime:
+  batch_size: 8
+  loader_workers: 1
+  max_new_tokens: 64
+paths:
+  state_root: /home/linbinhao/ECG_adv_data/runs/ecg_r1_full_elastic_20260907/state/full_gpu_exact
+  working_root: /dev/shm/ecg_r1_full_elastic_20260907
+  raw_root: /home/linbinhao/ECG_adv_data/physionet2021/training
+  toolkit_dir: /home/linbinhao/ECG_adv_data/external/ecg-image-kit_v1.0.0
+elastic:
+  candidate_policy: explicit_environment_allowlist
+  max_workers: 4
+  records_per_task: 32
+  poll_seconds: 30
+  idle_seconds: 90
+  min_available_ram_gib: 48
+  max_load_fraction: 0.9
+  validation_result: /home/linbinhao/ECG_adv_data/runs/ecg_r1_full_elastic_20260907/validation_gpu_exact/evaluation/evaluation_result.json
+  handoff:
+    source_state: /home/linbinhao/ECG_adv_data/runs/ecg_r1_full_elastic_20260907/state/full_retry1
+    pause_receipt: /home/linbinhao/ECG_adv_data/runs/ecg_r1_full_elastic_20260907/processor_optimization_pause_receipt_20260907.json
+    numeric_probe: /home/linbinhao/ECG_adv_data/runs/ecg_r1_full_elastic_20260907/processor_gpu_exact_probe_20260907.json

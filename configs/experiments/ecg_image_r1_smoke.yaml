@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: ecg_image_r1_smoke
+  purpose: Validate frozen ECG-R1 image-only adapter, parse completion, memory and throughput on disjoint smoke IDs without scoring labels.
+entrypoint:
+  name: evaluate_ecg_image
+  config: eval/ecg_image_r1_smoke.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/ecg_image_llm_10h_20260907/r1_smoke
+  if_exists: error
+  delegate_output_subdir: evaluation

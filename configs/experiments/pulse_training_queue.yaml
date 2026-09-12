@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: pulse_training_queue
+  purpose: CPU-only finite scheduler for exactly four centers times two matched PULSE AugMix training arms; adopt live owned jobs and admit at most four free GPUs.
+entrypoint:
+  name: coordinate_pulse_training
+  config: train/pulse_training_queue.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/pulse_augmix_sft_20260909/training_queue
+  if_exists: error
+  delegate_output_subdir: training

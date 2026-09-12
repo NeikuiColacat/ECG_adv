@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: founder_objective_clean_bce_chapman_shaoxing_eval
+  purpose: User-authorized visual-only PULSE and objective-only ECGFounder JSD development ablations; matched K500, no heldout selection.
+entrypoint:
+  name: evaluate_pn2021
+  config: eval/PN2021.yaml
+  arguments: ["--model","ecgfounder","--train-result","/home/linbinhao/ECG_adv_data/runs/dual_jsd_20260911/founder_objective_clean_bce_chapman_shaoxing/training/train_result.json","--center","chapman_shaoxing","--method-config","train/methods/augmix_clean_bce_lhat.yaml"]
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/dual_jsd_20260911/founder_objective_clean_bce_chapman_shaoxing_eval
+  if_exists: error
+  delegate_output_subdir: evaluation

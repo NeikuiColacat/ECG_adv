@@ -37,7 +37,7 @@ Before GPU training, long inference, or a cache build:
 ## Current Host
 
 ```text
-repo root:    /home/linbinhao/ECG_manual_refactor_paper_kernel_v2
+repo root:    current checkout (`git rev-parse --show-toplevel`)
 data root:    /home/linbinhao/ECG_adv_data
 python:       /home/linbinhao/miniforge3/envs/ECGTwin/bin/python
 cli tools:    /home/linbinhao/miniforge3/envs/cli-tools/bin
@@ -96,7 +96,23 @@ Do not add long Bash launchers or dated one-off Python entrypoints.
 
 ## Locked Research Contract
 
-Current prospective method:
+The user confirmed three development directions on 2026-09-12:
+
+- ECG LLM: PULSE and ECG-R1; see `docs/directions.md`.
+- Traditional SimCLR: ECGFounder and EfficientNet, the two-stage recipe below.
+- Traditional JSD: the existing R18 single-stage Joint recipe, JSD weight
+  `1.5` and VAE-LHAT supervised loss mass `0.20`; selector
+  `configs/train/methods/a1_rot4_two_chain_balanced_jsd1p5_vae_lhat_replace0p2.yaml`.
+  No SimCLR, source replay, source logit anchor, or stage boundary in this arm.
+  Do not substitute the September 11 two-stage JSD weight-12 ablation.
+
+Share implementation through Git commits, never imports from another worktree.
+The finite direction catalog `configs/directions.yaml` is navigation, not a
+new launch/config-generation surface. Preserve historical experiments and
+their identities; retiring old worktrees still requires a reviewed exact list
+and separate deletion confirmation. One writer owns each worktree index.
+
+Locked traditional SimCLR method:
 
 ```text
 PTB-XL source checkpoint

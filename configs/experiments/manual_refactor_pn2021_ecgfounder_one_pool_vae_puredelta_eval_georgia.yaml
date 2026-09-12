@@ -1,0 +1,23 @@
+schema_version: 1
+
+experiment:
+  name: manual_refactor_pn2021_ecgfounder_one_pool_vae_puredelta_eval_georgia_r2
+  purpose: Evaluate one-pool pure-delta VAE-LHAT on ref-excluded Georgia Clean and PN2021-C.
+
+entrypoint:
+  name: evaluate_pn2021
+  config: eval/PN2021.yaml
+  arguments:
+    - --model
+    - ecgfounder
+    - --train-result
+    - /home/linbinhao/ECG_adv_data/runs/one_pool_augmix_lhat_r2_20260901/vae_puredelta/ecgfounder/georgia/training/train_result.json
+    - --center
+    - georgia
+    - --method-config
+    - train/methods/one_pool_vae_lhat_puredelta.yaml
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/one_pool_augmix_lhat_r2_20260901/vae_puredelta/eval/ecgfounder/georgia
+  if_exists: error
+  delegate_output_subdir: evaluation

@@ -1,0 +1,101 @@
+schema_version: 1
+kind: navigation_only
+launchable: false
+scope: representative_existing_entrypoints_not_a_new_config_generator
+notes:
+  - Paths are repo-relative; index fragments name existing YAML keys.
+  - Ningbo entries are examples, not shortcuts for the full four-center grid.
+  - Keep canonical config paths, recipe identities, old worktrees, and frozen results unchanged.
+  - Historical checkpoint metadata does not guarantee weights remain at the recorded path.
+
+directions:
+  llm:
+    title: ECG LLM — PULSE-7B and ECG-R1
+    models: [PULSE-7B, ECG-R1-8B-RL-image-only]
+    evidence: configs/active_evidence_registry.yaml#image_llm_full_elastic_20260907
+    r1:
+      validation: configs/experiments/ecg_image_r1_elastic_validation_gpu_exact.yaml
+      full_evaluation: configs/experiments/ecg_image_r1_elastic_full_gpu_exact.yaml
+      paired_pulse_report: configs/experiments/ecg_image_r1_pulse_full_comparison.yaml
+    pulse_visual_examples:
+      clean: configs/experiments/pulse_visual_clean_ningbo.yaml
+      single_jsd: configs/experiments/pulse_visual_single_ningbo.yaml
+      three_jsd: configs/experiments/pulse_visual_three_ningbo.yaml
+      evaluation: configs/experiments/pulse_visual_eval_ningbo.yaml
+      grid_index: configs/active_scripts.yaml#dual_jsd_20260911
+    prior_lora_comparisons:
+      waveform_mix: configs/experiments/pulse_subset.yaml
+      pixel_mix: configs/experiments/pulse_pixel_subset.yaml
+    caution: The dual_jsd_workflow queue also launches Founder; it is not an LLM-only entrypoint.
+
+  two_stage_simclr:
+    title: Traditional classifiers — two-stage SimCLR
+    models: [efficientnet1dv2, ecgfounder]
+    primary_recipe: configs/train/methods/augmix_simclr_lhat.yaml
+    training_config: configs/train/PN2021.yaml
+    grid_index: configs/active_scripts.yaml#latest_mainline
+    evidence: configs/active_evidence_registry.yaml#active_development_mainline
+    primary_examples:
+      effnet: configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_ningbo.yaml
+      ecgfounder: configs/experiments/manual_refactor_pn2021_ecgfounder_augmix_simclr_lhat_ningbo.yaml
+    evaluation_examples:
+      effnet: configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_eval_ningbo.yaml
+      ecgfounder: configs/experiments/manual_refactor_pn2021_ecgfounder_augmix_simclr_lhat_eval_ningbo.yaml
+    matrix_examples:
+      effnet: configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_matrix.yaml
+      ecgfounder: configs/experiments/manual_refactor_pn2021_ecgfounder_augmix_simclr_lhat_matrix.yaml
+    controls:
+      no_vae:
+        effnet: configs/experiments/manual_refactor_pn2021_effnet_augmix_only_ningbo.yaml
+        ecgfounder: configs/experiments/manual_refactor_pn2021_ecgfounder_augmix_only_ningbo.yaml
+      vae_only:
+        effnet: configs/experiments/manual_refactor_pn2021_effnet_vae_lhat_only_ningbo.yaml
+        ecgfounder: configs/experiments/manual_refactor_pn2021_ecgfounder_vae_lhat_only_ningbo.yaml
+      a0_clean:
+        effnet: configs/experiments/manual_refactor_pn2021_effnet_a0_e25_ningbo.yaml
+        ecgfounder: configs/experiments/manual_refactor_pn2021_ecgfounder_a0_e30_ningbo.yaml
+      a1_locked:
+        effnet: configs/experiments/manual_refactor_pn2021_effnet_a1_rot4_e25_ningbo.yaml
+        ecgfounder: configs/experiments/manual_refactor_pn2021_ecgfounder_a1_rot4_e30_ningbo.yaml
+    control_indexes:
+      components: configs/active_scripts.yaml#prospective_component_ablation_2x2_r0
+      baselines: configs/active_scripts.yaml#prospective_matched_base_a0_a1
+
+  single_stage_jsd:
+    title: Traditional classifiers — single-stage R18 JSD1.5 plus LHAT replacement0.20
+    models: [efficientnet1dv2, ecgfounder]
+    primary_recipe: configs/train/methods/a1_rot4_two_chain_balanced_jsd1p5_vae_lhat_replace0p2.yaml
+    training_config: configs/train/PN2021_a1_joint_long_budget_r13.yaml
+    jsd_weight: 1.5
+    lhat_supervised_replacement_mass: 0.20
+    simclr: false
+    stage_boundaries: false
+    grid_index: configs/active_scripts.yaml#a1_vae_clean_replacement_r18_20260902
+    evidence: configs/active_evidence_registry.yaml#a1_vae_clean_replacement_r18_20260902
+    primary_examples:
+      effnet: configs/experiments/manual_refactor_pn2021_effnet_a1_vae_replace0p2_joint_ningbo.yaml
+      ecgfounder: configs/experiments/manual_refactor_pn2021_ecgfounder_a1_vae_replace0p2_joint_ningbo.yaml
+    evaluation_examples:
+      effnet: configs/experiments/manual_refactor_pn2021_effnet_a1_vae_replace0p2_joint_eval_ningbo.yaml
+      ecgfounder: configs/experiments/manual_refactor_pn2021_ecgfounder_a1_vae_replace0p2_joint_eval_ningbo.yaml
+    controls:
+      single_chain:
+        effnet: configs/experiments/manual_refactor_pn2021_effnet_a1_balanced_jsd1p5_long_single_ningbo.yaml
+        ecgfounder: configs/experiments/manual_refactor_pn2021_ecgfounder_a1_balanced_jsd1p5_long_single_ningbo.yaml
+      two_chain_no_vae:
+        effnet: configs/experiments/manual_refactor_pn2021_effnet_a1_balanced_jsd1p5_long_two_ningbo.yaml
+        ecgfounder: configs/experiments/manual_refactor_pn2021_ecgfounder_a1_balanced_jsd1p5_long_two_ningbo.yaml
+      a1_matched_long:
+        effnet: configs/experiments/manual_refactor_pn2021_effnet_a1_long_budget_a1_ningbo.yaml
+        ecgfounder: configs/experiments/manual_refactor_pn2021_ecgfounder_a1_long_budget_a1_ningbo.yaml
+    control_indexes:
+      chain_count: configs/active_scripts.yaml#a1_balanced_jsd1p5_long_r17_20260902
+      a1_matched_long: configs/active_scripts.yaml#a1_joint_long_budget_r13_20260902
+      a1_original_short: configs/active_scripts.yaml#prospective_matched_base_a0_a1
+      r19_mechanism_and_seeds: configs/active_scripts.yaml#a1_lhat_candidate_contract_multiseed_r19_20260902
+      r20_same_seed_replay: configs/active_scripts.yaml#a1_lhat_single_gpu_same_seed_r20_20260902
+    secondary_two_stage_founder_only:
+      clean_bce: configs/experiments/founder_objective_clean_bce_ningbo.yaml
+      clean_bce_jsd: configs/experiments/founder_objective_jsd_ningbo.yaml
+      width_ablation: configs/experiments/founder_jsd_width_workflow.yaml
+      evidence: configs/active_evidence_registry.yaml#founder_jsd_width_20260911

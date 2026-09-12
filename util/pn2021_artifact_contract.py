@@ -166,7 +166,7 @@ def validate_training_lineage(value: Any) -> dict[str, Any]:
             lineage["method_resources"], {"vae"}, "lineage.method_resources"
         )
         vae = resources["vae"]
-        if method["auxiliary_variant"] == "contracted_lhat":
+        if method["auxiliary_variant"] in {"contracted_lhat", "raw_lhat"}:
             vae_identity = _mapping(
                 vae,
                 {
@@ -191,7 +191,7 @@ def _runtime_method_resources_identity(
     value: Any, method: Mapping[str, Any]
 ) -> dict[str, Any]:
     resources = _mapping(value, None, "runtime method resources")
-    if method["auxiliary_variant"] != "contracted_lhat":
+    if method["auxiliary_variant"] not in {"contracted_lhat", "raw_lhat"}:
         if resources.get("vae_decoder_checkpoint") is not None:
             raise ValueError("non-VAE runtime cannot carry a VAE decoder identity")
         return {"vae": None}
@@ -367,7 +367,10 @@ def _prospective_cohort(result: Mapping[str, Any], lineage: Mapping[str, Any],
     resolved = _mapping(config.get("resolved"), None, "evaluation config.resolved")
     seed, adaptation = lineage["seed"], lineage["adaptation_data"]
     method_resources = lineage.get("method_resources")
-    if method_resources is None and lineage["method"]["auxiliary_variant"] != "contracted_lhat":
+    if method_resources is None and lineage["method"]["auxiliary_variant"] not in {
+        "contracted_lhat",
+        "raw_lhat",
+    }:
         method_resources = {"vae": None}
     return {
         "model_name": lineage["model"]["name"], "method": lineage["method"],

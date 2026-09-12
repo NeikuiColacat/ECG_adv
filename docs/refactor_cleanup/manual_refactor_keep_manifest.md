@@ -1,6 +1,6 @@
 # 手动重构保留清单与旧代码清理闸门
 
-更新日期：2026-08-12
+更新日期：2026-09-12（旧批次说明仍保留其历史时间）
 
 ## 目的
 
@@ -29,6 +29,39 @@ YAML 或隐式回退入口。
 
 ## A. 手动重构保护白名单
 
+2026-09-12 三方向整理（用户已授权实施，不含旧 worktree 删除授权）：
+`docs/directions.md`、`configs/directions.yaml`、
+`docs/refactor_cleanup/three_direction_consolidation.md` 为 KEEP-MANUAL。
+方向目录仅供导航，不改变受管 launcher、已有 YAML、配方与产物身份。
+传统 SimCLR 保留两阶段；传统 JSD 主线使用既有单阶段 R18（JSD1.5、LHAT监督0.20）；
+双阶段 JSD12 width 扩展保留为附属实验。共享实现按 Git 提交整合，禁止跨树导入。
+该批次已完成19树私有恢复快照；旧树退役仍必须经过 D 节用户确认闸门。
+
+2026-09-11 双路 JSD 扩展（用户授权，开发证据）：`core/consistency.py`、
+`core/pulse_visual.py`、`util/tests/test_dual_jsd.py` 为 KEEP-MANUAL。
+`util/evaluation/pulse_visual_subset.py` 和四中心 `pulse_visual_eval_*` 的 eval/experiment
+YAML 为 KEEP-MANUAL：分别重算三组已训练 CLIP，经作者生成等价闸门后执行固定 512
+开发子集；复用原始模型结果须哈希、prompt 和逐条输入指纹一致，不选 heldout checkpoint。
+复用现有 `core/augmix.py`、`core/pulse_finetune.py`、`core/online_trainer.py`、
+`core/methods/registry.py`、`util/pulse_training_contract.py` 和
+`util/pulse_training_queue.py`，不修改外部 PULSE 作者环境源码。
+新增 `configs/train/methods/augmix_clean_bce{,_jsd}_lhat.yaml` 两个有限选择器；
+`configs/train/` 和 `configs/experiments/` 的 `pulse_visual_smoke_{clean,single,three,resume}`、
+`pulse_visual_{clean,single,three}_{ningbo,chapman_shaoxing,cpsc_2018,georgia}`、
+`dual_jsd_workflow.yaml`，以及 `configs/experiments/` 的
+`founder_objective_{simclr,clean_bce,jsd}_{ningbo,chapman_shaoxing,cpsc_2018,georgia}{,_eval}.yaml`
+全部为 KEEP-MANUAL。连同四个 visual_eval，新增 45 个 experiment YAML，总 inventory 1019。
+PULSE schema3：原始 PULSE checkpoint、CLIP blocks19..22 q/v LoRA8/alpha16/dropout0、
+投影层训练、冻结语言模型；native500 波形算子替换图片算子，独立随机深度1..3、
+可重复、Dirichlet/Beta alpha1、RGB混合，clean answer CE + 12×三视图token JSD。
+ECGFounder：Stage1 clean BCE / clean BCE+12×Bernoulli JSD 对照，源anchor5、
+冻结分类头、锁定两链/alpha.5、Stage2与LHAT不变；同时重跑锁定SimCLR参考。
+仅K500训练；同一有限队列自动衔接四中心 PULSE 512 小规模评估和 Founder
+既有 ref-excluded 全量评估，两路训练/推理共同计入四卡总预算。
+共享总预算最多4卡；本轮用户允许已验证同一PID的≤32MiB空闲上下文共存，
+运行范围许可文件必须绑定UUID/PID/UID/start_ticks/boot_id，其他负载仍拒绝。
+非必要图像仅内存，保留模型、断点与结果；不据此删除历史正式权重。
+
 ### A0. 项目入口与边界
 
 | 文件 | 状态 | 当前职责 | 删除或合并前必须满足 |
@@ -36,16 +69,19 @@ YAML 或隐式回退入口。
 | `AGENTS.md` | `KEEP-MANUAL` | 共享服务器安全、白名单依赖边界、主线数据/方法/证据契约和验证入口 | 新代理入口完整接管前 100 行安全规则、白名单原则和论文证据边界 |
 | `README.md` | `KEEP-MANUAL` | 人类可读的手工重构入口、目录导航、dry-run 和开发证据边界 | 新项目首页完整接管当前 launcher、数据契约和验证命令 |
 | `pytest.ini` | `KEEP-MANUAL` | 将公共 CPU 回归测试发现范围锁定在 `util/tests/test_*.py`，并严格拒绝未知配置和 marker | 新测试配置完整接管同一发现边界和严格模式 |
-| `.codex/skills/README.md` | `KEEP-MANUAL` | 说明随仓库迁移的公开项目技能及当前用户级安装方式 | 新技能索引完整接管同一公开/私有边界和安装入口 |
+| `.codex/skills/README.md` | `KEEP-MANUAL` | 说明随仓库迁移的项目技能、项目局部发现方式和全局技能隔离边界 | 新技能索引完整接管同一公开/私有边界和发现入口 |
 | `.codex/skills/artifact-git-guard/SKILL.md` | `KEEP-MANUAL` | 提交与 push 前阻止权重、缓存、外部模型链接、秘密和运行产物进入 Git | 新 Git 防护流程覆盖相同风险并完成实际提交验证 |
 | `.codex/skills/data-prep-validator/SKILL.md` | `KEEP-MANUAL` | 审核 v7 Super5、100 Hz canonical、VAE 桥、K500 与 ref-exclusion 数据契约 | 新数据验证技能接管相同身份、布局和泄漏闸门 |
 | `.codex/skills/ecg-adv-gen/SKILL.md` | `KEEP-MANUAL` | 当前 clean-room 主线总路由；显式把旧 ECG_adv_Gen 内容降为历史来源 | 新总技能完整指向当前 AGENTS、keep manifest、active index 和 evidence registry |
+| `.codex/skills/ecg-adv-gen/references/legacy_provenance.md` | `KEEP-MANUAL` | 按需恢复旧 ECG_adv_Gen 技能内容和历史实现的不可变 Git 入口 | 新来源入口保留精确提交、历史降级和禁止直接执行旧路径的边界 |
 | `.codex/skills/ecg-agent-retrospective/SKILL.md` | `KEEP-MANUAL` | 将重复经验路由到 AGENTS、manifest、registry、基线文档或小技能 | 新回顾入口保留最小更新、证据和不读取全局私有会话的约束 |
 | `.codex/skills/ecg-agent-retrospective/references/handoff-template.md` | `KEEP-MANUAL` | 当前 clean worktree 的紧凑交接模板 | 新模板保留目标、状态、证据、未完成项和下一命令字段 |
 | `.codex/skills/ecg-agent-retrospective/references/session-hygiene.md` | `KEEP-MANUAL` | 项目会话卫生与禁止自动删除/归档边界 | 新规则接管相同人工确认和隐私边界 |
 | `.codex/skills/ecg-agent-retrospective/references/update-rules.md` | `KEEP-MANUAL` | 判断经验应进入 AGENTS、技能还是证据文件的最小规则 | 新规则保留可复用性、证据和上下文成本闸门 |
 | `.codex/skills/ecg-vae-online-at/SKILL.md` | `KEEP-MANUAL` | VAE-LHAT 攻击、回缩、诊断、ASR 和论文安全选择的专项流程；当前 YAML 优先于历史设置 | 新专项技能接管当前 M20/λ1.0/ε12/1步契约和历史降级规则 |
+| `.codex/skills/ecg-vae-online-at/references/historical_optimization_evidence.md` | `KEEP-MANUAL` | 将旧 VAE-LHAT 参数扫描与单次结果降级为按需 Git 历史入口 | 新来源入口保留不可变提交、matched-comparison 核查项和非当前默认声明 |
 | `.codex/skills/ecg-vae-online-at/references/literature_and_repos.md` | `KEEP-MANUAL` | VAE latent adversarial training、AugMix 及相关实现的文献与仓库线索 | 新参考文件保留来源区分和可追溯链接 |
+| `.codex/skills/ecg-code-simplifier/SKILL.md` | `KEEP-MANUAL` | 在不削弱数据、评估、复现和安全契约的前提下缩减近期改动与过度设计 | 新简化流程接管 diff-first 范围、删除前单向门检查、风险分级和等价验证 |
 | `.codex/skills/model-eval/SKILL.md` | `KEEP-MANUAL` | 统一两骨干 PN2021/PN2021-C、drop-all-zero、逐中心/逐类和 matched baseline 评估口径 | 新评估技能接管全部 metric identity 与 ref-exclusion 闸门 |
 | `.codex/skills/reproducibility-check/SKILL.md` | `KEEP-MANUAL` | 审核配置闭包、Git/seed/checkpoint/命令/指标的可回放身份 | 新复现技能接管相同 run-record 和证据闭环 |
 | `.codex/skills/shared-gpu-server-discipline/SKILL.md` | `KEEP-MANUAL` | GPU、CPU、内存、IO、进程、端口和输出目录的共享服务器前置检查 | 新资源纪律入口完整接管共享服务器安全规则 |
@@ -126,6 +162,7 @@ native-rate 到 100 Hz，以及 100 Hz 到 500 Hz 均使用该策略。PN2021 �
 | `configs/train/vae.yaml` | `KEEP-MANUAL` | ECGTwin VAE checkpoint、输入/latent、冻结方式和分类器桥接契约 | 新配置保留 checkpoint 双组件、raw mV、1024点、lead reorder、latent scale 和严格键数量 |
 | `configs/train/lhat.yaml` | `KEEP-MANUAL` | M20 nearest exact-label/non-self latent hull、标准化、λ1.0、ε12、1步 BCE 困难搜索，以及 `[0.25,0.5,0.75,1]` 预翻转最大损失收缩网格和端点残差修正 | 新配置保留 train-only standardizer、`include_anchor=false`、100 Hz 信息瓶颈、clean-correct margin 50% 保留、无 heldout feedback 和 raw/contract 双层诊断 |
 | `configs/train/augmix.yaml` | `KEEP-MANUAL` | 仅配置 Stage-1 两条独立 depth2/3 腐蚀链：在 500 Hz 算子域执行并回到 canonical100，以 Dirichlet(0.5,0.5) 混链、Beta(0.5,0.5) 混 clean | 新配置保留顺序隔离 RNG、pre-zscore raw mV、两链公式/温度0.5、非原地输入和配置束内单一算子来源 |
+| `configs/train/augmix_single_chain_no_mix.yaml` | `KEEP-MANUAL` | 单链组件消融资源：只生成一条 depth2/3 strong view，不做 Dirichlet 链间混合或 Beta clean 混合 | 保留与两链资源相同的算子 profile、severity、RNG namespace 和 pre-zscore raw-mV 路径；不得把历史文件名中的 SimCLR 当作 objective 来源 |
 | `configs/train/PN2021.yaml` | `KEEP-MANUAL` | 主线及既有有限选择器共用的 PN2021 训练控制：EffNet Stage-1 1024步 + E25/T30，ECGFounder Stage-1 256步 + E30/T30；EffNet 的五轮 rotating4 周期在 25 轮内完整重复五次；统一完整 K500、resident loader、最后 checkpoint、epoch history 和无 heldout 选模 | 新配置保留同源 checkpoint、完整 K500、两阶段超参、matched-base 单步预算、ref-exclusion、v7 映射、drop-all-zero 主口径和100 Hz bottleneck；不重复 recipe 身份或科学常量 |
 | `configs/train/PN2021_matched_base_a0_a1.yaml` | `KEEP-MANUAL` | A0/A1 单变量对照的专用完整 K500 控制：EffNet E25/T30、ECGFounder E30/T30，两个骨干均无 Stage-1 参数并固定 last checkpoint | 新配置保留 A0/A1 共用 comparison group、同源 checkpoint、相同 base/update、无 validation/heldout 选模和 YAML-owned 超参；不得用于含 Stage-1 的主线运行 |
 | `configs/train/methods/a0_clean_v1.yaml` | `KEEP-MANUAL` | schema-v2 A0 clean RecipeSpec 选择器；仅声明 recipe 身份且资源为空 | 新 selector 保留 A0 身份；单 clean BCE、完整 base exposure 和单次 outer step 必须由代码所有 |
@@ -135,19 +172,329 @@ native-rate 到 100 Hz，以及 100 Hz 到 500 Hz 均使用该策略。PN2021 �
 | `configs/train/methods/augmix_simclr_lhat.yaml` | `KEEP-MANUAL` | schema-v2 唯一主线 RecipeSpec 选择器；固定 `contracted_lhat`，仅引用 operator/AugMix/VAE/LHAT 与两条隔离 RNG | 新 selector 保留主线身份和完整外部资源闭包；K500-only、两阶段拓扑、五轮覆盖、family balance、辅助权重2、BN/RNG恢复和无 heldout feedback 必须由代码所有 |
 | `configs/train/methods/augmix_simclr_matched_no_vae.yaml` | `KEEP-MANUAL` | schema-v2 AugMix-only 组件消融；保留 Stage-1 AugMix-SimCLR 与 Stage-2 rotating4，移除全部 VAE/LHAT 资源 | 新 selector 保留与主线匹配的 Stage-1、Stage-2 teacher=0、corruption RNG、预算和 last-checkpoint 选择 |
 | `configs/train/methods/vae_lhat_only.yaml` | `KEEP-MANUAL` | schema-v2 VAE-LHAT-only 组件消融；从 source checkpoint 直接执行 rotating4+contracted LHAT，不执行 Stage-1 | 新 selector 保留主线同一 VAE/LHAT、辅助权重2、Stage-2 teacher=0、预算、RNG 与诊断合同 |
+| `configs/train/methods/augmix_supervised_matched_no_vae.yaml` | `KEEP-MANUAL` | schema-v2 supervised-AugMix no-VAE 2×2 新臂；保留两链 strong view，以 clean/strong 各0.5的监督 BCE 替代 SimCLR，并继续执行 Stage-2 rotating4 | 新 selector 保留与 SimCLR/no-VAE 锁定臂相同的 operator/AugMix/corruption RNG、训练预算和 last checkpoint；不得引入 projector、SimCLR 或 VAE/LHAT 资源 |
+| `configs/train/methods/augmix_supervised_single_chain_matched_no_vae.yaml` | `KEEP-MANUAL` | schema-v2 无 SimCLR、无 VAE 的监督单链 matched 消融；Stage-1 为 clean/strong 各0.5 BCE，Stage-2 复用 rotating4 | 新 selector 仅允许 strong-view geometry 从两链混合变为单链 no-mix；保留 source anchor、seed、预算、teacher=0、last checkpoint 和全部评估合同 |
+| `configs/train/methods/augmix_supervised_lhat.yaml` | `KEEP-MANUAL` | schema-v2 supervised-AugMix + VAE-LHAT 2×2 新臂；Stage-1 使用 clean/strong 监督 BCE，Stage-2 保留 rotating4+contracted LHAT | 新 selector 保留与完整 SimCLR+LHAT 锁定臂相同的 operator/AugMix/VAE/LHAT/RNG、辅助权重2、训练预算与诊断合同；唯一 Stage-1 因子差异为 objective |
 | `core/__init__.py` | `KEEP-MANUAL` | 仅作为显式空 package boundary；所有生产消费者直接从 owner module 导入 | 新核心包保留空 `__all__`，不恢复训练、方法、数据或配置的 eager re-export |
 | `core/corruption.py` | `KEEP-MANUAL` | 共享 GPU canonical 腐蚀内核；把两条链合并成 `2B`，固定在 500 Hz 调用五算子并返回 100 Hz raw-mV 波形及逐样本 provenance | 新实现保留线性 `100→500→100`、五算子各一次批量调用、depth2/3 组合掩码、无逐组合 CPU 分支和有限值诊断 |
-| `core/lhat.py` | `KEEP-MANUAL` | train-only latent standardizer、nearest exact-label non-self M20 hull 优化、固定 100 Hz canonical 可微解码后再走两模型攻击桥；攻击后一次批量解码收缩路径、端点残差修正并选择最高 BCE 的标签边界保护点 | 新实现保留只优化 batch-local hull 权重、不污染分类器/decoder 梯度、λ1.0/ε12/1步 raw 搜索、clean-correct margin 保护、finite/std/20mV gate、clean fallback、ASR/接受率/t 诊断和紧凑 D2H；不得把 backbone 目标长度重新下沉到 VAE decoder helper |
-| `core/augmix.py` | `KEEP-MANUAL` | 仅实现冻结 Stage-1 两链强视图；两条链按锁定 RNG 顺序独立生成后做逐样本 Dirichlet 与 Beta 混合 | 新实现保留 raw100 输入、500 Hz 算子域、canonical100输出、显式 generator、非原地语义、可复算权重和不把两条链合并成会改变 RNG 身份的 `2B` 调用 |
+| `core/lhat.py` | `KEEP-MANUAL` | train-only latent standardizer、nearest exact-label non-self M20 hull 优化、固定 100 Hz canonical 可微解码后再走两模型攻击桥；支持冻结 v1、非降 BCE v2、pure-delta v3 与最近边界外 v4 四个有限回缩合同 | 新实现保留只优化 batch-local hull 权重、不污染分类器/decoder 梯度、λ1.0/ε12/1步 raw 搜索、clean-correct margin 保护、finite/std/20mV gate、clean fallback、ASR/接受率/t 诊断；v2/v3 不得选中低于 raw-clean BCE 的辅助 view，v4 接纳样本必须真实翻转至少一个 clean-correct 标签 |
+| `core/augmix.py` | `KEEP-MANUAL` | 实现冻结 Stage-1 强视图；默认两链按锁定 RNG 顺序生成并做 Dirichlet/Beta 混合，显式单链消融只生成首条链并跳过两种混合 | 新实现保留 raw100 输入、500 Hz 算子域、canonical100输出、显式 generator、非原地语义、两链 golden 不变和单链独立 golden；不得以通用 width 参数绕过有限 recipe |
 | `core/latent_pool.py` | `KEEP-MANUAL` | 从 raw 100 Hz K500 经 compact deterministic encoder tuple 建立 frozen VAE posterior-mean latent pool；schema v2 预计算 stable exact-label neighbor table，缓存 eligible hash tuple/set，并把邻居表 SHA256 纳入身份 | 新实现保留 encoder/cache/label/latent/eligibility/standardizer 身份、`(scaled_mean, mean, logvar)` shape/finite 校验、候选 distinct/non-self、与原 stable search 逐元素一致及不可用样本显式清单 |
 | `core/methods/__init__.py` | `KEEP-MANUAL` | 仅作为显式空 recipe package boundary；contracts、registry 与 runtime 各自拥有其 API | 新包保留空 `__all__`与 owner-module direct import，不恢复 barrel re-export、DAG、动态 import 或插件式组合 |
 | `core/methods/contracts.py` | `KEEP-MANUAL` | 定义 canonical raw-mV waveform、Super5 target、valid-mask 与不可变 named-view bundle 的最小契约 | 新实现保留 `(B,1000,12)`、Super5、有限值、batch/sample-id 对齐与不可变输出检查；objective/resource requirement 由 finite registry 唯一拥有，不恢复中间 holder |
-| `core/methods/registry.py` | `KEEP-MANUAL` | 严格加载七个 schema-v2 文件选择器，含完整主线与 AugMix-only/VAE-LHAT-only 两个有限组件消融；由 loader-owned definition 唯一派生科学合同和路径无关 spec SHA | 新 loader 保留根键/recipe键/资源键精确检查、未知值与动态 import fail-closed、外部配置引用闭包、完整科学身份哈希及 direct-constructor/replace 拒绝 |
-| `core/methods/runtime.py` | `KEEP-MANUAL` | 按有限 recipe 直接分派 canonical corruption 与 attack-then-contract LHAT；只为候选充足且通过收缩/QC 的记录暴露辅助 view，其余 clean-only | 新 runtime 保留 K500 hash/标签绑定、exact-label pool、500 Hz 算子域、legacy RNG payload、contract accepted mask、组合拒绝原因、raw/contract 诊断、显式随机 trace 和无 agent_workspace import |
-| `core/online_trainer.py` | `KEEP-MANUAL` | 执行七个文件选择器；A1、AugMix-only、VAE-LHAT-only 与完整主线严格按组件开关分离，Stage-2 teacher 全部为0，所有 grouped recipe 均一次 outer update | 新实现保留 pre-zscore raw mV、Stage-1 仅属于 AugMix 两臂、LHAT 仅属于 VAE 两臂、单步 family balance、辅助 BN/RNG snapshot-restore、optimizer/view计数、最终 checkpoint、无 heldout 选模和完整配置/seed闭包 |
+| `core/methods/registry.py` | `KEEP-MANUAL` | 严格加载有限白名单 schema-v2 文件选择器，覆盖既有两阶段组合、无 SimCLR 的单阶段 direct/AugMix/VAE/joint 四格及有限单链消融；由 loader-owned definition 唯一派生科学合同和路径无关 spec SHA | 新 loader 保留精确 schema/resource 检查、组件需求绑定、未知值和动态 import fail-closed、完整配置闭包、科学身份哈希及 direct-constructor/replace 拒绝 |
+| `core/methods/runtime.py` | `KEEP-MANUAL` | 按有限 recipe 直接分派 canonical corruption、两链 AugMix strong view 与 attack-then-contract LHAT | 新 runtime 保留 K500 hash/标签绑定、exact-label pool、500 Hz 算子域、隔离 RNG、contract accepted mask、raw/contract 诊断、显式 stochastic trace 和无 agent_workspace import |
+| `core/online_trainer.py` | `KEEP-MANUAL` | 执行有限白名单 recipe；既支持原两阶段，也支持同一次 outer step 的 clean/AugMix/LHAT 单阶段 grouped objective 与 LHAT 0.25 五轮线性 warm-up | 新实现保留 pre-zscore raw mV、单阶段不调用 SimCLR/projector、family-balanced BN、辅助 BN/RNG snapshot-restore、optimizer/view/有效 loss mass 计数、最终 checkpoint、无 heldout 选模和完整配置/seed闭包 |
 | `core/train_PN2021.py` | `KEEP-MANUAL` | 通过 `data_runtime` 建立 raw 100 Hz 完整 K500 loader，校验 source checkpoint 锁，并按 code-owned `requires_vae` 用 frozen encoder 构建 latent pool 后释放、仅向在线 runtime 路由 pool/decoder | 新适配层保留四逻辑中心、CPSC/Extra 合并、K500 partition 身份、source path/SHA 锁、resident workers 约束、无pool recipe资源隔离及 recipe 不进入 DataLoader seed |
 
+| `configs/train/PN2021_one_stage_augmix_lhat_r0.yaml` | `KEEP-MANUAL` | 无对比学习单阶段四格消融的共同 K500 训练、预算、seed 与输出合同 | 保留同源 checkpoint、同 outer-step 预算、E25/E30、last checkpoint、无 validation/heldout 选模和唯一外部输出 |
+| `configs/train/lhat_one_stage_nondecreasing.yaml` | `KEEP-MANUAL` | 单阶段 VAE-LHAT 的非降 BCE 回缩合同；显式加入 t=0 raw-clean 端点 | 保留 exact-label M20、lambda1/epsilon12/1步、端点残差修正、clean-correct margin、完整 raw/contract 诊断且禁止选择低于 clean BCE 的 view |
+| `configs/train/lhat_pure_delta_boundary_outside.yaml` | `KEEP-MANUAL` | R16 单阶段 VAE-LHAT 边界外收缩合同：沿 clean-to-hard 网格选择第一个合法翻转点 | 保留 exact-label M20、lambda1/epsilon12/1步、constant-clean residual、有限值门控、clean fallback、raw/contract 双层诊断和无 heldout feedback；不得退化为按评估结果选择 t |
+| `configs/train/methods/one_stage_augmix_supervised.yaml` | `KEEP-MANUAL` | 单阶段 AugMix-only 选择器；clean/两链 strong 各0.5监督 BCE | 保留无 SimCLR/projector/source anchor、两链资源闭包、一次 outer step 和完整 K500 |
+| `configs/train/methods/one_stage_vae_lhat_mild.yaml` | `KEEP-MANUAL` | 单阶段 VAE-only 选择器；clean BCE 加 warm-up 到0.25的 contracted LHAT | 保留无阶段边界、非降 BCE 回缩、辅助 BN/RNG 恢复、attack diagnostics 和 clean-only fallback |
+| `configs/train/methods/one_stage_augmix_vae_lhat_mild.yaml` | `KEEP-MANUAL` | 单阶段 AugMix+VAE-LHAT 联合选择器 | 保留同一步 clean0.5+AugMix0.5+warm-up LHAT0.25、无对比学习和两组件完整资源闭包 |
+| `configs/train/augmix_single_chain_no_mix.yaml` | `KEEP-MANUAL` | 单阶段单链消融的有限强视图配置；只生成第一条 corruption chain，跳过 Dirichlet/Beta 混合 | 保留与两链臂相同 operator/depth/seed namespace，仅改变链数量和混合步骤，不开放任意 width 旁路 |
+| `configs/train/methods/one_stage_single_chain_supervised.yaml` | `KEEP-MANUAL` | 单阶段 single-chain AugMix-only 选择器；clean/单链 strong 各0.5监督 BCE | 保留无 SimCLR/projector/source anchor/VAE、一次 outer step、完整 K500 和精确单链资源闭包 |
+| `configs/train/methods/one_stage_single_chain_vae_lhat_mild.yaml` | `KEEP-MANUAL` | 单阶段 single-chain AugMix+VAE-LHAT 联合选择器 | 保留同一步 clean0.5+单链0.5+warm-up LHAT0.25、无对比学习、非降回缩和完整 VAE 诊断 |
+| `configs/train/methods/a1_rot4_two_chain_robust_c125_r500_a375_endpointmean_jsd1p5_vae_lhat_boundary.yaml` | `KEEP-MANUAL` | R16 两链 AugMix+VAE-LHAT 联合选择器；冻结 R13 主体，仅将 VAE contract 改为最近边界外点并以0.2辅助权重匹配有效 loss mass | 保留单阶段、无 SimCLR/projector/replay/anchor、A1 rotating4 与两链 endpoint-mean/JSD1.5 全部不变；VAE 开关仍是单变量消融 |
+| `configs/experiments/manual_refactor_pn2021_effnet_a1_vae_boundary_joint_georgia.yaml` | `KEEP-MANUAL` | R16 EffNet Georgia 预注册门控训练 launcher | 保留 R13 长预算、固定 last checkpoint、唯一 selector 与独立外部输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_a1_vae_boundary_joint_eval_georgia.yaml` | `KEEP-MANUAL` | R16 EffNet Georgia ref-excluded Clean/PN2021-C 门控评估 launcher | 保留 train-result lineage、相同 exact cohort、20 corruption view 与 drop_all_zero 主口径 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_a1_vae_boundary_joint_georgia.yaml` | `KEEP-MANUAL` | R16 ECGFounder Georgia 预注册门控训练 launcher | 保留 R13 长预算、固定 last checkpoint、唯一 selector 与独立外部输出 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_a1_vae_boundary_joint_eval_georgia.yaml` | `KEEP-MANUAL` | R16 ECGFounder Georgia ref-excluded Clean/PN2021-C 门控评估 launcher | 保留 train-result lineage、相同 exact cohort、20 corruption view 与 drop_all_zero 主口径 |
+| `configs/experiments/manual_refactor_pn2021_effnet_a1_balanced_jsd1p5_long_single_ningbo.yaml` | `KEEP-MANUAL` | R17 EffNet ningbo 单链 AugMix 长预算训练 launcher | 保留 R13 匹配长预算、R6 平衡 JSD1.5 方法选择器、last checkpoint 与唯一外部输出；不得引入 SimCLR 或额外组件 |
+| `configs/experiments/manual_refactor_pn2021_effnet_a1_balanced_jsd1p5_long_single_eval_ningbo.yaml` | `KEEP-MANUAL` | R17 EffNet ningbo 单链 AugMix ref-excluded 评估 launcher | 保留训练结果 lineage、同一 exact cohort、20 corruption view 与 drop_all_zero 主口径 |
+| `configs/experiments/manual_refactor_pn2021_effnet_a1_balanced_jsd1p5_long_two_ningbo.yaml` | `KEEP-MANUAL` | R17 EffNet ningbo 两链 AugMix 长预算训练 launcher | 保留 R13 匹配长预算、R6 平衡 JSD1.5 方法选择器、last checkpoint 与唯一外部输出；不得引入 SimCLR 或额外组件 |
+| `configs/experiments/manual_refactor_pn2021_effnet_a1_balanced_jsd1p5_long_two_eval_ningbo.yaml` | `KEEP-MANUAL` | R17 EffNet ningbo 两链 AugMix ref-excluded 评估 launcher | 保留训练结果 lineage、同一 exact cohort、20 corruption view 与 drop_all_zero 主口径 |
+| `configs/experiments/manual_refactor_pn2021_effnet_a1_balanced_jsd1p5_long_joint_ningbo.yaml` | `KEEP-MANUAL` | R17 EffNet ningbo 两链 AugMix+VAE-LHAT 长预算训练 launcher | 保留 R13 匹配长预算、R6 平衡 JSD1.5 方法选择器、last checkpoint 与唯一外部输出；不得引入 SimCLR 或额外组件 |
+| `configs/experiments/manual_refactor_pn2021_effnet_a1_balanced_jsd1p5_long_joint_eval_ningbo.yaml` | `KEEP-MANUAL` | R17 EffNet ningbo 两链 AugMix+VAE-LHAT ref-excluded 评估 launcher | 保留训练结果 lineage、同一 exact cohort、20 corruption view 与 drop_all_zero 主口径 |
+| `configs/experiments/manual_refactor_pn2021_effnet_a1_balanced_jsd1p5_long_single_chapman_shaoxing.yaml` | `KEEP-MANUAL` | R17 EffNet chapman_shaoxing 单链 AugMix 长预算训练 launcher | 保留 R13 匹配长预算、R6 平衡 JSD1.5 方法选择器、last checkpoint 与唯一外部输出；不得引入 SimCLR 或额外组件 |
+| `configs/experiments/manual_refactor_pn2021_effnet_a1_balanced_jsd1p5_long_single_eval_chapman_shaoxing.yaml` | `KEEP-MANUAL` | R17 EffNet chapman_shaoxing 单链 AugMix ref-excluded 评估 launcher | 保留训练结果 lineage、同一 exact cohort、20 corruption view 与 drop_all_zero 主口径 |
+| `configs/experiments/manual_refactor_pn2021_effnet_a1_balanced_jsd1p5_long_two_chapman_shaoxing.yaml` | `KEEP-MANUAL` | R17 EffNet chapman_shaoxing 两链 AugMix 长预算训练 launcher | 保留 R13 匹配长预算、R6 平衡 JSD1.5 方法选择器、last checkpoint 与唯一外部输出；不得引入 SimCLR 或额外组件 |
+| `configs/experiments/manual_refactor_pn2021_effnet_a1_balanced_jsd1p5_long_two_eval_chapman_shaoxing.yaml` | `KEEP-MANUAL` | R17 EffNet chapman_shaoxing 两链 AugMix ref-excluded 评估 launcher | 保留训练结果 lineage、同一 exact cohort、20 corruption view 与 drop_all_zero 主口径 |
+| `configs/experiments/manual_refactor_pn2021_effnet_a1_balanced_jsd1p5_long_joint_chapman_shaoxing.yaml` | `KEEP-MANUAL` | R17 EffNet chapman_shaoxing 两链 AugMix+VAE-LHAT 长预算训练 launcher | 保留 R13 匹配长预算、R6 平衡 JSD1.5 方法选择器、last checkpoint 与唯一外部输出；不得引入 SimCLR 或额外组件 |
+| `configs/experiments/manual_refactor_pn2021_effnet_a1_balanced_jsd1p5_long_joint_eval_chapman_shaoxing.yaml` | `KEEP-MANUAL` | R17 EffNet chapman_shaoxing 两链 AugMix+VAE-LHAT ref-excluded 评估 launcher | 保留训练结果 lineage、同一 exact cohort、20 corruption view 与 drop_all_zero 主口径 |
+| `configs/experiments/manual_refactor_pn2021_effnet_a1_balanced_jsd1p5_long_single_cpsc_2018.yaml` | `KEEP-MANUAL` | R17 EffNet cpsc_2018 单链 AugMix 长预算训练 launcher | 保留 R13 匹配长预算、R6 平衡 JSD1.5 方法选择器、last checkpoint 与唯一外部输出；不得引入 SimCLR 或额外组件 |
+| `configs/experiments/manual_refactor_pn2021_effnet_a1_balanced_jsd1p5_long_single_eval_cpsc_2018.yaml` | `KEEP-MANUAL` | R17 EffNet cpsc_2018 单链 AugMix ref-excluded 评估 launcher | 保留训练结果 lineage、同一 exact cohort、20 corruption view 与 drop_all_zero 主口径 |
+| `configs/experiments/manual_refactor_pn2021_effnet_a1_balanced_jsd1p5_long_two_cpsc_2018.yaml` | `KEEP-MANUAL` | R17 EffNet cpsc_2018 两链 AugMix 长预算训练 launcher | 保留 R13 匹配长预算、R6 平衡 JSD1.5 方法选择器、last checkpoint 与唯一外部输出；不得引入 SimCLR 或额外组件 |
+| `configs/experiments/manual_refactor_pn2021_effnet_a1_balanced_jsd1p5_long_two_eval_cpsc_2018.yaml` | `KEEP-MANUAL` | R17 EffNet cpsc_2018 两链 AugMix ref-excluded 评估 launcher | 保留训练结果 lineage、同一 exact cohort、20 corruption view 与 drop_all_zero 主口径 |
+| `configs/experiments/manual_refactor_pn2021_effnet_a1_balanced_jsd1p5_long_joint_cpsc_2018.yaml` | `KEEP-MANUAL` | R17 EffNet cpsc_2018 两链 AugMix+VAE-LHAT 长预算训练 launcher | 保留 R13 匹配长预算、R6 平衡 JSD1.5 方法选择器、last checkpoint 与唯一外部输出；不得引入 SimCLR 或额外组件 |
+| `configs/experiments/manual_refactor_pn2021_effnet_a1_balanced_jsd1p5_long_joint_eval_cpsc_2018.yaml` | `KEEP-MANUAL` | R17 EffNet cpsc_2018 两链 AugMix+VAE-LHAT ref-excluded 评估 launcher | 保留训练结果 lineage、同一 exact cohort、20 corruption view 与 drop_all_zero 主口径 |
+| `configs/experiments/manual_refactor_pn2021_effnet_a1_balanced_jsd1p5_long_single_georgia.yaml` | `KEEP-MANUAL` | R17 EffNet georgia 单链 AugMix 长预算训练 launcher | 保留 R13 匹配长预算、R6 平衡 JSD1.5 方法选择器、last checkpoint 与唯一外部输出；不得引入 SimCLR 或额外组件 |
+| `configs/experiments/manual_refactor_pn2021_effnet_a1_balanced_jsd1p5_long_single_eval_georgia.yaml` | `KEEP-MANUAL` | R17 EffNet georgia 单链 AugMix ref-excluded 评估 launcher | 保留训练结果 lineage、同一 exact cohort、20 corruption view 与 drop_all_zero 主口径 |
+| `configs/experiments/manual_refactor_pn2021_effnet_a1_balanced_jsd1p5_long_two_georgia.yaml` | `KEEP-MANUAL` | R17 EffNet georgia 两链 AugMix 长预算训练 launcher | 保留 R13 匹配长预算、R6 平衡 JSD1.5 方法选择器、last checkpoint 与唯一外部输出；不得引入 SimCLR 或额外组件 |
+| `configs/experiments/manual_refactor_pn2021_effnet_a1_balanced_jsd1p5_long_two_eval_georgia.yaml` | `KEEP-MANUAL` | R17 EffNet georgia 两链 AugMix ref-excluded 评估 launcher | 保留训练结果 lineage、同一 exact cohort、20 corruption view 与 drop_all_zero 主口径 |
+| `configs/experiments/manual_refactor_pn2021_effnet_a1_balanced_jsd1p5_long_joint_georgia.yaml` | `KEEP-MANUAL` | R17 EffNet georgia 两链 AugMix+VAE-LHAT 长预算训练 launcher | 保留 R13 匹配长预算、R6 平衡 JSD1.5 方法选择器、last checkpoint 与唯一外部输出；不得引入 SimCLR 或额外组件 |
+| `configs/experiments/manual_refactor_pn2021_effnet_a1_balanced_jsd1p5_long_joint_eval_georgia.yaml` | `KEEP-MANUAL` | R17 EffNet georgia 两链 AugMix+VAE-LHAT ref-excluded 评估 launcher | 保留训练结果 lineage、同一 exact cohort、20 corruption view 与 drop_all_zero 主口径 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_a1_balanced_jsd1p5_long_single_ningbo.yaml` | `KEEP-MANUAL` | R17 ECGFounder ningbo 单链 AugMix 长预算训练 launcher | 保留 R13 匹配长预算、R6 平衡 JSD1.5 方法选择器、last checkpoint 与唯一外部输出；不得引入 SimCLR 或额外组件 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_a1_balanced_jsd1p5_long_single_eval_ningbo.yaml` | `KEEP-MANUAL` | R17 ECGFounder ningbo 单链 AugMix ref-excluded 评估 launcher | 保留训练结果 lineage、同一 exact cohort、20 corruption view 与 drop_all_zero 主口径 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_a1_balanced_jsd1p5_long_two_ningbo.yaml` | `KEEP-MANUAL` | R17 ECGFounder ningbo 两链 AugMix 长预算训练 launcher | 保留 R13 匹配长预算、R6 平衡 JSD1.5 方法选择器、last checkpoint 与唯一外部输出；不得引入 SimCLR 或额外组件 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_a1_balanced_jsd1p5_long_two_eval_ningbo.yaml` | `KEEP-MANUAL` | R17 ECGFounder ningbo 两链 AugMix ref-excluded 评估 launcher | 保留训练结果 lineage、同一 exact cohort、20 corruption view 与 drop_all_zero 主口径 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_a1_balanced_jsd1p5_long_joint_ningbo.yaml` | `KEEP-MANUAL` | R17 ECGFounder ningbo 两链 AugMix+VAE-LHAT 长预算训练 launcher | 保留 R13 匹配长预算、R6 平衡 JSD1.5 方法选择器、last checkpoint 与唯一外部输出；不得引入 SimCLR 或额外组件 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_a1_balanced_jsd1p5_long_joint_eval_ningbo.yaml` | `KEEP-MANUAL` | R17 ECGFounder ningbo 两链 AugMix+VAE-LHAT ref-excluded 评估 launcher | 保留训练结果 lineage、同一 exact cohort、20 corruption view 与 drop_all_zero 主口径 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_a1_balanced_jsd1p5_long_single_chapman_shaoxing.yaml` | `KEEP-MANUAL` | R17 ECGFounder chapman_shaoxing 单链 AugMix 长预算训练 launcher | 保留 R13 匹配长预算、R6 平衡 JSD1.5 方法选择器、last checkpoint 与唯一外部输出；不得引入 SimCLR 或额外组件 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_a1_balanced_jsd1p5_long_single_eval_chapman_shaoxing.yaml` | `KEEP-MANUAL` | R17 ECGFounder chapman_shaoxing 单链 AugMix ref-excluded 评估 launcher | 保留训练结果 lineage、同一 exact cohort、20 corruption view 与 drop_all_zero 主口径 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_a1_balanced_jsd1p5_long_two_chapman_shaoxing.yaml` | `KEEP-MANUAL` | R17 ECGFounder chapman_shaoxing 两链 AugMix 长预算训练 launcher | 保留 R13 匹配长预算、R6 平衡 JSD1.5 方法选择器、last checkpoint 与唯一外部输出；不得引入 SimCLR 或额外组件 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_a1_balanced_jsd1p5_long_two_eval_chapman_shaoxing.yaml` | `KEEP-MANUAL` | R17 ECGFounder chapman_shaoxing 两链 AugMix ref-excluded 评估 launcher | 保留训练结果 lineage、同一 exact cohort、20 corruption view 与 drop_all_zero 主口径 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_a1_balanced_jsd1p5_long_joint_chapman_shaoxing.yaml` | `KEEP-MANUAL` | R17 ECGFounder chapman_shaoxing 两链 AugMix+VAE-LHAT 长预算训练 launcher | 保留 R13 匹配长预算、R6 平衡 JSD1.5 方法选择器、last checkpoint 与唯一外部输出；不得引入 SimCLR 或额外组件 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_a1_balanced_jsd1p5_long_joint_eval_chapman_shaoxing.yaml` | `KEEP-MANUAL` | R17 ECGFounder chapman_shaoxing 两链 AugMix+VAE-LHAT ref-excluded 评估 launcher | 保留训练结果 lineage、同一 exact cohort、20 corruption view 与 drop_all_zero 主口径 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_a1_balanced_jsd1p5_long_single_cpsc_2018.yaml` | `KEEP-MANUAL` | R17 ECGFounder cpsc_2018 单链 AugMix 长预算训练 launcher | 保留 R13 匹配长预算、R6 平衡 JSD1.5 方法选择器、last checkpoint 与唯一外部输出；不得引入 SimCLR 或额外组件 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_a1_balanced_jsd1p5_long_single_eval_cpsc_2018.yaml` | `KEEP-MANUAL` | R17 ECGFounder cpsc_2018 单链 AugMix ref-excluded 评估 launcher | 保留训练结果 lineage、同一 exact cohort、20 corruption view 与 drop_all_zero 主口径 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_a1_balanced_jsd1p5_long_two_cpsc_2018.yaml` | `KEEP-MANUAL` | R17 ECGFounder cpsc_2018 两链 AugMix 长预算训练 launcher | 保留 R13 匹配长预算、R6 平衡 JSD1.5 方法选择器、last checkpoint 与唯一外部输出；不得引入 SimCLR 或额外组件 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_a1_balanced_jsd1p5_long_two_eval_cpsc_2018.yaml` | `KEEP-MANUAL` | R17 ECGFounder cpsc_2018 两链 AugMix ref-excluded 评估 launcher | 保留训练结果 lineage、同一 exact cohort、20 corruption view 与 drop_all_zero 主口径 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_a1_balanced_jsd1p5_long_joint_cpsc_2018.yaml` | `KEEP-MANUAL` | R17 ECGFounder cpsc_2018 两链 AugMix+VAE-LHAT 长预算训练 launcher | 保留 R13 匹配长预算、R6 平衡 JSD1.5 方法选择器、last checkpoint 与唯一外部输出；不得引入 SimCLR 或额外组件 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_a1_balanced_jsd1p5_long_joint_eval_cpsc_2018.yaml` | `KEEP-MANUAL` | R17 ECGFounder cpsc_2018 两链 AugMix+VAE-LHAT ref-excluded 评估 launcher | 保留训练结果 lineage、同一 exact cohort、20 corruption view 与 drop_all_zero 主口径 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_a1_balanced_jsd1p5_long_single_georgia.yaml` | `KEEP-MANUAL` | R17 ECGFounder georgia 单链 AugMix 长预算训练 launcher | 保留 R13 匹配长预算、R6 平衡 JSD1.5 方法选择器、last checkpoint 与唯一外部输出；不得引入 SimCLR 或额外组件 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_a1_balanced_jsd1p5_long_single_eval_georgia.yaml` | `KEEP-MANUAL` | R17 ECGFounder georgia 单链 AugMix ref-excluded 评估 launcher | 保留训练结果 lineage、同一 exact cohort、20 corruption view 与 drop_all_zero 主口径 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_a1_balanced_jsd1p5_long_two_georgia.yaml` | `KEEP-MANUAL` | R17 ECGFounder georgia 两链 AugMix 长预算训练 launcher | 保留 R13 匹配长预算、R6 平衡 JSD1.5 方法选择器、last checkpoint 与唯一外部输出；不得引入 SimCLR 或额外组件 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_a1_balanced_jsd1p5_long_two_eval_georgia.yaml` | `KEEP-MANUAL` | R17 ECGFounder georgia 两链 AugMix ref-excluded 评估 launcher | 保留训练结果 lineage、同一 exact cohort、20 corruption view 与 drop_all_zero 主口径 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_a1_balanced_jsd1p5_long_joint_georgia.yaml` | `KEEP-MANUAL` | R17 ECGFounder georgia 两链 AugMix+VAE-LHAT 长预算训练 launcher | 保留 R13 匹配长预算、R6 平衡 JSD1.5 方法选择器、last checkpoint 与唯一外部输出；不得引入 SimCLR 或额外组件 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_a1_balanced_jsd1p5_long_joint_eval_georgia.yaml` | `KEEP-MANUAL` | R17 ECGFounder georgia 两链 AugMix+VAE-LHAT ref-excluded 评估 launcher | 保留训练结果 lineage、同一 exact cohort、20 corruption view 与 drop_all_zero 主口径 |
+| `configs/train/methods/a1_rot4_two_chain_balanced_jsd1p5_vae_lhat_replace0p05.yaml` | `KEEP-MANUAL` | R18 两链 AugMix+VAE-LHAT 0.05 clean-loss replacement 选择器 | 保留 R17 两链/JSD/攻击几何；VAE 槽位固定替换 clean BCE，总 loss mass 为1，拒绝样本回退 clean BCE，BN 权重与两链控制一致 |
+| `configs/train/methods/a1_rot4_two_chain_balanced_jsd1p5_vae_lhat_replace0p1.yaml` | `KEEP-MANUAL` | R18 两链 AugMix+VAE-LHAT 0.1 clean-loss replacement 选择器 | 保留 R17 两链/JSD/攻击几何；VAE 槽位固定替换 clean BCE，总 loss mass 为1，拒绝样本回退 clean BCE，BN 权重与两链控制一致 |
+| `configs/train/methods/a1_rot4_two_chain_balanced_jsd1p5_vae_lhat_replace0p2.yaml` | `KEEP-MANUAL` | R18 两链 AugMix+VAE-LHAT 0.2 clean-loss replacement 选择器 | 保留 R17 两链/JSD/攻击几何；VAE 槽位固定替换 clean BCE，总 loss mass 为1，拒绝样本回退 clean BCE，BN 权重与两链控制一致 |
+| `configs/experiments/manual_refactor_pn2021_effnet_a1_vae_replace0p05_joint_georgia.yaml` | `KEEP-MANUAL` | R18 EffNet Georgia replacement0.05 预注册训练 launcher | 保留 R13 长预算、R17 两链控制、last checkpoint 与独立外部输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_a1_vae_replace0p05_joint_eval_georgia.yaml` | `KEEP-MANUAL` | R18 EffNet Georgia replacement0.05 ref-excluded 评估 launcher | 保留 train-result lineage、20 corruption view 与 drop_all_zero 主口径 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_a1_vae_replace0p05_joint_georgia.yaml` | `KEEP-MANUAL` | R18 ECGFounder Georgia replacement0.05 预注册训练 launcher | 保留 R13 长预算、R17 两链控制、last checkpoint 与独立外部输出 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_a1_vae_replace0p05_joint_eval_georgia.yaml` | `KEEP-MANUAL` | R18 ECGFounder Georgia replacement0.05 ref-excluded 评估 launcher | 保留 train-result lineage、20 corruption view 与 drop_all_zero 主口径 |
+| `configs/experiments/manual_refactor_pn2021_effnet_a1_vae_replace0p1_joint_georgia.yaml` | `KEEP-MANUAL` | R18 EffNet Georgia replacement0.1 预注册训练 launcher | 保留 R13 长预算、R17 两链控制、last checkpoint 与独立外部输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_a1_vae_replace0p1_joint_eval_georgia.yaml` | `KEEP-MANUAL` | R18 EffNet Georgia replacement0.1 ref-excluded 评估 launcher | 保留 train-result lineage、20 corruption view 与 drop_all_zero 主口径 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_a1_vae_replace0p1_joint_georgia.yaml` | `KEEP-MANUAL` | R18 ECGFounder Georgia replacement0.1 预注册训练 launcher | 保留 R13 长预算、R17 两链控制、last checkpoint 与独立外部输出 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_a1_vae_replace0p1_joint_eval_georgia.yaml` | `KEEP-MANUAL` | R18 ECGFounder Georgia replacement0.1 ref-excluded 评估 launcher | 保留 train-result lineage、20 corruption view 与 drop_all_zero 主口径 |
+| `configs/experiments/manual_refactor_pn2021_effnet_a1_vae_replace0p2_joint_georgia.yaml` | `KEEP-MANUAL` | R18 EffNet Georgia replacement0.2 预注册训练 launcher | 保留 R13 长预算、R17 两链控制、last checkpoint 与独立外部输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_a1_vae_replace0p2_joint_eval_georgia.yaml` | `KEEP-MANUAL` | R18 EffNet Georgia replacement0.2 ref-excluded 评估 launcher | 保留 train-result lineage、20 corruption view 与 drop_all_zero 主口径 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_a1_vae_replace0p2_joint_georgia.yaml` | `KEEP-MANUAL` | R18 ECGFounder Georgia replacement0.2 预注册训练 launcher | 保留 R13 长预算、R17 两链控制、last checkpoint 与独立外部输出 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_a1_vae_replace0p2_joint_eval_georgia.yaml` | `KEEP-MANUAL` | R18 ECGFounder Georgia replacement0.2 ref-excluded 评估 launcher | 保留 train-result lineage、20 corruption view 与 drop_all_zero 主口径 |
+| `configs/experiments/manual_refactor_pn2021_effnet_a1_vae_replace0p2_joint_ningbo.yaml` | `KEEP-MANUAL` | R18 EffNet Ningbo 冻结 replacement0.2 训练 launcher | 保留 Georgia 选择后的完全冻结配方、R13 长预算、last checkpoint 与独立外部输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_a1_vae_replace0p2_joint_eval_ningbo.yaml` | `KEEP-MANUAL` | R18 EffNet Ningbo replacement0.2 ref-excluded 评估 launcher | 保留 train-result lineage、20 corruption view 与 drop_all_zero 主口径 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_a1_vae_replace0p2_joint_ningbo.yaml` | `KEEP-MANUAL` | R18 ECGFounder Ningbo 冻结 replacement0.2 训练 launcher | 保留 Georgia 选择后的完全冻结配方、R13 长预算、last checkpoint 与独立外部输出 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_a1_vae_replace0p2_joint_eval_ningbo.yaml` | `KEEP-MANUAL` | R18 ECGFounder Ningbo replacement0.2 ref-excluded 评估 launcher | 保留 train-result lineage、20 corruption view 与 drop_all_zero 主口径 |
+| `configs/experiments/manual_refactor_pn2021_effnet_a1_vae_replace0p2_joint_chapman_shaoxing.yaml` | `KEEP-MANUAL` | R18 EffNet Chapman-Shaoxing 冻结 replacement0.2 训练 launcher | 保留 Georgia 选择后的完全冻结配方、R13 长预算、last checkpoint 与独立外部输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_a1_vae_replace0p2_joint_eval_chapman_shaoxing.yaml` | `KEEP-MANUAL` | R18 EffNet Chapman-Shaoxing replacement0.2 ref-excluded 评估 launcher | 保留 train-result lineage、20 corruption view 与 drop_all_zero 主口径 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_a1_vae_replace0p2_joint_chapman_shaoxing.yaml` | `KEEP-MANUAL` | R18 ECGFounder Chapman-Shaoxing 冻结 replacement0.2 训练 launcher | 保留 Georgia 选择后的完全冻结配方、R13 长预算、last checkpoint 与独立外部输出 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_a1_vae_replace0p2_joint_eval_chapman_shaoxing.yaml` | `KEEP-MANUAL` | R18 ECGFounder Chapman-Shaoxing replacement0.2 ref-excluded 评估 launcher | 保留 train-result lineage、20 corruption view 与 drop_all_zero 主口径 |
+| `configs/experiments/manual_refactor_pn2021_effnet_a1_vae_replace0p2_joint_cpsc_2018.yaml` | `KEEP-MANUAL` | R18 EffNet CPSC 2018 冻结 replacement0.2 训练 launcher | 保留 Georgia 选择后的完全冻结配方、R13 长预算、last checkpoint 与独立外部输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_a1_vae_replace0p2_joint_eval_cpsc_2018.yaml` | `KEEP-MANUAL` | R18 EffNet CPSC 2018 replacement0.2 ref-excluded 评估 launcher | 保留 train-result lineage、20 corruption view 与 drop_all_zero 主口径 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_a1_vae_replace0p2_joint_cpsc_2018.yaml` | `KEEP-MANUAL` | R18 ECGFounder CPSC 2018 冻结 replacement0.2 训练 launcher | 保留 Georgia 选择后的完全冻结配方、R13 长预算、last checkpoint 与独立外部输出 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_a1_vae_replace0p2_joint_eval_cpsc_2018.yaml` | `KEEP-MANUAL` | R18 ECGFounder CPSC 2018 replacement0.2 ref-excluded 评估 launcher | 保留 train-result lineage、20 corruption view 与 drop_all_zero 主口径 |
+| `configs/eval/PN2021_matrix_one_stage_direct_r0.yaml` | `KEEP-MANUAL` | 单阶段 direct 臂的双骨干四中心 exact-cohort 聚合锁 | 保留 recipe/spec、comparison group、source、K500、训练预算、last checkpoint、ref exclusion 和 drop_all_zero 身份 |
+| `configs/eval/PN2021_matrix_one_stage_augmix_r0.yaml` | `KEEP-MANUAL` | 单阶段 augmix 臂的双骨干四中心 exact-cohort 聚合锁 | 保留 recipe/spec、comparison group、source、K500、训练预算、last checkpoint、ref exclusion 和 drop_all_zero 身份 |
+| `configs/eval/PN2021_matrix_one_stage_vae_r0.yaml` | `KEEP-MANUAL` | 单阶段 vae 臂的双骨干四中心 exact-cohort 聚合锁 | 保留 recipe/spec、comparison group、source、K500、训练预算、last checkpoint、ref exclusion 和 drop_all_zero 身份 |
+| `configs/eval/PN2021_matrix_one_stage_joint_r0.yaml` | `KEEP-MANUAL` | 单阶段 joint 臂的双骨干四中心 exact-cohort 聚合锁 | 保留 recipe/spec、comparison group、source、K500、训练预算、last checkpoint、ref exclusion 和 drop_all_zero 身份 |
+| `configs/eval/PN2021_matrix_one_stage_single_chain_r0.yaml` | `KEEP-MANUAL` | 单阶段 single-chain AugMix-only 臂的双骨干四中心 exact-cohort 聚合锁 | 保留 recipe/spec、comparison group、source、K500、训练预算、last checkpoint、ref exclusion 和 drop_all_zero 身份 |
+| `configs/eval/PN2021_matrix_one_stage_single_chain_joint_r0.yaml` | `KEEP-MANUAL` | 单阶段 single-chain AugMix+VAE 臂的双骨干四中心 exact-cohort 聚合锁 | 保留 recipe/spec、comparison group、source、K500、训练预算、last checkpoint、ref exclusion 和 drop_all_zero 身份 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_direct_ningbo.yaml` | `KEEP-MANUAL` | 单阶段 direct effnet ningbo K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_direct_eval_ningbo.yaml` | `KEEP-MANUAL` | 单阶段 direct effnet ningbo ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_direct_chapman_shaoxing.yaml` | `KEEP-MANUAL` | 单阶段 direct effnet chapman_shaoxing K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_direct_eval_chapman_shaoxing.yaml` | `KEEP-MANUAL` | 单阶段 direct effnet chapman_shaoxing ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_direct_cpsc_2018.yaml` | `KEEP-MANUAL` | 单阶段 direct effnet cpsc_2018 K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_direct_eval_cpsc_2018.yaml` | `KEEP-MANUAL` | 单阶段 direct effnet cpsc_2018 ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_direct_georgia.yaml` | `KEEP-MANUAL` | 单阶段 direct effnet georgia K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_direct_eval_georgia.yaml` | `KEEP-MANUAL` | 单阶段 direct effnet georgia ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_direct_ningbo.yaml` | `KEEP-MANUAL` | 单阶段 direct ecgfounder ningbo K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_direct_eval_ningbo.yaml` | `KEEP-MANUAL` | 单阶段 direct ecgfounder ningbo ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_direct_chapman_shaoxing.yaml` | `KEEP-MANUAL` | 单阶段 direct ecgfounder chapman_shaoxing K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_direct_eval_chapman_shaoxing.yaml` | `KEEP-MANUAL` | 单阶段 direct ecgfounder chapman_shaoxing ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_direct_cpsc_2018.yaml` | `KEEP-MANUAL` | 单阶段 direct ecgfounder cpsc_2018 K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_direct_eval_cpsc_2018.yaml` | `KEEP-MANUAL` | 单阶段 direct ecgfounder cpsc_2018 ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_direct_georgia.yaml` | `KEEP-MANUAL` | 单阶段 direct ecgfounder georgia K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_direct_eval_georgia.yaml` | `KEEP-MANUAL` | 单阶段 direct ecgfounder georgia ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_augmix_ningbo.yaml` | `KEEP-MANUAL` | 单阶段 augmix effnet ningbo K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_augmix_eval_ningbo.yaml` | `KEEP-MANUAL` | 单阶段 augmix effnet ningbo ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_augmix_chapman_shaoxing.yaml` | `KEEP-MANUAL` | 单阶段 augmix effnet chapman_shaoxing K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_augmix_eval_chapman_shaoxing.yaml` | `KEEP-MANUAL` | 单阶段 augmix effnet chapman_shaoxing ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_augmix_cpsc_2018.yaml` | `KEEP-MANUAL` | 单阶段 augmix effnet cpsc_2018 K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_augmix_eval_cpsc_2018.yaml` | `KEEP-MANUAL` | 单阶段 augmix effnet cpsc_2018 ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_augmix_georgia.yaml` | `KEEP-MANUAL` | 单阶段 augmix effnet georgia K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_augmix_eval_georgia.yaml` | `KEEP-MANUAL` | 单阶段 augmix effnet georgia ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_augmix_ningbo.yaml` | `KEEP-MANUAL` | 单阶段 augmix ecgfounder ningbo K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_augmix_eval_ningbo.yaml` | `KEEP-MANUAL` | 单阶段 augmix ecgfounder ningbo ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_augmix_chapman_shaoxing.yaml` | `KEEP-MANUAL` | 单阶段 augmix ecgfounder chapman_shaoxing K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_augmix_eval_chapman_shaoxing.yaml` | `KEEP-MANUAL` | 单阶段 augmix ecgfounder chapman_shaoxing ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_augmix_cpsc_2018.yaml` | `KEEP-MANUAL` | 单阶段 augmix ecgfounder cpsc_2018 K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_augmix_eval_cpsc_2018.yaml` | `KEEP-MANUAL` | 单阶段 augmix ecgfounder cpsc_2018 ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_augmix_georgia.yaml` | `KEEP-MANUAL` | 单阶段 augmix ecgfounder georgia K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_augmix_eval_georgia.yaml` | `KEEP-MANUAL` | 单阶段 augmix ecgfounder georgia ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_vae_ningbo.yaml` | `KEEP-MANUAL` | 单阶段 vae effnet ningbo K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_vae_eval_ningbo.yaml` | `KEEP-MANUAL` | 单阶段 vae effnet ningbo ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_vae_chapman_shaoxing.yaml` | `KEEP-MANUAL` | 单阶段 vae effnet chapman_shaoxing K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_vae_eval_chapman_shaoxing.yaml` | `KEEP-MANUAL` | 单阶段 vae effnet chapman_shaoxing ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_vae_cpsc_2018.yaml` | `KEEP-MANUAL` | 单阶段 vae effnet cpsc_2018 K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_vae_eval_cpsc_2018.yaml` | `KEEP-MANUAL` | 单阶段 vae effnet cpsc_2018 ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_vae_georgia.yaml` | `KEEP-MANUAL` | 单阶段 vae effnet georgia K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_vae_eval_georgia.yaml` | `KEEP-MANUAL` | 单阶段 vae effnet georgia ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_vae_ningbo.yaml` | `KEEP-MANUAL` | 单阶段 vae ecgfounder ningbo K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_vae_eval_ningbo.yaml` | `KEEP-MANUAL` | 单阶段 vae ecgfounder ningbo ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_vae_chapman_shaoxing.yaml` | `KEEP-MANUAL` | 单阶段 vae ecgfounder chapman_shaoxing K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_vae_eval_chapman_shaoxing.yaml` | `KEEP-MANUAL` | 单阶段 vae ecgfounder chapman_shaoxing ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_vae_cpsc_2018.yaml` | `KEEP-MANUAL` | 单阶段 vae ecgfounder cpsc_2018 K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_vae_eval_cpsc_2018.yaml` | `KEEP-MANUAL` | 单阶段 vae ecgfounder cpsc_2018 ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_vae_georgia.yaml` | `KEEP-MANUAL` | 单阶段 vae ecgfounder georgia K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_vae_eval_georgia.yaml` | `KEEP-MANUAL` | 单阶段 vae ecgfounder georgia ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_joint_ningbo.yaml` | `KEEP-MANUAL` | 单阶段 joint effnet ningbo K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_joint_eval_ningbo.yaml` | `KEEP-MANUAL` | 单阶段 joint effnet ningbo ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_joint_chapman_shaoxing.yaml` | `KEEP-MANUAL` | 单阶段 joint effnet chapman_shaoxing K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_joint_eval_chapman_shaoxing.yaml` | `KEEP-MANUAL` | 单阶段 joint effnet chapman_shaoxing ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_joint_cpsc_2018.yaml` | `KEEP-MANUAL` | 单阶段 joint effnet cpsc_2018 K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_joint_eval_cpsc_2018.yaml` | `KEEP-MANUAL` | 单阶段 joint effnet cpsc_2018 ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_joint_georgia.yaml` | `KEEP-MANUAL` | 单阶段 joint effnet georgia K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_joint_eval_georgia.yaml` | `KEEP-MANUAL` | 单阶段 joint effnet georgia ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_joint_ningbo.yaml` | `KEEP-MANUAL` | 单阶段 joint ecgfounder ningbo K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_joint_eval_ningbo.yaml` | `KEEP-MANUAL` | 单阶段 joint ecgfounder ningbo ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_joint_chapman_shaoxing.yaml` | `KEEP-MANUAL` | 单阶段 joint ecgfounder chapman_shaoxing K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_joint_eval_chapman_shaoxing.yaml` | `KEEP-MANUAL` | 单阶段 joint ecgfounder chapman_shaoxing ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_joint_cpsc_2018.yaml` | `KEEP-MANUAL` | 单阶段 joint ecgfounder cpsc_2018 K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_joint_eval_cpsc_2018.yaml` | `KEEP-MANUAL` | 单阶段 joint ecgfounder cpsc_2018 ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_joint_georgia.yaml` | `KEEP-MANUAL` | 单阶段 joint ecgfounder georgia K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_joint_eval_georgia.yaml` | `KEEP-MANUAL` | 单阶段 joint ecgfounder georgia ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_direct_matrix.yaml` | `KEEP-MANUAL` | 单阶段 direct effnet 四中心 diagonal 聚合 launcher | 保留 canonical 四中心顺序、exact-cohort 配置、四个唯一 evaluation result 和 artifact-only 聚合 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_direct_matrix.yaml` | `KEEP-MANUAL` | 单阶段 direct ecgfounder 四中心 diagonal 聚合 launcher | 保留 canonical 四中心顺序、exact-cohort 配置、四个唯一 evaluation result 和 artifact-only 聚合 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_augmix_matrix.yaml` | `KEEP-MANUAL` | 单阶段 augmix effnet 四中心 diagonal 聚合 launcher | 保留 canonical 四中心顺序、exact-cohort 配置、四个唯一 evaluation result 和 artifact-only 聚合 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_augmix_matrix.yaml` | `KEEP-MANUAL` | 单阶段 augmix ecgfounder 四中心 diagonal 聚合 launcher | 保留 canonical 四中心顺序、exact-cohort 配置、四个唯一 evaluation result 和 artifact-only 聚合 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_vae_matrix.yaml` | `KEEP-MANUAL` | 单阶段 vae effnet 四中心 diagonal 聚合 launcher | 保留 canonical 四中心顺序、exact-cohort 配置、四个唯一 evaluation result 和 artifact-only 聚合 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_vae_matrix.yaml` | `KEEP-MANUAL` | 单阶段 vae ecgfounder 四中心 diagonal 聚合 launcher | 保留 canonical 四中心顺序、exact-cohort 配置、四个唯一 evaluation result 和 artifact-only 聚合 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_joint_matrix.yaml` | `KEEP-MANUAL` | 单阶段 joint effnet 四中心 diagonal 聚合 launcher | 保留 canonical 四中心顺序、exact-cohort 配置、四个唯一 evaluation result 和 artifact-only 聚合 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_joint_matrix.yaml` | `KEEP-MANUAL` | 单阶段 joint ecgfounder 四中心 diagonal 聚合 launcher | 保留 canonical 四中心顺序、exact-cohort 配置、四个唯一 evaluation result 和 artifact-only 聚合 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_single_chain_ningbo.yaml` | `KEEP-MANUAL` | 单阶段 single-chain AugMix-only effnet ningbo K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_single_chain_eval_ningbo.yaml` | `KEEP-MANUAL` | 单阶段 single-chain AugMix-only effnet ningbo ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_single_chain_chapman_shaoxing.yaml` | `KEEP-MANUAL` | 单阶段 single-chain AugMix-only effnet chapman_shaoxing K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_single_chain_eval_chapman_shaoxing.yaml` | `KEEP-MANUAL` | 单阶段 single-chain AugMix-only effnet chapman_shaoxing ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_single_chain_cpsc_2018.yaml` | `KEEP-MANUAL` | 单阶段 single-chain AugMix-only effnet cpsc_2018 K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_single_chain_eval_cpsc_2018.yaml` | `KEEP-MANUAL` | 单阶段 single-chain AugMix-only effnet cpsc_2018 ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_single_chain_georgia.yaml` | `KEEP-MANUAL` | 单阶段 single-chain AugMix-only effnet georgia K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_single_chain_eval_georgia.yaml` | `KEEP-MANUAL` | 单阶段 single-chain AugMix-only effnet georgia ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_single_chain_matrix.yaml` | `KEEP-MANUAL` | 单阶段 single-chain AugMix-only effnet 四中心 diagonal 聚合 launcher | 保留 canonical 四中心顺序、exact-cohort 配置、四个唯一 evaluation result 和 artifact-only 聚合 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_single_chain_ningbo.yaml` | `KEEP-MANUAL` | 单阶段 single-chain AugMix-only ecgfounder ningbo K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_single_chain_eval_ningbo.yaml` | `KEEP-MANUAL` | 单阶段 single-chain AugMix-only ecgfounder ningbo ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_single_chain_chapman_shaoxing.yaml` | `KEEP-MANUAL` | 单阶段 single-chain AugMix-only ecgfounder chapman_shaoxing K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_single_chain_eval_chapman_shaoxing.yaml` | `KEEP-MANUAL` | 单阶段 single-chain AugMix-only ecgfounder chapman_shaoxing ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_single_chain_cpsc_2018.yaml` | `KEEP-MANUAL` | 单阶段 single-chain AugMix-only ecgfounder cpsc_2018 K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_single_chain_eval_cpsc_2018.yaml` | `KEEP-MANUAL` | 单阶段 single-chain AugMix-only ecgfounder cpsc_2018 ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_single_chain_georgia.yaml` | `KEEP-MANUAL` | 单阶段 single-chain AugMix-only ecgfounder georgia K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_single_chain_eval_georgia.yaml` | `KEEP-MANUAL` | 单阶段 single-chain AugMix-only ecgfounder georgia ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_single_chain_matrix.yaml` | `KEEP-MANUAL` | 单阶段 single-chain AugMix-only ecgfounder 四中心 diagonal 聚合 launcher | 保留 canonical 四中心顺序、exact-cohort 配置、四个唯一 evaluation result 和 artifact-only 聚合 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_single_chain_joint_ningbo.yaml` | `KEEP-MANUAL` | 单阶段 single-chain AugMix+VAE effnet ningbo K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_single_chain_joint_eval_ningbo.yaml` | `KEEP-MANUAL` | 单阶段 single-chain AugMix+VAE effnet ningbo ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_single_chain_joint_chapman_shaoxing.yaml` | `KEEP-MANUAL` | 单阶段 single-chain AugMix+VAE effnet chapman_shaoxing K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_single_chain_joint_eval_chapman_shaoxing.yaml` | `KEEP-MANUAL` | 单阶段 single-chain AugMix+VAE effnet chapman_shaoxing ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_single_chain_joint_cpsc_2018.yaml` | `KEEP-MANUAL` | 单阶段 single-chain AugMix+VAE effnet cpsc_2018 K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_single_chain_joint_eval_cpsc_2018.yaml` | `KEEP-MANUAL` | 单阶段 single-chain AugMix+VAE effnet cpsc_2018 ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_single_chain_joint_georgia.yaml` | `KEEP-MANUAL` | 单阶段 single-chain AugMix+VAE effnet georgia K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_single_chain_joint_eval_georgia.yaml` | `KEEP-MANUAL` | 单阶段 single-chain AugMix+VAE effnet georgia ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_one_stage_single_chain_joint_matrix.yaml` | `KEEP-MANUAL` | 单阶段 single-chain AugMix+VAE effnet 四中心 diagonal 聚合 launcher | 保留 canonical 四中心顺序、exact-cohort 配置、四个唯一 evaluation result 和 artifact-only 聚合 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_single_chain_joint_ningbo.yaml` | `KEEP-MANUAL` | 单阶段 single-chain AugMix+VAE ecgfounder ningbo K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_single_chain_joint_eval_ningbo.yaml` | `KEEP-MANUAL` | 单阶段 single-chain AugMix+VAE ecgfounder ningbo ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_single_chain_joint_chapman_shaoxing.yaml` | `KEEP-MANUAL` | 单阶段 single-chain AugMix+VAE ecgfounder chapman_shaoxing K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_single_chain_joint_eval_chapman_shaoxing.yaml` | `KEEP-MANUAL` | 单阶段 single-chain AugMix+VAE ecgfounder chapman_shaoxing ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_single_chain_joint_cpsc_2018.yaml` | `KEEP-MANUAL` | 单阶段 single-chain AugMix+VAE ecgfounder cpsc_2018 K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_single_chain_joint_eval_cpsc_2018.yaml` | `KEEP-MANUAL` | 单阶段 single-chain AugMix+VAE ecgfounder cpsc_2018 ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_single_chain_joint_georgia.yaml` | `KEEP-MANUAL` | 单阶段 single-chain AugMix+VAE ecgfounder georgia K500 训练 launcher | 保留共同训练配置、显式 source/model/method/center、唯一外部输出和 dry-run 闭包 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_single_chain_joint_eval_georgia.yaml` | `KEEP-MANUAL` | 单阶段 single-chain AugMix+VAE ecgfounder georgia ref-excluded Clean/PN2021-C 评估 launcher | 保留 train-result+method-config lineage、20 view、drop_all_zero 和唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_single_chain_joint_matrix.yaml` | `KEEP-MANUAL` | 单阶段 single-chain AugMix+VAE ecgfounder 四中心 diagonal 聚合 launcher | 保留 canonical 四中心顺序、exact-cohort 配置、四个唯一 evaluation result 和 artifact-only 聚合 |
+
 ### A6. 通用监督训练入口
+
+2026-09-10 用户授权波形腐蚀、RGB 图像混合的 PULSE 单链/双链消融。
+复用现有 AugMix、训练队列和 subset 模块；`configs/train/` 与
+`configs/experiments/` 的 `pulse_pixel_single_smoke.yaml`、
+`pulse_pixel_two_smoke.yaml`、`pulse_pixel_resume_smoke.yaml`、
+`pulse_pixel_w{1,2}_{ningbo,chapman_shaoxing,cpsc_2018,georgia}.yaml`、
+`pulse_pixel_training_queue.yaml`、`pulse_pixel_pipeline.yaml`，以及
+`configs/eval/pulse_pixel_adapter_full.yaml`、`configs/eval/pulse_pixel_subset.yaml`、
+`configs/experiments/pulse_pixel_subset.yaml` 为 `KEEP-MANUAL`。只改混合位置，
+固定 K500、100 步/batch16/seed、alpha0.5，无 clean residual/JSD/SimCLR/VAE。
+先通过单链逐像素/processor 一致和 fresh-process resume，再最多四张完全
+空闲 GPU 排队。复用已完成 512/center 的原始模型预测必须校验文件、数据、
+render/inference 源码、prompt/generation 和逐输入指纹；新旧单链/双链分列。
+中间增强图像只驻内存/显存，历史全量队列保持暂停；本轮不是独立最终测试集。
+同日用户确认四张闲置卡可以开始后，允许显式 run-scoped 小上下文许可：
+绑定四个 UUID、单一 PID/UID/start_ticks/boot_id、单卡最多 32 MiB，默认关闭。
+不停止他人进程；未知进程、显存增长和资源压力仍拒绝。新旧比较额外验证
+除 GPU 准入函数外的调度/推理 AST 一致，不豁免渲染、输入、模型或指标变更。
+
+2026-09-10 用户授权三组小样本比较：`boot_scripts/evaluate_pulse_subset.py`、
+`util/evaluation/pulse_subset.py`、`configs/eval/pulse_subset.yaml`、
+`configs/experiments/pulse_subset.yaml` 为 `KEEP-MANUAL`。保持原全量队列和
+15 个冻结 source 不变；复用原任务批次与已验证单链/两链结果，新增原始
+checkpoint（含原始 projector、无 LoRA 支路）作者 generate。每中心固定
+512 条、Clean+20 条件，三组输入指纹逐条相等才汇总，K500 排除不变。
+初始两卡，启动 15 分钟且两类 worker 通过工程检查后最多四张持续空闲卡，
+后台每分钟检查、失败 drain 不无限重试；六小时预算到期保存部分结果。
+`util/tests/test_pulse_subset.py` 为 `KEEP-MANUAL` 的本扩展 CPU 契约测试。
+
+PULSE 单阶段单链/两链 AugMix 图片 SFT 扩展（2026-09-09）以下文件为
+`KEEP-MANUAL`：`boot_scripts/train_ecg_image.py`、`core/pulse_finetune.py`、
+`util/pulse_training_contract.py`，以及 `configs/train/` 和
+`configs/experiments/` 中 `pulse_augmix_prepare.yaml`、
+`pulse_augmix_single_smoke.yaml`、`pulse_augmix_two_smoke.yaml`、`pulse_augmix_resume_smoke.yaml`、
+`pulse_augmix_w{1,2}_{ningbo,chapman_shaoxing,cpsc_2018,georgia}.yaml` 展开后的
+12 对配置。复用 `core/augmix.py` 的显式 native500 扩展和保留 GPU renderer；
+不改变 canonical100 主线。PULSE 原作者依赖为已锁定、用户数据目录下
+`PULSE_git_8496ead/LLaVA`，经现有 `pulse_llava_infer` 项目环境安装，不导入
+任何 `agent_workspace` 模块。单中心 K500、原始 500 Hz、固定 Super5、同预算
+单链/两链、无 SimCLR/VAE/JSD、LoRA+projector、冻结视觉编码器、最后检查点，
+以及 adapter/optimizer/RNG 持久恢复均是本扩展契约。prepare/smoke 不证明增益。
+
+CPU 自动排队扩展 `boot_scripts/coordinate_pulse_training.py`、
+`util/pulse_training_queue.py`、`configs/train/pulse_training_queue.yaml` 和
+`configs/experiments/pulse_training_queue.yaml` 为 `KEEP-MANUAL`。仅调度上述
+八个受管训练任务；每个子任务仍先 dry-run 再调用唯一 launcher。通过真实
+同用户进程身份接管已有任务，不把进度文件当存活证据；最多四张空闲卡，
+GPU 编号只从显式环境白名单读取。失败输出不覆盖、不无限重试。
+
+配对适配器推理模块 `util/evaluation/pulse_adapters.py` 为 `KEEP-MANUAL`：
+复用同一 PULSE base 与冻结视觉特征，逐臂切换原始 FP32 LoRA/projector 状态；
+不合并适配器、不量化，不改变作者贪心生成。批量 flat packing 和完整输出
+token IDs 必须先通过 GPU 独立作者路径一致性检查；仅 CPU 测试不构成准入。
+
+配对评估扩展 `boot_scripts/evaluate_pulse_adapters.py`、
+`util/pulse_benchmark_contract.py`、`util/evaluation/pulse_benchmark.py`、
+`util/evaluation/pulse_benchmark_metrics.py` 及 `configs/eval/`、
+`configs/experiments/` 的 `pulse_adapter_admission.yaml`、`pulse_adapter_full.yaml`
+为 `KEEP-MANUAL`。训练八任务完成后才自动启动推理准入，避免两调度器合计
+超过四卡。固定每中心128条开发任务原样扩展全量，不重复计算、不依据成绩
+选检查点或调参；两组共享图片和冻结视觉特征，但 AMP 权重缓存必须隔离。
+原始输出、固定任务提交、映射排除审核、逐中心逐类指标与配对区间持久保留，
+不保存波形图片；无同预算直接微调对照，不可把旧 zero-shot 当方法对照。
+
+`util/evaluation/pulse_generation_projection.py` 为 `KEEP-MANUAL` 的隔离推理
+优化原型：只复用原词表线性层的最后位置投影，不用于训练或带 labels 的
+forward，退出时恢复原函数。当前已准入的 benchmark 不导入它；启用前必须
+另做真实 PULSE GPU token 等价、显存与吞吐准入，CPU 小模型测试不能替代。
+
+`boot_scripts/profile_pulse_adapters.py`、`util/evaluation/pulse_profile.py` 和
+`configs/experiments/pulse_adapter_profile.yaml` 为 `KEEP-MANUAL` 的受管工程
+测速入口。只用宁波 K500 前两条及固定 clean/depth2/depth3 各一条件，保存
+组件同步耗时、有限 CUDA 算子统计和完整 token 对比；不写正式队列、不启用
+新推理协议，不将小范围 token 一致性冒充全条件 GPU 准入。2026-09-09 用户
+授权继续探索推理优化：此入口扩展宁波 K500 前八条、同三条件、两模型的
+三重复 LoRA 合并/FP16 trainables/batch2、4、8 隔离矩阵；合并只在进程内，
+CPU 内存精确备份恢复基础权重，不用减法 unmerge，不保存合并检查点。
+显存不足记录 OOM 后停止更大 batch，所有候选仍不得自动写入正式队列。
+同入口的代码白名单 `--suite logits` 使用相同八条/三条件/两模型，比较每个
+回答位置原始全词表 logits 与 softmax：只计 EOS 及之前、双方历史 token
+一致的位置，单独登记分歧；未合并重复为零误差控制。大向量只在 RAM 中，
+持久化逐位置标量指标、token、公式与汇总，不把词表概率当 Super5 概率。
+`util/evaluation/pulse_deployment.py` 为 `KEEP-MANUAL`，同一工程入口白名单
+`--suite deployment` 专用；按用户授权测试完整 merge-and-unload、释放双
+适配器 GPU 状态、batch2/3/4，最后位置投影单独标记。每个模型从原始权重
+重新加载，禁止反复减法 unmerge 或保存合并大检查点；只使用相同 K500 小
+范围、复用既有 renderer/backend/logit-distance owners，不修改正式 worker。
+诊断允许进程级 `PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128` 或
+`backend:cudaMallocAsync` 对照（不得混为同一 allocator）；
+记录有效 allocator、OOM 阶段和 inactive-split 计数；不修改用户全局或系统配置。
+同入口 `--suite deployment_cache` 允许复用 `pulse_generation_projection.py`
+中的进程内、可恢复 decoder context：初次 embedded-prompt forward 内注入
+HF DynamicCache，避免旧 tuple 持有整份旧 KV；可选 chunk512 prefill 必须保留
+全部图像/文本 token、位置与因果 attention，batch2/3/4 单独对照。禁止将空
+cache 直接传给 generate 而丢失图片输入；新增 CPU token/logit/cache 长度与
+异常恢复测试，真实 GPU 仍需独立同前缀 logits 与答案一致性验证。
+同入口 `--suite deployment_admission --center <logical-center>` 与四个
+`configs/experiments/pulse_deployment_admission_<center>.yaml` 为 `KEEP-MANUAL`。
+每中心固定取 K500 文件前八条，两臂、完整 21 条件，预先锁定 native allocator、
+merge-and-unload、mutable cache、batch3，无候选搜索。逐 batch 比对作者 packing，
+原始作者 generate 提供 reference raw logits；完整 token、解析、EOS/长度、
+重复一致性和完整网格全部通过才写 gate=passed，OOM/缺失/重复一律不得准入。
+工程结果 complete 不等于 gate passed；即使 passed 也不自动恢复旧正式队列。
 
 | 文件 | 状态 | 当前职责 | 删除或合并前必须满足 |
 |---|---|---|---|
@@ -157,7 +504,7 @@ native-rate 到 100 Hz，以及 100 Hz 到 500 Hz 均使用该策略。PN2021 �
 | `boot_scripts/__init__.py` | `KEEP-MANUAL` | PTB-XL 薄启动脚本包边界 | 新启动包完整接管两个模型入口且不承载训练业务逻辑 |
 | `boot_scripts/train_ptbxl_effnet.py` | `KEEP-MANUAL` | 保留原脚本路径与 config/config-root/output/dry-run parser，向 `core.train_PTBXL.run_ptbxl_boot` 传递固定 EfficientNet selector | 新入口保留原 CLI/JSON、raw100→EffNet、配置束、随机种子和输出身份；不得承载 profile/model/training 业务或恢复 checkpoint/device/DataLoader 超参旁路 |
 | `boot_scripts/train_ptbxl_ecgfounder.py` | `KEEP-MANUAL` | 保留原脚本路径与 config/config-root/output/dry-run/唯一 `--epochs=10` parser，向共享 owner 传递固定 ECGFounder selector | 新入口保留原 CLI/JSON、raw100→device linear5000、官方 checkpoint/full scope、配置束、随机种子和输出身份；不得承载重复业务或恢复任意 runtime override |
-| `boot_scripts/train_pn2021.py` | `KEEP-MANUAL` | 只接受五个有限业务 selector（source checkpoint、model、center、method config）启动完整 K500 训练；runtime/training/resource 细节由选定 PN2021 YAML 与 code-owned `requires_vae` 唯一拥有，支持无副作用 dry-run | 新入口保留源 checkpoint 强制输入、同组 seed/full-FT、recipe 隔离、A0/A1/A3c 零 VAE、主线严格 VAE 加载和 YAML-owned 运行身份；不接受 CLI 超参旁路、selection/refit 或任意组合分支 |
+| `boot_scripts/train_pn2021.py` | `KEEP-MANUAL` | 只接受有限白名单业务 selector（source checkpoint、model、center、method config）启动完整 K500 训练；runtime/training/resource 细节由选定 PN2021 YAML 与 code-owned `requires_vae` 唯一拥有，支持无副作用 dry-run | 新入口保留源 checkpoint 强制输入、同组 seed/full-FT、recipe 隔离、无 VAE 选择器资源隔离、VAE 臂严格加载和 YAML-owned 运行身份；不接受 CLI 超参旁路、selection/refit 或任意组合分支 |
 
 ### A7. 训练观察与 ECG 可视化
 
@@ -167,6 +514,69 @@ native-rate 到 100 Hz，以及 100 Hz 到 500 Hz 均使用该策略。PN2021 �
 
 ### A8. 正式评估、统一启动与运行留证
 
+2026-09-08：全量图片 R1 的以下有限运行面已完成推理、配对统计和独立复核；
+证据为 full image-only development evaluation，不能提升为严格 OOD 或论文最终结论。
+最终产物与哈希见 active evidence registry 的 image_llm_full_elastic_20260907。
+
+| 文件 | 状态 | 当前职责 | 必须保留 |
+|---|---|---|---|
+| `util/evaluation/ecg_image_queue.py` | `KEEP-MANUAL` | 本机持久固定任务队列 | GPU 数量无关的任务与 batch、内核锁独占、原子持久提交、故障仅重试未提交块 |
+| `util/evaluation/ecg_image_elastic.py` | `KEEP-MANUAL` | 现有 evaluate_ecg_image 的 schema2 有限 R1 调度器/内部 worker | 原模型/算子/绘图复用、环境 GPU 白名单、最多4卡、空闲复核、不抢占、smoke 门控 |
+| `util/evaluation/ecg_image_processor.py` | `KEEP-MANUAL` | 用户授权暂停优化的 R1 Tensor 图片处理 | 对齐 CPU uint8 抗锯齿缩放的定点系数与逐轴取整；真实输入数值及预测验证前不得替换正式路径 |
+| `configs/eval/ecg_image_r1_elastic_validation_gpu_exact.yaml`, `configs/experiments/ecg_image_r1_elastic_validation_gpu_exact.yaml`, `configs/eval/ecg_image_r1_elastic_full_gpu_exact.yaml`, `configs/experiments/ecg_image_r1_elastic_full_gpu_exact.yaml` | `KEEP-MANUAL` | 等价 GPU 图片处理重放与显式断点接力 | 独立新 state；168 图片 float32/BF16 逐值一致且672条模型重放一致后方可导入旧任务；保留旧来源哈希和全部占卡时间 |
+| `configs/eval/ecg_image_r1_elastic_validation.yaml`, `configs/experiments/ecg_image_r1_elastic_validation.yaml` | `KEEP-MANUAL` | 独立32条 smoke 的调度接入验证 | 不选正确率、旧输出不覆盖、GPU 仅环境绑定 |
+| `configs/eval/ecg_image_r1_elastic_full.yaml`, `configs/experiments/ecg_image_r1_elastic_full.yaml` | `KEEP-MANUAL` | 39879条全量受管推理 | exact PULSE cohort、21条件、v7/K500/dropzero、持久断点、不等量中心 |
+| `configs/eval/ecg_image_r1_elastic_validation_retry1.yaml`, `configs/experiments/ecg_image_r1_elastic_validation_retry1.yaml`, `configs/eval/ecg_image_r1_elastic_full_retry1.yaml`, `configs/experiments/ecg_image_r1_elastic_full_retry1.yaml` | `KEEP-MANUAL` | pidfd缺失修复后的受管重试 | 保留旧失败运行；只改进程协调为按worker身份的持久退卡请求，不改输入/模型/提示/batch；新source身份和独立state |
+| `configs/eval/ecg_image_r1_pulse_full_comparison.yaml`, `configs/experiments/ecg_image_r1_pulse_full_comparison.yaml` | `KEEP-MANUAL` | 完整弹性结果与PULSE全量逐例配对报告 | 四中心及20条件等权、记录配对bootstrap、预先排除2032条已观察身份的敏感性分析；配置不是性能证据 |
+
+新增 CPU 契约测试 `util/tests/test_ecg_image_elastic.py` 为 `KEEP-MANUAL`，属于 A9
+测试清单：固定 batch/尾批、动态进程领取、精确已提交结果、进程崩溃锁回收、
+任务/结果篡改拒绝、GPU 资源及授权门控；测试不加载 CUDA。
+
+同文件的 `ECG_IMAGE_ELASTIC_GPU_LIFECYCLE=1` 显式集成验证只监测已由受管
+YAML 启动的32条 smoke 队列，并通过该任务自己的 `control.json` 依次要求
+单 worker、安全 drain、保留已提交结果、两张确认空闲卡动态接力。测试本身
+不启动/终止 GPU 进程；完整生命周期、输出和 run file index 通过后才解除
+本 goal 全量队列的预先暂停。默认 pytest 跳过此项，CPU通过不能代替它。
+
+2026-09-07 用户授权的图片 ECG LLM 十小时开发测试增加以下有限入口；不改变
+raw100 分类器或训练主线。native500 路径显式复用既有 PULSE 输入协议，保留
+其原始文件作只读来源，活动代码不导入 `agent_workspace`。硬标签指标不伪装为
+AUROC/AUPRC；量化、外部模型与 dirty-worktree 结果均为开发证据。
+
+| 文件 | 状态 | 当前职责 | 删除或合并前必须满足 |
+|---|---|---|---|
+| `boot_scripts/evaluate_ecg_image.py` | `KEEP-MANUAL` | 唯一受管图片 LLM 薄入口 | 保留有限 backend、YAML 闭包和外部 run record |
+| `boot_scripts/report_ecg_image.py` | `KEEP-MANUAL` | 已完成图片推理的受管 CPU 配对分析薄入口 | 验证 shard 完整性与同子集 PULSE 预测，不加载模型或重新抽样选优 |
+| `util/ecg_image_renderer.py` | `KEEP-MANUAL` | 从已校验 PULSE GPU renderer 逐字节提升的共同图片生成器 | 保留 native500、导联、纸张和 float RGB 契约；既有 PULSE 对比要求相同哈希 |
+| `util/evaluation/ecg_image_data.py` | `KEEP-MANUAL` | native500 输入、种子、K500 排除复核和无标签哈希抽样 | 保留同记录/标签/腐蚀身份、独立 smoke 和四中心等量 |
+| `util/evaluation/ecg_image_llm.py` | `KEEP-MANUAL` | 固定外部图片模型、内存预测断点、多卡互斥分片与完整结果落盘 | 不训练、不自动 NORM 回填；保留配置和权重身份及完整 grid 检查 |
+| `util/evaluation/ecg_image_artifact.py` | `KEEP-MANUAL` | 纯 stdlib 的图片 LLM shard 结果校验与共同响应解析 | 保留身份、数量、重复项、文件哈希和 ref exclusion；CPU 报告不得因解析而导入 Torch |
+| `util/evaluation/ecg_image_metrics.py` | `KEEP-MANUAL` | 硬标签 F1/exact-match/Hamming、等 view/中心聚合与配对 bootstrap | 保留原始记录重采样单位，所有模型和腐蚀视图共同抽样；不得将 view 当独立样本 |
+| `util/evaluation/ecg_image_comparison.py` | `KEEP-MANUAL` | 完整受管 shard、PULSE 冻结预测与同 cohort 的校验合并 | 保留 file index、rank union、同标签/条件和配对结果 |
+| `util/evaluation/ecg_image_report.py` | `KEEP-MANUAL` | 规范 artifact.json 与技能提供的 portable HTML renderer | 不将 HTML 当独立验证；保留原始指标、来源与方法限制 |
+| `configs/eval/ecg_image_llama_smoke.yaml` | `KEEP-MANUAL` | 固定模型、精度和独立 smoke 协议 | 保留不使用正式成绩选择参数 |
+| `configs/experiments/ecg_image_llama_smoke.yaml` | `KEEP-MANUAL` | 图片 Llama smoke 的受管启动配置 | 保留 dry-run、外部唯一输出和无 GPU ID 配置 |
+| `configs/eval/ecg_image_llama_nf4_smoke.yaml` | `KEEP-MANUAL` | FP16 OOM 后的独立 NF4 接入/速度检查 | 显式量化身份；不得把量化结果称为原生精度复现 |
+| `configs/experiments/ecg_image_llama_nf4_smoke.yaml` | `KEEP-MANUAL` | NF4 fallback 的受管 smoke 启动配置 | 保留失败 FP16 run、不覆盖、不根据正确率选择精度 |
+| `configs/eval/ecg_image_llama_nf4_strict_smoke.yaml`, `configs/experiments/ecg_image_llama_nf4_strict_smoke.yaml` | `KEEP-MANUAL` | 原始提示 32/32 截断且不输出代码后的严格格式检查 | 仅独立 smoke、只看格式/吞吐，不查看正确率；提示差异显式记录 |
+| `configs/eval/ecg_image_llama_nf4_report_completion_smoke.yaml`, `configs/experiments/ecg_image_llama_nf4_report_completion_smoke.yaml` | `KEEP-MANUAL` | 256-token 完整报告诊断，区分截断与任务格式不支持 | 不把报告解析失败伪装成模型分类全错；不自动增加报告到标签的第二模型链条 |
+| `configs/eval/ecg_image_llama_fp16_2gpu_smoke.yaml`, `configs/experiments/ecg_image_llama_fp16_2gpu_smoke.yaml` | `KEEP-MANUAL` | 两卡分层放置原精度 Llama 的接入检查 | 仅独立 smoke、不量化、无 CPU/disk offload；不重启或改写已有 R1 推理结果 |
+| `configs/eval/ecg_image_llama_fp16_2gpu_strict_smoke.yaml`, `configs/experiments/ecg_image_llama_fp16_2gpu_strict_smoke.yaml` | `KEEP-MANUAL` | 两卡 FP16 严格代码提示接入复核 | 仅独立 smoke 的格式检查，不检查正确率，不增加报告映射 |
+| `configs/eval/ecg_image_r1_smoke.yaml` | `KEEP-MANUAL` | 固定 ECG-R1 image-only 权重、BF16 与独立 smoke 协议 | 不调用 waveform tower；冻结 active weight 身份并校验跨环境输入 |
+| `configs/experiments/ecg_image_r1_smoke.yaml` | `KEEP-MANUAL` | 图片 ECG-R1 smoke 的受管启动配置 | 保留 dry-run、外部唯一输出和无 GPU ID 配置 |
+| `configs/eval/ecg_image_r1_b2_smoke.yaml`, `configs/experiments/ecg_image_r1_b2_smoke.yaml`, `configs/eval/ecg_image_r1_b4_smoke.yaml`, `configs/experiments/ecg_image_r1_b4_smoke.yaml` | `KEEP-MANUAL` | R1 batch2/4 的独立 smoke 吞吐与显存检查 | 仅根据资源/格式选择批量，不计算或优化正确率 |
+| `configs/eval/ecg_image_r1_b8_smoke.yaml`, `configs/experiments/ecg_image_r1_b8_smoke.yaml` | `KEEP-MANUAL` | R1 batch8 的独立 smoke 吞吐与显存检查 | 同一独立 smoke，不根据正确率选择 |
+| `configs/eval/ecg_image_r1_n500_r0.yaml`, `configs/eval/ecg_image_r1_n500_r1.yaml`, `configs/eval/ecg_image_r1_n500_r2.yaml`, `configs/eval/ecg_image_r1_n500_r3.yaml` | `KEEP-MANUAL` | 固定 R1 BF16、batch8、四中心各500条的四分片推理配置 | 独立 smoke 吞吐决定规模；相同无标签抽样、21条件、冻结提示与权重，不训练 |
+| `configs/experiments/ecg_image_r1_n500_r0.yaml`, `configs/experiments/ecg_image_r1_n500_r1.yaml`, `configs/experiments/ecg_image_r1_n500_r2.yaml`, `configs/experiments/ecg_image_r1_n500_r3.yaml` | `KEEP-MANUAL` | 四分片唯一受管启动配置 | 全部 dry-run、外部新 run、内存中间预测、完整分片最终落盘 |
+| `configs/eval/ecg_image_r1_pulse_n500_comparison.yaml`, `configs/experiments/ecg_image_r1_pulse_n500_comparison.yaml` | `KEEP-MANUAL` | 四分片 R1 与同2000条 PULSE 的 CPU 配对分析和 HTML 配置 | 完整 grid、文件身份、hard-label 指标、记录配对 bootstrap，Llama 仅接入诊断 |
+| `configs/experiments/ecg_image_r1_pulse_n500_comparison_retry1.yaml` | `KEEP-MANUAL` | 修复 CPU 解析依赖后同配置配对分析重放 | 保留失败报告 run；逐字节比较指标/区间产物，非性能调参 |
+
+本测试显式读取 `/home/linbinhao/ECG_adv_data/runs/pulse_pn2021c_native500_gpu_renderer_s5_depth23_full_r0_20260905_v3_4gpu_handoff`
+下已完成的冻结 protocol/cohort/predictions 作为用户授权的外部对比输入；先核
+SHA 与实际 ref-excluded split，再重算相同子集指标。外部模型/ECG-Image-Kit
+保存在用户数据根并绑定 revision/hash，不复制到 Git，也不发送 ECG 到外部 API。
+
 | 文件 | 状态 | 当前职责 | 删除或合并前必须满足 |
 |---|---|---|---|
 | `configs/active_scripts.yaml` | `KEEP-MANUAL` | 区分当前 finite RecipeSpec CPU/CUDA-diagnostic-verified 运行面与 r2 legacy typed-graph metric evidence，并登记 schema-v1 train result、schema-v3 checkpoint/evaluation、三种互斥评估 subject、新输出根、诊断 smoke 及仍待完成的正式 GPU 重复 | 新索引必须保留 trusted/development/legacy-runtime 分层、artifact lineage 与 closure 边界，禁止把单中心单轮 smoke 或 r2 冒充完整 RecipeSpec replay、性能证据或论文证据 |
@@ -175,6 +585,9 @@ native-rate 到 100 Hz，以及 100 Hz 到 500 Hz 均使用该策略。PN2021 �
 | `configs/eval/PN2021_matrix.yaml` | `KEEP-MANUAL` | 前瞻四中心 diagonal 聚合配置；按骨干锁 canonical 顺序、method/replicate/source/seed、公共数据身份、四中心 K500 身份、eval artifact locks 与配置 SHA | 新配置保留 config-owned exact cohort、equal-view→equal-center 和唯一结果名；不得重新引入数据加载、模型构建或 checkpoint 反序列化配置 |
 | `configs/eval/PN2021_matrix_augmix_only_r0.yaml` | `KEEP-MANUAL` | AugMix-only 单种子双骨干四中心 exact-cohort 聚合锁 | 保留 matched recipe/spec、同一 source/seed/K500/训练预算与 ref-excluded 评估合同 |
 | `configs/eval/PN2021_matrix_vae_lhat_only_r0.yaml` | `KEEP-MANUAL` | VAE-LHAT-only 单种子双骨干四中心 exact-cohort 聚合锁 | 保留 matched recipe/spec、同一 source/VAE/seed/K500/训练预算与 ref-excluded 评估合同 |
+| `configs/eval/PN2021_matrix_supervised_augmix_no_vae_r0.yaml` | `KEEP-MANUAL` | supervised-AugMix no-VAE 新臂的单种子双骨干四中心 exact-cohort 聚合锁；当前仅配置与 dry-run 已验证 | 保留 supervised objective recipe/spec、同一 source/seed/K500/训练预算、canonical 四中心和 ref-excluded 评估合同；不得把待执行 cohort 冒充 matrix artifact |
+| `configs/eval/PN2021_matrix_supervised_augmix_lhat_r0.yaml` | `KEEP-MANUAL` | supervised-AugMix + VAE-LHAT 新臂的单种子双骨干四中心 exact-cohort 聚合锁；当前仅配置与 dry-run 已验证 | 保留 supervised objective recipe/spec、同一 source/VAE/seed/K500/训练预算、canonical 四中心和 ref-excluded 评估合同；不得把待执行 cohort 冒充 matrix artifact |
+| `configs/eval/PN2021_matrix_supervised_single_chain_no_vae_r0.yaml` | `KEEP-MANUAL` | 无 SimCLR 监督单链 no-VAE 的双骨干四中心 exact-cohort 聚合锁 | 保留单链 recipe/spec SHA、同一 source/seed/K500/预算、canonical 四中心、last checkpoint、ref exclusion 与 `drop_all_zero` 口径 |
 | `configs/eval/PN2021_matrix_a0_e25_e30.yaml` | `KEEP-MANUAL` | A0 的 EffNet E25/ECGFounder E30 四中心 exact-cohort 聚合锁 | 保留 A0 recipe/spec、matched-base comparison group、专用训练配置 SHA、两骨干 source SHA 和四中心 K500 身份 |
 | `configs/eval/PN2021_matrix_a1_rot4_e25_e30.yaml` | `KEEP-MANUAL` | A1 supervised rotating4 的 EffNet E25/ECGFounder E30 四中心 exact-cohort 聚合锁 | 保留 A1 recipe/spec、matched-base comparison group、专用训练配置 SHA、两骨干 source SHA 和四中心 K500 身份 |
 | `util/pn2021_artifact_contract.py` | `KEEP-MANUAL` | 纯 stdlib 的 PN2021 lineage/train/evaluation/checkpoint/source/legacy artifact validator；唯一拥有 PN2021 artifact JSON mapping loader、path/SHA reference builder、SHA 与 owner-relative resolver，并复哈 checkpoint bytes | 新实现保留 exact schema、三模式隔离、heldout-free selection、K500/ref-exclusion、config-owned cohort 与无 Torch 导入；不得以宽松 truthy 字段或声明 SHA 代替字节验证 |
@@ -185,7 +598,7 @@ native-rate 到 100 Hz，以及 100 Hz 到 500 Hz 均使用该策略。PN2021 �
 | `boot_scripts/evaluate_pn2021.py` | `KEEP-MANUAL` | 从评估 YAML 选择且仅选择一种 subject：前瞻 train-result+method-config 单中心、legacy A0/Direct 显式 checkpoint 单中心或 source-registry canonical4；构建模型并调用 canonical100 v2 正式评估，支持只读 dry-run | 新入口保留 schema/方法/模型/中心/checkpoint/lineage fail-closed、输入适配链和无隐式选模；前瞻 schema-v3 checkpoint 必须与 schema-v1 train result 同 lineage，legacy 仅接受已锁 A0/Direct schema-v2，source 仅接受注册表锁定 schema-v1 checkpoint |
 | `boot_scripts/aggregate_pn2021.py` | `KEEP-MANUAL` | 四个前瞻单中心 evaluation JSON 的 CPU/JSON diagonal 聚合薄入口；受管 launcher dry-run 不执行 delegate | 新入口保留 exactly-four `--result`、按 `--model` 选择 config-owned cohort、不读取 ECG/不构建模型或 GPU、只流式复哈 checkpoint 而不反序列化，以及唯一外部输出 |
 | `util/run_record.py` | `KEEP-MANUAL` | 记录命令、私有不可变配置闭包快照、data-ledger 双快照、Git/dirty SHA和环境；复用并 re-export 公共 SHA，复用 owner-relative artifact resolver 与统一 validator 校验 PN2021 train/evaluation/matrix | 新实现保留禁止 worktree 输出、原子 JSON、heldout-free last/eval、三模式 subject、四成员 matrix/config-owned cohort、派生指标复算、配置/ledger 快照与复哈、完整索引及实际 artifact 字节篡改检测；不恢复零调用 public `snapshot_yaml_files` 或 recorder 私有 resolver 副本 |
-| `boot_scripts/run_experiment.py` | `KEEP-MANUAL` | 单一 experiment YAML + config-root 的白名单 launcher；五个 code-owned entrypoint 锁定脚本/result，dry-run零副作用；实际数据入口在建 run dir 前 quick 校验 ledger 并从完整 closure 快照启动 | 新入口保留五入口受限 flags、配置闭包、数据账本、外部唯一run dir、精确argv、预期结果身份和RunRecorder生命周期；外部结果 artifact 不得混入 YAML closure |
+| `boot_scripts/run_experiment.py` | `KEEP-MANUAL` | 单一 experiment YAML + config-root 的白名单 launcher；七个 code-owned entrypoint（原五个加图片推理/报告）锁定脚本/result，dry-run零副作用；实际数据入口在建 run dir 前 quick 校验 ledger 并从完整 closure 快照启动 | 保留有限入口受限 flags、配置闭包、数据账本、外部唯一run dir、精确argv、预期结果身份和RunRecorder生命周期；外部结果 artifact 不得混入 YAML closure |
 | `configs/baselines/ptbxl_source_v1.yaml` | `KEEP-MANUAL` | 锁定 EfficientNet1DV2/ECGFounder 的 PTB-XL source `best.pt`、SHA256、fold9 选模及 fold10 指标 | 新注册表完整接管相同 checkpoint 身份与禁止使用 `last.pt` 的下游契约 |
 | `docs/baselines/ptbxl_source_v1.md` | `KEEP-MANUAL` | PTB-XL source baseline v1 的人类可读锁定日志、历史 config/checkpoint/metrics 与 live prospective finite-loader runtime 分界、原始证据路径及 10-epoch 否决结论 | 新决策日志完整保留历史配置、权重、SHA256、指标和下游使用规则，并禁止把 live runtime 迁移冒充 bitwise/metric replay |
 | `configs/baselines/pn2021_direct_v1.yaml` | `KEEP-MANUAL` | family-balanced Direct+fixed20 锁定注册表；原地保留same-backbone clean-floor、pooled选择、full-K500 证据，并登记 ECGFounder matched-LR/latent-threechain、EfficientNet L36/L37 及 ECGFounder L34/L35 两随机种子机制证据和 source-floor 否决 | 新注册表完整接管clean-floor、选择身份、配置闭包、全部 checkpoint/eval 证据、LR/VAE归因拆分、heldout-tuned状态及禁止将 source-floor 失败的开发锁冒充论文最终结果的契约 |
@@ -287,6 +700,60 @@ native-rate 到 100 Hz，以及 100 Hz 到 500 Hz 均使用该策略。PN2021 �
 | `configs/experiments/manual_refactor_pn2021_ecgfounder_vae_lhat_only_eval_cpsc_2018.yaml` | `KEEP-MANUAL` | ECGFounder VAE-LHAT-only cpsc_2018 ref-excluded Clean/PN2021-C 评估 | 保留 train-result+method-config lineage、drop-all-zero、20-view 与唯一外部输出 |
 | `configs/experiments/manual_refactor_pn2021_ecgfounder_vae_lhat_only_eval_georgia.yaml` | `KEEP-MANUAL` | ECGFounder VAE-LHAT-only georgia ref-excluded Clean/PN2021-C 评估 | 保留 train-result+method-config lineage、drop-all-zero、20-view 与唯一外部输出 |
 | `configs/experiments/manual_refactor_pn2021_ecgfounder_vae_lhat_only_matrix.yaml` | `KEEP-MANUAL` | ECGFounder VAE-LHAT-only 四中心 diagonal 聚合 | 保留 canonical 四中心顺序、exact-cohort 配置和四个唯一 evaluation result |
+| `configs/experiments/manual_refactor_pn2021_effnet_supervised_augmix_no_vae_ningbo.yaml` | `KEEP-MANUAL` | EfficientNet supervised-AugMix no-VAE Ningbo C臂待执行训练 | 保留两链 strong view、clean/strong 各0.5监督 BCE、完整 K500、固定预算、last checkpoint 与唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_supervised_augmix_no_vae_chapman_shaoxing.yaml` | `KEEP-MANUAL` | EfficientNet supervised-AugMix no-VAE Chapman-Shaoxing C臂待执行训练 | 同上，并保留目标中心身份 |
+| `configs/experiments/manual_refactor_pn2021_effnet_supervised_augmix_no_vae_cpsc_2018.yaml` | `KEEP-MANUAL` | EfficientNet supervised-AugMix no-VAE CPSC 2018+Extra C臂待执行训练 | 同上，并保留合并逻辑中心身份 |
+| `configs/experiments/manual_refactor_pn2021_effnet_supervised_augmix_no_vae_georgia.yaml` | `KEEP-MANUAL` | EfficientNet supervised-AugMix no-VAE Georgia C臂待执行训练 | 同上，并保留目标中心身份 |
+| `configs/experiments/manual_refactor_pn2021_effnet_supervised_augmix_no_vae_eval_ningbo.yaml` | `KEEP-MANUAL` | EfficientNet supervised-AugMix no-VAE Ningbo 待执行 ref-excluded Clean/PN2021-C 评估 | 保留 train-result+method-config lineage、drop-all-zero、20-view 与唯一外部输出；训练前无性能证据 |
+| `configs/experiments/manual_refactor_pn2021_effnet_supervised_augmix_no_vae_eval_chapman_shaoxing.yaml` | `KEEP-MANUAL` | EfficientNet supervised-AugMix no-VAE Chapman-Shaoxing 待执行评估 | 同上 |
+| `configs/experiments/manual_refactor_pn2021_effnet_supervised_augmix_no_vae_eval_cpsc_2018.yaml` | `KEEP-MANUAL` | EfficientNet supervised-AugMix no-VAE CPSC 2018+Extra 待执行评估 | 同上，并保留合并逻辑中心身份 |
+| `configs/experiments/manual_refactor_pn2021_effnet_supervised_augmix_no_vae_eval_georgia.yaml` | `KEEP-MANUAL` | EfficientNet supervised-AugMix no-VAE Georgia 待执行评估 | 同上 |
+| `configs/experiments/manual_refactor_pn2021_effnet_supervised_augmix_no_vae_matrix.yaml` | `KEEP-MANUAL` | EfficientNet supervised-AugMix no-VAE 四中心 diagonal 聚合 launcher；当前仅 dry-run 已通过 | 保留 canonical 四中心顺序、exact-cohort 配置和四个唯一 evaluation result；不得登记为已完成 matrix |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_augmix_no_vae_ningbo.yaml` | `KEEP-MANUAL` | ECGFounder supervised-AugMix no-VAE Ningbo C臂待执行训练 | 保留两链 strong view、clean/strong 各0.5监督 BCE、完整 K500、固定预算、last checkpoint 与唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_augmix_no_vae_chapman_shaoxing.yaml` | `KEEP-MANUAL` | ECGFounder supervised-AugMix no-VAE Chapman-Shaoxing C臂待执行训练 | 同上，并保留目标中心身份 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_augmix_no_vae_cpsc_2018.yaml` | `KEEP-MANUAL` | ECGFounder supervised-AugMix no-VAE CPSC 2018+Extra C臂待执行训练 | 同上，并保留合并逻辑中心身份 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_augmix_no_vae_georgia.yaml` | `KEEP-MANUAL` | ECGFounder supervised-AugMix no-VAE Georgia C臂待执行训练 | 同上，并保留目标中心身份 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_augmix_no_vae_eval_ningbo.yaml` | `KEEP-MANUAL` | ECGFounder supervised-AugMix no-VAE Ningbo 待执行 ref-excluded Clean/PN2021-C 评估 | 保留 train-result+method-config lineage、drop-all-zero、20-view 与唯一外部输出；训练前无性能证据 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_augmix_no_vae_eval_chapman_shaoxing.yaml` | `KEEP-MANUAL` | ECGFounder supervised-AugMix no-VAE Chapman-Shaoxing 待执行评估 | 同上 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_augmix_no_vae_eval_cpsc_2018.yaml` | `KEEP-MANUAL` | ECGFounder supervised-AugMix no-VAE CPSC 2018+Extra 待执行评估 | 同上，并保留合并逻辑中心身份 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_augmix_no_vae_eval_georgia.yaml` | `KEEP-MANUAL` | ECGFounder supervised-AugMix no-VAE Georgia 待执行评估 | 同上 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_augmix_no_vae_matrix.yaml` | `KEEP-MANUAL` | ECGFounder supervised-AugMix no-VAE 四中心 diagonal 聚合 launcher；当前仅 dry-run 已通过 | 保留 canonical 四中心顺序、exact-cohort 配置和四个唯一 evaluation result；不得登记为已完成 matrix |
+| `configs/experiments/manual_refactor_pn2021_effnet_supervised_single_chain_no_vae_ningbo.yaml` | `KEEP-MANUAL` | EfficientNet 无 SimCLR 监督单链 no-VAE Ningbo 训练 | 保留单链 strong view、clean/strong 各0.5 BCE、source anchor、完整 K500、固定预算、last checkpoint 与唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_supervised_single_chain_no_vae_chapman_shaoxing.yaml` | `KEEP-MANUAL` | EfficientNet 无 SimCLR 监督单链 no-VAE Chapman-Shaoxing 训练 | 保留单链 strong view、clean/strong 各0.5 BCE、source anchor、完整 K500、固定预算、last checkpoint 与唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_supervised_single_chain_no_vae_cpsc_2018.yaml` | `KEEP-MANUAL` | EfficientNet 无 SimCLR 监督单链 no-VAE CPSC 2018+Extra 训练 | 保留单链 strong view、clean/strong 各0.5 BCE、source anchor、完整 K500、固定预算、last checkpoint 与唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_supervised_single_chain_no_vae_georgia.yaml` | `KEEP-MANUAL` | EfficientNet 无 SimCLR 监督单链 no-VAE Georgia 训练 | 保留单链 strong view、clean/strong 各0.5 BCE、source anchor、完整 K500、固定预算、last checkpoint 与唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_supervised_single_chain_no_vae_eval_ningbo.yaml` | `KEEP-MANUAL` | EfficientNet 无 SimCLR 监督单链 no-VAE Ningbo ref-excluded 评估 | 保留 train-result+method-config lineage、PN2021 Clean/PN2021-C 20-view、drop-all-zero 与唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_supervised_single_chain_no_vae_eval_chapman_shaoxing.yaml` | `KEEP-MANUAL` | EfficientNet 无 SimCLR 监督单链 no-VAE Chapman-Shaoxing ref-excluded 评估 | 保留 train-result+method-config lineage、PN2021 Clean/PN2021-C 20-view、drop-all-zero 与唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_supervised_single_chain_no_vae_eval_cpsc_2018.yaml` | `KEEP-MANUAL` | EfficientNet 无 SimCLR 监督单链 no-VAE CPSC 2018+Extra ref-excluded 评估 | 保留 train-result+method-config lineage、PN2021 Clean/PN2021-C 20-view、drop-all-zero 与唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_supervised_single_chain_no_vae_eval_georgia.yaml` | `KEEP-MANUAL` | EfficientNet 无 SimCLR 监督单链 no-VAE Georgia ref-excluded 评估 | 保留 train-result+method-config lineage、PN2021 Clean/PN2021-C 20-view、drop-all-zero 与唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_supervised_single_chain_no_vae_matrix.yaml` | `KEEP-MANUAL` | EfficientNet 无 SimCLR 监督单链 no-VAE 四中心 diagonal 聚合 | 保留 canonical 四中心顺序、exact-cohort 配置和四个唯一 evaluation result |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_single_chain_no_vae_ningbo.yaml` | `KEEP-MANUAL` | ECGFounder 无 SimCLR 监督单链 no-VAE Ningbo 训练 | 保留单链 strong view、clean/strong 各0.5 BCE、source anchor、完整 K500、固定预算、last checkpoint 与唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_single_chain_no_vae_chapman_shaoxing.yaml` | `KEEP-MANUAL` | ECGFounder 无 SimCLR 监督单链 no-VAE Chapman-Shaoxing 训练 | 保留单链 strong view、clean/strong 各0.5 BCE、source anchor、完整 K500、固定预算、last checkpoint 与唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_single_chain_no_vae_cpsc_2018.yaml` | `KEEP-MANUAL` | ECGFounder 无 SimCLR 监督单链 no-VAE CPSC 2018+Extra 训练 | 保留单链 strong view、clean/strong 各0.5 BCE、source anchor、完整 K500、固定预算、last checkpoint 与唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_single_chain_no_vae_georgia.yaml` | `KEEP-MANUAL` | ECGFounder 无 SimCLR 监督单链 no-VAE Georgia 训练 | 保留单链 strong view、clean/strong 各0.5 BCE、source anchor、完整 K500、固定预算、last checkpoint 与唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_single_chain_no_vae_eval_ningbo.yaml` | `KEEP-MANUAL` | ECGFounder 无 SimCLR 监督单链 no-VAE Ningbo ref-excluded 评估 | 保留 train-result+method-config lineage、PN2021 Clean/PN2021-C 20-view、drop-all-zero 与唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_single_chain_no_vae_eval_chapman_shaoxing.yaml` | `KEEP-MANUAL` | ECGFounder 无 SimCLR 监督单链 no-VAE Chapman-Shaoxing ref-excluded 评估 | 保留 train-result+method-config lineage、PN2021 Clean/PN2021-C 20-view、drop-all-zero 与唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_single_chain_no_vae_eval_cpsc_2018.yaml` | `KEEP-MANUAL` | ECGFounder 无 SimCLR 监督单链 no-VAE CPSC 2018+Extra ref-excluded 评估 | 保留 train-result+method-config lineage、PN2021 Clean/PN2021-C 20-view、drop-all-zero 与唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_single_chain_no_vae_eval_georgia.yaml` | `KEEP-MANUAL` | ECGFounder 无 SimCLR 监督单链 no-VAE Georgia ref-excluded 评估 | 保留 train-result+method-config lineage、PN2021 Clean/PN2021-C 20-view、drop-all-zero 与唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_single_chain_no_vae_matrix.yaml` | `KEEP-MANUAL` | ECGFounder 无 SimCLR 监督单链 no-VAE 四中心 diagonal 聚合 | 保留 canonical 四中心顺序、exact-cohort 配置和四个唯一 evaluation result |
+| `configs/experiments/manual_refactor_pn2021_effnet_supervised_augmix_lhat_ningbo.yaml` | `KEEP-MANUAL` | EfficientNet supervised-AugMix + VAE-LHAT Ningbo D臂待执行训练 | 保留两链监督 Stage-1、rotating4+contracted LHAT、完整 K500、固定预算、last checkpoint、诊断与唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_effnet_supervised_augmix_lhat_chapman_shaoxing.yaml` | `KEEP-MANUAL` | EfficientNet supervised-AugMix + VAE-LHAT Chapman-Shaoxing D臂待执行训练 | 同上，并保留目标中心身份 |
+| `configs/experiments/manual_refactor_pn2021_effnet_supervised_augmix_lhat_cpsc_2018.yaml` | `KEEP-MANUAL` | EfficientNet supervised-AugMix + VAE-LHAT CPSC 2018+Extra D臂待执行训练 | 同上，并保留合并逻辑中心身份 |
+| `configs/experiments/manual_refactor_pn2021_effnet_supervised_augmix_lhat_georgia.yaml` | `KEEP-MANUAL` | EfficientNet supervised-AugMix + VAE-LHAT Georgia D臂待执行训练 | 同上，并保留目标中心身份 |
+| `configs/experiments/manual_refactor_pn2021_effnet_supervised_augmix_lhat_eval_ningbo.yaml` | `KEEP-MANUAL` | EfficientNet supervised-AugMix + VAE-LHAT Ningbo 待执行 ref-excluded Clean/PN2021-C 评估 | 保留 train-result+method-config lineage、drop-all-zero、20-view 与唯一外部输出；训练前无性能证据 |
+| `configs/experiments/manual_refactor_pn2021_effnet_supervised_augmix_lhat_eval_chapman_shaoxing.yaml` | `KEEP-MANUAL` | EfficientNet supervised-AugMix + VAE-LHAT Chapman-Shaoxing 待执行评估 | 同上 |
+| `configs/experiments/manual_refactor_pn2021_effnet_supervised_augmix_lhat_eval_cpsc_2018.yaml` | `KEEP-MANUAL` | EfficientNet supervised-AugMix + VAE-LHAT CPSC 2018+Extra 待执行评估 | 同上，并保留合并逻辑中心身份 |
+| `configs/experiments/manual_refactor_pn2021_effnet_supervised_augmix_lhat_eval_georgia.yaml` | `KEEP-MANUAL` | EfficientNet supervised-AugMix + VAE-LHAT Georgia 待执行评估 | 同上 |
+| `configs/experiments/manual_refactor_pn2021_effnet_supervised_augmix_lhat_matrix.yaml` | `KEEP-MANUAL` | EfficientNet supervised-AugMix + VAE-LHAT 四中心 diagonal 聚合 launcher；当前仅 dry-run 已通过 | 保留 canonical 四中心顺序、exact-cohort 配置和四个唯一 evaluation result；不得登记为已完成 matrix |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_augmix_lhat_ningbo.yaml` | `KEEP-MANUAL` | ECGFounder supervised-AugMix + VAE-LHAT Ningbo D臂待执行训练 | 保留两链监督 Stage-1、rotating4+contracted LHAT、完整 K500、固定预算、last checkpoint、诊断与唯一外部输出 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_augmix_lhat_chapman_shaoxing.yaml` | `KEEP-MANUAL` | ECGFounder supervised-AugMix + VAE-LHAT Chapman-Shaoxing D臂待执行训练 | 同上，并保留目标中心身份 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_augmix_lhat_cpsc_2018.yaml` | `KEEP-MANUAL` | ECGFounder supervised-AugMix + VAE-LHAT CPSC 2018+Extra D臂待执行训练 | 同上，并保留合并逻辑中心身份 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_augmix_lhat_georgia.yaml` | `KEEP-MANUAL` | ECGFounder supervised-AugMix + VAE-LHAT Georgia D臂待执行训练 | 同上，并保留目标中心身份 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_augmix_lhat_eval_ningbo.yaml` | `KEEP-MANUAL` | ECGFounder supervised-AugMix + VAE-LHAT Ningbo 待执行 ref-excluded Clean/PN2021-C 评估 | 保留 train-result+method-config lineage、drop-all-zero、20-view 与唯一外部输出；训练前无性能证据 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_augmix_lhat_eval_chapman_shaoxing.yaml` | `KEEP-MANUAL` | ECGFounder supervised-AugMix + VAE-LHAT Chapman-Shaoxing 待执行评估 | 同上 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_augmix_lhat_eval_cpsc_2018.yaml` | `KEEP-MANUAL` | ECGFounder supervised-AugMix + VAE-LHAT CPSC 2018+Extra 待执行评估 | 同上，并保留合并逻辑中心身份 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_augmix_lhat_eval_georgia.yaml` | `KEEP-MANUAL` | ECGFounder supervised-AugMix + VAE-LHAT Georgia 待执行评估 | 同上 |
+| `configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_augmix_lhat_matrix.yaml` | `KEEP-MANUAL` | ECGFounder supervised-AugMix + VAE-LHAT 四中心 diagonal 聚合 launcher；当前仅 dry-run 已通过 | 保留 canonical 四中心顺序、exact-cohort 配置和四个唯一 evaluation result；不得登记为已完成 matrix |
 | `configs/experiments/manual_refactor_pn2021_eval_effnet.yaml` | `KEEP-MANUAL` | 统一 launcher 的 PTB-XL EfficientNet source-registry canonical4 正式评估示例 | 新示例或注册表保留 source registry path/SHA、canonical 四中心精确顺序和 eval YAML 闭包 |
 | `configs/experiments/manual_refactor_pn2021_effnet_clean_eval_ningbo.yaml` | `KEEP-MANUAL` | 固定 EfficientNet clean refit checkpoint，通过 v2 canonical100 协议仅评估 ref-excluded Ningbo clean 与 PN2021-C 20 views | 新入口保留显式 target center、checkpoint 路径、共享输入适配链、kept/drop 与 depth2/3/23 指标和唯一受管输出 |
 | `configs/experiments/manual_refactor_pn2021_effnet_clean_eval_chapman_shaoxing.yaml` | `KEEP-MANUAL` | 固定 EfficientNet clean refit checkpoint，仅评估 ref-excluded Chapman-Shaoxing clean 与 PN2021-C 20 views | 同上 |
@@ -307,6 +774,77 @@ native-rate 到 100 Hz，以及 100 Hz 到 500 Hz 均使用该策略。PN2021 �
 
 ### A9. 最终基础契约测试
 
+`util/tests/test_founder_width_jsd.py` 为 `KEEP-MANUAL`：JSD width1/2/3
+数值、单链 clean Beta 残差、私有 RNG、固定闭包及前序任务完成闸门。
+
+### JSD width extension (2026-09-11 origin; integrated 2026-09-12)
+
+`util/founder_width_queue.py`, `configs/train/founder_jsd_width_workflow.yaml`,
+`configs/experiments/founder_jsd_width_workflow.yaml`,
+`configs/train/augmix_jsd_width{1,3}.yaml`,
+`configs/train/methods/augmix_clean_bce_jsd_width{1,3}_lhat.yaml`, and the 16
+`configs/experiments/founder_jsd_w{1,3}_{center}{,_eval}.yaml` files are
+`KEEP-MANUAL` for the explicitly authorized four-center width-only ablation.
+Reuse the existing finite coordinator, preserve two augmented JSD views and
+clean residual, all K500/seed/budget/Stage2/LHAT contracts. Width2 is frozen
+managed full-evaluation evidence, not rerun or selected from new results.
+The preserved isolated source originated at
+`/home/linbinhao/ECG_manual_refactor_jsd_width_20260911`. Its 24 unique files and
+seven shared deltas were reviewed and integrated after both original queues
+completed and the 19-tree recovery snapshot was verified. This does not permit
+overwriting a running worktree or bypassing the predecessor admission gate.
+
+### A9 continued
+
+`util/tests/test_dual_jsd.py` 为 `KEEP-MANUAL`：JSD 数值与三路梯度、
+ECGFounder 仅 Stage1 目标变化与冻结头、PULSE 原版混合拓扑和有限双路配置闭包。
+
+`util/tests/test_pulse_pixel_mixing.py` 为 `KEEP-MANUAL`：旧波形数值回归、
+先渲染后混合、单链等价与 RNG、配置预算、有限四卡工作流和基线复用拒绝。
+
+`util/tests/test_pulse_subset.py` 为 `KEEP-MANUAL`：固定子集原任务身份、
+三模型配对网格、原始 baseline 解析和输入指纹、两卡启动及四卡扩容闸门。
+
+`util/tests/test_pulse_generation_projection.py` 为 `KEEP-MANUAL`：CPU 小型
+Llama 的最后 logits、缓存贪心 token、权重不变性、训练/标签拒绝与异常恢复；
+它不加载 PULSE 权重、不使用 GPU，也不证明实际 benchmark 提速。
+
+`util/tests/test_pulse_finetune.py` 为 `KEEP-MANUAL`：覆盖 native500 成对
+随机性、不修改输入/全局 RNG、答案损失及梯度等价、配置拒绝、标签和受管
+dry-run。真实权重、GPU packing、梯度和断点恢复另外使用显式 smoke 验证。
+
+`util/tests/test_pulse_training_queue.py` 为 `KEEP-MANUAL`：覆盖八任务闭包、
+预算与作用域拒绝、显卡白名单和僵死进度不可冒充真实进程；不启动 GPU。
+
+`util/tests/test_pulse_adapters.py` 为 `KEEP-MANUAL`：覆盖批量 flat packing、
+错误 prompt/tiles 拒绝和生成 token 长度；不把 CPU packing 测试当 GPU 推理证据。
+
+`util/tests/test_pulse_benchmark.py` 为 `KEEP-MANUAL`：覆盖成对评估配置闭包、
+固定开发/全量任务复用、任务过滤、身份拒绝、独立 sklearn 指标核验及配对区间。
+小型合成数据显式展开 record bootstrap 后以 sklearn 独立核验逐中心、四中心
+等权、20 view 等权的 Macro-F1/ExactMatch 及配对差值区间；不代替真实全量
+预测产物的最终核验。
+显式环境开关 `PULSE_VERIFY_ZERO_SHOT_REFERENCE=1` 另行只读核验旧 PULSE
+完整预测网格、输入/模型身份及新旧解析器；历史脚本仅作为哈希核对的证据
+文本读取，不导入。此核验不把旧 zero-shot 升格为同预算直接微调对照。
+
+弹性全量调度契约测试 `util/tests/test_ecg_image_elastic.py` 为 `KEEP-MANUAL`：
+覆盖固定任务/batch、动态进程池、崩溃锁回收、协调器孤儿进程识别、不可变提交
+和显卡授权/资源门控；不加载 GPU。
+
+图片 LLM 的额外契约测试为 `util/tests/test_ecg_image_llm.py` 与
+`util/tests/test_ecg_image_renderer.py`，状态 `KEEP-MANUAL`：覆盖独立无标签
+嵌套抽样、解析失败、native500 shape/seed、渲染器非原地与 launcher dry-run。
+`util/tests/test_ecg_image_input_parity.py` 同为 `KEEP-MANUAL`，仅显式 GPU
+opt-in 时比较隔离环境下四中心/21条件的 waveform、float RGB 与 uint8 RGB
+哈希；默认 CPU 契约套件跳过，不擅自分配 GPU。
+同一 `test_ecg_image_llm.py` 还提供 `ECG_IMAGE_REPORT_VERIFY_ROOT` 显式 CPU
+产物审计：用 sklearn 独立复算逐条件指标，并用字面重复记录重采样复核
+所有全局/逐中心置信区间，不能把同一报告重画当成独立验证。
+全量审计还直接核对四中心 split NPY 身份集合、K500 零重叠、两模型完整网格及
+标签/中心身份，复算逐类 precision/recall/F1 和四中心等权聚合；另有隔离 CPU
+进程中的报告 payload 契约测试，禁止退回 native artifact 不接受的 legacy chart 字段。
+
 | 文件 | 状态 | 当前职责 | 删除或合并前必须满足 |
 |---|---|---|---|
 | `util/tests/__init__.py` | `KEEP-MANUAL` | 保留测试包边界 | 测试布局整体迁移时同步迁移 |
@@ -317,9 +855,9 @@ native-rate 到 100 Hz，以及 100 Hz 到 500 Hz 均使用该策略。PN2021 �
 | `util/tests/test_labels_super5.py` | `KEEP-MANUAL` | 直接验证白名单 PN2021 Super5 v7 映射、hash、NORM 抑制和 PTB-XL diagnostic class 转换 | 新标签层接管相同 mapping identity 和逐代码 golden policy |
 | `util/tests/test_data_runtime.py` | `KEEP-MANUAL` | 验证唯一 data-load mmap 配置、拒绝 auto/RAM、raw100-only finite-plan public surface、split/cache 身份、K500 resident/mmap 等价、有界预取和跨 view session 所有权；并仅以临时小 fixture 锁 canonical ledger、迁移等价、missing/extra/size/same-size drift、symlink/no-clobber/TOCTOU 边界 | 新运行时/账本层接管相同 raw BTC、finite plan、split/ref-exclusion、seed、resident/mmap/session、有界预取，以及 quick inventory-only/full content 分级和扫描稳定性契约 |
 | `util/tests/test_train_ptbxl.py` | `KEEP-MANUAL` | 验证两骨干 raw100 finite plan/fold/loader/input adapter、两层 thin boot CLI、五函数 model package surface、canonical-only factory 与共享 owner 的 dry-run/execute 委托 | 新 PTB-XL 适配层接管相同 raw BTC、`1000→5000 align_corners=True`、先插值后 z-score、配置单一来源、关闭语义、三份 direct JSON 与无 runtime/model alias override 契约 |
-| `util/tests/test_method_graph.py` | `KEEP-MANUAL` | 验证五个文件选择器与唯一 matched-no-VAE slot 的精确 schema/resource closure、loader-owned objective/requirements/scientific contract、路径无关 spec SHA、惰性 view 子集、构造绕过拒绝、RNG golden、退役 latent selector 拒绝和动态 import 禁令 | 新 recipe 层接管相同有限集合、运行行为、资源身份、随机兼容与静态白名单契约 |
-| `util/tests/test_online_trainer.py` | `KEEP-MANUAL` | 验证在线配置/参数闭包、两骨干 source checkpoint path/SHA 锁、五轮 rotating4、family-balanced BatchNorm、compact VAE encoder/decode signature，以及 exact lineage | 新 trainer 接管相同 source 身份、预算、调度、数据读取、BatchNorm、heldout-free last、lineage 和 VAE runtime 边界契约 |
-| `util/tests/test_manual_run_experiment.py` | `KEEP-MANUAL` | 验证五入口 launcher 配置闭包、ledger quick gate/快照防篡改、76 YAML result 注册、dry-run/collision、run record/file index 和参数禁令 | 新 launcher 接管相同零副作用、数据/配置 TOCTOU 闭口、输出防覆盖、白名单参数与完整性契约，并保持配置引用与外部结果 artifact 隔离 |
+| `util/tests/test_method_graph.py` | `KEEP-MANUAL` | 验证有限文件选择器的精确 schema/resource closure、SimCLR/监督 BCE objective、VAE off/on、两链/单链 strong-view exposure、路径无关 spec SHA、惰性 view 子集、构造绕过拒绝、RNG golden、退役 selector 拒绝和动态 import 禁令 | 新 recipe 层接管相同有限集合、objective/resource 正交组合、运行行为、资源身份、随机兼容与静态白名单契约 |
+| `util/tests/test_online_trainer.py` | `KEEP-MANUAL` | 验证在线配置/参数闭包、两骨干 source checkpoint path/SHA 锁、五轮 rotating4、family-balanced BatchNorm、compact VAE encoder/decode signature，以及两链/单链 supervised-AugMix clean/strong 各0.5 BCE、无 projector/SimCLR 调用和 exact lineage | 新 trainer 接管相同 source 身份、预算、调度、数据读取、objective 分派、BatchNorm、heldout-free last、lineage 和 VAE runtime 边界契约 |
+| `util/tests/test_manual_run_experiment.py` | `KEEP-MANUAL` | 验证有限入口 launcher 配置闭包、ledger quick gate/快照防篡改、274个受管 YAML 注册、114个 train/112个 eval 与28个 matrix launcher dry-run、collision、run record/file index 和参数禁令 | 新 launcher 接管相同零副作用、数据/配置 TOCTOU 闭口、输出防覆盖、白名单参数与完整性契约，并保持配置引用与外部结果 artifact 隔离 |
 | `util/tests/test_evaluation_metrics.py` | `KEEP-MANUAL` | 验证 raw-logit AUROC/AP、undefined-class 口径、drop-all-zero 过滤、equal-view→equal-center 和 canonical 四中心精确顺序 | 新指标层接管相同分数输入、宏平均分母、过滤、聚合与语义降级契约 |
 | `util/tests/test_pn2021_evaluation.py` | `KEEP-MANUAL` | 验证三种互斥 subject、legacy/source bypass 拒绝、schema-v3 result、corruption 锁、canonical4、ECGFounder canonical100、真实 evaluator→recorder seal、派生指标篡改、checkpoint 字节复哈、config-owned cohort、共享 artifact helpers/re-export 与 artifact-only import 隔离 | 新评测与聚合层接管相同 subject lineage、checkpoint/schema、corruption、中心聚合、ref-exclusion、CPSC 合并、模型输入和无 Torch matrix import 契约 |
 

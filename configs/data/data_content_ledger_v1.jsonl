@@ -1,4 +1,4 @@
-{"algorithm":"sha256","artifact":"ecg_data_content_ledger","member_count":121,"roots":["ptbxl_cache","pn2021_cache","pn2021c_cache","split_artifacts"],"schema_version":1,"total_size_bytes":404751718887}
+{"algorithm":"sha256","artifact":"ecg_data_content_ledger","member_count":118,"roots":["ptbxl_cache","pn2021_cache","pn2021c_cache","split_artifacts"],"schema_version":1,"total_size_bytes":67620838503}
 {"path":"failed_records.jsonl","root":"pn2021_cache","sha256":"bf2abfceb805e493b2c37a1790f3fda005ae5312acb78964291ba3310e0c173d","size_bytes":1649}
 {"path":"hash_ids.npy","root":"pn2021_cache","sha256":"4dd33068f4c71cb891cdc8261d0a3b3d0074e1a9896e07fd00d1ed3eba058fe4","size_bytes":17001856}
 {"path":"labels_super5.npy","root":"pn2021_cache","sha256":"ad129f5a786b9d0226f4759c9ccdfa6bde8deffeb8ab961cc17e933b5335b884","size_bytes":332193}
@@ -6,7 +6,6 @@
 {"path":"record_ids.npy","root":"pn2021_cache","sha256":"835a08ccdb9494345a6158d28f70dbb3f8ad60df1a20bf6287a62e684c9f6cc9","size_bytes":1859692}
 {"path":"records.parquet","root":"pn2021_cache","sha256":"9633b79131d9a64d991ee060752bbdc5f885a6037311b7c3d9495b94f02c7e0f","size_bytes":6364004}
 {"path":"signals.npy","root":"pn2021_cache","sha256":"1ee1e4969a0619a8b4ab64889ba46c812934d98e8a4de789499cdccc3f1d0ff8","size_bytes":3187824128}
-{"path":"signals_500hz.npy","root":"pn2021_cache","sha256":"fd7b6540d5de931976ca82768209d36734bb8e2c8476118cffa92b654e6cf688","size_bytes":15939120128}
 {"path":"build_state.json","root":"pn2021c_cache","sha256":"22c8c220676ca1a887141781a00fcb7302f1c79a1cf484c9d2981e82e8fba6b3","size_bytes":827}
 {"path":"compositions.json","root":"pn2021c_cache","sha256":"18ceee2be0f236898777b878affaf8d4f1cd7fbee880a3af89c0e84cb9427ce1","size_bytes":4033}
 {"path":"hash_ids.npy","root":"pn2021c_cache","sha256":"f686a57a7e694540fb38b2a39adbcbce95a2e128cba23acc178ff878669000af","size_bytes":16851328}
@@ -17,7 +16,6 @@
 {"path":"records.parquet","root":"pn2021c_cache","sha256":"8b62bb4797e5c3d0b3aa2f04006b6070b14ef615d4e4b2ce8c5019642b0edac1","size_bytes":6714529}
 {"path":"resolved_cache_config.yaml","root":"pn2021c_cache","sha256":"29351a1c075193cac8d046ce4e175a4e789740bd53cf3b24a9b01f21d0b933f2","size_bytes":1477}
 {"path":"signals_100hz.npy","root":"pn2021c_cache","sha256":"8f416d86911e711dc3e359dd1284e36e473253bd28201d3b8eec1bb3a2972d6c","size_bytes":63192000128}
-{"path":"signals_500hz.npy","root":"pn2021c_cache","sha256":"446c739cda84558bf039ea129858685ae87e5d5db22f2b6d9efe181062a4ebdc","size_bytes":315960000128}
 {"path":"source_indices.npy","root":"pn2021c_cache","sha256":"15c6d1dffd1c0deb18458cc53ff3dcb66d1a27d5193b6b0f8b4c7386ce63466e","size_bytes":526728}
 {"path":"failed_records.jsonl","root":"ptbxl_cache","sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size_bytes":0}
 {"path":"hash_ids.npy","root":"ptbxl_cache","sha256":"1b9a96adacbe6fadcb027819e4ecdf54059b2fe37f638fa040ac290049782024","size_bytes":5580672}
@@ -26,7 +24,6 @@
 {"path":"record_ids.npy","root":"ptbxl_cache","sha256":"b538cfb872ef229aaf0e9ceb398aa604f984cf7941d06c5814c4022aa00705d2","size_bytes":436108}
 {"path":"records.parquet","root":"ptbxl_cache","sha256":"4fcd9c82688f959f8aa554775c5ab6076b6c66eff40485049b739efade043a7f","size_bytes":3608829}
 {"path":"signals.npy","root":"ptbxl_cache","sha256":"db19119299ecaba728394e8af86032b4a2f2e50a4f8cd69db9ff8365a6530a5c","size_bytes":1046352128}
-{"path":"signals_500hz.npy","root":"ptbxl_cache","sha256":"3459860197af4bc4ad47b848bf086cc5492479517c6c7c3c3351a9d885c695be","size_bytes":5231760128}
 {"path":"pn2021_super5_k500_cpsc_combined_v1/chapman_shaoxing/candidate_nonzero_hash_ids.npy","root":"split_artifacts","sha256":"781d53d40ed453d4cab60a0e6c71f2ce01ec6bced6f294c02c11a8ed53a8405a","size_bytes":1490560}
 {"path":"pn2021_super5_k500_cpsc_combined_v1/chapman_shaoxing/candidate_nonzero_indices.npy","root":"split_artifacts","sha256":"69bb1f90d803a7decae559ac1badc87417a6aae21e2cb0fcb77c53bc116a22e3","size_bytes":46704}
 {"path":"pn2021_super5_k500_cpsc_combined_v1/chapman_shaoxing/candidate_nonzero_record_ids.npy","root":"split_artifacts","sha256":"e31572bf437c86b92c0448f5c7107de47358b07883d1e5a368bd80d60e7f7b72","size_bytes":2980992}

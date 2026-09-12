@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: manual_refactor_pn2021_effnet_r19_baseline_seed2_georgia
+  purpose: Independent seed-2 repeat of the frozen R18 method.
+entrypoint:
+  name: train_pn2021
+  config: train/PN2021_a1_lhat_ablation_r19_seed2.yaml
+  arguments: [--model, efficientnet1dv2, --method-config, train/methods/a1_rot4_two_chain_balanced_jsd1p5_vae_lhat_replace0p2.yaml, --center, georgia, --source-checkpoint, /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_ptbxl_effnet_source_v1/training/checkpoints/best.pt]
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/a1_lhat_ablation_multiseed_r19_20260902/baseline/seed2/effnet/georgia
+  if_exists: error
+  delegate_output_subdir: training

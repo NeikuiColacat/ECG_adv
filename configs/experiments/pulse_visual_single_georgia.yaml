@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: pulse_visual_single_georgia
+  purpose: User-authorized visual-only PULSE and objective-only ECGFounder JSD development ablations; matched K500, no heldout selection.
+entrypoint:
+  name: train_ecg_image
+  config: train/pulse_visual_single_georgia.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/dual_jsd_20260911/pulse_visual_single_georgia
+  if_exists: error
+  delegate_output_subdir: training

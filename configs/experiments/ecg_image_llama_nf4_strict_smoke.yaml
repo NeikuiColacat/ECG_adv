@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: ecg_image_llama_nf4_strict_smoke
+  purpose: Format-only strict-code probe on disjoint smoke IDs; never score labels or optimize accuracy.
+entrypoint:
+  name: evaluate_ecg_image
+  config: eval/ecg_image_llama_nf4_strict_smoke.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/ecg_image_llm_10h_20260907/llama_nf4_strict_smoke
+  if_exists: error
+  delegate_output_subdir: evaluation

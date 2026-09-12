@@ -27,9 +27,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from data_preprocess import preprocess_primitives as primitives  # noqa: E402
 from data_preprocess.load_cache import (  # noqa: E402
+    ECGCache,
     EXPECTED_CLASS_ORDER,
     EXPECTED_LEADS,
+    load_cache as _load_cache,
 )
 from util.augmentations.operators import (  # noqa: E402
     UPSTREAM_COMMIT,
@@ -101,8 +104,8 @@ def load_cache_config(path: str | Path = DEFAULT_CONFIG) -> dict[str, Any]:
 
     if int(corruption["domain_sampling_rate_hz"]) != 500:
         raise ValueError("corruption domain must be 500 Hz")
-    if [int(value) for value in corruption["output_sampling_rates_hz"]] != [100, 500]:
-        raise ValueError("output sampling rates must be [100, 500]")
+    if [int(value) for value in corruption["output_sampling_rates_hz"]] != [100]:
+        raise ValueError("only the canonical 100 Hz output may be persisted")
     if [int(value) for value in corruption["depths"]] != [2, 3]:
         raise ValueError("corruption depths must be [2, 3]")
     if corruption["combination_policy"] != "all_canonical_combinations_without_replacement":
@@ -262,37 +265,6 @@ def apply_composition(
     return np.ascontiguousarray(output, dtype=np.float32)
 
 
-def linear_interpolate_time_batch(
-    signals_ntc: np.ndarray,
-    target_num_samples: int,
-) -> np.ndarray:
-    """Aligned-corner linear resize for a float32 ``(N,time,12)`` batch."""
-
-    signals = np.asarray(signals_ntc)
-    if signals.ndim != 3 or signals.shape[1] < 2 or signals.shape[2] != 12:
-        raise ValueError(f"expected (N,time,12) signals, got {signals.shape}")
-    if int(target_num_samples) < 2:
-        raise ValueError("target_num_samples must be at least 2")
-    if not np.isfinite(signals).all():
-        raise ValueError("cannot interpolate non-finite signals")
-
-    import torch
-    import torch.nn.functional as torch_functional
-
-    source = torch.from_numpy(
-        np.ascontiguousarray(signals, dtype=np.float32)
-    ).permute(0, 2, 1)
-    with torch.no_grad():
-        resized = torch_functional.interpolate(
-            source,
-            size=int(target_num_samples),
-            mode="linear",
-            align_corners=True,
-        )
-    output = resized.permute(0, 2, 1).contiguous().numpy()
-    return np.ascontiguousarray(output, dtype=np.float32)
-
-
 def _stable_payload_hash(payload: dict[str, Any]) -> str:
     encoded = json.dumps(
         payload,
@@ -312,116 +284,58 @@ def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
     temporary.replace(path)
 
 
-def _load_source_contract(
+def _load_selected_source(
     config: dict[str, Any],
-) -> tuple[Path, dict[str, Any], str]:
+) -> tuple[ECGCache, pd.DataFrame, np.ndarray]:
     source = config["source"]
     source_dir = resolve_entry_config_path(source["cache_dir"])
-    manifest_path = source_dir / str(source["manifest_file"])
-    if not source_dir.is_dir() or not manifest_path.is_file():
-        raise FileNotFoundError(
-            f"whitelist-produced PN2021 cache is incomplete: {source_dir}"
-        )
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if manifest.get("schema_version") != 3 or manifest.get("dataset") != "pn2021":
-        raise ValueError("source must be the schema-v3 manual-refactor PN2021 cache")
-    waveform = manifest.get("waveform", {})
-    derived = manifest.get("derived_waveforms", {}).get("500hz_linear", {})
-    labels = manifest.get("labels", {})
-    if waveform.get("shape", [None])[1:] != [1000, 12]:
-        raise ValueError(f"unexpected source 100 Hz shape: {waveform.get('shape')}")
-    if waveform.get("sampling_rate_hz") != 100:
-        raise ValueError("source base waveform must be 100 Hz")
-    if waveform.get("lead_order") != list(EXPECTED_LEADS):
-        raise ValueError("source lead order does not match PTB-XL order")
-    if waveform.get("physical_unit") != "mV" or waveform.get("normalization") != "none":
-        raise ValueError("source waveform must be unnormalized physical-mV data")
-    if derived.get("shape", [None])[1:] != [5000, 12]:
-        raise ValueError(f"unexpected source 500 Hz shape: {derived.get('shape')}")
-    if derived.get("sampling_rate_hz") != 500 or derived.get("source_file") != waveform.get("file"):
-        raise ValueError("500 Hz source must be derived from the canonical 100 Hz cache")
-    if labels.get("class_order") != list(EXPECTED_CLASS_ORDER):
-        raise ValueError("source Super5 class order mismatch")
-    if labels.get("mapping_version") != source["required_mapping_version"]:
-        raise ValueError("source Super5 mapping version mismatch")
-    if labels.get("mapping_hash") != source["required_mapping_hash"]:
-        raise ValueError("source Super5 mapping hash mismatch")
-    return source_dir, manifest, _artifact_contract.sha256_file(manifest_path)
-
-
-def _select_source_records(
-    *,
-    source_dir: Path,
-    config: dict[str, Any],
-    source_record_count: int,
-) -> tuple[pd.DataFrame, np.ndarray]:
-    source = config["source"]
-    records = pd.read_parquet(source_dir / str(source["metadata_file"]))
-    if len(records) != source_record_count:
-        raise ValueError(
-            f"source metadata has {len(records)} rows, expected {source_record_count}"
-        )
-    required_columns = {"cache_index", "record_id", "record_key", "hash_id", "center"}
-    missing = sorted(required_columns - set(records.columns))
-    if missing:
-        raise ValueError(f"source metadata missing columns: {missing}")
-    centers = set(str(value) for value in source["centers"])
-    selected = records.loc[records["center"].isin(centers)].copy()
-    present_centers = set(str(value) for value in selected["center"].unique())
-    if present_centers != centers:
-        raise ValueError(
-            f"source cache center mismatch: expected {sorted(centers)}, "
-            f"found {sorted(present_centers)}"
-        )
-    source_indices = selected["cache_index"].to_numpy(dtype=np.int64, copy=True)
-    if len(np.unique(source_indices)) != len(source_indices):
-        raise ValueError("selected source cache indices are not unique")
-    selected.insert(0, "source_cache_index", source_indices)
-    selected["cache_index"] = np.arange(len(selected), dtype=np.int64)
-    selected.reset_index(drop=True, inplace=True)
-    return selected, source_indices
-
-
-def _validate_source_arrays(
-    *,
-    source_dir: Path,
-    config: dict[str, Any],
-    source_manifest: dict[str, Any],
-    selected_records: pd.DataFrame,
-    source_indices: np.ndarray,
-) -> tuple[np.memmap, np.ndarray, np.ndarray, np.ndarray]:
-    source = config["source"]
-    record_count = int(source_manifest["record_count"])
-    signals_100 = np.load(
-        source_dir / str(source["waveform_100hz_file"]), mmap_mode="r"
+    source_cache = _load_cache(
+        source_dir, sampling_rate_hz=100, validate_values="none"
     )
-    signals_500 = np.load(
-        source_dir / str(source["waveform_500hz_file"]), mmap_mode="r"
-    )
-    labels = np.load(source_dir / str(source["labels_file"]), mmap_mode="r")
-    record_ids = np.load(source_dir / str(source["record_ids_file"]), mmap_mode="r")
-    hash_ids = np.load(source_dir / str(source["hash_ids_file"]), mmap_mode="r")
-    if signals_100.shape != (record_count, 1000, 12):
-        raise ValueError(f"source 100 Hz array shape mismatch: {signals_100.shape}")
-    if signals_500.shape != (record_count, 5000, 12):
-        raise ValueError(f"source 500 Hz array shape mismatch: {signals_500.shape}")
-    if labels.shape != (record_count, 5):
-        raise ValueError(f"source labels shape mismatch: {labels.shape}")
-    if record_ids.shape != (record_count,) or hash_ids.shape != (record_count,):
-        raise ValueError("source ID arrays do not match source record_count")
-    if signals_100.dtype != np.float32 or signals_500.dtype != np.float32:
-        raise ValueError("source waveform arrays must be float32")
+    try:
+        identity = source_cache.identity
+        configured_paths = {
+            "manifest_file": identity.manifest_path,
+            "waveform_100hz_file": identity.signals_path,
+            "metadata_file": identity.metadata_path,
+            "labels_file": identity.labels_path,
+            "record_ids_file": identity.record_ids_path,
+            "hash_ids_file": identity.hash_ids_path,
+        }
+        mismatched = [
+            name
+            for name, resolved in configured_paths.items()
+            if (source_dir / str(source[name])).resolve() != resolved
+        ]
+        if mismatched:
+            raise ValueError(f"source cache config member mismatch: {mismatched}")
 
-    selected_labels = np.asarray(labels[source_indices], dtype=np.uint8)
-    selected_record_ids = np.asarray(record_ids[source_indices])
-    selected_hash_ids = np.asarray(hash_ids[source_indices])
-    if selected_records["record_id"].astype(str).tolist() != selected_record_ids.astype(str).tolist():
-        raise ValueError("record_ids.npy is not aligned with records.parquet")
-    if selected_records["hash_id"].astype(str).tolist() != selected_hash_ids.astype(str).tolist():
-        raise ValueError("hash_ids.npy is not aligned with records.parquet")
-    if len(set(selected_hash_ids.astype(str))) != len(selected_hash_ids):
-        raise ValueError("selected source hash IDs are not unique")
-    return signals_500, selected_labels, selected_record_ids, selected_hash_ids
+        if identity.mapping_version != source["required_mapping_version"]:
+            raise ValueError("source Super5 mapping version mismatch")
+        if identity.mapping_hash != source["required_mapping_hash"]:
+            raise ValueError("source Super5 mapping hash mismatch")
+
+        records = source_cache.records
+        if "center" not in records:
+            raise ValueError("source metadata missing columns: ['center']")
+        centers = set(str(value) for value in source["centers"])
+        selected = records.loc[records["center"].isin(centers)].copy()
+        present_centers = set(selected["center"].astype(str).unique())
+        if present_centers != centers:
+            raise ValueError(
+                f"source cache center mismatch: expected {sorted(centers)}, "
+                f"found {sorted(present_centers)}"
+            )
+        source_indices = selected["cache_index"].to_numpy(
+            dtype=np.int64, copy=True
+        )
+        selected.insert(0, "source_cache_index", source_indices)
+        selected["cache_index"] = np.arange(len(selected), dtype=np.int64)
+        selected.reset_index(drop=True, inplace=True)
+        return source_cache, selected, source_indices
+    except Exception:
+        source_cache.close()
+        raise
 
 
 def _prepare_staging(
@@ -431,13 +345,12 @@ def _prepare_staging(
     config: dict[str, Any],
     compositions: list[dict[str, Any]],
     record_count: int,
-) -> tuple[Path, np.memmap, np.memmap, dict[str, Any]]:
+) -> tuple[Path, np.memmap, dict[str, Any]]:
     if output_dir.exists():
         raise FileExistsError(f"refusing to overwrite completed cache: {output_dir}")
     staging_dir = output_dir.with_name(f".{output_dir.name}.building")
     state_path = staging_dir / "build_state.json"
     shape_100 = (len(compositions), record_count, 1000, 12)
-    shape_500 = (len(compositions), record_count, 5000, 12)
     resume = bool(config["execution"]["resume"])
 
     if staging_dir.exists():
@@ -452,18 +365,12 @@ def _prepare_staging(
             staging_dir / str(config["output"]["waveform_100hz_file"]),
             mmap_mode="r+",
         )
-        signals_500 = np.load(
-            staging_dir / str(config["output"]["waveform_500hz_file"]),
-            mmap_mode="r+",
-        )
-        if signals_100.shape != shape_100 or signals_500.shape != shape_500:
+        if signals_100.shape != shape_100:
             raise ValueError("staging waveform shapes do not match the current contract")
-        return staging_dir, signals_100, signals_500, state
+        return staging_dir, signals_100, state
 
     output_dir.parent.mkdir(parents=True, exist_ok=True)
-    estimated_bytes = (
-        math.prod(shape_100) + math.prod(shape_500)
-    ) * np.dtype("float32").itemsize
+    estimated_bytes = math.prod(shape_100) * np.dtype("float32").itemsize
     disk = shutil.disk_usage(output_dir.parent)
     reserve_bytes = max(int(disk.total * 0.10), 50 * 1024**3)
     if disk.free - estimated_bytes < reserve_bytes:
@@ -480,24 +387,17 @@ def _prepare_staging(
         dtype=np.float32,
         shape=shape_100,
     )
-    signals_500 = np.lib.format.open_memmap(
-        staging_dir / str(config["output"]["waveform_500hz_file"]),
-        mode="w+",
-        dtype=np.float32,
-        shape=shape_500,
-    )
     state = {
         **config_identity,
         "status": "building",
         "next_view_index": 0,
         "next_record_index": 0,
         "shape_100hz": list(shape_100),
-        "shape_500hz": list(shape_500),
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "updated_at_utc": datetime.now(timezone.utc).isoformat(),
     }
     _write_json_atomic(state_path, state)
-    return staging_dir, signals_100, signals_500, state
+    return staging_dir, signals_100, state
 
 
 def _validate_complete_output(
@@ -540,7 +440,7 @@ def _load_cache_operator_profile(
 def build_augmentations_cache(
     config_path: str | Path = DEFAULT_CONFIG,
 ) -> Path:
-    """Materialize deterministic five-center PN2021-C at 100 and 500 Hz."""
+    """Materialize deterministic five-center PN2021-C only at 100 Hz."""
 
     config_path = resolve_entry_config_path(config_path)
     config = load_cache_config(config_path)
@@ -553,25 +453,15 @@ def build_augmentations_cache(
     declared_seed = operator_profile.random_seed_config
     seed_path = declared_seed.path
 
-    source_dir, source_manifest, source_manifest_sha256 = _load_source_contract(config)
-    source_record_count = int(source_manifest["record_count"])
-    selected_records, source_indices = _select_source_records(
-        source_dir=source_dir,
-        config=config,
-        source_record_count=source_record_count,
-    )
-    (
-        source_signals_500,
-        selected_labels,
-        selected_record_ids,
-        selected_hash_ids,
-    ) = _validate_source_arrays(
-        source_dir=source_dir,
-        config=config,
-        source_manifest=source_manifest,
-        selected_records=selected_records,
-        source_indices=source_indices,
-    )
+    source_cache, selected_records, source_indices = _load_selected_source(config)
+    source_dir = source_cache.identity.cache_dir
+    source_manifest = source_cache.identity.raw_manifest
+    source_manifest_sha256 = source_cache.identity.manifest_sha256
+    source_record_count = len(source_cache)
+    source_signals_100 = source_cache.signals
+    selected_labels = np.asarray(source_cache.labels[source_indices], dtype=np.uint8)
+    selected_record_ids = np.asarray(source_cache.record_ids[source_indices])
+    selected_hash_ids = np.asarray(source_cache.hash_ids[source_indices])
 
     config_identity = {
         "config_sha256": _artifact_contract.sha256_file(config_path),
@@ -581,7 +471,7 @@ def build_augmentations_cache(
     }
     config_identity["config_identity_hash"] = _stable_payload_hash(config_identity)
     output_dir = resolve_entry_config_path(config["output"]["cache_dir"])
-    staging_dir, output_100, output_500, state = _prepare_staging(
+    staging_dir, output_100, state = _prepare_staging(
         output_dir=output_dir,
         config_identity=config_identity,
         config=config,
@@ -623,8 +513,11 @@ def build_augmentations_cache(
         record_start = start_record if view_index == start_view else 0
         for start in range(record_start, total_records, chunk_size):
             end = min(start + chunk_size, total_records)
-            source_batch = np.asarray(
-                source_signals_500[source_indices[start:end]], dtype=np.float32
+            source_batch_100 = np.asarray(
+                source_signals_100[source_indices[start:end]], dtype=np.float32
+            )
+            source_batch = primitives._linear_interpolate_time_batch(
+                source_batch_100, 5000
             )
             corrupted_500 = np.empty_like(source_batch, dtype=np.float32)
             for local_index, source_signal in enumerate(source_batch):
@@ -642,13 +535,14 @@ def build_augmentations_cache(
                     f"non-finite 500 Hz corruption at view={view_index}, "
                     f"records={start}:{end}"
                 )
-            corrupted_100 = linear_interpolate_time_batch(corrupted_500, 1000)
+            corrupted_100 = primitives._linear_interpolate_time_batch(
+                corrupted_500, 1000
+            )
             if not np.isfinite(corrupted_100).all():
                 raise ValueError(
                     f"non-finite 100 Hz corruption at view={view_index}, "
                     f"records={start}:{end}"
                 )
-            output_500[view_index, start:end] = corrupted_500
             output_100[view_index, start:end] = corrupted_100
             checkpoint_counter += 1
 
@@ -658,7 +552,6 @@ def build_augmentations_cache(
                 next_view = view_index + 1
                 next_record = 0
             if checkpoint_counter >= checkpoint_every or end == total_records:
-                output_500.flush()
                 output_100.flush()
                 state.update(
                     {
@@ -676,18 +569,13 @@ def build_augmentations_cache(
                 )
         start_record = 0
 
-    output_500.flush()
     output_100.flush()
-    _validate_complete_output(
-        output_500,
-        name="500 Hz",
-        chunk_records=max(chunk_size, 64),
-    )
     _validate_complete_output(
         output_100,
         name="100 Hz",
         chunk_records=max(chunk_size, 64),
     )
+    source_cache.close()
 
     center_counts = {
         str(center): int(count)
@@ -708,7 +596,8 @@ def build_augmentations_cache(
             "manifest_sha256": source_manifest_sha256,
             "source_record_count": source_record_count,
             "source_indices_file": "source_indices.npy",
-            "source_waveform_500hz_file": str(config["source"]["waveform_500hz_file"]),
+            "source_waveform_100hz_file": str(config["source"]["waveform_100hz_file"]),
+            "transient_100_to_500_interpolation": "linear_align_corners",
             "mapping_version": source_manifest["labels"]["mapping_version"],
             "mapping_hash": source_manifest["labels"]["mapping_hash"],
             "class_order": list(EXPECTED_CLASS_ORDER),
@@ -739,19 +628,9 @@ def build_augmentations_cache(
                 "sampling_rate_hz": 100,
                 "duration_seconds": 10,
                 "layout": config["output"]["layout"],
-                "derived_from": "corrupted_500hz",
+                "derived_from": "transient_corrupted_500hz",
                 "interpolation": "linear",
                 "align_corners": True,
-                "normalization": "none",
-            },
-            "500hz": {
-                "file": str(config["output"]["waveform_500hz_file"]),
-                "shape": list(output_500.shape),
-                "dtype": "float32",
-                "sampling_rate_hz": 500,
-                "duration_seconds": 10,
-                "layout": config["output"]["layout"],
-                "corruption_domain": True,
                 "normalization": "none",
             },
         },
@@ -769,7 +648,7 @@ def build_augmentations_cache(
         },
         "validation": {
             "full_100hz_isfinite": True,
-            "full_500hz_isfinite": True,
+            "transient_500hz_isfinite_per_chunk": True,
             "source_hash_unique": True,
             "metadata_alignment": True,
         },
@@ -789,8 +668,6 @@ def build_augmentations_cache(
     )
     _write_json_atomic(state_path, state)
     del output_100
-    del output_500
-    del source_signals_500
     staging_dir.replace(output_dir)
     print(f"[PN2021-C] cache written to {output_dir}")
     return output_dir

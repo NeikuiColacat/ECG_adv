@@ -1,0 +1,12 @@
+schema_version: 1
+references:
+  paired_config: eval/pulse_adapter_full.yaml
+source_state: /home/linbinhao/ECG_adv_data/runs/pulse_augmix_sft_20260909/paired_state
+records_per_center: 512
+runtime:
+  initial_workers: 2
+  max_workers: 4
+  expand_after_seconds: 900
+  idle_seconds: 60
+  poll_seconds: 60
+  max_wall_seconds: 21600

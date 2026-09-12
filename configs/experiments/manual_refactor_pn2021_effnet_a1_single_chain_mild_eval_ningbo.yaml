@@ -1,0 +1,23 @@
+schema_version: 1
+
+experiment:
+  name: manual_refactor_pn2021_effnet_a1_single_chain_mild_eval_ningbo_r0
+  purpose: Evaluate the matched A1 single-chain auxiliary ablation on ref-excluded ningbo Clean and PN2021-C.
+
+entrypoint:
+  name: evaluate_pn2021
+  config: eval/PN2021.yaml
+  arguments:
+    - --model
+    - efficientnet1dv2
+    - --train-result
+    - /home/linbinhao/ECG_adv_data/runs/a1_single_vs_two_chain_r0_20260901/single/effnet/ningbo/training/train_result.json
+    - --center
+    - ningbo
+    - --method-config
+    - train/methods/a1_rot4_single_chain_mild.yaml
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/a1_single_vs_two_chain_r0_20260901/single/eval/effnet/ningbo
+  if_exists: error
+  delegate_output_subdir: evaluation

@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: manual_refactor_pn2021_effnet_a1_balanced_jsd1p5_single_eval_georgia_r6
+  purpose: Evaluate the JSD 1.5 balanced single-chain arm on ref-excluded Georgia.
+entrypoint:
+  name: evaluate_pn2021
+  config: eval/PN2021.yaml
+  arguments: [--model, efficientnet1dv2, --train-result, /home/linbinhao/ECG_adv_data/runs/a1_pool_balanced_jsd1p5_augmix_lhat_r6_20260902/single_jsd1p5/effnet/georgia/training/train_result.json, --center, georgia, --method-config, train/methods/a1_rot4_single_chain_balanced_jsd1p5.yaml]
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/a1_pool_balanced_jsd1p5_augmix_lhat_r6_20260902/single_jsd1p5/eval/effnet/georgia
+  if_exists: error
+  delegate_output_subdir: evaluation

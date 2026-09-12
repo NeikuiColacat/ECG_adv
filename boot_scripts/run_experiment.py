@@ -5,14 +5,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Sequence
-
-import yaml
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -20,6 +18,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from util.config_bundle import (  # noqa: E402
     config_bundle_root,
+    load_yaml_mapping as _yaml_mapping,
     require_mapping as _mapping,
     resolve_config_reference,
     resolve_entry_config_path,
@@ -45,6 +44,21 @@ def _entrypoint(script: str, result: str, result_type: str) -> EntrypointSpec:
 
 
 ENTRYPOINTS = {
+    "evaluate_pulse_subset": _entrypoint(
+        "evaluate_pulse_subset.py", "subset_result.json", "pulse_subset_result"
+    ),
+    "profile_pulse_adapters": _entrypoint(
+        "profile_pulse_adapters.py", "profile_result.json", "pulse_profile_result"
+    ),
+    "evaluate_pulse_adapters": _entrypoint(
+        "evaluate_pulse_adapters.py", "benchmark_result.json", "pulse_benchmark_result"
+    ),
+    "coordinate_pulse_training": _entrypoint(
+        "coordinate_pulse_training.py", "queue_result.json", "pulse_training_queue_result"
+    ),
+    "train_ecg_image": _entrypoint(
+        "train_ecg_image.py", "train_result.json", "pulse_train_result"
+    ),
     "train_ptbxl_effnet": _entrypoint(
         "train_ptbxl_effnet.py", "train_result.json", "supervised_train_result"
     ),
@@ -60,13 +74,26 @@ ENTRYPOINTS = {
     "aggregate_pn2021": _entrypoint(
         "aggregate_pn2021.py", "matrix_result.json", "pn2021_matrix_result"
     ),
+    "evaluate_ecg_image": _entrypoint(
+        "evaluate_ecg_image.py", "evaluation_result.json", "ecg_image_evaluation_result"
+    ),
+    "report_ecg_image": _entrypoint(
+        "report_ecg_image.py", "comparison_result.json", "ecg_image_comparison_result"
+    ),
 }
 ENTRYPOINT_DATA_ROOTS = {
+    "evaluate_pulse_subset": ("pn2021_cache", "split_artifacts"),
+    "profile_pulse_adapters": ("pn2021_cache", "split_artifacts"),
+    "evaluate_pulse_adapters": ("pn2021_cache", "split_artifacts"),
+    "coordinate_pulse_training": ("pn2021_cache", "split_artifacts"),
+    "train_ecg_image": ("pn2021_cache", "split_artifacts"),
     "train_ptbxl_effnet": ("ptbxl_cache", "split_artifacts"),
     "train_ptbxl_ecgfounder": ("ptbxl_cache", "split_artifacts"),
     "train_pn2021": ("pn2021_cache", "split_artifacts"),
     "evaluate_pn2021": ("pn2021_cache", "pn2021c_cache", "split_artifacts"),
     "aggregate_pn2021": (),
+    "evaluate_ecg_image": ("pn2021_cache", "split_artifacts"),
+    "report_ecg_image": (),
 }
 LAUNCHER_OWNED_FLAGS = frozenset(
     {"--config", "--config-root", "--output-dir", "--dry-run"}
@@ -75,6 +102,11 @@ CONFIG_REFERENCE_FLAGS = frozenset({"--method-config", "--source-registry"})
 MODELS = frozenset({"efficientnet1dv2", "ecgfounder"})
 CENTERS = frozenset({"ningbo", "chapman_shaoxing", "cpsc_2018", "georgia"})
 ARGUMENT_SCHEMAS = {
+    "evaluate_pulse_subset": ((),),
+    "profile_pulse_adapters": ((), ("--suite",), ("--suite", "--center")),
+    "evaluate_pulse_adapters": ((),),
+    "coordinate_pulse_training": ((),),
+    "train_ecg_image": ((),),
     "train_ptbxl_effnet": ((),),
     "train_ptbxl_ecgfounder": ((), ("--epochs",)),
     "train_pn2021": (
@@ -88,12 +120,9 @@ ARGUMENT_SCHEMAS = {
     "aggregate_pn2021": (
         ("--model", "--result", "--result", "--result", "--result"),
     ),
+    "evaluate_ecg_image": ((),),
+    "report_ecg_image": ((),),
 }
-
-
-def _yaml_mapping(path: Path, description: str) -> dict[str, Any]:
-    payload = yaml.safe_load(path.read_text(encoding="utf-8"))
-    return _mapping(payload, description)
 
 
 def _config_closure(
@@ -104,13 +133,11 @@ def _config_closure(
     config_root: Path,
 ) -> tuple[tuple[Path, str], ...]:
     seeds = [experiment_path, entry_config_path]
-    for index, argument in enumerate(entry_arguments):
-        flag, separator, inline_value = argument.partition("=")
+    for flag, raw in zip(
+        entry_arguments[::2], entry_arguments[1::2], strict=True
+    ):
         if flag not in CONFIG_REFERENCE_FLAGS:
             continue
-        raw = inline_value if separator else (
-            entry_arguments[index + 1] if index + 1 < len(entry_arguments) else None
-        )
         seeds.append(
             resolve_config_reference(
                 raw,
@@ -169,6 +196,11 @@ def _validate_argument_schema(
     if any(not value.strip() or value.lstrip().startswith("-") for value in values):
         raise ValueError("entrypoint argument values must be non-empty and not flags")
     keyed = dict(zip(flags, values, strict=True))
+    if entrypoint_name == "profile_pulse_adapters" and "--suite" in keyed:
+        if keyed["--suite"] not in {"optimization", "logits", "deployment", "deployment_cache", "deployment_admission"}:
+            raise ValueError("unsupported PULSE diagnostic suite")
+        if (keyed["--suite"] == "deployment_admission") != ("--center" in keyed):
+            raise ValueError("deployment admission requires an explicit center; other suites forbid it")
     if "--model" in keyed and keyed["--model"] not in MODELS:
         raise ValueError(f"unsupported model {keyed['--model']!r}")
     if "--center" in keyed and keyed["--center"] not in CENTERS:
@@ -233,7 +265,7 @@ def _data_ledger_plan(
     splits = _closure_member(sources, config_root, "data/splits.yaml")
     if "pn2021c_cache" in required_roots:
         _closure_member(sources, config_root, "augmentation/cache.yaml")
-    descriptor = _mapping(_yaml_mapping(data_load, "data-load config").get(
+    descriptor = _mapping(_yaml_mapping(data_load, description="data-load config").get(
         "content_ledger"), "data-load config.content_ledger")
     if set(descriptor) != {"path", "sha256"}:
         raise ValueError("content_ledger must contain exactly path and sha256")
@@ -341,7 +373,9 @@ class ExperimentPlan:
 
 
 def _verify_entrypoint_binding(plan: ExperimentPlan) -> None:
-    payload = _yaml_mapping(plan.experiment_path, "experiment config")
+    payload = _yaml_mapping(
+        plan.experiment_path, description="experiment config"
+    )
     source = _mapping(payload.get("entrypoint"), "entrypoint")
     if set(source) != {"name", "config", "arguments"}:
         raise ValueError("entrypoint must contain exactly name, config and arguments")
@@ -375,7 +409,7 @@ def load_experiment_plan(
     experiment_path = resolve_entry_config_path(config_path)
     if not experiment_path.is_file():
         raise FileNotFoundError(f"experiment config not found: {experiment_path}")
-    payload = _yaml_mapping(experiment_path, "experiment config")
+    payload = _yaml_mapping(experiment_path, description="experiment config")
     if set(payload) != {"schema_version", "experiment", "entrypoint", "output"}:
         raise ValueError(
             "experiment config must contain exactly schema_version, experiment, "
@@ -468,7 +502,15 @@ def load_experiment_plan(
 
 def _run_delegate(argv: list[str], log_path: Path) -> int:
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    with log_path.open("w", encoding="utf-8") as log:
+    runtime_log = log_path
+    if Path(argv[1]) == ENTRYPOINTS["evaluate_ecg_image"].script:
+        config_path = Path(argv[argv.index("--config") + 1])
+        payload = _yaml_mapping(config_path, description="image inference config")
+        ram_logs = Path("/dev/shm/ecg_r1_full_elastic_20260907/logs" if payload.get("schema_version") == 2
+                        else "/dev/shm/ecg_image_llm_10h_20260907/logs")
+        ram_logs.mkdir(parents=True, exist_ok=True)
+        runtime_log = ram_logs / f"{log_path.parent.parent.name}.log"
+    with runtime_log.open("x" if runtime_log != log_path else "w", encoding="utf-8") as log:
         process = subprocess.run(
             argv,
             cwd=PROJECT_ROOT,
@@ -477,6 +519,8 @@ def _run_delegate(argv: list[str], log_path: Path) -> int:
             check=False,
             text=True,
         )
+    if runtime_log != log_path:
+        shutil.copyfile(runtime_log, log_path)
     return int(process.returncode)
 
 

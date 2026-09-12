@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: manual_refactor_pn2021_effnet_a1_long_budget_single_eval_chapman_shaoxing_r13_retry1
+  purpose: Evaluate the frozen long-budget single-chain endpoint-mean AugMix control on ref-excluded chapman_shaoxing.
+entrypoint:
+  name: evaluate_pn2021
+  config: eval/PN2021.yaml
+  arguments: [--model, efficientnet1dv2, --train-result, /home/linbinhao/ECG_adv_data/runs/a1_joint_long_budget_r13_retry1_20260902/single/effnet/chapman_shaoxing/training/train_result.json, --center, chapman_shaoxing, --method-config, train/methods/a1_rot4_single_chain_robust_c125_r500_a375_endpointmean_jsd1p5.yaml]
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/a1_joint_long_budget_r13_retry1_20260902/single/eval/effnet/chapman_shaoxing
+  if_exists: error
+  delegate_output_subdir: evaluation

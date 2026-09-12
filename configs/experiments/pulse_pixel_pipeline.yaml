@@ -1,0 +1,13 @@
+schema_version: 1
+experiment:
+  name: pulse_pixel_pipeline
+  purpose: 'Finite CPU coordinator: single/two/resume GPU admissions, eight matched
+    training jobs, then frozen-512 evaluation; at most four confirmed-free GPUs.'
+entrypoint:
+  name: coordinate_pulse_training
+  config: train/pulse_pixel_pipeline.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/pulse_pixel_mix_sft_20260910/pipeline
+  if_exists: error
+  delegate_output_subdir: training

@@ -1,0 +1,27 @@
+schema_version: 2
+
+recipe:
+  id: one_stage_augmix_vae_lhat_mild
+  kind: one_stage_augmix_lhat
+  auxiliary_variant: contracted_lhat
+  scientific_arm: one_stage_augmix_vae_lhat_mild
+  status: prospective_one_stage_ablation
+
+resources:
+  augmix_config:
+    type: config_reference
+    path: train/augmix.yaml
+  vae:
+    type: config_reference
+    path: train/vae.yaml
+  lhat_config:
+    type: config_reference
+    path: train/lhat_one_stage_nondecreasing.yaml
+  corruption_rng:
+    type: isolated_torch_generator
+    seed_config: random_seed.yaml
+    namespace: one_stage_twochain_augmix_v1
+  lhat_rng:
+    type: isolated_torch_generator
+    seed_config: random_seed.yaml
+    namespace: ecg_manual_refactor_lhat_one_stage_nondecreasing_v1

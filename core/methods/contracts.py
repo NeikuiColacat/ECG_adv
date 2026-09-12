@@ -19,7 +19,6 @@ CANONICAL_POINTS = 1000
 CANONICAL_CHANNELS = 12
 BASE_VIEW_NAME = "clean_view"
 SUPER5_CLASSES = 5
-EXPECTED_LATENT_SHAPE = (4, 128)
 
 
 def _frozen_mapping(value: Mapping[str, Any] | None) -> Mapping[str, Any]:

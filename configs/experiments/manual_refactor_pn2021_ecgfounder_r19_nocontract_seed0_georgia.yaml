@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: manual_refactor_pn2021_ecgfounder_r19_nocontract_seed0_georgia
+  purpose: Test raw VAE-LHAT without attack-then-contract.
+entrypoint:
+  name: train_pn2021
+  config: train/PN2021_a1_joint_long_budget_r13.yaml
+  arguments: [--model, ecgfounder, --method-config, train/methods/a1_rot4_two_chain_balanced_jsd1p5_vae_lhat_replace0p2_nocontract.yaml, --center, georgia, --source-checkpoint, /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_ptbxl_ecgfounder_source_v1/training/checkpoints/best.pt]
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/a1_lhat_ablation_multiseed_r19_20260902/nocontract/seed0/ecgfounder/georgia
+  if_exists: error
+  delegate_output_subdir: training

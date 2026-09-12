@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "experiment": {
+    "name": "founder_jsd_width_workflow",
+    "purpose": "Queue width1/3 ECGFounder JSD full evaluation after existing dual JSD workflow completes; reuse frozen width2."
+  },
+  "entrypoint": {
+    "name": "coordinate_pulse_training",
+    "config": "train/founder_jsd_width_workflow.yaml",
+    "arguments": []
+  },
+  "output": {
+    "run_dir": "/home/linbinhao/ECG_adv_data/runs/founder_jsd_width_20260911/founder_jsd_width_workflow",
+    "if_exists": "error",
+    "delegate_output_subdir": "training"
+  }
+}

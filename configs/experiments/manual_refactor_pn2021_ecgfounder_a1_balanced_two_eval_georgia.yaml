@@ -1,0 +1,23 @@
+schema_version: 1
+
+experiment:
+  name: manual_refactor_pn2021_ecgfounder_a1_balanced_two_eval_georgia_r4
+  purpose: Evaluate balanced two-chain supervised AugMix on ref-excluded Georgia Clean and PN2021-C.
+
+entrypoint:
+  name: evaluate_pn2021
+  config: eval/PN2021.yaml
+  arguments:
+    - --model
+    - ecgfounder
+    - --train-result
+    - /home/linbinhao/ECG_adv_data/runs/a1_pool_balanced_augmix_lhat_r4_20260902/two_balanced/ecgfounder/georgia_retry1/training/train_result.json
+    - --center
+    - georgia
+    - --method-config
+    - train/methods/a1_rot4_two_chain_supervised_balanced.yaml
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/a1_pool_balanced_augmix_lhat_r4_20260902/two_balanced/eval/ecgfounder/georgia
+  if_exists: error
+  delegate_output_subdir: evaluation

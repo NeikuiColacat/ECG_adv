@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: manual_refactor_pn2021_ecgfounder_a1_endpointmean_single_georgia_r11
+  purpose: Run the single-chain endpoint-mean AugMix control.
+entrypoint:
+  name: train_pn2021
+  config: train/PN2021_a1_endpoint_mean_screen_r11.yaml
+  arguments: [--model, ecgfounder, --method-config, train/methods/a1_rot4_single_chain_robust_c125_r500_a375_endpointmean_jsd1p5.yaml, --center, georgia, --source-checkpoint, /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_ptbxl_ecgfounder_source_v1/training/checkpoints/best.pt]
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/a1_endpoint_mean_screen_r11_20260902/single/ecgfounder/georgia
+  if_exists: error
+  delegate_output_subdir: training

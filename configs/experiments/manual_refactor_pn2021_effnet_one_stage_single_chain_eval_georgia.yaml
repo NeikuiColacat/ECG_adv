@@ -1,0 +1,23 @@
+schema_version: 1
+
+experiment:
+  name: manual_refactor_pn2021_effnet_one_stage_single_chain_eval_georgia_r0
+  purpose: Evaluate the single-chain no-VAE one-stage arm on ref-excluded georgia Clean and PN2021-C.
+
+entrypoint:
+  name: evaluate_pn2021
+  config: eval/PN2021.yaml
+  arguments:
+    - --model
+    - efficientnet1dv2
+    - --train-result
+    - /home/linbinhao/ECG_adv_data/runs/one_stage_single_chain_r0_20260901/no_vae/effnet/georgia/training/train_result.json
+    - --center
+    - georgia
+    - --method-config
+    - train/methods/one_stage_single_chain_supervised.yaml
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/one_stage_single_chain_r0_20260901/no_vae/eval/effnet/georgia
+  if_exists: error
+  delegate_output_subdir: evaluation

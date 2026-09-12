@@ -1,0 +1,25 @@
+schema_version: 1
+
+experiment:
+  name: manual_refactor_pn2021_ecgfounder_one_stage_vae_matrix_r0
+  purpose: Aggregate the vae one-stage four-center ecgfounder evaluation matrix.
+
+entrypoint:
+  name: aggregate_pn2021
+  config: eval/PN2021_matrix_one_stage_vae_r0.yaml
+  arguments:
+    - --model
+    - ecgfounder
+    - --result
+    - /home/linbinhao/ECG_adv_data/runs/one_stage_augmix_lhat_r0_20260901/vae/eval/ecgfounder/ningbo/evaluation/evaluation_result.json
+    - --result
+    - /home/linbinhao/ECG_adv_data/runs/one_stage_augmix_lhat_r0_20260901/vae/eval/ecgfounder/chapman_shaoxing/evaluation/evaluation_result.json
+    - --result
+    - /home/linbinhao/ECG_adv_data/runs/one_stage_augmix_lhat_r0_20260901/vae/eval/ecgfounder/cpsc_2018/evaluation/evaluation_result.json
+    - --result
+    - /home/linbinhao/ECG_adv_data/runs/one_stage_augmix_lhat_r0_20260901/vae/eval/ecgfounder/georgia/evaluation/evaluation_result.json
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/one_stage_augmix_lhat_r0_20260901/vae/matrix/ecgfounder
+  if_exists: error
+  delegate_output_subdir: evaluation

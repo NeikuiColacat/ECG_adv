@@ -7,32 +7,29 @@ import hashlib
 import json
 import os
 import stat
+import sys
 import tempfile
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Mapping
 
-import yaml
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from util.config_bundle import (
+    load_yaml_mapping as _read_yaml_mapping,
+    require_mapping as _mapping,
+)
 
 
 ROOT_NAMES = ("ptbxl_cache", "pn2021_cache", "pn2021c_cache", "split_artifacts")
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
 _HEADER_KEYS = {"algorithm", "artifact", "member_count", "roots", "schema_version", "total_size_bytes"}
 _MEMBER_KEYS = {"path", "root", "sha256", "size_bytes"}
 _HEX = frozenset("0123456789abcdef")
 
 
-def _mapping(value: Any, label: str) -> Mapping[str, Any]:
-    if not isinstance(value, Mapping):
-        raise ValueError(f"{label} must be a mapping")
-    return value
-
-
-def _load_yaml(path: Path) -> Mapping[str, Any]:
-    payload = yaml.safe_load(path.read_text(encoding="utf-8"))
-    return _mapping(payload, str(path))
-
-
-def _configured_path(value: Any, config: Path, label: str) -> Path:
+def _configured_path(value: Any, label: str) -> Path:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{label} must be a non-empty path")
     path = Path(value).expanduser()
@@ -69,17 +66,25 @@ def load_roots(
         else splits_path.parent.parent / "augmentation" / "cache.yaml"
     )
     required = _required(required_roots)
-    splits = _load_yaml(splits_path) if set(required).difference({"pn2021c_cache"}) else {}
-    cache = _load_yaml(cache_path) if "pn2021c_cache" in required else {}
+    splits = (
+        _read_yaml_mapping(splits_path, description=str(splits_path))
+        if set(required).difference({"pn2021c_cache"})
+        else {}
+    )
+    cache = (
+        _read_yaml_mapping(cache_path, description=str(cache_path))
+        if "pn2021c_cache" in required
+        else {}
+    )
     ptbxl = _mapping(splits.get("ptbxl"), "splits.ptbxl") if "ptbxl_cache" in required else {}
     pn2021 = _mapping(splits.get("pn2021"), "splits.pn2021") if "pn2021_cache" in required else {}
     split_output = _mapping(splits.get("output"), "splits.output") if "split_artifacts" in required else {}
     cache_output = _mapping(cache.get("output"), "cache.output") if cache else {}
     values = {
-        "ptbxl_cache": (ptbxl.get("cache_dir"), splits_path, "ptbxl.cache_dir"),
-        "pn2021_cache": (pn2021.get("cache_dir"), splits_path, "pn2021.cache_dir"),
-        "pn2021c_cache": (cache_output.get("cache_dir"), cache_path, "output.cache_dir"),
-        "split_artifacts": (split_output.get("root_dir"), splits_path, "output.root_dir"),
+        "ptbxl_cache": (ptbxl.get("cache_dir"), "ptbxl.cache_dir"),
+        "pn2021_cache": (pn2021.get("cache_dir"), "pn2021.cache_dir"),
+        "pn2021c_cache": (cache_output.get("cache_dir"), "output.cache_dir"),
+        "split_artifacts": (split_output.get("root_dir"), "output.root_dir"),
     }
     return {name: _configured_path(*values[name]) for name in required}
 

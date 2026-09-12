@@ -8,12 +8,13 @@ passes caller-owned models/components into :mod:`core.online_trainer`.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterable, Iterator, Mapping
 
 import torch
 import torch.nn as nn
 import yaml
 
+from core.corruption import generate_canonical_corruption
 from core.latent_pool import build_latent_pool
 from core.methods.registry import RecipeSpec, load_recipe_spec
 from core.online_trainer import (
@@ -28,6 +29,91 @@ from data_preprocess.data_runtime import PN2021K500LoaderPlan, RuntimeDataLoader
 from models.checkpoints import CheckpointIdentity
 from models.contracts import ECGFOUNDER_SPEC, EFFICIENTNET1DV2_SPEC
 from util.config_bundle import resolve_config_reference
+from util.augmentations.profile import load_augmentation_profile
+from util.random_seed import make_torch_generator
+
+
+def _lhat_candidate_source_policy(recipe: RecipeSpec) -> str:
+    auxiliary = recipe.scientific_contract.get("lhat_auxiliary")
+    if not isinstance(auxiliary, Mapping):
+        auxiliary = recipe.scientific_contract.get("auxiliary")
+    if not isinstance(auxiliary, Mapping):
+        return "clean_only"
+    return str(auxiliary.get("candidate_source_policy", "clean_only"))
+
+
+def _mixed_candidate_pool_batches(
+    batches: Iterable[Mapping[str, Any]],
+    *,
+    recipe: RecipeSpec,
+    config: Any,
+    center: str,
+    model_name: str,
+    device: torch.device,
+) -> Iterator[Mapping[str, Any]]:
+    """Attach one deterministic depth-2/3 corruption per ordered K500 record."""
+
+    resource = recipe.resources.get("operator_profile")
+    if not isinstance(resource, Mapping):
+        raise ValueError("mixed LHAT candidates require operator_profile")
+    operator_path = resolve_config_reference(
+        resource.get("path"),
+        owner_config_path=recipe.source_path,
+        config_root=config.config_root,
+        description="method.resources.operator_profile",
+        must_exist=True,
+    )
+    profile = load_augmentation_profile(
+        operator_path,
+        profile_name=str(resource.get("profile", "")),
+        severity=int(resource.get("severity", 0)),
+        config_root=config.config_root,
+    )
+    parameters = {
+        name: profile.parameters_for(name) for name in profile.canonical_order
+    }
+    seed = config.payload["random_seed"]
+    generator = make_torch_generator(
+        device,
+        "lhat_candidate_corruption_bank_v1",
+        str(seed["comparison_group"]),
+        int(seed["replicate_id"]),
+        center,
+        model_name,
+        config_path=config.references["random_seed_config"],
+    )
+    for raw_batch in batches:
+        if not isinstance(raw_batch, Mapping):
+            raise TypeError("ordered latent-pool batch must be a mapping")
+        waveform_keys = tuple(
+            name for name in ("waveform", "waveform_raw") if name in raw_batch
+        )
+        if len(waveform_keys) != 1:
+            raise ValueError(
+                "ordered latent-pool batch must expose one raw waveform"
+            )
+        waveform = torch.as_tensor(raw_batch[waveform_keys[0]]).to(
+            device=device, dtype=torch.float32, non_blocking=True
+        )
+        selection = torch.as_tensor(raw_batch["selection_index"]).to(
+            device=device, dtype=torch.int64, non_blocking=True
+        )
+        if waveform.ndim == 2:
+            waveform = waveform.unsqueeze(0)
+        if selection.ndim == 0:
+            selection = selection.unsqueeze(0)
+        if waveform.shape != (int(selection.shape[0]), 1000, 12):
+            raise ValueError("mixed candidate waveform/selection shapes differ")
+        corrupted = generate_canonical_corruption(
+            waveform,
+            operator_params=parameters,
+            generator=generator,
+            composition_indices=selection.remainder(20),
+        )
+        yield {
+            **raw_batch,
+            "candidate_corrupted_waveform": corrupted.waveform_raw_100hz,
+        }
 
 
 def load_pn2021_recipe_spec(
@@ -171,6 +257,7 @@ def train_pn2021(
         config_root=config.config_root,
     )
 
+
     pool = None
     if requires_pool:
         assert encoder is not None
@@ -203,13 +290,25 @@ def train_pn2021(
                     raise ValueError(
                         "VAE encoder must carry its strict checkpoint SHA256 identity"
                     )
+                candidate_source_policy = _lhat_candidate_source_policy(recipe)
+                pool_batches: Iterable[Mapping[str, Any]] = ordered_loader
+                if candidate_source_policy != "clean_only":
+                    pool_batches = _mixed_candidate_pool_batches(
+                        ordered_loader,
+                        recipe=recipe,
+                        config=config,
+                        center=center,
+                        model_name=spec.name,
+                        device=resolved_device,
+                    )
                 pool = build_latent_pool(
                     encoder,
-                    ordered_loader,
+                    pool_batches,
                     encoder_identity=encoder_sha256,
                     device=resolved_device,
                     num_candidates=lhat_config.num_candidates,
                     standardizer_epsilon=lhat_config.standardizer_epsilon,
+                    candidate_source_policy=candidate_source_policy,
                 )
             finally:
                 ordered_loader.close()

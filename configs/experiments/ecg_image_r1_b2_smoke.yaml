@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: ecg_image_r1_b2_smoke
+  purpose: Batch-2 throughput and memory check on disjoint smoke records only; no accuracy-based selection.
+entrypoint:
+  name: evaluate_ecg_image
+  config: eval/ecg_image_r1_b2_smoke.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/ecg_image_llm_10h_20260907/r1_b2_smoke
+  if_exists: error
+  delegate_output_subdir: evaluation

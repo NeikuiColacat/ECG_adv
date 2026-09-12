@@ -1,0 +1,33 @@
+schema_version: 1
+mode: train
+references:
+  split_config: data/splits.yaml
+  data_load_config: data/data_load.yaml
+  seed_config: random_seed.yaml
+  operators_config: augmentation/operators.yaml
+center: cpsc_2018
+width: 2
+model:
+  directory: /home/linbinhao/ECG_adv_data/models/PULSE-7B_3b497b4
+  revision: 3b497b425ade2717f76ba0b14202823b83668011
+  precision: float16
+  lora_rank: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+training:
+  seed: 20260909
+  optimizer_steps: 100
+  effective_batch: 16
+  learning_rate: 0.00005
+  projector_learning_rate: 0.00001
+  warmup_steps: 3
+  max_length: 4096
+  save_every: 10
+  smoke_records: 4
+  cpu_threads: 2
+  loader_workers: 2
+paths:
+  raw_root: /home/linbinhao/ECG_adv_data/physionet2021/training
+  toolkit_dir: /home/linbinhao/ECG_adv_data/external/ecg-image-kit_v1.0.0
+  temporary_root: /home/linbinhao/ECG_adv_data/tmp/pulse_augmix_sft_20260909
+resume_from: null

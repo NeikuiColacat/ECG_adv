@@ -1,0 +1,20 @@
+schema_version: 2
+
+recipe:
+  id: one_pool_vae_lhat_puredelta
+  kind: one_stage_vae_lhat
+  auxiliary_variant: contracted_lhat
+  scientific_arm: one_pool_vae_lhat_puredelta
+  status: prospective_one_pool_mechanism_screen
+
+resources:
+  vae:
+    type: config_reference
+    path: train/vae.yaml
+  lhat_config:
+    type: config_reference
+    path: train/lhat_pure_delta_nondecreasing.yaml
+  lhat_rng:
+    type: isolated_torch_generator
+    seed_config: random_seed.yaml
+    namespace: one_pool_lhat_pure_delta_r2

@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: ecg_image_r1_pulse_full_comparison
+  purpose: Frozen full-cohort paired analysis with equal-center metrics and predeclared prior-exposure sensitivity.
+entrypoint:
+  name: report_ecg_image
+  config: eval/ecg_image_r1_pulse_full_comparison.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/ecg_r1_full_elastic_20260907/comparison_retry1
+  if_exists: error
+  delegate_output_subdir: evaluation

@@ -1,0 +1,23 @@
+schema_version: 1
+
+experiment:
+  name: manual_refactor_pn2021_effnet_a1_vae_puredelta_eval_georgia_r1
+  purpose: Evaluate the pure-delta VAE-LHAT arm on ref-excluded Georgia Clean and PN2021-C.
+
+entrypoint:
+  name: evaluate_pn2021
+  config: eval/PN2021.yaml
+  arguments:
+    - --model
+    - efficientnet1dv2
+    - --train-result
+    - /home/linbinhao/ECG_adv_data/runs/a1_repaired_screen_r1_20260901/vae_puredelta/effnet/georgia/training/train_result.json
+    - --center
+    - georgia
+    - --method-config
+    - train/methods/a1_rot4_vae_lhat_puredelta.yaml
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/a1_repaired_screen_r1_20260901/vae_puredelta/eval/effnet/georgia
+  if_exists: error
+  delegate_output_subdir: evaluation

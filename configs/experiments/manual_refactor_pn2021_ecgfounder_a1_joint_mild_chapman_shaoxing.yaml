@@ -1,0 +1,23 @@
+schema_version: 1
+
+experiment:
+  name: manual_refactor_pn2021_ecgfounder_a1_joint_mild_chapman_shaoxing_r0
+  purpose: Validate strong two-chain AugMix and mild VAE-LHAT on the frozen A1 auxiliary recipe for ecgfounder/chapman_shaoxing.
+
+entrypoint:
+  name: train_pn2021
+  config: train/PN2021_a1_aux_screen_r0.yaml
+  arguments:
+    - --model
+    - ecgfounder
+    - --method-config
+    - train/methods/a1_rot4_augmix_vae_lhat_mild.yaml
+    - --center
+    - chapman_shaoxing
+    - --source-checkpoint
+    - /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_ptbxl_ecgfounder_source_v1/training/checkpoints/best.pt
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/a1_aux_screen_r0_20260901/joint/ecgfounder/chapman_shaoxing
+  if_exists: error
+  delegate_output_subdir: training

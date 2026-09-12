@@ -4,13 +4,16 @@
 references are resolved relative to the selected bundle root, not relative to
 the repository's default configs.
 
+Start from [directions.yaml](directions.yaml) for the three current research
+directions. It is a small navigation catalog, not an executable experiment.
+
 ## Sections
 
 | Directory | Contents |
 |---|---|
 | `data/` | Dataset locations, cache identities, splits, loader/runtime policy, and the derived-byte ledger |
 | `augmentation/` | Five-operator profile and offline PN2021-C cache contract |
-| `train/` | Trainer, VAE/LHAT/AugMix, five finite recipe selectors, and one code-owned matched no-VAE slot |
+| `train/` | Trainer, VAE/LHAT/AugMix and explicit code-owned recipe selectors |
 | `eval/` | Canonical PN2021 Clean/PN2021-C evaluation and diagonal-matrix aggregation contracts |
 | `baselines/` | Locked PTB-XL source and Direct+fixed20 evidence registries |
 | `experiments/` | Thin executable entry YAMLs |
@@ -24,6 +27,9 @@ the repository's default configs.
 - YAML-to-YAML references inside a bundle must be relative to the bundle root,
   such as `train/lhat.yaml` or `augmentation/operators.yaml`.
 - Relative references may not escape the bundle.
+- The preprocessing `label_mapping_file` field is relative to its owning YAML
+  directory, matching the preprocessing loader; closure converts it to a
+  bundle-relative dependency and applies the same escape checks.
 - Copy the whole `configs/` tree to explore a variant; then pass the copied
   experiment path and `--config-root <copied-configs>`.
 - Closure follows schema-owned references only: the top-level `references`
@@ -43,7 +49,7 @@ the repository's default configs.
   whose nested historical paths are snapshots, not live dependencies.
 - Python implementation names come from code-owned allowlists. YAML may not
   dynamically import a module.
-- Method YAML selects exactly one of five code-owned RecipeSpec variants. It
+- Method YAML selects one explicit code-owned RecipeSpec variant. It
   contains only recipe identity and external resource references; exposure,
   objective, resource requirements, and execution behavior remain code-owned.
 - Recipe selectors have exactly three root keys: `schema_version`, `recipe`,

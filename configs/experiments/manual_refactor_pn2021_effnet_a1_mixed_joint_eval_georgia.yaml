@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: manual_refactor_pn2021_effnet_a1_mixed_joint_eval_georgia_r10
+  purpose: Evaluate true mixed-view AugMix plus VAE-LHAT on ref-excluded Georgia.
+entrypoint:
+  name: evaluate_pn2021
+  config: eval/PN2021.yaml
+  arguments: [--model, efficientnet1dv2, --train-result, /home/linbinhao/ECG_adv_data/runs/a1_mixed_view_screen_r10_20260902/joint/effnet/georgia/training/train_result.json, --center, georgia, --method-config, train/methods/a1_rot4_two_chain_robust_c125_r500_a375_mixed_jsd1p5_vae_lhat.yaml]
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/a1_mixed_view_screen_r10_20260902/joint/eval/effnet/georgia
+  if_exists: error
+  delegate_output_subdir: evaluation

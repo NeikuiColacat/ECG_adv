@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: ecg_image_r1_pulse_n500_comparison_retry1
+  purpose: Identical paired analysis replay after removing a Torch dependency from the CPU parser; preserve the failed report run.
+entrypoint:
+  name: report_ecg_image
+  config: eval/ecg_image_r1_pulse_n500_comparison.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/ecg_image_llm_10h_20260907/comparison_n500_retry1
+  if_exists: error
+  delegate_output_subdir: evaluation

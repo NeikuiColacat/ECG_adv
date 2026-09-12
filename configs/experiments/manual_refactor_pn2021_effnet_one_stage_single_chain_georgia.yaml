@@ -1,0 +1,23 @@
+schema_version: 1
+
+experiment:
+  name: manual_refactor_pn2021_effnet_one_stage_single_chain_georgia_r0
+  purpose: Train the single-chain no-VAE arm of the no-contrastive one-stage chain-count ablation on georgia.
+
+entrypoint:
+  name: train_pn2021
+  config: train/PN2021_one_stage_augmix_lhat_r0.yaml
+  arguments:
+    - --model
+    - efficientnet1dv2
+    - --method-config
+    - train/methods/one_stage_single_chain_supervised.yaml
+    - --center
+    - georgia
+    - --source-checkpoint
+    - /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_ptbxl_effnet_source_v1/training/checkpoints/best.pt
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/one_stage_single_chain_r0_20260901/no_vae/effnet/georgia
+  if_exists: error
+  delegate_output_subdir: training

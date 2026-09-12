@@ -2,7 +2,7 @@ schema_version: 1
 
 content_ledger:
   path: data/data_content_ledger_v1.jsonl
-  sha256: d3bf1f18046a695b9c6089f2866cdb854042c3b528434018ecab8f56d36af665
+  sha256: 5991ac2123e9fe8774df7cb4a311fd0f4332554e51a77ea2a29ac2ce05ad5f13
 
 # Shared mmap-engine defaults. Batch, worker, residency and model-input policy
 # are owned by PTBXLLoaderPlan, PN2021K500LoaderPlan or

@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: pulse_deployment_admission_georgia
+  purpose: Frozen native-allocator merged mutable-cache batch3 gate against author unmerged batch2 on first eight georgia K500 records, both arms and all 21 conditions; no formal queue writes.
+entrypoint:
+  name: profile_pulse_adapters
+  config: eval/pulse_adapter_full.yaml
+  arguments: [--suite, deployment_admission, --center, georgia]
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/pulse_augmix_sft_20260909/deployment_admission_georgia_01
+  if_exists: error
+  delegate_output_subdir: evaluation

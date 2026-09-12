@@ -1,0 +1,23 @@
+schema_version: 1
+
+experiment:
+  name: manual_refactor_pn2021_effnet_supervised_augmix_no_vae_eval_chapman_shaoxing_r0
+  purpose: Evaluate the matched supervised-AugMix no-VAE ablation on ref-excluded chapman_shaoxing Clean and PN2021-C.
+
+entrypoint:
+  name: evaluate_pn2021
+  config: eval/PN2021.yaml
+  arguments:
+    - --model
+    - efficientnet1dv2
+    - --train-result
+    - /home/linbinhao/ECG_adv_data/runs/no_contrastive_supervised_augmix_2x2_r0_20260831/no_vae/effnet/chapman_shaoxing/training/train_result.json
+    - --center
+    - chapman_shaoxing
+    - --method-config
+    - train/methods/augmix_supervised_matched_no_vae.yaml
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/no_contrastive_supervised_augmix_2x2_r0_20260831/no_vae/eval/effnet/chapman_shaoxing
+  if_exists: error
+  delegate_output_subdir: evaluation

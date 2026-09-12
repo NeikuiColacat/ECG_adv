@@ -1,0 +1,23 @@
+schema_version: 1
+
+experiment:
+  name: manual_refactor_pn2021_ecgfounder_a1_vae_lhat_hardgain_eval_georgia_r0
+  purpose: Evaluate gain-gated A1 plus VAE-LHAT on ref-excluded georgia Clean and PN2021-C.
+
+entrypoint:
+  name: evaluate_pn2021
+  config: eval/PN2021.yaml
+  arguments:
+    - --model
+    - ecgfounder
+    - --train-result
+    - /home/linbinhao/ECG_adv_data/runs/a1_hardgain_screen_r0_20260901/vae_hard/ecgfounder/georgia/training/train_result.json
+    - --center
+    - georgia
+    - --method-config
+    - train/methods/a1_rot4_vae_lhat_hardgain.yaml
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/a1_hardgain_screen_r0_20260901/vae_hard/eval/ecgfounder/georgia
+  if_exists: error
+  delegate_output_subdir: evaluation

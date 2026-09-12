@@ -19,7 +19,13 @@ import core.online_trainer as trainer
 import core.train_PN2021 as train_adapter
 import data_preprocess.data_runtime as data_runtime
 import models.vae as vae
-from core.methods.registry import AuxiliaryVariant, RecipeKind, load_recipe_spec
+from core.methods.registry import (
+    AuxiliaryVariant,
+    RecipeKind,
+    Stage1Objective,
+    load_recipe_spec,
+)
+from core.methods.contracts import ViewBundle, WaveformView
 from core.methods.runtime import build_method_runtime, _derive_seed
 from core.train_PN2021 import _validate_locked_source_checkpoint
 from models.checkpoints import (
@@ -40,10 +46,435 @@ CONFIG_ROOT = REPO / "configs"
 RECIPES = CONFIG_ROOT / "train" / "methods"
 ONLINE_CONFIG = CONFIG_ROOT / "train" / "PN2021.yaml"
 MATCHED_A0_A1_CONFIG = CONFIG_ROOT / "train" / "PN2021_matched_base_a0_a1.yaml"
+RETIRED_EXPOSURE_MARKERS = (
+    "__exposure_name", "__exposure_group", "__exposure_index",
+    "__composition_index", "__objective_terms", "__loss_scale",
+)
+
+
+def _assert_no_retired_exposure_markers(source: str) -> None:
+    for marker in RETIRED_EXPOSURE_MARKERS:
+        assert marker not in source, f"retired exposure marker remains: {marker}"
+
+
+@pytest.mark.parametrize("marker", RETIRED_EXPOSURE_MARKERS)
+def test_retired_exposure_source_guard_rejects_each_counterexample(marker: str) -> None:
+    source = f"def train_online_model():\n    batch[{marker!r}] = 1\n"
+    with pytest.raises(AssertionError, match=f"retired exposure marker remains: {marker}"):
+        _assert_no_retired_exposure_markers(source)
 
 
 def _recipe(filename: str):
     return load_recipe_spec(RECIPES / filename)
+
+
+def test_augmix_bernoulli_jsd_is_finite_for_bfloat16_saturated_logits() -> None:
+    recipe = _recipe("a1_rot4_augmix_jsd.yaml")
+    clean = torch.randn(2, 1000, 12)
+    labels = torch.tensor(
+        [[1, 0, 0, 1, 0], [0, 1, 1, 0, 0]], dtype=torch.float32
+    )
+    sample_ids = ("a", "b")
+    waveforms = {
+        "clean_view": clean,
+        "augmix_view": clean.flip(1),
+        "augmix_chain1_view": clean.roll(17, 1),
+        "augmix_chain2_view": clean.roll(53, 1),
+    }
+    bundle = ViewBundle(
+        values={
+            name: WaveformView(
+                name=name,
+                waveform=waveform,
+                labels=labels,
+                sample_ids=sample_ids,
+            )
+            for name, waveform in waveforms.items()
+        }
+    )
+
+    class SaturatedHead(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.scale = torch.nn.Parameter(torch.tensor(1000.0))
+
+        def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+            return (self.scale * inputs[:, :5, 0]).to(torch.bfloat16)
+
+    model = SaturatedHead()
+    objective = trainer._compute_objective(
+        recipe=recipe,
+        bundle=bundle,
+        model=model,
+        spec=EFFICIENTNET1DV2_SPEC,
+        normalization_epsilon=1.0e-6,
+        pos_weight=None,
+        objective_term_names=recipe.scientific_contract["augmix_auxiliary"][
+            "objective_terms"
+        ],
+    )
+    assert torch.isfinite(objective.total)
+    objective.total.backward()
+    assert model.scale.grad is not None
+    assert torch.isfinite(model.scale.grad)
+
+
+def test_augmix_endpoint_mean_supervises_mixed_and_both_chain_views() -> None:
+    recipe = _recipe("a1_rot4_augmix_jsd_endpoint_mean_strong.yaml")
+    clean = torch.randn(2, 1000, 12)
+    labels = torch.tensor(
+        [[1, 0, 0, 1, 0], [0, 1, 1, 0, 0]], dtype=torch.float32
+    )
+    sample_ids = ("a", "b")
+    waveforms = {
+        "clean_view": clean,
+        "augmix_view": clean.flip(1),
+        "augmix_chain1_view": clean.roll(17, 1),
+        "augmix_chain2_view": clean.roll(53, 1),
+    }
+    bundle = ViewBundle(
+        values={
+            name: WaveformView(
+                name=name,
+                waveform=waveform,
+                labels=labels,
+                sample_ids=sample_ids,
+            )
+            for name, waveform in waveforms.items()
+        }
+    )
+
+    class Head(torch.nn.Module):
+        def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+            return inputs[:, :5, 0]
+
+    model = Head()
+    objective = trainer._compute_objective(
+        recipe=recipe,
+        bundle=bundle,
+        model=model,
+        spec=EFFICIENTNET1DV2_SPEC,
+        normalization_epsilon=1.0e-6,
+        pos_weight=None,
+        objective_term_names=recipe.scientific_contract["augmix_auxiliary"][
+            "objective_terms"
+        ],
+    )
+    logits = {
+        name: model(
+            trainer.prepare_canonical_model_input(
+                waveform,
+                EFFICIENTNET1DV2_SPEC,
+                epsilon=1.0e-6,
+            )
+        )
+        for name, waveform in waveforms.items()
+    }
+    supervised = torch.stack(
+        [
+            torch.nn.functional.binary_cross_entropy_with_logits(
+                logits[name], labels
+            )
+            for name in (
+                "augmix_view",
+                "augmix_chain1_view",
+                "augmix_chain2_view",
+            )
+        ]
+    ).mean()
+    probabilities = torch.stack(
+        [
+            torch.sigmoid(logits[name].float())
+            for name in (
+                "clean_view",
+                "augmix_chain1_view",
+                "augmix_chain2_view",
+            )
+        ]
+    ).clamp(1.0e-6, 1.0 - 1.0e-6)
+    mean_probability = probabilities.mean(dim=0).clamp(
+        1.0e-6, 1.0 - 1.0e-6
+    )
+    divergence = (
+        probabilities * (probabilities.log() - mean_probability.log())
+        + (1.0 - probabilities)
+        * (
+            (1.0 - probabilities).log()
+            - (1.0 - mean_probability).log()
+        )
+    ).mean()
+    assert objective.raw_terms["augmix_bce"] == pytest.approx(
+        supervised + 12.0 * divergence
+    )
+
+
+def test_augmix_half_endpoint_gives_mix_and_chain_family_equal_mass() -> None:
+    recipe = _recipe(
+        "a1_rot4_two_chain_robust_c125_r500_a375_halfendpoint_jsd1p5.yaml"
+    )
+    clean = torch.randn(2, 1000, 12)
+    labels = torch.tensor(
+        [[1, 0, 0, 1, 0], [0, 1, 1, 0, 0]], dtype=torch.float32
+    )
+    sample_ids = ("a", "b")
+    waveforms = {
+        "clean_view": clean,
+        "augmix_view": clean.flip(1),
+        "augmix_chain1_view": clean.roll(17, 1),
+        "augmix_chain2_view": clean.roll(53, 1),
+    }
+    bundle = ViewBundle(
+        values={
+            name: WaveformView(
+                name=name,
+                waveform=waveform,
+                labels=labels,
+                sample_ids=sample_ids,
+            )
+            for name, waveform in waveforms.items()
+        }
+    )
+
+    class Head(torch.nn.Module):
+        def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+            return inputs[:, :5, 0]
+
+    model = Head()
+    objective = trainer._compute_objective(
+        recipe=recipe,
+        bundle=bundle,
+        model=model,
+        spec=EFFICIENTNET1DV2_SPEC,
+        normalization_epsilon=1.0e-6,
+        pos_weight=None,
+        objective_term_names=recipe.scientific_contract["augmix_auxiliary"][
+            "objective_terms"
+        ],
+    )
+    logits = {
+        name: model(
+            trainer.prepare_canonical_model_input(
+                waveform,
+                EFFICIENTNET1DV2_SPEC,
+                epsilon=1.0e-6,
+            )
+        )
+        for name, waveform in waveforms.items()
+    }
+    mixed_loss = torch.nn.functional.binary_cross_entropy_with_logits(
+        logits["augmix_view"], labels
+    )
+    chain_loss = torch.stack(
+        [
+            torch.nn.functional.binary_cross_entropy_with_logits(
+                logits[name], labels
+            )
+            for name in ("augmix_chain1_view", "augmix_chain2_view")
+        ]
+    ).mean()
+    probabilities = torch.stack(
+        [
+            torch.sigmoid(logits[name].float())
+            for name in (
+                "clean_view",
+                "augmix_chain1_view",
+                "augmix_chain2_view",
+            )
+        ]
+    ).clamp(1.0e-6, 1.0 - 1.0e-6)
+    mean_probability = probabilities.mean(dim=0).clamp(
+        1.0e-6, 1.0 - 1.0e-6
+    )
+    divergence = (
+        probabilities * (probabilities.log() - mean_probability.log())
+        + (1.0 - probabilities)
+        * (
+            (1.0 - probabilities).log()
+            - (1.0 - mean_probability).log()
+        )
+    ).mean()
+    assert objective.raw_terms["augmix_bce"] == pytest.approx(
+        0.5 * (mixed_loss + chain_loss) + 1.5 * divergence
+    )
+
+
+def test_augmix_hardview_uses_per_sample_maximum_bce() -> None:
+    recipe = _recipe("a1_rot4_augmix_jsd_hardview_strong.yaml")
+    clean = torch.randn(2, 1000, 12)
+    labels = torch.tensor(
+        [[1, 0, 0, 1, 0], [0, 1, 1, 0, 0]], dtype=torch.float32
+    )
+    sample_ids = ("a", "b")
+    waveforms = {
+        "clean_view": clean,
+        "augmix_view": clean.flip(1),
+        "augmix_chain1_view": clean.roll(17, 1),
+        "augmix_chain2_view": clean.roll(53, 1),
+    }
+    bundle = ViewBundle(
+        values={
+            name: WaveformView(
+                name=name,
+                waveform=waveform,
+                labels=labels,
+                sample_ids=sample_ids,
+            )
+            for name, waveform in waveforms.items()
+        }
+    )
+
+    class Head(torch.nn.Module):
+        def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+            return inputs[:, :5, 0]
+
+    model = Head()
+    objective = trainer._compute_objective(
+        recipe=recipe,
+        bundle=bundle,
+        model=model,
+        spec=EFFICIENTNET1DV2_SPEC,
+        normalization_epsilon=1.0e-6,
+        pos_weight=None,
+        objective_term_names=recipe.scientific_contract["augmix_auxiliary"][
+            "objective_terms"
+        ],
+    )
+    logits = {
+        name: model(
+            trainer.prepare_canonical_model_input(
+                waveform,
+                EFFICIENTNET1DV2_SPEC,
+                epsilon=1.0e-6,
+            )
+        )
+        for name, waveform in waveforms.items()
+    }
+    supervised = torch.stack(
+        [
+            torch.nn.functional.binary_cross_entropy_with_logits(
+                logits[name], labels, reduction="none"
+            ).mean(dim=1)
+            for name in (
+                "augmix_view",
+                "augmix_chain1_view",
+                "augmix_chain2_view",
+            )
+        ]
+    ).max(dim=0).values.mean()
+    probabilities = torch.stack(
+        [
+            torch.sigmoid(logits[name].float())
+            for name in (
+                "clean_view",
+                "augmix_chain1_view",
+                "augmix_chain2_view",
+            )
+        ]
+    ).clamp(1.0e-6, 1.0 - 1.0e-6)
+    mean_probability = probabilities.mean(dim=0).clamp(
+        1.0e-6, 1.0 - 1.0e-6
+    )
+    divergence = (
+        probabilities * (probabilities.log() - mean_probability.log())
+        + (1.0 - probabilities)
+        * (
+            (1.0 - probabilities).log()
+            - (1.0 - mean_probability).log()
+        )
+    ).mean()
+    assert objective.raw_terms["augmix_bce"] == pytest.approx(
+        supervised + 12.0 * divergence
+    )
+
+
+def test_balanced_two_chain_augmix_uses_chain_mean_without_jsd() -> None:
+    recipe = _recipe("a1_rot4_two_chain_supervised_balanced.yaml")
+    clean = torch.randn(2, 1000, 12)
+    labels = torch.tensor(
+        [[1, 0, 0, 1, 0], [0, 1, 1, 0, 0]], dtype=torch.float32
+    )
+    sample_ids = ("a", "b")
+    waveforms = {
+        "clean_view": clean,
+        "augmix_view": clean.flip(1),
+        "augmix_chain1_view": clean.roll(17, 1),
+        "augmix_chain2_view": clean.roll(53, 1),
+    }
+    bundle = ViewBundle(
+        values={
+            name: WaveformView(
+                name=name,
+                waveform=waveform,
+                labels=labels,
+                sample_ids=sample_ids,
+            )
+            for name, waveform in waveforms.items()
+        }
+    )
+
+    class Head(torch.nn.Module):
+        def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+            return inputs[:, :5, 0]
+
+    model = Head()
+    objective = trainer._compute_objective(
+        recipe=recipe,
+        bundle=bundle,
+        model=model,
+        spec=EFFICIENTNET1DV2_SPEC,
+        normalization_epsilon=1.0e-6,
+        pos_weight=None,
+        objective_term_names=recipe.scientific_contract["augmix_auxiliary"][
+            "objective_terms"
+        ],
+    )
+    expected = torch.stack(
+        [
+            torch.nn.functional.binary_cross_entropy_with_logits(
+                model(
+                    trainer.prepare_canonical_model_input(
+                        waveforms[name],
+                        EFFICIENTNET1DV2_SPEC,
+                        epsilon=1.0e-6,
+                    )
+                ),
+                labels,
+            )
+            for name in ("augmix_chain1_view", "augmix_chain2_view")
+        ]
+    ).mean()
+    assert objective.raw_terms["augmix_bce"] == pytest.approx(expected)
+
+
+def test_one_pool_recipes_keep_one_step_and_simple_component_ablation() -> None:
+    single = _recipe("one_pool_single_chain_jsd.yaml")
+    two = _recipe("one_pool_augmix_jsd.yaml")
+    vae_only = _recipe("one_pool_vae_lhat_puredelta.yaml")
+    joint = _recipe("one_pool_augmix_jsd_vae_lhat_puredelta.yaml")
+    for recipe in (single, two, vae_only, joint):
+        assert recipe.scientific_contract["stages"] == (
+            "joint_supervised_adaptation",
+        )
+        assert recipe.scientific_contract["stage_boundaries"] is False
+        assert recipe.scientific_contract[
+            "one_outer_optimizer_step_per_clean_batch"
+        ] is True
+    assert [step.loss_scale for step in trainer._method_exposure_steps(two)] == [
+        0.5,
+        0.5,
+    ]
+    assert trainer._method_exposure_steps(two)[1].objective_terms == (
+        "augmix_bce",
+        "augmix_chain1_context",
+        "augmix_chain2_context",
+    )
+    assert [
+        step.loss_scale
+        for step in trainer._method_exposure_steps(joint, epoch=5)
+    ] == pytest.approx([0.5, 0.5, 0.1])
+    assert vae_only.scientific_contract["auxiliary"][
+        "attack_then_contract_version"
+    ] == "nondecreasing_pure_delta_grid_v3"
 
 
 def test_matched_a0_a1_profile_locks_effnet_e25_and_founder_e30() -> None:
@@ -162,6 +593,7 @@ def test_non_dry_handoffs_keep_bundle_relative_recipe(monkeypatch, tmp_path: Pat
             "device": torch.device("cuda"),
             "num_candidates": 20,
             "standardizer_epsilon": 1e-6,
+            "candidate_source_policy": "clean_only",
         }
         return object()
 
@@ -576,10 +1008,7 @@ def test_pn2021_boot_and_adapter_reject_retired_override_surfaces() -> None:
     assert not hasattr(train_adapter, "build_pn2021_latent_pool")
     assert not hasattr(train_adapter, "_encoder_sha256")
     assert not hasattr(trainer, "_iter_exposure_batches")
-    assert {
-        "__exposure_name", "__exposure_group", "__exposure_index",
-        "__composition_index", "__objective_terms", "__loss_scale",
-    }.isdisjoint(inspect.getsource(trainer.train_online_model))
+    _assert_no_retired_exposure_markers(inspect.getsource(trainer.train_online_model))
     assert vae.__all__ == [
         "build_ecgtwin_vae", "decode_to_ptbxl_waveform", "load_vae_config",
         "prepare_ecgtwin_encoder_input"]
@@ -641,6 +1070,41 @@ def test_finite_exposure_plans_lock_direct21_a1_rotating5_mainline6() -> None:
     with pytest.raises(ValueError, match="positive integer"):
         trainer._method_exposure_steps(mainline, epoch=0)
 
+    alpha0p25 = _recipe(
+        "a1_rot4_two_chain_balanced_jsd1p5_vae_lhat_alpha0p25.yaml"
+    )
+    alpha0p5 = _recipe(
+        "a1_rot4_two_chain_balanced_jsd1p5_vae_lhat_alpha0p5.yaml"
+    )
+    assert [
+        trainer._method_exposure_steps(alpha0p25, epoch=epoch)[-1].loss_scale
+        for epoch in (1, 5)
+    ] == pytest.approx([0.05, 0.25])
+    assert [
+        trainer._method_exposure_steps(alpha0p5, epoch=epoch)[-1].loss_scale
+        for epoch in (1, 5)
+    ] == pytest.approx([0.1, 0.5])
+
+    cosine_decay = _recipe(
+        "a1_rot4_two_chain_robust_c125_r500_a375_endpointmean_jsd1p5_vae_lhat_cosdecay.yaml"
+    )
+    assert [
+        trainer._method_exposure_steps(
+            cosine_decay, epoch=epoch, total_epochs=50
+        )[-1].loss_scale
+        for epoch in (1, 5, 50)
+    ] == pytest.approx([0.02, 0.1, 0.0])
+    with pytest.raises(ValueError, match="requires total_epochs"):
+        trainer._method_exposure_steps(cosine_decay, epoch=6)
+
+    robust_pool = _recipe(
+        "a1_rot4_two_chain_robust_c125_r375_a500_jsd1p5_vae_lhat.yaml"
+    )
+    robust_steps = trainer._method_exposure_steps(robust_pool, epoch=5)
+    assert [step.loss_scale for step in robust_steps] == pytest.approx(
+        [0.125, 0.09375, 0.09375, 0.09375, 0.09375, 0.5, 0.1]
+    )
+
     matched = _matched(); matched_steps = trainer._method_exposure_steps(matched)
     assert (matched.kind, matched.auxiliary_variant) == (
         RecipeKind.TWO_STAGE_AUGMIX_LHAT, AuxiliaryVariant.MATCHED_NO_VAE)
@@ -661,6 +1125,81 @@ def test_finite_exposure_plans_lock_direct21_a1_rotating5_mainline6() -> None:
     assert vae_only.scientific_contract["stages"] == ("supervised_adaptation",)
     assert "stage1" not in vae_only.scientific_contract
     assert vae_only.scientific_contract["stage2_teacher"] == "disabled"
+
+    one_stage_augmix = _recipe("one_stage_augmix_supervised.yaml")
+    assert [s.name for s in trainer._method_exposure_steps(one_stage_augmix)] == [
+        "clean",
+        "augmix",
+    ]
+    assert [s.loss_scale for s in trainer._method_exposure_steps(one_stage_augmix)] == [
+        0.5,
+        0.5,
+    ]
+    one_stage_vae = _recipe("one_stage_vae_lhat_mild.yaml")
+    assert [s.loss_scale for s in trainer._method_exposure_steps(
+        one_stage_vae, epoch=1
+    )] == pytest.approx([1.0, 0.05])
+    assert [s.loss_scale for s in trainer._method_exposure_steps(
+        one_stage_vae, epoch=5
+    )] == pytest.approx([1.0, 0.25])
+    one_stage_joint = _recipe("one_stage_augmix_vae_lhat_mild.yaml")
+    assert [s.name for s in trainer._method_exposure_steps(
+        one_stage_joint, epoch=3
+    )] == ["clean", "augmix", "auxiliary"]
+    assert [s.loss_scale for s in trainer._method_exposure_steps(
+        one_stage_joint, epoch=3
+    )] == pytest.approx([0.5, 0.5, 0.15])
+    one_stage_single = _recipe("one_stage_single_chain_supervised.yaml")
+    assert [s.name for s in trainer._method_exposure_steps(one_stage_single)] == [
+        "clean", "augmix"
+    ]
+    one_stage_single_joint = _recipe(
+        "one_stage_single_chain_vae_lhat_mild.yaml"
+    )
+    assert [s.loss_scale for s in trainer._method_exposure_steps(
+        one_stage_single_joint, epoch=3
+    )] == pytest.approx([0.5, 0.5, 0.15])
+
+    a1_augmix = _recipe("a1_rot4_augmix_mild.yaml")
+    assert [s.name for s in trainer._method_exposure_steps(a1_augmix)] == [
+        "clean", "corruption_00", "corruption_01", "corruption_10",
+        "corruption_11", "auxiliary_augmix",
+    ]
+    assert [s.loss_scale for s in trainer._method_exposure_steps(a1_augmix)] == (
+        pytest.approx([0.5, 0.125, 0.125, 0.125, 0.125, 0.125])
+    )
+    a1_single_chain = _recipe("a1_rot4_single_chain_mild.yaml")
+    assert [s.name for s in trainer._method_exposure_steps(a1_single_chain)] == [
+        "clean", "corruption_00", "corruption_01", "corruption_10",
+        "corruption_11", "auxiliary_augmix",
+    ]
+    assert [s.loss_scale for s in trainer._method_exposure_steps(
+        a1_single_chain
+    )] == pytest.approx([0.5, 0.125, 0.125, 0.125, 0.125, 0.125])
+    a1_lhat = _recipe("a1_rot4_vae_lhat_mild.yaml")
+    assert [s.loss_scale for s in trainer._method_exposure_steps(
+        a1_lhat, epoch=3
+    )] == pytest.approx([0.5, 0.125, 0.125, 0.125, 0.125, 0.06])
+    a1_joint = _recipe("a1_rot4_augmix_vae_lhat_mild.yaml")
+    assert [s.name for s in trainer._method_exposure_steps(
+        a1_joint, epoch=5
+    )][-2:] == ["auxiliary_augmix", "auxiliary_lhat"]
+    assert [s.loss_scale for s in trainer._method_exposure_steps(
+        a1_joint, epoch=5
+    )][-2:] == pytest.approx([0.125, 0.1])
+    a1_hardgain = _recipe("a1_rot4_vae_lhat_hardgain.yaml")
+    assert [s.loss_scale for s in trainer._method_exposure_steps(
+        a1_hardgain, epoch=1
+    )][-1] == pytest.approx(0.05)
+    assert [s.loss_scale for s in trainer._method_exposure_steps(
+        a1_hardgain, epoch=5
+    )][-1] == pytest.approx(0.25)
+    a1_joint_hardgain = _recipe(
+        "a1_rot4_augmix_vae_lhat_hardgain.yaml"
+    )
+    assert [s.loss_scale for s in trainer._method_exposure_steps(
+        a1_joint_hardgain, epoch=5
+    )][-2:] == pytest.approx([0.125, 0.25])
 
 
 def test_empty_lhat_auxiliary_is_an_empty_gradient_sum() -> None:
@@ -687,12 +1226,95 @@ def test_empty_lhat_auxiliary_is_an_empty_gradient_sum() -> None:
             empty_lhat_auxiliary=False)
 
 
+def test_lhat_clean_replacement_has_fixed_mass_and_clean_rejection_fallback() -> None:
+    recipe = _recipe(
+        "a1_rot4_two_chain_balanced_jsd1p5_vae_lhat_replace0p1.yaml"
+    )
+    steps = trainer._method_exposure_steps(recipe, epoch=1)
+    assert [step.loss_scale for step in steps] == pytest.approx(
+        [0.15, 0.0625, 0.0625, 0.0625, 0.0625, 0.5, 0.1]
+    )
+    assert sum(step.loss_scale for step in steps) == pytest.approx(1.0)
+    plan = trainer._build_batch_norm_momentum_plan(
+        torch.nn.BatchNorm1d(2, momentum=0.1),
+        recipe,
+        exposure_steps=steps,
+    )
+    assert plan is not None
+    assert plan.exposure_weights == pytest.approx(
+        [0.5, 0.125, 0.125, 0.125, 0.125, 0.0, 0.0]
+    )
+
+    clean = torch.randn(2, 1000, 12)
+    hard = clean.roll(13, dims=1)
+    labels = torch.tensor(
+        [[1, 0, 0, 1, 0], [0, 1, 1, 0, 0]], dtype=torch.float32
+    )
+    sample_ids = ("accepted", "fallback")
+    bundle = ViewBundle(
+        values={
+            "clean_view": WaveformView(
+                name="clean_view",
+                waveform=clean,
+                labels=labels,
+                sample_ids=sample_ids,
+            ),
+            "lhat_view": WaveformView(
+                name="lhat_view",
+                waveform=hard,
+                labels=labels,
+                sample_ids=sample_ids,
+                valid_mask=torch.tensor([True, False]),
+            ),
+        }
+    )
+
+    class Head(torch.nn.Module):
+        def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+            return inputs[:, :5, 0]
+
+    model = Head()
+    objective = trainer._compute_objective(
+        recipe=recipe,
+        bundle=bundle,
+        model=model,
+        spec=EFFICIENTNET1DV2_SPEC,
+        normalization_epsilon=1.0e-6,
+        pos_weight=None,
+        objective_term_names=("lhat_direct_bce",),
+    )
+    clean_logits = model(
+        trainer.prepare_canonical_model_input(
+            clean, EFFICIENTNET1DV2_SPEC, epsilon=1.0e-6
+        )
+    )
+    hard_logits = model(
+        trainer.prepare_canonical_model_input(
+            hard[:1], EFFICIENTNET1DV2_SPEC, epsilon=1.0e-6
+        )
+    )
+    expected = (
+        torch.nn.functional.binary_cross_entropy_with_logits(
+            hard_logits, labels[:1], reduction="sum"
+        )
+        + torch.nn.functional.binary_cross_entropy_with_logits(
+            clean_logits[1:], labels[1:], reduction="sum"
+        )
+    ) / 10.0
+    assert objective.valid_counts == {"lhat_direct_bce": 2}
+    assert objective.total == pytest.approx(expected)
+
+
 RNG_CASES = [
     ("a3c_depth23_v1.yaml", "base", None, "corruption_rng", "depth23_corruption", "composition_and_operators", 4099549646),
     ("direct_depth23_fixed20.yaml", "corruption_07", 7, "corruption_rng", "depth23_corruption", "composition_and_operators", 1342437248),
     ("augmix_simclr_lhat.yaml", "corruption_07", 7, "corruption_rng", "depth23_corruption", "composition_and_operators", 100675112),
     ("augmix_simclr_lhat.yaml", "auxiliary", None, "lhat_rng", "lhat", "candidate_selection", 1664578656),
     ("augmix_simclr_matched_no_vae.yaml", "corruption_07", 7, "corruption_rng", "depth23_corruption", "composition_and_operators", 100675112),
+    ("augmix_supervised_lhat.yaml", "corruption_07", 7, "corruption_rng", "depth23_corruption", "composition_and_operators", 100675112),
+    ("augmix_supervised_lhat.yaml", "auxiliary", None, "lhat_rng", "lhat", "candidate_selection", 1664578656),
+    ("augmix_supervised_matched_no_vae.yaml", "corruption_07", 7, "corruption_rng", "depth23_corruption", "composition_and_operators", 100675112),
+    ("augmix_supervised_single_chain_matched_no_vae.yaml", "corruption_07", 7, "corruption_rng", "depth23_corruption", "composition_and_operators", 100675112),
     ("vae_lhat_only.yaml", "auxiliary", None, "lhat_rng", "lhat", "candidate_selection", 1664578656),
 ]
 
@@ -717,14 +1339,42 @@ def test_method_rng_permanent_goldens(filename, exposure, composition, rng_name,
     ("a1", [.5, .125, .125, .125, .125]),
     ("mainline", [.5, .125, .125, .125, .125, 0]),
     ("matched", [.5, .125, .125, .125, .125]),
-    ("vae_only", [.5, .125, .125, .125, .125, 0])])
+    ("vae_only", [.5, .125, .125, .125, .125, 0]),
+    ("a1_augmix_mild", [.5, .125, .125, .125, .125, 0]),
+    ("a1_single_chain_mild", [.5, .125, .125, .125, .125, 0]),
+    ("a1_lhat_mild", [.5, .125, .125, .125, .125, 0]),
+    ("a1_joint_mild", [.5, .125, .125, .125, .125, 0, 0]),
+    ("a1_lhat_hardgain", [.5, .125, .125, .125, .125, 0]),
+    ("a1_joint_hardgain", [.5, .125, .125, .125, .125, 0, 0]),
+    ("one_stage_augmix", [.5, .5]),
+    ("one_stage_single_augmix", [.5, .5]),
+    ("one_stage_vae", [1., 0.]),
+    ("one_stage_joint", [.5, .5, 0.]),
+    ("one_stage_single_joint", [.5, .5, 0.]),
+    ("balanced_single", [.5, .125, .125, .125, .125, 0.]),
+    ("balanced_two", [.5, .125, .125, .125, .125, 0.]),
+    ("balanced_joint", [.5, .125, .125, .125, .125, 0., 0.])])
 def test_batch_norm_plan_preserves_family_weights(name, weights) -> None:
     recipes = {"clean": lambda: _recipe("a0_clean_v1.yaml"),
                "direct": lambda: _recipe("direct_depth23_fixed20.yaml"),
                "a1": lambda: _recipe("a1_corrupt_ft_rot4_v1.yaml"),
                "mainline": lambda: _recipe("augmix_simclr_lhat.yaml"),
                "matched": _matched,
-               "vae_only": lambda: _recipe("vae_lhat_only.yaml")}
+               "vae_only": lambda: _recipe("vae_lhat_only.yaml"),
+               "a1_augmix_mild": lambda: _recipe("a1_rot4_augmix_mild.yaml"),
+               "a1_single_chain_mild": lambda: _recipe("a1_rot4_single_chain_mild.yaml"),
+               "a1_lhat_mild": lambda: _recipe("a1_rot4_vae_lhat_mild.yaml"),
+               "a1_joint_mild": lambda: _recipe("a1_rot4_augmix_vae_lhat_mild.yaml"),
+               "a1_lhat_hardgain": lambda: _recipe("a1_rot4_vae_lhat_hardgain.yaml"),
+               "a1_joint_hardgain": lambda: _recipe("a1_rot4_augmix_vae_lhat_hardgain.yaml"),
+               "one_stage_augmix": lambda: _recipe("one_stage_augmix_supervised.yaml"),
+               "one_stage_single_augmix": lambda: _recipe("one_stage_single_chain_supervised.yaml"),
+               "one_stage_vae": lambda: _recipe("one_stage_vae_lhat_mild.yaml"),
+               "one_stage_joint": lambda: _recipe("one_stage_augmix_vae_lhat_mild.yaml"),
+               "one_stage_single_joint": lambda: _recipe("one_stage_single_chain_vae_lhat_mild.yaml"),
+               "balanced_single": lambda: _recipe("a1_rot4_single_chain_supervised_balanced.yaml"),
+               "balanced_two": lambda: _recipe("a1_rot4_two_chain_supervised_balanced.yaml"),
+               "balanced_joint": lambda: _recipe("a1_rot4_two_chain_supervised_balanced_vae_lhat_puredelta.yaml")}
     recipe = recipes[name](); steps = trainer._method_exposure_steps(recipe)
     plan = trainer._build_batch_norm_momentum_plan(
         torch.nn.BatchNorm1d(2, momentum=.1), recipe, exposure_steps=steps)
@@ -762,11 +1412,12 @@ def test_stage1_uses_resolved_augmix_constants_and_hash_free_legacy_seed(monkeyp
         monkeypatch.setattr(trainer, name, replacement)
     loader = [{"waveform": torch.full((2, 1000, 12), float(step + 1)),
                "hash_id": (f"batch-{step}-a", f"batch-{step}-b")} for step in range(2)]
-    summary = trainer._run_augmix_simclr_stage1(torch.nn.Linear(1, 4), loader,
+    summary = trainer._run_augmix_stage1(torch.nn.Linear(1, 4), loader,
         spec=SimpleNamespace(name="efficientnet1dv2"), device=torch.device("cpu"),
         recipe=recipe, augmix_config=augmix, center="ningbo", base_seed=20260501,
         resolved={"stage1_steps": 2, "stage1_learning_rate": 1e-3,
                   "stage1_weight_decay": 0., "stage1_gradient_clip_norm": 1.},
+        pos_weight=None,
         normalization_epsilon=1e-6, amp_enabled=False, amp_dtype=torch.bfloat16)
     assert [seed for seed, _ in captured] == [3967304348, 2995841993]
     assert [identity for _, identity in captured] == [
@@ -776,3 +1427,93 @@ def test_stage1_uses_resolved_augmix_constants_and_hash_free_legacy_seed(monkeyp
             summary["augmix_dirichlet_alpha"], summary["augmix_beta_alpha"],
             summary["logit_anchor_weight"], summary["ptbxl_replay_weight"]) == (
                 .5, 2, .5, .5, 5., 0.)
+
+
+def test_supervised_augmix_stage1_optimizes_both_labeled_views_without_simclr(
+    monkeypatch,
+) -> None:
+    recipe = _recipe("augmix_supervised_matched_no_vae.yaml")
+    assert recipe.stage1_objective is Stage1Objective.SUPERVISED_AUGMIX
+    runtime = build_method_runtime(
+        recipe,
+        model_name="efficientnet1dv2",
+        config_root=CONFIG_ROOT,
+    )
+    augmix = runtime.augmix_config
+    assert augmix is not None
+
+    monkeypatch.setattr(trainer, "_cache_k500_logits", lambda *a, **k: {})
+    monkeypatch.setattr(trainer, "_feature_width", lambda *a, **k: 5)
+    monkeypatch.setattr(trainer, "_head_parameters", lambda *a, **k: ())
+    monkeypatch.setattr(
+        trainer,
+        "prepare_canonical_model_input",
+        lambda raw, *a, **k: raw.mean((1, 2)).unsqueeze(1),
+    )
+    monkeypatch.setattr(
+        trainer,
+        "generate_two_chain_augmix_strong_view",
+        lambda raw, **k: SimpleNamespace(mixed_raw=raw * 0.5),
+    )
+    monkeypatch.setattr(
+        trainer,
+        "_forward_logits_and_features",
+        lambda model, value, spec: (model(value), model(value)),
+    )
+    monkeypatch.setattr(
+        trainer,
+        "_teacher_logits_for_hashes",
+        lambda cache, hashes, **k: torch.zeros(len(hashes), 5),
+    )
+    monkeypatch.setattr(
+        trainer,
+        "_simclr_nt_xent",
+        lambda *a, **k: pytest.fail("supervised AugMix must not call SimCLR"),
+    )
+    monkeypatch.setattr(
+        trainer,
+        "_weighted_logit_anchor_loss",
+        lambda logits, teacher, weights: logits.square().mean(),
+    )
+
+    model = torch.nn.Linear(1, 5)
+    torch.nn.init.zeros_(model.weight)
+    torch.nn.init.zeros_(model.bias)
+    loader = [
+        {
+            "waveform": torch.ones(2, 1000, 12),
+            "label": torch.tensor(
+                [[1, 0, 1, 0, 1], [0, 1, 0, 1, 0]], dtype=torch.float32
+            ),
+            "hash_id": ("batch-a", "batch-b"),
+        }
+    ]
+    summary = trainer._run_augmix_stage1(
+        model,
+        loader,
+        spec=SimpleNamespace(name="efficientnet1dv2"),
+        device=torch.device("cpu"),
+        recipe=recipe,
+        augmix_config=augmix,
+        center="ningbo",
+        base_seed=20260501,
+        resolved={
+            "stage1_steps": 1,
+            "stage1_learning_rate": 0.0,
+            "stage1_weight_decay": 0.0,
+            "stage1_gradient_clip_norm": 1.0,
+        },
+        pos_weight=None,
+        normalization_epsilon=1e-6,
+        amp_enabled=False,
+        amp_dtype=torch.bfloat16,
+    )
+    expected_bce = torch.nn.functional.binary_cross_entropy_with_logits(
+        torch.zeros(2, 5), loader[0]["label"]
+    ).item()
+    assert summary["objective"] == "supervised_augmix_bce"
+    assert summary["projector_used"] is False
+    assert summary["clean_bce_weight"] == summary["strong_bce_weight"] == 0.5
+    assert summary["mean_clean_bce"] == pytest.approx(expected_bce)
+    assert summary["mean_strong_bce"] == pytest.approx(expected_bce)
+    assert summary["mean_total_loss"] == pytest.approx(expected_bce)

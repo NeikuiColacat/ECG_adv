@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: manual_refactor_pn2021_ecgfounder_a1_robust_c0625_r4375_a500_joint_georgia_r7
+  purpose: Screen the clean 0.0625, rotating-corruption 0.4375, two-chain AugMix 0.5 robust one-stage pool with VAE-LHAT.
+entrypoint:
+  name: train_pn2021
+  config: train/PN2021_a1_robust_weight_screen_r7.yaml
+  arguments: [--model, ecgfounder, --method-config, train/methods/a1_rot4_two_chain_robust_c0625_r4375_a500_jsd1p5_vae_lhat.yaml, --center, georgia, --source-checkpoint, /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_ptbxl_ecgfounder_source_v1/training/checkpoints/best.pt]
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/a1_robust_weight_screen_r7_20260902/c0625_r4375_a500/ecgfounder/georgia
+  if_exists: error
+  delegate_output_subdir: training

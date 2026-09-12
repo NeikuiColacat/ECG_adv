@@ -1,0 +1,23 @@
+schema_version: 1
+
+experiment:
+  name: manual_refactor_pn2021_effnet_a1_balanced_joint_georgia_r4
+  purpose: Screen balanced two-chain supervised AugMix plus pure-delta VAE-LHAT on A1 for efficientnet1dv2/georgia.
+
+entrypoint:
+  name: train_pn2021
+  config: train/PN2021_a1_pool_balanced_augmix_lhat_r4.yaml
+  arguments:
+    - --model
+    - efficientnet1dv2
+    - --method-config
+    - train/methods/a1_rot4_two_chain_supervised_balanced_vae_lhat_puredelta.yaml
+    - --center
+    - georgia
+    - --source-checkpoint
+    - /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_ptbxl_effnet_source_v1/training/checkpoints/best.pt
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/a1_pool_balanced_augmix_lhat_r4_20260902/joint_balanced/effnet/georgia
+  if_exists: error
+  delegate_output_subdir: training

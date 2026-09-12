@@ -1,0 +1,23 @@
+schema_version: 1
+
+experiment:
+  name: manual_refactor_pn2021_ecgfounder_a1_pool_joint_complementary_eval_georgia_r3
+  purpose: Evaluate complementary two-chain AugMix-JSD plus pure-delta VAE-LHAT on ref-excluded Georgia.
+
+entrypoint:
+  name: evaluate_pn2021
+  config: eval/PN2021.yaml
+  arguments:
+    - --model
+    - ecgfounder
+    - --train-result
+    - /home/linbinhao/ECG_adv_data/runs/a1_pool_augmix_lhat_r3_20260901/joint_complementary/ecgfounder/georgia/training/train_result.json
+    - --center
+    - georgia
+    - --method-config
+    - train/methods/a1_rot4_augmix_jsd_complementary_strong_vae_lhat_puredelta.yaml
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/a1_pool_augmix_lhat_r3_20260901/joint_complementary/eval/ecgfounder/georgia
+  if_exists: error
+  delegate_output_subdir: evaluation

@@ -20,10 +20,6 @@ target_duration_seconds: 10
 target_num_samples: 1000
 target_interpolation: linear_align_corners
 window_policy: center
-derived_sampling_rate_hz: 500
-derived_num_samples: 5000
-derived_interpolation: linear_align_corners
-derived_batch_size: 64
 waveform_layout: time_channel
 lead_order: [I, II, III, aVR, aVL, aVF, V1, V2, V3, V4, V5, V6]
 

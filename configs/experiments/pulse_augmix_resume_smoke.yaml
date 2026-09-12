@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: pulse_augmix_resume_smoke
+  purpose: Verify actual fresh-process optimizer and RNG recovery against the uninterrupted PULSE smoke.
+entrypoint:
+  name: train_ecg_image
+  config: train/pulse_augmix_resume_smoke.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/pulse_augmix_sft_20260909/pulse_augmix_resume_smoke
+  if_exists: error
+  delegate_output_subdir: training

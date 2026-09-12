@@ -8,6 +8,7 @@ import inspect
 import json
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -17,7 +18,9 @@ import yaml
 
 from data_preprocess import preprocess_primitives as primitives
 from data_preprocess import split_cache
+from data_preprocess import data_runtime, load_cache as cache_owner
 from data_preprocess.load_cache import EXPECTED_CLASS_ORDER, EXPECTED_LEADS
+from data_preprocess.pn2021_metadata import parse_pn2021_header
 from models.contracts import (
     CLASS_ORDER,
     ECGFOUNDER_SPEC,
@@ -60,6 +63,35 @@ def _manual_paths() -> set[Path]:
 
 def _manifest_section(text: str, start: str, end: str) -> str:
     return text.split(start, 1)[1].split(end, 1)[0]
+
+
+@pytest.mark.parametrize("payload", [{}, {"record": "宁波", "nested": {"labels": [1, 0]}}])
+def test_split_and_cache_json_mapping_share_the_same_reader(tmp_path: Path, payload: dict) -> None:
+    assert data_runtime._read_json_mapping is cache_owner._read_json_mapping
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    assert data_runtime._read_json_mapping(path, description="split manifest") == payload
+
+
+@pytest.mark.parametrize("content", [None, '{"record":', "[]"])
+def test_shared_json_mapping_reader_preserves_errors(tmp_path: Path, content: str | None) -> None:
+    path = tmp_path / "manifest.json"
+    if content is not None:
+        path.write_text(content, encoding="utf-8")
+    for description in ("cache manifest", "split manifest"):
+        expected_type = FileNotFoundError if content is None else ValueError
+        with pytest.raises(expected_type) as caught:
+            data_runtime._read_json_mapping(path, description=description)
+        error = caught.value
+        if content is None:
+            assert str(error) == f"{description} not found: {path}"
+            assert error.__cause__ is None and error.__suppress_context__
+        elif content == "[]":
+            assert str(error) == f"{description} must be a JSON mapping: {path}"
+            assert error.__cause__ is None
+        else:
+            assert isinstance(error.__cause__, json.JSONDecodeError)
+            assert str(error) == f"invalid {description} JSON at {path}: {error.__cause__}"
 
 
 def test_data_and_model_constants_share_one_super5_contract() -> None:
@@ -210,6 +242,32 @@ def test_pn2021_preprocess_uses_aligned_corner_linear_interpolation() -> None:
     assert short_details["was_padded"] is True
 
 
+def test_pn2021_header_labels_and_demographics_share_one_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    header_path = tmp_path / "record.hea"
+    header_path.write_text(
+        "record 12 500 5000\n# Age: 63\n# Sex: Female\n"
+        "# Dx: 426783006, 22298006\n",
+        encoding="utf-8",
+    )
+    original_open = Path.open
+    open_count = 0
+
+    def counted_open(path: Path, *args, **kwargs):
+        nonlocal open_count
+        if path == header_path:
+            open_count += 1
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", counted_open)
+    snomed_codes, metadata = parse_pn2021_header(header_path)
+
+    assert open_count == 1
+    assert snomed_codes == [426783006, 22298006]
+    assert metadata == {"age": 63.0, "sex": "F", "hr": None}
+
+
 def test_cache_builders_share_exact_waveform_primitives(tmp_path: Path) -> None:
     shared_names = set(
         "WaveformQualityError _load_config _load_yaml_mapping "
@@ -263,17 +321,34 @@ def test_cache_builders_share_exact_waveform_primitives(tmp_path: Path) -> None:
             primitives._validate_nonfinite_policy(dataset, {})
 
 
-def test_data_yaml_records_the_same_interpolation_and_layout_contract() -> None:
+def test_data_ledger_direct_cli_resolves_project_imports(tmp_path: Path) -> None:
+    completed = subprocess.run(
+        [sys.executable, str(REPO / "data_preprocess" / "data_ledger.py"), "--help"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_data_yaml_persists_only_the_canonical_100hz_contract() -> None:
     pn2021 = yaml.safe_load((CONFIG_ROOT / "data" / "PN2021.yaml").read_text())
     ptbxl = yaml.safe_load((CONFIG_ROOT / "data" / "PTBXL.yaml").read_text())
 
     assert pn2021["target_sampling_rate_hz"] == 100
     assert pn2021["target_num_samples"] == 1000
     assert pn2021["target_interpolation"] == "linear_align_corners"
-    assert pn2021["derived_sampling_rate_hz"] == 500
-    assert pn2021["derived_num_samples"] == 5000
-    assert pn2021["derived_interpolation"] == "linear_align_corners"
-    assert ptbxl["derived_interpolation"] == "linear_align_corners"
+    derived_keys = {
+        "derived_sampling_rate_hz",
+        "derived_num_samples",
+        "derived_interpolation",
+        "derived_batch_size",
+    }
+    assert derived_keys.isdisjoint(pn2021)
+    assert derived_keys.isdisjoint(ptbxl)
+    assert ptbxl["sampling_rate_hz"] == 100
+    assert ptbxl["num_samples"] == 1000
     assert pn2021["lead_order"] == list(EXPECTED_LEADS)
 
 
@@ -291,27 +366,56 @@ def test_current_managed_config_closure_stays_inside_the_keep_manifest() -> None
     assert set(closure) <= manual_paths
 
 
+def test_preprocessing_mapping_closure_matches_its_owner_directory() -> None:
+    entry = CONFIG_ROOT / "data" / "PN2021.yaml"
+    mapping = CONFIG_ROOT / "data" / "PN2021_super5_v7.yaml"
+    assert resolve_yaml_config_closure([entry], config_root=CONFIG_ROOT) == (
+        entry.resolve(), mapping.resolve(),
+    )
+
+
+def test_mapping_closure_is_portable_and_does_not_select_root_decoy(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    data.mkdir()
+    entry = data / "PN2021.yaml"
+    mapping = data / "mapping.yaml"
+    entry.write_text("label_mapping_file: mapping.yaml\n")
+    mapping.write_text("mapping_version: owner_local\n")
+    (tmp_path / "mapping.yaml").write_text("mapping_version: wrong_root\n")
+    assert resolve_yaml_config_closure([entry], config_root=tmp_path) == (entry, mapping)
+
+
+@pytest.mark.parametrize("reference", ["../../outside.yaml", "/outside.yaml", "~/outside.yaml"])
+def test_owner_relative_mapping_cannot_escape_config_bundle(tmp_path: Path, reference: str) -> None:
+    data = tmp_path / "data"
+    data.mkdir()
+    entry = data / "PN2021.yaml"
+    entry.write_text(yaml.safe_dump({"label_mapping_file": reference}))
+    with pytest.raises(ValueError, match="escapes config bundle|must be relative"):
+        resolve_yaml_config_closure([entry], config_root=tmp_path)
+
+
 def test_tracked_data_content_ledger_identity_is_consistent() -> None:
     ledger_path = CONFIG_ROOT / "data" / "data_content_ledger_v1.jsonl"
     raw = ledger_path.read_bytes()
     rows = [json.loads(line) for line in raw.splitlines()]
     header, members = rows[0], rows[1:]
     digest = hashlib.sha256(raw).hexdigest()
-    expected_sha = "d3bf1f18046a695b9c6089f2866cdb854042c3b528434018ecab8f56d36af665"
+    expected_sha = "5991ac2123e9fe8774df7cb4a311fd0f4332554e51a77ea2a29ac2ce05ad5f13"
     expected_roots = {
-        "ptbxl_cache": (8, 6287849438),
-        "pn2021_cache": (8, 19152506828),
-        "pn2021c_cache": (12, 379178277220),
+        "ptbxl_cache": (7, 1056089310),
+        "pn2021_cache": (7, 3213386700),
+        "pn2021c_cache": (11, 63218277092),
         "split_artifacts": (93, 133085401),
     }
     assert raw.endswith(b"\n") and b"\r" not in raw
     assert digest == expected_sha
     assert header == {
         "algorithm": "sha256", "artifact": "ecg_data_content_ledger",
-        "member_count": 121, "roots": list(expected_roots),
-        "schema_version": 1, "total_size_bytes": 404751718887,
+        "member_count": 118, "roots": list(expected_roots),
+        "schema_version": 1, "total_size_bytes": 67620838503,
     }
-    assert len(members) == 121
+    assert len(members) == 118
     assert [(item["root"], item["path"]) for item in members] == sorted(
         (item["root"], item["path"]) for item in members
     )
@@ -516,7 +620,7 @@ def test_active_evidence_quarantines_accepted_subset_lhat_diagnostics() -> None:
     integrity = active["diagnostic_integrity"]
 
     assert registry["schema_version"] == 3
-    assert str(registry["updated"]) == "2026-08-16"
+    assert str(registry["updated"]) == "2026-09-10"
     assert integrity["status"] == "legacy_accepted_subset_quarantined"
     assert integrity["all_candidate_raw_diagnostics"] == {
         "availability": "unavailable",

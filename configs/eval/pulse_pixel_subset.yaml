@@ -1,0 +1,12 @@
+schema_version: 2
+references:
+  paired_config: eval/pulse_pixel_adapter_full.yaml
+source_state: /home/linbinhao/ECG_adv_data/runs/pulse_augmix_sft_20260909/subset512_three_arm_20260910/evaluation
+records_per_center: 512
+runtime:
+  initial_workers: 4
+  max_workers: 4
+  expand_after_seconds: 0
+  idle_seconds: 60
+  poll_seconds: 60
+  max_wall_seconds: 21600

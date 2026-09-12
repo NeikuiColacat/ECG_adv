@@ -26,8 +26,11 @@ from core.lhat import LatentStandardizer, SUPPORTED_NUM_CANDIDATES
 from models.vae import prepare_ecgtwin_encoder_input
 
 
-LATENT_POOL_SCHEMA_VERSION = 2
+LATENT_POOL_SCHEMA_VERSION = 3
 MAIN_NUM_CANDIDATES = 20
+SUPPORTED_CANDIDATE_SOURCE_POLICIES = frozenset(
+    {"clean_only", "clean10_corrupted10_same_neighbors_v1"}
+)
 EXPECTED_RAW_SHAPE = (1000, 12)
 EXPECTED_LATENT_SHAPE = (4, 128)
 EXPECTED_CLASS_COUNT = 5
@@ -136,6 +139,31 @@ def _raw_waveforms(batch: Mapping[str, Any]) -> torch.Tensor:
     value = value.to(dtype=torch.float32)
     if not bool(torch.isfinite(value).all()):
         raise ValueError("raw K500 waveform contains NaN or Inf")
+    return value
+
+
+def _candidate_corrupted_waveforms(
+    batch: Mapping[str, Any], batch_size: int
+) -> torch.Tensor:
+    if "candidate_corrupted_waveform" not in batch:
+        raise KeyError(
+            "mixed LHAT candidate pool requires candidate_corrupted_waveform"
+        )
+    value = _batch_tensor(
+        batch["candidate_corrupted_waveform"],
+        name="candidate_corrupted_waveform",
+    )
+    if value.ndim == 2:
+        value = value.unsqueeze(0)
+    if value.shape != (batch_size, *EXPECTED_RAW_SHAPE):
+        raise ValueError(
+            "candidate_corrupted_waveform must have shape (B,1000,12)"
+        )
+    if not value.is_floating_point():
+        raise TypeError("candidate_corrupted_waveform must be floating-point mV")
+    value = value.to(dtype=torch.float32)
+    if not bool(torch.isfinite(value).all()):
+        raise ValueError("candidate_corrupted_waveform contains NaN or Inf")
     return value
 
 
@@ -324,9 +352,11 @@ class LatentPoolIdentity:
     record_count: int
     latent_shape: tuple[int, ...]
     num_candidates: int
+    candidate_source_policy: str
     ordered_hash_ids_sha256: str
     labels_sha256: str
     latents_sha256: str
+    candidate_corrupted_latents_sha256: str | None
     eligibility_sha256: str
     exact_neighbor_indices_sha256: str
     standardizer_epsilon: float
@@ -340,9 +370,13 @@ class LatentPoolIdentity:
             "record_count": self.record_count,
             "latent_shape": list(self.latent_shape),
             "num_candidates": self.num_candidates,
+            "candidate_source_policy": self.candidate_source_policy,
             "ordered_hash_ids_sha256": self.ordered_hash_ids_sha256,
             "labels_sha256": self.labels_sha256,
             "latents_sha256": self.latents_sha256,
+            "candidate_corrupted_latents_sha256": (
+                self.candidate_corrupted_latents_sha256
+            ),
             "eligibility_sha256": self.eligibility_sha256,
             "exact_neighbor_indices_sha256": self.exact_neighbor_indices_sha256,
             "standardizer_epsilon": self.standardizer_epsilon,
@@ -359,6 +393,7 @@ class LatentAttackBatch:
     anchor_standardized: torch.Tensor
     candidate_pool_indices: torch.Tensor
     candidates_standardized: torch.Tensor
+    candidate_corrupted_mask: torch.Tensor
 
 
 @dataclass(frozen=True)
@@ -371,6 +406,9 @@ class LatentPool:
     labels: torch.Tensor
     latents: torch.Tensor
     standardized_latents: torch.Tensor
+    candidate_source_policy: str
+    candidate_corrupted_latents: torch.Tensor | None
+    candidate_corrupted_standardized_latents: torch.Tensor | None
     candidate_counts: torch.Tensor
     exact_neighbor_indices: torch.Tensor
     standardizer: LatentStandardizer
@@ -384,6 +422,15 @@ class LatentPool:
     )
 
     def __post_init__(self) -> None:
+        if self.candidate_source_policy not in SUPPORTED_CANDIDATE_SOURCE_POLICIES:
+            raise ValueError("latent-pool candidate source policy is unsupported")
+        mixed = self.candidate_source_policy != "clean_only"
+        if mixed != (self.candidate_corrupted_latents is not None) or mixed != (
+            self.candidate_corrupted_standardized_latents is not None
+        ):
+            raise ValueError(
+                "mixed candidate source requires both corrupted latent banks"
+            )
         object.__setattr__(
             self,
             "_hash_to_pool",
@@ -454,6 +501,19 @@ class LatentPool:
             labels=self.labels.to(device=resolved),
             latents=self.latents.to(device=resolved),
             standardized_latents=self.standardized_latents.to(device=resolved),
+            candidate_source_policy=self.candidate_source_policy,
+            candidate_corrupted_latents=(
+                None
+                if self.candidate_corrupted_latents is None
+                else self.candidate_corrupted_latents.to(device=resolved)
+            ),
+            candidate_corrupted_standardized_latents=(
+                None
+                if self.candidate_corrupted_standardized_latents is None
+                else self.candidate_corrupted_standardized_latents.to(
+                    device=resolved
+                )
+            ),
             candidate_counts=self.candidate_counts.to(device=resolved),
             exact_neighbor_indices=self.exact_neighbor_indices.to(device=resolved),
             standardizer=standardizer,
@@ -562,11 +622,35 @@ class LatentPool:
                     local[order[: self.identity.num_candidates]]
                 )
             candidate_indices = torch.stack(selected_rows, dim=0)
+        candidate_latents = self.standardized_latents[candidate_indices]
+        candidate_corrupted_mask = torch.zeros(
+            candidate_indices.shape,
+            device=candidate_indices.device,
+            dtype=torch.bool,
+        )
+        if self.candidate_source_policy == "clean10_corrupted10_same_neighbors_v1":
+            if self.identity.num_candidates != 20:
+                raise RuntimeError("mixed candidate policy is locked to M=20")
+            if self.candidate_corrupted_standardized_latents is None:
+                raise RuntimeError("mixed candidate pool lacks corrupted latents")
+            candidate_corrupted_mask[:, 1::2] = True
+            corrupted = self.candidate_corrupted_standardized_latents[
+                candidate_indices
+            ]
+            mask_shape = candidate_corrupted_mask.shape + (1,) * (
+                candidate_latents.ndim - 2
+            )
+            candidate_latents = torch.where(
+                candidate_corrupted_mask.view(mask_shape),
+                corrupted,
+                candidate_latents,
+            )
         return LatentAttackBatch(
             labels=self.labels.index_select(0, anchors),
             anchor_standardized=self.standardized_latents.index_select(0, anchors),
             candidate_pool_indices=candidate_indices,
-            candidates_standardized=self.standardized_latents[candidate_indices],
+            candidates_standardized=candidate_latents,
+            candidate_corrupted_mask=candidate_corrupted_mask,
         )
 
     def get_attack_batch_by_hashes(
@@ -592,6 +676,8 @@ def _build_identity(
     cache_indices: torch.Tensor,
     labels: torch.Tensor,
     latents: torch.Tensor,
+    candidate_source_policy: str,
+    candidate_corrupted_latents: torch.Tensor | None,
     candidate_counts: torch.Tensor,
     eligible_mask: torch.Tensor,
     exact_neighbor_indices: torch.Tensor,
@@ -601,6 +687,11 @@ def _build_identity(
     ordered_hash_ids_sha256 = _sha256_strings(hash_ids)
     labels_sha256 = _sha256_tensor(labels)
     latents_sha256 = _sha256_tensor(latents)
+    candidate_corrupted_latents_sha256 = (
+        None
+        if candidate_corrupted_latents is None
+        else _sha256_tensor(candidate_corrupted_latents)
+    )
     eligibility_digest = hashlib.sha256()
     for hash_id, count, eligible in zip(
         hash_ids,
@@ -620,11 +711,13 @@ def _build_identity(
         len(hash_ids),
         EXPECTED_LATENT_SHAPE,
         num_candidates,
+        candidate_source_policy,
         ordered_hash_ids_sha256,
         _sha256_tensor(selection_indices),
         _sha256_tensor(cache_indices),
         labels_sha256,
         latents_sha256,
+        candidate_corrupted_latents_sha256,
         eligibility_sha256,
         exact_neighbor_indices_sha256,
         standardizer.epsilon,
@@ -637,9 +730,13 @@ def _build_identity(
         record_count=len(hash_ids),
         latent_shape=EXPECTED_LATENT_SHAPE,
         num_candidates=num_candidates,
+        candidate_source_policy=candidate_source_policy,
         ordered_hash_ids_sha256=ordered_hash_ids_sha256,
         labels_sha256=labels_sha256,
         latents_sha256=latents_sha256,
+        candidate_corrupted_latents_sha256=(
+            candidate_corrupted_latents_sha256
+        ),
         eligibility_sha256=eligibility_sha256,
         exact_neighbor_indices_sha256=exact_neighbor_indices_sha256,
         standardizer_epsilon=standardizer.epsilon,
@@ -656,6 +753,7 @@ def build_latent_pool(
     device: str | torch.device | None = None,
     num_candidates: int = MAIN_NUM_CANDIDATES,
     standardizer_epsilon: float = 1e-6,
+    candidate_source_policy: str = "clean_only",
 ) -> LatentPool:
     """Encode caller-supplied raw K500 records into a strict train-only pool.
 
@@ -682,6 +780,18 @@ def build_latent_pool(
             f"{sorted(SUPPORTED_NUM_CANDIDATES)}"
         )
     resolved_num_candidates = int(num_candidates)
+    resolved_candidate_source_policy = str(candidate_source_policy)
+    if resolved_candidate_source_policy not in SUPPORTED_CANDIDATE_SOURCE_POLICIES:
+        raise ValueError(
+            "candidate_source_policy must be one of "
+            f"{sorted(SUPPORTED_CANDIDATE_SOURCE_POLICIES)}"
+        )
+    if (
+        resolved_candidate_source_policy
+        == "clean10_corrupted10_same_neighbors_v1"
+        and resolved_num_candidates != 20
+    ):
+        raise ValueError("mixed candidate source policy is locked to M=20")
     epsilon = float(standardizer_epsilon)
     if not bool(torch.isfinite(torch.tensor(epsilon))) or epsilon <= 0.0:
         raise ValueError("standardizer_epsilon must be finite and positive")
@@ -693,6 +803,7 @@ def build_latent_pool(
     selection_batches: list[torch.Tensor] = []
     cache_batches: list[torch.Tensor] = []
     latent_batches: list[torch.Tensor] = []
+    candidate_corrupted_latent_batches: list[torch.Tensor] = []
     for raw_batch in batches:
         if not isinstance(raw_batch, Mapping):
             raise TypeError("each latent-pool input batch must be a mapping")
@@ -718,6 +829,14 @@ def build_latent_pool(
         latent_batches.append(
             _encode_mean(encoder, waveform, device=resolved_device)
         )
+        if resolved_candidate_source_policy != "clean_only":
+            candidate_corrupted_latent_batches.append(
+                _encode_mean(
+                    encoder,
+                    _candidate_corrupted_waveforms(raw_batch, batch_size),
+                    device=resolved_device,
+                )
+            )
         label_batches.append(label.to(device="cpu"))
         selection_batches.append(selection.to(device="cpu"))
         cache_batches.append(cache.to(device="cpu"))
@@ -729,6 +848,11 @@ def build_latent_pool(
     selection_indices = torch.cat(selection_batches, dim=0).contiguous()
     cache_indices = torch.cat(cache_batches, dim=0).contiguous()
     latents = torch.cat(latent_batches, dim=0).contiguous()
+    candidate_corrupted_latents = (
+        None
+        if not candidate_corrupted_latent_batches
+        else torch.cat(candidate_corrupted_latent_batches, dim=0).contiguous()
+    )
     if len(set(all_hash_ids)) != len(all_hash_ids):
         raise ValueError("duplicate hash_id values are not allowed in a latent pool")
     if torch.unique(selection_indices).numel() != selection_indices.numel():
@@ -741,6 +865,10 @@ def build_latent_pool(
     selection_indices = selection_indices.index_select(0, order)
     cache_indices = cache_indices.index_select(0, order)
     latents = latents.index_select(0, order)
+    if candidate_corrupted_latents is not None:
+        candidate_corrupted_latents = candidate_corrupted_latents.index_select(
+            0, order
+        ).contiguous()
     hash_ids = tuple(all_hash_ids[int(index)] for index in order.tolist())
 
     candidate_counts = _candidate_counts(labels)
@@ -757,6 +885,11 @@ def build_latent_pool(
         epsilon=epsilon,
     )
     standardized_latents = standardizer.transform(latents).contiguous()
+    candidate_corrupted_standardized_latents = (
+        None
+        if candidate_corrupted_latents is None
+        else standardizer.transform(candidate_corrupted_latents).contiguous()
+    )
     exact_neighbor_indices = _exact_neighbor_table(
         standardized_latents,
         labels,
@@ -769,6 +902,8 @@ def build_latent_pool(
         cache_indices=cache_indices,
         labels=labels,
         latents=latents,
+        candidate_source_policy=resolved_candidate_source_policy,
+        candidate_corrupted_latents=candidate_corrupted_latents,
         candidate_counts=candidate_counts,
         eligible_mask=eligible_mask,
         exact_neighbor_indices=exact_neighbor_indices,
@@ -782,6 +917,11 @@ def build_latent_pool(
         labels=labels,
         latents=latents,
         standardized_latents=standardized_latents,
+        candidate_source_policy=resolved_candidate_source_policy,
+        candidate_corrupted_latents=candidate_corrupted_latents,
+        candidate_corrupted_standardized_latents=(
+            candidate_corrupted_standardized_latents
+        ),
         candidate_counts=candidate_counts,
         exact_neighbor_indices=exact_neighbor_indices,
         standardizer=standardizer,

@@ -15,12 +15,8 @@ from util.pn2021_artifact_contract import (
 )
 
 
-def _load(path: Path) -> dict[str, Any]:
-    return load_json_mapping(path, name="evaluation result")
-
-
 def _member(path: Path, center: str, expected: Mapping[str, Any] | None) -> tuple[dict[str, Any], dict[str, Any]]:
-    result = _load(path)
+    result = load_json_mapping(path, name="evaluation result")
     context = validate_pn2021_evaluation_result(
         result, result_path=path, expected_cohort=expected, prospective_only=True
     )

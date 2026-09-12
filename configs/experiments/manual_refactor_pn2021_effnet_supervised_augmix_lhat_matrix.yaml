@@ -1,0 +1,25 @@
+schema_version: 1
+
+experiment:
+  name: manual_refactor_pn2021_effnet_supervised_augmix_lhat_matrix_r0
+  purpose: Aggregate the matched supervised-AugMix plus contracted VAE-LHAT four-center diagonal evaluation without loading data or models.
+
+entrypoint:
+  name: aggregate_pn2021
+  config: eval/PN2021_matrix_supervised_augmix_lhat_r0.yaml
+  arguments:
+    - --model
+    - efficientnet1dv2
+    - --result
+    - /home/linbinhao/ECG_adv_data/runs/no_contrastive_supervised_augmix_2x2_r0_20260831/lhat/eval/effnet/ningbo/evaluation/evaluation_result.json
+    - --result
+    - /home/linbinhao/ECG_adv_data/runs/no_contrastive_supervised_augmix_2x2_r0_20260831/lhat/eval/effnet/chapman_shaoxing/evaluation/evaluation_result.json
+    - --result
+    - /home/linbinhao/ECG_adv_data/runs/no_contrastive_supervised_augmix_2x2_r0_20260831/lhat/eval/effnet/cpsc_2018/evaluation/evaluation_result.json
+    - --result
+    - /home/linbinhao/ECG_adv_data/runs/no_contrastive_supervised_augmix_2x2_r0_20260831/lhat/eval/effnet/georgia/evaluation/evaluation_result.json
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/no_contrastive_supervised_augmix_2x2_r0_20260831/lhat/matrix/effnet
+  if_exists: error
+  delegate_output_subdir: evaluation

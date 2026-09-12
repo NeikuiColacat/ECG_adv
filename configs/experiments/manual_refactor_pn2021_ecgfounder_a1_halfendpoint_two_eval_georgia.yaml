@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: manual_refactor_pn2021_ecgfounder_a1_halfendpoint_two_eval_georgia_r12
+  purpose: Evaluate two-chain half-endpoint AugMix on ref-excluded Georgia.
+entrypoint:
+  name: evaluate_pn2021
+  config: eval/PN2021.yaml
+  arguments: [--model, ecgfounder, --train-result, /home/linbinhao/ECG_adv_data/runs/a1_half_endpoint_screen_r12_20260902/two/ecgfounder/georgia/training/train_result.json, --center, georgia, --method-config, train/methods/a1_rot4_two_chain_robust_c125_r500_a375_halfendpoint_jsd1p5.yaml]
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/a1_half_endpoint_screen_r12_20260902/two/eval/ecgfounder/georgia
+  if_exists: error
+  delegate_output_subdir: evaluation

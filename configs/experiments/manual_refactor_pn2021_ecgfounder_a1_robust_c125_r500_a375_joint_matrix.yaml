@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: manual_refactor_pn2021_ecgfounder_a1_robust_c125_r500_a375_joint_matrix_r7
+  purpose: Aggregate the frozen selected R7 ECGFounder four-center evaluation matrix.
+entrypoint:
+  name: aggregate_pn2021
+  config: eval/PN2021_matrix_a1_robust_c125_r500_a375_r7.yaml
+  arguments: [--model, ecgfounder, --result, /home/linbinhao/ECG_adv_data/runs/a1_robust_weight_screen_r7_20260902/c125_r500_a375/eval/ecgfounder/ningbo/evaluation/evaluation_result.json, --result, /home/linbinhao/ECG_adv_data/runs/a1_robust_weight_screen_r7_20260902/c125_r500_a375/eval/ecgfounder/chapman_shaoxing/evaluation/evaluation_result.json, --result, /home/linbinhao/ECG_adv_data/runs/a1_robust_weight_screen_r7_20260902/c125_r500_a375/eval/ecgfounder/cpsc_2018/evaluation/evaluation_result.json, --result, /home/linbinhao/ECG_adv_data/runs/a1_robust_weight_screen_r7_20260902/c125_r500_a375/eval/ecgfounder/georgia/evaluation/evaluation_result.json]
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/a1_robust_weight_screen_r7_20260902/c125_r500_a375/matrix/ecgfounder
+  if_exists: error
+  delegate_output_subdir: evaluation

@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: manual_refactor_pn2021_effnet_a1_vae_replace0p05_joint_georgia_r18
+  purpose: Screen fixed-mass clean replacement by VAE-LHAT on the frozen balanced two-chain control.
+entrypoint:
+  name: train_pn2021
+  config: train/PN2021_a1_joint_long_budget_r13.yaml
+  arguments: [--model, efficientnet1dv2, --method-config, train/methods/a1_rot4_two_chain_balanced_jsd1p5_vae_lhat_replace0p05.yaml, --center, georgia, --source-checkpoint, /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_ptbxl_effnet_source_v1/training/checkpoints/best.pt]
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/a1_vae_clean_replacement_r18_20260902/replace0p05/effnet/georgia
+  if_exists: error
+  delegate_output_subdir: training

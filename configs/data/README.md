@@ -8,9 +8,11 @@ Runtime data and generated caches must remain outside Git.
 `PN2021.yaml` points to `PN2021_super5_v7.yaml`, which is the runtime source
 for the PN2021 SNOMED-to-Super5 mapping used during cache generation.
 
-Both dataset caches contain `signals.npy` at 100 Hz and a derived
-`signals_500hz.npy` created from the 100 Hz waveform by fixed, aligned-corner
-linear interpolation for models that require a 5000-point input grid.
+Both dataset caches persist only canonical `signals.npy` at 100 Hz. Components
+that operate on a 5000-point grid use fixed aligned-corner interpolation in
+memory and do not persist a second waveform copy. Existing schema-v3 manifests
+retain build-time 500 Hz derivation metadata for historical identity; the
+active content ledger is the authoritative retained-file inventory.
 
 PN2021 native-rate waveforms are also converted to 100 Hz with aligned-corner
 linear interpolation after the ten-second center window is selected. PTB-XL
@@ -38,18 +40,19 @@ verification checks the exact member inventory and byte sizes; full
 verification additionally streams every member through SHA256 and rejects
 metadata-detectable changes during the scan. This is not filesystem snapshot
 isolation: full sealing requires quiescent, read-only roots and an independent
-second full verification pass. The live seal was generated once and
-independently full-verified a second time over 121 files / 404,751,718,887
-bytes; both passes produced SHA256
-`d3bf1f18046a695b9c6089f2866cdb854042c3b528434018ecab8f56d36af665`.
+second full verification pass. The tracked seal records the current 100
+Hz-only active inventory. The post-retirement seal was full-content verified
+on 2026-08-24 over 118 files / 67,620,838,503 bytes with SHA256
+`5991ac2123e9fe8774df7cb4a311fd0f4332554e51a77ea2a29ac2ce05ad5f13`.
 Managed execution checks exact inventory and sizes before creating the run
 directory, snapshots the same ledger bytes under `configs/` and `manifests/`,
 and launches the delegate from the immutable config snapshot. Dry-run only
 reports the expected SHA and required roots; aggregate-only jobs bypass the
 data gate.
 
-The seal covers derived cache/split bytes, not raw WFDB inputs or preprocessing
-correctness. Runtime quick verification intentionally does not rehash 405 GB.
+The seal covers cache/split bytes, not raw WFDB inputs or preprocessing
+correctness. Runtime quick verification intentionally does not rehash waveform
+arrays.
 
 ## K500 comparison handoff
 

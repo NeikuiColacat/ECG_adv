@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: manual_refactor_pn2021_effnet_a1_mixed_two_georgia_r10
+  purpose: Run true two-chain Dirichlet mixed-view AugMix without VAE-LHAT.
+entrypoint:
+  name: train_pn2021
+  config: train/PN2021_a1_mixed_view_screen_r10.yaml
+  arguments: [--model, efficientnet1dv2, --method-config, train/methods/a1_rot4_two_chain_robust_c125_r500_a375_mixed_jsd1p5.yaml, --center, georgia, --source-checkpoint, /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_ptbxl_effnet_source_v1/training/checkpoints/best.pt]
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/a1_mixed_view_screen_r10_20260902/two/effnet/georgia
+  if_exists: error
+  delegate_output_subdir: training

@@ -1,0 +1,14 @@
+schema_version: 1
+experiment:
+  name: pulse_pixel_subset
+  purpose: Frozen matched 512-per-center Clean plus 20-corruption comparison; reuse
+    verified original baseline and compare frozen waveform arms with newly trained
+    RGB-mixing arms.
+entrypoint:
+  name: evaluate_pulse_subset
+  config: eval/pulse_pixel_subset.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/pulse_pixel_mix_sft_20260910/subset512
+  if_exists: error
+  delegate_output_subdir: evaluation

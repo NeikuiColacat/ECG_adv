@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "experiment": {
+    "name": "founder_jsd_w3_cpsc_2018",
+    "purpose": "Width-only ECGFounder JSD development ablation; clean Beta residual and two independent AugMix views; identical K500, steps and Stage2 LHAT."
+  },
+  "entrypoint": {
+    "name": "train_pn2021",
+    "config": "train/PN2021.yaml",
+    "arguments": [
+      "--model",
+      "ecgfounder",
+      "--method-config",
+      "train/methods/augmix_clean_bce_jsd_width3_lhat.yaml",
+      "--center",
+      "cpsc_2018",
+      "--source-checkpoint",
+      "/home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_ptbxl_ecgfounder_source_v1/training/checkpoints/best.pt"
+    ]
+  },
+  "output": {
+    "run_dir": "/home/linbinhao/ECG_adv_data/runs/founder_jsd_width_20260911/founder_jsd_w3_cpsc_2018",
+    "if_exists": "error",
+    "delegate_output_subdir": "training"
+  }
+}

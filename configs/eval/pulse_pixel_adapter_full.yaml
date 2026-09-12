@@ -1,0 +1,49 @@
+schema_version: 1
+stage: benchmark
+references:
+  evaluation_config: eval/PN2021.yaml
+  operators_config: augmentation/operators.yaml
+  data_load_config: data/data_load.yaml
+  split_config: data/splits.yaml
+  admission_config: experiments/pulse_adapter_admission.yaml
+baseline:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/pulse_pn2021c_native500_gpu_renderer_s5_depth23_full_r0_20260905_v3_4gpu_handoff
+  protocol_sha256: 75da63670290a3ddd5f9d0c3753710758940d633b7472d4564cd32447f0b24ea
+cohort:
+  mode: full_pulse
+training_results:
+  ningbo:
+    w1: /home/linbinhao/ECG_adv_data/runs/pulse_pixel_mix_sft_20260910/pulse_augmix_w1_ningbo/training/train_result.json
+    w2: /home/linbinhao/ECG_adv_data/runs/pulse_pixel_mix_sft_20260910/pulse_augmix_w2_ningbo/training/train_result.json
+  chapman_shaoxing:
+    w1: /home/linbinhao/ECG_adv_data/runs/pulse_pixel_mix_sft_20260910/pulse_augmix_w1_chapman_shaoxing/training/train_result.json
+    w2: /home/linbinhao/ECG_adv_data/runs/pulse_pixel_mix_sft_20260910/pulse_augmix_w2_chapman_shaoxing/training/train_result.json
+  cpsc_2018:
+    w1: /home/linbinhao/ECG_adv_data/runs/pulse_pixel_mix_sft_20260910/pulse_augmix_w1_cpsc_2018/training/train_result.json
+    w2: /home/linbinhao/ECG_adv_data/runs/pulse_pixel_mix_sft_20260910/pulse_augmix_w2_cpsc_2018/training/train_result.json
+  georgia:
+    w1: /home/linbinhao/ECG_adv_data/runs/pulse_pixel_mix_sft_20260910/pulse_augmix_w1_georgia/training/train_result.json
+    w2: /home/linbinhao/ECG_adv_data/runs/pulse_pixel_mix_sft_20260910/pulse_augmix_w2_georgia/training/train_result.json
+admission_training:
+  w1: /home/linbinhao/ECG_adv_data/runs/pulse_pixel_mix_sft_20260910/pulse_pixel_single_smoke/training/train_result.json
+  w2: /home/linbinhao/ECG_adv_data/runs/pulse_pixel_mix_sft_20260910/pulse_pixel_two_smoke/training/train_result.json
+paths:
+  state_root: /home/linbinhao/ECG_adv_data/runs/pulse_pixel_mix_sft_20260910/unused_full_state
+  raw_root: /home/linbinhao/ECG_adv_data/physionet2021/training
+  toolkit_dir: /home/linbinhao/ECG_adv_data/external/ecg-image-kit_v1.0.0
+  temporary_root: /home/linbinhao/ECG_adv_data/tmp/pulse_pixel_mix_sft_20260910
+runtime:
+  batch_size: 2
+  max_new_tokens: 32
+  loader_workers: 2
+  cpu_threads: 2
+  records_per_task: 8
+  development_records_per_center: 128
+  max_workers: 4
+  poll_seconds: 30
+  idle_seconds: 30
+  min_available_ram_gib: 48
+  max_load_fraction: 0.9
+  min_disk_free_gib: 20
+  bootstrap_repeats: 1000
+  bootstrap_seed: 20260909

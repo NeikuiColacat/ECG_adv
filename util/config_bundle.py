@@ -23,13 +23,13 @@ SNAPSHOT_ONLY_CLOSURE_MODES = frozenset(
     {"snapshot_only", "managed_run_snapshots_and_sha256"}
 )
 DECLARED_REFERENCE_KEY_PATHS = (
+    ("entrypoint", "config"),
     ("metadata", "random_seed_file"),
     ("method", "random_seed_file"),
     ("random_seed", "file"),
     ("corruption", "operators_config"),
     ("corruption", "random_seed_file"),
     ("corruption_chains", "operator_config"),
-    ("label_mapping_file",),
 )
 
 
@@ -130,7 +130,9 @@ def _nested_value(payload: dict[str, Any], keys: tuple[str, ...]) -> Any:
     return value
 
 
-def _declared_yaml_references(payload: dict[str, Any]) -> tuple[str, ...]:
+def _declared_yaml_references(
+    payload: dict[str, Any], *, owner_directory: Path
+) -> tuple[str, ...]:
     """Return only schema-owned YAML references, never YAML-looking prose."""
 
     if payload.get("config_closure") in SNAPSHOT_ONLY_CLOSURE_MODES:
@@ -159,6 +161,21 @@ def _declared_yaml_references(payload: dict[str, Any]) -> tuple[str, ...]:
         raw = _nested_value(payload, keys)
         if isinstance(raw, str):
             references.append(raw)
+    # Preprocessing resolves this field beside its owning YAML, not at the
+    # bundle root. Preserve that rule without changing frozen config bytes.
+    mapping_file = payload.get("label_mapping_file")
+    if isinstance(mapping_file, str):
+        references.append(str(owner_directory / Path(mapping_file).expanduser()))
+    # Nested experiment YAMLs need the same finite argument-owned references
+    # as a directly launched experiment. Otherwise a coordinator's copied
+    # bundle omits method selectors used only by its children.
+    arguments = _nested_value(payload, ("entrypoint", "arguments"))
+    if isinstance(arguments, list) and len(arguments) % 2 == 0:
+        for flag, raw in zip(arguments[::2], arguments[1::2], strict=True):
+            if isinstance(flag, str) and flag in {"--method-config", "--source-registry"}:
+                if not isinstance(raw, str):
+                    raise ValueError("entrypoint YAML reference must be a string")
+                references.append(raw)
     return tuple(dict.fromkeys(references))
 
 
@@ -184,7 +201,9 @@ def resolve_yaml_config_closure(
         payload = yaml.safe_load(path.read_text(encoding="utf-8"))
         if not isinstance(payload, dict):
             raise ValueError(f"config closure YAML must be a mapping: {path}")
-        for raw_reference in _declared_yaml_references(payload):
+        for raw_reference in _declared_yaml_references(
+            payload, owner_directory=path.parent.relative_to(root)
+        ):
             referenced = resolve_config_reference(
                 raw_reference,
                 owner_config_path=path,

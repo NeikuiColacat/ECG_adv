@@ -1,0 +1,29 @@
+schema_version: 1
+models:
+  - name: ECG-R1-8B-RL-image-only-BF16
+    results:
+      - /home/linbinhao/ECG_adv_data/runs/ecg_r1_full_elastic_20260907/full_gpu_exact/evaluation/evaluation_result.json
+baseline_run: /home/linbinhao/ECG_adv_data/runs/pulse_pn2021c_native500_gpu_renderer_s5_depth23_full_r0_20260905_v3_4gpu_handoff
+bootstrap:
+  repeats: 1000
+  seed: 20260907
+sensitivity:
+  exclude_prior_pilot_and_smoke: true
+report:
+  renderer: data_analytics_portable_v1
+limitations:
+  - 全量指四中心 K500-ref-excluded 且 drop_all_zero 后与 PULSE 完全相同的39879条，不是PN2021未经筛选的所有原始记录。
+  - 本次为冻结推理开发性测试，先前已观察2000条先导及32条smoke；另给排除这2032条的敏感性分析，不宣称严格盲测或最终论文证据。
+  - 四中心样本数与多标签支持数不同，主表按中心和腐蚀条件等权；中心差异包含病例组成差异，不是校正后的纯中心效应。
+  - ECG-R1为不量化BF16 image-only路径，活动图像和文本权重完整加载，未调用waveform tower/projector；不代表作者联合波形加图片配置。
+  - 统一使用native500物理mV及PULSE风格GPU页面，新模型执行uint8舍入和官方图像处理器；PULSE使用浮点页面的CLIP处理，最终模型tensor并不相同。
+  - R1中途改为CPU uint8数值等价的GPU缩放；168张图片的float32和BF16模型输入逐值相同，672条预留smoke预测逐条一致后才迁入21504条已有预测。保留逐任务来源哈希及旧worker耗时，不将数值验证泛化为所有可能输入的形式证明。
+  - 固定severity5、20个depth2/depth3条件和一次腐蚀种子；只与匹配的PULSE native500 GPU协议比较，不混合旧cached100路径。
+  - PULSE历史最多32新token且FP16 batch2，R1最多64且BF16 batch8；均为greedy，聊天模板和生成预算不同，不据此严格排名模型推理速度。
+  - PULSE历史解析先转大写，R1冻结解析提取大写代码并去除思考段；保留各自预测，审计统一解析器会改变多少标签，不悄悄改写主表。
+  - 解析失败保留为空集合计分；正常与异常冲突不自动修正。当前没有连续类别评分协议，不报告AUROC或AUPRC。
+  - 尚未独立证明PN2021来源与预训练数据完全无重叠，不宣称严格OOD；没有同任务源中心参照，不能用作者不同任务成绩减去本表作为跨中心降幅。
+  - PULSE历史未保存波形字节SHA256；身份、标签、预处理和renderer均已核对，但未独立证明历史WFDB原始字节从未变化。
+  - 95%百分位区间按中心分层并按原始记录配对重采样，不按患者聚类；逐中心区间未作多重比较校正，不覆盖新中心或腐蚀参数选择不确定性。
+  - 弹性调度保留固定任务及batch分组，每个新worker先复放旧batch8接入样本；正常退出累计GPU时间与有效任务吞吐分别记录，异常未完成worker可能使GPU时间记录成为下界。
+  - 使用规范portable HTML renderer；视觉和交互验收范围以生成时的验证receipt为准，未有浏览器证据时只声称结构与数据绑定校验。

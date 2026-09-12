@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: pulse_visual_eval_georgia
+  purpose: Fixed 512-record K500-excluded development comparison of visual clean, single, and three-chain JSD.
+entrypoint:
+  name: evaluate_pulse_subset
+  config: eval/pulse_visual_eval_georgia.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/dual_jsd_20260911/pulse_visual_eval_georgia
+  if_exists: error
+  delegate_output_subdir: evaluation

@@ -20,12 +20,19 @@ from boot_scripts.run_experiment import (
     main,
 )
 from models.contracts import EFFICIENTNET1DV2_SPEC
+from util import config_bundle
 from util.run_record import verify_run_file_index
 
 
 REPO = Path(__file__).resolve().parents[2]
 FIXTURE_CHECKPOINT = b"fixture checkpoint\n"
 FIXTURE_CHECKPOINT_SHA256 = hashlib.sha256(FIXTURE_CHECKPOINT).hexdigest()
+
+
+def test_launcher_and_data_ledger_share_the_yaml_mapping_loader() -> None:
+    assert launcher._yaml_mapping is config_bundle.load_yaml_mapping
+    assert data_ledger._read_yaml_mapping is config_bundle.load_yaml_mapping
+    assert not hasattr(data_ledger, "_load_yaml")
 
 
 def _write_bundle(tmp_path: Path, *, run_dir: Path) -> Path:
@@ -653,7 +660,7 @@ def test_all_tracked_experiment_jobs_resolve_with_explicit_results(
     tmp_path: Path,
 ) -> None:
     experiment_paths = sorted((REPO / "configs" / "experiments").glob("*.yaml"))
-    assert len(experiment_paths) == 112
+    assert len(experiment_paths) == 1036
     signatures: Counter[tuple[str, tuple[str, ...]]] = Counter()
     for experiment_path in experiment_paths:
         plan = load_experiment_plan(
@@ -663,24 +670,39 @@ def test_all_tracked_experiment_jobs_resolve_with_explicit_results(
         signatures[(plan.entrypoint_name, plan.entry_arguments[::2])] += 1
         assert plan.expected_result_relative_path.parts[0] in {"training", "evaluation"}
         assert plan.expected_result_type in {
+            "pulse_subset_result",
+            "pulse_profile_result",
+            "pulse_benchmark_result",
+            "pulse_training_queue_result",
+            "pulse_train_result",
             "supervised_train_result",
             "pn2021_train_result",
             "evaluation_result",
             "pn2021_matrix_result",
+            "ecg_image_evaluation_result",
+            "ecg_image_comparison_result",
         }
     assert signatures == Counter(
         {
+            ("evaluate_pulse_subset", ()): 6,
+            ("profile_pulse_adapters", ("--suite",)): 1,
+            ("profile_pulse_adapters", ("--suite", "--center")): 4,
+            ("evaluate_pulse_adapters", ()): 2,
+            ("coordinate_pulse_training", ()): 5,
+            ("train_ecg_image", ()): 39,
+            ("evaluate_ecg_image", ()): 20,
+            ("report_ecg_image", ()): 3,
             ("train_ptbxl_effnet", ()): 1,
             ("train_ptbxl_ecgfounder", ()): 1,
             ("train_ptbxl_ecgfounder", ("--epochs",)): 1,
             (
                 "train_pn2021",
                 ("--model", "--method-config", "--center", "--source-checkpoint"),
-                ): 42,
+                    ): 460,
             (
                 "evaluate_pn2021",
                 ("--model", "--train-result", "--center", "--method-config"),
-                ): 40,
+                    ): 446,
             (
                 "evaluate_pn2021",
                 ("--model", "--checkpoint", "--center"),
@@ -689,7 +711,7 @@ def test_all_tracked_experiment_jobs_resolve_with_explicit_results(
             (
                 "aggregate_pn2021",
                 ("--model", "--result", "--result", "--result", "--result"),
-                ): 10,
+                ): 30,
         }
     )
 

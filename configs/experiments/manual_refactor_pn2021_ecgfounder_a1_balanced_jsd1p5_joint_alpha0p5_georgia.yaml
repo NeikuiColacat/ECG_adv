@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: manual_refactor_pn2021_ecgfounder_a1_balanced_jsd1p5_joint_alpha0p5_georgia_r6
+  purpose: Test the R6 joint recipe with only VAE-LHAT auxiliary alpha raised from 0.10 to 0.50.
+entrypoint:
+  name: train_pn2021
+  config: train/PN2021_a1_pool_balanced_jsd1p5_augmix_lhat_r6.yaml
+  arguments: [--model, ecgfounder, --method-config, train/methods/a1_rot4_two_chain_balanced_jsd1p5_vae_lhat_alpha0p5.yaml, --center, georgia, --source-checkpoint, /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_ptbxl_ecgfounder_source_v1/training/checkpoints/best.pt]
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/a1_pool_balanced_jsd1p5_augmix_lhat_r6_20260902/joint_alpha0p5/ecgfounder/georgia
+  if_exists: error
+  delegate_output_subdir: training

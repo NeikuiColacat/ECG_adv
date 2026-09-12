@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: manual_refactor_pn2021_effnet_a1_endpointmean_single_eval_georgia_r11
+  purpose: Evaluate the R11 single-chain control on ref-excluded Georgia.
+entrypoint:
+  name: evaluate_pn2021
+  config: eval/PN2021.yaml
+  arguments: [--model, efficientnet1dv2, --train-result, /home/linbinhao/ECG_adv_data/runs/a1_endpoint_mean_screen_r11_20260902/single/effnet/georgia/training/train_result.json, --center, georgia, --method-config, train/methods/a1_rot4_single_chain_robust_c125_r500_a375_endpointmean_jsd1p5.yaml]
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/a1_endpoint_mean_screen_r11_20260902/single/eval/effnet/georgia
+  if_exists: error
+  delegate_output_subdir: evaluation

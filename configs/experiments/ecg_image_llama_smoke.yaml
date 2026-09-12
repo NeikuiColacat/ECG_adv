@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: ecg_image_llama_smoke
+  purpose: Validate native500 image-LLM integration and throughput on separate smoke IDs without scoring labels.
+entrypoint:
+  name: evaluate_ecg_image
+  config: eval/ecg_image_llama_smoke.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/ecg_image_llm_10h_20260907/llama_smoke
+  if_exists: error
+  delegate_output_subdir: evaluation

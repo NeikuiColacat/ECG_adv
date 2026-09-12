@@ -1,0 +1,23 @@
+schema_version: 1
+
+experiment:
+  name: manual_refactor_pn2021_ecgfounder_a1_vae_puredelta_georgia_r1
+  purpose: Screen pure-latent-displacement VAE-LHAT on the locked A1 recipe for ecgfounder/georgia.
+
+entrypoint:
+  name: train_pn2021
+  config: train/PN2021_a1_aux_screen_r0.yaml
+  arguments:
+    - --model
+    - ecgfounder
+    - --method-config
+    - train/methods/a1_rot4_vae_lhat_puredelta.yaml
+    - --center
+    - georgia
+    - --source-checkpoint
+    - /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_ptbxl_ecgfounder_source_v1/training/checkpoints/best.pt
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/a1_repaired_screen_r1_20260901/vae_puredelta/ecgfounder/georgia
+  if_exists: error
+  delegate_output_subdir: training

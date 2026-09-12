@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: manual_refactor_pn2021_effnet_r20rerun_mixedm20_seed2_cpsc_2018
+  purpose: Single-GPU same-seed reproducibility rerun of M20 with ten same-neighbor corruption latents and ten clean latents.
+entrypoint:
+  name: train_pn2021
+  config: train/PN2021_a1_lhat_ablation_r19_seed2.yaml
+  arguments: [--model, efficientnet1dv2, --method-config, train/methods/a1_rot4_two_chain_balanced_jsd1p5_vae_lhat_replace0p2_mixedm20.yaml, --center, cpsc_2018, --source-checkpoint, /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_ptbxl_effnet_source_v1/training/checkpoints/best.pt]
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/a1_lhat_ablation_single_gpu_rerun_r20_20260902/mixedm20/seed2/effnet/cpsc_2018
+  if_exists: error
+  delegate_output_subdir: training

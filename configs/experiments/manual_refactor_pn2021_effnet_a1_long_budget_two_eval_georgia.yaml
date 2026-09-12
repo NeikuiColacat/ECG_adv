@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: manual_refactor_pn2021_effnet_a1_long_budget_two_eval_georgia_r13_retry1
+  purpose: Evaluate the long-budget two-chain endpoint-mean AugMix control without VAE-LHAT on ref-excluded georgia.
+entrypoint:
+  name: evaluate_pn2021
+  config: eval/PN2021.yaml
+  arguments: [--model, efficientnet1dv2, --train-result, /home/linbinhao/ECG_adv_data/runs/a1_joint_long_budget_r13_retry1_20260902/two/effnet/georgia/training/train_result.json, --center, georgia, --method-config, train/methods/a1_rot4_two_chain_robust_c125_r500_a375_endpointmean_jsd1p5.yaml]
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/a1_joint_long_budget_r13_retry1_20260902/two/eval/effnet/georgia
+  if_exists: error
+  delegate_output_subdir: evaluation

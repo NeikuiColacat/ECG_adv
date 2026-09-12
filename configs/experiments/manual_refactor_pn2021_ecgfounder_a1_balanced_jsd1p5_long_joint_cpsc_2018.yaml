@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: manual_refactor_pn2021_ecgfounder_a1_balanced_jsd1p5_long_joint_cpsc_2018_r17
+  purpose: Run long-budget balanced two-chain AugMix plus pure-delta VAE-LHAT on cpsc_2018 without SimCLR.
+entrypoint:
+  name: train_pn2021
+  config: train/PN2021_a1_joint_long_budget_r13.yaml
+  arguments: [--model, ecgfounder, --method-config, train/methods/a1_rot4_two_chain_balanced_jsd1p5_vae_lhat_puredelta.yaml, --center, cpsc_2018, --source-checkpoint, /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_ptbxl_ecgfounder_source_v1/training/checkpoints/best.pt]
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/a1_balanced_jsd1p5_long_r17_20260902/joint/ecgfounder/cpsc_2018
+  if_exists: error
+  delegate_output_subdir: training

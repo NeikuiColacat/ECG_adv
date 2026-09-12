@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: ecg_image_r1_elastic_full_retry1
+  purpose: Full 39879-record native500 R1 BF16 image-only Clean+20 paired evaluation with a durable fixed-task elastic GPU pool, gated by managed smoke validation.
+entrypoint:
+  name: evaluate_ecg_image
+  config: eval/ecg_image_r1_elastic_full_retry1.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/ecg_r1_full_elastic_20260907/full_retry1
+  if_exists: error
+  delegate_output_subdir: evaluation

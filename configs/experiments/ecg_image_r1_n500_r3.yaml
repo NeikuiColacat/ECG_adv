@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: ecg_image_r1_n500_r3
+  purpose: Frozen BF16 image-only paired evaluation; 500 records per center, rank 3 of 4; no accuracy-based tuning.
+entrypoint:
+  name: evaluate_ecg_image
+  config: eval/ecg_image_r1_n500_r3.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/ecg_image_llm_10h_20260907/r1_n500_r3
+  if_exists: error
+  delegate_output_subdir: evaluation

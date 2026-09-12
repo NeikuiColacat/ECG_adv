@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: dual_jsd_workflow
+  purpose: User-authorized visual-only PULSE and objective-only ECGFounder JSD development ablations; matched K500, no heldout selection.
+entrypoint:
+  name: coordinate_pulse_training
+  config: train/dual_jsd_workflow.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/dual_jsd_20260911/dual_jsd_workflow
+  if_exists: error
+  delegate_output_subdir: training

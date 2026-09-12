@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: pulse_adapter_admission
+  purpose: K500-only paired PULSE engineering admission requiring exact author packing and generated token IDs.
+entrypoint:
+  name: evaluate_pulse_adapters
+  config: eval/pulse_adapter_admission.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/pulse_augmix_sft_20260909/paired_admission
+  if_exists: error
+  delegate_output_subdir: evaluation

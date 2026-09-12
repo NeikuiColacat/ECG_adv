@@ -1,0 +1,7 @@
+schema_version: 2
+references:
+  single: experiments/pulse_pixel_single_smoke.yaml
+  two: experiments/pulse_pixel_two_smoke.yaml
+  resume: experiments/pulse_pixel_resume_smoke.yaml
+  training_queue: experiments/pulse_pixel_training_queue.yaml
+  evaluation: experiments/pulse_pixel_subset.yaml

@@ -1,0 +1,54 @@
+schema_version: 3
+run_root: /home/linbinhao/ECG_adv_data/runs/dual_jsd_20260911
+references:
+  pulse_visual_smoke_clean: experiments/pulse_visual_smoke_clean.yaml
+  pulse_visual_smoke_single: experiments/pulse_visual_smoke_single.yaml
+  pulse_visual_smoke_three: experiments/pulse_visual_smoke_three.yaml
+  pulse_visual_smoke_resume: experiments/pulse_visual_smoke_resume.yaml
+  pulse_visual_clean_ningbo: experiments/pulse_visual_clean_ningbo.yaml
+  pulse_visual_single_ningbo: experiments/pulse_visual_single_ningbo.yaml
+  pulse_visual_three_ningbo: experiments/pulse_visual_three_ningbo.yaml
+  pulse_visual_clean_chapman_shaoxing: experiments/pulse_visual_clean_chapman_shaoxing.yaml
+  pulse_visual_single_chapman_shaoxing: experiments/pulse_visual_single_chapman_shaoxing.yaml
+  pulse_visual_three_chapman_shaoxing: experiments/pulse_visual_three_chapman_shaoxing.yaml
+  pulse_visual_clean_cpsc_2018: experiments/pulse_visual_clean_cpsc_2018.yaml
+  pulse_visual_single_cpsc_2018: experiments/pulse_visual_single_cpsc_2018.yaml
+  pulse_visual_three_cpsc_2018: experiments/pulse_visual_three_cpsc_2018.yaml
+  pulse_visual_clean_georgia: experiments/pulse_visual_clean_georgia.yaml
+  pulse_visual_single_georgia: experiments/pulse_visual_single_georgia.yaml
+  pulse_visual_three_georgia: experiments/pulse_visual_three_georgia.yaml
+  pulse_visual_eval_ningbo: experiments/pulse_visual_eval_ningbo.yaml
+  pulse_visual_eval_chapman_shaoxing: experiments/pulse_visual_eval_chapman_shaoxing.yaml
+  pulse_visual_eval_cpsc_2018: experiments/pulse_visual_eval_cpsc_2018.yaml
+  pulse_visual_eval_georgia: experiments/pulse_visual_eval_georgia.yaml
+  founder_objective_simclr_ningbo: experiments/founder_objective_simclr_ningbo.yaml
+  founder_objective_simclr_ningbo_eval: experiments/founder_objective_simclr_ningbo_eval.yaml
+  founder_objective_clean_bce_ningbo: experiments/founder_objective_clean_bce_ningbo.yaml
+  founder_objective_clean_bce_ningbo_eval: experiments/founder_objective_clean_bce_ningbo_eval.yaml
+  founder_objective_jsd_ningbo: experiments/founder_objective_jsd_ningbo.yaml
+  founder_objective_jsd_ningbo_eval: experiments/founder_objective_jsd_ningbo_eval.yaml
+  founder_objective_simclr_chapman_shaoxing: experiments/founder_objective_simclr_chapman_shaoxing.yaml
+  founder_objective_simclr_chapman_shaoxing_eval: experiments/founder_objective_simclr_chapman_shaoxing_eval.yaml
+  founder_objective_clean_bce_chapman_shaoxing: experiments/founder_objective_clean_bce_chapman_shaoxing.yaml
+  founder_objective_clean_bce_chapman_shaoxing_eval: experiments/founder_objective_clean_bce_chapman_shaoxing_eval.yaml
+  founder_objective_jsd_chapman_shaoxing: experiments/founder_objective_jsd_chapman_shaoxing.yaml
+  founder_objective_jsd_chapman_shaoxing_eval: experiments/founder_objective_jsd_chapman_shaoxing_eval.yaml
+  founder_objective_simclr_cpsc_2018: experiments/founder_objective_simclr_cpsc_2018.yaml
+  founder_objective_simclr_cpsc_2018_eval: experiments/founder_objective_simclr_cpsc_2018_eval.yaml
+  founder_objective_clean_bce_cpsc_2018: experiments/founder_objective_clean_bce_cpsc_2018.yaml
+  founder_objective_clean_bce_cpsc_2018_eval: experiments/founder_objective_clean_bce_cpsc_2018_eval.yaml
+  founder_objective_jsd_cpsc_2018: experiments/founder_objective_jsd_cpsc_2018.yaml
+  founder_objective_jsd_cpsc_2018_eval: experiments/founder_objective_jsd_cpsc_2018_eval.yaml
+  founder_objective_simclr_georgia: experiments/founder_objective_simclr_georgia.yaml
+  founder_objective_simclr_georgia_eval: experiments/founder_objective_simclr_georgia_eval.yaml
+  founder_objective_clean_bce_georgia: experiments/founder_objective_clean_bce_georgia.yaml
+  founder_objective_clean_bce_georgia_eval: experiments/founder_objective_clean_bce_georgia_eval.yaml
+  founder_objective_jsd_georgia: experiments/founder_objective_jsd_georgia.yaml
+  founder_objective_jsd_georgia_eval: experiments/founder_objective_jsd_georgia_eval.yaml
+runtime:
+  max_workers: 4
+  poll_seconds: 30
+  idle_seconds: 30
+  min_available_ram_gib: 64
+  max_load_fraction: 0.8
+  min_disk_free_gib: 40

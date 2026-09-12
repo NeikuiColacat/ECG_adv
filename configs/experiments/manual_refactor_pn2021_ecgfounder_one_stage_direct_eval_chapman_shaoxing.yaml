@@ -1,0 +1,23 @@
+schema_version: 1
+
+experiment:
+  name: manual_refactor_pn2021_ecgfounder_one_stage_direct_eval_chapman_shaoxing_r0
+  purpose: Evaluate the direct one-stage arm on ref-excluded chapman_shaoxing Clean and PN2021-C.
+
+entrypoint:
+  name: evaluate_pn2021
+  config: eval/PN2021.yaml
+  arguments:
+    - --model
+    - ecgfounder
+    - --train-result
+    - /home/linbinhao/ECG_adv_data/runs/one_stage_augmix_lhat_r0_20260901/direct/ecgfounder/chapman_shaoxing/training/train_result.json
+    - --center
+    - chapman_shaoxing
+    - --method-config
+    - train/methods/a0_clean_v1.yaml
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/one_stage_augmix_lhat_r0_20260901/direct/eval/ecgfounder/chapman_shaoxing
+  if_exists: error
+  delegate_output_subdir: evaluation

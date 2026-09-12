@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: pulse_augmix_w2_georgia
+  purpose: Matched native500 PULSE single versus two chain AugMix SFT, without contrastive learning, VAE or JSD; development evidence only.
+entrypoint:
+  name: train_ecg_image
+  config: train/pulse_augmix_w2_georgia.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/pulse_augmix_sft_20260909/pulse_augmix_w2_georgia
+  if_exists: error
+  delegate_output_subdir: training

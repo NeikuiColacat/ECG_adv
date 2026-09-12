@@ -44,14 +44,32 @@ class RecipeKind(str, Enum):
     RANDOM_DEPTH23 = "random_depth23"
     SUPERVISED_ROTATING_DEPTH23 = "supervised_rotating_depth23"
     SUPERVISED_ROTATING_DEPTH23_LHAT = "supervised_rotating_depth23_lhat"
+    SUPERVISED_ROTATING_DEPTH23_MILD_AUX = (
+        "supervised_rotating_depth23_mild_aux"
+    )
+    SUPERVISED_ROTATING_DEPTH23_HARDGAIN_AUX = (
+        "supervised_rotating_depth23_hardgain_aux"
+    )
     FIXED20 = "fixed20"
     TWO_STAGE_AUGMIX_LHAT = "two_stage_augmix_lhat"
+    ONE_STAGE_SUPERVISED_AUGMIX = "one_stage_supervised_augmix"
+    ONE_STAGE_VAE_LHAT = "one_stage_vae_lhat"
+    ONE_STAGE_AUGMIX_LHAT = "one_stage_augmix_lhat"
 
 
 class AuxiliaryVariant(str, Enum):
     NOT_APPLICABLE = "not_applicable"
     CONTRACTED_LHAT = "contracted_lhat"
+    RAW_LHAT = "raw_lhat"
     MATCHED_NO_VAE = "matched_no_vae"
+
+
+class Stage1Objective(str, Enum):
+    SIMCLR = "simclr"
+    SUPERVISED_AUGMIX = "supervised_augmix"
+    CLEAN_BCE = "clean_bce"
+    CLEAN_BCE_JSD = "clean_bce_jsd"
+    NOT_APPLICABLE = "not_applicable"
 
 
 _RESOURCE_SCHEMAS: Mapping[str, tuple[str, frozenset[str]]] = {
@@ -84,6 +102,22 @@ class _RecipeDefinition:
     resource_names: frozenset[str]
     comparison_rng_identity: str
     output_names: tuple[str, ...]
+    stage1_objective: Stage1Objective = Stage1Objective.NOT_APPLICABLE
+    stage1_view: str = "clean_vs_one_twochain_augmix_strong_view"
+    lhat_contract_version: str = "nondecreasing_bce_grid_v2"
+    augmix_jsd_weight: float = 0.0
+    one_stage_lhat_alpha_max: float = 0.25
+    lhat_auxiliary_alpha_max: float = 0.1
+    augmix_auxiliary_weight: float = 0.125
+    augmix_supervised_view_policy: str = "mixed_only"
+    rotating_base_scale: float = 1.0
+    rotating_clean_weight: float | None = None
+    rotating_corrupted_total_weight: float | None = None
+    lhat_training_selection: tuple[str, float] | None = None
+    lhat_auxiliary_schedule: str = "constant_after_warmup"
+    lhat_auxiliary_warmup_epochs: int = 5
+    lhat_loss_integration: str = "additive"
+    lhat_candidate_source_policy: str = "clean_only"
 
 
 _OBJECTIVE_NAME_BY_VIEW = MappingProxyType(
@@ -91,6 +125,9 @@ _OBJECTIVE_NAME_BY_VIEW = MappingProxyType(
         "clean_view": "clean_bce",
         "lhat_view": "lhat_direct_bce",
         "corrupted_view": "corrupted_bce",
+        "augmix_view": "augmix_bce",
+        "augmix_chain1_view": "augmix_chain1_context",
+        "augmix_chain2_view": "augmix_chain2_context",
     }
 )
 
@@ -99,17 +136,62 @@ def _objective_terms(output_names: tuple[str, ...]) -> tuple[tuple[str, str], ..
     return tuple((_OBJECTIVE_NAME_BY_VIEW[view], view) for view in output_names)
 
 
-def _objective_descriptions(output_names: tuple[str, ...]) -> list[dict[str, Any]]:
-    return [
-        {
-            "name": name,
-            "kind": "bce",
-            "views": [view],
-            "weight": 1.0,
-            "mask_policy": "valid_intersection",
-        }
-        for name, view in _objective_terms(output_names)
-    ]
+def _objective_descriptions(
+    output_names: tuple[str, ...], *, augmix_jsd_weight: float = 0.0,
+    augmix_supervised_view_policy: str = "mixed_only",
+) -> list[dict[str, Any]]:
+    descriptions: list[dict[str, Any]] = []
+    for name, view in _objective_terms(output_names):
+        if name == "augmix_bce" and (
+            augmix_jsd_weight > 0.0
+            or augmix_supervised_view_policy != "mixed_only"
+        ):
+            chain_views = [
+                value for value in ("augmix_chain1_view", "augmix_chain2_view")
+                if value in output_names
+            ]
+            descriptions.append(
+                {
+                    "name": name,
+                    "kind": (
+                        "bce_plus_multilabel_bernoulli_jsd"
+                        if augmix_jsd_weight > 0.0
+                        else "multiview_bce"
+                    ),
+                    "views": [
+                        *(["clean_view"] if augmix_jsd_weight > 0.0 else []),
+                        view,
+                        *chain_views,
+                    ],
+                    "weight": 1.0,
+                    "mask_policy": "valid_intersection",
+                    **(
+                        {"bernoulli_jsd_weight": float(augmix_jsd_weight)}
+                        if augmix_jsd_weight > 0.0
+                        else {}
+                    ),
+                    **(
+                        {
+                            "supervised_view_policy": (
+                                augmix_supervised_view_policy
+                            )
+                        }
+                        if augmix_supervised_view_policy != "mixed_only"
+                        else {}
+                    ),
+                }
+            )
+        else:
+            descriptions.append(
+                {
+                    "name": name,
+                    "kind": "context_only" if name.endswith("_context") else "bce",
+                    "views": [view],
+                    "weight": 0.0 if name.endswith("_context") else 1.0,
+                    "mask_policy": "valid_intersection",
+                }
+            )
+    return descriptions
 
 
 def _requirement_names(output_names: tuple[str, ...]) -> tuple[str, ...]:
@@ -135,6 +217,31 @@ _NO_VAE_RESOURCES = frozenset(
 )
 _VAE_ONLY_RESOURCES = frozenset(
     {"operator_profile", "vae", "lhat_config", "corruption_rng", "lhat_rng"}
+)
+_ONE_STAGE_AUGMIX_RESOURCES = frozenset(
+    {"augmix_config", "corruption_rng"}
+)
+_ONE_STAGE_VAE_RESOURCES = frozenset(
+    {"vae", "lhat_config", "lhat_rng"}
+)
+_ONE_STAGE_JOINT_RESOURCES = frozenset(
+    {"augmix_config", "vae", "lhat_config", "corruption_rng", "lhat_rng"}
+)
+_ROT4_AUGMIX_RESOURCES = frozenset(
+    {"operator_profile", "augmix_config", "corruption_rng"}
+)
+_ROT4_LHAT_MILD_RESOURCES = frozenset(
+    {"operator_profile", "vae", "lhat_config", "corruption_rng", "lhat_rng"}
+)
+_ROT4_JOINT_MILD_RESOURCES = frozenset(
+    {
+        "operator_profile",
+        "augmix_config",
+        "vae",
+        "lhat_config",
+        "corruption_rng",
+        "lhat_rng",
+    }
 )
 _DEFINITIONS: Mapping[str, _RecipeDefinition] = MappingProxyType(
     {
@@ -182,6 +289,23 @@ _DEFINITIONS: Mapping[str, _RecipeDefinition] = MappingProxyType(
             _MAINLINE_RESOURCES,
             "augmix_simclr_lhat",
             ("clean_view", "lhat_view", "corrupted_view"),
+            stage1_objective=Stage1Objective.SIMCLR,
+        ),
+        "augmix_clean_bce_lhat": _RecipeDefinition(
+            RecipeKind.TWO_STAGE_AUGMIX_LHAT,
+            AuxiliaryVariant.CONTRACTED_LHAT,
+            "augmix_clean_bce_lhat", "prospective_stage1_objective_ablation",
+            _MAINLINE_RESOURCES, "augmix_simclr_lhat",
+            ("clean_view", "lhat_view", "corrupted_view"),
+            stage1_objective=Stage1Objective.CLEAN_BCE,
+        ),
+        "augmix_clean_bce_jsd_lhat": _RecipeDefinition(
+            RecipeKind.TWO_STAGE_AUGMIX_LHAT,
+            AuxiliaryVariant.CONTRACTED_LHAT,
+            "augmix_clean_bce_jsd_lhat", "prospective_stage1_objective_ablation",
+            _MAINLINE_RESOURCES, "augmix_simclr_lhat",
+            ("clean_view", "lhat_view", "corrupted_view"),
+            stage1_objective=Stage1Objective.CLEAN_BCE_JSD,
         ),
         "augmix_simclr_matched_no_vae": _RecipeDefinition(
             RecipeKind.TWO_STAGE_AUGMIX_LHAT,
@@ -191,6 +315,38 @@ _DEFINITIONS: Mapping[str, _RecipeDefinition] = MappingProxyType(
             _NO_VAE_RESOURCES,
             "augmix_simclr_lhat",
             ("clean_view", "corrupted_view"),
+            stage1_objective=Stage1Objective.SIMCLR,
+        ),
+        "augmix_supervised_lhat": _RecipeDefinition(
+            RecipeKind.TWO_STAGE_AUGMIX_LHAT,
+            AuxiliaryVariant.CONTRACTED_LHAT,
+            "augmix_supervised_lhat",
+            "prospective_matched_ablation",
+            _MAINLINE_RESOURCES,
+            "augmix_simclr_lhat",
+            ("clean_view", "lhat_view", "corrupted_view"),
+            stage1_objective=Stage1Objective.SUPERVISED_AUGMIX,
+        ),
+        "augmix_supervised_matched_no_vae": _RecipeDefinition(
+            RecipeKind.TWO_STAGE_AUGMIX_LHAT,
+            AuxiliaryVariant.MATCHED_NO_VAE,
+            "augmix_supervised_matched_no_vae",
+            "prospective_matched_ablation",
+            _NO_VAE_RESOURCES,
+            "augmix_simclr_lhat",
+            ("clean_view", "corrupted_view"),
+            stage1_objective=Stage1Objective.SUPERVISED_AUGMIX,
+        ),
+        "augmix_supervised_single_chain_matched_no_vae": _RecipeDefinition(
+            RecipeKind.TWO_STAGE_AUGMIX_LHAT,
+            AuxiliaryVariant.MATCHED_NO_VAE,
+            "augmix_supervised_single_chain_matched_no_vae",
+            "prospective_matched_ablation",
+            _NO_VAE_RESOURCES,
+            "augmix_simclr_lhat",
+            ("clean_view", "corrupted_view"),
+            stage1_objective=Stage1Objective.SUPERVISED_AUGMIX,
+            stage1_view="clean_vs_one_single_chain_corruption_view",
         ),
         "vae_lhat_only": _RecipeDefinition(
             RecipeKind.SUPERVISED_ROTATING_DEPTH23_LHAT,
@@ -201,13 +357,1097 @@ _DEFINITIONS: Mapping[str, _RecipeDefinition] = MappingProxyType(
             "augmix_simclr_lhat",
             ("clean_view", "lhat_view", "corrupted_view"),
         ),
+        "a1_rot4_augmix_mild": _RecipeDefinition(
+            RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+            AuxiliaryVariant.NOT_APPLICABLE,
+            "a1_rot4_augmix_mild",
+            "prospective_mechanism_screen",
+            _ROT4_AUGMIX_RESOURCES,
+            "augmix_simclr_lhat",
+            ("clean_view", "corrupted_view", "augmix_view"),
+        ),
+        "a1_rot4_single_chain_mild": _RecipeDefinition(
+            RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+            AuxiliaryVariant.NOT_APPLICABLE,
+            "a1_rot4_single_chain_mild",
+            "prospective_matched_chain_ablation",
+            _ROT4_AUGMIX_RESOURCES,
+            "augmix_simclr_lhat",
+            ("clean_view", "corrupted_view", "augmix_view"),
+            stage1_view="clean_vs_one_single_chain_corruption_view",
+        ),
+        "a1_rot4_vae_lhat_mild": _RecipeDefinition(
+            RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+            AuxiliaryVariant.CONTRACTED_LHAT,
+            "a1_rot4_vae_lhat_mild",
+            "prospective_mechanism_screen",
+            _ROT4_LHAT_MILD_RESOURCES,
+            "augmix_simclr_lhat",
+            ("clean_view", "corrupted_view", "lhat_view"),
+        ),
+        "a1_rot4_augmix_vae_lhat_mild": _RecipeDefinition(
+            RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+            AuxiliaryVariant.CONTRACTED_LHAT,
+            "a1_rot4_augmix_vae_lhat_mild",
+            "prospective_mechanism_screen",
+            _ROT4_JOINT_MILD_RESOURCES,
+            "augmix_simclr_lhat",
+            ("clean_view", "corrupted_view", "augmix_view", "lhat_view"),
+        ),
+        "a1_rot4_augmix_jsd": _RecipeDefinition(
+            RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+            AuxiliaryVariant.NOT_APPLICABLE,
+            "a1_rot4_augmix_jsd",
+            "prospective_repaired_mechanism_screen",
+            _ROT4_AUGMIX_RESOURCES,
+            "augmix_simclr_lhat",
+            (
+                "clean_view",
+                "corrupted_view",
+                "augmix_view",
+                "augmix_chain1_view",
+                "augmix_chain2_view",
+            ),
+            stage1_view="clean_vs_two_chain_augmix_bernoulli_jsd",
+            augmix_jsd_weight=12.0,
+        ),
+        "a1_rot4_single_chain_jsd": _RecipeDefinition(
+            RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+            AuxiliaryVariant.NOT_APPLICABLE,
+            "a1_rot4_single_chain_jsd",
+            "prospective_repaired_chain_ablation",
+            _ROT4_AUGMIX_RESOURCES,
+            "augmix_simclr_lhat",
+            ("clean_view", "corrupted_view", "augmix_view"),
+            stage1_view="clean_vs_one_single_chain_bernoulli_jsd",
+            augmix_jsd_weight=12.0,
+        ),
+        "a1_rot4_vae_lhat_puredelta": _RecipeDefinition(
+            RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+            AuxiliaryVariant.CONTRACTED_LHAT,
+            "a1_rot4_vae_lhat_puredelta",
+            "prospective_repaired_mechanism_screen",
+            _ROT4_LHAT_MILD_RESOURCES,
+            "augmix_simclr_lhat",
+            ("clean_view", "corrupted_view", "lhat_view"),
+            lhat_contract_version="nondecreasing_pure_delta_grid_v3",
+        ),
+        "a1_rot4_augmix_jsd_vae_lhat_puredelta": _RecipeDefinition(
+            RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+            AuxiliaryVariant.CONTRACTED_LHAT,
+            "a1_rot4_augmix_jsd_vae_lhat_puredelta",
+            "prospective_repaired_mechanism_screen",
+            _ROT4_JOINT_MILD_RESOURCES,
+            "augmix_simclr_lhat",
+            (
+                "clean_view",
+                "corrupted_view",
+                "augmix_view",
+                "augmix_chain1_view",
+                "augmix_chain2_view",
+                "lhat_view",
+            ),
+            stage1_view="clean_vs_two_chain_augmix_bernoulli_jsd",
+            lhat_contract_version="nondecreasing_pure_delta_grid_v3",
+            augmix_jsd_weight=12.0,
+        ),
+        "a1_rot4_single_chain_jsd_strong": _RecipeDefinition(
+            RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+            AuxiliaryVariant.NOT_APPLICABLE,
+            "a1_rot4_single_chain_jsd_strong",
+            "prospective_a1_pool_strength_screen",
+            _ROT4_AUGMIX_RESOURCES,
+            "a1_pool_augmix_lhat_r3",
+            ("clean_view", "corrupted_view", "augmix_view"),
+            stage1_view="clean_vs_one_single_chain_bernoulli_jsd",
+            augmix_jsd_weight=12.0,
+            augmix_auxiliary_weight=0.5,
+        ),
+        "a1_rot4_augmix_jsd_endpoint_mean_strong": _RecipeDefinition(
+            RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+            AuxiliaryVariant.NOT_APPLICABLE,
+            "a1_rot4_augmix_jsd_endpoint_mean_strong",
+            "prospective_a1_pool_strength_screen",
+            _ROT4_AUGMIX_RESOURCES,
+            "a1_pool_augmix_lhat_r3",
+            (
+                "clean_view",
+                "corrupted_view",
+                "augmix_view",
+                "augmix_chain1_view",
+                "augmix_chain2_view",
+            ),
+            stage1_view="clean_vs_two_chain_augmix_bernoulli_jsd",
+            augmix_jsd_weight=12.0,
+            augmix_auxiliary_weight=0.5,
+            augmix_supervised_view_policy="mixed_plus_chains_mean",
+        ),
+        "a1_rot4_augmix_jsd_endpoint_mean_strong_vae_lhat_puredelta": (
+            _RecipeDefinition(
+                RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+                AuxiliaryVariant.CONTRACTED_LHAT,
+                "a1_rot4_augmix_jsd_endpoint_mean_strong_vae_lhat_puredelta",
+                "prospective_a1_pool_strength_screen",
+                _ROT4_JOINT_MILD_RESOURCES,
+                "a1_pool_augmix_lhat_r3",
+                (
+                    "clean_view",
+                    "corrupted_view",
+                    "augmix_view",
+                    "augmix_chain1_view",
+                    "augmix_chain2_view",
+                    "lhat_view",
+                ),
+                stage1_view="clean_vs_two_chain_augmix_bernoulli_jsd",
+                lhat_contract_version="nondecreasing_pure_delta_grid_v3",
+                augmix_jsd_weight=12.0,
+                augmix_auxiliary_weight=0.5,
+                augmix_supervised_view_policy="mixed_plus_chains_mean",
+            )
+        ),
+        "a1_rot4_augmix_jsd_hardview_strong": _RecipeDefinition(
+            RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+            AuxiliaryVariant.NOT_APPLICABLE,
+            "a1_rot4_augmix_jsd_hardview_strong",
+            "prospective_a1_pool_hardview_screen",
+            _ROT4_AUGMIX_RESOURCES,
+            "a1_pool_augmix_lhat_r3",
+            (
+                "clean_view",
+                "corrupted_view",
+                "augmix_view",
+                "augmix_chain1_view",
+                "augmix_chain2_view",
+            ),
+            stage1_view="clean_vs_two_chain_augmix_bernoulli_jsd",
+            augmix_jsd_weight=12.0,
+            augmix_auxiliary_weight=0.5,
+            augmix_supervised_view_policy="per_sample_max_mixed_and_chains",
+        ),
+        "a1_rot4_augmix_jsd_hardview_strong_vae_lhat_puredelta": (
+            _RecipeDefinition(
+                RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+                AuxiliaryVariant.CONTRACTED_LHAT,
+                "a1_rot4_augmix_jsd_hardview_strong_vae_lhat_puredelta",
+                "prospective_a1_pool_hardview_screen",
+                _ROT4_JOINT_MILD_RESOURCES,
+                "a1_pool_augmix_lhat_r3",
+                (
+                    "clean_view",
+                    "corrupted_view",
+                    "augmix_view",
+                    "augmix_chain1_view",
+                    "augmix_chain2_view",
+                    "lhat_view",
+                ),
+                stage1_view="clean_vs_two_chain_augmix_bernoulli_jsd",
+                lhat_contract_version="nondecreasing_pure_delta_grid_v3",
+                augmix_jsd_weight=12.0,
+                augmix_auxiliary_weight=0.5,
+                augmix_supervised_view_policy=(
+                    "per_sample_max_mixed_and_chains"
+                ),
+            )
+        ),
+        "a1_rot4_augmix_jsd_complementary_strong": _RecipeDefinition(
+            RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+            AuxiliaryVariant.NOT_APPLICABLE,
+            "a1_rot4_augmix_jsd_complementary_strong",
+            "prospective_a1_pool_complementary_screen",
+            _ROT4_AUGMIX_RESOURCES,
+            "a1_pool_augmix_lhat_r3",
+            (
+                "clean_view",
+                "corrupted_view",
+                "augmix_view",
+                "augmix_chain1_view",
+                "augmix_chain2_view",
+            ),
+            stage1_view="clean_vs_two_chain_augmix_bernoulli_jsd",
+            augmix_jsd_weight=12.0,
+            augmix_auxiliary_weight=0.5,
+        ),
+        "a1_rot4_augmix_jsd_complementary_strong_vae_lhat_puredelta": (
+            _RecipeDefinition(
+                RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+                AuxiliaryVariant.CONTRACTED_LHAT,
+                "a1_rot4_augmix_jsd_complementary_strong_vae_lhat_puredelta",
+                "prospective_a1_pool_complementary_screen",
+                _ROT4_JOINT_MILD_RESOURCES,
+                "a1_pool_augmix_lhat_r3",
+                (
+                    "clean_view",
+                    "corrupted_view",
+                    "augmix_view",
+                    "augmix_chain1_view",
+                    "augmix_chain2_view",
+                    "lhat_view",
+                ),
+                stage1_view="clean_vs_two_chain_augmix_bernoulli_jsd",
+                lhat_contract_version="nondecreasing_pure_delta_grid_v3",
+                augmix_jsd_weight=12.0,
+                augmix_auxiliary_weight=0.5,
+            )
+        ),
+        "a1_rot4_single_chain_supervised_balanced": _RecipeDefinition(
+            RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+            AuxiliaryVariant.NOT_APPLICABLE,
+            "a1_rot4_single_chain_supervised_balanced",
+            "prospective_a1_pool_balanced_screen",
+            _ROT4_AUGMIX_RESOURCES,
+            "a1_pool_balanced_augmix_lhat_r4",
+            ("clean_view", "corrupted_view", "augmix_view"),
+            stage1_view="clean_vs_one_single_chain_corruption_view",
+            augmix_auxiliary_weight=0.5,
+            rotating_base_scale=0.5,
+        ),
+        "a1_rot4_two_chain_supervised_balanced": _RecipeDefinition(
+            RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+            AuxiliaryVariant.NOT_APPLICABLE,
+            "a1_rot4_two_chain_supervised_balanced",
+            "prospective_a1_pool_balanced_screen",
+            _ROT4_AUGMIX_RESOURCES,
+            "a1_pool_balanced_augmix_lhat_r4",
+            (
+                "clean_view",
+                "corrupted_view",
+                "augmix_view",
+                "augmix_chain1_view",
+                "augmix_chain2_view",
+            ),
+            stage1_view="clean_vs_two_chain_augmix_supervised_chains_mean",
+            augmix_auxiliary_weight=0.5,
+            augmix_supervised_view_policy="chains_mean",
+            rotating_base_scale=0.5,
+        ),
+        "a1_rot4_two_chain_supervised_balanced_vae_lhat_puredelta": (
+            _RecipeDefinition(
+                RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+                AuxiliaryVariant.CONTRACTED_LHAT,
+                "a1_rot4_two_chain_supervised_balanced_vae_lhat_puredelta",
+                "prospective_a1_pool_balanced_screen",
+                _ROT4_JOINT_MILD_RESOURCES,
+                "a1_pool_balanced_augmix_lhat_r4",
+                (
+                    "clean_view",
+                    "corrupted_view",
+                    "augmix_view",
+                    "augmix_chain1_view",
+                    "augmix_chain2_view",
+                    "lhat_view",
+                ),
+                stage1_view="clean_vs_two_chain_augmix_supervised_chains_mean",
+                lhat_contract_version="nondecreasing_pure_delta_grid_v3",
+                augmix_auxiliary_weight=0.5,
+                augmix_supervised_view_policy="chains_mean",
+                rotating_base_scale=0.5,
+            )
+        ),
+        "a1_rot4_single_chain_balanced_jsd3": _RecipeDefinition(
+            RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+            AuxiliaryVariant.NOT_APPLICABLE,
+            "a1_rot4_single_chain_balanced_jsd3",
+            "prospective_a1_pool_balanced_jsd3_screen",
+            _ROT4_AUGMIX_RESOURCES,
+            "a1_pool_balanced_jsd3_augmix_lhat_r5",
+            ("clean_view", "corrupted_view", "augmix_view"),
+            stage1_view="clean_vs_one_single_chain_bernoulli_jsd",
+            augmix_jsd_weight=3.0,
+            augmix_auxiliary_weight=0.5,
+            rotating_base_scale=0.5,
+        ),
+        "a1_rot4_two_chain_balanced_jsd3": _RecipeDefinition(
+            RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+            AuxiliaryVariant.NOT_APPLICABLE,
+            "a1_rot4_two_chain_balanced_jsd3",
+            "prospective_a1_pool_balanced_jsd3_screen",
+            _ROT4_AUGMIX_RESOURCES,
+            "a1_pool_balanced_jsd3_augmix_lhat_r5",
+            (
+                "clean_view",
+                "corrupted_view",
+                "augmix_view",
+                "augmix_chain1_view",
+                "augmix_chain2_view",
+            ),
+            stage1_view="clean_vs_two_chain_augmix_bernoulli_jsd",
+            augmix_jsd_weight=3.0,
+            augmix_auxiliary_weight=0.5,
+            augmix_supervised_view_policy="chains_mean",
+            rotating_base_scale=0.5,
+        ),
+        "a1_rot4_two_chain_balanced_jsd3_vae_lhat_puredelta": (
+            _RecipeDefinition(
+                RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+                AuxiliaryVariant.CONTRACTED_LHAT,
+                "a1_rot4_two_chain_balanced_jsd3_vae_lhat_puredelta",
+                "prospective_a1_pool_balanced_jsd3_screen",
+                _ROT4_JOINT_MILD_RESOURCES,
+                "a1_pool_balanced_jsd3_augmix_lhat_r5",
+                (
+                    "clean_view",
+                    "corrupted_view",
+                    "augmix_view",
+                    "augmix_chain1_view",
+                    "augmix_chain2_view",
+                    "lhat_view",
+                ),
+                stage1_view="clean_vs_two_chain_augmix_bernoulli_jsd",
+                lhat_contract_version="nondecreasing_pure_delta_grid_v3",
+                augmix_jsd_weight=3.0,
+                augmix_auxiliary_weight=0.5,
+                augmix_supervised_view_policy="chains_mean",
+                rotating_base_scale=0.5,
+            )
+        ),
+        "a1_rot4_single_chain_balanced_jsd1p5": _RecipeDefinition(
+            RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+            AuxiliaryVariant.NOT_APPLICABLE,
+            "a1_rot4_single_chain_balanced_jsd1p5",
+            "prospective_a1_pool_balanced_jsd1p5_screen",
+            _ROT4_AUGMIX_RESOURCES,
+            "a1_pool_balanced_jsd1p5_augmix_lhat_r6",
+            ("clean_view", "corrupted_view", "augmix_view"),
+            stage1_view="clean_vs_one_single_chain_bernoulli_jsd",
+            augmix_jsd_weight=1.5,
+            augmix_auxiliary_weight=0.5,
+            rotating_base_scale=0.5,
+        ),
+        "a1_rot4_two_chain_balanced_jsd1p5": _RecipeDefinition(
+            RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+            AuxiliaryVariant.NOT_APPLICABLE,
+            "a1_rot4_two_chain_balanced_jsd1p5",
+            "prospective_a1_pool_balanced_jsd1p5_screen",
+            _ROT4_AUGMIX_RESOURCES,
+            "a1_pool_balanced_jsd1p5_augmix_lhat_r6",
+            (
+                "clean_view",
+                "corrupted_view",
+                "augmix_view",
+                "augmix_chain1_view",
+                "augmix_chain2_view",
+            ),
+            stage1_view="clean_vs_two_chain_augmix_bernoulli_jsd",
+            augmix_jsd_weight=1.5,
+            augmix_auxiliary_weight=0.5,
+            augmix_supervised_view_policy="chains_mean",
+            rotating_base_scale=0.5,
+        ),
+        "a1_rot4_two_chain_balanced_jsd1p5_vae_lhat_puredelta": (
+            _RecipeDefinition(
+                RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+                AuxiliaryVariant.CONTRACTED_LHAT,
+                "a1_rot4_two_chain_balanced_jsd1p5_vae_lhat_puredelta",
+                "prospective_a1_pool_balanced_jsd1p5_screen",
+                _ROT4_JOINT_MILD_RESOURCES,
+                "a1_pool_balanced_jsd1p5_augmix_lhat_r6",
+                (
+                    "clean_view",
+                    "corrupted_view",
+                    "augmix_view",
+                    "augmix_chain1_view",
+                    "augmix_chain2_view",
+                    "lhat_view",
+                ),
+                stage1_view="clean_vs_two_chain_augmix_bernoulli_jsd",
+                lhat_contract_version="nondecreasing_pure_delta_grid_v3",
+                augmix_jsd_weight=1.5,
+                augmix_auxiliary_weight=0.5,
+                augmix_supervised_view_policy="chains_mean",
+                rotating_base_scale=0.5,
+            )
+        ),
+        **{
+            f"a1_rot4_two_chain_balanced_jsd1p5_vae_lhat_replace{suffix}": (
+                _RecipeDefinition(
+                    RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+                    AuxiliaryVariant.CONTRACTED_LHAT,
+                    f"a1_rot4_two_chain_balanced_jsd1p5_vae_lhat_replace{suffix}",
+                    "prospective_a1_vae_clean_replacement_screen",
+                    _ROT4_JOINT_MILD_RESOURCES,
+                    "a1_pool_balanced_jsd1p5_augmix_lhat_r6",
+                    (
+                        "clean_view",
+                        "corrupted_view",
+                        "augmix_view",
+                        "augmix_chain1_view",
+                        "augmix_chain2_view",
+                        "lhat_view",
+                    ),
+                    stage1_view="clean_vs_two_chain_augmix_bernoulli_jsd",
+                    lhat_contract_version="nondecreasing_pure_delta_grid_v3",
+                    augmix_jsd_weight=1.5,
+                    lhat_auxiliary_alpha_max=mass,
+                    augmix_auxiliary_weight=0.5,
+                    augmix_supervised_view_policy="chains_mean",
+                    rotating_base_scale=0.5,
+                    lhat_auxiliary_warmup_epochs=1,
+                    lhat_loss_integration="replace_clean_with_lhat_or_clean_fallback",
+                )
+            )
+            for suffix, mass in (("0p05", 0.05), ("0p1", 0.1), ("0p2", 0.2))
+        },
+        "a1_rot4_two_chain_balanced_jsd1p5_vae_lhat_replace0p2_mixedm20": (
+            _RecipeDefinition(
+                RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+                AuxiliaryVariant.CONTRACTED_LHAT,
+                "a1_rot4_two_chain_balanced_jsd1p5_vae_lhat_replace0p2_mixedm20",
+                "prospective_a1_lhat_candidate_source_ablation",
+                _ROT4_JOINT_MILD_RESOURCES,
+                "a1_pool_balanced_jsd1p5_augmix_lhat_r6",
+                (
+                    "clean_view", "corrupted_view", "augmix_view",
+                    "augmix_chain1_view", "augmix_chain2_view", "lhat_view",
+                ),
+                stage1_view="clean_vs_two_chain_augmix_bernoulli_jsd",
+                lhat_contract_version="nondecreasing_pure_delta_grid_v3",
+                augmix_jsd_weight=1.5,
+                lhat_auxiliary_alpha_max=0.2,
+                augmix_auxiliary_weight=0.5,
+                augmix_supervised_view_policy="chains_mean",
+                rotating_base_scale=0.5,
+                lhat_auxiliary_warmup_epochs=1,
+                lhat_loss_integration="replace_clean_with_lhat_or_clean_fallback",
+                lhat_candidate_source_policy=(
+                    "clean10_corrupted10_same_neighbors_v1"
+                ),
+            )
+        ),
+        "a1_rot4_two_chain_balanced_jsd1p5_vae_lhat_replace0p2_nocontract": (
+            _RecipeDefinition(
+                RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+                AuxiliaryVariant.RAW_LHAT,
+                "a1_rot4_two_chain_balanced_jsd1p5_vae_lhat_replace0p2_nocontract",
+                "prospective_a1_lhat_contract_ablation",
+                _ROT4_JOINT_MILD_RESOURCES,
+                "a1_pool_balanced_jsd1p5_augmix_lhat_r6",
+                (
+                    "clean_view", "corrupted_view", "augmix_view",
+                    "augmix_chain1_view", "augmix_chain2_view", "lhat_view",
+                ),
+                stage1_view="clean_vs_two_chain_augmix_bernoulli_jsd",
+                lhat_contract_version="raw_attack_no_contract_v1",
+                augmix_jsd_weight=1.5,
+                lhat_auxiliary_alpha_max=0.2,
+                augmix_auxiliary_weight=0.5,
+                augmix_supervised_view_policy="chains_mean",
+                rotating_base_scale=0.5,
+                lhat_auxiliary_warmup_epochs=1,
+                lhat_loss_integration="replace_clean_with_lhat_or_clean_fallback",
+            )
+        ),
+        "a1_rot4_two_chain_balanced_jsd1p5_vae_lhat_alpha0p25": (
+            _RecipeDefinition(
+                RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+                AuxiliaryVariant.CONTRACTED_LHAT,
+                "a1_rot4_two_chain_balanced_jsd1p5_vae_lhat_alpha0p25",
+                "prospective_a1_pool_balanced_jsd1p5_alpha_screen",
+                _ROT4_JOINT_MILD_RESOURCES,
+                "a1_pool_balanced_jsd1p5_augmix_lhat_r6",
+                (
+                    "clean_view",
+                    "corrupted_view",
+                    "augmix_view",
+                    "augmix_chain1_view",
+                    "augmix_chain2_view",
+                    "lhat_view",
+                ),
+                stage1_view="clean_vs_two_chain_augmix_bernoulli_jsd",
+                lhat_contract_version="nondecreasing_pure_delta_grid_v3",
+                augmix_jsd_weight=1.5,
+                lhat_auxiliary_alpha_max=0.25,
+                augmix_auxiliary_weight=0.5,
+                augmix_supervised_view_policy="chains_mean",
+                rotating_base_scale=0.5,
+            )
+        ),
+        "a1_rot4_two_chain_balanced_jsd1p5_vae_lhat_alpha0p5": (
+            _RecipeDefinition(
+                RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+                AuxiliaryVariant.CONTRACTED_LHAT,
+                "a1_rot4_two_chain_balanced_jsd1p5_vae_lhat_alpha0p5",
+                "prospective_a1_pool_balanced_jsd1p5_alpha_screen",
+                _ROT4_JOINT_MILD_RESOURCES,
+                "a1_pool_balanced_jsd1p5_augmix_lhat_r6",
+                (
+                    "clean_view",
+                    "corrupted_view",
+                    "augmix_view",
+                    "augmix_chain1_view",
+                    "augmix_chain2_view",
+                    "lhat_view",
+                ),
+                stage1_view="clean_vs_two_chain_augmix_bernoulli_jsd",
+                lhat_contract_version="nondecreasing_pure_delta_grid_v3",
+                augmix_jsd_weight=1.5,
+                lhat_auxiliary_alpha_max=0.5,
+                augmix_auxiliary_weight=0.5,
+                augmix_supervised_view_policy="chains_mean",
+                rotating_base_scale=0.5,
+            )
+        ),
+        "a1_rot4_two_chain_robust_c125_r375_a500_jsd1p5_vae_lhat": (
+            _RecipeDefinition(
+                RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+                AuxiliaryVariant.CONTRACTED_LHAT,
+                "a1_rot4_two_chain_robust_c125_r375_a500_jsd1p5_vae_lhat",
+                "prospective_a1_robust_weight_screen",
+                _ROT4_JOINT_MILD_RESOURCES,
+                "a1_robust_weight_screen_r7",
+                (
+                    "clean_view",
+                    "corrupted_view",
+                    "augmix_view",
+                    "augmix_chain1_view",
+                    "augmix_chain2_view",
+                    "lhat_view",
+                ),
+                stage1_view="clean_vs_two_chain_augmix_bernoulli_jsd",
+                lhat_contract_version="nondecreasing_pure_delta_grid_v3",
+                augmix_jsd_weight=1.5,
+                augmix_auxiliary_weight=0.5,
+                augmix_supervised_view_policy="chains_mean",
+                rotating_clean_weight=0.125,
+                rotating_corrupted_total_weight=0.375,
+            )
+        ),
+        "a1_rot4_two_chain_robust_c125_r500_a375_jsd1p5_vae_lhat": (
+            _RecipeDefinition(
+                RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+                AuxiliaryVariant.CONTRACTED_LHAT,
+                "a1_rot4_two_chain_robust_c125_r500_a375_jsd1p5_vae_lhat",
+                "prospective_a1_robust_weight_screen",
+                _ROT4_JOINT_MILD_RESOURCES,
+                "a1_robust_weight_screen_r7",
+                (
+                    "clean_view",
+                    "corrupted_view",
+                    "augmix_view",
+                    "augmix_chain1_view",
+                    "augmix_chain2_view",
+                    "lhat_view",
+                ),
+                stage1_view="clean_vs_two_chain_augmix_bernoulli_jsd",
+                lhat_contract_version="nondecreasing_pure_delta_grid_v3",
+                augmix_jsd_weight=1.5,
+                augmix_auxiliary_weight=0.375,
+                augmix_supervised_view_policy="chains_mean",
+                rotating_clean_weight=0.125,
+                rotating_corrupted_total_weight=0.5,
+            )
+        ),
+        "a1_rot4_two_chain_robust_c0625_r4375_a500_jsd1p5_vae_lhat": (
+            _RecipeDefinition(
+                RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+                AuxiliaryVariant.CONTRACTED_LHAT,
+                "a1_rot4_two_chain_robust_c0625_r4375_a500_jsd1p5_vae_lhat",
+                "prospective_a1_robust_weight_screen",
+                _ROT4_JOINT_MILD_RESOURCES,
+                "a1_robust_weight_screen_r7",
+                (
+                    "clean_view",
+                    "corrupted_view",
+                    "augmix_view",
+                    "augmix_chain1_view",
+                    "augmix_chain2_view",
+                    "lhat_view",
+                ),
+                stage1_view="clean_vs_two_chain_augmix_bernoulli_jsd",
+                lhat_contract_version="nondecreasing_pure_delta_grid_v3",
+                augmix_jsd_weight=1.5,
+                augmix_auxiliary_weight=0.5,
+                augmix_supervised_view_policy="chains_mean",
+                rotating_clean_weight=0.0625,
+                rotating_corrupted_total_weight=0.4375,
+            )
+        ),
+        "a1_rot4_single_chain_robust_c125_r500_a375_jsd1p5": (
+            _RecipeDefinition(
+                RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+                AuxiliaryVariant.NOT_APPLICABLE,
+                "a1_rot4_single_chain_robust_c125_r500_a375_jsd1p5",
+                "prospective_a1_raw_attack_success_screen",
+                _ROT4_AUGMIX_RESOURCES,
+                "a1_raw_attack_success_screen_r8",
+                (
+                    "clean_view",
+                    "corrupted_view",
+                    "augmix_view",
+                    "augmix_chain1_view",
+                ),
+                stage1_view="clean_vs_one_single_chain_bernoulli_jsd",
+                augmix_jsd_weight=1.5,
+                augmix_auxiliary_weight=0.375,
+                augmix_supervised_view_policy="chains_mean",
+                rotating_clean_weight=0.125,
+                rotating_corrupted_total_weight=0.5,
+            )
+        ),
+        "a1_rot4_two_chain_robust_c125_r500_a375_jsd1p5": (
+            _RecipeDefinition(
+                RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+                AuxiliaryVariant.NOT_APPLICABLE,
+                "a1_rot4_two_chain_robust_c125_r500_a375_jsd1p5",
+                "prospective_a1_raw_attack_success_screen",
+                _ROT4_AUGMIX_RESOURCES,
+                "a1_raw_attack_success_screen_r8",
+                (
+                    "clean_view",
+                    "corrupted_view",
+                    "augmix_view",
+                    "augmix_chain1_view",
+                    "augmix_chain2_view",
+                ),
+                stage1_view="clean_vs_two_chain_augmix_bernoulli_jsd",
+                augmix_jsd_weight=1.5,
+                augmix_auxiliary_weight=0.375,
+                augmix_supervised_view_policy="chains_mean",
+                rotating_clean_weight=0.125,
+                rotating_corrupted_total_weight=0.5,
+            )
+        ),
+        "a1_rot4_two_chain_robust_c125_r500_a375_jsd1p5_vae_lhat_rawsuccess": (
+            _RecipeDefinition(
+                RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+                AuxiliaryVariant.CONTRACTED_LHAT,
+                "a1_rot4_two_chain_robust_c125_r500_a375_jsd1p5_vae_lhat_rawsuccess",
+                "prospective_a1_raw_attack_success_screen",
+                _ROT4_JOINT_MILD_RESOURCES,
+                "a1_raw_attack_success_screen_r8",
+                (
+                    "clean_view",
+                    "corrupted_view",
+                    "augmix_view",
+                    "augmix_chain1_view",
+                    "augmix_chain2_view",
+                    "lhat_view",
+                ),
+                stage1_view="clean_vs_two_chain_augmix_bernoulli_jsd",
+                lhat_contract_version="nondecreasing_pure_delta_grid_v3",
+                augmix_jsd_weight=1.5,
+                lhat_auxiliary_alpha_max=0.2,
+                augmix_auxiliary_weight=0.375,
+                augmix_supervised_view_policy="chains_mean",
+                rotating_clean_weight=0.125,
+                rotating_corrupted_total_weight=0.5,
+                lhat_training_selection=("raw_attack_success", 0.0),
+            )
+        ),
+        "a1_rot4_two_chain_robust_c125_r500_a375_jsd1p5_vae_lhat_equalpn_rawsuccess": (
+            _RecipeDefinition(
+                RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+                AuxiliaryVariant.CONTRACTED_LHAT,
+                "a1_rot4_two_chain_robust_c125_r500_a375_jsd1p5_vae_lhat_equalpn_rawsuccess",
+                "prospective_a1_raw_attack_success_screen",
+                _ROT4_JOINT_MILD_RESOURCES,
+                "a1_raw_attack_success_screen_r8",
+                (
+                    "clean_view",
+                    "corrupted_view",
+                    "augmix_view",
+                    "augmix_chain1_view",
+                    "augmix_chain2_view",
+                    "lhat_view",
+                ),
+                stage1_view="clean_vs_two_chain_augmix_bernoulli_jsd",
+                lhat_contract_version="nondecreasing_pure_delta_grid_v3",
+                augmix_jsd_weight=1.5,
+                lhat_auxiliary_alpha_max=0.2,
+                augmix_auxiliary_weight=0.375,
+                augmix_supervised_view_policy="chains_mean",
+                rotating_clean_weight=0.125,
+                rotating_corrupted_total_weight=0.5,
+                lhat_training_selection=("raw_attack_success", 0.0),
+            )
+        ),
+        "a1_rot4_single_chain_robust_c125_r500_a375_mixed_jsd1p5": (
+            _RecipeDefinition(
+                RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+                AuxiliaryVariant.NOT_APPLICABLE,
+                "a1_rot4_single_chain_robust_c125_r500_a375_mixed_jsd1p5",
+                "prospective_a1_mixed_view_screen",
+                _ROT4_AUGMIX_RESOURCES,
+                "a1_mixed_view_screen_r10",
+                (
+                    "clean_view",
+                    "corrupted_view",
+                    "augmix_view",
+                    "augmix_chain1_view",
+                ),
+                stage1_view="clean_vs_one_single_chain_bernoulli_jsd",
+                augmix_jsd_weight=1.5,
+                augmix_auxiliary_weight=0.375,
+                rotating_clean_weight=0.125,
+                rotating_corrupted_total_weight=0.5,
+            )
+        ),
+        "a1_rot4_two_chain_robust_c125_r500_a375_mixed_jsd1p5": (
+            _RecipeDefinition(
+                RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+                AuxiliaryVariant.NOT_APPLICABLE,
+                "a1_rot4_two_chain_robust_c125_r500_a375_mixed_jsd1p5",
+                "prospective_a1_mixed_view_screen",
+                _ROT4_AUGMIX_RESOURCES,
+                "a1_mixed_view_screen_r10",
+                (
+                    "clean_view",
+                    "corrupted_view",
+                    "augmix_view",
+                    "augmix_chain1_view",
+                    "augmix_chain2_view",
+                ),
+                stage1_view="clean_vs_two_chain_augmix_bernoulli_jsd",
+                augmix_jsd_weight=1.5,
+                augmix_auxiliary_weight=0.375,
+                rotating_clean_weight=0.125,
+                rotating_corrupted_total_weight=0.5,
+            )
+        ),
+        "a1_rot4_two_chain_robust_c125_r500_a375_mixed_jsd1p5_vae_lhat": (
+            _RecipeDefinition(
+                RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+                AuxiliaryVariant.CONTRACTED_LHAT,
+                "a1_rot4_two_chain_robust_c125_r500_a375_mixed_jsd1p5_vae_lhat",
+                "prospective_a1_mixed_view_screen",
+                _ROT4_JOINT_MILD_RESOURCES,
+                "a1_mixed_view_screen_r10",
+                (
+                    "clean_view",
+                    "corrupted_view",
+                    "augmix_view",
+                    "augmix_chain1_view",
+                    "augmix_chain2_view",
+                    "lhat_view",
+                ),
+                stage1_view="clean_vs_two_chain_augmix_bernoulli_jsd",
+                lhat_contract_version="nondecreasing_pure_delta_grid_v3",
+                augmix_jsd_weight=1.5,
+                augmix_auxiliary_weight=0.375,
+                rotating_clean_weight=0.125,
+                rotating_corrupted_total_weight=0.5,
+            )
+        ),
+        "a1_rot4_single_chain_robust_c125_r500_a375_endpointmean_jsd1p5": (
+            _RecipeDefinition(
+                RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+                AuxiliaryVariant.NOT_APPLICABLE,
+                "a1_rot4_single_chain_robust_c125_r500_a375_endpointmean_jsd1p5",
+                "prospective_a1_endpoint_mean_screen",
+                _ROT4_AUGMIX_RESOURCES,
+                "a1_endpoint_mean_screen_r11",
+                (
+                    "clean_view",
+                    "corrupted_view",
+                    "augmix_view",
+                    "augmix_chain1_view",
+                ),
+                stage1_view="clean_vs_one_single_chain_bernoulli_jsd",
+                augmix_jsd_weight=1.5,
+                augmix_auxiliary_weight=0.375,
+                augmix_supervised_view_policy="mixed_plus_chains_mean",
+                rotating_clean_weight=0.125,
+                rotating_corrupted_total_weight=0.5,
+            )
+        ),
+        "a1_rot4_two_chain_robust_c125_r500_a375_endpointmean_jsd1p5": (
+            _RecipeDefinition(
+                RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+                AuxiliaryVariant.NOT_APPLICABLE,
+                "a1_rot4_two_chain_robust_c125_r500_a375_endpointmean_jsd1p5",
+                "prospective_a1_endpoint_mean_screen",
+                _ROT4_AUGMIX_RESOURCES,
+                "a1_endpoint_mean_screen_r11",
+                (
+                    "clean_view",
+                    "corrupted_view",
+                    "augmix_view",
+                    "augmix_chain1_view",
+                    "augmix_chain2_view",
+                ),
+                stage1_view="clean_vs_two_chain_augmix_bernoulli_jsd",
+                augmix_jsd_weight=1.5,
+                augmix_auxiliary_weight=0.375,
+                augmix_supervised_view_policy="mixed_plus_chains_mean",
+                rotating_clean_weight=0.125,
+                rotating_corrupted_total_weight=0.5,
+            )
+        ),
+        "a1_rot4_two_chain_robust_c125_r500_a375_endpointmean_jsd1p5_vae_lhat": (
+            _RecipeDefinition(
+                RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+                AuxiliaryVariant.CONTRACTED_LHAT,
+                "a1_rot4_two_chain_robust_c125_r500_a375_endpointmean_jsd1p5_vae_lhat",
+                "prospective_a1_endpoint_mean_screen",
+                _ROT4_JOINT_MILD_RESOURCES,
+                "a1_endpoint_mean_screen_r11",
+                (
+                    "clean_view",
+                    "corrupted_view",
+                    "augmix_view",
+                    "augmix_chain1_view",
+                    "augmix_chain2_view",
+                    "lhat_view",
+                ),
+                stage1_view="clean_vs_two_chain_augmix_bernoulli_jsd",
+                lhat_contract_version="nondecreasing_pure_delta_grid_v3",
+                augmix_jsd_weight=1.5,
+                augmix_auxiliary_weight=0.375,
+                augmix_supervised_view_policy="mixed_plus_chains_mean",
+                rotating_clean_weight=0.125,
+                rotating_corrupted_total_weight=0.5,
+            )
+        ),
+        "a1_rot4_two_chain_robust_c125_r500_a375_endpointmean_jsd1p5_vae_lhat_cosdecay": (
+            _RecipeDefinition(
+                RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+                AuxiliaryVariant.CONTRACTED_LHAT,
+                "a1_rot4_two_chain_robust_c125_r500_a375_endpointmean_jsd1p5_vae_lhat_cosdecay",
+                "prospective_a1_vae_curriculum_screen",
+                _ROT4_JOINT_MILD_RESOURCES,
+                "a1_endpoint_mean_screen_r11",
+                (
+                    "clean_view",
+                    "corrupted_view",
+                    "augmix_view",
+                    "augmix_chain1_view",
+                    "augmix_chain2_view",
+                    "lhat_view",
+                ),
+                stage1_view="clean_vs_two_chain_augmix_bernoulli_jsd",
+                lhat_contract_version="nondecreasing_pure_delta_grid_v3",
+                augmix_jsd_weight=1.5,
+                augmix_auxiliary_weight=0.375,
+                augmix_supervised_view_policy="mixed_plus_chains_mean",
+                rotating_clean_weight=0.125,
+                rotating_corrupted_total_weight=0.5,
+                lhat_auxiliary_schedule="cosine_decay_to_zero",
+            )
+        ),
+        "a1_rot4_two_chain_robust_c125_r500_a375_endpointmean_jsd1p5_vae_lhat_boundary": (
+            _RecipeDefinition(
+                RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+                AuxiliaryVariant.CONTRACTED_LHAT,
+                "a1_rot4_two_chain_robust_c125_r500_a375_endpointmean_jsd1p5_vae_lhat_boundary",
+                "prospective_a1_vae_boundary_outside_screen",
+                _ROT4_JOINT_MILD_RESOURCES,
+                "a1_endpoint_mean_screen_r11",
+                (
+                    "clean_view",
+                    "corrupted_view",
+                    "augmix_view",
+                    "augmix_chain1_view",
+                    "augmix_chain2_view",
+                    "lhat_view",
+                ),
+                stage1_view="clean_vs_two_chain_augmix_bernoulli_jsd",
+                lhat_contract_version="nearest_boundary_outside_grid_v4",
+                augmix_jsd_weight=1.5,
+                lhat_auxiliary_alpha_max=0.2,
+                augmix_auxiliary_weight=0.375,
+                augmix_supervised_view_policy="mixed_plus_chains_mean",
+                rotating_clean_weight=0.125,
+                rotating_corrupted_total_weight=0.5,
+            )
+        ),
+        "a1_rot4_single_chain_robust_c125_r500_a375_halfendpoint_jsd1p5": (
+            _RecipeDefinition(
+                RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+                AuxiliaryVariant.NOT_APPLICABLE,
+                "a1_rot4_single_chain_robust_c125_r500_a375_halfendpoint_jsd1p5",
+                "prospective_a1_half_endpoint_screen",
+                _ROT4_AUGMIX_RESOURCES,
+                "a1_half_endpoint_screen_r12",
+                (
+                    "clean_view",
+                    "corrupted_view",
+                    "augmix_view",
+                    "augmix_chain1_view",
+                ),
+                stage1_view="clean_vs_one_single_chain_bernoulli_jsd",
+                augmix_jsd_weight=1.5,
+                augmix_auxiliary_weight=0.375,
+                augmix_supervised_view_policy="mixed_plus_chains_half",
+                rotating_clean_weight=0.125,
+                rotating_corrupted_total_weight=0.5,
+            )
+        ),
+        "a1_rot4_two_chain_robust_c125_r500_a375_halfendpoint_jsd1p5": (
+            _RecipeDefinition(
+                RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+                AuxiliaryVariant.NOT_APPLICABLE,
+                "a1_rot4_two_chain_robust_c125_r500_a375_halfendpoint_jsd1p5",
+                "prospective_a1_half_endpoint_screen",
+                _ROT4_AUGMIX_RESOURCES,
+                "a1_half_endpoint_screen_r12",
+                (
+                    "clean_view",
+                    "corrupted_view",
+                    "augmix_view",
+                    "augmix_chain1_view",
+                    "augmix_chain2_view",
+                ),
+                stage1_view="clean_vs_two_chain_augmix_bernoulli_jsd",
+                augmix_jsd_weight=1.5,
+                augmix_auxiliary_weight=0.375,
+                augmix_supervised_view_policy="mixed_plus_chains_half",
+                rotating_clean_weight=0.125,
+                rotating_corrupted_total_weight=0.5,
+            )
+        ),
+        "a1_rot4_two_chain_robust_c125_r500_a375_halfendpoint_jsd1p5_vae_lhat": (
+            _RecipeDefinition(
+                RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+                AuxiliaryVariant.CONTRACTED_LHAT,
+                "a1_rot4_two_chain_robust_c125_r500_a375_halfendpoint_jsd1p5_vae_lhat",
+                "prospective_a1_half_endpoint_screen",
+                _ROT4_JOINT_MILD_RESOURCES,
+                "a1_half_endpoint_screen_r12",
+                (
+                    "clean_view",
+                    "corrupted_view",
+                    "augmix_view",
+                    "augmix_chain1_view",
+                    "augmix_chain2_view",
+                    "lhat_view",
+                ),
+                stage1_view="clean_vs_two_chain_augmix_bernoulli_jsd",
+                lhat_contract_version="nondecreasing_pure_delta_grid_v3",
+                augmix_jsd_weight=1.5,
+                augmix_auxiliary_weight=0.375,
+                augmix_supervised_view_policy="mixed_plus_chains_half",
+                rotating_clean_weight=0.125,
+                rotating_corrupted_total_weight=0.5,
+            )
+        ),
+        "a1_rot4_vae_lhat_hardgain": _RecipeDefinition(
+            RecipeKind.SUPERVISED_ROTATING_DEPTH23_HARDGAIN_AUX,
+            AuxiliaryVariant.CONTRACTED_LHAT,
+            "a1_rot4_vae_lhat_hardgain",
+            "prospective_hardgain_mechanism_screen",
+            _ROT4_LHAT_MILD_RESOURCES,
+            "augmix_simclr_lhat",
+            ("clean_view", "corrupted_view", "lhat_view"),
+        ),
+        "a1_rot4_augmix_vae_lhat_hardgain": _RecipeDefinition(
+            RecipeKind.SUPERVISED_ROTATING_DEPTH23_HARDGAIN_AUX,
+            AuxiliaryVariant.CONTRACTED_LHAT,
+            "a1_rot4_augmix_vae_lhat_hardgain",
+            "prospective_hardgain_mechanism_screen",
+            _ROT4_JOINT_MILD_RESOURCES,
+            "augmix_simclr_lhat",
+            ("clean_view", "corrupted_view", "augmix_view", "lhat_view"),
+        ),
+        "one_stage_augmix_supervised": _RecipeDefinition(
+            RecipeKind.ONE_STAGE_SUPERVISED_AUGMIX,
+            AuxiliaryVariant.NOT_APPLICABLE,
+            "one_stage_augmix_supervised",
+            "prospective_one_stage_ablation",
+            _ONE_STAGE_AUGMIX_RESOURCES,
+            "one_stage_augmix_lhat_mild_r0",
+            ("clean_view", "augmix_view"),
+        ),
+        "one_stage_single_chain_supervised": _RecipeDefinition(
+            RecipeKind.ONE_STAGE_SUPERVISED_AUGMIX,
+            AuxiliaryVariant.NOT_APPLICABLE,
+            "one_stage_single_chain_supervised",
+            "prospective_one_stage_chain_ablation",
+            _ONE_STAGE_AUGMIX_RESOURCES,
+            "one_stage_augmix_lhat_mild_r0",
+            ("clean_view", "augmix_view"),
+            stage1_view="clean_vs_one_single_chain_corruption_view",
+        ),
+        "one_stage_vae_lhat_mild": _RecipeDefinition(
+            RecipeKind.ONE_STAGE_VAE_LHAT,
+            AuxiliaryVariant.CONTRACTED_LHAT,
+            "one_stage_vae_lhat_mild",
+            "prospective_one_stage_ablation",
+            _ONE_STAGE_VAE_RESOURCES,
+            "one_stage_augmix_lhat_mild_r0",
+            ("clean_view", "lhat_view"),
+        ),
+        "one_stage_augmix_vae_lhat_mild": _RecipeDefinition(
+            RecipeKind.ONE_STAGE_AUGMIX_LHAT,
+            AuxiliaryVariant.CONTRACTED_LHAT,
+            "one_stage_augmix_vae_lhat_mild",
+            "prospective_one_stage_ablation",
+            _ONE_STAGE_JOINT_RESOURCES,
+            "one_stage_augmix_lhat_mild_r0",
+            ("clean_view", "augmix_view", "lhat_view"),
+        ),
+        "one_stage_single_chain_vae_lhat_mild": _RecipeDefinition(
+            RecipeKind.ONE_STAGE_AUGMIX_LHAT,
+            AuxiliaryVariant.CONTRACTED_LHAT,
+            "one_stage_single_chain_vae_lhat_mild",
+            "prospective_one_stage_chain_ablation",
+            _ONE_STAGE_JOINT_RESOURCES,
+            "one_stage_augmix_lhat_mild_r0",
+            ("clean_view", "augmix_view", "lhat_view"),
+            stage1_view="clean_vs_one_single_chain_corruption_view",
+        ),
+        "one_pool_augmix_jsd": _RecipeDefinition(
+            RecipeKind.ONE_STAGE_SUPERVISED_AUGMIX,
+            AuxiliaryVariant.NOT_APPLICABLE,
+            "one_pool_augmix_jsd",
+            "prospective_one_pool_mechanism_screen",
+            _ONE_STAGE_AUGMIX_RESOURCES,
+            "one_pool_augmix_lhat_r2",
+            (
+                "clean_view",
+                "augmix_view",
+                "augmix_chain1_view",
+                "augmix_chain2_view",
+            ),
+            stage1_view="clean_vs_two_chain_augmix_bernoulli_jsd",
+            augmix_jsd_weight=12.0,
+        ),
+        "one_pool_single_chain_jsd": _RecipeDefinition(
+            RecipeKind.ONE_STAGE_SUPERVISED_AUGMIX,
+            AuxiliaryVariant.NOT_APPLICABLE,
+            "one_pool_single_chain_jsd",
+            "prospective_one_pool_chain_ablation",
+            _ONE_STAGE_AUGMIX_RESOURCES,
+            "one_pool_augmix_lhat_r2",
+            ("clean_view", "augmix_view"),
+            stage1_view="clean_vs_one_single_chain_bernoulli_jsd",
+            augmix_jsd_weight=12.0,
+        ),
+        "one_pool_vae_lhat_puredelta": _RecipeDefinition(
+            RecipeKind.ONE_STAGE_VAE_LHAT,
+            AuxiliaryVariant.CONTRACTED_LHAT,
+            "one_pool_vae_lhat_puredelta",
+            "prospective_one_pool_mechanism_screen",
+            _ONE_STAGE_VAE_RESOURCES,
+            "one_pool_augmix_lhat_r2",
+            ("clean_view", "lhat_view"),
+            lhat_contract_version="nondecreasing_pure_delta_grid_v3",
+            one_stage_lhat_alpha_max=0.1,
+        ),
+        "one_pool_augmix_jsd_vae_lhat_puredelta": _RecipeDefinition(
+            RecipeKind.ONE_STAGE_AUGMIX_LHAT,
+            AuxiliaryVariant.CONTRACTED_LHAT,
+            "one_pool_augmix_jsd_vae_lhat_puredelta",
+            "prospective_one_pool_mechanism_screen",
+            _ONE_STAGE_JOINT_RESOURCES,
+            "one_pool_augmix_lhat_r2",
+            (
+                "clean_view",
+                "augmix_view",
+                "augmix_chain1_view",
+                "augmix_chain2_view",
+                "lhat_view",
+            ),
+            stage1_view="clean_vs_two_chain_augmix_bernoulli_jsd",
+            lhat_contract_version="nondecreasing_pure_delta_grid_v3",
+            augmix_jsd_weight=12.0,
+            one_stage_lhat_alpha_max=0.1,
+        ),
     }
 )
 
 
-def _execution_contract(
-    kind: RecipeKind, variant: AuxiliaryVariant
-) -> Mapping[str, Any]:
+def _execution_contract(definition: _RecipeDefinition) -> Mapping[str, Any]:
+    kind = definition.kind
+    variant = definition.auxiliary_variant
     common = {
         "one_outer_optimizer_step_per_clean_batch": True,
         "complete_k500_base_record_exposure": True,
@@ -291,6 +1531,231 @@ def _execution_contract(
                 "batch_norm_policy": "family_loss_weighted_once_per_base_batch",
             }
         )
+    if kind in {
+        RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
+        RecipeKind.SUPERVISED_ROTATING_DEPTH23_HARDGAIN_AUX,
+    }:
+        hardgain = kind is RecipeKind.SUPERVISED_ROTATING_DEPTH23_HARDGAIN_AUX
+        uses_augmix = "augmix_view" in definition.output_names
+        uses_lhat = "lhat_view" in definition.output_names
+        single_chain = definition.stage1_view.startswith("clean_vs_one_single_chain")
+        augmix_consistency = definition.augmix_jsd_weight > 0.0
+        augmix_multiview = (
+            augmix_consistency
+            or definition.augmix_supervised_view_policy != "mixed_only"
+        )
+        if not (uses_augmix or uses_lhat):
+            raise AssertionError("mild auxiliary recipe must enable a component")
+        clean_weight = (
+            0.5 * float(definition.rotating_base_scale)
+            if definition.rotating_clean_weight is None
+            else float(definition.rotating_clean_weight)
+        )
+        corrupted_total_weight = (
+            0.5 * float(definition.rotating_base_scale)
+            if definition.rotating_corrupted_total_weight is None
+            else float(definition.rotating_corrupted_total_weight)
+        )
+        if clean_weight < 0.0 or corrupted_total_weight < 0.0:
+            raise AssertionError("rotating family weights must be non-negative")
+        if definition.lhat_auxiliary_warmup_epochs < 1:
+            raise AssertionError("LHAT warmup must be a positive integer")
+        if definition.lhat_loss_integration not in {
+            "additive",
+            "replace_clean_with_lhat_or_clean_fallback",
+        }:
+            raise AssertionError("unsupported LHAT loss integration")
+        if (
+            definition.lhat_loss_integration
+            == "replace_clean_with_lhat_or_clean_fallback"
+            and (not uses_lhat or definition.lhat_auxiliary_alpha_max > clean_weight)
+        ):
+            raise AssertionError(
+                "clean-replacement LHAT mass must fit inside the clean family"
+            )
+        return MappingProxyType(
+            {
+                **common,
+                "stages": ["joint_supervised_adaptation"],
+                "stage_boundaries": False,
+                "simclr": "disabled",
+                "projector": "disabled",
+                "source_logit_anchor": "disabled",
+                "stage2_teacher": "disabled",
+                "stage2_supervised_logit_anchor_weight_by_backbone": {
+                    "efficientnet1dv2": 0.0,
+                    "ecgfounder": 0.0,
+                },
+                "exposure_policy": (
+                    "a1_rotating4_plus_single_chain_and_lhat_auxiliaries"
+                    if single_chain and uses_lhat
+                    else "a1_rotating4_plus_single_chain_auxiliary"
+                    if single_chain
+                    else "a1_rotating4_plus_augmix_and_lhat_auxiliaries"
+                    if uses_augmix and uses_lhat
+                    else (
+                        "a1_rotating4_plus_augmix_auxiliary"
+                        if uses_augmix
+                        else "a1_rotating4_plus_lhat_auxiliary"
+                    )
+                ),
+                "corruption_depths": [2, 3],
+                "rotating4_schedule": (
+                    "epoch_modulo_five_covers_all_depth23_compositions"
+                ),
+                "family_loss_weights": {
+                    "clean": clean_weight,
+                    "corrupted_total": corrupted_total_weight,
+                    "corrupted_per_composition": corrupted_total_weight / 4.0,
+                },
+                "augmix_auxiliary": (
+                    {
+                        "objective_terms": [
+                            "augmix_bce",
+                            *(
+                                [
+                                    _OBJECTIVE_NAME_BY_VIEW[view]
+                                    for view in definition.output_names
+                                    if view.startswith("augmix_chain")
+                                ]
+                                if augmix_multiview
+                                else []
+                            ),
+                        ],
+                        "weight": float(definition.augmix_auxiliary_weight),
+                        "view_geometry": (
+                            (
+                                "one_depth23_corruption_chain_with_clean_"
+                                "bernoulli_jsd"
+                                if augmix_consistency
+                                else "one_depth23_corruption_chain_without_mix"
+                            )
+                            if single_chain
+                            else (
+                                (
+                                    "two_independent_depth23_chains_dirichlet_"
+                                    "mix_with_clean_chain_bernoulli_jsd"
+                                )
+                                if augmix_consistency
+                                else (
+                                    "two_independent_depth23_chains_"
+                                    "supervised_mean_without_jsd"
+                                )
+                                if definition.augmix_supervised_view_policy == "chains_mean"
+                                else (
+                                    "two_independent_depth23_chains_dirichlet_mix_"
+                                    "without_clean_beta"
+                                )
+                            )
+                        ),
+                        **(
+                            {
+                                "bernoulli_jsd_weight": float(
+                                    definition.augmix_jsd_weight
+                                )
+                            }
+                            if augmix_consistency
+                            else {}
+                        ),
+                        **(
+                            {
+                                "supervised_view_policy": (
+                                    definition.augmix_supervised_view_policy
+                                )
+                            }
+                            if definition.augmix_supervised_view_policy != "mixed_only"
+                            else {}
+                        ),
+                        "batch_norm_policy": "zero_momentum",
+                        "global_rng_policy": "snapshot_restore",
+                    }
+                    if uses_augmix
+                    else None
+                ),
+                "lhat_auxiliary": (
+                    {
+                        "objective_terms": ["lhat_direct_bce"],
+                        "alpha_max": (
+                            0.25
+                            if hardgain
+                            else float(definition.lhat_auxiliary_alpha_max)
+                        ),
+                        "linear_warmup_epochs": int(
+                            definition.lhat_auxiliary_warmup_epochs
+                        ),
+                        **(
+                            {
+                                "loss_integration": definition.lhat_loss_integration,
+                                "replacement_source": "clean_bce",
+                                "rejection_fallback": "clean_bce",
+                                "batch_norm_reference": (
+                                    "pre_replacement_base_family_weights"
+                                ),
+                            }
+                            if definition.lhat_loss_integration
+                            == "replace_clean_with_lhat_or_clean_fallback"
+                            else {}
+                        ),
+                        **(
+                            {"after_warmup_schedule": definition.lhat_auxiliary_schedule}
+                            if definition.lhat_auxiliary_schedule
+                            != "constant_after_warmup"
+                            else {}
+                        ),
+                        **(
+                            {"training_selection": {
+                                "mode": "minimum_bce_gain",
+                                "minimum_bce_gain": 0.01,
+                            }}
+                            if hardgain
+                            else {
+                                "training_selection": {
+                                    "mode": definition.lhat_training_selection[0],
+                                    "minimum_bce_gain": definition.lhat_training_selection[1],
+                                }
+                            }
+                            if definition.lhat_training_selection is not None
+                            else {}
+                        ),
+                        "gradient_merge": "direct_sum",
+                        "batch_norm_policy": "snapshot_restore",
+                        "global_rng_policy": "snapshot_restore",
+                        "attack_then_contract_version": (
+                            definition.lhat_contract_version
+                        ),
+                        **(
+                            {"candidate_source_policy": definition.lhat_candidate_source_policy}
+                            if definition.lhat_candidate_source_policy != "clean_only"
+                            else {}
+                        ),
+                        **(
+                            {"contract_enabled": False}
+                            if definition.lhat_contract_version
+                            == "raw_attack_no_contract_v1"
+                            else {}
+                        ),
+                        "diagnostic_scopes": (
+                            ["raw_all_candidate_eligible"]
+                            if definition.lhat_contract_version
+                            == "raw_attack_no_contract_v1"
+                            else [
+                                "raw_all_candidate_eligible",
+                                "contract_all_candidate_eligible",
+                                "contract_training_accepted",
+                            ]
+                        ),
+                    }
+                    if uses_lhat
+                    else None
+                ),
+                "generated_view_count": (
+                    4
+                    + sum(name.startswith("augmix") for name in definition.output_names)
+                    + int(uses_lhat)
+                ),
+                "batch_norm_policy": "family_loss_weighted_once_per_base_batch",
+            }
+        )
     if kind is RecipeKind.FIXED20:
         return MappingProxyType(
             {
@@ -307,23 +1772,176 @@ def _execution_contract(
                 "batch_norm_policy": "family_loss_weighted_once_per_base_batch",
             }
         )
-    if kind is RecipeKind.TWO_STAGE_AUGMIX_LHAT:
-        contracted = variant is AuxiliaryVariant.CONTRACTED_LHAT
+    if kind is RecipeKind.ONE_STAGE_SUPERVISED_AUGMIX:
+        single_chain = definition.stage1_view.startswith("clean_vs_one_single_chain")
+        augmix_consistency = definition.augmix_jsd_weight > 0.0
         return MappingProxyType(
             {
                 **common,
-                "stages": ["augmix_simclr", "supervised_adaptation"],
-                "stage1": {
-                    "view": "clean_vs_one_twochain_augmix_strong_view",
-                    "objective": "simclr",
-                    "temperature": 0.5,
-                    "classifier_head_trainable": False,
-                    "pretrain_logit_anchor_weight": 5.0,
-                    "pretrain_logit_anchor_class_weights": [1.0] * 5,
-                    "ptbxl_source_replay_weight": 0.0,
-                    "vicreg_weight": 0.0,
-                    "vae_lhat_tail_fraction": 0.0,
+                "stages": ["joint_supervised_adaptation"],
+                "stage_boundaries": False,
+                "simclr": "disabled",
+                "projector": "disabled",
+                "source_logit_anchor": "disabled",
+                "exposure_policy": (
+                    "clean_once_plus_one_single_chain_corruption_view"
+                    if single_chain
+                    else "clean_once_plus_one_twochain_augmix_view"
+                ),
+                "family_loss_weights": {"clean": 0.5, "augmix": 0.5},
+                **(
+                    {
+                        "augmix_objective": {
+                            "objective_terms": [
+                                "augmix_bce",
+                                *[
+                                    _OBJECTIVE_NAME_BY_VIEW[view]
+                                    for view in definition.output_names
+                                    if view.startswith("augmix_chain")
+                                ],
+                            ],
+                            "bernoulli_jsd_weight": float(
+                                definition.augmix_jsd_weight
+                            ),
+                        }
+                    }
+                    if augmix_consistency
+                    else {}
+                ),
+                "generated_view_count": (
+                    sum(name.startswith("augmix") for name in definition.output_names)
+                    if augmix_consistency
+                    else 1
+                ),
+                "batch_norm_policy": "family_loss_weighted_once_per_base_batch",
+            }
+        )
+    if kind in {RecipeKind.ONE_STAGE_VAE_LHAT, RecipeKind.ONE_STAGE_AUGMIX_LHAT}:
+        joint = kind is RecipeKind.ONE_STAGE_AUGMIX_LHAT
+        single_chain = definition.stage1_view.startswith("clean_vs_one_single_chain")
+        augmix_consistency = joint and definition.augmix_jsd_weight > 0.0
+        return MappingProxyType(
+            {
+                **common,
+                "stages": ["joint_supervised_adaptation"],
+                "stage_boundaries": False,
+                "simclr": "disabled",
+                "projector": "disabled",
+                "source_logit_anchor": "disabled",
+                "stage2_teacher": "disabled",
+                "stage2_supervised_logit_anchor_weight_by_backbone": {
+                    "efficientnet1dv2": 0.0,
+                    "ecgfounder": 0.0,
                 },
+                "exposure_policy": (
+                    (
+                        "clean_once_plus_one_single_chain_corruption_view_plus_lhat_auxiliary"
+                        if single_chain
+                        else "clean_once_plus_one_twochain_augmix_view_plus_lhat_auxiliary"
+                    )
+                    if joint
+                    else "clean_once_plus_lhat_auxiliary"
+                ),
+                "family_loss_weights": (
+                    {"clean": 0.5, "augmix": 0.5}
+                    if joint
+                    else {"clean": 1.0}
+                ),
+                **(
+                    {
+                        "augmix_objective": {
+                            "objective_terms": [
+                                "augmix_bce",
+                                *[
+                                    _OBJECTIVE_NAME_BY_VIEW[view]
+                                    for view in definition.output_names
+                                    if view.startswith("augmix_chain")
+                                ],
+                            ],
+                            "bernoulli_jsd_weight": float(
+                                definition.augmix_jsd_weight
+                            ),
+                        }
+                    }
+                    if augmix_consistency
+                    else {}
+                ),
+                "auxiliary": {
+                    "objective_terms": ["lhat_direct_bce"],
+                    "alpha_max": float(definition.one_stage_lhat_alpha_max),
+                    "linear_warmup_epochs": 5,
+                    "gradient_merge": "direct_sum",
+                    "batch_norm_policy": "snapshot_restore",
+                    "global_rng_policy": "snapshot_restore",
+                    "attack_then_contract_version": definition.lhat_contract_version,
+                    "diagnostic_scopes": [
+                        "raw_all_candidate_eligible",
+                        "contract_all_candidate_eligible",
+                        "contract_training_accepted",
+                    ],
+                },
+                "generated_view_count": (
+                    sum(name.startswith("augmix") for name in definition.output_names) + 1
+                    if augmix_consistency
+                    else 2 if joint else 1
+                ),
+                "batch_norm_policy": "family_loss_weighted_once_per_base_batch",
+            }
+        )
+    if kind is RecipeKind.TWO_STAGE_AUGMIX_LHAT:
+        contracted = variant is AuxiliaryVariant.CONTRACTED_LHAT
+        if definition.stage1_objective is Stage1Objective.SIMCLR:
+            stage1_name = "augmix_simclr"
+            stage1_contract = {
+                "view": definition.stage1_view,
+                "objective": "simclr",
+                "temperature": 0.5,
+                "classifier_head_trainable": False,
+                "pretrain_logit_anchor_weight": 5.0,
+                "pretrain_logit_anchor_class_weights": [1.0] * 5,
+                "ptbxl_source_replay_weight": 0.0,
+                "vicreg_weight": 0.0,
+                "vae_lhat_tail_fraction": 0.0,
+            }
+        elif definition.stage1_objective is Stage1Objective.SUPERVISED_AUGMIX:
+            stage1_name = "augmix_supervised"
+            stage1_contract = {
+                "view": definition.stage1_view,
+                "objective": "supervised_augmix",
+                "objective_weights": {
+                    "clean_bce": 0.5,
+                    "strong_view_bce": 0.5,
+                },
+                "classifier_head_trainable": False,
+                "pretrain_logit_anchor_weight": 5.0,
+                "pretrain_logit_anchor_class_weights": [1.0] * 5,
+                "ptbxl_source_replay_weight": 0.0,
+                "vicreg_weight": 0.0,
+                "vae_lhat_tail_fraction": 0.0,
+            }
+        elif definition.stage1_objective in {Stage1Objective.CLEAN_BCE, Stage1Objective.CLEAN_BCE_JSD}:
+            stage1_name = definition.stage1_objective.value
+            stage1_contract = {
+                "view": "clean_plus_two_independent_locked_augmix_strong_views",
+                "objective": definition.stage1_objective.value,
+                "objective_weights": {"clean_bce": 1.0,
+                    "bernoulli_jsd": 12.0 if definition.stage1_objective is Stage1Objective.CLEAN_BCE_JSD else 0.0},
+                "jsd_reduction": "mean_over_three_views_records_five_independent_binary_labels",
+                "classifier_head_trainable": False,
+                "pretrain_logit_anchor_weight": 5.0,
+                "pretrain_logit_anchor_class_weights": [1.0] * 5,
+                "ptbxl_source_replay_weight": 0.0, "vicreg_weight": 0.0,
+                "vae_lhat_tail_fraction": 0.0,
+                "model_views_per_record": 3,
+                "control_keeps_all_three_forward_passes": True,
+            }
+        else:
+            raise AssertionError("two-stage recipes require an explicit Stage-1 objective")
+        return MappingProxyType(
+            {
+                **common,
+                "stages": [stage1_name, "supervised_adaptation"],
+                "stage1": stage1_contract,
                 "stage2_teacher": "disabled",
                 "stage2_supervised_logit_anchor_weight_by_backbone": {
                     "efficientnet1dv2": 0.0,
@@ -407,6 +2025,10 @@ class RecipeSpec:
         return self._definition.auxiliary_variant
 
     @property
+    def stage1_objective(self) -> Stage1Objective:
+        return self._definition.stage1_objective
+
+    @property
     def scientific_arm(self) -> str:
         return self._definition.scientific_arm
 
@@ -453,6 +2075,7 @@ class RecipeSpec:
             "profile_name": self.profile_name,
             "kind": self.kind.value,
             "auxiliary_variant": self.auxiliary_variant.value,
+            "stage1_objective": self.stage1_objective.value,
             "scientific_arm": self.scientific_arm,
             "status": self.status,
             "schema_version": self.schema_version,
@@ -465,7 +2088,13 @@ class RecipeSpec:
             "rng_namespaces": dict(self.rng_namespaces),
             "outputs": list(self.output_names),
             "requirements": list(_requirement_names(self.output_names)),
-            "objective_terms": _objective_descriptions(self.output_names),
+            "objective_terms": _objective_descriptions(
+                self.output_names,
+                augmix_jsd_weight=self._definition.augmix_jsd_weight,
+                augmix_supervised_view_policy=(
+                    self._definition.augmix_supervised_view_policy
+                ),
+            ),
             "resources": _plain(self.resources),
             "scientific_contract": _plain(self.scientific_contract),
         }
@@ -574,9 +2203,7 @@ def load_recipe_spec(source: str | Path | Mapping[str, Any]) -> RecipeSpec:
         for name, resource in resources.items()
         if resource.get("type") == "isolated_torch_generator"
     }
-    scientific_contract = _execution_contract(
-        definition.kind, definition.auxiliary_variant
-    )
+    scientific_contract = _execution_contract(definition)
     identity_payload = {
         "schema_version": RECIPE_SCHEMA_VERSION,
         "recipe_version": RECIPE_VERSION,
@@ -585,7 +2212,13 @@ def load_recipe_spec(source: str | Path | Mapping[str, Any]) -> RecipeSpec:
         "comparison_rng_identity": definition.comparison_rng_identity,
         "outputs": list(definition.output_names),
         "requirements": list(_requirement_names(definition.output_names)),
-        "objective_terms": _objective_descriptions(definition.output_names),
+        "objective_terms": _objective_descriptions(
+            definition.output_names,
+            augmix_jsd_weight=definition.augmix_jsd_weight,
+            augmix_supervised_view_policy=(
+                definition.augmix_supervised_view_policy
+            ),
+        ),
         "scientific_contract": _plain(scientific_contract),
     }
     try:
@@ -615,5 +2248,6 @@ def load_recipe_spec(source: str | Path | Mapping[str, Any]) -> RecipeSpec:
 __all__ = [
     "AuxiliaryVariant",
     "RecipeKind",
+    "Stage1Objective",
     "load_recipe_spec",
 ]

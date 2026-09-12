@@ -1,0 +1,32 @@
+schema_version: 2
+
+recipe:
+  id: a1_rot4_augmix_vae_lhat_mild
+  kind: supervised_rotating_depth23_mild_aux
+  auxiliary_variant: contracted_lhat
+  scientific_arm: a1_rot4_augmix_vae_lhat_mild
+  status: prospective_mechanism_screen
+
+resources:
+  operator_profile:
+    type: config_reference
+    path: augmentation/operators.yaml
+    profile: pn2021c_paper_anchored_s5_v1
+    severity: 5
+  augmix_config:
+    type: config_reference
+    path: train/augmix_two_chain_no_clean_mix.yaml
+  vae:
+    type: config_reference
+    path: train/vae.yaml
+  lhat_config:
+    type: config_reference
+    path: train/lhat_one_stage_nondecreasing.yaml
+  corruption_rng:
+    type: isolated_torch_generator
+    seed_config: random_seed.yaml
+    namespace: aligned_targetonly_rotating4_corruption_v1
+  lhat_rng:
+    type: isolated_torch_generator
+    seed_config: random_seed.yaml
+    namespace: ecg_manual_refactor_lhat_one_stage_nondecreasing_v1

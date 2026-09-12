@@ -1,0 +1,10 @@
+schema_version: 3
+references:
+  paired_config: eval/pulse_adapter_full.yaml
+center: ningbo
+records_per_center: 512
+source_state: /home/linbinhao/ECG_adv_data/runs/pulse_augmix_sft_20260909/subset512_three_arm_20260910/evaluation
+training_results:
+  clean: /home/linbinhao/ECG_adv_data/runs/dual_jsd_20260911/pulse_visual_clean_ningbo/training/train_result.json
+  single: /home/linbinhao/ECG_adv_data/runs/dual_jsd_20260911/pulse_visual_single_ningbo/training/train_result.json
+  three: /home/linbinhao/ECG_adv_data/runs/dual_jsd_20260911/pulse_visual_three_ningbo/training/train_result.json

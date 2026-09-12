@@ -24,6 +24,15 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 INDEX_EXCLUDED_FILES = frozenset({"run_manifest.json", "run_file_index.json"})
 DATA_LEDGER_SNAPSHOT = Path("manifests/data_content_ledger.jsonl")
 RESULT_REQUIRED_KEYS = {
+    "pulse_subset_result": frozenset({"artifact_type", "schema_version", "status", "records_per_center", "models", "subset_identity", "files"}),
+    "pulse_profile_result": frozenset({"artifact_type", "schema_version", "status", "partition", "formal_optimization_enabled", "files"}),
+    "pulse_benchmark_result": frozenset({"artifact_type", "schema_version", "stage", "status", "protocol", "files"}),
+    "pulse_training_queue_result": frozenset({"artifact_type", "schema_version", "status", "jobs", "admission"}),
+    "pulse_train_result": frozenset({"artifact_type", "schema_version", "status", "mode",
+        "protocol", "optimizer_steps", "files"}),
+    "ecg_image_comparison_result": frozenset({"artifact_type", "schema_version", "status", "models", "cohort", "files", "summary"}),
+    "ecg_image_evaluation_result": frozenset({"artifact_type", "schema_version", "status",
+        "model", "protocol", "prediction_artifact", "expected_predictions", "completed_predictions"}),
     "supervised_train_result": frozenset(
         {"config", "epochs_completed", "model", "selected_checkpoint", "selected_epoch"}
     ),
@@ -425,6 +434,58 @@ def _matrix_result_summary(payload: dict[str, Any], result_path: Path) -> dict[s
 
 
 def _result_summary(payload: dict[str, Any], result_type: str, *, result_path: Path) -> dict[str, Any]:
+    if result_type == "pulse_subset_result":
+        from util.evaluation.pulse_subset import validate_result
+        _require_result_keys(payload, result_type)
+        validate_result(payload, result_path)
+        policy = {
+            1: "fixed_subset_original_single_two_no_retuning",
+            2: "fixed_subset_original_clean_single_three_no_retuning",
+        }[payload["schema_version"]]
+        return {"identity": {"subset_identity": payload["subset_identity"]}, "selection": {"policy": policy}}
+    if result_type == "pulse_profile_result":
+        from util.evaluation.pulse_profile import validate_result
+        _require_result_keys(payload, result_type)
+        validate_result(payload, result_path)
+        return {"identity": {"partition": payload["partition"]}, "selection": {"policy": "engineering_only_no_formal_optimization_enabled"}}
+    if result_type == "pulse_benchmark_result":
+        from util.pulse_benchmark_contract import validate_result
+        _require_result_keys(payload, result_type)
+        validate_result(payload, result_path)
+        return {"identity": payload["protocol"], "selection": {"policy": "fixed_paired_last_checkpoint_no_retuning"}}
+    if result_type == "pulse_training_queue_result":
+        from util.pulse_training_queue import validate_queue_result
+        _require_result_keys(payload, result_type)
+        validate_queue_result(payload, result_path)
+        policy = {
+            1: "all_eight_matched_last_checkpoints",
+            2: "all_eight_matched_last_checkpoints",
+            3: "all_44_dual_jsd_training_and_evaluation_jobs",
+            4: "width1_width3_four_centers_last_checkpoints_frozen_width2_baselines",
+        }[payload["schema_version"]]
+        return {"identity": payload["jobs"], "selection": {"policy": policy}}
+    if result_type == "pulse_train_result":
+        from util.pulse_training_contract import validate_result
+        _require_result_keys(payload, result_type)
+        validate_result(payload, result_path)
+        return {"identity": payload["protocol"], "selection": {"policy": "last", "optimizer_steps": payload["optimizer_steps"]}}
+    if result_type == "ecg_image_comparison_result":
+        _require_result_keys(payload, result_type)
+        _require(payload["schema_version"] == 1 and payload["status"] == "complete", "incomplete image comparison")
+        _require(len(payload["models"]) >= 2 and payload["cohort"]["records"] > 0, "empty image comparison")
+        _require({"metrics.json", "bootstrap.json", "artifact.json", "report.html"} <= set(payload["files"]), "missing comparison products")
+        for name, digest in payload["files"].items():
+            _require(Path(name).name == name, "comparison products must be direct files")
+            _require(sha256_file(result_path.parent / name) == digest, "comparison product hash mismatch")
+        return {"identity": _pick(payload, ("models", "cohort", "evidence_level")),
+                "selection": {"policy": "paired_frozen_hard_label_analysis"}}
+    if result_type == "ecg_image_evaluation_result":
+        from util.evaluation.ecg_image_artifact import validate_result
+
+        _require_result_keys(payload, result_type)
+        validate_result(payload, result_path)
+        return {"identity": _pick(payload, ("model", "protocol")),
+                "selection": {"policy": "frozen_inference_development_no_training"}}
     if result_type in {"supervised_train_result", "pn2021_train_result"}:
         return _train_result_summary(payload, result_type, result_path=result_path)
     if result_type == "pn2021_matrix_result":

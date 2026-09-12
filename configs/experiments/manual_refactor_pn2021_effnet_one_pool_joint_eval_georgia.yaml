@@ -1,0 +1,23 @@
+schema_version: 1
+
+experiment:
+  name: manual_refactor_pn2021_effnet_one_pool_joint_eval_georgia_r2
+  purpose: Evaluate one-pool two-chain AugMix-JSD plus pure-delta VAE-LHAT on ref-excluded Georgia.
+
+entrypoint:
+  name: evaluate_pn2021
+  config: eval/PN2021.yaml
+  arguments:
+    - --model
+    - efficientnet1dv2
+    - --train-result
+    - /home/linbinhao/ECG_adv_data/runs/one_pool_augmix_lhat_r2_20260901/joint/effnet/georgia/training/train_result.json
+    - --center
+    - georgia
+    - --method-config
+    - train/methods/one_pool_augmix_jsd_vae_lhat_puredelta.yaml
+
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/one_pool_augmix_lhat_r2_20260901/joint/eval/effnet/georgia
+  if_exists: error
+  delegate_output_subdir: evaluation

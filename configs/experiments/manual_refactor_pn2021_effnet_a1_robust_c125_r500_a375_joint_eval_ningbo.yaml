@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: manual_refactor_pn2021_effnet_a1_robust_c125_r500_a375_joint_eval_ningbo_r7
+  purpose: Evaluate the frozen R7 selected profile on ref-excluded Ningbo.
+entrypoint:
+  name: evaluate_pn2021
+  config: eval/PN2021.yaml
+  arguments: [--model, efficientnet1dv2, --train-result, /home/linbinhao/ECG_adv_data/runs/a1_robust_weight_screen_r7_20260902/c125_r500_a375/effnet/ningbo/training/train_result.json, --center, ningbo, --method-config, train/methods/a1_rot4_two_chain_robust_c125_r500_a375_jsd1p5_vae_lhat.yaml]
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/a1_robust_weight_screen_r7_20260902/c125_r500_a375/eval/effnet/ningbo
+  if_exists: error
+  delegate_output_subdir: evaluation

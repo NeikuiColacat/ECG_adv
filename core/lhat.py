@@ -75,6 +75,8 @@ class LHATConfig:
     canonical_domain: AttackDomain
     model_domains: dict[str, AttackDomain]
     attack_then_contract: AttackThenContractConfig
+    training_selection_mode: str
+    minimum_training_bce_gain: float
 
 
 @dataclass(frozen=True)
@@ -391,7 +393,10 @@ def load_lhat_config(
         "decoder_bridge",
         "diagnostics",
     }
-    if set(payload) != expected_root_keys:
+    if frozenset(payload) not in {
+        frozenset(expected_root_keys),
+        frozenset((*expected_root_keys, "training_selection")),
+    }:
         raise ValueError("LHAT config keys are incomplete or unexpected")
     if payload.get("schema_version") != 1:
         raise ValueError("LHAT config schema_version must be 1")
@@ -406,6 +411,20 @@ def load_lhat_config(
     raw_contract = _mapping(
         payload.get("attack_then_contract"), "attack_then_contract"
     )
+    raw_training_selection = payload.get("training_selection")
+    if raw_training_selection is None:
+        training_selection = {
+            "mode": "all_contract_accepted",
+            "minimum_bce_gain": 0.0,
+        }
+    else:
+        training_selection = _mapping(
+            raw_training_selection, "training_selection"
+        )
+        if set(training_selection) != {"mode", "minimum_bce_gain"}:
+            raise ValueError(
+                "training_selection keys are incomplete or unexpected"
+            )
     expected_contract_keys = {
         "enabled",
         "version",
@@ -500,6 +519,10 @@ def load_lhat_config(
                 raw_contract.get("uses_heldout_target", True)
             ),
         ),
+        training_selection_mode=str(training_selection.get("mode", "")),
+        minimum_training_bce_gain=float(
+            training_selection.get("minimum_bce_gain", float("nan"))
+        ),
     )
     if candidates.get("label_policy") != "exact_positive_set":
         raise ValueError("main LHAT candidate policy must be exact_positive_set")
@@ -538,6 +561,16 @@ def load_lhat_config(
         raise ValueError("candidate mode must be nearest or local_random")
     if config.local_pool_size < config.num_candidates:
         raise ValueError("local_pool_size must be at least num_candidates")
+    training_selection_identity = (
+        config.training_selection_mode,
+        config.minimum_training_bce_gain,
+    )
+    if training_selection_identity not in {
+        ("all_contract_accepted", 0.0),
+        ("minimum_bce_gain", 0.01),
+        ("raw_attack_success", 0.0),
+    }:
+        raise ValueError("LHAT training selection is unsupported")
     expected_domains = {
         "efficientnet1dv2": AttackDomain(100, 1000),
         "ecgfounder": AttackDomain(500, 5000),
@@ -549,15 +582,58 @@ def load_lhat_config(
     if bridge.get("interpolation") != "linear_align_corners":
         raise ValueError("LHAT domain bridges must use linear align_corners interpolation")
     contract = config.attack_then_contract
+    supported_contracts = {
+        (
+            "preflip_maxloss_grid_v1",
+            (0.25, 0.5, 0.75, 1.0),
+            "maximum_bce_without_new_clean_correct_flip",
+        ): "linear_clean_hard_endpoint",
+        (
+            "nondecreasing_bce_grid_v2",
+            (0.0, 0.25, 0.5, 0.75, 1.0),
+            "maximum_bce_not_below_clean_without_new_clean_correct_flip",
+        ): "linear_clean_hard_endpoint",
+        (
+            "nondecreasing_pure_delta_grid_v3",
+            (0.0, 0.25, 0.5, 0.75, 1.0),
+            "maximum_bce_not_below_clean_without_new_clean_correct_flip",
+        ): "constant_clean_anchor_residual",
+        (
+            "nearest_boundary_outside_grid_v4",
+            (0.0, 0.25, 0.5, 0.75, 1.0),
+            "minimum_t_with_new_clean_correct_flip",
+        ): "constant_clean_anchor_residual",
+    }
+    contract_identity = (
+        contract.version,
+        contract.t_values,
+        contract.selection,
+    )
+    raw_no_contract_identity = (
+        "raw_attack_no_contract_v1",
+        (),
+        "raw_attack_waveform",
+    )
+    if contract_identity == raw_no_contract_identity:
+        if (
+            contract.enabled
+            or contract.margin_retention != 0.0
+            or contract.margin_reference != "not_applicable"
+            or contract.endpoint_residual_correction != "none"
+            or not contract.raw_search_diagnostics_retained
+            or contract.uses_heldout_target
+        ):
+            raise ValueError(
+                "raw no-contract LHAT does not match the frozen ablation contract"
+            )
+        return config
     if (
         not contract.enabled
-        or contract.version != "preflip_maxloss_grid_v1"
-        or contract.t_values != (0.25, 0.5, 0.75, 1.0)
+        or contract_identity not in supported_contracts
         or contract.margin_retention != 0.5
-        or contract.selection != "maximum_bce_without_new_clean_correct_flip"
         or contract.margin_reference != "signed_raw_clean_logit"
         or contract.endpoint_residual_correction
-        != "linear_clean_hard_endpoint"
+        != supported_contracts.get(contract_identity)
         or not contract.raw_search_diagnostics_retained
         or contract.uses_heldout_target
     ):
@@ -994,6 +1070,40 @@ def apply_linear_endpoint_residual_correction(
     ).contiguous()
 
 
+def _select_contract_path_indices(
+    *,
+    valid: torch.Tensor,
+    preserving: torch.Tensor,
+    attack_successful: torch.Tensor,
+    path_bce: torch.Tensor,
+    clean_bce: torch.Tensor,
+    t_values: torch.Tensor,
+    selection: str,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Return the allowed path mask, accepted rows, and selected path indices."""
+
+    if selection == "minimum_t_with_new_clean_correct_flip":
+        allowed = valid & attack_successful
+        ranked = t_values.view(1, -1).expand_as(path_bce)
+        masked = ranked.masked_fill(~allowed, torch.inf)
+        accepted = allowed.any(dim=1)
+        selected_index = masked.argmin(dim=1)
+        return allowed, accepted, selected_index
+
+    allowed = valid & preserving
+    if selection == "maximum_bce_not_below_clean_without_new_clean_correct_flip":
+        # The explicit t=0 path is the corrected raw-clean endpoint. Keeping it
+        # in the candidate set avoids forcing an easier decoded view.
+        allowed &= path_bce >= clean_bce[:, None] - 1.0e-7
+    elif selection != "maximum_bce_without_new_clean_correct_flip":
+        raise RuntimeError(f"unsupported LHAT contract selection: {selection!r}")
+    ranked = path_bce + t_values.view(1, -1) * 1.0e-8
+    masked = ranked.masked_fill(~allowed, -torch.inf)
+    accepted = allowed.any(dim=1)
+    selected_index = masked.argmax(dim=1)
+    return allowed, accepted, selected_index
+
+
 def contract_lhat_adversarial(
     *,
     classifier: nn.Module,
@@ -1007,7 +1117,7 @@ def contract_lhat_adversarial(
     maximum_abs_mV: float,
     config: LHATConfig | None = None,
 ) -> AttackThenContractResult:
-    """Select the hardest label-preserving point on the clean-to-hard path."""
+    """Select the configured training point on the clean-to-hard latent path."""
 
     resolved = load_lhat_config() if config is None else config
     contract = resolved.attack_then_contract
@@ -1062,14 +1172,32 @@ def contract_lhat_adversarial(
                 resolved.canonical_domain.points,
                 12,
             )
-            corrected = apply_linear_endpoint_residual_correction(
-                decoded_paths,
-                t_values=t_values,
-                raw_clean_waveform=raw_clean_waveform,
-                decoded_anchor_waveform=attack.anchor_waveform_raw,
-                raw_hard_waveform=attack.waveform_raw,
-                decoded_hard_waveform=decoded_paths[:, -1],
-            )
+            if (
+                contract.endpoint_residual_correction
+                == "linear_clean_hard_endpoint"
+            ):
+                corrected = apply_linear_endpoint_residual_correction(
+                    decoded_paths,
+                    t_values=t_values,
+                    raw_clean_waveform=raw_clean_waveform,
+                    decoded_anchor_waveform=attack.anchor_waveform_raw,
+                    raw_hard_waveform=attack.waveform_raw,
+                    decoded_hard_waveform=decoded_paths[:, -1],
+                )
+            elif (
+                contract.endpoint_residual_correction
+                == "constant_clean_anchor_residual"
+            ):
+                clean_residual = (
+                    raw_clean_waveform - attack.anchor_waveform_raw
+                )
+                corrected = (
+                    decoded_paths + clean_residual[:, None]
+                ).contiguous()
+            else:
+                raise RuntimeError(
+                    "unsupported LHAT endpoint residual correction"
+                )
             flat = corrected.flatten(2)
             finite = torch.isfinite(flat).all(dim=2)
             safe = torch.nan_to_num(
@@ -1121,11 +1249,18 @@ def contract_lhat_adversarial(
                 (~clean_correct[:, None])
                 | (path_signed >= retained_margin[:, None])
             ).all(dim=2)
-            allowed = valid & preserving
-            ranked = path_bce + t_values.view(1, -1) * 1.0e-8
-            masked = ranked.masked_fill(~allowed, -torch.inf)
-            accepted = allowed.any(dim=1)
-            selected_index = masked.argmax(dim=1)
+            attack_successful = (
+                clean_correct[:, None] & (path_signed < 0.0)
+            ).any(dim=2)
+            allowed, accepted, selected_index = _select_contract_path_indices(
+                valid=valid,
+                preserving=preserving,
+                attack_successful=attack_successful,
+                path_bce=path_bce,
+                clean_bce=clean_bce,
+                t_values=t_values,
+                selection=contract.selection,
+            )
             rows = torch.arange(batch, device=corrected.device)
             selected = corrected[rows, selected_index]
             selected_logits = path_logits[rows, selected_index]

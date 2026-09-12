@@ -1,0 +1,21 @@
+schema_version: 1
+references:
+  w1_ningbo: experiments/pulse_augmix_w1_ningbo.yaml
+  w2_ningbo: experiments/pulse_augmix_w2_ningbo.yaml
+  w1_chapman_shaoxing: experiments/pulse_augmix_w1_chapman_shaoxing.yaml
+  w2_chapman_shaoxing: experiments/pulse_augmix_w2_chapman_shaoxing.yaml
+  w1_cpsc_2018: experiments/pulse_augmix_w1_cpsc_2018.yaml
+  w2_cpsc_2018: experiments/pulse_augmix_w2_cpsc_2018.yaml
+  w1_georgia: experiments/pulse_augmix_w1_georgia.yaml
+  w2_georgia: experiments/pulse_augmix_w2_georgia.yaml
+admission_results:
+  single: /home/linbinhao/ECG_adv_data/runs/pulse_augmix_sft_20260909/pulse_augmix_single_smoke_deterministic/training/train_result.json
+  two: /home/linbinhao/ECG_adv_data/runs/pulse_augmix_sft_20260909/pulse_augmix_two_smoke_deterministic/training/train_result.json
+  resume: /home/linbinhao/ECG_adv_data/runs/pulse_augmix_sft_20260909/pulse_augmix_resume_smoke_deterministic/training/train_result.json
+runtime:
+  max_workers: 4
+  poll_seconds: 30
+  idle_seconds: 30
+  min_available_ram_gib: 48
+  max_load_fraction: 0.9
+  min_disk_free_gib: 30

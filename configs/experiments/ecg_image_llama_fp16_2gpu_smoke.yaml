@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: ecg_image_llama_fp16_2gpu_smoke
+  purpose: Full precision two-GPU Llama admission check on disjoint smoke only; no report-to-label mapper or accuracy tuning.
+entrypoint:
+  name: evaluate_ecg_image
+  config: eval/ecg_image_llama_fp16_2gpu_smoke.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/ecg_image_llm_10h_20260907/llama_fp16_2gpu_smoke
+  if_exists: error
+  delegate_output_subdir: evaluation

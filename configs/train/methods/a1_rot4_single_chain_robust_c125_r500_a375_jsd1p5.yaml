@@ -1,0 +1,22 @@
+schema_version: 2
+
+recipe:
+  id: a1_rot4_single_chain_robust_c125_r500_a375_jsd1p5
+  kind: supervised_rotating_depth23_mild_aux
+  auxiliary_variant: not_applicable
+  scientific_arm: a1_rot4_single_chain_robust_c125_r500_a375_jsd1p5
+  status: prospective_a1_raw_attack_success_screen
+
+resources:
+  operator_profile:
+    type: config_reference
+    path: augmentation/operators.yaml
+    profile: pn2021c_paper_anchored_s5_v1
+    severity: 5
+  augmix_config:
+    type: config_reference
+    path: train/augmix_single_chain_no_mix.yaml
+  corruption_rng:
+    type: isolated_torch_generator
+    seed_config: random_seed.yaml
+    namespace: aligned_targetonly_rotating4_corruption_v1

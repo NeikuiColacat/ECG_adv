@@ -1,5 +1,5 @@
 schema_version: 2
-updated: 2026-08-16
+updated: 2026-09-01
 purpose: >
   Declare the executable surface of the clean-room manual refactor. Paths not
   owned by the keep manifest are not active runtime dependencies.
@@ -14,11 +14,18 @@ source_of_truth:
 launch_surface_policy:
   default_launcher: boot_scripts/run_experiment.py
   retained_entrypoints:
+    - evaluate_pulse_subset
+    - profile_pulse_adapters
+    - evaluate_pulse_adapters
+    - train_ecg_image
+    - coordinate_pulse_training
     - train_ptbxl_effnet
     - train_ptbxl_ecgfounder
     - train_pn2021
     - evaluate_pn2021
     - aggregate_pn2021
+    - evaluate_ecg_image
+    - report_ecg_image
   config_root: configs
   tracked_yaml_required: true
   run_scoped_output_required: true
@@ -37,6 +44,112 @@ launch_surface_policy:
     - no_system_environment_changes
     - no_implicit_overwrite
     - no_agent_workspace_runtime_import
+
+founder_jsd_width_20260911:
+  pipeline_config: configs/experiments/founder_jsd_width_workflow.yaml
+  status: prepared_pending_validation_and_predecessor
+  run_root: /home/linbinhao/ECG_adv_data/runs/founder_jsd_width_20260911
+  evidence: development_single_seed_width_only
+  gpu_policy: successor_of_dual_jsd_at_most_four_no_concurrent_schedulers
+
+dual_jsd_20260911:
+  pipeline_config: configs/experiments/dual_jsd_workflow.yaml
+  status: four_gpu_real_compute_verified_snapshot
+  run_dir_override: /home/linbinhao/ECG_adv_data/runs/dual_jsd_20260911/dual_jsd_workflow_handoff
+  evidence_registry_section: dual_jsd_20260911
+  pulse: clean_single_three_chain_clip_last4_qv_lora8_and_projector
+  founder: stage1_simclr_clean_bce_clean_bce_jsd_same_stage2_lhat
+  gpu_policy: at_most_four_run_scoped_verified_idle_context_permission
+  paper_claim_allowed: false
+
+pulse_pixel_mixing:
+  pipeline_config: configs/experiments/pulse_pixel_pipeline.yaml
+  status: formal_four_gpu_training_real_load_verified_snapshot
+  run_dir_override: /home/linbinhao/ECG_adv_data/runs/pulse_pixel_mix_sft_20260910/pipeline_authorized
+  evidence_registry_section: pulse_pixel_mix_sft_20260910
+  recipe: waveform_corruption_then_render_each_chain_then_rgb_weighted_mix
+  mixing_before: pulse_image_preprocessing_and_clip_encoder
+  components_disabled: [clean_image_residual, jsd, simclr, vae_lhat]
+  gpu_policy: four_explicit_uuids_with_run_scoped_single_verified_idle_context_exception
+  paper_claim_allowed: false
+
+pulse_augmix_sft:
+  subset_comparison_config: configs/experiments/pulse_subset.yaml
+  status: formal_evaluation_paused_four_deployment_admission_jobs_started_snapshot
+  evidence_registry_section: pulse_augmix_sft_20260909
+  entrypoint: train_ecg_image
+  queue_entrypoint: coordinate_pulse_training
+  queue_config: configs/experiments/pulse_training_queue.yaml
+  evaluation_entrypoint: evaluate_pulse_adapters
+  engineering_profile_config: configs/experiments/pulse_adapter_profile.yaml
+  deployment_admission_configs:
+    - configs/experiments/pulse_deployment_admission_ningbo.yaml
+    - configs/experiments/pulse_deployment_admission_chapman_shaoxing.yaml
+    - configs/experiments/pulse_deployment_admission_cpsc_2018.yaml
+    - configs/experiments/pulse_deployment_admission_georgia.yaml
+  evaluation_configs: [configs/experiments/pulse_adapter_admission.yaml, configs/experiments/pulse_adapter_full.yaml]
+  controls: [single_chain, two_chain_dirichlet_alpha0p5]
+  recipe: native500_clean_plus_augmented_label_text_sft
+  components_disabled: [simclr, vae_lhat, jsd]
+  training_scope: each_center_fixed_k500_only
+  gpu_policy: at_most_four_free_devices_explicit_uuid_binding
+  artifact: adapter_projector_optimizer_rng_checkpoint_not_full_base_copy
+  paper_claim_allowed: false
+
+image_llm_full_elastic:
+  status: completed_full_image_only_development_evaluation_independently_verified
+  evidence_registry_section: image_llm_full_elastic_20260907
+  entrypoint: evaluate_ecg_image
+  comparison: configs/experiments/ecg_image_r1_pulse_full_comparison.yaml
+  experiment_configs:
+    - configs/experiments/ecg_image_r1_elastic_validation_gpu_exact.yaml
+    - configs/experiments/ecg_image_r1_elastic_full_gpu_exact.yaml
+    - configs/experiments/ecg_image_r1_elastic_validation_retry1.yaml
+    - configs/experiments/ecg_image_r1_elastic_full_retry1.yaml
+    - configs/experiments/ecg_image_r1_elastic_validation.yaml
+    - configs/experiments/ecg_image_r1_elastic_full.yaml
+  runtime_modules:
+    - util/evaluation/ecg_image_queue.py
+    - util/evaluation/ecg_image_elastic.py
+  input_contract: same_frozen_native500_pulse_full_cohort
+  gpu_policy: explicit_environment_allowlist_at_most_four_confirmed_free_4090s
+  durability: immutable_fixed_tasks_kernel_lock_ownership_atomic_durable_result_commit
+  paper_claim_allowed: false
+
+image_llm_development_probe:
+  status: completed_frozen_inference_development_pilot
+  evidence_registry_section: image_llm_native500_pilot_20260907
+  final_comparison: configs/experiments/ecg_image_r1_pulse_n500_comparison_retry1.yaml
+  entrypoint: evaluate_ecg_image
+  experiment_configs:
+    - configs/experiments/ecg_image_llama_smoke.yaml
+    - configs/experiments/ecg_image_r1_smoke.yaml
+    - configs/experiments/ecg_image_r1_b2_smoke.yaml
+    - configs/experiments/ecg_image_r1_b4_smoke.yaml
+    - configs/experiments/ecg_image_r1_b8_smoke.yaml
+    - configs/experiments/ecg_image_r1_n500_r0.yaml
+    - configs/experiments/ecg_image_r1_n500_r1.yaml
+    - configs/experiments/ecg_image_r1_n500_r2.yaml
+    - configs/experiments/ecg_image_r1_n500_r3.yaml
+    - configs/experiments/ecg_image_r1_pulse_n500_comparison.yaml
+    - configs/experiments/ecg_image_r1_pulse_n500_comparison_retry1.yaml
+    - configs/experiments/ecg_image_llama_nf4_smoke.yaml
+    - configs/experiments/ecg_image_llama_nf4_strict_smoke.yaml
+    - configs/experiments/ecg_image_llama_nf4_report_completion_smoke.yaml
+    - configs/experiments/ecg_image_llama_fp16_2gpu_smoke.yaml
+    - configs/experiments/ecg_image_llama_fp16_2gpu_strict_smoke.yaml
+  input_contract: native500_physical_mV_online_gpu_renderer
+  cohort_contract: four_centers_refexcluded_drop_all_zero_label_independent_nested_hash
+  runtime_modules:
+    - util/ecg_image_renderer.py
+    - util/evaluation/ecg_image_data.py
+    - util/evaluation/ecg_image_llm.py
+    - util/evaluation/ecg_image_artifact.py
+    - util/evaluation/ecg_image_metrics.py
+    - util/evaluation/ecg_image_comparison.py
+    - util/evaluation/ecg_image_report.py
+  score_contract: hard_multilabel_F1_exact_match_Hamming_not_AUROC
+  paper_claim_allowed: false
 
 latest_mainline:
   method: augmix_simclr_lhat
@@ -236,14 +349,18 @@ latest_mainline:
       status: full_content_seal_generated_verified_and_managed
       tracked_content_ledger:
         path: configs/data/data_content_ledger_v1.jsonl
-        sha256: d3bf1f18046a695b9c6089f2866cdb854042c3b528434018ecab8f56d36af665
+        sha256: 5991ac2123e9fe8774df7cb4a311fd0f4332554e51a77ea2a29ac2ce05ad5f13
         schema_version: 1
-        member_count: 121
-        total_size_bytes: 404751718887
+        member_count: 118
+        total_size_bytes: 67620838503
       generation:
         mode: full_content
         source_git_sha: 67227549fbff5d81879096a9842b195b5ce3b4fb
         independent_second_full_verification: passed
+        storage_retirement_20260824:
+          removed_members: 3
+          removed_bytes: 337130880384
+          full_content_verification: passed
       launcher_enforcement:
         before_run_directory: quick_exact_inventory_and_size
         dry_run_reads_ledger_or_stats_data: false
@@ -559,6 +676,2200 @@ prospective_component_ablation_2x2_r0:
     - A1_reference_not_rerun_under_exact_new_rng_namespace
     - component_arms_not_compute_matched
     - heldout_feedback_already_used_to_select_full_recipe
+
+
+no_contrastive_supervised_augmix_2x2_r0_20260831:
+  status: completed_single_seed_four_center_development
+  evidence_level: recorded_dirty_worktree_single_seed_development
+  paper_claim_allowed: false
+  performance_evidence_available: true
+  run_root: /home/linbinhao/ECG_adv_data/runs/no_contrastive_supervised_augmix_2x2_r0_20260831
+  contract:
+    analysis_grid_id: stage1_objective_x_vae_lhat_2x2_r0_20260831
+    comparison_group: aligned_targetonly_augmix_lhat_simplified_20260805
+    replicate_id: 0
+    training_config:
+      path: configs/train/PN2021.yaml
+      sha256: 2e00752b89c11a1879b2f47727ded979824f782c4d588f04c9d02cd67a3f9166
+    checkpoint_selection: last
+    heldout_evaluation_used_for_selection: false
+    factors:
+      stage1_objective: [simclr, supervised_augmix]
+      vae_lhat: ["off", "on"]
+    invariants:
+      stage1_view: clean_vs_one_twochain_augmix_strong_view
+      stage2_teacher: disabled
+      stage2_family_weights: {clean: 0.5, corrupted_total: 0.5}
+      stage2_rotation: two_depth2_plus_two_depth3_five_epoch_cycle
+      comparison_rng_identity: augmix_simclr_lhat
+    arms:
+      A_simclr_no_vae:
+        selector: configs/train/methods/augmix_simclr_matched_no_vae.yaml
+        selector_file_sha256: a147bbf54a94d629c7654aee5cba3e960e770be6e37ac15f8e73865a4209325c
+        recipe_spec_sha256: b2b140ef2e4d440769b14f35b02ca61ba3951502fd7699a276a821ee202ae0f0
+        stage1_objective: simclr
+        contracted_vae_lhat: false
+        execution_status: exact_locked_cross_execution_reference
+        rerun_in_this_execution: false
+        locked_reference: configs/active_evidence_registry.yaml#matched_component_ablation_2x2_r0_20260816.component_grid.augmix_only
+      B_simclr_lhat:
+        selector: configs/train/methods/augmix_simclr_lhat.yaml
+        selector_file_sha256: f08d8555b1591021c85c19219d5284f2a0321bf0d5829955fac8b796e73b35d6
+        recipe_spec_sha256: 6245e89f572b49bd24f5d688bda7d3f8b16fa4972051353afa311d007cd9f675
+        stage1_objective: simclr
+        contracted_vae_lhat: true
+        execution_status: exact_locked_cross_execution_reference
+        rerun_in_this_execution: false
+        locked_reference: configs/active_evidence_registry.yaml#active_development_mainline.final_lock
+      C_supervised_augmix_no_vae:
+        selector: configs/train/methods/augmix_supervised_matched_no_vae.yaml
+        selector_file_sha256: 0d5a316957aa3f2cef529c8155cf7bda216a0cdc189512b5881249f9540ed7b4
+        recipe_spec_sha256: c6f6ecebcce3b3eabb03775663e1b4e5ec7e16ddb2cc979d6543b2eff8a6a525
+        stage1_objective: supervised_augmix
+        stage1_loss_weights: {clean_bce: 0.5, strong_view_bce: 0.5}
+        contracted_vae_lhat: false
+        execution_status: complete
+      D_supervised_augmix_lhat:
+        selector: configs/train/methods/augmix_supervised_lhat.yaml
+        selector_file_sha256: 4e89b3b47636290d5f390e04b29a76a203c9c05fa27066b9e4e2363aa1713dfb
+        recipe_spec_sha256: 552b9324685d9465577969224d473bf3f02526de3d1655c39e04e028e5b94c1c
+        stage1_objective: supervised_augmix
+        stage1_loss_weights: {clean_bce: 0.5, strong_view_bce: 0.5}
+        contracted_vae_lhat: true
+        execution_status: complete
+    comparison_boundary:
+      A_and_B_are_exact_locked_existing_artifacts: true
+      A_and_B_rerun_with_C_and_D: false
+      contemporaneous_four_arm_execution: false
+      shared_rng_identity_declared: true
+      C_and_D_rng_trace_verification: effnet_stage1_tensor_equal_4_of_4_ecgfounder_seed_matched_but_tensor_nondeterministic_4_of_4
+      compute_matched: false
+  experiment_configs:
+    training:
+      - configs/experiments/manual_refactor_pn2021_effnet_supervised_augmix_no_vae_ningbo.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_supervised_augmix_no_vae_chapman_shaoxing.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_supervised_augmix_no_vae_cpsc_2018.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_supervised_augmix_no_vae_georgia.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_augmix_no_vae_ningbo.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_augmix_no_vae_chapman_shaoxing.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_augmix_no_vae_cpsc_2018.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_augmix_no_vae_georgia.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_supervised_augmix_lhat_ningbo.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_supervised_augmix_lhat_chapman_shaoxing.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_supervised_augmix_lhat_cpsc_2018.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_supervised_augmix_lhat_georgia.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_augmix_lhat_ningbo.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_augmix_lhat_chapman_shaoxing.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_augmix_lhat_cpsc_2018.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_augmix_lhat_georgia.yaml
+    evaluation:
+      - configs/experiments/manual_refactor_pn2021_effnet_supervised_augmix_no_vae_eval_ningbo.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_supervised_augmix_no_vae_eval_chapman_shaoxing.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_supervised_augmix_no_vae_eval_cpsc_2018.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_supervised_augmix_no_vae_eval_georgia.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_augmix_no_vae_eval_ningbo.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_augmix_no_vae_eval_chapman_shaoxing.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_augmix_no_vae_eval_cpsc_2018.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_augmix_no_vae_eval_georgia.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_supervised_augmix_lhat_eval_ningbo.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_supervised_augmix_lhat_eval_chapman_shaoxing.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_supervised_augmix_lhat_eval_cpsc_2018.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_supervised_augmix_lhat_eval_georgia.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_augmix_lhat_eval_ningbo.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_augmix_lhat_eval_chapman_shaoxing.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_augmix_lhat_eval_cpsc_2018.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_augmix_lhat_eval_georgia.yaml
+    matrix:
+      - configs/experiments/manual_refactor_pn2021_effnet_supervised_augmix_no_vae_matrix.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_augmix_no_vae_matrix.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_supervised_augmix_lhat_matrix.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_augmix_lhat_matrix.yaml
+  matrix_cohort_configs:
+    supervised_augmix_no_vae:
+      path: configs/eval/PN2021_matrix_supervised_augmix_no_vae_r0.yaml
+      sha256: b4a98adef86569ab0bc574e51782071de5f1b7c5a7f3ecd58d222e9c51973a32
+    supervised_augmix_lhat:
+      path: configs/eval/PN2021_matrix_supervised_augmix_lhat_r0.yaml
+      sha256: ec81d9aac8c6f73de8353a659a9960a65ab578b99dd0d0ec39705fdb526fcd16
+  execution:
+    C_and_D_training_runs: {complete: 16, total: 16, status: complete}
+    C_and_D_evaluation_runs: {complete: 16, total: 16, status: complete}
+    C_and_D_matrix_runs: {complete: 4, total: 4, status: complete}
+    run_manifests: {complete: 36, total: 36}
+    checkpoints_available: true
+    evaluation_results_available: true
+    matrix_results_available: true
+    finite_numeric_artifacts: true
+  verification:
+    tracked_experiment_dry_run: passed_36_of_36_no_side_effects
+    focused_contract_tests: passed_111
+    full_pytest: passed_331_skipped_5
+    planned_run_root_absent_before_execution: verified_historical_preflight
+    artifact_schema_and_finite_value_audit: passed_train16_eval16_matrix4
+    exact_budget_and_component_switch_audit: passed_16_of_16
+    matrix_exact_cohort_validation: passed_4_of_4
+    run_card_status_and_exit_audit: passed_36_of_36
+  execution_identity:
+    git_commit: 5b117985089e78a503b47006c03a1a33b0aa3864
+    git_dirty: true
+    dirty_diff_sha256: 1eb44dd162915c07878d14d26c15ad2624f34b69cd19e4fb0fc0595a8ba2b697
+    manifests_with_same_identity: 36
+    identity_consistent: true
+  evidence_registration: configs/active_evidence_registry.yaml#no_contrastive_supervised_augmix_2x2_r0_20260831
+  metrics: configs/active_evidence_registry.yaml#no_contrastive_supervised_augmix_2x2_r0_20260831
+  claim_boundary:
+    - single_seed_dirty_worktree_development_evidence
+    - A_and_B_are_cross_execution_exact_locked_references
+    - four_arms_are_not_a_contemporaneous_execution
+    - component_arms_not_compute_matched
+    - ecgfounder_stage1_not_bitwise_identical_despite_matched_seeded_recipe
+    - independent_repeats_and_replay_audit_pending
+    - no_paper_claim_allowed
+
+
+no_contrastive_supervised_single_chain_no_vae_r0_20260901:
+  status: completed_single_seed_four_center_development
+  evidence_level: recorded_dirty_worktree_single_seed_development
+  paper_claim_allowed: false
+  performance_evidence_available: true
+  run_root: /home/linbinhao/ECG_adv_data/runs/no_contrastive_supervised_single_chain_no_vae_r0_20260901
+  contract:
+    analysis_id: supervised_single_chain_vs_two_chain_no_simclr_r0_20260901
+    comparison_group: aligned_targetonly_augmix_lhat_simplified_20260805
+    replicate_id: 0
+    method_selector:
+      path: configs/train/methods/augmix_supervised_single_chain_matched_no_vae.yaml
+      sha256: 2e241c4bf31d7163ffb0121303cde96395f5ee87d6fb0f7d9e0ae1cd31a576cf
+      recipe_spec_sha256: 17b977083a6b971a33c83b5f1b0fdd6ae15cd6fa27574db15f8a84f1f11698b2
+    augmix_config:
+      path: configs/train/augmix_single_chain_no_mix.yaml
+      sha256: b5994afd69fb06dab33dff79463e67d4dc65fa45fb1cbd16f7cc24009d69c284
+    stage1:
+      objective: supervised_augmix
+      objective_weights: {clean_bce: 0.5, strong_view_bce: 0.5}
+      view: clean_vs_one_single_chain_corruption_view
+      simclr: disabled
+      projector: disabled
+      source_logit_anchor_weight: 5.0
+    invariants:
+      stage2_teacher: disabled
+      stage2_family_weights: {clean: 0.5, corrupted_total: 0.5}
+      stage2_rotation: two_depth2_plus_two_depth3_five_epoch_cycle
+      contracted_vae_lhat: false
+      comparison_rng_identity: augmix_simclr_lhat
+      checkpoint_selection: last
+      heldout_evaluation_used_for_selection: false
+    matched_two_chain_reference:
+      evidence: configs/active_evidence_registry.yaml#no_contrastive_supervised_augmix_2x2_r0_20260831
+      selector: configs/train/methods/augmix_supervised_matched_no_vae.yaml
+      execution_status: exact_locked_existing_artifact
+      rerun_in_this_execution: false
+  experiment_configs:
+    training:
+      - configs/experiments/manual_refactor_pn2021_effnet_supervised_single_chain_no_vae_ningbo.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_supervised_single_chain_no_vae_chapman_shaoxing.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_supervised_single_chain_no_vae_cpsc_2018.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_supervised_single_chain_no_vae_georgia.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_single_chain_no_vae_ningbo.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_single_chain_no_vae_chapman_shaoxing.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_single_chain_no_vae_cpsc_2018.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_single_chain_no_vae_georgia.yaml
+    evaluation:
+      - configs/experiments/manual_refactor_pn2021_effnet_supervised_single_chain_no_vae_eval_ningbo.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_supervised_single_chain_no_vae_eval_chapman_shaoxing.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_supervised_single_chain_no_vae_eval_cpsc_2018.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_supervised_single_chain_no_vae_eval_georgia.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_single_chain_no_vae_eval_ningbo.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_single_chain_no_vae_eval_chapman_shaoxing.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_single_chain_no_vae_eval_cpsc_2018.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_single_chain_no_vae_eval_georgia.yaml
+    matrix:
+      - configs/experiments/manual_refactor_pn2021_effnet_supervised_single_chain_no_vae_matrix.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_supervised_single_chain_no_vae_matrix.yaml
+  matrix_cohort_config:
+    path: configs/eval/PN2021_matrix_supervised_single_chain_no_vae_r0.yaml
+    sha256: d5475c38fe24a4dc2fcaae9a8835c8232713bdb43c842ea0607e50453357a98d
+  execution:
+    training_runs: {complete: 8, total: 8, status: complete}
+    evaluation_runs: {complete: 8, total: 8, status: complete}
+    matrix_runs: {complete: 2, total: 2, status: complete}
+    run_manifests: {complete: 18, expected_fail_closed: 1, total: 19}
+    checkpoint_available: true
+    evaluation_result_available: true
+    matrix_result_available: true
+    finite_numeric_artifacts: true
+    failed_matrix_attempt:
+      path: /home/linbinhao/ECG_adv_data/runs/no_contrastive_supervised_single_chain_no_vae_r0_20260901/matrix/effnet
+      status: expected_fail_closed_preserved
+      cause: matrix_expected_evaluation_config_sha256_typo
+      delegate_exit_code: 1
+      matrix_result_created: false
+    execution_identity:
+      git_commit: 5b117985089e78a503b47006c03a1a33b0aa3864
+      git_dirty: true
+      train_eval_and_failed_matrix_dirty_diff_sha256: 1362ddc803185c58704436656e5d3504e252fadb5527afd6a47332f9d407b9d9
+      final_matrix_dirty_diff_sha256: c17716900ed5789ca26cbc3569c7a0b905f23d2a407b3141b67be750ba2bdbf7
+      manifests_with_same_git_commit_and_dirty_flag: 19
+  verification:
+    planned_run_root_absent_before_execution: verified
+    focused_contract_tests: passed_131_skipped_5
+    full_pytest: passed_335_skipped_5
+    initial_tracked_experiment_dry_run: passed_18_of_18_no_side_effects
+    corrected_matrix_dry_run: passed_2_of_2_no_side_effects
+    artifact_schema_and_finite_value_audit: passed_train8_eval8_matrix2
+    exact_budget_and_component_switch_audit: passed_8_of_8
+    matrix_exact_cohort_validation: passed_2_of_2
+    run_card_status_and_exit_audit: passed_18_complete_plus_1_expected_fail_closed
+    matched_cohort_except_method_identity: passed_2_of_2
+    matched_training_lineage_except_method_identity: passed_8_of_8
+  evidence_registration: configs/active_evidence_registry.yaml#no_contrastive_supervised_single_chain_no_vae_r0_20260901
+  metrics: configs/active_evidence_registry.yaml#no_contrastive_supervised_single_chain_no_vae_r0_20260901
+  claim_boundary:
+    - single_seed_dirty_worktree_development_evidence
+    - matched_two_chain_reference_is_exact_locked_cross_execution
+    - single_and_two_chain_strong_views_are_not_tensor_paired_by_design
+    - backbone_results_are_directionally_mixed
+    - independent_repeats_pending
+    - no_paper_claim_allowed
+
+
+one_stage_no_contrastive_augmix_lhat_r0_20260901:
+  status: complete_single_seed_development_evidence
+  evidence_level: prospective_single_seed_development
+  paper_claim_allowed: false
+  run_root: /home/linbinhao/ECG_adv_data/runs/one_stage_augmix_lhat_r0_20260901
+  contract:
+    training_config:
+      path: configs/train/PN2021_one_stage_augmix_lhat_r0.yaml
+      sha256: 0d49a836f411e0dd4a5c8ccb5f1df2b66713173691780b429a847dff19cf2832
+    comparison_group: one_stage_augmix_lhat_r0_20260901
+    replicate_id: 0
+    stages: [joint_supervised_adaptation]
+    stage_boundaries: false
+    simclr: disabled
+    projector: disabled
+    source_logit_anchor: disabled
+    checkpoint_selection: last
+    heldout_evaluation_used_for_selection: false
+    base_objectives:
+      direct: {clean: 1.0}
+      augmix: {clean: 0.5, twochain_augmix: 0.5}
+      vae: {clean: 1.0}
+      joint: {clean: 0.5, twochain_augmix: 0.5}
+    vae_auxiliary:
+      arms: [vae, joint]
+      alpha_max: 0.25
+      linear_warmup_epochs: 5
+      attack_then_contract: nondecreasing_bce_grid_v2
+      t_values: [0.0, 0.25, 0.5, 0.75, 1.0]
+  arms:
+    direct:
+      selector: configs/train/methods/a0_clean_v1.yaml
+    augmix:
+      selector: configs/train/methods/one_stage_augmix_supervised.yaml
+    vae:
+      selector: configs/train/methods/one_stage_vae_lhat_mild.yaml
+    joint:
+      selector: configs/train/methods/one_stage_augmix_vae_lhat_mild.yaml
+  experiment_configs:
+    training:
+      - configs/experiments/manual_refactor_pn2021_effnet_one_stage_direct_ningbo.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_one_stage_direct_chapman_shaoxing.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_one_stage_direct_cpsc_2018.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_one_stage_direct_georgia.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_direct_ningbo.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_direct_chapman_shaoxing.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_direct_cpsc_2018.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_direct_georgia.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_one_stage_augmix_ningbo.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_one_stage_augmix_chapman_shaoxing.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_one_stage_augmix_cpsc_2018.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_one_stage_augmix_georgia.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_augmix_ningbo.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_augmix_chapman_shaoxing.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_augmix_cpsc_2018.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_augmix_georgia.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_one_stage_vae_ningbo.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_one_stage_vae_chapman_shaoxing.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_one_stage_vae_cpsc_2018.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_one_stage_vae_georgia.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_vae_ningbo.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_vae_chapman_shaoxing.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_vae_cpsc_2018.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_vae_georgia.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_one_stage_joint_ningbo.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_one_stage_joint_chapman_shaoxing.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_one_stage_joint_cpsc_2018.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_one_stage_joint_georgia.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_joint_ningbo.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_joint_chapman_shaoxing.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_joint_cpsc_2018.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_joint_georgia.yaml
+    evaluation:
+      - configs/experiments/manual_refactor_pn2021_effnet_one_stage_direct_eval_ningbo.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_one_stage_direct_eval_chapman_shaoxing.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_one_stage_direct_eval_cpsc_2018.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_one_stage_direct_eval_georgia.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_direct_eval_ningbo.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_direct_eval_chapman_shaoxing.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_direct_eval_cpsc_2018.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_direct_eval_georgia.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_one_stage_augmix_eval_ningbo.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_one_stage_augmix_eval_chapman_shaoxing.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_one_stage_augmix_eval_cpsc_2018.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_one_stage_augmix_eval_georgia.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_augmix_eval_ningbo.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_augmix_eval_chapman_shaoxing.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_augmix_eval_cpsc_2018.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_augmix_eval_georgia.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_one_stage_vae_eval_ningbo.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_one_stage_vae_eval_chapman_shaoxing.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_one_stage_vae_eval_cpsc_2018.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_one_stage_vae_eval_georgia.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_vae_eval_ningbo.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_vae_eval_chapman_shaoxing.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_vae_eval_cpsc_2018.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_vae_eval_georgia.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_one_stage_joint_eval_ningbo.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_one_stage_joint_eval_chapman_shaoxing.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_one_stage_joint_eval_cpsc_2018.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_one_stage_joint_eval_georgia.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_joint_eval_ningbo.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_joint_eval_chapman_shaoxing.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_joint_eval_cpsc_2018.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_joint_eval_georgia.yaml
+    matrix:
+      - configs/experiments/manual_refactor_pn2021_effnet_one_stage_direct_matrix.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_direct_matrix.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_one_stage_augmix_matrix.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_augmix_matrix.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_one_stage_vae_matrix.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_vae_matrix.yaml
+      - configs/experiments/manual_refactor_pn2021_effnet_one_stage_joint_matrix.yaml
+      - configs/experiments/manual_refactor_pn2021_ecgfounder_one_stage_joint_matrix.yaml
+  matrix_cohort_configs:
+    direct: configs/eval/PN2021_matrix_one_stage_direct_r0.yaml
+    augmix: configs/eval/PN2021_matrix_one_stage_augmix_r0.yaml
+    vae: configs/eval/PN2021_matrix_one_stage_vae_r0.yaml
+    joint: configs/eval/PN2021_matrix_one_stage_joint_r0.yaml
+  execution:
+    training_runs: {complete: 32, total: 32}
+    evaluation_runs: {complete: 32, total: 32}
+    matrix_runs: {complete: 8, total: 8}
+    exact_matrix_cohort_validation: passed_8_of_8
+    finite_artifact_audit: passed_train32_eval32_matrix8
+    complete_run_manifests: 72
+    excluded_failed_attempts: 1
+    excluded_failed_attempt_path: /home/linbinhao/ECG_adv_data/runs/one_stage_augmix_lhat_r0_20260901/joint/effnet/ningbo
+    successful_retry_path: /home/linbinhao/ECG_adv_data/runs/one_stage_augmix_lhat_r0_20260901/joint/effnet/ningbo_retry1
+  evidence_registration: configs/active_evidence_registry.yaml#one_stage_no_contrastive_augmix_lhat_r0_20260901
+  metrics: configs/active_evidence_registry.yaml#one_stage_no_contrastive_augmix_lhat_r0_20260901
+  claim_boundary:
+    - single_seed_development_only
+    - no_post_execution_retuning_in_this_registered_cell
+    - independent_repeats_required_before_paper_claim
+
+
+one_stage_single_chain_vs_two_chain_r0_20260901:
+  status: complete_single_seed_development_evidence
+  evidence_level: prospective_matched_chain_ablation_single_seed
+  paper_claim_allowed: false
+  run_root: /home/linbinhao/ECG_adv_data/runs/one_stage_single_chain_r0_20260901
+  matched_two_chain_reference:
+    registry: one_stage_no_contrastive_augmix_lhat_r0_20260901
+    run_root: /home/linbinhao/ECG_adv_data/runs/one_stage_augmix_lhat_r0_20260901
+  contract:
+    training_config:
+      path: configs/train/PN2021_one_stage_augmix_lhat_r0.yaml
+      sha256: 0d49a836f411e0dd4a5c8ccb5f1df2b66713173691780b429a847dff19cf2832
+    comparison_group: one_stage_augmix_lhat_r0_20260901
+    replicate_id: 0
+    stages: [joint_supervised_adaptation]
+    stage_boundaries: false
+    simclr: disabled
+    projector: disabled
+    source_logit_anchor: disabled
+    checkpoint_selection: last
+    heldout_evaluation_used_for_selection: false
+    base_objectives:
+      no_vae: {clean: 0.5, single_chain_augmix: 0.5}
+      joint: {clean: 0.5, single_chain_augmix: 0.5}
+    vae_auxiliary:
+      arms: [joint]
+      alpha_max: 0.25
+      linear_warmup_epochs: 5
+      attack_then_contract: nondecreasing_bce_grid_v2
+      t_values: [0.0, 0.25, 0.5, 0.75, 1.0]
+  arms:
+    no_vae:
+      selector: configs/train/methods/one_stage_single_chain_supervised.yaml
+      selector_sha256: 74727386c3f34594ccb7f4faefb6636ccaf455f12825427818db57a83276add5
+      recipe_spec_sha256: 702248e615f6a2dccb3edcafc25f17697382491a3d28c6954d883a2458059ffc
+    joint:
+      selector: configs/train/methods/one_stage_single_chain_vae_lhat_mild.yaml
+      selector_sha256: a83524a8773d442398df2e974a8d1bc51110ea9cfcdebbf5615addd7c899eccf
+      recipe_spec_sha256: b95f6a8a9f0e7f29f8ead86057414b76aeb49be073dae3637f4fa71c7507abae
+  experiment_configs:
+    glob: configs/experiments/manual_refactor_pn2021_*_one_stage_single_chain*.yaml
+    training: {complete: 16, total: 16}
+    evaluation: {complete: 16, total: 16}
+    matrix: {complete: 4, total: 4}
+  matrix_cohort_configs:
+    no_vae: configs/eval/PN2021_matrix_one_stage_single_chain_r0.yaml
+    joint: configs/eval/PN2021_matrix_one_stage_single_chain_joint_r0.yaml
+  verification:
+    focused_contract_tests: passed_128
+    tracked_experiment_dry_run: passed_36_of_36_without_side_effects
+    pre_execution_full_pytest: passed_349_skipped_5
+    post_registration_full_pytest: passed_349_skipped_5
+    shared_gpu_preflight: passed_gpu4_single_device
+    artifact_schema_and_finite_value_audit: passed_train16_eval16_matrix4
+    exact_budget_audit: passed_effnet25epochs100steps_ecgfounder30epochs240steps
+    matrix_exact_cohort_validation: passed_4_of_4
+    run_manifests: passed_complete_36_of_36
+  evidence_registration: configs/active_evidence_registry.yaml#one_stage_single_chain_vs_two_chain_r0_20260901
+  metrics: configs/active_evidence_registry.yaml#one_stage_single_chain_vs_two_chain_r0_20260901
+  readout:
+    clean: near_tie_with_small_backbone_dependent_differences
+    pn2021c_depth23: single_chain_higher_for_both_backbones_with_and_without_vae
+    vae_increment_on_single_chain: not_stably_positive
+    chain_by_vae_interaction: near_zero
+  claim_boundary:
+    - single_seed_development_only
+    - matched_single_chain_vs_existing_two_chain_under_same_cohort_contract
+    - chain_views_share_rng_namespace_but_are_not_tensor_paired
+    - independent_repeats_required_before_paper_claim
+
+
+a1_auxiliary_mechanism_screen_r0_20260901:
+  status: complete_single_seed_dual_backbone_four_center_development_evidence
+  evidence_level: prospective_mechanism_screen_not_paper_claim
+  baseline:
+    selector: configs/train/methods/a1_corrupt_ft_rot4_v1.yaml
+    role: locked_correct_strong_finetuning_baseline
+    objective: {clean: 0.5, rotating_depth23_total: 0.5}
+  constraints:
+    simclr: disabled
+    projector: disabled
+    stage_boundaries: false
+    source_replay: disabled
+    source_logit_anchor: disabled
+    checkpoint_selection: last
+    heldout_evaluation_used_for_selection: true_for_mechanism_screen_only
+  training_config:
+    path: configs/train/PN2021_a1_aux_screen_r0.yaml
+    sha256: 38c32d15c5ce1c89ea17b4f127bb3a12e4ced72ecadc62dc11fa08e9086f87af
+    comparison_group: a1_aux_screen_r0_20260901
+    replicate_id: 0
+  arms:
+    augmix:
+      selector: configs/train/methods/a1_rot4_augmix_mild.yaml
+      selector_sha256: c38d5a10ec833be6b611739a8375e7ec80ef77a225eec78a340e9bd6419561a7
+      recipe_spec_sha256: 9629ddea01cf713e82c88b0c34601e40c9f85e5eebe92b93c512793f6fa7113f
+      auxiliary_weight: 0.125
+      geometry: two_chain_dirichlet_no_clean_beta
+    vae_lhat:
+      selector: configs/train/methods/a1_rot4_vae_lhat_mild.yaml
+      selector_sha256: 9bfc580bf2eddac969ca85f17f8b475f90f8a392114dbf11847e3bdbdfb19d11
+      recipe_spec_sha256: bf8300107864cabcdc39e5103f687cfe98977f08f954b65e2a1a155a2333f2d1
+      alpha_max: 0.1
+      linear_warmup_epochs: 5
+      attack_then_contract: nondecreasing_bce_grid_v2
+    joint:
+      selector: configs/train/methods/a1_rot4_augmix_vae_lhat_mild.yaml
+      selector_sha256: a696d7d14c87fb05f6bba67515758c0b9385312d4d54ff808274d03bf74b09e5
+      recipe_spec_sha256: 8ee620be2562fa996113d880e0799287ee057753c3eb950c98bb563fd9922a2b
+      augmix_auxiliary_weight: 0.125
+      vae_lhat_alpha_max: 0.1
+  experiment_configs:
+    glob: configs/experiments/manual_refactor_pn2021_*_a1_*_mild*.yaml
+    training: {complete: 24, total: 24}
+    evaluation: {complete: 24, total: 24}
+    matrix: {complete: 0, total: 0}
+  frozen_after_single_center_screen:
+    backbone: efficientnet1dv2
+    center: ningbo
+    clean_delta_pp_vs_a1:
+      augmix: {macro_auroc: 0.0211, macro_auprc: 0.0400}
+      vae_lhat: {macro_auroc: -0.0104, macro_auprc: 0.0081}
+      joint: {macro_auroc: 0.0042, macro_auprc: 0.0105}
+    pn2021c_depth23_delta_pp_vs_a1:
+      augmix: {macro_auroc: 0.1929, macro_auprc: 0.3165}
+      vae_lhat: {macro_auroc: 0.0483, macro_auprc: 0.1185}
+      joint: {macro_auroc: 0.1753, macro_auprc: 0.3217}
+    tuning_policy: frozen_no_further_recipe_changes_from_expansion_results
+  promotion_gate:
+    - no_invalid_decode
+    - report_raw_asr_contracted_asr_acceptance_bce_gain_selected_t_together
+    - no_material_clean_regression
+    - positive_pn2021c_depth23_delta_vs_exact_a1_subject
+    - freeze_before_dual_backbone_four_center_expansion
+  execution:
+    artifact_schema_and_finite_value_audit: passed_train24_eval24
+    exact_budget_audit: passed_effnet25epochs100steps_ecgfounder30epochs240steps
+    run_manifests: passed_complete_48_of_48
+    full_pytest: passed_362_skipped_5
+    excluded_failed_attempt: /home/linbinhao/ECG_adv_data/runs/a1_aux_screen_r0_20260901/augmix/effnet/ningbo
+    successful_retry: /home/linbinhao/ECG_adv_data/runs/a1_aux_screen_r0_20260901/augmix/effnet/ningbo_retry1
+  readout:
+    augmix_relative_to_a1: positive_dual_backbone_mean_on_all_four_primary_metrics
+    vae_lhat_relative_to_a1: not_stably_positive
+    joint_relative_to_a1: robustness_gain_supported_but_clean_metrics_mixed
+    vae_increment_joint_minus_augmix: negative_dual_backbone_mean_on_both_pn2021c_metrics
+    attribution: joint_gain_is_augmix_supported_not_vae_supported
+  evidence_registration: configs/active_evidence_registry.yaml#a1_auxiliary_mechanism_screen_r0_20260901
+
+
+a1_hardgain_vae_screen_r0_20260901:
+  status: complete_prespecified_georgia_dual_backbone_mechanism_screen
+  evidence_level: heldout_tuned_single_seed_development_not_paper_claim
+  paper_claim_allowed: false
+  run_root: /home/linbinhao/ECG_adv_data/runs/a1_hardgain_screen_r0_20260901
+  question: >
+    Does rejecting contracted VAE-LHAT samples below 0.01 BCE gain and raising
+    the warm-started alpha ceiling to 0.25 make VAE-LHAT positive on the
+    locked A1 base, alone or incrementally on top of two-chain AugMix?
+  constraints:
+    baseline: locked_a1_rotating_depth23
+    simclr: disabled
+    projector: disabled
+    stage_boundaries: false
+    source_replay: disabled
+    source_logit_anchor: disabled
+    checkpoint_selection: last
+    tuning_scope: georgia_mechanism_screen_after_reviewing_prior_heldout_results
+  training_config:
+    path: configs/train/PN2021_a1_hardgain_screen_r0.yaml
+    sha256: f6b1869ff9f24e3e397553350fa69a764b6bc5ac4c869c3ebba92a74cf2d285e
+    comparison_group: a1_hardgain_screen_r0_20260901
+    replicate_id: 0
+  arms:
+    vae_hardgain:
+      selector: configs/train/methods/a1_rot4_vae_lhat_hardgain.yaml
+      selector_sha256: 4fd66c946d5ae016dfeb7809d2f4b299eea3203dc67a5c90a5b6ce6f2adcd786
+      recipe_spec_sha256: 838bf5d1d5850181f26cf3f3984e36dfac95f40af7293ec674cfa928cfcc4cc6
+    joint_hardgain:
+      selector: configs/train/methods/a1_rot4_augmix_vae_lhat_hardgain.yaml
+      selector_sha256: c82e75ad360626e1190d38dc02120226aa7f720b5b943c108d0e72ccc14fb7e2
+      recipe_spec_sha256: 810a5b188e08562df9e592f5383b04089bbdb52d3209c010901508e6ed7ef5f1
+    lhat_config:
+      path: configs/train/lhat_hardgain_nondecreasing.yaml
+      sha256: 4f6ee9b66510ae46e75a7bdc7b34f0c1bb54cb0bc3f5fd719a4aaa9908d95c3c
+      training_selection: {mode: minimum_bce_gain, threshold: 0.01}
+      alpha_schedule: linear_warmup_epochs_1_to_5_then_0p25
+  experiment_configs:
+    glob: configs/experiments/manual_refactor_pn2021_*_a1_*_hardgain_*georgia.yaml
+    training: {complete: 4, total: 4}
+    evaluation: {complete: 4, total: 4}
+  execution:
+    dry_run: passed_8_of_8_without_side_effects
+    artifact_schema_and_finite_value_audit: passed_train4_eval4
+    exact_budget_audit: passed_effnet25epochs100steps_ecgfounder30epochs240steps
+    run_manifests: passed_complete_8_of_8
+    full_pytest: passed_362_skipped_5
+    excluded_failed_attempt: /home/linbinhao/ECG_adv_data/runs/a1_hardgain_screen_r0_20260901/vae_hard/effnet/georgia
+    successful_retry: /home/linbinhao/ECG_adv_data/runs/a1_hardgain_screen_r0_20260901/vae_hard/effnet/georgia_retry1
+  readout:
+    vae_hardgain_relative_to_a1: failed_stable_positive_gate_on_both_backbones
+    vae_increment_joint_hardgain_minus_augmix: all_negative_on_effnet_and_mixed_on_ecgfounder
+    attack_health: raw_attack_and_gain_gate_both_active
+    decision: stop_heldout_retuning_and_do_not_promote_hardgain_recipe
+  evidence_registration: configs/active_evidence_registry.yaml#a1_hardgain_vae_screen_r0_20260901
+  claim_boundary:
+    - mechanism_screen_selected_after_reviewing_prior_development_results
+    - single_seed_georgia_only
+    - independent_frozen_repeats_not_warranted_without_a_positive_development_gate
+
+
+a1_single_vs_two_chain_r0_20260901:
+  status: complete_matched_dual_backbone_four_center_development_evidence
+  evidence_level: locked_cross_execution_single_seed_chain_ablation
+  paper_claim_allowed: false
+  run_root: /home/linbinhao/ECG_adv_data/runs/a1_single_vs_two_chain_r0_20260901
+  matched_two_chain_reference:
+    registration: a1_auxiliary_mechanism_screen_r0_20260901
+    run_root: /home/linbinhao/ECG_adv_data/runs/a1_aux_screen_r0_20260901/augmix
+  contract:
+    training_config:
+      path: configs/train/PN2021_a1_aux_screen_r0.yaml
+      sha256: 38c32d15c5ce1c89ea17b4f127bb3a12e4ced72ecadc62dc11fa08e9086f87af
+    comparison_group: a1_aux_screen_r0_20260901
+    replicate_id: 0
+    base_weights: {clean: 0.5, rotating_depth23_total: 0.5}
+    chain_auxiliary_weight: 0.125
+    simclr: disabled
+    projector: disabled
+    stage_boundaries: false
+    source_replay: disabled
+    source_logit_anchor: disabled
+    checkpoint_selection: last
+  arms:
+    single_chain:
+      selector: configs/train/methods/a1_rot4_single_chain_mild.yaml
+      selector_sha256: ed80f485614e1902a61c0c7a1e7589ec3b423d31a9f571c76e0684d1f3920c44
+      recipe_spec_sha256: 4ed8ad59d68eabce746710237354ad40f1df998bc95d6a4328b5f1f8520d6889
+      generated_chains: 1
+      dirichlet_mix: false
+    two_chain:
+      selector: configs/train/methods/a1_rot4_augmix_mild.yaml
+      selector_sha256: c38d5a10ec833be6b611739a8375e7ec80ef77a225eec78a340e9bd6419561a7
+      recipe_spec_sha256: 9629ddea01cf713e82c88b0c34601e40c9f85e5eebe92b93c512793f6fa7113f
+      generated_chains: 2
+      dirichlet_mix: true
+      clean_beta_mix: false
+  experiment_configs:
+    glob: configs/experiments/manual_refactor_pn2021_*_a1_single_chain_mild_*.yaml
+    training: {complete: 8, total: 8}
+    evaluation: {complete: 8, total: 8}
+  execution:
+    dry_run: passed_16_of_16_without_side_effects
+    focused_contract_tests: passed_143
+    full_pytest: passed_365_skipped_5
+    artifact_schema_and_finite_value_audit: passed_train8_eval8
+    exact_budget_audit: passed_effnet25epochs100steps_ecgfounder30epochs240steps
+    lineage_match_against_two_chain: passed_8_of_8
+    run_manifests: passed_complete_16_of_16
+  readout:
+    clean_two_minus_single: small_positive_mean_driven_by_auprc
+    pn2021c_two_minus_single: negative_dual_backbone_mean_on_auroc_and_auprc
+    both_relative_to_a1: positive_robustness_mean_for_both_chain_variants
+    robustness_preference: single_chain
+    claim: two_chain_is_not_supported_as_superior_to_single_chain
+  evidence_registration: configs/active_evidence_registry.yaml#a1_single_vs_two_chain_r0_20260901
+  limitations:
+    - single_seed_only
+    - two_chain_reference_is_frozen_cross_execution_not_same_process
+    - relevant_lineage_fields_match_but_dirty_diff_identity_differs
+    - independent_frozen_repeats_required_before_paper_claim
+
+
+a1_repaired_augmix_lhat_screen_r1_20260901:
+  status: complete_georgia_dual_backbone_mechanism_screen_not_promoted
+  evidence_level: heldout_tuned_single_seed_development_not_paper_claim
+  paper_claim_allowed: false
+  run_root: /home/linbinhao/ECG_adv_data/runs/a1_repaired_screen_r1_20260901
+  question: >
+    Can AugMix-native Bernoulli consistency make two chains beat one chain,
+    and can pure-latent-displacement VAE-LHAT add a positive marginal while
+    the joint recipe exceeds the locked A1 baseline by at least 2 pp?
+  constraints:
+    baseline: locked_a1_rotating_depth23
+    method_components: [augmix, vae_lhat]
+    simclr: disabled
+    projector: disabled
+    stage_boundaries: false
+    source_replay: disabled
+    source_logit_anchor: disabled
+    checkpoint_selection: last
+    tuning_scope: georgia_mechanism_screen_after_reviewing_prior_heldout_results
+  training_config:
+    path: configs/train/PN2021_a1_aux_screen_r0.yaml
+    sha256: 38c32d15c5ce1c89ea17b4f127bb3a12e4ced72ecadc62dc11fa08e9086f87af
+    comparison_group: a1_aux_screen_r0_20260901
+    replicate_id: 0
+  arms:
+    single_jsd:
+      selector: configs/train/methods/a1_rot4_single_chain_jsd.yaml
+      selector_sha256: e7e2ebdadadeb2c0d721011c057cfe604a01563e8199e3c29843fbde2b65e127
+      recipe_spec_sha256: 2a166b105a2b4881c42c07150202b7b6c8d4ca86f7edbaa8d5b6b4bf821983f8
+    two_jsd:
+      selector: configs/train/methods/a1_rot4_augmix_jsd.yaml
+      selector_sha256: 2fa644da40e9459b573786855a5cf4ca918133a5a89f4c9de4262c4884c173dd
+      recipe_spec_sha256: b2235ec1b10dc23c6bc63228f0cb259609efac2b5f78bb62b3960c43e1b70a5f
+    vae_puredelta:
+      selector: configs/train/methods/a1_rot4_vae_lhat_puredelta.yaml
+      selector_sha256: 74f7b74399825452d2ce6bab33ea38f585eab0dfd16b2e41cf9dfe049ed1005b
+      recipe_spec_sha256: 229503bdb1a67403b4215faa64c5b3f7c0757e05a50ac15a20276f3b09df98f2
+    joint_repaired:
+      selector: configs/train/methods/a1_rot4_augmix_jsd_vae_lhat_puredelta.yaml
+      selector_sha256: e817e55fa129d4be1bd6fcce5d5992e15660b6ff35e411b667eff296c763c4ba
+      recipe_spec_sha256: e60e6e8840e299e914deb671ed92eacf918ba7d8f82e526739b7b4c4adf28998
+    lhat_config:
+      path: configs/train/lhat_pure_delta_nondecreasing.yaml
+      sha256: 21fa2b9614bb8f0a54f6213f1b5ab67ae42676d0c5c0f84b664b36bea1fbfb1f
+      endpoint_residual_correction: constant_clean_anchor_residual
+      alpha_schedule: linear_warmup_epochs_1_to_5_then_0p1
+  prespecified_development_gates:
+    - two_jsd_minus_single_jsd_positive_on_both_pn2021c_metrics
+    - vae_puredelta_minus_a1_positive_on_both_pn2021c_metrics
+    - joint_repaired_minus_two_jsd_positive_on_both_pn2021c_metrics
+    - joint_repaired_minus_a1_at_least_2pp_on_pn2021c_auprc
+  experiment_configs:
+    glob: configs/experiments/manual_refactor_pn2021_*_a1_*_georgia.yaml
+    training: {complete: 8, total: 8}
+    evaluation: {complete: 8, total: 8}
+  execution:
+    dry_run: passed_16_successful_jobs
+    artifact_schema_and_finite_value_audit: passed_train8_eval8
+    exact_budget_audit: passed_effnet25epochs100steps_ecgfounder30epochs240steps
+    failed_preoptimization_or_early_attempts: 4
+    failure_reason: bfloat16_probability_rounding_caused_nonfinite_jsd
+    numerical_repair: compute_bernoulli_probabilities_in_float32
+    failed_attempts_preserved: true
+  readout:
+    two_chain_minus_single_chain: positive_only_for_effnet_not_ecgfounder
+    vae_puredelta_minus_a1: not_positive_on_both_pn2021c_metrics
+    joint_minus_two_chain: mixed_near_zero_vae_marginal
+    joint_minus_a1_auprc_pp: {efficientnet1dv2: 0.4826, ecgfounder: 0.6040}
+    prespecified_gates_passed: 0_of_4
+    decision: do_not_expand_to_four_centers
+  evidence_registration: configs/active_evidence_registry.yaml#a1_repaired_augmix_lhat_screen_r1_20260901
+
+
+one_pool_augmix_lhat_screen_r2_20260901:
+  status: complete_georgia_dual_backbone_development_screen
+  evidence_level: heldout_tuned_single_seed_development_not_paper_claim
+  paper_claim_allowed: false
+  run_root: /home/linbinhao/ECG_adv_data/runs/one_pool_augmix_lhat_r2_20260901
+  question: >
+    Does replacing the redundant A1 rotating-corruption base with one pooled
+    clean plus AugMix objective make two chains beat one chain, permit a
+    positive VAE-LHAT marginal, and exceed locked A1 by at least 2 pp?
+  constraints:
+    baseline_for_comparison: locked_a1_rotating_depth23
+    training_pool: clean_plus_augmix_plus_optional_vae_lhat
+    method_components: [augmix, vae_lhat]
+    simclr: disabled
+    projector: disabled
+    stage_boundaries: false
+    source_replay: disabled
+    source_logit_anchor: disabled
+    checkpoint_selection: last
+  training_config:
+    path: configs/train/PN2021_one_pool_augmix_lhat_r2.yaml
+    sha256: 619c08c2e4d039574645df33b33412939f73b4908acc4b7bac0e12555cd3c534
+    comparison_group: one_pool_augmix_lhat_r2_20260901
+    replicate_id: 0
+  arms:
+    single_jsd:
+      selector: configs/train/methods/one_pool_single_chain_jsd.yaml
+      selector_sha256: 5df79314dd12cd34257f4882508c909acca8ad95a71aa9141bee15089a70be17
+      recipe_spec_sha256: d7712f083761186ce9dd0fde8c9fb8b6d879f10357106c57e3d63e52083df5c2
+    two_jsd:
+      selector: configs/train/methods/one_pool_augmix_jsd.yaml
+      selector_sha256: 6b9861312002f317d272c436775278be867def1525734320d9380143b9f86594
+      recipe_spec_sha256: d0a70e72cd4db6a241474c1a11902778825b3d2e395ffa9e9816b0f21cfc9549
+    vae_puredelta:
+      selector: configs/train/methods/one_pool_vae_lhat_puredelta.yaml
+      selector_sha256: 69891f7ac6bb7c957513e84041f15422c6674ec498eac4e74198ddd73c22ce70
+      recipe_spec_sha256: 732f5ae6d90cc4d177bacc0ad36098143e4769936e11223e68abbf3f5db921bd
+    joint:
+      selector: configs/train/methods/one_pool_augmix_jsd_vae_lhat_puredelta.yaml
+      selector_sha256: 1d889d339dbcb412f534dafbbbd266d8084277289a25405cb6de1b6117f5307c
+      recipe_spec_sha256: cd6515d4a1e8e1a0c0d6a3518bfaa581e310262b982e1a0587db147d1dd45331
+  objective:
+    clean_weight: 0.5
+    augmix_weight: 0.5
+    augmix_internal_jsd_weight: 12.0
+    vae_alpha_schedule: linear_warmup_epochs_1_to_5_then_0p1
+    one_outer_optimizer_step_per_clean_batch: true
+  prespecified_development_gates:
+    - two_jsd_minus_single_jsd_positive_on_both_pn2021c_metrics
+    - vae_puredelta_positive_relative_to_matched_clean_direct_on_both_pn2021c_metrics
+    - joint_minus_two_jsd_positive_on_both_pn2021c_metrics
+    - joint_minus_locked_a1_at_least_2pp_on_pn2021c_auprc
+  experiment_configs:
+    glob: configs/experiments/manual_refactor_pn2021_*_one_pool_*_georgia.yaml
+    training: {complete: 8, total: 8}
+    evaluation: {complete: 8, total: 8}
+  execution:
+    dry_run: passed_16_jobs
+    artifact_schema_and_finite_value_audit: passed_train8_eval8
+    exact_budget_audit: passed_effnet25epochs100steps_ecgfounder30epochs240steps
+    run_manifests: {complete: 16, total: 16}
+  readout:
+    two_chain_minus_single_chain:
+      efficientnet1dv2_pn2021c_pp: [0.146327, 0.351371]
+      ecgfounder_pn2021c_pp: [-0.117315, 0.008652]
+      dual_backbone_mean_pn2021c_pp: [0.014506, 0.180012]
+    vae_puredelta_minus_matched_clean_direct:
+      efficientnet1dv2_pn2021c_pp: [0.161112, 0.054541]
+      ecgfounder_pn2021c_pp: [0.047913, 0.164272]
+      dual_backbone_mean_pn2021c_pp: [0.104512, 0.109406]
+    joint_minus_two_chain:
+      efficientnet1dv2_pn2021c_pp: [-0.002834, 0.028914]
+      ecgfounder_pn2021c_pp: [0.040897, 0.138824]
+      dual_backbone_mean_pn2021c_pp: [0.019032, 0.083869]
+    joint_minus_locked_a1:
+      efficientnet1dv2_pn2021c_pp: [0.762976, 0.495045]
+      ecgfounder_pn2021c_pp: [-0.065395, -0.356031]
+      dual_backbone_mean_pn2021c_pp: [0.348790, 0.069507]
+    strict_gate_readout:
+      two_chain_superiority: failed_backbone_consistency
+      vae_main_effect: passed_both_backbones_both_pn2021c_metrics
+      vae_marginal_on_augmix: failed_effnet_auroc_by_0p002834pp
+      joint_gain_threshold: failed_both_backbones_below_0p50pp_auprc
+    decision: retain_mechanism_direction_but_do_not_expand_r2_to_four_centers
+  evidence_registration: configs/active_evidence_registry.yaml#one_pool_augmix_lhat_screen_r2_20260901
+
+
+a1_pool_augmix_lhat_screen_r3_20260901:
+  status: complete_georgia_dual_backbone_strength_screen_not_promoted
+  evidence_level: heldout_tuned_single_seed_development_not_paper_claim
+  paper_claim_allowed: false
+  run_root: /home/linbinhao/ECG_adv_data/runs/a1_pool_augmix_lhat_r3_20260901
+  question: >
+    Can an A1-based one-stage pool with explicitly supervised two-chain AugMix
+    and pure-delta VAE-LHAT preserve clean ablations and exceed A1 by at least
+    2 pp PN2021-C AP?
+  constraints:
+    baseline_for_comparison: locked_a1_rotating_depth23
+    method_components: [augmix, vae_lhat]
+    simclr: disabled
+    projector: disabled
+    stage_boundaries: false
+    source_replay: disabled
+    source_logit_anchor: disabled
+    checkpoint_selection: last
+    one_outer_optimizer_step_per_clean_batch: true
+  training_config:
+    path: configs/train/PN2021_a1_pool_augmix_lhat_r3.yaml
+    sha256: 6d030cfe45bb38fe0e5de9c589032e46ee14a693364d5578800e9ee5b68eca84
+    comparison_group: a1_pool_augmix_lhat_r3_20260901
+    replicate_id: 0
+  arms:
+    single_strong:
+      selector: configs/train/methods/a1_rot4_single_chain_jsd_strong.yaml
+      selector_sha256: 2b926c9d1880e11d7934b02b4031d04d247da14d74c8332c578d89c4cd9b59dd
+      recipe_spec_sha256: 013c0914730d65f5012219e5611b2c851065a20c37fb59bd3572963e08d2dd5c
+    two_strong:
+      selector: configs/train/methods/a1_rot4_augmix_jsd_endpoint_mean_strong.yaml
+      selector_sha256: 1f60e219ab3377851323176d5e17e2e3c2f54f5f9fcef743c4879f9abb18183d
+      recipe_spec_sha256: 857fabe0b0b3f4c6a77c46ef52296c8c046d36a56ae65d27721f6ed74dca52bf
+    joint_strong:
+      selector: configs/train/methods/a1_rot4_augmix_jsd_endpoint_mean_strong_vae_lhat_puredelta.yaml
+      selector_sha256: 86798cf6fe53da31eec6240484fe8fae227b25e4d5ba70b6311877e76a7c2edc
+      recipe_spec_sha256: 491f95a80ff083a8d4c73d224abe321e2d5d919c6ff09448c896efe310e6f983
+    two_hardmax:
+      selector: configs/train/methods/a1_rot4_augmix_jsd_hardview_strong.yaml
+      selector_sha256: c4a2ce05fda80e49224c88ad0dcf5326b354f93ffd1afc6ca59203fb70ac9c6d
+      recipe_spec_sha256: d08071e0f806413963cffea2acf95af0bcefdd7687203f0c06f5ab59b898ddd4
+    joint_hardmax:
+      selector: configs/train/methods/a1_rot4_augmix_jsd_hardview_strong_vae_lhat_puredelta.yaml
+      selector_sha256: ea9bd3d9fe9214806af76f5aaaaab39b6ffb296edc009aa1f21300a343e5fa74
+      recipe_spec_sha256: 8c50293e73da9c414371eaae0a7e8ad4d0043eaddd587e2272caaca9f9e5f3a9
+    two_complementary:
+      selector: configs/train/methods/a1_rot4_augmix_jsd_complementary_strong.yaml
+      selector_sha256: 08c7df0fd8d8219887aca79e2feaae1fd4a6d5617adda867434547c2abef698d
+      recipe_spec_sha256: 6a2ffae8a1dbc74758cd59747a9cab615a53a5a8f5d6427ae8c2e215e6c02c8f
+    joint_complementary:
+      selector: configs/train/methods/a1_rot4_augmix_jsd_complementary_strong_vae_lhat_puredelta.yaml
+      selector_sha256: 5232916234a8130f23072a01996af2a081c9c160ed43fb51cb5b50712735cfec
+      recipe_spec_sha256: 6ad1241a18b17e3b72aebe804a61b6dd7766be6e34d31b15e1e0493d76700322
+  objective:
+    a1_base_weights: {clean: 0.5, rotating_depth23_total: 0.5}
+    augmix_auxiliary_weight: 0.5
+    augmix_two_chain_supervision: mean_of_mixed_chain1_chain2_bce
+    hardview_extension_supervision: per_sample_max_of_mixed_chain1_chain2_bce
+    complementary_extension_sampling: disjoint_depth2_depth3_cover_all_five_operators
+    augmix_internal_bernoulli_jsd_weight: 12.0
+    vae_alpha_schedule: linear_warmup_epochs_1_to_5_then_0p1
+  prespecified_development_gates:
+    - two_strong_minus_single_strong_positive_on_both_pn2021c_metrics
+    - joint_strong_minus_two_strong_positive_on_both_pn2021c_metrics
+    - joint_strong_minus_locked_a1_at_least_2pp_on_pn2021c_auprc
+  experiment_configs:
+    glob: configs/experiments/manual_refactor_pn2021_*_a1_pool_*_georgia.yaml
+    training: {complete: 14, total: 14}
+    evaluation: {complete: 14, total: 14}
+  strict_gate_readout:
+    endpoint_mean_two_chain_superiority: failed_ecgfounder
+    endpoint_mean_vae_marginal: passed_both_backbones_both_pn2021c_metrics
+    hardmax_two_chain_superiority: failed_ecgfounder
+    complementary_two_chain_superiority: failed_both_backbones
+    joint_gain_threshold: failed_dual_backbone_mean_pn2021c_auprc_gain_0p520pp
+  decision: reject_strength_extensions_and_do_not_expand_to_four_centers
+
+
+a1_pool_balanced_augmix_lhat_screen_r4_20260902:
+  status: complete_georgia_dual_backbone_balanced_screen_not_promoted
+  evidence_level: heldout_tuned_single_seed_development_not_paper_claim
+  paper_claim_allowed: false
+  run_root: /home/linbinhao/ECG_adv_data/runs/a1_pool_balanced_augmix_lhat_r4_20260902
+  question: >
+    With total supervised loss mass fixed at one and without JSD, does direct
+    supervision of two independent AugMix chains beat one chain, retain a
+    positive pure-delta VAE-LHAT marginal, and exceed locked A1 by 2 pp AP?
+  constraints:
+    baseline_for_comparison: locked_a1_rotating_depth23
+    method_components: [augmix, vae_lhat]
+    simclr: disabled
+    projector: disabled
+    stage_boundaries: false
+    source_replay: disabled
+    source_logit_anchor: disabled
+    checkpoint_selection: last
+    one_outer_optimizer_step_per_clean_batch: true
+  training_config:
+    path: configs/train/PN2021_a1_pool_balanced_augmix_lhat_r4.yaml
+    sha256: 5f03fe8d04f5a9c4b47e725c3fc639b97a34a9ec6d753822eac7df38b977f6c2
+    comparison_group: a1_pool_balanced_augmix_lhat_r4_20260902
+    replicate_id: 0
+  arms:
+    single_balanced:
+      selector: configs/train/methods/a1_rot4_single_chain_supervised_balanced.yaml
+      selector_sha256: d8a455e5da62ff5168abf8c4835ca4973fcaf70e096409bc05f5252da5f025de
+      recipe_spec_sha256: 807e55531ce412c643f22517e397dd89271dec8ff78d4e75f622c6c3900603ab
+    two_balanced:
+      selector: configs/train/methods/a1_rot4_two_chain_supervised_balanced.yaml
+      selector_sha256: 6da3dc72dad7fff7011cc661cb058ce9e912f3a31c7b6a7095ded064759667ac
+      recipe_spec_sha256: a5a26ba9a6808778445543e96d69d30f46622e6ce0cd9ad96056194c62f71a0f
+    joint_balanced:
+      selector: configs/train/methods/a1_rot4_two_chain_supervised_balanced_vae_lhat_puredelta.yaml
+      selector_sha256: d0425a85acc701b51804451a1e9a94aa469a3bdd3eba08ab5c035c363bf44edb
+      recipe_spec_sha256: f4e3c32539365a185616479655ae38172cb02a6b78eb0615626dd23e49d99e9f
+  objective:
+    a1_base_weights: {clean: 0.25, rotating_depth23_total: 0.25}
+    augmix_weight: 0.5
+    single_chain_supervision: one_chain_bce
+    two_chain_supervision: mean_of_chain1_chain2_bce
+    jsd: disabled
+    vae_alpha_schedule: linear_warmup_epochs_1_to_5_then_0p1
+  prespecified_development_gates:
+    - two_balanced_minus_single_balanced_positive_on_both_pn2021c_metrics
+    - joint_balanced_minus_two_balanced_positive_on_both_pn2021c_metrics
+    - joint_balanced_minus_locked_a1_at_least_2pp_on_pn2021c_auprc
+  experiment_configs:
+    glob: configs/experiments/manual_refactor_pn2021_*_a1_balanced_*_georgia.yaml
+    training: {complete: 6, total: 6}
+    evaluation: {complete: 6, total: 6}
+    failed_preoptimization_attempts: {preserved: 6, included_in_metrics: false}
+  repair:
+    reason: batch_norm_exposure_weights_were_required_to_sum_to_one_before_normalization
+    correction: normalize_nonauxiliary_exposure_weights_only_for_batch_norm_schedule
+    loss_weights_changed: false
+    successful_run_suffix: georgia_retry1
+  strict_gate_readout:
+    two_chain_superiority: passed_both_backbones_both_pn2021c_metrics
+    vae_marginal: failed_auroc_by_0p004520pp_effnet_and_0p014499pp_ecgfounder
+    joint_gain_threshold: failed_dual_backbone_mean_pn2021c_auprc_gain_0p568pp
+  decision: retain_as_cleanest_two_chain_positive_development_ablation_only
+
+
+a1_pool_balanced_jsd3_augmix_lhat_screen_r5_20260902:
+  status: complete_georgia_dual_backbone_balanced_jsd3_screen_not_promoted
+  evidence_level: heldout_tuned_single_seed_development_not_paper_claim
+  paper_claim_allowed: false
+  run_root: /home/linbinhao/ECG_adv_data/runs/a1_pool_balanced_jsd3_augmix_lhat_r5_20260902
+  question: >
+    Does weak Bernoulli JSD at weight 3 preserve R4 two-chain superiority,
+    make the pure-delta VAE-LHAT marginal positive on both PN2021-C metrics,
+    and exceed locked A1 by 2 pp AP without adding another component?
+  constraints:
+    baseline_for_comparison: locked_a1_rotating_depth23
+    method_components: [augmix, vae_lhat]
+    simclr: disabled
+    projector: disabled
+    stage_boundaries: false
+    source_replay: disabled
+    source_logit_anchor: disabled
+    checkpoint_selection: last
+    one_outer_optimizer_step_per_clean_batch: true
+  training_config:
+    path: configs/train/PN2021_a1_pool_balanced_jsd3_augmix_lhat_r5.yaml
+    sha256: 4304a676008dcce66e0da4209bb3f909c0a3041a8c7e99d360327a45e91cbc63
+    comparison_group: a1_pool_balanced_jsd3_augmix_lhat_r5_20260902
+    replicate_id: 0
+  arms:
+    single_jsd3:
+      selector: configs/train/methods/a1_rot4_single_chain_balanced_jsd3.yaml
+      selector_sha256: 366c2ee18026e653651bdf50883d06e9cbd55b2dadcaf82af0e311371640b95a
+      recipe_spec_sha256: b826c22bb233c9eb421c953e25e5f187c05b6ef5b6bab7be357b612d6716267c
+    two_jsd3:
+      selector: configs/train/methods/a1_rot4_two_chain_balanced_jsd3.yaml
+      selector_sha256: 7bc77843f58e0ff5403b1f8fa08b24e40a8d1ab22289f37eb102bee894219e0b
+      recipe_spec_sha256: b51c509b6ecf8341477c898eb3d2e82e6270620cb3cbce76506c99594380f1da
+    joint_jsd3:
+      selector: configs/train/methods/a1_rot4_two_chain_balanced_jsd3_vae_lhat_puredelta.yaml
+      selector_sha256: b6731700de14e21bcd07c1e41968d03e56a31de2b53d2f782752bff8bb6524f2
+      recipe_spec_sha256: 5d6809eb12320a2103a9af2587828f600eda3064a570a682635e7fef4dc0446e
+  objective:
+    a1_base_weights: {clean: 0.25, rotating_depth23_total: 0.25}
+    augmix_weight: 0.5
+    single_chain_supervision: one_chain_bce
+    two_chain_supervision: mean_of_chain1_chain2_bce
+    augmix_internal_bernoulli_jsd_weight: 3.0
+    vae_alpha_schedule: linear_warmup_epochs_1_to_5_then_0p1
+  prespecified_development_gates:
+    - two_jsd3_minus_single_jsd3_positive_on_both_pn2021c_metrics
+    - joint_jsd3_minus_two_jsd3_positive_on_both_pn2021c_metrics
+    - joint_jsd3_minus_locked_a1_at_least_2pp_on_pn2021c_auprc
+  experiment_configs:
+    glob: configs/experiments/manual_refactor_pn2021_*_a1_balanced_jsd3_*_georgia.yaml
+    training: {complete: 6, total: 6}
+    evaluation: {complete: 6, total: 6}
+  strict_gate_readout:
+    two_chain_superiority: failed_ecgfounder_pn2021c_auroc_by_0p107087pp
+    vae_marginal: passed_both_backbones_both_pn2021c_metrics
+    joint_gain_threshold: failed_dual_backbone_mean_pn2021c_auprc_gain_0p697814pp
+  decision: use_only_as_vae_positive_development_ablation_not_as_joint_recipe
+
+
+a1_pool_balanced_jsd1p5_augmix_lhat_screen_r6_20260902:
+  status: complete_alpha_strength_extension_georgia_dual_backbone_not_promoted
+  evidence_level: heldout_tuned_single_seed_development_not_paper_claim
+  paper_claim_allowed: false
+  run_root: /home/linbinhao/ECG_adv_data/runs/a1_pool_balanced_jsd1p5_augmix_lhat_r6_20260902
+  question: >
+    At the prespecified midpoint JSD weight 1.5, do two-chain AugMix and
+    pure-delta VAE-LHAT both retain positive PN2021-C marginals in the same
+    balanced one-stage recipe on both backbones?
+  interpolation_basis:
+    jsd0_r4: two_chain_auroc_positive_but_vae_auroc_slightly_negative
+    jsd3_r5: vae_auroc_positive_but_ecgfounder_two_chain_auroc_negative
+    selected_weight: 1.5
+    selection_rule: midpoint_of_preestimated_joint_positive_interval_1p16_to_1p64
+    further_jsd_sweep_planned: false
+  constraints:
+    baseline_for_comparison: locked_a1_rotating_depth23
+    method_components: [augmix, vae_lhat]
+    simclr: disabled
+    projector: disabled
+    stage_boundaries: false
+    source_replay: disabled
+    source_logit_anchor: disabled
+    checkpoint_selection: last
+    one_outer_optimizer_step_per_clean_batch: true
+  training_config:
+    path: configs/train/PN2021_a1_pool_balanced_jsd1p5_augmix_lhat_r6.yaml
+    sha256: 02acb1ee624d6651213378a1ec7b536db6fb6d3fb30712e7f33608a18d6483d7
+    comparison_group: a1_pool_balanced_jsd1p5_augmix_lhat_r6_20260902
+    replicate_id: 0
+  arms:
+    single_jsd1p5:
+      selector: configs/train/methods/a1_rot4_single_chain_balanced_jsd1p5.yaml
+      selector_sha256: 0a770ca7b84faa8819ce4e2f7aca58070c3cd9a008fa530db45d6d4a84220027
+      recipe_spec_sha256: 3ceed6584c1d2a724aee00650f1cbf22ad5571e0766f938f2b089106c4333a8f
+    two_jsd1p5:
+      selector: configs/train/methods/a1_rot4_two_chain_balanced_jsd1p5.yaml
+      selector_sha256: efe52bb70eb55f6d914aec26040df5aa2d6afc8fad468f351bc28d88fa73dc16
+      recipe_spec_sha256: 6202ba72499f932946e10ed6a7b882cbe854bc4c90df1f21a973c4f93ecde6d0
+    joint_jsd1p5:
+      selector: configs/train/methods/a1_rot4_two_chain_balanced_jsd1p5_vae_lhat_puredelta.yaml
+      selector_sha256: 19bc51cb36d23c35f3c1674988d4ab50a9ffe3184ca65f2b4be35ff38bfc1daf
+      recipe_spec_sha256: fdb761520201637d446bc7a74b63eb0c1664324fb9f465d7fda616dbc26eb722
+    joint_alpha0p25:
+      selector: configs/train/methods/a1_rot4_two_chain_balanced_jsd1p5_vae_lhat_alpha0p25.yaml
+      selector_sha256: 7810d82a78f5edfa56a89fe9e4f36960d4773bbfbf0234e7ee599527c0152bfe
+      recipe_spec_sha256: b750fae56ef8cb9adf270cd43d3d6ea813966d0db13a88e34112be57f30c3f61
+    joint_alpha0p5:
+      selector: configs/train/methods/a1_rot4_two_chain_balanced_jsd1p5_vae_lhat_alpha0p5.yaml
+      selector_sha256: 83529463d240b435efdc598416c5bf7155c432c5f9d139dc653d43c6ae3d6857
+      recipe_spec_sha256: 000ee12f1ac99465cf607c35c4dde3675e592ee09b84ba2172b8d86549e9a9b0
+  objective:
+    a1_base_weights: {clean: 0.25, rotating_depth23_total: 0.25}
+    augmix_weight: 0.5
+    single_chain_supervision: one_chain_bce
+    two_chain_supervision: mean_of_chain1_chain2_bce
+    augmix_internal_bernoulli_jsd_weight: 1.5
+    vae_alpha_schedule: linear_warmup_epochs_1_to_5_then_0p1
+    vae_alpha_strength_extension: [0.25, 0.5]
+    alpha_extension_changes_other_mechanisms: false
+  prespecified_development_gates:
+    - two_jsd1p5_minus_single_jsd1p5_positive_on_both_pn2021c_metrics
+    - joint_jsd1p5_minus_two_jsd1p5_positive_on_both_pn2021c_metrics
+    - joint_jsd1p5_minus_locked_a1_at_least_2pp_on_pn2021c_auprc
+    - at_least_one_registered_alpha_joint_positive_vs_two_on_both_backbones_and_metrics
+    - at_least_one_registered_alpha_joint_at_least_2pp_vs_locked_a1_on_pn2021c_auprc
+  experiment_configs:
+    glob: configs/experiments/manual_refactor_pn2021_*_a1_balanced_jsd1p5_*_georgia.yaml
+    training: {complete: 10, total: 10}
+    evaluation: {complete: 10, total: 10}
+  strict_gate_readout:
+    two_chain_superiority: passed_both_backbones_both_pn2021c_metrics
+    vae_marginal: failed_ecgfounder_pn2021c_auroc_by_0p017715pp
+    joint_gain_threshold: failed_dual_backbone_mean_pn2021c_auprc_gain_0p660961pp
+    alpha0p25_vae_marginal: failed_pn2021c_auroc_on_both_backbones
+    alpha0p5_vae_marginal: failed_pn2021c_auroc_on_both_backbones
+    best_alpha_extension_joint_gain_threshold: failed_alpha0p25_dual_backbone_mean_pn2021c_auprc_gain_0p677770pp
+  decision: reject_alpha_scaling_as_rescue_axis
+
+
+a1_robust_weight_screen_r7_20260902:
+  status: complete_georgia_screen_selected_profile_frozen_for_cross_center_audit
+  evidence_level: heldout_tuned_single_seed_development_not_paper_claim
+  paper_claim_allowed: false
+  run_root: /home/linbinhao/ECG_adv_data/runs/a1_robust_weight_screen_r7_20260902
+  question: >
+    With JSD 1.5 and VAE-LHAT alpha 0.1 fixed, can moving only clean
+    supervised mass toward rotating corruption and two-chain AugMix raise the
+    joint method at least 2 pp above locked A1 on PN2021-C AUPRC?
+  constraints:
+    baseline_for_comparison: locked_a1_rotating_depth23
+    method_components: [augmix, vae_lhat]
+    simclr: disabled
+    projector: disabled
+    stage_boundaries: false
+    source_replay: disabled
+    source_logit_anchor: disabled
+    checkpoint_selection: last
+    one_outer_optimizer_step_per_clean_batch: true
+    unchanged_axes: [epochs, learning_rate, optimizer, jsd1p5, two_chain_geometry, vae_lhat_geometry, vae_alpha0p1]
+  training_config:
+    path: configs/train/PN2021_a1_robust_weight_screen_r7.yaml
+    sha256: 26c30b17d016de78746a2fee01339cbc3d7cfdfa5f1acb9880dee8aab1d6e28d
+    comparison_group: a1_robust_weight_screen_r7_20260902
+    replicate_id: 0
+  matrix_config:
+    path: configs/eval/PN2021_matrix_a1_robust_c125_r500_a375_r7.yaml
+    sha256: 287190ff7cb318dc31ac358eaecbca0a49aa72107c8f79ab8864bd9f7b27cf79
+  joint_profiles:
+    c125_r375_a500:
+      family_weights: {clean: 0.125, rotating_corruption: 0.375, two_chain_augmix: 0.5}
+      selector: configs/train/methods/a1_rot4_two_chain_robust_c125_r375_a500_jsd1p5_vae_lhat.yaml
+      selector_sha256: cedf551553f65c1c60b2d2c338b392f0c64be8acf63b8f74a5150f4ee71e9cbe
+      recipe_spec_sha256: 5e311128c73b771aa42f164ef859a653b30c9df377e22c44a20363380a64704b
+    c125_r500_a375:
+      family_weights: {clean: 0.125, rotating_corruption: 0.5, two_chain_augmix: 0.375}
+      selector: configs/train/methods/a1_rot4_two_chain_robust_c125_r500_a375_jsd1p5_vae_lhat.yaml
+      selector_sha256: d2f60b446bddd2dedabb28494c8e8cad7fb51db65aa2afaadc3df2c33ab94efb
+      recipe_spec_sha256: 02ce9da54f1fd4de531598d5afb565f1ecc9273f94c6b814914dc28093a7191e
+    c0625_r4375_a500:
+      family_weights: {clean: 0.0625, rotating_corruption: 0.4375, two_chain_augmix: 0.5}
+      selector: configs/train/methods/a1_rot4_two_chain_robust_c0625_r4375_a500_jsd1p5_vae_lhat.yaml
+      selector_sha256: 6c7e48b48b022199c7dca2776d4e087bab4853742e86ddde089b0a27eb12912f
+      recipe_spec_sha256: 15b88c6bd7bf10e24b793a5f6b540ee1962f4c6078177c74d082bb8a3cef1a44
+  prespecified_selection:
+    primary: maximum_dual_backbone_mean_pn2021c_depth23_drop_all_zero_auprc
+    guardrail: no_backbone_pn2021c_auroc_below_locked_a1
+    success: selected_profile_at_least_2pp_above_locked_a1_on_dual_backbone_mean_pn2021c_auprc
+    followup_if_success: run_matched_single_chain_and_two_chain_no_vae_ablations_only_for_selected_profile
+  experiment_configs:
+    glob: configs/experiments/manual_refactor_pn2021_*_a1_robust_*_georgia.yaml
+    georgia_screen_training: {complete: 6, total: 6}
+    georgia_screen_evaluation: {complete: 6, total: 6}
+    frozen_selected_remaining_center_training: {complete: 6, total: 6}
+    frozen_selected_remaining_center_evaluation: {complete: 6, total: 6}
+    selected_profile_matrix_aggregation: {complete: 2, total: 2}
+  selection_readout:
+    selected_profile: c125_r500_a375
+    selected_dual_backbone_pn2021c_gain_pp: {auroc: 0.535460, auprc: 0.913881}
+    auroc_guardrail: passed_both_backbones
+    georgia_2pp_gate: failed
+    weight_trend: saturated_three_profiles_within_0p041pp_per_backbone
+    four_center_gain_vs_locked_a1_pn2021c_pp:
+      efficientnet1dv2: {auroc: 0.857196, auprc: 1.222344}
+      ecgfounder: {auroc: 0.798857, auprc: 1.244341}
+      dual_backbone_mean: {auroc: 0.828027, auprc: 1.233343}
+    four_center_2pp_gate: failed
+    next_action: do_not_claim_2pp_or_run_component_attribution_for_failed_recipe
+
+
+
+
+a1_raw_attack_success_screen_r8_20260902:
+  status: complete_base_screen_equalpn_extension_preregistered
+  evidence_level: heldout_tuned_single_seed_development_not_paper_claim
+  paper_claim_allowed: false
+  run_root: /home/linbinhao/ECG_adv_data/runs/a1_raw_attack_success_screen_r8_20260902
+  question: >
+    With the selected R7 family weights fixed, does restricting VAE-LHAT
+    training to contracted samples whose raw attack flipped at least one
+    previously correct label make the VAE marginal positive, while preserving
+    two-chain superiority and reaching at least +2 pp over locked A1 on
+    PN2021-C AUPRC?
+  constraints:
+    baseline_for_comparison: locked_a1_rotating_depth23
+    method_components: [augmix, vae_lhat]
+    ablation_order: [single_chain, two_chain, two_chain_plus_vae_lhat]
+    simclr: disabled
+    projector: disabled
+    stage_boundaries: false
+    source_replay: disabled
+    source_logit_anchor: disabled
+    checkpoint_selection: last
+    one_outer_optimizer_step_per_clean_batch: true
+    unchanged_axes: [epochs, learning_rate, optimizer, jsd1p5, two_chain_geometry, vae_lhat_attack_geometry]
+  training_config:
+    path: configs/train/PN2021_a1_raw_attack_success_screen_r8.yaml
+    sha256: b267b955acbbfa21a4d43b829cd6a565814f859249a1002449063b014b425291
+    comparison_group: a1_raw_attack_success_screen_r8_20260902
+    replicate_id: 0
+  lhat_config:
+    path: configs/train/lhat_pure_delta_raw_attack_success.yaml
+    sha256: ab98c17dd5b4fb783d5503b1ec7e9fde7df12f31f1e1c67de723c2da90ad5611
+    training_selection: raw_attack_flips_at_least_one_previously_correct_label
+    alpha_schedule: linear_warmup_epochs_1_to_5_then_0p2
+    rationale: approximately_match_r7_effective_vae_loss_mass_after_sparse_selection
+  arms:
+    single_chain:
+      selector: configs/train/methods/a1_rot4_single_chain_robust_c125_r500_a375_jsd1p5.yaml
+      selector_sha256: 2b6967f3503a6e176f4ec701002e31db705e1e41028567ae9c9b9ef5df858d2d
+      recipe_spec_sha256: 76028bf445e708456d7c41cb83a749a864ef655eeaba004e34909874cf572ab9
+    two_chain:
+      selector: configs/train/methods/a1_rot4_two_chain_robust_c125_r500_a375_jsd1p5.yaml
+      selector_sha256: 8c3a805f593087ee932ad3f38c2466c47c1bf998aca4dd77c7280f55b901bda0
+      recipe_spec_sha256: f48104c7d25f80adc7e075c98134faa33b2c8ae804c73ba2c9ce85cb67902aa4
+    joint_rawsuccess:
+      selector: configs/train/methods/a1_rot4_two_chain_robust_c125_r500_a375_jsd1p5_vae_lhat_rawsuccess.yaml
+      selector_sha256: 92361a794d7cbe1a7f8a4bff71220594351916b8cfa79fd33037761958586abc
+      recipe_spec_sha256: 35f898842b0a2e9bd63299a69fc6e88d00a9cd0bef8d0f71569f1a3e4543a750
+  objective:
+    family_weights: {clean: 0.125, rotating_depth23_total: 0.5, augmix: 0.375}
+    single_chain_supervision: one_chain_bce
+    two_chain_supervision: mean_of_chain1_chain2_bce
+    augmix_internal_bernoulli_jsd_weight: 1.5
+    vae_training_selection: raw_attack_success_then_attack_then_contract
+  prespecified_development_gates:
+    - two_chain_minus_single_chain_positive_on_both_pn2021c_metrics_for_both_backbones
+    - joint_rawsuccess_minus_two_chain_positive_on_both_pn2021c_metrics_for_both_backbones
+    - joint_rawsuccess_minus_locked_a1_at_least_2pp_on_dual_backbone_mean_pn2021c_auprc
+  experiment_configs:
+    glob: configs/experiments/manual_refactor_pn2021_*_a1_rawsuccess_*_georgia.yaml
+    dry_run: passed_12_of_12_without_side_effects
+    training: {complete: 6, total: 6}
+    evaluation: {complete: 6, total: 6}
+  base_screen_readout:
+    metric_order: [clean_auroc, clean_auprc, pn2021c_depth23_auroc, pn2021c_depth23_auprc]
+    efficientnet1dv2:
+      single: [0.779634633695, 0.551807444145, 0.771884355907, 0.516555222394]
+      two: [0.778465391472, 0.551518680774, 0.772167862625, 0.517556206744]
+      joint_rawsuccess: [0.779033389440, 0.551727819322, 0.772421622769, 0.518011443148]
+      two_minus_single_pp: [-0.116924, -0.028876, 0.028351, 0.100098]
+      joint_minus_two_pp: [0.056800, 0.020914, 0.025376, 0.045524]
+    ecgfounder:
+      single: [0.863610498560, 0.634053691322, 0.814791656656, 0.581658289828]
+      two: [0.864279819033, 0.634610389521, 0.815292328531, 0.582718390575]
+      joint_rawsuccess: [0.864718868298, 0.637204632798, 0.814563847440, 0.583596726468]
+      two_minus_single_pp: [0.066932, 0.055670, 0.050067, 0.106010]
+      joint_minus_two_pp: [0.043905, 0.259424, -0.072848, 0.087834]
+    dual_backbone_mean:
+      two_minus_single_pn2021c_pp: [0.039209, 0.103054]
+      joint_minus_two_pn2021c_pp: [-0.023736, 0.066679]
+      joint_minus_a1_pn2021c_pp: [0.556025, 0.904504]
+    two_chain_gate: passed_both_backbones_both_pn2021c_metrics
+    vae_gate: failed_ecgfounder_pn2021c_auroc_by_0p072848pp
+    joint_2pp_gate: failed
+  equal_positive_negative_extension:
+    status: complete_rejected
+    rationale: ecgfounder_vae_auroc_loss_localized_to_mi_under_negative_dominated_multilabel_attack
+    lhat_config:
+      path: configs/train/lhat_pure_delta_equal_positive_negative_raw_attack_success.yaml
+      sha256: 5d01e63fd314895d566f10134e08d27478c1a099118003e8946ce4b908c34a61
+      attack_objective: maximize_equal_positive_negative_bce_with_logits
+    selector:
+      path: configs/train/methods/a1_rot4_two_chain_robust_c125_r500_a375_jsd1p5_vae_lhat_equalpn_rawsuccess.yaml
+      sha256: 94b42302c329719559571db956211eff3d1e8d393036549a20ab5621e986ef0a
+      recipe_spec_sha256: c7d456cc4b0493772557df313d1db0f87c3088536e1d700ab55a8efbd939768d
+    unchanged_from_r8: [single_chain_control, two_chain_control, family_weights, jsd1p5, lhat_alpha0p2, raw_attack_success_gate, attack_then_contract, epochs, optimizer]
+    experiment_configs:
+      glob: configs/experiments/manual_refactor_pn2021_*_a1_equalpn_rawsuccess_joint*_georgia.yaml
+      dry_run: passed_4_of_4_without_side_effects
+      training: {complete: 2, total: 2}
+      evaluation: {complete: 2, total: 2}
+    readout:
+      efficientnet1dv2_joint_minus_two_pn2021c_pp: {auroc: 0.039588, auprc: 0.041261}
+      ecgfounder_joint_minus_two_pn2021c_pp: {auroc: -0.090229, auprc: 0.084390}
+      dual_backbone_joint_minus_a1_pn2021c_pp: {auroc: 0.554441, auprc: 0.900651}
+      decision: reject_equal_positive_negative_attack_weighting
+
+
+a1_mixed_view_screen_r10_20260902:
+  status: complete_georgia_screen_component_gates_mixed
+  evidence_level: heldout_tuned_single_seed_development_not_paper_claim
+  paper_claim_allowed: false
+  run_root: /home/linbinhao/ECG_adv_data/runs/a1_mixed_view_screen_r10_20260902
+  question: >
+    Does supervising the actual two-chain Dirichlet mixture, rather than the
+    two chain endpoints, produce a stronger and more faithful AugMix gain,
+    while standard VAE-LHAT adds a positive marginal and the joint method
+    reaches at least +2 pp over locked A1 on PN2021-C AUPRC?
+  constraints:
+    baseline_for_comparison: locked_a1_rotating_depth23
+    method_components: [augmix, vae_lhat]
+    ablation_order: [single_chain, two_chain, two_chain_plus_vae_lhat]
+    simclr: disabled
+    projector: disabled
+    stage_boundaries: false
+    source_replay: disabled
+    source_logit_anchor: disabled
+    checkpoint_selection: last
+    one_outer_optimizer_step_per_clean_batch: true
+    unchanged_from_r8: [family_weights, jsd1p5, lhat_geometry, epochs, learning_rate, optimizer]
+  training_config:
+    path: configs/train/PN2021_a1_mixed_view_screen_r10.yaml
+    sha256: 88d5abfdf3c500bbd8b76efd7a4e65793f042d2b01f26e3354e5a545b85b1ffa
+    comparison_group: a1_mixed_view_screen_r10_20260902
+    replicate_id: 0
+  arms:
+    single_chain:
+      selector: configs/train/methods/a1_rot4_single_chain_robust_c125_r500_a375_mixed_jsd1p5.yaml
+      selector_sha256: 39f8ffb17b41824b14422bb6795cca9336c23dbffdf523f9de3a7840ebbfa443
+      recipe_spec_sha256: 3b8817696f119564e9bbbaa40ed872c342e8209463ecc37aeefd9cbe617222c1
+    two_chain:
+      selector: configs/train/methods/a1_rot4_two_chain_robust_c125_r500_a375_mixed_jsd1p5.yaml
+      selector_sha256: 055629c9028b4fdc2a1f3eedd756ec1aed7bf9abb255eee793fe58cd5bd0cddb
+      recipe_spec_sha256: 46e9bca2993d9ceca6b17d4311d1647a7518cd530e1fdcc577e7ce625dde7e5d
+    joint:
+      selector: configs/train/methods/a1_rot4_two_chain_robust_c125_r500_a375_mixed_jsd1p5_vae_lhat.yaml
+      selector_sha256: 460fdf1b65ad296f13be69737723ae642646d8eab115393197cb014999d7bdf9
+      recipe_spec_sha256: e6de039eccd6770f623508af61c5647842f98b386682016926d37606e409d5cf
+  objective:
+    family_weights: {clean: 0.125, rotating_depth23_total: 0.5, augmix: 0.375}
+    augmix_supervised_view: dirichlet_mixture_only
+    augmix_consistency_views: [clean, chain1, chain2]
+    augmix_internal_bernoulli_jsd_weight: 1.5
+    vae_alpha_schedule: linear_warmup_epochs_1_to_5_then_0p1
+    vae_training_selection: all_contract_accepted
+  prespecified_development_gates:
+    - two_chain_minus_single_chain_positive_on_both_pn2021c_metrics_for_both_backbones
+    - joint_minus_two_chain_positive_on_both_pn2021c_metrics_for_both_backbones
+    - joint_minus_locked_a1_at_least_2pp_on_dual_backbone_mean_pn2021c_auprc
+  experiment_configs:
+    glob: configs/experiments/manual_refactor_pn2021_*_a1_mixed_*_georgia.yaml
+    dry_run: passed_12_of_12_without_side_effects
+    training: {complete: 6, total: 6}
+    evaluation: {complete: 6, total: 6}
+  readout:
+    metric_order: [clean_auroc, clean_auprc, pn2021c_depth23_auroc, pn2021c_depth23_auprc]
+    efficientnet1dv2:
+      single: [0.778186225897, 0.551322181735, 0.770992507875, 0.516233070175]
+      two: [0.779211470135, 0.551834759879, 0.771609015189, 0.516077031523]
+      joint: [0.779304730387, 0.551984512324, 0.771632114896, 0.516259761932]
+      two_minus_single_pp: [0.102524, 0.051258, 0.061651, -0.015604]
+      joint_minus_two_pp: [0.009326, 0.014975, 0.002310, 0.018273]
+    ecgfounder:
+      single: [0.862954584527, 0.634059088469, 0.814568192090, 0.582099238236]
+      two: [0.862658556446, 0.633929661560, 0.815481116571, 0.583164431328]
+      joint: [0.863815045429, 0.636026869853, 0.815725808393, 0.583738696655]
+      two_minus_single_pp: [-0.029603, -0.012943, 0.091292, 0.106519]
+      joint_minus_two_pp: [0.115649, 0.209721, 0.024469, 0.057427]
+    dual_backbone_mean:
+      two_minus_single_pn2021c_pp: [0.076472, 0.045458]
+      joint_minus_two_pn2021c_pp: [0.013390, 0.037850]
+      joint_minus_a1_pn2021c_pp: [0.574648, 0.824019]
+    two_chain_gate: failed_efficientnet1dv2_pn2021c_auprc_by_0p015604pp
+    vae_gate: passed_both_backbones_both_pn2021c_metrics
+    joint_2pp_gate: failed
+
+
+a1_endpoint_mean_screen_r11_20260902:
+  status: complete_georgia_screen_near_miss_on_vae_auroc
+  evidence_level: heldout_tuned_single_seed_development_not_paper_claim
+  paper_claim_allowed: false
+  run_root: /home/linbinhao/ECG_adv_data/runs/a1_endpoint_mean_screen_r11_20260902
+  question: >
+    Does supervising the Dirichlet mixture and the mean BCE of its chain
+    endpoints fix the tiny EfficientNet two-chain AUPRC regression from R10,
+    preserve a positive VAE-LHAT marginal, and reach at least +2 pp over
+    locked A1 on PN2021-C AUPRC?
+  constraints:
+    baseline_for_comparison: locked_a1_rotating_depth23
+    method_components: [augmix, vae_lhat]
+    ablation_order: [single_chain, two_chain, two_chain_plus_vae_lhat]
+    simclr: disabled
+    projector: disabled
+    stage_boundaries: false
+    source_replay: disabled
+    source_logit_anchor: disabled
+    checkpoint_selection: last
+    one_outer_optimizer_step_per_clean_batch: true
+    sole_change_from_r10: augmix_supervised_view_policy_mixed_plus_chains_mean
+    unchanged_from_r10: [family_weights, jsd1p5, lhat_geometry, vae_alpha0p1, epochs, learning_rate, optimizer]
+  training_config:
+    path: configs/train/PN2021_a1_endpoint_mean_screen_r11.yaml
+    sha256: fc75ed4ab2666aa574e14dca4714b144772f023dcedf90f3c7ba0208c56d509c
+    comparison_group: a1_endpoint_mean_screen_r11_20260902
+    replicate_id: 0
+  arms:
+    single_chain:
+      selector: configs/train/methods/a1_rot4_single_chain_robust_c125_r500_a375_endpointmean_jsd1p5.yaml
+      selector_sha256: 7d81ec3b14254b979c9b6b9707dab248a1be61f0fe7528b1b269c21a0aca3d1c
+      recipe_spec_sha256: 0e0e153df8eb02b70ac2ad344d67b6cdc431da80bb9318373995f6b2d0d1d95c
+    two_chain:
+      selector: configs/train/methods/a1_rot4_two_chain_robust_c125_r500_a375_endpointmean_jsd1p5.yaml
+      selector_sha256: 2d50faf702e8fc075d3235e220241330cf20527e9f6dbbaab3502b9921631474
+      recipe_spec_sha256: b08cfe97eff2237cea37b544a493390cba9ad2197e768fd25bb64853568d1147
+    joint:
+      selector: configs/train/methods/a1_rot4_two_chain_robust_c125_r500_a375_endpointmean_jsd1p5_vae_lhat.yaml
+      selector_sha256: 8aad3cb0e2b1ef1bf5b66c94fe9a97d101e9494be1e462fd58fadd0d76ad9b49
+      recipe_spec_sha256: 1dbbe894f0e1153e4b0a6a61dc53fec7fa94d7cc0bc1c60306028ce3bdd5883d
+  objective:
+    family_weights: {clean: 0.125, rotating_depth23_total: 0.5, augmix: 0.375}
+    augmix_supervised_view: equal_mean_of_dirichlet_mix_and_available_chain_endpoints
+    augmix_consistency_views: [clean, chain1, chain2]
+    augmix_internal_bernoulli_jsd_weight: 1.5
+    vae_alpha_schedule: linear_warmup_epochs_1_to_5_then_0p1
+    vae_training_selection: all_contract_accepted
+  prespecified_development_gates:
+    - two_chain_minus_single_chain_positive_on_both_pn2021c_metrics_for_both_backbones
+    - joint_minus_two_chain_positive_on_both_pn2021c_metrics_for_both_backbones
+    - joint_minus_locked_a1_at_least_2pp_on_dual_backbone_mean_pn2021c_auprc
+  experiment_configs:
+    glob: configs/experiments/manual_refactor_pn2021_*_a1_endpointmean_*_georgia.yaml
+    dry_run: passed_12_of_12_without_side_effects
+    training: {complete: 6, total: 6}
+    evaluation: {complete: 6, total: 6}
+  readout:
+    metric_order: [clean_auroc, clean_auprc, pn2021c_depth23_auroc, pn2021c_depth23_auprc]
+    efficientnet1dv2:
+      single: [0.778148649103, 0.551058535588, 0.771542368605, 0.516961618953]
+      two: [0.779060352806, 0.551762748516, 0.772358389550, 0.517965325641]
+      joint: [0.778507077947, 0.551808404309, 0.772253656282, 0.518168488636]
+      two_minus_single_pp: [0.091170, 0.070421, 0.081602, 0.100371]
+      joint_minus_two_pp: [-0.055327, 0.004566, -0.010473, 0.020316]
+    ecgfounder:
+      single: [0.863009438018, 0.634832967002, 0.814476592935, 0.581441282352]
+      two: [0.862743256452, 0.635101019645, 0.814875437476, 0.582911044612]
+      joint: [0.863524565159, 0.637001259338, 0.814997712963, 0.583586759746]
+      two_minus_single_pp: [-0.026618, 0.026805, 0.039884, 0.146976]
+      joint_minus_two_pp: [0.078131, 0.190024, 0.012228, 0.067572]
+    dual_backbone_mean:
+      two_minus_single_pn2021c_pp: [0.060743, 0.123673]
+      joint_minus_two_pn2021c_pp: [0.000877, 0.043944]
+      joint_minus_a1_pn2021c_pp: [0.569320, 0.911858]
+    two_chain_gate: passed_both_backbones_both_pn2021c_metrics
+    vae_gate: failed_efficientnet1dv2_pn2021c_auroc_by_0p010473pp
+    joint_2pp_gate: failed
+
+
+a1_half_endpoint_screen_r12_20260902:
+  status: complete_georgia_screen_rejected_vae_auroc
+  evidence_level: heldout_tuned_single_seed_development_not_paper_claim
+  paper_claim_allowed: false
+  run_root: /home/linbinhao/ECG_adv_data/runs/a1_half_endpoint_screen_r12_20260902
+  question: >
+    Does assigning exactly half of AugMix supervised BCE to the Dirichlet
+    mixture and half to the chain-endpoint family preserve both R10's positive
+    VAE marginal and R11's positive two-chain marginal, while reaching at
+    least +2 pp over locked A1 on PN2021-C AUPRC?
+  constraints:
+    baseline_for_comparison: locked_a1_rotating_depth23
+    method_components: [augmix, vae_lhat]
+    ablation_order: [single_chain, two_chain, two_chain_plus_vae_lhat]
+    simclr: disabled
+    projector: disabled
+    stage_boundaries: false
+    source_replay: disabled
+    source_logit_anchor: disabled
+    checkpoint_selection: last
+    one_outer_optimizer_step_per_clean_batch: true
+    sole_change_from_r10_r11: fixed_half_mix_half_chain_family_supervised_bce
+    unchanged_axes: [family_weights, jsd1p5, augmix_geometry, lhat_geometry, vae_alpha0p1, epochs, learning_rate, optimizer]
+  training_config:
+    path: configs/train/PN2021_a1_half_endpoint_screen_r12.yaml
+    sha256: cd6d0b0772081bfd1e97d8190b02c8dde51b17073db59481a01aa44793937a39
+    comparison_group: a1_half_endpoint_screen_r12_20260902
+    replicate_id: 0
+  arms:
+    single_chain:
+      selector: configs/train/methods/a1_rot4_single_chain_robust_c125_r500_a375_halfendpoint_jsd1p5.yaml
+      selector_sha256: 88e60bad94b164b6c19b5b6bab7321a7c8d28a23e7727fb5bc066206f8426d52
+      recipe_spec_sha256: d3c91067c989a111e410cba6ba56ae4953457463144191d2b2239951a503aa1d
+    two_chain:
+      selector: configs/train/methods/a1_rot4_two_chain_robust_c125_r500_a375_halfendpoint_jsd1p5.yaml
+      selector_sha256: f38f8151ef8bcbfa78be431e1d96500a82dea33cdad26714e2c7e73444ed9c65
+      recipe_spec_sha256: 71ba29efcad5fea3f24b422357c91033b8ac867cdf2868c39ecb4a43079fed2a
+    joint:
+      selector: configs/train/methods/a1_rot4_two_chain_robust_c125_r500_a375_halfendpoint_jsd1p5_vae_lhat.yaml
+      selector_sha256: 5a5ab996f7d583e37deb9e1e9d07a2bca4265c14c792b590416986711e4eb9a5
+      recipe_spec_sha256: 9a179069b3c37a248a016b6c23a633d07eb780a3b3c76882f993ff0500d0e8c9
+  objective:
+    family_weights: {clean: 0.125, rotating_depth23_total: 0.5, augmix: 0.375}
+    augmix_supervised_view: half_dirichlet_mix_plus_half_mean_of_available_chain_endpoints
+    augmix_consistency_views: [clean, chain1, chain2]
+    augmix_internal_bernoulli_jsd_weight: 1.5
+    vae_alpha_schedule: linear_warmup_epochs_1_to_5_then_0p1
+    vae_training_selection: all_contract_accepted
+  prespecified_development_gates:
+    - two_chain_minus_single_chain_positive_on_both_pn2021c_metrics_for_both_backbones
+    - joint_minus_two_chain_positive_on_both_pn2021c_metrics_for_both_backbones
+    - joint_minus_locked_a1_at_least_2pp_on_dual_backbone_mean_pn2021c_auprc
+  experiment_configs:
+    glob: configs/experiments/manual_refactor_pn2021_*_a1_halfendpoint_*_georgia.yaml
+    dry_run: passed_12_of_12_without_side_effects
+    training: {complete: 6, total: 6}
+    evaluation: {complete: 6, total: 6}
+  readout:
+    metric_order: [clean_auroc, clean_auprc, pn2021c_depth23_auroc, pn2021c_depth23_auprc]
+    efficientnet1dv2:
+      single: [0.779281674094, 0.552295587453, 0.772123878505, 0.517399685601]
+      two: [0.779392901867, 0.552856113260, 0.772607679584, 0.518054454775]
+      joint: [0.779148754986, 0.552817384313, 0.772301790240, 0.518073326587]
+      two_minus_single_pp: [0.011123, 0.056053, 0.048380, 0.065477]
+      joint_minus_two_pp: [-0.024415, -0.003873, -0.030589, 0.001887]
+    ecgfounder:
+      single: [0.863737012675, 0.633589461506, 0.814296880120, 0.581369543310]
+      two: [0.863361839922, 0.634243872055, 0.815427471280, 0.582665550202]
+      joint: [0.864244841457, 0.636345900187, 0.815150132929, 0.583266518068]
+      two_minus_single_pp: [-0.037517, 0.065441, 0.113059, 0.129601]
+      joint_minus_two_pp: [0.088300, 0.210203, -0.027734, 0.060097]
+    dual_backbone_mean:
+      two_minus_single_pn2021c_pp: [0.080720, 0.097539]
+      joint_minus_two_pn2021c_pp: [-0.029161, 0.030992]
+      joint_minus_a1_pn2021c_pp: [0.579348, 0.891088]
+    two_chain_gate: passed_both_backbones_both_pn2021c_metrics
+    vae_gate: failed_pn2021c_auroc_on_both_backbones
+    joint_2pp_gate: failed
+
+
+
+a1_joint_long_budget_r13_20260902:
+  status: complete_four_center_a1_gate_passed_component_strict_gates_failed
+  evidence_level: heldout_tuned_single_seed_development_not_paper_claim
+  paper_claim_allowed: false
+  run_root: /home/linbinhao/ECG_adv_data/runs/a1_joint_long_budget_r13_retry1_20260902
+  failed_attempt0:
+    run_root: /home/linbinhao/ECG_adv_data/runs/a1_joint_long_budget_r13_20260902
+    status: failed_before_data_model_or_gpu_load
+    reason: fairness_budget_policy_enum_rejected
+    retained_for_audit: true
+  question: >
+    Does a matched doubled training horizon let the R11 Joint recipe exceed
+    locked A1 by at least 2 pp on dual-backbone PN2021-C AUPRC, and does that
+    gain remain after comparing with an A1 control trained for the same budget?
+  constraints:
+    method_components: [augmix, vae_lhat]
+    simclr: disabled
+    projector: disabled
+    stage_boundaries: false
+    source_replay: disabled
+    source_logit_anchor: disabled
+    checkpoint_selection: last
+    same_source_checkpoint: true
+    same_long_budget_between_a1_and_joint: true
+    efficientnet1dv2_budget: {epochs: 50, optimizer_steps: 200, scheduler_horizon_epochs: 60}
+    ecgfounder_budget: {epochs: 60, optimizer_steps: 480, scheduler_horizon_epochs: 60}
+    sole_change_from_r11: matched_doubled_epoch_and_scheduler_horizon
+  training_config:
+    path: configs/train/PN2021_a1_joint_long_budget_r13.yaml
+    sha256: 01922d5955609d3aecf8fcf99a16f77186f021595c32ac923ab9e51737783ca8
+    comparison_group: a1_joint_long_budget_r13_20260902
+    replicate_id: 0
+  arms:
+    matched_a1:
+      selector: configs/train/methods/a1_corrupt_ft_rot4_v1.yaml
+      selector_sha256: 782b9bb359b35d519f2206194321831d4e5631124995024e83a82c502308a434
+      recipe_spec_sha256: de0224de08ebf4658828f6ed0fa5ebd414d608fb7ab3430abaddfae8d33de44f
+    joint:
+      selector: configs/train/methods/a1_rot4_two_chain_robust_c125_r500_a375_endpointmean_jsd1p5_vae_lhat.yaml
+      selector_sha256: 8aad3cb0e2b1ef1bf5b66c94fe9a97d101e9494be1e462fd58fadd0d76ad9b49
+      recipe_spec_sha256: 1dbbe894f0e1153e4b0a6a61dc53fec7fa94d7cc0bc1c60306028ce3bdd5883d
+  prespecified_development_gates:
+    - joint_minus_locked_a1_at_least_2pp_on_dual_backbone_mean_pn2021c_auprc
+    - joint_minus_matched_long_a1_positive_on_both_pn2021c_metrics_for_both_backbones
+  conditional_followup:
+    if_both_gates_pass: add_and_run_matched_long_single_chain_and_two_chain_ablations
+    otherwise: reject_more_epochs_as_a_causal_rescue
+  georgia_readout:
+    metric_order: [clean_auroc, clean_auprc, pn2021c_depth23_auroc, pn2021c_depth23_auprc]
+    efficientnet1dv2:
+      matched_long_a1: [0.792774763306, 0.566107687053, 0.774496706998, 0.518480500429]
+      joint: [0.785699655314, 0.562064192391, 0.782956993082, 0.531605901453]
+      joint_minus_matched_long_a1_pp: [-0.707511, -0.404349, 0.846029, 1.312540]
+      joint_minus_locked_a1_pp: [-0.138832, 0.560103, 1.571658, 2.186490]
+    ecgfounder:
+      matched_long_a1: [0.861803545965, 0.646426121544, 0.805630520088, 0.585447033118]
+      joint: [0.859119301190, 0.638682891427, 0.812592109424, 0.587587771780]
+      joint_minus_matched_long_a1_pp: [-0.268424, -0.774323, 0.696159, 0.214074]
+      joint_minus_locked_a1_pp: [-1.082275, -0.638945, 0.396757, 1.381069]
+    dual_backbone_mean:
+      joint_minus_matched_long_a1_pn2021c_pp: {auroc: 0.771094, auprc: 0.763307}
+      joint_minus_locked_a1_pn2021c_pp: {auroc: 0.984207, auprc: 1.783779}
+    matched_long_a1_gate: passed_both_backbones_both_pn2021c_metrics
+    locked_a1_2pp_gate: failed_by_0p216221pp_on_dual_backbone_mean_auprc
+  frozen_cross_center_extension:
+    status: complete_locked_a1_2pp_gate_passed
+    parameters_changed_after_georgia: false
+    centers_to_run: [ningbo, chapman_shaoxing, cpsc_2018]
+    first_wave: frozen_joint_only
+    gate: four_center_dual_backbone_mean_joint_minus_locked_a1_pn2021c_auprc_at_least_2pp
+    if_gate_passes: run_remaining_centers_matched_long_a1_then_long_single_and_two_chain_ablations
+    if_gate_fails: reject_long_budget_as_2pp_rescue
+    readout:
+      efficientnet1dv2:
+        four_center_joint: [0.873004437473, 0.649089728009, 0.846707618144, 0.598509227760]
+        four_center_delta_vs_locked_a1_pp: [0.198670, 0.584014, 2.009100, 3.250603]
+        per_center_pn2021c_delta_vs_locked_a1_pp:
+          ningbo: {auroc: 1.788515, auprc: 3.841513}
+          chapman_shaoxing: {auroc: 2.334053, auprc: 4.488916}
+          cpsc_2018: {auroc: 2.342176, auprc: 2.485491}
+          georgia: {auroc: 1.571658, auprc: 2.186490}
+      ecgfounder:
+        four_center_joint: [0.914760760324, 0.716155556376, 0.878943529102, 0.662641911285]
+        four_center_delta_vs_locked_a1_pp: [-0.269287, 0.004289, 1.309680, 2.360639]
+        per_center_pn2021c_delta_vs_locked_a1_pp:
+          ningbo: {auroc: 1.184886, auprc: 1.803163}
+          chapman_shaoxing: {auroc: 0.990829, auprc: 1.944559}
+          cpsc_2018: {auroc: 2.666247, auprc: 4.313765}
+          georgia: {auroc: 0.396757, auprc: 1.381069}
+      dual_backbone_four_center_delta_vs_locked_a1_pn2021c_pp:
+        auroc: 1.659390
+        auprc: 2.805621
+      locked_a1_2pp_gate: passed_both_backbones_four_center_auprc_and_dual_mean
+  causal_followups:
+    status: complete_four_center
+    matched_long_a1_remaining_centers: [ningbo, chapman_shaoxing, cpsc_2018]
+    georgia_component_arms: [single_chain, two_chain]
+    component_gates:
+      - long_two_chain_minus_long_single_chain_positive_on_both_pn2021c_metrics_for_both_backbones
+      - long_joint_minus_long_two_chain_positive_on_both_pn2021c_metrics_for_both_backbones
+    compute_gate:
+      - four_center_joint_minus_four_center_matched_long_a1_positive_on_both_pn2021c_metrics_for_both_backbones
+    matched_long_a1_four_center_readout:
+      efficientnet1dv2:
+        four_center: [0.876620234748, 0.654448291008, 0.835858788984, 0.582028015733]
+        joint_minus_a1_pn2021c_pp: {auroc: 1.084883, auprc: 1.648121}
+      ecgfounder:
+        four_center: [0.915490015570, 0.718836464119, 0.871865709558, 0.653741253526]
+        joint_minus_a1_pn2021c_pp: {auroc: 0.707782, auprc: 0.890066}
+      dual_backbone_joint_minus_a1_pn2021c_pp: {auroc: 0.896332, auprc: 1.269093}
+      gate: passed_both_backbones_both_pn2021c_metrics
+    georgia_component_readout:
+      efficientnet1dv2:
+        single: [0.783873789223, 0.561295549768, 0.781683757588, 0.530525788791]
+        two: [0.785044464654, 0.561478071327, 0.782329518605, 0.531333548154]
+        joint: [0.785699655314, 0.562064192391, 0.782956993082, 0.531605901453]
+        two_minus_single_pn2021c_pp: {auroc: 0.064576, auprc: 0.080776}
+        joint_minus_two_pn2021c_pp: {auroc: 0.062747, auprc: 0.027235}
+      ecgfounder:
+        single: [0.855878946469, 0.636450738011, 0.812310995889, 0.587610342433]
+        two: [0.855646000762, 0.636131443568, 0.812621780710, 0.587225883186]
+        joint: [0.859119301190, 0.638682891427, 0.812592109424, 0.587587771780]
+        two_minus_single_pn2021c_pp: {auroc: 0.031078, auprc: -0.038446}
+        joint_minus_two_pn2021c_pp: {auroc: -0.002967, auprc: 0.036189}
+      dual_backbone_mean:
+        two_minus_single_pn2021c_pp: {auroc: 0.047827, auprc: 0.021165}
+        joint_minus_two_pn2021c_pp: {auroc: 0.029890, auprc: 0.031712}
+      strict_two_chain_gate: failed_ecgfounder_auprc_by_0p038446pp
+      strict_vae_gate: failed_ecgfounder_auroc_by_0p002967pp
+    frozen_component_cross_center_extension:
+      status: complete_without_parameter_changes
+      parameters_changed_after_georgia: false
+      centers_to_run: [ningbo, chapman_shaoxing, cpsc_2018]
+      arms: [single_chain, two_chain]
+      final_gate_basis: four_center_equal_center_mean
+    four_center_component_readout:
+      metric_order: [clean_auroc, clean_auprc, pn2021c_depth23_auroc, pn2021c_depth23_auprc]
+      efficientnet1dv2:
+        single: [0.872677250455, 0.648442480605, 0.846248687823, 0.597390307564]
+        two: [0.872955576084, 0.648785179008, 0.846892816106, 0.598641738822]
+        joint: [0.873004437473, 0.649089728009, 0.846707618144, 0.598509227760]
+        two_minus_single_pn2021c_pp: {auroc: 0.064413, auprc: 0.125143}
+        joint_minus_two_pn2021c_pp: {auroc: -0.018520, auprc: -0.013251}
+      ecgfounder:
+        single: [0.914462194375, 0.715222473757, 0.879430055638, 0.663398399829]
+        two: [0.913798026367, 0.715088582660, 0.879257055143, 0.662997849722]
+        joint: [0.914760760324, 0.716155556376, 0.878943529102, 0.662641911285]
+        two_minus_single_pn2021c_pp: {auroc: -0.017300, auprc: -0.040055}
+        joint_minus_two_pn2021c_pp: {auroc: -0.031353, auprc: -0.035594}
+      dual_backbone_mean:
+        two_minus_single_pn2021c_pp: {auroc: 0.023556, auprc: 0.042544}
+        joint_minus_two_pn2021c_pp: {auroc: -0.024936, auprc: -0.024422}
+      two_chain_gate: positive_dual_backbone_mean_but_failed_ecgfounder
+      vae_gate: failed_both_dual_backbone_robust_metrics
+      decision: keep_joint_vs_a1_gain_but_do_not_attribute_it_to_vae_lhat
+  experiment_configs:
+    glob: configs/experiments/manual_refactor_pn2021_*_a1_long_budget_*.yaml
+    georgia_dry_run: passed_8_of_8_without_side_effects
+    frozen_joint_remaining_centers_dry_run: passed_12_of_12_without_side_effects
+    matched_long_a1_remaining_centers_dry_run: passed_12_of_12_without_side_effects
+    georgia_component_arms_dry_run: passed_8_of_8_without_side_effects
+    frozen_component_remaining_centers_dry_run: passed_24_of_24_without_side_effects
+    training: {complete: 32, total: 32}
+    evaluation: {complete: 32, total: 32}
+
+
+a1_mixed_long_r14_20260902:
+  status: complete_georgia_rejected
+  evidence_level: heldout_tuned_single_seed_development_not_paper_claim
+  paper_claim_allowed: false
+  run_root: /home/linbinhao/ECG_adv_data/runs/a1_mixed_long_r14_20260902
+  question: >
+    Can long-budget standard mixed-view AugMix preserve the positive short-run
+    VAE marginal while also making two chains better than one?
+  constraints:
+    method_components: [augmix, vae_lhat]
+    simclr: disabled
+    projector: disabled
+    stage_boundaries: false
+    source_replay: disabled
+    source_logit_anchor: disabled
+    checkpoint_selection: last
+    sole_change_from_r13: augmix_supervised_view_policy_mixed_only
+  training_config:
+    path: configs/train/PN2021_a1_mixed_long_r14.yaml
+    sha256: a5b038c5fa4ab2a6255dbcc9f2bb224fc0377a8bb5951e28326eb3bc6ca94200
+  execution: {dry_run: passed_12_of_12, training: 6_of_6_complete, evaluation: 6_of_6_complete}
+  georgia_readout:
+    efficientnet1dv2:
+      single: [0.785342309642, 0.560895435271, 0.782334853903, 0.530093349436]
+      two: [0.786706697005, 0.561515211201, 0.782296476593, 0.530318197113]
+      joint: [0.787252969876, 0.562121730468, 0.782940085658, 0.530630422716]
+    ecgfounder:
+      single: [0.857033796559, 0.637243514779, 0.815683642495, 0.588311008629]
+      two: [0.855274115984, 0.636445813593, 0.813271439537, 0.587306467118]
+      joint: [0.857109646128, 0.638253403790, 0.813000284365, 0.587521810281]
+    dual_backbone_two_minus_single_pn2021c_pp: {auroc: -0.122529, auprc: -0.038985}
+    dual_backbone_joint_minus_two_pn2021c_pp: {auroc: 0.018623, auprc: 0.026378}
+    decision: reject_because_two_chain_gate_failed
+
+
+a1_vae_cosdecay_r15_20260902:
+  status: complete_four_center_rejected_robust_vae_marginal
+  evidence_level: heldout_tuned_single_seed_development_not_paper_claim
+  paper_claim_allowed: false
+  run_root: /home/linbinhao/ECG_adv_data/runs/a1_vae_cosdecay_r15_20260902
+  comparison_control_root: /home/linbinhao/ECG_adv_data/runs/a1_joint_long_budget_r13_retry1_20260902/two
+  question: >
+    Can a one-stage warmup-then-cosine-decay VAE-LHAT weight keep R13's
+    two-chain gain and turn the VAE marginal positive without adding a component?
+  constraints:
+    method_components: [augmix, vae_lhat]
+    simclr: disabled
+    projector: disabled
+    stage_boundaries: false
+    source_replay: disabled
+    source_logit_anchor: disabled
+    checkpoint_selection: last
+    augmix_supervised_view_policy: mixed_plus_chains_mean
+    vae_alpha_schedule: linear_warmup_epochs_1_to_5_then_cosine_decay_to_zero
+    parameters_changed_after_georgia: false
+  selector:
+    path: configs/train/methods/a1_rot4_two_chain_robust_c125_r500_a375_endpointmean_jsd1p5_vae_lhat_cosdecay.yaml
+    sha256: a5664b1325c179eec803b7d4c7f0055514be0cc5eb2a70a02c7daa14624d3f1e
+  execution: {dry_run: passed_16_of_16, training: 8_of_8_complete, evaluation: 8_of_8_complete, artifact_contract: passed_8_of_8_evaluations}
+  four_center_readout:
+    metric_order: [clean_auroc, clean_auprc, pn2021c_depth23_auroc, pn2021c_depth23_auprc]
+    efficientnet1dv2:
+      joint: [0.873053125532, 0.649033643696, 0.846748367490, 0.598426461884]
+      joint_minus_two_pp: {clean_auroc: 0.009755, clean_auprc: 0.024846, pn2021c_auroc: -0.014445, pn2021c_auprc: -0.021528}
+      joint_minus_locked_a1_pn2021c_pp: {auroc: 2.013175, auprc: 3.242326}
+    ecgfounder:
+      joint: [0.914490654174, 0.716027829707, 0.879114185742, 0.662647430737]
+      joint_minus_two_pp: {clean_auroc: 0.069263, clean_auprc: 0.093925, pn2021c_auroc: -0.014287, pn2021c_auprc: -0.035042}
+      joint_minus_locked_a1_pn2021c_pp: {auroc: 1.326745, auprc: 2.361191}
+    dual_backbone_mean:
+      joint_minus_two_pp: {clean_auroc: 0.039509, clean_auprc: 0.059386, pn2021c_auroc: -0.014366, pn2021c_auprc: -0.028285}
+      joint_minus_locked_a1_pn2021c_pp: {auroc: 1.669960, auprc: 2.801758}
+    vae_gate: clean_positive_but_robust_negative
+    locked_a1_2pp_gate: passed_auprc_failed_auroc
+    decision: reject_schedule_and_stop_result_conditioned_retuning
+  four_center_last_epoch_attack_health_mean:
+    efficientnet1dv2: {raw_anyflip_asr: 0.463570, contracted_anyflip_asr: 0.0, contract_acceptance: 0.810165, training_bce_gain: 0.051755, selected_t: 0.474693, invalid_decode_rate: 0.0}
+    ecgfounder: {raw_anyflip_asr: 0.492718, contracted_anyflip_asr: 0.0, contract_acceptance: 0.834369, training_bce_gain: 0.017299, selected_t: 0.526454, invalid_decode_rate: 0.0}
+
+
+a1_vae_boundary_r16_20260902:
+  status: complete_georgia_rejected_by_ecgfounder_auroc_gate
+  evidence_level: heldout_tuned_single_seed_development_not_paper_claim
+  paper_claim_allowed: false
+  run_root: /home/linbinhao/ECG_adv_data/runs/a1_vae_boundary_r16_20260902
+  comparison_control_root: /home/linbinhao/ECG_adv_data/runs/a1_joint_long_budget_r13_retry1_20260902/two
+  question: >
+    Can VAE-LHAT become a positive marginal over the frozen R13 two-chain
+    control when accepted training samples are the nearest valid points just
+    outside the clean decision boundary instead of hard-but-label-preserving
+    decoded views?
+  constraints:
+    method_components: [augmix, vae_lhat]
+    simclr: disabled
+    projector: disabled
+    stage_boundaries: false
+    source_replay: disabled
+    source_logit_anchor: disabled
+    checkpoint_selection: last
+    augmix_supervised_view_policy: mixed_plus_chains_mean
+    sole_mechanism_change: nearest_valid_clean_to_hard_grid_point_with_new_clean_correct_flip
+    vae_alpha_mass_matching: 0.2_replaces_0.1_for_expected_half_acceptance
+    parameters_changed_after_georgia: forbidden
+  training_config:
+    path: configs/train/PN2021_a1_joint_long_budget_r13.yaml
+    sha256: 01922d5955609d3aecf8fcf99a16f77186f021595c32ac923ab9e51737783ca8
+  lhat_config:
+    path: configs/train/lhat_pure_delta_boundary_outside.yaml
+    sha256: 7c2632af3c406876217b3191bfe2cc8b1a308398581362946c9b83504f66b23a
+  selector:
+    path: configs/train/methods/a1_rot4_two_chain_robust_c125_r500_a375_endpointmean_jsd1p5_vae_lhat_boundary.yaml
+    sha256: b9f2a4c396143d2159605f8a580a9549a54bdf05f843c265fa3f1541eeae7875
+    recipe_spec_sha256: ed68f234ae5c9e6896781eb898b48c58c9ff8fd67c034a36ced37c0f31aab210
+  frozen_two_chain_control:
+    path: configs/train/methods/a1_rot4_two_chain_robust_c125_r500_a375_endpointmean_jsd1p5.yaml
+    sha256: 2d50faf702e8fc075d3235e220241330cf20527e9f6dbbaab3502b9921631474
+  prespecified_georgia_gates:
+    performance: joint_minus_frozen_two_positive_for_both_pn2021c_auroc_and_auprc_on_both_backbones
+    mechanism: accepted_contracted_training_asr_equals_one_with_nonzero_acceptance_and_zero_invalid_decode
+    expansion: run_other_three_centers_only_if_all_georgia_gates_pass
+  experiment_configs:
+    - {path: configs/experiments/manual_refactor_pn2021_effnet_a1_vae_boundary_joint_georgia.yaml, sha256: b94f79f7e59e0d92c1a33a8197d172013b0f38bf31a82cbcdc26a8dbfbc7e98a, dry_run: passed_no_side_effects}
+    - {path: configs/experiments/manual_refactor_pn2021_effnet_a1_vae_boundary_joint_eval_georgia.yaml, sha256: 476cf95593b3b37a5395e5eec815f2e23e1aedec2e356e3bbf5c1c4629e006e8, dry_run: passed_no_side_effects}
+    - {path: configs/experiments/manual_refactor_pn2021_ecgfounder_a1_vae_boundary_joint_georgia.yaml, sha256: f8f655628755a5ea8e22f61962d775c8a7948ede2fbf16496b5b6b617790470f, dry_run: passed_no_side_effects}
+    - {path: configs/experiments/manual_refactor_pn2021_ecgfounder_a1_vae_boundary_joint_eval_georgia.yaml, sha256: 6da7234abc87c19327603298417b8a60ed21c9d87edcd1b6c1daba251988dd9a, dry_run: passed_no_side_effects}
+  execution:
+    dry_run: passed_4_of_4_without_side_effects
+    training: 2_of_2_complete
+    evaluation: 2_of_2_complete
+    artifact_contract: passed_2_of_2_evaluations
+    remaining_center_expansion: not_run_by_preregistered_gate
+  georgia_readout:
+    metric_order: [clean_auroc, clean_auprc, pn2021c_depth23_auroc, pn2021c_depth23_auprc]
+    efficientnet1dv2:
+      joint_boundary: [0.784910245762, 0.561178892833, 0.782818280136, 0.532926991569]
+      frozen_two: [0.785044464654, 0.561478071327, 0.782329518605, 0.531333548154]
+      joint_minus_two_pp: {clean_auroc: -0.013422, clean_auprc: -0.029918, pn2021c_auroc: 0.048876, pn2021c_auprc: 0.159344}
+      joint_minus_locked_a1_pn2021c_pp: {auroc: 0.832157, auprc: 1.444649}
+    ecgfounder:
+      joint_boundary: [0.854743398071, 0.635975030006, 0.811927684147, 0.587611154823]
+      frozen_two: [0.855646000762, 0.636131443568, 0.812621780710, 0.587225883186]
+      joint_minus_two_pp: {clean_auroc: -0.090260, clean_auprc: -0.015641, pn2021c_auroc: -0.069410, pn2021c_auprc: 0.038527}
+      joint_minus_locked_a1_pn2021c_pp: {auroc: 0.629716, auprc: 0.216412}
+    dual_backbone_mean:
+      joint_minus_two_pn2021c_pp: {auroc: -0.010267, auprc: 0.098936}
+      joint_minus_locked_a1_pn2021c_pp: {auroc: 0.730937, auprc: 0.830531}
+  last_epoch_attack_health:
+    efficientnet1dv2: {raw_anyflip_asr: 0.540284, contract_acceptance: 0.390946, accepted_training_anyflip_asr: 1.0, accepted_bce_gain: 0.158039, selected_t: 0.785526, invalid_decode_rate: 0.0}
+    ecgfounder: {raw_anyflip_asr: 0.566667, contract_acceptance: 0.302469, accepted_training_anyflip_asr: 1.0, accepted_bce_gain: 0.184376, selected_t: 0.826531, invalid_decode_rate: 0.0}
+  frozen_artifacts:
+    efficientnet1dv2: {train_result_sha256: 9af03ce922073cc246b6c48aa54e443f1c843d1e176a5e400d4521554fe24186, checkpoint_sha256: 97509eefb4f96058455d0907212fd53ebbca837404ac7f2c115a943ad3ec4160, training_history_sha256: d09045daec1fbde24eb84afbf800f8eaa216ebba649bd36cac1b848f6e877543, evaluation_result_sha256: 86636d8b6e24b2c22c5ef47ef847e80e50755845a1e776a416666e414143d2e9}
+    ecgfounder: {train_result_sha256: bd733b84a6e6f1ad814fd56efc0539cdd43d1987ad5a1b9915c931aedda642e5, checkpoint_sha256: 156bbb0cfac23e8dbbf49a37dc9418d9f3e19aa4418dcc06a3a553ba7a1adbef, training_history_sha256: e8db5e7751e7236b1adf2933728481cd845a94db76760f410fac98cfc182c050, evaluation_result_sha256: b054404141439e220668afbb15f24d99d283a488c8be42b83c6b56be7af763c6}
+  decision: >
+    Reject R16 and do not expand beyond Georgia. The mechanism gate passed,
+    but ECGFounder PN2021-C AUROC was negative versus the frozen two-chain
+    control, and the joint method did not beat locked A1 by 2 pp.
+
+
+a1_balanced_jsd1p5_long_r17_20260902:
+  status: complete_two_chain_gate_passed_vae_and_matched_a1_gates_failed
+  evidence_level: heldout_tuned_single_seed_development_not_paper_claim
+  paper_claim_allowed: false
+  run_root: /home/linbinhao/ECG_adv_data/runs/a1_balanced_jsd1p5_long_r17_20260902
+  matched_long_a1_control_root: /home/linbinhao/ECG_adv_data/runs/a1_joint_long_budget_r13_retry1_20260902/a1
+  question: >
+    Does freezing the R6 balanced one-stage JSD1.5 AugMix plus pure-delta
+    VAE-LHAT recipe and changing only to the R13 matched long budget produce
+    stable positive two-chain and VAE marginals while exceeding matched-long
+    A1 by at least 2 pp PN2021-C AUPRC?
+  rationale:
+    r6_two_chain_gate: passed_both_backbones_both_pn2021c_metrics
+    r6_vae_near_miss: ecgfounder_pn2021c_auroc_minus_0p017715pp
+    r6_joint_minus_a1_auprc: positive_but_short_budget_limited
+    r13_long_budget_joint_minus_locked_a1_auprc: plus_2p805621pp_dual_backbone_four_center
+  constraints:
+    method_components: [augmix, vae_lhat]
+    simclr: disabled
+    projector: disabled
+    stage_boundaries: false
+    source_replay: disabled
+    source_logit_anchor: disabled
+    checkpoint_selection: last
+    one_outer_optimizer_step_per_clean_batch: true
+    family_weights: {clean: 0.25, rotating_depth23_total: 0.25, augmix: 0.5}
+    augmix_internal_bernoulli_jsd_weight: 1.5
+    vae_alpha_schedule: linear_warmup_epochs_1_to_5_then_0p1
+    vae_contract: nondecreasing_pure_delta_grid_v3
+    parameters_changed_after_any_r17_evaluation: forbidden
+  training_config:
+    path: configs/train/PN2021_a1_joint_long_budget_r13.yaml
+    sha256: 01922d5955609d3aecf8fcf99a16f77186f021595c32ac923ab9e51737783ca8
+    comparison_group: a1_joint_long_budget_r13_20260902
+    replicate_id: 0
+    efficientnet1dv2: {epochs: 50, optimizer_steps: 200, scheduler_horizon_epochs: 60}
+    ecgfounder: {epochs: 60, optimizer_steps: 480, scheduler_horizon_epochs: 60}
+  arms:
+    single:
+      selector: configs/train/methods/a1_rot4_single_chain_balanced_jsd1p5.yaml
+      selector_sha256: 0a770ca7b84faa8819ce4e2f7aca58070c3cd9a008fa530db45d6d4a84220027
+      recipe_spec_sha256: 3ceed6584c1d2a724aee00650f1cbf22ad5571e0766f938f2b089106c4333a8f
+    two:
+      selector: configs/train/methods/a1_rot4_two_chain_balanced_jsd1p5.yaml
+      selector_sha256: efe52bb70eb55f6d914aec26040df5aa2d6afc8fad468f351bc28d88fa73dc16
+      recipe_spec_sha256: 6202ba72499f932946e10ed6a7b882cbe854bc4c90df1f21a973c4f93ecde6d0
+    joint:
+      selector: configs/train/methods/a1_rot4_two_chain_balanced_jsd1p5_vae_lhat_puredelta.yaml
+      selector_sha256: 19bc51cb36d23c35f3c1674988d4ab50a9ffe3184ca65f2b4be35ff38bfc1daf
+      recipe_spec_sha256: fdb761520201637d446bc7a74b63eb0c1664324fb9f465d7fda616dbc26eb722
+  prespecified_full_matrix_gates:
+    two_chain: four_center_equal_mean_two_minus_single_positive_on_both_pn2021c_metrics_for_both_backbones
+    vae_lhat: four_center_equal_mean_joint_minus_two_positive_on_both_pn2021c_metrics_for_both_backbones
+    a1_gain: dual_backbone_four_center_joint_minus_matched_long_a1_pn2021c_auprc_at_least_2pp
+    reporting: clean_and_pn2021c_auroc_auprc_per_backbone_before_dual_mean
+  experiment_configs:
+    glob: configs/experiments/manual_refactor_pn2021_*_a1_balanced_jsd1p5_long_*.yaml
+    expected_training: 24
+    expected_evaluation: 24
+    dry_run: passed_48_of_48_without_side_effects
+  execution:
+    training: 24_of_24_complete
+    evaluation: 24_of_24_complete
+    artifact_contract: passed_24_of_24_schema3_prospective_evaluations
+  four_center_readout:
+    metric_order: [clean_auroc, clean_auprc, pn2021c_depth23_auroc, pn2021c_depth23_auprc]
+    efficientnet1dv2:
+      matched_long_a1: [0.876620234748, 0.654448291008, 0.835858788984, 0.582028015733]
+      single: [0.875277113487, 0.650317025589, 0.842263100286, 0.589653305085]
+      two: [0.875338709021, 0.651116875608, 0.843899333468, 0.592664225534]
+      joint: [0.875416216368, 0.651503895380, 0.843863581232, 0.592765256847]
+      two_minus_single_pp: {clean_auroc: 0.006160, clean_auprc: 0.079985, pn2021c_auroc: 0.163623, pn2021c_auprc: 0.301092}
+      joint_minus_two_pp: {clean_auroc: 0.007751, clean_auprc: 0.038702, pn2021c_auroc: -0.003575, pn2021c_auprc: 0.010103}
+      joint_minus_matched_long_a1_pn2021c_pp: {auroc: 0.800479, auprc: 1.073725}
+    ecgfounder:
+      matched_long_a1: [0.915490015570, 0.718836464119, 0.871865709558, 0.653741253526]
+      single: [0.915052205450, 0.716166753374, 0.877986709487, 0.660852468621]
+      two: [0.914801479084, 0.716750378538, 0.878889946060, 0.661876808611]
+      joint: [0.915013025256, 0.717539514991, 0.878502276941, 0.661734937896]
+      two_minus_single_pp: {clean_auroc: -0.025073, clean_auprc: 0.058363, pn2021c_auroc: 0.090324, pn2021c_auprc: 0.102434}
+      joint_minus_two_pp: {clean_auroc: 0.021155, clean_auprc: 0.078914, pn2021c_auroc: -0.038767, pn2021c_auprc: -0.014187}
+      joint_minus_matched_long_a1_pn2021c_pp: {auroc: 0.663657, auprc: 0.799368}
+    dual_backbone_joint_minus_matched_long_a1_pn2021c_pp: {auroc: 0.732068, auprc: 0.936547}
+  last_epoch_attack_health_equal_center_mean:
+    efficientnet1dv2: {raw_anyflip_asr: 0.471421, contracted_anyflip_asr: 0.0, contract_acceptance: 0.823589, training_bce_gain: 0.042329, selected_t: 0.401029, invalid_decode_rate: 0.0}
+    ecgfounder: {raw_anyflip_asr: 0.488723, contracted_anyflip_asr: 0.0, contract_acceptance: 0.858752, training_bce_gain: 0.014619, selected_t: 0.464550, invalid_decode_rate: 0.0}
+  gate_readout:
+    two_chain: passed_both_backbones_both_pn2021c_metrics
+    vae_lhat: failed_efficientnet_auroc_and_ecgfounder_both_metrics
+    matched_long_a1_2pp_auprc: failed_at_0p936547pp
+  decision: >
+    Keep the balanced JSD1.5 two-chain recipe as the stable AugMix control.
+    Reject additive VAE loss mass as the rescue: the raw attack is healthy but
+    its marginal robustness is not positive. Test a predeclared adversarial
+    replacement integration next, without changing the two components.
+
+
+a1_vae_clean_replacement_r18_20260902:
+  status: complete_all_prespecified_development_gates_passed
+  evidence_level: heldout_tuned_single_seed_development_not_paper_claim
+  paper_claim_allowed: false
+  run_root: /home/linbinhao/ECG_adv_data/runs/a1_vae_clean_replacement_r18_20260902
+  frozen_two_chain_control_root: /home/linbinhao/ECG_adv_data/runs/a1_balanced_jsd1p5_long_r17_20260902/two
+  locked_a1_baseline_registration: matched_base_a0_a1_r0_20260814
+  matched_long_a1_audit_root: /home/linbinhao/ECG_adv_data/runs/a1_joint_long_budget_r13_retry1_20260902/a1
+  question: >
+    Does integrating VAE-LHAT as fixed-mass adversarial replacement of clean
+    BCE, instead of additive auxiliary loss, make its PN2021-C marginal
+    positive while preserving R17 two-chain superiority and at least +2 pp
+    AUPRC over the locked A1 method?
+  constraints:
+    method_components: [augmix, vae_lhat]
+    simclr: disabled
+    projector: disabled
+    stage_boundaries: false
+    source_replay: disabled
+    source_logit_anchor: disabled
+    checkpoint_selection: last
+    augmix_geometry: frozen_r17_two_chain
+    augmix_internal_bernoulli_jsd_weight: 1.5
+    vae_attack_geometry: frozen_nondecreasing_pure_delta_grid_v3
+    one_outer_optimizer_step_per_clean_batch: true
+    total_supervised_loss_mass: 1.0
+    rejected_lhat_sample_fallback: clean_bce
+    batch_norm_reference: frozen_r17_two_chain_base_family_weights
+    parameters_changed_after_any_r18_evaluation: forbidden
+  training_config:
+    path: configs/train/PN2021_a1_joint_long_budget_r13.yaml
+    sha256: 01922d5955609d3aecf8fcf99a16f77186f021595c32ac923ab9e51737783ca8
+    comparison_group: a1_joint_long_budget_r13_20260902
+    replicate_id: 0
+    efficientnet1dv2: {epochs: 50, optimizer_steps: 200, scheduler_horizon_epochs: 60}
+    ecgfounder: {epochs: 60, optimizer_steps: 480, scheduler_horizon_epochs: 60}
+  registered_replacement_masses:
+    replace0p05: {selector: configs/train/methods/a1_rot4_two_chain_balanced_jsd1p5_vae_lhat_replace0p05.yaml, selector_sha256: 5c4bd8c0ebd914c0f3616be3095050c3c0f534349c24d7bc4c510670056faa53, recipe_spec_sha256: 8909f65a902af45523a751bbdc7feb2672b61aa11bcc1f08eda85593a23b8ece}
+    replace0p1: {selector: configs/train/methods/a1_rot4_two_chain_balanced_jsd1p5_vae_lhat_replace0p1.yaml, selector_sha256: d3dedd2b240c34c105b625cd8c7acf7dfb50e4c310c9a8404ec3669c5b948e26, recipe_spec_sha256: b0f3a626751799581866f7302cd386b95bc34ca6ceee93efb00e6db177461e83}
+    replace0p2: {selector: configs/train/methods/a1_rot4_two_chain_balanced_jsd1p5_vae_lhat_replace0p2.yaml, selector_sha256: 293be9a6b992999df25241b203c9637c928a32d7abd0dbc2cfeed1c5ef30e9b8, recipe_spec_sha256: b14fa08cbf744bcd26e3c6156f66c5d90bdd26e5e7c98efdf8c693bfd9742087}
+  prespecified_georgia_selection:
+    eligible: joint_minus_frozen_r17_two_positive_on_both_pn2021c_metrics_for_both_backbones
+    primary: maximum_dual_backbone_mean_pn2021c_auprc_among_eligible_masses
+    tie_break: [maximum_dual_backbone_mean_pn2021c_auroc, smaller_replacement_mass]
+    if_none_eligible: reject_clean_replacement_axis_without_cross_center_expansion
+  conditional_full_matrix_gates:
+    two_chain: reuse_r17_passed_four_center_both_backbones_both_pn2021c_metrics
+    vae_lhat: selected_joint_minus_r17_two_positive_on_both_pn2021c_metrics_for_both_backbones
+    a1_gain: selected_joint_minus_locked_a1_dual_backbone_four_center_pn2021c_auprc_at_least_2pp
+    matched_long_a1: report_both_metrics_without_relabeling_the_locked_a1_gate
+  experiment_configs:
+    georgia_screen_glob: configs/experiments/manual_refactor_pn2021_*_a1_vae_replace*_georgia.yaml
+    selected_full_matrix_glob: configs/experiments/manual_refactor_pn2021_*_a1_vae_replace0p2_joint_*.yaml
+    expected_unique_configs: 24
+    expected_training: 12
+    expected_evaluation: 12
+    dry_run: passed_24_of_24_without_side_effects
+  implementation_checks:
+    legacy_r17_recipe_spec_hashes_unchanged: true
+    targeted_method_and_trainer_tests: 103_passed
+  execution:
+    georgia_training: 6_of_6_complete
+    georgia_evaluation: 6_of_6_complete
+    georgia_artifact_contract: passed_6_of_6_schema3_prospective_evaluations
+    remaining_center_training: 6_of_6_complete
+    remaining_center_evaluation: 6_of_6_complete
+    selected_full_matrix: 8_of_8_complete
+    total_training: 12_of_12_complete
+    total_evaluation: 12_of_12_complete
+    artifact_contract: passed_12_of_12_schema3_prospective_evaluations_with_checkpoint_hashes
+  georgia_screen_readout:
+    metric_order: [clean_auroc, clean_auprc, pn2021c_depth23_auroc, pn2021c_depth23_auprc]
+    frozen_r17_two:
+      efficientnet1dv2: [0.790352505996, 0.562458549941, 0.781356190212, 0.527051602684]
+      ecgfounder: [0.857889199559, 0.641069330747, 0.814427455318, 0.589007739252]
+    replace0p05_minus_two_pp:
+      efficientnet1dv2: {clean_auroc: -0.016799, clean_auprc: -0.031519, pn2021c_auroc: 0.019860, pn2021c_auprc: 0.022002}
+      ecgfounder: {clean_auroc: 0.088796, clean_auprc: -0.018499, pn2021c_auroc: 0.034867, pn2021c_auprc: 0.019247}
+      dual_backbone_pn2021c: {auroc: 0.027364, auprc: 0.020624}
+    replace0p1_minus_two_pp:
+      efficientnet1dv2: {clean_auroc: -0.088428, clean_auprc: -0.055605, pn2021c_auroc: 0.016068, pn2021c_auprc: 0.033249}
+      ecgfounder: {clean_auroc: 0.177148, clean_auprc: -0.055051, pn2021c_auroc: 0.086970, pn2021c_auprc: 0.049633}
+      dual_backbone_pn2021c: {auroc: 0.051519, auprc: 0.041441}
+    replace0p2_minus_two_pp:
+      efficientnet1dv2: {clean_auroc: -0.139441, clean_auprc: -0.179313, pn2021c_auroc: 0.028578, pn2021c_auprc: 0.016121}
+      ecgfounder: {clean_auroc: 0.061193, clean_auprc: -0.167539, pn2021c_auroc: 0.089990, pn2021c_auprc: 0.092361}
+      dual_backbone_pn2021c: {auroc: 0.059284, auprc: 0.054241}
+    eligibility: all_three_masses_passed_both_backbones_both_pn2021c_metrics
+    selected_mass: 0.2
+    selection_reason: maximum_dual_backbone_mean_pn2021c_auprc_among_eligible_masses
+    parameters_changed_after_georgia_evaluation: false
+    frozen_remaining_center_configs: 12
+    frozen_remaining_center_dry_run: passed_12_of_12_without_side_effects
+  selected_last_epoch_attack_health:
+    efficientnet1dv2: {raw_anyflip_asr: 0.524272, contract_acceptance: 0.816872, training_bce_gain: 0.052661, selected_t: 0.407922, invalid_decode_rate: 0.0}
+    ecgfounder: {raw_anyflip_asr: 0.540230, contract_acceptance: 0.845679, training_bce_gain: 0.015546, selected_t: 0.421811, invalid_decode_rate: 0.0}
+  selected_four_center_readout:
+    metric_order: [clean_auroc, clean_auprc, pn2021c_depth23_auroc, pn2021c_depth23_auprc]
+    efficientnet1dv2:
+      frozen_r17_single: [0.875277113487, 0.650317025589, 0.842263100286, 0.589653305085]
+      frozen_r17_two: [0.875338709021, 0.651116875608, 0.843899333468, 0.592664225534]
+      selected_replace0p2: [0.874506578530, 0.649734706806, 0.844201260809, 0.592974814647]
+      locked_a1: [0.871017733694, 0.643249584309, 0.826616614597, 0.566003202538]
+      matched_long_a1: [0.876620234748, 0.654448291008, 0.835858788984, 0.582028015733]
+      two_minus_single_pn2021c_pp: {auroc: 0.163623, auprc: 0.301092}
+      selected_minus_two_pn2021c_pp: {auroc: 0.030193, auprc: 0.031058}
+      selected_minus_locked_a1_pn2021c_pp: {auroc: 1.758465, auprc: 2.697161}
+      selected_minus_matched_long_a1_pn2021c_pp: {auroc: 0.834247, auprc: 1.094680}
+    ecgfounder:
+      frozen_r17_single: [0.915052205450, 0.716166753374, 0.877986709487, 0.660852468621]
+      frozen_r17_two: [0.914801479084, 0.716750378538, 0.878889946060, 0.661876808611]
+      selected_replace0p2: [0.915179335686, 0.717208267752, 0.879544633956, 0.663065532539]
+      locked_a1: [0.917453634491, 0.716112664424, 0.865846733585, 0.639035522664]
+      matched_long_a1: [0.915490015570, 0.718836464119, 0.871865709558, 0.653741253526]
+      two_minus_single_pn2021c_pp: {auroc: 0.090324, auprc: 0.102434}
+      selected_minus_two_pn2021c_pp: {auroc: 0.065469, auprc: 0.118873}
+      selected_minus_locked_a1_pn2021c_pp: {auroc: 1.369790, auprc: 2.403001}
+      selected_minus_matched_long_a1_pn2021c_pp: {auroc: 0.767892, auprc: 0.932428}
+    dual_backbone_mean_pn2021c_pp:
+      two_minus_single: {auroc: 0.126974, auprc: 0.201763}
+      selected_minus_two: {auroc: 0.047831, auprc: 0.074965}
+      selected_minus_locked_a1: {auroc: 1.564127, auprc: 2.550081}
+      selected_minus_matched_long_a1: {auroc: 0.801070, auprc: 1.013554}
+  selected_minus_two_per_center_pn2021c_pp:
+    efficientnet1dv2:
+      ningbo: {auroc: 0.045140, auprc: 0.061621}
+      chapman_shaoxing: {auroc: 0.007999, auprc: -0.011225}
+      cpsc_2018: {auroc: 0.039057, auprc: 0.057715}
+      georgia: {auroc: 0.028578, auprc: 0.016121}
+    ecgfounder:
+      ningbo: {auroc: 0.050968, auprc: 0.015850}
+      chapman_shaoxing: {auroc: 0.078098, auprc: 0.136840}
+      cpsc_2018: {auroc: 0.042818, auprc: 0.230440}
+      georgia: {auroc: 0.089990, auprc: 0.092361}
+  selected_four_center_last_epoch_attack_health_equal_center_mean:
+    efficientnet1dv2: {raw_anyflip_asr: 0.477549, contracted_anyflip_asr: 0.0, contract_acceptance: 0.824946, training_bce_gain: 0.042745, selected_t: 0.413616, invalid_decode_rate: 0.0}
+    ecgfounder: {raw_anyflip_asr: 0.494075, contracted_anyflip_asr: 0.0, contract_acceptance: 0.824849, training_bce_gain: 0.013101, selected_t: 0.439306, invalid_decode_rate: 0.0}
+  gate_readout:
+    two_chain: passed_both_backbones_both_pn2021c_metrics
+    vae_lhat: passed_selected_minus_two_on_both_backbones_both_pn2021c_metrics
+    locked_a1_2pp_auprc: passed_each_backbone_and_dual_backbone_mean
+    matched_long_a1_2pp_auprc: failed_and_reported_as_budget_audit
+  decision: >
+    Keep the one-stage two-chain AugMix plus fixed-mass VAE-LHAT clean
+    replacement recipe as the frozen development candidate. The simple
+    ablation remains single-chain AugMix, two-chain AugMix, then two-chain
+    AugMix plus VAE-LHAT. Do not promote the sub-tenth-pp VAE marginal to a
+    paper claim until the recipe is frozen and independently repeated.
+  limitations:
+    - replacement_mass_selected_on_georgia_heldout_development_feedback
+    - single_seed_only
+    - no_independent_frozen_repeats
+    - efficientnet_chapman_auprc_marginal_is_negative_by_0p011225pp
+    - vae_aggregate_marginal_is_below_one_tenth_pp_and_not_yet_stable
+
+
+a1_lhat_candidate_contract_multiseed_r19_20260902:
+  status: complete_development_ablation
+  evidence_level: matched_development_not_paper_claim
+  paper_claim_allowed: false
+  evidence_registration: configs/active_evidence_registry.yaml#a1_lhat_candidate_contract_multiseed_r19_20260902
+  run_root: /home/linbinhao/ECG_adv_data/runs/a1_lhat_ablation_multiseed_r19_20260902
+  summary:
+    path: /home/linbinhao/ECG_adv_data/runs/a1_lhat_ablation_multiseed_r19_20260902/r19_lhat_ablation_summary.json
+    sha256: eb4e1a7191ca6429b1586dd266baabd5e2ae32a583282c4c949c92e514a37338
+  question: >
+    Test clean-versus-corruption composition inside exact-label M20, remove
+    attack-then-contract, and repeat the clean-only contracted baseline across
+    seeds 0, 1, and 2 under one-stage no-SimCLR training.
+  constraints:
+    models: [efficientnet1dv2, ecgfounder]
+    centers: [ningbo, chapman_shaoxing, cpsc_2018, georgia]
+    baseline_seeds: [0, 1, 2]
+    mechanism_variant_seeds: [0, 1, 2]
+    simclr: disabled
+    stage_boundaries: false
+    checkpoint_selection: last
+    mapping_hash: 555ec85d5b51
+    same_backbone_optimizer_budget: true
+    efficientnet1dv2_optimizer_steps: 200
+    ecgfounder_optimizer_steps: 480
+  method_configs:
+    baseline: configs/train/methods/a1_rot4_two_chain_balanced_jsd1p5_vae_lhat_replace0p2.yaml
+    mixedm20: configs/train/methods/a1_rot4_two_chain_balanced_jsd1p5_vae_lhat_replace0p2_mixedm20.yaml
+    nocontract: configs/train/methods/a1_rot4_two_chain_balanced_jsd1p5_vae_lhat_replace0p2_nocontract.yaml
+    nocontract_lhat: configs/train/lhat_pure_delta_no_contract.yaml
+  training_configs:
+    seed0_matched_r13: configs/train/PN2021_a1_joint_long_budget_r13.yaml
+    seed1: configs/train/PN2021_a1_lhat_ablation_r19_seed1.yaml
+    seed2: configs/train/PN2021_a1_lhat_ablation_r19_seed2.yaml
+  experiment_configs:
+    glob: configs/experiments/manual_refactor_pn2021_*_r19_*.yaml
+    total_tracked: 146
+    formal_training: 72
+    successful_retry_training: 2
+    evaluation: 72
+    dry_run: passed_all_before_execution
+  execution:
+    successful_training_results: 72_of_72
+    successful_evaluation_results: 72_of_72
+    unique_checkpoints: 72
+    extension_results: 32_training_and_32_evaluation
+    expected_initial_nocontract_georgia_failures: 2
+    successful_nocontract_georgia_retries: 2
+    intermediate_logs: /dev/shm/ecg_lhat_r19_CUT9AX
+  result:
+    paired_baseline: seed0_r18_r13_plus_seed1_seed2_r19
+    mixedm20: no_stable_positive_gain_across_three_paired_seeds
+    nocontract: negative_for_every_seed_backbone_and_primary_metric
+    decision: keep_clean_only_m20_with_attack_then_contract
+
+
+a1_lhat_single_gpu_same_seed_r20_20260902:
+  status: completed_and_artifact_audited
+  evidence_level: same_seed_reproducibility_rerun_not_paper_claim
+  evidence_registration: configs/active_evidence_registry.yaml#a1_lhat_single_gpu_same_seed_r20_20260902
+  run_root: /home/linbinhao/ECG_adv_data/runs/a1_lhat_ablation_single_gpu_rerun_r20_20260902
+  experiment_configs:
+    glob: configs/experiments/manual_refactor_pn2021_*_r20rerun_*.yaml
+    total_tracked: 64
+    formal_training: 32
+    evaluation: 32
+    dry_run: passed_64_of_64
+  constraints:
+    physical_gpus: [0, 1, 6]
+    aggregate_physical_gpu_count: 3
+    visible_gpu_count_per_process: 1
+    same_seed_source: r19_seed1_seed2
+    concurrency: gpu1_initial_memory_compatible_pair_then_one_high_memory_process_per_gpu
+    high_memory_training: sequential_per_physical_gpu
+    temporary_logs: /dev/shm/ecg_lhat_r20_single_gpu
+    resource_amendment:
+      timestamp: 2026-09-02T13:33:42+08:00
+      original_physical_gpu: 1
+      added_physical_gpus: [0, 6]
+  execution:
+    state: completed
+    successful_training_results_at_resource_amendment: 4_of_32
+    successful_training_results: 32_of_32
+    successful_evaluation_results: 32_of_32
+    unique_recorded_checkpoint_shas: 32
+    supervisor_exit_code: 0
+    completed_at: 2026-09-02T15:17:41+08:00
+    artifact_audit: passed_at_2026-09-02T15:22:31+08:00
+    project_pytest: 383_passed_5_skipped
 
 
 historical_mainline:

@@ -16,66 +16,42 @@ from typing import Any
 DX_LINE_RE = re.compile(r"^#\s*Dx\s*:\s*(.*)$", re.IGNORECASE)
 
 
-def parse_header_snomeds(header_path: str | Path) -> list[int]:
-    """Return integer SNOMED codes from the first PN2021 ``#Dx:`` line.
+def parse_pn2021_header(
+    header_path: str | Path,
+) -> tuple[list[int], dict[str, Any]]:
+    """Read one PN2021 header and return SNOMED codes plus demographics."""
 
-    A missing diagnosis line or a malformed code list returns an empty list,
-    matching the cache-building behavior used before the dependency split.
-    File access errors remain visible to the caller.
-    """
-
+    snomed_codes: list[int] = []
+    diagnosis_seen = False
+    metadata: dict[str, Any] = {"age": None, "sex": None, "hr": None}
     with Path(header_path).open("r", encoding="utf-8") as handle:
         for line in handle:
-            match = DX_LINE_RE.match(line.strip())
-            if match is None:
+            stripped = line.strip()
+            diagnosis = DX_LINE_RE.match(stripped)
+            if diagnosis is not None and not diagnosis_seen:
+                diagnosis_seen = True
+                try:
+                    snomed_codes = [
+                        int(value.strip())
+                        for value in diagnosis.group(1).split(",")
+                        if value.strip()
+                    ]
+                except ValueError:
+                    snomed_codes = []
+            if not stripped.startswith("#"):
                 continue
-            raw_codes = match.group(1).strip()
-            try:
-                return [
-                    int(value.strip())
-                    for value in raw_codes.split(",")
-                    if value.strip()
-                ]
-            except ValueError:
-                return []
-    return []
-
-
-def parse_pn2021_header_metadata(header_path: str | Path) -> dict[str, Any]:
-    """Return PN2021 age/sex metadata without reading the waveform.
-
-    ``hr`` is retained as ``None`` for compatibility with existing cache
-    metadata.  Unreadable headers return the same all-missing demographic
-    record used by the previous preprocessing path.
-    """
-
-    metadata: dict[str, Any] = {"age": None, "sex": None, "hr": None}
-    try:
-        with Path(header_path).open("r", encoding="utf-8") as handle:
-            for line in handle:
-                stripped = line.strip()
-                if not stripped.startswith("#"):
+            body = stripped[1:].strip()
+            if body.startswith("Age:"):
+                try:
+                    age = float(body.split(":", 1)[1].strip())
+                except ValueError:
                     continue
-                body = stripped[1:].strip()
-                if body.startswith("Age:"):
-                    raw_age = body.split(":", 1)[1].strip()
-                    try:
-                        age = float(raw_age)
-                    except ValueError:
-                        continue
-                    if math.isfinite(age):
-                        metadata["age"] = age
-                elif body.startswith("Sex:"):
-                    raw_sex = body.split(":", 1)[1].strip().upper()
-                    if raw_sex.startswith("M"):
-                        metadata["sex"] = "M"
-                    elif raw_sex.startswith("F"):
-                        metadata["sex"] = "F"
-                    else:
-                        metadata["sex"] = "U"
-    except OSError:
-        pass
-    return metadata
+                if math.isfinite(age):
+                    metadata["age"] = age
+            elif body.startswith("Sex:"):
+                raw_sex = body.split(":", 1)[1].strip().upper()
+                metadata["sex"] = {"M": "M", "F": "F"}.get(raw_sex[:1], "U")
+    return snomed_codes, metadata
 
 
-__all__ = ["parse_header_snomeds", "parse_pn2021_header_metadata"]
+__all__ = ["parse_pn2021_header"]

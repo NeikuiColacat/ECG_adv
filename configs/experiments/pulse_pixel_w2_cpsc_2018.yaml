@@ -1,0 +1,14 @@
+schema_version: 1
+experiment:
+  name: pulse_pixel_w2_cpsc_2018
+  purpose: Matched waveform corruption followed by full-page RGB mixing before PULSE
+    preprocessing; no clean residual, JSD, SimCLR or VAE; single-seed development
+    only.
+entrypoint:
+  name: train_ecg_image
+  config: train/pulse_pixel_w2_cpsc_2018.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/pulse_pixel_mix_sft_20260910/pulse_augmix_w2_cpsc_2018
+  if_exists: error
+  delegate_output_subdir: training
