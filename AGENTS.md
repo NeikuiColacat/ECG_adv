@@ -1,15 +1,17 @@
 # ECG Manual Refactor Agent Instructions
 
+Worktree focus: Traditional classifiers: locked two-stage AugMix + SimCLR + VAE-LHAT.
+Branch: `direction/traditional-simclr`. Confirm the live branch before editing; this is a
+navigation hint, not authority to run or delete experiments in any direction.
+
 ## Shared Server Safety
 
 This machine is a multi-user shared server. Other users' files, environments,
 processes, ports, GPU jobs, and outputs are off-limits unless the user
 explicitly says otherwise.
 
-- Do not use `sudo`.
-- Do not update the Linux kernel.
-- Do not install, replace, or upgrade CUDA or NVIDIA drivers.
-- Do not make system-level environment changes.
+- No `sudo`, kernel updates, CUDA/NVIDIA driver installation, replacement or upgrades,
+  or system-level environment changes.
 - Use only user-level or project-level environments.
 - Keep operations under `/home/linbinhao`.
 - Do not create, edit, delete, chmod, chown, or relink files outside that home
@@ -17,6 +19,7 @@ explicitly says otherwise.
 - Do not use broad process commands such as `pkill python` or `killall`.
 - Stop only PIDs confirmed to belong to this user's current task.
 - Do not overwrite an existing experiment directory by default.
+- Do not edit source used by running jobs or bypass their source/hash guards.
 - Bind local web servers to `127.0.0.1`.
 - If a requested port is occupied, do not kill the listener unless it is
   confirmed to belong to this user and task.
@@ -34,6 +37,9 @@ Before GPU training, long inference, or a cache build:
 5. Check load, free memory, and disk capacity before heavy CPU, RAM, or IO work.
 6. Scale workers and concurrency down if the shared host is under pressure.
 
+After a long job starts, verify real progress and hand it back to the background
+queue. Do not keep an agent polling unless the user asks for monitoring.
+
 ## Current Host
 
 ```text
@@ -48,28 +54,28 @@ evidence:     configs/active_evidence_registry.yaml
 agent skills: .codex/skills/README.md
 ```
 
-The old `ECG_adv_Gen` repository and Git history are read-only provenance
-oracles. They are not active runtime dependencies of this clean-room rebuild.
+Legacy Git history is read-only provenance, never a runtime dependency.
 
 ## Clean-Room Boundary
 
-Use
-`docs/refactor_cleanup/manual_refactor_keep_manifest.md`
-as the default build and review boundary.
+The keep manifest is the default build and review boundary.
 
-- Reuse a retained module before creating a parallel implementation.
-- New runtime code may depend only on retained files or artifacts produced by
-  retained files.
-- Do not import from `agent_workspace`.
-- Do not import from the legacy `ecg_adv_gen`, `methods`, or `scripts` trees.
-- Do not restore compatibility wrappers merely to keep old entrypoints alive.
-- Keep exploratory scripts and intermediate outputs under `agent_workspace/`.
-- Only the two explicitly retained performance-summary artifacts may remain
-  active evidence there.
-- Use `apply_patch` for manual file edits.
-- Preserve unrelated dirty worktree changes.
+- Reuse a retained owner; prefer direct functions and explicit loops over new
+  engines, plugins or one-use abstraction layers. Do not restore compatibility
+  wrappers just to keep retired entrypoints alive.
+- Keep data/model, training, evaluation and scheduling responsibilities clear.
+  Remove internal duplicate checks only when one owner still enforces the same
+  contract; preserve data identity, finite values, gradients, BN/RNG and hashes.
+- Share fixes through reviewed Git commits, never cross-worktree imports.
+  One writer owns each index; preserve historical experiments and identities.
+- Runtime dependencies must be retained files or their artifacts. No imports
+  from `agent_workspace` or legacy `ecg_adv_gen`, `methods`, or `scripts`.
+- Exploratory code belongs in `agent_workspace/`; only its two explicitly
+  retained performance summaries are active evidence. Keep large outputs external.
+- Use `apply_patch`; preserve unrelated dirty worktree changes.
 - Do not delete legacy files until a generated candidate list has been reviewed
-  and the user explicitly confirms deletion.
+  and the user explicitly confirms deletion. Retiring worktrees also requires
+  a reviewed exact list and separate deletion confirmation.
 
 ## Single Launch Surface
 
@@ -82,98 +88,66 @@ All retained experiments launch from tracked YAML through:
   --dry-run
 ```
 
-Run a dry-run before an actual launch. The launcher must:
-
-- resolve the entire YAML closure inside the selected config bundle;
-- accept only code-owned entrypoint names;
-- reject dynamic imports and launcher-owned argument overrides;
-- write outside the worktree;
-- never load data, a model, or a GPU during dry-run;
-- leave a run card, file index, summary, resolved config snapshots, and hashes
-  for executed runs.
+Dry-run before execution: resolve the full YAML closure within the selected
+bundle, accept only code-owned entrypoints, and reject dynamic imports or
+launcher-owned overrides. Dry-run loads no data, model or GPU and has no writes.
+Executed runs write outside the worktree and retain a run card, file index,
+summary, resolved config snapshots and hashes.
 
 Do not add long Bash launchers or dated one-off Python entrypoints.
 
 ## Locked Research Contract
 
-The user confirmed three development directions on 2026-09-12:
+Use `docs/directions.md` and `configs/directions.yaml` to select the direction.
+The catalog is navigation, not another launcher or config generator.
 
-- ECG LLM: PULSE and ECG-R1; see `docs/directions.md`.
-- Traditional SimCLR: ECGFounder and EfficientNet, the two-stage recipe below.
-- Traditional JSD: the existing R18 single-stage Joint recipe, JSD weight
-  `1.5` and VAE-LHAT supervised loss mass `0.20`; selector
-  `configs/train/methods/a1_rot4_two_chain_balanced_jsd1p5_vae_lhat_replace0p2.yaml`.
-  No SimCLR, source replay, source logit anchor, or stage boundary in this arm.
-  Do not substitute the September 11 two-stage JSD weight-12 ablation.
+- **ECG LLM:** native-500-Hz waveform -> image -> model-specific processor.
+  ECG-R1's retained evaluation is image-only; do not claim waveform+image parity.
+- **SimCLR:** fixed PTB-XL source -> target K500 -> two-chain AugMix + SimCLR
+  -> clean/rotating corruption supervision + contracted VAE-LHAT.
+  Selector: `configs/train/methods/augmix_simclr_lhat.yaml`.
+- **JSD:** existing single-stage R18, JSD weight 1.5 and LHAT supervised mass
+  0.20 replacing clean loss, not an extra 20% loss. No SimCLR, source replay,
+  source logit anchor or stage boundary. Do not substitute two-stage JSD-12.
+  Selector: `configs/train/methods/a1_rot4_two_chain_balanced_jsd1p5_vae_lhat_replace0p2.yaml`.
 
-Share implementation through Git commits, never imports from another worktree.
-The finite direction catalog `configs/directions.yaml` is navigation, not a
-new launch/config-generation surface. Preserve historical experiments and
-their identities; retiring old worktrees still requires a reviewed exact list
-and separate deletion confirmation. One writer owns each worktree index.
+Shared Super5 data identity (including current LLM adaptation/evaluation):
 
-Locked traditional SimCLR method:
+- Super5 order: `CD, HYP, MI, NORM, STTC`; mapping
+  `v7_super5_sjr_rgq_review_20260528` / `555ec85d5b51`.
+- Centers: `ningbo`, `chapman_shaoxing`, `cpsc_2018` (including Extra), `georgia`.
+- Adapt only on the selected center's fixed K500; final evaluation excludes
+  those identities. Outside-K500 records are development assessment only,
+  never adaptation data.
+- Traditional primary metrics: macro AUROC and sklearn average precision, `drop_all_zero`,
+  equal views then equal centers. `all_zero_kept` is secondary audit evidence.
+  LLM generated-label metrics are not interchangeable with raw-logit AUROC/AP.
 
-```text
-PTB-XL source checkpoint
--> one target center's fixed K500 records
--> two-chain AugMix + SimCLR
--> clean plus rotating depth2/depth3 supervised adaptation
--> exact-label attack-then-contract VAE-LHAT BCE
--> K500-ref-excluded PN2021 Clean and PN2021-C evaluation
-```
+Traditional waveform contract (LLM uses its native500 image protocol above):
 
-Data and evaluation:
+- Canonical input: raw physical mV, `(B,1000,12)`, 100 Hz, PTB-XL lead order.
+  Corrupt before per-sample global z-score; PN2021-C runs in 500 Hz then returns
+  to canonical 100 Hz. EfficientNet consumes 100 Hz; Founder linearly interpolates
+  `1000 -> 5000` on device before the same global z-score.
+- VAE I/O: `(B,1024,12)` in ECGTwin lead order; latent `(B,4,128)`.
+  Reorder decoded leads with `[0,1,2,3,5,4,6,7,8,9,10,11]` before classification.
 
-- Super5 class order: `CD, HYP, MI, NORM, STTC`.
-- PN2021 mapping version:
-  `v7_super5_sjr_rgq_review_20260528`.
-- Mapping hash: `555ec85d5b51`.
-- Logical centers: `ningbo`, `chapman_shaoxing`, `cpsc_2018`, `georgia`.
-- `cpsc_2018` includes CPSC 2018 Extra.
-- Model adaptation sees only that logical center's fixed K500.
-- Records outside K500 may be used only for development parameter assessment,
-  never for model adaptation.
-- Final evaluation excludes the K500 record identities.
-- Primary table metrics are macro AUROC and sklearn average precision using
-  `drop_all_zero`.
-- `all_zero_kept` is secondary audit evidence.
+Locked SimCLR method details (not defaults for JSD or LLM):
 
-Waveform contract:
-
-- Canonical classifier bottleneck: raw physical mV, `(B,1000,12)`, 100 Hz,
-  PTB-XL lead order.
-- Corruptions happen before per-sample global z-score.
-- PN2021-C operators run in the 500 Hz domain and return to canonical 100 Hz.
-- EfficientNet consumes canonical 100 Hz.
-- ECGFounder uses linear `1000 -> 5000` interpolation on device, then the same
-  per-sample global z-score policy.
-- ECGTwin VAE input/output is `(B,1024,12)` in ECGTwin lead order.
-- VAE latent shape is `(B,4,128)`.
-- Decoded ECGTwin output must be reordered with
-  `[0,1,2,3,5,4,6,7,8,9,10,11]` before the canonical classifier path.
-
-Method contract:
-
-- Stage 1 uses clean versus one two-chain AugMix strong view with SimCLR.
-- No Stage-1 VAE tail, VICReg, PTB-XL replay, or residual head.
-- Stage 2 weights clean and corruption families `0.5 / 0.5`.
-- The corruption schedule rotates two depth-2 and two depth-3 views.
-- The Stage-1 frozen PTB-XL source logit anchor is retained; the Stage-2
-  post-Stage-1 logit-anchor teacher is disabled.
-- VAE-LHAT uses nearest exact-label non-self neighbors, `M=20`, hull lambda
-  `1.0`, standardized L2 epsilon `12`, one attack step, and attack-then-contract
-  selection with linear clean/hard endpoint residual correction.
-- Base and VAE auxiliary gradients are added directly; PCGrad is excluded.
-- The current recipe is heldout-tuned, single-seed development evidence, not a
-  final paper claim.
+- Stage 1: clean vs one two-chain strong view; retain frozen PTB-XL source-logit
+  anchor. No VAE tail, VICReg, PTB-XL replay or residual head.
+- Stage 2: clean/corruption weights 0.5/0.5; rotate two depth-2 and two depth-3
+  views. Post-Stage-1 logit-anchor teacher disabled.
+- LHAT: nearest exact-label non-self M=20, hull lambda=1.0, standardized L2
+  epsilon=12, one attack step; attack-then-contract with linear clean/hard
+  endpoint residual correction. Add base/auxiliary gradients directly; no PCGrad.
+- Recipes remain heldout-tuned development evidence, not final paper claims.
 
 ## Evidence Discipline
 
 Start from `configs/active_evidence_registry.yaml`.
 
-- A tracked config proves replayability, not performance.
-- A report proves presentation, not independent validation.
+- Configs prove replayability, not performance; reports are not independent validation.
 - Keep development, historical trusted, and paper-final evidence separate.
 - Do not select checkpoints or hyperparameters from heldout target labels or
   the full target-center class distribution.
@@ -202,11 +176,8 @@ Use the project Python directly:
 `pytest.ini` limits discovery to the retained `util/tests/test_*.py` contract
 suite. Keep its inventory synchronized with A9 of the keep manifest.
 
-Before committing or pushing:
-
-- run `git diff --check`;
-- inspect `git status --short`;
-- confirm no large artifacts, checkpoints, caches, secrets, host-specific
-  model-link changes, or unrelated user edits are staged;
-- use the artifact Git guard skill;
-- never stage broad directories blindly.
+Docs-only changes need link/scope checks and `git diff --check`, not GPU jobs.
+Before staging, committing or pushing, use the artifact Git guard, run
+`git diff --check`, inspect `git status --short` and the exact staged diff.
+Exclude artifacts, checkpoints,
+caches, secrets, model-link changes and unrelated edits; never stage broadly.

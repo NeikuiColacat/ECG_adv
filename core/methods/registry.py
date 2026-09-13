@@ -1573,6 +1573,36 @@ def _execution_contract(definition: _RecipeDefinition) -> Mapping[str, Any]:
             raise AssertionError(
                 "clean-replacement LHAT mass must fit inside the clean family"
             )
+        if single_chain:
+            exposure_policy = (
+                "a1_rotating4_plus_single_chain_and_lhat_auxiliaries"
+                if uses_lhat else "a1_rotating4_plus_single_chain_auxiliary"
+            )
+            view_geometry = (
+                "one_depth23_corruption_chain_with_clean_bernoulli_jsd"
+                if augmix_consistency
+                else "one_depth23_corruption_chain_without_mix"
+            )
+        else:
+            if uses_augmix and uses_lhat:
+                exposure_policy = "a1_rotating4_plus_augmix_and_lhat_auxiliaries"
+            elif uses_augmix:
+                exposure_policy = "a1_rotating4_plus_augmix_auxiliary"
+            else:
+                exposure_policy = "a1_rotating4_plus_lhat_auxiliary"
+            if augmix_consistency:
+                view_geometry = (
+                    "two_independent_depth23_chains_dirichlet_"
+                    "mix_with_clean_chain_bernoulli_jsd"
+                )
+            elif definition.augmix_supervised_view_policy == "chains_mean":
+                view_geometry = (
+                    "two_independent_depth23_chains_supervised_mean_without_jsd"
+                )
+            else:
+                view_geometry = (
+                    "two_independent_depth23_chains_dirichlet_mix_without_clean_beta"
+                )
         return MappingProxyType(
             {
                 **common,
@@ -1586,19 +1616,7 @@ def _execution_contract(definition: _RecipeDefinition) -> Mapping[str, Any]:
                     "efficientnet1dv2": 0.0,
                     "ecgfounder": 0.0,
                 },
-                "exposure_policy": (
-                    "a1_rotating4_plus_single_chain_and_lhat_auxiliaries"
-                    if single_chain and uses_lhat
-                    else "a1_rotating4_plus_single_chain_auxiliary"
-                    if single_chain
-                    else "a1_rotating4_plus_augmix_and_lhat_auxiliaries"
-                    if uses_augmix and uses_lhat
-                    else (
-                        "a1_rotating4_plus_augmix_auxiliary"
-                        if uses_augmix
-                        else "a1_rotating4_plus_lhat_auxiliary"
-                    )
-                ),
+                "exposure_policy": exposure_policy,
                 "corruption_depths": [2, 3],
                 "rotating4_schedule": (
                     "epoch_modulo_five_covers_all_depth23_compositions"
@@ -1623,31 +1641,7 @@ def _execution_contract(definition: _RecipeDefinition) -> Mapping[str, Any]:
                             ),
                         ],
                         "weight": float(definition.augmix_auxiliary_weight),
-                        "view_geometry": (
-                            (
-                                "one_depth23_corruption_chain_with_clean_"
-                                "bernoulli_jsd"
-                                if augmix_consistency
-                                else "one_depth23_corruption_chain_without_mix"
-                            )
-                            if single_chain
-                            else (
-                                (
-                                    "two_independent_depth23_chains_dirichlet_"
-                                    "mix_with_clean_chain_bernoulli_jsd"
-                                )
-                                if augmix_consistency
-                                else (
-                                    "two_independent_depth23_chains_"
-                                    "supervised_mean_without_jsd"
-                                )
-                                if definition.augmix_supervised_view_policy == "chains_mean"
-                                else (
-                                    "two_independent_depth23_chains_dirichlet_mix_"
-                                    "without_clean_beta"
-                                )
-                            )
-                        ),
+                        "view_geometry": view_geometry,
                         **(
                             {
                                 "bernoulli_jsd_weight": float(

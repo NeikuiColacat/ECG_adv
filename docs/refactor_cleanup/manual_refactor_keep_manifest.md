@@ -29,6 +29,12 @@ YAML 或隐式回退入口。
 
 ## A. 手动重构保护白名单
 
+2026-09-12 SimCLR 代码精简首批：人工合入 `core/online_trainer.py` 的默认值
+加显式覆盖逻辑及既有 `util/tests/test_online_trainer.py` 中52例回归；保持
+scheduler horizon 优先级。`core/methods/registry.py` 的 exposure/view geometry
+深层条件表达式展开为局部分支，74份完整 recipe describe/hash 的原 golden 不变。
+未改训练循环、配方或配置；运行中的 JSD 树暂不同步这些生产代码改动。
+
 2026-09-12 三方向整理（用户已授权实施，不含旧 worktree 删除授权）：
 `docs/directions.md`、`configs/directions.yaml`、
 `docs/refactor_cleanup/three_direction_consolidation.md` 为 KEEP-MANUAL。
