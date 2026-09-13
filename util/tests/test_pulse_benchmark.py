@@ -88,6 +88,80 @@ def test_prediction_identity_rejects_drift(field):
         validate_pair_row(row, sample, condition)
 
 
+def prediction_variant(kind):
+    from util.evaluation.pulse_subset import validate_original_row
+    from util.evaluation.pulse_visual_subset import validate_row
+
+    sample, condition = fixture_rows(1)[0], conditions()[0]
+    row = prediction(sample, condition)
+    def answer(text):
+        return {"response": text, "generated_tokens": 3,
+                "hit_max_new_tokens": False, **parse_response(text)}
+    if kind == "pair":
+        row["arms"] = {"w2": answer("MI"), "w1": answer("CD")}
+        return row, sample, condition, validate_pair_row, ["MI", "CD"]
+    if kind == "original":
+        row["answer"] = answer("CD")
+        # Extra fields were historically ignored, including an unrelated arms field.
+        row["arms"] = {"unused": None}
+        return row, sample, condition, validate_original_row, ["CD"]
+    row["arms"] = {"three": answer("HYP"), "single": answer("MI"), "clean": answer("CD")}
+    return row, sample, condition, validate_row, ["CD", "MI", "HYP"]
+
+
+@pytest.mark.parametrize("kind", ["pair", "original", "visual"])
+def test_prediction_validation_parses_real_answers_once_in_original_order(kind, monkeypatch):
+    from util import pulse_benchmark_contract as contract
+
+    row, sample, condition, validate, expected = prediction_variant(kind)
+    original = deepcopy((row, sample, condition))
+    calls = []
+
+    def parse(text):
+        calls.append(text)
+        return parse_response(text)
+
+    monkeypatch.setattr(contract, "parse_response", parse)
+    validate(row, sample, condition)
+    assert calls == expected
+    assert (row, sample, condition) == original
+
+
+@pytest.mark.parametrize("kind", ["pair", "original", "visual"])
+@pytest.mark.parametrize("failure,message", [
+    ("identity", "paired prediction sample/condition/arm identity mismatch"),
+    ("fingerprint", "paired input waveform fingerprint missing"),
+    ("parser", "paired response differs from its frozen parser"),
+    ("length", "invalid generated-answer length"),
+    ("truncation", "missing truncation audit"),
+])
+def test_prediction_validation_keeps_failure_priority(kind, failure, message):
+    row, sample, condition, validate, _ = prediction_variant(kind)
+    first = row["answer"] if kind == "original" else row["arms"]["w2" if kind == "pair" else "clean"]
+    first["hit_max_new_tokens"] = 1
+    if failure in {"identity", "fingerprint", "parser", "length"}:
+        first["generated_tokens"] = 0
+    if failure in {"identity", "fingerprint", "parser"}:
+        first["predicted_labels"] = ["STTC"]
+    if failure in {"identity", "fingerprint"}:
+        row["input_waveform_sha256"] = ""
+    if failure == "identity":
+        row["record_id"] = "foreign"
+    with pytest.raises(ValueError, match=f"^{message}$"):
+        validate(row, sample, condition)
+
+
+@pytest.mark.parametrize("kind", ["pair", "visual"])
+def test_prediction_validation_keeps_arm_check_before_fingerprints(kind):
+    row, sample, condition, validate, _ = prediction_variant(kind)
+    row["arms"]["foreign"] = row["arms"].pop("w1" if kind == "pair" else "single")
+    row["input_waveform_sha256"] = ""
+    message = ("paired prediction sample/condition/arm identity mismatch" if kind == "pair"
+               else "visual prediction arm or condition-index mismatch")
+    with pytest.raises(ValueError, match=f"^{message}$"):
+        validate(row, sample, condition)
+
+
 def test_paired_reducer_and_confidence_intervals_match_known_fixture(tmp_path):
     rows, views = fixture_rows(8), conditions()
     tasks = center_tasks(rows, views, "fixture", development_records=8)

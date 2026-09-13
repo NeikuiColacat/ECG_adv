@@ -16,7 +16,6 @@ from pathlib import Path
 import shutil
 import signal
 import subprocess
-import sys
 import time
 import uuid
 
@@ -26,7 +25,7 @@ from util.evaluation.ecg_image_queue import TaskQueue, atomic_json, digest_json,
 from util.evaluation.pulse_benchmark import (REPO, PULSE_PYTHON, claim_gpu, make_renderer,
     infer_batch, profile_and_baseline, source_identity, verify_sources, snapshot_sources)
 from util.pn2021_artifact_contract import sha256_file
-from util.pulse_benchmark_contract import ARMS, MODEL_NAMES, validate_pair_row
+from util.pulse_benchmark_contract import ARMS, MODEL_NAMES, validate_pair_row, validate_prediction_row
 from util.pulse_training_contract import CENTERS, CLASS_ORDER
 
 NAMES = ("PULSE-original", *MODEL_NAMES)
@@ -402,8 +401,7 @@ def worker(path, root, state, worker_id, kind):
 
 
 def validate_original_row(row, sample, condition):
-    # Reuse the exact parser, label, waveform hash and truncation contract.
-    validate_pair_row({**row, "arms": {arm: row["answer"] for arm in ARMS}}, sample, condition)
+    validate_prediction_row(row, sample, condition, answers=(row["answer"],))
 
 
 def comparison_arrays(prepared, pair_queue, base_queue):

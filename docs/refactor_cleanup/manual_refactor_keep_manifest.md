@@ -29,6 +29,20 @@ YAML 或隐式回退入口。
 
 ## A. 手动重构保护白名单
 
+2026-09-12 LLM 代码精简首批：在既有 `util/pulse_benchmark_contract.py`
+集中预测行校验，`util/evaluation/pulse_subset.py` 与 `pulse_visual_subset.py`
+直接传入真实答案，不再伪造双臂；原 schema、错误优先级、指纹和解析器不变。
+既有 `util/tests/test_pulse_benchmark.py` 增补20例顺序、拒绝及输入不变回归。
+未改渲染、生成或训练数值路径；未修改旧实验快照、配置或来源哈希。
+
+2026-09-12 传统 trainer 第一小片：原地简化 `core/online_trainer.py` 参数覆盖解析，
+在既有 `util/tests/test_online_trainer.py` 增补双骨干默认值、覆盖优先级和拒绝语义测试；
+`docs/directions.md` 补充调用链和日志职责。未增加 runtime 模块或修改冻结 YAML、
+配方、随机数、数值训练和产物 schema；本次不授权提交、重训或删除实验。
+验证：20份可加载的在线配置、8880组参数新旧对照一致；新增52个测试用例，
+全套 CPU 610 passed / 14 skipped；SimCLR 与 R18 两个 launcher dry-run 通过。
+报告位于 `/home/linbinhao/ECG_adv_data/analytics/trainer_parameter_slice_20260912_yko7sr/`。
+
 2026-09-12 三方向整理（用户已授权实施，不含旧 worktree 删除授权）：
 `docs/directions.md`、`configs/directions.yaml`、
 `docs/refactor_cleanup/three_direction_consolidation.md` 为 KEEP-MANUAL。

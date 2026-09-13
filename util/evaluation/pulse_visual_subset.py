@@ -142,12 +142,10 @@ def make_backend(evidence, reservation):
 
 
 def validate_row(row, sample, condition):
-    from util.pulse_benchmark_contract import validate_pair_row
+    from util.pulse_benchmark_contract import validate_prediction_row
     if set(row["arms"]) != set(ARMS) or row["condition_index"] != condition["condition_index"]:
         raise ValueError("visual prediction arm or condition-index mismatch")
-    # Reuse the exact existing sample, waveform fingerprint, parser and token checks.
-    for arm in ARMS:
-        validate_pair_row({**row,"arms":{"w1":row["arms"][arm],"w2":row["arms"][arm]}},sample,condition)
+    validate_prediction_row(row, sample, condition, answers=(row["arms"][arm] for arm in ARMS))
 
 
 def infer(samples,conditions,config,baseline,backend,renderer,profile,pool,*,verify=False):

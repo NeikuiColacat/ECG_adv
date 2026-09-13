@@ -63,17 +63,28 @@ def center_tasks(rows, conditions, protocol_identity, *, records_per_task=8, bat
 
 
 def validate_pair_row(row, sample, condition):
+    validate_prediction_row(row, sample, condition, expected_arms=ARMS)
+
+
+def validate_prediction_row(row, sample, condition, *, answers=None, expected_arms=None):
+    """Check shared prediction fields, then each real answer exactly once.
+
+    Pair callers keep their exact arm-set check and insertion order. Other
+    callers supply answers in their own fixed order without fabricating arms.
+    """
     if (row["sample_key"] != sample["sample_key"] or row["logical_center"] != sample["logical_center"]
             or row["record_id"] != sample["record_id"] or row["hash_id"] != sample["hash_id"]
             or row["true_labels"] != sample["label_names"] or row["condition_id"] != condition["condition_id"]
             or row["operators"] != condition["operators"] or row["depth"] != condition["depth"]
-            or set(row["arms"]) != set(ARMS)):
+            or (expected_arms is not None and set(row["arms"]) != set(expected_arms))):
         raise ValueError("paired prediction sample/condition/arm identity mismatch")
     for key in ("clean_waveform_sha256", "input_waveform_sha256"):
         digest = row.get(key, "")
         if len(digest) != 64 or not set(digest) <= set("0123456789abcdef"):
             raise ValueError("paired input waveform fingerprint missing")
-    for answer in row["arms"].values():
+    if answers is None:
+        answers = row["arms"].values()
+    for answer in answers:
         parsed = parse_response(answer["response"])
         if any(answer.get(k) != value for k, value in parsed.items()):
             raise ValueError("paired response differs from its frozen parser")
