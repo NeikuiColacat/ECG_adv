@@ -1,7 +1,10 @@
 # Literature And Repository Priors
 
-Use these as priors for ECGTwin VAE latent-hull online AT. They are guidance,
-not permission to drift away from the PTB-XL/PN2021 mainline.
+Historical related-work notes, not an active protocol or execution authorization.
+Read only for a literature task. The dated shortlist, execution order and
+five-seed/table recommendations below are historical proposals, not overrides
+of the current direction, AGENTS or selected experiment YAML. Recheck primary
+sources before making current availability, license or venue claims.
 
 ## Adversarial Training
 

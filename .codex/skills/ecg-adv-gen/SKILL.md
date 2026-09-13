@@ -1,82 +1,56 @@
 ---
 name: ecg-adv-gen
-description: Route implementation, protocol, evaluation, and evidence work for the ECG_manual_refactor PTB-XL Super5, PN2021/PN2021-C, EfficientNet1DV2, ECGFounder, AugMix, and VAE-LHAT pipeline. Use for work in this clean-room repository; treat legacy ECG_adv_Gen material as read-only provenance.
+description: Route ECG_manual_refactor work across PULSE/ECG-R1 image models, traditional SimCLR, and single-stage JSD; locate the relevant project contracts, configs, and evidence.
 ---
 
-# ECG Manual Refactor Project Router
+# ECG Project Router
 
-Use this skill as the project entrypoint, not as a second copy of every project
-contract.
+Use the selected checkout's `AGENTS.md` and project-local skills. Same-named
+global skills are separate definitions, not extra instructions to merge.
 
-## Authoritative Sources
+## Find Current Truth
 
-Read these in order:
+1. Read `AGENTS.md`; confirm checkout, branch, dirty state and task scope.
+2. Use `docs/directions.md` / `configs/directions.yaml` to select the direction.
+3. Locate the relevant entries in the keep manifest, `configs/active_scripts.yaml`
+   and `configs/active_evidence_registry.yaml` with `rg`. Read the applicable
+   rules and entries; unrelated historical batches are not a startup checklist.
+4. Inspect the selected YAML closure and implementation for mutable values;
+   inspect actual run artifacts before claiming execution or performance.
 
-1. `AGENTS.md` for safety and the current research contract.
-2. `docs/refactor_cleanup/manual_refactor_keep_manifest.md` for the retained
-   code and config boundary.
-3. `configs/active_scripts.yaml` for active launch surfaces.
-4. `configs/active_evidence_registry.yaml` for evidence status.
-5. The resolved YAML and implementation for any value that may have changed.
+Repository paths are relative to this checkout. Skill reference paths are
+relative to this skill directory. Do not import code from another worktree.
 
-Do not treat a Skill, report, historical command, or tracked config alone as
-proof that an experiment ran or improved performance.
+## Keep Directions Distinct
 
-## Current Mainline
+- ECG LLM: PULSE/ECG-R1 use native500 images and model-specific processors.
+  Current R1 evaluation is image-only; generated labels are not class scores.
+- Traditional SimCLR: locked two-stage AugMix/SimCLR then supervised adaptation
+  with VAE-LHAT; see `configs/train/methods/augmix_simclr_lhat.yaml`.
+- Traditional JSD: single-stage R18, JSD1.5 and LHAT clean-loss replacement0.20;
+  follow its selector in the direction catalog, not the two-stage JSD-12 ablation.
 
-Route the selected direction using `docs/directions.md` and the non-executable
-`configs/directions.yaml` catalog. ECG LLM owns PULSE/ECG-R1. The traditional
-JSD direction uses the existing single-stage R18 recipe (JSD 1.5, LHAT 0.20),
-not the two-stage JSD-12 ablation. The pipeline below is the SimCLR direction.
-Keep shared code in this repository; never import from another worktree.
+The AGENTS data, K500/ref-exclusion, evidence and safety rules apply throughout.
+A config, skill or report alone proves neither performance nor paper readiness.
 
-```text
-PTB-XL source checkpoint
--> one target center's fixed K500 records
--> two-chain AugMix + SimCLR
--> clean plus rotating depth2/depth3 supervision
--> exact-label attack-then-contract VAE-LHAT BCE
--> K500-ref-excluded PN2021 Clean and PN2021-C evaluation
-```
+## Route Only Relevant Work
 
-The current metric identity is Super5 `CD,HYP,MI,NORM,STTC`, mapping
-`v7_super5_sjr_rgq_review_20260528` / `555ec85d5b51`, with
-`drop_all_zero` as the primary view. Current evidence is development evidence
-unless the active registry says otherwise.
+| Task | Skill |
+|---|---|
+| Data, resampling, labels, K500, image-input identity | `data-prep-validator` |
+| VAE-LHAT geometry, contraction, diagnostics | `ecg-vae-online-at` |
+| Metrics, uncertainty, matched comparisons | `model-eval` |
+| Config/run/checkpoint identity and replay | `reproducibility-check` |
+| GPU, heavy CPU/IO, cache builds, web serving | `shared-gpu-server-discipline` |
+| Behavior-preserving code reduction or code audit | `ecg-code-simplifier` |
+| Staging, committing, pushing | `artifact-git-guard` |
+| Project instructions, skills, handoffs | `ecg-agent-retrospective` |
 
-## Hard Boundaries
-
-- New runtime code may depend only on keep-manifest files or artifacts produced
-  by them.
-- Do not import legacy `ecg_adv_gen`, `methods`, `scripts`, or exploratory
-  `agent_workspace` code.
-- Adapt on one logical center's fixed K500 only and exclude those identities
-  from target evaluation.
-- Keep CPSC 2018 and Extra as one logical center.
-- Keep datasets, caches, checkpoints, generated signals, and run outputs outside
-  Git.
-- Do not promote heldout-tuned, unmatched, dirty-Git, or single-seed results to
-  paper evidence.
-
-## Route Specialized Work
-
-- Loading, resampling, leads, labels, K500, and exclusion:
-  `data-prep-validator`.
-- VAE-LHAT geometry, diagnostics, or ablations: `ecg-vae-online-at`.
-- Metrics and matched model comparisons: `model-eval`.
-- Config closure, run identity, replay, or paper promotion:
-  `reproducibility-check`.
-- GPU, long inference, cache builds, CPU/IO, or web serving:
-  `shared-gpu-server-discipline`.
-- Behavior-preserving code reduction: `ecg-code-simplifier`.
-- Commit or push: `artifact-git-guard`.
-- Durable-agent-process review: `ecg-agent-retrospective`.
-
-Use only the smallest set needed for the task; the specialized Skill owns its
-detailed checklist.
+Use the smallest applicable set. An explanation/status request is read-only;
+do not turn skill routing into authorization to launch, delete, commit or publish.
 
 ## Historical Recovery
 
-Read `references/legacy_provenance.md` only when the user explicitly asks for
-legacy ECG_adv_Gen code, commands, results, or prompt-token history. Historical
-paths and parameter values are never current defaults.
+Read [legacy provenance](references/legacy_provenance.md) only for explicitly
+requested legacy code/history. Its commits, old paths and parameters are
+provenance, never current defaults.

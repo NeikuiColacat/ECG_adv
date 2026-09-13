@@ -1,79 +1,65 @@
 ---
 name: ecg-code-simplifier
-description: Simplify recently changed ECG_manual_refactor code without changing behavior or weakening data, evaluation, reproducibility, and safety contracts. Use after implementation or when asked to simplify, deduplicate, reduce overengineering, shrink code, or audit code complexity in this repository.
+description: Audit or simplify ECG_manual_refactor code for human review while preserving numerical behavior, data identity, reproducibility and shared-server safety.
 ---
 
 # ECG Code Simplifier
 
-Reduce production code and cognitive load while preserving observable behavior
-and the locked research contract.
+Reduce cognitive load and production complexity, not merely physical line count.
+Follow `AGENTS.md` and the relevant keep-manifest entries.
 
 ## Scope
 
-Read `AGENTS.md` and the keep manifest first. Specialized data, evaluation,
-reproducibility, GPU, and Git Skills take precedence in their domains.
+- Default to the requested changed-code slice: inspect diff, callers and tests;
+  use adjacent files only to establish a clearer owner.
+- A repository-wide audit is read-only unless implementation is also requested.
+  Report larger opportunities instead of expanding the patch silently.
+- Check live-job and historical replay source locks before editing. Even an
+  unused-import removal can break a source hash; never bypass the guard.
 
-Default to changed-code mode:
+## Simplify in This Order
 
-1. Inspect `git status`, the relevant diff, callers, and tests.
-2. Edit only touched files plus the minimum adjacent code needed to simplify
-   ownership.
-3. Report larger opportunities instead of widening the patch silently.
+1. Reuse a retained owner; remove contract-free forwarding and one-use machinery.
+2. Consolidate genuinely equivalent parsing/validation/transformations.
+3. Prefer direct functions and explicit loops over deeply nested expressions,
+   generic engines or compressed one-line code.
+4. Remove dead branches only after checking all consumers below.
 
-Use repository-audit mode only when the user explicitly requests a broad audit.
-That mode is read-only until the user chooses a slice to implement.
+Moving the same complexity to a new module is not a simplification. Small
+duplication may be cheaper than introducing dependency coupling.
 
-## Simplification Order
+## Before Merging or Removing
 
-1. Reuse an existing retained helper or canonical owner.
-2. Remove pass-through wrappers and one-use abstractions that add no contract.
-3. Consolidate duplicate parsing, validation, or transformations under one
-   owner.
-4. Flatten control flow and replace custom machinery with a clear standard
-   operation.
-5. Remove truly dead branches only after the one-way-door check.
+Search direct calls/imports, strings/YAML/registries/entrypoints, tests/mocks,
+serialization/reflection and generated consumers. Distinguish historical-only
+provenance from active replay code. No direct caller does not prove dead code.
 
-Keep a change only when total complexity decreases; moving the same complexity
-to a new abstraction is not simplification.
+- `SAFE`: local, behavior-equivalent and covered.
+- `CAREFUL`: shared owner, config/schema or numerics; needs equivalence tests.
+- `RISKY`: data/metric/model or launch/evidence identity; report first unless
+  explicitly scoped. File deletion still follows the manifest approval gate.
 
-## One-Way-Door Check
+## Preserve Non-Obvious Behavior
 
-Before deleting or merging a symbol, path, config key, or branch, search for:
+- Units, shape, rate, leads, labels, K500/ref-exclusion and mapping/metric identity.
+- Config/seed/checkpoint/artifact provenance, finite values and gradient boundaries.
+- Freeze/eval state, BatchNorm and RNG. Unused module initialization can consume
+  RNG; an apparently redundant forward can change BN or the exposure budget.
+- JSON writers are not interchangeable without checking serialization, failure
+  cleanup, atomic replacement and fsync guarantees.
+- Resource controls, output isolation and Git artifact guards.
 
-- direct calls and imports;
-- string references, YAML closures, registries, and launch entrypoints;
-- tests, mocks, serialization fields, reflection, and generated consumers;
-- historical-only references that must remain provenance rather than runtime.
-
-Classify candidates:
-
-- `SAFE`: local, behavior-equivalent, covered by existing tests.
-- `CAREFUL`: shared owner, config surface, serialization, or numerics; require a
-  focused equivalence test.
-- `RISKY`: data identity, metric identity, model semantics, launch/evidence
-  identity, or external API; report first unless the user explicitly scopes it.
-
-## Protected Contracts
-
-Never simplify away:
-
-- waveform units, shape, sampling rate, lead order, labels, K500 identity, or
-  ref-exclusion checks;
-- mapping/hash and metric-view checks;
-- config closure, seed, checkpoint, artifact, and Git provenance;
-- frozen/eval state restoration, finite-value checks, and gradient boundaries;
-- shared-server resource controls, output isolation, or Git artifact guards.
-
-Defensive code is removable only when another canonical owner enforces the same
-contract and verification proves equivalence.
+Remove duplicate defensive checks only when one canonical owner enforces the
+same contract and tests prove equivalence.
 
 ## Verify and Report
 
-- Run focused tests for every changed behavior boundary.
-- Run the retained pytest suite when core, data, evaluation, or launch code
-  changes.
-- Run `git diff --check` and inspect the final diff and status.
-- Report scope, production-line delta, verification, and deferred risky items.
+Run focused tests; for training-loop/numerical changes compare tiny old/new
+parameters, optimizer/scheduler state, BN, RNG, view order and artifact identity.
+Run the retained CPU suite for core/data/evaluation/launcher changes, and
+`git diff --check`. Docs-only edits need scope/link/diff checks, not training.
+Real-model/GPU parity requires a scoped, resource-checked run when applicable.
 
-Do not stage, commit, push, delete experiments, or launch resource-heavy jobs
-unless the user separately requests them.
+Report the reviewed slice, net complexity/line changes, verification and deferred
+risks. Do not stage, commit, delete experiments or launch heavy jobs without
+the corresponding authorization.

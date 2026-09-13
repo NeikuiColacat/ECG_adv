@@ -1,45 +1,51 @@
 ---
 name: shared-gpu-server-discipline
-description: Use before launching any ECG_manual_refactor GPU training, inference, cache build, long evaluation, local web server, or other shared-server resource-heavy job.
+description: Check resources and job ownership before ECG GPU/heavy CPU/IO work or local web serving, and safely hand off, pause or resume authorized jobs.
 ---
 
-# Shared GPU Server Discipline
+# Shared Server Execution
 
-This project runs on a multi-user shared server. Treat safety and traceability as
-part of the experiment contract.
+Use the first 100 lines of `AGENTS.md` for host and safety rules; reread after
+compaction/resume/handoff before heavy work. This skill grants no new resources.
 
-## Non-negotiables
+## Before Actual Launch or Resume
 
-- Do not use `sudo`.
-- Do not update the Linux kernel, CUDA, NVIDIA drivers, or system packages.
-- Do not modify system-level environments.
-- Keep project operations under `/home/linbinhao`.
-- Before any GPU job, read the first 100 lines of `AGENTS.md` after context
-  compaction, resume, or a new Codex handoff.
-- Before GPU training or long inference, run `nvidia-smi` and explicitly choose
-  free GPUs with `CUDA_VISIBLE_DEVICES=...`.
-- Default to one GPU. Use more only when the user explicitly allows it or the
-  machine is clearly idle.
-- Never use broad process commands such as `pkill python`, `killall`, or
-  unscoped `kill`.
-- Bind local web servers to `127.0.0.1`. If a port is occupied, do not kill the
-  process unless it is confirmed to belong to the current user and task.
+1. Confirm checkout, dirty state, exact task/output scope and existing jobs.
+2. For GPU work inspect `nvidia-smi` and compute-process ownership; choose only
+   confirmed free devices with explicit `CUDA_VISIBLE_DEVICES` (UUID preferred).
+   Preserve the user's GPU/concurrency ceiling and the workflow allowlist.
+3. Check CPU load, available RAM, disk and requested tmpfs capacity. Scale
+   workers/concurrency down under pressure; do not run parallel heavy cache
+   builds merely because GPUs are free.
+4. Use the retained launcher and dry-run, fresh external outputs, exact command,
+   environment and task-owned logs/receipts. Never overwrite a previous run.
 
-## Preflight
+Prefer one GPU unless more are authorized or live state clearly permits it;
+using all GPUs still requires explicit approval. A historical idle-context
+exception is not current permission to share someone else's occupied GPU.
 
-1. Confirm working directory is inside `/home/linbinhao`.
-2. Check `git status --short --branch`.
-3. Check GPU state with `nvidia-smi` for GPU jobs.
-4. For long CPU or IO jobs, check load, memory, and disk space.
-5. Choose a date/config-named output directory that does not overwrite previous
-   runs.
-6. Record GPU ids, command, run id, log path, checkpoint path, and manifest path.
+## Temporary Storage and Long Jobs
 
-## Stop Conditions
+If RAM intermediates are explicitly requested, use a private task-scoped RAM
+directory (for example under `/dev/shm`) and check capacity. This is a scoped
+exception to the home-only write rule, not general permission outside home.
+Keep necessary checkpoints, predictions and final provenance in the authorized
+external data root. Do not silently spill temporary outputs to the SSD.
+If all disk writes are forbidden, clarify the final-output destination before
+launch instead of overriding that restriction for durable artifacts.
 
-- The command would write outside `/home/linbinhao`.
-- The command would install or upgrade system packages, CUDA, drivers, or kernel.
-- The command would use all GPUs without explicit user approval.
-- The command would overwrite a non-temporary experiment directory.
-- The command would expose raw ECG data, credentials, or private artifacts to an
-  external service without explicit approval.
+Verify real task progress and actual compute, not only reserved VRAM. Then let
+the managed queue run in the background and hand off its status/control path;
+avoid agent polling unless monitoring is requested. Do not change live source
+or remove source/hash guards to make a handoff pass.
+
+For pause/recovery, verify PID/UID/start-time identity and use the task's own
+pause/drain controls. Stop only exact authorized task-owned PIDs, never broad
+process names. Do not reuse stale PID or GPU-number assumptions.
+
+## Stop and Clarify
+
+Stop before an unauthorized outside-home write, system/kernel/CUDA/driver
+change, foreign process/port mutation, overwrite, or external exposure of ECG
+data/secrets. Local servers bind to 127.0.0.1; keep unrelated listeners intact.
+Resource pressure means reducing or waiting for capacity, not taking other jobs.

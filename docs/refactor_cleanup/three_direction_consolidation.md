@@ -315,3 +315,56 @@ No commits were pushed; no GPU parity or new performance claim is implied.
 - [x] Exactly three registered worktrees; old source refs and local drafts recoverable.
 
 No further worktree removal is authorized by this document alone.
+
+## 2026-09-13 reviewed publication and remote archive policy
+
+The user authorized review, commit/push of the three directions, and archival
+of the old remote branches. This is publication of the current validated
+slices, not completion of every planned architecture simplification.
+
+- Preserve the remote default `main` at `ffe513a3472bc118bdeb04a7a08a28ae65dcb141`.
+- Publish `direction/ecg-llm`, `direction/traditional-simclr` and
+  `direction/traditional-jsd`; configure each local branch's matching upstream.
+- First push annotated tags `archive/20260913/<old-branch>` and verify their
+  peeled commit hashes. Only then remove the 12 original branch refs below,
+  with exact expected-old hashes and an atomic transaction. Abort if refs move.
+- Preserve all old commits, local history, datasets, checkpoints and run snapshots.
+  No default-branch change, forced branch update, GPU run or file cleanup is included.
+
+| Old remote branch | Commit protected by the archive tag |
+|---|---|
+| `archive/thesis-repro-cleanup` | `93c89067fdd2dec6c50a053c742c32aff110250d` |
+| `chore/streamlit-uv-migration` | `2f1f4df0ba844889fbbf093ed6fc9f44b591fd66` |
+| `codex/mainline-review-repair-20260711` | `df68b6f9eda9586c902e1b2bc8892f3237c782f0` |
+| `graduate-project` | `108c6eec68b13c2fe11ddf917e1ccfcaa560eff7` |
+| `handoff/k500-data-interface-20260731` | `314559b77bfae3dc950809c9f0c8fdcd2520f690` |
+| `mainline/simplified-augmix-lhat-20260805` | `3a39a516420b52c219a782a7b7440f82746f4b90` |
+| `paper/vae500-online-at-findings-20260603` | `f6838b1668b703082c32902f6b29a1edfff1fb6a` |
+| `refactor/data-module-20260620` | `6e7988ef26e4d30f802bc3f275c12b63dd03b735` |
+| `refactor/manual-20260715` | `fb51790dd1bd6ecb986e6bbd5fa341f989efddec` |
+| `refactor/manual-clean-v1-20260806` | `a1892b2bd1eebceeae8d89591a58379fe3476e0e` |
+| `refactor/paper-kernel-v2-20260811` | `5b117985089e78a503b47006c03a1a33b0aa3864` |
+| `refactor/pn2021c-vae-lhat-agent-cleanup-20260630` | `02f7cef37ba9e5603be5810dcc105a69b7d9da91` |
+
+Pre-publication CPU checks: LLM 630 passed / 14 skipped; SimCLR 610 / 14;
+JSD 574 / 14. Each had the existing TypedStorage warning. All 27 project-skill
+validators and three representative managed launcher dry-runs passed; dry-runs
+created no output directories. These are CPU/config checks, not new GPU or
+scientific-performance validation.
+
+The reviewed JSD repeat-study config bundle remains development evidence.
+Its prior run/config/source snapshots must not be rewritten to the publication
+commit. The shared guidance and local code slices are committed separately
+from that experiment bundle.
+
+The immutable before-inventory and final execution receipt are retained under
+`/home/linbinhao/ECG_adv_data/analytics/remote_publication_20260913_PMm0gT/`.
+Consult the receipt or live remote refs for the actual publication outcome;
+this section records the reviewed scope and recovery map.
+
+Recovery example (choose an unused local branch name; no force push):
+
+```bash
+git fetch origin tag archive/20260913/refactor/paper-kernel-v2-20260811
+git switch -c recovered-paper-kernel archive/20260913/refactor/paper-kernel-v2-20260811
+```

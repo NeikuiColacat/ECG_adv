@@ -1,36 +1,48 @@
 ---
 name: model-eval
-description: Standardize ECG_manual_refactor model evaluation commands, metric naming, output reports, center aggregation, drop-all-zero handling, and matched baseline comparisons.
+description: Interpret or evaluate traditional ECG classifiers and PULSE/ECG-R1 results with correct metric inputs, matched cohorts, aggregation and uncertainty.
 ---
 
-# Model Eval
+# ECG Model Evaluation
 
-Use this when evaluating EfficientNet1DV2, ECGFounder, VAE-LHAT adaptation,
-Direct+fixed20, PN2021 cross-center results, or paper tables.
+Start from the relevant evidence-registry entry and actual result artifacts.
+Requests for progress, explanations or existing results are read-only; run an
+evaluation only when requested, through the managed launcher after dry-run.
 
-## Required Evaluation Metadata
+## Select the Metric Family
 
-- Model family and checkpoint path.
-- Training/adaptation config and seed.
-- Dataset and center list.
-- PN2021 mapping version and cache version.
-- Ref-exclusion rule, including K500 IDs when relevant.
-- Metric view: all-zero kept vs drop all-zero.
-- Macro AUROC and macro AUPRC, plus per-center and per-class metrics when
-  available.
+- Traditional Super5: macro AUROC and sklearn average precision from raw logits;
+  AP is not trapezoidal PR-AUC. Do not introduce sigmoid saturation into ranking.
+- Generated-label PULSE/ECG-R1: use registered macro-F1, exact-match and Hamming
+  metrics; report parsing failure/truncation handling. Hard labels discard
+  fine-grained ranking; token-vocabulary logits are not automatically per-class
+  decision scores. Do not treat label-derived AUROC/AP as equivalent to metrics
+  from continuous class scores; probability calibration is not required.
 
-## Workflow
+## Verify the Comparison
 
-1. Find the canonical evaluation entry point or managed config.
-2. Confirm class order, mapping version, center list, and all-zero handling.
-3. Run or specify the smallest valid evaluation command.
-4. Save outputs to a date/config-named directory.
-5. Summarize deltas against direct fine-tuning and no-adaptation baselines in
-   percentage points.
+- Identify model/checkpoint, method/training config, source, seed/namespace,
+  selection rule, optimizer and record-exposure budgets.
+- Match dataset/cache, Super5 class order/mapping hash, centers, K500 exclusions,
+  record IDs and corruption views. Keep CPSC2018 + Extra one logical center.
+- Use `drop_all_zero` as primary and `all_zero_kept` as audit; name undefined-class
+  handling and macro denominators. Follow the registered metric contract.
+- Report clean and PN2021-C, per-center/per-class where available; average views
+  then centers equally, not by their unequal record counts.
+- Name the actual baseline. Locked A1 includes corruption; it is not clean-only.
+  Two-stage SimCLR vs single-stage JSD can be a whole-method comparison, not a
+  loss-only causal estimate when stages/budgets differ.
+- Report deltas in percentage points; a positive point estimate is not proof of
+  a significant gain.
 
-## Stop Conditions
+## Uncertainty and Evidence
 
-- The evaluation includes target-center reference samples that should be
-  excluded.
-- The mapping version or all-zero handling is missing.
-- The reported metric cannot be linked to a manifest, config, and checkpoint.
+Training repeats use independent seeds as the unit. Paired prediction bootstrap
+resamples records jointly across arms/views and within the registered center
+strata; it does not measure training-seed variability. Do not count twenty
+corruption views as twenty independent experiments.
+
+For new evaluation, preserve config/run/checkpoint hashes and external output
+isolation. Missing identity, leaked K500 records or mismatched metric views
+prevent a valid comparison; explain the gap instead of inventing a number.
+Use `reproducibility-check` for artifact integrity and paper-promotion gates.

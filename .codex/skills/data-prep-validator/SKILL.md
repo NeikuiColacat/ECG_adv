@@ -1,40 +1,46 @@
 ---
 name: data-prep-validator
-description: Validate ECG_manual_refactor ECG loading, preprocessing, split integrity, sampling rate, lead order, normalization, label mapping, and K500/ref-exclusion contracts.
+description: Review ECG preprocessing, splits, mapping and input identity, keeping traditional raw100 classifiers separate from native500 PULSE/ECG-R1 image paths.
 ---
 
 # Data Prep Validator
 
-Use this when touching or reviewing data loading, preprocessing, label mapping,
-center splits, cache creation, resampling, normalization, or evaluation inputs.
+Start with the selected YAML and the data contracts in `AGENTS.md`.
+A status/explanation request calls for inspection, not rebuilding caches.
 
-## Contracts To Preserve
+## Shared Super5 Identity
 
-- Super5 class order is `CD, HYP, MI, NORM, STTC`.
-- PN2021 mapping source of truth is
-  `configs/data/PN2021_super5_v7.yaml`; report version
-  `v7_super5_sjr_rgq_review_20260528` and hash `555ec85d5b51`.
-- PTB-XL records must not enter PN2021 target-center evaluation.
-- K500 reference samples used for adaptation must be excluded from downstream
-  target-center evaluation.
-- Canonical classifier-side ECG is raw mV `(B, 1000, 12)` at 100 Hz.
-- ECGTwin VAE encode/decode uses `(B, 1024, 12)` channels-last; bridge it
-  through `models/vae.py` and `core/lhat.py`, then return to canonical 100 Hz.
-- ECGTwin-to-PTB-XL lead index conversion is `[0, 1, 2, 3, 5, 4, 6, 7, 8, 9, 10, 11]`.
+- Mapping owner: `configs/data/PN2021_super5_v7.yaml`; version
+  `v7_super5_sjr_rgq_review_20260528`, hash `555ec85d5b51`,
+  class order `CD,HYP,MI,NORM,STTC`.
+- One center's fixed K500 is adaptation data; exclude those record identities
+  from target evaluation. Keep CPSC2018 + Extra one logical center.
+- PTB-XL source records must not enter the locked PN2021 target evaluation.
+  Check record identity, not merely array position or display filenames.
 
-## Workflow
+## Select the Input Path
 
-1. Identify the exact input schema, expected sampling rate, lead order, and
-   output shape.
-2. Verify split rules and leakage guards.
-3. Verify mapping version and cache version are recorded when label logic
-   changes.
-4. Run or specify the smallest smoke command that proves the changed path.
-5. Report any behavior-critical drift explicitly.
+- Traditional: raw physical mV `(B,1000,12)`, 100 Hz, PTB-XL lead order.
+  Corrupt in 500 Hz then return to 100 Hz; global per-sample z-score follows.
+  Founder interpolates 1000 -> 5000 on device before normalization.
+- VAE: ECGTwin `(B,1024,12)`; bridge through `models/vae.py` / `core/lhat.py`
+  to canonical 100 Hz, with lead reorder `[0,1,2,3,5,4,6,7,8,9,10,11]`.
+- PULSE/ECG-R1 images: follow the native500 waveform, lead/paper layout, renderer
+  and model-specific processor configuration. Do not impose raw100 downsampling
+  or classifier z-score on this path. R1's current evaluation is image-only.
+  Renderer/processor edits need real-input pixel/tensor and model parity;
+  correct tensor shape alone is insufficient.
 
-## Stop Conditions
+## Validate Proportionately
 
-- A change silently alters sampling rate, lead order, normalization, split logic,
-  label mapping, all-zero handling, or metric aggregation.
-- The evidence cannot identify which dataset version, center list, mapping
-  version, or K500 IDs were used.
+1. Identify source/cache/split versions, units, layout, normalization and IDs.
+2. Check the relevant mapping, cohort, K500-exclusion and clean/corrupt alignment.
+3. Distinguish ledger quick inventory/size checks from full content verification;
+   neither alone proves preprocessing correctness.
+4. For an authorized change, run the smallest relevant fixture/smoke and record
+   lineage. Cache rebuilds or heavy GPU checks require resource preflight.
+5. Flag unexplained rate/lead/split/mapping/metric drift; do not silently repair
+   metadata to reuse incompatible cache bytes.
+
+Missing dataset/mapping/K500 identity blocks a trustworthy comparison, not all
+read-only diagnosis. Do not overwrite caches or create a new split by default.
