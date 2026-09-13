@@ -805,6 +805,83 @@ def test_checkpoint_loader_exposes_schema3_and_finite_schema2(tmp_path: Path) ->
     assert identity.legacy_training_identity is None
 
 
+@pytest.mark.parametrize("model_name", ["efficientnet1dv2", "ecgfounder"])
+@pytest.mark.parametrize("overrides", [
+    {}, {"epochs": 2}, {"scheduler_horizon_epochs": 40}, {"batch_size": 16},
+    {"learning_rate": 0.002}, {"weight_decay": 0},
+    {"minimum_learning_rate_ratio": 0.1}, {"gradient_clip_norm": 2},
+    {"amp_enabled": False}, {"amp_dtype": "float16"}, {"stage1_steps": 1},
+    {"stage1_learning_rate": 0.003}, {"stage1_weight_decay": 0},
+    {"stage1_gradient_clip_norm": 3},
+])
+def test_online_parameter_overrides_preserve_defaults_and_inputs(model_name, overrides) -> None:
+    config = trainer.load_online_train_config(ONLINE_CONFIG)
+    before = copy.deepcopy(config.payload)
+    original_overrides = dict(overrides)
+    defaults, _ = trainer.resolve_online_training_parameters(config, model_name)
+    resolved, supplied = trainer.resolve_online_training_parameters(config, model_name, overrides)
+    assert resolved == {**defaults, **overrides}
+    assert list(resolved) == list(defaults)
+    assert set(resolved) == trainer.ONLINE_PARAMETER_NAMES
+    assert supplied == overrides and supplied is not overrides
+    assert config.payload == before and overrides == original_overrides
+
+
+@pytest.mark.parametrize("profile_horizon,overrides,expected", [
+    (None, {}, 25), (None, {"epochs": 2}, 2),
+    (None, {"epochs": 2, "scheduler_horizon_epochs": 7}, 7),
+    (30, {"epochs": 2}, 30), (30, {"scheduler_horizon_epochs": 40}, 40),
+    (30, {"epochs": 2, "scheduler_horizon_epochs": 7}, 7),
+])
+def test_online_scheduler_horizon_override_precedence(profile_horizon, overrides, expected) -> None:
+    config = trainer.load_online_train_config(ONLINE_CONFIG)
+    profile = config.payload["training"]["model_profiles"]["efficientnet1dv2"]
+    if profile_horizon is None:
+        profile.pop("scheduler_horizon_epochs", None)
+    else:
+        profile["scheduler_horizon_epochs"] = profile_horizon
+    resolved, _ = trainer.resolve_online_training_parameters(config, "efficientnet1dv2", overrides)
+    assert resolved["scheduler_horizon_epochs"] == expected
+
+
+@pytest.mark.parametrize("overrides,message", [
+    ({"typo": 1}, "unknown online training parameters"),
+    ({"epochs": True}, "resolved epochs must be a positive integer"),
+    ({"epochs": 0}, "resolved epochs must be a positive integer"),
+    ({"epochs": None}, "resolved epochs must be a positive integer"),
+    ({"scheduler_horizon_epochs": 1}, "scheduler_horizon_epochs must be greater"),
+    ({"batch_size": 1.5}, "resolved batch_size must be a positive integer"),
+    ({"learning_rate": True}, "resolved learning_rate must be numeric"),
+    ({"learning_rate": float("nan")}, "resolved learning_rate must be finite and positive"),
+    ({"weight_decay": -1}, "resolved weight_decay must be finite and nonnegative"),
+    ({"minimum_learning_rate_ratio": 0}, "resolved minimum_learning_rate_ratio must be finite and positive"),
+    ({"gradient_clip_norm": float("inf")}, "resolved gradient_clip_norm must be finite and positive"),
+    ({"stage1_steps": -1}, "resolved stage1_steps must be a nonnegative integer"),
+    ({"stage1_learning_rate": 0}, "resolved stage1_learning_rate must be finite and positive"),
+    ({"stage1_weight_decay": -1}, "resolved stage1_weight_decay must be finite and nonnegative"),
+    ({"stage1_gradient_clip_norm": None}, "resolved stage1_gradient_clip_norm must be numeric"),
+    ({"amp_enabled": 1}, "resolved amp_enabled must be boolean"),
+    ({"amp_dtype": "float32"}, "resolved amp_dtype must be bfloat16 or float16"),
+])
+def test_online_parameter_override_errors_remain_explicit(overrides, message) -> None:
+    config = trainer.load_online_train_config(ONLINE_CONFIG)
+    with pytest.raises(ValueError, match=message):
+        trainer.resolve_online_training_parameters(config, "efficientnet1dv2", overrides)
+
+
+def test_online_parameters_without_stage1_keep_zero_defaults() -> None:
+    config = trainer.load_online_train_config(ONLINE_CONFIG)
+    profile = config.payload["training"]["model_profiles"]["efficientnet1dv2"]
+    for key in tuple(profile):
+        if key.startswith("stage1_"):
+            del profile[key]
+    resolved, _ = trainer.resolve_online_training_parameters(config, "efficientnet1dv2")
+    assert {key: value for key, value in resolved.items() if key.startswith("stage1_")} == {
+        "stage1_steps": 0, "stage1_learning_rate": 0.0,
+        "stage1_weight_decay": 0.0, "stage1_gradient_clip_norm": 0.0,
+    }
+
+
 def test_online_config_references_and_overrides_remain_closed() -> None:
     config = trainer.load_online_train_config(ONLINE_CONFIG)
     resolved, supplied = trainer.resolve_online_training_parameters(config, "efficientnet1dv2")

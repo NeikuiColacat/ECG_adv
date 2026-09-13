@@ -836,6 +836,12 @@ def resolve_online_training_parameters(
     model_name: str,
     overrides: Mapping[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Apply explicit overrides to model/global defaults, then validate once.
+
+    A configured scheduler horizon stays fixed when epochs are overridden.
+    Only a missing horizon falls back to the effective epoch count.
+    """
+
     supplied = {} if overrides is None else dict(overrides)
     unknown = sorted(set(supplied) - ONLINE_PARAMETER_NAMES)
     if unknown:
@@ -846,39 +852,24 @@ def resolve_online_training_parameters(
         raise ValueError(f"unsupported online model_name: {model_name!r}")
     amp = training["amp"]
     resolved = {
-        "epochs": supplied.get("epochs", profile["epochs"]),
-        "scheduler_horizon_epochs": supplied.get(
+        "epochs": profile["epochs"],
+        "scheduler_horizon_epochs": profile.get(
             "scheduler_horizon_epochs",
-            profile.get(
-                "scheduler_horizon_epochs",
-                supplied.get("epochs", profile["epochs"]),
-            ),
+            supplied.get("epochs", profile["epochs"]),
         ),
-        "batch_size": supplied.get("batch_size", profile["batch_size"]),
-        "learning_rate": supplied.get("learning_rate", profile["learning_rate"]),
-        "weight_decay": supplied.get("weight_decay", profile["weight_decay"]),
-        "minimum_learning_rate_ratio": supplied.get(
-            "minimum_learning_rate_ratio", profile["minimum_learning_rate_ratio"]
-        ),
-        "gradient_clip_norm": supplied.get(
-            "gradient_clip_norm", training["gradient_clip_norm"]
-        ),
-        "amp_enabled": supplied.get("amp_enabled", amp["enabled"]),
-        "amp_dtype": supplied.get("amp_dtype", amp["dtype"]),
-        "stage1_steps": supplied.get(
-            "stage1_steps", profile.get("stage1_steps", 0)
-        ),
-        "stage1_learning_rate": supplied.get(
-            "stage1_learning_rate", profile.get("stage1_learning_rate", 0.0)
-        ),
-        "stage1_weight_decay": supplied.get(
-            "stage1_weight_decay", profile.get("stage1_weight_decay", 0.0)
-        ),
-        "stage1_gradient_clip_norm": supplied.get(
-            "stage1_gradient_clip_norm",
-            profile.get("stage1_gradient_clip_norm", 0.0),
-        ),
+        "batch_size": profile["batch_size"],
+        "learning_rate": profile["learning_rate"],
+        "weight_decay": profile["weight_decay"],
+        "minimum_learning_rate_ratio": profile["minimum_learning_rate_ratio"],
+        "gradient_clip_norm": training["gradient_clip_norm"],
+        "amp_enabled": amp["enabled"],
+        "amp_dtype": amp["dtype"],
+        "stage1_steps": profile.get("stage1_steps", 0),
+        "stage1_learning_rate": profile.get("stage1_learning_rate", 0.0),
+        "stage1_weight_decay": profile.get("stage1_weight_decay", 0.0),
+        "stage1_gradient_clip_norm": profile.get("stage1_gradient_clip_norm", 0.0),
     }
+    resolved.update(supplied)
     for key in ("epochs", "scheduler_horizon_epochs", "batch_size"):
         value = resolved[key]
         if isinstance(value, bool) or not isinstance(value, int) or value <= 0:

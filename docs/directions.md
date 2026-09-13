@@ -80,6 +80,30 @@ R19 保留 baseline／mixed-M20／no-contract 和完整 seed 身份；R20 是同
 不是此单阶段主方法；这些新目标／宽度正式实验目前只覆盖 Founder。
 更早的 sweep、未选参数、失败／重试和旧实现保留为历史来源，不在整理中删除。
 
+## 传统训练代码阅读顺序
+
+两条传统方向共用以下调用链，不需要各复制一个 trainer：
+
+```text
+boot_scripts/run_experiment.py → boot_scripts/train_pn2021.py
+→ core/train_PN2021.py → core/online_trainer.py
+```
+
+| 职责 | 当前唯一入口／位置 | 修改时的边界 |
+|---|---|---|
+| 启动与产物登记 | `run_experiment.py`、`util/run_record.py` | 配置闭包、外部输出目录、run card 和文件 hash |
+| K500 数据与可选 latent pool | `core/train_PN2021.py::train_pn2021` | 不在 trainer 内重新选样或读取 heldout |
+| 训练配置与参数覆盖 | `online_trainer.py::load_online_train_config`、`resolve_online_training_parameters` | 骨干／全局默认值 → 显式覆盖 → 校验；已配置的 scheduler horizon 不随 epochs 自动缩短 |
+| 配方、视图与损失 | `core/methods/registry.py`、`runtime.py`；`online_trainer.py::_compute_objective` | 保留 recipe 身份、视图顺序、loss 权重与梯度边界 |
+| 阶段与 optimizer | `online_trainer.py::_run_augmix_stage1`、`train_online_model` | SimCLR 有 Stage 1；单阶段 R18 不走该阶段；每个 base batch 一次 outer step |
+| 训练记录 | `_training_lineage`、`OnlineTrainingResult.describe`、epoch 末写入 | lineage、history、checkpoint 与最终结果各自保留原 schema |
+
+第一轮仅简化参数覆盖：先构造默认字典，再统一应用显式覆盖，保留参数顺序、
+类型转换、Stage-1 缺省值与错误语义。未改 YAML、配方、数值训练或日志字节格式。
+日志 writer 暂不合并：训练器使用 `.文件名.tmp`，run recorder 使用 `文件名.tmp`；
+字节内容相似不代表失败路径和临时文件契约完全相同。后续先验证这些边界，
+再决定是否复用，不新增通用训练框架或仅用于转发的模块。
+
 ## 共用边界与启动
 
 传统分类器共用固定 PTB-XL source、K500、Super5 mapping `555ec85d5b51`、
