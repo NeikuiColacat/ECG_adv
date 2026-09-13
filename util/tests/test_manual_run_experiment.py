@@ -35,6 +35,23 @@ def test_launcher_and_data_ledger_share_the_yaml_mapping_loader() -> None:
     assert not hasattr(data_ledger, "_load_yaml")
 
 
+def test_ram_delegate_log_keeps_only_final_tail(monkeypatch, tmp_path):
+    import sys
+    import tempfile
+    if not Path("/dev/shm").is_dir():
+        pytest.skip("RAM filesystem unavailable")
+    with tempfile.TemporaryDirectory(prefix="ecg-jsd-test-",dir="/dev/shm") as ram:
+        monkeypatch.setenv("ECG_RUNTIME_LOG_DIR",ram)
+        destination=tmp_path/"logs"/"delegate.log"
+        assert launcher._run_delegate([sys.executable,"-c","for i in range(300): print(i)"],destination)==0
+        lines=destination.read_text().splitlines()
+        assert len(lines)==201 and lines[1]=="100" and lines[-1]=="299"
+        assert not list(Path(ram).iterdir())
+    monkeypatch.setenv("ECG_RUNTIME_LOG_DIR",str(REPO))
+    with pytest.raises(ValueError):
+        launcher._run_delegate([sys.executable,"-c","pass"],tmp_path/"invalid.log")
+
+
 def _write_bundle(tmp_path: Path, *, run_dir: Path) -> Path:
     config_root = tmp_path / "configs"
     experiment_path = config_root / "experiments" / "fixture.yaml"

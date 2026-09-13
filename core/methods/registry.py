@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
 from types import MappingProxyType
@@ -128,6 +128,7 @@ _OBJECTIVE_NAME_BY_VIEW = MappingProxyType(
         "augmix_view": "augmix_bce",
         "augmix_chain1_view": "augmix_chain1_context",
         "augmix_chain2_view": "augmix_chain2_context",
+        "augmix_chain3_view": "augmix_chain3_context",
     }
 )
 
@@ -1445,6 +1446,23 @@ _DEFINITIONS: Mapping[str, _RecipeDefinition] = MappingProxyType(
 )
 
 
+# Width ablations inherit the entire frozen R18 definition. No extra tuning knobs.
+_DEFINITIONS = MappingProxyType({
+    **_DEFINITIONS,
+    **{
+        f"a1_rot4_jsd_width{width}_vae_lhat_replace0p2": replace(
+            _DEFINITIONS["a1_rot4_two_chain_balanced_jsd1p5_vae_lhat_replace0p2"],
+            scientific_arm=f"a1_rot4_jsd_width{width}_vae_lhat_replace0p2",
+            status="prospective_frozen_r18_width_repeat",
+            output_names=("clean_view", "corrupted_view", "augmix_view",
+                          *(f"augmix_chain{i}_view" for i in range(1, width + 1)), "lhat_view"),
+            stage1_view=("clean_vs_one_single_chain_bernoulli_jsd" if width == 1
+                         else "clean_vs_three_chain_augmix_bernoulli_jsd"),
+        ) for width in (1, 3)
+    },
+})
+
+
 def _execution_contract(definition: _RecipeDefinition) -> Mapping[str, Any]:
     kind = definition.kind
     variant = definition.auxiliary_variant
@@ -1624,6 +1642,9 @@ def _execution_contract(definition: _RecipeDefinition) -> Mapping[str, Any]:
                         ],
                         "weight": float(definition.augmix_auxiliary_weight),
                         "view_geometry": (
+                            "three_independent_depth23_chains_dirichlet_mix_with_clean_chain_bernoulli_jsd"
+                            if definition.stage1_view == "clean_vs_three_chain_augmix_bernoulli_jsd"
+                            else
                             (
                                 "one_depth23_corruption_chain_with_clean_"
                                 "bernoulli_jsd"

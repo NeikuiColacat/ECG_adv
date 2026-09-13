@@ -1,0 +1,947 @@
+{
+  "schema_version": 1,
+  "status": "preregistered_not_launched",
+  "run_root": "/home/linbinhao/ECG_adv_data/runs/jsd_simclr_width_repeat_20260912_v1",
+  "worktree": "/home/linbinhao/ECG_manual_refactor_jsd_width_20260911",
+  "gpu_allowlist": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "models": [
+    "ecgfounder",
+    "efficientnet1dv2"
+  ],
+  "centers": [
+    "ningbo",
+    "chapman_shaoxing",
+    "cpsc_2018",
+    "georgia"
+  ],
+  "seeds": [
+    0,
+    1,
+    2
+  ],
+  "arms": [
+    "jsd_w1",
+    "jsd_w2",
+    "jsd_w3",
+    "simclr"
+  ],
+  "checkpoint_selection": "last",
+  "training_records_per_center": 500,
+  "ref_exclusion": true,
+  "mapping_hash": "555ec85d5b51",
+  "metric_view": "drop_all_zero",
+  "corruption_views": 20,
+  "aggregation": "equal_views_then_equal_centers",
+  "primary_metric": "pn2021c_macro_auprc",
+  "secondary_metrics": [
+    "pn2021c_macro_auroc",
+    "clean_macro_auroc",
+    "clean_macro_auprc"
+  ],
+  "contrasts": [
+    "jsd_w2 - jsd_w1",
+    "jsd_w3 - jsd_w1"
+  ],
+  "practical_improvement_threshold_pp": 1,
+  "statistics": "Per-seed equal-four-center paired differences; mean and sample SD; exploratory Student-t CI with df=2 and Holm-adjusted two-sided p over four primary width contrasts (2 backbones x 2 widths). No view/record pseudoreplication. Three seeds give low power; no paper-final claim.",
+  "method_comparison_caveat": "Single-stage JSD versus locked two-stage SimCLR compares complete recipes, NOT objective alone or equal compute. Do not attribute their difference solely to JSD or SimCLR.",
+  "width_caveat": "Frozen R18 supervises mean endpoint BCE and clean+endpoint Bernoulli JSD. Width changes endpoint count (therefore forward compute), not outer steps, supervision mass or LHAT. It is not original AugMix's fixed three model views.",
+  "budgets": {
+    "jsd": {
+      "efficientnet1dv2": {
+        "epochs": 50,
+        "outer_steps": 200
+      },
+      "ecgfounder": {
+        "epochs": 60,
+        "outer_steps": 480
+      }
+    },
+    "simclr": {
+      "efficientnet1dv2": {
+        "stage1_steps": 1024,
+        "stage2_steps": 100
+      },
+      "ecgfounder": {
+        "stage1_steps": 256,
+        "stage2_steps": 240
+      }
+    }
+  },
+  "storage": {
+    "temporary": "in-process RAM; private /dev/shm logs and TMPDIR",
+    "durable": "only configs, source snapshot, final checkpoints, diagnostic tails and managed metrics under run_root",
+    "new_waveform_cache": false
+  },
+  "jobs": [
+    {
+      "id": "jsd_w3_seed0_ecgfounder_ningbo",
+      "arm": "jsd_w3",
+      "seed": 0,
+      "model": "ecgfounder",
+      "center": "ningbo",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed0_ecgfounder_ningbo.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed0_ecgfounder_ningbo_eval.yaml"
+    },
+    {
+      "id": "jsd_w3_seed0_effnet_ningbo",
+      "arm": "jsd_w3",
+      "seed": 0,
+      "model": "efficientnet1dv2",
+      "center": "ningbo",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed0_effnet_ningbo.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed0_effnet_ningbo_eval.yaml"
+    },
+    {
+      "id": "jsd_w1_seed0_ecgfounder_ningbo",
+      "arm": "jsd_w1",
+      "seed": 0,
+      "model": "ecgfounder",
+      "center": "ningbo",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed0_ecgfounder_ningbo.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed0_ecgfounder_ningbo_eval.yaml"
+    },
+    {
+      "id": "jsd_w1_seed0_effnet_ningbo",
+      "arm": "jsd_w1",
+      "seed": 0,
+      "model": "efficientnet1dv2",
+      "center": "ningbo",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed0_effnet_ningbo.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed0_effnet_ningbo_eval.yaml"
+    },
+    {
+      "id": "jsd_w2_seed0_ecgfounder_ningbo",
+      "arm": "jsd_w2",
+      "seed": 0,
+      "model": "ecgfounder",
+      "center": "ningbo",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed0_ecgfounder_ningbo.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed0_ecgfounder_ningbo_eval.yaml"
+    },
+    {
+      "id": "jsd_w2_seed0_effnet_ningbo",
+      "arm": "jsd_w2",
+      "seed": 0,
+      "model": "efficientnet1dv2",
+      "center": "ningbo",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed0_effnet_ningbo.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed0_effnet_ningbo_eval.yaml"
+    },
+    {
+      "id": "simclr_seed0_ecgfounder_ningbo",
+      "arm": "simclr",
+      "seed": 0,
+      "model": "ecgfounder",
+      "center": "ningbo",
+      "train_config": "configs/experiments/jsd_width_repeat/simclr_seed0_ecgfounder_ningbo.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/simclr_seed0_ecgfounder_ningbo_eval.yaml"
+    },
+    {
+      "id": "simclr_seed0_effnet_ningbo",
+      "arm": "simclr",
+      "seed": 0,
+      "model": "efficientnet1dv2",
+      "center": "ningbo",
+      "train_config": "configs/experiments/jsd_width_repeat/simclr_seed0_effnet_ningbo.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/simclr_seed0_effnet_ningbo_eval.yaml"
+    },
+    {
+      "id": "jsd_w3_seed0_ecgfounder_chapman_shaoxing",
+      "arm": "jsd_w3",
+      "seed": 0,
+      "model": "ecgfounder",
+      "center": "chapman_shaoxing",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed0_ecgfounder_chapman_shaoxing.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed0_ecgfounder_chapman_shaoxing_eval.yaml"
+    },
+    {
+      "id": "jsd_w3_seed0_effnet_chapman_shaoxing",
+      "arm": "jsd_w3",
+      "seed": 0,
+      "model": "efficientnet1dv2",
+      "center": "chapman_shaoxing",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed0_effnet_chapman_shaoxing.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed0_effnet_chapman_shaoxing_eval.yaml"
+    },
+    {
+      "id": "jsd_w1_seed0_ecgfounder_chapman_shaoxing",
+      "arm": "jsd_w1",
+      "seed": 0,
+      "model": "ecgfounder",
+      "center": "chapman_shaoxing",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed0_ecgfounder_chapman_shaoxing.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed0_ecgfounder_chapman_shaoxing_eval.yaml"
+    },
+    {
+      "id": "jsd_w1_seed0_effnet_chapman_shaoxing",
+      "arm": "jsd_w1",
+      "seed": 0,
+      "model": "efficientnet1dv2",
+      "center": "chapman_shaoxing",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed0_effnet_chapman_shaoxing.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed0_effnet_chapman_shaoxing_eval.yaml"
+    },
+    {
+      "id": "jsd_w2_seed0_ecgfounder_chapman_shaoxing",
+      "arm": "jsd_w2",
+      "seed": 0,
+      "model": "ecgfounder",
+      "center": "chapman_shaoxing",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed0_ecgfounder_chapman_shaoxing.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed0_ecgfounder_chapman_shaoxing_eval.yaml"
+    },
+    {
+      "id": "jsd_w2_seed0_effnet_chapman_shaoxing",
+      "arm": "jsd_w2",
+      "seed": 0,
+      "model": "efficientnet1dv2",
+      "center": "chapman_shaoxing",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed0_effnet_chapman_shaoxing.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed0_effnet_chapman_shaoxing_eval.yaml"
+    },
+    {
+      "id": "simclr_seed0_ecgfounder_chapman_shaoxing",
+      "arm": "simclr",
+      "seed": 0,
+      "model": "ecgfounder",
+      "center": "chapman_shaoxing",
+      "train_config": "configs/experiments/jsd_width_repeat/simclr_seed0_ecgfounder_chapman_shaoxing.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/simclr_seed0_ecgfounder_chapman_shaoxing_eval.yaml"
+    },
+    {
+      "id": "simclr_seed0_effnet_chapman_shaoxing",
+      "arm": "simclr",
+      "seed": 0,
+      "model": "efficientnet1dv2",
+      "center": "chapman_shaoxing",
+      "train_config": "configs/experiments/jsd_width_repeat/simclr_seed0_effnet_chapman_shaoxing.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/simclr_seed0_effnet_chapman_shaoxing_eval.yaml"
+    },
+    {
+      "id": "jsd_w3_seed0_ecgfounder_cpsc_2018",
+      "arm": "jsd_w3",
+      "seed": 0,
+      "model": "ecgfounder",
+      "center": "cpsc_2018",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed0_ecgfounder_cpsc_2018.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed0_ecgfounder_cpsc_2018_eval.yaml"
+    },
+    {
+      "id": "jsd_w3_seed0_effnet_cpsc_2018",
+      "arm": "jsd_w3",
+      "seed": 0,
+      "model": "efficientnet1dv2",
+      "center": "cpsc_2018",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed0_effnet_cpsc_2018.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed0_effnet_cpsc_2018_eval.yaml"
+    },
+    {
+      "id": "jsd_w1_seed0_ecgfounder_cpsc_2018",
+      "arm": "jsd_w1",
+      "seed": 0,
+      "model": "ecgfounder",
+      "center": "cpsc_2018",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed0_ecgfounder_cpsc_2018.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed0_ecgfounder_cpsc_2018_eval.yaml"
+    },
+    {
+      "id": "jsd_w1_seed0_effnet_cpsc_2018",
+      "arm": "jsd_w1",
+      "seed": 0,
+      "model": "efficientnet1dv2",
+      "center": "cpsc_2018",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed0_effnet_cpsc_2018.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed0_effnet_cpsc_2018_eval.yaml"
+    },
+    {
+      "id": "jsd_w2_seed0_ecgfounder_cpsc_2018",
+      "arm": "jsd_w2",
+      "seed": 0,
+      "model": "ecgfounder",
+      "center": "cpsc_2018",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed0_ecgfounder_cpsc_2018.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed0_ecgfounder_cpsc_2018_eval.yaml"
+    },
+    {
+      "id": "jsd_w2_seed0_effnet_cpsc_2018",
+      "arm": "jsd_w2",
+      "seed": 0,
+      "model": "efficientnet1dv2",
+      "center": "cpsc_2018",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed0_effnet_cpsc_2018.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed0_effnet_cpsc_2018_eval.yaml"
+    },
+    {
+      "id": "simclr_seed0_ecgfounder_cpsc_2018",
+      "arm": "simclr",
+      "seed": 0,
+      "model": "ecgfounder",
+      "center": "cpsc_2018",
+      "train_config": "configs/experiments/jsd_width_repeat/simclr_seed0_ecgfounder_cpsc_2018.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/simclr_seed0_ecgfounder_cpsc_2018_eval.yaml"
+    },
+    {
+      "id": "simclr_seed0_effnet_cpsc_2018",
+      "arm": "simclr",
+      "seed": 0,
+      "model": "efficientnet1dv2",
+      "center": "cpsc_2018",
+      "train_config": "configs/experiments/jsd_width_repeat/simclr_seed0_effnet_cpsc_2018.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/simclr_seed0_effnet_cpsc_2018_eval.yaml"
+    },
+    {
+      "id": "jsd_w3_seed0_ecgfounder_georgia",
+      "arm": "jsd_w3",
+      "seed": 0,
+      "model": "ecgfounder",
+      "center": "georgia",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed0_ecgfounder_georgia.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed0_ecgfounder_georgia_eval.yaml"
+    },
+    {
+      "id": "jsd_w3_seed0_effnet_georgia",
+      "arm": "jsd_w3",
+      "seed": 0,
+      "model": "efficientnet1dv2",
+      "center": "georgia",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed0_effnet_georgia.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed0_effnet_georgia_eval.yaml"
+    },
+    {
+      "id": "jsd_w1_seed0_ecgfounder_georgia",
+      "arm": "jsd_w1",
+      "seed": 0,
+      "model": "ecgfounder",
+      "center": "georgia",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed0_ecgfounder_georgia.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed0_ecgfounder_georgia_eval.yaml"
+    },
+    {
+      "id": "jsd_w1_seed0_effnet_georgia",
+      "arm": "jsd_w1",
+      "seed": 0,
+      "model": "efficientnet1dv2",
+      "center": "georgia",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed0_effnet_georgia.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed0_effnet_georgia_eval.yaml"
+    },
+    {
+      "id": "jsd_w2_seed0_ecgfounder_georgia",
+      "arm": "jsd_w2",
+      "seed": 0,
+      "model": "ecgfounder",
+      "center": "georgia",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed0_ecgfounder_georgia.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed0_ecgfounder_georgia_eval.yaml"
+    },
+    {
+      "id": "jsd_w2_seed0_effnet_georgia",
+      "arm": "jsd_w2",
+      "seed": 0,
+      "model": "efficientnet1dv2",
+      "center": "georgia",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed0_effnet_georgia.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed0_effnet_georgia_eval.yaml"
+    },
+    {
+      "id": "simclr_seed0_ecgfounder_georgia",
+      "arm": "simclr",
+      "seed": 0,
+      "model": "ecgfounder",
+      "center": "georgia",
+      "train_config": "configs/experiments/jsd_width_repeat/simclr_seed0_ecgfounder_georgia.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/simclr_seed0_ecgfounder_georgia_eval.yaml"
+    },
+    {
+      "id": "simclr_seed0_effnet_georgia",
+      "arm": "simclr",
+      "seed": 0,
+      "model": "efficientnet1dv2",
+      "center": "georgia",
+      "train_config": "configs/experiments/jsd_width_repeat/simclr_seed0_effnet_georgia.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/simclr_seed0_effnet_georgia_eval.yaml"
+    },
+    {
+      "id": "jsd_w3_seed1_ecgfounder_ningbo",
+      "arm": "jsd_w3",
+      "seed": 1,
+      "model": "ecgfounder",
+      "center": "ningbo",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed1_ecgfounder_ningbo.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed1_ecgfounder_ningbo_eval.yaml"
+    },
+    {
+      "id": "jsd_w3_seed1_effnet_ningbo",
+      "arm": "jsd_w3",
+      "seed": 1,
+      "model": "efficientnet1dv2",
+      "center": "ningbo",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed1_effnet_ningbo.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed1_effnet_ningbo_eval.yaml"
+    },
+    {
+      "id": "jsd_w1_seed1_ecgfounder_ningbo",
+      "arm": "jsd_w1",
+      "seed": 1,
+      "model": "ecgfounder",
+      "center": "ningbo",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed1_ecgfounder_ningbo.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed1_ecgfounder_ningbo_eval.yaml"
+    },
+    {
+      "id": "jsd_w1_seed1_effnet_ningbo",
+      "arm": "jsd_w1",
+      "seed": 1,
+      "model": "efficientnet1dv2",
+      "center": "ningbo",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed1_effnet_ningbo.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed1_effnet_ningbo_eval.yaml"
+    },
+    {
+      "id": "jsd_w2_seed1_ecgfounder_ningbo",
+      "arm": "jsd_w2",
+      "seed": 1,
+      "model": "ecgfounder",
+      "center": "ningbo",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed1_ecgfounder_ningbo.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed1_ecgfounder_ningbo_eval.yaml"
+    },
+    {
+      "id": "jsd_w2_seed1_effnet_ningbo",
+      "arm": "jsd_w2",
+      "seed": 1,
+      "model": "efficientnet1dv2",
+      "center": "ningbo",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed1_effnet_ningbo.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed1_effnet_ningbo_eval.yaml"
+    },
+    {
+      "id": "simclr_seed1_ecgfounder_ningbo",
+      "arm": "simclr",
+      "seed": 1,
+      "model": "ecgfounder",
+      "center": "ningbo",
+      "train_config": "configs/experiments/jsd_width_repeat/simclr_seed1_ecgfounder_ningbo.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/simclr_seed1_ecgfounder_ningbo_eval.yaml"
+    },
+    {
+      "id": "simclr_seed1_effnet_ningbo",
+      "arm": "simclr",
+      "seed": 1,
+      "model": "efficientnet1dv2",
+      "center": "ningbo",
+      "train_config": "configs/experiments/jsd_width_repeat/simclr_seed1_effnet_ningbo.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/simclr_seed1_effnet_ningbo_eval.yaml"
+    },
+    {
+      "id": "jsd_w3_seed1_ecgfounder_chapman_shaoxing",
+      "arm": "jsd_w3",
+      "seed": 1,
+      "model": "ecgfounder",
+      "center": "chapman_shaoxing",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed1_ecgfounder_chapman_shaoxing.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed1_ecgfounder_chapman_shaoxing_eval.yaml"
+    },
+    {
+      "id": "jsd_w3_seed1_effnet_chapman_shaoxing",
+      "arm": "jsd_w3",
+      "seed": 1,
+      "model": "efficientnet1dv2",
+      "center": "chapman_shaoxing",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed1_effnet_chapman_shaoxing.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed1_effnet_chapman_shaoxing_eval.yaml"
+    },
+    {
+      "id": "jsd_w1_seed1_ecgfounder_chapman_shaoxing",
+      "arm": "jsd_w1",
+      "seed": 1,
+      "model": "ecgfounder",
+      "center": "chapman_shaoxing",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed1_ecgfounder_chapman_shaoxing.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed1_ecgfounder_chapman_shaoxing_eval.yaml"
+    },
+    {
+      "id": "jsd_w1_seed1_effnet_chapman_shaoxing",
+      "arm": "jsd_w1",
+      "seed": 1,
+      "model": "efficientnet1dv2",
+      "center": "chapman_shaoxing",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed1_effnet_chapman_shaoxing.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed1_effnet_chapman_shaoxing_eval.yaml"
+    },
+    {
+      "id": "jsd_w2_seed1_ecgfounder_chapman_shaoxing",
+      "arm": "jsd_w2",
+      "seed": 1,
+      "model": "ecgfounder",
+      "center": "chapman_shaoxing",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed1_ecgfounder_chapman_shaoxing.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed1_ecgfounder_chapman_shaoxing_eval.yaml"
+    },
+    {
+      "id": "jsd_w2_seed1_effnet_chapman_shaoxing",
+      "arm": "jsd_w2",
+      "seed": 1,
+      "model": "efficientnet1dv2",
+      "center": "chapman_shaoxing",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed1_effnet_chapman_shaoxing.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed1_effnet_chapman_shaoxing_eval.yaml"
+    },
+    {
+      "id": "simclr_seed1_ecgfounder_chapman_shaoxing",
+      "arm": "simclr",
+      "seed": 1,
+      "model": "ecgfounder",
+      "center": "chapman_shaoxing",
+      "train_config": "configs/experiments/jsd_width_repeat/simclr_seed1_ecgfounder_chapman_shaoxing.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/simclr_seed1_ecgfounder_chapman_shaoxing_eval.yaml"
+    },
+    {
+      "id": "simclr_seed1_effnet_chapman_shaoxing",
+      "arm": "simclr",
+      "seed": 1,
+      "model": "efficientnet1dv2",
+      "center": "chapman_shaoxing",
+      "train_config": "configs/experiments/jsd_width_repeat/simclr_seed1_effnet_chapman_shaoxing.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/simclr_seed1_effnet_chapman_shaoxing_eval.yaml"
+    },
+    {
+      "id": "jsd_w3_seed1_ecgfounder_cpsc_2018",
+      "arm": "jsd_w3",
+      "seed": 1,
+      "model": "ecgfounder",
+      "center": "cpsc_2018",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed1_ecgfounder_cpsc_2018.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed1_ecgfounder_cpsc_2018_eval.yaml"
+    },
+    {
+      "id": "jsd_w3_seed1_effnet_cpsc_2018",
+      "arm": "jsd_w3",
+      "seed": 1,
+      "model": "efficientnet1dv2",
+      "center": "cpsc_2018",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed1_effnet_cpsc_2018.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed1_effnet_cpsc_2018_eval.yaml"
+    },
+    {
+      "id": "jsd_w1_seed1_ecgfounder_cpsc_2018",
+      "arm": "jsd_w1",
+      "seed": 1,
+      "model": "ecgfounder",
+      "center": "cpsc_2018",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed1_ecgfounder_cpsc_2018.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed1_ecgfounder_cpsc_2018_eval.yaml"
+    },
+    {
+      "id": "jsd_w1_seed1_effnet_cpsc_2018",
+      "arm": "jsd_w1",
+      "seed": 1,
+      "model": "efficientnet1dv2",
+      "center": "cpsc_2018",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed1_effnet_cpsc_2018.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed1_effnet_cpsc_2018_eval.yaml"
+    },
+    {
+      "id": "jsd_w2_seed1_ecgfounder_cpsc_2018",
+      "arm": "jsd_w2",
+      "seed": 1,
+      "model": "ecgfounder",
+      "center": "cpsc_2018",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed1_ecgfounder_cpsc_2018.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed1_ecgfounder_cpsc_2018_eval.yaml"
+    },
+    {
+      "id": "jsd_w2_seed1_effnet_cpsc_2018",
+      "arm": "jsd_w2",
+      "seed": 1,
+      "model": "efficientnet1dv2",
+      "center": "cpsc_2018",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed1_effnet_cpsc_2018.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed1_effnet_cpsc_2018_eval.yaml"
+    },
+    {
+      "id": "simclr_seed1_ecgfounder_cpsc_2018",
+      "arm": "simclr",
+      "seed": 1,
+      "model": "ecgfounder",
+      "center": "cpsc_2018",
+      "train_config": "configs/experiments/jsd_width_repeat/simclr_seed1_ecgfounder_cpsc_2018.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/simclr_seed1_ecgfounder_cpsc_2018_eval.yaml"
+    },
+    {
+      "id": "simclr_seed1_effnet_cpsc_2018",
+      "arm": "simclr",
+      "seed": 1,
+      "model": "efficientnet1dv2",
+      "center": "cpsc_2018",
+      "train_config": "configs/experiments/jsd_width_repeat/simclr_seed1_effnet_cpsc_2018.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/simclr_seed1_effnet_cpsc_2018_eval.yaml"
+    },
+    {
+      "id": "jsd_w3_seed1_ecgfounder_georgia",
+      "arm": "jsd_w3",
+      "seed": 1,
+      "model": "ecgfounder",
+      "center": "georgia",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed1_ecgfounder_georgia.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed1_ecgfounder_georgia_eval.yaml"
+    },
+    {
+      "id": "jsd_w3_seed1_effnet_georgia",
+      "arm": "jsd_w3",
+      "seed": 1,
+      "model": "efficientnet1dv2",
+      "center": "georgia",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed1_effnet_georgia.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed1_effnet_georgia_eval.yaml"
+    },
+    {
+      "id": "jsd_w1_seed1_ecgfounder_georgia",
+      "arm": "jsd_w1",
+      "seed": 1,
+      "model": "ecgfounder",
+      "center": "georgia",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed1_ecgfounder_georgia.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed1_ecgfounder_georgia_eval.yaml"
+    },
+    {
+      "id": "jsd_w1_seed1_effnet_georgia",
+      "arm": "jsd_w1",
+      "seed": 1,
+      "model": "efficientnet1dv2",
+      "center": "georgia",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed1_effnet_georgia.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed1_effnet_georgia_eval.yaml"
+    },
+    {
+      "id": "jsd_w2_seed1_ecgfounder_georgia",
+      "arm": "jsd_w2",
+      "seed": 1,
+      "model": "ecgfounder",
+      "center": "georgia",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed1_ecgfounder_georgia.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed1_ecgfounder_georgia_eval.yaml"
+    },
+    {
+      "id": "jsd_w2_seed1_effnet_georgia",
+      "arm": "jsd_w2",
+      "seed": 1,
+      "model": "efficientnet1dv2",
+      "center": "georgia",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed1_effnet_georgia.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed1_effnet_georgia_eval.yaml"
+    },
+    {
+      "id": "simclr_seed1_ecgfounder_georgia",
+      "arm": "simclr",
+      "seed": 1,
+      "model": "ecgfounder",
+      "center": "georgia",
+      "train_config": "configs/experiments/jsd_width_repeat/simclr_seed1_ecgfounder_georgia.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/simclr_seed1_ecgfounder_georgia_eval.yaml"
+    },
+    {
+      "id": "simclr_seed1_effnet_georgia",
+      "arm": "simclr",
+      "seed": 1,
+      "model": "efficientnet1dv2",
+      "center": "georgia",
+      "train_config": "configs/experiments/jsd_width_repeat/simclr_seed1_effnet_georgia.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/simclr_seed1_effnet_georgia_eval.yaml"
+    },
+    {
+      "id": "jsd_w3_seed2_ecgfounder_ningbo",
+      "arm": "jsd_w3",
+      "seed": 2,
+      "model": "ecgfounder",
+      "center": "ningbo",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed2_ecgfounder_ningbo.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed2_ecgfounder_ningbo_eval.yaml"
+    },
+    {
+      "id": "jsd_w3_seed2_effnet_ningbo",
+      "arm": "jsd_w3",
+      "seed": 2,
+      "model": "efficientnet1dv2",
+      "center": "ningbo",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed2_effnet_ningbo.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed2_effnet_ningbo_eval.yaml"
+    },
+    {
+      "id": "jsd_w1_seed2_ecgfounder_ningbo",
+      "arm": "jsd_w1",
+      "seed": 2,
+      "model": "ecgfounder",
+      "center": "ningbo",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed2_ecgfounder_ningbo.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed2_ecgfounder_ningbo_eval.yaml"
+    },
+    {
+      "id": "jsd_w1_seed2_effnet_ningbo",
+      "arm": "jsd_w1",
+      "seed": 2,
+      "model": "efficientnet1dv2",
+      "center": "ningbo",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed2_effnet_ningbo.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed2_effnet_ningbo_eval.yaml"
+    },
+    {
+      "id": "jsd_w2_seed2_ecgfounder_ningbo",
+      "arm": "jsd_w2",
+      "seed": 2,
+      "model": "ecgfounder",
+      "center": "ningbo",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed2_ecgfounder_ningbo.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed2_ecgfounder_ningbo_eval.yaml"
+    },
+    {
+      "id": "jsd_w2_seed2_effnet_ningbo",
+      "arm": "jsd_w2",
+      "seed": 2,
+      "model": "efficientnet1dv2",
+      "center": "ningbo",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed2_effnet_ningbo.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed2_effnet_ningbo_eval.yaml"
+    },
+    {
+      "id": "simclr_seed2_ecgfounder_ningbo",
+      "arm": "simclr",
+      "seed": 2,
+      "model": "ecgfounder",
+      "center": "ningbo",
+      "train_config": "configs/experiments/jsd_width_repeat/simclr_seed2_ecgfounder_ningbo.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/simclr_seed2_ecgfounder_ningbo_eval.yaml"
+    },
+    {
+      "id": "simclr_seed2_effnet_ningbo",
+      "arm": "simclr",
+      "seed": 2,
+      "model": "efficientnet1dv2",
+      "center": "ningbo",
+      "train_config": "configs/experiments/jsd_width_repeat/simclr_seed2_effnet_ningbo.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/simclr_seed2_effnet_ningbo_eval.yaml"
+    },
+    {
+      "id": "jsd_w3_seed2_ecgfounder_chapman_shaoxing",
+      "arm": "jsd_w3",
+      "seed": 2,
+      "model": "ecgfounder",
+      "center": "chapman_shaoxing",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed2_ecgfounder_chapman_shaoxing.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed2_ecgfounder_chapman_shaoxing_eval.yaml"
+    },
+    {
+      "id": "jsd_w3_seed2_effnet_chapman_shaoxing",
+      "arm": "jsd_w3",
+      "seed": 2,
+      "model": "efficientnet1dv2",
+      "center": "chapman_shaoxing",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed2_effnet_chapman_shaoxing.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed2_effnet_chapman_shaoxing_eval.yaml"
+    },
+    {
+      "id": "jsd_w1_seed2_ecgfounder_chapman_shaoxing",
+      "arm": "jsd_w1",
+      "seed": 2,
+      "model": "ecgfounder",
+      "center": "chapman_shaoxing",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed2_ecgfounder_chapman_shaoxing.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed2_ecgfounder_chapman_shaoxing_eval.yaml"
+    },
+    {
+      "id": "jsd_w1_seed2_effnet_chapman_shaoxing",
+      "arm": "jsd_w1",
+      "seed": 2,
+      "model": "efficientnet1dv2",
+      "center": "chapman_shaoxing",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed2_effnet_chapman_shaoxing.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed2_effnet_chapman_shaoxing_eval.yaml"
+    },
+    {
+      "id": "jsd_w2_seed2_ecgfounder_chapman_shaoxing",
+      "arm": "jsd_w2",
+      "seed": 2,
+      "model": "ecgfounder",
+      "center": "chapman_shaoxing",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed2_ecgfounder_chapman_shaoxing.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed2_ecgfounder_chapman_shaoxing_eval.yaml"
+    },
+    {
+      "id": "jsd_w2_seed2_effnet_chapman_shaoxing",
+      "arm": "jsd_w2",
+      "seed": 2,
+      "model": "efficientnet1dv2",
+      "center": "chapman_shaoxing",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed2_effnet_chapman_shaoxing.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed2_effnet_chapman_shaoxing_eval.yaml"
+    },
+    {
+      "id": "simclr_seed2_ecgfounder_chapman_shaoxing",
+      "arm": "simclr",
+      "seed": 2,
+      "model": "ecgfounder",
+      "center": "chapman_shaoxing",
+      "train_config": "configs/experiments/jsd_width_repeat/simclr_seed2_ecgfounder_chapman_shaoxing.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/simclr_seed2_ecgfounder_chapman_shaoxing_eval.yaml"
+    },
+    {
+      "id": "simclr_seed2_effnet_chapman_shaoxing",
+      "arm": "simclr",
+      "seed": 2,
+      "model": "efficientnet1dv2",
+      "center": "chapman_shaoxing",
+      "train_config": "configs/experiments/jsd_width_repeat/simclr_seed2_effnet_chapman_shaoxing.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/simclr_seed2_effnet_chapman_shaoxing_eval.yaml"
+    },
+    {
+      "id": "jsd_w3_seed2_ecgfounder_cpsc_2018",
+      "arm": "jsd_w3",
+      "seed": 2,
+      "model": "ecgfounder",
+      "center": "cpsc_2018",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed2_ecgfounder_cpsc_2018.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed2_ecgfounder_cpsc_2018_eval.yaml"
+    },
+    {
+      "id": "jsd_w3_seed2_effnet_cpsc_2018",
+      "arm": "jsd_w3",
+      "seed": 2,
+      "model": "efficientnet1dv2",
+      "center": "cpsc_2018",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed2_effnet_cpsc_2018.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed2_effnet_cpsc_2018_eval.yaml"
+    },
+    {
+      "id": "jsd_w1_seed2_ecgfounder_cpsc_2018",
+      "arm": "jsd_w1",
+      "seed": 2,
+      "model": "ecgfounder",
+      "center": "cpsc_2018",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed2_ecgfounder_cpsc_2018.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed2_ecgfounder_cpsc_2018_eval.yaml"
+    },
+    {
+      "id": "jsd_w1_seed2_effnet_cpsc_2018",
+      "arm": "jsd_w1",
+      "seed": 2,
+      "model": "efficientnet1dv2",
+      "center": "cpsc_2018",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed2_effnet_cpsc_2018.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed2_effnet_cpsc_2018_eval.yaml"
+    },
+    {
+      "id": "jsd_w2_seed2_ecgfounder_cpsc_2018",
+      "arm": "jsd_w2",
+      "seed": 2,
+      "model": "ecgfounder",
+      "center": "cpsc_2018",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed2_ecgfounder_cpsc_2018.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed2_ecgfounder_cpsc_2018_eval.yaml"
+    },
+    {
+      "id": "jsd_w2_seed2_effnet_cpsc_2018",
+      "arm": "jsd_w2",
+      "seed": 2,
+      "model": "efficientnet1dv2",
+      "center": "cpsc_2018",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed2_effnet_cpsc_2018.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed2_effnet_cpsc_2018_eval.yaml"
+    },
+    {
+      "id": "simclr_seed2_ecgfounder_cpsc_2018",
+      "arm": "simclr",
+      "seed": 2,
+      "model": "ecgfounder",
+      "center": "cpsc_2018",
+      "train_config": "configs/experiments/jsd_width_repeat/simclr_seed2_ecgfounder_cpsc_2018.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/simclr_seed2_ecgfounder_cpsc_2018_eval.yaml"
+    },
+    {
+      "id": "simclr_seed2_effnet_cpsc_2018",
+      "arm": "simclr",
+      "seed": 2,
+      "model": "efficientnet1dv2",
+      "center": "cpsc_2018",
+      "train_config": "configs/experiments/jsd_width_repeat/simclr_seed2_effnet_cpsc_2018.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/simclr_seed2_effnet_cpsc_2018_eval.yaml"
+    },
+    {
+      "id": "jsd_w3_seed2_ecgfounder_georgia",
+      "arm": "jsd_w3",
+      "seed": 2,
+      "model": "ecgfounder",
+      "center": "georgia",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed2_ecgfounder_georgia.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed2_ecgfounder_georgia_eval.yaml"
+    },
+    {
+      "id": "jsd_w3_seed2_effnet_georgia",
+      "arm": "jsd_w3",
+      "seed": 2,
+      "model": "efficientnet1dv2",
+      "center": "georgia",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed2_effnet_georgia.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w3_seed2_effnet_georgia_eval.yaml"
+    },
+    {
+      "id": "jsd_w1_seed2_ecgfounder_georgia",
+      "arm": "jsd_w1",
+      "seed": 2,
+      "model": "ecgfounder",
+      "center": "georgia",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed2_ecgfounder_georgia.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed2_ecgfounder_georgia_eval.yaml"
+    },
+    {
+      "id": "jsd_w1_seed2_effnet_georgia",
+      "arm": "jsd_w1",
+      "seed": 2,
+      "model": "efficientnet1dv2",
+      "center": "georgia",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed2_effnet_georgia.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w1_seed2_effnet_georgia_eval.yaml"
+    },
+    {
+      "id": "jsd_w2_seed2_ecgfounder_georgia",
+      "arm": "jsd_w2",
+      "seed": 2,
+      "model": "ecgfounder",
+      "center": "georgia",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed2_ecgfounder_georgia.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed2_ecgfounder_georgia_eval.yaml"
+    },
+    {
+      "id": "jsd_w2_seed2_effnet_georgia",
+      "arm": "jsd_w2",
+      "seed": 2,
+      "model": "efficientnet1dv2",
+      "center": "georgia",
+      "train_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed2_effnet_georgia.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/jsd_w2_seed2_effnet_georgia_eval.yaml"
+    },
+    {
+      "id": "simclr_seed2_ecgfounder_georgia",
+      "arm": "simclr",
+      "seed": 2,
+      "model": "ecgfounder",
+      "center": "georgia",
+      "train_config": "configs/experiments/jsd_width_repeat/simclr_seed2_ecgfounder_georgia.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/simclr_seed2_ecgfounder_georgia_eval.yaml"
+    },
+    {
+      "id": "simclr_seed2_effnet_georgia",
+      "arm": "simclr",
+      "seed": 2,
+      "model": "efficientnet1dv2",
+      "center": "georgia",
+      "train_config": "configs/experiments/jsd_width_repeat/simclr_seed2_effnet_georgia.yaml",
+      "eval_config": "configs/experiments/jsd_width_repeat/simclr_seed2_effnet_georgia_eval.yaml"
+    }
+  ]
+}

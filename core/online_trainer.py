@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -2477,6 +2478,11 @@ def train_online_model(
         checkpoint_dir, output_config["last_checkpoint_file"]
     )
     history_path = _output_member(output, output_config["history_file"])
+    progress_history_path = history_path
+    if ram_root := os.environ.get("ECG_RUNTIME_LOG_DIR"):
+        ram_root = Path(ram_root).resolve(strict=True)
+        ram_root.relative_to(Path("/dev/shm"))
+        progress_history_path = ram_root / f"{output.parent.name}.history.json"
     result_path = _output_member(output, output_config["result_file"])
     method_resources_path = _output_member(
         output, output_config["method_resources_file"]
@@ -2629,7 +2635,8 @@ def train_online_model(
             amp_enabled=amp_enabled,
             amp_dtype=amp_dtype,
         )
-        stage1_checkpoint = checkpoint_dir / "stage1.pt"
+        stage1_checkpoint = (Path(ram_root) / f"{output.parent.name}.stage1.pt"
+                             if ram_root else checkpoint_dir / "stage1.pt")
         temporary_stage1 = stage1_checkpoint.with_name(
             f".{stage1_checkpoint.name}.tmp"
         )
@@ -2650,6 +2657,8 @@ def train_online_model(
             "path": str(stage1_checkpoint),
             "sha256": sha256_file(stage1_checkpoint),
         }
+        if ram_root:
+            stage1_summary["checkpoint"]["retention"] = "temporary_ram_not_required_for_final_evaluation"
         method_resource_identity["stage1"] = stage1_summary
         _write_json(method_resources_path, method_resource_identity)
     model_identity = _model_identity(model, spec)
@@ -3315,7 +3324,7 @@ def train_online_model(
                 torch.save(checkpoint, temporary)
                 temporary.replace(last_checkpoint)
             _write_json(
-                history_path,
+                history_path if epoch == epochs else progress_history_path,
                 {
                     "schema_version": 3,
                     "lineage": lineage,

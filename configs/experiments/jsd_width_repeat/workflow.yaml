@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "experiment": {
+    "name": "jsd_simclr_width_repeat",
+    "purpose": "Frozen 2-backbone x 4-center x 3-seed JSD width comparison with locked SimCLR method reference; RAM temporaries."
+  },
+  "entrypoint": {
+    "name": "coordinate_pulse_training",
+    "config": "train/jsd_width_repeat/workflow.yaml",
+    "arguments": []
+  },
+  "output": {
+    "run_dir": "/home/linbinhao/ECG_adv_data/runs/jsd_simclr_width_repeat_20260912_v1/dual_jsd_workflow",
+    "if_exists": "error",
+    "delegate_output_subdir": "training"
+  }
+}

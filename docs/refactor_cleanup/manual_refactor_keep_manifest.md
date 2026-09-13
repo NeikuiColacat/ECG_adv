@@ -29,6 +29,27 @@ YAML 或隐式回退入口。
 
 ## A. 手动重构保护白名单
 
+2026-09-12 JSD 安全修整首批：运行源码继续冻结；仅在既有
+`util/tests/test_founder_width_jsd.py` 复用合成结果 fixture，新增8例样本、seed
+namespace、源权重及评估类序不匹配的配对拒绝测试，验证拒绝后不写比较产物。
+未改生产代码、配置、运行控制或来源哈希。队列依赖解耦和配对索引精简延后至
+实验结束并重新核对源码身份后实施；本记录不授权运行中热替换。
+
+2026-09-12 JSD 链数补跑（用户授权四卡、RAM 中间文件）：
+`configs/train/jsd_width_repeat/` 与 `configs/experiments/jsd_width_repeat/`
+为本轮 KEEP-MANUAL 配置束（96训练 + 96评估 + 1既有队列入口）。
+`configs/train/augmix_jsd_width{1,3}_no_clean_mix.yaml`、
+`configs/train/methods/a1_rot4_jsd_width{1,3}_vae_lhat_replace0p2.yaml`
+为有限宽度扩展；复用 `core/augmix.py`、`core/methods/registry.py`、
+`util/founder_width_queue.py`、`util/pulse_training_queue.py` 与唯一 launcher，
+不增加生产入口。R18 width2 配方及数值路径不变，width1/3继承其LHAT与监督质量。
+JSD组对各链BCE取均值、clean与各链做JSD；增加链数会增加前向量，不是原版固定三视图。
+SimCLR仅作两阶段完整方案参考，不作等预算或只换loss的因果结论。
+临时增强、日志只用RAM；最终权重、指标、哈希与诊断尾部保存在ECG_adv_data/runs内。
+既有 `test_founder_width_jsd.py` 增补该193配置闭包、有限梯度、无Beta与width2逐位一致测试；
+`test_manual_run_experiment.py` 验证RAM日志尾部；旧74配方快照哈希仍独立锁定。
+新结果尚未完成，不得将预注册配置当成改善证据。
+
 2026-09-12 三方向整理（用户已授权实施，不含旧 worktree 删除授权）：
 `docs/directions.md`、`configs/directions.yaml`、
 `docs/refactor_cleanup/three_direction_consolidation.md` 为 KEEP-MANUAL。

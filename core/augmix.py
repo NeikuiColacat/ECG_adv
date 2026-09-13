@@ -190,6 +190,7 @@ def load_augmix_config(
     method_name = str(method.get("name", ""))
     mode_by_method = {
         "jsd_width_augmix": "jsd_width_augmix",
+        "jsd_width_no_clean_mix": "jsd_width_no_clean_mix",
         "two_chain_augmix_simclr": "two_chain_augmix",
         "two_chain_augmix_no_clean_mix": "two_chain_no_clean_mix",
         "single_chain_simclr_control": "single_chain_no_mix",
@@ -290,6 +291,7 @@ def load_augmix_config(
         raise ValueError("operators may not repeat within one corruption chain")
     if config.stage1_mode in {
         "jsd_width_augmix",
+        "jsd_width_no_clean_mix",
         "two_chain_augmix",
         "two_chain_no_clean_mix",
         "two_chain_complementary_no_clean_mix",
@@ -302,7 +304,7 @@ def load_augmix_config(
                 "AugMix independent-chain declaration differs from its mode"
             )
         if (
-            config.stage1_width not in ((1, 2, 3) if config.stage1_mode == "jsd_width_augmix" else (2,))
+            config.stage1_width not in ((1, 2, 3) if config.stage1_mode.startswith("jsd_width_") else (2,))
             or stage1_twochain.get("view") != "one_strong_view"
             or stage1_twochain.get("chain_sampling")
             != (
@@ -324,6 +326,7 @@ def load_augmix_config(
                 "standard two-chain AugMix locks the clean Beta mix to 0.5"
             )
         if config.stage1_mode in {
+            "jsd_width_no_clean_mix",
             "two_chain_no_clean_mix",
             "two_chain_complementary_no_clean_mix",
         } and (
@@ -474,7 +477,7 @@ def _generate_augmix_multiview(
     operator_params = _load_operator_profile(resolved)
     # Width two deliberately follows the original arithmetic and RNG path below.
     # Width one keeps the Beta clean residual; it is NOT single_chain_no_mix.
-    if resolved.stage1_mode == "jsd_width_augmix" and resolved.stage1_width != 2:
+    if resolved.stage1_mode.startswith("jsd_width_") and resolved.stage1_width != 2:
         chains = tuple(
             generate_canonical_corruption(
                 clean, operator_params=operator_params, generator=generator,
@@ -489,6 +492,8 @@ def _generate_augmix_multiview(
         mixture = weights[:, 0, None, None] * chains[0]
         for index in range(1, len(chains)):
             mixture = mixture + weights[:, index, None, None] * chains[index]
+        if resolved.stage1_mode == "jsd_width_no_clean_mix":
+            return _AugMixMultiViewBatch(mixed_raw=mixture.contiguous(), chain_raws=chains)
         strength = _symmetric_beta(
             len(clean), alpha=resolved.stage1_beta_alpha,
             device=clean.device, generator=generator,
@@ -548,6 +553,7 @@ def _generate_augmix_multiview(
         + weights[:, 1].view(-1, 1, 1) * second.waveform_raw_100hz
     )
     if resolved.stage1_mode in {
+        "jsd_width_no_clean_mix",
         "two_chain_no_clean_mix",
         "two_chain_complementary_no_clean_mix",
     }:

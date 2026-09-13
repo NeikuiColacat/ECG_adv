@@ -4,6 +4,18 @@ purpose: >
   Declare the executable surface of the clean-room manual refactor. Paths not
   owned by the keep manifest are not active runtime dependencies.
 
+jsd_simclr_width_repeat_20260912:
+  status: launched_managed_queue_20260912
+  config: configs/experiments/jsd_width_repeat/workflow.yaml
+  protocol: configs/train/jsd_width_repeat/plan.json
+  run_root: /home/linbinhao/ECG_adv_data/runs/jsd_simclr_width_repeat_20260912_v1
+  grid: {backbones: 2, centers: 4, seeds: 3, arms: 4, training_jobs: 96, evaluation_jobs: 96}
+  arms: [jsd_w1, jsd_w2, jsd_w3, simclr]
+  evidence: development_only_not_paper_final
+  temporary_storage: private_RAM_directory_from_ECG_RUNTIME_LOG_DIR
+  final_storage: managed_run_root_only
+  caveat: R18 width changes endpoint view count; SimCLR is a different two-stage complete recipe.
+
 source_of_truth:
   shared_server_safety: AGENTS.md
   keep_manifest: docs/refactor_cleanup/manual_refactor_keep_manifest.md

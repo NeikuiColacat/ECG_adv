@@ -5,9 +5,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
+import tempfile
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Sequence
@@ -502,6 +505,16 @@ def load_experiment_plan(
 
 def _run_delegate(argv: list[str], log_path: Path) -> int:
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    if ram_root := os.environ.get("ECG_RUNTIME_LOG_DIR"):
+        ram_root = Path(ram_root).resolve(strict=True)
+        ram_root.relative_to(Path("/dev/shm"))
+        # Verbose progress stays in RAM. Retain a small final diagnostic tail.
+        with tempfile.TemporaryFile(mode="w+", encoding="utf-8", dir=ram_root) as log:
+            process = subprocess.run(argv, cwd=PROJECT_ROOT, stdout=log,
+                                     stderr=subprocess.STDOUT, check=False, text=True)
+            log.seek(0)
+            log_path.write_text("RAM log; final 200 lines only.\n" + "".join(deque(log, maxlen=200)))
+        return int(process.returncode)
     runtime_log = log_path
     if Path(argv[1]) == ENTRYPOINTS["evaluate_ecg_image"].script:
         config_path = Path(argv[argv.index("--config") + 1])

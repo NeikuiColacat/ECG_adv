@@ -4,6 +4,29 @@ purpose: >
   Separate the current prospective manual-refactor recipe from historical
   trusted evidence. A launch config is not evidence by itself.
 
+jsd_simclr_width_repeat_20260912:
+  status: launched_no_completed_comparison_yet
+  evidence_class: frozen_three_seed_development
+  paper_claim_allowed: false
+  experiment: configs/experiments/jsd_width_repeat/workflow.yaml
+  protocol: configs/train/jsd_width_repeat/plan.json
+  run_root: /home/linbinhao/ECG_adv_data/runs/jsd_simclr_width_repeat_20260912_v1
+  models: [efficientnet1dv2, ecgfounder]
+  centers: [ningbo, chapman_shaoxing, cpsc_2018, georgia]
+  seeds: [0, 1, 2]
+  arms: [jsd_w1, jsd_w2, jsd_w3, simclr]
+  primary_contrasts: [jsd_w2_minus_jsd_w1, jsd_w3_minus_jsd_w1]
+  primary_metric: pn2021c_depth23_macro_average_precision_drop_all_zero_refexcluded
+  repeats_are: independently_seeded_training_not_twenty_corruption_views
+  inference: exploratory_three_seed_paired_t_intervals_and_Holm_four_primary_contrasts
+  practical_gain_threshold_pp: 1.0
+  limitations:
+    - fixed_development_centers_and_historically_heldout_tuned_recipe
+    - three_seeds_have_low_power_and_do_not_guarantee_statistical_significance
+    - SimCLR_comparison_is_complete_recipe_not_loss_only_or_equal_compute
+    - R18_endpoint_BCE_JSD_changes_forward_view_count_with_width
+    - dirty_source_snapshot_must_not_be_promoted_to_paper_final
+
 founder_jsd_width_20260911:
   status: prepared_no_new_performance_results
   config: configs/experiments/founder_jsd_width_workflow.yaml

@@ -1,0 +1,40 @@
+{
+  "schema_version": 2,
+  "recipe": {
+    "id": "a1_rot4_jsd_width1_vae_lhat_replace0p2",
+    "kind": "supervised_rotating_depth23_mild_aux",
+    "auxiliary_variant": "contracted_lhat",
+    "scientific_arm": "a1_rot4_jsd_width1_vae_lhat_replace0p2",
+    "status": "prospective_frozen_r18_width_repeat"
+  },
+  "resources": {
+    "operator_profile": {
+      "type": "config_reference",
+      "path": "augmentation/operators.yaml",
+      "profile": "pn2021c_paper_anchored_s5_v1",
+      "severity": 5
+    },
+    "augmix_config": {
+      "type": "config_reference",
+      "path": "train/augmix_jsd_width1_no_clean_mix.yaml"
+    },
+    "vae": {
+      "type": "config_reference",
+      "path": "train/vae.yaml"
+    },
+    "lhat_config": {
+      "type": "config_reference",
+      "path": "train/lhat_pure_delta_nondecreasing.yaml"
+    },
+    "corruption_rng": {
+      "type": "isolated_torch_generator",
+      "seed_config": "random_seed.yaml",
+      "namespace": "aligned_targetonly_rotating4_corruption_v1"
+    },
+    "lhat_rng": {
+      "type": "isolated_torch_generator",
+      "seed_config": "random_seed.yaml",
+      "namespace": "ecg_manual_refactor_lhat_pure_delta_v1"
+    }
+  }
+}

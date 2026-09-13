@@ -9,10 +9,12 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from collections import deque
 import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 
 from util.config_bundle import load_yaml_mapping, resolve_config_reference
@@ -160,7 +162,7 @@ def unclaimed_training_devices(candidates, job_devices, *, live, children):
 
 
 def validate_queue_result(payload, path):
-    if payload.get("schema_version") == 4:
+    if payload.get("schema_version") in (4, 5):
         from util.founder_width_queue import validate_result
         return validate_result(payload, path)
     if payload.get("schema_version") == 3:
@@ -460,7 +462,8 @@ def run_dual_jsd(config, config_path, config_root, output):
     candidates = allowed_gpus()
     if len(candidates) != 4:
         raise ValueError("dual JSD uses exactly four explicit candidate GPUs")
-    width_mode = config["schema_version"] == 4
+    width_mode = config["schema_version"] in (4, 5)
+    repeat_mode = config["schema_version"] == 5
     if width_mode:
         from util import founder_width_queue as width_queue
         plans = width_queue.plans(config, config_path, config_root)
@@ -474,7 +477,7 @@ def run_dual_jsd(config, config_path, config_root, output):
             "util/pulse_training_contract.py", "util/pulse_training_queue.py",
             "util/evaluation/pulse_visual_subset.py", "util/evaluation/pulse_subset.py",
             "util/config_bundle.py", *(("util/founder_width_queue.py", "util/run_record.py",
-                "core/methods/runtime.py", "core/corruption.py") if width_mode else ())):
+                "core/methods/runtime.py", "core/corruption.py", "boot_scripts/run_experiment.py") if width_mode else ())):
         dest = output / "source_snapshot" / relative
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(REPO/relative, dest)
@@ -503,6 +506,9 @@ def run_dual_jsd(config, config_path, config_root, output):
                 if item["process"].poll() is None:
                     continue
                 if item["log"] is not None:
+                    if repeat_mode:
+                        item["log"].seek(0)
+                        (output/f"{key}.launcher.log").write_text("".join(deque(item["log"], maxlen=100)))
                     item["log"].close()
                 if item["process"].returncode != 0:
                     raise RuntimeError(f"dual JSD child failed; preserved without automatic retry: {key}")
@@ -520,9 +526,9 @@ def run_dual_jsd(config, config_path, config_root, output):
             if len(complete) == len(plans):
                 if width_mode:
                     comparison = width_queue.finalize(config, complete, output)
-                    result = {"artifact_type":"pulse_training_queue_result", "schema_version":4,
+                    result = {"artifact_type":"pulse_training_queue_result", "schema_version":config["schema_version"],
                         "status":"complete", "jobs":complete, "admission":{"sources":sources},
-                        "width2_baselines":config["width2_baselines"], "width_comparison":comparison}
+                        "width2_baselines":config.get("width2_baselines", {}), "width_comparison":comparison}
                     validate_queue_result(result, output/"queue_result.json")
                     atomic_json(output/"queue_result.json", result)
                     atomic_json(output/"status.json", {"status":"complete", "completed":complete})
@@ -586,10 +592,15 @@ def run_dual_jsd(config, config_path, config_root, output):
                     dry = subprocess.run([*cmd,"--dry-run"], check=True, capture_output=True, text=True)
                     atomic_json(output/f"{key}.dry_run.json", json.loads(dry.stdout))
                     env = {**os.environ, "CUDA_VISIBLE_DEVICES": device["uuid"], "OMP_NUM_THREADS":"2", "MKL_NUM_THREADS":"2"}
-                    log = (output/f"{key}.launcher.log").open("x")
+                    log = (tempfile.TemporaryFile(mode="w+", dir=os.environ["ECG_RUNTIME_LOG_DIR"])
+                           if repeat_mode else (output/f"{key}.launcher.log").open("x"))
                     child = subprocess.Popen(cmd, cwd=REPO, env=env, stdout=log, stderr=subprocess.STDOUT)
                     active[key] = {"process":child,"log":log,"gpu":index,"lane":lane}
                     atomic_json(output/f"{key}.launch.json", {"command":cmd,"gpu_uuid":device["uuid"],"process_identity":process_identity(child.pid)})
+                    if repeat_mode:
+                        available.pop(0)
+                        if available and len(active) < control["max_workers"]:
+                            continue
                     break
             time.sleep(30)
 
@@ -597,7 +608,7 @@ def run_dual_jsd(config, config_path, config_root, output):
 def run(config_path, config_root, output):
     from util.run_record import verify_run_file_index
     config = load_yaml_mapping(config_path, description="PULSE training queue")
-    if config.get("schema_version") in (3, 4):
+    if config.get("schema_version") in (3, 4, 5):
         return run_dual_jsd(config, config_path, config_root, output)
     if config.get("schema_version") == 2:
         return run_pixel_pipeline(config, config_path, config_root, output)
