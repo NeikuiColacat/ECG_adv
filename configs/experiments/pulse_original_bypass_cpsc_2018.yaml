@@ -1,0 +1,13 @@
+schema_version: 1
+experiment:
+  name: pulse_original_bypass_cpsc_2018
+  purpose: Compare zero-LoRA original bypass against author reference and current
+    v2 with final adapters; engineering only.
+entrypoint:
+  name: pulse_hybrid
+  config: eval/pulse_original_bypass_cpsc_2018.yaml
+  arguments: []
+output:
+  run_dir: /dev/shm/linbinhao-pulse-hybrid/original_bypass_v3_20260930/cpsc_2018/run
+  if_exists: error
+  delegate_output_subdir: evaluation

@@ -78,6 +78,24 @@ pulse_augmix_gpu_image_only_20260924:
   waveform_corruption: disabled
   gpu_policy: one_explicit_free_gpu_per_managed_run
 
+pulse_original_zero_lora_bypass:
+  evaluation_configs:
+    - configs/experiments/pulse_original_bypass_ningbo.yaml
+    - configs/experiments/pulse_original_bypass_chapman_shaoxing.yaml
+    - configs/experiments/pulse_original_bypass_cpsc_2018.yaml
+    - configs/experiments/pulse_original_bypass_georgia.yaml
+  status: four_center_bounded_token_and_performance_admission_passed
+  execution_mode: arm_major_original_bypass_v3
+  evidence: /data/linbinhao/ecg_llm_runs/pulse_original_bypass_v3_20260930/audit/performance_summary.json
+  protocol: docs/pulse_evaluation_architecture.md
+  adapters: final_200_step_single_and_three
+  batch_size: 1
+  records: {ningbo: 16, chapman_shaoxing: 4, cpsc_2018: 4, georgia: 4}
+  exact_token_references: [author_equivalent_reference, arm_major_fp16_adapters_v2]
+  gpu_policy: at_most_four_combined_workers_with_one_reserved_benchmark_slot
+  paper_claim_allowed: false
+  live_evaluation_default_changed: false
+
 pulse_full_lora32_final_model_timing:
   evaluation_configs:
     - configs/experiments/pulse_full_lora32_timing_ningbo.yaml

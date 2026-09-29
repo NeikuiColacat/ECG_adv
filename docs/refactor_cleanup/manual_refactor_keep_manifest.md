@@ -540,6 +540,12 @@ token IDs 必须先通过 GPU 独立作者路径一致性检查；仅 CPU 测试
 forward，退出时恢复原函数。当前已准入的 benchmark 不导入它；启用前必须
 另做真实 PULSE GPU token 等价、显存与吞吐准入，CPU 小模型测试不能替代。
 
+`pulse_adapters.py` 的 `arm_major_original_bypass_v3` 只在原始臂已验证
+LoRA B 全零时跳过零增量分支，保留 projector、微调臂及独立视觉编码。
+`configs/eval/`、`configs/experiments/` 下 `pulse_original_bypass_*.yaml`
+四中心工程准入为 `KEEP-MANUAL`；继续使用现有 hybrid 入口，以最终模型、
+B1、六条件逐 token 对照作者路径和当前 v2，禁止覆盖运行中的旧结果身份。
+
 `boot_scripts/profile_pulse_adapters.py`、`util/evaluation/pulse_profile.py` 和
 `configs/experiments/pulse_adapter_profile.yaml` 为 `KEEP-MANUAL` 的受管工程
 测速入口。只用宁波 K500 前两条及固定 clean/depth2/depth3 各一条件，保存

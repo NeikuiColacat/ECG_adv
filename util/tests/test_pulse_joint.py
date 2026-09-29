@@ -79,10 +79,12 @@ def test_gpu_c5_metrics_keep_only_clean_and_image_families_and_reject_identity_d
             metrics_from_predictions(bad, samples, conditions, arms=arms)
 
 
-@pytest.mark.parametrize("phase,random_subset", [("smoke", False), ("screen", False), ("screen", True), ("final", True)])
-@pytest.mark.parametrize("execution", ["reference_v1", "arm_major_fp16_adapters_v2"])
+@pytest.mark.parametrize("phase,random_subset,performance_smoke", [
+    ("smoke", False, False), ("screen", False, False), ("screen", True, False),
+    ("final", True, False), ("screen", True, True)])
+@pytest.mark.parametrize("execution", ["reference_v1", "arm_major_fp16_adapters_v2", "arm_major_original_bypass_v3"])
 @pytest.mark.parametrize("batch_size", [1, 2, 3, 4])
-def test_gpu_c5_result_roundtrip_and_tamper_rejection(tmp_path, monkeypatch, phase, execution, random_subset, batch_size):
+def test_gpu_c5_result_roundtrip_and_tamper_rejection(tmp_path, monkeypatch, phase, execution, random_subset, batch_size, performance_smoke):
     import json
     from util import pulse_hybrid_contract as contract
     from util.evaluation.pulse_hybrid_development import c5_gpu_conditions_for
@@ -185,16 +187,18 @@ def test_gpu_c5_result_roundtrip_and_tamper_rejection(tmp_path, monkeypatch, pha
     (output / "original_baseline.json").write_text(json.dumps(baseline))
     (output / "original_parent_parity.json").write_text(json.dumps(parity))
     if execution != "reference_v1":
-        check_indices = evaluator.c5_admission_indices(count, batch_size, every_batch=phase == "smoke")
+        check_indices = evaluator.c5_admission_indices(count, batch_size, every_batch=phase == "smoke" or performance_smoke)
         performance = {"execution_mode": execution, "batch_size": batch_size,
             "trainable_vision_outputs_cached": 0, "inference_trainable_dtype": "float16",
             "reference_parameter_storage_restored": True,
+            **({"original_zero_lora_bypassed": True} if execution == "arm_major_original_bypass_v3" else {}),
             "records": [{"sample_key": s["sample_key"], "tokens_exact": True, "views": 6, "arms": 3}
                         for s in [samples[i] for i in check_indices]]}
         (output / "performance_admission.json").write_text(json.dumps(performance))
         batches = [{"offset": start, "sample_keys": [s["sample_key"] for s in samples[start:start + batch_size]],
             "actual_batch_size": len(samples[start:start + batch_size]),
-            "seconds": {"optimized": 1.0, **({"reference": 1.5} if start in check_indices else {})},
+            "seconds": {"optimized": 1.0, **({"reference": 1.5} if start in check_indices else {}),
+                **({"baseline": 1.2} if execution == "arm_major_original_bypass_v3" and performance_smoke else {})},
             "reference_checked": start in check_indices, "warmup_excluded": True,
             "peak_allocated_bytes": 100, "peak_reserved_bytes": 200}
             for start in range(0, count, batch_size)]
@@ -204,6 +208,7 @@ def test_gpu_c5_result_roundtrip_and_tamper_rejection(tmp_path, monkeypatch, pha
         "original_baseline_sha256": sha256_file(output / "original_baseline.json"),
         "original_parent_parity": parity,
         "phase": phase, "execution_mode": execution, "inference_batch_size": batch_size,
+        "performance_smoke": performance_smoke,
         "records": count, "conditions": 6, "image_suite": "image_c5_gpu_v1", **sampling,
         "cohort_identity": digest_json(samples),
         "image_severity": 5, "image_implementation": "image_c5_torch_gpu_v1", "model_arms": arms,
@@ -216,7 +221,10 @@ def test_gpu_c5_result_roundtrip_and_tamper_rejection(tmp_path, monkeypatch, pha
     with pytest.raises(ValueError):
         contract.validate_result(wrong_phase, path)
     if execution != "reference_v1":
-        for field, value in (("records", []), ("reference_parameter_storage_restored", False)):
+        bad_fields = [("records", []), ("reference_parameter_storage_restored", False)]
+        if execution == "arm_major_original_bypass_v3":
+            bad_fields.append(("original_zero_lora_bypassed", False))
+        for field, value in bad_fields:
             altered_admission = {**performance, field: value}
             member = output / "performance_admission.json"
             member.write_text(json.dumps(altered_admission))

@@ -14,6 +14,7 @@ import time
 from util.evaluation.ecg_image_queue import atomic_json, digest_json
 from util.pn2021_artifact_contract import sha256_file
 from util.pulse_training_contract import CENTERS, CLASS_ORDER, validate_result as validate_training
+from util.pulse_hybrid_contract import C5_FP16_MODES, C5_OPTIMIZED_MODES, C5_ORIGINAL_BYPASS
 
 REPO = Path(__file__).resolve().parents[2]
 ARMS = ("original", "clean", "single", "three")
@@ -564,7 +565,8 @@ def run(config, refs, root, output):
     reservation = [torch.empty(20 * 1024**3, dtype=torch.uint8, device="cuda")]
     started = time.time()
     backend = HybridPulseBackend(evidence, reservation, arms=arms,
-        fp16_adapters=config.get("execution_mode") == "arm_major_fp16_adapters_v2")
+        fp16_adapters=config.get("execution_mode") in C5_FP16_MODES,
+        bypass_original_lora=config.get("execution_mode") == C5_ORIGINAL_BYPASS)
     tmp = Path(template["paths"]["temporary_root"])
     tmp.mkdir(parents=True, exist_ok=True)
     renderer, rendering = PulseECGTensorRenderer.from_ecg_image_kit(template["paths"]["toolkit_dir"], device="cuda", tmp_root=tmp)
@@ -582,8 +584,8 @@ def run(config, refs, root, output):
     performance = []
     performance_batches = []
     admitted_batch_sizes = set()
-    optimized = image_suite == GPU_C5_SUITE and config.get("execution_mode") in (
-        "arm_major_cached_prompt_v1", "arm_major_fp16_adapters_v2")
+    optimized = image_suite == GPU_C5_SUITE and config.get("execution_mode") in C5_OPTIMIZED_MODES
+    compare_baseline = config.get("execution_mode") == C5_ORIGINAL_BYPASS and config.get("performance_smoke", False)
     torch.cuda.reset_peak_memory_stats()
     # C5 uses the explicitly admitted batch for all three arms. Each new
     # batch shape, including a tail, must pass same-batch author/token parity.
@@ -608,6 +610,8 @@ def run(config, refs, root, output):
             compare = new_batch_shape or config["phase"] == "smoke" or config.get("performance_smoke", False)
             if new_batch_shape:
                 backend.generate_pair(prepared_views[0], verify_author=True)
+                if compare_baseline:
+                    backend.generate_views(prepared_views[:1], bypass_original_lora=False)
                 backend.generate_views(prepared_views[:1])
                 admitted_batch_sizes.add(len(batch))
             if config.get("performance_smoke", False) and offset == batch_size:
@@ -617,6 +621,10 @@ def run(config, refs, root, output):
             # second path through thermal/cache warmup. Warmup is excluded.
             timings = {}
             order = ("reference", "optimized") if (offset // batch_size) % 2 == 0 else ("optimized", "reference")
+            if compare_baseline:
+                methods = ("reference", "baseline", "optimized")
+                shift = (offset // batch_size) % len(methods)
+                order = methods[shift:] + methods[:shift]
             for method in order:
                 if method == "reference" and not compare:
                     continue
@@ -627,6 +635,9 @@ def run(config, refs, root, output):
                         for pixels in prepared_views:
                             reference_answers.append(backend.generate_pair(pixels))
                             reference_tokens.append(backend.last_token_ids)
+                    elif method == "baseline":
+                        baseline_answers = backend.generate_views(prepared_views, bypass_original_lora=False)
+                        baseline_tokens = backend.last_view_token_ids
                     else:
                         optimized_answers = backend.generate_views(prepared_views)
                         optimized_tokens = backend.last_view_token_ids
@@ -634,12 +645,15 @@ def run(config, refs, root, output):
                 timings[method] = time.perf_counter() - measured
             if compare and (reference_tokens != optimized_tokens or reference_answers != optimized_answers):
                 raise ValueError("optimized C5 generation differs from reference tokens/answers")
+            if compare_baseline and (baseline_tokens != optimized_tokens or baseline_answers != optimized_answers):
+                raise ValueError("optimized C5 generation differs from current v2 tokens/answers")
             if compare:
                 performance.extend({"sample_key": sample["sample_key"], "tokens_exact": True,
                     "views": len(conditions), "arms": len(arms), "seconds": timings,
                     "order": list(order), "batch_offset": offset, "actual_batch_size": len(batch)} for sample in batch)
                 atomic_json(output / "performance_admission.json", {"execution_mode": config["execution_mode"],
-                    "inference_trainable_dtype": ("float16" if config["execution_mode"] == "arm_major_fp16_adapters_v2" else "float32"),
+                    "inference_trainable_dtype": ("float16" if config["execution_mode"] in C5_FP16_MODES else "float32"),
+                    **({"original_zero_lora_bypassed": True} if config["execution_mode"] == C5_ORIGINAL_BYPASS else {}),
                     "reference_parameter_storage_restored": all(p.dtype == torch.float32 for p in backend.parameters.values()),
                     "batch_size": batch_size, "trainable_vision_outputs_cached": 0, "records": performance})
             performance_batches.append({"offset": offset, "sample_keys": [s["sample_key"] for s in batch],

@@ -1,8 +1,34 @@
 schema_version: 3
-updated: 2026-09-27
+updated: 2026-09-30
 purpose: >
   Separate the current prospective manual-refactor recipe from historical
   trusted evidence. A launch config is not evidence by itself.
+
+pulse_original_zero_lora_bypass_20260930:
+  status: validated_bounded_engineering_not_full_cohort_admission
+  execution_mode: arm_major_original_bypass_v3
+  baseline_execution_mode: arm_major_fp16_adapters_v2
+  protocol: docs/pulse_evaluation_architecture.md
+  archive: /data/linbinhao/ecg_llm_runs/pulse_original_bypass_v3_20260930
+  report: /data/linbinhao/ecg_llm_runs/pulse_original_bypass_v3_20260930/audit/performance_summary.json
+  report_sha256: 994e094de82dcae8eda9cf9855e6afe5bb76cf7cce22c78a24f81e68f72f0e37
+  batch_size: 1
+  final_adapter_optimizer_steps: 200
+  records: {ningbo: 16, chapman_shaoxing: 4, cpsc_2018: 4, georgia: 4}
+  conditions: 6
+  model_arms: [original, single, three]
+  generated_outputs: 504
+  exact_tokens_and_answers_vs_author_reference_and_v2: true
+  measured_generation_latency_reduction_percent: 9.576971289839086
+  measured_generation_throughput_increase_percent: 10.59129673762289
+  center_latency_reduction_percent: {ningbo: 9.47759, chapman_shaoxing: 10.25441, cpsc_2018: 10.59241, georgia: 8.14830}
+  timing_scope: paired_generation_only_excludes_startup_rendering_io_and_warmup
+  regression: {project_passed: 1082, project_skipped: 236, dedicated_pulse_cpu_passed: 42}
+  initial_attempt: interface_guard_rejected_before_predictions_fixed_with_regression
+  live_evaluation_hot_swapped: false
+  live_sources_verified_unchanged: 92
+  scheduler_restored: true
+  paper_claim_allowed: false
 
 pulse_full_lora32_recovery4gpu_20260927:
   status: eight_trainings_complete_audited_archived_evaluation_not_run

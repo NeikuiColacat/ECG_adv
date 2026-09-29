@@ -8,6 +8,59 @@ import torch
 from util.evaluation.pulse_adapters import decode_generated, pack_shared_prompt_features
 
 
+@pytest.mark.parametrize("value", [None, 0.1, float("nan")])
+def test_original_lora_bypass_rejects_missing_or_nonzero_factors(value):
+    from util.evaluation.pulse_adapters import HybridPulseBackend
+    backend = HybridPulseBackend.__new__(HybridPulseBackend)
+    backend.states = {"original": {} if value is None else {"layer.lora_B.default.weight": torch.tensor([value])}}
+    with pytest.raises(ValueError, match="exactly zero"):
+        backend._validate_original_lora()
+    backend.states["original"] = {"layer.lora_B.default.weight": torch.zeros(2, 3)}
+    backend._validate_original_lora()
+
+
+@pytest.mark.parametrize("fail", [False, True])
+@torch.inference_mode()
+def test_original_lora_bypass_skips_only_zero_arm_and_restores_frozen_state(fail):
+    peft = pytest.importorskip("peft")
+    from util.evaluation.pulse_adapters import HybridPulseBackend
+    torch.manual_seed(17)
+    backend = HybridPulseBackend.__new__(HybridPulseBackend)
+    model = torch.nn.Sequential(torch.nn.Linear(5, 7))
+    backend.model = peft.get_peft_model(model, peft.LoraConfig(r=2, target_modules=["0"], lora_alpha=4)).eval()
+    backend.model.requires_grad_(False)
+    backend.states = {"original": {n: p.clone() for n, p in backend.model.named_parameters()}}
+    backend._validate_original_lora()
+    before = {n: p.clone() for n, p in backend.model.named_parameters()}
+    layer = backend.model.base_model.model[0]
+    x = torch.randn(2, 11, 5)
+    expected = backend.model(x)
+    calls = []
+    hook = layer.lora_A["default"].register_forward_hook(lambda *args: calls.append(True))
+    def run():
+        with backend._without_original_lora():
+            assert layer.disable_adapters
+            assert torch.equal(backend.model(x), expected)
+            assert not calls
+            if fail:
+                raise RuntimeError("probe failure")
+    if fail:
+        with pytest.raises(RuntimeError, match="probe failure"):
+            run()
+    else:
+        run()
+    assert not layer.disable_adapters and not layer.merged
+    assert all(not p.requires_grad and torch.equal(p, before[n]) for n, p in backend.model.named_parameters())
+    # Simulate selecting a trained arm after original; its update must execute.
+    layer.lora_B["default"].weight.fill_(0.1)
+    assert not torch.equal(backend.model(x), expected)
+    assert calls == [True]
+    hook.remove()
+    with backend.model.disable_adapter(), pytest.raises(ValueError, match="enabled, unmerged"):
+        with backend._without_original_lora():
+            pass
+
+
 def test_profile_timing_restores_methods_and_existing_overrides():
     from util.evaluation.pulse_profile import timed_calls
     class Target:
@@ -24,6 +77,26 @@ def test_profile_timing_restores_methods_and_existing_overrides():
             assert target.method(3) == 6
             raise RuntimeError("probe failure")
     assert target.method is original
+
+
+@torch.inference_mode()
+def test_original_bypass_accepts_transformers_adapter_mixin_and_preserves_tokens():
+    peft = pytest.importorskip("peft")
+    transformers = pytest.importorskip("transformers")
+    from util.evaluation.pulse_adapters import HybridPulseBackend
+    config = transformers.LlamaConfig(vocab_size=37, hidden_size=16, intermediate_size=32,
+        num_hidden_layers=1, num_attention_heads=2, num_key_value_heads=2, eos_token_id=None)
+    model = peft.get_peft_model(transformers.LlamaForCausalLM(config),
+        peft.LoraConfig(r=2, target_modules=["q_proj", "v_proj"]))
+    backend = HybridPulseBackend.__new__(HybridPulseBackend)
+    backend.model = model.eval().requires_grad_(False)
+    ids = torch.tensor([[1, 3, 9, 17]])
+    kwargs = dict(do_sample=False, max_new_tokens=4, pad_token_id=0)
+    expected = model.generate(ids, **kwargs)
+    with backend._without_original_lora():
+        assert torch.equal(model.generate(ids, **kwargs), expected)
+    assert torch.equal(model.generate(ids, **kwargs), expected)
+    assert not any(p.requires_grad for p in model.parameters())
 
 
 def test_engineering_profile_config_has_managed_result(tmp_path):

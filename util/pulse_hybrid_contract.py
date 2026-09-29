@@ -15,6 +15,9 @@ RAM = Path("/dev/shm/linbinhao-pulse-hybrid")
 RAM_PREFIX_ROOT = Path("/dev/shm")
 RAM_PREFIX = "linbinhao-pulse-"
 ARCHIVE_ROOT = Path("/data/linbinhao/ecg_llm_runs")
+C5_ORIGINAL_BYPASS = "arm_major_original_bypass_v3"
+C5_FP16_MODES = ("arm_major_fp16_adapters_v2", C5_ORIGINAL_BYPASS)
+C5_OPTIMIZED_MODES = ("arm_major_cached_prompt_v1", *C5_FP16_MODES)
 
 
 def is_scoped_ram_path(value: Path) -> bool:
@@ -61,7 +64,7 @@ def validate_config(c):
             for key in ("execution_mode", "performance_smoke", "inference_batch_size", "sampling_method"):
                 if key in c:
                     expected.add(key)
-            if (c.get("execution_mode", "reference_v1") not in ("reference_v1", "arm_major_cached_prompt_v1", "arm_major_fp16_adapters_v2")
+            if (c.get("execution_mode", "reference_v1") not in ("reference_v1", *C5_OPTIMIZED_MODES)
                     or type(c.get("performance_smoke", False)) is not bool
                     or (c.get("performance_smoke", False) and c["phase"] not in ("smoke", "screen"))):
                 raise ValueError("invalid C5 execution/performance admission mode")
@@ -521,15 +524,17 @@ def validate_result(result, path):
         if c5:
             baseline_path = path.parent / "original_baseline.json"
             execution = details.get("execution_mode", "reference_v1")
-            if execution not in ("reference_v1", "arm_major_cached_prompt_v1", "arm_major_fp16_adapters_v2"):
+            if execution not in ("reference_v1", *C5_OPTIMIZED_MODES):
                 raise ValueError("unknown GPU C5 execution mode")
-            if execution in ("arm_major_cached_prompt_v1", "arm_major_fp16_adapters_v2"):
+            if execution in C5_OPTIMIZED_MODES:
                 if "performance_admission.json" not in result["files"]:
                     raise ValueError("optimized C5 lacks native token parity admission")
                 admission = json.loads((path.parent / "performance_admission.json").read_text())
-                if execution == "arm_major_fp16_adapters_v2" and (admission.get("inference_trainable_dtype") != "float16"
+                if execution in C5_FP16_MODES and (admission.get("inference_trainable_dtype") != "float16"
                         or admission.get("reference_parameter_storage_restored") is not True):
                     raise ValueError("FP16 inference requires restored reference parameter storage")
+                if execution == C5_ORIGINAL_BYPASS and admission.get("original_zero_lora_bypassed") is not True:
+                    raise ValueError("original LoRA bypass lacks zero-update admission")
                 checks = admission.get("records", [])
                 from util.evaluation.pulse_hybrid_development import c5_admission_indices
                 check_indices = c5_admission_indices(len(cohort["samples"]), admission_batch,
@@ -551,13 +556,16 @@ def validate_result(result, path):
                         keys = [s["sample_key"] for s in cohort["samples"][start:start + admission_batch]]
                         seconds = timing.get("seconds", {})
                         checked = start in check_indices
+                        expected_seconds = {"reference", "optimized"} if checked else {"optimized"}
+                        if execution == C5_ORIGINAL_BYPASS and details.get("performance_smoke", False):
+                            expected_seconds.add("baseline")
                         if (type(timing.get("offset")) is not int or timing["offset"] != start
                                 or timing.get("sample_keys") != keys
                                 or type(timing.get("actual_batch_size")) is not int
                                 or timing["actual_batch_size"] != len(keys)
                                 or timing.get("reference_checked") is not checked
                                 or timing.get("warmup_excluded") is not True
-                                or set(seconds) != ({"reference", "optimized"} if checked else {"optimized"})
+                                or set(seconds) != expected_seconds
                                 or any(type(v) not in (int, float) or not math.isfinite(v) or v <= 0 for v in seconds.values())
                                 or any(type(timing.get(k)) is not int or timing[k] < 0 for k in
                                        ("peak_allocated_bytes", "peak_reserved_bytes"))):

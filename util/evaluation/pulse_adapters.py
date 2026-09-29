@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
 import torch
@@ -199,15 +200,39 @@ class PairedPulseBackend:
 
 class HybridPulseBackend(PairedPulseBackend):
     """Original/single/three inference with explicit adapter and precision policy."""
-    def __init__(self, evidence, reservation, *, arms, fp16_adapters=False):
+    def __init__(self, evidence, reservation, *, arms, fp16_adapters=False, bypass_original_lora=False):
         self.arms = tuple(arms)
         self.fp16_adapters = fp16_adapters
+        self.bypass_original_lora = bypass_original_lora
         source_arm = next(a for a in self.arms if a != "original")
         super().__init__({"w1": evidence[source_arm]}, reservation=reservation)
         # set_pair stores states but has not applied an adapter yet.
         original = {n: p.detach().clone() for n, p in self.parameters.items()}
         self.set_pair(evidence)
         self.states["original"] = original
+        if bypass_original_lora:
+            self._validate_original_lora()
+
+    def _validate_original_lora(self):
+        factors = [p for name, p in self.states["original"].items() if ".lora_B." in name]
+        if not factors or any(torch.count_nonzero(p).item() for p in factors):
+            raise ValueError("original LoRA bypass requires exactly zero saved B factors")
+
+    @contextmanager
+    def _without_original_lora(self):
+        # Only the original arm has a provably zero LoRA update. The projector
+        # is still restored and evaluated, and trained arms keep their branches.
+        if self.model.training or torch.is_grad_enabled() or any(p.requires_grad for p in self.model.parameters()):
+            raise ValueError("original LoRA bypass requires frozen eval/no-grad inference")
+        if any(getattr(m, "merged", False) is True or getattr(m, "disable_adapters", False) is True
+               for m in self.model.modules()):
+            raise ValueError("original LoRA bypass requires enabled, unmerged adapters")
+        try:
+            with self.model.disable_adapter():
+                yield
+        finally:
+            # PEFT 0.7 re-enables gradients when it re-enables the adapters.
+            self.model.requires_grad_(False)
 
     def _prepare_prompt_cache(self):
         # Only the frozen prompt embeddings may be reused. Visual features
@@ -224,9 +249,12 @@ class HybridPulseBackend(PairedPulseBackend):
             self.prompt_text = self.base.get_model().embed_tokens(ids).detach()
 
     @torch.inference_mode()
-    def generate_views(self, views):
+    def generate_views(self, views, *, bypass_original_lora=None):
+        bypass = self.bypass_original_lora if bypass_original_lora is None else bypass_original_lora
+        if bypass and not self.bypass_original_lora:
+            raise ValueError("original LoRA bypass was not validated at model load")
         if not self.fp16_adapters:
-            return self._generate_views(views)
+            return self._generate_views(views, bypass_original_lora=bypass)
         # PEFT otherwise promotes each FP16 activation to its FP32 LoRA
         # storage type, then autocast immediately converts it back. Keep
         # exact reference FP32 buffers and checkpoints; use the same FP16
@@ -239,13 +267,13 @@ class HybridPulseBackend(PairedPulseBackend):
         try:
             for parameter in self.parameters.values():
                 parameter.data = parameter.data.to(torch.float16)
-            return self._generate_views(views)
+            return self._generate_views(views, bypass_original_lora=bypass)
         finally:
             for name, parameter in self.parameters.items():
                 parameter.data = saved[name]
 
     @torch.inference_mode()
-    def _generate_views(self, views):
+    def _generate_views(self, views, *, bypass_original_lora=False):
         """Amortize exact adapter copies; validate against the same batch reference."""
         if not hasattr(self, "prompt_text"):
             self._prepare_prompt_cache()
@@ -260,7 +288,8 @@ class HybridPulseBackend(PairedPulseBackend):
                 torch._foreach_copy_(list(self.parameters.values()),
                     [self.states[arm][name] for name in self.parameters])
             # All cached casts expire before the next adapter is selected.
-            with torch.autocast("cuda", dtype=torch.float16):
+            adapter_context = self._without_original_lora() if bypass_original_lora and arm == "original" else nullcontext()
+            with adapter_context, torch.autocast("cuda", dtype=torch.float16):
                 for index, pixels in enumerate(views):
                     with torch.cuda.nvtx.range("vision"):
                         features = self.base.get_vision_tower()(pixels.flatten(0, 1))

@@ -322,8 +322,9 @@ def test_fp16_inference_restores_exact_fp32_parameter_storage(monkeypatch, fail)
     backend = HybridPulseBackend({"single": {}, "three": {}}, [], arms=("original", "single", "three"), fp16_adapters=True)
     parameter = next(iter(backend.parameters.values()))
     before, pointer = parameter.clone(), parameter.data_ptr()
-    def probe(views):
+    def probe(views, *, bypass_original_lora=False):
         assert parameter.dtype == torch.float16
+        assert not bypass_original_lora
         parameter.fill_(7)
         if fail:
             raise RuntimeError("simulated inference failure")
