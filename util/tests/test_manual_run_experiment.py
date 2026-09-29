@@ -28,6 +28,23 @@ FIXTURE_CHECKPOINT = b"fixture checkpoint\n"
 FIXTURE_CHECKPOINT_SHA256 = hashlib.sha256(FIXTURE_CHECKPOINT).hexdigest()
 
 
+def test_source_snapshot_copies_bytes_and_rejects_escape(tmp_path):
+    import hashlib
+    from util.run_record import capture_source_snapshot
+    source, target = tmp_path / "code", tmp_path / "snapshot"
+    (source / "package").mkdir(parents=True)
+    content = b"value = 7" + bytes([10])
+    (source / "package/a.py").write_bytes(content)
+    expected = {"package/a.py": hashlib.sha256(content).hexdigest()}
+    assert capture_source_snapshot(source, target, ["package/a.py"]) == expected
+    assert (target / "package/a.py").read_bytes() == content
+    (target / "package/a.py").write_text("tamper")
+    assert (source / "package/a.py").read_bytes() == content
+    for bad in ("../outside.py", str(source / "package/a.py")):
+        with pytest.raises(ValueError, match="relative"):
+            capture_source_snapshot(source, target, [bad])
+
+
 def _archive_fixture(tmp_path):
     from util.run_record import build_run_file_index, sha256_file
     root = tmp_path / "ram/run"

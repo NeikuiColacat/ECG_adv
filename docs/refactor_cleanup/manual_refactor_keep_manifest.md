@@ -553,6 +553,11 @@ CPU/CUDA trace，记录 vision/projector/prefill/decode/lm_head，剖析耗时�
 吞吐结论，剖析前后 token 必须一致。实现继续归属 `pulse_profile.py`。
 `docs/pulse_paper_operators.md` 为 `KEEP-MANUAL` 的原始文献、算子设计及验证边界说明。
 
+`configs/train/pulse_paper_{single,three}_ningbo{,_smoke}.yaml` 及对应 experiment
+声明、`configs/eval/pulse_paper_stress_ningbo{,_smoke}.yaml` 及对应 experiment
+声明均为 `KEEP-MANUAL`。这是新的 paper_ecg_torch_v1 候选协议，保持 K500/
+ref-exclusion、配对预算、独立来源身份和单一 launcher；不得替换历史 C5 结果。
+
 `boot_scripts/profile_pulse_adapters.py`、`util/evaluation/pulse_profile.py` 和
 `configs/experiments/pulse_adapter_profile.yaml` 为 `KEEP-MANUAL` 的受管工程
 测速入口。只用宁波 K500 前两条及固定 clean/depth2/depth3 各一条件，保存

@@ -9,6 +9,7 @@ approximations; they are not pixel-equivalent to Pillow or imagecorruptions.
 from __future__ import annotations
 
 import math
+from functools import lru_cache
 
 import torch
 import torch.nn.functional as F
@@ -190,6 +191,7 @@ def _elastic(image: torch.Tensor, level: torch.Tensor,
                          align_corners=True).clamp(0, 1).to(image.dtype)
 
 
+@lru_cache(maxsize=8)
 def _dct_matrix(device: torch.device) -> torch.Tensor:
     n = torch.arange(8, device=device, dtype=torch.float32)
     k = n[:, None]
@@ -207,6 +209,11 @@ _QC = (17,18,24,47,99,99,99,99,18,21,26,66,99,99,99,99,24,26,56,99,99,99,99,99,
        99,99,99,99,99,99,99,99,99,99,99,99,99,99,99,99)
 
 
+@lru_cache(maxsize=8)
+def _jpeg_quantization_tables(device: torch.device) -> torch.Tensor:
+    return torch.tensor((_QY, _QC), device=device, dtype=torch.float32).reshape(2, 1, 1, 1, 8, 8)
+
+
 def _jpeg_compression(image: torch.Tensor, level: torch.Tensor) -> torch.Tensor:
     """JPEG-style RGB->YCbCr block DCT, quantization, and inverse transform."""
     b, _, h, w = image.shape
@@ -219,8 +226,8 @@ def _jpeg_compression(image: torch.Tensor, level: torch.Tensor) -> torch.Tensor:
     blocks = ycc.reshape(b, 3, hp // 8, 8, wp // 8, 8).permute(0, 1, 2, 4, 3, 5)
     dct = _dct_matrix(image.device)
     coeff = dct @ blocks @ dct.t()
-    qy = torch.tensor(_QY, device=image.device, dtype=torch.float32).reshape(1,1,1,1,8,8)
-    qc = torch.tensor(_QC, device=image.device, dtype=torch.float32).reshape(1,1,1,1,8,8)
+    tables = _jpeg_quantization_tables(image.device)
+    qy, qc = tables[:1], tables[1:]
     quality = (100 - level * 8).clamp(10, 90).view(b,1,1,1,1,1)
     scale = torch.where(quality < 50, 5000 / quality, 200 - 2 * quality) / 100
     quant = torch.cat((qy.expand(b,1,1,1,-1,-1), qc.expand(b,2,1,1,-1,-1)), 1) * scale

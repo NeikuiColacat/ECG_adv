@@ -124,11 +124,11 @@ def validate_result(payload: dict, path: Path) -> None:
             raise ValueError("visual-only training admission failed")
         weight = 12.0
         if "image_augmentation" in protocol:
-            from core.image_corruption import validate_image_config
+            from core.image_corruption import GPU_IMAGE_IMPLEMENTATIONS, gpu_image_identity, validate_image_config
             validate_image_config(protocol["image_augmentation"])
             weight = protocol["image_augmentation"]["jsd_weight"]
             expected_topology = ("image_only_gpu_branches_v1"
-                if protocol["image_augmentation"].get("implementation") == "augmix_torch_gpu_v2"
+                if protocol["image_augmentation"].get("implementation") in GPU_IMAGE_IMPLEMENTATIONS
                 else "shared_waveform_image_branches_v1")
             if protocol.get("augmentation_topology") != expected_topology:
                 raise ValueError("hybrid augmentation topology missing")
@@ -142,14 +142,11 @@ def validate_result(payload: dict, path: Path) -> None:
                             or not reference.get("pillow_version")
                             or protocol.get("mix_residual") != "corrupted_waveform_render"):
                         raise ValueError("missing reference AugMix implementation identity")
-                elif implementation == "augmix_torch_gpu_v2":
+                elif implementation in GPU_IMAGE_IMPLEMENTATIONS:
                     gpu = protocol.get("image_gpu", {})
-                    if (gpu.get("implementation") != "augmix_torch_gpu_v2"
-                        or gpu.get("device_policy") != "same_device_as_rendered_rgb"
-                        or gpu.get("parity") != "visual_approximation_not_reference_pixel_equivalence"
-                        or gpu.get("host_tensor_transfer") != "none_inside_operator"
-                        or gpu.get("waveform_corruption") != "disabled"
-                        or protocol.get("mix_residual") != "clean_render"):
+                    expected_gpu = gpu_image_identity(implementation)
+                    keys = ("implementation", "device_policy", "parity", "host_tensor_transfer", "waveform_corruption")
+                    if any(gpu.get(k) != expected_gpu[k] for k in keys) or protocol.get("mix_residual") != "clean_render":
                         raise ValueError("missing GPU AugMix implementation identity")
                 else:
                     raise ValueError("unknown AugMix image implementation identity")

@@ -13,15 +13,16 @@ import time
 
 from util.evaluation.ecg_image_queue import atomic_json, digest_json
 from util.pn2021_artifact_contract import sha256_file
+from util.run_record import capture_source_snapshot
 from util.pulse_training_contract import CENTERS, CLASS_ORDER, validate_result as validate_training
-from util.pulse_hybrid_contract import C5_FP16_MODES, C5_OPTIMIZED_MODES, C5_ORIGINAL_BYPASS
+from util.pulse_hybrid_contract import (IMAGE_FP16_MODES, IMAGE_OPTIMIZED_MODES, ORIGINAL_BYPASS_MODE,
+    GPU_C5_SUITE, PAPER_SUITE, GPU_IMAGE_SUITES)
 
 REPO = Path(__file__).resolve().parents[2]
 ARMS = ("original", "clean", "single", "three")
 WIDTHS = {"clean": 0, "single": 1, "three": 3}
 REFERENCE_C15_SUITE = "joint_c15_reference_v1"
 C15_SUITES = ("joint_c15", REFERENCE_C15_SUITE)
-GPU_C5_SUITE = "image_c5_gpu_v1"
 PROCESSOR_INPUT_HASH_MODE = "view_identity_v1"
 FULL_CENTER_RECORDS = dict(zip(CENTERS, (18727, 5322, 7619, 8211)))
 FULL_PARENT_PROTOCOL_SHA256 = "75da63670290a3ddd5f9d0c3753710758940d633b7472d4564cd32447f0b24ea"
@@ -215,7 +216,7 @@ def metrics_from_predictions(rows, samples, conditions, *, arms=ARMS):
     truth = np.array([s["label"] for s in samples], dtype=np.uint8)
     if truth.shape != (len(samples), 5) or not truth.any(axis=1).all():
         raise ValueError("expected drop-all-zero Super5 cohort")
-    c5_identity = any(c.get("image_implementation") == "image_c5_torch_gpu_v1" for c in conditions)
+    c5_identity = any(c.get("image_implementation") in ("image_c5_torch_gpu_v1", "paper_ecg_torch_v1") for c in conditions)
     per_condition, families = [], {a: {} for a in arms}
     for condition in conditions:
         selected = [keyed[s["sample_key"], condition["condition_id"]] for s in samples]
@@ -225,7 +226,7 @@ def metrics_from_predictions(rows, samples, conditions, *, arms=ARMS):
             if c5_identity:
                 if row.get("hash_id") != sample.get("hash_id"):
                     raise ValueError("C5 prediction hash identity changed")
-                for key in ("family", "image_operator", "image_severity", "image_implementation"):
+                for key in ("family", "image_operator", "image_severity", "image_implementation", "stress_group"):
                     if key in condition and row.get(key) != condition[key]:
                         raise ValueError("C5 prediction condition identity changed")
         for arm in arms:
@@ -363,6 +364,43 @@ def c5_gpu_conditions_for(parent_conditions, *, severity=5):
     ]
 
 
+def gpu_image_conditions_for(parent_conditions, *, suite, severity):
+    if suite == GPU_C5_SUITE:
+        return c5_gpu_conditions_for(parent_conditions, severity=severity)
+    from core.paper_ecg import paper_conditions, PAPER_IMPLEMENTATION
+    if (suite != PAPER_SUITE or not parent_conditions or parent_conditions[0]["condition_id"] != "clean"
+            or parent_conditions[0].get("operators") != []):
+        raise ValueError("invalid paper ECG image suite")
+    return [{**parent_conditions[0], "family": "clean"}] + [
+        {"condition_id": c["condition_id"], "family": "image_" + c["stress_group"].removesuffix("_family"),
+         "operators": [], "image_operator": c["image_operator"], "image_severity": c["image_severity"],
+         "image_implementation": PAPER_IMPLEMENTATION, "stress_group": c["stress_group"]}
+        for c in paper_conditions((severity,))]
+
+
+def gpu_image_view(clean_rgb, condition, samples, seed):
+    """Create one seeded image realization, shared by every model arm."""
+    import torch
+    if condition["family"] == "clean":
+        return clean_rgb
+    if condition["image_implementation"] == "paper_ecg_torch_v1":
+        from core.paper_ecg import apply_paper_operator
+        from util.evaluation.ecg_image_data import derived_seed
+        def apply(image, sample):
+            # Keep geometry/noise coupled across severity levels for this operator.
+            key = derived_seed(seed, "paper_ecg_torch_v1", sample["hash_id"], condition["image_operator"])
+            return apply_paper_operator(image, condition["image_operator"], severity=condition["image_severity"],
+                rng=torch.Generator(device=image.device).manual_seed(key), validate=False)
+    elif condition["image_implementation"] == "image_c5_torch_gpu_v1":
+        from core.image_augmix_gpu import apply_gpu_c5_image_operator_prevalidated
+        def apply(image, sample):
+            return apply_gpu_c5_image_operator_prevalidated(image, condition["image_operator"], severity=condition["image_severity"],
+                rng=torch.Generator(device=image.device).manual_seed(c5_gpu_image_seed(seed, sample["hash_id"], condition)))
+    else:
+        raise ValueError("unknown GPU image implementation")
+    return torch.cat([apply(clean_rgb[i:i + 1], sample) for i, sample in enumerate(samples)])
+
+
 def c5_gpu_image_seed(seed, source_hash, condition):
     from core.image_augmix_gpu import GPU_C5_IMPLEMENTATION
     from util.evaluation.ecg_image_data import derived_seed
@@ -374,7 +412,7 @@ def verify_original_answer(originals, sample_key, condition, answer, *, image_su
                            baseline_mode="frozen_parent_v1"):
     if baseline_mode not in ("frozen_parent_v1", "current_protocol_v1"):
         raise ValueError("unknown original baseline protocol")
-    if baseline_mode == "current_protocol_v1" and image_suite != GPU_C5_SUITE:
+    if baseline_mode == "current_protocol_v1" and image_suite not in GPU_IMAGE_SUITES:
         raise ValueError("current-protocol baseline is only admitted for GPU C5")
     if condition["family"] not in ("clean", "waveform"):
         return
@@ -413,7 +451,7 @@ def original_prediction_digest(rows):
         for r in sorted(rows, key=lambda r: (r["sample_key"], r["condition_id"]))])
 
 
-def select_c5_samples(rows, count, admission_sample_keys=(), *, sampling_seed=None):
+def select_image_samples(rows, count, admission_sample_keys=(), *, sampling_seed=None):
     """Keep the final cohort intact; include named regression records in smoke."""
     if count == "full":
         if admission_sample_keys:
@@ -437,7 +475,7 @@ def select_c5_samples(rows, count, admission_sample_keys=(), *, sampling_seed=No
     return selected
 
 
-def c5_admission_indices(count, batch_size, *, every_batch=False):
+def image_admission_indices(count, batch_size, *, every_batch=False):
     """Admit every encountered batch shape, including an incomplete tail."""
     if type(count) is not int or count < 1 or type(batch_size) is not int or not 1 <= batch_size <= 4:
         raise ValueError("invalid C5 batch admission dimensions")
@@ -490,12 +528,12 @@ def run(config, refs, root, output):
     # GPU C5 uses the retained full K500-excluded parent even for smoke; the
     # older 512-record subset parent is a different protocol and is not
     # present in the C5 source state.
-    if config["records_per_center"] == "full" or image_suite == GPU_C5_SUITE:
+    if config["records_per_center"] == "full" or image_suite in GPU_IMAGE_SUITES:
         parent, parent_rows, original_rows = checked_full_parent(config, training)
     else:
         parent, parent_rows, _, original_rows, _ = checked_subset_parent(config)
-    if image_suite == GPU_C5_SUITE:
-        samples = select_c5_samples(parent_rows, config["records_per_center"], config.get("admission_sample_keys", ()),
+    if image_suite in GPU_IMAGE_SUITES:
+        samples = select_image_samples(parent_rows, config["records_per_center"], config.get("admission_sample_keys", ()),
             sampling_seed=config["seed"] if config.get("sampling_method") == "seeded_hash_v1" else None)
     elif config["records_per_center"] == "full":
         samples = parent_rows
@@ -508,9 +546,10 @@ def run(config, refs, root, output):
     template, train_refs = load_config(refs["training_config"], root)
     profile = load_augmentation_profile(train_refs["operators_config"], config_root=root)
     joint_suite = image_suite in ("joint_v2", "joint_v3", *C15_SUITES)
-    if image_suite == GPU_C5_SUITE:
-        conditions = c5_gpu_conditions_for(parent["conditions"], severity=config["image_severity"])
-        if any(e["result"]["protocol"].get("image_gpu", {}).get("implementation") != "augmix_torch_gpu_v2"
+    if image_suite in GPU_IMAGE_SUITES:
+        conditions = gpu_image_conditions_for(parent["conditions"], suite=image_suite, severity=config["image_severity"])
+        if any(e["result"]["protocol"].get("image_gpu", {}).get("implementation") != (
+                "paper_ecg_torch_v1" if image_suite == PAPER_SUITE else "augmix_torch_gpu_v2")
                for e in evidence.values()):
             raise ValueError("GPU C5 evaluation requires GPU v2 trained arms")
         trained = evidence["three"]["result"]["protocol"]
@@ -545,9 +584,10 @@ def run(config, refs, root, output):
         raise RuntimeError("one GPU per development evaluator")
     output.mkdir(parents=True, exist_ok=False)
     (output / "batches").mkdir()
-    for relative in ("util/evaluation/pulse_hybrid_development.py", "util/evaluation/pulse_adapters.py", "core/pulse_finetune.py",
+    capture_source_snapshot(REPO, output / "source_snapshot",
+        ("util/evaluation/pulse_hybrid_development.py", "util/evaluation/pulse_adapters.py", "core/pulse_finetune.py",
             "util/evaluation/pulse_visual_subset.py", "util/evaluation/pulse_profile.py", "core/image_corruption.py", "core/image_stress.py",
-            "core/image_augmix_c.py", "core/image_augmix_gpu.py", "util/pulse_hybrid_contract.py",
+            "core/image_augmix_c.py", "core/image_augmix_gpu.py", "core/paper_ecg.py", "util/pulse_hybrid_contract.py",
             "util/pulse_training_contract.py", "util/augmentations/profile.py",
             "util/augmentations/torch_operators.py", "util/config_bundle.py",
             "util/evaluation/ecg_image_queue.py", "util/evaluation/pn2021.py",
@@ -558,15 +598,12 @@ def run(config, refs, root, output):
             "data_preprocess/load_cache.py", "data_preprocess/preprocess_primitives.py",
             "data_preprocess/PN2021_preprocess.py", "data_preprocess/pn2021_metadata.py",
             "data_preprocess/data_runtime.py", "models/checkpoints.py", "models/contracts.py",
-            "models/input_adapter.py"):
-        destination = output / "source_snapshot" / relative
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(REPO / relative, destination)
+            "models/input_adapter.py"))
     reservation = [torch.empty(20 * 1024**3, dtype=torch.uint8, device="cuda")]
     started = time.time()
     backend = HybridPulseBackend(evidence, reservation, arms=arms,
-        fp16_adapters=config.get("execution_mode") in C5_FP16_MODES,
-        bypass_original_lora=config.get("execution_mode") == C5_ORIGINAL_BYPASS)
+        fp16_adapters=config.get("execution_mode") in IMAGE_FP16_MODES,
+        bypass_original_lora=config.get("execution_mode") == ORIGINAL_BYPASS_MODE)
     tmp = Path(template["paths"]["temporary_root"])
     tmp.mkdir(parents=True, exist_ok=True)
     renderer, rendering = PulseECGTensorRenderer.from_ecg_image_kit(template["paths"]["toolkit_dir"], device="cuda", tmp_root=tmp)
@@ -584,27 +621,24 @@ def run(config, refs, root, output):
     performance = []
     performance_batches = []
     admitted_batch_sizes = set()
-    optimized = image_suite == GPU_C5_SUITE and config.get("execution_mode") in C5_OPTIMIZED_MODES
-    compare_baseline = config.get("execution_mode") == C5_ORIGINAL_BYPASS and config.get("performance_smoke", False)
+    optimized = image_suite in GPU_IMAGE_SUITES and config.get("execution_mode") in IMAGE_OPTIMIZED_MODES
+    compare_baseline = config.get("execution_mode") == ORIGINAL_BYPASS_MODE and config.get("performance_smoke", False)
     torch.cuda.reset_peak_memory_stats()
     # C5 uses the explicitly admitted batch for all three arms. Each new
     # batch shape, including a tail, must pass same-batch author/token parity.
-    batch_size = config.get("inference_batch_size", 1) if image_suite == GPU_C5_SUITE else 2
+    batch_size = config.get("inference_batch_size", 1) if image_suite in GPU_IMAGE_SUITES else 2
     for offset in range(0, len(samples), batch_size):
         batch = samples[offset:offset + batch_size]
         waves = np.stack([native500_waveform(s, Path(template["paths"]["raw_root"]))[0] for s in batch])
         clean = torch.from_numpy(waves).cuda()
         clean_rgb = renderer.render(clean)
-        if image_suite == GPU_C5_SUITE:
+        if image_suite in GPU_IMAGE_SUITES:
             validate_gpu_image(clean_rgb)
         batch_rows = []
         prepared_views = []
         if optimized:
             for condition in conditions:
-                rgb = clean_rgb if condition["family"] == "clean" else torch.cat([apply_gpu_c5_image_operator_prevalidated(
-                    clean_rgb[i:i+1], condition["image_operator"], severity=condition["image_severity"],
-                    rng=torch.Generator(device="cuda").manual_seed(c5_gpu_image_seed(config["seed"], sample["hash_id"], condition)))
-                    for i, sample in enumerate(batch)])
+                rgb = gpu_image_view(clean_rgb, condition, batch, config["seed"])
                 prepared_views.append(renderer.preprocess_for_pulse(rgb).to(dtype=torch.float16).clone())
             new_batch_shape = len(batch) not in admitted_batch_sizes
             compare = new_batch_shape or config["phase"] == "smoke" or config.get("performance_smoke", False)
@@ -658,8 +692,8 @@ def run(config, refs, root, output):
                     "views": len(conditions), "arms": len(arms), "seconds": timings,
                     "order": list(order), "batch_offset": offset, "actual_batch_size": len(batch)} for sample in batch)
                 atomic_json(output / "performance_admission.json", {"execution_mode": config["execution_mode"],
-                    "inference_trainable_dtype": ("float16" if config["execution_mode"] in C5_FP16_MODES else "float32"),
-                    **({"original_zero_lora_bypassed": True} if config["execution_mode"] == C5_ORIGINAL_BYPASS else {}),
+                    "inference_trainable_dtype": ("float16" if config["execution_mode"] in IMAGE_FP16_MODES else "float32"),
+                    **({"original_zero_lora_bypassed": True} if config["execution_mode"] == ORIGINAL_BYPASS_MODE else {}),
                     "reference_parameter_storage_restored": all(p.dtype == torch.float32 for p in backend.parameters.values()),
                     "batch_size": batch_size, "trainable_vision_outputs_cached": 0, "records": performance})
             performance_batches.append({"offset": offset, "sample_keys": [s["sample_key"] for s in batch],
@@ -670,15 +704,8 @@ def run(config, refs, root, output):
         for condition in conditions:
             if optimized:
                 pixels = prepared_views[conditions.index(condition)]
-            elif image_suite == GPU_C5_SUITE and condition["family"] == "image":
-                # C5 is image-only: use the clean native500 render and apply
-                # exactly one deterministic device-native corruption.
-                rgb = torch.cat([apply_gpu_c5_image_operator_prevalidated(
-                    clean_rgb[i:i+1], condition["image_operator"],
-                    severity=condition["image_severity"],
-                    rng=torch.Generator(device="cuda").manual_seed(
-                        c5_gpu_image_seed(config["seed"], s["hash_id"], condition)))
-                    for i, s in enumerate(batch)])
+            elif image_suite in GPU_IMAGE_SUITES and condition["family"] != "clean":
+                rgb = gpu_image_view(clean_rgb, condition, batch, config["seed"])
                 viewed = clean
             elif image_suite == REFERENCE_C15_SUITE and condition["family"] in ("image", "joint"):
                 viewed = clean
@@ -730,7 +757,7 @@ def run(config, refs, root, output):
             ) for sample in batch]
             answers = (optimized_answers[conditions.index(condition)] if optimized else
                        backend.generate_pair(pixels, verify_author=condition["family"] == "clean"
-                           and (len(batch) not in admitted_batch_sizes if image_suite == GPU_C5_SUITE else offset == 0)))
+                           and (len(batch) not in admitted_batch_sizes if image_suite in GPU_IMAGE_SUITES else offset == 0)))
             if not optimized and condition["family"] == "clean":
                 admitted_batch_sizes.add(len(batch))
             for i, sample in enumerate(batch):
@@ -759,7 +786,7 @@ def run(config, refs, root, output):
                 batch_rows.append({"sample_key": sample["sample_key"], "hash_id": sample["hash_id"],
                     "condition_id": condition["condition_id"],
                     **{k: condition[k] for k in ("family", "operators", "image_operator", "image_severity",
-                                                  "image_implementation") if k in condition},
+                                                  "image_implementation", "stress_group") if k in condition},
                     "true_labels": sample["label_names"],
                     # This is deliberately named as an identity digest: it is
                     # not a SHA-256 over CUDA tensor bytes.
@@ -775,7 +802,7 @@ def run(config, refs, root, output):
     if config.get("performance_smoke", False):
         torch.cuda.profiler.stop()
     baseline_details = {}
-    if image_suite == GPU_C5_SUITE:
+    if image_suite in GPU_IMAGE_SUITES:
         baseline = {"mode": config["original_baseline_mode"], "batch_size": batch_size,
             "seed": config["seed"], "precision": "float16",
             "deterministic_algorithms": torch.are_deterministic_algorithms_enabled(),
@@ -804,21 +831,22 @@ def run(config, refs, root, output):
         **({"record_span": config["record_span"], "parent_cohort_identity": digest_json(parent_rows)}
            if config["phase"] == "block" else {}),
         **({"training_result_paths": {a: str(e["path"]) for a, e in evidence.items()}}
-           if image_suite == GPU_C5_SUITE else {}),
+           if image_suite in GPU_IMAGE_SUITES else {}),
         "development_only": True, "processor_input_hash_mode": PROCESSOR_INPUT_HASH_MODE,
         **({"inference_batch_size": config["inference_batch_size"]} if "inference_batch_size" in config else {}),
         **({"performance_smoke": config["performance_smoke"]} if "performance_smoke" in config else {}),
         **({"sampling_method": config["sampling_method"], "sampling_source_state": config["source_state"],
             "sampling_population_identity": digest_json(parent_rows)} if "sampling_method" in config else {}),
-        **({"execution_mode": config.get("execution_mode", "reference_v1")} if image_suite == GPU_C5_SUITE else {}),
+        **({"execution_mode": config.get("execution_mode", "reference_v1")} if image_suite in GPU_IMAGE_SUITES else {}),
         "evaluation_seed": config["seed"],
         "original_parent_parity": original_parity,
         **baseline_details,
         **({"image_suite": image_suite} if image_suite else {}),
         **({"model_arms": list(arms)} if "model_arms" in config else {}),
-        **({"image_severity": config["image_severity"]} if image_suite in (GPU_C5_SUITE, *C15_SUITES) else {}),
+        **({"image_severity": config["image_severity"]} if image_suite in (*GPU_IMAGE_SUITES, *C15_SUITES) else {}),
         **({"image_reference": reference_identity} if reference_identity else {}),
-        **({"image_implementation": GPU_C5_IMPLEMENTATION} if image_suite == GPU_C5_SUITE else {})})
+        **({"image_implementation": "paper_ecg_torch_v1" if image_suite == PAPER_SUITE else GPU_C5_IMPLEMENTATION}
+           if image_suite in GPU_IMAGE_SUITES else {})})
 
 
 def summarize_four_centers(entries, output, *, seed, phase="final", families=None, arms=ARMS):

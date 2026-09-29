@@ -63,6 +63,26 @@ RESULT_REQUIRED_KEYS = {
 }
 
 
+def capture_source_snapshot(root: Path, destination: Path, files: Sequence[str]) -> dict[str, str]:
+    """Copy code-owned relative paths and fingerprint the copied bytes.
+
+    The caller owns output creation/locking. Resume checks must verify existing
+    snapshots rather than call this fresh-snapshot operation again.
+    """
+    hashes = {}
+    for name in files:
+        relative = Path(name)
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError("source snapshot paths must stay relative to the code root")
+        source, target = root / relative, destination / relative
+        source.resolve().relative_to(root.resolve())
+        target.resolve().relative_to(destination.resolve())
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+        hashes[name] = sha256_file(target)
+    return hashes
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -889,6 +909,7 @@ __all__ = [
     "build_run_file_index",
     "capture_environment",
     "capture_git_state",
+    "capture_source_snapshot",
     "ensure_output_outside_worktree",
     "sha256_file",
     "utc_now",

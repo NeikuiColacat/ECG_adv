@@ -4,6 +4,28 @@ purpose: >
   Separate the current prospective manual-refactor recipe from historical
   trusted evidence. A launch config is not evidence by itself.
 
+pulse_paper_torch_v1:
+  status: implemented_wired_cpu_validated_gpu_admission_pending
+  protocol: docs/pulse_paper_operators.md
+  implementation: paper_ecg_torch_v1
+  image_suite: paper_ecg_gpu_v1
+  training_operators: [yellowing, exposure, shadow, crease, wrinkle, ink_fade, defocus, sensor_noise, low_resolution, grid_fade]
+  held_out_operators: [rotate, perspective, stain, glare, occlusion, jpeg_compression]
+  candidate_training_severity: 2
+  managed_stress_example_severity: 5
+  metric_families: [clean, image_seen, image_held_out]
+  cpu_verification: {passed: 1264, skipped: 237, legacy_differential_cases: 24, jpeg_differential_cases: 15, managed_dry_runs: 6}
+  pulse_environment_cpu_verification: {passed: 139, skipped: 1}
+  validation_root: /home/linbinhao/ECG_adv_data/operations/pulse_torch_paper_20260930
+  gpu_operator_admission: pending
+  gpu_throughput: unmeasured
+  full_model_paper_training_admission: pending
+  full_model_paper_evaluation_admission: pending
+  author_pixel_equivalence: not_claimed
+  clinical_fidelity: unvalidated_procedural_approximations
+  performance_profile_checkout: 63f6909b79d51737b3fa1d0abb9b73252e6a7628
+  paper_claim_allowed: false
+
 pulse_original_zero_lora_bypass_20260930:
   status: validated_bounded_engineering_not_full_cohort_admission
   execution_mode: arm_major_original_bypass_v3

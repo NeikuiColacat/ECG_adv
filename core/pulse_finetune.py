@@ -31,6 +31,7 @@ from util.ecg_image_renderer import PulseECGTensorRenderer
 from util.evaluation.ecg_image_data import QUESTION, native500_waveform
 from util.evaluation.ecg_image_queue import atomic_json, digest_json
 from util.pn2021_artifact_contract import sha256_file
+from util.run_record import capture_source_snapshot
 from util.pulse_training_contract import CLASS_ORDER, FULL_LORA_SCOPE, label_text, load_config, validate_result
 
 REPO = Path(__file__).resolve().parents[1]
@@ -348,38 +349,12 @@ def run(config_path: Path, config_root: Path, output: Path) -> None:
             clean_augmented_loss_weights=[1.0, 0.0],
             images_per_record_exposure=3 if config["width"] else 1)
     if config["schema_version"] in (4, 5):
-        protocol.update(image_augmentation=config["image_augmentation"],
-            augmentation_topology=("image_only_gpu_branches_v1"
-                if config["image_augmentation"].get("implementation") == "augmix_torch_gpu_v2"
-                else "shared_waveform_image_branches_v1"),
-            mix_residual=("clean_render"
-                if config["image_augmentation"].get("implementation") == "augmix_torch_gpu_v2"
-                else "corrupted_waveform_render"),
-            jsd_weight=config["image_augmentation"]["jsd_weight"] if config["width"] else 0.0,
+        from core.image_corruption import image_augmentation_protocol
+        protocol.update(image_augmentation_protocol(config["image_augmentation"], config["width"]),
             evidence_role="pn2021_development_validation_authorized_20260914")
-        if "implementation" in config["image_augmentation"]:
-            implementation = config["image_augmentation"]["implementation"]
-            if implementation == "augmix_pil_reference_v1":
-                from core.image_augmix_c import AUGMIX_IMPLEMENTATION, AUGMIX_UPSTREAM_COMMIT
-                protocol["image_reference"] = {"implementation": AUGMIX_IMPLEMENTATION,
-                    "upstream_commit": AUGMIX_UPSTREAM_COMMIT,
-                    "pillow_version": importlib.metadata.version("Pillow"),
-                    "input_quantization": "round_rgb_uint8", "size": "native_canvas"}
-            elif implementation == "augmix_torch_gpu_v2":
-                from core.image_augmix_gpu import GPU_AUGMIX_IMPLEMENTATION
-                protocol["image_gpu"] = {
-                    "implementation": GPU_AUGMIX_IMPLEMENTATION,
-                    "device_policy": "same_device_as_rendered_rgb",
-                    "randomness": "caller_owned_torch_generator_on_input_device",
-                    "parity": "visual_approximation_not_reference_pixel_equivalence",
-                    "host_tensor_transfer": "none_inside_operator",
-                    "waveform_corruption": "disabled",
-                }
-            else:
-                raise ValueError(f"unsupported image implementation: {implementation}")
     identity = digest_json(protocol)
     atomic_json(output / "protocol.json", protocol)
-    sources = ("core/pulse_finetune.py", "core/augmix.py", "util/pulse_training_contract.py",
+    sources = ("core/pulse_finetune.py", "core/augmix.py", "util/pulse_training_contract.py", "util/run_record.py",
         "util/ecg_image_renderer.py", "util/evaluation/ecg_image_data.py",
         "util/augmentations/torch_operators.py", "util/augmentations/profile.py",
         "data_preprocess/preprocess_primitives.py", "data_preprocess/PN2021_preprocess.py",
@@ -388,19 +363,12 @@ def run(config_path: Path, config_root: Path, output: Path) -> None:
         sources += ("core/pulse_visual.py", "core/consistency.py")
     if config["schema_version"] in (4, 5):
         sources += ("core/image_corruption.py", "core/pulse_hybrid.py")
+        from core.image_corruption import IMAGE_IMPLEMENTATION_SOURCES
         implementation = config["image_augmentation"].get("implementation")
-        if implementation == "augmix_pil_reference_v1":
-            sources += ("core/image_augmix_c.py",)
-        elif implementation == "augmix_torch_gpu_v2":
-            sources += ("core/image_augmix_gpu.py",)
-        elif tuple(config["image_augmentation"]["operators"]) != ("paper_texture", "grid_fade", "tone", "shadow"):
-            raise ValueError("unrecognized schema-4 image operator implementation")
-    source_hashes = {}
-    for relative in sources:
-        destination = output / "source_snapshot" / relative
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(REPO / relative, destination)
-        source_hashes[relative] = sha256_file(destination)
+        if implementation is not None:
+            sources += IMAGE_IMPLEMENTATION_SOURCES[implementation]
+    source_hashes = capture_source_snapshot(REPO, output / "source_snapshot",
+        sources)
     atomic_json(output / "source_identity.json", source_hashes)
     protocol["implementation_sha256"] = source_hashes
     identity = digest_json(protocol)

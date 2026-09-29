@@ -7,7 +7,7 @@ import torch
 
 from core.augmix import _dirichlet
 from core.corruption import CANONICAL_OPERATORS
-from core.image_corruption import apply_image_operator, validate_image_config
+from core.image_corruption import GPU_IMAGE_IMPLEMENTATIONS, image_operator, validate_image_config
 from util.augmentations.torch_operators import apply_operator_batch_prevalidated
 
 
@@ -29,41 +29,19 @@ def hybrid_jsd_views(clean, *, width, profile, seed, identity, renderer, image_c
         return int(torch.randint(count, (), device="cpu", generator=rng))
 
     image_implementation = image_config.get("implementation")
-    if image_implementation == "augmix_pil_reference_v1":
-        from core.image_augmix_c import apply_augmix_image_operator
-
-        def apply_image(value, operator, rng):
-            return apply_augmix_image_operator(
-                value, operator, severity=image_config["severity"], rng=rng
-            )
-    elif image_implementation == "augmix_torch_gpu_v2":
-        from core.image_augmix_gpu import (
-            apply_gpu_augmix_image_operator_prevalidated,
-            validate_gpu_image,
-        )
-
-        def apply_image(value, operator, rng):
-            return apply_gpu_augmix_image_operator_prevalidated(
-                value, operator, severity=image_config["severity"], rng=rng
-            )
-    elif image_implementation is None:
-        apply_image = lambda value, operator, rng: apply_image_operator(
-            value, operator, strength=image_config["strength"], rng=rng
-        )
-    else:
-        raise ValueError(f"unknown image implementation: {image_implementation}")
-
+    apply_image = image_operator(image_config)
+    gpu_image_only = image_implementation in GPU_IMAGE_IMPLEMENTATIONS
     original = renderer.render(clean)
-    views, traces = [original], []
+    if gpu_image_only and width:
+        from core.image_augmix_gpu import validate_gpu_image
+        validate_gpu_image(original)
+    views, traces, mix_parameters = [original], [], []
     if width:
         for view in range(2):
-            if image_implementation == "augmix_torch_gpu_v2":
-                if image_config["waveform_strength"] != 0:
-                    raise ValueError("GPU v2 image-only training requires waveform_strength=0")
+            if gpu_image_only:
                 # Waveform corruption is disabled for this throughput protocol.
                 anchor = original
                 wave_ops = []
-                validate_gpu_image(anchor)
             else:
                 wave = clean.clone()
                 rng = keyed(f"view{view}/wave")
@@ -90,16 +68,18 @@ def hybrid_jsd_views(clean, *, width, profile, seed, identity, renderer, image_c
                 value, ops = anchor, []
                 for _ in range(1 + choice(3, choice_rng)):
                     op = image_config["operators"][choice(len(image_config["operators"]), choice_rng)]
-                    value = apply_image(value, op, rng)
+                    value = apply_image(value, op, rng=rng)
                     ops.append(op)
                 # Keep the mix coefficient on-device; converting a CUDA scalar
                 # to Python here inserts a host synchronization per chain.
                 mixed.add_(value * weights[chain].to(dtype=value.dtype))
                 chains.append(ops)
             views.append(((1 - m) * anchor + m * mixed).clamp(0, 1))
-            traces.append({"waveform_operators": wave_ops, "image_chains": chains,
-                           "weights": weights.tolist(), "m": float(m)})
-    gpu_image_only = image_implementation == "augmix_torch_gpu_v2"
+            traces.append({"waveform_operators": wave_ops, "image_chains": chains})
+            mix_parameters.append(torch.cat((weights, m.reshape(1))))
+        # One small metadata transfer after both views; never copy image tensors.
+        for trace, values in zip(traces, torch.stack(mix_parameters).tolist()):
+            trace.update(weights=values[:-1], m=values[-1])
     return views, {"width": width, "views": traces, "mixing_domain": "rendered_rgb",
                    "topology": "image_only_gpu_branches_v1" if gpu_image_only else "shared_waveform_image_branches_v1",
                    "residual": "clean_render" if gpu_image_only else "corrupted_waveform_render"}

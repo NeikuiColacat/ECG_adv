@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: pulse_paper_single_ningbo_smoke
+  purpose: Candidate paper-image LoRA pool; bounded engineering admission.
+entrypoint:
+  name: train_ecg_image
+  config: train/pulse_paper_single_ningbo_smoke.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/pulse_paper_ecg_v1_20260930/ningbo_single_smoke
+  if_exists: error
+  delegate_output_subdir: training

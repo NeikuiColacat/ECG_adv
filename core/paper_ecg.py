@@ -59,7 +59,8 @@ def apply_paper_operator(image, operator, *, severity, rng, validate=True):
 
     A trusted chain can validate its RGB anchor once and pass validate=False.
     There is no per-image Python loop, image transfer, or RNG scalar readback.
-    Same-device replay is exact; cross-device bitwise identity is not promised.
+    Replay requires the same device/software and deterministic backend settings;
+    cross-device bitwise identity is not promised. Working arithmetic is FP32.
     """
     if (operator not in PAPER_EVAL_OPERATORS or type(severity) not in (int, float)
             or not math.isfinite(severity) or not 0 <= severity <= 5):
@@ -106,12 +107,14 @@ def apply_paper_operator(image, operator, *, severity, rng, validate=True):
         highlight = (-0.5 * ((distance - 1.8 * band) / band).square()).exp()
         result = value * (1 - 0.55 * amount * shade) + 0.25 * amount * highlight * (1 - value)
     elif operator == "wrinkle":
-        # Smooth random shading plus directional ridges, without bending traces.
-        texture = F.interpolate(rand(batch, 1, 24, 24), (height, width), mode="bilinear", align_corners=False)
-        angle, frequency, phase = math.pi * rand(), 12 + 20 * rand(), math.tau * rand()
-        ridges = (frequency * (x * angle.cos() + y * angle.sin()) + phase).sin().square()
-        field = 0.5 * texture + 0.5 * ridges
-        result = value * (1 - 0.35 * amount * field)
+        # Nonperiodic surface-slope shading; no regular bands or trace warping.
+        surface = F.avg_pool2d(F.pad(rand(batch, 1, 48, 48), (2, 2, 2, 2), mode="replicate"), 5, stride=1)
+        dx = F.pad(surface[..., 2:] - surface[..., :-2], (1, 1, 0, 0), mode="replicate")
+        dy = F.pad(surface[:, :, 2:] - surface[:, :, :-2], (0, 0, 1, 1), mode="replicate")
+        angle = math.tau * rand()
+        lighting = (12 * (dx * angle.cos() + dy * angle.sin())).tanh()
+        lighting = F.interpolate(lighting, (height, width), mode="bilinear", align_corners=False)
+        result = value * (1 + 0.55 * amount * lighting)
     elif operator in ("ink_fade", "grid_fade"):
         if operator == "ink_fade":
             high, low = value.amax(1, keepdim=True), value.amin(1, keepdim=True)

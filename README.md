@@ -30,6 +30,28 @@ The [full evaluation guide](docs/pulse_full_lora32_live_eval_20260928.md) lists
 the initial and reboot-recovery entrypoints. Inspect the selected run's state
 files for progress; a dated index entry is a snapshot.
 
+## Paper ECG operators (experimental)
+
+The [paper-image guide](docs/pulse_paper_operators.md) links the original papers,
+defines the training/stress split, and documents every approximation. The public
+Torch API is `core.paper_ecg.apply_paper_operator`: batched RGB tensors stay on
+their input device, with a caller-owned random generator. It requires no image
+files, Pillow round trips, custom CUDA, or model downloads.
+
+For a small code review, read these owners in order:
+
+1. `core/paper_ecg.py`: the 16 formulas and fixed operator lists.
+2. `core/image_corruption.py`: configuration, dispatch and implementation identity.
+3. `core/pulse_hybrid.py`: shared render, image branches and JSD views.
+4. `util/evaluation/pulse_hybrid_development.py`: paired views and separate
+   `image_seen`/`image_held_out` metrics.
+
+The `pulse_paper_*_ningbo_smoke.yaml` experiment declarations provide bounded
+training and evaluation examples. Dry-run them first and review their external
+paths. These are new candidate recipes; they do not change the running C5
+experiment or establish a clinical robustness result. See the guide for the
+current CPU/GPU verification boundary.
+
 ## Run one experiment
 
 Read [AGENTS.md](AGENTS.md), choose an existing experiment from the direction

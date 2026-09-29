@@ -1,0 +1,13 @@
+schema_version: 1
+experiment:
+  name: pulse_paper_stress_ningbo
+  purpose: Clean plus 16 paper artifacts at S5; report seen and held-out families
+    separately. Engineering/development only.
+entrypoint:
+  name: pulse_hybrid
+  config: eval/pulse_paper_stress_ningbo.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/pulse_paper_ecg_v1_20260930/ningbo_stress
+  if_exists: error
+  delegate_output_subdir: evaluation

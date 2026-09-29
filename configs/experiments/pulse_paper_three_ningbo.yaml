@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: pulse_paper_three_ningbo
+  purpose: Candidate paper-image LoRA recipe; requires separate new training and validation.
+entrypoint:
+  name: train_ecg_image
+  config: train/pulse_paper_three_ningbo.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/pulse_paper_ecg_v1_20260930/ningbo_three
+  if_exists: error
+  delegate_output_subdir: training

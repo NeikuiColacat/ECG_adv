@@ -19,6 +19,7 @@ from util.config_bundle import load_yaml_mapping, resolve_config_reference
 from util.evaluation.ecg_image_elastic import free_device, process_identity, resource_snapshot
 from util.evaluation.ecg_image_queue import atomic_json, exclusive_lock
 from util.pn2021_artifact_contract import sha256_file
+from util.run_record import capture_source_snapshot
 from util.pulse_training_contract import CENTERS, load_config, validate_result
 
 REPO = Path(__file__).resolve().parents[1]
@@ -268,15 +269,11 @@ def run_pixel_pipeline(config, config_path, config_root, output):
     stopping = [False]
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *args: stopping.__setitem__(0, True))
-    sources = {}
-    for relative in ("util/pulse_training_queue.py", "boot_scripts/coordinate_pulse_training.py",
+    sources = capture_source_snapshot(REPO, output / "source_snapshot",
+        ("util/pulse_training_queue.py", "boot_scripts/coordinate_pulse_training.py",
                      "core/augmix.py", "core/pulse_finetune.py", "util/pulse_training_contract.py",
                      "util/evaluation/pulse_subset.py", "util/evaluation/ecg_image_elastic.py",
-                     "boot_scripts/run_experiment.py", "util/run_record.py"):
-        destination = output / "source_snapshot" / relative
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(REPO / relative, destination)
-        sources[relative] = sha256_file(destination)
+                     "boot_scripts/run_experiment.py", "util/run_record.py"))
     atomic_json(output / "source_identity.json", sources)
     completed = {}
     with exclusive_lock(output.parent / "pixel_pipeline.lock"):
@@ -468,17 +465,13 @@ def run_dual_jsd(config, config_path, config_root, output):
     else:
         plans = dual_jsd_plans(config, config_path, config_root)
     output.mkdir(parents=True, exist_ok=False)
-    sources = {}
-    for relative in ("core/consistency.py", "core/pulse_visual.py", "core/pulse_finetune.py",
+    sources = capture_source_snapshot(REPO, output / "source_snapshot",
+        ("core/consistency.py", "core/pulse_visual.py", "core/pulse_finetune.py",
             "core/augmix.py", "core/online_trainer.py", "core/methods/registry.py",
             "util/pulse_training_contract.py", "util/pulse_training_queue.py",
             "util/evaluation/pulse_visual_subset.py", "util/evaluation/pulse_subset.py",
-            "util/config_bundle.py", *(("util/founder_width_queue.py", "util/run_record.py",
-                "core/methods/runtime.py", "core/corruption.py") if width_mode else ())):
-        dest = output / "source_snapshot" / relative
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(REPO/relative, dest)
-        sources[relative] = sha256_file(dest)
+            "util/config_bundle.py", "util/run_record.py", *(("util/founder_width_queue.py",
+                "core/methods/runtime.py", "core/corruption.py") if width_mode else ())))
     atomic_json(output/"source_identity.json", sources)
     atomic_json(output/"control.json", {"paused": False, "max_workers": 4})
     active, complete, idle_since = {}, {}, {}
@@ -608,14 +601,10 @@ def run(config_path, config_root, output):
     jobs = load_jobs(config, config_path, config_root)
     output.mkdir(parents=True, exist_ok=False)
     gate = admission(config)
-    gate["coordinator_sources"] = {}
-    for relative in ("util/pulse_training_queue.py", "boot_scripts/coordinate_pulse_training.py",
+    gate['coordinator_sources'] = capture_source_snapshot(REPO, output / "source_snapshot",
+        ("util/pulse_training_queue.py", "boot_scripts/coordinate_pulse_training.py",
                      "util/config_bundle.py", "util/evaluation/ecg_image_elastic.py",
-                     "util/evaluation/ecg_image_queue.py", "boot_scripts/run_experiment.py", "util/run_record.py"):
-        destination = output / "source_snapshot" / relative
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(REPO / relative, destination)
-        gate["coordinator_sources"][relative] = sha256_file(destination)
+                     "util/evaluation/ecg_image_queue.py", "boot_scripts/run_experiment.py", "util/run_record.py"))
     atomic_json(output / "admission.json", gate)
     atomic_json(output / "control.json", {"paused": False, "max_workers": 4, "allowed_gpus": candidates})
     atomic_json(output / "jobs.json", {key: {k: str(v) if isinstance(v, Path) else v for k, v in job.items()}

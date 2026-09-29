@@ -72,6 +72,17 @@ def test_grid_fade_keeps_achromatic_ink_and_yellowing_keeps_black():
     assert torch.equal(apply_paper_operator(black, "yellowing", severity=5, rng=torch.Generator()), black)
 
 
+def test_jpeg_constants_are_reused_without_mutation():
+    from core.image_augmix_gpu import _dct_matrix, _jpeg_quantization_tables
+    device = torch.device("cpu")
+    matrix, tables = _dct_matrix(device), _jpeg_quantization_tables(device)
+    saved_matrix, saved_tables = matrix.clone(), tables.clone()
+    assert _dct_matrix(device).data_ptr() == matrix.data_ptr()
+    assert _jpeg_quantization_tables(device).data_ptr() == tables.data_ptr()
+    apply_paper_operator(paper(), "jpeg_compression", severity=3, rng=torch.Generator().manual_seed(1))
+    assert torch.equal(matrix, saved_matrix) and torch.equal(tables, saved_tables)
+
+
 @pytest.mark.parametrize("severity", [-1, 6, float("nan"), True])
 def test_paper_rejects_invalid_severity(severity):
     with pytest.raises(ValueError):
@@ -85,6 +96,37 @@ def test_paper_rejects_nonfinite_pixels_and_missing_rng():
         apply_paper_operator(image, "crease", severity=1, rng=torch.Generator())
     with pytest.raises(ValueError, match="generator"):
         apply_paper_operator(paper(), "crease", severity=1, rng=None)
+
+
+@pytest.mark.parametrize("width", [0, 1, 3])
+def test_paper_training_dispatch_renders_once_and_records_identity(monkeypatch, width):
+    from core import image_augmix_gpu
+    from core.image_corruption import image_augmentation_protocol, validate_image_config
+    from core.paper_ecg import validate_paper_image
+    from core.pulse_hybrid import hybrid_jsd_views
+    monkeypatch.setattr(image_augmix_gpu, "validate_gpu_image", validate_paper_image)
+    config = dict(implementation="paper_ecg_torch_v1", operators=list(PAPER_TRAIN_OPERATORS),
+                  severity=2, waveform_strength=0.0, jsd_weight=3.0)
+    validate_image_config(config, for_execution=True)
+    class Renderer:
+        calls = 0
+        def render(self, wave):
+            self.calls += 1
+            return paper()[:1]
+    renderer = Renderer()
+    wave = torch.zeros(1, 5000, 12)
+    views, trace = hybrid_jsd_views(wave, width=width, profile=None, seed=17, identity="fixture",
+        renderer=renderer, image_config=config)
+    assert renderer.calls == 1 and len(views) == (3 if width else 1)
+    assert trace["topology"] == "image_only_gpu_branches_v1" and trace["residual"] == "clean_render"
+    assert all(not view["waveform_operators"] for view in trace["views"])
+    assert all(op in PAPER_TRAIN_OPERATORS for view in trace["views"] for chain in view["image_chains"] for op in chain)
+    protocol = image_augmentation_protocol(config, width)
+    assert protocol["image_gpu"]["implementation"] == "paper_ecg_torch_v1"
+    assert protocol["jsd_weight"] == (3.0 if width else 0.0)
+    for bad in ({**config, "waveform_strength": 0.1}, {**config, "operators": list(PAPER_HELDOUT_OPERATORS)}):
+        with pytest.raises(ValueError):
+            validate_image_config(bad, for_execution=True)
 
 
 @pytest.mark.skipif(os.environ.get("PULSE_GPU_OPS_NATIVE") != "1", reason="explicit native GPU admission required")

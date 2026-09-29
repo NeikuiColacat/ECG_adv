@@ -6,7 +6,7 @@ import pytest
 import yaml
 
 from util.pulse_hybrid_contract import validate_config
-from util.evaluation.pulse_hybrid_development import c5_admission_indices, select_c5_samples
+from util.evaluation.pulse_hybrid_development import image_admission_indices, select_image_samples
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -54,19 +54,19 @@ def test_author_admission_includes_each_tail_shape(batch, count):
         if size not in seen:
             expected.extend(range(start, start+size))
         seen.add(size)
-    assert c5_admission_indices(count, batch) == expected
-    assert c5_admission_indices(count, batch, every_batch=True) == list(range(count))
+    assert image_admission_indices(count, batch) == expected
+    assert image_admission_indices(count, batch, every_batch=True) == list(range(count))
 
 
 def test_random_subset_is_reproducible_nested_and_label_independent():
     rows = [{"sample_key": f"ningbo:{i}", "hash_id": str(i), "label": [i % 2]} for i in range(100)]
     before = copy.deepcopy(rows)
-    chosen = select_c5_samples(rows, 16, sampling_seed=20260924)
-    assert chosen == select_c5_samples(list(reversed(rows)), 16, sampling_seed=20260924)
-    assert chosen == select_c5_samples(rows, 32, sampling_seed=20260924)[:16]
-    assert chosen != select_c5_samples(rows, 16, sampling_seed=20260925)
+    chosen = select_image_samples(rows, 16, sampling_seed=20260924)
+    assert chosen == select_image_samples(list(reversed(rows)), 16, sampling_seed=20260924)
+    assert chosen == select_image_samples(rows, 32, sampling_seed=20260924)[:16]
+    assert chosen != select_image_samples(rows, 16, sampling_seed=20260925)
     altered = [{**r, "label": [0]} for r in rows]
-    assert [r["hash_id"] for r in chosen] == [r["hash_id"] for r in select_c5_samples(altered, 16, sampling_seed=20260924)]
+    assert [r["hash_id"] for r in chosen] == [r["hash_id"] for r in select_image_samples(altered, 16, sampling_seed=20260924)]
     assert len({r["hash_id"] for r in chosen}) == 16
     assert rows == before
 

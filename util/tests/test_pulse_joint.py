@@ -84,16 +84,19 @@ def test_gpu_c5_metrics_keep_only_clean_and_image_families_and_reject_identity_d
     ("final", True, False), ("screen", True, True)])
 @pytest.mark.parametrize("execution", ["reference_v1", "arm_major_fp16_adapters_v2", "arm_major_original_bypass_v3"])
 @pytest.mark.parametrize("batch_size", [1, 2, 3, 4])
-def test_gpu_c5_result_roundtrip_and_tamper_rejection(tmp_path, monkeypatch, phase, execution, random_subset, batch_size, performance_smoke):
+@pytest.mark.parametrize("suite", ["image_c5_gpu_v1", "paper_ecg_gpu_v1"])
+def test_gpu_image_result_roundtrip_and_tamper_rejection(tmp_path, monkeypatch, phase, execution, random_subset, batch_size, performance_smoke, suite):
     import json
     from util import pulse_hybrid_contract as contract
-    from util.evaluation.pulse_hybrid_development import c5_gpu_conditions_for
+    from util.evaluation.pulse_hybrid_development import gpu_image_conditions_for
     from util.pn2021_artifact_contract import sha256_file
     from util.pulse_training_contract import CLASS_ORDER, validate_result as validate_training
     from util.tests.test_pulse_hybrid_workflow import fixture
     from core.pulse_finetune import MODEL_HASHES, MODEL_CONFIG_HASHES
     from util.evaluation.pulse_hybrid_development import original_prediction_digest
 
+    paper = suite == "paper_ecg_gpu_v1"
+    implementation = "paper_ecg_torch_v1" if paper else "image_c5_torch_gpu_v1"
     monkeypatch.setattr(contract, "DATA", tmp_path)
     training_paths, training_hashes = {}, {}
     for arm, width in (("single", 1), ("three", 3)):
@@ -101,6 +104,8 @@ def test_gpu_c5_result_roundtrip_and_tamper_rejection(tmp_path, monkeypatch, pha
         directory.mkdir()
         config_path = ("configs/train/pulse_full_lora32_template.yaml" if phase != "smoke"
                        else f"configs/train/pulse_augmix_gpu_{arm}_ningbo.yaml")
+        if paper:
+            config_path = f"configs/train/pulse_paper_{arm}_ningbo" + ("_smoke" if phase == "smoke" else "") + ".yaml"
         config = yaml.safe_load((ROOT / config_path).read_text())
         config["width"] = width
         config["training"].update(optimizer_steps=200 if phase != "smoke" else 4, warmup_steps=0)
@@ -119,10 +124,10 @@ def test_gpu_c5_result_roundtrip_and_tamper_rejection(tmp_path, monkeypatch, pha
             "image_augmentation": config["image_augmentation"], "training": config["training"],
             "augmentation_topology": "image_only_gpu_branches_v1", "mix_residual": "clean_render",
             "dirichlet_alpha": 1., "clean_mix": "beta_1_1", "jsd_weight": config["image_augmentation"]["jsd_weight"],
-            "image_gpu": {"implementation": "augmix_torch_gpu_v2",
+            "image_gpu": {"implementation": "paper_ecg_torch_v1" if paper else "augmix_torch_gpu_v2",
                 "device_policy": "same_device_as_rendered_rgb", "waveform_corruption": "disabled",
-                "parity": "visual_approximation_not_reference_pixel_equivalence",
-                "host_tensor_transfer": "none_inside_operator"}}
+                "parity": "procedural_appearance_not_author_pixel_equivalence" if paper else "visual_approximation_not_reference_pixel_equivalence",
+                "host_tensor_transfer": "none_inside_prevalidated_operator" if paper else "none_inside_operator"}}
         path = directory / "train_result.json"
         trained = {"artifact_type": "pulse_train_result", "schema_version": 1, "status": "complete",
             "mode": "smoke" if phase == "smoke" else "train", "optimizer_steps": config["training"]["optimizer_steps"], "protocol": protocol,
@@ -140,7 +145,7 @@ def test_gpu_c5_result_roundtrip_and_tamper_rejection(tmp_path, monkeypatch, pha
         "util/config_bundle.py", "util/pn2021_artifact_contract.py", "util/random_seed.py", "util/run_record.py",
         "data_preprocess/load_cache.py", "data_preprocess/PN2021_preprocess.py", "data_preprocess/pn2021_metadata.py",
         "data_preprocess/data_runtime.py", "data_preprocess/preprocess_primitives.py", "core/image_augmix_gpu.py",
-        "core/image_augmix_c.py", "core/image_corruption.py", "core/image_stress.py", "util/augmentations/profile.py",
+        "core/image_augmix_c.py", "core/paper_ecg.py", "core/image_corruption.py", "core/image_stress.py", "util/augmentations/profile.py",
         "util/evaluation/ecg_image_artifact.py", "util/evaluation/ecg_image_elastic.py",
         "util/evaluation/pulse_visual_subset.py", "util/pulse_hybrid_contract.py", "util/pulse_training_contract.py",
         "models/checkpoints.py", "models/contracts.py", "models/input_adapter.py")
@@ -155,17 +160,17 @@ def test_gpu_c5_result_roundtrip_and_tamper_rejection(tmp_path, monkeypatch, pha
     if random_subset:
         population = [{**samples[i % 4], "sample_key": f"ningbo:heldout-{i}", "hash_id": f"heldout-{i}"} for i in range(64)]
         count = 16 if phase == "screen" else 32
-        samples = evaluator.select_c5_samples(population, count, sampling_seed=20260924)
+        samples = evaluator.select_image_samples(population, count, sampling_seed=20260924)
         monkeypatch.setattr(evaluator, "checked_full_parent", lambda *args, **kwargs: ({}, population, []))
         sampling = {"sampling_method": "seeded_hash_v1", "sampling_source_state": str(tmp_path),
             "sampling_population_identity": digest_json(population)}
     count = len(samples)
     batch_shapes = {min(batch_size, count)} | ({count % batch_size} if count % batch_size else set())
-    conditions = c5_gpu_conditions_for([{"condition_id": "clean", "operators": []}])
+    conditions = gpu_image_conditions_for([{"condition_id": "clean", "operators": []}], suite=suite, severity=5)
     arms = ["original", "single", "three"]
     rows = [{**c, "sample_key": s["sample_key"], "hash_id": s["hash_id"], "true_labels": s["label_names"],
              "processor_input_identity_sha256": processor_input_identity(seed=20260924, sample=s,
-                 condition=c, image_suite="image_c5_gpu_v1", renderer_identity=digest_json({})),
+                 condition=c, image_suite=suite, renderer_identity=digest_json({})),
              "processor_input_hash_mode": PROCESSOR_INPUT_HASH_MODE,
              "arms": {a: answer_fixture(s["label_names"]) for a in arms}} for s in samples for c in conditions]
     metrics = metrics_from_predictions(rows, samples, conditions, arms=arms)
@@ -187,12 +192,12 @@ def test_gpu_c5_result_roundtrip_and_tamper_rejection(tmp_path, monkeypatch, pha
     (output / "original_baseline.json").write_text(json.dumps(baseline))
     (output / "original_parent_parity.json").write_text(json.dumps(parity))
     if execution != "reference_v1":
-        check_indices = evaluator.c5_admission_indices(count, batch_size, every_batch=phase == "smoke" or performance_smoke)
+        check_indices = evaluator.image_admission_indices(count, batch_size, every_batch=phase == "smoke" or performance_smoke)
         performance = {"execution_mode": execution, "batch_size": batch_size,
             "trainable_vision_outputs_cached": 0, "inference_trainable_dtype": "float16",
             "reference_parameter_storage_restored": True,
             **({"original_zero_lora_bypassed": True} if execution == "arm_major_original_bypass_v3" else {}),
-            "records": [{"sample_key": s["sample_key"], "tokens_exact": True, "views": 6, "arms": 3}
+            "records": [{"sample_key": s["sample_key"], "tokens_exact": True, "views": len(conditions), "arms": 3}
                         for s in [samples[i] for i in check_indices]]}
         (output / "performance_admission.json").write_text(json.dumps(performance))
         batches = [{"offset": start, "sample_keys": [s["sample_key"] for s in samples[start:start + batch_size]],
@@ -209,9 +214,9 @@ def test_gpu_c5_result_roundtrip_and_tamper_rejection(tmp_path, monkeypatch, pha
         "original_parent_parity": parity,
         "phase": phase, "execution_mode": execution, "inference_batch_size": batch_size,
         "performance_smoke": performance_smoke,
-        "records": count, "conditions": 6, "image_suite": "image_c5_gpu_v1", **sampling,
+        "records": count, "conditions": len(conditions), "image_suite": suite, **sampling,
         "cohort_identity": digest_json(samples),
-        "image_severity": 5, "image_implementation": "image_c5_torch_gpu_v1", "model_arms": arms,
+        "image_severity": 5, "image_implementation": implementation, "model_arms": arms,
         "training_result_paths": training_paths, "training_results": training_hashes, "families": metrics["families"]})
     path = output / "hybrid_result.json"
     result = json.loads(path.read_text())

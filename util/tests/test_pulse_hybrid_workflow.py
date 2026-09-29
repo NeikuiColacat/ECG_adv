@@ -457,7 +457,7 @@ def test_three_arm_metrics_exclude_trained_clean_control():
 def test_c5_smoke_covers_four_centers_and_known_failure_records(tmp_path, monkeypatch):
     from util import pulse_hybrid_contract as contract
     from util.config_bundle import resolve_yaml_config_closure
-    from util.evaluation.pulse_hybrid_development import select_c5_samples
+    from util.evaluation.pulse_hybrid_development import select_image_samples
     path = ROOT / "configs/train/pulse_full_lora32_pipeline.yaml"
     config, _ = contract.load_config(path, ROOT / "configs")
     monkeypatch.setattr(contract, "DATA", tmp_path)
@@ -479,11 +479,11 @@ def test_c5_smoke_covers_four_centers_and_known_failure_records(tmp_path, monkey
         assert child["original_baseline_mode"] == "current_protocol_v1"
         assert child["admission_sample_keys"] == config["smoke_sample_keys"][center]
     rows = [{"sample_key": f"cpsc_2018:{i}", "label": i % 2} for i in range(281)]
-    assert select_c5_samples(rows, 4, ["cpsc_2018:280"])[0] == rows[280]
-    assert select_c5_samples(rows, "full") is rows
+    assert select_image_samples(rows, 4, ["cpsc_2018:280"])[0] == rows[280]
+    assert select_image_samples(rows, "full") is rows
     for count, probes in (("full", ["cpsc_2018:280"]), (4, ["cpsc_2018:missing"])):
         with pytest.raises(ValueError):
-            select_c5_samples(rows, count, probes)
+            select_image_samples(rows, count, probes)
     bad = copy.deepcopy(child); bad["original_baseline_mode"] = "ignore_parent"
     with pytest.raises(ValueError, match="explicit"):
         contract.validate_config(bad)

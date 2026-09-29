@@ -2,13 +2,20 @@
 
 Status: design and implementation in progress; no new training result is claimed.
 
+Verification so far: 1264 CPU tests passed, 237 skipped; all six managed paper
+declarations dry-run successfully. The actual PULSE environment also passes 139
+CPU checks with one native-GPU test skipped. A 24-case legacy comparison preserves
+exact pixels, augmentation traces and global RNG; 15 JPEG cases remain pixel exact
+after constant caching. Native GPU speed, full-model paper
+training/evaluation admission and clinical fidelity remain unvalidated.
+
 ## Delivery plan
 
 - [ ] Separate measured model inference costs from rendering and serialization.
 - [x] Verify paper-ECG artifacts against PULSE and ECG-Image-Kit primary sources.
-- [ ] Define a versioned training pool and independently reported stress suites.
-- [ ] Implement device-resident operators with PyTorch and bounded allocations.
-- [ ] Simplify the affected owners and document the public execution path.
+- [x] Define a versioned training pool and independently reported stress suites.
+- [x] Implement device-resident operators with PyTorch and bounded allocations.
+- [x] Simplify the affected owners and document the public execution path.
 - [ ] Verify deterministic replay, source identity, native-size execution,
       numerical parity where applicable, and measured throughput.
 
@@ -76,7 +83,7 @@ checks complete; it is not a published PULSE setting.
 | exposure | Gamma and illumination attenuation | Yes | Seen family; scanner/camera exposure |
 | shadow | Smooth spatial attenuation | Yes | Seen family; uneven lighting |
 | crease | Paired narrow dark/highlight bands | Yes | Seen family; fold appearance without signal warping |
-| wrinkle | Smooth texture plus directional shading | Yes | Seen family; wrinkle appearance proxy |
+| wrinkle | Nonperiodic height-field light/shadow shading | Yes | Seen family; wrinkle appearance proxy |
 | ink_fade | Attenuate dark achromatic ink | Yes | Seen family; trace/text fading proxy |
 | defocus | Separable Gaussian blur | Yes | Seen family; loss of sharpness |
 | sensor_noise | Additive RGB Gaussian noise | Yes | Seen family; imaging noise approximation |
@@ -107,6 +114,14 @@ Future composed damage should be a separate frozen suite, not mixed into this
 single-operator average. The retained waveform PN2021-C and image C5 numbers
 remain separate reference protocols.
 
+The managed evaluator runs one fixed severity per declaration: clean plus 16
+paper views (17 conditions, 51 generated answers per ECG across the three arms).
+Its family keys are `clean`, `image_seen` and `image_held_out`. To evaluate
+all five levels, freeze five declarations with fresh output roots and aggregate
+each family across severity levels; do not count repeated clean views as extra
+corruptions. The library also exposes all 80 operator/level combinations through
+`paper_conditions()` for external integrations.
+
 ### Parameter and replay contract
 
 Severity zero returns an exact clone without consuming RNG. For positive levels,
@@ -120,7 +135,7 @@ not author-derived clinical calibration. Increasing severity is not a guarantee
 of monotonic model error.
 
 The caller owns a generator on the input device. Same input, generator state,
-batch grouping, software and device give deterministic replay; CPU/CUDA bitwise
+batch grouping, software, device and deterministic backend settings give replay; CPU/CUDA bitwise
 equivalence and invariance to regrouping records are not claimed. Evaluate each
 record with its identity-derived seed and reuse its corrupted view across all
 model arms. Never reuse trainable visual features across adapters.
@@ -131,6 +146,66 @@ trusted chain validates its anchor once and uses `validate=False` internally.
 Only O(H+W) coordinate vectors are cached, with eight shape/device entries.
 Random fields are never cached. Conversion to display images belongs to audit
 export, outside the training/inference hot path.
+
+## Use and review
+
+From the repository root, the standalone API needs PyTorch:
+
+```python
+from core.paper_ecg import apply_paper_operator
+import torch
+
+# images: floating [batch, 3, height, width] RGB in [0, 1].
+generator = torch.Generator(device=images.device).manual_seed(7)
+augmented = apply_paper_operator(images, "crease", severity=2, rng=generator)
+```
+
+The managed Ningbo examples have explicit paired configurations:
+
+| Purpose | Experiment declaration | Scope |
+| --- | --- | --- |
+| Single-chain admission | `pulse_paper_single_ningbo_smoke.yaml` | Four optimizer steps, K500 only |
+| Three-chain admission | `pulse_paper_three_ningbo_smoke.yaml` | Same budget, three image branches |
+| Paired stress admission | `pulse_paper_stress_ningbo_smoke.yaml` | Four K500-excluded records, S5, three arms |
+| Candidate training | `pulse_paper_single_ningbo.yaml`, `pulse_paper_three_ningbo.yaml` | 200 matched optimizer steps |
+| Development stress screen | `pulse_paper_stress_ningbo.yaml` | 16 seeded K500-excluded records; never a paper-final result |
+
+All declarations are under `configs/experiments/`. For example:
+
+```bash
+/home/linbinhao/miniforge3/envs/ECGTwin/bin/python \
+  boot_scripts/run_experiment.py \
+  --config configs/experiments/pulse_paper_single_ningbo_smoke.yaml --dry-run
+```
+
+The paired stress example consumes both matching smoke training results. Actual
+execution needs one admitted free GPU and the model-specific environment. Do not
+substitute archived adapters from another recipe or bypass their source guards.
+Four-center work requires matching per-center training/evaluation declarations.
+
+CPU checks: `util/tests/test_paper_ecg.py`, the generic GPU-image result contract
+matrix in `test_pulse_joint.py`, and the retained training/launcher suites.
+Native operator checks are opt-in via `PULSE_GPU_OPS_NATIVE=1`, with exactly one
+admitted device selected in `CUDA_VISIBLE_DEVICES`. CPU fixtures and synthetic
+previews establish neither GPU throughput nor clinical fidelity.
+
+## Architecture changes
+
+- Training implementations share one configuration/dispatch/identity owner;
+  the trainer no longer repeats its protocol dictionary and source-file switch.
+- Image evaluation shares admission and sampling code across C5 and paper views,
+  while each suite retains its own condition generator and implementation ID.
+- Five fresh source-copy loops use `util.run_record.capture_source_snapshot`;
+  locked resume paths still verify existing snapshots without overwriting them.
+- Both AugMix views transfer their small diagnostic weights together once.
+  Image tensors are never copied for this logging operation.
+- JPEG DCT and quantization constants are reused per device, avoiding repeated
+  allocations and constant-table transfers after warmup.
+
+Existing replay recipes require their recorded source checkout. The initial
+Torch profiling screen was frozen at `63f6909` before training-owner changes;
+its old adapters must be profiled from that checkout. The separate live runtime
+continues with its original source identity.
 
 ## Performance acceptance
 

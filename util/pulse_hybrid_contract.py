@@ -15,9 +15,12 @@ RAM = Path("/dev/shm/linbinhao-pulse-hybrid")
 RAM_PREFIX_ROOT = Path("/dev/shm")
 RAM_PREFIX = "linbinhao-pulse-"
 ARCHIVE_ROOT = Path("/data/linbinhao/ecg_llm_runs")
-C5_ORIGINAL_BYPASS = "arm_major_original_bypass_v3"
-C5_FP16_MODES = ("arm_major_fp16_adapters_v2", C5_ORIGINAL_BYPASS)
-C5_OPTIMIZED_MODES = ("arm_major_cached_prompt_v1", *C5_FP16_MODES)
+GPU_C5_SUITE = "image_c5_gpu_v1"
+PAPER_SUITE = "paper_ecg_gpu_v1"
+GPU_IMAGE_SUITES = (GPU_C5_SUITE, PAPER_SUITE)
+ORIGINAL_BYPASS_MODE = "arm_major_original_bypass_v3"
+IMAGE_FP16_MODES = ("arm_major_fp16_adapters_v2", ORIGINAL_BYPASS_MODE)
+IMAGE_OPTIMIZED_MODES = ("arm_major_cached_prompt_v1", *IMAGE_FP16_MODES)
 
 
 def is_scoped_ram_path(value: Path) -> bool:
@@ -43,31 +46,32 @@ def validate_config(c):
         raise ValueError("invalid hybrid workflow mode/schema")
     if c["mode"] == "evaluate":
         c15 = c.get("image_suite") in ("joint_c15", "joint_c15_reference_v1")
-        c5 = c.get("image_suite") == "image_c5_gpu_v1"
+        gpu_images = c.get("image_suite") in GPU_IMAGE_SUITES
+        paper = c.get("image_suite") == PAPER_SUITE
         joint = c.get("image_suite") in ("joint_v2", "joint_v3") or c15
         reduced = c.get("image_suite") == "joint_v3"
         expected = {"schema_version", "mode", "references", "phase", "center", "records_per_center",
                     "source_state", "training_results", "waveform_indices", "image_strength", "seed"}
         if c.get("phase") == "block":
             expected.add("record_span")
-            if not c5 or c.get("records_per_center") != "full":
+            if c.get("image_suite") != GPU_C5_SUITE or c.get("records_per_center") != "full":
                 raise ValueError("record blocks require the full C5 cohort")
             validate_record_span(c.get("center"), c.get("record_span"))
         elif "record_span" in c:
             raise ValueError("record spans are reserved for block evaluations")
-        if joint or c5:
+        if joint or gpu_images:
             expected.add("image_suite")
-        if c15 or c5:
+        if c15 or gpu_images:
             expected.add("image_severity")
-        if c5:
+        if gpu_images:
             expected.add("original_baseline_mode")
             for key in ("execution_mode", "performance_smoke", "torch_profile", "inference_batch_size", "sampling_method"):
                 if key in c:
                     expected.add(key)
             if (type(c.get("torch_profile", False)) is not bool or c.get("torch_profile", False)
-                    and (not c.get("performance_smoke") or c.get("execution_mode") not in C5_OPTIMIZED_MODES)):
+                    and (not c.get("performance_smoke") or c.get("execution_mode") not in IMAGE_OPTIMIZED_MODES)):
                 raise ValueError("Torch profiling requires an optimized performance screen")
-            if (c.get("execution_mode", "reference_v1") not in ("reference_v1", *C5_OPTIMIZED_MODES)
+            if (c.get("execution_mode", "reference_v1") not in ("reference_v1", *IMAGE_OPTIMIZED_MODES)
                     or type(c.get("performance_smoke", False)) is not bool
                     or (c.get("performance_smoke", False) and c["phase"] not in ("smoke", "screen"))):
                 raise ValueError("invalid C5 execution/performance admission mode")
@@ -90,21 +94,21 @@ def validate_config(c):
         if "model_arms" in c:
             expected.add("model_arms")
             if (c["model_arms"] != ["original", "single", "three"]
-                    or c.get("image_suite") not in ("joint_c15_reference_v1", "image_c5_gpu_v1")):
+                    or c.get("image_suite") not in ("joint_c15_reference_v1", *GPU_IMAGE_SUITES)):
                 raise ValueError("three-arm evaluation requires the reference C15 suite")
         if set(c) != expected or c["phase"] not in ("smoke", "screen", "final", "block") or c["center"] not in CENTERS:
             raise ValueError("invalid hybrid development schema")
-        expected_waveforms = ([] if c5 else
+        expected_waveforms = ([] if gpu_images else
             list(range(1, 6)) if reduced or c15 else
             list(range(1, 21)) if c["phase"] == "final" or joint and c["phase"] == "screen" else [1, 10, 11, 20])
         from util.evaluation.pulse_hybrid_development import FULL_CENTER_RECORDS
-        random_subset = (c5 and c.get("sampling_method") == "seeded_hash_v1"
+        random_subset = (gpu_images and c.get("sampling_method") == "seeded_hash_v1"
             and type(c["records_per_center"]) is int and 16 <= c["records_per_center"] <= FULL_CENTER_RECORDS[c["center"]])
-        expected_records = {"smoke": 4, "screen": (c["records_per_center"] if c5 else 128), "final": c["records_per_center"], "block": "full"}[c["phase"]]
+        expected_records = {"smoke": 4, "screen": (c["records_per_center"] if gpu_images else 128), "final": c["records_per_center"], "block": "full"}[c["phase"]]
         if ((c["records_per_center"] not in (4, 16, 128, 512, "full") and not random_subset)
                 or (type(c["records_per_center"]) is not int and c["records_per_center"] != "full")
                 or ("sampling_method" in c and not random_subset)
-                or (c["phase"] == "screen" and c["records_per_center"] not in ((4, 16, 128) if c5 else (128,)) and not random_subset)
+                or (c["phase"] == "screen" and c["records_per_center"] not in ((4, 16, 128) if gpu_images else (128,)) and not random_subset)
                 or (c["phase"] == "final" and c["records_per_center"] not in (512, "full") and not random_subset)
                 or c["phase"] not in ("final", "block") and c["records_per_center"] == "full"
                 or c["records_per_center"] != expected_records
@@ -114,7 +118,7 @@ def validate_config(c):
             raise ValueError("development cohort or fixed corruption suite changed")
         if c15 and (type(c.get("image_severity")) is not int or not 1 <= c["image_severity"] <= 5):
             raise ValueError("invalid C15 image severity")
-        if c5 and (type(c.get("image_severity")) is not int or c["image_severity"] != 5
+        if gpu_images and (type(c.get("image_severity")) is not int or c["image_severity"] not in ((1, 2, 3, 4, 5) if paper else (5,))
                    or c.get("model_arms") != ["original", "single", "three"]):
             raise ValueError("GPU C5 evaluation requires integer severity 5 and three model arms")
         for raw in [c["source_state"], *c["training_results"].values()]:
@@ -297,27 +301,28 @@ def validate_result(result, path):
         details = result["details"]
         arms = tuple(details.get("model_arms", ("original", "clean", "single", "three")))
         if "model_arms" in details and (arms != ("original", "single", "three")
-                                        or details.get("image_suite") not in ("joint_c15_reference_v1", "image_c5_gpu_v1")):
+                                        or details.get("image_suite") not in ("joint_c15_reference_v1", *GPU_IMAGE_SUITES)):
             raise ValueError("invalid reference result model arms")
         phase = details.get("phase")
         suite = details.get("image_suite")
         c15 = suite in ("joint_c15", "joint_c15_reference_v1")
-        c5 = suite == "image_c5_gpu_v1"
+        gpu_images = suite in GPU_IMAGE_SUITES
+        paper = suite == PAPER_SUITE
         if type(details.get("records")) is not int:
             raise ValueError("result record count must be an integer")
-        if c5 and (type(details.get("inference_batch_size", 1)) is not int
+        if gpu_images and (type(details.get("inference_batch_size", 1)) is not int
                 or not 1 <= details.get("inference_batch_size", 1) <= 4
                 or type(details.get("performance_smoke", False)) is not bool
                 or (phase == "block" and details.get("inference_batch_size", 1) != 1)
                 or (details.get("performance_smoke", False) and phase not in ("smoke", "screen"))):
             raise ValueError("invalid result batch/performance policy")
         joint = suite in ("joint_v2", "joint_v3") or c15
-        condition_count = (6 if c5 else 96 if c15
+        condition_count = (17 if paper else 6 if gpu_images else 96 if c15
                            else 24 if suite == "joint_v3"
                            else ((20 if phase == "smoke" else 84) if joint else (25 if phase == "final" else 9)))
         full_cohort = details.get("full_cohort") is True
         from util.evaluation.pulse_hybrid_development import FULL_CENTER_RECORDS
-        random_subset = (c5 and details.get("sampling_method") == "seeded_hash_v1"
+        random_subset = (gpu_images and details.get("sampling_method") == "seeded_hash_v1"
             and phase in ("screen", "final") and not full_cohort and type(details.get("records")) is int
             and 16 <= details["records"] <= FULL_CENTER_RECORDS.get(details.get("center"), 0))
         if "sampling_method" in details and not random_subset:
@@ -326,7 +331,7 @@ def validate_result(result, path):
         if is_block:
             start, stop = validate_record_span(details.get("center"), details.get("record_span"))
             parent_digest = details.get("parent_cohort_identity")
-            if (not c5 or details.get("full_cohort") is not False
+            if (suite != GPU_C5_SUITE or details.get("full_cohort") is not False
                     or details.get("records") != stop - start
                     or not isinstance(parent_digest, str) or len(parent_digest) != 64
                     or any(ch not in "0123456789abcdef" for ch in parent_digest)):
@@ -335,7 +340,7 @@ def validate_result(result, path):
             raise ValueError("non-block result carries a partial record scope")
         valid_records = (is_block or (phase == "smoke" and details.get("records") == 4)
                          or random_subset
-                         or (phase == "screen" and type(details.get("records")) is int and details["records"] in ((4, 16, 128) if c5 else (128,)))
+                         or (phase == "screen" and type(details.get("records")) is int and details["records"] in ((4, 16, 128) if gpu_images else (128,)))
                          or (phase == "final" and ((full_cohort and details.get("records", 0) > 512)
                                                    or (not full_cohort and details.get("records") == 512))))
         if (phase not in ("smoke", "screen", "final", "block") or details.get("center") not in CENTERS
@@ -343,8 +348,8 @@ def validate_result(result, path):
                 or details.get("conditions") != condition_count):
             raise ValueError("hybrid result has an incomplete phase budget")
         cohort = json.loads((path.parent / "cohort.json").read_text())
-        if c5:
-            from util.evaluation.pulse_hybrid_development import c5_gpu_conditions_for, FULL_CENTER_RECORDS
+        if gpu_images:
+            from util.evaluation.pulse_hybrid_development import gpu_image_conditions_for, FULL_CENTER_RECORDS
             from util.evaluation.ecg_image_queue import digest_json
             if not {"cohort.json", "metrics.json", "generation_admission.json",
                     "original_parent_parity.json", "runtime.json"} <= set(result["files"]):
@@ -352,10 +357,10 @@ def validate_result(result, path):
             if (details.get("cohort_identity") != digest_json(cohort["samples"])
                     or (full_cohort and details["records"] != FULL_CENTER_RECORDS[details["center"]])):
                 raise ValueError("GPU C5 cohort identity or full population changed")
-            if (type(details.get("image_severity")) is not int or details["image_severity"] != 5
+            if (type(details.get("image_severity")) is not int or details["image_severity"] not in ((1, 2, 3, 4, 5) if paper else (5,))
                     or arms != ("original", "single", "three")
-                    or details.get("image_implementation") != "image_c5_torch_gpu_v1"
-                    or cohort["conditions"] != c5_gpu_conditions_for([cohort["conditions"][0]], severity=5)):
+                    or details.get("image_implementation") != ("paper_ecg_torch_v1" if paper else "image_c5_torch_gpu_v1")
+                    or cohort["conditions"] != gpu_image_conditions_for([cohort["conditions"][0]], suite=suite, severity=details["image_severity"])):
                 raise ValueError("GPU C5 image suite identity changed")
             paths = details.get("training_result_paths", {})
             training_hashes = details.get("training_results", {})
@@ -393,14 +398,14 @@ def validate_result(result, path):
                         or protocol.get("width") != {"single": 1, "three": 3}[arm]
                         or protocol.get("augmentation_topology") != "image_only_gpu_branches_v1"
                         or protocol.get("mix_residual") != "clean_render"
-                        or protocol.get("image_gpu", {}).get("implementation") != "augmix_torch_gpu_v2"
+                        or protocol.get("image_gpu", {}).get("implementation") != ("paper_ecg_torch_v1" if paper else "augmix_torch_gpu_v2")
                         or protocol.get("image_augmentation", {}).get("waveform_strength") != 0):
                     raise ValueError("GPU C5 referenced training lineage differs")
             if random_subset:
-                from util.evaluation.pulse_hybrid_development import checked_full_parent, select_c5_samples
+                from util.evaluation.pulse_hybrid_development import checked_full_parent, select_image_samples
                 _, population, _ = checked_full_parent({"source_state": details["sampling_source_state"],
                     "center": details["center"]}, training_records)
-                expected_samples = select_c5_samples(population, details["records"], sampling_seed=details["evaluation_seed"])
+                expected_samples = select_image_samples(population, details["records"], sampling_seed=details["evaluation_seed"])
                 if (details.get("sampling_population_identity") != digest_json(population)
                         or cohort["samples"] != expected_samples):
                     raise ValueError("frozen random subset identity/order changed")
@@ -437,6 +442,8 @@ def validate_result(result, path):
                 "source_snapshot/models/contracts.py",
                 "source_snapshot/models/input_adapter.py",
             }
+            if paper:
+                required_sources.add("source_snapshot/core/paper_ecg.py")
             if not required_sources <= set(result["files"]):
                 raise ValueError("GPU C5 source snapshot is incomplete")
         if joint:
@@ -475,7 +482,7 @@ def validate_result(result, path):
         rows = [r for name in sorted(result["files"]) if name.startswith("batches/")
                 for r in json.loads((path.parent / name).read_text())]
         if "merged_blocks" in details:
-            if (not c5 or phase != "final" or not full_cohort
+            if (suite != GPU_C5_SUITE or phase != "final" or not full_cohort
                     or "block_results.json" not in result["files"]):
                 raise ValueError("merged blocks require a complete final C5 artifact")
             from util.run_record import archived_reference
@@ -491,7 +498,7 @@ def validate_result(result, path):
                 raise ValueError("merged predictions differ from immutable evaluation blocks")
         elif "block_results.json" in result["files"]:
             raise ValueError("block provenance lacks a declared full-center merge")
-        if c5:
+        if gpu_images:
             from util.evaluation.pulse_hybrid_development import processor_input_identity, PROCESSOR_INPUT_HASH_MODE
             samples_by_key = {s["sample_key"]: s for s in cohort["samples"]}
             conditions_by_key = {c["condition_id"]: c for c in cohort["conditions"]}
@@ -510,9 +517,9 @@ def validate_result(result, path):
                 or len(cohort["conditions"]) != result["details"]["conditions"]):
             raise ValueError("hybrid result cohort mismatch")
         admissions = json.loads((path.parent / "generation_admission.json").read_text())
-        admission_batch = details.get("inference_batch_size", 1) if suite == "image_c5_gpu_v1" else 2
+        admission_batch = details.get("inference_batch_size", 1) if gpu_images else 2
         batch_shapes = {min(admission_batch, len(cohort["samples"]))}
-        if c5 and len(cohort["samples"]) % admission_batch:
+        if gpu_images and len(cohort["samples"]) % admission_batch:
             batch_shapes.add(len(cohort["samples"]) % admission_batch)
         if set(admissions) != {f"{a}_batch{b}" for a in arms for b in batch_shapes} or any(
                 v != {"packing_exact": True, "tokens_exact": True} for v in admissions.values()):
@@ -522,31 +529,31 @@ def validate_result(result, path):
             parity = json.loads(parity_path.read_text())
             if parity != details["original_parent_parity"]:
                 raise ValueError("original parent parity audit changed")
-            if not c5 and (parity.get("canonical_drift", 0) or parity.get("canonical_unknown", 0)):
+            if not gpu_images and (parity.get("canonical_drift", 0) or parity.get("canonical_unknown", 0)):
                 raise ValueError("unexplained original-parent answer drift")
-        if c5:
+        if gpu_images:
             baseline_path = path.parent / "original_baseline.json"
             execution = details.get("execution_mode", "reference_v1")
-            if execution not in ("reference_v1", *C5_OPTIMIZED_MODES):
+            if execution not in ("reference_v1", *IMAGE_OPTIMIZED_MODES):
                 raise ValueError("unknown GPU C5 execution mode")
-            if execution in C5_OPTIMIZED_MODES:
+            if execution in IMAGE_OPTIMIZED_MODES:
                 if "performance_admission.json" not in result["files"]:
                     raise ValueError("optimized C5 lacks native token parity admission")
                 admission = json.loads((path.parent / "performance_admission.json").read_text())
-                if execution in C5_FP16_MODES and (admission.get("inference_trainable_dtype") != "float16"
+                if execution in IMAGE_FP16_MODES and (admission.get("inference_trainable_dtype") != "float16"
                         or admission.get("reference_parameter_storage_restored") is not True):
                     raise ValueError("FP16 inference requires restored reference parameter storage")
-                if execution == C5_ORIGINAL_BYPASS and admission.get("original_zero_lora_bypassed") is not True:
+                if execution == ORIGINAL_BYPASS_MODE and admission.get("original_zero_lora_bypassed") is not True:
                     raise ValueError("original LoRA bypass lacks zero-update admission")
                 checks = admission.get("records", [])
-                from util.evaluation.pulse_hybrid_development import c5_admission_indices
-                check_indices = c5_admission_indices(len(cohort["samples"]), admission_batch,
+                from util.evaluation.pulse_hybrid_development import image_admission_indices
+                check_indices = image_admission_indices(len(cohort["samples"]), admission_batch,
                     every_batch=phase == "smoke" or details.get("performance_smoke", False))
                 if (admission.get("execution_mode") != execution or admission.get("batch_size") != admission_batch
                         or admission.get("trainable_vision_outputs_cached") != 0
                         or len(checks) != len(check_indices)
                         or [r["sample_key"] for r in checks] != [cohort["samples"][i]["sample_key"] for i in check_indices]
-                        or any(r.get("tokens_exact") is not True or r.get("views") != 6 or r.get("arms") != 3 for r in checks)):
+                        or any(r.get("tokens_exact") is not True or r.get("views") != condition_count or r.get("arms") != 3 for r in checks)):
                     raise ValueError("optimized C5 token admission is incomplete")
                 if "inference_batch_size" in details:
                     if "performance_batches.json" not in result["files"]:
@@ -560,7 +567,7 @@ def validate_result(result, path):
                         seconds = timing.get("seconds", {})
                         checked = start in check_indices
                         expected_seconds = {"reference", "optimized"} if checked else {"optimized"}
-                        if execution == C5_ORIGINAL_BYPASS and details.get("performance_smoke", False):
+                        if execution == ORIGINAL_BYPASS_MODE and details.get("performance_smoke", False):
                             expected_seconds.add("baseline")
                         if (type(timing.get("offset")) is not int or timing["offset"] != start
                                 or timing.get("sample_keys") != keys

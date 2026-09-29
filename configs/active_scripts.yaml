@@ -46,6 +46,20 @@ launch_surface_policy:
     - no_implicit_overwrite
     - no_agent_workspace_runtime_import
 
+pulse_paper_torch_v1:
+  status: candidate_cpu_validated_gpu_admission_pending
+  protocol: docs/pulse_paper_operators.md
+  training_admission:
+    - configs/experiments/pulse_paper_single_ningbo_smoke.yaml
+    - configs/experiments/pulse_paper_three_ningbo_smoke.yaml
+  evaluation_admission: configs/experiments/pulse_paper_stress_ningbo_smoke.yaml
+  candidate_training:
+    - configs/experiments/pulse_paper_single_ningbo.yaml
+    - configs/experiments/pulse_paper_three_ningbo.yaml
+  development_screen: configs/experiments/pulse_paper_stress_ningbo.yaml
+  profile: configs/experiments/pulse_torch_profile.yaml
+  profile_source_commit: 63f6909b79d51737b3fa1d0abb9b73252e6a7628
+
 pulse_reference_fixed_s3_steps200_20260919:
   workflow_config: configs/experiments/pulse_reference_fixed_pipeline.yaml
   protocol: docs/pulse_reference_fixed_pipeline.md
