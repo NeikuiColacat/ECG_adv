@@ -19,6 +19,37 @@ def search():
     return yaml.safe_load((ROOT / "configs/train/pulse_hybrid_search.yaml").read_text())
 
 
+@pytest.mark.parametrize("fixed", [False, True])
+def test_coordinator_state_preserves_controls_and_rejects_drift(tmp_path, monkeypatch, fixed):
+    from util import pulse_hybrid_workflow as workflow
+    from util.evaluation import ecg_image_elastic
+    repo, state, output = tmp_path / "repo", tmp_path / "state", tmp_path / "output"
+    source = repo / "core/fixture.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("SOURCE_VERSION = 1")
+    identity = {"config": "frozen-config", "sources": {"core/fixture.py": workflow.sha256_file(source)}}
+    defaults = {"paused": False, "max_workers": 4, "allowed_gpus": [1, 4, 5, 7]}
+    process = {"pid": 123, "start_ticks": "456", "boot_id": "fixture"}
+    monkeypatch.setattr(workflow, "REPO", repo)
+    monkeypatch.setattr(ecg_image_elastic, "process_identity", lambda pid: process)
+    workflow._bind_coordinator_state(state, output, identity, defaults, fixed=fixed)
+    assert json.loads((state / "identity.json").read_text()) == identity
+    assert (state / "source_snapshot/core/fixture.py").read_bytes() == source.read_bytes()
+    assert json.loads((state / "coordinator.json").read_text()) == {"process": process, "output": str(output)}
+    paused = {"paused": True, "max_workers": 1, "allowed_gpus": [7]}
+    workflow.atomic_json(state / "control.json", paused)
+    workflow._bind_coordinator_state(state, output, identity, defaults, fixed=fixed)
+    assert json.loads((state / "control.json").read_text()) == paused
+    with pytest.raises(RuntimeError, match="source/config changed"):
+        workflow._bind_coordinator_state(state, output, {**identity, "config": "changed"}, defaults, fixed=fixed)
+    snapshot = state / "source_snapshot/core/fixture.py"
+    snapshot.write_text("tampered snapshot")
+    with pytest.raises(RuntimeError, match="source snapshot changed"):
+        workflow._bind_coordinator_state(state, output, identity, defaults, fixed=fixed)
+    assert snapshot.read_text() == "tampered snapshot"
+    assert json.loads((state / "control.json").read_text()) == paused
+
+
 def test_full_lora_ram_storage_is_explicit_and_bounded():
     from util.pulse_training_contract import validate_config as validate_training
     config = yaml.safe_load((ROOT / "configs/train/pulse_full_lora32_pipeline.yaml").read_text())

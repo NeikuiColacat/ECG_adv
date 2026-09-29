@@ -159,6 +159,33 @@ the authorized `/data/linbinhao/ecg_llm_runs` HDD namespace. Choose storage befo
 launching a managed job; do not move its active output or spill onto the nearly
 full SSD. Copy, fsync and verify the archive before releasing RAM artifacts.
 
+## Simplification priorities
+
+Pause speculative performance tuning while the retained experiment runs. The
+v3 measurements establish a bounded 9.58% generation-time reduction. Historical
+last-position projection saved about 0.78-1.08% in its own small probe, without
+a stable-speedup claim. Historical merged-LoRA measurements were larger, but
+their logits were not bitwise identical and they are not current v3 admissions.
+These observations guide engineering effort; they do not establish a hardware
+or model performance ceiling. See the active evidence registry for each scope.
+
+Prefer explicit ownership and fewer duplicated rules:
+
+1. Both coordinator entrypoints share `_bind_coordinator_state`. It preserves
+   existing operator controls and rejects changed source/config or snapshots;
+   each caller still owns its lock, resource policy and job graph.
+2. Keep task construction, scheduling and result verification separate. Preserve
+   numerical code, data identity, hashes and failure semantics while simplifying.
+3. Review retained traditional-training modules before narrowing repository
+   scope. Six large modules account for 9,917 lines, but are still referenced by
+   retained entrypoints. Shared `core/augmix.py` and `core/consistency.py`
+   are directly imported by PULSE, so directory names alone cannot guide removal.
+
+The first startup-state pass reduces tracked production Python from 37,620 to
+37,613 physical lines across the same 92 files. Its main benefit is one review
+point for the shared state contract. Larger reductions require a dependency-led
+scope review; compressing formatting or removing integrity checks is not a goal.
+
 ## Safe development loop
 
 Run the canonical launcher with `--dry-run`, check resources, then select free

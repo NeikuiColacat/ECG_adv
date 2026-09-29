@@ -661,9 +661,28 @@ def mirror_metrics(name, entry, config, state):
         "returncode": result.returncode, "stdout": result.stdout, "stderr": result.stderr})
 
 
+def _bind_coordinator_state(state, output, identity, default_control, *, fixed=False):
+    """Bind state under the caller's coordinator lock; preserve live controls."""
+    from util.evaluation.ecg_image_elastic import process_identity
+    identity_path = state / "identity.json"
+    if identity_path.exists() and json.loads(identity_path.read_text()) != identity:
+        raise RuntimeError("fixed workflow source/config changed; new admission is required" if fixed else
+                           "workflow source/config changed; new study or re-admission required")
+    atomic_json(identity_path, identity)
+    for relative, digest in identity["sources"].items():
+        destination = state / "source_snapshot" / relative
+        if not destination.exists():
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(REPO / relative, destination)
+        if sha256_file(destination) != digest:
+            raise RuntimeError("fixed workflow source snapshot changed" if fixed else "workflow source snapshot changed")
+    if not (state / "control.json").exists():
+        atomic_json(state / "control.json", default_control)
+    atomic_json(state / "coordinator.json", {"process": process_identity(os.getpid()), "output": str(output)})
+
+
 def run(config, refs, config_path, root, output):
     from util.pulse_training_contract import load_config as load_training
-    from util.evaluation.ecg_image_elastic import process_identity
     import optuna
     template, _ = load_training(refs["training_config"], root)
     durable = Path(config["paths"]["run_root"])
@@ -676,20 +695,8 @@ def run(config, refs, config_path, root, output):
                for p in (REPO / directory).rglob("*.py") if "tests" not in p.parts}
     identity = {"config": digest_json(config), "sources": sources}
     with exclusive_lock(state / "coordinator.lock"):
-        identity_path = state / "identity.json"
-        if identity_path.exists() and json.loads(identity_path.read_text()) != identity:
-            raise RuntimeError("workflow source/config changed; new study or re-admission required")
-        atomic_json(identity_path, identity)
-        for source, digest in sources.items():
-            destination = state / "source_snapshot" / source
-            if not destination.exists():
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(REPO / source, destination)
-            if sha256_file(destination) != digest:
-                raise RuntimeError("workflow source snapshot changed")
-        if not (state / "control.json").exists():
-            atomic_json(state / "control.json", {"paused": False, "max_workers": 4, "allowed_gpus": list(range(8))})
-        atomic_json(state / "coordinator.json", {"process": process_identity(os.getpid()), "output": str(output)})
+        _bind_coordinator_state(state, output, identity,
+            {"paused": False, "max_workers": 4, "allowed_gpus": list(range(8))})
         smoke_jobs = make_jobs(config, root, template, phase="smoke", recipe=None)
         smoke = run_jobs(smoke_jobs, config, state, sources, smoke=True)
         recovery = Path(smoke["smoke_ningbo_resume"]["path"]).parent / "recovery_audit.json"
@@ -995,7 +1002,6 @@ def run_fixed(config, refs, config_path, root, output):
     """Finite smoke -> eight matched trains -> four C15 evaluations -> report."""
     from util.pulse_training_contract import load_config as load_training
     from util.pulse_training_queue import allowed_gpus
-    from util.evaluation.ecg_image_elastic import process_identity
     from util.evaluation.pulse_hybrid_development import summarize_four_centers, merge_center_blocks
 
     candidates = allowed_gpus()
@@ -1019,21 +1025,8 @@ def run_fixed(config, refs, config_path, root, output):
                    for directory in ("core", "util", "boot_scripts", "data_preprocess", "models")
                    for p in (REPO / directory).rglob("*.py") if "tests" not in p.parts}
         identity = {"config": digest_json(config), "sources": sources}
-        identity_path = state / "identity.json"
-        if identity_path.exists() and json.loads(identity_path.read_text()) != identity:
-            raise RuntimeError("fixed workflow source/config changed; new admission is required")
-        atomic_json(identity_path, identity)
-        for relative, digest in sources.items():
-            destination = state / "source_snapshot" / relative
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            if not destination.exists():
-                shutil.copyfile(REPO / relative, destination)
-            if sha256_file(destination) != digest:
-                raise RuntimeError("fixed workflow source snapshot changed")
-        if not (state / "control.json").exists():
-            atomic_json(state / "control.json", {"paused": False,
-                "max_workers": config.get("storage", {}).get("max_workers", 4), "allowed_gpus": candidates})
-        atomic_json(state / "coordinator.json", {"process": process_identity(os.getpid()), "output": str(output)})
+        _bind_coordinator_state(state, output, identity, {"paused": False,
+            "max_workers": config.get("storage", {}).get("max_workers", 4), "allowed_gpus": candidates}, fixed=True)
         try:
             resume_checkpoints, precompleted = None, {}
             smoke = {}
