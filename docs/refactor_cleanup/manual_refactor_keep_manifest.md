@@ -158,6 +158,7 @@ ECGFounder：Stage1 clean BCE / clean BCE+12×Bernoulli JSD 对照，源anchor5�
 | `.codex/skills/shared-gpu-server-discipline/SKILL.md` | `KEEP-MANUAL` | GPU、CPU、内存、IO、进程、端口和输出目录的共享服务器前置检查 | 新资源纪律入口完整接管共享服务器安全规则 |
 | `configs/README.md` | `KEEP-MANUAL` | configs-shaped 配置束、单一 launcher 和相对引用规则 | 新配置文档完整接管 bundle root、闭包、输出与覆盖规则 |
 | `core/image_augmix_gpu.py` | `KEEP-MANUAL` | `augmix_torch_gpu_v2` 的九个训练图像算子与 `image_c5_torch_gpu_v1` 的五个评测图像算子；设备内 RNG、几何、直方图、运动模糊、弹性和块 DCT JPEG 近似 | 保留图像张量不经 CPU、实现身份独立于 PIL 参考、波形腐蚀关闭的协议边界；视觉近似结果不得并入参考证据 |
+| `core/paper_ecg.py` | `KEEP-MANUAL` | 独立版本的纯 Torch 纸质 ECG 外观算子；十类训练候选、六类 held-out stress | 严重度为工程定义；不声称作者像素一致或临床校准；历史 PN2021-C/C5 身份不变 |
 | `configs/train/pulse_augmix_gpu_single_ningbo.yaml` | `KEEP-MANUAL` | Ningbo 单链 GPU 图像 AugMix 开发配置 | 仅经受管 launcher 使用；保留 native500、K500、GPU v2、waveform_strength=0 和外部输出根 |
 | `configs/train/pulse_augmix_gpu_three_ningbo.yaml` | `KEEP-MANUAL` | Ningbo 三链 GPU 图像 AugMix 开发配置 | 同上 |
 | `configs/eval/pulse_image_c5_gpu_ningbo.yaml` | `KEEP-MANUAL` | clean 加五个 GPU 图像腐蚀的 severity=5 开发评测配置 | 保留三臂 identity、空 waveform_indices、五算子顺序和 GPU C5 独立证据身份 |
@@ -546,6 +547,12 @@ LoRA B 全零时跳过零增量分支，保留 projector、微调臂及独立视
 四中心工程准入为 `KEEP-MANUAL`；继续使用现有 hybrid 入口，以最终模型、
 B1、六条件逐 token 对照作者路径和当前 v2，禁止覆盖运行中的旧结果身份。
 
+`configs/eval/pulse_torch_profile.yaml` 和 `configs/experiments/pulse_torch_profile.yaml`
+为 `KEEP-MANUAL`；受管四样本性能 screen 在已准入的单个视图上采集 Torch
+CPU/CUDA trace，记录 vision/projector/prefill/decode/lm_head，剖析耗时不用于
+吞吐结论，剖析前后 token 必须一致。实现继续归属 `pulse_profile.py`。
+`docs/pulse_paper_operators.md` 为 `KEEP-MANUAL` 的原始文献、算子设计及验证边界说明。
+
 `boot_scripts/profile_pulse_adapters.py`、`util/evaluation/pulse_profile.py` 和
 `configs/experiments/pulse_adapter_profile.yaml` 为 `KEEP-MANUAL` 的受管工程
 测速入口。只用宁波 K500 前两条及固定 clean/depth2/depth3 各一条件，保存
@@ -877,6 +884,10 @@ CPU fixtures do not establish model-weight or GPU numerical admissions.
 oracles and explicit single-GPU 9+5 replay, dtype, range, RNG, input immutability,
 native-canvas and image-only training integration checks. CUDA checks are
 opt-in; neither these tests nor visual approximations establish CPU-reference parity.
+
+`util/tests/test_paper_ecg.py`: KEEP-MANUAL, paper-image replay, dtype/range,
+source/RNG preservation, zero identity, gradient flow, family split, and explicit
+native-size GPU admission. CPU checks do not establish clinical fidelity or GPU speed.
 
 `util/tests/test_image_augmix_c.py`: KEEP-MANUAL, original PIL formulas, all C15
 operators, real JPEG/pixelate, private/restored RNG and constant-image regression.

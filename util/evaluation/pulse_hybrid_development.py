@@ -546,7 +546,7 @@ def run(config, refs, root, output):
     output.mkdir(parents=True, exist_ok=False)
     (output / "batches").mkdir()
     for relative in ("util/evaluation/pulse_hybrid_development.py", "util/evaluation/pulse_adapters.py", "core/pulse_finetune.py",
-            "util/evaluation/pulse_visual_subset.py", "core/image_corruption.py", "core/image_stress.py",
+            "util/evaluation/pulse_visual_subset.py", "util/evaluation/pulse_profile.py", "core/image_corruption.py", "core/image_stress.py",
             "core/image_augmix_c.py", "core/image_augmix_gpu.py", "util/pulse_hybrid_contract.py",
             "util/pulse_training_contract.py", "util/augmentations/profile.py",
             "util/augmentations/torch_operators.py", "util/config_bundle.py",
@@ -647,6 +647,12 @@ def run(config, refs, root, output):
                 raise ValueError("optimized C5 generation differs from reference tokens/answers")
             if compare_baseline and (baseline_tokens != optimized_tokens or baseline_answers != optimized_answers):
                 raise ValueError("optimized C5 generation differs from current v2 tokens/answers")
+            if config.get("torch_profile", False) and offset == 0:
+                from util.evaluation.pulse_profile import profile_generation
+                answers, tokens, summary = profile_generation(backend, prepared_views[:1], output)
+                if answers != optimized_answers[:1] or tokens != optimized_tokens[:1]:
+                    raise ValueError("Torch profiling changed admitted generation outputs")
+                atomic_json(output / "torch_profile.json", {**summary, "tokens_exact": True})
             if compare:
                 performance.extend({"sample_key": sample["sample_key"], "tokens_exact": True,
                     "views": len(conditions), "arms": len(arms), "seconds": timings,

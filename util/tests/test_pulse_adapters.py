@@ -8,6 +8,52 @@ import torch
 from util.evaluation.pulse_adapters import decode_generated, pack_shared_prompt_features
 
 
+@pytest.mark.parametrize("fail", [False, True])
+def test_torch_profile_stages_preserve_outputs_and_remove_hooks(monkeypatch, tmp_path, fail):
+    from util.evaluation.pulse_profile import profile_generation
+
+    class Backbone(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.mm_projector = torch.nn.Linear(4, 4)
+
+        def forward(self, *, inputs_embeds):
+            return inputs_embeds + 1
+
+    backbone = Backbone()
+    vision, head = torch.nn.Linear(4, 4), torch.nn.Linear(4, 7)
+    base = SimpleNamespace(get_model=lambda: backbone, get_vision_tower=lambda: vision, lm_head=head)
+    backend = SimpleNamespace(base=base)
+
+    def generate(views):
+        x = backbone.mm_projector(vision(views[0]))
+        head(backbone(inputs_embeds=x))
+        ids = head(backbone(inputs_embeds=x[:, :1])).argmax(-1).tolist()
+        if fail:
+            raise RuntimeError("probe failure")
+        backend.last_view_token_ids = ids
+        return ids
+
+    backend.generate_views = generate
+    original_profile = torch.profiler.profile
+    monkeypatch.setattr(torch.profiler, "profile", lambda **kwargs:
+        original_profile(activities=[torch.profiler.ProfilerActivity.CPU]))
+    monkeypatch.setattr(torch.cuda, "synchronize", lambda: None)
+    views = [torch.ones(1, 3, 4)]
+    if fail:
+        with pytest.raises(RuntimeError, match="probe failure"):
+            profile_generation(backend, views, tmp_path)
+    else:
+        expected = generate(views)
+        answers, tokens, summary = profile_generation(backend, views, tmp_path)
+        assert answers == tokens == expected
+        assert {e["name"] for e in summary["stages"]} == {
+            "pulse/vision", "pulse/projector", "pulse/llm_prefill", "pulse/llm_decode", "pulse/lm_head"}
+        assert not summary["cuda_trace_available"]
+        assert (tmp_path / "torch_trace.json").is_file()
+    assert all(not m._forward_hooks and not m._forward_pre_hooks for m in (backbone, vision, head, backbone.mm_projector))
+
+
 @pytest.mark.parametrize("value", [None, 0.1, float("nan")])
 def test_original_lora_bypass_rejects_missing_or_nonzero_factors(value):
     from util.evaluation.pulse_adapters import HybridPulseBackend

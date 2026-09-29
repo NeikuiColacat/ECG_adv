@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: pulse_torch_profile
+  purpose: Bounded PyTorch CPU/CUDA stage trace with matched v2/v3 token admission.
+entrypoint:
+  name: pulse_hybrid
+  config: eval/pulse_torch_profile.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/pulse_torch_profile_20260930_r0
+  if_exists: error
+  delegate_output_subdir: evaluation

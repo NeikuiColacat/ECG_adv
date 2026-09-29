@@ -7,6 +7,61 @@ import time
 from util.pn2021_artifact_contract import sha256_file
 
 
+def profile_generation(backend, views, output):
+    """Trace one admitted view; profiled times are never throughput evidence."""
+    import torch
+    if len(views) != 1:
+        raise ValueError("Torch profiling is bounded to one prepared view")
+    modules = {backend.base.get_vision_tower(): "vision",
+               backend.base.get_model().mm_projector: "projector",
+               backend.base.get_model(): "llm", backend.base.lm_head: "lm_head"}
+    handles, scopes = [], []
+
+    def enter(module, args, kwargs):
+        name = modules[module]
+        if name == "llm":
+            value = kwargs.get("inputs_embeds")
+            if value is None:
+                value = kwargs.get("input_ids")
+            if value is None and args:
+                value = args[0]
+            name = "llm_prefill" if value is not None and value.shape[1] > 1 else "llm_decode"
+        scope = torch.profiler.record_function("pulse/" + name)
+        scope.__enter__()
+        scopes.append(scope)
+
+    def leave(module, args, kwargs, result):
+        scopes.pop().__exit__(None, None, None)
+
+    try:
+        for module in modules:
+            handles.append(module.register_forward_pre_hook(enter, with_kwargs=True))
+            handles.append(module.register_forward_hook(leave, with_kwargs=True, always_call=True))
+        with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU,
+                torch.profiler.ProfilerActivity.CUDA], record_shapes=False,
+                profile_memory=False, with_stack=False) as profile:
+            answers = backend.generate_views(views)
+            torch.cuda.synchronize()
+    finally:
+        for handle in handles:
+            handle.remove()
+        while scopes:
+            scopes.pop().__exit__(None, None, None)
+    profile.export_chrome_trace(str(output / "torch_trace.json"))
+    events = [{"name": e.key, "calls": e.count,
+               "cpu_total_ms": e.cpu_time_total / 1000,
+               "cpu_self_ms": e.self_cpu_time_total / 1000,
+               "cuda_total_ms": e.cuda_time_total / 1000,
+               "cuda_self_ms": e.self_cuda_time_total / 1000}
+              for e in profile.key_averages()]
+    summary = {"scope": "one_view_all_arms_after_admission_not_throughput",
+               "cuda_trace_available": any("CUDA" in str(e.device_type) for e in profile.events()),
+               "stages": [e for e in events if e["name"].startswith("pulse/")],
+               "top_cpu": sorted(events, key=lambda e: e["cpu_self_ms"], reverse=True)[:20],
+               "top_cuda": sorted(events, key=lambda e: e["cuda_self_ms"], reverse=True)[:20]}
+    return answers, backend.last_view_token_ids, summary
+
+
 @contextmanager
 def merged_lora_probe(base):
     """Use PEFT's merge, but restore exact CPU backups instead of subtracting delta."""

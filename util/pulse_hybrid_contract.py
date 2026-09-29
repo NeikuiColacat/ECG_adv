@@ -61,9 +61,12 @@ def validate_config(c):
             expected.add("image_severity")
         if c5:
             expected.add("original_baseline_mode")
-            for key in ("execution_mode", "performance_smoke", "inference_batch_size", "sampling_method"):
+            for key in ("execution_mode", "performance_smoke", "torch_profile", "inference_batch_size", "sampling_method"):
                 if key in c:
                     expected.add(key)
+            if (type(c.get("torch_profile", False)) is not bool or c.get("torch_profile", False)
+                    and (not c.get("performance_smoke") or c.get("execution_mode") not in C5_OPTIMIZED_MODES)):
+                raise ValueError("Torch profiling requires an optimized performance screen")
             if (c.get("execution_mode", "reference_v1") not in ("reference_v1", *C5_OPTIMIZED_MODES)
                     or type(c.get("performance_smoke", False)) is not bool
                     or (c.get("performance_smoke", False) and c["phase"] not in ("smoke", "screen"))):
