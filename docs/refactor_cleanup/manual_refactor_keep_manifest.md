@@ -853,6 +853,9 @@ SHA 与实际 ref-excluded split，再重算相同子集指标。外部模型/EC
 
 ### A9. 最终基础契约测试
 
+`util/tests/test_pulse_live_metrics.py`: KEEP-MANUAL, committed-record updates,
+restart/idempotence, paired-batch validation and offline-metric equivalence with
+unequal center sizes. CPU synthetic fixtures do not establish model performance.
 `docs/pulse_evaluation_architecture.md`: KEEP-MANUAL, PULSE code ownership,
 paired evaluation rectangle, measured batch/K selection and artifact review.
 
@@ -886,6 +889,10 @@ KEEP-MANUAL：B1 原生 token 等价和有界 Nsight 性能预检，非最终评
 复用已完成 rank-32 权重，执行四中心全量 K500 排除的 C5 推理；按512条切块、
 batch=1、最多四张空闲卡调度。只用已提交预测更新阶段性指标，最终要求与合并结果
 一致；保留新推理适配器的四中心 smoke/token 等价准入，不重训、不覆盖旧运行。
+
+`configs/train/pulse_full_lora32_live_eval_20260929_resume4gpu.yaml` 和
+`configs/experiments/pulse_full_lora32_live_eval_20260929_resume4gpu.yaml` 为 KEEP-MANUAL：
+从固定哈希的重启前归档恢复，复用完整块，在新输出目录补算未完成块；同一科学协议。
 
 以下配置为 KEEP-MANUAL：使用已完成且审计的 200-step 权重，对每中心固定种子
 随机选出的 16 条 K500 排除记录测试 batch 1/2/4（必要时 3）。仅按吞吐、显存和

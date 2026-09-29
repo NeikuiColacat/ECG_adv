@@ -46,12 +46,28 @@ def test_nonfinite_and_out_of_space_feedback_is_rejected():
 
 def test_optuna_cpu_ask_tell_and_storage(tmp_path):
     from importlib.util import find_spec
+    import json
+    import subprocess
+    import sys
+
     if find_spec("optuna") is None:
         pytest.skip("Optuna is installed only in the coordinator environment")
-    from core.pulse_hpo import open_study, suggest_recipe
-    study = open_study(tmp_path, seed=20260914)
-    trial = study.ask()
-    recipe = suggest_recipe(trial, SPACE)
-    assert set(recipe) == SEARCH_KEYS
-    study.tell(trial, 0.5)
-    assert open_study(tmp_path, seed=20260914).best_trial.number == trial.number
+    # Match the search entrypoint's fresh process and import order. Pytest
+    # collection may already have loaded Torch's incompatible libstdc++.
+    script = """import optuna
+import json
+import sys
+from pathlib import Path
+from core.pulse_hpo import SEARCH_KEYS, open_study, suggest_recipe
+directory = Path(sys.argv[1])
+study = open_study(directory, seed=20260914)
+trial = study.ask()
+recipe = suggest_recipe(trial, json.loads(sys.stdin.read()))
+assert set(recipe) == SEARCH_KEYS
+study.tell(trial, 0.5)
+assert open_study(directory, seed=20260914).best_trial.number == trial.number
+"""
+    result = subprocess.run([sys.executable, "-c", script, str(tmp_path)],
+                            input=json.dumps(SPACE), cwd=ROOT, text=True,
+                            capture_output=True, timeout=60)
+    assert result.returncode == 0, result.stdout + result.stderr

@@ -12,7 +12,6 @@ from pathlib import Path
 import shutil
 import signal
 import subprocess
-import sys
 import time
 
 import yaml
@@ -22,7 +21,7 @@ from core.pulse_hpo import open_study, suggest_recipe, training_cell, matched_tr
 from util.evaluation.ecg_image_queue import atomic_json, digest_json, exclusive_lock
 from util.pn2021_artifact_contract import sha256_file
 from util.pulse_hybrid_contract import load_config, validate_config, validate_result, finalize
-from util.pulse_training_contract import CENTERS, validate_result as validate_training
+from util.pulse_training_contract import CLASS_ORDER, CENTERS, validate_result as validate_training
 
 REPO = Path(__file__).resolve().parents[1]
 PYTHON = Path("/home/linbinhao/miniforge3/envs/ECGTwin/bin/python")
@@ -171,6 +170,8 @@ def checked_completion(job):
 class LiveC5Metrics:
     """Summarize only atomically committed records while full C5 blocks run."""
 
+    arms = ("original", "single", "three")
+
     def __init__(self):
         self.cohorts = {}
         self.finalized_cohorts = set()
@@ -187,10 +188,76 @@ class LiveC5Metrics:
                 "parse_failures": 0, "truncated": 0, "records": 0}
         return self.counts[key]
 
-    def refresh(self, jobs, complete, active, config, state):
-        from util.evaluation.pulse_hybrid_development import CLASS_ORDER, FULL_CENTER_RECORDS
+    def _load_cohort(self, name, job, output_dir):
+        """Register immutable block identities once, before reading predictions."""
+        key = str(output_dir.resolve())
+        if key in self.cohorts:
+            return self.cohorts[key]
+        path = output_dir / "cohort.json"
+        if not path.is_file():
+            return None
+        cohort = json.loads(path.read_text())
+        center = (job["merge_config"]["center"] if job.get("merge_config") else
+                  yaml.safe_load(Path(job["plan"].entry_config_path).read_text())["center"])
+        samples, conditions = cohort["samples"], cohort["conditions"]
+        condition_ids = [item["condition_id"] for item in conditions]
+        if not samples or len(condition_ids) != len(set(condition_ids)):
+            raise ValueError(f"invalid live C5 cohort: {name}")
+        for sample in samples:
+            sample_key = sample["sample_key"]
+            owner = self.expected_sample_owner.get((center, sample_key))
+            if owner is not None and owner != key:
+                raise ValueError(f"overlapping live evaluation blocks: {center}/{sample_key}")
+            self.expected_sample_owner[(center, sample_key)] = key
+        prior = self.conditions.get(center)
+        if prior is not None and digest_json(prior) != digest_json(conditions):
+            raise ValueError(f"live evaluation conditions changed within {center}")
+        self.conditions[center] = conditions
+        self.cohorts[key] = {"center": center, "samples": samples,
+                             "conditions": conditions, "next_offset": 0}
+        return self.cohorts[key]
 
-        arms = ("original", "single", "three")
+    def _accumulate_batch(self, cohort, samples, path):
+        """Consume one complete paired rectangle, preserving the class counts."""
+        rows = json.loads(path.read_text())
+        expected = {(sample["sample_key"], condition["condition_id"])
+                    for sample in samples for condition in cohort["conditions"]}
+        identities = [(row["sample_key"], row["condition_id"]) for row in rows]
+        if not samples or len(identities) != len(set(identities)) or set(identities) != expected:
+            raise ValueError(f"incomplete live prediction batch: {path}")
+        by_key = {sample["sample_key"]: sample for sample in samples}
+        center = cohort["center"]
+        for row in rows:
+            if (row.get("true_labels") != by_key[row["sample_key"]]["label_names"]
+                    or set(row.get("arms", {})) != set(self.arms)):
+                raise ValueError(f"live prediction identity changed: {path}")
+            truth = set(row["true_labels"])
+            for arm in self.arms:
+                answer = row["arms"][arm]
+                predicted = answer.get("predicted_labels")
+                if (not isinstance(predicted, list) or len(predicted) != len(set(predicted))
+                        or set(predicted) - set(CLASS_ORDER)):
+                    raise ValueError(f"invalid live predicted labels: {path}")
+                prediction = set(predicted)
+                stats = self._condition_stats(center, row["condition_id"], arm, len(CLASS_ORDER))
+                for index, label in enumerate(CLASS_ORDER):
+                    actual, guessed = label in truth, label in prediction
+                    stats["tp"][index] += int(actual and guessed)
+                    stats["fp"][index] += int(not actual and guessed)
+                    stats["fn"][index] += int(actual and not guessed)
+                    stats["hamming_errors"] += int(actual != guessed)
+                stats["exact"] += int(truth == prediction)
+                stats["parse_failures"] += int(not answer.get("parse_valid", False))
+                stats["truncated"] += int(answer.get("hit_max_new_tokens", False))
+                stats["records"] += 1
+        for sample in samples:
+            key = sample["sample_key"]
+            if key in self.completed_sample_keys[center]:
+                raise ValueError(f"duplicate live evaluated sample: {center}/{key}")
+            self.completed_sample_keys[center].add(key)
+
+    def refresh(self, jobs, complete, active, config, state):
+        """Read newly committed batches, then publish a provisional summary."""
         batch_size = config.get("inference_batch_size", 1)
         for name, job in jobs.items():
             if job["plan"].entrypoint_name != "pulse_hybrid":
@@ -201,41 +268,13 @@ class LiveC5Metrics:
                 output_dir = Path(job["plan"].delegate_output_dir)
             else:
                 continue
-            cohort_path = output_dir / "cohort.json"
             cohort_key = str(output_dir.resolve())
             if cohort_key in self.finalized_cohorts:
                 continue
-            if cohort_key not in self.cohorts:
-                if not cohort_path.is_file():
-                    continue
-                cohort = json.loads(cohort_path.read_text())
-                if job.get("merge_config"):
-                    center = job["merge_config"]["center"]
-                else:
-                    child = yaml.safe_load(Path(job["plan"].entry_config_path).read_text())
-                    center = child["center"]
-                samples, conditions = cohort["samples"], cohort["conditions"]
-            else:
-                cohort = self.cohorts[cohort_key]
-                center, samples, conditions = cohort["center"], cohort["samples"], cohort["conditions"]
-            condition_ids = [item["condition_id"] for item in conditions]
-            if not samples or len(condition_ids) != len(set(condition_ids)):
-                raise ValueError(f"invalid live C5 cohort: {name}")
-
-            if cohort_key not in self.cohorts:
-                for sample in samples:
-                    key = sample["sample_key"]
-                    owner = self.expected_sample_owner.get((center, key))
-                    if owner is not None and owner != cohort_key:
-                        raise ValueError(f"overlapping live evaluation blocks: {center}/{key}")
-                    self.expected_sample_owner[(center, key)] = cohort_key
-                prior = self.conditions.get(center)
-                if prior is not None and digest_json(prior) != digest_json(conditions):
-                    raise ValueError(f"live evaluation conditions changed within {center}")
-                self.conditions[center] = conditions
-                self.cohorts[cohort_key] = {"center": center, "samples": samples,
-                    "conditions": conditions, "next_offset": 0}
-
+            cohort = self._load_cohort(name, job, output_dir)
+            if cohort is None:
+                continue
+            samples = cohort["samples"]
             progress_path = output_dir / "progress.json"
             if not progress_path.is_file():
                 if name in complete:
@@ -247,56 +286,25 @@ class LiveC5Metrics:
                     or progress.get("total_records") != len(samples)):
                 raise ValueError(f"invalid live evaluation progress: {name}")
             batch_dir = output_dir / "batches"
-            cohort_state = self.cohorts[cohort_key]
-            while cohort_state["next_offset"] < completed_records:
-                offset = cohort_state["next_offset"]
+            while cohort["next_offset"] < completed_records:
+                offset = cohort["next_offset"]
                 batch_path = batch_dir / f"{offset:04d}.json"
                 if not batch_path.is_file():
                     break
                 batch_samples = samples[offset:offset + batch_size]
-                rows = json.loads(batch_path.read_text())
-                expected = {(sample["sample_key"], condition_id)
-                    for sample in batch_samples for condition_id in condition_ids}
-                identities = [(row["sample_key"], row["condition_id"]) for row in rows]
-                if (not batch_samples or len(identities) != len(set(identities))
-                        or set(identities) != expected):
-                    raise ValueError(f"incomplete live prediction batch: {batch_path}")
-                sample_by_key = {sample["sample_key"]: sample for sample in batch_samples}
-                for row in rows:
-                    sample = sample_by_key[row["sample_key"]]
-                    if (row.get("true_labels") != sample["label_names"]
-                            or set(row.get("arms", {})) != set(arms)):
-                        raise ValueError(f"live prediction identity changed: {batch_path}")
-                    truth = set(row["true_labels"])
-                    for arm in arms:
-                        answer = row["arms"][arm]
-                        predicted = answer.get("predicted_labels")
-                        if (not isinstance(predicted, list) or len(predicted) != len(set(predicted))
-                                or set(predicted) - set(CLASS_ORDER)):
-                            raise ValueError(f"invalid live predicted labels: {batch_path}")
-                        prediction = set(predicted)
-                        stats = self._condition_stats(center, row["condition_id"], arm, len(CLASS_ORDER))
-                        for index, label in enumerate(CLASS_ORDER):
-                            actual, guessed = label in truth, label in prediction
-                            stats["tp"][index] += int(actual and guessed)
-                            stats["fp"][index] += int(not actual and guessed)
-                            stats["fn"][index] += int(actual and not guessed)
-                            stats["hamming_errors"] += int(actual != guessed)
-                        stats["exact"] += int(truth == prediction)
-                        stats["parse_failures"] += int(not answer.get("parse_valid", False))
-                        stats["truncated"] += int(answer.get("hit_max_new_tokens", False))
-                        stats["records"] += 1
-                for sample in batch_samples:
-                    key = sample["sample_key"]
-                    if key in self.completed_sample_keys[center]:
-                        raise ValueError(f"duplicate live evaluated sample: {center}/{key}")
-                    self.completed_sample_keys[center].add(key)
-                cohort_state["next_offset"] += len(batch_samples)
-            if name in complete and cohort_state["next_offset"] != len(samples):
+                self._accumulate_batch(cohort, batch_samples, batch_path)
+                cohort["next_offset"] += len(batch_samples)
+            if name in complete and cohort["next_offset"] != len(samples):
                 raise ValueError(f"completed evaluation has uncommitted live records: {name}")
             if name in complete:
                 self.finalized_cohorts.add(cohort_key)
 
+        self._write_summary(state)
+
+    def _write_summary(self, state):
+        from util.evaluation.pulse_hybrid_development import FULL_CENTER_RECORDS
+
+        arms = self.arms
         per_center = {}
         for center in CENTERS:
             available = len(self.completed_sample_keys[center])
@@ -926,69 +934,49 @@ def prepare_fixed_recovery(config, template, source_hashes, state):
             continue
         expected_training = {arm: completed[f"final_{center}_{arm}"]["sha256"]
                              for arm in ("single", "three")}
-        for context in contexts:
-            entry = completed_child(context, f"final/{center}_eval", "pulse_hybrid")
-            if entry is None:
-                continue
-            result = entry["result"]
-            details = result["details"]
-            if (result.get("mode") != "evaluate" or details.get("phase") != "final"
-                    or details.get("center") != center
-                    or details.get("image_suite") != config["image_suite"]
-                    or details.get("image_severity") != config["image_severity"]
-                    or details.get("evaluation_seed") != config["seed"]
-                    or details.get("inference_batch_size", 1) != config.get("inference_batch_size", 1)
-                    or details.get("sampling_method") != config.get("sampling_method")
-                    or (config["records_per_center"] != "full" and details.get("records") != config["records_per_center"])
-                    or details.get("model_arms") != ["original", "single", "three"]
-                    or details.get("full_cohort") != (config["records_per_center"] == "full")):
-                raise ValueError(f"recovery completed evaluation identity changed: {center}")
-            if block_evaluation and (
-                    result["files"].get("source_snapshot/" + evaluation_source) != source_hashes[evaluation_source]
-                    or result["files"].get("source_snapshot/" + inference_source) != source_hashes[inference_source]):
-                skipped_evaluations.append({"path": entry["path"],
-                    "reason": "changed evaluator or inference adapter requires fresh admission and inference"})
-                continue
-            if details.get("training_results") != expected_training:
-                skipped_evaluations.append({"path": entry["path"],
-                    "reason": "different immutable training result identities"})
-                continue
-            completed[f"final_{center}_eval"] = entry
-            break
-    if block_evaluation:
-        for center in CENTERS:
-            if f"final_{center}_eval" in completed:
-                continue
-            training_keys = [f"final_{center}_{arm}" for arm in ("single", "three")]
-            if not all(key in completed for key in training_keys):
-                continue
-            expected_training = {arm: completed[f"final_{center}_{arm}"]["sha256"]
-                                 for arm in ("single", "three")}
+        # Prefer a complete center; otherwise recover its immutable blocks.
+        # Both use the same model/source identity gate and archive priority.
+        whole_center = f"final_{center}_eval"
+        targets = [(whole_center, f"final/{center}_eval", None)]
+        if block_evaluation:
             for span in center_block_spans(center):
                 suffix = f"{span[0]:05d}_{span[1]:05d}"
-                for context in contexts:
-                    entry = completed_child(context, f"final/{center}_eval_blocks/{suffix}", "pulse_hybrid")
-                    if entry is None:
-                        continue
-                    result, details = entry["result"], entry["result"]["details"]
-                    if (result.get("mode") != "evaluate" or details.get("phase") != "block"
-                            or details.get("center") != center or details.get("record_span") != span
-                            or details.get("full_cohort") is not False
-                            or details.get("image_suite") != config["image_suite"]
-                            or details.get("image_severity") != config["image_severity"]
-                            or details.get("evaluation_seed") != config["seed"]
-                            or details.get("model_arms") != ["original", "single", "three"]):
-                        raise ValueError(f"recovery completed block identity changed: {center}/{suffix}")
-                    if (details.get("training_results") != expected_training
-                            or result["files"].get("source_snapshot/" + evaluation_source)
-                            != source_hashes[evaluation_source]
-                            or result["files"].get("source_snapshot/" + inference_source)
-                            != source_hashes[inference_source]):
-                        skipped_evaluations.append({"path": entry["path"],
-                            "reason": "block training, evaluator or inference adapter source identity differs"})
-                        continue
-                    completed[f"final_{center}_eval_{suffix}"] = entry
-                    break
+                targets.append((f"{whole_center}_{suffix}",
+                                f"final/{center}_eval_blocks/{suffix}", span))
+        for name, relative, span in targets:
+            if span is not None and whole_center in completed:
+                break
+            expected = {"center": center, "image_suite": config["image_suite"],
+                        "image_severity": config["image_severity"], "evaluation_seed": config["seed"],
+                        "model_arms": ["original", "single", "three"],
+                        "phase": "block" if span is not None else "final",
+                        "full_cohort": span is None and config["records_per_center"] == "full"}
+            if span is not None:
+                expected["record_span"] = span
+            for context in contexts:
+                entry = completed_child(context, relative, "pulse_hybrid")
+                if entry is None:
+                    continue
+                result, details = entry["result"], entry["result"]["details"]
+                valid_budget = span is not None or (
+                    details.get("inference_batch_size", 1) == config.get("inference_batch_size", 1)
+                    and details.get("sampling_method") == config.get("sampling_method")
+                    and (config["records_per_center"] == "full"
+                         or details.get("records") == config["records_per_center"]))
+                if (result.get("mode") != "evaluate" or not valid_budget
+                        or (span is not None and details.get("full_cohort") is not False)
+                        or any(details.get(key) != value for key, value in expected.items())):
+                    kind = "block" if span is not None else "evaluation"
+                    raise ValueError(f"recovery completed {kind} identity changed: {relative}")
+                if (details.get("training_results") != expected_training
+                        or (block_evaluation and any(
+                            result["files"].get("source_snapshot/" + source) != source_hashes[source]
+                            for source in (evaluation_source, inference_source)))):
+                    skipped_evaluations.append({"path": entry["path"],
+                        "reason": "training, evaluator or inference adapter source identity differs"})
+                    continue
+                completed[name] = entry
+                break
     atomic_json(state / "recovery_admission.json", {"archive": str(archive),
         "archive_receipt_sha256": recovery["archive_receipt_sha256"],
         "pinned_archive_chain": pins,

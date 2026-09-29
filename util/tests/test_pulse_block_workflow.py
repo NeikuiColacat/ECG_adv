@@ -462,7 +462,9 @@ def recovery_fixture(tmp_path, *, smoke_source):
     saved = archive(tmp_path / 'archives', 'source')
     parent = saved['receipt'].parent / 'run'
     evaluation_name = 'util/evaluation/pulse_hybrid_development.py'
-    identity = {'sources': {**SOURCES, evaluation_name: smoke_source}}
+    inference_name = 'util/evaluation/pulse_adapters.py'
+    identity = {'sources': {**SOURCES, evaluation_name: smoke_source,
+                            inference_name: 'current-inference'}}
     (parent / 'state/identity.json').write_text(json.dumps(identity))
     smoke_entries = json.loads((parent / 'workflow/smoke_results.json').read_text())
     for key, entry in saved['resolved_smokes'].items():
@@ -470,12 +472,14 @@ def recovery_fixture(tmp_path, *, smoke_source):
             continue
         path = Path(entry['path'])
         value = json.loads(path.read_text())
-        value['files'] = {'source_snapshot/' + evaluation_name: smoke_source}
+        value['files'] = {'source_snapshot/' + evaluation_name: smoke_source,
+                          'source_snapshot/' + inference_name: 'current-inference'}
         path.write_text(json.dumps(value))
         smoke_entries[key]['sha256'] = sha256_file(path)
     (parent / 'workflow/smoke_results.json').write_text(json.dumps(smoke_entries))
     refresh_fixture_receipt(saved)
-    sources = {**CURRENT, evaluation_name: 'current-evaluator'}
+    sources = {**CURRENT, evaluation_name: 'current-evaluator',
+               inference_name: 'current-inference'}
     return saved, sources
 
 
@@ -502,7 +506,8 @@ def test_block_transition_still_rejects_changed_training_code(candidate, tmp_pat
         candidate.workflow.prepare_fixed_recovery(config, template(), sources, tmp_path / 'fresh/state')
 
 
-@pytest.mark.parametrize('change', ['none', 'different_training', 'different_evaluator', 'different_span'])
+@pytest.mark.parametrize('change', ['none', 'different_training', 'different_evaluator',
+                                  'different_adapter', 'different_span'])
 def test_recovery_reuses_only_matching_committed_blocks(candidate, tmp_path, monkeypatch, change):
     import shutil
     from util.pn2021_artifact_contract import sha256_file
@@ -518,11 +523,16 @@ def test_recovery_reuses_only_matching_committed_blocks(candidate, tmp_path, mon
     path = block_root / 'evaluation/hybrid_result.json'
     result = json.loads(path.read_text())
     result['details'].update(phase='block', full_cohort=False, record_span=[0, 512])
-    result['files'] = {'source_snapshot/util/evaluation/pulse_hybrid_development.py': 'current-evaluator'}
+    result['files'] = {
+        'source_snapshot/util/evaluation/pulse_hybrid_development.py': 'current-evaluator',
+        'source_snapshot/util/evaluation/pulse_adapters.py': 'current-inference',
+    }
     if change == 'different_training':
         result['details']['training_results']['single'] = 'other-training'
     elif change == 'different_evaluator':
         result['files']['source_snapshot/util/evaluation/pulse_hybrid_development.py'] = 'old-evaluator'
+    elif change == 'different_adapter':
+        result['files']['source_snapshot/util/evaluation/pulse_adapters.py'] = 'old-inference'
     elif change == 'different_span':
         result['details']['record_span'] = [512, 1024]
     path.write_text(json.dumps(result))

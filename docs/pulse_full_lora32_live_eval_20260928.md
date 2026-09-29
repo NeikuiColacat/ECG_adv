@@ -44,3 +44,20 @@ Launch configuration: `configs/experiments/pulse_full_lora32_live_eval_20260928.
 The run state is under
 `/dev/shm/linbinhao-pulse-hybrid/full_lora32_live_eval_20260928_r0/run/state/`;
 the durable archive is `/data/linbinhao/ecg_llm_runs/pulse_full_lora32_live_eval_20260928_r0/`.
+
+## Reboot recovery on September 29
+
+The first run was deliberately interrupted and archived before the server
+reboot. Its successor uses
+`configs/experiments/pulse_full_lora32_live_eval_20260929_resume4gpu.yaml`.
+That configuration pins the September 28 archive receipt, reuses complete
+training/evaluation artifacts, and gives unfinished blocks a new run identity.
+It does not overwrite the predecessor or treat partial blocks as complete.
+
+The successor state lives under
+`/dev/shm/linbinhao-pulse-hybrid/full_lora32_live_eval_20260929_resume4gpu_r0/run/state/`;
+its configured archive is
+`/data/linbinhao/ecg_llm_runs/pulse_full_lora32_live_eval_20260929_resume4gpu_r0/`.
+Read `status.json`, `control.json`, and `live_metrics.json` there for
+current progress. GPU allocations and completion counts are runtime state,
+not durable properties of this document.

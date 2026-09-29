@@ -16,9 +16,19 @@ The JSD direction uses the existing R18 recipe. The September 11 two-stage
 Founder JSD/width experiment remains an auxiliary comparison, not its default.
 These are development recipes, not paper-final claims. Different stage/step
 budgets do not establish a matched causal estimate of SimCLR's benefit.
-Exactly three worktrees remain, one per direction. All 16 historical worktrees
-were retired with approval after preserving their source and local drafts.
-See the consolidation record for the verified recovery paths and status.
+Each direction has a long-lived branch; temporary review worktrees may also
+exist. Use the live Git worktree list for current checkouts. Historical
+consolidation and recovery decisions are recorded separately.
+
+## PULSE review path
+
+The current PULSE comparison is a fixed recipe: eight completed adapters,
+four K500-excluded centers, and original/single/three predictions on six views.
+Read [the architecture map](docs/pulse_evaluation_architecture.md) first, then
+follow its explicit training, inference, validation and scheduling owners.
+The [full evaluation guide](docs/pulse_full_lora32_live_eval_20260928.md) lists
+the initial and reboot-recovery entrypoints. Inspect the selected run's state
+files for progress; a dated index entry is a snapshot.
 
 ## Run one experiment
 
@@ -88,6 +98,8 @@ git diff --check
 CPU tests do not replace opt-in GPU or real-model parity checks. Preserve
 unrelated dirty files, source checkpoints and final results. No `sudo`,
 system/CUDA/driver changes, unscoped process kills, or broad Git staging.
+When running the complete suite on this host, give pytest a fresh home-owned
+directory with `--basetemp`; path-contract fixtures intentionally reject `/tmp`.
 
 The [keep manifest](docs/refactor_cleanup/manual_refactor_keep_manifest.md)
 owns retained-file and deletion boundaries. The

@@ -8,7 +8,7 @@ These are single-seed development results; they are not a paper-final claim.
 
 | Question | Owner |
 | --- | --- |
-| What will run, and where? | `configs/experiments/pulse_full_lora32_pipeline.yaml` and its referenced YAML closure |
+| What will run, and where? | The selected `configs/experiments/pulse_full_lora32_*.yaml` and its referenced YAML closure |
 | How are configs resolved and results sealed? | `boot_scripts/run_experiment.py`, `util/config_bundle.py`, `util/run_record.py` |
 | Which model, records and training recipe are allowed? | `util/pulse_training_contract.py`, `core/pulse_finetune.py` |
 | How are image-only single/three branches constructed? | `core/pulse_hybrid.py`, `core/image_augmix_gpu.py` |
@@ -22,6 +22,39 @@ Entrypoints delegate to these owners. Scientific runtime code must not import
 temporary refactoring candidates and experiment outputs are not runtime inputs.
 The adapter module owns shared original/single/three generation; the evaluator
 owns cohort selection, view construction, paired predictions and metrics.
+
+## Follow one fixed evaluation
+
+1. `run_experiment.py` resolves a closed YAML bundle and starts
+   `run_pulse_hybrid.py`. The latter chooses fixed scheduling, evaluation,
+   or optional parameter search explicitly.
+2. `run_fixed` verifies source identities and the pinned recovery archive.
+   `prepare_fixed_recovery` first restores matching training, then applies
+   one common identity gate to whole-center results and record blocks.
+3. `make_jobs` builds a finite dependency graph. `run_jobs` admits one
+   idle GPU per worker and starts children through the same managed launcher.
+4. An evaluator checks the cohort and adapters, renders paired views, and
+   commits each complete record. `LiveC5Metrics` registers block identities,
+   accumulates newly committed batches, then publishes its provisional summary.
+5. `merge_center_blocks` verifies exact coverage and recomputes metrics.
+   `summarize_four_centers` performs paired record bootstrap; the launcher
+   archives the sealed run only after final validation and closed logs.
+
+The coordinator never loads a GPU model. Training owns optimizer state;
+inference owns adapter switching; validation owns immutable identity checks.
+The fixed path does not create or consult an Optuna study.
+
+Use the recipe for the intended operation:
+
+| Operation | Experiment entry |
+| --- | --- |
+| Train and evaluate the fixed recipe | `pulse_full_lora32_pipeline.yaml` |
+| Evaluate archived adapters on the full cohort | `pulse_full_lora32_live_eval_20260928.yaml` |
+| Resume the verified reboot archive | `pulse_full_lora32_live_eval_20260929_resume4gpu.yaml` |
+| Engineering timing / token admission | `pulse_full_lora32_timing_*.yaml`, `pulse_full_lora32_perf_smoke.yaml` |
+
+These files live under `configs/experiments/`. The dated configurations
+identify immutable runs, not automatic recommendations to launch them again.
 
 ## One comparable evaluation rectangle
 

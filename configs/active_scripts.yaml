@@ -126,7 +126,9 @@ pulse_full_lora32_pipeline_20260927_repair:
 pulse_full_lora32_live_eval_20260928:
   workflow_config: configs/experiments/pulse_full_lora32_live_eval_20260928.yaml
   protocol: docs/pulse_full_lora32_live_eval_20260928.md
-  status: queued_waiting_for_free_gpu
+  status: interrupted_archived_before_server_reboot
+  status_is_snapshot_not_live: true
+  successor: pulse_full_lora32_live_eval_20260929_resume4gpu
   run_root: /dev/shm/linbinhao-pulse-hybrid/full_lora32_live_eval_20260928_r0/run
   archive_root: /data/linbinhao/ecg_llm_runs/pulse_full_lora32_live_eval_20260928_r0
   reused_training_archive: /data/linbinhao/ecg_llm_runs/pulse_full_lora32_pipeline_20260927_recovery4gpu
@@ -137,6 +139,22 @@ pulse_full_lora32_live_eval_20260928:
   live_metrics: state/live_metrics.json
   managed_state: /dev/shm/linbinhao-pulse-hybrid/full_lora32_live_eval_20260928_r0/run/state/status.json
   coordinator_log: /dev/shm/linbinhao-pulse-hybrid/full_lora32_live_eval_20260928_coordinator.log
+  gpu_policy: up_to_four_workers_only_on_idle_devices_with_no_compute_process
+  output_policy: task_scoped_shm_then_hdd
+
+pulse_full_lora32_live_eval_20260929_resume4gpu:
+  workflow_config: configs/experiments/pulse_full_lora32_live_eval_20260929_resume4gpu.yaml
+  protocol: docs/pulse_full_lora32_live_eval_20260928.md
+  status: resumed_after_server_reboot
+  status_is_snapshot_not_live: true
+  status_observed_date: 2026-09-29
+  run_root: /dev/shm/linbinhao-pulse-hybrid/full_lora32_live_eval_20260929_resume4gpu_r0/run
+  archive_root: /data/linbinhao/ecg_llm_runs/pulse_full_lora32_live_eval_20260929_resume4gpu_r0
+  recovery_archive: /data/linbinhao/ecg_llm_runs/pulse_full_lora32_live_eval_20260928_r0
+  evaluation: {image_suite: image_c5_gpu_v1, image_severity: 5, block_size: 512, batch_size: 1}
+  model_arms: [original, single, three]
+  managed_state: /dev/shm/linbinhao-pulse-hybrid/full_lora32_live_eval_20260929_resume4gpu_r0/run/state/status.json
+  live_metrics: state/live_metrics.json
   gpu_policy: up_to_four_workers_only_on_idle_devices_with_no_compute_process
   output_policy: task_scoped_shm_then_hdd
 
