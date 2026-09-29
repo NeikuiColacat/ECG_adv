@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: pulse_c15_reference_ningbo
+  purpose: Versioned real C15 ImageNet-C-style development screen; not a full severity benchmark.
+entrypoint:
+  name: pulse_hybrid
+  config: eval/pulse_c15_reference_ningbo.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/pulse_augmix_reference_20260919/ningbo_c15
+  if_exists: error
+  delegate_output_subdir: evaluation

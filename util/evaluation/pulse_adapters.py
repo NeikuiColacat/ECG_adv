@@ -33,6 +33,11 @@ def matched_training_evidence(paths, *, allow_smoke=False):
         if result["mode"] != expected_mode or result["protocol"]["width"] != int(arm[1:]):
             raise ValueError("adapter mode or chain count mismatch")
         protocol = dict(result["protocol"])
+        if "model_asset_sha256" not in protocol:
+            raise ValueError("adapter result lacks the closed PULSE model asset manifest; retrain it")
+        from core.pulse_finetune import MODEL_CONFIG_HASHES, MODEL_HASHES
+        if protocol["model_asset_sha256"] != {**MODEL_HASHES, **MODEL_CONFIG_HASHES}:
+            raise ValueError("adapter model asset manifest is not the locked PULSE closure")
         protocol.pop("width")
         common = protocol if common is None else common
         if protocol != common:
@@ -87,7 +92,7 @@ class PairedPulseBackend:
         os.environ["HF_HOME"] = "/home/linbinhao/ECG_adv_data/hf_cache/pulse"
         os.environ["HF_HUB_OFFLINE"] = "1"
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
-        from core.pulse_finetune import MODEL_HASHES, load_pulse_for_training
+        from core.pulse_finetune import load_pulse_for_training, verify_model_assets
         from llava.constants import DEFAULT_IMAGE_TOKEN, IMAGE_TOKEN_INDEX as AUTHOR_IMAGE_TOKEN_INDEX
         from llava.conversation import conv_templates
         from llava.mm_utils import tokenizer_image_token
@@ -96,16 +101,17 @@ class PairedPulseBackend:
         if max_new_tokens != 32 or AUTHOR_IMAGE_TOKEN_INDEX != IMAGE_TOKEN_INDEX:
             raise ValueError("PULSE generation contract changed")
         protocol = evidence["w1"]["result"]["protocol"]
-        for name, digest in MODEL_HASHES.items():
-            if sha256_file(Path(protocol["model"]["directory"]) / name) != digest:
-                raise ValueError("source PULSE model shard changed")
-        self.tokenizer, self.model, self.loading = load_pulse_for_training(protocol)
+        verify_model_assets(Path(protocol["model"]["directory"]))
+        self.tokenizer, self.model, self.loading = load_pulse_for_training(protocol, model_assets_verified=True)
         if reservation is not None:
             reservation.clear()
             torch.cuda.empty_cache()
         self.model.to("cuda")
         self.base = self.model.get_base_model()
         self.parameters = {n: p for n, p in self.model.named_parameters() if p.requires_grad}
+        # A visual LoRA state changes CLIP features themselves.  It cannot
+        # share one feature tensor across adapter arms; language-only arms can.
+        self.visual_lora = any(".vision_tower." in name for name in self.parameters)
         self.base_identity = protocol["model"]
         self.states = {}
         self.set_pair(evidence)
@@ -162,10 +168,15 @@ class PairedPulseBackend:
         ids = self.prompt_ids.expand(len(pixels), -1)
         outputs = {}
         self.last_token_ids = {}
-        with torch.autocast("cuda", dtype=torch.float16):
-            features = self.base.get_vision_tower()(pixels.flatten(0, 1))
+        features = None
+        if not getattr(self, "visual_lora", False):
+            with torch.autocast("cuda", dtype=torch.float16):
+                features = self.base.get_vision_tower()(pixels.flatten(0, 1))
         for arm in ("w1", "w2"):
             self._select(arm)
+            if getattr(self, "visual_lora", False):
+                with torch.autocast("cuda", dtype=torch.float16):
+                    features = self.base.get_vision_tower()(pixels.flatten(0, 1))
             # End the previous AMP context before overwriting FP32 trainables:
             # a cached FP16 weight must never survive an adapter switch.
             with torch.autocast("cuda", dtype=torch.float16):
@@ -184,4 +195,129 @@ class PairedPulseBackend:
                 generated_cpu = generated.cpu()
                 self.last_token_ids[arm] = generated_cpu.clone()
                 outputs[arm] = decode_generated(self.tokenizer, generated_cpu, max_new_tokens=self.max_new_tokens)
+        return outputs
+
+class HybridPulseBackend(PairedPulseBackend):
+    """Original/single/three inference with explicit adapter and precision policy."""
+    def __init__(self, evidence, reservation, *, arms, fp16_adapters=False):
+        self.arms = tuple(arms)
+        self.fp16_adapters = fp16_adapters
+        source_arm = next(a for a in self.arms if a != "original")
+        super().__init__({"w1": evidence[source_arm]}, reservation=reservation)
+        # set_pair stores states but has not applied an adapter yet.
+        original = {n: p.detach().clone() for n, p in self.parameters.items()}
+        self.set_pair(evidence)
+        self.states["original"] = original
+
+    def _prepare_prompt_cache(self):
+        # Only the frozen prompt embeddings may be reused. Visual features
+        # and projector output are recomputed for each adapter and view.
+        if any("embed_tokens" in name for name in self.parameters):
+            raise ValueError("prompt cache requires frozen text embeddings")
+        positions = (self.prompt_ids[0] == IMAGE_TOKEN_INDEX).nonzero().flatten()
+        if len(positions) != 1:
+            raise ValueError("expected one image placeholder per prompt")
+        self.prompt_position = int(positions.item())
+        ids = torch.cat((self.prompt_ids[:, :self.prompt_position],
+                         self.prompt_ids[:, self.prompt_position + 1:]), dim=1)
+        with torch.inference_mode():
+            self.prompt_text = self.base.get_model().embed_tokens(ids).detach()
+
+    @torch.inference_mode()
+    def generate_views(self, views):
+        if not self.fp16_adapters:
+            return self._generate_views(views)
+        # PEFT otherwise promotes each FP16 activation to its FP32 LoRA
+        # storage type, then autocast immediately converts it back. Keep
+        # exact reference FP32 buffers and checkpoints; use the same FP16
+        # linear operands once per arm for this inference-only region.
+        if any(p.dtype != torch.float32 or not any(marker in name for marker in
+                   (".lora_A.", ".lora_B.", ".mm_projector."))
+               for name, p in self.parameters.items()):
+            raise ValueError("FP16 inference storage is restricted to FP32 LoRA/projector linears")
+        saved = {name: parameter.data for name, parameter in self.parameters.items()}
+        try:
+            for parameter in self.parameters.values():
+                parameter.data = parameter.data.to(torch.float16)
+            return self._generate_views(views)
+        finally:
+            for name, parameter in self.parameters.items():
+                parameter.data = saved[name]
+
+    @torch.inference_mode()
+    def _generate_views(self, views):
+        """Amortize exact adapter copies; validate against the same batch reference."""
+        if not hasattr(self, "prompt_text"):
+            self._prepare_prompt_cache()
+        if not views or any(p.ndim != 5 or not 1 <= len(p) <= 4
+               or len(p) != len(views[0]) or tuple(p.shape[1:]) != (5, 3, 336, 336) or p.dtype != torch.float16
+               or p.device.type != "cuda" for p in views):
+            raise ValueError("optimized C5 requires matched native FP16 CUDA batches")
+        outputs = [{} for _ in views]
+        tokens = [{} for _ in views]
+        for arm in self.arms:
+            with torch.cuda.nvtx.range("adapter_copy"):
+                torch._foreach_copy_(list(self.parameters.values()),
+                    [self.states[arm][name] for name in self.parameters])
+            # All cached casts expire before the next adapter is selected.
+            with torch.autocast("cuda", dtype=torch.float16):
+                for index, pixels in enumerate(views):
+                    with torch.cuda.nvtx.range("vision"):
+                        features = self.base.get_vision_tower()(pixels.flatten(0, 1))
+                    with torch.cuda.nvtx.range("pack"):
+                        if tuple(features.shape) != (len(pixels) * 5, 576, 1024) or self.base.config.mm_patch_merge_type != "flat":
+                            raise ValueError("optimized C5 visual packing changed")
+                        visual = self.base.get_model().mm_projector(features).reshape(len(pixels), 2880, self.prompt_text.shape[-1])
+                        prompt = self.prompt_text.expand(len(pixels), -1, -1)
+                        packed = torch.cat((prompt[:, :self.prompt_position], visual,
+                                            prompt[:, self.prompt_position:]), dim=1)
+                        if packed.shape[1] > self.base.config.tokenizer_model_max_length:
+                            raise ValueError("optimized C5 context overflow")
+                    with torch.cuda.nvtx.range("generate"):
+                        generated = self._generate(packed)
+                    host = generated.cpu()
+                    tokens[index][arm] = host.tolist()
+                    outputs[index][arm] = decode_generated(self.tokenizer, host, max_new_tokens=32)
+        self.last_view_token_ids = tokens
+        return outputs
+
+    @torch.inference_mode()
+    def generate_pair(self, pixels, *, verify_author=False):
+        if pixels.ndim != 5 or tuple(pixels.shape[1:]) != (5, 3, 336, 336):
+            raise ValueError("PULSE expects Bx5x3x336x336")
+        pixels = pixels.to(device="cuda", dtype=torch.float16)
+        ids = self.prompt_ids.expand(len(pixels), -1)
+        outputs = {}
+        self.last_token_ids = {}
+        original_tokens = None
+        for arm in self.arms:
+            self._select(arm)
+            # End autocast before switching trainables; never reuse CLIP features.
+            with torch.autocast("cuda", dtype=torch.float16):
+                features = self.base.get_vision_tower()(pixels.flatten(0, 1))
+                packed = pack_shared_prompt_features(self.base, ids, features)
+                generated = self._generate(packed)
+                if arm == "original" and verify_author:
+                    original_tokens = generated.clone()
+                if verify_author:
+                    author = self.base.prepare_inputs_labels_for_multimodal(ids, None, None, None, None,
+                        pixels, image_sizes=[(2200, 1700)] * len(pixels))[4]
+                    reference = self.base.generate(ids, images=pixels,
+                        image_sizes=[(2200, 1700)] * len(pixels), **self.generation_kwargs)
+                    if not torch.equal(author, packed) or not torch.equal(reference, generated):
+                        raise ValueError("hybrid generation differs from author packing/tokens")
+                    self.admissions[f"{arm}_batch{len(pixels)}"] = {"packing_exact": True, "tokens_exact": True}
+                host = generated.cpu()
+                self.last_token_ids[arm] = host.tolist()
+                outputs[arm] = decode_generated(self.tokenizer, host, max_new_tokens=32)
+        if verify_author:
+            # A second original pass after all adapter switches catches
+            # leaked weights or cached visual features in the live path.
+            self._select("original")
+            with torch.autocast("cuda", dtype=torch.float16):
+                features = self.base.get_vision_tower()(pixels.flatten(0, 1))
+                restored = self._generate(pack_shared_prompt_features(self.base, ids, features))
+            if original_tokens is None or not torch.equal(original_tokens, restored):
+                raise ValueError("original generation changed after restoring adapter state")
+            self.original_restore_admission = {"tokens_exact_after_adapter_switches": True}
         return outputs

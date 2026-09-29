@@ -29,6 +29,52 @@ YAML 或隐式回退入口。
 
 ## A. 手动重构保护白名单
 
+2026-09-19 authorized fixed pipeline: `docs/pulse_reference_fixed_pipeline.md`,
+`configs/train/pulse_reference_fixed_template.yaml`,
+`configs/train/pulse_reference_fixed_pipeline.yaml` and
+`configs/experiments/pulse_reference_fixed_pipeline.yaml` are KEEP-MANUAL.
+Reuse the existing hybrid coordinator/evaluator for smoke, eight K500 trains,
+four 512-record C15 evaluations and automatic aggregation, with original/single/
+three arms and no Optuna. The exact glass-loop CPU acceleration is owned by
+`core/image_augmix_c.py` and its existing operator test file; generated child
+YAMLs and outputs stay in the external immutable run bundle.
+
+2026-09-19 PULSE AugMix audit repair: `core/image_augmix_c.py`,
+`environments/pulse-image-requirements.txt`, `docs/pulse_augmix_audit_20260919.md`,
+`configs/train/pulse_augmix_reference_{clean,single,three}_ningbo.yaml`, their
+matching experiment YAMLs, and `configs/eval/pulse_c15_reference_ningbo.yaml`
+with its matching experiment YAML are KEEP-MANUAL. Reuse the existing hybrid
+training/evaluation owners; keep the hybrid topology explicit. Old approximate
+`pulse_c15_*` train/eval/experiment configs and `docs/pulse_c15_augmix_plan.md`
+are historical KEEP-MANUAL records, not permission to reuse their old outputs
+under the corrected operator identity. No old artifacts or hashes are rewritten.
+The four `pulse_joint_full512_*` eval/experiment configs also remain protected.
+
+2026-09-17 joint evaluation：`core/image_stress.py`、
+`docs/pulse_joint_evaluation.md`、`configs/eval/pulse_joint_{smoke,ningbo,chapman_shaoxing,cpsc_2018,georgia}.yaml`
+及对应 `configs/experiments/pulse_joint_*.yaml` 为 KEEP-MANUAL。
+复用原 hybrid evaluator，仅新增冻结的波形×图像开发测试，不改训练 checkpoint。
+
+2026-09-18 单算子 successor：`docs/pulse_joint_single_operator_evaluation.md`、
+`configs/eval/pulse_joint_v3_*.yaml` 及对应 `configs/experiments/pulse_joint_v3_*.yaml`
+为 KEEP-MANUAL；每条记录固定 1 clean + 5 waveform + 3 image + 15 joint 条件。
+
+2026-09-14 PULSE hybrid 开发扩展：`core/image_corruption.py`、
+`core/pulse_hybrid.py`、`configs/train/pulse_hybrid_smoke.yaml`、
+`core/pulse_hpo.py`（有限搜索与等权开发指标，不是新调度器）、
+`configs/experiments/pulse_hybrid_smoke.yaml` 和
+`docs/pulse_hybrid_augmix_plan.md`、`environments/pulse-hpo-requirements.txt`
+以及 `configs/train/pulse_hybrid_search.yaml`、
+`environments/pulse-tracking-requirements.txt`
+为 KEEP-MANUAL。非 K500 PN2021
+获批用于本轮开发调参，不升级为独立测试证据；旧 schema 1–3 配方不变。
+
+可执行扩展同为 KEEP-MANUAL：`boot_scripts/run_pulse_hybrid.py`、
+`util/pulse_hybrid_contract.py`、`util/pulse_hybrid_workflow.py`、
+`util/pulse_tracking.py`、`util/evaluation/pulse_hybrid_development.py`、
+`configs/experiments/pulse_hybrid_search.yaml`。仅有限 YAML 搜索与四中心
+开发评估，复用单一 launcher 和资源检查，无动态入口、跨树依赖或外传图片。
+
 2026-09-12 LLM 代码精简首批：在既有 `util/pulse_benchmark_contract.py`
 集中预测行校验，`util/evaluation/pulse_subset.py` 与 `pulse_visual_subset.py`
 直接传入真实答案，不再伪造双臂；原 schema、错误优先级、指纹和解析器不变。
@@ -111,6 +157,14 @@ ECGFounder：Stage1 clean BCE / clean BCE+12×Bernoulli JSD 对照，源anchor5�
 | `.codex/skills/reproducibility-check/SKILL.md` | `KEEP-MANUAL` | 审核配置闭包、Git/seed/checkpoint/命令/指标的可回放身份 | 新复现技能接管相同 run-record 和证据闭环 |
 | `.codex/skills/shared-gpu-server-discipline/SKILL.md` | `KEEP-MANUAL` | GPU、CPU、内存、IO、进程、端口和输出目录的共享服务器前置检查 | 新资源纪律入口完整接管共享服务器安全规则 |
 | `configs/README.md` | `KEEP-MANUAL` | configs-shaped 配置束、单一 launcher 和相对引用规则 | 新配置文档完整接管 bundle root、闭包、输出与覆盖规则 |
+| `core/image_augmix_gpu.py` | `KEEP-MANUAL` | `augmix_torch_gpu_v2` 的九个训练图像算子与 `image_c5_torch_gpu_v1` 的五个评测图像算子；设备内 RNG、几何、直方图、运动模糊、弹性和块 DCT JPEG 近似 | 保留图像张量不经 CPU、实现身份独立于 PIL 参考、波形腐蚀关闭的协议边界；视觉近似结果不得并入参考证据 |
+| `configs/train/pulse_augmix_gpu_single_ningbo.yaml` | `KEEP-MANUAL` | Ningbo 单链 GPU 图像 AugMix 开发配置 | 仅经受管 launcher 使用；保留 native500、K500、GPU v2、waveform_strength=0 和外部输出根 |
+| `configs/train/pulse_augmix_gpu_three_ningbo.yaml` | `KEEP-MANUAL` | Ningbo 三链 GPU 图像 AugMix 开发配置 | 同上 |
+| `configs/eval/pulse_image_c5_gpu_ningbo.yaml` | `KEEP-MANUAL` | clean 加五个 GPU 图像腐蚀的 severity=5 开发评测配置 | 保留三臂 identity、空 waveform_indices、五算子顺序和 GPU C5 独立证据身份 |
+| `configs/experiments/pulse_augmix_gpu_single_ningbo.yaml` | `KEEP-MANUAL` | 单链 GPU 图像训练的 managed experiment 声明 | 保留单一 launcher、外部 run root 和 no-overwrite |
+| `configs/experiments/pulse_augmix_gpu_three_ningbo.yaml` | `KEEP-MANUAL` | 三链 GPU 图像训练的 managed experiment 声明 | 同上 |
+| `configs/experiments/pulse_image_c5_gpu_ningbo.yaml` | `KEEP-MANUAL` | GPU C5 image-only 评测的 managed experiment 声明 | 同上 |
+| `docs/pulse_augmix_gpu_approx.md` | `KEEP-MANUAL` | GPU 14 算子清单、近似边界、协议身份和重写难度 | 文档必须继续区分视觉近似与 CPU reference，不把未运行配置写成结果 |
 | `environments/README.md` | `KEEP-MANUAL` | Miniforge ECGTwin 重建、验证、切换和旧环境退出契约 | 新环境文档接管 conda/pip 分层、轮子哈希、验证闸门和外部产物边界 |
 | `environments/cli-tools-miniforge.yml` | `KEEP-MANUAL` | 锁定纯 conda-forge 的 tmux 3.7b 与 Git 2.51.0 CLI 环境 | 3.6a 兼容阶段通过旧 server 查询；3.7b 通过隔离 tmux 配置和仓库 Git smoke test，最终切换需重启 server |
 | `environments/ecgtwin-miniforge.yml` | `KEEP-MANUAL` | 锁定纯 conda-forge Python 3.11.5 基础环境 | 新基础环境规范保持 Python、pip、setuptools、wheel 和 Git 兼容版本 |
@@ -798,6 +852,69 @@ SHA 与实际 ref-excluded split，再重算相同子集指标。外部模型/EC
 | `configs/experiments/manual_refactor_pn2021_ecgfounder_fixed20_eval_georgia.yaml` | `KEEP-MANUAL` | 固定 ECGFounder fixed20 refit checkpoint，仅评估 ref-excluded Georgia clean 与 PN2021-C 20 views | 同上 |
 
 ### A9. 最终基础契约测试
+
+`docs/pulse_evaluation_architecture.md`: KEEP-MANUAL, PULSE code ownership,
+paired evaluation rectangle, measured batch/K selection and artifact review.
+
+`util/tests/test_pulse_batch_budget.py`: KEEP-MANUAL, typed batch policies, tail-shape admissions,
+fixed-seed label-independent random subsets and finite shared evaluation budgets.
+
+`util/tests/test_pulse_block_workflow.py`: KEEP-MANUAL, pinned archive-chain recovery,
+completed artifact reuse, fresh evaluator admissions, typed phase budgets, fixed 512-record partitions,
+exact cohort coverage and prediction-based full-center metric recomputation.
+CPU fixtures do not establish model-weight or GPU numerical admissions.
+
+`util/tests/test_image_augmix_gpu.py`: KEEP-MANUAL, CPU formula/geometry
+oracles and explicit single-GPU 9+5 replay, dtype, range, RNG, input immutability,
+native-canvas and image-only training integration checks. CUDA checks are
+opt-in; neither these tests nor visual approximations establish CPU-reference parity.
+
+`util/tests/test_image_augmix_c.py`: KEEP-MANUAL, original PIL formulas, all C15
+operators, real JPEG/pixelate, private/restored RNG and constant-image regression.
+Existing hybrid/joint tests additionally cover reference protocol identity,
+the 96-condition product, paired image randomness and frozen-parent lookup.
+
+`util/tests/test_pulse_joint.py`：KEEP-MANUAL，图像变换私有 RNG、角点保留、
+完整联合视图、冻结配置与四类指标分离；C5 显式新基线、历史答案诊断和基线产物防篡改。
+同时覆盖原始回答重解析、二元标签一致性、K500 实际交集、父队列摘要及输入配方摘要防篡改。
+`configs/experiments/pulse_full_lora32_perf_smoke.yaml` 和对应 eval 配置为
+KEEP-MANUAL：B1 原生 token 等价和有界 Nsight 性能预检，非最终评测结果。
+
+`docs/pulse_full_lora32_live_eval_20260928.md`、
+`configs/train/pulse_full_lora32_live_eval_20260928.yaml` 和
+`configs/experiments/pulse_full_lora32_live_eval_20260928.yaml` 为 KEEP-MANUAL：
+复用已完成 rank-32 权重，执行四中心全量 K500 排除的 C5 推理；按512条切块、
+batch=1、最多四张空闲卡调度。只用已提交预测更新阶段性指标，最终要求与合并结果
+一致；保留新推理适配器的四中心 smoke/token 等价准入，不重训、不覆盖旧运行。
+
+以下配置为 KEEP-MANUAL：使用已完成且审计的 200-step 权重，对每中心固定种子
+随机选出的 16 条 K500 排除记录测试 batch 1/2/4（必要时 3）。仅按吞吐、显存和
+同批次参考实现的 token 等价性选 batch，不使用准确率选参。phase=screen 不进入最终
+四中心指标；每次运行保存不可变配置快照。train 配置仅作为输入闭包，不启动训练。
+GPU 总并发最多四项，输出优先任务专属 shm，容量不足使用已授权的机械硬盘。
+
+| 实验入口 | 评测配置 | 输入闭包 |
+| --- | --- | --- |
+| `configs/experiments/pulse_full_lora32_timing_ningbo.yaml` | `configs/eval/pulse_full_lora32_timing_ningbo.yaml` | `configs/train/pulse_full_lora32_timing_ningbo.yaml` |
+| `configs/experiments/pulse_full_lora32_timing_chapman_shaoxing.yaml` | `configs/eval/pulse_full_lora32_timing_chapman_shaoxing.yaml` | `configs/train/pulse_full_lora32_timing_chapman_shaoxing.yaml` |
+| `configs/experiments/pulse_full_lora32_timing_cpsc_2018.yaml` | `configs/eval/pulse_full_lora32_timing_cpsc_2018.yaml` | `configs/train/pulse_full_lora32_timing_cpsc_2018.yaml` |
+| `configs/experiments/pulse_full_lora32_timing_georgia.yaml` | `configs/eval/pulse_full_lora32_timing_georgia.yaml` | `configs/train/pulse_full_lora32_timing_georgia.yaml` |
+
+`configs/experiments/pulse_full_lora32_profile_ningbo.yaml` 为 KEEP-MANUAL：
+复用 Ningbo 计时配置的固定 4 条记录及 200-step 权重，在独立输出目录采集首个
+optimized NVTX 区间。主计时使用未加 profiler 的运行；本次重复仅用于工程诊断，
+不选参、不进入最终指标。训练、计时和 profiling 合计最多四个 GPU worker。
+
+`util/tests/test_pulse_hybrid.py`：KEEP-MANUAL，图像范围／身份退化、
+输入及 RNG 不变、共享波形链宽对照、可配置 JSD 梯度契约。
+`util/tests/test_pulse_hpo.py`：KEEP-MANUAL，配对调参预算、完整四中心／
+算子族等权目标，以及 Optuna 本地 ask/tell 存储；合成测试值非实验指标。
+`util/tests/test_pulse_hybrid_workflow.py`：KEEP-MANUAL，实际任务依赖图、
+复制闭包、内存／持久化边界、开发指标完整性和纯数值本地看板；四中心定向预检、
+adapter 切换后的原模型恢复，以及失败时仅清理已核实身份的任务进程；
+RAM 暂存与机械盘归档的显式范围、并发上限及安全恢复路径。
+`util/tests/test_manual_run_experiment.py` 同时验证归档 SHA256、原始 run index
+不改写、迁移引用、校验成功后释放本次 RAM 输出，以及失败保留与防覆盖。
 
 `util/tests/test_founder_width_jsd.py` 为 `KEEP-MANUAL`：JSD width1/2/3
 数值、单链 clean Beta 残差、私有 RNG、固定闭包及前序任务完成闸门。

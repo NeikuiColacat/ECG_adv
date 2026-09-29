@@ -14,6 +14,7 @@ source_of_truth:
 launch_surface_policy:
   default_launcher: boot_scripts/run_experiment.py
   retained_entrypoints:
+    - pulse_hybrid
     - evaluate_pulse_subset
     - profile_pulse_adapters
     - evaluate_pulse_adapters
@@ -44,6 +45,151 @@ launch_surface_policy:
     - no_system_environment_changes
     - no_implicit_overwrite
     - no_agent_workspace_runtime_import
+
+pulse_reference_fixed_s3_steps200_20260919:
+  workflow_config: configs/experiments/pulse_reference_fixed_pipeline.yaml
+  protocol: docs/pulse_reference_fixed_pipeline.md
+  status: failed_or_interrupted_no_complete_four_center_result
+  scope: smoke_then_eight_k500_trains_then_four_center_512_record_c15_evaluation_then_summary
+  model_arms: [original, single, three]
+  optuna: false
+  gpu_policy: at_most_four_exclusive_free_devices
+  state_root: /home/linbinhao/ECG_adv_data/runs/pulse_reference_fixed_s3_steps200_20260919/state
+
+pulse_augmix_reference_20260919:
+  training_configs:
+    - configs/experiments/pulse_augmix_reference_clean_ningbo.yaml
+    - configs/experiments/pulse_augmix_reference_single_ningbo.yaml
+    - configs/experiments/pulse_augmix_reference_three_ningbo.yaml
+  evaluation_config: configs/experiments/pulse_c15_reference_ningbo.yaml
+  protocol: docs/pulse_augmix_audit_20260919.md
+  status: cpu_validation_only_no_gpu_run
+  evidence: development_pilot_not_full_original_augmix_parity
+  supersedes_approximate_execution_not_artifacts: pulse_c15_augmix_20260918
+
+pulse_augmix_gpu_image_only_20260924:
+  training_configs:
+    - configs/experiments/pulse_augmix_gpu_single_ningbo.yaml
+    - configs/experiments/pulse_augmix_gpu_three_ningbo.yaml
+  evaluation_config: configs/experiments/pulse_image_c5_gpu_ningbo.yaml
+  protocol: docs/pulse_augmix_gpu_approx.md
+  status: implemented_not_executed
+  evidence: visual_approximation_development_only
+  waveform_corruption: disabled
+  gpu_policy: one_explicit_free_gpu_per_managed_run
+
+pulse_full_lora32_final_model_timing:
+  evaluation_configs:
+    - configs/experiments/pulse_full_lora32_timing_ningbo.yaml
+    - configs/experiments/pulse_full_lora32_timing_chapman_shaoxing.yaml
+    - configs/experiments/pulse_full_lora32_timing_cpsc_2018.yaml
+    - configs/experiments/pulse_full_lora32_timing_georgia.yaml
+  status: prepared_not_executed
+  phase: screen
+  records_per_center: 16
+  adapters: final_200_step_single_and_three
+  scope: engineering_batch_selection_on_seeded_k500_excluded_subset
+  paper_claim_allowed: false
+  gpu_policy: at_most_four_combined_training_timing_and_profiling_workers
+  dispatch_gate_required: true
+  batch_candidates: [1, 2, 4]
+  selected_batch_size: null
+  accuracy_based_selection: false
+
+pulse_full_lora32_final_model_profile:
+  evaluation_config: configs/experiments/pulse_full_lora32_profile_ningbo.yaml
+  paired_timing_config: configs/experiments/pulse_full_lora32_timing_ningbo.yaml
+  status: prepared_not_executed
+  phase: screen
+  records_per_center: 4
+  adapters: final_200_step_single_and_three
+  scope: separate_engineering_profile_on_same_frozen_ningbo_prefix
+  capture: first_optimized_nvtx_range_only
+  paper_claim_allowed: false
+  primary_timing_source: uninstrumented_timing_run
+  gpu_policy: at_most_four_combined_training_timing_and_profiling_workers
+  dispatch_gate_required: true
+
+pulse_full_lora32_pipeline_20260927_repair:
+  workflow_config: configs/experiments/pulse_full_lora32_pipeline.yaml
+  protocol: docs/pulse_full_lora32_pipeline.md
+  status: audited_four_gpu_preflight_running
+  run_root: /dev/shm/linbinhao-pulse-hybrid/full_lora32_20260927_audited4gpu/run
+  archive_root: /data/linbinhao/ecg_llm_runs/pulse_full_lora32_pipeline_20260927_audited4gpu
+  gpu_allowlist: [2, 3, 4, 5]
+  performance_smoke_config: configs/experiments/pulse_full_lora32_perf_smoke.yaml
+  original_baseline_mode: current_protocol_v1
+  smoke: {centers: 4, optimizer_steps: 4, known_failure_records_included: true}
+  retrain_required: true
+  launch_blocker_at_repair: insufficient_free_disk_for_new_outputs_above_40gib_reserve
+
+pulse_full_lora32_live_eval_20260928:
+  workflow_config: configs/experiments/pulse_full_lora32_live_eval_20260928.yaml
+  protocol: docs/pulse_full_lora32_live_eval_20260928.md
+  status: queued_waiting_for_free_gpu
+  run_root: /dev/shm/linbinhao-pulse-hybrid/full_lora32_live_eval_20260928_r0/run
+  archive_root: /data/linbinhao/ecg_llm_runs/pulse_full_lora32_live_eval_20260928_r0
+  reused_training_archive: /data/linbinhao/ecg_llm_runs/pulse_full_lora32_pipeline_20260927_recovery4gpu
+  centers: [ningbo, chapman_shaoxing, cpsc_2018, georgia]
+  records_per_center: full_k500_excluded
+  evaluation: {image_suite: image_c5_gpu_v1, image_severity: 5, block_size: 512, batch_size: 1}
+  model_arms: [original, single, three]
+  live_metrics: state/live_metrics.json
+  managed_state: /dev/shm/linbinhao-pulse-hybrid/full_lora32_live_eval_20260928_r0/run/state/status.json
+  coordinator_log: /dev/shm/linbinhao-pulse-hybrid/full_lora32_live_eval_20260928_coordinator.log
+  gpu_policy: up_to_four_workers_only_on_idle_devices_with_no_compute_process
+  output_policy: task_scoped_shm_then_hdd
+
+pulse_full_lora32_pipeline_20260925:
+  workflow_config: /home/linbinhao/ECG_adv_data/runs/pulse_full_lora32_pipeline_20260925_retry4/configs/experiments/pulse_full_lora32_pipeline.yaml
+  protocol: docs/pulse_full_lora32_pipeline.md
+  status: failed_or_interrupted_eval_parent_parity_and_legacy_model_manifest
+  scope: smoke_then_eight_full_language_lora_k500_trains_then_four_center_full_cohort_gpu_c5_evaluation
+  training: {optimizer_steps: 200, effective_batch: 16, lora_rank: 32, lora_alpha: 64}
+  evaluation: {records_per_center: full, k500_excluded: true, image_suite: image_c5_gpu_v1, image_severity: 5}
+  model_arms: [original, single, three]
+  gpu_policy: explicit_allowlist_free_device_admission_at_most_four_workers
+  processor_input_hash_mode: view_identity_v1
+  run_root: /home/linbinhao/ECG_adv_data/runs/pulse_full_lora32_pipeline_20260925_retry4
+
+pulse_joint_20260917:
+  smoke_config: configs/experiments/pulse_joint_smoke.yaml
+  evaluation_configs:
+    - configs/experiments/pulse_joint_ningbo.yaml
+    - configs/experiments/pulse_joint_chapman_shaoxing.yaml
+    - configs/experiments/pulse_joint_cpsc_2018.yaml
+    - configs/experiments/pulse_joint_georgia.yaml
+  protocol: docs/pulse_joint_evaluation.md
+  evidence: frozen_checkpoint_development_validation
+  gpu_policy: at_most_four_exclusive_free_devices
+
+pulse_joint_singleop_20260918:
+  evaluation_configs:
+    - configs/experiments/pulse_joint_v3_ningbo.yaml
+    - configs/experiments/pulse_joint_v3_chapman_shaoxing.yaml
+    - configs/experiments/pulse_joint_v3_cpsc_2018.yaml
+    - configs/experiments/pulse_joint_v3_georgia.yaml
+  protocol: docs/pulse_joint_single_operator_evaluation.md
+  evidence: frozen_checkpoint_development_validation
+  gpu_policy: at_most_four_exclusive_free_devices
+
+pulse_joint_singleop_20260918_full512:
+  evaluation_configs:
+    - configs/experiments/pulse_joint_full512_ningbo.yaml
+    - configs/experiments/pulse_joint_full512_chapman_shaoxing.yaml
+    - configs/experiments/pulse_joint_full512_cpsc_2018.yaml
+    - configs/experiments/pulse_joint_full512_georgia.yaml
+  protocol: docs/pulse_joint_single_operator_evaluation.md
+  evidence: full_fixed_512_development_validation
+  gpu_policy: at_most_four_exclusive_free_devices
+
+pulse_hybrid_20260914:
+  workflow_config: configs/experiments/pulse_hybrid_search.yaml
+  smoke_config: configs/experiments/pulse_hybrid_smoke.yaml
+  status: gpu_smokes_passed_four_center_search_running
+  evidence: target_development_tuned_not_independent_test
+  gpu_policy: at_most_four_exclusive_free_devices
+  paper_claim_allowed: false
 
 founder_jsd_width_20260911:
   pipeline_config: configs/experiments/founder_jsd_width_workflow.yaml

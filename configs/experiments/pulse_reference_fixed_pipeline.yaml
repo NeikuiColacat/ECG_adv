@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: pulse_reference_fixed_pipeline
+  purpose: Fixed-recipe four-center K500 single/three AugMix training, three-arm 512-record C15 evaluation and automatic summary; no Optuna.
+entrypoint:
+  name: pulse_hybrid
+  config: train/pulse_reference_fixed_pipeline.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/pulse_reference_fixed_s3_steps200_20260919/workflow
+  if_exists: error
+  delegate_output_subdir: training

@@ -1,0 +1,14 @@
+schema_version: 1
+experiment:
+  name: pulse_full_lora32_timing_cpsc_2018
+  purpose: Engineering batch timing on 16 seeded K500-excluded records with final
+    200-step adapters. Selection uses throughput, memory and parity only; no paper
+    claim.
+entrypoint:
+  name: pulse_hybrid
+  config: eval/pulse_full_lora32_timing_cpsc_2018.yaml
+  arguments: []
+output:
+  run_dir: /dev/shm/linbinhao-pulse-hybrid/batch12h_1790536933/b4_alloc128/diagnostics/final_model_timing/cpsc_2018
+  if_exists: error
+  delegate_output_subdir: evaluation

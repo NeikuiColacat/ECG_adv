@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: pulse_full_lora32_live_eval_20260928
+  purpose: Full four-center K500-excluded PULSE single-chain versus three-chain C5 evaluation with live committed-record metrics.
+entrypoint:
+  name: pulse_hybrid
+  config: train/pulse_full_lora32_live_eval_20260928.yaml
+  arguments: []
+output:
+  run_dir: /dev/shm/linbinhao-pulse-hybrid/full_lora32_live_eval_20260928_r0/run
+  if_exists: error
+  delegate_output_subdir: workflow

@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: pulse_image_c5_gpu_ningbo
+  purpose: Clean plus five GPU image corruptions at severity 5; waveform corruptions disabled.
+entrypoint:
+  name: pulse_hybrid
+  config: eval/pulse_image_c5_gpu_ningbo.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/pulse_augmix_gpu_approx_20260924/ningbo_c5
+  if_exists: error
+  delegate_output_subdir: evaluation

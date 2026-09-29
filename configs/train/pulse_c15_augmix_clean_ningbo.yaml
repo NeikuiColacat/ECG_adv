@@ -1,0 +1,39 @@
+schema_version: 4
+mode: train
+references:
+  split_config: data/splits.yaml
+  data_load_config: data/data_load.yaml
+  seed_config: random_seed.yaml
+  operators_config: augmentation/operators.yaml
+center: ningbo
+width: 0
+model:
+  directory: /home/linbinhao/ECG_adv_data/models/PULSE-7B_3b497b4
+  revision: 3b497b425ade2717f76ba0b14202823b83668011
+  precision: float16
+  lora_rank: 8
+  lora_alpha: 16
+  lora_dropout: 0.0
+training:
+  seed: 20260918
+  optimizer_steps: 100
+  effective_batch: 16
+  learning_rate: 1.0e-05
+  projector_learning_rate: 1.0e-05
+  warmup_steps: 3
+  max_length: 4096
+  save_every: 10
+  smoke_records: 4
+  cpu_threads: 2
+  loader_workers: 2
+paths:
+  raw_root: /home/linbinhao/ECG_adv_data/physionet2021/training
+  toolkit_dir: /home/linbinhao/ECG_adv_data/external/ecg-image-kit_v1.0.0
+  temporary_root: /dev/shm/linbinhao-pulse-hybrid/c15
+resume_from: null
+mixing_domain: rendered_rgb
+image_augmentation:
+  operators: [autocontrast, equalize, posterize, rotate, solarize, shear_x, shear_y, translate_x, translate_y]
+  strength: 0.35
+  waveform_strength: 0.5
+  jsd_weight: 12.0

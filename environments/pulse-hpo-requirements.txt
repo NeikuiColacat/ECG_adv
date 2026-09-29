@@ -1,0 +1,2 @@
+# Coordinator environment only; do not upgrade PULSE's torch/transformers stack.
+optuna==5.0.0

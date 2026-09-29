@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: pulse_full_lora32_live_eval_20260929_resume4gpu
+  purpose: Resume full four-center K500-excluded PULSE single-chain versus three-chain C5 evaluation from the verified interrupted archive.
+entrypoint:
+  name: pulse_hybrid
+  config: train/pulse_full_lora32_live_eval_20260929_resume4gpu.yaml
+  arguments: []
+output:
+  run_dir: /dev/shm/linbinhao-pulse-hybrid/full_lora32_live_eval_20260929_resume4gpu_r0/run
+  if_exists: error
+  delegate_output_subdir: workflow

@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: pulse_augmix_gpu_three_ningbo
+  purpose: Native500 PULSE throughput development with a CUDA-resident approximate nine-op AugMix image-only path; not reference-pixel evidence.
+entrypoint:
+  name: train_ecg_image
+  config: train/pulse_augmix_gpu_three_ningbo.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/pulse_augmix_gpu_approx_20260924/ningbo_three
+  if_exists: error
+  delegate_output_subdir: training

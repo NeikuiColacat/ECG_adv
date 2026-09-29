@@ -1,0 +1,2 @@
+# Isolated pulse_tracking environment; never install in pulse_llava_infer.
+trackio==0.37.1

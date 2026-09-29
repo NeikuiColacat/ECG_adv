@@ -44,6 +44,7 @@ def _entrypoint(script: str, result: str, result_type: str) -> EntrypointSpec:
 
 
 ENTRYPOINTS = {
+    "pulse_hybrid": _entrypoint("run_pulse_hybrid.py", "hybrid_result.json", "pulse_hybrid_result"),
     "evaluate_pulse_subset": _entrypoint(
         "evaluate_pulse_subset.py", "subset_result.json", "pulse_subset_result"
     ),
@@ -82,6 +83,7 @@ ENTRYPOINTS = {
     ),
 }
 ENTRYPOINT_DATA_ROOTS = {
+    "pulse_hybrid": ("pn2021_cache", "split_artifacts"),
     "evaluate_pulse_subset": ("pn2021_cache", "split_artifacts"),
     "profile_pulse_adapters": ("pn2021_cache", "split_artifacts"),
     "evaluate_pulse_adapters": ("pn2021_cache", "split_artifacts"),
@@ -102,6 +104,7 @@ CONFIG_REFERENCE_FLAGS = frozenset({"--method-config", "--source-registry"})
 MODELS = frozenset({"efficientnet1dv2", "ecgfounder"})
 CENTERS = frozenset({"ningbo", "chapman_shaoxing", "cpsc_2018", "georgia"})
 ARGUMENT_SCHEMAS = {
+    "pulse_hybrid": ((),),
     "evaluate_pulse_subset": ((),),
     "profile_pulse_adapters": ((), ("--suite",), ("--suite", "--center")),
     "evaluate_pulse_adapters": ((),),
@@ -585,7 +588,34 @@ def execute_experiment(
             error=f"{type(exc).__name__}: {exc}",
         )
         raise
-    return recorder.finalize(exit_code=exit_code)
+    exit_code = recorder.finalize(exit_code=exit_code)
+    if exit_code == 0 and plan.entrypoint_name == "pulse_hybrid":
+        # Archive only after the outer launcher has closed logs and finalized its
+        # result and file index. Child evaluators do not carry storage settings.
+        snapshot = plan.run_dir / "configs" / plan.entry_config_path.relative_to(plan.config_root)
+        workflow = _yaml_mapping(snapshot, description="completed workflow config")
+        if "storage" in workflow:
+            from util.pulse_hybrid_contract import validate_config
+            from util.run_record import archive_completed_run
+            from util.evaluation.ecg_image_queue import atomic_json
+            validate_config(workflow)
+            if Path(workflow["paths"]["run_root"]).resolve() != plan.run_dir:
+                raise ValueError("archive source differs from the managed run root")
+            archive_status = plan.run_dir.parent / "archive_status.json"
+            destination = Path(workflow["storage"]["archive_root"])
+            atomic_json(archive_status, {"status": "copying_and_verifying", "destination": str(destination)})
+            try:
+                receipt = archive_completed_run(plan.run_dir, destination,
+                    release_source=workflow["storage"]["release_ram_after_archive"],
+                    min_free_gib=workflow["runtime"]["min_disk_gib"])
+            except BaseException as error:
+                atomic_json(archive_status, {"status": "archive_failed_ram_retained",
+                    "destination": str(destination), "error": f"{type(error).__name__}: {error}"})
+                raise
+            atomic_json(archive_status, {"status": "complete", "destination": str(destination),
+                "file_count": receipt["file_count"], "total_bytes": receipt["total_bytes"],
+                "ram_released": receipt["ram_released"]})
+    return exit_code
 
 
 def build_parser() -> argparse.ArgumentParser:

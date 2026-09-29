@@ -1,8 +1,261 @@
 schema_version: 3
-updated: 2026-09-10
+updated: 2026-09-27
 purpose: >
   Separate the current prospective manual-refactor recipe from historical
   trusted evidence. A launch config is not evidence by itself.
+
+pulse_full_lora32_recovery4gpu_20260927:
+  status: eight_trainings_complete_audited_archived_evaluation_not_run
+  status_is_snapshot_not_live: true
+  status_observed_date: 2026-09-27
+  workflow_config: configs/experiments/pulse_full_lora32_pipeline.yaml
+  original_run_root: /dev/shm/linbinhao-pulse-hybrid/full_lora32_20260927_recovery4gpu/run
+  run_root: /data/linbinhao/ecg_llm_runs/pulse_full_lora32_pipeline_20260927_recovery4gpu/run
+  archive_receipt_sha256: 15c1c8a89b23d9079cb34b8545a02141711a2e38c58f02e43edf761b92df3821
+  training_execution_completed: true
+  training_checkpoints_audited: 8
+  ram_released_after_verified_archive: true
+  coordinator_exit_reason: deliberately_drained_before_new_batch_subset_protocol
+  intended_archive_root: /data/linbinhao/ecg_llm_runs/pulse_full_lora32_pipeline_20260927_recovery4gpu
+  archived_status: /data/linbinhao/ecg_llm_runs/pulse_full_lora32_pipeline_20260927_recovery4gpu/run/state/status.json
+  prior_preserved_archive: /data/linbinhao/ecg_llm_runs/pulse_full_lora32_20260927_gpu_race_preserved
+  prior_archive_receipt_sha256: 92c326bbfcb9814d48248cf6b1fa07fd2dfde3e4c1da008020d9e2207638c843
+  max_gpu_workers: 4
+  gpu_allowlist: [2, 3, 4, 6, 7]
+  active_gpus_at_snapshot: []
+  standby_gpu_at_snapshot: null
+  reused_smoke_admissions: 16
+  runtime_source_files_verified_unchanged: 92
+  training: {centers: [ningbo, chapman_shaoxing, cpsc_2018, georgia], adaptation: fixed_k500,
+             optimizer_steps: 200, effective_batch: 16, trained_arms: [single, three]}
+  evaluation: {records_per_center: full, records_total: 39879, k500_excluded: true,
+               image_suite: image_c5_gpu_v1, image_severity: 5, conditions: 6,
+               model_arms: [original, single, three], execution_completed: false}
+  mapping_hash: 555ec85d5b51
+  monitor: /home/linbinhao/ECG_adv_data/operations/pulse_evaluation_monitor_20260927/live/latest.json
+  reliability_review: /home/linbinhao/ECG_adv_data/operations/pulse_evaluation_monitor_20260927/RELIABILITY_AND_LORA.md
+  capacity_audit: /home/linbinhao/ECG_adv_data/operations/pulse_evaluation_monitor_20260927/capacity_and_lora_audit.json
+  performance_review: /home/linbinhao/ECG_adv_data/operations/pulse_evaluation_monitor_20260927/PERFORMANCE.md
+  recovery_candidate: /home/linbinhao/ECG_adv_data/operations/pulse_evaluation_monitor_20260927/recovery_completed_candidate_v2.json
+  simplification_candidate: /home/linbinhao/ECG_adv_data/operations/pulse_evaluation_monitor_20260927/simplification_candidate.json
+  candidates_applied: false
+  patient_independence_verified: false
+  independent_external_test: false
+  gpu_execution_completed: false
+  paper_claim_allowed: false
+
+pulse_full_lora32_batch_engineering_20260927:
+  status: k32_development_evaluation_complete
+  evidence_role: engineering_measurement_not_final_metrics
+  performance_only_selection: true
+  batch1_four_center_native_token_admission: passed_16_records_each
+  batch2_default_allocator: out_of_memory_in_ningbo_cpsc_2018_and_georgia
+  batch4_default_allocator: out_of_memory_in_cpsc_2018
+  allocator_diagnostic: >-
+    batch2_completed_ningbo_but_was_slower; batch3_oom_at_kv_cache; batch4_oom_at_logits
+  selected_batch_size: 1
+  selected_records_per_center: 32
+  k_selection_basis: >-
+    From the measured B1 maximum center runtime of 813.1 seconds for 16 records,
+    K=32 projects to about 27.1 minutes on four concurrent GPUs before the
+    reserved 30 minutes for validation and HDD archival. Selection uses no labels.
+  four_center_k32_evaluation: complete_integrity_checked_development_only
+  k32_archive: /data/linbinhao/ecg_llm_runs/pulse_full_lora32_k32_development_20260928
+  k32_runtime_seconds: {ningbo: 964.9151, chapman_shaoxing: 998.3240, cpsc_2018: 888.3536, georgia: 926.4335}
+  k32_parent_baseline_parity: {checked: 128, exact: 128, drift: 0}
+  k32_generation_admission: tokens_and_packing_exact_all_arms_all_centers
+  k32_patient_independence_verified: false
+  selection_basis: >-
+    Batch 1 completed all four centers with exact parity. In same-GPU, same-allocator,
+    same-cohort Ningbo measurements it was about 1.95x faster than batch 2;
+    batch 3 and 4 did not complete because of GPU OOM.
+  batch1_allocator128_control_ningbo: 12.5345_seconds_per_record_561.20_seconds_peak_allocated_18.43_GiB
+  batch2_allocator128_ningbo: 24.4799_seconds_per_record_945.10_seconds_peak_allocated_21.85_GiB
+  batch3_allocator128_ningbo: oom_request_72_MiB_free_39.75_MiB
+  batch4_allocator128_cpsc_2018: oom_request_1.43_GiB_at_logits
+  selection_plan: /home/linbinhao/ECG_adv_data/operations/pulse_evaluation_monitor_20260927/batch12h_1790536933/plan.json
+  batch1_measurements: /home/linbinhao/ECG_adv_data/operations/pulse_evaluation_monitor_20260927/batch12h_1790536933/b1_measurements.json
+  batch_sweep_archive: /data/linbinhao/ecg_llm_runs/pulse_batch_sweep_20260928_b1_b4
+  training_evidence: pulse_full_lora32_recovery4gpu_20260927
+  paper_claim_allowed: false
+
+pulse_augmix_gpu_image_only_20260924:
+  status: implemented_not_executed
+  protocol: docs/pulse_augmix_gpu_approx.md
+  training_configs:
+    - configs/experiments/pulse_augmix_gpu_single_ningbo.yaml
+    - configs/experiments/pulse_augmix_gpu_three_ningbo.yaml
+  evaluation_config: configs/experiments/pulse_image_c5_gpu_ningbo.yaml
+  training_implementation: augmix_torch_gpu_v2
+  evaluation_suite: image_c5_gpu_v1
+  evaluation_implementation: image_c5_torch_gpu_v1
+  evaluation: {records_per_center: 128, conditions: 6, image_severity: 5,
+               model_arms: [original, single, three], waveform_corruption: disabled}
+  evidence_role: visual_approximation_development_only
+  paper_claim_allowed: false
+
+pulse_full_lora32_pipeline_20260927_repair:
+  status: failed_or_interrupted_archived
+  status_is_snapshot_not_live: true
+  failure_evidence: /data/linbinhao/ecg_llm_runs/pulse_full_lora32_20260927_gpu_race_preserved/run/state/status.json
+  preserved_archive_root: /data/linbinhao/ecg_llm_runs/pulse_full_lora32_20260927_gpu_race_preserved
+  successor_evidence: pulse_full_lora32_recovery4gpu_20260927
+  workflow_config: configs/experiments/pulse_full_lora32_pipeline.yaml
+  protocol: docs/pulse_full_lora32_pipeline.md
+  run_root: /dev/shm/linbinhao-pulse-hybrid/full_lora32_20260927_audited4gpu/run
+  archive_root: /data/linbinhao/ecg_llm_runs/pulse_full_lora32_pipeline_20260927_audited4gpu
+  drained_prior_run: /data/linbinhao/ecg_llm_runs/pulse_full_lora32_pipeline_20260927_repaired_retry2_audit_drained
+  independent_data_audit: /home/linbinhao/ECG_adv_data/audits/pulse_four_center_repair_20260927/independent-data-audit.json
+  inference_execution: arm_major_fp16_adapters_v2
+  native_admission: {raw_token_pairs: 72, exact_pairs: 72, throughput_gain_pct: 14.929785, latency_reduction_pct: 12.990353}
+  profile_receipt: /home/linbinhao/ECG_adv_data/audits/pulse_four_center_repair_20260927/profile-v2-summary.json
+  audit_validation: {project_passed: 838, project_failed_preexisting: 5, project_skipped: 233, c5_workflow_passed: 47}
+  gpu_allowlist: [2, 3, 4, 5]
+  first_ram_attempt_failure: {run_root: /dev/shm/linbinhao-pulse-hybrid/full_lora32_20260927_repaired/run, reason: config_json_expected_sha256_missing_one_hex_digit, cleanup_survivors: 0}
+  storage: {mode: ram_then_hdd, ram_budget_gib: 40, ram_reserve_gib: 8, max_workers: 4, release_after_verified_archive: true}
+  original_baseline_mode: current_protocol_v1
+  retrain_required: true
+  historical_failure: pulse_full_lora32_pipeline_20260925
+  validation: {focused_passed: 88, project_passed: 829, project_failed: 5, project_skipped: 233, launcher_dry_run: passed}
+  validation_log: /home/linbinhao/ECG_adv_data/audits/pulse_four_center_repair_20260927/final-tests.log
+  ram_hdd_validation: {focused_passed: 114, project_passed: 833, project_failed: 5, project_skipped: 233, launcher_dry_run: passed}
+  ram_hdd_validation_log: /home/linbinhao/ECG_adv_data/audits/pulse_four_center_repair_20260927/ram-hdd-project-tests.log
+  retry2_validation: {focused_passed: 56, all_nine_model_assets_verified: true, original_download_config_blob_matched: true}
+  retry2_asset_receipt: /home/linbinhao/ECG_adv_data/audits/pulse_four_center_repair_20260927/ram-retry2-model-assets.json
+  launch_blocker_at_repair: insufficient_free_disk_for_new_outputs_above_40gib_reserve
+  gpu_execution_completed: false
+  paper_claim_allowed: false
+
+pulse_full_lora32_pipeline_20260925:
+  status: failed_or_interrupted_eval_parent_parity_and_legacy_model_manifest
+  failure_evidence: /home/linbinhao/ECG_adv_data/runs/pulse_full_lora32_pipeline_20260925_retry4/state/status.json
+  retrain_required: true
+  protocol: docs/pulse_full_lora32_pipeline.md
+  workflow_config: /home/linbinhao/ECG_adv_data/runs/pulse_full_lora32_pipeline_20260925_retry4/configs/experiments/pulse_full_lora32_pipeline.yaml
+  run_root: /home/linbinhao/ECG_adv_data/runs/pulse_full_lora32_pipeline_20260925_retry4
+  training: {centers: [ningbo, chapman_shaoxing, cpsc_2018, georgia], adaptation: fixed_k500,
+             optimizer_steps: 200, effective_batch: 16, trained_arms: [single, three],
+             training_scope: llm_all_linear_lora32_clip_last4_qv_lora8_projector}
+  evaluation: {records_per_center: full, k500_excluded: true, image_suite: image_c5_gpu_v1,
+               image_severity: 5, conditions: 6, model_arms: [original, single, three]}
+  processor_input_hash_mode: view_identity_v1
+  independent_external_test: false
+  paper_claim_allowed: false
+
+pulse_reference_fixed_s3_steps200_20260919:
+  status: failed_or_interrupted_no_complete_four_center_result
+  failure_evidence: /home/linbinhao/ECG_adv_data/runs/pulse_reference_fixed_s3_steps200_20260919/state/status.json
+  status_is_snapshot_not_live: true
+  launch_receipt: /home/linbinhao/ECG_adv_data/runs/pulse_reference_fixed_s3_steps200_20260919/launch.json
+  launcher_pid_at_start: 2180736
+  coordinator_pid_at_start: 2180781
+  first_single_smoke: {completed_optimizer_steps: 2, lora_and_projector_gradients_nonzero: true}
+  automatic_transition_verified: single_smoke_to_three_smoke
+  formal_training_started_at_snapshot: false
+  cpu_validation: {project_passed: 793, project_failed: 3, project_skipped: 14}
+  cohort_preflight: /home/linbinhao/ECG_adv_data/previews/pulse_reference_fixed_20260919/cohort_preflight.json
+  cohort_preflight_sha256: db5fc94fe7c4a9b6943e38eb265a68d612dfb01205ffcfea71c457360417c2af
+  four_center_record_overlap: 0
+  native_glass_acceleration: {float_output_exact: true, rng_exact: true, reference_seconds: 113.98, accelerated_seconds_including_jit: 2.75}
+  workflow_config: configs/experiments/pulse_reference_fixed_pipeline.yaml
+  protocol: docs/pulse_reference_fixed_pipeline.md
+  run_root: /home/linbinhao/ECG_adv_data/runs/pulse_reference_fixed_s3_steps200_20260919
+  selection: fixed_recipe_last_checkpoint_no_hpo
+  training: {records_per_center: 500, optimizer_steps: 200, effective_batch: 16, trained_arms: [single, three]}
+  evaluation: {records_per_center: 512, conditions: 96, image_severity: 3, model_arms: [original, single, three]}
+  independent_external_test: false
+  patient_independence_verified: false
+  paper_claim_allowed: false
+
+pulse_c15_augmix_20260918_audit:
+  status: historical_approximation_with_confirmed_implementation_defects
+  audit: docs/pulse_augmix_audit_20260919.md
+  run_root: /home/linbinhao/ECG_adv_data/runs/pulse_c15_augmix_20260918
+  original_augmix_parity: false
+  performance_conclusion_about_original_augmix_allowed: false
+  old_artifacts_modified: false
+  paper_claim_allowed: false
+
+pulse_augmix_reference_20260919:
+  status: implementation_repaired_no_gpu_run
+  cpu_validation: {focused_passed: 158, project_passed: 773, project_failed: 3, project_skipped: 14}
+  project_failures: historical_archive_path_guards_and_live_disk_reserve
+  pulse_environment_c15_replay: 15_operators_severity3_no_gpu_initialized
+  audit: docs/pulse_augmix_audit_20260919.md
+  training_implementation: augmix_pil_reference_v1
+  evaluation_suite: joint_c15_reference_v1
+  run_root: /home/linbinhao/ECG_adv_data/runs/pulse_augmix_reference_20260919
+  topology: shared_waveform_image_branches_v1
+  full_original_augmix_experimental_parity: false
+  independent_external_test: false
+  paper_claim_allowed: false
+
+pulse_joint_20260917:
+  status: smoke_verified_four_center_preflight_passed
+  status_is_snapshot_not_live: true
+  smoke_result: /home/linbinhao/ECG_adv_data/runs/pulse_joint_20260917/smoke/evaluation/hybrid_result.json
+  smoke_verified: {records: 4, conditions: 20, arms: 4, file_index: true, author_packing_and_tokens: exact}
+  protocol: docs/pulse_joint_evaluation.md
+  source_workflow: /home/linbinhao/ECG_adv_data/runs/pulse_hybrid_20260914/workflow/training/hybrid_result.json
+  run_root: /home/linbinhao/ECG_adv_data/runs/pulse_joint_20260917
+  records_per_center: 128
+  conditions: {clean: 1, waveform: 20, image: 3, joint: 60}
+  independent_external_test: false
+  patient_independence_verified: false
+  paper_claim_allowed: false
+
+pulse_joint_singleop_20260918:
+  status: complete_development_validation_single_seed
+  protocol: docs/pulse_joint_single_operator_evaluation.md
+  run_root: /home/linbinhao/ECG_adv_data/runs/pulse_joint_singleop_20260918
+  summary: /home/linbinhao/ECG_adv_data/runs/pulse_joint_singleop_20260918/summary/comparison.json
+  summary_sha256: d79c325d10df8ded02744c577f0acc64918211f65051db9ccd5049ec2774a83c
+  records_per_center: 128
+  conditions: {clean: 1, waveform: 5, image: 3, joint: 15}
+  result_sha256:
+    ningbo: ff3106491bb772867145e984a4dd38d4819bb9a85b1290e6779e55ab29fb52cc
+    chapman_shaoxing: 29aad1d45479ceaf451766f6f9dc2b70aafdb66174a3a824392602ab6fe550b4
+    cpsc_2018: 221de9173005808203dc8573799cc5e189ff2a4d72779739be83ad5a182e98cf
+    georgia: da735cfcc4cfe49e190c2d6b431066ffea4f8c07358019939cbf59bc0b228c3f
+  independent_external_test: false
+  patient_independence_verified: false
+  paper_claim_allowed: false
+
+pulse_joint_singleop_20260918_full512:
+  status: launched_full_fixed_512_development_validation
+  protocol: docs/pulse_joint_single_operator_evaluation.md
+  run_root: /home/linbinhao/ECG_adv_data/runs/pulse_joint_singleop_20260918_full512_retry
+  launch_override: '--run-dir /home/linbinhao/ECG_adv_data/runs/pulse_joint_singleop_20260918_full512_retry/<center>'
+  records_per_center: 512
+  conditions: {clean: 1, waveform: 5, image: 3, joint: 15}
+  independent_external_test: false
+  patient_independence_verified: false
+  paper_claim_allowed: false
+
+pulse_hybrid_20260914:
+  status: all_five_gpu_smokes_passed_optuna_development_search_started
+  config: configs/experiments/pulse_hybrid_smoke.yaml
+  protocol: docs/pulse_hybrid_augmix_plan.md
+  training: each_center_fixed_k500
+  selection: user_authorized_non_k500_pn2021_development_validation
+  independent_external_test: false
+  cpu_validation: {project_passed: 657, project_skipped: 14, pulse_focused_passed: 36}
+  workflow_config: configs/experiments/pulse_hybrid_search.yaml
+  workflow_scope: smoke_then_eight_shared_trials_then_four_center_refit_and_development_evaluation
+  cohort_admission: /home/linbinhao/ECG_adv_data/runs/pulse_hybrid_20260914/admissions/cohort_admission.json
+  four_center_record_overlap: 0
+  patient_independence_verified: false
+  installed: {optuna_coordinator: 5.0.0, trackio_isolated: 0.37.1}
+  gpu_smoke_started: true
+  gpu_training_smokes_passed: [clean, single, three]
+  gpu_smoke_root: /home/linbinhao/ECG_adv_data/runs/pulse_hybrid_20260914/smoke
+  frozen_llm_and_visual_parameter_updates_verified: true
+  resume_max_trainable_delta: 0.0
+  generation_admission: all_four_arms_packing_and_tokens_exact
+  smoke_evaluation: {records: 4, conditions: 9, arms: 4, result_contract_verified: true}
+  local_dashboard: http://127.0.0.1:9091/?project=pulse-hybrid-development
+  optuna_real_trials_started: 1
+  paper_claim_allowed: false
 
 founder_jsd_width_20260911:
   status: prepared_no_new_performance_results

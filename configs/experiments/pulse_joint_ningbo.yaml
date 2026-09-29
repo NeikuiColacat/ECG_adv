@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: pulse_joint_ningbo
+  purpose: Frozen-checkpoint paired waveform plus image-v2 development evaluation; no independent-test claim.
+entrypoint:
+  name: pulse_hybrid
+  config: eval/pulse_joint_ningbo.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/pulse_joint_20260917/ningbo
+  if_exists: error
+  delegate_output_subdir: evaluation

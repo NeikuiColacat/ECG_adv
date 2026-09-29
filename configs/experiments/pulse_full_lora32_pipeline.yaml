@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: pulse_full_lora32_pipeline
+  purpose: Full language-model LoRA rank32 PULSE training followed by matched four-center development evaluation.
+entrypoint:
+  name: pulse_hybrid
+  config: train/pulse_full_lora32_pipeline.yaml
+  arguments: []
+output:
+  run_dir: /dev/shm/linbinhao-pulse-hybrid/full_lora32_20260927_recovery4gpu/run
+  if_exists: error
+  delegate_output_subdir: workflow

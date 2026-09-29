@@ -1,0 +1,21 @@
+schema_version: 1
+mode: fixed
+references:
+  training_config: train/pulse_reference_fixed_template.yaml
+seed: 20260919
+max_gpu_workers: 4
+centers: [ningbo, chapman_shaoxing, cpsc_2018, georgia]
+arms: {single: 1, three: 3}
+evidence_role: fixed_recipe_development_comparison
+records_per_center: 512
+image_suite: joint_c15_reference_v1
+image_severity: 3
+paths:
+  run_root: /home/linbinhao/ECG_adv_data/runs/pulse_reference_fixed_s3_steps200_20260919
+  source_state: /home/linbinhao/ECG_adv_data/runs/pulse_augmix_sft_20260909/subset512_three_arm_20260910/evaluation
+  temporary_root: /home/linbinhao/ECG_adv_data/tmp/pulse_fixed_20260919
+runtime:
+  poll_seconds: 30
+  idle_seconds: 30
+  min_ram_gib: 64
+  min_disk_gib: 40

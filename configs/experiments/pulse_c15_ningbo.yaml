@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: pulse_c15_ningbo
+  purpose: ImageNet-C/CIFAR-C-style 15-family ECG development evaluation at middle severity.
+entrypoint:
+  name: pulse_hybrid
+  config: eval/pulse_c15_ningbo.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/pulse_c15_augmix_20260918/ningbo_eval
+  if_exists: error
+  delegate_output_subdir: evaluation

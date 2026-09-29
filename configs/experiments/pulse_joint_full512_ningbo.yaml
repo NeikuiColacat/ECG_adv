@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: pulse_joint_full512_ningbo
+  purpose: Full fixed 512-record single-wave plus single-image Cartesian development evaluation; no independent-test claim.
+entrypoint:
+  name: pulse_hybrid
+  config: eval/pulse_joint_full512_ningbo.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/pulse_joint_singleop_20260918_full512/ningbo
+  if_exists: error
+  delegate_output_subdir: evaluation

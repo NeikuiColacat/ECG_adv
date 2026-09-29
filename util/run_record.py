@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import platform
+import shutil
 import stat
 import subprocess
 import sys
@@ -23,7 +24,9 @@ from util.pn2021_artifact_contract import resolve_artifact_reference, sha256_fil
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 INDEX_EXCLUDED_FILES = frozenset({"run_manifest.json", "run_file_index.json"})
 DATA_LEDGER_SNAPSHOT = Path("manifests/data_content_ledger.jsonl")
+RAM_ARCHIVE_SOURCE_ROOT = Path("/dev/shm/linbinhao-pulse-hybrid")
 RESULT_REQUIRED_KEYS = {
+    "pulse_hybrid_result": frozenset({"artifact_type", "schema_version", "status", "mode", "details", "files"}),
     "pulse_subset_result": frozenset({"artifact_type", "schema_version", "status", "records_per_center", "models", "subset_identity", "files"}),
     "pulse_profile_result": frozenset({"artifact_type", "schema_version", "status", "partition", "formal_optimization_enabled", "files"}),
     "pulse_benchmark_result": frozenset({"artifact_type", "schema_version", "stage", "status", "protocol", "files"}),
@@ -329,6 +332,113 @@ def verify_run_file_index(run_dir: str | Path) -> list[str]:
     return errors
 
 
+def archived_reference(raw: str | Path, context: Path) -> Path:
+    """Resolve a preserved absolute reference inside a verified relocated run."""
+    original = Path(raw)
+    for directory in context.resolve().parents:
+        receipt_path = directory / "archive_receipt.json"
+        payload_root = directory / "run"
+        if receipt_path.is_file() and context.resolve().is_relative_to(payload_root):
+            receipt = json.loads(receipt_path.read_text())
+            if receipt.get("status") != "verified" or receipt.get("schema_version") != 1:
+                raise ValueError("archive relocation receipt is not verified")
+            try:
+                relative = original.relative_to(Path(receipt["source_run_root"]))
+            except ValueError:
+                return original
+            candidate = (payload_root / relative).resolve()
+            candidate.relative_to(payload_root)
+            entry = receipt["files"].get(relative.as_posix())
+            if not entry or sha256_file(candidate) != entry["sha256"]:
+                raise ValueError("archived reference failed its preserved SHA256")
+            return candidate
+    return original
+
+
+def archive_completed_run(source: Path, destination: Path, *, release_source: bool = False,
+                          min_free_gib: int = 40, allow_failed: bool = False) -> dict[str, Any]:
+    """Copy a quiescent completed run, verify every byte, then optionally release RAM.
+
+    The wrapper receipt sits outside run/, so original records and indexes remain
+    byte-identical. Failed copies retain the entire source and the partial archive.
+    """
+    source, destination = source.absolute(), destination.absolute()
+    if source.is_symlink() or source.resolve() != source or source.stat().st_uid != os.getuid():
+        raise ValueError("archive source must be a real same-user directory")
+    if release_source and not source.is_relative_to(RAM_ARCHIVE_SOURCE_ROOT):
+        raise ValueError("automatic release is restricted to task-owned RAM outputs")
+    manifest = json.loads((source / "run_manifest.json").read_text())
+    admitted_status = {"complete", "failed"} if allow_failed else {"complete"}
+    if manifest.get("status") not in admitted_status or verify_run_file_index(source):
+        raise ValueError("only an integrity-checked completed run can be archived")
+    if destination.exists() or destination.is_symlink():
+        raise FileExistsError(f"archive already exists: {destination}")
+    destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if destination.parent.resolve() != destination.parent or destination.parent.stat().st_uid != os.getuid():
+        raise ValueError("archive parent must be a real same-user directory")
+    files = {}
+    for member in sorted(source.rglob("*")):
+        info = member.lstat()
+        if info.st_uid != os.getuid() or not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)):
+            raise ValueError(f"archive refuses unowned or special member: {member}")
+        if member.is_file():
+            files[member.relative_to(source).as_posix()] = {"size_bytes": info.st_size,
+                "sha256": sha256_file(member)}
+    total = sum(item["size_bytes"] for item in files.values())
+    if shutil.disk_usage(destination.parent).free < total + min_free_gib * 1024**3:
+        raise RuntimeError("archive would cross the durable disk reserve")
+    staging = destination.with_name(destination.name + ".partial")
+    staging.mkdir(mode=0o700, exist_ok=False)
+    target = staging / "run"
+    target.mkdir(mode=0o700)
+    for relative, expected in files.items():
+        member = target / relative
+        member.parent.mkdir(parents=True, exist_ok=True)
+        with (source / relative).open("rb") as reader, member.open("xb") as writer:
+            shutil.copyfileobj(reader, writer, length=1024 * 1024)
+            writer.flush()
+            os.fsync(writer.fileno())
+        if member.stat().st_size != expected["size_bytes"] or sha256_file(member) != expected["sha256"]:
+            raise ValueError(f"archive copy failed verification: {relative}")
+    if verify_run_file_index(target) or verify_run_file_index(source):
+        raise ValueError("run integrity changed during archival; RAM retained")
+    actual = {p.relative_to(source).as_posix() for p in source.rglob("*") if p.is_file()}
+    if actual != set(files) or any(sha256_file(source / name) != item["sha256"] for name, item in files.items()):
+        raise ValueError("source changed during archival; RAM retained")
+    receipt = {"schema_version": 1, "status": "verified", "source_run_root": str(source),
+        "source_status": manifest["status"],
+        "archive_root": str(destination), "file_count": len(files), "total_bytes": total,
+        "verified_at_utc": utc_now(), "files": files, "ram_released": False}
+    _write_json_atomic(staging / "archive_receipt.json", receipt)
+    expected = manifest.get("expected_result")
+    if expected and manifest["status"] == "complete":
+        _expected_result_evidence(target, Path(expected["path"]), str(expected["type"]))
+    # Persist newly created directory entries and the receipt before releasing
+    # the only RAM copy; file contents have already been fsynced individually.
+    with (staging / "archive_receipt.json").open("rb") as handle:
+        os.fsync(handle.fileno())
+    for directory in [p for p in target.rglob("*") if p.is_dir()] + [target, staging]:
+        fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    if destination.exists():
+        raise FileExistsError(f"archive appeared during copy: {destination}")
+    staging.rename(destination)
+    for directory in (destination, destination.parent):
+        fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    if release_source:
+        shutil.rmtree(source)
+        receipt["ram_released"] = True
+        _write_json_atomic(destination / "archive_receipt.json", receipt)
+    return receipt
+
+
 def _pick(payload: dict[str, Any], keys: Sequence[str]) -> dict[str, Any]:
     return {key: payload.get(key) for key in keys}
 
@@ -464,6 +574,13 @@ def _result_summary(payload: dict[str, Any], result_type: str, *, result_path: P
             4: "width1_width3_four_centers_last_checkpoints_frozen_width2_baselines",
         }[payload["schema_version"]]
         return {"identity": payload["jobs"], "selection": {"policy": policy}}
+    if result_type == "pulse_hybrid_result":
+        from util.pulse_hybrid_contract import validate_result
+        _require_result_keys(payload, result_type)
+        validate_result(payload, result_path)
+        policy = ("pn2021_fixed_recipe_development_not_independent_test" if payload["mode"] == "fixed"
+                  else "pn2021_development_tuned_not_independent_test")
+        return {"identity": payload["details"], "selection": {"policy": policy}}
     if result_type == "pulse_train_result":
         from util.pulse_training_contract import validate_result
         _require_result_keys(payload, result_type)

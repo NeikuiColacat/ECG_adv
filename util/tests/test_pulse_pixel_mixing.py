@@ -93,16 +93,38 @@ def test_pixel_protocol_rejects_changed_hyperparameters_and_evaluation_budget():
         validate_subset(payload)
 
 
-def test_fixed_workflow_has_three_admissions_eight_trains_and_one_evaluation():
+def test_fixed_workflow_has_three_admissions_eight_trains_and_one_evaluation(tmp_path):
+    from uuid import uuid4
+    from util.config_bundle import resolve_yaml_config_closure
+
     path = REPO / "configs/train/pulse_pixel_pipeline.yaml"
+    wrong = REPO / "configs/experiments/pulse_augmix_single_smoke.yaml"
+    old_root = "/home/linbinhao/ECG_adv_data/runs/pulse_pixel_mix_sft_20260910"
+    run_root = Path("/home/linbinhao/ECG_adv_data/runs") / f"unit_pixel_{uuid4().hex}" / Path(old_root).name
+    isolated = tmp_path / "configs"
+    # Keep all admission, resume, training and evaluation links consistent while
+    # removing this unit test's dependency on archived live experiment paths.
+    closure = resolve_yaml_config_closure([path, wrong], config_root=REPO / "configs")
+    for source in closure:
+        destination = isolated / source.relative_to(REPO / "configs")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(source.read_text().replace(old_root, str(run_root)))
+    path = isolated / path.relative_to(REPO / "configs")
     payload = yaml.safe_load(path.read_text())
-    plans, jobs = pixel_pipeline_plans(payload, path, REPO / "configs")
+    plans, jobs = pixel_pipeline_plans(payload, path, isolated)
     assert tuple(plans) == ("single", "two", "resume", "training_queue", "evaluation")
     assert len(jobs) == 8
-    assert all("pulse_pixel_mix_sft_20260910" in str(j["run"]) for j in jobs.values())
+    assert all(j["run"].is_relative_to(run_root) for j in jobs.values())
+    assert not run_root.exists()
+    child_path = plans["resume"][1].entry_config_path
+    child = yaml.safe_load(child_path.read_text())
+    assert Path(child["resume_from"]).is_relative_to(run_root)
+    child["resume_from"] = "/data/archived_pixel_fixture/resume_probe.pt"
+    with pytest.raises(ValueError, match="resume checkpoint"):
+        validate_config(child)
     payload["references"]["single"] = "experiments/pulse_augmix_single_smoke.yaml"
     with pytest.raises(ValueError, match="domain/arm"):
-        pixel_pipeline_plans(payload, path, REPO / "configs")
+        pixel_pipeline_plans(payload, path, isolated)
 
 
 def test_reused_parent_rejects_inference_source_or_recipe_changes():

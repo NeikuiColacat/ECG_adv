@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: pulse_joint_v3_cpsc_2018
+  purpose: Single-wave-operator plus single-image-operator Cartesian development evaluation; no independent-test claim.
+entrypoint:
+  name: pulse_hybrid
+  config: eval/pulse_joint_v3_cpsc_2018.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/pulse_joint_singleop_20260918/cpsc_2018
+  if_exists: error
+  delegate_output_subdir: evaluation

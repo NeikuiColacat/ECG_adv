@@ -186,3 +186,33 @@ def test_adapter_switch_ends_previous_amp_cache_and_shares_vision(monkeypatch):
     outputs = backend.generate_pair(Pixels())
     assert len(vision_calls) == 1 and len(contexts) == 3
     assert outputs["w1"] != outputs["w2"]
+
+
+def test_visual_lora_recomputes_vision_features_after_each_arm(monkeypatch):
+    from util.evaluation import pulse_adapters as module
+    from contextlib import nullcontext
+    calls, active = [], []
+
+    class Pixels:
+        ndim, shape = 5, (1, 5, 3, 336, 336)
+        def __len__(self): return 1
+        def to(self, **kwargs): return self
+        def flatten(self, *args): return self
+
+    def vision(_pixels):
+        calls.append(backend.arm)
+        return torch.zeros(1)
+
+    backend = object.__new__(module.PairedPulseBackend)
+    backend.base = SimpleNamespace(get_vision_tower=lambda: vision)
+    backend.prompt_ids = torch.tensor([[1, -200, 5]])
+    backend.tokenizer = SimpleNamespace(bos_token_id=1, eos_token_id=2, decode=lambda t, **kw: str(t.tolist()))
+    backend.max_new_tokens, backend.arm, backend.visual_lora = 32, None, True
+    def select(arm): backend.arm = arm
+    backend._select = select
+    backend._generate = lambda packed: torch.tensor([[1, 8 if backend.arm == "w1" else 9, 2]])
+    monkeypatch.setattr(module.torch, "autocast", lambda *a, **kw: nullcontext())
+    monkeypatch.setattr(module, "pack_shared_prompt_features", lambda *args: torch.zeros(1))
+    outputs = backend.generate_pair(Pixels())
+    assert calls == ["w1", "w2"]
+    assert outputs["w1"] != outputs["w2"]

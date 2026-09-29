@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: pulse_full_lora32_perf_smoke
+  purpose: Native B1 matched token parity and Nsight performance admission before four-GPU recovery.
+entrypoint:
+  name: pulse_hybrid
+  config: eval/pulse_full_lora32_perf_smoke.yaml
+  arguments: []
+output:
+  run_dir: /dev/shm/linbinhao-pulse-hybrid/performance_20260927_fp16/run
+  if_exists: error
+  delegate_output_subdir: evaluation

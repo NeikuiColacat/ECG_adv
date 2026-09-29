@@ -1,0 +1,37 @@
+schema_version: 1
+mode: search
+references:
+  training_config: train/pulse_hybrid_smoke.yaml
+trials: 8
+seed: 20260914
+screening_steps: 25
+final_steps: 100
+max_gpu_workers: 4
+centers: [ningbo, chapman_shaoxing, cpsc_2018, georgia]
+arms: {clean: 0, single: 1, three: 3}
+evidence_role: pn2021_development_validation
+search_space:
+  learning_rate: [0.000003, 0.00002]
+  projector_learning_rate: [0.000003, 0.00002]
+  jsd_weight: [1.5, 3.0, 6.0, 12.0]
+  waveform_strength: [0.15, 0.35, 0.5]
+  image_strength: [0.25, 0.5, 0.75]
+objective:
+  clean: 0.5
+  waveform: 0.25
+  image: 0.25
+  centers: equal
+  arms: equal
+tracking:
+  project: pulse-hybrid-development
+  local_only: true
+  python: /home/linbinhao/ECG_adv_data/envs/pulse_tracking/bin/python
+paths:
+  run_root: /home/linbinhao/ECG_adv_data/runs/pulse_hybrid_20260914
+  source_state: /home/linbinhao/ECG_adv_data/runs/pulse_augmix_sft_20260909/subset512_three_arm_20260910/evaluation
+  temporary_root: /dev/shm/linbinhao-pulse-hybrid/trials
+runtime:
+  poll_seconds: 30
+  idle_seconds: 30
+  min_ram_gib: 64
+  min_disk_gib: 40

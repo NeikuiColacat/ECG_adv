@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: pulse_full_lora32_timing_ningbo_b1_alloc128
+  purpose: Engineering batch-1 control under max_split_size_mb=128 to compare allocator-matched throughput with batch 2; same 16 seeded K500-excluded records and final 200-step adapters.
+entrypoint:
+  name: pulse_hybrid
+  config: eval/pulse_full_lora32_timing_ningbo_b1_alloc128.yaml
+  arguments: []
+output:
+  run_dir: /dev/shm/linbinhao-pulse-hybrid/batch12h_1790536933/b1_alloc128_control/diagnostics/final_model_timing/ningbo
+  if_exists: error
+  delegate_output_subdir: evaluation

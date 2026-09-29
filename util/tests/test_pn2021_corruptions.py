@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -106,6 +107,7 @@ def test_depth2_plus_depth3_expands_to_the_locked_twenty_views() -> None:
 
 def test_cache_staging_persists_only_the_canonical_100hz_waveform(
     tmp_path: Path,
+    monkeypatch,
 ) -> None:
     cache, _ = _contracts()
     output_dir = tmp_path / "pn2021c_100hz"
@@ -113,6 +115,9 @@ def test_cache_staging_persists_only_the_canonical_100hz_waveform(
         **cache,
         "output": {**cache["output"], "cache_dir": str(output_dir)},
     }
+    # This shape/storage test must not depend on the shared host's free space.
+    monkeypatch.setattr(cache_builder.shutil, "disk_usage",
+                        lambda _: SimpleNamespace(total=100 * 1024**3, free=100 * 1024**3))
 
     staging, signals_100, state = cache_builder._prepare_staging(
         output_dir=output_dir,
@@ -126,6 +131,29 @@ def test_cache_staging_persists_only_the_canonical_100hz_waveform(
     assert state["shape_100hz"] == [1, 2, 1000, 12]
     assert "shape_500hz" not in state
     assert not (staging / "signals_500hz.npy").exists()
+
+
+@pytest.mark.parametrize("total_gib", [100, 1000])
+@pytest.mark.parametrize("margin_bytes", [-1, 0])
+def test_cache_staging_enforces_exact_disk_reserve_boundary(tmp_path, monkeypatch, total_gib, margin_bytes):
+    cache, _ = _contracts()
+    output_dir = tmp_path / "disk_reserve_probe"
+    config = {**cache, "output": {**cache["output"], "cache_dir": str(output_dir)}}
+    total = total_gib * 1024**3
+    reserve = max(int(total * 0.10), 50 * 1024**3)
+    estimated = 1 * 2 * 1000 * 12 * np.dtype("float32").itemsize
+    monkeypatch.setattr(cache_builder.shutil, "disk_usage",
+                        lambda _: SimpleNamespace(total=total, free=reserve + estimated + margin_bytes))
+    arguments = dict(output_dir=output_dir, config_identity={"config_identity_hash": "reserve"},
+                     config=config, compositions=[{"view_index": 0}], record_count=2)
+    if margin_bytes < 0:
+        with pytest.raises(OSError, match="insufficient target-disk safety margin"):
+            cache_builder._prepare_staging(**arguments)
+        assert not output_dir.with_name(f".{output_dir.name}.building").exists()
+    else:
+        staging, signals, state = cache_builder._prepare_staging(**arguments)
+        assert staging.is_dir() and signals.shape == (1, 2, 1000, 12)
+        assert state["shape_100hz"] == list(signals.shape)
 
 
 def test_composite_view_is_reproducible_from_record_and_composition_identity() -> None:

@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: pulse_c15_augmix_clean_chapman_shaoxing
+  purpose: Original-AugMix image operator pool, matched clean PULSE visual adaptation.
+entrypoint:
+  name: train_ecg_image
+  config: train/pulse_c15_augmix_clean_chapman_shaoxing.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/pulse_c15_augmix_20260918/fourcenter/chapman_shaoxing_clean
+  if_exists: error
+  delegate_output_subdir: training

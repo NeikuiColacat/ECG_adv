@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: pulse_c15_ningbo_retry
+  purpose: ImageNet-C/CIFAR-C-style 15-family ECG development evaluation for the retry lineage.
+entrypoint:
+  name: pulse_hybrid
+  config: eval/pulse_c15_ningbo_retry.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/pulse_c15_augmix_20260918/ningbo_eval_retry
+  if_exists: error
+  delegate_output_subdir: evaluation

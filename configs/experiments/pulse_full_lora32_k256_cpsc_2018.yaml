@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: pulse_full_lora32_k256_cpsc_2018
+  purpose: K=256 K500-excluded seeded-hash development comparison of single- and three-chain AugMix PULSE adapters.
+entrypoint:
+  name: pulse_hybrid
+  config: eval/pulse_full_lora32_k256_cpsc_2018.yaml
+  arguments: []
+output:
+  run_dir: /dev/shm/linbinhao-pulse-hybrid/pulse_full_lora32_k256_20260928_r0/cpsc_2018
+  if_exists: error
+  delegate_output_subdir: evaluation

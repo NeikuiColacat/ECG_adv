@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: pulse_hybrid_search
+  purpose: Finite shared-recipe K500 hybrid AugMix search using explicitly authorized PN2021 development feedback, not an independent test.
+entrypoint:
+  name: pulse_hybrid
+  config: train/pulse_hybrid_search.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/pulse_hybrid_20260914/workflow
+  if_exists: error
+  delegate_output_subdir: training

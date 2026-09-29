@@ -31,7 +31,7 @@ from util.ecg_image_renderer import PulseECGTensorRenderer
 from util.evaluation.ecg_image_data import QUESTION, native500_waveform
 from util.evaluation.ecg_image_queue import atomic_json, digest_json
 from util.pn2021_artifact_contract import sha256_file
-from util.pulse_training_contract import CLASS_ORDER, label_text, load_config, validate_result
+from util.pulse_training_contract import CLASS_ORDER, FULL_LORA_SCOPE, label_text, load_config, validate_result
 
 REPO = Path(__file__).resolve().parents[1]
 TRAINABLE_TARGETS = ("q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj")
@@ -40,6 +40,36 @@ MODEL_HASHES = {
     "model-00002-of-00003.safetensors": "09717b1627cabad1693a4efd921baf73178f1fb28868ee73bd34895a80c2691a",
     "model-00003-of-00003.safetensors": "7039b3c407a504bf9fb13a34c47934e30f026ea32e9efaf258725f27a0322af0",
 }
+# The three safetensors files are not a complete model identity.  The loader
+# also consumes the index, config and tokenizer assets, so record their fixed
+# hashes as part of every training protocol.  Keeping this separate preserves
+# the historical ``MODEL_HASHES`` shard API used by the benchmark tests.
+MODEL_CONFIG_HASHES = {
+    "config.json": "a1fcab3551342089a3893d6fc3897388aaffa8ea54bb2014af875a350bb262f3",
+    "generation_config.json": "2cfbce54aed452a2bdbb96c051f1ebefa1a058463f3a09fce6d68a831882e636",
+    "model.safetensors.index.json": "3aa4216f08f95215796622b2fec456eb0caa3472b9e709b046cb386b77a1efb1",
+    "special_tokens_map.json": "719833ff26ac897a3ec8ed946028a135de2a351470af59b4008744ab1f0ee9b7",
+    "tokenizer.model": "9e556afd44213b6bd1be2b850ebbbd98f5481437a8021afaf58ee7fb1818d347",
+    "tokenizer_config.json": "e3d348c5c498caa305b77317e0aa4157e60f49bc1fa37e061273cc0b9a5efb52",
+}
+
+
+def verify_model_assets(directory: Path) -> dict[str, str]:
+    """Verify every local asset used by the PULSE loader.
+
+    Checking only the weight shards lets a changed tokenizer/config silently
+    alter prompts or generation while retaining the same apparent checkpoint.
+    """
+    expected = {**MODEL_HASHES, **MODEL_CONFIG_HASHES}
+    for name, digest in expected.items():
+        path = directory / name
+        if not path.is_file() or sha256_file(path) != digest:
+            raise ValueError(f"PULSE model asset mismatch: {name}")
+    index = json.loads((directory / "model.safetensors.index.json").read_text())
+    referenced = set(index.get("weight_map", {}).values())
+    if referenced != set(MODEL_HASHES):
+        raise ValueError("PULSE model index does not close over the locked shards")
+    return {name: sha256_file(directory / name) for name in expected}
 
 
 def k500_records(center: str, refs: dict) -> tuple[list[dict], dict]:
@@ -109,11 +139,13 @@ def tokenize_supervision(tokenizer, label: list[int]) -> tuple[torch.Tensor, tor
         "expanded_sequence_tokens": len(tokens) - 1 + 5 * 576}
 
 
-def load_pulse_for_training(config: dict):
+def load_pulse_for_training(config: dict, *, model_assets_verified=False):
     from llava.model.builder import load_pretrained_model
     from peft import LoraConfig, get_peft_model
     from safetensors import safe_open
     directory = Path(config["model"]["directory"])
+    if not model_assets_verified:
+        verify_model_assets(directory)
     warnings.filterwarnings("ignore", message=r"for vision_model\..*copying from a non-meta parameter", category=UserWarning)
     tokenizer, model, _, _ = load_pretrained_model(str(directory), None, "pulse-7b",
         device="cpu", device_map="cpu", attn_implementation="sdpa", local_files_only=True)
@@ -128,18 +160,25 @@ def load_pulse_for_training(config: dict):
     if not torch.equal(actual, expected):
         raise ValueError("trained PULSE vision tower does not match checkpoint")
     model.requires_grad_(False)
-    visual = (config.get("schema_version") == 3 or config.get("training_scope")
+    full_lora = config.get("training_scope") == FULL_LORA_SCOPE
+    visual = (full_lora or config.get("schema_version") in (3, 4) or config.get("training_scope")
               == "clip_last4_qv_lora8_projector_frozen_llm")
     targets = [name for name, layer in model.named_modules() if isinstance(layer, torch.nn.Linear)
                and name.startswith("model.layers.") and name.rsplit(".", 1)[-1] in TRAINABLE_TARGETS]
     if len(targets) != 32 * len(TRAINABLE_TARGETS):
         raise ValueError("unexpected PULSE language LoRA target count")
+    rank_pattern, alpha_pattern = {}, {}
     if visual:
         from core.pulse_visual import visual_lora_targets
-        targets = visual_lora_targets(model)
+        visual_targets = visual_lora_targets(model)
+        targets = targets + visual_targets if full_lora else visual_targets
+        if full_lora:
+            rank_pattern = {name: 8 for name in visual_targets}
+            alpha_pattern = {name: 16 for name in visual_targets}
     options = config["model"]
     model = get_peft_model(model, LoraConfig(r=options["lora_rank"], lora_alpha=options["lora_alpha"],
-        lora_dropout=options["lora_dropout"], bias="none", task_type="CAUSAL_LM", target_modules=targets))
+        lora_dropout=options["lora_dropout"], bias="none", task_type="CAUSAL_LM", target_modules=targets,
+        rank_pattern=rank_pattern, alpha_pattern=alpha_pattern))
     base = model.get_base_model()
     base.config.use_cache = False
     base.config.tokenizer_model_max_length = config["training"]["max_length"]
@@ -274,10 +313,13 @@ def save_checkpoint(path: Path, model, optimizer, scheduler, scaler, *, step: in
 
 def run(config_path: Path, config_root: Path, output: Path) -> None:
     config, refs = load_config(config_path, config_root)
+    if config["schema_version"] in (4, 5):
+        from core.image_corruption import validate_image_config
+        validate_image_config(config["image_augmentation"], for_execution=True)
     output.mkdir(parents=True, exist_ok=False)
     Path(config["paths"]["temporary_root"]).mkdir(parents=True, exist_ok=True)
     settings = config["training"]
-    visual = config["schema_version"] == 3
+    visual = config["schema_version"] in (3, 4, 5)
     torch.set_num_threads(settings["cpu_threads"])
     rows, data_audit = k500_records(config["center"], refs)
     atomic_json(output / "k500_records.json", rows)
@@ -287,6 +329,7 @@ def run(config_path: Path, config_root: Path, output: Path) -> None:
         "mapping_version": "v7_super5_sjr_rgq_review_20260528", "class_order": list(CLASS_ORDER),
         "simclr": False, "vae_lhat": False, "jsd": False, "stage_count": 1,
         "model": config["model"], "training": settings, "data_audit": data_audit,
+        "model_asset_sha256": verify_model_assets(Path(config["model"]["directory"])),
         "k500_records_sha256": sha256_file(output / "k500_records.json"),
         "operator_profile": {k: v for k, v in profile.describe().items() if not k.endswith("path")},
         "input": "native500_physical_mV_5000x12_no_zscore", "clean_mix": "none",
@@ -295,7 +338,7 @@ def run(config_path: Path, config_root: Path, output: Path) -> None:
     if config.get("mixing_domain") == "rendered_rgb":
         protocol["mixing_domain"] = "rendered_rgb"
     if visual:
-        protocol.update(training_scope="clip_last4_qv_lora8_projector_frozen_llm",
+        protocol.update(training_scope=config.get("training_scope", "clip_last4_qv_lora8_projector_frozen_llm"),
             vision_blocks=[19, 20, 21, 22], jsd=config["width"] > 0,
             jsd_weight=12.0 if config["width"] else 0.0,
             jsd_distribution="aligned_teacher_forced_answer_token_vocabulary",
@@ -304,6 +347,36 @@ def run(config_path: Path, config_root: Path, output: Path) -> None:
             operator_sampling="uniform_with_replacement",
             clean_augmented_loss_weights=[1.0, 0.0],
             images_per_record_exposure=3 if config["width"] else 1)
+    if config["schema_version"] in (4, 5):
+        protocol.update(image_augmentation=config["image_augmentation"],
+            augmentation_topology=("image_only_gpu_branches_v1"
+                if config["image_augmentation"].get("implementation") == "augmix_torch_gpu_v2"
+                else "shared_waveform_image_branches_v1"),
+            mix_residual=("clean_render"
+                if config["image_augmentation"].get("implementation") == "augmix_torch_gpu_v2"
+                else "corrupted_waveform_render"),
+            jsd_weight=config["image_augmentation"]["jsd_weight"] if config["width"] else 0.0,
+            evidence_role="pn2021_development_validation_authorized_20260914")
+        if "implementation" in config["image_augmentation"]:
+            implementation = config["image_augmentation"]["implementation"]
+            if implementation == "augmix_pil_reference_v1":
+                from core.image_augmix_c import AUGMIX_IMPLEMENTATION, AUGMIX_UPSTREAM_COMMIT
+                protocol["image_reference"] = {"implementation": AUGMIX_IMPLEMENTATION,
+                    "upstream_commit": AUGMIX_UPSTREAM_COMMIT,
+                    "pillow_version": importlib.metadata.version("Pillow"),
+                    "input_quantization": "round_rgb_uint8", "size": "native_canvas"}
+            elif implementation == "augmix_torch_gpu_v2":
+                from core.image_augmix_gpu import GPU_AUGMIX_IMPLEMENTATION
+                protocol["image_gpu"] = {
+                    "implementation": GPU_AUGMIX_IMPLEMENTATION,
+                    "device_policy": "same_device_as_rendered_rgb",
+                    "randomness": "caller_owned_torch_generator_on_input_device",
+                    "parity": "visual_approximation_not_reference_pixel_equivalence",
+                    "host_tensor_transfer": "none_inside_operator",
+                    "waveform_corruption": "disabled",
+                }
+            else:
+                raise ValueError(f"unsupported image implementation: {implementation}")
     identity = digest_json(protocol)
     atomic_json(output / "protocol.json", protocol)
     sources = ("core/pulse_finetune.py", "core/augmix.py", "util/pulse_training_contract.py",
@@ -313,6 +386,15 @@ def run(config_path: Path, config_root: Path, output: Path) -> None:
         "util/evaluation/ecg_image_elastic.py")
     if visual:
         sources += ("core/pulse_visual.py", "core/consistency.py")
+    if config["schema_version"] in (4, 5):
+        sources += ("core/image_corruption.py", "core/pulse_hybrid.py")
+        implementation = config["image_augmentation"].get("implementation")
+        if implementation == "augmix_pil_reference_v1":
+            sources += ("core/image_augmix_c.py",)
+        elif implementation == "augmix_torch_gpu_v2":
+            sources += ("core/image_augmix_gpu.py",)
+        elif tuple(config["image_augmentation"]["operators"]) != ("paper_texture", "grid_fade", "tone", "shadow"):
+            raise ValueError("unrecognized schema-4 image operator implementation")
     source_hashes = {}
     for relative in sources:
         destination = output / "source_snapshot" / relative
@@ -358,10 +440,7 @@ def run(config_path: Path, config_root: Path, output: Path) -> None:
     # reductions; RNG restoration alone is insufficient for exact resume.
     torch.use_deterministic_algorithms(True)
     directory = Path(config["model"]["directory"])
-    for name, digest in MODEL_HASHES.items():
-        if sha256_file(directory / name) != digest:
-            raise ValueError(f"PULSE model shard mismatch: {name}")
-    tokenizer, model, model_audit = load_pulse_for_training(config)
+    tokenizer, model, model_audit = load_pulse_for_training(config, model_assets_verified=True)
     # Keep the CUDA claim throughout CPU hashing/loading, then transfer once.
     del admission_reservation
     torch.cuda.empty_cache()
@@ -453,8 +532,13 @@ def run(config_path: Path, config_root: Path, output: Path) -> None:
             if visual:
                 from core.augmix import native500_augmix_jsd_views
                 from core.pulse_visual import aligned_answer_logits, answer_jsd_loss
-                images, trace = native500_augmix_jsd_views(clean, width=config["width"], profile=profile,
-                    seed=seed, identity=f"{selected[index]['hash_id']}|{exposure}", renderer=renderer)
+                view_function, view_options = native500_augmix_jsd_views, {}
+                if config["schema_version"] in (4, 5):
+                    from core.pulse_hybrid import hybrid_jsd_views
+                    view_function = hybrid_jsd_views
+                    view_options = {"image_config": config["image_augmentation"]}
+                images, trace = view_function(clean, width=config["width"], profile=profile,
+                    seed=seed, identity=f"{selected[index]['hash_id']}|{exposure}", renderer=renderer, **view_options)
                 input_ids, labels, _ = tokens[index]
                 input_ids, labels = input_ids.cuda(), labels.cuda()
                 logits, answer_targets = [], None
@@ -470,7 +554,7 @@ def run(config_path: Path, config_root: Path, output: Path) -> None:
                     logits.append(value)
                     answer_targets = target
                     del features, pixels, packed, masked
-                loss, ce, jsd = answer_jsd_loss(logits, answer_targets)
+                loss, ce, jsd = answer_jsd_loss(logits, answer_targets, jsd_weight=protocol["jsd_weight"])
                 if not bool(torch.isfinite(loss)):
                     raise ValueError("nonfinite visual JSD loss")
                 loss_sum += float(loss.detach()) / batch
@@ -502,6 +586,10 @@ def run(config_path: Path, config_root: Path, output: Path) -> None:
         scaler.unscale_(optimizer)
         norm = torch.nn.utils.clip_grad_norm_([*adapter, *projector], 1.0, error_if_nonfinite=True)
         groups = {"lora": adapter, "projector": projector}
+        if config.get("training_scope") == FULL_LORA_SCOPE:
+            groups.update({kind: [p for n, p in model.named_parameters()
+                if p.requires_grad and "lora_" in n and marker in n]
+                for kind, marker in (("vision_lora", ".vision_tower."), ("language_lora", ".model.layers."))})
         grad_audit = {name: float(torch.stack([p.grad.detach().float().square().sum() for p in values if p.grad is not None]).sum().sqrt())
                       for name, values in groups.items()}
         if any(value <= 0 or not math.isfinite(value) for value in grad_audit.values()):
@@ -560,7 +648,8 @@ def run(config_path: Path, config_root: Path, output: Path) -> None:
         delta = {name: float((value - initial_trainables[name]).abs().max()) for name, value in restored.items()}
         atomic_json(output / "visual_training_admission.json", {
             "frozen_parameter_versions_unchanged": True, "trainable_vision_outputs_cached": len(vision_cache.clean),
-            "vision_lora_updated": any(v > 0 for n, v in delta.items() if "lora_" in n),
+            "vision_lora_updated": any(v > 0 for n, v in delta.items() if "lora_" in n and ".vision_tower." in n),
+            "language_lora_updated": any(v > 0 for n, v in delta.items() if "lora_" in n and ".model.layers." in n),
             "projector_updated": any(v > 0 for n, v in delta.items() if ".mm_projector." in n),
             "trainable_max_deltas": delta, "author_flat_packing_exact": vision_cache.packing_verified})
     atomic_json(output / "runtime.json", {"seconds": time.time() - started, "gpu_hours": (time.time() - started) / 3600,

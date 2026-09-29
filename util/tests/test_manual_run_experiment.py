@@ -29,6 +29,68 @@ FIXTURE_CHECKPOINT = b"fixture checkpoint\n"
 FIXTURE_CHECKPOINT_SHA256 = hashlib.sha256(FIXTURE_CHECKPOINT).hexdigest()
 
 
+def _archive_fixture(tmp_path):
+    from util.run_record import build_run_file_index, sha256_file
+    root = tmp_path / "ram/run"
+    root.mkdir(parents=True)
+    (root / "checkpoint.pt").write_bytes(b"preserved fixture checkpoint")
+    (root / "run_file_index.json").write_text(json.dumps(build_run_file_index(root)))
+    (root / "run_manifest.json").write_text(json.dumps({"status": "complete",
+        "run_file_index_sha256": sha256_file(root / "run_file_index.json")}))
+    return root
+
+
+def test_ram_archive_preserves_hashes_and_resolves_paths_after_release(tmp_path, monkeypatch):
+    from util import run_record as records
+    source = _archive_fixture(tmp_path)
+    checkpoint = source / "checkpoint.pt"
+    before = checkpoint.read_bytes()
+    monkeypatch.setattr(records, "RAM_ARCHIVE_SOURCE_ROOT", source.parent)
+    destination = tmp_path / "hdd/completed"
+    receipt = records.archive_completed_run(source, destination, release_source=True, min_free_gib=0)
+    assert receipt["ram_released"] and not source.exists()
+    assert records.verify_run_file_index(destination / "run") == []
+    relocated = records.archived_reference(checkpoint, destination / "run/run_manifest.json")
+    assert relocated == destination / "run/checkpoint.pt" and relocated.read_bytes() == before
+    relocated.write_bytes(b"tampered")
+    with pytest.raises(ValueError, match="SHA256"):
+        records.archived_reference(checkpoint, destination / "run/run_manifest.json")
+
+
+def test_ram_archive_failure_preserves_source_and_refuses_collisions(tmp_path, monkeypatch):
+    from util import run_record as records
+    source = _archive_fixture(tmp_path)
+    destination = tmp_path / "hdd/completed"
+    destination.mkdir(parents=True)
+    with pytest.raises(FileExistsError):
+        records.archive_completed_run(source, destination, min_free_gib=0)
+    assert source.exists()
+    def broken_copy(*args, **kwargs):
+        raise OSError("simulated archive IO failure")
+    monkeypatch.setattr(records.shutil, "copyfileobj", broken_copy)
+    with pytest.raises(OSError, match="simulated"):
+        records.archive_completed_run(source, tmp_path / "hdd/failed", min_free_gib=0)
+    assert records.verify_run_file_index(source) == []
+    assert (tmp_path / "hdd/failed.partial").is_dir()
+
+
+def test_archive_refuses_incomplete_runs_and_non_ram_release(tmp_path, monkeypatch):
+    from util import run_record as records
+    source = _archive_fixture(tmp_path)
+    monkeypatch.setattr(records, "RAM_ARCHIVE_SOURCE_ROOT", tmp_path / "other-task")
+    with pytest.raises(ValueError, match="task-owned RAM"):
+        records.archive_completed_run(source, tmp_path / "archive", release_source=True)
+    manifest = source / "run_manifest.json"
+    payload = json.loads(manifest.read_text()); payload["status"] = "failed"
+    manifest.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="completed run"):
+        records.archive_completed_run(source, tmp_path / "archive")
+    receipt = records.archive_completed_run(source, tmp_path / "failed_archive",
+        allow_failed=True, min_free_gib=0)
+    assert receipt["source_status"] == "failed" and source.exists()
+    assert json.loads((tmp_path / "failed_archive/run/run_manifest.json").read_text())["status"] == "failed"
+
+
 def test_launcher_and_data_ledger_share_the_yaml_mapping_loader() -> None:
     assert launcher._yaml_mapping is config_bundle.load_yaml_mapping
     assert data_ledger._read_yaml_mapping is config_bundle.load_yaml_mapping
@@ -660,7 +722,11 @@ def test_all_tracked_experiment_jobs_resolve_with_explicit_results(
     tmp_path: Path,
 ) -> None:
     experiment_paths = sorted((REPO / "configs" / "experiments").glob("*.yaml"))
-    assert len(experiment_paths) == 1036
+    assert len(experiment_paths) == 1088
+    assert {f"pulse_full_lora32_timing_{center}" for center in
+            ("ningbo", "chapman_shaoxing", "cpsc_2018", "georgia")} <= {
+                path.stem for path in experiment_paths}
+    assert "pulse_full_lora32_profile_ningbo" in {path.stem for path in experiment_paths}
     signatures: Counter[tuple[str, tuple[str, ...]]] = Counter()
     for experiment_path in experiment_paths:
         plan = load_experiment_plan(
@@ -668,8 +734,9 @@ def test_all_tracked_experiment_jobs_resolve_with_explicit_results(
             run_dir=tmp_path / experiment_path.stem,
         )
         signatures[(plan.entrypoint_name, plan.entry_arguments[::2])] += 1
-        assert plan.expected_result_relative_path.parts[0] in {"training", "evaluation"}
+        assert plan.expected_result_relative_path.parts[0] in {"training", "evaluation", "workflow"}
         assert plan.expected_result_type in {
+            "pulse_hybrid_result",
             "pulse_subset_result",
             "pulse_profile_result",
             "pulse_benchmark_result",
@@ -684,12 +751,13 @@ def test_all_tracked_experiment_jobs_resolve_with_explicit_results(
         }
     assert signatures == Counter(
         {
+            ("pulse_hybrid", ()): 40,
             ("evaluate_pulse_subset", ()): 6,
             ("profile_pulse_adapters", ("--suite",)): 1,
             ("profile_pulse_adapters", ("--suite", "--center")): 4,
             ("evaluate_pulse_adapters", ()): 2,
             ("coordinate_pulse_training", ()): 5,
-            ("train_ecg_image", ()): 39,
+            ("train_ecg_image", ()): 51,
             ("evaluate_ecg_image", ()): 20,
             ("report_ecg_image", ()): 3,
             ("train_ptbxl_effnet", ()): 1,

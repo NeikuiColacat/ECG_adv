@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: pulse_c15_augmix_clean_ningbo
+  purpose: Original-AugMix image operator pool, clean PULSE visual adaptation, PN2021 development pilot.
+entrypoint:
+  name: train_ecg_image
+  config: train/pulse_c15_augmix_clean_ningbo.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/pulse_c15_augmix_20260918/ningbo_clean
+  if_exists: error
+  delegate_output_subdir: training

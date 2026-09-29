@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: pulse_hybrid_smoke
+  purpose: Hybrid image AugMix admission before PN2021 development tuning; no independent-test claim.
+entrypoint:
+  name: train_ecg_image
+  config: train/pulse_hybrid_smoke.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/pulse_hybrid_20260914/smoke
+  if_exists: error
+  delegate_output_subdir: training

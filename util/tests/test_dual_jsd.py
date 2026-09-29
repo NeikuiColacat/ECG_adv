@@ -193,18 +193,33 @@ def test_founder_only_stage1_contract_changes():
 def test_visual_configs_and_finite_grid(tmp_path):
     path=REPO/"configs/train/dual_jsd_workflow.yaml"
     config=yaml.safe_load(path.read_text())
-    plans=dual_jsd_plans(config,path,REPO/"configs")
-    assert tuple(plans)==DUAL_KEYS and len(plans)==44
-    # Prove the coordinator is portable after its launcher copies only the
-    # declared closure; do not accidentally fall back to workspace configs.
+    # Historical output roots may now be symlinks to a cold archive. Exercise
+    # this grid in a fresh home-owned namespace without weakening path guards.
+    from uuid import uuid4
     import shutil
     from util.config_bundle import resolve_yaml_config_closure
+    old_root=config["run_root"]
+    run_root=Path("/home/linbinhao/ECG_adv_data/runs")/f"unit_dual_{uuid4().hex}"
+    isolated=tmp_path/"configs"
     closure=resolve_yaml_config_closure([path],config_root=REPO/"configs")
     for source in closure:
-        destination=tmp_path/source.relative_to(REPO/"configs")
-        destination.parent.mkdir(parents=True,exist_ok=True); shutil.copyfile(source,destination)
-    copied=tmp_path/path.relative_to(REPO/"configs")
-    assert tuple(dual_jsd_plans(yaml.safe_load(copied.read_text()),copied,tmp_path))==DUAL_KEYS
+        destination=isolated/source.relative_to(REPO/"configs")
+        destination.parent.mkdir(parents=True,exist_ok=True)
+        destination.write_text(source.read_text().replace(old_root,str(run_root)))
+    local_path=isolated/path.relative_to(REPO/"configs")
+    config=yaml.safe_load(local_path.read_text())
+    plans=dual_jsd_plans(config,local_path,isolated)
+    assert tuple(plans)==DUAL_KEYS and len(plans)==44
+    assert all(plan.run_dir==run_root/key for key,(_,plan) in plans.items())
+    assert not run_root.exists()
+    # Prove the coordinator is portable with only its declared config closure.
+    relocated=tmp_path/"relocated"
+    shutil.copytree(isolated,relocated)
+    copied=relocated/path.relative_to(REPO/"configs")
+    assert tuple(dual_jsd_plans(yaml.safe_load(copied.read_text()),copied,relocated))==DUAL_KEYS
+    bad_root=copy.deepcopy(config); bad_root["run_root"]="/data/archived_dual_fixture"
+    with pytest.raises(ValueError):
+        dual_jsd_plans(bad_root,local_path,isolated)
     for key,(_,plan) in plans.items():
         if plan.entrypoint_name == "train_ecg_image":
             data=yaml.safe_load(plan.entry_config_path.read_text())

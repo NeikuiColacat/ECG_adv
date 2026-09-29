@@ -1,0 +1,20 @@
+schema_version: 1
+mode: evaluate
+phase: smoke
+image_suite: image_c5_gpu_v1
+original_baseline_mode: current_protocol_v1
+execution_mode: arm_major_fp16_adapters_v2
+performance_smoke: true
+references:
+  training_config: train/pulse_full_lora32_template.yaml
+center: ningbo
+records_per_center: 4
+source_state: /home/linbinhao/ECG_adv_data/runs/pulse_pn2021c_native500_gpu_renderer_s5_depth23_full_r0_20260905_v3_4gpu_handoff
+training_results:
+  single: /data/linbinhao/ecg_llm_runs/pulse_full_lora32_pipeline_20260927_repaired_retry2_audit_drained/run/smoke/ningbo_single/training/train_result.json
+  three: /data/linbinhao/ecg_llm_runs/pulse_full_lora32_pipeline_20260927_repaired_retry2_audit_drained/run/smoke/ningbo_three/training/train_result.json
+model_arms: [original, single, three]
+waveform_indices: []
+image_strength: 1.0
+image_severity: 5
+seed: 20260924

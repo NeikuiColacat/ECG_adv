@@ -38,9 +38,9 @@ def aligned_answer_logits(base, packed, labels):
     return base.lm_head(hidden[:, :-1][selected]).float(), labels[:, 1:][selected]
 
 
-def answer_jsd_loss(logits, targets):
+def answer_jsd_loss(logits, targets, *, jsd_weight=12.0):
     if len(logits) not in (1, 3):
         raise ValueError("PULSE visual objective requires clean or clean plus two AugMix views")
     ce = F.cross_entropy(logits[0].float(), targets)
     jsd = categorical_jsd(logits) if len(logits) == 3 else ce.new_zeros(())
-    return ce + 12.0 * jsd, ce, jsd
+    return ce + jsd_weight * jsd, ce, jsd

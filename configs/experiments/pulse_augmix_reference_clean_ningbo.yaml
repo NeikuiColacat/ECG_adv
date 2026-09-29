@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: pulse_augmix_reference_clean_ningbo
+  purpose: Matched clean control for the corrected PIL AugMix development pilot.
+entrypoint:
+  name: train_ecg_image
+  config: train/pulse_augmix_reference_clean_ningbo.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/pulse_augmix_reference_20260919/ningbo_clean
+  if_exists: error
+  delegate_output_subdir: training

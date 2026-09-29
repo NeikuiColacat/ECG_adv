@@ -8,7 +8,7 @@ import yaml
 
 from boot_scripts.run_experiment import load_experiment_plan
 from core.augmix import native500_augmix_one
-from core.pulse_finetune import MODEL_HASHES, answer_only_loss, sample_schedule
+from core.pulse_finetune import MODEL_HASHES, MODEL_CONFIG_HASHES, answer_only_loss, sample_schedule
 from util.augmentations.profile import load_augmentation_profile
 from util.pulse_training_contract import label_text, validate_config
 
@@ -55,7 +55,9 @@ def test_formal_center_arms_have_identical_update_and_exposure_budgets():
 
 def test_source_model_hashes_are_sha256_values():
     assert len(MODEL_HASHES) == 3
-    assert all(len(value) == 64 and set(value) <= set("0123456789abcdef") for value in MODEL_HASHES.values())
+    assert len(MODEL_CONFIG_HASHES) == 6
+    assert all(len(value) == 64 and set(value) <= set("0123456789abcdef")
+               for value in {**MODEL_HASHES, **MODEL_CONFIG_HASHES}.values())
 
 
 @pytest.mark.parametrize("change", [
@@ -132,7 +134,7 @@ def test_exposure_schedule_is_balanced_and_independent_of_torch_rng():
 
 def test_pulse_yaml_dry_run_is_non_mutating(tmp_path):
     configs = sorted((REPO / "configs/experiments").glob("pulse_augmix_*.yaml"))
-    assert len(configs) == 12
+    assert len(configs) == 17
     for path in configs:
         plan = load_experiment_plan(path, run_dir=tmp_path / path.stem)
         assert plan.expected_result_type == "pulse_train_result"

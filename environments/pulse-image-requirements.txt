@@ -1,0 +1,12 @@
+# Additive CPU dependencies only. Install with --no-deps; do not change Torch/CUDA.
+# NumPy 1.26.4, Pillow 10.1.0 and SciPy 1.16.3 are the existing model environment.
+# Headless OpenCV supplies cv2 without adding a GUI runtime.
+imagecorruptions==1.1.2
+scikit-image==0.22.0
+opencv-python-headless==4.10.0.84
+imageio==2.34.2
+tifffile==2024.8.30
+lazy_loader==0.4
+# CPU-only JIT for the byte-equivalent ordered glass-blur loop.
+numba==0.61.2
+llvmlite==0.44.0

@@ -3,6 +3,8 @@
 One repository, three research directions, shared data and implementation.
 Start with [the direction guide](docs/directions.md); its small
 [configuration catalog](configs/directions.yaml) points to existing experiments.
+For the PULSE single-chain / three-chain comparison, start with the compact
+[code map and evaluation protocol](docs/pulse_evaluation_architecture.md).
 
 | Direction | Main method | Long-lived branch |
 |---|---|---|

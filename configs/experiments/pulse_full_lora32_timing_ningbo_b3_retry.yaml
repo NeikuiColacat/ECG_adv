@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: pulse_full_lora32_timing_ningbo_b3_retry
+  purpose: Engineering batch-3 timing retry using the GPU UUID required by the exclusive-device guard; same 16 seeded K500-excluded records and final 200-step adapters.
+entrypoint:
+  name: pulse_hybrid
+  config: eval/pulse_full_lora32_timing_ningbo_b3_retry.yaml
+  arguments: []
+output:
+  run_dir: /dev/shm/linbinhao-pulse-hybrid/batch12h_1790536933/b3_alloc128_retry/diagnostics/final_model_timing/ningbo
+  if_exists: error
+  delegate_output_subdir: evaluation

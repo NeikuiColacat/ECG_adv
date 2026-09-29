@@ -1,0 +1,14 @@
+schema_version: 1
+experiment:
+  name: pulse_full_lora32_profile_ningbo
+  purpose: Separate profiling repeat on the same fixed 128 K500-excluded records
+    and final 200-step adapters as the uninstrumented Ningbo timing pilot.
+    Engineering diagnostics only, with no timing or final metric claim.
+entrypoint:
+  name: pulse_hybrid
+  config: eval/pulse_full_lora32_timing_ningbo.yaml
+  arguments: []
+output:
+  run_dir: /dev/shm/linbinhao-pulse-hybrid/full_lora32_20260927_recovery4gpu/run/diagnostics/final_model_profile/ningbo
+  if_exists: error
+  delegate_output_subdir: evaluation

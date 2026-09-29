@@ -1,0 +1,16 @@
+schema_version: 1
+mode: evaluate
+phase: screen
+image_suite: joint_v3
+references:
+  training_config: train/pulse_hybrid_smoke.yaml
+center: chapman_shaoxing
+records_per_center: 128
+source_state: /home/linbinhao/ECG_adv_data/runs/pulse_augmix_sft_20260909/subset512_three_arm_20260910/evaluation
+training_results:
+  clean: /home/linbinhao/ECG_adv_data/runs/pulse_hybrid_20260914/final/chapman_shaoxing_clean/training/train_result.json
+  single: /home/linbinhao/ECG_adv_data/runs/pulse_hybrid_20260914/final/chapman_shaoxing_single/training/train_result.json
+  three: /home/linbinhao/ECG_adv_data/runs/pulse_hybrid_20260914/final/chapman_shaoxing_three/training/train_result.json
+waveform_indices: [1, 2, 3, 4, 5]
+image_strength: 1.0
+seed: 20260914

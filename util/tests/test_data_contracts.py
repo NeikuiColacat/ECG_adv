@@ -620,7 +620,7 @@ def test_active_evidence_quarantines_accepted_subset_lhat_diagnostics() -> None:
     integrity = active["diagnostic_integrity"]
 
     assert registry["schema_version"] == 3
-    assert str(registry["updated"]) == "2026-09-10"
+    assert str(registry["updated"]) == "2026-09-27"
     assert integrity["status"] == "legacy_accepted_subset_quarantined"
     assert integrity["all_candidate_raw_diagnostics"] == {
         "availability": "unavailable",

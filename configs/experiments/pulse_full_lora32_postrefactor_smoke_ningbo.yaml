@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: pulse_full_lora32_postrefactor_smoke_ningbo
+  purpose: Four-record native generation and same-batch token admission after moving the three-arm backend; no performance or scientific claim.
+entrypoint:
+  name: pulse_hybrid
+  config: eval/pulse_full_lora32_postrefactor_smoke_ningbo.yaml
+  arguments: []
+output:
+  run_dir: /dev/shm/linbinhao-pulse-hybrid/batch12h_1790536933/postrefactor_smoke_ningbo
+  if_exists: error
+  delegate_output_subdir: evaluation

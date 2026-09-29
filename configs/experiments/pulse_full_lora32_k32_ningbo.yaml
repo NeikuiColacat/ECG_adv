@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: pulse_full_lora32_k32_ningbo
+  purpose: K=32 seeded-hash engineering evaluation after measured batch sweep; descriptive only, no paper claim.
+entrypoint:
+  name: pulse_hybrid
+  config: eval/pulse_full_lora32_k32_ningbo.yaml
+  arguments: []
+output:
+  run_dir: /dev/shm/linbinhao-pulse-hybrid/batch12h_1790536933/eval_k32/diagnostics/final_model_timing/ningbo
+  if_exists: error
+  delegate_output_subdir: evaluation

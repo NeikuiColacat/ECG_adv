@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: pulse_augmix_reference_three_ningbo
+  purpose: Corrected original PIL operator semantics in three-image-chain hybrid AugMix.
+entrypoint:
+  name: train_ecg_image
+  config: train/pulse_augmix_reference_three_ningbo.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/pulse_augmix_reference_20260919/ningbo_three
+  if_exists: error
+  delegate_output_subdir: training

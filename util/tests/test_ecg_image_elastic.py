@@ -429,15 +429,20 @@ def _check_full_report_fixture(tmp_path, monkeypatch):
 
 
 def test_full_report_uses_real_counts_and_labels_elastic_runtime(tmp_path):
-    import inspect
+    import ast
     import subprocess
     import sys
+    module_source = Path(__file__).read_text()
+    tree = ast.parse(module_source)
+    helper = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+                  and node.name == "_check_full_report_fixture")
+    helper_source = ast.get_source_segment(module_source, helper)
 
     # Match the real CPU-only report process. Test collection imports Torch;
     # its libstdc++ preload is incompatible with this host's SQLite/ICU build.
     # Do not alter either environment or weaken actual SQLite query provenance.
     source = ("import json, pytest\nfrom pathlib import Path\n"
-              f"CENTERS = {CENTERS!r}\n" + inspect.getsource(_check_full_report_fixture) +
+              f"CENTERS = {CENTERS!r}\n" + helper_source +
               f"\n_check_full_report_fixture(Path({str(tmp_path)!r}), pytest.MonkeyPatch())\n")
     process = subprocess.run([sys.executable, "-c", source], cwd=REPO, text=True, capture_output=True, timeout=60)
     assert process.returncode == 0, process.stdout + process.stderr
