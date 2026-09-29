@@ -896,6 +896,12 @@ KEEP-MANUAL：B1 原生 token 等价和有界 Nsight 性能预检，非最终评
 batch=1、最多四张空闲卡调度。只用已提交预测更新阶段性指标，最终要求与合并结果
 一致；保留新推理适配器的四中心 smoke/token 等价准入，不重训、不覆盖旧运行。
 
+`configs/train/pulse_full_lora32_live_eval_20260930_gpu_recovery.yaml` 和
+`configs/experiments/pulse_full_lora32_live_eval_20260930_gpu_recovery.yaml` 为 KEEP-MANUAL：
+独占 GPU 预检失败后的受管恢复配方。使用原 v2 推理源码身份，复用 8 个训练
+结果及 43 个封存分块（21,706 条 ECG）；未封存分块在新输出目录重算。
+恢复配方与 v3 提速准入分开，不能通过更新旧 hash 混合已有输出。
+
 `configs/train/pulse_full_lora32_live_eval_20260929_resume4gpu.yaml` 和
 `configs/experiments/pulse_full_lora32_live_eval_20260929_resume4gpu.yaml` 为 KEEP-MANUAL：
 从固定哈希的重启前归档恢复，复用完整块，在新输出目录补算未完成块；同一科学协议。

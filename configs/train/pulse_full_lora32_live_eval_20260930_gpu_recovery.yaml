@@ -1,0 +1,46 @@
+schema_version: 1
+mode: fixed
+references:
+  training_config: train/pulse_full_lora32_template.yaml
+seed: 20260924
+max_gpu_workers: 4
+centers:
+- ningbo
+- chapman_shaoxing
+- cpsc_2018
+- georgia
+arms:
+  single: 1
+  three: 3
+evidence_role: fixed_recipe_development_comparison
+records_per_center: full
+image_suite: image_c5_gpu_v1
+image_severity: 5
+original_baseline_mode: current_protocol_v1
+evaluation_block_size: 512
+smoke_sample_keys:
+  ningbo: []
+  chapman_shaoxing:
+  - chapman_shaoxing:940e242011a568f753e2db882634dcea9744eb3dce01a55d5449d6883aef6588
+  cpsc_2018:
+  - cpsc_2018:70d1cc09a50ec52ee1b80301cc28b8ef074648f45b485d0ddd0de272661444cf
+  georgia: []
+paths:
+  run_root: /dev/shm/linbinhao-pulse-hybrid/full_lora32_live_eval_20260930_gpu_recovery_r0/run
+  source_state: /home/linbinhao/ECG_adv_data/runs/pulse_pn2021c_native500_gpu_renderer_s5_depth23_full_r0_20260905_v3_4gpu_handoff
+  temporary_root: /dev/shm/linbinhao-pulse-hybrid/full_lora32_live_eval_20260930_gpu_recovery_r0/tmp
+recovery:
+  archive_root: /data/linbinhao/ecg_llm_runs/pulse_full_lora32_live_eval_20260929_gpu_admission_failure
+  archive_receipt_sha256: 0d9cfac0f4577f16940f20f1d2bd7b1fb0f054f3f15e6eaa421e1572dc64e656
+storage:
+  mode: ram_then_hdd
+  archive_root: /data/linbinhao/ecg_llm_runs/pulse_full_lora32_live_eval_20260930_gpu_recovery_r0
+  ram_budget_gib: 40
+  ram_reserve_gib: 8
+  max_workers: 4
+  release_ram_after_archive: true
+runtime:
+  poll_seconds: 30
+  idle_seconds: 60
+  min_ram_gib: 64
+  min_disk_gib: 40

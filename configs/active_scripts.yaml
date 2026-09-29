@@ -160,6 +160,20 @@ pulse_full_lora32_live_eval_20260928:
   gpu_policy: up_to_four_workers_only_on_idle_devices_with_no_compute_process
   output_policy: task_scoped_shm_then_hdd
 
+pulse_full_lora32_live_eval_20260930_gpu_recovery:
+  workflow_config: configs/experiments/pulse_full_lora32_live_eval_20260930_gpu_recovery.yaml
+  status: verified_recovery_recipe
+  status_is_snapshot_not_live: true
+  run_root: /dev/shm/linbinhao-pulse-hybrid/full_lora32_live_eval_20260930_gpu_recovery_r0/run
+  managed_state: /dev/shm/linbinhao-pulse-hybrid/full_lora32_live_eval_20260930_gpu_recovery_r0/run/state/status.json
+  recovery_archive: /data/linbinhao/ecg_llm_runs/pulse_full_lora32_live_eval_20260929_gpu_admission_failure
+  runtime_source_policy: preserve_original_v2_evaluator_and_adapter_hashes
+  runtime_checkout: /home/linbinhao/ecg-llm
+  purpose: reuse_eight_trainings_and_43_sealed_blocks_after_exclusive_gpu_admission_failure
+  completed_records_available: 21706
+  unsealed_block_policy: preserve_failed_artifacts_and_recompute_in_fresh_output
+  gpu_policy: at_most_four_workers_on_confirmed_idle_devices_selected_at_launch
+
 pulse_full_lora32_live_eval_20260929_resume4gpu:
   workflow_config: configs/experiments/pulse_full_lora32_live_eval_20260929_resume4gpu.yaml
   protocol: docs/pulse_full_lora32_live_eval_20260928.md

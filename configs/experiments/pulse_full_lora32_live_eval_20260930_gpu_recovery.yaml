@@ -1,0 +1,13 @@
+schema_version: 1
+experiment:
+  name: pulse_full_lora32_live_eval_20260930_gpu_recovery
+  purpose: Recover verified v2 blocks after exclusive GPU admission failure. Execute
+    with the unchanged v2 runtime source identity; do not switch to the v3 optimization.
+entrypoint:
+  name: pulse_hybrid
+  config: train/pulse_full_lora32_live_eval_20260930_gpu_recovery.yaml
+  arguments: []
+output:
+  run_dir: /dev/shm/linbinhao-pulse-hybrid/full_lora32_live_eval_20260930_gpu_recovery_r0/run
+  if_exists: error
+  delegate_output_subdir: workflow
