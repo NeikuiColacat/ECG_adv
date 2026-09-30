@@ -80,16 +80,98 @@ No full training run is part of this migration.
 
 ### Migration verification
 
-- Final project regression: 1575 passed, 239 skipped, zero failures.
-- Actual PULSE environment (Torch 2.1.1+cu118), paper CPU suites: 306 passed,
-  three native-GPU checks skipped.
+- Final project regression: 1579 passed, 240 skipped, zero failures; three
+  upstream deprecation warnings. Skipped tests are not counted as passes.
+- Actual PULSE environment (Torch 2.1.1+cu118), paper CPU/GPU suites:
+  314 passed, zero skipped or failed. GPU 0 was explicitly admitted and free.
+  Strict deterministic algorithms were enabled and TF32 disabled.
 - All eighteen v1/v2/v3 declarations pass managed dry-run, including six new
-  v3 declarations. Paired training differs only in width and temporary path.
+  v3 declarations; all six v3 declarations were rechecked after the GPU fixes.
+  Paired training differs only in width and temporary path.
 - All nineteen source texture hashes and the decoded bank hash match.
-- Synthetic full-canvas S2/S5 previews reviewed; no patient images published.
-- New native CUDA admission was not executed: available devices remained
-  occupied, including the graphics process on GPU 7. No other job was changed.
-  GPU throughput and real-model training/evaluation admission remain pending.
+- The first GPU check exposed unsupported deterministic floating cumsum in
+  Otsu on Torch 2.1. Prefix sums now use exact integers before division.
+- Li uses a finite histogram transition map instead of 100 scalar iterations.
+  Eight pointer-doubling gathers resolve its 256 partitions. Independent
+  skimage checks cover 84 random sparse, dense and constant histograms.
+- Tiled integer histograms avoid atomic contention on white pixels. The
+  second optimization preserves all 100 recorded CPU and GPU image hashes.
+- The protected live inference checkout remains on its original source.
+  New full-model training/evaluation admission has not been executed.
+
+Current evidence, logs, source hashes and the local interactive HTML report:
+
+    /home/linbinhao/ECG_adv_data/operations/pulse_paper_gpu0_admission_20260930_170834
+
+The report is paired_native_v3/index.html. Generated ECG images remain outside
+Git. They contain a real training ECG with lead names and calibration marks,
+but no patient metadata. They have not been published to an external service.
+
+### CPU/GPU numerical comparison
+
+One fixed, previously recorded Ningbo K500 training exposure was chosen before
+comparison, without model-score selection. The native 1700 by 2200 renderer
+and K500/exposure files were checked against their recorded hashes. Twenty-five
+operators (the v1/v2/v3 union), two severities (S2/S5), and FP32/FP16 produce
+100 paired cases. The CPU reference is the same Torch port with identical
+GPU-generated parameter plans and random fields replayed on CPU; original
+OpenCV/skimage/quilting formula checks are separate. This does not establish
+pixel equality for every option of the complete upstream libraries.
+
+Forty-one pairs are bitwise identical. Ninety-three have maximum error within
+approximately one 8-bit gray level; seven exceed it. FP32's largest error is
+1.878 gray levels (Folding), with mean error 0.0276 and at most 0.018 percent
+of pixels above one level. A diagnostic using FP64 sampling reduces Folding's
+CPU/GPU maximum to 0.0000304 gray levels, identifying interpolation and
+subsequent byte rounding as the main source. The production path retains FP32.
+
+The largest FP16 difference is 6.101 gray levels in JPEG S5, affecting
+0.00131 percent of pixels above one level. Exactly one of 11,246,400 DCT
+coefficients crosses a quantization boundary, within 0.000000477 of a half
+integer. Wrinkle/Faxify FP16 also show sparse rounding differences up to
+1.121 gray levels. Therefore the audit does not claim cross-device bitwise
+equivalence or identical downstream generated answers. The actual renderer
+supplies FP32 images; model inputs are converted after image preprocessing.
+
+The HTML shows original/GPU, CPU/GPU, magnified differences, waveform crops,
+and the actual five PULSE input tiles. General 3 by 3 quilting is checked
+separately from the author's default one-block path. Neither visual review nor
+these arithmetic tests establish clinical label preservation or an AugMix gain.
+
+### Bounded performance measurements
+
+RTX 4090, native B1 RGB FP32, S2, same real ECG and seed, warm operator only,
+three CUDA-event repetitions; comparison copies and file IO are excluded:
+
+| Operator | Milliseconds |
+| --- | ---: |
+| quilting_wrinkle | 2.188 |
+| dirty_rollers | 2.456 |
+| folding | 3.414 |
+| bad_photocopy | 6.699 |
+| faxify | 7.223 |
+| dirty_drum | 8.070 |
+
+On this matched input, histogram tiling reduces Faxify from 60.133 to 7.223 ms
+(8.33 times faster) without changing its output. This is an operator-level
+measurement, not a whole-training or whole-inference speedup.
+
+### Proposed next pool (not activated)
+
+The registered v3 recipe remains thirteen training and nine held-out operators.
+A future separately versioned recipe can consider these twelve training
+families: yellowing, exposure, shadow, crease, quilting_wrinkle, ink_fade,
+ink_bleed, low_ink_lines, dirty_rollers, defocus, sensor_noise, low_resolution.
+Start with mild train-side visual calibration; independent branches should
+preserve waveform coordinates.
+
+Ten candidate held-out operators are rotate, perspective, folding, stain,
+glare, occlusion, jpeg_compression, dirty_drum, bad_photocopy and faxify. Report
+these separately from clean and seen-operator severity sweeps. Operator
+holdout does not imply disjoint physical mechanisms. Retain old C5 for
+longitudinal comparison, explicitly noting noise/brightness overlap with the
+new training pool. Include a matched-budget clean-only LoRA control and freeze
+the recipe before looking at held-out metrics. No candidate was activated here.
 
 The opt-in native test covers all twenty-two operators, every fax threshold
 and photocopy noise family, original textures and multi-block quilting. Run

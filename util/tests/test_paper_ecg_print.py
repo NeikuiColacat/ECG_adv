@@ -3,6 +3,8 @@ import itertools
 import json
 import os
 import random
+from contextlib import ExitStack
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -10,6 +12,74 @@ import torch
 
 from core import paper_ecg_print as port
 from core.paper_ecg_quilting import apply_wrinkle_texture, minimum_cut_path, quilt_texture
+
+
+def paired_cpu_gpu_outputs(image, operator, severity, seed=41, texture_bank=None):
+    """Compare arithmetic with identical parameter plans and random fields.
+
+    Diagnostic-only: GPU random fields are explicitly copied to CPU and replayed.
+    This is not a throughput path or a claim about CPU/CUDA seed equivalence.
+    Patches are process-local and restored on every exit, including failures.
+    """
+    from core.paper_ecg import apply_paper_operator as apply_v1
+    assert image.is_cuda
+    apply = port.apply_paper_operator if operator in port.PAPER_EVAL_OPERATORS else apply_v1
+    originals = {name: getattr(torch, name) for name in ('rand', 'randn', 'randint', 'randperm')}
+    original_plan = port._parameter_rng
+    fields, plans = [], []
+    recording = True
+    def capture_plan(rng):
+        nonlocal recording
+        recording = False
+        try:
+            plan = original_plan(rng)
+        finally:
+            recording = True
+        plans.append(plan.getstate())
+        return plan
+    def capture(name):
+        def run(*args, **kwargs):
+            result = originals[name](*args, **kwargs)
+            if recording and kwargs.get('generator') is not None:
+                fields.append((name, result.detach().cpu().clone()))
+            return result
+        return run
+    options = {'texture_bank': texture_bank} if apply is port.apply_paper_operator else {}
+    with ExitStack() as stack:
+        for name in originals:stack.enter_context(patch.object(torch, name, capture(name)))
+        stack.enter_context(patch.object(port, '_parameter_rng', capture_plan))
+        gpu = apply(image, operator, severity=severity,
+            rng=torch.Generator(device=image.device).manual_seed(seed), validate=False, **options)
+    field_index, plan_index = 0, 0
+    def replay_plan(rng):
+        nonlocal plan_index
+        assert plan_index < len(plans), 'CPU requested an extra parameter plan'
+        value = random.Random(0);value.setstate(plans[plan_index]);plan_index += 1
+        return value
+    def replay(name):
+        def run(*args, **kwargs):
+            nonlocal field_index
+            if kwargs.get('generator') is None:
+                return originals[name](*args, **kwargs)
+            assert field_index < len(fields), 'CPU requested an extra random field'
+            expected_name, value = fields[field_index];field_index += 1
+            assert expected_name == name, (expected_name, name)
+            if name == 'randperm':size = (args[0],)
+            elif name == 'randint':size = kwargs.get('size', args[-1] if args else ())
+            else:size = kwargs.get('size', args[0] if len(args) == 1 and isinstance(args[0], (tuple, list, torch.Size)) else args)
+            assert tuple(size) == tuple(value.shape), (name, size, value.shape)
+            assert torch.device(kwargs.get('device', 'cpu')).type == 'cpu'
+            return value.clone()
+        return run
+    if apply is port.apply_paper_operator:
+        options = {'texture_bank': texture_bank.detach().cpu() if texture_bank is not None else None}
+    with ExitStack() as stack:
+        for name in originals:stack.enter_context(patch.object(torch, name, replay(name)))
+        stack.enter_context(patch.object(port, '_parameter_rng', replay_plan))
+        cpu = apply(image.detach().cpu(), operator, severity=severity,
+            rng=torch.Generator().manual_seed(seed), validate=False, **options)
+    assert field_index == len(fields) and plan_index == len(plans), 'CPU did not consume the complete GPU sampling trace'
+    return cpu, gpu, {'random_fields': len(fields), 'parameter_plans': len(plans)}
 
 
 def paper(dtype=torch.float32, device='cpu'):
@@ -102,6 +172,14 @@ def test_folding_matches_two_opencv_perspective_strips():
     assert np.max(np.abs(actual-expected)) <= 1
 
 
+@pytest.mark.parametrize('shape', [(2, 1, 1, 1), (3, 1, 17, 63), (2, 1, 32, 32)])
+def test_tiled_byte_histogram_matches_independent_bincount(shape):
+    value = torch.randint(256, shape, generator=torch.Generator().manual_seed(62)).float()
+    value[0] = 255
+    expected = torch.stack([torch.bincount(row.flatten().long(), minlength=256) for row in value])
+    assert torch.equal(port._byte_histogram(value), expected)
+
+
 @pytest.mark.parametrize('method', port.FAX_METHODS)
 @pytest.mark.parametrize('kind', ['random', 'constant', 'bimodal'])
 def test_fax_thresholds_match_skimage(method, kind):
@@ -112,6 +190,19 @@ def test_fax_thresholds_match_skimage(method, kind):
     expected = getattr(filters, 'threshold_'+method)(raw)
     actual = port.grayscale_threshold(torch.from_numpy(raw)[None, None].float(), method).numpy()[0, 0]
     np.testing.assert_allclose(actual, expected, atol=2e-3, rtol=0)
+
+
+def test_li_partition_acceleration_matches_cpu_reference_across_histograms():
+    filters = pytest.importorskip('skimage.filters')
+    rng = np.random.default_rng(621)
+    for levels in (1, 2, 3, 5, 16, 64, 256):
+        for _ in range(12):
+            support = rng.choice(256, size=levels, replace=False).astype(np.uint8)
+            weights = rng.lognormal(0, 2, levels);weights /= weights.sum()
+            raw = rng.choice(support, size=(41, 57), p=weights)
+            expected = filters.threshold_li(raw)
+            actual = port.grayscale_threshold(torch.from_numpy(raw)[None, None].float(), 'li').item()
+            assert abs(actual-expected) <= 2e-3
 
 
 @pytest.mark.parametrize('angle', [0, 30, 90])
@@ -253,6 +344,20 @@ def test_invalid_print_request_does_not_consume_rng(severity):
     rng = torch.Generator().manual_seed(3); before = rng.get_state().clone()
     with pytest.raises(ValueError):port.apply_paper_operator(paper(), 'faxify', severity=severity, rng=rng)
     assert torch.equal(before, rng.get_state())
+
+
+@pytest.mark.skipif(os.environ.get('PULSE_GPU_OPS_NATIVE') != '1', reason='explicit free GPU admission required')
+def test_fixed_field_cpu_cuda_arithmetic_agreement():
+    from core.paper_ecg_quilting import load_original_texture_bank
+    assert os.environ.get('CUDA_VISIBLE_DEVICES', '').startswith('GPU-') and torch.cuda.device_count() == 1
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = False
+    torch.use_deterministic_algorithms(True)
+    bank = load_original_texture_bank('cuda:0')
+    for dtype in (torch.float16, torch.float32):
+        for operator in port.PAPER_EVAL_OPERATORS + ('yellowing', 'ink_fade', 'grid_fade'):
+            cpu, gpu, trace = paired_cpu_gpu_outputs(paper(dtype, 'cuda')[:1], operator, 2, texture_bank=bank)
+            assert (cpu.float()-gpu.cpu().float()).abs().max() <= 1/255+1e-6, (operator, dtype, trace)
 
 
 @pytest.mark.skipif(os.environ.get('PULSE_GPU_OPS_NATIVE') != '1', reason='explicit free GPU admission required')

@@ -249,6 +249,18 @@ def dirty_drum(image, p, rng, *, direction=None):
 FAX_METHODS = ('mean', 'otsu', 'li', 'triangle', 'sauvola')
 
 
+def _byte_histogram(gray):
+    """Exact tiled integer counts, avoiding atomic contention on white paper."""
+    values = gray.to(torch.int64).flatten(1)
+    padding = (-values.shape[1]) % 1024
+    values = F.pad(values, (0, padding)).reshape(values.shape[0], -1, 1024)
+    counts = torch.zeros((*values.shape[:2], 256), device=gray.device, dtype=torch.int64)
+    counts.scatter_add_(2, values, torch.ones_like(values))
+    histogram = counts.sum(1)
+    histogram[:, 0] -= padding
+    return histogram
+
+
 def grayscale_threshold(gray, method):
     """The five algorithms in Faxify's random mode, without dynamic eval."""
     if method not in FAX_METHODS:
@@ -258,11 +270,10 @@ def grayscale_threshold(gray, method):
         mean = F.avg_pool2d(padded, 15, stride=1)
         std = (F.avg_pool2d(padded.square(), 15, stride=1)-mean.square()).clamp_min(0).sqrt()
         return mean*(1+.2*(std/127.5-1))
-    values = gray.to(torch.int64).flatten(1)
-    histogram = torch.zeros((gray.shape[0], 256), device=gray.device, dtype=torch.int64)
-    histogram.scatter_add_(1, values, torch.ones_like(values))
+    histogram = _byte_histogram(gray)
     counts = histogram.double()
-    bins = torch.arange(256, device=gray.device, dtype=torch.float64)[None]
+    integer_bins = torch.arange(256, device=gray.device, dtype=torch.int64)[None]
+    bins = integer_bins.double()
     total = counts.sum(1)
     low = (counts > 0).to(torch.int64).argmax(1)
     high = 255-(counts.flip(1) > 0).to(torch.int64).argmax(1)
@@ -270,8 +281,11 @@ def grayscale_threshold(gray, method):
     if method == 'mean':
         threshold = average
     elif method == 'otsu':
-        weight = counts.cumsum(1)
-        moment = (counts*bins).cumsum(1)
+        # CUDA float cumsum is rejected by deterministic mode in Torch 2.1.
+        # Counts and byte-valued moments are exact integers; convert only
+        # after the prefix sums, before computing between-class variance.
+        weight = histogram.cumsum(1).double()
+        moment = (histogram*integer_bins).cumsum(1).double()
         reverse_weight = total[:, None]-weight
         reverse_moment = moment[:, -1:]-moment
         variance = weight*reverse_weight*(moment/weight.clamp_min(1)-reverse_moment/reverse_weight.clamp_min(1)).square()
@@ -287,22 +301,31 @@ def grayscale_threshold(gray, method):
         threshold = length.argmax(1)
         threshold = torch.where(flip, 255-threshold, threshold)
     else:
-        shifted = bins-low[:, None]
-        current = average-low
-        done = low == high
-        for _ in range(100):
-            foreground = shifted > current[:, None]
-            front = counts*foreground
-            back = counts*~foreground
-            mean_front = (front*shifted).sum(1)/front.sum(1).clamp_min(1)
-            mean_back = (back*shifted).sum(1)/back.sum(1).clamp_min(1)
-            denominator = mean_back.clamp_min(1e-100).log()-mean_front.clamp_min(1e-100).log()
-            blocked = mean_back == 0
-            candidate = torch.where(blocked, current, (mean_back-mean_front)/denominator.clamp_max(-1e-100))
-            candidate = torch.where(done, current, candidate)
-            done = done | blocked | ((candidate-current).abs() <= .5)
-            current = candidate
-        threshold = current+low
+        # A byte image has only 256 possible histogram partitions. Compute
+        # Li's next threshold for every partition once. Its monotone finite
+        # transition map reaches a terminal state within 256 steps; eight
+        # pointer-doubling gathers replace hundreds of tiny CUDA kernels.
+        back_weight = histogram.cumsum(1).double()
+        moment = (histogram*integer_bins).cumsum(1).double()-low[:, None]*back_weight
+        front_weight = total[:, None]-back_weight
+        mean_back = moment/back_weight.clamp_min(1)
+        mean_front = (moment[:, -1:]-moment)/front_weight.clamp_min(1)
+        blocked = (mean_back == 0) | (front_weight == 0)
+        denominator = mean_back.clamp_min(1e-100).log()-mean_front.clamp_min(1e-100).log()
+        next_value = torch.where(blocked, bins, (mean_back-mean_front)/denominator.clamp_max(-1e-100)+low[:, None])
+        next_partition = next_value.floor().long().clamp(0, 255)
+        after = next_value.gather(1, next_partition)
+        next_blocked = blocked.gather(1, next_partition)
+        terminal = next_blocked | ((after-next_value).abs() <= .5)
+        terminal_value = torch.where(next_blocked, next_value, after)
+        pointers = torch.where(terminal, integer_bins, next_partition)
+        for _ in range(8):
+            pointers = pointers.gather(1, pointers)
+        start = average.floor().long().clamp(0, 255)[:, None]
+        first = next_value.gather(1, start).squeeze(1)
+        threshold = terminal_value.gather(1, pointers.gather(1, start)).squeeze(1)
+        threshold = torch.where((first-average).abs() <= .5, first, threshold)
+        threshold = torch.where(blocked.gather(1, start).squeeze(1), average, threshold)
     threshold = torch.where(low == high, low, threshold)
     return threshold.to(gray.dtype).reshape(-1, 1, 1, 1)
 

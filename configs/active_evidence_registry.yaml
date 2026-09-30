@@ -5,18 +5,21 @@ purpose: >
   trusted evidence. A launch config is not evidence by itself.
 
 pulse_paper_torch_v3:
-  status: implemented_wired_cpu_validated_native_gpu_pending
+  status: implemented_wired_native_operator_validated_model_admission_pending
   implementation: paper_ecg_torch_v3
   image_suite: paper_ecg_gpu_v3
   protocol: docs/paper_ecg_printing.md
-  validation_root: /home/linbinhao/ECG_adv_data/operations/pulse_paper_complete_20260930_154836
-  cpu_full_regression: {passed: 1575, skipped: 239, failed: 0}
-  pulse_environment_cpu: {passed: 306, skipped: 3, torch: 2.1.1+cu118}
+  validation_root: /home/linbinhao/ECG_adv_data/operations/pulse_paper_gpu0_admission_20260930_170834
+  migration_provenance_root: /home/linbinhao/ECG_adv_data/operations/pulse_paper_complete_20260930_154836
+  cpu_full_regression: {passed: 1579, skipped: 240, failed: 0, warnings: 3}
+  pulse_environment_cpu_and_gpu: {passed: 314, skipped: 0, failed: 0, torch: 2.1.1+cu118, log: native_final.log}
   managed_dry_runs: {total_paper_versions: 18, new_v3: 6}
   texture_bank: {files: 19, patches_shape: [19, 3, 250, 250], source_and_decoded_hashes_verified: true, identity: 9b01be9b7f7c2d575ce57fab8d5551ee959a46a45a458d6615070fa8d63a0dfb}
-  gpu_operator_admission: not_executed_no_exclusive_free_device
-  gpu_performance: unmeasured
-  visual_review: synthetic_cpu_s2_and_s5_not_patient_data
+  gpu_operator_admission: {device: RTX_4090, physical_gpu: 0, shape: [1, 3, 1700, 2200], deterministic: true, tf32: false, report: validation_summary.json}
+  paired_cpu_gpu: {operators: 25, cases: 100, severities: [2, 5], dtypes: [float32, float16], fixed_training_records: 1, identical_random_fields: true, bitwise_equal_cases: 41, cases_over_one_gray_level: 7, max_gray_float32: 1.877966, max_gray_float16: 6.101074, report: paired_native_v3/report.json, numerical_diagnosis: numerics_diagnostic_v2.json}
+  gpu_operator_milliseconds: {dirty_rollers: 2.456, dirty_drum: 8.070, quilting_wrinkle: 2.188, folding: 3.414, bad_photocopy: 6.699, faxify: 7.223, scope: warm_operator_only, dtype: float32, severity: 2, repeats: 3}
+  histogram_optimization: {unchanged_cpu_and_gpu_output_cases: 100, faxify_s2_before_ms: 60.133, faxify_s2_after_ms: 7.223, scope: same_real_image_and_seed}
+  visual_review: {report: paired_native_v3/index.html, real_k500_ecgs: 1, patient_metadata_drawn: false, local_only: true, upstream_global_pixel_parity_claimed: false}
   training_operators: [color_paper, ink_bleed, low_ink_lines, exposure, shadow, crease, wrinkle, defocus, sensor_noise, low_resolution, dirty_rollers, dirty_drum, quilting_wrinkle]
   held_out_operators: [rotate, perspective, stain, glare, occlusion, jpeg_compression, folding, bad_photocopy, faxify]
   model_admission: not_executed

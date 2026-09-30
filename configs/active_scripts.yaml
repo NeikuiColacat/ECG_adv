@@ -47,7 +47,7 @@ launch_surface_policy:
     - no_agent_workspace_runtime_import
 
 pulse_paper_torch_v3:
-  status: candidate_cpu_validated_native_gpu_admission_pending
+  status: candidate_native_operator_validated_model_admission_pending
   protocol: docs/paper_ecg_printing.md
   training_admission:
     - configs/experiments/pulse_paper_print_single_ningbo_smoke.yaml
