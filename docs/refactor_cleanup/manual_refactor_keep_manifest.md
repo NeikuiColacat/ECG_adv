@@ -994,7 +994,8 @@ dry-run。真实权重、GPU packing、梯度和断点恢复另外使用显式 s
 预算与作用域拒绝、显卡白名单和僵死进度不可冒充真实进程；不启动 GPU。
 
 `util/tests/test_pulse_adapters.py` 为 `KEEP-MANUAL`：覆盖批量 flat packing、
-错误 prompt/tiles 拒绝和生成 token 长度；不把 CPU packing 测试当 GPU 推理证据。
+错误 prompt/tiles 拒绝、生成 token 长度、零 LoRA 分支隔离，以及推理成功/异常后
+FP32 参数内容和存储指针的精确恢复；不把 CPU packing 测试当 GPU 推理证据。
 
 `util/tests/test_pulse_benchmark.py` 为 `KEEP-MANUAL`：覆盖成对评估配置闭包、
 固定开发/全量任务复用、任务过滤、身份拒绝、独立 sklearn 指标核验及配对区间。

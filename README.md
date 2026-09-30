@@ -112,7 +112,8 @@ and bytes; quick runtime checks do not constitute full content verification.
 ## Verify and preserve
 
 ```bash
-CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 \
+TMPDIR=/home/linbinhao/ECG_adv_data/tmp \
+  CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 \
   /home/linbinhao/miniforge3/envs/ECGTwin/bin/python -m pytest -q
 git diff --check
 ```
@@ -120,8 +121,10 @@ git diff --check
 CPU tests do not replace opt-in GPU or real-model parity checks. Preserve
 unrelated dirty files, source checkpoints and final results. No `sudo`,
 system/CUDA/driver changes, unscoped process kills, or broad Git staging.
-When running the complete suite on this host, give pytest a fresh home-owned
-directory with `--basetemp`; path-contract fixtures intentionally reject `/tmp`.
+The complete suite needs temporary fixtures inside the owned ECG data root.
+The command above uses pytest's numbered temporary directories beneath `TMPDIR`;
+an explicit fresh `--basetemp` there also works. Path-contract fixtures
+intentionally reject the system `/tmp` directory.
 
 The [keep manifest](docs/refactor_cleanup/manual_refactor_keep_manifest.md)
 owns retained-file and deletion boundaries. The

@@ -1,22 +1,35 @@
 # PULSE paper-image operators and performance audit
 
-Status: design and implementation in progress; no new training result is claimed.
+Status: bounded engineering admission complete. Clinical calibration and
+robustness benefits have not been established.
 
-Verification so far: 1264 CPU tests passed, 237 skipped; all six managed paper
-declarations dry-run successfully. The actual PULSE environment also passes 139
-CPU checks with one native-GPU test skipped. A 24-case legacy comparison preserves
+Verification so far: 1266 CPU tests passed, 237 skipped; all six managed paper
+declarations dry-run successfully. The actual PULSE environment also passes 141
+CPU checks with one native-GPU test skipped. Native-size tests in that environment
+now pass all 361 paper/legacy checks with GPU admission enabled on one RTX 4090.
+A 24-case legacy comparison preserves
 exact pixels, augmentation traces and global RNG; 15 JPEG cases remain pixel exact
-after constant caching. Native GPU speed, full-model paper
-training/evaluation admission and clinical fidelity remain unvalidated.
+after constant caching. At 2200 x 1700, batch one, FP16, the 16 paper operators
+take 0.28--5.12 ms each after warmup (three CUDA-event repeats, validation excluded).
+These are operator timings, not whole-pipeline speedups. Both single- and
+three-chain LoRA smokes completed four optimizer steps with finite nonzero
+language/vision LoRA and projector gradients, frozen-parameter preservation,
+and exact saved trainables. Four K500-excluded records then completed all 17
+conditions across three arms: all 204 generated answers and raw token sequences
+match the reference path. Result contracts, file indexes and source hashes pass.
+Native GPU previews were inspected using a synthetic ECG-like fixture, not
+patient data. A new-process checkpoint resume was not run for this new recipe;
+saved optimizer/RNG states and disk trainables were verified. Clinical fidelity
+and robustness benefits remain unvalidated.
 
 ## Delivery plan
 
-- [ ] Separate measured model inference costs from rendering and serialization.
+- [x] Separate measured model inference costs from rendering and serialization.
 - [x] Verify paper-ECG artifacts against PULSE and ECG-Image-Kit primary sources.
 - [x] Define a versioned training pool and independently reported stress suites.
 - [x] Implement device-resident operators with PyTorch and bounded allocations.
 - [x] Simplify the affected owners and document the public execution path.
-- [ ] Verify deterministic replay, source identity, native-size execution,
+- [x] Verify deterministic replay, source identity, native-size execution,
       numerical parity where applicable, and measured throughput.
 
 ## Protocol boundary
@@ -146,6 +159,9 @@ trusted chain validates its anchor once and uses `validate=False` internally.
 Only O(H+W) coordinate vectors are cached, with eight shape/device entries.
 Random fields are never cached. Conversion to display images belongs to audit
 export, outside the training/inference hot path.
+Managed augmentation runs outside model autocast. Standalone callers should
+also keep these operators outside autocast to retain the stated FP32 working
+arithmetic; ambient autocast can change convolution/matrix precision.
 
 ## Use and review
 
@@ -201,6 +217,10 @@ previews establish neither GPU throughput nor clinical fidelity.
   Image tensors are never copied for this logging operation.
 - JPEG DCT and quantization constants are reused per device, avoiding repeated
   allocations and constant-table transfers after warmup.
+- FP16 inference storage is allocated without converting the previous arm: the
+  next arm overwrites every parameter before use. Exact FP32 reference buffers
+  are restored on both success and failure. This removes redundant work; no
+  separate end-to-end speedup is attributed to this small change.
 
 Existing replay recipes require their recorded source checkout. The initial
 Torch profiling screen was frozen at `63f6909` before training-owner changes;
@@ -215,3 +235,60 @@ efficiency score. Keep data, checkpoints, decoding, precision, batch, and random
 seeds matched when evaluating a runtime optimization. Profile overhead is
 excluded from speed claims. Use PyTorch operators; no custom CUDA implementation
 is part of this work.
+
+### Measured Torch breakdown
+
+The frozen `63f6909` screen completed on an RTX 4090 with CUDA activities present
+and exact generated tokens/answers. Four Georgia records, six conditions and
+three arms produced 72 matched outputs. Unprofiled generation totals were
+53.443 s for the author-reference path, 47.866 s for v2, and 43.545 s for v3:
+v3 reduced latency by 9.03% versus v2 in this bounded screen. This is neither a
+full-cohort result nor the speedup from the later storage allocation cleanup.
+
+For one clean view across the three arms, CUDA kernels were correlated with
+their host launch and the innermost module hook; durations are non-overlapping:
+
+| Stage | Kernel time | Share of kernel time |
+| --- | ---: | ---: |
+| LLM prefill | 1036.504 ms | 79.97% |
+| LLM decode | 133.430 ms | 10.29% |
+| Vision tower | 97.840 ms | 7.55% |
+| Language head | 15.496 ms | 1.20% |
+| Projector | 2.402 ms | 0.19% |
+| Outside these hooks | 10.412 ms | 0.80% |
+
+There were 25,100 kernels. They occupied 1296.084 ms of a 2048.874 ms kernel
+span. Profiling changes timing, so this ratio is not a production utilization
+claim. Host `cudaLaunchKernel` calls accumulated 275.691 ms. Long host
+`cudaMemcpyAsync` calls accumulated 545.057 ms, but actual host/device transfers
+were only 107 bytes D2H and 24 bytes H2D in this generation-only trace. The three
+longest waits belonged to tensor-to-Boolean scalar reads. This identifies
+synchronization with queued GPU work, not a measured PCIe-bandwidth shortage.
+
+The principal compute cost is the 2880-token visual prompt passing through the
+LLM for every view/arm. Active visual adapters require separate vision forwards.
+The next potentially material Torch experiments are admitted larger batches
+and a fixed-shape compiled/captured generation path to reduce launch gaps.
+Both need fresh memory, token-parity and wall-clock admission; neither is enabled
+here. Changing image tiling, generation length, adapter merging, quantization,
+or attention numerics would change more than scheduling and needs a separate
+research identity. No promise of sustained 100% utilization is supported.
+
+Evidence: external `pulse_torch_profile_20260930_r0/evaluation/` contains the
+trace, stage summary, paired timings and validated result; the operations folder
+`pulse_torch_paper_20260930/` contains `torch_trace_breakdown.json`,
+`profile_performance_summary.json`, and `gpu_operator_admission.json`.
+The paired four-step training and 204-output evaluation are under
+`pulse_paper_ecg_v1_20260930/`; their independent revalidation is recorded in
+`model_paper_admission.json` in the same operations folder. None of these bounded
+admissions establish the benefit of the unexecuted 200-step candidate recipe.
+
+### Code size and scope
+
+Against pre-task cleanup commit `a6753b7`, retained production Python
+(`git ls-files '*.py'`, excluding `util/tests/` and `agent_workspace/`) changes
+from 92 files / 37,613 lines to 93 files / 37,897 lines, a net addition of 284.
+The new pool, profiler and explicit protocol integration exceed the lines
+removed from existing owners; total repository code size has not decreased.
+The simplification is in shared ownership and fewer duplicate paths. No legacy
+file deletion or wholesale rewrite is part of this change.

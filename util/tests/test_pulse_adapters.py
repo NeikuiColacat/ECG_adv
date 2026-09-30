@@ -54,6 +54,38 @@ def test_torch_profile_stages_preserve_outputs_and_remove_hooks(monkeypatch, tmp
     assert all(not m._forward_hooks and not m._forward_pre_hooks for m in (backbone, vision, head, backbone.mm_projector))
 
 
+@pytest.mark.parametrize("fail", [False, True])
+@torch.inference_mode()
+def test_fp16_inference_storage_restores_exact_reference_after_arm_writes(fail):
+    from util.evaluation.pulse_adapters import HybridPulseBackend
+    backend = HybridPulseBackend.__new__(HybridPulseBackend)
+    backend.fp16_adapters, backend.bypass_original_lora = True, False
+    parameter = torch.nn.Parameter(torch.tensor([1.125, -2.75]), requires_grad=False)
+    backend.parameters = {"layer.lora_A.default.weight": parameter}
+    reference, pointer = parameter.clone(), parameter.data_ptr()
+    states = [torch.tensor([0.125, 0.3]), torch.tensor([-1.3, 2.5])]
+
+    def generate(views, *, bypass_original_lora):
+        assert parameter.dtype == torch.float16 and not torch.is_grad_enabled()
+        result = []
+        for state in states:
+            torch._foreach_copy_([parameter], [state])
+            result.append(parameter.clone())
+        if fail:
+            raise RuntimeError("probe failure")
+        return result
+
+    backend._generate_views = generate
+    for _ in range(2):
+        if fail:
+            with pytest.raises(RuntimeError, match="probe failure"):
+                backend.generate_views([None])
+        else:
+            assert all(torch.equal(a, b.half()) for a, b in zip(backend.generate_views([None]), states))
+        assert parameter.dtype == torch.float32 and parameter.data_ptr() == pointer
+        assert torch.equal(parameter, reference)
+
+
 @pytest.mark.parametrize("value", [None, 0.1, float("nan")])
 def test_original_lora_bypass_rejects_missing_or_nonzero_factors(value):
     from util.evaluation.pulse_adapters import HybridPulseBackend

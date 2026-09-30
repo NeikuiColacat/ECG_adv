@@ -266,7 +266,9 @@ class HybridPulseBackend(PairedPulseBackend):
         saved = {name: parameter.data for name, parameter in self.parameters.items()}
         try:
             for parameter in self.parameters.values():
-                parameter.data = parameter.data.to(torch.float16)
+                # Every arm copies its full state before use; casting the
+                # previous arm here would produce values immediately overwritten.
+                parameter.data = torch.empty_like(parameter, dtype=torch.float16)
             return self._generate_views(views, bypass_original_lora=bypass)
         finally:
             for name, parameter in self.parameters.items():

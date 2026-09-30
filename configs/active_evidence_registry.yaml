@@ -5,7 +5,7 @@ purpose: >
   trusted evidence. A launch config is not evidence by itself.
 
 pulse_paper_torch_v1:
-  status: implemented_wired_cpu_validated_gpu_admission_pending
+  status: bounded_gpu_training_and_evaluation_validated_not_clinically_calibrated
   protocol: docs/pulse_paper_operators.md
   implementation: paper_ecg_torch_v1
   image_suite: paper_ecg_gpu_v1
@@ -14,16 +14,23 @@ pulse_paper_torch_v1:
   candidate_training_severity: 2
   managed_stress_example_severity: 5
   metric_families: [clean, image_seen, image_held_out]
-  cpu_verification: {passed: 1264, skipped: 237, legacy_differential_cases: 24, jpeg_differential_cases: 15, managed_dry_runs: 6}
-  pulse_environment_cpu_verification: {passed: 139, skipped: 1}
+  cpu_verification: {passed: 1266, skipped: 237, legacy_differential_cases: 24, jpeg_differential_cases: 15, managed_dry_runs: 6}
+  pulse_environment_cpu_verification: {passed: 141, skipped: 1}
   validation_root: /home/linbinhao/ECG_adv_data/operations/pulse_torch_paper_20260930
-  gpu_operator_admission: pending
-  gpu_throughput: unmeasured
-  full_model_paper_training_admission: pending
-  full_model_paper_evaluation_admission: pending
+  gpu_operator_admission: {passed: 361, scope: cpu_gpu_suite_with_native_gpu_enabled, device: RTX_4090, torch: 2.1.1+cu118, report: gpu_operator_admission.json}
+  gpu_operator_milliseconds: {min: 0.27696, max: 5.12143, batch: 1, shape: [3, 2200, 1700], repeats: 3, scope: warm_operator_only}
+  full_model_paper_training_admission: {single_steps: 4, three_steps: 4, finite_nonzero_gradients: true, frozen_parameters_preserved: true, saved_trainables_exact: true}
+  full_model_paper_evaluation_admission: {records: 4, conditions: 17, model_arms: 3, generated_answers: 204, k500_overlap: 0, exact_tokens_and_answers_vs_reference: true}
+  model_admission_report: model_paper_admission.json
+  model_admission_root: /home/linbinhao/ECG_adv_data/runs/pulse_paper_ecg_v1_20260930
+  new_recipe_process_resume_replay: not_executed
+  candidate_200_step_training: not_executed
+  robustness_benefit: not_established
   author_pixel_equivalence: not_claimed
   clinical_fidelity: unvalidated_procedural_approximations
   performance_profile_checkout: 63f6909b79d51737b3fa1d0abb9b73252e6a7628
+  performance_profile: {records: 4, conditions: 6, generated_answers: 72, cuda_trace_available: true, exact_tokens_and_answers: true, generation_latency_reduction_percent_vs_v2: 9.02839, scope: bounded_generation_only_excludes_profiler}
+  performance_profile_report: profile_performance_summary.json
   paper_claim_allowed: false
 
 pulse_original_zero_lora_bypass_20260930:
