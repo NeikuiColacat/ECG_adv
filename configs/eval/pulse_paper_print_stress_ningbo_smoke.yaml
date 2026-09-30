@@ -1,0 +1,24 @@
+schema_version: 1
+mode: evaluate
+phase: smoke
+image_suite: paper_ecg_gpu_v3
+original_baseline_mode: current_protocol_v1
+execution_mode: arm_major_original_bypass_v3
+references:
+  training_config: train/pulse_paper_print_three_ningbo_smoke.yaml
+center: ningbo
+records_per_center: 4
+source_state: /home/linbinhao/ECG_adv_data/runs/pulse_pn2021c_native500_gpu_renderer_s5_depth23_full_r0_20260905_v3_4gpu_handoff
+training_results:
+  single: /home/linbinhao/ECG_adv_data/runs/pulse_paper_print_ecg_v3_20260930/ningbo_single_smoke/training/train_result.json
+  three: /home/linbinhao/ECG_adv_data/runs/pulse_paper_print_ecg_v3_20260930/ningbo_three_smoke/training/train_result.json
+model_arms:
+- original
+- single
+- three
+waveform_indices: []
+image_strength: 1.0
+image_severity: 5
+seed: 20260924
+inference_batch_size: 1
+performance_smoke: false

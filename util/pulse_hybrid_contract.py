@@ -17,7 +17,9 @@ RAM_PREFIX = "linbinhao-pulse-"
 ARCHIVE_ROOT = Path("/data/linbinhao/ecg_llm_runs")
 GPU_C5_SUITE = "image_c5_gpu_v1"
 PAPER_SUITE = "paper_ecg_gpu_v1"
-GPU_IMAGE_SUITES = (GPU_C5_SUITE, PAPER_SUITE)
+PAPER_IMPLEMENTATIONS = {PAPER_SUITE: "paper_ecg_torch_v1", "paper_ecg_gpu_v2": "paper_ecg_torch_v2", "paper_ecg_gpu_v3": "paper_ecg_torch_v3"}
+PAPER_CONDITION_COUNTS = {PAPER_SUITE: 17, "paper_ecg_gpu_v2": 17, "paper_ecg_gpu_v3": 23}
+GPU_IMAGE_SUITES = (GPU_C5_SUITE, *PAPER_IMPLEMENTATIONS)
 ORIGINAL_BYPASS_MODE = "arm_major_original_bypass_v3"
 IMAGE_FP16_MODES = ("arm_major_fp16_adapters_v2", ORIGINAL_BYPASS_MODE)
 IMAGE_OPTIMIZED_MODES = ("arm_major_cached_prompt_v1", *IMAGE_FP16_MODES)
@@ -47,7 +49,7 @@ def validate_config(c):
     if c["mode"] == "evaluate":
         c15 = c.get("image_suite") in ("joint_c15", "joint_c15_reference_v1")
         gpu_images = c.get("image_suite") in GPU_IMAGE_SUITES
-        paper = c.get("image_suite") == PAPER_SUITE
+        paper = c.get("image_suite") in PAPER_IMPLEMENTATIONS
         joint = c.get("image_suite") in ("joint_v2", "joint_v3") or c15
         reduced = c.get("image_suite") == "joint_v3"
         expected = {"schema_version", "mode", "references", "phase", "center", "records_per_center",
@@ -307,7 +309,7 @@ def validate_result(result, path):
         suite = details.get("image_suite")
         c15 = suite in ("joint_c15", "joint_c15_reference_v1")
         gpu_images = suite in GPU_IMAGE_SUITES
-        paper = suite == PAPER_SUITE
+        paper = suite in PAPER_IMPLEMENTATIONS
         if type(details.get("records")) is not int:
             raise ValueError("result record count must be an integer")
         if gpu_images and (type(details.get("inference_batch_size", 1)) is not int
@@ -317,7 +319,7 @@ def validate_result(result, path):
                 or (details.get("performance_smoke", False) and phase not in ("smoke", "screen"))):
             raise ValueError("invalid result batch/performance policy")
         joint = suite in ("joint_v2", "joint_v3") or c15
-        condition_count = (17 if paper else 6 if gpu_images else 96 if c15
+        condition_count = (PAPER_CONDITION_COUNTS[suite] if paper else 6 if gpu_images else 96 if c15
                            else 24 if suite == "joint_v3"
                            else ((20 if phase == "smoke" else 84) if joint else (25 if phase == "final" else 9)))
         full_cohort = details.get("full_cohort") is True
@@ -359,7 +361,7 @@ def validate_result(result, path):
                 raise ValueError("GPU C5 cohort identity or full population changed")
             if (type(details.get("image_severity")) is not int or details["image_severity"] not in ((1, 2, 3, 4, 5) if paper else (5,))
                     or arms != ("original", "single", "three")
-                    or details.get("image_implementation") != ("paper_ecg_torch_v1" if paper else "image_c5_torch_gpu_v1")
+                    or details.get("image_implementation") != PAPER_IMPLEMENTATIONS.get(suite, "image_c5_torch_gpu_v1")
                     or cohort["conditions"] != gpu_image_conditions_for([cohort["conditions"][0]], suite=suite, severity=details["image_severity"])):
                 raise ValueError("GPU C5 image suite identity changed")
             paths = details.get("training_result_paths", {})
@@ -398,7 +400,7 @@ def validate_result(result, path):
                         or protocol.get("width") != {"single": 1, "three": 3}[arm]
                         or protocol.get("augmentation_topology") != "image_only_gpu_branches_v1"
                         or protocol.get("mix_residual") != "clean_render"
-                        or protocol.get("image_gpu", {}).get("implementation") != ("paper_ecg_torch_v1" if paper else "augmix_torch_gpu_v2")
+                        or protocol.get("image_gpu", {}).get("implementation") != PAPER_IMPLEMENTATIONS.get(suite, "augmix_torch_gpu_v2")
                         or protocol.get("image_augmentation", {}).get("waveform_strength") != 0):
                     raise ValueError("GPU C5 referenced training lineage differs")
             if random_subset:
@@ -444,6 +446,10 @@ def validate_result(result, path):
             }
             if paper:
                 required_sources.add("source_snapshot/core/paper_ecg.py")
+            if suite in ("paper_ecg_gpu_v2", "paper_ecg_gpu_v3"):
+                required_sources.add("source_snapshot/core/paper_ecg_upstream.py")
+            if suite == "paper_ecg_gpu_v3":
+                required_sources.update(("source_snapshot/core/paper_ecg_print.py", "source_snapshot/core/paper_ecg_quilting.py"))
             if not required_sources <= set(result["files"]):
                 raise ValueError("GPU C5 source snapshot is incomplete")
         if joint:

@@ -12,11 +12,13 @@ import torch
 import torch.nn.functional as F
 
 IMAGE_OPERATORS = ("paper_texture", "grid_fade", "tone", "shadow")
-GPU_IMAGE_IMPLEMENTATIONS = ("augmix_torch_gpu_v2", "paper_ecg_torch_v1")
+GPU_IMAGE_IMPLEMENTATIONS = ("augmix_torch_gpu_v2", "paper_ecg_torch_v1", "paper_ecg_torch_v2", "paper_ecg_torch_v3")
 IMAGE_IMPLEMENTATION_SOURCES = {
     "augmix_pil_reference_v1": ("core/image_augmix_c.py",),
     "augmix_torch_gpu_v2": ("core/image_augmix_gpu.py",),
     "paper_ecg_torch_v1": ("core/paper_ecg.py", "core/image_augmix_gpu.py"),
+    "paper_ecg_torch_v2": ("core/paper_ecg_upstream.py", "core/paper_ecg.py", "core/image_augmix_gpu.py"),
+    "paper_ecg_torch_v3": ("core/paper_ecg_print.py", "core/paper_ecg_quilting.py", "core/paper_ecg_upstream.py", "core/paper_ecg.py", "core/image_augmix_gpu.py"),
 }
 
 
@@ -32,9 +34,13 @@ def validate_image_config(config, *, for_execution=False):
         raise ValueError("invalid hybrid image configuration")
     if reference:
         from core.paper_ecg import PAPER_TRAIN_OPERATORS
-        paper = implementation == "paper_ecg_torch_v1"
+        if implementation == "paper_ecg_torch_v2":
+            from core.paper_ecg_upstream import PAPER_TRAIN_OPERATORS
+        elif implementation == "paper_ecg_torch_v3":
+            from core.paper_ecg_print import PAPER_TRAIN_OPERATORS
+        paper = implementation in ("paper_ecg_torch_v1", "paper_ecg_torch_v2", "paper_ecg_torch_v3")
         if operators != (PAPER_TRAIN_OPERATORS if paper else AUGMIX_TRAIN_OPERATORS):
-            raise ValueError("paper ECG requires its ten training operators" if paper else
+            raise ValueError("paper ECG requires its registered training operators" if paper else
                              "reference AugMix requires its nine training operators")
         if implementation in GPU_IMAGE_IMPLEMENTATIONS and config.get("waveform_strength") != 0:
             raise ValueError("GPU image augmentation is image-only and requires waveform_strength=0")
@@ -67,6 +73,12 @@ def image_operator(config):
     elif implementation == "paper_ecg_torch_v1":
         from core.paper_ecg import apply_paper_operator
         return partial(apply_paper_operator, severity=config["severity"], validate=False)
+    elif implementation == "paper_ecg_torch_v2":
+        from core.paper_ecg_upstream import apply_paper_operator
+        return partial(apply_paper_operator, severity=config["severity"], validate=False)
+    elif implementation == "paper_ecg_torch_v3":
+        from core.paper_ecg_print import apply_paper_operator
+        return partial(apply_paper_operator, severity=config["severity"], validate=False)
     else:
         raise ValueError(f"unknown image implementation: {implementation}")
     return partial(apply, severity=config["severity"])
@@ -75,12 +87,27 @@ def image_operator(config):
 def gpu_image_identity(implementation):
     if implementation not in GPU_IMAGE_IMPLEMENTATIONS:
         raise ValueError("unknown GPU image implementation")
-    paper = implementation == "paper_ecg_torch_v1"
+    paper = implementation in ("paper_ecg_torch_v1", "paper_ecg_torch_v2", "paper_ecg_torch_v3")
+    upstream = {}
+    if implementation in ("paper_ecg_torch_v2", "paper_ecg_torch_v3"):
+        from core.paper_ecg_upstream import AUGRAPHY_COMMIT
+        upstream = {"augraphy_commit": AUGRAPHY_COMMIT,
+                    "upstream_parity": "selected_fixed_parameter_oracles_within_one_uint8_level",
+                    "low_ink_lines": "row_only_lightening_variant",
+                    "sampling": "project_severity_and_private_torch_rng"}
+    if implementation == "paper_ecg_torch_v3":
+        from core.paper_ecg_quilting import ECG_IMAGE_KIT_COMMIT, WRINKLE_BANK_ID
+        upstream.update(ecg_image_kit_commit=ECG_IMAGE_KIT_COMMIT, wrinkle_bank=WRINKLE_BANK_ID,
+            upstream_parity="v2_color_ink_fixtures_only_print_tolerances_reported_separately",
+            print_parameter_sampling="private_python_from_caller_seed_counter_v1",
+            texture_upload="one_verified_bank_per_device_then_resident",
+            print_parity="fixed_parameter_kernels_tested_sampling_and_interpolation_versioned")
     return {"implementation": implementation, "device_policy": "same_device_as_rendered_rgb",
             "randomness": "caller_owned_torch_generator_on_input_device",
             "parity": "procedural_appearance_not_author_pixel_equivalence" if paper else "visual_approximation_not_reference_pixel_equivalence",
-            "host_tensor_transfer": "none_inside_prevalidated_operator" if paper else "none_inside_operator",
-            "waveform_corruption": "disabled"}
+            "host_tensor_transfer": ("small_parameter_uploads_and_one_time_texture_bank_no_image_readback"
+                if implementation == "paper_ecg_torch_v3" else "none_inside_prevalidated_operator" if paper else "none_inside_operator"),
+            "waveform_corruption": "disabled", **upstream}
 
 
 def image_augmentation_protocol(config, width):

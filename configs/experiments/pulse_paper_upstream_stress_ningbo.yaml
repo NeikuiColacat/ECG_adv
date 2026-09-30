@@ -1,0 +1,13 @@
+schema_version: 1
+experiment:
+  name: pulse_paper_upstream_stress_ningbo
+  purpose: Upstream-derived paper v2 candidate; GPU/model admission and robustness
+    benefit remain unverified.
+entrypoint:
+  name: pulse_hybrid
+  config: eval/pulse_paper_upstream_stress_ningbo.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/pulse_paper_upstream_ecg_v2_20260930/ningbo_stress
+  if_exists: error
+  delegate_output_subdir: evaluation

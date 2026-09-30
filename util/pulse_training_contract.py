@@ -146,6 +146,10 @@ def validate_result(payload: dict, path: Path) -> None:
                     gpu = protocol.get("image_gpu", {})
                     expected_gpu = gpu_image_identity(implementation)
                     keys = ("implementation", "device_policy", "parity", "host_tensor_transfer", "waveform_corruption")
+                    if implementation == "paper_ecg_torch_v3":
+                        keys = tuple(expected_gpu)
+                        if set(gpu) != set(expected_gpu):
+                            raise ValueError("incomplete printing/texture implementation identity")
                     if any(gpu.get(k) != expected_gpu[k] for k in keys) or protocol.get("mix_residual") != "clean_render":
                         raise ValueError("missing GPU AugMix implementation identity")
                 else:

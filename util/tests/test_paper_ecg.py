@@ -99,13 +99,21 @@ def test_paper_rejects_nonfinite_pixels_and_missing_rng():
 
 
 @pytest.mark.parametrize("width", [0, 1, 3])
-def test_paper_training_dispatch_renders_once_and_records_identity(monkeypatch, width):
+@pytest.mark.parametrize("implementation", ["paper_ecg_torch_v1", "paper_ecg_torch_v2", "paper_ecg_torch_v3"])
+def test_paper_training_dispatch_renders_once_and_records_identity(monkeypatch, width, implementation):
     from core import image_augmix_gpu
     from core.image_corruption import image_augmentation_protocol, validate_image_config
     from core.paper_ecg import validate_paper_image
     from core.pulse_hybrid import hybrid_jsd_views
     monkeypatch.setattr(image_augmix_gpu, "validate_gpu_image", validate_paper_image)
-    config = dict(implementation="paper_ecg_torch_v1", operators=list(PAPER_TRAIN_OPERATORS),
+    pool = PAPER_TRAIN_OPERATORS
+    if implementation == "paper_ecg_torch_v2":
+        from core.paper_ecg_upstream import PAPER_TRAIN_OPERATORS as pool
+    elif implementation == "paper_ecg_torch_v3":
+        from core import paper_ecg_print
+        pool = paper_ecg_print.PAPER_TRAIN_OPERATORS
+        monkeypatch.setattr(paper_ecg_print, "load_original_texture_bank", lambda device: paper())
+    config = dict(implementation=implementation, operators=list(pool),
                   severity=2, waveform_strength=0.0, jsd_weight=3.0)
     validate_image_config(config, for_execution=True)
     class Renderer:
@@ -120,9 +128,9 @@ def test_paper_training_dispatch_renders_once_and_records_identity(monkeypatch, 
     assert renderer.calls == 1 and len(views) == (3 if width else 1)
     assert trace["topology"] == "image_only_gpu_branches_v1" and trace["residual"] == "clean_render"
     assert all(not view["waveform_operators"] for view in trace["views"])
-    assert all(op in PAPER_TRAIN_OPERATORS for view in trace["views"] for chain in view["image_chains"] for op in chain)
+    assert all(op in pool for view in trace["views"] for chain in view["image_chains"] for op in chain)
     protocol = image_augmentation_protocol(config, width)
-    assert protocol["image_gpu"]["implementation"] == "paper_ecg_torch_v1"
+    assert protocol["image_gpu"]["implementation"] == implementation
     assert protocol["jsd_weight"] == (3.0 if width else 0.0)
     for bad in ({**config, "waveform_strength": 0.1}, {**config, "operators": list(PAPER_HELDOUT_OPERATORS)}):
         with pytest.raises(ValueError):

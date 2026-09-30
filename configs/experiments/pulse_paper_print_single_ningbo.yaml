@@ -1,0 +1,13 @@
+schema_version: 1
+experiment:
+  name: pulse_paper_print_single_ningbo
+  purpose: Versioned upstream printing and quilted-texture pool; bounded engineering/development
+    only.
+entrypoint:
+  name: train_ecg_image
+  config: train/pulse_paper_print_single_ningbo.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/pulse_paper_print_ecg_v3_20260930/ningbo_single
+  if_exists: error
+  delegate_output_subdir: training

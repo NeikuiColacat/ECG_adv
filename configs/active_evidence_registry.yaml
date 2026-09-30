@@ -4,6 +4,50 @@ purpose: >
   Separate the current prospective manual-refactor recipe from historical
   trusted evidence. A launch config is not evidence by itself.
 
+pulse_paper_torch_v3:
+  status: implemented_wired_cpu_validated_native_gpu_pending
+  implementation: paper_ecg_torch_v3
+  image_suite: paper_ecg_gpu_v3
+  protocol: docs/paper_ecg_printing.md
+  validation_root: /home/linbinhao/ECG_adv_data/operations/pulse_paper_complete_20260930_154836
+  cpu_full_regression: {passed: 1575, skipped: 239, failed: 0}
+  pulse_environment_cpu: {passed: 306, skipped: 3, torch: 2.1.1+cu118}
+  managed_dry_runs: {total_paper_versions: 18, new_v3: 6}
+  texture_bank: {files: 19, patches_shape: [19, 3, 250, 250], source_and_decoded_hashes_verified: true, identity: 9b01be9b7f7c2d575ce57fab8d5551ee959a46a45a458d6615070fa8d63a0dfb}
+  gpu_operator_admission: not_executed_no_exclusive_free_device
+  gpu_performance: unmeasured
+  visual_review: synthetic_cpu_s2_and_s5_not_patient_data
+  training_operators: [color_paper, ink_bleed, low_ink_lines, exposure, shadow, crease, wrinkle, defocus, sensor_noise, low_resolution, dirty_rollers, dirty_drum, quilting_wrinkle]
+  held_out_operators: [rotate, perspective, stain, glare, occlusion, jpeg_compression, folding, bad_photocopy, faxify]
+  model_admission: not_executed
+  candidate_200_step_training: not_executed
+  author_pixel_equivalence: not_claimed
+  robustness_benefit: not_established
+  paper_claim_allowed: false
+
+pulse_paper_torch_v2:
+  status: implemented_wired_native_operator_validated_model_admission_pending
+  protocol: docs/paper_ecg_open_source.md
+  implementation: paper_ecg_torch_v2
+  image_suite: paper_ecg_gpu_v2
+  augraphy_commit: ed4dcbdaf7b1da6ef59ac60816f96ea253da4c9b
+  license_notice: docs/licenses/augraphy-MIT.txt
+  validation_root: /home/linbinhao/ECG_adv_data/operations/pulse_paper_sources_20260930_113246
+  training_operators: [color_paper, ink_bleed, low_ink_lines, exposure, shadow, crease, wrinkle, defocus, sensor_noise, low_resolution]
+  held_out_operators: [rotate, perspective, stain, glare, occlusion, jpeg_compression]
+  candidate_training_severity: 2
+  managed_stress_example_severity: 5
+  opencv_fixture_comparisons: {cases: 3, max_uint8_error: 1, global_pixel_parity_claimed: false}
+  cpu_integration: {passed: 378, skipped: 2}
+  full_cpu_regression: {passed: 1386, skipped: 238, failed: 0}
+  managed_dry_runs: 6
+  gpu_operator_admission: {passed: 58, shape: [1, 3, 1700, 2200], input_dtype: float16, torch: 2.1.1+cu118, deterministic: true, report: gpu_operator_admission.json}
+  gpu_operator_milliseconds: {color_paper: 1.446, ink_bleed: 2.990, low_ink_lines: 0.542, scope: warm_operator_only, severity: 2, repeats: 5}
+  model_admission: not_executed
+  candidate_200_step_training: not_executed
+  robustness_benefit: not_established
+  paper_claim_allowed: false
+
 pulse_paper_torch_v1:
   status: bounded_gpu_training_and_evaluation_validated_not_clinically_calibrated
   protocol: docs/pulse_paper_operators.md

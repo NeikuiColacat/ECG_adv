@@ -159,6 +159,9 @@ ECGFounder：Stage1 clean BCE / clean BCE+12×Bernoulli JSD 对照，源anchor5�
 | `configs/README.md` | `KEEP-MANUAL` | configs-shaped 配置束、单一 launcher 和相对引用规则 | 新配置文档完整接管 bundle root、闭包、输出与覆盖规则 |
 | `core/image_augmix_gpu.py` | `KEEP-MANUAL` | `augmix_torch_gpu_v2` 的九个训练图像算子与 `image_c5_torch_gpu_v1` 的五个评测图像算子；设备内 RNG、几何、直方图、运动模糊、弹性和块 DCT JPEG 近似 | 保留图像张量不经 CPU、实现身份独立于 PIL 参考、波形腐蚀关闭的协议边界；视觉近似结果不得并入参考证据 |
 | `core/paper_ecg.py` | `KEEP-MANUAL` | 独立版本的纯 Torch 纸质 ECG 外观算子；十类训练候选、六类 held-out stress | 严重度为工程定义；不声称作者像素一致或临床校准；历史 PN2021-C/C5 身份不变 |
+| `core/paper_ecg_upstream.py` | `KEEP-MANUAL` | Augraphy 选定算法的 Torch 移植及明确标注的低墨量变体 | 独立 v2 身份；来源、许可、定参误差和抽样差异显式记录；不替代 v1 |
+| `core/paper_ecg_print.py` | `KEEP-MANUAL` | 五类打印扫描算法的 RGB Torch 移植、私有参数规划与 v3 池 | 明确阈值/噪声分支和坐标/舍入差异；不声称全库 API 或种子等价 |
+| `core/paper_ecg_quilting.py` | `KEEP-MANUAL` | 纹理哈希、显式资产准备、设备纹理库、通用 quilting 与原始混合 | 外部纹理不进 Git；默认单块与通用拼接分开；BSD 归属保留 |
 | `configs/train/pulse_augmix_gpu_single_ningbo.yaml` | `KEEP-MANUAL` | Ningbo 单链 GPU 图像 AugMix 开发配置 | 仅经受管 launcher 使用；保留 native500、K500、GPU v2、waveform_strength=0 和外部输出根 |
 | `configs/train/pulse_augmix_gpu_three_ningbo.yaml` | `KEEP-MANUAL` | Ningbo 三链 GPU 图像 AugMix 开发配置 | 同上 |
 | `configs/eval/pulse_image_c5_gpu_ningbo.yaml` | `KEEP-MANUAL` | clean 加五个 GPU 图像腐蚀的 severity=5 开发评测配置 | 保留三臂 identity、空 waveform_indices、五算子顺序和 GPU C5 独立证据身份 |
@@ -558,6 +561,18 @@ CPU/CUDA trace，记录 vision/projector/prefill/decode/lm_head，剖析耗时�
 声明均为 `KEEP-MANUAL`。这是新的 paper_ecg_torch_v1 候选协议，保持 K500/
 ref-exclusion、配对预算、独立来源身份和单一 launcher；不得替换历史 C5 结果。
 
+`docs/paper_ecg_open_source.md`、`docs/licenses/augraphy-MIT.txt`、
+`configs/train/pulse_paper_upstream_{single,three}_ningbo{,_smoke}.yaml`、
+`configs/eval/pulse_paper_upstream_stress_ningbo{,_smoke}.yaml` 及对应六个
+experiment 声明为 `KEEP-MANUAL`：v2 来源审计、MIT 归属与待 GPU/模型准入
+的新候选；已有运行和历史度量不得混入该身份。
+
+`docs/paper_ecg_printing.md`、`docs/licenses/ecg-image-kit-BSD-3-Clause.txt`、
+`configs/train/pulse_paper_print_{single,three}_ningbo{,_smoke}.yaml`、
+`configs/eval/pulse_paper_print_stress_ningbo{,_smoke}.yaml` 及对应六个
+experiment 声明为 `KEEP-MANUAL`：v3 打印/纹理移植与独立配对实验候选。
+保持旧池不变，区分 13 类训练和 9 类 held-out stress；配置不是性能证据。
+
 `boot_scripts/profile_pulse_adapters.py`、`util/evaluation/pulse_profile.py` 和
 `configs/experiments/pulse_adapter_profile.yaml` 为 `KEEP-MANUAL` 的受管工程
 测速入口。只用宁波 K500 前两条及固定 clean/depth2/depth3 各一条件，保存
@@ -893,6 +908,16 @@ opt-in; neither these tests nor visual approximations establish CPU-reference pa
 `util/tests/test_paper_ecg.py`: KEEP-MANUAL, paper-image replay, dtype/range,
 source/RNG preservation, zero identity, gradient flow, family split, and explicit
 native-size GPU admission. CPU checks do not establish clinical fidelity or GPU speed.
+
+`util/tests/test_paper_ecg_upstream.py`: KEEP-MANUAL, selected fixed-parameter
+OpenCV oracles, explicit low-ink variant, versioned stress dispatch, private RNG,
+finite range and opt-in native GPU timing. Upstream sampling parity and clinical
+validity are not established by these fixtures.
+
+`util/tests/test_paper_ecg_print.py`: KEEP-MANUAL, roller/fold/fax/photocopy/
+quilt oracles, texture integrity, all noise/threshold modes, private RNG and
+source immutability, versioned dispatch and explicit native CUDA admission.
+These checks are not clinical or robustness evidence.
 
 `util/tests/test_image_augmix_c.py`: KEEP-MANUAL, original PIL formulas, all C15
 operators, real JPEG/pixelate, private/restored RNG and constant-image regression.

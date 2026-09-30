@@ -46,6 +46,30 @@ launch_surface_policy:
     - no_implicit_overwrite
     - no_agent_workspace_runtime_import
 
+pulse_paper_torch_v3:
+  status: candidate_cpu_validated_native_gpu_admission_pending
+  protocol: docs/paper_ecg_printing.md
+  training_admission:
+    - configs/experiments/pulse_paper_print_single_ningbo_smoke.yaml
+    - configs/experiments/pulse_paper_print_three_ningbo_smoke.yaml
+  evaluation_admission: configs/experiments/pulse_paper_print_stress_ningbo_smoke.yaml
+  candidate_training:
+    - configs/experiments/pulse_paper_print_single_ningbo.yaml
+    - configs/experiments/pulse_paper_print_three_ningbo.yaml
+  development_screen: configs/experiments/pulse_paper_print_stress_ningbo.yaml
+
+pulse_paper_torch_v2:
+  status: candidate_native_operator_validated_model_admission_pending
+  protocol: docs/paper_ecg_open_source.md
+  training_admission:
+    - configs/experiments/pulse_paper_upstream_single_ningbo_smoke.yaml
+    - configs/experiments/pulse_paper_upstream_three_ningbo_smoke.yaml
+  evaluation_admission: configs/experiments/pulse_paper_upstream_stress_ningbo_smoke.yaml
+  candidate_training:
+    - configs/experiments/pulse_paper_upstream_single_ningbo.yaml
+    - configs/experiments/pulse_paper_upstream_three_ningbo.yaml
+  development_screen: configs/experiments/pulse_paper_upstream_stress_ningbo.yaml
+
 pulse_paper_torch_v1:
   status: candidate_bounded_gpu_training_and_evaluation_validated
   protocol: docs/pulse_paper_operators.md

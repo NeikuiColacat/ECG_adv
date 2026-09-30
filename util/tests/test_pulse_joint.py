@@ -84,7 +84,7 @@ def test_gpu_c5_metrics_keep_only_clean_and_image_families_and_reject_identity_d
     ("final", True, False), ("screen", True, True)])
 @pytest.mark.parametrize("execution", ["reference_v1", "arm_major_fp16_adapters_v2", "arm_major_original_bypass_v3"])
 @pytest.mark.parametrize("batch_size", [1, 2, 3, 4])
-@pytest.mark.parametrize("suite", ["image_c5_gpu_v1", "paper_ecg_gpu_v1"])
+@pytest.mark.parametrize("suite", ["image_c5_gpu_v1", "paper_ecg_gpu_v1", "paper_ecg_gpu_v2", "paper_ecg_gpu_v3"])
 def test_gpu_image_result_roundtrip_and_tamper_rejection(tmp_path, monkeypatch, phase, execution, random_subset, batch_size, performance_smoke, suite):
     import json
     from util import pulse_hybrid_contract as contract
@@ -95,8 +95,8 @@ def test_gpu_image_result_roundtrip_and_tamper_rejection(tmp_path, monkeypatch, 
     from core.pulse_finetune import MODEL_HASHES, MODEL_CONFIG_HASHES
     from util.evaluation.pulse_hybrid_development import original_prediction_digest
 
-    paper = suite == "paper_ecg_gpu_v1"
-    implementation = "paper_ecg_torch_v1" if paper else "image_c5_torch_gpu_v1"
+    paper = suite in contract.PAPER_IMPLEMENTATIONS
+    implementation = contract.PAPER_IMPLEMENTATIONS.get(suite, "image_c5_torch_gpu_v1")
     monkeypatch.setattr(contract, "DATA", tmp_path)
     training_paths, training_hashes = {}, {}
     for arm, width in (("single", 1), ("three", 3)):
@@ -106,6 +106,10 @@ def test_gpu_image_result_roundtrip_and_tamper_rejection(tmp_path, monkeypatch, 
                        else f"configs/train/pulse_augmix_gpu_{arm}_ningbo.yaml")
         if paper:
             config_path = f"configs/train/pulse_paper_{arm}_ningbo" + ("_smoke" if phase == "smoke" else "") + ".yaml"
+            if suite == "paper_ecg_gpu_v2":
+                config_path = config_path.replace("pulse_paper_", "pulse_paper_upstream_")
+            elif suite == "paper_ecg_gpu_v3":
+                config_path = config_path.replace("pulse_paper_", "pulse_paper_print_")
         config = yaml.safe_load((ROOT / config_path).read_text())
         config["width"] = width
         config["training"].update(optimizer_steps=200 if phase != "smoke" else 4, warmup_steps=0)
@@ -124,16 +128,38 @@ def test_gpu_image_result_roundtrip_and_tamper_rejection(tmp_path, monkeypatch, 
             "image_augmentation": config["image_augmentation"], "training": config["training"],
             "augmentation_topology": "image_only_gpu_branches_v1", "mix_residual": "clean_render",
             "dirichlet_alpha": 1., "clean_mix": "beta_1_1", "jsd_weight": config["image_augmentation"]["jsd_weight"],
-            "image_gpu": {"implementation": "paper_ecg_torch_v1" if paper else "augmix_torch_gpu_v2",
+            "image_gpu": {"implementation": implementation if paper else "augmix_torch_gpu_v2",
                 "device_policy": "same_device_as_rendered_rgb", "waveform_corruption": "disabled",
                 "parity": "procedural_appearance_not_author_pixel_equivalence" if paper else "visual_approximation_not_reference_pixel_equivalence",
                 "host_tensor_transfer": "none_inside_prevalidated_operator" if paper else "none_inside_operator"}}
+        if suite == "paper_ecg_gpu_v3":
+            protocol["image_gpu"].update({
+                "host_tensor_transfer": "small_parameter_uploads_and_one_time_texture_bank_no_image_readback",
+                "randomness": "caller_owned_torch_generator_on_input_device",
+                "augraphy_commit": "ed4dcbdaf7b1da6ef59ac60816f96ea253da4c9b",
+                "upstream_parity": "v2_color_ink_fixtures_only_print_tolerances_reported_separately",
+                "low_ink_lines": "row_only_lightening_variant", "sampling": "project_severity_and_private_torch_rng",
+                "ecg_image_kit_commit": "27b90f56896c9fc78b05a83ca14844ea2637aa0b",
+                "wrinkle_bank": "9b01be9b7f7c2d575ce57fab8d5551ee959a46a45a458d6615070fa8d63a0dfb",
+                "print_parameter_sampling": "private_python_from_caller_seed_counter_v1",
+                "texture_upload": "one_verified_bank_per_device_then_resident",
+                "print_parity": "fixed_parameter_kernels_tested_sampling_and_interpolation_versioned"})
         path = directory / "train_result.json"
         trained = {"artifact_type": "pulse_train_result", "schema_version": 1, "status": "complete",
             "mode": "smoke" if phase == "smoke" else "train", "optimizer_steps": config["training"]["optimizer_steps"], "protocol": protocol,
             "files": {p.name: sha256_file(p) for p in directory.iterdir()}}
         path.write_text(json.dumps(trained))
         validate_training(trained, path)
+        if suite == "paper_ecg_gpu_v3":
+            for key in ("wrinkle_bank", "print_parameter_sampling", "augraphy_commit"):
+                bad = copy.deepcopy(trained)
+                bad["protocol"]["image_gpu"][key] = "changed"
+                with pytest.raises(ValueError, match="implementation identity"):
+                    validate_training(bad, path)
+            bad = copy.deepcopy(trained)
+            del bad["protocol"]["image_gpu"]["wrinkle_bank"]
+            with pytest.raises(ValueError, match="implementation identity"):
+                validate_training(bad, path)
         training_paths[arm], training_hashes[arm] = str(path), sha256_file(path)
 
     output = tmp_path / "evaluation"
@@ -149,6 +175,10 @@ def test_gpu_image_result_roundtrip_and_tamper_rejection(tmp_path, monkeypatch, 
         "util/evaluation/ecg_image_artifact.py", "util/evaluation/ecg_image_elastic.py",
         "util/evaluation/pulse_visual_subset.py", "util/pulse_hybrid_contract.py", "util/pulse_training_contract.py",
         "models/checkpoints.py", "models/contracts.py", "models/input_adapter.py")
+    if suite in ("paper_ecg_gpu_v2", "paper_ecg_gpu_v3"):
+        sources += ("core/paper_ecg_upstream.py",)
+    if suite == "paper_ecg_gpu_v3":
+        sources += ("core/paper_ecg_print.py", "core/paper_ecg_quilting.py")
     for source in sources:
         member = output / "source_snapshot" / source
         member.parent.mkdir(parents=True, exist_ok=True)

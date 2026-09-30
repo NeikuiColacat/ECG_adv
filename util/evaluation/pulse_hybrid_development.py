@@ -16,7 +16,7 @@ from util.pn2021_artifact_contract import sha256_file
 from util.run_record import capture_source_snapshot
 from util.pulse_training_contract import CENTERS, CLASS_ORDER, validate_result as validate_training
 from util.pulse_hybrid_contract import (IMAGE_FP16_MODES, IMAGE_OPTIMIZED_MODES, ORIGINAL_BYPASS_MODE,
-    GPU_C5_SUITE, PAPER_SUITE, GPU_IMAGE_SUITES)
+    GPU_C5_SUITE, PAPER_SUITE, PAPER_IMPLEMENTATIONS, GPU_IMAGE_SUITES)
 
 REPO = Path(__file__).resolve().parents[2]
 ARMS = ("original", "clean", "single", "three")
@@ -216,7 +216,7 @@ def metrics_from_predictions(rows, samples, conditions, *, arms=ARMS):
     truth = np.array([s["label"] for s in samples], dtype=np.uint8)
     if truth.shape != (len(samples), 5) or not truth.any(axis=1).all():
         raise ValueError("expected drop-all-zero Super5 cohort")
-    c5_identity = any(c.get("image_implementation") in ("image_c5_torch_gpu_v1", "paper_ecg_torch_v1") for c in conditions)
+    c5_identity = any(c.get("image_implementation") in ("image_c5_torch_gpu_v1", *PAPER_IMPLEMENTATIONS.values()) for c in conditions)
     per_condition, families = [], {a: {} for a in arms}
     for condition in conditions:
         selected = [keyed[s["sample_key"], condition["condition_id"]] for s in samples]
@@ -368,7 +368,11 @@ def gpu_image_conditions_for(parent_conditions, *, suite, severity):
     if suite == GPU_C5_SUITE:
         return c5_gpu_conditions_for(parent_conditions, severity=severity)
     from core.paper_ecg import paper_conditions, PAPER_IMPLEMENTATION
-    if (suite != PAPER_SUITE or not parent_conditions or parent_conditions[0]["condition_id"] != "clean"
+    if suite == "paper_ecg_gpu_v2":
+        from core.paper_ecg_upstream import paper_conditions, PAPER_IMPLEMENTATION
+    elif suite == "paper_ecg_gpu_v3":
+        from core.paper_ecg_print import paper_conditions, PAPER_IMPLEMENTATION
+    if (suite not in PAPER_IMPLEMENTATIONS or not parent_conditions or parent_conditions[0]["condition_id"] != "clean"
             or parent_conditions[0].get("operators") != []):
         raise ValueError("invalid paper ECG image suite")
     return [{**parent_conditions[0], "family": "clean"}] + [
@@ -383,12 +387,16 @@ def gpu_image_view(clean_rgb, condition, samples, seed):
     import torch
     if condition["family"] == "clean":
         return clean_rgb
-    if condition["image_implementation"] == "paper_ecg_torch_v1":
+    if condition["image_implementation"] in PAPER_IMPLEMENTATIONS.values():
         from core.paper_ecg import apply_paper_operator
+        if condition["image_implementation"] == "paper_ecg_torch_v2":
+            from core.paper_ecg_upstream import apply_paper_operator
+        elif condition["image_implementation"] == "paper_ecg_torch_v3":
+            from core.paper_ecg_print import apply_paper_operator
         from util.evaluation.ecg_image_data import derived_seed
         def apply(image, sample):
             # Keep geometry/noise coupled across severity levels for this operator.
-            key = derived_seed(seed, "paper_ecg_torch_v1", sample["hash_id"], condition["image_operator"])
+            key = derived_seed(seed, condition["image_implementation"], sample["hash_id"], condition["image_operator"])
             return apply_paper_operator(image, condition["image_operator"], severity=condition["image_severity"],
                 rng=torch.Generator(device=image.device).manual_seed(key), validate=False)
     elif condition["image_implementation"] == "image_c5_torch_gpu_v1":
@@ -548,8 +556,7 @@ def run(config, refs, root, output):
     joint_suite = image_suite in ("joint_v2", "joint_v3", *C15_SUITES)
     if image_suite in GPU_IMAGE_SUITES:
         conditions = gpu_image_conditions_for(parent["conditions"], suite=image_suite, severity=config["image_severity"])
-        if any(e["result"]["protocol"].get("image_gpu", {}).get("implementation") != (
-                "paper_ecg_torch_v1" if image_suite == PAPER_SUITE else "augmix_torch_gpu_v2")
+        if any(e["result"]["protocol"].get("image_gpu", {}).get("implementation") != PAPER_IMPLEMENTATIONS.get(image_suite, "augmix_torch_gpu_v2")
                for e in evidence.values()):
             raise ValueError("GPU C5 evaluation requires GPU v2 trained arms")
         trained = evidence["three"]["result"]["protocol"]
@@ -598,7 +605,9 @@ def run(config, refs, root, output):
             "data_preprocess/load_cache.py", "data_preprocess/preprocess_primitives.py",
             "data_preprocess/PN2021_preprocess.py", "data_preprocess/pn2021_metadata.py",
             "data_preprocess/data_runtime.py", "models/checkpoints.py", "models/contracts.py",
-            "models/input_adapter.py"))
+            "models/input_adapter.py")
+        + (("core/paper_ecg_upstream.py",) if image_suite in ("paper_ecg_gpu_v2", "paper_ecg_gpu_v3") else ())
+        + (("core/paper_ecg_print.py", "core/paper_ecg_quilting.py") if image_suite == "paper_ecg_gpu_v3" else ()))
     reservation = [torch.empty(20 * 1024**3, dtype=torch.uint8, device="cuda")]
     started = time.time()
     backend = HybridPulseBackend(evidence, reservation, arms=arms,
@@ -845,7 +854,7 @@ def run(config, refs, root, output):
         **({"model_arms": list(arms)} if "model_arms" in config else {}),
         **({"image_severity": config["image_severity"]} if image_suite in (*GPU_IMAGE_SUITES, *C15_SUITES) else {}),
         **({"image_reference": reference_identity} if reference_identity else {}),
-        **({"image_implementation": "paper_ecg_torch_v1" if image_suite == PAPER_SUITE else GPU_C5_IMPLEMENTATION}
+        **({"image_implementation": PAPER_IMPLEMENTATIONS.get(image_suite, GPU_C5_IMPLEMENTATION)}
            if image_suite in GPU_IMAGE_SUITES else {})})
 
 
