@@ -132,6 +132,60 @@ def _write_bundle(tmp_path: Path, *, run_dir: Path) -> Path:
     return experiment_path
 
 
+@pytest.mark.parametrize("damage", [None, "source_hash", "snapshot_edit", "snapshot_missing"])
+def test_parent_bundle_seals_every_nested_draw_ledger(tmp_path, damage):
+    run_dir = tmp_path/"runs/parent"
+    experiment = _write_bundle(tmp_path/"bundle", run_dir=run_dir)
+    root = experiment.parent.parent
+    profile = root/"train/PTBXL.yaml"
+    parent_profile = yaml.safe_load(profile.read_text())
+    original_ledger = root/"data/content_ledger.jsonl"
+    child_ledgers = []
+    for draw in (1, 2):
+        data = root/f"data/draw{draw}";data.mkdir()
+        ledger = data/"content_ledger.jsonl";ledger.write_bytes(original_ledger.read_bytes())
+        (data/"data_load.yaml").write_text(yaml.safe_dump({"content_ledger":{
+            "path":f"data/draw{draw}/content_ledger.jsonl", "sha256":launcher.sha256_file(ledger)}}))
+        child_profile = yaml.safe_load(profile.read_text())
+        child_profile["references"]["data_load_config"] = f"data/draw{draw}/data_load.yaml"
+        (root/f"train/PTBXL_draw{draw}.yaml").write_text(yaml.safe_dump(child_profile))
+        child = yaml.safe_load(experiment.read_text())
+        child["entrypoint"]["config"] = f"train/PTBXL_draw{draw}.yaml"
+        child["output"]["run_dir"] = str(tmp_path/f"runs/child{draw}")
+        (root/f"experiments/draw{draw}.yaml").write_text(yaml.safe_dump(child))
+        parent_profile["references"][f"draw{draw}"] = f"experiments/draw{draw}.yaml"
+        child_ledgers.append(ledger)
+    profile.write_text(yaml.safe_dump(parent_profile))
+    plan = load_experiment_plan(experiment)
+    called = []
+    if damage == "source_hash":child_ledgers[-1].write_bytes(b"tampered")
+    def delegate(argv, log_path):
+        called.append(True)
+        copied = Path(argv[argv.index("--config-root")+1])
+        for draw in (1, 2):
+            child = load_experiment_plan(copied/f"experiments/draw{draw}.yaml", config_root=copied)
+            assert child.data_ledger.path.read_bytes() == original_ledger.read_bytes()
+        victim = copied/"data/draw2/content_ledger.jsonl"
+        if damage == "snapshot_edit":victim.write_bytes(b"tampered")
+        elif damage == "snapshot_missing":victim.unlink()
+        output = Path(argv[argv.index("--output-dir")+1]);output.mkdir(parents=True)
+        (output/"train_result.json").write_text(json.dumps({"config":{},"epochs_completed":1,
+            "model":{"name":"fixture"},"selected_epoch":1,"selected_checkpoint":{"path":"checkpoints/best.pt"}}))
+        log_path.write_text("fixture complete\n")
+        return 0
+    if damage == "source_hash":
+        with pytest.raises(ValueError,match="referenced data content ledger SHA256 mismatch"):
+            execute_experiment(plan,launcher_argv=["fixture"],delegate_runner=delegate)
+        assert not called and not run_dir.exists()
+    else:
+        code = execute_experiment(plan,launcher_argv=["fixture"],delegate_runner=delegate)
+        assert code == (0 if damage is None else 1)
+        if damage is None:
+            record=json.loads((run_dir/"run_manifest.json").read_text())
+            assert len(record["referenced_data_ledger_snapshots"]) == 3
+            assert verify_run_file_index(run_dir) == []
+
+
 def _fixture_arguments(entrypoint_name: str) -> list[str]:
     if entrypoint_name in {"train_ptbxl_effnet", "train_ptbxl_ecgfounder"}:
         return []

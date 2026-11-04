@@ -58,6 +58,13 @@ SAMPLING_RECOVERY = {
     "engineering_admission": str(SAMPLING_ROOT/"engineering_admission_recovery1.json"),
     "reuse_policy": "two_original_trainings_and_two_verified_repair_evaluations_v1",
 }
+SAMPLING_NVME_ROOT = Path("/data_nvme/linbinhao/ECG_adv_data/runs/k500_sampling_20261104_r0")
+SAMPLING_NVME_RECOVERY = {
+    "previous_workflow": str(SAMPLING_ROOT/"workflow_recovery1"),
+    "engineering_admission": str(SAMPLING_ROOT/"engineering_admission_recovery2.json"),
+    "reuse_policy": "verified_32_completed_draw0_results_v1",
+    "storage_root": str(SAMPLING_NVME_ROOT),
+}
 
 
 def sampling_grid():
@@ -78,9 +85,9 @@ def sampling_plans(config, path, root):
             or config["runtime"] != SAMPLING_LIMITS
             or config["cohort_report"] != str(SAMPLING_ROOT/"sampling_cohorts.json")):
         raise ValueError("sampling queue requires frozen three draws, two methods/backbones, four centers")
-    if recovery and config["recovery"] != SAMPLING_RECOVERY:
+    if recovery and config["recovery"] not in (SAMPLING_RECOVERY, SAMPLING_NVME_RECOVERY):
         raise ValueError("sampling recovery is restricted to the original stopped queue")
-    suffix = "_recovery1" if recovery else ""
+    suffix = "_recovery2" if config.get("recovery") == SAMPLING_NVME_RECOVERY else "_recovery1" if recovery else ""
     expected_admissions = {f"{arm}_{model}": str(SAMPLING_ROOT/f"engineering_{arm}_{model}{suffix}/training/train_result.json")
         for arm in SAMPLING_METHODS for model in MODELS}
     if config["admission_results"] != expected_admissions:
@@ -97,7 +104,7 @@ def sampling_plans(config, path, root):
                  "--center",center,"--method-config",method] if suffix else
                 ["--model",model,"--method-config",method,"--center",center,"--source-checkpoint",source])
         expected_config = root/(f"eval/k500_sampling/draw{draw}.yaml" if suffix else f"train/k500_sampling/{arm}_d{draw}.yaml")
-        if (plan.run_dir != SAMPLING_ROOT/key or list(plan.entry_arguments) != args
+        if (plan.run_dir != (SAMPLING_ROOT/key).resolve() or list(plan.entry_arguments) != args
                 or plan.entry_config_path != expected_config
                 or plan.entrypoint_name != ("evaluate_pn2021" if suffix else "train_pn2021")):
             raise ValueError("sampling child escaped its frozen identity")
@@ -202,14 +209,15 @@ def validate_sampling_result(value, path):
 
 
 def recover_sampling_completed(config, members, config_root, sources):
-    """Reuse only four named artifacts, with full byte/config/lineage checks."""
+    """Reuse the policy's exact completed set with byte/config/lineage checks."""
     from util.run_record import verify_run_file_index
     from util.pn2021_artifact_contract import (
         validate_pn2021_train_result, validate_pn2021_evaluation_result,
     )
-    if config.get("recovery") != SAMPLING_RECOVERY:
+    policy = config.get("recovery")
+    if policy not in (SAMPLING_RECOVERY, SAMPLING_NVME_RECOVERY):
         raise ValueError("sampling recovery identity differs from the frozen policy")
-    previous = Path(SAMPLING_RECOVERY["previous_workflow"])
+    previous = Path(policy["previous_workflow"])
     manifest = json.loads((previous/"run_manifest.json").read_text())
     status = json.loads((previous/"training/status.json").read_text())
     if (manifest["status"] != "failed" or status["status"] not in {"failed", "draining"}
@@ -217,15 +225,23 @@ def recover_sampling_completed(config, members, config_root, sources):
         raise ValueError("sampling recovery requires the intact stopped workflow")
     old = json.loads((previous/"training/source_identity.json").read_text())
     changed = {rel for rel in old.keys() | sources.keys() if old.get(rel) != sources.get(rel)}
-    if not changed.issubset({"data_preprocess/data_ledger.py", "util/simclr_joint_queue.py"}):
+    allowed = {"data_preprocess/data_ledger.py", "util/simclr_joint_queue.py"}
+    if policy == SAMPLING_NVME_RECOVERY:
+        allowed.add("util/run_record.py")  # Seal all declared per-draw ledgers.
+    if not changed.issubset(allowed):
         raise ValueError("sampling recovery changed training/model/evaluation source")
     for rel, digest in old.items():
         if sha256_file(previous/"training/source_snapshot"/rel) != digest:
             raise ValueError("original sampling source snapshot changed")
     completed = dict(status["completed"])
-    if set(completed) != {key.removesuffix("_eval") for key in SAMPLING_REPAIR_RESULTS}:
-        raise ValueError("sampling recovery requires exactly the two original successful trainings")
-    completed.update(SAMPLING_REPAIR_RESULTS)
+    if policy == SAMPLING_NVME_RECOVERY:
+        expected_keys = {key for key, (_, draw, _, _, _) in sampling_grid().items() if draw == 0}
+        if set(completed) != expected_keys or any(completed.get(k) != v for k,v in SAMPLING_REPAIR_RESULTS.items()):
+            raise ValueError("NVMe recovery requires exactly the verified 32 completed draw0 results")
+    else:
+        if set(completed) != {key.removesuffix("_eval") for key in SAMPLING_REPAIR_RESULTS}:
+            raise ValueError("sampling recovery requires exactly the two original successful trainings")
+        completed.update(SAMPLING_REPAIR_RESULTS)
     for key, entry in completed.items():
         plan = members[key][1]
         path = Path(entry["result"])
@@ -249,7 +265,7 @@ def recover_sampling_completed(config, members, config_root, sources):
             if execution["mode"] != "online_torch_gpu_v1" or execution["metadata_verification"]["metadata_member_count"] != 10:
                 raise ValueError("recovered evaluation omits repaired online metadata verification")
         else:
-            if path != plan.run_dir/plan.expected_result_relative_path:
+            if path.resolve() != (plan.run_dir/plan.expected_result_relative_path).resolve():
                 raise ValueError("recovered training escaped its original output")
             validate_pn2021_train_result(value, result_path=path)
     return completed
@@ -260,7 +276,9 @@ def run_sampling(config, config_path, config_root, output):
     if os.environ.get("CUDA_VISIBLE_DEVICES") != "" or os.environ.get("K500_SAMPLING_GPUS") != "0,1":
         raise ValueError("sampling coordinator must be CPU-only and explicitly authorize GPUs 0,1")
     members = sampling_plans(config,config_path,config_root)
-    admission_path = (Path(SAMPLING_RECOVERY["engineering_admission"]) if "recovery" in config
+    if config.get("recovery") == SAMPLING_NVME_RECOVERY and SAMPLING_ROOT.resolve() != SAMPLING_NVME_ROOT:
+        raise ValueError("NVMe recovery requires the explicitly authorized verified storage binding")
+    admission_path = (Path(config["recovery"]["engineering_admission"]) if "recovery" in config
         else SAMPLING_ROOT/"engineering_admission.json")
     admission = json.loads(admission_path.read_text())
     if admission.get("status") != "passed" or set(admission.get("jobs",{})) != set(config["admission_results"]):

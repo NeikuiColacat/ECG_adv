@@ -125,3 +125,42 @@ CUDA_VISIBLE_DEVICES='' K500_SAMPLING_GPUS=0,1 \
 
 Removing `--dry-run` executes the finite queue once the new engineering
 admission exists. Existing parent/child output directories are never overwritten.
+
+## Authorized NVMe storage and complete-ledger recovery
+
+The first recovery completed all 32 draw0 jobs (16 trainings, 16 evaluations),
+then stopped before creating the draw1 child run: its copied configuration
+bundle included every YAML but only the coordinator's draw0 content ledger.
+The draw1 launcher therefore raised `FileNotFoundError` for its declared ledger.
+This was a packaging failure, not a model or GPU-memory failure.
+
+After the user explicitly authorized `/data_nvme`, the current experiment alone
+was copied to `/data_nvme/linbinhao/ECG_adv_data/runs/k500_sampling_20261104_r0`.
+All 8,381 regular files were content-hashed, 212 symlinks were preserved without
+following them, and the 32 completed result/checkpoint/config identities were
+revalidated through the old path after binding. The old home directory remains
+as `k500_sampling_20261104_r0.before_nvme`; it was not deleted. The original
+logical path is a link to the verified NVMe directory. Migration evidence is
+external at `reports/k500_nvme_migration_20261104_r0/`.
+
+The existing run recorder now seals every content ledger declared by the copied
+YAML closure before creating a run and verifies every snapshot on finalization.
+The original primary data inventory gate remains intact. Source-ledger hash
+drift, snapshot removal and snapshot tampering fail. This changes packaging and
+storage only; training code, methods, budgets, seeds, K500s, labels and metric
+cohorts are unchanged.
+
+`configs/experiments/k500_sampling/workflow_recovery2.yaml` uses an exact
+registered NVMe binding, four fresh one-epoch/2-Stage1-step engineering runs on
+draw1, and a new `engineering_admission_recovery2.json`. It verifies and reuses
+exactly the 32 completed draw0 results, preserving both stopped parent runs and
+all failure logs. Only queue, recorder and the previously audited ledger repair
+may differ from prior source snapshots; model/training/evaluation math stays
+frozen. Result-path comparisons resolve the authorized link without rewriting
+old artifact bytes or hashes.
+
+Current status/control/report paths are under `workflow_recovery2/training/`.
+The remaining 32 trainings and 32 evaluations use physical NVMe storage, still
+with two authorized GPU workers and the 25-GiB reserve. The final comparison is
+produced only after all 96 results complete and validate. The legacy recovery1
+configuration is historical evidence, not the current launch entry.

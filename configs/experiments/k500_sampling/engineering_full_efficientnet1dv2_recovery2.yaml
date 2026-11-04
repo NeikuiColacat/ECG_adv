@@ -1,0 +1,21 @@
+schema_version: 1
+experiment:
+  name: engineering_full_efficientnet1dv2_recovery2
+  purpose: Fresh draw1 engineering admission for NVMe recovery with complete ledger
+    snapshots; no heldout selection.
+entrypoint:
+  name: train_pn2021
+  config: train/k500_sampling/smoke_full_draw1.yaml
+  arguments:
+  - --model
+  - efficientnet1dv2
+  - --method-config
+  - train/methods/augmix_simclr_lhat.yaml
+  - --center
+  - ningbo
+  - --source-checkpoint
+  - /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_ptbxl_effnet_source_v1/training/checkpoints/best.pt
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/k500_sampling_20261104_r0/engineering_full_efficientnet1dv2_recovery2
+  if_exists: error
+  delegate_output_subdir: training

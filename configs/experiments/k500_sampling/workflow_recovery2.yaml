@@ -1,0 +1,13 @@
+schema_version: 1
+experiment:
+  name: k500_sampling_workflow_recovery2_nvme_20261104_r0
+  purpose: Continue draw1/draw2 on authorized NVMe storage; reuse all 32 verified
+    draw0 results and seal every per-draw ledger in the parent bundle.
+entrypoint:
+  name: coordinate_pulse_training
+  config: train/k500_sampling/workflow_recovery2.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/k500_sampling_20261104_r0/workflow_recovery2
+  if_exists: error
+  delegate_output_subdir: training

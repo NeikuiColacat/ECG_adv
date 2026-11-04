@@ -29,6 +29,15 @@ YAML 或隐式回退入口。
 
 ## A. 手动重构保护白名单
 
+2026-11-04 用户授权 `/data_nvme`：当前 K500 实验独占子目录迁移到
+`/data_nvme/linbinhao/ECG_adv_data/runs/k500_sampling_20261104_r0`，旧路径保留
+符号链接，home 原目录保留 `.before_nvme` 回滚备份。`workflow_recovery2.yaml`
+双层配置、`smoke_{full,no_vae}_draw1.yaml` 和四个
+`engineering_*_recovery2.yaml` 为 KEEP-MANUAL，科学配方和训练预算不变。
+`util/run_record.py` 负责复制配置闭包中所有声明的内容账本并在收尾时核验，
+避免父队列只携带 draw0 账本；launcher/queue 既有测试文件覆盖回归。
+新恢复复用完整核验的 draw0 32 份产物，保留历史失败，继续剩余 64 个子任务。
+
 2026-11-04 用户再次授权 GPU 0/1 继续 K500 实验：
 `configs/experiments/k500_sampling/workflow_recovery1.yaml`、
 `configs/train/k500_sampling/workflow_recovery1.yaml` 为 KEEP-MANUAL。

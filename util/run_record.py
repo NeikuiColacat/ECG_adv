@@ -18,6 +18,7 @@ from typing import Any, Sequence
 import yaml
 
 from util.pn2021_artifact_contract import resolve_artifact_reference, sha256_file
+from util.config_bundle import resolve_config_reference
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -233,6 +234,32 @@ def _write_yaml_snapshots(
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(payload)
     return [metadata for _, _, metadata in prepared]
+
+
+def _prepare_referenced_ledger_snapshots(prepared_yaml, *, config_root: Path):
+    """Seal every declared ledger in a queue's copied YAML closure."""
+    ledgers = {}
+    for _, raw, metadata in prepared_yaml:
+        payload = yaml.safe_load(raw)
+        if not isinstance(payload, dict) or "content_ledger" not in payload:
+            continue
+        descriptor = payload["content_ledger"]
+        if not isinstance(descriptor, dict) or set(descriptor) != {"path", "sha256"}:
+            raise ValueError("referenced content ledger requires an exact path/SHA256 descriptor")
+        path = resolve_config_reference(descriptor["path"],
+            owner_config_path=Path(metadata["source_path"]), config_root=config_root,
+            description="referenced data content ledger", must_exist=True)
+        raw_ledger = path.read_bytes()
+        digest = hashlib.sha256(raw_ledger).hexdigest()
+        if digest != descriptor["sha256"]:
+            raise ValueError("referenced data content ledger SHA256 mismatch")
+        relative = Path("configs") / path.relative_to(config_root)
+        if relative in ledgers and ledgers[relative][0] != raw_ledger:
+            raise ValueError("referenced data ledger descriptors disagree")
+        ledgers[relative] = (raw_ledger, {"source_path": str(path),
+            "snapshot_path": relative.as_posix(), "sha256": digest,
+            "size_bytes": len(raw_ledger)})
+    return [(relative, raw, metadata) for relative, (raw, metadata) in ledgers.items()]
 
 
 def _artifact_role(relative: Path) -> str:
@@ -577,19 +604,21 @@ def _validated_data_content(value: VerifiedDataContent) -> dict[str, Any]:
     }
 
 
+def _validate_ledger_snapshot(snapshot: Path, expected_sha256: str) -> None:
+    try:
+        metadata = snapshot.lstat()
+    except OSError as exc:
+        raise ValueError("data content ledger snapshot is missing") from exc
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+        raise ValueError("data content ledger snapshot must be a regular file")
+    if sha256_file(snapshot) != expected_sha256:
+        raise ValueError("data content ledger snapshot SHA-256 mismatch")
+
+
 def _validate_data_content_snapshot(run_dir: Path, record: Any) -> None:
-    if record is None:
-        return
-    for relative in (record.get("ledger_snapshot"), record.get("config_ledger_snapshot")):
-        snapshot = run_dir / str(relative)
-        try:
-            metadata = snapshot.lstat()
-        except OSError as exc:
-            raise ValueError("data content ledger snapshot is missing") from exc
-        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
-            raise ValueError("data content ledger snapshot must be a regular file")
-        if sha256_file(snapshot) != record.get("expected_ledger_sha256"):
-            raise ValueError("data content ledger snapshot SHA-256 mismatch")
+    if record is not None:
+        for relative in (record.get("ledger_snapshot"), record.get("config_ledger_snapshot")):
+            _validate_ledger_snapshot(run_dir / str(relative), record.get("expected_ledger_sha256"))
 
 
 @dataclass
@@ -634,6 +663,9 @@ class RunRecorder:
         prepared_snapshots = _prepare_yaml_snapshots(
             config_sources, config_root=config_root.resolve()
         )
+        prepared_ledgers = _prepare_referenced_ledger_snapshots(
+            prepared_snapshots, config_root=config_root.resolve()
+        )
         if data_content is not None:
             actual = {
                 item["source_path"]: item["sha256"]
@@ -654,6 +686,7 @@ class RunRecorder:
             config_snapshot.parent.mkdir(parents=True, exist_ok=True)
             config_snapshot.write_bytes(data_content.ledger_bytes)
         snapshots = _write_yaml_snapshots(output, prepared_snapshots)
+        _write_yaml_snapshots(output, prepared_ledgers)
         started = utc_now()
         manifest: dict[str, Any] = {
             "schema_version": 1,
@@ -686,6 +719,8 @@ class RunRecorder:
             "run_file_index_sha256": None,
             "error": None,
         }
+        if prepared_ledgers:
+            manifest["referenced_data_ledger_snapshots"] = [v for _, _, v in prepared_ledgers]
         card = {
             "schema_version": 1,
             "experiment_name": experiment_name,
@@ -729,6 +764,8 @@ class RunRecorder:
                 _validate_data_content_snapshot(
                     self.run_dir, self.manifest.get("data_content")
                 )
+                for ledger in self.manifest.get("referenced_data_ledger_snapshots", []):
+                    _validate_ledger_snapshot(self.run_dir / ledger["snapshot_path"], ledger["sha256"])
                 result_evidence = _expected_result_evidence(
                     self.run_dir, Path(expected["path"]), str(expected["type"])
                 )

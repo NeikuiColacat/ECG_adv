@@ -55,6 +55,17 @@ traditional_simclr_handoff:
   experiment_glob: configs/experiments/simclr_handoff/*.yaml
   validation: docs/simclr_handoff_validation.md
 
+k500_sampling_recovery2_nvme_20261104:
+  pipeline_config: configs/experiments/k500_sampling/workflow_recovery2.yaml
+  status: nvme_recovery_config_ready_live_state_external
+  worktree_branch: experiment/k500-nvme-recovery-20261104
+  gpu_allowlist: [0, 1]
+  verified_reusable_jobs: {training: 16, evaluation: 16}
+  remaining_jobs: {training: 32, evaluation: 32}
+  physical_storage: /data_nvme/linbinhao/ECG_adv_data/runs/k500_sampling_20261104_r0
+  logical_storage: /home/linbinhao/ECG_adv_data/runs/k500_sampling_20261104_r0
+  status_path: /home/linbinhao/ECG_adv_data/runs/k500_sampling_20261104_r0/workflow_recovery2/training/status.json
+
 k500_sampling_recovery1_20261104:
   pipeline_config: configs/experiments/k500_sampling/workflow_recovery1.yaml
   status: recovery_config_ready_live_state_external

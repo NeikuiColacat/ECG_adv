@@ -146,7 +146,9 @@ ECGFounder 换成表中相应 YAML。宁波仅是接入示例；其他中心应�
 
 本次修复逐一验证十个**指定**元数据文件的大小和全内容哈希，明确记录未验证的 sidecar，继续拒绝缺失、篡改及符号链接；旧的完整缓存门禁保持严格。原训练结果、失败日志及 source snapshots 保留。修复验证与完整队列恢复的状态见 [交接验证记录](docs/simclr_handoff_validation.md)。
 
-完整抽样队列的恢复入口为 [workflow_recovery1.yaml](configs/experiments/k500_sampling/workflow_recovery1.yaml)。恢复独立保存在 `workflow_recovery1/`，原队列保留失败历史。恢复器完整核验并复用上述 2 份训练、2 份修复评估，剩余 46 份训练、46 份评估；启动前须以新源码完成四份新工程训练并登记 `engineering_admission_recovery1.json`。不改旧 admission/hash，不覆盖失败目录。当前进度看外置 `workflow_recovery1/training/status.json`，不能将配置就绪或已有验证当成全部实验完成。
+第一次恢复队列已完成 draw0 全部 16 份训练和 16 份评估，随后因父配置包漏带 draw1 账本退出。新入口为 [workflow_recovery2.yaml](configs/experiments/k500_sampling/workflow_recovery2.yaml)：复制全部抽样账本，复用已核验的 32 份结果，继续 draw1/draw2 的 32 份训练、32 份评估；新源码需完成四份 draw1 短训练准入。历史失败不覆盖，当前状态看外置 `workflow_recovery2/training/status.json`。
+
+用户已授权本次实验写入 `/data_nvme/linbinhao/ECG_adv_data/runs/k500_sampling_20261104_r0`。原 home 路径为指向该目录的本地链接，因此旧结果引用继续有效；home 原目录保留在 `.before_nvme`，未删除 checkpoint。迁移逐文件校验及配置包 readback 证据见外置 `reports/k500_nvme_migration_20261104_r0/`。其他实验目录未迁移。不要绕过源代码、账本、GPU 或磁盘余量门禁。
 
 现有配方及中心有历史开发调参；三次重复也不能自动升级为论文最终独立测试。论文最终结论仍需冻结方案后的独立测试证据。
 

@@ -26,6 +26,33 @@ def test_sampling_recovery_keeps_the_grid_and_requires_fresh_engineering(tmp_pat
         q.sampling_plans(config, path, REPO/"configs")
 
 
+def test_nvme_sampling_recovery_keeps_all_96_scientific_plans_and_exact_storage(tmp_path):
+    from util import simclr_joint_queue as q
+    path = REPO/"configs/train/k500_sampling/workflow_recovery2.yaml"
+    config = yaml.safe_load(path.read_text())
+    members = q.sampling_plans(config,path,REPO/"configs")
+    assert len(members) == 96 and config["recovery"] == q.SAMPLING_NVME_RECOVERY
+    assert all("_recovery2/training/train_result.json" in p for p in config["admission_results"].values())
+    for key,(_,plan) in members.items():
+        assert plan.run_dir == (q.SAMPLING_ROOT/key).resolve()
+    config["recovery"] = {**config["recovery"], "storage_root":str(tmp_path)}
+    with pytest.raises(ValueError,match="restricted"):
+        q.sampling_plans(config,path,REPO/"configs")
+
+
+def test_nvme_sampling_recovery_rejects_a_partial_draw0(tmp_path,monkeypatch):
+    from util import simclr_joint_queue as q,run_record
+    previous = tmp_path/"previous";(previous/"training").mkdir(parents=True)
+    (previous/"run_manifest.json").write_text(json.dumps({"status":"failed"}))
+    (previous/"training/status.json").write_text(json.dumps({"status":"draining","active":{},"completed":{}}))
+    (previous/"training/source_identity.json").write_text("{}")
+    policy = {**q.SAMPLING_NVME_RECOVERY,"previous_workflow":str(previous)}
+    monkeypatch.setattr(q,"SAMPLING_NVME_RECOVERY",policy)
+    monkeypatch.setattr(run_record,"verify_run_file_index",lambda path:[])
+    with pytest.raises(ValueError,match="32 completed"):
+        q.recover_sampling_completed({"recovery":policy},{},tmp_path,{})
+
+
 @pytest.mark.parametrize("damage", [None, "source", "result", "config", "active", "training_link"])
 def test_sampling_recovery_checks_exact_completed_artifacts(tmp_path, monkeypatch, damage):
     from types import SimpleNamespace

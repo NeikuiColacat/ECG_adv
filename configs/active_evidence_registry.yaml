@@ -20,6 +20,20 @@ simclr_classic_three_seed_20260912:
   metric_view: drop_all_zero_refexcluded_equal_20_views_then_equal_four_centers
   limitations: [historically_tuned_development_centers, legacy_parent_missing_final_file_index, not_matched_to_online_torch_backend]
 
+k500_sampling_recovery2_nvme_20261104:
+  status: nvme_recovery_config_ready_live_state_external
+  paper_claim_allowed: false
+  config: configs/experiments/k500_sampling/workflow_recovery2.yaml
+  protocol: docs/k500_sampling_protocol.md
+  verified_reusable_jobs: {training: 16, evaluation: 16}
+  remaining_jobs: {training: 32, evaluation: 32}
+  previous_failure: draw1_ledger_missing_from_parent_snapshot_before_child_run_creation
+  repair: seal_all_declared_data_ledgers_in_copied_config_closure
+  physical_storage: /data_nvme/linbinhao/ECG_adv_data/runs/k500_sampling_20261104_r0
+  migration_verification: /home/linbinhao/ECG_adv_data/reports/k500_nvme_migration_20261104_r0/storage_binding.json
+  original_home_backup: /home/linbinhao/ECG_adv_data/runs/k500_sampling_20261104_r0.before_nvme
+  scientific_contract: original_three_K500_draws_fixed_training_seed_common_cohort_unchanged
+
 k500_sampling_recovery1_20261104:
   status: recovery_config_ready_live_state_external
   paper_claim_allowed: false
