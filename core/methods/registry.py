@@ -52,6 +52,7 @@ class RecipeKind(str, Enum):
     )
     FIXED20 = "fixed20"
     TWO_STAGE_AUGMIX_LHAT = "two_stage_augmix_lhat"
+    JOINT_AUGMIX_SIMCLR = "joint_augmix_simclr"
     ONE_STAGE_SUPERVISED_AUGMIX = "one_stage_supervised_augmix"
     ONE_STAGE_VAE_LHAT = "one_stage_vae_lhat"
     ONE_STAGE_AUGMIX_LHAT = "one_stage_augmix_lhat"
@@ -306,6 +307,15 @@ _DEFINITIONS: Mapping[str, _RecipeDefinition] = MappingProxyType(
             _MAINLINE_RESOURCES, "augmix_simclr_lhat",
             ("clean_view", "lhat_view", "corrupted_view"),
             stage1_objective=Stage1Objective.CLEAN_BCE_JSD,
+        ),
+        "augmix_simclr_joint_no_vae": _RecipeDefinition(
+            RecipeKind.JOINT_AUGMIX_SIMCLR,
+            AuxiliaryVariant.MATCHED_NO_VAE,
+            "augmix_simclr_joint_no_vae",
+            "prospective_single_stage_joint_development",
+            _NO_VAE_RESOURCES,
+            "augmix_simclr_lhat",
+            ("clean_view", "corrupted_view"),
         ),
         "augmix_simclr_matched_no_vae": _RecipeDefinition(
             RecipeKind.TWO_STAGE_AUGMIX_LHAT,
@@ -1882,6 +1892,36 @@ def _execution_contract(definition: _RecipeDefinition) -> Mapping[str, Any]:
                 "batch_norm_policy": "family_loss_weighted_once_per_base_batch",
             }
         )
+    if kind is RecipeKind.JOINT_AUGMIX_SIMCLR:
+        return MappingProxyType({
+            **common,
+            "stages": ["joint_supervised_simclr_adaptation"],
+            "stage_boundaries": False,
+            "classifier_head_trainable": True,
+            "projector": "training_only_two_linear_relu_128",
+            "exposure_policy": "clean_once_then_rotating_depth23_2plus2",
+            "rotating4_schedule": "epoch_modulo_five_covers_all_depth23_compositions",
+            "family_loss_weights": {
+                "clean": 0.5, "corrupted_total": 0.5,
+                "corrupted_per_composition": 0.125,
+            },
+            "joint_objective": {
+                "simclr_weight": 1.0,
+                "source_logit_anchor_weight": 5.0,
+                "temperature": 0.5,
+                "view": "clean_vs_one_twochain_augmix_strong_view",
+                "source_teacher": "frozen_source_logits_on_selected_K500_only",
+                "batch_norm_policy": "snapshot_restore",
+                "global_rng_policy": "snapshot_restore",
+                "model_forwards_per_base_batch": 7,
+                "optimizer": "one_shared_adamw_model_and_projector",
+                "learning_rate": "supervised_backbone_profile_for_all_parameters",
+                "weight_schedule": "constant_from_first_to_last_step",
+            },
+            "vae_lhat": "disabled",
+            "generated_view_count": 5,
+            "batch_norm_policy": "family_loss_weighted_once_per_base_batch",
+        })
     if kind is RecipeKind.TWO_STAGE_AUGMIX_LHAT:
         contracted = variant is AuxiliaryVariant.CONTRACTED_LHAT
         if definition.stage1_objective is Stage1Objective.SIMCLR:

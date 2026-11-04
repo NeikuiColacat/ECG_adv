@@ -1,0 +1,21 @@
+schema_version: 1
+experiment:
+  name: full_d1_efficientnet1dv2_chapman_shaoxing_eval
+  purpose: Fixed training seed; three independent K500 draws; classic two-stage full
+    versus no-VAE on the identical common evaluation cohort.
+entrypoint:
+  name: evaluate_pn2021
+  config: eval/k500_sampling/draw1.yaml
+  arguments:
+  - --model
+  - efficientnet1dv2
+  - --train-result
+  - /home/linbinhao/ECG_adv_data/runs/k500_sampling_20261104_r0/full_d1_efficientnet1dv2_chapman_shaoxing/training/train_result.json
+  - --center
+  - chapman_shaoxing
+  - --method-config
+  - train/methods/augmix_simclr_lhat.yaml
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/k500_sampling_20261104_r0/full_d1_efficientnet1dv2_chapman_shaoxing_eval
+  if_exists: error
+  delegate_output_subdir: evaluation

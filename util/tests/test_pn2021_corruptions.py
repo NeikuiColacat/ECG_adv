@@ -104,6 +104,68 @@ def test_depth2_plus_depth3_expands_to_the_locked_twenty_views() -> None:
         assert operator_indices == sorted(operator_indices)
 
 
+@pytest.mark.parametrize("sidecar_in_ledger", [False, True])
+def test_online_metadata_gate_does_not_certify_or_require_retired_waveforms(tmp_path, sidecar_in_ledger):
+    from data_preprocess import data_ledger
+    roots = {}
+    for name in data_ledger.ROOT_NAMES:
+        root = tmp_path/name
+        root.mkdir()
+        roots[name] = root
+    corruption = roots["pn2021c_cache"]
+    names = ("build_state.json", "compositions.json", "hash_ids.npy", "labels_super5.npy",
+        "manifest.json", "operators_config_snapshot.yaml", "record_ids.npy",
+        "records.parquet", "resolved_cache_config.yaml", "source_indices.npy")
+    for i, name in enumerate(names):
+        (corruption/name).write_text(f"metadata-{i}")
+    if sidecar_in_ledger:
+        (corruption/"RETIREMENT_20261017.md").write_text("retired")
+    waveform = corruption/"signals_100hz.npy"
+    waveform.write_bytes(b"fixture-waveform")
+    ledger = tmp_path/"ledger.jsonl"
+    sealed = data_ledger.generate_ledger(roots, ledger)
+    waveform.unlink()
+    (corruption/"RETIREMENT.md").write_text("retired")
+    result = data_ledger.verify_pn2021c_metadata(ledger, corruption, expected_sha256=sealed["ledger_sha256"])
+    assert result["metadata_member_count"] == 10
+    assert result["verified_metadata_members"] == list(names)
+    assert result["unverified_ledger_sidecars"] == (["RETIREMENT_20261017.md"] if sidecar_in_ledger else [])
+    assert result["historical_waveform_hash_verified"] is False
+    with pytest.raises(ValueError, match="inventory"):
+        data_ledger.verify_ledger(ledger, roots)
+    (corruption/"manifest.json").write_text("tampered-4")
+    with pytest.raises(ValueError, match="metadata changed"):
+        data_ledger.verify_pn2021c_metadata(ledger, corruption, expected_sha256=sealed["ledger_sha256"])
+
+
+@pytest.mark.parametrize("damage", ["ledger_missing", "file_missing", "symlink", "hash", "ledger_hash"])
+def test_online_metadata_gate_requires_named_members_and_exact_bytes(tmp_path, damage):
+    from data_preprocess import data_ledger
+    roots = {name: tmp_path/name for name in data_ledger.ROOT_NAMES}
+    for root in roots.values():
+        root.mkdir()
+    corruption = roots["pn2021c_cache"]
+    for name in data_ledger.PN2021C_METADATA_MEMBERS:
+        (corruption/name).write_bytes(b"original")
+    required = corruption/"compositions.json"
+    if damage == "ledger_missing":
+        required.rename(corruption/"unrelated.json")  # Still ten files; names matter.
+    ledger = tmp_path/"ledger.jsonl"
+    sealed = data_ledger.generate_ledger(roots, ledger)
+    if damage == "file_missing":
+        required.unlink()
+    elif damage == "symlink":
+        required.unlink()
+        required.symlink_to(corruption/"manifest.json")
+    elif damage == "hash":
+        required.write_bytes(b"modified")  # Same size; full hashing must reject it.
+    expected = "0"*64 if damage == "ledger_hash" else sealed["ledger_sha256"]
+    with pytest.raises(ValueError, match={"ledger_missing": "missing required metadata",
+            "file_missing": "metadata missing", "symlink": "regular files",
+            "hash": "metadata changed", "ledger_hash": "SHA-256 mismatch"}[damage]):
+        data_ledger.verify_pn2021c_metadata(ledger, corruption, expected_sha256=expected)
+
+
 def test_cache_staging_persists_only_the_canonical_100hz_waveform(
     tmp_path: Path,
 ) -> None:

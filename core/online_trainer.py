@@ -184,6 +184,7 @@ def _build_batch_norm_momentum_plan(
         RecipeKind.SUPERVISED_ROTATING_DEPTH23_HARDGAIN_AUX,
         RecipeKind.FIXED20,
         RecipeKind.TWO_STAGE_AUGMIX_LHAT,
+        RecipeKind.JOINT_AUGMIX_SIMCLR,
         RecipeKind.ONE_STAGE_SUPERVISED_AUGMIX,
         RecipeKind.ONE_STAGE_VAE_LHAT,
         RecipeKind.ONE_STAGE_AUGMIX_LHAT,
@@ -325,6 +326,7 @@ def _method_exposure_steps(
         RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
         RecipeKind.SUPERVISED_ROTATING_DEPTH23_HARDGAIN_AUX,
         RecipeKind.TWO_STAGE_AUGMIX_LHAT,
+        RecipeKind.JOINT_AUGMIX_SIMCLR,
     }:
         if isinstance(epoch, bool) or not isinstance(epoch, int) or epoch < 1:
             raise ValueError("rotating-four epoch must be a positive integer")
@@ -352,7 +354,10 @@ def _method_exposure_steps(
                 for index in compositions
             ),
         )
-        if recipe.kind is RecipeKind.SUPERVISED_ROTATING_DEPTH23:
+        if recipe.kind in {
+            RecipeKind.SUPERVISED_ROTATING_DEPTH23,
+            RecipeKind.JOINT_AUGMIX_SIMCLR,
+        }:
             return steps
         if recipe.kind in {
             RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
@@ -452,6 +457,7 @@ def _recipe_family_loss_weights(recipe: RecipeSpec) -> dict[str, float] | None:
         RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
         RecipeKind.SUPERVISED_ROTATING_DEPTH23_HARDGAIN_AUX,
         RecipeKind.TWO_STAGE_AUGMIX_LHAT,
+        RecipeKind.JOINT_AUGMIX_SIMCLR,
     }:
         weights = dict(recipe.scientific_contract["family_loss_weights"])
         if recipe.kind in {
@@ -2095,6 +2101,50 @@ def _preserve_torch_rng(device: torch.device) -> Iterator[None]:
             torch.cuda.set_rng_state(cuda_state, device)
 
 
+def _joint_simclr_objective(
+    model: nn.Module,
+    projector: nn.Module,
+    raw: torch.Tensor,
+    hashes: Sequence[str],
+    *,
+    spec: ModelSpec,
+    augmix_config: AugMixConfig,
+    teacher_cache: Mapping[str, torch.Tensor],
+    normalization_epsilon: float,
+    base_seed: int,
+    rng_identity: Sequence[str],
+    contract: Mapping[str, Any],
+) -> dict[str, torch.Tensor]:
+    """Joint auxiliary; caller preserves BN/RNG through forward AND backward."""
+    generator = make_torch_generator(
+        raw.device, "joint_augmix_simclr_view", *rng_identity,
+        base_seed=base_seed,
+        config_path=augmix_config.random_seed_config_path,
+    )
+    strong = generate_two_chain_augmix_strong_view(
+        raw, sampling_rate_hz=100, config=augmix_config, generator=generator,
+    ).mixed_raw
+    clean_input = prepare_canonical_model_input(
+        raw, spec, epsilon=normalization_epsilon,
+    )
+    strong_input = prepare_canonical_model_input(
+        strong, spec, epsilon=normalization_epsilon,
+    )
+    logits, features = _forward_logits_and_features(model, clean_input, spec)
+    _, strong_features = _forward_logits_and_features(model, strong_input, spec)
+    contrastive = _simclr_nt_xent(
+        projector(features), projector(strong_features),
+        temperature=float(contract["temperature"]),
+    )
+    anchor = _weighted_logit_anchor_loss(
+        logits, _teacher_logits_for_hashes(teacher_cache, hashes, device=raw.device),
+        (1.0,) * 5,
+    )
+    loss = (float(contract["simclr_weight"]) * contrastive
+            + float(contract["source_logit_anchor_weight"]) * anchor)
+    return {"loss": loss, "simclr": contrastive, "source_anchor": anchor}
+
+
 def _run_augmix_stage1(
     model: nn.Module,
     train_dataloader: Any,
@@ -2394,6 +2444,7 @@ def train_online_model(
         RecipeKind.SUPERVISED_ROTATING_DEPTH23_HARDGAIN_AUX,
         RecipeKind.FIXED20,
         RecipeKind.TWO_STAGE_AUGMIX_LHAT,
+        RecipeKind.JOINT_AUGMIX_SIMCLR,
         RecipeKind.ONE_STAGE_SUPERVISED_AUGMIX,
         RecipeKind.ONE_STAGE_VAE_LHAT,
         RecipeKind.ONE_STAGE_AUGMIX_LHAT,
@@ -2548,7 +2599,38 @@ def train_online_model(
     method_resource_identity["vae_decoder_checkpoint"] = decoder_identity
     _write_json(method_resources_path, method_resource_identity)
 
+    joint_contract = recipe.scientific_contract.get("joint_objective")
+    joint_projector: nn.Module | None = None
+    joint_teacher: dict[str, torch.Tensor] | None = None
+    if recipe.kind is RecipeKind.JOINT_AUGMIX_SIMCLR:
+        if not isinstance(joint_contract, Mapping) or runtime.augmix_config is None:
+            raise RuntimeError("joint SimCLR requires its finite contract and AugMix")
+        if any(not parameter.requires_grad for parameter in _head_parameters(model, spec)):
+            raise ValueError("joint SimCLR trains the classifier head from step one")
+        width = _feature_width(model, spec)
+        with _preserve_torch_rng(resolved_device):
+            joint_projector = nn.Sequential(
+                nn.Linear(width, width), nn.ReLU(inplace=True),
+                nn.Linear(width, min(128, width)),
+            ).to(resolved_device)
+        joint_teacher = _cache_k500_logits(
+            model, train_dataloader, spec=spec, device=resolved_device,
+            normalization_epsilon=float(config.payload["data"]["normalization_epsilon"]),
+        )
+        method_resource_identity["joint_simclr"] = {
+            "source_teacher_record_count": len(joint_teacher),
+            "source_teacher_hash_ids_sha256": hashlib.sha256(
+                "\n".join(sorted(joint_teacher)).encode("utf-8")
+            ).hexdigest(),
+            "projector_parameter_count": sum(p.numel() for p in joint_projector.parameters()),
+            "source_teacher_scope": "initial_source_checkpoint_selected_K500_only",
+            "optimizer_shared_with_classifier": True,
+            "stage_boundaries": False,
+        }
+        _write_json(method_resources_path, method_resource_identity)
     trainable = [value for value in model.parameters() if value.requires_grad]
+    if joint_projector is not None:
+        trainable.extend(joint_projector.parameters())
     if not trainable:
         raise ValueError("model has no trainable parameters")
     optimizer = AdamW(
@@ -2695,6 +2777,7 @@ def train_online_model(
                     RecipeKind.SUPERVISED_ROTATING_DEPTH23_MILD_AUX,
                     RecipeKind.SUPERVISED_ROTATING_DEPTH23_HARDGAIN_AUX,
                     RecipeKind.TWO_STAGE_AUGMIX_LHAT,
+                    RecipeKind.JOINT_AUGMIX_SIMCLR,
                 }
                 else None
             ),
@@ -2746,6 +2829,7 @@ def train_online_model(
 
     history: list[dict[str, Any]] = []
     optimizer_steps = 0
+    first_joint_gradients: dict[str, float] | None = None
     try:
         for epoch in range(1, epochs + 1):
             model.train()
@@ -2755,6 +2839,10 @@ def train_online_model(
             optimizer_steps_at_epoch_start = optimizer_steps
             epoch_base_batches = 0
             epoch_loss_sum = torch.zeros((), device=resolved_device)
+            epoch_joint_sums = {
+                name: torch.zeros((), device=resolved_device)
+                for name in ("loss", "simclr", "source_anchor")
+            } if joint_projector is not None else {}
             epoch_samples = 0
             epoch_origin_samples = 0
             epoch_term_sums = {
@@ -2974,17 +3062,53 @@ def train_online_model(
                             and objective.valid_counts == {"lhat_direct_bce": 0}
                         ),
                     )
+                if group_start and joint_projector is not None:
+                    assert joint_teacher is not None
+                    assert runtime.augmix_config is not None
+                    assert isinstance(joint_contract, Mapping)
+                    with _preserve_batch_norm_buffers(model), _preserve_torch_rng(resolved_device):
+                        with torch.cuda.amp.autocast(enabled=amp_enabled, dtype=amp_dtype):
+                            joint_values = _joint_simclr_objective(
+                                model, joint_projector, raw, hashes, spec=spec,
+                                augmix_config=runtime.augmix_config,
+                                teacher_cache=joint_teacher, normalization_epsilon=epsilon,
+                                base_seed=seed.base_seed, rng_identity=rng_identity,
+                                contract=joint_contract,
+                            )
+                        if not bool(torch.isfinite(joint_values["loss"]).item()):
+                            raise FloatingPointError("joint SimCLR loss became NaN or Inf")
+                        if scaler.is_enabled():
+                            scaler.scale(joint_values["loss"]).backward()
+                        else:
+                            joint_values["loss"].backward()
+                    for name, value in joint_values.items():
+                        epoch_joint_sums[name] += value.detach() * batch_size
+                    epoch_loss_sum += joint_values["loss"].detach() * batch_size
                 if group_end:
+                    if joint_projector is not None and first_joint_gradients is None:
+                        groups = {"classifier_head": _head_parameters(model, spec),
+                                  "projector": tuple(joint_projector.parameters())}
+                        first_joint_gradients = {}
+                        for name, parameters in groups.items():
+                            grads = [p.grad for p in parameters if p.grad is not None]
+                            if not grads:
+                                raise RuntimeError(f"joint {name} did not receive gradients")
+                            norm = torch.stack([g.detach().float().square().sum() for g in grads]).sum().sqrt()
+                            if not bool(torch.isfinite(norm).item()) or float(norm) <= 0:
+                                raise FloatingPointError(f"joint {name} has non-finite or zero gradients")
+                            first_joint_gradients[name] = float(norm)
                     if scaler.is_enabled():
                         scaler.unscale_(optimizer)
                         torch.nn.utils.clip_grad_norm_(
-                            trainable, float(resolved["gradient_clip_norm"])
+                            trainable, float(resolved["gradient_clip_norm"]),
+                            error_if_nonfinite=joint_projector is not None,
                         )
                         scaler.step(optimizer)
                         scaler.update()
                     else:
                         torch.nn.utils.clip_grad_norm_(
-                            trainable, float(resolved["gradient_clip_norm"])
+                            trainable, float(resolved["gradient_clip_norm"]),
+                            error_if_nonfinite=joint_projector is not None,
                         )
                         optimizer.step()
                     optimizer_steps += 1
@@ -3230,6 +3354,20 @@ def train_online_model(
                 "view_execution_sample_count": epoch_samples,
                 "exposure": exposure_metrics,
             }
+            if joint_projector is not None:
+                train_metrics["joint_simclr"] = {
+                    name: float(value.detach().cpu()) / epoch_origin_samples
+                    for name, value in epoch_joint_sums.items()
+                }
+                train_metrics["joint_simclr"].update({
+                    "paired_record_count": epoch_origin_samples,
+                    "additional_model_forward_records": 2 * epoch_origin_samples,
+                    "classifier_head_trainable": True,
+                    "first_step_gradient_l2": first_joint_gradients,
+                })
+                exposure_metrics["model_forwards_per_base_batch"] = 7
+                exposure_metrics["contrastive_pair_count"] = epoch_origin_samples
+                exposure_metrics["additional_joint_forward_record_count"] = 2 * epoch_origin_samples
             if recipe.requires_vae:
                 train_metrics.update(
                     {
@@ -3300,6 +3438,8 @@ def train_online_model(
                     "metrics": epoch_record,
                     "run_identity": run_identity,
                 }
+                if joint_projector is not None:
+                    checkpoint["joint_projector_state_dict"] = joint_projector.state_dict()
                 temporary = last_checkpoint.with_name(
                     f".{last_checkpoint.name}.tmp"
                 )

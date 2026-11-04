@@ -227,4 +227,42 @@ __all__ = [
     "CANONICAL_OPERATORS",
     "INPUT_SAMPLING_RATE_HZ",
     "generate_canonical_corruption",
+    "generate_evaluation_corruption",
 ]
+
+
+def generate_evaluation_corruption(
+    clean_raw_100hz: torch.Tensor,
+    *,
+    hash_ids: tuple[str, ...],
+    composition_index: int,
+    operator_params: Mapping[str, Mapping[str, Any]],
+    cache_version: str,
+    seed_config_path,
+) -> CorruptionBatch:
+    """Fixed 32-record GPU streams shared by models, methods and training seeds.
+
+    Production evaluation batch sizes are multiples of 32. Isolated streams
+    depend on the ordered record hashes and view, so 128/512-record loaders
+    traverse exactly the same stochastic microbatches. This is a versioned
+    Torch realization, not byte-identical NumPy cache reconstruction.
+    """
+    import hashlib
+    from util.random_seed import make_torch_generator
+
+    clean = _validate_clean_raw_100hz(clean_raw_100hz)
+    if (len(hash_ids) != len(clean) or len(set(hash_ids)) != len(hash_ids)
+            or type(composition_index) is not int or not 0 <= composition_index < 20):
+        raise ValueError("evaluation corruption requires unique record hashes and a fixed view in [0,19]")
+    results = []
+    for start in range(0, len(clean), 32):
+        end = min(start+32, len(clean))
+        record_digest = hashlib.sha256("".join(f"{v}\n" for v in hash_ids[start:end]).encode()).hexdigest()
+        generator = make_torch_generator(clean.device, "pn2021c_evaluation_gpu_microbatch32_v1",
+            cache_version, composition_index, record_digest, config_path=seed_config_path)
+        indices = torch.full((end-start,), composition_index, dtype=torch.int64, device=clean.device)
+        results.append(generate_canonical_corruption(clean[start:end], operator_params=operator_params,
+            generator=generator, composition_indices=indices, _input_prevalidated=True))
+    return CorruptionBatch(torch.cat([v.waveform_raw_100hz for v in results]),
+        CorruptionDiagnostics(**{name: torch.cat([getattr(v.diagnostics, name) for v in results])
+            for name in CorruptionDiagnostics.__dataclass_fields__}))

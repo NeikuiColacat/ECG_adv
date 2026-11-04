@@ -1110,6 +1110,63 @@ def build_cache_splits(config_path: str | Path = DEFAULT_CONFIG) -> Path:
     return output_root
 
 
+def freeze_common_sampling_evaluation(split_dirs: Sequence[Path], *, cache_dir: Path) -> dict[str, Any]:
+    """Finish three newly built splits with one evaluation cohort per center.
+
+    Only fresh, unpublished split artifacts are accepted. K500/tuning identities
+    stay unchanged; evaluation excludes the union of the three K500 draws.
+    """
+    if len(split_dirs) != 3 or len(set(map(Path, split_dirs))) != 3:
+        raise ValueError("exactly three different sampling splits are required")
+    manifests = [json.loads((Path(p)/"split_manifest.json").read_text()) for p in split_dirs]
+    if any("common_sampling_evaluation" in m for m in manifests):
+        raise ValueError("common evaluation is already frozen")
+    summary = {}
+    with load_cache(cache_dir, sampling_rate_hz=100, mode="mmap", validate_values="sample") as cache:
+        for center, sources in EXPECTED_LOGICAL_CENTERS:
+            members = []
+            for directory in split_dirs:
+                base = Path(directory)/center
+                member = json.loads((base/"split_manifest.json").read_text())
+                hashes = np.load(base/member["files"]["k500"]["hash_ids"]["file"], allow_pickle=False).astype(str)
+                if len(hashes) != 500 or _hash_id_set_sha256(hashes) != member["k500_hash_id_set_sha256"]:
+                    raise ValueError("sampling K500 identity differs from its manifest")
+                members.append((base, member, hashes))
+            draw_hashes = [m[1]["k500_hash_id_set_sha256"] for m in members]
+            if len(set(draw_hashes)) != 3:
+                raise ValueError("sampling repeats must use three distinct K500 subsets")
+            union = set().union(*(set(m[2]) for m in members))
+            physical = cache.records["center"].astype(str).to_numpy()
+            eligible = np.isin(physical, sources)
+            excluded = np.isin(cache.hash_ids.astype(str), sorted(union))
+            kept = _sorted_indices_by_hash(cache, np.flatnonzero(eligible & ~excluded))
+            dropped = _sorted_indices_by_hash(cache, kept[np.asarray(cache.labels[kept]).sum(axis=1)>0])
+            public = {"policy": "exclude_union_of_three_k500_draws_v1",
+                "sampling_k500_hashes": draw_hashes, "total_excluded_count": len(union),
+                "additional_excluded_count": len(union)-500,
+                "union_hash_id_set_sha256": _hash_id_set_sha256(union)}
+            for manifest, (base, member, _) in zip(manifests, members, strict=True):
+                descriptor = _save_array(base, "common_excluded_hash_ids.npy", _fixed_strings(sorted(union), width=64))
+                member["evaluation_common_cohort"] = {**public, "union_hash_ids": descriptor}
+                for partition, indices in [("evaluation_all_zero_kept", kept), ("evaluation_drop_all_zero", dropped)]:
+                    member["files"][partition] = _write_identity_arrays(base, prefix=partition, cache=cache, indices=indices)
+                    member[partition+"_count"] = int(indices.size)
+                    member[partition+"_hash_id_set_sha256"] = _hash_id_set_sha256(cache.hash_ids[indices])
+                (base/"split_manifest.json").write_text(json.dumps(member, indent=2)+"\n")
+                manifest["logical_centers"][center] = {**member, "manifest_sha256": _artifact_contract.sha256_file(base/"split_manifest.json")}
+            summary[center] = {**public, "kept_count": int(kept.size), "drop_count": int(dropped.size),
+                "kept_hash": _hash_id_set_sha256(cache.hash_ids[kept]), "drop_hash": _hash_id_set_sha256(cache.hash_ids[dropped])}
+    for directory, manifest in zip(split_dirs, manifests, strict=True):
+        manifest["common_sampling_evaluation"] = "exclude_union_of_three_k500_draws_v1"
+        (Path(directory)/"split_manifest.json").write_text(json.dumps(manifest, indent=2)+"\n")
+        parent_path = Path(directory).parent/"split_manifest.json"
+        if parent_path.is_file():
+            parent = json.loads(parent_path.read_text())
+            parent["datasets"]["pn2021"]["manifest_sha256"] = _artifact_contract.sha256_file(Path(directory)/"split_manifest.json")
+            parent_path.write_text(json.dumps(parent, indent=2)+"\n")
+    return summary
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Build PTB-XL official-fold and PN2021 K500 split artifacts"

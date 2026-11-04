@@ -35,6 +35,17 @@ def test_launcher_and_data_ledger_share_the_yaml_mapping_loader() -> None:
     assert not hasattr(data_ledger, "_load_yaml")
 
 
+def test_gpu_online_evaluation_keeps_clean_and_split_ledger_gates(tmp_path):
+    cached = load_experiment_plan(REPO/"configs/experiments/simclr_joint/joint_s0_efficientnet1dv2_ningbo_eval.yaml",
+                                 run_dir=tmp_path/"cached")
+    online = load_experiment_plan(REPO/"configs/experiments/simclr_joint/joint_s0_efficientnet1dv2_ningbo_eval_gpu.yaml",
+                                 run_dir=tmp_path/"online")
+    assert cached.data_ledger.required_roots == ("pn2021_cache","pn2021c_cache","split_artifacts")
+    assert online.data_ledger.required_roots == ("pn2021_cache","split_artifacts")
+    assert online.data_ledger.expected_sha256 == cached.data_ledger.expected_sha256
+    assert not (tmp_path/"online").exists()
+
+
 def _write_bundle(tmp_path: Path, *, run_dir: Path) -> Path:
     config_root = tmp_path / "configs"
     experiment_path = config_root / "experiments" / "fixture.yaml"

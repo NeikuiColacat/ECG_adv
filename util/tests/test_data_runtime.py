@@ -41,6 +41,66 @@ from data_preprocess.load_cache import (
 REPO = Path(__file__).resolve().parents[2]
 
 
+def test_sampling_draws_keep_K500_distinct_and_evaluation_exactly_common(tmp_path, monkeypatch):
+    from contextlib import nullcontext
+    from data_preprocess import split_cache
+    from util.pn2021_artifact_contract import validate_common_sampling_exclusion
+    physical = [source for _,sources in split_cache.EXPECTED_LOGICAL_CENTERS
+                for source in [sources[0]] for _ in range(1200)] + ["ptb","st_petersburg_incart","cpsc_2018_extra"]
+    count = len(physical)
+    hashes = np.asarray([hashlib.sha256(str(i).encode()).hexdigest() for i in range(count)])
+    index = {h:i for i,h in enumerate(hashes)}
+    labels = np.eye(5,dtype=np.uint8)[np.arange(count)%5]
+    cache = SimpleNamespace(dataset="pn2021",is_corruption=False,
+        hash_ids=hashes,record_ids=np.asarray([f"r{i}" for i in range(count)]),labels=labels,
+        records=pd.DataFrame({"center":physical,"quality_status":["clean"]*count}),
+        available_centers=sorted(set(physical)),identity=SimpleNamespace(
+            mapping_version=PN2021_MAPPING_VERSION,mapping_hash=PN2021_MAPPING_HASH,manifest_sha256="a"*64),
+        describe=lambda:{"dataset":"pn2021"},indices_for_hashes=lambda hs:np.asarray([index[h] for h in hs]))
+    # The split owner only needs len(cache) in the reference-mask construction.
+    class SizedCache(SimpleNamespace):
+        def __len__(self): return count
+    cache = SizedCache(**cache.__dict__)
+    monkeypatch.setattr(split_cache,"load_cache",lambda *a,**kw:nullcontext(cache))
+    config=yaml.safe_load((REPO/"configs/data/splits.yaml").read_text())["pn2021"]
+    directories=[]
+    for draw in range(3):
+        directory=tmp_path/f"draw{draw}"
+        split_cache._build_pn2021_split(config=config,output_dir=directory,base_seed=20260501,seed_namespace=f"draw-{draw}")
+        directories.append(directory)
+    summary=split_cache.freeze_common_sampling_evaluation(directories,cache_dir=tmp_path)
+    for center,_ in split_cache.EXPECTED_LOGICAL_CENTERS:
+        subsets=[];eval_sets=[]
+        for directory in directories:
+            train=data_runtime.load_selection(cache,directory,partition="k500",logical_center=center)
+            evaluation=data_runtime.load_selection(cache,directory,partition="evaluation_all_zero_kept",logical_center=center)
+            subsets.append(set(train.hash_ids));eval_sets.append(set(evaluation.hash_ids))
+            assert len(train)==500
+        union=set.union(*subsets)
+        all_center=set(hashes[np.isin(np.asarray(physical),dict(split_cache.EXPECTED_LOGICAL_CENTERS)[center])])
+        assert len({tuple(sorted(s)) for s in subsets})==3
+        assert all(e==all_center-union for e in eval_sets)
+        assert summary[center]["total_excluded_count"]==len(union)
+    with pytest.raises(ValueError,match="already frozen"):
+        split_cache.freeze_common_sampling_evaluation(directories,cache_dir=tmp_path)
+    # A changed union file must be rejected before loading any waveform.
+    union_path=directories[0]/"ningbo/common_excluded_hash_ids.npy"
+    data=np.load(union_path,allow_pickle=False);data[0]="f"*64;np.save(union_path,data,allow_pickle=False)
+    with pytest.raises(ValueError,match="SHA256 mismatch"):
+        data_runtime.load_selection(cache,directories[0],partition="evaluation_all_zero_kept",logical_center="ningbo")
+
+
+@pytest.mark.parametrize("change", ["missing_training_subset","wrong_count","wrong_policy"])
+def test_sampling_exclusion_rejects_wrong_identity(change):
+    from util.pn2021_artifact_contract import validate_common_sampling_exclusion
+    value={"policy":"exclude_union_of_three_k500_draws_v1","sampling_k500_hashes":["a"*64,"b"*64,"c"*64],
+        "total_excluded_count":1400,"additional_excluded_count":900,"union_hash_id_set_sha256":"d"*64}
+    if change=="missing_training_subset": value["sampling_k500_hashes"][0]="e"*64
+    elif change=="wrong_count": value["additional_excluded_count"]=0
+    else: value["policy"]="per_draw_complement"
+    with pytest.raises(ValueError): validate_common_sampling_exclusion(value,k500_hash="a"*64)
+
+
 def _data_load_fixture(tmp_path: Path, descriptor: dict[str, object]) -> Path:
     payload = yaml.safe_load(
         (REPO / "configs" / "data" / "data_load.yaml").read_text(encoding="utf-8")

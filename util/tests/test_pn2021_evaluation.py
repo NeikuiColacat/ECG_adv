@@ -996,6 +996,31 @@ def test_pn2021_evaluation_runs_four_centers_with_truthful_aggregates(
         _result_summary(attacked, "evaluation_result", result_path=result_path)
 
 
+def test_common_sampling_evaluation_declares_extra_exclusion_and_preserves_metric_checks(tmp_path,monkeypatch):
+    from util.pn2021_artifact_contract import _validate_center_evidence
+    fixture=_write_fixture(tmp_path)
+    split_path=Path(fixture["split_manifest_path"])
+    split=json.loads(split_path.read_text());entry=split["logical_centers"]["ningbo"]
+    common={"policy":"exclude_union_of_three_k500_draws_v1",
+        "sampling_k500_hashes":[entry["k500_hash_id_set_sha256"],hashlib.sha256(b"draw1").hexdigest(),hashlib.sha256(b"draw2").hexdigest()],
+        "total_excluded_count":1200,"additional_excluded_count":700,"union_hash_id_set_sha256":"d"*64}
+    entry["evaluation_common_cohort"]={**common,"union_hash_ids":{"file":"verified_by_loader.npy"}}
+    split_path.write_text(json.dumps(split))
+    cfg_path=Path(fixture["config_path"]);payload=yaml.safe_load(cfg_path.read_text())
+    payload["artifact_locks"]["split_manifest_sha256"]=_sha256(split_path);_write_yaml(cfg_path,payload)
+    config=load_pn2021_eval_config(cfg_path,config_root=fixture["config_root"])
+    factory,_=_loader_factory(fixture);monkeypatch.setattr(data_runtime,"_build_runtime_loader",factory)
+    result=evaluate_pn2021(_TinyModel(),_checkpoint_identity(fixture),config=config,logical_centers=["ningbo"])
+    entries=[result["clean"]["per_center"]["ningbo"],*[v["per_center"]["ningbo"] for v in result["corrupted"]["per_view"]]]
+    for i,member in enumerate(entries):
+        assert member["identity"]["reference_exclusion"]["common_sampling_exclusion"]==common
+        assert all(m["total_excluded_count"]==1200 for m in member["metrics"].values())
+        _validate_center_evidence(member,corrupted=i>0)
+    entries[0]["metrics"][CLEAN_VIEW_ALIASES[0]]["total_excluded_count"]=500
+    with pytest.raises(ValueError,match="common sampling exclusion"):
+        _validate_center_evidence(entries[0],corrupted=False)
+
+
 def test_single_center_result_never_claims_a_four_center_mean(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -316,6 +316,48 @@ def test_complementary_two_chain_partitions_all_five_operators(monkeypatch) -> N
 RUN_CUDA_TESTS = os.environ.get("ECG_RUN_CUDA_AUG_TESTS") == "1"
 
 
+@pytest.mark.parametrize("composition", [0, 19])
+def test_gpu_online_evaluation_stream_uses_fixed_record_microbatches(composition):
+    from core.corruption import generate_evaluation_corruption
+    raw = torch.linspace(-1, 1, 65*1000*12).reshape(65,1000,12)
+    original = raw.clone()
+    hashes = tuple(f"record-{i}" for i in range(65))
+    profile = load_augmix_config().operator_profile_config
+    kwargs = dict(composition_index=composition,
+        operator_params={name:profile.parameters_for(name) for name in profile.canonical_order},
+        cache_version="pn2021c_paper_anchored_s5_depth23_5center_dualrate_v1",
+        seed_config_path=CONFIG_ROOT/"random_seed.yaml")
+    before = torch.get_rng_state().clone()
+    full = generate_evaluation_corruption(raw, hash_ids=hashes, **kwargs)
+    split = torch.cat([generate_evaluation_corruption(raw[a:b], hash_ids=hashes[a:b], **kwargs).waveform_raw_100hz
+                       for a,b in ((0,32),(32,65))])
+    assert torch.equal(full.waveform_raw_100hz, split)
+    assert torch.equal(before, torch.get_rng_state()) and torch.equal(raw, original)
+    assert not full.diagnostics.output_nonfinite_count.any()
+    changed = generate_evaluation_corruption(raw[:32], hash_ids=tuple(f"other-{i}" for i in range(32)), **kwargs)
+    assert not torch.equal(full.waveform_raw_100hz[:32], changed.waveform_raw_100hz)
+
+
+@pytest.mark.skipif(not RUN_CUDA_TESTS or not torch.cuda.is_available(),
+    reason="select a free GPU and enable ECG_RUN_CUDA_AUG_TESTS")
+def test_gpu_online_evaluation_pairs_founder128_and_effnet512_batches():
+    from core.corruption import generate_evaluation_corruption
+    raw = torch.linspace(-1, 1, 512*1000*12, device="cuda:0").reshape(512,1000,12)
+    hashes = tuple(f"record-{i}" for i in range(512))
+    profile = load_augmix_config().operator_profile_config
+    kwargs = dict(composition_index=19,
+        operator_params={name:profile.parameters_for(name) for name in profile.canonical_order},
+        cache_version="pn2021c_paper_anchored_s5_depth23_5center_dualrate_v1",
+        seed_config_path=CONFIG_ROOT/"random_seed.yaml")
+    before = torch.cuda.get_rng_state().clone()
+    full = generate_evaluation_corruption(raw, hash_ids=hashes, **kwargs)
+    split = torch.cat([generate_evaluation_corruption(raw[a:a+128], hash_ids=hashes[a:a+128], **kwargs).waveform_raw_100hz
+                       for a in range(0,512,128)])
+    assert torch.equal(full.waveform_raw_100hz, split)
+    assert full.waveform_raw_100hz.is_cuda and not full.diagnostics.output_nonfinite_count.any()
+    assert torch.equal(before, torch.cuda.get_rng_state())
+
+
 @pytest.mark.skipif(
     not RUN_CUDA_TESTS or not torch.cuda.is_available(),
     reason="set ECG_RUN_CUDA_AUG_TESTS=1 after selecting a free shared-server GPU",

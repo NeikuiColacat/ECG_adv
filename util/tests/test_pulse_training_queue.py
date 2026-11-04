@@ -11,7 +11,238 @@ from boot_scripts.run_experiment import load_experiment_plan
 from util.pulse_training_queue import JOB_KEYS, allowed_gpus, job_state, live_training_jobs, load_jobs, validate_config
 
 REPO = Path(__file__).resolve().parents[2]
+
+
+def test_sampling_queue_resolves_all_children_and_keeps_training_seed_fixed(tmp_path):
+    from util import simclr_joint_queue as q
+    from util.config_bundle import load_yaml_mapping
+    path=REPO/"configs/train/k500_sampling/workflow.yaml"
+    payload=load_yaml_mapping(path,description="sampling workflow")
+    members=q.sampling_plans(payload,path,REPO/"configs")
+    assert len(members)==96 and len(q.sampling_grid())==96
+    from boot_scripts.run_experiment import load_experiment_plan
+    parent=load_experiment_plan(REPO/"configs/experiments/k500_sampling/workflow.yaml",run_dir=tmp_path/"workflow")
+    assert parent.data_ledger.split_config_relative_path.as_posix()=="data/k500_sampling/draw0/splits.yaml"
+    assert not parent.run_dir.exists()
+    for model in q.MODELS:
+        for center in q.CENTERS:
+            seeds=[];splits=[]
+            for draw in range(3):
+                for arm in q.SAMPLING_METHODS:
+                    plan=members[f"{arm}_d{draw}_{model}_{center}"][1]
+                    p=load_yaml_mapping(plan.entry_config_path,description="sampling train")
+                    seeds.append(p["random_seed"]);splits.append(p["references"]["split_config"])
+                    assert plan.data_ledger.split_config_relative_path.as_posix()==p["references"]["split_config"]
+            assert all(s==seeds[0] for s in seeds) and len(set(splits))==3
+    payload["runtime"]={**payload["runtime"],"max_workers":3}
+    with pytest.raises(ValueError,match="frozen"):
+        q.sampling_plans(payload,path,REPO/"configs")
+
+
+@pytest.mark.parametrize("mismatch", [None,"training_seed","evaluation_cohort","K500"])
+def test_sampling_summary_requires_fixed_seed_distinct_draws_and_common_evaluation(tmp_path,mismatch):
+    from util import simclr_joint_queue as q
+    completed={}
+    for key,(arm,draw,model,center,suffix) in q.sampling_grid().items():
+        path=tmp_path/f"{key}.json"
+        value={"optimizer_steps":100 if model=="efficientnet1dv2" else 240}
+        if suffix:
+            k500=f"{center}-{draw}"
+            line={"adaptation_data":{"record_count":500,"hash_id_set_sha256":k500},
+                "source_checkpoint":{"sha256":"a"*64},"seed":{"effective_seed":123},
+                "selection":{"policy":"last","heldout_evaluation_used_for_selection":False},
+                "method":{"recipe_id":q.SAMPLING_METHODS[arm]}}
+            identity={"hash_id_set_sha256":center,"hash_label_set_sha256":center,"ordered_hash_ids_sha256":center,
+                "reference_exclusion":{"common_sampling_exclusion":{"policy":"common"}}}
+            if arm=="full" and draw==1 and model==q.MODELS[0] and center==q.CENTERS[0]:
+                if mismatch=="training_seed":line["seed"]["effective_seed"]=456
+                elif mismatch=="evaluation_cohort":identity["hash_id_set_sha256"]="changed"
+                elif mismatch=="K500":line["adaptation_data"]["hash_id_set_sha256"]="changed"
+            metric={"macro_auroc":.9,"macro_auprc":.7+draw*.01+(.02 if arm=="full" else 0)}
+            value={"status":"complete","checkpoint":{"lineage":line,"sha256":"a"*64},
+                "protocol":{"corruption_cache":{"view_count":20,"execution":{"mode":"online_torch_gpu_v1"}}},
+                "clean":{"per_center":{center:{"identity":identity}},"evaluated_center_mean":{"pn2021_drop_all_zero_refexcluded":metric}},
+                "corrupted":{"aggregates":{"depth23":{"evaluated_center_mean":{"pn2021c_drop_all_zero_corrupted_refexcluded":metric}}}}}
+        path.write_text(json.dumps(value));completed[key]={"result":str(path),"sha256":"a"*64}
+    if mismatch:
+        with pytest.raises(ValueError):q.sampling_finalize(completed,tmp_path)
+        assert not (tmp_path/"sampling_comparison.json").exists()
+    else:
+        q.sampling_finalize(completed,tmp_path)
+        report=json.loads((tmp_path/"sampling_comparison.json").read_text())
+        assert len(report["rows"])==48
+        assert report["sampling_summary"][q.MODELS[0]]["full"]["corrupt_macro_auprc"]["sample_sd"]==pytest.approx(.01)
+        assert next(c for c in report["paired_contrasts"] if c["metric"]=="corrupt_macro_auprc")["full_minus_no_vae_pp"]==pytest.approx(2)
 CONFIG = REPO / "configs/train/pulse_training_queue.yaml"
+
+
+def test_simclr_joint_grid_configs_and_side_effect_free_parent_plan(tmp_path):
+    from util import simclr_joint_queue as joint
+    path = REPO / "configs/train/simclr_joint/workflow.yaml"
+    payload = yaml.safe_load(path.read_text())
+    jobs = joint.plans(payload, path, REPO / "configs")
+    assert len(jobs) == 96
+    assert len({p.run_dir for _, p in jobs.values()}) == 96
+    parent = load_experiment_plan(REPO / "configs/experiments/simclr_joint/workflow.yaml",
+        run_dir=tmp_path / "dry_only")
+    assert not parent.run_dir.exists()
+    assert not parent.describe()["loads_model_or_gpu"]
+    for seed in joint.SEEDS:
+        a = yaml.safe_load((REPO/f"configs/train/simclr_joint/joint_s{seed}.yaml").read_text())
+        b = yaml.safe_load((REPO/f"configs/train/simclr_joint/two_stage_s{seed}.yaml").read_text())
+        assert a["random_seed"] == b["random_seed"]
+        assert a["data"] == b["data"] and a["protocol"] == b["protocol"]
+
+
+@pytest.mark.parametrize("change", ["extra_job", "gpu_workers", "output_root"])
+def test_simclr_joint_queue_rejects_expanded_scope(change):
+    from util import simclr_joint_queue as joint
+    path = REPO / "configs/train/simclr_joint/workflow.yaml"
+    payload = yaml.safe_load(path.read_text())
+    if change == "extra_job":
+        payload["references"]["extra_seed"] = next(iter(payload["references"].values()))
+    elif change == "gpu_workers":
+        payload["runtime"]["max_workers"] = 2
+    else:
+        payload["run_root"] += "_changed"
+    with pytest.raises(ValueError):
+        joint.plans(payload, path, REPO / "configs")
+
+
+@pytest.mark.parametrize("mismatch", [None, "source", "seed", "evaluation"])
+def test_simclr_joint_comparison_pairs_cohorts_before_writing(tmp_path, mismatch):
+    from util import simclr_joint_queue as joint
+    completed = {}
+    for index, (key, (arm, seed, model, center, suffix)) in enumerate(joint.grid().items()):
+        path = tmp_path/f"{key}.json"
+        if suffix:
+            lineage = {"adaptation_data":{"record_count":500,"center":center},
+                "source_checkpoint":{"sha256":"a"*64}, "seed":{"effective_seed":seed+10},
+                "selection":{"policy":"last","heldout_evaluation_used_for_selection":False},
+                "method":{"recipe_id":joint.METHODS[arm]}}
+            identity = {"hash_id_set_sha256":center,"hash_label_set_sha256":center,
+                        "reference_exclusion":{"reference_count":500}}
+            if arm == "joint" and seed == 0 and model == "efficientnet1dv2" and center == "ningbo":
+                if mismatch == "source":lineage["source_checkpoint"]["sha256"] = "b"*64
+                if mismatch == "seed":lineage["seed"]["effective_seed"] = 999
+                if mismatch == "evaluation":identity["hash_id_set_sha256"] = "other"
+            metric = {"macro_auroc":.9,"macro_auprc":.7 + (.001 if arm=="joint" else 0)}
+            value = {"status":"complete","checkpoint":{"lineage":lineage,"sha256":"a"*64},
+                "protocol":{"mapping_hash":"555ec85d5b51","logical_centers":[center],
+                            "corruption_cache":{"view_count":20}},
+                "clean":{"per_center":{center:{"identity":identity}},
+                         "evaluated_center_mean":{"pn2021_drop_all_zero_refexcluded":metric}},
+                "corrupted":{"aggregates":{"depth23":{"evaluated_center_mean":{
+                    "pn2021c_drop_all_zero_corrupted_refexcluded":metric}}}}}
+        else:
+            value = {"optimizer_steps":100 if model=="efficientnet1dv2" else 240}
+        path.write_text(json.dumps(value))
+        completed[key] = {"result":str(path),"sha256":"a"*64}
+    output = tmp_path / "report"
+    output.mkdir()
+    if mismatch:
+        with pytest.raises(ValueError, match="unmatched"):
+            joint.finalize(completed, output)
+        assert not (output / "comparison.json").exists()
+    else:
+        joint.finalize(completed, output)
+        report = json.loads((output / "comparison.json").read_text())
+        assert len(report["rows"]) == 48
+        for contrast in report["paired_contrasts"]:
+            expected = .1 if "auprc" in contrast["metric"] else 0
+            assert contrast["joint_minus_two_stage_pp"] == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("changed", [None, "util/simclr_joint_queue.py", "core/online_trainer.py"])
+def test_joint_recovery_allows_only_scheduler_source_changes(changed):
+    from util import simclr_joint_queue as joint
+    before = {"util/simclr_joint_queue.py": "old", "core/online_trainer.py": "frozen"}
+    after = dict(before)
+    if changed:
+        after[changed] = "new"
+    if changed == "core/online_trainer.py":
+        with pytest.raises(ValueError, match="source changed"):
+            joint.admission_source_delta(before, after, recovery=True)
+    else:
+        assert set(joint.admission_source_delta(before, after, recovery=True)) == ({changed} if changed else set())
+    if changed:
+        with pytest.raises(ValueError):
+            joint.admission_source_delta(before, after, recovery=False)
+
+
+@pytest.mark.parametrize("corruption", [None, "config", "result", "incomplete"])
+def test_joint_recovery_checks_completed_child_bytes_and_configs(tmp_path, monkeypatch, corruption):
+    from types import SimpleNamespace
+    from util import simclr_joint_queue as joint, run_record
+    prior = tmp_path/"prior"
+    (prior/"training").mkdir(parents=True)
+    child = tmp_path/"child"
+    child.mkdir()
+    config_root = tmp_path/"configs"
+    config_root.mkdir()
+    config = config_root/"seed.yaml"
+    config.write_text("replicate_id: 0\n")
+    result = child/"train_result.json"
+    result.write_text('{"status":"complete"}')
+    entry = {"result": str(result), "sha256": joint.sha256_file(result)}
+    (prior/"run_manifest.json").write_text(json.dumps({"status":"failed"}))
+    (prior/"training/status.json").write_text(json.dumps({"status":"failed", "completed":{"job":entry}}))
+    sources = {"core/online_trainer.py":"frozen", "util/simclr_joint_queue.py":"old"}
+    (prior/"training/source_identity.json").write_text(json.dumps(sources))
+    (child/"run_manifest.json").write_text(json.dumps({"status":"complete" if corruption!="incomplete" else "failed",
+        "entrypoint":{"name":"train_pn2021"}, "config_snapshots":[{
+            "snapshot_path":"configs/seed.yaml", "sha256":joint.sha256_file(config)}]}))
+    if corruption == "config": config.write_text("replicate_id: 1\n")
+    if corruption == "result": result.write_text('{"status":"changed"}')
+    monkeypatch.setitem(joint.RECOVERY, "previous_workflow", str(prior))
+    monkeypatch.setattr(run_record, "verify_run_file_index", lambda path: [])
+    members = {"job": (None, SimpleNamespace(run_dir=child, expected_result_relative_path="train_result.json",
+                                             entrypoint_name="train_pn2021"))}
+    if corruption:
+        with pytest.raises(ValueError):
+            joint.recover_completed(members, config_root, sources)
+    else:
+        assert joint.recover_completed(members, config_root, sources) == {"job":entry}
+
+
+def test_joint_recovery_waits_for_full_cache_verification(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from util import simclr_joint_queue as joint
+    receipt = tmp_path/"receipt.json"
+    cache = tmp_path/"cache"
+    cache.mkdir()
+    assert not joint.restored_cache_ready(receipt, cache)
+    waveform = cache/"signals_100hz.npy"
+    waveform.touch()
+    fake = SimpleNamespace(st_dev=1, st_ino=2, st_size=63192000128, st_mtime_ns=3, st_ctime_ns=4)
+    original_stat = Path.stat
+    monkeypatch.setattr(Path, "stat", lambda path, *a, **kw: fake if path == waveform else original_stat(path,*a,**kw))
+    value = {"status":"complete", "cache_dir":str(cache), "verification_mode":"full_content",
+        "waveform_sha256":"8f416d86911e711dc3e359dd1284e36e473253bd28201d3b8eec1bb3a2972d6c",
+        "ledger_sha256":"5991ac2123e9fe8774df7cb4a311fd0f4332554e51a77ea2a29ac2ce05ad5f13",
+        "waveform_stat":vars(fake)}
+    receipt.write_text(json.dumps(value))
+    assert joint.restored_cache_ready(receipt, cache)
+    fake.st_mtime_ns += 1
+    with pytest.raises(ValueError, match="identity differs"):
+        joint.restored_cache_ready(receipt, cache)
+
+
+def test_gpu_online_joint_queue_preserves_training_and_finite_grid():
+    from util import simclr_joint_queue as joint
+    path = REPO/"configs/train/simclr_joint/workflow_online_gpu1.yaml"
+    jobs = joint.plans(yaml.safe_load(path.read_text()), path, REPO/"configs")
+    assert len(jobs) == 96
+    for key, (_, plan) in jobs.items():
+        if key.endswith("_eval"):
+            assert plan.entry_config_path.name == "PN2021_online_gpu.yaml"
+            assert "pn2021c_cache" not in plan.data_ledger.required_roots
+    before = {"core/online_trainer.py":"frozen","core/corruption.py":"old"}
+    after = {**before,"core/corruption.py":"new"}
+    assert set(joint.admission_source_delta(before, after, recovery=True, online=True)) == {"core/corruption.py"}
+    with pytest.raises(ValueError):
+        joint.admission_source_delta(before, {**after,"core/online_trainer.py":"changed"}, recovery=True, online=True)
+
 
 
 def config():
@@ -99,13 +330,17 @@ def test_active_job_without_device_identity_blocks_new_gpu_assignments(live, chi
     (2, "all_eight_matched_last_checkpoints", 8),
     (3, "all_44_dual_jsd_training_and_evaluation_jobs", 44),
     (4, "width1_width3_four_centers_last_checkpoints_frozen_width2_baselines", 16),
+    (5, "all_96_paired_three_seed_simclr_training_and_evaluation_jobs", 96),
+    (6, "all_96_fixed_training_seed_three_K500_sampling_draw_jobs", 96),
 ])
 def test_queue_summary_uses_validated_schema(monkeypatch, tmp_path, schema, expected_policy, count):
     from util import pulse_training_queue as queue
     from util.founder_width_queue import KEYS as WIDTH_KEYS
+    from util.simclr_joint_queue import grid, sampling_grid
     from util.run_record import _result_summary
 
-    keys = queue.DUAL_KEYS if schema == 3 else WIDTH_KEYS if schema == 4 else JOB_KEYS
+    keys = (sampling_grid() if schema == 6 else grid() if schema == 5 else queue.DUAL_KEYS if schema == 3
+            else WIDTH_KEYS if schema == 4 else JOB_KEYS)
     assert len(keys) == count
     payload = {"artifact_type": "pulse_training_queue_result", "schema_version": schema,
                "status": "complete", "jobs": dict.fromkeys(keys, {}), "admission": {}}

@@ -1,0 +1,20 @@
+schema_version: 1
+experiment:
+  name: simclr_handoff_efficientnet_ningbo_train
+  purpose: Locked classic two-stage AugMix-SimCLR and contracted VAE-LHAT; fixed Ningbo K500.
+entrypoint:
+  name: train_pn2021
+  config: train/PN2021.yaml
+  arguments:
+    - --model
+    - efficientnet1dv2
+    - --method-config
+    - train/methods/augmix_simclr_lhat.yaml
+    - --center
+    - ningbo
+    - --source-checkpoint
+    - /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_ptbxl_effnet_source_v1/training/checkpoints/best.pt
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/traditional_simclr_handoff_v1/efficientnet1dv2/ningbo
+  if_exists: error
+  delegate_output_subdir: training

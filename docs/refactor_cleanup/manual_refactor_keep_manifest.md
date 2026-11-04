@@ -29,6 +29,39 @@ YAML 或隐式回退入口。
 
 ## A. 手动重构保护白名单
 
+2026-11-04 Traditional SimCLR 交接：主方法仍为经典两阶段
+`augmix_simclr_lhat`，spec SHA `6245e89f572b49bd24f5d688bda7d3f8b16fa4972051353afa311d007cd9f675`。
+`README.md`、`docs/simclr_handoff_validation.md`、
+`configs/experiments/simclr_handoff/*.yaml` 为 KEEP-MANUAL，提供双骨干成对训练与
+在线 GPU 评估入口。单阶段与 no-VAE 是辅助对照，不更改主方法。
+在线元数据验证按原始十个指定文件逐一校验完整哈希，新增 sidecar 单列未验证；
+旧账本和三套新账本均验证。保留旧失败 run，独立新目录验证评估修复。
+
+2026-11-04 K500 重新抽样验证：`configs/data/k500_sampling/`、
+`configs/train/k500_sampling/`、`configs/eval/k500_sampling/`、
+`configs/experiments/k500_sampling/` 与 `docs/k500_sampling_protocol.md`
+为 KEEP-MANUAL。复用 split/runtime/evaluator、`util/simclr_joint_queue.py`
+和既有 launcher/recorder，三套新 K500、固定训练种子、共同评估集排除并集；
+经典完整版与 no-VAE、双骨干四中心，GPU 0/1 各一个任务。旧数据和结果不覆盖。
+
+2026-11-04 单阶段 SimCLR 验证（用户授权 goal、GPU 2、多随机种子）：
+`core/online_trainer.py`、`core/methods/registry.py` 保留旧74配方身份，增加独立
+`augmix_simclr_joint_no_vae` 有限配方；`util/simclr_joint_queue.py` 为 KEEP-MANUAL，
+经既有 `util/pulse_training_queue.py` 与唯一 launcher 执行固定两组×三种子×
+双骨干×四中心；`configs/train/simclr_joint/`、`configs/experiments/simclr_joint/`、
+`configs/train/methods/augmix_simclr_joint_no_vae.yaml` 为 KEEP-MANUAL 配置束。
+`docs/simclr_joint_protocol.md` 保存冻结协议，既有 trainer/method/queue 测试覆盖
+梯度、BN/RNG、独立种子、固定网格与拒绝错误配对。仅 GPU 2 串行，既有输出不覆盖；
+同监督步数而非等总计算量，开发结果不升级为论文最终测试。
+
+2026-11-04 用户进一步要求在线腐蚀且使用既有 GPU 算子：保留
+`configs/eval/PN2021_online_gpu.yaml` 与同一配置束内 GPU 评估/恢复入口。
+`core/corruption.py` 增加固定32记录微批评估流，既有训练算子行为保持；
+`data_preprocess/data_ledger.py` 增加仅在线评估使用的原始十项元数据全内容验证，
+既有完整缓存清单门禁保持。`util/evaluation/pn2021.py` 在 GPU 完成腐蚀、重采样、
+标准化与推理；新评估不持久化腐蚀波形，CUDA 随机实现单独标记，不混算历史
+NumPy 缓存基线。CPU/CUDA流一致性与 launcher 门禁测试沿用既有测试文件。
+
 2026-09-12 SimCLR 代码精简首批：人工合入 `core/online_trainer.py` 的默认值
 加显式覆盖逻辑及既有 `util/tests/test_online_trainer.py` 中52例回归；保持
 scheduler horizon 优先级。`core/methods/registry.py` 的 exposure/view geometry

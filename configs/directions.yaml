@@ -36,9 +36,14 @@ directions:
     grid_index: configs/active_scripts.yaml#latest_mainline
     evidence: configs/active_evidence_registry.yaml#active_development_mainline
     primary_examples:
-      effnet: configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_ningbo.yaml
-      ecgfounder: configs/experiments/manual_refactor_pn2021_ecgfounder_augmix_simclr_lhat_ningbo.yaml
+      effnet: configs/experiments/simclr_handoff/efficientnet_ningbo_train.yaml
+      ecgfounder: configs/experiments/simclr_handoff/ecgfounder_ningbo_train.yaml
     evaluation_examples:
+      effnet: configs/experiments/simclr_handoff/efficientnet_ningbo_eval.yaml
+      ecgfounder: configs/experiments/simclr_handoff/ecgfounder_ningbo_eval.yaml
+    evaluation_backend: online_torch_gpu_v1
+    handoff: README.md
+    historical_cached_examples:
       effnet: configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_eval_ningbo.yaml
       ecgfounder: configs/experiments/manual_refactor_pn2021_ecgfounder_augmix_simclr_lhat_eval_ningbo.yaml
     matrix_examples:

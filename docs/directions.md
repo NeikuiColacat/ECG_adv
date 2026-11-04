@@ -40,11 +40,16 @@ PULSE 原始全量基线是 comparison 配置引用的冻结外部产物；报�
 
 主方法：[augmix_simclr_lhat](../configs/train/methods/augmix_simclr_lhat.yaml)；
 训练配置：[PN2021.yaml](../configs/train/PN2021.yaml)。
+本分支的环境、外置依赖、两阶段参数与执行步骤见 [交接 README](../README.md)。
+新评估使用在线 Torch GPU 算子，无需恢复已退役的腐蚀波形 cache。
 
 | 骨干 | 宁波训练 | 宁波评估 | 四中心汇总 |
 |---|---|---|---|
-| EfficientNet | [train](../configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_ningbo.yaml) | [eval](../configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_eval_ningbo.yaml) | [matrix](../configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_matrix.yaml) |
-| ECGFounder | [train](../configs/experiments/manual_refactor_pn2021_ecgfounder_augmix_simclr_lhat_ningbo.yaml) | [eval](../configs/experiments/manual_refactor_pn2021_ecgfounder_augmix_simclr_lhat_eval_ningbo.yaml) | [matrix](../configs/experiments/manual_refactor_pn2021_ecgfounder_augmix_simclr_lhat_matrix.yaml) |
+| EfficientNet | [train](../configs/experiments/simclr_handoff/efficientnet_ningbo_train.yaml) | [online eval](../configs/experiments/simclr_handoff/efficientnet_ningbo_eval.yaml) | [历史 matrix](../configs/experiments/manual_refactor_pn2021_effnet_augmix_simclr_lhat_matrix.yaml) |
+| ECGFounder | [train](../configs/experiments/simclr_handoff/ecgfounder_ningbo_train.yaml) | [online eval](../configs/experiments/simclr_handoff/ecgfounder_ningbo_eval.yaml) | [历史 matrix](../configs/experiments/manual_refactor_pn2021_ecgfounder_augmix_simclr_lhat_matrix.yaml) |
+
+表中四中心 matrix 引用原冻结结果；新在线评估应使用新配置与独立输出目录，
+保持四个中心、20 视图等权汇总，不能混入历史 NumPy-cache 结果。
 
 必要消融为 `augmix_simclr_matched_no_vae`、`vae_lhat_only`、`a0_clean_v1`、
 `a1_corrupt_ft_rot4_v1`。双骨干代表入口已列于导航 YAML；完整网格定位

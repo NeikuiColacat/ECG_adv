@@ -227,6 +227,10 @@ def test_all_recipe_descriptions_preserve_the_frozen_registry_characterization()
     # Only the checkout prefix is normalized; scientific fields stay untouched.
     descriptions = {}
     for path in sorted(RECIPES.glob("*.yaml")):
+        if path.name == "augmix_simclr_joint_no_vae.yaml":
+            # Prospective joint recipe has separate contracts; preserve all 74
+            # historical descriptions and their original golden hash.
+            continue
         description = load_recipe_spec(path).describe()
         description["source_path"] = path.relative_to(REPO).as_posix()
         descriptions[path.name] = description
@@ -1081,7 +1085,7 @@ def test_loader_removes_dag_plugins_and_locks_component_ablation_slots() -> None
     )) == (
         ("AugMixConfig", "generate_two_chain_augmix_strong_view", "load_augmix_config"),
         ("CANONICAL_OPERATORS", "INPUT_SAMPLING_RATE_HZ",
-         "generate_canonical_corruption"),
+         "generate_canonical_corruption", "generate_evaluation_corruption"),
         ("LHATConfig", "LatentStandardizer", "contract_lhat_adversarial",
          "generate_lhat_adversarial", "load_lhat_config"),
         ("LatentPool", "build_latent_pool"),

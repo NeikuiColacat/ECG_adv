@@ -160,6 +160,12 @@ def unclaimed_training_devices(candidates, job_devices, *, live, children):
 
 
 def validate_queue_result(payload, path):
+    if payload.get("schema_version") == 6:
+        from util.simclr_joint_queue import validate_sampling_result
+        return validate_sampling_result(payload, path)
+    if payload.get("schema_version") == 5:
+        from util.simclr_joint_queue import validate_result
+        return validate_result(payload, path)
     if payload.get("schema_version") == 4:
         from util.founder_width_queue import validate_result
         return validate_result(payload, path)
@@ -597,6 +603,12 @@ def run_dual_jsd(config, config_path, config_root, output):
 def run(config_path, config_root, output):
     from util.run_record import verify_run_file_index
     config = load_yaml_mapping(config_path, description="PULSE training queue")
+    if config.get("schema_version") == 6:
+        from util.simclr_joint_queue import run_sampling
+        return run_sampling(config, config_path, config_root, output)
+    if config.get("schema_version") == 5:
+        from util.simclr_joint_queue import run as run_joint
+        return run_joint(config, config_path, config_root, output)
     if config.get("schema_version") in (3, 4):
         return run_dual_jsd(config, config_path, config_root, output)
     if config.get("schema_version") == 2:

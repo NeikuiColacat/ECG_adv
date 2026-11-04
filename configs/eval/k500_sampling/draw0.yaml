@@ -1,0 +1,98 @@
+schema_version: 2
+profile_name: k500_sampling_common_evaluation_draw0
+references:
+  split_config: data/k500_sampling/draw0/splits.yaml
+  data_load_config: data/k500_sampling/draw0/data_load.yaml
+  corruption_cache_config: augmentation/cache.yaml
+  random_seed_config: random_seed.yaml
+protocol:
+  mapping_version: v7_super5_sjr_rgq_review_20260528
+  mapping_hash: 555ec85d5b51
+  class_order:
+  - CD
+  - HYP
+  - MI
+  - NORM
+  - STTC
+  logical_centers:
+  - ningbo
+  - chapman_shaoxing
+  - cpsc_2018
+  - georgia
+  reference_count_per_center: 500
+  partitions:
+    clean: pn2021_all_zero_kept_refexcluded
+    corrupted: pn2021c_all_zero_kept_corrupted_refexcluded
+  canonical_views:
+    clean_kept: pn2021_all_zero_kept_refexcluded
+    clean_drop: pn2021_drop_all_zero_refexcluded
+    corrupted_kept: pn2021c_all_zero_kept_corrupted_refexcluded
+    corrupted_drop: pn2021c_drop_all_zero_corrupted_refexcluded
+  corruption:
+    expected_profile: pn2021c_paper_anchored_s5_v1
+    expected_severity: 5
+    expected_domain_sampling_rate_hz: 500
+    expected_view_count: 20
+    depths:
+    - 2
+    - 3
+    combinations_per_depth:
+      2: 10
+      3: 10
+    aggregation: equal_views_then_equal_centers
+  input_pipeline:
+    canonical_domain:
+      sampling_rate_hz: 100
+      duration_seconds: 10.0
+      points: 1000
+      channels: 12
+      layout: time_channel
+      physical_unit: mV
+      normalization: none
+    sanitization:
+      stage: before_model_domain_adaptation
+      nonfinite_replacement: zero
+    model_domains:
+      efficientnet1dv2:
+        sampling_rate_hz: 100
+        points: 1000
+        adaptation: identity
+      ecgfounder:
+        sampling_rate_hz: 500
+        points: 5000
+        adaptation: interpolate
+        mode: linear
+        align_corners: true
+    normalization:
+      stage: after_model_domain_adaptation
+      method: per_sample_global_zscore
+      epsilon: 1.0e-06
+      variance_correction: 0
+    output:
+      layout: channel_time
+      dtype: float32
+artifact_locks:
+  clean_cache_manifest_sha256: fa06cf268147d451e2925c17311ba13f565962dcf28acee27cb991a915dbb31f
+  split_manifest_sha256: 382b6e5904ccf4a69c95253beb0ddd624746c88e514187d41acc89e72318ccc3
+  corruption_cache_manifest_sha256: a7d976374d8f5b7de3748dd67dc8a779879316ee5249eb59ec6dd8899c852c02
+  compositions_sha256: 18ceee2be0f236898777b878affaf8d4f1cd7fbee880a3af89c0e84cb9427ce1
+runtime:
+  device: cuda
+  batch_size_by_model:
+    efficientnet1dv2: 512
+    ecgfounder: 128
+  num_workers: 0
+  pin_memory: true
+  persistent_workers: false
+  prefetch_factor: 2
+  cache_mode: mmap
+  validate_values: sample
+  amp:
+    enabled: true
+    dtype: bfloat16
+  corruption_source: online_torch_gpu_v1
+  corruption_microbatch_size: 32
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/k500_sampling_20261104_r0/evaluation
+  if_exists: error
+  result_file: evaluation_result.json

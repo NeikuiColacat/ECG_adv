@@ -24,6 +24,11 @@ from util.config_bundle import (
 
 
 ROOT_NAMES = ("ptbxl_cache", "pn2021_cache", "pn2021c_cache", "split_artifacts")
+PN2021C_METADATA_MEMBERS = (
+    "build_state.json", "compositions.json", "hash_ids.npy", "labels_super5.npy",
+    "manifest.json", "operators_config_snapshot.yaml", "record_ids.npy",
+    "records.parquet", "resolved_cache_config.yaml", "source_indices.npy",
+)
 _HEADER_KEYS = {"algorithm", "artifact", "member_count", "roots", "schema_version", "total_size_bytes"}
 _MEMBER_KEYS = {"path", "root", "sha256", "size_bytes"}
 _HEX = frozenset("0123456789abcdef")
@@ -366,6 +371,42 @@ def verify_ledger(
     return _summary(
         digest, selected, expected.values(), "full_content" if full else "inventory_only"
     )
+
+
+def verify_pn2021c_metadata(
+    ledger_path: str | Path, cache_root: str | Path, *, expected_sha256: str
+) -> dict[str, Any]:
+    """Full original metadata verification for explicitly online corruption.
+
+    Require each original metadata path and its full content hash. Later ledger
+    sidecars (for example a retirement note) are reported separately and are not
+    certified. The retired waveform is neither required nor certified. Existing
+    full/inventory checks retain their exact membership contract.
+    """
+    digest, _, members = _parse_ledger(Path(ledger_path), expected_sha256)
+    root = Path(cache_root).resolve()
+    metadata = {v["path"]: v for v in members if v["root"] == "pn2021c_cache"}
+    missing = set(PN2021C_METADATA_MEMBERS).difference(metadata)
+    if missing:
+        raise ValueError(f"online PN2021-C ledger is missing required metadata: {sorted(missing)}")
+    for name in PN2021C_METADATA_MEMBERS:
+        member = metadata[name]
+        path = root / name
+        try:
+            value = path.lstat()
+        except FileNotFoundError as error:
+            raise ValueError(f"online corruption metadata missing: {name}") from error
+        if stat.S_ISLNK(value.st_mode) or not stat.S_ISREG(value.st_mode):
+            raise ValueError("online corruption metadata must be regular files")
+        row = _stat_row(name, "file", value)
+        if value.st_size != member["size_bytes"] or _hash_file(path, row) != member["sha256"]:
+            raise ValueError(f"online corruption metadata changed: {member['path']}")
+    sidecars = sorted(set(metadata).difference((*PN2021C_METADATA_MEMBERS, "signals_100hz.npy")))
+    return {"ledger_sha256": digest, "metadata_member_count": len(PN2021C_METADATA_MEMBERS),
+        "verified_metadata_members": list(PN2021C_METADATA_MEMBERS),
+        "unverified_ledger_sidecars": sidecars,
+        "verification_mode": "full_metadata_content_only_no_waveform_cache",
+        "historical_waveform_hash_verified": False, "persistent_waveform_cache": False}
 
 
 def _main() -> None:

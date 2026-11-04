@@ -4,6 +4,74 @@ purpose: >
   Separate the current prospective manual-refactor recipe from historical
   trusted evidence. A launch config is not evidence by itself.
 
+simclr_classic_three_seed_20260912:
+  status: child_runs_verified_legacy_parent_not_finalized
+  evidence_class: validated_three_training_seed_development
+  paper_claim_allowed: false
+  method: augmix_simclr_lhat
+  recipe_spec_sha256: 6245e89f572b49bd24f5d688bda7d3f8b16fa4972051353afa311d007cd9f675
+  corruption_backend: historical_numpy_cache
+  completed_jobs: {training: 24, evaluation: 24}
+  models: [efficientnet1dv2, ecgfounder]
+  seeds: [0, 1, 2]
+  report: /home/linbinhao/ECG_adv_data/runs/jsd_simclr_width_repeat_20260912_v1/dual_jsd_workflow/training/width_comparison.json
+  report_sha256: 58b75a4010b5bda792a8aa7dd66b11d0d8ea7aaf2e90cb7594d5e215131fd1bc
+  report_selector: seed_summary.MODEL.simclr
+  metric_view: drop_all_zero_refexcluded_equal_20_views_then_equal_four_centers
+  limitations: [historically_tuned_development_centers, legacy_parent_missing_final_file_index, not_matched_to_online_torch_backend]
+
+k500_sampling_20261104:
+  status: original_queue_failed_metadata_gate_repaired_separate_evaluation_verified
+  paper_claim_allowed: false
+  config: configs/experiments/k500_sampling/workflow.yaml
+  protocol: docs/k500_sampling_protocol.md
+  run_root: /home/linbinhao/ECG_adv_data/runs/k500_sampling_20261104_r0
+  methods: [augmix_simclr_lhat, augmix_simclr_matched_no_vae]
+  sampling_draws: [0, 1, 2]
+  training_replicate_fixed: 0
+  common_evaluation: excludes_union_of_all_three_training_subsets
+  corruption: online_torch_gpu_v1_no_waveform_cache
+  gpu_allowlist: [0, 1]
+  jobs: {training: 48, evaluation: 48}
+  original_completed_jobs: {training: 2, evaluation: 0}
+  repair_validation: docs/simclr_handoff_validation.md
+  repair_evaluation: /home/linbinhao/ECG_adv_data/runs/traditional_simclr_fixcheck_20261104_r0/evaluation/evaluation_result.json
+  repair_full_evaluation: /home/linbinhao/ECG_adv_data/runs/traditional_simclr_fixcheck_full_20261104_r0/evaluation/evaluation_result.json
+  complete_sampling_comparison_available: false
+  recovery_required: new_source_admission_and_explicit_recovery_config
+
+simclr_joint_novae_20261104:
+  status: completed_three_seed_development_joint_below_two_stage
+  evidence_class: validated_frozen_three_seed_development
+  paper_claim_allowed: false
+  config: configs/experiments/simclr_joint/workflow_online_gpu1.yaml
+  corruption_backend: online_torch_gpu_v1
+  original_stopped_config: configs/experiments/simclr_joint/workflow.yaml
+  protocol: docs/simclr_joint_protocol.md
+  run_root: /home/linbinhao/ECG_adv_data/runs/simclr_joint_novae_20261104_r0
+  models: [efficientnet1dv2, ecgfounder]
+  centers: [ningbo, chapman_shaoxing, cpsc_2018, georgia]
+  seeds: [0, 1, 2]
+  arms: [augmix_simclr_joint_no_vae, augmix_simclr_matched_no_vae]
+  joint_weights: {clean_bce: 0.5, rotating_corruption_bce: 0.5, simclr: 1.0, source_soft_target_bce: 5.0}
+  primary_metric: pn2021c_macro_average_precision_drop_all_zero_refexcluded
+  aggregation: equal_views_then_equal_centers_then_seed_mean
+  checkpoint_selection: last
+  adaptation_records_per_center: 500
+  mapping_hash: 555ec85d5b51
+  practical_retention_reference_pp: 1.0
+  completed_jobs: {training: 48, evaluation: 48}
+  comparison: /home/linbinhao/ECG_adv_data/runs/simclr_joint_novae_20261104_r0/workflow_online_gpu1/training/comparison.json
+  comparison_sha256: a44285fc5ad62adb5b4ced7acfd0198be75260b83ab4b0c276c8e00acbba274b
+  completion_audit: /home/linbinhao/ECG_adv_data/runs/simclr_joint_novae_20261104_r0/completion_audit.json
+  joint_minus_two_stage_corrupt_AP_pp: {efficientnet1dv2: -7.673570749940376, ecgfounder: -7.09162396190377}
+  practical_retention_within_1pp_clean_and_corrupt_AP: {efficientnet1dv2: false, ecgfounder: false}
+  limitations:
+    - same_supervised_step_budget_not_equal_total_compute_or_contrastive_exposure
+    - new_joint_optimizer_head_training_and_loss_combination_not_loss_only_causal
+    - three_seeds_low_power_exploratory_intervals
+    - historically_tuned_fixed_development_centers_not_paper_final_test
+
 founder_jsd_width_20260911:
   status: prepared_no_new_performance_results
   config: configs/experiments/founder_jsd_width_workflow.yaml

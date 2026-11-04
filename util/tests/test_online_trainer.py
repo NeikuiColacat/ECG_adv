@@ -45,6 +45,62 @@ REPO = Path(__file__).resolve().parents[2]
 CONFIG_ROOT = REPO / "configs"
 RECIPES = CONFIG_ROOT / "train" / "methods"
 ONLINE_CONFIG = CONFIG_ROOT / "train" / "PN2021.yaml"
+
+
+def test_joint_simclr_preserves_supervised_exposures_without_a_stage_boundary():
+    joint = load_recipe_spec(RECIPES / "augmix_simclr_joint_no_vae.yaml")
+    control = load_recipe_spec(RECIPES / "augmix_simclr_matched_no_vae.yaml")
+    for epoch in range(1, 6):
+        assert trainer._method_exposure_steps(joint, epoch=epoch) == trainer._method_exposure_steps(control, epoch=epoch)
+    assert joint.scientific_contract["stage_boundaries"] is False
+    assert joint.scientific_contract["classifier_head_trainable"] is True
+    assert not joint.requires_vae
+    assert joint.stage1_objective is Stage1Objective.NOT_APPLICABLE
+    assert joint.scientific_contract["joint_objective"]["model_forwards_per_base_batch"] == 7
+
+
+@pytest.mark.parametrize("seed", [0, 1, 2])
+def test_joint_simclr_gradients_and_auxiliary_bn_rng_isolation(seed):
+    torch.manual_seed(seed)
+    class Model(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.conv = torch.nn.Conv1d(12, 6, 1)
+            self.bn = torch.nn.BatchNorm1d(6)
+            self.classifier = torch.nn.Sequential(
+                torch.nn.Identity(), torch.nn.Identity(),
+                torch.nn.Dropout(.2), torch.nn.Linear(6, 5),
+            )
+        def forward_features(self, inputs):
+            return torch.relu(self.bn(self.conv(inputs))).mean(2)
+    model = Model().train()
+    projector = torch.nn.Sequential(torch.nn.Linear(6, 6), torch.nn.ReLU(), torch.nn.Linear(6, 6))
+    raw = torch.randn(4, 1000, 12)
+    hashes = tuple(f"sample{i}" for i in range(4))
+    teacher = {h: torch.zeros(5) for h in hashes}
+    recipe = _recipe("augmix_simclr_joint_no_vae.yaml")
+    from core.augmix import load_augmix_config
+    augmix = load_augmix_config(CONFIG_ROOT / "train/augmix.yaml")
+    state = torch.get_rng_state().clone()
+    buffers = {k: v.clone() for k, v in model.named_buffers()}
+    with trainer._preserve_batch_norm_buffers(model), trainer._preserve_torch_rng(torch.device("cpu")):
+        values = trainer._joint_simclr_objective(
+            model, projector, raw, hashes, spec=EFFICIENTNET1DV2_SPEC,
+            augmix_config=augmix, teacher_cache=teacher, normalization_epsilon=1e-6,
+            base_seed=20260501, rng_identity=(str(seed), "test"),
+            contract=recipe.scientific_contract["joint_objective"],
+        )
+        torch.testing.assert_close(values["loss"], values["simclr"] + 5 * values["source_anchor"])
+        values["loss"].backward()
+    assert torch.equal(state, torch.get_rng_state())
+    assert all(torch.equal(v, buffers[k]) for k, v in model.named_buffers())
+    for group in [model.conv.parameters(), model.classifier[3].parameters(), projector.parameters()]:
+        grads = [p.grad for p in group]
+        assert all(g is not None and torch.isfinite(g).all() for g in grads)
+        assert sum(float(g.abs().sum()) for g in grads) > 0
+    assert all(not t.requires_grad for t in teacher.values())
+
+
 MATCHED_A0_A1_CONFIG = CONFIG_ROOT / "train" / "PN2021_matched_base_a0_a1.yaml"
 RETIRED_EXPOSURE_MARKERS = (
     "__exposure_name", "__exposure_group", "__exposure_index",

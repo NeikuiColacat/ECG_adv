@@ -1,0 +1,20 @@
+schema_version: 1
+experiment:
+  name: engineering_no_vae_efficientnet1dv2
+  purpose: Real-model engineering admission on resampled K500, no heldout metric selection.
+entrypoint:
+  name: train_pn2021
+  config: train/k500_sampling/smoke_no_vae.yaml
+  arguments:
+  - --model
+  - efficientnet1dv2
+  - --method-config
+  - train/methods/augmix_simclr_matched_no_vae.yaml
+  - --center
+  - ningbo
+  - --source-checkpoint
+  - /home/linbinhao/ECG_adv_data/runs/manual_refactor/managed_ptbxl_effnet_source_v1/training/checkpoints/best.pt
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/k500_sampling_20261104_r0/engineering_no_vae_efficientnet1dv2
+  if_exists: error
+  delegate_output_subdir: training

@@ -45,6 +45,47 @@ launch_surface_policy:
     - no_implicit_overwrite
     - no_agent_workspace_runtime_import
 
+traditional_simclr_handoff:
+  status: locked_classic_two_stage_online_gpu_handoff
+  branch: direction/traditional-simclr
+  readme: README.md
+  method: configs/train/methods/augmix_simclr_lhat.yaml
+  recipe_spec_sha256: 6245e89f572b49bd24f5d688bda7d3f8b16fa4972051353afa311d007cd9f675
+  evaluation_config: configs/eval/PN2021_online_gpu.yaml
+  experiment_glob: configs/experiments/simclr_handoff/*.yaml
+  validation: docs/simclr_handoff_validation.md
+
+k500_sampling_20261104:
+  pipeline_config: configs/experiments/k500_sampling/workflow.yaml
+  protocol: docs/k500_sampling_protocol.md
+  experiment_glob: configs/experiments/k500_sampling/*.yaml
+  train_config_glob: configs/train/k500_sampling/*.yaml
+  data_config_glob: configs/data/k500_sampling/draw*/*
+  evaluation_config_glob: configs/eval/k500_sampling/*.yaml
+  status: original_queue_failed_metadata_gate_repaired_separate_evaluation_verified
+  original_completed_jobs: {training: 2, evaluation: 0}
+  recovery_required: new_source_admission_and_explicit_recovery_config
+  gpu_allowlist: [0, 1]
+  jobs: {training: 48, evaluation: 48}
+  run_root: /home/linbinhao/ECG_adv_data/runs/k500_sampling_20261104_r0
+
+simclr_joint_novae_20261104:
+  pipeline_config: configs/experiments/simclr_joint/workflow_online_gpu1.yaml
+  original_pipeline_config: configs/experiments/simclr_joint/workflow.yaml
+  protocol: docs/simclr_joint_protocol.md
+  status: completed_three_seed_development_joint_below_two_stage
+  evaluation_config: configs/eval/PN2021_online_gpu.yaml
+  corruption_execution: online_torch_gpu_v1_no_waveform_cache
+  experiment_glob: configs/experiments/simclr_joint/*.yaml
+  train_config_glob: configs/train/simclr_joint/*.yaml
+  arms: [augmix_simclr_joint_no_vae, augmix_simclr_matched_no_vae]
+  models: [efficientnet1dv2, ecgfounder]
+  centers: [ningbo, chapman_shaoxing, cpsc_2018, georgia]
+  seeds: [0, 1, 2]
+  jobs: {training: 48, evaluation: 48, engineering_training: 4}
+  gpu_binding: SIMCLR_JOINT_GPU_environment_exactly_one_user_authorized_device
+  run_root: /home/linbinhao/ECG_adv_data/runs/simclr_joint_novae_20261104_r0
+
 founder_jsd_width_20260911:
   pipeline_config: configs/experiments/founder_jsd_width_workflow.yaml
   status: prepared_pending_validation_and_predecessor

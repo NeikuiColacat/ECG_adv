@@ -230,6 +230,7 @@ class DataLedgerPlan:
     expected_sha256: str
     required_roots: tuple[str, ...]
     closure_sha256: tuple[tuple[Path, str], ...]
+    split_config_relative_path: Path = Path("data/splits.yaml")
 
     def describe(self) -> dict[str, Any]:
         return {
@@ -257,12 +258,28 @@ def _data_ledger_plan(
     entrypoint_name: str,
     sources: Sequence[tuple[Path, str]],
     config_root: Path,
+    entry_config_path: Path | None = None,
 ) -> DataLedgerPlan | None:
     required_roots = ENTRYPOINT_DATA_ROOTS[entrypoint_name]
+    if entrypoint_name == "evaluate_pn2021" and entry_config_path is not None:
+        evaluation = _yaml_mapping(entry_config_path, description="evaluation data contract")
+        runtime = evaluation.get("runtime", {})
+        if "corruption_source" in runtime:
+            if (evaluation.get("schema_version") != 2
+                    or runtime.get("corruption_source") != "online_torch_gpu_v1"
+                    or runtime.get("device") != "cuda" or runtime.get("corruption_microbatch_size") != 32):
+                raise ValueError("only the explicit GPU online evaluation contract omits a waveform cache")
+            # Clean waveforms/splits retain their original exact ledger gate.
+            # The evaluator separately verifies all ten corruption metadata hashes.
+            required_roots = ("pn2021_cache", "split_artifacts")
     if not required_roots:
         return None
-    data_load = _closure_member(sources, config_root, "data/data_load.yaml")
-    splits = _closure_member(sources, config_root, "data/splits.yaml")
+    references = (_yaml_mapping(entry_config_path, description="data references").get("references", {})
+                  if entry_config_path is not None else {})
+    data_load_ref = references.get("data_load_config", "data/data_load.yaml")
+    split_ref = references.get("split_config", "data/splits.yaml")
+    data_load = _closure_member(sources, config_root, data_load_ref)
+    splits = _closure_member(sources, config_root, split_ref)
     if "pn2021c_cache" in required_roots:
         _closure_member(sources, config_root, "augmentation/cache.yaml")
     descriptor = _mapping(_yaml_mapping(data_load, description="data-load config").get(
@@ -286,6 +303,7 @@ def _data_ledger_plan(
         expected_sha256=digest,
         required_roots=required_roots,
         closure_sha256=tuple((path, sha256_file(path)) for path, _ in sources),
+        split_config_relative_path=splits.relative_to(config_root),
     )
 
 
@@ -479,7 +497,7 @@ def load_experiment_plan(
         entry_arguments=arguments,
         config_root=root,
     )
-    data_ledger = _data_ledger_plan(str(entrypoint_name), closure, root)
+    data_ledger = _data_ledger_plan(str(entrypoint_name), closure, root, entry_config_path)
     return ExperimentPlan(
         experiment_path=experiment_path,
         config_root=root,
@@ -546,7 +564,7 @@ def execute_experiment(
         if hashlib.sha256(ledger_bytes).hexdigest() != ledger.expected_sha256:
             raise ValueError("data ledger SHA256 differs from the execution plan")
         roots = load_roots(
-            plan.config_root / "data/splits.yaml",
+            plan.config_root / ledger.split_config_relative_path,
             plan.config_root / "augmentation/cache.yaml",
             ledger.required_roots,
         )

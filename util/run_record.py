@@ -462,6 +462,8 @@ def _result_summary(payload: dict[str, Any], result_type: str, *, result_path: P
             2: "all_eight_matched_last_checkpoints",
             3: "all_44_dual_jsd_training_and_evaluation_jobs",
             4: "width1_width3_four_centers_last_checkpoints_frozen_width2_baselines",
+            5: "all_96_paired_three_seed_simclr_training_and_evaluation_jobs",
+            6: "all_96_fixed_training_seed_three_K500_sampling_draw_jobs",
         }[payload["schema_version"]]
         return {"identity": payload["jobs"], "selection": {"policy": policy}}
     if result_type == "pulse_train_result":
