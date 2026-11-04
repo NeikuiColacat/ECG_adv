@@ -55,6 +55,17 @@ traditional_simclr_handoff:
   experiment_glob: configs/experiments/simclr_handoff/*.yaml
   validation: docs/simclr_handoff_validation.md
 
+k500_sampling_recovery1_20261104:
+  pipeline_config: configs/experiments/k500_sampling/workflow_recovery1.yaml
+  status: recovery_config_ready_live_state_external
+  worktree_branch: experiment/k500-recovery-20261104
+  protocol: docs/k500_sampling_protocol.md
+  gpu_allowlist: [0, 1]
+  verified_reusable_jobs: {training: 2, evaluation: 2}
+  total_jobs: {training: 48, evaluation: 48}
+  engineering_admission: /home/linbinhao/ECG_adv_data/runs/k500_sampling_20261104_r0/engineering_admission_recovery1.json
+  status_path: /home/linbinhao/ECG_adv_data/runs/k500_sampling_20261104_r0/workflow_recovery1/training/status.json
+
 k500_sampling_20261104:
   pipeline_config: configs/experiments/k500_sampling/workflow.yaml
   protocol: docs/k500_sampling_protocol.md

@@ -29,6 +29,14 @@ YAML 或隐式回退入口。
 
 ## A. 手动重构保护白名单
 
+2026-11-04 用户再次授权 GPU 0/1 继续 K500 实验：
+`configs/experiments/k500_sampling/workflow_recovery1.yaml`、
+`configs/train/k500_sampling/workflow_recovery1.yaml` 为 KEEP-MANUAL。
+恢复代码保留在既有 `util/simclr_joint_queue.py`，测试复用既有 queue 测试文件。
+仅复用原两份成功训练与两份指定 SHA 的完整修复评估；新源码须经四份新工程
+训练准入，所有旧输出、源快照与准入记录保留。只允许 ledger 修复与 queue
+源码变化；科学配方、预算、K500、训练 seed 和共同评估集不变。
+
 2026-11-04 Traditional SimCLR 交接：主方法仍为经典两阶段
 `augmix_simclr_lhat`，spec SHA `6245e89f572b49bd24f5d688bda7d3f8b16fa4972051353afa311d007cd9f675`。
 `README.md`、`docs/simclr_handoff_validation.md`、

@@ -1,0 +1,14 @@
+schema_version: 1
+experiment:
+  name: k500_sampling_workflow_recovery1_20261104_r0
+  purpose: Resume the unchanged K500 sampling grid on GPUs 0 and 1; verify and reuse
+    two trainings and two repaired online evaluations, with fresh four-model engineering
+    admission.
+entrypoint:
+  name: coordinate_pulse_training
+  config: train/k500_sampling/workflow_recovery1.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/k500_sampling_20261104_r0/workflow_recovery1
+  if_exists: error
+  delegate_output_subdir: training

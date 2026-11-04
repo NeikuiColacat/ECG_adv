@@ -85,3 +85,43 @@ evaluation directories. Do not edit the old admission/source hash, erase failed
 directories, or relaunch the original queue with implicit retries. The three
 new draw ledgers are retained as `content_ledger_final.jsonl`; preliminary
 unreferenced ledger drafts are not part of this delivery.
+
+## Explicit GPU 0/1 recovery
+
+After delivery, the user authorized continuing on free GPUs 0 and 1.
+`configs/experiments/k500_sampling/workflow_recovery1.yaml` is a new parent run
+at `workflow_recovery1/`, using the same original 96-child scientific grid.
+The four engineering training entries are rerun into fresh `_recovery1`
+directories. Their artifact/checkpoint bytes and all 82 current runtime-source
+hashes bind a new `engineering_admission_recovery1.json`; the old admission is
+not edited or used as the new source gate.
+
+Only two original successful trainings and two exact-SHA clean-plus-20-view
+repair evaluations may be reused. Recovery verifies the stopped parent's file
+index/source snapshots, permits only ledger and queue source differences,
+checks every reused run's complete configuration closure, and validates result
+schemas/checkpoint bytes/training lineage. The two repair result paths outside
+the original sampling root are accepted only for their exact job keys, paths
+and SHA256; other external results remain forbidden. The failed original
+evaluation directory is preserved, rather than retried or overwritten.
+
+The remaining 46 trainings and 46 evaluations use their original planned fresh
+child directories. Two workers, one per explicitly authorized GPU, retain the
+idle/ownership/RAM/load/25-GiB-free-disk gates. Source/config changes drain the
+queue, and failed children stop it without automatic retries. Runtime state
+and pause control are `workflow_recovery1/training/status.json` and
+`control.json`; state includes resource blockers and free disk capacity.
+The final comparison is written only after all 96 validated results exist.
+
+From an immutable admitted checkout, dry-run first, then start the CPU-only
+coordinator after checking current GPU ownership:
+
+```bash
+CUDA_VISIBLE_DEVICES='' K500_SAMPLING_GPUS=0,1 \
+  /home/linbinhao/miniforge3/envs/ECGTwin/bin/python \
+  boot_scripts/run_experiment.py \
+  --config configs/experiments/k500_sampling/workflow_recovery1.yaml --dry-run
+```
+
+Removing `--dry-run` executes the finite queue once the new engineering
+admission exists. Existing parent/child output directories are never overwritten.

@@ -13,6 +13,93 @@ from util.pulse_training_queue import JOB_KEYS, allowed_gpus, job_state, live_tr
 REPO = Path(__file__).resolve().parents[2]
 
 
+def test_sampling_recovery_keeps_the_grid_and_requires_fresh_engineering(tmp_path):
+    from util import simclr_joint_queue as q
+    path = REPO/"configs/train/k500_sampling/workflow_recovery1.yaml"
+    config = yaml.safe_load(path.read_text())
+    members = q.sampling_plans(config, path, REPO/"configs")
+    assert len(members) == 96
+    assert config["recovery"] == q.SAMPLING_RECOVERY
+    assert all("_recovery1/training/train_result.json" in p for p in config["admission_results"].values())
+    config["recovery"] = {**config["recovery"], "previous_workflow": str(tmp_path)}
+    with pytest.raises(ValueError, match="restricted"):
+        q.sampling_plans(config, path, REPO/"configs")
+
+
+@pytest.mark.parametrize("damage", [None, "source", "result", "config", "active", "training_link"])
+def test_sampling_recovery_checks_exact_completed_artifacts(tmp_path, monkeypatch, damage):
+    from types import SimpleNamespace
+    from util import simclr_joint_queue as q, run_record, pn2021_artifact_contract as contract
+    previous = tmp_path/"previous"
+    (previous/"training/source_snapshot/core").mkdir(parents=True)
+    source = previous/"training/source_snapshot/core/online_trainer.py"
+    source.write_text("unchanged training")
+    sources = {"core/online_trainer.py": q.sha256_file(source)}
+    (previous/"training/source_identity.json").write_text(json.dumps(sources))
+    (previous/"run_manifest.json").write_text(json.dumps({"status":"failed"}))
+    root = tmp_path/"configs";root.mkdir()
+    config = root/"fixture.yaml";config.write_text("locked: true\n")
+    members, completed, repairs = {}, {}, {}
+    for arm in ("full", "no_vae"):
+        train_key = f"{arm}_d0_efficientnet1dv2_ningbo"
+        for suffix in ("", "_eval"):
+            key = train_key+suffix;run = tmp_path/key;(run/"training").mkdir(parents=True)
+            path = run/"training/result.json"
+            value = ({"subject":{"train_result":{"path":completed[train_key]["result"],
+                    "sha256":completed[train_key]["sha256"]}},
+                "protocol":{"corruption_cache":{"execution":{"mode":"online_torch_gpu_v1",
+                    "metadata_verification":{"metadata_member_count":10}}}}} if suffix else {})
+            if damage == "training_link" and suffix:
+                value["subject"]["train_result"] = {"path":"other", "sha256":"0"*64}
+            path.write_text(json.dumps(value))
+            entry = {"result":str(path), "sha256":q.sha256_file(path)}
+            if suffix: repairs[key] = entry
+            else: completed[key] = entry
+            name = "evaluate_pn2021" if suffix else "train_pn2021"
+            (run/"run_manifest.json").write_text(json.dumps({"status":"complete", "entrypoint":{"name":name},
+                "config_snapshots":[{"snapshot_path":"configs/fixture.yaml", "sha256":q.sha256_file(config)}]}))
+            members[key] = (None, SimpleNamespace(config_sources=[(config, "fixture")],
+                run_dir=run, expected_result_relative_path=Path("training/result.json"), entrypoint_name=name))
+    (previous/"training/status.json").write_text(json.dumps({"status":"draining", "completed":completed,
+        "active":{"job":123} if damage == "active" else {}}))
+    monkeypatch.setattr(q, "SAMPLING_REPAIR_RESULTS", repairs)
+    policy = {**q.SAMPLING_RECOVERY, "previous_workflow":str(previous)}
+    monkeypatch.setattr(q, "SAMPLING_RECOVERY", policy)
+    monkeypatch.setattr(run_record, "verify_run_file_index", lambda path: [])
+    monkeypatch.setattr(contract, "validate_pn2021_train_result", lambda *a, **kw: None)
+    monkeypatch.setattr(contract, "validate_pn2021_evaluation_result", lambda *a, **kw: None)
+    if damage == "source": sources = {**sources, "core/online_trainer.py":"changed"}
+    elif damage == "config": config.write_text("locked: false\n")
+    elif damage == "result": Path(next(iter(completed.values()))["result"]).write_text("changed")
+    if damage:
+        with pytest.raises(ValueError):
+            q.recover_sampling_completed({"recovery":policy},members,root,sources)
+    else:
+        assert len(q.recover_sampling_completed({"recovery":policy},members,root,sources)) == 4
+
+
+@pytest.mark.parametrize("damage", [None, "key", "path", "hash"])
+def test_sampling_result_allows_only_the_exact_external_repair(tmp_path, monkeypatch, damage):
+    from util import simclr_joint_queue as q
+    monkeypatch.setattr(q, "SAMPLING_ROOT", tmp_path/"sampling")
+    jobs = {key:{"result":str(q.SAMPLING_ROOT/key/"training/result.json"), "sha256":"0"*64} for key in q.sampling_grid()}
+    key = "full_d0_efficientnet1dv2_ningbo_eval"
+    approved = {"result":str(tmp_path/"repair.json"), "sha256":"0"*64}
+    monkeypatch.setattr(q, "SAMPLING_REPAIR_RESULTS", {key:approved})
+    jobs[key] = dict(approved)
+    if damage == "key": jobs["full_d1_efficientnet1dv2_ningbo_eval"] = dict(approved)
+    elif damage == "path": jobs[key]["result"] = str(tmp_path/"other.json")
+    elif damage == "hash": jobs[key]["sha256"] = "f"*64
+    monkeypatch.setattr(q, "sha256_file", lambda path: "0"*64)
+    value = {"schema_version":6, "artifact_type":"pulse_training_queue_result", "status":"complete", "jobs":jobs,
+        "sampling_comparison":{"metrics":str(tmp_path/"sampling_comparison.json"), "sha256":"0"*64}}
+    if damage:
+        with pytest.raises(ValueError, match="escaped"):
+            q.validate_sampling_result(value,tmp_path/"queue_result.json")
+    else:
+        q.validate_sampling_result(value,tmp_path/"queue_result.json")
+
+
 def test_sampling_queue_resolves_all_children_and_keeps_training_seed_fixed(tmp_path):
     from util import simclr_joint_queue as q
     from util.config_bundle import load_yaml_mapping

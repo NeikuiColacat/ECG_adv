@@ -45,6 +45,19 @@ SAMPLING_ROOT = ROOT.parent/SAMPLING_GROUP
 SAMPLING_METHODS = {"full": "augmix_simclr_lhat", "no_vae": "augmix_simclr_matched_no_vae"}
 SAMPLING_LIMITS = {"max_workers": 2, "poll_seconds": 15, "idle_seconds": 30,
     "min_available_ram_gib": 64, "max_load_fraction": .8, "min_disk_free_gib": 25}
+SAMPLING_REPAIR_RESULTS = {
+    "full_d0_efficientnet1dv2_ningbo_eval": {
+        "result": str(ROOT.parent/"traditional_simclr_fixcheck_full_20261104_r0/evaluation/evaluation_result.json"),
+        "sha256": "cc5a0fb9c4cc91ef2b74bbb85db7f120f3090ef2e841f12454bdb9075adb398d"},
+    "no_vae_d0_efficientnet1dv2_ningbo_eval": {
+        "result": str(ROOT.parent/"traditional_simclr_fixcheck_20261104_r0/evaluation/evaluation_result.json"),
+        "sha256": "7300869ccd4b3e4ee961b16edb8568e371e3fc6468a6133b23afc0aabe01ddce"},
+}
+SAMPLING_RECOVERY = {
+    "previous_workflow": str(SAMPLING_ROOT/"workflow"),
+    "engineering_admission": str(SAMPLING_ROOT/"engineering_admission_recovery1.json"),
+    "reuse_policy": "two_original_trainings_and_two_verified_repair_evaluations_v1",
+}
 
 
 def sampling_grid():
@@ -55,7 +68,9 @@ def sampling_grid():
 
 def sampling_plans(config, path, root):
     from boot_scripts.run_experiment import load_experiment_plan
-    if (set(config) != {"schema_version", "run_root", "references", "runtime", "admission_results", "cohort_report"}
+    required = {"schema_version", "run_root", "references", "runtime", "admission_results", "cohort_report"}
+    recovery = "recovery" in config
+    if (set(config) != required | ({"recovery"} if recovery else set())
             or config["schema_version"] != 6 or Path(config["run_root"]) != SAMPLING_ROOT
             or tuple(config["references"]) != (*sampling_grid(), "split_config", "data_load_config")
             or config["references"]["split_config"] != "data/k500_sampling/draw0/splits.yaml"
@@ -63,7 +78,10 @@ def sampling_plans(config, path, root):
             or config["runtime"] != SAMPLING_LIMITS
             or config["cohort_report"] != str(SAMPLING_ROOT/"sampling_cohorts.json")):
         raise ValueError("sampling queue requires frozen three draws, two methods/backbones, four centers")
-    expected_admissions = {f"{arm}_{model}": str(SAMPLING_ROOT/f"engineering_{arm}_{model}/training/train_result.json")
+    if recovery and config["recovery"] != SAMPLING_RECOVERY:
+        raise ValueError("sampling recovery is restricted to the original stopped queue")
+    suffix = "_recovery1" if recovery else ""
+    expected_admissions = {f"{arm}_{model}": str(SAMPLING_ROOT/f"engineering_{arm}_{model}{suffix}/training/train_result.json")
         for arm in SAMPLING_METHODS for model in MODELS}
     if config["admission_results"] != expected_admissions:
         raise ValueError("four real-model sampling engineering admissions are required")
@@ -171,8 +189,11 @@ def validate_sampling_result(value, path):
             or value.get("artifact_type") != "pulse_training_queue_result"
             or set(value.get("jobs",{})) != set(sampling_grid())):
         raise ValueError("incomplete K500 sampling queue")
-    for entry in value["jobs"].values():
-        member = Path(entry["result"]);member.resolve().relative_to(SAMPLING_ROOT)
+    for key, entry in value["jobs"].items():
+        member = Path(entry["result"])
+        if not member.resolve().is_relative_to(SAMPLING_ROOT.resolve()):
+            if entry != SAMPLING_REPAIR_RESULTS.get(key):
+                raise ValueError("sampling result escaped its original root or exact repair identity")
         if sha256_file(member) != entry["sha256"]:
             raise ValueError("sampling result bytes changed")
     ref = value["sampling_comparison"]
@@ -180,12 +201,68 @@ def validate_sampling_result(value, path):
         raise ValueError("sampling comparison changed")
 
 
+def recover_sampling_completed(config, members, config_root, sources):
+    """Reuse only four named artifacts, with full byte/config/lineage checks."""
+    from util.run_record import verify_run_file_index
+    from util.pn2021_artifact_contract import (
+        validate_pn2021_train_result, validate_pn2021_evaluation_result,
+    )
+    if config.get("recovery") != SAMPLING_RECOVERY:
+        raise ValueError("sampling recovery identity differs from the frozen policy")
+    previous = Path(SAMPLING_RECOVERY["previous_workflow"])
+    manifest = json.loads((previous/"run_manifest.json").read_text())
+    status = json.loads((previous/"training/status.json").read_text())
+    if (manifest["status"] != "failed" or status["status"] not in {"failed", "draining"}
+            or status.get("active") or verify_run_file_index(previous)):
+        raise ValueError("sampling recovery requires the intact stopped workflow")
+    old = json.loads((previous/"training/source_identity.json").read_text())
+    changed = {rel for rel in old.keys() | sources.keys() if old.get(rel) != sources.get(rel)}
+    if not changed.issubset({"data_preprocess/data_ledger.py", "util/simclr_joint_queue.py"}):
+        raise ValueError("sampling recovery changed training/model/evaluation source")
+    for rel, digest in old.items():
+        if sha256_file(previous/"training/source_snapshot"/rel) != digest:
+            raise ValueError("original sampling source snapshot changed")
+    completed = dict(status["completed"])
+    if set(completed) != {key.removesuffix("_eval") for key in SAMPLING_REPAIR_RESULTS}:
+        raise ValueError("sampling recovery requires exactly the two original successful trainings")
+    completed.update(SAMPLING_REPAIR_RESULTS)
+    for key, entry in completed.items():
+        plan = members[key][1]
+        path = Path(entry["result"])
+        run = path.parent.parent
+        if sha256_file(path) != entry["sha256"] or verify_run_file_index(run):
+            raise ValueError("recovered sampling artifact bytes changed")
+        card = json.loads((run/"run_manifest.json").read_text())
+        expected = {p.relative_to(config_root).as_posix(): sha256_file(p) for p, _ in plan.config_sources}
+        snapshots = {Path(v["snapshot_path"]).relative_to("configs").as_posix(): v["sha256"]
+            for v in card["config_snapshots"]}
+        if (card["status"] != "complete" or card["entrypoint"]["name"] != plan.entrypoint_name
+                or snapshots != expected):
+            raise ValueError("recovered sampling configuration or status changed")
+        value = json.loads(path.read_text())
+        if key.endswith("_eval"):
+            validate_pn2021_evaluation_result(value, result_path=path, prospective_only=True)
+            train = completed[key.removesuffix("_eval")]
+            if value["subject"]["train_result"] != {"path": train["result"], "sha256": train["sha256"]}:
+                raise ValueError("recovered evaluation uses a different training artifact")
+            execution = value["protocol"]["corruption_cache"]["execution"]
+            if execution["mode"] != "online_torch_gpu_v1" or execution["metadata_verification"]["metadata_member_count"] != 10:
+                raise ValueError("recovered evaluation omits repaired online metadata verification")
+        else:
+            if path != plan.run_dir/plan.expected_result_relative_path:
+                raise ValueError("recovered training escaped its original output")
+            validate_pn2021_train_result(value, result_path=path)
+    return completed
+
+
 def run_sampling(config, config_path, config_root, output):
     from util.run_record import verify_run_file_index
     if os.environ.get("CUDA_VISIBLE_DEVICES") != "" or os.environ.get("K500_SAMPLING_GPUS") != "0,1":
         raise ValueError("sampling coordinator must be CPU-only and explicitly authorize GPUs 0,1")
     members = sampling_plans(config,config_path,config_root)
-    admission = json.loads((SAMPLING_ROOT/"engineering_admission.json").read_text())
+    admission_path = (Path(SAMPLING_RECOVERY["engineering_admission"]) if "recovery" in config
+        else SAMPLING_ROOT/"engineering_admission.json")
+    admission = json.loads(admission_path.read_text())
     if admission.get("status") != "passed" or set(admission.get("jobs",{})) != set(config["admission_results"]):
         raise ValueError("four sampling engineering admissions have not passed")
     output.mkdir(parents=True,exist_ok=False)
@@ -198,12 +275,18 @@ def run_sampling(config, config_path, config_root, output):
     if sources != admission["runtime_sources"]:
         raise ValueError("sampling runtime source differs from the engineering admission")
     for key,entry in admission["jobs"].items():
-        if sha256_file(entry["result"]) != entry["sha256"] or verify_run_file_index(Path(entry["result"]).parent.parent):
+        if (entry["result"] != config["admission_results"][key]
+                or sha256_file(entry["result"]) != entry["sha256"]
+                or verify_run_file_index(Path(entry["result"]).parent.parent)):
             raise ValueError("sampling engineering artifact changed")
+    atomic_json(output/"engineering_admission.json", admission)
     atomic_json(output/"source_identity.json",sources)
     atomic_json(output/"control.json",{"paused":False,"max_workers":2})
     config_hashes={p:sha256_file(p) for _,plan in members.values() for p,_ in plan.config_sources}
-    completed,active,idle = {},{},{}
+    config_hashes[config_path] = sha256_file(config_path)
+    completed = recover_sampling_completed(config,members,config_root,sources) if "recovery" in config else {}
+    atomic_json(output/"recovered_results.json", completed)
+    active,idle = {},{}
     stopping=[False];failure=[None]
     for sig in (signal.SIGINT,signal.SIGTERM): signal.signal(sig,lambda *args:stopping.__setitem__(0,True))
     with exclusive_lock(SAMPLING_ROOT/"sampling.lock"):
@@ -230,11 +313,17 @@ def run_sampling(config, config_path, config_root, output):
             if set(control)!={"paused","max_workers"} or type(control["paused"]) is not bool or type(control["max_workers"]) is not int or not 0<=control["max_workers"]<=2:
                 stopping[0]=True;failure[0]="sampling control exceeds two authorized GPUs"
                 control={"paused":True,"max_workers":0}
+            free_gib = shutil.disk_usage(output).free / 1024**3
+            blockers = (["available_ram_below_64_GiB"] if snapshot["available_ram_gib"] < 64 else [])
+            if snapshot["load1"] > snapshot["cpu_affinity_count"]*.8: blockers.append("host_load_above_limit")
+            if free_gib < 25: blockers.append("disk_free_below_25_GiB")
             atomic_json(output/"status.json",{"status":"draining" if stopping[0] else "running","completed":completed,
-                "active":{c["key"]:{"gpu":g,"pid":c["process"].pid} for g,c in active.items()},"time":time.time(),"failure":failure[0]})
+                "active":{c["key"]:{"gpu":g,"pid":c["process"].pid} for g,c in active.items()},
+                "resource_blockers":blockers,"disk_free_gib":free_gib,
+                "time":time.time(),"failure":failure[0]})
             if stopping[0] and not active: raise RuntimeError(failure[0] or "sampling queue drained")
             safe_host=(snapshot["available_ram_gib"]>=64 and snapshot["load1"]<=snapshot["cpu_affinity_count"]*.8
-                and shutil.disk_usage(output).free>=25*1024**3)
+                and free_gib>=25)
             for gpu in (0,1):
                 device=snapshot["gpus"].get(gpu)
                 safe=(safe_host and device is not None and not device["pids"] and free_device(device))

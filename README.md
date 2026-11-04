@@ -146,7 +146,7 @@ ECGFounder 换成表中相应 YAML。宁波仅是接入示例；其他中心应�
 
 本次修复逐一验证十个**指定**元数据文件的大小和全内容哈希，明确记录未验证的 sidecar，继续拒绝缺失、篡改及符号链接；旧的完整缓存门禁保持严格。原训练结果、失败日志及 source snapshots 保留。修复验证与完整队列恢复的状态见 [交接验证记录](docs/simclr_handoff_validation.md)。
 
-**完整抽样队列尚未恢复。** 原工程准入绑定旧源码哈希，新代码不能直接复用该准入或覆盖失败目录。后续需独立的新恢复配置、确认旧训练 artifact 的复用边界、重新做工程准入，再按空闲 GPU 运行。不得手改旧 source hash/admission 或将剩余任务写成已完成。
+完整抽样队列的恢复入口为 [workflow_recovery1.yaml](configs/experiments/k500_sampling/workflow_recovery1.yaml)。恢复独立保存在 `workflow_recovery1/`，原队列保留失败历史。恢复器完整核验并复用上述 2 份训练、2 份修复评估，剩余 46 份训练、46 份评估；启动前须以新源码完成四份新工程训练并登记 `engineering_admission_recovery1.json`。不改旧 admission/hash，不覆盖失败目录。当前进度看外置 `workflow_recovery1/training/status.json`，不能将配置就绪或已有验证当成全部实验完成。
 
 现有配方及中心有历史开发调参；三次重复也不能自动升级为论文最终独立测试。论文最终结论仍需冻结方案后的独立测试证据。
 
