@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -44,21 +43,6 @@ def _entrypoint(script: str, result: str, result_type: str) -> EntrypointSpec:
 
 
 ENTRYPOINTS = {
-    "evaluate_pulse_subset": _entrypoint(
-        "evaluate_pulse_subset.py", "subset_result.json", "pulse_subset_result"
-    ),
-    "profile_pulse_adapters": _entrypoint(
-        "profile_pulse_adapters.py", "profile_result.json", "pulse_profile_result"
-    ),
-    "evaluate_pulse_adapters": _entrypoint(
-        "evaluate_pulse_adapters.py", "benchmark_result.json", "pulse_benchmark_result"
-    ),
-    "coordinate_pulse_training": _entrypoint(
-        "coordinate_pulse_training.py", "queue_result.json", "pulse_training_queue_result"
-    ),
-    "train_ecg_image": _entrypoint(
-        "train_ecg_image.py", "train_result.json", "pulse_train_result"
-    ),
     "train_ptbxl_effnet": _entrypoint(
         "train_ptbxl_effnet.py", "train_result.json", "supervised_train_result"
     ),
@@ -74,39 +58,20 @@ ENTRYPOINTS = {
     "aggregate_pn2021": _entrypoint(
         "aggregate_pn2021.py", "matrix_result.json", "pn2021_matrix_result"
     ),
-    "evaluate_ecg_image": _entrypoint(
-        "evaluate_ecg_image.py", "evaluation_result.json", "ecg_image_evaluation_result"
-    ),
-    "report_ecg_image": _entrypoint(
-        "report_ecg_image.py", "comparison_result.json", "ecg_image_comparison_result"
-    ),
 }
 ENTRYPOINT_DATA_ROOTS = {
-    "evaluate_pulse_subset": ("pn2021_cache", "split_artifacts"),
-    "profile_pulse_adapters": ("pn2021_cache", "split_artifacts"),
-    "evaluate_pulse_adapters": ("pn2021_cache", "split_artifacts"),
-    "coordinate_pulse_training": ("pn2021_cache", "split_artifacts"),
-    "train_ecg_image": ("pn2021_cache", "split_artifacts"),
     "train_ptbxl_effnet": ("ptbxl_cache", "split_artifacts"),
     "train_ptbxl_ecgfounder": ("ptbxl_cache", "split_artifacts"),
     "train_pn2021": ("pn2021_cache", "split_artifacts"),
     "evaluate_pn2021": ("pn2021_cache", "pn2021c_cache", "split_artifacts"),
     "aggregate_pn2021": (),
-    "evaluate_ecg_image": ("pn2021_cache", "split_artifacts"),
-    "report_ecg_image": (),
 }
 LAUNCHER_OWNED_FLAGS = frozenset(
     {"--config", "--config-root", "--output-dir", "--dry-run"}
 )
-CONFIG_REFERENCE_FLAGS = frozenset({"--method-config", "--source-registry"})
 MODELS = frozenset({"efficientnet1dv2", "ecgfounder"})
 CENTERS = frozenset({"ningbo", "chapman_shaoxing", "cpsc_2018", "georgia"})
 ARGUMENT_SCHEMAS = {
-    "evaluate_pulse_subset": ((),),
-    "profile_pulse_adapters": ((), ("--suite",), ("--suite", "--center")),
-    "evaluate_pulse_adapters": ((),),
-    "coordinate_pulse_training": ((),),
-    "train_ecg_image": ((),),
     "train_ptbxl_effnet": ((),),
     "train_ptbxl_ecgfounder": ((), ("--epochs",)),
     "train_pn2021": (
@@ -120,8 +85,6 @@ ARGUMENT_SCHEMAS = {
     "aggregate_pn2021": (
         ("--model", "--result", "--result", "--result", "--result"),
     ),
-    "evaluate_ecg_image": ((),),
-    "report_ecg_image": ((),),
 }
 
 
@@ -129,25 +92,9 @@ def _config_closure(
     *,
     experiment_path: Path,
     entry_config_path: Path,
-    entry_arguments: Sequence[str],
     config_root: Path,
 ) -> tuple[tuple[Path, str], ...]:
-    seeds = [experiment_path, entry_config_path]
-    for flag, raw in zip(
-        entry_arguments[::2], entry_arguments[1::2], strict=True
-    ):
-        if flag not in CONFIG_REFERENCE_FLAGS:
-            continue
-        seeds.append(
-            resolve_config_reference(
-                raw,
-                owner_config_path=experiment_path,
-                config_root=config_root,
-                description=f"entrypoint argument {flag}",
-                must_exist=True,
-            )
-        )
-    paths = resolve_yaml_config_closure(seeds, config_root=config_root)
+    paths = resolve_yaml_config_closure([experiment_path], config_root=config_root)
     return tuple(
         (
             path,
@@ -166,8 +113,6 @@ def _validated_arguments(entrypoint_name: str, value: Any) -> tuple[str, ...]:
         raise ValueError("entrypoint.arguments must be a list of strings")
     arguments = tuple(value)
     for argument in arguments:
-        if "\x00" in argument:
-            raise ValueError("entrypoint.arguments may not contain NUL bytes")
         flag = argument.split("=", 1)[0]
         if flag in LAUNCHER_OWNED_FLAGS:
             raise ValueError(f"entrypoint argument is launcher-owned: {flag}")
@@ -196,11 +141,6 @@ def _validate_argument_schema(
     if any(not value.strip() or value.lstrip().startswith("-") for value in values):
         raise ValueError("entrypoint argument values must be non-empty and not flags")
     keyed = dict(zip(flags, values, strict=True))
-    if entrypoint_name == "profile_pulse_adapters" and "--suite" in keyed:
-        if keyed["--suite"] not in {"optimization", "logits", "deployment", "deployment_cache", "deployment_admission"}:
-            raise ValueError("unsupported PULSE diagnostic suite")
-        if (keyed["--suite"] == "deployment_admission") != ("--center" in keyed):
-            raise ValueError("deployment admission requires an explicit center; other suites forbid it")
     if "--model" in keyed and keyed["--model"] not in MODELS:
         raise ValueError(f"unsupported model {keyed['--model']!r}")
     if "--center" in keyed and keyed["--center"] not in CENTERS:
@@ -261,21 +201,23 @@ def _data_ledger_plan(
     entry_config_path: Path | None = None,
 ) -> DataLedgerPlan | None:
     required_roots = ENTRYPOINT_DATA_ROOTS[entrypoint_name]
-    if entrypoint_name == "evaluate_pn2021" and entry_config_path is not None:
-        evaluation = _yaml_mapping(entry_config_path, description="evaluation data contract")
-        runtime = evaluation.get("runtime", {})
+    if not required_roots:
+        return None
+    entry_config = (
+        _yaml_mapping(entry_config_path, description="entrypoint data contract")
+        if entry_config_path is not None else {}
+    )
+    if entrypoint_name == "evaluate_pn2021":
+        runtime = entry_config.get("runtime", {})
         if "corruption_source" in runtime:
-            if (evaluation.get("schema_version") != 2
+            if (entry_config.get("schema_version") != 2
                     or runtime.get("corruption_source") != "online_torch_gpu_v1"
                     or runtime.get("device") != "cuda" or runtime.get("corruption_microbatch_size") != 32):
                 raise ValueError("only the explicit GPU online evaluation contract omits a waveform cache")
             # Clean waveforms/splits retain their original exact ledger gate.
             # The evaluator separately verifies all ten corruption metadata hashes.
             required_roots = ("pn2021_cache", "split_artifacts")
-    if not required_roots:
-        return None
-    references = (_yaml_mapping(entry_config_path, description="data references").get("references", {})
-                  if entry_config_path is not None else {})
+    references = entry_config.get("references", {})
     data_load_ref = references.get("data_load_config", "data/data_load.yaml")
     split_ref = references.get("split_config", "data/splits.yaml")
     data_load = _closure_member(sources, config_root, data_load_ref)
@@ -494,7 +436,6 @@ def load_experiment_plan(
     closure = _config_closure(
         experiment_path=experiment_path,
         entry_config_path=entry_config_path,
-        entry_arguments=arguments,
         config_root=root,
     )
     data_ledger = _data_ledger_plan(str(entrypoint_name), closure, root, entry_config_path)
@@ -520,15 +461,7 @@ def load_experiment_plan(
 
 def _run_delegate(argv: list[str], log_path: Path) -> int:
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    runtime_log = log_path
-    if Path(argv[1]) == ENTRYPOINTS["evaluate_ecg_image"].script:
-        config_path = Path(argv[argv.index("--config") + 1])
-        payload = _yaml_mapping(config_path, description="image inference config")
-        ram_logs = Path("/dev/shm/ecg_r1_full_elastic_20260907/logs" if payload.get("schema_version") == 2
-                        else "/dev/shm/ecg_image_llm_10h_20260907/logs")
-        ram_logs.mkdir(parents=True, exist_ok=True)
-        runtime_log = ram_logs / f"{log_path.parent.parent.name}.log"
-    with runtime_log.open("x" if runtime_log != log_path else "w", encoding="utf-8") as log:
+    with log_path.open("w", encoding="utf-8") as log:
         process = subprocess.run(
             argv,
             cwd=PROJECT_ROOT,
@@ -537,8 +470,6 @@ def _run_delegate(argv: list[str], log_path: Path) -> int:
             check=False,
             text=True,
         )
-    if runtime_log != log_path:
-        shutil.copyfile(runtime_log, log_path)
     return int(process.returncode)
 
 

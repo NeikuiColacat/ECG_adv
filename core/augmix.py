@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import hashlib
 from pathlib import Path
 
 import torch
@@ -11,7 +10,6 @@ import yaml
 
 from core.corruption import (
     CANONICAL_OPERATORS,
-    COMPOSITIONS,
     INPUT_POINTS,
     INPUT_SAMPLING_RATE_HZ,
     generate_canonical_corruption,
@@ -25,15 +23,6 @@ from util.augmentations.profile import (
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_AUGMIX_CONFIG_PATH = PROJECT_ROOT / "configs" / "train" / "augmix.yaml"
-_DEPTH2_COMPLEMENT_INDEX = tuple(
-    next(
-        index
-        for index, composition in enumerate(COMPOSITIONS)
-        if len(composition) == 3
-        and set(composition).isdisjoint(COMPOSITIONS[depth2_index])
-    )
-    for depth2_index in range(10)
-)
 
 
 @dataclass(frozen=True)
@@ -56,98 +45,6 @@ class TwoChainAugMixBatch:
     """One strong view built from two independent corruption chains."""
 
     mixed_raw: torch.Tensor
-
-
-def native500_augmix_one(clean: torch.Tensor, *, width: int, profile: AugmentationProfile,
-                        seed: int, identity: str, renderer=None) -> tuple[torch.Tensor, dict]:
-    """Image-LLM extension: no 100 Hz round trip, clean residual, or cross-record mix.
-
-    Chain/mixing RNGs are separately keyed, so chain 1 is tensor-identical in
-    the two arms and does not perturb sample order, LoRA initialization/dropout.
-    Existing canonical100 AugMix behavior remains unchanged.
-    """
-    from util.augmentations.torch_operators import apply_operator_batch_prevalidated
-    if tuple(clean.shape) != (1, 5000, 12) or width not in (1, 2):
-        raise ValueError("native500 AugMix requires one ECG and width 1 or 2")
-    if not clean.is_floating_point() or not bool(torch.isfinite(clean).all()):
-        raise ValueError("native500 AugMix requires finite physical mV")
-
-    def keyed(tag: str) -> torch.Generator:
-        raw = f"pulse-augmix-native500-v1|{seed}|{identity}|{tag}".encode()
-        return torch.Generator(device=clean.device).manual_seed(int.from_bytes(hashlib.sha256(raw).digest()[:8], "little") % (2**63 - 1))
-
-    chains, compositions = [], []
-    for chain_index in range(width):
-        generator = keyed(f"chain{chain_index}")
-        index = int(torch.randint(len(COMPOSITIONS), (1,), generator=generator, device=clean.device).item())
-        operators = COMPOSITIONS[index]
-        value = clean.clone()
-        for operator in operators:
-            value = apply_operator_batch_prevalidated(operator, value,
-                params=profile.parameters_for(operator), sampling_rate_hz=500, rng=generator)
-        chains.append(value)
-        compositions.append(list(operators))
-    weights = (torch.ones(1, device=clean.device) if width == 1 else
-               _dirichlet(1, width, alpha=0.5, device=clean.device, generator=keyed("mix"))[0])
-    # The pixel ablation changes only this order: render each independently
-    # corrupted waveform, then mix RGB, before any CLIP preprocessing/encoding.
-    values = chains if renderer is None else [renderer.render(value) for value in chains]
-    mixed = sum(weight * value for weight, value in zip(weights, values, strict=True))
-    if not bool(torch.isfinite(mixed).all()):
-        raise ValueError("nonfinite native500 AugMix result")
-    trace = {"width": width, "compositions": compositions,
-             "weights": weights.tolist(), "clean_mix": "none"}
-    if renderer is not None:
-        trace["mixing_domain"] = "rendered_rgb"
-    return mixed.contiguous(), trace
-
-
-def native500_augmix_jsd_views(clean: torch.Tensor, *, width: int,
-                              profile: AugmentationProfile, seed: int,
-                              identity: str, renderer) -> tuple[list[torch.Tensor], dict]:
-    """Original mixing topology with ECG operators: clean plus two independent mixes.
-
-    Width counts augmented chains, not the clean residual or the two JSD views.
-    Unlike the locked old path, depth is uniform 1..3 with replacement and alpha=1.
-    No global RNG, cross-record mixing, or persisted augmented images.
-    """
-    from util.augmentations.torch_operators import apply_operator_batch_prevalidated
-    if tuple(clean.shape) != (1, 5000, 12) or width not in (0, 1, 3):
-        raise ValueError("visual JSD requires native500 and clean/single/three-chain")
-    if not clean.is_floating_point() or not bool(torch.isfinite(clean).all()):
-        raise ValueError("visual JSD requires finite physical mV")
-    def keyed(tag):
-        raw = f"pulse-visual-jsd-v1|{seed}|{identity}|{tag}".encode()
-        value = int.from_bytes(hashlib.sha256(raw).digest()[:8], "little") % (2**63-1)
-        return torch.Generator(device=clean.device).manual_seed(value)
-    original = renderer.render(clean)
-    if width == 0:
-        return [original], {"width": 0, "views": [], "mixing_domain": "rendered_rgb"}
-    views, traces = [original], []
-    for view_id in range(2):
-        weights = _dirichlet(1, width, alpha=1.0, device=clean.device,
-                             generator=keyed(f"view{view_id}/weights"))[0]
-        m = torch.rand((), device=clean.device, generator=keyed(f"view{view_id}/beta"))
-        mixed = torch.zeros_like(original)
-        chains = []
-        for chain_id in range(width):
-            rng = keyed(f"view{view_id}/chain{chain_id}")
-            depth = int(torch.randint(1, 4, (), device=clean.device, generator=rng))
-            value, operators = clean.clone(), []
-            for _ in range(depth):
-                index = int(torch.randint(len(CANONICAL_OPERATORS), (), device=clean.device, generator=rng))
-                operator = CANONICAL_OPERATORS[index]
-                value = apply_operator_batch_prevalidated(operator, value,
-                    params=profile.parameters_for(operator), sampling_rate_hz=500, rng=rng)
-                operators.append(operator)
-            mixed.add_(renderer.render(value), alpha=float(weights[chain_id]))
-            chains.append(operators)
-        views.append((1-m)*original + m*mixed)
-        traces.append({"compositions": chains, "weights": weights.tolist(), "m": float(m)})
-    if any(not bool(torch.isfinite(x).all()) for x in views):
-        raise ValueError("nonfinite visual AugMix")
-    return views, {"width": width, "views": traces, "mixing_domain": "rendered_rgb",
-                   "dirichlet_alpha": 1.0, "beta_alpha": 1.0}
 
 
 @dataclass(frozen=True)
@@ -189,13 +86,8 @@ def load_augmix_config(
         raise ValueError("AugMix method keys are incomplete or unexpected")
     method_name = str(method.get("name", ""))
     mode_by_method = {
-        "jsd_width_augmix": "jsd_width_augmix",
         "two_chain_augmix_simclr": "two_chain_augmix",
         "two_chain_augmix_no_clean_mix": "two_chain_no_clean_mix",
-        "single_chain_simclr_control": "single_chain_no_mix",
-        "two_chain_augmix_complementary_no_clean_mix": (
-            "two_chain_complementary_no_clean_mix"
-        ),
     }
     if method_name not in mode_by_method:
         raise ValueError("AugMix method is unsupported")
@@ -276,10 +168,7 @@ def load_augmix_config(
         raise ValueError("main AugMix corruption depths must be [2, 3]")
     if config.canonical_operators != CANONICAL_OPERATORS:
         raise ValueError("AugMix canonical operator order is invalid")
-    if config.composition_sampling not in {
-        "uniform_over_all_depth2_depth3_compositions",
-        "complementary_depth2_depth3_operator_partition",
-    }:
+    if config.composition_sampling != "uniform_over_all_depth2_depth3_compositions":
         raise ValueError("AugMix composition sampler is unsupported")
     if (
         corruptions.get("profile_status")
@@ -288,80 +177,23 @@ def load_augmix_config(
         raise ValueError("AugMix profile status must not mislabel the custom preset")
     if bool(corruptions.get("replacement_within_chain", True)):
         raise ValueError("operators may not repeat within one corruption chain")
-    if config.stage1_mode in {
-        "jsd_width_augmix",
-        "two_chain_augmix",
-        "two_chain_no_clean_mix",
-        "two_chain_complementary_no_clean_mix",
-    }:
-        complementary = (
-            config.stage1_mode == "two_chain_complementary_no_clean_mix"
-        )
-        if bool(corruptions.get("independent_chains", False)) == complementary:
-            raise ValueError(
-                "AugMix independent-chain declaration differs from its mode"
-            )
-        if (
-            config.stage1_width not in ((1, 2, 3) if config.stage1_mode == "jsd_width_augmix" else (2,))
-            or stage1_twochain.get("view") != "one_strong_view"
-            or stage1_twochain.get("chain_sampling")
-            != (
-                "complementary_depth2_depth3_locked_rng"
-                if complementary
-                else "independent_sequential_locked_rng"
-            )
-        ):
-            raise ValueError(
-                "AugMix must use the locked two-chain strong view"
-            )
-        if config.stage1_dirichlet_alpha != 0.5:
-            raise ValueError("two-chain AugMix locks Dirichlet alpha to 0.5")
-        if config.stage1_mode in {"two_chain_augmix", "jsd_width_augmix"} and (
-            stage1_twochain.get("clean_mix") != "beta"
-            or config.stage1_beta_alpha != 0.5
-        ):
-            raise ValueError(
-                "standard two-chain AugMix locks the clean Beta mix to 0.5"
-            )
-        if config.stage1_mode in {
-            "two_chain_no_clean_mix",
-            "two_chain_complementary_no_clean_mix",
-        } and (
-            stage1_twochain.get("clean_mix") != "none"
-            or config.stage1_beta_alpha != 0.0
-        ):
-            raise ValueError(
-                "strong two-chain AugMix must disable clean Beta mixing"
-            )
-        if complementary and config.composition_sampling != (
-            "complementary_depth2_depth3_operator_partition"
-        ):
-            raise ValueError(
-                "complementary AugMix must lock the depth2/depth3 partition"
-            )
-        if not complementary and config.composition_sampling != (
-            "uniform_over_all_depth2_depth3_compositions"
-        ):
-            raise ValueError(
-                "independent AugMix must sample uniformly over depth2+3"
-            )
-        if config.stage1_simclr_temperature != 0.5:
-            raise ValueError("AugMix records the legacy temperature as 0.5")
-    else:
-        if bool(corruptions.get("independent_chains", True)):
-            raise ValueError("single-chain control may not declare two chains")
-        if (
-            config.stage1_width != 1
-            or stage1_twochain.get("view") != "one_strong_view"
-            or stage1_twochain.get("chain_sampling") != "single_locked_rng"
-            or stage1_twochain.get("clean_mix") != "none"
-            or config.stage1_dirichlet_alpha != 0.0
-            or config.stage1_beta_alpha != 0.0
-            or config.stage1_simclr_temperature != 0.5
-        ):
-            raise ValueError(
-                "single-chain control must disable Dirichlet/Beta mixing"
-            )
+    if not bool(corruptions.get("independent_chains", False)):
+        raise ValueError("AugMix requires independent corruption chains")
+    if (
+        config.stage1_width != 2
+        or stage1_twochain.get("view") != "one_strong_view"
+        or stage1_twochain.get("chain_sampling") != "independent_sequential_locked_rng"
+    ):
+        raise ValueError("AugMix must use the locked two-chain strong view")
+    if config.stage1_dirichlet_alpha != 0.5:
+        raise ValueError("two-chain AugMix locks Dirichlet alpha to 0.5")
+    expected_clean_mix = "beta" if config.stage1_mode == "two_chain_augmix" else "none"
+    expected_beta = 0.5 if config.stage1_mode == "two_chain_augmix" else 0.0
+    if (stage1_twochain.get("clean_mix") != expected_clean_mix
+            or config.stage1_beta_alpha != expected_beta):
+        raise ValueError("AugMix clean mixing differs from its locked mode")
+    if config.stage1_simclr_temperature != 0.5:
+        raise ValueError("AugMix records the legacy temperature as 0.5")
     if not config.random_namespace:
         raise ValueError("AugMix random namespace must be recorded")
     return config
@@ -454,7 +286,7 @@ def _generate_augmix_multiview(
     config: AugMixConfig | None = None,
     generator: torch.Generator,
 ) -> _AugMixMultiViewBatch:
-    """Generate a frozen two-chain or single-chain strong view.
+    """Generate a frozen two-chain strong view.
 
     The two corruption calls deliberately remain sequential.  This preserves
     the stochastic identity of the development lock; combining them into one
@@ -472,67 +304,16 @@ def _generate_augmix_multiview(
     _validate_generator(generator, clean.device)
 
     operator_params = _load_operator_profile(resolved)
-    # Width two deliberately follows the original arithmetic and RNG path below.
-    # Width one keeps the Beta clean residual; it is NOT single_chain_no_mix.
-    if resolved.stage1_mode == "jsd_width_augmix" and resolved.stage1_width != 2:
-        chains = tuple(
-            generate_canonical_corruption(
-                clean, operator_params=operator_params, generator=generator,
-                _input_prevalidated=True,
-            ).waveform_raw_100hz.to(dtype=torch.float32).contiguous()
-            for _ in range(resolved.stage1_width)
-        )
-        weights = _dirichlet(
-            len(clean), resolved.stage1_width, alpha=resolved.stage1_dirichlet_alpha,
-            device=clean.device, generator=generator,
-        )
-        mixture = weights[:, 0, None, None] * chains[0]
-        for index in range(1, len(chains)):
-            mixture = mixture + weights[:, index, None, None] * chains[index]
-        strength = _symmetric_beta(
-            len(clean), alpha=resolved.stage1_beta_alpha,
-            device=clean.device, generator=generator,
-        ).view(-1, 1, 1)
-        return _AugMixMultiViewBatch(
-            mixed_raw=((1.0-strength)*clean.to(torch.float32)+strength*mixture).contiguous(),
-            chain_raws=chains,
-        )
-    first_indices: torch.Tensor | None = None
-    second_indices: torch.Tensor | None = None
-    if resolved.stage1_mode == "two_chain_complementary_no_clean_mix":
-        batch = int(clean.shape[0])
-        first_indices = torch.randint(
-            0,
-            10,
-            (batch,),
-            device=clean.device,
-            dtype=torch.int64,
-            generator=generator,
-        )
-        complement_by_depth2 = torch.as_tensor(
-            _DEPTH2_COMPLEMENT_INDEX,
-            device=clean.device,
-            dtype=torch.int64,
-        )
-        second_indices = complement_by_depth2.index_select(0, first_indices)
     first = generate_canonical_corruption(
         clean,
         operator_params=operator_params,
         generator=generator,
-        composition_indices=first_indices,
         _input_prevalidated=True,
     )
-    if resolved.stage1_mode == "single_chain_no_mix":
-        first_raw = first.waveform_raw_100hz.to(dtype=torch.float32).contiguous()
-        return _AugMixMultiViewBatch(
-            mixed_raw=first_raw,
-            chain_raws=(first_raw,),
-        )
     second = generate_canonical_corruption(
         clean,
         operator_params=operator_params,
         generator=generator,
-        composition_indices=second_indices,
         _input_prevalidated=True,
     )
     batch = int(clean.shape[0])
@@ -547,10 +328,7 @@ def _generate_augmix_multiview(
         weights[:, 0].view(-1, 1, 1) * first.waveform_raw_100hz
         + weights[:, 1].view(-1, 1, 1) * second.waveform_raw_100hz
     )
-    if resolved.stage1_mode in {
-        "two_chain_no_clean_mix",
-        "two_chain_complementary_no_clean_mix",
-    }:
+    if resolved.stage1_mode == "two_chain_no_clean_mix":
         return _AugMixMultiViewBatch(
             mixed_raw=mixture.contiguous(),
             chain_raws=(

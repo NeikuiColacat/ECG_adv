@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections import Counter
 from dataclasses import replace
 from pathlib import Path
 
@@ -36,14 +35,24 @@ def test_launcher_and_data_ledger_share_the_yaml_mapping_loader() -> None:
 
 
 def test_gpu_online_evaluation_keeps_clean_and_split_ledger_gates(tmp_path):
-    cached = load_experiment_plan(REPO/"configs/experiments/simclr_joint/joint_s0_efficientnet1dv2_ningbo_eval.yaml",
-                                 run_dir=tmp_path/"cached")
-    online = load_experiment_plan(REPO/"configs/experiments/simclr_joint/joint_s0_efficientnet1dv2_ningbo_eval_gpu.yaml",
-                                 run_dir=tmp_path/"online")
-    assert cached.data_ledger.required_roots == ("pn2021_cache","pn2021c_cache","split_artifacts")
-    assert online.data_ledger.required_roots == ("pn2021_cache","split_artifacts")
+    experiment = _write_bundle(tmp_path, run_dir=tmp_path / "online")
+    config_path = tmp_path / "configs/train/PTBXL.yaml"
+    config = yaml.safe_load(config_path.read_text())
+    config.update(schema_version=2, runtime={"corruption_source": "online_torch_gpu_v1",
+        "corruption_microbatch_size": 32, "device": "cuda"})
+    config_path.write_text(yaml.safe_dump(config))
+    payload = yaml.safe_load(experiment.read_text())
+    payload["entrypoint"].update(name="evaluate_pn2021", arguments=[
+        "--model", "efficientnet1dv2", "--checkpoint", "/external/model.pt", "--center", "ningbo"])
+    experiment.write_text(yaml.safe_dump(payload))
+    online = load_experiment_plan(experiment)
+    assert online.data_ledger.required_roots == ("pn2021_cache", "split_artifacts")
+    del config["runtime"]
+    config_path.write_text(yaml.safe_dump(config))
+    cached = load_experiment_plan(experiment, run_dir=tmp_path / "cached")
+    assert cached.data_ledger.required_roots == ("pn2021_cache", "pn2021c_cache", "split_artifacts")
     assert online.data_ledger.expected_sha256 == cached.data_ledger.expected_sha256
-    assert not (tmp_path/"online").exists()
+    assert not (tmp_path / "online").exists()
 
 
 def _write_bundle(tmp_path: Path, *, run_dir: Path) -> Path:
@@ -130,60 +139,6 @@ def _write_bundle(tmp_path: Path, *, run_dir: Path) -> Path:
         encoding="utf-8",
     )
     return experiment_path
-
-
-@pytest.mark.parametrize("damage", [None, "source_hash", "snapshot_edit", "snapshot_missing"])
-def test_parent_bundle_seals_every_nested_draw_ledger(tmp_path, damage):
-    run_dir = tmp_path/"runs/parent"
-    experiment = _write_bundle(tmp_path/"bundle", run_dir=run_dir)
-    root = experiment.parent.parent
-    profile = root/"train/PTBXL.yaml"
-    parent_profile = yaml.safe_load(profile.read_text())
-    original_ledger = root/"data/content_ledger.jsonl"
-    child_ledgers = []
-    for draw in (1, 2):
-        data = root/f"data/draw{draw}";data.mkdir()
-        ledger = data/"content_ledger.jsonl";ledger.write_bytes(original_ledger.read_bytes())
-        (data/"data_load.yaml").write_text(yaml.safe_dump({"content_ledger":{
-            "path":f"data/draw{draw}/content_ledger.jsonl", "sha256":launcher.sha256_file(ledger)}}))
-        child_profile = yaml.safe_load(profile.read_text())
-        child_profile["references"]["data_load_config"] = f"data/draw{draw}/data_load.yaml"
-        (root/f"train/PTBXL_draw{draw}.yaml").write_text(yaml.safe_dump(child_profile))
-        child = yaml.safe_load(experiment.read_text())
-        child["entrypoint"]["config"] = f"train/PTBXL_draw{draw}.yaml"
-        child["output"]["run_dir"] = str(tmp_path/f"runs/child{draw}")
-        (root/f"experiments/draw{draw}.yaml").write_text(yaml.safe_dump(child))
-        parent_profile["references"][f"draw{draw}"] = f"experiments/draw{draw}.yaml"
-        child_ledgers.append(ledger)
-    profile.write_text(yaml.safe_dump(parent_profile))
-    plan = load_experiment_plan(experiment)
-    called = []
-    if damage == "source_hash":child_ledgers[-1].write_bytes(b"tampered")
-    def delegate(argv, log_path):
-        called.append(True)
-        copied = Path(argv[argv.index("--config-root")+1])
-        for draw in (1, 2):
-            child = load_experiment_plan(copied/f"experiments/draw{draw}.yaml", config_root=copied)
-            assert child.data_ledger.path.read_bytes() == original_ledger.read_bytes()
-        victim = copied/"data/draw2/content_ledger.jsonl"
-        if damage == "snapshot_edit":victim.write_bytes(b"tampered")
-        elif damage == "snapshot_missing":victim.unlink()
-        output = Path(argv[argv.index("--output-dir")+1]);output.mkdir(parents=True)
-        (output/"train_result.json").write_text(json.dumps({"config":{},"epochs_completed":1,
-            "model":{"name":"fixture"},"selected_epoch":1,"selected_checkpoint":{"path":"checkpoints/best.pt"}}))
-        log_path.write_text("fixture complete\n")
-        return 0
-    if damage == "source_hash":
-        with pytest.raises(ValueError,match="referenced data content ledger SHA256 mismatch"):
-            execute_experiment(plan,launcher_argv=["fixture"],delegate_runner=delegate)
-        assert not called and not run_dir.exists()
-    else:
-        code = execute_experiment(plan,launcher_argv=["fixture"],delegate_runner=delegate)
-        assert code == (0 if damage is None else 1)
-        if damage is None:
-            record=json.loads((run_dir/"run_manifest.json").read_text())
-            assert len(record["referenced_data_ledger_snapshots"]) == 3
-            assert verify_run_file_index(run_dir) == []
 
 
 def _fixture_arguments(entrypoint_name: str) -> list[str]:
@@ -721,76 +676,41 @@ def test_internal_absolute_yaml_reference_is_rejected(tmp_path: Path) -> None:
         load_experiment_plan(experiment_path)
 
 
-def test_all_tracked_experiment_jobs_resolve_with_explicit_results(
-    tmp_path: Path,
-) -> None:
-    experiment_paths = sorted((REPO / "configs" / "experiments").glob("*.yaml"))
-    assert len(experiment_paths) == 1036
-    signatures: Counter[tuple[str, tuple[str, ...]]] = Counter()
-    for experiment_path in experiment_paths:
-        plan = load_experiment_plan(
-            experiment_path,
-            run_dir=tmp_path / experiment_path.stem,
-        )
-        signatures[(plan.entrypoint_name, plan.entry_arguments[::2])] += 1
+def test_all_tracked_experiment_jobs_resolve_with_explicit_results(tmp_path: Path) -> None:
+    experiments = sorted((REPO / "configs/experiments").rglob("*.yaml"))
+    assert experiments
+    assert set(launcher.ENTRYPOINTS) == {
+        "train_ptbxl_effnet", "train_ptbxl_ecgfounder", "train_pn2021",
+        "evaluate_pn2021", "aggregate_pn2021",
+    }
+    for path in experiments:
+        plan = load_experiment_plan(path, run_dir=tmp_path / path.stem)
         assert plan.expected_result_relative_path.parts[0] in {"training", "evaluation"}
         assert plan.expected_result_type in {
-            "pulse_subset_result",
-            "pulse_profile_result",
-            "pulse_benchmark_result",
-            "pulse_training_queue_result",
-            "pulse_train_result",
-            "supervised_train_result",
-            "pn2021_train_result",
-            "evaluation_result",
-            "pn2021_matrix_result",
-            "ecg_image_evaluation_result",
-            "ecg_image_comparison_result",
+            "supervised_train_result", "pn2021_train_result", "evaluation_result", "pn2021_matrix_result",
         }
-    assert signatures == Counter(
-        {
-            ("evaluate_pulse_subset", ()): 6,
-            ("profile_pulse_adapters", ("--suite",)): 1,
-            ("profile_pulse_adapters", ("--suite", "--center")): 4,
-            ("evaluate_pulse_adapters", ()): 2,
-            ("coordinate_pulse_training", ()): 5,
-            ("train_ecg_image", ()): 39,
-            ("evaluate_ecg_image", ()): 20,
-            ("report_ecg_image", ()): 3,
-            ("train_ptbxl_effnet", ()): 1,
-            ("train_ptbxl_ecgfounder", ()): 1,
-            ("train_ptbxl_ecgfounder", ("--epochs",)): 1,
-            (
-                "train_pn2021",
-                ("--model", "--method-config", "--center", "--source-checkpoint"),
-                    ): 460,
-            (
-                "evaluate_pn2021",
-                ("--model", "--train-result", "--center", "--method-config"),
-                    ): 446,
-            (
-                "evaluate_pn2021",
-                ("--model", "--checkpoint", "--center"),
-            ): 16,
-            ("evaluate_pn2021", ("--model", "--source-registry")): 1,
-            (
-                "aggregate_pn2021",
-                ("--model", "--result", "--result", "--result", "--result"),
-                ): 30,
-        }
-    )
 
 
-def test_mainline_closure_includes_stage1_augmix_config(tmp_path: Path) -> None:
-    experiment_path = (
-        REPO
-        / "configs"
-        / "experiments"
-        / "manual_refactor_pn2021_effnet_augmix_simclr_lhat_ningbo.yaml"
-    )
-    plan = load_experiment_plan(experiment_path, run_dir=tmp_path / "mainline")
-    closure = {path.relative_to(plan.config_root).as_posix() for path, _ in plan.config_sources}
-    assert "train/augmix.yaml" in closure
+def test_mainline_closure_includes_its_method_resources(tmp_path: Path) -> None:
+    for path in sorted((REPO / "configs/experiments").rglob("*.yaml")):
+        payload = yaml.safe_load(path.read_text())
+        arguments = payload["entrypoint"].get("arguments", [])
+        if payload["entrypoint"]["name"] != "train_pn2021":
+            continue
+        method = arguments[arguments.index("--method-config") + 1]
+        if method not in {
+            "train/methods/augmix_simclr_lhat.yaml",
+            "train/methods/a1_rot4_two_chain_balanced_jsd1p5_vae_lhat_replace0p2.yaml",
+        }:
+            continue
+        plan = load_experiment_plan(path, run_dir=tmp_path / path.stem)
+        closure = {item.relative_to(plan.config_root).as_posix() for item, _ in plan.config_sources}
+        assert method in closure
+        assert "train/vae.yaml" in closure
+        if "augmix_simclr" in method:
+            assert "train/augmix.yaml" in closure
+        return
+    pytest.fail("branch has no locked mainline training experiment")
 
 
 def test_launcher_snapshots_source_registry_but_not_train_result(tmp_path: Path) -> None:

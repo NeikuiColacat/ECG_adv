@@ -1,0 +1,13 @@
+schema_version: 1
+experiment:
+  name: traditional-simclr_efficientnet_source_train
+  purpose: 'traditional-simclr: efficientnet1dv2 source_train; frozen recipe, development
+    evidence.'
+entrypoint:
+  name: train_ptbxl_effnet
+  config: train/PTBXL.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/traditional_simclr_v2/efficientnet1dv2/source_retrain
+  if_exists: error
+  delegate_output_subdir: training

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -168,7 +169,10 @@ def test_online_metadata_gate_requires_named_members_and_exact_bytes(tmp_path, d
 
 def test_cache_staging_persists_only_the_canonical_100hz_waveform(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(cache_builder.shutil, "disk_usage", lambda path:
+        SimpleNamespace(total=1024**4, free=512 * 1024**3))
     cache, _ = _contracts()
     output_dir = tmp_path / "pn2021c_100hz"
     config = {

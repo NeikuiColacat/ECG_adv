@@ -1301,7 +1301,7 @@ def test_ecgfounder_evaluation_rejects_500hz_cache(
 
 def test_default_eval_config_uses_canonical_profile_and_artifact_locks() -> None:
     assert DEFAULT_PN2021_EVAL_CONFIG == (
-        Path(__file__).resolve().parents[2] / "configs" / "eval" / "PN2021.yaml"
+        Path(__file__).resolve().parents[2] / "configs" / "eval" / "PN2021_online_gpu.yaml"
     )
     config = load_pn2021_eval_config(DEFAULT_PN2021_EVAL_CONFIG)
     assert config.payload["schema_version"] == 2

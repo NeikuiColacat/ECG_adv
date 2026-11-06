@@ -1,0 +1,22 @@
+schema_version: 1
+experiment:
+  name: traditional-simclr_ecgfounder_matrix
+  purpose: 'traditional-simclr: ecgfounder matrix; frozen recipe, development evidence.'
+entrypoint:
+  name: aggregate_pn2021
+  config: eval/PN2021_matrix.yaml
+  arguments:
+  - --model
+  - ecgfounder
+  - --result
+  - /home/linbinhao/ECG_adv_data/runs/traditional_simclr_v2/ecgfounder/ningbo_eval/evaluation/evaluation_result.json
+  - --result
+  - /home/linbinhao/ECG_adv_data/runs/traditional_simclr_v2/ecgfounder/chapman_shaoxing_eval/evaluation/evaluation_result.json
+  - --result
+  - /home/linbinhao/ECG_adv_data/runs/traditional_simclr_v2/ecgfounder/cpsc_2018_eval/evaluation/evaluation_result.json
+  - --result
+  - /home/linbinhao/ECG_adv_data/runs/traditional_simclr_v2/ecgfounder/georgia_eval/evaluation/evaluation_result.json
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/traditional_simclr_v2/ecgfounder/matrix
+  if_exists: error
+  delegate_output_subdir: evaluation

@@ -65,7 +65,7 @@ from util.random_seed import seed_process
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_PN2021_EVAL_CONFIG = PROJECT_ROOT / "configs" / "eval" / "PN2021.yaml"
+DEFAULT_PN2021_EVAL_CONFIG = PROJECT_ROOT / "configs" / "eval" / "PN2021_online_gpu.yaml"
 PN2021_MAPPING_VERSION = MAPPING_VERSION
 PN2021_MAPPING_HASH = MAPPING_HASH
 _LOCKED_INPUT_PIPELINE = {

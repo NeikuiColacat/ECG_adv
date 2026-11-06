@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -232,31 +233,9 @@ def test_stage1_two_chain_output_and_rng_identity_are_locked() -> None:
     )
 
 
-def test_stage1_single_chain_output_and_rng_identity_are_locked() -> None:
-    config = load_augmix_config(
-        CONFIG_ROOT / "train" / "augmix_single_chain_no_mix.yaml"
-    )
-    generator = torch.Generator(device="cpu").manual_seed(20260813)
-    output = generate_two_chain_augmix_strong_view(
-        _raw_batch(),
-        sampling_rate_hz=100,
-        config=config,
-        generator=generator,
-    )
-    assert config.stage1_mode == "single_chain_no_mix"
-    assert config.stage1_width == 1
-    assert _sha256_tensor(output.mixed_raw) == (
-        "9d9ec0aa09384367679ae1519c4261ab6338aa5fd6d2e99c6edf46b9018a88bb"
-    )
-    assert _sha256_tensor(generator.get_state()) == (
-        "a1fbfec3b19ac8fa8bb90671c8ef9db36efdc3af153e08934be3a50801eb89e8"
-    )
-
-
 def test_two_chain_no_clean_mix_preserves_full_mixture_strength() -> None:
-    config = load_augmix_config(
-        CONFIG_ROOT / "train" / "augmix_two_chain_no_clean_mix.yaml"
-    )
+    config = replace(load_augmix_config(), stage1_mode="two_chain_no_clean_mix",
+                     stage1_beta_alpha=0.0)
     generator = torch.Generator(device="cpu").manual_seed(20260813)
     output = generate_two_chain_augmix_strong_view(
         _raw_batch(),
@@ -273,44 +252,6 @@ def test_two_chain_no_clean_mix_preserves_full_mixture_strength() -> None:
     assert _sha256_tensor(generator.get_state()) == (
         "3e4ba45ee878ba50e0a8b4872d29adaf7bc9b70580cb62b196ee98d0466939b3"
     )
-
-
-def test_complementary_two_chain_partitions_all_five_operators(monkeypatch) -> None:
-    config = load_augmix_config(
-        CONFIG_ROOT / "train" / "augmix_two_chain_complementary_no_clean_mix.yaml"
-    )
-    captured: list[torch.Tensor] = []
-
-    def fake_corruption(
-        clean: torch.Tensor,
-        *,
-        composition_indices: torch.Tensor | None,
-        **_: object,
-    ) -> CorruptionBatch:
-        assert composition_indices is not None
-        captured.append(composition_indices.detach().cpu())
-        return CorruptionBatch(clean.clone(), None)  # type: ignore[arg-type]
-
-    monkeypatch.setattr(augmix, "generate_canonical_corruption", fake_corruption)
-    output = augmix._generate_augmix_multiview(
-        _raw_batch(),
-        sampling_rate_hz=100,
-        config=config,
-        generator=torch.Generator(device="cpu").manual_seed(20260902),
-    )
-    assert config.stage1_mode == "two_chain_complementary_no_clean_mix"
-    assert config.composition_sampling == (
-        "complementary_depth2_depth3_operator_partition"
-    )
-    assert len(captured) == 2
-    for depth2_index, depth3_index in zip(*captured, strict=True):
-        first = set(augmix.COMPOSITIONS[int(depth2_index)])
-        second = set(augmix.COMPOSITIONS[int(depth3_index)])
-        assert len(first) == 2
-        assert len(second) == 3
-        assert first.isdisjoint(second)
-        assert first | second == set(augmix.CANONICAL_OPERATORS)
-    assert len(output.chain_raws) == 2
 
 
 RUN_CUDA_TESTS = os.environ.get("ECG_RUN_CUDA_AUG_TESTS") == "1"

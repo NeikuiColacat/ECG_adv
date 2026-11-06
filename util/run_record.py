@@ -18,22 +18,12 @@ from typing import Any, Sequence
 import yaml
 
 from util.pn2021_artifact_contract import resolve_artifact_reference, sha256_file
-from util.config_bundle import resolve_config_reference
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 INDEX_EXCLUDED_FILES = frozenset({"run_manifest.json", "run_file_index.json"})
 DATA_LEDGER_SNAPSHOT = Path("manifests/data_content_ledger.jsonl")
 RESULT_REQUIRED_KEYS = {
-    "pulse_subset_result": frozenset({"artifact_type", "schema_version", "status", "records_per_center", "models", "subset_identity", "files"}),
-    "pulse_profile_result": frozenset({"artifact_type", "schema_version", "status", "partition", "formal_optimization_enabled", "files"}),
-    "pulse_benchmark_result": frozenset({"artifact_type", "schema_version", "stage", "status", "protocol", "files"}),
-    "pulse_training_queue_result": frozenset({"artifact_type", "schema_version", "status", "jobs", "admission"}),
-    "pulse_train_result": frozenset({"artifact_type", "schema_version", "status", "mode",
-        "protocol", "optimizer_steps", "files"}),
-    "ecg_image_comparison_result": frozenset({"artifact_type", "schema_version", "status", "models", "cohort", "files", "summary"}),
-    "ecg_image_evaluation_result": frozenset({"artifact_type", "schema_version", "status",
-        "model", "protocol", "prediction_artifact", "expected_predictions", "completed_predictions"}),
     "supervised_train_result": frozenset(
         {"config", "epochs_completed", "model", "selected_checkpoint", "selected_epoch"}
     ),
@@ -236,32 +226,6 @@ def _write_yaml_snapshots(
     return [metadata for _, _, metadata in prepared]
 
 
-def _prepare_referenced_ledger_snapshots(prepared_yaml, *, config_root: Path):
-    """Seal every declared ledger in a queue's copied YAML closure."""
-    ledgers = {}
-    for _, raw, metadata in prepared_yaml:
-        payload = yaml.safe_load(raw)
-        if not isinstance(payload, dict) or "content_ledger" not in payload:
-            continue
-        descriptor = payload["content_ledger"]
-        if not isinstance(descriptor, dict) or set(descriptor) != {"path", "sha256"}:
-            raise ValueError("referenced content ledger requires an exact path/SHA256 descriptor")
-        path = resolve_config_reference(descriptor["path"],
-            owner_config_path=Path(metadata["source_path"]), config_root=config_root,
-            description="referenced data content ledger", must_exist=True)
-        raw_ledger = path.read_bytes()
-        digest = hashlib.sha256(raw_ledger).hexdigest()
-        if digest != descriptor["sha256"]:
-            raise ValueError("referenced data content ledger SHA256 mismatch")
-        relative = Path("configs") / path.relative_to(config_root)
-        if relative in ledgers and ledgers[relative][0] != raw_ledger:
-            raise ValueError("referenced data ledger descriptors disagree")
-        ledgers[relative] = (raw_ledger, {"source_path": str(path),
-            "snapshot_path": relative.as_posix(), "sha256": digest,
-            "size_bytes": len(raw_ledger)})
-    return [(relative, raw, metadata) for relative, (raw, metadata) in ledgers.items()]
-
-
 def _artifact_role(relative: Path) -> str:
     value = relative.as_posix()
     if relative == DATA_LEDGER_SNAPSHOT:
@@ -461,60 +425,6 @@ def _matrix_result_summary(payload: dict[str, Any], result_path: Path) -> dict[s
 
 
 def _result_summary(payload: dict[str, Any], result_type: str, *, result_path: Path) -> dict[str, Any]:
-    if result_type == "pulse_subset_result":
-        from util.evaluation.pulse_subset import validate_result
-        _require_result_keys(payload, result_type)
-        validate_result(payload, result_path)
-        policy = {
-            1: "fixed_subset_original_single_two_no_retuning",
-            2: "fixed_subset_original_clean_single_three_no_retuning",
-        }[payload["schema_version"]]
-        return {"identity": {"subset_identity": payload["subset_identity"]}, "selection": {"policy": policy}}
-    if result_type == "pulse_profile_result":
-        from util.evaluation.pulse_profile import validate_result
-        _require_result_keys(payload, result_type)
-        validate_result(payload, result_path)
-        return {"identity": {"partition": payload["partition"]}, "selection": {"policy": "engineering_only_no_formal_optimization_enabled"}}
-    if result_type == "pulse_benchmark_result":
-        from util.pulse_benchmark_contract import validate_result
-        _require_result_keys(payload, result_type)
-        validate_result(payload, result_path)
-        return {"identity": payload["protocol"], "selection": {"policy": "fixed_paired_last_checkpoint_no_retuning"}}
-    if result_type == "pulse_training_queue_result":
-        from util.pulse_training_queue import validate_queue_result
-        _require_result_keys(payload, result_type)
-        validate_queue_result(payload, result_path)
-        policy = {
-            1: "all_eight_matched_last_checkpoints",
-            2: "all_eight_matched_last_checkpoints",
-            3: "all_44_dual_jsd_training_and_evaluation_jobs",
-            4: "width1_width3_four_centers_last_checkpoints_frozen_width2_baselines",
-            5: "all_96_paired_three_seed_simclr_training_and_evaluation_jobs",
-            6: "all_96_fixed_training_seed_three_K500_sampling_draw_jobs",
-        }[payload["schema_version"]]
-        return {"identity": payload["jobs"], "selection": {"policy": policy}}
-    if result_type == "pulse_train_result":
-        from util.pulse_training_contract import validate_result
-        _require_result_keys(payload, result_type)
-        validate_result(payload, result_path)
-        return {"identity": payload["protocol"], "selection": {"policy": "last", "optimizer_steps": payload["optimizer_steps"]}}
-    if result_type == "ecg_image_comparison_result":
-        _require_result_keys(payload, result_type)
-        _require(payload["schema_version"] == 1 and payload["status"] == "complete", "incomplete image comparison")
-        _require(len(payload["models"]) >= 2 and payload["cohort"]["records"] > 0, "empty image comparison")
-        _require({"metrics.json", "bootstrap.json", "artifact.json", "report.html"} <= set(payload["files"]), "missing comparison products")
-        for name, digest in payload["files"].items():
-            _require(Path(name).name == name, "comparison products must be direct files")
-            _require(sha256_file(result_path.parent / name) == digest, "comparison product hash mismatch")
-        return {"identity": _pick(payload, ("models", "cohort", "evidence_level")),
-                "selection": {"policy": "paired_frozen_hard_label_analysis"}}
-    if result_type == "ecg_image_evaluation_result":
-        from util.evaluation.ecg_image_artifact import validate_result
-
-        _require_result_keys(payload, result_type)
-        validate_result(payload, result_path)
-        return {"identity": _pick(payload, ("model", "protocol")),
-                "selection": {"policy": "frozen_inference_development_no_training"}}
     if result_type in {"supervised_train_result", "pn2021_train_result"}:
         return _train_result_summary(payload, result_type, result_path=result_path)
     if result_type == "pn2021_matrix_result":
@@ -663,9 +573,6 @@ class RunRecorder:
         prepared_snapshots = _prepare_yaml_snapshots(
             config_sources, config_root=config_root.resolve()
         )
-        prepared_ledgers = _prepare_referenced_ledger_snapshots(
-            prepared_snapshots, config_root=config_root.resolve()
-        )
         if data_content is not None:
             actual = {
                 item["source_path"]: item["sha256"]
@@ -686,7 +593,6 @@ class RunRecorder:
             config_snapshot.parent.mkdir(parents=True, exist_ok=True)
             config_snapshot.write_bytes(data_content.ledger_bytes)
         snapshots = _write_yaml_snapshots(output, prepared_snapshots)
-        _write_yaml_snapshots(output, prepared_ledgers)
         started = utc_now()
         manifest: dict[str, Any] = {
             "schema_version": 1,
@@ -719,8 +625,6 @@ class RunRecorder:
             "run_file_index_sha256": None,
             "error": None,
         }
-        if prepared_ledgers:
-            manifest["referenced_data_ledger_snapshots"] = [v for _, _, v in prepared_ledgers]
         card = {
             "schema_version": 1,
             "experiment_name": experiment_name,
@@ -764,8 +668,6 @@ class RunRecorder:
                 _validate_data_content_snapshot(
                     self.run_dir, self.manifest.get("data_content")
                 )
-                for ledger in self.manifest.get("referenced_data_ledger_snapshots", []):
-                    _validate_ledger_snapshot(self.run_dir / ledger["snapshot_path"], ledger["sha256"])
                 result_evidence = _expected_result_evidence(
                     self.run_dir, Path(expected["path"]), str(expected["type"])
                 )
