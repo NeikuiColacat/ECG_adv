@@ -1,0 +1,22 @@
+schema_version: 1
+experiment:
+  name: traditional-jsd_efficientnet_matrix
+  purpose: 'traditional-jsd: efficientnet1dv2 matrix; frozen recipe, development evidence.'
+entrypoint:
+  name: aggregate_pn2021
+  config: eval/PN2021_matrix.yaml
+  arguments:
+  - --model
+  - efficientnet1dv2
+  - --result
+  - /home/linbinhao/ECG_adv_data/runs/traditional_jsd_v2/efficientnet1dv2/ningbo_eval/evaluation/evaluation_result.json
+  - --result
+  - /home/linbinhao/ECG_adv_data/runs/traditional_jsd_v2/efficientnet1dv2/chapman_shaoxing_eval/evaluation/evaluation_result.json
+  - --result
+  - /home/linbinhao/ECG_adv_data/runs/traditional_jsd_v2/efficientnet1dv2/cpsc_2018_eval/evaluation/evaluation_result.json
+  - --result
+  - /home/linbinhao/ECG_adv_data/runs/traditional_jsd_v2/efficientnet1dv2/georgia_eval/evaluation/evaluation_result.json
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/traditional_jsd_v2/efficientnet1dv2/matrix
+  if_exists: error
+  delegate_output_subdir: evaluation

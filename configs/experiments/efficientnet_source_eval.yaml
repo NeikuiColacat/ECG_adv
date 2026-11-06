@@ -1,0 +1,17 @@
+schema_version: 1
+experiment:
+  name: traditional-jsd_efficientnet_source_eval
+  purpose: 'traditional-jsd: efficientnet1dv2 source_eval; frozen recipe, development
+    evidence.'
+entrypoint:
+  name: evaluate_pn2021
+  config: eval/PN2021_online_gpu.yaml
+  arguments:
+  - --model
+  - efficientnet1dv2
+  - --source-registry
+  - baselines/ptbxl_source_v1.yaml
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/traditional_jsd_v2/efficientnet1dv2/source_eval
+  if_exists: error
+  delegate_output_subdir: evaluation

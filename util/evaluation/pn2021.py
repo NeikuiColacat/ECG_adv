@@ -65,7 +65,7 @@ from util.random_seed import seed_process
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_PN2021_EVAL_CONFIG = PROJECT_ROOT / "configs" / "eval" / "PN2021.yaml"
+DEFAULT_PN2021_EVAL_CONFIG = PROJECT_ROOT / "configs" / "eval" / "PN2021_online_gpu.yaml"
 PN2021_MAPPING_VERSION = MAPPING_VERSION
 PN2021_MAPPING_HASH = MAPPING_HASH
 _LOCKED_INPUT_PIPELINE = {
@@ -419,6 +419,8 @@ def load_pn2021_eval_config(
         _locked_sha256(value, description=f"artifact_locks.{name}")
 
     runtime = _mapping(payload["runtime"], description="runtime")
+    online_keys = {"corruption_source", "corruption_microbatch_size"}
+    online = bool(online_keys & runtime.keys())
     _exact_keys(
         runtime,
         expected={
@@ -431,9 +433,14 @@ def load_pn2021_eval_config(
             "cache_mode",
             "validate_values",
             "amp",
-        },
+        } | (online_keys if online else set()),
         description="runtime",
     )
+    if online:
+        if (runtime["corruption_source"] != "online_torch_gpu_v1"
+                or type(runtime["corruption_microbatch_size"]) is not int
+                or runtime["corruption_microbatch_size"] != 32 or runtime["device"] != "cuda"):
+            raise ValueError("online GPU corruption requires CUDA and frozen 32-record stochastic microbatches")
     if runtime["device"] not in {"cpu", "cuda", "auto"}:
         raise ValueError("runtime.device must be cpu, cuda or auto")
     batch_sizes = _mapping(
@@ -443,6 +450,8 @@ def load_pn2021_eval_config(
         raise ValueError("runtime.batch_size_by_model must cover both model specs")
     for name, value in batch_sizes.items():
         _positive_int(value, description=f"runtime.batch_size_by_model.{name}")
+        if online and value % 32:
+            raise ValueError("online GPU model batches must be multiples of 32")
     configured_workers = _positive_int(
         runtime["num_workers"],
         description="runtime.num_workers",
@@ -746,13 +755,14 @@ def _loader_identity(
     selection = _mapping(
         dataset.get("selection"), description="loader.dataset.selection"
     )
-    expected_dataset = "pn2021c" if corrupted else "pn2021"
+    online = corrupted and config.payload["runtime"].get("corruption_source") == "online_torch_gpu_v1"
+    expected_dataset = "pn2021c" if corrupted and not online else "pn2021"
     if cache.get("dataset") != expected_dataset:
         raise ValueError(f"evaluation loader requires cache dataset {expected_dataset}")
     artifact_locks = config.payload["artifact_locks"]
     expected_cache_manifest_sha256 = artifact_locks[
         "corruption_cache_manifest_sha256"
-        if corrupted
+        if corrupted and not online
         else "clean_cache_manifest_sha256"
     ]
     if cache.get("manifest_sha256") != expected_cache_manifest_sha256:
@@ -772,7 +782,7 @@ def _loader_identity(
         )
     if cache.get("physical_unit") != "mV" or cache.get("normalization") != "none":
         raise ValueError("evaluation cache must contain unnormalized raw mV signals")
-    expected_view_count = 20 if corrupted else 1
+    expected_view_count = 20 if corrupted and not online else 1
     if int(cache.get("view_count", -1)) != expected_view_count:
         raise ValueError("evaluation cache view count mismatch")
     if tuple(cache.get("class_order", ())) != CLASS_ORDER:
@@ -802,7 +812,13 @@ def _loader_identity(
         or selection.get("mapping_hash") != PN2021_MAPPING_HASH
     ):
         raise ValueError("evaluation selection mapping identity mismatch")
-    if corrupted:
+    if online:
+        if view is None or dataset.get("view") is not None:
+            raise ValueError("online GPU corruption requires a clean source loader and an explicit output view")
+        identity = {**identity, "online_corruption": {"mode": "online_torch_gpu_v1",
+            "composition": view.describe(), "persistent_waveform_cache": False,
+            "stochastic_microbatch_size": 32, "cache_index_domain": "pn2021_source_cache"}}
+    elif corrupted:
         if view is None or dataset.get("view") not in {
             view.view_index,
             view.composition_id,
@@ -865,6 +881,11 @@ def _loader_identity(
             "evaluation_drop_all_zero_hash_id_set_sha256"
         ),
     }
+    if "evaluation_common_cohort" in center_entry:
+        from util.pn2021_artifact_contract import validate_common_sampling_exclusion
+        reference_identity["common_sampling_exclusion"] = validate_common_sampling_exclusion(
+            {k:v for k,v in center_entry["evaluation_common_cohort"].items() if k != "union_hash_ids"},
+            k500_hash=center_entry["k500_hash_id_set_sha256"])
     return identity, reference_identity
 
 
@@ -902,6 +923,17 @@ def _evaluate_loader(
     hash_ids: list[str] = []
     record_ids: list[str] = []
     cache_indices: list[int] = []
+    online = corrupted and config.payload["runtime"].get("corruption_source") == "online_torch_gpu_v1"
+    repaired_count = torch.zeros((), device=device, dtype=torch.int64) if online else None
+    if online:
+        if device.type != "cuda":
+            raise ValueError("online Torch corruption evaluation must run on the authorized GPU")
+        from core.corruption import generate_evaluation_corruption
+        from data_preprocess.augmentations_cache import load_cache_config, _load_cache_operator_profile
+        corruption_config = load_cache_config(config.corruption_cache_config_path)
+        operator_profile = _load_cache_operator_profile(config_path=config.corruption_cache_config_path,
+            config=corruption_config)
+        operator_params = {name: operator_profile.parameters_for(name) for name in operator_profile.canonical_order}
     with torch.inference_mode():
         for batch in loader:
             if not isinstance(batch, Mapping):
@@ -945,7 +977,7 @@ def _evaluate_loader(
             batch_records = _strings(
                 batch.get("record_id"), batch_size=batch_size, description="record_id"
             )
-            if corrupted:
+            if corrupted and not online:
                 composition_ids = _strings(
                     batch.get("composition_id"),
                     batch_size=batch_size,
@@ -958,6 +990,13 @@ def _evaluate_loader(
             if not isinstance(raw_indices, torch.Tensor) or raw_indices.numel() != batch_size:
                 raise ValueError("cache_index must contain one value per record")
             raw_100hz_btc = waveforms.to(device, non_blocking=True)
+            if online:
+                assert view is not None and repaired_count is not None
+                generated = generate_evaluation_corruption(raw_100hz_btc, hash_ids=tuple(batch_hashes),
+                    composition_index=view.view_index, operator_params=operator_params,
+                    cache_version=corruption_config["cache_version"], seed_config_path=config.random_seed_config_path)
+                raw_100hz_btc = generated.waveform_raw_100hz
+                repaired_count += generated.diagnostics.output_nonfinite_count.sum()
             inputs = prepare_canonical_model_input(
                 raw_100hz_btc,
                 spec,
@@ -981,6 +1020,8 @@ def _evaluate_loader(
             cache_indices.extend(int(value) for value in raw_indices.reshape(-1).tolist())
     if not logits_parts:
         raise ValueError("evaluation loader produced no records")
+    if repaired_count is not None and int(repaired_count.item()) != 0:
+        raise ValueError("online GPU corruption required nonfinite repairs; evaluation rejected")
     logits = np.concatenate(logits_parts, axis=0)
     targets = np.concatenate(target_parts, axis=0)
     if len(set(hash_ids)) != len(hash_ids) or len(set(record_ids)) != len(record_ids):
@@ -1005,6 +1046,8 @@ def _evaluate_loader(
         payload["excluded_reference_count"] = reference_identity[
             "excluded_reference_count"
         ]
+        if "common_sampling_exclusion" in reference_identity:
+            payload["total_excluded_count"] = reference_identity["common_sampling_exclusion"]["total_excluded_count"]
     identity = {
         "loader": loader_description,
         "reference_exclusion": reference_identity,
@@ -1138,6 +1181,39 @@ def evaluate_pn2021(
         raise ValueError("evaluation model must expose a canonical ModelSpec")
     views, corruption_identity = load_corruption_views(resolved_config)
     runtime = _runtime_values(resolved_config, spec)
+    online = resolved_config.payload["runtime"].get("corruption_source") == "online_torch_gpu_v1"
+    metadata_verification = None
+    if online:
+        from data_preprocess.data_ledger import verify_pn2021c_metadata
+        data_load = _yaml_mapping(resolved_config.data_load_config_path, description="data load")
+        descriptor = data_load["content_ledger"]
+        ledger_path = resolve_config_reference(descriptor["path"],
+            owner_config_path=resolved_config.data_load_config_path, config_root=resolved_config.config_root,
+            description="online metadata ledger", must_exist=True)
+        metadata_verification = verify_pn2021c_metadata(
+            ledger_path, corruption_identity["cache_dir"], expected_sha256=descriptor["sha256"])
+        runtime.update({key: resolved_config.payload["runtime"][key]
+            for key in ("corruption_source", "corruption_microbatch_size")})
+        from core.corruption import COMPOSITIONS
+        from data_preprocess.augmentations_cache import load_cache_config, _load_cache_operator_profile, build_compositions
+        cache_payload = load_cache_config(resolved_config.corruption_cache_config_path)
+        profile = _load_cache_operator_profile(config_path=resolved_config.corruption_cache_config_path, config=cache_payload)
+        historical = _yaml_mapping(Path(corruption_identity["cache_dir"])/"operators_config_snapshot.yaml",
+            description="historical corruption parameters")["profiles"][profile.profile_name]
+        if any(profile.parameters_for(name) != historical[name][profile.severity] for name in profile.canonical_order):
+            raise ValueError("online GPU severity parameters differ from locked historical metadata")
+        if (build_compositions(cache_payload, profile) != [v.describe() for v in views]
+                or tuple(v.operators for v in views) != COMPOSITIONS):
+            raise ValueError("GPU operator combinations differ from the locked 20 evaluation views")
+        corruption_identity = {**corruption_identity, "execution": {
+            "mode": "online_torch_gpu_v1", "persistent_waveform_cache": False,
+            "algorithm": "existing_generate_canonical_corruption_100_to_500_to_100",
+            "stochastic_microbatch_size": 32,
+            "rng_namespace": "pn2021c_evaluation_gpu_microbatch32_v1",
+            "rng_identity": "cache_version_composition_ordered_microbatch_hash_ids_excludes_model_arm_training_seed",
+            "operator_config_sha256": profile.config_sha256,
+            "seed_config_sha256": profile.random_seed_config.sha256,
+            "metadata_verification": metadata_verification}}
     selected_centers = _resolve_evaluation_centers(
         resolved_config, logical_centers
     )
@@ -1209,12 +1285,15 @@ def evaluate_pn2021(
                 "hash_id_set_sha256": identity["hash_id_set_sha256"],
                 "hash_label_set_sha256": identity["hash_label_set_sha256"],
             }
+            _atomic_json(output/"evaluation_progress.json", {"status": "running",
+                "clean_centers_completed": list(clean_centers), "corruption_views_completed": 0})
 
         corrupted_views: list[dict[str, Any]] = []
         for view in views:
             per_center: dict[str, Any] = {}
             for center in selected_centers:
-                loader = data_session.open_corrupted(center, view.composition_id)
+                loader = (data_session.open_clean(center) if online
+                    else data_session.open_corrupted(center, view.composition_id))
                 try:
                     metrics, identity = _evaluate_loader(
                         model,
@@ -1242,6 +1321,10 @@ def evaluate_pn2021(
                         "clean and PN2021-C evaluation records/labels are not identical"
                     )
                 per_center[center] = {"metrics": metrics, "identity": identity}
+                _atomic_json(output/"evaluation_progress.json", {"status": "running",
+                    "clean_centers_completed": list(clean_centers),
+                    "corruption_views_completed": len(corrupted_views),
+                    "current_composition": view.composition_id, "current_view_centers_completed": list(per_center)})
             evaluated_center_mean = mean_metric_views(
                 [per_center[center]["metrics"] for center in selected_centers]
             )
@@ -1314,6 +1397,8 @@ def evaluate_pn2021(
     }
     validate_evaluation_aggregates(result)
     _atomic_json(result_path, result)
+    _atomic_json(output/"evaluation_progress.json", {"status": "complete",
+        "clean_centers_completed": list(clean_centers), "corruption_views_completed": len(corrupted_views)})
     return result
 
 

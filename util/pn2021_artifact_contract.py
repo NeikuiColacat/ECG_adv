@@ -328,6 +328,22 @@ def _view_signatures(views: Any, centers: Sequence[str]) -> list[tuple[Any, ...]
     return signatures
 
 
+def validate_common_sampling_exclusion(value: Any, *, k500_hash: str) -> dict[str, Any]:
+    common = dict(_mapping(value, {"policy", "sampling_k500_hashes", "total_excluded_count",
+        "additional_excluded_count", "union_hash_id_set_sha256"}, "common sampling exclusion"))
+    members = common["sampling_k500_hashes"]
+    total = common["total_excluded_count"]
+    if (common["policy"] != "exclude_union_of_three_k500_draws_v1"
+            or not isinstance(members, list) or len(members) != 3 or len(set(members)) != 3
+            or k500_hash not in members or type(total) is not int or not 500 < total <= 1500
+            or type(common["additional_excluded_count"]) is not int
+            or common["additional_excluded_count"] != total-500):
+        raise ValueError("invalid common sampling exclusion")
+    for digest in [*members, common["union_hash_id_set_sha256"]]:
+        _sha(digest, "common sampling hash")
+    return common
+
+
 def _validate_center_evidence(entry: Mapping[str, Any], *, corrupted: bool) -> None:
     identity = _mapping(entry.get("identity"), None, "evaluation identity")
     metrics = _mapping(entry.get("metrics"), None, "evaluation metrics")
@@ -340,6 +356,11 @@ def _validate_center_evidence(entry: Mapping[str, Any], *, corrupted: bool) -> N
     if tuple(metrics) != aliases:
         raise ValueError("evaluation metric aliases are not canonical")
     reference = _mapping(identity.get("reference_exclusion"), None, "reference_exclusion")
+    if "common_sampling_exclusion" in reference:
+        common = validate_common_sampling_exclusion(reference["common_sampling_exclusion"],
+            k500_hash=reference["k500_hash_id_set_sha256"])
+        if any(v.get("total_excluded_count") != common["total_excluded_count"] for v in metrics.values()):
+            raise ValueError("metric omits the common sampling exclusion")
     kept, dropped = (metrics[alias] for alias in aliases)
     for metric, alias, policy in zip((kept, dropped), aliases, ("kept", "drop"), strict=True):
         record = _mapping(metric.get("record_identity"), None, f"{alias}.record_identity")

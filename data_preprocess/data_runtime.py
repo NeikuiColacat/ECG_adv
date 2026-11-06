@@ -501,6 +501,21 @@ def load_selection(
                 "PN2021 evaluation contains K500 reference leakage: "
                 f"count={len(overlap)}, preview={sorted(overlap)[:5]}"
             )
+        common = center_manifest.get("evaluation_common_cohort")
+        if common is not None:
+            from util.pn2021_artifact_contract import validate_common_sampling_exclusion
+            public = validate_common_sampling_exclusion(
+                {k:v for k,v in common.items() if k != "union_hash_ids"},
+                k500_hash=center_manifest["k500_hash_id_set_sha256"])
+            union = _load_artifact_array(artifact_base, common["union_hash_ids"],
+                description="common sampling excluded hash IDs").astype(str)
+            if (len(set(union)) != public["total_excluded_count"]
+                    or _hash_id_set_sha256(union) != public["union_hash_id_set_sha256"]
+                    or not set(reference_hashes).issubset(set(union))
+                    or set(hash_ids).intersection(union)):
+                raise ValueError("common sampling exclusion identity or leakage mismatch")
+            if partition == "evaluation_all_zero_kept" and len(hash_ids)+len(union) != center_manifest["source_record_count"]:
+                raise ValueError("common evaluation is not the exact union complement")
     actual_hash_set = _hash_id_set_sha256(hash_ids)
     if not expected_hash_set or actual_hash_set != expected_hash_set:
         raise ValueError(

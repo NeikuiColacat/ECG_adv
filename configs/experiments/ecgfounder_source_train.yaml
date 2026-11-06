@@ -1,0 +1,12 @@
+schema_version: 1
+experiment:
+  name: traditional-jsd_ecgfounder_source_train
+  purpose: 'traditional-jsd: ecgfounder source_train; frozen recipe, development evidence.'
+entrypoint:
+  name: train_ptbxl_ecgfounder
+  config: train/PTBXL.yaml
+  arguments: []
+output:
+  run_dir: /home/linbinhao/ECG_adv_data/runs/traditional_jsd_v2/ecgfounder/source_retrain
+  if_exists: error
+  delegate_output_subdir: training

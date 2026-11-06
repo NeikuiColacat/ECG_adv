@@ -1,65 +1,34 @@
 ---
 name: ecg-code-simplifier
-description: Audit or simplify ECG_manual_refactor code for human review while preserving numerical behavior, data identity, reproducibility and shared-server safety.
+description: Simplify the selected traditional ECG checkout while preserving scientific and runtime contracts.
 ---
 
 # ECG Code Simplifier
 
-Reduce cognitive load and production complexity, not merely physical line count.
-Follow `AGENTS.md` and the relevant keep-manifest entries.
+Read AGENTS.md and docs/METHOD.md. Inspect the requested slice, callers, YAML,
+entrypoints and tests before changing ownership or deleting files.
+Check live-job source locks; even an import removal can invalidate a run hash.
 
-## Scope
+Prefer existing owners, direct functions and explicit loops. Remove dead wrappers,
+duplicate work and unused branches after checking string-based consumers and
+serialized artifacts. Moving complexity to a new module is not simplification.
+Small duplication may cost less than a new shared abstraction.
 
-- Default to the requested changed-code slice: inspect diff, callers and tests;
-  use adjacent files only to establish a clearer owner.
-- A repository-wide audit is read-only unless implementation is also requested.
-  Report larger opportunities instead of expanding the patch silently.
-- Check live-job and historical replay source locks before editing. Even an
-  unused-import removal can break a source hash; never bypass the guard.
+Preserve units, shapes, leads, labels, K500 exclusion, mapping, metric identity,
+config/seed/checkpoint provenance, finite values and gradient boundaries.
+Preserve freeze/eval state, BatchNorm, RNG and optimizer/exposure budgets.
+Initializer removal can consume different RNG; extra forwards can change BN.
+Do not substitute JSON writers without checking atomicity and failure behavior.
+Keep one owner for every required validation and maintain focused tests.
 
-## Simplify in This Order
+User-authorized simplification may remove redundant tracked files after recording
+the exact plan. Never infer authority to delete external results or worktrees.
+Keep historical recovery in docs/EVIDENCE.md; historical code is not a dependency.
+Use apply_patch and preserve unrelated dirty work.
 
-1. Reuse a retained owner; remove contract-free forwarding and one-use machinery.
-2. Consolidate genuinely equivalent parsing/validation/transformations.
-3. Prefer direct functions and explicit loops over deeply nested expressions,
-   generic engines or compressed one-line code.
-4. Remove dead branches only after checking all consumers below.
-
-Moving the same complexity to a new module is not a simplification. Small
-duplication may be cheaper than introducing dependency coupling.
-
-## Before Merging or Removing
-
-Search direct calls/imports, strings/YAML/registries/entrypoints, tests/mocks,
-serialization/reflection and generated consumers. Distinguish historical-only
-provenance from active replay code. No direct caller does not prove dead code.
-
-- `SAFE`: local, behavior-equivalent and covered.
-- `CAREFUL`: shared owner, config/schema or numerics; needs equivalence tests.
-- `RISKY`: data/metric/model or launch/evidence identity; report first unless
-  explicitly scoped. File deletion still follows the manifest approval gate.
-
-## Preserve Non-Obvious Behavior
-
-- Units, shape, rate, leads, labels, K500/ref-exclusion and mapping/metric identity.
-- Config/seed/checkpoint/artifact provenance, finite values and gradient boundaries.
-- Freeze/eval state, BatchNorm and RNG. Unused module initialization can consume
-  RNG; an apparently redundant forward can change BN or the exposure budget.
-- JSON writers are not interchangeable without checking serialization, failure
-  cleanup, atomic replacement and fsync guarantees.
-- Resource controls, output isolation and Git artifact guards.
-
-Remove duplicate defensive checks only when one canonical owner enforces the
-same contract and tests prove equivalence.
-
-## Verify and Report
-
-Run focused tests; for training-loop/numerical changes compare tiny old/new
-parameters, optimizer/scheduler state, BN, RNG, view order and artifact identity.
-Run the retained CPU suite for core/data/evaluation/launcher changes, and
-`git diff --check`. Docs-only edits need scope/link/diff checks, not training.
-Real-model/GPU parity requires a scoped, resource-checked run when applicable.
-
-Report the reviewed slice, net complexity/line changes, verification and deferred
-risks. Do not stage, commit, delete experiments or launch heavy jobs without
-the corresponding authorization.
+For source/config edits run relevant focused checks and the retained CPU suite.
+For numerical changes compare tiny old/new parameters, optimizer/scheduler state,
+BN, RNG and view ordering; test real models/GPU only within authorized scope.
+Docs-only edits need links, scope and git diff --check.
+Report the removed complexity, validation and remaining limits.
+Staging, committing, pushing and heavy jobs require their own applicable scope.

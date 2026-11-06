@@ -14,7 +14,6 @@ import torch.nn as nn
 from core.augmix import (
     AugMixConfig,
     _generate_augmix_multiview,
-    generate_two_chain_augmix_strong_view,
     load_augmix_config,
 )
 from core.corruption import generate_canonical_corruption
@@ -139,28 +138,6 @@ def _quality_mask(
             failures.append("severe_amplitude")
         reasons.append("+".join(failures))
     return accepted, tuple(reasons)
-
-
-def _lhat_training_selection_mask(
-    config: LHATConfig,
-    attack_diagnostics: Any,
-    contract_diagnostics: Any,
-) -> torch.Tensor:
-    """Select contracted views using only train-time attack evidence."""
-
-    mode = config.training_selection_mode
-    if mode == "all_contract_accepted":
-        return torch.ones_like(contract_diagnostics.accepted)
-    if mode == "minimum_bce_gain":
-        return contract_diagnostics.bce_gain >= float(
-            config.minimum_training_bce_gain
-        )
-    if mode == "raw_attack_success":
-        return (
-            attack_diagnostics.positive_hide_numerator
-            + attack_diagnostics.negative_add_numerator
-        ) > 0
-    raise RuntimeError(f"unsupported LHAT training selection: {mode!r}")
 
 
 def _scoped_lhat_diagnostics(
@@ -324,20 +301,9 @@ class MethodViewRuntime:
                 raise ValueError(
                     "recipe and LHAT attack-then-contract versions differ"
                 )
-            expected_training_selection = (
-                auxiliary_contract.get("training_selection")
-                if isinstance(auxiliary_contract, Mapping)
-                else None
-            )
-            if isinstance(expected_training_selection, Mapping) and (
-                self.lhat_config.training_selection_mode
-                != expected_training_selection.get("mode")
-                or self.lhat_config.minimum_training_bce_gain
-                != float(expected_training_selection.get("minimum_bce_gain"))
-            ):
-                raise ValueError(
-                    "recipe and LHAT training-selection contracts differ"
-                )
+            if (not self.lhat_config.attack_then_contract.enabled
+                    or self.lhat_config.training_selection_mode != "all_contract_accepted"):
+                raise ValueError("retained LHAT requires contraction and all-contract-accepted selection")
         self.augmix_config: AugMixConfig | None = None
         if "augmix_config" in self._resource_paths:
             self.augmix_config = load_augmix_config(
@@ -553,48 +519,6 @@ class MethodViewRuntime:
             diagnostics=diagnostics,
         )
 
-    def _augmix_strong_view(
-        self,
-        inputs: tuple[WaveformView, ...],
-        *,
-        diagnostics: dict[str, Any],
-        rng_namespace: str,
-        base_seed: int,
-        rng_identity: tuple[str, ...],
-    ) -> WaveformView:
-        if len(inputs) != 1 or not isinstance(inputs[0], WaveformView):
-            raise TypeError("AugMix requires one clean WaveformView")
-        if self.augmix_config is None:
-            raise RuntimeError("AugMix view has no resolved AugMix config")
-        source = inputs[0]
-        generator = self._augmix_generator(
-            source=source,
-            diagnostics=diagnostics,
-            rng_namespace=rng_namespace,
-            base_seed=base_seed,
-            rng_identity=rng_identity,
-        )
-        mixed = generate_two_chain_augmix_strong_view(
-            source.waveform,
-            sampling_rate_hz=source.sampling_rate_hz,
-            config=self.augmix_config,
-            generator=generator,
-        ).mixed_raw
-        finite = torch.isfinite(mixed).flatten(1).all(dim=1)
-        _record_diagnostic(
-            diagnostics,
-            "augmix",
-            "output_nonfinite_count",
-            (~finite).float().sum().detach(),
-        )
-        return WaveformView(
-            name="augmix",
-            waveform=mixed,
-            labels=source.labels,
-            sample_ids=source.sample_ids,
-            valid_mask=source.valid_mask & finite,
-            metadata={"diagnostic_weight": source.batch_size},
-        )
 
     def _augmix_consistency_views(
         self,
@@ -749,70 +673,37 @@ class MethodViewRuntime:
                 model_name=self.model_name,
                 config=self.lhat_config,
             )
-            contract_result = None
-            if self.lhat_config.attack_then_contract.enabled:
-                contract_result = contract_lhat_adversarial(
-                    classifier=classifier,
-                    decoder=self.decoder,
-                    attack=attack,
-                    raw_clean_waveform=source.waveform.index_select(
-                        0, candidate_index
-                    ),
-                    targets=candidate_targets,
-                    standardizer=pool.standardizer,
-                    model_name=self.model_name,
-                    minimum_std_mV=self.minimum_std_mV,
-                    maximum_abs_mV=self.maximum_abs_mV,
-                    config=self.lhat_config,
-                )
-                training_waveform = contract_result.waveform_raw
-            else:
-                training_waveform = attack.waveform_raw
+            contract_result = contract_lhat_adversarial(
+                classifier=classifier,
+                decoder=self.decoder,
+                attack=attack,
+                raw_clean_waveform=source.waveform.index_select(
+                    0, candidate_index
+                ),
+                targets=candidate_targets,
+                standardizer=pool.standardizer,
+                model_name=self.model_name,
+                minimum_std_mV=self.minimum_std_mV,
+                maximum_abs_mV=self.maximum_abs_mV,
+                config=self.lhat_config,
+            )
+            training_waveform = contract_result.waveform_raw
             accepted_local, reasons = _quality_mask(
                 training_waveform,
                 minimum_std_mV=self.minimum_std_mV,
                 maximum_abs_mV=self.maximum_abs_mV,
             )
-            selection_mode = self.lhat_config.training_selection_mode
-            if contract_result is None:
-                contract_accepted = torch.ones_like(accepted_local)
-                selection_accepted = torch.ones_like(accepted_local)
-            else:
-                contract_accepted = contract_result.valid_mask
-                selection_accepted = _lhat_training_selection_mask(
-                    self.lhat_config,
-                    attack.diagnostics,
-                    contract_result.diagnostics,
-                )
+            contract_accepted = contract_result.valid_mask
+            selection_accepted = torch.ones_like(contract_accepted)
             accepted_local &= contract_accepted & selection_accepted
-            if contract_result is not None:
-                contract_acceptance = (
-                    contract_result.valid_mask.detach().cpu().tolist()
-                )
-                selection_acceptance = selection_accepted.detach().cpu().tolist()
-                selection_rejection_reason = (
-                    "insufficient_bce_gain"
-                    if selection_mode == "minimum_bce_gain"
-                    else "raw_attack_not_successful"
-                )
-                reasons = tuple(
-                    (
-                        (
-                            "contract_rejected"
-                            if reason == "accepted"
-                            else f"contract_rejected+{reason}"
-                        )
-                        if not bool(contract_acceptance[index])
-                        else (
-                            selection_rejection_reason
-                            if reason == "accepted"
-                            else f"{selection_rejection_reason}+{reason}"
-                        )
-                        if not bool(selection_acceptance[index])
-                        else reason
-                    )
-                    for index, reason in enumerate(reasons)
-                )
+            contract_acceptance = (
+                contract_result.valid_mask.detach().cpu().tolist()
+            )
+            reasons = tuple(
+                ("contract_rejected" if reason == "accepted" else f"contract_rejected+{reason}")
+                if not bool(contract_acceptance[index]) else reason
+                for index, reason in enumerate(reasons)
+            )
             _record_diagnostic(
                 diagnostics,
                 "lhat",
@@ -830,21 +721,16 @@ class MethodViewRuntime:
                 "final_hull_weights": attack.weights.detach().contiguous(),
                 "quality_accepted_mask": accepted_local.detach().contiguous(),
             }
-            if selection_mode == "raw_attack_success":
-                stochastic_trace["training_selection_accepted_mask"] = (
-                    selection_accepted.detach().contiguous()
-                )
-            if contract_result is not None:
-                stochastic_trace.update(
-                    {
-                        "contract_accepted_mask": (
-                            contract_result.valid_mask.detach().contiguous()
-                        ),
-                        "contract_selected_t": (
-                            contract_result.diagnostics.selected_t.detach().contiguous()
-                        ),
-                    }
-                )
+            stochastic_trace.update(
+                {
+                    "contract_accepted_mask": (
+                        contract_result.valid_mask.detach().contiguous()
+                    ),
+                    "contract_selected_t": (
+                        contract_result.diagnostics.selected_t.detach().contiguous()
+                    ),
+                }
+            )
             # ``_quality_mask`` already materialized one compact per-record
             # summary to construct the audit reasons. Reuse that host result
             # instead of synchronizing the accepted mask a second time.
@@ -872,11 +758,7 @@ class MethodViewRuntime:
             diagnostic_samples, diagnostic_means, local_diagnostic_weights = (
                 _scoped_lhat_diagnostics(
                     attack.diagnostics,
-                    (
-                        None
-                        if contract_result is None
-                        else contract_result.diagnostics
-                    ),
+                    contract_result.diagnostics,
                     accepted_local,
                     len(accepted_positions),
                 )
@@ -985,24 +867,13 @@ class MethodViewRuntime:
 
         generated: dict[str, WaveformView] = {BASE_VIEW_NAME: clean}
         if "augmix_view" in required_outputs:
-            if any(name.startswith("augmix_chain") for name in required_outputs):
-                generated.update(
-                    self._augmix_consistency_views(
-                        (clean,),
-                        diagnostics=diagnostics,
-                        rng_namespace=rng_namespace("corruption_rng"),
-                        base_seed=base_seed,
-                        rng_identity=identity,
-                    )
-                )
-            else:
-                generated["augmix_view"] = self._augmix_strong_view(
-                    (clean,),
-                    diagnostics=diagnostics,
+            generated.update(
+                self._augmix_consistency_views(
+                    (clean,), diagnostics=diagnostics,
                     rng_namespace=rng_namespace("corruption_rng"),
-                    base_seed=base_seed,
-                    rng_identity=identity,
+                    base_seed=base_seed, rng_identity=identity,
                 )
+            )
         if "corrupted_view" in required_outputs:
             generated["corrupted_view"] = self._canonical_corruption(
                 (clean,),
@@ -1016,7 +887,6 @@ class MethodViewRuntime:
         if "lhat_view" in required_outputs:
             if self.recipe.auxiliary_variant not in {
                 AuxiliaryVariant.CONTRACTED_LHAT,
-                AuxiliaryVariant.RAW_LHAT,
             }:
                 raise RuntimeError("only a finite LHAT recipe can emit lhat_view")
             generated["lhat_view"] = self._lhat_attack(

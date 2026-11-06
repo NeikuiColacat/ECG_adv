@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -232,31 +233,9 @@ def test_stage1_two_chain_output_and_rng_identity_are_locked() -> None:
     )
 
 
-def test_stage1_single_chain_output_and_rng_identity_are_locked() -> None:
-    config = load_augmix_config(
-        CONFIG_ROOT / "train" / "augmix_single_chain_no_mix.yaml"
-    )
-    generator = torch.Generator(device="cpu").manual_seed(20260813)
-    output = generate_two_chain_augmix_strong_view(
-        _raw_batch(),
-        sampling_rate_hz=100,
-        config=config,
-        generator=generator,
-    )
-    assert config.stage1_mode == "single_chain_no_mix"
-    assert config.stage1_width == 1
-    assert _sha256_tensor(output.mixed_raw) == (
-        "9d9ec0aa09384367679ae1519c4261ab6338aa5fd6d2e99c6edf46b9018a88bb"
-    )
-    assert _sha256_tensor(generator.get_state()) == (
-        "a1fbfec3b19ac8fa8bb90671c8ef9db36efdc3af153e08934be3a50801eb89e8"
-    )
-
-
 def test_two_chain_no_clean_mix_preserves_full_mixture_strength() -> None:
-    config = load_augmix_config(
-        CONFIG_ROOT / "train" / "augmix_two_chain_no_clean_mix.yaml"
-    )
+    config = replace(load_augmix_config(), stage1_mode="two_chain_no_clean_mix",
+                     stage1_beta_alpha=0.0)
     generator = torch.Generator(device="cpu").manual_seed(20260813)
     output = generate_two_chain_augmix_strong_view(
         _raw_batch(),
@@ -275,45 +254,49 @@ def test_two_chain_no_clean_mix_preserves_full_mixture_strength() -> None:
     )
 
 
-def test_complementary_two_chain_partitions_all_five_operators(monkeypatch) -> None:
-    config = load_augmix_config(
-        CONFIG_ROOT / "train" / "augmix_two_chain_complementary_no_clean_mix.yaml"
-    )
-    captured: list[torch.Tensor] = []
-
-    def fake_corruption(
-        clean: torch.Tensor,
-        *,
-        composition_indices: torch.Tensor | None,
-        **_: object,
-    ) -> CorruptionBatch:
-        assert composition_indices is not None
-        captured.append(composition_indices.detach().cpu())
-        return CorruptionBatch(clean.clone(), None)  # type: ignore[arg-type]
-
-    monkeypatch.setattr(augmix, "generate_canonical_corruption", fake_corruption)
-    output = augmix._generate_augmix_multiview(
-        _raw_batch(),
-        sampling_rate_hz=100,
-        config=config,
-        generator=torch.Generator(device="cpu").manual_seed(20260902),
-    )
-    assert config.stage1_mode == "two_chain_complementary_no_clean_mix"
-    assert config.composition_sampling == (
-        "complementary_depth2_depth3_operator_partition"
-    )
-    assert len(captured) == 2
-    for depth2_index, depth3_index in zip(*captured, strict=True):
-        first = set(augmix.COMPOSITIONS[int(depth2_index)])
-        second = set(augmix.COMPOSITIONS[int(depth3_index)])
-        assert len(first) == 2
-        assert len(second) == 3
-        assert first.isdisjoint(second)
-        assert first | second == set(augmix.CANONICAL_OPERATORS)
-    assert len(output.chain_raws) == 2
-
-
 RUN_CUDA_TESTS = os.environ.get("ECG_RUN_CUDA_AUG_TESTS") == "1"
+
+
+@pytest.mark.parametrize("composition", [0, 19])
+def test_gpu_online_evaluation_stream_uses_fixed_record_microbatches(composition):
+    from core.corruption import generate_evaluation_corruption
+    raw = torch.linspace(-1, 1, 65*1000*12).reshape(65,1000,12)
+    original = raw.clone()
+    hashes = tuple(f"record-{i}" for i in range(65))
+    profile = load_augmix_config().operator_profile_config
+    kwargs = dict(composition_index=composition,
+        operator_params={name:profile.parameters_for(name) for name in profile.canonical_order},
+        cache_version="pn2021c_paper_anchored_s5_depth23_5center_dualrate_v1",
+        seed_config_path=CONFIG_ROOT/"random_seed.yaml")
+    before = torch.get_rng_state().clone()
+    full = generate_evaluation_corruption(raw, hash_ids=hashes, **kwargs)
+    split = torch.cat([generate_evaluation_corruption(raw[a:b], hash_ids=hashes[a:b], **kwargs).waveform_raw_100hz
+                       for a,b in ((0,32),(32,65))])
+    assert torch.equal(full.waveform_raw_100hz, split)
+    assert torch.equal(before, torch.get_rng_state()) and torch.equal(raw, original)
+    assert not full.diagnostics.output_nonfinite_count.any()
+    changed = generate_evaluation_corruption(raw[:32], hash_ids=tuple(f"other-{i}" for i in range(32)), **kwargs)
+    assert not torch.equal(full.waveform_raw_100hz[:32], changed.waveform_raw_100hz)
+
+
+@pytest.mark.skipif(not RUN_CUDA_TESTS or not torch.cuda.is_available(),
+    reason="select a free GPU and enable ECG_RUN_CUDA_AUG_TESTS")
+def test_gpu_online_evaluation_pairs_founder128_and_effnet512_batches():
+    from core.corruption import generate_evaluation_corruption
+    raw = torch.linspace(-1, 1, 512*1000*12, device="cuda:0").reshape(512,1000,12)
+    hashes = tuple(f"record-{i}" for i in range(512))
+    profile = load_augmix_config().operator_profile_config
+    kwargs = dict(composition_index=19,
+        operator_params={name:profile.parameters_for(name) for name in profile.canonical_order},
+        cache_version="pn2021c_paper_anchored_s5_depth23_5center_dualrate_v1",
+        seed_config_path=CONFIG_ROOT/"random_seed.yaml")
+    before = torch.cuda.get_rng_state().clone()
+    full = generate_evaluation_corruption(raw, hash_ids=hashes, **kwargs)
+    split = torch.cat([generate_evaluation_corruption(raw[a:a+128], hash_ids=hashes[a:a+128], **kwargs).waveform_raw_100hz
+                       for a in range(0,512,128)])
+    assert torch.equal(full.waveform_raw_100hz, split)
+    assert full.waveform_raw_100hz.is_cuda and not full.diagnostics.output_nonfinite_count.any()
+    assert torch.equal(before, torch.cuda.get_rng_state())
 
 
 @pytest.mark.skipif(
