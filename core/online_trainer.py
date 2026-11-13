@@ -75,6 +75,7 @@ ONLINE_PARAMETER_NAMES = frozenset(
         "stage1_learning_rate",
         "stage1_weight_decay",
         "stage1_gradient_clip_norm",
+        "stage1_jsd_weight",
     }
 )
 FAMILY_BALANCED_BN_POLICY = "family_loss_weighted_once_per_base_batch"
@@ -555,6 +556,10 @@ def load_online_train_config(
                 profile["stage1_gradient_clip_norm"],
                 f"{model_name}.stage1_gradient_clip_norm",
             )
+        if "stage1_jsd_weight" in profile:
+            if not present_stage1_keys:
+                raise ValueError(f"{model_name}.stage1_jsd_weight requires Stage-1 parameters")
+            _nonnegative_number(profile["stage1_jsd_weight"], f"{model_name}.stage1_jsd_weight")
     amp = _mapping(training.get("amp"), "training.amp")
     if not isinstance(amp.get("enabled"), bool) or amp.get("dtype") not in {
         "bfloat16",
@@ -620,6 +625,7 @@ def resolve_online_training_parameters(
         "stage1_learning_rate": profile.get("stage1_learning_rate", 0.0),
         "stage1_weight_decay": profile.get("stage1_weight_decay", 0.0),
         "stage1_gradient_clip_norm": profile.get("stage1_gradient_clip_norm", 0.0),
+        "stage1_jsd_weight": profile.get("stage1_jsd_weight", 0.0),
     }
     resolved.update(supplied)
     for key in ("epochs", "scheduler_horizon_epochs", "batch_size"):
@@ -652,6 +658,9 @@ def resolve_online_training_parameters(
         resolved["stage1_weight_decay"] = _nonnegative_number(
             resolved["stage1_weight_decay"], "resolved stage1_weight_decay"
         )
+    resolved["stage1_jsd_weight"] = _nonnegative_number(
+        resolved["stage1_jsd_weight"], "resolved stage1_jsd_weight"
+    )
     if not isinstance(resolved["amp_enabled"], bool):
         raise ValueError("resolved amp_enabled must be boolean")
     if resolved["amp_dtype"] not in {"bfloat16", "float16"}:
@@ -1642,8 +1651,12 @@ def _run_augmix_stage1(
 
     if recipe.kind is not RecipeKind.TWO_STAGE_AUGMIX_LHAT:
         raise ValueError("Stage-1 belongs only to the two-stage recipe")
-    if recipe.stage1_objective is not Stage1Objective.SIMCLR:
-        raise ValueError("two-stage recipe requires the locked SimCLR objective")
+    if recipe.stage1_objective not in {Stage1Objective.SIMCLR, Stage1Objective.SIMCLR_PLUS_JSD}:
+        raise ValueError("two-stage recipe requires a SimCLR objective")
+    simclr_jsd = recipe.stage1_objective is Stage1Objective.SIMCLR_PLUS_JSD
+    jsd_weight = float(resolved.get("stage1_jsd_weight", 0.0))
+    if not simclr_jsd and jsd_weight != 0.0:
+        raise ValueError("stage1_jsd_weight is only valid for SimCLR plus JSD")
     temperature = augmix_config.stage1_simclr_temperature
     teacher_cache = _cache_k500_logits(
         model,
@@ -1714,6 +1727,21 @@ def _run_augmix_stage1(
                 config=augmix_config,
                 generator=generator,
             ).mixed_raw
+            if simclr_jsd:
+                second_generator = make_torch_generator(
+                    device, augmix_config.random_namespace,
+                    recipe.comparison_rng_identity, center, spec.name,
+                    f"base_seed={base_seed}", f"stage1_step={step}",
+                    "jsd_second_view",
+                    config_path=augmix_config.random_seed_config_path,
+                )
+                second = generate_two_chain_augmix_strong_view(
+                    raw, sampling_rate_hz=100, config=augmix_config,
+                    generator=second_generator,
+                ).mixed_raw
+                second_input = prepare_canonical_model_input(
+                    second, spec, epsilon=normalization_epsilon,
+                )
             clean_input = prepare_canonical_model_input(
                 raw,
                 spec,
@@ -1748,8 +1776,15 @@ def _run_augmix_stage1(
                     projector(strong_features),
                     temperature=temperature,
                 )
-                total = simclr + 5.0 * anchor
-                primary_losses = (simclr, torch.zeros_like(simclr))
+                if simclr_jsd:
+                    from core.consistency import bernoulli_jsd
+                    second_logits, _ = _forward_logits_and_features(model, second_input, spec)
+                    jsd = bernoulli_jsd([clean_logits, strong_logits, second_logits])
+                    total = simclr + jsd_weight * jsd + 5.0 * anchor
+                    primary_losses = (simclr, jsd)
+                else:
+                    total = simclr + 5.0 * anchor
+                    primary_losses = (simclr, torch.zeros_like(simclr))
             if not bool(torch.isfinite(total).item()):
                 raise FloatingPointError("Stage-1 loss became NaN or Inf")
             total.backward()
@@ -1787,6 +1822,18 @@ def _run_augmix_stage1(
         "mean_total_loss": float(means[0]),
         "mean_logit_anchor_loss": float(means[3]),
     }
+    if simclr_jsd:
+        return {
+            **common_summary,
+            "objective": "simclr_plus_jsd",
+            "simclr_temperature": temperature,
+            "jsd_weight": jsd_weight,
+            "mean_simclr_loss": float(means[1]),
+            "mean_bernoulli_jsd": float(means[2]),
+            "classifier_head_trainable": False,
+            "projector_used": True,
+            "model_views_per_record": 3,
+        }
     return {
         **common_summary,
         "simclr_temperature": temperature,
@@ -1850,6 +1897,8 @@ def train_online_model(
     resolved, supplied = resolve_online_training_parameters(
         config, spec.name, training_parameters
     )
+    if recipe.stage1_objective is not Stage1Objective.SIMCLR_PLUS_JSD and resolved["stage1_jsd_weight"] != 0.0:
+        raise ValueError("stage1_jsd_weight is only valid for SimCLR plus JSD")
     configured_batch = getattr(train_dataloader, "batch_size", None)
     if configured_batch is not None and int(configured_batch) != int(
         resolved["batch_size"]

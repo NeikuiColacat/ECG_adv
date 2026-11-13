@@ -53,6 +53,7 @@ class AuxiliaryVariant(str, Enum):
 
 class Stage1Objective(str, Enum):
     SIMCLR = "simclr"
+    SIMCLR_PLUS_JSD = "simclr_plus_jsd"
     NOT_APPLICABLE = "not_applicable"
 
 
@@ -219,6 +220,16 @@ _DEFINITIONS: Mapping[str, _RecipeDefinition] = MappingProxyType({
         output_names=('clean_view', 'corrupted_view'),
         stage1_objective=Stage1Objective.SIMCLR,
     ),
+    "augmix_simclr_jsd_matched_no_vae": _RecipeDefinition(
+        kind=RecipeKind.TWO_STAGE_AUGMIX_LHAT,
+        auxiliary_variant=AuxiliaryVariant.MATCHED_NO_VAE,
+        scientific_arm="augmix_simclr_jsd_matched_no_vae",
+        status="prospective_simclr_jsd_development",
+        resource_names=frozenset(('augmix_config', 'corruption_rng', 'operator_profile')),
+        comparison_rng_identity="augmix_simclr_lhat",
+        output_names=('clean_view', 'corrupted_view'),
+        stage1_objective=Stage1Objective.SIMCLR_PLUS_JSD,
+    ),
 })
 
 
@@ -301,6 +312,18 @@ _SCIENTIFIC_CONTRACTS = {
     },
     "augmix_simclr_matched_no_vae": {
         **_DIRECTION_CONTRACT,
+    },
+    "augmix_simclr_jsd_matched_no_vae": {
+        **_DIRECTION_CONTRACT,
+        "stages": ['augmix_simclr_plus_bernoulli_jsd', 'supervised_adaptation'],
+        "stage1": {
+            **_DIRECTION_CONTRACT["stage1"],
+            "objective": "simclr_plus_jsd",
+            "jsd_weight_source": "training.model_profiles.<model>.stage1_jsd_weight",
+            "jsd_reduction": "mean_over_three_views_records_five_independent_binary_labels",
+            "model_views_per_record": 3,
+            "control_keeps_all_three_forward_passes": True,
+        },
     },
 }
 
