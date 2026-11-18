@@ -2,6 +2,8 @@
 
 import copy
 import hashlib
+import json
+import shutil
 from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,9 +11,11 @@ from types import SimpleNamespace
 import pytest
 import torch
 import torch.nn.functional as F
+import yaml
 
 import core.online_trainer as trainer
-from core.methods.registry import load_recipe_spec
+from boot_scripts import train_pn2021
+from core.methods.registry import Stage1Objective, load_recipe_spec
 from core.methods.contracts import ViewBundle, WaveformView
 from core.methods.runtime import build_method_runtime, _derive_seed
 from models.contracts import EFFICIENTNET1DV2_SPEC
@@ -64,6 +68,40 @@ def test_online_parameter_overrides_preserve_scheduler_horizon(name):
     assert supplied == {"epochs": 2}
     with pytest.raises(ValueError, match="unknown online training parameters"):
         trainer.resolve_online_training_parameters(config, "efficientnet1dv2", {"typo": 1})
+
+
+def test_jsd_weight_matches_recipe_in_dry_run_and_training(tmp_path, capsys):
+    root = tmp_path / "configs"
+    shutil.copytree(CONFIG_ROOT, root)
+    profile_path = root / "train/PN2021.yaml"
+    profile = yaml.safe_load(profile_path.read_text())
+    profile["training"]["model_profiles"]["efficientnet1dv2"]["stage1_jsd_weight"] = 4.0
+    profile_path.write_text(yaml.safe_dump(profile))
+    args = [
+        "--dry-run", "--config", str(profile_path), "--config-root", str(root),
+        "--center", "ningbo", "--model", "efficientnet1dv2",
+        "--source-checkpoint", str(tmp_path / "unused.pt"), "--method-config",
+    ]
+    old_method = f"train/methods/{MATCHED}.yaml"
+    error = "stage1_jsd_weight is only valid for SimCLR plus JSD"
+    with pytest.raises(ValueError, match=error):
+        train_pn2021.main([*args, old_method])
+
+    model = torch.nn.Identity()
+    model.model_spec = EFFICIENTNET1DV2_SPEC
+    with pytest.raises(ValueError, match=error):
+        trainer.train_online_model(
+            model, [], center="ningbo", method_config_path=old_method,
+            config_path=profile_path, config_root=root, output_dir=tmp_path / "training",
+            device="cpu",
+        )
+
+    assert train_pn2021.main([*args, "train/methods/augmix_simclr_jsd_matched_no_vae.yaml"]) == 0
+    plan = json.loads(capsys.readouterr().out)
+    assert plan["training_parameters"]["resolved"]["stage1_jsd_weight"] == 4.0
+    stage1 = plan["method"]["scientific_contract"]["stage1"]
+    assert stage1["simclr_views"] == ["clean", "augmix_1"]
+    assert stage1["jsd_views"] == ["clean", "augmix_1", "augmix_2"]
 
 
 def test_auxiliary_preserves_bn_rng_through_backward_but_accumulates_gradients():
@@ -145,6 +183,50 @@ def test_stage1_uses_resolved_augmix_constants_and_hash_free_legacy_seed(monkeyp
             summary["augmix_dirichlet_alpha"], summary["augmix_beta_alpha"],
             summary["logit_anchor_weight"], summary["ptbxl_replay_weight"]) == (
                 .5, 2, .5, .5, 5., 0.)
+
+
+def test_simclr_plus_jsd_keeps_three_views_at_zero_weight(monkeypatch) -> None:
+    recipe = _recipe("augmix_simclr_jsd_matched_no_vae.yaml")
+    assert recipe.stage1_objective is Stage1Objective.SIMCLR_PLUS_JSD
+    runtime = build_method_runtime(recipe, model_name="efficientnet1dv2", config_root=CONFIG_ROOT)
+    assert runtime.augmix_config is not None
+    monkeypatch.setattr(trainer, "_cache_k500_logits", lambda *a, **k: {})
+    monkeypatch.setattr(trainer, "_feature_width", lambda *a, **k: 5)
+    monkeypatch.setattr(trainer, "_head_parameters", lambda *a, **k: ())
+    monkeypatch.setattr(trainer, "prepare_canonical_model_input", lambda raw, *a, **k: raw.mean((1, 2)).unsqueeze(1))
+    monkeypatch.setattr(trainer, "generate_two_chain_augmix_strong_view", lambda raw, **k: SimpleNamespace(mixed_raw=raw * 0.5))
+    monkeypatch.setattr(trainer, "_forward_logits_and_features", lambda model, x, spec: ((y := model(x)), y))
+    monkeypatch.setattr(trainer, "_teacher_logits_for_hashes", lambda cache, hashes, **k: torch.zeros(len(hashes), 5))
+    monkeypatch.setattr(trainer, "_simclr_nt_xent", lambda clean, strong, **k: (clean - strong).square().mean())
+    monkeypatch.setattr(trainer, "_weighted_logit_anchor_loss", lambda logits, teacher, weights: logits.square().mean())
+    loader = [{"waveform": torch.ones(2, 1000, 12), "hash_id": ("a", "b")}]
+
+    def run(weight: float) -> tuple[dict, int]:
+        torch.manual_seed(7)
+        model = torch.nn.Linear(1, 5, bias=False)
+        calls = []
+        model.register_forward_hook(lambda _module, args, _out: calls.append(args[0].detach().clone()))
+        summary = trainer._run_augmix_stage1(
+            model, loader, spec=SimpleNamespace(name="efficientnet1dv2"),
+            device=torch.device("cpu"), recipe=recipe, augmix_config=runtime.augmix_config,
+            center="ningbo", base_seed=1,
+            resolved={"stage1_steps": 1, "stage1_learning_rate": 0.0,
+                      "stage1_weight_decay": 0.0, "stage1_gradient_clip_norm": 1.0,
+                      "stage1_jsd_weight": weight},
+            pos_weight=None, normalization_epsilon=1e-6,
+            amp_enabled=False, amp_dtype=torch.bfloat16,
+        )
+        return summary, len(calls)
+
+    zero, zero_calls = run(0.0)
+    weighted, weighted_calls = run(4.0)
+    assert zero_calls == weighted_calls == 3
+    assert zero["mean_bernoulli_jsd"] > 0
+    assert zero["mean_bernoulli_jsd"] == pytest.approx(weighted["mean_bernoulli_jsd"])
+    assert weighted["mean_total_loss"] - zero["mean_total_loss"] == pytest.approx(
+        4.0 * zero["mean_bernoulli_jsd"], abs=1e-6
+    )
+    assert weighted["projector_used"] is True
 
 
 def test_simclr_mainline_and_matched_control_share_supervised_weights():
