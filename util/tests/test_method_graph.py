@@ -1,4 +1,4 @@
-"""Contracts for the four retained, code-owned adaptation recipes."""
+"""Contracts for the registered, code-owned adaptation recipes."""
 
 import hashlib
 import json
@@ -20,8 +20,14 @@ REPO = Path(__file__).resolve().parents[2]
 CONFIG_ROOT = REPO / "configs"
 RECIPES = CONFIG_ROOT / "train/methods"
 IDENTITY = ("center=ningbo", "model=efficientnet1dv2", "epoch=2")
-RECIPE_HASHES = {'a0_clean_v1': '32296a2419575e66a4f702deaa5147b328b945b72b812e52019d8d3b9fdccf98', 'a1_corrupt_ft_rot4_v1': 'de0224de08ebf4658828f6ed0fa5ebd414d608fb7ab3430abaddfae8d33de44f', 'augmix_simclr_lhat': '6245e89f572b49bd24f5d688bda7d3f8b16fa4972051353afa311d007cd9f675', 'augmix_simclr_matched_no_vae': 'b2b140ef2e4d440769b14f35b02ca61ba3951502fd7699a276a821ee202ae0f0'}
-DESCRIPTION_SHA256 = '4039f4f1915e284fb387caa4476753a89fad11e23efb486608fc5ef194b42fbd'
+RECIPE_HASHES = {
+    "a0_clean_v1": "32296a2419575e66a4f702deaa5147b328b945b72b812e52019d8d3b9fdccf98",
+    "a1_corrupt_ft_rot4_v1": "de0224de08ebf4658828f6ed0fa5ebd414d608fb7ab3430abaddfae8d33de44f",
+    "augmix_simclr_lhat": "6245e89f572b49bd24f5d688bda7d3f8b16fa4972051353afa311d007cd9f675",
+    "augmix_simclr_matched_no_vae": "b2b140ef2e4d440769b14f35b02ca61ba3951502fd7699a276a821ee202ae0f0",
+    "augmix_simclr_jsd_matched_no_vae": "f32f37031b2aa11b41ae4c76eeededa71294ddcca15426345d5a2673b9954818",
+}
+DESCRIPTION_SHA256 = "3960ca83f3cc36521cb551ad0743fc50fbd3a5978cec121098bc8b81ab62673c"
 
 def _batch(size: int = 2):
     waveform = torch.linspace(-1.0, 1.0, size * 12000).reshape(size, 1000, 12)
@@ -36,7 +42,7 @@ def _runtime(filename: str, **resources: object):
         model_name="efficientnet1dv2", config_root=CONFIG_ROOT, **resources)
 
 
-def test_exact_four_recipe_descriptions_and_scientific_hashes():
+def test_registered_recipe_descriptions_and_scientific_hashes():
     assert {path.stem for path in RECIPES.glob("*.yaml")} == set(RECIPE_HASHES)
     descriptions = {}
     for name, expected in RECIPE_HASHES.items():

@@ -592,6 +592,8 @@ def resolve_online_training_parameters(
     config: OnlineTrainConfig,
     model_name: str,
     overrides: Mapping[str, Any] | None = None,
+    *,
+    recipe: RecipeSpec | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Apply explicit overrides to model/global defaults, then validate once.
 
@@ -661,6 +663,12 @@ def resolve_online_training_parameters(
     resolved["stage1_jsd_weight"] = _nonnegative_number(
         resolved["stage1_jsd_weight"], "resolved stage1_jsd_weight"
     )
+    if (
+        recipe is not None
+        and resolved["stage1_jsd_weight"] != 0.0
+        and recipe.stage1_objective is not Stage1Objective.SIMCLR_PLUS_JSD
+    ):
+        raise ValueError("stage1_jsd_weight is only valid for SimCLR plus JSD")
     if not isinstance(resolved["amp_enabled"], bool):
         raise ValueError("resolved amp_enabled must be boolean")
     if resolved["amp_dtype"] not in {"bfloat16", "float16"}:
@@ -1655,8 +1663,6 @@ def _run_augmix_stage1(
         raise ValueError("two-stage recipe requires a SimCLR objective")
     simclr_jsd = recipe.stage1_objective is Stage1Objective.SIMCLR_PLUS_JSD
     jsd_weight = float(resolved.get("stage1_jsd_weight", 0.0))
-    if not simclr_jsd and jsd_weight != 0.0:
-        raise ValueError("stage1_jsd_weight is only valid for SimCLR plus JSD")
     temperature = augmix_config.stage1_simclr_temperature
     teacher_cache = _cache_k500_logits(
         model,
@@ -1895,10 +1901,8 @@ def train_online_model(
 
     spec = _model_spec(model)
     resolved, supplied = resolve_online_training_parameters(
-        config, spec.name, training_parameters
+        config, spec.name, training_parameters, recipe=recipe
     )
-    if recipe.stage1_objective is not Stage1Objective.SIMCLR_PLUS_JSD and resolved["stage1_jsd_weight"] != 0.0:
-        raise ValueError("stage1_jsd_weight is only valid for SimCLR plus JSD")
     configured_batch = getattr(train_dataloader, "batch_size", None)
     if configured_batch is not None and int(configured_batch) != int(
         resolved["batch_size"]

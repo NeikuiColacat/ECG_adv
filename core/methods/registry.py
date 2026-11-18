@@ -319,6 +319,9 @@ _SCIENTIFIC_CONTRACTS = {
         "stage1": {
             **_DIRECTION_CONTRACT["stage1"],
             "objective": "simclr_plus_jsd",
+            "view": "clean_and_two_independent_twochain_augmix_strong_views",
+            "simclr_views": ["clean", "augmix_1"],
+            "jsd_views": ["clean", "augmix_1", "augmix_2"],
             "jsd_weight_source": "training.model_profiles.<model>.stage1_jsd_weight",
             "jsd_reduction": "mean_over_three_views_records_five_independent_binary_labels",
             "model_views_per_record": 3,

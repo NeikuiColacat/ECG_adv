@@ -16,7 +16,6 @@ if str(PROJECT_ROOT) not in sys.path:
 from core.online_trainer import (
     ALLOWED_CENTERS,
     DEFAULT_ONLINE_CONFIG_PATH,
-    load_online_train_config,
     resolve_online_training_parameters,
 )
 from core.train_PN2021 import (
@@ -47,14 +46,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    config = load_online_train_config(args.config, config_root=args.config_root)
-    recipe, _ = load_pn2021_recipe_spec(
+    recipe, config = load_pn2021_recipe_spec(
         args.method_config,
-        config_path=config.path,
-        config_root=config.config_root,
+        config_path=args.config,
+        config_root=args.config_root,
     )
     resolved_training, supplied_training = resolve_online_training_parameters(
-        config, args.model
+        config, args.model, recipe=recipe
     )
     if supplied_training:
         raise AssertionError("PN2021 training parameters must be YAML-owned")

@@ -2,6 +2,8 @@
 
 import copy
 import hashlib
+import json
+import shutil
 from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,8 +11,10 @@ from types import SimpleNamespace
 import pytest
 import torch
 import torch.nn.functional as F
+import yaml
 
 import core.online_trainer as trainer
+from boot_scripts import train_pn2021
 from core.methods.registry import Stage1Objective, load_recipe_spec
 from core.methods.contracts import ViewBundle, WaveformView
 from core.methods.runtime import build_method_runtime, _derive_seed
@@ -64,6 +68,40 @@ def test_online_parameter_overrides_preserve_scheduler_horizon(name):
     assert supplied == {"epochs": 2}
     with pytest.raises(ValueError, match="unknown online training parameters"):
         trainer.resolve_online_training_parameters(config, "efficientnet1dv2", {"typo": 1})
+
+
+def test_jsd_weight_matches_recipe_in_dry_run_and_training(tmp_path, capsys):
+    root = tmp_path / "configs"
+    shutil.copytree(CONFIG_ROOT, root)
+    profile_path = root / "train/PN2021.yaml"
+    profile = yaml.safe_load(profile_path.read_text())
+    profile["training"]["model_profiles"]["efficientnet1dv2"]["stage1_jsd_weight"] = 4.0
+    profile_path.write_text(yaml.safe_dump(profile))
+    args = [
+        "--dry-run", "--config", str(profile_path), "--config-root", str(root),
+        "--center", "ningbo", "--model", "efficientnet1dv2",
+        "--source-checkpoint", str(tmp_path / "unused.pt"), "--method-config",
+    ]
+    old_method = f"train/methods/{MATCHED}.yaml"
+    error = "stage1_jsd_weight is only valid for SimCLR plus JSD"
+    with pytest.raises(ValueError, match=error):
+        train_pn2021.main([*args, old_method])
+
+    model = torch.nn.Identity()
+    model.model_spec = EFFICIENTNET1DV2_SPEC
+    with pytest.raises(ValueError, match=error):
+        trainer.train_online_model(
+            model, [], center="ningbo", method_config_path=old_method,
+            config_path=profile_path, config_root=root, output_dir=tmp_path / "training",
+            device="cpu",
+        )
+
+    assert train_pn2021.main([*args, "train/methods/augmix_simclr_jsd_matched_no_vae.yaml"]) == 0
+    plan = json.loads(capsys.readouterr().out)
+    assert plan["training_parameters"]["resolved"]["stage1_jsd_weight"] == 4.0
+    stage1 = plan["method"]["scientific_contract"]["stage1"]
+    assert stage1["simclr_views"] == ["clean", "augmix_1"]
+    assert stage1["jsd_views"] == ["clean", "augmix_1", "augmix_2"]
 
 
 def test_auxiliary_preserves_bn_rng_through_backward_but_accumulates_gradients():
